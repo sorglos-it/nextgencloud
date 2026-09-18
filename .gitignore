@@ -1,0 +1,8 @@
+# tooling
+receipts/
+review-receipts/
+
+Thumbs.db
+.DS_Store
+*.bak
+*.log

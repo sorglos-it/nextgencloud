@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NGC Desktop</title>
+<style>
+:root{
+  --bar-h: 44px;
+  --accent: #2f7de1;
+  --accent-2: #16d1c3;
+  --win-bg: #1e2430;
+  --win-fg: #e8ecf3;
+  --win-border: #38414f;
+  --title-bg: #2a3240;
+  --title-bg-active: #333e50;
+  --bar-bg: rgba(20,25,34,.72);
+  --bar-fg: #e8ecf3;
+  --menu-bg: rgba(24,30,40,.92);
+  --shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  --radius: 10px;
+  --field-bg: #151a23;
+  --muted: #97a3b6;
+}
+html[data-theme="light"]{
+  --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
+  --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
+  --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
+  --menu-bg: rgba(250,251,254,.94);
+  --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+  --field-bg:#ffffff; --muted:#5b6a80;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  overflow:hidden; color:var(--bar-fg);
+  background:#0d1017;
+  -webkit-user-select:none; user-select:none;
+  touch-action:manipulation;
+}
+
+/* ---------- Desktop ---------- */
+#desktop{
+  position:fixed; inset:var(--bar-h) 0 0 0;
+  background-size:cover; background-position:center;
+  overflow:hidden;
+}
+#wallpaper{position:absolute; inset:0; background-size:cover; background-position:center; transition:background .3s}
+
+#icons{
+  position:absolute; inset:12px auto 12px 12px;
+  display:flex; flex-direction:column; flex-wrap:wrap; align-content:flex-start;
+  gap:4px; max-height:calc(100% - 24px);
+}
+.dicon{
+  width:92px; padding:10px 4px 8px; border-radius:8px; text-align:center;
+  cursor:default; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8);
+  border:1px solid transparent;
+}
+.dicon:hover{background:rgba(255,255,255,.12)}
+.dicon.sel{background:rgba(47,125,225,.35); border-color:rgba(255,255,255,.35)}
+.dicon .g{font-size:30px; line-height:1.1; display:block}
+.dicon .n{font-size:12px; word-break:break-word}
+
+/* ---------- Taskleiste (oben) ---------- */
+#taskbar{
+  position:fixed; top:0; left:0; right:0; height:var(--bar-h);
+  display:flex; align-items:center; gap:6px; padding:0 8px;
+  background:var(--bar-bg); backdrop-filter:blur(18px) saturate(150%);
+  border-bottom:1px solid rgba(255,255,255,.10);
+  z-index:100000;
+}
+#startbtn{
+  display:flex; align-items:center; gap:8px; height:34px; padding:0 12px;
+  border:0; border-radius:8px; cursor:pointer; font:inherit; font-weight:600;
+  color:#fff; background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+}
+#startbtn:hover{filter:brightness(1.12)}
+#startbtn.open{filter:brightness(.9)}
+#startbtn .logo{font-size:16px}
+#tasks{display:flex; align-items:center; gap:4px; flex:1; min-width:0; overflow:hidden}
+.task{
+  display:flex; align-items:center; gap:7px; height:34px; max-width:190px;
+  padding:0 12px; border-radius:8px; cursor:pointer; flex:0 1 auto; min-width:0;
+  background:rgba(255,255,255,.07); border:1px solid transparent; color:var(--bar-fg);
+}
+.task:hover{background:rgba(255,255,255,.14)}
+.task.active{background:rgba(255,255,255,.18); border-color:rgba(255,255,255,.25)}
+.task.min{opacity:.6}
+.task .lbl{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#tray{display:flex; align-items:center; gap:12px; padding-right:4px; white-space:nowrap}
+#tray button{background:none;border:0;color:inherit;font:inherit;cursor:pointer;opacity:.85;font-size:16px}
+#tray button:hover{opacity:1}
+#clock{text-align:right; line-height:1.15; font-variant-numeric:tabular-nums; font-size:12.5px}
+#clock b{display:block; font-size:13.5px; font-weight:600}
+
+/* ---------- Startmenü ---------- */
+#startmenu{
+  position:fixed; top:calc(var(--bar-h) + 6px); left:8px; width:min(420px, calc(100vw - 16px));
+  max-height:min(560px, calc(100vh - var(--bar-h) - 20px));
+  background:var(--menu-bg); backdrop-filter:blur(22px) saturate(150%);
+  border:1px solid rgba(255,255,255,.14); border-radius:14px; box-shadow:var(--shadow);
+  z-index:100001; display:none; flex-direction:column; overflow:hidden; color:var(--win-fg);
+}
+#startmenu.open{display:flex; animation:pop .13s ease-out}
+@keyframes pop{from{opacity:0; transform:translateY(-8px) scale(.98)}to{opacity:1}}
+#smsearch{margin:12px; padding:9px 12px; border-radius:8px; border:1px solid var(--win-border);
+  background:var(--field-bg); color:var(--win-fg); font:inherit; outline:none}
+#smsearch:focus{border-color:var(--accent)}
+#smhead{padding:0 16px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+#smlist{overflow:auto; padding:8px; display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:4px}
+.smitem{display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 6px;
+  border-radius:10px; cursor:pointer; text-align:center; font-size:12.5px}
+.smitem:hover{background:rgba(127,160,220,.20)}
+.smitem .g{font-size:26px}
+#smfoot{display:flex; gap:8px; padding:10px 12px; border-top:1px solid rgba(127,127,127,.25)}
+#smfoot button{flex:1; padding:8px; border-radius:8px; border:1px solid var(--win-border);
+  background:transparent; color:inherit; font:inherit; cursor:pointer}
+#smfoot button:hover{background:rgba(127,160,220,.2)}
+
+/* ---------- Fenster ---------- */
+.win{
+  position:absolute; display:flex; flex-direction:column;
+  min-width:240px; min-height:150px;
+  background:var(--win-bg); color:var(--win-fg);
+  border:1px solid var(--win-border); border-radius:var(--radius);
+  box-shadow:var(--shadow); overflow:hidden;
+}
+.win.min{display:none}
+.win.max{border-radius:0}
+.win.anim{transition:left .16s,top .16s,width .16s,height .16s}
+.titlebar{
+  display:flex; align-items:center; height:36px; padding-left:12px; gap:8px;
+  background:var(--title-bg); border-bottom:1px solid var(--win-border);
+  cursor:default; flex:0 0 auto; touch-action:none;
+}
+.win.focus .titlebar{background:var(--title-bg-active)}
+.titlebar .g{font-size:15px}
+.titlebar .t{flex:1; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.9}
+.win.focus .titlebar .t{opacity:1}
+.wbtns{display:flex; height:100%}
+.wbtn{width:44px; height:100%; border:0; background:none; color:inherit; cursor:pointer;
+  font-size:14px; line-height:1; opacity:.8}
+.wbtn:hover{background:rgba(127,127,127,.25); opacity:1}
+.wbtn.close:hover{background:#e13e3e; color:#fff}
+.body{flex:1; overflow:auto; position:relative; background:var(--win-bg)}
+.rs{position:absolute; z-index:5}
+.rs.e{right:0;top:0;width:6px;height:100%;cursor:ew-resize}
+.rs.s{left:0;bottom:0;height:6px;width:100%;cursor:ns-resize}
+.rs.w{left:0;top:0;width:6px;height:100%;cursor:ew-resize}
+.rs.n{left:0;top:0;height:6px;width:100%;cursor:ns-resize}
+.rs.se{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
+.rs.sw{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
+.win.max .rs{display:none}
+#snaphint{position:absolute; border:2px solid var(--accent); background:rgba(47,125,225,.22);
+  border-radius:8px; display:none; pointer-events:none; z-index:99999}
+
+/* ---------- App-Inhalte ---------- */
+.pad{padding:16px}
+.app h2{margin:0 0 8px; font-size:16px}
+.app p{margin:0 0 10px}
+button.b, .b{padding:7px 12px; border-radius:7px; border:1px solid var(--win-border);
+  background:var(--field-bg); color:var(--win-fg); font:inherit; cursor:pointer}
+button.b:hover{border-color:var(--accent)}
+input.f, textarea.f, select.f{background:var(--field-bg); color:var(--win-fg);
+  border:1px solid var(--win-border); border-radius:7px; padding:7px 10px; font:inherit; outline:none}
+input.f:focus, textarea.f:focus{border-color:var(--accent)}
+.row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+
+/* Notizblock */
+.note{width:100%;height:100%;border:0;resize:none;padding:14px;background:var(--win-bg);
+  color:var(--win-fg);font:13.5px/1.6 Consolas,"Cascadia Mono",monospace;outline:none;
+  -webkit-user-select:text; user-select:text}
+.statusbar{flex:0 0 auto;padding:5px 12px;font-size:12px;color:var(--muted);
+  border-top:1px solid var(--win-border);background:var(--title-bg)}
+
+/* Rechner */
+.calc{display:flex;flex-direction:column;height:100%;padding:10px;gap:8px}
+.calc .disp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:8px;
+  padding:10px 12px;text-align:right;font-variant-numeric:tabular-nums}
+.calc .disp .e{font-size:12px;color:var(--muted);min-height:16px;overflow:hidden}
+.calc .disp .v{font-size:28px;font-weight:600;overflow:hidden}
+.calc .keys{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.calc .keys button{border-radius:8px;border:1px solid var(--win-border);background:var(--title-bg);
+  color:var(--win-fg);font:15px/1 inherit;cursor:pointer}
+.calc .keys button:hover{background:rgba(127,160,220,.25)}
+.calc .keys button.op{background:var(--field-bg)}
+.calc .keys button.eq{background:var(--accent);color:#fff;border-color:transparent}
+
+/* Explorer */
+.expl{display:flex;height:100%}
+.expl .side{width:170px;flex:0 0 auto;border-right:1px solid var(--win-border);
+  background:var(--title-bg);overflow:auto;padding:8px}
+.expl .side div{padding:7px 10px;border-radius:7px;cursor:pointer;font-size:13px}
+.expl .side div:hover{background:rgba(127,160,220,.2)}
+.expl .side div.on{background:var(--accent);color:#fff}
+.expl .main{flex:1;overflow:auto;padding:10px}
+.expl .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
+.expl .it{padding:12px 6px;border-radius:8px;text-align:center;cursor:default;font-size:12px}
+.expl .it:hover{background:rgba(127,160,220,.2)}
+.expl .it .g{display:block;font-size:28px}
+.crumb{padding:6px 12px;border-bottom:1px solid var(--win-border);font-size:12px;color:var(--muted)}
+
+/* Terminal */
+.term{height:100%;overflow:auto;background:#0b0e14;color:#c8e1c8;
+  font:13px/1.5 Consolas,"Cascadia Mono",monospace;padding:10px;
+  -webkit-user-select:text;user-select:text}
+.term .in{display:flex;gap:6px}
+.term .in input{flex:1;background:none;border:0;color:#eaeaea;font:inherit;outline:none}
+.term .p{color:var(--accent-2)}
+
+/* Malen */
+.paintwrap{display:flex;flex-direction:column;height:100%}
+.painttools{display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid var(--win-border);
+  background:var(--title-bg);flex:0 0 auto;flex-wrap:wrap}
+.paintwrap canvas{flex:1;background:#fff;touch-action:none;cursor:crosshair;display:block;min-height:0}
+
+/* Einstellungen */
+.wpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin:8px 0 16px}
+.wpgrid button{height:64px;border-radius:8px;border:2px solid transparent;cursor:pointer;background-size:cover}
+.wpgrid button.on{border-color:var(--accent)}
+.swatches{display:flex;gap:8px;flex-wrap:wrap}
+.swatches button{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.swatches button.on{border-color:var(--win-fg)}
+kbd{background:var(--field-bg);border:1px solid var(--win-border);border-bottom-width:2px;
+  border-radius:5px;padding:1px 6px;font:12px/1.6 Consolas,monospace}
+
+/* Uhr */
+.clockapp{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:6px}
+.clockapp .big{font-size:56px;font-weight:200;font-variant-numeric:tabular-nums;letter-spacing:1px}
+.clockapp .sub{color:var(--muted)}
+
+@media (max-width:640px){
+  #icons{display:none}
+  .task .lbl{display:none}
+  .expl .side{width:120px}
+}
+</style>
+</head>
+<body>
+
+<div id="taskbar">
+  <button id="startbtn"><span class="logo">⊞</span><span>Start</span></button>
+  <div id="tasks"></div>
+  <div id="tray">
+    <button id="themebtn" title="Design wechseln">🌗</button>
+    <div id="clock"><b>--:--</b><span>--</span></div>
+  </div>
+</div>
+
+<div id="startmenu">
+  <input id="smsearch" type="text" placeholder="Apps durchsuchen…" autocomplete="off">
+  <div id="smhead">Alle Apps</div>
+  <div id="smlist"></div>
+  <div id="smfoot">
+    <button id="sm-tile">Fenster anordnen</button>
+    <button id="sm-closeall">Alle schließen</button>
+  </div>
+</div>
+
+<div id="desktop">
+  <div id="wallpaper"></div>
+  <div id="icons"></div>
+  <div id="snaphint"></div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* =======================================================================
+   Einstellungen / Persistenz
+   ======================================================================= */
+const LS = {
+  get(k, d){ try{ const v = localStorage.getItem("ngc."+k); return v===null? d : JSON.parse(v);}catch(e){return d;} },
+  set(k, v){ try{ localStorage.setItem("ngc."+k, JSON.stringify(v)); }catch(e){} }
+};
+
+const WALLPAPERS = [
+  {id:"deep",   name:"Deep Space", css:"radial-gradient(120% 120% at 20% 15%, #2b4a7d 0%, #16223a 45%, #0a0e18 100%)"},
+  {id:"aurora", name:"Aurora",     css:"linear-gradient(135deg,#0f2027 0%,#203a43 45%,#2c5364 100%)"},
+  {id:"sunset", name:"Sunset",     css:"linear-gradient(135deg,#ff7e5f 0%,#feb47b 50%,#8e5b8e 100%)"},
+  {id:"mint",   name:"Mint",       css:"linear-gradient(135deg,#134e5e 0%,#71b280 100%)"},
+  {id:"plum",   name:"Plum",       css:"linear-gradient(135deg,#41295a 0%,#2f0743 100%)"},
+  {id:"grid",   name:"Raster",     css:"linear-gradient(#0e1420,#0e1420), repeating-linear-gradient(0deg,rgba(120,160,220,.12) 0 1px,transparent 1px 40px), repeating-linear-gradient(90deg,rgba(120,160,220,.12) 0 1px,transparent 1px 40px)"}
+];
+const ACCENTS = ["#2f7de1","#16d1c3","#e14f8a","#f0a020","#8b5cf6","#22c55e"];
+
+function applyWallpaper(id){
+  const w = WALLPAPERS.find(x=>x.id===id) || WALLPAPERS[0];
+  const el = document.getElementById("wallpaper");
+  el.style.background = w.css;
+  el.style.backgroundSize = w.id==="grid" ? "auto, auto, auto" : "cover";
+  LS.set("wallpaper", w.id);
+}
+function applyAccent(c){ document.documentElement.style.setProperty("--accent", c); LS.set("accent", c); }
+function applyTheme(t){ document.documentElement.dataset.theme = t; LS.set("theme", t); }
+
+applyTheme(LS.get("theme","dark"));
+applyWallpaper(LS.get("wallpaper","deep"));
+applyAccent(LS.get("accent", ACCENTS[0]));
+
+/* =======================================================================
+   Fenster-Manager
+   ======================================================================= */
+const desktop  = document.getElementById("desktop");
+const tasksEl  = document.getElementById("tasks");
+const snapHint = document.getElementById("snaphint");
+const windows  = new Map();          // id -> win-Objekt
+let zTop = 10, uid = 0, focused = null;
+let cascade = 0;
+
+function area(){ return { w: desktop.clientWidth, h: desktop.clientHeight }; }
+
+function openApp(appId, arg){
+  const app = APPS.find(a=>a.id===appId);
+  if(!app) return null;
+  if(app.single){
+    for(const w of windows.values()) if(w.app === appId){ focus(w); if(w.min) restore(w); return w; }
+  }
+  return createWindow(app, arg);
+}
+
+function createWindow(app, arg){
+  const id = "w"+(++uid);
+  const a  = area();
+  const w  = Math.min(app.w || 560, Math.max(280, a.w - 40));
+  const h  = Math.min(app.h || 400, Math.max(180, a.h - 40));
+  const off = (cascade++ % 8) * 26;
+  const x = Math.max(8, Math.min(a.w - w - 8, 70 + off));
+  const y = Math.max(8, Math.min(a.h - h - 8, 40 + off));
+
+  const el = document.createElement("div");
+  el.className = "win";
+  el.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;z-index:${++zTop}`;
+  el.innerHTML = `
+    <div class="titlebar">
+      <span class="g">${app.icon}</span>
+      <span class="t">${app.name}</span>
+      <div class="wbtns">
+        <button class="wbtn mini" title="Minimieren">—</button>
+        <button class="wbtn maxi" title="Maximieren">▢</button>
+        <button class="wbtn close" title="Schließen">✕</button>
+      </div>
+    </div>
+    <div class="body"></div>
+    <div class="rs n"></div><div class="rs e"></div><div class="rs s"></div><div class="rs w"></div>
+    <div class="rs se"></div><div class="rs sw"></div>`;
+  desktop.appendChild(el);
+
+  const win = { id, app: app.id, el, title: app.name, icon: app.icon,
+                body: el.querySelector(".body"), min:false, max:false, prev:null, cleanup:null };
+  windows.set(id, win);
+
+  // Taskleisten-Button
+  const tb = document.createElement("div");
+  tb.className = "task";
+  tb.innerHTML = `<span>${app.icon}</span><span class="lbl">${app.name}</span>`;
+  tb.onclick = () => {
+    if(win.min) { restore(win); }
+    else if(focused === win) { minimize(win); }
+    else focus(win);
+  };
+  tasksEl.appendChild(tb);
+  win.tab = tb;
+
+  // Buttons
+  el.querySelector(".mini").onclick  = e => { e.stopPropagation(); minimize(win); };
+  el.querySelector(".maxi").onclick  = e => { e.stopPropagation(); toggleMax(win); };
+  el.querySelector(".close").onclick = e => { e.stopPropagation(); closeWin(win); };
+  el.addEventListener("pointerdown", () => focus(win), true);
+
+  makeDraggable(win);
+  makeResizable(win);
+
+  // App-Inhalt montieren
+  try { win.cleanup = app.mount(win.body, win, arg) || null; }
+  catch(err){ win.body.innerHTML = `<div class="pad">Fehler beim Laden: ${err}</div>`; }
+
+  focus(win);
+  return win;
+}
+
+function setTitle(win, t){ win.title = t; win.el.querySelector(".t").textContent = t;
+  win.tab.querySelector(".lbl").textContent = t; }
+
+function focus(win){
+  if(focused === win && !win.min) return;
+  if(focused && focused !== win){ focused.el.classList.remove("focus"); focused.tab.classList.remove("active"); }
+  focused = win;
+  win.el.classList.add("focus"); win.tab.classList.add("active");
+  win.el.style.zIndex = ++zTop;
+}
+function minimize(win){
+  win.min = true; win.el.classList.add("min"); win.tab.classList.add("min");
+  win.el.classList.remove("focus"); win.tab.classList.remove("active");
+  if(focused === win) focused = null;
+  const rest = [...windows.values()].filter(w=>!w.min);
+  if(rest.length) focus(rest.sort((a,b)=>a.el.style.zIndex - b.el.style.zIndex).pop());
+}
+function restore(win){ win.min = false; win.el.classList.remove("min"); win.tab.classList.remove("min"); focus(win); }
+function toggleMax(win){
+  const a = area();
+  win.el.classList.add("anim");
+  setTimeout(()=>win.el.classList.remove("anim"), 200);
+  if(win.max){
+    const p = win.prev || {left:"60px",top:"40px",width:"600px",height:"420px"};
+    Object.assign(win.el.style, p);
+    win.max = false; win.el.classList.remove("max");
+  } else {
+    win.prev = {left:win.el.style.left, top:win.el.style.top, width:win.el.style.width, height:win.el.style.height};
+    Object.assign(win.el.style, {left:"0px", top:"0px", width:a.w+"px", height:a.h+"px"});
+    win.max = true; win.el.classList.add("max");
+  }
+}
+function closeWin(win){
+  try{ if(typeof win.cleanup === "function") win.cleanup(); }catch(e){}
+  win.el.remove(); win.tab.remove(); windows.delete(win.id);
+  if(focused === win) focused = null;
+  const rest = [...windows.values()].filter(w=>!w.min);
+  if(rest.length) focus(rest.sort((a,b)=>a.el.style.zIndex - b.el.style.zIndex).pop());
+}
+
+/* ---- Ziehen (Maus + Touch via Pointer Events) ---- */
+function makeDraggable(win){
+  const bar = win.el.querySelector(".titlebar");
+  let sx=0, sy=0, ox=0, oy=0, dragging=false, snap=null;
+
+  bar.addEventListener("dblclick", e => { if(!e.target.closest(".wbtn")) toggleMax(win); });
+
+  bar.addEventListener("pointerdown", e => {
+    if(e.target.closest(".wbtn") || e.button === 2) return;
+    focus(win);
+    dragging = true; snap = null;
+    if(win.max){                            // maximiertes Fenster "abreißen"
+      const rel = e.clientX / area().w;
+      toggleMax(win);
+      const w = win.el.offsetWidth;
+      win.el.style.left = Math.max(0, e.clientX - w*rel) + "px";
+      win.el.style.top  = "0px";
+    }
+    sx = e.clientX; sy = e.clientY;
+    ox = win.el.offsetLeft; oy = win.el.offsetTop;
+    bar.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  bar.addEventListener("pointermove", e => {
+    if(!dragging) return;
+    const a = area(), W = win.el.offsetWidth;
+    let nx = ox + e.clientX - sx;
+    let ny = oy + e.clientY - sy;
+    nx = Math.max(-W + 60, Math.min(a.w - 60, nx));
+    ny = Math.max(0, Math.min(a.h - 34, ny));
+    win.el.style.left = nx + "px";
+    win.el.style.top  = ny + "px";
+
+    // Andock-Vorschau an den Bildschirmrändern
+    const m = 12;
+    let s = null;
+    if(e.clientY <= m) s = {left:0, top:0, width:a.w, height:a.h};
+    else if(e.clientX <= m) s = {left:0, top:0, width:Math.round(a.w/2), height:a.h};
+    else if(e.clientX >= a.w - m) s = {left:Math.round(a.w/2), top:0, width:Math.round(a.w/2), height:a.h};
+    snap = s;
+    if(s){
+      Object.assign(snapHint.style, {display:"block", left:s.left+"px", top:s.top+"px",
+                                     width:s.width+"px", height:s.height+"px"});
+    } else snapHint.style.display = "none";
+  });
+
+  const end = e => {
+    if(!dragging) return;
+    dragging = false; snapHint.style.display = "none";
+    try{ bar.releasePointerCapture(e.pointerId); }catch(_){}
+    if(snap){
+      win.prev = {left:win.el.style.left, top:win.el.style.top,
+                  width:win.el.offsetWidth+"px", height:win.el.offsetHeight+"px"};
+      win.el.classList.add("anim"); setTimeout(()=>win.el.classList.remove("anim"),200);
+      Object.assign(win.el.style, {left:snap.left+"px", top:snap.top+"px",
+                                   width:snap.width+"px", height:snap.height+"px"});
+      win.max = (snap.width === area().w);
+      win.el.classList.toggle("max", win.max);
+      snap = null;
+    }
+  };
+  bar.addEventListener("pointerup", end);
+  bar.addEventListener("pointercancel", end);
+}
+
+/* ---- Größe ändern ---- */
+function makeResizable(win){
+  win.el.querySelectorAll(".rs").forEach(h => {
+    const dir = h.classList[1];
+    let sx, sy, ox, oy, ow, oh, on=false;
+    h.addEventListener("pointerdown", e => {
+      on = true; focus(win);
+      sx=e.clientX; sy=e.clientY;
+      ox=win.el.offsetLeft; oy=win.el.offsetTop;
+      ow=win.el.offsetWidth; oh=win.el.offsetHeight;
+      h.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation();
+    });
+    h.addEventListener("pointermove", e => {
+      if(!on) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      const MINW = 240, MINH = 150;
+      let l=ox, t=oy, w=ow, hh=oh;
+      if(dir.includes("e")) w = Math.max(MINW, ow + dx);
+      if(dir.includes("s")) hh = Math.max(MINH, oh + dy);
+      if(dir.includes("w")){ w = Math.max(MINW, ow - dx); l = ox + (ow - w); }
+      if(dir.includes("n")){ hh = Math.max(MINH, oh - dy); t = Math.max(0, oy + (oh - hh)); }
+      Object.assign(win.el.style, {left:l+"px", top:t+"px", width:w+"px", height:hh+"px"});
+    });
+    const end = e => { on=false; try{h.releasePointerCapture(e.pointerId);}catch(_){} };
+    h.addEventListener("pointerup", end);
+    h.addEventListener("pointercancel", end);
+  });
+}
+
+/* ---- Fenster nebeneinander anordnen ---- */
+function tileWindows(){
+  const list = [...windows.values()].filter(w=>!w.min);
+  if(!list.length) return;
+  const a = area();
+  const cols = Math.ceil(Math.sqrt(list.length));
+  const rows = Math.ceil(list.length / cols);
+  list.forEach((w,i) => {
+    const c = i % cols, r = Math.floor(i / cols);
+    const cw = Math.floor(a.w / cols), ch = Math.floor(a.h / rows);
+    w.max = false; w.el.classList.remove("max");
+    w.el.classList.add("anim"); setTimeout(()=>w.el.classList.remove("anim"),200);
+    Object.assign(w.el.style, {left:c*cw+"px", top:r*ch+"px", width:cw+"px", height:ch+"px"});
+  });
+}
+
+// Fenster beim Verkleinern des Viewports im Bild halten
+window.addEventListener("resize", () => {
+  const a = area();
+  for(const w of windows.values()){
+    if(w.max){ Object.assign(w.el.style,{left:"0px",top:"0px",width:a.w+"px",height:a.h+"px"}); continue; }
+    w.el.style.left = Math.min(w.el.offsetLeft, Math.max(0, a.w - 80)) + "px";
+    w.el.style.top  = Math.min(w.el.offsetTop,  Math.max(0, a.h - 40)) + "px";
+  }
+});
+
+/* =======================================================================
+   Apps
+   ======================================================================= */
+const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; };
+
+const APPS = [
+
+/* ---------------- Explorer ---------------- */
+{
+  id:"explorer", name:"Explorer", icon:"📁", w:640, h:420, desktop:true,
+  mount(body){
+    const FS = {
+      "Dieser PC":      [["💽","Lokal (C:)"],["🗄️","Netz (W:)"],["📀","DVD (D:)"]],
+      "Dokumente":      [["📄","Angebot.pdf"],["📄","Notizen.txt"],["📊","Umsatz.xlsx"],["📁","Projekte"]],
+      "Bilder":         [["🖼️","Urlaub.jpg"],["🖼️","Logo.png"],["🖼️","Screenshot.png"]],
+      "Downloads":      [["📦","setup.zip"],["🎵","track.mp3"],["🎬","clip.mp4"]],
+      "Papierkorb":     []
+    };
+    const wrap = el("div","expl");
+    const side = el("div","side");
+    const main = el("div","main");
+    const holder = el("div");
+    holder.style.cssText = "display:flex;flex-direction:column;height:100%";
+    const crumb = el("div","crumb");
+    const grid  = el("div","grid");
+    main.appendChild(grid);
+    holder.append(crumb, main);
+    wrap.append(side, holder);
+    holder.style.flex = "1"; holder.style.minWidth = "0";
+    body.style.padding = "0"; body.appendChild(wrap);
+
+    let cur = "Dieser PC";
+    const render = () => {
+      crumb.textContent = "🏠  ›  " + cur + "   —   " + FS[cur].length + " Objekt(e)";
+      grid.innerHTML = "";
+      side.querySelectorAll("div").forEach(d => d.classList.toggle("on", d.dataset.k === cur));
+      if(!FS[cur].length) grid.innerHTML = `<div style="color:var(--muted);padding:14px">Dieser Ordner ist leer.</div>`;
+      FS[cur].forEach(([g,n]) => {
+        const it = el("div","it",`<span class="g">${g}</span>${n}`);
+        it.ondblclick = () => alert(`"${n}" lässt sich hier leider nicht öffnen – das ist eine Demo-Dateiablage.`);
+        grid.appendChild(it);
+      });
+    };
+    Object.keys(FS).forEach(k => {
+      const d = el("div", null, ({"Dieser PC":"💻","Dokumente":"📄","Bilder":"🖼️","Downloads":"⬇️","Papierkorb":"🗑️"})[k] + " " + k);
+      d.dataset.k = k; d.onclick = () => { cur = k; render(); };
+      side.appendChild(d);
+    });
+    render();
+  }
+},
+
+/* ---------------- Notizblock ---------------- */
+{
+  id:"notes", name:"Notizblock", icon:"📝", w:520, h:400, desktop:true,
+  mount(body, win){
+    body.style.cssText = "display:flex;flex-direction:column;padding:0";
+    const ta = el("textarea","note");
+    ta.spellcheck = false;
+    ta.value = LS.get("notes","Notizen\n=======\n\nWird automatisch im Browser gespeichert.\n");
+    const st = el("div","statusbar");
+    const upd = () => { st.textContent = `${ta.value.length} Zeichen · ${ta.value.split("\n").length} Zeilen · automatisch gespeichert`; };
+    let t;
+    ta.oninput = () => { upd(); clearTimeout(t); t = setTimeout(()=>LS.set("notes", ta.value), 400); };
+    body.append(ta, st); upd();
+    setTimeout(()=>ta.focus(), 50);
+    return () => LS.set("notes", ta.value);
+  }
+},
+
+/* ---------------- Rechner ---------------- */
+{
+  id:"calc", name:"Rechner", icon:"🧮", w:300, h:420, single:true, desktop:true,
+  mount(body, win){
+    body.innerHTML = `<div class="calc">
+      <div class="disp"><div class="e"></div><div class="v">0</div></div>
+      <div class="keys"></div></div>`;
+    const eE = body.querySelector(".e"), vE = body.querySelector(".v"), keys = body.querySelector(".keys");
+    let expr = "", val = "0";
+
+    const show = () => { eE.textContent = expr; vE.textContent = val; };
+    const push = c => {
+      if("0123456789".includes(c)) val = (val === "0" ? "" : val) + c;
+      else if(c === ",") { if(!val.includes(".")) val += "."; }
+      else if("+-*/".includes(c)) { expr += val + " " + c + " "; val = "0"; }
+      show();
+    };
+    const evaluate = () => {
+      const s = (expr + val).replace(/\s+/g,"");
+      if(!/^[0-9+\-*/.]+$/.test(s)) return;
+      const toks = s.match(/(\d+\.?\d*|[+\-*/])/g) || [];
+      const out = [], ops = [], pr = {"+":1,"-":1,"*":2,"/":2};
+      for(const t of toks){
+        if(/^\d/.test(t)) out.push(parseFloat(t));
+        else { while(ops.length && pr[ops.at(-1)] >= pr[t]) out.push(ops.pop()); ops.push(t); }
+      }
+      while(ops.length) out.push(ops.pop());
+      const st = [];
+      for(const t of out){
+        if(typeof t === "number") st.push(t);
+        else { const b = st.pop(), a = st.pop(); if(a===undefined||b===undefined) return;
+               st.push(t==="+"?a+b : t==="-"?a-b : t==="*"?a*b : a/b); }
+      }
+      const r = st.pop();
+      expr = ""; val = (r===undefined||!isFinite(r)) ? "Fehler" : String(Math.round(r*1e10)/1e10); show();
+    };
+
+    const layout = [
+      ["C","op"],["±","op"],["%","op"],["÷","op"],
+      ["7"],["8"],["9"],["×","op"],
+      ["4"],["5"],["6"],["−","op"],
+      ["1"],["2"],["3"],["+","op"],
+      ["0"],[","],["⌫","op"],["=","eq"]
+    ];
+    layout.forEach(([lab, cls]) => {
+      const b = el("button", cls||"", lab);
+      b.onclick = () => {
+        if(lab==="C"){ expr=""; val="0"; show(); }
+        else if(lab==="⌫"){ val = val.length>1 ? val.slice(0,-1) : "0"; show(); }
+        else if(lab==="±"){ val = val.startsWith("-") ? val.slice(1) : "-"+val; show(); }
+        else if(lab==="%"){ val = String(parseFloat(val)/100); show(); }
+        else if(lab==="="){ evaluate(); }
+        else push({"÷":"/","×":"*","−":"-"}[lab] || lab);
+      };
+      keys.appendChild(b);
+    });
+    show();
+
+    const onKey = e => {
+      if(focused !== win) return;
+      const k = e.key;
+      if(/[0-9]/.test(k)) push(k);
+      else if("+-*/".includes(k)) push(k);
+      else if(k==="," || k===".") push(",");
+      else if(k==="Enter" || k==="=") { e.preventDefault(); evaluate(); }
+      else if(k==="Backspace"){ val = val.length>1 ? val.slice(0,-1) : "0"; show(); }
+      else if(k==="Escape"){ expr=""; val="0"; show(); }
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }
+},
+
+/* ---------------- Terminal ---------------- */
+{
+  id:"term", name:"Terminal", icon:"⌨️", w:600, h:360,
+  mount(body){
+    body.style.padding = "0";
+    const t = el("div","term");
+    body.appendChild(t);
+    const line = txt => { const d = el("div", null, txt); t.appendChild(d); t.scrollTop = t.scrollHeight; };
+    line('NGC Shell 1.0 &nbsp;—&nbsp; "help" für Befehle.');
+
+    const prompt = () => {
+      const row = el("div","in", `<span class="p">C:\\NGC&gt;</span>`);
+      const inp = el("input"); inp.autocomplete="off"; inp.spellcheck=false;
+      row.appendChild(inp); t.appendChild(row); inp.focus(); t.scrollTop = t.scrollHeight;
+      inp.onkeydown = e => {
+        if(e.key !== "Enter") return;
+        const cmd = inp.value.trim();
+        row.replaceChild(el("span",null," "+cmd), inp);
+        run(cmd); prompt();
+      };
+    };
+    const run = raw => {
+      const [c, ...rest] = raw.split(/\s+/);
+      const arg = rest.join(" ");
+      switch((c||"").toLowerCase()){
+        case "": break;
+        case "help": line("help · apps · open &lt;app&gt; · echo &lt;text&gt; · date · dir · ver · theme · cls · exit"); break;
+        case "apps": line(APPS.map(a=>a.id).join("  ")); break;
+        case "open":
+          if(openApp(arg.toLowerCase())) line("Starte "+arg+" …");
+          else line(`App "${arg}" nicht gefunden. "apps" zeigt alle.`);
+          break;
+        case "echo": line(arg.replace(/[<>&]/g, ch=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[ch]))); break;
+        case "date": line(new Date().toLocaleString("de-DE")); break;
+        case "dir":  line("Dokumente\\  Bilder\\  Downloads\\  index.html"); break;
+        case "ver":  line("NGC Desktop 1.0 (Web)"); break;
+        case "theme": applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"); line("Design gewechselt."); break;
+        case "cls": t.innerHTML = ""; break;
+        case "exit": closeWin(focused); return;
+        default: line(`"${c}" ist kein bekannter Befehl.`);
+      }
+    };
+    prompt();
+    t.onclick = e => { if(!window.getSelection().toString()){ const i = t.querySelector("input"); if(i) i.focus(); } };
+  }
+},
+
+/* ---------------- Malen ---------------- */
+{
+  id:"paint", name:"Malen", icon:"🎨", w:640, h:460, desktop:true,
+  mount(body){
+    body.style.padding = "0";
+    const wrap = el("div","paintwrap");
+    const tools = el("div","painttools");
+    const cv = el("canvas");
+    wrap.append(tools, cv); body.appendChild(wrap);
+
+    const color = el("input"); color.type="color"; color.value="#2f7de1"; color.className="f";
+    color.style.cssText = "padding:2px;width:44px;height:32px";
+    const size = el("input"); size.type="range"; size.min=1; size.max=40; size.value=6;
+    const eraser = el("button","b","Radierer");
+    const clear  = el("button","b","Leeren");
+    const save   = el("button","b","PNG speichern");
+    tools.append(color, size, eraser, clear, save);
+
+    const ctx = cv.getContext("2d");
+    let erase = false, drawing = false, last = null;
+
+    const fit = () => {
+      const snap = cv.width ? ctx.getImageData(0,0,cv.width,cv.height) : null;
+      cv.width = Math.max(1, cv.clientWidth); cv.height = Math.max(1, cv.clientHeight);
+      ctx.fillStyle = "#fff"; ctx.fillRect(0,0,cv.width,cv.height);
+      if(snap) ctx.putImageData(snap,0,0);
+      ctx.lineCap = ctx.lineJoin = "round";
+    };
+    const ro = new ResizeObserver(fit); ro.observe(cv);
+    setTimeout(fit, 30);
+
+    const pos = e => { const r = cv.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; };
+    cv.addEventListener("pointerdown", e => { drawing = true; last = pos(e); cv.setPointerCapture(e.pointerId); e.preventDefault(); });
+    cv.addEventListener("pointermove", e => {
+      if(!drawing) return;
+      const p = pos(e);
+      ctx.strokeStyle = erase ? "#ffffff" : color.value;
+      ctx.lineWidth = size.value * (erase ? 2.5 : 1);
+      ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+      last = p;
+    });
+    const stop = e => { drawing = false; try{cv.releasePointerCapture(e.pointerId);}catch(_){} };
+    cv.addEventListener("pointerup", stop); cv.addEventListener("pointercancel", stop);
+
+    eraser.onclick = () => { erase = !erase; eraser.style.borderColor = erase ? "var(--accent)" : ""; };
+    clear.onclick  = () => { ctx.fillStyle="#fff"; ctx.fillRect(0,0,cv.width,cv.height); };
+    save.onclick   = () => { const a = el("a"); a.download = "zeichnung.png"; a.href = cv.toDataURL("image/png"); a.click(); };
+
+    return () => ro.disconnect();
+  }
+},
+
+/* ---------------- Uhr ---------------- */
+{
+  id:"clock", name:"Uhr", icon:"🕒", w:360, h:230, single:true,
+  mount(body){
+    body.innerHTML = `<div class="clockapp"><div class="big">--:--:--</div><div class="sub"></div></div>`;
+    const big = body.querySelector(".big"), sub = body.querySelector(".sub");
+    const tick = () => {
+      const d = new Date();
+      big.textContent = d.toLocaleTimeString("de-DE");
+      sub.textContent = d.toLocaleDateString("de-DE",{weekday:"long", day:"2-digit", month:"long", year:"numeric"});
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }
+},
+
+/* ---------------- Einstellungen ---------------- */
+{
+  id:"settings", name:"Einstellungen", icon:"⚙️", w:520, h:460, single:true,
+  mount(body){
+    const p = el("div","app pad");
+    p.innerHTML = `<h2>Hintergrund</h2><div class="wpgrid"></div>
+      <h2>Akzentfarbe</h2><div class="swatches"></div>
+      <h2 style="margin-top:18px">Design</h2>
+      <div class="row"><button class="b" data-t="dark">Dunkel</button><button class="b" data-t="light">Hell</button></div>
+      <h2 style="margin-top:18px">Tastenkürzel</h2>
+      <p style="color:var(--muted)">
+        <kbd>Esc</kbd> Startmenü schließen &nbsp;·&nbsp; <kbd>Alt</kbd>+<kbd>F4</kbd> Fenster schließen<br>
+        Titelleiste doppelklicken = maximieren &nbsp;·&nbsp; Fenster an den Rand ziehen = andocken
+      </p>`;
+    body.appendChild(p);
+
+    const grid = p.querySelector(".wpgrid");
+    WALLPAPERS.forEach(w => {
+      const b = el("button", LS.get("wallpaper")===w.id ? "on":"", "");
+      b.style.background = w.css; b.title = w.name;
+      b.onclick = () => { applyWallpaper(w.id); grid.querySelectorAll("button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); };
+      grid.appendChild(b);
+    });
+    const sw = p.querySelector(".swatches");
+    ACCENTS.forEach(c => {
+      const b = el("button", LS.get("accent")===c ? "on":"", "");
+      b.style.background = c;
+      b.onclick = () => { applyAccent(c); sw.querySelectorAll("button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); };
+      sw.appendChild(b);
+    });
+    p.querySelectorAll("[data-t]").forEach(b => b.onclick = () => applyTheme(b.dataset.t));
+  }
+},
+
+/* ---------------- Über ---------------- */
+{
+  id:"about", name:"Über NGC", icon:"ℹ️", w:440, h:300, single:true,
+  mount(body){
+    body.innerHTML = `<div class="app pad">
+      <h2>NGC Desktop 1.0</h2>
+      <p>Eine Desktop-Oberfläche im Browser: Fenster lassen sich verschieben, in der Größe ändern,
+         maximieren, minimieren und an den Bildschirmrändern andocken.</p>
+      <p style="color:var(--muted)">Alles in einer einzigen <code>index.html</code> — kein Framework,
+         keine externen Abhängigkeiten. Einstellungen und Notizen liegen im lokalen Browser-Speicher.</p>
+      <div class="row"><button class="b" id="ab-set">Einstellungen öffnen</button></div>
+    </div>`;
+    body.querySelector("#ab-set").onclick = () => openApp("settings");
+  }
+}
+];
+
+/* =======================================================================
+   Startmenü / Taskleiste / Desktop-Symbole
+   ======================================================================= */
+const startbtn = document.getElementById("startbtn");
+const startmenu = document.getElementById("startmenu");
+const smlist = document.getElementById("smlist");
+const smsearch = document.getElementById("smsearch");
+
+function renderMenu(filter=""){
+  const f = filter.trim().toLowerCase();
+  smlist.innerHTML = "";
+  const list = APPS.filter(a => !f || a.name.toLowerCase().includes(f) || a.id.includes(f));
+  if(!list.length){ smlist.innerHTML = `<div style="padding:14px;color:var(--muted)">Keine Treffer.</div>`; return; }
+  list.forEach(a => {
+    const it = el("div","smitem",`<span class="g">${a.icon}</span><span>${a.name}</span>`);
+    it.onclick = () => { openApp(a.id); toggleMenu(false); };
+    smlist.appendChild(it);
+  });
+}
+function toggleMenu(open){
+  const o = open === undefined ? !startmenu.classList.contains("open") : open;
+  startmenu.classList.toggle("open", o);
+  startbtn.classList.toggle("open", o);
+  if(o){ smsearch.value = ""; renderMenu(); setTimeout(()=>smsearch.focus(), 30); }
+}
+startbtn.onclick = e => { e.stopPropagation(); toggleMenu(); };
+smsearch.oninput = () => renderMenu(smsearch.value);
+smsearch.onkeydown = e => {
+  if(e.key === "Escape") toggleMenu(false);
+  if(e.key === "Enter"){ const first = smlist.querySelector(".smitem"); if(first) first.click(); }
+};
+document.addEventListener("pointerdown", e => {
+  if(!startmenu.contains(e.target) && !startbtn.contains(e.target)) toggleMenu(false);
+});
+document.getElementById("sm-tile").onclick = () => { tileWindows(); toggleMenu(false); };
+document.getElementById("sm-closeall").onclick = () => { [...windows.values()].forEach(closeWin); toggleMenu(false); };
+
+document.getElementById("themebtn").onclick = () =>
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+
+/* Uhr in der Taskleiste */
+const clockEl = document.getElementById("clock");
+const tickBar = () => {
+  const d = new Date();
+  clockEl.innerHTML = `<b>${d.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</b>` +
+                      `<span>${d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"})}</span>`;
+};
+tickBar(); setInterval(tickBar, 15000);
+
+/* Desktop-Symbole */
+const iconsEl = document.getElementById("icons");
+APPS.filter(a => a.desktop).concat(APPS.filter(a => a.id==="settings")).forEach(a => {
+  const d = el("div","dicon",`<span class="g">${a.icon}</span><span class="n">${a.name}</span>`);
+  d.onclick = e => { e.stopPropagation(); iconsEl.querySelectorAll(".dicon").forEach(x=>x.classList.remove("sel")); d.classList.add("sel"); };
+  d.ondblclick = () => openApp(a.id);
+  iconsEl.appendChild(d);
+});
+desktop.addEventListener("pointerdown", e => {
+  if(e.target === desktop || e.target.id === "wallpaper")
+    iconsEl.querySelectorAll(".dicon").forEach(x=>x.classList.remove("sel"));
+});
+
+/* Globale Tastatur */
+window.addEventListener("keydown", e => {
+  if(e.key === "Escape" && startmenu.classList.contains("open")) toggleMenu(false);
+  if(e.altKey && e.key === "F4" && focused){ e.preventDefault(); closeWin(focused); }
+  if(e.key === "Meta" || (e.ctrlKey && e.key === "Escape")){ e.preventDefault(); toggleMenu(); }
+});
+
+/* Startfenster */
+openApp("about");
+})();
+</script>
+</body>
+</html>

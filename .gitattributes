@@ -1,0 +1,9 @@
+# LF everywhere, also in a Windows working copy.
+* text=auto eol=lf
+
+# binaries
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.woff2 binary
+*.ttf   binary
