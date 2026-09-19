@@ -4,30 +4,35 @@
 
 ## Ziel der nächsten Sitzung
 
-Den Entwurf für den Kern fertig abstimmen und danach den Umsetzungsplan schreiben:
+Den Entwurf für den Kern freigeben lassen und danach den Umsetzungsplan schreiben:
 
-1. Abschnitt 5 mit Thomas besprechen: Datenbank, Installation, Fehlerbehandlung, Tests. Die
-   Vorschläge dazu stehen im Entwurf unter 4.6.
-2. Die offenen Fragen 1 bis 7 aus Kapitel 5 des Entwurfs klären, denn sie betreffen den Kern.
-3. Thomas den ganzen Entwurf lesen und freigeben lassen.
-4. Erst danach den Umsetzungsplan für den Kern schreiben.
+1. Thomas liest den ganzen Entwurf, vor allem die Stellen mit „Beim Ausformulieren ergänzt".
+2. Die offenen Fragen 1 bis 6 aus Kapitel 5 des Entwurfs klären, eine nach der anderen.
+3. Erst dann den Umsetzungsplan schreiben. Sein erster Schritt ist Schritt 1 aus 4.7 des
+   Entwurfs: Verträge in `contracts/`, eine `CLAUDE.md` je Teil und das Grundgerüst.
 
 ## Stand
 
 | | |
 |---|---|
-| Erledigt | Repo angelegt (privat), Zielbild, Zerlegung in sieben Teilprojekte, Kern-Abschnitte 1 bis 4 abgestimmt |
-| In Arbeit | Brainstorming zum Kern: Abschnitt 5 ist noch nicht vorgestellt |
+| Erledigt | Repo angelegt (privat), Zielbild, Zerlegung in sieben Teilprojekte, alle sechs Abschnitte des Kern-Entwurfs abgestimmt |
+| In Arbeit | Brainstorming: Entwurf ist geschrieben, Freigabe durch Thomas und offene Fragen stehen aus |
 | Blockiert | nichts |
 | Code | noch keiner, nur der Prototyp |
 
+## Vor dem Bauen zu prüfen
+
+- Sobald die vier Server per Remote Control verbunden sind: ob sich die Sitzungen gegenseitig
+  Nachrichten schicken können (Entwurf 4.7 setzt das voraus).
+- Was Thomas bereitstellt: siehe Entwurf 4.7, „Voraussetzungen".
+
 ## Offene Entscheidungen
 
-Stehen im Entwurf, Kapitel 5 „Offene Fragen", jeweils mit Vorschlag.
+Stehen im Entwurf, Kapitel 5 „Offene Fragen".
 
 ## Skills
 
-- `superpowers:brainstorming`: weitermachen beim Schritt „Present design" mit Abschnitt 5
+- `superpowers:brainstorming`: weitermachen beim Schritt „User reviews written spec"
 - `superpowers:writing-plans`: erst, wenn Thomas den Entwurf freigegeben hat
 
 ## Artefakte

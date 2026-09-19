@@ -1,7 +1,10 @@
 # NGC – Entwurf für den Kern
 
-**Stand:** 19.09.2026 · **Status:** Abschnitte 1–4 mit Thomas abgestimmt, Abschnitt 5 offen
+**Stand:** 19.09.2026 · **Status:** Abschnitte 1 bis 6 mit Thomas abgestimmt, offene Fragen in Kapitel 5
 **Einstieg für die nächste Sitzung:** [`docs/STAND.md`](../../STAND.md)
+
+> Stellen, die ich erst beim Ausformulieren ergänzt habe, sind mit **„Beim Ausformulieren
+> ergänzt"** markiert. Thomas hat sie noch nicht gesehen.
 
 ---
 
@@ -19,16 +22,21 @@ Kompatibilität.
 - Der App-Store ist „die erste App": Er bindet mehrere Stores an, darunter einen globalen
   Store von uns mit Gratis- und Kauf-Apps (Abo oder Kauf, pro Benutzer oder pro Site). Eigene
   Apps lassen sich hochladen.
-- NGC hat vier Teile: Webinterface, API, Datenbank (MariaDB, MySQL, MSSQL, Oracle, SQLite) und
-  Server-Controller. Alle vier können auf einer Maschine laufen, müssen aber nicht. Das
-  Webinterface spricht mit x APIs, die mit y Datenbanken arbeiten; die APIs können z
-  Server-Controller haben.
+- NGC hat vier Teile: Webinterface, API, Datenbank und Server-Controller. Alle vier können auf
+  einer Maschine laufen, müssen aber nicht. Das Webinterface spricht mit x APIs, die mit y
+  Datenbanken arbeiten; die APIs können z Server-Controller haben.
 - Endausbau, nicht der Anfang: Webinterface auf einem Webserver, API auf einem
   Application-Server, Datenbank auf einem Datenbankserver, auf jedem läuft ein Controller.
   Ein vierter Server bekommt die App LDAP/Active Directory zugewiesen, ein weiterer wird
   Fileserver und so weiter.
 
 ## 2. Grundsätze
+
+### Sicherheit zuerst
+
+Thomas: „sehr, sehr viel Sicherheit … das Ding muss sicher sein." Jede Entscheidung wird
+zuerst daran gemessen. Das Sicherheitsmodell steht in 4.5, die verbindlichen Regeln für das
+Programmieren in 4.6.
 
 ### Wir bauen nur die Pipeline
 
@@ -44,44 +52,55 @@ App-Oberfläche (Browser)  ⇄  API  ⇄  Server-Controller  ⇄  Dienst
 - API und Controller sind wie VPN-Server und VPN-Client. Der Controller baut die Verbindung
   selbst auf, auf den Servern muss dafür kein Port von außen offen sein.
 - Wie ein Dienst programmiert ist, ist egal, solange er die Schnittstelle des Controllers
-  spricht (Abschnitt 4.3).
+  spricht (4.3).
 - Beispiele von Thomas: Beim Mail-Client läuft die Oberfläche im Browser. Erst beim Senden
   geht die Mail über die API zum Controller des Mailservers, der sie verschickt. Beim Terminal
   geht `cp -r` über API und Controller an den Dienst „virtuelles Terminal", die Ausgabe kommt
   denselben Weg zurück.
 
+### Jeder Server läuft auch ohne API weiter
+
+Über die API kommen Änderungen, den laufenden Betrieb braucht sie nicht. Der Controller hält
+auf jedem Server alles vor, was der Server zum Weiterlaufen braucht, und stellt es nach einem
+Verbindungsabbruch oder Neustart selbst wieder her (4.6). Beispiel von Thomas: Eine Firewall
+muss weiterlaufen, auch wenn die Verbindung zur API abreißt.
+
 ### Rollen der vier Teile
 
 | Teil | Rolle |
 |---|---|
-| Webinterface | Liegt auf jedem Webserver, zum Beispiel Standard-Apache. HTML, CSS, JS und PHP; PHP nur für das Webinterface selbst. |
+| Webinterface | Liegt auf jedem Webserver, Standard ist Apache. HTML, CSS, JS und PHP; PHP nur für das Webinterface selbst. |
 | API | Eigener, dauerhaft laufender Dienst. Vermittler mit zwei Seiten (Webinterface und Controller) und „die Firewall zwischen GUI und Server". Macht Anmeldung, Rollen und Rechte und die Weiterleitung. Führt nie App-Code aus. Mehrere APIs sind möglich, zum Beispiel für die Performance. |
-| Server-Controller | Eigener, dauerhaft laufender Dienst auf jedem Server. Redet nur mit der API und tut, was sie sagt. Root-Aufgaben führt er nur mit Unterschrift des Benutzers aus (4.5). |
-| Datenbank | Gehört zur API. |
+| Server-Controller | Eigener, dauerhaft laufender Dienst auf jedem Server. Redet nur mit der API und tut, was sie sagt. Root-Aufgaben führt er nur mit Unterschrift des Benutzers aus (4.5). Hält seinen Zustand lokal in SQLite. |
+| Datenbank | MariaDB als Standard, auf demselben oder einem eigenen Server. SQLite, wenn alles auf einem Pi läuft. |
 
 ### Apps laufen auf dem Client
 
 App-Oberflächen bestehen nur aus HTML, CSS und JavaScript und laufen nur im Browser. Kein Code
 aus einem Store läuft auf dem Webserver oder in der API. Was auf einem Server passieren muss,
-erledigt ein Dienst der App über den Controller.
+erledigt ein Dienst der App über den Controller. Die Dienste einer App dürfen ihre Daten in
+SQLite ablegen.
 
 ### Keine Abhängigkeiten
 
 API, Controller und Werkzeuge sind je eine einzelne Go-Datei ohne Laufzeitumgebung. Fremdcode
 wird ins Repo kopiert (`vendor/`), seine Herkunft steht in `THIRD-PARTY.md`. Das Webinterface
-kommt ohne Framework und ohne Build-Schritt aus.
+kommt ohne Framework und ohne Build-Schritt aus. Von außen kommen nur Apache, PHP und MariaDB
+aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte.
 
-### Sprachen
+### Sprachen und Plattformen
 
-API, Controller und Werkzeuge in **Go**. Webinterface in **HTML, CSS, JS und PHP**.
+- API, Controller und Werkzeuge in **Go**, Webinterface in **HTML, CSS, JS und PHP**.
+- **Debian und Ubuntu**, jeweils **amd64 und arm64**, damit NGC auch auf dem Pi läuft.
+- **Windows** wird nicht umgesetzt. Der Entwurf soll es nur nicht ausschließen.
 
 ## 3. Teilprojekte
 
 | # | Teilprojekt | Inhalt |
 |---|---|---|
-| 1 | **Kern** | Die Pipeline durchgängig auf einer Maschine: Desktop, API, SQLite, Controller, App-Modell, App-Store mit mehreren Quellen, Benutzer & Rechte, Sicherheitsmodell, Beispiel-Apps |
-| 2 | **Verteilung** | Weitere Server mit ihren Controllern koppeln (Kopplungscode). Webinterface, API und Datenbank auf getrennten Servern. x APIs, y Datenbanken, z Controller. Dienste an Server zuweisen. |
-| 3 | **Datenbanken** | MariaDB, MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie SQLite |
+| 1 | **Kern** | Die Pipeline von Anfang an verteilt: je ein Webserver, eine API, ein Datenbankserver (MariaDB) und ein Controller auf eigenen Servern. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, Benutzer & Rechte, Sicherheitsmodell, Beispiel-Apps und die Installation über ulh. |
+| 2 | **Verteilung** | Mehrere APIs (x), Datenbanken (y) und Controller (z); Dienste an bestimmte Server zuweisen |
+| 3 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
 | 4 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
 | 5 | **Store-Server** | Serverseite des globalen Stores: Entwickler veröffentlichen Apps, Kunden bezahlen, der Server stellt Lizenzen aus |
 | 6 | **NGC-Zertifizierungsstelle** | Eigene App: Zertifikate für Server und Geräte, PIV-Zertifikate für USB-/NFC-Sticks |
@@ -95,7 +114,8 @@ Entwurf, einen Plan und wird dann gebaut.
 
 ### 4.1 Erfolgskriterium
 
-Der Kern ist fertig, wenn Folgendes geht:
+Der Kern ist fertig, wenn der folgende Ablauf zweimal klappt: einmal verteilt auf vier
+Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils über ulh.
 
 1. NGC installieren und als erster Admin mit Passkey anmelden.
 2. Im App-Store die Terminal-App aktivieren. Das Aktivieren ist eine Root-Aufgabe und gelingt
@@ -105,29 +125,42 @@ Der Kern ist fertig, wenn Folgendes geht:
 4. Ein Benutzer ohne das Recht sieht die Terminal-App gar nicht.
 5. Eine App aus einem Test-Store installieren und eine Kauf-App mit einer Test-Lizenz
    freischalten.
+6. Die Angriffe aus dem Gesamttest scheitern (4.6).
+7. *Beim Ausformulieren ergänzt:* Die Verbindung zwischen API und Controller wird getrennt,
+   und der Server mit dem Controller wird neu gestartet. Der Controller stellt den Zustand
+   seiner Apps trotzdem wieder her (Test-App mit Startaktion, 4.6).
 
-### 4.2 Überblick (Abschnitt 1, abgestimmt)
+### 4.2 Überblick (Abschnitt 1, abgestimmt; an die Abschnitte 5 und 6 angepasst)
+
+Aufbau auf vier Servern:
 
 ```
-Browser ──HTTPS──► Apache: web/  (HTML, CSS, JS, PHP)
-   │
-   └── WebSocket über /api/ ──► ngc-api ◄── WebSocket ── ngc-controller ── stdin/stdout ──► Dienst
-                                  │                      (baut die Verbindung
-                                SQLite                    selbst auf)
+            Server 1                  Server 2              Server 4
+Browser ─HTTPS─► Apache + web/ ─/api/─► ngc-api ─────TLS────► MariaDB
+                                          ▲
+                                          │ Tunnel, den der Controller aufbaut
+                                          │
+                              Server 3:  ngc-controller ─stdin/stdout─► Dienst
+                                          │
+                                        SQLite (lokaler Zustand)
 ```
+
+Alles auf einem Pi: dieselben Teile auf einer Maschine, die API nutzt SQLite statt MariaDB.
 
 Apache reicht `/api/` an die API weiter. Der Browser kennt damit nur den Webserver, und die
 API muss nicht offen im Netz stehen.
 
-| Teil | Ort im Repo | Aufgabe |
-|---|---|---|
-| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Jede App läuft in einem abgeschotteten Fenster. PHP liefert die Desktop-Seite aus und verwaltet die Liste der APIs. |
-| API | `cmd/ngc-api` | Anmeldung, Sitzungen und Sitzungszertifikate, Rollen und Rechte, Weiterleitung zum Controller, Apps, Stores, Lizenzen, Protokoll |
-| Controller | `cmd/ngc-controller` | Startet Dienste, reicht Daten durch, prüft Root-Aufgaben |
-| Store-Werkzeug | `cmd/ngc-store` | Packt Apps, baut und signiert Store-Kataloge |
-| Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). |
-| Fremdcode | `vendor/`, `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 |
-| Prototyp | `prototype/` | Unverändert als Vorlage für den Desktop |
+| Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
+|---|---|---|---|
+| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus und verwaltet die Liste der APIs. | 1 |
+| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen, Protokoll. Dazu das Werkzeug `ngc-store`, das Apps packt und Kataloge signiert. | 2 |
+| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, lokaler Zustand, der Dienst „virtuelles Terminal" | 3 |
+| Datenbank | `db/` | MariaDB einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | 4 |
+| Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
+| Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
+| Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
+| Fremdcode | `vendor/`, `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
+| Prototyp | `prototype/` | Unverändert als Vorlage für den Desktop | – |
 
 **Regel für mehrere APIs:** Sitzungen und alles Wichtige liegen in der Datenbank, nicht im
 Speicher einer einzelnen API. Jede API muss jede andere ersetzen können. Gebaut wird das erst
@@ -264,9 +297,9 @@ Administratoren sichtbar.
 sind Pflicht, YubiKey ebenfalls. Root-Aufgaben aus dem Webinterface müssen vom Benutzer
 signiert sein, mit einem eigenen Zertifikat pro Benutzer, das nur für die Sitzungsdauer gilt.
 
-**Ersteinrichtung.** Der Installer zeigt einen Einmal-Code an. Nur mit diesem Code lässt sich
-das erste Admin-Konto anlegen. So kann niemand im Netz eine frisch installierte Instanz
-übernehmen.
+**Ersteinrichtung.** Das ulh-Skript der API zeigt am Ende einen Einmal-Code an. Nur mit diesem
+Code lässt sich das erste Admin-Konto anlegen. So kann niemand im Netz eine frisch
+installierte Instanz übernehmen.
 
 **Anmeldung nur mit Passkey oder Sicherheitsschlüssel.**
 
@@ -329,7 +362,8 @@ Aktivität oder beim Abmelden.
   Sitzungsschlüssel. Dazu gehört auch das Installieren von App-Diensten.
 - Der Controller prüft die ganze Kette selbst, bis zurück zum Passkey. Außerdem prüft er, ob
   der Benutzer auf diesem Server Root-Aufgaben erledigen darf.
-- Diese Liste führt der Controller selbst. Nur ein Admin kann sie ändern, mit seinem Passkey.
+- Diese Liste führt der Controller selbst, in seiner lokalen SQLite-Datei. Nur ein Admin kann
+  sie ändern, mit seinem Passkey. Die API hält nur eine Kopie zur Anzeige.
 - Ohne gültige Unterschrift läuft nichts als root. Die API allein kann Root-Aufgaben damit
   nicht fälschen.
 - Jede unterschriebene Aufgabe kommt ins Protokoll. So lässt sich nachweisen, wer sie
@@ -338,11 +372,11 @@ Aktivität oder beim Abmelden.
 **Rechte.** Die Shell blendet nur aus, was jemand nicht darf. Entscheiden tut die API, bei
 jedem Kanal neu, anhand von Benutzer, Rolle, App, Aktion und Lizenz.
 
-**Controller.** API und Controller weisen sich gegenseitig mit Schlüsseln aus. Im Kern koppelt
-der Installer den lokalen Controller automatisch, weitere Server bekommen später einmalig
-einen Kopplungscode. Der Controller startet nur Programme aktivierter Apps, jeweils unter dem
-eigenen Systembenutzer der App. Er selbst läuft als root, weil er diese Benutzer anlegen muss.
-Deshalb bleibt sein Code so klein wie möglich.
+**Controller.** API und Controller weisen sich gegenseitig mit Schlüsseln aus. Einen Controller
+auf einem anderen Server koppelt man einmalig mit einem Kopplungscode, den die API ausgibt;
+läuft alles auf einer Maschine, koppelt das ulh-Skript automatisch. Der Controller startet nur
+Programme aktivierter Apps, jeweils unter dem eigenen Systembenutzer der App. Er selbst läuft
+als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein wie möglich.
 
 **Verschlüsselung.**
 
@@ -350,11 +384,16 @@ Deshalb bleibt sein Code so klein wie möglich.
 |---|---|
 | Browser ↔ Apache | TLS 1.3, ausschließlich AES-256-GCM |
 | Browser ↔ API | zusätzlich Sitzungsschlüssel und AES-256-GCM (siehe Sitzung, Schritt 4) |
+| Apache ↔ API (getrennte Server) | *Beim Ausformulieren ergänzt:* TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an |
 | API ↔ Controller | Tunnel wie bei einem VPN nach dem Noise-Protokoll, auf dem auch WireGuard aufbaut: AES-256-GCM, beide Seiten prüfen gegenseitig ihre Schlüssel. Außen herum zusätzlich TLS, damit der Tunnel durch Firewalls und Proxys kommt. |
-| Datenbank | SQLite-Datei komplett mit AES-256 verschlüsselt (XTS). Geheimnisse darin, etwa Zugangsschlüssel zu Stores, verschlüsselt die API zusätzlich mit einem eigenen Schlüssel, damit sie auch in einer anderen Datenbank oder in einer Sicherung geschützt bleiben. |
-| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen und Lizenzen, Schlüsselaustausch im Tunnel |
+| API ↔ MariaDB | TLS; MariaDB nimmt nur verschlüsselte Verbindungen an |
+| MariaDB | eingebaute Verschlüsselung von MariaDB, AES-256 |
+| SQLite (API auf dem Pi, Controller) | ganze Datei mit AES-256 verschlüsselt (XTS) |
+| Daten der Apps | *Beim Ausformulieren ergänzt:* verschlüsselter Datenordner pro App, siehe 4.6 |
+| Geheimnisse in der Datenbank | zusätzlich von der API mit eigenem Schlüssel verschlüsselt, etwa Zugangsschlüssel zu Stores. So bleiben sie auch in einer anderen Datenbank oder in einer Sicherung geschützt. |
+| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen und Programmdateien, Schlüsselaustausch im Tunnel |
 
-**Zertifikate für die Webseite.** Der Installer bietet drei Wege an:
+**Zertifikate für die Webseite.** Das ulh-Skript des Webinterface bietet drei Wege an:
 
 - Let's Encrypt über `mod_md`, das in Apache schon eingebaut ist. Dafür braucht es einen
   öffentlichen Namen.
@@ -365,7 +404,7 @@ Deshalb bleibt sein Code so klein wie möglich.
 Die NGC-Zertifizierungsstelle wird eine eigene App (Teilprojekt 6).
 
 **Folge für jede Installation:** Passkeys funktionieren nur, wenn NGC über einen Namen statt
-einer IP-Adresse aufgerufen wird und der Browser dem Zertifikat vertraut. Der Installer fragt
+einer IP-Adresse aufgerufen wird und der Browser dem Zertifikat vertraut. Das ulh-Skript fragt
 deshalb nach dem Namen.
 
 **Browser.** Das Webinterface läuft nur über HTTPS. Eine strenge Sicherheitsrichtlinie (CSP)
@@ -387,49 +426,176 @@ in der App Benutzer & Rechte.
   kann einem angemeldeten Admin veränderten Code unterschieben und dessen Sitzungsschlüssel
   benutzen, solange die Sitzung offen ist. Dagegen helfen die strenge CSP, ein gehärteter
   Webserver, kurze Sitzungen und eventuell eine erneute Bestätigung per Passkey bei kritischen
-  Aktionen (offene Frage 5).
+  Aktionen (offene Fragen 3 und 4).
 
-### 4.6 Abschnitt 5 – noch nicht besprochen
+### 4.6 Datenbank, Installation, Fehler, Tests (Abschnitt 5, abgestimmt)
 
-Die folgenden Punkte sind **Vorschläge**, die Thomas noch nicht gesehen hat. In der nächsten
-Sitzung werden sie als Abschnitt 5 vorgestellt und abgestimmt.
+**Datenbank.**
 
-- **Datenbank:** SQLite, verschlüsselt wie in 4.5. Nur SQL, das alle fünf Systeme können,
-  damit Teilprojekt 3 nichts umbauen muss. IDs erzeugt die Anwendung, Zeitstempel sind Zahlen.
-  Tabellen: Benutzer, Rollen, Rechte, Schlüssel (Passkeys, Sticks), Sitzungen, Apps, Dienste,
-  Controller, Root-Berechtigungen, Stores, Lizenzen, Einstellungen, Protokoll.
-- **Installation:** Linux zuerst (Debian, Ubuntu, Raspberry Pi OS; amd64 und arm64), Windows
-  später. Ein Installationsskript richtet ein: Apache mit PHP und den Modulen `proxy`,
-  `proxy_http` und `proxy_wstunnel`, `web/` im Webroot, `ngc-api` und `ngc-controller` als
-  systemd-Dienste, Schlüssel, Kopplung des lokalen Controllers, Zertifikat (drei Wege aus 4.5),
-  am Ende der Einmal-Code.
-- **Fehlerbehandlung:** Fehler laufen Station für Station zurück: Exit-Code des Dienstes →
-  Controller → API → Shell → App. Ist ein Controller nicht erreichbar, zeigt die Shell die App
-  als „nicht erreichbar". Bricht eine Verbindung ab, wird sie automatisch neu aufgebaut, offene
-  Kanäle enden dabei. Jede Aktion hat ein Zeitlimit.
-- **Tests:** Go-Tests für Protokoll, Rechte, Kryptografie und Datenbank. Ein Durchstich-Test
-  startet API, Controller und einen Test-Dienst im selben Testlauf. Das Webinterface wird im
-  Browser getestet. Offen ist, ob Testwerkzeuge wie Playwright per npm erlaubt sind (offene
-  Frage 7).
+- **MariaDB ist der Standard** für die API, auf demselben Server oder woanders. Die Verbindung
+  läuft über TLS, die Daten liegen mit der eingebauten Verschlüsselung von MariaDB
+  verschlüsselt (AES-256), Geheimnisse verschlüsselt die API zusätzlich selbst.
+- Die API arbeitet mit einem Datenbankkonto, das nur Daten lesen und schreiben darf. Tabellen
+  anlegen oder ändern darf nur ein eigenes Konto für Migrationen, und das benutzt nur die
+  Installation über ulh.
+- **SQLite** gibt es an drei Stellen, jeweils mit AES-256 verschlüsselt:
+  1. **Alles auf einem Pi:** Wer bei der Installation keinen Datenbankserver will, bekommt
+     SQLite statt MariaDB und spart damit Ressourcen.
+  2. **Beim Controller auf jedem Server:** Dort liegt alles, was der Server braucht, um ohne
+     API weiterzulaufen: Kopplung, die Liste der Root-Berechtigungen, die installierten Apps
+     und deren Einstellungen, zum Beispiel die Regeln einer Firewall.
+  3. **Für Apps:** Die Dienste einer App dürfen ihre Daten in SQLite ablegen.
+- **Portables SQL:** nur SQL, das alle fünf Systeme verstehen, damit Teilprojekt 3 nichts
+  umbauen muss. IDs erzeugt die Anwendung, Zeitstempel sind Zahlen, SQLite-eigene Funktionen
+  gibt es nicht. Änderungen am Aufbau laufen über nummerierte Migrationen.
+- **Tabellen der API:** Benutzer, Rollen, Rechte, Schlüssel (Passkeys und Sticks), Sitzungen,
+  Apps, Dienste, Controller, Root-Berechtigungen (Kopie), Stores, Lizenzen, Einstellungen,
+  Protokoll.
+- *Beim Ausformulieren ergänzt:* **Verschlüsselte App-Daten.** Damit auch die SQLite-Dateien
+  der Apps verschlüsselt sind, egal in welcher Sprache ein Dienst geschrieben ist, stellt der
+  Controller jeder App einen eigenen Datenordner bereit und verschlüsselt ihn. Vorschlag:
+  fscrypt, die Ordnerverschlüsselung des Linux-Kernels (AES-256-XTS). Im Plan zu prüfen, ob
+  das auf allen Zielsystemen geht; sonst ein verschlüsselter Container pro App.
+- *Beim Ausformulieren ergänzt:* **Startaktion.** Eine App kann im Manifest eine Startaktion
+  angeben. Der Controller ruft sie nach jedem Start selbst auf, auch ohne API. So setzt zum
+  Beispiel eine Firewall ihre Regeln nach einem Neustart wieder.
+
+**Regeln für sicheres Programmieren, verbindlich für alle vier Teile.**
+
+- **SQL nur mit Platzhaltern.** Keine Abfrage wird aus Eingaben zusammengesetzt. Tabellen- und
+  Spaltennamen stammen nur aus festen Listen.
+- **Programme ohne Shell starten.** Der Controller ruft Dienste direkt mit einer Liste von
+  Argumenten auf, nie über `sh -c`.
+- **Jede Eingabe von außen wird geprüft,** bevor damit irgendetwas passiert: Typ, Länge,
+  erlaubte Werte. Unbekannte Felder werden abgelehnt.
+- **Nichts, was von außen kommt, wird als HTML eingefügt.** Genau diesen Fehler hat das
+  Terminal im Prototyp, im Kern gibt es ihn nicht mehr.
+- **Pakete werden sicher entpackt:** keine absoluten Pfade, kein `..`, keine symbolischen
+  Links, feste Größengrenzen.
+- **Überall gelten Obergrenzen:** für die Nachrichtengröße, die Zahl der Kanäle pro Sitzung und
+  die Anmeldeversuche.
+- **Kryptografie kommt nur aus der Standardbibliothek von Go und aus geprüften
+  Fremdbibliotheken,** nichts ist selbst gebaut.
+- **Geheimnisse landen nie im Log.**
+- **So prüfen wir das:** Jeder Parser (Protokoll, Manifest, Katalog, Lizenz, Passkey-Daten)
+  wird mit dem eingebauten Fuzzing von Go getestet, also mit Massen zufälliger und kaputter
+  Eingaben. Den Fremdcode prüft `govulncheck`, ein Werkzeug des Go-Teams, auf bekannte
+  Sicherheitslücken. Als Prüfliste für Reviews dient der OWASP ASVS.
+
+**Installation über ulh.**
+
+- Für jeden der vier Teile gibt es ulh-Skripte zum Installieren, Konfigurieren und
+  Deinstallieren, dazu eines für „alles auf einem Pi". Dank `answer.yaml` laufen sie auch ohne
+  Rückfragen.
+- Die Skripte erledigen das Zertifikat (die drei Wege aus 4.5), MariaDB mit TLS und
+  Verschlüsselung und die Kopplung der Controller. Am Ende zeigen sie den Einmal-Code für den
+  ersten Admin an.
+- Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
+- Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
+  eigenes Repository eingebunden.
+
+**Fehlerbehandlung.**
+
+- Ein Fehler läuft Station für Station zurück: vom Exit-Code des Dienstes über Controller, API
+  und Shell bis zur App. Die App bekommt eine klare Meldung, zum Beispiel „keine
+  Berechtigung", „Dienst nicht erreichbar" oder „Dienst mit Code 2 beendet".
+- Ist ein Controller nicht erreichbar, zeigt die Shell seine Apps gleich als „nicht
+  erreichbar" an.
+- Bricht eine Verbindung ab, bauen Shell und Controller sie selbst wieder auf, mit wachsenden
+  Pausen zwischen den Versuchen. Offene Kanäle gehen dabei verloren, ein Terminal muss man neu
+  öffnen.
+- Jeder Auftrag hat ein Zeitlimit, standardmäßig 30 Sekunden, im Manifest änderbar. Für offene
+  Datenströme wie ein Terminal gilt es nicht.
+- Die API startet nur, wenn Datenbank und Schlüssel in Ordnung sind. Sonst bricht sie mit einer
+  klaren Meldung ab, statt nur halb zu laufen.
+
+**Tests.**
+
+- Go-Tests für Protokoll, Rechteprüfung, Kryptografie (Sitzungszertifikate,
+  Root-Unterschriften, Tunnel) und Datenbank. Alle Datenbanktests laufen gegen MariaDB und gegen
+  SQLite.
+- Ein Gesamttest startet API, Controller und einen Test-Dienst und spielt das Erfolgskriterium
+  durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften und
+  wieder eingespielte alte Nachrichten.
+- Der Gesamttest läuft einmal verteilt auf vier Servern und einmal komplett auf einem Pi.
+- Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
+- Das Webinterface prüfen wir im Browser. Ob Testwerkzeuge wie Playwright per npm kommen
+  dürfen, ist offene Frage 5; ohne npm ginge ein Browsertest auch aus Go heraus.
+
+### 4.7 Arbeitsteilung auf vier Servern (Abschnitt 6, abgestimmt)
+
+**Rollen.** Ich (die Sitzung auf Thomas' Rechner) bin der **Koordinator**. Auf vier Servern
+arbeitet jeweils eine Claude-Sitzung, per Remote Control verbunden, an einem Teil:
+
+| Server | Teil | Ordner | Was dort gebaut wird |
+|---|---|---|---|
+| 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, dazu der PHP-Teil |
+| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen, Protokoll, das Werkzeug `ngc-store` |
+| 3 | Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, der Dienst „virtuelles Terminal" |
+| 4 | Datenbank | `db/` | MariaDB auf Server 4 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse |
+
+Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
+
+**Zuerst die Verträge.** Bevor jemand baut, legt der Koordinator die Schnittstellen schriftlich
+in `contracts/` fest, und Thomas gibt sie frei:
+
+1. Webinterface ↔ API
+2. API ↔ Controller
+3. Controller ↔ Dienst
+4. API und Controller ↔ Datenbank, als Go-Schnittstelle
+5. App-Paket, Store-Katalog und Lizenz
+6. ulh-Konventionen: Pfade, Dienste, Ports, `answer.yaml`
+
+Zu jedem Vertrag gibt es Testdaten, zum Beispiel Beispielnachrichten und Beispielunterschriften.
+Beide Seiten testen unabhängig dagegen, so muss niemand auf den anderen warten.
+
+**Eigene Anweisungen.** Jeder Ordner bekommt eine eigene `CLAUDE.md`: die Aufgabe, welche Ordner
+dem Teil gehören, welche Verträge gelten, die Sicherheitsregeln aus 4.6, wie getestet wird,
+wann der Teil fertig ist und was tabu ist, also fremde Ordner und das Ändern von Verträgen.
+
+**Abstimmung.**
+
+- Die Sitzungen schicken sich gegenseitig Nachrichten. Fragen an einen Nachbarn gehen direkt
+  an dessen Sitzung, Fragen zu einem Vertrag an den Koordinator.
+- Einen Vertrag ändert nur der Koordinator, und alle vier erfahren es sofort.
+- Was nicht im Repo steht, gilt nicht. Jede Entscheidung kommt ins Entscheidungsprotokoll.
+- Jeder Teil arbeitet auf einem eigenen Branch und liefert per Pull Request. Der Koordinator
+  prüft jeden Pull Request auf Vertrag und Sicherheit und führt ihn dann zusammen.
+
+**Ablauf.**
+
+1. Der Koordinator schreibt Verträge, Anweisungen und das Grundgerüst, Thomas gibt frei.
+2. Die vier Teile werden parallel gebaut, jeder gegen die Testdaten.
+3. Alle vier Teile laufen zusammen auf den vier Servern, dann folgt der verteilte Gesamttest.
+4. Alles läuft auf einem einzigen Pi mit SQLite, dort folgt der zweite Gesamttest.
+5. Zum Schluss ein Sicherheitsdurchgang: Fuzzing, Angriffe und ein Review nach dem OWASP ASVS.
+
+**Voraussetzungen von Thomas, wenn es losgeht:** vier Server mit Debian oder Ubuntu, die sich
+gegenseitig im Netz erreichen, Zugriff auf das Repo von jedem Server aus, die vier Sitzungen
+per Remote Control verbunden und für Schritt 4 ein Pi.
 
 ## 5. Offene Fragen
 
-1. Abschnitt 5 abstimmen (4.6).
-2. Lizenz von NGC: MIT, AGPL oder etwas anderes? Wichtig für die Monetarisierung. `ngc.js`
+**Für den Kern, vor dem Umsetzungsplan zu klären:**
+
+1. **Lizenz von NGC:** MIT, AGPL oder etwas anderes? Wichtig für die Monetarisierung. `ngc.js`
    muss so lizenziert sein, dass es auch in bezahlten, geschlossenen Apps stecken darf.
-3. Zielplattformen des Kerns: Vorschlag Linux zuerst, Windows später.
-4. App-Updates aus den Stores schon im Kern oder später?
-5. Kritische Aktionen zusätzlich mit einer erneuten Passkey-Bestätigung absichern?
-6. Die zwei unbesprochenen Grenzen in 4.5: so akzeptieren oder weiter absichern?
-7. Dürfen reine Entwicklungswerkzeuge (Testrunner, Browser-Tests) per Paketmanager kommen?
-   Diese Frage ist aus der Regel „Software ohne Abhängigkeiten" noch offen.
-8. Für Teilprojekt 2: Was heißt „mehrere APIs" genau: Lastverteilung, Ausfallsicherheit,
-   mehrere Standorte?
-9. Für Teilprojekt 4: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint?
-   Das ist bisher nur angenommen.
-10. Idee: Thomas' Projekt `ulh` (Skripte für alle Linux-Distributionen, `answer.yaml` für
-    Läufe ohne Rückfragen) als Grundlage für Dienste, die Server einrichten. Prüfen in den
-    Teilprojekten 2 und 7.
+2. **App-Updates** aus den Stores schon im Kern oder später?
+3. **Kritische Aktionen** zusätzlich mit einer erneuten Passkey-Bestätigung absichern?
+4. **Die zwei unbesprochenen Grenzen** in 4.5: so akzeptieren oder weiter absichern?
+5. **Entwicklungswerkzeuge:** Dürfen reine Testwerkzeuge (Testrunner, Browser-Tests) per
+   Paketmanager kommen? Diese Frage ist aus der Regel „Software ohne Abhängigkeiten" offen.
+6. **Beim Ausformulieren ergänzte Stellen** bestätigen: Erfolgskriterium 7, TLS zwischen Apache
+   und API, verschlüsselte App-Datenordner, Startaktion.
+
+**Für spätere Teilprojekte:**
+
+7. Teilprojekt 2: Was heißt „mehrere APIs" genau: Lastverteilung, Ausfallsicherheit, mehrere
+   Standorte?
+8. Teilprojekt 4: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint? Das
+   ist bisher nur angenommen.
+9. Teilprojekt 7: Thomas' Projekt `ulh` auch als Grundlage für Dienste nutzen, die Server
+   einrichten (Skripte für alle Distributionen, `answer.yaml` für Läufe ohne Rückfragen)?
 
 ## 6. Entscheidungsprotokoll
 
@@ -445,6 +611,13 @@ Sitzung werden sie als Abschnitt 5 vorgestellt und abgestimmt.
 | 18.09.2026 | App-Store als erste App mit mehreren Quellen und globalem Store. Die Serverseite wird Teilprojekt 5. Abschnitt 3 abgestimmt. |
 | 18.09.2026 | Sicherheit: AES-256, Passkeys und YubiKey Pflicht, signierte Root-Aufgaben, Sitzungszertifikate. Der private Client-Schlüssel entsteht im Browser. Abschnitt 4 abgestimmt. |
 | 18.09.2026 | NGC-Zertifizierungsstelle als eigene App (Teilprojekt 6). USB-/NFC-Sticks: FIDO2 im Kern, PIV mit der Zertifizierungsstelle. |
+| 19.09.2026 | Vorgabe Thomas: nur Debian und Ubuntu, jeweils amd64 und arm64 (damit auch auf dem Pi). Windows höchstens vorsehen, auf keinen Fall umsetzen. |
+| 19.09.2026 | Vorgabe Thomas: „sehr, sehr viel Sicherheit" — SQL-Injection und Ähnliches von Anfang an verhindern. |
+| 19.09.2026 | Vorgabe Thomas: MariaDB ist die Standard-Datenbank (lokal oder auf einem anderen Server). SQLite steht Apps zur Verfügung, liegt beim Controller für alles, was ein Server ohne API zum Weiterlaufen braucht (Beispiel Firewall), und ersetzt MariaDB, wenn alles auf einem Pi laufen soll. |
+| 19.09.2026 | Vorgabe Thomas: Webinterface, API, Server-Controller und Datenbank werden eigene Arbeitspakete mit eigenen Anweisungen. Vier Claude-Sitzungen bauen sie gleichzeitig auf vier Servern (Remote Control) und stimmen sich ab, damit die Teile wirklich getrennt funktionieren. |
+| 19.09.2026 | Vorgabe Thomas: Installation, Konfiguration und Deinstallation laufen über ulh. |
+| 19.09.2026 | Abschnitt 5 abgestimmt: Plattformen, Datenbank, Regeln für sicheres Programmieren, Installation über ulh (Skripte im NGC-Repo unter `ulh/`, solange es privat ist), Fehlerbehandlung, Tests |
+| 19.09.2026 | Abschnitt 6 abgestimmt: Koordinator und vier Sitzungen, Verträge zuerst, eigene `CLAUDE.md` je Teil, Branch und Pull Request je Teil. Der Kern läuft damit von Anfang an verteilt, Teilprojekt 2 umfasst nur noch mehrere APIs, Datenbanken und Controller. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -454,6 +627,7 @@ Vor der Übernahme prüfen: Lizenz, Pflege, Größe. Übernahme per `go mod vend
 | Zweck | Kandidat | Stand |
 |---|---|---|
 | SQLite ohne cgo, Verschlüsselung AES-256-XTS | `github.com/ncruces/go-sqlite3` mit `vfs/xts` | Am 18.09.2026 geprüft: v0.35.5 vom 16.09.2026, AES-256 bei 64-Byte-Schlüssel, reines Go. Lizenz noch prüfen. |
+| MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
 | WebSocket | `github.com/coder/websocket` | zu prüfen |
 | Argon2id | `golang.org/x/crypto/argon2` | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
