@@ -103,7 +103,7 @@ schaut jemand mit Ahnung von Lizenzrecht drauf.
 
 | # | Teilprojekt | Inhalt |
 |---|---|---|
-| 1 | **Kern** | Die Pipeline von Anfang an verteilt: je ein Webserver, eine API, ein Datenbankserver (MariaDB) und ein Controller auf eigenen Servern. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell, Beispiel-Apps und die Installation über ulh. |
+| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf vier Servern: Webserver, API, Datenbankserver (MariaDB) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
 | 2 | **Verteilung** | Mehrere APIs (x), Datenbanken (y) und Controller (z); Dienste an bestimmte Server zuweisen |
 | 3 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
 | 4 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
@@ -134,6 +134,9 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
 7. Die Verbindung zwischen API und Controller wird getrennt, und der Server mit dem Controller
    wird neu gestartet. Der Controller stellt den Zustand seiner Apps trotzdem wieder her
    (Test-App mit Startaktion, 4.6).
+8. Ein NGC-Update und ein App-Update werden im Modus „automatisch" selbst eingespielt. Ein
+   absichtlich kaputtes Update wird selbst zurückgenommen, und eine ältere Version lässt sich
+   nicht einspielen (4.8).
 
 ### 4.2 Überblick (Abschnitt 1, abgestimmt; an die Abschnitte 5 und 6 angepasst)
 
@@ -150,6 +153,10 @@ Browser ─HTTPS─► Apache + web/ ─/api/─► ngc-api ─────TLS�
                                         SQLite (lokaler Zustand)
 ```
 
+Auf jedem der vier Server läuft außerdem ein Controller. Er hält die Verbindung zur API und
+spielt die Updates für den Teil ein, der auf seinem Server liegt (4.8). Server 3 ist der Server
+für die Dienste der Apps.
+
 Alles auf einem Pi: dieselben Teile auf einer Maschine, die API nutzt SQLite statt MariaDB.
 
 Apache reicht `/api/` an die API weiter. Der Browser kennt damit nur den Webserver, und die
@@ -158,8 +165,8 @@ API muss nicht offen im Netz stehen.
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
 | Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus und verwaltet die Liste der APIs. | 1 |
-| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | 2 |
-| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, der Dienst „virtuelles Terminal" | 3 |
+| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | 2 |
+| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle vier |
 | Datenbank | `db/` | MariaDB einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | 4 |
 | Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
 | Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
@@ -398,6 +405,8 @@ Aktivität oder beim Abmelden.
   sie ändern, mit seinem Passkey. Die API hält nur eine Kopie zur Anzeige.
 - Ohne gültige Unterschrift läuft nichts als root. Die API allein kann Root-Aufgaben damit
   nicht fälschen.
+- Für automatische Updates unterschreibt der Admin einmal eine Dauerfreigabe pro Teil oder
+  App (4.8).
 - Jede unterschriebene Aufgabe kommt ins Protokoll. So lässt sich nachweisen, wer sie
   angeordnet hat.
 
@@ -424,7 +433,7 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 | Daten der Apps | verschlüsselter Datenordner pro App (4.6) |
 | Kauf-Apps | pro App AES-256; der Schlüssel steckt in der Lizenz, verschlüsselt mit dem öffentlichen Schlüssel der Installation (4.4) |
 | Geheimnisse in der Datenbank | zusätzlich von der API mit eigenem Schlüssel verschlüsselt, etwa Zugangsschlüssel zu Stores. So bleiben sie auch in einer anderen Datenbank oder in einer Sicherung geschützt. |
-| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen und Programmdateien, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel |
+| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen, Programmdateien und Updates, Dauerfreigaben, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel |
 
 **Zertifikate für die Webseite.** Das ulh-Skript des Webinterface bietet drei Wege an:
 
@@ -526,6 +535,8 @@ in der App Benutzer & Rechte.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
 - Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
   eigenes Repository eingebunden.
+- Updates spielt danach der Controller ein (4.8). ulh bleibt der Notweg, falls NGC selbst nicht
+  mehr startet.
 
 **Fehlerbehandlung.**
 
@@ -551,6 +562,8 @@ in der App Benutzer & Rechte.
   durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder
   eingespielte alte Nachrichten und eine gekaufte App, die eine fremde Installation öffnen will.
 - Der Gesamttest läuft einmal verteilt auf vier Servern und einmal komplett auf einem Pi.
+- Updates: automatisches Update, Zurücknehmen eines kaputten Updates, Ablehnen einer älteren
+  Version und die Reihenfolge über vier Server.
 - Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
 - Das Webinterface prüfen wir im Browser. Ob Testwerkzeuge wie Playwright per npm kommen
   dürfen, ist offene Frage 5; ohne npm ginge ein Browsertest auch aus Go heraus.
@@ -562,10 +575,10 @@ arbeitet jeweils eine Claude-Sitzung, per Remote Control verbunden, an einem Tei
 
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
-| 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, dazu der PHP-Teil |
-| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, das Werkzeug `ngc-store` |
-| 3 | Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, der Dienst „virtuelles Terminal" |
-| 4 | Datenbank | `db/` | MariaDB auf Server 4 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse |
+| 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil |
+| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Updates, das Werkzeug `ngc-store` |
+| 3 | Controller | `controller/` | Der Controller, der auf allen vier Servern läuft: Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
+| 4 | Datenbank | `db/` | MariaDB auf Server 4 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
 Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
 
@@ -576,7 +589,8 @@ in `contracts/` fest, und Thomas gibt sie frei:
 2. API ↔ Controller
 3. Controller ↔ Dienst
 4. API und Controller ↔ Datenbank, als Go-Schnittstelle
-5. App-Paket, Store-Katalog und Lizenz, samt Verschlüsselung der Kauf-Apps
+5. App-Paket, Store-Katalog und Lizenz, samt Verschlüsselung der Kauf-Apps, dazu NGC-Updates
+   und Dauerfreigaben
 6. ulh-Konventionen: Pfade, Dienste, Ports, `answer.yaml`
 
 Zu jedem Vertrag gibt es Testdaten, zum Beispiel Beispielnachrichten und Beispielunterschriften.
@@ -607,12 +621,63 @@ wann der Teil fertig ist und was tabu ist, also fremde Ordner und das Ändern vo
 gegenseitig im Netz erreichen, Zugriff auf das Repo von jedem Server aus, die vier Sitzungen
 per Remote Control verbunden und für Schritt 4 ein Pi.
 
+### 4.8 Updates (am 19.09.2026 abgestimmt)
+
+**Vorgabe von Thomas:** Alle Teile unterstützen Autoupdate: Webinterface, API,
+Server-Controller, Datenbank und Apps.
+
+| Teil | Wer aktualisiert | Woher kommt das Update |
+|---|---|---|
+| Webinterface, API, Controller | der Controller auf dem jeweiligen Server | NGC-Updates, signiert mit dem Release-Schlüssel von NGC |
+| Datenbank | Die Migrationen gehören zur jeweiligen API-Version. Der Controller spielt sie ein, bevor die neue API startet. | kommt mit dem API-Update |
+| Apps (Oberfläche und Dienste) | API und Controller | aus dem jeweiligen Store, vom Store signiert |
+| Apache, PHP, MariaDB und das übrige System | der Controller über apt | Paketquellen von Debian und Ubuntu, dort signiert |
+
+Vorschlag, im Plan festzulegen: NGC-Updates kommen über den globalen Store als eigener,
+signierter Katalog.
+
+**Drei Modi, pro Teil und pro App einstellbar:**
+
+- **Automatisch (Standard):** Das Update wird heruntergeladen, geprüft und selbst installiert,
+  nachts in einem festen Wartungsfenster.
+- **Halbautomatisch:** Das Update wird vorab heruntergeladen und geprüft, installiert wird es
+  per Klick.
+- **Nur Benachrichtigung:** NGC meldet nur, dass es ein Update gibt. Ein Klick lädt es
+  herunter und installiert es.
+
+**Dauerfreigabe.** Ein Update ist eine Root-Aufgabe, und nachts ist niemand da, der
+unterschreiben könnte. Deshalb unterschreibt der Admin einmal eine Dauerfreigabe, wenn er
+„automatisch" einstellt: „Updates für diesen Teil, die mit diesem Schlüssel signiert sind,
+dürfen selbst installiert werden." Die Freigabe liegt beim Controller. Er installiert nur
+Updates, die mit genau diesem Schlüssel signiert und neuer als die installierte Version sind.
+Die API allein kann also weiterhin nichts unterschieben. Bei der Ersteinrichtung unterschreibt
+der erste Admin diese Freigaben für NGC selbst, deshalb ist „automatisch" von Anfang an aktiv.
+
+**Sicher zurück.** Bei jedem Update bleibt die vorige Version erhalten. Startet der
+aktualisierte Teil nicht sauber, stellt der Controller selbst die alte Version wieder her. Eine
+ältere Version als die installierte wird sonst nie eingespielt, damit niemand eine Version mit
+bekannter Sicherheitslücke zurückbringen kann.
+
+**Reihenfolge.** Die API verteilt ein NGC-Update Schritt für Schritt: erst die Datenbank, dann
+die API, dann die Controller, zuletzt das Webinterface. Der nächste Schritt beginnt erst, wenn
+der vorige läuft. Dafür versteht jeder Teil auch die vorige Version der Verträge, und jede
+Migration lässt die vorige API-Version weiterlaufen.
+
+**Folgen.**
+
+- Auf jedem Server läuft ein Controller, im Kern also vier.
+- Der Release-Schlüssel, mit dem NGC-Updates signiert werden, ist der wichtigste Schlüssel
+  überhaupt: Wer ihn hat, kann Code auf alle Installationen mit Autoupdate bringen. Er liegt
+  deshalb auf einem Hardware-Stick und nie auf einem Server.
+- ulh bleibt für Installation, Konfiguration und Deinstallation zuständig und ist der Notweg,
+  falls NGC selbst nicht mehr startet.
+
 ## 5. Offene Fragen
 
 **Für den Kern, vor dem Umsetzungsplan zu klären:**
 
 1. **Lizenz von NGC:** entschieden am 19.09.2026, siehe Kapitel 2.
-2. **App-Updates** aus den Stores schon im Kern oder später?
+2. **App-Updates:** entschieden am 19.09.2026, Autoupdate für alle Teile (4.8).
 3. **Kritische Aktionen** zusätzlich mit einer erneuten Passkey-Bestätigung absichern?
 4. **Die zwei unbesprochenen Grenzen** in 4.5: so akzeptieren oder weiter absichern?
 5. **Entwicklungswerkzeuge:** Dürfen reine Testwerkzeuge (Testrunner, Browser-Tests) per
@@ -653,6 +718,8 @@ per Remote Control verbunden und für Schritt 4 ein Pi.
 | 19.09.2026 | Beim Ausformulieren ergänzt und von Thomas bestätigt: Erfolgskriterium 7 (Server läuft ohne API weiter), TLS mit AES-256 zwischen Apache und API, verschlüsselter Datenordner pro App, Startaktion im Manifest |
 | 19.09.2026 | Idee Thomas, aufgenommen: Kauf-Apps werden für die kaufende Installation verschlüsselt. Nur deren API und Controller können sie öffnen (4.4). |
 | 19.09.2026 | Lizenz: AGPL-3.0 für NGC, MIT für `ngc.js` und die Verträge (offene Frage 1) |
+| 19.09.2026 | Vorgabe Thomas: Alle Teile unterstützen Autoupdate — Webinterface, API, Server-Controller, Datenbank und Apps. Modi: automatisch (Standard), halbautomatisch (per Klick) oder nur Benachrichtigung und dann Klick. |
+| 19.09.2026 | Update-Konzept abgestimmt (4.8): Controller auf jedem Server spielt Updates ein, Dauerfreigabe des Admins für den Modus „automatisch", Rücknahme bei Fehlschlag, keine älteren Versionen, Reihenfolge Datenbank → API → Controller → Webinterface, Release-Schlüssel auf einem Hardware-Stick |
 
 ## 7. Fremdcode-Kandidaten
 
