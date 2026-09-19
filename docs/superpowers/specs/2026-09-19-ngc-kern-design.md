@@ -106,15 +106,17 @@ schaut jemand mit Ahnung von Lizenzrecht drauf.
 
 | # | Teilprojekt | Inhalt |
 |---|---|---|
-| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf sieben Servern: ein Webserver, zwei API-Server mit Lastverteilung, drei Datenbankknoten (MariaDB Galera) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell mit Ende-zu-Ende-Verschlüsselung, Dienste in Containern, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
-| 2 | **Verteilung** | Mehrere Server für Dienste (z Controller) und Dienste an bestimmte Server zuweisen. Mehrere APIs und Datenbanken mit Lastverteilung gibt es schon im Kern. |
-| 3 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
-| 4 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
-| 5 | **Store-Server** | Serverseite des globalen Stores: Entwickler veröffentlichen Apps, Kunden bezahlen, der Server stellt die Lizenzen aus, jeweils mit dem Schlüssel der App für die Installation des Käufers |
-| 6 | **NGC-Zertifizierungsstelle** | Eigene App: Zertifikate für Server und Geräte, PIV-Zertifikate für USB-/NFC-Sticks |
+| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf sieben Servern: ein Webserver, zwei API-Server mit Lastverteilung, drei Datenbankknoten (MariaDB Galera) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Anmeldung mit Passwort oder Passkey, Sicherheitsmodell mit Ende-zu-Ende-Verschlüsselung, Dienste in Containern, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
+| 2 | **NGC-Zertifizierungsstelle** | Eigene App: Zertifikate für Server und Geräte, damit auch ein Heimnetz ohne Aufwand ein vertrauenswürdiges Zertifikat bekommt und auf Passkeys umstellen kann; PIV-Zertifikate für USB-/NFC-Sticks |
+| 3 | **Verteilung** | Mehrere Server für Dienste (z Controller) und Dienste an bestimmte Server zuweisen. Mehrere APIs und Datenbanken mit Lastverteilung gibt es schon im Kern. |
+| 4 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
+| 5 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
+| 6 | **Store-Server** | Serverseite des globalen Stores: Entwickler veröffentlichen Apps, Kunden bezahlen, der Server stellt die Lizenzen aus, jeweils mit dem Schlüssel der App für die Installation des Käufers |
 | 7 | **Apps** | Endausbau: LDAP/AD, Fileserver, Firewall … |
 
-Der Kern kommt zuerst, weil er die Schnittstellen festlegt, an die alles andere andockt. Die
+Der Kern kommt zuerst, weil er die Schnittstellen festlegt, an die alles andere andockt. Direkt
+danach kommt die Zertifizierungsstelle, weil sie das Problem mit Zertifikaten im Heimnetz löst,
+einer der Gründe für NGC. Die
 Reihenfolge von 2 bis 7 können wir noch ändern. Jedes Teilprojekt bekommt einen eigenen
 Entwurf, einen Plan und wird dann gebaut.
 
@@ -125,7 +127,8 @@ Entwurf, einen Plan und wird dann gebaut.
 Der Kern ist fertig, wenn der folgende Ablauf zweimal klappt: einmal verteilt auf sieben
 Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils über ulh.
 
-1. NGC installieren und als erster Admin mit Passkey anmelden.
+1. NGC installieren und als erster Admin anmelden: mit Benutzer, Passwort und TOTP, solange das
+   Zertifikat nicht vertrauenswürdig ist, sonst mit Passkey.
 2. Im App-Store die Terminal-App aktivieren. Das Aktivieren ist eine Root-Aufgabe und gelingt
    nur mit der Unterschrift des Admins, die der Controller prüft.
 3. Im Terminal-Fenster `cp -r` eintippen. Der Befehl läuft über API und Controller zum Dienst
@@ -146,6 +149,9 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
     angemeldete Benutzer bleiben angemeldet (4.2).
 11. Die Anmeldung mit einem YubiKey 5 NFC und einem Nitrokey 3 NFC klappt, jeweils mit PIN,
     per USB am Rechner und per NFC am Handy (4.5).
+12. Mit einem vertrauenswürdigen Zertifikat stellt der Admin sich und eine Rolle auf Passkeys
+    um. Danach ist für sie die Anmeldung per Passwort gesperrt. Root-Aufgaben gehen in beiden
+    Stufen nur mit Unterschrift des Benutzers (4.5).
 
 ### 4.2 Überblick (Abschnitt 1, abgestimmt; an die späteren Abschnitte angepasst)
 
@@ -192,7 +198,7 @@ API muss nicht offen im Netz stehen.
 
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
-| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
+| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
 | API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | API 1 und 2 |
 | Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
 | Datenbank | `db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
@@ -309,7 +315,7 @@ und im Katalog steht zu jedem Paket eine Prüfsumme. So fällt jede Manipulation
   installieren.
 - Mit `ngc-store` kann jeder Apps packen und einen signierten Katalog erzeugen, also einen
   eigenen Store aufsetzen.
-- Wer Apps verkaufen will, braucht zusätzlich einen Store-Server (Teilprojekt 5), der die
+- Wer Apps verkaufen will, braucht zusätzlich einen Store-Server (Teilprojekt 6), der die
   Lizenzen ausstellt. Die Kauf-Apps selbst sind verschlüsselt und können wie Gratis-Apps als
   einfache Dateien bereitliegen (siehe „Verschlüsselte Kauf-Apps").
 
@@ -393,32 +399,48 @@ erhalten, auch wenn die App gelöscht wird.
 **Fest im Kern:** App-Store und Benutzer & Rechte. Beide sind immer aktiv und nur für
 Administratoren sichtbar.
 
-### 4.5 Sicherheit (Abschnitt 4, abgestimmt)
+### 4.5 Sicherheit (Abschnitt 4, abgestimmt; am 19.09.2026 um die Anmeldung mit Passwort erweitert)
 
-**Vorgaben von Thomas:** AES-256 symmetrisch beziehungsweise asymmetrisch, wo nötig. Passkeys
-sind Pflicht, YubiKey ebenfalls. Root-Aufgaben aus dem Webinterface müssen vom Benutzer
-signiert sein, mit einem eigenen Zertifikat pro Benutzer, das nur für die Sitzungsdauer gilt.
+**Vorgaben von Thomas:** AES-256 symmetrisch beziehungsweise asymmetrisch, wo nötig. Root-Aufgaben
+aus dem Webinterface müssen vom Benutzer signiert sein, mit einem eigenen Zertifikat pro
+Benutzer, das nur für die Sitzungsdauer gilt. Passkeys sowie YubiKey 5 NFC und Nitrokey 3 NFC
+mit PIN müssen funktionieren. Im Heimnetz ohne vertrauenswürdiges Zertifikat beginnt NGC mit
+Benutzer und Passwort, TOTP lässt sich dazuschalten, und man stellt auf Passkeys um, sobald es
+geht.
 
 **Ersteinrichtung.** Das ulh-Skript der API zeigt am Ende einen Einmal-Code an. Nur mit diesem
 Code lässt sich das erste Admin-Konto anlegen. So kann niemand im Netz eine frisch
 installierte Instanz übernehmen.
 
-**Anmeldung nur mit Passkey oder Sicherheitsschlüssel.**
+**Anmeldung in zwei Stufen** (am 19.09.2026 abgestimmt).
 
-- Jedes Konto braucht mindestens einen Schlüssel, besser zwei, etwa einen YubiKey und das
-  Handy.
-- Passkeys vom Handy, aus Windows Hello und aus Passwortmanagern funktionieren genauso wie
-  Sicherheitsschlüssel.
-- Pro Rolle kann zusätzlich ein Passwort verlangt werden. Gespeichert wird nur ein
-  Argon2id-Hash. Nach Fehlversuchen werden weitere Versuche verzögert und das Konto kurz
-  gesperrt.
-- Kein TOTP: Es kann nichts unterschreiben, und das braucht das Sitzungszertifikat.
-- Wer alle Schlüssel verliert: Wiederherstellungscodes, ein Admin setzt das Konto zurück, oder
-  im Notfall ein Befehl direkt auf dem Server.
+1. **Benutzer und Passwort:** Das funktioniert immer, auch im Heimnetz ohne vertrauenswürdiges
+   Zertifikat. Ein zweiter Faktor per Authenticator-App (TOTP) lässt sich zuschalten, und NGC
+   empfiehlt das.
+2. **Passkey oder Stick:** sobald die Installation ein vertrauenswürdiges Zertifikat hat.
+   Umgestellt wird pro Benutzer oder für ganze Rollen. Für die Umgestellten ist die Anmeldung
+   per Passwort danach abgeschaltet. Pro Rolle kann zusätzlich zum Passkey das Passwort verlangt
+   werden.
 
-**USB-/NFC-Sticks mit PIN.** Thomas wollte Sticks, auf die der Admin ein Zertifikat schreibt
-und die mit PIN als Single Sign-on gelten. Solche Sticks gibt es schon, zum Beispiel den
-YubiKey 5 NFC oder den Nitrokey 3 NFC (Open Source), per USB und per NFC am Handy.
+**Passwortschlüssel.** Damit das Sicherheitsmodell auch mit Passwort hält:
+
+- Das Passwort verlässt den Browser nie. Der Browser berechnet daraus einen Schlüssel, mit
+  einem absichtlich langsamen Verfahren, damit Raten teuer wird. Mit diesem Schlüssel meldet er
+  sich an, und die API kennt nur dessen öffentlichen Teil.
+- Der Passwortschlüssel übernimmt die Rolle des Passkeys: Er unterschreibt das
+  Sitzungszertifikat, die Root-Aufgaben und die Vertrauensliste. Eine übernommene API kann also
+  auch mit Passwort keine Root-Aufgaben fälschen und kein Passwort mitschneiden.
+- TOTP prüft die API. Es schützt die Anmeldung, falls jemand das Passwort stiehlt. Das
+  Geheimnis dafür liegt verschlüsselt in der Datenbank.
+- Nach Fehlversuchen werden weitere Versuche verzögert und das Konto kurz gesperrt.
+- Mit Passwort-Anmeldung zeigt NGC dauerhaft den Hinweis, auf Passkeys umzustellen, sobald es
+  geht.
+
+**Passkeys und Sticks.** Passkeys vom Handy, aus Windows Hello und aus Passwortmanagern
+funktionieren genauso wie Sicherheitsschlüssel. Jedes Konto sollte zwei haben, etwa einen Stick
+und das Handy. Thomas wollte außerdem Sticks, auf die der Admin ein Zertifikat schreibt und die
+mit PIN als Single Sign-on gelten. Solche Sticks gibt es schon, zum Beispiel den YubiKey 5 NFC
+oder den Nitrokey 3 NFC (Open Source), per USB und per NFC am Handy.
 
 - **FIDO2 (im Kern):** dasselbe Verfahren wie Passkeys. Der Admin richtet den Stick für einen
   Benutzer ein und gibt ihn aus, Name und Schlüssel liegen dann auf dem Stick. Der Benutzer
@@ -426,22 +448,26 @@ YubiKey 5 NFC oder den Nitrokey 3 NFC (Open Source), per USB und per NFC am Hand
   und Server von NGC. **Pflicht (Thomas, 19.09.2026):** YubiKey 5 NFC und Nitrokey 3 NFC
   funktionieren als Anmeldung mit PIN, per USB am Rechner und per NFC am Handy. NGC verlangt
   dabei immer die PIN des Sticks, bloßes Antippen reicht nicht.
-- **PIV (mit der Zertifizierungsstelle, Teilprojekt 6):** Der Stick arbeitet als Smartcard,
+- **PIV (mit der Zertifizierungsstelle, Teilprojekt 2):** Der Stick arbeitet als Smartcard,
   der Admin schreibt ein Zertifikat unserer Zertifizierungsstelle darauf. Das ist der Weg zu
   Single Sign-on über NGC hinaus, etwa für die Windows-Anmeldung mit der späteren
   LDAP/AD-App.
 
+**Wiederherstellung.** Wer sein Passwort oder alle Schlüssel verliert, hat drei Wege zurück:
+Wiederherstellungscodes, ein Admin setzt das Konto zurück, oder im Notfall ein Befehl direkt auf
+dem Server.
+
 **Sitzung und Sitzungszertifikate.**
 
-1. Der Benutzer meldet sich mit Passkey oder Stick an.
+1. Der Benutzer meldet sich an, mit Passwort oder mit Passkey beziehungsweise Stick.
 2. Der Browser erzeugt sein Schlüsselpaar, die API erzeugt ihres. Beide gelten nur für die
    Dauer der Sitzung. Den privaten Schlüssel des Browsers kann niemand auslesen, auch die Shell
    nicht.
 3. Die API stellt zwei Zertifikate aus, eines für den öffentlichen Schlüssel des Clients und
    eines für ihren eigenen. Ihren öffentlichen Schlüssel schickt sie an den Client. Das
-   Client-Zertifikat unterschreibt zusätzlich der Passkey. So bleibt die Kette bis zum
-   Benutzer erhalten, und der Controller kann sie bei Root-Aufgaben und beim Aufbau jedes
-   Kanals prüfen.
+   Client-Zertifikat unterschreibt zusätzlich der Passkey oder der Passwortschlüssel. So bleibt
+   die Kette bis zum Benutzer erhalten, und der Controller kann sie bei Root-Aufgaben und beim
+   Aufbau jedes Kanals prüfen.
 4. Ab da wird jede Nachricht zwischen Webclient und API zusätzlich zu TLS verschlüsselt: Mit
    den beiden Schlüsselpaaren vereinbaren Client und API einen gemeinsamen AES-256-Schlüssel,
    der nie übertragen wird, und verschlüsseln damit jede Nachricht (AES-256-GCM). Jede
@@ -464,12 +490,12 @@ Aktivität oder beim Abmelden.
 **Root-Aufgaben.**
 
 - Alles, was auf einem Server als root läuft, unterschreibt die Shell mit dem
-  Sitzungsschlüssel. Dazu gehört auch das Installieren von App-Diensten.
-- Der Controller prüft die ganze Kette selbst, bis zurück zum Passkey. Außerdem prüft er, ob
-  der Benutzer auf diesem Server Root-Aufgaben erledigen darf.
+  Sitzungsschlüssel. Dazu gehört auch das Installieren und Deinstallieren von App-Diensten.
+- Der Controller prüft die ganze Kette selbst, bis zurück zum Passkey oder Passwortschlüssel.
+  Außerdem prüft er, ob der Benutzer auf diesem Server Root-Aufgaben erledigen darf.
 - Diese Liste ist Teil der Vertrauensliste (siehe unten). Der Controller hält sie in seiner
-  lokalen SQLite-Datei, nur ein Admin kann sie mit seinem Passkey ändern, die API hält nur eine
-  Kopie zur Anzeige.
+  lokalen SQLite-Datei, nur ein Admin kann sie ändern, die API hält nur eine Kopie zur
+  Anzeige.
 - Ohne gültige Unterschrift läuft nichts als root. Die API allein kann Root-Aufgaben damit
   nicht fälschen.
 - Für automatische Updates unterschreibt der Admin einmal eine Dauerfreigabe pro Teil oder
@@ -477,11 +503,12 @@ Aktivität oder beim Abmelden.
 - Jede unterschriebene Aufgabe kommt ins Protokoll. So lässt sich nachweisen, wer sie
   angeordnet hat.
 
-**Erneute Passkey-Bestätigung** (am 19.09.2026 abgestimmt). Thomas: „einstellbar von überhaupt
-nicht bis hardcore, inkl. eigener White- und Blacklist". Die Stufe gilt pro Rolle; hat ein
+**Erneute Bestätigung** (am 19.09.2026 abgestimmt). Thomas: „einstellbar von überhaupt nicht
+bis hardcore, inkl. eigener White- und Blacklist". Bestätigt wird per Passkey oder, mit
+Passwort-Anmeldung, durch erneute Eingabe des Passworts. Die Stufe gilt pro Rolle; hat ein
 Benutzer mehrere Rollen, gilt die strengste.
 
-| Stufe | Erneute Passkey-Bestätigung bei … |
+| Stufe | Erneute Bestätigung bei … |
 |---|---|
 | Aus | nie, die Anmeldung reicht |
 | Kritisch (Standard) | Admins und Root-Berechtigungen ändern, Stores und ihre Schlüssel eintragen, eigene Apps hochladen, einem Dienst root-Rechte erlauben, Dauerfreigaben unterschreiben; *beim Ausformulieren ergänzt:* eine App samt Daten löschen |
@@ -493,22 +520,22 @@ Benutzer mehrere Rollen, gilt die strengste.
 - **Whitelist:** Was hier steht, braucht nie eine Bestätigung, auch wenn die Stufe höher ist.
 - Ein Eintrag kann eine einzelne Aktion, eine ganze App oder ein ganzer Server sein. Steht
   etwas auf beiden Listen, gewinnt die Blacklist.
-- Stufe und Listen zu ändern verlangt immer den Passkey, egal was eingestellt ist. Sonst könnte
-  jemand mit einer gekaperten Sitzung zuerst die Stufe herunterdrehen.
+- Stufe und Listen zu ändern verlangt immer eine erneute Bestätigung, egal was eingestellt
+  ist. Sonst könnte jemand mit einer gekaperten Sitzung zuerst die Stufe herunterdrehen.
 - Bei Root-Aufgaben prüft der Controller die Einstellung selbst, wie seine Liste der
   Root-Berechtigungen, damit die API allein sie nicht aushebeln kann. Für alles andere prüft
   die API.
-- In der Stufe Hardcore prüft der Controller die Passkey-Bestätigung jeder Aufgabe selbst,
-  nicht nur bei Root-Aufgaben (offene Frage 4, Variante B). Eine übernommene API kann dann gar
-  nichts mehr auslösen.
+- In der Stufe Hardcore prüft der Controller die Bestätigung jeder Aufgabe selbst, nicht nur
+  bei Root-Aufgaben (offene Frage 4, Variante B). Eine übernommene API kann dann gar nichts
+  mehr auslösen.
 
 **Vertrauensliste** (am 19.09.2026 abgestimmt). Eine Liste, die ein Admin mit seinem Passkey
-unterschreibt. Sie enthält:
+oder Passwortschlüssel unterschreibt. Sie enthält:
 
-- die Admins und die Passkey-Schlüssel aller Benutzer,
+- die Admins und die Schlüssel aller Benutzer, also Passkeys und Passwortschlüssel,
 - die Schlüssel aller Controller und aller API-Server,
 - die Root-Berechtigungen je Server,
-- die Stufen der erneuten Passkey-Bestätigung mit ihren Listen.
+- die Stufen der erneuten Bestätigung mit ihren Listen.
 
 Browser und Controller prüfen die Unterschrift selbst. Die API verteilt die Liste nur und kann
 sie nicht fälschen. Den Admin-Schlüssel bekommt der Browser vom Webserver, nicht von der API,
@@ -519,7 +546,8 @@ von Admin-Unterschriften darauf zurückführen lassen, sonst schlägt der Browse
   werden abgelehnt, damit niemand eine überholte Liste zurückspielen kann.
 - *Beim Ausformulieren ergänzt:* Neue Benutzer trägt ein Admin ein. Einen weiteren eigenen
   Schlüssel, etwa einen zweiten Stick, bestätigt ein Benutzer selbst mit einem seiner
-  vorhandenen Schlüssel, ohne dafür einen Admin zu brauchen.
+  vorhandenen Schlüssel, ohne dafür einen Admin zu brauchen. Dasselbe gilt, wenn er sein
+  Passwort ändert.
 
 **Ende-zu-Ende-Verschlüsselung** (am 19.09.2026 abgestimmt). Thomas: „Verschlüsselung vom
 Browser bis direkt zum Dienst muss rein. nicht später. jetzt."
@@ -531,8 +559,9 @@ Browser bis direkt zum Dienst muss rein. nicht später. jetzt."
 - Den Schlüssel des Controllers nimmt die Shell nur aus der geprüften Vertrauensliste. Eine
   übernommene API kann also keinen falschen Controller unterschieben.
 - *Beim Ausformulieren ergänzt:* Der Controller prüft beim Aufbau jedes Kanals, dass am anderen
-  Ende wirklich die Sitzung dieses Benutzers sitzt, über die Kette bis zu dessen Passkey. Eine
-  übernommene API kann sich damit in keiner Stufe als Benutzer ausgeben.
+  Ende wirklich die Sitzung dieses Benutzers sitzt, über die Kette bis zu dessen Passkey oder
+  Passwortschlüssel. Eine übernommene API kann sich damit in keiner Stufe als Benutzer
+  ausgeben.
 - Die API sieht nur, wer welchen Dienst mit welcher Aktion aufruft, weil sie das für die
   Weiterleitung und die Rechteprüfung braucht. Den Inhalt sieht sie nicht, der Webserver auch
   nicht.
@@ -561,22 +590,25 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 | SQLite (API auf dem Pi, Controller) | ganze Datei mit AES-256 verschlüsselt (XTS) |
 | Daten der Apps | verschlüsselter Datenordner pro App (4.6) |
 | Kauf-Apps | pro App AES-256; der Schlüssel steckt in der Lizenz, verschlüsselt mit dem öffentlichen Schlüssel der Installation (4.4) |
-| Geheimnisse in der Datenbank | zusätzlich von der API mit eigenem Schlüssel verschlüsselt, etwa Zugangsschlüssel zu Stores. So bleiben sie auch in einer anderen Datenbank oder in einer Sicherung geschützt. |
-| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen, Programmdateien und Updates, Dauerfreigaben, Vertrauensliste, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel und Ende zu Ende |
+| Geheimnisse in der Datenbank | zusätzlich von der API mit eigenem Schlüssel verschlüsselt, etwa TOTP-Geheimnisse und Zugangsschlüssel zu Stores. So bleiben sie auch in einer anderen Datenbank oder in einer Sicherung geschützt. |
+| Asymmetrisch | Passkeys, Passwortschlüssel, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen, Programmdateien und Updates, Dauerfreigaben, Vertrauensliste, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel und Ende zu Ende |
 
 **Zertifikate für die Webseite.** Das ulh-Skript des Webinterface bietet drei Wege an:
 
 - Let's Encrypt über `mod_md`, das in Apache schon eingebaut ist. Dafür braucht es einen
   öffentlichen Namen.
-- Ein selbst signiertes Zertifikat. Mit Passkeys funktioniert es nur, wenn man es auf jedem
-  Gerät als vertrauenswürdig einträgt, sonst verweigert der Browser den Passkey.
+- Ein selbst signiertes Zertifikat. Damit warnt der Browser beim ersten Aufruf, und die
+  Anmeldung läuft mit Passwort. Passkeys gehen erst, wenn das Zertifikat auf jedem Gerät als
+  vertrauenswürdig eingetragen ist.
 - Import eines Zertifikats von einer anderen Zertifizierungsstelle.
 
-Die NGC-Zertifizierungsstelle wird eine eigene App (Teilprojekt 6).
+Die NGC-Zertifizierungsstelle wird eine eigene App und direkt nach dem Kern gebaut
+(Teilprojekt 2). Thomas: Sie ist ein Grund, NGC überhaupt zu bauen. Mit ihr wird der Umstieg
+vom Passwort auf Passkeys im Heimnetz zu ein paar Klicks.
 
-**Folge für jede Installation:** Passkeys funktionieren nur, wenn NGC über einen Namen statt
-einer IP-Adresse aufgerufen wird und der Browser dem Zertifikat vertraut. Das ulh-Skript fragt
-deshalb nach dem Namen.
+**Folge für Passkeys:** Sie funktionieren nur, wenn NGC über einen Namen statt einer IP-Adresse
+aufgerufen wird und der Browser dem Zertifikat vertraut. Das ulh-Skript fragt deshalb nach dem
+Namen. Fehlt eins von beiden, bleibt es bei der Anmeldung mit Passwort.
 
 **Browser.** Das Webinterface läuft nur über HTTPS. Eine strenge Sicherheitsrichtlinie (CSP)
 verbietet fremde Skripte und Code direkt in der HTML-Seite. Das eingebettete Skript aus dem
@@ -599,7 +631,11 @@ in der App Benutzer & Rechte.
   veränderten Code unterschieben und dessen Sitzungsschlüssel benutzen, solange die Sitzung
   offen ist. Neuen Geräten könnte er außerdem einen falschen Admin-Schlüssel ausliefern. Dagegen
   helfen die strenge CSP, ein gehärteter Webserver, kurze Sitzungen und die erneute
-  Passkey-Bestätigung: Was bestätigt werden muss, geht ohne den Finger des Benutzers nicht.
+  Bestätigung: Was bestätigt werden muss, geht ohne den Benutzer nicht.
+- Mit Passwort-Anmeldung ohne vertrauenswürdiges Zertifikat warnt der Browser beim ersten
+  Aufruf, und ein Angreifer im selben Netz könnte sich dazwischenschalten. Ein Passwort lässt
+  sich außerdem leichter erraten oder abgreifen als ein Stick. Deshalb der dauerhafte Hinweis
+  auf den Umstieg zu Passkeys.
 
 ### 4.6 Datenbank, Installation, Fehler, Tests (Abschnitt 5, abgestimmt)
 
@@ -623,10 +659,10 @@ in der App Benutzer & Rechte.
      API weiterzulaufen: Kopplung, die Vertrauensliste, die installierten Apps
      und deren Einstellungen, zum Beispiel die Regeln einer Firewall.
   3. **Für Apps:** Die Dienste einer App dürfen ihre Daten in SQLite ablegen.
-- **Portables SQL:** nur SQL, das alle fünf Systeme verstehen, damit Teilprojekt 3 nichts
+- **Portables SQL:** nur SQL, das alle fünf Systeme verstehen, damit Teilprojekt 4 nichts
   umbauen muss. IDs erzeugt die Anwendung, Zeitstempel sind Zahlen, SQLite-eigene Funktionen
   gibt es nicht. Änderungen am Aufbau laufen über nummerierte Migrationen.
-- **Tabellen der API:** Benutzer, Rollen, Rechte, Schlüssel (Passkeys und Sticks), Sitzungen,
+- **Tabellen der API:** Benutzer, Rollen, Rechte, Schlüssel (Passkeys, Sticks und Passwortschlüssel), TOTP (verschlüsselt), Sitzungen,
   Apps, Dienste, Controller, Vertrauensliste (Kopie), Bestätigungsstufen und ihre Listen,
   Stores, Lizenzen, Einstellungen, Protokoll.
 - **Verschlüsselte App-Daten:** Damit auch die SQLite-Dateien der Apps verschlüsselt sind, egal
@@ -709,6 +745,8 @@ in der App Benutzer & Rechte.
 - Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
 - Zusätzlich prüft der Gesamttest die Anmeldung mit echten Sticks: YubiKey 5 NFC und
   Nitrokey 3 NFC, jeweils mit PIN, per USB und per NFC.
+- Passwort-Anmeldung: mit Passwort und TOTP anmelden, dann auf Passkey umstellen. Ein
+  Mitschnitt zeigt, dass das Passwort den Browser nie verlässt.
 - Das Webinterface prüfen wir automatisch mit Playwright in den Engines von Chrome, Firefox und
   Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `tests/browser/`, mit
   festgeschriebenen Versionen, nur auf Test-Servern und nie nötig, um NGC zu bauen oder
@@ -723,8 +761,8 @@ Server ihres Teils und betreut alle Server, die dazugehören:
 
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
-| Web | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
-| API 1 und 2 | API | `api/` | Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
+| Web | Webinterface | `web/` | Desktop, Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
+| API 1 und 2 | API | `api/` | Anmeldung mit Passwortschlüssel, TOTP und Passkeys, Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
 | Dienste | Controller | `controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
 | DB 1 bis 3 | Datenbank | `db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
@@ -833,7 +871,7 @@ Sperre in der Datenbank.
 
 1. **Lizenz von NGC:** entschieden am 19.09.2026, siehe Kapitel 2.
 2. **App-Updates:** entschieden am 19.09.2026, Autoupdate für alle Teile (4.8).
-3. **Erneute Passkey-Bestätigung:** entschieden am 19.09.2026, einstellbar in vier Stufen mit
+3. **Erneute Bestätigung:** entschieden am 19.09.2026, einstellbar in vier Stufen mit
    eigenen Listen (4.5).
 4. **Die zwei Restrisiken:** entschieden am 19.09.2026, Variante B und
    Ende-zu-Ende-Verschlüsselung (4.5).
@@ -844,7 +882,7 @@ Sperre in der Datenbank.
 
 6. **Mehrere APIs:** entschieden am 19.09.2026, Lastverteilung mit Ausfallsicherheit, schon im
    Kern (4.2).
-7. Teilprojekt 4: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint? Das
+7. Teilprojekt 5: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint? Das
    ist bisher nur angenommen.
 8. Den privaten Schlüssel der Installation im TPM-Chip ablegen, wo einer vorhanden ist, damit
    er sich nicht kopieren lässt (4.4).
@@ -852,6 +890,9 @@ Sperre in der Datenbank.
    einrichten (Skripte für alle Distributionen, `answer.yaml` für Läufe ohne Rückfragen)?
 10. LXC als zweite Container-Laufzeit einbauen, sobald eine App ein komplettes System braucht,
     etwa der AD-Server (4.3).
+11. Teilprojekt 2: Let's Encrypt über eine DNS-Prüfung für Installationen mit eigener Domain,
+    die von außen nicht erreichbar sind, und ein eigener Namensdienst von NGC wie `synology.me`
+    bei Synology.
 
 ## 6. Entscheidungsprotokoll
 
@@ -889,6 +930,8 @@ Sperre in der Datenbank.
 | 19.09.2026 | Lastverteilung für API und Datenbank schon im Kern (Variante A). Der verteilte Test läuft auf sieben Servern: Web, API 1 und 2, DB 1 bis 3 (MariaDB Galera) und Dienste. Es bleibt bei vier Claude-Sitzungen. |
 | 19.09.2026 | Vorgabe Thomas zu 4.4: Apps lassen sich deinstallieren, um Speicher freizugeben. Dabei wählt man „Daten löschen" oder „Daten aufheben" für eine spätere Neuinstallation. |
 | 19.09.2026 | Vorgabe Thomas zu 4.5: YubiKey 5 NFC und Nitrokey 3 NFC müssen als Anmeldung mit PIN funktionieren. Die PIN ist immer Pflicht, der Gesamttest prüft beide mit echten Sticks. |
+| 19.09.2026 | Vorgabe Thomas: Im Heimnetz ohne vertrauenswürdiges Zertifikat beginnt NGC mit Benutzer und Passwort, TOTP lässt sich dazuschalten, und man stellt auf Passkeys um, sobald es geht. Eine Zertifizierungsstellen-App ist ein Grund, NGC überhaupt zu bauen. Ausgearbeitet in 4.5. |
+| 19.09.2026 | Anmeldung in zwei Stufen abgestimmt: Benutzer und Passwort mit Passwortschlüssel im Browser und zuschaltbarem TOTP, Umstieg auf Passkeys pro Benutzer oder Rolle. Die Zertifizierungsstellen-App rückt direkt hinter den Kern (Teilprojekt 2, vorher 6), die übrigen Teilprojekte rücken eins nach. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -901,6 +944,8 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
 | WebSocket | `github.com/coder/websocket` | zu prüfen |
 | Argon2id | `golang.org/x/crypto/argon2` | zu prüfen |
+| Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`), sonst PBKDF2 aus der Web Crypto API mit hoher Rundenzahl | zu prüfen |
+| TOTP | `github.com/pquerna/otp` oder eigene Umsetzung nach RFC 6238 mit dessen Testvektoren; HMAC kommt aus der Standardbibliothek von Go | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
 | Noise-Tunnel | `github.com/flynn/noise` | zu prüfen |
 | Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `tests/browser/` | erlaubt seit 19.09.2026 |

@@ -6,7 +6,7 @@
 
 Den Entwurf für den Kern freigeben lassen und danach den Umsetzungsplan schreiben:
 
-1. Thomas gibt den ganzen Entwurf frei, dabei auch die drei Stellen mit „Beim Ausformulieren
+1. Thomas gibt den ganzen Entwurf frei, dabei auch die Stellen mit „Beim Ausformulieren
    ergänzt". Alle offenen Fragen für den Kern sind entschieden.
 2. Stellen, an denen er etwas ändern will, einarbeiten.
 3. Erst dann den Umsetzungsplan schreiben. Sein erster Schritt ist Schritt 1 aus 4.7 des
