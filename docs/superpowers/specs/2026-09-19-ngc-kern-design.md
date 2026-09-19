@@ -144,6 +144,8 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
    Daten. Eine manipulierte Vertrauensliste lehnen Browser und Controller ab (4.5).
 10. Im laufenden Betrieb fallen eine API und ein Datenbankknoten aus. Alles läuft weiter, und
     angemeldete Benutzer bleiben angemeldet (4.2).
+11. Die Anmeldung mit einem YubiKey 5 NFC und einem Nitrokey 3 NFC klappt, jeweils mit PIN,
+    per USB am Rechner und per NFC am Handy (4.5).
 
 ### 4.2 Überblick (Abschnitt 1, abgestimmt; an die späteren Abschnitte angepasst)
 
@@ -421,7 +423,9 @@ YubiKey 5 NFC oder den Nitrokey 3 NFC (Open Source), per USB und per NFC am Hand
 - **FIDO2 (im Kern):** dasselbe Verfahren wie Passkeys. Der Admin richtet den Stick für einen
   Benutzer ein und gibt ihn aus, Name und Schlüssel liegen dann auf dem Stick. Der Benutzer
   steckt ihn ein oder hält ihn ans Handy, gibt seine PIN ein und ist angemeldet, für alle Apps
-  und Server von NGC.
+  und Server von NGC. **Pflicht (Thomas, 19.09.2026):** YubiKey 5 NFC und Nitrokey 3 NFC
+  funktionieren als Anmeldung mit PIN, per USB am Rechner und per NFC am Handy. NGC verlangt
+  dabei immer die PIN des Sticks, bloßes Antippen reicht nicht.
 - **PIV (mit der Zertifizierungsstelle, Teilprojekt 6):** Der Stick arbeitet als Smartcard,
   der Admin schreibt ein Zertifikat unserer Zertifizierungsstelle darauf. Das ist der Weg zu
   Single Sign-on über NGC hinaus, etwa für die Windows-Anmeldung mit der späteren
@@ -703,6 +707,8 @@ in der App Benutzer & Rechte.
   eine manipulierte oder ältere Vertrauensliste wird abgelehnt, und ein Container kommt weder
   ins Netz noch an Dateien außerhalb seines Ordners.
 - Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
+- Zusätzlich prüft der Gesamttest die Anmeldung mit echten Sticks: YubiKey 5 NFC und
+  Nitrokey 3 NFC, jeweils mit PIN, per USB und per NFC.
 - Das Webinterface prüfen wir automatisch mit Playwright in den Engines von Chrome, Firefox und
   Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `tests/browser/`, mit
   festgeschriebenen Versionen, nur auf Test-Servern und nie nötig, um NGC zu bauen oder
@@ -765,7 +771,7 @@ wann der Teil fertig ist und was tabu ist, also fremde Ordner und das Ändern vo
 genügen, etwa auf Proxmox: Web, API 1, API 2, DB 1, DB 2, DB 3 und Dienste. Sie müssen sich
 gegenseitig im Netz erreichen, und jeder braucht Zugriff auf das Repo. Die vier Sitzungen
 laufen auf Web, API 1, DB 1 und Dienste und sind per Remote Control verbunden. Für Schritt 4
-kommt ein Pi dazu.
+kommt ein Pi dazu, und für den Test je ein YubiKey 5 NFC und ein Nitrokey 3 NFC.
 
 ### 4.8 Updates (am 19.09.2026 abgestimmt)
 
@@ -882,6 +888,7 @@ Sperre in der Datenbank.
 | 19.09.2026 | Vorgabe Thomas zu 4.2: In der PHP-Konfiguration des Webinterface stehen mehrere Server (IP-Adressen), auf denen die API läuft, mit Lastverteilung über diese Server. Dasselbe für die Datenbank. Ausgearbeitet in 4.2 und 4.6. |
 | 19.09.2026 | Lastverteilung für API und Datenbank schon im Kern (Variante A). Der verteilte Test läuft auf sieben Servern: Web, API 1 und 2, DB 1 bis 3 (MariaDB Galera) und Dienste. Es bleibt bei vier Claude-Sitzungen. |
 | 19.09.2026 | Vorgabe Thomas zu 4.4: Apps lassen sich deinstallieren, um Speicher freizugeben. Dabei wählt man „Daten löschen" oder „Daten aufheben" für eine spätere Neuinstallation. |
+| 19.09.2026 | Vorgabe Thomas zu 4.5: YubiKey 5 NFC und Nitrokey 3 NFC müssen als Anmeldung mit PIN funktionieren. Die PIN ist immer Pflicht, der Gesamttest prüft beide mit echten Sticks. |
 
 ## 7. Fremdcode-Kandidaten
 
