@@ -1,10 +1,7 @@
 # NGC – Entwurf für den Kern
 
-**Stand:** 19.09.2026 · **Status:** Alles mit Thomas abgestimmt, offene Fragen für den Kern geklärt; die Freigabe des ganzen Entwurfs steht aus
+**Stand:** 19.09.2026 · **Status:** Von Thomas am 19.09.2026 freigegeben. Nächster Schritt: der Umsetzungsplan
 **Einstieg für die nächste Sitzung:** [`docs/STAND.md`](../../STAND.md)
-
-> Stellen, die ich erst beim Ausformulieren ergänzt habe, sind mit **„Beim Ausformulieren
-> ergänzt"** markiert. Thomas hat sie noch nicht bestätigt.
 
 ---
 
@@ -186,7 +183,7 @@ dasselbe für die Datenbank.
 - Ein neuer API-Server kommt über die Vertrauensliste dazu, also nur mit Unterschrift eines
   Admins. Einen fremden Server, der sich als API ausgibt, nehmen Controller und Browser nicht
   an.
-- *Beim Ausformulieren ergänzt:* Alle APIs einer Installation teilen sich deren Schlüssel,
+- Alle APIs einer Installation teilen sich deren Schlüssel,
   etwa den für die Kauf-Apps. Ein neuer API-Server bekommt sie beim Koppeln von einer laufenden
   API, über eine verschlüsselte Verbindung und nur mit Unterschrift eines Admins.
 - In der Konfiguration der API steht ebenso die Liste der Datenbankknoten (4.6).
@@ -511,7 +508,7 @@ Benutzer mehrere Rollen, gilt die strengste.
 | Stufe | Erneute Bestätigung bei … |
 |---|---|
 | Aus | nie, die Anmeldung reicht |
-| Kritisch (Standard) | Admins und Root-Berechtigungen ändern, Stores und ihre Schlüssel eintragen, eigene Apps hochladen, einem Dienst root-Rechte erlauben, Dauerfreigaben unterschreiben; *beim Ausformulieren ergänzt:* eine App samt Daten löschen |
+| Kritisch (Standard) | Admins und Root-Berechtigungen ändern, Stores und ihre Schlüssel eintragen, eigene Apps hochladen, einem Dienst root-Rechte erlauben, Dauerfreigaben unterschreiben, eine App samt Daten löschen |
 | Root | jeder Root-Aufgabe, also auch beim Aktivieren einer App und bei einem Update per Klick |
 | Hardcore | jeder Aktion, die etwas ändert, und jedem Kanal zu einem Dienst |
 
@@ -542,9 +539,9 @@ sie nicht fälschen. Den Admin-Schlüssel bekommt der Browser vom Webserver, nic
 und merkt ihn sich beim ersten Besuch. Spätere Fassungen müssen sich über eine lückenlose Kette
 von Admin-Unterschriften darauf zurückführen lassen, sonst schlägt der Browser Alarm.
 
-- *Beim Ausformulieren ergänzt:* Jede neue Fassung trägt eine höhere Nummer. Ältere Fassungen
+- Jede neue Fassung trägt eine höhere Nummer. Ältere Fassungen
   werden abgelehnt, damit niemand eine überholte Liste zurückspielen kann.
-- *Beim Ausformulieren ergänzt:* Neue Benutzer trägt ein Admin ein. Einen weiteren eigenen
+- Neue Benutzer trägt ein Admin ein. Einen weiteren eigenen
   Schlüssel, etwa einen zweiten Stick, bestätigt ein Benutzer selbst mit einem seiner
   vorhandenen Schlüssel, ohne dafür einen Admin zu brauchen. Dasselbe gilt, wenn er sein
   Passwort ändert.
@@ -558,7 +555,7 @@ Browser bis direkt zum Dienst muss rein. nicht später. jetzt."
   seinem Container.
 - Den Schlüssel des Controllers nimmt die Shell nur aus der geprüften Vertrauensliste. Eine
   übernommene API kann also keinen falschen Controller unterschieben.
-- *Beim Ausformulieren ergänzt:* Der Controller prüft beim Aufbau jedes Kanals, dass am anderen
+- Der Controller prüft beim Aufbau jedes Kanals, dass am anderen
   Ende wirklich die Sitzung dieses Benutzers sitzt, über die Kette bis zu dessen Passkey oder
   Passwortschlüssel. Eine übernommene API kann sich damit in keiner Stufe als Benutzer
   ausgeben.
@@ -853,7 +850,7 @@ die APIs, dann die Controller, zuletzt das Webinterface. Der nächste Schritt be
 der vorige läuft. APIs und Datenbankknoten kommen nacheinander dran, damit immer einer läuft;
 so bleibt NGC während des Updates erreichbar. Dafür versteht jeder Teil auch die vorige
 Version der Verträge, und jede Migration lässt die vorige API-Version weiterlaufen.
-*Beim Ausformulieren ergänzt:* Den Ablauf steuert immer nur eine API; welche, regelt eine
+Den Ablauf steuert immer nur eine API; welche, regelt eine
 Sperre in der Datenbank.
 
 **Folgen.**
@@ -932,6 +929,7 @@ Sperre in der Datenbank.
 | 19.09.2026 | Vorgabe Thomas zu 4.5: YubiKey 5 NFC und Nitrokey 3 NFC müssen als Anmeldung mit PIN funktionieren. Die PIN ist immer Pflicht, der Gesamttest prüft beide mit echten Sticks. |
 | 19.09.2026 | Vorgabe Thomas: Im Heimnetz ohne vertrauenswürdiges Zertifikat beginnt NGC mit Benutzer und Passwort, TOTP lässt sich dazuschalten, und man stellt auf Passkeys um, sobald es geht. Eine Zertifizierungsstellen-App ist ein Grund, NGC überhaupt zu bauen. Ausgearbeitet in 4.5. |
 | 19.09.2026 | Anmeldung in zwei Stufen abgestimmt: Benutzer und Passwort mit Passwortschlüssel im Browser und zuschaltbarem TOTP, Umstieg auf Passkeys pro Benutzer oder Rolle. Die Zertifizierungsstellen-App rückt direkt hinter den Kern (Teilprojekt 2, vorher 6), die übrigen Teilprojekte rücken eins nach. |
+| 19.09.2026 | Entwurf von Thomas freigegeben, einschließlich der sechs beim Ausformulieren ergänzten Stellen: Fassungsnummern der Vertrauensliste, zweiter eigener Schlüssel ohne Admin, Prüfung der Benutzersitzung bei jedem Kanal, gemeinsame Schlüssel für neue API-Server nur mit Admin-Unterschrift, eine API steuert die Update-Reihenfolge über eine Sperre in der Datenbank, „App samt Daten löschen" in der Stufe Kritisch. |
 
 ## 7. Fremdcode-Kandidaten
 

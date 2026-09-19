@@ -4,41 +4,36 @@
 
 ## Ziel der nächsten Sitzung
 
-Den Entwurf für den Kern freigeben lassen und danach den Umsetzungsplan schreiben:
-
-1. Thomas gibt den ganzen Entwurf frei, dabei auch die Stellen mit „Beim Ausformulieren
-   ergänzt". Alle offenen Fragen für den Kern sind entschieden.
-2. Stellen, an denen er etwas ändern will, einarbeiten.
-3. Erst dann den Umsetzungsplan schreiben. Sein erster Schritt ist Schritt 1 aus 4.7 des
-   Entwurfs: Verträge in `contracts/`, eine `CLAUDE.md` je Teil und das Grundgerüst.
+Den Umsetzungsplan für den Kern schreiben und mit Schritt 1 aus 4.7 des Entwurfs beginnen:
+Verträge in `contracts/`, eine `CLAUDE.md` je Teil und das Grundgerüst des Repos.
 
 ## Stand
 
 | | |
 |---|---|
-| Erledigt | Repo angelegt (privat), Zielbild, Zerlegung in sieben Teilprojekte, alle sechs Abschnitte des Kern-Entwurfs abgestimmt |
-| In Arbeit | Brainstorming: Entwurf ist komplett, alle offenen Fragen für den Kern sind entschieden; die Freigabe des ganzen Entwurfs steht aus |
+| Erledigt | Repo angelegt (privat), Entwurf für den Kern von Thomas am 19.09.2026 freigegeben |
+| In Arbeit | Umsetzungsplan (Skill `superpowers:writing-plans`) |
 | Blockiert | nichts |
 | Code | noch keiner, nur der Prototyp |
 
 ## Vor dem Bauen zu prüfen
 
-- Sobald die vier Server per Remote Control verbunden sind: ob sich die Sitzungen gegenseitig
+- Sobald die Server per Remote Control verbunden sind: ob sich die Sitzungen gegenseitig
   Nachrichten schicken können (Entwurf 4.7 setzt das voraus).
-- Was Thomas bereitstellt: siehe Entwurf 4.7, „Voraussetzungen".
+- Was Thomas bereitstellt: siehe Entwurf 4.7, „Voraussetzungen" (sieben Server, ein Pi, je ein
+  YubiKey 5 NFC und Nitrokey 3 NFC).
 
 ## Offene Entscheidungen
 
-Stehen im Entwurf, Kapitel 5 „Offene Fragen".
+Für den Kern keine mehr. Offene Punkte für spätere Teilprojekte stehen im Entwurf, Kapitel 5.
 
 ## Skills
 
-- `superpowers:brainstorming`: weitermachen beim Schritt „User reviews written spec"
-- `superpowers:writing-plans`: erst, wenn Thomas den Entwurf freigegeben hat
+- `superpowers:writing-plans`: Umsetzungsplan aus dem freigegebenen Entwurf
 
 ## Artefakte
 
-- Entwurf: [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](superpowers/specs/2026-09-19-ngc-kern-design.md)
+- Entwurf (freigegeben): [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](superpowers/specs/2026-09-19-ngc-kern-design.md)
 - Prototyp: [`prototype/index.html`](../prototype/index.html), Original unter `W:\ngc\index.html`
 - Repo: <https://github.com/sorglos-it/nextgencloud> (privat)
 - Facebook-Post: zurückgestellt, solange das Repo privat ist; Vermerk in
