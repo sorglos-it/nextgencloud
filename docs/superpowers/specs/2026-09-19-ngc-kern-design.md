@@ -70,9 +70,9 @@ muss weiterlaufen, auch wenn die Verbindung zur API abreißt.
 | Teil | Rolle |
 |---|---|
 | Webinterface | Liegt auf jedem Webserver, Standard ist Apache. HTML, CSS, JS und PHP; PHP nur für das Webinterface selbst. |
-| API | Eigener, dauerhaft laufender Dienst. Vermittler mit zwei Seiten (Webinterface und Controller) und „die Firewall zwischen GUI und Server". Macht Anmeldung, Rollen und Rechte und die Weiterleitung. Führt nie App-Code aus. Mehrere APIs sind möglich, zum Beispiel für die Performance. |
+| API | Eigener, dauerhaft laufender Dienst. Vermittler mit zwei Seiten (Webinterface und Controller) und „die Firewall zwischen GUI und Server". Macht Anmeldung, Rollen und Rechte und die Weiterleitung. Führt nie App-Code aus. Mehrere API-Server teilen sich die Last (4.2). |
 | Server-Controller | Eigener, dauerhaft laufender Dienst auf jedem Server. Redet nur mit der API und tut, was sie sagt. Root-Aufgaben führt er nur mit Unterschrift des Benutzers aus (4.5). Hält seinen Zustand lokal in SQLite und startet die Dienste der Apps in Containern. |
-| Datenbank | MariaDB als Standard, auf demselben oder einem eigenen Server. SQLite, wenn alles auf einem Pi läuft. |
+| Datenbank | MariaDB als Standard, als Galera-Cluster mit mehreren Knoten oder als einzelner Server. SQLite, wenn alles auf einem Pi läuft. |
 
 ### Apps laufen auf dem Client
 
@@ -86,7 +86,7 @@ SQLite ablegen. Jede App bekommt für ihre Dienste einen eigenen Container (4.3)
 API, Controller und Werkzeuge sind je eine einzelne Go-Datei ohne Laufzeitumgebung. Fremdcode
 wird ins Repo kopiert (`vendor/`), seine Herkunft steht in `THIRD-PARTY.md`. Das Webinterface
 kommt ohne Framework und ohne Build-Schritt aus. Von außen kommen nur Apache, PHP, MariaDB
-und Podman aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte.
+mit Galera und Podman aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte.
 
 ### Lizenz
 
@@ -106,8 +106,8 @@ schaut jemand mit Ahnung von Lizenzrecht drauf.
 
 | # | Teilprojekt | Inhalt |
 |---|---|---|
-| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf vier Servern: Webserver, API, Datenbankserver (MariaDB) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell mit Ende-zu-Ende-Verschlüsselung, Dienste in Containern, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
-| 2 | **Verteilung** | Mehrere APIs (x), Datenbanken (y) und Controller (z); Dienste an bestimmte Server zuweisen |
+| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf sieben Servern: ein Webserver, zwei API-Server mit Lastverteilung, drei Datenbankknoten (MariaDB Galera) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell mit Ende-zu-Ende-Verschlüsselung, Dienste in Containern, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
+| 2 | **Verteilung** | Mehrere Server für Dienste (z Controller) und Dienste an bestimmte Server zuweisen. Mehrere APIs und Datenbanken mit Lastverteilung gibt es schon im Kern. |
 | 3 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
 | 4 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
 | 5 | **Store-Server** | Serverseite des globalen Stores: Entwickler veröffentlichen Apps, Kunden bezahlen, der Server stellt die Lizenzen aus, jeweils mit dem Schlüssel der App für die Installation des Käufers |
@@ -122,7 +122,7 @@ Entwurf, einen Plan und wird dann gebaut.
 
 ### 4.1 Erfolgskriterium
 
-Der Kern ist fertig, wenn der folgende Ablauf zweimal klappt: einmal verteilt auf vier
+Der Kern ist fertig, wenn der folgende Ablauf zweimal klappt: einmal verteilt auf sieben
 Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils über ulh.
 
 1. NGC installieren und als erster Admin mit Passkey anmelden.
@@ -142,37 +142,58 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
    nicht einspielen (4.8).
 9. Ein Mitschnitt auf dem API-Server zeigt vom Inhalt der Kanäle nichts, nur verschlüsselte
    Daten. Eine manipulierte Vertrauensliste lehnen Browser und Controller ab (4.5).
+10. Im laufenden Betrieb fallen eine API und ein Datenbankknoten aus. Alles läuft weiter, und
+    angemeldete Benutzer bleiben angemeldet (4.2).
 
-### 4.2 Überblick (Abschnitt 1, abgestimmt; an die Abschnitte 5 und 6 angepasst)
+### 4.2 Überblick (Abschnitt 1, abgestimmt; an die späteren Abschnitte angepasst)
 
-Aufbau auf vier Servern:
+Aufbau auf sieben Servern:
 
 ```
-            Server 1                  Server 2              Server 4
-Browser ─HTTPS─► Apache + web/ ─/api/─► ngc-api ─────TLS────► MariaDB
-                                          ▲
-                                          │ Tunnel, den der Controller aufbaut
-                                          │
-                              Server 3:  ngc-controller ─stdin/stdout─► Dienst (Container)
-                                          │
-                                        SQLite (lokaler Zustand)
+Browser ─HTTPS─► Web (Apache + web/) ─/api/─► API 1 oder API 2 ─TLS─► DB 1 bis 3 (Galera)
+                                                     ▲
+                                 Tunnel zu jeder API │
+                                                     │
+                                Dienste: ngc-controller ─stdin/stdout─► Dienst (Container)
+                                            │
+                                          SQLite (lokaler Zustand)
 ```
 
-Auf jedem der vier Server läuft außerdem ein Controller. Er hält die Verbindung zur API und
-spielt die Updates für den Teil ein, der auf seinem Server liegt (4.8). Server 3 ist der Server
-für die Dienste der Apps.
+Auf jedem der sieben Server läuft außerdem ein Controller. Er hält einen Tunnel zu jeder API
+und spielt die Updates für den Teil ein, der auf seinem Server liegt (4.8). Der Server
+„Dienste" ist der Server für die Dienste der Apps.
 
-Alles auf einem Pi: dieselben Teile auf einer Maschine, die API nutzt SQLite statt MariaDB.
+**Lastverteilung** (am 19.09.2026 abgestimmt). Thomas: In der Konfiguration des Webinterface
+stehen mehrere Server, auf denen die API läuft, und die Last verteilt sich über diese Server;
+dasselbe für die Datenbank.
 
-Apache reicht `/api/` an die API weiter. Der Browser kennt damit nur den Webserver, und die
+- In der PHP-Konfiguration des Webinterface steht die Liste der API-Server mit IP-Adresse und
+  Port. Daraus richtet der Controller auf dem Webserver die Lastverteilung in Apache ein
+  (`mod_proxy_balancer`). Ändert sich die Liste, stellt er Apache selbst um.
+- Apache prüft laufend, welche APIs antworten, und schickt jede neue Verbindung an eine davon.
+  Fällt eine API aus, verbindet sich der Browser neu und landet bei einer anderen. Weil die
+  Sitzungen in der Datenbank liegen, geht es ohne neue Anmeldung weiter.
+- Jeder Controller hält zu jeder API einen Tunnel, so erreicht jede API jeden Controller
+  direkt.
+- Ein neuer API-Server kommt über die Vertrauensliste dazu, also nur mit Unterschrift eines
+  Admins. Einen fremden Server, der sich als API ausgibt, nehmen Controller und Browser nicht
+  an.
+- *Beim Ausformulieren ergänzt:* Alle APIs einer Installation teilen sich deren Schlüssel,
+  etwa den für die Kauf-Apps. Ein neuer API-Server bekommt sie beim Koppeln von einer laufenden
+  API, über eine verschlüsselte Verbindung und nur mit Unterschrift eines Admins.
+- In der Konfiguration der API steht ebenso die Liste der Datenbankknoten (4.6).
+
+Alles auf einem Pi: dieselben Teile auf einer Maschine, mit einer API und SQLite statt MariaDB.
+
+Apache reicht `/api/` an die APIs weiter. Der Browser kennt damit nur den Webserver, und die
 API muss nicht offen im Netz stehen.
 
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
-| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | 1 |
-| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | 2 |
-| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle vier |
-| Datenbank | `db/` | MariaDB einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | 4 |
+| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
+| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | API 1 und 2 |
+| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
+| Datenbank | `db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
 | Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
 | Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
 | Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
@@ -181,8 +202,7 @@ API muss nicht offen im Netz stehen.
 | Tests | `tests/` | Gesamttest über alle Teile; Browser-Tests mit Playwright in `tests/browser/` (4.6) | – |
 
 **Regel für mehrere APIs:** Sitzungen und alles Wichtige liegen in der Datenbank, nicht im
-Speicher einer einzelnen API. Jede API muss jede andere ersetzen können. Gebaut wird das erst
-im Teilprojekt Verteilung, aber der Kern darf es nicht verhindern.
+Speicher einer einzelnen API. Jede API kann jede andere ersetzen.
 
 **Nicht im Kern:** die Teilprojekte 2 bis 7.
 
@@ -341,7 +361,20 @@ Aktivieren eine Root-Aufgabe mit Unterschrift des Admins (4.5). Rechte an einer 
 Rolle Administrator, alle anderen sehen die App erst nach der Freigabe.
 
 **Deaktivieren.** Die App verschwindet aus allen Startmenüs, ihre offenen Kanäle werden
-geschlossen. Gelöscht wird nichts.
+geschlossen. Gelöscht wird nichts, die App lässt sich jederzeit wieder aktivieren.
+
+**Deinstallieren** (am 19.09.2026 von Thomas ergänzt). Wer eine App nicht mehr braucht, kann sie
+deinstallieren und so Speicher freigeben. Container, Images und alle Versionen der App werden
+entfernt. Dabei wählt der Admin, was mit den Daten der App passiert:
+
+- **Daten löschen:** Auch der Datenordner und die Einstellungen der App werden gelöscht, der
+  Speicher ist komplett frei.
+- **Daten aufheben:** Der verschlüsselte Datenordner und die Einstellungen bleiben liegen.
+  Installiert man die App später neu, ist alles wieder da. Der App-Store zeigt aufgehobene
+  Daten mit ihrer Größe an, damit man sie auch später noch löschen kann.
+
+Deinstallieren ist eine Root-Aufgabe mit Unterschrift des Admins. Eine gekaufte Lizenz bleibt
+erhalten, auch wenn die App gelöscht wird.
 
 **Im Browser.**
 
@@ -447,7 +480,7 @@ Benutzer mehrere Rollen, gilt die strengste.
 | Stufe | Erneute Passkey-Bestätigung bei … |
 |---|---|
 | Aus | nie, die Anmeldung reicht |
-| Kritisch (Standard) | Admins und Root-Berechtigungen ändern, Stores und ihre Schlüssel eintragen, eigene Apps hochladen, einem Dienst root-Rechte erlauben, Dauerfreigaben unterschreiben |
+| Kritisch (Standard) | Admins und Root-Berechtigungen ändern, Stores und ihre Schlüssel eintragen, eigene Apps hochladen, einem Dienst root-Rechte erlauben, Dauerfreigaben unterschreiben; *beim Ausformulieren ergänzt:* eine App samt Daten löschen |
 | Root | jeder Root-Aufgabe, also auch beim Aktivieren einer App und bei einem Update per Klick |
 | Hardcore | jeder Aktion, die etwas ändert, und jedem Kanal zu einem Dienst |
 
@@ -469,7 +502,7 @@ Benutzer mehrere Rollen, gilt die strengste.
 unterschreibt. Sie enthält:
 
 - die Admins und die Passkey-Schlüssel aller Benutzer,
-- die Schlüssel aller Controller,
+- die Schlüssel aller Controller und aller API-Server,
 - die Root-Berechtigungen je Server,
 - die Stufen der erneuten Passkey-Bestätigung mit ihren Listen.
 
@@ -519,6 +552,7 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 | Apache ↔ API (getrennte Server) | TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an |
 | API ↔ Controller | Tunnel wie bei einem VPN nach dem Noise-Protokoll, auf dem auch WireGuard aufbaut: AES-256-GCM, beide Seiten prüfen gegenseitig ihre Schlüssel. Außen herum zusätzlich TLS, damit der Tunnel durch Firewalls und Proxys kommt. |
 | API ↔ MariaDB | TLS; MariaDB nimmt nur verschlüsselte Verbindungen an |
+| Datenbankknoten untereinander | TLS für die Galera-Replikation |
 | MariaDB | eingebaute Verschlüsselung von MariaDB, AES-256 |
 | SQLite (API auf dem Pi, Controller) | ganze Datei mit AES-256 verschlüsselt (XTS) |
 | Daten der Apps | verschlüsselter Datenordner pro App (4.6) |
@@ -567,9 +601,14 @@ in der App Benutzer & Rechte.
 
 **Datenbank.**
 
-- **MariaDB ist der Standard** für die API, auf demselben Server oder woanders. Die Verbindung
-  läuft über TLS, die Daten liegen mit der eingebauten Verschlüsselung von MariaDB
-  verschlüsselt (AES-256), Geheimnisse verschlüsselt die API zusätzlich selbst.
+- **MariaDB ist der Standard**, als Galera-Cluster mit mindestens drei gleichberechtigten
+  Knoten oder, bei kleinen Installationen, als einzelner Server. In der Konfiguration der API
+  steht die Liste der Knoten. Die API verteilt die Last, weicht bei einem Ausfall auf einen
+  anderen Knoten aus und wiederholt eine Transaktion, wenn Galera sie wegen eines
+  gleichzeitigen Schreibzugriffs abweist. Mindestens drei Knoten braucht es, damit der Cluster
+  bei einem Ausfall entscheiden kann, welcher Teil weiterarbeiten darf.
+- Die Verbindungen laufen über TLS, die Daten liegen mit der eingebauten Verschlüsselung von
+  MariaDB verschlüsselt (AES-256), Geheimnisse verschlüsselt die API zusätzlich selbst.
 - Die API arbeitet mit einem Datenbankkonto, das nur Daten lesen und schreiben darf. Tabellen
   anlegen oder ändern darf nur ein eigenes Konto für Migrationen, und das benutzt nur die
   Installation über ulh.
@@ -622,9 +661,9 @@ in der App Benutzer & Rechte.
 - Für jeden der vier Teile gibt es ulh-Skripte zum Installieren, Konfigurieren und
   Deinstallieren, dazu eines für „alles auf einem Pi". Dank `answer.yaml` laufen sie auch ohne
   Rückfragen.
-- Die Skripte erledigen das Zertifikat (die drei Wege aus 4.5), MariaDB mit TLS und
-  Verschlüsselung, Podman auf den Servern mit Diensten, das Schlüsselpaar der Installation und
-  die Kopplung der Controller. Am Ende zeigen sie den Einmal-Code für den ersten Admin an.
+- Die Skripte erledigen das Zertifikat (die drei Wege aus 4.5), den MariaDB-Galera-Cluster mit TLS
+  und Verschlüsselung, die Lastverteilung in Apache, Podman auf den Servern mit Diensten, das
+  Schlüsselpaar der Installation und die Kopplung von Controllern und weiteren API-Servern. Am Ende zeigen sie den Einmal-Code für den ersten Admin an.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
 - Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
   eigenes Repository eingebunden.
@@ -654,9 +693,12 @@ in der App Benutzer & Rechte.
 - Ein Gesamttest startet API, Controller und einen Test-Dienst und spielt das Erfolgskriterium
   durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder
   eingespielte alte Nachrichten und eine gekaufte App, die eine fremde Installation öffnen will.
-- Der Gesamttest läuft einmal verteilt auf vier Servern und einmal komplett auf einem Pi.
+- Der Gesamttest läuft einmal verteilt auf sieben Servern und einmal komplett auf einem Pi.
+- Ausfall: Eine API und ein Datenbankknoten werden im laufenden Betrieb abgeschaltet.
+- Deinstallieren: Mit „Daten aufheben" und späterer Neuinstallation sind die Daten wieder da,
+  mit „Daten löschen" ist der Speicher frei.
 - Updates: automatisches Update, Zurücknehmen eines kaputten Updates, Ablehnen einer älteren
-  Version und die Reihenfolge über vier Server.
+  Version und die Reihenfolge über alle Server.
 - Ende zu Ende und Container: Ein Mitschnitt auf dem API-Server zeigt nur verschlüsselte Daten,
   eine manipulierte oder ältere Vertrauensliste wird abgelehnt, und ein Container kommt weder
   ins Netz noch an Dateien außerhalb seines Ordners.
@@ -667,17 +709,18 @@ in der App Benutzer & Rechte.
   laufen zu lassen. Thomas: „zum Testen unserer Software darfst du bauen was du willst. solange
   der core davon nicht betroffen wird".
 
-### 4.7 Arbeitsteilung auf vier Servern (Abschnitt 6, abgestimmt)
+### 4.7 Arbeitsteilung (Abschnitt 6, abgestimmt)
 
-**Rollen.** Ich (die Sitzung auf Thomas' Rechner) bin der **Koordinator**. Auf vier Servern
-arbeitet jeweils eine Claude-Sitzung, per Remote Control verbunden, an einem Teil:
+**Rollen.** Ich (die Sitzung auf Thomas' Rechner) bin der **Koordinator**. Vier
+Claude-Sitzungen, per Remote Control verbunden, arbeiten je an einem Teil. Jede sitzt auf einem
+Server ihres Teils und betreut alle Server, die dazugehören:
 
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
-| 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil |
-| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
-| 3 | Controller | `controller/` | Der Controller, der auf allen vier Servern läuft: Tunnel zur API, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
-| 4 | Datenbank | `db/` | MariaDB auf Server 4 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
+| Web | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
+| API 1 und 2 | API | `api/` | Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
+| Dienste | Controller | `controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
+| DB 1 bis 3 | Datenbank | `db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
 Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
 
@@ -690,7 +733,8 @@ in `contracts/` fest, und Thomas gibt sie frei:
 4. API und Controller ↔ Datenbank, als Go-Schnittstelle
 5. App-Paket, Store-Katalog und Lizenz, samt Verschlüsselung der Kauf-Apps, dazu NGC-Updates
    und Dauerfreigaben
-6. ulh-Konventionen: Pfade, Dienste, Ports, `answer.yaml`
+6. ulh-Konventionen und Konfiguration: Pfade, Dienste, Ports, `answer.yaml`, die Listen der
+   API-Server und Datenbankknoten
 7. Vertrauensliste und Ende-zu-Ende-Verschlüsselung zwischen Browser und Controller
 
 Zu jedem Vertrag gibt es Testdaten, zum Beispiel Beispielnachrichten und Beispielunterschriften.
@@ -713,13 +757,15 @@ wann der Teil fertig ist und was tabu ist, also fremde Ordner und das Ändern vo
 
 1. Der Koordinator schreibt Verträge, Anweisungen und das Grundgerüst, Thomas gibt frei.
 2. Die vier Teile werden parallel gebaut, jeder gegen die Testdaten.
-3. Alle vier Teile laufen zusammen auf den vier Servern, dann folgt der verteilte Gesamttest.
+3. Alle vier Teile laufen zusammen auf den sieben Servern, dann folgt der verteilte Gesamttest.
 4. Alles läuft auf einem einzigen Pi mit SQLite, dort folgt der zweite Gesamttest.
 5. Zum Schluss ein Sicherheitsdurchgang: Fuzzing, Angriffe und ein Review nach dem OWASP ASVS.
 
-**Voraussetzungen von Thomas, wenn es losgeht:** vier Server mit Debian oder Ubuntu, die sich
-gegenseitig im Netz erreichen, Zugriff auf das Repo von jedem Server aus, die vier Sitzungen
-per Remote Control verbunden und für Schritt 4 ein Pi.
+**Voraussetzungen von Thomas, wenn es losgeht:** sieben Server mit Debian oder Ubuntu, VMs
+genügen, etwa auf Proxmox: Web, API 1, API 2, DB 1, DB 2, DB 3 und Dienste. Sie müssen sich
+gegenseitig im Netz erreichen, und jeder braucht Zugriff auf das Repo. Die vier Sitzungen
+laufen auf Web, API 1, DB 1 und Dienste und sind per Remote Control verbunden. Für Schritt 4
+kommt ein Pi dazu.
 
 ### 4.8 Updates (am 19.09.2026 abgestimmt)
 
@@ -759,13 +805,16 @@ aktualisierte Teil nicht sauber, stellt der Controller selbst die alte Version w
 bekannter Sicherheitslücke zurückbringen kann.
 
 **Reihenfolge.** Die API verteilt ein NGC-Update Schritt für Schritt: erst die Datenbank, dann
-die API, dann die Controller, zuletzt das Webinterface. Der nächste Schritt beginnt erst, wenn
-der vorige läuft. Dafür versteht jeder Teil auch die vorige Version der Verträge, und jede
-Migration lässt die vorige API-Version weiterlaufen.
+die APIs, dann die Controller, zuletzt das Webinterface. Der nächste Schritt beginnt erst, wenn
+der vorige läuft. APIs und Datenbankknoten kommen nacheinander dran, damit immer einer läuft;
+so bleibt NGC während des Updates erreichbar. Dafür versteht jeder Teil auch die vorige
+Version der Verträge, und jede Migration lässt die vorige API-Version weiterlaufen.
+*Beim Ausformulieren ergänzt:* Den Ablauf steuert immer nur eine API; welche, regelt eine
+Sperre in der Datenbank.
 
 **Folgen.**
 
-- Auf jedem Server läuft ein Controller, im Kern also vier.
+- Auf jedem Server läuft ein Controller, im Kern also sieben.
 - Der Release-Schlüssel, mit dem NGC-Updates signiert werden, ist der wichtigste Schlüssel
   überhaupt: Wer ihn hat, kann Code auf alle Installationen mit Autoupdate bringen. Er liegt
   deshalb auf einem Hardware-Stick und nie auf einem Server.
@@ -787,8 +836,8 @@ Migration lässt die vorige API-Version weiterlaufen.
 
 **Für spätere Teilprojekte:**
 
-6. Teilprojekt 2: Was heißt „mehrere APIs" genau: Lastverteilung, Ausfallsicherheit, mehrere
-   Standorte?
+6. **Mehrere APIs:** entschieden am 19.09.2026, Lastverteilung mit Ausfallsicherheit, schon im
+   Kern (4.2).
 7. Teilprojekt 4: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint? Das
    ist bisher nur angenommen.
 8. Den privaten Schlüssel der Installation im TPM-Chip ablegen, wo einer vorhanden ist, damit
@@ -830,6 +879,9 @@ Migration lässt die vorige API-Version weiterlaufen.
 | 19.09.2026 | Vorgabe Thomas: Die Dienste der Apps laufen als einzelne Container („docker/lxc"). Ausgearbeitet in 4.3. |
 | 19.09.2026 | Container mit Podman, jeder unter dem Systembenutzer seiner App. LXC bleibt vorbehalten und lässt sich jederzeit als zweite Laufzeit einbauen. Die Vertrauensliste, von einem Admin mit Passkey unterschrieben, ist der gemeinsame Anker für Browser und Controller. |
 | 19.09.2026 | Offene Frage 5: Für Tests ist alles erlaubt, auch npm (Playwright in `tests/browser/`), solange NGC selbst nicht davon abhängt. |
+| 19.09.2026 | Vorgabe Thomas zu 4.2: In der PHP-Konfiguration des Webinterface stehen mehrere Server (IP-Adressen), auf denen die API läuft, mit Lastverteilung über diese Server. Dasselbe für die Datenbank. Ausgearbeitet in 4.2 und 4.6. |
+| 19.09.2026 | Lastverteilung für API und Datenbank schon im Kern (Variante A). Der verteilte Test läuft auf sieben Servern: Web, API 1 und 2, DB 1 bis 3 (MariaDB Galera) und Dienste. Es bleibt bei vier Claude-Sitzungen. |
+| 19.09.2026 | Vorgabe Thomas zu 4.4: Apps lassen sich deinstallieren, um Speicher freizugeben. Dabei wählt man „Daten löschen" oder „Daten aufheben" für eine spätere Neuinstallation. |
 
 ## 7. Fremdcode-Kandidaten
 
