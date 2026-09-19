@@ -1,10 +1,10 @@
 # NGC – Entwurf für den Kern
 
-**Stand:** 19.09.2026 · **Status:** Abschnitte 1 bis 6 mit Thomas abgestimmt, Ergänzungen bestätigt, offene Fragen in Kapitel 5
+**Stand:** 19.09.2026 · **Status:** Alles mit Thomas abgestimmt, offene Fragen für den Kern geklärt; die Freigabe des ganzen Entwurfs steht aus
 **Einstieg für die nächste Sitzung:** [`docs/STAND.md`](../../STAND.md)
 
 > Stellen, die ich erst beim Ausformulieren ergänzt habe, sind mit **„Beim Ausformulieren
-> ergänzt"** markiert. Thomas hat sie noch nicht gesehen.
+> ergänzt"** markiert. Thomas hat sie noch nicht bestätigt.
 
 ---
 
@@ -178,6 +178,7 @@ API muss nicht offen im Netz stehen.
 | Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
 | Fremdcode | `vendor/`, `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
 | Prototyp | `prototype/` | Unverändert als Vorlage für den Desktop | – |
+| Tests | `tests/` | Gesamttest über alle Teile; Browser-Tests mit Playwright in `tests/browser/` (4.6) | – |
 
 **Regel für mehrere APIs:** Sitzungen und alles Wichtige liegen in der Datenbank, nicht im
 Speicher einer einzelnen API. Jede API muss jede andere ersetzen können. Gebaut wird das erst
@@ -203,7 +204,8 @@ const t = await ngc.open("terminal", "shell")   // Datenstrom, der offen bleibt
 3. Die API prüft das Recht, sucht den Controller, auf dem der Dienst liegt, und öffnet dort
    den Kanal. Dabei hängt sie an, wer fragt: Benutzer, App und Aktion. Diese Angabe kommt nur
    von der API, der Browser kann sie nicht fälschen.
-4. Der Controller startet den Dienst.
+4. Der Controller prüft selbst, dass am anderen Ende wirklich die Sitzung dieses Benutzers
+   sitzt (4.5, Ende-zu-Ende-Verschlüsselung), und startet den Dienst.
 
 Kanalnummern gelten immer nur für eine Verbindung. Der Browser erfährt nie, auf welchem Server
 ein Dienst läuft, und der Dienst bekommt die Sitzung des Browsers nie zu sehen.
@@ -334,8 +336,8 @@ Test-Apps und stellt Test-Lizenzen aus.
 
 **Aktivieren.** Die API prüft das Manifest und trägt die App in die Datenbank ein. Die
 Container-Images der Dienste schickt sie über die Pipeline an den Controller, der für jede App
-einen eigenen Systembenutzer und Container anlegt. Weil das root-Rechte braucht, ist das Aktivieren eine
-Root-Aufgabe mit Unterschrift des Admins (4.5). Rechte an einer neuen App hat zuerst nur die
+einen eigenen Systembenutzer und Container anlegt. Weil das root-Rechte braucht, ist das
+Aktivieren eine Root-Aufgabe mit Unterschrift des Admins (4.5). Rechte an einer neuen App hat zuerst nur die
 Rolle Administrator, alle anderen sehen die App erst nach der Freigabe.
 
 **Deaktivieren.** Die App verschwindet aus allen Startmenüs, ihre offenen Kanäle werden
@@ -401,7 +403,8 @@ YubiKey 5 NFC oder den Nitrokey 3 NFC (Open Source), per USB und per NFC am Hand
 3. Die API stellt zwei Zertifikate aus, eines für den öffentlichen Schlüssel des Clients und
    eines für ihren eigenen. Ihren öffentlichen Schlüssel schickt sie an den Client. Das
    Client-Zertifikat unterschreibt zusätzlich der Passkey. So bleibt die Kette bis zum
-   Benutzer erhalten, und der Controller kann sie bei Root-Aufgaben prüfen.
+   Benutzer erhalten, und der Controller kann sie bei Root-Aufgaben und beim Aufbau jedes
+   Kanals prüfen.
 4. Ab da wird jede Nachricht zwischen Webclient und API zusätzlich zu TLS verschlüsselt: Mit
    den beiden Schlüsselpaaren vereinbaren Client und API einen gemeinsamen AES-256-Schlüssel,
    der nie übertragen wird, und verschlüsseln damit jede Nachricht (AES-256-GCM). Jede
@@ -503,7 +506,7 @@ jedem Kanal neu, anhand von Benutzer, Rolle, App, Aktion und Lizenz.
 **Controller.** API und Controller weisen sich gegenseitig mit Schlüsseln aus. Einen Controller
 auf einem anderen Server koppelt man einmalig mit einem Kopplungscode, den die API ausgibt;
 läuft alles auf einer Maschine, koppelt das ulh-Skript automatisch. Der Controller startet nur
-Programme aktivierter Apps, jeweils unter dem eigenen Systembenutzer der App. Er selbst läuft
+Container aktivierter Apps, jeweils unter dem eigenen Systembenutzer der App. Er selbst läuft
 als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein wie möglich.
 
 **Verschlüsselung.**
@@ -585,9 +588,9 @@ in der App Benutzer & Rechte.
   Stores, Lizenzen, Einstellungen, Protokoll.
 - **Verschlüsselte App-Daten:** Damit auch die SQLite-Dateien der Apps verschlüsselt sind, egal
   in welcher Sprache ein Dienst geschrieben ist, stellt der Controller jeder App einen eigenen
-  Datenordner bereit und verschlüsselt ihn. Der Ordner wird in den Container der App eingebunden. Vorschlag: fscrypt, die Ordnerverschlüsselung des
-  Linux-Kernels (AES-256-XTS). Im Plan zu prüfen, ob das auf allen Zielsystemen geht; sonst ein
-  verschlüsselter Container pro App.
+  Datenordner bereit, verschlüsselt ihn und bindet ihn in den Container der App ein.
+  Vorschlag: fscrypt, die Ordnerverschlüsselung des Linux-Kernels (AES-256-XTS). Im Plan zu
+  prüfen, ob das auf allen Zielsystemen geht; sonst ein verschlüsselter Container pro App.
 - **Startaktion:** Eine App kann im Manifest eine Startaktion angeben. Der Controller ruft sie
   nach jedem Start selbst auf, auch ohne API. So setzt zum Beispiel eine Firewall ihre Regeln
   nach einem Neustart wieder.
@@ -620,8 +623,8 @@ in der App Benutzer & Rechte.
   Deinstallieren, dazu eines für „alles auf einem Pi". Dank `answer.yaml` laufen sie auch ohne
   Rückfragen.
 - Die Skripte erledigen das Zertifikat (die drei Wege aus 4.5), MariaDB mit TLS und
-  Verschlüsselung, Podman auf den Servern mit Diensten, das Schlüsselpaar der Installation und die Kopplung der Controller. Am Ende
-  zeigen sie den Einmal-Code für den ersten Admin an.
+  Verschlüsselung, Podman auf den Servern mit Diensten, das Schlüsselpaar der Installation und
+  die Kopplung der Controller. Am Ende zeigen sie den Einmal-Code für den ersten Admin an.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
 - Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
   eigenes Repository eingebunden.
@@ -646,7 +649,7 @@ in der App Benutzer & Rechte.
 **Tests.**
 
 - Go-Tests für Protokoll, Rechteprüfung, Kryptografie (Sitzungszertifikate,
-  Root-Unterschriften, Tunnel, Kauf-Apps) und Datenbank. Alle Datenbanktests laufen gegen
+  Root-Unterschriften, Tunnel, Ende zu Ende, Vertrauensliste, Kauf-Apps) und Datenbank. Alle Datenbanktests laufen gegen
   MariaDB und gegen SQLite.
 - Ein Gesamttest startet API, Controller und einen Test-Dienst und spielt das Erfolgskriterium
   durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder
@@ -658,8 +661,11 @@ in der App Benutzer & Rechte.
   eine manipulierte oder ältere Vertrauensliste wird abgelehnt, und ein Container kommt weder
   ins Netz noch an Dateien außerhalb seines Ordners.
 - Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
-- Das Webinterface prüfen wir im Browser. Ob Testwerkzeuge wie Playwright per npm kommen
-  dürfen, ist offene Frage 5; ohne npm ginge ein Browsertest auch aus Go heraus.
+- Das Webinterface prüfen wir automatisch mit Playwright in den Engines von Chrome, Firefox und
+  Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `tests/browser/`, mit
+  festgeschriebenen Versionen, nur auf Test-Servern und nie nötig, um NGC zu bauen oder
+  laufen zu lassen. Thomas: „zum Testen unserer Software darfst du bauen was du willst. solange
+  der core davon nicht betroffen wird".
 
 ### 4.7 Arbeitsteilung auf vier Servern (Abschnitt 6, abgestimmt)
 
@@ -768,7 +774,7 @@ Migration lässt die vorige API-Version weiterlaufen.
 
 ## 5. Offene Fragen
 
-**Für den Kern, vor dem Umsetzungsplan zu klären:**
+**Für den Kern:** alle fünf entschieden.
 
 1. **Lizenz von NGC:** entschieden am 19.09.2026, siehe Kapitel 2.
 2. **App-Updates:** entschieden am 19.09.2026, Autoupdate für alle Teile (4.8).
@@ -776,8 +782,8 @@ Migration lässt die vorige API-Version weiterlaufen.
    eigenen Listen (4.5).
 4. **Die zwei Restrisiken:** entschieden am 19.09.2026, Variante B und
    Ende-zu-Ende-Verschlüsselung (4.5).
-5. **Entwicklungswerkzeuge:** Dürfen reine Testwerkzeuge (Testrunner, Browser-Tests) per
-   Paketmanager kommen? Diese Frage ist aus der Regel „Software ohne Abhängigkeiten" offen.
+5. **Testwerkzeuge:** entschieden am 19.09.2026. Für Tests ist alles erlaubt, auch npm,
+   solange NGC selbst nicht davon abhängt (4.6).
 
 **Für spätere Teilprojekte:**
 
@@ -823,6 +829,7 @@ Migration lässt die vorige API-Version weiterlaufen.
 | 19.09.2026 | Vorgabe Thomas: Verschlüsselung vom Browser bis direkt zum Dienst kommt in den Kern, „nicht später. jetzt." Ausgearbeitet in 4.5. |
 | 19.09.2026 | Vorgabe Thomas: Die Dienste der Apps laufen als einzelne Container („docker/lxc"). Ausgearbeitet in 4.3. |
 | 19.09.2026 | Container mit Podman, jeder unter dem Systembenutzer seiner App. LXC bleibt vorbehalten und lässt sich jederzeit als zweite Laufzeit einbauen. Die Vertrauensliste, von einem Admin mit Passkey unterschrieben, ist der gemeinsame Anker für Browser und Controller. |
+| 19.09.2026 | Offene Frage 5: Für Tests ist alles erlaubt, auch npm (Playwright in `tests/browser/`), solange NGC selbst nicht davon abhängt. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -837,4 +844,5 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | Argon2id | `golang.org/x/crypto/argon2` | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
 | Noise-Tunnel | `github.com/flynn/noise` | zu prüfen |
+| Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `tests/browser/` | erlaubt seit 19.09.2026 |
 | Noise im Browser (Ende zu Ende) | JavaScript-Umsetzung ohne npm | zu prüfen; findet sich keine geprüfte, dann eigene Umsetzung des Ablaufs nach der Spezifikation, getestet mit den offiziellen Testvektoren. Die Kryptografie selbst kommt aus der Web Crypto API des Browsers. |
