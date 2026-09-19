@@ -410,6 +410,28 @@ Aktivität oder beim Abmelden.
 - Jede unterschriebene Aufgabe kommt ins Protokoll. So lässt sich nachweisen, wer sie
   angeordnet hat.
 
+**Erneute Passkey-Bestätigung** (am 19.09.2026 abgestimmt). Thomas: „einstellbar von überhaupt
+nicht bis hardcore, inkl. eigener White- und Blacklist". Die Stufe gilt pro Rolle; hat ein
+Benutzer mehrere Rollen, gilt die strengste.
+
+| Stufe | Erneute Passkey-Bestätigung bei … |
+|---|---|
+| Aus | nie, die Anmeldung reicht |
+| Kritisch (Standard) | Admins und Root-Berechtigungen ändern, Stores und ihre Schlüssel eintragen, eigene Apps hochladen, einem Dienst root-Rechte erlauben, Dauerfreigaben unterschreiben |
+| Root | jeder Root-Aufgabe, also auch beim Aktivieren einer App und bei einem Update per Klick |
+| Hardcore | jeder Aktion, die etwas ändert, und jedem Kanal zu einem Dienst |
+
+- **Blacklist:** Was hier steht, braucht immer eine Bestätigung, auch wenn die Stufe niedriger
+  ist.
+- **Whitelist:** Was hier steht, braucht nie eine Bestätigung, auch wenn die Stufe höher ist.
+- Ein Eintrag kann eine einzelne Aktion, eine ganze App oder ein ganzer Server sein. Steht
+  etwas auf beiden Listen, gewinnt die Blacklist.
+- Stufe und Listen zu ändern verlangt immer den Passkey, egal was eingestellt ist. Sonst könnte
+  jemand mit einer gekaperten Sitzung zuerst die Stufe herunterdrehen.
+- Bei Root-Aufgaben prüft der Controller die Einstellung selbst, wie seine Liste der
+  Root-Berechtigungen, damit die API allein sie nicht aushebeln kann. Für alles andere prüft
+  die API.
+
 **Rechte.** Die Shell blendet nur aus, was jemand nicht darf. Entscheiden tut die API, bei
 jedem Kanal neu, anhand von Benutzer, Rolle, App, Aktion und Lizenz.
 
@@ -467,8 +489,8 @@ in der App Benutzer & Rechte.
 - *Noch nicht mit Thomas besprochen:* Wer den Webserver übernimmt, der die Shell ausliefert,
   kann einem angemeldeten Admin veränderten Code unterschieben und dessen Sitzungsschlüssel
   benutzen, solange die Sitzung offen ist. Dagegen helfen die strenge CSP, ein gehärteter
-  Webserver, kurze Sitzungen und eventuell eine erneute Bestätigung per Passkey bei kritischen
-  Aktionen (offene Fragen 3 und 4).
+  Webserver, kurze Sitzungen und die einstellbare erneute Passkey-Bestätigung (offene
+  Frage 4).
 
 ### 4.6 Datenbank, Installation, Fehler, Tests (Abschnitt 5, abgestimmt)
 
@@ -491,8 +513,8 @@ in der App Benutzer & Rechte.
   umbauen muss. IDs erzeugt die Anwendung, Zeitstempel sind Zahlen, SQLite-eigene Funktionen
   gibt es nicht. Änderungen am Aufbau laufen über nummerierte Migrationen.
 - **Tabellen der API:** Benutzer, Rollen, Rechte, Schlüssel (Passkeys und Sticks), Sitzungen,
-  Apps, Dienste, Controller, Root-Berechtigungen (Kopie), Stores, Lizenzen, Einstellungen,
-  Protokoll.
+  Apps, Dienste, Controller, Root-Berechtigungen (Kopie), Bestätigungsstufen und ihre Listen,
+  Stores, Lizenzen, Einstellungen, Protokoll.
 - **Verschlüsselte App-Daten:** Damit auch die SQLite-Dateien der Apps verschlüsselt sind, egal
   in welcher Sprache ein Dienst geschrieben ist, stellt der Controller jeder App einen eigenen
   Datenordner bereit und verschlüsselt ihn. Vorschlag: fscrypt, die Ordnerverschlüsselung des
@@ -678,7 +700,8 @@ Migration lässt die vorige API-Version weiterlaufen.
 
 1. **Lizenz von NGC:** entschieden am 19.09.2026, siehe Kapitel 2.
 2. **App-Updates:** entschieden am 19.09.2026, Autoupdate für alle Teile (4.8).
-3. **Kritische Aktionen** zusätzlich mit einer erneuten Passkey-Bestätigung absichern?
+3. **Erneute Passkey-Bestätigung:** entschieden am 19.09.2026, einstellbar in vier Stufen mit
+   eigenen Listen (4.5).
 4. **Die zwei unbesprochenen Grenzen** in 4.5: so akzeptieren oder weiter absichern?
 5. **Entwicklungswerkzeuge:** Dürfen reine Testwerkzeuge (Testrunner, Browser-Tests) per
    Paketmanager kommen? Diese Frage ist aus der Regel „Software ohne Abhängigkeiten" offen.
@@ -720,6 +743,7 @@ Migration lässt die vorige API-Version weiterlaufen.
 | 19.09.2026 | Lizenz: AGPL-3.0 für NGC, MIT für `ngc.js` und die Verträge (offene Frage 1) |
 | 19.09.2026 | Vorgabe Thomas: Alle Teile unterstützen Autoupdate — Webinterface, API, Server-Controller, Datenbank und Apps. Modi: automatisch (Standard), halbautomatisch (per Klick) oder nur Benachrichtigung und dann Klick. |
 | 19.09.2026 | Update-Konzept abgestimmt (4.8): Controller auf jedem Server spielt Updates ein, Dauerfreigabe des Admins für den Modus „automatisch", Rücknahme bei Fehlschlag, keine älteren Versionen, Reihenfolge Datenbank → API → Controller → Webinterface, Release-Schlüssel auf einem Hardware-Stick |
+| 19.09.2026 | Erneute Passkey-Bestätigung einstellbar (offene Frage 3): Stufen Aus, Kritisch (Standard), Root und Hardcore pro Rolle, dazu eigene Black- und Whitelist; Änderungen daran verlangen immer den Passkey (4.5) |
 
 ## 7. Fremdcode-Kandidaten
 
