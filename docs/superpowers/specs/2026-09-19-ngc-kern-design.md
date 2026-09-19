@@ -1,10 +1,7 @@
 # NGC – Entwurf für den Kern
 
-**Stand:** 19.09.2026 · **Status:** Abschnitte 1 bis 6 mit Thomas abgestimmt, offene Fragen in Kapitel 5
+**Stand:** 19.09.2026 · **Status:** Abschnitte 1 bis 6 mit Thomas abgestimmt, Ergänzungen bestätigt, offene Fragen in Kapitel 5
 **Einstieg für die nächste Sitzung:** [`docs/STAND.md`](../../STAND.md)
-
-> Stellen, die ich erst beim Ausformulieren ergänzt habe, sind mit **„Beim Ausformulieren
-> ergänzt"** markiert. Thomas hat sie noch nicht gesehen.
 
 ---
 
@@ -98,11 +95,11 @@ aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte
 
 | # | Teilprojekt | Inhalt |
 |---|---|---|
-| 1 | **Kern** | Die Pipeline von Anfang an verteilt: je ein Webserver, eine API, ein Datenbankserver (MariaDB) und ein Controller auf eigenen Servern. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, Benutzer & Rechte, Sicherheitsmodell, Beispiel-Apps und die Installation über ulh. |
+| 1 | **Kern** | Die Pipeline von Anfang an verteilt: je ein Webserver, eine API, ein Datenbankserver (MariaDB) und ein Controller auf eigenen Servern. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell, Beispiel-Apps und die Installation über ulh. |
 | 2 | **Verteilung** | Mehrere APIs (x), Datenbanken (y) und Controller (z); Dienste an bestimmte Server zuweisen |
 | 3 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
 | 4 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
-| 5 | **Store-Server** | Serverseite des globalen Stores: Entwickler veröffentlichen Apps, Kunden bezahlen, der Server stellt Lizenzen aus |
+| 5 | **Store-Server** | Serverseite des globalen Stores: Entwickler veröffentlichen Apps, Kunden bezahlen, der Server stellt die Lizenzen aus, jeweils mit dem Schlüssel der App für die Installation des Käufers |
 | 6 | **NGC-Zertifizierungsstelle** | Eigene App: Zertifikate für Server und Geräte, PIV-Zertifikate für USB-/NFC-Sticks |
 | 7 | **Apps** | Endausbau: LDAP/AD, Fileserver, Firewall … |
 
@@ -124,11 +121,11 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
    „virtuelles Terminal", die Ausgabe kommt zurück.
 4. Ein Benutzer ohne das Recht sieht die Terminal-App gar nicht.
 5. Eine App aus einem Test-Store installieren und eine Kauf-App mit einer Test-Lizenz
-   freischalten.
+   freischalten. Eine fremde Installation kann dieselbe Kauf-App nicht öffnen.
 6. Die Angriffe aus dem Gesamttest scheitern (4.6).
-7. *Beim Ausformulieren ergänzt:* Die Verbindung zwischen API und Controller wird getrennt,
-   und der Server mit dem Controller wird neu gestartet. Der Controller stellt den Zustand
-   seiner Apps trotzdem wieder her (Test-App mit Startaktion, 4.6).
+7. Die Verbindung zwischen API und Controller wird getrennt, und der Server mit dem Controller
+   wird neu gestartet. Der Controller stellt den Zustand seiner Apps trotzdem wieder her
+   (Test-App mit Startaktion, 4.6).
 
 ### 4.2 Überblick (Abschnitt 1, abgestimmt; an die Abschnitte 5 und 6 angepasst)
 
@@ -153,8 +150,8 @@ API muss nicht offen im Netz stehen.
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
 | Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus und verwaltet die Liste der APIs. | 1 |
-| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen, Protokoll. Dazu das Werkzeug `ngc-store`, das Apps packt und Kataloge signiert. | 2 |
-| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, lokaler Zustand, der Dienst „virtuelles Terminal" | 3 |
+| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | 2 |
+| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, der Dienst „virtuelles Terminal" | 3 |
 | Datenbank | `db/` | MariaDB einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | 4 |
 | Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
 | Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
@@ -237,8 +234,8 @@ Manifest sagt außerdem, welches Programm ein Dienst startet und ob er root-Rech
 - **Eigene Apps:** Ein Administrator lädt ein App-Paket hoch, das nur in dieser Installation
   gilt.
 
-**Was ein Store ist.** Für Gratis-Apps reichen Dateien auf einem beliebigen Webserver: ein
-Katalog mit Apps, Versionen und Preisen sowie die Pakete. Der Store signiert seinen Katalog,
+**Was ein Store ist.** Ein Store besteht aus Dateien auf einem beliebigen Webserver: einem
+Katalog mit Apps, Versionen und Preisen sowie den Paketen. Der Store signiert seinen Katalog,
 und im Katalog steht zu jedem Paket eine Prüfsumme. So fällt jede Manipulation auf.
 
 - Den Schlüssel des globalen Stores bringt NGC mit. Bei jedem weiteren Store bestätigt der
@@ -247,8 +244,9 @@ und im Katalog steht zu jedem Paket eine Prüfsumme. So fällt jede Manipulation
   installieren.
 - Mit `ngc-store` kann jeder Apps packen und einen signierten Katalog erzeugen, also einen
   eigenen Store aufsetzen.
-- Wer Apps verkaufen will, braucht zusätzlich einen Store-Server (Teilprojekt 5). Der stellt
-  Lizenzen aus und gibt bezahlte Pakete nur an Käufer heraus.
+- Wer Apps verkaufen will, braucht zusätzlich einen Store-Server (Teilprojekt 5), der die
+  Lizenzen ausstellt. Die Kauf-Apps selbst sind verschlüsselt und können wie Gratis-Apps als
+  einfache Dateien bereitliegen (siehe „Verschlüsselte Kauf-Apps").
 
 **Gratis und Kauf.** Im Katalog steht für jede App: gratis, Kauf oder Abo, jeweils pro Site
 oder pro Benutzer. Bezahlt wird auf der Webseite des Stores, nie in NGC, deshalb sieht NGC keine
@@ -261,11 +259,37 @@ prüft sie selbst, auch ohne Internet:
   läuft die App noch eine Übergangsfrist weiter. Danach wird sie deaktiviert, aber nicht
   gelöscht.
 
-Wer NGC selbst umbaut, kann die Lizenzprüfung umgehen. Das lässt sich bei offener Software
-nicht verhindern.
+**Verschlüsselte Kauf-Apps** (Idee von Thomas, 19.09.2026). Eine Kauf-App lässt sich nur in der
+Installation öffnen, für die sie gekauft wurde:
+
+1. Der Store verschlüsselt jede Kauf-App einmal mit einem zufälligen AES-256-Schlüssel. Die
+   verschlüsselte Datei darf jeder herunterladen, ohne den Schlüssel ist sie wertlos.
+2. Jede Installation bekommt bei der Einrichtung ein eigenes Schlüsselpaar. Beim Kauf
+   verschlüsselt der Store den Schlüssel der App mit dem öffentlichen Schlüssel dieser
+   Installation und legt ihn in die signierte Lizenz.
+3. Nur die API dieser Installation kann ihn mit ihrem privaten Schlüssel entschlüsseln. Beim
+   Aktivieren gibt sie ihn über den verschlüsselten Tunnel nur an die eigenen, gekoppelten
+   Controller weiter. Erst dort werden die Programme entschlüsselt und im verschlüsselten
+   Datenordner der App abgelegt (4.6). Die Oberfläche entschlüsselt die API für den Browser.
+4. Läuft ein Abo aus, gibt die API den Schlüssel nicht mehr heraus. Nach der Übergangsfrist
+   starten die Controller den Dienst nicht mehr.
+
+Grenzen:
+
+- Die Oberfläche einer App läuft im Browser und muss dort unverschlüsselt ankommen. Jeder
+  Benutzer der Installation kann sie im Browser ansehen. Geschützt ist sie nur auf dem
+  Übertragungsweg und gegen die Weitergabe an andere Installationen.
+- Wer auf einem Server der Installation root ist, kann das entschlüsselte Programm eines
+  Dienstes kopieren.
+- Wer die ganze Installation samt Schlüssel auf eine andere Maschine kopiert, nimmt die Apps
+  mit. Später hilft dagegen, den privaten Schlüssel im TPM-Chip des Servers abzulegen (offene
+  Frage 8).
+- Wer NGC selbst umbaut, kann Lizenzprüfung und Verschlüsselung umgehen. Einfaches Weitergeben
+  und das Herunterladen ohne Kauf bringen aber nichts mehr.
 
 Bis der Store-Server fertig ist, besteht der globale Store nur aus einem signierten Katalog mit
-Gratis-Apps. Kauf-Apps testet der Kern mit einem Test-Store und Test-Lizenzen.
+Gratis-Apps. Kauf-Apps testet der Kern mit einem Test-Store: `ngc-store` verschlüsselt die
+Test-Apps und stellt Test-Lizenzen aus.
 
 **Aktivieren.** Die API prüft das Manifest und trägt die App in die Datenbank ein. Die
 Programme der Dienste schickt sie über die Pipeline an den Controller, der für jede App einen
@@ -384,14 +408,15 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 |---|---|
 | Browser ↔ Apache | TLS 1.3, ausschließlich AES-256-GCM |
 | Browser ↔ API | zusätzlich Sitzungsschlüssel und AES-256-GCM (siehe Sitzung, Schritt 4) |
-| Apache ↔ API (getrennte Server) | *Beim Ausformulieren ergänzt:* TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an |
+| Apache ↔ API (getrennte Server) | TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an |
 | API ↔ Controller | Tunnel wie bei einem VPN nach dem Noise-Protokoll, auf dem auch WireGuard aufbaut: AES-256-GCM, beide Seiten prüfen gegenseitig ihre Schlüssel. Außen herum zusätzlich TLS, damit der Tunnel durch Firewalls und Proxys kommt. |
 | API ↔ MariaDB | TLS; MariaDB nimmt nur verschlüsselte Verbindungen an |
 | MariaDB | eingebaute Verschlüsselung von MariaDB, AES-256 |
 | SQLite (API auf dem Pi, Controller) | ganze Datei mit AES-256 verschlüsselt (XTS) |
-| Daten der Apps | *Beim Ausformulieren ergänzt:* verschlüsselter Datenordner pro App, siehe 4.6 |
+| Daten der Apps | verschlüsselter Datenordner pro App (4.6) |
+| Kauf-Apps | pro App AES-256; der Schlüssel steckt in der Lizenz, verschlüsselt mit dem öffentlichen Schlüssel der Installation (4.4) |
 | Geheimnisse in der Datenbank | zusätzlich von der API mit eigenem Schlüssel verschlüsselt, etwa Zugangsschlüssel zu Stores. So bleiben sie auch in einer anderen Datenbank oder in einer Sicherung geschützt. |
-| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen und Programmdateien, Schlüsselaustausch im Tunnel |
+| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen und Programmdateien, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel |
 
 **Zertifikate für die Webseite.** Das ulh-Skript des Webinterface bietet drei Wege an:
 
@@ -418,7 +443,7 @@ in der App Benutzer & Rechte.
 
 **Grenzen.**
 
-- Wer NGC selbst umbaut, kann die Lizenzprüfung umgehen (4.4).
+- Wer NGC selbst umbaut, kann Lizenzprüfung und Verschlüsselung der Kauf-Apps umgehen (4.4).
 - *Noch nicht mit Thomas besprochen:* Aufgaben ohne root laufen im Vertrauen auf die API. Wer
   die API übernimmt, kann solche Aufgaben im Namen von Benutzern auslösen und die Daten in der
   Pipeline sehen.
@@ -451,14 +476,14 @@ in der App Benutzer & Rechte.
 - **Tabellen der API:** Benutzer, Rollen, Rechte, Schlüssel (Passkeys und Sticks), Sitzungen,
   Apps, Dienste, Controller, Root-Berechtigungen (Kopie), Stores, Lizenzen, Einstellungen,
   Protokoll.
-- *Beim Ausformulieren ergänzt:* **Verschlüsselte App-Daten.** Damit auch die SQLite-Dateien
-  der Apps verschlüsselt sind, egal in welcher Sprache ein Dienst geschrieben ist, stellt der
-  Controller jeder App einen eigenen Datenordner bereit und verschlüsselt ihn. Vorschlag:
-  fscrypt, die Ordnerverschlüsselung des Linux-Kernels (AES-256-XTS). Im Plan zu prüfen, ob
-  das auf allen Zielsystemen geht; sonst ein verschlüsselter Container pro App.
-- *Beim Ausformulieren ergänzt:* **Startaktion.** Eine App kann im Manifest eine Startaktion
-  angeben. Der Controller ruft sie nach jedem Start selbst auf, auch ohne API. So setzt zum
-  Beispiel eine Firewall ihre Regeln nach einem Neustart wieder.
+- **Verschlüsselte App-Daten:** Damit auch die SQLite-Dateien der Apps verschlüsselt sind, egal
+  in welcher Sprache ein Dienst geschrieben ist, stellt der Controller jeder App einen eigenen
+  Datenordner bereit und verschlüsselt ihn. Vorschlag: fscrypt, die Ordnerverschlüsselung des
+  Linux-Kernels (AES-256-XTS). Im Plan zu prüfen, ob das auf allen Zielsystemen geht; sonst ein
+  verschlüsselter Container pro App.
+- **Startaktion:** Eine App kann im Manifest eine Startaktion angeben. Der Controller ruft sie
+  nach jedem Start selbst auf, auch ohne API. So setzt zum Beispiel eine Firewall ihre Regeln
+  nach einem Neustart wieder.
 
 **Regeln für sicheres Programmieren, verbindlich für alle vier Teile.**
 
@@ -488,8 +513,8 @@ in der App Benutzer & Rechte.
   Deinstallieren, dazu eines für „alles auf einem Pi". Dank `answer.yaml` laufen sie auch ohne
   Rückfragen.
 - Die Skripte erledigen das Zertifikat (die drei Wege aus 4.5), MariaDB mit TLS und
-  Verschlüsselung und die Kopplung der Controller. Am Ende zeigen sie den Einmal-Code für den
-  ersten Admin an.
+  Verschlüsselung, das Schlüsselpaar der Installation und die Kopplung der Controller. Am Ende
+  zeigen sie den Einmal-Code für den ersten Admin an.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
 - Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
   eigenes Repository eingebunden.
@@ -512,11 +537,11 @@ in der App Benutzer & Rechte.
 **Tests.**
 
 - Go-Tests für Protokoll, Rechteprüfung, Kryptografie (Sitzungszertifikate,
-  Root-Unterschriften, Tunnel) und Datenbank. Alle Datenbanktests laufen gegen MariaDB und gegen
-  SQLite.
+  Root-Unterschriften, Tunnel, Kauf-Apps) und Datenbank. Alle Datenbanktests laufen gegen
+  MariaDB und gegen SQLite.
 - Ein Gesamttest startet API, Controller und einen Test-Dienst und spielt das Erfolgskriterium
-  durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften und
-  wieder eingespielte alte Nachrichten.
+  durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder
+  eingespielte alte Nachrichten und eine gekaufte App, die eine fremde Installation öffnen will.
 - Der Gesamttest läuft einmal verteilt auf vier Servern und einmal komplett auf einem Pi.
 - Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
 - Das Webinterface prüfen wir im Browser. Ob Testwerkzeuge wie Playwright per npm kommen
@@ -530,8 +555,8 @@ arbeitet jeweils eine Claude-Sitzung, per Remote Control verbunden, an einem Tei
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
 | 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, dazu der PHP-Teil |
-| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen, Protokoll, das Werkzeug `ngc-store` |
-| 3 | Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, der Dienst „virtuelles Terminal" |
+| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, das Werkzeug `ngc-store` |
+| 3 | Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, der Dienst „virtuelles Terminal" |
 | 4 | Datenbank | `db/` | MariaDB auf Server 4 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse |
 
 Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
@@ -543,7 +568,7 @@ in `contracts/` fest, und Thomas gibt sie frei:
 2. API ↔ Controller
 3. Controller ↔ Dienst
 4. API und Controller ↔ Datenbank, als Go-Schnittstelle
-5. App-Paket, Store-Katalog und Lizenz
+5. App-Paket, Store-Katalog und Lizenz, samt Verschlüsselung der Kauf-Apps
 6. ulh-Konventionen: Pfade, Dienste, Ports, `answer.yaml`
 
 Zu jedem Vertrag gibt es Testdaten, zum Beispiel Beispielnachrichten und Beispielunterschriften.
@@ -585,15 +610,15 @@ per Remote Control verbunden und für Schritt 4 ein Pi.
 4. **Die zwei unbesprochenen Grenzen** in 4.5: so akzeptieren oder weiter absichern?
 5. **Entwicklungswerkzeuge:** Dürfen reine Testwerkzeuge (Testrunner, Browser-Tests) per
    Paketmanager kommen? Diese Frage ist aus der Regel „Software ohne Abhängigkeiten" offen.
-6. **Beim Ausformulieren ergänzte Stellen** bestätigen: Erfolgskriterium 7, TLS zwischen Apache
-   und API, verschlüsselte App-Datenordner, Startaktion.
 
 **Für spätere Teilprojekte:**
 
-7. Teilprojekt 2: Was heißt „mehrere APIs" genau: Lastverteilung, Ausfallsicherheit, mehrere
+6. Teilprojekt 2: Was heißt „mehrere APIs" genau: Lastverteilung, Ausfallsicherheit, mehrere
    Standorte?
-8. Teilprojekt 4: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint? Das
+7. Teilprojekt 4: Ist mit „Controller für Tablet und Handy" eine zweite Oberfläche gemeint? Das
    ist bisher nur angenommen.
+8. Den privaten Schlüssel der Installation im TPM-Chip ablegen, wo einer vorhanden ist, damit
+   er sich nicht kopieren lässt (4.4).
 9. Teilprojekt 7: Thomas' Projekt `ulh` auch als Grundlage für Dienste nutzen, die Server
    einrichten (Skripte für alle Distributionen, `answer.yaml` für Läufe ohne Rückfragen)?
 
@@ -618,6 +643,8 @@ per Remote Control verbunden und für Schritt 4 ein Pi.
 | 19.09.2026 | Vorgabe Thomas: Installation, Konfiguration und Deinstallation laufen über ulh. |
 | 19.09.2026 | Abschnitt 5 abgestimmt: Plattformen, Datenbank, Regeln für sicheres Programmieren, Installation über ulh (Skripte im NGC-Repo unter `ulh/`, solange es privat ist), Fehlerbehandlung, Tests |
 | 19.09.2026 | Abschnitt 6 abgestimmt: Koordinator und vier Sitzungen, Verträge zuerst, eigene `CLAUDE.md` je Teil, Branch und Pull Request je Teil. Der Kern läuft damit von Anfang an verteilt, Teilprojekt 2 umfasst nur noch mehrere APIs, Datenbanken und Controller. |
+| 19.09.2026 | Beim Ausformulieren ergänzt und von Thomas bestätigt: Erfolgskriterium 7 (Server läuft ohne API weiter), TLS mit AES-256 zwischen Apache und API, verschlüsselter Datenordner pro App, Startaktion im Manifest |
+| 19.09.2026 | Idee Thomas, aufgenommen: Kauf-Apps werden für die kaufende Installation verschlüsselt. Nur deren API und Controller können sie öffnen (4.4). |
 
 ## 7. Fremdcode-Kandidaten
 

@@ -6,8 +6,8 @@
 
 Den Entwurf für den Kern freigeben lassen und danach den Umsetzungsplan schreiben:
 
-1. Thomas liest den ganzen Entwurf, vor allem die Stellen mit „Beim Ausformulieren ergänzt".
-2. Die offenen Fragen 1 bis 6 aus Kapitel 5 des Entwurfs klären, eine nach der anderen.
+1. Die offenen Fragen 1 bis 5 aus Kapitel 5 des Entwurfs klären, eine nach der anderen.
+2. Thomas gibt den ganzen Entwurf frei.
 3. Erst dann den Umsetzungsplan schreiben. Sein erster Schritt ist Schritt 1 aus 4.7 des
    Entwurfs: Verträge in `contracts/`, eine `CLAUDE.md` je Teil und das Grundgerüst.
 
@@ -16,7 +16,7 @@ Den Entwurf für den Kern freigeben lassen und danach den Umsetzungsplan schreib
 | | |
 |---|---|
 | Erledigt | Repo angelegt (privat), Zielbild, Zerlegung in sieben Teilprojekte, alle sechs Abschnitte des Kern-Entwurfs abgestimmt |
-| In Arbeit | Brainstorming: Entwurf ist geschrieben, Freigabe durch Thomas und offene Fragen stehen aus |
+| In Arbeit | Brainstorming: Entwurf ist geschrieben, Ergänzungen und verschlüsselte Kauf-Apps sind bestätigt; offene Fragen 1 bis 5 und die Freigabe stehen aus |
 | Blockiert | nichts |
 | Code | noch keiner, nur der Prototyp |
 
