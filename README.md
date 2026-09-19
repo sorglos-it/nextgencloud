@@ -2,9 +2,19 @@
 
 Short name: **NGC**.
 
+## Goal
+
+An open alternative to Synology's DSM: a desktop in the browser that starts with nothing but a
+login and an app store, and grows through apps — from a small cloud or a firewall on a Raspberry
+Pi to distributed setups where web interface, API, database and server controller run on
+separate machines.
+
 ## Status
 
-New project. What exists so far is one prototype, the NGC Desktop.
+Design phase, no product code yet. The only code is the prototype below.
+
+- Design of the core, in German: [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](docs/superpowers/specs/2026-09-19-ngc-kern-design.md)
+- Current state and next steps: [`docs/STAND.md`](docs/STAND.md)
 
 ## Prototype: NGC Desktop 1.0
 
