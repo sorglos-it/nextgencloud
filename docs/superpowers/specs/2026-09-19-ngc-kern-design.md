@@ -3,6 +3,9 @@
 **Stand:** 19.09.2026 · **Status:** Abschnitte 1 bis 6 mit Thomas abgestimmt, Ergänzungen bestätigt, offene Fragen in Kapitel 5
 **Einstieg für die nächste Sitzung:** [`docs/STAND.md`](../../STAND.md)
 
+> Stellen, die ich erst beim Ausformulieren ergänzt habe, sind mit **„Beim Ausformulieren
+> ergänzt"** markiert. Thomas hat sie noch nicht gesehen.
+
 ---
 
 ## 1. Zielbild
@@ -68,7 +71,7 @@ muss weiterlaufen, auch wenn die Verbindung zur API abreißt.
 |---|---|
 | Webinterface | Liegt auf jedem Webserver, Standard ist Apache. HTML, CSS, JS und PHP; PHP nur für das Webinterface selbst. |
 | API | Eigener, dauerhaft laufender Dienst. Vermittler mit zwei Seiten (Webinterface und Controller) und „die Firewall zwischen GUI und Server". Macht Anmeldung, Rollen und Rechte und die Weiterleitung. Führt nie App-Code aus. Mehrere APIs sind möglich, zum Beispiel für die Performance. |
-| Server-Controller | Eigener, dauerhaft laufender Dienst auf jedem Server. Redet nur mit der API und tut, was sie sagt. Root-Aufgaben führt er nur mit Unterschrift des Benutzers aus (4.5). Hält seinen Zustand lokal in SQLite. |
+| Server-Controller | Eigener, dauerhaft laufender Dienst auf jedem Server. Redet nur mit der API und tut, was sie sagt. Root-Aufgaben führt er nur mit Unterschrift des Benutzers aus (4.5). Hält seinen Zustand lokal in SQLite und startet die Dienste der Apps in Containern. |
 | Datenbank | MariaDB als Standard, auf demselben oder einem eigenen Server. SQLite, wenn alles auf einem Pi läuft. |
 
 ### Apps laufen auf dem Client
@@ -76,14 +79,14 @@ muss weiterlaufen, auch wenn die Verbindung zur API abreißt.
 App-Oberflächen bestehen nur aus HTML, CSS und JavaScript und laufen nur im Browser. Kein Code
 aus einem Store läuft auf dem Webserver oder in der API. Was auf einem Server passieren muss,
 erledigt ein Dienst der App über den Controller. Die Dienste einer App dürfen ihre Daten in
-SQLite ablegen.
+SQLite ablegen. Jede App bekommt für ihre Dienste einen eigenen Container (4.3).
 
 ### Keine Abhängigkeiten
 
 API, Controller und Werkzeuge sind je eine einzelne Go-Datei ohne Laufzeitumgebung. Fremdcode
 wird ins Repo kopiert (`vendor/`), seine Herkunft steht in `THIRD-PARTY.md`. Das Webinterface
-kommt ohne Framework und ohne Build-Schritt aus. Von außen kommen nur Apache, PHP und MariaDB
-aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte.
+kommt ohne Framework und ohne Build-Schritt aus. Von außen kommen nur Apache, PHP, MariaDB
+und Podman aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte.
 
 ### Lizenz
 
@@ -103,7 +106,7 @@ schaut jemand mit Ahnung von Lizenzrecht drauf.
 
 | # | Teilprojekt | Inhalt |
 |---|---|---|
-| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf vier Servern: Webserver, API, Datenbankserver (MariaDB) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
+| 1 | **Kern** | Die Pipeline von Anfang an verteilt auf vier Servern: Webserver, API, Datenbankserver (MariaDB) und ein Server für die Dienste der Apps, auf jedem ein Controller. Dasselbe läuft auch komplett auf einem Pi mit SQLite. Dazu App-Modell, App-Store mit mehreren Quellen, verschlüsselte Kauf-Apps, Benutzer & Rechte, Sicherheitsmodell mit Ende-zu-Ende-Verschlüsselung, Dienste in Containern, Autoupdate für alle Teile, Beispiel-Apps und die Installation über ulh. |
 | 2 | **Verteilung** | Mehrere APIs (x), Datenbanken (y) und Controller (z); Dienste an bestimmte Server zuweisen |
 | 3 | **Datenbanken** | MySQL, MSSQL und Oracle hinter derselben Schnittstelle wie MariaDB und SQLite |
 | 4 | **Handy und Tablet** | Eine zweite Oberfläche für Touch, dieselben Apps im Vollbild |
@@ -126,7 +129,7 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
 2. Im App-Store die Terminal-App aktivieren. Das Aktivieren ist eine Root-Aufgabe und gelingt
    nur mit der Unterschrift des Admins, die der Controller prüft.
 3. Im Terminal-Fenster `cp -r` eintippen. Der Befehl läuft über API und Controller zum Dienst
-   „virtuelles Terminal", die Ausgabe kommt zurück.
+   „virtuelles Terminal" in dessen Container, die Ausgabe kommt zurück.
 4. Ein Benutzer ohne das Recht sieht die Terminal-App gar nicht.
 5. Eine App aus einem Test-Store installieren und eine Kauf-App mit einer Test-Lizenz
    freischalten. Eine fremde Installation kann dieselbe Kauf-App nicht öffnen.
@@ -137,6 +140,8 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
 8. Ein NGC-Update und ein App-Update werden im Modus „automatisch" selbst eingespielt. Ein
    absichtlich kaputtes Update wird selbst zurückgenommen, und eine ältere Version lässt sich
    nicht einspielen (4.8).
+9. Ein Mitschnitt auf dem API-Server zeigt vom Inhalt der Kanäle nichts, nur verschlüsselte
+   Daten. Eine manipulierte Vertrauensliste lehnen Browser und Controller ab (4.5).
 
 ### 4.2 Überblick (Abschnitt 1, abgestimmt; an die Abschnitte 5 und 6 angepasst)
 
@@ -148,7 +153,7 @@ Browser ─HTTPS─► Apache + web/ ─/api/─► ngc-api ─────TLS�
                                           ▲
                                           │ Tunnel, den der Controller aufbaut
                                           │
-                              Server 3:  ngc-controller ─stdin/stdout─► Dienst
+                              Server 3:  ngc-controller ─stdin/stdout─► Dienst (Container)
                                           │
                                         SQLite (lokaler Zustand)
 ```
@@ -164,9 +169,9 @@ API muss nicht offen im Netz stehen.
 
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
-| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus und verwaltet die Liste der APIs. | 1 |
-| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | 2 |
-| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle vier |
+| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | 1 |
+| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | 2 |
+| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle vier |
 | Datenbank | `db/` | MariaDB einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | 4 |
 | Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
 | Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
@@ -203,14 +208,16 @@ const t = await ngc.open("terminal", "shell")   // Datenstrom, der offen bleibt
 Kanalnummern gelten immer nur für eine Verbindung. Der Browser erfährt nie, auf welchem Server
 ein Dienst läuft, und der Dienst bekommt die Sitzung des Browsers nie zu sehen.
 
-**Schnittstelle zum Dienst.** Für jeden Kanal startet der Controller das Programm des Dienstes.
+**Schnittstelle zum Dienst.** Für jeden Kanal startet der Controller das Programm des Dienstes
+im Container der App.
 
 - Daten aus dem Kanal kommen auf stdin an, was das Programm auf stdout schreibt, geht zurück,
   stderr landet im Log. Exit-Code 0 heißt Erfolg.
 - Wer fragt, steht in den Umgebungsvariablen `NGC_USER`, `NGC_APP` und `NGC_ACTION`.
 - Das beherrscht jede Programmiersprache, auch ein Bash-Skript.
-- Jeder Dienst läuft unter einem eigenen Systembenutzer. Root-Rechte bekommt er nur, wenn die
-  App das im Manifest angibt und der Admin es beim Aktivieren erlaubt.
+- Jeder Container läuft unter dem eigenen Systembenutzer seiner App. Root-Rechte, das Netz des
+  Servers oder andere Sonderrechte bekommt ein Dienst nur, wenn die App das im Manifest angibt
+  und der Admin es beim Aktivieren erlaubt.
 - Was in den Daten steht, regeln App und Dienst unter sich, beim Terminal zum Beispiel
   Tastendrücke und Fenstergröße.
 
@@ -219,7 +226,25 @@ Kopf mit Art und Kanalnummer, dahinter die Daten ohne Umweg über Base64. Es gib
 öffnen, Daten, Ende der Eingabe, schließen (mit Erfolg oder Fehler) und Freigabe. Die Freigabe
 regelt die Menge: Ein Sender schickt pro Kanal nur so viel, wie der Empfänger freigegeben hat.
 So kann eine große Datei die API nicht überlasten. Wie die Leitungen zusätzlich verschlüsselt
-sind, steht in 4.5.
+sind und wie Shell und Controller den Inhalt Ende zu Ende verschlüsseln, steht in 4.5.
+
+**Container** (am 19.09.2026 abgestimmt). Jede App bekommt für ihre Dienste einen eigenen
+Container, gestartet mit Podman.
+
+- Podman startet dieselben Images wie Docker, braucht aber keinen Hintergrunddienst, der
+  dauerhaft als root läuft. Jeder Container läuft unter dem eigenen Systembenutzer seiner App.
+  Wer aus einem Container ausbricht, landet bei einem Benutzer ohne Rechte.
+- Ein Container hat standardmäßig keinen Netzzugang. Netz oder weitere Rechte bekommt er nur
+  über das Manifest und die Freigabe des Admins.
+- Pro App gibt es Grenzen für CPU und Arbeitsspeicher.
+- Der verschlüsselte Datenordner der App (4.6) wird in den Container eingebunden.
+- Nach einem Neustart des Servers startet systemd die Container selbst, auch ohne API.
+- Das Terminal arbeitet innerhalb des Containers seiner App. Ein Terminal direkt auf dem Server
+  braucht eine ausdrückliche Freigabe.
+- **LXC bleibt vorbehalten:** Der Controller spricht Container nur über eine eigene
+  Schnittstelle an, hinter der heute Podman steckt. Dort lässt sich LXC jederzeit als zweite
+  Laufzeit einbauen, etwa für Apps, die ein komplettes System brauchen wie der AD-Server. Das
+  Manifest gibt an, welche Laufzeit ein Dienst braucht.
 
 **Nicht im Kern:** Dienste, die dauerhaft laufen und über einen Socket angebunden sind. Die
 braucht man erst, wenn es zu langsam wäre, für jeden Kanal ein Programm zu starten.
@@ -232,13 +257,14 @@ braucht man erst, wenn es zu langsam wäre, für jeden Kanal ein Programm zu sta
 org.sorglos.terminal/
 ├── manifest.json        Name, Version, Aktionen, Dienste
 ├── ui/                  nur HTML, CSS, JS und Bilder
-└── services/terminal/   Programm des Dienstes, je Plattform oder als Skript
+└── services/terminal/   Container-Image des Dienstes für amd64 und arm64
 ```
 
 Im Manifest meldet die App ihre **Aktionen** an, beim Terminal etwa `shell` für „Befehle auf
 dem Server ausführen". Aus den Aktionen werden die Rechte, die ein Admin an Rollen vergibt.
 Dazu hat jede App das Grundrecht **„benutzen"**; wer es nicht hat, sieht die App nicht. Das
-Manifest sagt außerdem, welches Programm ein Dienst startet und ob er root-Rechte braucht.
+Manifest sagt außerdem, welches Programm ein Dienst im Container startet, welche Laufzeit er
+braucht (heute Podman) und ob er Netz, root-Rechte oder andere Sonderrechte braucht.
 
 **Quellen.** Der App-Store verwaltet mehrere Quellen gleichzeitig:
 
@@ -284,8 +310,8 @@ Installation öffnen, für die sie gekauft wurde:
    Installation und legt ihn in die signierte Lizenz.
 3. Nur die API dieser Installation kann ihn mit ihrem privaten Schlüssel entschlüsseln. Beim
    Aktivieren gibt sie ihn über den verschlüsselten Tunnel nur an die eigenen, gekoppelten
-   Controller weiter. Erst dort werden die Programme entschlüsselt und im verschlüsselten
-   Datenordner der App abgelegt (4.6). Die Oberfläche entschlüsselt die API für den Browser.
+   Controller weiter. Erst dort werden die Container-Images der
+   Dienste entschlüsselt und geladen. Die Oberfläche entschlüsselt die API für den Browser.
 4. Läuft ein Abo aus, gibt die API den Schlüssel nicht mehr heraus. Nach der Übergangsfrist
    starten die Controller den Dienst nicht mehr.
 
@@ -294,7 +320,7 @@ Grenzen:
 - Die Oberfläche einer App läuft im Browser und muss dort unverschlüsselt ankommen. Jeder
   Benutzer der Installation kann sie im Browser ansehen. Geschützt ist sie nur auf dem
   Übertragungsweg und gegen die Weitergabe an andere Installationen.
-- Wer auf einem Server der Installation root ist, kann das entschlüsselte Programm eines
+- Wer auf einem Server der Installation root ist, kann das entschlüsselte Container-Image eines
   Dienstes kopieren.
 - Wer die ganze Installation samt Schlüssel auf eine andere Maschine kopiert, nimmt die Apps
   mit. Später hilft dagegen, den privaten Schlüssel im TPM-Chip des Servers abzulegen (offene
@@ -307,8 +333,8 @@ Gratis-Apps. Kauf-Apps testet der Kern mit einem Test-Store: `ngc-store` verschl
 Test-Apps und stellt Test-Lizenzen aus.
 
 **Aktivieren.** Die API prüft das Manifest und trägt die App in die Datenbank ein. Die
-Programme der Dienste schickt sie über die Pipeline an den Controller, der für jede App einen
-eigenen Systembenutzer anlegt. Weil das root-Rechte braucht, ist das Aktivieren eine
+Container-Images der Dienste schickt sie über die Pipeline an den Controller, der für jede App
+einen eigenen Systembenutzer und Container anlegt. Weil das root-Rechte braucht, ist das Aktivieren eine
 Root-Aufgabe mit Unterschrift des Admins (4.5). Rechte an einer neuen App hat zuerst nur die
 Rolle Administrator, alle anderen sehen die App erst nach der Freigabe.
 
@@ -401,8 +427,9 @@ Aktivität oder beim Abmelden.
   Sitzungsschlüssel. Dazu gehört auch das Installieren von App-Diensten.
 - Der Controller prüft die ganze Kette selbst, bis zurück zum Passkey. Außerdem prüft er, ob
   der Benutzer auf diesem Server Root-Aufgaben erledigen darf.
-- Diese Liste führt der Controller selbst, in seiner lokalen SQLite-Datei. Nur ein Admin kann
-  sie ändern, mit seinem Passkey. Die API hält nur eine Kopie zur Anzeige.
+- Diese Liste ist Teil der Vertrauensliste (siehe unten). Der Controller hält sie in seiner
+  lokalen SQLite-Datei, nur ein Admin kann sie mit seinem Passkey ändern, die API hält nur eine
+  Kopie zur Anzeige.
 - Ohne gültige Unterschrift läuft nichts als root. Die API allein kann Root-Aufgaben damit
   nicht fälschen.
 - Für automatische Updates unterschreibt der Admin einmal eine Dauerfreigabe pro Teil oder
@@ -431,6 +458,44 @@ Benutzer mehrere Rollen, gilt die strengste.
 - Bei Root-Aufgaben prüft der Controller die Einstellung selbst, wie seine Liste der
   Root-Berechtigungen, damit die API allein sie nicht aushebeln kann. Für alles andere prüft
   die API.
+- In der Stufe Hardcore prüft der Controller die Passkey-Bestätigung jeder Aufgabe selbst,
+  nicht nur bei Root-Aufgaben (offene Frage 4, Variante B). Eine übernommene API kann dann gar
+  nichts mehr auslösen.
+
+**Vertrauensliste** (am 19.09.2026 abgestimmt). Eine Liste, die ein Admin mit seinem Passkey
+unterschreibt. Sie enthält:
+
+- die Admins und die Passkey-Schlüssel aller Benutzer,
+- die Schlüssel aller Controller,
+- die Root-Berechtigungen je Server,
+- die Stufen der erneuten Passkey-Bestätigung mit ihren Listen.
+
+Browser und Controller prüfen die Unterschrift selbst. Die API verteilt die Liste nur und kann
+sie nicht fälschen. Den Admin-Schlüssel bekommt der Browser vom Webserver, nicht von der API,
+und merkt ihn sich beim ersten Besuch. Spätere Fassungen müssen sich über eine lückenlose Kette
+von Admin-Unterschriften darauf zurückführen lassen, sonst schlägt der Browser Alarm.
+
+- *Beim Ausformulieren ergänzt:* Jede neue Fassung trägt eine höhere Nummer. Ältere Fassungen
+  werden abgelehnt, damit niemand eine überholte Liste zurückspielen kann.
+- *Beim Ausformulieren ergänzt:* Neue Benutzer trägt ein Admin ein. Einen weiteren eigenen
+  Schlüssel, etwa einen zweiten Stick, bestätigt ein Benutzer selbst mit einem seiner
+  vorhandenen Schlüssel, ohne dafür einen Admin zu brauchen.
+
+**Ende-zu-Ende-Verschlüsselung** (am 19.09.2026 abgestimmt). Thomas: „Verschlüsselung vom
+Browser bis direkt zum Dienst muss rein. nicht später. jetzt."
+
+- Jeder Kanal bekommt eine eigene Verschlüsselung zwischen der Shell im Browser und dem
+  Controller auf dem Server des Dienstes: Schlüsselaustausch nach dem Noise-Protokoll, danach
+  AES-256-GCM. Erst auf dem Server selbst übergibt der Controller die Daten an den Dienst in
+  seinem Container.
+- Den Schlüssel des Controllers nimmt die Shell nur aus der geprüften Vertrauensliste. Eine
+  übernommene API kann also keinen falschen Controller unterschieben.
+- *Beim Ausformulieren ergänzt:* Der Controller prüft beim Aufbau jedes Kanals, dass am anderen
+  Ende wirklich die Sitzung dieses Benutzers sitzt, über die Kette bis zu dessen Passkey. Eine
+  übernommene API kann sich damit in keiner Stufe als Benutzer ausgeben.
+- Die API sieht nur, wer welchen Dienst mit welcher Aktion aufruft, weil sie das für die
+  Weiterleitung und die Rechteprüfung braucht. Den Inhalt sieht sie nicht, der Webserver auch
+  nicht.
 
 **Rechte.** Die Shell blendet nur aus, was jemand nicht darf. Entscheiden tut die API, bei
 jedem Kanal neu, anhand von Benutzer, Rolle, App, Aktion und Lizenz.
@@ -447,6 +512,7 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 |---|---|
 | Browser ↔ Apache | TLS 1.3, ausschließlich AES-256-GCM |
 | Browser ↔ API | zusätzlich Sitzungsschlüssel und AES-256-GCM (siehe Sitzung, Schritt 4) |
+| Browser ↔ Dienst | Ende zu Ende pro Kanal zwischen Shell und Controller: Schlüsselaustausch nach Noise, AES-256-GCM; die API sieht nur verschlüsselte Daten |
 | Apache ↔ API (getrennte Server) | TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an |
 | API ↔ Controller | Tunnel wie bei einem VPN nach dem Noise-Protokoll, auf dem auch WireGuard aufbaut: AES-256-GCM, beide Seiten prüfen gegenseitig ihre Schlüssel. Außen herum zusätzlich TLS, damit der Tunnel durch Firewalls und Proxys kommt. |
 | API ↔ MariaDB | TLS; MariaDB nimmt nur verschlüsselte Verbindungen an |
@@ -455,7 +521,7 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 | Daten der Apps | verschlüsselter Datenordner pro App (4.6) |
 | Kauf-Apps | pro App AES-256; der Schlüssel steckt in der Lizenz, verschlüsselt mit dem öffentlichen Schlüssel der Installation (4.4) |
 | Geheimnisse in der Datenbank | zusätzlich von der API mit eigenem Schlüssel verschlüsselt, etwa Zugangsschlüssel zu Stores. So bleiben sie auch in einer anderen Datenbank oder in einer Sicherung geschützt. |
-| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen, Programmdateien und Updates, Dauerfreigaben, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel |
+| Asymmetrisch | Passkeys, Sitzungszertifikate, Signaturen von Katalogen, Lizenzen, Programmdateien und Updates, Dauerfreigaben, Vertrauensliste, Schlüssel der Kauf-Apps, Schlüsselaustausch im Tunnel und Ende zu Ende |
 
 **Zertifikate für die Webseite.** Das ulh-Skript des Webinterface bietet drei Wege an:
 
@@ -483,14 +549,16 @@ in der App Benutzer & Rechte.
 **Grenzen.**
 
 - Wer NGC selbst umbaut, kann Lizenzprüfung und Verschlüsselung der Kauf-Apps umgehen (4.4).
-- *Noch nicht mit Thomas besprochen:* Aufgaben ohne root laufen im Vertrauen auf die API. Wer
-  die API übernimmt, kann solche Aufgaben im Namen von Benutzern auslösen und die Daten in der
-  Pipeline sehen.
-- *Noch nicht mit Thomas besprochen:* Wer den Webserver übernimmt, der die Shell ausliefert,
-  kann einem angemeldeten Admin veränderten Code unterschieben und dessen Sitzungsschlüssel
-  benutzen, solange die Sitzung offen ist. Dagegen helfen die strenge CSP, ein gehärteter
-  Webserver, kurze Sitzungen und die einstellbare erneute Passkey-Bestätigung (offene
-  Frage 4).
+- Die API entscheidet weiterhin über die Rechte bei Aufgaben ohne root. Eine übernommene API
+  könnte einem echten Benutzer also etwas erlauben, was seine Rechte nicht hergeben, und sie
+  sieht, wer wann welchen Dienst aufruft. Den Inhalt sieht sie nicht, und als Benutzer oder
+  Controller ausgeben kann sie sich nicht. In der Stufe Hardcore kann sie gar nichts mehr
+  auslösen (offene Frage 4, abgestimmt am 19.09.2026).
+- Wer den Webserver übernimmt, der die Shell ausliefert, kann einem angemeldeten Benutzer
+  veränderten Code unterschieben und dessen Sitzungsschlüssel benutzen, solange die Sitzung
+  offen ist. Neuen Geräten könnte er außerdem einen falschen Admin-Schlüssel ausliefern. Dagegen
+  helfen die strenge CSP, ein gehärteter Webserver, kurze Sitzungen und die erneute
+  Passkey-Bestätigung: Was bestätigt werden muss, geht ohne den Finger des Benutzers nicht.
 
 ### 4.6 Datenbank, Installation, Fehler, Tests (Abschnitt 5, abgestimmt)
 
@@ -506,18 +574,18 @@ in der App Benutzer & Rechte.
   1. **Alles auf einem Pi:** Wer bei der Installation keinen Datenbankserver will, bekommt
      SQLite statt MariaDB und spart damit Ressourcen.
   2. **Beim Controller auf jedem Server:** Dort liegt alles, was der Server braucht, um ohne
-     API weiterzulaufen: Kopplung, die Liste der Root-Berechtigungen, die installierten Apps
+     API weiterzulaufen: Kopplung, die Vertrauensliste, die installierten Apps
      und deren Einstellungen, zum Beispiel die Regeln einer Firewall.
   3. **Für Apps:** Die Dienste einer App dürfen ihre Daten in SQLite ablegen.
 - **Portables SQL:** nur SQL, das alle fünf Systeme verstehen, damit Teilprojekt 3 nichts
   umbauen muss. IDs erzeugt die Anwendung, Zeitstempel sind Zahlen, SQLite-eigene Funktionen
   gibt es nicht. Änderungen am Aufbau laufen über nummerierte Migrationen.
 - **Tabellen der API:** Benutzer, Rollen, Rechte, Schlüssel (Passkeys und Sticks), Sitzungen,
-  Apps, Dienste, Controller, Root-Berechtigungen (Kopie), Bestätigungsstufen und ihre Listen,
+  Apps, Dienste, Controller, Vertrauensliste (Kopie), Bestätigungsstufen und ihre Listen,
   Stores, Lizenzen, Einstellungen, Protokoll.
 - **Verschlüsselte App-Daten:** Damit auch die SQLite-Dateien der Apps verschlüsselt sind, egal
   in welcher Sprache ein Dienst geschrieben ist, stellt der Controller jeder App einen eigenen
-  Datenordner bereit und verschlüsselt ihn. Vorschlag: fscrypt, die Ordnerverschlüsselung des
+  Datenordner bereit und verschlüsselt ihn. Der Ordner wird in den Container der App eingebunden. Vorschlag: fscrypt, die Ordnerverschlüsselung des
   Linux-Kernels (AES-256-XTS). Im Plan zu prüfen, ob das auf allen Zielsystemen geht; sonst ein
   verschlüsselter Container pro App.
 - **Startaktion:** Eine App kann im Manifest eine Startaktion angeben. Der Controller ruft sie
@@ -552,7 +620,7 @@ in der App Benutzer & Rechte.
   Deinstallieren, dazu eines für „alles auf einem Pi". Dank `answer.yaml` laufen sie auch ohne
   Rückfragen.
 - Die Skripte erledigen das Zertifikat (die drei Wege aus 4.5), MariaDB mit TLS und
-  Verschlüsselung, das Schlüsselpaar der Installation und die Kopplung der Controller. Am Ende
+  Verschlüsselung, Podman auf den Servern mit Diensten, das Schlüsselpaar der Installation und die Kopplung der Controller. Am Ende
   zeigen sie den Einmal-Code für den ersten Admin an.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
 - Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
@@ -586,6 +654,9 @@ in der App Benutzer & Rechte.
 - Der Gesamttest läuft einmal verteilt auf vier Servern und einmal komplett auf einem Pi.
 - Updates: automatisches Update, Zurücknehmen eines kaputten Updates, Ablehnen einer älteren
   Version und die Reihenfolge über vier Server.
+- Ende zu Ende und Container: Ein Mitschnitt auf dem API-Server zeigt nur verschlüsselte Daten,
+  eine manipulierte oder ältere Vertrauensliste wird abgelehnt, und ein Container kommt weder
+  ins Netz noch an Dateien außerhalb seines Ordners.
 - Passkeys testen wir mit einem simulierten Passkey, dafür braucht es keinen echten Stick.
 - Das Webinterface prüfen wir im Browser. Ob Testwerkzeuge wie Playwright per npm kommen
   dürfen, ist offene Frage 5; ohne npm ginge ein Browsertest auch aus Go heraus.
@@ -597,9 +668,9 @@ arbeitet jeweils eine Claude-Sitzung, per Remote Control verbunden, an einem Tei
 
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
-| 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil |
-| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Updates, das Werkzeug `ngc-store` |
-| 3 | Controller | `controller/` | Der Controller, der auf allen vier Servern läuft: Tunnel zur API, Kopplung, Dienste starten, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
+| 1 | Webinterface | `web/` | Desktop, Anmeldung mit Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil |
+| 2 | API | `api/` | Sitzungen und Zertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
+| 3 | Controller | `controller/` | Der Controller, der auf allen vier Servern läuft: Tunnel zur API, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
 | 4 | Datenbank | `db/` | MariaDB auf Server 4 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
 Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
@@ -609,11 +680,12 @@ in `contracts/` fest, und Thomas gibt sie frei:
 
 1. Webinterface ↔ API
 2. API ↔ Controller
-3. Controller ↔ Dienst
+3. Controller ↔ Dienst im Container
 4. API und Controller ↔ Datenbank, als Go-Schnittstelle
 5. App-Paket, Store-Katalog und Lizenz, samt Verschlüsselung der Kauf-Apps, dazu NGC-Updates
    und Dauerfreigaben
 6. ulh-Konventionen: Pfade, Dienste, Ports, `answer.yaml`
+7. Vertrauensliste und Ende-zu-Ende-Verschlüsselung zwischen Browser und Controller
 
 Zu jedem Vertrag gibt es Testdaten, zum Beispiel Beispielnachrichten und Beispielunterschriften.
 Beide Seiten testen unabhängig dagegen, so muss niemand auf den anderen warten.
@@ -702,7 +774,8 @@ Migration lässt die vorige API-Version weiterlaufen.
 2. **App-Updates:** entschieden am 19.09.2026, Autoupdate für alle Teile (4.8).
 3. **Erneute Passkey-Bestätigung:** entschieden am 19.09.2026, einstellbar in vier Stufen mit
    eigenen Listen (4.5).
-4. **Die zwei unbesprochenen Grenzen** in 4.5: so akzeptieren oder weiter absichern?
+4. **Die zwei Restrisiken:** entschieden am 19.09.2026, Variante B und
+   Ende-zu-Ende-Verschlüsselung (4.5).
 5. **Entwicklungswerkzeuge:** Dürfen reine Testwerkzeuge (Testrunner, Browser-Tests) per
    Paketmanager kommen? Diese Frage ist aus der Regel „Software ohne Abhängigkeiten" offen.
 
@@ -716,6 +789,8 @@ Migration lässt die vorige API-Version weiterlaufen.
    er sich nicht kopieren lässt (4.4).
 9. Teilprojekt 7: Thomas' Projekt `ulh` auch als Grundlage für Dienste nutzen, die Server
    einrichten (Skripte für alle Distributionen, `answer.yaml` für Läufe ohne Rückfragen)?
+10. LXC als zweite Container-Laufzeit einbauen, sobald eine App ein komplettes System braucht,
+    etwa der AD-Server (4.3).
 
 ## 6. Entscheidungsprotokoll
 
@@ -744,6 +819,10 @@ Migration lässt die vorige API-Version weiterlaufen.
 | 19.09.2026 | Vorgabe Thomas: Alle Teile unterstützen Autoupdate — Webinterface, API, Server-Controller, Datenbank und Apps. Modi: automatisch (Standard), halbautomatisch (per Klick) oder nur Benachrichtigung und dann Klick. |
 | 19.09.2026 | Update-Konzept abgestimmt (4.8): Controller auf jedem Server spielt Updates ein, Dauerfreigabe des Admins für den Modus „automatisch", Rücknahme bei Fehlschlag, keine älteren Versionen, Reihenfolge Datenbank → API → Controller → Webinterface, Release-Schlüssel auf einem Hardware-Stick |
 | 19.09.2026 | Erneute Passkey-Bestätigung einstellbar (offene Frage 3): Stufen Aus, Kritisch (Standard), Root und Hardcore pro Rolle, dazu eigene Black- und Whitelist; Änderungen daran verlangen immer den Passkey (4.5) |
+| 19.09.2026 | Offene Frage 4, Variante B: In der Stufe Hardcore prüft der Controller jede Aufgabe selbst, nicht nur Root-Aufgaben. |
+| 19.09.2026 | Vorgabe Thomas: Verschlüsselung vom Browser bis direkt zum Dienst kommt in den Kern, „nicht später. jetzt." Ausgearbeitet in 4.5. |
+| 19.09.2026 | Vorgabe Thomas: Die Dienste der Apps laufen als einzelne Container („docker/lxc"). Ausgearbeitet in 4.3. |
+| 19.09.2026 | Container mit Podman, jeder unter dem Systembenutzer seiner App. LXC bleibt vorbehalten und lässt sich jederzeit als zweite Laufzeit einbauen. Die Vertrauensliste, von einem Admin mit Passkey unterschrieben, ist der gemeinsame Anker für Browser und Controller. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -758,3 +837,4 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | Argon2id | `golang.org/x/crypto/argon2` | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
 | Noise-Tunnel | `github.com/flynn/noise` | zu prüfen |
+| Noise im Browser (Ende zu Ende) | JavaScript-Umsetzung ohne npm | zu prüfen; findet sich keine geprüfte, dann eigene Umsetzung des Ablaufs nach der Spezifikation, getestet mit den offiziellen Testvektoren. Die Kryptografie selbst kommt aus der Web Crypto API des Browsers. |
