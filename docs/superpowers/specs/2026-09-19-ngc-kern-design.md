@@ -85,6 +85,14 @@ wird ins Repo kopiert (`vendor/`), seine Herkunft steht in `THIRD-PARTY.md`. Das
 kommt ohne Framework und ohne Build-Schritt aus. Von außen kommen nur Apache, PHP und MariaDB
 aus den Paketquellen von Debian und Ubuntu, und die installieren die ulh-Skripte.
 
+### Lizenz
+
+NGC steht unter der **AGPL-3.0**. `ngc.js` und die Verträge in `contracts/` stehen unter
+**MIT**, damit auch geschlossene, bezahlte Apps möglich sind. Solange alle Rechte bei Thomas
+liegen, kann er Firmen zusätzlich eine kommerzielle Lizenz verkaufen. Nimmt er Code von anderen
+Entwicklern an, braucht er dafür deren schriftliche Zustimmung. Bevor NGC öffentlich wird,
+schaut jemand mit Ahnung von Lizenzrecht drauf.
+
 ### Sprachen und Plattformen
 
 - API, Controller und Werkzeuge in **Go**, Webinterface in **HTML, CSS, JS und PHP**.
@@ -603,8 +611,7 @@ per Remote Control verbunden und für Schritt 4 ein Pi.
 
 **Für den Kern, vor dem Umsetzungsplan zu klären:**
 
-1. **Lizenz von NGC:** MIT, AGPL oder etwas anderes? Wichtig für die Monetarisierung. `ngc.js`
-   muss so lizenziert sein, dass es auch in bezahlten, geschlossenen Apps stecken darf.
+1. **Lizenz von NGC:** entschieden am 19.09.2026, siehe Kapitel 2.
 2. **App-Updates** aus den Stores schon im Kern oder später?
 3. **Kritische Aktionen** zusätzlich mit einer erneuten Passkey-Bestätigung absichern?
 4. **Die zwei unbesprochenen Grenzen** in 4.5: so akzeptieren oder weiter absichern?
@@ -645,11 +652,12 @@ per Remote Control verbunden und für Schritt 4 ein Pi.
 | 19.09.2026 | Abschnitt 6 abgestimmt: Koordinator und vier Sitzungen, Verträge zuerst, eigene `CLAUDE.md` je Teil, Branch und Pull Request je Teil. Der Kern läuft damit von Anfang an verteilt, Teilprojekt 2 umfasst nur noch mehrere APIs, Datenbanken und Controller. |
 | 19.09.2026 | Beim Ausformulieren ergänzt und von Thomas bestätigt: Erfolgskriterium 7 (Server läuft ohne API weiter), TLS mit AES-256 zwischen Apache und API, verschlüsselter Datenordner pro App, Startaktion im Manifest |
 | 19.09.2026 | Idee Thomas, aufgenommen: Kauf-Apps werden für die kaufende Installation verschlüsselt. Nur deren API und Controller können sie öffnen (4.4). |
+| 19.09.2026 | Lizenz: AGPL-3.0 für NGC, MIT für `ngc.js` und die Verträge (offene Frage 1) |
 
 ## 7. Fremdcode-Kandidaten
 
-Vor der Übernahme prüfen: Lizenz, Pflege, Größe. Übernahme per `go mod vendor`, Herkunft in
-`THIRD-PARTY.md`.
+Vor der Übernahme prüfen: Lizenz, Pflege, Größe. Jede Lizenz muss mit der AGPL-3.0 vereinbar
+sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 
 | Zweck | Kandidat | Stand |
 |---|---|---|
