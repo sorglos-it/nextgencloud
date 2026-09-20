@@ -91,6 +91,15 @@ func DeriveKey(password []byte, k KDF) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
+// Size limits. They are generous for all three allowed algorithms (RSA-4096
+// is the largest) but bound the cost of parsing an attacker-supplied key or
+// signature before any expensive cryptography runs.
+const (
+	MaxPublic  = 1024 // SubjectPublicKeyInfo, enough for RSA-4096
+	MaxSig     = 1024
+	MaxRSABits = 4096
+)
+
 // UserKey is a key of a user as listed in the trust list.
 type UserKey struct {
 	ID     string    `json:"id"`
@@ -113,7 +122,7 @@ func (k UserKey) Validate() error {
 		}
 		return k.KDF.Validate()
 	case KindPasskey:
-		if len(k.CredID) == 0 || len(k.CredID) > 1023 || k.KDF != nil {
+		if len(k.CredID) == 0 || len(k.CredID) > 1023 || len(k.Public) > MaxPublic || k.KDF != nil {
 			return ErrKey
 		}
 		_, err := parsePublic(k)
@@ -146,10 +155,17 @@ func Challenge(purpose string, payload []byte) []byte {
 	return h[:]
 }
 
-// Verify checks that p is a proof by key over payload for purpose.
+// Verify checks that p is a proof by key over payload for purpose. key must
+// be self-consistent: ID is the hash of Public.
 func Verify(p Proof, key UserKey, rp RP, purpose string, payload []byte) error {
+	if key.ID != sign.KeyID(key.Public) {
+		return ErrKey
+	}
 	if p.KeyID != key.ID || p.Kind != key.Kind {
 		return ErrKeyMismatch
+	}
+	if len(p.Sig) > MaxSig {
+		return ErrSignature
 	}
 	switch key.Kind {
 	case KindPassword:
@@ -225,6 +241,9 @@ func verifyAssertion(p Proof, key UserKey, rp RP, challenge []byte) error {
 }
 
 func parsePublic(k UserKey) (crypto.PublicKey, error) {
+	if len(k.Public) > MaxPublic {
+		return nil, ErrKey
+	}
 	pub, err := x509.ParsePKIXPublicKey(k.Public)
 	if err != nil {
 		return nil, ErrKey
@@ -239,7 +258,7 @@ func parsePublic(k UserKey) (crypto.PublicKey, error) {
 			return nil, ErrKey
 		}
 	case *rsa.PublicKey:
-		if k.Alg != AlgRS256 || key.N.BitLen() < 2048 {
+		if k.Alg != AlgRS256 || key.N.BitLen() < 2048 || key.N.BitLen() > MaxRSABits {
 			return nil, ErrKey
 		}
 	default:

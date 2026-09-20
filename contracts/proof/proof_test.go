@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
+	"math/big"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
@@ -168,6 +169,75 @@ func TestPasswordKey(t *testing.T) {
 	weak.MemKiB = 1024
 	if _, err := DeriveKey([]byte("x"), weak); err != ErrKDF {
 		t.Errorf("weak KDF: %v", err)
+	}
+}
+
+func TestVerifyKeyIDMismatch(t *testing.T) {
+	priv1, key1 := passwordKey(t, "Heimnetz-2026")
+	_, key2 := passwordKey(t, "Käse&Brot")
+	payload := []byte("statement")
+	// A genuine signature by key1, but the UserKey handed to Verify claims
+	// key2's ID while still carrying key1's Public — a foreign key answering
+	// for another key's identity. Must be rejected before the signature (which
+	// would otherwise genuinely verify) is even checked.
+	sig := ed25519.Sign(priv1, sign.Message(sign.PurposeClientCert, payload))
+	relabeled := key1
+	relabeled.ID = key2.ID
+	p := Proof{Kind: KindPassword, KeyID: key2.ID, Sig: sig}
+	if err := Verify(p, relabeled, testRP, sign.PurposeClientCert, payload); err != ErrKey {
+		t.Errorf("key ID mismatch: got %v, want %v", err, ErrKey)
+	}
+}
+
+func TestUserKeyPublicTooLarge(t *testing.T) {
+	a := newAuthenticator(t, AlgES256)
+	oversized := make([]byte, MaxPublic+1)
+	key := a.key
+	key.Public = oversized
+	key.ID = sign.KeyID(oversized) // keep ID self-consistent: isolate the size check
+	if err := key.Validate(); err != ErrKey {
+		t.Errorf("oversized public key: got %v, want %v", err, ErrKey)
+	}
+}
+
+func TestVerifyPublicTooLarge(t *testing.T) {
+	// TestUserKeyPublicTooLarge only exercises Validate's own explicit MaxPublic
+	// check, which short-circuits before Validate ever calls parsePublic. This
+	// test proves the second enforcement point — inside parsePublic itself —
+	// independently, since that's the one protecting Verify when a caller skips
+	// Validate (the whole reason for enforcing the cap in both places).
+	a := newAuthenticator(t, AlgES256)
+	payload := []byte("statement")
+	p := a.prove(testRP, sign.PurposeClientCert, payload, flagUP|flagUV, testRP.Origins[0])
+	oversized := make([]byte, MaxPublic+1)
+	key := a.key
+	key.Public = oversized
+	key.ID = sign.KeyID(oversized) // keep ID self-consistent: isolate the size check
+	p.KeyID = key.ID
+	if err := Verify(p, key, testRP, sign.PurposeClientCert, payload); err != ErrKey {
+		t.Errorf("oversized public key via Verify: got %v, want %v", err, ErrKey)
+	}
+}
+
+func TestVerifySignatureTooLarge(t *testing.T) {
+	priv, key := passwordKey(t, "Heimnetz-2026")
+	payload := []byte("statement")
+	sig := ed25519.Sign(priv, sign.Message(sign.PurposeClientCert, payload))
+	p := Proof{Kind: KindPassword, KeyID: key.ID, Sig: append(sig, make([]byte, MaxSig)...)}
+	if err := Verify(p, key, testRP, sign.PurposeClientCert, payload); err != ErrSignature {
+		t.Errorf("oversized signature: got %v, want %v", err, ErrSignature)
+	}
+}
+
+func TestUserKeyRSAModulusTooLarge(t *testing.T) {
+	n := new(big.Int).Lsh(big.NewInt(1), MaxRSABits) // BitLen() == MaxRSABits+1
+	spki, err := x509.MarshalPKIXPublicKey(&rsa.PublicKey{N: n, E: 65537})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := UserKey{ID: sign.KeyID(spki), Kind: KindPasskey, Alg: AlgRS256, Public: spki, CredID: []byte("credential-1")}
+	if err := key.Validate(); err != ErrKey {
+		t.Errorf("oversized RSA modulus: got %v, want %v", err, ErrKey)
 	}
 }
 
