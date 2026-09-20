@@ -40,11 +40,40 @@ func TestSignVerify(t *testing.T) {
 	if err := Verify(env, pub, PurposeTask); err != ErrBadSignature {
 		t.Errorf("tampered payload: %v", err)
 	}
+	env.Payload = make([]byte, MaxPayload+1)
+	if err := Verify(env, pub, PurposeTask); err != ErrTooLarge {
+		t.Errorf("oversized payload: %v", err)
+	}
 }
 
 func TestSignTooLarge(t *testing.T) {
 	if _, err := Sign(testKey(0), PurposeTask, make([]byte, MaxPayload+1)); err != ErrTooLarge {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSignVerifyEmptyPayload(t *testing.T) {
+	priv := testKey(0)
+	pub := priv.Public().(ed25519.PublicKey)
+	env, err := Sign(priv, PurposeTask, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(env, pub, PurposeTask); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+}
+
+func TestVerifyBadKeyLength(t *testing.T) {
+	priv := testKey(0)
+	env, err := Sign(priv, PurposeTask, []byte(`{"v":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	short := ed25519.PublicKey{1, 2, 3}
+	env.KeyID = KeyID(short) // matches, so the KeyID check doesn't hide the length check below it
+	if err := Verify(env, short, PurposeTask); err != ErrBadSignature {
+		t.Errorf("short key: %v", err)
 	}
 }
 
