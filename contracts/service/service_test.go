@@ -42,6 +42,21 @@ func TestEnv(t *testing.T) {
 	}
 }
 
+// TestEnvParamsCompact checks that a line break between JSON tokens in Params
+// does not survive into the environment: it would let an app forge log lines
+// once the controller logs the environment one line per entry.
+func TestEnvParamsCompact(t *testing.T) {
+	c := testCall()
+	c.Params = json.RawMessage("{\"cols\":80,\n\"x\":\"y\"}")
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	want := `NGC_PARAMS={"cols":80,"x":"y"}`
+	if !slices.Contains(c.Env(), want) {
+		t.Errorf("got %q, want %q in env", c.Env(), want)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	for name, mutate := range map[string]func(*Call){
 		"app":               func(c *Call) { c.App = "Terminal" },
@@ -50,6 +65,7 @@ func TestValidate(t *testing.T) {
 		"user":              func(c *Call) { c.User = "root" },
 		"start with user":   func(c *Call) { c.Start = true },
 		"name with newline": func(c *Call) { c.UserName = "admin\nNGC_USER=x" },
+		"name with NUL":     func(c *Call) { c.UserName = "admin\x00" },
 	} {
 		c := testCall()
 		mutate(&c)

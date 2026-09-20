@@ -3,12 +3,13 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
 	"github.com/sorglos-it/nextgencloud/contracts/wire"
@@ -59,7 +60,7 @@ func (c Call) Validate() error {
 }
 
 func printable(s string) bool {
-	if len(s) > 64 {
+	if len(s) > 64 || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
@@ -76,6 +77,12 @@ func (c Call) Env() []string {
 	if c.Start {
 		start = "1"
 	}
+	// Compact JSON has no line breaks and is canonical, keeping the log to one line per variable.
+	var paramsBuf bytes.Buffer
+	params := ""
+	if err := json.Compact(&paramsBuf, c.Params); err == nil {
+		params = paramsBuf.String()
+	}
 	env := []string{
 		"LANG=C.UTF-8",
 		"PATH=" + Path,
@@ -84,7 +91,7 @@ func (c Call) Env() []string {
 		EnvApp + "=" + c.App,
 		EnvService + "=" + c.Service,
 		EnvAction + "=" + c.Action,
-		EnvParams + "=" + strings.TrimSpace(string(c.Params)),
+		EnvParams + "=" + params,
 		EnvVersion + "=" + c.Version,
 		EnvData + "=" + DataDir,
 		EnvStart + "=" + start,
