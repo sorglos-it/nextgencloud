@@ -56,7 +56,9 @@ func TestFrameRules(t *testing.T) {
 		{Type: TypeEOF, Channel: 1, Payload: []byte("x")},
 		{Type: TypeEOF, Channel: ControlChannel},
 		{Type: TypeClose, Channel: 1},
+		{Type: TypeClose, Channel: ControlChannel, Payload: []byte("{}")},
 		{Type: TypeGrant, Channel: 1, Payload: []byte{1, 2}},
+		{Type: TypeGrant, Channel: ControlChannel, Payload: Grant(DefaultWindow, nil)},
 		{Type: TypeData, Channel: 1, Payload: make([]byte, MaxPayload+1)},
 	}
 	for _, f := range bad {
@@ -66,6 +68,15 @@ func TestFrameRules(t *testing.T) {
 	}
 	if _, err := Decode([]byte{2, 0, 0}); err != ErrFrame {
 		t.Errorf("short frame: %v", err)
+	}
+	good := []Frame{
+		{Type: TypeData, Channel: 1, Payload: make([]byte, MaxPayload)},
+		{Type: TypeGrant, Channel: 1, Payload: make([]byte, MaxPayload)},
+	}
+	for _, f := range good {
+		if _, err := f.Encode(); err != nil {
+			t.Errorf("%+v: got %v", f.Type, err)
+		}
 	}
 }
 
@@ -154,6 +165,7 @@ type frameVector struct {
 
 func TestVectors(t *testing.T) {
 	open, _ := json.Marshal(testOpen())
+	closeErr, _ := json.Marshal(Error(CodeForbidden))
 	var vs []frameVector
 	for _, f := range []struct {
 		name string
@@ -162,7 +174,9 @@ func TestVectors(t *testing.T) {
 		{"open", Frame{Type: TypeOpen, Channel: 1, Payload: open}},
 		{"data", Frame{Type: TypeData, Channel: 1, Payload: []byte("ls\n")}},
 		{"eof", Frame{Type: TypeEOF, Channel: 1}},
+		{"close", Frame{Type: TypeClose, Channel: 1, Payload: closeErr}},
 		{"grant with handshake", Frame{Type: TypeGrant, Channel: 1, Payload: Grant(DefaultWindow, bytes.Repeat([]byte{9}, MinHandshake))}},
+		{"grant without handshake", Frame{Type: TypeGrant, Channel: 1, Payload: Grant(DefaultWindow, nil)}},
 		{"control", Frame{Type: TypeData, Channel: 0, Payload: []byte(`{"t":"bye"}`)}},
 	} {
 		b, err := f.f.Encode()
@@ -185,13 +199,15 @@ func FuzzDecode(f *testing.F) {
 		if err != nil || !bytes.Equal(out, b) {
 			t.Fatalf("re-encode differs: %v", err)
 		}
-		switch fr.Type {
-		case TypeOpen:
+		switch {
+		case fr.Type == TypeOpen:
 			_, _ = ParseOpen(fr.Payload)
-		case TypeClose:
+		case fr.Type == TypeClose:
 			_, _ = ParseClose(fr.Payload)
-		case TypeGrant:
+		case fr.Type == TypeGrant:
 			_, _, _ = ParseGrant(fr.Payload)
+		case fr.Type == TypeData && fr.Channel == ControlChannel:
+			_, _ = ParseControl(fr.Payload)
 		}
 	})
 }

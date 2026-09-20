@@ -21,11 +21,25 @@
     "encoded": "AwAAAAE"
   },
   {
+    "name": "close",
+    "type": 4,
+    "channel": 1,
+    "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0ZPUkJJRERFTiIsIm1lc3NhZ2UiOiJLZWluZSBCZXJlY2h0aWd1bmcuIn0",
+    "encoded": "BAAAAAF7InN0YXR1cyI6ImVycm9yIiwiY29kZSI6IkVfRk9SQklEREVOIiwibWVzc2FnZSI6IktlaW5lIEJlcmVjaHRpZ3VuZy4ifQ"
+  },
+  {
     "name": "grant with handshake",
     "type": 5,
     "channel": 1,
     "payload": "AAQAAAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ",
     "encoded": "BQAAAAEABAAACQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ"
+  },
+  {
+    "name": "grant without handshake",
+    "type": 5,
+    "channel": 1,
+    "payload": "AAQAAA",
+    "encoded": "BQAAAAEABAAA"
   },
   {
     "name": "control",

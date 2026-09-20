@@ -49,7 +49,7 @@ const (
 type Frame struct {
 	Type    Type
 	Channel uint32
-	Payload []byte
+	Payload []byte // from Decode: aliases the decoded buffer, valid only until it is reused
 }
 
 var (
@@ -71,7 +71,8 @@ func (f Frame) Encode() ([]byte, error) {
 	return b, nil
 }
 
-// Decode parses one frame and checks the rules for its type.
+// Decode parses one frame and checks the rules for its type. The Payload of
+// the returned Frame points into b and is only valid until b is reused.
 func Decode(b []byte) (Frame, error) {
 	if len(b) < HeaderSize || len(b) > MaxFrame {
 		return Frame{}, ErrFrame
