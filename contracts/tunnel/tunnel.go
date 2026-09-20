@@ -22,18 +22,20 @@ import (
 
 // Paths on the API listener, names and limits. Times in seconds.
 const (
-	PathTunnel   = "/tunnel"      // WebSocket; query key=<Fingerprint of the controller's Noise key>
-	PathPair     = "/tunnel/pair" // POST PairRequest
-	Subprotocol  = "ngc.tunnel.v1"
-	PairPrefix   = "ngc-pair:"
-	SecretSize   = 16
-	PairLifetime = 86400
-	MaxPairCode  = 1024
-	MaxHello     = 4096
-	PingInterval = 30
-	ReconnectMin = 1
-	ReconnectMax = 60
-	Contract     = 1 // version of the contracts; every part also understands the previous one
+	PathTunnel     = "/tunnel"      // WebSocket; query key=<Fingerprint of the controller's Noise key>
+	PathPair       = "/tunnel/pair" // POST PairRequest
+	Subprotocol    = "ngc.tunnel.v1"
+	PairPrefix     = "ngc-pair:"
+	SecretSize     = 16
+	PairLifetime   = 86400
+	MaxPairCode    = 1024
+	MaxURL         = 256 // longest PairCode.URL
+	MaxPairRequest = 4096
+	MaxHello       = 4096
+	PingInterval   = 30
+	ReconnectMin   = 1
+	ReconnectMax   = 60
+	Contract       = 1 // version of the contracts; every part also understands the previous one
 )
 
 // Parts of NGC a server can carry.
@@ -130,7 +132,7 @@ func ParsePairCode(s string) (PairCode, error) {
 	if err := enc.DecodeStrict(b, MaxPairCode, &c); err != nil {
 		return PairCode{}, ErrPairCode
 	}
-	if !strings.HasPrefix(c.URL, "wss://") || len(c.URL) > 256 || len(c.Key) != 32 || len(c.Secret) != SecretSize ||
+	if !strings.HasPrefix(c.URL, "wss://") || len(c.URL) > MaxURL || len(c.Key) != 32 || len(c.Secret) != SecretSize ||
 		c.Anchor.Seq == 0 || len(c.Anchor.Hash) != sha256.Size {
 		return PairCode{}, ErrPairCode
 	}
@@ -152,7 +154,7 @@ var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$`)
 // ParsePairRequest decodes and checks a pairing request; Verify checks the MAC.
 func ParsePairRequest(b []byte) (PairRequest, error) {
 	var r PairRequest
-	if err := enc.DecodeStrict(b, 4096, &r); err != nil {
+	if err := enc.DecodeStrict(b, MaxPairRequest, &r); err != nil {
 		return PairRequest{}, ErrPair
 	}
 	if !hostName.MatchString(r.Name) || len(r.Noise) != 32 || len(r.MAC) != sha256.Size {

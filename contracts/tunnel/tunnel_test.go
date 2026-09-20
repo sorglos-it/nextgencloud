@@ -31,7 +31,8 @@ func TestPairCode(t *testing.T) {
 	}
 	short := c
 	short.Secret = short.Secret[:8]
-	for _, s := range []string{"", PairPrefix, PairPrefix + "!!", strings.TrimPrefix(c.String(), PairPrefix), short.String()} {
+	long := PairPrefix + strings.Repeat("A", MaxPairCode)
+	for _, s := range []string{"", PairPrefix, PairPrefix + "!!", strings.TrimPrefix(c.String(), PairPrefix), short.String(), long} {
 		if _, err := ParsePairCode(s); err != ErrPairCode {
 			t.Errorf("%q: %v", s, err)
 		}
@@ -52,11 +53,26 @@ func TestPairRequest(t *testing.T) {
 	if swapped.Verify(c.Secret, c.Key) != ErrPair {
 		t.Error("other controller key accepted")
 	}
+	if r.Verify(c.Secret, bytes.Repeat([]byte{0xA2}, 32)) != ErrPair {
+		t.Error("other API key accepted")
+	}
 	if r.Verify(bytes.Repeat([]byte{1}, SecretSize), c.Key) != ErrPair {
 		t.Error("other secret accepted")
 	}
-	if _, err := ParsePairRequest([]byte(`{"name":"a b","noise":"","mac":""}`)); err != ErrPair {
-		t.Errorf("bad request: %v", err)
+	badName := PairRequest{Name: "a b", Noise: ctl, MAC: bytes.Repeat([]byte{1}, 32)}
+	b, _ = json.Marshal(badName)
+	if _, err := ParsePairRequest(b); err != ErrPair {
+		t.Errorf("bad name: %v", err)
+	}
+	badNoise := PairRequest{Name: "dienste", Noise: nil, MAC: bytes.Repeat([]byte{1}, 32)}
+	b, _ = json.Marshal(badNoise)
+	if _, err := ParsePairRequest(b); err != ErrPair {
+		t.Errorf("bad noise length: %v", err)
+	}
+	badMAC := PairRequest{Name: "dienste", Noise: ctl, MAC: nil}
+	b, _ = json.Marshal(badMAC)
+	if _, err := ParsePairRequest(b); err != ErrPair {
+		t.Errorf("bad mac length: %v", err)
 	}
 }
 
@@ -107,6 +123,18 @@ func TestParseOpen(t *testing.T) {
 	if _, err := ParseOpen(b); err == nil {
 		t.Error("client certificate without proof accepted")
 	}
+	userOnly := testOpen()
+	userOnly.Client, userOnly.Proof = nil, nil
+	b, _ = json.Marshal(userOnly)
+	if _, err := ParseOpen(b); err == nil {
+		t.Error("user without client certificate and proof accepted")
+	}
+	proofOnly := testOpen()
+	proofOnly.User, proofOnly.Client = "", nil
+	b, _ = json.Marshal(proofOnly)
+	if _, err := ParseOpen(b); err == nil {
+		t.Error("proof without user and client certificate accepted")
+	}
 	if _, err := ParseOpen([]byte(`{"app":"org.sorglos.terminal","service":"terminal","action":"shell","window":262144,"extra":1}`)); err == nil {
 		t.Error("unknown field accepted")
 	}
@@ -132,6 +160,24 @@ func FuzzParsePairCode(f *testing.F) {
 	f.Add(testCode().String())
 	f.Fuzz(func(t *testing.T, s string) {
 		_, _ = ParsePairCode(s)
+	})
+}
+
+func FuzzParsePairRequest(f *testing.F) {
+	c := testCode()
+	ctl := bytes.Repeat([]byte{0xC1}, 32)
+	b, _ := json.Marshal(PairRequest{Name: "dienste", Noise: ctl, MAC: PairMAC(c.Secret, ctl, c.Key)})
+	f.Add(b)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		_, _ = ParsePairRequest(b)
+	})
+}
+
+func FuzzParseHello(f *testing.F) {
+	b, _ := json.Marshal(Hello{Version: "1.0.0", Contract: Contract, Node: "ctl-1", TrustSeq: 3, Arch: "arm64", OS: "debian-13", Parts: []string{PartServices}})
+	f.Add(b)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		_, _ = ParseHello(b)
 	})
 }
 
