@@ -1,0 +1,41 @@
+{
+  "protocol": "Noise_KK_25519_AESGCM_SHA256",
+  "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxs",
+  "initStatic": {
+    "private": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+    "public": "pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogk"
+  },
+  "initEphemeral": {
+    "private": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+    "public": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVk"
+  },
+  "respStatic": {
+    "private": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+    "public": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI"
+  },
+  "respEphemeral": {
+    "private": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+    "public": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs"
+  },
+  "msg1Payload": "bTE",
+  "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVmy_41agEMrFXo4z54Xfgb7Mm8",
+  "msg2Payload": "bTI",
+  "msg2": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8QsSW4TPwUfSgaqQBNw6jE4pMcM",
+  "transport": [
+    {
+      "from": "initiator",
+      "plaintext": "bHMgLWxhCg",
+      "ciphertext": "cCpR_lZuctFcrio2RhtUVWZd7V3HrTU"
+    },
+    {
+      "from": "responder",
+      "plaintext": "dG90YWwgMAo",
+      "ciphertext": "L60Jmb2A7u_fnTzAypJeTR2ncJzpZt7i"
+    },
+    {
+      "from": "initiator",
+      "plaintext": "",
+      "ciphertext": "iMOTUL3aJYTrC2NfNO0E0A"
+    }
+  ]
+}

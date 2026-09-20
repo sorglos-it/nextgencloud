@@ -8,5 +8,6 @@ nach: `go get <modul>@<version>`, `go mod vendor`, `govulncheck ./...`, Eintrag 
 |---|---|---|---|---|
 | golang.org/x/crypto | v0.57.0 | BSD-3-Clause | Argon2id für den Passwortschlüssel | 2026-09-19 |
 | golang.org/x/sys | v0.48.0 | BSD-3-Clause | indirekt über golang.org/x/crypto (CPU-Erkennung für blake2b) | 2026-09-19 |
+| github.com/flynn/noise | v1.1.0 | BSD-3-Clause (GitHub meldet NOASSERTION wegen der Markenzeile) | Noise_KK für Sitzung, Tunnel und Ende zu Ende | 2026-09-19 |
 
 Eigene Änderungen an übernommenem Code: keine.
