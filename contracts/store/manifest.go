@@ -20,6 +20,8 @@ import (
 const (
 	ManifestFile  = "manifest.json"
 	MaxManifest   = 64 << 10
+	MaxActions    = 64 // actions per manifest
+	MaxServices   = 16 // services per manifest
 	RuntimePodman = "podman"
 	NeedRoot      = "root"    // root inside the container
 	NeedNetwork   = "network" // access to the network
@@ -106,10 +108,13 @@ func (m *Manifest) Validate() error {
 	if m.UI != nil && (!ValidPath(m.UI.Entry) || !size(m.UI.Width) || !size(m.UI.Height)) {
 		return ErrManifest
 	}
+	if len(m.Actions) > MaxActions || len(m.Services) > MaxServices {
+		return ErrManifest
+	}
 	services := map[string]bool{}
 	for _, s := range m.Services {
 		if !wire.ValidName(s.Name) || services[s.Name] || len(s.Command) == 0 || len(s.Command) > 32 ||
-			!strings.HasPrefix(s.Command[0], "/") {
+			len(s.Command[0]) < 2 || !strings.HasPrefix(s.Command[0], "/") {
 			return ErrManifest
 		}
 		for _, arg := range s.Command {

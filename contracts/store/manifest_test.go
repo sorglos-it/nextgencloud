@@ -2,6 +2,8 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +49,23 @@ func TestManifestRejects(t *testing.T) {
 		"start is a stream":   func(m *Manifest) { m.Start = "shell" },
 		"memory":              func(m *Manifest) { m.Memory = 1 },
 		"nothing to do":       func(m *Manifest) { m.UI, m.Actions, m.Services = nil, nil, nil },
+		"ui width":            func(m *Manifest) { m.UI.Width = 100 },
+		"cpu":                 func(m *Manifest) { m.CPU = 50 },
+		"minNgc":              func(m *Manifest) { m.MinNGC = "abc" },
+		"description":         func(m *Manifest) { m.Description = strings.Repeat("a", 1001) },
+		"bare root command":   func(m *Manifest) { m.Services[0].Command = []string{"/"} },
+		"too many actions": func(m *Manifest) {
+			m.Actions = nil
+			for i := 0; i <= MaxActions; i++ {
+				m.Actions = append(m.Actions, Action{Name: fmt.Sprintf("a%d", i), Title: "t", Service: "terminal"})
+			}
+		},
+		"too many services": func(m *Manifest) {
+			m.Services = nil
+			for i := 0; i <= MaxServices; i++ {
+				m.Services = append(m.Services, Service{Name: fmt.Sprintf("s%d", i), Command: []string{"/bin/x"}})
+			}
+		},
 	}
 	for name, mutate := range cases {
 		m := terminalManifest()
@@ -57,6 +76,11 @@ func TestManifestRejects(t *testing.T) {
 	}
 	if _, err := ParseManifest([]byte(`{"id":"org.sorglos.terminal","script":"rm -rf /"}`)); err != ErrManifest {
 		t.Errorf("unknown field: %v", err)
+	}
+	b, _ := json.Marshal(terminalManifest())
+	b = append(b[:len(b)-1], []byte(`,"unknown":true}`)...)
+	if _, err := ParseManifest(b); err != ErrManifest {
+		t.Errorf("unknown field in an otherwise valid manifest: %v", err)
 	}
 }
 
