@@ -6,5 +6,6 @@ nach: `go get <modul>@<version>`, `go mod vendor`, `govulncheck ./...`, Eintrag 
 
 | Modul | Version | Lizenz | Wofür | Übernommen |
 |---|---|---|---|---|
+| golang.org/x/crypto | v0.57.0 | BSD-3-Clause | Argon2id für den Passwortschlüssel | 2026-09-19 |
 
 Eigene Änderungen an übernommenem Code: keine.

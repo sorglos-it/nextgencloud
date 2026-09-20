@@ -1,0 +1,154 @@
+{
+  "rp": {
+    "id": "ngc.example.org",
+    "origins": [
+      "https://ngc.example.org"
+    ]
+  },
+  "proofs": [
+    {
+      "name": "passkey ES256",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "6K5MIlScfaDUQohj8CGptw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzHRPKagoa3czva3xEFlwdNsFiklzqRK80EJ5EzrlHJQOLOOojUtcKX8d8BhAyuiFvoKZUmMM5rSlCDJ75uXsfw",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "6K5MIlScfaDUQohj8CGptw",
+        "sig": "MEQCICwlMrdJQtne3nzzgU9-jOlGw44l7BiJ-pKQBeK4JdYuAiATRuxbyJvtTGmU_418Ye8mDVGg3WfLDTqH9w4KKeeVRg",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": true
+    },
+    {
+      "name": "passkey ES256 without PIN",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "6K5MIlScfaDUQohj8CGptw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzHRPKagoa3czva3xEFlwdNsFiklzqRK80EJ5EzrlHJQOLOOojUtcKX8d8BhAyuiFvoKZUmMM5rSlCDJ75uXsfw",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "6K5MIlScfaDUQohj8CGptw",
+        "sig": "MEUCIQDnbqSs2LdU6NW5lYyOOlvN6l7B9wrMoCHTuHdH8AzH-wIgfJ8DQrYdB5JsXk0JK_DIF4vuikqmWTwJLCpSCstOQhw",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwBAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey EdDSA",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "BYYLYdwhEcB0MDTbs9tU-g",
+        "kind": "passkey",
+        "alg": "EdDSA",
+        "pub": "MCowBQYDK2VwAyEAMxFgYd-MaQq2kZy6MhzrP0J35VaFHsjhSMzfImCPg6o",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "BYYLYdwhEcB0MDTbs9tU-g",
+        "sig": "78EY5Z8g45DLJNx4_frB_P-G2EOwQN9RlFeNjdYqBREHhfiDWgc-NxN8PdukMl8EqKD30ddFi0VBgzRB2YQaAQ",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": true
+    },
+    {
+      "name": "passkey EdDSA without PIN",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "BYYLYdwhEcB0MDTbs9tU-g",
+        "kind": "passkey",
+        "alg": "EdDSA",
+        "pub": "MCowBQYDK2VwAyEAMxFgYd-MaQq2kZy6MhzrP0J35VaFHsjhSMzfImCPg6o",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "BYYLYdwhEcB0MDTbs9tU-g",
+        "sig": "sL8C66VndpbLJXFn2N5hwkqrjLsGVSQUAdWuMBwqZromdy09lGzE6cWfBiWBAnvn0HpDrZwgfrRkZR5ziCyOCA",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwBAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey RS256",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "jVM0xDsOU-TL6ORhOnRXdw",
+        "kind": "passkey",
+        "alg": "RS256",
+        "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1KtDOWUhzvhqOZWN3qaTek6jx08c4Q3-_pOq7cgPTI4rb9lGiXQ5HFpEIgaYj3oYRGCpTKMGiCyUa0-x7_1i67Z7tPWL-cJLsmYgKcq5JliMea-aT1NmFx7jcxLoMZ8XRD1CrYrivsF_VtWOieh9TRy19oEYPyUodvXE3TSM1Woin5XdJuZc4cLnPigtw6Qus2OPRhcJDAGn84SaCeIBsjJFJwEn_1Pe1_9EoKSSFUOWSH-hjCw8fEc13m6h5ON5-j1S2JAw1LJKijNSDiiNyo0D6YCXoYp6aBTLRad9DBUwKLf1bO7tr83SP3TPI4hPxBTKczb_J6zpL9ZW34Pq6QIDAQAB",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "jVM0xDsOU-TL6ORhOnRXdw",
+        "sig": "gQXm-tlPeGa_lJdaB3B6VUSvTUqSxjZx8lFCg2AAbUdh-1E4VrAYvLLvw56l73z6hL_CU1AVaRgeqEAvISiziMb3TrKkYsLj4I3mZ4SdwbfhPAhBOA4gswrBib5iHf1sMj2hFJT-ivBUB17AIeQ3pKX47FPh_dd30M1npJstwrbPTRrC8whRme1MLVMogvogf-Cmon4A-uYrNtyJ0_b9KSs0ligDbOXZF3cIrVaxwDEUUmvEGhX7QaGkjMeBfK4xkCAOkv2Y1R7wdbag1HdhvxWccOjovZ1BCHpOHTnjiJsq83t-4HLIgG-WgtvZD3wR9A3GAn2ce0QK-qI1SsCZug",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": true
+    },
+    {
+      "name": "passkey RS256 without PIN",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "jVM0xDsOU-TL6ORhOnRXdw",
+        "kind": "passkey",
+        "alg": "RS256",
+        "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1KtDOWUhzvhqOZWN3qaTek6jx08c4Q3-_pOq7cgPTI4rb9lGiXQ5HFpEIgaYj3oYRGCpTKMGiCyUa0-x7_1i67Z7tPWL-cJLsmYgKcq5JliMea-aT1NmFx7jcxLoMZ8XRD1CrYrivsF_VtWOieh9TRy19oEYPyUodvXE3TSM1Woin5XdJuZc4cLnPigtw6Qus2OPRhcJDAGn84SaCeIBsjJFJwEn_1Pe1_9EoKSSFUOWSH-hjCw8fEc13m6h5ON5-j1S2JAw1LJKijNSDiiNyo0D6YCXoYp6aBTLRad9DBUwKLf1bO7tr83SP3TPI4hPxBTKczb_J6zpL9ZW34Pq6QIDAQAB",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "jVM0xDsOU-TL6ORhOnRXdw",
+        "sig": "rEudaXgtJeneJBnrdBg45Q3p4VOwzMDl71LniQ9gUj9M8b2KYmc4shiOZ6bcyvhdwloPsmTvXXmwRWB09o_-ZmeCSFTITIDsXLoQNeJBkiHvzaHy0TGxbYILpW21Z6xbZzBOADIU6aMJUc-K5FQh2Q4hx_cxFYFFvzC_frexK9SSXC2agv2BcNcLvF6bXx2WJfvUWKVy98wP6UrGLD93Jv_-OQ6DN4gVxluNrbXmhYf_OIKgi2u7qAIGhFKx8-1CzF818a5b-UdR5mwHuclbLnchR8YzZSYUBZ4ZxrF8Kt3_i7ME0Ftze_HoSIC2-_3DmIswAcQYhw92k0LelIVALA",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwBAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "password key",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "egLZXAFKwZtmuHb4lGT_GQ",
+        "kind": "password",
+        "alg": "EdDSA",
+        "pub": "zs3euPN4EQ_1OBUwYmmzcdVfTmT9hV-vrAlXdBYO6q0",
+        "kdf": {
+          "alg": "argon2id",
+          "salt": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "m": 65536,
+          "t": 3,
+          "p": 1
+        }
+      },
+      "proof": {
+        "kind": "password",
+        "kid": "egLZXAFKwZtmuHb4lGT_GQ",
+        "sig": "cekqla51l5UvsLP5XFKKl0khV6RPq9T_5Kp3aRCfCul5ItfQGqsM7PKcZtAXIgTgETgTleX1JweyVP81tw52Bg"
+      },
+      "valid": true
+    }
+  ]
+}
