@@ -6,3 +6,11 @@ Thumbs.db
 .DS_Store
 *.bak
 *.log
+
+# build output
+/bin/
+/dist/
+
+# browser tests (npm only there)
+/tests/browser/node_modules/
+/tests/browser/test-results/
