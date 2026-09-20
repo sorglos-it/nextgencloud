@@ -1,0 +1,11 @@
+{
+  "seed": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "public": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "purpose": "trustlist/v1",
+  "message": "bmdjL3RydXN0bGlzdC92MQB7InYiOjEsInNlcSI6MX0",
+  "envelope": {
+    "payload": "eyJ2IjoxLCJzZXEiOjF9",
+    "kid": "Vkdap1RjR0wChd9dvyvKtw",
+    "sig": "rtokoYQ577aUYnVD_B2AxhSrUygP2CwZ6YjW8PV3jfYbxt4fMuk1ev3WCVsDbdJqY43kk4Izh9lIIOmoUOAWDQ"
+  }
+}
