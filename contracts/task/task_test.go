@@ -98,8 +98,13 @@ func TestValidate(t *testing.T) {
 		{"short id", func(tk *Task) { tk.ID = tk.ID[:IDSize-1] }},
 		{"bad installation", func(tk *Task) { tk.Installation = "" }},
 		{"bad certificate hash", func(tk *Task) { tk.Cert = tk.Cert[:len(tk.Cert)-1] }},
+		{"non-empty invalid node", func(tk *Task) { tk.Node = "Ctl 1" }},
+		{"bad app id", func(tk *Task) { tk.App = "Terminal" }},
 		{"bad service name", func(tk *Task) { tk.Service = "Not-Valid" }},
+		{"bad action name", func(tk *Task) { tk.Action = "Not-Valid" }},
 		{"params not an object", func(tk *Task) { tk.Params = json.RawMessage(`[1,2,3]`) }},
+		{"issued zero", func(tk *Task) { tk.Issued = 0 }},
+		{"expires equals issued", func(tk *Task) { tk.Expires = tk.Issued }},
 	}
 	for _, c := range cases {
 		tk := base
