@@ -26,11 +26,10 @@ const (
 var sessionSeed = bytes.Repeat([]byte{0x51}, ed25519.SeedSize)
 
 type fixture struct {
-	list    *trust.List
-	admin   trusttest.Signer
-	sessSig ed25519.PrivateKey
-	cert    session.ClientCert
-	client  []byte
+	list     *trust.List
+	admin    trusttest.Signer
+	sessSig  ed25519.PrivateKey
+	verified session.Verified
 }
 
 func newFixture(t testing.TB) fixture {
@@ -45,11 +44,15 @@ func newFixture(t testing.TB) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{list: l, admin: admin, sessSig: sessSig, cert: cert, client: client}
+	v, err := session.VerifyClient(client, admin.Prove(sign.PurposeClientCert, client), l, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fixture{list: l, admin: admin, sessSig: sessSig, verified: v}
 }
 
 func (f fixture) task() Task {
-	return Task{ID: bytes.Repeat([]byte{0x61}, IDSize), Installation: f.list.Installation, Cert: session.CertHash(f.client),
+	return Task{ID: bytes.Repeat([]byte{0x61}, IDSize), Installation: f.list.Installation, Cert: session.CertHash(f.verified.Payload()),
 		Node: "ctl-1", App: "ngc.store", Service: "controller", Action: "activate",
 		Params: json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0"}`), Issued: issued, Expires: issued + 60}
 }
@@ -68,16 +71,42 @@ func signTask(t testing.TB, priv ed25519.PrivateKey, tk Task) sign.Envelope {
 }
 
 func (f fixture) input(env *sign.Envelope) Input {
-	return Input{Task: env, Cert: f.cert, Client: f.client, Node: "ctl-1", App: "ngc.store", Service: "controller",
+	return Input{Task: env, Session: f.verified, Node: "ctl-1", App: "ngc.store", Service: "controller",
 		Action: "activate", Root: true, Changes: true}
 }
 
 func TestCheck(t *testing.T) {
 	f := newFixture(t)
-	env := signTask(t, f.sessSig, f.task())
+	tk := f.task()
+	env := signTask(t, f.sessSig, tk)
 	got, err := Check(f.input(&env), f.list, now)
-	if err != nil || got == nil || got.Action != "activate" {
+	if err != nil || got == nil || got.Action != "activate" || !bytes.Equal(got.Params, tk.Params) {
 		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	f := newFixture(t)
+	base := f.task()
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid task rejected: %v", err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(tk *Task)
+	}{
+		{"short id", func(tk *Task) { tk.ID = tk.ID[:IDSize-1] }},
+		{"bad installation", func(tk *Task) { tk.Installation = "" }},
+		{"bad certificate hash", func(tk *Task) { tk.Cert = tk.Cert[:len(tk.Cert)-1] }},
+		{"bad service name", func(tk *Task) { tk.Service = "Not-Valid" }},
+		{"params not an object", func(tk *Task) { tk.Params = json.RawMessage(`[1,2,3]`) }},
+	}
+	for _, c := range cases {
+		tk := base
+		c.mutate(&tk)
+		if err := tk.Validate(); err != ErrTask {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrTask)
+		}
 	}
 }
 
@@ -89,6 +118,19 @@ func TestCheckRejects(t *testing.T) {
 	long := f.task()
 	long.Expires = long.Issued + MaxLifetime + 1
 	longEnv := signTask(t, f.sessSig, long)
+	// A second, legitimately verified session bound to different certificate
+	// bytes (only the nonce differs) but the same user and session key, so
+	// only the task's Cert-hash binding is wrong, nothing else about it.
+	otherClient, err := json.Marshal(session.ClientCert{Installation: f.list.Installation, User: f.list.Users[1].ID,
+		Nonce: bytes.Repeat([]byte{0x54}, session.NonceSize), Sig: enc.Bytes(f.sessSig.Public().(ed25519.PublicKey)),
+		DH: f.verified.Cert().DH, Issued: issued, Expires: issued + 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSession, err := session.VerifyClient(otherClient, f.admin.Prove(sign.PurposeClientCert, otherClient), f.list, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name   string
 		mutate func(in *Input, now *int64)
@@ -100,7 +142,7 @@ func TestCheckRejects(t *testing.T) {
 		{"expired", func(_ *Input, now *int64) { *now = issued + 60 }, ErrExpired},
 		{"too long", func(in *Input, _ *int64) { in.Task = &longEnv }, ErrTask},
 		{"other session key", func(in *Input, _ *int64) { in.Task = &foreign }, sign.ErrWrongKey},
-		{"other client certificate", func(in *Input, _ *int64) { in.Client = append([]byte(" "), f.client...) }, ErrTask},
+		{"other client certificate", func(in *Input, _ *int64) { in.Session = otherSession }, ErrTask},
 	}
 	for _, c := range cases {
 		in, n := f.input(&env), int64(now)
@@ -129,7 +171,9 @@ func TestConfirm(t *testing.T) {
 	if _, err := Check(in, f.list, now); err != nil {
 		t.Errorf("confirmed: %v", err)
 	}
-	bad := trusttest.NewSigner(9).Prove(sign.PurposeConfirm, env.Payload)
+	// admin2's key is genuinely in the trust list, but she is not the user
+	// who owns this task's session (f.admin, Users[1]): still ErrConfirm.
+	bad := trusttest.NewPasskey(trusttest.GenesisPasskeyFill).Prove(sign.PurposeConfirm, env.Payload)
 	in.Confirm = &bad
 	if _, err := Check(in, f.list, now); err != ErrConfirm {
 		t.Errorf("foreign confirmation: %v", err)
@@ -143,7 +187,7 @@ func TestConfirm(t *testing.T) {
 
 func TestLevels(t *testing.T) {
 	f := newFixture(t)
-	shell := Input{Cert: f.cert, Client: f.client, Node: "ctl-1", App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Changes: true}
+	shell := Input{Session: f.verified, Node: "ctl-1", App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Changes: true}
 	if tk, err := Check(shell, f.list, now); err != nil || tk != nil {
 		t.Errorf("plain channel at level critical: %v %v", tk, err)
 	}
@@ -168,7 +212,7 @@ func TestVectors(t *testing.T) {
 	env := signTask(t, f.sessSig, f.task())
 	golden.Check(t, *update, "task.json", vector{
 		Trust: f.admin.Sign(t, f.list), Now: now, SessionSeed: sessionSeed,
-		Client: f.client, ClientProof: f.admin.Prove(sign.PurposeClientCert, f.client),
+		Client: f.verified.Payload(), ClientProof: f.admin.Prove(sign.PurposeClientCert, f.verified.Payload()),
 		Task: env, Confirm: f.admin.Prove(sign.PurposeConfirm, env.Payload),
 	})
 }
@@ -181,6 +225,6 @@ func FuzzVerify(f *testing.F) {
 		if err != nil {
 			return
 		}
-		_, _ = Verify(env, fx.cert, fx.client, now)
+		_, _ = Verify(env, fx.verified, now)
 	})
 }

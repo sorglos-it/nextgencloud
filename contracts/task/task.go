@@ -6,6 +6,7 @@ package task
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 
@@ -39,6 +40,11 @@ type Task struct {
 	Expires      int64           `json:"exp"`
 }
 
+// Errors from Verify, VerifyConfirm and Check. The caller maps them to
+// wire.Code: ErrNoTask and ErrConfirm to E_CONFIRM (the shell asks the user
+// to confirm and tries again), ErrForbidden to E_FORBIDDEN, and everything
+// else — including errors returned as-is from packages sign and proof — to
+// E_VERIFY.
 var (
 	ErrTask      = errors.New("task: malformed task or other target")
 	ErrNoTask    = errors.New("task: signed task required")
@@ -49,7 +55,7 @@ var (
 
 // Validate checks the fields of t.
 func (t Task) Validate() error {
-	if len(t.ID) != IDSize || !trust.ValidID(t.Installation) || len(t.Cert) != 32 ||
+	if len(t.ID) != IDSize || !trust.ValidID(t.Installation) || len(t.Cert) != sha256.Size ||
 		(t.Node != "" && !wire.ValidName(t.Node)) || !wire.ValidAppID(t.App) ||
 		!wire.ValidName(t.Service) || !wire.ValidName(t.Action) || !wire.ValidParams(t.Params) ||
 		t.Issued <= 0 || t.Expires <= t.Issued || t.Expires-t.Issued > MaxLifetime {
@@ -58,9 +64,16 @@ func (t Task) Validate() error {
 	return nil
 }
 
-// Verify checks that env is a task signed with the session key of cert,
-// bound to the client certificate payload client and valid at now.
-func Verify(env sign.Envelope, cert session.ClientCert, client []byte, now int64) (Task, error) {
+// Verify checks that env is a task signed with the session key of v, bound
+// to v's client certificate payload and valid at now.
+func Verify(env sign.Envelope, v session.Verified, now int64) (Task, error) {
+	if len(env.Payload) > MaxTask {
+		return Task{}, ErrTask
+	}
+	cert := v.Cert()
+	if now >= cert.Expires {
+		return Task{}, ErrExpired
+	}
 	if err := sign.Verify(env, ed25519.PublicKey(cert.Sig), sign.PurposeTask); err != nil {
 		return Task{}, err
 	}
@@ -71,7 +84,7 @@ func Verify(env sign.Envelope, cert session.ClientCert, client []byte, now int64
 	if err := t.Validate(); err != nil {
 		return Task{}, err
 	}
-	if t.Installation != cert.Installation || !bytes.Equal(t.Cert, session.CertHash(client)) {
+	if t.Installation != cert.Installation || !bytes.Equal(t.Cert, session.CertHash(v.Payload())) {
 		return Task{}, ErrTask
 	}
 	if now < t.Issued-session.MaxSkew || now >= t.Expires {
@@ -94,9 +107,8 @@ func VerifyConfirm(p proof.Proof, env sign.Envelope, l *trust.List, user string)
 type Input struct {
 	Task     *sign.Envelope
 	Confirm  *proof.Proof
-	Cert     session.ClientCert // already verified with session.VerifyClient
-	Client   []byte             // its payload
-	Node     string             // the verifier's own node; empty for the API
+	Session  session.Verified // the chain back to the user's key; only session.VerifyClient makes one
+	Node     string           // the verifier's own node; empty for the API
 	App      string
 	Service  string
 	Action   string
@@ -108,25 +120,26 @@ type Input struct {
 // Check decides whether a channel may open. It returns the verified task,
 // or nil if none was needed and none came.
 func Check(in Input, l *trust.List, now int64) (*Task, error) {
+	cert := in.Session.Cert()
 	op := trust.Op{App: in.App, Action: in.Action, Node: in.Node, Root: in.Root, Critical: in.Critical, Changes: in.Changes}
-	confirm := l.NeedsConfirm(in.Cert.User, op)
+	confirm := l.NeedsConfirm(cert.User, op)
 	if in.Task == nil {
 		if in.Root || confirm {
 			return nil, ErrNoTask
 		}
 		return nil, nil
 	}
-	t, err := Verify(*in.Task, in.Cert, in.Client, now)
+	t, err := Verify(*in.Task, in.Session, now)
 	if err != nil {
 		return nil, err
 	}
 	if t.Node != in.Node || t.App != in.App || t.Service != in.Service || t.Action != in.Action {
 		return nil, ErrTask
 	}
-	if in.Root && !l.MayRoot(in.Cert.User, in.Node) {
+	if in.Root && !l.MayRoot(cert.User, in.Node) {
 		return nil, ErrForbidden
 	}
-	if confirm && (in.Confirm == nil || VerifyConfirm(*in.Confirm, *in.Task, l, in.Cert.User) != nil) {
+	if confirm && (in.Confirm == nil || VerifyConfirm(*in.Confirm, *in.Task, l, cert.User) != nil) {
 		return nil, ErrConfirm
 	}
 	return &t, nil

@@ -59,8 +59,8 @@ func newFixture(t testing.TB) fixture {
 
 func TestVerify(t *testing.T) {
 	f := newFixture(t)
-	c, err := VerifyClient(f.client, f.proof, f.list, now)
-	if err != nil || c.User != f.list.Users[1].ID {
+	v, err := VerifyClient(f.client, f.proof, f.list, now)
+	if err != nil || v.Cert().User != f.list.Users[1].ID || !bytes.Equal(v.Payload(), f.client) {
 		t.Fatalf("client: %v", err)
 	}
 	a, err := VerifyAPI(f.api, f.list, f.client, now)

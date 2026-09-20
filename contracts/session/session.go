@@ -144,27 +144,41 @@ func TokenHash(token []byte) []byte {
 	return h[:]
 }
 
+// Verified is a client certificate whose proof has been checked against the
+// trust list. Only VerifyClient makes one, so whoever holds a Verified knows
+// the chain back to the user's key was checked.
+type Verified struct {
+	cert    ClientCert
+	payload []byte
+}
+
+// Cert returns the certificate.
+func (v Verified) Cert() ClientCert { return v.cert }
+
+// Payload returns the exact bytes the user's proof covers.
+func (v Verified) Payload() []byte { return v.payload }
+
 // VerifyClient checks a client certificate and the user's proof over it
 // against the trust list. The API checks the nonce in addition.
-func VerifyClient(payload []byte, p proof.Proof, l *trust.List, now int64) (ClientCert, error) {
+func VerifyClient(payload []byte, p proof.Proof, l *trust.List, now int64) (Verified, error) {
 	var c ClientCert
 	if err := enc.DecodeStrict(payload, MaxCert, &c); err != nil {
-		return ClientCert{}, ErrCert
+		return Verified{}, ErrCert
 	}
 	if err := c.Validate(); err != nil || c.Installation != l.Installation {
-		return ClientCert{}, ErrCert
+		return Verified{}, ErrCert
 	}
 	owner, key, ok := l.KeyOwner(p.KeyID)
 	if !ok || owner.ID != c.User {
-		return ClientCert{}, ErrUser
+		return Verified{}, ErrUser
 	}
 	if err := proof.Verify(p, key, l.RP, sign.PurposeClientCert, payload); err != nil {
-		return ClientCert{}, err
+		return Verified{}, err
 	}
 	if now < c.Issued-MaxSkew || now >= c.Expires {
-		return ClientCert{}, ErrExpired
+		return Verified{}, ErrExpired
 	}
-	return c, nil
+	return Verified{cert: c, payload: payload}, nil
 }
 
 // SignAPI signs an API certificate with the key of an API node.
