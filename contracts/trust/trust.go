@@ -31,6 +31,9 @@ const (
 	MaxStores      = 64
 	MaxKeysPerUser = 16
 	MaxEntries     = 256 // per black or white list
+	MaxAuto        = 64
+	MaxOrigins     = 8
+	MaxRoot        = 256 // per RootUsers or RootRoles list on one controller
 )
 
 // Level of re-confirmation for a role.
@@ -183,7 +186,7 @@ func Open(a Anchor, chain []Signed) (Version, error) {
 		return Version{}, ErrAnchor
 	}
 	if l.Seq == 1 {
-		if err := checkSigner(l, l, chain[0]); err != nil {
+		if err := checkSigner(l, l, chain[0], true); err != nil {
 			return Version{}, err
 		}
 	}
@@ -192,6 +195,9 @@ func Open(a Anchor, chain []Signed) (Version, error) {
 
 // Advance verifies the versions following cur, in order, and returns the newest.
 func Advance(cur Version, chain []Signed) (Version, error) {
+	if cur.List == nil {
+		return Version{}, ErrChain
+	}
 	for _, s := range chain {
 		next, err := Parse(s.Payload)
 		if err != nil {
@@ -200,7 +206,7 @@ func Advance(cur Version, chain []Signed) (Version, error) {
 		if next.Seq != cur.List.Seq+1 || !bytes.Equal(next.Prev, cur.Hash) || next.Installation != cur.List.Installation {
 			return Version{}, ErrChain
 		}
-		if err := checkSigner(cur.List, next, s); err != nil {
+		if err := checkSigner(cur.List, next, s, false); err != nil {
 			return Version{}, err
 		}
 		cur = Version{List: next, Hash: Hash(s)}
@@ -209,8 +215,12 @@ func Advance(cur Version, chain []Signed) (Version, error) {
 }
 
 // checkSigner verifies the proof of s with a key from prev and checks that
-// its owner may make the change from prev to next.
-func checkSigner(prev, next *List, s Signed) error {
+// its owner may make the change from prev to next. genesis is true only for
+// Open's version-1 special case, where prev and next are the same list: it is
+// passed explicitly rather than inferred (e.g. from prev == next) so that a
+// future caller which happens to pass equal-but-distinct pointers, or a copy,
+// cannot silently let a non-admin sign her own genesis.
+func checkSigner(prev, next *List, s Signed, genesis bool) error {
 	u, key, ok := prev.KeyOwner(s.Proof.KeyID)
 	if !ok {
 		return ErrSigner
@@ -221,7 +231,7 @@ func checkSigner(prev, next *List, s Signed) error {
 	if slices.Contains(u.Roles, RoleAdmin) {
 		return nil
 	}
-	if prev == next || !onlyOwnKeys(prev, next, u.ID) {
+	if genesis || !onlyOwnKeys(prev, next, u.ID) {
 		return ErrSigner
 	}
 	return nil
@@ -362,7 +372,8 @@ func (l *List) Validate() error {
 		return ErrInvalid
 	}
 	if len(l.Users) == 0 || len(l.Users) > MaxUsers || len(l.Roles) > MaxRoles ||
-		len(l.Nodes) > MaxNodes || len(l.Stores) > MaxStores {
+		len(l.Nodes) > MaxNodes || len(l.Stores) > MaxStores || len(l.Auto) > MaxAuto ||
+		len(l.RP.Origins) > MaxOrigins {
 		return ErrInvalid
 	}
 	for i, r := range l.Roles {
@@ -388,7 +399,7 @@ func (l *List) Validate() error {
 				return ErrInvalid
 			}
 		case NodeController:
-			if len(n.Sign) != 0 || n.URL != "" {
+			if len(n.Sign) != 0 || n.URL != "" || len(n.RootUsers) > MaxRoot || len(n.RootRoles) > MaxRoot {
 				return ErrInvalid
 			}
 			for _, id := range n.RootUsers {
