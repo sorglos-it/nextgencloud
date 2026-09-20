@@ -69,3 +69,29 @@ func FuzzBytes(f *testing.F) {
 		}
 	})
 }
+
+func FuzzDecodeStrict(f *testing.F) {
+	type doc struct {
+		A int   `json:"a"`
+		B Bytes `json:"b"`
+	}
+	f.Add(`{"a":1,"b":"APv_"}`)
+	f.Add(`{"a":1,"b":"APv_","c":2}`)
+	f.Add(`{"a":1,"b":"APv_"} {}`)
+	f.Add(`not json`)
+	f.Add(``)
+	f.Fuzz(func(t *testing.T, s string) {
+		var d doc
+		if DecodeStrict([]byte(s), 100, &d) != nil {
+			return
+		}
+		out, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back doc
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatalf("re-decode failed for %q -> %q: %v", s, out, err)
+		}
+	})
+}
