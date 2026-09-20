@@ -1,0 +1,37 @@
+[
+  {
+    "name": "open",
+    "type": 1,
+    "channel": 1,
+    "payload": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwicGFyYW1zIjp7ImNvbHMiOjgwLCJyb3dzIjoyNH0sIndpbmRvdyI6MjYyMTQ0LCJlMmUiOiJCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIIn0",
+    "encoded": "AQAAAAF7ImFwcCI6Im9yZy5zb3JnbG9zLnRlcm1pbmFsIiwic2VydmljZSI6InRlcm1pbmFsIiwiYWN0aW9uIjoic2hlbGwiLCJwYXJhbXMiOnsiY29scyI6ODAsInJvd3MiOjI0fSwid2luZG93IjoyNjIxNDQsImUyZSI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0gifQ"
+  },
+  {
+    "name": "data",
+    "type": 2,
+    "channel": 1,
+    "payload": "bHMK",
+    "encoded": "AgAAAAFscwo"
+  },
+  {
+    "name": "eof",
+    "type": 3,
+    "channel": 1,
+    "payload": "",
+    "encoded": "AwAAAAE"
+  },
+  {
+    "name": "grant with handshake",
+    "type": 5,
+    "channel": 1,
+    "payload": "AAQAAAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ",
+    "encoded": "BQAAAAEABAAACQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ"
+  },
+  {
+    "name": "control",
+    "type": 2,
+    "channel": 0,
+    "payload": "eyJ0IjoiYnllIn0",
+    "encoded": "AgAAAAB7InQiOiJieWUifQ"
+  }
+]
