@@ -81,6 +81,19 @@ func TestVerifyRejects(t *testing.T) {
 	if _, err := VerifyClient(f.client, stranger.Prove(sign.PurposeClientCert, f.client), f.list, now); err != ErrUser {
 		t.Errorf("foreign key: %v", err)
 	}
+	// "foreign key" above only covers the unknown-key half of the owner
+	// check. Here the signing key is genuinely listed (f.admin owns
+	// Users[1]), but the certificate claims to be Users[0] (the passkey
+	// admin) instead: still ErrUser.
+	var cu ClientCert
+	if err := json.Unmarshal(f.client, &cu); err != nil {
+		t.Fatal(err)
+	}
+	cu.User = f.list.Users[0].ID
+	otherUser, _ := json.Marshal(cu)
+	if _, err := VerifyClient(otherUser, f.admin.Prove(sign.PurposeClientCert, otherUser), f.list, now); err != ErrUser {
+		t.Errorf("cross-user: %v", err)
+	}
 	if _, err := VerifyClient(f.client, f.admin.Prove(sign.PurposeTask, f.client), f.list, now); err != proof.ErrSignature {
 		t.Errorf("other purpose: %v", err)
 	}
@@ -105,6 +118,32 @@ func TestVerifyRejects(t *testing.T) {
 	if _, err := VerifyAPI(env, f.list, f.client, now); err != ErrCert {
 		t.Errorf("rogue api: %v", err)
 	}
+
+	// Each case changes exactly one field of a freshly signed API
+	// certificate and re-signs it, so the signature check does not fire
+	// before the field check under test does.
+	_, nodeSign := trusttest.NodeKeys(0xA1) // key of "api-1" in trusttest.Genesis
+	apiCase := func(mutate func(*APICert), want error) {
+		t.Helper()
+		var m APICert
+		if err := json.Unmarshal(f.api.Payload, &m); err != nil {
+			t.Fatal(err)
+		}
+		mutate(&m)
+		env, err := SignAPI(nodeSign, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := VerifyAPI(env, f.list, f.client, now); err != want {
+			t.Errorf("got %v, want %v", err, want)
+		}
+	}
+	apiCase(func(m *APICert) { m.Installation = trusttest.ID(0x12) }, ErrCert)
+	apiCase(func(m *APICert) { m.Node = "api-2" }, ErrCert)
+	apiCase(func(m *APICert) { m.DH = bytes.Repeat([]byte{0x99}, 31) }, ErrCert)
+	apiCase(func(m *APICert) { m.Expires = m.Issued + MaxLifetime + 1 }, ErrCert)
+	apiCase(func(m *APICert) { m.Expires = now }, ErrExpired)
+	apiCase(func(m *APICert) { m.Issued = now + MaxSkew + 1 }, ErrExpired)
 }
 
 func TestCodes(t *testing.T) {
@@ -141,5 +180,22 @@ func FuzzVerifyClient(f *testing.F) {
 	f.Add(fx.client)
 	f.Fuzz(func(t *testing.T, b []byte) {
 		_, _ = VerifyClient(b, fx.proof, fx.list, now)
+	})
+}
+
+// FuzzVerifyAPI signs the fuzzed bytes as the envelope payload with the real
+// node key, as FuzzOpen (contracts/trust) fuzzes chain bytes rather than
+// arbitrary top-level input, so fuzzing exercises APICert's JSON decoding
+// and field checks instead of mostly failing the signature check.
+func FuzzVerifyAPI(f *testing.F) {
+	fx := newFixture(f)
+	_, nodeSign := trusttest.NodeKeys(0xA1) // key of "api-1" in trusttest.Genesis
+	f.Add([]byte(fx.api.Payload))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		env, err := sign.Sign(nodeSign, sign.PurposeAPICert, b)
+		if err != nil {
+			return
+		}
+		_, _ = VerifyAPI(env, fx.list, fx.client, now)
 	})
 }

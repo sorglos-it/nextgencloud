@@ -183,6 +183,7 @@ func VerifyAPI(env sign.Envelope, l *trust.List, client []byte, now int64) (APIC
 	for _, n := range l.Nodes {
 		if n.Kind == trust.NodeAPI && sign.KeyID(n.Sign) == env.KeyID {
 			node = n
+			break
 		}
 	}
 	if node.ID == "" {
