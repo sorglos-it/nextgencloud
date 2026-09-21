@@ -46,16 +46,23 @@ so klein wie möglich.
 - Dienste in Podman-Containern starten (`service`): ein Container je App, eigener Systembenutzer,
   kein Netz (außer mit `network`), Grenzen für CPU und Speicher, verschlüsselter Datenordner als
   `/data`, Startaktion nach jedem Start, auch ohne API. Die Parameter sind mit Aufgabe die der
-  Aufgabe, sonst die des OPEN (`service.Call`); `NGC_PARAMS` nie ins Log.
+  Aufgabe, sonst die des OPEN (`service.Call`); auf Ende-zu-Ende-Kanälen bindet der Prolog das
+  Feld `params` des OPEN oder, mit Aufgabe, deren Bytes. `NGC_PARAMS` nie ins Log.
 - Container nur über eine eigene Schnittstelle ansprechen, damit LXC später danebenpassen kann.
-- Apps aktivieren, deaktivieren, deinstallieren (`core`, `store`): Paket prüfen, Kauf-Apps
-  entschlüsseln, Image laden, Daten löschen oder aufheben. Aktivieren nur, wenn `grants` genau die
-  `needs` des Manifests enthält, sonst `E_FORBIDDEN`.
+- Apps aktivieren, deaktivieren, deinstallieren (`core`, `store`): Paket prüfen (`store.Walk`,
+  höchstens `store.MaxDirs` Verzeichnisse), Kauf-Apps entschlüsseln, Image laden, Daten löschen
+  oder aufheben. Aktivieren nur, wenn `grants` genau die `needs` des Manifests enthält, sonst
+  `E_FORBIDDEN`.
 - Updates einspielen und bei Fehlschlag zurücknehmen; ohne Unterschrift nur mit Dauerfreigabe
-  (`core.Unattended`) und nie eine ältere Version. Mit Rolle `db` spielst du die Migrationen aus der
-  Datei `ngc-api` ein, mit dem Zugang aus `controller.json` (`migrate`), wenn die API, die das
-  Update steuert, dich dafür bestimmt: Sie nimmt unter den verbundenen Controllern mit Rolle `db`
-  den mit der kleinsten Node-ID, scheitert er, den nächsten.
+  (`core.Unattended`) und nie eine ältere Version. Ohne Benutzer zählt dabei nur, was Release- oder
+  Store-Schlüssel signiert haben: Version und SHA-256 nimmst du aus dem geprüften Release oder
+  Katalogeintrag der bereitgelegten Datei (dessen `seq` du gegen den neuesten gesehenen geprüft
+  hast) und lehnst Parameter ab, die davon abweichen; die Parameter eines solchen Kanals sind nicht
+  unterschrieben.
+- Mit Rolle `db` spielst du die Migrationen aus der Datei `ngc-api` ein, mit dem Zugang aus
+  `controller.json` (`migrate`), wenn die API, die das Update steuert, dich dafür bestimmt: Sie
+  nimmt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten Node-ID, scheitert
+  er, den nächsten.
 - Konfiguration über `config.LoadController`, schreiben nur mit `config.SaveController`. Schlüssel
   und Passwörter darin sind `config.Secret` bzw. `config.SecretText`; den Wert geben nur `Bytes()`
   bzw. `Text()`, nie ins Log.
