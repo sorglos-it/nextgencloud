@@ -42,24 +42,35 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
 
 ## Regeln
 
-- Programmdateien übernimmt ein Skript nur, wenn die Signatur des Release stimmt. Es lädt
-  `release.json` (ein `sign.Envelope`) und die Dateien seines Teils und prüft mit `openssl` ab 3.0,
-  `jq` und `sha256sum` aus den Paketquellen (Vorlage und Testdaten: `contracts/testdata/release/`,
-  Skript `verify.sh`):
-  1. `payload` und `sig` aus `release.json` holen und von base64url in Bytes umwandeln
-     (`tr -- '-_' '+/'`, mit `=` auf ein Vielfaches von 4 auffüllen, `base64 -d`).
-  2. Die Nachricht ist genau `ngc/release/v1`, ein Null-Byte und die Nutzlast:
-     `{ printf 'ngc/release/v1\0'; cat payload.bin; } > message.bin`.
-  3. `openssl pkeyutl -verify -pubin -inkey release-key.pem -rawin -in message.bin -sigfile sig.bin`
-     muss gelingen. `release-key.pem` ist der Release-Schlüssel als PEM, fest im Skript.
-  4. Für jede Datei, die das Skript übernimmt, ihren Eintrag in `files` der Nutzlast nehmen (`part`,
-     `arch`): `sha256` von base64url in Hex umwandeln (`od -An -tx1 | tr -d ' \n'`), mit
-     `sha256sum` und der Größe (`size`) vergleichen. Stimmt etwas nicht, bricht das Skript ab.
-  5. Nie ein älteres Release: `seq` der Nutzlast (`jq -r .seq payload.bin`) mit der Nummer in
-     `/var/lib/ngc/release.seq` vergleichen (fehlt die Datei, ist noch nichts installiert). Ist sie
-     kleiner, bricht das Skript ab; dieselbe Nummer darf zur Reparatur noch einmal installiert
-     werden. Nach einer erfolgreichen Installation schreibt das Skript die Nummer dorthin. Go prüft
-     genauso (`store.VerifyRelease` mit dieser Nummer als `lastSeq`, sonst `store.ErrRollback`).
+- Programmdateien übernimmt ein Skript nur, wenn die Signatur des Release stimmt. Die Vorlage mit
+  Testdaten ist `contracts/testdata/release/verify.sh`, aufgerufen je Teil als
+  `verify.sh <Verzeichnis> <Teil> <Arch>` (etwa `ngc-api amd64` oder `ngc-web all`). Im
+  Verzeichnis liegen `release.json` (ein `sign.Envelope`), `release-key.pem` (der Release-Schlüssel
+  als PEM, fest im Skript) und die geladenen Dateien. Werkzeuge aus den Paketquellen: `sh`, `jq`,
+  `openssl` ab 3.0, `base64`, `sha256sum`, `od`, `tr`, `cut`, `wc` und `mktemp`. Die Schritte:
+  1. `payload` und `sig` aus `release.json` (je ein Text) streng von base64url in Bytes umwandeln:
+     nur `A-Z a-z 0-9 - _`, und die Bytes ergeben wieder genau diesen Text.
+  2. Die Nachricht ist genau `ngc/release/v1`, ein Null-Byte und die Nutzlast;
+     `openssl pkeyutl -verify -pubin -inkey release-key.pem -rawin` muss sie mit `sig` bestätigen.
+  3. `files` der Nutzlast ist eine Liste mit genau einem Eintrag für Teil und Arch; darin sind `url`
+     und `sha256` Text und `size` eine Zahl.
+  4. Der Dateiname ist das letzte Stück der `url` nach dem letzten `/` und passt auf
+     `^[A-Za-z0-9][A-Za-z0-9._-]*$`. Nur diese Datei wird geprüft und danach installiert; andere
+     Dateien im Verzeichnis und Dateien anderer Teile zählen nicht.
+  5. `sha256` wie in 1 umwandeln, in Hex (`od -An -tx1 | tr -d ' \n'`, genau 64 Zeichen) mit
+     `sha256sum` der Datei vergleichen, ebenso ihre Größe mit `size`.
+  6. Nie ein älteres Release (das tut das ulh-Skript, nicht `verify.sh`): `seq` der Nutzlast mit der
+     Nummer in `/var/lib/ngc/release.seq` vergleichen (fehlt die Datei, ist noch nichts
+     installiert). Ist sie kleiner, bricht das Skript ab; dieselbe Nummer darf zur Reparatur noch
+     einmal installiert werden. Nach einer erfolgreichen Installation schreibt das Skript die Nummer
+     dorthin. Go prüft genauso (`store.VerifyRelease` mit dieser Nummer als `lastSeq`, sonst
+     `store.ErrRollback`).
+
+  `verify.sh` legt Arbeitsdateien in einem Verzeichnis von `mktemp -d` ab, das es am Ende löscht,
+  und schreibt nichts in das Verzeichnis der Dateien. Geht etwas schief, meldet es
+  `release wrong: <Grund>` und endet mit 1, bei falschem Aufruf mit 2; nur wenn alles stimmt, gibt es
+  `release ok` aus und endet mit 0. `TestReleaseScript` in `contracts/store` prüft das in 28 Fällen;
+  auf den Linux-Servern muss er mit dem echten `jq` bestehen.
 - Release-Dateien benennen Softwareteile: `ngc-web` (`all`), `ngc-api` und `ngc-controller` (`amd64`,
   `arm64`). Die Migrationen stecken in `ngc-api`.
 - Rollen eines Servers (`roles`): `web`, `api`, `db`, `services`. Welche Softwareteile dazu gehören,
