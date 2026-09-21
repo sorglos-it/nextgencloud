@@ -1,6 +1,6 @@
 # Server-Controller
 
-Deine Ordner: `controller/`, dazu `scripts/ngc-controller.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V2, V3, V4, V5, V6, V7.
+Deine Ordner: `controller/`, dazu `scripts/ngc-controller.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V1, V2, V3, V4, V5, V6, V7.
 
 ## Aufgabe
 
@@ -27,7 +27,12 @@ so klein wie möglich.
   `core.Unattended`. Aufgaben prüfst du mit `task.Check` und `core.RuleFor` bzw. `store.RuleFor`
   (Root einer App: das Manifest verlangt `root`), Aufgaben-IDs merkst du dir (`dbapi.OnceTask`).
   Kanalnummern höchstens `wire.MaxTunnelChannels` je Tunnel, gezählt, bis sie wieder frei sind
-  (CLOSE gesendet und empfangen); ein Frame darüber beendet den Tunnel.
+  (CLOSE gesendet und empfangen); ein Frame darüber beendet den Tunnel. Was du auf einem Kanal
+  zuerst schicken darfst, gibt `Opened.Window` frei (die Freigabe der API auf dem Tunnel), nicht
+  `window` im OPEN des Browsers: Das gilt nur zwischen Browser und API. Was die API bei `transfer`
+  (`ngc.store/controller/activate`,
+  `ngc.store/controller/stage`) und bei `ngc.users/controller/trust` schickt, begrenzt
+  `core.Action.MaxIn`; bei mehr schließt du mit `E_TOOLARGE`.
 - Ende zu Ende (`contracts/README.md`, Abschnitt „Kanäle“): Prolog `noisep.E2EPrologue` mit deiner
   Node-ID, App, Dienst, Aktion und den Bytes aus `Opened.Open.Params` und
   `Opened.Open.TaskBytes()`; Noise-Nachricht 1 und 2 ohne Nutzlast. Den Dienst startest du erst,
@@ -49,7 +54,8 @@ so klein wie möglich.
 - Updates einspielen und bei Fehlschlag zurücknehmen; ohne Unterschrift nur mit Dauerfreigabe
   (`core.Unattended`) und nie eine ältere Version. Mit Rolle `db` spielst du die Migrationen aus der
   Datei `ngc-api` ein, mit dem Zugang aus `controller.json` (`migrate`), wenn die API, die das
-  Update steuert, dich dafür bestimmt.
+  Update steuert, dich dafür bestimmt: Sie nimmt unter den verbundenen Controllern mit Rolle `db`
+  den mit der kleinsten Node-ID, scheitert er, den nächsten.
 - Konfiguration über `config.LoadController`, schreiben nur mit `config.SaveController`. Schlüssel
   und Passwörter darin sind `config.Secret` bzw. `config.SecretText`; den Wert geben nur `Bytes()`
   bzw. `Text()`, nie ins Log.
