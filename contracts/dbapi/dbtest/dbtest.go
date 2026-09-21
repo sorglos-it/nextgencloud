@@ -394,10 +394,11 @@ func testLocks(t *testing.T, s dbapi.Store) {
 
 // racers is how many goroutines each race starts at once, and rounds how
 // many races a concurrency test runs, each on a fresh value or lock: a check
-// and a write that are not one step lose only some races.
+// and a write that are not one step lose only a few races. More goroutines
+// per race make a lost race rarer, so the rounds are what catch it.
 const (
-	racers = 32
-	rounds = 64
+	racers = 16
+	rounds = 256
 )
 
 // race runs f(i) for i < racers in goroutines released together, and returns
@@ -423,7 +424,7 @@ func race[T any](f func(i int) T) []T {
 // value, exactly one succeeds and every other one gives ErrUsed.
 func testConcurrentOnce(t *testing.T, s dbapi.Store) {
 	for round := range rounds {
-		value := bytes.Repeat([]byte{0x5a, byte(round)}, 16)
+		value := append(bytes.Repeat([]byte{0x5a}, 30), byte(round>>8), byte(round))
 		errs := race(func(i int) error {
 			return s.OnceCreate(ctx, dbapi.OnceTask, value, strconv.Itoa(i), 1790000100)
 		})
