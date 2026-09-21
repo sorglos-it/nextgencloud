@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -479,61 +480,168 @@ func TestReleaseScriptVector(t *testing.T) {
 	golden.CheckBytes(t, *update, "release/release.json", release)
 }
 
-// TestReleaseScript runs verify.sh on the release vector, then on copies with
-// a changed file and a changed signature. It needs a POSIX shell and the
-// tools of the ulh scripts; the Linux servers have them.
+// TestReleaseScript runs verify.sh on the release vector and on releases made
+// for one case each. It needs a POSIX shell and the tools of the ulh scripts,
+// jq among them; the Linux servers have them, and there the test must pass
+// with the real jq. Elsewhere a stand-in for the three filters of verify.sh
+// can take jq's place on PATH.
 func TestReleaseScript(t *testing.T) {
-	for _, tool := range []string{"sh", "openssl", "jq", "sha256sum", "od", "base64", "tr", "cut", "wc"} {
+	for _, tool := range []string{"sh", "openssl", "jq", "sha256sum", "od", "base64", "tr", "cut", "wc", "mktemp"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s missing", tool)
 		}
 	}
-	files := map[string][]byte{}
+	vector := map[string][]byte{}
 	for _, name := range []string{"release.json", "release-key.pem", "ngc-web-all.tar", "verify.sh"} {
 		b, err := os.ReadFile(filepath.Join(golden.Dir, "release", name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		files[name] = b
+		vector[name] = b
 	}
-	run := func(change func(map[string][]byte)) (string, error) {
-		dir := t.TempDir()
-		copies := map[string][]byte{}
+	script := filepath.Join(t.TempDir(), "verify.sh")
+	if err := os.WriteFile(script, vector["verify.sh"], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checksum := func(b []byte) enc.Bytes { s := sha256.Sum256(b); return s[:] }
+	api := []byte("NGC api test file\n")
+	web := File{Part: ReleaseWeb, Arch: "all", URL: "ngc-web-all.tar", Size: int64(len(releaseFile)), SHA256: checksum(releaseFile)}
+	apiAMD := File{Part: ReleaseAPI, Arch: "amd64", URL: "https://example.org/1.1.0/ngc-api-amd64.tar", Size: int64(len(api)), SHA256: checksum(api)}
+	apiARM := File{Part: ReleaseAPI, Arch: "arm64", URL: "https://example.org/1.1.0/ngc-api-arm64.tar", Size: 1, SHA256: checksum([]byte("x"))}
+	webAt := func(url string) File { f := web; f.URL = url; return f }
+	payload := func(files ...File) []byte {
+		b, err := json.Marshal(Release{Seq: 3, Issued: issued, Version: "1.1.0", Files: files})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	// release is release.json with payload signed by the release key, after
+	// change if set.
+	release := func(payload []byte, change func(env map[string]string)) []byte {
+		env, err := sign.Sign(releaseKey, sign.PurposeRelease, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]string{"payload": enc.B64.EncodeToString(env.Payload), "kid": env.KeyID, "sig": enc.B64.EncodeToString(env.Sig)}
+		if change != nil {
+			change(m)
+		}
+		b, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(b, '\n')
+	}
+	// dir is a release directory: release.json, the release key and files.
+	dir := func(releaseJSON []byte, files map[string][]byte) map[string][]byte {
+		d := map[string][]byte{"release.json": releaseJSON, "release-key.pem": vector["release-key.pem"]}
 		for name, b := range files {
-			copies[name] = bytes.Clone(b)
+			d[name] = b
 		}
-		change(copies)
-		for name, b := range copies {
-			if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		cmd := exec.Command("sh", "verify.sh", ".")
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		return string(out), err
+		return d
 	}
-	if out, err := run(func(map[string][]byte) {}); err != nil || out != "release ok\n" {
-		t.Fatalf("release vector: %q, %v", out, err)
-	}
-	for name, change := range map[string]func(map[string][]byte){
-		"changed file": func(c map[string][]byte) { c["ngc-web-all.tar"][0] ^= 1 },
-		"changed signature": func(c map[string][]byte) {
-			var env sign.Envelope
-			if err := json.Unmarshal(c["release.json"], &env); err != nil {
-				t.Fatal(err)
-			}
-			env.Sig[0] ^= 1
-			c["release.json"], _ = json.Marshal(env)
-		},
-		"other key": func(c map[string][]byte) {
-			der, _ := x509.MarshalPKIXPublicKey(storeKey.Public())
-			c["release-key.pem"] = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-		},
-	} {
-		if out, err := run(change); err == nil || strings.Contains(out, "release ok") {
-			t.Errorf("%s: %q, %v", name, out, err)
+	webOnly := map[string][]byte{"ngc-web-all.tar": releaseFile}
+	otherKey := func() []byte {
+		der, err := x509.MarshalPKIXPublicKey(storeKey.Public())
+		if err != nil {
+			t.Fatal(err)
 		}
+		return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	}()
+	withKey := func(d map[string][]byte, key []byte) map[string][]byte { d["release-key.pem"] = key; return d }
+	unusedBit := func(m map[string]string) { // sets an unused bit of the signature's last letter
+		const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+		s := m["sig"]
+		m["sig"] = s[:len(s)-1] + string(alphabet[strings.IndexByte(alphabet, s[len(s)-1])|1])
+	}
+	webArgs := []string{ReleaseWeb, "all"}
+
+	cases := []struct {
+		name  string
+		files map[string][]byte
+		args  []string
+		why   string // what verify.sh says of a release it refuses; "" if it passes
+	}{
+		{"release vector", map[string][]byte{"release.json": vector["release.json"], "release-key.pem": vector["release-key.pem"],
+			"ngc-web-all.tar": vector["ngc-web-all.tar"]}, webArgs, ""},
+		{"url of https", dir(release(payload(webAt("https://example.org/1.1.0/ngc-web-all.tar")), nil), webOnly), webArgs, ""},
+		{"url with a directory", dir(release(payload(webAt("sub/ngc-web-all.tar")), nil), webOnly), webArgs, ""},
+		{"files of other parts missing", dir(release(payload(web, apiAMD, apiARM), nil), map[string][]byte{"ngc-api-amd64.tar": api}),
+			[]string{ReleaseAPI, "amd64"}, ""},
+		{"file of another part changed", dir(release(payload(web, apiAMD), nil), map[string][]byte{"ngc-web-all.tar": releaseFile,
+			"ngc-api-amd64.tar": []byte("changed")}), webArgs, ""},
+		{"files not listed", dir(release(payload(web), nil), map[string][]byte{"ngc-web-all.tar": releaseFile, "evil.sh": []byte("rm -rf /"),
+			"payload.json": []byte("{}"), "sub/ngc-web-all.tar": []byte("other")}), webArgs, ""},
+		{"file named like a work file", dir(release(payload(webAt("payload.json")), nil), map[string][]byte{"payload.json": releaseFile}), webArgs, ""},
+
+		{"tampered payload", dir(release(payload(web), func(m map[string]string) {
+			p, _ := enc.B64.DecodeString(m["payload"])
+			m["payload"] = enc.B64.EncodeToString(bytes.Replace(p, []byte(`"1.1.0"`), []byte(`"9.9.9"`), 1))
+		}), webOnly), webArgs, "signature does not verify"},
+		{"wrong key", withKey(dir(release(payload(web), nil), webOnly), otherKey), webArgs, "signature does not verify"},
+		{"changed signature", dir(release(payload(web), func(m map[string]string) {
+			s, _ := enc.B64.DecodeString(m["sig"])
+			s[0] ^= 1
+			m["sig"] = enc.B64.EncodeToString(s)
+		}), webOnly), webArgs, "signature does not verify"},
+		{"signature with an unused bit set", dir(release(payload(web), unusedBit), webOnly), webArgs, "signature not base64url"},
+		{"payload with padding", dir(release(payload(web), func(m map[string]string) { m["payload"] += "=" }), webOnly), webArgs, "payload not base64url"},
+		{"no payload", dir(release(payload(web), func(m map[string]string) { delete(m, "payload") }), webOnly), webArgs, "no payload"},
+		{"wrong hash", dir(release(payload(web), nil), map[string][]byte{"ngc-web-all.tar": []byte("NGC web test filE\n")}), webArgs, "checksum wrong"},
+		{"bytes appended", dir(release(payload(web), nil), map[string][]byte{"ngc-web-all.tar": append(slices.Clone(releaseFile), 'x')}), webArgs, "checksum wrong"},
+		{"wrong size", dir(release(payload(func() File { f := web; f.Size++; return f }()), nil), webOnly), webArgs, "size wrong"},
+		{"missing file", dir(release(payload(web), nil), nil), webArgs, "file missing"},
+		{"file only in the url's directory", dir(release(payload(webAt("sub/ngc-web-all.tar")), nil),
+			map[string][]byte{"sub/ngc-web-all.tar": releaseFile}), webArgs, "file missing"},
+		{"files null", dir(release(payload(), nil), webOnly), webArgs, "no single valid entry"},
+		{"files empty", dir(release(payload([]File{}...), nil), webOnly), webArgs, "no single valid entry"},
+		{"part not listed", dir(release(payload(web), nil), webOnly), []string{ReleaseController, "amd64"}, "no single valid entry"},
+		{"two entries for the part", dir(release(payload(web, web), nil), webOnly), webArgs, "no single valid entry"},
+		{"size as a string", dir(release([]byte(strings.Replace(string(payload(web)), `"size":18`, `"size":"18"`, 1)), nil), webOnly), webArgs, "no single valid entry"},
+		{"name with a leading dash", dir(release(payload(webAt("-x.tar")), nil), map[string][]byte{"-x.tar": releaseFile}), webArgs, "file name not allowed"},
+		{"name --help", dir(release(payload(webAt("https://example.org/--help")), nil), map[string][]byte{"--help": releaseFile}), webArgs, "file name not allowed"},
+		{"hidden name", dir(release(payload(webAt(".x.tar")), nil), map[string][]byte{".x.tar": releaseFile}), webArgs, "file name not allowed"},
+		{"url ending in a slash", dir(release(payload(webAt("https://example.org/")), nil), webOnly), webArgs, "file name not allowed"},
+		{"no part and arch", dir(release(payload(web), nil), webOnly), nil, "usage"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			d, tmp := t.TempDir(), t.TempDir()
+			for name, b := range c.files {
+				p := filepath.Join(d, filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, b, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("sh", append([]string{filepath.ToSlash(script), "."}, c.args...)...)
+			cmd.Dir = d
+			cmd.Env = append(os.Environ(), "TMPDIR="+filepath.ToSlash(tmp))
+			out, err := cmd.CombinedOutput()
+			if c.why == "" && (err != nil || string(out) != "release ok\n") ||
+				c.why != "" && (err == nil || strings.Contains(string(out), "release ok") || !strings.Contains(string(out), c.why)) {
+				t.Errorf("%q, %v", out, err)
+			}
+			// Nothing is written into the release directory, and the work
+			// directory is gone.
+			left := 0
+			err = filepath.WalkDir(d, func(p string, e os.DirEntry, err error) error {
+				if err == nil && !e.IsDir() {
+					left++
+				}
+				return err
+			})
+			if err != nil || left != len(c.files) {
+				t.Errorf("%d files in the release directory, %v", left, err)
+			}
+			if work, err := os.ReadDir(tmp); err != nil || len(work) != 0 {
+				t.Errorf("left in TMPDIR: %v, %v", work, err)
+			}
+		})
 	}
 }
 
