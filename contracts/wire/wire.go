@@ -82,8 +82,18 @@
 //
 // Core apps (CoreApp) have no end-to-end handshake; their DATA is plain inside
 // the link's Noise session and a result is all DATA up to the other side's EOF
-// (package core, Flow). A call-style result is at most MaxCallResult bytes;
-// beyond that the sender ends with CodeTooLarge.
+// (package core, Flow).
+//
+// Results. Every call-style result is at most MaxCallResult bytes, on core-app
+// and app channels alike: on an end-to-end channel it is the controller's
+// output up to its E2EEnd, for every action that is not a stream
+// (store.Action.Stream). A sender with more ends with CodeTooLarge (on an
+// end-to-end channel in its E2EEnd).
+// The receiver enforces the limit and closes the channel with CodeTooLarge
+// when more arrives: on core-app channels the API, which reads their data
+// (a controller's result before passing it on, and it keeps its own results
+// within the limit), on end-to-end channels the shell, as the API cannot see
+// their plaintext.
 package wire
 
 import (
