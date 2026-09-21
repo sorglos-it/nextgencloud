@@ -347,22 +347,23 @@ type proofVectors struct {
 // proofErrors names the error each invalid vector must fail with, so that a
 // vector cannot pass by failing for another rule than the one it breaks.
 var proofErrors = map[string]error{
-	"passkey ES256 without PIN":                    ErrNoUV,
-	"passkey EdDSA without PIN":                    ErrNoUV,
-	"passkey RS256 without PIN":                    ErrNoUV,
-	"passkey ES256, challenge for another purpose": ErrClientData,
-	"passkey ES256, challenge for another payload": ErrClientData,
-	"passkey ES256, foreign origin":                ErrClientData,
-	"passkey ES256, cross-origin":                  ErrClientData,
-	"passkey ES256, foreign rpIdHash":              ErrAuthData,
-	"passkey ES256, type webauthn.create":          ErrClientData,
-	"passkey ES256, user not present":              ErrNoUV,
-	"passkey ES256, key ID mismatch":               ErrKeyMismatch,
-	"passkey ES256, flipped signature bit":         ErrSignature,
-	"passkey ES256, authData of 36 bytes":          ErrAuthData,
-	"passkey RS256, 1024-bit key":                  ErrKey,
-	"password key, signature for another purpose":  ErrSignature,
-	"password key, proof claims kind passkey":      ErrKeyMismatch,
+	"passkey ES256 without PIN":                            ErrNoUV,
+	"passkey EdDSA without PIN":                            ErrNoUV,
+	"passkey RS256 without PIN":                            ErrNoUV,
+	"passkey ES256, challenge for another purpose":         ErrClientData,
+	"passkey ES256, challenge for another payload":         ErrClientData,
+	"passkey ES256, foreign origin":                        ErrClientData,
+	"passkey ES256, origin that starts with the RP origin": ErrClientData,
+	"passkey ES256, cross-origin":                          ErrClientData,
+	"passkey ES256, foreign rpIdHash":                      ErrAuthData,
+	"passkey ES256, type webauthn.create":                  ErrClientData,
+	"passkey ES256, user not present":                      ErrNoUV,
+	"passkey ES256, key ID mismatch":                       ErrKeyMismatch,
+	"passkey ES256, flipped signature bit":                 ErrSignature,
+	"passkey ES256, authData of 36 bytes":                  ErrAuthData,
+	"passkey RS256, 1024-bit key":                          ErrKey,
+	"password key, signature for another purpose":          ErrSignature,
+	"password key, proof claims kind passkey":              ErrKeyMismatch,
 }
 
 // Passkey test keys are random and ECDSA signatures are randomized, so this
@@ -422,6 +423,9 @@ func writeProofVectors(t *testing.T) {
 	invalid("passkey ES256, challenge for another payload", es.key,
 		with(func(as *assertion) { as.challenge = Challenge(sign.PurposeClientCert, []byte(`{"v":2}`)) }))
 	invalid("passkey ES256, foreign origin", es.key, with(func(as *assertion) { as.origin = "https://evil.example" }))
+	// Catches a verifier that compares origins by prefix.
+	invalid("passkey ES256, origin that starts with the RP origin", es.key,
+		with(func(as *assertion) { as.origin = testRP.Origins[0] + ".evil.example" }))
 	invalid("passkey ES256, cross-origin", es.key, with(func(as *assertion) { as.crossOrigin = true }))
 	invalid("passkey ES256, foreign rpIdHash", es.key, with(func(as *assertion) { as.rpID = "evil.example" }))
 	invalid("passkey ES256, type webauthn.create", es.key, with(func(as *assertion) { as.typ = "webauthn.create" }))
