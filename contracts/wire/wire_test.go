@@ -145,6 +145,7 @@ func grantCases() []grantCase {
 		{"credit above MaxWindow", Grant(MaxWindow+1, nil), false},
 		{"47-byte handshake", Grant(DefaultWindow, hs(HandshakeSize-1)), false},
 		{"49-byte handshake", Grant(DefaultWindow, hs(HandshakeSize+1)), false},
+		{"3-byte handshake", Grant(1, []byte{1, 2, 3}), false},
 	}
 }
 
@@ -197,7 +198,7 @@ func openCases(t testing.TB) []openCase {
 	}
 	return []openCase{
 		{"valid terminal", valid, true},
-		{"valid core app", marshal(func(o *Open) { o.App, o.Service, o.Action, o.E2E = "ngc.desktop", "api", "apps", nil }), true},
+		{"valid core app", marshal(func(o *Open) { o.App, o.Service, o.Action, o.Params, o.E2E = "ngc.desktop", "api", "apps", nil, nil }), true},
 		{"valid with task and confirmation", marshal(func(o *Open) { withTask(o); o.Confirm = confirmProof() }), true},
 		{"valid window MinWindow", marshal(func(o *Open) { o.Window = MinWindow }), true},
 		{"valid window MaxWindow", marshal(func(o *Open) { o.Window = MaxWindow }), true},

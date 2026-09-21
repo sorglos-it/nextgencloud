@@ -151,6 +151,11 @@
       "name": "49-byte handshake",
       "payload": "AAQAAAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
       "valid": false
+    },
+    {
+      "name": "3-byte handshake",
+      "payload": "AAAAAQECAw",
+      "valid": false
     }
   ],
   "opens": [
@@ -161,7 +166,7 @@
     },
     {
       "name": "valid core app",
-      "payload": "eyJhcHAiOiJuZ2MuZGVza3RvcCIsInNlcnZpY2UiOiJhcGkiLCJhY3Rpb24iOiJhcHBzIiwicGFyYW1zIjp7ImNvbHMiOjgwLCJyb3dzIjoyNH0sIndpbmRvdyI6MjYyMTQ0fQ",
+      "payload": "eyJhcHAiOiJuZ2MuZGVza3RvcCIsInNlcnZpY2UiOiJhcGkiLCJhY3Rpb24iOiJhcHBzIiwid2luZG93IjoyNjIxNDR9",
       "valid": true
     },
     {

@@ -89,6 +89,8 @@ func TestPairRequest(t *testing.T) {
 		"name of 33 characters": func(r *PairRequest) { r.Name = "d" + strings.Repeat("x", 32) },
 		"noise of 31 bytes":     func(r *PairRequest) { r.Noise = r.Noise[:31] },
 		"mac of 31 bytes":       func(r *PairRequest) { r.MAC = r.MAC[:31] },
+		"no noise":              func(r *PairRequest) { r.Noise = nil },
+		"no mac":                func(r *PairRequest) { r.MAC = nil },
 	} {
 		bad := r
 		mutate(&bad)
@@ -474,6 +476,7 @@ func TestParseOpen(t *testing.T) {
 		"duplicate field":    strings.Replace(valid, `{"open":`, `{"window":262144,"open":`, 1),
 		"proof null":         strings.Replace(valid, `,"proof":{`, `,"proof":null,"x":{`, 1),
 		"open not base64url": strings.Replace(valid, `{"open":"`, `{"open":"=`, 1),
+		"unknown field":      strings.Replace(valid, `{"open":`, `{"extra":1,"open":`, 1),
 	} {
 		if _, _, err := ParseOpen([]byte(s)); err != wire.ErrOpen {
 			t.Errorf("%s: %v", name, err)
