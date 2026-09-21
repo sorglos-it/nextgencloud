@@ -383,9 +383,15 @@ func TestWalkUI(t *testing.T) {
 	if err != ErrPackage || readErr != ErrPackage {
 		t.Errorf("cut data: %v, fn read %v", err, readErr)
 	}
-	// fn may leave data unread; WalkUI skips it.
-	if err := WalkUI(bytes.NewReader(valid), func(PackFile, io.Reader) error { return nil }); err != nil {
-		t.Errorf("unread data: %v", err)
+	// fn may leave data unread; WalkUI skips it, and finds it cut short too.
+	big := writeUI(t, uiFile("ui/a", strings.Repeat("a", 3*blockSize+1)), uiFile("ui/b", "bb"))
+	for _, b := range [][]byte{valid, big} {
+		if err := WalkUI(bytes.NewReader(b), func(PackFile, io.Reader) error { return nil }); err != nil {
+			t.Errorf("unread data: %v", err)
+		}
+	}
+	if err := WalkUI(bytes.NewReader(big[:2*blockSize+7]), func(PackFile, io.Reader) error { return nil }); err != ErrPackage {
+		t.Errorf("unread data cut short: %v", err)
 	}
 }
 

@@ -259,8 +259,12 @@ func walkUI(r io.Reader, fn func(f PackFile, body io.Reader) error, dir func(pat
 		if err := fn(PackFile{Path: path, Size: e.size, Kind: KindUI}, body); err != nil {
 			return err
 		}
-		if _, err := io.Copy(io.Discard, body); err != nil {
-			return ErrPackage
+		// What fn left unread goes through blk: io.Discard would take a buffer
+		// from a pool, which may allocate one per file.
+		for body.left > 0 {
+			if _, err := body.Read(blk[:min(body.left, blockSize)]); err != nil {
+				return ErrPackage
+			}
 		}
 		if pad := (blockSize - e.size%blockSize) % blockSize; pad > 0 {
 			if _, err := io.ReadFull(r, blk[:pad]); err != nil || !allNUL(blk[:pad]) {
