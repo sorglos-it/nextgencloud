@@ -31,6 +31,13 @@ type authenticator struct {
 
 func newAuthenticator(t *testing.T, alg string) authenticator {
 	t.Helper()
+	return newAuthenticatorBits(t, alg, 2048)
+}
+
+// newAuthenticatorBits is newAuthenticator with the size of an RSA modulus
+// given, so a vector can carry a key that is too short.
+func newAuthenticatorBits(t *testing.T, alg string, rsaBits int) authenticator {
+	t.Helper()
 	var (
 		pub    any
 		signFn func(digest, signed []byte) []byte
@@ -57,7 +64,7 @@ func newAuthenticator(t *testing.T, alg string) authenticator {
 		pub = p
 		signFn = func(_, signed []byte) []byte { return ed25519.Sign(priv, signed) }
 	case AlgRS256:
-		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,19 +87,46 @@ func newAuthenticator(t *testing.T, alg string) authenticator {
 	}
 }
 
-func (a authenticator) prove(rp RP, purpose string, payload []byte, flags byte, origin string) Proof {
+// assertion is what an authenticator puts into one WebAuthn assertion.
+// assertionFor returns a valid one; a negative case changes one field.
+type assertion struct {
+	typ         string // type in the client data
+	origin      string
+	crossOrigin bool
+	challenge   []byte
+	rpID        string // its SHA-256 starts the authenticator data
+	flags       byte
+	authDataLen int
+}
+
+func assertionFor(purpose string, payload []byte) assertion {
+	return assertion{typ: "webauthn.get", origin: testRP.Origins[0], challenge: Challenge(purpose, payload),
+		rpID: testRP.ID, flags: flagUP | flagUV, authDataLen: minAuthData}
+}
+
+// assert signs as with a's key, over authenticator data and the hash of the
+// client data as a real authenticator does, so a vector breaks only the rule
+// its field was changed for.
+func (a authenticator) assert(as assertion) Proof {
 	cd, _ := json.Marshal(map[string]any{
-		"type":        "webauthn.get",
-		"challenge":   enc.B64.EncodeToString(Challenge(purpose, payload)),
-		"origin":      origin,
-		"crossOrigin": false,
+		"type":        as.typ,
+		"challenge":   enc.B64.EncodeToString(as.challenge),
+		"origin":      as.origin,
+		"crossOrigin": as.crossOrigin,
 	})
-	rpHash := sha256.Sum256([]byte(rp.ID))
-	ad := append(append([]byte{}, rpHash[:]...), flags, 0, 0, 0, 7)
+	rpHash := sha256.Sum256([]byte(as.rpID))
+	ad := make([]byte, as.authDataLen)
+	copy(ad, append(rpHash[:], as.flags, 0, 0, 0, 7)) // signature counter 7
 	cdHash := sha256.Sum256(cd)
 	signed := append(append([]byte{}, ad...), cdHash[:]...)
 	digest := sha256.Sum256(signed)
 	return Proof{Kind: KindPasskey, KeyID: a.key.ID, Sig: a.signFn(digest[:], signed), AuthData: ad, ClientData: cd}
+}
+
+func (a authenticator) prove(rp RP, purpose string, payload []byte, flags byte, origin string) Proof {
+	as := assertionFor(purpose, payload)
+	as.rpID, as.flags, as.origin = rp.ID, flags, origin
+	return a.assert(as)
 }
 
 func TestPasskeyAlgorithms(t *testing.T) {
@@ -241,6 +275,45 @@ func TestUserKeyRSAModulusTooLarge(t *testing.T) {
 	}
 }
 
+func TestProofValidate(t *testing.T) {
+	payload := []byte("statement")
+	// A password proof straight from an Ed25519 key: Validate looks at the
+	// structure only, so the slow Argon2id derivation is not needed.
+	priv := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	password := Proof{Kind: KindPassword, KeyID: sign.KeyID(priv.Public().(ed25519.PublicKey)),
+		Sig: ed25519.Sign(priv, sign.Message(sign.PurposeClientCert, payload))}
+	passkey := newAuthenticator(t, AlgES256).prove(testRP, sign.PurposeClientCert, payload, flagUP|flagUV, testRP.Origins[0])
+	cases := []struct {
+		name   string
+		base   Proof
+		mutate func(p *Proof)
+		valid  bool
+	}{
+		{"valid password proof", password, func(*Proof) {}, true},
+		{"valid passkey proof", passkey, func(*Proof) {}, true},
+		{"unknown kind", password, func(p *Proof) { p.Kind = "otp" }, false},
+		{"key ID not 16 bytes", password, func(p *Proof) { p.KeyID = enc.B64.EncodeToString(make([]byte, 15)) }, false},
+		{"empty signature", password, func(p *Proof) { p.Sig = nil }, false},
+		{"signature of MaxSig bytes", password, func(p *Proof) { p.Sig = make([]byte, MaxSig) }, true},
+		{"signature over MaxSig", password, func(p *Proof) { p.Sig = make([]byte, MaxSig+1) }, false},
+		{"password proof with authData", password, func(p *Proof) { p.AuthData = passkey.AuthData }, false},
+		{"password proof with clientData", password, func(p *Proof) { p.ClientData = passkey.ClientData }, false},
+		{"passkey authData of 36 bytes", passkey, func(p *Proof) { p.AuthData = p.AuthData[:36] }, false},
+		{"passkey authData of MaxAuthData bytes", passkey, func(p *Proof) { p.AuthData = make([]byte, MaxAuthData) }, true},
+		{"passkey authData over MaxAuthData", passkey, func(p *Proof) { p.AuthData = make([]byte, MaxAuthData+1) }, false},
+		{"passkey without clientData", passkey, func(p *Proof) { p.ClientData = nil }, false},
+		{"passkey clientData of MaxClientData bytes", passkey, func(p *Proof) { p.ClientData = make([]byte, MaxClientData) }, true},
+		{"passkey clientData over MaxClientData", passkey, func(p *Proof) { p.ClientData = make([]byte, MaxClientData+1) }, false},
+	}
+	for _, c := range cases {
+		p := c.base
+		c.mutate(&p)
+		if err := p.Validate(); (err == nil) != c.valid || (err != nil && err != ErrProof) {
+			t.Errorf("%s: valid=%v, got %v", c.name, c.valid, err)
+		}
+	}
+}
+
 type kdfVector struct {
 	Password string    `json:"password"`
 	KDF      KDF       `json:"kdf"`
@@ -271,6 +344,27 @@ type proofVectors struct {
 	Proofs []proofVector `json:"proofs"`
 }
 
+// proofErrors names the error each invalid vector must fail with, so that a
+// vector cannot pass by failing for another rule than the one it breaks.
+var proofErrors = map[string]error{
+	"passkey ES256 without PIN":                    ErrNoUV,
+	"passkey EdDSA without PIN":                    ErrNoUV,
+	"passkey RS256 without PIN":                    ErrNoUV,
+	"passkey ES256, challenge for another purpose": ErrClientData,
+	"passkey ES256, challenge for another payload": ErrClientData,
+	"passkey ES256, foreign origin":                ErrClientData,
+	"passkey ES256, cross-origin":                  ErrClientData,
+	"passkey ES256, foreign rpIdHash":              ErrAuthData,
+	"passkey ES256, type webauthn.create":          ErrClientData,
+	"passkey ES256, user not present":              ErrNoUV,
+	"passkey ES256, key ID mismatch":               ErrKeyMismatch,
+	"passkey ES256, flipped signature bit":         ErrSignature,
+	"passkey ES256, authData of 36 bytes":          ErrAuthData,
+	"passkey RS256, 1024-bit key":                  ErrKey,
+	"password key, signature for another purpose":  ErrSignature,
+	"password key, proof claims kind passkey":      ErrKeyMismatch,
+}
+
 // Passkey test keys are random and ECDSA signatures are randomized, so this
 // golden file is written once with -update and afterwards only verified.
 func TestProofVectors(t *testing.T) {
@@ -284,14 +378,23 @@ func TestProofVectors(t *testing.T) {
 		if (err == nil) != v.Valid {
 			t.Errorf("%s: valid=%v, got %v", v.Name, v.Valid, err)
 		}
+		if v.Valid {
+			if err := v.Proof.Validate(); err != nil {
+				t.Errorf("%s: structure: %v", v.Name, err)
+			}
+		} else if want, ok := proofErrors[v.Name]; !ok || err != want {
+			t.Errorf("%s: got %v, want %v", v.Name, err, want)
+		}
 	}
 }
 
 func writeProofVectors(t *testing.T) {
 	payload := []byte(`{"v":1}`)
 	vs := proofVectors{RP: testRP}
+	auth := map[string]authenticator{}
 	for _, alg := range []string{AlgES256, AlgEdDSA, AlgRS256} {
 		a := newAuthenticator(t, alg)
+		auth[alg] = a
 		vs.Proofs = append(vs.Proofs,
 			proofVector{Name: "passkey " + alg, Purpose: sign.PurposeClientCert, Payload: payload, Key: a.key,
 				Proof: a.prove(testRP, sign.PurposeClientCert, payload, flagUP|flagUV, testRP.Origins[0]), Valid: true},
@@ -299,8 +402,42 @@ func writeProofVectors(t *testing.T) {
 				Proof: a.prove(testRP, sign.PurposeClientCert, payload, flagUP, testRP.Origins[0]), Valid: false})
 	}
 	priv, key := passwordKey(t, "Heimnetz-2026")
+	passwordSig := ed25519.Sign(priv, sign.Message(sign.PurposeClientCert, payload))
 	vs.Proofs = append(vs.Proofs, proofVector{Name: "password key", Purpose: sign.PurposeClientCert, Payload: payload, Key: key,
-		Proof: Proof{Kind: KindPassword, KeyID: key.ID, Sig: ed25519.Sign(priv, sign.Message(sign.PurposeClientCert, payload))}, Valid: true})
+		Proof: Proof{Kind: KindPassword, KeyID: key.ID, Sig: passwordSig}, Valid: true})
+
+	// Each case below starts from a valid proof over the same purpose and
+	// payload and breaks exactly one rule (proofErrors says which).
+	invalid := func(name string, key UserKey, p Proof) {
+		vs.Proofs = append(vs.Proofs, proofVector{Name: name, Purpose: sign.PurposeClientCert, Payload: payload, Key: key, Proof: p})
+	}
+	es := auth[AlgES256]
+	with := func(change func(as *assertion)) Proof {
+		as := assertionFor(sign.PurposeClientCert, payload)
+		change(&as)
+		return es.assert(as)
+	}
+	invalid("passkey ES256, challenge for another purpose", es.key,
+		with(func(as *assertion) { as.challenge = Challenge(sign.PurposeTask, payload) }))
+	invalid("passkey ES256, challenge for another payload", es.key,
+		with(func(as *assertion) { as.challenge = Challenge(sign.PurposeClientCert, []byte(`{"v":2}`)) }))
+	invalid("passkey ES256, foreign origin", es.key, with(func(as *assertion) { as.origin = "https://evil.example" }))
+	invalid("passkey ES256, cross-origin", es.key, with(func(as *assertion) { as.crossOrigin = true }))
+	invalid("passkey ES256, foreign rpIdHash", es.key, with(func(as *assertion) { as.rpID = "evil.example" }))
+	invalid("passkey ES256, type webauthn.create", es.key, with(func(as *assertion) { as.typ = "webauthn.create" }))
+	invalid("passkey ES256, user not present", es.key, with(func(as *assertion) { as.flags = flagUV }))
+	mismatch := with(func(*assertion) {})
+	mismatch.KeyID = auth[AlgEdDSA].key.ID
+	invalid("passkey ES256, key ID mismatch", es.key, mismatch)
+	flipped := with(func(*assertion) {})
+	flipped.Sig[len(flipped.Sig)-1] ^= 1
+	invalid("passkey ES256, flipped signature bit", es.key, flipped)
+	invalid("passkey ES256, authData of 36 bytes", es.key, with(func(as *assertion) { as.authDataLen = 36 }))
+	weak := newAuthenticatorBits(t, AlgRS256, 1024)
+	invalid("passkey RS256, 1024-bit key", weak.key, weak.assert(assertionFor(sign.PurposeClientCert, payload)))
+	invalid("password key, signature for another purpose", key,
+		Proof{Kind: KindPassword, KeyID: key.ID, Sig: ed25519.Sign(priv, sign.Message(sign.PurposeTask, payload))})
+	invalid("password key, proof claims kind passkey", key, Proof{Kind: KindPasskey, KeyID: key.ID, Sig: passwordSig})
 	golden.Check(t, true, "proof.json", vs)
 }
 

@@ -65,6 +65,7 @@ type KDF struct {
 var (
 	ErrKDF         = errors.New("proof: KDF parameters out of range")
 	ErrKey         = errors.New("proof: malformed user key")
+	ErrProof       = errors.New("proof: malformed proof")
 	ErrKeyMismatch = errors.New("proof: proof names another key")
 	ErrSignature   = errors.New("proof: bad signature")
 	ErrClientData  = errors.New("proof: client data does not match")
@@ -95,10 +96,19 @@ func DeriveKey(password []byte, k KDF) (ed25519.PrivateKey, error) {
 // is the largest) but bound the cost of parsing an attacker-supplied key or
 // signature before any expensive cryptography runs.
 const (
-	MaxPublic  = 1024 // SubjectPublicKeyInfo, enough for RSA-4096
-	MaxSig     = 1024
-	MaxRSABits = 4096
+	MaxPublic     = 1024 // SubjectPublicKeyInfo, enough for RSA-4096
+	MaxSig        = 1024
+	MaxRSABits    = 4096
+	MaxAuthData   = 4096
+	MaxClientData = 4096
 )
+
+// minAuthData is the fixed start of WebAuthn authenticator data: SHA-256 of
+// the RP ID, one byte of flags and the 4-byte signature counter.
+const minAuthData = 37
+
+// keyIDSize is the length of a key ID in bytes (sign.KeyID).
+const keyIDSize = 16
 
 // UserKey is a key of a user as listed in the trust list.
 type UserKey struct {
@@ -141,6 +151,38 @@ type Proof struct {
 	// Passkeys only. The challenge in ClientData is Challenge(purpose, payload).
 	AuthData   enc.Bytes `json:"authData,omitempty"`
 	ClientData enc.Bytes `json:"clientData,omitempty"`
+}
+
+// Validate checks the structure of p before any cryptography runs:
+// Kind is password or passkey; KeyID is base64url of 16 bytes; Sig has
+// 1..MaxSig bytes; a password proof has no AuthData and no ClientData; a
+// passkey proof has 37..MaxAuthData bytes of AuthData and
+// 1..MaxClientData bytes of ClientData.
+func (p Proof) Validate() error {
+	// The length check comes first so an oversized key ID is never decoded.
+	if len(p.KeyID) != enc.B64.EncodedLen(keyIDSize) {
+		return ErrProof
+	}
+	if id, err := enc.B64.DecodeString(p.KeyID); err != nil || len(id) != keyIDSize {
+		return ErrProof
+	}
+	if len(p.Sig) == 0 || len(p.Sig) > MaxSig {
+		return ErrProof
+	}
+	switch p.Kind {
+	case KindPassword:
+		if len(p.AuthData) != 0 || len(p.ClientData) != 0 {
+			return ErrProof
+		}
+	case KindPasskey:
+		if len(p.AuthData) < minAuthData || len(p.AuthData) > MaxAuthData ||
+			len(p.ClientData) == 0 || len(p.ClientData) > MaxClientData {
+			return ErrProof
+		}
+	default:
+		return ErrProof
+	}
+	return nil
 }
 
 // RP names the relying party for passkeys.
@@ -196,14 +238,14 @@ const (
 
 func verifyAssertion(p Proof, key UserKey, rp RP, challenge []byte) error {
 	var cd clientData
-	if len(p.ClientData) > 4096 || json.Unmarshal(p.ClientData, &cd) != nil {
+	if len(p.ClientData) > MaxClientData || json.Unmarshal(p.ClientData, &cd) != nil {
 		return ErrClientData
 	}
 	if cd.Type != "webauthn.get" || cd.CrossOrigin ||
 		cd.Challenge != enc.B64.EncodeToString(challenge) || !slices.Contains(rp.Origins, cd.Origin) {
 		return ErrClientData
 	}
-	if len(p.AuthData) < 37 || len(p.AuthData) > 4096 {
+	if len(p.AuthData) < minAuthData || len(p.AuthData) > MaxAuthData {
 		return ErrAuthData
 	}
 	rpHash := sha256.Sum256([]byte(rp.ID))

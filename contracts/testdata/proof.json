@@ -11,16 +11,16 @@
       "purpose": "clientcert/v1",
       "payload": "eyJ2IjoxfQ",
       "key": {
-        "id": "6K5MIlScfaDUQohj8CGptw",
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
         "kind": "passkey",
         "alg": "ES256",
-        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzHRPKagoa3czva3xEFlwdNsFiklzqRK80EJ5EzrlHJQOLOOojUtcKX8d8BhAyuiFvoKZUmMM5rSlCDJ75uXsfw",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
         "credId": "Y3JlZGVudGlhbC0x"
       },
       "proof": {
         "kind": "passkey",
-        "kid": "6K5MIlScfaDUQohj8CGptw",
-        "sig": "MEQCICwlMrdJQtne3nzzgU9-jOlGw44l7BiJ-pKQBeK4JdYuAiATRuxbyJvtTGmU_418Ye8mDVGg3WfLDTqH9w4KKeeVRg",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEQCID642jCE1sUiHxr_zzz6EaP5wyuLHypNHSNjmBuv5-1AAiB8Dwxe41_BqXwoU13LiekxZgn2v6rllmRWWxCFogB7cg",
         "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
         "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
       },
@@ -31,16 +31,16 @@
       "purpose": "clientcert/v1",
       "payload": "eyJ2IjoxfQ",
       "key": {
-        "id": "6K5MIlScfaDUQohj8CGptw",
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
         "kind": "passkey",
         "alg": "ES256",
-        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzHRPKagoa3czva3xEFlwdNsFiklzqRK80EJ5EzrlHJQOLOOojUtcKX8d8BhAyuiFvoKZUmMM5rSlCDJ75uXsfw",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
         "credId": "Y3JlZGVudGlhbC0x"
       },
       "proof": {
         "kind": "passkey",
-        "kid": "6K5MIlScfaDUQohj8CGptw",
-        "sig": "MEUCIQDnbqSs2LdU6NW5lYyOOlvN6l7B9wrMoCHTuHdH8AzH-wIgfJ8DQrYdB5JsXk0JK_DIF4vuikqmWTwJLCpSCstOQhw",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEQCIDi_WtY0RcJ1KiFiCX0DX6D7NKTpshRlkg_ao6FEKogaAiBDIR54j_xnHIDlLXwIE8Y4pjxDwjL1_fwSTlebuKBO7Q",
         "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwBAAAABw",
         "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
       },
@@ -51,16 +51,16 @@
       "purpose": "clientcert/v1",
       "payload": "eyJ2IjoxfQ",
       "key": {
-        "id": "BYYLYdwhEcB0MDTbs9tU-g",
+        "id": "4DZ_Esg6zPQyjbmfq5eD5Q",
         "kind": "passkey",
         "alg": "EdDSA",
-        "pub": "MCowBQYDK2VwAyEAMxFgYd-MaQq2kZy6MhzrP0J35VaFHsjhSMzfImCPg6o",
+        "pub": "MCowBQYDK2VwAyEAI2wqgwhI3XUoNIPBPlYnkxk8IoEiqcME5FoIFnus0Hw",
         "credId": "Y3JlZGVudGlhbC0x"
       },
       "proof": {
         "kind": "passkey",
-        "kid": "BYYLYdwhEcB0MDTbs9tU-g",
-        "sig": "78EY5Z8g45DLJNx4_frB_P-G2EOwQN9RlFeNjdYqBREHhfiDWgc-NxN8PdukMl8EqKD30ddFi0VBgzRB2YQaAQ",
+        "kid": "4DZ_Esg6zPQyjbmfq5eD5Q",
+        "sig": "h22jzzfI17-Rc9YJmv55wbfwkNFx_QaKDOpwgMmbsotS5JdIW0ttxDwJVSSp8lCosiDFmONz3hvLJ5vbgvZuCw",
         "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
         "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
       },
@@ -71,16 +71,16 @@
       "purpose": "clientcert/v1",
       "payload": "eyJ2IjoxfQ",
       "key": {
-        "id": "BYYLYdwhEcB0MDTbs9tU-g",
+        "id": "4DZ_Esg6zPQyjbmfq5eD5Q",
         "kind": "passkey",
         "alg": "EdDSA",
-        "pub": "MCowBQYDK2VwAyEAMxFgYd-MaQq2kZy6MhzrP0J35VaFHsjhSMzfImCPg6o",
+        "pub": "MCowBQYDK2VwAyEAI2wqgwhI3XUoNIPBPlYnkxk8IoEiqcME5FoIFnus0Hw",
         "credId": "Y3JlZGVudGlhbC0x"
       },
       "proof": {
         "kind": "passkey",
-        "kid": "BYYLYdwhEcB0MDTbs9tU-g",
-        "sig": "sL8C66VndpbLJXFn2N5hwkqrjLsGVSQUAdWuMBwqZromdy09lGzE6cWfBiWBAnvn0HpDrZwgfrRkZR5ziCyOCA",
+        "kid": "4DZ_Esg6zPQyjbmfq5eD5Q",
+        "sig": "jU253OSyvMLg-COrw5q7Gtoc4iRTi4a5RDjzRuvtPImL-Z6tcHPacPs2J9JxZbyBOU_NM0EIH6XODdhDHNh1Cw",
         "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwBAAAABw",
         "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
       },
@@ -91,16 +91,16 @@
       "purpose": "clientcert/v1",
       "payload": "eyJ2IjoxfQ",
       "key": {
-        "id": "jVM0xDsOU-TL6ORhOnRXdw",
+        "id": "cvLgb3BEXghHpBJEGMpEUg",
         "kind": "passkey",
         "alg": "RS256",
-        "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1KtDOWUhzvhqOZWN3qaTek6jx08c4Q3-_pOq7cgPTI4rb9lGiXQ5HFpEIgaYj3oYRGCpTKMGiCyUa0-x7_1i67Z7tPWL-cJLsmYgKcq5JliMea-aT1NmFx7jcxLoMZ8XRD1CrYrivsF_VtWOieh9TRy19oEYPyUodvXE3TSM1Woin5XdJuZc4cLnPigtw6Qus2OPRhcJDAGn84SaCeIBsjJFJwEn_1Pe1_9EoKSSFUOWSH-hjCw8fEc13m6h5ON5-j1S2JAw1LJKijNSDiiNyo0D6YCXoYp6aBTLRad9DBUwKLf1bO7tr83SP3TPI4hPxBTKczb_J6zpL9ZW34Pq6QIDAQAB",
+        "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu6YHgzucjPbbHfGtzdlYaUhKZo8ge_5Rqc_jYUdXzCO-h7jhxqnzBwn7zXtjuoKMTFp5bDlvsBY-B3FiQqcgs7dVTWvTf1oSh9er_Na0xJQG6ppEf5OYPWdF8xYJlfxqZdRPvRWeWWYS3LntlCsHeQT3raA3IMeaG2_U2U5arRqlQYzXJl9mTwfj15tPSZLtPDJ6auPYdJ13O4eXOBpAIeDC9Gan7glb9utf39nr42wFx0_6arn3cAo4T-oIAGLjgN_Qrmkrh7BaaI1FRU2ePdUl5FB3TLobfkAk3mISOCw5Zy-0iUJmHda7DIps2Y15W3NFiM_M7wqMHxCuJtuSYQIDAQAB",
         "credId": "Y3JlZGVudGlhbC0x"
       },
       "proof": {
         "kind": "passkey",
-        "kid": "jVM0xDsOU-TL6ORhOnRXdw",
-        "sig": "gQXm-tlPeGa_lJdaB3B6VUSvTUqSxjZx8lFCg2AAbUdh-1E4VrAYvLLvw56l73z6hL_CU1AVaRgeqEAvISiziMb3TrKkYsLj4I3mZ4SdwbfhPAhBOA4gswrBib5iHf1sMj2hFJT-ivBUB17AIeQ3pKX47FPh_dd30M1npJstwrbPTRrC8whRme1MLVMogvogf-Cmon4A-uYrNtyJ0_b9KSs0ligDbOXZF3cIrVaxwDEUUmvEGhX7QaGkjMeBfK4xkCAOkv2Y1R7wdbag1HdhvxWccOjovZ1BCHpOHTnjiJsq83t-4HLIgG-WgtvZD3wR9A3GAn2ce0QK-qI1SsCZug",
+        "kid": "cvLgb3BEXghHpBJEGMpEUg",
+        "sig": "uOEIWBQJEWHbD1dFD-sSL-MNcUw0LXo1q56q7RnRcbGqRzSYAjMYuhvUwZvjRYle4-XnBZLC4uZdPSww5t40qesc6oqRZGrXhkK4lVI_oY2IZT6XXOsiz4CROHJujyqjZxggqWITTY7A0G-YCaV2OjuG5DoOd089wxWecI5vNM8wz3g6dNCMvc0ZLEeriOEXslV2cpp_8H1lpNRtWFH_KukPWJaKxQ_yIh1YUDxlyZKXIkX8R1TNwvF6eenUzhNLDTRfIEVkqql1HdsbuX8UTU5h-A1Gh5DoFsIWi6c3TttF7Pl9fCR_U7ERV4Rt9eck_dxWxGjRJW7yqOWuNaIkfw",
         "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
         "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
       },
@@ -111,16 +111,16 @@
       "purpose": "clientcert/v1",
       "payload": "eyJ2IjoxfQ",
       "key": {
-        "id": "jVM0xDsOU-TL6ORhOnRXdw",
+        "id": "cvLgb3BEXghHpBJEGMpEUg",
         "kind": "passkey",
         "alg": "RS256",
-        "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1KtDOWUhzvhqOZWN3qaTek6jx08c4Q3-_pOq7cgPTI4rb9lGiXQ5HFpEIgaYj3oYRGCpTKMGiCyUa0-x7_1i67Z7tPWL-cJLsmYgKcq5JliMea-aT1NmFx7jcxLoMZ8XRD1CrYrivsF_VtWOieh9TRy19oEYPyUodvXE3TSM1Woin5XdJuZc4cLnPigtw6Qus2OPRhcJDAGn84SaCeIBsjJFJwEn_1Pe1_9EoKSSFUOWSH-hjCw8fEc13m6h5ON5-j1S2JAw1LJKijNSDiiNyo0D6YCXoYp6aBTLRad9DBUwKLf1bO7tr83SP3TPI4hPxBTKczb_J6zpL9ZW34Pq6QIDAQAB",
+        "pub": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu6YHgzucjPbbHfGtzdlYaUhKZo8ge_5Rqc_jYUdXzCO-h7jhxqnzBwn7zXtjuoKMTFp5bDlvsBY-B3FiQqcgs7dVTWvTf1oSh9er_Na0xJQG6ppEf5OYPWdF8xYJlfxqZdRPvRWeWWYS3LntlCsHeQT3raA3IMeaG2_U2U5arRqlQYzXJl9mTwfj15tPSZLtPDJ6auPYdJ13O4eXOBpAIeDC9Gan7glb9utf39nr42wFx0_6arn3cAo4T-oIAGLjgN_Qrmkrh7BaaI1FRU2ePdUl5FB3TLobfkAk3mISOCw5Zy-0iUJmHda7DIps2Y15W3NFiM_M7wqMHxCuJtuSYQIDAQAB",
         "credId": "Y3JlZGVudGlhbC0x"
       },
       "proof": {
         "kind": "passkey",
-        "kid": "jVM0xDsOU-TL6ORhOnRXdw",
-        "sig": "rEudaXgtJeneJBnrdBg45Q3p4VOwzMDl71LniQ9gUj9M8b2KYmc4shiOZ6bcyvhdwloPsmTvXXmwRWB09o_-ZmeCSFTITIDsXLoQNeJBkiHvzaHy0TGxbYILpW21Z6xbZzBOADIU6aMJUc-K5FQh2Q4hx_cxFYFFvzC_frexK9SSXC2agv2BcNcLvF6bXx2WJfvUWKVy98wP6UrGLD93Jv_-OQ6DN4gVxluNrbXmhYf_OIKgi2u7qAIGhFKx8-1CzF818a5b-UdR5mwHuclbLnchR8YzZSYUBZ4ZxrF8Kt3_i7ME0Ftze_HoSIC2-_3DmIswAcQYhw92k0LelIVALA",
+        "kid": "cvLgb3BEXghHpBJEGMpEUg",
+        "sig": "mhvNmlr0kVy-wjQLAE3PDcWLZ1aXNlZ8xvS_lL323srQxghnxNMoeIGvBlITOPuRm8hWFmQRRB4Xsxe7WieXqmk468FOBlkpf40UPIlfB-6hA1JOT4PLiN8a6Ss4fHqfyBbyj6BLeIlbmpTsgB_pImxrcrXiCRUqefyR2WmzyTRk4zrWSW_I43g3ZwuJYeNQMADDZk2IiPOw-BJhcJ6k5AqLeBXYqYlO6Sy06ol6cRpfdwfGG1FOtnTEJMmiHxrBKZn2w_K_OEObCIyto7r1o2C4r6inOcf5G99quZzYr-iaUu-MWuQODq37GNc6siMur3FAyIXCQ_134Olv8nj78w",
         "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwBAAAABw",
         "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
       },
@@ -149,6 +149,274 @@
         "sig": "cekqla51l5UvsLP5XFKKl0khV6RPq9T_5Kp3aRCfCul5ItfQGqsM7PKcZtAXIgTgETgTleX1JweyVP81tw52Bg"
       },
       "valid": true
+    },
+    {
+      "name": "passkey ES256, challenge for another purpose",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEYCIQCBZO1HNypvuxGMqnM9T9rt0TQGpW2HqQsu3mUKH9KjZAIhAOcuykipEnvVz30v8elmL56mtvcIHvWEp5xW6R86y2Vj",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJLWXd4R2JQMDNZRUl4Y0hFTXR2Z1FHd0ZTNHFmR0tZU1pEeUpVVEZnSGVBIiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, challenge for another payload",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEQCIAFpnHpFYUDtrrVNKqEvypvI78vGOKPOwYCJRVncKdIRAiBDoPisyTSWK35sIVq87UgGnfw2-UdsytcB1rKt_js0qQ",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJieXZHZ3dPZ3hYQlJ3cDFFUnhkajZwbGpsV0Q5V19xWjJBU0ZBQTd0andvIiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, foreign origin",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEUCIDyzHxq2xjamtmER37wNan5yzJZnLUzu-bycxwmmi21dAiEA3Rx8LiCH1jn6Xw9JsoBSq9Ldrh7JVkIejOehdWM38Z8",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL2V2aWwuZXhhbXBsZSIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, cross-origin",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEUCIQDvtI4iI-RjWHlH_G6ULQX27VM-61z8d4Evy1ps646B5QIgJ-SMlJKjEuL8hbrSyPE6B-CaFsk_sU6Ewzi4ujJg97k",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOnRydWUsIm9yaWdpbiI6Imh0dHBzOi8vbmdjLmV4YW1wbGUub3JnIiwidHlwZSI6IndlYmF1dGhuLmdldCJ9"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, foreign rpIdHash",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEYCIQDabQZUTJmTt6JTY72nrAyZt1FKUvm2A3TzDuF4z6SfSQIhAOm1XbDt7s4itPVovqLzsw7MO-SrqvUKT8moB5SqaGSz",
+        "authData": "nBgN4M1pnueIl8R8_bPn7h11kG4xt3RqR0fepTaQmDcFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, type webauthn.create",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEUCIA3DmW0kP-NIjPZro3f3dcZBH9yQyfJoftEtbSGHwoDdAiEA6NL2dFGgrRRbrtpELCuuW0D_w45kg0vPdsbs5qKttpM",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5jcmVhdGUifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, user not present",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEQCICwlFprdn1qxgcJWGo1B4bdRSMpceuyeOMgegQr1CoQtAiBSUCNbjwH0tGfzrvjCqyLltQCGiVFNTiLlcWgsHXqpMg",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwEAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, key ID mismatch",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "4DZ_Esg6zPQyjbmfq5eD5Q",
+        "sig": "MEUCIH5u4i1qps3ea_QjyF_79zI1gkwhDWRyNkeqjNlRiBWWAiEAs1GVGvYsny1_sm79EXzL3wR0wFKicvfAi1Po9qxNeTc",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, flipped signature bit",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEUCIQCwSvUfnMTyeEBLuJf4_M8ncUOjtJj2TezTFi7iWAQ7WQIgeWHrpccxeca-zKzW0O113aopkafWyRn2pPLLlqGQ4G0",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey ES256, authData of 36 bytes",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "U9ZlFowPeUpNriJWPWvjTw",
+        "kind": "passkey",
+        "alg": "ES256",
+        "pub": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM4DK_an7YeBC9aeflrul_6FZvpWqXFNMAjVl2nUM_D3ABcCHPX7mm0mE28dbcT1_6w31IA5NSchGMYxByzYazg",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "U9ZlFowPeUpNriJWPWvjTw",
+        "sig": "MEQCIFYvUdVsyc0Ol-4qI6rnaR7X2yxuw9bAX_lSa4ice5cMAiAh8KKT8XI3cwTROCyQXkkWprolxDypSaEnfGs_eAyCdg",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAA",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "passkey RS256, 1024-bit key",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "unuuOoIUODs3x-tm0_Efhg",
+        "kind": "passkey",
+        "alg": "RS256",
+        "pub": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDAY5cjcJ_75wDtuV69oxUmGmx1TgnDWhucCPMvwsQrmupbb7e3xhofsmYWJN0mma9FA8ke9RXgc3s6SuHcetkMH1avlM1ektFo-b2oDMswOBTeOOX__9DbBE8Bs139jE5LV9ydaKvC0KXnm8BQXnwMIXYy36dDeQeNxm3UHdVWSQIDAQAB",
+        "credId": "Y3JlZGVudGlhbC0x"
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "unuuOoIUODs3x-tm0_Efhg",
+        "sig": "AQZEwyRvWUYR8WmiZLnt8gcTDh6237mh_uIxbiKOLy05ze0bxniyoJF5zAxqFiQ8ErIMJPIVMaWH_ZBKKYzmedPm3G2TWGclUQcnJbxTdGgTALOupSNKIFlfG9ZFFGW1xMyruEPRU68wGMzmfQ2e9k8HzpyLhhQNuTjSE5E9BmU",
+        "authData": "5lL3rR7Np0QHGBtAD4X-SjGYAtLzLKSO1DYqIibaVNwFAAAABw",
+        "clientData": "eyJjaGFsbGVuZ2UiOiJwelFpSk9yX1g0U3F0UXZqUnlyTTB5TVZoV0s0cHdEb1FCMlIyMWkxaG44IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL25nYy5leGFtcGxlLm9yZyIsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ"
+      },
+      "valid": false
+    },
+    {
+      "name": "password key, signature for another purpose",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "egLZXAFKwZtmuHb4lGT_GQ",
+        "kind": "password",
+        "alg": "EdDSA",
+        "pub": "zs3euPN4EQ_1OBUwYmmzcdVfTmT9hV-vrAlXdBYO6q0",
+        "kdf": {
+          "alg": "argon2id",
+          "salt": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "m": 65536,
+          "t": 3,
+          "p": 1
+        }
+      },
+      "proof": {
+        "kind": "password",
+        "kid": "egLZXAFKwZtmuHb4lGT_GQ",
+        "sig": "rzY2fYXpRCevf-GDdWyLP65wdM4snWQsBJj1dC9SAhqWi20qX_zDLI45FVce2LSl4fr2to0-vO0lQeeJYm8oDA"
+      },
+      "valid": false
+    },
+    {
+      "name": "password key, proof claims kind passkey",
+      "purpose": "clientcert/v1",
+      "payload": "eyJ2IjoxfQ",
+      "key": {
+        "id": "egLZXAFKwZtmuHb4lGT_GQ",
+        "kind": "password",
+        "alg": "EdDSA",
+        "pub": "zs3euPN4EQ_1OBUwYmmzcdVfTmT9hV-vrAlXdBYO6q0",
+        "kdf": {
+          "alg": "argon2id",
+          "salt": "AQIDBAUGBwgJCgsMDQ4PEA",
+          "m": 65536,
+          "t": 3,
+          "p": 1
+        }
+      },
+      "proof": {
+        "kind": "passkey",
+        "kid": "egLZXAFKwZtmuHb4lGT_GQ",
+        "sig": "cekqla51l5UvsLP5XFKKl0khV6RPq9T_5Kp3aRCfCul5ItfQGqsM7PKcZtAXIgTgETgTleX1JweyVP81tw52Bg"
+      },
+      "valid": false
     }
   ]
 }
