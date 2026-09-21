@@ -383,6 +383,8 @@ func TestRuleFor(t *testing.T) {
 		{"invalid params give an error", activate, json.RawMessage(`{"app":"org.sorglos.terminal"}`), false, ErrParams},
 		{"params that do not decode give an error", activate, json.RawMessage(`{"app":`), false, ErrParams},
 		{"upload is critical without params", upload, nil, true, nil},
+		{"activate without params gives an error", activate, nil, false, ErrParams},
+		{"uninstall without params gives an error", uninstall, nil, false, ErrParams},
 		{"upload is critical with empty params", upload, json.RawMessage(`{}`), true, nil},
 		{"params for an action without any give an error", upload, json.RawMessage(`{"app":"org.sorglos.terminal"}`), false, ErrParams},
 	}
@@ -392,12 +394,18 @@ func TestRuleFor(t *testing.T) {
 			t.Errorf("%s: got %v, %v; want %v, %v", c.name, got, err, c.want, c.wantErr)
 		}
 	}
-	// nil params ask Critical(a, nil), and Root and Changes come from the table.
+	// nil params ask Critical(a, nil) where params do not decide, and Root
+	// and Changes come from the table.
 	for _, a := range All() {
 		r := RuleFor(a)
 		got, err := r.Critical(nil)
-		if err != nil || got != Critical(a, nil) || r.Root != a.Root || r.Changes != a.Changes {
+		decide := a.Name == ActActivate || a.Name == ActUninstall
+		if (decide && err != ErrParams) || (!decide && (err != nil || got != Critical(a, nil))) ||
+			r.Root != a.Root || r.Changes != a.Changes {
 			t.Errorf("%s/%s/%s: rule %+v, Critical(nil) = %v, %v", a.App, a.Service, a.Name, r, got, err)
+		}
+		if decide && !a.Root {
+			t.Errorf("%s: params decide, so it must be a root task", a.Name)
 		}
 	}
 }

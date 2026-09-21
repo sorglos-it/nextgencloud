@@ -40,8 +40,9 @@ const (
 // Call describes one run of a service program.
 type Call struct {
 	User, UserName, App, Service, Action, Version string
-	// Params are the task's params when a task came, else the OPEN's params,
-	// which noisep.E2EPrologue binds on end-to-end channels.
+	// Params are the task's params when a task came, else the OPEN's params.
+	// On end-to-end channels noisep.E2EPrologue binds the OPEN's params
+	// member, or with a task the task's bytes, which carry its params.
 	Params json.RawMessage
 	Start  bool
 }

@@ -186,6 +186,10 @@ func WithoutUser(a Action) bool {
 // approval in l covers p.Target for signer (the key that signed the staged
 // file's release or catalog; nil for trust.AutoSystem), and p.Version is
 // newer than installed (not checked for trust.AutoSystem; "" never is older).
+// Nothing but the signed files counts: the controller takes Version and
+// SHA256 from the staged file's verified release or catalog entry, whose seq
+// it has checked against the newest it saw, and refuses params that differ.
+// The params of a channel without a user are not signed.
 func Unattended(p *InstallParams, l *trust.List, signer []byte, installed string) bool {
 	if p == nil || l == nil || p.Validate() != nil || !store.Approved(l, p.Target, signer) {
 		return false
@@ -195,13 +199,17 @@ func Unattended(p *InstallParams, l *trust.List, signer []byte, installed string
 
 // RuleFor returns the task.Rule of a core action: Root and Changes from the
 // table; Critical parses params with ParseParams (an error for invalid ones)
-// and asks Critical. With nil params it answers Critical(a, nil) — Check only
-// does that when no task came or the task has no params, and every
-// param-dependent action is a root task, which never runs without a task. The
-// executor parses the task's params again and refuses invalid ones.
+// and asks Critical. With nil params (no task came, or the task has none) it
+// answers Critical(a, nil), except for activate and uninstall, whose params
+// decide: there nil params are an error (task.Rule). Both are root tasks, so
+// Check never asks them without a task. The executor parses the task's
+// params again and refuses invalid ones.
 func RuleFor(a Action) task.Rule {
 	return task.Rule{Root: a.Root, Changes: a.Changes, Critical: func(params json.RawMessage) (bool, error) {
 		if params == nil {
+			if paramsDecide(a) {
+				return false, ErrParams
+			}
 			return Critical(a, nil), nil
 		}
 		p, err := ParseParams(a, params)
@@ -246,6 +254,18 @@ func ParseParams(a Action, raw json.RawMessage) (Params, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// paramsDecide reports whether the params of a decide whether it is critical.
+func paramsDecide(a Action) bool {
+	if a.Params == nil {
+		return false
+	}
+	switch a.Params().(type) {
+	case *ActivateParams, *UninstallParams:
+		return true
+	}
+	return false
 }
 
 // Critical reports whether an action needs re-confirmation at level
