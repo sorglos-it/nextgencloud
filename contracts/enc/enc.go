@@ -12,9 +12,50 @@ import (
 )
 
 // B64 is the only binary-to-text encoding in NGC contracts: base64url without
-// padding (RFC 4648, section 5). Decoding is strict: non-zero trailing bits
-// are rejected, so every byte string has exactly one encoding.
-var B64 = base64.RawURLEncoding.Strict()
+// padding (RFC 4648, section 5). Decoding is strict: every byte must be in the
+// alphabet A-Z a-z 0-9 - _ (encoding/base64 alone would skip CR and LF), and
+// non-zero trailing bits are refused, so every byte string has exactly one
+// encoding. B64 has the methods EncodeToString, EncodedLen, DecodedLen,
+// Decode and DecodeString of encoding/base64.
+var B64 = strictBase64{base64.RawURLEncoding.Strict()}
+
+// strictBase64 wraps the encoding with only the methods the contracts use,
+// so that no way to decode skips the alphabet check.
+type strictBase64 struct{ enc *base64.Encoding }
+
+func (s strictBase64) EncodeToString(src []byte) string { return s.enc.EncodeToString(src) }
+func (s strictBase64) EncodedLen(n int) int             { return s.enc.EncodedLen(n) }
+func (s strictBase64) DecodedLen(n int) int             { return s.enc.DecodedLen(n) }
+
+// Decode decodes src into dst, as base64.Encoding.Decode does, once every
+// byte of src is known to be in the alphabet.
+func (s strictBase64) Decode(dst, src []byte) (int, error) {
+	if i := outsideAlphabet(src); i >= 0 {
+		return 0, base64.CorruptInputError(i)
+	}
+	return s.enc.Decode(dst, src)
+}
+
+// DecodeString decodes str, as base64.Encoding.DecodeString does, once every
+// byte of str is known to be in the alphabet.
+func (s strictBase64) DecodeString(str string) ([]byte, error) {
+	if i := outsideAlphabet(str); i >= 0 {
+		return nil, base64.CorruptInputError(i)
+	}
+	return s.enc.DecodeString(str)
+}
+
+// outsideAlphabet returns the index of the first byte of s outside the
+// base64url alphabet, or -1.
+func outsideAlphabet[S ~[]byte | ~string](s S) int {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '-' || c == '_') {
+			return i
+		}
+	}
+	return -1
+}
 
 // Bytes is a byte slice that encodes as a base64url string in JSON.
 type Bytes []byte
@@ -28,10 +69,14 @@ func (b Bytes) MarshalJSON() ([]byte, error) {
 func (b *Bytes) UnmarshalJSON(data []byte) error {
 	// base64url needs no escapes, so a string without a backslash is decoded
 	// straight from the input: a copy first would double the cost of a large
-	// payload.
+	// payload. The alphabet is checked before the output is allocated.
 	if len(data) >= 2 && data[0] == '"' && data[len(data)-1] == '"' && bytes.IndexByte(data, '\\') < 0 {
-		v := make([]byte, B64.DecodedLen(len(data)-2))
-		n, err := B64.Decode(v, data[1:len(data)-1])
+		src := data[1 : len(data)-1]
+		if i := outsideAlphabet(src); i >= 0 {
+			return base64.CorruptInputError(i)
+		}
+		v := make([]byte, B64.DecodedLen(len(src)))
+		n, err := B64.enc.Decode(v, src)
 		if err != nil {
 			return err
 		}
@@ -107,6 +152,10 @@ var (
 	ErrNull = errors.New("enc: null")
 	// ErrName reports a member name no struct field can have.
 	ErrName = errors.New("enc: member name no struct field has")
+
+	// errLimit reports a budget with a limit below 0 other than Raw: a
+	// mistake in the contract, not in the document.
+	errLimit = errors.New("enc: budget with a negative limit other than Raw")
 )
 
 // Budget bounds one kind of JSON document from outside. Decode checks the
@@ -118,18 +167,23 @@ var (
 //   - Size: the document has at most Size bytes.
 //   - Items: every array, and every object that decodes into a Go map, is
 //     listed by its path with the most elements (members of a map) it may
-//     hold. A path joins the member names from the top-level value with "/";
-//     "*" stands for each element of an array and each member of a map, so
-//     "users/*/keys" is the keys array of every user. An array whose path is
-//     not listed is refused.
+//     hold; 0 allows only an empty one. A path joins the member names from the
+//     top-level value with "/"; "*" stands for each element of an array and
+//     each member of a map, so "users/*/keys" is the keys array of every user.
+//     An array whose path is not listed is refused. A limit below 0 other than
+//     Raw is a mistake in the budget itself: Decode then refuses every
+//     document.
 //   - An object whose path is not listed is a struct: at most MaxMembers
 //     members, whose names have at most MaxName bytes, contain no "/" and are
 //     not "*". DecodeStrict refuses unknown and repeated members. The limits
 //     keep a map whose path is missing from the budget small, and keep long
 //     names from being copied into the error of a refused member.
-//   - A path listed as Raw holds a raw JSON value (json.RawMessage), which is
-//     copied as bytes without building anything, so nothing in it is counted
-//     and its member names are free.
+//   - Every path of a json.RawMessage must be listed as Raw. The first pass
+//     counts nothing inside a raw value and does not check its member names,
+//     but a raw value is not free: DecodeStrict keeps the member names of
+//     each object in it to refuse repeated ones, which costs up to about 15
+//     times the value's size. So a raw member needs its own small size bound
+//     in its contract; a small Size of the whole document is one.
 //   - Everywhere, raw values included: at most MaxDepth levels of nesting,
 //     no number whose exact decimal value exceeds MaxSafeInteger in magnitude
 //     (9007199254740991.0 passes, 9007199254740991.5 and 1e16 do not), and no
@@ -164,6 +218,12 @@ type frame struct {
 // jsontext.Decoder on a bytes.Buffer does not copy) and keeps no member
 // names: DecodeStrict finds repeated names in the second pass.
 func (b Budget) check(data []byte) error {
+	// Checked first, so a wrong budget fails its very first test.
+	for _, limit := range b.Items {
+		if limit < 0 && limit != Raw {
+			return errLimit
+		}
+	}
 	if len(data) > b.Size {
 		return ErrTooLarge
 	}

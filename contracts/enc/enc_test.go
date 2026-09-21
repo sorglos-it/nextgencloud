@@ -38,10 +38,26 @@ func TestBytesRoundTrip(t *testing.T) {
 }
 
 func TestBytesRejectsNonCanonical(t *testing.T) {
-	for _, s := range []string{`"AA=="`, `"+/8"`, `"AB"`} {
+	// The last five differ from "APv_" only in one byte outside the
+	// alphabet; encoding/base64 alone would skip the line breaks.
+	for _, s := range []string{`"AA=="`, `"+/8"`, `"AB"`, `"AP\nv_"`, `"AP\rv_"`, `"AP v_"`, `"AP\tv_"`, `"APv_="`} {
 		var b Bytes
 		if err := json.Unmarshal([]byte(s), &b); err == nil {
 			t.Errorf("%s: accepted", s)
+		}
+	}
+}
+
+func TestB64Alphabet(t *testing.T) {
+	if b, err := B64.DecodeString("APv_"); err != nil || string(b) != "\x00\xfb\xff" {
+		t.Fatalf("APv_: %x %v", b, err)
+	}
+	for _, s := range []string{"AP\nv_", "AP\rv_", "AP v_", "AP\tv_", "APv_=", "APv_\n"} {
+		if _, err := B64.DecodeString(s); err == nil {
+			t.Errorf("DecodeString %q: accepted", s)
+		}
+		if _, err := B64.Decode(make([]byte, 8), []byte(s)); err == nil {
+			t.Errorf("Decode %q: accepted", s)
 		}
 	}
 }
@@ -180,6 +196,20 @@ func TestBudget(t *testing.T) {
 	if err := testBudget.check(members(MaxMembers + 1)); err != ErrBudget {
 		t.Errorf("struct object with MaxMembers+1 members: got %v, want %v", err, ErrBudget)
 	}
+	// A limit below 0 other than Raw is a mistake in the budget: even a
+	// document without the array is refused.
+	wrong := Budget{Size: 1000, Items: map[string]int{"a": -2}}
+	if err := wrong.Decode([]byte(`{}`), &budgetDoc{}); err != errLimit {
+		t.Errorf("negative limit: got %v, want %v", err, errLimit)
+	}
+	// 0 allows only an empty array.
+	empty := Budget{Size: 1000, Items: map[string]int{"a": 0}}
+	if err := empty.Decode([]byte(`{"a":[]}`), &budgetDoc{}); err != nil {
+		t.Errorf("empty array at limit 0: %v", err)
+	}
+	if err := empty.Decode([]byte(`{"a":[1]}`), &budgetDoc{}); err != ErrBudget {
+		t.Errorf("one element at limit 0: got %v, want %v", err, ErrBudget)
+	}
 }
 
 func TestSafeNumber(t *testing.T) {
@@ -292,6 +322,7 @@ func FuzzBytes(f *testing.F) {
 	})
 }
 
+// Run with -fuzzminimizetime=1s: the fuzzer's minimizer stalls on this target otherwise.
 func FuzzBudget(f *testing.F) {
 	f.Add(`{"a":[1,2,3],"m":{"x":1},"keys":[{"k":[1]}],"r":{"q":[1,{"z":2}]},"n":1}`)
 	f.Add(`{"a":[1,2,3,4]}`)
