@@ -12,9 +12,11 @@ so klein wie möglich.
   nimmst du nur aus dem Kopplungscode (`tunnel.ParsePairCode`), den die Shell vorher gegen ihre
   Vertrauensliste geprüft hat (`tunnel.PairCode.Check`); ulh zeigt Nummer und Fingerabdruck des
   Ankers zum Vergleich.
-- Steuerkanal nach `wire.ControlAllowed`: zuerst `hello` mit den Rollen des Servers
-  (`tunnel.Hello`), dann `status` (`tunnel.Status`, höchstens `tunnel.MaxStatusApps` Apps),
-  `update` (`store.UpdateReport`) und `notify` (`core.Notice`).
+- Steuerkanal nach `wire.ControlAllowed`: zuerst `hello` mit den Rollen des Servers und der
+  Vertragsfassung (`tunnel.Hello`, `tunnel.Contract`), dann `status` (`tunnel.Status`, höchstens
+  `tunnel.MaxStatusApps` Apps), `update` (`store.UpdateReport`) und `notify` (`core.Notice`). Die
+  neuere Seite spricht die Fassung der älteren; API und Controller liegen höchstens eine Fassung
+  auseinander.
 - Vertrauensliste selbst prüfen (`trust`), Fassungen in SQLite; neue Fassungen kommen über den Kanal
   `ngc.users/controller/trust` (`session.ParseTrustChain`, `trust.Advance`). Du antwortest mit
   `core.TrustResult` oder schließt mit `E_VERIFY`.
@@ -33,7 +35,9 @@ so klein wie möglich.
   warten). Ausgabe als `wire.E2EData`, Ergebnis als `wire.E2EEnd` mit `service.Result`; danach
   schickst du nichts mehr. Kommt EOF oder CLOSE vor dem Ende der Shell, ist die Eingabe
   abgeschnitten: Dienst beenden, Fehler melden. Bei Aktionen, die kein Datenstrom sind, höchstens
-  `wire.MaxCallResult` Byte Ausgabe, sonst `E_TOOLARGE`.
+  `wire.MaxCallResult` Byte Ausgabe; wäre es mehr, beendest du mit `E_TOOLARGE` im Ende (die Shell
+  setzt die Grenze als Empfängerin durch). Ebenso bleiben deine Ergebnisse der Kern-Aktionen
+  darunter; dort prüft sie die API.
 - Dienste in Podman-Containern starten (`service`): ein Container je App, eigener Systembenutzer,
   kein Netz (außer mit `network`), Grenzen für CPU und Speicher, verschlüsselter Datenordner als
   `/data`, Startaktion nach jedem Start, auch ohne API. Die Parameter sind mit Aufgabe die der
