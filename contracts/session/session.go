@@ -52,8 +52,17 @@ const (
 	MaxChain         = 32 << 20 // bytes of one TrustChain as JSON
 )
 
-// maxTrustHint bounds a TrustHint body; {"seq":N} needs at most 28 bytes.
+// maxTrustHint bounds a TrustHint body; {"seq":N} needs at most 24 bytes.
 const maxTrustHint = 64
+
+// Budgets of the documents before the WebSocket (enc.Budget). Only a
+// TrustChain has an array, so any other array is refused.
+var (
+	requestBudget = enc.Budget{Size: MaxRequest}   // LoginStart, LoginFinish, Setup
+	certBudget    = enc.Budget{Size: MaxCert}      // ClientCert, APICert
+	hintBudget    = enc.Budget{Size: maxTrustHint} // TrustHint
+	chainBudget   = enc.Budget{Size: MaxChain, Items: map[string]int{"versions": MaxChainVersions}}
+)
 
 // LoginStart asks for a login challenge.
 type LoginStart struct {
@@ -71,7 +80,7 @@ type LoginChallenge struct {
 	KDF          *proof.KDF  `json:"kdf,omitempty"`      // set if the user may log in with a password
 	Passkeys     []enc.Bytes `json:"passkeys,omitempty"` // credential IDs for allowCredentials
 	TOTP         bool        `json:"totp"`
-	PasswordToo  bool        `json:"passwordToo,omitempty"` // a role asks for the password in addition to a passkey
+	PasswordToo  bool        `json:"passwordToo,omitempty"` // a role asks for a passkey and the password: LoginFinish.Proof by a passkey, plus Password
 	RP           proof.RP    `json:"rp"`
 }
 
@@ -93,7 +102,7 @@ type LoginFinish struct {
 	Proof proof.Proof `json:"proof"`
 	// Password is a proof by a password key of the same user over the same
 	// Cert bytes, purpose clientcert/v1 (VerifyPassword). The browser sends
-	// it when LoginChallenge.PasswordToo is set.
+	// it when LoginChallenge.PasswordToo is set; Proof is then by a passkey.
 	Password *proof.Proof `json:"password,omitempty"`
 	TOTP     string       `json:"totp,omitempty"`
 }
@@ -160,7 +169,7 @@ var (
 // ParseLoginStart decodes and checks the body of PathLoginStart.
 func ParseLoginStart(b []byte) (LoginStart, error) {
 	var s LoginStart
-	if enc.DecodeStrict(b, MaxRequest, &s) != nil || !trust.ValidLoginName(s.Name) {
+	if requestBudget.Decode(b, &s) != nil || !trust.ValidLoginName(s.Name) {
 		return LoginStart{}, ErrMessage
 	}
 	return s, nil
@@ -170,7 +179,7 @@ func ParseLoginStart(b []byte) (LoginStart, error) {
 // the structure only; VerifyClient and VerifyPassword check the proofs.
 func ParseLoginFinish(b []byte) (LoginFinish, error) {
 	var f LoginFinish
-	if enc.DecodeStrict(b, MaxRequest, &f) != nil || len(f.Cert) == 0 || len(f.Cert) > MaxCert ||
+	if requestBudget.Decode(b, &f) != nil || len(f.Cert) == 0 || len(f.Cert) > MaxCert ||
 		f.Proof.Validate() != nil ||
 		(f.Password != nil && (f.Password.Kind != proof.KindPassword || f.Password.Validate() != nil)) ||
 		(f.TOTP != "" && !ValidTOTP(f.TOTP)) {
@@ -183,7 +192,7 @@ func ParseLoginFinish(b []byte) (LoginFinish, error) {
 // checks the version it carries.
 func ParseSetup(b []byte) (Setup, error) {
 	var s Setup
-	if enc.DecodeStrict(b, MaxRequest, &s) != nil || !ValidSetupCode(s.Code) || len(s.Trust.Payload) == 0 ||
+	if requestBudget.Decode(b, &s) != nil || !ValidSetupCode(s.Code) || len(s.Trust.Payload) == 0 ||
 		s.Trust.Proof.Validate() != nil {
 		return Setup{}, ErrMessage
 	}
@@ -194,7 +203,7 @@ func ParseSetup(b []byte) (Setup, error) {
 // trust.Advance check the versions themselves.
 func ParseTrustChain(b []byte) (TrustChain, error) {
 	var c TrustChain
-	if enc.DecodeStrict(b, MaxChain, &c) != nil || len(c.Versions) == 0 || len(c.Versions) > MaxChainVersions {
+	if chainBudget.Decode(b, &c) != nil || len(c.Versions) == 0 || len(c.Versions) > MaxChainVersions {
 		return TrustChain{}, ErrMessage
 	}
 	for _, v := range c.Versions {
@@ -208,7 +217,7 @@ func ParseTrustChain(b []byte) (TrustChain, error) {
 // ParseTrustHint decodes and checks the body of the control message "trust".
 func ParseTrustHint(b []byte) (TrustHint, error) {
 	var h TrustHint
-	if enc.DecodeStrict(b, maxTrustHint, &h) != nil || h.Seq < 1 {
+	if hintBudget.Decode(b, &h) != nil || h.Seq < 1 {
 		return TrustHint{}, ErrMessage
 	}
 	return h, nil
@@ -251,17 +260,21 @@ func (v Verified) Cert() ClientCert { return v.cert }
 func (v Verified) Payload() []byte { return v.payload }
 
 // VerifyClient checks a client certificate and the user's proof over it
-// against the trust list. The API checks the nonce in addition.
+// against the trust list. The API checks the nonce in addition. If a role of
+// the user asks for the password too (trust.List.PasswordToo), the proof must
+// be by a passkey: the password key alone never makes a session, not at the
+// API (which checks the password with VerifyPassword besides) and not at a
+// controller, which sees only this proof. A password-key proof gives ErrUser.
 func VerifyClient(payload []byte, p proof.Proof, l *trust.List, now int64) (Verified, error) {
 	var c ClientCert
-	if err := enc.DecodeStrict(payload, MaxCert, &c); err != nil {
+	if err := certBudget.Decode(payload, &c); err != nil {
 		return Verified{}, ErrCert
 	}
 	if err := c.Validate(); err != nil || c.Installation != l.Installation {
 		return Verified{}, ErrCert
 	}
 	owner, key, ok := l.KeyOwner(p.KeyID)
-	if !ok || owner.ID != c.User {
+	if !ok || owner.ID != c.User || (key.Kind != proof.KindPasskey && l.PasswordToo(owner.ID)) {
 		return Verified{}, ErrUser
 	}
 	if err := proof.Verify(p, key, l.RP, sign.PurposeClientCert, payload); err != nil {
@@ -275,7 +288,9 @@ func VerifyClient(payload []byte, p proof.Proof, l *trust.List, now int64) (Veri
 
 // VerifyPassword checks the second proof of a role that asks for the password
 // too: by a password key of the user of v, over v.Payload(), purpose
-// clientcert/v1. ErrUser if the key is not a password key of that user.
+// clientcert/v1. ErrUser if the key is not a password key of that user. v's
+// own proof was then by a passkey (VerifyClient), so the two proofs come from
+// two different keys of the same user.
 func VerifyPassword(v Verified, p proof.Proof, l *trust.List) error {
 	owner, key, ok := l.KeyOwner(p.KeyID)
 	if !ok || owner.ID != v.Cert().User || key.Kind != proof.KindPassword {
@@ -298,7 +313,7 @@ func SignAPI(priv ed25519.PrivateKey, c APICert) (sign.Envelope, error) {
 // it, so a session cannot outlive the user's approval.
 func VerifyAPI(env sign.Envelope, l *trust.List, client []byte, now int64) (APICert, error) {
 	var cc ClientCert
-	if err := enc.DecodeStrict(client, MaxCert, &cc); err != nil {
+	if err := certBudget.Decode(client, &cc); err != nil {
 		return APICert{}, ErrCert
 	}
 	var node trust.Node
@@ -315,7 +330,7 @@ func VerifyAPI(env sign.Envelope, l *trust.List, client []byte, now int64) (APIC
 		return APICert{}, err
 	}
 	var c APICert
-	if err := enc.DecodeStrict(env.Payload, MaxCert, &c); err != nil {
+	if err := certBudget.Decode(env.Payload, &c); err != nil {
 		return APICert{}, ErrCert
 	}
 	if c.Installation != l.Installation || c.Node != node.ID || !bytes.Equal(c.Client, CertHash(client)) ||

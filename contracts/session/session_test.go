@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"flag"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,16 +30,34 @@ type fixture struct {
 	client []byte
 	proof  proof.Proof
 	api    sign.Envelope
+	// carol's role asks for the password too; she holds a passkey and a
+	// password key.
+	carol                       string
+	carolPasskey, carolPassword trusttest.Signer
 }
 
 // newFixture signs everything with the password admin. trusttest.Genesis
 // sorts its two admins by ID, which puts the passkey admin ("admin2") at
 // Users[0] and the password admin passed in here (trusttest.NewSigner(1),
-// "admin") at Users[1] — see trust_test.go's chain comment.
+// "admin") at Users[1] — see trust_test.go's chain comment. On top of
+// Genesis the list has a second API node, api-2, so that a certificate naming
+// it is refused for naming another node than its signer and not for naming
+// an unknown one; and carol (Users[2]) in the role "careful", which asks for
+// the password too.
 func newFixture(t testing.TB) fixture {
 	t.Helper()
 	admin := trusttest.NewSigner(1)
 	l := trusttest.Genesis(admin)
+	api2DH, api2Sign := trusttest.NodeKeys(0xA2)
+	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: api2DH.Public,
+		Sign: enc.Bytes(api2Sign.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel"}, l.Nodes[1]}
+	carol, carolPasskey, carolPassword := trusttest.ID(0x23), trusttest.NewPasskey(0x63), trusttest.NewSigner(0x64)
+	l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
+	l.Users = append(l.Users, trust.User{ID: carol, Name: "carol", Roles: []string{"careful"},
+		Keys: []proof.UserKey{carolPasskey.Key, carolPassword.Key}})
+	if err := l.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	sessSig := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x51}, ed25519.SeedSize))
 	sessDH, _ := trusttest.NodeKeys(0x52)
 	client, err := json.Marshal(ClientCert{
@@ -55,7 +74,8 @@ func newFixture(t testing.TB) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{list: l, admin: admin, client: client, proof: admin.Prove(sign.PurposeClientCert, client), api: env}
+	return fixture{list: l, admin: admin, client: client, proof: admin.Prove(sign.PurposeClientCert, client), api: env,
+		carol: carol, carolPasskey: carolPasskey, carolPassword: carolPassword}
 }
 
 // clientCert decodes the fixture's client certificate for a test to change.
@@ -66,6 +86,14 @@ func (f fixture) clientCert(t testing.TB) ClientCert {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// clientFor returns the fixture's client certificate for another user.
+func (f fixture) clientFor(t testing.TB, user string) []byte {
+	t.Helper()
+	c := f.clientCert(t)
+	c.User = user
+	return mustJSON(t, c)
 }
 
 // resignAPI returns the fixture's API certificate with one change, signed
@@ -165,6 +193,7 @@ func TestVerifyRejects(t *testing.T) {
 		}
 	}
 	apiCase("other installation", func(m *APICert) { m.Installation = trusttest.ID(0x12) }, ErrCert)
+	// api-2 is an API node of the list too, but api-1 signed.
 	apiCase("other node name", func(m *APICert) { m.Node = "api-2" }, ErrCert)
 	apiCase("DH key of 31 bytes", func(m *APICert) { m.DH = bytes.Repeat([]byte{0x99}, 31) }, ErrCert)
 	// Moving Issued back instead of Expires on keeps the certificate within
@@ -208,6 +237,35 @@ func TestVerifyPassword(t *testing.T) {
 		if err := VerifyPassword(v, tc.p, f.list); err != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, err, tc.want)
 		}
+	}
+}
+
+// TestPasswordTooNeedsPasskey: for a role that asks for the password too,
+// the password key is the second proof, never the only one.
+func TestPasswordTooNeedsPasskey(t *testing.T) {
+	f := newFixture(t)
+	client := f.clientFor(t, f.carol)
+	byPasskey := f.carolPasskey.Prove(sign.PurposeClientCert, client)
+	byPassword := f.carolPassword.Prove(sign.PurposeClientCert, client)
+	v, err := VerifyClient(client, byPasskey, f.list, now)
+	if err != nil {
+		t.Fatalf("passkey, then password: %v", err)
+	}
+	if err := VerifyPassword(v, byPassword, f.list); err != nil {
+		t.Errorf("passkey, then password: %v", err)
+	}
+	if _, err := VerifyClient(client, byPassword, f.list, now); err != ErrUser {
+		t.Errorf("password key alone for a password-too role: got %v, want %v", err, ErrUser)
+	}
+	// The probe of the review: the password proof twice. It parses, but the
+	// first proof is refused.
+	body := mustJSON(t, LoginFinish{Cert: client, Proof: byPassword, Password: &byPassword})
+	lf, err := ParseLoginFinish(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyClient(lf.Cert, lf.Proof, f.list, now); err != ErrUser {
+		t.Errorf("password proof as both proofs: got %v, want %v", err, ErrUser)
 	}
 }
 
@@ -390,7 +448,8 @@ func TestParseTrustChain(t *testing.T) {
 		{"valid", chain(func(*TrustChain) {}), true},
 		{"valid with more", chain(func(c *TrustChain) { c.More = true }), true},
 		{"MaxChainVersions versions", chain(func(c *TrustChain) { c.Versions = repeat(MaxChainVersions) }), true},
-		{"no versions", chain(func(c *TrustChain) { c.Versions = nil }), false},
+		{"no versions", chain(func(c *TrustChain) { c.Versions = []trust.Signed{} }), false},
+		{"versions null", chain(func(c *TrustChain) { c.Versions = nil }), false},
 		{"more than MaxChainVersions", chain(func(c *TrustChain) { c.Versions = repeat(MaxChainVersions + 1) }), false},
 		{"empty payload", chain(func(c *TrustChain) { c.Versions[1].Payload = nil }), false},
 		{"payload over sign.MaxPayload", chain(func(c *TrustChain) { c.Versions[1].Payload = make([]byte, sign.MaxPayload+1) }), false},
@@ -403,7 +462,8 @@ func TestParseTrustChain(t *testing.T) {
 func TestParseTrustHint(t *testing.T) {
 	checkParse(t, func(b []byte) error { _, err := ParseTrustHint(b); return err }, []parseCase{
 		{"valid", []byte(`{"seq":4}`), true},
-		{"largest seq", []byte(`{"seq":18446744073709551615}`), true},
+		{"largest seq", []byte(`{"seq":9007199254740991}`), true},
+		{"seq beyond MaxSafeInteger", []byte(`{"seq":9007199254740992}`), false},
 		{"seq 0", []byte(`{"seq":0}`), false},
 		{"no seq", []byte(`{}`), false},
 		{"negative seq", []byte(`{"seq":-1}`), false},
@@ -453,13 +513,36 @@ func apiRejects(t testing.TB, f fixture) []apiReject {
 	}
 }
 
+// clientReject is a client certificate with a proof that VerifyClient must
+// refuse against the vector's trust list at its now, for the reason its name
+// gives.
+type clientReject struct {
+	Name   string      `json:"name"`
+	Client enc.Bytes   `json:"client"`
+	Proof  proof.Proof `json:"proof"`
+	Valid  bool        `json:"valid"`
+	want   error       // the error VerifyClient must return; not in the file
+}
+
+// clientRejects: carol's role asks for the password too, so her certificate
+// signed by her password key alone is refused, while the same certificate
+// signed by her passkey passes (TestPasswordTooNeedsPasskey).
+func clientRejects(t testing.TB, f fixture) []clientReject {
+	client := f.clientFor(t, f.carol)
+	return []clientReject{
+		{Name: "password key alone for a password-too role", Client: client,
+			Proof: f.carolPassword.Prove(sign.PurposeClientCert, client), want: ErrUser},
+	}
+}
+
 type vector struct {
-	Trust      trust.Signed  `json:"trust"`
-	Now        int64         `json:"now"`
-	Client     enc.Bytes     `json:"client"`
-	Proof      proof.Proof   `json:"proof"`
-	API        sign.Envelope `json:"api"`
-	APIRejects []apiReject   `json:"apiRejects"`
+	Trust         trust.Signed   `json:"trust"`
+	Now           int64          `json:"now"`
+	Client        enc.Bytes      `json:"client"`
+	Proof         proof.Proof    `json:"proof"`
+	API           sign.Envelope  `json:"api"`
+	APIRejects    []apiReject    `json:"apiRejects"`
+	ClientRejects []clientReject `json:"clientRejects"`
 }
 
 func TestVectors(t *testing.T) {
@@ -470,8 +553,84 @@ func TestVectors(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
 		}
 	}
+	clients := clientRejects(t, f)
+	for _, r := range clients {
+		if _, err := VerifyClient(r.Client, r.Proof, f.list, now); err != r.want {
+			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
+		}
+	}
 	golden.Check(t, *update, "session.json", vector{Trust: f.admin.Sign(t, f.list), Now: now, Client: f.client, Proof: f.proof, API: f.api,
-		APIRejects: rejects})
+		APIRejects: rejects, ClientRejects: clients})
+}
+
+// allocated returns how many bytes f allocates.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// hostile returns prefix, then as many empty objects as fit, then suffix:
+// exactly size bytes, the shape of the review's probes.
+func hostile(prefix, suffix string, size int) []byte {
+	var b bytes.Buffer
+	b.Grow(size)
+	b.WriteString(prefix + "{}")
+	for b.Len()+len(",{}")+len(suffix) <= size {
+		b.WriteString(",{}")
+	}
+	for b.Len()+len(suffix) < size {
+		b.WriteByte(' ')
+	}
+	b.WriteString(suffix)
+	return b.Bytes()
+}
+
+// TestParsersBoundAllocation feeds each parser an array of empty objects at
+// its full size limit, where its contract allows no array or a short one:
+// refusing it must allocate next to nothing.
+func TestParsersBoundAllocation(t *testing.T) {
+	f := newFixture(t)
+	_, nodeSign := trusttest.NodeKeys(0xA1) // key of "api-1" in trusttest.Genesis
+	apiEnv, err := sign.Sign(nodeSign, sign.PurposeAPICert, hostile(`{"client":[`, `]}`, MaxCert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		in    []byte
+		parse func([]byte) error
+		want  error
+	}{
+		{"ParseLoginStart", hostile(`{"name":[`, `]}`, MaxRequest),
+			func(b []byte) error { _, err := ParseLoginStart(b); return err }, ErrMessage},
+		{"ParseLoginFinish", hostile(`{"proof":{"sig":[`, `]}}`, MaxRequest),
+			func(b []byte) error { _, err := ParseLoginFinish(b); return err }, ErrMessage},
+		{"ParseSetup", hostile(`{"trust":{"payload":[`, `]}}`, MaxRequest),
+			func(b []byte) error { _, err := ParseSetup(b); return err }, ErrMessage},
+		{"ParseTrustChain", hostile(`{"versions":[`, `]}`, MaxChain),
+			func(b []byte) error { _, err := ParseTrustChain(b); return err }, ErrMessage},
+		{"ParseTrustHint", hostile(`{"seq":[`, `]}`, maxTrustHint),
+			func(b []byte) error { _, err := ParseTrustHint(b); return err }, ErrMessage},
+		{"VerifyClient", hostile(`{"inst":[`, `]}`, MaxCert),
+			func(b []byte) error { _, err := VerifyClient(b, f.proof, f.list, now); return err }, ErrCert},
+		{"VerifyAPI, client certificate", hostile(`{"dh":[`, `]}`, MaxCert),
+			func(b []byte) error { _, err := VerifyAPI(f.api, f.list, b, now); return err }, ErrCert},
+		{"VerifyAPI, API certificate", nil,
+			func([]byte) error { _, err := VerifyAPI(apiEnv, f.list, f.client, now); return err }, ErrCert},
+	}
+	for _, c := range cases {
+		var err error
+		n := allocated(func() { err = c.parse(c.in) })
+		if n > 64<<10 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+		if err != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
+	}
 }
 
 func FuzzVerifyClient(f *testing.F) {
