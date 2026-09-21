@@ -3,6 +3,7 @@ package tunnel
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"reflect"
@@ -12,11 +13,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flynn/noise"
+
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/internal/golden"
+	"github.com/sorglos-it/nextgencloud/contracts/noisep"
 	"github.com/sorglos-it/nextgencloud/contracts/proof"
 	"github.com/sorglos-it/nextgencloud/contracts/session"
 	"github.com/sorglos-it/nextgencloud/contracts/sign"
+	"github.com/sorglos-it/nextgencloud/contracts/task"
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
 	"github.com/sorglos-it/nextgencloud/contracts/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/contracts/wire"
@@ -192,7 +197,7 @@ func testJoinCode(t testing.TB) JoinCode {
 }
 
 // joinKeys returns the Noise and signing keys of a new API server.
-func joinKeys() (noise, sign []byte) {
+func joinKeys() (noiseKey, signKey []byte) {
 	dh, sig := trusttest.NodeKeys(0xA3)
 	return dh.Public, sig.Public().(ed25519.PublicKey)
 }
@@ -583,6 +588,115 @@ func TestVerifyOpen(t *testing.T) {
 	})
 }
 
+// TestTaskSwapBreaksHandshake is the review's probe as a test: an API that
+// holds two valid tasks of the same user for the same target (it can get a
+// second one by failing the shell's first attempt) swaps one for the other in
+// a root app OPEN, adds one to an OPEN without a task, or drops it. The
+// controller verifies whatever task arrives, but the end-to-end prologue
+// binds the task's bytes, so message 1 of the shell fails.
+func TestTaskSwapBreaksHandshake(t *testing.T) {
+	const app, svc, act = "org.sorglos.files", "files", "delete"
+	admin := trusttest.NewSigner(1)
+	l := trusttest.Genesis(admin)
+	ctlDH, _ := trusttest.NodeKeys(0xC1) // ctl-1 in trusttest.Genesis
+	sessPriv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x51}, ed25519.SeedSize))
+	shellDH, err := noisep.Keypair(bytes.NewReader(bytes.Repeat([]byte{0x52}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := mustJSON(t, session.ClientCert{Installation: l.Installation, User: trusttest.ID(0x21),
+		Nonce: bytes.Repeat([]byte{0x31}, session.NonceSize), Sig: enc.Bytes(sessPriv.Public().(ed25519.PublicKey)), DH: shellDH.Public,
+		Issued: now - 100, Expires: now + 3600})
+	certProof := admin.Prove(sign.PurposeClientCert, cert)
+	newTask := func(params string, id byte) *sign.Envelope {
+		env, err := sign.Sign(sessPriv, sign.PurposeTask, mustJSON(t, task.Task{ID: bytes.Repeat([]byte{id}, task.IDSize),
+			Installation: l.Installation, Cert: session.CertHash(cert), Node: "ctl-1", App: app, Service: svc, Action: act,
+			Params: json.RawMessage(params), Issued: now - 10, Expires: now + 200}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &env
+	}
+	taskA, taskB := newTask(`{"path":"/data/everything"}`, 0xA), newTask(`{"path":"/tmp/old.log"}`, 0xB)
+	rule := task.Rule{Root: true, Changes: true, Critical: func(json.RawMessage) (bool, error) { return false, nil }}
+
+	// shell writes the OPEN with tk; its prologue binds the task's bytes.
+	shell := func(tk *sign.Envelope) (wire.Open, *noise.HandshakeState) {
+		var taskBytes []byte
+		if tk != nil {
+			taskBytes = mustJSON(t, tk)
+		}
+		hs, err := noisep.Handshake(true, noisep.E2EPrologue("ctl-1", app, svc, act, nil, taskBytes), shellDH, ctlDH.Public, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg1, _, _, err := hs.WriteMessage(nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wire.Open{App: app, Service: svc, Action: act, Window: wire.DefaultWindow, E2E: msg1, Task: tk}, hs
+	}
+	// controller checks the OPEN the API forwarded and reads message 1 over
+	// the prologue of what arrived.
+	controller := func(o wire.Open) (*noise.HandshakeState, *task.Task, error) {
+		opened, err := VerifyOpen(mustJSON(t, Open{Open: mustJSON(t, o), Window: wire.DefaultWindow, Client: cert, Proof: &certProof}), l, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked, err := task.Check(task.Input{Task: opened.Open.Task, Session: *opened.Session, Node: "ctl-1",
+			App: opened.Open.App, Service: opened.Open.Service, Action: opened.Open.Action, Rule: rule}, l, now)
+		hs, herr := noisep.Handshake(false, noisep.E2EPrologue("ctl-1", opened.Open.App, opened.Open.Service, opened.Open.Action,
+			opened.Open.Params, opened.Open.TaskBytes()), ctlDH, opened.Session.Cert().DH, rand.Reader)
+		if herr != nil {
+			t.Fatal(herr)
+		}
+		if _, _, _, err := hs.ReadMessage(nil, opened.Open.E2E); err != nil {
+			return nil, checked, err
+		}
+		return hs, checked, err
+	}
+
+	t.Run("as the shell sent it", func(t *testing.T) {
+		o, shellHS := shell(taskB)
+		ctlHS, checked, err := controller(o)
+		if err != nil || checked == nil || string(checked.Params) != `{"path":"/tmp/old.log"}` {
+			t.Fatalf("got %+v, %v", checked, err)
+		}
+		msg2, rc1, rc2, err := ctlHS.WriteMessage(nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ic1, ic2, err := shellHS.ReadMessage(nil, msg2)
+		if err != nil {
+			t.Fatalf("shell reads message 2: %v", err)
+		}
+		first, _ := wire.E2E(wire.E2EData, nil)
+		c, _ := noisep.NewTransport(true, ic1, ic2).Seal(first)
+		if _, err := noisep.NewTransport(false, rc1, rc2).Open(c); err != nil {
+			t.Fatalf("controller opens the first message: %v", err)
+		}
+	})
+	for name, swap := range map[string]struct {
+		sent, forwarded *sign.Envelope
+	}{
+		"another valid task swapped in":   {taskB, taskA},
+		"a task added to an OPEN without": {nil, taskA},
+		"the task dropped":                {taskB, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, _ := shell(swap.sent)
+			o.Task = swap.forwarded
+			_, checked, err := controller(o)
+			if swap.forwarded != nil && checked == nil {
+				t.Fatal("the forwarded task no longer verifies, so this case proves nothing")
+			}
+			if err == nil {
+				t.Fatal("the controller read message 1 over the task the API chose")
+			}
+		})
+	}
+}
+
 // allocated returns how many bytes f allocates.
 func allocated(f func()) uint64 {
 	var before, after runtime.MemStats
@@ -820,7 +934,8 @@ func FuzzParseStatus(f *testing.F) {
 }
 
 // FuzzParseOpen checks that the browser's OPEN inside an accepted tunnel OPEN
-// parses again to the same params.
+// parses again to the same params and task bytes, and that those bytes stand
+// in the OPEN as they are.
 func FuzzParseOpen(f *testing.F) {
 	f.Add(mustJSON(f, testOpen()))
 	f.Add(mustJSON(f, stageOpen(f)))
@@ -829,8 +944,12 @@ func FuzzParseOpen(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if again, err := wire.ParseOpen(o.Open); err != nil || !bytes.Equal(again.Params, inner.Params) {
+		again, err := wire.ParseOpen(o.Open)
+		if err != nil || !bytes.Equal(again.Params, inner.Params) || !bytes.Equal(again.TaskBytes(), inner.TaskBytes()) {
 			t.Fatalf("inner OPEN parses differently: %v", err)
+		}
+		if !bytes.Contains(o.Open, inner.Params) || !bytes.Contains(o.Open, inner.TaskBytes()) {
+			t.Fatalf("params or task bytes not in the OPEN")
 		}
 	})
 }

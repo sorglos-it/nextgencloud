@@ -5,7 +5,8 @@
   "service": "terminal",
   "action": "shell",
   "params": "eyJjb2xzIjo4MCwicm93cyI6MjR9",
-  "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsANU8oep9zofBFDIFKoVQ7SYVz3FcqEPIlxDtgzJbaRy6",
+  "task": "",
+  "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsANU8oep9zofBFDIFKoVQ7SYVz3FcqEPIlxDtgzJbaRy647DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
   "initStatic": {
     "private": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
     "public": "pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogk"
@@ -23,9 +24,9 @@
     "public": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs"
   },
   "msg1Payload": "",
-  "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVlrZ-ja0GEgRTfMk9UL8Sv9",
+  "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVnj_6xbq7PdZJhstd97hxSo",
   "msg2Payload": "",
-  "msg2": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8QtGUKf40kxshEo8VMFF0xnw",
+  "msg2": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qtb288fvqpeqlYYizc5lrXz",
   "transport": [
     {
       "from": "initiator",
@@ -46,6 +47,50 @@
       "from": "responder",
       "plaintext": "Ansic3RhdHVzIjoib2sifQ",
       "ciphertext": "tjkbl_-aiG0U9LUoMX1_BxSLt1H507dZ5WvcPIkXngc"
+    }
+  ],
+  "prologues": [
+    {
+      "name": "params",
+      "controllerId": "ctl-svc",
+      "open": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwicGFyYW1zIjp7ImNvbHMiOjgwLCJyb3dzIjoyNH0sIndpbmRvdyI6MjYyMTQ0LCJlMmUiOiJ6bzA2MGN5Mk0teDdjTUY0RktYSGJzMENsb1VGRFRSSFJib0ZodzVZZlZual82eGJxN1BkWkpoc3RkOTdoeFNvIn0",
+      "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsANU8oep9zofBFDIFKoVQ7SYVz3FcqEPIlxDtgzJbaRy647DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+      "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVnj_6xbq7PdZJhstd97hxSo"
+    },
+    {
+      "name": "params with white space",
+      "controllerId": "ctl-svc",
+      "open": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwicGFyYW1zIjp7ICJjb2xzIjogODAsICJyb3dzIjogMjQgfSwid2luZG93IjoyNjIxNDQsImUyZSI6InpvMDYwY3kyTS14N2NNRjRGS1hIYnMwQ2xvVUZEVFJIUmJvRmh3NVlmVm5QWm9vUTZTaUZYUXRMODBScWlWa3kifQ",
+      "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsAAxHp6z9Bb8lo6IHGhfNM73mAmCSxr2dGAmiEIC0WbKW47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+      "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVnPZooQ6SiFXQtL80RqiVky"
+    },
+    {
+      "name": "no params",
+      "controllerId": "ctl-svc",
+      "open": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwid2luZG93IjoyNjIxNDQsImUyZSI6InpvMDYwY3kyTS14N2NNRjRGS1hIYnMwQ2xvVUZEVFJIUmJvRmh3NVlmVmx0MGZsTk9UdnFWZmtvLVFEbWZjRXIifQ",
+      "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsAOOwxEKY_BwUmvv0yJlvuSQnrkHkZJuTTKSVmRt4UrhV47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+      "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVlt0flNOTvqVfko-QDmfcEr"
+    },
+    {
+      "name": "empty params",
+      "controllerId": "ctl-svc",
+      "open": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwicGFyYW1zIjp7fSwid2luZG93IjoyNjIxNDQsImUyZSI6InpvMDYwY3kyTS14N2NNRjRGS1hIYnMwQ2xvVUZEVFJIUmJvRmh3NVlmVm5UUzRqcEpfNTZGdGR2VkpHZTJaMTkifQ",
+      "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsAEQTb6NVs2eKEUatFvfoZJ6U-0_CH-d-gxDAYPYcqv-K47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+      "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVnTS4jpJ_56FtdvVJGe2Z19"
+    },
+    {
+      "name": "task",
+      "controllerId": "ctl-svc",
+      "open": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwid2luZG93IjoyNjIxNDQsImUyZSI6InpvMDYwY3kyTS14N2NNRjRGS1hIYnMwQ2xvVUZEVFJIUmJvRmh3NVlmVm56YnlMd1ZKUnBvOUdqcnBRYjAwdmwiLCJ0YXNrIjp7InBheWxvYWQiOiJleUoySWpveGZRIiwia2lkIjoiTUpmaTN1TExTalMxT0VETnR3V3UxdyIsInNpZyI6ImZ5am0zeHFrS0tWdU1LWTYxT21jSEtOb3h0N0Rfd1BDdmkxZUJ3QkY0OWloc3JBOVZuX1FCN293SEU0ekpyUTRpLVRNRGY5WFVxRFdsbjBONDRxREF3In19",
+      "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsAOOwxEKY_BwUmvv0yJlvuSQnrkHkZJuTTKSVmRt4UrhV4qB9Gn4sYYYrED0lFfpdj41v3SftEEXAaIpC1r0G1zg",
+      "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVnzbyLwVJRpo9GjrpQb00vl"
+    },
+    {
+      "name": "task with white space",
+      "controllerId": "ctl-svc",
+      "open": "eyJhcHAiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbCIsInNlcnZpY2UiOiJ0ZXJtaW5hbCIsImFjdGlvbiI6InNoZWxsIiwid2luZG93IjoyNjIxNDQsImUyZSI6InpvMDYwY3kyTS14N2NNRjRGS1hIYnMwQ2xvVUZEVFJIUmJvRmh3NVlmVm5xVjd3Q2Ywb2dtSDNPQXh4T1Z2SUsiLCJ0YXNrIjp7InBheWxvYWQiOiAiZXlKMklqb3hmUSIsICJraWQiOiAiTUpmaTN1TExTalMxT0VETnR3V3UxdyIsICJzaWciOiAiZnlqbTN4cWtLS1Z1TUtZNjFPbWNIS05veHQ3RF93UEN2aTFlQndCRjQ5aWhzckE5Vm5fUUI3b3dIRTR6SnJRNGktVE1EZjlYVXFEV2xuME40NHFEQXcifX0",
+      "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsAOOwxEKY_BwUmvv0yJlvuSQnrkHkZJuTTKSVmRt4UrhVBVfCsEzaOCwpxyBEQBltTqox_WtvOUFMU23MFeZwoAQ",
+      "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVnqV7wCf0ogmH3OAxxOVvIK"
     }
   ]
 }

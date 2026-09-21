@@ -58,6 +58,7 @@
 package wire
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
@@ -236,19 +237,67 @@ type Open struct {
 	E2E     enc.Bytes       `json:"e2e,omitempty"`     // Noise message 1 of the end-to-end handshake, HandshakeSize bytes; empty for core apps
 	Task    *sign.Envelope  `json:"task,omitempty"`    // signed task (package task), for root tasks and re-confirmation
 	Confirm *proof.Proof    `json:"confirm,omitempty"` // the user's re-confirmation of Task (task.VerifyConfirm)
+
+	task []byte // the task member as the OPEN carried it (ParseOpen)
+}
+
+// TaskBytes returns the value of the task member exactly as it stood in the
+// OPEN payload ParseOpen parsed, from '{' to '}': the bytes
+// noisep.E2EPrologue hashes. It is nil without a task, and for an Open that
+// ParseOpen did not make.
+func (o Open) TaskBytes() []byte { return o.task }
+
+// openDoc is an OPEN as it is decoded: the same members, but the task keeps
+// its bytes.
+type openDoc struct {
+	App     string          `json:"app"`
+	Service string          `json:"service"`
+	Action  string          `json:"action"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Window  uint32          `json:"window"`
+	E2E     enc.Bytes       `json:"e2e,omitempty"`
+	Task    *openTask       `json:"task,omitempty"`
+	Confirm *proof.Proof    `json:"confirm,omitempty"`
+}
+
+// openTask is the task member of an OPEN: the envelope and its bytes.
+type openTask struct {
+	env sign.Envelope
+	raw []byte
+}
+
+// taskBudget bounds the task member while it is decoded on its own: an
+// envelope has no array.
+var taskBudget = enc.Budget{Size: MaxBrowserOpen}
+
+// UnmarshalJSON implements json.Unmarshaler. encoding/json/v2 hands it the
+// member's value exactly as it stands in the input, after the checks of the
+// whole OPEN; the envelope is decoded as strictly as the rest.
+func (t *openTask) UnmarshalJSON(b []byte) error {
+	if err := taskBudget.Decode(b, &t.env); err != nil {
+		return err
+	}
+	t.raw = bytes.Clone(b)
+	return nil
 }
 
 // openBudget bounds an OPEN while it is decoded (enc.Budget). It has no array;
 // its params stay raw, byte for byte as noisep.E2EPrologue hashes them, and
-// the whole OPEN is small enough to bound what decoding them costs.
+// the whole OPEN is small enough to bound what decoding them costs. The task
+// is a struct here, so its members are counted before its bytes are kept.
 var openBudget = enc.Budget{Size: MaxBrowserOpen, Items: map[string]int{"params": enc.Raw}}
 
-// ParseOpen decodes and validates an OPEN payload from the browser. Every
-// failure is ErrOpen.
+// ParseOpen decodes and validates an OPEN payload from the browser. Params
+// and TaskBytes keep the bytes as they arrived. Every failure is ErrOpen.
 func ParseOpen(p []byte) (Open, error) {
-	var o Open
-	if openBudget.Decode(p, &o) != nil {
+	var d openDoc
+	if openBudget.Decode(p, &d) != nil {
 		return Open{}, ErrOpen
+	}
+	o := Open{App: d.App, Service: d.Service, Action: d.Action, Params: d.Params, Window: d.Window, E2E: d.E2E,
+		Confirm: d.Confirm}
+	if d.Task != nil {
+		o.Task, o.task = &d.Task.env, d.Task.raw
 	}
 	if err := o.Validate(); err != nil {
 		return Open{}, err

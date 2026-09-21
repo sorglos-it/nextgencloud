@@ -40,22 +40,28 @@ var ErrTooLarge = errors.New("noisep: message too large")
 
 // E2EPrologue binds an end-to-end handshake to exactly one channel:
 //
-//	"ngc/e2e/v1" 0x00 controllerID 0x00 app 0x00 service 0x00 action 0x00 SHA-256(params)
+//	"ngc/e2e/v1" 0x00 controllerID 0x00 app 0x00 service 0x00 action 0x00 SHA-256(params) SHA-256(task)
 //
-// (SHA-256 as 32 raw bytes). params are the bytes of the OPEN's params member
-// exactly as the shell wrote them into its OPEN payload, from the opening '{'
-// to the closing '}'; nil if the OPEN has none (as with a task, whose params
-// are signed). The controller takes them from Opened.Open.Params
-// (tunnel.VerifyOpen), which keeps them byte for byte.
-func E2EPrologue(controllerID, app, service, action string, params []byte) []byte {
-	h := sha256.Sum256(params)
+// (each SHA-256 as 32 raw bytes, one after the other). params and task are
+// the values of the OPEN's params and task members exactly as the shell wrote
+// them into its OPEN payload, each from its opening '{' to its closing '}';
+// nil for a member the OPEN does not have, which hashes as the empty string.
+// An OPEN with a task has no params of its own, so the task carries them;
+// binding its bytes keeps whoever relays the OPEN from swapping in, adding or
+// dropping a task, even another valid one of the same user. The controller
+// takes both from tunnel.VerifyOpen: Opened.Open.Params and
+// Opened.Open.TaskBytes(), which keep the bytes as they arrived.
+func E2EPrologue(controllerID, app, service, action string, params, task []byte) []byte {
+	p := sha256.Sum256(params)
+	t := sha256.Sum256(task)
 	b := []byte(PrologueE2E)
 	for _, s := range []string{controllerID, app, service, action} {
 		b = append(b, 0)
 		b = append(b, s...)
 	}
 	b = append(b, 0)
-	return append(b, h[:]...)
+	b = append(b, p[:]...)
+	return append(b, t[:]...)
 }
 
 // Keypair creates an X25519 key pair. rng is crypto/rand.Reader outside tests.

@@ -248,6 +248,59 @@ func TestParseOpen(t *testing.T) {
 	}
 }
 
+// TestParseOpenTaskBytes: ParseOpen keeps the task member exactly as the OPEN
+// carried it, because noisep.E2EPrologue hashes those bytes, and decodes the
+// envelope as strictly as the rest of the OPEN.
+func TestParseOpenTaskBytes(t *testing.T) {
+	env := taskEnvelope(t)
+	compact := mustJSON(t, env)
+	spaced := `{ "sig" : "` + enc.B64.EncodeToString(env.Sig) + `", "kid": "` + env.KeyID + `",` + "\n" +
+		`"payload":"` + enc.B64.EncodeToString(env.Payload) + `" }`
+	open := func(task string) []byte {
+		return []byte(`{"app":"org.sorglos.terminal","service":"terminal","action":"shell","window":262144,"e2e":"` +
+			enc.B64.EncodeToString(bytes.Repeat([]byte{7}, HandshakeSize)) + `","task":` + task + `}`)
+	}
+	for name, task := range map[string]string{"as json.Marshal writes it": string(compact), "white space, other order": spaced} {
+		o, err := ParseOpen(open(task))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if string(o.TaskBytes()) != task {
+			t.Errorf("%s: task bytes %q, want %q", name, o.TaskBytes(), task)
+		}
+		if o.Task == nil || !bytes.Equal(o.Task.Payload, env.Payload) || o.Task.KeyID != env.KeyID || !bytes.Equal(o.Task.Sig, env.Sig) {
+			t.Errorf("%s: envelope %+v", name, o.Task)
+		}
+	}
+	if o, err := ParseOpen(mustJSON(t, testOpen())); err != nil || o.TaskBytes() != nil {
+		t.Errorf("no task: %q, %v", o.TaskBytes(), err)
+	}
+	withTask := testOpen()
+	withTask.Params, withTask.Task = nil, env
+	if withTask.TaskBytes() != nil {
+		t.Error("an Open ParseOpen did not make has task bytes")
+	}
+	many := `{"payload":"eA"`
+	for i := 0; i < 70; i++ {
+		many += `,"x` + strconv.Itoa(i) + `":0`
+	}
+	for name, task := range map[string]string{
+		"unknown member":         strings.Replace(string(compact), `{"payload"`, `{"extra":1,"payload"`, 1),
+		"duplicate member":       strings.Replace(string(compact), `{"payload"`, `{"kid":"x","payload"`, 1),
+		"member in other case":   strings.Replace(string(compact), `"kid"`, `"Kid"`, 1),
+		"null member":            strings.Replace(string(compact), `"kid":"`+env.KeyID+`"`, `"kid":null`, 1),
+		"not an object":          `"task"`,
+		"an array":               `[` + string(compact) + `]`,
+		"payload not base64url":  strings.Replace(string(compact), `{"payload":"`, `{"payload":"=`, 1),
+		"more than 64 members":   many + `}`,
+		"trailing data in value": string(compact) + ` {}`,
+	} {
+		if _, err := ParseOpen(open(task)); err != ErrOpen {
+			t.Errorf("%s: got %v, want %v", name, err, ErrOpen)
+		}
+	}
+}
+
 // TestOpenValidateTask pins the task size rule, which no OPEN of at most
 // MaxBrowserOpen bytes can break by itself.
 func TestOpenValidateTask(t *testing.T) {
