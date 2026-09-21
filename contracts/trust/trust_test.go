@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/internal/golden"
 	"github.com/sorglos-it/nextgencloud/contracts/proof"
 	"github.com/sorglos-it/nextgencloud/contracts/sign"
@@ -503,6 +504,119 @@ func TestSignatureBeforeDecoding(t *testing.T) {
 	if errOpen != trust.ErrAnchor {
 		t.Errorf("Open: got %v, want %v", errOpen, trust.ErrAnchor)
 	}
+}
+
+// signedSize is the budget ParseSigned documents: the base64url of
+// sign.MaxPayload bytes plus 64 KiB.
+var signedSize = enc.B64.EncodedLen(sign.MaxPayload) + 64<<10
+
+func TestParseSigned(t *testing.T) {
+	g := admin.Sign(t, trusttest.Genesis(admin))
+	good, err := json.Marshal(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := trust.ParseSigned(good)
+	if err != nil {
+		t.Fatalf("valid version: %v", err)
+	}
+	if _, err := trust.Open(anchor(t, g), []trust.Signed{got}); err != nil {
+		t.Errorf("open the parsed version: %v", err)
+	}
+	byPasskey, err := json.Marshal(passkeyAdmin.Sign(t, trusttest.Genesis(admin)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofJSON, err := json.Marshal(g.Proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `"payload":"` + enc.B64.EncodeToString(g.Payload) + `"`
+	prf := `"proof":` + string(proofJSON)
+	doc := func(members ...string) []byte { return []byte("{" + strings.Join(members, ",") + "}") }
+	for name, in := range map[string][]byte{
+		"members in another order": doc(prf, payload),
+		"proof by a passkey":       byPasskey,
+	} {
+		if _, err := trust.ParseSigned(in); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	cases := map[string][]byte{
+		"empty payload":                doc(`"payload":""`, prf),
+		"no payload":                   doc(prf),
+		"no proof":                     doc(payload),
+		"proof of an unknown kind":     doc(payload, `"proof":{"kind":"x","kid":"`+g.Proof.KeyID+`","sig":"AQ"}`),
+		"password proof with authData": doc(payload, `"proof":{"kind":"password","kid":"`+g.Proof.KeyID+`","sig":"AQ","authData":"AQ"}`),
+		"payload over sign.MaxPayload": doc(`"payload":"`+enc.B64.EncodeToString(make([]byte, sign.MaxPayload+1))+`"`, prf),
+		"unknown member":               doc(payload, prf, `"x":1`),
+		"duplicate member":             doc(payload, payload, prf),
+		"member name in another case":  doc(`"Payload"`+payload[len(`"payload"`):], prf),
+		"null":                         doc(payload, `"proof":null`),
+		"trailing data":                append(bytes.Clone(good), `{}`...),
+		"not an object":                []byte(`[]`),
+		"over the size of its budget":  append(bytes.Clone(good), bytes.Repeat([]byte(" "), signedSize)...),
+	}
+	for name, in := range cases {
+		if _, err := trust.ParseSigned(in); err != trust.ErrInvalid {
+			t.Errorf("%s: got %v, want %v", name, err, trust.ErrInvalid)
+		}
+	}
+}
+
+// TestParseSignedBoundsAllocation feeds ParseSigned documents of the full size
+// of its budget, in shapes the budget refuses: refusing them must allocate
+// next to nothing.
+func TestParseSignedBoundsAllocation(t *testing.T) {
+	nested := strings.Repeat(`{"a":`, 40) + `1` + strings.Repeat(`}`, 40)
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		{"payload as an array", hostile(`{"payload":[`, `{}`, `]}`, signedSize)},
+		{"signature as an array", hostile(`{"proof":{"sig":[`, `{}`, `]}}`, signedSize)},
+		{"too many members", hostile(`{`, `"x":1`, `}`, signedSize)},
+		{"nested too deep", append(bytes.Repeat([]byte(" "), signedSize-len(nested)), nested...)},
+		{"a member name too long", []byte(`{"` + strings.Repeat("a", signedSize-6) + `":1}`)},
+	}
+	for _, c := range cases {
+		if len(c.in) != signedSize {
+			t.Fatalf("%s: %d bytes, want %d", c.name, len(c.in), signedSize)
+		}
+		var err error
+		n := allocated(func() { _, err = trust.ParseSigned(c.in) })
+		t.Logf("%s: %d bytes allocated", c.name, n)
+		if n > 64<<10 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+		if err != trust.ErrInvalid {
+			t.Errorf("%s: got %v, want %v", c.name, err, trust.ErrInvalid)
+		}
+	}
+}
+
+func FuzzParseSigned(f *testing.F) {
+	b, err := json.Marshal(admin.Sign(f, trusttest.Genesis(admin)))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(b)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		s, err := trust.ParseSigned(b)
+		if err != nil {
+			return
+		}
+		// What ParseSigned accepts, it accepts again as encoding/json writes
+		// it, with the same payload.
+		again, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		back, err := trust.ParseSigned(again)
+		if err != nil || !bytes.Equal(back.Payload, s.Payload) || back.Proof.KeyID != s.Proof.KeyID {
+			t.Fatalf("%s does not read back: %v", again, err)
+		}
+	})
 }
 
 func FuzzParse(f *testing.F) {

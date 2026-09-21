@@ -183,6 +183,27 @@ var listBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
 	"auto":              MaxAuto,
 }}
 
+// signedBudget bounds one version as distributed while it is decoded: the
+// base64url of a payload of sign.MaxPayload bytes, plus 64 KiB for the proof
+// (at most about 12 KiB), member names and white space. It has no array.
+var signedBudget = enc.Budget{Size: enc.B64.EncodedLen(sign.MaxPayload) + 64<<10}
+
+// ParseSigned decodes one version from outside, such as the body of
+// ngc.users/api/trust: strict JSON within a budget (enc.Budget) of the
+// base64url of sign.MaxPayload bytes plus 64 KiB, a payload of 1 to
+// sign.MaxPayload bytes and a proof that passes proof.Proof.Validate. It
+// checks no signature: Open and Advance do, and expect versions parsed here
+// or by session.ParseTrustChain. Every failure is ErrInvalid alone, since the
+// decoder's errors quote parts of the input.
+func ParseSigned(b []byte) (Signed, error) {
+	var s Signed
+	if signedBudget.Decode(b, &s) != nil || len(s.Payload) == 0 || len(s.Payload) > sign.MaxPayload ||
+		s.Proof.Validate() != nil {
+		return Signed{}, ErrInvalid
+	}
+	return s, nil
+}
+
 // Parse decodes and validates a payload. It does not check signatures.
 func Parse(payload []byte) (*List, error) {
 	var l List
@@ -199,6 +220,7 @@ func Parse(payload []byte) (*List, error) {
 // chain[0] must be the anchored version. Its hash is compared before its
 // payload is decoded, and Advance checks each later proof before decoding
 // that payload, so the only payload decoded unsigned is the pinned one.
+// Versions from outside come through ParseSigned or session.ParseTrustChain.
 func Open(a Anchor, chain []Signed) (Version, error) {
 	if len(chain) == 0 {
 		return Version{}, ErrAnchor
