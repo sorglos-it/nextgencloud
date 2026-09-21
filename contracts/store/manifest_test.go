@@ -161,6 +161,30 @@ func TestParseManifestBoundsAllocation(t *testing.T) {
 	}
 }
 
+func TestValidText(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"Terminal", true},
+		{"Befehle ausführen", true},
+		{strings.Repeat("a", 64), true},
+		{strings.Repeat("ä", 32), true},
+		{"", false},
+		{strings.Repeat("a", 65), false},
+		{strings.Repeat("ä", 32) + "a", false},
+		{"a" + "\x0ab", false},
+		{"a" + "\x07b", false},
+		{"a" + "\xc2\xa0b", false},
+		{"a" + "\xffb", false},
+	}
+	for _, c := range cases {
+		if got := ValidText(c.s, 64); got != c.want {
+			t.Errorf("%q: got %v", c.s, got)
+		}
+	}
+}
+
 func TestVersions(t *testing.T) {
 	cases := []struct {
 		a, b  string

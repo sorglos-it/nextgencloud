@@ -185,7 +185,7 @@ func (c *Catalog) Validate() error {
 }
 
 func (e Entry) valid() bool {
-	if !wire.ValidAppID(e.ID) || wire.CoreApp(e.ID) || !label(e.Name, 64) || !label(e.Publisher, 64) ||
+	if !wire.ValidAppID(e.ID) || wire.CoreApp(e.ID) || !ValidText(e.Name, 64) || !ValidText(e.Publisher, 64) ||
 		len(e.Description) > 1000 || !utf8.ValidString(e.Description) || len(e.Versions) == 0 || len(e.Versions) > MaxVersions ||
 		(e.Price != nil && !e.Price.valid()) {
 		return false
@@ -381,7 +381,7 @@ func ParseUpdateReport(b []byte) (UpdateReport, error) {
 		return UpdateReport{}, ErrUpdate
 	}
 	if !ValidTarget(r.Target) || (r.Version != "" && !ValidVersion(r.Version)) ||
-		(r.Message != "" && !label(r.Message, wire.MaxMessageText)) {
+		(r.Message != "" && !ValidText(r.Message, wire.MaxMessageText)) {
 		return UpdateReport{}, ErrUpdate
 	}
 	return r, nil

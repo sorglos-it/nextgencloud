@@ -6,8 +6,6 @@ import (
 	"errors"
 	"io"
 	"regexp"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/sign"
@@ -214,8 +212,8 @@ var noticeBudget = enc.Budget{Size: MaxNotice}
 
 // ParseNotice checks the body of a "notify" control message: at most
 // MaxNotice bytes of strict JSON (enc.Budget); Level info, warn or error;
-// Text 1..wire.MaxMessageText bytes of printable UTF-8; App empty or a valid
-// non-core app ID. Every failure is ErrNotice.
+// Text store.ValidText of at most wire.MaxMessageText bytes; App empty or a
+// valid non-core app ID. Every failure is ErrNotice.
 func ParseNotice(b []byte) (Notice, error) {
 	var n Notice
 	if noticeBudget.Decode(b, &n) != nil {
@@ -226,23 +224,10 @@ func ParseNotice(b []byte) (Notice, error) {
 	default:
 		return Notice{}, ErrNotice
 	}
-	if !printable(n.Text, wire.MaxMessageText) || (n.App != "" && !validApp(n.App)) {
+	if !store.ValidText(n.Text, wire.MaxMessageText) || (n.App != "" && !validApp(n.App)) {
 		return Notice{}, ErrNotice
 	}
 	return n, nil
-}
-
-// printable allows printable UTF-8 text (unicode.IsPrint) of 1 to max bytes.
-func printable(s string, max int) bool {
-	if s == "" || len(s) > max || !utf8.ValidString(s) {
-		return false
-	}
-	for _, r := range s {
-		if !unicode.IsPrint(r) {
-			return false
-		}
-	}
-	return true
 }
 
 // LicenseOf maps a license to the strings in InstalledApp and LicenseResult:

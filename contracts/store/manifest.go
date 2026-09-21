@@ -128,7 +128,7 @@ func RuleFor(m *Manifest, action string) (task.Rule, error) {
 
 // Validate checks m.
 func (m *Manifest) Validate() error {
-	if !wire.ValidAppID(m.ID) || wire.CoreApp(m.ID) || !label(m.Name, 64) || !label(m.Publisher, 64) ||
+	if !wire.ValidAppID(m.ID) || wire.CoreApp(m.ID) || !ValidText(m.Name, 64) || !ValidText(m.Publisher, 64) ||
 		!ValidVersion(m.Version) || len(m.Description) > 1000 || !utf8.ValidString(m.Description) ||
 		(m.Icon != "" && !ValidPath(m.Icon)) || (m.MinNGC != "" && !ValidVersion(m.MinNGC)) {
 		return ErrManifest
@@ -157,7 +157,7 @@ func (m *Manifest) Validate() error {
 	}
 	actions := map[string]bool{}
 	for _, a := range m.Actions {
-		if !wire.ValidName(a.Name) || actions[a.Name] || !label(a.Title, 100) || !services[a.Service] ||
+		if !wire.ValidName(a.Name) || actions[a.Name] || !ValidText(a.Title, 100) || !services[a.Service] ||
 			a.Timeout < 0 || a.Timeout > service.MaxTimeout || (a.Stream && a.Timeout != 0) {
 			return ErrManifest
 		}
@@ -191,8 +191,10 @@ func validNeeds(needs []string) bool {
 	return true
 }
 
-// label allows printable UTF-8 text of 1 to max bytes.
-func label(s string, max int) bool {
+// ValidText reports whether s is 1 to max bytes of printable UTF-8: every
+// rune unicode.IsPrint (letters, marks, numbers, punctuation, symbols and the
+// ASCII space). Names, titles and messages meant for people use it.
+func ValidText(s string, max int) bool {
 	if s == "" || len(s) > max || !utf8.ValidString(s) {
 		return false
 	}
