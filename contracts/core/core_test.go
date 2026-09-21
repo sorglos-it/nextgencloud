@@ -137,6 +137,9 @@ func TestTransfer(t *testing.T) {
 		"catalog without store": func(tr *Transfer) { tr.Store = "" },
 		"short checksum":        func(tr *Transfer) { tr.SHA256 = []byte{1} },
 		"too large":             func(tr *Transfer) { tr.Size = store.MaxPackage + 1 },
+		"zero size":             func(tr *Transfer) { tr.Size = 0 },
+		"invalid store name":    func(tr *Transfer) { tr.Store = "BAD" },
+		"short key":             func(tr *Transfer) { tr.Key = []byte{1} },
 	} {
 		tr := testTransfer()
 		mutate(&tr)
@@ -178,6 +181,7 @@ func TestExamples(t *testing.T) {
 		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Fingerprint: "k3y…", Since: 1790000000}},
 		"ngc.users/log":          []LogEntry{{Time: 1790000000, User: "ISEhISEhISEhISEhISEhIQ", Kind: LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"}},
 		"ngc.store/sources":      []SourceInfo{{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5, Checked: 1790000000}},
+		"ngc.store/catalog":      CatalogResult{Catalog: sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{7}, 64)}},
 		"ngc.store/installed":    []InstalledApp{{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1", Active: true, State: AppOK, License: LicenseValid}},
 		"ngc.store/upload":       UploadResult{ID: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{5}, 32)},
 		"ngc.store/license":      LicenseResult{App: "org.sorglos.terminal", State: LicenseValid},

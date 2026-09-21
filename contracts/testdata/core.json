@@ -28,6 +28,13 @@
     "secret": "JBSWY3DPEHPK3PXP",
     "uri": "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP\u0026issuer=NGC"
   },
+  "ngc.store/catalog": {
+    "catalog": {
+      "payload": "e30",
+      "kid": "k",
+      "sig": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw"
+    }
+  },
   "ngc.store/install-key": {
     "installation": "EREREREREREREREREREREQ",
     "key": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY"

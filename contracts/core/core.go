@@ -254,7 +254,7 @@ type ActivateParams struct {
 	App     string    `json:"app"`
 	Version string    `json:"version"`
 	SHA256  enc.Bytes `json:"sha256"`           // of the package file as the store delivers it
-	Store   string    `json:"store"`            // LocalStore for uploaded apps
+	Store   string    `json:"store"`            // LocalStore for uploaded apps; Transfer.Store stays empty for those instead.
 	Grants  []string  `json:"grants,omitempty"` // store.NeedRoot, store.NeedNetwork the admin allows
 }
 

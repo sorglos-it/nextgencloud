@@ -192,7 +192,7 @@ const MaxTransferHeader = 8 << 20
 // update) or neither (uploaded app, the signed task names its checksum).
 type Transfer struct {
 	Catalog *sign.Envelope `json:"catalog,omitempty"`
-	Store   string         `json:"store,omitempty"`
+	Store   string         `json:"store,omitempty"` // empty for an uploaded app; ActivateParams.Store is LocalStore there instead.
 	Release *sign.Envelope `json:"release,omitempty"`
 	License *sign.Envelope `json:"license,omitempty"` // paid apps
 	Key     enc.Bytes      `json:"key,omitempty"`     // paid apps: content key, unwrapped by the API
