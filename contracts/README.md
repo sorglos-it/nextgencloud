@@ -6,7 +6,8 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 
 | Vertrag | Inhalt | Pakete | Testdaten |
 |---|---|---|---|
-| V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `sign`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `sign.json`, `core.json` |
+| Grundlagen | Kodierung und signierte Umschläge, für alle Verträge | `enc`, `sign` | `sign.json` |
+| V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `core.json` |
 | V2 | API ↔ Controller | `tunnel`, `wire`, `noisep`, `task`, `core` | `tunnel.json`, `task.json` |
 | V3 | Controller ↔ Dienst im Container | `service` | `service/echo.sh` |
 | V4 | API und Controller ↔ Datenbank | `dbapi`, `dbapi/memstore`, `dbapi/dbtest` | – (Konformitätstests) |
@@ -23,8 +24,10 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 - **Jede Eingabe von außen** läuft durch die `Parse…`- oder `Verify…`-Funktion des Vertrags, nie
   direkt durch `json.Unmarshal`.
 - **Grenzen gelten immer**, auch wenn die Gegenstelle zu NGC gehört.
-- **Testdaten**: `contracts/testdata/` ist die gemeinsame Wahrheit. Go-Tests erzeugen sie mit
-  `go test ./contracts/<paket>/ -run TestVectors -update`; das Webinterface prüft sich in
+- **Testdaten**: `contracts/testdata/` ist die gemeinsame Wahrheit. Go-Tests schreiben sie mit dem
+  Schalter `-update`, und zwar gezielt mit `-run` auf den Test, der die Datei erzeugt (etwa
+  `TestVectors`, `TestExamples`, `TestPackVectors`). `proof.json` wird nur einmal erzeugt und danach
+  nur geprüft, weil die Passkey-Signaturen zufällig sind. Das Webinterface prüft sich in
   `tests/browser/` dagegen. Eine geänderte Datei ist eine Vertragsänderung.
 - **Vorige Fassung verstehen**: Beim Update läuft kurz die vorige Version mit (`tunnel.Contract`).
   Felder kommen dazu, alte verschwinden erst eine Version später.
