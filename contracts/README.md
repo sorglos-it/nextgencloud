@@ -24,7 +24,8 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 - **Umschläge von außen** liest `sign.ParseEnvelope` (Lizenzen, Kataloge, Releases), einzelne
   Fassungen der Vertrauensliste `trust.ParseSigned` und ganze Ketten `session.ParseTrustChain`.
   `store.VerifyCatalog`, `store.VerifyLicense`, `store.VerifyRelease`, `trust.Open` und
-  `trust.Advance` erwarten so gelesene Werte.
+  `trust.Advance` erwarten so gelesene Werte; steckt ein Umschlag in einem größeren Dokument (etwa
+  im Kopf einer Übertragung, `core.ReadTransfer`), liest ihn dessen Parser.
 - **Jede Signatur hat einen Zweck** (`sign.Purpose…`). Eine Unterschrift für eine Sache gilt nie für
   eine andere.
 - **Jede Eingabe von außen** läuft durch die `Parse…`- oder `Verify…`-Funktion des Vertrags, nie
