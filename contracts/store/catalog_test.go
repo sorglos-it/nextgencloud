@@ -196,11 +196,15 @@ func TestRelease(t *testing.T) {
 		t.Errorf("older release: %v", err)
 	}
 	for name, mutate := range map[string]func(r *Release){
-		"duplicate file": func(r *Release) { r.Files = append(r.Files, r.Files[1]) },
-		"unknown part":   func(r *Release) { r.Files[0].Part = "db" },
-		"web per arch":   func(r *Release) { r.Files[0].Arch = "amd64" },
-		"version":        func(r *Release) { r.Version = "1.1" },
-		"no files":       func(r *Release) { r.Files = nil },
+		"duplicate file":           func(r *Release) { r.Files = append(r.Files, r.Files[1]) },
+		"unknown part":             func(r *Release) { r.Files[0].Part = "db" },
+		"web per arch":             func(r *Release) { r.Files[0].Arch = "amd64" },
+		"version":                  func(r *Release) { r.Version = "1.1" },
+		"no files":                 func(r *Release) { r.Files = nil },
+		"old part name web":        func(r *Release) { r.Files[0].Part = "web" },
+		"old part name api":        func(r *Release) { r.Files[1].Part = "api" },
+		"old part name controller": func(r *Release) { r.Files[3].Part = "controller" },
+		"component name db":        func(r *Release) { r.Files[1].Part = "ngc-db" },
 	} {
 		r := testRelease()
 		mutate(&r)

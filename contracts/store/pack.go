@@ -44,6 +44,12 @@ var (
 // been checked. manifest.json must come first. Walk returns the manifest
 // after checking that the files it names are present.
 //
+// Entries are directories (of size 0) and regular files; links, devices and
+// sparse files are refused. Without sparse entries fn never gets more bytes
+// than the archive carries: archive/tar reports a PAX sparse file as a
+// regular file of its full logical size and fills the holes itself, so a
+// few KiB could hand out gigabytes.
+//
 // The check against what the manifest promises only completes after the
 // last call to fn, so on any error from Walk the caller must discard
 // everything fn already received — none of it was fully validated on its
@@ -55,20 +61,19 @@ func Walk(r io.Reader, fn func(m *Manifest, f PackFile, body io.Reader) error) (
 	lr := &io.LimitedReader{R: r, N: MaxPackage}
 	tr := tar.NewReader(lr)
 	h, err := tr.Next()
-	if err != nil || h.Typeflag != tar.TypeReg || h.Name != ManifestFile || h.Size > MaxManifest {
+	if err != nil || h.Typeflag != tar.TypeReg || h.Name != ManifestFile || h.Size > MaxManifest || sparse(h) {
 		return nil, ErrPackage
 	}
-	b, err := io.ReadAll(tr)
-	if err != nil {
+	b := make([]byte, h.Size)
+	if _, err := io.ReadFull(tr, b); err != nil {
 		return nil, ErrPackage
 	}
 	m, err := ParseManifest(b)
 	if err != nil {
 		return nil, ErrPackage
 	}
-	seen := map[string]bool{ManifestFile: true}
-	isFile := map[string]bool{}    // regular files, by their checked path
-	dirNeeded := map[string]bool{} // paths some regular file requires to be a directory
+	entries := newTree()
+	entries.add(ManifestFile, true)
 	var uiTotal int64
 	images := 0
 	for n := 1; ; n++ {
@@ -79,74 +84,112 @@ func Walk(r io.Reader, fn func(m *Manifest, f PackFile, body io.Reader) error) (
 			}
 			break
 		}
-		if err != nil || n > MaxEntries {
+		if err != nil || n > MaxEntries || sparse(h) {
 			return nil, ErrPackage
 		}
-		name := strings.Clone(strings.TrimSuffix(h.Name, "/"))
-		if seen[name] {
-			return nil, ErrPackage
-		}
-		seen[name] = true
-		clash := false
-		forEachAncestor(name, func(p string) {
-			if isFile[p] {
-				clash = true
-			}
-		})
-		if clash {
-			return nil, ErrPackage
-		}
+		name := strings.TrimSuffix(h.Name, "/")
+		f := PackFile{Size: h.Size}
 		switch h.Typeflag {
 		case tar.TypeDir:
-			if name != "ui" && name != "services" && !(strings.HasPrefix(name, "ui/") && ValidPath(name[3:])) {
+			if h.Size != 0 || (name != "ui" && name != "services" && !uiPath(name)) {
 				return nil, ErrPackage
 			}
-			continue
 		case tar.TypeReg:
-			if dirNeeded[name] {
+			switch {
+			case uiPath(name):
+				uiTotal += h.Size
+				if h.Size > MaxUIFile || uiTotal > MaxUITotal {
+					return nil, ErrPackage
+				}
+				f.Kind = KindUI
+			case name == "services/amd64.tar" || name == "services/arm64.tar":
+				if h.Size > MaxPackage {
+					return nil, ErrPackage
+				}
+				f.Kind, f.Arch = KindImage, strings.TrimSuffix(strings.TrimPrefix(name, "services/"), ".tar")
+				images++
+			default:
 				return nil, ErrPackage
 			}
 		default:
 			return nil, ErrPackage
 		}
-		f := PackFile{Path: name, Size: h.Size}
-		switch {
-		case strings.HasPrefix(name, "ui/") && ValidPath(name[3:]):
-			uiTotal += h.Size
-			if h.Size > MaxUIFile || uiTotal > MaxUITotal {
-				return nil, ErrPackage
-			}
-			f.Kind = KindUI
-		case name == "services/amd64.tar" || name == "services/arm64.tar":
-			if h.Size > MaxPackage {
-				return nil, ErrPackage
-			}
-			f.Kind, f.Arch = KindImage, strings.TrimSuffix(strings.TrimPrefix(name, "services/"), ".tar")
-			images++
-		default:
+		// Checked, so short: the copy keeps no PAX buffer of the reader alive.
+		name = strings.Clone(name)
+		if !entries.add(name, h.Typeflag == tar.TypeReg) {
 			return nil, ErrPackage
 		}
-		isFile[name] = true
-		forEachAncestor(name, func(p string) { dirNeeded[p] = true })
+		if h.Typeflag == tar.TypeDir {
+			continue
+		}
+		f.Path = name
 		if err := fn(m, f, tr); err != nil {
 			return nil, err
 		}
 	}
-	if (m.UI != nil && !isFile["ui/"+m.UI.Entry]) || (m.Icon != "" && !isFile["ui/"+m.Icon]) ||
+	if (m.UI != nil && !entries.files["ui/"+m.UI.Entry]) || (m.Icon != "" && !entries.files["ui/"+m.Icon]) ||
 		(len(m.Services) > 0) != (images > 0) {
 		return nil, ErrPackage
 	}
 	return m, nil
 }
 
-// forEachAncestor calls fn with every proper prefix of name that ends right
-// before a '/': the directory paths an entry named name would sit under.
-func forEachAncestor(name string, fn func(string)) {
-	for i := range len(name) {
-		if name[i] == '/' {
-			fn(name[:i])
+// uiPath reports whether name is a file or directory below ui/.
+func uiPath(name string) bool { return strings.HasPrefix(name, "ui/") && ValidPath(name[3:]) }
+
+// sparse reports whether h is a sparse file: old GNU sparse entries, and
+// every entry with a GNU.sparse.* PAX record.
+func sparse(h *tar.Header) bool {
+	if h.Typeflag == tar.TypeGNUSparse {
+		return true
+	}
+	for k := range h.PAXRecords {
+		if strings.HasPrefix(k, "GNU.sparse.") {
+			return true
 		}
 	}
+	return false
+}
+
+// tree checks that the entries of an archive form a tree, whatever their
+// order: no name twice, no entry under a regular file, and no regular file
+// where an entry needs a directory.
+type tree struct {
+	names map[string]bool // every entry
+	files map[string]bool // regular files
+	dirs  map[string]bool // paths some entry needs to be directories
+}
+
+func newTree() *tree {
+	return &tree{names: map[string]bool{}, files: map[string]bool{}, dirs: map[string]bool{}}
+}
+
+// add records the entry name, a regular file if file is set, and reports
+// whether the entries still form a tree.
+func (t *tree) add(name string, file bool) bool {
+	if t.names[name] || (file && t.dirs[name]) {
+		return false
+	}
+	// The ancestors, longest first. Once one is needed as a directory, so are
+	// all shorter ones, and none of them is a file.
+	for i := len(name) - 1; i > 0; i-- {
+		if name[i] != '/' {
+			continue
+		}
+		p := name[:i]
+		if t.dirs[p] {
+			break
+		}
+		if t.files[p] {
+			return false
+		}
+		t.dirs[p] = true
+	}
+	t.names[name] = true
+	if file {
+		t.files[name] = true
+	}
+	return true
 }
 
 func packageAEAD(key, fileID []byte) (cipher.AEAD, error) {

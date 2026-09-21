@@ -29,9 +29,11 @@ const (
 	GraceDefault      = 14 * 86400
 	MaxGrace          = 90 * 86400
 
-	ReleaseWeb        = "web"
-	ReleaseAPI        = "api" // includes ngc-store and the database migrations
-	ReleaseController = "controller"
+	// Release files name software components, the same names as update
+	// targets and tunnel.Components.
+	ReleaseWeb        = trust.AutoWeb        // "ngc-web", arch "all"
+	ReleaseAPI        = trust.AutoAPI        // "ngc-api"; includes ngc-store and the database migrations
+	ReleaseController = trust.AutoController // "ngc-controller"
 
 	ModeAuto   = "auto"   // install in the maintenance window (default); needs a standing approval
 	ModeSemi   = "semi"   // download and check in advance, install on click
@@ -128,7 +130,8 @@ type Release struct {
 	Files   []File `json:"files"`
 }
 
-// File is one part of NGC for one architecture ("all" for the web interface).
+// File is one software component of NGC (ReleaseWeb, ReleaseAPI,
+// ReleaseController) for one architecture ("all" for ReleaseWeb).
 type File struct {
 	Part   string    `json:"part"`
 	Arch   string    `json:"arch"`
