@@ -953,7 +953,7 @@ Sperre in der Datenbank.
 | 21.09.2026 | Neue Fassungen der Vertrauensliste bekommt ein Controller über den Kanal `ngc.users/controller/trust` (ohne Benutzer), der Browser per HTTP und seitenweise; die Steuernachricht `trust` ist nur noch ein Hinweis. |
 | 21.09.2026 | Der Browser kennt den Controller, auf dem die Dienste einer App laufen (`DesktopApp.node`), weil Ende zu Ende ihn braucht; die Oberfläche zeigt ihn normalen Benutzern nicht. Ersetzt in 4.3 „Der Browser erfährt nie, auf welchem Server ein Dienst läuft“. |
 | 21.09.2026 | Freigabe je Strecke und Richtung, gezählt in Bytes der DATA-Nutzlast, additiv, höchstens 1 MiB offen. Höchstens 64 Kanalnummern je Sitzung und 1024 je Tunnel; eine Nummer zählt, bis sie wieder frei ist, auch beim Schließen. Wer darüber hinausgeht, beendet die Verbindung; ist nur der Tunnel hinter der API voll, antwortet sie dem Browser mit CLOSE E_LIMIT. |
-| 21.09.2026 | Das Ergebnis eines Aufrufs sind alle Daten bis zum Ende, höchstens 8 MiB; was der Öffner schicken darf, steht je Kern-Aktion fest. |
+| 21.09.2026 | Das Ergebnis eines Aufrufs sind alle Daten bis zum Ende, höchstens 8 MiB, für alle Apps; prüfen muss das der Empfänger, bei Ende-zu-Ende-Kanälen also die Shell; was der Öffner schicken darf, steht je Kern-Aktion fest. |
 | 21.09.2026 | Ohne Benutzer öffnet die API nur drei Kern-Aktionen: `ngc.users/controller/trust`, `ngc.store/controller/stage` und `install`. `install` führt der Controller nur mit Dauerfreigabe und nur für eine neuere Version aus. |
 | 21.09.2026 | Der globale Store hat die ID `global`, `local` steht für hochgeladene Apps. Die API gibt den globalen Store bei der Ersteinrichtung mit, damit er in Fassung 1 der Vertrauensliste steht. |
 | 21.09.2026 | Migrationen spielt beim Update genau ein Controller mit der Rolle `db` ein; nur dort steht der Zugang des Kontos `ngc_migrate` in `controller.json`. Ändert 4.6 („das benutzt nur die Installation über ulh“). |
@@ -966,6 +966,14 @@ Sperre in der Datenbank.
 | 21.09.2026 | Aus der Prüfung von Plan 0, noch nicht im Protokoll: Der Passwortschlüssel entsteht nur mit Argon2id (kein PBKDF2-Ausweg). Die Grenzen für Passkey-Beweise (`MaxPublic`, `MaxSig`, `MaxRSABits`, `MaxAuthData`, `MaxClientData`) gelten auch im Browser. |
 | 21.09.2026 | Kanalnummern: Ein CLOSE wird immer mit CLOSE beantwortet; eine Nummer ist erst wieder frei, wenn CLOSE gesendet und empfangen wurde. Was nach dem eigenen CLOSE für den Kanal noch ankommt, wird verworfen. |
 | 21.09.2026 | „Passwort zusätzlich“ prüft die API bei der Anmeldung. Controller verlassen sich auf den Passkey-Beweis im Client-Zertifikat; ein Passwortbeweis geht nicht an die Controller. |
+| 21.09.2026 | Vertragsnummern: Zwischen Browser und API steht die Nummer im Pfad (`/api/v1/…`). Neue oder geänderte Felder gibt es nur mit neuer Nummer; die API bedient die aktuelle und die vorige Nummer nebeneinander. Im Tunnel nennt `Hello.Contract` die Nummer, die neuere Seite spricht die Sprache der älteren. |
+| 21.09.2026 | `ngc-store` packt und prüft Releases, signiert aber nur Test-Releases mit einer Schlüsseldatei. Der echte Release-Schlüssel bleibt auf dem Hardware-Stick; mit welchem Werkzeug der Stick signiert, wird vor dem ersten Release entschieden. |
+| 22.09.2026 | Leere Listen als Ergebnis sendet die API als `[]`, nie als `null`. |
+| 22.09.2026 | `hello`, `PairRequest`, `JoinRequest` und die Kopplungs- und Beitrittscodes bleiben über Vertragsnummern hinweg gleich; eine Änderung bekommt einen neuen Nachrichtentyp oder ein neues Präfix. |
+| 22.09.2026 | Migrationen: Die API mit der Update-Sperre wählt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten Node-ID; fällt er aus, den nächsten. |
+| 22.09.2026 | ulh installiert nie ein älteres Release als das installierte; dasselbe darf zur Reparatur erneut installiert werden. Das Prüfskript prüft genau die gelisteten Dateien seines Teils und installiert nur diese; eine leere Liste ist ein Fehler. |
+| 22.09.2026 | Oberflächen-Pakete (`ui/`) liest die Shell nur in der kanonischen Form, die NGCs Packer schreibt: USTAR, nur Dateien und Ordner, PAX nur mit `path`, feste Tiefen- und Anzahlgrenzen. Alles andere wird abgelehnt, damit Browser und Go genau dasselbe sehen. |
+| 22.09.2026 | Kataloge: Das Budget begrenzt auch die Summe der Versionen über alle Apps, damit ein signierter Katalog wenig Speicher kostet. |
 
 ## 7. Fremdcode-Kandidaten
 
