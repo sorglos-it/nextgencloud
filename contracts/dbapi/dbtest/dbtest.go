@@ -392,8 +392,13 @@ func testLocks(t *testing.T, s dbapi.Store) {
 	}
 }
 
-// racers is how many goroutines the concurrency tests start at once.
-const racers = 32
+// racers is how many goroutines each race starts at once, and rounds how
+// many races a concurrency test runs, each on a fresh value or lock: a check
+// and a write that are not one step lose only some races.
+const (
+	racers = 32
+	rounds = 64
+)
 
 // race runs f(i) for i < racers in goroutines released together, and returns
 // their results.
@@ -417,23 +422,25 @@ func race[T any](f func(i int) T) []T {
 // testConcurrentOnce: of concurrent OnceCreate calls for the same kind and
 // value, exactly one succeeds and every other one gives ErrUsed.
 func testConcurrentOnce(t *testing.T, s dbapi.Store) {
-	value := bytes.Repeat([]byte{0x5a}, 32)
-	errs := race(func(i int) error {
-		return s.OnceCreate(ctx, dbapi.OnceTask, value, strconv.Itoa(i), 1790000100)
-	})
-	ok, used := 0, 0
-	for _, err := range errs {
-		switch {
-		case err == nil:
-			ok++
-		case errors.Is(err, dbapi.ErrUsed):
-			used++
-		default:
-			t.Errorf("OnceCreate: %v", err)
+	for round := range rounds {
+		value := bytes.Repeat([]byte{0x5a, byte(round)}, 16)
+		errs := race(func(i int) error {
+			return s.OnceCreate(ctx, dbapi.OnceTask, value, strconv.Itoa(i), 1790000100)
+		})
+		ok, used := 0, 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				ok++
+			case errors.Is(err, dbapi.ErrUsed):
+				used++
+			default:
+				t.Errorf("round %d, OnceCreate: %v", round, err)
+			}
 		}
-	}
-	if ok != 1 || used != racers-1 {
-		t.Errorf("%d created, %d used, want 1 and %d", ok, used, racers-1)
+		if ok != 1 || used != racers-1 {
+			t.Fatalf("round %d: %d created, %d used, want 1 and %d", round, ok, used, racers-1)
+		}
 	}
 }
 
@@ -445,21 +452,24 @@ func testConcurrentLock(t *testing.T, s dbapi.Store) {
 		ok  bool
 		err error
 	}
-	results := race(func(i int) result {
-		ok, err := s.LockTake(ctx, dbapi.LockUpdate, "owner-"+strconv.Itoa(i), now, now+60)
-		return result{ok, err}
-	})
-	taken := 0
-	for _, r := range results {
-		if r.err != nil {
-			t.Errorf("LockTake: %v", r.err)
+	for round := range rounds {
+		name := dbapi.LockUpdate + "-" + strconv.Itoa(round)
+		results := race(func(i int) result {
+			ok, err := s.LockTake(ctx, name, "owner-"+strconv.Itoa(i), now, now+60)
+			return result{ok, err}
+		})
+		taken := 0
+		for _, r := range results {
+			if r.err != nil {
+				t.Errorf("round %d, LockTake: %v", round, r.err)
+			}
+			if r.ok {
+				taken++
+			}
 		}
-		if r.ok {
-			taken++
+		if taken != 1 {
+			t.Fatalf("round %d: %d owners took the lock, want 1", round, taken)
 		}
-	}
-	if taken != 1 {
-		t.Errorf("%d owners took the lock, want 1", taken)
 	}
 }
 
