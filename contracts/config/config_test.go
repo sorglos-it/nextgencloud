@@ -448,6 +448,66 @@ func TestSecret(t *testing.T) {
 	}
 }
 
+// TestSecretBytesIsACopy: whoever changes what Bytes returned changes neither
+// the Secret nor a copy of it, which shares its key.
+func TestSecretBytesIsACopy(t *testing.T) {
+	s := NewSecret([]byte{1, 2, 3})
+	shared := s
+	got := s.Bytes()
+	got[0] = 9
+	if !bytes.Equal(s.Bytes(), []byte{1, 2, 3}) || !bytes.Equal(shared.Bytes(), []byte{1, 2, 3}) {
+		t.Errorf("secret changed through Bytes: %v, %v", s.Bytes(), shared.Bytes())
+	}
+	if &s.Bytes()[0] == &s.Bytes()[0] {
+		t.Error("Bytes hands out the same array twice")
+	}
+}
+
+// TestRedactedFileRefused: encoding/json writes the stand-in "[secret]" for
+// every secret. A file written that way must fail to load, never store the
+// stand-in as a key or password; SaveController writes the real file.
+func TestRedactedFileRefused(t *testing.T) {
+	api, err := LoadAPI(example(t, "api.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctl, err := LoadController(example(t, "controller-db.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, parse := range map[string]func() error{
+		"api.json": func() error { b, _ := json.Marshal(api); _, err := parseAPI(b); return err },
+		"controller.json": func() error {
+			b, _ := json.Marshal(ctl)
+			_, err := parseController(b)
+			return err
+		},
+		// The password alone: everything else of the database is valid.
+		"database of api.json": func() error {
+			b, _ := json.Marshal(api.DB)
+			var d DB
+			return decode(apiBudget, b, &d)
+		},
+		// The real api.json with only its password replaced by the stand-in.
+		"api.json, password only": func() error {
+			b, err := os.ReadFile(example(t, "api.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b = bytes.Replace(b, []byte(`"password": "changeme"`), []byte(`"password": "[secret]"`), 1)
+			if !bytes.Contains(b, []byte(`"password": "[secret]"`)) {
+				t.Fatal("password not replaced")
+			}
+			_, err = parseAPI(b)
+			return err
+		},
+	} {
+		if err := parse(); err != ErrConfig {
+			t.Errorf("%s: got %v, want %v", name, err, ErrConfig)
+		}
+	}
+}
+
 // allocated returns how many bytes f allocates.
 func allocated(f func()) uint64 {
 	var before, after runtime.MemStats

@@ -84,16 +84,18 @@ func NewSecret(b []byte) Secret {
 	return Secret{func() []byte { return c }}
 }
 
-// Bytes returns the key, nil while s is unset.
+// Bytes returns a copy of the key, nil while s is unset. Changing the copy
+// changes nothing in s, nor in any Secret that shares its key.
 func (s Secret) Bytes() []byte {
 	if s.key == nil {
 		return nil
 	}
-	return s.key()
+	return bytes.Clone(s.key())
 }
 
 // IsZero reports whether s is unset (the omitzero option of encoding/json).
-func (s Secret) IsZero() bool { return len(s.Bytes()) == 0 }
+// NewSecret keeps no empty key, so an unset Secret has no function.
+func (s Secret) IsZero() bool { return s.key == nil }
 
 // String returns "[secret]", or "" while s is unset.
 func (s Secret) String() string { return shown(!s.IsZero()) }
@@ -138,7 +140,8 @@ func (s SecretText) Text() string {
 }
 
 // IsZero reports whether s is unset (the omitzero option of encoding/json).
-func (s SecretText) IsZero() bool { return s.Text() == "" }
+// NewSecretText keeps no empty password, so an unset one has no function.
+func (s SecretText) IsZero() bool { return s.text == nil }
 
 // String returns "[secret]", or "" while s is unset.
 func (s SecretText) String() string { return shown(!s.IsZero()) }
@@ -154,11 +157,22 @@ func (s SecretText) LogValue() slog.Value { return slog.StringValue(s.String()) 
 // MarshalJSON encodes String; only marshalFile writes the password itself.
 func (s SecretText) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) }
 
-// UnmarshalJSON decodes the password from a JSON string.
+// errRedacted reports the stand-in "[secret]" where a password belongs: the
+// file was written by encoding/json, which leaves the secrets out, instead
+// of by SaveController.
+var errRedacted = errors.New("config: the stand-in for a secret instead of the password")
+
+// UnmarshalJSON decodes the password from a JSON string. It refuses the
+// stand-in "[secret]", so that a configuration that went through
+// encoding/json fails to load instead of taking it for the password (a key
+// fails anyway: the stand-in is no base64url).
 func (s *SecretText) UnmarshalJSON(data []byte) error {
 	var t string
 	if err := jsonv2.Unmarshal(data, &t); err != nil {
 		return err
+	}
+	if t == shown(true) {
+		return errRedacted
 	}
 	*s = NewSecretText(t)
 	return nil
