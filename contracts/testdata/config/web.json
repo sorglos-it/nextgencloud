@@ -1,0 +1,7 @@
+{
+  "apis": ["https://api-1.ngc.test:7443", "https://api-2.ngc.test:7443"],
+  "rp": {
+    "id": "ngc.example.org",
+    "origins": ["https://ngc.example.org"]
+  }
+}

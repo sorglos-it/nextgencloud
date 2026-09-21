@@ -1,0 +1,19 @@
+{
+  "node": "api-1",
+  "listen": ":7443",
+  "cert": "/etc/ngc/tls/api.crt",
+  "certKey": "/etc/ngc/tls/api.key",
+  "db": {
+    "driver": "mariadb",
+    "nodes": ["db-1.ngc.test:3306", "db-2.ngc.test:3306", "db-3.ngc.test:3306"],
+    "name": "ngc",
+    "user": "ngc",
+    "password": "changeme"
+  },
+  "noiseKey": "oaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE",
+  "signKey": "oqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqI",
+  "secretKey": "o6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6M",
+  "releaseKey": "pKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKQ",
+  "storeKey": "paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU",
+  "storeUrl": "https://store.nextgencloud.org"
+}

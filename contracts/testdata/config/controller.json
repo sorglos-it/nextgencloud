@@ -1,0 +1,18 @@
+{
+  "name": "dienste",
+  "noiseKey": "wcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcE",
+  "apis": [
+    {
+      "url": "wss://api-1.ngc.test:7443/tunnel",
+      "key": "oaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE"
+    }
+  ],
+  "anchor": {
+    "seq": 1,
+    "hash": "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s"
+  },
+  "db": "/var/lib/ngc/controller/state.db",
+  "dbKey": "zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzA",
+  "releaseKey": "pKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKQ",
+  "parts": ["services"]
+}
