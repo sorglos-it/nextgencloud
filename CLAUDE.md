@@ -53,10 +53,11 @@ ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an de
 - Auf den Linux-Servern zusätzlich `go test -race ./...` laufen lassen (Thomas' Windows-Rechner hat
   kein cgo, der Data-Race-Detektor lief dort noch nicht); die Tests, die sich unter Windows oder
   ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `contracts/service`,
-  `TestReleaseScript` in `contracts/store` mit `openssl` und `jq`, die Dateirechte-Prüfung in
-  `contracts/config`), müssen dort grün sein.
+  `TestReleaseScript` in `contracts/store` mit 28 Fällen, der `openssl`, das echte `jq` und
+  `mktemp` braucht, die Dateirechte-Prüfung in `contracts/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
-  Vektoren in `contracts/testdata/`.
+  Vektoren in `contracts/testdata/`. Fuzz-Ziele in `contracts/store` nur mit
+  `-fuzzminimizetime=1s`, sonst bleibt das Verkleinern der Eingaben hängen.
 - In `contracts/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
   Passkey-Admin, `Users[1]` der Passwort-Admin aus `NewSigner(1)`.
 - `contracts/trust/trusttest` nur in Tests importieren; `scripts/check.sh` bricht sonst ab.
