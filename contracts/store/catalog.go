@@ -16,18 +16,19 @@ import (
 
 // Prices, limits and update states. Times in seconds.
 const (
-	PriceBuy          = "buy"
-	PriceSubscription = "subscription"
-	PerSite           = "site"
-	PerUser           = "user"
-	PeriodMonth       = "month"
-	PeriodYear        = "year"
-	MaxPackage        = 4 << 30
-	MaxApps           = 10000
-	MaxVersions       = 100
-	MaxLicense        = 8 << 10
-	GraceDefault      = 14 * 86400
-	MaxGrace          = 90 * 86400
+	PriceBuy           = "buy"
+	PriceSubscription  = "subscription"
+	PerSite            = "site"
+	PerUser            = "user"
+	PeriodMonth        = "month"
+	PeriodYear         = "year"
+	MaxPackage         = 4 << 30
+	MaxApps            = 10000
+	MaxVersions        = 100   // per app
+	MaxCatalogVersions = 50000 // of all apps together: each costs up to about 500 bytes to decode
+	MaxLicense         = 8 << 10
+	GraceDefault       = 14 * 86400
+	MaxGrace           = 90 * 86400
 
 	// Release files name software components, the same names as update
 	// targets and tunnel.Components.
@@ -173,8 +174,10 @@ func (c *Catalog) Validate() error {
 	if !wire.ValidName(c.Store) || c.Seq == 0 || c.Issued <= 0 || len(c.Apps) > MaxApps {
 		return ErrCatalog
 	}
+	versions := 0
 	for i, e := range c.Apps {
-		if (i > 0 && c.Apps[i-1].ID >= e.ID) || !e.valid() {
+		versions += len(e.Versions)
+		if (i > 0 && c.Apps[i-1].ID >= e.ID) || !e.valid() || versions > MaxCatalogVersions {
 			return ErrCatalog
 		}
 	}
@@ -205,12 +208,14 @@ func (p Price) valid() bool {
 		strings.HasPrefix(p.Shop, "https://") && validURL(p.Shop)
 }
 
-// catalogBudget bounds a catalog while it is decoded (enc.Budget).
+// catalogBudget bounds a catalog while it is decoded (enc.Budget). The
+// per-app limits alone would allow MaxApps*MaxVersions versions; the total
+// keeps what any catalog within it costs to decode below about 32 MiB.
 var catalogBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
 	"apps":                    MaxApps,
 	"apps/*/versions":         MaxVersions,
 	"apps/*/versions/*/needs": maxNeeds,
-}}
+}, Totals: map[string]int{"apps/*/versions": MaxCatalogVersions}}
 
 func parseCatalog(b []byte) (*Catalog, error) {
 	var c Catalog

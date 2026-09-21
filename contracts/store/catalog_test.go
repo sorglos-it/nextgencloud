@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,6 +115,16 @@ func TestCatalogRejects(t *testing.T) {
 		"plain http":          func(c *Catalog) { c.Apps[1].Versions[0].URL = "http://cdn.ngc.test/x.ngc" },
 		"core app":            func(c *Catalog) { c.Apps[0].ID = "ngc.calculator" },
 		"no versions":         func(c *Catalog) { c.Apps[0].Versions = nil },
+		"more versions than MaxCatalogVersions": func(c *Catalog) {
+			c.Apps = nil
+			for i := range MaxCatalogVersions/MaxVersions + 1 {
+				e := Entry{ID: fmt.Sprintf("org.example.a%05d", i), Name: "App", Publisher: "P"}
+				for j := range MaxVersions {
+					e.Versions = append(e.Versions, Package{Version: fmt.Sprintf("1.0.%d", j), URL: "a.ngc", Size: 1, SHA256: make([]byte, 32)})
+				}
+				c.Apps = append(c.Apps, e)
+			}
+		},
 	}
 	for name, mutate := range cases {
 		c := testCatalog()
@@ -327,6 +338,73 @@ func TestParsersBoundAllocation(t *testing.T) {
 		if err != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
 		}
+	}
+}
+
+// catalogShape is a catalog of apps apps, each with fields app and versions
+// times version, all inside the budget but not valid.
+func catalogShape(apps int, app string, versions int, version string) []byte {
+	var b strings.Builder
+	b.WriteString(`{"store":"global","seq":1,"issued":1,"apps":[`)
+	for i := range apps {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`{` + app + `"versions":[`)
+		for j := range versions {
+			if j > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(version)
+		}
+		b.WriteString(`]}`)
+	}
+	b.WriteString(`]}`)
+	return []byte(b.String())
+}
+
+// TestCatalogDecodeCost decodes the costliest shapes of catalog the budget
+// lets through: every one costs less than 32 MiB, and one version more than
+// MaxCatalogVersions is refused before anything is built.
+func TestCatalogDecodeCost(t *testing.T) {
+	perApp := MaxCatalogVersions / MaxApps
+	// filled builds a shape whose string of every app or version is as long
+	// as the payload allows; slots is how many such strings it has.
+	filled := func(slots int, shape func(s string) []byte) []byte {
+		n := (sign.MaxPayload - len(shape(""))) / slots
+		return shape(strings.Repeat("x", n))
+	}
+	cases := []struct {
+		name string
+		doc  []byte
+	}{
+		{"most apps, each with a price and versions with two needs", catalogShape(MaxApps, `"price":{},`, perApp, `{"needs":["",""]}`)},
+		{"fewest apps, full lists of versions with two needs", catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions, `{"needs":["",""]}`)},
+		{"most apps with long descriptions", filled(MaxApps, func(s string) []byte {
+			return catalogShape(MaxApps, `"description":"`+s+`",`, perApp, `{"needs":["",""]}`)
+		})},
+		{"versions with long URLs", filled(MaxCatalogVersions, func(s string) []byte {
+			return catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions, `{"url":"`+s+`","needs":["",""]}`)
+		})},
+		{"versions with every field", catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions,
+			`{"version":"","url":"","size":0,"sha256":"","needs":["",""],"minNgc":""}`)},
+	}
+	for _, c := range cases {
+		var got Catalog
+		var err error
+		n := allocated(func() { err = catalogBudget.Decode(c.doc, &got) })
+		t.Logf("%s: %d bytes, %.1f MiB allocated", c.name, len(c.doc), float64(n)/(1<<20))
+		if err != nil || len(c.doc) > sign.MaxPayload {
+			t.Errorf("%s: %d bytes, not inside the budget: %v", c.name, len(c.doc), err)
+		}
+		if n > 32<<20 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+	}
+	over := catalogShape(MaxCatalogVersions/MaxVersions+1, ``, MaxVersions, `{}`)
+	var err error
+	if n := allocated(func() { _, err = parseCatalog(over) }); n > 64<<10 || err != ErrCatalog {
+		t.Errorf("one app of versions too many: %d bytes allocated, %v", n, err)
 	}
 }
 
