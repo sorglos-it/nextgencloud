@@ -3,6 +3,8 @@ package noisep
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/internal/golden"
+	"github.com/sorglos-it/nextgencloud/contracts/wire"
 )
 
 var update = flag.Bool("update", false, "rewrite contracts/testdata")
@@ -89,12 +92,58 @@ func TestWrongPrologueOrKeyFails(t *testing.T) {
 	}
 }
 
+// terminalParams are the params of the terminal OPEN in wire.json.
+var terminalParams = []byte(`{"cols":80,"rows":24}`)
+
 func TestE2EPrologue(t *testing.T) {
-	got := string(E2EPrologue("ctl-svc", "org.sorglos.terminal", "terminal", "shell"))
-	want := "ngc/e2e/v1\x00ctl-svc\x00org.sorglos.terminal\x00terminal\x00shell"
-	if got != want {
-		t.Fatalf("got %q", got)
+	const target = "ngc/e2e/v1\x00ctl-svc\x00org.sorglos.terminal\x00terminal\x00shell\x00"
+	h := sha256.Sum256(terminalParams)
+	got := E2EPrologue("ctl-svc", "org.sorglos.terminal", "terminal", "shell", terminalParams)
+	if want := append([]byte(target), h[:]...); !bytes.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
 	}
+
+	t.Run("empty params hash the empty string", func(t *testing.T) {
+		emptyHash, _ := hex.DecodeString("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+		want := append([]byte(target), emptyHash...)
+		for _, params := range [][]byte{nil, {}} {
+			if got := E2EPrologue("ctl-svc", "org.sorglos.terminal", "terminal", "shell", params); !bytes.Equal(got, want) {
+				t.Errorf("params %q: got %q", params, got)
+			}
+		}
+	})
+
+	t.Run("other params break the handshake", func(t *testing.T) {
+		is, rs := fixedKey(t, 1), fixedKey(t, 2)
+		prologue := func(params string) []byte {
+			return E2EPrologue("ctl-svc", "org.sorglos.terminal", "terminal", "shell", []byte(params))
+		}
+		for _, c := range []struct {
+			name, shell, controller string
+			ok                      bool
+		}{
+			{"same params", string(terminalParams), string(terminalParams), true},
+			{"other value", string(terminalParams), `{"cols":81,"rows":24}`, false},
+			{"same value, other bytes", string(terminalParams), `{"cols":80, "rows":24}`, false},
+			{"params only on one side", string(terminalParams), "", false},
+		} {
+			init, err := Handshake(true, prologue(c.shell), is, rs.Public, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			msg1, _, _, err := init.WriteMessage(nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := Handshake(false, prologue(c.controller), rs, is.Public, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := resp.ReadMessage(nil, msg1); (err == nil) != c.ok {
+				t.Errorf("%s: got %v", c.name, err)
+			}
+		}
+	})
 }
 
 type keyVector struct {
@@ -110,6 +159,11 @@ type transportVector struct {
 
 type noiseVector struct {
 	Protocol      string            `json:"protocol"`
+	ControllerID  string            `json:"controllerId"`
+	App           string            `json:"app"`
+	Service       string            `json:"service"`
+	Action        string            `json:"action"`
+	Params        enc.Bytes         `json:"params"`
 	Prologue      enc.Bytes         `json:"prologue"`
 	InitStatic    keyVector         `json:"initStatic"`
 	InitEphemeral keyVector         `json:"initEphemeral"`
@@ -124,25 +178,49 @@ type noiseVector struct {
 
 func kv(k noise.DHKey) keyVector { return keyVector{Private: k.Private, Public: k.Public} }
 
+// TestVectors writes noise.json: an end-to-end handshake for the terminal
+// OPEN of wire.json, both messages without payload, then one inner message
+// (wire.E2E) per transport message, as shell and controller exchange them.
 func TestVectors(t *testing.T) {
 	is, ie, rs, re := fixedKey(t, 1), fixedKey(t, 2), fixedKey(t, 3), fixedKey(t, 4)
-	prologue := E2EPrologue("ctl-svc", "org.sorglos.terminal", "terminal", "shell")
-	it, rt, msg1, msg2 := pair(t, prologue, is, ie, rs, re, []byte("m1"), []byte("m2"))
 	v := noiseVector{
-		Protocol: "Noise_KK_25519_AESGCM_SHA256", Prologue: prologue,
+		Protocol:     "Noise_KK_25519_AESGCM_SHA256",
+		ControllerID: "ctl-svc", App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Params: terminalParams,
 		InitStatic: kv(is), InitEphemeral: kv(ie), RespStatic: kv(rs), RespEphemeral: kv(re),
-		Msg1Payload: []byte("m1"), Msg1: msg1, Msg2Payload: []byte("m2"), Msg2: msg2,
 	}
+	v.Prologue = E2EPrologue(v.ControllerID, v.App, v.Service, v.Action, v.Params)
+	it, rt, msg1, msg2 := pair(t, v.Prologue, is, ie, rs, re, nil, nil)
+	if len(msg1) != wire.HandshakeSize || len(msg2) != wire.HandshakeSize {
+		t.Fatalf("handshake messages of %d and %d bytes", len(msg1), len(msg2))
+	}
+	v.Msg1, v.Msg2 = msg1, msg2
 	for _, s := range []struct {
-		from string
-		tr   *Transport
-		msg  string
-	}{{"initiator", it, "ls -la\n"}, {"responder", rt, "total 0\n"}, {"initiator", it, ""}} {
-		c, err := s.tr.Seal([]byte(s.msg))
+		from       string
+		tr, peer   *Transport
+		kind       byte
+		body       string
+		controller bool
+	}{
+		{"initiator", it, rt, wire.E2EData, "ls -la\n", false},
+		{"responder", rt, it, wire.E2EData, "total 0\n", true},
+		{"initiator", it, rt, wire.E2EEnd, "", false},
+		{"responder", rt, it, wire.E2EEnd, `{"status":"ok"}`, true},
+	} {
+		plain, err := wire.E2E(s.kind, []byte(s.body))
 		if err != nil {
 			t.Fatal(err)
 		}
-		v.Transport = append(v.Transport, transportVector{From: s.from, Plaintext: []byte(s.msg), Ciphertext: c})
+		if _, err := wire.ParseE2E(plain, s.controller); err != nil {
+			t.Fatalf("%s %q: %v", s.from, plain, err)
+		}
+		c, err := s.tr.Seal(plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.peer.Open(c); err != nil || !bytes.Equal(got, plain) {
+			t.Fatalf("%s %q: %v", s.from, got, err)
+		}
+		v.Transport = append(v.Transport, transportVector{From: s.from, Plaintext: plain, Ciphertext: c})
 	}
 	golden.Check(t, *update, "noise.json", v)
 }

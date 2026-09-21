@@ -1,6 +1,11 @@
 {
   "protocol": "Noise_KK_25519_AESGCM_SHA256",
-  "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxs",
+  "controllerId": "ctl-svc",
+  "app": "org.sorglos.terminal",
+  "service": "terminal",
+  "action": "shell",
+  "params": "eyJjb2xzIjo4MCwicm93cyI6MjR9",
+  "prologue": "bmdjL2UyZS92MQBjdGwtc3ZjAG9yZy5zb3JnbG9zLnRlcm1pbmFsAHRlcm1pbmFsAHNoZWxsANU8oep9zofBFDIFKoVQ7SYVz3FcqEPIlxDtgzJbaRy6",
   "initStatic": {
     "private": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
     "public": "pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogk"
@@ -17,25 +22,30 @@
     "private": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
     "public": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs"
   },
-  "msg1Payload": "bTE",
-  "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVmy_41agEMrFXo4z54Xfgb7Mm8",
-  "msg2Payload": "bTI",
-  "msg2": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8QsSW4TPwUfSgaqQBNw6jE4pMcM",
+  "msg1Payload": "",
+  "msg1": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVlrZ-ja0GEgRTfMk9UL8Sv9",
+  "msg2Payload": "",
+  "msg2": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8QtGUKf40kxshEo8VMFF0xnw",
   "transport": [
     {
       "from": "initiator",
-      "plaintext": "bHMgLWxhCg",
-      "ciphertext": "cCpR_lZuctFcrio2RhtUVWZd7V3HrTU"
+      "plaintext": "AWxzIC1sYQo",
+      "ciphertext": "HTUC8xdjGTMufUHwQyhiRVEMY6Wh_VjM"
     },
     {
       "from": "responder",
-      "plaintext": "dG90YWwgMAo",
-      "ciphertext": "L60Jmb2A7u_fnTzAypJeTR2ncJzpZt7i"
+      "plaintext": "AXRvdGFsIDAK",
+      "ciphertext": "WrYSjLDM_tUqMxyJ3_4IrD70N8gWoBzu-Q"
     },
     {
       "from": "initiator",
-      "plaintext": "",
-      "ciphertext": "iMOTUL3aJYTrC2NfNO0E0A"
+      "plaintext": "Ag",
+      "ciphertext": "1cuf7tg6sER5X5nHm24V81Q"
+    },
+    {
+      "from": "responder",
+      "plaintext": "Ansic3RhdHVzIjoib2sifQ",
+      "ciphertext": "tjkbl_-aiG0U9LUoMX1_BxSLt1H507dZ5WvcPIkXngc"
     }
   ]
 }

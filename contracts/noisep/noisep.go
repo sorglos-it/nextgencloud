@@ -1,9 +1,21 @@
 // Package noisep fixes how NGC uses the Noise protocol framework: always
-// Noise_KK_25519_AESGCM_SHA256, for three uses told apart by the prologue.
+// Noise_KK_25519_AESGCM_SHA256, for three uses told apart by the prologue:
+// session (browser -> API; static keys ClientCert.DH and APICert.DH), tunnel
+// (controller -> API; keys from the trust list, before that from the pairing
+// code) and end to end (shell -> controller; ClientCert.DH and the
+// controller's key from the trust list). Messages 1 and 2 carry an empty
+// payload in all three uses, so each is exactly wire.HandshakeSize (48) bytes;
+// a non-empty payload is a protocol error. Session and tunnel send them as the
+// first two binary WebSocket messages, an end-to-end channel in Open.E2E and
+// the first GRANT (package wire). Whoever carries message 1 can replay it, so
+// nothing is acted on before the initiator's first transport message has
+// decrypted. A failed Open ends the link, or on an end-to-end channel the
+// channel, as cut off.
 package noisep
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"io"
 
@@ -26,15 +38,24 @@ const (
 // ErrTooLarge reports a message above the Noise limit.
 var ErrTooLarge = errors.New("noisep: message too large")
 
-// E2EPrologue binds an end-to-end handshake to exactly one channel target:
-// "ngc/e2e/v1" 0x00 controllerID 0x00 app 0x00 service 0x00 action.
-func E2EPrologue(controllerID, app, service, action string) []byte {
+// E2EPrologue binds an end-to-end handshake to exactly one channel:
+//
+//	"ngc/e2e/v1" 0x00 controllerID 0x00 app 0x00 service 0x00 action 0x00 SHA-256(params)
+//
+// (SHA-256 as 32 raw bytes). params are the bytes of the OPEN's params member
+// exactly as the shell wrote them into its OPEN payload, from the opening '{'
+// to the closing '}'; nil if the OPEN has none (as with a task, whose params
+// are signed). The controller takes them from Opened.Open.Params
+// (tunnel.VerifyOpen), which keeps them byte for byte.
+func E2EPrologue(controllerID, app, service, action string, params []byte) []byte {
+	h := sha256.Sum256(params)
 	b := []byte(PrologueE2E)
 	for _, s := range []string{controllerID, app, service, action} {
 		b = append(b, 0)
 		b = append(b, s...)
 	}
-	return b
+	b = append(b, 0)
+	return append(b, h[:]...)
 }
 
 // Keypair creates an X25519 key pair. rng is crypto/rand.Reader outside tests.
