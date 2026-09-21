@@ -1,6 +1,6 @@
 # Webinterface
 
-Deine Ordner: `web/`, `tests/browser/`, dazu `scripts/ngc-web.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V1, V5, V6, V7 (`contracts/README.md`).
+Deine Ordner: `web/`, `tests/browser/`, dazu `scripts/ngc-web.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V1, V2, V5, V6, V7 (`contracts/README.md`).
 
 ## Aufgabe
 
@@ -32,9 +32,11 @@ dunkel. Dazu:
   Noise-Nachricht 1 und 2 ohne Nutzlast. Sofort nach Nachricht 2 die erste Nachricht schicken
   (leere Daten oder gleich Eingabe und Ende), innere Nachrichten nach `wire.E2E`; nach deinem Ende
   nichts mehr. Das Ergebnis steht im Ende des Controllers; fehlt es, ist die Antwort abgeschnitten:
-  Fehler zeigen. Bei Aktionen ohne `stream` im Manifest nimmst du höchstens `wire.MaxCallResult`
-  Byte Ausgabe an und schließt bei mehr mit `E_TOOLARGE`: Die API sieht den Klartext nicht, also
-  setzt nur du diese Grenze durch.
+  Fehler zeigen.
+- Ergebnisse nach Art von `call` nimmst du höchstens bis `wire.MaxCallResult` Byte an und schließt
+  bei mehr mit `E_TOOLARGE`: die Ergebnisse der API bei Kern-Aktionen und auf Ende-zu-Ende-Kanälen
+  die Ausgabe von Aktionen ohne `stream` im Manifest. Dort sieht die API den Klartext nicht, also
+  setzt nur du die Grenze durch.
 - Aufgaben: `task.Task` bauen und mit dem Sitzungsschlüssel unterschreiben, bei Bedarf erneute
   Bestätigung (Passkey oder Passwort erneut) mit Zweck `confirm/v1`. Ein OPEN mit Aufgabe hat keine
   eigenen Parameter.
