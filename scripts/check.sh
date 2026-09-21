@@ -12,8 +12,9 @@ go vet ./...
 go test ./...
 for arch in amd64 arm64; do
 	# trusttest holds fixed test keys: only test code may import it. The list
-	# is taken for each target, so files built only there count too.
-	bad=$(GOOS=linux GOARCH="$arch" go list -f '{{.ImportPath}}: {{join .Imports " "}}' ./... | grep 'contracts/trust/trusttest' | grep -v '^github.com/sorglos-it/nextgencloud/contracts/trust/trusttest:' || true)
+	# is taken as each target is built (cgo off too), so files built only
+	# there count as well.
+	bad=$(CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go list -f '{{.ImportPath}}: {{join .Imports " "}}' ./... | grep 'contracts/trust/trusttest' | grep -v '^github.com/sorglos-it/nextgencloud/contracts/trust/trusttest:' || true)
 	if [ -n "$bad" ]; then
 		echo "trusttest imported outside tests (linux/$arch):"
 		echo "$bad"
