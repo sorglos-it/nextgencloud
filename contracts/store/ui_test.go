@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strconv"
@@ -33,6 +34,42 @@ func goodUI() []entry {
 	}
 }
 
+// withSum stores the checksum of a header block patched after rawHeader.
+func withSum(h []byte) []byte {
+	copy(h[148:156], "        ")
+	sum := 0
+	for _, c := range h {
+		sum += int(c)
+	}
+	copy(h[148:156], fmt.Sprintf("%06o\x00 ", sum))
+	return h
+}
+
+// oneFile is a regular file of one byte, "x", after a hand-made header that
+// patch may change.
+func oneFile(name string, patch func(h []byte)) []byte {
+	h := rawHeader(name, 1, tar.TypeReg)
+	patch(h)
+	return append(withSum(h), pad512([]byte("x"))...)
+}
+
+// gnuTar writes the good UI entries and then a file in the GNU format.
+func gnuTar(t testing.TB) []byte {
+	t.Helper()
+	buf := bytes.NewBuffer(withoutEnd(buildTar(t, goodUI())))
+	w := tar.NewWriter(buf)
+	if err := w.WriteHeader(&tar.Header{Name: "ui/gnu.txt", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg, Format: tar.FormatGNU}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 // uiCases returns the cases of ui.json. Each invalid one differs from the
 // valid one by breaking exactly one rule of WalkUI.
 func uiCases(t testing.TB) []uiVector {
@@ -54,6 +91,8 @@ func uiCases(t testing.TB) []uiVector {
 		{Name: "only the end marker", Tar: slices.Clone(endMarker), Valid: true},
 		{Name: "path of 200 bytes", Tar: with(entry{path200, []byte("x"), tar.TypeReg}), Valid: true, Files: append(slices.Clone(goodFiles), path200)},
 		{Name: "file name in a PAX header", Tar: with(entry{paxName, []byte("x"), tar.TypeReg}), Valid: true, Files: append(slices.Clone(goodFiles), paxName)},
+		// The twin of the two cases with a patched header below.
+		{Name: "hand-made header", Tar: slices.Concat(entries, oneFile("ui/h.txt", func([]byte) {}), endMarker), Valid: true, Files: append(slices.Clone(goodFiles), "ui/h.txt")},
 
 		{Name: "symlink", Tar: with(entry{"ui/link", nil, tar.TypeSymlink})},
 		{Name: "hard link", Tar: with(entry{"ui/hardlink", nil, tar.TypeLink})},
@@ -72,6 +111,9 @@ func uiCases(t testing.TB) []uiVector {
 		// before it reads any data.
 		{Name: "file too large, header only", Tar: slices.Concat(entries, rawHeader("ui/big.bin", MaxUIFile+1, tar.TypeReg))},
 		{Name: "sparse file", Tar: slices.Concat(entries, sparseEntry("ui/x.bin", 4096), endMarker)},
+		{Name: "GNU header", Tar: gnuTar(t)},
+		{Name: "number field ending in a space", Tar: slices.Concat(entries, oneFile("ui/n.txt", func(h []byte) { h[135] = ' ' }), endMarker)},
+		{Name: "non-ASCII byte in a header", Tar: slices.Concat(entries, oneFile("ui/u.txt", func(h []byte) { copy(h[265:297], "\xc3\xbc") }), endMarker)},
 		{Name: "truncated archive", Tar: slices.Clone(valid[:cssData+5])},
 		{Name: "no end marker", Tar: entries},
 		{Name: "one zero block", Tar: slices.Concat(entries, endMarker[:512])},

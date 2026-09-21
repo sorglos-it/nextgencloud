@@ -12,17 +12,24 @@ const uiSlack = 16 << 20
 
 // WalkUI reads the tar of an app's UI that the API keeps (dbapi.BlobUI) and
 // sends the shell (ngc.desktop/ui), and calls fn for every regular file with
-// its data. Rules, the same as Walk's for ui/: entries "ui" or
-// "ui/<ValidPath>" (after removing one trailing "/"; a file is never "ui"),
-// directories of size 0 or regular files only, no links, no sparse entries,
-// no duplicates, no entry under a file and no file where a directory is
-// needed, at most MaxEntries entries, MaxUIFile per file and MaxUITotal in
-// all (checked from the header, before reading). The archive ends with its
-// end marker, two zero blocks, and nothing follows it; with the marker it
-// has at most MaxUITotal+16 MiB, and WalkUI reads at most one byte more from
-// r. Every failure is ErrPackage or fn's own error; after one the caller
-// discards what fn received. The shell implements the same rules (vectors:
-// ui.json).
+// its data. The shell implements the same rules (vectors: ui.json):
+//
+//   - Walk's rules for ui/: entries "ui" or "ui/<ValidPath>" after removing
+//     one trailing "/" (a file is never "ui"), directories of size 0 or
+//     regular files only, no links, no sparse entries, no duplicates, no
+//     entry under a file and no file where a directory is needed, at most
+//     MaxEntries entries, MaxUIFile per file and MaxUITotal in all (checked
+//     from the header, before reading).
+//   - Headers as tar.Writer writes them by default: USTAR (magic "ustar\0",
+//     version "00", only ASCII bytes, the fields mode, uid, gid, size, mtime,
+//     devmajor and devminor ending in NUL), each perhaps after a PAX header
+//     ('x') whose records override it (path, size).
+//   - The archive ends with its end marker, two zero blocks, and nothing
+//     follows it; with the marker it has at most MaxUITotal+16 MiB, and
+//     WalkUI reads at most one byte more from r.
+//
+// Every failure is ErrPackage or fn's own error; after one the caller
+// discards what fn received.
 func WalkUI(r io.Reader, fn func(f PackFile, body io.Reader) error) error {
 	const limit = MaxUITotal + uiSlack
 	lr := &io.LimitedReader{R: r, N: limit + 1}
@@ -36,6 +43,12 @@ func WalkUI(r io.Reader, fn func(f PackFile, body io.Reader) error) error {
 			break
 		}
 		if err != nil || n > MaxEntries || sparse(h) {
+			return ErrPackage
+		}
+		// Only what tar.Writer writes by default: USTAR headers, with PAX
+		// records where USTAR has no room. archive/tar reads more dialects,
+		// each one more thing the shell would have to read the same way.
+		if h.Format != tar.FormatUSTAR && h.Format != tar.FormatPAX {
 			return ErrPackage
 		}
 		name := strings.TrimSuffix(h.Name, "/")
