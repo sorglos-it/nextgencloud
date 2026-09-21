@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -219,13 +220,21 @@ func openCases(t testing.TB) []openCase {
 		{"malformed confirm", marshal(func(o *Open) { withTask(o); o.Confirm = confirmProof(); o.Confirm.Sig = nil }), false},
 		{"params not an object", marshal(func(o *Open) { o.Params = json.RawMessage(`[80,24]`) }), false},
 		{"params with duplicate names", replace(`{"cols":80,"rows":24}`, `{"cols":80,"cols":24}`), false},
-		{"params null", replace(`{"cols":80,"rows":24}`, `null`), false},
+		{"null inside params", replace(`"cols":80`, `"cols":null`), false},
+		{"invalid UTF-8 inside params", replace(`"cols":80`, "\"cols\":\"\xff\""), false},
 		{"params over MaxParams", marshal(func(o *Open) { o.Params = params(MaxParams + 1) }), false},
 		{"number beyond MaxSafeInteger", replace(`"cols":80`, `"cols":9007199254740992`), false},
 		{"unknown field", replace(`{"app":`, `{"extra":1,"app":`), false},
 		{"duplicate field", replace(`{"app":"org.sorglos.terminal",`, `{"app":"org.sorglos.terminal","app":"org.sorglos.terminal",`), false},
 		{"field name in other case", replace(`"app":`, `"App":`), false},
+		{"valid OPEN of MaxBrowserOpen bytes", padded(valid, MaxBrowserOpen), true},
+		{"OPEN over MaxBrowserOpen", padded(valid, MaxBrowserOpen+1), false},
 	}
+}
+
+// padded returns b followed by spaces up to n bytes.
+func padded(b []byte, n int) []byte {
+	return append(bytes.Clone(b), bytes.Repeat([]byte(" "), n-len(b))...)
 }
 
 func TestParseOpen(t *testing.T) {
@@ -238,13 +247,10 @@ func TestParseOpen(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", c.name, err, ErrOpen)
 		}
 	}
-	// A whole OPEN of MaxBrowserOpen bytes passes, one byte more does not.
-	full := append(mustJSON(t, testOpen()), bytes.Repeat([]byte(" "), MaxBrowserOpen)...)[:MaxBrowserOpen]
-	if _, err := ParseOpen(full); err != nil {
-		t.Errorf("OPEN of MaxBrowserOpen bytes: %v", err)
-	}
-	if _, err := ParseOpen(append(full, ' ')); err != ErrOpen {
-		t.Errorf("OPEN over MaxBrowserOpen: got %v, want %v", err, ErrOpen)
+	// params null break two rules (no null, params an object), so they are
+	// no vector, but ParseOpen refuses them as well.
+	if _, err := ParseOpen(bytes.Replace(mustJSON(t, testOpen()), []byte(`{"cols":80,"rows":24}`), []byte(`null`), 1)); err != ErrOpen {
+		t.Errorf("params null: got %v, want %v", err, ErrOpen)
 	}
 }
 
@@ -380,6 +386,45 @@ func TestValidParams(t *testing.T) {
 	}
 }
 
+type closeCase struct {
+	name    string
+	payload []byte
+	valid   bool
+}
+
+// closeCases: valid CLOSE payloads, and one case per rule of ParseClose, each
+// valid apart from its rule. Messages are bounded in bytes, so the umlaut
+// cases catch a count of characters.
+func closeCases() []closeCase {
+	message := func(text string) []byte {
+		return []byte(`{"status":"error","code":"E_EXIT","message":"` + text + `"}`)
+	}
+	ok := []byte(`{"status":"ok"}`)
+	return []closeCase{
+		{"ok", ok, true},
+		{"error with its message", []byte(`{"status":"error","code":"E_FORBIDDEN","message":"Keine Berechtigung."}`), true},
+		{"too large", []byte(`{"status":"error","code":"E_TOOLARGE","message":"Zu viele Daten."}`), true},
+		{"exit code 0", []byte(`{"status":"error","code":"E_EXIT","exitCode":0}`), true},
+		{"exit code 255", []byte(`{"status":"error","code":"E_EXIT","exitCode":255}`), true},
+		{"message of 256 bytes", message(strings.Repeat("x", MaxMessageText)), true},
+		{"message of 128 umlauts, 256 bytes", message(strings.Repeat("ü", MaxMessageText/2)), true},
+		{"CLOSE of MaxClosePayload bytes", padded(ok, MaxClosePayload), true},
+		{"status ok with a code", []byte(`{"status":"ok","code":"E_EXIT"}`), false},
+		{"unknown code", []byte(`{"status":"error","code":"E_WHAT"}`), false},
+		{"unknown status", []byte(`{"status":"maybe"}`), false},
+		{"exit code -1", []byte(`{"status":"error","code":"E_EXIT","exitCode":-1}`), false},
+		{"exit code 256", []byte(`{"status":"error","code":"E_EXIT","exitCode":256}`), false},
+		{"message of 257 bytes", message(strings.Repeat("x", MaxMessageText+1)), false},
+		{"message of 129 umlauts, 258 bytes", message(strings.Repeat("ü", MaxMessageText/2+1)), false},
+		{"null", []byte(`{"status":"ok","code":null}`), false},
+		{"invalid UTF-8", message("\xff"), false},
+		{"CLOSE over MaxClosePayload", padded(ok, MaxClosePayload+1), false},
+		{"duplicate member", []byte(`{"status":"ok","status":"ok"}`), false},
+		{"unknown member", []byte(`{"status":"ok","extra":1}`), false},
+		{"member name in other case", []byte(`{"Status":"ok"}`), false},
+	}
+}
+
 func TestParseClose(t *testing.T) {
 	code := 2
 	for _, c := range []Close{{Status: StatusOK}, Error(CodeForbidden), Error(CodeTooLarge),
@@ -389,21 +434,16 @@ func TestParseClose(t *testing.T) {
 			t.Errorf("%+v: %v", c, err)
 		}
 	}
-	for _, s := range []string{
-		`{"status":"ok","code":"E_EXIT"}`,
-		`{"status":"error","code":"E_WHAT"}`,
-		`{"status":"maybe"}`,
-		`{"status":"error","code":"E_EXIT","exitCode":256}`,
-		`{"status":"error","code":"E_EXIT","exitCode":-1}`,
-		`{"status":"error","code":"E_EXIT","message":"` + strings.Repeat("x", MaxMessageText+1) + `"}`,
-		`{"status":"ok","status":"ok"}`,
-		`{"status":"ok","extra":1}`,
-		`{"Status":"ok"}`,
-		`{"status":"ok","code":null}`,
-		`{"status":"ok"} {}`,
-		``,
-		`{"status":"ok"}` + strings.Repeat(" ", MaxClosePayload),
-	} {
+	for _, c := range closeCases() {
+		_, err := ParseClose(c.payload)
+		if c.valid && err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if !c.valid && err != ErrClose {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrClose)
+		}
+	}
+	for _, s := range []string{`{"status":"ok"} {}`, ``} {
 		if _, err := ParseClose([]byte(s)); err != ErrClose {
 			t.Errorf("%.60s: got %v, want %v", s, err, ErrClose)
 		}
@@ -436,30 +476,44 @@ func TestParseControl(t *testing.T) {
 	}
 }
 
-func TestControlAllowed(t *testing.T) {
+type controlCase struct {
+	link    string
+	fromAPI bool
+	t       string
+	allowed bool
+}
+
+// controlCases: every link, direction and type of the table, and an unknown
+// link and type.
+func controlCases() []controlCase {
 	all := []string{CtlHello, CtlTrust, CtlNotify, CtlStatus, CtlUpdate, CtlBye}
-	allowed := map[string]map[bool][]string{
-		LinkSession: {true: {CtlTrust, CtlNotify, CtlBye}, false: {CtlBye}},
-		LinkTunnel:  {true: {CtlHello, CtlBye}, false: {CtlHello, CtlStatus, CtlUpdate, CtlNotify, CtlBye}},
+	allowed := []struct {
+		link    string
+		fromAPI bool
+		types   []string
+	}{
+		{LinkSession, true, []string{CtlTrust, CtlNotify, CtlBye}},
+		{LinkSession, false, []string{CtlBye}},
+		{LinkTunnel, true, []string{CtlHello, CtlBye}},
+		{LinkTunnel, false, []string{CtlHello, CtlStatus, CtlUpdate, CtlNotify, CtlBye}},
 	}
-	for link, sides := range allowed {
-		for fromAPI, types := range sides {
-			for _, typ := range all {
-				want := false
-				for _, a := range types {
-					want = want || a == typ
-				}
-				if got := ControlAllowed(link, fromAPI, typ); got != want {
-					t.Errorf("%s, from API %v, %s: got %v, want %v", link, fromAPI, typ, got, want)
-				}
-			}
+	var cs []controlCase
+	for _, a := range allowed {
+		for _, typ := range all {
+			cs = append(cs, controlCase{a.link, a.fromAPI, typ, slices.Contains(a.types, typ)})
+		}
+	}
+	return append(cs, controlCase{"other", true, CtlBye, false}, controlCase{LinkTunnel, false, "shutdown", false})
+}
+
+func TestControlAllowed(t *testing.T) {
+	for _, c := range controlCases() {
+		if got := ControlAllowed(c.link, c.fromAPI, c.t); got != c.allowed {
+			t.Errorf("%s, from API %v, %s: got %v, want %v", c.link, c.fromAPI, c.t, got, c.allowed)
 		}
 	}
 	if ControlAllowed(LinkSession, false, CtlStatus) {
 		t.Error("browser sends status")
-	}
-	if ControlAllowed("other", true, CtlBye) || ControlAllowed(LinkTunnel, false, "shutdown") {
-		t.Error("unknown link or type allowed")
 	}
 }
 
@@ -487,6 +541,7 @@ func e2eCases() []e2eCase {
 		{"end from shell with body", msg(E2EEnd, `{"status":"ok"}`), false, false},
 		{"end from controller without status", msg(E2EEnd, ""), true, false},
 		{"end from controller with status maybe", msg(E2EEnd, `{"status":"maybe"}`), true, false},
+		{"end from controller with a CLOSE over MaxClosePayload", append([]byte{E2EEnd}, padded([]byte(`{"status":"ok"}`), MaxClosePayload+1)...), true, false},
 	}
 }
 
@@ -645,6 +700,12 @@ type openVector struct {
 	Valid   bool      `json:"valid"`
 }
 
+type closeVector struct {
+	Name    string    `json:"name"`
+	Payload enc.Bytes `json:"payload"`
+	Valid   bool      `json:"valid"`
+}
+
 type e2eVector struct {
 	Name           string    `json:"name"`
 	Plain          enc.Bytes `json:"plain"`
@@ -652,12 +713,21 @@ type e2eVector struct {
 	Valid          bool      `json:"valid"`
 }
 
+type controlVector struct {
+	Link    string `json:"link"`
+	FromAPI bool   `json:"fromApi"`
+	T       string `json:"t"`
+	Allowed bool   `json:"allowed"`
+}
+
 type vectors struct {
 	Frames    []frameVector    `json:"frames"`
 	BadFrames []badFrameVector `json:"badFrames"`
 	Grants    []grantVector    `json:"grants"`
 	Opens     []openVector     `json:"opens"`
+	Closes    []closeVector    `json:"closes"`
 	E2E       []e2eVector      `json:"e2e"`
+	Controls  []controlVector  `json:"controls"`
 }
 
 // raw builds a frame without Encode's checks.
@@ -716,8 +786,14 @@ func TestVectors(t *testing.T) {
 	for _, c := range openCases(t) {
 		v.Opens = append(v.Opens, openVector{Name: c.name, Payload: c.payload, Valid: c.valid})
 	}
+	for _, c := range closeCases() {
+		v.Closes = append(v.Closes, closeVector{Name: c.name, Payload: c.payload, Valid: c.valid})
+	}
 	for _, c := range e2eCases() {
 		v.E2E = append(v.E2E, e2eVector{Name: c.name, Plain: c.plain, FromController: c.fromController, Valid: c.valid})
+	}
+	for _, c := range controlCases() {
+		v.Controls = append(v.Controls, controlVector{Link: c.link, FromAPI: c.fromAPI, T: c.t, Allowed: c.allowed})
 	}
 	checkVectors(t, v)
 	golden.Check(t, *update, "wire.json", v)
@@ -761,9 +837,19 @@ func checkVectors(t *testing.T, v vectors) {
 			t.Errorf("open %s: got %v, want valid %v", o.Name, err, o.Valid)
 		}
 	}
+	for _, c := range v.Closes {
+		if _, err := ParseClose(c.Payload); (err == nil) != c.Valid {
+			t.Errorf("close %s: got %v, want valid %v", c.Name, err, c.Valid)
+		}
+	}
 	for _, e := range v.E2E {
 		if _, err := ParseE2E(e.Plain, e.FromController); (err == nil) != e.Valid {
 			t.Errorf("e2e %s: got %v, want valid %v", e.Name, err, e.Valid)
+		}
+	}
+	for _, c := range v.Controls {
+		if ControlAllowed(c.Link, c.FromAPI, c.T) != c.Allowed {
+			t.Errorf("control %s, from API %v, %s: want allowed %v", c.Link, c.FromAPI, c.T, c.Allowed)
 		}
 	}
 }
