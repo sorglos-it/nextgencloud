@@ -90,10 +90,9 @@
 // (store.Action.Stream). A sender with more ends with CodeTooLarge (on an
 // end-to-end channel in its E2EEnd).
 // The receiver enforces the limit and closes the channel with CodeTooLarge
-// when more arrives: on core-app channels the API, which reads their data
-// (a controller's result before passing it on, and it keeps its own results
-// within the limit), on end-to-end channels the shell, as the API cannot see
-// their plaintext.
+// when more arrives: the API for a controller's result on a core-app channel,
+// before passing it on; the shell for the API's own results and on every
+// end-to-end channel, whose plaintext the API cannot see.
 package wire
 
 import (
