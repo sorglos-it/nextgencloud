@@ -54,6 +54,12 @@ const (
 	NodeController NodeKind = "controller"
 )
 
+// Store IDs with a fixed meaning.
+const (
+	StoreGlobal = "global" // the global store; its key comes from the API configuration (config.API.StoreKey)
+	StoreLocal  = "local"  // apps an admin uploaded; never a store in the list
+)
+
 // Targets of standing approvals besides app IDs.
 const (
 	AutoWeb        = "ngc-web"
@@ -300,6 +306,21 @@ func (l *List) KeyOwner(keyID string) (User, proof.UserKey, bool) {
 	return User{}, proof.UserKey{}, false
 }
 
+// PasswordToo reports whether a role of the user asks for the password in
+// addition to a passkey (session.LoginChallenge.PasswordToo).
+func (l *List) PasswordToo(userID string) bool {
+	u, ok := l.User(userID)
+	if !ok {
+		return false
+	}
+	for _, name := range u.Roles {
+		if r, ok := l.Role(name); ok && r.PasswordToo {
+			return true
+		}
+	}
+	return false
+}
+
 // MayRoot reports whether a user may run root tasks on a controller.
 func (l *List) MayRoot(userID, nodeID string) bool {
 	n, ok := l.Node(nodeID)
@@ -377,8 +398,9 @@ func (l *List) Validate() error {
 		return ErrInvalid
 	}
 	for i, r := range l.Roles {
+		// A role cannot both forbid password keys and ask for the password.
 		if !wire.ValidName(r.Name) || (i > 0 && l.Roles[i-1].Name >= r.Name) || !validLevel(r.Level) ||
-			!validEntries(r.Black) || !validEntries(r.White) {
+			!validEntries(r.Black) || !validEntries(r.White) || (r.PasskeyOnly && r.PasswordToo) {
 			return ErrInvalid
 		}
 	}
@@ -417,7 +439,8 @@ func (l *List) Validate() error {
 		}
 	}
 	for i, s := range l.Stores {
-		if !wire.ValidName(s.ID) || (i > 0 && l.Stores[i-1].ID >= s.ID) || !validLabel(s.Name) ||
+		// StoreLocal marks uploaded apps, so no catalog key may claim it.
+		if !wire.ValidName(s.ID) || s.ID == StoreLocal || (i > 0 && l.Stores[i-1].ID >= s.ID) || !validLabel(s.Name) ||
 			!strings.HasPrefix(s.URL, "https://") || len(s.URL) > 256 || len(s.Key) != ed25519.PublicKeySize {
 			return ErrInvalid
 		}
@@ -431,7 +454,11 @@ func (l *List) Validate() error {
 			if len(a.Key) != 0 {
 				return ErrInvalid
 			}
-		case a.Target == AutoWeb || a.Target == AutoAPI || a.Target == AutoController || wire.ValidAppID(a.Target):
+		// Core apps ship inside the NGC parts, not from a store, so they are
+		// no update target: the same set as store.ValidTarget, which trust
+		// cannot import.
+		case a.Target == AutoWeb || a.Target == AutoAPI || a.Target == AutoController ||
+			(wire.ValidAppID(a.Target) && !wire.CoreApp(a.Target)):
 			if len(a.Key) != ed25519.PublicKeySize {
 				return ErrInvalid
 			}
@@ -447,18 +474,24 @@ func (l *List) validateUsers() error {
 	names := map[string]bool{}
 	admins, passkeys := 0, false
 	for i, u := range l.Users {
-		if !ValidID(u.ID) || (i > 0 && l.Users[i-1].ID >= u.ID) || !validLoginName(u.Name) || names[u.Name] ||
+		if !ValidID(u.ID) || (i > 0 && l.Users[i-1].ID >= u.ID) || !ValidLoginName(u.Name) || names[u.Name] ||
 			len(u.Roles) == 0 || len(u.Keys) == 0 || len(u.Keys) > MaxKeysPerUser {
 			return ErrInvalid
 		}
 		names[u.Name] = true
-		passkeyOnly := false
+		passkeyOnly, passwordToo := false, false
 		for j, name := range u.Roles {
 			r, ok := l.Role(name)
 			if !ok || (j > 0 && u.Roles[j-1] >= name) {
 				return ErrInvalid
 			}
 			passkeyOnly = passkeyOnly || r.PasskeyOnly
+			passwordToo = passwordToo || r.PasswordToo
+		}
+		// Such a user could never log in: one role forbids the password key
+		// the other one asks for.
+		if passkeyOnly && passwordToo {
+			return ErrInvalid
 		}
 		for _, k := range u.Keys {
 			if k.Validate() != nil || keys[k.ID] || (passkeyOnly && k.Kind == proof.KindPassword) {
@@ -508,8 +541,10 @@ func validEntries(entries []string) bool {
 	return true
 }
 
-// validLoginName allows lower-case letters, digits and . _ - (1 to 64 characters).
-func validLoginName(s string) bool {
+// ValidLoginName allows lower-case letters, digits and . _ - (1 to 64
+// characters, the first a letter or digit). The API checks a typed name with
+// it before looking it up (session.ParseLoginStart).
+func ValidLoginName(s string) bool {
 	if len(s) == 0 || len(s) > 64 {
 		return false
 	}

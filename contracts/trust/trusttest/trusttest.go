@@ -109,8 +109,9 @@ const GenesisPasskeyFill = 7
 // Genesis returns version 1: user "admin" with admin's key, a second admin
 // "admin2" who signs with a passkey (NewPasskey(GenesisPasskeyFill)) against
 // the RP ngc.example.org, API "api-1" (NodeKeys(0xA1)) and controller "ctl-1"
-// (NodeKeys(0xC1)), on which admins may run root tasks. Also carries one
-// store and two standing approvals (system, and controller updates) so a
+// (NodeKeys(0xC1)), on which admins may run root tasks. Also carries the
+// global store (ID trust.StoreGlobal, as the setup puts it into version 1)
+// and two standing approvals (system, and controller updates) so a
 // realistic list exercises those fields too.
 func Genesis(admin Signer) *trust.List {
 	apiDH, apiSign := NodeKeys(0xA1)
@@ -132,7 +133,7 @@ func Genesis(admin Signer) *trust.List {
 			{ID: "ctl-1", Kind: trust.NodeController, Name: "Dienste", Noise: ctlDH.Public, RootRoles: []string{trust.RoleAdmin}},
 		},
 		Stores: []trust.Store{
-			{ID: "ngc-store", Name: "NGC Store", URL: "https://store.ngc.example", Key: enc.Bytes(storeSign.Public().(ed25519.PublicKey))},
+			{ID: trust.StoreGlobal, Name: "NGC Store", URL: "https://store.ngc.example", Key: enc.Bytes(storeSign.Public().(ed25519.PublicKey))},
 		},
 		Auto: []trust.Auto{
 			{Target: trust.AutoController, Key: enc.Bytes(autoSign.Public().(ed25519.PublicKey))},

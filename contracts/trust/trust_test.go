@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/internal/golden"
@@ -150,6 +152,24 @@ func vectors(t *testing.T) []vector {
 
 	nonAdminGenesis := genesisByNonAdmin(t)
 
+	// Key changes: a user may change only her own keys, a new admin cannot
+	// vouch for herself, and a replaced key signs nothing after the version
+	// that replaced it.
+	otherKey := trusttest.Next(t, v2)
+	otherKey.Users[1].Keys = []proof.UserKey{trusttest.NewSigner(9).Key}
+	otherUsersKey := alice.Sign(t, otherKey)
+
+	withMallory := trusttest.Next(t, g)
+	withMallory.Users = append(withMallory.Users,
+		trust.User{ID: trusttest.ID(0x30), Name: "mallory", Roles: []string{trust.RoleAdmin}, Keys: []proof.UserKey{mallory.Key}})
+	slices.SortFunc(withMallory.Users, func(a, b trust.User) int { return strings.Compare(a.ID, b.ID) })
+	selfAdded := mallory.Sign(t, withMallory)
+
+	newKey := trusttest.Next(t, g)
+	newKey.Users[1].Keys = []proof.UserKey{trusttest.NewSigner(8).Key}
+	replaced := admin.Sign(t, newKey)
+	oldKey := admin.Sign(t, trusttest.Next(t, replaced))
+
 	return []vector{
 		{"genesis", anchor(t, g), c[:1], true, 1},
 		{"admin adds a user, user adds an own key, passkey admin re-signs", anchor(t, g), full, true, 4},
@@ -164,7 +184,29 @@ func vectors(t *testing.T) []vector {
 		{"wrong installation", anchor(t, g), []trust.Signed{g, badInstall}, false, 0},
 		{"successor without an admin", anchor(t, g), []trust.Signed{g, badSuccessor}, false, 0},
 		{"genesis signed by a non-admin", anchor(t, nonAdminGenesis), []trust.Signed{nonAdminGenesis}, false, 0},
+		{"user changes another user's key", anchor(t, g), []trust.Signed{g, v2, otherUsersKey}, false, 0},
+		{"new admin signs her own addition", anchor(t, g), []trust.Signed{g, selfAdded}, false, 0},
+		{"admin replaces the key that signs the version", anchor(t, g), []trust.Signed{g, replaced}, true, 2},
+		{"old key signs after it was replaced", anchor(t, g), []trust.Signed{g, replaced, oldKey}, false, 0},
 	}
+}
+
+// vectorErrors names the error each invalid vector must fail with, so that a
+// vector cannot pass by failing for another rule than the one it breaks.
+var vectorErrors = map[string]error{
+	"wrong anchor":                        trust.ErrAnchor,
+	"missing version":                     trust.ErrChain,
+	"old version again":                   trust.ErrChain,
+	"tampered":                            proof.ErrSignature,
+	"user makes herself admin":            trust.ErrSigner,
+	"unknown signer":                      trust.ErrSigner,
+	"wrong prev hash":                     trust.ErrChain,
+	"wrong installation":                  trust.ErrChain,
+	"successor without an admin":          trust.ErrInvalid,
+	"genesis signed by a non-admin":       trust.ErrSigner,
+	"user changes another user's key":     trust.ErrSigner,
+	"new admin signs her own addition":    trust.ErrSigner,
+	"old key signs after it was replaced": trust.ErrSigner,
 }
 
 func TestVectors(t *testing.T) {
@@ -173,6 +215,9 @@ func TestVectors(t *testing.T) {
 		got, err := trust.Open(v.Anchor, v.Chain)
 		if (err == nil) != v.Valid || (v.Valid && got.List.Seq != v.Seq) {
 			t.Errorf("%s: want valid=%v seq=%d, got %v", v.Name, v.Valid, v.Seq, err)
+		}
+		if want, ok := vectorErrors[v.Name]; !v.Valid && (!ok || err != want) {
+			t.Errorf("%s: got %v, want %v", v.Name, err, want)
 		}
 	}
 	golden.Check(t, *update, "trust.json", vs)
@@ -217,6 +262,18 @@ func TestValidate(t *testing.T) {
 		"AutoSystem with a key":             func(l *trust.List) { l.Auto[1].Key = make([]byte, ed25519.PublicKeySize) },
 		"valid target without a key":        func(l *trust.List) { l.Auto[0].Key = nil },
 		"unknown target":                    func(l *trust.List) { l.Auto = append(l.Auto, trust.Auto{Target: "unknown-target"}) },
+		"store named local":                 func(l *trust.List) { l.Stores[0].ID = trust.StoreLocal },
+		"core app as standing approval target": func(l *trust.List) {
+			l.Auto = []trust.Auto{l.Auto[0], {Target: "ngc.store", Key: make([]byte, ed25519.PublicKeySize)}, l.Auto[1]}
+		},
+		"passkey-only role that also asks for the password": func(l *trust.List) {
+			l.Roles = append(l.Roles, trust.Role{Name: "strict", Level: trust.LevelCritical, PasskeyOnly: true, PasswordToo: true})
+		},
+		"user in a passkey-only and a password-too role": func(l *trust.List) {
+			l.Roles = append(l.Roles, trust.Role{Name: "passkey-only", Level: trust.LevelCritical, PasskeyOnly: true},
+				trust.Role{Name: "password-too", Level: trust.LevelCritical, PasswordToo: true})
+			l.Users[0].Roles = []string{trust.RoleAdmin, "passkey-only", "password-too"} // admin2 holds only a passkey
+		},
 	}
 	for name, mutate := range cases {
 		l := trusttest.Genesis(admin)
@@ -225,17 +282,59 @@ func TestValidate(t *testing.T) {
 			t.Errorf("%s: got %v", name, err)
 		}
 	}
+	// Twins of cases above that keep every rule: each must pass, so the case
+	// it mirrors fails for its own reason and not for a side effect of its
+	// mutation. Genesis itself is the twin of "store named local".
+	twins := map[string]func(l *trust.List){
+		"passkey with rp": func(l *trust.List) { l.Users[0].Keys = append(l.Users[0].Keys, pk) },
+		"app as standing approval target": func(l *trust.List) {
+			l.Auto = []trust.Auto{l.Auto[0], {Target: "org.sorglos.terminal", Key: make([]byte, ed25519.PublicKeySize)}, l.Auto[1]}
+		},
+		"passkey-only role": func(l *trust.List) {
+			l.Roles = append(l.Roles, trust.Role{Name: "strict", Level: trust.LevelCritical, PasskeyOnly: true})
+		},
+		"password-too role": func(l *trust.List) {
+			l.Roles = append(l.Roles, trust.Role{Name: "strict", Level: trust.LevelCritical, PasswordToo: true})
+		},
+		"user in a passkey-only role while a password-too role exists": func(l *trust.List) {
+			l.Roles = append(l.Roles, trust.Role{Name: "passkey-only", Level: trust.LevelCritical, PasskeyOnly: true},
+				trust.Role{Name: "password-too", Level: trust.LevelCritical, PasswordToo: true})
+			l.Users[0].Roles = []string{trust.RoleAdmin, "passkey-only"}
+		},
+	}
+	for name, mutate := range twins {
+		l := trusttest.Genesis(admin)
+		mutate(l)
+		if err := l.Validate(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestPasswordToo(t *testing.T) {
 	l := trusttest.Genesis(admin)
-	l.Users[0].Keys = append(l.Users[0].Keys, pk)
+	l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
+	bob := trusttest.ID(0x22)
+	l.Users = append(l.Users, trust.User{ID: bob, Name: "bob", Roles: []string{"careful"},
+		Keys: []proof.UserKey{passkey(t), trusttest.NewSigner(5).Key}})
 	if err := l.Validate(); err != nil {
-		t.Errorf("passkey with rp: %v", err)
+		t.Fatal(err)
+	}
+	if !l.PasswordToo(bob) {
+		t.Error("user in a password-too role: false")
+	}
+	if l.PasswordToo(l.Users[0].ID) || l.PasswordToo(l.Users[1].ID) {
+		t.Error("admins without a password-too role: true")
+	}
+	if l.PasswordToo(trusttest.ID(0x99)) {
+		t.Error("unknown user: true")
 	}
 }
 
 func TestPolicy(t *testing.T) {
 	l := trusttest.Genesis(admin)
 	l.Roles = []trust.Role{
-		{Name: trust.RoleAdmin, Level: trust.LevelCritical, White: []string{"app/ngc.store/update"}},
+		{Name: trust.RoleAdmin, Level: trust.LevelCritical, White: []string{"app/ngc.store/install"}},
 		{Name: "ops", Level: trust.LevelHardcore},
 		{Name: "user", Level: trust.LevelOff, Black: []string{"app/org.sorglos.terminal"}},
 	}
@@ -257,7 +356,7 @@ func TestPolicy(t *testing.T) {
 	}{
 		{"admin, normal channel", adminID, shell, false},
 		{"admin, critical", adminID, trust.Op{App: "ngc.store", Action: "upload", Critical: true}, true},
-		{"admin, whitelisted", adminID, trust.Op{App: "ngc.store", Action: "update", Root: true, Critical: true}, false},
+		{"admin, whitelisted", adminID, trust.Op{App: "ngc.store", Action: "install", Root: true, Critical: true}, false},
 		{"user, blacklisted", bob, shell, true},
 		{"user, level off", bob, calc, false},
 		{"strictest role wins", carol, calc, true},
