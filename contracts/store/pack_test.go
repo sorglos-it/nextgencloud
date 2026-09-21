@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
@@ -203,8 +204,6 @@ func rawHeader(name string, size int64, flag byte) []byte {
 	return h
 }
 
-func pad512(b []byte) []byte { return append(b, make([]byte, (512-len(b)%512)%512)...) }
-
 // sparseFile is a PAX 1.0 sparse file of size bytes whose only data is data,
 // at offset 0; the rest is a hole. The header names the file as the sparse
 // record does, so a reader that ignores the GNU.sparse.* records finds
@@ -334,6 +333,37 @@ func TestWalkBoundsManifestAllocation(t *testing.T) {
 		if n > MaxManifest+64<<10 || err != ErrPackage {
 			t.Errorf("%d bytes allocated, %v", n, err)
 		}
+	}
+}
+
+// TestWalkMaxDirs: Walk keeps the tree of WalkUI, so MaxDirs holds for a
+// package too, "ui" and "services" counted, and deep distinct paths cost next
+// to nothing.
+func TestWalkMaxDirs(t *testing.T) {
+	walk := func(b []byte) error {
+		_, err := Walk(bytes.NewReader(b), func(*Manifest, PackFile, io.Reader) error { return nil })
+		return err
+	}
+	entries := goodEntries(t) // "ui" and "services"
+	for _, f := range deepFiles(MaxDirs - 1) {
+		entries = append(entries, entry{f.path, f.data, tar.TypeReg})
+	}
+	if err := walk(buildTar(t, entries)); err != nil {
+		t.Errorf("MaxDirs directories: %v", err)
+	}
+	if err := walk(buildTar(t, append(entries, entry{"ui/extra/f", []byte("x"), tar.TypeReg}))); err != ErrPackage {
+		t.Errorf("one directory too many: %v", err)
+	}
+	deep := goodEntries(t)
+	for i := range MaxEntries - len(deep) {
+		deep = append(deep, entry{fmt.Sprintf("ui/x%05d%s/f", i, strings.Repeat("/a", 96)), []byte("x"), tar.TypeReg})
+	}
+	b := buildTar(t, deep)
+	var err error
+	n := allocated(func() { err = walk(b) })
+	t.Logf("deep distinct paths: %d bytes, %d bytes allocated", len(b), n)
+	if err != ErrPackage || n > 1<<20 {
+		t.Errorf("deep distinct paths: %v, %d bytes allocated", err, n)
 	}
 }
 

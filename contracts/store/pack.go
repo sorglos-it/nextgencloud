@@ -17,6 +17,7 @@ import (
 // Limits and names of app packages and their encryption.
 const (
 	MaxEntries = 10000
+	MaxDirs    = 1000 // directories: named by an entry or implied by a path, "ui" for "ui/x"
 	MaxUIFile  = 16 << 20
 	MaxUITotal = 64 << 20
 	ChunkSize  = 64 << 10
@@ -152,8 +153,9 @@ func sparse(h *tar.Header) bool {
 }
 
 // tree checks that the entries of an archive form a tree, whatever their
-// order: no name twice, no entry under a regular file, and no regular file
-// where an entry needs a directory.
+// order: no name twice, no entry under a regular file, no regular file where
+// an entry needs a directory, and at most MaxDirs directories, so that what
+// it keeps stays small whatever the paths.
 type tree struct {
 	names map[string]bool // every entry
 	files map[string]bool // regular files
@@ -188,8 +190,10 @@ func (t *tree) add(name string, file bool) bool {
 	t.names[name] = true
 	if file {
 		t.files[name] = true
+	} else {
+		t.dirs[name] = true
 	}
-	return true
+	return len(t.dirs) <= MaxDirs
 }
 
 func packageAEAD(key, fileID []byte) (cipher.AEAD, error) {

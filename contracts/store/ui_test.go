@@ -1,7 +1,6 @@
 package store
 
 import (
-	"archive/tar"
 	"bytes"
 	"errors"
 	"fmt"
@@ -24,45 +23,32 @@ type uiVector struct {
 	Files []string  `json:"files,omitempty"`
 }
 
-// goodUI returns the entries of a valid UI tar.
-func goodUI() []entry {
-	return []entry{
-		{"ui/", nil, tar.TypeDir},
-		{"ui/index.html", []byte("<!doctype html><title>Terminal</title>"), tar.TypeReg},
-		{"ui/icon.svg", []byte("<svg/>"), tar.TypeReg},
-		{"ui/css/app.css", []byte("body{margin:0}\n"), tar.TypeReg},
-	}
+// uiSpec is an entry a test writes with UIWriter: a directory, or a file and
+// its data.
+type uiSpec struct {
+	path string
+	dir  bool
+	data []byte
 }
 
-// withSum stores the checksum of a header block patched after rawHeader.
-func withSum(h []byte) []byte {
-	copy(h[148:156], "        ")
-	sum := 0
-	for _, c := range h {
-		sum += int(c)
-	}
-	copy(h[148:156], fmt.Sprintf("%06o\x00 ", sum))
-	return h
-}
+func uiDir(path string) uiSpec        { return uiSpec{path: path, dir: true} }
+func uiFile(path, data string) uiSpec { return uiSpec{path: path, data: []byte(data)} }
 
-// oneFile is a regular file of one byte, "x", after a hand-made header that
-// patch may change.
-func oneFile(name string, patch func(h []byte)) []byte {
-	h := rawHeader(name, 1, tar.TypeReg)
-	patch(h)
-	return append(withSum(h), pad512([]byte("x"))...)
-}
-
-// gnuTar writes the good UI entries and then a file in the GNU format.
-func gnuTar(t testing.TB) []byte {
+// writeUI writes entries and the end marker with UIWriter.
+func writeUI(t testing.TB, entries ...uiSpec) []byte {
 	t.Helper()
-	buf := bytes.NewBuffer(withoutEnd(buildTar(t, goodUI())))
-	w := tar.NewWriter(buf)
-	if err := w.WriteHeader(&tar.Header{Name: "ui/gnu.txt", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg, Format: tar.FormatGNU}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.Write([]byte("x")); err != nil {
-		t.Fatal(err)
+	var buf bytes.Buffer
+	w := NewUIWriter(&buf)
+	for _, e := range entries {
+		var err error
+		if e.dir {
+			err = w.Dir(e.path)
+		} else {
+			err = w.File(e.path, int64(len(e.data)), bytes.NewReader(e.data))
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", e.path, err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
@@ -70,54 +56,186 @@ func gnuTar(t testing.TB) []byte {
 	return buf.Bytes()
 }
 
-// uiCases returns the cases of ui.json. Each invalid one differs from the
-// valid one by breaking exactly one rule of WalkUI.
+// header is a header block as UIWriter writes it, changed by patch, with its
+// checksum computed again.
+func header(flag byte, name string, size int64, patch func(*[blockSize]byte)) []byte {
+	b := uiHeader(flag, name, size)
+	if patch != nil {
+		patch(b)
+		copy(b[148:156], octalField(int64(headerSum(b)), 7)+" ")
+	}
+	return b[:]
+}
+
+// rawFile is a file entry: its header, changed by patch, and its data.
+func rawFile(name, data string, patch func(*[blockSize]byte)) []byte {
+	return append(header('0', name, int64(len(data)), patch), pad512([]byte(data))...)
+}
+
+// rawPAX is a PAX header, changed by patch, whose data is record.
+func rawPAX(record string, patch func(*[blockSize]byte)) []byte {
+	return append(header('x', "", int64(len(record)), patch), pad512([]byte(record))...)
+}
+
+// afterPAX is the header of a file of data "x" that follows a PAX header.
+func afterPAX() []byte { return rawFile("", "x", nil) }
+
+// deepFiles returns files whose paths imply dirs directories in all, "ui"
+// included: "ui/dN" and 97 levels below it per file, as many as needed.
+func deepFiles(dirs int) []uiSpec {
+	var files []uiSpec
+	for i, left := 0, dirs-1; left > 0; i++ {
+		depth := min(left, 98)
+		files = append(files, uiFile("ui/d"+strconv.Itoa(i)+strings.Repeat("/a", depth-1)+"/f", "x"))
+		left -= depth
+	}
+	return files
+}
+
+// uiCases returns the cases of ui.json. Each invalid one breaks exactly one
+// rule of WalkUI, "PAX path empty, the header keeps its name" aside, a case
+// in which other tar readers disagree.
 func uiCases(t testing.TB) []uiVector {
 	t.Helper()
-	good := goodUI()
-	valid := buildTar(t, good)
-	entries := withoutEnd(valid)
-	with := func(extra ...entry) []byte { return buildTar(t, append(goodUI(), extra...)) }
-	goodFiles := []string{"ui/index.html", "ui/icon.svg", "ui/css/app.css"}
-	// 200 bytes below ui/, split by USTAR into prefix and name; one byte more
-	// is no ValidPath.
-	path200 := "ui/" + strings.Repeat("a", 100) + "/" + strings.Repeat("b", 99)
-	path201 := "ui/" + strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100)
-	// A name too long for USTAR, so tar.Writer puts it in a PAX record.
-	paxName := "ui/" + strings.Repeat("c", 150)
-	cssData := bytes.Index(valid, good[3].body)
-	return []uiVector{
-		{Name: "valid", Tar: valid, Valid: true, Files: goodFiles},
-		{Name: "only the end marker", Tar: slices.Clone(endMarker), Valid: true},
-		{Name: "path of 200 bytes", Tar: with(entry{path200, []byte("x"), tar.TypeReg}), Valid: true, Files: append(slices.Clone(goodFiles), path200)},
-		{Name: "file name in a PAX header", Tar: with(entry{paxName, []byte("x"), tar.TypeReg}), Valid: true, Files: append(slices.Clone(goodFiles), paxName)},
-		// The twin of the two cases with a patched header below.
-		{Name: "hand-made header", Tar: slices.Concat(entries, oneFile("ui/h.txt", func([]byte) {}), endMarker), Valid: true, Files: append(slices.Clone(goodFiles), "ui/h.txt")},
+	end := endMarker
+	cat := slices.Concat[[]byte]
+	// The one file "ui/x.txt" of data "x", its header changed by patch.
+	file := func(patch func(*[blockSize]byte)) []byte { return cat(rawFile("ui/x.txt", "x", patch), end) }
+	// The same file, its checksum plus delta written by format.
+	sumAs := func(format string, delta int) []byte {
+		b := uiHeader('0', "ui/x.txt", 1)
+		copy(b[148:156], fmt.Sprintf(format, headerSum(b)+delta))
+		return cat(b[:], pad512([]byte("x")), end)
+	}
+	long := "ui/" + strings.Repeat("c", 150) // needs a PAX header
+	record := paxPathRecord(long)
+	rest := record[strings.IndexByte(record, ' '):] // " path=…\n"
+	withPAX := func(data string) []byte { return cat(rawPAX(data, nil), afterPAX(), end) }
+	n100 := "ui/" + strings.Repeat("n", 97)
+	n101 := "ui/" + strings.Repeat("n", 98)
+	p200 := "ui/" + strings.Repeat("a", 100) + "/" + strings.Repeat("b", 99)
+	dLong := "ui/" + strings.Repeat("d", 98) // "ui/ddd…/" has 102 bytes
+	deep := deepFiles(MaxDirs)
+	var deepPaths []string
+	for _, f := range deep {
+		deepPaths = append(deepPaths, f.path)
+	}
 
-		{Name: "symlink", Tar: with(entry{"ui/link", nil, tar.TypeSymlink})},
-		{Name: "hard link", Tar: with(entry{"ui/hardlink", nil, tar.TypeLink})},
-		{Name: "fifo", Tar: with(entry{"ui/fifo", nil, tar.TypeFifo})},
-		{Name: "parent directory", Tar: with(entry{"ui/../x", []byte("x"), tar.TypeReg})},
-		{Name: "absolute path", Tar: with(entry{"/ui/x", []byte("x"), tar.TypeReg})},
-		{Name: "outside ui", Tar: with(entry{ManifestFile, []byte("{}"), tar.TypeReg})},
-		{Name: "hidden file", Tar: with(entry{"ui/.htaccess", []byte("x"), tar.TypeReg})},
-		{Name: "path of 201 bytes", Tar: with(entry{path201, []byte("x"), tar.TypeReg})},
-		{Name: "duplicate", Tar: with(good[1])},
-		{Name: "entry under a file", Tar: with(entry{"ui/index.html/x", []byte("x"), tar.TypeReg})},
-		{Name: "file where a directory is needed", Tar: with(entry{"ui/css", []byte("x"), tar.TypeReg})},
-		{Name: "file where a directory entry needs a directory", Tar: with(entry{"ui/img/icons/", nil, tar.TypeDir}, entry{"ui/img", []byte("x"), tar.TypeReg})},
-		{Name: "directory with a size", Tar: slices.Concat(entries, rawHeader("ui/img/", 1, tar.TypeDir), endMarker)},
+	return []uiVector{
+		{Name: "valid", Tar: writeUI(t, uiDir("ui"), uiDir("ui/css"),
+			uiFile("ui/index.html", "<!doctype html><title>Terminal</title>"), uiFile("ui/icon.svg", "<svg/>"),
+			uiFile("ui/css/app.css", "body{margin:0}\n")),
+			Valid: true, Files: []string{"ui/index.html", "ui/icon.svg", "ui/css/app.css"}},
+		{Name: "one file", Tar: file(nil), Valid: true, Files: []string{"ui/x.txt"}},
+		{Name: "only the end marker", Tar: slices.Clone(end), Valid: true},
+		{Name: "empty file", Tar: writeUI(t, uiFile("ui/empty.txt", "")), Valid: true, Files: []string{"ui/empty.txt"}},
+		{Name: "file of one block", Tar: writeUI(t, uiFile("ui/b.bin", strings.Repeat("z", blockSize))), Valid: true, Files: []string{"ui/b.bin"}},
+		{Name: "name of 100 bytes in the header", Tar: writeUI(t, uiFile(n100, "x")), Valid: true, Files: []string{n100}},
+		{Name: "name of 101 bytes in a PAX header", Tar: writeUI(t, uiFile(n101, "x")), Valid: true, Files: []string{n101}},
+		{Name: "path of 200 bytes", Tar: writeUI(t, uiFile(p200, "x")), Valid: true, Files: []string{p200}},
+		{Name: "directory with a long name", Tar: writeUI(t, uiDir(dLong), uiFile(dLong+"/f", "x")), Valid: true, Files: []string{dLong + "/f"}},
+		{Name: "MaxDirs directories", Tar: writeUI(t, deep...), Valid: true, Files: deepPaths},
+
+		// The header layout, one field at a time.
+		{Name: "name with bytes after its NUL", Tar: file(func(b *[blockSize]byte) { copy(b[9:], "junk") })},
+		{Name: "name field empty", Tar: cat(rawFile("", "x", nil), end)},
+		{Name: "file mode 0600", Tar: file(func(b *[blockSize]byte) { copy(b[100:108], "0000600\x00") })},
+		{Name: "mode not octal", Tar: file(func(b *[blockSize]byte) { copy(b[100:108], "0000999\x00") })},
+		{Name: "mode with setuid", Tar: file(func(b *[blockSize]byte) { copy(b[100:108], "0004644\x00") })},
+		{Name: "directory with the mode of a file", Tar: cat(header('5', "ui/d/", 0, func(b *[blockSize]byte) { copy(b[100:108], "0000644\x00") }), end)},
+		{Name: "uid 1", Tar: file(func(b *[blockSize]byte) { copy(b[108:116], "0000001\x00") })},
+		{Name: "gid 1", Tar: file(func(b *[blockSize]byte) { copy(b[116:124], "0000001\x00") })},
+		{Name: "size with a leading space", Tar: file(func(b *[blockSize]byte) { copy(b[124:136], " 0000000001\x00") })},
+		{Name: "size 1, then NUL bytes", Tar: file(func(b *[blockSize]byte) { copy(b[124:136], "1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00") })},
+		{Name: "size without its NUL", Tar: file(func(b *[blockSize]byte) { b[135] = ' ' })},
+		{Name: "mtime 1", Tar: file(func(b *[blockSize]byte) { copy(b[136:148], "00000000001\x00") })},
+		{Name: "wrong checksum", Tar: sumAs("%06o\x00 ", 1)},
+		{Name: "checksum of 7 digits and NUL", Tar: sumAs("%07o\x00", 0)},
+		{Name: "checksum with leading spaces", Tar: sumAs("%7o ", 0)},
+		{Name: "checksum without its space", Tar: sumAs("%06o\x00\x00", 0)},
+		{Name: "checksum with its NUL and space swapped", Tar: sumAs("%06o \x00", 0)},
+		{Name: "typeflag NUL", Tar: file(func(b *[blockSize]byte) { b[156] = 0 })},
+		{Name: "typeflag NUL with a trailing slash", Tar: cat(header('5', "ui/nd/", 0, func(b *[blockSize]byte) { b[156] = 0 }), end)},
+		{Name: "symlink", Tar: cat(header('2', "ui/link", 0, nil), end)},
+		{Name: "hard link", Tar: cat(header('1', "ui/hardlink", 0, nil), end)},
+		{Name: "fifo", Tar: cat(header('6', "ui/fifo", 0, nil), end)},
+		{Name: "contiguous file", Tar: file(func(b *[blockSize]byte) { b[156] = '7' })},
+		{Name: "global PAX header", Tar: cat(rawPAX(record, func(b *[blockSize]byte) { b[156] = 'g' }), afterPAX(), end)},
+		{Name: "linkname on a file", Tar: file(func(b *[blockSize]byte) { copy(b[157:], "/etc/shadow") })},
+		{Name: "magic of GNU tar", Tar: file(func(b *[blockSize]byte) { copy(b[257:265], "ustar  \x00") })},
+		{Name: "version xx", Tar: file(func(b *[blockSize]byte) { copy(b[263:265], "xx") })},
+		{Name: "version NUL NUL", Tar: file(func(b *[blockSize]byte) { copy(b[263:265], "\x00\x00") })},
+		{Name: "uname and gname", Tar: file(func(b *[blockSize]byte) { copy(b[265:], "root"); copy(b[297:], "root") })},
+		{Name: "devmajor", Tar: file(func(b *[blockSize]byte) { copy(b[329:337], "0000007\x00") })},
+		{Name: "prefix", Tar: file(func(b *[blockSize]byte) { copy(b[345:], "ui") })},
+		{Name: "STAR trailer", Tar: file(func(b *[blockSize]byte) { copy(b[508:], "tar\x00") })},
+		{Name: "bytes 500 to 507", Tar: file(func(b *[blockSize]byte) { copy(b[500:], "GARBAGE!") })},
+		{Name: "directory with a size", Tar: cat(header('5', "ui/d/", 1, nil), pad512([]byte("x")), end)},
+
+		// PAX headers.
+		{Name: "PAX header with a name", Tar: cat(rawPAX(record, func(b *[blockSize]byte) { copy(b[:], "PaxHeaders/0") }), afterPAX(), end)},
+		{Name: "PAX header with mode 0000", Tar: cat(rawPAX(record, func(b *[blockSize]byte) { copy(b[100:108], "0000000\x00") }), afterPAX(), end)},
+		{Name: "name after a PAX header", Tar: cat(rawPAX(record, nil), rawFile("ui/y.txt", "x", nil), end)},
+		{Name: "PAX uid record", Tar: withPAX(record + paxRecord("uid", "abc"))},
+		{Name: "PAX mtime record", Tar: withPAX(record + paxRecord("mtime", "x"))},
+		{Name: "PAX comment record", Tar: withPAX(record + paxRecord("comment", "hi"))},
+		{Name: "PAX linkpath record", Tar: withPAX(record + paxRecord("linkpath", "/etc/shadow"))},
+		{Name: "PAX size record", Tar: cat(rawPAX(record+paxRecord("size", "1"), nil), header('0', "", 0, nil), pad512([]byte("x")), end)},
+		{Name: "PAX size record with a plus", Tar: cat(rawPAX(record+paxRecord("size", "+1"), nil), header('0', "", 0, nil), pad512([]byte("x")), end)},
+		{Name: "PAX size record below 0", Tar: withPAX(record + paxRecord("size", "-1"))},
+		{Name: "PAX path twice", Tar: withPAX(record + paxPathRecord("ui/"+strings.Repeat("e", 150)))},
+		{Name: "PAX path empty", Tar: withPAX(paxPathRecord(""))},
+		{Name: "PAX path empty, the header keeps its name", Tar: cat(rawPAX(paxPathRecord(""), nil), rawFile("ui/keep.txt", "x", nil), end)},
+		{Name: "PAX path for a short name", Tar: withPAX(paxPathRecord("ui/p.txt"))},
+		{Name: "PAX path of 100 bytes", Tar: withPAX(paxPathRecord(n100))},
+		{Name: "PAX length with a leading zero", Tar: withPAX("0" + strconv.Itoa(len(record)+1) + rest)},
+		{Name: "PAX length with a plus sign", Tar: withPAX("+" + strconv.Itoa(len(record)+1) + rest)},
+		{Name: "PAX length off by one", Tar: withPAX(strconv.Itoa(len(record)+1) + rest)},
+		{Name: "PAX record without its newline", Tar: withPAX(strconv.Itoa(len(record)-1) + rest[:len(rest)-1])},
+		{Name: "PAX size longer than its record", Tar: cat(header('x', "", int64(len(record)+7), nil), pad512([]byte(record)), afterPAX(), end)},
+		{Name: "PAX size shorter than its record", Tar: cat(header('x', "", int64(len(record)-1), nil), pad512([]byte(record)), afterPAX(), end)},
+		{Name: "two PAX headers in a row", Tar: cat(rawPAX(record, nil), rawPAX(paxPathRecord("ui/"+strings.Repeat("e", 150)), nil), afterPAX(), end)},
+		{Name: "PAX header before the end marker", Tar: cat(rawPAX(record, nil), end)},
+		{Name: "PAX padding not NUL", Tar: cat(func() []byte {
+			b := rawPAX(record, nil)
+			b[len(b)-1] = 'x'
+			return b
+		}(), afterPAX(), end)},
+		// Declared too long and nothing after it: WalkUI refuses the header
+		// before it reads the data; one with its data is in TestWalkUILimits.
+		{Name: "PAX data longer than a block, header only", Tar: cat(header('x', "", blockSize+1, nil), end)},
+
+		// Data and the end of the archive.
+		{Name: "data padding not NUL", Tar: cat(func() []byte {
+			b := rawFile("ui/x.txt", "x", nil)
+			b[len(b)-1] = 'x'
+			return b
+		}(), end)},
+		{Name: "truncated archive", Tar: rawFile("ui/x.txt", "0123456789", nil)[:blockSize+5]},
+		{Name: "empty archive", Tar: []byte{}},
+		{Name: "no end marker", Tar: rawFile("ui/x.txt", "x", nil)},
+		{Name: "one zero block", Tar: cat(rawFile("ui/x.txt", "x", nil), end[:blockSize])},
+		{Name: "an entry after one zero block", Tar: cat(rawFile("ui/x.txt", "x", nil), end[:blockSize], rawFile("ui/y.txt", "y", nil), end)},
+		{Name: "data after the end marker", Tar: cat(rawFile("ui/x.txt", "x", nil), end, end[:blockSize])},
+
+		// Names, the tree and the limits.
+		{Name: "parent directory", Tar: cat(rawFile("ui/../x", "x", nil), end)},
+		{Name: "absolute path", Tar: cat(rawFile("/ui/x", "x", nil), end)},
+		{Name: "outside ui", Tar: cat(rawFile(ManifestFile, "{}", nil), end)},
+		{Name: "hidden file", Tar: cat(rawFile("ui/.htaccess", "x", nil), end)},
+		{Name: "non-ASCII name", Tar: cat(rawFile("ui/\xc3\xa4.txt", "x", nil), end)},
+		{Name: "path of 201 bytes", Tar: withPAX(paxPathRecord(p200 + "b"))},
+		{Name: "file named ui", Tar: cat(rawFile("ui", "x", nil), end)},
+		{Name: "directory without its slash", Tar: cat(header('5', "ui/d", 0, nil), end)},
+		{Name: "file with a trailing slash", Tar: cat(rawFile("ui/t.txt/", "x", nil), end)},
+		{Name: "duplicate", Tar: cat(rawFile("ui/x.txt", "x", nil), rawFile("ui/x.txt", "y", nil), end)},
+		{Name: "entry under a file", Tar: cat(rawFile("ui/x.txt", "x", nil), rawFile("ui/x.txt/y", "y", nil), end)},
+		{Name: "file where a directory is needed", Tar: cat(rawFile("ui/a/b", "x", nil), rawFile("ui/a", "y", nil), end)},
+		{Name: "file where a directory entry needs a directory", Tar: cat(header('5', "ui/a/b/", 0, nil), rawFile("ui/a", "y", nil), end)},
 		// Declared too large and nothing after it: WalkUI refuses the header
-		// before it reads any data.
-		{Name: "file too large, header only", Tar: slices.Concat(entries, rawHeader("ui/big.bin", MaxUIFile+1, tar.TypeReg))},
-		{Name: "sparse file", Tar: slices.Concat(entries, sparseEntry("ui/x.bin", 4096), endMarker)},
-		{Name: "GNU header", Tar: gnuTar(t)},
-		{Name: "number field ending in a space", Tar: slices.Concat(entries, oneFile("ui/n.txt", func(h []byte) { h[135] = ' ' }), endMarker)},
-		{Name: "non-ASCII byte in a header", Tar: slices.Concat(entries, oneFile("ui/u.txt", func(h []byte) { copy(h[265:297], "\xc3\xbc") }), endMarker)},
-		{Name: "truncated archive", Tar: slices.Clone(valid[:cssData+5])},
-		{Name: "no end marker", Tar: entries},
-		{Name: "one zero block", Tar: slices.Concat(entries, endMarker[:512])},
-		{Name: "data after the end marker", Tar: slices.Concat(valid, endMarker[:512])},
+		// before it reads the data; one with its data is in TestWalkUILimits.
+		{Name: "file too large, header only", Tar: cat(header('0', "ui/big.bin", MaxUIFile+1, nil), end)},
+		{Name: "one directory too many", Tar: cat(withoutEnd(writeUI(t, deep...)), rawFile("ui/extra/f", "x", nil), end)},
 	}
 }
 
@@ -140,193 +258,275 @@ func walkUIFiles(b []byte) ([]string, [][]byte, error) {
 	return paths, data, err
 }
 
+// rewrite reads b with walkUI and writes what it read again with UIWriter.
+func rewrite(t testing.TB, b []byte) ([]byte, error) {
+	var entries []uiSpec
+	err := walkUI(bytes.NewReader(b), func(f PackFile, body io.Reader) error {
+		d, err := io.ReadAll(body)
+		entries = append(entries, uiSpec{path: f.Path, data: d})
+		return err
+	}, func(path string) { entries = append(entries, uiDir(path)) })
+	if err != nil {
+		return nil, err
+	}
+	return writeUI(t, entries...), nil
+}
+
 func TestUIVectors(t *testing.T) {
 	cases := uiCases(t)
+	names := map[string]bool{}
 	for _, c := range cases {
-		paths, _, err := walkUIFiles(c.Tar)
-		if (err == nil) != c.Valid {
-			t.Errorf("%s: %v", c.Name, err)
+		if names[c.Name] {
+			t.Errorf("%s twice", c.Name)
 		}
-		if err != nil && err != ErrPackage {
-			t.Errorf("%s: got %v, want %v", c.Name, err, ErrPackage)
+		names[c.Name] = true
+		paths, _, err := walkUIFiles(c.Tar)
+		if (err == nil) != c.Valid || (err != nil && err != ErrPackage) {
+			t.Errorf("%s: %v", c.Name, err)
 		}
 		if c.Valid && !slices.Equal(paths, c.Files) {
 			t.Errorf("%s: files %q, want %q", c.Name, paths, c.Files)
 		}
+		// One form only: what WalkUI accepts is exactly what UIWriter writes.
+		if again, err := rewrite(t, c.Tar); c.Valid && (err != nil || !bytes.Equal(again, c.Tar)) {
+			t.Errorf("%s: UIWriter writes it otherwise", c.Name)
+		}
+	}
+	// The header cases change what UIWriter writes for one file.
+	if !bytes.Equal(slices.Concat(rawFile("ui/x.txt", "x", nil), endMarker), writeUI(t, uiFile("ui/x.txt", "x"))) {
+		t.Error("rawFile differs from UIWriter")
 	}
 	golden.Check(t, *update, "ui.json", cases)
 }
 
-func TestWalkUI(t *testing.T) {
-	paths, data, err := walkUIFiles(buildTar(t, goodUI()))
-	if err != nil || !slices.Equal(paths, []string{"ui/index.html", "ui/icon.svg", "ui/css/app.css"}) ||
-		string(data[2]) != "body{margin:0}\n" {
-		t.Fatalf("%q, %q, %v", paths, data, err)
+func TestUIWriter(t *testing.T) {
+	// Write, then walk: the same files with the same data.
+	big := strings.Repeat("z", 3*blockSize+7)
+	b := writeUI(t, uiDir("ui"), uiFile("ui/index.html", "<!doctype html>"), uiFile("ui/big.bin", big),
+		uiFile("ui/"+strings.Repeat("p", 150), "long"), uiDir("ui/"+strings.Repeat("q", 120)), uiFile("ui/empty", ""))
+	paths, data, err := walkUIFiles(b)
+	if err != nil || len(paths) != 4 || paths[1] != "ui/big.bin" || string(data[1]) != big || string(data[2]) != "long" || len(data[3]) != 0 {
+		t.Fatalf("round trip: %q, %v", paths, err)
 	}
-	// fn's own error comes back as it is.
+	refuse := map[string]func(w *UIWriter) error{
+		"bad name":              func(w *UIWriter) error { return w.File("ui/../x", 1, strings.NewReader("x")) },
+		"file named ui":         func(w *UIWriter) error { return w.File("ui", 1, strings.NewReader("x")) },
+		"directory outside ui":  func(w *UIWriter) error { return w.Dir("x") },
+		"file too large":        func(w *UIWriter) error { return w.File("ui/x", MaxUIFile+1, strings.NewReader("x")) },
+		"negative size":         func(w *UIWriter) error { return w.File("ui/x", -1, strings.NewReader("x")) },
+		"fewer bytes than size": func(w *UIWriter) error { return w.File("ui/x", 2, strings.NewReader("x")) },
+		"duplicate": func(w *UIWriter) error {
+			_ = w.File("ui/x", 1, strings.NewReader("x"))
+			return w.File("ui/x", 1, strings.NewReader("x"))
+		},
+		"under a file": func(w *UIWriter) error {
+			_ = w.File("ui/x", 1, strings.NewReader("x"))
+			return w.Dir("ui/x/y")
+		},
+		"one directory too many": func(w *UIWriter) error {
+			for _, f := range deepFiles(MaxDirs) {
+				_ = w.File(f.path, 1, strings.NewReader("x"))
+			}
+			return w.File("ui/extra/f", 1, strings.NewReader("x"))
+		},
+		"after Close": func(w *UIWriter) error {
+			_ = w.Close()
+			return w.Dir("ui")
+		},
+	}
+	for name, f := range refuse {
+		w := NewUIWriter(io.Discard)
+		if err := f(w); err != ErrPackage {
+			t.Errorf("%s: got %v, want %v", name, err, ErrPackage)
+		}
+		if err := w.Dir("ui"); err == nil {
+			t.Errorf("%s: the writer goes on after an error", name)
+		}
+	}
+}
+
+// TestUIFromPackage builds the UI tar of a package as the API does: Walk the
+// package, write its UI files with UIWriter, and WalkUI reads them back.
+func TestUIFromPackage(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewUIWriter(&buf)
+	_, err := Walk(bytes.NewReader(buildTar(t, goodEntries(t))), func(m *Manifest, f PackFile, body io.Reader) error {
+		if f.Kind != KindUI {
+			return nil
+		}
+		return w.File(f.Path, f.Size, body)
+	})
+	if err != nil || w.Close() != nil {
+		t.Fatal(err)
+	}
+	paths, _, err := walkUIFiles(buf.Bytes())
+	if err != nil || !slices.Equal(paths, []string{"ui/index.html", "ui/icon.svg"}) {
+		t.Errorf("%q, %v", paths, err)
+	}
+}
+
+func TestWalkUI(t *testing.T) {
+	valid := writeUI(t, uiDir("ui"), uiFile("ui/a", "aa"), uiFile("ui/b", "bb"))
+	// fn's own error comes back as it is, and fn never sees a directory.
 	stop := errors.New("stop")
-	calls := 0
-	err = WalkUI(bytes.NewReader(buildTar(t, goodUI())), func(PackFile, io.Reader) error { calls++; return stop })
-	if err != stop || calls != 1 {
-		t.Errorf("fn's error: %v after %d calls", err, calls)
+	var seen []string
+	err := WalkUI(bytes.NewReader(valid), func(f PackFile, _ io.Reader) error { seen = append(seen, f.Path); return stop })
+	if err != stop || !slices.Equal(seen, []string{"ui/a"}) {
+		t.Errorf("fn's error: %v after %q", err, seen)
 	}
 	// Data cut short reaches fn as ErrPackage.
-	valid := buildTar(t, goodUI())
-	cut := valid[:bytes.Index(valid, goodUI()[3].body)+5]
 	var readErr error
-	err = WalkUI(bytes.NewReader(cut), func(f PackFile, body io.Reader) error {
+	err = WalkUI(bytes.NewReader(rawFile("ui/x.txt", "0123456789", nil)[:blockSize+5]), func(_ PackFile, body io.Reader) error {
 		_, readErr = io.ReadAll(body)
 		return readErr
 	})
 	if err != ErrPackage || readErr != ErrPackage {
 		t.Errorf("cut data: %v, fn read %v", err, readErr)
 	}
-}
-
-// bigUITar returns a UI tar of n files named ui/f<i> of size bytes each.
-func bigUITar(t testing.TB, n int, size int) []byte {
-	t.Helper()
-	entries := []entry{{"ui/", nil, tar.TypeDir}}
-	body := make([]byte, size)
-	for i := range n {
-		entries = append(entries, entry{"ui/f" + strconv.Itoa(i), body, tar.TypeReg})
+	// fn may leave data unread; WalkUI skips it.
+	if err := WalkUI(bytes.NewReader(valid), func(PackFile, io.Reader) error { return nil }); err != nil {
+		t.Errorf("unread data: %v", err)
 	}
-	return buildTar(t, entries)
 }
 
-// TestWalkUILimits covers the limits too large for ui.json, on both sides.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+// zeros reads as n NUL bytes.
+func zeros(n int64) io.Reader { return io.LimitReader(zeroReader{}, n) }
+
+// uiPipe streams a UI tar: n files "ui/f<i>" of size NUL bytes each, written
+// by UIWriter, then raw instead of the end marker if raw is set. The caller
+// closes the reader, which ends the writer.
+func uiPipe(n int, size int64, raw []byte) *io.PipeReader {
+	pr, pw := io.Pipe()
+	go func() {
+		w := NewUIWriter(pw)
+		var err error
+		for i := 0; i < n && err == nil; i++ {
+			err = w.File("ui/f"+strconv.Itoa(i), size, zeros(size))
+		}
+		switch {
+		case err == nil && raw != nil:
+			_, err = pw.Write(raw)
+		case err == nil:
+			err = w.Close()
+		}
+		pw.CloseWithError(err)
+	}()
+	return pr
+}
+
+// TestWalkUILimits covers the limits too large for ui.json, on both sides,
+// with the data in the archive: WalkUI refuses from the header, while a
+// reader that reads the data first could pass the header-only vectors.
 func TestWalkUILimits(t *testing.T) {
+	bigRecord := paxPathRecord("ui/" + strings.Repeat("x", 1<<20+1-17))
+	if len(bigRecord) != 1<<20+1 {
+		t.Fatalf("record of %d bytes", len(bigRecord))
+	}
 	cases := []struct {
 		name  string
-		tar   []byte
+		tar   func() io.Reader
 		valid bool
 	}{
-		{"MaxUIFile", bigUITar(t, 1, MaxUIFile), true},
-		{"file too large, with its data", bigUITar(t, 1, MaxUIFile+1), false},
-		{"MaxUITotal in all", bigUITar(t, MaxUITotal/MaxUIFile, MaxUIFile), true},
-		{"total too large", buildTar(t, append(slices.Clone(goodUI()), func() []entry {
-			var e []entry
-			for i := range MaxUITotal / MaxUIFile {
-				e = append(e, entry{"ui/big" + strconv.Itoa(i), make([]byte, MaxUIFile), tar.TypeReg})
-			}
-			return e
-		}()...)), false},
-		{"MaxEntries entries", bigUITar(t, MaxEntries-1, 1), true},
-		{"too many entries", bigUITar(t, MaxEntries, 1), false},
+		{"MaxUIFile", func() io.Reader { return uiPipe(1, MaxUIFile, nil) }, true},
+		{"file too large, with its data", func() io.Reader {
+			return io.MultiReader(bytes.NewReader(header('0', "ui/big.bin", MaxUIFile+1, nil)), zeros(MaxUIFile+blockSize), bytes.NewReader(endMarker))
+		}, false},
+		{"MaxUITotal in all", func() io.Reader { return uiPipe(MaxUITotal/MaxUIFile, MaxUIFile, nil) }, true},
+		{"total too large", func() io.Reader {
+			return uiPipe(MaxUITotal/MaxUIFile, MaxUIFile, slices.Concat(rawFile("ui/one-more", "x", nil), endMarker))
+		}, false},
+		{"MaxEntries entries", func() io.Reader { return uiPipe(MaxEntries, 0, nil) }, true},
+		{"too many entries", func() io.Reader {
+			return uiPipe(MaxEntries, 0, slices.Concat(rawFile("ui/one-more", "", nil), endMarker))
+		}, false},
+		{"PAX data of 1 MiB and 1 byte", func() io.Reader {
+			return io.MultiReader(bytes.NewReader(rawPAX(bigRecord, nil)), bytes.NewReader(afterPAX()), bytes.NewReader(endMarker))
+		}, false},
 	}
 	for _, c := range cases {
-		_, _, err := walkUIFiles(c.tar)
-		if (err == nil) != c.valid || (err != nil && err != ErrPackage) {
-			t.Errorf("%s: %v", c.name, err)
-		}
-	}
-}
-
-// uiStream serves an archive chunk by chunk, so a test can feed WalkUI more
-// than it may read without holding all of it.
-type uiStream struct {
-	next func() []byte // the next chunk; nil at the end
-	buf  []byte
-}
-
-func (s *uiStream) Read(p []byte) (int, error) {
-	for len(s.buf) == 0 {
-		if s.next == nil {
-			return 0, io.EOF
-		}
-		if s.buf = s.next(); s.buf == nil {
-			s.next = nil
-		}
-	}
-	n := copy(p, s.buf)
-	s.buf = s.buf[n:]
-	return n, nil
-}
-
-// paxCommentRecord is a PAX comment record of exactly n bytes.
-func paxCommentRecord(n int) []byte {
-	return []byte(paxRecord("comment", strings.Repeat("c", n-len(" comment=\n")-len(strconv.Itoa(n)))))
-}
-
-// TestWalkUIReadLimit streams archives whose files keep every limit but whose
-// PAX comments make them long: one of exactly MaxUITotal+16 MiB with its end
-// marker passes, one block longer does not.
-func TestWalkUIReadLimit(t *testing.T) {
-	const limit = MaxUITotal + uiSlack
-	const full = 1 << 20 // the longest PAX header archive/tar reads
-	perEntry := 512 + full + 512
-	n := (limit - len(endMarker)) / perEntry
-	last := limit - len(endMarker) - n*perEntry - 1024
-	if last <= 0 || last%512 != 0 || last > full {
-		t.Fatalf("no last entry fits: %d", last)
-	}
-	fullRecord := paxCommentRecord(full)
-	for _, c := range []struct {
-		name  string
-		extra int
-		valid bool
-	}{{"exactly the limit", 0, true}, {"one block more", 512, false}} {
-		var chunks [][]byte
-		for i := range n + 1 {
-			record := fullRecord
-			if i == n {
-				record = paxCommentRecord(last + c.extra)
-			}
-			if len(record) != full && len(record) != last+c.extra {
-				t.Fatalf("record of %d bytes", len(record))
-			}
-			chunks = append(chunks, rawHeader("PaxHeaders/0", int64(len(record)), tar.TypeXHeader), record,
-				rawHeader("ui/f"+strconv.Itoa(i), 0, tar.TypeReg))
-		}
-		chunks = append(chunks, endMarker)
-		size := 0
-		for _, ch := range chunks {
-			size += len(ch)
-		}
-		if size != limit+c.extra {
-			t.Fatalf("%s: archive of %d bytes", c.name, size)
-		}
+		r := c.tar()
 		files := 0
-		err := WalkUI(&uiStream{next: func() []byte {
-			if len(chunks) == 0 {
-				return nil
-			}
-			ch := chunks[0]
-			chunks = chunks[1:]
-			return ch
-		}}, func(PackFile, io.Reader) error { files++; return nil })
+		err := WalkUI(r, func(_ PackFile, body io.Reader) error {
+			files++
+			_, err := io.Copy(io.Discard, body)
+			return err
+		})
+		if pr, ok := r.(*io.PipeReader); ok {
+			pr.Close()
+		}
 		if (err == nil) != c.valid || (err != nil && err != ErrPackage) {
 			t.Errorf("%s: %v after %d files", c.name, err, files)
 		}
 	}
 }
 
+// TestWalkUITreeCost: paths of distinct directories 97 levels deep would
+// make the tree keep a directory per level, over 100 MiB for MaxEntries of
+// them; MaxDirs refuses them after ten files. The most the tree keeps is
+// MaxEntries names of 200 bytes.
+func TestWalkUITreeCost(t *testing.T) {
+	var deep bytes.Buffer
+	for i := range MaxEntries - 1 {
+		deep.Write(rawPAX(paxPathRecord(fmt.Sprintf("ui/x%05d%s/f", i, strings.Repeat("/a", 96))), nil))
+		deep.Write(afterPAX())
+	}
+	deep.Write(endMarker)
+	var long []uiSpec
+	for i := range MaxEntries {
+		long = append(long, uiFile(fmt.Sprintf("ui/%05d%s", i, strings.Repeat("n", 192)), ""))
+	}
+	cases := []struct {
+		name  string
+		tar   []byte
+		valid bool
+		max   uint64
+	}{
+		{"deep distinct paths", deep.Bytes(), false, 256 << 10},
+		{"MaxEntries long names", writeUI(t, long...), true, 16 << 20},
+	}
+	for _, c := range cases {
+		files := 0
+		var err error
+		n := allocated(func() {
+			err = WalkUI(bytes.NewReader(c.tar), func(PackFile, io.Reader) error { files++; return nil })
+		})
+		t.Logf("%s: %d bytes, %d files, %d bytes allocated", c.name, len(c.tar), files, n)
+		if (err == nil) != c.valid || n > c.max {
+			t.Errorf("%s: %v after %d files, %d bytes allocated", c.name, err, files, n)
+		}
+	}
+}
+
 func FuzzWalkUI(f *testing.F) {
 	for _, c := range uiCases(f) {
-		f.Add([]byte(c.Tar))
+		if len(c.Tar) < 64<<10 {
+			f.Add([]byte(c.Tar))
+		}
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		paths, data, err := walkUIFiles(b)
 		if err != nil {
 			return
 		}
-		// What passes keeps the limits, and the same files written again by
-		// tar.Writer pass too.
+		// What passes keeps the limits, and is exactly what UIWriter writes
+		// for the same entries: the form has one encoding.
 		var total int64
-		entries := make([]entry, len(paths))
 		for i, p := range paths {
 			if !uiPath(p) || len(data[i]) > MaxUIFile {
 				t.Fatalf("file %q of %d bytes", p, len(data[i]))
 			}
 			total += int64(len(data[i]))
-			entries[i] = entry{p, data[i], tar.TypeReg}
 		}
 		if total > MaxUITotal || len(paths) > MaxEntries {
 			t.Fatalf("%d files, %d bytes", len(paths), total)
 		}
-		again, _, err := walkUIFiles(buildTar(t, entries))
-		if err != nil || !slices.Equal(again, paths) {
-			t.Fatalf("written again: %q, %v; was %q", again, err, paths)
+		again, err := rewrite(t, b)
+		if err != nil || !bytes.Equal(again, b) {
+			t.Fatalf("accepted, but UIWriter writes it otherwise: %v", err)
 		}
 	})
 }
