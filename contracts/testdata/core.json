@@ -1,4 +1,14 @@
 {
+  "empty": {
+    "ngc.desktop/apps": [],
+    "ngc.store/installed": [],
+    "ngc.store/sources": [],
+    "ngc.store/updates": [],
+    "ngc.users/list": [],
+    "ngc.users/log": [],
+    "ngc.users/pending": [],
+    "ngc.users/rights": []
+  },
   "ngc.desktop/apps": [
     {
       "id": "org.sorglos.terminal",

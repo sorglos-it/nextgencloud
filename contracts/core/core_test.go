@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -574,10 +575,10 @@ func TestParseParamsBoundsAllocation(t *testing.T) {
 	}
 }
 
-// TestExamples writes one example result per call action, so the web
-// interface and the API test against the same JSON.
-func TestExamples(t *testing.T) {
-	examples := map[string]any{
+// examples returns one example result per action with a result, and a
+// notice.
+func examples() map[string]any {
+	return map[string]any{
 		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
 		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
 		"ngc.desktop/totp-begin": TOTPBegin{Secret: "JBSWY3DPEHPK3PXP", URI: "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP&issuer=NGC"},
@@ -597,6 +598,13 @@ func TestExamples(t *testing.T) {
 		"ngc.store/updates":      []UpdateInfo{{Target: "ngc-api", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00", State: store.UpdateAvailable}},
 		"notice":                 Notice{Level: NoticeWarn, Text: "Die Lizenz für Terminal läuft in 3 Tagen ab.", App: "org.sorglos.terminal"},
 	}
+}
+
+// TestExamples writes one example result per call action, so the web
+// interface and the API test against the same JSON. "empty" holds the
+// results that are lists again, empty, as EncodeResult sends them.
+func TestExamples(t *testing.T) {
+	examples := examples()
 	// The examples keep the rules the shell checks.
 	for _, e := range examples["ngc.users/log"].([]LogEntry) {
 		if !ValidLogID(e.ID) {
@@ -615,7 +623,76 @@ func TestExamples(t *testing.T) {
 	if _, err := ParseNotice(notice); err != nil {
 		t.Errorf("notice: %v", err)
 	}
+	empty := map[string]json.RawMessage{}
+	for name, v := range examples {
+		if typ := reflect.TypeOf(v); typ.Kind() == reflect.Slice {
+			b, err := EncodeResult(reflect.Zero(typ).Interface())
+			if err != nil {
+				t.Fatal(err)
+			}
+			empty[name] = b
+		}
+	}
+	examples["empty"] = empty
 	golden.Check(t, *update, "core.json", examples)
+}
+
+// TestEncodeResult: each of the eight results that are lists comes out as []
+// when nil, where encoding/json writes null; every example comes out as
+// encoding/json writes it, but for escapes; a null or a result too large is
+// ErrResult.
+func TestEncodeResult(t *testing.T) {
+	var lists []string
+	for name, v := range examples() {
+		if typ := reflect.TypeOf(v); typ.Kind() == reflect.Slice {
+			lists = append(lists, name)
+			none := reflect.Zero(typ).Interface()
+			if b, _ := json.Marshal(none); string(b) != "null" {
+				t.Errorf("%s: encoding/json writes %s", name, b)
+			}
+			for _, list := range []any{none, reflect.MakeSlice(typ, 0, 0).Interface()} {
+				if b, err := EncodeResult(list); err != nil || string(b) != "[]" {
+					t.Errorf("%s: %s, %v", name, b, err)
+				}
+			}
+		}
+		// The shell tests with core.json, which encoding/json writes; the API
+		// sends what EncodeResult writes.
+		v1, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v2, err := EncodeResult(v)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var a, b any
+		if json.Unmarshal(v1, &a) != nil || json.Unmarshal(v2, &b) != nil || !reflect.DeepEqual(a, b) {
+			t.Errorf("%s: EncodeResult writes %s, encoding/json %s", name, v2, v1)
+		}
+	}
+	slices.Sort(lists)
+	want := []string{"ngc.desktop/apps", "ngc.store/installed", "ngc.store/sources", "ngc.store/updates",
+		"ngc.users/list", "ngc.users/log", "ngc.users/pending", "ngc.users/rights"}
+	if !slices.Equal(lists, want) {
+		t.Errorf("results that are lists: %q", lists)
+	}
+	for name, v := range map[string]any{
+		"nil":           nil,
+		"nil pointer":   (*Me)(nil),
+		"null member":   struct{ P *int }{},
+		"too large":     strings.Repeat("x", wire.MaxCallResult-1),
+		"invalid UTF-8": "\xff",
+		"cannot encode": func() {},
+	} {
+		if _, err := EncodeResult(v); err != ErrResult {
+			t.Errorf("%s: got %v, want %v", name, err, ErrResult)
+		}
+	}
+	// At the limit it still passes.
+	if b, err := EncodeResult(strings.Repeat("x", wire.MaxCallResult-2)); err != nil || len(b) != wire.MaxCallResult {
+		t.Errorf("result of wire.MaxCallResult bytes: %d, %v", len(b), err)
+	}
 }
 
 func FuzzParseParams(f *testing.F) {

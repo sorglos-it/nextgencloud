@@ -1,8 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"io"
 	"regexp"
@@ -67,11 +70,11 @@ type DesktopApp struct {
 	Name    string   `json:"name"`
 	Version string   `json:"version"`
 	Icon    string   `json:"icon,omitempty"` // path below ui/
-	Width   int      `json:"width,omitempty"`
-	Height  int      `json:"height,omitempty"`
+	Width   int      `json:"width,omitzero"`
+	Height  int      `json:"height,omitzero"`
 	Actions []string `json:"actions,omitempty"` // actions this user may use
 	State   string   `json:"state"`
-	Core    bool     `json:"core,omitempty"` // app store and users & rights; their UI is part of the shell
+	Core    bool     `json:"core,omitzero"` // app store and users & rights; their UI is part of the shell
 	// Node is the controller the app's services run on (trust list node ID);
 	// the shell needs it for noisep.E2EPrologue and the controller's Noise
 	// key and never shows it; empty for apps without services.
@@ -91,7 +94,7 @@ type UserInfo struct {
 	Roles     []string `json:"roles,omitempty"`
 	TOTP      bool     `json:"totp"`
 	Locked    bool     `json:"locked"`
-	LastLogin int64    `json:"lastLogin,omitempty"`
+	LastLogin int64    `json:"lastLogin,omitzero"`
 }
 
 // PairCodeResult answers ngc.users/pair-code and ngc.users/join-code.
@@ -134,9 +137,9 @@ type SourceInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	URL     string `json:"url"`
-	Seq     uint64 `json:"seq"`               // newest catalog seen
-	Checked int64  `json:"checked,omitempty"` // last successful fetch
-	Error   string `json:"error,omitempty"`   // German
+	Seq     uint64 `json:"seq"`              // newest catalog seen
+	Checked int64  `json:"checked,omitzero"` // last successful fetch
+	Error   string `json:"error,omitempty"`  // German
 }
 
 // CatalogResult answers ngc.store/catalog. The shell verifies it with the
@@ -154,7 +157,7 @@ type InstalledApp struct {
 	Active   bool   `json:"active"`
 	State    string `json:"state"`
 	License  string `json:"license"`
-	KeptData int64  `json:"keptData,omitempty"` // bytes of data kept after uninstalling
+	KeptData int64  `json:"keptData,omitzero"` // bytes of data kept after uninstalling
 }
 
 // UploadResult answers ngc.store/upload.
@@ -190,6 +193,42 @@ type UpdateInfo struct {
 // the newest version the controller verified.
 type TrustResult struct {
 	Seq uint64 `json:"seq"`
+}
+
+// ErrResult reports a result EncodeResult does not send.
+var ErrResult = errors.New("core: result the shell would refuse")
+
+// EncodeResult encodes the result of a core action as the API sends it.
+// encoding/json writes a nil slice as null, which the shell refuses (no null,
+// enc.Budget); EncodeResult writes an empty or nil list as [] and an empty or
+// nil map as {}, so the eight results that are lists (ngc.desktop/apps,
+// ngc.users/list, log, pending and rights, ngc.store/sources, installed and
+// updates) are [] when empty. It encodes with encoding/json/v2, whose
+// omitempty keeps false and 0; the result types mark optional bools and
+// numbers omitzero, which both versions leave out alike. Every failure is
+// ErrResult: a value encoding/json/v2 refuses (invalid UTF-8, a func), a null
+// anywhere else (a nil pointer or interface outside an omitempty field), and
+// a result of more than wire.MaxCallResult bytes.
+func EncodeResult(v any) ([]byte, error) {
+	b, err := jsonv2.Marshal(v, jsonv2.Deterministic(true))
+	if err != nil || len(b) > wire.MaxCallResult || !nullFree(b) {
+		return nil, ErrResult
+	}
+	return b, nil
+}
+
+// nullFree reports whether the JSON value b holds no null.
+func nullFree(b []byte) bool {
+	dec := jsontext.NewDecoder(bytes.NewReader(b))
+	for {
+		tok, err := dec.ReadToken()
+		if err == io.EOF {
+			return true
+		}
+		if err != nil || tok.Kind() == 'n' {
+			return false
+		}
+	}
 }
 
 // Notice is the body of a "notify" control message: the API tells the
