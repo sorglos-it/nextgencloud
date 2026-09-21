@@ -14,5 +14,5 @@
   "db": "/var/lib/ngc/controller/state.db",
   "dbKey": "zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzA",
   "releaseKey": "pKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKQ",
-  "parts": ["services"]
+  "roles": ["services"]
 }

@@ -28,7 +28,7 @@ func main() {
 		slog.Error("cannot read the configuration", "file", *path, "error", err)
 		os.Exit(1)
 	}
-	slog.Info("ngc-controller starting", "version", Version, "name", cfg.Name, "parts", cfg.Parts)
+	slog.Info("ngc-controller starting", "version", Version, "name", cfg.Name, "roles", cfg.Roles)
 	slog.Error("the controller is not built yet, see controller/CLAUDE.md")
 	os.Exit(1)
 }

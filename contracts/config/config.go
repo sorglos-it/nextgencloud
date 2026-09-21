@@ -5,12 +5,16 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/proof"
+	"github.com/sorglos-it/nextgencloud/contracts/session"
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
 	"github.com/sorglos-it/nextgencloud/contracts/tunnel"
 	"github.com/sorglos-it/nextgencloud/contracts/wire"
@@ -34,12 +38,23 @@ const (
 	ServiceAPI        = "ngc-api.service"
 	ServiceController = "ngc-controller.service"
 
-	MaxConfig              = 1 << 20
-	MaxField               = 256   // bounds every free-form string field below that carries no file-size limit of its own
+	MaxConfig = 1 << 20
+	// MaxField bounds these strings: each of Web.APIs and Web.RP.Origins;
+	// API.Listen, Cert, CertKey and StoreURL; DB.Name, User, Password and each
+	// of DB.Nodes; APIRef.URL; Controller.DB, Podman and WebConfig.
+	MaxField               = 256
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
 	DefaultPodman          = "/usr/bin/podman"
 )
+
+// maxList is the most APIs web.json and controller.json name, and the most
+// Galera nodes a DB names.
+const maxList = 16
+
+// maxRoles is the number of roles a server can carry (tunnel.RoleWeb,
+// RoleAPI, RoleDB, RoleServices).
+const maxRoles = 4
 
 // Database drivers.
 const (
@@ -53,7 +68,7 @@ var ErrConfig = errors.New("config: invalid configuration")
 // Web is /etc/ngc/web.json; the PHP of the web interface reads it too.
 type Web struct {
 	APIs []string `json:"apis"` // https://host:port, Apache balances over them
-	RP   proof.RP `json:"rp"`   // name and origins for passkeys; empty without a name
+	RP   proof.RP `json:"rp"`   // ID and origins for passkeys: both set, or both empty without passkeys
 }
 
 // DB tells an API which database to use.
@@ -69,18 +84,20 @@ type DB struct {
 
 // API is /etc/ngc/api.json. It holds keys, so the file belongs to root with mode 0600.
 type API struct {
-	Node            string    `json:"node"` // node ID in the trust list
-	Listen          string    `json:"listen"`
-	Cert            string    `json:"cert"`
-	CertKey         string    `json:"certKey"`
-	DB              DB        `json:"db"`
-	NoiseKey        enc.Bytes `json:"noiseKey"`   // X25519 private key for the tunnel
-	SignKey         enc.Bytes `json:"signKey"`    // Ed25519 private key for API certificates
-	SecretKey       enc.Bytes `json:"secretKey"`  // AES-256 key for secrets in the database, shared by all APIs
-	ReleaseKey      enc.Bytes `json:"releaseKey"` // public key of NGC releases
-	StoreKey        enc.Bytes `json:"storeKey"`   // public key of the global store
+	Node       string    `json:"node"` // node ID in the trust list
+	Listen     string    `json:"listen"`
+	Cert       string    `json:"cert"`
+	CertKey    string    `json:"certKey"`
+	DB         DB        `json:"db"`
+	NoiseKey   enc.Bytes `json:"noiseKey"`   // X25519 private key for the tunnel
+	SignKey    enc.Bytes `json:"signKey"`    // Ed25519 private key for API certificates
+	SecretKey  enc.Bytes `json:"secretKey"`  // AES-256 key for secrets in the database, shared by all APIs
+	ReleaseKey enc.Bytes `json:"releaseKey"` // public key of NGC releases
+	// StoreKey and StoreURL name the global store (ID trust.StoreGlobal); the
+	// API hands it to the shell in session.SetupInfo.Store.
+	StoreKey        enc.Bytes `json:"storeKey"`
 	StoreURL        string    `json:"storeUrl"`
-	SessionLifetime int64     `json:"sessionLifetime,omitempty"`
+	SessionLifetime int64     `json:"sessionLifetime,omitempty"` // seconds, at most session.MaxLifetime
 	IdleTimeout     int64     `json:"idleTimeout,omitempty"`
 }
 
@@ -100,14 +117,26 @@ type Controller struct {
 	DB         string       `json:"db"`
 	DBKey      enc.Bytes    `json:"dbKey"` // 64 bytes for AES-256-XTS
 	ReleaseKey enc.Bytes    `json:"releaseKey"`
-	Parts      []string     `json:"parts"` // tunnel.RoleWeb, RoleAPI, RoleDB, RoleServices
+	Roles      []string     `json:"roles"` // one to four of tunnel.RoleWeb, RoleAPI, RoleDB, RoleServices
 	Podman     string       `json:"podman,omitempty"`
 	WebConfig  string       `json:"webConfig,omitempty"` // web server: path of web.json for the balancer
+	// Migrate is the database access for the migrations of an update: the
+	// ngc_migrate account (MariaDB) or the SQLite file and key. Only a server
+	// with tunnel.RoleDB has it.
+	Migrate *DB `json:"migrate,omitempty"`
 }
 
-// decode strictly-JSON-decodes b into v, wrapping any failure as ErrConfig.
-func decode(b []byte, v any) error {
-	if err := enc.DecodeStrict(b, MaxConfig, v); err != nil {
+// Budgets of the configuration files (enc.Budget), each with its lists.
+var (
+	webBudget        = enc.Budget{Size: MaxConfig, Items: map[string]int{"apis": maxList, "rp/origins": trust.MaxOrigins}}
+	apiBudget        = enc.Budget{Size: MaxConfig, Items: map[string]int{"db/nodes": maxList}}
+	controllerBudget = enc.Budget{Size: MaxConfig, Items: map[string]int{"apis": maxList, "roles": maxRoles, "migrate/nodes": maxList}}
+	anchorBudget     = enc.Budget{Size: MaxConfig}
+)
+
+// decode decodes b into v within budget, wrapping any failure as ErrConfig.
+func decode(budget enc.Budget, b []byte, v any) error {
+	if err := budget.Decode(b, v); err != nil {
 		return ErrConfig
 	}
 	return nil
@@ -117,7 +146,7 @@ func decode(b []byte, v any) error {
 // LoadWeb so fuzzing can call it directly, in memory, without touching disk.
 func parseWeb(b []byte) (*Web, error) {
 	var w Web
-	if err := decode(b, &w); err != nil {
+	if err := decode(webBudget, b, &w); err != nil {
 		return nil, err
 	}
 	return &w, w.Validate()
@@ -135,7 +164,7 @@ func LoadWeb(path string) (*Web, error) {
 // parseAPI decodes api.json's payload, fills in the defaults and validates.
 func parseAPI(b []byte) (*API, error) {
 	var a API
-	if err := decode(b, &a); err != nil {
+	if err := decode(apiBudget, b, &a); err != nil {
 		return nil, err
 	}
 	if a.SessionLifetime == 0 {
@@ -160,7 +189,7 @@ func LoadAPI(path string) (*API, error) {
 // and validates.
 func parseController(b []byte) (*Controller, error) {
 	var c Controller
-	if err := decode(b, &c); err != nil {
+	if err := decode(controllerBudget, b, &c); err != nil {
 		return nil, err
 	}
 	if c.Podman == "" {
@@ -188,7 +217,19 @@ func SaveController(path string, c *Controller) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o600)
+	return writeAtomic(path, append(b, '\n'), 0o600)
+}
+
+// parseAnchor decodes and checks the payload of trust-anchor.json.
+func parseAnchor(b []byte) (trust.Anchor, error) {
+	var a trust.Anchor
+	if err := decode(anchorBudget, b, &a); err != nil {
+		return trust.Anchor{}, err
+	}
+	if a.Seq == 0 || len(a.Hash) != 32 {
+		return trust.Anchor{}, ErrConfig
+	}
+	return a, nil
 }
 
 // LoadAnchor reads trust-anchor.json.
@@ -197,14 +238,7 @@ func LoadAnchor(path string) (trust.Anchor, error) {
 	if err != nil {
 		return trust.Anchor{}, err
 	}
-	var a trust.Anchor
-	if err := decode(b, &a); err != nil {
-		return trust.Anchor{}, err
-	}
-	if a.Seq == 0 || len(a.Hash) != 32 {
-		return trust.Anchor{}, ErrConfig
-	}
-	return a, nil
+	return parseAnchor(b)
 }
 
 // SaveAnchor writes trust-anchor.json; the PHP of the web interface sends it
@@ -217,12 +251,58 @@ func SaveAnchor(path string, a trust.Anchor) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return writeAtomic(path, append(b, '\n'), 0o644)
 }
+
+// writeAtomic replaces path so that a crash leaves the old or the new file,
+// never a torn one, and the file ends up with mode perm even if it existed.
+func writeAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			f.Close()
+			os.Remove(tmp)
+		}
+	}()
+	// The mode is set before any byte is written, so a file that holds keys
+	// is never readable for others, not even for a moment.
+	if err = f.Chmod(perm); err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if err = os.Chmod(path, perm); err != nil {
+		return err
+	}
+	// The rename lasts through a crash only once the directory is synced;
+	// some systems cannot sync a directory, and the file is complete anyway.
+	if d, derr := os.Open(dir); derr == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
+}
+
+var rpIDPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 // Validate checks the web configuration.
 func (w *Web) Validate() error {
-	if len(w.APIs) == 0 || len(w.APIs) > 16 {
+	if len(w.APIs) == 0 || len(w.APIs) > maxList {
 		return ErrConfig
 	}
 	for _, u := range w.APIs {
@@ -230,8 +310,12 @@ func (w *Web) Validate() error {
 			return ErrConfig
 		}
 	}
+	if (w.RP.ID == "") != (len(w.RP.Origins) == 0) || len(w.RP.Origins) > trust.MaxOrigins ||
+		(w.RP.ID != "" && (len(w.RP.ID) > 253 || !rpIDPattern.MatchString(w.RP.ID))) {
+		return ErrConfig
+	}
 	for _, o := range w.RP.Origins {
-		if !strings.HasPrefix(o, "https://") {
+		if !strings.HasPrefix(o, "https://") || len(o) > MaxField {
 			return ErrConfig
 		}
 	}
@@ -247,7 +331,8 @@ func (a *API) Validate() error {
 		len(a.NoiseKey) != 32 || len(a.SignKey) != 32 || len(a.SecretKey) != 32 ||
 		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 ||
 		!strings.HasPrefix(a.StoreURL, "https://") || len(a.StoreURL) > MaxField ||
-		a.SessionLifetime < 300 || a.IdleTimeout < 60 || a.IdleTimeout > a.SessionLifetime {
+		a.SessionLifetime < 300 || a.SessionLifetime > session.MaxLifetime ||
+		a.IdleTimeout < 60 || a.IdleTimeout > a.SessionLifetime {
 		return ErrConfig
 	}
 	return a.DB.Validate()
@@ -257,7 +342,7 @@ func (a *API) Validate() error {
 func (d *DB) Validate() error {
 	switch d.Driver {
 	case DriverMariaDB:
-		if len(d.Nodes) == 0 || len(d.Nodes) > 16 ||
+		if len(d.Nodes) == 0 || len(d.Nodes) > maxList ||
 			d.Name == "" || len(d.Name) > MaxField ||
 			d.User == "" || len(d.User) > MaxField ||
 			d.Password == "" || len(d.Password) > MaxField ||
@@ -283,9 +368,9 @@ func (d *DB) Validate() error {
 // Validate checks the controller configuration.
 func (c *Controller) Validate() error {
 	if (c.Node != "" && !wire.ValidName(c.Node)) || !wire.ValidName(c.Name) || len(c.NoiseKey) != 32 ||
-		len(c.APIs) == 0 || len(c.APIs) > 16 || c.Anchor.Seq == 0 || len(c.Anchor.Hash) != 32 ||
+		len(c.APIs) == 0 || len(c.APIs) > maxList || c.Anchor.Seq == 0 || len(c.Anchor.Hash) != 32 ||
 		!strings.HasPrefix(c.DB, "/") || len(c.DB) > MaxField || len(c.DBKey) != 64 || len(c.ReleaseKey) != 32 ||
-		len(c.Parts) == 0 || !strings.HasPrefix(c.Podman, "/") || len(c.Podman) > MaxField ||
+		len(c.Roles) == 0 || len(c.Roles) > maxRoles || !strings.HasPrefix(c.Podman, "/") || len(c.Podman) > MaxField ||
 		len(c.WebConfig) > MaxField {
 		return ErrConfig
 	}
@@ -294,14 +379,97 @@ func (c *Controller) Validate() error {
 			return ErrConfig
 		}
 	}
-	for i, p := range c.Parts {
-		if !slices.Contains([]string{tunnel.RoleWeb, tunnel.RoleAPI, tunnel.RoleDB, tunnel.RoleServices}, p) ||
-			slices.Contains(c.Parts[:i], p) {
+	for i, r := range c.Roles {
+		if !tunnel.ValidRole(r) || slices.Contains(c.Roles[:i], r) {
 			return ErrConfig
 		}
 	}
-	if slices.Contains(c.Parts, tunnel.RoleWeb) && c.WebConfig == "" {
+	if slices.Contains(c.Roles, tunnel.RoleWeb) && c.WebConfig == "" {
 		return ErrConfig
+	}
+	// Only a server with the database role runs the migrations of an update,
+	// so no other server holds that access.
+	if slices.Contains(c.Roles, tunnel.RoleDB) != (c.Migrate != nil) {
+		return ErrConfig
+	}
+	if c.Migrate != nil {
+		return c.Migrate.Validate()
 	}
 	return nil
 }
+
+// secret shows whether a secret is set, never the secret itself.
+func secret(set bool) slog.Value {
+	if set {
+		return slog.StringValue("[secret]")
+	}
+	return slog.StringValue("")
+}
+
+// LogValue shows d for log/slog, without its password and key.
+func (d DB) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("driver", d.Driver),
+		slog.Any("nodes", d.Nodes),
+		slog.String("name", d.Name),
+		slog.String("user", d.User),
+		slog.Attr{Key: "password", Value: secret(d.Password != "")},
+		slog.String("path", d.Path),
+		slog.Attr{Key: "key", Value: secret(len(d.Key) != 0)},
+	)
+}
+
+// String shows d as LogValue does, so that fmt never prints its secrets.
+func (d DB) String() string { return d.LogValue().String() }
+
+// LogValue shows a for log/slog, without its private keys and the database
+// password.
+func (a API) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("node", a.Node),
+		slog.String("listen", a.Listen),
+		slog.String("cert", a.Cert),
+		slog.String("certKey", a.CertKey),
+		slog.Attr{Key: "db", Value: a.DB.LogValue()},
+		slog.Attr{Key: "noiseKey", Value: secret(len(a.NoiseKey) != 0)},
+		slog.Attr{Key: "signKey", Value: secret(len(a.SignKey) != 0)},
+		slog.Attr{Key: "secretKey", Value: secret(len(a.SecretKey) != 0)},
+		slog.String("releaseKey", enc.B64.EncodeToString(a.ReleaseKey)),
+		slog.String("storeKey", enc.B64.EncodeToString(a.StoreKey)),
+		slog.String("storeUrl", a.StoreURL),
+		slog.Int64("sessionLifetime", a.SessionLifetime),
+		slog.Int64("idleTimeout", a.IdleTimeout),
+	)
+}
+
+// String shows a as LogValue does, so that fmt never prints its secrets.
+func (a API) String() string { return a.LogValue().String() }
+
+// LogValue shows c for log/slog, without its private keys and the migration
+// password.
+func (c Controller) LogValue() slog.Value {
+	apis := make([]string, len(c.APIs))
+	for i, a := range c.APIs {
+		apis[i] = a.URL + " " + enc.B64.EncodeToString(a.Key)
+	}
+	attrs := []slog.Attr{
+		slog.String("node", c.Node),
+		slog.String("name", c.Name),
+		{Key: "noiseKey", Value: secret(len(c.NoiseKey) != 0)},
+		slog.Any("apis", apis),
+		slog.Group("anchor", slog.Uint64("seq", c.Anchor.Seq), slog.String("hash", enc.B64.EncodeToString(c.Anchor.Hash))),
+		slog.String("db", c.DB),
+		{Key: "dbKey", Value: secret(len(c.DBKey) != 0)},
+		slog.String("releaseKey", enc.B64.EncodeToString(c.ReleaseKey)),
+		slog.Any("roles", c.Roles),
+		slog.String("podman", c.Podman),
+		slog.String("webConfig", c.WebConfig),
+	}
+	if c.Migrate != nil {
+		attrs = append(attrs, slog.Attr{Key: "migrate", Value: c.Migrate.LogValue()})
+	}
+	return slog.GroupValue(attrs...)
+}
+
+// String shows c as LogValue does, so that fmt never prints its secrets.
+func (c Controller) String() string { return c.LogValue().String() }
