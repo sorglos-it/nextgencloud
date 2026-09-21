@@ -1,6 +1,6 @@
 # API
 
-Deine Ordner: `api/`, `ulh/api/`. Verträge: V1, V2, V4, V5, V6, V7.
+Deine Ordner: `api/`, dazu `scripts/ngc-api.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V1, V2, V4, V5, V6, V7.
 
 ## Aufgabe
 

@@ -1,6 +1,6 @@
 # Server-Controller
 
-Deine Ordner: `controller/`, `ulh/controller/`. Verträge: V2, V3, V4, V5, V6, V7.
+Deine Ordner: `controller/`, dazu `scripts/ngc-controller.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V2, V3, V4, V5, V6, V7.
 
 ## Aufgabe
 

@@ -1,9 +1,13 @@
 # Installation über ulh
 
 NGC wird mit [ulh](https://github.com/sorglos-it/ulh) installiert, konfiguriert und deinstalliert.
-Die Skripte liegen im NGC-Repo unter `ulh/`, solange NGC privat ist; ulh bindet das Repo als eigene
-Quelle ein. Jedes Teil schreibt die Skripte für seinen Server, der Koordinator hält diese
-Konventionen fest.
+Die Skripte liegen direkt im öffentlichen ulh-Repo: `scripts/<skript>.sh`, eingetragen in dessen
+`config.yaml` unter der Kategorie „NextGenCloud". Aufbau nach ulhs Vorlage `scripts/_template.sh`
+und ulhs `DOCS.md` (Abschnitt „Script Development"); `SCRIPTS.md` und `TREE.md` in ulh werden
+mitgepflegt. Jedes Teil schreibt das Skript für seinen Server auf einem eigenen Branch im ulh-Repo
+(`ngc-web`, `ngc-api`, `ngc-controller`, `ngc-db`) und liefert per Pull Request; der Koordinator
+hält diese Konventionen fest und führt zusammen. Jede ulh-Installation holt beim Start `main`,
+deshalb kommt nur Geprüftes dorthin.
 
 ## Skripte
 

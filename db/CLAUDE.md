@@ -1,6 +1,6 @@
 # Datenbank
 
-Deine Ordner: `db/`, `ulh/db/`. Verträge: V4, V6.
+Deine Ordner: `db/`, dazu `scripts/ngc-db.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V4, V6.
 
 ## Aufgabe
 

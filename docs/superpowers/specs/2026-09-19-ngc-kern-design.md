@@ -200,7 +200,7 @@ API muss nicht offen im Netz stehen.
 | Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
 | Datenbank | `db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
 | Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
-| Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
+| Installation | im ulh-Repo: `scripts/ngc-*.sh` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
 | Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
 | Fremdcode | `vendor/`, `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
 | Prototyp | `prototype/` | Unverändert als Vorlage für den Desktop | – |
@@ -702,8 +702,8 @@ in der App Benutzer & Rechte.
   und Verschlüsselung, die Lastverteilung in Apache, Podman auf den Servern mit Diensten, das
   Schlüsselpaar der Installation und die Kopplung von Controllern und weiteren API-Servern. Am Ende zeigen sie den Einmal-Code für den ersten Admin an.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
-- Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
-  eigenes Repository eingebunden.
+- Die Skripte liegen direkt im öffentlichen ulh-Repo (`scripts/ngc-*.sh`, Einträge in dessen
+  `config.yaml`), auch solange NGC privat ist (Entscheidung vom 21.09.2026).
 - Updates spielt danach der Controller ein (4.8). ulh bleibt der Notweg, falls NGC selbst nicht
   mehr startet.
 
@@ -763,7 +763,7 @@ Server ihres Teils und betreut alle Server, die dazugehören:
 | Dienste | Controller | `controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
 | DB 1 bis 3 | Datenbank | `db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
-Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
+Jeder Teil schreibt auch sein eigenes ulh-Skript, im ulh-Repo unter `scripts/ngc-<teil>.sh`.
 
 **Zuerst die Verträge.** Bevor jemand baut, legt der Koordinator die Schnittstellen schriftlich
 in `contracts/` fest, und Thomas gibt sie frei:
@@ -930,6 +930,14 @@ Sperre in der Datenbank.
 | 19.09.2026 | Vorgabe Thomas: Im Heimnetz ohne vertrauenswürdiges Zertifikat beginnt NGC mit Benutzer und Passwort, TOTP lässt sich dazuschalten, und man stellt auf Passkeys um, sobald es geht. Eine Zertifizierungsstellen-App ist ein Grund, NGC überhaupt zu bauen. Ausgearbeitet in 4.5. |
 | 19.09.2026 | Anmeldung in zwei Stufen abgestimmt: Benutzer und Passwort mit Passwortschlüssel im Browser und zuschaltbarem TOTP, Umstieg auf Passkeys pro Benutzer oder Rolle. Die Zertifizierungsstellen-App rückt direkt hinter den Kern (Teilprojekt 2, vorher 6), die übrigen Teilprojekte rücken eins nach. |
 | 19.09.2026 | Entwurf von Thomas freigegeben, einschließlich der sechs beim Ausformulieren ergänzten Stellen: Fassungsnummern der Vertrauensliste, zweiter eigener Schlüssel ohne Admin, Prüfung der Benutzersitzung bei jedem Kanal, gemeinsame Schlüssel für neue API-Server nur mit Admin-Unterschrift, eine API steuert die Update-Reihenfolge über eine Sperre in der Datenbank, „App samt Daten löschen" in der Stufe Kritisch. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Der Anker der Vertrauensliste ist Nummer und SHA-256 einer Fassung (damit auch der Admin-Schlüssel), nicht der Schlüssel allein. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Ein Container je App, also ein Image je App und Architektur (`services/<arch>.tar`); die Dienste sind Programme darin. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Kern-Apps (`ngc.desktop`, `ngc.users`, `ngc.store`) bedient die API selbst; ihre Kanäle haben keinen eigenen Ende-zu-Ende-Schlüsselaustausch, weil die Sitzung zur API schon so verschlüsselt ist. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Update-Dateien kommen über Kanäle (`stage`, `install`) zum Controller, nicht über Steuernachrichten; über den Steuerkanal läuft nur der Fortschritt. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl) ist noch kein Vertrag; sie kommt als Vertragsänderung vor Plan 1 des Webinterface. |
+| 20.09.2026 | Beim Ausführen von Plan 0 geklärt: Bei der Anmeldung unterschreibt der Benutzer mit Passkey oder Passwortschlüssel das Client-Zertifikat, das der Browser gebaut hat (`sign.PurposeClientCert`); einen eigenen Zweck nur für die Anmeldung gibt es nicht. |
+| 20.09.2026 | Beim Ausführen von Plan 0 geklärt: `session.VerifyClient` liefert eine geprüfte Sitzung (`session.Verified`), die nur durch diese Prüfung entsteht. Aufgaben (`task.Input`) nehmen nur eine solche Sitzung an, damit keine ungeprüfte bis zum Controller kommt. |
+| 21.09.2026 | Vorgabe Thomas: Die ulh-Skripte für NGC kommen direkt ins öffentliche ulh (`scripts/ngc-*.sh`, Einträge in dessen `config.yaml`), auch solange NGC privat ist. Kein Unterordner in NGC, kein zweites Repo, ulh bleibt unverändert. Ersetzt die Regel „Skripte im NGC-Repo unter `ulh/`" aus Abschnitt 5. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -941,10 +949,10 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | SQLite ohne cgo, Verschlüsselung AES-256-XTS | `github.com/ncruces/go-sqlite3` mit `vfs/xts` | Am 18.09.2026 geprüft: v0.35.5 vom 16.09.2026, AES-256 bei 64-Byte-Schlüssel, reines Go. Lizenz noch prüfen. |
 | MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
 | WebSocket | `github.com/coder/websocket` | zu prüfen |
-| Argon2id | `golang.org/x/crypto/argon2` | zu prüfen |
+| Argon2id | `golang.org/x/crypto/argon2` | Übernommen in Plan 0: v0.57.0, BSD-3-Clause, in `contracts/proof` |
 | Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`), sonst PBKDF2 aus der Web Crypto API mit hoher Rundenzahl | zu prüfen |
 | TOTP | `github.com/pquerna/otp` oder eigene Umsetzung nach RFC 6238 mit dessen Testvektoren; HMAC kommt aus der Standardbibliothek von Go | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
-| Noise-Tunnel | `github.com/flynn/noise` | zu prüfen |
+| Noise-Tunnel | `github.com/flynn/noise` | Übernommen in Plan 0: v1.1.0, BSD-3-Clause, in `contracts/noisep` |
 | Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `tests/browser/` | erlaubt seit 19.09.2026 |
 | Noise im Browser (Ende zu Ende) | JavaScript-Umsetzung ohne npm | zu prüfen; findet sich keine geprüfte, dann eigene Umsetzung des Ablaufs nach der Spezifikation, getestet mit den offiziellen Testvektoren. Die Kryptografie selbst kommt aus der Web Crypto API des Browsers. |

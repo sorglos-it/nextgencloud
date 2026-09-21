@@ -1,6 +1,6 @@
 # Webinterface
 
-Deine Ordner: `web/`, `ulh/web/`, `tests/browser/`. Verträge: V1, V6, V7 (`contracts/README.md`).
+Deine Ordner: `web/`, `tests/browser/`, dazu `scripts/ngc-web.sh` im ulh-Repo (`contracts/ulh.md`). Verträge: V1, V6, V7 (`contracts/README.md`).
 
 ## Aufgabe
 

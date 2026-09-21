@@ -6,13 +6,16 @@ Schritt: `docs/STAND.md`. Verträge: `contracts/README.md`.
 
 ## Wer macht was
 
-| Teil | Ordner | Sitzung auf Server |
-|---|---|---|
-| Webinterface | `web/`, `ulh/web/` | Web |
-| API | `api/`, `ulh/api/` | API 1 |
-| Controller | `controller/`, `ulh/controller/` | Dienste |
-| Datenbank | `db/`, `ulh/db/` | DB 1 |
-| Verträge, `contracts/`, Zusammenführen | – | Koordinator (Thomas' Rechner) |
+| Teil | Ordner | ulh-Skript | Sitzung auf Server |
+|---|---|---|---|
+| Webinterface | `web/` | `scripts/ngc-web.sh` | Web |
+| API | `api/` | `scripts/ngc-api.sh` | API 1 |
+| Controller | `controller/` | `scripts/ngc-controller.sh` | Dienste |
+| Datenbank | `db/` | `scripts/ngc-db.sh` | DB 1 |
+| Verträge, `contracts/`, Zusammenführen | – | – | Koordinator (Thomas' Rechner) |
+
+Die ulh-Skripte liegen im öffentlichen ulh-Repo (`sorglos-it/ulh`), nicht hier; Regeln dafür in
+`contracts/ulh.md`. `scripts/ngc-all.sh` (alles auf einem Pi) kommt mit dem Plan für den Pi.
 
 Fremde Ordner sind tabu. `contracts/` ändert nur der Koordinator: Wer eine Änderung braucht, fragt
 ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an dessen Sitzung.
@@ -58,6 +61,8 @@ ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an de
 
 - Ein Branch je Teil (`web`, `api`, `controller`, `db`), Pull Request nach `main`. Der Koordinator
   prüft jeden Pull Request auf Vertrag und Sicherheit und führt ihn zusammen.
+- Im ulh-Repo genauso: Branch `ngc-<teil>`, Pull Request nach dessen `main`. Nur geprüfte Skripte,
+  denn jede ulh-Installation holt beim Start `main`.
 - Kleine Commits, englische Nachricht in der Befehlsform, Trailer
   `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Nie mit Gewalt schieben, nie fremde Branches ändern.
