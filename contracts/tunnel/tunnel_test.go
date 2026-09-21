@@ -101,7 +101,7 @@ func TestHello(t *testing.T) {
 func testOpen() Open {
 	return Open{
 		Open: wire.Open{App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Window: wire.DefaultWindow,
-			E2E: bytes.Repeat([]byte{7}, wire.MinHandshake)},
+			E2E: bytes.Repeat([]byte{7}, wire.HandshakeSize)},
 		User: trusttest.ID(0x21), Client: []byte(`{"inst":"x"}`),
 		Proof: &proof.Proof{Kind: proof.KindPassword, KeyID: "k", Sig: []byte{1}},
 	}
