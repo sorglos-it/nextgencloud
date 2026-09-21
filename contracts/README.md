@@ -39,8 +39,9 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 - **Rollen und Softwareteile:** Ein Server hat Rollen (`tunnel.RoleWeb`, `tunnel.RoleAPI`,
   `tunnel.RoleDB`, `tunnel.RoleServices`: `web`, `api`, `db`, `services`). Softwareteile sind
   `ngc-web`, `ngc-api` und `ngc-controller` (`trust.AutoWeb`, `trust.AutoAPI`,
-  `trust.AutoController`). Release-Dateien, Update-Ziele und `tunnel.Status.Components` nennen
-  Softwareteile; welche ein Server mit seinen Rollen braucht, sagt `tunnel.Components`.
+  `trust.AutoController`). Release-Dateien und `tunnel.Status.Components` nennen Softwareteile,
+  Update-Ziele ebenso (dazu `system` und Apps); welche Softwareteile ein Server mit seinen Rollen
+  braucht, sagt `tunnel.Components`.
 - **Testdaten**: `contracts/testdata/` ist die gemeinsame Wahrheit (Tabelle unten). Go-Tests
   schreiben sie mit dem Schalter `-update`, gezielt mit `-run` auf den Test, der die Datei erzeugt.
   `proof.json` enthält zufällige Schlüssel und entsteht nur bei einer Vertragsänderung neu. Das
@@ -100,8 +101,8 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
    Liste.
 10. Jedes andere Objekt ist eine Struktur: höchstens 64 Felder (`enc.MaxMembers`), jeder Name
     höchstens 64 Byte nach dem Auflösen der Escapes (`enc.MaxName`), ohne `/` und nicht `*`.
-11. In rohen Werten zählt nichts, und die Namen sind frei; 12 bis 14 gelten auch dort. Ein roher
-    Wert hat immer eine eigene kleine Größengrenze.
+11. In rohen Werten zählt nichts, und die Namen sind frei (doppelt dürfen sie nicht sein, Regel 4);
+    12 bis 14 gelten auch dort. Ein roher Wert hat immer eine eigene kleine Größengrenze.
 12. Höchstens 32 Ebenen (`enc.MaxDepth`); der äußerste Wert ist Ebene 1.
 13. Keine Zahl, deren genauer Wert dem Betrag nach größer ist als 2^53−1 (`enc.MaxSafeInteger`):
     `9007199254740991` und `9007199254740991.0` gehen, `9007199254740992`, `9007199254740991.5`
@@ -138,7 +139,8 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | `trust-anchor.json` | `config.LoadAnchor` | `config.MaxConfig` | keine |
 
 Antworten der API, für die Go keinen Parser hat (etwa `session.LoginChallenge` und die Ergebnisse
-in `core.json`), liest das Webinterface nach den Regeln 1 bis 8 und 12 bis 14.
+in `core.json`), liest das Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14; ein Ergebnis hat
+höchstens `wire.MaxCallResult` Byte.
 
 ## Kanäle
 
