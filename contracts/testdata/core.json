@@ -1,0 +1,125 @@
+{
+  "ngc.desktop/apps": [
+    {
+      "id": "org.sorglos.terminal",
+      "name": "Terminal",
+      "version": "1.0.0",
+      "icon": "icon.svg",
+      "width": 720,
+      "height": 480,
+      "actions": [
+        "shell"
+      ],
+      "state": "ok"
+    }
+  ],
+  "ngc.desktop/me": {
+    "id": "ISEhISEhISEhISEhISEhIQ",
+    "name": "admin",
+    "roles": [
+      "admin"
+    ],
+    "admin": true,
+    "passwordLogin": true,
+    "totp": false,
+    "level": "critical"
+  },
+  "ngc.desktop/totp-begin": {
+    "secret": "JBSWY3DPEHPK3PXP",
+    "uri": "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP\u0026issuer=NGC"
+  },
+  "ngc.store/install-key": {
+    "installation": "EREREREREREREREREREREQ",
+    "key": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY"
+  },
+  "ngc.store/installed": [
+    {
+      "id": "org.sorglos.terminal",
+      "version": "1.0.0",
+      "store": "global",
+      "node": "ctl-1",
+      "active": true,
+      "state": "ok",
+      "license": "valid"
+    }
+  ],
+  "ngc.store/license": {
+    "app": "org.sorglos.terminal",
+    "state": "valid"
+  },
+  "ngc.store/sources": [
+    {
+      "id": "global",
+      "name": "NGC Store",
+      "url": "https://store.ngc.test",
+      "seq": 5,
+      "checked": 1790000000
+    }
+  ],
+  "ngc.store/updates": [
+    {
+      "target": "ngc-api",
+      "installed": "1.0.0",
+      "available": "1.1.0",
+      "mode": "auto",
+      "window": "02:00-04:00",
+      "state": "available"
+    }
+  ],
+  "ngc.store/upload": {
+    "id": "org.example.notes",
+    "version": "0.1.0",
+    "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+  },
+  "ngc.users/list": [
+    {
+      "id": "ISEhISEhISEhISEhISEhIQ",
+      "name": "admin",
+      "roles": [
+        "admin"
+      ],
+      "totp": true,
+      "locked": false,
+      "lastLogin": 1790000000
+    }
+  ],
+  "ngc.users/log": [
+    {
+      "time": 1790000000,
+      "user": "ISEhISEhISEhISEhISEhIQ",
+      "kind": "task",
+      "app": "ngc.store",
+      "action": "activate",
+      "node": "ctl-1",
+      "result": "ok"
+    }
+  ],
+  "ngc.users/pair-code": {
+    "code": "ngc-pair:…",
+    "expires": 1790086400
+  },
+  "ngc.users/pending": [
+    {
+      "name": "dienste",
+      "key": "wcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcE",
+      "fingerprint": "k3y…",
+      "since": 1790000000
+    }
+  ],
+  "ngc.users/rights": [
+    {
+      "role": "user",
+      "rights": [
+        "org.sorglos.calculator/use"
+      ]
+    }
+  ],
+  "ngc.users/trust": {
+    "seq": 4
+  },
+  "notice": {
+    "level": "warn",
+    "text": "Die Lizenz für Terminal läuft in 3 Tagen ab.",
+    "app": "org.sorglos.terminal"
+  }
+}
