@@ -38,7 +38,9 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
   `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`). Dazu gehören
   die Regeln der Vertrauensliste (`trust.List.Validate`): Keine Rolle ist zugleich `passkeyOnly` und
   `passwordToo`; wer in einer Rolle mit `passkeyOnly` ist, hat keinen Passwortschlüssel, und wer in
-  einer Rolle mit `passwordToo` ist, hat einen Passkey und einen Passwortschlüssel.
+  einer Rolle mit `passwordToo` ist, hat einen Passkey und einen Passwortschlüssel. Texte für
+  Menschen (Namen, Titel, Meldungen) prüft `store.ValidText`: 1 Byte bis zur Grenze des Feldes,
+  druckbares UTF-8.
 - **Geheimnisse** in Konfigurationen sind `config.Secret` (Schlüssel) und `config.SecretText`
   (Passwörter). Den Wert geben nur `Bytes()` bzw. `Text()`; fmt, `log/slog` und `json.Marshal`
   zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController` bzw.
@@ -82,10 +84,10 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
 | `tunnel.json` | Kopplungscode mit MAC und Fingerabdruck, `pairCheck` (`tunnel.PairCode.Check`), `join` (Beitrittscode, `tunnel.JoinMAC`) | `tunnel`: `TestVectors` |
-| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis, dazu `notice` | `core`: `TestExamples` |
+| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis, dazu `notice`; unter `empty` die acht Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
 | `store.json`, `pack.json` | Katalog, Lizenz und Release; Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
-| `ui.json` | ui-tars, gültige und ungültige (`store.WalkUI`) | `store`: `TestUIVectors` |
-| `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft es wie die ulh-Skripte | `store`: `TestReleaseScriptVector` |
+| `ui.json` | ui-tars, gültige und ungültige (Regeln im Kommentar von `store/ui.go`); bei gültigen unter `files` die Dateien, die `store.WalkUI` liefert. Fälle mit Daten bis `store.MaxUIFile`, `store.MaxUITotal` oder mit `store.MaxEntries` Einträgen stehen nicht darin | `store`: `TestUIVectors` |
+| `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 28 Fällen | `store`: `TestReleaseScriptVector` |
 | `config/*.json` | Beispiel-Konfigurationen | von Hand |
 | `service/echo.sh` | Beispiel-Dienst | von Hand |
 
@@ -121,7 +123,9 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 9. Listen nur an den Pfaden, die das Budget nennt, je mit höchstens so vielen Elementen; ebenso
    Objekte, die Go als Map liest (Zahl der Einträge). Ein Pfad verbindet die Feldnamen von außen
    nach innen mit `/`, `*` steht für jedes Element: `users/*/keys`. `0` erlaubt nur eine leere
-   Liste.
+   Liste. Dazu kann ein Budget einen dieser Pfade über das ganze Dokument begrenzen
+   (`enc.Budget.Totals`): alle Listen (Maps) an diesem Pfad zusammen, etwa die Versionen aller Apps
+   eines Katalogs (Tabelle, „insgesamt“).
 10. Jedes andere Objekt ist eine Struktur: höchstens 64 Felder (`enc.MaxMembers`), jeder Name
     höchstens 64 Byte nach dem Auflösen der Escapes (`enc.MaxName`), ohne `/` und nicht `*`.
 11. In rohen Werten zählt nichts, und die Namen sind frei (doppelt dürfen sie nicht sein, Regel 4);
@@ -130,8 +134,9 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 13. Keine Zahl, deren genauer Wert dem Betrag nach größer ist als 2^53−1 (`enc.MaxSafeInteger`):
     `9007199254740991` und `9007199254740991.0` gehen, `9007199254740992`, `9007199254740991.5`
     und `1e16` nicht.
-14. Nirgends `null`. Wer JSON schreibt, lässt ein leeres Feld weg; eine leere Liste als Ergebnis
-    ist `[]`, nie `null`.
+14. Nirgends `null`. Wer JSON schreibt, lässt ein leeres Feld weg. Ergebnisse der API kodiert
+    `core.EncodeResult`: Eine leere Liste als Ergebnis ist `[]`, nie `null` (Beispiele unter
+    `empty` in `core.json`), und optionale Felder mit Nullwert (`""`, 0, `false`) fehlen.
 
 | Dokument | Go | Bytes | Listen und Maps (Pfad: höchstens) |
 |---|---|---|---|
@@ -155,7 +160,7 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | Parameter einer Kern-Aktion | `core.ParseParams` | `wire.MaxParams` (8 KiB) | `rights` 1000, `grants` 2 |
 | Kopf einer Übertragung | `core.ReadTransfer` | `core.MaxTransferHeader` (8 MiB) | keine |
 | Umschlag (`sign.Envelope`) um Lizenz, Katalog oder Release | `sign.ParseEnvelope` | base64url von `maxPayload` Byte + 1 KiB (`maxPayload` höchstens `sign.MaxPayload`; für Lizenzen `store.MaxLicense`) | keine |
-| Katalog | `store.VerifyCatalog` | `sign.MaxPayload` | `apps` 10000, `apps/*/versions` 100, `apps/*/versions/*/needs` 2 |
+| Katalog | `store.VerifyCatalog` | `sign.MaxPayload` | `apps` 10000, `apps/*/versions` 100, `apps/*/versions/*/needs` 2; insgesamt `apps/*/versions` 50000 (`store.MaxCatalogVersions`) |
 | Lizenz | `store.VerifyLicense` | `store.MaxLicense` (8 KiB) | keine |
 | Release | `store.VerifyRelease` | `sign.MaxPayload` | `files` 16 |
 | Manifest | `store.ParseManifest` | `store.MaxManifest` (64 KiB) | `actions` 64, `services` 16, `services/*/command` 32, `needs` 2 |
@@ -255,7 +260,8 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   SHA-256(task), beide Hashes als 32 rohe Byte. params und task sind die Werte der Felder `params`
   und `task` genau so, wie sie im OPEN stehen, jeweils von `{` bis `}`; fehlt ein Feld, wird der
   leere Text gehasht. Der Controller nimmt sie aus `Opened.Open.Params` und
-  `Opened.Open.TaskBytes()`.
+  `Opened.Open.TaskBytes()`. Ein OPEN mit Aufgabe hat keine `params`; dann binden die Bytes der
+  Aufgabe deren Parameter (`service.Call`).
 - **Handschlag:** Nachricht 1 steht im OPEN (`e2e`), Nachricht 2 in der ersten GRANT der Seite, die
   den Kanal angenommen hat (diese GRANT hat dann 52 Byte). Fehlt der Handschlag dort oder steht
   einer in einer anderen GRANT, ist das `E_PROTOCOL`.
@@ -282,8 +288,9 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
     Beispiele: `core.json`.
   - `in` (`core.FlowIn`): Der Öffner schickt höchstens `MaxIn` Byte, dann EOF; Ergebnis wie bei
     `call`.
-  - `out` (`core.FlowOut`): Die API schickt Daten statt eines Ergebnisses; bei `ui` ein tar nach
-    `store.WalkUI`.
+  - `out` (`core.FlowOut`): Die API schickt Daten statt eines Ergebnisses; bei `ui` ein ui-tar in
+    der einen Form, die der Kommentar in `store/ui.go` festlegt: `store.UIWriter` schreibt sie,
+    `store.WalkUI` liest sie, alles andere wird abgelehnt.
   - `transfer` (`core.FlowTransfer`): API → Controller, ein Kopf `core.Transfer`
     (`core.WriteTransfer`, `core.ReadTransfer`), danach genau `size` Byte; Ergebnis wie bei `call`.
 - **App-Kanäle:** Das Ergebnis ist die Ausgabe des Controllers bis zu seinem Ende (`wire.E2EEnd`).
@@ -305,7 +312,8 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
     (`transfer`) und bei `ngc.users/controller/trust`.
 - **Aufgaben:** Ein OPEN mit Aufgabe (`task`) hat keine eigenen Parameter; es gelten die der
   Aufgabe. Ob ein Kanal eine Aufgabe braucht, root ist oder kritisch, entscheidet `task.Check` mit
-  einer Regel aus geprüften Daten, nie aus dem OPEN: `core.RuleFor` für Kern-Aktionen,
+  einer Regel aus geprüften Daten, nie aus dem OPEN: `core.RuleFor` für Kern-Aktionen (ohne
+  Parameter ist `activate` oder `uninstall` ein Fehler, denn ihre Parameter entscheiden),
   `store.RuleFor` aus dem Manifest einer App (root, wenn das Manifest `root` verlangt). Die API
   prüft eine Aufgabe, bevor sie sie an einen Controller weiterleitet, mit dem Ziel-Controller als
   `task.Input.Node`. Wer prüft, merkt sich die ID der Aufgabe bis zu ihrem Ablauf
@@ -318,7 +326,10 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   `ngc.store/controller/stage` und `ngc.store/controller/install`. `install` ohne Benutzer führt
   der Controller nur aus, wenn `core.Unattended` zustimmt: Es gibt eine Dauerfreigabe für das Ziel
   und den Schlüssel, der die Datei signiert hat, und die Version ist neuer als die installierte; ist
-  nichts installiert, nie. Bei `system` gibt es keinen Versionsvergleich.
+  nichts installiert, nie. Bei `system` gibt es keinen Versionsvergleich. Es zählen nur die
+  signierten Dateien: Version und SHA-256 nimmt der Controller aus dem geprüften Release oder
+  Katalogeintrag der Datei (dessen `seq` er geprüft hat) und lehnt Parameter ab, die davon
+  abweichen, denn die Parameter eines Kanals ohne Benutzer sind nicht unterschrieben.
 
 ## Prüfen
 
