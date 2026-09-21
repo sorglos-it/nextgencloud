@@ -115,7 +115,9 @@ type Local interface {
 
 	// OnceCreate remembers a one-time value until expires. A value that is
 	// already there gives ErrUsed, even after it was used; OncePurge frees
-	// expired values again.
+	// expired values again. It is atomic, also across several APIs on one
+	// database: of concurrent calls for the same kind and value, exactly one
+	// succeeds.
 	OnceCreate(ctx context.Context, kind string, value []byte, data string, expires int64) error
 	// OnceUse marks a value as used and returns its data. It gives
 	// ErrNotFound if it is unknown or expired and ErrUsed on a second use.
@@ -167,7 +169,9 @@ type Store interface {
 
 	// LockTake takes the lock until until, unless someone else holds it and
 	// their time has not passed at now. The same owner may take it again and
-	// moves the time.
+	// moves the time. It is atomic, also across several APIs on one database:
+	// of concurrent calls of different owners for a free lock, exactly one
+	// succeeds.
 	LockTake(ctx context.Context, name, owner string, now, until int64) (bool, error)
 	// LockFree gives the lock back; another owner is ignored.
 	LockFree(ctx context.Context, name, owner string) error

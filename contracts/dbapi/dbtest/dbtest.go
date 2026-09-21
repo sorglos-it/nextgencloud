@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/core"
@@ -23,7 +25,7 @@ func Run(t *testing.T, open func(t *testing.T) dbapi.Store) {
 	tests := map[string]func(*testing.T, dbapi.Store){
 		"blobs": testBlobs, "apps": testApps, "once": testOnce, "users": testUsers,
 		"sessions": testSessions, "pending": testPending, "log": testLog, "locks": testLocks,
-		"aliasing": testAliasing,
+		"aliasing": testAliasing, "concurrent once": testConcurrentOnce, "concurrent lock": testConcurrentLock,
 	}
 	for name, fn := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -387,6 +389,77 @@ func testLocks(t *testing.T, s dbapi.Store) {
 	}
 	if _, err := s.LockTake(ctx, dbapi.LockUpdate, "api-1", now, now); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("lock without time: %v", err)
+	}
+}
+
+// racers is how many goroutines the concurrency tests start at once.
+const racers = 32
+
+// race runs f(i) for i < racers in goroutines released together, and returns
+// their results.
+func race[T any](f func(i int) T) []T {
+	out := make([]T, racers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			out[i] = f(i)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return out
+}
+
+// testConcurrentOnce: of concurrent OnceCreate calls for the same kind and
+// value, exactly one succeeds and every other one gives ErrUsed.
+func testConcurrentOnce(t *testing.T, s dbapi.Store) {
+	value := bytes.Repeat([]byte{0x5a}, 32)
+	errs := race(func(i int) error {
+		return s.OnceCreate(ctx, dbapi.OnceTask, value, strconv.Itoa(i), 1790000100)
+	})
+	ok, used := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, dbapi.ErrUsed):
+			used++
+		default:
+			t.Errorf("OnceCreate: %v", err)
+		}
+	}
+	if ok != 1 || used != racers-1 {
+		t.Errorf("%d created, %d used, want 1 and %d", ok, used, racers-1)
+	}
+}
+
+// testConcurrentLock: of concurrent LockTake calls of different owners for a
+// free lock, exactly one gets it.
+func testConcurrentLock(t *testing.T, s dbapi.Store) {
+	const now = 1790000000
+	type result struct {
+		ok  bool
+		err error
+	}
+	results := race(func(i int) result {
+		ok, err := s.LockTake(ctx, dbapi.LockUpdate, "owner-"+strconv.Itoa(i), now, now+60)
+		return result{ok, err}
+	})
+	taken := 0
+	for _, r := range results {
+		if r.err != nil {
+			t.Errorf("LockTake: %v", r.err)
+		}
+		if r.ok {
+			taken++
+		}
+	}
+	if taken != 1 {
+		t.Errorf("%d owners took the lock, want 1", taken)
 	}
 }
 
