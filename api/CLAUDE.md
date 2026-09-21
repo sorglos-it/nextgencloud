@@ -7,10 +7,14 @@ Deine Ordner: `api/`, dazu `scripts/ngc-api.sh` im ulh-Repo (`contracts/ulh.md`)
 Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App-Code aus.
 
 - Anmeldung nach `session`: Anfragen nur über `session.ParseLoginStart`, `session.ParseLoginFinish`
-  und `session.ParseSetup`; Passwortschlüssel oder Passkey prüfen (`session.VerifyClient`). Hat
-  eine Rolle des Benutzers `passwordToo` (`trust.List.PasswordToo`, dann
-  `session.LoginChallenge.PasswordToo`), kommt der Beweis von einem Passkey und dazu der
-  Passwortbeweis (`password`), den du mit `session.VerifyPassword` prüfst. Das setzt nur die API
+  und `session.ParseSetup`; Passwortschlüssel oder Passkey prüfen (`session.VerifyClient`). Die
+  Nonce aus `session.LoginChallenge` prüft `session.VerifyClient` nicht, das tust du: beim
+  Ausgeben mit `dbapi.OnceNonce` und dem Benutzer merken (höchstens `session.ChallengeLifetime`),
+  bei der Anmeldung genau einmal verbrauchen (`dbapi.Local.OnceUse`) und mit dem Benutzer des
+  Zertifikats vergleichen. Hat eine Rolle des Benutzers `passwordToo` (`trust.List.PasswordToo`,
+  dann `session.LoginChallenge.PasswordToo`), kommt der Beweis von einem Passkey und dazu der
+  Passwortbeweis (`password`), den du mit `session.VerifyPassword` prüfst; fehlt `password`, lehnst
+  du die Anmeldung ab (`session.ParseLoginFinish` lässt das Feld offen). Das setzt nur die API
   durch; an Controller geht kein Passwortbeweis. TOTP, Sperre nach Fehlversuchen, Sitzung und
   Zertifikate, Cookie mit `session.TokenHash`. Ersteinrichtung: `session.SetupInfo` mit dem
   globalen Store aus `api.json` (`storeUrl`, `storeKey`), Fassung 1 mit `session.VerifySetup`
@@ -27,8 +31,18 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   kopieren. Ende-zu-Ende-Daten nie auspacken.
 - Ergebnisse nach Art von `call` auf Kern-App-Kanälen höchstens `wire.MaxCallResult`: Das
   Ergebnis eines Controllers prüfst du, bevor du es weitergibst, und schließt bei mehr mit
-  `E_TOOLARGE`; deine eigenen Ergebnisse hältst du darunter. Auf Ende-zu-Ende-Kanälen prüft das die
-  Shell, du siehst dort keinen Klartext.
+  `E_TOOLARGE`; deine eigenen Ergebnisse hältst du darunter (als Empfängerin prüft sie die Shell).
+  Auf Ende-zu-Ende-Kanälen prüft das die Shell, du siehst dort keinen Klartext.
+- Ergebnisse so kodieren, dass eine leere Liste `[]` ist, nie `null`: `json.Marshal` schreibt eine
+  nil-Slice als `null`, und das lehnt die Shell ab (`contracts/README.md`, „Striktes JSON“, Regel
+  14). Das betrifft vor allem die acht Ergebnisse, die als Ganzes eine Liste sind
+  (`ngc.desktop/apps`, `ngc.users/list`, `ngc.users/rights`, `ngc.users/pending`, `ngc.users/log`,
+  `ngc.store/sources`, `ngc.store/installed`, `ngc.store/updates`).
+- Was der Öffner schicken darf (`core.Action.MaxIn`), setzt du bei `ngc.store/api/upload`,
+  `ngc.users/api/trust` und `ngc.store/api/license` durch: bei mehr schließt du mit `E_TOOLARGE`.
+  Umschläge von außen liest du nur mit `sign.ParseEnvelope` (Lizenzen mit `store.MaxLicense`,
+  Kataloge und Releases mit `sign.MaxPayload`), eine Fassung der Vertrauensliste mit
+  `trust.ParseSigned`.
 - Vertragsfassungen (`contracts/README.md`, Regeln): Du bedienst die aktuelle und die vorige Nummer
   nebeneinander, jede unter ihren eigenen Pfaden (heute `/api/v1/…`). Im Tunnel spricht die neuere
   Seite die Fassung der älteren, die ihr `hello` nennt (`tunnel.Hello`); nach der Reihenfolge der
@@ -48,8 +62,9 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   globale Store heißt `global` (`store.GlobalID`), `local` steht für hochgeladene Apps
   (`core.LocalStore`); einen zweiten Store `global` lehnst du ab.
 - Updates: Reihenfolge Datenbank → APIs → Controller → Webinterface, gesteuert von genau einer API
-  über `dbapi.LockUpdate`. Die Migrationen spielt genau ein Controller mit Rolle `db` ein; er
-  bekommt dafür die Datei `ngc-api` seiner Architektur.
+  über `dbapi.LockUpdate`. Die Migrationen spielt genau ein Controller mit Rolle `db` ein: Die API
+  mit der Sperre wählt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten
+  Node-ID; scheitert er, den nächsten. Er bekommt dafür die Datei `ngc-api` seiner Architektur.
 - Protokoll: Anmeldungen, Rechte, Aufgaben mit Unterschrift, Kanäle, Stores, Lizenzen, Updates;
   jede Zeile mit einer ID aus 16 Zufallsbytes als Hex (`core.LogEntry`, `core.ValidLogID`).
 - Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen. Ein
