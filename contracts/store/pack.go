@@ -43,8 +43,17 @@ var (
 // Walk reads an app package and calls fn for every file once its header has
 // been checked. manifest.json must come first. Walk returns the manifest
 // after checking that the files it names are present.
+//
+// The check against what the manifest promises only completes after the
+// last call to fn, so on any error from Walk the caller must discard
+// everything fn already received — none of it was fully validated on its
+// own. Walk bounds how much of r it reads, but a package cut short in
+// transit before reaching that bound still parses as a shorter, "complete"
+// archive; only comparing it against the checksum the catalogue lists for
+// it catches that.
 func Walk(r io.Reader, fn func(m *Manifest, f PackFile, body io.Reader) error) (*Manifest, error) {
-	tr := tar.NewReader(r)
+	lr := &io.LimitedReader{R: r, N: MaxPackage}
+	tr := tar.NewReader(lr)
 	h, err := tr.Next()
 	if err != nil || h.Typeflag != tar.TypeReg || h.Name != ManifestFile || h.Size > MaxManifest {
 		return nil, ErrPackage
@@ -58,21 +67,35 @@ func Walk(r io.Reader, fn func(m *Manifest, f PackFile, body io.Reader) error) (
 		return nil, ErrPackage
 	}
 	seen := map[string]bool{ManifestFile: true}
+	isFile := map[string]bool{}    // regular files, by their checked path
+	dirNeeded := map[string]bool{} // paths some regular file requires to be a directory
 	var uiTotal int64
 	images := 0
 	for n := 1; ; n++ {
 		h, err := tr.Next()
 		if err == io.EOF {
+			if lr.N == 0 {
+				return nil, ErrPackage
+			}
 			break
 		}
 		if err != nil || n > MaxEntries {
 			return nil, ErrPackage
 		}
-		name := strings.TrimSuffix(h.Name, "/")
+		name := strings.Clone(strings.TrimSuffix(h.Name, "/"))
 		if seen[name] {
 			return nil, ErrPackage
 		}
 		seen[name] = true
+		clash := false
+		forEachAncestor(name, func(p string) {
+			if isFile[p] {
+				clash = true
+			}
+		})
+		if clash {
+			return nil, ErrPackage
+		}
 		switch h.Typeflag {
 		case tar.TypeDir:
 			if name != "ui" && name != "services" && !(strings.HasPrefix(name, "ui/") && ValidPath(name[3:])) {
@@ -80,6 +103,9 @@ func Walk(r io.Reader, fn func(m *Manifest, f PackFile, body io.Reader) error) (
 			}
 			continue
 		case tar.TypeReg:
+			if dirNeeded[name] {
+				return nil, ErrPackage
+			}
 		default:
 			return nil, ErrPackage
 		}
@@ -100,15 +126,27 @@ func Walk(r io.Reader, fn func(m *Manifest, f PackFile, body io.Reader) error) (
 		default:
 			return nil, ErrPackage
 		}
+		isFile[name] = true
+		forEachAncestor(name, func(p string) { dirNeeded[p] = true })
 		if err := fn(m, f, tr); err != nil {
 			return nil, err
 		}
 	}
-	if (m.UI != nil && !seen["ui/"+m.UI.Entry]) || (m.Icon != "" && !seen["ui/"+m.Icon]) ||
+	if (m.UI != nil && !isFile["ui/"+m.UI.Entry]) || (m.Icon != "" && !isFile["ui/"+m.Icon]) ||
 		(len(m.Services) > 0) != (images > 0) {
 		return nil, ErrPackage
 	}
 	return m, nil
+}
+
+// forEachAncestor calls fn with every proper prefix of name that ends right
+// before a '/': the directory paths an entry named name would sit under.
+func forEachAncestor(name string, fn func(string)) {
+	for i := range len(name) {
+		if name[i] == '/' {
+			fn(name[:i])
+		}
+	}
 }
 
 func packageAEAD(key, fileID []byte) (cipher.AEAD, error) {
@@ -286,6 +324,9 @@ func WrapKey(contentKey, installPub []byte, app string, rng io.Reader) (*Wrapped
 
 // UnwrapKey opens a wrapped content key with the installation's private key.
 func UnwrapKey(w *WrappedKey, installPriv *ecdh.PrivateKey, app string) ([]byte, error) {
+	if w == nil || installPriv == nil {
+		return nil, ErrEncrypted
+	}
 	peer, err := ecdh.X25519().NewPublicKey(w.Ephemeral)
 	if err != nil || len(w.Nonce) != 12 {
 		return nil, ErrEncrypted
