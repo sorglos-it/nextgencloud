@@ -100,7 +100,7 @@ type Controller struct {
 	DB         string       `json:"db"`
 	DBKey      enc.Bytes    `json:"dbKey"` // 64 bytes for AES-256-XTS
 	ReleaseKey enc.Bytes    `json:"releaseKey"`
-	Parts      []string     `json:"parts"` // tunnel.PartWeb, PartAPI, PartDB, PartServices
+	Parts      []string     `json:"parts"` // tunnel.RoleWeb, RoleAPI, RoleDB, RoleServices
 	Podman     string       `json:"podman,omitempty"`
 	WebConfig  string       `json:"webConfig,omitempty"` // web server: path of web.json for the balancer
 }
@@ -295,12 +295,12 @@ func (c *Controller) Validate() error {
 		}
 	}
 	for i, p := range c.Parts {
-		if !slices.Contains([]string{tunnel.PartWeb, tunnel.PartAPI, tunnel.PartDB, tunnel.PartServices}, p) ||
+		if !slices.Contains([]string{tunnel.RoleWeb, tunnel.RoleAPI, tunnel.RoleDB, tunnel.RoleServices}, p) ||
 			slices.Contains(c.Parts[:i], p) {
 			return ErrConfig
 		}
 	}
-	if slices.Contains(c.Parts, tunnel.PartWeb) && c.WebConfig == "" {
+	if slices.Contains(c.Parts, tunnel.RoleWeb) && c.WebConfig == "" {
 		return ErrConfig
 	}
 	return nil

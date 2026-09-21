@@ -156,7 +156,7 @@ func TestValidate(t *testing.T) {
 		"api url":             func(c *Controller) { c.APIs[0].URL = "https://api-1.ngc.test:7443/tunnel" },
 		"parts":               func(c *Controller) { c.Parts = []string{"mail"} },
 		"db key":              func(c *Controller) { c.DBKey = make([]byte, 32) },
-		"web without webconf": func(c *Controller) { c.Parts = []string{tunnel.PartWeb} },
+		"web without webconf": func(c *Controller) { c.Parts = []string{tunnel.RoleWeb} },
 	}
 	for name, mutate := range controllerCases {
 		c, err := LoadController(example(t, "controller.json"))
