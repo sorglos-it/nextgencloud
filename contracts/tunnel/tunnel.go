@@ -36,7 +36,7 @@ const (
 	MaxURL         = 256  // longest PairCode.URL and JoinCode.URL
 	MaxPairRequest = 4096 // also for join requests
 	MaxHello       = 4096
-	MaxStatusApps  = 512
+	MaxStatusApps  = 256 // at the longest app ID and version a status still fits one frame, with room to spare
 	PingInterval   = 30
 	ReconnectMin   = 1
 	ReconnectMax   = 60
@@ -151,7 +151,7 @@ var components = []string{trust.AutoWeb, trust.AutoAPI, trust.AutoController}
 
 // Open is the payload of an OPEN from the API to a controller.
 type Open struct {
-	Open   enc.Bytes    `json:"open"`             // the browser's OPEN payload byte for byte; for channels without a user the API's own
+	Open   enc.Bytes    `json:"open"`             // an OPEN payload: the browser's, which the API must forward unchanged, or the API's own for a channel without a user
 	Window uint32       `json:"window"`           // credit the API grants the controller on this channel
 	Client enc.Bytes    `json:"client,omitempty"` // client certificate payload exactly as the user's proof covers it
 	Proof  *proof.Proof `json:"proof,omitempty"`  // the user's proof over Client
@@ -159,7 +159,12 @@ type Open struct {
 
 // Opened is a checked OPEN from the API.
 type Opened struct {
-	Open    wire.Open         // the browser's OPEN; Params are byte for byte what the shell sent
+	// Open is the OPEN as the API forwarded it, and the API can put any OPEN
+	// here. Only two things bind it to what the shell sent: on an app channel
+	// the end-to-end prologue, which hashes its params and task
+	// (noisep.E2EPrologue), and the signature of its task (task.Check).
+	// Params and TaskBytes keep the bytes as they arrived, for the prologue.
+	Open    wire.Open
 	Window  uint32            // credit on the tunnel hop
 	Session *session.Verified // nil for a channel without a user
 }
@@ -421,6 +426,11 @@ func ParseOpen(p []byte) (Open, wire.Open, error) {
 // Session.Cert().User and nothing else. A channel without a client
 // certificate is allowed only for the actions core.WithoutUser lists; the
 // controller checks that, and for install also core.Unattended.
+//
+// A role that asks for the password too (trust.List.PasswordToo) is enforced
+// by the API at login (session.VerifyPassword); no password proof travels to
+// a controller, which relies on the passkey proof that session.VerifyClient
+// requires of such users.
 func VerifyOpen(p []byte, l *trust.List, now int64) (Opened, error) {
 	o, inner, err := ParseOpen(p)
 	if err != nil {

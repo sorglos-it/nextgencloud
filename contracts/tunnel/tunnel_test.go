@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"reflect"
 	"runtime"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/contracts/proof"
 	"github.com/sorglos-it/nextgencloud/contracts/session"
 	"github.com/sorglos-it/nextgencloud/contracts/sign"
+	"github.com/sorglos-it/nextgencloud/contracts/store"
 	"github.com/sorglos-it/nextgencloud/contracts/task"
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
 	"github.com/sorglos-it/nextgencloud/contracts/trust/trusttest"
@@ -165,6 +167,7 @@ func checkCases(t testing.TB, chain []trust.Signed) []checkCase {
 		{"anchor is an older version", c(api1.URL, api1.Noise, trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}), false},
 		{"anchor names a version the shell does not know", c(api1.URL, api1.Noise, trust.Anchor{Seq: 3, Hash: v.Hash}), false},
 		{"anchor hash differs", c(api1.URL, api1.Noise, trust.Anchor{Seq: v.List.Seq, Hash: otherHash}), false},
+		{"anchor with the newest hash but an older seq", c(api1.URL, api1.Noise, trust.Anchor{Seq: 1, Hash: v.Hash}), false},
 		{"key of a controller", c(api1.URL, ctl1.Noise, newestAnchor), false},
 		{"URL of no API node", c("wss://api-9.test:7443/tunnel", api1.Noise, newestAnchor), false},
 		{"key of one API node, URL of another", c(api2.URL, api1.Noise, newestAnchor), false},
@@ -390,7 +393,7 @@ func TestParseStatus(t *testing.T) {
 		"old part name":         func(s *Status) { s.Components = map[string]string{"controller": "1.0.0"} },
 		"bad component version": func(s *Status) { s.Components[trust.AutoWeb] = "v1" },
 		"negative diskFree":     func(s *Status) { s.DiskFree = -1 },
-		"513 apps":              func(s *Status) { s.Apps = apps(MaxStatusApps + 1) },
+		"one app over the most": func(s *Status) { s.Apps = apps(MaxStatusApps + 1) },
 	} {
 		bad := testStatus()
 		mutate(&bad)
@@ -408,6 +411,39 @@ func TestParseStatus(t *testing.T) {
 		if _, err := ParseStatus([]byte(s)); err != ErrStatus {
 			t.Errorf("%s: %v", s, err)
 		}
+	}
+}
+
+// TestStatusFitsOneFrame builds the largest status a controller can send:
+// MaxStatusApps apps with IDs of 100 characters, versions of 20 and the
+// longest state, every component at the longest version and the largest
+// diskFree. As the body of a status control message it must fit one frame.
+func TestStatusFitsOneFrame(t *testing.T) {
+	const version = "999999.999999.999999"
+	s := Status{Components: map[string]string{trust.AutoWeb: version, trust.AutoAPI: version, trust.AutoController: version},
+		DiskFree: 1<<53 - 1}
+	for i := range MaxStatusApps {
+		id := fmt.Sprintf("a.%s%04d", strings.Repeat("b", 94), i)
+		s.Apps = append(s.Apps, AppStatus{App: id, Version: version, State: StateUnlicensed})
+	}
+	if len(s.Apps[0].App) != 100 || !wire.ValidAppID(s.Apps[0].App) || !store.ValidVersion(version) {
+		t.Fatalf("app ID %q or version %q not at the limit", s.Apps[0].App, version)
+	}
+	body := mustJSON(t, s)
+	control := append(append([]byte(`{"t":"status","b":`), body...), '}')
+	t.Logf("largest status: %d bytes as a control message, %d to spare in the frame", len(control), wire.MaxPayload-len(control))
+	if len(control) > wire.MaxPayload*3/4 {
+		t.Errorf("largest status takes %d of %d bytes: too little room left", len(control), wire.MaxPayload)
+	}
+	if _, err := (wire.Frame{Type: wire.TypeData, Channel: wire.ControlChannel, Payload: control}).Encode(); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	c, err := wire.ParseControl(control)
+	if err != nil {
+		t.Fatalf("control message: %v", err)
+	}
+	if _, err := ParseStatus(c.B); err != nil {
+		t.Fatalf("status: %v", err)
 	}
 }
 
@@ -518,18 +554,19 @@ func TestMaxOpenPayload(t *testing.T) {
 		}
 		largest = b
 	}
-	// base64url grows by one or two characters per byte.
-	if len(largest) < wire.MaxBrowserOpen-1 {
-		t.Fatalf("largest browser OPEN has %d bytes", len(largest))
-	}
+	// White space after the value fills the OPEN to its last byte.
+	largest = append(largest, bytes.Repeat([]byte(" "), wire.MaxBrowserOpen-len(largest))...)
 	if _, err := wire.ParseOpen(largest); err != nil {
 		t.Fatalf("browser OPEN of %d bytes: %v", len(largest), err)
 	}
 	outer := mustJSON(t, Open{Open: largest, Window: wire.MaxWindow, Client: bytes.Repeat([]byte{'c'}, session.MaxCert),
 		Proof: maximalPasskeyProof()})
 	t.Logf("browser OPEN %d bytes, tunnel OPEN %d bytes", len(largest), len(outer))
-	if len(outer) > wire.MaxOpenPayload {
-		t.Fatalf("tunnel OPEN of %d bytes exceeds MaxOpenPayload", len(outer))
+	// 21,846 characters of base64url for the OPEN, 5,462 for the certificate,
+	// 12,378 for the proof with its member names, the window of 7 digits and
+	// the rest of the JSON: the true maximum, which MaxOpenPayload must hold.
+	if len(outer) != 39735 || len(outer) > wire.MaxOpenPayload {
+		t.Fatalf("largest tunnel OPEN has %d bytes, want 39735 within MaxOpenPayload", len(outer))
 	}
 	if _, _, err := ParseOpen(outer); err != nil {
 		t.Fatalf("largest tunnel OPEN: %v", err)

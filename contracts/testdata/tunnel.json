@@ -51,6 +51,11 @@
         "valid": false
       },
       {
+        "name": "anchor with the newest hash but an older seq",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoxLCJoYXNoIjoiU1lSM1R3cGkxNWlBcEdjQ3BEMjhRNy15YTFoUEVSb3VpRGxhUjUtTDM0YyJ9fQ",
+        "valid": false
+      },
+      {
         "name": "key of a controller",
         "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5IjoiUWxkZFhJcVRnekpWNEo4RUJVcFBZa2JUYnRGandjZjREQl9KcFlvT2tTMCIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiU1lSM1R3cGkxNWlBcEdjQ3BEMjhRNy15YTFoUEVSb3VpRGxhUjUtTDM0YyJ9fQ",
         "valid": false
