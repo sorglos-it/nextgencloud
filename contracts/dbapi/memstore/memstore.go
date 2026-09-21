@@ -26,6 +26,7 @@ type store struct {
 	once     map[string]onceValue
 	locks    map[string]lockValue
 	log      []core.LogEntry
+	logIDs   map[string]bool
 }
 
 type onceValue struct {
@@ -44,7 +45,7 @@ func New() dbapi.Store {
 	return &store{
 		blobs: map[string]dbapi.Blob{}, users: map[string]dbapi.User{}, sessions: map[string]dbapi.Session{},
 		apps: map[string]dbapi.App{}, pending: map[string]dbapi.Pending{}, once: map[string]onceValue{},
-		locks: map[string]lockValue{},
+		locks: map[string]lockValue{}, logIDs: map[string]bool{},
 	}
 }
 
@@ -341,26 +342,39 @@ func (s *store) PendingDelete(_ context.Context, k []byte) error {
 }
 
 func (s *store) LogAdd(_ context.Context, e core.LogEntry) error {
-	if e.Kind == "" || e.Time <= 0 {
+	if !core.ValidLogID(e.ID) || e.Kind == "" || e.Time <= 0 {
 		return dbapi.ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.logIDs[e.ID] {
+		return dbapi.ErrUsed
+	}
+	s.logIDs[e.ID] = true
 	s.log = append(s.log, e)
 	return nil
 }
 
+// compareLog orders log entries by time, then by ID; IDs are lower-case hex
+// of one length, so byte order is the order of their numbers.
+func compareLog(time1 int64, id1 string, time2 int64, id2 string) int {
+	if c := cmp.Compare(time1, time2); c != 0 {
+		return c
+	}
+	return strings.Compare(id1, id2)
+}
+
 func (s *store) LogQuery(_ context.Context, q core.LogQuery) ([]core.LogEntry, error) {
-	if q.Limit <= 0 {
+	if q.Limit < 1 || q.BeforeTime < 0 || (q.BeforeID != "" && (!core.ValidLogID(q.BeforeID) || q.BeforeTime == 0)) {
 		return nil, dbapi.ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]core.LogEntry, 0, q.Limit)
+	out := make([]core.LogEntry, 0, min(q.Limit, len(s.log)))
 	rows := slices.Clone(s.log)
-	slices.SortFunc(rows, func(a, b core.LogEntry) int { return cmp.Compare(b.Time, a.Time) })
+	slices.SortFunc(rows, func(a, b core.LogEntry) int { return compareLog(b.Time, b.ID, a.Time, a.ID) })
 	for _, e := range rows {
-		if (q.Before != 0 && e.Time >= q.Before) || (q.User != "" && e.User != q.User) {
+		if (q.BeforeTime != 0 && compareLog(e.Time, e.ID, q.BeforeTime, q.BeforeID) >= 0) || (q.User != "" && e.User != q.User) {
 			continue
 		}
 		if out = append(out, e); len(out) == q.Limit {

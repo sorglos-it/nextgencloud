@@ -305,15 +305,20 @@ func (p *RoleRights) Validate() error {
 	return check(ok)
 }
 
-// LogQuery selects log entries, newest first.
+// LogQuery selects log entries: newest first, ordered by (Time, ID)
+// descending; the next page starts after the last entry: BeforeTime = its
+// Time, BeforeID = its ID. Without BeforeID a page holds only entries with
+// Time < BeforeTime; without BeforeTime it starts at the newest entry.
 type LogQuery struct {
-	Before int64  `json:"before,omitempty"` // entries older than this time
-	Limit  int    `json:"limit"`
-	User   string `json:"user,omitempty"`
+	BeforeTime int64  `json:"beforeTime,omitempty"`
+	BeforeID   string `json:"beforeId,omitempty"` // ValidLogID; only with BeforeTime
+	Limit      int    `json:"limit"`
+	User       string `json:"user,omitempty"`
 }
 
 func (p *LogQuery) Validate() error {
-	return check(p.Before >= 0 && p.Limit >= 1 && p.Limit <= 500 && (p.User == "" || trust.ValidID(p.User)))
+	return check(p.Limit >= 1 && p.Limit <= 500 && (p.User == "" || trust.ValidID(p.User)) && p.BeforeTime >= 0 &&
+		(p.BeforeID == "" || (ValidLogID(p.BeforeID) && p.BeforeTime > 0)))
 }
 
 var window = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$`)

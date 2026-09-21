@@ -3,7 +3,11 @@ package core
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
+	"regexp"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/sign"
@@ -52,7 +56,7 @@ const (
 type Me struct {
 	ID            string      `json:"id"`
 	Name          string      `json:"name"`
-	Roles         []string    `json:"roles"`
+	Roles         []string    `json:"roles,omitempty"` // from the trust list, where they are never empty; nil is left out, never null
 	Admin         bool        `json:"admin"`
 	PasswordLogin bool        `json:"passwordLogin"` // show the hint to switch to passkeys
 	TOTP          bool        `json:"totp"`
@@ -67,9 +71,13 @@ type DesktopApp struct {
 	Icon    string   `json:"icon,omitempty"` // path below ui/
 	Width   int      `json:"width,omitempty"`
 	Height  int      `json:"height,omitempty"`
-	Actions []string `json:"actions"` // actions this user may use
+	Actions []string `json:"actions,omitempty"` // actions this user may use
 	State   string   `json:"state"`
 	Core    bool     `json:"core,omitempty"` // app store and users & rights; their UI is part of the shell
+	// Node is the controller the app's services run on (trust list node ID);
+	// the shell needs it for noisep.E2EPrologue and the controller's Noise
+	// key and never shows it; empty for apps without services.
+	Node string `json:"node,omitempty"`
 }
 
 // TOTPBegin answers ngc.desktop/totp-begin.
@@ -82,7 +90,7 @@ type TOTPBegin struct {
 type UserInfo struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Roles     []string `json:"roles"`
+	Roles     []string `json:"roles,omitempty"`
 	TOTP      bool     `json:"totp"`
 	Locked    bool     `json:"locked"`
 	LastLogin int64    `json:"lastLogin,omitempty"`
@@ -104,6 +112,9 @@ type Pending struct {
 
 // LogEntry is a row of ngc.users/log.
 type LogEntry struct {
+	// ID is 32 lower-case hex characters from 16 random bytes, made by the
+	// API; hex so every database collation orders it like Go.
+	ID     string `json:"id"`
 	Time   int64  `json:"time"`
 	User   string `json:"user,omitempty"`
 	Kind   string `json:"kind"`
@@ -113,6 +124,12 @@ type LogEntry struct {
 	Result string `json:"result"` // "ok" or a wire.Code
 	Detail string `json:"detail,omitempty"`
 }
+
+var logID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// ValidLogID reports whether s is the ID of a log entry: 32 lower-case hex
+// characters.
+func ValidLogID(s string) bool { return logID.MatchString(s) }
 
 // SourceInfo is a store in ngc.store/sources.
 type SourceInfo struct {
@@ -185,6 +202,64 @@ type Notice struct {
 	App   string `json:"app,omitempty"`
 }
 
+// MaxNotice limits the body of a "notify" control message.
+const MaxNotice = 1024
+
+// ErrNotice reports a malformed notice.
+var ErrNotice = errors.New("core: malformed notice")
+
+// noticeBudget bounds a notice while it is decoded (enc.Budget): it has no
+// array.
+var noticeBudget = enc.Budget{Size: MaxNotice}
+
+// ParseNotice checks the body of a "notify" control message: at most
+// MaxNotice bytes of strict JSON (enc.Budget); Level info, warn or error;
+// Text 1..wire.MaxMessageText bytes of printable UTF-8; App empty or a valid
+// non-core app ID. Every failure is ErrNotice.
+func ParseNotice(b []byte) (Notice, error) {
+	var n Notice
+	if noticeBudget.Decode(b, &n) != nil {
+		return Notice{}, ErrNotice
+	}
+	switch n.Level {
+	case NoticeInfo, NoticeWarn, NoticeError:
+	default:
+		return Notice{}, ErrNotice
+	}
+	if !printable(n.Text, wire.MaxMessageText) || (n.App != "" && !validApp(n.App)) {
+		return Notice{}, ErrNotice
+	}
+	return n, nil
+}
+
+// printable allows printable UTF-8 text (unicode.IsPrint) of 1 to max bytes.
+func printable(s string, max int) bool {
+	if s == "" || len(s) > max || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// LicenseOf maps a license to the strings in InstalledApp and LicenseResult:
+// nil -> LicenseNone; store.LicenseValid/Grace/Expired -> LicenseValid/Grace/Expired.
+func LicenseOf(l *store.License, now int64) string {
+	if l == nil {
+		return LicenseNone
+	}
+	switch l.State(now) {
+	case store.LicenseValid:
+		return LicenseValid
+	case store.LicenseGrace:
+		return LicenseGrace
+	}
+	return LicenseExpired
+}
+
 // MaxTransferHeader limits the JSON header of a transfer.
 const MaxTransferHeader = 8 << 20
 
@@ -230,7 +305,8 @@ func WriteTransfer(w io.Writer, t Transfer) error {
 	return err
 }
 
-// ReadTransfer reads exactly the header; the file follows in r.
+// ReadTransfer reads exactly the header; the file follows in r. Every
+// failure is ErrTransfer.
 func ReadTransfer(r io.Reader) (Transfer, error) {
 	var n [4]byte
 	if _, err := io.ReadFull(r, n[:]); err != nil {
@@ -244,9 +320,21 @@ func ReadTransfer(r io.Reader) (Transfer, error) {
 	if _, err := io.ReadFull(r, b); err != nil {
 		return Transfer{}, ErrTransfer
 	}
+	return parseTransfer(b)
+}
+
+// transferBudget bounds a transfer header while it is decoded (enc.Budget):
+// it has no array, and its envelopes hold bytes.
+var transferBudget = enc.Budget{Size: MaxTransferHeader}
+
+// parseTransfer decodes and checks the JSON of a transfer header.
+func parseTransfer(b []byte) (Transfer, error) {
 	var t Transfer
-	if err := enc.DecodeStrict(b, MaxTransferHeader, &t); err != nil {
+	if transferBudget.Decode(b, &t) != nil {
 		return Transfer{}, ErrTransfer
 	}
-	return t, t.Validate()
+	if err := t.Validate(); err != nil {
+		return Transfer{}, err
+	}
+	return t, nil
 }

@@ -152,9 +152,17 @@ type Store interface {
 	PendingList(ctx context.Context) ([]Pending, error)
 	PendingDelete(ctx context.Context, key []byte) error
 
+	// LogAdd keeps an entry. The caller sets e.ID (core.ValidLogID). An ID
+	// that is missing or not core.ValidLogID, an empty Kind or a Time below 1
+	// gives ErrInvalid; a second entry with the same ID gives ErrUsed.
 	LogAdd(ctx context.Context, e core.LogEntry) error
-	// LogQuery returns entries older than q.Before (0: now), newest first,
-	// at most q.Limit, for q.User if set.
+	// LogQuery returns entries newest first, ordered by (Time, ID)
+	// descending, IDs compared byte by byte; only entries strictly after the
+	// cursor, (Time, ID) < (q.BeforeTime, q.BeforeID), so with BeforeID empty
+	// Time < BeforeTime, and no cursor while BeforeTime is 0; at most q.Limit;
+	// only those of q.User if set. A Limit below 1, a BeforeTime below 0, or a
+	// BeforeID that is not core.ValidLogID or comes without a BeforeTime gives
+	// ErrInvalid.
 	LogQuery(ctx context.Context, q core.LogQuery) ([]core.LogEntry, error)
 
 	// LockTake takes the lock until until, unless someone else holds it and

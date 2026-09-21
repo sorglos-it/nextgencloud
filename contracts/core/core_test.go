@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
+	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
@@ -164,6 +166,164 @@ func TestParseParams(t *testing.T) {
 	for _, c := range bad {
 		if _, err := ParseParams(action(t, c.app, c.service, c.name), json.RawMessage(c.params)); err != ErrParams {
 			t.Errorf("%s %s: got %v, want %v", c.name, c.params, err, ErrParams)
+		}
+	}
+
+	// The log cursor, one rule per case.
+	log := action(t, AppUsers, ServiceAPI, ActLog)
+	const id = "000102030405060708090a0b0c0d0e0f"
+	for _, c := range []struct {
+		name, params string
+		valid        bool
+	}{
+		{"log cursor time only", `{"limit":10,"beforeTime":1790000000}`, true},
+		{"log cursor time and id", `{"limit":10,"beforeTime":1790000000,"beforeId":"` + id + `"}`, true},
+		{"log cursor id without time", `{"limit":10,"beforeId":"` + id + `"}`, false},
+		{"log cursor id not hex", `{"limit":10,"beforeTime":1790000000,"beforeId":"000102030405060708090a0b0c0d0e0g"}`, false},
+		{"log cursor id upper case", `{"limit":10,"beforeTime":1790000000,"beforeId":"000102030405060708090A0B0C0D0E0F"}`, false},
+		{"log cursor id of 31 characters", `{"limit":10,"beforeTime":1790000000,"beforeId":"` + id[1:] + `"}`, false},
+		{"log cursor id of 33 characters", `{"limit":10,"beforeTime":1790000000,"beforeId":"` + id + `0"}`, false},
+		{"log cursor time negative", `{"limit":10,"beforeTime":-1}`, false},
+		{"log cursor time beyond 2^53-1", `{"limit":10,"beforeTime":9007199254740992}`, false},
+		{"log cursor under the old name", `{"limit":10,"before":1790000000}`, false},
+	} {
+		if _, err := ParseParams(log, json.RawMessage(c.params)); (err == nil) != c.valid {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}
+
+func TestValidLogID(t *testing.T) {
+	for _, s := range []string{"000102030405060708090a0b0c0d0e0f", "ffffffffffffffffffffffffffffffff"} {
+		if !ValidLogID(s) {
+			t.Errorf("%s rejected", s)
+		}
+	}
+	for _, s := range []string{"", "000102030405060708090a0b0c0d0e0", "000102030405060708090a0b0c0d0e0f0",
+		"000102030405060708090A0B0C0D0E0F", "000102030405060708090a0b0c0d0e0g", "AAECAwQFBgcICQoLDA0ODw",
+		"000102030405060708090a0b0c0d0e0f" + "\n"} {
+		if ValidLogID(s) {
+			t.Errorf("%q accepted", s)
+		}
+	}
+}
+
+func TestParseNotice(t *testing.T) {
+	umlauts := func(n int) string { return strings.Repeat("ä", n) } // two bytes each
+	good := []struct{ name, body string }{
+		{"warning about an app", `{"level":"warn","text":"Die Lizenz für Terminal läuft in 3 Tagen ab.","app":"org.sorglos.terminal"}`},
+		{"info without app", `{"level":"info","text":"Update installiert."}`},
+		{"error", `{"level":"error","text":"x"}`},
+		{"text of MaxMessageText bytes", `{"level":"info","text":"` + umlauts(wire.MaxMessageText/2) + `"}`},
+	}
+	for _, c := range good {
+		if _, err := ParseNotice([]byte(c.body)); err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	bad := []struct{ name, body string }{
+		{"unknown level", `{"level":"debug","text":"x"}`},
+		{"no level", `{"text":"x"}`},
+		{"empty text", `{"level":"info","text":""}`},
+		{"text over MaxMessageText bytes", `{"level":"info","text":"` + umlauts(wire.MaxMessageText/2) + `a"}`},
+		{"text with a line break", `{"level":"info","text":"a\nb"}`},
+		{"text with a control character", `{"level":"info","text":"a\u0007b"}`},
+		{"core app", `{"level":"info","text":"x","app":"ngc.store"}`},
+		{"invalid app id", `{"level":"info","text":"x","app":"Terminal"}`},
+		{"unknown member", `{"level":"info","text":"x","user":"admin"}`},
+		{"member in other case", `{"Level":"info","text":"x"}`},
+		{"duplicate member", `{"level":"info","level":"warn","text":"x"}`},
+		{"null", `{"level":"info","text":"x","app":null}`},
+		{"not an object", `["info","x"]`},
+		{"trailing data", `{"level":"info","text":"x"} {}`},
+		{"over MaxNotice", `{"level":"info","text":"x"}` + strings.Repeat(" ", MaxNotice)},
+	}
+	for _, c := range bad {
+		if _, err := ParseNotice([]byte(c.body)); err != ErrNotice {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrNotice)
+		}
+	}
+}
+
+func TestLicenseOf(t *testing.T) {
+	const issued = 1790000000
+	l := &store.License{Issued: issued, Expires: issued + 86400, Grace: 3600}
+	cases := []struct {
+		name string
+		l    *store.License
+		now  int64
+		want string
+	}{
+		{"free app", nil, issued, LicenseNone},
+		{"valid", l, issued + 1, LicenseValid},
+		{"grace", l, issued + 86400, LicenseGrace},
+		{"expired", l, issued + 86400 + 3600, LicenseExpired},
+	}
+	for _, c := range cases {
+		if got := LicenseOf(c.l, c.now); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestResultsWithoutNull: a result the API fills with nothing is sent
+// without null, which every strict decoder refuses, and reads back the same.
+func TestResultsWithoutNull(t *testing.T) {
+	budget := enc.Budget{Size: 1 << 20, Items: map[string]int{"roles": trust.MaxRoles, "actions": 64, "rights": maxRights}}
+	for _, v := range []any{&Me{}, &DesktopApp{}, &UserInfo{}, &RoleRights{}, &LogEntry{}, &Pending{}, &SourceInfo{},
+		&CatalogResult{}, &InstalledApp{}, &UploadResult{}, &LicenseResult{}, &InstallKey{}, &UpdateInfo{}, &TrustResult{},
+		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}} {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Empty bytes read back as empty, not nil, so the JSON is compared.
+		back := reflect.New(reflect.TypeOf(v).Elem()).Interface()
+		err = budget.Decode(b, back)
+		again, _ := json.Marshal(back)
+		if err != nil || !bytes.Equal(again, b) {
+			t.Errorf("%T: %s does not read back: %s, %v", v, b, again, err)
+		}
+	}
+}
+
+// TestNoticeBoundsAllocation and TestTransferBoundsAllocation feed the
+// parsers a document of their full size with an array or too many members
+// where they allow none: refusing it must allocate next to nothing beyond
+// the document itself.
+func TestNoticeBoundsAllocation(t *testing.T) {
+	for _, in := range [][]byte{hostile(`{"text":[`, `{}`, `]}`, MaxNotice), members(`{`, `}`, MaxNotice)} {
+		var err error
+		n := allocated(func() { _, err = ParseNotice(in) })
+		t.Logf("%d bytes allocated", n)
+		if n > 64<<10 || err != ErrNotice {
+			t.Errorf("%d bytes allocated, %v", n, err)
+		}
+	}
+}
+
+func TestTransferBoundsAllocation(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		{"payload as an array", hostile(`{"catalog":{"payload":[`, `{}`, `]}}`, MaxTransferHeader)},
+		{"members of the catalog", members(`{"catalog":{`, `}}`, MaxTransferHeader)},
+	}
+	for _, c := range cases {
+		var err error
+		n := allocated(func() { _, err = parseTransfer(c.in) })
+		t.Logf("%s: %d bytes allocated", c.name, n)
+		if n > 64<<10 || err != ErrTransfer {
+			t.Errorf("%s: %d bytes allocated, %v", c.name, n, err)
+		}
+		// ReadTransfer holds the header itself, and next to nothing besides.
+		framed := binary.BigEndian.AppendUint32(nil, uint32(len(c.in)))
+		framed = append(framed, c.in...)
+		n = allocated(func() { _, err = ReadTransfer(bytes.NewReader(framed)) })
+		t.Logf("%s, ReadTransfer: %d bytes allocated", c.name, n)
+		if n > uint64(len(c.in))+64<<10 || err != ErrTransfer {
+			t.Errorf("%s, ReadTransfer: %d bytes allocated, %v", c.name, n, err)
 		}
 	}
 }
@@ -411,14 +571,15 @@ func TestParseParamsBoundsAllocation(t *testing.T) {
 func TestExamples(t *testing.T) {
 	examples := map[string]any{
 		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
-		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK}},
+		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
 		"ngc.desktop/totp-begin": TOTPBegin{Secret: "JBSWY3DPEHPK3PXP", URI: "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP&issuer=NGC"},
 		"ngc.users/list":         []UserInfo{{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, TOTP: true, LastLogin: 1790000000}},
 		"ngc.users/rights":       []RoleRights{{Role: "user", Rights: []string{"org.sorglos.calculator/use"}}},
 		"ngc.users/trust":        TrustResult{Seq: 4},
 		"ngc.users/pair-code":    PairCodeResult{Code: "ngc-pair:…", Expires: 1790086400},
+		"ngc.users/join-code":    PairCodeResult{Code: "ngc-join:…", Expires: 1790086400},
 		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Fingerprint: "k3y…", Since: 1790000000}},
-		"ngc.users/log":          []LogEntry{{Time: 1790000000, User: "ISEhISEhISEhISEhISEhIQ", Kind: LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"}},
+		"ngc.users/log":          []LogEntry{{ID: "000102030405060708090a0b0c0d0e0f", Time: 1790000000, User: "ISEhISEhISEhISEhISEhIQ", Kind: LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"}},
 		"ngc.store/sources":      []SourceInfo{{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5, Checked: 1790000000}},
 		"ngc.store/catalog":      CatalogResult{Catalog: sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{7}, 64)}},
 		"ngc.store/installed":    []InstalledApp{{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1", Active: true, State: AppOK, License: LicenseValid}},
@@ -427,6 +588,24 @@ func TestExamples(t *testing.T) {
 		"ngc.store/install-key":  InstallKey{Installation: "EREREREREREREREREREREQ", Key: bytes.Repeat([]byte{6}, 32)},
 		"ngc.store/updates":      []UpdateInfo{{Target: "ngc-api", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00", State: store.UpdateAvailable}},
 		"notice":                 Notice{Level: NoticeWarn, Text: "Die Lizenz für Terminal läuft in 3 Tagen ab.", App: "org.sorglos.terminal"},
+	}
+	// The examples keep the rules the shell checks.
+	for _, e := range examples["ngc.users/log"].([]LogEntry) {
+		if !ValidLogID(e.ID) {
+			t.Errorf("log entry ID %q", e.ID)
+		}
+	}
+	for _, a := range examples["ngc.desktop/apps"].([]DesktopApp) {
+		if !wire.ValidName(a.Node) {
+			t.Errorf("desktop app node %q", a.Node)
+		}
+	}
+	notice, err := json.Marshal(examples["notice"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseNotice(notice); err != nil {
+		t.Errorf("notice: %v", err)
 	}
 	golden.Check(t, *update, "core.json", examples)
 }
@@ -449,6 +628,26 @@ func FuzzParseParams(f *testing.F) {
 			if err == nil && p != nil && p.Validate() != nil {
 				t.Fatalf("%s: accepted params that do not validate", a.Name)
 			}
+		}
+	})
+}
+
+func FuzzParseNotice(f *testing.F) {
+	f.Add([]byte(`{"level":"warn","text":"Die Lizenz für Terminal läuft in 3 Tagen ab.","app":"org.sorglos.terminal"}`))
+	f.Add([]byte(`{"level":"info","text":"x"}`))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		n, err := ParseNotice(b)
+		if err != nil {
+			return
+		}
+		// What passes encodes to a notice that passes again, unchanged.
+		out, err := json.Marshal(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		back, err := ParseNotice(out)
+		if err != nil || back != n {
+			t.Fatalf("%q -> %s: %+v, %v", b, out, back, err)
 		}
 	})
 }

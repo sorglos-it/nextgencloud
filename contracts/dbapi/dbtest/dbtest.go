@@ -5,8 +5,10 @@ package dbtest
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/core"
@@ -257,11 +259,23 @@ func testPending(t *testing.T, s dbapi.Store) {
 	}
 }
 
+// logID returns the log entry ID of n: 32 lower-case hex characters.
+func logID(n byte) string { return strings.Repeat(hex.EncodeToString([]byte{n}), 16) }
+
+// ids returns the IDs of entries, in order.
+func ids(entries []core.LogEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.ID
+	}
+	return out
+}
+
 func testLog(t *testing.T, s dbapi.Store) {
 	entries := []core.LogEntry{
-		{Time: 1790000001, User: "u-admin", Kind: core.LogLogin, Result: "ok"},
-		{Time: 1790000002, User: "u-alice", Kind: core.LogChannel, App: "org.sorglos.terminal", Action: "shell", Node: "ctl-1", Result: "ok"},
-		{Time: 1790000003, User: "u-admin", Kind: core.LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"},
+		{ID: logID(0x31), Time: 1790000001, User: "u-admin", Kind: core.LogLogin, Result: "ok"},
+		{ID: logID(0x32), Time: 1790000002, User: "u-alice", Kind: core.LogChannel, App: "org.sorglos.terminal", Action: "shell", Node: "ctl-1", Result: "ok", Detail: "80x24"},
+		{ID: logID(0x33), Time: 1790000003, User: "u-admin", Kind: core.LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"},
 	}
 	for _, e := range entries {
 		if err := s.LogAdd(ctx, e); err != nil {
@@ -269,23 +283,78 @@ func testLog(t *testing.T, s dbapi.Store) {
 		}
 	}
 	got, err := s.LogQuery(ctx, core.LogQuery{Limit: 10})
-	if err != nil || len(got) != 3 || got[0].Time != 1790000003 {
+	if err != nil || len(got) != 3 || got[0].Time != 1790000003 || got[1] != entries[1] {
 		t.Fatalf("newest first: %+v, %v", got, err)
 	}
 	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 2}); len(got) != 2 {
 		t.Error("limit")
 	}
-	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10, Before: 1790000003}); len(got) != 2 || got[0].Time != 1790000002 {
+	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10, BeforeTime: 1790000003}); len(got) != 2 || got[0].Time != 1790000002 {
 		t.Error("before")
 	}
 	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10, User: "u-alice"}); len(got) != 1 || got[0].App != "org.sorglos.terminal" {
 		t.Error("user")
 	}
-	if err := s.LogAdd(ctx, core.LogEntry{Time: 1790000004}); !errors.Is(err, dbapi.ErrInvalid) {
-		t.Errorf("entry without kind: %v", err)
+	for name, e := range map[string]core.LogEntry{
+		"entry without id":         {Time: 1790000004, Kind: core.LogLogin, Result: "ok"},
+		"entry with an invalid id": {ID: strings.ToUpper(logID(0x3a)), Time: 1790000004, Kind: core.LogLogin, Result: "ok"},
+		"entry without kind":       {ID: logID(0x34), Time: 1790000004},
+		"entry without time":       {ID: logID(0x35), Kind: core.LogLogin, Result: "ok"},
+	} {
+		if err := s.LogAdd(ctx, e); !errors.Is(err, dbapi.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
-	if _, err := s.LogQuery(ctx, core.LogQuery{}); !errors.Is(err, dbapi.ErrInvalid) {
-		t.Errorf("query without limit: %v", err)
+	if err := s.LogAdd(ctx, core.LogEntry{ID: logID(0x31), Time: 1790000009, Kind: core.LogLogin, Result: "ok"}); !errors.Is(err, dbapi.ErrUsed) {
+		t.Errorf("id twice: %v", err)
+	}
+	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10}); len(got) != 3 {
+		t.Errorf("refused entries were kept: %+v", got)
+	}
+	for name, q := range map[string]core.LogQuery{
+		"query without limit":       {},
+		"cursor id without time":    {Limit: 10, BeforeID: logID(0x33)},
+		"cursor with an invalid id": {Limit: 10, BeforeTime: 1790000003, BeforeID: "33"},
+		"cursor time below 0":       {Limit: 10, BeforeTime: -1},
+	} {
+		if _, err := s.LogQuery(ctx, q); !errors.Is(err, dbapi.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// Five entries in the same second, added out of ID order.
+	const second = 1790000010
+	for _, n := range []byte{0xc3, 0x0a, 0xf1, 0x5e, 0x7b} {
+		if err := s.LogAdd(ctx, core.LogEntry{ID: logID(n), Time: second, User: "u-bob", Kind: core.LogChannel, Result: "ok"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Paging with Limit 2 returns all five exactly once, in ID-descending order.
+	var paged []string
+	q := core.LogQuery{Limit: 2, User: "u-bob"}
+	for range 5 {
+		page, err := s.LogQuery(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		paged = append(paged, ids(page)...)
+		q.BeforeTime, q.BeforeID = page[len(page)-1].Time, page[len(page)-1].ID
+	}
+	if want := []string{logID(0xf1), logID(0xc3), logID(0x7b), logID(0x5e), logID(0x0a)}; !slices.Equal(paged, want) {
+		t.Errorf("five entries in the same second: paged %v, want %v", paged, want)
+	}
+	// A cursor inside a second: the rest of that second, then older seconds.
+	got, err = s.LogQuery(ctx, core.LogQuery{Limit: 10, BeforeTime: second, BeforeID: logID(0x7b)})
+	if want := []string{logID(0x5e), logID(0x0a), logID(0x33), logID(0x32), logID(0x31)}; err != nil || !slices.Equal(ids(got), want) {
+		t.Errorf("cursor inside a second: %v, %v; want %v", ids(got), err, want)
+	}
+	// A cursor time without ID leaves out its whole second.
+	got, err = s.LogQuery(ctx, core.LogQuery{Limit: 10, BeforeTime: second})
+	if want := []string{logID(0x33), logID(0x32), logID(0x31)}; err != nil || !slices.Equal(ids(got), want) {
+		t.Errorf("cursor time without id: %v, %v; want %v", ids(got), err, want)
 	}
 }
 
