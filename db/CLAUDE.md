@@ -29,7 +29,10 @@ Deine Ordner: `db/`, dazu `scripts/ngc-db.sh` im ulh-Repo (`contracts/ulh.md`). 
 
 ## Tests
 
-- `dbtest.Run` gegen MariaDB (Cluster aus drei Knoten) und gegen SQLite.
+- `dbtest.Run` gegen MariaDB (Cluster aus drei Knoten) und gegen SQLite. Darin sind Wettläufe:
+  256 Runden mit je 16 gleichzeitigen `OnceCreate` bzw. `LockTake`, jede auf einem neuen Wert oder
+  einer neuen Sperre. Sie müssen auf Linux auch mit `go test -race` bestehen (SQLite braucht dafür
+  eine Behandlung für „busy“).
 - Migrationen vorwärts und mit der vorigen API-Version.
 - Ausfall: ein Knoten wird im laufenden Betrieb abgeschaltet, die Tests laufen weiter.
 - Kein Test darf ein Schema von Hand anlegen: immer über die Migrationen.
