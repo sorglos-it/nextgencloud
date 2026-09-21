@@ -32,7 +32,9 @@ dunkel. Dazu:
   Noise-Nachricht 1 und 2 ohne Nutzlast. Sofort nach Nachricht 2 die erste Nachricht schicken
   (leere Daten oder gleich Eingabe und Ende), innere Nachrichten nach `wire.E2E`; nach deinem Ende
   nichts mehr. Das Ergebnis steht im Ende des Controllers; fehlt es, ist die Antwort abgeschnitten:
-  Fehler zeigen.
+  Fehler zeigen. Bei Aktionen ohne `stream` im Manifest nimmst du höchstens `wire.MaxCallResult`
+  Byte Ausgabe an und schließt bei mehr mit `E_TOOLARGE`: Die API sieht den Klartext nicht, also
+  setzt nur du diese Grenze durch.
 - Aufgaben: `task.Task` bauen und mit dem Sitzungsschlüssel unterschreiben, bei Bedarf erneute
   Bestätigung (Passkey oder Passwort erneut) mit Zweck `confirm/v1`. Ein OPEN mit Aufgabe hat keine
   eigenen Parameter.
