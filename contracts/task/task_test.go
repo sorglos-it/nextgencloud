@@ -51,11 +51,35 @@ func newFixture(t testing.TB) fixture {
 	return fixture{list: l, admin: admin, sessSig: sessSig, verified: v}
 }
 
+// activateParams returns valid params of ngc.store/controller/activate with
+// extra members appended, such as grants.
+func activateParams(extra string) json.RawMessage {
+	sum := enc.B64.EncodeToString(bytes.Repeat([]byte{0x01}, 32))
+	return json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"` + trust.StoreGlobal + `"` + extra + `}`)
+}
+
 func (f fixture) task() Task {
 	return Task{ID: bytes.Repeat([]byte{0x61}, IDSize), Installation: f.list.Installation, Cert: session.CertHash(f.verified.Payload()),
 		Node: "ctl-1", App: "ngc.store", Service: "controller", Action: "activate",
-		Params: json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0"}`), Issued: issued, Expires: issued + 60}
+		Params: activateParams(""), Issued: issued, Expires: issued + 60}
 }
+
+// grantRule mimics core's rule for ngc.store/controller/activate: a root task
+// that is critical once it grants the app something. Like core, it refuses
+// params it cannot read, and no params at all.
+var grantRule = Rule{Root: true, Changes: true, Critical: func(params json.RawMessage) (bool, error) {
+	var p struct {
+		Grants []string `json:"grants"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return false, err
+	}
+	return len(p.Grants) > 0, nil
+}}
+
+// appRule is the rule of an app channel whose manifest asks for nothing
+// special.
+var appRule = Rule{Changes: true, Critical: func(json.RawMessage) (bool, error) { return false, nil }}
 
 func signTask(t testing.TB, priv ed25519.PrivateKey, tk Task) sign.Envelope {
 	t.Helper()
@@ -72,7 +96,7 @@ func signTask(t testing.TB, priv ed25519.PrivateKey, tk Task) sign.Envelope {
 
 func (f fixture) input(env *sign.Envelope) Input {
 	return Input{Task: env, Session: f.verified, Node: "ctl-1", App: "ngc.store", Service: "controller",
-		Action: "activate", Root: true, Changes: true}
+		Action: "activate", Rule: grantRule}
 }
 
 func TestCheck(t *testing.T) {
@@ -136,6 +160,11 @@ func TestCheckRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A string where grantRule expects a list: valid params for Task.Validate
+	// that only the rule refuses.
+	unreadable := f.task()
+	unreadable.Params = activateParams(`,"grants":"network"`)
+	unreadableEnv := signTask(t, f.sessSig, unreadable)
 	cases := []struct {
 		name   string
 		mutate func(in *Input, now *int64)
@@ -148,6 +177,8 @@ func TestCheckRejects(t *testing.T) {
 		{"too long", func(in *Input, _ *int64) { in.Task = &longEnv }, ErrTask},
 		{"other session key", func(in *Input, _ *int64) { in.Task = &foreign }, sign.ErrWrongKey},
 		{"other client certificate", func(in *Input, _ *int64) { in.Session = otherSession }, ErrTask},
+		{"params the rule rejects", func(in *Input, _ *int64) { in.Task = &unreadableEnv }, ErrTask},
+		{"zero rule", func(in *Input, _ *int64) { in.Rule = Rule{} }, ErrTask},
 	}
 	for _, c := range cases {
 		in, n := f.input(&env), int64(now)
@@ -190,9 +221,81 @@ func TestConfirm(t *testing.T) {
 	}
 }
 
+// TestCriticalFromTask shows that the signed params decide whether an action
+// is critical: at level critical the same action needs a confirmation only
+// when its task grants something.
+func TestCriticalFromTask(t *testing.T) {
+	f := newFixture(t)
+	f.list.Roles[0].Level = trust.LevelCritical
+	granting := f.task()
+	granting.Params = activateParams(`,"grants":["network"]`)
+	env := signTask(t, f.sessSig, granting)
+	in := f.input(&env)
+	var seen json.RawMessage
+	in.Rule.Critical = func(params json.RawMessage) (bool, error) {
+		seen = params
+		return grantRule.Critical(params)
+	}
+	if _, err := Check(in, f.list, now); err != ErrConfirm {
+		t.Errorf("grant in the task, no confirmation: got %v, want %v", err, ErrConfirm)
+	}
+	if !bytes.Equal(seen, granting.Params) {
+		t.Errorf("rule saw %s, want the task's params %s", seen, granting.Params)
+	}
+	good := f.admin.Prove(sign.PurposeConfirm, env.Payload)
+	in.Confirm = &good
+	if _, err := Check(in, f.list, now); err != nil {
+		t.Errorf("grant in the task, confirmed: %v", err)
+	}
+	plain := signTask(t, f.sessSig, f.task())
+	if got, err := Check(f.input(&plain), f.list, now); err != nil || got == nil {
+		t.Errorf("no grant in the task: %v", err)
+	}
+}
+
+// TestAPIPreCheck: before the API forwards a task to a controller it checks
+// it itself, with the task's node as Node.
+func TestAPIPreCheck(t *testing.T) {
+	f := newFixture(t)
+	env := signTask(t, f.sessSig, f.task())
+	in := f.input(&env)
+	in.Node = f.task().Node
+	if got, err := Check(in, f.list, now); err != nil || got == nil {
+		t.Errorf("API pre-check with the task's node: %v", err)
+	}
+	in.Node = ""
+	if _, err := Check(in, f.list, now); err != ErrTask {
+		t.Errorf("API pre-check with empty node: got %v, want %v", err, ErrTask)
+	}
+}
+
+// TestRootApp: a channel to an app whose manifest asks for root is a root
+// task like a core root action.
+func TestRootApp(t *testing.T) {
+	f := newFixture(t)
+	rootRule := Rule{Root: true, Changes: true, Critical: func(json.RawMessage) (bool, error) { return false, nil }}
+	tk := f.task()
+	tk.App, tk.Service, tk.Action, tk.Params = "org.sorglos.terminal", "terminal", "shell", nil
+	env := signTask(t, f.sessSig, tk)
+	in := Input{Task: &env, Session: f.verified, Node: "ctl-1", App: tk.App, Service: tk.Service, Action: tk.Action, Rule: rootRule}
+	if got, err := Check(in, f.list, now); err != nil || got == nil {
+		t.Errorf("root app channel with task: %v", err)
+	}
+	noTask := in
+	noTask.Task = nil
+	if _, err := Check(noTask, f.list, now); err != ErrNoTask {
+		t.Errorf("root app channel without task: got %v, want %v", err, ErrNoTask)
+	}
+	noRoot := trusttest.Genesis(f.admin)
+	noRoot.Nodes[1].RootRoles = nil
+	if _, err := Check(in, noRoot, now); err != ErrForbidden {
+		t.Errorf("root app channel, user without root: got %v, want %v", err, ErrForbidden)
+	}
+}
+
 func TestLevels(t *testing.T) {
 	f := newFixture(t)
-	shell := Input{Session: f.verified, Node: "ctl-1", App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Changes: true}
+	shell := Input{Session: f.verified, Node: "ctl-1", App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Rule: appRule}
 	if tk, err := Check(shell, f.list, now); err != nil || tk != nil {
 		t.Errorf("plain channel at level critical: %v %v", tk, err)
 	}

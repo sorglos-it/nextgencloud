@@ -25,8 +25,8 @@ const (
 	MaxTask     = 16 << 10
 )
 
-// Task describes exactly one channel. If a task comes with an OPEN, its
-// Params replace the ones in the OPEN.
+// Task describes exactly one channel. An OPEN that carries a task carries no
+// params of its own (wire.Open.Validate); the task's params are the params.
 type Task struct {
 	ID           enc.Bytes       `json:"id"` // random; verifiers remember it until Expires
 	Installation string          `json:"inst"`
@@ -102,29 +102,54 @@ func VerifyConfirm(p proof.Proof, env sign.Envelope, l *trust.List, user string)
 	return proof.Verify(p, key, l.RP, sign.PurposeConfirm, env.Payload)
 }
 
-// Input is what the verifier knows about a channel. Root, Critical and
-// Changes come from the manifest or the core list, never from the sender.
+// Rule says how a verifier judges a channel. The verifier builds it from
+// what it holds itself — core.RuleFor for core actions, store.RuleFor from
+// the installed app's manifest — never from the OPEN or its params.
+type Rule struct {
+	Root    bool // root task on a controller: a signed task is required and the user needs root there
+	Changes bool // every channel to a service counts as a change
+	// Critical reports whether the action is critical with these params.
+	// Check calls it with the verified task's params, or with nil when no
+	// task came. Params the action does not accept give an error, which
+	// Check returns as ErrTask.
+	Critical func(params json.RawMessage) (bool, error)
+}
+
+// Input is what the verifier knows about a channel.
 type Input struct {
-	Task     *sign.Envelope
-	Confirm  *proof.Proof
-	Session  session.Verified // the chain back to the user's key; only session.VerifyClient makes one
-	Node     string           // the verifier's own node; empty for the API
-	App      string
-	Service  string
-	Action   string
-	Root     bool
-	Critical bool
-	Changes  bool // every channel to a service counts as a change
+	Task    *sign.Envelope
+	Confirm *proof.Proof
+	Session session.Verified // the chain back to the user's key; only session.VerifyClient makes one
+	// Node is the controller the channel runs on. A controller passes its
+	// own node ID. The API passes "" for core actions it carries out itself
+	// (service "api"); when it checks a task before forwarding it, it passes
+	// the node it forwards to: for ngc.store/controller actions the task's
+	// node (task.Verify first), for an app the node the app runs on.
+	Node                 string
+	App, Service, Action string
+	Rule                 Rule
 }
 
 // Check decides whether a channel may open. It returns the verified task,
-// or nil if none was needed and none came.
+// or nil if none was needed and none came. Whether the action is critical
+// comes from the rule applied to the signed params, so a sender cannot make
+// a critical action look harmless.
 func Check(in Input, l *trust.List, now int64) (*Task, error) {
+	if in.Rule.Critical == nil {
+		return nil, ErrTask
+	}
 	cert := in.Session.Cert()
-	op := trust.Op{App: in.App, Action: in.Action, Node: in.Node, Root: in.Root, Critical: in.Critical, Changes: in.Changes}
-	confirm := l.NeedsConfirm(cert.User, op)
+	op := trust.Op{App: in.App, Action: in.Action, Node: in.Node, Root: in.Rule.Root, Changes: in.Rule.Changes}
 	if in.Task == nil {
-		if in.Root || confirm {
+		if in.Rule.Root {
+			return nil, ErrNoTask
+		}
+		critical, err := in.Rule.Critical(nil)
+		if err != nil {
+			return nil, ErrTask
+		}
+		op.Critical = critical
+		if l.NeedsConfirm(cert.User, op) {
 			return nil, ErrNoTask
 		}
 		return nil, nil
@@ -136,10 +161,15 @@ func Check(in Input, l *trust.List, now int64) (*Task, error) {
 	if t.Node != in.Node || t.App != in.App || t.Service != in.Service || t.Action != in.Action {
 		return nil, ErrTask
 	}
-	if in.Root && !l.MayRoot(cert.User, in.Node) {
+	critical, err := in.Rule.Critical(t.Params)
+	if err != nil {
+		return nil, ErrTask
+	}
+	op.Critical = critical
+	if in.Rule.Root && !l.MayRoot(cert.User, in.Node) {
 		return nil, ErrForbidden
 	}
-	if confirm && (in.Confirm == nil || VerifyConfirm(*in.Confirm, *in.Task, l, cert.User) != nil) {
+	if l.NeedsConfirm(cert.User, op) && (in.Confirm == nil || VerifyConfirm(*in.Confirm, *in.Task, l, cert.User) != nil) {
 		return nil, ErrConfirm
 	}
 	return &t, nil
