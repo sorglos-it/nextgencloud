@@ -130,7 +130,8 @@ type budgetDoc struct {
 }
 
 type budgetKey struct {
-	K []int `json:"k,omitempty"`
+	K []int          `json:"k,omitempty"`
+	M map[string]int `json:"m,omitempty"`
 }
 
 var testBudget = Budget{Size: 1000, Items: map[string]int{"a": 3, "m": 2, "keys": 2, "keys/*/k": 1, "r": Raw}}
@@ -212,6 +213,63 @@ func TestBudget(t *testing.T) {
 	}
 }
 
+// totalsBudget caps the k arrays and m maps of all keys together.
+var totalsBudget = Budget{Size: 1000,
+	Items:  map[string]int{"a": 3, "keys": 4, "keys/*/k": 3, "keys/*/m": 3, "r": Raw},
+	Totals: map[string]int{"keys/*/k": 4, "keys/*/m": 3},
+}
+
+func TestBudgetTotals(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want error
+	}{
+		{"total at its limit", `{"keys":[{"k":[1,2]},{"k":[3,4]}]}`, nil},
+		{"total over its limit across arrays", `{"keys":[{"k":[1,2]},{"k":[3]},{"k":[4,5]}]}`, ErrBudget},
+		{"empty arrays count nothing", `{"keys":[{"k":[]},{"k":[]},{"k":[]},{"k":[1,2,3]}]}`, nil},
+		{"map total at its limit", `{"keys":[{"m":{"x":1}},{"m":{"y":2,"z":3}}]}`, nil},
+		{"map total over its limit across maps", `{"keys":[{"m":{"x":1,"y":2}},{"m":{"z":3,"w":4}}]}`, ErrBudget},
+		{"each total on its own", `{"keys":[{"k":[1,2],"m":{"x":1}},{"k":[3,4],"m":{"y":2,"z":3}}]}`, nil},
+		{"a path without a total", `{"a":[1,2,3],"keys":[{"k":[1]}]}`, nil},
+		{"raw value is not counted", `{"r":{"keys":[{"k":[1,2,3,4,5,6]}]},"keys":[{"k":[1,2,3]}]}`, nil},
+	}
+	for _, c := range cases {
+		var d budgetDoc
+		if err := totalsBudget.Decode([]byte(c.in), &d); !errors.Is(err, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
+	}
+	// 0 allows only empty arrays at the path.
+	zero := Budget{Size: 1000, Items: map[string]int{"keys": 4, "keys/*/k": 3}, Totals: map[string]int{"keys/*/k": 0}}
+	if err := zero.Decode([]byte(`{"keys":[{"k":[]},{"k":[]}]}`), &budgetDoc{}); err != nil {
+		t.Errorf("empty arrays at total 0: %v", err)
+	}
+	if err := zero.Decode([]byte(`{"keys":[{"k":[]},{"k":[1]}]}`), &budgetDoc{}); err != ErrBudget {
+		t.Errorf("one element at total 0: got %v, want %v", err, ErrBudget)
+	}
+	// A total the budget cannot keep is a mistake in the budget: even a
+	// document without the path is refused.
+	nine := map[string]int{}
+	for i := range 9 {
+		nine["p"+strconv.Itoa(i)] = 1
+	}
+	nineItems := map[string]int{}
+	for p := range nine {
+		nineItems[p] = 1
+	}
+	for name, b := range map[string]Budget{
+		"total for a path without a limit": {Size: 1000, Items: map[string]int{"a": 3}, Totals: map[string]int{"b": 1}},
+		"total for a raw path":             {Size: 1000, Items: map[string]int{"r": Raw}, Totals: map[string]int{"r": 1}},
+		"total below 0":                    {Size: 1000, Items: map[string]int{"a": 3}, Totals: map[string]int{"a": -1}},
+		"nine totals":                      {Size: 1000, Items: nineItems, Totals: nine},
+	} {
+		if err := b.Decode([]byte(`{}`), &budgetDoc{}); err != errLimit {
+			t.Errorf("%s: got %v, want %v", name, err, errLimit)
+		}
+	}
+}
+
 func TestSafeNumber(t *testing.T) {
 	cases := map[string]bool{
 		"0": true, "-0": true, "0.0": true, "0e999": true, "1": true, "-1": true, "-0.5": true,
@@ -288,7 +346,11 @@ func TestBudgetAllocation(t *testing.T) {
 		{"one long member name", fill(`{"`, `x`, ``, `":1}`, size), ErrName},
 		{"numbers in a raw value", fill(`{"r":[`, `1e5`, `,`, `,null]}`, size), ErrNull},
 		{"a map of many members", fill(`{"m":{`, `"x":1`, `,`, `}}`, size), ErrBudget},
+		{"many small arrays over a total", fill(`{"keys":[`, `{"k":[1]}`, `,`, `]}`, size), ErrBudget},
 	}
+	// Each array keeps its own limit; only the total refuses the document.
+	b.Items["keys"], b.Items["keys/*/k"] = size, 1
+	b.Totals = map[string]int{"keys/*/k": 1000}
 	for _, c := range cases {
 		var d budgetDoc
 		var err error
@@ -329,7 +391,19 @@ func FuzzBudget(f *testing.F) {
 	f.Add(`{"r":[[[[[[]]]]]]}`)
 	f.Add(`{"n":9007199254740992}`)
 	f.Add(`{"s":null}`)
+	f.Add(`{"keys":[{"k":[1,2],"m":{"x":1}},{"k":[3,4],"m":{"y":2,"z":3}}]}`)
 	f.Fuzz(func(t *testing.T, s string) {
+		// With totals, what passes keeps them.
+		var capped budgetDoc
+		if totalsBudget.Decode([]byte(s), &capped) == nil {
+			k, m := 0, 0
+			for _, key := range capped.Keys {
+				k, m = k+len(key.K), m+len(key.M)
+			}
+			if k > totalsBudget.Totals["keys/*/k"] || m > totalsBudget.Totals["keys/*/m"] {
+				t.Fatalf("over a total for %q: %d, %d", s, k, m)
+			}
+		}
 		var d budgetDoc
 		if testBudget.Decode([]byte(s), &d) != nil {
 			return

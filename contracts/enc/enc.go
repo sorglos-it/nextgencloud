@@ -153,10 +153,13 @@ var (
 	// ErrName reports a member name no struct field can have.
 	ErrName = errors.New("enc: member name no struct field has")
 
-	// errLimit reports a budget with a limit below 0 other than Raw: a
-	// mistake in the contract, not in the document.
-	errLimit = errors.New("enc: budget with a negative limit other than Raw")
+	// errLimit reports a budget with a limit below 0 other than Raw, or a
+	// total it cannot keep: a mistake in the contract, not in the document.
+	errLimit = errors.New("enc: budget with a negative limit other than Raw or a wrong total")
 )
+
+// maxTotals is the most totals one budget may have.
+const maxTotals = 8
 
 // Budget bounds one kind of JSON document from outside. Decode checks the
 // document against it in a first pass that builds nothing and allocates a
@@ -178,6 +181,12 @@ var (
 //     not "*". DecodeStrict refuses unknown and repeated members. The limits
 //     keep a map whose path is missing from the budget small, and keep long
 //     names from being copied into the error of a refused member.
+//   - Totals: a path of Items may also cap all its arrays (maps) together: the
+//     elements (members) of every array (map) at that path in the document,
+//     added up. For "apps/*/versions" that is the versions of all apps. A
+//     total for a path Items does not list as an array or map, a total below
+//     0, or more than eight totals are a mistake in the budget itself: Decode
+//     then refuses every document.
 //   - Every path of a json.RawMessage must be listed as Raw. The first pass
 //     counts nothing inside a raw value and does not check its member names,
 //     but a raw value is not free: DecodeStrict keeps the member names of
@@ -189,8 +198,9 @@ var (
 //     (9007199254740991.0 passes, 9007199254740991.5 and 1e16 do not), and no
 //     null: a member without a value is left out instead.
 type Budget struct {
-	Size  int
-	Items map[string]int
+	Size   int
+	Items  map[string]int
+	Totals map[string]int
 }
 
 // Decode checks data against b, then decodes it into v with DecodeStrict.
@@ -212,6 +222,23 @@ type frame struct {
 	mapped bool // an object counted like an array, whose members' path is "*"
 	raw    bool // inside a raw value
 	name   bool // an object that expects a name or its end next
+	total  int  // 1 + the index of this container's total in check's totals, or 0
+}
+
+// total counts the elements of all containers at one path of Budget.Totals.
+type total struct {
+	path     string
+	limit, n int
+}
+
+// count adds one element or member to the total of f, if it has one.
+func (f *frame) count(totals []total) bool {
+	if f.total == 0 {
+		return true
+	}
+	t := &totals[f.total-1]
+	t.n++
+	return t.n <= t.limit
 }
 
 // check is the first pass of Decode. It reads data in place (a
@@ -223,6 +250,17 @@ func (b Budget) check(data []byte) error {
 		if limit < 0 && limit != Raw {
 			return errLimit
 		}
+	}
+	if len(b.Totals) > maxTotals {
+		return errLimit
+	}
+	var store [maxTotals]total
+	totals := store[:0]
+	for p, limit := range b.Totals {
+		if items, ok := b.Items[p]; !ok || items == Raw || limit < 0 {
+			return errLimit
+		}
+		totals = append(totals, total{path: p, limit: limit})
 	}
 	if len(data) > b.Size {
 		return ErrTooLarge
@@ -246,7 +284,7 @@ func (b Budget) check(data []byte) error {
 				f.name = false
 				f.n++
 				switch {
-				case f.limit >= 0 && f.n > f.limit:
+				case f.limit >= 0 && f.n > f.limit, !f.count(totals):
 					return ErrBudget
 				case f.raw:
 					continue
@@ -269,7 +307,7 @@ func (b Budget) check(data []byte) error {
 			// is refused unread.
 			if !f.object && k != ']' {
 				f.n++
-				if f.limit >= 0 && f.n > f.limit {
+				if (f.limit >= 0 && f.n > f.limit) || !f.count(totals) {
 					return ErrBudget
 				}
 			}
@@ -289,6 +327,11 @@ func (b Budget) check(data []byte) error {
 				fr.raw = true
 			case listed:
 				fr.limit, fr.mapped = limit, k == '{'
+				for i := range totals {
+					if totals[i].path == string(path) {
+						fr.total = i + 1
+					}
+				}
 			case k == '[':
 				return ErrBudget
 			default:
