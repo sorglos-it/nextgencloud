@@ -53,16 +53,22 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   3. `openssl pkeyutl -verify -pubin -inkey release-key.pem -rawin -in message.bin -sigfile sig.bin`
      muss gelingen. `release-key.pem` ist der Release-Schlüssel als PEM, fest im Skript.
   4. Für jede Datei, die das Skript übernimmt, ihren Eintrag in `files` der Nutzlast nehmen (`part`,
-     `arch`): `sha256` von base64url in Hex umwandeln (`od -An -tx1`), mit `sha256sum` und der
-     Größe (`size`) vergleichen. Stimmt etwas nicht, bricht das Skript ab.
+     `arch`): `sha256` von base64url in Hex umwandeln (`od -An -tx1 | tr -d ' \n'`), mit
+     `sha256sum` und der Größe (`size`) vergleichen. Stimmt etwas nicht, bricht das Skript ab.
+  5. Nie ein älteres Release: `seq` der Nutzlast (`jq -r .seq payload.bin`) mit der Nummer in
+     `/var/lib/ngc/release.seq` vergleichen (fehlt die Datei, ist noch nichts installiert). Ist sie
+     kleiner, bricht das Skript ab; dieselbe Nummer darf zur Reparatur noch einmal installiert
+     werden. Nach einer erfolgreichen Installation schreibt das Skript die Nummer dorthin. Go prüft
+     genauso (`store.VerifyRelease` mit dieser Nummer als `lastSeq`, sonst `store.ErrRollback`).
 - Release-Dateien benennen Softwareteile: `ngc-web` (`all`), `ngc-api` und `ngc-controller` (`amd64`,
   `arm64`). Die Migrationen stecken in `ngc-api`.
 - Rollen eines Servers (`roles`): `web`, `api`, `db`, `services`. Welche Softwareteile dazu gehören,
   sagt `tunnel.Components`: immer `ngc-controller`, dazu `ngc-web` bzw. `ngc-api` je nach Rolle.
-- Mit Rolle `db` kann der Controller beim Update die Migrationen einspielen; genau einen dieser
-  Controller bestimmt die API, die das Update steuert. Dafür steht der Zugang des Kontos
-  `ngc_migrate` (auf dem Pi: SQLite-Datei und Schlüssel) in `controller.json` unter `migrate`.
-  Andere Server bekommen diesen Eintrag nicht.
+- Mit Rolle `db` kann der Controller beim Update die Migrationen einspielen. Genau einen dieser
+  Controller bestimmt die API, die das Update steuert (sie hält `dbapi.LockUpdate`): unter den
+  verbundenen Controllern mit Rolle `db` den mit der kleinsten Node-ID, scheitert er, den nächsten.
+  Dafür steht der Zugang des Kontos `ngc_migrate` (auf dem Pi: SQLite-Datei und Schlüssel) in
+  `controller.json` unter `migrate`. Andere Server bekommen diesen Eintrag nicht.
 - Konfigurationsdateien sind striktes JSON (`contracts/README.md`, „Striktes JSON“): nie `null`,
   ein leeres Feld fehlt ganz. Es gelten die Regeln von `config`: in `controller.json` ein bis vier
   verschiedene `roles`, `migrate` genau mit Rolle `db`, `webConfig` mit Rolle `web`; in `web.json`
