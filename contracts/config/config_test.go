@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
+	"github.com/sorglos-it/nextgencloud/contracts/tunnel"
 )
 
 func example(t *testing.T, name string) string {
@@ -60,6 +62,23 @@ func TestSaveController(t *testing.T) {
 	}
 }
 
+// TestSaveControllerInvalid checks that SaveController refuses to write a
+// controller that fails Validate, and leaves no file behind when it refuses.
+func TestSaveControllerInvalid(t *testing.T) {
+	c, err := LoadController(example(t, "controller.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Name = "" // now fails wire.ValidName
+	path := filepath.Join(t.TempDir(), "controller.json")
+	if err := SaveController(path, c); err != ErrConfig {
+		t.Fatalf("got %v, want ErrConfig", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("file exists after a refused save: %v", err)
+	}
+}
+
 func TestAnchor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trust-anchor.json")
 	want := trust.Anchor{Seq: 7, Hash: make([]byte, 32)}
@@ -75,54 +94,123 @@ func TestAnchor(t *testing.T) {
 	}
 }
 
-func TestValidate(t *testing.T) {
-	w, _ := LoadWeb(example(t, "web.json"))
-	a, _ := LoadAPI(example(t, "api.json"))
-	c, _ := LoadController(example(t, "controller.json"))
-	cases := map[string]func(){
-		"web without apis":     func() { w.APIs = nil },
-		"web with plain http":  func() { w.APIs = []string{"http://api-1.ngc.test:7443"} },
-		"api without node":     func() { a.Node = "" },
-		"api with short key":   func() { a.NoiseKey = []byte{1} },
-		"api with sqlite path": func() { a.DB.Driver, a.DB.Path = DriverSQLite, "" },
-		"api with db nodes":    func() { a.DB.Driver, a.DB.Nodes = DriverSQLite, []string{"db-1:3306"} },
-		"controller name":      func() { c.Name = "Server 1" },
-		"controller api url":   func() { c.APIs[0].URL = "https://api-1.ngc.test:7443/tunnel" },
-		"controller parts":     func() { c.Parts = []string{"mail"} },
-		"controller db key":    func() { c.DBKey = make([]byte, 32) },
+// TestSaveAnchorInvalid checks that SaveAnchor refuses a Seq of 0 and a
+// too-short hash, and leaves no file behind either time.
+func TestSaveAnchorInvalid(t *testing.T) {
+	cases := map[string]trust.Anchor{
+		"seq zero":   {Seq: 0, Hash: make([]byte, 32)},
+		"short hash": {Seq: 7, Hash: make([]byte, 16)},
 	}
-	for name, mutate := range cases {
-		w2, a2, c2 := *w, *a, *c
-		mutate()
-		var err error
-		switch {
-		case name[:3] == "web":
-			err = w.Validate()
-		case name[:3] == "api":
-			err = a.Validate()
-		default:
-			err = c.Validate()
+	for name, a := range cases {
+		path := filepath.Join(t.TempDir(), "trust-anchor.json")
+		if err := SaveAnchor(path, a); err != ErrConfig {
+			t.Errorf("%s: got %v, want ErrConfig", name, err)
 		}
-		if err != ErrConfig {
-			t.Errorf("%s: %v", name, err)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s: file exists after a refused save: %v", name, err)
 		}
-		*w, *a, *c = w2, a2, c2
 	}
 }
 
-func FuzzLoad(f *testing.F) {
-	b, err := os.ReadFile(filepath.Join("..", "testdata", "config", "api.json"))
-	if err != nil {
-		f.Fatal(err)
+// TestValidate loads a fresh, known-valid Web/API/Controller from the
+// example files for every case (rather than mutating and restoring one
+// shared value), so a case can never leak a change into a later one: each
+// case changes exactly the field(s) its closure touches.
+func TestValidate(t *testing.T) {
+	webCases := map[string]func(*Web){
+		"without apis":     func(w *Web) { w.APIs = nil },
+		"plain http":       func(w *Web) { w.APIs = []string{"http://api-1.ngc.test:7443"} },
+		"origin not https": func(w *Web) { w.RP.Origins = []string{"http://ngc.example.org"} },
 	}
-	f.Add(b)
-	f.Fuzz(func(t *testing.T, b []byte) {
-		path := filepath.Join(t.TempDir(), "c.json")
-		if err := os.WriteFile(path, b, 0o600); err != nil {
-			t.Skip()
+	for name, mutate := range webCases {
+		w, err := LoadWeb(example(t, "web.json"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		_, _ = LoadWeb(path)
-		_, _ = LoadAPI(path)
-		_, _ = LoadController(path)
+		mutate(w)
+		if err := w.Validate(); err != ErrConfig {
+			t.Errorf("web %s: %v", name, err)
+		}
+	}
+
+	apiCases := map[string]func(*API){
+		"without node":          func(a *API) { a.Node = "" },
+		"short key":             func(a *API) { a.NoiseKey = []byte{1} },
+		"mariadb node no colon": func(a *API) { a.DB.Nodes = []string{"db-1"} },
+		"db password too long":  func(a *API) { a.DB.Password = strings.Repeat("x", MaxField+1) },
+		"store url too long":    func(a *API) { a.StoreURL = "https://" + strings.Repeat("x", MaxField) },
+	}
+	for name, mutate := range apiCases {
+		a, err := LoadAPI(example(t, "api.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(a)
+		if err := a.Validate(); err != ErrConfig {
+			t.Errorf("api %s: %v", name, err)
+		}
+	}
+
+	controllerCases := map[string]func(*Controller){
+		"name":                func(c *Controller) { c.Name = "Server 1" },
+		"api url":             func(c *Controller) { c.APIs[0].URL = "https://api-1.ngc.test:7443/tunnel" },
+		"parts":               func(c *Controller) { c.Parts = []string{"mail"} },
+		"db key":              func(c *Controller) { c.DBKey = make([]byte, 32) },
+		"web without webconf": func(c *Controller) { c.Parts = []string{tunnel.PartWeb} },
+	}
+	for name, mutate := range controllerCases {
+		c, err := LoadController(example(t, "controller.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(c)
+		if err := c.Validate(); err != ErrConfig {
+			t.Errorf("controller %s: %v", name, err)
+		}
+	}
+}
+
+// validSQLite is a DB configuration that passes Validate(): SQLite, an
+// absolute path, a 64-byte key, no Galera nodes and no MariaDB leftovers.
+func validSQLite() DB {
+	return DB{Driver: DriverSQLite, Path: "/var/lib/ngc/api/api.db", Key: make([]byte, 64)}
+}
+
+// TestValidateSQLite pins one SQLite rule per case: each starts from a fresh
+// validSQLite() and changes exactly one field away from valid.
+func TestValidateSQLite(t *testing.T) {
+	base := validSQLite()
+	if err := base.Validate(); err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	cases := map[string]func(*DB){
+		"relative path":     func(d *DB) { d.Path = "var/lib/ngc/api/api.db" },
+		"wrong key length":  func(d *DB) { d.Key = make([]byte, 32) },
+		"nodes present":     func(d *DB) { d.Nodes = []string{"db-1:3306"} },
+		"leftover password": func(d *DB) { d.Password = "leftover" },
+	}
+	for name, mutate := range cases {
+		d := validSQLite()
+		mutate(&d)
+		if err := d.Validate(); err != ErrConfig {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// FuzzLoad fuzzes the three parse functions directly, in memory: no file is
+// written per iteration, only JSON bytes are decoded and validated.
+func FuzzLoad(f *testing.F) {
+	for _, name := range []string{"web.json", "api.json", "controller.json"} {
+		b, err := os.ReadFile(filepath.Join("..", "testdata", "config", name))
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b)
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		_, _ = parseWeb(b)
+		_, _ = parseAPI(b)
+		_, _ = parseController(b)
 	})
 }

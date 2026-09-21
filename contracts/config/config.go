@@ -35,6 +35,7 @@ const (
 	ServiceController = "ngc-controller.service"
 
 	MaxConfig              = 1 << 20
+	MaxField               = 256   // bounds every free-form string field below that carries no file-size limit of its own
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
 	DefaultPodman          = "/usr/bin/podman"
@@ -104,30 +105,37 @@ type Controller struct {
 	WebConfig  string       `json:"webConfig,omitempty"` // web server: path of web.json for the balancer
 }
 
-func load(path string, v any) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+// decode strictly-JSON-decodes b into v, wrapping any failure as ErrConfig.
+func decode(b []byte, v any) error {
 	if err := enc.DecodeStrict(b, MaxConfig, v); err != nil {
 		return ErrConfig
 	}
 	return nil
 }
 
-// LoadWeb reads web.json.
-func LoadWeb(path string) (*Web, error) {
+// parseWeb decodes and validates the payload of web.json. It is split out of
+// LoadWeb so fuzzing can call it directly, in memory, without touching disk.
+func parseWeb(b []byte) (*Web, error) {
 	var w Web
-	if err := load(path, &w); err != nil {
+	if err := decode(b, &w); err != nil {
 		return nil, err
 	}
 	return &w, w.Validate()
 }
 
-// LoadAPI reads api.json and fills in the defaults.
-func LoadAPI(path string) (*API, error) {
+// LoadWeb reads web.json.
+func LoadWeb(path string) (*Web, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseWeb(b)
+}
+
+// parseAPI decodes api.json's payload, fills in the defaults and validates.
+func parseAPI(b []byte) (*API, error) {
 	var a API
-	if err := load(path, &a); err != nil {
+	if err := decode(b, &a); err != nil {
 		return nil, err
 	}
 	if a.SessionLifetime == 0 {
@@ -139,16 +147,35 @@ func LoadAPI(path string) (*API, error) {
 	return &a, a.Validate()
 }
 
-// LoadController reads controller.json and fills in the defaults.
-func LoadController(path string) (*Controller, error) {
+// LoadAPI reads api.json and fills in the defaults.
+func LoadAPI(path string) (*API, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseAPI(b)
+}
+
+// parseController decodes controller.json's payload, fills in the defaults
+// and validates.
+func parseController(b []byte) (*Controller, error) {
 	var c Controller
-	if err := load(path, &c); err != nil {
+	if err := decode(b, &c); err != nil {
 		return nil, err
 	}
 	if c.Podman == "" {
 		c.Podman = DefaultPodman
 	}
 	return &c, c.Validate()
+}
+
+// LoadController reads controller.json and fills in the defaults.
+func LoadController(path string) (*Controller, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseController(b)
 }
 
 // SaveController writes controller.json; the controller uses it after
@@ -166,8 +193,12 @@ func SaveController(path string, c *Controller) error {
 
 // LoadAnchor reads trust-anchor.json.
 func LoadAnchor(path string) (trust.Anchor, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return trust.Anchor{}, err
+	}
 	var a trust.Anchor
-	if err := load(path, &a); err != nil {
+	if err := decode(b, &a); err != nil {
 		return trust.Anchor{}, err
 	}
 	if a.Seq == 0 || len(a.Hash) != 32 {
@@ -195,7 +226,7 @@ func (w *Web) Validate() error {
 		return ErrConfig
 	}
 	for _, u := range w.APIs {
-		if !strings.HasPrefix(u, "https://") || len(u) > 256 {
+		if !strings.HasPrefix(u, "https://") || len(u) > MaxField {
 			return ErrConfig
 		}
 	}
@@ -209,9 +240,13 @@ func (w *Web) Validate() error {
 
 // Validate checks the API configuration.
 func (a *API) Validate() error {
-	if !wire.ValidName(a.Node) || a.Listen == "" || a.Cert == "" || a.CertKey == "" ||
+	if !wire.ValidName(a.Node) ||
+		a.Listen == "" || len(a.Listen) > MaxField ||
+		a.Cert == "" || len(a.Cert) > MaxField ||
+		a.CertKey == "" || len(a.CertKey) > MaxField ||
 		len(a.NoiseKey) != 32 || len(a.SignKey) != 32 || len(a.SecretKey) != 32 ||
-		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 || !strings.HasPrefix(a.StoreURL, "https://") ||
+		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 ||
+		!strings.HasPrefix(a.StoreURL, "https://") || len(a.StoreURL) > MaxField ||
 		a.SessionLifetime < 300 || a.IdleTimeout < 60 || a.IdleTimeout > a.SessionLifetime {
 		return ErrConfig
 	}
@@ -222,16 +257,21 @@ func (a *API) Validate() error {
 func (d *DB) Validate() error {
 	switch d.Driver {
 	case DriverMariaDB:
-		if len(d.Nodes) == 0 || len(d.Nodes) > 16 || d.Name == "" || d.User == "" || d.Path != "" || len(d.Key) != 0 {
+		if len(d.Nodes) == 0 || len(d.Nodes) > 16 ||
+			d.Name == "" || len(d.Name) > MaxField ||
+			d.User == "" || len(d.User) > MaxField ||
+			d.Password == "" || len(d.Password) > MaxField ||
+			d.Path != "" || len(d.Key) != 0 {
 			return ErrConfig
 		}
 		for _, n := range d.Nodes {
-			if !strings.Contains(n, ":") || len(n) > 256 {
+			if !strings.Contains(n, ":") || len(n) > MaxField {
 				return ErrConfig
 			}
 		}
 	case DriverSQLite:
-		if !strings.HasPrefix(d.Path, "/") || len(d.Key) != 64 || len(d.Nodes) != 0 {
+		if !strings.HasPrefix(d.Path, "/") || len(d.Key) != 64 || len(d.Nodes) != 0 ||
+			d.Name != "" || d.User != "" || d.Password != "" {
 			return ErrConfig
 		}
 	default:
@@ -244,12 +284,13 @@ func (d *DB) Validate() error {
 func (c *Controller) Validate() error {
 	if (c.Node != "" && !wire.ValidName(c.Node)) || !wire.ValidName(c.Name) || len(c.NoiseKey) != 32 ||
 		len(c.APIs) == 0 || len(c.APIs) > 16 || c.Anchor.Seq == 0 || len(c.Anchor.Hash) != 32 ||
-		!strings.HasPrefix(c.DB, "/") || len(c.DBKey) != 64 || len(c.ReleaseKey) != 32 ||
-		len(c.Parts) == 0 || !strings.HasPrefix(c.Podman, "/") {
+		!strings.HasPrefix(c.DB, "/") || len(c.DB) > MaxField || len(c.DBKey) != 64 || len(c.ReleaseKey) != 32 ||
+		len(c.Parts) == 0 || !strings.HasPrefix(c.Podman, "/") || len(c.Podman) > MaxField ||
+		len(c.WebConfig) > MaxField {
 		return ErrConfig
 	}
 	for _, a := range c.APIs {
-		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > 256 || len(a.Key) != 32 {
+		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField || len(a.Key) != 32 {
 			return ErrConfig
 		}
 	}
