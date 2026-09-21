@@ -46,12 +46,15 @@ const (
 	UpdateRejected   = "rejected" // signature, approval or version check failed
 )
 
+// GlobalID is the global store's ID.
+const GlobalID = trust.StoreGlobal
+
 // Catalog lists the apps of a store.
 type Catalog struct {
 	Store  string  `json:"store"`
 	Seq    uint64  `json:"seq"`
 	Issued int64   `json:"issued"`
-	Apps   []Entry `json:"apps"` // sorted by ID
+	Apps   []Entry `json:"apps,omitempty"` // sorted by ID; a store without apps leaves it out
 }
 
 // Entry is an app in a catalog.
@@ -199,9 +202,16 @@ func (p Price) valid() bool {
 		strings.HasPrefix(p.Shop, "https://") && validURL(p.Shop)
 }
 
+// catalogBudget bounds a catalog while it is decoded (enc.Budget).
+var catalogBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
+	"apps":                    MaxApps,
+	"apps/*/versions":         MaxVersions,
+	"apps/*/versions/*/needs": maxNeeds,
+}}
+
 func parseCatalog(b []byte) (*Catalog, error) {
 	var c Catalog
-	if err := enc.DecodeStrict(b, sign.MaxPayload, &c); err != nil {
+	if catalogBudget.Decode(b, &c) != nil {
 		return nil, ErrCatalog
 	}
 	if err := c.Validate(); err != nil {
@@ -256,9 +266,13 @@ func (l *License) State(now int64) LicenseState {
 	return LicenseExpired
 }
 
+// licenseBudget bounds a license while it is decoded (enc.Budget): it has no
+// array.
+var licenseBudget = enc.Budget{Size: MaxLicense}
+
 func parseLicense(b []byte) (*License, error) {
 	var l License
-	if err := enc.DecodeStrict(b, MaxLicense, &l); err != nil {
+	if licenseBudget.Decode(b, &l) != nil {
 		return nil, ErrLicense
 	}
 	if err := l.Validate(); err != nil {
@@ -283,10 +297,13 @@ func VerifyLicense(env sign.Envelope, st trust.Store, installation string, insta
 	return l, nil
 }
 
+// maxReleaseFiles is the most files a release lists.
+const maxReleaseFiles = 16
+
 // Validate checks r.
 func (r *Release) Validate() error {
 	if r.Seq == 0 || r.Issued <= 0 || !ValidVersion(r.Version) || len(r.Notes) > 10000 || !utf8.ValidString(r.Notes) ||
-		len(r.Files) == 0 || len(r.Files) > 16 {
+		len(r.Files) == 0 || len(r.Files) > maxReleaseFiles {
 		return ErrRelease
 	}
 	seen := map[string]bool{}
@@ -302,9 +319,12 @@ func (r *Release) Validate() error {
 	return nil
 }
 
+// releaseBudget bounds a release while it is decoded (enc.Budget).
+var releaseBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{"files": maxReleaseFiles}}
+
 func parseRelease(b []byte) (*Release, error) {
 	var r Release
-	if err := enc.DecodeStrict(b, sign.MaxPayload, &r); err != nil {
+	if releaseBudget.Decode(b, &r) != nil {
 		return nil, ErrRelease
 	}
 	if err := r.Validate(); err != nil {
@@ -336,10 +356,15 @@ func ValidTarget(t string) bool {
 		(wire.ValidAppID(t) && !wire.CoreApp(t))
 }
 
-// ParseUpdateReport decodes and checks an update report.
+// reportBudget bounds an update report while it is decoded (enc.Budget): it
+// has no array.
+var reportBudget = enc.Budget{Size: 4096}
+
+// ParseUpdateReport decodes and checks an update report. Every failure is
+// ErrUpdate.
 func ParseUpdateReport(b []byte) (UpdateReport, error) {
 	var r UpdateReport
-	if err := enc.DecodeStrict(b, 4096, &r); err != nil {
+	if reportBudget.Decode(b, &r) != nil {
 		return UpdateReport{}, ErrUpdate
 	}
 	switch r.State {

@@ -3,6 +3,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/service"
+	"github.com/sorglos-it/nextgencloud/contracts/task"
 	"github.com/sorglos-it/nextgencloud/contracts/wire"
 )
 
@@ -27,6 +29,9 @@ const (
 	NeedNetwork   = "network" // access to the network
 	DefaultCPU    = 1000      // thousandths of a core
 	DefaultMemory = 256       // MiB
+
+	maxCommand = 32 // path and arguments of a service
+	maxNeeds   = 2  // NeedRoot and NeedNetwork, each at most once
 )
 
 // Manifest describes an app. It is manifest.json in the app package.
@@ -74,10 +79,19 @@ type Service struct {
 // ErrManifest reports an invalid manifest.
 var ErrManifest = errors.New("store: invalid manifest")
 
-// ParseManifest decodes and validates manifest.json.
+// manifestBudget bounds a manifest while it is decoded (enc.Budget).
+var manifestBudget = enc.Budget{Size: MaxManifest, Items: map[string]int{
+	"actions":            MaxActions,
+	"services":           MaxServices,
+	"services/*/command": maxCommand,
+	"needs":              maxNeeds,
+}}
+
+// ParseManifest decodes and validates manifest.json. Every failure is
+// ErrManifest.
 func ParseManifest(b []byte) (*Manifest, error) {
 	var m Manifest
-	if err := enc.DecodeStrict(b, MaxManifest, &m); err != nil {
+	if manifestBudget.Decode(b, &m) != nil {
 		return nil, ErrManifest
 	}
 	if err := m.Validate(); err != nil {
@@ -93,6 +107,23 @@ func (m *Manifest) Action(name string) (Action, bool) {
 		return Action{}, false
 	}
 	return m.Actions[i], true
+}
+
+// RuleFor returns the task.Rule for an action of an installed app: Root if the
+// manifest needs NeedRoot (activation always grants all needs), Critical from
+// the manifest's action whatever the params, Changes always. ErrManifest for
+// an action the manifest does not have.
+func RuleFor(m *Manifest, action string) (task.Rule, error) {
+	if m == nil {
+		return task.Rule{}, ErrManifest
+	}
+	a, ok := m.Action(action)
+	if !ok {
+		return task.Rule{}, ErrManifest
+	}
+	critical := a.Critical
+	return task.Rule{Root: slices.Contains(m.Needs, NeedRoot), Changes: true,
+		Critical: func(json.RawMessage) (bool, error) { return critical, nil }}, nil
 }
 
 // Validate checks m.
@@ -113,7 +144,7 @@ func (m *Manifest) Validate() error {
 	}
 	services := map[string]bool{}
 	for _, s := range m.Services {
-		if !wire.ValidName(s.Name) || services[s.Name] || len(s.Command) == 0 || len(s.Command) > 32 ||
+		if !wire.ValidName(s.Name) || services[s.Name] || len(s.Command) == 0 || len(s.Command) > maxCommand ||
 			len(s.Command[0]) < 2 || !strings.HasPrefix(s.Command[0], "/") {
 			return ErrManifest
 		}
