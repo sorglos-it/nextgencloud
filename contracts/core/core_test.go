@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
+	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/internal/golden"
+	"github.com/sorglos-it/nextgencloud/contracts/session"
 	"github.com/sorglos-it/nextgencloud/contracts/sign"
 	"github.com/sorglos-it/nextgencloud/contracts/store"
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
+	"github.com/sorglos-it/nextgencloud/contracts/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/contracts/wire"
 )
 
@@ -35,9 +39,61 @@ func TestTable(t *testing.T) {
 		if got, ok := Lookup(a.App, a.Service, a.Name); !ok || got.Name != a.Name {
 			t.Errorf("%s: lookup", key)
 		}
+		// Only an opener that sends data before its EOF has a bound for it.
+		if (a.MaxIn > 0) != (a.Flow == FlowIn || a.Flow == FlowTransfer) || a.MaxIn < 0 {
+			t.Errorf("%s: MaxIn %d with flow %s", key, a.MaxIn, a.Flow)
+		}
 	}
 	if _, ok := Lookup(AppStore, ServiceAPI, ActActivate); ok {
 		t.Error("activate belongs to the controller service")
+	}
+
+	// Every action whose opener sends data, with its bound.
+	maxIn := map[string]int64{
+		AppUsers + "/" + ServiceAPI + "/" + ActTrust:           6 << 20,
+		AppUsers + "/" + ServiceController + "/" + ActTrust:    session.MaxChain,
+		AppStore + "/" + ServiceAPI + "/" + ActUpload:          store.MaxPackage,
+		AppStore + "/" + ServiceAPI + "/" + ActLicense:         16 << 10,
+		AppStore + "/" + ServiceController + "/" + ActActivate: 4 + MaxTransferHeader + store.MaxPackage,
+		AppStore + "/" + ServiceController + "/" + ActStage:    4 + MaxTransferHeader + store.MaxPackage,
+	}
+	for _, a := range All() {
+		key := a.App + "/" + a.Service + "/" + a.Name
+		if want, ok := maxIn[key]; ok != (a.MaxIn > 0) || a.MaxIn != want {
+			t.Errorf("%s: MaxIn %d, want %d", key, a.MaxIn, want)
+		}
+	}
+
+	// The actions the API may open without a user, and no others.
+	without := map[string]bool{
+		AppUsers + "/" + ServiceController + "/" + ActTrust:   true,
+		AppStore + "/" + ServiceController + "/" + ActStage:   true,
+		AppStore + "/" + ServiceController + "/" + ActInstall: true,
+	}
+	n := 0
+	for _, a := range All() {
+		key := a.App + "/" + a.Service + "/" + a.Name
+		if WithoutUser(a) != without[key] {
+			t.Errorf("%s: WithoutUser %v", key, WithoutUser(a))
+		}
+		if without[key] {
+			n++
+		}
+	}
+	if n != len(without) {
+		t.Errorf("%d of the %d actions without a user exist", n, len(without))
+	}
+
+	join := action(t, AppUsers, ServiceAPI, ActJoinCode)
+	if !join.Admin || join.Root || !join.Changes || join.Flow != FlowCall || join.Params != nil {
+		t.Errorf("join-code: %+v", join)
+	}
+	ctlTrust := action(t, AppUsers, ServiceController, ActTrust)
+	if !ctlTrust.Admin || ctlTrust.Root || !ctlTrust.Changes || ctlTrust.Flow != FlowIn || ctlTrust.Params != nil {
+		t.Errorf("ngc.users/controller/trust: %+v", ctlTrust)
+	}
+	if LocalStore != trust.StoreLocal {
+		t.Errorf("LocalStore %q", LocalStore)
 	}
 }
 
@@ -50,16 +106,28 @@ func action(t *testing.T, app, service, name string) Action {
 	return a
 }
 
+// activateParams returns valid params of ngc.store/controller/activate with
+// extra members appended.
+func activateParams(extra string) json.RawMessage {
+	sum := enc.B64.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	return json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global"` + extra + `}`)
+}
+
 func TestParseParams(t *testing.T) {
 	sum := enc.B64.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	good := []struct{ app, service, name, params string }{
 		{AppDesktop, ServiceAPI, ActMe, ``},
+		{AppDesktop, ServiceAPI, ActMe, `{}`},
+		{AppDesktop, ServiceAPI, ActMe, `{ }`},
 		{AppDesktop, ServiceAPI, ActUI, `{"app":"org.sorglos.terminal"}`},
 		{AppDesktop, ServiceAPI, ActTOTPConfirm, `{"code":"123456"}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":["org.sorglos.calculator/use","org.sorglos.terminal/shell"]}`},
+		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":[]}`},
+		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user"}`},
 		{AppUsers, ServiceAPI, ActLog, `{"limit":100}`},
 		{AppStore, ServiceAPI, ActSetUpdate, `{"target":"ngc-api","mode":"auto","window":"02:00-04:00"}`},
 		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["network"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"local","grants":["root","network"]}`},
 		{AppStore, ServiceController, ActUninstall, `{"app":"org.sorglos.terminal","keepData":true}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"system"}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"ngc-controller","version":"1.1.0","sha256":"` + sum + `"}`},
@@ -71,20 +139,45 @@ func TestParseParams(t *testing.T) {
 	}
 	bad := []struct{ app, service, name, params string }{
 		{AppDesktop, ServiceAPI, ActMe, `{"x":1}`},
+		{AppDesktop, ServiceAPI, ActMe, `[]`},
+		{AppDesktop, ServiceAPI, ActMe, `null`},
+		{AppDesktop, ServiceAPI, ActMe, `{} {}`},
 		{AppDesktop, ServiceAPI, ActUI, ``},
 		{AppDesktop, ServiceAPI, ActUI, `{"app":"ngc.users"}`},
+		{AppDesktop, ServiceAPI, ActUI, `{"app":null}`},
+		{AppDesktop, ServiceAPI, ActUI, `{"app":"org.sorglos.terminal","app":"org.sorglos.mail"}`},
+		{AppDesktop, ServiceAPI, ActUI, `{"App":"org.sorglos.terminal"}`},
 		{AppDesktop, ServiceAPI, ActTOTPConfirm, `{"code":"12345"}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":["everything"]}`},
+		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":["org.sorglos.terminal/use","org.sorglos.terminal/use"]}`},
+		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":null}`},
 		{AppUsers, ServiceAPI, ActLog, `{"limit":0}`},
+		{AppUsers, ServiceAPI, ActLog, `{"limit":501}`},
 		{AppStore, ServiceAPI, ActSetUpdate, `{"target":"ngc-api","mode":"always"}`},
 		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["host"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["root","root"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["root","network","root"]}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"system","version":"1.0.0"}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"ngc-controller","version":"1.1.0"}`},
+		{AppStore, ServiceController, ActInstall, `{"target":"ngc-controller","version":"1.1.0","sha256":"` + sum + `","size":1}`},
 	}
 	for _, c := range bad {
-		if _, err := ParseParams(action(t, c.app, c.service, c.name), json.RawMessage(c.params)); err == nil {
-			t.Errorf("%s %s: accepted", c.name, c.params)
+		if _, err := ParseParams(action(t, c.app, c.service, c.name), json.RawMessage(c.params)); err != ErrParams {
+			t.Errorf("%s %s: got %v, want %v", c.name, c.params, err, ErrParams)
 		}
+	}
+}
+
+// TestRoleRightsWithoutRights: a role without rights is legitimate, so it
+// is sent without the member instead of null, and read back.
+func TestRoleRightsWithoutRights(t *testing.T) {
+	b, err := json.Marshal(RoleRights{Role: "user"})
+	if err != nil || string(b) != `{"role":"user"}` {
+		t.Fatalf("got %s, %v", b, err)
+	}
+	p, err := ParseParams(action(t, AppUsers, ServiceAPI, ActSetRights), b)
+	if err != nil || p.(*RoleRights).Role != "user" || len(p.(*RoleRights).Rights) != 0 {
+		t.Errorf("round trip: %+v, %v", p, err)
 	}
 }
 
@@ -107,6 +200,84 @@ func TestCritical(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := Critical(c.a, c.p); got != c.want {
+			t.Errorf("%s: got %v", c.name, got)
+		}
+	}
+}
+
+func TestRuleFor(t *testing.T) {
+	activate := action(t, AppStore, ServiceController, ActActivate)
+	uninstall := action(t, AppStore, ServiceController, ActUninstall)
+	upload := action(t, AppStore, ServiceAPI, ActUpload)
+	cases := []struct {
+		name    string
+		a       Action
+		params  json.RawMessage
+		want    bool
+		wantErr error
+	}{
+		{"activate with grants in the task is critical", activate, activateParams(`,"grants":["root"]`), true, nil},
+		{"activate without grants is not", activate, activateParams(``), false, nil},
+		{"uninstall without keepData is critical", uninstall, json.RawMessage(`{"app":"org.sorglos.terminal"}`), true, nil},
+		{"uninstall with keepData is not", uninstall, json.RawMessage(`{"app":"org.sorglos.terminal","keepData":true}`), false, nil},
+		{"invalid params give an error", activate, json.RawMessage(`{"app":"org.sorglos.terminal"}`), false, ErrParams},
+		{"params that do not decode give an error", activate, json.RawMessage(`{"app":`), false, ErrParams},
+		{"upload is critical without params", upload, nil, true, nil},
+		{"upload is critical with empty params", upload, json.RawMessage(`{}`), true, nil},
+		{"params for an action without any give an error", upload, json.RawMessage(`{"app":"org.sorglos.terminal"}`), false, ErrParams},
+	}
+	for _, c := range cases {
+		got, err := RuleFor(c.a).Critical(c.params)
+		if got != c.want || err != c.wantErr {
+			t.Errorf("%s: got %v, %v; want %v, %v", c.name, got, err, c.want, c.wantErr)
+		}
+	}
+	// nil params ask Critical(a, nil), and Root and Changes come from the table.
+	for _, a := range All() {
+		r := RuleFor(a)
+		got, err := r.Critical(nil)
+		if err != nil || got != Critical(a, nil) || r.Root != a.Root || r.Changes != a.Changes {
+			t.Errorf("%s/%s/%s: rule %+v, Critical(nil) = %v, %v", a.App, a.Service, a.Name, r, got, err)
+		}
+	}
+}
+
+func TestUnattended(t *testing.T) {
+	releaseKey := bytes.Repeat([]byte{0x72}, 32)
+	storeKey := bytes.Repeat([]byte{0x71}, 32)
+	sum := bytes.Repeat([]byte{1}, 32)
+	approved := trusttest.Genesis(trusttest.NewSigner(1))
+	approved.Auto = []trust.Auto{{Target: trust.AutoController, Key: releaseKey}, {Target: "org.sorglos.terminal", Key: storeKey}, {Target: trust.AutoSystem}}
+	noSystem := trusttest.Genesis(trusttest.NewSigner(1))
+	noSystem.Auto = []trust.Auto{{Target: trust.AutoController, Key: releaseKey}}
+	controller := func(version string) *InstallParams {
+		return &InstallParams{Target: trust.AutoController, Version: version, SHA256: sum}
+	}
+	system := &InstallParams{Target: trust.AutoSystem}
+	cases := []struct {
+		name      string
+		p         *InstallParams
+		l         *trust.List
+		signer    []byte
+		installed string
+		want      bool
+	}{
+		{"approved and newer", controller("1.1.0"), approved, releaseKey, "1.0.0", true},
+		{"approved but older", controller("1.1.0"), approved, releaseKey, "1.2.0", false},
+		{"approved but same version", controller("1.1.0"), approved, releaseKey, "1.1.0", false},
+		{"other key", controller("1.1.0"), approved, storeKey, "1.0.0", false},
+		{"nothing installed yet", controller("1.1.0"), approved, releaseKey, "", false},
+		{"system approved", system, approved, nil, "", true},
+		{"system not approved", system, noSystem, nil, "", false},
+		{"app approved for its store key", &InstallParams{Target: "org.sorglos.terminal", Version: "1.1.0", SHA256: sum}, approved, storeKey, "1.0.0", true},
+		{"target without approval", &InstallParams{Target: trust.AutoAPI, Version: "1.1.0", SHA256: sum}, approved, releaseKey, "1.0.0", false},
+		{"no signer", controller("1.1.0"), approved, nil, "1.0.0", false},
+		{"invalid params", &InstallParams{Target: trust.AutoController, Version: "1.1.0"}, approved, releaseKey, "1.0.0", false},
+		{"no params", nil, approved, releaseKey, "1.0.0", false},
+		{"no list", controller("1.1.0"), nil, releaseKey, "1.0.0", false},
+	}
+	for _, c := range cases {
+		if got := Unattended(c.p, c.l, c.signer, c.installed); got != c.want {
 			t.Errorf("%s: got %v", c.name, got)
 		}
 	}
@@ -167,6 +338,74 @@ func TestRights(t *testing.T) {
 	}
 }
 
+// allocated returns how many bytes f allocates.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// hostile returns prefix, then elem as often as fits, then suffix: exactly
+// size bytes.
+func hostile(prefix, elem, suffix string, size int) []byte {
+	var b bytes.Buffer
+	b.Grow(size)
+	b.WriteString(prefix + elem)
+	for b.Len()+1+len(elem)+len(suffix) <= size {
+		b.WriteString("," + elem)
+	}
+	for b.Len()+len(suffix) < size {
+		b.WriteByte(' ')
+	}
+	b.WriteString(suffix)
+	return b.Bytes()
+}
+
+// members returns prefix, then as many members "xN":0 as fit, then suffix:
+// exactly size bytes.
+func members(prefix, suffix string, size int) []byte {
+	var b bytes.Buffer
+	b.WriteString(prefix + `"x0":0`)
+	for i := 1; b.Len()+len(`,"x`+strconv.Itoa(i)+`":0`)+len(suffix) <= size; i++ {
+		b.WriteString(`,"x` + strconv.Itoa(i) + `":0`)
+	}
+	for b.Len()+len(suffix) < size {
+		b.WriteByte(' ')
+	}
+	b.WriteString(suffix)
+	return b.Bytes()
+}
+
+// TestParseParamsBoundsAllocation feeds ParseParams params of the full size
+// with more elements than an action allows, or an array or object where it
+// allows none: refusing them must allocate next to nothing.
+func TestParseParamsBoundsAllocation(t *testing.T) {
+	cases := []struct {
+		name string
+		a    Action
+		in   []byte
+	}{
+		{"rights", action(t, AppUsers, ServiceAPI, ActSetRights), hostile(`{"role":"user","rights":[`, `{}`, `]}`, wire.MaxParams)},
+		{"grants", action(t, AppStore, ServiceController, ActActivate), hostile(`{"grants":[`, `""`, `]}`, wire.MaxParams)},
+		{"an array no params have", action(t, AppDesktop, ServiceAPI, ActUI), hostile(`{"app":[`, `{}`, `]}`, wire.MaxParams)},
+		{"members of params", action(t, AppDesktop, ServiceAPI, ActUI), members(`{`, `}`, wire.MaxParams)},
+		{"members for an action without params", action(t, AppDesktop, ServiceAPI, ActMe), members(`{`, `}`, wire.MaxParams)},
+	}
+	for _, c := range cases {
+		var err error
+		n := allocated(func() { _, err = ParseParams(c.a, c.in) })
+		t.Logf("%s: %d bytes allocated", c.name, n)
+		if n > 64<<10 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+		if err != ErrParams {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrParams)
+		}
+	}
+}
+
 // TestExamples writes one example result per call action, so the web
 // interface and the API test against the same JSON.
 func TestExamples(t *testing.T) {
@@ -194,9 +433,22 @@ func TestExamples(t *testing.T) {
 
 func FuzzParseParams(f *testing.F) {
 	f.Add([]byte(`{"app":"org.sorglos.terminal","version":"1.0.0"}`))
+	f.Add([]byte(`{"role":"user","rights":["org.sorglos.calculator/use"]}`))
+	f.Add([]byte(activateParams(`,"grants":["root","network"]`)))
 	f.Fuzz(func(t *testing.T, b []byte) {
+		// The rule reads nil params as "none came"; the fuzzer's are bytes.
+		if b == nil {
+			b = []byte{}
+		}
 		for _, a := range All() {
-			_, _ = ParseParams(a, b)
+			p, err := ParseParams(a, b)
+			// Whatever passes also passes the rule of the action.
+			if _, rerr := RuleFor(a).Critical(b); (err == nil) != (rerr == nil) {
+				t.Fatalf("%s: ParseParams %v, rule %v", a.Name, err, rerr)
+			}
+			if err == nil && p != nil && p.Validate() != nil {
+				t.Fatalf("%s: accepted params that do not validate", a.Name)
+			}
 		}
 	})
 }

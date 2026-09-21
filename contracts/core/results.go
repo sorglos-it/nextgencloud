@@ -88,9 +88,9 @@ type UserInfo struct {
 	LastLogin int64    `json:"lastLogin,omitempty"`
 }
 
-// PairCodeResult answers ngc.users/pair-code.
+// PairCodeResult answers ngc.users/pair-code and ngc.users/join-code.
 type PairCodeResult struct {
-	Code    string `json:"code"` // tunnel.PairCode as string
+	Code    string `json:"code"` // tunnel.PairCode, for join-code tunnel.JoinCode, as string
 	Expires int64  `json:"expires"`
 }
 
@@ -171,7 +171,8 @@ type UpdateInfo struct {
 	State     string `json:"state,omitempty"` // store.Update… of the newest report
 }
 
-// TrustResult answers ngc.users/trust.
+// TrustResult answers ngc.users/trust, and ngc.users/controller/trust with
+// the newest version the controller verified.
 type TrustResult struct {
 	Seq uint64 `json:"seq"`
 }
