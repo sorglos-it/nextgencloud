@@ -15,15 +15,27 @@
 // who may send which. On a tunnel both sides send hello first.
 //
 // Channels. Only one side opens channels: the browser on a session link, the
-// API on a tunnel. The opener picks a number >= 1 not in use; it is free again
-// once a CLOSE for it was sent or received. At most MaxSessionChannels are open
-// on a session link and MaxTunnelChannels on a tunnel; beyond that the other
-// side answers the OPEN with CLOSE E_LIMIT. A channel runs: OPEN (its Window is
-// the credit the opener grants) -> the other side's first GRANT (credit at
-// least MinWindow; on an end-to-end channel also Noise message 2) or a CLOSE
-// with an error -> DATA both ways -> EOF from each side that has nothing more
-// to send -> CLOSE from the side that accepted the channel. Either side may
-// send CLOSE with an error at any time; after CLOSE nothing more is sent.
+// API on a tunnel. The opener picks a free number >= 1. At most
+// MaxSessionChannels are open on a session link and MaxTunnelChannels on a
+// tunnel; beyond that the other side answers the OPEN with CLOSE E_LIMIT. A
+// channel runs: OPEN (its Window is the credit the opener grants) -> the other
+// side's first GRANT (credit at least MinWindow; on an end-to-end channel also
+// Noise message 2) or a CLOSE with an error -> DATA both ways -> EOF from each
+// side that has nothing more to send -> CLOSE from the side that accepted the
+// channel. Either side may send CLOSE with an error at any time; after its
+// CLOSE a side sends nothing more on the channel.
+//
+// Closing. A side answers every CLOSE with a CLOSE, unless it has sent one for
+// that channel already. A number is free again only once a CLOSE for it was
+// both sent and received, so that frames still under way can never reach a
+// new channel with the same number (on a tunnel perhaps another user's).
+// Frames for a channel that arrive after one's own CLOSE are dropped without
+// an answer. A protocol error on a number is a frame for a number that is
+// neither open nor closing (never opened, or free again), an OPEN for a number
+// that is still open, or an OPEN from the side that does not open channels.
+// The receiver answers it with CLOSE E_PROTOCOL for that number, which ends
+// the channel if there is one, and frees the number once the other side's
+// CLOSE for it has arrived.
 //
 // Credit is kept per hop and direction and counted in bytes of DATA payload as
 // framed (on end-to-end channels including the 16-byte Noise tag). OPEN.Window
@@ -33,23 +45,30 @@
 // CLOSE, GRANT and channel 0 do not count.
 //
 // Relay. The API relays a browser's channel to a controller: it puts the
-// browser's OPEN payload unchanged into tunnel.Open, keeps its own credit on
-// each hop, grants the controller no more than it can hold until the browser
-// takes it, copies Noise message 2 from the controller's first GRANT into its
-// own first GRANT to the browser and passes on a CLOSE with the same code.
+// browser's OPEN payload unchanged into tunnel.Open, relays DATA and EOF
+// unchanged and one to one (each DATA payload as one DATA frame, each EOF as
+// one EOF), keeps its own credit on each hop, grants the controller no more
+// than it can hold until the browser takes it, copies Noise message 2 from the
+// controller's first GRANT into its own first GRANT to the browser and passes
+// on a CLOSE with the same code.
 //
 // End to end. Channels to apps other than core apps are encrypted between shell
 // and controller (noisep.E2EPrologue binds controller, app, service, action and
-// the exact OPEN params). Noise message 1 travels in Open.E2E, message 2 in the
-// first GRANT; every DATA payload is then one Noise transport message whose
-// plaintext is one inner message (E2E, ParseE2E). Right after reading message 2
-// the shell sends its first inner message — an E2EData, empty if it has no
-// input yet, or its input and E2EEnd — and the controller starts the service
-// only once that message has decrypted (waiting at most E2EFirstTimeout
-// seconds). E2EEnd from the shell ends the input; E2EEnd from the controller
-// carries the outcome. A side that sees EOF or CLOSE of the channel before the
-// other side's E2EEnd treats the data as cut off and reports an error: EOF and
-// CLOSE only end the transport.
+// the exact OPEN params and task). Noise message 1 travels in Open.E2E, message
+// 2 in the first GRANT of the side that accepted the channel, which therefore
+// has 4+HandshakeSize bytes. That GRANT without it, and a handshake in any
+// other GRANT (a later one, one from the opener, or one on a core-app channel),
+// is a protocol error (CLOSE E_PROTOCOL). Every DATA payload is then one Noise
+// transport message whose plaintext is one inner message (E2E, ParseE2E).
+// Right after reading message 2 the shell sends its first inner message — an
+// E2EData, empty if it has no input yet, or its input and E2EEnd — and the
+// controller starts the service only once that message has decrypted (waiting
+// at most E2EFirstTimeout seconds). E2EEnd from the shell ends the input;
+// E2EEnd from the controller carries the outcome. Nothing may follow a side's
+// E2EEnd: an inner message after it is a protocol error (CLOSE E_PROTOCOL). A
+// side that sees EOF or CLOSE of the channel before the other side's E2EEnd
+// treats the data as cut off and reports an error: EOF and CLOSE only end the
+// transport.
 //
 // Core apps (CoreApp) have no end-to-end handshake; their DATA is plain inside
 // the link's Noise session and a result is all DATA up to the other side's EOF
