@@ -173,6 +173,18 @@ func vectors(t *testing.T) []vector {
 	replaced := admin.Sign(t, newKey)
 	oldKey := admin.Sign(t, trusttest.Next(t, replaced))
 
+	// A member of a password-too role needs a passkey and a password key;
+	// with either missing she could never log in.
+	carolWith := func(keys ...proof.UserKey) trust.Signed {
+		l := trusttest.Next(t, g)
+		withCarol(keys...)(l)
+		return admin.Sign(t, l)
+	}
+	carolPasskey, carolPassword := trusttest.NewPasskey(0x63).Key, trusttest.NewSigner(0x64).Key
+	carolBoth := carolWith(carolPasskey, carolPassword)
+	carolNoPasskey := carolWith(carolPassword)
+	carolNoPassword := carolWith(carolPasskey)
+
 	return []vector{
 		{"genesis", anchor(t, g), c[:1], true, 1},
 		{"admin adds a user, user adds an own key, passkey admin re-signs", anchor(t, g), full, true, 4},
@@ -191,25 +203,30 @@ func vectors(t *testing.T) []vector {
 		{"new admin signs her own addition", anchor(t, g), []trust.Signed{g, selfAdded}, false, 0},
 		{"admin replaces the key that signs the version", anchor(t, g), []trust.Signed{g, replaced}, true, 2},
 		{"old key signs after it was replaced", anchor(t, g), []trust.Signed{g, replaced, oldKey}, false, 0},
+		{"password-too member with a passkey and a password key", anchor(t, g), []trust.Signed{g, carolBoth}, true, 2},
+		{"password-too member without a passkey", anchor(t, g), []trust.Signed{g, carolNoPasskey}, false, 0},
+		{"password-too member without a password key", anchor(t, g), []trust.Signed{g, carolNoPassword}, false, 0},
 	}
 }
 
 // vectorErrors names the error each invalid vector must fail with, so that a
 // vector cannot pass by failing for another rule than the one it breaks.
 var vectorErrors = map[string]error{
-	"wrong anchor":                        trust.ErrAnchor,
-	"missing version":                     trust.ErrChain,
-	"old version again":                   trust.ErrChain,
-	"tampered":                            proof.ErrSignature,
-	"user makes herself admin":            trust.ErrSigner,
-	"unknown signer":                      trust.ErrSigner,
-	"wrong prev hash":                     trust.ErrChain,
-	"wrong installation":                  trust.ErrChain,
-	"successor without an admin":          trust.ErrInvalid,
-	"genesis signed by a non-admin":       trust.ErrSigner,
-	"user changes another user's key":     trust.ErrSigner,
-	"new admin signs her own addition":    trust.ErrSigner,
-	"old key signs after it was replaced": trust.ErrSigner,
+	"wrong anchor":                               trust.ErrAnchor,
+	"missing version":                            trust.ErrChain,
+	"old version again":                          trust.ErrChain,
+	"tampered":                                   proof.ErrSignature,
+	"user makes herself admin":                   trust.ErrSigner,
+	"unknown signer":                             trust.ErrSigner,
+	"wrong prev hash":                            trust.ErrChain,
+	"wrong installation":                         trust.ErrChain,
+	"successor without an admin":                 trust.ErrInvalid,
+	"genesis signed by a non-admin":              trust.ErrSigner,
+	"user changes another user's key":            trust.ErrSigner,
+	"new admin signs her own addition":           trust.ErrSigner,
+	"old key signs after it was replaced":        trust.ErrSigner,
+	"password-too member without a passkey":      trust.ErrInvalid,
+	"password-too member without a password key": trust.ErrInvalid,
 }
 
 func TestVectors(t *testing.T) {
@@ -272,11 +289,19 @@ func TestValidate(t *testing.T) {
 		"passkey-only role that also asks for the password": func(l *trust.List) {
 			l.Roles = append(l.Roles, trust.Role{Name: "strict", Level: trust.LevelCritical, PasskeyOnly: true, PasswordToo: true})
 		},
+		// admin2 holds only a passkey, so she also breaks the rule below that
+		// a password-too member needs a password key: no user can be in both
+		// kinds of role, whatever her keys.
 		"user in a passkey-only and a password-too role": func(l *trust.List) {
 			l.Roles = append(l.Roles, trust.Role{Name: "passkey-only", Level: trust.LevelCritical, PasskeyOnly: true},
 				trust.Role{Name: "password-too", Level: trust.LevelCritical, PasswordToo: true})
-			l.Users[0].Roles = []string{trust.RoleAdmin, "passkey-only", "password-too"} // admin2 holds only a passkey
+			l.Users[0].Roles = []string{trust.RoleAdmin, "passkey-only", "password-too"}
 		},
+		"password-too member with only a password key": withCarol(trusttest.NewSigner(0x64).Key),
+		"password-too member with only a passkey":      withCarol(pk),
+		// The lock-out of the review: the password admin holds no passkey,
+		// the passkey admin no password key.
+		"admin role that asks for the password too": func(l *trust.List) { l.Roles[0].PasswordToo = true },
 	}
 	for name, mutate := range cases {
 		l := trusttest.Genesis(admin)
@@ -304,6 +329,7 @@ func TestValidate(t *testing.T) {
 				trust.Role{Name: "password-too", Level: trust.LevelCritical, PasswordToo: true})
 			l.Users[0].Roles = []string{trust.RoleAdmin, "passkey-only"}
 		},
+		"password-too member with a passkey and a password key": withCarol(pk, trusttest.NewSigner(0x64).Key),
 	}
 	for name, mutate := range twins {
 		l := trusttest.Genesis(admin)
@@ -311,6 +337,29 @@ func TestValidate(t *testing.T) {
 		if err := l.Validate(); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// TestValidID: an ID has exactly one spelling, so a line break or padding
+// around it, which encoding/base64 alone would skip, makes it invalid.
+func TestValidID(t *testing.T) {
+	id := trusttest.ID(0x11)
+	if !trust.ValidID(id) {
+		t.Fatalf("%s rejected", id)
+	}
+	for _, s := range []string{id + "\n", "\r\n" + id, id[:11] + "\n" + id[11:], id + "=", id[:21]} {
+		if trust.ValidID(s) {
+			t.Errorf("%q accepted", s)
+		}
+	}
+}
+
+// withCarol returns a change that adds the role "careful", which asks for
+// the password too, and carol in it with keys.
+func withCarol(keys ...proof.UserKey) func(l *trust.List) {
+	return func(l *trust.List) {
+		l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
+		l.Users = append(l.Users, trust.User{ID: trusttest.ID(0x23), Name: "carol", Roles: []string{"careful"}, Keys: keys})
 	}
 }
 

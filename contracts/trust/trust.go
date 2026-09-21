@@ -83,7 +83,7 @@ type Role struct {
 	Black       []string `json:"black,omitempty"`
 	White       []string `json:"white,omitempty"`
 	PasskeyOnly bool     `json:"passkeyOnly,omitempty"` // members have no password keys
-	PasswordToo bool     `json:"passwordToo,omitempty"` // members log in with a passkey and their password in addition
+	PasswordToo bool     `json:"passwordToo,omitempty"` // members log in with a passkey and their password in addition, so each holds both kinds of keys
 }
 
 // Node is an API server or a controller.
@@ -519,12 +519,22 @@ func (l *List) validateUsers() error {
 		if passkeyOnly && passwordToo {
 			return ErrInvalid
 		}
+		hasPasskey, hasPassword := false, false
 		for _, k := range u.Keys {
 			if k.Validate() != nil || keys[k.ID] || (passkeyOnly && k.Kind == proof.KindPassword) {
 				return ErrInvalid
 			}
 			keys[k.ID] = true
-			passkeys = passkeys || k.Kind == proof.KindPasskey
+			hasPasskey = hasPasskey || k.Kind == proof.KindPasskey
+			hasPassword = hasPassword || k.Kind == proof.KindPassword
+		}
+		passkeys = passkeys || hasPasskey
+		// Such a user could never log in either: a role that asks for the
+		// password too needs a passkey and a password key (session.VerifyClient,
+		// VerifyPassword). Setting it on the admin role would lock every admin
+		// out, and the setup cannot run again once an admin exists.
+		if passwordToo && !(hasPasskey && hasPassword) {
+			return ErrInvalid
 		}
 		if slices.Contains(u.Roles, RoleAdmin) {
 			admins++
