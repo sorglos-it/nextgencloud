@@ -50,8 +50,15 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
   `proof.json` enthält zufällige Schlüssel und entsteht nur bei einer Vertragsänderung neu. Das
   Webinterface prüft sich in `tests/browser/` dagegen. Eine geänderte Datei ist eine
   Vertragsänderung.
-- **Vorige Fassung verstehen**: Beim Update läuft kurz die vorige Version mit (`tunnel.Contract`).
-  Felder kommen dazu, alte verschwinden erst eine Version später.
+- **Vertragsfassungen:** Zwischen Browser und API steht die Nummer der Fassung im Pfad, heute
+  überall `/api/v1/…` (`session.Path…`, auch die WebSocket-Leitung `session.PathSocket`). Neue
+  oder geänderte Felder kommen nur mit einer neuen Nummer, denn striktes JSON lehnt unbekannte
+  Felder ab. Die API bedient die aktuelle und die vorige Nummer nebeneinander, jede unter ihren
+  eigenen Pfaden; eine alte Shell spricht weiter `/api/v1/…`, bis sie aktualisiert ist. Das passt
+  zur Reihenfolge der Updates (Datenbank → API → Controller → Webinterface, Entwurf 4.8): Das
+  Webinterface ist nie neuer als die API. Im Tunnel nennt `tunnel.Hello` die Fassung (`contract`,
+  heute `tunnel.Contract` = 1); die neuere Seite spricht die Fassung der älteren, und beide liegen
+  höchstens eine Fassung auseinander.
 - **Sprache**: Code und Kommentare Englisch, Meldungen für Benutzer Deutsch (`wire.Code.Message`).
 
 ## Testdaten
@@ -255,8 +262,7 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   Ende-zu-Ende-Austausch; ihre DATA laufen ohne zweite Verschlüsselung in der Noise-Sitzung der
   Leitung. Wie Daten fließen, sagt `core.Action` (`Flow`, `MaxIn`):
   - `call` (`core.FlowCall`): Parameter im OPEN oder in der Aufgabe; der Öffner schickt sofort EOF.
-    Das Ergebnis sind alle DATA bis zum EOF der Gegenseite, höchstens `wire.MaxCallResult` (8 MiB);
-    darüber beendet der Absender mit `E_TOOLARGE`. Aktionen ohne Ergebnis antworten `{}`.
+    Das Ergebnis sind alle DATA bis zum EOF der Gegenseite. Aktionen ohne Ergebnis antworten `{}`.
     Beispiele: `core.json`.
   - `in` (`core.FlowIn`): Der Öffner schickt höchstens `MaxIn` Byte, dann EOF; Ergebnis wie bei
     `call`.
@@ -265,8 +271,14 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   - `transfer` (`core.FlowTransfer`): API → Controller, ein Kopf `core.Transfer`
     (`core.WriteTransfer`, `core.ReadTransfer`), danach genau `size` Byte; Ergebnis wie bei `call`.
 - **App-Kanäle:** Das Ergebnis ist die Ausgabe des Controllers bis zu seinem Ende (`wire.E2EEnd`).
-  Für Aktionen, die kein Datenstrom sind (ohne `stream` im Manifest), gilt dieselbe Grenze
-  `wire.MaxCallResult`.
+- **Grenze für Ergebnisse:** Jedes Ergebnis nach Art von `call` hat höchstens `wire.MaxCallResult`
+  (8 MiB), bei Kern-Apps wie bei Apps: `call`, `in` und `transfer` der Kern-Aktionen und jede
+  App-Aktion, die kein Datenstrom ist (ohne `stream` im Manifest). Wer mehr zu schicken hätte,
+  beendet mit `E_TOOLARGE` (auf Ende-zu-Ende-Kanälen im Ende des Controllers). Durchsetzen muss es
+  der Empfänger: Kommt mehr, schließt er den Kanal mit `E_TOOLARGE`. Bei Kern-Apps ist das die API,
+  die deren Daten sieht (das Ergebnis eines Controllers prüft sie, bevor sie es weitergibt; ihre
+  eigenen Ergebnisse hält sie selbst darunter), auf Ende-zu-Ende-Kanälen die Shell, denn die API
+  sieht deren Klartext nicht.
 - **Aufgaben:** Ein OPEN mit Aufgabe (`task`) hat keine eigenen Parameter; es gelten die der
   Aufgabe. Ob ein Kanal eine Aufgabe braucht, root ist oder kritisch, entscheidet `task.Check` mit
   einer Regel aus geprüften Daten, nie aus dem OPEN: `core.RuleFor` für Kern-Aktionen,
