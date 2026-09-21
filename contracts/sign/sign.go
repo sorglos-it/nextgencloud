@@ -54,8 +54,9 @@ var (
 // payload of 1 to maxPayload bytes, a key ID as KeyID makes it and a 64-byte
 // signature. A maxPayload above MaxPayload counts as MaxPayload. It checks
 // no signature: Verify does, and the Verify functions of the contracts
-// expect an envelope parsed here. Every failure is ErrEnvelope alone, since
-// the decoder's errors quote parts of the input.
+// expect an envelope parsed here, or by the parser of a document that holds
+// it (core.ReadTransfer). Every failure is ErrEnvelope alone, since the
+// decoder's errors quote parts of the input.
 func ParseEnvelope(b []byte, maxPayload int) (Envelope, error) {
 	maxPayload = min(maxPayload, MaxPayload)
 	if maxPayload < 1 {
