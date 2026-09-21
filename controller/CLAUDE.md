@@ -30,9 +30,9 @@ so klein wie möglich.
   (CLOSE gesendet und empfangen); ein Frame darüber beendet den Tunnel. Was du auf einem Kanal
   zuerst schicken darfst, gibt `Opened.Window` frei (die Freigabe der API auf dem Tunnel), nicht
   `window` im OPEN des Browsers: Das gilt nur zwischen Browser und API. Was die API bei `transfer`
-  (`ngc.store/controller/activate`,
-  `ngc.store/controller/stage`) und bei `ngc.users/controller/trust` schickt, begrenzt
-  `core.Action.MaxIn`; bei mehr schließt du mit `E_TOOLARGE`.
+  (`ngc.store/controller/activate`, `ngc.store/controller/stage`) und bei
+  `ngc.users/controller/trust` schickt, begrenzt `core.Action.MaxIn`; bei mehr schließt du mit
+  `E_TOOLARGE`.
 - Ende zu Ende (`contracts/README.md`, Abschnitt „Kanäle“): Prolog `noisep.E2EPrologue` mit deiner
   Node-ID, App, Dienst, Aktion und den Bytes aus `Opened.Open.Params` und
   `Opened.Open.TaskBytes()`; Noise-Nachricht 1 und 2 ohne Nutzlast. Den Dienst startest du erst,
