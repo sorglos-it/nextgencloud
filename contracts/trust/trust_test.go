@@ -1,6 +1,7 @@
 package trust_test
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -8,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -79,7 +81,8 @@ func TestAdvanceZeroVersion(t *testing.T) {
 // genesisByNonAdmin returns a version-1 list where alice, a listed
 // non-admin, is the only available signer. Used to prove that Open's
 // version-1 special case checks admin-ness explicitly rather than by
-// accident (see checkSigner's genesis parameter).
+// accident (a signer who only changed her own keys may sign a later
+// version, but never version 1).
 func genesisByNonAdmin(t *testing.T) trust.Signed {
 	t.Helper()
 	g := trusttest.Genesis(admin)
@@ -88,9 +91,9 @@ func genesisByNonAdmin(t *testing.T) trust.Signed {
 	return alice.Sign(t, g)
 }
 
-// TestGenesisSignerMustBeAdmin proves the version-1 admin check does not
-// depend on prev and next being the same pointer: a listed non-admin is
-// refused even though she is a real, verifiable signer with a real key.
+// TestGenesisSignerMustBeAdmin proves the version-1 admin check: a listed
+// non-admin is refused even though she is a real, verifiable signer with a
+// real key.
 func TestGenesisSignerMustBeAdmin(t *testing.T) {
 	s := genesisByNonAdmin(t)
 	if _, err := trust.Open(anchor(t, s), []trust.Signed{s}); err != trust.ErrSigner {
@@ -369,6 +372,87 @@ func TestPolicy(t *testing.T) {
 	}
 	if !l.MayRoot(adminID, "ctl-1") || l.MayRoot(bob, "ctl-1") || l.MayRoot(adminID, "api-1") {
 		t.Error("root permissions wrong")
+	}
+}
+
+// allocated returns how many bytes f allocates.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// hostile returns prefix, then elem as often as fits, then suffix: exactly
+// size bytes.
+func hostile(prefix, elem, suffix string, size int) []byte {
+	var b bytes.Buffer
+	b.Grow(size)
+	b.WriteString(prefix + elem)
+	for b.Len()+1+len(elem)+len(suffix) <= size {
+		b.WriteString("," + elem)
+	}
+	for b.Len()+len(suffix) < size {
+		b.WriteByte(' ')
+	}
+	b.WriteString(suffix)
+	return b.Bytes()
+}
+
+// TestParseBoundsAllocation feeds Parse the review's probe, a payload of the
+// full size with more array elements than Validate allows, before any
+// signature is checked: refusing it must allocate next to nothing.
+func TestParseBoundsAllocation(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		{"nodes", hostile(`{"nodes":[`, `{}`, `]}`, sign.MaxPayload)},
+		{"users", hostile(`{"users":[`, `{}`, `]}`, sign.MaxPayload)},
+		{"keys of one user", hostile(`{"users":[{"keys":[`, `{}`, `]}]}`, sign.MaxPayload)},
+		{"roles of one user", hostile(`{"users":[{"roles":[`, `""`, `]}]}`, sign.MaxPayload)},
+		{"an array no list has", hostile(`{"rp":{"id":[`, `{}`, `]}}`, sign.MaxPayload)},
+	}
+	for _, c := range cases {
+		var err error
+		if n := allocated(func() { _, err = trust.Parse(c.in) }); n > 64<<10 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+		if err != trust.ErrInvalid {
+			t.Errorf("%s: got %v, want %v", c.name, err, trust.ErrInvalid)
+		}
+	}
+}
+
+// TestSignatureBeforeDecoding: a payload within every budget can still cost
+// tens of MiB to decode (10000 users, each with 16 empty keys and 114 empty
+// role names). Open and Advance check the hash or the proof first, so such a
+// payload that nobody listed signed costs no more than hashing it.
+func TestSignatureBeforeDecoding(t *testing.T) {
+	user := `{"keys":[` + strings.Repeat(`{},`, 15) + `{}],"roles":[` + strings.Repeat(`"",`, 113) + `""]}`
+	payload := []byte(`{"users":[` + strings.Repeat(user+",", trust.MaxUsers-1) + user + `]}`)
+	if len(payload) > sign.MaxPayload {
+		t.Fatalf("payload of %d bytes", len(payload))
+	}
+	g := admin.Sign(t, trusttest.Genesis(admin))
+	v1, err := trust.Open(anchor(t, g), []trust.Signed{g})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := trust.Signed{Payload: payload, Proof: mallory.Prove(sign.PurposeTrustList, payload)}
+	var errAdvance, errOpen error
+	if n := allocated(func() { _, errAdvance = trust.Advance(v1, []trust.Signed{unsigned}) }); n > 2*uint64(len(payload)) {
+		t.Errorf("Advance: %d bytes allocated for a %d-byte payload", n, len(payload))
+	}
+	if errAdvance != trust.ErrSigner {
+		t.Errorf("Advance: got %v, want %v", errAdvance, trust.ErrSigner)
+	}
+	if n := allocated(func() { _, errOpen = trust.Open(anchor(t, g), []trust.Signed{unsigned}) }); n > 64<<10 {
+		t.Errorf("Open: %d bytes allocated", n)
+	}
+	if errOpen != trust.ErrAnchor {
+		t.Errorf("Open: got %v, want %v", errOpen, trust.ErrAnchor)
 	}
 }
 

@@ -83,7 +83,7 @@ type Role struct {
 	Black       []string `json:"black,omitempty"`
 	White       []string `json:"white,omitempty"`
 	PasskeyOnly bool     `json:"passkeyOnly,omitempty"` // members have no password keys
-	PasswordToo bool     `json:"passwordToo,omitempty"` // the API asks for the password in addition to a passkey
+	PasswordToo bool     `json:"passwordToo,omitempty"` // members log in with a passkey and their password in addition
 }
 
 // Node is an API server or a controller.
@@ -165,10 +165,28 @@ func Hash(s Signed) []byte {
 	return h[:]
 }
 
+// listBudget bounds a trust list while it is decoded: every array holds at
+// most what Validate allows. A user's roles are distinct roles of the list,
+// so MaxRoles bounds them too.
+var listBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
+	"rp/origins":        MaxOrigins,
+	"users":             MaxUsers,
+	"users/*/roles":     MaxRoles,
+	"users/*/keys":      MaxKeysPerUser,
+	"roles":             MaxRoles,
+	"roles/*/black":     MaxEntries,
+	"roles/*/white":     MaxEntries,
+	"nodes":             MaxNodes,
+	"nodes/*/rootUsers": MaxRoot,
+	"nodes/*/rootRoles": MaxRoot,
+	"stores":            MaxStores,
+	"auto":              MaxAuto,
+}}
+
 // Parse decodes and validates a payload. It does not check signatures.
 func Parse(payload []byte) (*List, error) {
 	var l List
-	if err := enc.DecodeStrict(payload, sign.MaxPayload, &l); err != nil {
+	if err := listBudget.Decode(payload, &l); err != nil {
 		return nil, ErrInvalid
 	}
 	if err := l.Validate(); err != nil {
@@ -178,33 +196,49 @@ func Parse(payload []byte) (*List, error) {
 }
 
 // Open verifies chain from a pinned anchor and returns the newest version.
-// chain[0] must be the anchored version.
+// chain[0] must be the anchored version. Its hash is compared before its
+// payload is decoded, and Advance checks each later proof before decoding
+// that payload, so the only payload decoded unsigned is the pinned one.
 func Open(a Anchor, chain []Signed) (Version, error) {
 	if len(chain) == 0 {
+		return Version{}, ErrAnchor
+	}
+	h := Hash(chain[0])
+	if !bytes.Equal(h, a.Hash) {
 		return Version{}, ErrAnchor
 	}
 	l, err := Parse(chain[0].Payload)
 	if err != nil {
 		return Version{}, err
 	}
-	h := Hash(chain[0])
-	if l.Seq != a.Seq || !bytes.Equal(h, a.Hash) {
+	if l.Seq != a.Seq {
 		return Version{}, ErrAnchor
 	}
 	if l.Seq == 1 {
-		if err := checkSigner(l, l, chain[0], true); err != nil {
+		// Version 1 signs itself, so only an admin of it may have signed.
+		u, err := verifySigner(l, chain[0])
+		if err != nil {
 			return Version{}, err
+		}
+		if !slices.Contains(u.Roles, RoleAdmin) {
+			return Version{}, ErrSigner
 		}
 	}
 	return Advance(Version{List: l, Hash: h}, chain[1:])
 }
 
-// Advance verifies the versions following cur, in order, and returns the newest.
+// Advance verifies the versions following cur, in order, and returns the
+// newest. Each proof is checked with a key of the version before it first,
+// so a payload that no listed key signed is refused before it is decoded.
 func Advance(cur Version, chain []Signed) (Version, error) {
 	if cur.List == nil {
 		return Version{}, ErrChain
 	}
 	for _, s := range chain {
+		u, err := verifySigner(cur.List, s)
+		if err != nil {
+			return Version{}, err
+		}
 		next, err := Parse(s.Payload)
 		if err != nil {
 			return Version{}, err
@@ -212,35 +246,25 @@ func Advance(cur Version, chain []Signed) (Version, error) {
 		if next.Seq != cur.List.Seq+1 || !bytes.Equal(next.Prev, cur.Hash) || next.Installation != cur.List.Installation {
 			return Version{}, ErrChain
 		}
-		if err := checkSigner(cur.List, next, s, false); err != nil {
-			return Version{}, err
+		if !slices.Contains(u.Roles, RoleAdmin) && !onlyOwnKeys(cur.List, next, u.ID) {
+			return Version{}, ErrSigner
 		}
 		cur = Version{List: next, Hash: Hash(s)}
 	}
 	return cur, nil
 }
 
-// checkSigner verifies the proof of s with a key from prev and checks that
-// its owner may make the change from prev to next. genesis is true only for
-// Open's version-1 special case, where prev and next are the same list: it is
-// passed explicitly rather than inferred (e.g. from prev == next) so that a
-// future caller which happens to pass equal-but-distinct pointers, or a copy,
-// cannot silently let a non-admin sign her own genesis.
-func checkSigner(prev, next *List, s Signed, genesis bool) error {
+// verifySigner checks the proof of s with a key of prev and returns the key's
+// owner, who still has to be allowed the change.
+func verifySigner(prev *List, s Signed) (User, error) {
 	u, key, ok := prev.KeyOwner(s.Proof.KeyID)
 	if !ok {
-		return ErrSigner
+		return User{}, ErrSigner
 	}
 	if err := proof.Verify(s.Proof, key, prev.RP, sign.PurposeTrustList, s.Payload); err != nil {
-		return err
+		return User{}, err
 	}
-	if slices.Contains(u.Roles, RoleAdmin) {
-		return nil
-	}
-	if genesis || !onlyOwnKeys(prev, next, u.ID) {
-		return ErrSigner
-	}
-	return nil
+	return u, nil
 }
 
 // onlyOwnKeys reports whether next differs from prev in nothing but the keys
@@ -307,7 +331,9 @@ func (l *List) KeyOwner(keyID string) (User, proof.UserKey, bool) {
 }
 
 // PasswordToo reports whether a role of the user asks for the password in
-// addition to a passkey (session.LoginChallenge.PasswordToo).
+// addition to a passkey (session.LoginChallenge.PasswordToo). The user's
+// client certificate then needs a passkey proof: session.VerifyClient refuses
+// a password key alone, and VerifyPassword checks the password as well.
 func (l *List) PasswordToo(userID string) bool {
 	u, ok := l.User(userID)
 	if !ok {
