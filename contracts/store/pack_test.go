@@ -321,6 +321,22 @@ func TestWalkRejects(t *testing.T) {
 	}
 }
 
+// TestWalkBoundsManifestAllocation: a package whose manifest has more
+// elements than its budget allows costs little more than the manifest.
+func TestWalkBoundsManifestAllocation(t *testing.T) {
+	for _, m := range [][]byte{hostile(`{"actions":[`, `{}`, `]}`, MaxManifest), members(`{"ui":{`, `}}`, MaxManifest)} {
+		b := buildTar(t, []entry{{ManifestFile, m, tar.TypeReg}})
+		var err error
+		n := allocated(func() {
+			_, err = Walk(bytes.NewReader(b), func(*Manifest, PackFile, io.Reader) error { return nil })
+		})
+		t.Logf("%d bytes allocated for a manifest of %d", n, len(m))
+		if n > MaxManifest+64<<10 || err != ErrPackage {
+			t.Errorf("%d bytes allocated, %v", n, err)
+		}
+	}
+}
+
 var contentKey = bytes.Repeat([]byte{0x42}, KeySize)
 
 func fixedRand(b byte) io.Reader { return bytes.NewReader(bytes.Repeat([]byte{b}, 1024)) }
