@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/core"
@@ -20,6 +21,7 @@ func Run(t *testing.T, open func(t *testing.T) dbapi.Store) {
 	tests := map[string]func(*testing.T, dbapi.Store){
 		"blobs": testBlobs, "apps": testApps, "once": testOnce, "users": testUsers,
 		"sessions": testSessions, "pending": testPending, "log": testLog, "locks": testLocks,
+		"aliasing": testAliasing,
 	}
 	for name, fn := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -316,5 +318,156 @@ func testLocks(t *testing.T, s dbapi.Store) {
 	}
 	if _, err := s.LockTake(ctx, dbapi.LockUpdate, "api-1", now, now); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("lock without time: %v", err)
+	}
+}
+
+// flip changes the first byte of b in place, so a shared backing array shows
+// it; b is left alone if empty.
+func flip(b []byte) {
+	if len(b) > 0 {
+		b[0]++
+	}
+}
+
+// flipStr does the same for the first element of a []string.
+func flipStr(s []string) {
+	if len(s) > 0 {
+		s[0] += "!"
+	}
+}
+
+// testAliasing checks the rule every implementation has to follow: Put/Create
+// must copy the caller's slice instead of keeping a reference to it ("in"),
+// and Get/List must return a copy the caller cannot use to reach back into
+// the store ("out"). Each check mutates the slice actually handed across the
+// call, not a copy of it, so an implementation that forgot to clone would
+// have its stored or returned data change out from under it.
+func testAliasing(t *testing.T, s dbapi.Store) {
+	// Blob.Data: Put/Get, then one BlobFrom out check.
+	wantData := []byte("blob-data")
+	putData := bytes.Clone(wantData)
+	if err := s.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobCatalog, ID: "a", Data: putData}); err != nil {
+		t.Fatal(err)
+	}
+	flip(putData) // mutate what we handed to BlobPut
+	if b, err := s.BlobGet(ctx, dbapi.BlobCatalog, "a"); err != nil || !bytes.Equal(b.Data, wantData) {
+		t.Errorf("Blob.Data in: %q, want %q (%v)", b.Data, wantData, err)
+	}
+	outBlob, err := s.BlobGet(ctx, dbapi.BlobCatalog, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flip(outBlob.Data) // mutate what BlobGet handed back
+	if b, err := s.BlobGet(ctx, dbapi.BlobCatalog, "a"); err != nil || !bytes.Equal(b.Data, wantData) {
+		t.Errorf("Blob.Data out: %q, want %q (%v)", b.Data, wantData, err)
+	}
+	fromList, err := s.BlobFrom(ctx, dbapi.BlobCatalog, 0)
+	if err != nil || len(fromList) != 1 {
+		t.Fatalf("BlobFrom: %+v, %v", fromList, err)
+	}
+	flip(fromList[0].Data)
+	if l, err := s.BlobFrom(ctx, dbapi.BlobCatalog, 0); err != nil || len(l) != 1 || !bytes.Equal(l[0].Data, wantData) {
+		t.Errorf("BlobFrom out: %+v, want %q (%v)", l, wantData, err)
+	}
+
+	// App.Manifest, App.SHA256, App.Grants: Put/Get, then one AppList out check.
+	wantManifest, wantSHA, wantGrants := []byte(`{"id":"app-a"}`), bytes.Repeat([]byte{9}, 32), []string{"network", "root"}
+	putApp := dbapi.App{ID: "app-a", Manifest: bytes.Clone(wantManifest), SHA256: bytes.Clone(wantSHA), Grants: slices.Clone(wantGrants)}
+	if err := s.AppPut(ctx, putApp); err != nil {
+		t.Fatal(err)
+	}
+	flip(putApp.Manifest)
+	flip(putApp.SHA256)
+	flipStr(putApp.Grants)
+	if a, err := s.AppGet(ctx, "app-a"); err != nil || !bytes.Equal(a.Manifest, wantManifest) || !bytes.Equal(a.SHA256, wantSHA) || !slices.Equal(a.Grants, wantGrants) {
+		t.Errorf("App in: %+v (%v)", a, err)
+	}
+	outApp, err := s.AppGet(ctx, "app-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flip(outApp.Manifest)
+	flip(outApp.SHA256)
+	flipStr(outApp.Grants)
+	if a, err := s.AppGet(ctx, "app-a"); err != nil || !bytes.Equal(a.Manifest, wantManifest) || !bytes.Equal(a.SHA256, wantSHA) || !slices.Equal(a.Grants, wantGrants) {
+		t.Errorf("App out: %+v (%v)", a, err)
+	}
+	appList, err := s.AppList(ctx)
+	if err != nil || len(appList) != 1 {
+		t.Fatalf("AppList: %+v, %v", appList, err)
+	}
+	flip(appList[0].Manifest)
+	if l, err := s.AppList(ctx); err != nil || len(l) != 1 || !bytes.Equal(l[0].Manifest, wantManifest) {
+		t.Errorf("AppList out: %+v, want %q (%v)", l, wantManifest, err)
+	}
+
+	// Session.Token, Session.APIKey. Token doubles as the lookup key, so every
+	// SessionGet below uses wantToken, the original that is never mutated.
+	wantToken, wantAPIKey := bytes.Repeat([]byte{0xAA}, 32), bytes.Repeat([]byte{0xBB}, 48)
+	putToken, putAPIKey := bytes.Clone(wantToken), bytes.Clone(wantAPIKey)
+	if err := s.SessionPut(ctx, dbapi.Session{Token: putToken, User: "u-a", APIKey: putAPIKey}); err != nil {
+		t.Fatal(err)
+	}
+	flip(putToken)
+	flip(putAPIKey)
+	if v, err := s.SessionGet(ctx, wantToken); err != nil || !bytes.Equal(v.Token, wantToken) || !bytes.Equal(v.APIKey, wantAPIKey) {
+		t.Errorf("Session in: %+v (%v)", v, err)
+	}
+	outSess, err := s.SessionGet(ctx, wantToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flip(outSess.Token)
+	flip(outSess.APIKey)
+	if v, err := s.SessionGet(ctx, wantToken); err != nil || !bytes.Equal(v.Token, wantToken) || !bytes.Equal(v.APIKey, wantAPIKey) {
+		t.Errorf("Session out: %+v (%v)", v, err)
+	}
+
+	// User.Roles, User.TOTP: Put/Get, then one UserList out check.
+	wantRoles, wantTOTP := []string{"admin", "user"}, []byte("totp-secret")
+	putUser := dbapi.User{ID: "u-a", Name: "alias-user", Roles: slices.Clone(wantRoles), TOTP: bytes.Clone(wantTOTP)}
+	if err := s.UserPut(ctx, putUser); err != nil {
+		t.Fatal(err)
+	}
+	flipStr(putUser.Roles)
+	flip(putUser.TOTP)
+	if u, err := s.UserGet(ctx, "u-a"); err != nil || !slices.Equal(u.Roles, wantRoles) || !bytes.Equal(u.TOTP, wantTOTP) {
+		t.Errorf("User in: %+v (%v)", u, err)
+	}
+	outUser, err := s.UserGet(ctx, "u-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flipStr(outUser.Roles)
+	flip(outUser.TOTP)
+	if u, err := s.UserGet(ctx, "u-a"); err != nil || !slices.Equal(u.Roles, wantRoles) || !bytes.Equal(u.TOTP, wantTOTP) {
+		t.Errorf("User out: %+v (%v)", u, err)
+	}
+	userList, err := s.UserList(ctx)
+	if err != nil || len(userList) != 1 {
+		t.Fatalf("UserList: %+v, %v", userList, err)
+	}
+	flipStr(userList[0].Roles)
+	if l, err := s.UserList(ctx); err != nil || len(l) != 1 || !slices.Equal(l[0].Roles, wantRoles) {
+		t.Errorf("UserList out: %+v, want %v (%v)", l, wantRoles, err)
+	}
+
+	// Pending.Key: no single Get exists, so PendingList carries both checks.
+	wantPendKey := bytes.Repeat([]byte{0xCC}, 32)
+	putPending := dbapi.Pending{Name: "alias-pending", Key: bytes.Clone(wantPendKey)}
+	if err := s.PendingPut(ctx, putPending); err != nil {
+		t.Fatal(err)
+	}
+	flip(putPending.Key)
+	pendList, err := s.PendingList(ctx)
+	if err != nil || len(pendList) != 1 {
+		t.Fatalf("PendingList: %+v, %v", pendList, err)
+	}
+	if !bytes.Equal(pendList[0].Key, wantPendKey) {
+		t.Errorf("Pending in: %x, want %x", pendList[0].Key, wantPendKey)
+	}
+	flip(pendList[0].Key)
+	if l, err := s.PendingList(ctx); err != nil || len(l) != 1 || !bytes.Equal(l[0].Key, wantPendKey) {
+		t.Errorf("PendingList out: %+v, want %x (%v)", l, wantPendKey, err)
 	}
 }

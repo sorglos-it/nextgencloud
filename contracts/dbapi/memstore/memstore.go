@@ -211,6 +211,9 @@ func (s *store) UserGet(_ context.Context, id string) (dbapi.User, error) {
 	return u, nil
 }
 
+// UserByName looks up the ID under the lock and then calls UserGet, which
+// locks again; that two-step shape is only needed because sync.Mutex is not
+// reentrant — an SQL implementation does this with one "WHERE name = ?" query.
 func (s *store) UserByName(ctx context.Context, name string) (dbapi.User, error) {
 	s.mu.Lock()
 	id := ""

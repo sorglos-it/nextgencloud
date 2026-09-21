@@ -101,13 +101,15 @@ type Local interface {
 	BlobPut(ctx context.Context, b Blob) error
 	// BlobGet returns a document or ErrNotFound.
 	BlobGet(ctx context.Context, kind, id string) (Blob, error)
-	// BlobFrom returns the documents of a kind with Seq >= seq, ascending by Seq.
+	// BlobFrom returns the documents of a kind with Seq >= seq, ordered by
+	// Seq then ID.
 	BlobFrom(ctx context.Context, kind string, seq uint64) ([]Blob, error)
 	// BlobDelete removes a document; removing what is not there is no error.
 	BlobDelete(ctx context.Context, kind, id string) error
 
 	AppPut(ctx context.Context, a App) error
 	AppGet(ctx context.Context, id string) (App, error)
+	// AppList returns every app, ordered by ID.
 	AppList(ctx context.Context) ([]App, error)
 	AppDelete(ctx context.Context, id string) error
 
@@ -133,6 +135,7 @@ type Store interface {
 	UserPut(ctx context.Context, u User) error
 	UserGet(ctx context.Context, id string) (User, error)
 	UserByName(ctx context.Context, name string) (User, error)
+	// UserList returns every user, ordered by Name.
 	UserList(ctx context.Context) ([]User, error)
 	UserDelete(ctx context.Context, id string) error
 
@@ -145,6 +148,7 @@ type Store interface {
 	SessionPurge(ctx context.Context, now int64) error
 
 	PendingPut(ctx context.Context, p Pending) error
+	// PendingList returns every pending controller, ordered by Since then Name.
 	PendingList(ctx context.Context) ([]Pending, error)
 	PendingDelete(ctx context.Context, key []byte) error
 
