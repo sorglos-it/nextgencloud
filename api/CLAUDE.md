@@ -33,11 +33,14 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   Ergebnis eines Controllers prüfst du, bevor du es weitergibst, und schließt bei mehr mit
   `E_TOOLARGE`; deine eigenen Ergebnisse hältst du darunter (als Empfängerin prüft sie die Shell).
   Auf Ende-zu-Ende-Kanälen prüft das die Shell, du siehst dort keinen Klartext.
-- Ergebnisse so kodieren, dass eine leere Liste `[]` ist, nie `null`: `json.Marshal` schreibt eine
+- Ergebnisse kodierst du mit `core.EncodeResult`, nie mit `json.Marshal`: Das schreibt eine
   nil-Slice als `null`, und das lehnt die Shell ab (`contracts/README.md`, „Striktes JSON“, Regel
-  14). Das betrifft vor allem die acht Ergebnisse, die als Ganzes eine Liste sind
-  (`ngc.desktop/apps`, `ngc.users/list`, `ngc.users/rights`, `ngc.users/pending`, `ngc.users/log`,
-  `ngc.store/sources`, `ngc.store/installed`, `ngc.store/updates`).
+  14). `core.EncodeResult` schreibt leere Listen als `[]` und leere Maps als `{}`, lässt optionale
+  Felder mit Nullwert weg und gibt `core.ErrResult` für alles, was die Shell ablehnen würde (ein
+  übrig gebliebenes `null`, ungültiges UTF-8, mehr als `wire.MaxCallResult` Byte). Das betrifft vor
+  allem die acht Ergebnisse, die als Ganzes eine Liste sind (`ngc.desktop/apps`, `ngc.users/list`,
+  `ngc.users/rights`, `ngc.users/pending`, `ngc.users/log`, `ngc.store/sources`,
+  `ngc.store/installed`, `ngc.store/updates`); leer stehen sie unter `empty` in `core.json`.
 - Was der Öffner schicken darf (`core.Action.MaxIn`), setzt du bei `ngc.store/api/upload`,
   `ngc.users/api/trust` und `ngc.store/api/license` durch: bei mehr schließt du mit `E_TOOLARGE`.
   Umschläge von außen liest du nur mit `sign.ParseEnvelope` (Lizenzen mit `store.MaxLicense`,
@@ -56,11 +59,13 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   Vertrauensliste an Controller über den Kanal `ngc.users/controller/trust`, an Browser per
   `GET /api/v1/trust` (`session.TrustChain`, seitenweise) und Hinweis `trust`. Ohne Benutzer
   öffnest du nur, was `core.WithoutUser` nennt.
-- Apps und Stores: Kataloge prüfen (`store.VerifyCatalog`), Pakete entpacken (`store.Walk`),
-  Oberflächen als tar nach den Regeln von `store.WalkUI` ablegen und ausliefern, Lizenzen prüfen,
-  Schlüssel der Kauf-Apps entpacken (`store.UnwrapKey`) und nur an eigene Controller geben. Der
-  globale Store heißt `global` (`store.GlobalID`), `local` steht für hochgeladene Apps
-  (`core.LocalStore`); einen zweiten Store `global` lehnst du ab.
+- Apps und Stores: Kataloge prüfen (`store.VerifyCatalog`), Pakete entpacken (`store.Walk`,
+  höchstens `store.MaxDirs` Verzeichnisse), die Oberfläche einer App mit `store.NewUIWriter`
+  (`store.UIWriter`) als ui-tar in der einen Form aus `store/ui.go` schreiben, in `dbapi.BlobUI`
+  ablegen und bei `ngc.desktop/ui` unverändert ausliefern (die Shell liest es wie `store.WalkUI`),
+  Lizenzen prüfen, Schlüssel der Kauf-Apps entpacken (`store.UnwrapKey`) und nur an eigene
+  Controller geben. Der globale Store heißt `global` (`store.GlobalID`), `local` steht für
+  hochgeladene Apps (`core.LocalStore`); einen zweiten Store `global` lehnst du ab.
 - Updates: Reihenfolge Datenbank → APIs → Controller → Webinterface, gesteuert von genau einer API
   über `dbapi.LockUpdate`. Die Migrationen spielt genau ein Controller mit Rolle `db` ein: Die API
   mit der Sperre wählt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten
