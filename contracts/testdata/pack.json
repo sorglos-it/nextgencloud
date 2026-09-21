@@ -1,0 +1,12 @@
+{
+  "contentKey": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+  "plain": "TkdDIEthdWYtQXBwLCBUZXN0aW5oYWx0",
+  "sealed": "TkdDRU5DMQokJCQkJCQkJCQkJCQkJCQktQLfcfArvO5rqcEgqzZDZ_TYekKVQ_pNk2iKGgzix9e4TAvUFiOYjQ",
+  "installSeed": "kZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZE",
+  "app": "org.sorglos.terminal",
+  "wrapped": {
+    "eph": "ew1H2TQn-DERYHgcfHM_2J-IlwrvSQ2KoO4ZpMuKGxQ",
+    "nonce": "MzMzMzMzMzMzMzMz",
+    "sealed": "9CNvc8T6Lv1UrlulT3YE1oaAIKy4c6C2S0xj-WeEFFiKuivNy-ARtgXcQIWsSNbZ"
+  }
+}
