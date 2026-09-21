@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -80,7 +82,7 @@ func TestSaveController(t *testing.T) {
 	}
 	// On Windows, os.Stat reports permissions derived only from the
 	// read-only attribute, so it cannot reflect the 0600 mode SaveController
-	// requested; the mode is verified on Linux (see scripts/check.sh).
+	// requested; run go test ./contracts/config/ on Linux to check the modes.
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v: the file holds keys", info.Mode().Perm())
 	}
@@ -91,11 +93,20 @@ func TestSaveController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(b, []byte("null")) {
-		t.Errorf("saved file holds null:\n%s", b)
+	if bytes.Contains(b, []byte("null")) || bytes.Contains(b, []byte("[secret]")) {
+		t.Errorf("saved file holds null or a redacted secret:\n%s", b)
+	}
+	// The file is the one place that holds the secrets themselves.
+	for _, s := range []string{enc.B64.EncodeToString(c.NoiseKey.Bytes()), enc.B64.EncodeToString(c.DBKey.Bytes()),
+		`"password": "` + c.Migrate.Password.Text() + `"`} {
+		if !bytes.Contains(b, []byte(s)) {
+			t.Errorf("saved file lacks %q:\n%s", s, b)
+		}
 	}
 	again, err := LoadController(path)
-	if err != nil || again.Node != "ctl-1" || again.String() != c.String() || again.Migrate.Password != c.Migrate.Password {
+	if err != nil || again.Node != "ctl-1" || again.String() != c.String() ||
+		!bytes.Equal(again.NoiseKey.Bytes(), c.NoiseKey.Bytes()) || !bytes.Equal(again.DBKey.Bytes(), c.DBKey.Bytes()) ||
+		again.Migrate.Password.Text() != c.Migrate.Password.Text() {
 		t.Fatalf("round trip: %+v, %v", again, err)
 	}
 }
@@ -223,9 +234,9 @@ func TestValidate(t *testing.T) {
 	}{
 		"session lifetime of 86400":    {func(a *API) { a.SessionLifetime = session.MaxLifetime }, true},
 		"without node":                 {func(a *API) { a.Node = "" }, false},
-		"short key":                    {func(a *API) { a.NoiseKey = []byte{1} }, false},
+		"short key":                    {func(a *API) { a.NoiseKey = NewSecret([]byte{1}) }, false},
 		"mariadb node no colon":        {func(a *API) { a.DB.Nodes = []string{"db-1"} }, false},
-		"db password too long":         {func(a *API) { a.DB.Password = strings.Repeat("x", MaxField+1) }, false},
+		"db password too long":         {func(a *API) { a.DB.Password = NewSecretText(strings.Repeat("x", MaxField+1)) }, false},
 		"store url too long":           {func(a *API) { a.StoreURL = "https://" + strings.Repeat("x", MaxField) }, false},
 		"session lifetime above 86400": {func(a *API) { a.SessionLifetime = session.MaxLifetime + 1 }, false},
 		"idle longer than the session": {func(a *API) { a.IdleTimeout = a.SessionLifetime + 1 }, false},
@@ -258,12 +269,12 @@ func TestValidate(t *testing.T) {
 		"no roles":                  {func(c *Controller) { c.Roles, c.Migrate = nil, nil }, false},
 		"duplicate role":            {func(c *Controller) { c.Roles = []string{tunnel.RoleDB, tunnel.RoleDB} }, false},
 		"five roles":                {func(c *Controller) { c.Roles = append(c.Roles, tunnel.RoleWeb, tunnel.RoleAPI, tunnel.RoleWeb) }, false},
-		"db key":                    {func(c *Controller) { c.DBKey = make([]byte, 32) }, false},
+		"db key":                    {func(c *Controller) { c.DBKey = NewSecret(make([]byte, 32)) }, false},
 		"web without webconf":       {func(c *Controller) { c.Roles = append(c.Roles, tunnel.RoleWeb) }, false},
 		"db role without migrate":   {func(c *Controller) { c.Migrate = nil }, false},
 		"migrate without db role":   {func(c *Controller) { c.Roles = []string{tunnel.RoleServices} }, false},
 		"migrate with empty driver": {func(c *Controller) { c.Migrate.Driver = "" }, false},
-		"migrate without password":  {func(c *Controller) { c.Migrate.Password = "" }, false},
+		"migrate without password":  {func(c *Controller) { c.Migrate.Password = SecretText{} }, false},
 	}
 	for name, c := range controllerCases {
 		ctl, err := LoadController(example(t, "controller-db.json"))
@@ -280,7 +291,7 @@ func TestValidate(t *testing.T) {
 // validSQLite is a DB configuration that passes Validate(): SQLite, an
 // absolute path, a 64-byte key, no Galera nodes and no MariaDB leftovers.
 func validSQLite() DB {
-	return DB{Driver: DriverSQLite, Path: "/var/lib/ngc/api/api.db", Key: make([]byte, 64)}
+	return DB{Driver: DriverSQLite, Path: "/var/lib/ngc/api/api.db", Key: NewSecret(make([]byte, 64))}
 }
 
 // TestValidateSQLite pins one SQLite rule per case: each starts from a fresh
@@ -292,9 +303,10 @@ func TestValidateSQLite(t *testing.T) {
 	}
 	cases := map[string]func(*DB){
 		"relative path":     func(d *DB) { d.Path = "var/lib/ngc/api/api.db" },
-		"wrong key length":  func(d *DB) { d.Key = make([]byte, 32) },
+		"wrong key length":  func(d *DB) { d.Key = NewSecret(make([]byte, 32)) },
 		"nodes present":     func(d *DB) { d.Nodes = []string{"db-1:3306"} },
-		"leftover password": func(d *DB) { d.Password = "leftover" },
+		"leftover password": func(d *DB) { d.Password = NewSecretText("leftover") },
+		"path too long":     func(d *DB) { d.Path = "/" + strings.Repeat("x", MaxField) },
 	}
 	for name, mutate := range cases {
 		d := validSQLite()
@@ -305,9 +317,29 @@ func TestValidateSQLite(t *testing.T) {
 	}
 }
 
-// TestRedaction logs and prints each configuration: the secrets of the
-// examples must not appear, in any of the usual encodings, but the node or
-// name must.
+// secretForms returns how a key or password could show when printed: as
+// base64url, standard base64, decimal and Go byte lists, and hex. A key of
+// the examples repeats one byte, so the first 8 bytes stand for all of it.
+func secretForms(keys [][]byte, passwords []string) []string {
+	var forms []string
+	for _, k := range keys {
+		head := k[:8]
+		forms = append(forms, enc.B64.EncodeToString(k), base64.StdEncoding.EncodeToString(k),
+			strings.Trim(fmt.Sprint(head), "[]"), strings.Trim(fmt.Sprintf("%#v", head), "[]byte{}"),
+			fmt.Sprintf("%x", head), fmt.Sprintf("%X", head))
+	}
+	for _, p := range passwords {
+		forms = append(forms, p, fmt.Sprintf("%x", p), fmt.Sprintf("%X", p))
+	}
+	return forms
+}
+
+// TestRedaction prints and logs each configuration in every way at hand:
+// every verb of package fmt, the configuration itself, by pointer, in a
+// slice, in a map and in an exported and an unexported field of another
+// struct, through both handlers of log/slog and through encoding/json. No
+// secret of the examples may show; the node or name does. Only the file
+// holds the secrets (TestSaveController).
 func TestRedaction(t *testing.T) {
 	api, err := LoadAPI(example(t, "api.json"))
 	if err != nil {
@@ -318,49 +350,101 @@ func TestRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	sqlite := validSQLite()
-	sqlite.Key = bytes.Repeat([]byte{0x5C}, 64)
+	sqlite.Key = NewSecret(bytes.Repeat([]byte{0x5C}, 64))
 	withSQLite, err := LoadController(example(t, "controller.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	withSQLite.Roles, withSQLite.Migrate = []string{tunnel.RoleDB}, &sqlite
 
-	secrets := func(keys ...[]byte) []string {
-		var s []string
-		for _, k := range keys {
-			s = append(s, enc.B64.EncodeToString(k), fmt.Sprint(k), fmt.Sprintf("%x", k))
-		}
-		return s
-	}
+	type exported struct{ Cfg any }
+	type unexported struct{ cfg any }
+	verbs := []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%b", "%o", "%O", "%c", "%U", "%e", "%E",
+		"%f", "%F", "%g", "%G", "%t", "%T", "%p", "% x", "%#x", "%+q", "%#q", "%-300s", "%.10v", "%300v", "%w"}
 	cases := []struct {
 		name    string
-		cfg     any // as slog gets it
-		value   any // the configuration itself, as fmt gets it
+		value   any // the configuration itself
+		pointer any
 		shown   string
 		secrets []string
 	}{
-		{"api", api, *api, "api-1", append(secrets(api.NoiseKey, api.SignKey, api.SecretKey), api.DB.Password)},
-		{"controller", ctl, *ctl, "datenbank", append(secrets(ctl.NoiseKey, ctl.DBKey), ctl.Migrate.Password)},
-		{"controller with SQLite", withSQLite, *withSQLite, "dienste", secrets(withSQLite.NoiseKey, withSQLite.DBKey, sqlite.Key)},
-		{"db", &api.DB, api.DB, "ngc.test", []string{api.DB.Password}},
+		{"api", *api, api, "api-1",
+			secretForms([][]byte{api.NoiseKey.Bytes(), api.SignKey.Bytes(), api.SecretKey.Bytes()}, []string{api.DB.Password.Text()})},
+		{"controller", *ctl, ctl, "datenbank",
+			secretForms([][]byte{ctl.NoiseKey.Bytes(), ctl.DBKey.Bytes()}, []string{ctl.Migrate.Password.Text()})},
+		{"controller with SQLite", *withSQLite, withSQLite, "dienste",
+			secretForms([][]byte{withSQLite.NoiseKey.Bytes(), withSQLite.DBKey.Bytes(), sqlite.Key.Bytes()}, nil)},
+		{"db", api.DB, &api.DB, "ngc.test", secretForms(nil, []string{api.DB.Password.Text()})},
 	}
 	for _, c := range cases {
-		var buf bytes.Buffer
-		slog.New(slog.NewJSONHandler(&buf, nil)).Info("x", "cfg", c.cfg)
-		for _, out := range []string{buf.String(), fmt.Sprintf("%+v", c.value), fmt.Sprintf("%v", c.value), fmt.Sprint(c.cfg)} {
+		var outs []string
+		for _, arg := range []any{c.value, c.pointer, []any{c.value}, map[string]any{"cfg": c.value},
+			exported{c.value}, unexported{c.value}} {
+			for _, verb := range verbs {
+				outs = append(outs, fmt.Sprintf(verb, arg))
+			}
+			var buf bytes.Buffer
+			slog.New(slog.NewJSONHandler(&buf, nil)).Info("x", "cfg", arg)
+			slog.New(slog.NewTextHandler(&buf, nil)).Info("x", "cfg", arg)
+			b, err := json.Marshal(arg)
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			outs = append(outs, buf.String(), string(b))
+		}
+		for _, out := range outs {
 			for _, s := range c.secrets {
 				if strings.Contains(out, s) {
-					t.Errorf("%s: %.60q shows a secret:\n%s", c.name, s, out)
+					t.Errorf("%s: %.40q shows a secret:\n%.400s", c.name, s, out)
 				}
 			}
-			if !strings.Contains(out, c.shown) || !strings.Contains(out, "[secret]") {
-				t.Errorf("%s: %q or [secret] missing:\n%s", c.name, c.shown, out)
+		}
+		var logged bytes.Buffer
+		slog.New(slog.NewJSONHandler(&logged, nil)).Info("x", "cfg", c.pointer)
+		encoded, _ := json.Marshal(c.value)
+		for _, out := range []string{fmt.Sprintf("%v", c.value), fmt.Sprintf("%+v", c.pointer), logged.String(), string(encoded)} {
+			if !strings.Contains(out, c.shown) {
+				t.Errorf("%s: %q missing:\n%s", c.name, c.shown, out)
 			}
+		}
+		if s := fmt.Sprint(c.value); !strings.Contains(s, "[secret]") {
+			t.Errorf("%s: [secret] missing: %s", c.name, s)
 		}
 	}
 	empty := DB{Driver: DriverMariaDB}
 	if s := empty.String(); strings.Contains(s, "[secret]") {
 		t.Errorf("unset secrets shown as set: %s", s)
+	}
+}
+
+// TestSecret: a secret keeps a copy of its value, shows it only through
+// Bytes and Text, and an unset one is left out of a file.
+func TestSecret(t *testing.T) {
+	b := []byte{1, 2, 3}
+	s := NewSecret(b)
+	b[0] = 9
+	if !bytes.Equal(s.Bytes(), []byte{1, 2, 3}) || s.String() != "[secret]" || fmt.Sprintf("%#v", s) != `"[secret]"` {
+		t.Errorf("secret %v, %s", s.Bytes(), s)
+	}
+	if NewSecret(nil).Bytes() != nil || !NewSecret(nil).IsZero() || NewSecretText("").Text() != "" || (SecretText{}).String() != "" {
+		t.Error("unset secrets")
+	}
+	var back struct {
+		Key  Secret     `json:"key"`
+		Word SecretText `json:"word"`
+	}
+	if err := decode(anchorBudget, []byte(`{"key":"AQID","word":"geheim"}`), &back); err != nil ||
+		!bytes.Equal(back.Key.Bytes(), []byte{1, 2, 3}) || back.Word.Text() != "geheim" {
+		t.Errorf("decode: %v, %v", back, err)
+	}
+	for _, in := range []string{`{"key":"AQI="}`, `{"key":"AQ\nID"}`, `{"key":1}`, `{"word":1}`, "{\"word\":\"\xff\"}"} {
+		if err := decode(anchorBudget, []byte(in), &back); err != ErrConfig {
+			t.Errorf("%q: got %v, want %v", in, err, ErrConfig)
+		}
+	}
+	file, err := marshalFile(DB{Driver: DriverSQLite, Path: "/x.db", Key: NewSecret([]byte{1, 2, 3})})
+	if err != nil || string(file) != "{\n  \"driver\": \"sqlite\",\n  \"path\": \"/x.db\",\n  \"key\": \"AQID\"\n}\n" {
+		t.Errorf("file %q, %v", file, err)
 	}
 }
 

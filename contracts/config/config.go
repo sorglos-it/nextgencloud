@@ -3,8 +3,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,8 +43,8 @@ const (
 
 	MaxConfig = 1 << 20
 	// MaxField bounds these strings: each of Web.APIs and Web.RP.Origins;
-	// API.Listen, Cert, CertKey and StoreURL; DB.Name, User, Password and each
-	// of DB.Nodes; APIRef.URL; Controller.DB, Podman and WebConfig.
+	// API.Listen, Cert, CertKey and StoreURL; DB.Name, User, Password, Path
+	// and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and WebConfig.
 	MaxField               = 256
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
@@ -65,6 +68,110 @@ const (
 // ErrConfig reports a configuration that does not work.
 var ErrConfig = errors.New("config: invalid configuration")
 
+// Secret is a key of a configuration file, base64url there (enc.Bytes). Only
+// the file shows it: fmt with any verb, log/slog and encoding/json show
+// "[secret]", or "" while it is unset. The key sits inside a function, which
+// even printing by reflection (a Secret in an unexported field, a verb that
+// does not fit) shows only as an address. Bytes gives the key.
+type Secret struct{ key func() []byte }
+
+// NewSecret returns a Secret holding a copy of b.
+func NewSecret(b []byte) Secret {
+	if len(b) == 0 {
+		return Secret{}
+	}
+	c := bytes.Clone(b)
+	return Secret{func() []byte { return c }}
+}
+
+// Bytes returns the key, nil while s is unset.
+func (s Secret) Bytes() []byte {
+	if s.key == nil {
+		return nil
+	}
+	return s.key()
+}
+
+// IsZero reports whether s is unset (the omitzero option of encoding/json).
+func (s Secret) IsZero() bool { return len(s.Bytes()) == 0 }
+
+// String returns "[secret]", or "" while s is unset.
+func (s Secret) String() string { return shown(!s.IsZero()) }
+
+// Format prints String with every verb and flag of package fmt.
+func (s Secret) Format(f fmt.State, verb rune) { fmt.Fprintf(f, fmt.FormatString(f, verb), s.String()) }
+
+// LogValue implements slog.LogValuer.
+func (s Secret) LogValue() slog.Value { return slog.StringValue(s.String()) }
+
+// MarshalJSON encodes String; only marshalFile writes the key itself.
+func (s Secret) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) }
+
+// UnmarshalJSON decodes the key from base64url, as enc.Bytes does.
+func (s *Secret) UnmarshalJSON(data []byte) error {
+	var b enc.Bytes
+	if err := b.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	*s = NewSecret(b)
+	return nil
+}
+
+// SecretText is a password of a configuration file, a JSON string there. It
+// shows itself nowhere else, as Secret does. Text gives the password.
+type SecretText struct{ text func() string }
+
+// NewSecretText returns a SecretText holding t.
+func NewSecretText(t string) SecretText {
+	if t == "" {
+		return SecretText{}
+	}
+	return SecretText{func() string { return t }}
+}
+
+// Text returns the password, "" while s is unset.
+func (s SecretText) Text() string {
+	if s.text == nil {
+		return ""
+	}
+	return s.text()
+}
+
+// IsZero reports whether s is unset (the omitzero option of encoding/json).
+func (s SecretText) IsZero() bool { return s.Text() == "" }
+
+// String returns "[secret]", or "" while s is unset.
+func (s SecretText) String() string { return shown(!s.IsZero()) }
+
+// Format prints String with every verb and flag of package fmt.
+func (s SecretText) Format(f fmt.State, verb rune) {
+	fmt.Fprintf(f, fmt.FormatString(f, verb), s.String())
+}
+
+// LogValue implements slog.LogValuer.
+func (s SecretText) LogValue() slog.Value { return slog.StringValue(s.String()) }
+
+// MarshalJSON encodes String; only marshalFile writes the password itself.
+func (s SecretText) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) }
+
+// UnmarshalJSON decodes the password from a JSON string.
+func (s *SecretText) UnmarshalJSON(data []byte) error {
+	var t string
+	if err := jsonv2.Unmarshal(data, &t); err != nil {
+		return err
+	}
+	*s = NewSecretText(t)
+	return nil
+}
+
+// shown is what a Secret or SecretText shows of itself.
+func shown(set bool) string {
+	if set {
+		return "[secret]"
+	}
+	return ""
+}
+
 // Web is /etc/ngc/web.json; the PHP of the web interface reads it too.
 type Web struct {
 	APIs []string `json:"apis"` // https://host:port, Apache balances over them
@@ -73,13 +180,13 @@ type Web struct {
 
 // DB tells an API which database to use.
 type DB struct {
-	Driver   string    `json:"driver"`
-	Nodes    []string  `json:"nodes,omitempty"` // MariaDB: host:port of the Galera nodes
-	Name     string    `json:"name,omitempty"`
-	User     string    `json:"user,omitempty"`
-	Password string    `json:"password,omitempty"`
-	Path     string    `json:"path,omitempty"` // SQLite: file
-	Key      enc.Bytes `json:"key,omitempty"`  // SQLite: 64 bytes for AES-256-XTS
+	Driver   string     `json:"driver"`
+	Nodes    []string   `json:"nodes,omitempty"` // MariaDB: host:port of the Galera nodes
+	Name     string     `json:"name,omitempty"`
+	User     string     `json:"user,omitempty"`
+	Password SecretText `json:"password,omitzero"`
+	Path     string     `json:"path,omitempty"` // SQLite: file
+	Key      Secret     `json:"key,omitzero"`   // SQLite: 64 bytes for AES-256-XTS
 }
 
 // API is /etc/ngc/api.json. It holds keys, so the file belongs to root with mode 0600.
@@ -89,9 +196,9 @@ type API struct {
 	Cert       string    `json:"cert"`
 	CertKey    string    `json:"certKey"`
 	DB         DB        `json:"db"`
-	NoiseKey   enc.Bytes `json:"noiseKey"`   // X25519 private key for the tunnel
-	SignKey    enc.Bytes `json:"signKey"`    // Ed25519 private key for API certificates
-	SecretKey  enc.Bytes `json:"secretKey"`  // AES-256 key for secrets in the database, shared by all APIs
+	NoiseKey   Secret    `json:"noiseKey"`   // X25519 private key for the tunnel
+	SignKey    Secret    `json:"signKey"`    // Ed25519 private key for API certificates
+	SecretKey  Secret    `json:"secretKey"`  // AES-256 key for secrets in the database, shared by all APIs
 	ReleaseKey enc.Bytes `json:"releaseKey"` // public key of NGC releases
 	// StoreKey and StoreURL name the global store (ID trust.StoreGlobal); the
 	// API hands it to the shell in session.SetupInfo.Store.
@@ -111,11 +218,11 @@ type APIRef struct {
 type Controller struct {
 	Node       string       `json:"node,omitempty"` // empty until an admin put it in the trust list
 	Name       string       `json:"name"`
-	NoiseKey   enc.Bytes    `json:"noiseKey"`
+	NoiseKey   Secret       `json:"noiseKey"`
 	APIs       []APIRef     `json:"apis"` // from the pairing code; later from the trust list
 	Anchor     trust.Anchor `json:"anchor"`
 	DB         string       `json:"db"`
-	DBKey      enc.Bytes    `json:"dbKey"` // 64 bytes for AES-256-XTS
+	DBKey      Secret       `json:"dbKey"` // 64 bytes for AES-256-XTS
 	ReleaseKey enc.Bytes    `json:"releaseKey"`
 	Roles      []string     `json:"roles"` // one to four of tunnel.RoleWeb, RoleAPI, RoleDB, RoleServices
 	Podman     string       `json:"podman,omitempty"`
@@ -213,11 +320,32 @@ func SaveController(path string, c *Controller) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := marshalFile(c)
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, append(b, '\n'), 0o600)
+	return writeAtomic(path, b, 0o600)
+}
+
+// fileMarshalers write the secrets themselves, which only a configuration
+// file holds.
+var fileMarshalers = jsonv2.JoinMarshalers(
+	jsonv2.MarshalFunc(func(s Secret) ([]byte, error) { return enc.Bytes(s.Bytes()).MarshalJSON() }),
+	jsonv2.MarshalFunc(func(s SecretText) ([]byte, error) { return json.Marshal(s.Text()) }),
+)
+
+// marshalFile encodes v for a configuration file: as encoding/json does,
+// indented and with a final newline, but with the secrets themselves.
+func marshalFile(v any) ([]byte, error) {
+	b, err := jsonv2.Marshal(v, json.DefaultOptionsV1(), jsonv2.WithMarshalers(fileMarshalers))
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := json.Indent(&out, b, "", "  "); err != nil {
+		return nil, err
+	}
+	return append(out.Bytes(), '\n'), nil
 }
 
 // parseAnchor decodes and checks the payload of trust-anchor.json.
@@ -247,11 +375,11 @@ func SaveAnchor(path string, a trust.Anchor) error {
 	if a.Seq == 0 || len(a.Hash) != 32 {
 		return ErrConfig
 	}
-	b, err := json.MarshalIndent(a, "", "  ")
+	b, err := marshalFile(a)
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, append(b, '\n'), 0o644)
+	return writeAtomic(path, b, 0o644)
 }
 
 // writeAtomic replaces path so that a crash leaves the old or the new file,
@@ -328,7 +456,7 @@ func (a *API) Validate() error {
 		a.Listen == "" || len(a.Listen) > MaxField ||
 		a.Cert == "" || len(a.Cert) > MaxField ||
 		a.CertKey == "" || len(a.CertKey) > MaxField ||
-		len(a.NoiseKey) != 32 || len(a.SignKey) != 32 || len(a.SecretKey) != 32 ||
+		len(a.NoiseKey.Bytes()) != 32 || len(a.SignKey.Bytes()) != 32 || len(a.SecretKey.Bytes()) != 32 ||
 		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 ||
 		!strings.HasPrefix(a.StoreURL, "https://") || len(a.StoreURL) > MaxField ||
 		a.SessionLifetime < 300 || a.SessionLifetime > session.MaxLifetime ||
@@ -345,8 +473,8 @@ func (d *DB) Validate() error {
 		if len(d.Nodes) == 0 || len(d.Nodes) > maxList ||
 			d.Name == "" || len(d.Name) > MaxField ||
 			d.User == "" || len(d.User) > MaxField ||
-			d.Password == "" || len(d.Password) > MaxField ||
-			d.Path != "" || len(d.Key) != 0 {
+			d.Password.IsZero() || len(d.Password.Text()) > MaxField ||
+			d.Path != "" || !d.Key.IsZero() {
 			return ErrConfig
 		}
 		for _, n := range d.Nodes {
@@ -355,8 +483,8 @@ func (d *DB) Validate() error {
 			}
 		}
 	case DriverSQLite:
-		if !strings.HasPrefix(d.Path, "/") || len(d.Key) != 64 || len(d.Nodes) != 0 ||
-			d.Name != "" || d.User != "" || d.Password != "" {
+		if !strings.HasPrefix(d.Path, "/") || len(d.Path) > MaxField || len(d.Key.Bytes()) != 64 || len(d.Nodes) != 0 ||
+			d.Name != "" || d.User != "" || !d.Password.IsZero() {
 			return ErrConfig
 		}
 	default:
@@ -367,9 +495,9 @@ func (d *DB) Validate() error {
 
 // Validate checks the controller configuration.
 func (c *Controller) Validate() error {
-	if (c.Node != "" && !wire.ValidName(c.Node)) || !wire.ValidName(c.Name) || len(c.NoiseKey) != 32 ||
+	if (c.Node != "" && !wire.ValidName(c.Node)) || !wire.ValidName(c.Name) || len(c.NoiseKey.Bytes()) != 32 ||
 		len(c.APIs) == 0 || len(c.APIs) > maxList || c.Anchor.Seq == 0 || len(c.Anchor.Hash) != 32 ||
-		!strings.HasPrefix(c.DB, "/") || len(c.DB) > MaxField || len(c.DBKey) != 64 || len(c.ReleaseKey) != 32 ||
+		!strings.HasPrefix(c.DB, "/") || len(c.DB) > MaxField || len(c.DBKey.Bytes()) != 64 || len(c.ReleaseKey) != 32 ||
 		len(c.Roles) == 0 || len(c.Roles) > maxRoles || !strings.HasPrefix(c.Podman, "/") || len(c.Podman) > MaxField ||
 		len(c.WebConfig) > MaxField {
 		return ErrConfig
@@ -398,14 +526,6 @@ func (c *Controller) Validate() error {
 	return nil
 }
 
-// secret shows whether a secret is set, never the secret itself.
-func secret(set bool) slog.Value {
-	if set {
-		return slog.StringValue("[secret]")
-	}
-	return slog.StringValue("")
-}
-
 // LogValue shows d for log/slog, without its password and key.
 func (d DB) LogValue() slog.Value {
 	return slog.GroupValue(
@@ -413,9 +533,9 @@ func (d DB) LogValue() slog.Value {
 		slog.Any("nodes", d.Nodes),
 		slog.String("name", d.Name),
 		slog.String("user", d.User),
-		slog.Attr{Key: "password", Value: secret(d.Password != "")},
+		slog.Attr{Key: "password", Value: d.Password.LogValue()},
 		slog.String("path", d.Path),
-		slog.Attr{Key: "key", Value: secret(len(d.Key) != 0)},
+		slog.Attr{Key: "key", Value: d.Key.LogValue()},
 	)
 }
 
@@ -431,9 +551,9 @@ func (a API) LogValue() slog.Value {
 		slog.String("cert", a.Cert),
 		slog.String("certKey", a.CertKey),
 		slog.Attr{Key: "db", Value: a.DB.LogValue()},
-		slog.Attr{Key: "noiseKey", Value: secret(len(a.NoiseKey) != 0)},
-		slog.Attr{Key: "signKey", Value: secret(len(a.SignKey) != 0)},
-		slog.Attr{Key: "secretKey", Value: secret(len(a.SecretKey) != 0)},
+		slog.Attr{Key: "noiseKey", Value: a.NoiseKey.LogValue()},
+		slog.Attr{Key: "signKey", Value: a.SignKey.LogValue()},
+		slog.Attr{Key: "secretKey", Value: a.SecretKey.LogValue()},
 		slog.String("releaseKey", enc.B64.EncodeToString(a.ReleaseKey)),
 		slog.String("storeKey", enc.B64.EncodeToString(a.StoreKey)),
 		slog.String("storeUrl", a.StoreURL),
@@ -455,11 +575,11 @@ func (c Controller) LogValue() slog.Value {
 	attrs := []slog.Attr{
 		slog.String("node", c.Node),
 		slog.String("name", c.Name),
-		{Key: "noiseKey", Value: secret(len(c.NoiseKey) != 0)},
+		{Key: "noiseKey", Value: c.NoiseKey.LogValue()},
 		slog.Any("apis", apis),
 		slog.Group("anchor", slog.Uint64("seq", c.Anchor.Seq), slog.String("hash", enc.B64.EncodeToString(c.Anchor.Hash))),
 		slog.String("db", c.DB),
-		{Key: "dbKey", Value: secret(len(c.DBKey) != 0)},
+		{Key: "dbKey", Value: c.DBKey.LogValue()},
 		slog.String("releaseKey", enc.B64.EncodeToString(c.ReleaseKey)),
 		slog.Any("roles", c.Roles),
 		slog.String("podman", c.Podman),
