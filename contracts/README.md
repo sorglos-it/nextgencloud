@@ -30,7 +30,10 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
   (`Max…`, `Min…`, die Budgets und die Regeln in `Validate`) setzt das JavaScript des Webinterface
   genauso durch, auch die, für die es keine eigenen Testdaten gibt (etwa `trust.MaxAuto`,
   `trust.MaxOrigins`, `trust.MaxRoot`, die Grenzen für Passkey-Beweise `proof.MaxPublic`,
-  `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`).
+  `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`). Dazu gehören
+  die Regeln der Vertrauensliste (`trust.List.Validate`): Keine Rolle ist zugleich `passkeyOnly` und
+  `passwordToo`; wer in einer Rolle mit `passkeyOnly` ist, hat keinen Passwortschlüssel, und wer in
+  einer Rolle mit `passwordToo` ist, hat einen Passkey und einen Passwortschlüssel.
 - **Geheimnisse** in Konfigurationen sind `config.Secret` (Schlüssel) und `config.SecretText`
   (Passwörter). Den Wert geben nur `Bytes()` bzw. `Text()`; fmt, `log/slog` und `json.Marshal`
   zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController` bzw.
