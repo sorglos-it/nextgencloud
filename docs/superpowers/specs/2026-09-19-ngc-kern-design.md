@@ -232,8 +232,10 @@ const t = await ngc.open("terminal", "shell")   // Datenstrom, der offen bleibt
 4. Der Controller prüft selbst, dass am anderen Ende wirklich die Sitzung dieses Benutzers
    sitzt (4.5, Ende-zu-Ende-Verschlüsselung), und startet den Dienst.
 
-Kanalnummern gelten immer nur für eine Verbindung. Der Browser erfährt nie, auf welchem Server
-ein Dienst läuft, und der Dienst bekommt die Sitzung des Browsers nie zu sehen.
+Kanalnummern gelten immer nur für eine Verbindung. Der Browser kennt den Controller, auf dem die
+Dienste einer App laufen, weil die Ende-zu-Ende-Verschlüsselung dessen Schlüssel braucht; die
+Oberfläche zeigt ihn normalen Benutzern nicht an. Der Dienst bekommt die Sitzung des Browsers nie
+zu sehen.
 
 **Schnittstelle zum Dienst.** Für jeden Kanal startet der Controller das Programm des Dienstes
 im Container der App.
@@ -244,7 +246,8 @@ im Container der App.
 - Das beherrscht jede Programmiersprache, auch ein Bash-Skript.
 - Jeder Container läuft unter dem eigenen Systembenutzer seiner App. Root-Rechte, das Netz des
   Servers oder andere Sonderrechte bekommt ein Dienst nur, wenn die App das im Manifest angibt
-  und der Admin es beim Aktivieren erlaubt.
+  und der Admin es beim Aktivieren erlaubt. Er erlaubt immer alles, was das Manifest verlangt,
+  oder aktiviert die App nicht.
 - Was in den Daten steht, regeln App und Dienst unter sich, beim Terminal zum Beispiel
   Tastendrücke und Fenstergröße.
 
@@ -647,8 +650,9 @@ in der App Benutzer & Rechte.
 - Die Verbindungen laufen über TLS, die Daten liegen mit der eingebauten Verschlüsselung von
   MariaDB verschlüsselt (AES-256), Geheimnisse verschlüsselt die API zusätzlich selbst.
 - Die API arbeitet mit einem Datenbankkonto, das nur Daten lesen und schreiben darf. Tabellen
-  anlegen oder ändern darf nur ein eigenes Konto für Migrationen, und das benutzt nur die
-  Installation über ulh.
+  anlegen oder ändern darf nur ein eigenes Konto für Migrationen. Das benutzen nur die
+  Installation über ulh und beim Update genau ein Controller mit der Rolle `db` (4.8); nur dort
+  steht der Zugang in `controller.json`.
 - **SQLite** gibt es an drei Stellen, jeweils mit AES-256 verschlüsselt:
   1. **Alles auf einem Pi:** Wer bei der Installation keinen Datenbankserver will, bekommt
      SQLite statt MariaDB und spart damit Ressourcen.
@@ -938,6 +942,30 @@ Sperre in der Datenbank.
 | 20.09.2026 | Beim Ausführen von Plan 0 geklärt: Bei der Anmeldung unterschreibt der Benutzer mit Passkey oder Passwortschlüssel das Client-Zertifikat, das der Browser gebaut hat (`sign.PurposeClientCert`); einen eigenen Zweck nur für die Anmeldung gibt es nicht. |
 | 20.09.2026 | Beim Ausführen von Plan 0 geklärt: `session.VerifyClient` liefert eine geprüfte Sitzung (`session.Verified`), die nur durch diese Prüfung entsteht. Aufgaben (`task.Input`) nehmen nur eine solche Sitzung an, damit keine ungeprüfte bis zum Controller kommt. |
 | 21.09.2026 | Vorgabe Thomas: Die ulh-Skripte für NGC kommen direkt ins öffentliche ulh (`scripts/ngc-*.sh`, Einträge in dessen `config.yaml`), auch solange NGC privat ist. Kein Unterordner in NGC, kein zweites Repo, ulh bleibt unverändert. Ersetzt die Regel „Skripte im NGC-Repo unter `ulh/`" aus Abschnitt 5. |
+| 21.09.2026 | Nach der Abschlussprüfung von Plan 0: Ende zu Ende bindet der Prolog zusätzlich SHA-256 der Parameter und SHA-256 der Aufgabe, jeweils genau so, wie sie im OPEN stehen; so kann die API weder Parameter ändern noch eine andere gültige Aufgabe unterschieben. Noise-Nachricht 1 und 2 tragen in allen drei Verwendungen keine Nutzlast (je 48 Byte). |
+| 21.09.2026 | Der Controller startet einen Dienst erst, wenn die erste Ende-zu-Ende-Nachricht der Shell entschlüsselt ist; die Shell schickt sie immer, notfalls leer. Ein wieder eingespieltes OPEN bewirkt so nichts. |
+| 21.09.2026 | Ende-zu-Ende-Daten laufen in inneren Rahmen (Daten oder Ende); das Ende des Controllers trägt das Ergebnis. Fehlt das Ende, ist der Datenstrom abgeschnitten und das ist ein Fehler; EOF und CLOSE auf der Leitung sind nur Transport. |
+| 21.09.2026 | Die API gibt das OPEN des Browsers Byte für Byte an den Controller weiter (`tunnel.Open`, Feld `open`). Ein eigenes Feld für den Benutzer gibt es nicht mehr; der Benutzer eines Kanals kommt nur aus dem geprüften Client-Zertifikat. |
+| 21.09.2026 | Die Shell zeigt einen Kopplungscode (und einen Beitrittscode für weitere API-Server) erst, wenn er zu ihrer geprüften Vertrauensliste passt: Anker = ihre neueste Fassung, Schlüssel und Adresse = ein API-Server der Liste. ulh zeigt den Fingerabdruck des Ankers zum Vergleich. |
+| 21.09.2026 | Ob eine Aufgabe root braucht oder kritisch ist, entscheidet der Prüfende nur aus geprüften Daten: Kernliste, Manifest und die Parameter der unterschriebenen Aufgabe, nie aus dem OPEN. Ein OPEN mit Aufgabe hat keine eigenen Parameter. |
+| 21.09.2026 | Kanäle zu einer App sind Root-Aufgaben, wenn ihr Manifest `root` verlangt. Aktivieren gewährt immer alle `needs` des Manifests oder wird abgelehnt. |
+| 21.09.2026 | Die API prüft eine Aufgabe, die sie an einen Controller weiterleitet, vorher selbst, mit dem Ziel-Controller als Node. |
+| 21.09.2026 | Neue Fassungen der Vertrauensliste bekommt ein Controller über den Kanal `ngc.users/controller/trust` (ohne Benutzer), der Browser per HTTP und seitenweise; die Steuernachricht `trust` ist nur noch ein Hinweis. |
+| 21.09.2026 | Der Browser kennt den Controller, auf dem die Dienste einer App laufen (`DesktopApp.node`), weil Ende zu Ende ihn braucht; die Oberfläche zeigt ihn normalen Benutzern nicht. Ersetzt in 4.3 „Der Browser erfährt nie, auf welchem Server ein Dienst läuft“. |
+| 21.09.2026 | Freigabe je Strecke und Richtung, gezählt in Bytes der DATA-Nutzlast, additiv, höchstens 1 MiB offen. Höchstens 64 Kanalnummern je Sitzung und 1024 je Tunnel; eine Nummer zählt, bis sie wieder frei ist, auch beim Schließen. Wer darüber hinausgeht, beendet die Verbindung; ist nur der Tunnel hinter der API voll, antwortet sie dem Browser mit CLOSE E_LIMIT. |
+| 21.09.2026 | Das Ergebnis eines Aufrufs sind alle Daten bis zum Ende, höchstens 8 MiB; was der Öffner schicken darf, steht je Kern-Aktion fest. |
+| 21.09.2026 | Ohne Benutzer öffnet die API nur drei Kern-Aktionen: `ngc.users/controller/trust`, `ngc.store/controller/stage` und `install`. `install` führt der Controller nur mit Dauerfreigabe und nur für eine neuere Version aus. |
+| 21.09.2026 | Der globale Store hat die ID `global`, `local` steht für hochgeladene Apps. Die API gibt den globalen Store bei der Ersteinrichtung mit, damit er in Fassung 1 der Vertrauensliste steht. |
+| 21.09.2026 | Migrationen spielt beim Update genau ein Controller mit der Rolle `db` ein; nur dort steht der Zugang des Kontos `ngc_migrate` in `controller.json`. Ändert 4.6 („das benutzt nur die Installation über ulh“). |
+| 21.09.2026 | Begriffe: Rollen eines Servers (`web`, `api`, `db`, `services`) und Softwareteile (`ngc-web`, `ngc-api`, `ngc-controller`). Release-Dateien und Update-Ziele benennen Softwareteile. |
+| 21.09.2026 | JSON von außen ist strikt: keine doppelten oder anders geschriebenen Feldnamen (Go: `encoding/json/v2`, im Browser genauso). Jede Grenze aus den Go-Verträgen gilt auch im JavaScript. |
+| 21.09.2026 | Verlangt eine Rolle zusätzlich das Passwort, unterschreibt ein Passwortschlüssel desselben Benutzers dieselben Zertifikat-Bytes (Zweck `clientcert/v1`). „Nur Passkey“ und „Passwort zusätzlich“ zusammen sind unzulässig. |
+| 21.09.2026 | Weitere API-Server treten mit einem Beitrittscode `ngc-join:…` bei. Die gemeinsamen Schlüssel übergibt die API erst nach der Unterschrift eines Admins; wie, regelt die API selbst. |
+| 21.09.2026 | ulh prüft Programmdateien mit `openssl` (Ed25519 über `ngc/release/v1`, Null-Byte, Nutzlast) und `sha256sum`; dafür installiert es `openssl` und `jq` aus den Paketquellen. |
+| 21.09.2026 | Das Protokoll blättert mit Zeit und ID (Hex aus Kleinbuchstaben), damit bei gleicher Zeit kein Eintrag verloren geht. |
+| 21.09.2026 | Aus der Prüfung von Plan 0, noch nicht im Protokoll: Der Passwortschlüssel entsteht nur mit Argon2id (kein PBKDF2-Ausweg). Die Grenzen für Passkey-Beweise (`MaxPublic`, `MaxSig`, `MaxRSABits`, `MaxAuthData`, `MaxClientData`) gelten auch im Browser. |
+| 21.09.2026 | Kanalnummern: Ein CLOSE wird immer mit CLOSE beantwortet; eine Nummer ist erst wieder frei, wenn CLOSE gesendet und empfangen wurde. Was nach dem eigenen CLOSE für den Kanal noch ankommt, wird verworfen. |
+| 21.09.2026 | „Passwort zusätzlich“ prüft die API bei der Anmeldung. Controller verlassen sich auf den Passkey-Beweis im Client-Zertifikat; ein Passwortbeweis geht nicht an die Controller. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -950,7 +978,7 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
 | WebSocket | `github.com/coder/websocket` | zu prüfen |
 | Argon2id | `golang.org/x/crypto/argon2` | Übernommen in Plan 0: v0.57.0, BSD-3-Clause, in `contracts/proof` |
-| Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`), sonst PBKDF2 aus der Web Crypto API mit hoher Rundenzahl | zu prüfen |
+| Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`); kein PBKDF2-Ausweg (21.09.2026) | zu prüfen |
 | TOTP | `github.com/pquerna/otp` oder eigene Umsetzung nach RFC 6238 mit dessen Testvektoren; HMAC kommt aus der Standardbibliothek von Go | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
 | Noise-Tunnel | `github.com/flynn/noise` | Übernommen in Plan 0: v1.1.0, BSD-3-Clause, in `contracts/noisep` |
