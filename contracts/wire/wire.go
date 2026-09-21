@@ -15,27 +15,36 @@
 // who may send which. On a tunnel both sides send hello first.
 //
 // Channels. Only one side opens channels: the browser on a session link, the
-// API on a tunnel. The opener picks a free number >= 1. At most
-// MaxSessionChannels are open on a session link and MaxTunnelChannels on a
-// tunnel; beyond that the other side answers the OPEN with CLOSE E_LIMIT. A
-// channel runs: OPEN (its Window is the credit the opener grants) -> the other
-// side's first GRANT (credit at least MinWindow; on an end-to-end channel also
-// Noise message 2) or a CLOSE with an error -> DATA both ways -> EOF from each
-// side that has nothing more to send -> CLOSE from the side that accepted the
-// channel. Either side may send CLOSE with an error at any time; after its
-// CLOSE a side sends nothing more on the channel.
+// API on a tunnel. The opener picks a free number >= 1. A channel runs: OPEN
+// (its Window is the credit the opener grants) -> the other side's first GRANT
+// (credit at least MinWindow; on an end-to-end channel also Noise message 2)
+// or a CLOSE with an error -> DATA both ways -> EOF from each side that has
+// nothing more to send -> CLOSE from the side that accepted the channel.
+// Either side may send CLOSE with an error at any time; after its CLOSE a side
+// sends nothing more on the channel.
 //
 // Closing. A side answers every CLOSE with a CLOSE, unless it has sent one for
 // that channel already. A number is free again only once a CLOSE for it was
 // both sent and received, so that frames still under way can never reach a
 // new channel with the same number (on a tunnel perhaps another user's).
 // Frames for a channel that arrive after one's own CLOSE are dropped without
-// an answer. A protocol error on a number is a frame for a number that is
-// neither open nor closing (never opened, or free again), an OPEN for a number
-// that is still open, or an OPEN from the side that does not open channels.
-// The receiver answers it with CLOSE E_PROTOCOL for that number, which ends
-// the channel if there is one, and frees the number once the other side's
-// CLOSE for it has arrived.
+// an answer, but the other side's CLOSE among them still counts as received
+// and frees the number. A protocol error on a number is a frame for a number
+// that is neither open nor closing (never opened, or free again), an OPEN for
+// a number that is still open, or an OPEN from the side that does not open
+// channels. The receiver answers it with CLOSE E_PROTOCOL for that number,
+// which ends the channel if there is one, and frees the number once the other
+// side's CLOSE for it has arrived.
+//
+// Limits. A number counts toward the channel limit (MaxSessionChannels on a
+// session link, MaxTunnelChannels on a tunnel) until it is free again, while
+// it is closing too. A frame that would exceed the limit ends the link with a
+// protocol error: an OPEN beyond it, or a stray frame whose CLOSE E_PROTOCOL
+// would make one number too many. Correct peers are unaffected, because an
+// ordered link frees a number at the other side before the opener's next OPEN
+// arrives, so an opener that keeps the same count never exceeds it. An API
+// whose tunnel to a controller is at the limit answers a browser's OPEN for
+// that controller with CLOSE E_LIMIT instead of relaying it.
 //
 // Credit is kept per hop and direction and counted in bytes of DATA payload as
 // framed (on end-to-end channels including the 16-byte Noise tag). OPEN.Window
@@ -64,11 +73,12 @@
 // E2EData, empty if it has no input yet, or its input and E2EEnd — and the
 // controller starts the service only once that message has decrypted (waiting
 // at most E2EFirstTimeout seconds). E2EEnd from the shell ends the input;
-// E2EEnd from the controller carries the outcome. Nothing may follow a side's
-// E2EEnd: an inner message after it is a protocol error (CLOSE E_PROTOCOL). A
-// side that sees EOF or CLOSE of the channel before the other side's E2EEnd
-// treats the data as cut off and reports an error: EOF and CLOSE only end the
-// transport.
+// E2EEnd from the controller carries the outcome. Nothing may follow E2EEnd
+// from that side: an inner message a side sends after its own E2EEnd is a
+// protocol error (CLOSE E_PROTOCOL), while the controller's output still
+// follows the shell's E2EEnd. A side that sees EOF or CLOSE of the channel
+// before the other side's E2EEnd treats the data as cut off and reports an
+// error: EOF and CLOSE only end the transport.
 //
 // Core apps (CoreApp) have no end-to-end handshake; their DATA is plain inside
 // the link's Noise session and a result is all DATA up to the other side's EOF
@@ -111,8 +121,8 @@ const (
 	DefaultWindow      = 256 << 10
 	MinWindow          = 4 << 10
 	MaxWindow          = 1 << 20  // most credit a side may have outstanding per channel and direction
-	MaxSessionChannels = 64       // open channels on one browser session link
-	MaxTunnelChannels  = 1024     // open channels on one API–controller tunnel
+	MaxSessionChannels = 64       // channel numbers not free (open or closing) on one browser session link
+	MaxTunnelChannels  = 1024     // channel numbers not free (open or closing) on one API–controller tunnel
 	MaxOpenPayload     = 40 << 10 // tunnel.Open: the largest browser OPEN in base64 plus certificate and proof
 	MaxBrowserOpen     = 16 << 10
 	MaxClosePayload    = 4 << 10
