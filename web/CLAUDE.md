@@ -46,8 +46,15 @@ dunkel. Dazu:
   des Ankers (`tunnel.Fingerprint` des Hashes).
 - Apps: abgeschottete iframes, `web/sdk/ngc.js` (MIT) mit `ngc.call` und `ngc.open`, strenge CSP,
   Oberflächen für App-Store (Kataloge mit `store.VerifyCatalog` prüfen), Benutzer & Rechte, Rechner
-  und Terminal, Anzeige und Einstellung der Updates. Das ui-tar prüfst du nach den Regeln von
-  `store.WalkUI`.
+  und Terminal, Anzeige und Einstellung der Updates.
+- Oberflächen der Apps (`ngc.desktop/ui`) kommen als ui-tar in genau einer Form, die der Kommentar
+  in `store/ui.go` Feld für Feld festlegt (`store.UIWriter` schreibt sie, `store.WalkUI` liest
+  sie). Dein Leser folgt diesen Regeln Zeile für Zeile und lehnt alles andere ab; die Testdaten
+  sind `ui.json`. Die Fälle „… header only“ darin lehnst du schon nach dem Kopf ab, ohne Daten zu
+  lesen: Grenzen prüfst du am Kopf, bevor du weiterliest. Fälle mit echten Daten bis
+  `store.MaxUIFile` je Datei, `store.MaxUITotal` insgesamt und `store.MaxEntries` Einträgen stehen
+  nicht in `ui.json`; die erzeugst du in deinen Tests selbst. Für die Grenze der Verzeichnisse
+  (`store.MaxDirs`) gibt es dagegen Fälle in `ui.json`.
 - JSON von außen strikt wie in Go (`contracts/README.md`, Abschnitt „Striktes JSON“: Regeln und
   Budgets). Jede Grenze aus den Go-Paketen gilt auch hier.
 - PHP: liefert die Seite aus, liest `/etc/ngc/web.json` und `/etc/ngc/trust-anchor.json`
