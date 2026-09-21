@@ -192,11 +192,16 @@ type transportVector struct {
 
 // prologueVector is one OPEN as the shell wrote it, with the prologue its
 // params and task members give and message 1 over that prologue (the keys of
-// the main vector). The OPEN's e2e member is that message 1.
+// the main vector). The OPEN's e2e member is that message 1. Params and Task
+// are the values of those members exactly as they stand in Open, empty for a
+// member Open lacks, so an implementation can check its own extraction
+// against them or hash them without one.
 type prologueVector struct {
 	Name         string    `json:"name"`
 	ControllerID string    `json:"controllerId"`
 	Open         enc.Bytes `json:"open"`
+	Params       enc.Bytes `json:"params"`
+	Task         enc.Bytes `json:"task"`
 	Prologue     enc.Bytes `json:"prologue"`
 	Msg1         enc.Bytes `json:"msg1"`
 }
@@ -267,17 +272,37 @@ func prologueVectors(t *testing.T, is, ie, rs noise.DHKey) []prologueVector {
 			open += `,"task":` + string(c.task)
 		}
 		open += `}`
-		// The controller's side: the members as wire.ParseOpen keeps them.
-		o, err := wire.ParseOpen([]byte(open))
-		if err != nil {
-			t.Fatalf("%s: %v", c.name, err)
-		}
-		if !bytes.Equal(E2EPrologue(ctl, o.App, o.Service, o.Action, o.Params, o.TaskBytes()), prologue) {
-			t.Fatalf("%s: the controller's prologue differs", c.name)
-		}
-		vs = append(vs, prologueVector{Name: c.name, ControllerID: ctl, Open: []byte(open), Prologue: prologue, Msg1: msg1})
+		vs = append(vs, prologueVector{Name: c.name, ControllerID: ctl, Open: []byte(open), Params: c.params, Task: c.task,
+			Prologue: prologue, Msg1: msg1})
 	}
+	checkPrologueVectors(t, vs)
 	return vs
+}
+
+// checkPrologueVectors holds each case against the Go functions: its params
+// and task members are the bytes wire.ParseOpen keeps and stand in the OPEN
+// as they are, and they give its prologue, whose message 1 is the OPEN's e2e.
+func checkPrologueVectors(t *testing.T, vs []prologueVector) {
+	for _, v := range vs {
+		o, err := wire.ParseOpen(v.Open)
+		if err != nil {
+			t.Fatalf("%s: %v", v.Name, err)
+		}
+		if !bytes.Equal(o.Params, v.Params) || !bytes.Equal(o.TaskBytes(), v.Task) {
+			t.Errorf("%s: members %q and %q, the OPEN has %q and %q", v.Name, v.Params, v.Task, o.Params, o.TaskBytes())
+		}
+		for _, member := range [][]byte{v.Params, v.Task} {
+			if !bytes.Contains(v.Open, member) {
+				t.Errorf("%s: %q not in the OPEN as it is", v.Name, member)
+			}
+		}
+		if !bytes.Equal(E2EPrologue(v.ControllerID, o.App, o.Service, o.Action, v.Params, v.Task), v.Prologue) {
+			t.Errorf("%s: the members give another prologue", v.Name)
+		}
+		if !bytes.Equal(o.E2E, v.Msg1) {
+			t.Errorf("%s: e2e is not message 1", v.Name)
+		}
+	}
 }
 
 // TestVectors writes noise.json: an end-to-end handshake for the terminal
