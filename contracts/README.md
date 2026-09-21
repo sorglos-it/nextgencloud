@@ -7,31 +7,277 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 | Vertrag | Inhalt | Pakete | Testdaten |
 |---|---|---|---|
 | Grundlagen | Kodierung und signierte Umschläge, für alle Verträge | `enc`, `sign` | `sign.json` |
-| V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `core.json` |
-| V2 | API ↔ Controller | `tunnel`, `wire`, `noisep`, `task`, `core` | `tunnel.json`, `task.json` |
+| V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `task`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `task.json`, `core.json` |
+| V2 | API ↔ Controller | `tunnel`, `wire`, `noisep`, `task`, `core` | `tunnel.json`, `wire.json`, `noise.json`, `task.json`, `core.json` |
 | V3 | Controller ↔ Dienst im Container | `service` | `service/echo.sh` |
 | V4 | API und Controller ↔ Datenbank | `dbapi`, `dbapi/memstore`, `dbapi/dbtest` | – (Konformitätstests) |
-| V5 | App-Paket, Katalog, Lizenz, Updates | `store` | `store.json`, `pack.json` |
-| V6 | Konfiguration, Pfade, ulh | `config`, `ulh.md` | `config/*.json` |
-| V7 | Vertrauensliste, Ende zu Ende | `trust`, `trust/trusttest`, `noisep`, `proof` | `trust.json` |
+| V5 | App-Paket, Katalog, Lizenz, Updates | `store` | `store.json`, `pack.json`, `ui.json`, `release/` |
+| V6 | Konfiguration, Pfade, ulh | `config`, `ulh.md` | `config/*.json`, `release/` |
+| V7 | Vertrauensliste, Ende zu Ende | `trust`, `trust/trusttest`, `noisep`, `proof` | `trust.json`, `noise.json` |
 
 ## Regeln
 
 - **Signaturen decken immer die genauen Bytes** eines Dokuments ab (`sign.Envelope`, `trust.Signed`).
-  Nie neu erzeugtes JSON prüfen, sondern die empfangene Nutzlast.
+  Nie neu erzeugtes JSON prüfen, sondern die empfangene Nutzlast. Erst die Unterschrift prüfen,
+  dann die Nutzlast lesen; bei der Vertrauensliste erst den Hash des Ankers bzw. den Beweis der
+  neuen Fassung (`trust.Open`, `trust.Advance`).
 - **Jede Signatur hat einen Zweck** (`sign.Purpose…`). Eine Unterschrift für eine Sache gilt nie für
   eine andere.
 - **Jede Eingabe von außen** läuft durch die `Parse…`- oder `Verify…`-Funktion des Vertrags, nie
-  direkt durch `json.Unmarshal`.
-- **Grenzen gelten immer**, auch wenn die Gegenstelle zu NGC gehört.
-- **Testdaten**: `contracts/testdata/` ist die gemeinsame Wahrheit. Go-Tests schreiben sie mit dem
-  Schalter `-update`, und zwar gezielt mit `-run` auf den Test, der die Datei erzeugt (etwa
-  `TestVectors`, `TestExamples`, `TestPackVectors`). `proof.json` wird nur einmal erzeugt und danach
-  nur geprüft, weil die Passkey-Signaturen zufällig sind. Das Webinterface prüft sich in
-  `tests/browser/` dagegen. Eine geänderte Datei ist eine Vertragsänderung.
+  direkt durch `json.Unmarshal` (im Browser nie direkt durch `JSON.parse`). JSON ist dabei immer
+  strikt, siehe „Striktes JSON“.
+- **Grenzen gelten immer**, auch wenn die Gegenstelle zu NGC gehört. Jede Grenze aus den Go-Paketen
+  (`Max…`, `Min…`, die Budgets und die Regeln in `Validate`) setzt das JavaScript des Webinterface
+  genauso durch, auch die, für die es keine eigenen Testdaten gibt (etwa `trust.MaxAuto`,
+  `trust.MaxOrigins`, `trust.MaxRoot`, die Grenzen für Passkey-Beweise `proof.MaxPublic`,
+  `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`).
+- **Geheimnisse** in Konfigurationen sind `config.Secret` (Schlüssel) und `config.SecretText`
+  (Passwörter). Den Wert geben nur `Bytes()` bzw. `Text()`; fmt, `log/slog` und `json.Marshal`
+  zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController` bzw.
+  `config.SaveAnchor`, nie mit `json.Marshal`. Ein Passwort, das wörtlich `[secret]` lautet, lehnt
+  `config` ab.
+- **Rollen und Softwareteile:** Ein Server hat Rollen (`tunnel.RoleWeb`, `tunnel.RoleAPI`,
+  `tunnel.RoleDB`, `tunnel.RoleServices`: `web`, `api`, `db`, `services`). Softwareteile sind
+  `ngc-web`, `ngc-api` und `ngc-controller` (`trust.AutoWeb`, `trust.AutoAPI`,
+  `trust.AutoController`). Release-Dateien, Update-Ziele und `tunnel.Status.Components` nennen
+  Softwareteile; welche ein Server mit seinen Rollen braucht, sagt `tunnel.Components`.
+- **Testdaten**: `contracts/testdata/` ist die gemeinsame Wahrheit (Tabelle unten). Go-Tests
+  schreiben sie mit dem Schalter `-update`, gezielt mit `-run` auf den Test, der die Datei erzeugt.
+  `proof.json` enthält zufällige Schlüssel und entsteht nur bei einer Vertragsänderung neu. Das
+  Webinterface prüft sich in `tests/browser/` dagegen. Eine geänderte Datei ist eine
+  Vertragsänderung.
 - **Vorige Fassung verstehen**: Beim Update läuft kurz die vorige Version mit (`tunnel.Contract`).
   Felder kommen dazu, alte verschwinden erst eine Version später.
 - **Sprache**: Code und Kommentare Englisch, Meldungen für Benutzer Deutsch (`wire.Code.Message`).
+
+## Testdaten
+
+| Datei | Inhalt | Erzeugt von |
+|---|---|---|
+| `sign.json` | ein signierter Umschlag | `sign`: `TestVectors` |
+| `proof.json`, `proof_kdf.json` | Beweise mit Passkey und Passwortschlüssel, gültige und ungültige; Argon2id | `proof`: `TestProofVectors`, `TestKDFVectors` |
+| `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige | `trust`: `TestVectors` |
+| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`) | `session`: `TestVectors` |
+| `task.json` | Aufgabe und erneute Bestätigung | `task`: `TestVectors` |
+| `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
+| `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
+| `tunnel.json` | Kopplungscode mit MAC und Fingerabdruck, `pairCheck` (`tunnel.PairCode.Check`), `join` (Beitrittscode, `tunnel.JoinMAC`) | `tunnel`: `TestVectors` |
+| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion, dazu `notice` | `core`: `TestExamples` |
+| `store.json`, `pack.json` | Katalog, Lizenz und Release; Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
+| `ui.json` | ui-tars, gültige und ungültige (`store.WalkUI`) | `store`: `TestUIVectors` |
+| `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft es wie die ulh-Skripte | `store`: `TestReleaseScriptVector` |
+| `config/*.json` | Beispiel-Konfigurationen | von Hand |
+| `service/echo.sh` | Beispiel-Dienst | von Hand |
+
+## Striktes JSON
+
+Go liest JSON von außen mit `enc.DecodeStrict`, immer über ein `enc.Budget`. Das Webinterface lehnt
+genau dieselben Dokumente ab; `JSON.parse` allein reicht dafür nicht. Einzige Ausnahme ist
+`clientData` eines Passkey-Beweises: Das schreibt der Browser, und WebAuthn erlaubt darin weitere
+Felder; `proof.Verify` liest davon nur `type`, `challenge`, `origin` und `crossOrigin`.
+
+1. Genau ein JSON-Wert. Leerraum davor und danach ist erlaubt (Leerzeichen, Tab, CR, LF), sonst
+   nichts, auch kein BOM.
+2. Höchstens die Bytegrenze des Dokuments (Tabelle unten).
+3. Feldnamen genau wie im Vertrag, auch in Groß- und Kleinschreibung; unbekannte Felder werden
+   abgelehnt.
+4. Kein Feldname doppelt, in keiner Tiefe, auch nicht in rohen Werten. Verglichen wird nach dem
+   Auflösen der Escapes: `"a"` und `"\u0061"` sind derselbe Name.
+5. Nur gültiges UTF-8, auch kein einzelnes Surrogat als Escape (`"\ud800"`).
+6. Rohe Werte (`json.RawMessage`, etwa `params`) bleiben Byte für Byte erhalten.
+7. Alle Zahlenfelder der Verträge sind ganze Zahlen und stehen nur als Ziffern da: `1.0`, `0.0`,
+   `1e2` und `10E0` werden abgelehnt. Vorzeichenlose Felder (`uint…`) lehnen jedes Minus ab, auch
+   `-0`. Es gilt der Wertebereich des Go-Typs. Nie eine Zahl, wo Text oder `true`/`false` steht,
+   und umgekehrt.
+8. Bytes (`enc.Bytes`, IDs, Schlüssel-IDs) sind base64url ohne `=`: nur `A-Z a-z 0-9 - _`, also
+   auch kein CR, LF, Leerzeichen oder Tab; die unbenutzten Bits am Ende sind 0.
+
+Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
+
+9. Listen nur an den Pfaden, die das Budget nennt, je mit höchstens so vielen Elementen; ebenso
+   Objekte, die Go als Map liest (Zahl der Einträge). Ein Pfad verbindet die Feldnamen von außen
+   nach innen mit `/`, `*` steht für jedes Element: `users/*/keys`. `0` erlaubt nur eine leere
+   Liste.
+10. Jedes andere Objekt ist eine Struktur: höchstens 64 Felder (`enc.MaxMembers`), jeder Name
+    höchstens 64 Byte nach dem Auflösen der Escapes (`enc.MaxName`), ohne `/` und nicht `*`.
+11. In rohen Werten zählt nichts, und die Namen sind frei; 12 bis 14 gelten auch dort. Ein roher
+    Wert hat immer eine eigene kleine Größengrenze.
+12. Höchstens 32 Ebenen (`enc.MaxDepth`); der äußerste Wert ist Ebene 1.
+13. Keine Zahl, deren genauer Wert dem Betrag nach größer ist als 2^53−1 (`enc.MaxSafeInteger`):
+    `9007199254740991` und `9007199254740991.0` gehen, `9007199254740992`, `9007199254740991.5`
+    und `1e16` nicht.
+14. Nirgends `null`. Wer JSON schreibt, lässt ein leeres Feld weg.
+
+| Dokument | Go | Bytes | Listen und Maps (Pfad: höchstens) |
+|---|---|---|---|
+| Fassung der Vertrauensliste | `trust.Parse` | `sign.MaxPayload` (4 MiB) | `users` 10000, `users/*/roles` 256, `users/*/keys` 16, `roles` 256, `roles/*/black` 256, `roles/*/white` 256, `nodes` 256, `nodes/*/rootUsers` 256, `nodes/*/rootRoles` 256, `stores` 64, `auto` 64, `rp/origins` 8 |
+| Anmeldung, Ersteinrichtung | `session.ParseLoginStart`, `session.ParseLoginFinish`, `session.ParseSetup` | `session.MaxRequest` (64 KiB) | keine |
+| Client- und API-Zertifikat | `session.VerifyClient`, `session.VerifyAPI` | `session.MaxCert` (4096) | keine |
+| Antwort von `GET /api/v1/trust` | `session.ParseTrustChain` | `session.MaxChain` (32 MiB) | `versions` 64 |
+| Steuernachricht `trust` | `session.ParseTrustHint` | 64 | keine |
+| Aufgabe | `task.Verify` | `task.MaxTask` (16 KiB) | `params` roh |
+| OPEN des Browsers | `wire.ParseOpen` | `wire.MaxBrowserOpen` (16 KiB) | `params` roh, höchstens `wire.MaxParams` (8 KiB) |
+| CLOSE, auch im Ende des Controllers | `wire.ParseClose`, `wire.ParseE2E` | `wire.MaxClosePayload` (4096) | keine |
+| Steuernachricht | `wire.ParseControl` | `wire.MaxPayload` (65514) | `b` roh |
+| Steuernachricht `hello` | `tunnel.ParseHello` | `tunnel.MaxHello` (4096) | `roles` 4 |
+| Steuernachricht `status` | `tunnel.ParseStatus` | `wire.MaxPayload` | `apps` 256 (`tunnel.MaxStatusApps`), `components` 3 (Map) |
+| Steuernachricht `notify` | `core.ParseNotice` | `core.MaxNotice` (1024) | keine |
+| Steuernachricht `update` | `store.ParseUpdateReport` | 4096 | keine |
+| OPEN im Tunnel | `tunnel.ParseOpen` | `wire.MaxOpenPayload` (40 KiB) | keine |
+| Kopplungs- und Beitrittscode | `tunnel.ParsePairCode`, `tunnel.ParseJoinCode` | `tunnel.MaxPairCode` (1024, der ganze Code) | keine |
+| Kopplungs- und Beitrittsanfrage | `tunnel.ParsePairRequest`, `tunnel.ParseJoinRequest` | `tunnel.MaxPairRequest` (4096) | keine |
+| Parameter einer Kern-Aktion | `core.ParseParams` | `wire.MaxParams` (8 KiB) | `rights` 1000, `grants` 2 |
+| Kopf einer Übertragung | `core.ReadTransfer` | `core.MaxTransferHeader` (8 MiB) | keine |
+| Katalog | `store.VerifyCatalog` | `sign.MaxPayload` | `apps` 10000, `apps/*/versions` 100, `apps/*/versions/*/needs` 2 |
+| Lizenz | `store.VerifyLicense` | `store.MaxLicense` (8 KiB) | keine |
+| Release | `store.VerifyRelease` | `sign.MaxPayload` | `files` 16 |
+| Manifest | `store.ParseManifest` | `store.MaxManifest` (64 KiB) | `actions` 64, `services` 16, `services/*/command` 32, `needs` 2 |
+| `web.json` | `config.LoadWeb` | `config.MaxConfig` (1 MiB) | `apis` 16, `rp/origins` 8 |
+| `api.json` | `config.LoadAPI` | `config.MaxConfig` | `db/nodes` 16 |
+| `controller.json` | `config.LoadController` | `config.MaxConfig` | `apis` 16, `roles` 4, `migrate/nodes` 16 |
+| `trust-anchor.json` | `config.LoadAnchor` | `config.MaxConfig` | keine |
+
+Antworten der API, für die Go keinen Parser hat (etwa `session.LoginChallenge` und die Ergebnisse
+in `core.json`), liest das Webinterface nach den Regeln 1 bis 8 und 12 bis 14.
+
+## Kanäle
+
+Die genauen Regeln stehen in den Paketbeschreibungen von `wire`, `noisep` und `tunnel`; hier die
+Kurzfassung.
+
+### Leitungen und Frames
+
+- **Leitungen:** Sitzung (Browser ↔ API: `/api/v1/ws`, Unterprotokoll `ngc.v1`, Prolog
+  `ngc/session/v1`) und Tunnel (Controller ↔ API: `/tunnel?key=` mit dem Fingerabdruck des
+  Controller-Schlüssels, `ngc.tunnel.v1`, Prolog `ngc/tunnel/v1`), beide mit
+  Noise_KK_25519_AESGCM_SHA256 (`noisep`). Die erste binäre WebSocket-Nachricht ist
+  Noise-Nachricht 1 von Browser bzw. Controller, die zweite Nachricht 2 der API; beide ohne
+  Nutzlast, genau 48 Byte (`wire.HandshakeSize`). Danach ist jede binäre Nachricht genau eine
+  Noise-Transportnachricht mit genau einem Frame. Eine Textnachricht, ein kaputter Frame oder ein
+  Entschlüsselungsfehler beenden die Leitung. Ausgeführt wird erst etwas, wenn die erste
+  Transportnachricht des Initiators entschlüsselt ist.
+- **Frames:** 1 Byte Typ, 4 Byte Kanal (Big Endian), dann die Nutzlast; zusammen höchstens
+  `wire.MaxFrame` (65519) Byte. OPEN (1): JSON, 1 Byte bis `wire.MaxOpenPayload`. DATA (2): Daten.
+  EOF (3): leer. CLOSE (4): `wire.Close` als JSON, 1 Byte bis `wire.MaxClosePayload`. GRANT (5):
+  genau 4 oder 52 Byte, erst die Freigabe (uint32, Big Endian, 1 bis `wire.MaxWindow`), dann
+  nichts oder Noise-Nachricht 2. Auf Kanal 0 gibt es nur DATA.
+
+### Steuerkanal 0
+
+Kanal 0 ist immer offen und trägt Steuernachrichten (`wire.Control`: Typ `t`, Inhalt `b`). Wer was
+schicken darf, sagt `wire.ControlAllowed`; alles andere beendet die Leitung.
+
+| Leitung | Absender | erlaubt |
+|---|---|---|
+| Sitzung | API | `trust` (`session.TrustHint`), `notify` (`core.Notice`), `bye` |
+| Sitzung | Browser | `bye` |
+| Tunnel | API | `hello` (`tunnel.Hello`), `bye` |
+| Tunnel | Controller | `hello`, `status` (`tunnel.Status`), `update` (`store.UpdateReport`), `notify`, `bye` |
+
+Im Tunnel schicken beide zuerst `hello`. Nach `bye` schließt der Absender die Leitung. `trust` ist
+nur ein Hinweis: Die Fassungen holt die Shell mit `GET /api/v1/trust?from=N`
+(`session.TrustChain`, seitenweise mit `more`); ein Controller bekommt sie über den Kanal
+`ngc.users/controller/trust`.
+
+### Kanäle
+
+- **Öffnen:** nur der Browser (Sitzung) bzw. die API (Tunnel), mit einer freien Nummer ab 1.
+  Ablauf: OPEN (sein `window` ist die erste Freigabe des Öffners) → erste GRANT der Gegenseite
+  (angenommen; Freigabe mindestens `wire.MinWindow`, 4 KiB) oder CLOSE mit Fehler → DATA in beide
+  Richtungen → EOF von jeder Seite, die nichts mehr schickt → CLOSE von der Seite, die den Kanal
+  angenommen hat. Jede Seite darf jederzeit mit einem Fehler schließen; nach ihrem CLOSE schickt sie
+  nichts mehr auf dem Kanal.
+- **Schließen:** Jedes CLOSE wird mit CLOSE beantwortet, außer man hat selbst schon eines geschickt.
+  Eine Nummer ist erst wieder frei, wenn ein CLOSE für sie gesendet und eines empfangen ist. Was
+  nach dem eigenen CLOSE noch für den Kanal ankommt, wird ohne Antwort verworfen; ein CLOSE der
+  Gegenseite darunter zählt trotzdem als empfangen. Protokollfehler sind: ein Frame für eine
+  Nummer, die weder offen ist noch schließt, ein OPEN für eine offene Nummer und ein OPEN von der
+  Seite, die keine Kanäle öffnet. Die Antwort ist CLOSE `E_PROTOCOL` für diese Nummer.
+- **Grenzen:** Eine Nummer zählt, bis sie wieder frei ist, auch beim Schließen: höchstens
+  `wire.MaxSessionChannels` (64) je Sitzung und `wire.MaxTunnelChannels` (1024) je Tunnel. Ein
+  Frame, der darüber führen würde (ein OPEN oder ein Frame, dessen CLOSE `E_PROTOCOL` eine Nummer zu
+  viel ergäbe), beendet die Leitung. Der Öffner zählt deshalb selbst mit und öffnet nie über die
+  Grenze. Ist der Tunnel zum Ziel-Controller voll, antwortet die API dem Browser mit CLOSE
+  `E_LIMIT`, statt weiterzuleiten.
+- **Freigabe:** je Strecke und Richtung, gezählt in Bytes der DATA-Nutzlast (auf
+  Ende-zu-Ende-Kanälen samt 16 Byte Noise-Prüfwert). `window` im OPEN (`wire.MinWindow` bis
+  `wire.MaxWindow`) und jede GRANT kommen hinzu; offen sein darf höchstens `wire.MaxWindow` (1 MiB).
+  Mehr DATA als freigegeben oder eine GRANT, die darüber führte, schließen den Kanal mit CLOSE
+  `E_PROTOCOL`. EOF, CLOSE, GRANT und Kanal 0 zählen nicht.
+- **API als Vermittler:** Sie legt das OPEN des Browsers unverändert in das Feld `open` von
+  `tunnel.Open`, dazu ihre eigene Freigabe (`window`) und das Client-Zertifikat mit dem Beweis des
+  Benutzers (`client`, `proof`). DATA und EOF gibt sie unverändert und eins zu eins weiter, CLOSE
+  mit demselben Code. Die Freigabe führt sie je Strecke selbst und gibt dem Controller nie mehr
+  frei, als sie halten kann, bis der Browser es abnimmt. Noise-Nachricht 2 kopiert sie aus der
+  ersten GRANT des Controllers in ihre erste GRANT an den Browser.
+- **Beim Controller:** `tunnel.VerifyOpen` prüft das OPEN samt Client-Zertifikat
+  (`session.VerifyClient`). Der Benutzer eines Kanals ist nur `Opened.Session.Cert().User`; das OPEN
+  selbst binden nur der Prolog (Ende zu Ende) und die Unterschrift der Aufgabe. Eine Rolle mit
+  `passwordToo` setzt die API bei der Anmeldung durch; an Controller geht kein Passwortbeweis, sie
+  verlassen sich auf den Passkey-Beweis, den `session.VerifyClient` für solche Benutzer verlangt.
+
+### Ende zu Ende
+
+Alle Apps außer den Kern-Apps (`wire.CoreApp`) sprechen Ende zu Ende: Noise_KK zwischen Shell und
+Controller, mit dem Schlüssel `dh` des Client-Zertifikats und dem Noise-Schlüssel des Controllers
+aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (Feld `node`).
+
+- **Prolog** (`noisep.E2EPrologue`):
+  `ngc/e2e/v1` 0x00 Controller-ID 0x00 App 0x00 Dienst 0x00 Aktion 0x00 SHA-256(params)
+  SHA-256(task), beide Hashes als 32 rohe Byte. params und task sind die Werte der Felder `params`
+  und `task` genau so, wie sie im OPEN stehen, jeweils von `{` bis `}`; fehlt ein Feld, wird der
+  leere Text gehasht. Der Controller nimmt sie aus `Opened.Open.Params` und
+  `Opened.Open.TaskBytes()`.
+- **Handschlag:** Nachricht 1 steht im OPEN (`e2e`), Nachricht 2 in der ersten GRANT der Seite, die
+  den Kanal angenommen hat (diese GRANT hat dann 52 Byte). Fehlt der Handschlag dort oder steht
+  einer in einer anderen GRANT, ist das `E_PROTOCOL`.
+- **Innere Nachrichten:** Jede DATA-Nutzlast ist eine Noise-Transportnachricht; ihr Klartext beginnt
+  mit einem Byte (`wire.E2E`, `wire.ParseE2E`): 1 = Daten (`wire.E2EData`, höchstens
+  `wire.MaxE2EPlaintext` Byte samt diesem), 2 = Ende (`wire.E2EEnd`; von der Shell leer, vom
+  Controller mit dem Ergebnis als CLOSE-JSON).
+- **Ablauf:** Sofort nach Nachricht 2 schickt die Shell ihre erste innere Nachricht: Daten, leer,
+  wenn noch keine Eingabe da ist, oder Eingabe und Ende. Der Controller startet den Dienst erst,
+  wenn diese Nachricht entschlüsselt ist, und wartet darauf höchstens `wire.E2EFirstTimeout` (30)
+  Sekunden. Ende von der Shell heißt „keine Eingabe mehr“; die Ausgabe des Controllers läuft danach
+  weiter. Nach ihrem eigenen Ende schickt eine Seite keine innere Nachricht mehr (sonst
+  `E_PROTOCOL`).
+- **Abgeschnitten:** Kommt EOF oder CLOSE des Kanals vor dem Ende der Gegenseite, sind die Daten
+  abgeschnitten: Fehler. EOF und CLOSE beenden nur den Transport.
+
+### Kern-Apps und Aufgaben
+
+- **Kern-Apps** (`ngc.desktop`, `ngc.users`, `ngc.store`) haben keinen eigenen
+  Ende-zu-Ende-Austausch; ihre DATA laufen ohne zweite Verschlüsselung in der Noise-Sitzung der
+  Leitung. Wie Daten fließen, sagt `core.Action` (`Flow`, `MaxIn`):
+  - `call` (`core.FlowCall`): Parameter im OPEN oder in der Aufgabe; der Öffner schickt sofort EOF.
+    Das Ergebnis sind alle DATA bis zum EOF der Gegenseite, höchstens `wire.MaxCallResult` (8 MiB);
+    darüber beendet der Absender mit `E_TOOLARGE`. Aktionen ohne Ergebnis antworten `{}`.
+    Beispiele: `core.json`.
+  - `in` (`core.FlowIn`): Der Öffner schickt höchstens `MaxIn` Byte, dann EOF; Ergebnis wie bei
+    `call`.
+  - `out` (`core.FlowOut`): Die API schickt Daten statt eines Ergebnisses; bei `ui` ein tar nach
+    `store.WalkUI`.
+  - `transfer` (`core.FlowTransfer`): API → Controller, ein Kopf `core.Transfer`
+    (`core.WriteTransfer`, `core.ReadTransfer`), danach genau `size` Byte; Ergebnis wie bei `call`.
+- **App-Kanäle:** Das Ergebnis ist die Ausgabe des Controllers bis zu seinem Ende (`wire.E2EEnd`).
+  Für Aktionen, die kein Datenstrom sind (ohne `stream` im Manifest), gilt dieselbe Grenze
+  `wire.MaxCallResult`.
+- **Aufgaben:** Ein OPEN mit Aufgabe (`task`) hat keine eigenen Parameter; es gelten die der
+  Aufgabe. Ob ein Kanal eine Aufgabe braucht, root ist oder kritisch, entscheidet `task.Check` mit
+  einer Regel aus geprüften Daten, nie aus dem OPEN: `core.RuleFor` für Kern-Aktionen,
+  `store.RuleFor` aus dem Manifest einer App (root, wenn das Manifest `root` verlangt). Die API
+  prüft eine Aufgabe, bevor sie sie an einen Controller weiterleitet, mit dem Ziel-Controller als
+  `task.Input.Node`. Wer prüft, merkt sich die ID der Aufgabe bis zu ihrem Ablauf
+  (`dbapi.OnceTask`).
+- **Vertrauensliste an Controller:** Kanal `ngc.users/controller/trust` (`in`). Die API schickt eine
+  `session.TrustChain`; der Controller prüft sie (`session.ParseTrustChain`, `trust.Advance`) und
+  antwortet mit `core.TrustResult` (seine neueste geprüfte Fassung) oder schließt mit `E_VERIFY`.
+- **Ohne Benutzer** (`tunnel.Open` ohne `client` und `proof`, mit einem OPEN der API) öffnet die
+  API nur, was `core.WithoutUser` nennt: `ngc.users/controller/trust`,
+  `ngc.store/controller/stage` und `ngc.store/controller/install`. `install` ohne Benutzer führt
+  der Controller nur aus, wenn `core.Unattended` zustimmt: Es gibt eine Dauerfreigabe für das Ziel
+  und den Schlüssel, der die Datei signiert hat, und die Version ist neuer als die installierte; ist
+  nichts installiert, nie. Bei `system` gibt es keinen Versionsvergleich.
 
 ## Prüfen
 
