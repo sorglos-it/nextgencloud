@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"flag"
+	"runtime"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
@@ -179,6 +181,16 @@ func TestCheckRejects(t *testing.T) {
 		{"other client certificate", func(in *Input, _ *int64) { in.Session = otherSession }, ErrTask},
 		{"params the rule rejects", func(in *Input, _ *int64) { in.Task = &unreadableEnv }, ErrTask},
 		{"zero rule", func(in *Input, _ *int64) { in.Rule = Rule{} }, ErrTask},
+		// An action that cannot judge an OPEN without signed params refuses it.
+		{"no task, the rule refuses nil params", func(in *Input, _ *int64) {
+			in.Task = nil
+			in.Rule = Rule{Changes: true, Critical: func(params json.RawMessage) (bool, error) {
+				if params == nil {
+					return false, errors.New("params must be signed")
+				}
+				return false, nil
+			}}
+		}, ErrTask},
 	}
 	for _, c := range cases {
 		in, n := f.input(&env), int64(now)
@@ -323,6 +335,34 @@ func TestVectors(t *testing.T) {
 		Client: f.verified.Payload(), ClientProof: f.admin.Prove(sign.PurposeClientCert, f.verified.Payload()),
 		Task: env, Confirm: f.admin.Prove(sign.PurposeConfirm, env.Payload),
 	})
+}
+
+// TestVerifyBoundsAllocation feeds Verify a task of the full size that is an
+// array of empty objects where a task has none, signed with the session key
+// so that it reaches the decoder: refusing it must allocate next to nothing
+// besides the signature check.
+func TestVerifyBoundsAllocation(t *testing.T) {
+	f := newFixture(t)
+	var b bytes.Buffer
+	b.WriteString(`{"id":[{}`)
+	for b.Len()+len(`,{}]}`) <= MaxTask {
+		b.WriteString(`,{}`)
+	}
+	b.WriteString(`]}`)
+	env, err := sign.Sign(f.sessSig, sign.PurposeTask, b.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = Verify(env, f.verified, now)
+	runtime.ReadMemStats(&after)
+	if n := after.TotalAlloc - before.TotalAlloc; n > 64<<10 {
+		t.Errorf("%d bytes allocated", n)
+	}
+	if err != ErrTask {
+		t.Errorf("got %v, want %v", err, ErrTask)
+	}
 }
 
 func FuzzVerify(f *testing.F) {

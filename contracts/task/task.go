@@ -25,6 +25,10 @@ const (
 	MaxTask     = 16 << 10
 )
 
+// taskBudget bounds a task while it is decoded (enc.Budget): it has no array
+// of its own, and its params stay raw bytes, which the rule and core read.
+var taskBudget = enc.Budget{Size: MaxTask, Items: map[string]int{"params": enc.Raw}}
+
 // Task describes exactly one channel. An OPEN that carries a task carries no
 // params of its own (wire.Open.Validate); the task's params are the params.
 type Task struct {
@@ -78,7 +82,7 @@ func Verify(env sign.Envelope, v session.Verified, now int64) (Task, error) {
 		return Task{}, err
 	}
 	var t Task
-	if err := enc.DecodeStrict(env.Payload, MaxTask, &t); err != nil {
+	if err := taskBudget.Decode(env.Payload, &t); err != nil {
 		return Task{}, ErrTask
 	}
 	if err := t.Validate(); err != nil {
@@ -110,8 +114,10 @@ type Rule struct {
 	Changes bool // every channel to a service counts as a change
 	// Critical reports whether the action is critical with these params.
 	// Check calls it with the verified task's params, or with nil when no
-	// task came. Params the action does not accept give an error, which
-	// Check returns as ErrTask.
+	// task came. The answer for nil must hold for any params an OPEN without
+	// a task may carry, since those are not signed: an action that some
+	// params make critical answers true (or an error) for nil. Params the
+	// action does not accept give an error, which Check returns as ErrTask.
 	Critical func(params json.RawMessage) (bool, error)
 }
 
