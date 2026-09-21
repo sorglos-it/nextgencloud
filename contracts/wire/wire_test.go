@@ -316,6 +316,47 @@ func TestOpenValidateTask(t *testing.T) {
 	}
 }
 
+// TestParseOpenScansParamsOnce: the params that cost most to check are an
+// object of MaxParams bytes with as many names as fit. DecodeStrict checks
+// them already, so ParseOpen must cost no more than that decode plus a little,
+// not a second scan of the params. Validate, which gets params from anywhere,
+// still scans them.
+func TestParseOpenScansParamsOnce(t *testing.T) {
+	var p strings.Builder
+	p.WriteString("{")
+	for i := 0; ; i++ {
+		m := `"` + strconv.FormatInt(int64(i), 36) + `":0`
+		if i > 0 {
+			m = "," + m
+		}
+		if p.Len()+len(m)+1 > MaxParams {
+			break
+		}
+		p.WriteString(m)
+	}
+	p.WriteString("}")
+	o := testOpen()
+	o.Params = json.RawMessage(p.String())
+	doc := mustJSON(t, o)
+	var err error
+	decode := allocated(func() { err = openBudget.Decode(doc, &openDoc{}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	parse := allocated(func() { _, err = ParseOpen(doc) })
+	t.Logf("params of %d bytes: DecodeStrict %d bytes, ParseOpen %d bytes allocated", p.Len(), decode, parse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parse > decode+16<<10 {
+		t.Errorf("ParseOpen allocates %d bytes, the decode alone %d: the params are scanned twice", parse, decode)
+	}
+	o.Params = json.RawMessage(`{"a":1,"a":2}`)
+	if err := o.Validate(); err != ErrOpen {
+		t.Errorf("Validate, params with duplicate names: got %v, want %v", err, ErrOpen)
+	}
+}
+
 func TestValidParams(t *testing.T) {
 	cases := map[string]bool{
 		``:                    true,

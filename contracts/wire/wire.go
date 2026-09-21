@@ -318,15 +318,26 @@ func ParseOpen(p []byte) (Open, error) {
 	if d.Task != nil {
 		o.Task, o.task = &d.Task.env, d.Task.raw
 	}
-	if err := o.Validate(); err != nil {
+	// DecodeStrict has checked the params in full: one JSON value, valid
+	// UTF-8, no repeated names. Scanning them again would double the cost of
+	// the largest params, whose names are what makes them expensive.
+	if err := o.validate(false); err != nil {
 		return Open{}, err
 	}
 	return o, nil
 }
 
 // Validate checks the fields of o.
-func (o Open) Validate() error {
-	if !ValidAppID(o.App) || !ValidName(o.Service) || !ValidName(o.Action) || !ValidParams(o.Params) ||
+func (o Open) Validate() error { return o.validate(true) }
+
+// validate checks the fields of o; scanParams says whether the params still
+// need the full scan of ValidParams.
+func (o Open) validate(scanParams bool) error {
+	params := paramsShape(o.Params)
+	if scanParams {
+		params = ValidParams(o.Params)
+	}
+	if !ValidAppID(o.App) || !ValidName(o.Service) || !ValidName(o.Action) || !params ||
 		o.Window < MinWindow || o.Window > MaxWindow {
 		return ErrOpen
 	}
@@ -354,11 +365,14 @@ func (o Open) Validate() error {
 // ValidParams reports whether raw is empty or exactly one JSON object of at
 // most MaxParams bytes: valid UTF-8, no duplicate member names at any depth.
 func ValidParams(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return true
-	}
-	v := jsontext.Value(raw)
-	return len(raw) <= MaxParams && v.IsValid() && v.Kind() == '{'
+	return paramsShape(raw) && (len(raw) == 0 || jsontext.Value(raw).IsValid())
+}
+
+// paramsShape is ValidParams without the scan of the whole value, for params
+// that enc.DecodeStrict has already checked: empty, or at most MaxParams bytes
+// of a JSON object.
+func paramsShape(raw json.RawMessage) bool {
+	return len(raw) == 0 || (len(raw) <= MaxParams && jsontext.Value(raw).Kind() == '{')
 }
 
 // Status of a closed channel.
