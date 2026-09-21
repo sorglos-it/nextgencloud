@@ -3,10 +3,17 @@ package store
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
@@ -339,6 +346,117 @@ func TestVectors(t *testing.T) {
 		ReleaseKey: enc.Bytes(releaseKey.Public().(ed25519.PublicKey)),
 		Release:    signJSON(t, releaseKey, sign.PurposeRelease, testRelease()),
 	})
+}
+
+// releaseFile is the one file of the release vector for install scripts.
+var releaseFile = []byte("NGC web test file\n")
+
+// TestReleaseScriptVector writes what verify.sh, the reference for the ulh
+// scripts, checks: the release key as PEM, the file and the signed release,
+// each compared byte for byte.
+func TestReleaseScriptVector(t *testing.T) {
+	der, err := x509.MarshalPKIXPublicKey(releaseKey.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	sum := sha256.Sum256(releaseFile)
+	env := signJSON(t, releaseKey, sign.PurposeRelease, Release{Seq: 3, Issued: issued, Version: "1.1.0",
+		Files: []File{{Part: ReleaseWeb, Arch: "all", URL: "ngc-web-all.tar", Size: int64(len(releaseFile)), SHA256: sum[:]}}})
+	release, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release = append(release, '\n')
+
+	// The key parsed back from the PEM verifies the release.
+	block, rest := pem.Decode(keyPEM)
+	if block == nil || block.Type != "PUBLIC KEY" || len(rest) != 0 {
+		t.Fatalf("PEM %q", keyPEM)
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, ok := pub.(ed25519.PublicKey)
+	if !ok {
+		t.Fatalf("key of type %T", pub)
+	}
+	r, err := VerifyRelease(env, key, 0)
+	if err != nil || len(r.Files) != 1 || r.Files[0].Size != 18 {
+		t.Fatalf("release: %+v, %v", r, err)
+	}
+	// verify.sh builds the signed message itself.
+	script, err := os.ReadFile(filepath.Join(golden.Dir, "release", "verify.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := string(sign.Message(sign.PurposeRelease, nil))
+	if want := `printf '` + strings.TrimSuffix(prefix, "\x00") + `\0'`; !strings.HasSuffix(prefix, "\x00") || !bytes.Contains(script, []byte(want)) {
+		t.Errorf("verify.sh does not build the message %q", prefix)
+	}
+
+	golden.CheckBytes(t, *update, "release/release-key.pem", keyPEM)
+	golden.CheckBytes(t, *update, "release/ngc-web-all.tar", releaseFile)
+	golden.CheckBytes(t, *update, "release/release.json", release)
+}
+
+// TestReleaseScript runs verify.sh on the release vector, then on copies with
+// a changed file and a changed signature. It needs a POSIX shell and the
+// tools of the ulh scripts; the Linux servers have them.
+func TestReleaseScript(t *testing.T) {
+	for _, tool := range []string{"sh", "openssl", "jq", "sha256sum", "od", "base64", "tr", "cut", "wc"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s missing", tool)
+		}
+	}
+	files := map[string][]byte{}
+	for _, name := range []string{"release.json", "release-key.pem", "ngc-web-all.tar", "verify.sh"} {
+		b, err := os.ReadFile(filepath.Join(golden.Dir, "release", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[name] = b
+	}
+	run := func(change func(map[string][]byte)) (string, error) {
+		dir := t.TempDir()
+		copies := map[string][]byte{}
+		for name, b := range files {
+			copies[name] = bytes.Clone(b)
+		}
+		change(copies)
+		for name, b := range copies {
+			if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command("sh", "verify.sh", ".")
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run(func(map[string][]byte) {}); err != nil || out != "release ok\n" {
+		t.Fatalf("release vector: %q, %v", out, err)
+	}
+	for name, change := range map[string]func(map[string][]byte){
+		"changed file": func(c map[string][]byte) { c["ngc-web-all.tar"][0] ^= 1 },
+		"changed signature": func(c map[string][]byte) {
+			var env sign.Envelope
+			if err := json.Unmarshal(c["release.json"], &env); err != nil {
+				t.Fatal(err)
+			}
+			env.Sig[0] ^= 1
+			c["release.json"], _ = json.Marshal(env)
+		},
+		"other key": func(c map[string][]byte) {
+			der, _ := x509.MarshalPKIXPublicKey(storeKey.Public())
+			c["release-key.pem"] = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+		},
+	} {
+		if out, err := run(change); err == nil || strings.Contains(out, "release ok") {
+			t.Errorf("%s: %q, %v", name, out, err)
+		}
+	}
 }
 
 func FuzzCatalog(f *testing.F) {

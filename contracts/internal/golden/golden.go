@@ -21,10 +21,19 @@ func Check(t *testing.T, update bool, name string, v any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = append(got, '\n')
+	CheckBytes(t, update, name, append(got, '\n'))
+}
+
+// CheckBytes compares data with the file Dir/name byte for byte; with update
+// set it writes the file (creating its directory) instead.
+func CheckBytes(t *testing.T, update bool, name string, data []byte) {
+	t.Helper()
 	path := filepath.Join(Dir, name)
 	if update {
-		if err := os.WriteFile(path, got, 0o644); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -33,7 +42,7 @@ func Check(t *testing.T, update bool, name string, v any) {
 	if err != nil {
 		t.Fatalf("%v (run go test -update once to create it)", err)
 	}
-	if !bytes.Equal(got, want) {
+	if !bytes.Equal(data, want) {
 		t.Fatalf("%s differs from the golden file; if intended, run go test -update and review the diff", name)
 	}
 }
