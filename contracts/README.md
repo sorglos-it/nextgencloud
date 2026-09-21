@@ -8,7 +8,7 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 |---|---|---|---|
 | Grundlagen | Kodierung und signierte Umschläge, für alle Verträge | `enc`, `sign` | `sign.json` |
 | V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `task`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `task.json`, `core.json` |
-| V2 | API ↔ Controller | `tunnel`, `wire`, `noisep`, `task`, `core` | `tunnel.json`, `wire.json`, `noise.json`, `task.json`, `core.json` |
+| V2 | API ↔ Controller | `tunnel`, `session`, `wire`, `noisep`, `task`, `core` | `tunnel.json`, `wire.json`, `noise.json`, `task.json`, `core.json` |
 | V3 | Controller ↔ Dienst im Container | `service` | `service/echo.sh` |
 | V4 | API und Controller ↔ Datenbank | `dbapi`, `dbapi/memstore`, `dbapi/dbtest` | – (Konformitätstests) |
 | V5 | App-Paket, Katalog, Lizenz, Updates | `store` | `store.json`, `pack.json`, `ui.json`, `release/` |
@@ -21,6 +21,10 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
   Nie neu erzeugtes JSON prüfen, sondern die empfangene Nutzlast. Erst die Unterschrift prüfen,
   dann die Nutzlast lesen; bei der Vertrauensliste erst den Hash des Ankers bzw. den Beweis der
   neuen Fassung (`trust.Open`, `trust.Advance`).
+- **Umschläge von außen** liest `sign.ParseEnvelope` (Lizenzen, Kataloge, Releases), einzelne
+  Fassungen der Vertrauensliste `trust.ParseSigned` und ganze Ketten `session.ParseTrustChain`.
+  `store.VerifyCatalog`, `store.VerifyLicense`, `store.VerifyRelease`, `trust.Open` und
+  `trust.Advance` erwarten so gelesene Werte.
 - **Jede Signatur hat einen Zweck** (`sign.Purpose…`). Eine Unterschrift für eine Sache gilt nie für
   eine andere.
 - **Jede Eingabe von außen** läuft durch die `Parse…`- oder `Verify…`-Funktion des Vertrags, nie
@@ -59,6 +63,10 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
   Webinterface ist nie neuer als die API. Im Tunnel nennt `tunnel.Hello` die Fassung (`contract`,
   heute `tunnel.Contract` = 1); die neuere Seite spricht die Fassung der älteren, und beide liegen
   höchstens eine Fassung auseinander.
+- **Nachrichten vor der Einigung** bleiben über alle Nummern gleich: `hello` (`tunnel.Hello`),
+  `tunnel.PairRequest`, `tunnel.JoinRequest`, `tunnel.PairCode` und `tunnel.JoinCode`. Mit ihnen
+  erfahren die Seiten erst, welche Fassung die andere spricht. Eine Änderung daran bekommt einen
+  neuen Nachrichtentyp bzw. ein neues Präfix (etwa `ngc-pair2:`).
 - **Sprache**: Code und Kommentare Englisch, Meldungen für Benutzer Deutsch (`wire.Code.Message`).
 
 ## Testdaten
@@ -73,7 +81,7 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
 | `tunnel.json` | Kopplungscode mit MAC und Fingerabdruck, `pairCheck` (`tunnel.PairCode.Check`), `join` (Beitrittscode, `tunnel.JoinMAC`) | `tunnel`: `TestVectors` |
-| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion, dazu `notice` | `core`: `TestExamples` |
+| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis, dazu `notice` | `core`: `TestExamples` |
 | `store.json`, `pack.json` | Katalog, Lizenz und Release; Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
 | `ui.json` | ui-tars, gültige und ungültige (`store.WalkUI`) | `store`: `TestUIVectors` |
 | `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft es wie die ulh-Skripte | `store`: `TestReleaseScriptVector` |
@@ -100,8 +108,12 @@ Felder; `proof.Verify` liest davon nur `type`, `challenge`, `origin` und `crossO
    `1e2` und `10E0` werden abgelehnt. Vorzeichenlose Felder (`uint…`) lehnen jedes Minus ab, auch
    `-0`. Es gilt der Wertebereich des Go-Typs. Nie eine Zahl, wo Text oder `true`/`false` steht,
    und umgekehrt.
-8. Bytes (`enc.Bytes`, IDs, Schlüssel-IDs) sind base64url ohne `=`: nur `A-Z a-z 0-9 - _`, also
-   auch kein CR, LF, Leerzeichen oder Tab; die unbenutzten Bits am Ende sind 0.
+8. Bytes (`enc.Bytes`) sind base64url ohne `=`: nur `A-Z a-z 0-9 - _`, also auch kein CR, LF,
+   Leerzeichen oder Tab; die unbenutzten Bits am Ende sind 0. Ebenso die IDs, die `trust.ValidID`
+   prüft (16 Byte: Benutzer, Installation), und Schlüssel-IDs (16 Byte, `sign.KeyID`; geprüft in
+   `proof.Proof.Validate` und `sign.ParseEnvelope`). Andere IDs haben eigene Regeln: Knoten und
+   Stores `wire.ValidName`, Apps `wire.ValidAppID`, Einträge im Protokoll `core.ValidLogID` (Hex aus
+   Kleinbuchstaben).
 
 Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 
@@ -117,11 +129,13 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 13. Keine Zahl, deren genauer Wert dem Betrag nach größer ist als 2^53−1 (`enc.MaxSafeInteger`):
     `9007199254740991` und `9007199254740991.0` gehen, `9007199254740992`, `9007199254740991.5`
     und `1e16` nicht.
-14. Nirgends `null`. Wer JSON schreibt, lässt ein leeres Feld weg.
+14. Nirgends `null`. Wer JSON schreibt, lässt ein leeres Feld weg; eine leere Liste als Ergebnis
+    ist `[]`, nie `null`.
 
 | Dokument | Go | Bytes | Listen und Maps (Pfad: höchstens) |
 |---|---|---|---|
-| Fassung der Vertrauensliste | `trust.Parse` | `sign.MaxPayload` (4 MiB) | `users` 10000, `users/*/roles` 256, `users/*/keys` 16, `roles` 256, `roles/*/black` 256, `roles/*/white` 256, `nodes` 256, `nodes/*/rootUsers` 256, `nodes/*/rootRoles` 256, `stores` 64, `auto` 64, `rp/origins` 8 |
+| Fassung der Vertrauensliste (Nutzlast) | `trust.Parse` | `sign.MaxPayload` (4 MiB) | `users` 10000, `users/*/roles` 256, `users/*/keys` 16, `roles` 256, `roles/*/black` 256, `roles/*/white` 256, `nodes` 256, `nodes/*/rootUsers` 256, `nodes/*/rootRoles` 256, `stores` 64, `auto` 64, `rp/origins` 8 |
+| Fassung samt Beweis (`trust.Signed`), etwa an `ngc.users/api/trust` | `trust.ParseSigned` | base64url von `sign.MaxPayload` Byte + 64 KiB | keine |
 | Anmeldung, Ersteinrichtung | `session.ParseLoginStart`, `session.ParseLoginFinish`, `session.ParseSetup` | `session.MaxRequest` (64 KiB) | keine |
 | Client- und API-Zertifikat | `session.VerifyClient`, `session.VerifyAPI` | `session.MaxCert` (4096) | keine |
 | Antwort von `GET /api/v1/trust` | `session.ParseTrustChain` | `session.MaxChain` (32 MiB) | `versions` 64 |
@@ -139,6 +153,7 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | Kopplungs- und Beitrittsanfrage | `tunnel.ParsePairRequest`, `tunnel.ParseJoinRequest` | `tunnel.MaxPairRequest` (4096) | keine |
 | Parameter einer Kern-Aktion | `core.ParseParams` | `wire.MaxParams` (8 KiB) | `rights` 1000, `grants` 2 |
 | Kopf einer Übertragung | `core.ReadTransfer` | `core.MaxTransferHeader` (8 MiB) | keine |
+| Umschlag (`sign.Envelope`) um Lizenz, Katalog oder Release | `sign.ParseEnvelope` | base64url von `maxPayload` Byte + 1 KiB (`maxPayload` höchstens `sign.MaxPayload`; für Lizenzen `store.MaxLicense`) | keine |
 | Katalog | `store.VerifyCatalog` | `sign.MaxPayload` | `apps` 10000, `apps/*/versions` 100, `apps/*/versions/*/needs` 2 |
 | Lizenz | `store.VerifyLicense` | `store.MaxLicense` (8 KiB) | keine |
 | Release | `store.VerifyRelease` | `sign.MaxPayload` | `files` 16 |
@@ -191,7 +206,7 @@ nur ein Hinweis: Die Fassungen holt die Shell mit `GET /api/v1/trust?from=N`
 (`session.TrustChain`, seitenweise mit `more`); ein Controller bekommt sie über den Kanal
 `ngc.users/controller/trust`.
 
-### Kanäle
+### Öffnen, Schließen, Freigabe
 
 - **Öffnen:** nur der Browser (Sitzung) bzw. die API (Tunnel), mit einer freien Nummer ab 1.
   Ablauf: OPEN (sein `window` ist die erste Freigabe des Öffners) → erste GRANT der Gegenseite
@@ -271,14 +286,22 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   - `transfer` (`core.FlowTransfer`): API → Controller, ein Kopf `core.Transfer`
     (`core.WriteTransfer`, `core.ReadTransfer`), danach genau `size` Byte; Ergebnis wie bei `call`.
 - **App-Kanäle:** Das Ergebnis ist die Ausgabe des Controllers bis zu seinem Ende (`wire.E2EEnd`).
-- **Grenze für Ergebnisse:** Jedes Ergebnis nach Art von `call` hat höchstens `wire.MaxCallResult`
-  (8 MiB), bei Kern-Apps wie bei Apps: `call`, `in` und `transfer` der Kern-Aktionen und jede
-  App-Aktion, die kein Datenstrom ist (ohne `stream` im Manifest). Wer mehr zu schicken hätte,
-  beendet mit `E_TOOLARGE` (auf Ende-zu-Ende-Kanälen im Ende des Controllers). Durchsetzen muss es
-  der Empfänger: Kommt mehr, schließt er den Kanal mit `E_TOOLARGE`. Bei Kern-Apps ist das die API,
-  die deren Daten sieht (das Ergebnis eines Controllers prüft sie, bevor sie es weitergibt; ihre
-  eigenen Ergebnisse hält sie selbst darunter), auf Ende-zu-Ende-Kanälen die Shell, denn die API
-  sieht deren Klartext nicht.
+- **Grenze für Ergebnisse:** höchstens `wire.MaxCallResult` (8 MiB) für jedes Ergebnis nach Art von
+  `call`, bei Kern-Apps wie bei Apps:
+  - gemeint sind `call`, `in` und `transfer` der Kern-Aktionen und jede App-Aktion, die kein
+    Datenstrom ist (ohne `stream` im Manifest);
+  - wer mehr zu schicken hätte, beendet mit `E_TOOLARGE` (auf Ende-zu-Ende-Kanälen im Ende des
+    Controllers);
+  - durchsetzen muss es der Empfänger, der bei mehr den Kanal mit `E_TOOLARGE` schließt: die API
+    für das Ergebnis eines Controllers auf einem Kern-App-Kanal, bevor sie es weitergibt; die Shell
+    für die Ergebnisse der API und auf jedem Ende-zu-Ende-Kanal, dessen Klartext die API nicht
+    sieht.
+- **Grenze für Eingaben:** Was der Öffner bei `in` und `transfer` schickt, begrenzt `MaxIn`
+  (`core.Action`); der Empfänger schließt bei mehr ebenso mit `E_TOOLARGE`:
+  - die API bei `ngc.store/api/upload` (bis `store.MaxPackage`, 4 GiB), `ngc.users/api/trust` und
+    `ngc.store/api/license`;
+  - der Controller bei `ngc.store/controller/activate` und `ngc.store/controller/stage`
+    (`transfer`) und bei `ngc.users/controller/trust`.
 - **Aufgaben:** Ein OPEN mit Aufgabe (`task`) hat keine eigenen Parameter; es gelten die der
   Aufgabe. Ob ein Kanal eine Aufgabe braucht, root ist oder kritisch, entscheidet `task.Check` mit
   einer Regel aus geprüften Daten, nie aus dem OPEN: `core.RuleFor` für Kern-Aktionen,
