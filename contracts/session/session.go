@@ -17,6 +17,11 @@ import (
 )
 
 // HTTP paths on the web server; Apache passes /api/ on to the APIs.
+//
+// GET PathTrust?from=N pages through the versions of the trust list as
+// TrustChain says. The API tells the shell with the control message "trust"
+// (body TrustHint) that a newer version exists. Controllers get versions on
+// the channel ngc.users/controller/trust instead.
 const (
 	PathSetup       = "/api/v1/setup"
 	PathLoginStart  = "/api/v1/login/start"
@@ -40,6 +45,15 @@ const (
 	TOTPDigits        = 6
 	TOTPPeriod        = 30 // RFC 6238 with HMAC-SHA1, as authenticator apps expect
 )
+
+// Limits of one answer of PathTrust.
+const (
+	MaxChainVersions = 64       // versions in one TrustChain
+	MaxChain         = 32 << 20 // bytes of one TrustChain as JSON
+)
+
+// maxTrustHint bounds a TrustHint body; {"seq":N} needs at most 28 bytes.
+const maxTrustHint = 64
 
 // LoginStart asks for a login challenge.
 type LoginStart struct {
@@ -75,9 +89,12 @@ type ClientCert struct {
 
 // LoginFinish sends the signed client certificate.
 type LoginFinish struct {
-	Cert     enc.Bytes    `json:"cert"` // ClientCert as JSON, exactly the bytes the proof covers
-	Proof    proof.Proof  `json:"proof"`
-	Password *proof.Proof `json:"password,omitempty"` // second proof by the password key if a role asks for it
+	Cert  enc.Bytes   `json:"cert"` // ClientCert as JSON, exactly the bytes the proof covers
+	Proof proof.Proof `json:"proof"`
+	// Password is a proof by a password key of the same user over the same
+	// Cert bytes, purpose clientcert/v1 (VerifyPassword). The browser sends
+	// it when LoginChallenge.PasswordToo is set.
+	Password *proof.Proof `json:"password,omitempty"`
 	TOTP     string       `json:"totp,omitempty"`
 }
 
@@ -98,9 +115,18 @@ type LoginResult struct {
 	PasswordHint bool          `json:"passwordHint,omitempty"` // logged in with a password: show the hint to switch to passkeys
 }
 
-// TrustChain answers PathTrust?from=N with versions N to the newest.
+// TrustChain answers GET PathTrust?from=N: versions from N (inclusive) on,
+// at most MaxChainVersions and MaxChain bytes. More tells that newer
+// versions exist; the shell asks again from the one after the last.
 type TrustChain struct {
 	Versions []trust.Signed `json:"versions"`
+	More     bool           `json:"more,omitempty"`
+}
+
+// TrustHint is the body of the control message "trust" from the API to the
+// shell: version Seq exists. The shell fetches it with GET PathTrust.
+type TrustHint struct {
+	Seq uint64 `json:"seq"`
 }
 
 // SetupInfo answers GET PathSetup while no admin exists.
@@ -108,6 +134,10 @@ type SetupInfo struct {
 	Installation string       `json:"installation"`
 	Nodes        []trust.Node `json:"nodes"` // the API servers for version 1 of the trust list
 	Now          int64        `json:"now"`
+	// Store is the global store as the API is configured (config.API.StoreURL,
+	// StoreKey), ID trust.StoreGlobal, name "NGC Store". The shell lists it in
+	// version 1 unless the admin switches it off.
+	Store *trust.Store `json:"store,omitempty"`
 }
 
 // Setup creates the first admin with version 1 of the trust list.
@@ -120,7 +150,69 @@ var (
 	ErrCert    = errors.New("session: malformed certificate")
 	ErrUser    = errors.New("session: proof is not by a key of this user")
 	ErrExpired = errors.New("session: certificate not valid at this time")
+	ErrMessage = errors.New("session: malformed message")
+	ErrSetup   = errors.New("session: version 1 does not match the setup")
 )
+
+// The parsers below answer every failure with ErrMessage alone: the decoder's
+// own errors quote parts of the input, which may hold a code or a proof.
+
+// ParseLoginStart decodes and checks the body of PathLoginStart.
+func ParseLoginStart(b []byte) (LoginStart, error) {
+	var s LoginStart
+	if enc.DecodeStrict(b, MaxRequest, &s) != nil || !trust.ValidLoginName(s.Name) {
+		return LoginStart{}, ErrMessage
+	}
+	return s, nil
+}
+
+// ParseLoginFinish decodes and checks the body of PathLoginFinish. It checks
+// the structure only; VerifyClient and VerifyPassword check the proofs.
+func ParseLoginFinish(b []byte) (LoginFinish, error) {
+	var f LoginFinish
+	if enc.DecodeStrict(b, MaxRequest, &f) != nil || len(f.Cert) == 0 || len(f.Cert) > MaxCert ||
+		f.Proof.Validate() != nil ||
+		(f.Password != nil && (f.Password.Kind != proof.KindPassword || f.Password.Validate() != nil)) ||
+		(f.TOTP != "" && !ValidTOTP(f.TOTP)) {
+		return LoginFinish{}, ErrMessage
+	}
+	return f, nil
+}
+
+// ParseSetup decodes and checks the body of POST PathSetup. VerifySetup
+// checks the version it carries.
+func ParseSetup(b []byte) (Setup, error) {
+	var s Setup
+	if enc.DecodeStrict(b, MaxRequest, &s) != nil || !ValidSetupCode(s.Code) || len(s.Trust.Payload) == 0 ||
+		s.Trust.Proof.Validate() != nil {
+		return Setup{}, ErrMessage
+	}
+	return s, nil
+}
+
+// ParseTrustChain decodes and checks an answer of PathTrust. trust.Open and
+// trust.Advance check the versions themselves.
+func ParseTrustChain(b []byte) (TrustChain, error) {
+	var c TrustChain
+	if enc.DecodeStrict(b, MaxChain, &c) != nil || len(c.Versions) == 0 || len(c.Versions) > MaxChainVersions {
+		return TrustChain{}, ErrMessage
+	}
+	for _, v := range c.Versions {
+		if len(v.Payload) == 0 || len(v.Payload) > sign.MaxPayload || v.Proof.Validate() != nil {
+			return TrustChain{}, ErrMessage
+		}
+	}
+	return c, nil
+}
+
+// ParseTrustHint decodes and checks the body of the control message "trust".
+func ParseTrustHint(b []byte) (TrustHint, error) {
+	var h TrustHint
+	if enc.DecodeStrict(b, maxTrustHint, &h) != nil || h.Seq < 1 {
+		return TrustHint{}, ErrMessage
+	}
+	return h, nil
+}
 
 // Validate checks the fields of c.
 func (c ClientCert) Validate() error {
@@ -181,6 +273,17 @@ func VerifyClient(payload []byte, p proof.Proof, l *trust.List, now int64) (Veri
 	return Verified{cert: c, payload: payload}, nil
 }
 
+// VerifyPassword checks the second proof of a role that asks for the password
+// too: by a password key of the user of v, over v.Payload(), purpose
+// clientcert/v1. ErrUser if the key is not a password key of that user.
+func VerifyPassword(v Verified, p proof.Proof, l *trust.List) error {
+	owner, key, ok := l.KeyOwner(p.KeyID)
+	if !ok || owner.ID != v.Cert().User || key.Kind != proof.KindPassword {
+		return ErrUser
+	}
+	return proof.Verify(p, key, l.RP, sign.PurposeClientCert, v.Payload())
+}
+
 // SignAPI signs an API certificate with the key of an API node.
 func SignAPI(priv ed25519.PrivateKey, c APICert) (sign.Envelope, error) {
 	b, err := json.Marshal(c)
@@ -191,8 +294,13 @@ func SignAPI(priv ed25519.PrivateKey, c APICert) (sign.Envelope, error) {
 }
 
 // VerifyAPI checks an API certificate: signed by an API node of the trust
-// list and bound to the client certificate client.
+// list, bound to the client certificate client and never valid longer than
+// it, so a session cannot outlive the user's approval.
 func VerifyAPI(env sign.Envelope, l *trust.List, client []byte, now int64) (APICert, error) {
+	var cc ClientCert
+	if err := enc.DecodeStrict(client, MaxCert, &cc); err != nil {
+		return APICert{}, ErrCert
+	}
 	var node trust.Node
 	for _, n := range l.Nodes {
 		if n.Kind == trust.NodeAPI && sign.KeyID(n.Sign) == env.KeyID {
@@ -211,13 +319,56 @@ func VerifyAPI(env sign.Envelope, l *trust.List, client []byte, now int64) (APIC
 		return APICert{}, ErrCert
 	}
 	if c.Installation != l.Installation || c.Node != node.ID || !bytes.Equal(c.Client, CertHash(client)) ||
-		len(c.DH) != 32 || c.Issued <= 0 || c.Expires <= c.Issued || c.Expires-c.Issued > MaxLifetime {
+		len(c.DH) != 32 || c.Issued <= 0 || c.Expires <= c.Issued || c.Expires-c.Issued > MaxLifetime ||
+		c.Expires > cc.Expires {
 		return APICert{}, ErrCert
 	}
 	if now < c.Issued-MaxSkew || now >= c.Expires {
 		return APICert{}, ErrExpired
 	}
 	return c, nil
+}
+
+// VerifySetup checks version 1 the new admin sent against what the API
+// offered in SetupInfo: trust.Open with the anchor {1, trust.Hash(s.Trust)}
+// (so an admin in the list signed it), the same Installation, Nodes equal to
+// info.Nodes (compared as encoding/json output), and Stores either empty or
+// exactly the global store info.Store. Returns trust errors or ErrSetup.
+func VerifySetup(s Setup, info SetupInfo) (trust.Version, error) {
+	v, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(s.Trust)}, []trust.Signed{s.Trust})
+	if err != nil {
+		return trust.Version{}, err
+	}
+	l := v.List
+	if l.Installation != info.Installation || !sameNodes(l.Nodes, info.Nodes) {
+		return trust.Version{}, ErrSetup
+	}
+	if len(l.Stores) != 0 && (info.Store == nil || len(l.Stores) != 1 || !sameJSON(l.Stores[0], *info.Store)) {
+		return trust.Version{}, ErrSetup
+	}
+	return v, nil
+}
+
+// sameNodes compares node by node, so that no nodes at all match whether
+// they are nil or empty.
+func sameNodes(a, b []trust.Node) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !sameJSON(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameJSON reports whether a and b encode to the same JSON: the form the
+// admin signed and the API offered.
+func sameJSON(a, b any) bool {
+	x, err1 := json.Marshal(a)
+	y, err2 := json.Marshal(b)
+	return err1 == nil && err2 == nil && bytes.Equal(x, y)
 }
 
 var setupCode = regexp.MustCompile(`^[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){3}$`)
