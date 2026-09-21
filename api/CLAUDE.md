@@ -25,6 +25,14 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   eigener Freigabe; DATA und EOF unverändert und eins zu eins, CLOSE mit demselben Code;
   Noise-Nachricht 2 aus der ersten GRANT des Controllers in die erste GRANT an den Browser
   kopieren. Ende-zu-Ende-Daten nie auspacken.
+- Ergebnisse nach Art von `call` auf Kern-App-Kanälen höchstens `wire.MaxCallResult`: Das
+  Ergebnis eines Controllers prüfst du, bevor du es weitergibst, und schließt bei mehr mit
+  `E_TOOLARGE`; deine eigenen Ergebnisse hältst du darunter. Auf Ende-zu-Ende-Kanälen prüft das die
+  Shell, du siehst dort keinen Klartext.
+- Vertragsfassungen (`contracts/README.md`, Regeln): Du bedienst die aktuelle und die vorige Nummer
+  nebeneinander, jede unter ihren eigenen Pfaden (heute `/api/v1/…`). Im Tunnel spricht die neuere
+  Seite die Fassung der älteren, die ihr `hello` nennt (`tunnel.Hello`); nach der Reihenfolge der
+  Updates bist das meist du.
 - Rechte je Kanal: Benutzer, Rolle, App, Aktion, Lizenz. Kern-Aktionen nach `core`; Aufgaben mit
   `task.Check` und `core.RuleFor` bzw. `store.RuleFor`, nie mit Parametern aus dem OPEN. Eine
   Aufgabe, die du an einen Controller weiterleitest, prüfst du vorher mit dem Ziel-Controller als
@@ -47,7 +55,10 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
 - Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen. Ein
   neuer API-Server kommt mit einem Beitrittscode (`tunnel.JoinCode`, `tunnel.JoinRequest`); wie er
   nach der Unterschrift des Admins die gemeinsamen Schlüssel bekommt, legst du selbst fest.
-- Werkzeug `ngc-store`: Apps packen, verschlüsseln, Kataloge, Releases und Test-Lizenzen signieren.
+- Werkzeug `ngc-store`: Apps packen und verschlüsseln, Kataloge und Test-Lizenzen signieren,
+  Release-Dateien packen und prüfen. Releases signiert es nur zum Testen, mit einer Schlüsseldatei.
+  Der echte Release-Schlüssel von NGC liegt auf einem Hardware-Stick, nie auf einem Server (Entwurf
+  4.8); wie der Stick signiert, wird vor dem ersten Release festgelegt.
 - Konfiguration nur über `config.LoadAPI`. Schlüssel und Passwörter darin sind `config.Secret` bzw.
   `config.SecretText`; den Wert geben nur `Bytes()` bzw. `Text()`. Ins Log nur über die
   `LogValue`-Methoden, nie Schlüssel oder Passwörter.
