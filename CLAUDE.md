@@ -2,7 +2,8 @@
 
 NGC (NextGenCloud) ist eine offene Alternative zu Synologys DSM: ein Arbeitsplatz im Browser mit
 App-Store. Entwurf: `docs/superpowers/specs/2026-09-19-ngc-kern-design.md`. Stand und nächster
-Schritt: `docs/STAND.md`. Verträge: `contracts/README.md`.
+Schritt: `docs/STAND.md`. Verträge: `contracts/README.md`. Wie Kanäle laufen: dort, Abschnitt
+„Kanäle“; wie JSON von außen geprüft wird: Abschnitt „Striktes JSON“.
 
 ## Wer macht was
 
@@ -24,13 +25,16 @@ ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an de
 
 - SQL nur mit Platzhaltern, Tabellen- und Spaltennamen nur aus festen Listen.
 - Programme ohne Shell starten, immer mit Argumentliste, nie `sh -c`.
-- Jede Eingabe von außen prüfen: Typ, Länge, erlaubte Werte; unbekannte JSON-Felder ablehnen. Immer
-  über die `Parse…`- oder `Verify…`-Funktion des Vertrags.
+- Jede Eingabe von außen prüfen: Typ, Länge, erlaubte Werte; unbekannte, doppelte oder anders
+  geschriebene JSON-Feldnamen ablehnen (`enc.DecodeStrict`, mit Budget `enc.Budget`). Immer über
+  die `Parse…`- oder `Verify…`-Funktion des Vertrags.
 - Nichts, was von außen kommt, als HTML einfügen (`textContent`, nie `innerHTML`).
-- Pakete sicher entpacken: keine absoluten Pfade, kein `..`, keine Links, feste Größen (`store.Walk`).
-- Überall Obergrenzen: Nachrichtengröße, Kanäle je Sitzung, Anmeldeversuche.
+- Pakete sicher entpacken: keine absoluten Pfade, kein `..`, keine Links, keine Sparse-Dateien, feste
+  Größen (`store.Walk`, für Oberflächen `store.WalkUI`).
+- Überall Obergrenzen: Nachrichtengröße, Kanäle je Sitzung und je Tunnel, Freigabe je Kanal,
+  Anmeldeversuche.
 - Kryptografie nur aus der Standardbibliothek oder aus `vendor/`, nichts selbst gebaut.
-- Geheimnisse nie ins Log, auch nicht gekürzt.
+- Geheimnisse nie ins Log, auch nicht gekürzt (`config.Secret`, `config.SecretText`).
 
 ## Technik
 
@@ -47,13 +51,15 @@ ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an de
 
 - `go test ./...` muss grün sein, `scripts/check.sh` vor jedem Commit.
 - Auf den Linux-Servern zusätzlich `go test -race ./...` laufen lassen (Thomas' Windows-Rechner hat
-  kein cgo, der Data-Race-Detektor lief dort noch nicht); die beiden Tests, die sich unter Windows
-  selbst überspringen (`TestEchoService` in `contracts/service`, die Dateirechte-Prüfung in
+  kein cgo, der Data-Race-Detektor lief dort noch nicht); die Tests, die sich unter Windows oder
+  ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `contracts/service`,
+  `TestReleaseScript` in `contracts/store` mit `openssl` und `jq`, die Dateirechte-Prüfung in
   `contracts/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
   Vektoren in `contracts/testdata/`.
 - In `contracts/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
   Passkey-Admin, `Users[1]` der Passwort-Admin aus `NewSigner(1)`.
+- `contracts/trust/trusttest` nur in Tests importieren; `scripts/check.sh` bricht sonst ab.
 - Fremdcode prüfen: `govulncheck ./...`.
 - Keine Tests löschen oder überspringen, um grün zu werden.
 
