@@ -35,10 +35,13 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   aus `storeUrl` und `storeKey` in `api.json`) und `releaseKey` aus `api.json`. Eine Anfrage
   prüfst du mit `session.VerifySetup(s, info, code)`; Fehlversuche zählst du (`E_LOCKED`). Sobald
   es einen Admin gibt, antworten beide Methoden `E_NOTFOUND`.
-- Eigenes TLS: ein Zertifikat für den Host von `url`. Sein Fingerabdruck (`trust.TLSPin`) steht in
-  deinem Knoten der Vertrauensliste, in deinen Kopplungs- und Beitrittscodes und in `web.json`. Ein
-  neuer TLS-Schlüssel braucht zuerst eine neue Fassung der Vertrauensliste mit dem neuen
-  Fingerabdruck.
+- Eigenes TLS: Dein Zertifikat erzeugst du selbst, selbst signiert für den Host von `url` und deinen
+  Schlüssel, 100 Jahre gültig, damit kein Datum Apache aussperrt (`SSLProxyCheckPeerExpire on`).
+  Vertrauen trägt nur der Fingerabdruck des Schlüssels (`trust.TLSPin`, SHA-256 des SPKI), nicht
+  das Zertifikat: Er steht in deinem Knoten der Vertrauensliste, in deinen Kopplungs- und
+  Beitrittscodes und in `web.json`. Erneuern darfst du das Zertifikat nur mit demselben Schlüssel.
+  Einen neuen Schlüssel gibt es nur zusammen mit einem neuen Fingerabdruck in der Vertrauensliste:
+  erst die neue Fassung, dann der neue Schlüssel.
 - WebSocket nach `wire` und `noisep` (Ablauf: `shared/README.md`, Abschnitt „Kanäle“):
   Kanalnummern höchstens `wire.MaxSessionChannels` je Sitzung und `wire.MaxTunnelChannels` je
   Tunnel, gezählt, bis sie wieder frei sind (CLOSE gesendet und empfangen); ein Frame darüber
