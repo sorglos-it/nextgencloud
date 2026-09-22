@@ -86,9 +86,13 @@ so klein wie möglich.
 - Mit Rolle `web`: Adressen (Host und Port aus `url` jedes API-Knotens) und Fingerabdrücke nimmst du
   aus der Vertrauensliste, holst jedes Zertifikat mit `tunnel.PinnedTLS`, schreibst
   `config.APITrustFile` und `web.json` (`config.SaveWeb`; `apis` mit `url` = `https://<Host>:<Port>`
-  und `tls`), richtest daraus die Lastverteilung in Apache ein und lädst Apache neu. Den Anker
-  schreibst du mit `config.SaveAnchor`. Vor deiner ersten Fassung der Vertrauensliste hat ngc-web
-  das aus `api_pins` getan.
+  und `tls`), richtest daraus die Lastverteilung in Apache ein und lädst Apache neu. Das tust du,
+  wenn sich die API-Server der Vertrauensliste ändern, und auch, wenn eine Verbindung zu einer API
+  an der Zertifikatsprüfung scheitert: Dann holst du ihr aktuelles Zertifikat neu, nimmst es nur,
+  wenn sein Schlüssel zum Fingerabdruck passt, und lädst Apache neu. Vertrauen trägt nur der
+  Fingerabdruck, nicht das Zertifikat; so sperrt weder ein erneuertes Zertifikat noch ein Datum
+  Apache aus. Den Anker schreibst du mit `config.SaveAnchor`. Vor deiner ersten Fassung der
+  Vertrauensliste hat ngc-web das aus `api_pins` getan.
 - Der Dienst „virtuelles Terminal" als Beispiel-Dienst.
 
 ## Tests
