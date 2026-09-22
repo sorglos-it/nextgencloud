@@ -25,8 +25,9 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   `session.HTTPStatus`, Inhalt `wire.Error`, jede Antwort mit `Cache-Control: no-store`, Anfragen
   nur mit `Content-Type: application/json`; das Cookie mit `session.CookieAttributes`; `from` nur
   über `session.ParseFrom`. Jede fehlgeschlagene Anmeldung ist gleich `E_LOGIN`, nach zu vielen
-  Fehlversuchen kommt `E_LOCKED` mit `Retry-After`. `GET /api/v1/trust` antwortet nur mit Sitzung,
-  und mit 204, wenn nichts Neueres da ist.
+  Fehlversuchen kommt `E_LOCKED` mit `Retry-After`. Die Sperre führst du je Anmeldename, auch für
+  Namen, die es nicht gibt, damit auch `E_LOCKED` nie verrät, ob ein Benutzer existiert.
+  `GET /api/v1/trust` antwortet nur mit Sitzung, und mit 204, wenn nichts Neueres da ist.
 - Ersteinrichtung: Den Einmal-Code (`session.ValidSetupCode`) kann nur root lesen (ulh zeigt ihn),
   und er kommt nie ins Log. `GET /api/v1/setup` antwortet mit `session.SetupOffer`: dein
   `session.SetupInfo` als JSON und `session.OfferMAC` über genau diese Bytes. Darin dein Knoten
@@ -93,10 +94,13 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
 - Beitritt weiterer API-Server: Die `tunnel.JoinRequest` kommt an `tunnel.PathJoin`
   (`tunnel.ParseJoinRequest`, MAC mit `tunnel.JoinRequest.Verify` und dem Geheimnis des Codes, das
   genau einmal gilt: `dbapi.OnceJoin`). Du legst sie als `dbapi.BlobJoin` ab und zeigst sie mit
-  `ngc.users/pending-api` (`core.PendingAPI`); den Fingerabdruck rechnet die Shell. Mehrere APIs
-  teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen. Wie ein neuer
-  API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel bekommt, legst du selbst
-  fest.
+  `ngc.users/pending-api` (`core.PendingAPI`); den Fingerabdruck rechnet die Shell. Trittst du
+  selbst bei, schickst du deine `tunnel.JoinRequest` per POST an
+  `https://<Host und Port aus url des Codes>` + `tunnel.PathJoin`, TLS mit `tunnel.PinnedTLS` und
+  dem Fingerabdruck des Codes (`tunnel.JoinCode.TLS`), und holst später die gemeinsamen Schlüssel
+  ebenso gepinnt. Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann
+  jede ersetzen. Wie ein neuer API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel
+  bekommt, legst du selbst fest.
 - Apps und Stores: Kataloge prüfen (`store.VerifyCatalog`), Pakete entpacken (`store.Walk`,
   höchstens `store.MaxDirs` Verzeichnisse), Lizenzen prüfen, Schlüssel der Kauf-Apps entpacken
   (`store.UnwrapKey`) und nur an eigene Controller geben. Der globale Store heißt `global`
