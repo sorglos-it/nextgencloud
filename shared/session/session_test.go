@@ -513,7 +513,7 @@ func TestParseSetupOffer(t *testing.T) {
 		{"MaxSetupNodes API nodes", withInfo(func(i *SetupInfo) { i.Nodes = apiNodes(MaxSetupNodes) }), testSetupCode, nil},
 		{"two API nodes in order", withInfo(func(i *SetupInfo) { i.Nodes = append(i.Nodes, api2Node()) }), testSetupCode, nil},
 		{"store name of 64 bytes", withInfo(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 64) }), testSetupCode, nil},
-		{"store URL of 256 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 256-8) }), testSetupCode, nil},
+		{"store URL of 256 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + trusttest.Host(248) }), testSetupCode, nil},
 		{"info of MaxRequest bytes", withMAC(padded(infoJSON, MaxRequest)), testSetupCode, nil},
 
 		// The answer around the info.
@@ -555,7 +555,9 @@ func TestParseSetupOffer(t *testing.T) {
 		{"store name with a line feed", withInfo(func(i *SetupInfo) { i.Store.Name = "NGC\nStore" }), testSetupCode, ErrMessage},
 		{"store name of 65 bytes", withInfo(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 65) }), testSetupCode, ErrMessage},
 		{"store URL with http", withInfo(func(i *SetupInfo) { i.Store.URL = "http://store.ngc.example" }), testSetupCode, ErrMessage},
-		{"store URL of 257 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 257-8) }), testSetupCode, ErrMessage},
+		{"store URL of 257 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + trusttest.Host(249) }), testSetupCode, ErrMessage},
+		{"API node URL without a port", withInfo(func(i *SetupInfo) { i.Nodes[0].URL = "wss://api-1.test/tunnel" }), testSetupCode, ErrMessage},
+		{"store URL with a trailing slash", withInfo(func(i *SetupInfo) { i.Store.URL += "/" }), testSetupCode, ErrMessage},
 	}
 	for _, c := range cases {
 		got, err := ParseSetupOffer(c.body, c.code)
@@ -978,7 +980,9 @@ func setupVectors(t testing.TB) setupVector {
 			{Name: "info with a store name that is no text", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.Name = "NGC\nStore" }), testSetupCode), want: ErrMessage},
 			{Name: "info with a store name of 65 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 65) }), testSetupCode), want: ErrMessage},
 			{Name: "info with a store URL of plain http", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "http://store.ngc.example" }), testSetupCode), want: ErrMessage},
-			{Name: "info with a store URL of 257 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 257-8) }), testSetupCode), want: ErrMessage},
+			{Name: "info with a store URL of 257 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "https://" + trusttest.Host(249) }), testSetupCode), want: ErrMessage},
+			{Name: "info with an API node address that is no tunnel URL",
+				Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes[0].URL = "wss://api-1.test/tunnel" }), testSetupCode), want: ErrMessage},
 		},
 		Requests: []setupPost{
 			{Name: "valid", Request: post(good, testSetupCode), Valid: true},

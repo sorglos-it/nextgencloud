@@ -196,6 +196,16 @@ func vectors(t *testing.T) []vector {
 	_, ctlPin.Nodes[1].TLS = trusttest.APITLS(0xC1, "ctl-1.test")
 	controllerWithPin := admin.Sign(t, ctlPin)
 
+	// Addresses land in the configuration of Apache and of the database
+	// driver, so a version whose addresses break the grammar is no version,
+	// even with a correct signature.
+	feedURL := trusttest.Next(t, g)
+	feedURL.Nodes[0].URL += "\x0a"
+	apiURLWithFeed := admin.Sign(t, feedURL)
+	slashStore := trusttest.Next(t, g)
+	slashStore.Stores[0].URL += "/"
+	storeURLWithSlash := admin.Sign(t, slashStore)
+
 	return []vector{
 		{"genesis", anchor(t, g), c[:1], true, 1},
 		{"admin adds a user, user adds an own key, passkey admin re-signs", anchor(t, g), full, true, 4},
@@ -219,6 +229,8 @@ func vectors(t *testing.T) []vector {
 		{"password-too member without a password key", anchor(t, g), []trust.Signed{g, carolNoPassword}, false, 0},
 		{"API node without a TLS pin", anchor(t, g), []trust.Signed{g, apiWithoutPin}, false, 0},
 		{"controller with a TLS pin", anchor(t, g), []trust.Signed{g, controllerWithPin}, false, 0},
+		{"API node with a line feed in its URL", anchor(t, g), []trust.Signed{g, apiURLWithFeed}, false, 0},
+		{"store URL with a trailing slash", anchor(t, g), []trust.Signed{g, storeURLWithSlash}, false, 0},
 	}
 }
 
@@ -242,6 +254,8 @@ var vectorErrors = map[string]error{
 	"password-too member without a password key": trust.ErrInvalid,
 	"API node without a TLS pin":                 trust.ErrInvalid,
 	"controller with a TLS pin":                  trust.ErrInvalid,
+	"API node with a line feed in its URL":       trust.ErrInvalid,
+	"store URL with a trailing slash":            trust.ErrInvalid,
 }
 
 func TestVectors(t *testing.T) {
@@ -398,12 +412,15 @@ func TestValidAPINode(t *testing.T) {
 	if !trust.ValidAPINode(api) {
 		t.Fatal("api-1 of Genesis refused")
 	}
-	host := func(n int) string { return "wss://" + strings.Repeat("a", n-len("wss://")-len("/tunnel")) + "/tunnel" }
+	host := func(n int) string { return "wss://" + trusttest.Host(n-18) + ":7443/tunnel" }
 	for name, c := range map[string]struct {
 		mutate func(n *trust.Node)
 		valid  bool
 	}{
 		"URL of 256 bytes":             {func(n *trust.Node) { n.URL = host(256) }, true},
+		"URL with an IPv6 host":        {func(n *trust.Node) { n.URL = "wss://[2001:db8::1]:7443/tunnel" }, true},
+		"URL without a port":           {func(n *trust.Node) { n.URL = "wss://api-1.test/tunnel" }, false},
+		"URL with a line feed":         {func(n *trust.Node) { n.URL += "\x0a" }, false},
 		"name of 64 bytes of umlauts":  {func(n *trust.Node) { n.Name = strings.Repeat("\u00e4", 32) }, true},
 		"kind controller":              {func(n *trust.Node) { n.Kind = trust.NodeController }, false},
 		"ID not a name":                {func(n *trust.Node) { n.ID = "API 1" }, false},
@@ -435,22 +452,25 @@ func TestValidStore(t *testing.T) {
 	if !trust.ValidStore(global) {
 		t.Fatal("global store of Genesis refused")
 	}
-	url := func(n int) string { return "https://" + strings.Repeat("s", n-len("https://")) }
+	url := func(n int) string { return "https://" + trusttest.Host(n-8) }
 	for name, c := range map[string]struct {
 		mutate func(s *trust.Store)
 		valid  bool
 	}{
-		"another ID":            {func(s *trust.Store) { s.ID = "other" }, true},
-		"URL of 256 bytes":      {func(s *trust.Store) { s.URL = url(256) }, true},
-		"name of 64 bytes":      {func(s *trust.Store) { s.Name = strings.Repeat("S", 64) }, true},
-		"ID local":              {func(s *trust.Store) { s.ID = trust.StoreLocal }, false},
-		"ID not a name":         {func(s *trust.Store) { s.ID = "Global" }, false},
-		"no name":               {func(s *trust.Store) { s.Name = "" }, false},
-		"name with a line feed": {func(s *trust.Store) { s.Name = "NGC\nStore" }, false},
-		"name of 65 bytes":      {func(s *trust.Store) { s.Name = strings.Repeat("S", 65) }, false},
-		"URL with http":         {func(s *trust.Store) { s.URL = "http://store.ngc.example" }, false},
-		"URL of 257 bytes":      {func(s *trust.Store) { s.URL = url(257) }, false},
-		"key of 31 bytes":       {func(s *trust.Store) { s.Key = s.Key[:31] }, false},
+		"another ID":                {func(s *trust.Store) { s.ID = "other" }, true},
+		"URL of 256 bytes":          {func(s *trust.Store) { s.URL = url(256) }, true},
+		"URL with a path":           {func(s *trust.Store) { s.URL = "https://store.ngc.example/ngc" }, true},
+		"name of 64 bytes":          {func(s *trust.Store) { s.Name = strings.Repeat("S", 64) }, true},
+		"URL with a trailing slash": {func(s *trust.Store) { s.URL += "/" }, false},
+		"URL with user info":        {func(s *trust.Store) { s.URL = "https://user@store.ngc.example" }, false},
+		"ID local":                  {func(s *trust.Store) { s.ID = trust.StoreLocal }, false},
+		"ID not a name":             {func(s *trust.Store) { s.ID = "Global" }, false},
+		"no name":                   {func(s *trust.Store) { s.Name = "" }, false},
+		"name with a line feed":     {func(s *trust.Store) { s.Name = "NGC\nStore" }, false},
+		"name of 65 bytes":          {func(s *trust.Store) { s.Name = strings.Repeat("S", 65) }, false},
+		"URL with http":             {func(s *trust.Store) { s.URL = "http://store.ngc.example" }, false},
+		"URL of 257 bytes":          {func(s *trust.Store) { s.URL = url(257) }, false},
+		"key of 31 bytes":           {func(s *trust.Store) { s.Key = s.Key[:31] }, false},
 	} {
 		s := global
 		c.mutate(&s)
