@@ -91,7 +91,7 @@ type Node struct {
 	Name      string    `json:"name"`
 	Noise     enc.Bytes `json:"noise"`               // X25519 static key: tunnel, and for controllers end to end
 	Sign      enc.Bytes `json:"sign,omitempty"`      // API only: Ed25519 key that signs API certificates
-	URL       string    `json:"url,omitempty"`       // API only: tunnel address, wss://host:port/tunnel
+	URL       string    `json:"url,omitempty"`       // API only: tunnel address (ValidTunnelURL)
 	TLS       enc.Bytes `json:"tls,omitempty"`       // API only: TLSPin of its TLS key; controllers and Apache accept only a certificate with this key
 	RootUsers []string  `json:"rootUsers,omitempty"` // controller only
 	RootRoles []string  `json:"rootRoles,omitempty"` // controller only
@@ -101,7 +101,7 @@ type Node struct {
 type Store struct {
 	ID   string    `json:"id"`
 	Name string    `json:"name"`
-	URL  string    `json:"url"`
+	URL  string    `json:"url"` // ValidStoreURL
 	Key  enc.Bytes `json:"key"` // Ed25519 key that signs the catalog
 }
 
@@ -166,28 +166,24 @@ func TLSPin(spki []byte) []byte {
 	return h[:]
 }
 
-// maxURL bounds Node.URL and Store.URL, as tunnel.MaxURL bounds the URL of a
-// code.
-const maxURL = 256
-
 // ValidAPINode reports whether n is a well-formed API node: of kind api, an
 // ID (wire.ValidName), a name (wire.ValidText, 64), a 32-byte Noise key, a
-// 32-byte signing key, a wss:// URL of at most 256 bytes, a 32-byte TLS pin
+// 32-byte signing key, a tunnel address (ValidTunnelURL), a 32-byte TLS pin
 // and no root lists. Validate uses it; session.ParseSetupOffer too.
 func ValidAPINode(n Node) bool {
 	return n.Kind == NodeAPI && validNode(n) && len(n.Sign) == ed25519.PublicKeySize &&
-		strings.HasPrefix(n.URL, "wss://") && len(n.URL) <= maxURL && len(n.TLS) == sha256.Size &&
+		ValidTunnelURL(n.URL) && len(n.TLS) == sha256.Size &&
 		len(n.RootUsers)+len(n.RootRoles) == 0
 }
 
 // ValidStore reports whether s is a well-formed store: an ID
 // (wire.ValidName) other than StoreLocal, a name (wire.ValidText, 64), an
-// https:// URL of at most 256 bytes and a 32-byte key. Validate uses it;
+// address (ValidStoreURL) and a 32-byte key. Validate uses it;
 // session.ParseSetupOffer too.
 func ValidStore(s Store) bool {
 	// StoreLocal marks uploaded apps, so no catalog key may claim it.
 	return wire.ValidName(s.ID) && s.ID != StoreLocal && wire.ValidText(s.Name, 64) &&
-		strings.HasPrefix(s.URL, "https://") && len(s.URL) <= maxURL && len(s.Key) == ed25519.PublicKeySize
+		ValidStoreURL(s.URL) && len(s.Key) == ed25519.PublicKeySize
 }
 
 // validNode checks what every node has, whatever its kind: an ID, a name and

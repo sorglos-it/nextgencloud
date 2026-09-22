@@ -65,8 +65,17 @@ func testCatalog() Catalog {
 	}}
 }
 
+// licenseApp is the app testLicense is issued for, and so the app
+// VerifyLicense and VerifyLicenseFor must be given. store.json carries it as
+// licenseApp, beside installation and installKey, so another implementation
+// reads every input of the check from the file.
+const licenseApp = "org.sorglos.terminal"
+
+// otherApp is an app the installation holds no license for.
+const otherApp = "org.sorglos.mail"
+
 func testLicense() License {
-	return License{ID: "L-1", Store: GlobalID, App: "org.sorglos.terminal", Installation: trusttest.ID(0x11),
+	return License{ID: "L-1", Store: GlobalID, App: licenseApp, Installation: trusttest.ID(0x11),
 		InstallKey: install.Public, Per: PerUser, Users: 5, Issued: issued, Expires: issued + 30*86400,
 		Key: &WrappedKey{Ephemeral: bytes.Repeat([]byte{2}, 32), Nonce: bytes.Repeat([]byte{3}, 12), Sealed: bytes.Repeat([]byte{4}, 48)}}
 }
@@ -162,15 +171,36 @@ func TestEmptyCatalog(t *testing.T) {
 
 func TestLicense(t *testing.T) {
 	env := signJSON(t, storeKey, sign.PurposeLicense, testLicense())
-	l, err := VerifyLicense(env, global, trusttest.ID(0x11), install.Public)
+	l, err := VerifyLicense(env, global, trusttest.ID(0x11), licenseApp, install.Public)
 	if err != nil {
 		t.Fatalf("valid: %v", err)
 	}
-	if _, err := VerifyLicense(env, global, trusttest.ID(0x12), install.Public); err != ErrLicense {
+	if _, err := VerifyLicense(env, global, trusttest.ID(0x12), licenseApp, install.Public); err != ErrLicense {
 		t.Errorf("other installation: %v", err)
 	}
-	if _, err := VerifyLicense(env, global, trusttest.ID(0x11), bytes.Repeat([]byte{9}, 32)); err != ErrLicense {
+	if _, err := VerifyLicense(env, global, trusttest.ID(0x11), licenseApp, bytes.Repeat([]byte{9}, 32)); err != ErrLicense {
 		t.Errorf("other installation key: %v", err)
+	}
+	// A license binds to one app, or the API would unlock an expensive app
+	// with the license of a cheap one on the same installation. Both
+	// functions refuse it, and with the same error.
+	if _, err := VerifyLicense(env, global, trusttest.ID(0x11), otherApp, install.Public); err != ErrLicense {
+		t.Errorf("other app: %v", err)
+	}
+	if _, err := VerifyLicenseFor(env, global, trusttest.ID(0x11), otherApp); err != ErrLicense {
+		t.Errorf("other app, as a controller checks it: %v", err)
+	}
+	// The same the other way round: a license the store really issued for
+	// another app, held against this one on the same installation and with
+	// the right install key.
+	mail := testLicense()
+	mail.App = otherApp
+	envMail := signJSON(t, storeKey, sign.PurposeLicense, mail)
+	if _, err := VerifyLicense(envMail, global, trusttest.ID(0x11), licenseApp, install.Public); err != ErrLicense {
+		t.Errorf("license issued for another app: %v", err)
+	}
+	if _, err := VerifyLicenseFor(envMail, global, trusttest.ID(0x11), licenseApp); err != ErrLicense {
+		t.Errorf("license issued for another app, as a controller checks it: %v", err)
 	}
 	for _, c := range []struct {
 		now  int64
@@ -209,6 +239,70 @@ func TestLicense(t *testing.T) {
 	}
 }
 
+// TestVerifyLicenseFor checks what a controller can check on its own, and
+// that VerifyLicense is the stronger check: every license VerifyLicenseFor
+// refuses, VerifyLicense refuses with the same error. The one difference is
+// the other way round: a controller never sees the installation's install
+// key, so a license wrapped for another one passes here and only
+// VerifyLicense, which the API runs, refuses it.
+func TestVerifyLicenseFor(t *testing.T) {
+	const app = licenseApp
+	installation := trusttest.ID(0x11)
+	env := signJSON(t, storeKey, sign.PurposeLicense, testLicense())
+	l, err := VerifyLicenseFor(env, global, installation, app)
+	if err != nil || l.App != app || l.State(issued+86400) != LicenseValid {
+		t.Fatalf("valid: %v", err)
+	}
+
+	otherInstall, _ := trusttest.NodeKeys(0x92)
+	foreign := testLicense()
+	foreign.InstallKey = otherInstall.Public
+	envForeign := signJSON(t, storeKey, sign.PurposeLicense, foreign)
+	if _, err := VerifyLicense(envForeign, global, installation, app, install.Public); err != ErrLicense {
+		t.Errorf("VerifyLicense, license for another install key: %v", err)
+	}
+	if _, err := VerifyLicenseFor(envForeign, global, installation, app); err != nil {
+		t.Errorf("VerifyLicenseFor, license for another install key: %v", err)
+	}
+
+	signed := func(change func(l *License)) sign.Envelope {
+		l := testLicense()
+		change(&l)
+		return signJSON(t, storeKey, sign.PurposeLicense, l)
+	}
+	noJSON, err := sign.Sign(storeKey, sign.PurposeLicense, []byte("no json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name         string
+		env          sign.Envelope
+		installation string
+		app          string
+		want         error
+	}{
+		{name: "another app", env: env, installation: installation, app: otherApp, want: ErrLicense},
+		{name: "another installation", env: env, installation: trusttest.ID(0x12), app: app, want: ErrLicense},
+		{name: "another store", env: signed(func(l *License) { l.Store = "other" }), installation: installation, app: app, want: ErrLicense},
+		{name: "per user without users", env: signed(func(l *License) { l.Users = 0 }), installation: installation, app: app, want: ErrLicense},
+		{name: "payload that is no JSON", env: noJSON, installation: installation, app: app, want: ErrLicense},
+		{name: "signed with the release key", env: signJSON(t, releaseKey, sign.PurposeLicense, testLicense()),
+			installation: installation, app: app, want: sign.ErrWrongKey},
+		{name: "signed for purpose catalog", env: signJSON(t, storeKey, sign.PurposeCatalog, testLicense()),
+			installation: installation, app: app, want: sign.ErrBadSignature},
+	} {
+		if _, err := VerifyLicenseFor(c.env, global, c.installation, c.app); err != c.want {
+			t.Errorf("%s: VerifyLicenseFor got %v, want %v", c.name, err, c.want)
+		}
+		// The API's check is the controller's plus the install key, so it
+		// refuses the same licenses for the same reason, even with the right
+		// key in hand.
+		if _, err := VerifyLicense(c.env, global, c.installation, c.app, install.Public); err != c.want {
+			t.Errorf("%s: VerifyLicense got %v, want %v", c.name, err, c.want)
+		}
+	}
+}
+
 func TestRelease(t *testing.T) {
 	env := signJSON(t, releaseKey, sign.PurposeRelease, testRelease())
 	pub := releaseKey.Public().(ed25519.PublicKey)
@@ -237,6 +331,17 @@ func TestRelease(t *testing.T) {
 	}
 }
 
+// badUpdateReports are update reports ParseUpdateReport must refuse, one per
+// rule: TestUpdates checks them, FuzzParseUpdateReport seeds with them.
+var badUpdateReports = []string{
+	`{"target":"ngc-api","state":"exploded"}`,
+	`{"target":"ngc-api","state":"failed","message":null}`,
+	`{"target":"ngc-api","state":"failed","version":"1.1"}`,
+	`{"target":"ngc.store","state":"failed"}`,
+	`{"target":"ngc-api","state":"failed","message":"a\nb"}`,
+	`{"target":"ngc-api","state":"failed"} {}`,
+}
+
 func TestUpdates(t *testing.T) {
 	for _, target := range []string{trust.AutoWeb, trust.AutoSystem, "org.sorglos.terminal"} {
 		if !ValidTarget(target) {
@@ -252,9 +357,14 @@ func TestUpdates(t *testing.T) {
 	if _, err := ParseUpdateReport(r); err != nil {
 		t.Errorf("report: %v", err)
 	}
-	for _, bad := range []string{`{"target":"ngc-api","state":"exploded"}`, `{"target":"ngc-api","state":"failed","message":null}`,
-		`{"target":"ngc-api","state":"failed","version":"1.1"}`, `{"target":"ngc.store","state":"failed"}`,
-		`{"target":"ngc-api","state":"failed","message":"a\nb"}`, `{"target":"ngc-api","state":"failed"} {}`} {
+	// An update the app's grants do not cover is a state of its own, so the
+	// shell can offer the activation instead of an error.
+	g, _ := json.Marshal(UpdateReport{Target: "org.sorglos.terminal", Version: "2.0.0", State: UpdateNeedsGrants,
+		Message: "Die neue Fassung braucht mehr Rechte."})
+	if got, err := ParseUpdateReport(g); err != nil || got.State != UpdateNeedsGrants {
+		t.Errorf("needsgrants report: %+v, %v", got, err)
+	}
+	for _, bad := range badUpdateReports {
 		if _, err := ParseUpdateReport([]byte(bad)); err != ErrUpdate {
 			t.Errorf("bad report %s: %v", bad, err)
 		}
@@ -547,7 +657,8 @@ func catalogRejects(t testing.TB) []catalogReject {
 }
 
 // licenseReject is a license that VerifyLicense(license, global,
-// installation, installKey) must refuse, for the reason its name gives.
+// installation, licenseApp, installKey) must refuse, for the reason its name
+// gives.
 type licenseReject struct {
 	Name    string        `json:"name"`
 	License sign.Envelope `json:"license"`
@@ -569,6 +680,10 @@ func licenseRejects(t testing.TB) []licenseReject {
 		{Name: "other installation", License: signed(func(l *License) { l.Installation = trusttest.ID(0x12) }), want: ErrLicense, bound: true},
 		{Name: "other install key", License: signed(func(l *License) { l.InstallKey = other.Public }), want: ErrLicense, bound: true},
 		{Name: "other store", License: signed(func(l *License) { l.Store = "other" }), want: ErrLicense, bound: true},
+		// A license the store really signed, for the right installation and
+		// the right install key, but for another app: whoever skips the app
+		// check fails here and nowhere else.
+		{Name: "other app", License: signed(func(l *License) { l.App = otherApp }), want: ErrLicense, bound: true},
 		{Name: "per user without users", License: signed(func(l *License) { l.Users = 0 }), want: ErrLicense},
 		{Name: "grace over 90 days", License: signed(func(l *License) { l.Grace = MaxGrace + 1 }), want: ErrLicense},
 	}
@@ -614,8 +729,10 @@ func releaseRejects(t testing.TB) []releaseReject {
 
 // vector is store.json. Catalogs and licenses are verified against the
 // store (store, storeKey), releases against releaseKey, licenses for
-// installation and installKey. catalogLastSeq and releaseLastSeq are the
-// seqs of the valid catalog and release themselves: an equal seq is no
+// installation, licenseApp and installKey - all three are in the file, so an
+// implementation in another language reads every input of the check from it
+// and cannot pass by leaving one out. catalogLastSeq and releaseLastSeq are
+// the seqs of the valid catalog and release themselves: an equal seq is no
 // rollback.
 type vector struct {
 	Store          string          `json:"store"`
@@ -625,6 +742,7 @@ type vector struct {
 	CatalogRejects []catalogReject `json:"catalogRejects"`
 	Installation   string          `json:"installation"`
 	InstallKey     enc.Bytes       `json:"installKey"`
+	LicenseApp     string          `json:"licenseApp"` // the app the licenses are checked for
 	License        sign.Envelope   `json:"license"`
 	LicenseRejects []licenseReject `json:"licenseRejects"`
 	ReleaseKey     enc.Bytes       `json:"releaseKey"`
@@ -651,6 +769,7 @@ func TestVectors(t *testing.T) {
 		CatalogRejects: catalogRejects(t),
 		Installation:   trusttest.ID(0x11),
 		InstallKey:     install.Public,
+		LicenseApp:     licenseApp,
 		License:        signJSON(t, storeKey, sign.PurposeLicense, testLicense()),
 		LicenseRejects: licenseRejects(t),
 		ReleaseKey:     enc.Bytes(releaseKey.Public().(ed25519.PublicKey)),
@@ -663,7 +782,7 @@ func TestVectors(t *testing.T) {
 	if c, err := VerifyCatalog(v.Catalog, st, v.CatalogLastSeq); err != nil || c.Seq != v.CatalogLastSeq {
 		t.Errorf("catalog at its own seq: %v", err)
 	}
-	if _, err := VerifyLicense(v.License, st, v.Installation, v.InstallKey); err != nil {
+	if _, err := VerifyLicense(v.License, st, v.Installation, v.LicenseApp, v.InstallKey); err != nil {
 		t.Errorf("license: %v", err)
 	}
 	if r, err := VerifyRelease(v.Release, releasePub, v.ReleaseLastSeq); err != nil || r.Seq != v.ReleaseLastSeq {
@@ -716,7 +835,7 @@ func TestVectors(t *testing.T) {
 		only(r.Name, r.Catalog, v.Catalog, r.want, r.bound, err == nil)
 	}
 	for _, r := range v.LicenseRejects {
-		if _, err := VerifyLicense(r.License, st, v.Installation, v.InstallKey); err != r.want || r.Valid {
+		if _, err := VerifyLicense(r.License, st, v.Installation, v.LicenseApp, v.InstallKey); err != r.want || r.Valid {
 			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
 		}
 		signedAs(r.Name, r.License, signer{}, r.want, storePub, sign.PurposeLicense)
@@ -965,5 +1084,39 @@ func FuzzCatalog(f *testing.F) {
 		_, _ = parseLicense(b)
 		_, _ = parseRelease(b)
 		_, _ = ParseUpdateReport(b)
+	})
+}
+
+// FuzzParseUpdateReport checks that an accepted report survives a round
+// trip: what the API reads is what a controller can send again unchanged, so
+// no report can mean one thing on the way in and another on the way out.
+func FuzzParseUpdateReport(f *testing.F) {
+	for _, state := range []string{UpdateAvailable, UpdateDownloaded, UpdateInstalling, UpdateInstalled,
+		UpdateRolledBack, UpdateFailed, UpdateRejected, UpdateNeedsGrants} {
+		b, err := json.Marshal(UpdateReport{Target: trust.AutoAPI, Version: "1.1.0", State: state, Message: "Meldung."})
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b)
+	}
+	for _, bad := range badUpdateReports {
+		f.Add([]byte(bad))
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		r, err := ParseUpdateReport(b)
+		if err != nil {
+			if err != ErrUpdate {
+				t.Fatalf("%q: got %v, want %v", b, err, ErrUpdate)
+			}
+			return
+		}
+		again, err := json.Marshal(r)
+		if err != nil {
+			t.Fatalf("encode %+v: %v", r, err)
+		}
+		back, err := ParseUpdateReport(again)
+		if err != nil || back != r {
+			t.Fatalf("round trip of %+v: %+v, %v", r, back, err)
+		}
 	})
 }

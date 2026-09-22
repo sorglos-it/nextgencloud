@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,19 @@ import (
 
 // ID returns a valid ID made of 16 bytes of fill.
 func ID(fill byte) string { return enc.B64.EncodeToString(bytes.Repeat([]byte{fill}, 16)) }
+
+// Host returns a valid host name of exactly n bytes (1 to 253): labels of up
+// to 62 letters a, joined by '.'. Tests build addresses at their limits with it.
+func Host(n int) string {
+	var b strings.Builder
+	for n > 63 {
+		b.WriteString(strings.Repeat("a", 62))
+		b.WriteByte('.')
+		n -= 63
+	}
+	b.WriteString(strings.Repeat("a", n))
+	return b.String()
+}
 
 // Signer holds a password key or a passkey. Keys come from a fixed seed
 // instead of Argon2id or a real authenticator so that tests stay fast; the
@@ -154,10 +168,13 @@ const GenesisPasskeyFill = 7
 // "admin2" who signs with a passkey (NewPasskey(GenesisPasskeyFill)) against
 // the RP ngc.example.org, API "api-1" (NodeKeys(0xA1), with the TLS pin of
 // APITLS(0xE1, "api-1.test")) and controller "ctl-1" (NodeKeys(0xC1)), on
-// which admins may run root tasks. Also carries the global store (ID
-// trust.StoreGlobal, as the setup puts it into version 1) and two standing
-// approvals (system, and ngc-controller updates signed with the release key
-// NodeKeys(ReleaseFill)) so a realistic list exercises those fields too.
+// which admins may run root tasks. An API node is named by its node ID, as
+// core.PendingAPI and the setup of an API server (apps/server-api/CLAUDE.md)
+// name them; only controllers carry a display name. Also carries the global
+// store (ID trust.StoreGlobal, as the setup puts it into version 1) and two
+// standing approvals (system, and ngc-controller updates signed with the
+// release key NodeKeys(ReleaseFill)) so a realistic list exercises those
+// fields too.
 func Genesis(admin Signer) *trust.List {
 	apiDH, apiSign := NodeKeys(0xA1)
 	_, apiPin := APITLS(0xE1, "api-1.test")
@@ -174,7 +191,7 @@ func Genesis(admin Signer) *trust.List {
 		},
 		Roles: []trust.Role{{Name: trust.RoleAdmin, Level: trust.LevelCritical}},
 		Nodes: []trust.Node{
-			{ID: "api-1", Kind: trust.NodeAPI, Name: "API 1", Noise: apiDH.Public,
+			{ID: "api-1", Kind: trust.NodeAPI, Name: "api-1", Noise: apiDH.Public,
 				Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)), URL: "wss://api-1.test:7443/tunnel", TLS: apiPin},
 			{ID: "ctl-1", Kind: trust.NodeController, Name: "Dienste", Noise: ctlDH.Public, RootRoles: []string{trust.RoleAdmin}},
 		},

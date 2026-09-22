@@ -76,9 +76,18 @@ func TestPairCode(t *testing.T) {
 	shortPin.TLS = shortPin.TLS[:31]
 	noPin := c
 	noPin.TLS = nil
+	// The receiver dials this address and it reaches configurations from
+	// there, so it has to be a tunnel address and nothing else.
+	noPort := c
+	noPort.URL = "wss://api-1.test/tunnel"
+	feed := c
+	feed.URL = "wss://api-1.test:7443/tunnel\x0a"
+	userInfo := c
+	userInfo.URL = "wss://user@api-1.test:7443/tunnel"
 	long := PairPrefix + strings.Repeat("A", MaxPairCode)
 	for _, s := range []string{"", PairPrefix, PairPrefix + "!!", strings.TrimPrefix(c.String(), PairPrefix), short.String(),
-		http.String(), shortPin.String(), noPin.String(), long, JoinCode(c).String(), c.String() + "\nA"} {
+		http.String(), shortPin.String(), noPin.String(), noPort.String(), feed.String(), userInfo.String(), long,
+		JoinCode(c).String(), c.String() + "\nA"} {
 		if _, err := ParsePairCode(s); err != ErrPairCode {
 			t.Errorf("%.40q: %v", s, err)
 		}
@@ -137,7 +146,7 @@ func pairChain(t testing.TB) []trust.Signed {
 		Keys: []proof.UserKey{trusttest.NewSigner(2).Key}})
 	dh, sig := trusttest.NodeKeys(0xA2)
 	_, pin := trusttest.APITLS(0xE2, "api-2.test")
-	api2 := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: dh.Public,
+	api2 := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: dh.Public,
 		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
 	l2.Nodes = slices.Insert(l2.Nodes, 1, api2) // api-1, api-2, ctl-1
 	return []trust.Signed{g, admin.Sign(t, l2)}
@@ -329,7 +338,10 @@ func TestJoinCode(t *testing.T) {
 		"no TLS pin":          func(r *JoinRequest) { r.TLS = nil },
 		"URL with https":      func(r *JoinRequest) { r.URL = "https://api-3.test:7443/tunnel" },
 		"no URL":              func(r *JoinRequest) { r.URL = "" },
-		"URL over MaxURL":     func(r *JoinRequest) { r.URL = "wss://" + strings.Repeat("a", MaxURL-len("wss://")+1) },
+		"URL without a port":  func(r *JoinRequest) { r.URL = "wss://api-3.test/tunnel" },
+		"URL with a query":    func(r *JoinRequest) { r.URL = "wss://api-3.test:7443/tunnel?x=1" },
+		"URL host upper case": func(r *JoinRequest) { r.URL = "wss://API-3.test:7443/tunnel" },
+		"URL over MaxURL":     func(r *JoinRequest) { r.URL = "wss://" + trusttest.Host(MaxURL-18+1) + ":7443/tunnel" },
 		"mac of 31 bytes":     func(r *JoinRequest) { r.MAC = r.MAC[:31] },
 	} {
 		bad := r
@@ -339,7 +351,7 @@ func TestJoinCode(t *testing.T) {
 		}
 	}
 	atMax := r
-	atMax.URL = "wss://" + strings.Repeat("a", MaxURL-len("wss://"))
+	atMax.URL = "wss://" + trusttest.Host(MaxURL-18) + ":7443/tunnel"
 	if _, err := ParseJoinRequest(mustJSON(t, atMax)); err != nil {
 		t.Errorf("URL of MaxURL bytes: %v", err)
 	}

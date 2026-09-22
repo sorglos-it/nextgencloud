@@ -47,6 +47,10 @@ const (
 	UpdateRolledBack = "rolledback"
 	UpdateFailed     = "failed"
 	UpdateRejected   = "rejected" // signature, approval or version check failed
+	// UpdateNeedsGrants is a state of its own, not UpdateRejected: nothing is
+	// wrong with the update, the app may simply not do what it now needs, so
+	// the shell offers the activation instead of an error.
+	UpdateNeedsGrants = "needsgrants" // the new version needs rights the app was not granted (Granted): no install by click or without a user; the admin activates it
 )
 
 // GlobalID is the global store's ID.
@@ -82,12 +86,15 @@ type Package struct {
 	// ui-tar has another.
 	UI        enc.Bytes `json:"ui"`
 	Encrypted bool      `json:"encrypted,omitempty"` // paid apps (Task 15)
-	Needs     []string  `json:"needs,omitempty"`     // as in the manifest, shown before download
-	// MinNGC is the oldest NGC version the app needs, as in the manifest. A
-	// manifest field that NGC version X introduces may appear only in packages
-	// whose minNgc (in the manifest and in the catalog entry) is at least X:
-	// an older NGC never offers such a version, because it could not read the
-	// manifest (strict JSON).
+	// Needs is as in the manifest, shown before download; an update whose
+	// needs are not Granted by the app's grants is not installed without a new
+	// activation (UpdateNeedsGrants).
+	Needs []string `json:"needs,omitempty"`
+	// MinNGC is the oldest NGC version the app needs, as in the manifest
+	// (SupportsMinNGC). A manifest field that NGC version X introduces may
+	// appear only in packages whose minNgc (in the manifest and in the catalog
+	// entry) is at least X: an older NGC never offers such a version, because
+	// it could not read the manifest (strict JSON).
 	MinNGC string `json:"minNgc,omitempty"`
 }
 
@@ -129,7 +136,7 @@ type LicenseState int
 const (
 	LicenseValid   LicenseState = iota
 	LicenseGrace                // expired, but within the grace period: runs, NGC warns
-	LicenseExpired              // controllers do not start the services
+	LicenseExpired              // controllers stop the app's services and start none (tunnel.StateUnlicensed)
 )
 
 // Release is a signed NGC version.
@@ -302,9 +309,13 @@ func parseLicense(b []byte) (*License, error) {
 	return &l, nil
 }
 
-// VerifyLicense checks the signature of the store st and that the license
-// belongs to this installation and its key.
-func VerifyLicense(env sign.Envelope, st trust.Store, installation string, installKey []byte) (*License, error) {
+// verifyLicense checks everything about a license that needs no secret of
+// the installation: the signature of the store st, the form (Validate), and
+// that st issued it for this installation and this app. VerifyLicense and
+// VerifyLicenseFor both go through it, so the API and a controller can never
+// judge the same license differently: VerifyLicense is this and the key
+// check, nothing else.
+func verifyLicense(env sign.Envelope, st trust.Store, installation, app string) (*License, error) {
 	if err := sign.Verify(env, ed25519.PublicKey(st.Key), sign.PurposeLicense); err != nil {
 		return nil, err
 	}
@@ -312,10 +323,39 @@ func VerifyLicense(env sign.Envelope, st trust.Store, installation string, insta
 	if err != nil {
 		return nil, err
 	}
-	if l.Store != st.ID || l.Installation != installation || !bytes.Equal(l.InstallKey, installKey) {
+	if l.Store != st.ID || l.Installation != installation || l.App != app {
 		return nil, ErrLicense
 	}
 	return l, nil
+}
+
+// VerifyLicense checks the signature of the store st and that the license
+// belongs to this installation, to app and to this installation's key. It is
+// VerifyLicenseFor plus the key check, so it refuses everything a controller
+// refuses and with the same error; the app belongs in it, or a license for a
+// cheap app would unlock an expensive one on the same installation. Only the
+// API runs it, because only the API knows installKey.
+func VerifyLicense(env sign.Envelope, st trust.Store, installation, app string, installKey []byte) (*License, error) {
+	l, err := verifyLicense(env, st, installation, app)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(l.InstallKey, installKey) {
+		return nil, ErrLicense
+	}
+	return l, nil
+}
+
+// VerifyLicenseFor checks a license as a controller can, without the
+// installation's key: the signature of the store st (purpose license/v1),
+// the form of the license (Validate), and that st issued it (Store) for this
+// installation (Installation) and for app (App). Only the API can check the
+// rest: that the content key in Key is wrapped for the installation's key
+// (InstallKey; UnwrapKey opens it only with the private key), and how many
+// users a per-user license allows. Whether the services may run, State(now)
+// decides: a controller stops them once it is LicenseExpired.
+func VerifyLicenseFor(env sign.Envelope, st trust.Store, installation, app string) (*License, error) {
+	return verifyLicense(env, st, installation, app)
 }
 
 // maxReleaseFiles is the most files a release lists.
@@ -389,7 +429,8 @@ func ParseUpdateReport(b []byte) (UpdateReport, error) {
 		return UpdateReport{}, ErrUpdate
 	}
 	switch r.State {
-	case UpdateAvailable, UpdateDownloaded, UpdateInstalling, UpdateInstalled, UpdateRolledBack, UpdateFailed, UpdateRejected:
+	case UpdateAvailable, UpdateDownloaded, UpdateInstalling, UpdateInstalled, UpdateRolledBack, UpdateFailed,
+		UpdateRejected, UpdateNeedsGrants:
 	default:
 		return UpdateReport{}, ErrUpdate
 	}

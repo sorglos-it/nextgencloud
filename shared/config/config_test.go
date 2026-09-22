@@ -26,6 +26,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
@@ -377,28 +378,30 @@ func TestValidate(t *testing.T) {
 		mutate func(*Web)
 		valid  bool
 	}{
-		"without passkeys":      {func(w *Web) { w.RP.ID, w.RP.Origins = "", nil }, true},
-		"eight origins":         {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins) }, true},
-		"RP ID of 253 bytes":    {func(w *Web) { w.RP.ID = strings.Repeat(strings.Repeat("a", 62)+".", 4) + "a" }, true},
-		"sixteen apis":          {func(w *Web) { w.APIs = webAPIs(maxList) }, true},
-		"api url of 256 bytes":  {func(w *Web) { w.APIs[1].URL = "https://" + strings.Repeat("x", MaxField-8) }, true},
-		"without apis":          {func(w *Web) { w.APIs = nil }, false},
-		"seventeen apis":        {func(w *Web) { w.APIs = webAPIs(maxList + 1) }, false},
-		"plain http":            {func(w *Web) { w.APIs[0].URL = "http://api-1.ngc.test:7443" }, false},
-		"api url of 257 bytes":  {func(w *Web) { w.APIs[1].URL = "https://" + strings.Repeat("x", MaxField-7) }, false},
-		"api without pin":       {func(w *Web) { w.APIs[1].TLS = nil }, false},
-		"api pin of 31 bytes":   {func(w *Web) { w.APIs[1].TLS = w.APIs[1].TLS[:31] }, false},
-		"api url twice":         {func(w *Web) { w.APIs[1].URL = w.APIs[0].URL }, false},
-		"origin not https":      {func(w *Web) { w.RP.Origins = []string{"http://ngc.example.org"} }, false},
-		"http origin":           {func(w *Web) { w.RP.Origins = append(w.RP.Origins, "http://ngc.example.org") }, false},
-		"nine origins":          {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins + 1) }, false},
-		"origin too long":       {func(w *Web) { w.RP.Origins = []string{"https://" + strings.Repeat("x", MaxField)} }, false},
-		"RP ID with a space":    {func(w *Web) { w.RP.ID = "ngc example.org" }, false},
-		"RP ID in upper case":   {func(w *Web) { w.RP.ID = "NGC.example.org" }, false},
-		"RP ID with a port":     {func(w *Web) { w.RP.ID = "ngc.example.org:443" }, false},
-		"RP ID of 254 bytes":    {func(w *Web) { w.RP.ID = strings.Repeat(strings.Repeat("a", 62)+".", 4) + "ab" }, false},
-		"RP ID without origins": {func(w *Web) { w.RP.Origins = nil }, false},
-		"origins without RP ID": {func(w *Web) { w.RP.ID = "" }, false},
+		"without passkeys":       {func(w *Web) { w.RP.ID, w.RP.Origins = "", nil }, true},
+		"eight origins":          {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins) }, true},
+		"RP ID of 253 bytes":     {func(w *Web) { w.RP.ID = strings.Repeat(strings.Repeat("a", 62)+".", 4) + "a" }, true},
+		"sixteen apis":           {func(w *Web) { w.APIs = webAPIs(maxList) }, true},
+		"api url of 256 bytes":   {func(w *Web) { w.APIs[1].URL = "https://" + trusttest.Host(243) + ":7443" }, true},
+		"without apis":           {func(w *Web) { w.APIs = nil }, false},
+		"seventeen apis":         {func(w *Web) { w.APIs = webAPIs(maxList + 1) }, false},
+		"plain http":             {func(w *Web) { w.APIs[0].URL = "http://api-1.ngc.test:7443" }, false},
+		"api url of 257 bytes":   {func(w *Web) { w.APIs[1].URL = "https://" + trusttest.Host(244) + ":7443" }, false},
+		"api url with a path":    {func(w *Web) { w.APIs[1].URL += "/api" }, false},
+		"api url without a port": {func(w *Web) { w.APIs[1].URL = "https://api-2.ngc.test" }, false},
+		"api without pin":        {func(w *Web) { w.APIs[1].TLS = nil }, false},
+		"api pin of 31 bytes":    {func(w *Web) { w.APIs[1].TLS = w.APIs[1].TLS[:31] }, false},
+		"api url twice":          {func(w *Web) { w.APIs[1].URL = w.APIs[0].URL }, false},
+		"origin not https":       {func(w *Web) { w.RP.Origins = []string{"http://ngc.example.org"} }, false},
+		"http origin":            {func(w *Web) { w.RP.Origins = append(w.RP.Origins, "http://ngc.example.org") }, false},
+		"nine origins":           {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins + 1) }, false},
+		"origin too long":        {func(w *Web) { w.RP.Origins = []string{"https://" + strings.Repeat("x", MaxField)} }, false},
+		"RP ID with a space":     {func(w *Web) { w.RP.ID = "ngc example.org" }, false},
+		"RP ID in upper case":    {func(w *Web) { w.RP.ID = "NGC.example.org" }, false},
+		"RP ID with a port":      {func(w *Web) { w.RP.ID = "ngc.example.org:443" }, false},
+		"RP ID of 254 bytes":     {func(w *Web) { w.RP.ID = strings.Repeat(strings.Repeat("a", 62)+".", 4) + "ab" }, false},
+		"RP ID without origins":  {func(w *Web) { w.RP.Origins = nil }, false},
+		"origins without RP ID":  {func(w *Web) { w.RP.ID = "" }, false},
 	}
 	for name, c := range webCases {
 		w, err := LoadWeb(example(t, "web.json"))
@@ -421,21 +424,28 @@ func TestValidate(t *testing.T) {
 		mutate func(*API)
 		valid  bool
 	}{
-		"session lifetime of 86400":    {func(a *API) { a.SessionLifetime = session.MaxLifetime }, true},
-		"url of 256 bytes":             {func(a *API) { a.URL = "wss://" + strings.Repeat("x", MaxField-6) }, true},
-		"four CA certificates":         {func(a *API) { a.DB.CA = strings.Repeat(ca, maxCACerts) }, true},
-		"CA with white space around":   {func(a *API) { a.DB.CA = " \t\r\n" + ca + "\r\n\t " + ca + " \n" }, true},
-		"CA with CRLF line ends":       {func(a *API) { a.DB.CA = strings.ReplaceAll(ca, "\n", "\r\n") }, true},
-		"CA of MaxCA bytes":            {func(a *API) { a.DB.CA = ca + strings.Repeat(" ", MaxCA-len(ca)) }, true},
-		"SQLite":                       {func(a *API) { a.DB = validSQLite() }, true},
-		"without node":                 {func(a *API) { a.Node = "" }, false},
-		"without url":                  {func(a *API) { a.URL = "" }, false},
-		"https url":                    {func(a *API) { a.URL = "https://api-1.ngc.test:7443/tunnel" }, false},
-		"url of 257 bytes":             {func(a *API) { a.URL = "wss://" + strings.Repeat("x", MaxField-5) }, false},
-		"short key":                    {func(a *API) { a.NoiseKey = NewSecret([]byte{1}) }, false},
-		"mariadb node no colon":        {func(a *API) { a.DB.Nodes = []string{"db-1"} }, false},
+		"session lifetime of 86400":         {func(a *API) { a.SessionLifetime = session.MaxLifetime }, true},
+		"url of 256 bytes":                  {func(a *API) { a.URL = "wss://" + trusttest.Host(238) + ":7443/tunnel" }, true},
+		"mariadb node with an IPv6 address": {func(a *API) { a.DB.Nodes = []string{"[2001:db8::5]:3306"} }, true},
+		"four CA certificates":              {func(a *API) { a.DB.CA = strings.Repeat(ca, maxCACerts) }, true},
+		"CA with white space around":        {func(a *API) { a.DB.CA = " \t\r\n" + ca + "\r\n\t " + ca + " \n" }, true},
+		"CA with CRLF line ends":            {func(a *API) { a.DB.CA = strings.ReplaceAll(ca, "\n", "\r\n") }, true},
+		"CA of MaxCA bytes":                 {func(a *API) { a.DB.CA = ca + strings.Repeat(" ", MaxCA-len(ca)) }, true},
+		"SQLite":                            {func(a *API) { a.DB = validSQLite() }, true},
+		"without node":                      {func(a *API) { a.Node = "" }, false},
+		"without url":                       {func(a *API) { a.URL = "" }, false},
+		"https url":                         {func(a *API) { a.URL = "https://api-1.ngc.test:7443/tunnel" }, false},
+		"url of 257 bytes":                  {func(a *API) { a.URL = "wss://" + trusttest.Host(239) + ":7443/tunnel" }, false},
+		"url without the tunnel path":       {func(a *API) { a.URL = "wss://api-1.ngc.test:7443" }, false},
+		"short key":                         {func(a *API) { a.NoiseKey = NewSecret([]byte{1}) }, false},
+		"mariadb node no colon":             {func(a *API) { a.DB.Nodes = []string{"db-1"} }, false},
+		"mariadb node with DSN parameters": {func(a *API) {
+			a.DB.Nodes = []string{"db-1.ngc.test:3306)/ngc?allowAllFiles=true"}
+		}, false},
+		"mariadb node in upper case":   {func(a *API) { a.DB.Nodes = []string{"DB-1.ngc.test:3306"} }, false},
 		"db password too long":         {func(a *API) { a.DB.Password = NewSecretText(strings.Repeat("x", MaxField+1)) }, false},
-		"store url too long":           {func(a *API) { a.StoreURL = "https://" + strings.Repeat("x", MaxField) }, false},
+		"store url too long":           {func(a *API) { a.StoreURL = "https://" + trusttest.Host(249) }, false},
+		"store url with a query":       {func(a *API) { a.StoreURL += "?x=1" }, false},
 		"session lifetime above 86400": {func(a *API) { a.SessionLifetime = session.MaxLifetime + 1 }, false},
 		"idle longer than the session": {func(a *API) { a.IdleTimeout = a.SessionLifetime + 1 }, false},
 		"MariaDB without CA":           {func(a *API) { a.DB.CA = "" }, false},
@@ -480,6 +490,7 @@ func TestValidate(t *testing.T) {
 		"migrate to SQLite":         {func(c *Controller) { c.Migrate = &sqlite }, true},
 		"name":                      {func(c *Controller) { c.Name = "Server 1" }, false},
 		"api url":                   {func(c *Controller) { c.APIs[0].URL = "https://api-1.ngc.test:7443/tunnel" }, false},
+		"api url with a line feed":  {func(c *Controller) { c.APIs[0].URL += "\x0a" }, false},
 		"api pin of 31 bytes":       {func(c *Controller) { c.APIs[0].TLS = c.APIs[0].TLS[:31] }, false},
 		"api without pin":           {func(c *Controller) { c.APIs[0].TLS = nil }, false},
 		"without apis":              {func(c *Controller) { c.APIs = nil }, false},
@@ -612,8 +623,16 @@ func TestDBTLSConfig(t *testing.T) {
 			t.Errorf("%s: %v, %v", name, cfg, err)
 		}
 	}
-	if cfg, err := (DB{Driver: DriverMariaDB, CA: exampleCA(t)}).TLSConfig(""); cfg != nil || err != ErrConfig {
-		t.Errorf("without a server name: %v, %v", cfg, err)
+	// The name goes into the TLS handshake and names the node whose
+	// certificate must match: only a host of the grammar is one.
+	for name, server := range map[string]string{
+		"without a server name": "",
+		"in upper case":         "DB-1.ngc.test",
+		"with a line feed":      "db-1.ngc.test\x0a",
+	} {
+		if cfg, err := (DB{Driver: DriverMariaDB, CA: exampleCA(t)}).TLSConfig(server); cfg != nil || err != ErrConfig {
+			t.Errorf("server name %s: %v, %v", name, cfg, err)
+		}
 	}
 }
 

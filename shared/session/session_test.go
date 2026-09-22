@@ -54,7 +54,7 @@ func newFixture(t testing.TB) fixture {
 	l := trusttest.Genesis(admin)
 	api2DH, api2Sign := trusttest.NodeKeys(0xA2)
 	_, api2Pin := trusttest.APITLS(0xE2, "api-2.test")
-	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: api2DH.Public,
+	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: api2DH.Public,
 		Sign: enc.Bytes(api2Sign.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: api2Pin}, l.Nodes[1]}
 	carol, carolPasskey, carolPassword := trusttest.ID(0x23), trusttest.NewPasskey(0x63), trusttest.NewSigner(0x64)
 	l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
@@ -305,7 +305,7 @@ func setupInfo() SetupInfo {
 func api2Node() trust.Node {
 	dh, sig := trusttest.NodeKeys(0xA2)
 	_, pin := trusttest.APITLS(0xE2, "api-2.test")
-	return trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: dh.Public,
+	return trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: dh.Public,
 		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
 }
 
@@ -490,7 +490,7 @@ func TestParseSetupOffer(t *testing.T) {
 		nodes := make([]trust.Node, n)
 		for i := range nodes {
 			k := bytes.Repeat([]byte{byte(0x40 + i)}, 32)
-			nodes[i] = trust.Node{ID: fmt.Sprintf("api-%02d", i+1), Kind: trust.NodeAPI, Name: fmt.Sprintf("API %d", i+1),
+			nodes[i] = trust.Node{ID: fmt.Sprintf("api-%02d", i+1), Kind: trust.NodeAPI, Name: fmt.Sprintf("api-%02d", i+1),
 				Noise: k, Sign: k, URL: fmt.Sprintf("wss://api-%d.test:7443/tunnel", i+1), TLS: k}
 		}
 		return nodes
@@ -513,7 +513,7 @@ func TestParseSetupOffer(t *testing.T) {
 		{"MaxSetupNodes API nodes", withInfo(func(i *SetupInfo) { i.Nodes = apiNodes(MaxSetupNodes) }), testSetupCode, nil},
 		{"two API nodes in order", withInfo(func(i *SetupInfo) { i.Nodes = append(i.Nodes, api2Node()) }), testSetupCode, nil},
 		{"store name of 64 bytes", withInfo(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 64) }), testSetupCode, nil},
-		{"store URL of 256 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 256-8) }), testSetupCode, nil},
+		{"store URL of 256 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + trusttest.Host(248) }), testSetupCode, nil},
 		{"info of MaxRequest bytes", withMAC(padded(infoJSON, MaxRequest)), testSetupCode, nil},
 
 		// The answer around the info.
@@ -555,7 +555,9 @@ func TestParseSetupOffer(t *testing.T) {
 		{"store name with a line feed", withInfo(func(i *SetupInfo) { i.Store.Name = "NGC\nStore" }), testSetupCode, ErrMessage},
 		{"store name of 65 bytes", withInfo(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 65) }), testSetupCode, ErrMessage},
 		{"store URL with http", withInfo(func(i *SetupInfo) { i.Store.URL = "http://store.ngc.example" }), testSetupCode, ErrMessage},
-		{"store URL of 257 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 257-8) }), testSetupCode, ErrMessage},
+		{"store URL of 257 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + trusttest.Host(249) }), testSetupCode, ErrMessage},
+		{"API node URL without a port", withInfo(func(i *SetupInfo) { i.Nodes[0].URL = "wss://api-1.test/tunnel" }), testSetupCode, ErrMessage},
+		{"store URL with a trailing slash", withInfo(func(i *SetupInfo) { i.Store.URL += "/" }), testSetupCode, ErrMessage},
 	}
 	for _, c := range cases {
 		got, err := ParseSetupOffer(c.body, c.code)
@@ -978,7 +980,9 @@ func setupVectors(t testing.TB) setupVector {
 			{Name: "info with a store name that is no text", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.Name = "NGC\nStore" }), testSetupCode), want: ErrMessage},
 			{Name: "info with a store name of 65 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 65) }), testSetupCode), want: ErrMessage},
 			{Name: "info with a store URL of plain http", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "http://store.ngc.example" }), testSetupCode), want: ErrMessage},
-			{Name: "info with a store URL of 257 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 257-8) }), testSetupCode), want: ErrMessage},
+			{Name: "info with a store URL of 257 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "https://" + trusttest.Host(249) }), testSetupCode), want: ErrMessage},
+			{Name: "info with an API node address that is no tunnel URL",
+				Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes[0].URL = "wss://api-1.test/tunnel" }), testSetupCode), want: ErrMessage},
 		},
 		Requests: []setupPost{
 			{Name: "valid", Request: post(good, testSetupCode), Valid: true},

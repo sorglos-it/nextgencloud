@@ -46,6 +46,11 @@ const (
 	// trust.Node.TLS) before it is written: by ngc-web, then by the controller
 	// with role web.
 	APITrustFile = "/etc/ngc/tls/api-trust.pem"
+	// BalancerFile is Apache's balancer for /api/ with its proxy TLS settings
+	// (shared/ulh.md, "Lastverteilung in Apache"): written only by ngc-web at
+	// install and afterwards by the controller with role web, both from web.json,
+	// whose addresses pass trust.ValidWebURL; ngc-web's virtual host includes it.
+	BalancerFile = "/etc/ngc/apache-apis.conf"
 	MaxCA        = 16 << 10 // DB.CA
 
 	ServiceAPI        = "ngc-api.service"
@@ -55,7 +60,9 @@ const (
 	// MaxField bounds these strings: WebAPI.URL and each of Web.RP.Origins;
 	// API.URL, Listen, Cert, CertKey and StoreURL; DB.Name, User, Password,
 	// Path and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and
-	// WebConfig.
+	// WebConfig. The addresses among them keep the grammar of package trust
+	// (ValidTunnelURL, ValidWebURL, ValidStoreURL, ValidHostPort), whose bound
+	// is the same 256 bytes.
 	MaxField               = 256
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
@@ -209,14 +216,14 @@ type Web struct {
 
 // WebAPI is an API behind Apache.
 type WebAPI struct {
-	URL string    `json:"url"` // https://<host>:<port>, the listener of the API's tunnel URL
+	URL string    `json:"url"` // https://<host>:<port> (trust.ValidWebURL), which trust.WebURL makes from the node's tunnel address
 	TLS enc.Bytes `json:"tls"` // pin of its TLS key (trust.TLSPin); Apache trusts only a certificate with it (APITrustFile)
 }
 
 // DB tells an API which database to use.
 type DB struct {
 	Driver   string     `json:"driver"`
-	Nodes    []string   `json:"nodes,omitempty"` // MariaDB: host:port of the Galera nodes
+	Nodes    []string   `json:"nodes,omitempty"` // MariaDB: host:port of the Galera nodes (trust.ValidHostPort)
 	Name     string     `json:"name,omitempty"`
 	User     string     `json:"user,omitempty"`
 	Password SecretText `json:"password,omitzero"`
@@ -232,8 +239,9 @@ type DB struct {
 type API struct {
 	Node string `json:"node"` // node ID in the trust list
 	// URL is this API's tunnel address exactly as its node in the trust list
-	// names it: wss://<host>:<port of Listen>/tunnel. Controllers dial it, and
-	// the API puts it into session.SetupInfo and its pairing and join codes.
+	// names it: wss://<host>:<port of Listen>/tunnel (trust.ValidTunnelURL).
+	// Controllers dial it, and the API puts it into session.SetupInfo and its
+	// pairing and join codes.
 	URL        string    `json:"url"`
 	Listen     string    `json:"listen"`
 	Cert       string    `json:"cert"`
@@ -244,7 +252,8 @@ type API struct {
 	SecretKey  Secret    `json:"secretKey"`  // AES-256 key for secrets in the database, shared by all APIs
 	ReleaseKey enc.Bytes `json:"releaseKey"` // public key of NGC releases
 	// StoreKey and StoreURL name the global store (ID trust.StoreGlobal); the
-	// API hands it to the shell in session.SetupInfo.Store.
+	// API hands it to the shell in session.SetupInfo.Store. StoreURL follows
+	// trust.ValidStoreURL, as trust.Store.URL does.
 	StoreKey        enc.Bytes `json:"storeKey"`
 	StoreURL        string    `json:"storeUrl"`
 	SessionLifetime int64     `json:"sessionLifetime,omitempty"` // seconds, at most session.MaxLifetime
@@ -253,7 +262,7 @@ type API struct {
 
 // APIRef is an API a controller dials.
 type APIRef struct {
-	URL string    `json:"url"`
+	URL string    `json:"url"` // its tunnel address (trust.ValidTunnelURL)
 	Key enc.Bytes `json:"key"` // its Noise key
 	// TLS is the pin of its TLS key (trust.TLSPin): from the pairing code,
 	// later from the trust list; the controller dials with tunnel.PinnedTLS.
@@ -496,7 +505,7 @@ func (w *Web) Validate() error {
 	for i, a := range w.APIs {
 		// An address twice is a mistake: Apache would balance over it twice,
 		// and with two pins it would trust two keys for one server.
-		if !strings.HasPrefix(a.URL, "https://") || len(a.URL) > MaxField || len(a.TLS) != 32 ||
+		if !trust.ValidWebURL(a.URL) || len(a.TLS) != 32 ||
 			slices.ContainsFunc(w.APIs[:i], func(b WebAPI) bool { return b.URL == a.URL }) {
 			return ErrConfig
 		}
@@ -516,13 +525,13 @@ func (w *Web) Validate() error {
 // Validate checks the API configuration.
 func (a *API) Validate() error {
 	if !wire.ValidName(a.Node) ||
-		!strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField ||
+		!trust.ValidTunnelURL(a.URL) ||
 		a.Listen == "" || len(a.Listen) > MaxField ||
 		a.Cert == "" || len(a.Cert) > MaxField ||
 		a.CertKey == "" || len(a.CertKey) > MaxField ||
 		len(a.NoiseKey.Bytes()) != 32 || len(a.SignKey.Bytes()) != 32 || len(a.SecretKey.Bytes()) != 32 ||
 		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 ||
-		!strings.HasPrefix(a.StoreURL, "https://") || len(a.StoreURL) > MaxField ||
+		!trust.ValidStoreURL(a.StoreURL) ||
 		a.SessionLifetime < 300 || a.SessionLifetime > session.MaxLifetime ||
 		a.IdleTimeout < 60 || a.IdleTimeout > a.SessionLifetime {
 		return ErrConfig
@@ -542,7 +551,9 @@ func (d *DB) Validate() error {
 			return ErrConfig
 		}
 		for _, n := range d.Nodes {
-			if !strings.Contains(n, ":") || len(n) > MaxField {
+			// The node goes into the DSN of the driver, where parameters would
+			// follow the host: it holds nothing but host and port.
+			if !trust.ValidHostPort(n) {
 				return ErrConfig
 			}
 		}
@@ -606,14 +617,21 @@ func parseCA(ca string) ([]*x509.Certificate, error) {
 }
 
 // TLSConfig returns the TLS client configuration for the database node
-// serverName (the host of an entry of Nodes): TLS 1.3, and the node's
-// certificate must chain to CA and name serverName. ErrConfig without a CA
-// (one Validate accepts) or without a server name.
+// serverName: the host of an entry of Nodes as net.SplitHostPort gives it, so
+// an IPv6 address without its brackets. TLS 1.3, and the node's certificate
+// must chain to CA and name serverName. ErrConfig without a CA (one Validate
+// accepts) or for a name trust.ValidHost refuses (with the brackets put back
+// for IPv6).
 func (d DB) TLSConfig(serverName string) (*tls.Config, error) {
 	certs, err := parseCA(d.CA)
 	// Without a name crypto/tls refuses to connect, but a database driver may
-	// put in a name of its own; the caller names the node instead.
-	if err != nil || serverName == "" {
+	// put in a name of its own; the caller names the node instead, and that is
+	// the host of an entry the grammar accepted.
+	host := serverName
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if err != nil || !trust.ValidHost(host) {
 		return nil, ErrConfig
 	}
 	pool := x509.NewCertPool()
@@ -633,7 +651,7 @@ func (c *Controller) Validate() error {
 		return ErrConfig
 	}
 	for _, a := range c.APIs {
-		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField || len(a.Key) != 32 || len(a.TLS) != 32 {
+		if !trust.ValidTunnelURL(a.URL) || len(a.Key) != 32 || len(a.TLS) != 32 {
 			return ErrConfig
 		}
 	}

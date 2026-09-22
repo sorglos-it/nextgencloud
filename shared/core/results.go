@@ -66,10 +66,16 @@ type Me struct {
 
 // DesktopApp is an entry of the start menu (ngc.desktop/apps).
 type DesktopApp struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Version string   `json:"version"`
-	Icon    string   `json:"icon,omitempty"` // path below ui/
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Icon    string `json:"icon,omitempty"` // path below ui/
+	// Entry is the page the shell loads first, a path below ui/ as the
+	// manifest's ui.entry names it; empty for core apps and apps without a
+	// UI. Like Icon, Width and Height it comes from the API unsigned: it only
+	// picks among the files of the ui-tar the UI proof covers, and the shell
+	// starts no page that is not a file of that ui-tar.
+	Entry   string   `json:"entry,omitempty"`
 	Width   int      `json:"width,omitzero"`
 	Height  int      `json:"height,omitzero"`
 	Actions []string `json:"actions,omitempty"` // actions this user may use
@@ -124,6 +130,19 @@ type PendingAPI struct {
 	TLS   enc.Bytes `json:"tls"`
 	URL   string    `json:"url"`
 	Since int64     `json:"since"`
+}
+
+// NodeInfo is a row of ngc.users/nodes: a controller of the trust list as
+// the API that answers sees it, so that the admin can pick the node of an
+// activate task and see whether a server is up. Roles, Version and Arch are
+// what the controller said in its last hello to this API (tunnel.Hello);
+// nothing here is signed, and a controller refuses a task it cannot carry out.
+type NodeInfo struct {
+	Node    string   `json:"node"`              // node ID in the trust list
+	Online  bool     `json:"online"`            // it has a tunnel to this API now
+	Roles   []string `json:"roles,omitempty"`   // tunnel.Hello.Roles
+	Version string   `json:"version,omitempty"` // tunnel.Hello.Version: its NGC version
+	Arch    string   `json:"arch,omitempty"`    // tunnel.Hello.Arch
 }
 
 // LogEntry is a row of ngc.users/log.
@@ -187,7 +206,9 @@ type UploadResult struct {
 	UI      enc.Bytes `json:"ui"`     // its UI hash (store.PackageUI)
 }
 
-// LicenseResult answers ngc.store/license.
+// LicenseResult answers ngc.store/api/license, and ngc.store/controller/license
+// with the state (LicenseOf) of the newest license the controller now holds
+// for App.
 type LicenseResult struct {
 	App   string `json:"app"`
 	State string `json:"state"`
@@ -208,10 +229,12 @@ type UpdateInfo struct {
 	Target    string `json:"target"`
 	Node      string `json:"node"`
 	Installed string `json:"installed,omitempty"`
-	// Available is the newest version of Target the API offers for Node. It
-	// is never an app version whose minNgc (store.Package.MinNGC) is newer
-	// than the NGC version of Node (tunnel.Hello.Version): the API does not
-	// offer such a version, and the controller does not install it.
+	// Available is the newest version of Target the API offers for Node. It is
+	// never an app version whose minNgc (store.Package.MinNGC) does not suit
+	// the NGC version of Node (store.SupportsMinNGC with tunnel.Hello.Version;
+	// a version that is no release version, such as 0.0.0-dev, suits no
+	// minNgc), and only from the catalog of the app's own store
+	// (dbapi.App.Store).
 	Available string `json:"available,omitempty"`
 	// SHA256 is the checksum of the file staged on Node for Available once State
 	// is store.UpdateDownloaded; an update by click signs it into InstallParams.
@@ -226,7 +249,12 @@ type UpdateInfo struct {
 	Key    enc.Bytes `json:"key,omitempty"`
 	Mode   string    `json:"mode"`
 	Window string    `json:"window,omitempty"`
-	State  string    `json:"state,omitempty"` // store.Update… of the newest report
+	// State is store.Update… of the newest report, or store.UpdateNeedsGrants
+	// when Available needs rights the app was not granted (store.Granted of
+	// its catalog entry's needs with dbapi.App.Grants): such a row is never
+	// installed by click or without a user; the admin activates the new
+	// version with the new grants.
+	State string `json:"state,omitempty"`
 }
 
 // TrustResult answers ngc.users/trust, and ngc.users/controller/trust with
@@ -241,9 +269,9 @@ var ErrResult = errors.New("core: result the shell would refuse")
 // EncodeResult encodes the result of a core action as the API sends it.
 // encoding/json writes a nil slice as null, which the shell refuses (no null,
 // enc.Budget); EncodeResult writes an empty or nil list as [] and an empty or
-// nil map as {}, so the nine results that are lists (ngc.desktop/apps,
-// ngc.users/list, log, pending, pending-api and rights, ngc.store/sources,
-// installed and updates) are [] when empty. It encodes with
+// nil map as {}, so the ten results that are lists (ngc.desktop/apps,
+// ngc.users/list, log, nodes, pending, pending-api and rights,
+// ngc.store/sources, installed and updates) are [] when empty. It encodes with
 // encoding/json/v2, whose omitempty keeps false and 0; the result types mark
 // optional bools and numbers omitzero, which both versions leave out alike.
 // Every failure is ErrResult: a value encoding/json/v2 refuses (invalid
@@ -334,8 +362,8 @@ type Transfer struct {
 	Catalog *sign.Envelope `json:"catalog,omitempty"`
 	Store   string         `json:"store,omitempty"` // empty for an uploaded app; ActivateParams.Store is LocalStore there instead.
 	Release *sign.Envelope `json:"release,omitempty"`
-	License *sign.Envelope `json:"license,omitempty"` // paid apps
-	Key     enc.Bytes      `json:"key,omitempty"`     // paid apps: content key, unwrapped by the API
+	License *sign.Envelope `json:"license,omitempty"` // paid apps; the controller checks it with store.VerifyLicenseFor and keeps the newest (dbapi.BlobLicense)
+	Key     enc.Bytes      `json:"key,omitempty"`     // paid apps: content key, unwrapped by the API, which alone holds the installation's private key
 	Size    int64          `json:"size"`
 	SHA256  enc.Bytes      `json:"sha256"`
 }
