@@ -14,7 +14,7 @@ deshalb kommt nur Geprüftes dorthin.
 | Skript | Server | Was es tut |
 |---|---|---|
 | `ngc-db` | DB 1 bis 3 | MariaDB mit Galera und TLS einrichten, Verschlüsselung einschalten, Konten `ngc` (lesen und schreiben) und `ngc_migrate` (Schema) anlegen; zeigt am Ende das Zertifikat der CA der Installation (PEM) |
-| `ngc-api` | API 1 und 2 | `ngc-api` und `ngc-store` nach `/usr/lib/ngc/`, `api.json` schreiben, Schlüssel und TLS-Zertifikat erzeugen oder mit `join_code` von einer laufenden API übernehmen, `ngc-api.service` starten; zeigt am Ende den Einmal-Code (erster API-Server), den TLS-Fingerabdruck (`pin.sh`) und den Noise-Fingerabdruck (`tunnel.Fingerprint`), beim Beitritt `tunnel.JoinFingerprint` |
+| `ngc-api` | API 1 und 2 | `ngc-api` und `ngc-store` nach `/usr/lib/ngc/`, `api.json` schreiben, Schlüssel und ein selbst signiertes TLS-Zertifikat (100 Jahre gültig) erzeugen oder mit `join_code` von einer laufenden API übernehmen, `ngc-api.service` starten; zeigt am Ende den Einmal-Code (erster API-Server), den TLS-Fingerabdruck (`pin.sh`) und den Noise-Fingerabdruck (`tunnel.Fingerprint`), beim Beitritt `tunnel.JoinFingerprint` |
 | `ngc-web` | Web | Apache und PHP einrichten, das Webinterface nach `/var/www/ngc/` (Webroot nur dessen `public/`), Zertifikat (Let's Encrypt, selbst signiert oder Import), `web.json` schreiben, Lastverteilung vorbereiten; prüft das Zertifikat jeder API gegen ihren Fingerabdruck und schreibt `config.APITrustFile` |
 | `ngc-controller` | alle | `ngc-controller` nach `/usr/lib/ngc/`, Schlüssel erzeugen, mit dem Kopplungscode koppeln, `controller.json` schreiben (mit `roles`, bei Rolle `db` auch `migrate`), `ngc-controller.service` starten, Podman installieren, wenn der Server Dienste trägt |
 | `ngc-all` | Pi | alles auf einer Maschine mit SQLite; `configure` koppelt den Controller nach der Ersteinrichtung |
@@ -34,9 +34,11 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   Fingerabdrucks beim Beitritt), `hostname` (Name, unter dem Controller und Apache den Server
   erreichen; daraus `url` = `wss://<hostname>:7443/tunnel` in `api.json` und das TLS-Zertifikat für
   diesen Namen), `db_driver`, `db_nodes`, `db_name`, `db_user`, `db_password`, `db_ca` (MariaDB:
-  Zertifikat der CA von `ngc-db`), `store_url`, `join_code` (leer beim ersten API-Server, sonst der
-  Beitrittscode einer laufenden API: `ngc-join:` und base64url des JSON, geprüft mit
-  `tunnel.ParseJoinCode`)
+  Zertifikat der CA von `ngc-db`), `store_url` und `store_key` (der globale Store: Adresse und
+  öffentlicher Schlüssel, base64url; ohne Angabe der offizielle NGC-Store, eine normale Installation
+  braucht also keins von beiden; `api.json` nimmt sie als `storeUrl` und `storeKey`), `join_code`
+  (leer beim ersten API-Server, sonst der Beitrittscode einer laufenden API: `ngc-join:` und
+  base64url des JSON, geprüft mit `tunnel.ParseJoinCode`)
 - `ngc-web`: `hostname`, `cert_mode` (`letsencrypt`, `selfsigned`, `import`), `cert_file`,
   `key_file`, `apis` (Adressen `https://<hostname>:7443`), `api_pins` (je API der Fingerabdruck,
   den `ngc-api` zeigt, in derselben Reihenfolge)
@@ -114,13 +116,19 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   öffentlichen Schlüssels, base64url; Testdaten `tls/api.pem`, `tunnel.json` `tlsPin`, geprüft von
   `TestTLSPinScript`). Kann `pin.sh` die Datei nicht lesen, gibt es keinen Fingerabdruck aus und
   endet mit 1, bei falschem Aufruf mit 2; die Skripte prüfen den Exit-Status und brechen sonst ab.
-  `ngc-web` holt das Zertifikat jeder API
+  Vertrauen trägt nur dieser Fingerabdruck des Schlüssels, nicht das Zertifikat: `ngc-api` erzeugt
+  sein Zertifikat selbst, selbst signiert für `hostname` und seinen Schlüssel, 100 Jahre gültig, und
+  erneuert es nur mit demselben Schlüssel; einen neuen Schlüssel gibt es nur zusammen mit einem
+  neuen Fingerabdruck in der Vertrauensliste. `ngc-web` holt das Zertifikat jeder API
   (`openssl s_client -connect <host>:7443 -servername <host>`), vergleicht den Fingerabdruck mit
   `api_pins`, schreibt passende Zertifikate nach `/etc/ngc/tls/api-trust.pem`
   (`config.APITrustFile`) und `web.json` (`apis` mit `url` und `tls`) und richtet Apache mit
   `SSLProxyVerify require`, `SSLProxyCACertificateFile` = diese Datei, `SSLProxyCheckPeerName on`,
   `SSLProxyCheckPeerExpire on`, `SSLProxyProtocol TLSv1.3` ein. Ist der Controller des Webservers
-  gekoppelt, übernimmt er das aus der Vertrauensliste. Den Beitritt und die Kopplung führen die
+  gekoppelt, übernimmt er das aus der Vertrauensliste. Er schreibt die Datei auch neu, wenn eine
+  Verbindung zu einer API an der Zertifikatsprüfung scheitert: Er holt ihr aktuelles Zertifikat,
+  nimmt es nur, wenn sein Schlüssel zum Fingerabdruck passt, und lädt Apache neu; so sperrt weder
+  ein erneuertes Zertifikat noch ein Datum Apache aus. Den Beitritt und die Kopplung führen die
   Programme aus (`ngc-api`, `ngc-controller`); sie prüfen TLS mit dem Fingerabdruck aus dem Code.
 - **`ngc-all`:** `install` richtet alles ein, startet die API und zeigt den Einmal-Code; `web.json`
   bekommt Adresse und Fingerabdruck der lokalen API ohne Rückfrage. Der Controller läuft erst nach
