@@ -13,11 +13,11 @@ deshalb kommt nur Geprüftes dorthin.
 
 | Skript | Server | Was es tut |
 |---|---|---|
-| `ngc-db` | DB 1 bis 3 | MariaDB mit Galera und TLS einrichten, Verschlüsselung einschalten, Konten `ngc` (lesen und schreiben) und `ngc_migrate` (Schema) anlegen |
-| `ngc-api` | API 1 und 2 | `ngc-api` und `ngc-store` nach `/usr/lib/ngc/`, `api.json` schreiben, Schlüssel erzeugen oder mit `join_code` von einer laufenden API übernehmen, `ngc-api.service` starten, Einmal-Code anzeigen |
-| `ngc-web` | Web | Apache und PHP einrichten, das Webinterface nach `/var/www/ngc/` (Webroot nur dessen `public/`), Zertifikat (Let's Encrypt, selbst signiert oder Import), `web.json` schreiben, Lastverteilung vorbereiten |
+| `ngc-db` | DB 1 bis 3 | MariaDB mit Galera und TLS einrichten, Verschlüsselung einschalten, Konten `ngc` (lesen und schreiben) und `ngc_migrate` (Schema) anlegen; zeigt am Ende das Zertifikat der CA der Installation (PEM) |
+| `ngc-api` | API 1 und 2 | `ngc-api` und `ngc-store` nach `/usr/lib/ngc/`, `api.json` schreiben, Schlüssel und TLS-Zertifikat erzeugen oder mit `join_code` von einer laufenden API übernehmen, `ngc-api.service` starten; zeigt am Ende den Einmal-Code (erster API-Server), den TLS-Fingerabdruck (`pin.sh`) und den Noise-Fingerabdruck (`tunnel.Fingerprint`), beim Beitritt `tunnel.JoinFingerprint` |
+| `ngc-web` | Web | Apache und PHP einrichten, das Webinterface nach `/var/www/ngc/` (Webroot nur dessen `public/`), Zertifikat (Let's Encrypt, selbst signiert oder Import), `web.json` schreiben, Lastverteilung vorbereiten; prüft das Zertifikat jeder API gegen ihren Fingerabdruck und schreibt `config.APITrustFile` |
 | `ngc-controller` | alle | `ngc-controller` nach `/usr/lib/ngc/`, Schlüssel erzeugen, mit dem Kopplungscode koppeln, `controller.json` schreiben (mit `roles`, bei Rolle `db` auch `migrate`), `ngc-controller.service` starten, Podman installieren, wenn der Server Dienste trägt |
-| `ngc-all` | Pi | alles auf einer Maschine mit SQLite statt MariaDB, koppelt den Controller selbst |
+| `ngc-all` | Pi | alles auf einer Maschine mit SQLite; `configure` koppelt den Controller nach der Ersteinrichtung |
 
 Jedes Skript kann `install`, `configure` und `uninstall`. Ein zweiter Lauf von `install` ändert
 nichts, was schon stimmt.
@@ -27,18 +27,27 @@ nichts, was schon stimmt.
 Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
 
 - `ngc-db`: `nodes` (Liste der Knoten), `bootstrap` (erster Knoten: ja/nein), `password_ngc`,
-  `password_migrate`
-- `ngc-api`: `node` (z. B. `api-1`), `db_driver`, `db_nodes`, `db_name`, `db_user`, `db_password`,
-  `store_url`, `join_code` (leer beim ersten API-Server, sonst der Beitrittscode einer laufenden API:
-  `ngc-join:` und base64url des JSON, geprüft mit `tunnel.ParseJoinCode`)
+  `password_migrate`. Der erste Knoten erzeugt die CA der Installation und zeigt ihr Zertifikat
+  (PEM); wie die anderen Knoten ihre Zertifikate bekommen, legt der Plan der Datenbank fest. Der
+  private Schlüssel der CA kommt nie in answer.yaml, in eine Konfigurationsdatei oder ins Repo.
+- `ngc-api`: `node` (z. B. `api-1`; auch der Name in der Vertrauensliste und Teil des
+  Fingerabdrucks beim Beitritt), `hostname` (Name, unter dem Controller und Apache den Server
+  erreichen; daraus `url` = `wss://<hostname>:7443/tunnel` in `api.json` und das TLS-Zertifikat für
+  diesen Namen), `db_driver`, `db_nodes`, `db_name`, `db_user`, `db_password`, `db_ca` (MariaDB:
+  Zertifikat der CA von `ngc-db`), `store_url`, `join_code` (leer beim ersten API-Server, sonst der
+  Beitrittscode einer laufenden API: `ngc-join:` und base64url des JSON, geprüft mit
+  `tunnel.ParseJoinCode`)
 - `ngc-web`: `hostname`, `cert_mode` (`letsencrypt`, `selfsigned`, `import`), `cert_file`,
-  `key_file`, `apis` (Liste der API-Adressen)
+  `key_file`, `apis` (Adressen `https://<hostname>:7443`), `api_pins` (je API der Fingerabdruck,
+  den `ngc-api` zeigt, in derselben Reihenfolge)
 - `ngc-controller`: `name` (Name des Servers nach `wire.ValidName`: Kleinbuchstaben, Ziffern und
   Bindestrich, beginnt mit einem Buchstaben, höchstens 32 Zeichen), `pair_code` (der Kopplungscode
   aus der Shell: `ngc-pair:` und base64url des JSON, geprüft mit `tunnel.ParsePairCode`), `roles`
   (`web`, `api`, `db`, `services`); mit Rolle `db` zusätzlich `migrate_nodes`, `migrate_name`,
-  `migrate_user` (`ngc_migrate`) und `migrate_password` für `migrate` in `controller.json`
-- `ngc-all`: `hostname`, `cert_mode`
+  `migrate_user` (`ngc_migrate`), `migrate_password` und `migrate_ca` (Zertifikat der CA von
+  `ngc-db`) für `migrate` in `controller.json`
+- `ngc-all`: `hostname`, `cert_mode` für `install`; `pair_code` für `configure` nach der
+  Ersteinrichtung
 
 ## Regeln
 
@@ -70,7 +79,9 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   und schreibt nichts in das Verzeichnis der Dateien. Geht etwas schief, meldet es
   `release wrong: <Grund>` und endet mit 1, bei falschem Aufruf mit 2; nur wenn alles stimmt, gibt es
   `release ok` aus und endet mit 0. `TestReleaseScript` in `shared/store` prüft das in 31 Fällen;
-  auf den Linux-Servern muss er mit dem echten `jq` bestehen.
+  auf den Linux-Servern muss er mit dem echten `jq` bestehen. `release.json` bleibt im Format
+  `release/v1`; spätere Formate kommen in eigene Dateien (Regel „Signierte Dokumente, die bleiben“
+  in `shared/README.md`).
 - Release-Dateien benennen Softwareteile: `ngc-web` (`all`), `ngc-api` und `ngc-controller` (`amd64`,
   `arm64`). Die Migrationen stecken in `ngc-api`.
 - Rollen eines Servers (`roles`): `web`, `api`, `db`, `services`. Welche Softwareteile dazu gehören,
@@ -94,7 +105,26 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
 - Kopplungs- und Beitrittscodes zeigt die Shell erst, wenn sie zu ihrer neuesten geprüften Fassung
   der Vertrauensliste passen (`tunnel.PairCode.Check`, `tunnel.JoinCode.Check`).
 - Am Ende zeigt `ngc-api` beziehungsweise `ngc-all` den Einmal-Code für das erste Admin-Konto an
-  (`session.ValidSetupCode`). `ngc-controller` zeigt seinen Fingerabdruck (`tunnel.Fingerprint`
-  seines Schlüssels) und den Anker aus dem Kopplungscode (Nummer und `tunnel.Fingerprint` des
-  Hashes); der Admin vergleicht beides mit der Anzeige der Shell.
+  (`session.ValidSetupCode`); ihn liest nur root, und er kommt in kein Log. `ngc-controller`
+  zeigt seinen Fingerabdruck (`tunnel.Fingerprint` seines Schlüssels) und den Anker aus dem
+  Kopplungscode (Nummer und `tunnel.Fingerprint` des Hashes); der Admin vergleicht beides mit der
+  Anzeige der Shell.
+- **TLS intern, nie ungeprüft:** Kein Skript und kein Programm schaltet eine Zertifikatsprüfung
+  ab. Den Fingerabdruck eines TLS-Zertifikats rechnet `shared/testdata/tls/pin.sh` (SHA-256 des
+  öffentlichen Schlüssels, base64url; Testdaten `tls/api.pem`, `tunnel.json` `tlsPin`, geprüft von
+  `TestTLSPinScript`). Kann `pin.sh` die Datei nicht lesen, gibt es keinen Fingerabdruck aus und
+  endet mit 1, bei falschem Aufruf mit 2; die Skripte prüfen den Exit-Status und brechen sonst ab.
+  `ngc-web` holt das Zertifikat jeder API
+  (`openssl s_client -connect <host>:7443 -servername <host>`), vergleicht den Fingerabdruck mit
+  `api_pins`, schreibt passende Zertifikate nach `/etc/ngc/tls/api-trust.pem`
+  (`config.APITrustFile`) und `web.json` (`apis` mit `url` und `tls`) und richtet Apache mit
+  `SSLProxyVerify require`, `SSLProxyCACertificateFile` = diese Datei, `SSLProxyCheckPeerName on`,
+  `SSLProxyCheckPeerExpire on`, `SSLProxyProtocol TLSv1.3` ein. Ist der Controller des Webservers
+  gekoppelt, übernimmt er das aus der Vertrauensliste. Den Beitritt und die Kopplung führen die
+  Programme aus (`ngc-api`, `ngc-controller`); sie prüfen TLS mit dem Fingerabdruck aus dem Code.
+- **`ngc-all`:** `install` richtet alles ein, startet die API und zeigt den Einmal-Code; `web.json`
+  bekommt Adresse und Fingerabdruck der lokalen API ohne Rückfrage. Der Controller läuft erst nach
+  `configure` mit `pair_code`, einem Kopplungscode aus der Shell nach der Ersteinrichtung (alle vier
+  Rollen, `migrate` auf die SQLite-Datei). Bis dahin kennt nur der Browser der Ersteinrichtung den
+  Anker.
 - Nach der Installation spielt der Controller die Updates ein (4.8); ulh bleibt der Notweg.
