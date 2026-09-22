@@ -311,6 +311,7 @@ func TestValidate(t *testing.T) {
 		// An origin reaches web.json and the browser compares it as text, so it
 		// is scheme, host and port and nothing else (trust.ValidOrigin).
 		"origin with a path":         func(l *trust.List) { l.RP.Origins = []string{"https://ngc.example.org/x"} },
+		"origin on port 443":         func(l *trust.List) { l.RP.Origins = []string{"https://ngc.example.org:443"} },
 		"origin with a line feed":    func(l *trust.List) { l.RP.Origins = []string{"https://ngc.example.org\x0a"} },
 		"origin in upper case":       func(l *trust.List) { l.RP.Origins = []string{"https://NGC.example.org"} },
 		"AutoSystem with a key":      func(l *trust.List) { l.Auto[1].Key = make([]byte, ed25519.PublicKeySize) },

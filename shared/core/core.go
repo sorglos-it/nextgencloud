@@ -218,7 +218,10 @@ func WithoutUser(a Action) bool {
 // SHA256 from the staged file's verified release or catalog entry, whose seq
 // it has checked against the newest it saw, and refuses params that differ.
 // The params of a channel without a user are not signed. The rules of
-// InstallParams on store and grants apply as well.
+// InstallParams on store and grants apply as well, and the caller checks
+// them: Unattended sees neither the app's row nor the catalog, so a true
+// answer is the standing approval and the version alone, never permission to
+// install on its own.
 func Unattended(p *InstallParams, l *trust.List, signer []byte, installed string) bool {
 	if p == nil || l == nil || p.Validate() != nil || !store.Approved(l, p.Target, signer) {
 		return false

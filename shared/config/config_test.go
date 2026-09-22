@@ -398,6 +398,7 @@ func TestValidate(t *testing.T) {
 		"http origin":             {func(w *Web) { w.RP.Origins = append(w.RP.Origins, "http://ngc.example.org") }, false},
 		"nine origins":            {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins + 1) }, false},
 		"origin of 257 bytes":     {func(w *Web) { w.RP.Origins = []string{"https://" + trusttest.Host(249)} }, false},
+		"origin on port 443":      {func(w *Web) { w.RP.Origins = []string{"https://ngc.example.org:443"} }, false},
 		"origin with a path":      {func(w *Web) { w.RP.Origins = []string{"https://ngc.example.org/x"} }, false},
 		"origin with a query":     {func(w *Web) { w.RP.Origins = []string{"https://ngc.example.org?y=1"} }, false},
 		"origin with user info":   {func(w *Web) { w.RP.Origins = []string{"https://user@ngc.example.org"} }, false},

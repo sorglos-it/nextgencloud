@@ -131,8 +131,13 @@ func addressCases() urlVectors {
 		Origins: []urlCase{
 			{Name: "host only", Value: "https://ngc.example.org", Valid: true},
 			{Name: "port", Value: "https://ngc.example.org:8443", Valid: true},
-			{Name: "IPv6", Value: "https://[2001:db8::1]:443", Valid: true},
+			{Name: "IPv6", Value: "https://[2001:db8::1]:8443", Valid: true},
+			{Name: "IPv6 without a port", Value: "https://[2001:db8::1]", Valid: true},
 			{Name: "256 bytes", Value: "https://" + h(248), Valid: true},
+			// A browser leaves the default port out, so an entry with it
+			// matches no origin a browser ever sends.
+			{Name: "default port", Value: "https://ngc.example.org:443"},
+			{Name: "IPv6 with the default port", Value: "https://[2001:db8::1]:443"},
 			{Name: "plain http", Value: "http://ngc.example.org"},
 			{Name: "trailing slash", Value: "https://ngc.example.org/"},
 			{Name: "path", Value: "https://ngc.example.org/x"},
