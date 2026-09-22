@@ -13,8 +13,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -94,6 +92,7 @@ type Node struct {
 	Noise     enc.Bytes `json:"noise"`               // X25519 static key: tunnel, and for controllers end to end
 	Sign      enc.Bytes `json:"sign,omitempty"`      // API only: Ed25519 key that signs API certificates
 	URL       string    `json:"url,omitempty"`       // API only: tunnel address, wss://host:port/tunnel
+	TLS       enc.Bytes `json:"tls,omitempty"`       // API only: TLSPin of its TLS key; controllers and Apache accept only a certificate with this key
 	RootUsers []string  `json:"rootUsers,omitempty"` // controller only
 	RootRoles []string  `json:"rootRoles,omitempty"` // controller only
 }
@@ -157,6 +156,44 @@ var (
 func ValidID(s string) bool {
 	b, err := enc.B64.DecodeString(s)
 	return err == nil && len(b) == 16
+}
+
+// TLSPin returns the pin of a TLS key: SHA-256 of its SubjectPublicKeyInfo
+// in DER (x509.Certificate.RawSubjectPublicKeyInfo), 32 bytes. API nodes list
+// it (Node.TLS); shared/testdata/tls/pin.sh computes the same with openssl.
+func TLSPin(spki []byte) []byte {
+	h := sha256.Sum256(spki)
+	return h[:]
+}
+
+// maxURL bounds Node.URL and Store.URL, as tunnel.MaxURL bounds the URL of a
+// code.
+const maxURL = 256
+
+// ValidAPINode reports whether n is a well-formed API node: of kind api, an
+// ID (wire.ValidName), a name (wire.ValidText, 64), a 32-byte Noise key, a
+// 32-byte signing key, a wss:// URL of at most 256 bytes, a 32-byte TLS pin
+// and no root lists. Validate uses it; session.ParseSetupOffer too.
+func ValidAPINode(n Node) bool {
+	return n.Kind == NodeAPI && validNode(n) && len(n.Sign) == ed25519.PublicKeySize &&
+		strings.HasPrefix(n.URL, "wss://") && len(n.URL) <= maxURL && len(n.TLS) == sha256.Size &&
+		len(n.RootUsers)+len(n.RootRoles) == 0
+}
+
+// ValidStore reports whether s is a well-formed store: an ID
+// (wire.ValidName) other than StoreLocal, a name (wire.ValidText, 64), an
+// https:// URL of at most 256 bytes and a 32-byte key. Validate uses it;
+// session.ParseSetupOffer too.
+func ValidStore(s Store) bool {
+	// StoreLocal marks uploaded apps, so no catalog key may claim it.
+	return wire.ValidName(s.ID) && s.ID != StoreLocal && wire.ValidText(s.Name, 64) &&
+		strings.HasPrefix(s.URL, "https://") && len(s.URL) <= maxURL && len(s.Key) == ed25519.PublicKeySize
+}
+
+// validNode checks what every node has, whatever its kind: an ID, a name and
+// a Noise key.
+func validNode(n Node) bool {
+	return wire.ValidName(n.ID) && wire.ValidText(n.Name, 64) && len(n.Noise) == 32
 }
 
 // Hash returns the SHA-256 of the payload of s.
@@ -459,17 +496,19 @@ func (l *List) Validate() error {
 		return err
 	}
 	for i, n := range l.Nodes {
-		if !wire.ValidName(n.ID) || (i > 0 && l.Nodes[i-1].ID >= n.ID) || !validLabel(n.Name) || len(n.Noise) != 32 {
+		if i > 0 && l.Nodes[i-1].ID >= n.ID {
 			return ErrInvalid
 		}
 		switch n.Kind {
 		case NodeAPI:
-			if len(n.Sign) != ed25519.PublicKeySize || !strings.HasPrefix(n.URL, "wss://") || len(n.URL) > 256 ||
-				len(n.RootUsers)+len(n.RootRoles) > 0 {
+			if !ValidAPINode(n) {
 				return ErrInvalid
 			}
 		case NodeController:
-			if len(n.Sign) != 0 || n.URL != "" || len(n.RootUsers) > MaxRoot || len(n.RootRoles) > MaxRoot {
+			// Signing keys, addresses and TLS pins belong to API nodes: nobody
+			// dials a controller.
+			if !validNode(n) || len(n.Sign) != 0 || n.URL != "" || len(n.TLS) != 0 ||
+				len(n.RootUsers) > MaxRoot || len(n.RootRoles) > MaxRoot {
 				return ErrInvalid
 			}
 			for _, id := range n.RootUsers {
@@ -487,9 +526,7 @@ func (l *List) Validate() error {
 		}
 	}
 	for i, s := range l.Stores {
-		// StoreLocal marks uploaded apps, so no catalog key may claim it.
-		if !wire.ValidName(s.ID) || s.ID == StoreLocal || (i > 0 && l.Stores[i-1].ID >= s.ID) || !validLabel(s.Name) ||
-			!strings.HasPrefix(s.URL, "https://") || len(s.URL) > 256 || len(s.Key) != ed25519.PublicKeySize {
+		if !ValidStore(s) || (i > 0 && l.Stores[i-1].ID >= s.ID) {
 			return ErrInvalid
 		}
 	}
@@ -609,19 +646,6 @@ func ValidLoginName(s string) bool {
 	for i, c := range s {
 		ok := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (i > 0 && (c == '.' || c == '_' || c == '-'))
 		if !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// validLabel allows any printable UTF-8 text of 1 to 64 bytes.
-func validLabel(s string) bool {
-	if len(s) == 0 || len(s) > 64 || !utf8.ValidString(s) {
-		return false
-	}
-	for _, c := range s {
-		if !unicode.IsPrint(c) {
 			return false
 		}
 	}

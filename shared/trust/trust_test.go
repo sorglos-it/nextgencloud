@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"flag"
@@ -186,6 +187,15 @@ func vectors(t *testing.T) []vector {
 	carolNoPasskey := carolWith(carolPassword)
 	carolNoPassword := carolWith(carolPasskey)
 
+	// Controllers and Apache trust an API only with its pin, so an API node
+	// needs one; nobody dials a controller, so a controller has none.
+	noPin := trusttest.Next(t, g)
+	noPin.Nodes[0].TLS = nil
+	apiWithoutPin := admin.Sign(t, noPin)
+	ctlPin := trusttest.Next(t, g)
+	_, ctlPin.Nodes[1].TLS = trusttest.APITLS(0xC1, "ctl-1.test")
+	controllerWithPin := admin.Sign(t, ctlPin)
+
 	return []vector{
 		{"genesis", anchor(t, g), c[:1], true, 1},
 		{"admin adds a user, user adds an own key, passkey admin re-signs", anchor(t, g), full, true, 4},
@@ -207,6 +217,8 @@ func vectors(t *testing.T) []vector {
 		{"password-too member with a passkey and a password key", anchor(t, g), []trust.Signed{g, carolBoth}, true, 2},
 		{"password-too member without a passkey", anchor(t, g), []trust.Signed{g, carolNoPasskey}, false, 0},
 		{"password-too member without a password key", anchor(t, g), []trust.Signed{g, carolNoPassword}, false, 0},
+		{"API node without a TLS pin", anchor(t, g), []trust.Signed{g, apiWithoutPin}, false, 0},
+		{"controller with a TLS pin", anchor(t, g), []trust.Signed{g, controllerWithPin}, false, 0},
 	}
 }
 
@@ -228,6 +240,8 @@ var vectorErrors = map[string]error{
 	"old key signs after it was replaced":        trust.ErrSigner,
 	"password-too member without a passkey":      trust.ErrInvalid,
 	"password-too member without a password key": trust.ErrInvalid,
+	"API node without a TLS pin":                 trust.ErrInvalid,
+	"controller with a TLS pin":                  trust.ErrInvalid,
 }
 
 func TestVectors(t *testing.T) {
@@ -303,6 +317,9 @@ func TestValidate(t *testing.T) {
 		// The lock-out of the review: the password admin holds no passkey,
 		// the passkey admin no password key.
 		"admin role that asks for the password too": func(l *trust.List) { l.Roles[0].PasswordToo = true },
+		"API node without a TLS pin":                func(l *trust.List) { l.Nodes[0].TLS = nil },
+		"API node with a pin of 31 bytes":           func(l *trust.List) { l.Nodes[0].TLS = l.Nodes[0].TLS[:31] },
+		"controller with a TLS pin":                 func(l *trust.List) { l.Nodes[1].TLS = bytes.Repeat([]byte{0xC1}, 32) },
 	}
 	for name, mutate := range cases {
 		l := trusttest.Genesis(admin)
@@ -313,9 +330,12 @@ func TestValidate(t *testing.T) {
 	}
 	// Twins of cases above that keep every rule: each must pass, so the case
 	// it mirrors fails for its own reason and not for a side effect of its
-	// mutation. Genesis itself is the twin of "store named local".
+	// mutation. Genesis itself is the twin of "store named local", "API node
+	// without a TLS pin" and "controller with a TLS pin".
 	twins := map[string]func(l *trust.List){
-		"passkey with rp": func(l *trust.List) { l.Users[0].Keys = append(l.Users[0].Keys, pk) },
+		// A pin is a hash: any 32 bytes are one.
+		"API node with another pin of 32 bytes": func(l *trust.List) { l.Nodes[0].TLS = bytes.Repeat([]byte{0x77}, 32) },
+		"passkey with rp":                       func(l *trust.List) { l.Users[0].Keys = append(l.Users[0].Keys, pk) },
 		"app as standing approval target": func(l *trust.List) {
 			l.Auto = []trust.Auto{l.Auto[0], {Target: "org.sorglos.terminal", Key: make([]byte, ed25519.PublicKeySize)}, l.Auto[1]}
 		},
@@ -337,6 +357,110 @@ func TestValidate(t *testing.T) {
 		mutate(l)
 		if err := l.Validate(); err != nil {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// TestTLSPin: the pin is SHA-256 of the certificate's SubjectPublicKeyInfo,
+// which for an Ed25519 key is what x509.MarshalPKIXPublicKey writes. It names
+// the key, not the certificate.
+func TestTLSPin(t *testing.T) {
+	cert, pin := trusttest.APITLS(0xE1, "api-1.test")
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	if got := trust.TLSPin(leaf.RawSubjectPublicKeyInfo); !bytes.Equal(got, want[:]) || !bytes.Equal(pin, want[:]) {
+		t.Errorf("pin %x and APITLS's %x, want %x", got, pin, want)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(cert.PrivateKey.(ed25519.PrivateKey).Public())
+	if err != nil || !bytes.Equal(spki, leaf.RawSubjectPublicKeyInfo) {
+		t.Errorf("SubjectPublicKeyInfo %x, key as PKIX %x, %v", leaf.RawSubjectPublicKeyInfo, spki, err)
+	}
+	if leaf.DNSNames[0] != "api-1.test" || leaf.SerialNumber.Int64() != 1 {
+		t.Errorf("certificate for %v, serial %v", leaf.DNSNames, leaf.SerialNumber)
+	}
+	again, _ := trusttest.APITLS(0xE1, "api-1.test")
+	_, sameKey := trusttest.APITLS(0xE1, "other.test")
+	_, otherKey := trusttest.APITLS(0xE2, "api-1.test")
+	if !bytes.Equal(again.Certificate[0], cert.Certificate[0]) {
+		t.Error("APITLS made other bytes for the same fill and host")
+	}
+	if !bytes.Equal(sameKey, pin) || bytes.Equal(otherKey, pin) {
+		t.Error("the pin follows the certificate instead of the key")
+	}
+}
+
+// TestValidAPINode breaks one rule per case, starting from api-1 of Genesis.
+func TestValidAPINode(t *testing.T) {
+	api := trusttest.Genesis(admin).Nodes[0]
+	if !trust.ValidAPINode(api) {
+		t.Fatal("api-1 of Genesis refused")
+	}
+	host := func(n int) string { return "wss://" + strings.Repeat("a", n-len("wss://")-len("/tunnel")) + "/tunnel" }
+	for name, c := range map[string]struct {
+		mutate func(n *trust.Node)
+		valid  bool
+	}{
+		"URL of 256 bytes":             {func(n *trust.Node) { n.URL = host(256) }, true},
+		"name of 64 bytes of umlauts":  {func(n *trust.Node) { n.Name = strings.Repeat("\u00e4", 32) }, true},
+		"kind controller":              {func(n *trust.Node) { n.Kind = trust.NodeController }, false},
+		"ID not a name":                {func(n *trust.Node) { n.ID = "API 1" }, false},
+		"no name":                      {func(n *trust.Node) { n.Name = "" }, false},
+		"name with a line feed":        {func(n *trust.Node) { n.Name = "API\n1" }, false},
+		"name of 65 bytes":             {func(n *trust.Node) { n.Name = strings.Repeat("a", 65) }, false},
+		"Noise key of 31 bytes":        {func(n *trust.Node) { n.Noise = n.Noise[:31] }, false},
+		"no signing key":               {func(n *trust.Node) { n.Sign = nil }, false},
+		"URL with https":               {func(n *trust.Node) { n.URL = "https://api-1.test:7443/tunnel" }, false},
+		"URL of 257 bytes":             {func(n *trust.Node) { n.URL = host(257) }, false},
+		"no TLS pin":                   {func(n *trust.Node) { n.TLS = nil }, false},
+		"TLS pin of 33 bytes":          {func(n *trust.Node) { n.TLS = append(slices.Clone(n.TLS), 1) }, false},
+		"root user":                    {func(n *trust.Node) { n.RootUsers = []string{trusttest.ID(0x21)} }, false},
+		"root role":                    {func(n *trust.Node) { n.RootRoles = []string{trust.RoleAdmin} }, false},
+		"empty root lists are no list": {func(n *trust.Node) { n.RootUsers, n.RootRoles = []string{}, []string{} }, true},
+	} {
+		n := api
+		c.mutate(&n)
+		if got := trust.ValidAPINode(n); got != c.valid {
+			t.Errorf("%s: got %v, want %v", name, got, c.valid)
+		}
+	}
+}
+
+// TestValidStore breaks one rule per case, starting from the global store of
+// Genesis.
+func TestValidStore(t *testing.T) {
+	global := trusttest.Genesis(admin).Stores[0]
+	if !trust.ValidStore(global) {
+		t.Fatal("global store of Genesis refused")
+	}
+	url := func(n int) string { return "https://" + strings.Repeat("s", n-len("https://")) }
+	for name, c := range map[string]struct {
+		mutate func(s *trust.Store)
+		valid  bool
+	}{
+		"another ID":            {func(s *trust.Store) { s.ID = "other" }, true},
+		"URL of 256 bytes":      {func(s *trust.Store) { s.URL = url(256) }, true},
+		"name of 64 bytes":      {func(s *trust.Store) { s.Name = strings.Repeat("S", 64) }, true},
+		"ID local":              {func(s *trust.Store) { s.ID = trust.StoreLocal }, false},
+		"ID not a name":         {func(s *trust.Store) { s.ID = "Global" }, false},
+		"no name":               {func(s *trust.Store) { s.Name = "" }, false},
+		"name with a line feed": {func(s *trust.Store) { s.Name = "NGC\nStore" }, false},
+		"name of 65 bytes":      {func(s *trust.Store) { s.Name = strings.Repeat("S", 65) }, false},
+		"URL with http":         {func(s *trust.Store) { s.URL = "http://store.ngc.example" }, false},
+		"URL of 257 bytes":      {func(s *trust.Store) { s.URL = url(257) }, false},
+		"key of 31 bytes":       {func(s *trust.Store) { s.Key = s.Key[:31] }, false},
+	} {
+		s := global
+		c.mutate(&s)
+		if got := trust.ValidStore(s); got != c.valid {
+			t.Errorf("%s: got %v, want %v", name, got, c.valid)
+		}
+		l := trusttest.Genesis(admin)
+		l.Stores = []trust.Store{s}
+		if err := l.Validate(); (err == nil) != c.valid {
+			t.Errorf("%s: Validate gives %v", name, err)
 		}
 	}
 }
