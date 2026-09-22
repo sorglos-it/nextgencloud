@@ -241,12 +241,12 @@ var ErrResult = errors.New("core: result the shell would refuse")
 // enc.Budget); EncodeResult writes an empty or nil list as [] and an empty or
 // nil map as {}, so the nine results that are lists (ngc.desktop/apps,
 // ngc.users/list, log, pending, pending-api and rights, ngc.store/sources,
-// installed and updates) are [] when empty. It encodes with encoding/json/v2, whose
-// omitempty keeps false and 0; the result types mark optional bools and
-// numbers omitzero, which both versions leave out alike. Every failure is
-// ErrResult: a value encoding/json/v2 refuses (invalid UTF-8, a func), a null
-// anywhere else (a nil pointer or interface outside an omitempty field), and
-// a result of more than wire.MaxCallResult bytes.
+// installed and updates) are [] when empty. It encodes with
+// encoding/json/v2, whose omitempty keeps false and 0; the result types mark
+// optional bools and numbers omitzero, which both versions leave out alike.
+// Every failure is ErrResult: a value encoding/json/v2 refuses (invalid
+// UTF-8, a func), a null anywhere else (a nil pointer or interface outside
+// an omitempty field), and a result of more than wire.MaxCallResult bytes.
 func EncodeResult(v any) ([]byte, error) {
 	b, err := jsonv2.Marshal(v, jsonv2.Deterministic(true))
 	if err != nil || len(b) > wire.MaxCallResult || !nullFree(b) {
