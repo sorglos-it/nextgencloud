@@ -12,18 +12,21 @@ import (
 
 // Kinds of documents.
 const (
-	BlobSetting = "setting" // ID: setting key
-	BlobTrust   = "trust"   // ID: version number as text, Seq: version number
-	BlobCatalog = "catalog" // ID: store, Seq: catalog number
-	BlobLicense = "license" // ID: app
-	BlobRights  = "rights"  // ID: role, Data: core.RoleRights as JSON
-	BlobUI      = "ui"      // ID: "<app>@<version>", Data: tar of the ui/ files
+	BlobSetting  = "setting"  // ID: setting key
+	BlobTrust    = "trust"    // ID: version number as text, Seq: version number
+	BlobCatalog  = "catalog"  // ID: store, Seq: catalog number
+	BlobLicense  = "license"  // ID: app
+	BlobRights   = "rights"   // ID: role, Data: core.RoleRights as JSON
+	BlobUI       = "ui"       // ID: "<app>@<version>", Data: the canonical ui-tar of the plain package (store.PackageUI)
+	BlobApproval = "approval" // ID: "<app>@<version>", Data: core.UIProof as JSON (the evidence the version was installed with)
+	BlobJoin     = "join"     // ID: node ID, Data: tunnel.JoinRequest as JSON (an API server waiting to be listed)
 )
 
 // Kinds of one-time values.
 const (
 	OnceNonce = "nonce" // login challenge; Data: user ID
 	OncePair  = "pair"  // SHA-256 of a pairing secret
+	OnceJoin  = "join"  // SHA-256 of a join secret
 	OnceTask  = "task"  // ID of a signed task, against replay
 )
 
@@ -31,8 +34,13 @@ const (
 const (
 	SettingInstallation = "installation" // installation ID
 	SettingInstallKey   = "installKey"   // X25519 private key of the installation, encrypted by the API
-	SettingUpdate       = "update."      // prefix, e.g. "update.ngc-api": core.UpdateInfo as JSON
-	LockUpdate          = "update"       // only one API drives a rollout
+	// SettingUpdate is the prefix of a target's update policy, e.g.
+	// "update.ngc-api": core.UpdateSetting as JSON (mode and window). It
+	// holds no state: the API computes the rows of ngc.store/updates
+	// (core.UpdateInfo, one per target and node) from releases, catalogs and
+	// the controllers' reports.
+	SettingUpdate = "update."
+	LockUpdate    = "update" // only one API drives a rollout
 )
 
 // Blob is a document.
@@ -122,7 +130,11 @@ type Local interface {
 	// OnceUse marks a value as used and returns its data. It gives
 	// ErrNotFound if it is unknown or expired and ErrUsed on a second use.
 	OnceUse(ctx context.Context, kind string, value []byte, now int64) (string, error)
-	// OncePurge removes values that expired before now.
+	// OncePurge removes values that expired before now. Where several APIs
+	// share one database they pass now minus session.MaxSkew: an API whose
+	// clock runs behind still accepts a task or nonce until its own now
+	// reaches the expiry, and a purge by a faster clock must not free it
+	// earlier. A controller's own database passes now.
 	OncePurge(ctx context.Context, now int64) error
 
 	Close() error

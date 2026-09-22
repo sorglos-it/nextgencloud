@@ -7,6 +7,7 @@
     "ngc.users/list": [],
     "ngc.users/log": [],
     "ngc.users/pending": [],
+    "ngc.users/pending-api": [],
     "ngc.users/rights": []
   },
   "ngc.desktop/apps": [
@@ -39,11 +40,21 @@
     "secret": "JBSWY3DPEHPK3PXP",
     "uri": "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP\u0026issuer=NGC"
   },
+  "ngc.desktop/ui-proof": {
+    "app": "org.sorglos.terminal",
+    "version": "1.0.0",
+    "store": "global",
+    "catalog": {
+      "payload": "eyJzdG9yZSI6Imdsb2JhbCIsInNlcSI6NSwiaXNzdWVkIjoxNzkwMDAwMDAwLCJhcHBzIjpbeyJpZCI6Im9yZy5zb3JnbG9zLmNhbGN1bGF0b3IiLCJuYW1lIjoiUmVjaG5lciIsInB1Ymxpc2hlciI6IlNvcmdsb3MgSVQiLCJ2ZXJzaW9ucyI6W3sidmVyc2lvbiI6IjEuMC4wIiwidXJsIjoib3JnLnNvcmdsb3MuY2FsY3VsYXRvci0xLjAuMC5uZ2MiLCJzaXplIjoxMjM0NSwic2hhMjU2IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSIsInVpIjoiQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3YyJ9XX0seyJpZCI6Im9yZy5zb3JnbG9zLnRlcm1pbmFsIiwibmFtZSI6IlRlcm1pbmFsIiwicHVibGlzaGVyIjoiU29yZ2xvcyBJVCIsInZlcnNpb25zIjpbeyJ2ZXJzaW9uIjoiMS4wLjAiLCJ1cmwiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbC0xLjAuMC5uZ2MiLCJzaXplIjo1MDAwMDAwLCJzaGEyNTYiOiJBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJIiwidWkiOiJDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnIn0seyJ2ZXJzaW9uIjoiMS4xLjAiLCJ1cmwiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbC0xLjEuMC5uZ2MiLCJzaXplIjo1MTAwMDAwLCJzaGEyNTYiOiJBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNIiwidWkiOiJDUWtKQ1FrSkNRa0pDUWtKQ1FrSkNRa0pDUWtKQ1FrSkNRa0pDUWtKQ1FrIn1dfV19",
+      "kid": "1Lf-KH2t1XefQCsw_lcR3g",
+      "sig": "Y16NC_PaZp6XjvZaIdo1SXQPPUDsEp2KM1C2HjS1UWQjI8hi9JhexFX-9d622XszExeNWGEBOE35I4FIo_LEAQ"
+    }
+  },
   "ngc.store/catalog": {
     "catalog": {
-      "payload": "e30",
-      "kid": "k",
-      "sig": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw"
+      "payload": "eyJzdG9yZSI6Imdsb2JhbCIsInNlcSI6NSwiaXNzdWVkIjoxNzkwMDAwMDAwLCJhcHBzIjpbeyJpZCI6Im9yZy5zb3JnbG9zLmNhbGN1bGF0b3IiLCJuYW1lIjoiUmVjaG5lciIsInB1Ymxpc2hlciI6IlNvcmdsb3MgSVQiLCJ2ZXJzaW9ucyI6W3sidmVyc2lvbiI6IjEuMC4wIiwidXJsIjoib3JnLnNvcmdsb3MuY2FsY3VsYXRvci0xLjAuMC5uZ2MiLCJzaXplIjoxMjM0NSwic2hhMjU2IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSIsInVpIjoiQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3YyJ9XX0seyJpZCI6Im9yZy5zb3JnbG9zLnRlcm1pbmFsIiwibmFtZSI6IlRlcm1pbmFsIiwicHVibGlzaGVyIjoiU29yZ2xvcyBJVCIsInZlcnNpb25zIjpbeyJ2ZXJzaW9uIjoiMS4wLjAiLCJ1cmwiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbC0xLjAuMC5uZ2MiLCJzaXplIjo1MDAwMDAwLCJzaGEyNTYiOiJBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJIiwidWkiOiJDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnIn0seyJ2ZXJzaW9uIjoiMS4xLjAiLCJ1cmwiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbC0xLjEuMC5uZ2MiLCJzaXplIjo1MTAwMDAwLCJzaGEyNTYiOiJBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNIiwidWkiOiJDUWtKQ1FrSkNRa0pDUWtKQ1FrSkNRa0pDUWtKQ1FrSkNRa0pDUWtKQ1FrIn1dfV19",
+      "kid": "1Lf-KH2t1XefQCsw_lcR3g",
+      "sig": "Y16NC_PaZp6XjvZaIdo1SXQPPUDsEp2KM1C2HjS1UWQjI8hi9JhexFX-9d622XszExeNWGEBOE35I4FIo_LEAQ"
     }
   },
   "ngc.store/install-key": {
@@ -76,21 +87,39 @@
   ],
   "ngc.store/updates": [
     {
-      "target": "ngc-api",
+      "target": "ngc-controller",
+      "node": "ctl-1",
+      "installed": "1.0.0",
+      "available": "1.1.0",
+      "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+      "key": "buCR_SgKm2hVT6c8WIEl1H00JcaKJroja02tkPkKj5I",
+      "mode": "semi",
+      "state": "downloaded"
+    },
+    {
+      "target": "org.sorglos.terminal",
+      "node": "ctl-1",
       "installed": "1.0.0",
       "available": "1.1.0",
       "mode": "auto",
       "window": "02:00-04:00",
+      "state": "available"
+    },
+    {
+      "target": "system",
+      "node": "ctl-1",
+      "mode": "notify",
       "state": "available"
     }
   ],
   "ngc.store/upload": {
     "id": "org.example.notes",
     "version": "0.1.0",
-    "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+    "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+    "ui": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo"
   },
   "ngc.users/join-code": {
-    "code": "ngc-join:…",
+    "code": "ngc-join:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYMTlmWDE5ZlgxOWZYMTlmWDE5Zlh3IiwiYW5jaG9yIjp7InNlcSI6MSwiaGFzaCI6InhKYS15Wnc0RTJiMTNMLWVZcTBrNDRaNTBXTldZSkV1WW9HTDJtMmo0ODAifX0",
     "expires": 1790086400
   },
   "ngc.users/list": [
@@ -118,14 +147,23 @@
     }
   ],
   "ngc.users/pair-code": {
-    "code": "ngc-pair:…",
+    "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MSwiaGFzaCI6InhKYS15Wnc0RTJiMTNMLWVZcTBrNDRaNTBXTldZSkV1WW9HTDJtMmo0ODAifX0",
     "expires": 1790086400
   },
   "ngc.users/pending": [
     {
       "name": "dienste",
       "key": "wcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcE",
-      "fingerprint": "k3y…",
+      "since": 1790000000
+    }
+  ],
+  "ngc.users/pending-api": [
+    {
+      "node": "api-2",
+      "noise": "PFxs4t2Z4Q0sPeBddzqhXj5tlx7U5BOJyTtLvdoXchI",
+      "sign": "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+      "tls": "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+      "url": "wss://api-2.test:7443/tunnel",
       "since": 1790000000
     }
   ],
