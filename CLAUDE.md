@@ -67,6 +67,9 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
   `TestValidText` in `shared/wire` schlägt fehl, bis Doku und Testdaten nachgezogen sind.
 - Keine Laufzeitabhängigkeiten: Fremdcode nur per `go mod vendor`, mit Zeile in `THIRD-PARTY.md`,
   Lizenz vereinbar mit der AGPL-3.0. Neue Module vorher beim Koordinator anfragen.
+- Die Module für die vier Teile (SQLite, MariaDB-Treiber, WebSocket, Passkeys, TOTP) liegen schon
+  in `vendor/`. Solange kein Teil sie einbindet, hält `tools/modules.go` sie fest; wer eines zuerst
+  benutzt, streicht dort seine Zeile.
 - Webinterface ohne Framework und ohne Build-Schritt; npm nur in `apps/web/tests/`.
 - Sprache: Code, Bezeichner, Kommentare und Commit-Nachrichten Englisch. Dokumente, Oberfläche und
   Meldungen für Benutzer Deutsch.

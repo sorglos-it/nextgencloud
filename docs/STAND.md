@@ -5,15 +5,14 @@
 ## Ziel der nächsten Sitzung
 
 Den Vertrag für die Wiederherstellung schreiben (Codes, Zurücksetzen durch einen Admin,
-Notfallbefehl auf dem Server) und die Module aus Kapitel 7 übernehmen. Danach die Pläne 1 bis 4
-für die vier Teile.
+Notfallbefehl auf dem Server). Danach die Pläne 1 bis 4 für die vier Teile.
 
 ## Stand
 
 | | |
 |---|---|
 | Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden |
-| In Arbeit | nichts; die Verträge sind freigegeben und liegen auf `main` (Etikett `vertraege-v1`, 22.09.2026) |
+| In Arbeit | nichts; die Verträge sind freigegeben und liegen auf `main` (Etikett `vertraege-v1`, 22.09.2026), die Module aus Kapitel 7 liegen in `vendor/` |
 | Blockiert | nichts |
 | Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
 
@@ -23,10 +22,7 @@ für die vier Teile.
    Server), als Vertragsänderung vor den Plänen 1–4. Braucht eine eigene Schlüsselart oder eine
    Ausnahme für Rollen nur mit Passkey (die Vertrauensliste lehnt dort Passwortschlüssel ab) und
    eine Antwort für hochgeladene Apps, deren freigebender Admin-Schlüssel wechselt.
-2. Die Module aus Entwurf, Kapitel 7 (SQLite, MariaDB-Treiber, WebSocket, WebAuthn/TOTP) prüfen und
-   nach `vendor/` übernehmen, bevor die vier Sitzungen starten; sonst stoßen vier Branches dort
-   zusammen. Das lädt Code herunter: vorher Thomas fragen.
-3. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
+2. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
 
 ## Vor dem Bauen zu prüfen
 
@@ -51,6 +47,9 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
 - Aufbau des Repos: `CLAUDE.md` im Stamm, Abschnitt „Aufbau“. `vendor/` bleibt im Stamm, weil Go es
   neben `go.mod` verlangt.
+- Fremdcode: alle Module aus Entwurf, Kapitel 7 liegen seit dem 22.09.2026 in `vendor/`, aufgezählt
+  in `THIRD-PARTY.md`. Was noch kein Teil einbindet, hält `tools/modules.go` fest; wer ein Modul
+  zuerst benutzt, nimmt seine Zeile dort heraus.
 - Linux-Tests mit `-race` gehen auf Thomas' Rechner nur in WSL (Debian, mit `gcc`); eine
   Go-Toolchain für Linux muss dort vorhanden sein.
 - Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung (`TestValidText` hält es an).

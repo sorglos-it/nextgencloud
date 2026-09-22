@@ -1038,6 +1038,8 @@ Sperre in der Datenbank.
 | 22.09.2026 | Apaches Lastverteilung steht in `config.BalancerFile` (`/etc/ngc/apache-apis.conf`); sie schreiben nur ngc-web bei der Installation und danach der Controller mit Rolle `web`, beide aus `web.json`. Die Form legt der Plan des Webinterface als Vorlage in `shared/ulh.md` fest. |
 | 22.09.2026 | ngc-api zeigt beim Beitritt den Anker des Beitrittscodes wie ngc-controller beim Koppeln. Nach der Ersteinrichtung koppelt man zuerst den Controller des Webservers: Erst er schreibt `trust-anchor.json`. |
 | 22.09.2026 | Vorgabe Thomas: Die Grenze der Ersteinrichtung (Angreifer im selben Netz beim ersten Aufruf ohne vertrauenswürdiges Zertifikat) wird dokumentiert, nicht technisch erzwungen. Empfehlung im Entwurf: in einem Netz einrichten, dem man traut, oder gleich mit einem vertrauenswürdigen Zertifikat (ngc-web bietet Let's Encrypt an). |
+| 22.09.2026 | Die Module aus Kapitel 7 sind übernommen. Mit allem, was sie mitbringen, liegen 21 Module und rund 20 MB in `vendor/`; jede Lizenz ist mit der AGPL-3.0 vereinbar, `govulncheck` meldet keine erreichbare Lücke. |
+| 22.09.2026 | Solange kein Teil die neuen Module einbindet, hält `tools/modules.go` (Bau-Markierung `modules`) sie in `go.mod` und `vendor/`; `tools/check.sh` baut die Datei für beide Ziele mit. Jede Zeile wandert in den Teil, der das Modul zuerst benutzt, die Datei verschwindet mit der letzten Zeile. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -1046,13 +1048,13 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 
 | Zweck | Kandidat | Stand |
 |---|---|---|
-| SQLite ohne cgo, Verschlüsselung AES-256-XTS | `github.com/ncruces/go-sqlite3` mit `vfs/xts` | Am 18.09.2026 geprüft: v0.35.5 vom 16.09.2026, AES-256 bei 64-Byte-Schlüssel, reines Go. Lizenz noch prüfen. |
-| MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
-| WebSocket | `github.com/coder/websocket` | zu prüfen |
+| SQLite ohne cgo, Verschlüsselung AES-256-XTS | `github.com/ncruces/go-sqlite3` mit `vfs/xts` | Übernommen am 22.09.2026: v0.35.5, MIT, reines Go, AES-256 bei 64-Byte-Schlüssel. Bringt SQLite selbst als WebAssembly (MIT-0) und julianday (MIT) mit. |
+| MariaDB | `github.com/go-sql-driver/mysql` | Übernommen am 22.09.2026: v1.10.1, MPL-2.0. Keine seiner Dateien trägt den Vermerk „Incompatible With Secondary Licenses“, deshalb mit der AGPL-3.0 vereinbar. |
+| WebSocket | `github.com/coder/websocket` | Übernommen am 22.09.2026: v1.8.15, ISC, ohne weitere Module. |
 | Argon2id | `golang.org/x/crypto/argon2` | Übernommen in Plan 0: v0.57.0, BSD-3-Clause, in `shared/proof` |
 | Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`); kein PBKDF2-Ausweg (21.09.2026) | zu prüfen |
-| TOTP | `github.com/pquerna/otp` oder eigene Umsetzung nach RFC 6238 mit dessen Testvektoren; HMAC kommt aus der Standardbibliothek von Go | zu prüfen |
-| WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
+| TOTP | `github.com/pquerna/otp` | Übernommen am 22.09.2026: v1.5.0, Apache-2.0; bringt barcode (MIT) für den QR-Code der Einrichtung mit, zusammen 0,15 MB. Eigene Umsetzung nach RFC 6238 damit nicht nötig. |
+| WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | Übernommen am 22.09.2026: v0.18.2, BSD-3-Clause; bringt acht weitere Module mit (CBOR, TPM, JWT, Metadaten), alle vereinbar. Siehe `THIRD-PARTY.md`. |
 | Noise-Tunnel | `github.com/flynn/noise` | Übernommen in Plan 0: v1.1.0, BSD-3-Clause, in `shared/noisep` |
 | Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `apps/web/tests/` | erlaubt seit 19.09.2026 |
 | Noise im Browser (Ende zu Ende) | JavaScript-Umsetzung ohne npm | zu prüfen; findet sich keine geprüfte, dann eigene Umsetzung des Ablaufs nach der Spezifikation, getestet mit den offiziellen Testvektoren. Die Kryptografie selbst kommt aus der Web Crypto API des Browsers. |
