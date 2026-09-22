@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -412,22 +413,197 @@ func TestCatalogDecodeCost(t *testing.T) {
 	}
 }
 
-type vector struct {
-	StoreKey   enc.Bytes     `json:"storeKey"`
-	Catalog    sign.Envelope `json:"catalog"`
-	License    sign.Envelope `json:"license"`
-	ReleaseKey enc.Bytes     `json:"releaseKey"`
-	Release    sign.Envelope `json:"release"`
+// catalogReject is a catalog that VerifyCatalog(catalog, global, lastSeq)
+// must refuse, for the reason its name gives.
+type catalogReject struct {
+	Name    string        `json:"name"`
+	Catalog sign.Envelope `json:"catalog"`
+	LastSeq uint64        `json:"lastSeq"`
+	Valid   bool          `json:"valid"`
+	want    error         // the error VerifyCatalog must return; not in the file
+	bound   bool          // a valid catalog, refused only for the store it names; not in the file
 }
 
+// catalogRejects changes one thing of testCatalog per case and signs it with
+// the store key for catalogs, unless the name says otherwise. Every lastSeq
+// is 0, which refuses no seq, except where the name says otherwise.
+func catalogRejects(t testing.TB) []catalogReject {
+	signed := func(change func(c *Catalog)) sign.Envelope {
+		c := testCatalog()
+		change(&c)
+		return signJSON(t, storeKey, sign.PurposeCatalog, c)
+	}
+	// Without its ui member, as a store that does not know it would write
+	// the version.
+	noUI := testCatalog()
+	noUI.Apps[0].Versions[0].UI = nil
+	b, err := json.Marshal(noUI)
+	if err != nil || bytes.Count(b, []byte(`"ui":""`)) != 1 {
+		t.Fatalf("%s, %v", b, err)
+	}
+	withoutUI, err := sign.Sign(storeKey, sign.PurposeCatalog, bytes.Replace(b, []byte(`,"ui":""`), nil, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []catalogReject{
+		{Name: "signed by another key", Catalog: signJSON(t, releaseKey, sign.PurposeCatalog, testCatalog()), want: sign.ErrWrongKey},
+		{Name: "signed for purpose license", Catalog: signJSON(t, storeKey, sign.PurposeLicense, testCatalog()), want: sign.ErrBadSignature},
+		{Name: "catalog of another store", Catalog: signed(func(c *Catalog) { c.Store = "other" }), want: ErrCatalog, bound: true},
+		{Name: "older than the last one seen", Catalog: signJSON(t, storeKey, sign.PurposeCatalog, testCatalog()), LastSeq: 6, want: ErrRollback},
+		{Name: "core app", Catalog: signed(func(c *Catalog) { c.Apps[0].ID = "ngc.calculator" }), want: ErrCatalog},
+		// Ascending as text, not as versions: 1.9.0 is older than 1.10.0.
+		{Name: "versions not ascending", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].Version, c.Apps[1].Versions[1].Version = "1.10.0", "1.9.0"
+		}), want: ErrCatalog},
+		{Name: "version without ui", Catalog: withoutUI, want: ErrCatalog},
+		{Name: "ui of 31 bytes", Catalog: signed(func(c *Catalog) { c.Apps[0].Versions[0].UI = c.Apps[0].Versions[0].UI[:31] }), want: ErrCatalog},
+		{Name: "plain http url", Catalog: signed(func(c *Catalog) { c.Apps[1].Versions[0].URL = "http://cdn.ngc.test/terminal-1.0.0.ngc" }), want: ErrCatalog},
+		{Name: "encrypted without a price", Catalog: signed(func(c *Catalog) { c.Apps[0].Versions[0].Encrypted = true }), want: ErrCatalog},
+	}
+}
+
+// licenseReject is a license that VerifyLicense(license, global,
+// installation, installKey) must refuse, for the reason its name gives.
+type licenseReject struct {
+	Name    string        `json:"name"`
+	License sign.Envelope `json:"license"`
+	Valid   bool          `json:"valid"`
+	want    error         // the error VerifyLicense must return; not in the file
+	bound   bool          // a valid license, refused only for whom it names; not in the file
+}
+
+// licenseRejects changes one thing of testLicense per case and signs it
+// with the store key for licenses.
+func licenseRejects(t testing.TB) []licenseReject {
+	signed := func(change func(l *License)) sign.Envelope {
+		l := testLicense()
+		change(&l)
+		return signJSON(t, storeKey, sign.PurposeLicense, l)
+	}
+	other, _ := trusttest.NodeKeys(0x92)
+	return []licenseReject{
+		{Name: "other installation", License: signed(func(l *License) { l.Installation = trusttest.ID(0x12) }), want: ErrLicense, bound: true},
+		{Name: "other install key", License: signed(func(l *License) { l.InstallKey = other.Public }), want: ErrLicense, bound: true},
+		{Name: "other store", License: signed(func(l *License) { l.Store = "other" }), want: ErrLicense, bound: true},
+		{Name: "per user without users", License: signed(func(l *License) { l.Users = 0 }), want: ErrLicense},
+		{Name: "grace over 90 days", License: signed(func(l *License) { l.Grace = MaxGrace + 1 }), want: ErrLicense},
+	}
+}
+
+// releaseReject is a release that VerifyRelease(release, releaseKey, lastSeq)
+// must refuse, for the reason its name gives.
+type releaseReject struct {
+	Name    string        `json:"name"`
+	Release sign.Envelope `json:"release"`
+	LastSeq uint64        `json:"lastSeq"`
+	Valid   bool          `json:"valid"`
+	want    error         // the error VerifyRelease must return; not in the file
+}
+
+// releaseRejects changes one thing of testRelease per case and signs it with
+// the release key for releases, unless the name says otherwise. Every
+// lastSeq is 0, except where the name says otherwise.
+func releaseRejects(t testing.TB) []releaseReject {
+	signed := func(change func(r *Release)) sign.Envelope {
+		r := testRelease()
+		change(&r)
+		return signJSON(t, releaseKey, sign.PurposeRelease, r)
+	}
+	return []releaseReject{
+		{Name: "signed by the store key", Release: signJSON(t, storeKey, sign.PurposeRelease, testRelease()), want: sign.ErrWrongKey},
+		{Name: "signed for purpose catalog", Release: signJSON(t, releaseKey, sign.PurposeCatalog, testRelease()), want: sign.ErrBadSignature},
+		{Name: "old part name web", Release: signed(func(r *Release) { r.Files[0].Part = "web" }), want: ErrRelease},
+		// A second file, not the same one twice.
+		{Name: "two files for ngc-api amd64", Release: signed(func(r *Release) {
+			twin := r.Files[1]
+			twin.URL, twin.SHA256 = "https://releases.ngc.test/1.1.0/ngc-api-amd64-b.tar", bytes.Repeat([]byte{0x07}, 32)
+			r.Files = slices.Insert(r.Files, 2, twin)
+		}), want: ErrRelease},
+		{Name: "older than the last one seen", Release: signJSON(t, releaseKey, sign.PurposeRelease, testRelease()), LastSeq: 4, want: ErrRollback},
+	}
+}
+
+type vector struct {
+	StoreKey       enc.Bytes       `json:"storeKey"`
+	Catalog        sign.Envelope   `json:"catalog"`
+	CatalogRejects []catalogReject `json:"catalogRejects"`
+	Installation   string          `json:"installation"`
+	InstallKey     enc.Bytes       `json:"installKey"`
+	License        sign.Envelope   `json:"license"`
+	LicenseRejects []licenseReject `json:"licenseRejects"`
+	ReleaseKey     enc.Bytes       `json:"releaseKey"`
+	Release        sign.Envelope   `json:"release"`
+	ReleaseRejects []releaseReject `json:"releaseRejects"`
+}
+
+// TestVectors writes store.json: a catalog, a license and a release that
+// verify, and rejects of each that are signed correctly but for their own
+// rule. It checks every reject fails for the reason its name gives: one
+// refused for its signature carries the valid payload, one refused for its
+// seq is the valid document, and one refused for whom it names is valid on
+// its own.
 func TestVectors(t *testing.T) {
-	golden.Check(t, *update, "store.json", vector{
-		StoreKey:   global.Key,
-		Catalog:    signJSON(t, storeKey, sign.PurposeCatalog, testCatalog()),
-		License:    signJSON(t, storeKey, sign.PurposeLicense, testLicense()),
-		ReleaseKey: enc.Bytes(releaseKey.Public().(ed25519.PublicKey)),
-		Release:    signJSON(t, releaseKey, sign.PurposeRelease, testRelease()),
-	})
+	releasePub := releaseKey.Public().(ed25519.PublicKey)
+	v := vector{
+		StoreKey:       global.Key,
+		Catalog:        signJSON(t, storeKey, sign.PurposeCatalog, testCatalog()),
+		CatalogRejects: catalogRejects(t),
+		Installation:   trusttest.ID(0x11),
+		InstallKey:     install.Public,
+		License:        signJSON(t, storeKey, sign.PurposeLicense, testLicense()),
+		LicenseRejects: licenseRejects(t),
+		ReleaseKey:     enc.Bytes(releasePub),
+		Release:        signJSON(t, releaseKey, sign.PurposeRelease, testRelease()),
+		ReleaseRejects: releaseRejects(t),
+	}
+	if _, err := VerifyCatalog(v.Catalog, global, 0); err != nil {
+		t.Errorf("catalog: %v", err)
+	}
+	if _, err := VerifyLicense(v.License, global, v.Installation, v.InstallKey); err != nil {
+		t.Errorf("license: %v", err)
+	}
+	if _, err := VerifyRelease(v.Release, releasePub, 0); err != nil {
+		t.Errorf("release: %v", err)
+	}
+	// only checks that r, refused with err, breaks no rule but the one err
+	// names: valid is the valid document, parses whether r's payload is one.
+	only := func(name string, r, valid sign.Envelope, err error, bound, parses bool) {
+		t.Helper()
+		switch {
+		case err == sign.ErrWrongKey || err == sign.ErrBadSignature:
+			if !bytes.Equal(r.Payload, valid.Payload) {
+				t.Errorf("%s: refused for its signature, but its payload differs", name)
+			}
+		case err == ErrRollback:
+			if !reflect.DeepEqual(r, valid) {
+				t.Errorf("%s: refused for its seq, but not the valid document", name)
+			}
+		case parses != bound:
+			t.Errorf("%s: payload parses %v, bound %v", name, parses, bound)
+		}
+	}
+	for _, r := range v.CatalogRejects {
+		if _, err := VerifyCatalog(r.Catalog, global, r.LastSeq); err != r.want || r.Valid {
+			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
+		}
+		_, err := parseCatalog(r.Catalog.Payload)
+		only(r.Name, r.Catalog, v.Catalog, r.want, r.bound, err == nil)
+	}
+	for _, r := range v.LicenseRejects {
+		if _, err := VerifyLicense(r.License, global, v.Installation, v.InstallKey); err != r.want || r.Valid {
+			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
+		}
+		_, err := parseLicense(r.License.Payload)
+		only(r.Name, r.License, v.License, r.want, r.bound, err == nil)
+	}
+	for _, r := range v.ReleaseRejects {
+		if _, err := VerifyRelease(r.Release, releasePub, r.LastSeq); err != r.want || r.Valid {
+			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
+		}
+		_, err := parseRelease(r.Release.Payload)
+		only(r.Name, r.Release, v.Release, r.want, false, err == nil)
+	}
+	golden.Check(t, *update, "store.json", v)
 }
 
 // releaseFile is the one file of the release vector for install scripts.
