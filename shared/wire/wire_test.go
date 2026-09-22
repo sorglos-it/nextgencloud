@@ -424,6 +424,9 @@ func closeCases() []closeCase {
 		{"message of 256 bytes", message(strings.Repeat("x", MaxMessageText)), true},
 		{"message of 128 umlauts, 256 bytes", message(strings.Repeat("ü", MaxMessageText/2)), true},
 		{"CLOSE of MaxClosePayload bytes", padded(ok, MaxClosePayload), true},
+		{"error E_LOGIN with its message", []byte(`{"status":"error","code":"E_LOGIN","message":"Anmeldung fehlgeschlagen."}`), true},
+		{"error E_LOCKED with its message",
+			[]byte(`{"status":"error","code":"E_LOCKED","message":"Zu viele Fehlversuche. Bitte später erneut versuchen."}`), true},
 		{"status ok with a code", []byte(`{"status":"ok","code":"E_EXIT"}`), false},
 		{"unknown code", []byte(`{"status":"error","code":"E_WHAT"}`), false},
 		{"unknown status", []byte(`{"status":"maybe"}`), false},
@@ -437,6 +440,10 @@ func closeCases() []closeCase {
 		{"duplicate member", []byte(`{"status":"ok","status":"ok"}`), false},
 		{"unknown member", []byte(`{"status":"ok","extra":1}`), false},
 		{"member name in other case", []byte(`{"Status":"ok"}`), false},
+		// Valid JSON whose message escapes a character ValidText refuses;
+		// "\x5c" is the backslash of the escape.
+		{"message with a control character", message("Zeile\x5cu0007"), false},
+		{"message with a line feed", message("Zeile\x5cnzwei"), false},
 	}
 }
 
@@ -463,8 +470,45 @@ func TestParseClose(t *testing.T) {
 			t.Errorf("%.60s: got %v, want %v", s, err, ErrClose)
 		}
 	}
-	if Error(CodeForbidden).Message != "Keine Berechtigung." || Error(CodeTooLarge).Message != "Zu viele Daten." {
+	if Error(CodeForbidden).Message != "Keine Berechtigung." || Error(CodeTooLarge).Message != "Zu viele Daten." ||
+		Error(CodeLogin).Message != "Anmeldung fehlgeschlagen." ||
+		Error(CodeLocked).Message != "Zu viele Fehlversuche. Bitte später erneut versuchen." {
 		t.Error("German message missing")
+	}
+	// The CLOSE of every code with its message is valid.
+	for code := range messages {
+		if err := Error(code).Validate(); err != nil {
+			t.Errorf("%s: %v", code, err)
+		}
+	}
+}
+
+// TestValidText: the cases of store.TestValidText, and more characters that
+// break a line or are invisible.
+func TestValidText(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"Terminal", true},
+		{"Befehle ausführen", true},
+		{strings.Repeat("a", 64), true},
+		{strings.Repeat("ä", 32), true}, // exactly 64 bytes of umlauts
+		{"", false},
+		{strings.Repeat("a", 65), false},
+		{strings.Repeat("ä", 32) + "a", false},
+		{"a" + "\x0ab", false},         // line feed
+		{"a" + "\x07b", false},         // BEL
+		{"a" + "\xc2\xa0b", false},     // no-break space
+		{"a" + "\xffb", false},         // invalid UTF-8
+		{"a" + "\x09b", false},         // tab
+		{"a" + "\x0db", false},         // carriage return
+		{"a" + "\xe2\x80\xa8b", false}, // U+2028, line separator
+	}
+	for _, c := range cases {
+		if got := ValidText(c.s, 64); got != c.want {
+			t.Errorf("%q: got %v", c.s, got)
+		}
 	}
 }
 
@@ -557,6 +601,8 @@ func e2eCases() []e2eCase {
 		{"end from controller without status", msg(E2EEnd, ""), true, false},
 		{"end from controller with status maybe", msg(E2EEnd, `{"status":"maybe"}`), true, false},
 		{"end from controller with a CLOSE over MaxClosePayload", append([]byte{E2EEnd}, padded([]byte(`{"status":"ok"}`), MaxClosePayload+1)...), true, false},
+		{"end from controller with a message with a control character",
+			msg(E2EEnd, `{"status":"error","code":"E_EXIT","message":"Zeile`+"\x5cu0007"+`"}`), true, false},
 	}
 }
 

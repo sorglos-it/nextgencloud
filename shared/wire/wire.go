@@ -9,7 +9,11 @@
 // payload and are exactly HandshakeSize bytes (package noisep). After that
 // every binary WebSocket message is exactly one Noise transport message whose
 // plaintext is exactly one frame. A text message, a frame that does not decode
-// or a failed decryption ends the link.
+// or a failed decryption ends the link. Noise_KK authenticates both ends of
+// both links; the TLS they run in only carries them through firewalls and
+// proxies, and is verified all the same, never switched off: the browser
+// checks the web server's certificate, Apache and the controller check the
+// API's certificate against its pin (trust.Node.TLS, tunnel.PinnedTLS).
 //
 // Channel 0 is always open and carries Control messages; ControlAllowed says
 // who may send which. On a tunnel both sides send hello first.
@@ -57,9 +61,15 @@
 // browser's OPEN payload unchanged into tunnel.Open, relays DATA and EOF
 // unchanged and one to one (each DATA payload as one DATA frame, each EOF as
 // one EOF), keeps its own credit on each hop, grants the controller no more
-// than it can hold until the browser takes it, copies Noise message 2 from the
-// controller's first GRANT into its own first GRANT to the browser and passes
-// on a CLOSE with the same code.
+// than it can hold until the browser takes it, sends its first GRANT to the
+// browser only after the controller's first GRANT arrived (copying Noise
+// message 2 from it on an end-to-end channel), or passes on the controller's
+// CLOSE instead, and passes on a CLOSE with the same code. One exception: on
+// a channel of a core action with flow transfer that the shell opened
+// (core.ShellOpens; ngc.store/controller/activate), the shell sends EOF right
+// after the first GRANT and no DATA — DATA from it is a protocol error (CLOSE
+// E_PROTOCOL) — and the API itself writes the transfer header and the file
+// on the tunnel hop, then EOF (core.FlowTransfer).
 //
 // End to end. Channels to apps other than core apps are encrypted between shell
 // and controller (noisep.E2EPrologue binds controller, app, service, action and
@@ -84,11 +94,14 @@
 // the link's Noise session and a result is all DATA up to the other side's EOF
 // (package core, Flow).
 //
-// Results. Every call-style result is at most MaxCallResult bytes, on core-app
-// and app channels alike: on an end-to-end channel it is the controller's
-// output up to its E2EEnd, for every action that is not a stream
-// (store.Action.Stream). A sender with more ends with CodeTooLarge (on an
-// end-to-end channel in its E2EEnd).
+// Results. A result counts only if its channel ends in success: on a
+// core-app channel with CLOSE status ok, on an end-to-end channel with the
+// controller's E2EEnd of status ok; after an error the receiver discards
+// what came. Every call-style result is at most MaxCallResult bytes, on
+// core-app and app channels alike: on an end-to-end channel it is the
+// controller's output up to its E2EEnd, for every action that is not a
+// stream (store.Action.Stream). A sender with more ends with CodeTooLarge
+// (on an end-to-end channel in its E2EEnd).
 // The receiver enforces the limit and closes the channel with CodeTooLarge
 // when more arrives: the API for a controller's result on a core-app channel,
 // before passing it on; the shell for the API's own results and on every
@@ -104,6 +117,8 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -258,6 +273,24 @@ func ValidAppID(s string) bool { return len(s) <= 100 && appIDPattern.MatchStrin
 
 // ValidName reports whether s is a well-formed service or action name.
 func ValidName(s string) bool { return namePattern.MatchString(s) }
+
+// ValidText reports whether s is 1 to max bytes of printable UTF-8: every
+// rune unicode.IsPrint (letters, marks, numbers, punctuation, symbols and
+// the ASCII space; no control characters, no line breaks). Names, titles and
+// messages meant for people use it; store.ValidText is the same rule.
+func ValidText(s string, max int) bool {
+	// Ranging over invalid UTF-8 yields U+FFFD, which is printable, so the
+	// encoding is checked first.
+	if s == "" || len(s) > max || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // CoreApp reports whether app belongs to NGC itself. The API serves these
 // channels; they carry no end-to-end handshake of their own because the
@@ -418,6 +451,13 @@ const (
 	CodeVerify      Code = "E_VERIFY"
 	CodeInternal    Code = "E_INTERNAL"
 	CodeTooLarge    Code = "E_TOOLARGE"
+	// Answers before the WebSocket. E_LOGIN is the same for every failed
+	// login and for a missing or expired session, so that no answer tells
+	// which part failed or whether a user exists. E_LOCKED answers after too
+	// many failed attempts; the HTTP answer says in Retry-After when to try
+	// again.
+	CodeLogin  Code = "E_LOGIN"
+	CodeLocked Code = "E_LOCKED"
 )
 
 var messages = map[Code]string{
@@ -433,6 +473,8 @@ var messages = map[Code]string{
 	CodeVerify:      "Unterschrift ungültig.",
 	CodeInternal:    "Interner Fehler.",
 	CodeTooLarge:    "Zu viele Daten.",
+	CodeLogin:       "Anmeldung fehlgeschlagen.",
+	CodeLocked:      "Zu viele Fehlversuche. Bitte später erneut versuchen.",
 }
 
 // Message returns the German text shown to users.
@@ -480,7 +522,10 @@ func (c Close) Validate() error {
 	default:
 		return ErrClose
 	}
-	if len(c.Message) > MaxMessageText || (c.ExitCode != nil && (*c.ExitCode < 0 || *c.ExitCode > 255)) {
+	// The shell shows the message to people, so it is text for people like
+	// every name and title (ValidText), which also bounds its length.
+	if (c.Message != "" && !ValidText(c.Message, MaxMessageText)) ||
+		(c.ExitCode != nil && (*c.ExitCode < 0 || *c.ExitCode > 255)) {
 		return ErrClose
 	}
 	return nil
