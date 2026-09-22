@@ -8,6 +8,11 @@
 > ist `apps/server-api/` (`ngc-store`: `apps/cli/`), `controller/` ist `apps/server-controller/`,
 > `db/` ist `apps/server-db/`, `web/` ist `apps/web/`, `tests/browser/` ist `apps/web/tests/`,
 > `scripts/check.sh` ist `tools/check.sh`, `prototype/index.html` ist `docs/prototype.html`.
+>
+> **Vertragstext überholt:** Nach zwei Abschlussprüfungen und ihren Fix-Wellen weicht der Vertrag an
+> vielen Stellen von diesem Plan ab (etwa `tunnel.Open` ohne `User`, Rollen statt `Parts`, der Prolog
+> für Ende zu Ende, Setup mit MAC, TLS-Fingerabdrücke). Maßgeblich sind `shared/` und
+> `shared/README.md`; dieser Plan ist nur noch die Geschichte.
 
 **Ziel:** Die sieben Verträge zwischen den Teilen als Go-Pakete mit Testvektoren, je eine
 `CLAUDE.md` für die vier Teile und ein Grundgerüst, das baut und testet. Danach können vier

@@ -4,31 +4,30 @@
 
 ## Ziel der nächsten Sitzung
 
-Plan 0 abschließen: die letzte kleine Korrekturrunde von T3, dann alles prüfen und Thomas die
-Verträge zur Freigabe vorlegen. Danach Pull Request, Etikett `vertraege-v1` und die Pläne 1 bis 4
-für die vier Teile.
+Thomas gibt die Verträge frei. Danach Pull Request nach `main`, Squash-Merge und Etikett
+`vertraege-v1`; dann der Vertrag für die Wiederherstellung und die Pläne 1 bis 4 für die vier Teile.
 
 ## Stand
 
 | | |
 |---|---|
-| Erledigt | Plan 0, Tasks 1–21 (Verträge, Testdaten, Anweisungen, Grundgerüst). Abschlussprüfung des Branches, danach Fixplan T1–T4: T1, T2 und T4 fertig und nachgeprüft, T3 Runde 1 zusammengeführt. Umbau nach dem Projektstruktur-Standard (22.09.2026), vorher und nachher mit `tools/check.sh` geprüft |
-| In Arbeit | T3 Runde 2 (kleine Nachträge aus der Nachprüfung), auf `plan-0-vertraege` |
+| Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), zwei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, dann A–F), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 37 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke |
+| In Arbeit | Schlussprüfung der zweiten Fix-Welle, danach die Freigabe |
 | Blockiert | nichts |
 | Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
-1. T3 Runde 2: fehlende Testfälle in `shared/testdata/ui.json` (Ordnernamen, Ordner mit Größe,
-   `x` nach PAX, Ordner doppelt, gültiger Ordner nach Datei darunter), Race-Tests in
-   `shared/dbapi/dbtest` mit Spin-Barriere und Hinweis „nur mit `-race`“, `verify.sh` verlangt
-   genau eine Zeile, die vier `omitzero`-Felder per Test festnageln. Einzelheiten: Protokoll unter
-   `.superpowers/sdd/…/progress.md` (letzte Zeilen), dort noch mit den alten Pfaden.
-2. Nachprüfung von Runde 2.
-3. Gesamtcheck: `tools/check.sh`, jeden Parser fuzzen (`-parallel=4`, Ziele in `shared/store` mit
-   `-fuzzminimizetime=1s`), `govulncheck ./...`, Abschlussprüfung des ganzen Branches.
-4. Thomas gibt die Verträge frei. Danach Pull Request nach `main`, Squash-Merge, Etikett
+1. Thomas gibt die Verträge frei. Danach Pull Request nach `main`, Squash-Merge, Etikett
    `vertraege-v1`.
+2. Vertrag für die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl auf dem
+   Server), als Vertragsänderung vor den Plänen 1–4. Braucht eine eigene Schlüsselart oder eine
+   Ausnahme für Rollen nur mit Passkey (die Vertrauensliste lehnt dort Passwortschlüssel ab) und
+   eine Antwort für hochgeladene Apps, deren freigebender Admin-Schlüssel wechselt.
+3. Die Module aus Entwurf, Kapitel 7 (SQLite, MariaDB-Treiber, WebSocket, WebAuthn/TOTP) prüfen und
+   nach `vendor/` übernehmen, bevor die vier Sitzungen starten; sonst stoßen vier Branches dort
+   zusammen. Das lädt Code herunter: vorher Thomas fragen.
+4. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
 
 ## Vor dem Bauen zu prüfen
 
@@ -36,16 +35,16 @@ für die vier Teile.
   Nachrichten schicken können (Entwurf 4.7 setzt das voraus).
 - Was Thomas bereitstellt: siehe Entwurf 4.7, „Voraussetzungen“ (sieben Server, ein Pi, je ein
   YubiKey 5 NFC und Nitrokey 3 NFC).
-- Auf dem ersten Linux-Server nachholen: `go test -race ./...`, `TestEchoService`, die
-  Dateirechte-Prüfung in `shared/config` und `TestReleaseScript` mit echtem `jq` (darf nicht
-  übersprungen werden).
+- Auf dem ersten Linux-Server mit echtem `jq`: `TestReleaseScript` (31 Fälle, auch der mit einem
+  Null-Byte) muss laufen und grün sein; bisher lief es nur mit einem Ersatz für `jq`.
 
 ## Offene Entscheidungen
 
 - **Release-Stick:** Mit welchem Werkzeug der Hardware-Stick das Release signiert, wird vor dem
   ersten Release entschieden. `ngc-store` signiert nur Test-Releases.
-- **Wiederherstellung** (Codes, Zurücksetzen durch einen Admin, Notfallbefehl auf dem Server): noch
-  kein Vertrag. Kommt als Vertragsänderung vor dem Plan für das Webinterface.
+- **Für den Sicherheitsdurchgang (Plan 7) vorgemerkt:** eine feste Bindung der Oberfläche einer
+  Store-App an ihren Store, die einen Wechsel des Admin-Schlüssels übersteht; `enc.Budget` soll
+  Mitglieder in Rohwerten zählen; eine gemeinsame Prüfung der Form von URLs für alle Verträge.
 
 Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
@@ -53,20 +52,23 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
 - Aufbau des Repos: `CLAUDE.md` im Stamm, Abschnitt „Aufbau“. `vendor/` bleibt im Stamm, weil Go es
   neben `go.mod` verlangt.
+- Linux-Tests mit `-race` gehen auf Thomas' Rechner nur in WSL (Debian, mit `gcc`); eine
+  Go-Toolchain für Linux muss dort vorhanden sein.
+- Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung (`TestValidText` hält es an).
 - Der claude-mem-Dienst (`bun … worker-service.cjs`) leckt Speicher. Brechen Builds oder
   Fuzz-Läufe ab, zuerst den freien Speicher prüfen.
 
 ## Skills
 
-- `superpowers:subagent-driven-development`: Plan 0 und Fixplan ausführen (läuft)
+- `superpowers:subagent-driven-development`: Plan 0 und die Fixpläne (fast fertig)
 - `superpowers:finishing-a-development-branch`: am Ende
 
 ## Artefakte
 
 - Entwurf (freigegeben, mit Entscheidungsprotokoll): [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](superpowers/specs/2026-09-19-ngc-kern-design.md)
 - Plan 0: [`docs/superpowers/plans/2026-09-19-ngc-plan-0-vertraege-grundgeruest.md`](superpowers/plans/2026-09-19-ngc-plan-0-vertraege-grundgeruest.md)
-  (noch mit den alten Pfaden, Zuordnung oben im Plan)
-- Fixplan, Berichte, Protokoll: `.superpowers/sdd/2026-09-19-ngc-plan-0-vertraege-grundgeruest/`
+  (historisch; maßgeblich sind `shared/` und `shared/README.md`)
+- Fixpläne, Berichte, Prüfungen, Protokoll: `.superpowers/sdd/2026-09-19-ngc-plan-0-vertraege-grundgeruest/`
   (nicht im Repo)
 - Verträge: [`shared/README.md`](../shared/README.md), [`shared/ulh.md`](../shared/ulh.md)
 - Prototyp: [`docs/prototype.html`](prototype.html), Original unter `W:\ngc\index.html`
