@@ -4,15 +4,18 @@ Hier stehen die Schnittstellen zwischen Webinterface, API, Controller und Datenb
 dem Koordinator. Wer einen Vertrag ändern will, fragt ihn; alle vier Teile erfahren jede Änderung
 sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter AGPL-3.0.
 
+Noch kein Vertrag ist die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl):
+Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plänen 1 bis 4.
+
 | Vertrag | Inhalt | Pakete | Testdaten |
 |---|---|---|---|
-| Grundlagen | Kodierung und signierte Umschläge, für alle Verträge | `enc`, `sign` | `sign.json` |
-| V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `task`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `task.json`, `core.json` |
+| Grundlagen | Kodierung und signierte Umschläge, für alle Verträge | `enc`, `sign` | `sign.json`, `json.json` |
+| V1 | Webinterface ↔ API | `session`, `wire`, `noisep`, `proof`, `task`, `core` | `session.json`, `wire.json`, `noise.json`, `proof.json`, `proof_kdf.json`, `task.json`, `core.json`, `uiproof.json` |
 | V2 | API ↔ Controller | `tunnel`, `session`, `wire`, `noisep`, `task`, `core` | `tunnel.json`, `wire.json`, `noise.json`, `task.json`, `core.json` |
 | V3 | Controller ↔ Dienst im Container | `service` | `service/echo.sh` |
 | V4 | API und Controller ↔ Datenbank | `dbapi`, `dbapi/memstore`, `dbapi/dbtest` | – (Konformitätstests) |
-| V5 | App-Paket, Katalog, Lizenz, Updates | `store` | `store.json`, `pack.json`, `ui.json`, `release/` |
-| V6 | Konfiguration, Pfade, ulh | `config`, `ulh.md` | `config/*.json`, `release/` |
+| V5 | App-Paket, Katalog, Lizenz, Updates | `store` | `store.json`, `pack.json`, `ui.json`, `packui.json`, `release/` |
+| V6 | Konfiguration, Pfade, ulh | `config`, `ulh.md` | `config/*.json`, `release/`, `tls/` |
 | V7 | Vertrauensliste, Ende zu Ende | `trust`, `trust/trusttest`, `noisep`, `proof` | `trust.json`, `noise.json` |
 
 ## Regeln
@@ -24,8 +27,9 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 - **Umschläge von außen** liest `sign.ParseEnvelope` (Lizenzen, Kataloge, Releases), einzelne
   Fassungen der Vertrauensliste `trust.ParseSigned` und ganze Ketten `session.ParseTrustChain`.
   `store.VerifyCatalog`, `store.VerifyLicense`, `store.VerifyRelease`, `trust.Open` und
-  `trust.Advance` erwarten so gelesene Werte; steckt ein Umschlag in einem größeren Dokument (etwa
-  im Kopf einer Übertragung, `core.ReadTransfer`), liest ihn dessen Parser.
+  `trust.Advance` erwarten so gelesene Werte; steckt ein Umschlag in einem größeren Dokument (im
+  Kopf einer Übertragung, `core.ReadTransfer`, oder in einem UI-Beweis, `core.ParseUIProof`),
+  prüft dessen Parser seine Form (`sign.Envelope.Validate`).
 - **Jede Signatur hat einen Zweck** (`sign.Purpose…`). Eine Unterschrift für eine Sache gilt nie für
   eine andere.
 - **Jede Eingabe von außen** läuft durch die `Parse…`- oder `Verify…`-Funktion des Vertrags, nie
@@ -38,14 +42,51 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
   `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`). Dazu gehören
   die Regeln der Vertrauensliste (`trust.List.Validate`): Keine Rolle ist zugleich `passkeyOnly` und
   `passwordToo`; wer in einer Rolle mit `passkeyOnly` ist, hat keinen Passwortschlüssel, und wer in
-  einer Rolle mit `passwordToo` ist, hat einen Passkey und einen Passwortschlüssel. Texte für
-  Menschen (Namen, Titel, Meldungen) prüft `store.ValidText`: 1 Byte bis zur Grenze des Feldes,
-  druckbares UTF-8.
+  einer Rolle mit `passwordToo` ist, hat einen Passkey und einen Passwortschlüssel. Einzeilige
+  Texte für Menschen (Namen, Titel, Meldungen, auch `message` eines CLOSE) prüft `wire.ValidText`
+  (`store.ValidText` ist dieselbe Regel): 1 Byte bis zur Grenze des Feldes, druckbares UTF-8, ohne
+  Steuerzeichen und Zeilenumbrüche. Beschreibungen und Hinweise (`description`, `notes`) sind
+  gültiges UTF-8 bis zu ihrer Grenze; die Shell zeigt alles nur als Text.
+- **Druckbar** heißt, was die Unicode-Tabellen von Go sagen (Unicode 17.0 mit Go 1.27):
+  Buchstaben, kombinierende Zeichen, Zahlzeichen, Satzzeichen, Symbole und das Leerzeichen U+0020.
+  In JavaScript muss jeder Codepunkt (nicht jede UTF-16-Einheit) auf
+  `/^[\p{L}\p{M}\p{N}\p{P}\p{S} ]$/u` passen, und die Länge zählt UTF-8-Bytes. Einen Codepunkt,
+  den die Tabellen des Prüfers nicht kennen, zählt er als nicht druckbar; U+FDD0 ist nie druckbar.
+  Ein Prüfer mit älteren Tabellen lehnt also manchen Text ab, den Go annimmt: Wer Texte schreibt,
+  die andere prüfen, nimmt nur lange zugewiesene Zeichen. Neue Unicode-Tabellen in Go sind eine
+  Vertragsänderung (`TestValidText` in `shared/wire` hält sie an).
+- **Selbst rechnen:** Was die Shell unterschreibt oder den Admin vergleichen lässt, rechnet sie
+  selbst aus, nie aus Antworten der API: Prüfsumme, Manifest und UI-Prüfsumme (`store.PackageUI`)
+  eines Pakets, das sie hochlädt (`core.UploadResult` dient nur dem Abgleich), die Fingerabdrücke
+  wartender Controller (`tunnel.Fingerprint` ihres Schlüssels) und API-Server
+  (`tunnel.JoinFingerprint`). Ein Paket liest sie dafür wie `store.Walk`, also in jeder Form, die
+  Go `archive/tar` liest, auch mit PAX-Köpfen und langen GNU-Namen; `packui.json` zeigt nur die
+  USTAR-Pakete von `ngc-store pack`. Was sie nicht lesen kann, lehnt sie ab. Rechnet sie anders als
+  Go, scheitert nur die Aktivierung: Eine UI-Prüfsumme, die nicht zum Paket passt, lehnt der
+  Controller ab (`E_VERIFY`).
+- **TLS intern:** Jede TLS-Strecke zwischen NGC-Teilen prüft ihre Gegenseite; eine Prüfung
+  abzuschalten ist verboten. API-Server weisen sich mit dem Fingerabdruck ihres TLS-Schlüssels aus
+  (`trust.Node.TLS`, `trust.TLSPin`; in Go `tunnel.PinnedTLS`, im Skript `testdata/tls/pin.sh`),
+  MariaDB-Knoten mit einem Zertifikat der CA der Installation (`config.DB.CA`,
+  `config.DB.TLSConfig`). Auf dem Tunnel und dem WebSocket der Sitzung prüft Noise beide Enden; das
+  TLS darum trägt sie nur durch Firewalls und Proxys und wird trotzdem geprüft. Abschalten heißt:
+  eine Verbindung ohne Prüfung. Einen Fingerabdruck prüft Go nur mit `InsecureSkipVerify` zusammen
+  mit `VerifyConnection`; beides setzt `tunnel.PinnedTLS`, sonst steht `InsecureSkipVerify`
+  nirgends.
+- **Signierte Dokumente, die bleiben:** Release, Katalog und Lizenz bekommen ein neues Feld nur mit
+  einem neuen Zweck (`release/v2` usw.) an einem eigenen Ort; in der Übergangszeit signiert der
+  Herausgeber beide Fassungen, jeder Leser nimmt die neueste, die er kennt. Ein neues Feld im
+  Manifest braucht `minNgc` (im Manifest und im Katalog) mindestens bei der NGC-Version, die es
+  liest: Eine Version, deren `minNgc` neuer ist als die NGC-Version des Knotens, bietet die API
+  nicht an, und der Controller installiert sie nicht. Die Vertrauensliste ist eine einzige Kette:
+  ein neues Format nur mit einer neuen Vertragsnummer, sobald alle Controller sie in `hello` nennen;
+  ein Controller, der dabei fehlte, spielt erst sein Update ein und liest dann weiter. Das ui-tar
+  ändert sich nie; eine andere Form wäre eine neue Aktion.
 - **Geheimnisse** in Konfigurationen sind `config.Secret` (Schlüssel) und `config.SecretText`
   (Passwörter). Den Wert geben nur `Bytes()` bzw. `Text()`; fmt, `log/slog` und `json.Marshal`
-  zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController` bzw.
-  `config.SaveAnchor`, nie mit `json.Marshal`. Ein Passwort, das wörtlich `[secret]` lautet, lehnt
-  `config` ab.
+  zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController`,
+  `config.SaveAnchor` oder `config.SaveWeb`, nie mit `json.Marshal`. Ein Passwort, das wörtlich
+  `[secret]` lautet, lehnt `config` ab.
 - **Rollen und Softwareteile:** Ein Server hat Rollen (`tunnel.RoleWeb`, `tunnel.RoleAPI`,
   `tunnel.RoleDB`, `tunnel.RoleServices`: `web`, `api`, `db`, `services`). Softwareteile sind
   `ngc-web`, `ngc-api` und `ngc-controller` (`trust.AutoWeb`, `trust.AutoAPI`,
@@ -77,15 +118,19 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 | Datei | Inhalt | Erzeugt von |
 |---|---|---|
 | `sign.json` | ein signierter Umschlag | `sign`: `TestVectors` |
-| `proof.json`, `proof_kdf.json` | Beweise mit Passkey und Passwortschlüssel, gültige und ungültige; Argon2id | `proof`: `TestProofVectors`, `TestKDFVectors` |
+| `json.json` | Prüfdokument mit jeder Feldart (`schema`), sein Budget (`size`, `items`, `totals`) und gültige und ungültige Fälle (`cases`, das Dokument als base64url) | `enc`: `TestJSONVectors` |
+| `proof.json`, `proof_kdf.json` | Beweise mit Passkey und Passwortschlüssel, gültige und ungültige; Argon2id, auch für ein Passwort, das in NFD getippt wurde (`typed`; `password` ist dessen NFC) | `proof`: `TestProofVectors`, `TestKDFVectors` |
 | `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige | `trust`: `TestVectors` |
-| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`) | `session`: `TestVectors` |
-| `task.json` | Aufgabe und erneute Bestätigung | `task`: `TestVectors` |
+| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
+| `task.json` | Root-Aufgabe (`deactivate`) und erneute Bestätigung | `task`: `TestVectors` |
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
-| `tunnel.json` | Kopplungscode mit MAC und Fingerabdruck, `pairCheck` (`tunnel.PairCode.Check`), `join` (Beitrittscode, `tunnel.JoinMAC`) | `tunnel`: `TestVectors` |
-| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis, dazu `notice`; unter `empty` die acht Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
-| `store.json`, `pack.json` | Katalog, Lizenz und Release; Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
+| `tunnel.json` | Kopplungscode (mit `tls`) mit MAC und Fingerabdruck, `pairCheck` (`tunnel.PairCode.Check`), `join` (Beitrittscode und Anfrage mit `node`, `tls`, `url`, MAC nach `tunnel.JoinMAC` und `fingerprint` nach `tunnel.JoinFingerprint`), `tlsPin` (Fingerabdruck von `tls/api.pem`) | `tunnel`: `TestVectors` |
+| `tls/` | `api.pem`: TLS-Zertifikat von `api-1` aus `trust.json`; `pin.sh` (von Hand) rechnet den Fingerabdruck wie `trust.TLSPin`, geprüft von `TestTLSPinScript` | `tunnel`: `TestVectors` |
+| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis (auch `ngc.desktop/ui-proof` und `ngc.users/pending-api`; Kopplungs- und Beitrittscode sind echte Codes zur Fassung „genesis“ aus `trust.json`, `ngc.store/catalog` ein echter Katalog des globalen Stores), dazu `notice`; unter `empty` die neun Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
+| `uiproof.json` | UI-Beweise gegen eine Vertrauensliste (`trust`): je Fall App, Version, Beweis, die UI-Prüfsumme, die er belegt, und ob er gilt | `core`: `TestUIProofVectors` |
+| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten (`catalogRejects`, `licenseRejects`, `releaseRejects`) und den Werten zum Prüfen (`store`, `installation`, `installKey`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
+| `packui.json` | Pakete, wie `ngc-store pack` sie schreibt, mit dem ui-tar von `store.PackageUI` und dessen SHA-256 | `store`: `TestPackageUIVectors` |
 | `ui.json` | ui-tars, gültige und ungültige (Regeln im Kommentar von `store/ui.go`); bei gültigen unter `files` die Dateien, die `store.WalkUI` liefert. Fälle mit Daten bis `store.MaxUIFile`, `store.MaxUITotal` oder mit `store.MaxEntries` Einträgen stehen nicht darin | `store`: `TestUIVectors` |
 | `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 31 Fällen | `store`: `TestReleaseScriptVector` |
 | `config/*.json` | Beispiel-Konfigurationen | von Hand |
@@ -94,9 +139,10 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 ## Striktes JSON
 
 Go liest JSON von außen mit `enc.DecodeStrict`, immer über ein `enc.Budget`. Das Webinterface lehnt
-genau dieselben Dokumente ab; `JSON.parse` allein reicht dafür nicht. Einzige Ausnahme ist
-`clientData` eines Passkey-Beweises: Das schreibt der Browser, und WebAuthn erlaubt darin weitere
-Felder; `proof.Verify` liest davon nur `type`, `challenge`, `origin` und `crossOrigin`.
+genau dieselben Dokumente ab; `JSON.parse` allein reicht dafür nicht. Die Testdaten dafür stehen in
+`json.json`. Einzige Ausnahme ist `clientData` eines Passkey-Beweises: Das schreibt der Browser,
+und WebAuthn erlaubt darin weitere Felder; `proof.Verify` liest davon nur `type`, `challenge`,
+`origin` und `crossOrigin`.
 
 1. Genau ein JSON-Wert. Leerraum davor und danach ist erlaubt (Leerzeichen, Tab, CR, LF), sonst
    nichts, auch kein BOM.
@@ -132,8 +178,9 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
     12 bis 14 gelten auch dort. Ein roher Wert hat immer eine eigene kleine Größengrenze.
 12. Höchstens 32 Ebenen (`enc.MaxDepth`); der äußerste Wert ist Ebene 1.
 13. Keine Zahl, deren genauer Wert dem Betrag nach größer ist als 2^53−1 (`enc.MaxSafeInteger`):
-    `9007199254740991` und `9007199254740991.0` gehen, `9007199254740992`, `9007199254740991.5`
-    und `1e16` nicht.
+    `9007199254740991` und `9007199254740991.0` gehen, `9007199254740992`, `9007199254740991.4`
+    und `1e16` nicht. Es zählt der Wert der Ziffern: Ein `Number` in JavaScript rundet
+    `9007199254740991.4` auf 2^53−1 und darf deshalb nicht der Prüfer sein.
 14. Nirgends `null`. Wer JSON schreibt, lässt ein leeres Feld weg. Ergebnisse der API kodiert
     `core.EncodeResult`: Eine leere Liste als Ergebnis ist `[]`, nie `null` (Beispiele unter
     `empty` in `core.json`), und optionale Felder mit Nullwert (`""`, 0, `false`) fehlen.
@@ -143,6 +190,7 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | Fassung der Vertrauensliste (Nutzlast) | `trust.Parse` | `sign.MaxPayload` (4 MiB) | `users` 10000, `users/*/roles` 256, `users/*/keys` 16, `roles` 256, `roles/*/black` 256, `roles/*/white` 256, `nodes` 256, `nodes/*/rootUsers` 256, `nodes/*/rootRoles` 256, `stores` 64, `auto` 64, `rp/origins` 8 |
 | Fassung samt Beweis (`trust.Signed`), etwa an `ngc.users/api/trust` | `trust.ParseSigned` | base64url von `sign.MaxPayload` Byte + 64 KiB | keine |
 | Anmeldung, Ersteinrichtung | `session.ParseLoginStart`, `session.ParseLoginFinish`, `session.ParseSetup` | `session.MaxRequest` (64 KiB) | keine |
+| Angebot der Ersteinrichtung | `session.ParseSetupOffer` | `session.MaxSetupOffer` (128 KiB), darin `info` höchstens `session.MaxRequest` | `info`: `nodes` 16 (`session.MaxSetupNodes`) |
 | Client- und API-Zertifikat | `session.VerifyClient`, `session.VerifyAPI` | `session.MaxCert` (4096) | keine |
 | Antwort von `GET /api/v1/trust` | `session.ParseTrustChain` | `session.MaxChain` (32 MiB) | `versions` 64 |
 | Steuernachricht `trust` | `session.ParseTrustHint` | 64 | keine |
@@ -159,19 +207,62 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | Kopplungs- und Beitrittsanfrage | `tunnel.ParsePairRequest`, `tunnel.ParseJoinRequest` | `tunnel.MaxPairRequest` (4096) | keine |
 | Parameter einer Kern-Aktion | `core.ParseParams` | `wire.MaxParams` (8 KiB) | `rights` 1000, `grants` 2 |
 | Kopf einer Übertragung | `core.ReadTransfer` | `core.MaxTransferHeader` (8 MiB) | keine |
+| UI-Beweis | `core.ParseUIProof` | `wire.MaxCallResult` (8 MiB) | keine |
 | Umschlag (`sign.Envelope`) um Lizenz, Katalog oder Release | `sign.ParseEnvelope` | base64url von `maxPayload` Byte + 1 KiB (`maxPayload` höchstens `sign.MaxPayload`; für Lizenzen `store.MaxLicense`) | keine |
-| Katalog | `store.VerifyCatalog` | `sign.MaxPayload` | `apps` 10000, `apps/*/versions` 100, `apps/*/versions/*/needs` 2; insgesamt `apps/*/versions` 50000 (`store.MaxCatalogVersions`) |
+| Katalog | `store.VerifyCatalog` | `sign.MaxPayload` | `apps` 10000, `apps/*/versions` 100, `apps/*/versions/*/needs` 2; insgesamt `apps/*/versions` 30000 (`store.MaxCatalogVersions`) |
 | Lizenz | `store.VerifyLicense` | `store.MaxLicense` (8 KiB) | keine |
 | Release | `store.VerifyRelease` | `sign.MaxPayload` | `files` 16 |
 | Manifest | `store.ParseManifest` | `store.MaxManifest` (64 KiB) | `actions` 64, `services` 16, `services/*/command` 32, `needs` 2 |
-| `web.json` | `config.LoadWeb` | `config.MaxConfig` (1 MiB) | `apis` 16, `rp/origins` 8 |
+| `web.json` | `config.LoadWeb` | `config.MaxConfig` (1 MiB) | `apis` 16 (Objekte mit `url` und `tls`), `rp/origins` 8 |
 | `api.json` | `config.LoadAPI` | `config.MaxConfig` | `db/nodes` 16 |
 | `controller.json` | `config.LoadController` | `config.MaxConfig` | `apis` 16, `roles` 4, `migrate/nodes` 16 |
 | `trust-anchor.json` | `config.LoadAnchor` | `config.MaxConfig` | keine |
 
-Antworten der API, für die Go keinen Parser hat (etwa `session.LoginChallenge` und die Ergebnisse
-in `core.json`), liest das Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14; ein Ergebnis hat
-höchstens `wire.MaxCallResult` Byte.
+Antworten der API, für die Go keinen Parser hat (etwa `session.LoginChallenge`,
+`session.LoginResult` und die Ergebnisse in `core.json` außer dem UI-Beweis), liest das
+Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14; ein Ergebnis hat höchstens
+`wire.MaxCallResult` Byte.
+
+## Vor dem WebSocket
+
+Bis zum WebSocket spricht die Shell HTTPS mit JSON (`Content-Type: application/json`, sonst
+`E_PROTOCOL`); jede Antwort trägt `Cache-Control: no-store`. Fehler haben den Status
+`session.HTTPStatus(code)` und als Inhalt das CLOSE-JSON `wire.Error(code)`.
+
+| Pfad | Methode | Inhalt | Antwort | Fehler |
+|---|---|---|---|---|
+| `/api/v1/setup` | GET | – | 200 `session.SetupOffer` | 404 `E_NOTFOUND`, sobald es einen Admin gibt |
+| `/api/v1/setup` | POST | `session.Setup` | 204 | 403 `E_VERIFY`, 404 `E_NOTFOUND`, 429 `E_LOCKED` |
+| `/api/v1/login/start` | POST | `session.LoginStart` | 200 `session.LoginChallenge`, auch für unbekannte Namen | 429 `E_LOCKED` |
+| `/api/v1/login/finish` | POST | `session.LoginFinish` | 200 `session.LoginResult` und das Cookie | 401 `E_LOGIN`, 429 `E_LOCKED` |
+| `/api/v1/logout` | POST | – | 204, Cookie gelöscht | 401 `E_LOGIN` |
+| `/api/v1/trust?from=N` | GET | – | 200 `session.TrustChain` ab N; 204, wenn N eins nach der neuesten ist | 401 `E_LOGIN`, 404 `E_NOTFOUND` (N größer) |
+| `/api/v1/ws` | GET (Upgrade) | – | 101, Unterprotokoll `ngc.v1` | 401 `E_LOGIN` |
+
+Überall zusätzlich 400 `E_PROTOCOL` (kaputte Anfrage, `from` nicht nach `session.ParseFrom`), 413
+`E_TOOLARGE` (mehr als `session.MaxRequest`), 500 `E_INTERNAL`, 503 `E_UNREACHABLE` (Datenbank nicht
+erreichbar).
+
+- `E_LOGIN` steht für jede fehlgeschlagene Anmeldung gleich (unbekannter Name, falscher Beweis oder
+  TOTP-Code, fehlender Passwortbeweis, verbrauchte oder abgelaufene Nonce) und für eine fehlende
+  oder abgelaufene Sitzung. `E_LOCKED` kommt mit `Retry-After` in Sekunden.
+- Cookie `ngc_session` (`session.CookieName`): base64url von 32 Zufallsbytes, dazu
+  `Path=/api/; Secure; HttpOnly; SameSite=Strict` (`session.CookieAttributes`), ohne `Domain` und
+  ohne `Max-Age`; die Datenbank kennt nur `session.TokenHash` der 32 Bytes. Abmelden löscht es mit
+  `Max-Age=0`. Die API beendet eine Sitzung nach `IdleTimeout` ohne Nutzung oder nach
+  `SessionLifetime` (`config.API`).
+- Jede API bedient jede Sitzung: Der private Schlüssel zu `dh` des API-Zertifikats liegt
+  verschlüsselt in der Datenbank (`dbapi.Session`). Nach einem Ausfall verbindet sich die Shell mit
+  denselben Schlüsseln neu.
+- **Ersteinrichtung:** Die Shell fragt zuerst den Einmal-Code ab (`session.NormalizeSetupCode`:
+  Leerzeichen, Tabs und `-` egal, Kleinbuchstaben erlaubt) und prüft damit das Angebot
+  (`session.ParseSetupOffer`: erst der MAC `session.OfferMAC` über die genauen Bytes von `info`,
+  dann `info` nach den Regeln der Vertrauensliste: Knoten nach `trust.ValidAPINode`, nach ID
+  sortiert und ohne doppelte ID, der Store nach `trust.ValidStore`). Daraus baut sie Fassung 1: der
+  Admin, die API-Knoten aus `info.nodes`, wahlweise der globale Store aus `info.store`,
+  Dauerfreigaben nur für `ngc-web`, `ngc-api`, `ngc-controller` mit `info.releaseKey` und für
+  `system`. Sie schickt sie mit `session.SetupMAC` über die genauen Bytes der Nutzlast; die API
+  prüft sie mit `session.VerifySetup`. Der Code selbst geht nie über die Leitung.
 
 ## Kanäle
 
@@ -188,7 +279,10 @@ Kurzfassung.
   Nutzlast, genau 48 Byte (`wire.HandshakeSize`). Danach ist jede binäre Nachricht genau eine
   Noise-Transportnachricht mit genau einem Frame. Eine Textnachricht, ein kaputter Frame oder ein
   Entschlüsselungsfehler beenden die Leitung. Ausgeführt wird erst etwas, wenn die erste
-  Transportnachricht des Initiators entschlüsselt ist.
+  Transportnachricht des Initiators entschlüsselt ist. Beide laufen in TLS, das nur durch Firewalls
+  und Proxys trägt; die Echtheit prüft Noise. Geprüft wird das TLS trotzdem (Regel „TLS intern“):
+  Der Browser prüft das Zertifikat des Webservers, Apache und der Controller das der API gegen
+  ihren Fingerabdruck.
 - **Frames:** 1 Byte Typ, 4 Byte Kanal (Big Endian), dann die Nutzlast; zusammen höchstens
   `wire.MaxFrame` (65519) Byte. OPEN (1): JSON, 1 Byte bis `wire.MaxOpenPayload`. DATA (2): Daten.
   EOF (3): leer. CLOSE (4): `wire.Close` als JSON, 1 Byte bis `wire.MaxClosePayload`. GRANT (5):
@@ -207,10 +301,12 @@ schicken darf, sagt `wire.ControlAllowed`; alles andere beendet die Leitung.
 | Tunnel | API | `hello` (`tunnel.Hello`), `bye` |
 | Tunnel | Controller | `hello`, `status` (`tunnel.Status`), `update` (`store.UpdateReport`), `notify`, `bye` |
 
-Im Tunnel schicken beide zuerst `hello`. Nach `bye` schließt der Absender die Leitung. `trust` ist
-nur ein Hinweis: Die Fassungen holt die Shell mit `GET /api/v1/trust?from=N`
-(`session.TrustChain`, seitenweise mit `more`); ein Controller bekommt sie über den Kanal
-`ngc.users/controller/trust`.
+Im Tunnel schicken beide zuerst `hello`; das `hello` des Controllers nennt in `node` den Knoten,
+dessen Noise-Schlüssel den Tunnel aufgebaut hat (leer, solange der Controller nicht in der
+Vertrauensliste steht). Nennt er einen anderen, beendet die API den Tunnel. Nach `bye` schließt der
+Absender die Leitung. `trust` ist nur ein Hinweis: Die Fassungen holt die Shell mit
+`GET /api/v1/trust?from=N` (`session.TrustChain`, seitenweise mit `more`); ein Controller bekommt
+sie über den Kanal `ngc.users/controller/trust`.
 
 ### Öffnen, Schließen, Freigabe
 
@@ -241,13 +337,19 @@ nur ein Hinweis: Die Fassungen holt die Shell mit `GET /api/v1/trust?from=N`
   `tunnel.Open`, dazu ihre eigene Freigabe (`window`) und das Client-Zertifikat mit dem Beweis des
   Benutzers (`client`, `proof`). DATA und EOF gibt sie unverändert und eins zu eins weiter, CLOSE
   mit demselben Code. Die Freigabe führt sie je Strecke selbst und gibt dem Controller nie mehr
-  frei, als sie halten kann, bis der Browser es abnimmt. Noise-Nachricht 2 kopiert sie aus der
-  ersten GRANT des Controllers in ihre erste GRANT an den Browser.
+  frei, als sie halten kann, bis der Browser es abnimmt. Ihre erste GRANT an den Browser schickt
+  sie erst nach der ersten GRANT des Controllers (oder sie gibt dessen CLOSE weiter); auf
+  Ende-zu-Ende-Kanälen kopiert sie Noise-Nachricht 2 aus dessen GRANT hinein. Ausnahme:
+  `transfer` mit Aufgabe (unten, „Kern-Apps und Aufgaben“).
 - **Beim Controller:** `tunnel.VerifyOpen` prüft das OPEN samt Client-Zertifikat
   (`session.VerifyClient`). Der Benutzer eines Kanals ist nur `Opened.Session.Cert().User`; das OPEN
   selbst binden nur der Prolog (Ende zu Ende) und die Unterschrift der Aufgabe. Eine Rolle mit
   `passwordToo` setzt die API bei der Anmeldung durch; an Controller geht kein Passwortbeweis, sie
   verlassen sich auf den Passkey-Beweis, den `session.VerifyClient` für solche Benutzer verlangt.
+  Das Client-Zertifikat beweist den Benutzer nur zusammen mit dem Ende-zu-Ende-Handschlag
+  (Schlüssel `dh`) oder einer Aufgabe (Schlüssel `sig`): Die API hält Zertifikat und Beweis jeder
+  Sitzung und kann jedes anhängen. Auf anderen Kanälen (etwa `stage`) berechtigt und protokolliert
+  der Controller nicht nach ihm.
 
 ### Ende zu Ende
 
@@ -293,7 +395,18 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
     `store.WalkUI` liest sie, alles andere wird abgelehnt.
   - `transfer` (`core.FlowTransfer`): API → Controller, ein Kopf `core.Transfer`
     (`core.WriteTransfer`, `core.ReadTransfer`), danach genau `size` Byte; Ergebnis wie bei `call`.
+- **Wer öffnet:** Die Shell öffnet alle Aktionen des Dienstes `api` und die Root-Aufgaben des
+  Dienstes `controller` (`activate`, `deactivate`, `uninstall`, `delete-data`, `install`), jeweils
+  mit Aufgabe (`core.ShellOpens`); `stage` und `ngc.users/controller/trust` öffnet nur die API,
+  ohne Benutzer, und lehnt ein OPEN der Shell dafür mit `E_FORBIDDEN` ab.
+- **`transfer` mit Aufgabe** (`activate`): Die Shell schickt nach der ersten GRANT sofort EOF und
+  keine DATA (sonst `E_PROTOCOL`). Die API schreibt auf der Tunnel-Strecke selbst den Kopf
+  `core.Transfer` und die Datei, dann EOF; dort gilt `MaxIn`. Ergebnis und CLOSE des Controllers
+  gehen wie sonst zurück.
 - **App-Kanäle:** Das Ergebnis ist die Ausgabe des Controllers bis zu seinem Ende (`wire.E2EEnd`).
+- **Ergebnis nur mit Erfolg:** Ein Ergebnis gilt nur, wenn der Kanal mit CLOSE `ok` endet, auf
+  Ende-zu-Ende-Kanälen mit einem Ende des Controllers mit `ok`. Sonst verwirft der Empfänger, was
+  kam.
 - **Grenze für Ergebnisse:** höchstens `wire.MaxCallResult` (8 MiB) für jedes Ergebnis nach Art von
   `call`, bei Kern-Apps wie bei Apps:
   - gemeint sind `call`, `in` und `transfer` der Kern-Aktionen und jede App-Aktion, die kein
@@ -304,8 +417,8 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
     für das Ergebnis eines Controllers auf einem Kern-App-Kanal, bevor sie es weitergibt; die Shell
     für die Ergebnisse der API und auf jedem Ende-zu-Ende-Kanal, dessen Klartext die API nicht
     sieht.
-- **Grenze für Eingaben:** Was der Öffner bei `in` und `transfer` schickt, begrenzt `MaxIn`
-  (`core.Action`); der Empfänger schließt bei mehr ebenso mit `E_TOOLARGE`:
+- **Grenze für Eingaben:** Was der Öffner bei `in` und was die API bei `transfer` schickt, begrenzt
+  `MaxIn` (`core.Action`); der Empfänger schließt bei mehr ebenso mit `E_TOOLARGE`:
   - die API bei `ngc.store/api/upload` (bis `store.MaxPackage`, 4 GiB), `ngc.users/api/trust` und
     `ngc.store/api/license`;
   - der Controller bei `ngc.store/controller/activate` und `ngc.store/controller/stage`
@@ -330,6 +443,35 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   signierten Dateien: Version und SHA-256 nimmt der Controller aus dem geprüften Release oder
   Katalogeintrag der Datei (dessen `seq` er geprüft hat) und lehnt Parameter ab, die davon
   abweichen, denn die Parameter eines Kanals ohne Benutzer sind nicht unterschrieben.
+- **Oberflächen:** Eine App-Oberfläche führt die Shell erst aus, wenn ihr ui-tar zu einer
+  signierten Prüfsumme passt. Die Prüfsumme ist SHA-256 des kanonischen ui-tar (`store.PackageUI`:
+  die Dateien unter `ui/` in der Reihenfolge des Pakets, mit `store.UIWriter` geschrieben, ohne
+  Ordner). Sie steht im Katalog je Version (`ui`, vom Store signiert) und in `activate` (`ui`, vom
+  Admin signiert); der Controller vergleicht sie beim Aktivieren und Installieren. Den Beweis holt
+  die Shell mit `ngc.desktop/ui-proof` (`core.UIProof`) und prüft ihn wie `core.VerifyUIProof`;
+  dann lädt sie `ngc.desktop/ui` ganz, vergleicht SHA-256 und liest es erst danach nach den Regeln
+  von `store.WalkUI`. Geprüfte Prüfsummen merkt sie sich je App und Version, Kataloge je Store und
+  `seq`. Nach jeder neuen Fassung der Vertrauensliste prüft sie die Beweise neu, vor allem die
+  hochgeladener Apps: Ein Store oder der Schlüssel eines Admins kann darin fehlen.
+  - Für eine Store-App bürgt jeder Store der Vertrauensliste, dessen geprüfter Katalog App, Version
+    und Prüfsumme führt. Grenze: Eine übernommene API kann zusammen mit einem feindlichen Store, den
+    der Admin eingetragen hat, einer App eines anderen Stores eine fremde Oberfläche unterschieben.
+    Stores trägt man deshalb nur ein, wenn man ihnen so weit traut wie der Software von dort.
+  - Welche signierte Version einer Oberfläche die Shell ausführt, entscheidet die API: etwa eine
+    ältere, die ein Store oder Admin einmal signiert hat, oder die Version, zu der ein Controller
+    nach einem gescheiterten Update zurückgekehrt ist. Eine Oberfläche, die niemand für diese App
+    signiert hat, kann sie der Shell nicht unterschieben.
+  - Der Beweis einer hochgeladenen App gilt ohne Zeitprüfung, aber nur, solange Schlüssel und
+    Root-Recht des Admins, der sie aktiviert hat, in der Vertrauensliste stehen. Nach einem Wechsel
+    dieses Schlüssels muss die App neu aktiviert werden.
+- **Updates per Klick, Dauerfreigaben:** `ngc.store/updates` hat eine Zeile je Ziel und Controller
+  (`core.UpdateInfo`). Ein Update per Klick ist je Controller eine Root-Aufgabe `install` mit
+  `target`, `version` = `available` und `sha256` der Zeile (gesetzt, sobald `state` `downloaded`
+  ist; bei `system` nur `target`). Eine Dauerfreigabe für einen NGC-Teil nennt den Release-Schlüssel
+  (bei der Ersteinrichtung aus `session.SetupInfo`, später `key` der Zeile), für eine App den
+  Schlüssel ihres Stores aus der Vertrauensliste. Controller prüfen Releases nur mit ihrem eigenen
+  Release-Schlüssel. Gespeichert ist je Ziel nur die Einstellung (Modus und Zeitfenster,
+  `core.UpdateSetting` unter `dbapi.SettingUpdate`); die Zeilen rechnet die API aus.
 
 ## Prüfen
 
