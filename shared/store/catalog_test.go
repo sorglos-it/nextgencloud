@@ -209,6 +209,62 @@ func TestLicense(t *testing.T) {
 	}
 }
 
+// TestVerifyLicenseFor checks what a controller can check on its own. It
+// never sees the installation's install key, so a license wrapped for
+// another one passes here and only VerifyLicense, which the API runs,
+// refuses it.
+func TestVerifyLicenseFor(t *testing.T) {
+	const app = "org.sorglos.terminal"
+	installation := trusttest.ID(0x11)
+	env := signJSON(t, storeKey, sign.PurposeLicense, testLicense())
+	l, err := VerifyLicenseFor(env, global, installation, app)
+	if err != nil || l.App != app || l.State(issued+86400) != LicenseValid {
+		t.Fatalf("valid: %v", err)
+	}
+
+	otherInstall, _ := trusttest.NodeKeys(0x92)
+	foreign := testLicense()
+	foreign.InstallKey = otherInstall.Public
+	envForeign := signJSON(t, storeKey, sign.PurposeLicense, foreign)
+	if _, err := VerifyLicense(envForeign, global, installation, install.Public); err != ErrLicense {
+		t.Errorf("VerifyLicense, license for another install key: %v", err)
+	}
+	if _, err := VerifyLicenseFor(envForeign, global, installation, app); err != nil {
+		t.Errorf("VerifyLicenseFor, license for another install key: %v", err)
+	}
+
+	signed := func(change func(l *License)) sign.Envelope {
+		l := testLicense()
+		change(&l)
+		return signJSON(t, storeKey, sign.PurposeLicense, l)
+	}
+	noJSON, err := sign.Sign(storeKey, sign.PurposeLicense, []byte("no json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name         string
+		env          sign.Envelope
+		installation string
+		app          string
+		want         error
+	}{
+		{name: "another app", env: env, installation: installation, app: "org.sorglos.mail", want: ErrLicense},
+		{name: "another installation", env: env, installation: trusttest.ID(0x12), app: app, want: ErrLicense},
+		{name: "another store", env: signed(func(l *License) { l.Store = "other" }), installation: installation, app: app, want: ErrLicense},
+		{name: "per user without users", env: signed(func(l *License) { l.Users = 0 }), installation: installation, app: app, want: ErrLicense},
+		{name: "payload that is no JSON", env: noJSON, installation: installation, app: app, want: ErrLicense},
+		{name: "signed with the release key", env: signJSON(t, releaseKey, sign.PurposeLicense, testLicense()),
+			installation: installation, app: app, want: sign.ErrWrongKey},
+		{name: "signed for purpose catalog", env: signJSON(t, storeKey, sign.PurposeCatalog, testLicense()),
+			installation: installation, app: app, want: sign.ErrBadSignature},
+	} {
+		if _, err := VerifyLicenseFor(c.env, global, c.installation, c.app); err != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
+	}
+}
+
 func TestRelease(t *testing.T) {
 	env := signJSON(t, releaseKey, sign.PurposeRelease, testRelease())
 	pub := releaseKey.Public().(ed25519.PublicKey)

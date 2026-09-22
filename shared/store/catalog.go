@@ -129,7 +129,7 @@ type LicenseState int
 const (
 	LicenseValid   LicenseState = iota
 	LicenseGrace                // expired, but within the grace period: runs, NGC warns
-	LicenseExpired              // controllers do not start the services
+	LicenseExpired              // controllers stop the app's services and start none (tunnel.StateUnlicensed)
 )
 
 // Release is a signed NGC version.
@@ -313,6 +313,28 @@ func VerifyLicense(env sign.Envelope, st trust.Store, installation string, insta
 		return nil, err
 	}
 	if l.Store != st.ID || l.Installation != installation || !bytes.Equal(l.InstallKey, installKey) {
+		return nil, ErrLicense
+	}
+	return l, nil
+}
+
+// VerifyLicenseFor checks a license as a controller can, without the
+// installation's key: the signature of the store st (purpose license/v1),
+// the form of the license (Validate), and that st issued it (Store) for this
+// installation (Installation) and for app (App). Only the API can check the
+// rest: that the content key in Key is wrapped for the installation's key
+// (InstallKey; UnwrapKey opens it only with the private key), and how many
+// users a per-user license allows. Whether the services may run, State(now)
+// decides: a controller stops them once it is LicenseExpired.
+func VerifyLicenseFor(env sign.Envelope, st trust.Store, installation, app string) (*License, error) {
+	if err := sign.Verify(env, ed25519.PublicKey(st.Key), sign.PurposeLicense); err != nil {
+		return nil, err
+	}
+	l, err := parseLicense(env.Payload)
+	if err != nil {
+		return nil, err
+	}
+	if l.Store != st.ID || l.Installation != installation || l.App != app {
 		return nil, ErrLicense
 	}
 	return l, nil
