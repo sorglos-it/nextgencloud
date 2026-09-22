@@ -4,15 +4,26 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flynn/noise"
 
@@ -44,7 +55,7 @@ func mustJSON(t testing.TB, v any) []byte {
 }
 
 func testCode() PairCode {
-	return PairCode{URL: "wss://api-1.test:7443/tunnel", Key: bytes.Repeat([]byte{0xA1}, 32),
+	return PairCode{URL: "wss://api-1.test:7443/tunnel", Key: bytes.Repeat([]byte{0xA1}, 32), TLS: bytes.Repeat([]byte{0xE1}, 32),
 		Secret: bytes.Repeat([]byte{0x5E}, SecretSize), Anchor: trust.Anchor{Seq: 3, Hash: bytes.Repeat([]byte{0xAB}, 32)}}
 }
 
@@ -61,9 +72,13 @@ func TestPairCode(t *testing.T) {
 	short.Secret = short.Secret[:8]
 	http := c
 	http.URL = "https://api-1.test:7443/tunnel"
+	shortPin := c
+	shortPin.TLS = shortPin.TLS[:31]
+	noPin := c
+	noPin.TLS = nil
 	long := PairPrefix + strings.Repeat("A", MaxPairCode)
 	for _, s := range []string{"", PairPrefix, PairPrefix + "!!", strings.TrimPrefix(c.String(), PairPrefix), short.String(),
-		http.String(), long, JoinCode(c).String(), c.String() + "\nA"} {
+		http.String(), shortPin.String(), noPin.String(), long, JoinCode(c).String(), c.String() + "\nA"} {
 		if _, err := ParsePairCode(s); err != ErrPairCode {
 			t.Errorf("%.40q: %v", s, err)
 		}
@@ -111,7 +126,8 @@ func TestPairRequest(t *testing.T) {
 }
 
 // pairChain returns version 1 (trusttest.Genesis) and version 2, in which
-// the admin adds the user alice and the second API server api-2.
+// the admin adds the user alice and the second API server api-2 (NodeKeys(0xA2),
+// TLS pin of APITLS(0xE2, "api-2.test")).
 func pairChain(t testing.TB) []trust.Signed {
 	admin := trusttest.NewSigner(1)
 	g := admin.Sign(t, trusttest.Genesis(admin))
@@ -120,8 +136,9 @@ func pairChain(t testing.TB) []trust.Signed {
 	l2.Users = append(l2.Users, trust.User{ID: trusttest.ID(0x22), Name: "alice", Roles: []string{"user"},
 		Keys: []proof.UserKey{trusttest.NewSigner(2).Key}})
 	dh, sig := trusttest.NodeKeys(0xA2)
+	_, pin := trusttest.APITLS(0xE2, "api-2.test")
 	api2 := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: dh.Public,
-		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel"}
+		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
 	l2.Nodes = slices.Insert(l2.Nodes, 1, api2) // api-1, api-2, ctl-1
 	return []trust.Signed{g, admin.Sign(t, l2)}
 }
@@ -158,19 +175,20 @@ func checkCases(t testing.TB, chain []trust.Signed) []checkCase {
 	newestAnchor := trust.Anchor{Seq: v.List.Seq, Hash: v.Hash}
 	otherHash := slices.Clone(v.Hash)
 	otherHash[len(otherHash)-1] ^= 1
-	c := func(url string, key []byte, a trust.Anchor) code {
-		return code{URL: url, Key: key, Secret: secret, Anchor: a}
+	c := func(url string, key, pin []byte, a trust.Anchor) code {
+		return code{URL: url, Key: key, TLS: pin, Secret: secret, Anchor: a}
 	}
 	return []checkCase{
-		{"anchor is the newest version, key and URL of api-1", c(api1.URL, api1.Noise, newestAnchor), true},
-		{"anchor is the newest version, key and URL of api-2", c(api2.URL, api2.Noise, newestAnchor), true},
-		{"anchor is an older version", c(api1.URL, api1.Noise, trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}), false},
-		{"anchor names a version the shell does not know", c(api1.URL, api1.Noise, trust.Anchor{Seq: 3, Hash: v.Hash}), false},
-		{"anchor hash differs", c(api1.URL, api1.Noise, trust.Anchor{Seq: v.List.Seq, Hash: otherHash}), false},
-		{"anchor with the newest hash but an older seq", c(api1.URL, api1.Noise, trust.Anchor{Seq: 1, Hash: v.Hash}), false},
-		{"key of a controller", c(api1.URL, ctl1.Noise, newestAnchor), false},
-		{"URL of no API node", c("wss://api-9.test:7443/tunnel", api1.Noise, newestAnchor), false},
-		{"key of one API node, URL of another", c(api2.URL, api1.Noise, newestAnchor), false},
+		{"anchor is the newest version, key, URL and pin of api-1", c(api1.URL, api1.Noise, api1.TLS, newestAnchor), true},
+		{"anchor is the newest version, key, URL and pin of api-2", c(api2.URL, api2.Noise, api2.TLS, newestAnchor), true},
+		{"anchor is an older version", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}), false},
+		{"anchor names a version the shell does not know", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: 3, Hash: v.Hash}), false},
+		{"anchor hash differs", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: v.List.Seq, Hash: otherHash}), false},
+		{"anchor with the newest hash but an older seq", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: 1, Hash: v.Hash}), false},
+		{"key of a controller", c(api1.URL, ctl1.Noise, api1.TLS, newestAnchor), false},
+		{"URL of no API node", c("wss://api-9.test:7443/tunnel", api1.Noise, api1.TLS, newestAnchor), false},
+		{"key of one API node, URL of another", c(api2.URL, api1.Noise, api1.TLS, newestAnchor), false},
+		{"TLS pin of another API node", c(api1.URL, api1.Noise, api2.TLS, newestAnchor), false},
 	}
 }
 
@@ -199,10 +217,22 @@ func testJoinCode(t testing.TB) JoinCode {
 	return JoinCode(checkCases(t, pairChain(t))[0].code)
 }
 
-// joinKeys returns the Noise and signing keys of a new API server.
-func joinKeys() (noiseKey, signKey []byte) {
+// joinURL is the tunnel URL of the new API server api-3.
+const joinURL = "wss://api-3.test:7443/tunnel"
+
+// joinKeys returns the Noise and signing keys of the new API server api-3
+// and the pin of its TLS key.
+func joinKeys() (noiseKey, signKey, tlsPin []byte) {
 	dh, sig := trusttest.NodeKeys(0xA3)
-	return dh.Public, sig.Public().(ed25519.PublicKey)
+	_, pin := trusttest.APITLS(0xE3, "api-3.test")
+	return dh.Public, sig.Public().(ed25519.PublicKey), pin
+}
+
+// testJoinRequest returns api-3's join request to the issuer of c.
+func testJoinRequest(c JoinCode) JoinRequest {
+	noise, sig, pin := joinKeys()
+	return JoinRequest{Node: "api-3", Noise: noise, Sign: sig, TLS: pin, URL: joinURL,
+		MAC: JoinMAC(c.Secret, noise, sig, pin, c.Key, joinURL)}
 }
 
 func TestJoinCode(t *testing.T) {
@@ -213,7 +243,9 @@ func TestJoinCode(t *testing.T) {
 	}
 	short := c
 	short.Key = short.Key[:31]
-	for _, s := range []string{"", JoinPrefix, JoinPrefix + "!!", PairCode(c).String(), short.String(),
+	noPin := c
+	noPin.TLS = nil
+	for _, s := range []string{"", JoinPrefix, JoinPrefix + "!!", PairCode(c).String(), short.String(), noPin.String(),
 		JoinPrefix + strings.Repeat("A", MaxPairCode)} {
 		if _, err := ParseJoinCode(s); err != ErrJoinCode {
 			t.Errorf("%.40q: %v", s, err)
@@ -232,21 +264,34 @@ func TestJoinCode(t *testing.T) {
 		}
 	}
 
-	noise, sig := joinKeys()
-	r := JoinRequest{Node: "api-3", Noise: noise, Sign: sig, MAC: JoinMAC(c.Secret, noise, sig, c.Key)}
+	r := testJoinRequest(c)
 	parsed, err := ParseJoinRequest(mustJSON(t, r))
-	if err != nil || parsed.Verify(c.Secret, c.Key) != nil {
-		t.Fatalf("valid join request: %v", err)
+	if err != nil || parsed.Verify(c.Secret, c.Key) != nil || !reflect.DeepEqual(parsed, r) {
+		t.Fatalf("valid join request: %+v, %v", parsed, err)
 	}
 	other := bytes.Repeat([]byte{0x77}, 32)
-	for name, bad := range map[string]JoinRequest{
-		"other noise key":        {Node: r.Node, Noise: other, Sign: r.Sign, MAC: r.MAC},
-		"other sign key":         {Node: r.Node, Noise: r.Noise, Sign: other, MAC: r.MAC},
-		"noise and sign swapped": {Node: r.Node, Noise: r.Sign, Sign: r.Noise, MAC: r.MAC},
+	otherURL := "wss://api-4.test:7443/tunnel"
+	for name, change := range map[string]func(*JoinRequest){
+		"other noise key":        func(r *JoinRequest) { r.Noise = other },
+		"other sign key":         func(r *JoinRequest) { r.Sign = other },
+		"other TLS pin":          func(r *JoinRequest) { r.TLS = other },
+		"other URL":              func(r *JoinRequest) { r.URL = otherURL },
+		"URL one byte longer":    func(r *JoinRequest) { r.URL += "x" },
+		"noise and sign swapped": func(r *JoinRequest) { r.Noise, r.Sign = r.Sign, r.Noise },
+		"sign and TLS swapped":   func(r *JoinRequest) { r.Sign, r.TLS = r.TLS, r.Sign },
 	} {
+		bad := r
+		change(&bad)
 		if bad.Verify(c.Secret, c.Key) != ErrJoin {
 			t.Errorf("%s accepted", name)
 		}
+	}
+	// The node ID is no key: the admin sees it and may list the server under
+	// it, so the MAC leaves it out, as JoinFingerprint does.
+	renamed := r
+	renamed.Node = "api-4"
+	if renamed.Verify(c.Secret, c.Key) != nil {
+		t.Error("other node ID refused")
 	}
 	if r.Verify(c.Secret, other) != ErrJoin {
 		t.Error("other API key accepted")
@@ -254,15 +299,40 @@ func TestJoinCode(t *testing.T) {
 	if r.Verify(bytes.Repeat([]byte{1}, SecretSize), c.Key) != ErrJoin {
 		t.Error("other secret accepted")
 	}
-	if bytes.Equal(JoinMAC(c.Secret, noise, sig, c.Key), PairMAC(c.Secret, noise, c.Key)) {
+	if bytes.Equal(r.MAC, PairMAC(c.Secret, r.Noise, c.Key)) {
 		t.Error("join MAC equals the pairing MAC")
 	}
+
+	// The fingerprint changes with every value the new server asks to be
+	// listed with.
+	fp := JoinFingerprint(r.Noise, r.Sign, r.TLS, r.URL)
+	if id, err := enc.B64.DecodeString(fp); err != nil || len(id) != 16 {
+		t.Errorf("fingerprint %q: %v", fp, err)
+	}
+	for name, got := range map[string]string{
+		"other noise key":        JoinFingerprint(other, r.Sign, r.TLS, r.URL),
+		"other sign key":         JoinFingerprint(r.Noise, other, r.TLS, r.URL),
+		"other TLS pin":          JoinFingerprint(r.Noise, r.Sign, other, r.URL),
+		"other URL":              JoinFingerprint(r.Noise, r.Sign, r.TLS, otherURL),
+		"noise and sign swapped": JoinFingerprint(r.Sign, r.Noise, r.TLS, r.URL),
+		"Noise key alone":        Fingerprint(r.Noise),
+	} {
+		if got == fp {
+			t.Errorf("%s: same fingerprint %s", name, fp)
+		}
+	}
+
 	for name, mutate := range map[string]func(*JoinRequest){
-		"node in upper case": func(r *JoinRequest) { r.Node = "API-3" },
-		"empty node":         func(r *JoinRequest) { r.Node = "" },
-		"noise of 31 bytes":  func(r *JoinRequest) { r.Noise = r.Noise[:31] },
-		"sign of 33 bytes":   func(r *JoinRequest) { r.Sign = append(slices.Clone(r.Sign), 1) },
-		"mac of 31 bytes":    func(r *JoinRequest) { r.MAC = r.MAC[:31] },
+		"node in upper case":  func(r *JoinRequest) { r.Node = "API-3" },
+		"empty node":          func(r *JoinRequest) { r.Node = "" },
+		"noise of 31 bytes":   func(r *JoinRequest) { r.Noise = r.Noise[:31] },
+		"sign of 33 bytes":    func(r *JoinRequest) { r.Sign = append(slices.Clone(r.Sign), 1) },
+		"TLS pin of 31 bytes": func(r *JoinRequest) { r.TLS = r.TLS[:31] },
+		"no TLS pin":          func(r *JoinRequest) { r.TLS = nil },
+		"URL with https":      func(r *JoinRequest) { r.URL = "https://api-3.test:7443/tunnel" },
+		"no URL":              func(r *JoinRequest) { r.URL = "" },
+		"URL over MaxURL":     func(r *JoinRequest) { r.URL = "wss://" + strings.Repeat("a", MaxURL-len("wss://")+1) },
+		"mac of 31 bytes":     func(r *JoinRequest) { r.MAC = r.MAC[:31] },
 	} {
 		bad := r
 		mutate(&bad)
@@ -270,8 +340,173 @@ func TestJoinCode(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+	atMax := r
+	atMax.URL = "wss://" + strings.Repeat("a", MaxURL-len("wss://"))
+	if _, err := ParseJoinRequest(mustJSON(t, atMax)); err != nil {
+		t.Errorf("URL of MaxURL bytes: %v", err)
+	}
 	if _, err := ParseJoinRequest([]byte(`{"node":"api-3","extra":1}`)); err != ErrJoin {
 		t.Errorf("unknown member: %v", err)
+	}
+}
+
+// serveTLS runs a TLS server with the identity of api-1 (APITLS(0xE1,
+// "api-1.test")) up to maxVersion on a local port and returns its address.
+// After each handshake it writes one byte, which also carries TLS 1.3's
+// session tickets to the client.
+func serveTLS(t *testing.T, maxVersion uint16) string {
+	t.Helper()
+	cert, _ := trusttest.APITLS(0xE1, "api-1.test")
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, MaxVersion: maxVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				c.SetDeadline(time.Now().Add(10 * time.Second))
+				if c.(*tls.Conn).Handshake() == nil {
+					c.Write([]byte{1})
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// dialTLS connects to addr with cfg and reads the server's byte.
+func dialTLS(addr string, cfg *tls.Config) (tls.ConnectionState, error) {
+	c, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, cfg)
+	if err != nil {
+		return tls.ConnectionState{}, err
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.ReadFull(c, make([]byte, 1)); err != nil {
+		return tls.ConnectionState{}, err
+	}
+	return c.ConnectionState(), nil
+}
+
+func TestPinnedTLS(t *testing.T) {
+	cert, pin := trusttest.APITLS(0xE1, "api-1.test")
+	_, otherPin := trusttest.APITLS(0xE2, "api-2.test")
+	certHash := sha256.Sum256(cert.Certificate[0])
+	addr := serveTLS(t, 0)
+	for name, c := range map[string]struct {
+		pins [][]byte
+		want error
+	}{
+		"right pin":              {[][]byte{pin}, nil},
+		"right pin among others": {[][]byte{otherPin, pin}, nil},
+		"other pin":              {[][]byte{otherPin}, errPin},
+		"no pins":                {nil, errPin},
+		"31 bytes of the pin":    {[][]byte{pin[:31]}, errPin},
+		// The pin names the key, not the certificate.
+		"hash of the certificate": {[][]byte{certHash[:]}, errPin},
+	} {
+		state, err := dialTLS(addr, PinnedTLS(c.pins...))
+		if !errors.Is(err, c.want) || (err == nil) != (c.want == nil) {
+			t.Errorf("%s: got %v, want %v", name, err, c.want)
+		}
+		if err == nil && state.Version != tls.VersionTLS13 {
+			t.Errorf("%s: TLS version %x", name, state.Version)
+		}
+	}
+	// The caller's slice may change afterwards; the configuration keeps its own.
+	mine := slices.Clone(pin)
+	cfg := PinnedTLS(mine)
+	mine[0] ^= 1
+	if _, err := dialTLS(addr, cfg); err != nil {
+		t.Errorf("pin changed after the call: %v", err)
+	}
+
+	t.Run("server limited to TLS 1.2", func(t *testing.T) {
+		old := serveTLS(t, tls.VersionTLS12)
+		if _, err := dialTLS(old, PinnedTLS(pin)); err == nil || errors.Is(err, errPin) {
+			t.Errorf("got %v, want a refused handshake", err)
+		}
+	})
+
+	// A resumed session skips the certificate, so the pin is checked again on
+	// the certificate of the session: a configuration with another pin that
+	// resumes the same session is refused.
+	t.Run("resumed session", func(t *testing.T) {
+		cache := tls.NewLRUClientSessionCache(4)
+		pinned := func(pins ...[]byte) (*tls.Config, *bool) {
+			cfg := PinnedTLS(pins...)
+			cfg.ServerName, cfg.ClientSessionCache = "api-1.test", cache
+			resumed, check := new(bool), cfg.VerifyConnection
+			cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+				*resumed = cs.DidResume
+				return check(cs)
+			}
+			return cfg, resumed
+		}
+		cfg, resumed := pinned(pin)
+		if _, err := dialTLS(addr, cfg); err != nil || *resumed {
+			t.Fatalf("first connection: resumed %v, %v", *resumed, err)
+		}
+		cfg, resumed = pinned(pin)
+		if state, err := dialTLS(addr, cfg); err != nil || !*resumed || !state.DidResume {
+			t.Fatalf("second connection with the right pin: resumed %v, %v", *resumed, err)
+		}
+		cfg, resumed = pinned(otherPin)
+		if _, err := dialTLS(addr, cfg); !errors.Is(err, errPin) || !*resumed {
+			t.Errorf("resumed with another pin: resumed %v, %v", *resumed, err)
+		}
+	})
+}
+
+// TestTLSPinScript runs pin.sh, the reference for the ulh scripts, on
+// tls/api.pem. It needs a POSIX shell, openssl, base64 and tr; the Linux
+// servers have them, and there the test must pass.
+func TestTLSPinScript(t *testing.T) {
+	for _, tool := range []string{"sh", "openssl", "base64", "tr"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s missing", tool)
+		}
+	}
+	dir := t.TempDir()
+	for _, name := range []string{"api.pem", "pin.sh"} {
+		b, err := os.ReadFile(filepath.Join(golden.Dir, "tls", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("no certificate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command("sh", append([]string{"pin.sh"}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		code := 0
+		if exit, ok := err.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return string(out), code
+	}
+	_, pin := apiPEM()
+	if out, code := run("api.pem"); out != enc.B64.EncodeToString(pin)+"\n" || code != 0 {
+		t.Errorf("api.pem: %q, exit %d, want %q", out, code, enc.B64.EncodeToString(pin)+"\n")
+	}
+	if out, code := run("other.txt"); out != "" || code != 1 {
+		t.Errorf("no certificate: %q, exit %d", out, code)
+	}
+	if out, code := run(); out != "" || code != 2 {
+		t.Errorf("no argument: %q, exit %d", out, code)
 	}
 }
 
@@ -831,12 +1066,15 @@ type pairCheckVector struct {
 }
 
 type joinVector struct {
-	Code   string    `json:"code"`
-	Secret enc.Bytes `json:"secret"`
-	APIKey enc.Bytes `json:"apiKey"`
-	Noise  enc.Bytes `json:"noise"`
-	Sign   enc.Bytes `json:"sign"`
-	MAC    enc.Bytes `json:"mac"`
+	Code        string    `json:"code"`
+	Secret      enc.Bytes `json:"secret"`
+	APIKey      enc.Bytes `json:"apiKey"`
+	Noise       enc.Bytes `json:"noise"`
+	Sign        enc.Bytes `json:"sign"`
+	TLS         enc.Bytes `json:"tls"`
+	URL         string    `json:"url"`
+	MAC         enc.Bytes `json:"mac"`
+	Fingerprint string    `json:"fingerprint"`
 }
 
 type vector struct {
@@ -848,6 +1086,14 @@ type vector struct {
 	Fingerprint   string          `json:"fingerprint"`
 	PairCheck     pairCheckVector `json:"pairCheck"`
 	Join          joinVector      `json:"join"`
+	TLSPin        enc.Bytes       `json:"tlsPin"` // the pin of the certificate in tls/api.pem
+}
+
+// apiPEM returns the certificate of APITLS(0xE1, "api-1.test") as PEM, the
+// bytes of tls/api.pem, and the pin of its key.
+func apiPEM() ([]byte, []byte) {
+	cert, pin := trusttest.APITLS(0xE1, "api-1.test")
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), pin
 }
 
 func TestVectors(t *testing.T) {
@@ -861,9 +1107,12 @@ func TestVectors(t *testing.T) {
 		v.PairCheck.Cases = append(v.PairCheck.Cases, pairCheckCase{Name: cc.name, Code: PairCode(cc.code).String(), Valid: cc.valid})
 	}
 	jc := testJoinCode(t)
-	noise, sig := joinKeys()
-	v.Join = joinVector{Code: jc.String(), Secret: jc.Secret, APIKey: jc.Key, Noise: noise, Sign: sig,
-		MAC: JoinMAC(jc.Secret, noise, sig, jc.Key)}
+	jr := testJoinRequest(jc)
+	v.Join = joinVector{Code: jc.String(), Secret: jc.Secret, APIKey: jc.Key, Noise: jr.Noise, Sign: jr.Sign, TLS: jr.TLS,
+		URL: jr.URL, MAC: jr.MAC, Fingerprint: JoinFingerprint(jr.Noise, jr.Sign, jr.TLS, jr.URL)}
+	certPEM, pin := apiPEM()
+	v.TLSPin = pin
+	golden.CheckBytes(t, *update, "tls/api.pem", certPEM)
 	checkVector(t, v)
 	golden.Check(t, *update, "tunnel.json", v)
 }
@@ -896,14 +1145,31 @@ func checkVector(t *testing.T, v vector) {
 	if err != nil || !bytes.Equal(jc.Secret, v.Join.Secret) || !bytes.Equal(jc.Key, v.Join.APIKey) || jc.Check(latest) != nil {
 		t.Errorf("join code: %+v, %v", jc, err)
 	}
-	jr := JoinRequest{Node: "api-3", Noise: v.Join.Noise, Sign: v.Join.Sign, MAC: v.Join.MAC}
-	if jr.Verify(v.Join.Secret, v.Join.APIKey) != nil {
-		t.Error("join MAC")
+	jr := JoinRequest{Node: "api-3", Noise: v.Join.Noise, Sign: v.Join.Sign, TLS: v.Join.TLS, URL: v.Join.URL, MAC: v.Join.MAC}
+	if _, err := ParseJoinRequest(mustJSON(t, jr)); err != nil || jr.Verify(v.Join.Secret, v.Join.APIKey) != nil {
+		t.Errorf("join request or MAC: %v", err)
+	}
+	if JoinFingerprint(jr.Noise, jr.Sign, jr.TLS, jr.URL) != v.Join.Fingerprint {
+		t.Error("join fingerprint")
+	}
+	// tlsPin is the pin of the certificate in tls/api.pem, as pin.sh prints it.
+	b, err := os.ReadFile(filepath.Join(golden.Dir, "tls", "api.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, rest := pem.Decode(b)
+	if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 {
+		t.Fatalf("tls/api.pem: %q", b)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || !bytes.Equal(trust.TLSPin(cert.RawSubjectPublicKeyInfo), v.TLSPin) {
+		t.Errorf("tlsPin is not the pin of tls/api.pem: %v", err)
 	}
 }
 
 func FuzzParsePairCode(f *testing.F) {
 	f.Add(testCode().String())
+	f.Add(PairCode(checkCases(f, pairChain(f))[0].code).String())
 	f.Fuzz(func(t *testing.T, s string) {
 		_, _ = ParsePairCode(s)
 	})
@@ -934,12 +1200,18 @@ func FuzzParsePairRequest(f *testing.F) {
 	})
 }
 
+// FuzzParseJoinRequest checks that every join request ParseJoinRequest
+// accepts encodes to one it accepts again, with the same content.
 func FuzzParseJoinRequest(f *testing.F) {
-	c := testJoinCode(f)
-	noise, sig := joinKeys()
-	f.Add(mustJSON(f, JoinRequest{Node: "api-3", Noise: noise, Sign: sig, MAC: JoinMAC(c.Secret, noise, sig, c.Key)}))
+	f.Add(mustJSON(f, testJoinRequest(testJoinCode(f))))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		_, _ = ParseJoinRequest(b)
+		r, err := ParseJoinRequest(b)
+		if err != nil {
+			return
+		}
+		if again, err := ParseJoinRequest(mustJSON(t, r)); err != nil || !reflect.DeepEqual(again, r) {
+			t.Fatalf("round trip of %q: %+v, %v", b, again, err)
+		}
 	})
 }
 

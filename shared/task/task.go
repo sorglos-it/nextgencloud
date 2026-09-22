@@ -78,6 +78,33 @@ func Verify(env sign.Envelope, v session.Verified, now int64) (Task, error) {
 	if now >= cert.Expires {
 		return Task{}, ErrExpired
 	}
+	t, err := verifyBound(env, cert, v.Payload())
+	if err != nil {
+		return Task{}, err
+	}
+	if now < t.Issued-session.MaxSkew || now >= t.Expires {
+		return Task{}, ErrExpired
+	}
+	return t, nil
+}
+
+// VerifyApproval checks env as Verify does — signed with the session key of
+// the client certificate cert, whose payload is client, bound to it, valid in
+// form and of this installation — but not the time, and without a Verified:
+// for evidence of what a user approved in the past (core.UIProof). Nothing
+// may run on it; it remembers no task ID. cert is what
+// session.VerifyApproval returned for client.
+func VerifyApproval(env sign.Envelope, cert session.ClientCert, client []byte) (Task, error) {
+	if len(env.Payload) > MaxTask {
+		return Task{}, ErrTask
+	}
+	return verifyBound(env, cert, client)
+}
+
+// verifyBound is what Verify and VerifyApproval share: the signature by the
+// session key of cert, before the payload is decoded, then the task's form
+// and its binding to the client certificate payload client.
+func verifyBound(env sign.Envelope, cert session.ClientCert, client []byte) (Task, error) {
 	if err := sign.Verify(env, ed25519.PublicKey(cert.Sig), sign.PurposeTask); err != nil {
 		return Task{}, err
 	}
@@ -88,11 +115,8 @@ func Verify(env sign.Envelope, v session.Verified, now int64) (Task, error) {
 	if err := t.Validate(); err != nil {
 		return Task{}, err
 	}
-	if t.Installation != cert.Installation || !bytes.Equal(t.Cert, session.CertHash(v.Payload())) {
+	if t.Installation != cert.Installation || !bytes.Equal(t.Cert, session.CertHash(client)) {
 		return Task{}, ErrTask
-	}
-	if now < t.Issued-session.MaxSkew || now >= t.Expires {
-		return Task{}, ErrExpired
 	}
 	return t, nil
 }

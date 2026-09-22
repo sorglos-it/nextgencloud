@@ -60,11 +60,35 @@ func activateParams(extra string) json.RawMessage {
 	return json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"` + trust.StoreGlobal + `"` + extra + `}`)
 }
 
+// task returns the root task ngc.store/controller/deactivate of the terminal
+// on ctl-1, the task of task.json.
 func (f fixture) task() Task {
 	return Task{ID: bytes.Repeat([]byte{0x61}, IDSize), Installation: f.list.Installation, Cert: session.CertHash(f.verified.Payload()),
-		Node: "ctl-1", App: "ngc.store", Service: "controller", Action: "activate",
-		Params: activateParams(""), Issued: issued, Expires: issued + 60}
+		Node: "ctl-1", App: "ngc.store", Service: "controller", Action: "deactivate",
+		Params: json.RawMessage(`{"app":"org.sorglos.terminal"}`), Issued: issued, Expires: issued + 60}
 }
+
+// activateTask returns the root task ngc.store/controller/activate of the
+// terminal on ctl-1 with params activateParams(extra), for the cases where
+// its grants matter.
+func (f fixture) activateTask(extra string) Task {
+	tk := f.task()
+	tk.Action, tk.Params = "activate", activateParams(extra)
+	return tk
+}
+
+// deactivateRule mimics core's rule for ngc.store/controller/deactivate: a
+// root task that is never critical. Like core, it refuses params it cannot
+// read.
+var deactivateRule = Rule{Root: true, Changes: true, Critical: func(params json.RawMessage) (bool, error) {
+	if params == nil {
+		return false, nil
+	}
+	var p struct {
+		App string `json:"app"`
+	}
+	return false, json.Unmarshal(params, &p)
+}}
 
 // grantRule mimics core's rule for ngc.store/controller/activate: a root task
 // that is critical once it grants the app something. Like core, it refuses
@@ -96,9 +120,17 @@ func signTask(t testing.TB, priv ed25519.PrivateKey, tk Task) sign.Envelope {
 	return env
 }
 
+// input is the channel of f.task() on ctl-1 with the task in env.
 func (f fixture) input(env *sign.Envelope) Input {
 	return Input{Task: env, Session: f.verified, Node: "ctl-1", App: "ngc.store", Service: "controller",
-		Action: "activate", Rule: grantRule}
+		Action: "deactivate", Rule: deactivateRule}
+}
+
+// activateInput is the channel of f.activateTask on ctl-1 with the task in env.
+func (f fixture) activateInput(env *sign.Envelope) Input {
+	in := f.input(env)
+	in.Action, in.Rule = "activate", grantRule
+	return in
 }
 
 func TestCheck(t *testing.T) {
@@ -106,8 +138,14 @@ func TestCheck(t *testing.T) {
 	tk := f.task()
 	env := signTask(t, f.sessSig, tk)
 	got, err := Check(f.input(&env), f.list, now)
-	if err != nil || got == nil || got.Action != "activate" || !bytes.Equal(got.Params, tk.Params) {
+	if err != nil || got == nil || got.Action != "deactivate" || !bytes.Equal(got.Params, tk.Params) {
 		t.Fatalf("got %v, %v", got, err)
+	}
+	activate := f.activateTask("")
+	activateEnv := signTask(t, f.sessSig, activate)
+	if got, err := Check(f.activateInput(&activateEnv), f.list, now); err != nil || got == nil || got.Action != "activate" ||
+		!bytes.Equal(got.Params, activate.Params) {
+		t.Fatalf("activate: got %v, %v", got, err)
 	}
 }
 
@@ -162,10 +200,10 @@ func TestCheckRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A string where grantRule expects a list: valid params for Task.Validate
-	// that only the rule refuses.
+	// A list where the rule expects the app's ID: valid params for
+	// Task.Validate that only the rule refuses.
 	unreadable := f.task()
-	unreadable.Params = activateParams(`,"grants":"network"`)
+	unreadable.Params = json.RawMessage(`{"app":["org.sorglos.terminal"]}`)
 	unreadableEnv := signTask(t, f.sessSig, unreadable)
 	cases := []struct {
 		name   string
@@ -174,7 +212,7 @@ func TestCheckRejects(t *testing.T) {
 	}{
 		{"root task without task", func(in *Input, _ *int64) { in.Task = nil }, ErrNoTask},
 		{"other node", func(in *Input, _ *int64) { in.Node = "ctl-2" }, ErrTask},
-		{"other action", func(in *Input, _ *int64) { in.Action = "deactivate" }, ErrTask},
+		{"other action", func(in *Input, _ *int64) { in.Action = "activate" }, ErrTask},
 		{"expired", func(_ *Input, now *int64) { *now = issued + 60 }, ErrExpired},
 		{"too long", func(in *Input, _ *int64) { in.Task = &longEnv }, ErrTask},
 		{"other session key", func(in *Input, _ *int64) { in.Task = &foreign }, sign.ErrWrongKey},
@@ -239,10 +277,9 @@ func TestConfirm(t *testing.T) {
 func TestCriticalFromTask(t *testing.T) {
 	f := newFixture(t)
 	f.list.Roles[0].Level = trust.LevelCritical
-	granting := f.task()
-	granting.Params = activateParams(`,"grants":["network"]`)
+	granting := f.activateTask(`,"grants":["network"]`)
 	env := signTask(t, f.sessSig, granting)
-	in := f.input(&env)
+	in := f.activateInput(&env)
 	var seen json.RawMessage
 	in.Rule.Critical = func(params json.RawMessage) (bool, error) {
 		seen = params
@@ -259,8 +296,8 @@ func TestCriticalFromTask(t *testing.T) {
 	if _, err := Check(in, f.list, now); err != nil {
 		t.Errorf("grant in the task, confirmed: %v", err)
 	}
-	plain := signTask(t, f.sessSig, f.task())
-	if got, err := Check(f.input(&plain), f.list, now); err != nil || got == nil {
+	plain := signTask(t, f.sessSig, f.activateTask(""))
+	if got, err := Check(f.activateInput(&plain), f.list, now); err != nil || got == nil {
 		t.Errorf("no grant in the task: %v", err)
 	}
 }
@@ -314,6 +351,63 @@ func TestLevels(t *testing.T) {
 	f.list.Roles[0].Level = trust.LevelHardcore
 	if _, err := Check(shell, f.list, now); err != ErrNoTask {
 		t.Errorf("plain channel at level hardcore: %v", err)
+	}
+}
+
+// TestVerifyApproval: a past approval needs everything a task needs but the
+// time.
+func TestVerifyApproval(t *testing.T) {
+	f := newFixture(t)
+	const years = 5 * 365 * 86400
+	// The certificate and its task expired years ago: evidence of what the
+	// admin approved back then.
+	cert := f.verified.Cert()
+	cert.Issued, cert.Expires = issued-years, issued-years+3600
+	client, err := json.Marshal(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.VerifyApproval(client, f.admin.Prove(sign.PurposeClientCert, client), f.list); err != nil {
+		t.Fatal(err)
+	}
+	old := f.task()
+	old.Cert = session.CertHash(client)
+	old.Issued, old.Expires = issued-years+10, issued-years+70
+	env := signTask(t, f.sessSig, old)
+	got, err := VerifyApproval(env, cert, client)
+	if err != nil || got.Action != old.Action || !bytes.Equal(got.ID, old.ID) || !bytes.Equal(got.Params, old.Params) {
+		t.Fatalf("task that expired years ago: %+v, %v", got, err)
+	}
+
+	flipped := env
+	flipped.Sig = bytes.Clone(env.Sig)
+	flipped.Sig[0] ^= 1
+	otherCert := old // bound to the certificate of the fixture, the same session key
+	otherCert.Cert = session.CertHash(f.verified.Payload())
+	otherInstallation := old
+	otherInstallation.Installation = trusttest.ID(0x12)
+	malformed := old
+	malformed.ID = malformed.ID[:IDSize-1]
+	_, stranger := trusttest.NodeKeys(0x77)
+	large, err := sign.Sign(f.sessSig, sign.PurposeTask, bytes.Repeat([]byte(" "), MaxTask+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		env  sign.Envelope
+		want error
+	}{
+		{"another certificate's hash", signTask(t, f.sessSig, otherCert), ErrTask},
+		{"a flipped signature", flipped, sign.ErrBadSignature},
+		{"another installation", signTask(t, f.sessSig, otherInstallation), ErrTask},
+		{"signed by another key", signTask(t, stranger, old), sign.ErrWrongKey},
+		{"malformed task", signTask(t, f.sessSig, malformed), ErrTask},
+		{"over MaxTask", large, ErrTask},
+	} {
+		if _, err := VerifyApproval(c.env, cert, client); err != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
 	}
 }
 

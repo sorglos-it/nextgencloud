@@ -11,8 +11,10 @@ import (
 )
 
 // TestVectorParamsAreValid keeps the task in task.json one a verifier would
-// accept: a core action whose params core accepts. It is an external test
-// package so that core may import task.
+// accept: a core action, whichever it is, whose params core accepts. The task
+// is ngc.store/controller/deactivate; the example of activate, whose params
+// carry the UI hash, lives in uiproof.json. It is an external test package so
+// that core may import task.
 func TestVectorParamsAreValid(t *testing.T) {
 	var v struct {
 		Task sign.Envelope `json:"task"`
