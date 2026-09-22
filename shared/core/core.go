@@ -34,20 +34,22 @@ const (
 // Action names.
 const (
 	ActMe          = "me"
+	ActUIProof     = "ui-proof"
 	ActApps        = "apps"
 	ActUI          = "ui"
 	ActTOTPBegin   = "totp-begin"
 	ActTOTPConfirm = "totp-confirm"
 	ActTOTPOff     = "totp-off"
 
-	ActList      = "list"
-	ActRights    = "rights"
-	ActSetRights = "set-rights"
-	ActTrust     = "trust"
-	ActPairCode  = "pair-code"
-	ActJoinCode  = "join-code"
-	ActPending   = "pending"
-	ActLog       = "log"
+	ActList       = "list"
+	ActRights     = "rights"
+	ActSetRights  = "set-rights"
+	ActTrust      = "trust"
+	ActPairCode   = "pair-code"
+	ActJoinCode   = "join-code"
+	ActPending    = "pending"
+	ActPendingAPI = "pending-api"
+	ActLog        = "log"
 
 	ActSources    = "sources"
 	ActCatalog    = "catalog"
@@ -92,7 +94,8 @@ const (
 	// passes store.WalkUI.
 	FlowOut Flow = "out"
 	// FlowTransfer: API -> controller, a Transfer header, then exactly size
-	// bytes; the result is as for call.
+	// bytes; the result is as for call. When the shell opened the channel
+	// (ShellOpens), it sends EOF at once and no DATA.
 	FlowTransfer Flow = "transfer"
 )
 
@@ -107,7 +110,11 @@ type Action struct {
 	Changes            bool
 	Flow               Flow
 	Params             func() Params // nil: the action takes no parameters
-	MaxIn              int64         // the most bytes of DATA the opener may send before its EOF; 0 for call and out
+	// MaxIn bounds the DATA that feeds the action before its EOF: on FlowIn
+	// what the opener sends, on FlowTransfer what the API sends the
+	// controller — the shell sends none, even when it opened the channel; 0
+	// for call and out.
+	MaxIn int64
 }
 
 // newParams returns a constructor for the parameter type T.
@@ -121,6 +128,7 @@ func newParams[T any, PT interface {
 var actions = []Action{
 	// App, Service, Name, Admin, Root, Changes, Flow, Params, MaxIn
 	{AppDesktop, ServiceAPI, ActMe, false, false, false, FlowCall, nil, 0},
+	{AppDesktop, ServiceAPI, ActUIProof, false, false, false, FlowCall, newParams[AppParams](), 0},
 	{AppDesktop, ServiceAPI, ActApps, false, false, false, FlowCall, nil, 0},
 	{AppDesktop, ServiceAPI, ActUI, false, false, false, FlowOut, newParams[AppParams](), 0},
 	{AppDesktop, ServiceAPI, ActTOTPBegin, false, false, true, FlowCall, nil, 0},
@@ -134,6 +142,7 @@ var actions = []Action{
 	{AppUsers, ServiceAPI, ActPairCode, true, false, true, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActJoinCode, true, false, true, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActPending, true, false, false, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActPendingAPI, true, false, false, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActLog, true, false, false, FlowCall, newParams[LogQuery](), 0},
 
 	// The API sends a session.TrustChain (session.ParseTrustChain); the
@@ -171,6 +180,16 @@ func Lookup(app, service, name string) (Action, bool) {
 	return Action{}, false
 }
 
+// ShellOpens reports whether the shell may open a channel for a: every
+// action of service api, and the root tasks of service controller (activate,
+// deactivate, uninstall, delete-data, install), each with a signed task. The
+// API alone opens stage and ngc.users/controller/trust, without a user
+// (WithoutUser), and refuses a shell's OPEN for them with E_FORBIDDEN. On a
+// transfer action the shell opened (activate) it sends EOF at once; the API
+// writes the Transfer header and the file on the tunnel hop (package wire,
+// "Relay").
+func ShellOpens(a Action) bool { return a.Service == ServiceAPI || a.Root }
+
 // WithoutUser reports whether the API may open a channel for action a without
 // a user (tunnel.Open without client certificate): ngc.users/controller/trust
 // (the versions carry their own signatures), ngc.store/controller/stage
@@ -186,6 +205,8 @@ func WithoutUser(a Action) bool {
 // approval in l covers p.Target for signer (the key that signed the staged
 // file's release or catalog; nil for trust.AutoSystem), and p.Version is
 // newer than installed (not checked for trust.AutoSystem; "" never is older).
+// For an NGC part the signer is the controller's own release key
+// (config.Controller.ReleaseKey): it verifies releases with no other key.
 // Nothing but the signed files counts: the controller takes Version and
 // SHA256 from the staged file's verified release or catalog entry, whose seq
 // it has checked against the newest it saw, and refuses params that differ.
@@ -344,7 +365,8 @@ func (p *LogQuery) Validate() error {
 var window = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$`)
 
 // UpdateSetting sets the update mode of a part or an app. Switching to
-// store.ModeAuto also needs a standing approval in the trust list.
+// store.ModeAuto also needs a standing approval in the trust list. It is the
+// target's policy on every node; the API keeps it as dbapi.SettingUpdate.
 type UpdateSetting struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`
@@ -362,13 +384,19 @@ func (p *UpdateSetting) Validate() error {
 type ActivateParams struct {
 	App     string    `json:"app"`
 	Version string    `json:"version"`
-	SHA256  enc.Bytes `json:"sha256"`           // of the package file as the store delivers it
-	Store   string    `json:"store"`            // LocalStore for uploaded apps; Transfer.Store stays empty for those instead.
-	Grants  []string  `json:"grants,omitempty"` // store.NeedRoot, store.NeedNetwork the admin allows
+	SHA256  enc.Bytes `json:"sha256"` // of the package file as the store delivers it
+	// UI is the app's UI hash (store.PackageUI of the plain package): for a
+	// store app the ui of its catalog entry, for an uploaded app computed by
+	// the shell from the file it uploaded. The controller computes it from the
+	// package it gets and refuses a mismatch (E_VERIFY); the API keeps this
+	// task as the app's UI proof (UIProof).
+	UI     enc.Bytes `json:"ui"`
+	Store  string    `json:"store"`            // LocalStore for uploaded apps; Transfer.Store stays empty for those instead.
+	Grants []string  `json:"grants,omitempty"` // store.NeedRoot, store.NeedNetwork the admin allows
 }
 
 func (p *ActivateParams) Validate() error {
-	ok := validApp(p.App) && store.ValidVersion(p.Version) && len(p.SHA256) == 32 && wire.ValidName(p.Store)
+	ok := validApp(p.App) && store.ValidVersion(p.Version) && len(p.SHA256) == 32 && len(p.UI) == 32 && wire.ValidName(p.Store)
 	for i, g := range p.Grants {
 		ok = ok && (g == store.NeedRoot || g == store.NeedNetwork) && !slices.Contains(p.Grants[:i], g)
 	}
