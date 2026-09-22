@@ -858,6 +858,7 @@ func TestUIProof(t *testing.T) {
 			u := uploaded(same)
 			p.Task, p.Client, p.Proof = u.Task, u.Client, u.Proof
 		}), false},
+		{"catalog and a task", storeApp(func(p *UIProof) { p.Task = uploaded(same).Task }), false},
 		{"catalog and a client certificate", storeApp(func(p *UIProof) { p.Client = uploaded(same).Client }), false},
 		{"catalog and a proof", storeApp(func(p *UIProof) { p.Proof = uploaded(same).Proof }), false},
 		{"neither kind", storeApp(func(p *UIProof) { p.Catalog = nil }), false},
