@@ -639,6 +639,16 @@ in der App Benutzer & Rechte.
   offen ist. Neuen Geräten könnte er außerdem einen falschen Admin-Schlüssel ausliefern. Dagegen
   helfen die strenge CSP, ein gehärteter Webserver, kurze Sitzungen und die erneute
   Bestätigung: Was bestätigt werden muss, geht ohne den Benutzer nicht.
+- Die Oberfläche einer Store-App darf jeder Store der Vertrauensliste belegen, dessen Katalog die
+  App in dieser Version mit dieser Prüfsumme führt. Eine übernommene API kann deshalb zusammen
+  mit einem feindlichen Store, den der Admin selbst eingetragen hat, einer App eines anderen
+  Stores eine fremde Oberfläche unterschieben. Stores trägt man also nur ein, wenn man ihnen so
+  weit traut wie der Software, die man von dort installiert. Eine festere Bindung kommt mit dem
+  Sicherheitsdurchgang (Plan 7).
+- Welche Version einer App installiert ist, erfährt die Shell von der API. Eine übernommene API
+  kann ihr daher eine ältere, aber signierte Oberfläche zeigen. Die Shell merkt sich je App die
+  neueste geprüfte Version und lehnt ältere ab; ein Browser, der die neuere nie gesehen hat,
+  merkt das nicht.
 - Mit Passwort-Anmeldung ohne vertrauenswürdiges Zertifikat warnt der Browser beim ersten
   Aufruf, und ein Angreifer im selben Netz könnte sich dazwischenschalten. Ein Passwort lässt
   sich außerdem leichter erraten oder abgreifen als ein Stick. Deshalb der dauerhafte Hinweis
@@ -999,6 +1009,11 @@ Sperre in der Datenbank.
 | 22.09.2026 | Texte für Menschen prüft überall dieselbe Regel (`wire.ValidText`), auch die Meldung eines CLOSE. |
 | 22.09.2026 | Einmalwerte in einer geteilten Datenbank räumt die API erst `MaxSkew` nach ihrem Ablauf weg. |
 | 22.09.2026 | Die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl) kommt wie entschieden nach der Freigabe der Verträge, aber vor den Plänen 1 bis 4. Sie braucht eine eigene Schlüsselart oder eine Ausnahme für Rollen nur mit Passkey, weil die Vertrauensliste dort Passwortschlüssel ablehnt. |
+| 22.09.2026 | Kataloge dürfen zusammen höchstens 30.000 Versionen führen (`store.MaxCatalogVersions`, vorher 50.000): Mit der UI-Prüfsumme je Version kostet ein Katalog sonst beim Lesen über 32 MiB. Ein gültiger Katalog passt ohnehin nur mit rund 28.900 Versionen in `sign.MaxPayload`. |
+| 22.09.2026 | Welche Zeichen in Texten für Menschen gelten, legen die Unicode-Tabellen von Go fest (Unicode 17.0 mit Go 1.27); die Shell prüft dieselbe Regel Codepunkt für Codepunkt, unbekannte Zeichen gelten als nicht druckbar. Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung; `TestValidText` hält es an, bis Doku und Testdaten nachgezogen sind. |
+| 22.09.2026 | Die Oberfläche einer Store-App belegt jeder Store der Vertrauensliste, dessen Katalog App, Version und UI-Prüfsumme führt. Eine feste Bindung an den Store über die Aktivierung des Admins ist verworfen: Nach jedem Wechsel des Admin-Schlüssels (etwa ein neues Passwort) müssten sonst alle Apps neu aktiviert werden. Die Grenze steht in 4.5, eine bessere Bindung kommt mit Plan 7. |
+| 22.09.2026 | Die Shell merkt sich je Installation und App die neueste Version, deren Oberfläche sie geprüft hat, und lehnt ältere ab. |
+| 22.09.2026 | Updates: Gespeichert wird je Ziel nur die Einstellung (`update.<ziel>`: Modus und Zeitfenster); den Stand je Server rechnet die API aus Releases, Katalogen und den Meldungen der Controller aus. |
 
 ## 7. Fremdcode-Kandidaten
 
