@@ -62,6 +62,7 @@ func TestTable(t *testing.T) {
 		AppUsers + "/" + ServiceController + "/" + ActTrust:    session.MaxChain,
 		AppStore + "/" + ServiceAPI + "/" + ActUpload:          store.MaxPackage,
 		AppStore + "/" + ServiceAPI + "/" + ActLicense:         16 << 10,
+		AppStore + "/" + ServiceController + "/" + ActLicense:  16 << 10,
 		AppStore + "/" + ServiceController + "/" + ActActivate: 4 + MaxTransferHeader + store.MaxPackage,
 		AppStore + "/" + ServiceController + "/" + ActStage:    4 + MaxTransferHeader + store.MaxPackage,
 	}
@@ -77,6 +78,7 @@ func TestTable(t *testing.T) {
 		AppUsers + "/" + ServiceController + "/" + ActTrust:   true,
 		AppStore + "/" + ServiceController + "/" + ActStage:   true,
 		AppStore + "/" + ServiceController + "/" + ActInstall: true,
+		AppStore + "/" + ServiceController + "/" + ActLicense: true,
 	}
 	n := 0
 	for _, a := range All() {
@@ -93,8 +95,9 @@ func TestTable(t *testing.T) {
 	}
 
 	// Who opens: the shell every action of service api and the root tasks on
-	// controllers, each with a signed task; stage and ngc.users/controller/trust
-	// only the API, without a user. Every action has someone who opens it.
+	// controllers, each with a signed task; stage, license and
+	// ngc.users/controller/trust only the API, without a user. Every action has
+	// someone who opens it.
 	shellRoot := map[string]bool{
 		AppStore + "/" + ServiceController + "/" + ActActivate:   true,
 		AppStore + "/" + ServiceController + "/" + ActDeactivate: true,
@@ -118,7 +121,8 @@ func TestTable(t *testing.T) {
 	if n != len(shellRoot) {
 		t.Errorf("%d of the %d root tasks the shell opens exist", n, len(shellRoot))
 	}
-	for _, a := range []Action{action(t, AppStore, ServiceController, ActStage), action(t, AppUsers, ServiceController, ActTrust)} {
+	for _, a := range []Action{action(t, AppStore, ServiceController, ActStage), action(t, AppUsers, ServiceController, ActTrust),
+		action(t, AppStore, ServiceController, ActLicense)} {
 		if ShellOpens(a) {
 			t.Errorf("%s/%s/%s: the shell must not open it", a.App, a.Service, a.Name)
 		}
@@ -132,6 +136,10 @@ func TestTable(t *testing.T) {
 	if !pendingAPI.Admin || pendingAPI.Root || pendingAPI.Changes || pendingAPI.Flow != FlowCall || pendingAPI.Params != nil || pendingAPI.MaxIn != 0 {
 		t.Errorf("pending-api: %+v", pendingAPI)
 	}
+	nodes := action(t, AppUsers, ServiceAPI, ActNodes)
+	if !nodes.Admin || nodes.Root || nodes.Changes || nodes.Flow != FlowCall || nodes.Params != nil || nodes.MaxIn != 0 {
+		t.Errorf("nodes: %+v", nodes)
+	}
 	uiProof := action(t, AppDesktop, ServiceAPI, ActUIProof)
 	if uiProof.Admin || uiProof.Root || uiProof.Changes || uiProof.Flow != FlowCall || uiProof.Params == nil || uiProof.MaxIn != 0 {
 		t.Errorf("ui-proof: %+v", uiProof)
@@ -141,6 +149,15 @@ func TestTable(t *testing.T) {
 	ctlTrust := action(t, AppUsers, ServiceController, ActTrust)
 	if !ctlTrust.Admin || ctlTrust.Root || !ctlTrust.Changes || ctlTrust.Flow != FlowIn || ctlTrust.Params != nil {
 		t.Errorf("ngc.users/controller/trust: %+v", ctlTrust)
+	}
+	// A renewed license is no root task: the controller checks the store's
+	// signature itself, so the API brings it without a user and without a task.
+	ctlLicense := action(t, AppStore, ServiceController, ActLicense)
+	if !ctlLicense.Admin || ctlLicense.Root || !ctlLicense.Changes || ctlLicense.Flow != FlowIn ||
+		ctlLicense.Params == nil || ctlLicense.MaxIn != MaxLicenseIn {
+		t.Errorf("ngc.store/controller/license: %+v", ctlLicense)
+	} else if _, ok := ctlLicense.Params().(*AppParams); !ok {
+		t.Errorf("ngc.store/controller/license takes %T", ctlLicense.Params())
 	}
 	if LocalStore != trust.StoreLocal {
 		t.Errorf("LocalStore %q", LocalStore)
@@ -329,7 +346,7 @@ func TestResultsWithoutNull(t *testing.T) {
 	budget := enc.Budget{Size: 1 << 20, Items: map[string]int{"roles": trust.MaxRoles, "actions": 64, "rights": maxRights}}
 	for _, v := range []any{&Me{}, &DesktopApp{}, &UserInfo{}, &RoleRights{}, &LogEntry{}, &Pending{}, &SourceInfo{},
 		&CatalogResult{}, &InstalledApp{}, &UploadResult{}, &LicenseResult{}, &InstallKey{}, &UpdateInfo{}, &TrustResult{},
-		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}, &PendingAPI{}} {
+		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}, &PendingAPI{}, &NodeInfo{}} {
 		b, err := json.Marshal(v)
 		if err != nil {
 			t.Fatal(err)
@@ -1119,8 +1136,9 @@ func examples(t testing.TB) map[string]any {
 	join := tunnel.JoinCode{URL: "wss://api-1.test:7443/tunnel", Key: api1.Public, TLS: api1Pin,
 		Secret: bytes.Repeat([]byte{0x5F}, tunnel.SecretSize), Anchor: anchor}
 	return map[string]any{
-		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
-		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
+		"ngc.desktop/me": Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
+		"ngc.desktop/apps": []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg",
+			Entry: "index.html", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
 		"ngc.desktop/totp-begin": TOTPBegin{Secret: "JBSWY3DPEHPK3PXP", URI: "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP&issuer=NGC"},
 		"ngc.desktop/ui-proof":   f.storeProof(t),
 		"ngc.users/list":         []UserInfo{{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, TOTP: true, LastLogin: 1790000000}},
@@ -1128,6 +1146,7 @@ func examples(t testing.TB) map[string]any {
 		"ngc.users/trust":        TrustResult{Seq: 4},
 		"ngc.users/pair-code":    PairCodeResult{Code: pair.String(), Expires: 1790086400},
 		"ngc.users/join-code":    PairCodeResult{Code: join.String(), Expires: 1790086400},
+		"ngc.users/nodes":        []NodeInfo{{Node: "ctl-1", Online: true, Roles: []string{tunnel.RoleServices}, Version: "1.0.0", Arch: "amd64"}},
 		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Since: 1790000000}},
 		"ngc.users/pending-api": []PendingAPI{{Node: "api-2", Noise: apiDH.Public, Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)),
 			TLS: apiPin, URL: "wss://api-2.test:7443/tunnel", Since: 1790000000}},
@@ -1144,6 +1163,8 @@ func examples(t testing.TB) map[string]any {
 			{Target: "org.sorglos.terminal", Node: "ctl-1", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00",
 				State: store.UpdateAvailable},
 			{Target: trust.AutoSystem, Node: "ctl-1", Mode: store.ModeNotify, State: store.UpdateAvailable},
+			{Target: "org.sorglos.mail", Node: "ctl-1", Installed: "2.0.0", Available: "2.1.0", Mode: store.ModeAuto,
+				State: store.UpdateNeedsGrants},
 		},
 		"notice": Notice{Level: NoticeWarn, Text: "Die Lizenz für Terminal läuft in 3 Tagen ab.", App: "org.sorglos.terminal"},
 	}
@@ -1163,6 +1184,29 @@ func TestExamples(t *testing.T) {
 	for _, a := range examples["ngc.desktop/apps"].([]DesktopApp) {
 		if !wire.ValidName(a.Node) {
 			t.Errorf("desktop app node %q", a.Node)
+		}
+		// The shell may only start a page the UI proof covers, so the entry is
+		// a path a ui-tar can hold.
+		if a.Entry != "" && !store.ValidPath(a.Entry) {
+			t.Errorf("desktop app entry %q", a.Entry)
+		}
+	}
+	// A version that would widen the grants is never installed, so no such row
+	// carries a checksum an update by click could be signed from.
+	for _, u := range examples["ngc.store/updates"].([]UpdateInfo) {
+		if u.State == store.UpdateNeedsGrants && len(u.SHA256) != 0 {
+			t.Errorf("update row %s on %s: state %s with a checksum", u.Target, u.Node, u.State)
+		}
+	}
+	// The rows are hints, but they name real nodes and real roles.
+	for _, n := range examples["ngc.users/nodes"].([]NodeInfo) {
+		if !wire.ValidName(n.Node) {
+			t.Errorf("node row %q", n.Node)
+		}
+		for _, r := range n.Roles {
+			if !tunnel.ValidRole(r) {
+				t.Errorf("node %s has role %q", n.Node, r)
+			}
 		}
 	}
 	notice, err := json.Marshal(examples["notice"])
@@ -1317,7 +1361,8 @@ func TestEncodeResult(t *testing.T) {
 	}
 	slices.Sort(lists)
 	want := []string{"ngc.desktop/apps", "ngc.store/installed", "ngc.store/sources", "ngc.store/updates",
-		"ngc.users/list", "ngc.users/log", "ngc.users/pending", "ngc.users/pending-api", "ngc.users/rights"}
+		"ngc.users/list", "ngc.users/log", "ngc.users/nodes", "ngc.users/pending", "ngc.users/pending-api",
+		"ngc.users/rights"}
 	if !slices.Equal(lists, want) {
 		t.Errorf("results that are lists: %q", lists)
 	}
@@ -1346,9 +1391,10 @@ func TestEncodeResult(t *testing.T) {
 // and would not notice omitempty.
 func TestEncodeResultOmitsZero(t *testing.T) {
 	app := DesktopApp{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", State: AppOK}
-	sized, coreApp := app, app
+	sized, coreApp, withEntry := app, app, app
 	sized.Width, sized.Height = 720, 480
 	coreApp.Core = true
+	withEntry.Entry = "index.html"
 	user := UserInfo{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin"}
 	seen := user
 	seen.LastLogin = 1790000000
@@ -1364,6 +1410,7 @@ func TestEncodeResultOmitsZero(t *testing.T) {
 	}{
 		{app, sized, []string{"width", "height"}},
 		{app, coreApp, []string{"core"}},
+		{app, withEntry, []string{"entry"}},
 		{user, seen, []string{"lastLogin"}},
 		{source, fetched, []string{"checked"}},
 		{installed, kept, []string{"keptData"}},

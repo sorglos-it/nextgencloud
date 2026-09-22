@@ -208,6 +208,50 @@ func TestVersions(t *testing.T) {
 	}
 }
 
+// TestGranted: an update installs only when the app's grants already cover
+// what the new version needs; more grants than needs are no obstacle.
+func TestGranted(t *testing.T) {
+	cases := []struct {
+		needs, grants []string
+		want          bool
+	}{
+		{nil, nil, true},
+		{[]string{NeedNetwork}, []string{NeedNetwork, NeedRoot}, true},
+		{[]string{NeedRoot}, []string{NeedNetwork}, false},
+		{[]string{NeedRoot, NeedNetwork}, []string{NeedNetwork}, false},
+	}
+	for _, c := range cases {
+		if got := Granted(c.needs, c.grants); got != c.want {
+			t.Errorf("Granted(%v, %v) = %v", c.needs, c.grants, got)
+		}
+	}
+}
+
+func TestSupportsMinNGC(t *testing.T) {
+	cases := []struct {
+		ngc, minNGC string
+		want        bool
+	}{
+		{"1.2.0", "", true},
+		{"0.0.0-dev", "", true},
+		{"1.2.0", "1.2.0", true},
+		{"1.2.0", "1.1.9", true},
+		{"1.10.0", "1.9.0", true},
+		{"1.2.0", "1.2.1", false},
+		// A build that is no release version counts as older than every
+		// minNgc, so a development NGC never installs a package that asks for
+		// one.
+		{"0.0.0-dev", "0.0.1", false},
+		{"0.0.0-dev", "0.0.0", false},
+		{"1.2.0", "1.2", false},
+	}
+	for _, c := range cases {
+		if got := SupportsMinNGC(c.ngc, c.minNGC); got != c.want {
+			t.Errorf("SupportsMinNGC(%q, %q) = %v", c.ngc, c.minNGC, got)
+		}
+	}
+}
+
 func FuzzParseManifest(f *testing.F) {
 	b, _ := json.Marshal(terminalManifest())
 	f.Add(b)

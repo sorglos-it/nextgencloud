@@ -12,10 +12,13 @@ import (
 
 // Kinds of documents.
 const (
-	BlobSetting  = "setting"  // ID: setting key
-	BlobTrust    = "trust"    // ID: version number as text, Seq: version number
-	BlobCatalog  = "catalog"  // ID: store, Seq: catalog number
-	BlobLicense  = "license"  // ID: app
+	BlobSetting = "setting" // ID: setting key
+	BlobTrust   = "trust"   // ID: version number as text, Seq: version number
+	BlobCatalog = "catalog" // ID: store, Seq: catalog number
+	// BlobLicense: ID: app; the newest license of the app: at the API the one
+	// it verified (store.VerifyLicense), at a controller the one it verified
+	// with store.VerifyLicenseFor.
+	BlobLicense  = "license"
 	BlobRights   = "rights"   // ID: role, Data: core.RoleRights as JSON
 	BlobUI       = "ui"       // ID: "<app>@<version>", Data: the canonical ui-tar of the plain package (store.PackageUI)
 	BlobApproval = "approval" // ID: "<app>@<version>", Data: core.UIProof as JSON (the evidence the version was installed with)
@@ -78,13 +81,18 @@ type Session struct {
 
 // App is an app of this installation.
 type App struct {
-	ID       string
-	Version  string // empty if only kept data remains
+	ID      string
+	Version string // empty if only kept data remains
+	// Store is the store the app was activated from; its updates come only
+	// from this store's catalog.
 	Store    string
 	Node     string // controller it runs on
 	Active   bool
 	Manifest []byte // manifest.json as delivered
 	SHA256   []byte // checksum of the package
+	// Grants is what the admin allowed at activation; an update installs only
+	// if its needs are among them (store.Granted), and the app then runs with
+	// its needs.
 	Grants   []string
 	KeptData int64
 	Updated  int64

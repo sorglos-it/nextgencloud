@@ -282,10 +282,13 @@ func ParseSetup(b []byte) (Setup, error) {
 // MaxRequest (nodes at most MaxSetupNodes): a valid installation ID, 1 to
 // MaxSetupNodes nodes each trust.ValidAPINode, sorted by ID without two of
 // one ID, Now > 0, a 32-byte ReleaseKey, Store absent or with ID
-// trust.StoreGlobal and passing trust.ValidStore, else ErrMessage. These are
-// the rules of trust.List.Validate for what version 1 takes from the offer,
-// so a version 1 built from an accepted offer as the package comment says
-// validates.
+// trust.StoreGlobal and passing trust.ValidStore, else ErrMessage. The
+// addresses of the nodes and of the store follow the grammar of package
+// trust (trust.ValidTunnelURL and trust.ValidStoreURL, through
+// trust.ValidAPINode and trust.ValidStore), so what the shell writes into
+// version 1 goes on into configurations unchanged. These are the rules of
+// trust.List.Validate for what version 1 takes from the offer, so a version 1
+// built from an accepted offer as the package comment says validates.
 func ParseSetupOffer(b []byte, code string) (SetupInfo, error) {
 	var o SetupOffer
 	if offerBudget.Decode(b, &o) != nil || len(o.Info) == 0 || len(o.Info) > MaxRequest || len(o.MAC) != sha256.Size {
