@@ -272,6 +272,7 @@ func smallBadPackages(t testing.TB) map[string][]byte {
 		"unknown top level":       append(slices.Clone(good), entry{"bin/sh", []byte("x"), tar.TypeReg}),
 		"directory bad name":      append(slices.Clone(good), entry{"etc", nil, tar.TypeDir}),
 		"duplicate":               append(slices.Clone(good), good[2]),
+		"directory twice":         append(slices.Clone(good), good[1]),
 		"unknown arch":            append(slices.Clone(good), entry{"services/riscv64.tar", []byte("x"), tar.TypeReg}),
 		"ui entry missing":        {good[0], good[3], good[4]},
 		"missing icon":            {good[0], good[1], good[2], good[4]},

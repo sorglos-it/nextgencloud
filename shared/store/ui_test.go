@@ -134,6 +134,9 @@ func uiCases(t testing.TB) []uiVector {
 		{Name: "name of 101 bytes in a PAX header", Tar: writeUI(t, uiFile(n101, "x")), Valid: true, Files: []string{n101}},
 		{Name: "path of 200 bytes", Tar: writeUI(t, uiFile(p200, "x")), Valid: true, Files: []string{p200}},
 		{Name: "directory with a long name", Tar: writeUI(t, uiDir(dLong), uiFile(dLong+"/f", "x")), Valid: true, Files: []string{dLong + "/f"}},
+		// A directory may be named after a path has implied it, as long as no
+		// entry names it twice.
+		{Name: "directory after a file below it", Tar: writeUI(t, uiFile("ui/a/b", "x"), uiDir("ui/a"), uiDir("ui")), Valid: true, Files: []string{"ui/a/b"}},
 		{Name: "MaxDirs directories", Tar: writeUI(t, deep...), Valid: true, Files: deepPaths},
 
 		// The header layout, one field at a time.
@@ -171,6 +174,10 @@ func uiCases(t testing.TB) []uiVector {
 		{Name: "STAR trailer", Tar: file(func(b *[blockSize]byte) { copy(b[508:], "tar\x00") })},
 		{Name: "bytes 500 to 507", Tar: file(func(b *[blockSize]byte) { copy(b[500:], "GARBAGE!") })},
 		{Name: "directory with a size", Tar: cat(header('5', "ui/d/", 1, nil), pad512([]byte("x")), end)},
+		// With nothing after it but the end marker. A reader without the rule
+		// that skips a directory's data accepts the case above and refuses
+		// this one; one that reads no data for a directory does the opposite.
+		{Name: "directory with a size, header only", Tar: cat(header('5', "ui/d/", 1, nil), end)},
 
 		// PAX headers.
 		{Name: "PAX header with a name", Tar: cat(rawPAX(record, func(b *[blockSize]byte) { copy(b[:], "PaxHeaders/0") }), afterPAX(), end)},
@@ -195,6 +202,11 @@ func uiCases(t testing.TB) []uiVector {
 		{Name: "PAX size longer than its record", Tar: cat(header('x', "", int64(len(record)+7), nil), pad512([]byte(record)), afterPAX(), end)},
 		{Name: "PAX size shorter than its record", Tar: cat(header('x', "", int64(len(record)-1), nil), pad512([]byte(record)), afterPAX(), end)},
 		{Name: "two PAX headers in a row", Tar: cat(rawPAX(record, nil), rawPAX(paxPathRecord("ui/"+strings.Repeat("e", 150)), nil), afterPAX(), end)},
+		// The header after a PAX header is the entry's own; one of typeflag x
+		// is refused there even with data a file could have. The case above
+		// fails a reader that takes it for the entry anyway, at the header
+		// after it.
+		{Name: "PAX header, then an x header with data", Tar: cat(rawPAX(record, nil), rawPAX("x", nil), end)},
 		{Name: "PAX header before the end marker", Tar: cat(rawPAX(record, nil), end)},
 		{Name: "PAX padding not NUL", Tar: cat(func() []byte {
 			b := rawPAX(record, nil)
@@ -227,8 +239,13 @@ func uiCases(t testing.TB) []uiVector {
 		{Name: "path of 201 bytes", Tar: withPAX(paxPathRecord(p200 + "b"))},
 		{Name: "file named ui", Tar: cat(rawFile("ui", "x", nil), end)},
 		{Name: "directory without its slash", Tar: cat(header('5', "ui/d", 0, nil), end)},
+		{Name: "directory ui/../", Tar: cat(header('5', "ui/../", 0, nil), end)},
+		{Name: "directory ../", Tar: cat(header('5', "../", 0, nil), end)},
+		{Name: "directory ui/.git/", Tar: cat(header('5', "ui/.git/", 0, nil), end)},
+		{Name: "directory ui//", Tar: cat(header('5', "ui//", 0, nil), end)},
 		{Name: "file with a trailing slash", Tar: cat(rawFile("ui/t.txt/", "x", nil), end)},
 		{Name: "duplicate", Tar: cat(rawFile("ui/x.txt", "x", nil), rawFile("ui/x.txt", "y", nil), end)},
+		{Name: "directory twice", Tar: cat(header('5', "ui/a/", 0, nil), header('5', "ui/a/", 0, nil), end)},
 		{Name: "entry under a file", Tar: cat(rawFile("ui/x.txt", "x", nil), rawFile("ui/x.txt/y", "y", nil), end)},
 		{Name: "file where a directory is needed", Tar: cat(rawFile("ui/a/b", "x", nil), rawFile("ui/a", "y", nil), end)},
 		{Name: "file where a directory entry needs a directory", Tar: cat(header('5', "ui/a/b/", 0, nil), rawFile("ui/a", "y", nil), end)},
