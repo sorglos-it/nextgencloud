@@ -21,6 +21,19 @@ import (
 // with the client certificate and the proof that make it (admin-signed). The
 // API keeps it per version (dbapi.BlobApproval); the whole answer is at most
 // wire.MaxCallResult bytes.
+//
+// Which store vouches: any store in the current trust list whose verified
+// catalog lists that app and version with that UI hash. Nothing signed tells
+// the shell which store an app was installed from, so a compromised API
+// together with a hostile store the admin added could give an app of another
+// store a UI that store did not sign. An admin should therefore add only
+// stores they trust as much as the software they install from them.
+//
+// Rollback: the shell keeps, per installation and app, the newest version
+// whose UI it has verified, and refuses a UI proof for an older version; with
+// a newer version it updates its record. The installed version comes from
+// the API, so a browser that never saw the newer version can still be shown
+// the older version's signed UI.
 type UIProof struct {
 	App     string         `json:"app"`
 	Version string         `json:"version"`
@@ -62,12 +75,16 @@ func ParseUIProof(b []byte) (UIProof, error) {
 // VerifyUIProof checks p for app at version against the trust list l and
 // returns the UI hash. Store app: the store p.Store of l signed p.Catalog
 // (store.VerifyCatalog, lastSeq 0) and it lists app at version, whose ui is
-// the hash. Uploaded app: session.VerifyApproval(p.Client, *p.Proof, l) gives
-// the certificate, task.VerifyApproval gives the task, which is
-// ngc.store/controller/activate on a node where that user may run root tasks
-// (l.MayRoot), with params (ParseParams) naming app, version and LocalStore;
-// their ui is the hash. No time is checked: the approval holds while its key
-// and root permission stay in l. Every failure is ErrUIProof.
+// the hash; any store of l may vouch so, whichever store the app came from
+// (UIProof, "Which store vouches"). Uploaded app:
+// session.VerifyApproval(p.Client, *p.Proof, l) gives the certificate,
+// task.VerifyApproval gives the task, which is ngc.store/controller/activate
+// on a node where that user may run root tasks (l.MayRoot), with params
+// (ParseParams) naming app, version and LocalStore; their ui is the hash. No
+// time is checked: the approval holds while its key and root permission stay
+// in l. Nor is the order of versions: refusing a proof for a version older
+// than the newest one it verified is the shell's rule (UIProof, "Rollback").
+// Every failure is ErrUIProof.
 func VerifyUIProof(p UIProof, app, version string, l *trust.List) ([]byte, error) {
 	ui, err := verifyUIProof(p, app, version, l)
 	if err != nil {
