@@ -293,6 +293,17 @@ func TestRelease(t *testing.T) {
 	}
 }
 
+// badUpdateReports are update reports ParseUpdateReport must refuse, one per
+// rule: TestUpdates checks them, FuzzParseUpdateReport seeds with them.
+var badUpdateReports = []string{
+	`{"target":"ngc-api","state":"exploded"}`,
+	`{"target":"ngc-api","state":"failed","message":null}`,
+	`{"target":"ngc-api","state":"failed","version":"1.1"}`,
+	`{"target":"ngc.store","state":"failed"}`,
+	`{"target":"ngc-api","state":"failed","message":"a\nb"}`,
+	`{"target":"ngc-api","state":"failed"} {}`,
+}
+
 func TestUpdates(t *testing.T) {
 	for _, target := range []string{trust.AutoWeb, trust.AutoSystem, "org.sorglos.terminal"} {
 		if !ValidTarget(target) {
@@ -308,9 +319,14 @@ func TestUpdates(t *testing.T) {
 	if _, err := ParseUpdateReport(r); err != nil {
 		t.Errorf("report: %v", err)
 	}
-	for _, bad := range []string{`{"target":"ngc-api","state":"exploded"}`, `{"target":"ngc-api","state":"failed","message":null}`,
-		`{"target":"ngc-api","state":"failed","version":"1.1"}`, `{"target":"ngc.store","state":"failed"}`,
-		`{"target":"ngc-api","state":"failed","message":"a\nb"}`, `{"target":"ngc-api","state":"failed"} {}`} {
+	// An update the app's grants do not cover is a state of its own, so the
+	// shell can offer the activation instead of an error.
+	g, _ := json.Marshal(UpdateReport{Target: "org.sorglos.terminal", Version: "2.0.0", State: UpdateNeedsGrants,
+		Message: "Die neue Fassung braucht mehr Rechte."})
+	if got, err := ParseUpdateReport(g); err != nil || got.State != UpdateNeedsGrants {
+		t.Errorf("needsgrants report: %+v, %v", got, err)
+	}
+	for _, bad := range badUpdateReports {
 		if _, err := ParseUpdateReport([]byte(bad)); err != ErrUpdate {
 			t.Errorf("bad report %s: %v", bad, err)
 		}
@@ -1021,5 +1037,39 @@ func FuzzCatalog(f *testing.F) {
 		_, _ = parseLicense(b)
 		_, _ = parseRelease(b)
 		_, _ = ParseUpdateReport(b)
+	})
+}
+
+// FuzzParseUpdateReport checks that an accepted report survives a round
+// trip: what the API reads is what a controller can send again unchanged, so
+// no report can mean one thing on the way in and another on the way out.
+func FuzzParseUpdateReport(f *testing.F) {
+	for _, state := range []string{UpdateAvailable, UpdateDownloaded, UpdateInstalling, UpdateInstalled,
+		UpdateRolledBack, UpdateFailed, UpdateRejected, UpdateNeedsGrants} {
+		b, err := json.Marshal(UpdateReport{Target: trust.AutoAPI, Version: "1.1.0", State: state, Message: "Meldung."})
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b)
+	}
+	for _, bad := range badUpdateReports {
+		f.Add([]byte(bad))
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		r, err := ParseUpdateReport(b)
+		if err != nil {
+			if err != ErrUpdate {
+				t.Fatalf("%q: got %v, want %v", b, err, ErrUpdate)
+			}
+			return
+		}
+		again, err := json.Marshal(r)
+		if err != nil {
+			t.Fatalf("encode %+v: %v", r, err)
+		}
+		back, err := ParseUpdateReport(again)
+		if err != nil || back != r {
+			t.Fatalf("round trip of %+v: %+v, %v", r, back, err)
+		}
 	})
 }

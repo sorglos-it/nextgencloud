@@ -49,11 +49,11 @@ type Manifest struct {
 	Needs       []string  `json:"needs,omitempty"`   // NeedRoot, NeedNetwork; the admin must allow them
 	CPU         int       `json:"cpu,omitempty"`     // thousandths of a core, default DefaultCPU
 	Memory      int       `json:"memory,omitempty"`  // MiB, default DefaultMemory
-	// MinNGC is the oldest NGC version the app needs. A manifest field that
-	// NGC version X introduces may appear only in packages whose minNgc (in
-	// the manifest and in the catalog entry) is at least X: an older NGC never
-	// offers such a version, because it could not read the manifest (strict
-	// JSON).
+	// MinNGC is the oldest NGC version the app needs (SupportsMinNGC). A
+	// manifest field that NGC version X introduces may appear only in packages
+	// whose minNgc (in the manifest and in the catalog entry) is at least X: an
+	// older NGC never offers such a version, because it could not read the
+	// manifest (strict JSON).
 	MinNGC string `json:"minNgc,omitempty"`
 }
 
@@ -195,6 +195,19 @@ func validNeeds(needs []string) bool {
 	return true
 }
 
+// Granted reports whether every one of needs (a manifest's Needs) is among
+// grants, what an admin allowed an app when activating it
+// (core.ActivateParams.Grants, kept as dbapi.App.Grants). An update installs
+// only then; the app then runs with its grants reduced to needs.
+func Granted(needs, grants []string) bool {
+	for _, n := range needs {
+		if !slices.Contains(grants, n) {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidText reports whether s is 1 to max bytes of printable UTF-8: every
 // rune unicode.IsPrint (letters, marks, numbers, punctuation, symbols and the
 // ASCII space). Names, titles and messages meant for people use it.
@@ -223,6 +236,21 @@ func Newer(a, b string) bool {
 		return false
 	}
 	return slices.Compare(x[:], y[:]) > 0
+}
+
+// SupportsMinNGC reports whether an NGC of version ngc can take a package
+// that asks for minNGC (Manifest.MinNGC, Package.MinNGC): minNGC empty, or
+// ngc a release version (ValidVersion) not older than minNGC. A version that
+// is no release version, such as 0.0.0-dev, suits no minNGC, and neither does
+// a minNGC that is no version.
+func SupportsMinNGC(ngc, minNGC string) bool {
+	if minNGC == "" {
+		return true
+	}
+	// Newer is false for an invalid version on either side, so both are
+	// checked here: a build that names itself 0.0.0-dev must fail every
+	// minNgc, not pass it.
+	return ValidVersion(ngc) && ValidVersion(minNGC) && !Newer(minNGC, ngc)
 }
 
 func parseVersion(s string) ([3]int, bool) {

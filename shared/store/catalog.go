@@ -47,6 +47,10 @@ const (
 	UpdateRolledBack = "rolledback"
 	UpdateFailed     = "failed"
 	UpdateRejected   = "rejected" // signature, approval or version check failed
+	// UpdateNeedsGrants is a state of its own, not UpdateRejected: nothing is
+	// wrong with the update, the app may simply not do what it now needs, so
+	// the shell offers the activation instead of an error.
+	UpdateNeedsGrants = "needsgrants" // the new version needs rights the app was not granted (Granted): no install by click or without a user; the admin activates it
 )
 
 // GlobalID is the global store's ID.
@@ -82,12 +86,15 @@ type Package struct {
 	// ui-tar has another.
 	UI        enc.Bytes `json:"ui"`
 	Encrypted bool      `json:"encrypted,omitempty"` // paid apps (Task 15)
-	Needs     []string  `json:"needs,omitempty"`     // as in the manifest, shown before download
-	// MinNGC is the oldest NGC version the app needs, as in the manifest. A
-	// manifest field that NGC version X introduces may appear only in packages
-	// whose minNgc (in the manifest and in the catalog entry) is at least X:
-	// an older NGC never offers such a version, because it could not read the
-	// manifest (strict JSON).
+	// Needs is as in the manifest, shown before download; an update whose
+	// needs are not Granted by the app's grants is not installed without a new
+	// activation (UpdateNeedsGrants).
+	Needs []string `json:"needs,omitempty"`
+	// MinNGC is the oldest NGC version the app needs, as in the manifest
+	// (SupportsMinNGC). A manifest field that NGC version X introduces may
+	// appear only in packages whose minNgc (in the manifest and in the catalog
+	// entry) is at least X: an older NGC never offers such a version, because
+	// it could not read the manifest (strict JSON).
 	MinNGC string `json:"minNgc,omitempty"`
 }
 
@@ -411,7 +418,8 @@ func ParseUpdateReport(b []byte) (UpdateReport, error) {
 		return UpdateReport{}, ErrUpdate
 	}
 	switch r.State {
-	case UpdateAvailable, UpdateDownloaded, UpdateInstalling, UpdateInstalled, UpdateRolledBack, UpdateFailed, UpdateRejected:
+	case UpdateAvailable, UpdateDownloaded, UpdateInstalling, UpdateInstalled, UpdateRolledBack, UpdateFailed,
+		UpdateRejected, UpdateNeedsGrants:
 	default:
 		return UpdateReport{}, ErrUpdate
 	}
