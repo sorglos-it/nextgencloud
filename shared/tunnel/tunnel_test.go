@@ -137,7 +137,7 @@ func pairChain(t testing.TB) []trust.Signed {
 		Keys: []proof.UserKey{trusttest.NewSigner(2).Key}})
 	dh, sig := trusttest.NodeKeys(0xA2)
 	_, pin := trusttest.APITLS(0xE2, "api-2.test")
-	api2 := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: dh.Public,
+	api2 := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: dh.Public,
 		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
 	l2.Nodes = slices.Insert(l2.Nodes, 1, api2) // api-1, api-2, ctl-1
 	return []trust.Signed{g, admin.Sign(t, l2)}

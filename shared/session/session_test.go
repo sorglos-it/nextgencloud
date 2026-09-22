@@ -54,7 +54,7 @@ func newFixture(t testing.TB) fixture {
 	l := trusttest.Genesis(admin)
 	api2DH, api2Sign := trusttest.NodeKeys(0xA2)
 	_, api2Pin := trusttest.APITLS(0xE2, "api-2.test")
-	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: api2DH.Public,
+	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: api2DH.Public,
 		Sign: enc.Bytes(api2Sign.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: api2Pin}, l.Nodes[1]}
 	carol, carolPasskey, carolPassword := trusttest.ID(0x23), trusttest.NewPasskey(0x63), trusttest.NewSigner(0x64)
 	l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
@@ -305,7 +305,7 @@ func setupInfo() SetupInfo {
 func api2Node() trust.Node {
 	dh, sig := trusttest.NodeKeys(0xA2)
 	_, pin := trusttest.APITLS(0xE2, "api-2.test")
-	return trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: dh.Public,
+	return trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: dh.Public,
 		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
 }
 
@@ -490,7 +490,7 @@ func TestParseSetupOffer(t *testing.T) {
 		nodes := make([]trust.Node, n)
 		for i := range nodes {
 			k := bytes.Repeat([]byte{byte(0x40 + i)}, 32)
-			nodes[i] = trust.Node{ID: fmt.Sprintf("api-%02d", i+1), Kind: trust.NodeAPI, Name: fmt.Sprintf("API %d", i+1),
+			nodes[i] = trust.Node{ID: fmt.Sprintf("api-%02d", i+1), Kind: trust.NodeAPI, Name: fmt.Sprintf("api-%02d", i+1),
 				Noise: k, Sign: k, URL: fmt.Sprintf("wss://api-%d.test:7443/tunnel", i+1), TLS: k}
 		}
 		return nodes

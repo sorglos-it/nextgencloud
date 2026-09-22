@@ -154,10 +154,13 @@ const GenesisPasskeyFill = 7
 // "admin2" who signs with a passkey (NewPasskey(GenesisPasskeyFill)) against
 // the RP ngc.example.org, API "api-1" (NodeKeys(0xA1), with the TLS pin of
 // APITLS(0xE1, "api-1.test")) and controller "ctl-1" (NodeKeys(0xC1)), on
-// which admins may run root tasks. Also carries the global store (ID
-// trust.StoreGlobal, as the setup puts it into version 1) and two standing
-// approvals (system, and ngc-controller updates signed with the release key
-// NodeKeys(ReleaseFill)) so a realistic list exercises those fields too.
+// which admins may run root tasks. An API node is named by its node ID, as
+// core.PendingAPI and the setup of an API server (apps/server-api/CLAUDE.md)
+// name them; only controllers carry a display name. Also carries the global
+// store (ID trust.StoreGlobal, as the setup puts it into version 1) and two
+// standing approvals (system, and ngc-controller updates signed with the
+// release key NodeKeys(ReleaseFill)) so a realistic list exercises those
+// fields too.
 func Genesis(admin Signer) *trust.List {
 	apiDH, apiSign := NodeKeys(0xA1)
 	_, apiPin := APITLS(0xE1, "api-1.test")
@@ -174,7 +177,7 @@ func Genesis(admin Signer) *trust.List {
 		},
 		Roles: []trust.Role{{Name: trust.RoleAdmin, Level: trust.LevelCritical}},
 		Nodes: []trust.Node{
-			{ID: "api-1", Kind: trust.NodeAPI, Name: "API 1", Noise: apiDH.Public,
+			{ID: "api-1", Kind: trust.NodeAPI, Name: "api-1", Noise: apiDH.Public,
 				Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)), URL: "wss://api-1.test:7443/tunnel", TLS: apiPin},
 			{ID: "ctl-1", Kind: trust.NodeController, Name: "Dienste", Noise: ctlDH.Public, RootRoles: []string{trust.RoleAdmin}},
 		},
