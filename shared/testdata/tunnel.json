@@ -81,12 +81,13 @@
     "code": "ngc-join:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
     "secret": "Xl5eXl5eXl5eXl5eXl5eXg",
     "apiKey": "wwb7DvK_i3-TutmBVfo32ux02wxMvtpsbx26nTZVglI",
+    "node": "api-3",
     "noise": "X8L4oSRDevzufUVn_jHgLC0EKTnelvB7BuKMDEw690A",
     "sign": "rPErSswcZgqDJq7TQDnvtyil5JZIgkD1CpMqt6ulF1E",
     "tls": "_QyfTZZChW4J3_yZuEB8I-2ni2ckSRcT3btNUVOBuzA",
     "url": "wss://api-3.test:7443/tunnel",
-    "mac": "Gsdpc0n-zj90kOH9CseNDPvUwngeH5TVJx4XnFa7UK0",
-    "fingerprint": "gAgJhg9aZ3BSrLpybtYrXA"
+    "mac": "BXO8kvhQxwrjaao98dOFhVhmSqmRzMDW89uVgjx3gs8",
+    "fingerprint": "eaurhXIU0ypdZLZQTEpeuw"
   },
   "tlsPin": "I9zuosAkzb61MJOrBDOS2PBOmRB_EEsc0ttbtw0slhQ"
 }

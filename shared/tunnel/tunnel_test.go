@@ -232,7 +232,7 @@ func joinKeys() (noiseKey, signKey, tlsPin []byte) {
 func testJoinRequest(c JoinCode) JoinRequest {
 	noise, sig, pin := joinKeys()
 	return JoinRequest{Node: "api-3", Noise: noise, Sign: sig, TLS: pin, URL: joinURL,
-		MAC: JoinMAC(c.Secret, noise, sig, pin, c.Key, joinURL)}
+		MAC: JoinMAC(c.Secret, "api-3", noise, sig, pin, c.Key, joinURL)}
 }
 
 func TestJoinCode(t *testing.T) {
@@ -271,27 +271,24 @@ func TestJoinCode(t *testing.T) {
 	}
 	other := bytes.Repeat([]byte{0x77}, 32)
 	otherURL := "wss://api-4.test:7443/tunnel"
+	// The node ID is under the MAC too: it is the server's ID and name in the
+	// trust list, so the issuing API cannot rename a waiting server.
 	for name, change := range map[string]func(*JoinRequest){
-		"other noise key":        func(r *JoinRequest) { r.Noise = other },
-		"other sign key":         func(r *JoinRequest) { r.Sign = other },
-		"other TLS pin":          func(r *JoinRequest) { r.TLS = other },
-		"other URL":              func(r *JoinRequest) { r.URL = otherURL },
-		"URL one byte longer":    func(r *JoinRequest) { r.URL += "x" },
-		"noise and sign swapped": func(r *JoinRequest) { r.Noise, r.Sign = r.Sign, r.Noise },
-		"sign and TLS swapped":   func(r *JoinRequest) { r.Sign, r.TLS = r.TLS, r.Sign },
+		"other node ID":           func(r *JoinRequest) { r.Node = "api-4" },
+		"node ID one byte longer": func(r *JoinRequest) { r.Node += "x" },
+		"other noise key":         func(r *JoinRequest) { r.Noise = other },
+		"other sign key":          func(r *JoinRequest) { r.Sign = other },
+		"other TLS pin":           func(r *JoinRequest) { r.TLS = other },
+		"other URL":               func(r *JoinRequest) { r.URL = otherURL },
+		"URL one byte longer":     func(r *JoinRequest) { r.URL += "x" },
+		"noise and sign swapped":  func(r *JoinRequest) { r.Noise, r.Sign = r.Sign, r.Noise },
+		"sign and TLS swapped":    func(r *JoinRequest) { r.Sign, r.TLS = r.TLS, r.Sign },
 	} {
 		bad := r
 		change(&bad)
 		if bad.Verify(c.Secret, c.Key) != ErrJoin {
 			t.Errorf("%s accepted", name)
 		}
-	}
-	// The node ID is no key: the admin sees it and may list the server under
-	// it, so the MAC leaves it out, as JoinFingerprint does.
-	renamed := r
-	renamed.Node = "api-4"
-	if renamed.Verify(c.Secret, c.Key) != nil {
-		t.Error("other node ID refused")
 	}
 	if r.Verify(c.Secret, other) != ErrJoin {
 		t.Error("other API key accepted")
@@ -305,16 +302,17 @@ func TestJoinCode(t *testing.T) {
 
 	// The fingerprint changes with every value the new server asks to be
 	// listed with.
-	fp := JoinFingerprint(r.Noise, r.Sign, r.TLS, r.URL)
+	fp := JoinFingerprint(r.Node, r.Noise, r.Sign, r.TLS, r.URL)
 	if id, err := enc.B64.DecodeString(fp); err != nil || len(id) != 16 {
 		t.Errorf("fingerprint %q: %v", fp, err)
 	}
 	for name, got := range map[string]string{
-		"other noise key":        JoinFingerprint(other, r.Sign, r.TLS, r.URL),
-		"other sign key":         JoinFingerprint(r.Noise, other, r.TLS, r.URL),
-		"other TLS pin":          JoinFingerprint(r.Noise, r.Sign, other, r.URL),
-		"other URL":              JoinFingerprint(r.Noise, r.Sign, r.TLS, otherURL),
-		"noise and sign swapped": JoinFingerprint(r.Sign, r.Noise, r.TLS, r.URL),
+		"other node ID":          JoinFingerprint("api-4", r.Noise, r.Sign, r.TLS, r.URL),
+		"other noise key":        JoinFingerprint(r.Node, other, r.Sign, r.TLS, r.URL),
+		"other sign key":         JoinFingerprint(r.Node, r.Noise, other, r.TLS, r.URL),
+		"other TLS pin":          JoinFingerprint(r.Node, r.Noise, r.Sign, other, r.URL),
+		"other URL":              JoinFingerprint(r.Node, r.Noise, r.Sign, r.TLS, otherURL),
+		"noise and sign swapped": JoinFingerprint(r.Node, r.Sign, r.Noise, r.TLS, r.URL),
 		"Noise key alone":        Fingerprint(r.Noise),
 	} {
 		if got == fp {
@@ -1069,6 +1067,7 @@ type joinVector struct {
 	Code        string    `json:"code"`
 	Secret      enc.Bytes `json:"secret"`
 	APIKey      enc.Bytes `json:"apiKey"`
+	Node        string    `json:"node"`
 	Noise       enc.Bytes `json:"noise"`
 	Sign        enc.Bytes `json:"sign"`
 	TLS         enc.Bytes `json:"tls"`
@@ -1108,8 +1107,8 @@ func TestVectors(t *testing.T) {
 	}
 	jc := testJoinCode(t)
 	jr := testJoinRequest(jc)
-	v.Join = joinVector{Code: jc.String(), Secret: jc.Secret, APIKey: jc.Key, Noise: jr.Noise, Sign: jr.Sign, TLS: jr.TLS,
-		URL: jr.URL, MAC: jr.MAC, Fingerprint: JoinFingerprint(jr.Noise, jr.Sign, jr.TLS, jr.URL)}
+	v.Join = joinVector{Code: jc.String(), Secret: jc.Secret, APIKey: jc.Key, Node: jr.Node, Noise: jr.Noise, Sign: jr.Sign,
+		TLS: jr.TLS, URL: jr.URL, MAC: jr.MAC, Fingerprint: JoinFingerprint(jr.Node, jr.Noise, jr.Sign, jr.TLS, jr.URL)}
 	certPEM, pin := apiPEM()
 	v.TLSPin = pin
 	golden.CheckBytes(t, *update, "tls/api.pem", certPEM)
@@ -1145,11 +1144,11 @@ func checkVector(t *testing.T, v vector) {
 	if err != nil || !bytes.Equal(jc.Secret, v.Join.Secret) || !bytes.Equal(jc.Key, v.Join.APIKey) || jc.Check(latest) != nil {
 		t.Errorf("join code: %+v, %v", jc, err)
 	}
-	jr := JoinRequest{Node: "api-3", Noise: v.Join.Noise, Sign: v.Join.Sign, TLS: v.Join.TLS, URL: v.Join.URL, MAC: v.Join.MAC}
+	jr := JoinRequest{Node: v.Join.Node, Noise: v.Join.Noise, Sign: v.Join.Sign, TLS: v.Join.TLS, URL: v.Join.URL, MAC: v.Join.MAC}
 	if _, err := ParseJoinRequest(mustJSON(t, jr)); err != nil || jr.Verify(v.Join.Secret, v.Join.APIKey) != nil {
 		t.Errorf("join request or MAC: %v", err)
 	}
-	if JoinFingerprint(jr.Noise, jr.Sign, jr.TLS, jr.URL) != v.Join.Fingerprint {
+	if JoinFingerprint(jr.Node, jr.Noise, jr.Sign, jr.TLS, jr.URL) != v.Join.Fingerprint {
 		t.Error("join fingerprint")
 	}
 	// tlsPin is the pin of the certificate in tls/api.pem, as pin.sh prints it.
