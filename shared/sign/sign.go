@@ -50,13 +50,12 @@ var (
 
 // ParseEnvelope decodes an envelope from outside (a license an admin
 // uploads, a catalog or release fetched from a store): strict JSON within a
-// budget (enc.Budget) of the base64url of maxPayload bytes plus 1 KiB, a
-// payload of 1 to maxPayload bytes, a key ID as KeyID makes it and a 64-byte
-// signature. A maxPayload above MaxPayload counts as MaxPayload. It checks
+// budget (enc.Budget) of the base64url of maxPayload bytes plus 1 KiB, then
+// Validate. A maxPayload above MaxPayload counts as MaxPayload. It checks
 // no signature: Verify does, and the Verify functions of the contracts
 // expect an envelope parsed here, or by the parser of a document that holds
-// it (core.ReadTransfer). Every failure is ErrEnvelope alone, since the
-// decoder's errors quote parts of the input.
+// it. Every failure is ErrEnvelope alone, since the decoder's errors quote
+// parts of the input.
 func ParseEnvelope(b []byte, maxPayload int) (Envelope, error) {
 	maxPayload = min(maxPayload, MaxPayload)
 	if maxPayload < 1 {
@@ -65,14 +64,31 @@ func ParseEnvelope(b []byte, maxPayload int) (Envelope, error) {
 	// An envelope has no array, so the budget only bounds its size.
 	budget := enc.Budget{Size: enc.B64.EncodedLen(maxPayload) + envelopeSlack}
 	var env Envelope
-	if budget.Decode(b, &env) != nil || len(env.Payload) == 0 || len(env.Payload) > maxPayload ||
-		len(env.KeyID) != enc.B64.EncodedLen(keyIDSize) || len(env.Sig) != ed25519.SignatureSize {
+	if budget.Decode(b, &env) != nil {
 		return Envelope{}, ErrEnvelope
 	}
-	if id, err := enc.B64.DecodeString(env.KeyID); err != nil || len(id) != keyIDSize {
-		return Envelope{}, ErrEnvelope
+	if err := env.Validate(maxPayload); err != nil {
+		return Envelope{}, err
 	}
 	return env, nil
+}
+
+// Validate checks the structure of e without its signature: a payload of 1
+// to maxPayload bytes (a maxPayload above MaxPayload counts as MaxPayload), a
+// key ID as KeyID makes it (22 characters, 16 bytes) and a 64-byte
+// signature. ParseEnvelope runs it, and so does every parser of a document
+// that holds an envelope (core.ReadTransfer, core.ParseUIProof). Every
+// failure is ErrEnvelope.
+func (e Envelope) Validate(maxPayload int) error {
+	maxPayload = min(maxPayload, MaxPayload)
+	if maxPayload < 1 || len(e.Payload) == 0 || len(e.Payload) > maxPayload ||
+		len(e.KeyID) != enc.B64.EncodedLen(keyIDSize) || len(e.Sig) != ed25519.SignatureSize {
+		return ErrEnvelope
+	}
+	if id, err := enc.B64.DecodeString(e.KeyID); err != nil || len(id) != keyIDSize {
+		return ErrEnvelope
+	}
+	return nil
 }
 
 // Message returns the bytes a signature covers: "ngc/" || purpose || 0x00 || payload.

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/internal/golden"
@@ -424,6 +425,13 @@ func closeCases() []closeCase {
 		{"message of 256 bytes", message(strings.Repeat("x", MaxMessageText)), true},
 		{"message of 128 umlauts, 256 bytes", message(strings.Repeat("ü", MaxMessageText/2)), true},
 		{"CLOSE of MaxClosePayload bytes", padded(ok, MaxClosePayload), true},
+		{"error E_LOGIN with its message", []byte(`{"status":"error","code":"E_LOGIN","message":"Anmeldung fehlgeschlagen."}`), true},
+		{"error E_LOCKED with its message",
+			[]byte(`{"status":"error","code":"E_LOCKED","message":"Zu viele Fehlversuche. Bitte später erneut versuchen."}`), true},
+		// Printable, though a check that walks UTF-16 units instead of code
+		// points refuses the first, and one without marks the second.
+		{"message with a character outside the BMP (U+1F600)", message("Fertig \xf0\x9f\x98\x80"), true},
+		{"message with a combining mark (U+0308)", message("Ka\xcc\x88se"), true},
 		{"status ok with a code", []byte(`{"status":"ok","code":"E_EXIT"}`), false},
 		{"unknown code", []byte(`{"status":"error","code":"E_WHAT"}`), false},
 		{"unknown status", []byte(`{"status":"maybe"}`), false},
@@ -437,6 +445,21 @@ func closeCases() []closeCase {
 		{"duplicate member", []byte(`{"status":"ok","status":"ok"}`), false},
 		{"unknown member", []byte(`{"status":"ok","extra":1}`), false},
 		{"member name in other case", []byte(`{"Status":"ok"}`), false},
+		// Valid JSON whose message escapes a character ValidText refuses;
+		// "\x5c" is the backslash of the escape.
+		{"message with a control character", message("Zeile\x5cu0007"), false},
+		{"message with a line feed", message("Zeile\x5cnzwei"), false},
+		// One message for each other general category ValidText refuses, and
+		// emoji joined by a format character, with the character as UTF-8,
+		// which JSON allows unescaped. A check that refuses only control
+		// characters accepts all of them.
+		{"message with a right-to-left override (U+202E, Cf)", message("Zeile\xe2\x80\xaezwei"), false},
+		{"message with emoji joined by U+200D (Cf)", message("\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9"), false},
+		{"message with a no-break space (U+00A0, Zs)", message("Zeile\xc2\xa0zwei"), false},
+		{"message with a line separator (U+2028, Zl)", message("Zeile\xe2\x80\xa8zwei"), false},
+		{"message with a paragraph separator (U+2029, Zp)", message("Zeile\xe2\x80\xa9zwei"), false},
+		{"message with a private-use character (U+E000, Co)", message("Zeile\xee\x80\x80zwei"), false},
+		{"message with a noncharacter (U+FDD0, Cn)", message("Zeile\xef\xb7\x90zwei"), false},
 	}
 }
 
@@ -463,8 +486,60 @@ func TestParseClose(t *testing.T) {
 			t.Errorf("%.60s: got %v, want %v", s, err, ErrClose)
 		}
 	}
-	if Error(CodeForbidden).Message != "Keine Berechtigung." || Error(CodeTooLarge).Message != "Zu viele Daten." {
+	if Error(CodeForbidden).Message != "Keine Berechtigung." || Error(CodeTooLarge).Message != "Zu viele Daten." ||
+		Error(CodeLogin).Message != "Anmeldung fehlgeschlagen." ||
+		Error(CodeLocked).Message != "Zu viele Fehlversuche. Bitte später erneut versuchen." {
 		t.Error("German message missing")
+	}
+	// The CLOSE of every code with its message is valid.
+	for code := range messages {
+		if err := Error(code).Validate(); err != nil {
+			t.Errorf("%s: %v", code, err)
+		}
+	}
+}
+
+// TestValidText: the cases of store.TestValidText, and more characters that
+// break a line or are invisible.
+func TestValidText(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"Terminal", true},
+		{"Befehle ausführen", true},
+		{strings.Repeat("a", 64), true},
+		{strings.Repeat("ä", 32), true}, // exactly 64 bytes of umlauts
+		{"", false},
+		{strings.Repeat("a", 65), false},
+		{strings.Repeat("ä", 32) + "a", false},
+		{"a" + "\x0ab", false},         // line feed
+		{"a" + "\x07b", false},         // BEL
+		{"a" + "\xc2\xa0b", false},     // no-break space
+		{"a" + "\xffb", false},         // invalid UTF-8
+		{"a" + "\x09b", false},         // tab
+		{"a" + "\x0db", false},         // carriage return
+		{"a" + "\xe2\x80\xa8b", false}, // U+2028, line separator
+		{"a" + "\xe2\x80\xa9b", false}, // U+2029, paragraph separator
+		{"a" + "\xe2\x80\xaeb", false}, // U+202E, right-to-left override (format)
+		{"a" + "\xe2\x80\x8bb", false}, // U+200B, zero-width space (format)
+		{"a" + "\xee\x80\x80b", false}, // U+E000, private use
+		{"a" + "\xef\xb7\x90b", false}, // U+FDD0, a noncharacter: unknown to every table, so never printable
+		{"\xf0\x9f\x98\x80", true},     // U+1F600, outside the BMP
+		{"Ka" + "\xcc\x88se", true},    // a and a combining diaeresis (NFD)
+		// U+1F468 U+200D U+1F469: the joiner between the emoji is a format
+		// character, so such a sequence is refused.
+		{"\xf0\x9f\x91\xa8" + "\xe2\x80\x8d" + "\xf0\x9f\x91\xa9", false},
+	}
+	for _, c := range cases {
+		if got := ValidText(c.s, 64); got != c.want {
+			t.Errorf("%q: got %v", c.s, got)
+		}
+	}
+	// The doc of ValidText names the tables it is checked against. Other
+	// tables change what Go accepts, so the doc and the contract must follow.
+	if unicode.Version != "17.0.0" {
+		t.Errorf("Go's Unicode tables are %s; the doc of ValidText says 17.0", unicode.Version)
 	}
 }
 
@@ -557,6 +632,10 @@ func e2eCases() []e2eCase {
 		{"end from controller without status", msg(E2EEnd, ""), true, false},
 		{"end from controller with status maybe", msg(E2EEnd, `{"status":"maybe"}`), true, false},
 		{"end from controller with a CLOSE over MaxClosePayload", append([]byte{E2EEnd}, padded([]byte(`{"status":"ok"}`), MaxClosePayload+1)...), true, false},
+		{"end from controller with a message with a control character",
+			msg(E2EEnd, `{"status":"error","code":"E_EXIT","message":"Zeile`+"\x5cu0007"+`"}`), true, false},
+		{"end from controller with a message with a right-to-left override",
+			msg(E2EEnd, `{"status":"error","code":"E_EXIT","message":"Zeile`+"\xe2\x80\xae"+`zwei"}`), true, false},
 	}
 }
 

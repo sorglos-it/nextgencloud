@@ -22,5 +22,18 @@
     },
     "seed": "jkQkR21tyATs3A-qz5y07tL97tbuyWmqof4MOajzGas",
     "public": "PEFVNA7F7E9_nPNvJRWF_RAjd70aSOSBg_KJqDxU12s"
+  },
+  {
+    "password": "Käse\u0026Brot",
+    "typed": "Käse\u0026Brot",
+    "kdf": {
+      "alg": "argon2id",
+      "salt": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "m": 65536,
+      "t": 3,
+      "p": 1
+    },
+    "seed": "jkQkR21tyATs3A-qz5y07tL97tbuyWmqof4MOajzGas",
+    "public": "PEFVNA7F7E9_nPNvJRWF_RAjd70aSOSBg_KJqDxU12s"
   }
 ]
