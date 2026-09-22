@@ -195,8 +195,9 @@ const maxTotals = 8
 //     in its contract; a small Size of the whole document is one.
 //   - Everywhere, raw values included: at most MaxDepth levels of nesting,
 //     no number whose exact decimal value exceeds MaxSafeInteger in magnitude
-//     (9007199254740991.0 passes, 9007199254740991.5 and 1e16 do not), and no
-//     null: a member without a value is left out instead.
+//     (9007199254740991.0 passes; 1e16 does not, nor does 9007199254740991.4,
+//     although a float64 rounds it down to MaxSafeInteger), and no null: a
+//     member without a value is left out instead.
 type Budget struct {
 	Size   int
 	Items  map[string]int

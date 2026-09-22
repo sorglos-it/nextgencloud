@@ -63,6 +63,11 @@
       "valid": true
     },
     {
+      "name": "largest uint32",
+      "doc": "eyJ1Ijo0Mjk0OTY3Mjk1fQ",
+      "valid": true
+    },
+    {
       "name": "decimal point on a safe integer in raw",
       "doc": "eyJyYXciOjkwMDcxOTkyNTQ3NDA5OTEuMH0",
       "valid": true
@@ -203,8 +208,13 @@
       "valid": false
     },
     {
+      "name": "negative integer beyond 2^53-1",
+      "doc": "eyJuIjotOTAwNzE5OTI1NDc0MDk5Mn0",
+      "valid": false
+    },
+    {
       "name": "fraction on the largest safe integer in raw",
-      "doc": "eyJyYXciOjkwMDcxOTkyNTQ3NDA5OTEuNX0",
+      "doc": "eyJyYXciOjkwMDcxOTkyNTQ3NDA5OTEuNH0",
       "valid": false
     },
     {
@@ -260,6 +270,16 @@
     {
       "name": "list in sub over its limit",
       "doc": "eyJzdWIiOnsibGlzdCI6WzEsMiwzLDQsNV19fQ",
+      "valid": false
+    },
+    {
+      "name": "subs over its limit",
+      "doc": "eyJzdWJzIjpbe30se30se30se31dfQ",
+      "valid": false
+    },
+    {
+      "name": "list in subs over its limit",
+      "doc": "eyJzdWJzIjpbeyJsaXN0IjpbMSwyLDMsNCw1XX1dfQ",
       "valid": false
     },
     {

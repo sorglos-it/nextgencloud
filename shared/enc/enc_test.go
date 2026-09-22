@@ -281,7 +281,7 @@ func TestSafeNumber(t *testing.T) {
 	cases := map[string]bool{
 		"0": true, "-0": true, "0.0": true, "0e999": true, "1": true, "-1": true, "-0.5": true,
 		"9007199254740991": true, "-9007199254740991": true, "9007199254740991.0": true, "9007199254740990.9": true,
-		"9007199254740992": false, "-9007199254740992": false, "9007199254740991.5": false,
+		"9007199254740992": false, "-9007199254740992": false, "9007199254740991.5": false, "9007199254740991.4": false,
 		"1e15": true, "1E+15": true, "1e16": false, "1e-400": true, "1E400": false,
 		"9.007199254740991e15": true, "9.007199254740992e15": false,
 		"90071992547409910e-1": true, "90071992547409911e-1": false,
@@ -462,6 +462,7 @@ func jsonCases() []jsonCase {
 		{"smallest safe integer", `{"n":-9007199254740991}`, nil},
 		{"minus zero in a signed field", `{"n":-0}`, nil},
 		{"unsigned zero", `{"u":0}`, nil},
+		{"largest uint32", `{"u":4294967295}`, nil},
 		{"decimal point on a safe integer in raw", `{"raw":9007199254740991.0}`, nil},
 		{"names differing in case in raw", `{"raw":{"k":1,"K":2}}`, nil},
 		{"escaped control character in a string", `{"s":"a` + escape("0001") + `b"}`, nil},
@@ -491,7 +492,10 @@ func jsonCases() []jsonCase {
 		{"negative unsigned", `{"u":-1}`, is(strconv.ErrSyntax)},
 		{"uint32 overflow", `{"u":4294967296}`, is(strconv.ErrRange)},
 		{"integer beyond 2^53-1", `{"n":9007199254740992}`, is(ErrNumber)},
-		{"fraction on the largest safe integer in raw", `{"raw":9007199254740991.5}`, is(ErrNumber)},
+		{"negative integer beyond 2^53-1", `{"n":-9007199254740992}`, is(ErrNumber)},
+		// .4, not .5: a check through a float64 (JavaScript's Number) rounds
+		// .5 up to 2^53 and refuses it anyway, but rounds .4 down to 2^53-1.
+		{"fraction on the largest safe integer in raw", `{"raw":9007199254740991.4}`, is(ErrNumber)},
 		{"exponent beyond 2^53-1 in raw", `{"raw":1e16}`, is(ErrNumber)},
 		{"number for a string", `{"s":1}`, kind},
 		{"string for a number", `{"n":"1"}`, kind},
@@ -503,6 +507,8 @@ func jsonCases() []jsonCase {
 		{"list over its limit", `{"list":[1,2,3,4,5]}`, is(ErrBudget)},
 		{"map over its limit", `{"map":{"a":1,"b":2,"c":3}}`, is(ErrBudget)},
 		{"list in sub over its limit", `{"sub":{"list":[1,2,3,4,5]}}`, is(ErrBudget)},
+		{"subs over its limit", `{"subs":[{},{},{},{}]}`, is(ErrBudget)},
+		{"list in subs over its limit", `{"subs":[{"list":[1,2,3,4,5]}]}`, is(ErrBudget)},
 		{"total over its limit", `{"subs":[{"list":[1,2,3]},{"list":[4,5,6]},{"list":[7]}]}`, is(ErrBudget)},
 		{"depth 33", `{"raw":` + nested(32) + `}`, is(ErrDepth)},
 		{"document of 1025 bytes", sized(1025), is(ErrTooLarge)},
