@@ -49,8 +49,9 @@ func newFixture(t testing.TB) fixture {
 	admin := trusttest.NewSigner(1)
 	l := trusttest.Genesis(admin)
 	api2DH, api2Sign := trusttest.NodeKeys(0xA2)
+	_, api2Pin := trusttest.APITLS(0xE2, "api-2.test")
 	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: api2DH.Public,
-		Sign: enc.Bytes(api2Sign.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel"}, l.Nodes[1]}
+		Sign: enc.Bytes(api2Sign.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: api2Pin}, l.Nodes[1]}
 	carol, carolPasskey, carolPassword := trusttest.ID(0x23), trusttest.NewPasskey(0x63), trusttest.NewSigner(0x64)
 	l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
 	l.Users = append(l.Users, trust.User{ID: carol, Name: "carol", Roles: []string{"careful"},

@@ -6,9 +6,13 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/flynn/noise"
 
@@ -100,6 +104,46 @@ func NodeKeys(fill byte) (noise.DHKey, ed25519.PrivateKey) {
 	return dh, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{fill}, ed25519.SeedSize))
 }
 
+// ReleaseFill is the seed of the key Genesis's standing approval for
+// ngc-controller names; tests use NodeKeys(ReleaseFill) as the NGC release key.
+const ReleaseFill = 0xD1
+
+// APITLS returns the TLS identity of a test API server: an Ed25519 key from
+// seed fill, a self-signed certificate for host (serial 1, valid from
+// 2026-01-01 to 2036-01-01 UTC, DNS name host), and the pin of its key
+// (trust.TLSPin). The same fill and host give the same bytes.
+func APITLS(fill byte, host string) (tls.Certificate, []byte) {
+	priv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{fill}, ed25519.SeedSize))
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: host},
+		DNSNames:     []string{host},
+		NotBefore:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:     time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	// Ed25519 signs without chance and the serial is set, so nothing should
+	// read the reader; zeros keeps the bytes fixed even if something did.
+	der, err := x509.CreateCertificate(zeros{}, tmpl, tmpl, priv.Public(), priv)
+	if err != nil {
+		panic(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		panic(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv, Leaf: leaf}, trust.TLSPin(leaf.RawSubjectPublicKeyInfo)
+}
+
+// zeros is a reader of zero bytes without end.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 // GenesisPasskeyFill is the seed Genesis uses for its second admin, who signs
 // with a passkey instead of a password key. NewPasskey is deterministic, so
 // a test that needs to act as that signer calls NewPasskey(GenesisPasskeyFill)
@@ -108,17 +152,19 @@ const GenesisPasskeyFill = 7
 
 // Genesis returns version 1: user "admin" with admin's key, a second admin
 // "admin2" who signs with a passkey (NewPasskey(GenesisPasskeyFill)) against
-// the RP ngc.example.org, API "api-1" (NodeKeys(0xA1)) and controller "ctl-1"
-// (NodeKeys(0xC1)), on which admins may run root tasks. Also carries the
-// global store (ID trust.StoreGlobal, as the setup puts it into version 1)
-// and two standing approvals (system, and controller updates) so a
-// realistic list exercises those fields too.
+// the RP ngc.example.org, API "api-1" (NodeKeys(0xA1), with the TLS pin of
+// APITLS(0xE1, "api-1.test")) and controller "ctl-1" (NodeKeys(0xC1)), on
+// which admins may run root tasks. Also carries the global store (ID
+// trust.StoreGlobal, as the setup puts it into version 1) and two standing
+// approvals (system, and ngc-controller updates signed with the release key
+// NodeKeys(ReleaseFill)) so a realistic list exercises those fields too.
 func Genesis(admin Signer) *trust.List {
 	apiDH, apiSign := NodeKeys(0xA1)
+	_, apiPin := APITLS(0xE1, "api-1.test")
 	ctlDH, _ := NodeKeys(0xC1)
 	admin2 := NewPasskey(GenesisPasskeyFill)
 	_, storeSign := NodeKeys(0xB1)
-	_, autoSign := NodeKeys(0xD1)
+	_, releaseSign := NodeKeys(ReleaseFill)
 	return &trust.List{
 		Seq: 1, Issued: 1790000000, Installation: ID(0x11),
 		RP: proof.RP{ID: rpID, Origins: []string{rpOrigin}},
@@ -129,14 +175,14 @@ func Genesis(admin Signer) *trust.List {
 		Roles: []trust.Role{{Name: trust.RoleAdmin, Level: trust.LevelCritical}},
 		Nodes: []trust.Node{
 			{ID: "api-1", Kind: trust.NodeAPI, Name: "API 1", Noise: apiDH.Public,
-				Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)), URL: "wss://api-1.test:7443/tunnel"},
+				Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)), URL: "wss://api-1.test:7443/tunnel", TLS: apiPin},
 			{ID: "ctl-1", Kind: trust.NodeController, Name: "Dienste", Noise: ctlDH.Public, RootRoles: []string{trust.RoleAdmin}},
 		},
 		Stores: []trust.Store{
 			{ID: trust.StoreGlobal, Name: "NGC Store", URL: "https://store.ngc.example", Key: enc.Bytes(storeSign.Public().(ed25519.PublicKey))},
 		},
 		Auto: []trust.Auto{
-			{Target: trust.AutoController, Key: enc.Bytes(autoSign.Public().(ed25519.PublicKey))},
+			{Target: trust.AutoController, Key: enc.Bytes(releaseSign.Public().(ed25519.PublicKey))},
 			{Target: trust.AutoSystem},
 		},
 	}
