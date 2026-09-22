@@ -11,8 +11,8 @@ Thomas gibt die Verträge frei. Danach Pull Request nach `main`, Squash-Merge un
 
 | | |
 |---|---|
-| Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), zwei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, dann A–F), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 37 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke |
-| In Arbeit | Schlussprüfung der zweiten Fix-Welle, danach die Freigabe |
+| Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden |
+| In Arbeit | Freigabe der Verträge durch Thomas |
 | Blockiert | nichts |
 | Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
 
