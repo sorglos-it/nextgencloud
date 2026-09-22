@@ -324,9 +324,9 @@ func TestOpenValidateTask(t *testing.T) {
 
 // TestParseOpenScansParamsOnce: the params that cost most to check are an
 // object of MaxParams bytes with as many names as fit. DecodeStrict checks
-// them already, so ParseOpen must cost no more than that decode plus a little,
-// not a second scan of the params. Validate, which gets params from anywhere,
-// still scans them.
+// them already, so ParseOpen must cost no more than that decode plus a part
+// of it, not a second scan of the params. Validate, which gets params from
+// anywhere, still scans them.
 func TestParseOpenScansParamsOnce(t *testing.T) {
 	var p strings.Builder
 	p.WriteString("{")
@@ -345,16 +345,31 @@ func TestParseOpenScansParamsOnce(t *testing.T) {
 	o.Params = json.RawMessage(p.String())
 	doc := mustJSON(t, o)
 	var err error
-	decode := allocated(func() { err = openBudget.Decode(doc, &openDoc{}) })
+	// Allocations only grow by chance: a GC empties sync.Pool, and under
+	// -race sync.Pool also drops items at random. Measured one run each
+	// under -race, ParseOpen often allocated some 10% more than the decode,
+	// and in 1 of 200 tries almost three times as much. The least of five
+	// runs is the cost itself.
+	least := func(f func()) uint64 {
+		n := allocated(f)
+		for range 4 {
+			n = min(n, allocated(f))
+		}
+		return n
+	}
+	decode := least(func() { err = openBudget.Decode(doc, &openDoc{}) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	parse := allocated(func() { _, err = ParseOpen(doc) })
+	parse := least(func() { _, err = ParseOpen(doc) })
 	t.Logf("params of %d bytes: DecodeStrict %d bytes, ParseOpen %d bytes allocated", p.Len(), decode, parse)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parse > decode+16<<10 {
+	// A second scan of the params allocates about as much as the decode
+	// again. Half a decode more lies between the two, far from both, so the
+	// bound holds with and without -race.
+	if parse > decode+decode/2 {
 		t.Errorf("ParseOpen allocates %d bytes, the decode alone %d: the params are scanned twice", parse, decode)
 	}
 	o.Params = json.RawMessage(`{"a":1,"a":2}`)
