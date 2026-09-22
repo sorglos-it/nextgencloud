@@ -65,11 +65,14 @@ func testCatalog() Catalog {
 	}}
 }
 
-// licenseApp is the app testLicense and every licenseReject are issued for,
-// and so the app VerifyLicense and VerifyLicenseFor must be given. store.json
-// names it only inside the signed license payload, not as a field of its own:
-// a field would be a change to the vector.
+// licenseApp is the app testLicense is issued for, and so the app
+// VerifyLicense and VerifyLicenseFor must be given. store.json carries it as
+// licenseApp, beside installation and installKey, so another implementation
+// reads every input of the check from the file.
 const licenseApp = "org.sorglos.terminal"
+
+// otherApp is an app the installation holds no license for.
+const otherApp = "org.sorglos.mail"
 
 func testLicense() License {
 	return License{ID: "L-1", Store: GlobalID, App: licenseApp, Installation: trusttest.ID(0x11),
@@ -181,17 +184,17 @@ func TestLicense(t *testing.T) {
 	// A license binds to one app, or the API would unlock an expensive app
 	// with the license of a cheap one on the same installation. Both
 	// functions refuse it, and with the same error.
-	if _, err := VerifyLicense(env, global, trusttest.ID(0x11), "org.sorglos.mail", install.Public); err != ErrLicense {
+	if _, err := VerifyLicense(env, global, trusttest.ID(0x11), otherApp, install.Public); err != ErrLicense {
 		t.Errorf("other app: %v", err)
 	}
-	if _, err := VerifyLicenseFor(env, global, trusttest.ID(0x11), "org.sorglos.mail"); err != ErrLicense {
+	if _, err := VerifyLicenseFor(env, global, trusttest.ID(0x11), otherApp); err != ErrLicense {
 		t.Errorf("other app, as a controller checks it: %v", err)
 	}
 	// The same the other way round: a license the store really issued for
 	// another app, held against this one on the same installation and with
 	// the right install key.
 	mail := testLicense()
-	mail.App = "org.sorglos.mail"
+	mail.App = otherApp
 	envMail := signJSON(t, storeKey, sign.PurposeLicense, mail)
 	if _, err := VerifyLicense(envMail, global, trusttest.ID(0x11), licenseApp, install.Public); err != ErrLicense {
 		t.Errorf("license issued for another app: %v", err)
@@ -278,7 +281,7 @@ func TestVerifyLicenseFor(t *testing.T) {
 		app          string
 		want         error
 	}{
-		{name: "another app", env: env, installation: installation, app: "org.sorglos.mail", want: ErrLicense},
+		{name: "another app", env: env, installation: installation, app: otherApp, want: ErrLicense},
 		{name: "another installation", env: env, installation: trusttest.ID(0x12), app: app, want: ErrLicense},
 		{name: "another store", env: signed(func(l *License) { l.Store = "other" }), installation: installation, app: app, want: ErrLicense},
 		{name: "per user without users", env: signed(func(l *License) { l.Users = 0 }), installation: installation, app: app, want: ErrLicense},
@@ -677,6 +680,10 @@ func licenseRejects(t testing.TB) []licenseReject {
 		{Name: "other installation", License: signed(func(l *License) { l.Installation = trusttest.ID(0x12) }), want: ErrLicense, bound: true},
 		{Name: "other install key", License: signed(func(l *License) { l.InstallKey = other.Public }), want: ErrLicense, bound: true},
 		{Name: "other store", License: signed(func(l *License) { l.Store = "other" }), want: ErrLicense, bound: true},
+		// A license the store really signed, for the right installation and
+		// the right install key, but for another app: whoever skips the app
+		// check fails here and nowhere else.
+		{Name: "other app", License: signed(func(l *License) { l.App = otherApp }), want: ErrLicense, bound: true},
 		{Name: "per user without users", License: signed(func(l *License) { l.Users = 0 }), want: ErrLicense},
 		{Name: "grace over 90 days", License: signed(func(l *License) { l.Grace = MaxGrace + 1 }), want: ErrLicense},
 	}
@@ -722,8 +729,10 @@ func releaseRejects(t testing.TB) []releaseReject {
 
 // vector is store.json. Catalogs and licenses are verified against the
 // store (store, storeKey), releases against releaseKey, licenses for
-// installation and installKey. catalogLastSeq and releaseLastSeq are the
-// seqs of the valid catalog and release themselves: an equal seq is no
+// installation, licenseApp and installKey - all three are in the file, so an
+// implementation in another language reads every input of the check from it
+// and cannot pass by leaving one out. catalogLastSeq and releaseLastSeq are
+// the seqs of the valid catalog and release themselves: an equal seq is no
 // rollback.
 type vector struct {
 	Store          string          `json:"store"`
@@ -733,6 +742,7 @@ type vector struct {
 	CatalogRejects []catalogReject `json:"catalogRejects"`
 	Installation   string          `json:"installation"`
 	InstallKey     enc.Bytes       `json:"installKey"`
+	LicenseApp     string          `json:"licenseApp"` // the app the licenses are checked for
 	License        sign.Envelope   `json:"license"`
 	LicenseRejects []licenseReject `json:"licenseRejects"`
 	ReleaseKey     enc.Bytes       `json:"releaseKey"`
@@ -759,6 +769,7 @@ func TestVectors(t *testing.T) {
 		CatalogRejects: catalogRejects(t),
 		Installation:   trusttest.ID(0x11),
 		InstallKey:     install.Public,
+		LicenseApp:     licenseApp,
 		License:        signJSON(t, storeKey, sign.PurposeLicense, testLicense()),
 		LicenseRejects: licenseRejects(t),
 		ReleaseKey:     enc.Bytes(releaseKey.Public().(ed25519.PublicKey)),
@@ -771,7 +782,7 @@ func TestVectors(t *testing.T) {
 	if c, err := VerifyCatalog(v.Catalog, st, v.CatalogLastSeq); err != nil || c.Seq != v.CatalogLastSeq {
 		t.Errorf("catalog at its own seq: %v", err)
 	}
-	if _, err := VerifyLicense(v.License, st, v.Installation, licenseApp, v.InstallKey); err != nil {
+	if _, err := VerifyLicense(v.License, st, v.Installation, v.LicenseApp, v.InstallKey); err != nil {
 		t.Errorf("license: %v", err)
 	}
 	if r, err := VerifyRelease(v.Release, releasePub, v.ReleaseLastSeq); err != nil || r.Seq != v.ReleaseLastSeq {
@@ -824,7 +835,7 @@ func TestVectors(t *testing.T) {
 		only(r.Name, r.Catalog, v.Catalog, r.want, r.bound, err == nil)
 	}
 	for _, r := range v.LicenseRejects {
-		if _, err := VerifyLicense(r.License, st, v.Installation, licenseApp, v.InstallKey); err != r.want || r.Valid {
+		if _, err := VerifyLicense(r.License, st, v.Installation, v.LicenseApp, v.InstallKey); err != r.want || r.Valid {
 			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
 		}
 		signedAs(r.Name, r.License, signer{}, r.want, storePub, sign.PurposeLicense)
