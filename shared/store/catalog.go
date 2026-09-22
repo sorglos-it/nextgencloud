@@ -25,7 +25,7 @@ const (
 	MaxPackage         = 4 << 30
 	MaxApps            = 10000
 	MaxVersions        = 100   // per app
-	MaxCatalogVersions = 50000 // of all apps together: each costs up to about 500 bytes to decode
+	MaxCatalogVersions = 30000 // of all apps together: each costs up to about 750 bytes to decode, its app's share included
 	MaxLicense         = 8 << 10
 	GraceDefault       = 14 * 86400
 	MaxGrace           = 90 * 86400
@@ -220,7 +220,10 @@ func (p Price) valid() bool {
 
 // catalogBudget bounds a catalog while it is decoded (enc.Budget). The
 // per-app limits alone would allow MaxApps*MaxVersions versions; the total
-// keeps what any catalog within it costs to decode below about 32 MiB.
+// keeps what any catalog within it costs to decode below 32 MiB
+// (TestCatalogDecodeCost). No valid catalog reaches the total: each valid
+// version takes at least 145 bytes of sign.MaxPayload
+// (TestMaxCatalogVersionsRefusesNoValidCatalog).
 var catalogBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
 	"apps":                    MaxApps,
 	"apps/*/versions":         MaxVersions,
