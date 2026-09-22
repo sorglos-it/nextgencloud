@@ -60,7 +60,9 @@ func testCatalog() Catalog {
 			Price: &Price{Model: PriceSubscription, Per: PerSite, Amount: 499, Currency: "EUR", Period: PeriodMonth, Shop: "https://store.ngc.test/buy/terminal"},
 			Versions: []Package{
 				{Version: "1.0.0", URL: "https://cdn.ngc.test/terminal-1.0.0.ngc", Size: 5000000, SHA256: sum, UI: ui, Encrypted: true},
-				{Version: "1.1.0", URL: "https://cdn.ngc.test/terminal-1.1.0.ngc", Size: 5100000, SHA256: sum, UI: ui, Encrypted: true},
+				// A store signs its download links, so a query must pass.
+				{Version: "1.1.0", URL: "https://cdn.ngc.test/terminal-1.1.0.ngc?token=a1b2c3&expires=1790003600",
+					Size: 5100000, SHA256: sum, UI: ui, Encrypted: true},
 			}},
 	}}
 }
@@ -652,6 +654,29 @@ func catalogRejects(t testing.TB) []catalogReject {
 		{Name: "version without ui", Catalog: withoutUI, want: ErrCatalog},
 		{Name: "ui of 31 bytes", Catalog: signed(func(c *Catalog) { c.Apps[0].Versions[0].UI = c.Apps[0].Versions[0].UI[:31] }), want: ErrCatalog},
 		{Name: "plain http url", Catalog: signed(func(c *Catalog) { c.Apps[1].Versions[0].URL = "http://cdn.ngc.test/terminal-1.0.0.ngc" }), want: ErrCatalog},
+		// The address grammar (validHTTPSURL): the host as trust.ValidHost
+		// writes it, no user info, no fragment, nothing unprintable, at most
+		// 512 bytes. A JavaScript verifier that keeps the old loose rule
+		// passes every other case in this file and fails these.
+		{Name: "url with an upper-case host", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].URL = "https://CDN.ngc.test/terminal-1.0.0.ngc"
+		}), want: ErrCatalog},
+		{Name: "url with user info", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].URL = "https://user@cdn.ngc.test/terminal-1.0.0.ngc"
+		}), want: ErrCatalog},
+		{Name: "url with a fragment", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].URL = "https://cdn.ngc.test/terminal-1.0.0.ngc#top"
+		}), want: ErrCatalog},
+		{Name: "url with a control character", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].URL = "https://cdn.ngc.test/terminal\x07-1.0.0.ngc"
+		}), want: ErrCatalog},
+		// An internationalised name belongs in a catalog as punycode.
+		{Name: "url with a host that is no punycode", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].URL = "https://m\xc3\xbcnchen.example/terminal-1.0.0.ngc"
+		}), want: ErrCatalog},
+		{Name: "url of 513 bytes", Catalog: signed(func(c *Catalog) {
+			c.Apps[1].Versions[0].URL = "https://cdn.ngc.test/" + strings.Repeat("a", 513-len("https://cdn.ngc.test/"))
+		}), want: ErrCatalog},
 		{Name: "encrypted without a price", Catalog: signed(func(c *Catalog) { c.Apps[0].Versions[0].Encrypted = true }), want: ErrCatalog},
 	}
 }

@@ -179,11 +179,58 @@ var (
 	licenseID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 )
 
+// maxURL bounds an https address of a catalog or a release. It is larger
+// than trust's maxURL, because a store signs download links and puts its
+// token in the query.
+const maxURL = 512
+
+// validURL reports whether u is somewhere a catalog or a release may point
+// at: an https address (validHTTPSURL) or a path relative to the catalog
+// (ValidPath).
 func validURL(u string) bool {
 	if strings.HasPrefix(u, "https://") {
-		return len(u) > len("https://") && len(u) <= 512 && !strings.ContainsAny(u, " \t\r\n\"'<>\\")
+		return validHTTPSURL(u)
 	}
 	return ValidPath(u)
+}
+
+// validHTTPSURL reports whether u is an address NGC fetches a package or a
+// release file from, or shows as a shop link: "https://", a host by
+// trust.ValidHost with an optional ":" and port (trust.ValidHostPort), then
+// nothing, or "/" and a path and query of printable ASCII (0x21 to 0x7e)
+// without " ' < > \ and #; at most maxURL bytes.
+//
+// It follows the address grammar of trust and calls it, so a host is judged
+// the same everywhere. Unlike trust.ValidStoreURL it allows a query, since
+// stores sign download links, but it allows no fragment: NGC fetches these
+// addresses, and a fragment says nothing to a server. User info cannot pass:
+// it is part of the authority, and neither host rule allows "@".
+func validHTTPSURL(u string) bool {
+	if len(u) > maxURL {
+		return false
+	}
+	rest, ok := strings.CutPrefix(u, "https://")
+	if !ok {
+		return false
+	}
+	// A bracketed IPv6 host holds no "/", so the first one starts the path.
+	authority, pathQuery, hasPath := strings.Cut(rest, "/")
+	if !trust.ValidHost(authority) && !trust.ValidHostPort(authority) {
+		return false
+	}
+	if !hasPath {
+		return true
+	}
+	for i := 0; i < len(pathQuery); i++ {
+		c := pathQuery[i]
+		// 0x21 to 0x7e leaves out control characters, the space and DEL; the
+		// named ones would start a fragment or break out of a configuration
+		// file, a shell word or an HTML attribute.
+		if c < 0x21 || c > 0x7e || c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\' || c == '#' {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate checks c.
