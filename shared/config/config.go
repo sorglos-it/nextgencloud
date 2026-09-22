@@ -4,8 +4,11 @@ package config
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -38,13 +41,21 @@ const (
 	RunDir         = "/run/ngc"
 	APIPort        = 7443
 
+	// APITrustFile holds the certificates of the API servers that Apache's
+	// proxy trusts, each checked against its pin (Web.APIs[i].TLS, later
+	// trust.Node.TLS) before it is written: by ngc-web, then by the controller
+	// with role web.
+	APITrustFile = "/etc/ngc/tls/api-trust.pem"
+	MaxCA        = 16 << 10 // DB.CA
+
 	ServiceAPI        = "ngc-api.service"
 	ServiceController = "ngc-controller.service"
 
 	MaxConfig = 1 << 20
-	// MaxField bounds these strings: each of Web.APIs and Web.RP.Origins;
-	// API.Listen, Cert, CertKey and StoreURL; DB.Name, User, Password, Path
-	// and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and WebConfig.
+	// MaxField bounds these strings: WebAPI.URL and each of Web.RP.Origins;
+	// API.URL, Listen, Cert, CertKey and StoreURL; DB.Name, User, Password,
+	// Path and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and
+	// WebConfig.
 	MaxField               = 256
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
@@ -58,6 +69,10 @@ const maxList = 16
 // maxRoles is the number of roles a server can carry (tunnel.RoleWeb,
 // RoleAPI, RoleDB, RoleServices).
 const maxRoles = 4
+
+// maxCACerts is the most certificates DB.CA holds: the installation's CA,
+// and while it is replaced its successor, with room to spare.
+const maxCACerts = 4
 
 // Database drivers.
 const (
@@ -188,8 +203,14 @@ func shown(set bool) string {
 
 // Web is /etc/ngc/web.json; the PHP of the web interface reads it too.
 type Web struct {
-	APIs []string `json:"apis"` // https://host:port, Apache balances over them
+	APIs []WebAPI `json:"apis"` // Apache balances over them
 	RP   proof.RP `json:"rp"`   // ID and origins for passkeys: both set, or both empty without passkeys
+}
+
+// WebAPI is an API behind Apache.
+type WebAPI struct {
+	URL string    `json:"url"` // https://<host>:<port>, the listener of the API's tunnel URL
+	TLS enc.Bytes `json:"tls"` // pin of its TLS key (trust.TLSPin); Apache trusts only a certificate with it (APITrustFile)
 }
 
 // DB tells an API which database to use.
@@ -201,11 +222,19 @@ type DB struct {
 	Password SecretText `json:"password,omitzero"`
 	Path     string     `json:"path,omitempty"` // SQLite: file
 	Key      Secret     `json:"key,omitzero"`   // SQLite: 64 bytes for AES-256-XTS
+	// CA is the certificate of the installation's database CA in PEM, which
+	// ngc-db made (MariaDB only). A client verifies every node's certificate
+	// against it and the node's host name (TLSConfig), never without.
+	CA string `json:"ca,omitempty"`
 }
 
 // API is /etc/ngc/api.json. It holds keys, so the file belongs to root with mode 0600.
 type API struct {
-	Node       string    `json:"node"` // node ID in the trust list
+	Node string `json:"node"` // node ID in the trust list
+	// URL is this API's tunnel address exactly as its node in the trust list
+	// names it: wss://<host>:<port of Listen>/tunnel. Controllers dial it, and
+	// the API puts it into session.SetupInfo and its pairing and join codes.
+	URL        string    `json:"url"`
 	Listen     string    `json:"listen"`
 	Cert       string    `json:"cert"`
 	CertKey    string    `json:"certKey"`
@@ -226,6 +255,9 @@ type API struct {
 type APIRef struct {
 	URL string    `json:"url"`
 	Key enc.Bytes `json:"key"` // its Noise key
+	// TLS is the pin of its TLS key (trust.TLSPin): from the pairing code,
+	// later from the trust list; the controller dials with tunnel.PinnedTLS.
+	TLS enc.Bytes `json:"tls"`
 }
 
 // Controller is /etc/ngc/controller.json, also root and 0600.
@@ -341,6 +373,20 @@ func SaveController(path string, c *Controller) error {
 	return writeAtomic(path, b, 0o600)
 }
 
+// SaveWeb writes web.json (mode 0644, atomically as SaveController does); the
+// controller with role web uses it when the API servers in the trust list change.
+func SaveWeb(path string, w *Web) error {
+	if err := w.Validate(); err != nil {
+		return err
+	}
+	b, err := marshalFile(w)
+	if err != nil {
+		return err
+	}
+	// The PHP of the web interface reads it, and it holds no secret.
+	return writeAtomic(path, b, 0o644)
+}
+
 // fileMarshalers write the secrets themselves, which only a configuration
 // file holds.
 var fileMarshalers = jsonv2.JoinMarshalers(
@@ -447,8 +493,11 @@ func (w *Web) Validate() error {
 	if len(w.APIs) == 0 || len(w.APIs) > maxList {
 		return ErrConfig
 	}
-	for _, u := range w.APIs {
-		if !strings.HasPrefix(u, "https://") || len(u) > MaxField {
+	for i, a := range w.APIs {
+		// An address twice is a mistake: Apache would balance over it twice,
+		// and with two pins it would trust two keys for one server.
+		if !strings.HasPrefix(a.URL, "https://") || len(a.URL) > MaxField || len(a.TLS) != 32 ||
+			slices.ContainsFunc(w.APIs[:i], func(b WebAPI) bool { return b.URL == a.URL }) {
 			return ErrConfig
 		}
 	}
@@ -467,6 +516,7 @@ func (w *Web) Validate() error {
 // Validate checks the API configuration.
 func (a *API) Validate() error {
 	if !wire.ValidName(a.Node) ||
+		!strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField ||
 		a.Listen == "" || len(a.Listen) > MaxField ||
 		a.Cert == "" || len(a.Cert) > MaxField ||
 		a.CertKey == "" || len(a.CertKey) > MaxField ||
@@ -496,15 +546,81 @@ func (d *DB) Validate() error {
 				return ErrConfig
 			}
 		}
+		if _, err := parseCA(d.CA); err != nil {
+			return err
+		}
 	case DriverSQLite:
 		if !strings.HasPrefix(d.Path, "/") || len(d.Path) > MaxField || len(d.Key.Bytes()) != 64 || len(d.Nodes) != 0 ||
-			d.Name != "" || d.User != "" || !d.Password.IsZero() {
+			d.Name != "" || d.User != "" || !d.Password.IsZero() || d.CA != "" {
 			return ErrConfig
 		}
 	default:
 		return ErrConfig
 	}
 	return nil
+}
+
+// pemSpace is the white space DB.CA may hold around its PEM blocks.
+const pemSpace = " \t\r\n"
+
+// parseCA returns the certificates of DB.CA: at most MaxCA bytes, 1 to
+// maxCACerts PEM blocks of type CERTIFICATE without headers and with nothing
+// but white space around them, each a certificate x509.ParseCertificate
+// accepts with BasicConstraintsValid and IsCA; ErrConfig otherwise. Validate
+// and TLSConfig both read the field through it, so a client trusts exactly
+// the certificates Validate accepted.
+func parseCA(ca string) ([]*x509.Certificate, error) {
+	if len(ca) > MaxCA {
+		return nil, ErrConfig
+	}
+	var certs []*x509.Certificate
+	rest := []byte(ca)
+	for {
+		rest = bytes.TrimLeft(rest, pemSpace)
+		if len(rest) == 0 {
+			break
+		}
+		if len(certs) == maxCACerts {
+			return nil, ErrConfig
+		}
+		block, after := pem.Decode(rest)
+		// pem.Decode skips whatever comes before a block it can read, even a
+		// broken block. So the block must start right after the white space:
+		// what it consumed holds no later BEGIN line (the body of a block it
+		// returns is base64, which has no '-').
+		if block == nil || bytes.LastIndex(rest[:len(rest)-len(after)], []byte("-----BEGIN")) != 0 ||
+			block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			return nil, ErrConfig
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !cert.BasicConstraintsValid || !cert.IsCA {
+			return nil, ErrConfig
+		}
+		certs = append(certs, cert)
+		rest = after
+	}
+	if len(certs) == 0 {
+		return nil, ErrConfig
+	}
+	return certs, nil
+}
+
+// TLSConfig returns the TLS client configuration for the database node
+// serverName (the host of an entry of Nodes): TLS 1.3, and the node's
+// certificate must chain to CA and name serverName. ErrConfig without a CA
+// (one Validate accepts) or without a server name.
+func (d DB) TLSConfig(serverName string) (*tls.Config, error) {
+	certs, err := parseCA(d.CA)
+	// Without a name crypto/tls refuses to connect, but a database driver may
+	// put in a name of its own; the caller names the node instead.
+	if err != nil || serverName == "" {
+		return nil, ErrConfig
+	}
+	pool := x509.NewCertPool()
+	for _, c := range certs {
+		pool.AddCert(c)
+	}
+	return &tls.Config{RootCAs: pool, ServerName: serverName, MinVersion: tls.VersionTLS13}, nil
 }
 
 // Validate checks the controller configuration.
@@ -517,7 +633,7 @@ func (c *Controller) Validate() error {
 		return ErrConfig
 	}
 	for _, a := range c.APIs {
-		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField || len(a.Key) != 32 {
+		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField || len(a.Key) != 32 || len(a.TLS) != 32 {
 			return ErrConfig
 		}
 	}
@@ -550,6 +666,8 @@ func (d DB) LogValue() slog.Value {
 		slog.Attr{Key: "password", Value: d.Password.LogValue()},
 		slog.String("path", d.Path),
 		slog.Attr{Key: "key", Value: d.Key.LogValue()},
+		// Only whether it is set: the certificate is public, but long.
+		slog.Bool("ca", d.CA != ""),
 	)
 }
 
@@ -561,6 +679,7 @@ func (d DB) String() string { return d.LogValue().String() }
 func (a API) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("node", a.Node),
+		slog.String("url", a.URL),
 		slog.String("listen", a.Listen),
 		slog.String("cert", a.Cert),
 		slog.String("certKey", a.CertKey),
@@ -584,7 +703,7 @@ func (a API) String() string { return a.LogValue().String() }
 func (c Controller) LogValue() slog.Value {
 	apis := make([]string, len(c.APIs))
 	for i, a := range c.APIs {
-		apis[i] = a.URL + " " + enc.B64.EncodeToString(a.Key)
+		apis[i] = a.URL + " " + enc.B64.EncodeToString(a.Key) + " " + enc.B64.EncodeToString(a.TLS)
 	}
 	attrs := []slog.Attr{
 		slog.String("node", c.Node),

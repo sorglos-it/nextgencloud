@@ -1,5 +1,14 @@
 {
-  "apis": ["https://api-1.ngc.test:7443", "https://api-2.ngc.test:7443"],
+  "apis": [
+    {
+      "url": "https://api-1.ngc.test:7443",
+      "tls": "4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"
+    },
+    {
+      "url": "https://api-2.ngc.test:7443",
+      "tls": "4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uI"
+    }
+  ],
   "rp": {
     "id": "ngc.example.org",
     "origins": ["https://ngc.example.org"]

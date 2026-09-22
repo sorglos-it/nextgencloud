@@ -2,17 +2,28 @@ package config
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
@@ -23,13 +34,104 @@ func example(t *testing.T, name string) string {
 	return filepath.Join("..", "testdata", "config", name)
 }
 
+// pin returns a TLS pin of the examples: 32 bytes of fill (api-1 0xE1, api-2
+// 0xE2).
+func pin(fill byte) []byte { return bytes.Repeat([]byte{fill}, 32) }
+
+// zeroReader reads only zero bytes, so certificates come out the same on
+// every run.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+// testCert makes a certificate from template with an Ed25519 key from 32
+// bytes of fill, valid from 2026-01-01 to 2036-01-01 UTC: signed by parent's
+// key parentKey, or by itself when parent is nil. It returns the DER and the
+// key.
+func testCert(t testing.TB, template *x509.Certificate, fill byte, parent *x509.Certificate,
+	parentKey ed25519.PrivateKey) ([]byte, ed25519.PrivateKey) {
+	t.Helper()
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{fill}, ed25519.SeedSize))
+	template.NotBefore = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	template.NotAfter = time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC)
+	if parent == nil {
+		parent, parentKey = template, key
+	}
+	der, err := x509.CreateCertificate(zeroReader{}, template, parent, key.Public(), parentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der, key
+}
+
+// certPEM returns der as a PEM block of type CERTIFICATE.
+func certPEM(der []byte) string {
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// testCA makes a database CA from the Ed25519 seed of 32 bytes of fill:
+// serial 1, CN "NGC DB CA (Test)", a CA for certificates and CRLs. It returns
+// the certificate, its key and its PEM.
+func testCA(t testing.TB, fill byte) (*x509.Certificate, ed25519.PrivateKey, string) {
+	t.Helper()
+	der, key := testCert(t, &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "NGC DB CA (Test)"},
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}, fill, nil, nil)
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, key, certPEM(der)
+}
+
+// exampleCA returns the PEM of the database CA of the examples (db.ca in
+// api.json, migrate.ca in controller-db.json): testCA with fill 0xCA.
+func exampleCA(t testing.TB) string {
+	t.Helper()
+	_, _, p := testCA(t, 0xCA)
+	return p
+}
+
+// nodeCert returns the certificate of database node host, signed by the
+// example CA, with its key from fill 0xDB.
+func nodeCert(t testing.TB, host string) ([]byte, ed25519.PrivateKey) {
+	t.Helper()
+	ca, caKey, _ := testCA(t, 0xCA)
+	return testCert(t, &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: host},
+		DNSNames:              []string{host},
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}, 0xDB, ca, caKey)
+}
+
 func TestExamples(t *testing.T) {
+	// The examples hold the CA as a JSON string: go test -v prints it to paste.
+	ca := exampleCA(t)
+	quoted, err := json.Marshal(ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("exampleCA as a JSON string: %s", quoted)
+
 	w, err := LoadWeb(example(t, "web.json"))
-	if err != nil || len(w.APIs) != 2 || w.RP.ID != "ngc.example.org" {
+	if err != nil || len(w.APIs) != 2 || w.RP.ID != "ngc.example.org" ||
+		w.APIs[0].URL != "https://api-1.ngc.test:7443" || !bytes.Equal(w.APIs[0].TLS, pin(0xE1)) ||
+		w.APIs[1].URL != "https://api-2.ngc.test:7443" || !bytes.Equal(w.APIs[1].TLS, pin(0xE2)) {
 		t.Fatalf("web: %+v, %v", w, err)
 	}
 	a, err := LoadAPI(example(t, "api.json"))
-	if err != nil || a.Node != "api-1" || a.DB.Driver != DriverMariaDB || len(a.DB.Nodes) != 3 {
+	if err != nil || a.Node != "api-1" || a.URL != "wss://api-1.ngc.test:7443/tunnel" || a.DB.Driver != DriverMariaDB ||
+		len(a.DB.Nodes) != 3 {
 		t.Fatalf("api: %+v, %v", a, err)
 	}
 	if a.SessionLifetime != DefaultSessionLifetime || a.IdleTimeout != DefaultIdleTimeout {
@@ -44,6 +146,17 @@ func TestExamples(t *testing.T) {
 	if err != nil || d.Name != "datenbank" || len(d.Roles) != 2 || d.Roles[0] != tunnel.RoleDB || d.Migrate == nil ||
 		d.Migrate.Driver != DriverMariaDB || d.Migrate.User != "ngc_migrate" || len(d.Migrate.Nodes) != 3 {
 		t.Fatalf("controller with the db role: %+v, %v", d, err)
+	}
+	// Both controllers dial api-1 of web.json, pinned to its TLS key.
+	for _, ctl := range []*Controller{c, d} {
+		for _, api := range ctl.APIs {
+			if api.URL != "wss://api-1.ngc.test:7443/tunnel" || !bytes.Equal(api.TLS, pin(0xE1)) {
+				t.Errorf("%s: api %+v", ctl.Name, api)
+			}
+		}
+	}
+	if a.DB.CA != ca || d.Migrate.CA != ca {
+		t.Errorf("db.ca of api.json or migrate.ca of controller-db.json is not exampleCA")
 	}
 }
 
@@ -129,6 +242,61 @@ func TestSaveControllerInvalid(t *testing.T) {
 	}
 }
 
+// TestSaveWeb: SaveWeb writes web.json so that LoadWeb reads the same back,
+// readable for the PHP of the web interface, with no temporary file left
+// over, and refuses a configuration that fails Validate without writing.
+func TestSaveWeb(t *testing.T) {
+	w, err := LoadWeb(example(t, "web.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As the controller with role web does when a third API server joins.
+	w.APIs = append(w.APIs, WebAPI{URL: "https://api-3.ngc.test:7443", TLS: pin(0xE3)})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "web.json")
+	// An older file only root may read: saving must make it readable again.
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWeb(path, w); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// See TestSaveController for Windows.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+		t.Errorf("mode %v: the PHP of the web interface reads the file", info.Mode().Perm())
+	}
+	if names := dirEntries(t, dir); len(names) != 1 || names[0] != "web.json" {
+		t.Errorf("files left: %v", names)
+	}
+	if again, err := LoadWeb(path); err != nil || !reflect.DeepEqual(again, w) {
+		t.Fatalf("round trip: %+v, %v", again, err)
+	}
+	// Without passkeys the file keeps an empty rp, never a null.
+	w.RP = proof.RP{}
+	if err := SaveWeb(path, w); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || bytes.Contains(b, []byte("null")) {
+		t.Errorf("saved file:\n%s\n%v", b, err)
+	}
+	if again, err := LoadWeb(path); err != nil || !reflect.DeepEqual(again, w) {
+		t.Fatalf("round trip without passkeys: %+v, %v", again, err)
+	}
+
+	w.APIs[2].TLS = nil
+	refused := filepath.Join(t.TempDir(), "web.json")
+	if err := SaveWeb(refused, w); err != ErrConfig {
+		t.Fatalf("API without a pin: got %v, want ErrConfig", err)
+	}
+	if names := dirEntries(t, filepath.Dir(refused)); len(names) != 0 {
+		t.Errorf("files after a refused save: %v", names)
+	}
+}
+
 func TestAnchor(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "trust-anchor.json")
@@ -191,6 +359,15 @@ func origins(n int) []string {
 	return o
 }
 
+// webAPIs returns n valid APIs for web.json, each with its own address and pin.
+func webAPIs(n int) []WebAPI {
+	apis := make([]WebAPI, n)
+	for i := range apis {
+		apis[i] = WebAPI{URL: fmt.Sprintf("https://api-%d.ngc.test:7443", i+1), TLS: pin(byte(0xE1 + i))}
+	}
+	return apis
+}
+
 // TestValidate loads a fresh, known-valid Web/API/Controller from the
 // example files for every case (rather than mutating and restoring one
 // shared value), so a case can never leak a change into a later one: each
@@ -203,9 +380,15 @@ func TestValidate(t *testing.T) {
 		"without passkeys":      {func(w *Web) { w.RP.ID, w.RP.Origins = "", nil }, true},
 		"eight origins":         {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins) }, true},
 		"RP ID of 253 bytes":    {func(w *Web) { w.RP.ID = strings.Repeat(strings.Repeat("a", 62)+".", 4) + "a" }, true},
+		"sixteen apis":          {func(w *Web) { w.APIs = webAPIs(maxList) }, true},
+		"api url of 256 bytes":  {func(w *Web) { w.APIs[1].URL = "https://" + strings.Repeat("x", MaxField-8) }, true},
 		"without apis":          {func(w *Web) { w.APIs = nil }, false},
-		"seventeen apis":        {func(w *Web) { w.APIs = append(origins(16), "https://api-17.ngc.test:7443") }, false},
-		"plain http":            {func(w *Web) { w.APIs = []string{"http://api-1.ngc.test:7443"} }, false},
+		"seventeen apis":        {func(w *Web) { w.APIs = webAPIs(maxList + 1) }, false},
+		"plain http":            {func(w *Web) { w.APIs[0].URL = "http://api-1.ngc.test:7443" }, false},
+		"api url of 257 bytes":  {func(w *Web) { w.APIs[1].URL = "https://" + strings.Repeat("x", MaxField-7) }, false},
+		"api without pin":       {func(w *Web) { w.APIs[1].TLS = nil }, false},
+		"api pin of 31 bytes":   {func(w *Web) { w.APIs[1].TLS = w.APIs[1].TLS[:31] }, false},
+		"api url twice":         {func(w *Web) { w.APIs[1].URL = w.APIs[0].URL }, false},
 		"origin not https":      {func(w *Web) { w.RP.Origins = []string{"http://ngc.example.org"} }, false},
 		"http origin":           {func(w *Web) { w.RP.Origins = append(w.RP.Origins, "http://ngc.example.org") }, false},
 		"nine origins":          {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins + 1) }, false},
@@ -228,18 +411,52 @@ func TestValidate(t *testing.T) {
 		}
 	}
 
+	caCert, _, ca := testCA(t, 0xCA)
+	leaf, _ := nodeCert(t, "db-1.ngc.test")
+	// A self-signed certificate without basic constraints: no CA.
+	unconstrained, _ := testCert(t, &x509.Certificate{SerialNumber: big.NewInt(3),
+		Subject: pkix.Name{CommonName: "NGC DB CA (Test)"}, KeyUsage: x509.KeyUsageCertSign}, 0xCA, nil, nil)
+	caBlock := func(b pem.Block) string { return string(pem.EncodeToMemory(&b)) }
 	apiCases := map[string]struct {
 		mutate func(*API)
 		valid  bool
 	}{
 		"session lifetime of 86400":    {func(a *API) { a.SessionLifetime = session.MaxLifetime }, true},
+		"url of 256 bytes":             {func(a *API) { a.URL = "wss://" + strings.Repeat("x", MaxField-6) }, true},
+		"four CA certificates":         {func(a *API) { a.DB.CA = strings.Repeat(ca, maxCACerts) }, true},
+		"CA with white space around":   {func(a *API) { a.DB.CA = " \t\r\n" + ca + "\r\n\t " + ca + " \n" }, true},
+		"CA with CRLF line ends":       {func(a *API) { a.DB.CA = strings.ReplaceAll(ca, "\n", "\r\n") }, true},
+		"CA of MaxCA bytes":            {func(a *API) { a.DB.CA = ca + strings.Repeat(" ", MaxCA-len(ca)) }, true},
+		"SQLite":                       {func(a *API) { a.DB = validSQLite() }, true},
 		"without node":                 {func(a *API) { a.Node = "" }, false},
+		"without url":                  {func(a *API) { a.URL = "" }, false},
+		"https url":                    {func(a *API) { a.URL = "https://api-1.ngc.test:7443/tunnel" }, false},
+		"url of 257 bytes":             {func(a *API) { a.URL = "wss://" + strings.Repeat("x", MaxField-5) }, false},
 		"short key":                    {func(a *API) { a.NoiseKey = NewSecret([]byte{1}) }, false},
 		"mariadb node no colon":        {func(a *API) { a.DB.Nodes = []string{"db-1"} }, false},
 		"db password too long":         {func(a *API) { a.DB.Password = NewSecretText(strings.Repeat("x", MaxField+1)) }, false},
 		"store url too long":           {func(a *API) { a.StoreURL = "https://" + strings.Repeat("x", MaxField) }, false},
 		"session lifetime above 86400": {func(a *API) { a.SessionLifetime = session.MaxLifetime + 1 }, false},
 		"idle longer than the session": {func(a *API) { a.IdleTimeout = a.SessionLifetime + 1 }, false},
+		"MariaDB without CA":           {func(a *API) { a.DB.CA = "" }, false},
+		"CA not PEM":                   {func(a *API) { a.DB.CA = "NGC DB CA (Test)" }, false},
+		"CA that is a leaf":            {func(a *API) { a.DB.CA = certPEM(leaf) }, false},
+		"CA without basic constraints": {func(a *API) { a.DB.CA = certPEM(unconstrained) }, false},
+		"five CA certificates":         {func(a *API) { a.DB.CA = strings.Repeat(ca, maxCACerts+1) }, false},
+		"CA over MaxCA":                {func(a *API) { a.DB.CA = ca + strings.Repeat(" ", MaxCA-len(ca)+1) }, false},
+		"text before the CA":           {func(a *API) { a.DB.CA = "CA:\n" + ca }, false},
+		"text after the CA":            {func(a *API) { a.DB.CA = ca + "#\n" }, false},
+		"text between CA certificates": {func(a *API) { a.DB.CA = ca + "#\n" + ca }, false},
+		// pem.Decode alone would skip the broken block and return the CA.
+		"CA after a broken block": {func(a *API) {
+			a.DB.CA = "-----BEGIN CERTIFICATE-----\nAAAA!\n-----END CERTIFICATE-----\n" + ca
+		}, false},
+		"CA with a PEM header": {func(a *API) {
+			a.DB.CA = caBlock(pem.Block{Type: "CERTIFICATE", Headers: map[string]string{"Comment": "NGC"}, Bytes: caCert.Raw})
+		}, false},
+		"CA of another PEM type": {func(a *API) { a.DB.CA = caBlock(pem.Block{Type: "TRUSTED CERTIFICATE", Bytes: caCert.Raw}) }, false},
+		"CA that does not parse": {func(a *API) { a.DB.CA = caBlock(pem.Block{Type: "CERTIFICATE", Bytes: []byte("NGC")}) }, false},
+		"SQLite with a CA":       {func(a *API) { a.DB = validSQLite(); a.DB.CA = ca }, false},
 	}
 	for name, c := range apiCases {
 		a, err := LoadAPI(example(t, "api.json"))
@@ -263,6 +480,8 @@ func TestValidate(t *testing.T) {
 		"migrate to SQLite":         {func(c *Controller) { c.Migrate = &sqlite }, true},
 		"name":                      {func(c *Controller) { c.Name = "Server 1" }, false},
 		"api url":                   {func(c *Controller) { c.APIs[0].URL = "https://api-1.ngc.test:7443/tunnel" }, false},
+		"api pin of 31 bytes":       {func(c *Controller) { c.APIs[0].TLS = c.APIs[0].TLS[:31] }, false},
+		"api without pin":           {func(c *Controller) { c.APIs[0].TLS = nil }, false},
 		"without apis":              {func(c *Controller) { c.APIs = nil }, false},
 		"unknown role":              {func(c *Controller) { c.Roles = []string{"mail"} }, false},
 		"old part name":             {func(c *Controller) { c.Roles = []string{"ngc-controller"} }, false},
@@ -275,6 +494,7 @@ func TestValidate(t *testing.T) {
 		"migrate without db role":   {func(c *Controller) { c.Roles = []string{tunnel.RoleServices} }, false},
 		"migrate with empty driver": {func(c *Controller) { c.Migrate.Driver = "" }, false},
 		"migrate without password":  {func(c *Controller) { c.Migrate.Password = SecretText{} }, false},
+		"migrate without CA":        {func(c *Controller) { c.Migrate.CA = "" }, false},
 	}
 	for name, c := range controllerCases {
 		ctl, err := LoadController(example(t, "controller-db.json"))
@@ -307,6 +527,7 @@ func TestValidateSQLite(t *testing.T) {
 		"nodes present":     func(d *DB) { d.Nodes = []string{"db-1:3306"} },
 		"leftover password": func(d *DB) { d.Password = NewSecretText("leftover") },
 		"path too long":     func(d *DB) { d.Path = "/" + strings.Repeat("x", MaxField) },
+		"leftover CA":       func(d *DB) { d.CA = exampleCA(t) },
 	}
 	for name, mutate := range cases {
 		d := validSQLite()
@@ -314,6 +535,85 @@ func TestValidateSQLite(t *testing.T) {
 		if err := d.Validate(); err != ErrConfig {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// handshake connects a client with config client to a local tls.Listen with
+// config server and returns the client's handshake error.
+func handshake(t *testing.T, server, client *tls.Config) error {
+	t.Helper()
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+		// The client decides; the server's result only mirrors it.
+		_ = c.(*tls.Conn).Handshake()
+	}()
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", ln.Addr().String(), client)
+	if err == nil {
+		conn.Close()
+	}
+	<-served
+	return err
+}
+
+// TestDBTLSConfig connects to a database node behind a local TLS listener
+// with DB.TLSConfig: only a certificate from the CA of DB.CA that names the
+// node counts, and only over TLS 1.3. Without a CA there is no configuration.
+func TestDBTLSConfig(t *testing.T) {
+	_, _, other := testCA(t, 0xCB) // the same name as the example CA, another key
+	der, key := nodeCert(t, "db-1.ngc.test")
+	node := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+	cases := []struct {
+		name       string
+		ca         string
+		serverName string
+		serverMax  uint16 // highest TLS version of the node; 0 is Go's default
+		fails      func(error) bool
+	}{
+		{"node of the CA", exampleCA(t), "db-1.ngc.test", 0, nil},
+		{"another CA", other, "db-1.ngc.test", 0,
+			func(err error) bool { return errors.As(err, new(x509.UnknownAuthorityError)) }},
+		{"another server name", exampleCA(t), "db-2.ngc.test", 0,
+			func(err error) bool { return errors.As(err, new(x509.HostnameError)) }},
+		{"node limited to TLS 1.2", exampleCA(t), "db-1.ngc.test", tls.VersionTLS12,
+			func(err error) bool { return err != nil && strings.Contains(err.Error(), "protocol version") }},
+	}
+	for _, c := range cases {
+		cfg, err := DB{Driver: DriverMariaDB, CA: c.ca}.TLSConfig(c.serverName)
+		if err != nil || cfg.InsecureSkipVerify || cfg.MinVersion != tls.VersionTLS13 || cfg.ServerName != c.serverName {
+			t.Fatalf("%s: %+v, %v", c.name, cfg, err)
+		}
+		// The certificates are valid from 2026 to 2036; a fixed clock keeps
+		// the test from depending on the day it runs.
+		cfg.Time = func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) }
+		err = handshake(t, &tls.Config{Certificates: []tls.Certificate{node}, MaxVersion: c.serverMax}, cfg)
+		if c.fails == nil && err != nil || c.fails != nil && !c.fails(err) {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+
+	for name, d := range map[string]DB{
+		"SQLite":               validSQLite(),
+		"MariaDB without CA":   {Driver: DriverMariaDB},
+		"five CA certificates": {Driver: DriverMariaDB, CA: strings.Repeat(exampleCA(t), maxCACerts+1)},
+	} {
+		if cfg, err := d.TLSConfig("db-1.ngc.test"); cfg != nil || err != ErrConfig {
+			t.Errorf("%s: %v, %v", name, cfg, err)
+		}
+	}
+	if cfg, err := (DB{Driver: DriverMariaDB, CA: exampleCA(t)}).TLSConfig(""); cfg != nil || err != ErrConfig {
+		t.Errorf("without a server name: %v, %v", cfg, err)
 	}
 }
 
@@ -414,6 +714,32 @@ func TestRedaction(t *testing.T) {
 	empty := DB{Driver: DriverMariaDB}
 	if s := empty.String(); strings.Contains(s, "[secret]") {
 		t.Errorf("unset secrets shown as set: %s", s)
+	}
+}
+
+// TestLogValues: the logs show an API's tunnel address, each API of a
+// controller as address, Noise key and TLS pin, and of a database CA only
+// whether it is set.
+func TestLogValues(t *testing.T) {
+	api, err := LoadAPI(example(t, "api.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctl, err := LoadController(example(t, "controller-db.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := api.String(); !strings.Contains(s, "url=wss://api-1.ngc.test:7443/tunnel ") || !strings.Contains(s, " ca=true]") ||
+		strings.Contains(s, "CERTIFICATE") {
+		t.Errorf("api: %s", s)
+	}
+	dials := "wss://api-1.ngc.test:7443/tunnel " + enc.B64.EncodeToString(ctl.APIs[0].Key) + " " + enc.B64.EncodeToString(pin(0xE1))
+	if s := ctl.String(); !strings.Contains(s, "apis=["+dials+"]") || !strings.Contains(s, " ca=true]") ||
+		strings.Contains(s, "CERTIFICATE") {
+		t.Errorf("controller: %s", s)
+	}
+	if s := validSQLite().String(); !strings.Contains(s, " ca=false]") {
+		t.Errorf("SQLite: %s", s)
 	}
 }
 
@@ -578,5 +904,48 @@ func FuzzLoad(f *testing.F) {
 		_, _ = parseAPI(b)
 		_, _ = parseController(b)
 		_, _ = parseAnchor(b)
+	})
+}
+
+// FuzzParseCA feeds the parser of DB.CA directly, where FuzzLoad reaches it
+// only through a JSON string. What it accepts is 1 to maxCACerts CA
+// certificates, one per PEM block, with nothing but white space outside the
+// blocks, and TLSConfig takes it too.
+func FuzzParseCA(f *testing.F) {
+	ca := exampleCA(f)
+	leaf, _ := nodeCert(f, "db-1.ngc.test")
+	for _, s := range []string{ca, " \t\r\n" + ca + "\r\n" + ca, strings.ReplaceAll(ca, "\n", "\r\n"), strings.Repeat(ca, maxCACerts+1),
+		certPEM(leaf), "-----BEGIN CERTIFICATE-----\nAAAA!\n-----END CERTIFICATE-----\n" + ca, "CA:\n" + ca, ca + "#", ""} {
+		f.Add(s)
+	}
+	const end = "-----END CERTIFICATE-----"
+	f.Fuzz(func(t *testing.T, s string) {
+		certs, err := parseCA(s)
+		if err != nil {
+			if certs != nil || err != ErrConfig {
+				t.Fatalf("refused with %v, %d certificates", err, len(certs))
+			}
+			return
+		}
+		if len(s) > MaxCA || len(certs) == 0 || len(certs) > maxCACerts ||
+			strings.Count(s, "-----BEGIN") != len(certs) || strings.Count(s, end) != len(certs) {
+			t.Fatalf("accepted %q as %d certificates", s, len(certs))
+		}
+		rest := s
+		for _, c := range certs {
+			if !c.BasicConstraintsValid || !c.IsCA {
+				t.Fatalf("accepted a certificate that is no CA: %q", s)
+			}
+			if strings.Trim(rest[:strings.Index(rest, "-----BEGIN")], pemSpace) != "" {
+				t.Fatalf("accepted text outside the blocks: %q", s)
+			}
+			rest = rest[strings.Index(rest, end)+len(end):]
+		}
+		if strings.Trim(rest, pemSpace) != "" {
+			t.Fatalf("accepted text after the blocks: %q", s)
+		}
+		if _, err := (DB{Driver: DriverMariaDB, CA: s}).TLSConfig("db-1.ngc.test"); err != nil {
+			t.Fatalf("TLSConfig: %v", err)
+		}
 	})
 }
