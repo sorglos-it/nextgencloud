@@ -49,8 +49,12 @@ func buildTar(t testing.TB, entries []entry) []byte {
 	return buf.Bytes()
 }
 
-func manifestEntry(t testing.TB) entry {
-	b, err := json.Marshal(terminalManifest())
+func manifestEntry(t testing.TB) entry { return manifestOf(t, terminalManifest()) }
+
+// manifestOf is the manifest.json entry of a package for m.
+func manifestOf(t testing.TB, m *Manifest) entry {
+	t.Helper()
+	b, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}

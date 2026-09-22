@@ -25,7 +25,7 @@ const (
 	MaxPackage         = 4 << 30
 	MaxApps            = 10000
 	MaxVersions        = 100   // per app
-	MaxCatalogVersions = 50000 // of all apps together: each costs up to about 500 bytes to decode
+	MaxCatalogVersions = 30000 // of all apps together: each costs up to about 750 bytes to decode, its app's share included
 	MaxLicense         = 8 << 10
 	GraceDefault       = 14 * 86400
 	MaxGrace           = 90 * 86400
@@ -72,13 +72,23 @@ type Entry struct {
 
 // Package is one version of an app.
 type Package struct {
-	Version   string    `json:"version"`
-	URL       string    `json:"url"` // https URL or a path relative to the catalog
-	Size      int64     `json:"size"`
-	SHA256    enc.Bytes `json:"sha256"`              // of the file as downloaded
+	Version string    `json:"version"`
+	URL     string    `json:"url"` // https URL or a path relative to the catalog
+	Size    int64     `json:"size"`
+	SHA256  enc.Bytes `json:"sha256"` // of the file as downloaded
+	// UI is the SHA-256 of the package's ui-tar (PackageUI) over the plain
+	// package, before a paid app is encrypted; the shell runs the app's UI
+	// only if its ui-tar has this hash, the controller refuses a package whose
+	// ui-tar has another.
+	UI        enc.Bytes `json:"ui"`
 	Encrypted bool      `json:"encrypted,omitempty"` // paid apps (Task 15)
 	Needs     []string  `json:"needs,omitempty"`     // as in the manifest, shown before download
-	MinNGC    string    `json:"minNgc,omitempty"`
+	// MinNGC is the oldest NGC version the app needs, as in the manifest. A
+	// manifest field that NGC version X introduces may appear only in packages
+	// whose minNgc (in the manifest and in the catalog entry) is at least X:
+	// an older NGC never offers such a version, because it could not read the
+	// manifest (strict JSON).
+	MinNGC string `json:"minNgc,omitempty"`
 }
 
 // Price of a paid app. Payment happens on the store's shop page, never in NGC.
@@ -192,7 +202,7 @@ func (e Entry) valid() bool {
 	}
 	for i, p := range e.Versions {
 		if !ValidVersion(p.Version) || (i > 0 && !Newer(p.Version, e.Versions[i-1].Version)) || !validURL(p.URL) ||
-			p.Size <= 0 || p.Size > MaxPackage || len(p.SHA256) != 32 || p.Encrypted != (e.Price != nil) ||
+			p.Size <= 0 || p.Size > MaxPackage || len(p.SHA256) != 32 || len(p.UI) != 32 || p.Encrypted != (e.Price != nil) ||
 			!validNeeds(p.Needs) || (p.MinNGC != "" && !ValidVersion(p.MinNGC)) {
 			return false
 		}
@@ -210,7 +220,10 @@ func (p Price) valid() bool {
 
 // catalogBudget bounds a catalog while it is decoded (enc.Budget). The
 // per-app limits alone would allow MaxApps*MaxVersions versions; the total
-// keeps what any catalog within it costs to decode below about 32 MiB.
+// keeps what any catalog within it costs to decode below 32 MiB
+// (TestCatalogDecodeCost). No valid catalog reaches the total: each valid
+// version takes at least 145 bytes of sign.MaxPayload
+// (TestMaxCatalogVersionsRefusesNoValidCatalog).
 var catalogBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
 	"apps":                    MaxApps,
 	"apps/*/versions":         MaxVersions,

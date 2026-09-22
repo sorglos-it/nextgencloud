@@ -2,15 +2,17 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"io"
 	"strconv"
 	"strings"
 )
 
 // A UI tar is how the API keeps an app's UI (dbapi.BlobUI) and sends it to
-// the shell (ngc.desktop/ui). UIWriter writes it and WalkUI reads it. Both
-// know exactly one form, the one below, so the shell's reader can follow the
-// same rules line by line (vectors: ui.json):
+// the shell (ngc.desktop/ui); PackageUI makes the one of an app package, and
+// its SHA-256 is the app's UI hash. UIWriter writes it and WalkUI reads it.
+// Both know exactly one form, the one below, so the shell's reader can follow
+// the same rules line by line (vectors: ui.json):
 //
 //   - The archive is a sequence of 512-byte blocks: its entries, then the end
 //     marker of two blocks of NUL bytes, then nothing.
@@ -376,4 +378,47 @@ func (u *UIWriter) add(path string, dir bool, size int64, r io.Reader) error {
 // pad512 appends NUL bytes to b up to a whole block.
 func pad512(b []byte) []byte {
 	return append(b, make([]byte, (blockSize-len(b)%blockSize)%blockSize)...)
+}
+
+// PackageUI writes the ui-tar of an app package to w: every regular file
+// below ui/ (Walk, Kind KindUI) in the order the package lists them, through
+// UIWriter, then the end marker; directory entries are not written. It
+// returns the manifest and SHA-256 of exactly what it wrote: the app's UI
+// hash (Package.UI, core.ActivateParams.UI). ngc-store, the API (which keeps
+// and serves these bytes, dbapi.BlobUI) and the controller compute it the
+// same way, and the shell does for a package an admin uploads (vectors:
+// packui.json). pkg is the plain package; an encrypted one is ErrPackage.
+//
+// Every failure is ErrPackage or an error of w. Walk checks the package as a
+// whole only after its last file, so after a failure the caller discards
+// what w received.
+func PackageUI(pkg io.Reader, w io.Writer) (*Manifest, []byte, error) {
+	h := sha256.New()
+	u := NewUIWriter(io.MultiWriter(w, h))
+	m, err := Walk(pkg, func(_ *Manifest, f PackFile, body io.Reader) error {
+		if f.Kind != KindUI {
+			return nil // an image: Walk skips its data
+		}
+		return u.File(f.Path, f.Size, packageBody{body})
+	})
+	if err == nil {
+		err = u.Close()
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return m, h.Sum(nil), nil
+}
+
+// packageBody is the data of one file of a package for UIWriter. Failing to
+// read it, a package cut short included, is ErrPackage, so the only errors
+// UIWriter passes on as they are come from w.
+type packageBody struct{ r io.Reader }
+
+func (b packageBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err != nil && err != io.EOF {
+		err = ErrPackage
+	}
+	return n, err
 }
