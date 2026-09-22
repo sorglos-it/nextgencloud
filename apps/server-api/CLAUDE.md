@@ -20,31 +20,54 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   Passwortbeweis (`password`), den du mit `session.VerifyPassword` prüfst; fehlt `password`, lehnst
   du die Anmeldung ab (`session.ParseLoginFinish` lässt das Feld offen). Das setzt nur die API
   durch; an Controller geht kein Passwortbeweis. TOTP, Sperre nach Fehlversuchen, Sitzung und
-  Zertifikate, Cookie mit `session.TokenHash`. Ersteinrichtung: `session.SetupInfo` mit dem
-  globalen Store aus `api.json` (`storeUrl`, `storeKey`), Fassung 1 mit `session.VerifySetup`
-  prüfen, den Einmal-Code in konstanter Zeit vergleichen.
+  Zertifikate, Cookie mit `session.TokenHash`.
+- HTTP bis zum WebSocket genau nach `shared/README.md`, Abschnitt „Vor dem WebSocket“: Status mit
+  `session.HTTPStatus`, Inhalt `wire.Error`, jede Antwort mit `Cache-Control: no-store`, Anfragen
+  nur mit `Content-Type: application/json`; das Cookie mit `session.CookieAttributes`; `from` nur
+  über `session.ParseFrom`. Jede fehlgeschlagene Anmeldung ist gleich `E_LOGIN`, nach zu vielen
+  Fehlversuchen kommt `E_LOCKED` mit `Retry-After`. `GET /api/v1/trust` antwortet nur mit Sitzung,
+  und mit 204, wenn nichts Neueres da ist.
+- Ersteinrichtung: Den Einmal-Code (`session.ValidSetupCode`) kann nur root lesen (ulh zeigt ihn),
+  und er kommt nie ins Log. `GET /api/v1/setup` antwortet mit `session.SetupOffer`: dein
+  `session.SetupInfo` als JSON und `session.OfferMAC` über genau diese Bytes. Darin dein Knoten
+  (`id` und `name` = `node`, `url` aus `api.json`, Noise- und Signaturschlüssel, Fingerabdruck
+  deines TLS-Zertifikats), der globale Store (`id` `global`, `name` „NGC Store“, `url` und `key`
+  aus `storeUrl` und `storeKey` in `api.json`) und `releaseKey` aus `api.json`. Eine Anfrage
+  prüfst du mit `session.VerifySetup(s, info, code)`; Fehlversuche zählst du (`E_LOCKED`). Sobald
+  es einen Admin gibt, antworten beide Methoden `E_NOTFOUND`.
+- Eigenes TLS: ein Zertifikat für den Host von `url`. Sein Fingerabdruck (`trust.TLSPin`) steht in
+  deinem Knoten der Vertrauensliste, in deinen Kopplungs- und Beitrittscodes und in `web.json`. Ein
+  neuer TLS-Schlüssel braucht zuerst eine neue Fassung der Vertrauensliste mit dem neuen
+  Fingerabdruck.
 - WebSocket nach `wire` und `noisep` (Ablauf: `shared/README.md`, Abschnitt „Kanäle“):
   Kanalnummern höchstens `wire.MaxSessionChannels` je Sitzung und `wire.MaxTunnelChannels` je
   Tunnel, gezählt, bis sie wieder frei sind (CLOSE gesendet und empfangen); ein Frame darüber
   beendet die Leitung. Ist der Tunnel zum Ziel-Controller voll, antwortest du dem Browser mit CLOSE
   `E_LIMIT`. Freigabe je Strecke bis `wire.MaxWindow`, Steuernachrichten nach
-  `wire.ControlAllowed`.
+  `wire.ControlAllowed`. Nennt `hello` eines Controllers in `node` einen anderen Knoten als den
+  seines Noise-Schlüssels, beendest du den Tunnel.
 - Kanäle weiterleiten: das OPEN des Browsers Byte für Byte in `tunnel.Open` (Feld `open`), mit
-  eigener Freigabe; DATA und EOF unverändert und eins zu eins, CLOSE mit demselben Code;
-  Noise-Nachricht 2 aus der ersten GRANT des Controllers in die erste GRANT an den Browser
-  kopieren. Ende-zu-Ende-Daten nie auspacken.
+  eigener Freigabe; DATA und EOF unverändert und eins zu eins, CLOSE mit demselben Code. Deine
+  erste GRANT an den Browser schickst du erst nach der ersten GRANT des Controllers (auf
+  Ende-zu-Ende-Kanälen mit Noise-Nachricht 2 daraus), oder du gibst dessen CLOSE weiter.
+  Ende-zu-Ende-Daten nie auspacken. Ein OPEN der Shell, bei dem `core.ShellOpens` nein sagt
+  (`stage`, `ngc.users/controller/trust`), lehnst du mit `E_FORBIDDEN` ab. Auf einem
+  weitergeleiteten `transfer`-Kanal (`activate`) lehnst du DATA der Shell ab (`E_PROTOCOL`) und
+  schreibst den Kopf `core.Transfer` und die Datei selbst, dann EOF.
 - Ergebnisse nach Art von `call` auf Kern-App-Kanälen höchstens `wire.MaxCallResult`: Das
   Ergebnis eines Controllers prüfst du, bevor du es weitergibst, und schließt bei mehr mit
   `E_TOOLARGE`; deine eigenen Ergebnisse hältst du darunter (als Empfängerin prüft sie die Shell).
-  Auf Ende-zu-Ende-Kanälen prüft das die Shell, du siehst dort keinen Klartext.
+  Auf Ende-zu-Ende-Kanälen prüft das die Shell, du siehst dort keinen Klartext. Ein Ergebnis gilt
+  nur, wenn der Kanal mit CLOSE `ok` endet.
 - Ergebnisse kodierst du mit `core.EncodeResult`, nie mit `json.Marshal`: Das schreibt eine
   nil-Slice als `null`, und das lehnt die Shell ab (`shared/README.md`, „Striktes JSON“, Regel
   14). `core.EncodeResult` schreibt leere Listen als `[]` und leere Maps als `{}`, lässt optionale
   Felder mit Nullwert weg und gibt `core.ErrResult` für alles, was die Shell ablehnen würde (ein
   übrig gebliebenes `null`, ungültiges UTF-8, mehr als `wire.MaxCallResult` Byte). Das betrifft vor
-  allem die acht Ergebnisse, die als Ganzes eine Liste sind (`ngc.desktop/apps`, `ngc.users/list`,
-  `ngc.users/rights`, `ngc.users/pending`, `ngc.users/log`, `ngc.store/sources`,
-  `ngc.store/installed`, `ngc.store/updates`); leer stehen sie unter `empty` in `core.json`.
+  allem die neun Ergebnisse, die als Ganzes eine Liste sind (`ngc.desktop/apps`, `ngc.users/list`,
+  `ngc.users/rights`, `ngc.users/pending`, `ngc.users/pending-api`, `ngc.users/log`,
+  `ngc.store/sources`, `ngc.store/installed`, `ngc.store/updates`); leer stehen sie unter `empty`
+  in `core.json`.
 - Was der Öffner schicken darf (`core.Action.MaxIn`), setzt du bei `ngc.store/api/upload`,
   `ngc.users/api/trust` und `ngc.store/api/license` durch: bei mehr schließt du mit `E_TOOLARGE`.
   Umschläge von außen liest du nur mit `sign.ParseEnvelope` (Lizenzen mit `store.MaxLicense`,
@@ -59,30 +82,52 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   Aufgabe, die du an einen Controller weiterleitest, prüfst du vorher mit dem Ziel-Controller als
   `task.Input.Node`; Aufgaben-IDs merkst du dir (`dbapi.OnceTask`).
 - Tunnel zu jedem Controller (`tunnel`), Kopplung, Kopplungs- und Beitrittscodes (`tunnel.PairCode`,
-  `tunnel.JoinCode`; Kern-Aktionen `pair-code` und `join-code`). Neue Fassungen der
-  Vertrauensliste an Controller über den Kanal `ngc.users/controller/trust`, an Browser per
-  `GET /api/v1/trust` (`session.TrustChain`, seitenweise) und Hinweis `trust`. Ohne Benutzer
-  öffnest du nur, was `core.WithoutUser` nennt.
+  `tunnel.JoinCode`, beide mit deinem Fingerabdruck in `tls`; Kern-Aktionen `pair-code` und
+  `join-code`). Wartende Controller zeigt `ngc.users/pending` (`core.Pending`, ohne Fingerabdruck:
+  den rechnet die Shell). Neue Fassungen der Vertrauensliste an Controller über den Kanal
+  `ngc.users/controller/trust`, an Browser per `GET /api/v1/trust` (`session.TrustChain`,
+  seitenweise) und Hinweis `trust`. Ohne Benutzer öffnest du nur, was `core.WithoutUser` nennt.
+- Beitritt weiterer API-Server: Die `tunnel.JoinRequest` kommt an `tunnel.PathJoin`
+  (`tunnel.ParseJoinRequest`, MAC mit `tunnel.JoinRequest.Verify` und dem Geheimnis des Codes, das
+  genau einmal gilt: `dbapi.OnceJoin`). Du legst sie als `dbapi.BlobJoin` ab und zeigst sie mit
+  `ngc.users/pending-api` (`core.PendingAPI`); den Fingerabdruck rechnet die Shell. Mehrere APIs
+  teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen. Wie ein neuer
+  API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel bekommt, legst du selbst
+  fest.
 - Apps und Stores: Kataloge prüfen (`store.VerifyCatalog`), Pakete entpacken (`store.Walk`,
-  höchstens `store.MaxDirs` Verzeichnisse), die Oberfläche einer App mit `store.NewUIWriter`
-  (`store.UIWriter`) als ui-tar in der einen Form aus `store/ui.go` schreiben, in `dbapi.BlobUI`
-  ablegen und bei `ngc.desktop/ui` unverändert ausliefern (die Shell liest es wie `store.WalkUI`),
-  Lizenzen prüfen, Schlüssel der Kauf-Apps entpacken (`store.UnwrapKey`) und nur an eigene
-  Controller geben. Der globale Store heißt `global` (`store.GlobalID`), `local` steht für
-  hochgeladene Apps (`core.LocalStore`); einen zweiten Store `global` lehnst du ab.
+  höchstens `store.MaxDirs` Verzeichnisse), Lizenzen prüfen, Schlüssel der Kauf-Apps entpacken
+  (`store.UnwrapKey`) und nur an eigene Controller geben. Der globale Store heißt `global`
+  (`store.GlobalID`), `local` steht für hochgeladene Apps (`core.LocalStore`); einen zweiten Store
+  `global` lehnst du ab. Auf `ngc.store/upload` antwortest du mit `core.UploadResult` (ID, Version,
+  SHA-256 und `store.PackageUI` des Pakets); die Shell gleicht damit nur ab.
+- Oberflächen: `dbapi.BlobUI` hält genau `store.PackageUI` des unverschlüsselten Pakets, und
+  `ngc.desktop/ui` liefert diese Bytes unverändert (die Shell liest sie wie `store.WalkUI`). Für
+  jede installierte Version hältst du ihren `core.UIProof` in `dbapi.BlobApproval`: bei Store-Apps
+  den Katalog ihres Stores, der die Version führt, bei hochgeladenen Apps die Aufgabe `activate`,
+  die sie installiert hat, mit dem Client-Zertifikat und dem Beweis ihrer Sitzung. Ihn liefert
+  `ngc.desktop/ui-proof`, höchstens `wire.MaxCallResult` Byte; so verliert ein gekürzter Katalog
+  den Beweis nicht.
 - Updates: Reihenfolge Datenbank → APIs → Controller → Webinterface, gesteuert von genau einer API
   über `dbapi.LockUpdate`. Die Migrationen spielt genau ein Controller mit Rolle `db` ein: Die API
   mit der Sperre wählt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten
   Node-ID; scheitert er, den nächsten. Er bekommt dafür die Datei `ngc-api` seiner Architektur.
+- `ngc.store/updates` rechnest du je Ziel und Controller aus Releases, Katalogen, den Meldungen der
+  Controller und der Einstellung des Ziels (`dbapi.SettingUpdate`: `core.UpdateSetting` mit Modus
+  und Zeitfenster); die Zeilen speicherst du nicht. `sha256` ist die Prüfsumme der Datei, die nach
+  `stage` auf dem Controller liegt, `key` bei NGC-Teilen dein Release-Schlüssel
+  (`config.API.ReleaseKey`). Eine Version, deren `minNgc` neuer ist als die NGC-Version des
+  Controllers (`tunnel.Hello.Version`), bietest du nicht an.
+- Einmalwerte (`dbapi.OnceNonce`, `dbapi.OncePair`, `dbapi.OnceJoin`, `dbapi.OnceTask`) räumst du
+  mit `OncePurge(now - session.MaxSkew)` weg (`dbapi.Local.OncePurge`): Sonst könnte eine API mit
+  nachgehender Uhr eine Aufgabe noch einmal annehmen, deren ID eine API mit vorgehender Uhr schon
+  weggeräumt hat.
 - Protokoll: Anmeldungen, Rechte, Aufgaben mit Unterschrift, Kanäle, Stores, Lizenzen, Updates;
   jede Zeile mit einer ID aus 16 Zufallsbytes als Hex (`core.LogEntry`, `core.ValidLogID`).
-- Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen. Ein
-  neuer API-Server kommt mit einem Beitrittscode (`tunnel.JoinCode`, `tunnel.JoinRequest`); wie er
-  nach der Unterschrift des Admins die gemeinsamen Schlüssel bekommt, legst du selbst fest.
 - Werkzeug `ngc-store` in `apps/cli/`: Aufgabe in `apps/cli/CLAUDE.md`.
 - Konfiguration nur über `config.LoadAPI`. Schlüssel und Passwörter darin sind `config.Secret` bzw.
   `config.SecretText`; den Wert geben nur `Bytes()` bzw. `Text()`. Ins Log nur über die
-  `LogValue`-Methoden, nie Schlüssel oder Passwörter.
+  `LogValue`-Methoden, nie Schlüssel oder Passwörter. MariaDB nur über `config.DB.TLSConfig`, mit
+  dem Host des jeweiligen Knotens aus `db.nodes` als Servername.
 
 ## Tests
 
@@ -90,7 +135,8 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
 - Gegen die Vektoren in `shared/testdata/`.
 - Fuzzing für alles, was von außen kommt.
 - Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder eingespielte Nachrichten,
-  fremde Lizenz, geänderte Parameter, abgeschnittene Daten, Kanäle über der Grenze.
+  fremde Lizenz, geänderte Parameter, abgeschnittene Daten, Kanäle über der Grenze, ein Mann in der
+  Mitte bei der Ersteinrichtung (Anfrage mit einem anderen Code oder über andere Bytes).
 
 ## Fertig, wenn
 
