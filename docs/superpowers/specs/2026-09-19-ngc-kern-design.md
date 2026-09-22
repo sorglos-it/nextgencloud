@@ -646,9 +646,9 @@ in der App Benutzer & Rechte.
   weit traut wie der Software, die man von dort installiert. Eine festere Bindung kommt mit dem
   Sicherheitsdurchgang (Plan 7).
 - Welche Version einer App installiert ist, erfährt die Shell von der API. Eine übernommene API
-  kann ihr daher eine ältere, aber signierte Oberfläche zeigen. Die Shell merkt sich je App die
-  neueste geprüfte Version und lehnt ältere ab; ein Browser, der die neuere nie gesehen hat,
-  merkt das nicht.
+  kann ihr daher eine ältere, aber signierte Oberfläche zeigen, nie eine, die niemand für diese
+  App signiert hat. Eine Sperre gegen ältere Versionen in der Shell gibt es nicht, weil der
+  Controller ein fehlgeschlagenes Update selbst auf die vorige Version zurücksetzt.
 - Mit Passwort-Anmeldung ohne vertrauenswürdiges Zertifikat warnt der Browser beim ersten
   Aufruf, und ein Angreifer im selben Netz könnte sich dazwischenschalten. Ein Passwort lässt
   sich außerdem leichter erraten oder abgreifen als ein Stick. Deshalb der dauerhafte Hinweis
@@ -1012,7 +1012,7 @@ Sperre in der Datenbank.
 | 22.09.2026 | Kataloge dürfen zusammen höchstens 30.000 Versionen führen (`store.MaxCatalogVersions`, vorher 50.000): Mit der UI-Prüfsumme je Version kostet ein Katalog sonst beim Lesen über 32 MiB. Ein gültiger Katalog passt ohnehin nur mit rund 28.900 Versionen in `sign.MaxPayload`. |
 | 22.09.2026 | Welche Zeichen in Texten für Menschen gelten, legen die Unicode-Tabellen von Go fest (Unicode 17.0 mit Go 1.27); die Shell prüft dieselbe Regel Codepunkt für Codepunkt, unbekannte Zeichen gelten als nicht druckbar. Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung; `TestValidText` hält es an, bis Doku und Testdaten nachgezogen sind. |
 | 22.09.2026 | Die Oberfläche einer Store-App belegt jeder Store der Vertrauensliste, dessen Katalog App, Version und UI-Prüfsumme führt. Eine feste Bindung an den Store über die Aktivierung des Admins ist verworfen: Nach jedem Wechsel des Admin-Schlüssels (etwa ein neues Passwort) müssten sonst alle Apps neu aktiviert werden. Die Grenze steht in 4.5, eine bessere Bindung kommt mit Plan 7. |
-| 22.09.2026 | Die Shell merkt sich je Installation und App die neueste Version, deren Oberfläche sie geprüft hat, und lehnt ältere ab. |
+| 22.09.2026 | Welche signierte Version einer Oberfläche die Shell ausführt, entscheidet die API; eine unsignierte kann sie nicht unterschieben. Eine Sperre gegen ältere Versionen in der Shell ist verworfen: Sie würde die Version aussperren, auf die der Controller nach einem fehlgeschlagenen Update zurücksetzt. |
 | 22.09.2026 | Updates: Gespeichert wird je Ziel nur die Einstellung (`update.<ziel>`: Modus und Zeitfenster); den Stand je Server rechnet die API aus Releases, Katalogen und den Meldungen der Controller aus. |
 
 ## 7. Fremdcode-Kandidaten
