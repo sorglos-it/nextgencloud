@@ -217,7 +217,8 @@ func WithoutUser(a Action) bool {
 // Nothing but the signed files counts: the controller takes Version and
 // SHA256 from the staged file's verified release or catalog entry, whose seq
 // it has checked against the newest it saw, and refuses params that differ.
-// The params of a channel without a user are not signed.
+// The params of a channel without a user are not signed. The rules of
+// InstallParams on store and grants apply as well.
 func Unattended(p *InstallParams, l *trust.List, signer []byte, installed string) bool {
 	if p == nil || l == nil || p.Validate() != nil || !store.Approved(l, p.Target, signer) {
 		return false
@@ -387,7 +388,12 @@ func (p *UpdateSetting) Validate() error {
 
 // ActivateParams is the root task that installs and starts an app on a
 // controller. Grants must equal the manifest's Needs as a set; the controller
-// refuses activation otherwise (E_FORBIDDEN).
+// refuses activation otherwise (E_FORBIDDEN). Activating an app that is
+// installed replaces it with Version (the same version again, as after a
+// change of the approving admin's key, or a newer one; never an older one:
+// E_FORBIDDEN), grants included, and keeps its data. This is how an admin
+// upgrades an app whose new version needs grants it was not given
+// (store.UpdateNeedsGrants).
 type ActivateParams struct {
 	App     string    `json:"app"`
 	Version string    `json:"version"`
@@ -429,6 +435,14 @@ func (p *StageParams) Validate() error {
 }
 
 // InstallParams installs a staged update; for trust.AutoSystem it runs apt.
+// For an app the controller installs a staged version only from the catalog
+// of the store the app was activated from (dbapi.App.Store; another store:
+// E_VERIFY) and only if the new manifest's needs are among the grants of the
+// activation (store.Granted with dbapi.App.Grants; else E_FORBIDDEN, and an
+// install without a user reports store.UpdateNeedsGrants); the app then runs
+// with its grants reduced to the new needs. Those grants are the ones the
+// controller wrote into its own database when it activated the app, never a
+// value an API sends it.
 type InstallParams struct {
 	Target  string    `json:"target"`
 	Version string    `json:"version,omitempty"`

@@ -112,6 +112,14 @@
       "node": "ctl-1",
       "mode": "notify",
       "state": "available"
+    },
+    {
+      "target": "org.sorglos.mail",
+      "node": "ctl-1",
+      "installed": "2.0.0",
+      "available": "2.1.0",
+      "mode": "auto",
+      "state": "needsgrants"
     }
   ],
   "ngc.store/upload": {

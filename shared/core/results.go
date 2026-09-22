@@ -229,10 +229,12 @@ type UpdateInfo struct {
 	Target    string `json:"target"`
 	Node      string `json:"node"`
 	Installed string `json:"installed,omitempty"`
-	// Available is the newest version of Target the API offers for Node. It
-	// is never an app version whose minNgc (store.Package.MinNGC) is newer
-	// than the NGC version of Node (tunnel.Hello.Version): the API does not
-	// offer such a version, and the controller does not install it.
+	// Available is the newest version of Target the API offers for Node. It is
+	// never an app version whose minNgc (store.Package.MinNGC) does not suit
+	// the NGC version of Node (store.SupportsMinNGC with tunnel.Hello.Version;
+	// a version that is no release version, such as 0.0.0-dev, suits no
+	// minNgc), and only from the catalog of the app's own store
+	// (dbapi.App.Store).
 	Available string `json:"available,omitempty"`
 	// SHA256 is the checksum of the file staged on Node for Available once State
 	// is store.UpdateDownloaded; an update by click signs it into InstallParams.
@@ -247,7 +249,12 @@ type UpdateInfo struct {
 	Key    enc.Bytes `json:"key,omitempty"`
 	Mode   string    `json:"mode"`
 	Window string    `json:"window,omitempty"`
-	State  string    `json:"state,omitempty"` // store.Update… of the newest report
+	// State is store.Update… of the newest report, or store.UpdateNeedsGrants
+	// when Available needs rights the app was not granted (store.Granted of
+	// its catalog entry's needs with dbapi.App.Grants): such a row is never
+	// installed by click or without a user; the admin activates the new
+	// version with the new grants.
+	State string `json:"state,omitempty"`
 }
 
 // TrustResult answers ngc.users/trust, and ngc.users/controller/trust with

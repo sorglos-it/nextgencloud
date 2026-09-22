@@ -1163,6 +1163,8 @@ func examples(t testing.TB) map[string]any {
 			{Target: "org.sorglos.terminal", Node: "ctl-1", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00",
 				State: store.UpdateAvailable},
 			{Target: trust.AutoSystem, Node: "ctl-1", Mode: store.ModeNotify, State: store.UpdateAvailable},
+			{Target: "org.sorglos.mail", Node: "ctl-1", Installed: "2.0.0", Available: "2.1.0", Mode: store.ModeAuto,
+				State: store.UpdateNeedsGrants},
 		},
 		"notice": Notice{Level: NoticeWarn, Text: "Die Lizenz für Terminal läuft in 3 Tagen ab.", App: "org.sorglos.terminal"},
 	}
@@ -1187,6 +1189,13 @@ func TestExamples(t *testing.T) {
 		// a path a ui-tar can hold.
 		if a.Entry != "" && !store.ValidPath(a.Entry) {
 			t.Errorf("desktop app entry %q", a.Entry)
+		}
+	}
+	// A version that would widen the grants is never installed, so no such row
+	// carries a checksum an update by click could be signed from.
+	for _, u := range examples["ngc.store/updates"].([]UpdateInfo) {
+		if u.State == store.UpdateNeedsGrants && len(u.SHA256) != 0 {
+			t.Errorf("update row %s on %s: state %s with a checksum", u.Target, u.Node, u.State)
 		}
 	}
 	// The rows are hints, but they name real nodes and real roles.
