@@ -65,10 +65,10 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 ## Tests
 
 - `go test ./...` muss grün sein, `tools/check.sh` vor jedem Commit.
-- Auf den Linux-Servern zusätzlich `go test -race ./...` laufen lassen (Thomas' Windows-Rechner hat
-  kein cgo, der Data-Race-Detektor lief dort noch nicht); die Tests, die sich unter Windows oder
+- Auf den Linux-Servern zusätzlich `go test -race ./...` laufen lassen (auf Thomas' Windows-Rechner
+  geht das nur in WSL, dort am 22.09.2026 grün); die Tests, die sich unter Windows oder
   ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `shared/service`,
-  `TestReleaseScript` in `shared/store` mit 28 Fällen, der `openssl`, das echte `jq` und
+  `TestReleaseScript` in `shared/store` mit 31 Fällen, der `openssl`, das echte `jq` und
   `mktemp` braucht, die Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
   Vektoren in `shared/testdata/`. Fuzz-Ziele in `shared/store` nur mit

@@ -87,7 +87,7 @@ sofort. Dieses Verzeichnis steht unter MIT (siehe `LICENSE`), NGC selbst unter A
 | `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis, dazu `notice`; unter `empty` die acht Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
 | `store.json`, `pack.json` | Katalog, Lizenz und Release; Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
 | `ui.json` | ui-tars, gültige und ungültige (Regeln im Kommentar von `store/ui.go`); bei gültigen unter `files` die Dateien, die `store.WalkUI` liefert. Fälle mit Daten bis `store.MaxUIFile`, `store.MaxUITotal` oder mit `store.MaxEntries` Einträgen stehen nicht darin | `store`: `TestUIVectors` |
-| `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 28 Fällen | `store`: `TestReleaseScriptVector` |
+| `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 31 Fällen | `store`: `TestReleaseScriptVector` |
 | `config/*.json` | Beispiel-Konfigurationen | von Hand |
 | `service/echo.sh` | Beispiel-Dienst | von Hand |
 

@@ -69,7 +69,7 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   `verify.sh` legt Arbeitsdateien in einem Verzeichnis von `mktemp -d` ab, das es am Ende löscht,
   und schreibt nichts in das Verzeichnis der Dateien. Geht etwas schief, meldet es
   `release wrong: <Grund>` und endet mit 1, bei falschem Aufruf mit 2; nur wenn alles stimmt, gibt es
-  `release ok` aus und endet mit 0. `TestReleaseScript` in `shared/store` prüft das in 28 Fällen;
+  `release ok` aus und endet mit 0. `TestReleaseScript` in `shared/store` prüft das in 31 Fällen;
   auf den Linux-Servern muss er mit dem echten `jq` bestehen.
 - Release-Dateien benennen Softwareteile: `ngc-web` (`all`), `ngc-api` und `ngc-controller` (`amd64`,
   `arm64`). Die Migrationen stecken in `ngc-api`.
