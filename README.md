@@ -53,7 +53,7 @@ fremden Abhängigkeiten. Im Browser öffnen, und sie läuft.
 Die Oberfläche ist deutsch. Tastatur: `Esc` schließt das Startmenü, `Alt`+`F4` schließt das aktive
 Fenster, die Windows-Taste oder `Strg`+`Esc` öffnet und schließt das Startmenü.
 
-Noch ein Entwurf: Der Explorer zeigt Platzhalter-Dateien und kann sie nicht öffnen, und das
+Noch eine Attrappe: Der Explorer zeigt Platzhalter-Dateien und kann sie nicht öffnen, und das
 Terminal („NGC Shell“) kennt nur seine zehn eingebauten Befehle (`help`, `apps`, `open <app>`,
 `echo`, `date`, `dir`, `ver`, `theme`, `cls`, `exit`) – es führt nichts auf dem Rechner aus.
 
