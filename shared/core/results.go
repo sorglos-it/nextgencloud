@@ -201,7 +201,9 @@ type InstallKey struct {
 
 // UpdateInfo is a row of ngc.store/updates: one target on one controller (an
 // NGC part on every node whose tunnel.Components hold it, an app on the node
-// it runs on, system on every node).
+// it runs on, system on every node). The API computes the rows from
+// releases, catalogs, the controllers' reports and each target's
+// UpdateSetting (dbapi.SettingUpdate), and stores no row.
 type UpdateInfo struct {
 	Target    string `json:"target"`
 	Node      string `json:"node"`

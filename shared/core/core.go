@@ -365,7 +365,8 @@ func (p *LogQuery) Validate() error {
 var window = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$`)
 
 // UpdateSetting sets the update mode of a part or an app. Switching to
-// store.ModeAuto also needs a standing approval in the trust list.
+// store.ModeAuto also needs a standing approval in the trust list. It is the
+// target's policy on every node; the API keeps it as dbapi.SettingUpdate.
 type UpdateSetting struct {
 	Target string `json:"target"`
 	Mode   string `json:"mode"`

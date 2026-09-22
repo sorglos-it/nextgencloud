@@ -34,8 +34,13 @@ const (
 const (
 	SettingInstallation = "installation" // installation ID
 	SettingInstallKey   = "installKey"   // X25519 private key of the installation, encrypted by the API
-	SettingUpdate       = "update."      // prefix, e.g. "update.ngc-api": core.UpdateInfo as JSON
-	LockUpdate          = "update"       // only one API drives a rollout
+	// SettingUpdate is the prefix of a target's update policy, e.g.
+	// "update.ngc-api": core.UpdateSetting as JSON (mode and window). It
+	// holds no state: the API computes the rows of ngc.store/updates
+	// (core.UpdateInfo, one per target and node) from releases, catalogs and
+	// the controllers' reports.
+	SettingUpdate = "update."
+	LockUpdate    = "update" // only one API drives a rollout
 )
 
 // Blob is a document.
