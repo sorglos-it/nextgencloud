@@ -14,8 +14,12 @@ bekommt, den es braucht. `sql/` enthält die nummerierten Migrationen.
 - MariaDB-Galera-Cluster mit mindestens drei Knoten einrichten: TLS zwischen den Knoten,
   eingebaute Verschlüsselung (AES-256), Konto `ngc` nur mit Lesen und Schreiben, Konto
   `ngc_migrate` für das Schema.
-- TLS zu MariaDB: eine CA je Installation. Das Zertifikat eines Knotens nennt den Host seines
-  Eintrags in `db.nodes` (`host:port`); MariaDB verlangt TLS 1.3. Das Zertifikat der CA (PEM,
+- Knotenadressen sind `<host>:<port>` nach `trust.ValidHostPort` (`shared/README.md`, Regel
+  „Adressen“), in `db.nodes` und `migrate.nodes` ebenso wie in `nodes` von `ngc-db`; die Länge
+  begrenzt `config.MaxField`. Die Skripte prüfen den Host mit `host.sh`
+  (`shared/testdata/ulh/host.sh`: DNS-Name oder IPv4).
+- TLS zu MariaDB: eine CA je Installation. Das Zertifikat eines Knotens nennt genau diesen Host
+  (bei IPv4 als IP-Adresse); MariaDB verlangt TLS 1.3. Das Zertifikat der CA (PEM,
   `config.DB.CA`, höchstens `config.MaxCA`) kommt nach `db_ca` (`ngc-api`) und `migrate_ca`
   (`ngc-controller`); API und Controller prüfen damit jeden Knoten (`config.DB.TLSConfig`), nie eine
   Verbindung ohne Prüfung. Auch die Replikation zwischen den Galera-Knoten prüft gegen dieselbe CA
