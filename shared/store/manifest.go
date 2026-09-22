@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -194,17 +193,10 @@ func validNeeds(needs []string) bool {
 // ValidText reports whether s is 1 to max bytes of printable UTF-8: every
 // rune unicode.IsPrint (letters, marks, numbers, punctuation, symbols and the
 // ASCII space). Names, titles and messages meant for people use it.
-func ValidText(s string, max int) bool {
-	if s == "" || len(s) > max || !utf8.ValidString(s) {
-		return false
-	}
-	for _, r := range s {
-		if !unicode.IsPrint(r) {
-			return false
-		}
-	}
-	return true
-}
+//
+// It is wire.ValidText: the rule has one implementation, so a name in a
+// catalog and the message of a CLOSE can never be judged differently.
+func ValidText(s string, max int) bool { return wire.ValidText(s, max) }
 
 var (
 	versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$`)
