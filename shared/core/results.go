@@ -66,10 +66,16 @@ type Me struct {
 
 // DesktopApp is an entry of the start menu (ngc.desktop/apps).
 type DesktopApp struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Version string   `json:"version"`
-	Icon    string   `json:"icon,omitempty"` // path below ui/
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Icon    string `json:"icon,omitempty"` // path below ui/
+	// Entry is the page the shell loads first, a path below ui/ as the
+	// manifest's ui.entry names it; empty for core apps and apps without a
+	// UI. Like Icon, Width and Height it comes from the API unsigned: it only
+	// picks among the files of the ui-tar the UI proof covers, and the shell
+	// starts no page that is not a file of that ui-tar.
+	Entry   string   `json:"entry,omitempty"`
 	Width   int      `json:"width,omitzero"`
 	Height  int      `json:"height,omitzero"`
 	Actions []string `json:"actions,omitempty"` // actions this user may use

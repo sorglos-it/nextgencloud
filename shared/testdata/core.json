@@ -16,6 +16,7 @@
       "name": "Terminal",
       "version": "1.0.0",
       "icon": "icon.svg",
+      "entry": "index.html",
       "width": 720,
       "height": 480,
       "actions": [

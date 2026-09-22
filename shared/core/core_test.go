@@ -1119,8 +1119,9 @@ func examples(t testing.TB) map[string]any {
 	join := tunnel.JoinCode{URL: "wss://api-1.test:7443/tunnel", Key: api1.Public, TLS: api1Pin,
 		Secret: bytes.Repeat([]byte{0x5F}, tunnel.SecretSize), Anchor: anchor}
 	return map[string]any{
-		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
-		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
+		"ngc.desktop/me": Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
+		"ngc.desktop/apps": []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg",
+			Entry: "index.html", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
 		"ngc.desktop/totp-begin": TOTPBegin{Secret: "JBSWY3DPEHPK3PXP", URI: "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP&issuer=NGC"},
 		"ngc.desktop/ui-proof":   f.storeProof(t),
 		"ngc.users/list":         []UserInfo{{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, TOTP: true, LastLogin: 1790000000}},
@@ -1163,6 +1164,11 @@ func TestExamples(t *testing.T) {
 	for _, a := range examples["ngc.desktop/apps"].([]DesktopApp) {
 		if !wire.ValidName(a.Node) {
 			t.Errorf("desktop app node %q", a.Node)
+		}
+		// The shell may only start a page the UI proof covers, so the entry is
+		// a path a ui-tar can hold.
+		if a.Entry != "" && !store.ValidPath(a.Entry) {
+			t.Errorf("desktop app entry %q", a.Entry)
 		}
 	}
 	notice, err := json.Marshal(examples["notice"])
@@ -1346,9 +1352,10 @@ func TestEncodeResult(t *testing.T) {
 // and would not notice omitempty.
 func TestEncodeResultOmitsZero(t *testing.T) {
 	app := DesktopApp{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", State: AppOK}
-	sized, coreApp := app, app
+	sized, coreApp, withEntry := app, app, app
 	sized.Width, sized.Height = 720, 480
 	coreApp.Core = true
+	withEntry.Entry = "index.html"
 	user := UserInfo{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin"}
 	seen := user
 	seen.LastLogin = 1790000000
@@ -1364,6 +1371,7 @@ func TestEncodeResultOmitsZero(t *testing.T) {
 	}{
 		{app, sized, []string{"width", "height"}},
 		{app, coreApp, []string{"core"}},
+		{app, withEntry, []string{"entry"}},
 		{user, seen, []string{"lastLogin"}},
 		{source, fetched, []string{"checked"}},
 		{installed, kept, []string{"keptData"}},
