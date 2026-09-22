@@ -8,11 +8,14 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -21,6 +24,11 @@ import (
 var ctx = context.Background()
 
 // Run checks a store. open returns a fresh, empty store for every subtest.
+//
+// The subtests "concurrent once" and "concurrent lock" race goroutines
+// against the store, and a store whose check and write are two steps loses
+// only some of the races. They are reliable only under go test -race on
+// Linux; without -race such a store can pass them.
 func Run(t *testing.T, open func(t *testing.T) dbapi.Store) {
 	t.Helper()
 	tests := map[string]func(*testing.T, dbapi.Store){
@@ -396,27 +404,42 @@ func testLocks(t *testing.T, s dbapi.Store) {
 // racers is how many goroutines each race starts at once, and rounds how
 // many races a concurrency test runs, each on a fresh value or lock: a check
 // and a write that are not one step lose only a few races. More goroutines
-// per race make a lost race rarer, so the rounds are what catch it.
+// per race make a lost race rarer, so the rounds are what catch it. spinFor
+// bounds how long the racers wait for each other without yielding; starting
+// all of them took up to about 7 ms on a machine with 128 CPUs.
 const (
-	racers = 16
-	rounds = 256
+	racers  = 16
+	rounds  = 256
+	spinFor = 10 * time.Millisecond
 )
 
-// race runs f(i) for i < racers in goroutines released together, and returns
-// their results.
+// race runs f(i) for i < racers in goroutines and returns their results.
+// Each goroutine waits until all have started, so the calls begin as close
+// together as the scheduler allows; a closed channel would wake them one
+// after another. If GOMAXPROCS lets all racers run at once, they spin
+// without yielding and start together when the last one arrives; if not,
+// or after spinFor, they yield while they wait, so the others get to run.
+// They wait only for each other to start, never for a call, so a call that
+// blocks cannot hang the race.
 func race[T any](f func(i int) T) []T {
 	out := make([]T, racers)
-	start := make(chan struct{})
+	spin := runtime.GOMAXPROCS(0) >= racers
+	begin := time.Now()
+	var started atomic.Int32
 	var wg sync.WaitGroup
 	for i := range racers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			<-start
+			started.Add(1)
+			for started.Load() < racers {
+				if !spin || time.Since(begin) > spinFor {
+					runtime.Gosched()
+				}
+			}
 			out[i] = f(i)
 		}()
 	}
-	close(start)
 	wg.Wait()
 	return out
 }
