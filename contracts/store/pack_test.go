@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"encoding/json"
+	"fmt"
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
@@ -169,6 +171,86 @@ func buildTarHugeImage(t testing.TB) []byte {
 	return buf.Bytes() // deliberately no body and no Close: the header alone must be enough to reject
 }
 
+// paxRecord formats one PAX record: its length in decimal, including itself.
+func paxRecord(k, v string) string {
+	s := " " + k + "=" + v + "\n"
+	n := len(s) + 1
+	for len(strconv.Itoa(n))+len(s) != n {
+		n = len(strconv.Itoa(n)) + len(s)
+	}
+	return strconv.Itoa(n) + s
+}
+
+// rawHeader builds a USTAR header block by hand, for entries tar.Writer does
+// not write.
+func rawHeader(name string, size int64, flag byte) []byte {
+	h := make([]byte, 512)
+	copy(h[0:100], name)
+	copy(h[100:108], "0000644\x00")
+	copy(h[108:116], "0000000\x00")
+	copy(h[116:124], "0000000\x00")
+	copy(h[124:136], fmt.Sprintf("%011o\x00", size))
+	copy(h[136:148], "00000000000\x00")
+	h[156] = flag
+	copy(h[257:265], "ustar\x0000")
+	for i := 148; i < 156; i++ {
+		h[i] = ' '
+	}
+	sum := 0
+	for _, c := range h {
+		sum += int(c)
+	}
+	copy(h[148:156], fmt.Sprintf("%06o\x00 ", sum))
+	return h
+}
+
+// sparseFile is a PAX 1.0 sparse file of size bytes whose only data is data,
+// at offset 0; the rest is a hole. The header names the file as the sparse
+// record does, so a reader that ignores the GNU.sparse.* records finds
+// nothing else wrong with it.
+func sparseFile(name string, data []byte, size int64) []byte {
+	pax := paxRecord("GNU.sparse.major", "1") + paxRecord("GNU.sparse.minor", "0") +
+		paxRecord("GNU.sparse.name", name) + paxRecord("GNU.sparse.realsize", strconv.FormatInt(size, 10))
+	out := append(rawHeader("PaxHeaders/0", int64(len(pax)), tar.TypeXHeader), pad512([]byte(pax))...)
+	sparseMap := pad512([]byte("1\n0\n" + strconv.Itoa(len(data)) + "\n")) // one segment: offset 0, len(data) bytes
+	out = append(out, rawHeader(name, int64(len(sparseMap)+len(data)), tar.TypeReg)...)
+	return append(append(out, sparseMap...), pad512(slices.Clone(data))...)
+}
+
+// sparseEntry claims size bytes but carries one 512-byte block, its sparse map.
+func sparseEntry(name string, size int64) []byte { return sparseFile(name, nil, size) }
+
+// endMarker is the end of every archive: two zero blocks.
+var endMarker = make([]byte, 1024)
+
+// withoutEnd returns an archive of buildTar without its end marker, so raw
+// entries can follow.
+func withoutEnd(archive []byte) []byte { return slices.Clone(archive[:len(archive)-len(endMarker)]) }
+
+// TestSparseEntryExpands shows why Walk refuses sparse entries: archive/tar
+// alone reports sparseEntry as a regular file and hands out every byte it
+// claims, from one block of data.
+func TestSparseEntryExpands(t *testing.T) {
+	b := slices.Concat(sparseEntry("services/amd64.tar", 100<<20), endMarker)
+	tr := tar.NewReader(bytes.NewReader(b))
+	h, err := tr.Next()
+	if err != nil || h.Typeflag != tar.TypeReg || h.Name != "services/amd64.tar" || h.Size != 100<<20 {
+		t.Fatalf("%+v, %v", h, err)
+	}
+	if n, err := io.Copy(io.Discard, tr); err != nil || n != 100<<20 {
+		t.Errorf("%d bytes from an archive of %d: %v", n, len(b), err)
+	}
+	// The sparse manifest of smallBadPackages reads as the good manifest, so
+	// only the sparse rule refuses it.
+	tr = tar.NewReader(bytes.NewReader(smallBadPackages(t)["sparse manifest"]))
+	if h, err := tr.Next(); err != nil || h.Name != ManifestFile || h.Typeflag != tar.TypeReg {
+		t.Fatalf("%+v, %v", h, err)
+	}
+	if b, err := io.ReadAll(tr); err != nil || !bytes.Equal(b, manifestEntry(t).body) {
+		t.Errorf("sparse manifest reads %q, %v", b, err)
+	}
+}
+
 // smallBadPackages returns invalid packages cheap enough to build on every
 // call (including once per fuzz run), keyed by the reason Walk must reject
 // them. Each differs from a good package by exactly one thing.
@@ -202,6 +284,14 @@ func smallBadPackages(t testing.TB) map[string][]byte {
 	for name, entries := range cases {
 		out[name] = buildTar(t, entries)
 	}
+	all := withoutEnd(buildTar(t, good))
+	out["sparse image"] = slices.Concat(withoutEnd(buildTar(t, good[:4])), sparseEntry("services/amd64.tar", 100<<20), endMarker)
+	out["sparse ui file"] = slices.Concat(all, sparseEntry("ui/x.bin", 4096), endMarker)
+	// Read as a plain file, this manifest is the good one.
+	out["sparse manifest"] = slices.Concat(sparseFile(ManifestFile, good[0].body, int64(len(good[0].body))), buildTar(t, good[1:]))
+	out["directory with a size"] = slices.Concat(all, rawHeader("ui/img/", 1, tar.TypeDir), endMarker)
+	out["file where a directory entry needs a directory"] = buildTar(t, append(slices.Clone(good),
+		entry{"ui/img/icons/", nil, tar.TypeDir}, entry{"ui/img", []byte("x"), tar.TypeReg}))
 	return out
 }
 
@@ -227,6 +317,53 @@ func TestWalkRejects(t *testing.T) {
 		if err != ErrPackage {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// TestWalkBoundsManifestAllocation: a package whose manifest has more
+// elements than its budget allows costs little more than the manifest.
+func TestWalkBoundsManifestAllocation(t *testing.T) {
+	for _, m := range [][]byte{hostile(`{"actions":[`, `{}`, `]}`, MaxManifest), members(`{"ui":{`, `}}`, MaxManifest)} {
+		b := buildTar(t, []entry{{ManifestFile, m, tar.TypeReg}})
+		var err error
+		n := allocated(func() {
+			_, err = Walk(bytes.NewReader(b), func(*Manifest, PackFile, io.Reader) error { return nil })
+		})
+		t.Logf("%d bytes allocated for a manifest of %d", n, len(m))
+		if n > MaxManifest+64<<10 || err != ErrPackage {
+			t.Errorf("%d bytes allocated, %v", n, err)
+		}
+	}
+}
+
+// TestWalkMaxDirs: Walk keeps the tree of WalkUI, so MaxDirs holds for a
+// package too, "ui" and "services" counted, and deep distinct paths cost next
+// to nothing.
+func TestWalkMaxDirs(t *testing.T) {
+	walk := func(b []byte) error {
+		_, err := Walk(bytes.NewReader(b), func(*Manifest, PackFile, io.Reader) error { return nil })
+		return err
+	}
+	entries := goodEntries(t) // "ui" and "services"
+	for _, f := range deepFiles(MaxDirs - 1) {
+		entries = append(entries, entry{f.path, f.data, tar.TypeReg})
+	}
+	if err := walk(buildTar(t, entries)); err != nil {
+		t.Errorf("MaxDirs directories: %v", err)
+	}
+	if err := walk(buildTar(t, append(entries, entry{"ui/extra/f", []byte("x"), tar.TypeReg}))); err != ErrPackage {
+		t.Errorf("one directory too many: %v", err)
+	}
+	deep := goodEntries(t)
+	for i := range MaxEntries - len(deep) {
+		deep = append(deep, entry{fmt.Sprintf("ui/x%05d%s/f", i, strings.Repeat("/a", 96)), []byte("x"), tar.TypeReg})
+	}
+	b := buildTar(t, deep)
+	var err error
+	n := allocated(func() { err = walk(b) })
+	t.Logf("deep distinct paths: %d bytes, %d bytes allocated", len(b), n)
+	if err != ErrPackage || n > 1<<20 {
+		t.Errorf("deep distinct paths: %v, %d bytes allocated", err, n)
 	}
 }
 

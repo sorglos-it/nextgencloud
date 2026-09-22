@@ -1,4 +1,14 @@
 {
+  "empty": {
+    "ngc.desktop/apps": [],
+    "ngc.store/installed": [],
+    "ngc.store/sources": [],
+    "ngc.store/updates": [],
+    "ngc.users/list": [],
+    "ngc.users/log": [],
+    "ngc.users/pending": [],
+    "ngc.users/rights": []
+  },
   "ngc.desktop/apps": [
     {
       "id": "org.sorglos.terminal",
@@ -10,7 +20,8 @@
       "actions": [
         "shell"
       ],
-      "state": "ok"
+      "state": "ok",
+      "node": "ctl-1"
     }
   ],
   "ngc.desktop/me": {
@@ -78,6 +89,10 @@
     "version": "0.1.0",
     "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
   },
+  "ngc.users/join-code": {
+    "code": "ngc-join:…",
+    "expires": 1790086400
+  },
   "ngc.users/list": [
     {
       "id": "ISEhISEhISEhISEhISEhIQ",
@@ -92,6 +107,7 @@
   ],
   "ngc.users/log": [
     {
+      "id": "000102030405060708090a0b0c0d0e0f",
       "time": 1790000000,
       "user": "ISEhISEhISEhISEhISEhIQ",
       "kind": "task",

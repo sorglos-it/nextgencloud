@@ -16,22 +16,25 @@ import (
 
 // Prices, limits and update states. Times in seconds.
 const (
-	PriceBuy          = "buy"
-	PriceSubscription = "subscription"
-	PerSite           = "site"
-	PerUser           = "user"
-	PeriodMonth       = "month"
-	PeriodYear        = "year"
-	MaxPackage        = 4 << 30
-	MaxApps           = 10000
-	MaxVersions       = 100
-	MaxLicense        = 8 << 10
-	GraceDefault      = 14 * 86400
-	MaxGrace          = 90 * 86400
+	PriceBuy           = "buy"
+	PriceSubscription  = "subscription"
+	PerSite            = "site"
+	PerUser            = "user"
+	PeriodMonth        = "month"
+	PeriodYear         = "year"
+	MaxPackage         = 4 << 30
+	MaxApps            = 10000
+	MaxVersions        = 100   // per app
+	MaxCatalogVersions = 50000 // of all apps together: each costs up to about 500 bytes to decode
+	MaxLicense         = 8 << 10
+	GraceDefault       = 14 * 86400
+	MaxGrace           = 90 * 86400
 
-	ReleaseWeb        = "web"
-	ReleaseAPI        = "api" // includes ngc-store and the database migrations
-	ReleaseController = "controller"
+	// Release files name software components, the same names as update
+	// targets and tunnel.Components.
+	ReleaseWeb        = trust.AutoWeb        // "ngc-web", arch "all"
+	ReleaseAPI        = trust.AutoAPI        // "ngc-api"; includes ngc-store and the database migrations
+	ReleaseController = trust.AutoController // "ngc-controller"
 
 	ModeAuto   = "auto"   // install in the maintenance window (default); needs a standing approval
 	ModeSemi   = "semi"   // download and check in advance, install on click
@@ -46,12 +49,15 @@ const (
 	UpdateRejected   = "rejected" // signature, approval or version check failed
 )
 
+// GlobalID is the global store's ID.
+const GlobalID = trust.StoreGlobal
+
 // Catalog lists the apps of a store.
 type Catalog struct {
 	Store  string  `json:"store"`
 	Seq    uint64  `json:"seq"`
 	Issued int64   `json:"issued"`
-	Apps   []Entry `json:"apps"` // sorted by ID
+	Apps   []Entry `json:"apps,omitempty"` // sorted by ID; a store without apps leaves it out
 }
 
 // Entry is an app in a catalog.
@@ -125,7 +131,8 @@ type Release struct {
 	Files   []File `json:"files"`
 }
 
-// File is one part of NGC for one architecture ("all" for the web interface).
+// File is one software component of NGC (ReleaseWeb, ReleaseAPI,
+// ReleaseController) for one architecture ("all" for ReleaseWeb).
 type File struct {
 	Part   string    `json:"part"`
 	Arch   string    `json:"arch"`
@@ -167,8 +174,10 @@ func (c *Catalog) Validate() error {
 	if !wire.ValidName(c.Store) || c.Seq == 0 || c.Issued <= 0 || len(c.Apps) > MaxApps {
 		return ErrCatalog
 	}
+	versions := 0
 	for i, e := range c.Apps {
-		if (i > 0 && c.Apps[i-1].ID >= e.ID) || !e.valid() {
+		versions += len(e.Versions)
+		if (i > 0 && c.Apps[i-1].ID >= e.ID) || !e.valid() || versions > MaxCatalogVersions {
 			return ErrCatalog
 		}
 	}
@@ -176,7 +185,7 @@ func (c *Catalog) Validate() error {
 }
 
 func (e Entry) valid() bool {
-	if !wire.ValidAppID(e.ID) || wire.CoreApp(e.ID) || !label(e.Name, 64) || !label(e.Publisher, 64) ||
+	if !wire.ValidAppID(e.ID) || wire.CoreApp(e.ID) || !ValidText(e.Name, 64) || !ValidText(e.Publisher, 64) ||
 		len(e.Description) > 1000 || !utf8.ValidString(e.Description) || len(e.Versions) == 0 || len(e.Versions) > MaxVersions ||
 		(e.Price != nil && !e.Price.valid()) {
 		return false
@@ -199,9 +208,18 @@ func (p Price) valid() bool {
 		strings.HasPrefix(p.Shop, "https://") && validURL(p.Shop)
 }
 
+// catalogBudget bounds a catalog while it is decoded (enc.Budget). The
+// per-app limits alone would allow MaxApps*MaxVersions versions; the total
+// keeps what any catalog within it costs to decode below about 32 MiB.
+var catalogBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{
+	"apps":                    MaxApps,
+	"apps/*/versions":         MaxVersions,
+	"apps/*/versions/*/needs": maxNeeds,
+}, Totals: map[string]int{"apps/*/versions": MaxCatalogVersions}}
+
 func parseCatalog(b []byte) (*Catalog, error) {
 	var c Catalog
-	if err := enc.DecodeStrict(b, sign.MaxPayload, &c); err != nil {
+	if catalogBudget.Decode(b, &c) != nil {
 		return nil, ErrCatalog
 	}
 	if err := c.Validate(); err != nil {
@@ -256,9 +274,13 @@ func (l *License) State(now int64) LicenseState {
 	return LicenseExpired
 }
 
+// licenseBudget bounds a license while it is decoded (enc.Budget): it has no
+// array.
+var licenseBudget = enc.Budget{Size: MaxLicense}
+
 func parseLicense(b []byte) (*License, error) {
 	var l License
-	if err := enc.DecodeStrict(b, MaxLicense, &l); err != nil {
+	if licenseBudget.Decode(b, &l) != nil {
 		return nil, ErrLicense
 	}
 	if err := l.Validate(); err != nil {
@@ -283,10 +305,13 @@ func VerifyLicense(env sign.Envelope, st trust.Store, installation string, insta
 	return l, nil
 }
 
+// maxReleaseFiles is the most files a release lists.
+const maxReleaseFiles = 16
+
 // Validate checks r.
 func (r *Release) Validate() error {
 	if r.Seq == 0 || r.Issued <= 0 || !ValidVersion(r.Version) || len(r.Notes) > 10000 || !utf8.ValidString(r.Notes) ||
-		len(r.Files) == 0 || len(r.Files) > 16 {
+		len(r.Files) == 0 || len(r.Files) > maxReleaseFiles {
 		return ErrRelease
 	}
 	seen := map[string]bool{}
@@ -302,9 +327,12 @@ func (r *Release) Validate() error {
 	return nil
 }
 
+// releaseBudget bounds a release while it is decoded (enc.Budget).
+var releaseBudget = enc.Budget{Size: sign.MaxPayload, Items: map[string]int{"files": maxReleaseFiles}}
+
 func parseRelease(b []byte) (*Release, error) {
 	var r Release
-	if err := enc.DecodeStrict(b, sign.MaxPayload, &r); err != nil {
+	if releaseBudget.Decode(b, &r) != nil {
 		return nil, ErrRelease
 	}
 	if err := r.Validate(); err != nil {
@@ -336,10 +364,15 @@ func ValidTarget(t string) bool {
 		(wire.ValidAppID(t) && !wire.CoreApp(t))
 }
 
-// ParseUpdateReport decodes and checks an update report.
+// reportBudget bounds an update report while it is decoded (enc.Budget): it
+// has no array.
+var reportBudget = enc.Budget{Size: 4096}
+
+// ParseUpdateReport decodes and checks an update report. Every failure is
+// ErrUpdate.
 func ParseUpdateReport(b []byte) (UpdateReport, error) {
 	var r UpdateReport
-	if err := enc.DecodeStrict(b, 4096, &r); err != nil {
+	if reportBudget.Decode(b, &r) != nil {
 		return UpdateReport{}, ErrUpdate
 	}
 	switch r.State {
@@ -348,7 +381,7 @@ func ParseUpdateReport(b []byte) (UpdateReport, error) {
 		return UpdateReport{}, ErrUpdate
 	}
 	if !ValidTarget(r.Target) || (r.Version != "" && !ValidVersion(r.Version)) ||
-		(r.Message != "" && !label(r.Message, wire.MaxMessageText)) {
+		(r.Message != "" && !ValidText(r.Message, wire.MaxMessageText)) {
 		return UpdateReport{}, ErrUpdate
 	}
 	return r, nil

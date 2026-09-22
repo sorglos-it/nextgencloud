@@ -4,7 +4,6 @@
 package core
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -14,6 +13,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/contracts/enc"
 	"github.com/sorglos-it/nextgencloud/contracts/session"
 	"github.com/sorglos-it/nextgencloud/contracts/store"
+	"github.com/sorglos-it/nextgencloud/contracts/task"
 	"github.com/sorglos-it/nextgencloud/contracts/trust"
 	"github.com/sorglos-it/nextgencloud/contracts/wire"
 )
@@ -28,7 +28,7 @@ const (
 	ServiceController = "controller"
 
 	RightUse   = "use"
-	LocalStore = "local" // store ID of apps an admin uploaded
+	LocalStore = trust.StoreLocal // store ID of apps an admin uploaded
 )
 
 // Action names.
@@ -45,6 +45,7 @@ const (
 	ActSetRights = "set-rights"
 	ActTrust     = "trust"
 	ActPairCode  = "pair-code"
+	ActJoinCode  = "join-code"
 	ActPending   = "pending"
 	ActLog       = "log"
 
@@ -65,14 +66,34 @@ const (
 	ActInstall    = "install"
 )
 
+// What the opener of a FlowIn channel may send (Action.MaxIn).
+const (
+	MaxTrustIn   = 6 << 20  // ngc.users/api/trust: one trust.Signed as JSON
+	MaxLicenseIn = 16 << 10 // ngc.store/api/license: one signed license (sign.Envelope) as JSON
+)
+
+// maxTransferIn is what the API sends on a FlowTransfer channel: the length
+// of the header, the header, the file.
+const maxTransferIn = 4 + MaxTransferHeader + store.MaxPackage
+
 // Flow is how data moves on the channel of an action.
 type Flow string
 
 const (
-	FlowCall     Flow = "call"     // params in the OPEN, one JSON result
-	FlowIn       Flow = "in"       // the shell sends data, then one JSON result
-	FlowOut      Flow = "out"      // the API sends data instead of a JSON result
-	FlowTransfer Flow = "transfer" // API to controller: Transfer header, then the file
+	// FlowCall: params in the OPEN (core API actions) or in the task. The
+	// opener sends EOF at once. The result is all DATA up to the other side's
+	// EOF, or up to the E2E end on app channels, at most wire.MaxCallResult.
+	// Actions without a result answer {}.
+	FlowCall Flow = "call"
+	// FlowIn: the opener sends at most MaxIn bytes of DATA, then EOF; the
+	// result is as for call.
+	FlowIn Flow = "in"
+	// FlowOut: the API sends data instead of a result; for ui, a tar that
+	// passes store.WalkUI.
+	FlowOut Flow = "out"
+	// FlowTransfer: API -> controller, a Transfer header, then exactly size
+	// bytes; the result is as for call.
+	FlowTransfer Flow = "transfer"
 )
 
 // Params are the parameters of an action.
@@ -86,6 +107,7 @@ type Action struct {
 	Changes            bool
 	Flow               Flow
 	Params             func() Params // nil: the action takes no parameters
+	MaxIn              int64         // the most bytes of DATA the opener may send before its EOF; 0 for call and out
 }
 
 // newParams returns a constructor for the parameter type T.
@@ -97,37 +119,43 @@ func newParams[T any, PT interface {
 }
 
 var actions = []Action{
-	// App, Service, Name, Admin, Root, Changes, Flow, Params
-	{AppDesktop, ServiceAPI, ActMe, false, false, false, FlowCall, nil},
-	{AppDesktop, ServiceAPI, ActApps, false, false, false, FlowCall, nil},
-	{AppDesktop, ServiceAPI, ActUI, false, false, false, FlowOut, newParams[AppParams]()},
-	{AppDesktop, ServiceAPI, ActTOTPBegin, false, false, true, FlowCall, nil},
-	{AppDesktop, ServiceAPI, ActTOTPConfirm, false, false, true, FlowCall, newParams[CodeParams]()},
-	{AppDesktop, ServiceAPI, ActTOTPOff, false, false, true, FlowCall, newParams[CodeParams]()},
+	// App, Service, Name, Admin, Root, Changes, Flow, Params, MaxIn
+	{AppDesktop, ServiceAPI, ActMe, false, false, false, FlowCall, nil, 0},
+	{AppDesktop, ServiceAPI, ActApps, false, false, false, FlowCall, nil, 0},
+	{AppDesktop, ServiceAPI, ActUI, false, false, false, FlowOut, newParams[AppParams](), 0},
+	{AppDesktop, ServiceAPI, ActTOTPBegin, false, false, true, FlowCall, nil, 0},
+	{AppDesktop, ServiceAPI, ActTOTPConfirm, false, false, true, FlowCall, newParams[CodeParams](), 0},
+	{AppDesktop, ServiceAPI, ActTOTPOff, false, false, true, FlowCall, newParams[CodeParams](), 0},
 
-	{AppUsers, ServiceAPI, ActList, true, false, false, FlowCall, nil},
-	{AppUsers, ServiceAPI, ActRights, true, false, false, FlowCall, nil},
-	{AppUsers, ServiceAPI, ActSetRights, true, false, true, FlowCall, newParams[RoleRights]()},
-	{AppUsers, ServiceAPI, ActTrust, true, false, true, FlowIn, nil},
-	{AppUsers, ServiceAPI, ActPairCode, true, false, true, FlowCall, nil},
-	{AppUsers, ServiceAPI, ActPending, true, false, false, FlowCall, nil},
-	{AppUsers, ServiceAPI, ActLog, true, false, false, FlowCall, newParams[LogQuery]()},
+	{AppUsers, ServiceAPI, ActList, true, false, false, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActRights, true, false, false, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActSetRights, true, false, true, FlowCall, newParams[RoleRights](), 0},
+	{AppUsers, ServiceAPI, ActTrust, true, false, true, FlowIn, nil, MaxTrustIn},
+	{AppUsers, ServiceAPI, ActPairCode, true, false, true, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActJoinCode, true, false, true, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActPending, true, false, false, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActLog, true, false, false, FlowCall, newParams[LogQuery](), 0},
 
-	{AppStore, ServiceAPI, ActSources, true, false, false, FlowCall, nil},
-	{AppStore, ServiceAPI, ActCatalog, true, false, false, FlowCall, newParams[StoreParams]()},
-	{AppStore, ServiceAPI, ActInstalled, true, false, false, FlowCall, nil},
-	{AppStore, ServiceAPI, ActUpload, true, false, true, FlowIn, nil},
-	{AppStore, ServiceAPI, ActLicense, true, false, true, FlowIn, nil},
-	{AppStore, ServiceAPI, ActInstallKey, true, false, false, FlowCall, nil},
-	{AppStore, ServiceAPI, ActUpdates, true, false, false, FlowCall, nil},
-	{AppStore, ServiceAPI, ActSetUpdate, true, false, true, FlowCall, newParams[UpdateSetting]()},
+	// The API sends a session.TrustChain (session.ParseTrustChain); the
+	// controller answers TrustResult with its newest verified seq, or ends
+	// with E_VERIFY.
+	{AppUsers, ServiceController, ActTrust, true, false, true, FlowIn, nil, session.MaxChain},
 
-	{AppStore, ServiceController, ActActivate, true, true, true, FlowTransfer, newParams[ActivateParams]()},
-	{AppStore, ServiceController, ActDeactivate, true, true, true, FlowCall, newParams[AppParams]()},
-	{AppStore, ServiceController, ActUninstall, true, true, true, FlowCall, newParams[UninstallParams]()},
-	{AppStore, ServiceController, ActDeleteData, true, true, true, FlowCall, newParams[AppParams]()},
-	{AppStore, ServiceController, ActStage, true, false, false, FlowTransfer, newParams[StageParams]()},
-	{AppStore, ServiceController, ActInstall, true, true, true, FlowCall, newParams[InstallParams]()},
+	{AppStore, ServiceAPI, ActSources, true, false, false, FlowCall, nil, 0},
+	{AppStore, ServiceAPI, ActCatalog, true, false, false, FlowCall, newParams[StoreParams](), 0},
+	{AppStore, ServiceAPI, ActInstalled, true, false, false, FlowCall, nil, 0},
+	{AppStore, ServiceAPI, ActUpload, true, false, true, FlowIn, nil, store.MaxPackage},
+	{AppStore, ServiceAPI, ActLicense, true, false, true, FlowIn, nil, MaxLicenseIn},
+	{AppStore, ServiceAPI, ActInstallKey, true, false, false, FlowCall, nil, 0},
+	{AppStore, ServiceAPI, ActUpdates, true, false, false, FlowCall, nil, 0},
+	{AppStore, ServiceAPI, ActSetUpdate, true, false, true, FlowCall, newParams[UpdateSetting](), 0},
+
+	{AppStore, ServiceController, ActActivate, true, true, true, FlowTransfer, newParams[ActivateParams](), maxTransferIn},
+	{AppStore, ServiceController, ActDeactivate, true, true, true, FlowCall, newParams[AppParams](), 0},
+	{AppStore, ServiceController, ActUninstall, true, true, true, FlowCall, newParams[UninstallParams](), 0},
+	{AppStore, ServiceController, ActDeleteData, true, true, true, FlowCall, newParams[AppParams](), 0},
+	{AppStore, ServiceController, ActStage, true, false, false, FlowTransfer, newParams[StageParams](), maxTransferIn},
+	{AppStore, ServiceController, ActInstall, true, true, true, FlowCall, newParams[InstallParams](), 0},
 }
 
 // All returns every core action.
@@ -143,28 +171,101 @@ func Lookup(app, service, name string) (Action, bool) {
 	return Action{}, false
 }
 
+// WithoutUser reports whether the API may open a channel for action a without
+// a user (tunnel.Open without client certificate): ngc.users/controller/trust
+// (the versions carry their own signatures), ngc.store/controller/stage
+// (nothing is installed) and ngc.store/controller/install (see Unattended).
+func WithoutUser(a Action) bool {
+	if a.Service != ServiceController {
+		return false
+	}
+	return (a.App == AppUsers && a.Name == ActTrust) || (a.App == AppStore && (a.Name == ActStage || a.Name == ActInstall))
+}
+
+// Unattended reports whether an install without a user may run: a standing
+// approval in l covers p.Target for signer (the key that signed the staged
+// file's release or catalog; nil for trust.AutoSystem), and p.Version is
+// newer than installed (not checked for trust.AutoSystem; "" never is older).
+// Nothing but the signed files counts: the controller takes Version and
+// SHA256 from the staged file's verified release or catalog entry, whose seq
+// it has checked against the newest it saw, and refuses params that differ.
+// The params of a channel without a user are not signed.
+func Unattended(p *InstallParams, l *trust.List, signer []byte, installed string) bool {
+	if p == nil || l == nil || p.Validate() != nil || !store.Approved(l, p.Target, signer) {
+		return false
+	}
+	return p.Target == trust.AutoSystem || store.Newer(p.Version, installed)
+}
+
+// RuleFor returns the task.Rule of a core action: Root and Changes from the
+// table; Critical parses params with ParseParams (an error for invalid ones)
+// and asks Critical. With nil params (no task came, or the task has none) it
+// answers Critical(a, nil), except for activate and uninstall, whose params
+// decide: there nil params are an error (task.Rule). Both are root tasks, so
+// Check never asks them without a task. The executor parses the task's
+// params again and refuses invalid ones.
+func RuleFor(a Action) task.Rule {
+	return task.Rule{Root: a.Root, Changes: a.Changes, Critical: func(params json.RawMessage) (bool, error) {
+		if params == nil {
+			if paramsDecide(a) {
+				return false, ErrParams
+			}
+			return Critical(a, nil), nil
+		}
+		p, err := ParseParams(a, params)
+		if err != nil {
+			return false, err
+		}
+		return Critical(a, p), nil
+	}}
+}
+
 var (
 	ErrParams   = errors.New("core: invalid parameters")
 	ErrTransfer = errors.New("core: invalid transfer")
 )
 
+// Limits of the parameters that Validate checks besides wire.MaxParams.
+const (
+	maxRights = 1000 // RoleRights.Rights
+	maxGrants = 2    // ActivateParams.Grants: store.NeedRoot and store.NeedNetwork, each at most once
+)
+
+// paramsBudget bounds the params of every action while they are decoded
+// (enc.Budget): only RoleRights and ActivateParams have an array.
+var paramsBudget = enc.Budget{Size: wire.MaxParams, Items: map[string]int{"rights": maxRights, "grants": maxGrants}}
+
 // ParseParams decodes the parameters of an action strictly. Actions without
-// parameters accept nothing but an empty value or {}.
+// parameters accept nothing but an empty value or an empty object. Every
+// failure is ErrParams.
 func ParseParams(a Action, raw json.RawMessage) (Params, error) {
 	if a.Params == nil {
-		if t := bytes.TrimSpace(raw); len(t) != 0 && string(t) != "{}" {
+		var none struct{}
+		if len(raw) != 0 && paramsBudget.Decode(raw, &none) != nil {
 			return nil, ErrParams
 		}
 		return nil, nil
 	}
 	v := a.Params()
-	if err := enc.DecodeStrict(raw, wire.MaxParams, v); err != nil {
+	if paramsBudget.Decode(raw, v) != nil {
 		return nil, ErrParams
 	}
 	if err := v.Validate(); err != nil {
 		return nil, err
 	}
 	return v, nil
+}
+
+// paramsDecide reports whether the params of a decide whether it is critical.
+func paramsDecide(a Action) bool {
+	if a.Params == nil {
+		return false
+	}
+	switch a.Params().(type) {
+	case *ActivateParams, *UninstallParams:
+		return true
+	}
+	return false
 }
 
 // Critical reports whether an action needs re-confirmation at level
@@ -209,29 +310,35 @@ type StoreParams struct {
 
 func (p *StoreParams) Validate() error { return check(wire.ValidName(p.Store)) }
 
-// RoleRights are the rights of a role on apps (params of set-rights, result of rights).
+// RoleRights are the rights of a role on apps (params of set-rights, result
+// of rights). A role without rights leaves Rights out.
 type RoleRights struct {
 	Role   string   `json:"role"`
-	Rights []string `json:"rights"`
+	Rights []string `json:"rights,omitempty"`
 }
 
 func (p *RoleRights) Validate() error {
-	ok := wire.ValidName(p.Role) && len(p.Rights) <= 1000
+	ok := wire.ValidName(p.Role) && len(p.Rights) <= maxRights
 	for i, r := range p.Rights {
 		ok = ok && ValidRight(r) && !slices.Contains(p.Rights[:i], r)
 	}
 	return check(ok)
 }
 
-// LogQuery selects log entries, newest first.
+// LogQuery selects log entries: newest first, ordered by (Time, ID)
+// descending; the next page starts after the last entry: BeforeTime = its
+// Time, BeforeID = its ID. Without BeforeID a page holds only entries with
+// Time < BeforeTime; without BeforeTime it starts at the newest entry.
 type LogQuery struct {
-	Before int64  `json:"before,omitempty"` // entries older than this time
-	Limit  int    `json:"limit"`
-	User   string `json:"user,omitempty"`
+	BeforeTime int64  `json:"beforeTime,omitempty"`
+	BeforeID   string `json:"beforeId,omitempty"` // ValidLogID; only with BeforeTime
+	Limit      int    `json:"limit"`
+	User       string `json:"user,omitempty"`
 }
 
 func (p *LogQuery) Validate() error {
-	return check(p.Before >= 0 && p.Limit >= 1 && p.Limit <= 500 && (p.User == "" || trust.ValidID(p.User)))
+	return check(p.Limit >= 1 && p.Limit <= 500 && (p.User == "" || trust.ValidID(p.User)) && p.BeforeTime >= 0 &&
+		(p.BeforeID == "" || (ValidLogID(p.BeforeID) && p.BeforeTime > 0)))
 }
 
 var window = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$`)
@@ -249,7 +356,9 @@ func (p *UpdateSetting) Validate() error {
 	return check(store.ValidTarget(p.Target) && mode && (p.Window == "" || window.MatchString(p.Window)))
 }
 
-// ActivateParams is the root task that installs and starts an app on a controller.
+// ActivateParams is the root task that installs and starts an app on a
+// controller. Grants must equal the manifest's Needs as a set; the controller
+// refuses activation otherwise (E_FORBIDDEN).
 type ActivateParams struct {
 	App     string    `json:"app"`
 	Version string    `json:"version"`

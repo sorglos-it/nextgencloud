@@ -30,30 +30,43 @@ func TestManifest(t *testing.T) {
 	if err := calculator.Validate(); err != nil {
 		t.Errorf("UI-only app: %v", err)
 	}
+	both := terminalManifest()
+	both.Needs = []string{NeedRoot, NeedNetwork}
+	b, _ = json.Marshal(both)
+	if m, err := ParseManifest(b); err != nil || len(m.Needs) != 2 {
+		t.Errorf("both needs: %v", err)
+	}
 }
 
 func TestManifestRejects(t *testing.T) {
 	cases := map[string]func(m *Manifest){
-		"core app id":         func(m *Manifest) { m.ID = "ngc.store" },
-		"version":             func(m *Manifest) { m.Version = "1.0" },
-		"leading zero":        func(m *Manifest) { m.Version = "1.01.0" },
-		"path traversal":      func(m *Manifest) { m.UI.Entry = "../index.html" },
-		"absolute icon":       func(m *Manifest) { m.Icon = "/etc/passwd" },
-		"hidden file":         func(m *Manifest) { m.Icon = ".icon.svg" },
-		"unknown service":     func(m *Manifest) { m.Actions[0].Service = "mail" },
-		"stream with timeout": func(m *Manifest) { m.Actions[0].Timeout = 10 },
-		"relative command":    func(m *Manifest) { m.Services[0].Command = []string{"ngc-terminal"} },
-		"duplicate action":    func(m *Manifest) { m.Actions = append(m.Actions, m.Actions[0]) },
-		"unknown need":        func(m *Manifest) { m.Needs = []string{"host"} },
-		"lxc not yet":         func(m *Manifest) { m.Runtime = "lxc" },
-		"start is a stream":   func(m *Manifest) { m.Start = "shell" },
-		"memory":              func(m *Manifest) { m.Memory = 1 },
-		"nothing to do":       func(m *Manifest) { m.UI, m.Actions, m.Services = nil, nil, nil },
-		"ui width":            func(m *Manifest) { m.UI.Width = 100 },
-		"cpu":                 func(m *Manifest) { m.CPU = 50 },
-		"minNgc":              func(m *Manifest) { m.MinNGC = "abc" },
-		"description":         func(m *Manifest) { m.Description = strings.Repeat("a", 1001) },
-		"bare root command":   func(m *Manifest) { m.Services[0].Command = []string{"/"} },
+		"core app id":             func(m *Manifest) { m.ID = "ngc.store" },
+		"version":                 func(m *Manifest) { m.Version = "1.0" },
+		"leading zero":            func(m *Manifest) { m.Version = "1.01.0" },
+		"path traversal":          func(m *Manifest) { m.UI.Entry = "../index.html" },
+		"absolute icon":           func(m *Manifest) { m.Icon = "/etc/passwd" },
+		"hidden file":             func(m *Manifest) { m.Icon = ".icon.svg" },
+		"unknown service":         func(m *Manifest) { m.Actions[0].Service = "mail" },
+		"stream with timeout":     func(m *Manifest) { m.Actions[0].Timeout = 10 },
+		"relative command":        func(m *Manifest) { m.Services[0].Command = []string{"ngc-terminal"} },
+		"duplicate action":        func(m *Manifest) { m.Actions = append(m.Actions, m.Actions[0]) },
+		"unknown need":            func(m *Manifest) { m.Needs = []string{"host"} },
+		"lxc not yet":             func(m *Manifest) { m.Runtime = "lxc" },
+		"start is a stream":       func(m *Manifest) { m.Start = "shell" },
+		"memory":                  func(m *Manifest) { m.Memory = 1 },
+		"nothing to do":           func(m *Manifest) { m.UI, m.Actions, m.Services = nil, nil, nil },
+		"ui width":                func(m *Manifest) { m.UI.Width = 100 },
+		"cpu":                     func(m *Manifest) { m.CPU = 50 },
+		"minNgc":                  func(m *Manifest) { m.MinNGC = "abc" },
+		"description":             func(m *Manifest) { m.Description = strings.Repeat("a", 1001) },
+		"bare root command":       func(m *Manifest) { m.Services[0].Command = []string{"/"} },
+		"service without command": func(m *Manifest) { m.Services[0].Command = nil },
+		"too many arguments": func(m *Manifest) {
+			m.Services[0].Command = []string{"/bin/x"}
+			for len(m.Services[0].Command) <= maxCommand {
+				m.Services[0].Command = append(m.Services[0].Command, "a")
+			}
+		},
 		"too many actions": func(m *Manifest) {
 			m.Actions = nil
 			for i := 0; i <= MaxActions; i++ {
@@ -81,6 +94,94 @@ func TestManifestRejects(t *testing.T) {
 	b = append(b[:len(b)-1], []byte(`,"unknown":true}`)...)
 	if _, err := ParseManifest(b); err != ErrManifest {
 		t.Errorf("unknown field in an otherwise valid manifest: %v", err)
+	}
+	noCommand := terminalManifest()
+	noCommand.Services[0].Command = nil
+	b, _ = json.Marshal(noCommand)
+	if _, err := ParseManifest(b); err != ErrManifest {
+		t.Errorf("command null: %v", err)
+	}
+}
+
+func TestRuleFor(t *testing.T) {
+	root := terminalManifest()
+	root.Needs = []string{NeedNetwork, NeedRoot}
+	root.Actions = append(root.Actions, Action{Name: "wipe", Title: "Alles löschen", Service: "terminal", Critical: true})
+	r, err := RuleFor(root, "shell")
+	if critical, cerr := r.Critical([]byte(`{"x":1}`)); err != nil || !r.Root || !r.Changes || critical || cerr != nil {
+		t.Errorf("needs root gives a root rule: %+v, %v, %v, %v", r, err, critical, cerr)
+	}
+	r, err = RuleFor(root, "wipe")
+	for _, params := range [][]byte{nil, []byte(`{}`), []byte(`not json`)} {
+		if critical, cerr := r.Critical(params); err != nil || !critical || cerr != nil {
+			t.Errorf("critical action with params %q: %v, %v, %v", params, err, critical, cerr)
+		}
+	}
+	if r, err := RuleFor(terminalManifest(), "shell"); err != nil || r.Root || !r.Changes {
+		t.Errorf("no root without the need: %+v, %v", r, err)
+	}
+	network := terminalManifest()
+	network.Needs = []string{NeedNetwork}
+	if r, err := RuleFor(network, "shell"); err != nil || r.Root {
+		t.Errorf("network is no root: %+v, %v", r, err)
+	}
+	if _, err := RuleFor(root, "format"); err != ErrManifest {
+		t.Errorf("unknown action: %v", err)
+	}
+	if _, err := RuleFor(nil, "shell"); err != ErrManifest {
+		t.Errorf("no manifest: %v", err)
+	}
+}
+
+// TestParseManifestBoundsAllocation feeds ParseManifest a manifest of the
+// full size with more elements than it allows, or an array or object where
+// it allows none: refusing it must allocate next to nothing.
+func TestParseManifestBoundsAllocation(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		{"actions", hostile(`{"actions":[`, `{}`, `]}`, MaxManifest)},
+		{"services", hostile(`{"services":[`, `{}`, `]}`, MaxManifest)},
+		{"command", hostile(`{"services":[{"command":[`, `""`, `]}]}`, MaxManifest)},
+		{"needs", hostile(`{"needs":[`, `""`, `]}`, MaxManifest)},
+		{"an array no member has", hostile(`{"ui":{"entry":[`, `{}`, `]}}`, MaxManifest)},
+		{"members of the ui", members(`{"ui":{`, `}}`, MaxManifest)},
+	}
+	for _, c := range cases {
+		var err error
+		n := allocated(func() { _, err = ParseManifest(c.in) })
+		t.Logf("%s: %d bytes allocated", c.name, n)
+		if n > 64<<10 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+		if err != ErrManifest {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrManifest)
+		}
+	}
+}
+
+func TestValidText(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"Terminal", true},
+		{"Befehle ausführen", true},
+		{strings.Repeat("a", 64), true},
+		{strings.Repeat("ä", 32), true},
+		{"", false},
+		{strings.Repeat("a", 65), false},
+		{strings.Repeat("ä", 32) + "a", false},
+		{"a" + "\x0ab", false},
+		{"a" + "\x07b", false},
+		{"a" + "\xc2\xa0b", false},
+		{"a" + "\xffb", false},
+	}
+	for _, c := range cases {
+		if got := ValidText(c.s, 64); got != c.want {
+			t.Errorf("%q: got %v", c.s, got)
+		}
 	}
 }
 

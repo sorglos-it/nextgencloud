@@ -5,8 +5,12 @@ package dbtest
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/contracts/core"
@@ -21,7 +25,7 @@ func Run(t *testing.T, open func(t *testing.T) dbapi.Store) {
 	tests := map[string]func(*testing.T, dbapi.Store){
 		"blobs": testBlobs, "apps": testApps, "once": testOnce, "users": testUsers,
 		"sessions": testSessions, "pending": testPending, "log": testLog, "locks": testLocks,
-		"aliasing": testAliasing,
+		"aliasing": testAliasing, "concurrent once": testConcurrentOnce, "concurrent lock": testConcurrentLock,
 	}
 	for name, fn := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -257,11 +261,23 @@ func testPending(t *testing.T, s dbapi.Store) {
 	}
 }
 
+// logID returns the log entry ID of n: 32 lower-case hex characters.
+func logID(n byte) string { return strings.Repeat(hex.EncodeToString([]byte{n}), 16) }
+
+// ids returns the IDs of entries, in order.
+func ids(entries []core.LogEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.ID
+	}
+	return out
+}
+
 func testLog(t *testing.T, s dbapi.Store) {
 	entries := []core.LogEntry{
-		{Time: 1790000001, User: "u-admin", Kind: core.LogLogin, Result: "ok"},
-		{Time: 1790000002, User: "u-alice", Kind: core.LogChannel, App: "org.sorglos.terminal", Action: "shell", Node: "ctl-1", Result: "ok"},
-		{Time: 1790000003, User: "u-admin", Kind: core.LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"},
+		{ID: logID(0x31), Time: 1790000001, User: "u-admin", Kind: core.LogLogin, Result: "ok"},
+		{ID: logID(0x32), Time: 1790000002, User: "u-alice", Kind: core.LogChannel, App: "org.sorglos.terminal", Action: "shell", Node: "ctl-1", Result: "ok", Detail: "80x24"},
+		{ID: logID(0x33), Time: 1790000003, User: "u-admin", Kind: core.LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"},
 	}
 	for _, e := range entries {
 		if err := s.LogAdd(ctx, e); err != nil {
@@ -269,23 +285,78 @@ func testLog(t *testing.T, s dbapi.Store) {
 		}
 	}
 	got, err := s.LogQuery(ctx, core.LogQuery{Limit: 10})
-	if err != nil || len(got) != 3 || got[0].Time != 1790000003 {
+	if err != nil || len(got) != 3 || got[0].Time != 1790000003 || got[1] != entries[1] {
 		t.Fatalf("newest first: %+v, %v", got, err)
 	}
 	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 2}); len(got) != 2 {
 		t.Error("limit")
 	}
-	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10, Before: 1790000003}); len(got) != 2 || got[0].Time != 1790000002 {
+	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10, BeforeTime: 1790000003}); len(got) != 2 || got[0].Time != 1790000002 {
 		t.Error("before")
 	}
 	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10, User: "u-alice"}); len(got) != 1 || got[0].App != "org.sorglos.terminal" {
 		t.Error("user")
 	}
-	if err := s.LogAdd(ctx, core.LogEntry{Time: 1790000004}); !errors.Is(err, dbapi.ErrInvalid) {
-		t.Errorf("entry without kind: %v", err)
+	for name, e := range map[string]core.LogEntry{
+		"entry without id":         {Time: 1790000004, Kind: core.LogLogin, Result: "ok"},
+		"entry with an invalid id": {ID: strings.ToUpper(logID(0x3a)), Time: 1790000004, Kind: core.LogLogin, Result: "ok"},
+		"entry without kind":       {ID: logID(0x34), Time: 1790000004},
+		"entry without time":       {ID: logID(0x35), Kind: core.LogLogin, Result: "ok"},
+	} {
+		if err := s.LogAdd(ctx, e); !errors.Is(err, dbapi.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
-	if _, err := s.LogQuery(ctx, core.LogQuery{}); !errors.Is(err, dbapi.ErrInvalid) {
-		t.Errorf("query without limit: %v", err)
+	if err := s.LogAdd(ctx, core.LogEntry{ID: logID(0x31), Time: 1790000009, Kind: core.LogLogin, Result: "ok"}); !errors.Is(err, dbapi.ErrUsed) {
+		t.Errorf("id twice: %v", err)
+	}
+	if got, _ := s.LogQuery(ctx, core.LogQuery{Limit: 10}); len(got) != 3 {
+		t.Errorf("refused entries were kept: %+v", got)
+	}
+	for name, q := range map[string]core.LogQuery{
+		"query without limit":       {},
+		"cursor id without time":    {Limit: 10, BeforeID: logID(0x33)},
+		"cursor with an invalid id": {Limit: 10, BeforeTime: 1790000003, BeforeID: "33"},
+		"cursor time below 0":       {Limit: 10, BeforeTime: -1},
+	} {
+		if _, err := s.LogQuery(ctx, q); !errors.Is(err, dbapi.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// Five entries in the same second, added out of ID order.
+	const second = 1790000010
+	for _, n := range []byte{0xc3, 0x0a, 0xf1, 0x5e, 0x7b} {
+		if err := s.LogAdd(ctx, core.LogEntry{ID: logID(n), Time: second, User: "u-bob", Kind: core.LogChannel, Result: "ok"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Paging with Limit 2 returns all five exactly once, in ID-descending order.
+	var paged []string
+	q := core.LogQuery{Limit: 2, User: "u-bob"}
+	for range 5 {
+		page, err := s.LogQuery(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		paged = append(paged, ids(page)...)
+		q.BeforeTime, q.BeforeID = page[len(page)-1].Time, page[len(page)-1].ID
+	}
+	if want := []string{logID(0xf1), logID(0xc3), logID(0x7b), logID(0x5e), logID(0x0a)}; !slices.Equal(paged, want) {
+		t.Errorf("five entries in the same second: paged %v, want %v", paged, want)
+	}
+	// A cursor inside a second: the rest of that second, then older seconds.
+	got, err = s.LogQuery(ctx, core.LogQuery{Limit: 10, BeforeTime: second, BeforeID: logID(0x7b)})
+	if want := []string{logID(0x5e), logID(0x0a), logID(0x33), logID(0x32), logID(0x31)}; err != nil || !slices.Equal(ids(got), want) {
+		t.Errorf("cursor inside a second: %v, %v; want %v", ids(got), err, want)
+	}
+	// A cursor time without ID leaves out its whole second.
+	got, err = s.LogQuery(ctx, core.LogQuery{Limit: 10, BeforeTime: second})
+	if want := []string{logID(0x33), logID(0x32), logID(0x31)}; err != nil || !slices.Equal(ids(got), want) {
+		t.Errorf("cursor time without id: %v, %v; want %v", ids(got), err, want)
 	}
 }
 
@@ -318,6 +389,88 @@ func testLocks(t *testing.T, s dbapi.Store) {
 	}
 	if _, err := s.LockTake(ctx, dbapi.LockUpdate, "api-1", now, now); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("lock without time: %v", err)
+	}
+}
+
+// racers is how many goroutines each race starts at once, and rounds how
+// many races a concurrency test runs, each on a fresh value or lock: a check
+// and a write that are not one step lose only a few races. More goroutines
+// per race make a lost race rarer, so the rounds are what catch it.
+const (
+	racers = 16
+	rounds = 256
+)
+
+// race runs f(i) for i < racers in goroutines released together, and returns
+// their results.
+func race[T any](f func(i int) T) []T {
+	out := make([]T, racers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			out[i] = f(i)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return out
+}
+
+// testConcurrentOnce: of concurrent OnceCreate calls for the same kind and
+// value, exactly one succeeds and every other one gives ErrUsed.
+func testConcurrentOnce(t *testing.T, s dbapi.Store) {
+	for round := range rounds {
+		value := append(bytes.Repeat([]byte{0x5a}, 30), byte(round>>8), byte(round))
+		errs := race(func(i int) error {
+			return s.OnceCreate(ctx, dbapi.OnceTask, value, strconv.Itoa(i), 1790000100)
+		})
+		ok, used := 0, 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				ok++
+			case errors.Is(err, dbapi.ErrUsed):
+				used++
+			default:
+				t.Errorf("round %d, OnceCreate: %v", round, err)
+			}
+		}
+		if ok != 1 || used != racers-1 {
+			t.Fatalf("round %d: %d created, %d used, want 1 and %d", round, ok, used, racers-1)
+		}
+	}
+}
+
+// testConcurrentLock: of concurrent LockTake calls of different owners for a
+// free lock, exactly one gets it.
+func testConcurrentLock(t *testing.T, s dbapi.Store) {
+	const now = 1790000000
+	type result struct {
+		ok  bool
+		err error
+	}
+	for round := range rounds {
+		name := dbapi.LockUpdate + "-" + strconv.Itoa(round)
+		results := race(func(i int) result {
+			ok, err := s.LockTake(ctx, name, "owner-"+strconv.Itoa(i), now, now+60)
+			return result{ok, err}
+		})
+		taken := 0
+		for _, r := range results {
+			if r.err != nil {
+				t.Errorf("round %d, LockTake: %v", round, r.err)
+			}
+			if r.ok {
+				taken++
+			}
+		}
+		if taken != 1 {
+			t.Fatalf("round %d: %d owners took the lock, want 1", round, taken)
+		}
 	}
 }
 

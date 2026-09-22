@@ -40,8 +40,11 @@ const (
 // Call describes one run of a service program.
 type Call struct {
 	User, UserName, App, Service, Action, Version string
-	Params                                        json.RawMessage
-	Start                                         bool
+	// Params are the task's params when a task came, else the OPEN's params.
+	// On end-to-end channels noisep.E2EPrologue binds the OPEN's params
+	// member, or with a task the task's bytes, which carry its params.
+	Params json.RawMessage
+	Start  bool
 }
 
 // ErrCall reports a call the controller must not start.
@@ -77,7 +80,8 @@ func (c Call) Env() []string {
 	if c.Start {
 		start = "1"
 	}
-	// Compact JSON has no line breaks and is canonical, keeping the log to one line per variable.
+	// Compact JSON: one line without insignificant whitespace, as the service
+	// reads it. The controller never logs NGC_PARAMS: params can carry user data.
 	var paramsBuf bytes.Buffer
 	params := ""
 	if err := json.Compact(&paramsBuf, c.Params); err == nil {
