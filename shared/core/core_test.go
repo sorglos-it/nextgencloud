@@ -1104,7 +1104,7 @@ func examples(t testing.TB) map[string]any {
 			TLS: apiPin, URL: "wss://api-2.test:7443/tunnel", Since: 1790000000}},
 		"ngc.users/log":         []LogEntry{{ID: "000102030405060708090a0b0c0d0e0f", Time: 1790000000, User: "ISEhISEhISEhISEhISEhIQ", Kind: LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"}},
 		"ngc.store/sources":     []SourceInfo{{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5, Checked: 1790000000}},
-		"ngc.store/catalog":     CatalogResult{Catalog: sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{7}, 64)}},
+		"ngc.store/catalog":     CatalogResult{Catalog: *f.catalog(t, uiCatalog(), f.global)},
 		"ngc.store/installed":   []InstalledApp{{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1", Active: true, State: AppOK, License: LicenseValid}},
 		"ngc.store/upload":      UploadResult{ID: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{5}, 32), UI: uiNotes},
 		"ngc.store/license":     LicenseResult{App: "org.sorglos.terminal", State: LicenseValid},
@@ -1158,6 +1158,46 @@ func TestExamples(t *testing.T) {
 	}
 	if err != nil {
 		t.Errorf("join code: %v", err)
+	}
+	// The catalog is real: its envelope has the strict form, and the global
+	// store of that version signed it.
+	cat, err := json.Marshal(examples["ngc.store/catalog"].(CatalogResult).Catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := sign.ParseEnvelope(cat, sign.MaxPayload)
+	if err == nil {
+		err = trust.ErrInvalid // no global store in the list
+		for _, st := range g.List.Stores {
+			if st.ID == trust.StoreGlobal {
+				_, err = store.VerifyCatalog(env, st, 0)
+			}
+		}
+	}
+	if err != nil {
+		t.Errorf("catalog: %v", err)
+	}
+	// Every example reads back as the shell reads a result: strict JSON
+	// through a budget, which knows the lists, and then the same encoding.
+	lists := enc.Budget{Size: wire.MaxCallResult, Items: map[string]int{"": 64, "*/roles": trust.MaxRoles, "*/actions": 64, "*/rights": maxRights}}
+	objects := enc.Budget{Size: wire.MaxCallResult, Items: map[string]int{"roles": trust.MaxRoles}}
+	for name, v := range examples {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		budget := objects
+		if reflect.TypeOf(v).Kind() == reflect.Slice {
+			budget = lists
+		}
+		back := reflect.New(reflect.TypeOf(v))
+		if err := budget.Decode(b, back.Interface()); err != nil {
+			t.Errorf("%s does not read back: %v", name, err)
+			continue
+		}
+		if again, err := json.Marshal(back.Elem().Interface()); err != nil || !bytes.Equal(again, b) {
+			t.Errorf("%s reads back as %s, %v", name, again, err)
+		}
 	}
 	// A pending API server becomes an API node with exactly its values and
 	// Name = Node.
