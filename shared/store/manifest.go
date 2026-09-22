@@ -49,7 +49,12 @@ type Manifest struct {
 	Needs       []string  `json:"needs,omitempty"`   // NeedRoot, NeedNetwork; the admin must allow them
 	CPU         int       `json:"cpu,omitempty"`     // thousandths of a core, default DefaultCPU
 	Memory      int       `json:"memory,omitempty"`  // MiB, default DefaultMemory
-	MinNGC      string    `json:"minNgc,omitempty"`
+	// MinNGC is the oldest NGC version the app needs. A manifest field that
+	// NGC version X introduces may appear only in packages whose minNgc (in
+	// the manifest and in the catalog entry) is at least X: an older NGC never
+	// offers such a version, because it could not read the manifest (strict
+	// JSON).
+	MinNGC string `json:"minNgc,omitempty"`
 }
 
 // UI is the browser part of the app.

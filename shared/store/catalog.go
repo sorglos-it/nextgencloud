@@ -83,7 +83,12 @@ type Package struct {
 	UI        enc.Bytes `json:"ui"`
 	Encrypted bool      `json:"encrypted,omitempty"` // paid apps (Task 15)
 	Needs     []string  `json:"needs,omitempty"`     // as in the manifest, shown before download
-	MinNGC    string    `json:"minNgc,omitempty"`
+	// MinNGC is the oldest NGC version the app needs, as in the manifest. A
+	// manifest field that NGC version X introduces may appear only in packages
+	// whose minNgc (in the manifest and in the catalog entry) is at least X:
+	// an older NGC never offers such a version, because it could not read the
+	// manifest (strict JSON).
+	MinNGC string `json:"minNgc,omitempty"`
 }
 
 // Price of a paid app. Payment happens on the store's shop page, never in NGC.
