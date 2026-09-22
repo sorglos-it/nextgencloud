@@ -156,7 +156,7 @@ gh api licenses/agpl-3.0 --jq .body > LICENSE
 ```
 MIT License
 
-Copyright (c) 2026 Thomas Weirich (Sorglos)
+Copyright (c) 2026 Sorglos Thomas Weirich
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
