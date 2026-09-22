@@ -174,7 +174,8 @@ dasselbe für die Datenbank.
 
 - In der PHP-Konfiguration des Webinterface steht die Liste der API-Server mit Hostname, Port
   und TLS-Fingerabdruck. Daraus richtet der Controller auf dem Webserver die Lastverteilung in Apache ein
-  (`mod_proxy_balancer`). Ändert sich die Liste, stellt er Apache selbst um.
+  (`mod_proxy_balancer`) in einer eigenen Datei (`config.BalancerFile`), die vor seiner Kopplung
+  ngc-web schreibt. Ändert sich die Liste, stellt er Apache selbst um.
 - Apache prüft laufend, welche APIs antworten, und schickt jede neue Verbindung an eine davon.
   Fällt eine API aus, verbindet sich der Browser neu und landet bei einer anderen. Weil die
   Sitzungen in der Datenbank liegen, geht es ohne neue Anmeldung weiter.
@@ -246,6 +247,8 @@ im Container der App.
   stderr landet im Log. Exit-Code 0 heißt Erfolg.
 - Wer fragt, steht in den Umgebungsvariablen `NGC_USER`, `NGC_APP` und `NGC_ACTION`.
 - Das beherrscht jede Programmiersprache, auch ein Bash-Skript.
+- Verlangt ein Update mehr Rechte, spielt der Controller es nicht ein; der Admin aktiviert dann
+  die neue Version mit den neuen Rechten.
 - Jeder Container läuft unter dem eigenen Systembenutzer seiner App. Root-Rechte, das Netz des
   Servers oder andere Sonderrechte bekommt ein Dienst nur, wenn die App das im Manifest angibt
   und der Admin es beim Aktivieren erlaubt. Er erlaubt immer alles, was das Manifest verlangt,
@@ -345,7 +348,9 @@ Installation öffnen, für die sie gekauft wurde:
    Controller weiter. Erst dort werden die Container-Images der
    Dienste entschlüsselt und geladen. Die Oberfläche entschlüsselt die API für den Browser.
 4. Läuft ein Abo aus, gibt die API den Schlüssel nicht mehr heraus. Nach der Übergangsfrist
-   starten die Controller den Dienst nicht mehr.
+   starten die Controller den Dienst nicht mehr. Erneuerte Lizenzen bringt die API den
+   Controllern über `ngc.store/controller/license`; Unterschrift, Installation und App prüfen die
+   Controller selbst, den Schlüssel der Installation nur die API.
 
 Grenzen:
 
@@ -415,8 +420,9 @@ geht.
 
 **Ersteinrichtung.** Das ulh-Skript der API zeigt am Ende einen Einmal-Code an. Nur mit diesem
 Code lässt sich das erste Admin-Konto anlegen. So kann niemand im Netz eine frisch
-installierte Instanz übernehmen. Der Code geht nie über die Leitung: Browser und API weisen sich
-mit ihm gegenseitig aus (MAC über das Angebot der API und über Fassung 1).
+installierte Instanz übernehmen, der nur mithört oder sich zwischen Browser und API schaltet
+(Grenze siehe unten). Der Code geht nie über die Leitung: Browser und API weisen sich mit ihm
+gegenseitig aus (MAC über das Angebot der API und über Fassung 1).
 
 **Anmeldung in zwei Stufen** (am 19.09.2026 abgestimmt).
 
@@ -649,6 +655,10 @@ in der App Benutzer & Rechte.
   kann ihr daher eine ältere, aber signierte Oberfläche zeigen, nie eine, die niemand für diese
   App signiert hat. Eine Sperre gegen ältere Versionen in der Shell gibt es nicht, weil der
   Controller ein fehlgeschlagenes Update selbst auf die vorige Version zurücksetzt.
+- Beim ersten Aufruf mit einem nicht vertrauenswürdigen Zertifikat kann ein Angreifer im selben
+  Netz dem Browser eine eigene Shell ausliefern. Gegen sie helfen die MACs der Ersteinrichtung
+  nicht, denn sie liest den Einmal-Code beim Tippen mit. Die Ersteinrichtung macht man deshalb in
+  einem Netz, dem man traut, oder gleich mit einem vertrauenswürdigen Zertifikat.
 - Mit Passwort-Anmeldung ohne vertrauenswürdiges Zertifikat warnt der Browser beim ersten
   Aufruf, und ein Angreifer im selben Netz könnte sich dazwischenschalten. Ein Passwort lässt
   sich außerdem leichter erraten oder abgreifen als ein Stick. Deshalb der dauerhafte Hinweis
@@ -751,7 +761,9 @@ in der App Benutzer & Rechte.
 - Ein Gesamttest startet API, Controller und einen Test-Dienst und spielt das Erfolgskriterium
   durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder
   eingespielte alte Nachrichten, eine gekaufte App, die eine fremde Installation öffnen will, eine
-  untergeschobene Oberfläche und ein Mann in der Mitte bei der Ersteinrichtung.
+  untergeschobene Oberfläche, ein Mann in der Mitte zwischen Apache und API bei der
+  Ersteinrichtung (fremdes Angebot, fremde Fassung 1) und ein Update, das mehr Rechte verlangt, als
+  die App beim Aktivieren bekam.
 - Der Gesamttest läuft einmal verteilt auf sieben Servern und einmal komplett auf einem Pi.
 - Ausfall: Eine API und ein Datenbankknoten werden im laufenden Betrieb abgeschaltet.
 - Deinstallieren: Mit „Daten aufheben" und späterer Neuinstallation sind die Daten wieder da,
@@ -861,6 +873,8 @@ dürfen selbst installiert werden." Die Freigabe liegt beim Controller. Er insta
 Updates, die mit genau diesem Schlüssel signiert und neuer als die installierte Version sind.
 Die API allein kann also weiterhin nichts unterschieben. Bei der Ersteinrichtung unterschreibt
 der erste Admin diese Freigaben für NGC selbst, deshalb ist „automatisch" von Anfang an aktiv.
+Neue Rechte deckt die Freigabe nicht: Verlangt eine neue Version mehr (`needs`), spielt der
+Controller sie weder automatisch noch per Klick ein; der Admin aktiviert sie neu.
 
 **Sicher zurück.** Bei jedem Update bleibt die vorige Version erhalten. Startet der
 aktualisierte Teil nicht sauber, stellt der Controller selbst die alte Version wieder her. Eine
@@ -1015,6 +1029,15 @@ Sperre in der Datenbank.
 | 22.09.2026 | Welche signierte Version einer Oberfläche die Shell ausführt, entscheidet die API; eine unsignierte kann sie nicht unterschieben. Eine Sperre gegen ältere Versionen in der Shell ist verworfen: Sie würde die Version aussperren, auf die der Controller nach einem fehlgeschlagenen Update zurücksetzt. |
 | 22.09.2026 | Updates: Gespeichert wird je Ziel nur die Einstellung (`update.<ziel>`: Modus und Zeitfenster); den Stand je Server rechnet die API aus Releases, Katalogen und den Meldungen der Controller aus. |
 | 22.09.2026 | Das TLS-Zertifikat einer API ist selbst signiert und 100 Jahre gültig; es trägt kein Vertrauen, das trägt der gepinnte Schlüssel. Erneuert wird es nur mit demselben Schlüssel, ein neuer Schlüssel kommt nur mit neuem Fingerabdruck in der Vertrauensliste. Der Controller mit Rolle `web` vergleicht bei jedem Tunnelaufbau und täglich das Zertifikat, das er über `tunnel.PinnedTLS` bekommt, mit dem in `config.APITrustFile`; weicht es ab (der Schlüssel passt, das prüft der Pin), schreibt er die Datei neu und lädt Apache neu. Für die Installation der API gibt es `store_key` neben `store_url`, beide vorbelegt mit dem offiziellen NGC-Store. |
+| 22.09.2026 | Nach der Prüfung von Fixplan 2: Hosts und Adressen haben eine Grammatik und genau eine Schreibweise (`trust.ValidHost`, `trust.ValidHostPort`, `trust.ValidTunnelURL`, `trust.ValidWebURL`, `trust.ValidStoreURL`): Tunnel `wss://<host>:<port>/tunnel`, hinter Apache `https://<host>:<port>` (abgeleitet mit `trust.WebURL`), Datenbankknoten `<host>:<port>`, Stores `https://<host>[:<port>][/<pfad>]`; Host als DNS-Name in Kleinbuchstaben, IPv4 oder IPv6 nach RFC 5952; alles ASCII, höchstens 256 Byte. Sie gilt in Vertrauensliste, Codes, Beitrittsanfragen, allen Konfigurationen und den ulh-Skripten (`testdata/ulh/host.sh`, dort ohne IPv6: ein IPv6-Netz erreicht man über den Hostnamen). Grund: Die Werte landen in Konfigurationen anderer Programme. API-Knoten heißen wie ihre Knoten-ID, auch in den Testdaten. |
+| 22.09.2026 | `core.DesktopApp.entry` nennt die Seite, mit der die Shell eine App-Oberfläche startet (aus `ui.entry` des Manifests). Sie ist nicht signiert und wählt nur unter den Dateien des geprüften ui-tar. |
+| 22.09.2026 | Lizenzen prüfen die Controller selbst (`store.VerifyLicenseFor`: Unterschrift des Stores der App, Installation, App, Form); nur die API prüft den Schlüssel der Installation und die Zahl der Benutzer. Erneuerte Lizenzen bringt die API ohne Benutzer über `ngc.store/controller/license`; ohne Benutzer öffnet sie damit vier Kern-Aktionen (ersetzt „nur drei“ vom 21.09.2026). Nach Ablauf plus Übergangsfrist stoppt der Controller die Dienste, startet keine, lehnt Kanäle mit `E_LICENSE` ab und meldet `unlicensed`; mit einer gültigen Lizenz startet er sie wieder. |
+| 22.09.2026 | Ein Update bekommt nie mehr Rechte als beim Aktivieren (`store.Granted` mit `dbapi.App.Grants`) und kommt nur aus dem Katalog des Stores, aus dem die App aktiviert wurde (`dbapi.App.Store`). Eine Zeile mit mehr Rechten steht auf `needsgrants` (`store.UpdateNeedsGrants`) und wird weder per Klick noch automatisch installiert; der Admin aktiviert die neue Version mit den neuen Rechten. Aktivieren einer installierten App ersetzt sie durch dieselbe oder eine neuere Version, nie eine ältere, und behält die Daten. |
+| 22.09.2026 | `minNgc` vergleicht `store.SupportsMinNGC`; eine NGC-Version, die keine Release-Version ist (etwa `0.0.0-dev`), gilt als älter als jedes `minNgc`. |
+| 22.09.2026 | `ngc.users/nodes` listet die Controller der Vertrauensliste mit Rollen, Online-Zustand, NGC-Version und Architektur aus ihrem `hello` (nicht signiert), damit der Admin das Ziel einer Aktivierung wählt; eine App mit Diensten aktiviert der Controller nur mit Rolle `services`. |
+| 22.09.2026 | Apaches Lastverteilung steht in `config.BalancerFile` (`/etc/ngc/apache-apis.conf`); sie schreiben nur ngc-web bei der Installation und danach der Controller mit Rolle `web`, beide aus `web.json`. Die Form legt der Plan des Webinterface als Vorlage in `shared/ulh.md` fest. |
+| 22.09.2026 | ngc-api zeigt beim Beitritt den Anker des Beitrittscodes wie ngc-controller beim Koppeln. Nach der Ersteinrichtung koppelt man zuerst den Controller des Webservers: Erst er schreibt `trust-anchor.json`. |
+| 22.09.2026 | Vorgabe Thomas: Die Grenze der Ersteinrichtung (Angreifer im selben Netz beim ersten Aufruf ohne vertrauenswürdiges Zertifikat) wird dokumentiert, nicht technisch erzwungen. Empfehlung im Entwurf: in einem Netz einrichten, dem man traut, oder gleich mit einem vertrauenswürdigen Zertifikat (ngc-web bietet Let's Encrypt an). |
 
 ## 7. Fremdcode-Kandidaten
 
