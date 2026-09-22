@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,19 @@ import (
 
 // ID returns a valid ID made of 16 bytes of fill.
 func ID(fill byte) string { return enc.B64.EncodeToString(bytes.Repeat([]byte{fill}, 16)) }
+
+// Host returns a valid host name of exactly n bytes (1 to 253): labels of up
+// to 62 letters a, joined by '.'. Tests build addresses at their limits with it.
+func Host(n int) string {
+	var b strings.Builder
+	for n > 63 {
+		b.WriteString(strings.Repeat("a", 62))
+		b.WriteByte('.')
+		n -= 63
+	}
+	b.WriteString(strings.Repeat("a", n))
+	return b.String()
+}
 
 // Signer holds a password key or a passkey. Keys come from a fixed seed
 // instead of Argon2id or a real authenticator so that tests stay fast; the

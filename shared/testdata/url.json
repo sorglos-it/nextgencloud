@@ -1,0 +1,493 @@
+{
+  "hosts": [
+    {
+      "name": "DNS name",
+      "value": "api-1.test",
+      "valid": true
+    },
+    {
+      "name": "single label",
+      "value": "localhost",
+      "valid": true
+    },
+    {
+      "name": "one character",
+      "value": "a",
+      "valid": true
+    },
+    {
+      "name": "digits first in a label",
+      "value": "1password.example",
+      "valid": true
+    },
+    {
+      "name": "punycode label",
+      "value": "xn--mnchen-3ya.example",
+      "valid": true
+    },
+    {
+      "name": "label of 63 characters",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.test",
+      "valid": true
+    },
+    {
+      "name": "name of 253 bytes",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.a",
+      "valid": true
+    },
+    {
+      "name": "IPv4",
+      "value": "192.0.2.1",
+      "valid": true
+    },
+    {
+      "name": "IPv6",
+      "value": "[2001:db8::1]",
+      "valid": true
+    },
+    {
+      "name": "IPv6 loopback",
+      "value": "[::1]",
+      "valid": true
+    },
+    {
+      "name": "empty",
+      "value": "",
+      "valid": false
+    },
+    {
+      "name": "upper case",
+      "value": "API-1.test",
+      "valid": false
+    },
+    {
+      "name": "label starting with a hyphen",
+      "value": "-api.test",
+      "valid": false
+    },
+    {
+      "name": "label ending with a hyphen",
+      "value": "api-.test",
+      "valid": false
+    },
+    {
+      "name": "empty label",
+      "value": "api..test",
+      "valid": false
+    },
+    {
+      "name": "trailing dot",
+      "value": "api.test.",
+      "valid": false
+    },
+    {
+      "name": "label of 64 characters",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.test",
+      "valid": false
+    },
+    {
+      "name": "name of 254 bytes",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aa",
+      "valid": false
+    },
+    {
+      "name": "underscore",
+      "value": "api_1.test",
+      "valid": false
+    },
+    {
+      "name": "last label all digits",
+      "value": "1.2.3",
+      "valid": false
+    },
+    {
+      "name": "IPv4 with a leading zero",
+      "value": "192.0.2.01",
+      "valid": false
+    },
+    {
+      "name": "IPv4 out of range",
+      "value": "256.0.0.1",
+      "valid": false
+    },
+    {
+      "name": "IPv6 without brackets",
+      "value": "2001:db8::1",
+      "valid": false
+    },
+    {
+      "name": "IPv6 in upper case",
+      "value": "[2001:DB8::1]",
+      "valid": false
+    },
+    {
+      "name": "IPv6 not compressed",
+      "value": "[2001:db8:0:0:0:0:0:1]",
+      "valid": false
+    },
+    {
+      "name": "IPv4-mapped IPv6",
+      "value": "[::ffff:192.0.2.1]",
+      "valid": false
+    },
+    {
+      "name": "IPv6 with a zone",
+      "value": "[fe80::1%eth0]",
+      "valid": false
+    },
+    {
+      "name": "IPv4 in brackets",
+      "value": "[192.0.2.1]",
+      "valid": false
+    },
+    {
+      "name": "non-ASCII",
+      "value": "münchen.example",
+      "valid": false
+    },
+    {
+      "name": "space",
+      "value": "api 1.test",
+      "valid": false
+    },
+    {
+      "name": "line feed",
+      "value": "api-1.test\n",
+      "valid": false
+    },
+    {
+      "name": "quote",
+      "value": "api\".test",
+      "valid": false
+    }
+  ],
+  "hostPort": [
+    {
+      "name": "host name",
+      "value": "db-1.ngc.test:3306",
+      "valid": true
+    },
+    {
+      "name": "IPv4",
+      "value": "192.0.2.5:3306",
+      "valid": true
+    },
+    {
+      "name": "IPv6",
+      "value": "[2001:db8::5]:3306",
+      "valid": true
+    },
+    {
+      "name": "no port",
+      "value": "db-1.ngc.test",
+      "valid": false
+    },
+    {
+      "name": "port 0",
+      "value": "db-1.ngc.test:0",
+      "valid": false
+    },
+    {
+      "name": "port 65536",
+      "value": "db-1.ngc.test:65536",
+      "valid": false
+    },
+    {
+      "name": "port with a leading zero",
+      "value": "db-1.ngc.test:03306",
+      "valid": false
+    },
+    {
+      "name": "DSN parameters",
+      "value": "db-1.ngc.test:3306)/ngc?allowAllFiles=true",
+      "valid": false
+    },
+    {
+      "name": "upper case",
+      "value": "DB-1.ngc.test:3306",
+      "valid": false
+    },
+    {
+      "name": "IPv6 without brackets",
+      "value": "2001:db8::5:3306",
+      "valid": false
+    }
+  ],
+  "tunnel": [
+    {
+      "name": "host name",
+      "value": "wss://api-1.test:7443/tunnel",
+      "valid": true,
+      "web": "https://api-1.test:7443"
+    },
+    {
+      "name": "IPv4",
+      "value": "wss://192.0.2.1:7443/tunnel",
+      "valid": true,
+      "web": "https://192.0.2.1:7443"
+    },
+    {
+      "name": "IPv6",
+      "value": "wss://[2001:db8::1]:7443/tunnel",
+      "valid": true,
+      "web": "https://[2001:db8::1]:7443"
+    },
+    {
+      "name": "port 1",
+      "value": "wss://a:1/tunnel",
+      "valid": true,
+      "web": "https://a:1"
+    },
+    {
+      "name": "port 65535",
+      "value": "wss://a:65535/tunnel",
+      "valid": true,
+      "web": "https://a:65535"
+    },
+    {
+      "name": "256 bytes",
+      "value": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:7443/tunnel",
+      "valid": true,
+      "web": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:7443"
+    },
+    {
+      "name": "empty",
+      "value": "",
+      "valid": false
+    },
+    {
+      "name": "scheme only",
+      "value": "wss://",
+      "valid": false
+    },
+    {
+      "name": "https",
+      "value": "https://api-1.test:7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "scheme in upper case",
+      "value": "WSS://api-1.test:7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "no port",
+      "value": "wss://api-1.test/tunnel",
+      "valid": false
+    },
+    {
+      "name": "port 0",
+      "value": "wss://api-1.test:0/tunnel",
+      "valid": false
+    },
+    {
+      "name": "port 65536",
+      "value": "wss://api-1.test:65536/tunnel",
+      "valid": false
+    },
+    {
+      "name": "port with a leading zero",
+      "value": "wss://api-1.test:07443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "port with a sign",
+      "value": "wss://api-1.test:+7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "no path",
+      "value": "wss://api-1.test:7443",
+      "valid": false
+    },
+    {
+      "name": "root path",
+      "value": "wss://api-1.test:7443/",
+      "valid": false
+    },
+    {
+      "name": "trailing slash",
+      "value": "wss://api-1.test:7443/tunnel/",
+      "valid": false
+    },
+    {
+      "name": "path in other case",
+      "value": "wss://api-1.test:7443/Tunnel",
+      "valid": false
+    },
+    {
+      "name": "query",
+      "value": "wss://api-1.test:7443/tunnel?x=1",
+      "valid": false
+    },
+    {
+      "name": "fragment",
+      "value": "wss://api-1.test:7443/tunnel#x",
+      "valid": false
+    },
+    {
+      "name": "user info",
+      "value": "wss://user@api-1.test:7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "host in upper case",
+      "value": "wss://API-1.test:7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "line feed and an Apache directive",
+      "value": "wss://api-1.test:7443/tunnel\nInclude /etc/shadow",
+      "valid": false
+    },
+    {
+      "name": "quote in the host",
+      "value": "wss://api\".test:7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "257 bytes",
+      "value": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:7443/tunnel",
+      "valid": false
+    }
+  ],
+  "web": [
+    {
+      "name": "host name",
+      "value": "https://api-1.test:7443",
+      "valid": true
+    },
+    {
+      "name": "IPv6",
+      "value": "https://[2001:db8::1]:443",
+      "valid": true
+    },
+    {
+      "name": "no port",
+      "value": "https://api-1.test",
+      "valid": false
+    },
+    {
+      "name": "root path",
+      "value": "https://api-1.test:7443/",
+      "valid": false
+    },
+    {
+      "name": "tunnel path",
+      "value": "https://api-1.test:7443/tunnel",
+      "valid": false
+    },
+    {
+      "name": "plain http",
+      "value": "http://api-1.test:7443",
+      "valid": false
+    },
+    {
+      "name": "line feed",
+      "value": "https://api-1.test:7443\n",
+      "valid": false
+    },
+    {
+      "name": "257 bytes",
+      "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:7443",
+      "valid": false
+    }
+  ],
+  "store": [
+    {
+      "name": "host only",
+      "value": "https://store.ngc.example",
+      "valid": true
+    },
+    {
+      "name": "port",
+      "value": "https://store.ngc.example:8443",
+      "valid": true
+    },
+    {
+      "name": "path",
+      "value": "https://example.org/ngc/store",
+      "valid": true
+    },
+    {
+      "name": "path characters",
+      "value": "https://example.org/a-b_c.d~e",
+      "valid": true
+    },
+    {
+      "name": "IPv6",
+      "value": "https://[2001:db8::1]:8443/ngc",
+      "valid": true
+    },
+    {
+      "name": "256 bytes",
+      "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": true
+    },
+    {
+      "name": "plain http",
+      "value": "http://store.ngc.example",
+      "valid": false
+    },
+    {
+      "name": "trailing slash",
+      "value": "https://store.ngc.example/",
+      "valid": false
+    },
+    {
+      "name": "empty segment",
+      "value": "https://example.org/a//b",
+      "valid": false
+    },
+    {
+      "name": "dot segment",
+      "value": "https://example.org/./a",
+      "valid": false
+    },
+    {
+      "name": "dot-dot segment",
+      "value": "https://example.org/a/../b",
+      "valid": false
+    },
+    {
+      "name": "query",
+      "value": "https://store.ngc.example?x=1",
+      "valid": false
+    },
+    {
+      "name": "fragment",
+      "value": "https://store.ngc.example#x",
+      "valid": false
+    },
+    {
+      "name": "user info",
+      "value": "https://user@store.ngc.example",
+      "valid": false
+    },
+    {
+      "name": "space in the path",
+      "value": "https://example.org/a b",
+      "valid": false
+    },
+    {
+      "name": "percent escape",
+      "value": "https://example.org/%41",
+      "valid": false
+    },
+    {
+      "name": "host in upper case",
+      "value": "https://Store.ngc.example",
+      "valid": false
+    },
+    {
+      "name": "port 0",
+      "value": "https://store.ngc.example:0",
+      "valid": false
+    },
+    {
+      "name": "257 bytes",
+      "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    }
+  ]
+}

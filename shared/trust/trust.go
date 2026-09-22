@@ -166,10 +166,6 @@ func TLSPin(spki []byte) []byte {
 	return h[:]
 }
 
-// maxURL bounds Node.URL and Store.URL, as tunnel.MaxURL bounds the URL of a
-// code.
-const maxURL = 256
-
 // ValidAPINode reports whether n is a well-formed API node: of kind api, an
 // ID (wire.ValidName), a name (wire.ValidText, 64), a 32-byte Noise key, a
 // 32-byte signing key, a wss:// URL of at most 256 bytes, a 32-byte TLS pin
