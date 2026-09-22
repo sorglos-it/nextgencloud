@@ -168,6 +168,53 @@ func TestParseEnvelopeBound(t *testing.T) {
 	}
 }
 
+// TestEnvelopeValidate: one case per rule, each valid apart from its rule,
+// for envelopes that reach Validate without ParseEnvelope, inside another
+// document.
+func TestEnvelopeValidate(t *testing.T) {
+	env, err := Sign(testKey(0), PurposeCatalog, []byte(`{"v":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := Sign(testKey(0), PurposeCatalog, make([]byte, MaxPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// with returns base changed by change, leaving base as it is.
+	with := func(base Envelope, change func(e *Envelope)) Envelope {
+		base.Payload, base.Sig = bytes.Clone(base.Payload), bytes.Clone(base.Sig)
+		change(&base)
+		return base
+	}
+	cases := []struct {
+		name       string
+		env        Envelope
+		maxPayload int
+		valid      bool
+	}{
+		{"valid", env, 7, true},
+		{"payload of MaxPayload bytes, bound above MaxPayload", full, 2 * MaxPayload, true},
+		{"payload over MaxPayload, bound above MaxPayload",
+			with(full, func(e *Envelope) { e.Payload = append(e.Payload, 0) }), 2 * MaxPayload, false},
+		{"empty payload", with(env, func(e *Envelope) { e.Payload = nil }), 7, false},
+		{"payload over maxPayload", env, 6, false},
+		{"maxPayload 0", env, 0, false},
+		{"key ID of 21 characters", with(env, func(e *Envelope) { e.KeyID = e.KeyID[1:] }), 7, false},
+		{"key ID not base64url", with(env, func(e *Envelope) { e.KeyID = strings.Repeat("+", 22) }), 7, false},
+		{"key ID with bits after its 16 bytes", with(env, func(e *Envelope) { e.KeyID = strings.Repeat("A", 21) + "B" }), 7, false},
+		{"signature of 63 bytes", with(env, func(e *Envelope) { e.Sig = e.Sig[:63] }), 7, false},
+	}
+	for _, c := range cases {
+		err := c.env.Validate(c.maxPayload)
+		if c.valid && err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if !c.valid && err != ErrEnvelope {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrEnvelope)
+		}
+	}
+}
+
 // allocated returns how many bytes f allocates.
 func allocated(f func()) uint64 {
 	var before, after runtime.MemStats
