@@ -367,6 +367,16 @@
       "valid": true
     },
     {
+      "name": "message with a character outside the BMP (U+1F600)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiRmVydGlnIPCfmIAifQ",
+      "valid": true
+    },
+    {
+      "name": "message with a combining mark (U+0308)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiS2HMiHNlIn0",
+      "valid": true
+    },
+    {
       "name": "status ok with a code",
       "payload": "eyJzdGF0dXMiOiJvayIsImNvZGUiOiJFX0VYSVQifQ",
       "valid": false
@@ -439,6 +449,41 @@
     {
       "name": "message with a line feed",
       "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGVcbnp3ZWkifQ",
+      "valid": false
+    },
+    {
+      "name": "message with a right-to-left override (U+202E, Cf)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGXigK56d2VpIn0",
+      "valid": false
+    },
+    {
+      "name": "message with emoji joined by U+200D (Cf)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoi8J-RqOKAjfCfkakifQ",
+      "valid": false
+    },
+    {
+      "name": "message with a no-break space (U+00A0, Zs)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGXCoHp3ZWkifQ",
+      "valid": false
+    },
+    {
+      "name": "message with a line separator (U+2028, Zl)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGXigKh6d2VpIn0",
+      "valid": false
+    },
+    {
+      "name": "message with a paragraph separator (U+2029, Zp)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGXigKl6d2VpIn0",
+      "valid": false
+    },
+    {
+      "name": "message with a private-use character (U+E000, Co)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGXugIB6d2VpIn0",
+      "valid": false
+    },
+    {
+      "name": "message with a noncharacter (U+FDD0, Cn)",
+      "payload": "eyJzdGF0dXMiOiJlcnJvciIsImNvZGUiOiJFX0VYSVQiLCJtZXNzYWdlIjoiWmVpbGXvt5B6d2VpIn0",
       "valid": false
     }
   ],
@@ -524,6 +569,12 @@
     {
       "name": "end from controller with a message with a control character",
       "plain": "Ansic3RhdHVzIjoiZXJyb3IiLCJjb2RlIjoiRV9FWElUIiwibWVzc2FnZSI6IlplaWxlXHUwMDA3In0",
+      "fromController": true,
+      "valid": false
+    },
+    {
+      "name": "end from controller with a message with a right-to-left override",
+      "plain": "Ansic3RhdHVzIjoiZXJyb3IiLCJjb2RlIjoiRV9FWElUIiwibWVzc2FnZSI6IlplaWxl4oCuendlaSJ9",
       "fromController": true,
       "valid": false
     }

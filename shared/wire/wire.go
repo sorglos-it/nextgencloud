@@ -278,6 +278,15 @@ func ValidName(s string) bool { return namePattern.MatchString(s) }
 // rune unicode.IsPrint (letters, marks, numbers, punctuation, symbols and
 // the ASCII space; no control characters, no line breaks). Names, titles and
 // messages meant for people use it; store.ValidText is the same rule.
+//
+// The reference tables are Go's: Unicode 17.0 with Go 1.27 (unicode.Version).
+// In JavaScript every code point (not every UTF-16 unit) must match
+// /^[\p{L}\p{M}\p{N}\p{P}\p{S} ]$/u, and the length counts UTF-8 bytes. A
+// code point the checker's tables do not know counts as not printable; the
+// noncharacter U+FDD0, which no table will ever assign, is never printable.
+// A checker with older tables therefore refuses some text that Go accepts,
+// so senders whose text others check should keep to long-assigned
+// characters.
 func ValidText(s string, max int) bool {
 	// Ranging over invalid UTF-8 yields U+FFFD, which is printable, so the
 	// encoding is checked first.
