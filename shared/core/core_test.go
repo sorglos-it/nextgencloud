@@ -695,6 +695,54 @@ func TestEncodeResult(t *testing.T) {
 	}
 }
 
+// TestEncodeResultOmitsZero: an optional number or bool of a result is left
+// out when it is 0 or false and written when it is set (rule 14 of strict
+// JSON). encoding/json/v2, which EncodeResult uses, writes 0 and false for
+// omitempty, so these fields need omitzero; the examples set most of them
+// and would not notice omitempty.
+func TestEncodeResultOmitsZero(t *testing.T) {
+	app := DesktopApp{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", State: AppOK}
+	sized, coreApp := app, app
+	sized.Width, sized.Height = 720, 480
+	coreApp.Core = true
+	user := UserInfo{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin"}
+	seen := user
+	seen.LastLogin = 1790000000
+	source := SourceInfo{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5}
+	fetched := source
+	fetched.Checked = 1790000000
+	installed := InstalledApp{ID: "org.sorglos.terminal", Store: "global", Node: "ctl-1", State: AppOK, License: LicenseNone}
+	kept := installed
+	kept.KeptData = 4096
+	cases := []struct {
+		zero, set any // the result with the fields 0 or false, and with them set
+		keys      []string
+	}{
+		{app, sized, []string{"width", "height"}},
+		{app, coreApp, []string{"core"}},
+		{user, seen, []string{"lastLogin"}},
+		{source, fetched, []string{"checked"}},
+		{installed, kept, []string{"keptData"}},
+	}
+	for _, c := range cases {
+		for _, r := range []struct {
+			v    any
+			want bool
+		}{{c.zero, false}, {c.set, true}} {
+			b, err := EncodeResult(r.v)
+			var m map[string]any
+			if err != nil || json.Unmarshal(b, &m) != nil {
+				t.Fatalf("%T: %s, %v", r.v, b, err)
+			}
+			for _, k := range c.keys {
+				if _, ok := m[k]; ok != r.want {
+					t.Errorf("%s: %s written %v, want %v", b, k, ok, r.want)
+				}
+			}
+		}
+	}
+}
+
 func FuzzParseParams(f *testing.F) {
 	f.Add([]byte(`{"app":"org.sorglos.terminal","version":"1.0.0"}`))
 	f.Add([]byte(`{"role":"user","rights":["org.sorglos.calculator/use"]}`))
