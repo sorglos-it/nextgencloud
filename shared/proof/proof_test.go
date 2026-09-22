@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"flag"
 	"math/big"
+	"slices"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -316,17 +317,39 @@ func TestProofValidate(t *testing.T) {
 
 type kdfVector struct {
 	Password string    `json:"password"`
+	Typed    string    `json:"typed,omitempty"` // what a person typed, before NFC
 	KDF      KDF       `json:"kdf"`
 	Seed     enc.Bytes `json:"seed"`
 	Public   enc.Bytes `json:"public"`
 }
 
+// The same password as two people may type it: "Käse&Brot" with the ä as
+// one code point (NFC, U+00E4) and as a and a combining diaeresis (NFD,
+// U+0308). The key comes from the NFC form only. Written as UTF-8 bytes, so
+// that no editor can normalize them.
+const (
+	kaeseNFC = "K\xc3\xa4se&Brot"
+	kaeseNFD = "Ka\xcc\x88se&Brot"
+)
+
+// TestKDFVectors writes proof_kdf.json. An entry with typed holds the NFD
+// form of its password, from which the web interface must derive the same
+// key: it checks typed.normalize("NFC") === password (Go has no NFC table).
 func TestKDFVectors(t *testing.T) {
 	var vs []kdfVector
-	for _, pw := range []string{"Heimnetz-2026", "Käse&Brot"} {
+	for _, pw := range []string{"Heimnetz-2026", kaeseNFC} {
 		priv, _ := passwordKey(t, pw)
 		vs = append(vs, kdfVector{Password: pw, KDF: testKDF(), Seed: priv.Seed(), Public: []byte(priv.Public().(ed25519.PublicKey))})
 	}
+	typed := vs[1]
+	typed.Typed = kaeseNFD
+	// Both strings hold exactly the code points they claim, and differ.
+	if typed.Typed == typed.Password ||
+		!slices.Equal([]rune(typed.Password), []rune{'K', 0xe4, 's', 'e', '&', 'B', 'r', 'o', 't'}) ||
+		!slices.Equal([]rune(typed.Typed), []rune{'K', 'a', 0x308, 's', 'e', '&', 'B', 'r', 'o', 't'}) {
+		t.Fatalf("password %q, typed %q: not the NFC and NFD forms of Käse&Brot", typed.Password, typed.Typed)
+	}
+	vs = append(vs, typed)
 	golden.Check(t, *update, "proof_kdf.json", vs)
 }
 
