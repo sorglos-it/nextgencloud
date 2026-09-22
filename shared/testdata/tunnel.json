@@ -1,5 +1,5 @@
 {
-  "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoib2FHaG9hR2hvYUdob2FHaG9hR2hvYUdob2FHaG9hR2hvYUdob2FHaG9hRSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjozLCJoYXNoIjoicTZ1cnE2dXJxNnVycTZ1cnE2dXJxNnVycTZ1cnE2dXJxNnVycTZ1cnE2cyJ9fQ",
+  "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoib2FHaG9hR2hvYUdob2FHaG9hR2hvYUdob2FHaG9hR2hvYUdob2FHaG9hRSIsInRscyI6IjRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUhoNGVIaDRlSGg0ZUUiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MywiaGFzaCI6InE2dXJxNnVycTZ1cnE2dXJxNnVycTZ1cnE2dXJxNnVycTZ1cnE2dXJxNnMifX0",
   "secret": "Xl5eXl5eXl5eXl5eXl5eXg",
   "apiKey": "oaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE",
   "controllerKey": "wcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcE",
@@ -26,58 +26,67 @@
     ],
     "cases": [
       {
-        "name": "anchor is the newest version, key and URL of api-1",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "name": "anchor is the newest version, key, URL and pin of api-1",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": true
       },
       {
-        "name": "anchor is the newest version, key and URL of api-2",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMi50ZXN0Ojc0NDMvdHVubmVsIiwia2V5IjoiUEZ4czR0Mlo0UTBzUGVCZGR6cWhYajV0bHg3VTVCT0p5VHRMdmRvWGNoSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "name": "anchor is the newest version, key, URL and pin of api-2",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMi50ZXN0Ojc0NDMvdHVubmVsIiwia2V5IjoiUEZ4czR0Mlo0UTBzUGVCZGR6cWhYajV0bHg3VTVCT0p5VHRMdmRvWGNoSSIsInRscyI6IjB5ZUJDNmk5WHpYWEpDb09Eb19RN3F4Vjc0TEtqQzFwMHJSMWNYeGtsZG8iLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": true
       },
       {
         "name": "anchor is an older version",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoxLCJoYXNoIjoieEphLXladzRFMmIxM0wtZVlxMGs0NFo1MFdOV1lKRXVZb0dMMm0yajQ4MCJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MSwiaGFzaCI6InhKYS15Wnc0RTJiMTNMLWVZcTBrNDRaNTBXTldZSkV1WW9HTDJtMmo0ODAifX0",
         "valid": false
       },
       {
         "name": "anchor names a version the shell does not know",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjozLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MywiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": false
       },
       {
         "name": "anchor hash differs",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzcyJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM3MifX0",
         "valid": false
       },
       {
         "name": "anchor with the newest hash but an older seq",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoxLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MSwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": false
       },
       {
         "name": "key of a controller",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5IjoiUWxkZFhJcVRnekpWNEo4RUJVcFBZa2JUYnRGandjZjREQl9KcFlvT2tTMCIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5IjoiUWxkZFhJcVRnekpWNEo4RUJVcFBZa2JUYnRGandjZjREQl9KcFlvT2tTMCIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": false
       },
       {
         "name": "URL of no API node",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktOS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktOS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": false
       },
       {
         "name": "key of one API node, URL of another",
-        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMi50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMi50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
+        "valid": false
+      },
+      {
+        "name": "TLS pin of another API node",
+        "code": "ngc-pair:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6IjB5ZUJDNmk5WHpYWEpDb09Eb19RN3F4Vjc0TEtqQzFwMHJSMWNYeGtsZG8iLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
         "valid": false
       }
     ]
   },
   "join": {
-    "code": "ngc-join:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInNlY3JldCI6IlhsNWVYbDVlWGw1ZVhsNWVYbDVlWGciLCJhbmNob3IiOnsic2VxIjoyLCJoYXNoIjoiMDhaRlZCYzFIczFjTDc0TFJSeERyOHZFS0p1N1p1MldjaTJKbDU1d1MzbyJ9fQ",
+    "code": "ngc-join:eyJ1cmwiOiJ3c3M6Ly9hcGktMS50ZXN0Ojc0NDMvdHVubmVsIiwia2V5Ijoid3diN0R2S19pMy1UdXRtQlZmbzMydXgwMnd4TXZ0cHNieDI2blRaVmdsSSIsInRscyI6Ikk5enVvc0FremI2MU1KT3JCRE9TMlBCT21SQl9FRXNjMHR0YnR3MHNsaFEiLCJzZWNyZXQiOiJYbDVlWGw1ZVhsNWVYbDVlWGw1ZVhnIiwiYW5jaG9yIjp7InNlcSI6MiwiaGFzaCI6IjA4WkZWQmMxSHMxY0w3NExSUnhEcjh2RUtKdTdadTJXY2kySmw1NXdTM28ifX0",
     "secret": "Xl5eXl5eXl5eXl5eXl5eXg",
     "apiKey": "wwb7DvK_i3-TutmBVfo32ux02wxMvtpsbx26nTZVglI",
     "noise": "X8L4oSRDevzufUVn_jHgLC0EKTnelvB7BuKMDEw690A",
     "sign": "rPErSswcZgqDJq7TQDnvtyil5JZIgkD1CpMqt6ulF1E",
-    "mac": "m-MJ1MIYghuuXnH5Lp91E1kAtViFmvGZcw0BMHrSlS8"
-  }
+    "tls": "_QyfTZZChW4J3_yZuEB8I-2ni2ckSRcT3btNUVOBuzA",
+    "url": "wss://api-3.test:7443/tunnel",
+    "mac": "Gsdpc0n-zj90kOH9CseNDPvUwngeH5TVJx4XnFa7UK0",
+    "fingerprint": "gAgJhg9aZ3BSrLpybtYrXA"
+  },
+  "tlsPin": "I9zuosAkzb61MJOrBDOS2PBOmRB_EEsc0ttbtw0slhQ"
 }
