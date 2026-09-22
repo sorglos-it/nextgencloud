@@ -19,12 +19,14 @@ const (
 	BlobRights   = "rights"   // ID: role, Data: core.RoleRights as JSON
 	BlobUI       = "ui"       // ID: "<app>@<version>", Data: the canonical ui-tar of the plain package (store.PackageUI)
 	BlobApproval = "approval" // ID: "<app>@<version>", Data: core.UIProof as JSON (the evidence the version was installed with)
+	BlobJoin     = "join"     // ID: node ID, Data: tunnel.JoinRequest as JSON (an API server waiting to be listed)
 )
 
 // Kinds of one-time values.
 const (
 	OnceNonce = "nonce" // login challenge; Data: user ID
 	OncePair  = "pair"  // SHA-256 of a pairing secret
+	OnceJoin  = "join"  // SHA-256 of a join secret
 	OnceTask  = "task"  // ID of a signed task, against replay
 )
 

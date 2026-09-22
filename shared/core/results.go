@@ -103,12 +103,27 @@ type PairCodeResult struct {
 	Expires int64  `json:"expires"`
 }
 
-// Pending is a controller that paired but is not in the trust list yet.
+// Pending is a controller that paired but is not in the trust list yet. The
+// admin compares tunnel.Fingerprint(Key), which the shell computes itself,
+// with the output of the ulh script.
 type Pending struct {
-	Name        string    `json:"name"`
-	Key         enc.Bytes `json:"key"`
-	Fingerprint string    `json:"fingerprint"` // the admin compares it with the output of the ulh script
-	Since       int64     `json:"since"`
+	Name  string    `json:"name"`
+	Key   enc.Bytes `json:"key"`
+	Since int64     `json:"since"`
+}
+
+// PendingAPI is an API server that asked to join (tunnel.JoinRequest) but is
+// not in the trust list yet (ngc.users/pending-api). The shell adds it as a
+// trust.Node of kind api with exactly these values and Name = Node, once the
+// admin compared tunnel.JoinFingerprint of them, which the shell computes
+// itself, with the output of the new server's ulh script.
+type PendingAPI struct {
+	Node  string    `json:"node"`
+	Noise enc.Bytes `json:"noise"`
+	Sign  enc.Bytes `json:"sign"`
+	TLS   enc.Bytes `json:"tls"`
+	URL   string    `json:"url"`
+	Since int64     `json:"since"`
 }
 
 // LogEntry is a row of ngc.users/log.
@@ -184,14 +199,32 @@ type InstallKey struct {
 	Key          enc.Bytes `json:"key"` // X25519
 }
 
-// UpdateInfo is a row of ngc.store/updates.
+// UpdateInfo is a row of ngc.store/updates: one target on one controller (an
+// NGC part on every node whose tunnel.Components hold it, an app on the node
+// it runs on, system on every node).
 type UpdateInfo struct {
 	Target    string `json:"target"`
+	Node      string `json:"node"`
 	Installed string `json:"installed,omitempty"`
+	// Available is the newest version of Target the API offers for Node. It
+	// is never an app version whose minNgc (store.Package.MinNGC) is newer
+	// than the NGC version of Node (tunnel.Hello.Version): the API does not
+	// offer such a version, and the controller does not install it.
 	Available string `json:"available,omitempty"`
-	Mode      string `json:"mode"`
-	Window    string `json:"window,omitempty"`
-	State     string `json:"state,omitempty"` // store.Update… of the newest report
+	// SHA256 is the checksum of the file staged on Node for Available once State
+	// is store.UpdateDownloaded; an update by click signs it into InstallParams.
+	// The controller checks the staged file against the release or catalog entry
+	// it verified when staging, so this value only has to match.
+	SHA256 enc.Bytes `json:"sha256,omitempty"`
+	// Key is what a standing approval for an NGC part names (trust.Auto.Key):
+	// the NGC release key the API is configured with. Controllers verify
+	// releases only with their own release key, so a wrong Key can only keep
+	// updates from installing on their own. Empty for apps (the shell takes the
+	// store's key from the trust list) and for system.
+	Key    enc.Bytes `json:"key,omitempty"`
+	Mode   string    `json:"mode"`
+	Window string    `json:"window,omitempty"`
+	State  string    `json:"state,omitempty"` // store.Update… of the newest report
 }
 
 // TrustResult answers ngc.users/trust, and ngc.users/controller/trust with
@@ -206,9 +239,9 @@ var ErrResult = errors.New("core: result the shell would refuse")
 // EncodeResult encodes the result of a core action as the API sends it.
 // encoding/json writes a nil slice as null, which the shell refuses (no null,
 // enc.Budget); EncodeResult writes an empty or nil list as [] and an empty or
-// nil map as {}, so the eight results that are lists (ngc.desktop/apps,
-// ngc.users/list, log, pending and rights, ngc.store/sources, installed and
-// updates) are [] when empty. It encodes with encoding/json/v2, whose
+// nil map as {}, so the nine results that are lists (ngc.desktop/apps,
+// ngc.users/list, log, pending, pending-api and rights, ngc.store/sources,
+// installed and updates) are [] when empty. It encodes with encoding/json/v2, whose
 // omitempty keeps false and 0; the result types mark optional bools and
 // numbers omitzero, which both versions leave out alike. Every failure is
 // ErrResult: a value encoding/json/v2 refuses (invalid UTF-8, a func), a null

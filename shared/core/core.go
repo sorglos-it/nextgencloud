@@ -41,14 +41,15 @@ const (
 	ActTOTPConfirm = "totp-confirm"
 	ActTOTPOff     = "totp-off"
 
-	ActList      = "list"
-	ActRights    = "rights"
-	ActSetRights = "set-rights"
-	ActTrust     = "trust"
-	ActPairCode  = "pair-code"
-	ActJoinCode  = "join-code"
-	ActPending   = "pending"
-	ActLog       = "log"
+	ActList       = "list"
+	ActRights     = "rights"
+	ActSetRights  = "set-rights"
+	ActTrust      = "trust"
+	ActPairCode   = "pair-code"
+	ActJoinCode   = "join-code"
+	ActPending    = "pending"
+	ActPendingAPI = "pending-api"
+	ActLog        = "log"
 
 	ActSources    = "sources"
 	ActCatalog    = "catalog"
@@ -141,6 +142,7 @@ var actions = []Action{
 	{AppUsers, ServiceAPI, ActPairCode, true, false, true, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActJoinCode, true, false, true, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActPending, true, false, false, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActPendingAPI, true, false, false, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActLog, true, false, false, FlowCall, newParams[LogQuery](), 0},
 
 	// The API sends a session.TrustChain (session.ParseTrustChain); the
@@ -203,6 +205,8 @@ func WithoutUser(a Action) bool {
 // approval in l covers p.Target for signer (the key that signed the staged
 // file's release or catalog; nil for trust.AutoSystem), and p.Version is
 // newer than installed (not checked for trust.AutoSystem; "" never is older).
+// For an NGC part the signer is the controller's own release key
+// (config.Controller.ReleaseKey): it verifies releases with no other key.
 // Nothing but the signed files counts: the controller takes Version and
 // SHA256 from the staged file's verified release or catalog entry, whose seq
 // it has checked against the newest it saw, and refuses params that differ.

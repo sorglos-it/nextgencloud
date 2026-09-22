@@ -127,6 +127,10 @@ func TestTable(t *testing.T) {
 	if !join.Admin || join.Root || !join.Changes || join.Flow != FlowCall || join.Params != nil {
 		t.Errorf("join-code: %+v", join)
 	}
+	pendingAPI := action(t, AppUsers, ServiceAPI, ActPendingAPI)
+	if !pendingAPI.Admin || pendingAPI.Root || pendingAPI.Changes || pendingAPI.Flow != FlowCall || pendingAPI.Params != nil || pendingAPI.MaxIn != 0 {
+		t.Errorf("pending-api: %+v", pendingAPI)
+	}
 	uiProof := action(t, AppDesktop, ServiceAPI, ActUIProof)
 	if uiProof.Admin || uiProof.Root || uiProof.Changes || uiProof.Flow != FlowCall || uiProof.Params == nil || uiProof.MaxIn != 0 {
 		t.Errorf("ui-proof: %+v", uiProof)
@@ -324,7 +328,7 @@ func TestResultsWithoutNull(t *testing.T) {
 	budget := enc.Budget{Size: 1 << 20, Items: map[string]int{"roles": trust.MaxRoles, "actions": 64, "rights": maxRights}}
 	for _, v := range []any{&Me{}, &DesktopApp{}, &UserInfo{}, &RoleRights{}, &LogEntry{}, &Pending{}, &SourceInfo{},
 		&CatalogResult{}, &InstalledApp{}, &UploadResult{}, &LicenseResult{}, &InstallKey{}, &UpdateInfo{}, &TrustResult{},
-		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}} {
+		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}, &PendingAPI{}} {
 		b, err := json.Marshal(v)
 		if err != nil {
 			t.Fatal(err)
@@ -1028,6 +1032,9 @@ func genesis(t testing.TB) trust.Version {
 // notice.
 func examples(t testing.TB) map[string]any {
 	f := newUIFixture(t)
+	apiDH, apiSign := trusttest.NodeKeys(0xA2)
+	_, apiPin := trusttest.APITLS(0xE2, "api-2.test")
+	_, releaseKey := trusttest.NodeKeys(trusttest.ReleaseFill)
 	return map[string]any{
 		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
 		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
@@ -1038,16 +1045,24 @@ func examples(t testing.TB) map[string]any {
 		"ngc.users/trust":        TrustResult{Seq: 4},
 		"ngc.users/pair-code":    PairCodeResult{Code: "ngc-pair:…", Expires: 1790086400},
 		"ngc.users/join-code":    PairCodeResult{Code: "ngc-join:…", Expires: 1790086400},
-		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Fingerprint: "k3y…", Since: 1790000000}},
-		"ngc.users/log":          []LogEntry{{ID: "000102030405060708090a0b0c0d0e0f", Time: 1790000000, User: "ISEhISEhISEhISEhISEhIQ", Kind: LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"}},
-		"ngc.store/sources":      []SourceInfo{{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5, Checked: 1790000000}},
-		"ngc.store/catalog":      CatalogResult{Catalog: sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{7}, 64)}},
-		"ngc.store/installed":    []InstalledApp{{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1", Active: true, State: AppOK, License: LicenseValid}},
-		"ngc.store/upload":       UploadResult{ID: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{5}, 32), UI: uiNotes},
-		"ngc.store/license":      LicenseResult{App: "org.sorglos.terminal", State: LicenseValid},
-		"ngc.store/install-key":  InstallKey{Installation: "EREREREREREREREREREREQ", Key: bytes.Repeat([]byte{6}, 32)},
-		"ngc.store/updates":      []UpdateInfo{{Target: "ngc-api", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00", State: store.UpdateAvailable}},
-		"notice":                 Notice{Level: NoticeWarn, Text: "Die Lizenz für Terminal läuft in 3 Tagen ab.", App: "org.sorglos.terminal"},
+		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Since: 1790000000}},
+		"ngc.users/pending-api": []PendingAPI{{Node: "api-2", Noise: apiDH.Public, Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)),
+			TLS: apiPin, URL: "wss://api-2.test:7443/tunnel", Since: 1790000000}},
+		"ngc.users/log":         []LogEntry{{ID: "000102030405060708090a0b0c0d0e0f", Time: 1790000000, User: "ISEhISEhISEhISEhISEhIQ", Kind: LogTask, App: "ngc.store", Action: "activate", Node: "ctl-1", Result: "ok"}},
+		"ngc.store/sources":     []SourceInfo{{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5, Checked: 1790000000}},
+		"ngc.store/catalog":     CatalogResult{Catalog: sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{7}, 64)}},
+		"ngc.store/installed":   []InstalledApp{{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1", Active: true, State: AppOK, License: LicenseValid}},
+		"ngc.store/upload":      UploadResult{ID: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{5}, 32), UI: uiNotes},
+		"ngc.store/license":     LicenseResult{App: "org.sorglos.terminal", State: LicenseValid},
+		"ngc.store/install-key": InstallKey{Installation: "EREREREREREREREREREREQ", Key: bytes.Repeat([]byte{6}, 32)},
+		"ngc.store/updates": []UpdateInfo{
+			{Target: trust.AutoController, Node: "ctl-1", Installed: "1.0.0", Available: "1.1.0", SHA256: bytes.Repeat([]byte{0x05}, 32),
+				Key: enc.Bytes(releaseKey.Public().(ed25519.PublicKey)), Mode: store.ModeSemi, State: store.UpdateDownloaded},
+			{Target: "org.sorglos.terminal", Node: "ctl-1", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00",
+				State: store.UpdateAvailable},
+			{Target: trust.AutoSystem, Node: "ctl-1", Mode: store.ModeNotify, State: store.UpdateAvailable},
+		},
+		"notice": Notice{Level: NoticeWarn, Text: "Die Lizenz für Terminal läuft in 3 Tagen ab.", App: "org.sorglos.terminal"},
 	}
 }
 
@@ -1073,6 +1088,28 @@ func TestExamples(t *testing.T) {
 	}
 	if _, err := ParseNotice(notice); err != nil {
 		t.Errorf("notice: %v", err)
+	}
+	// A pending API server becomes an API node with exactly its values and
+	// Name = Node.
+	for _, p := range examples["ngc.users/pending-api"].([]PendingAPI) {
+		n := trust.Node{ID: p.Node, Kind: trust.NodeAPI, Name: p.Node, Noise: p.Noise, Sign: p.Sign, URL: p.URL, TLS: p.TLS}
+		if !trust.ValidAPINode(n) {
+			t.Errorf("pending API server %+v is no valid API node", p)
+		}
+	}
+	// An update by click signs a row into InstallParams; a row's key is what
+	// the standing approval of Genesis for its target names.
+	for _, u := range examples["ngc.store/updates"].([]UpdateInfo) {
+		if !store.ValidTarget(u.Target) || !wire.ValidName(u.Node) || (len(u.Key) != 0 && !store.Approved(genesis(t).List, u.Target, u.Key)) {
+			t.Errorf("update row %+v", u)
+		}
+		click := InstallParams{Target: u.Target}
+		if u.Target != trust.AutoSystem {
+			click.Version, click.SHA256 = u.Available, u.SHA256
+		}
+		if (u.State == store.UpdateDownloaded || u.Target == trust.AutoSystem) != (click.Validate() == nil) {
+			t.Errorf("update row %+v: install params %v", u, click.Validate())
+		}
 	}
 	// The UI proof is the valid store case of uiproof.json; the global store
 	// of Genesis signed it.
@@ -1105,7 +1142,7 @@ func TestExamples(t *testing.T) {
 	golden.Check(t, *update, "core.json", examples)
 }
 
-// TestEncodeResult: each of the eight results that are lists comes out as []
+// TestEncodeResult: each of the nine results that are lists comes out as []
 // when nil, where encoding/json writes null; every example comes out as
 // encoding/json writes it, but for escapes; a null or a result too large is
 // ErrResult.
@@ -1141,7 +1178,7 @@ func TestEncodeResult(t *testing.T) {
 	}
 	slices.Sort(lists)
 	want := []string{"ngc.desktop/apps", "ngc.store/installed", "ngc.store/sources", "ngc.store/updates",
-		"ngc.users/list", "ngc.users/log", "ngc.users/pending", "ngc.users/rights"}
+		"ngc.users/list", "ngc.users/log", "ngc.users/pending", "ngc.users/pending-api", "ngc.users/rights"}
 	if !slices.Equal(lists, want) {
 		t.Errorf("results that are lists: %q", lists)
 	}

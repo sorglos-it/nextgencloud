@@ -7,6 +7,7 @@
     "ngc.users/list": [],
     "ngc.users/log": [],
     "ngc.users/pending": [],
+    "ngc.users/pending-api": [],
     "ngc.users/rights": []
   },
   "ngc.desktop/apps": [
@@ -86,11 +87,28 @@
   ],
   "ngc.store/updates": [
     {
-      "target": "ngc-api",
+      "target": "ngc-controller",
+      "node": "ctl-1",
+      "installed": "1.0.0",
+      "available": "1.1.0",
+      "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+      "key": "buCR_SgKm2hVT6c8WIEl1H00JcaKJroja02tkPkKj5I",
+      "mode": "semi",
+      "state": "downloaded"
+    },
+    {
+      "target": "org.sorglos.terminal",
+      "node": "ctl-1",
       "installed": "1.0.0",
       "available": "1.1.0",
       "mode": "auto",
       "window": "02:00-04:00",
+      "state": "available"
+    },
+    {
+      "target": "system",
+      "node": "ctl-1",
+      "mode": "notify",
       "state": "available"
     }
   ],
@@ -136,7 +154,16 @@
     {
       "name": "dienste",
       "key": "wcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcE",
-      "fingerprint": "k3y…",
+      "since": 1790000000
+    }
+  ],
+  "ngc.users/pending-api": [
+    {
+      "node": "api-2",
+      "noise": "PFxs4t2Z4Q0sPeBddzqhXj5tlx7U5BOJyTtLvdoXchI",
+      "sign": "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+      "tls": "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+      "url": "wss://api-2.test:7443/tunnel",
       "since": 1790000000
     }
   ],
