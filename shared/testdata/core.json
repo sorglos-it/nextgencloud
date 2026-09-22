@@ -39,6 +39,16 @@
     "secret": "JBSWY3DPEHPK3PXP",
     "uri": "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP\u0026issuer=NGC"
   },
+  "ngc.desktop/ui-proof": {
+    "app": "org.sorglos.terminal",
+    "version": "1.0.0",
+    "store": "global",
+    "catalog": {
+      "payload": "eyJzdG9yZSI6Imdsb2JhbCIsInNlcSI6NSwiaXNzdWVkIjoxNzkwMDAwMDAwLCJhcHBzIjpbeyJpZCI6Im9yZy5zb3JnbG9zLmNhbGN1bGF0b3IiLCJuYW1lIjoiUmVjaG5lciIsInB1Ymxpc2hlciI6IlNvcmdsb3MgSVQiLCJ2ZXJzaW9ucyI6W3sidmVyc2lvbiI6IjEuMC4wIiwidXJsIjoib3JnLnNvcmdsb3MuY2FsY3VsYXRvci0xLjAuMC5uZ2MiLCJzaXplIjoxMjM0NSwic2hhMjU2IjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSIsInVpIjoiQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3YyJ9XX0seyJpZCI6Im9yZy5zb3JnbG9zLnRlcm1pbmFsIiwibmFtZSI6IlRlcm1pbmFsIiwicHVibGlzaGVyIjoiU29yZ2xvcyBJVCIsInZlcnNpb25zIjpbeyJ2ZXJzaW9uIjoiMS4wLjAiLCJ1cmwiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbC0xLjAuMC5uZ2MiLCJzaXplIjo1MDAwMDAwLCJzaGEyNTYiOiJBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJIiwidWkiOiJDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnIn0seyJ2ZXJzaW9uIjoiMS4xLjAiLCJ1cmwiOiJvcmcuc29yZ2xvcy50ZXJtaW5hbC0xLjEuMC5uZ2MiLCJzaXplIjo1MTAwMDAwLCJzaGEyNTYiOiJBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNIiwidWkiOiJDUWtKQ1FrSkNRa0pDUWtKQ1FrSkNRa0pDUWtKQ1FrSkNRa0pDUWtKQ1FrIn1dfV19",
+      "kid": "1Lf-KH2t1XefQCsw_lcR3g",
+      "sig": "Y16NC_PaZp6XjvZaIdo1SXQPPUDsEp2KM1C2HjS1UWQjI8hi9JhexFX-9d622XszExeNWGEBOE35I4FIo_LEAQ"
+    }
+  },
   "ngc.store/catalog": {
     "catalog": {
       "payload": "e30",
@@ -87,7 +97,8 @@
   "ngc.store/upload": {
     "id": "org.example.notes",
     "version": "0.1.0",
-    "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+    "sha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+    "ui": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo"
   },
   "ngc.users/join-code": {
     "code": "ngc-join:…",

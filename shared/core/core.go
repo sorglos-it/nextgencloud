@@ -34,6 +34,7 @@ const (
 // Action names.
 const (
 	ActMe          = "me"
+	ActUIProof     = "ui-proof"
 	ActApps        = "apps"
 	ActUI          = "ui"
 	ActTOTPBegin   = "totp-begin"
@@ -126,6 +127,7 @@ func newParams[T any, PT interface {
 var actions = []Action{
 	// App, Service, Name, Admin, Root, Changes, Flow, Params, MaxIn
 	{AppDesktop, ServiceAPI, ActMe, false, false, false, FlowCall, nil, 0},
+	{AppDesktop, ServiceAPI, ActUIProof, false, false, false, FlowCall, newParams[AppParams](), 0},
 	{AppDesktop, ServiceAPI, ActApps, false, false, false, FlowCall, nil, 0},
 	{AppDesktop, ServiceAPI, ActUI, false, false, false, FlowOut, newParams[AppParams](), 0},
 	{AppDesktop, ServiceAPI, ActTOTPBegin, false, false, true, FlowCall, nil, 0},
@@ -377,13 +379,19 @@ func (p *UpdateSetting) Validate() error {
 type ActivateParams struct {
 	App     string    `json:"app"`
 	Version string    `json:"version"`
-	SHA256  enc.Bytes `json:"sha256"`           // of the package file as the store delivers it
-	Store   string    `json:"store"`            // LocalStore for uploaded apps; Transfer.Store stays empty for those instead.
-	Grants  []string  `json:"grants,omitempty"` // store.NeedRoot, store.NeedNetwork the admin allows
+	SHA256  enc.Bytes `json:"sha256"` // of the package file as the store delivers it
+	// UI is the app's UI hash (store.PackageUI of the plain package): for a
+	// store app the ui of its catalog entry, for an uploaded app computed by
+	// the shell from the file it uploaded. The controller computes it from the
+	// package it gets and refuses a mismatch (E_VERIFY); the API keeps this
+	// task as the app's UI proof (UIProof).
+	UI     enc.Bytes `json:"ui"`
+	Store  string    `json:"store"`            // LocalStore for uploaded apps; Transfer.Store stays empty for those instead.
+	Grants []string  `json:"grants,omitempty"` // store.NeedRoot, store.NeedNetwork the admin allows
 }
 
 func (p *ActivateParams) Validate() error {
-	ok := validApp(p.App) && store.ValidVersion(p.Version) && len(p.SHA256) == 32 && wire.ValidName(p.Store)
+	ok := validApp(p.App) && store.ValidVersion(p.Version) && len(p.SHA256) == 32 && len(p.UI) == 32 && wire.ValidName(p.Store)
 	for i, g := range p.Grants {
 		ok = ok && (g == store.NeedRoot || g == store.NeedNetwork) && !slices.Contains(p.Grants[:i], g)
 	}

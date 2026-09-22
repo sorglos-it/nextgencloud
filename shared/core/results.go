@@ -160,11 +160,16 @@ type InstalledApp struct {
 	KeptData int64  `json:"keptData,omitzero"` // bytes of data kept after uninstalling
 }
 
-// UploadResult answers ngc.store/upload.
+// UploadResult answers ngc.store/upload: what the API read from the package.
+// The shell never signs these values: it computes the package's SHA-256,
+// reads its manifest and computes its UI hash (store.PackageUI) from the file
+// it sent itself, refuses a mismatch with this result and puts its own values
+// into ActivateParams.
 type UploadResult struct {
 	ID      string    `json:"id"`
 	Version string    `json:"version"`
-	SHA256  enc.Bytes `json:"sha256"` // goes into ActivateParams
+	SHA256  enc.Bytes `json:"sha256"` // of the package file
+	UI      enc.Bytes `json:"ui"`     // its UI hash (store.PackageUI)
 }
 
 // LicenseResult answers ngc.store/license.

@@ -2,8 +2,10 @@ package core
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"reflect"
@@ -15,9 +17,11 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/internal/golden"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
+	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -123,6 +127,12 @@ func TestTable(t *testing.T) {
 	if !join.Admin || join.Root || !join.Changes || join.Flow != FlowCall || join.Params != nil {
 		t.Errorf("join-code: %+v", join)
 	}
+	uiProof := action(t, AppDesktop, ServiceAPI, ActUIProof)
+	if uiProof.Admin || uiProof.Root || uiProof.Changes || uiProof.Flow != FlowCall || uiProof.Params == nil || uiProof.MaxIn != 0 {
+		t.Errorf("ui-proof: %+v", uiProof)
+	} else if _, ok := uiProof.Params().(*AppParams); !ok {
+		t.Errorf("ui-proof takes %T", uiProof.Params())
+	}
 	ctlTrust := action(t, AppUsers, ServiceController, ActTrust)
 	if !ctlTrust.Admin || ctlTrust.Root || !ctlTrust.Changes || ctlTrust.Flow != FlowIn || ctlTrust.Params != nil {
 		t.Errorf("ngc.users/controller/trust: %+v", ctlTrust)
@@ -145,24 +155,28 @@ func action(t *testing.T, app, service, name string) Action {
 // extra members appended.
 func activateParams(extra string) json.RawMessage {
 	sum := enc.B64.EncodeToString(bytes.Repeat([]byte{1}, 32))
-	return json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global"` + extra + `}`)
+	ui := enc.B64.EncodeToString(bytes.Repeat([]byte{6}, 32))
+	return json.RawMessage(`{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui + `","store":"global"` + extra + `}`)
 }
 
 func TestParseParams(t *testing.T) {
 	sum := enc.B64.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	ui := enc.B64.EncodeToString(bytes.Repeat([]byte{6}, 32))
+	ui31 := enc.B64.EncodeToString(bytes.Repeat([]byte{6}, 31))
 	good := []struct{ app, service, name, params string }{
 		{AppDesktop, ServiceAPI, ActMe, ``},
 		{AppDesktop, ServiceAPI, ActMe, `{}`},
 		{AppDesktop, ServiceAPI, ActMe, `{ }`},
 		{AppDesktop, ServiceAPI, ActUI, `{"app":"org.sorglos.terminal"}`},
+		{AppDesktop, ServiceAPI, ActUIProof, `{"app":"org.sorglos.terminal"}`},
 		{AppDesktop, ServiceAPI, ActTOTPConfirm, `{"code":"123456"}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":["org.sorglos.calculator/use","org.sorglos.terminal/shell"]}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":[]}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user"}`},
 		{AppUsers, ServiceAPI, ActLog, `{"limit":100}`},
 		{AppStore, ServiceAPI, ActSetUpdate, `{"target":"ngc-api","mode":"auto","window":"02:00-04:00"}`},
-		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["network"]}`},
-		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"local","grants":["root","network"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui + `","store":"global","grants":["network"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui + `","store":"local","grants":["root","network"]}`},
 		{AppStore, ServiceController, ActUninstall, `{"app":"org.sorglos.terminal","keepData":true}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"system"}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"ngc-controller","version":"1.1.0","sha256":"` + sum + `"}`},
@@ -182,6 +196,8 @@ func TestParseParams(t *testing.T) {
 		{AppDesktop, ServiceAPI, ActUI, `{"app":null}`},
 		{AppDesktop, ServiceAPI, ActUI, `{"app":"org.sorglos.terminal","app":"org.sorglos.mail"}`},
 		{AppDesktop, ServiceAPI, ActUI, `{"App":"org.sorglos.terminal"}`},
+		{AppDesktop, ServiceAPI, ActUIProof, ``},
+		{AppDesktop, ServiceAPI, ActUIProof, `{"app":"ngc.store"}`},
 		{AppDesktop, ServiceAPI, ActTOTPConfirm, `{"code":"12345"}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":["everything"]}`},
 		{AppUsers, ServiceAPI, ActSetRights, `{"role":"user","rights":["org.sorglos.terminal/use","org.sorglos.terminal/use"]}`},
@@ -189,9 +205,12 @@ func TestParseParams(t *testing.T) {
 		{AppUsers, ServiceAPI, ActLog, `{"limit":0}`},
 		{AppUsers, ServiceAPI, ActLog, `{"limit":501}`},
 		{AppStore, ServiceAPI, ActSetUpdate, `{"target":"ngc-api","mode":"always"}`},
-		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["host"]}`},
-		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["root","root"]}`},
-		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global","grants":["root","network","root"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui + `","store":"global","grants":["host"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui + `","store":"global","grants":["root","root"]}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui + `","store":"global","grants":["root","network","root"]}`},
+		// The UI hash is signed with every activation.
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","store":"global"}`},
+		{AppStore, ServiceController, ActActivate, `{"app":"org.sorglos.terminal","version":"1.0.0","sha256":"` + sum + `","ui":"` + ui31 + `","store":"global"}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"system","version":"1.0.0"}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"ngc-controller","version":"1.1.0"}`},
 		{AppStore, ServiceController, ActInstall, `{"target":"ngc-controller","version":"1.1.0","sha256":"` + sum + `","size":1}`},
@@ -305,7 +324,7 @@ func TestResultsWithoutNull(t *testing.T) {
 	budget := enc.Budget{Size: 1 << 20, Items: map[string]int{"roles": trust.MaxRoles, "actions": 64, "rights": maxRights}}
 	for _, v := range []any{&Me{}, &DesktopApp{}, &UserInfo{}, &RoleRights{}, &LogEntry{}, &Pending{}, &SourceInfo{},
 		&CatalogResult{}, &InstalledApp{}, &UploadResult{}, &LicenseResult{}, &InstallKey{}, &UpdateInfo{}, &TrustResult{},
-		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}} {
+		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}} {
 		b, err := json.Marshal(v)
 		if err != nil {
 			t.Fatal(err)
@@ -539,6 +558,391 @@ func TestRights(t *testing.T) {
 	}
 }
 
+// The UI hashes of uiproof.json, one per version, so a reader that takes the
+// ui of another entry fails.
+var (
+	uiCalculator = bytes.Repeat([]byte{0x07}, 32) // org.sorglos.calculator 1.0.0
+	uiTerminal   = bytes.Repeat([]byte{0x08}, 32) // org.sorglos.terminal 1.0.0
+	uiTerminal11 = bytes.Repeat([]byte{0x09}, 32) // org.sorglos.terminal 1.1.0
+	uiNotes      = bytes.Repeat([]byte{0x0A}, 32) // org.example.notes 0.1.0, uploaded
+)
+
+// uiFixture is the trust list of uiproof.json and the keys its proofs are
+// made with. The list is version 1: Genesis plus the user alice (role user,
+// level off, root nowhere) and the store other, signed by the admin.
+type uiFixture struct {
+	signed  trust.Signed
+	list    *trust.List
+	global  ed25519.PrivateKey // key of the global store in Genesis
+	other   ed25519.PrivateKey // key of the store other
+	sessSig ed25519.PrivateKey // session key of every client certificate
+}
+
+func newUIFixture(t testing.TB) uiFixture {
+	t.Helper()
+	admin := trusttest.NewSigner(1)
+	l := trusttest.Genesis(admin)
+	_, global := trusttest.NodeKeys(0xB1)
+	_, other := trusttest.NodeKeys(0xB2)
+	l.Roles = append(l.Roles, trust.Role{Name: "user", Level: trust.LevelOff})
+	l.Users = append(l.Users, trust.User{ID: trusttest.ID(0x30), Name: "alice", Roles: []string{"user"},
+		Keys: []proof.UserKey{trusttest.NewSigner(0x31).Key}})
+	l.Stores = append(l.Stores, trust.Store{ID: "other", Name: "Other Store", URL: "https://store.other.example",
+		Key: enc.Bytes(other.Public().(ed25519.PublicKey))})
+	signed := admin.Sign(t, l)
+	v, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(signed)}, []trust.Signed{signed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uiFixture{signed: signed, list: v.List, global: global, other: other,
+		sessSig: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x51}, ed25519.SeedSize))}
+}
+
+// uiCatalog is the catalog of the global store in uiproof.json.
+func uiCatalog() store.Catalog {
+	return store.Catalog{Store: trust.StoreGlobal, Seq: 5, Issued: 1790000000, Apps: []store.Entry{
+		{ID: "org.sorglos.calculator", Name: "Rechner", Publisher: "Sorglos IT", Versions: []store.Package{
+			{Version: "1.0.0", URL: "org.sorglos.calculator-1.0.0.ngc", Size: 12345, SHA256: bytes.Repeat([]byte{0x01}, 32), UI: uiCalculator},
+		}},
+		{ID: "org.sorglos.terminal", Name: "Terminal", Publisher: "Sorglos IT", Versions: []store.Package{
+			{Version: "1.0.0", URL: "org.sorglos.terminal-1.0.0.ngc", Size: 5000000, SHA256: bytes.Repeat([]byte{0x02}, 32), UI: uiTerminal},
+			{Version: "1.1.0", URL: "org.sorglos.terminal-1.1.0.ngc", Size: 5100000, SHA256: bytes.Repeat([]byte{0x03}, 32), UI: uiTerminal11},
+		}},
+	}}
+}
+
+// catalog signs c with key as a catalog.
+func (f uiFixture) catalog(t testing.TB, c store.Catalog, key ed25519.PrivateKey) *sign.Envelope {
+	t.Helper()
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := sign.Sign(key, sign.PurposeCatalog, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &env
+}
+
+// storeProof is the valid proof of a store app in uiproof.json and core.json:
+// org.sorglos.terminal 1.0.0 with the catalog of the global store.
+func (f uiFixture) storeProof(t testing.TB) UIProof {
+	return UIProof{App: "org.sorglos.terminal", Version: "1.0.0", Store: trust.StoreGlobal, Catalog: f.catalog(t, uiCatalog(), f.global)}
+}
+
+// approval returns a proof of the uploaded app org.example.notes 0.1.0: a
+// client certificate of user with the fixture's session key (issued
+// 1790000000, valid for an hour), the proof of s over it, and the task of
+// ngc.store/controller/<action> on ctl-1 with params, signed with the session
+// key and bound to that certificate.
+func (f uiFixture) approval(t testing.TB, user string, s trusttest.Signer, action string, params any) UIProof {
+	t.Helper()
+	dh, _ := trusttest.NodeKeys(0x52)
+	client, err := json.Marshal(session.ClientCert{Installation: f.list.Installation, User: user,
+		Nonce: bytes.Repeat([]byte{0x53}, session.NonceSize), Sig: enc.Bytes(f.sessSig.Public().(ed25519.PublicKey)),
+		DH: dh.Public, Issued: 1790000000, Expires: 1790003600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(task.Task{ID: bytes.Repeat([]byte{0x61}, task.IDSize), Installation: f.list.Installation,
+		Cert: session.CertHash(client), Node: "ctl-1", App: AppStore, Service: ServiceController, Action: action,
+		Params: raw, Issued: 1790000000, Expires: 1790000060})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := sign.Sign(f.sessSig, sign.PurposeTask, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := s.Prove(sign.PurposeClientCert, client)
+	return UIProof{App: "org.example.notes", Version: "0.1.0", Store: LocalStore, Task: &env, Client: client, Proof: &p}
+}
+
+// uiProofCase is a case of uiproof.json with what Go makes of it.
+type uiProofCase struct {
+	name, app, version string
+	proof              UIProof
+	ui                 []byte // the hash a valid case proves
+	parses             bool   // ParseUIProof accepts the proof
+	want               error  // what verifyUIProof returns; nil for a valid case
+}
+
+// uiProofCases returns the cases of uiproof.json. Each invalid case changes
+// one thing of a valid one.
+func uiProofCases(t testing.TB, f uiFixture) []uiProofCase {
+	t.Helper()
+	const terminal, notes = "org.sorglos.terminal", "org.example.notes"
+	admin, passkeyAdmin := trusttest.NewSigner(1), trusttest.NewPasskey(trusttest.GenesisPasskeyFill)
+	passkeyID, adminID, aliceID := trusttest.ID(0x20), trusttest.ID(0x21), trusttest.ID(0x30)
+	activate := func(app, version, st string) ActivateParams {
+		return ActivateParams{App: app, Version: version, SHA256: bytes.Repeat([]byte{0x05}, 32), UI: uiNotes, Store: st}
+	}
+	withCatalog := func(app, version string, env *sign.Envelope) UIProof {
+		return UIProof{App: app, Version: version, Store: trust.StoreGlobal, Catalog: env}
+	}
+	global := f.storeProof(t).Catalog
+	byAdmin := f.approval(t, adminID, admin, ActActivate, activate(notes, "0.1.0", LocalStore))
+
+	third := uiCatalog()
+	third.Store = "third"
+	_, thirdKey := trusttest.NodeKeys(0xB3)
+	ofThird := withCatalog(terminal, "1.0.0", f.catalog(t, third, thirdKey))
+	ofThird.Store = "third"
+
+	flipped := *byAdmin.Task
+	flipped.Sig = bytes.Clone(flipped.Sig)
+	flipped.Sig[0] ^= 1
+	withFlipped := byAdmin
+	withFlipped.Task = &flipped
+
+	together := withCatalog(terminal, "1.0.0", global)
+	together.Task, together.Client, together.Proof = byAdmin.Task, byAdmin.Client, byAdmin.Proof
+
+	// The admin's activation of a store app, offered instead of its catalog.
+	storeTask := f.approval(t, adminID, admin, ActActivate, ActivateParams{App: terminal, Version: "1.0.0",
+		SHA256: bytes.Repeat([]byte{0x02}, 32), UI: uiTerminal, Store: trust.StoreGlobal})
+	storeTask.App, storeTask.Version, storeTask.Store = terminal, "1.0.0", trust.StoreGlobal
+
+	return []uiProofCase{
+		{"store app from the global store", terminal, "1.0.0", withCatalog(terminal, "1.0.0", global), uiTerminal, true, nil},
+		{"uploaded app activated by the admin", notes, "0.1.0", byAdmin, uiNotes, true, nil},
+		{"uploaded app activated by the passkey admin", notes, "0.1.0",
+			f.approval(t, passkeyID, passkeyAdmin, ActActivate, activate(notes, "0.1.0", LocalStore)), uiNotes, true, nil},
+
+		{"catalog of a store not in the list", terminal, "1.0.0", ofThird, nil, true, errProofStore},
+		{"catalog signed by another key", terminal, "1.0.0",
+			withCatalog(terminal, "1.0.0", f.catalog(t, uiCatalog(), f.other)), nil, true, sign.ErrWrongKey},
+		{"version not in the catalog", terminal, "1.2.0", withCatalog(terminal, "1.2.0", global), nil, true, errProofListed},
+		{"app not in the catalog", "org.sorglos.mail", "1.0.0", withCatalog("org.sorglos.mail", "1.0.0", global), nil, true, errProofListed},
+		{"uploaded app activated by a user without root on the node", notes, "0.1.0",
+			f.approval(t, aliceID, trusttest.NewSigner(0x31), ActActivate, activate(notes, "0.1.0", LocalStore)), nil, true, errProofRoot},
+		{"task for another app", notes, "0.1.0",
+			f.approval(t, adminID, admin, ActActivate, activate("org.example.other", "0.1.0", LocalStore)), nil, true, errProofTask},
+		{"task for another version", notes, "0.1.0",
+			f.approval(t, adminID, admin, ActActivate, activate(notes, "0.2.0", LocalStore)), nil, true, errProofTask},
+		{"task that is no activate", notes, "0.1.0",
+			f.approval(t, adminID, admin, ActDeactivate, AppParams{App: notes}), nil, true, errProofTask},
+		{"params naming a store", notes, "0.1.0",
+			f.approval(t, adminID, admin, ActActivate, activate(notes, "0.1.0", trust.StoreGlobal)), nil, true, errProofTask},
+		{"certificate proof by a key not in the list", notes, "0.1.0",
+			f.approval(t, adminID, trusttest.NewSigner(0x77), ActActivate, activate(notes, "0.1.0", LocalStore)), nil, true, session.ErrUser},
+		{"flipped task signature", notes, "0.1.0", withFlipped, nil, true, sign.ErrBadSignature},
+		{"catalog and task together", terminal, "1.0.0", together, nil, false, errProofForm},
+		{"store app without a catalog", terminal, "1.0.0", storeTask, nil, false, errProofForm},
+	}
+}
+
+// TestUIProof holds each case of uiproof.json against ParseUIProof and the
+// reason verifyUIProof gives, so no case is refused by a rule other than its
+// own, then checks the rules of ParseUIProof one by one.
+func TestUIProof(t *testing.T) {
+	f := newUIFixture(t)
+	for _, c := range uiProofCases(t, f) {
+		b, err := json.Marshal(c.proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := ParseUIProof(b)
+		if (err == nil) != c.parses || (err != nil && err != ErrUIProof) {
+			t.Errorf("%s: ParseUIProof %v", c.name, err)
+		}
+		if err != nil {
+			p = c.proof // as a caller would pass it who skips the parser
+		}
+		ui, err := verifyUIProof(p, c.app, c.version, f.list)
+		if !errors.Is(err, c.want) || (c.want == nil && !bytes.Equal(ui, c.ui)) {
+			t.Errorf("%s: got %x, %v; want %v", c.name, ui, err, c.want)
+		}
+		// VerifyUIProof gives the hash or ErrUIProof alone.
+		pub, err := VerifyUIProof(p, c.app, c.version, f.list)
+		if (c.want == nil) != (err == nil) || (err != nil && (err != ErrUIProof || pub != nil)) || !bytes.Equal(pub, ui) {
+			t.Errorf("%s: VerifyUIProof %x, %v", c.name, pub, err)
+		}
+	}
+
+	// A valid proof holds only for the app and version it names, and only
+	// against a trust list.
+	sp := f.storeProof(t)
+	for name, check := range map[string]func() ([]byte, error){
+		"another version asked for": func() ([]byte, error) { return verifyUIProof(sp, sp.App, "1.1.0", f.list) },
+		"another app asked for":     func() ([]byte, error) { return verifyUIProof(sp, "org.sorglos.calculator", sp.Version, f.list) },
+		"no trust list":             func() ([]byte, error) { return verifyUIProof(sp, sp.App, sp.Version, nil) },
+	} {
+		if ui, err := check(); err != errProofForm || ui != nil {
+			t.Errorf("%s: %x, %v", name, ui, err)
+		}
+	}
+
+	// ParseUIProof, one rule per case, from the valid proofs of both kinds.
+	storeApp := func(change func(p *UIProof)) UIProof {
+		p := f.storeProof(t)
+		change(&p)
+		return p
+	}
+	uploaded := func(change func(p *UIProof)) UIProof {
+		p := f.approval(t, trusttest.ID(0x21), trusttest.NewSigner(1), ActActivate,
+			ActivateParams{App: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{0x05}, 32), UI: uiNotes, Store: LocalStore})
+		change(&p)
+		return p
+	}
+	same := func(*UIProof) {}
+	bigTask, err := sign.Sign(f.sessSig, sign.PurposeTask, bytes.Repeat([]byte(" "), task.MaxTask+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		p     UIProof
+		valid bool
+	}{
+		{"store app", storeApp(same), true},
+		{"uploaded app", uploaded(same), true},
+		{"client of session.MaxCert bytes", uploaded(func(p *UIProof) { p.Client = bytes.Repeat([]byte{'x'}, session.MaxCert) }), true},
+		{"catalog of another store than global", storeApp(func(p *UIProof) { p.Store = "other" }), true},
+
+		{"both kinds together", storeApp(func(p *UIProof) {
+			u := uploaded(same)
+			p.Task, p.Client, p.Proof = u.Task, u.Client, u.Proof
+		}), false},
+		{"catalog and a client certificate", storeApp(func(p *UIProof) { p.Client = uploaded(same).Client }), false},
+		{"catalog and a proof", storeApp(func(p *UIProof) { p.Proof = uploaded(same).Proof }), false},
+		{"neither kind", storeApp(func(p *UIProof) { p.Catalog = nil }), false},
+		{"store local with a catalog", storeApp(func(p *UIProof) { p.Store = LocalStore }), false},
+		{"task with a store other than local", uploaded(func(p *UIProof) { p.Store = trust.StoreGlobal }), false},
+		{"client over session.MaxCert bytes", uploaded(func(p *UIProof) { p.Client = bytes.Repeat([]byte{'x'}, session.MaxCert+1) }), false},
+		{"task without a client certificate", uploaded(func(p *UIProof) { p.Client = nil }), false},
+		{"task without a proof", uploaded(func(p *UIProof) { p.Proof = nil }), false},
+		{"proof of an unknown kind", uploaded(func(p *UIProof) { p.Proof.Kind = "otp" }), false},
+		{"task over task.MaxTask", uploaded(func(p *UIProof) { p.Task = &bigTask }), false},
+		{"task with a signature of 63 bytes", uploaded(func(p *UIProof) { p.Task.Sig = p.Task.Sig[:63] }), false},
+		{"catalog with a key ID of 21 characters", storeApp(func(p *UIProof) { p.Catalog.KeyID = p.Catalog.KeyID[:21] }), false},
+		{"core app", storeApp(func(p *UIProof) { p.App = AppStore }), false},
+		{"version that is none", storeApp(func(p *UIProof) { p.Version = "1.0" }), false},
+		{"store that is no name", storeApp(func(p *UIProof) { p.Store = "Global" }), false},
+	} {
+		b, err := json.Marshal(c.p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ParseUIProof(b); (err == nil) != c.valid || (err != nil && err != ErrUIProof) {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	good, err := json.Marshal(f.storeProof(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const head = `{"app":"org.sorglos.terminal",`
+	if !strings.HasPrefix(string(good), head) {
+		t.Fatalf("proof starts %.40s", good)
+	}
+	rest := string(good[len(head):]) // the members after app, and the closing brace
+	for name, b := range map[string]string{
+		"unknown member":        head + `"user":"admin",` + rest,
+		"member in other case":  `{"App":"org.sorglos.terminal",` + rest,
+		"duplicate member":      head + `"app":"org.sorglos.terminal",` + rest,
+		"null member":           head + `"task":null,` + rest,
+		"an array":              `[` + string(good) + `]`,
+		"trailing data":         string(good) + ` {}`,
+		"over MaxCallResult":    string(good) + strings.Repeat(" ", wire.MaxCallResult),
+		"not JSON":              `app=org.sorglos.terminal`,
+		"empty":                 ``,
+		"payload with an array": `{"app":"org.sorglos.terminal","version":"1.0.0","store":"global","catalog":{"payload":[]}}`,
+	} {
+		if _, err := ParseUIProof([]byte(b)); err != ErrUIProof {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// An empty member counts as absent, as everywhere (tunnel.ParseOpen): a
+	// catalog beside an empty client is still a catalog alone.
+	if _, err := ParseUIProof([]byte(head + `"client":"",` + rest)); err != nil {
+		t.Errorf("empty client beside a catalog: %v", err)
+	}
+}
+
+// TestParseUIProofBoundsAllocation feeds ParseUIProof a proof of the full
+// size with an array or too many members where it allows none: refusing it
+// must allocate next to nothing beyond the document itself.
+func TestParseUIProofBoundsAllocation(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   []byte
+	}{
+		{"payload as an array", hostile(`{"catalog":{"payload":[`, `{}`, `]}}`, wire.MaxCallResult)},
+		{"members of the user's proof", members(`{"proof":{`, `}}`, wire.MaxCallResult)},
+		{"members of the UI proof", members(`{`, `}`, wire.MaxCallResult)},
+	} {
+		var err error
+		n := allocated(func() { _, err = ParseUIProof(c.in) })
+		t.Logf("%s: %d bytes allocated", c.name, n)
+		if n > 64<<10 || err != ErrUIProof {
+			t.Errorf("%s: %d bytes allocated, %v", c.name, n, err)
+		}
+	}
+}
+
+// uiProofVector is uiproof.json: the trust list the web interface opens with
+// the anchor {1, hash of trust}, and proofs to parse (core.ParseUIProof) and
+// verify (core.VerifyUIProof) for app at version.
+type uiProofVector struct {
+	Trust trust.Signed        `json:"trust"`
+	Cases []uiProofVectorCase `json:"cases"`
+}
+
+type uiProofVectorCase struct {
+	Name    string    `json:"name"`
+	App     string    `json:"app"`
+	Version string    `json:"version"`
+	Proof   enc.Bytes `json:"proof"`        // the UIProof as JSON
+	UI      enc.Bytes `json:"ui,omitempty"` // the UI hash a valid proof gives
+	Valid   bool      `json:"valid"`
+}
+
+// TestUIProofVectors writes uiproof.json and holds the file against the Go
+// functions, as the web interface holds it against its own.
+func TestUIProofVectors(t *testing.T) {
+	f := newUIFixture(t)
+	v := uiProofVector{Trust: f.signed}
+	for _, c := range uiProofCases(t, f) {
+		b, err := json.Marshal(c.proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v.Cases = append(v.Cases, uiProofVectorCase{Name: c.name, App: c.app, Version: c.version, Proof: b, UI: c.ui,
+			Valid: c.parses && c.want == nil})
+	}
+	golden.Check(t, *update, "uiproof.json", v)
+
+	var file uiProofVector
+	golden.Load(t, "uiproof.json", &file)
+	latest, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(file.Trust)}, []trust.Signed{file.Trust})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := 0
+	for _, c := range file.Cases {
+		p, err := ParseUIProof(c.Proof)
+		var ui []byte
+		if err == nil {
+			ui, err = VerifyUIProof(p, c.App, c.Version, latest.List)
+		}
+		if (err == nil) != c.Valid || !bytes.Equal(ui, c.UI) {
+			t.Errorf("%s: got %x, %v; want valid %v", c.Name, ui, err, c.Valid)
+		}
+		if c.Valid {
+			valid++
+		}
+	}
+	if valid != 3 || len(file.Cases) != 16 {
+		t.Errorf("%d cases, %d of them valid", len(file.Cases), valid)
+	}
+}
+
 // allocated returns how many bytes f allocates.
 func allocated(f func()) uint64 {
 	var before, after runtime.MemStats
@@ -607,13 +1011,28 @@ func TestParseParamsBoundsAllocation(t *testing.T) {
 	}
 }
 
+// genesis opens version 1 as the "genesis" vector of trust.json has it:
+// trusttest.Genesis signed by its admin NewSigner(1).
+func genesis(t testing.TB) trust.Version {
+	t.Helper()
+	admin := trusttest.NewSigner(1)
+	g := admin.Sign(t, trusttest.Genesis(admin))
+	v, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(g)}, []trust.Signed{g})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
 // examples returns one example result per action with a result, and a
 // notice.
-func examples() map[string]any {
+func examples(t testing.TB) map[string]any {
+	f := newUIFixture(t)
 	return map[string]any{
 		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
 		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
 		"ngc.desktop/totp-begin": TOTPBegin{Secret: "JBSWY3DPEHPK3PXP", URI: "otpauth://totp/NGC:admin?secret=JBSWY3DPEHPK3PXP&issuer=NGC"},
+		"ngc.desktop/ui-proof":   f.storeProof(t),
 		"ngc.users/list":         []UserInfo{{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, TOTP: true, LastLogin: 1790000000}},
 		"ngc.users/rights":       []RoleRights{{Role: "user", Rights: []string{"org.sorglos.calculator/use"}}},
 		"ngc.users/trust":        TrustResult{Seq: 4},
@@ -624,7 +1043,7 @@ func examples() map[string]any {
 		"ngc.store/sources":      []SourceInfo{{ID: "global", Name: "NGC Store", URL: "https://store.ngc.test", Seq: 5, Checked: 1790000000}},
 		"ngc.store/catalog":      CatalogResult{Catalog: sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{7}, 64)}},
 		"ngc.store/installed":    []InstalledApp{{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1", Active: true, State: AppOK, License: LicenseValid}},
-		"ngc.store/upload":       UploadResult{ID: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{5}, 32)},
+		"ngc.store/upload":       UploadResult{ID: "org.example.notes", Version: "0.1.0", SHA256: bytes.Repeat([]byte{5}, 32), UI: uiNotes},
 		"ngc.store/license":      LicenseResult{App: "org.sorglos.terminal", State: LicenseValid},
 		"ngc.store/install-key":  InstallKey{Installation: "EREREREREREREREREREREQ", Key: bytes.Repeat([]byte{6}, 32)},
 		"ngc.store/updates":      []UpdateInfo{{Target: "ngc-api", Installed: "1.0.0", Available: "1.1.0", Mode: store.ModeAuto, Window: "02:00-04:00", State: store.UpdateAvailable}},
@@ -636,7 +1055,7 @@ func examples() map[string]any {
 // interface and the API test against the same JSON. "empty" holds the
 // results that are lists again, empty, as EncodeResult sends them.
 func TestExamples(t *testing.T) {
-	examples := examples()
+	examples := examples(t)
 	// The examples keep the rules the shell checks.
 	for _, e := range examples["ngc.users/log"].([]LogEntry) {
 		if !ValidLogID(e.ID) {
@@ -654,6 +1073,23 @@ func TestExamples(t *testing.T) {
 	}
 	if _, err := ParseNotice(notice); err != nil {
 		t.Errorf("notice: %v", err)
+	}
+	// The UI proof is the valid store case of uiproof.json; the global store
+	// of Genesis signed it.
+	b, err := json.Marshal(examples["ngc.desktop/ui-proof"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ParseUIProof(b)
+	if err == nil {
+		var ui []byte
+		ui, err = VerifyUIProof(p, p.App, p.Version, genesis(t).List)
+		if err == nil && !bytes.Equal(ui, uiTerminal) {
+			t.Errorf("ui-proof proves %x", ui)
+		}
+	}
+	if err != nil {
+		t.Errorf("ui-proof: %v", err)
 	}
 	empty := map[string]json.RawMessage{}
 	for name, v := range examples {
@@ -675,7 +1111,7 @@ func TestExamples(t *testing.T) {
 // ErrResult.
 func TestEncodeResult(t *testing.T) {
 	var lists []string
-	for name, v := range examples() {
+	for name, v := range examples(t) {
 		if typ := reflect.TypeOf(v); typ.Kind() == reflect.Slice {
 			lists = append(lists, name)
 			none := reflect.Zero(typ).Interface()
@@ -823,5 +1259,36 @@ func FuzzReadTransfer(f *testing.F) {
 	f.Add(buf.Bytes())
 	f.Fuzz(func(t *testing.T, b []byte) {
 		_, _ = ReadTransfer(bytes.NewReader(b))
+	})
+}
+
+func FuzzParseUIProof(f *testing.F) {
+	fx := newUIFixture(f)
+	for _, c := range uiProofCases(f, fx) {
+		b, err := json.Marshal(c.proof)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b)
+	}
+	f.Add([]byte(`{}`))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		p, err := ParseUIProof(b)
+		if err != nil {
+			return
+		}
+		// What passes encodes to a proof that passes again, unchanged.
+		out, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		back, err := ParseUIProof(out)
+		if err != nil {
+			t.Fatalf("%q -> %s: %v", b, out, err)
+		}
+		again, err := json.Marshal(back)
+		if err != nil || !bytes.Equal(again, out) {
+			t.Fatalf("%s -> %s, %v", out, again, err)
+		}
 	})
 }

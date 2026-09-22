@@ -12,12 +12,13 @@ import (
 
 // Kinds of documents.
 const (
-	BlobSetting = "setting" // ID: setting key
-	BlobTrust   = "trust"   // ID: version number as text, Seq: version number
-	BlobCatalog = "catalog" // ID: store, Seq: catalog number
-	BlobLicense = "license" // ID: app
-	BlobRights  = "rights"  // ID: role, Data: core.RoleRights as JSON
-	BlobUI      = "ui"      // ID: "<app>@<version>", Data: tar of the ui/ files
+	BlobSetting  = "setting"  // ID: setting key
+	BlobTrust    = "trust"    // ID: version number as text, Seq: version number
+	BlobCatalog  = "catalog"  // ID: store, Seq: catalog number
+	BlobLicense  = "license"  // ID: app
+	BlobRights   = "rights"   // ID: role, Data: core.RoleRights as JSON
+	BlobUI       = "ui"       // ID: "<app>@<version>", Data: the canonical ui-tar of the plain package (store.PackageUI)
+	BlobApproval = "approval" // ID: "<app>@<version>", Data: core.UIProof as JSON (the evidence the version was installed with)
 )
 
 // Kinds of one-time values.
