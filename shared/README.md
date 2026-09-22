@@ -55,15 +55,24 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   Ein Prüfer mit älteren Tabellen lehnt also manchen Text ab, den Go annimmt: Wer Texte schreibt,
   die andere prüfen, nimmt nur lange zugewiesene Zeichen. Neue Unicode-Tabellen in Go sind eine
   Vertragsänderung (`TestValidText` in `shared/wire` hält sie an).
-- **Selbst rechnen:** Was die Shell unterschreibt oder den Admin vergleichen lässt, rechnet sie
-  selbst aus, nie aus Antworten der API: Prüfsumme, Manifest und UI-Prüfsumme (`store.PackageUI`)
-  eines Pakets, das sie hochlädt (`core.UploadResult` dient nur dem Abgleich), die Fingerabdrücke
-  wartender Controller (`tunnel.Fingerprint` ihres Schlüssels) und API-Server
-  (`tunnel.JoinFingerprint`). Ein Paket liest sie dafür wie `store.Walk`, also in jeder Form, die
-  Go `archive/tar` liest, auch mit PAX-Köpfen und langen GNU-Namen; `packui.json` zeigt nur die
-  USTAR-Pakete von `ngc-store pack`. Was sie nicht lesen kann, lehnt sie ab. Rechnet sie anders als
-  Go, scheitert nur die Aktivierung: Eine UI-Prüfsumme, die nicht zum Paket passt, lehnt der
-  Controller ab (`E_VERIFY`).
+- **Selbst rechnen:** Prüfsummen, Manifeste, UI-Prüfsummen und Fingerabdrücke, die die Shell selbst
+  ausrechnen kann, nimmt sie nie aus Antworten der API, wenn sie sie unterschreibt oder den Admin
+  vergleichen lässt: Prüfsumme, Manifest und UI-Prüfsumme (`store.PackageUI`) eines Pakets, das sie
+  hochlädt (`core.UploadResult` dient nur dem Abgleich), die Fingerabdrücke wartender Controller
+  (`tunnel.Fingerprint` ihres Schlüssels) und API-Server (`tunnel.JoinFingerprint`). Ein Paket liest
+  sie dafür wie `store.Walk`, also in jeder Form, die Go `archive/tar` liest, auch mit PAX-Köpfen
+  und langen GNU-Namen; `packui.json` zeigt nur die USTAR-Pakete von `ngc-store pack`. Was sie nicht
+  lesen kann, lehnt sie ab. Rechnet sie anders als Go, scheitert nur die Aktivierung: Eine
+  UI-Prüfsumme, die nicht zum Paket passt, lehnt der Controller ab (`E_VERIFY`). Außerdem:
+  - `sha256` eines Updates per Klick darf aus der Zeile von `ngc.store/updates` kommen: Der
+    Controller installiert nur eine Datei, die zur unterschriebenen Aufgabe und zum signierten
+    Release oder Katalogeintrag passt; ein falscher Wert lässt das Update also nur scheitern.
+  - Die Werte eines neuen API-Servers kommen aus `core.PendingAPI`: Der Admin vergleicht
+    `tunnel.JoinFingerprint`, den die Shell über genau diese Werte rechnet, mit der Ausgabe von ulh.
+  - Schlüssel für Dauerfreigaben kommen nie von der API: Store-Schlüssel aus der geprüften
+    Vertrauensliste der Shell, der Release-Schlüssel aus Fassung 1 (dem per MAC geprüften Angebot
+    der Ersteinrichtung) oder aus den bestehenden Dauerfreigaben. `key` in `core.UpdateInfo` dient
+    nur Anzeige und Abgleich.
 - **TLS intern:** Jede TLS-Strecke zwischen NGC-Teilen prüft ihre Gegenseite; eine Prüfung
   abzuschalten ist verboten. API-Server weisen sich mit dem Fingerabdruck ihres TLS-Schlüssels aus
   (`trust.Node.TLS`, `trust.TLSPin`; in Go `tunnel.PinnedTLS`, im Skript `testdata/tls/pin.sh`),
@@ -245,7 +254,9 @@ erreichbar).
 
 - `E_LOGIN` steht für jede fehlgeschlagene Anmeldung gleich (unbekannter Name, falscher Beweis oder
   TOTP-Code, fehlender Passwortbeweis, verbrauchte oder abgelaufene Nonce) und für eine fehlende
-  oder abgelaufene Sitzung. `E_LOCKED` kommt mit `Retry-After` in Sekunden.
+  oder abgelaufene Sitzung. `E_LOCKED` kommt mit `Retry-After` in Sekunden. Die Sperre gilt je
+  Anmeldename, auch für Namen, die es nicht gibt, damit auch `E_LOCKED` nie verrät, ob ein Benutzer
+  existiert.
 - Cookie `ngc_session` (`session.CookieName`): base64url von 32 Zufallsbytes, dazu
   `Path=/api/; Secure; HttpOnly; SameSite=Strict` (`session.CookieAttributes`), ohne `Domain` und
   ohne `Max-Age`; die Datenbank kennt nur `session.TokenHash` der 32 Bytes. Abmelden löscht es mit
@@ -335,12 +346,12 @@ sie über den Kanal `ngc.users/controller/trust`.
   `E_PROTOCOL`. EOF, CLOSE, GRANT und Kanal 0 zählen nicht.
 - **API als Vermittler:** Sie legt das OPEN des Browsers unverändert in das Feld `open` von
   `tunnel.Open`, dazu ihre eigene Freigabe (`window`) und das Client-Zertifikat mit dem Beweis des
-  Benutzers (`client`, `proof`). DATA und EOF gibt sie unverändert und eins zu eins weiter, CLOSE
-  mit demselben Code. Die Freigabe führt sie je Strecke selbst und gibt dem Controller nie mehr
-  frei, als sie halten kann, bis der Browser es abnimmt. Ihre erste GRANT an den Browser schickt
-  sie erst nach der ersten GRANT des Controllers (oder sie gibt dessen CLOSE weiter); auf
-  Ende-zu-Ende-Kanälen kopiert sie Noise-Nachricht 2 aus dessen GRANT hinein. Ausnahme:
-  `transfer` mit Aufgabe (unten, „Kern-Apps und Aufgaben“).
+  Benutzers (`client`, `proof`). DATA und EOF gibt sie unverändert und eins zu eins weiter
+  (Ausnahme: `transfer` mit Aufgabe, unten unter „Kern-Apps und Aufgaben“), CLOSE mit demselben
+  Code. Die Freigabe führt sie je Strecke selbst und gibt dem Controller nie mehr frei, als sie
+  halten kann, bis der Browser es abnimmt. Ihre erste GRANT an den Browser schickt sie erst nach
+  der ersten GRANT des Controllers (oder sie gibt dessen CLOSE weiter); auf Ende-zu-Ende-Kanälen
+  kopiert sie Noise-Nachricht 2 aus dessen GRANT hinein.
 - **Beim Controller:** `tunnel.VerifyOpen` prüft das OPEN samt Client-Zertifikat
   (`session.VerifyClient`). Der Benutzer eines Kanals ist nur `Opened.Session.Cert().User`; das OPEN
   selbst binden nur der Prolog (Ende zu Ende) und die Unterschrift der Aufgabe. Eine Rolle mit
@@ -468,10 +479,11 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   (`core.UpdateInfo`). Ein Update per Klick ist je Controller eine Root-Aufgabe `install` mit
   `target`, `version` = `available` und `sha256` der Zeile (gesetzt, sobald `state` `downloaded`
   ist; bei `system` nur `target`). Eine Dauerfreigabe für einen NGC-Teil nennt den Release-Schlüssel
-  (bei der Ersteinrichtung aus `session.SetupInfo`, später `key` der Zeile), für eine App den
-  Schlüssel ihres Stores aus der Vertrauensliste. Controller prüfen Releases nur mit ihrem eigenen
-  Release-Schlüssel. Gespeichert ist je Ziel nur die Einstellung (Modus und Zeitfenster,
-  `core.UpdateSetting` unter `dbapi.SettingUpdate`); die Zeilen rechnet die API aus.
+  aus Fassung 1 (bei der Ersteinrichtung aus `session.SetupInfo`) oder aus den bestehenden
+  Dauerfreigaben, für eine App den Schlüssel ihres Stores aus der geprüften Vertrauensliste; `key`
+  der Zeile dient nur Anzeige und Abgleich (Regel „Selbst rechnen“). Controller prüfen Releases nur
+  mit ihrem eigenen Release-Schlüssel. Gespeichert ist je Ziel nur die Einstellung (Modus und
+  Zeitfenster, `core.UpdateSetting` unter `dbapi.SettingUpdate`); die Zeilen rechnet die API aus.
 
 ## Prüfen
 
