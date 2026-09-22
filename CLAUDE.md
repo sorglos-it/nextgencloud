@@ -2,24 +2,39 @@
 
 NGC (NextGenCloud) ist eine offene Alternative zu Synologys DSM: ein Arbeitsplatz im Browser mit
 App-Store. Entwurf: `docs/superpowers/specs/2026-09-19-ngc-kern-design.md`. Stand und nächster
-Schritt: `docs/STAND.md`. Verträge: `contracts/README.md`. Wie Kanäle laufen: dort, Abschnitt
+Schritt: `docs/STAND.md`. Verträge: `shared/README.md`. Wie Kanäle laufen: dort, Abschnitt
 „Kanäle“; wie JSON von außen geprüft wird: Abschnitt „Striktes JSON“.
 
 ## Wer macht was
 
 | Teil | Ordner | ulh-Skript | Sitzung auf Server |
 |---|---|---|---|
-| Webinterface | `web/` | `scripts/ngc-web.sh` | Web |
-| API | `api/` | `scripts/ngc-api.sh` | API 1 |
-| Controller | `controller/` | `scripts/ngc-controller.sh` | Dienste |
-| Datenbank | `db/` | `scripts/ngc-db.sh` | DB 1 |
-| Verträge, `contracts/`, Zusammenführen | – | – | Koordinator (Thomas' Rechner) |
+| Webinterface | `apps/web/` | `scripts/ngc-web.sh` | Web |
+| API | `apps/server-api/`, Werkzeug `ngc-store` in `apps/cli/` | `scripts/ngc-api.sh` | API 1 |
+| Controller | `apps/server-controller/` | `scripts/ngc-controller.sh` | Dienste |
+| Datenbank | `apps/server-db/` | `scripts/ngc-db.sh` | DB 1 |
+| Verträge (`shared/`), `tools/`, `docs/`, Zusammenführen | – | – | Koordinator (Thomas' Rechner) |
 
 Die ulh-Skripte liegen im öffentlichen ulh-Repo (`sorglos-it/ulh`), nicht hier; Regeln dafür in
-`contracts/ulh.md`. `scripts/ngc-all.sh` (alles auf einem Pi) kommt mit dem Plan für den Pi.
+`shared/ulh.md`. `scripts/ngc-all.sh` (alles auf einem Pi) kommt mit dem Plan für den Pi.
 
-Fremde Ordner sind tabu. `contracts/` ändert nur der Koordinator: Wer eine Änderung braucht, fragt
+Fremde Ordner sind tabu. `shared/` ändert nur der Koordinator: Wer eine Änderung braucht, fragt
 ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an dessen Sitzung.
+
+## Aufbau
+
+Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Verträge in
+`shared/`, Skripte in `tools/`, Dokumente in `docs/`. Neue Ordner nur mit Namen aus dem Standard.
+
+- Ein Go-Teil hat direkt nur `main.go` (Einstiegspunkt), `VERSION` und `CLAUDE.md`. Die Logik
+  liegt in `classes/`, ein Go-Paket; wächst es über etwa 20 Dateien, bekommt jedes Paket einen
+  Unterordner (`classes/session/`). Go-Tests liegen neben dem Code, wie Go es verlangt.
+- Dazu, wenn nötig: `sql/` (Migrationen), `config/` (nur `*.example`), `templates/`, `lang/`.
+- Go ist ein Modul im Stamm (`go.mod`). Deshalb liegt `vendor/` im Stamm: Go verlangt es neben
+  `go.mod`, als einzige Ausnahme vom Standard.
+- Programme heißen nach ihrem Softwareteil: `go build -o ngc-api ./apps/server-api`, ebenso
+  `ngc-controller` und `ngc-store`. Die Version steht in `VERSION` des Teils und kommt beim Bauen
+  mit `-ldflags "-X main.Version=…"` ins Programm.
 
 ## Regeln für sicheres Programmieren (Entwurf 4.6, verbindlich)
 
@@ -42,25 +57,25 @@ ihn und wartet auf die neue Fassung. Fragen an einen Nachbarn gehen direkt an de
   `CGO_ENABLED=0`. Ziel sind Debian und Ubuntu. Windows wird nicht umgesetzt.
 - Keine Laufzeitabhängigkeiten: Fremdcode nur per `go mod vendor`, mit Zeile in `THIRD-PARTY.md`,
   Lizenz vereinbar mit der AGPL-3.0. Neue Module vorher beim Koordinator anfragen.
-- Webinterface ohne Framework und ohne Build-Schritt; npm nur in `tests/browser/`.
+- Webinterface ohne Framework und ohne Build-Schritt; npm nur in `apps/web/tests/`.
 - Sprache: Code, Bezeichner, Kommentare und Commit-Nachrichten Englisch. Dokumente, Oberfläche und
   Meldungen für Benutzer Deutsch.
 - Kommentare erklären, warum etwas so ist, nicht was die Zeile tut.
 
 ## Tests
 
-- `go test ./...` muss grün sein, `scripts/check.sh` vor jedem Commit.
+- `go test ./...` muss grün sein, `tools/check.sh` vor jedem Commit.
 - Auf den Linux-Servern zusätzlich `go test -race ./...` laufen lassen (Thomas' Windows-Rechner hat
   kein cgo, der Data-Race-Detektor lief dort noch nicht); die Tests, die sich unter Windows oder
-  ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `contracts/service`,
-  `TestReleaseScript` in `contracts/store` mit 28 Fällen, der `openssl`, das echte `jq` und
-  `mktemp` braucht, die Dateirechte-Prüfung in `contracts/config`), müssen dort grün sein.
+  ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `shared/service`,
+  `TestReleaseScript` in `shared/store` mit 28 Fällen, der `openssl`, das echte `jq` und
+  `mktemp` braucht, die Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
-  Vektoren in `contracts/testdata/`. Fuzz-Ziele in `contracts/store` nur mit
+  Vektoren in `shared/testdata/`. Fuzz-Ziele in `shared/store` nur mit
   `-fuzzminimizetime=1s`, sonst bleibt das Verkleinern der Eingaben hängen.
-- In `contracts/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
+- In `shared/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
   Passkey-Admin, `Users[1]` der Passwort-Admin aus `NewSigner(1)`.
-- `contracts/trust/trusttest` nur in Tests importieren; `scripts/check.sh` bricht sonst ab.
+- `shared/trust/trusttest` nur in Tests importieren; `tools/check.sh` bricht sonst ab.
 - Fremdcode prüfen: `govulncheck ./...`.
 - Keine Tests löschen oder überspringen, um grün zu werden.
 

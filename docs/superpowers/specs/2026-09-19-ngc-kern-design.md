@@ -87,7 +87,7 @@ mit Galera und Podman aus den Paketquellen von Debian und Ubuntu, und die instal
 
 ### Lizenz
 
-NGC steht unter der **AGPL-3.0**. `ngc.js` und die Verträge in `contracts/` stehen unter
+NGC steht unter der **AGPL-3.0**. `ngc.js` und die Verträge in `shared/` stehen unter
 **MIT**, damit auch geschlossene, bezahlte Apps möglich sind. Solange alle Rechte bei Thomas
 liegen, kann er Firmen zusätzlich eine kommerzielle Lizenz verkaufen. Nimmt er Code von anderen
 Entwicklern an, braucht er dafür deren schriftliche Zustimmung. Bevor NGC öffentlich wird,
@@ -155,11 +155,11 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
 Aufbau auf sieben Servern:
 
 ```
-Browser ─HTTPS─► Web (Apache + web/) ─/api/─► API 1 oder API 2 ─TLS─► DB 1 bis 3 (Galera)
-                                                     ▲
-                                 Tunnel zu jeder API │
-                                                     │
-                                Dienste: ngc-controller ─stdin/stdout─► Dienst (Container)
+Browser ─HTTPS─► Web (Apache + apps/web/) ─/api/─► API 1 oder API 2 ─TLS─► DB 1 bis 3 (Galera)
+                                                          ▲
+                                      Tunnel zu jeder API │
+                                                          │
+                                     Dienste: ngc-controller ─stdin/stdout─► Dienst (Container)
                                             │
                                           SQLite (lokaler Zustand)
 ```
@@ -195,16 +195,17 @@ API muss nicht offen im Netz stehen.
 
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
-| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
-| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | API 1 und 2 |
-| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
-| Datenbank | `db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
-| Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
+| Webinterface | `apps/web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
+| API | `apps/server-api/`, `ngc-store` in `apps/cli/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | API 1 und 2 |
+| Controller | `apps/server-controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
+| Datenbank | `apps/server-db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
+| Verträge | `shared/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
 | Installation | im ulh-Repo: `scripts/ngc-*.sh` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
-| Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
-| Fremdcode | `vendor/`, `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
-| Prototyp | `prototype/` | Unverändert als Vorlage für den Desktop | – |
-| Tests | `tests/` | Gesamttest über alle Teile; Browser-Tests mit Playwright in `tests/browser/` (4.6) | – |
+| Mitgelieferte Apps | Oberflächen in `apps/web/`, Dienst des Terminals in `apps/server-controller/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
+| Fremdcode | `vendor/` (Go), `apps/web/public/assets/vendor/` (Browser), `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
+| Prototyp | `docs/prototype.html` | Unverändert als Vorlage für den Desktop | – |
+| Skripte | `tools/` | `check.sh` vor jedem Commit, später Bauen, Release und der Gesamttest | – |
+| Tests | neben dem Code (Go), `apps/web/tests/` (Browser) | Browser-Tests mit Playwright (4.6); der Gesamttest über alle Teile als Skript in `tools/` | – |
 
 **Regel für mehrere APIs:** Sitzungen und alles Wichtige liegen in der Datenbank, nicht im
 Speicher einer einzelnen API. Jede API kann jede andere ersetzen.
@@ -749,7 +750,7 @@ in der App Benutzer & Rechte.
 - Passwort-Anmeldung: mit Passwort und TOTP anmelden, dann auf Passkey umstellen. Ein
   Mitschnitt zeigt, dass das Passwort den Browser nie verlässt.
 - Das Webinterface prüfen wir automatisch mit Playwright in den Engines von Chrome, Firefox und
-  Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `tests/browser/`, mit
+  Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `apps/web/tests/`, mit
   festgeschriebenen Versionen, nur auf Test-Servern und nie nötig, um NGC zu bauen oder
   laufen zu lassen. Thomas: „zum Testen unserer Software darfst du bauen was du willst. solange
   der core davon nicht betroffen wird".
@@ -762,15 +763,15 @@ Server ihres Teils und betreut alle Server, die dazugehören:
 
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
-| Web | Webinterface | `web/` | Desktop, Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
-| API 1 und 2 | API | `api/` | Anmeldung mit Passwortschlüssel, TOTP und Passkeys, Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
-| Dienste | Controller | `controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
-| DB 1 bis 3 | Datenbank | `db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
+| Web | Webinterface | `apps/web/` | Desktop, Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
+| API 1 und 2 | API | `apps/server-api/`, `apps/cli/` | Anmeldung mit Passwortschlüssel, TOTP und Passkeys, Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
+| Dienste | Controller | `apps/server-controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
+| DB 1 bis 3 | Datenbank | `apps/server-db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
 Jeder Teil schreibt auch sein eigenes ulh-Skript, im ulh-Repo unter `scripts/ngc-<teil>.sh`.
 
 **Zuerst die Verträge.** Bevor jemand baut, legt der Koordinator die Schnittstellen schriftlich
-in `contracts/` fest, und Thomas gibt sie frei:
+in `shared/` fest, und Thomas gibt sie frei:
 
 1. Webinterface ↔ API
 2. API ↔ Controller
@@ -974,6 +975,7 @@ Sperre in der Datenbank.
 | 22.09.2026 | ulh installiert nie ein älteres Release als das installierte; dasselbe darf zur Reparatur erneut installiert werden. Das Prüfskript prüft genau die gelisteten Dateien seines Teils und installiert nur diese; eine leere Liste ist ein Fehler. |
 | 22.09.2026 | Oberflächen-Pakete (`ui/`) liest die Shell nur in der kanonischen Form, die NGCs Packer schreibt: USTAR, nur Dateien und Ordner, PAX nur mit `path`, feste Tiefen- und Anzahlgrenzen. Alles andere wird abgelehnt, damit Browser und Go genau dasselbe sehen. |
 | 22.09.2026 | Kataloge: Das Budget begrenzt auch die Summe der Versionen über alle Apps, damit ein signierter Katalog wenig Speicher kostet. |
+| 22.09.2026 | Vorgabe Thomas: Das Repo folgt dem Projektstruktur-Standard. Die Teile liegen unter `apps/`: `web`, `server-api`, `server-controller`, `server-db` und `cli` (das Werkzeug `ngc-store`, gehört zur API). Die Verträge liegen in `shared/` (vorher `contracts/`, Importpfad `github.com/sorglos-it/nextgencloud/shared/…`), Skripte in `tools/` (vorher `scripts/`), der Prototyp in `docs/prototype.html`. Ein Go-Teil hat direkt nur `main.go`, `VERSION` und `CLAUDE.md`, die Logik liegt in `classes/`. Go bleibt ein Modul im Stamm, deshalb bleibt `vendor/` dort: Go verlangt es neben `go.mod` (einzige Ausnahme vom Standard). Webroot ist nur `apps/web/public/`, Fremdcode für den Browser liegt in `apps/web/public/assets/vendor/`, Browser-Tests in `apps/web/tests/`, der Gesamttest kommt als Skript nach `tools/`. Die mitgelieferten Apps haben keinen eigenen Ordner: ihre Oberflächen baut das Webinterface, den Terminal-Dienst der Controller. |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -985,10 +987,10 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | SQLite ohne cgo, Verschlüsselung AES-256-XTS | `github.com/ncruces/go-sqlite3` mit `vfs/xts` | Am 18.09.2026 geprüft: v0.35.5 vom 16.09.2026, AES-256 bei 64-Byte-Schlüssel, reines Go. Lizenz noch prüfen. |
 | MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
 | WebSocket | `github.com/coder/websocket` | zu prüfen |
-| Argon2id | `golang.org/x/crypto/argon2` | Übernommen in Plan 0: v0.57.0, BSD-3-Clause, in `contracts/proof` |
+| Argon2id | `golang.org/x/crypto/argon2` | Übernommen in Plan 0: v0.57.0, BSD-3-Clause, in `shared/proof` |
 | Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`); kein PBKDF2-Ausweg (21.09.2026) | zu prüfen |
 | TOTP | `github.com/pquerna/otp` oder eigene Umsetzung nach RFC 6238 mit dessen Testvektoren; HMAC kommt aus der Standardbibliothek von Go | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
-| Noise-Tunnel | `github.com/flynn/noise` | Übernommen in Plan 0: v1.1.0, BSD-3-Clause, in `contracts/noisep` |
-| Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `tests/browser/` | erlaubt seit 19.09.2026 |
+| Noise-Tunnel | `github.com/flynn/noise` | Übernommen in Plan 0: v1.1.0, BSD-3-Clause, in `shared/noisep` |
+| Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `apps/web/tests/` | erlaubt seit 19.09.2026 |
 | Noise im Browser (Ende zu Ende) | JavaScript-Umsetzung ohne npm | zu prüfen; findet sich keine geprüfte, dann eigene Umsetzung des Ablaufs nach der Spezifikation, getestet mit den offiziellen Testvektoren. Die Kryptografie selbst kommt aus der Web Crypto API des Browsers. |

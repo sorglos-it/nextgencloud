@@ -7,10 +7,21 @@ Thumbs.db
 *.bak
 *.log
 
-# build output
-/bin/
-/dist/
+# Erzeugtes
+dist/
+bin/
+obj/
 
-# browser tests (npm only there)
-/tests/browser/node_modules/
-/tests/browser/test-results/
+# Laufzeitdaten
+apps/*/data/
+
+# Echte Konfiguration und Secrets - nur *.example kommt ins Repo
+apps/*/config/*
+!apps/*/config/*.example
+
+# Browser-Tests (npm nur dort)
+apps/web/tests/node_modules/
+apps/web/tests/test-results/
+
+# Fremdcode gehört ins Repo (vendor/ im Stamm per go mod vendor, JavaScript von Hand kopiert in
+# apps/web/public/assets/vendor/), deshalb fehlt hier die Zeile apps/*/vendor/ aus der Vorlage.

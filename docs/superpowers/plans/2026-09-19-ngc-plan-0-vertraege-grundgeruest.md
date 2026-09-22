@@ -3,6 +3,12 @@
 > **Für ausführende Agenten:** PFLICHT-SKILL: superpowers:subagent-driven-development (empfohlen)
 > oder superpowers:executing-plans, Aufgabe für Aufgabe. Schritte nutzen Checkboxen (`- [ ]`).
 
+> **Pfade seit 22.09.2026:** Das Repo folgt jetzt dem Projektstruktur-Standard; dieser Plan nennt
+> noch die alten Pfade. `contracts/` ist `shared/` (Importpfad `…/nextgencloud/shared/…`), `api/`
+> ist `apps/server-api/` (`ngc-store`: `apps/cli/`), `controller/` ist `apps/server-controller/`,
+> `db/` ist `apps/server-db/`, `web/` ist `apps/web/`, `tests/browser/` ist `apps/web/tests/`,
+> `scripts/check.sh` ist `tools/check.sh`, `prototype/index.html` ist `docs/prototype.html`.
+
 **Ziel:** Die sieben Verträge zwischen den Teilen als Go-Pakete mit Testvektoren, je eine
 `CLAUDE.md` für die vier Teile und ein Grundgerüst, das baut und testet. Danach können vier
 Claude-Sitzungen auf den sieben Servern parallel anfangen, ohne aufeinander zu warten.
