@@ -29,11 +29,10 @@ import (
 // store a UI that store did not sign. An admin should therefore add only
 // stores they trust as much as the software they install from them.
 //
-// Rollback: the shell keeps, per installation and app, the newest version
-// whose UI it has verified, and refuses a UI proof for an older version; with
-// a newer version it updates its record. The installed version comes from
-// the API, so a browser that never saw the newer version can still be shown
-// the older version's signed UI.
+// Versions: the API decides which signed version of an app's UI the shell
+// runs, for example an older one a store or admin once signed, or the
+// version a controller restored after a failed update (store.UpdateRolledBack).
+// It cannot make the shell run a UI nobody signed for that app.
 type UIProof struct {
 	App     string         `json:"app"`
 	Version string         `json:"version"`
@@ -82,9 +81,8 @@ func ParseUIProof(b []byte) (UIProof, error) {
 // on a node where that user may run root tasks (l.MayRoot), with params
 // (ParseParams) naming app, version and LocalStore; their ui is the hash. No
 // time is checked: the approval holds while its key and root permission stay
-// in l. Nor is the order of versions: refusing a proof for a version older
-// than the newest one it verified is the shell's rule (UIProof, "Rollback").
-// Every failure is ErrUIProof.
+// in l. No order of versions is checked either: the API decides which signed
+// version the shell runs (UIProof, "Versions"). Every failure is ErrUIProof.
 func VerifyUIProof(p UIProof, app, version string, l *trust.List) ([]byte, error) {
 	ui, err := verifyUIProof(p, app, version, l)
 	if err != nil {
