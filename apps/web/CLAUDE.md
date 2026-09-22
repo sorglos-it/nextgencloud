@@ -35,7 +35,10 @@ dunkel. Dazu:
   (Zweck `clientcert/v1`).
 - HTTP bis zum WebSocket genau nach `shared/README.md`, Abschnitt „Vor dem WebSocket“. Fehler
   erkennst du am Code im CLOSE-JSON (`wire.Code`), nicht am Status; `E_LOGIN` sagt nie, was falsch
-  war, bei `E_LOCKED` wartest du `Retry-After` Sekunden. Das Cookie setzt und löscht die API.
+  war, bei `E_LOCKED` wartest du `Retry-After` Sekunden. Antworten, die Apache selbst gibt (502 oder
+  503, wenn keine API antwortet oder ihre Zertifikatsprüfung scheitert), tragen kein CLOSE-JSON:
+  Jede Fehlerantwort, die kein JSON ist, behandelst du als `E_UNREACHABLE`. Das Cookie setzt und
+  löscht die API.
 - Ersteinrichtung: Zuerst fragst du den Einmal-Code ab (`session.NormalizeSetupCode`), dann prüfst
   du das Angebot von `GET /api/v1/setup` damit wie `session.ParseSetupOffer`, bevor du `info` liest.
   Fassung 1: der Admin, die API-Knoten aus `info.nodes`, wahlweise der globale Store aus
@@ -64,7 +67,8 @@ dunkel. Dazu:
   Fingerabdruck, den der Admin mit der Ausgabe von ulh vergleicht, rechnest du selbst aus
   (`tunnel.Fingerprint` des Schlüssels bzw. `tunnel.JoinFingerprint` über `node`, `noise`, `sign`,
   `tls` und `url`). Einen API-Server nimmst du als `trust.Node` der Art `api` auf, mit genau den
-  Werten aus `core.PendingAPI` und `name` = `node`.
+  Werten aus `core.PendingAPI` und `name` = `node`; das ist sicher, weil der Admin
+  `tunnel.JoinFingerprint` über genau diese Werte mit ulh vergleicht.
 - Ende zu Ende: pro Kanal Noise zum Controller aus `core.DesktopApp` (Feld `node`, nicht
   anzeigen). Prolog `noisep.E2EPrologue` mit SHA-256 von `params` und von `task`, jeweils genau den
   Bytes, die du ins OPEN geschrieben hast (fehlt das Feld: SHA-256 des leeren Texts);
@@ -109,14 +113,17 @@ dunkel. Dazu:
   sie wie `store.Walk`, also auch mit PAX-Köpfen und langen GNU-Namen, nicht nur die USTAR-Pakete
   aus `packui.json`; was du nicht lesen kannst, lehnst du ab. Weicht `core.UploadResult` davon ab,
   brichst du ab. Unterschrieben werden nur deine eigenen Werte: `core.ActivateParams` mit `sha256`,
-  `ui` und `grants` = den `needs` des Manifests, die der Admin erlaubt hat. Bei Store-Apps kommen
-  `sha256` und `ui` aus dem geprüften Katalog.
+  `ui` und `grants` genau gleich den `needs` des Manifests; erlaubt der Admin nicht alle, wird die
+  App nicht aktiviert. Bei Store-Apps kommen `sha256` und `ui` aus dem geprüften Katalog.
 - Updates (`ngc.store/updates`): eine Zeile je Ziel und Controller (`core.UpdateInfo`). Ein Update
   per Klick ist je Zeile eine Root-Aufgabe `install` mit `target`, `version` = `available` und
-  `sha256` der Zeile (nur bei `state` `downloaded`; bei `system` nur `target`). Dauerfreigaben
-  nennen für NGC-Teile den Release-Schlüssel (bei der Ersteinrichtung `info.releaseKey` aus
-  `session.SetupInfo`, später `key` der Zeile), für Apps den Schlüssel ihres Stores aus der
-  Vertrauensliste.
+  `sha256` der Zeile (nur bei `state` `downloaded`; bei `system` nur `target`). `sha256` darfst du
+  aus der Zeile nehmen: Der Controller installiert nur eine Datei, die zur Aufgabe und zum
+  signierten Release oder Katalogeintrag passt, ein falscher Wert lässt das Update nur scheitern.
+  Schlüssel für Dauerfreigaben nimmst du nie von der API: für NGC-Teile den Release-Schlüssel aus
+  Fassung 1 (`info.releaseKey` des per MAC geprüften Angebots) oder aus den bestehenden
+  Dauerfreigaben deiner geprüften Liste, für Apps den Schlüssel ihres Stores aus der geprüften
+  Vertrauensliste; `key` der Zeile dient nur Anzeige und Abgleich.
 - JSON von außen strikt wie in Go (`shared/README.md`, Abschnitt „Striktes JSON“: Regeln und
   Budgets). Jede Grenze aus den Go-Paketen gilt auch hier. Texte für Menschen prüfst du wie
   `wire.ValidText`, Codepunkt für Codepunkt (`shared/README.md`, Regeln).
