@@ -1014,6 +1014,7 @@ Sperre in der Datenbank.
 | 22.09.2026 | Die Oberfläche einer Store-App belegt jeder Store der Vertrauensliste, dessen Katalog App, Version und UI-Prüfsumme führt. Eine feste Bindung an den Store über die Aktivierung des Admins ist verworfen: Nach jedem Wechsel des Admin-Schlüssels (etwa ein neues Passwort) müssten sonst alle Apps neu aktiviert werden. Die Grenze steht in 4.5, eine bessere Bindung kommt mit Plan 7. |
 | 22.09.2026 | Welche signierte Version einer Oberfläche die Shell ausführt, entscheidet die API; eine unsignierte kann sie nicht unterschieben. Eine Sperre gegen ältere Versionen in der Shell ist verworfen: Sie würde die Version aussperren, auf die der Controller nach einem fehlgeschlagenen Update zurücksetzt. |
 | 22.09.2026 | Updates: Gespeichert wird je Ziel nur die Einstellung (`update.<ziel>`: Modus und Zeitfenster); den Stand je Server rechnet die API aus Releases, Katalogen und den Meldungen der Controller aus. |
+| 22.09.2026 | Das TLS-Zertifikat einer API ist selbst signiert und 100 Jahre gültig; es trägt kein Vertrauen, das trägt der gepinnte Schlüssel. Erneuert wird es nur mit demselben Schlüssel, ein neuer Schlüssel kommt nur mit neuem Fingerabdruck in der Vertrauensliste. Der Controller mit Rolle `web` holt das Zertifikat neu, wenn die Prüfung einer Verbindung scheitert, nimmt es nur mit passendem Schlüssel an und lädt Apache neu. Für die Installation der API gibt es `store_key` neben `store_url`, beide vorbelegt mit dem offiziellen NGC-Store. |
 
 ## 7. Fremdcode-Kandidaten
 
