@@ -3,7 +3,8 @@
 NGC (NextGenCloud) ist eine offene Alternative zu Synologys DSM: ein Arbeitsplatz im Browser mit
 App-Store. Entwurf: `docs/superpowers/specs/2026-09-19-ngc-kern-design.md`. Stand und nächster
 Schritt: `docs/STAND.md`. Verträge: `shared/README.md`. Wie Kanäle laufen: dort, Abschnitt
-„Kanäle“; wie JSON von außen geprüft wird: Abschnitt „Striktes JSON“.
+„Kanäle“; was vor dem WebSocket läuft: Abschnitt „Vor dem WebSocket“; wie JSON von außen geprüft
+wird: Abschnitt „Striktes JSON“.
 
 ## Wer macht was
 
@@ -49,12 +50,17 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 - Überall Obergrenzen: Nachrichtengröße, Kanäle je Sitzung und je Tunnel, Freigabe je Kanal,
   Anmeldeversuche.
 - Kryptografie nur aus der Standardbibliothek oder aus `vendor/`, nichts selbst gebaut.
+- TLS zwischen NGC-Teilen nie ungeprüft: API-Server über ihren Fingerabdruck (`tunnel.PinnedTLS`),
+  MariaDB über die CA der Installation (`config.DB.TLSConfig`).
 - Geheimnisse nie ins Log, auch nicht gekürzt (`config.Secret`, `config.SecretText`).
 
 ## Technik
 
 - Go 1.27 (`go.mod`: `go 1.27`, `toolchain go1.27.1`), Bau für linux/amd64 und linux/arm64 mit
   `CGO_ENABLED=0`. Ziel sind Debian und Ubuntu. Windows wird nicht umgesetzt.
+- Texte für Menschen prüft `wire.ValidText` mit den Unicode-Tabellen von Go (Unicode 17.0 mit
+  Go 1.27). Ein Go-Update, das neue Unicode-Tabellen bringt, ist deshalb eine Vertragsänderung:
+  `TestValidText` in `shared/wire` schlägt fehl, bis Doku und Testdaten nachgezogen sind.
 - Keine Laufzeitabhängigkeiten: Fremdcode nur per `go mod vendor`, mit Zeile in `THIRD-PARTY.md`,
   Lizenz vereinbar mit der AGPL-3.0. Neue Module vorher beim Koordinator anfragen.
 - Webinterface ohne Framework und ohne Build-Schritt; npm nur in `apps/web/tests/`.
@@ -69,7 +75,8 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
   geht das nur in WSL, dort am 22.09.2026 grün); die Tests, die sich unter Windows oder
   ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `shared/service`,
   `TestReleaseScript` in `shared/store` mit 31 Fällen, der `openssl`, das echte `jq` und
-  `mktemp` braucht, die Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
+  `mktemp` braucht, `TestTLSPinScript` in `shared/tunnel`, der `openssl` braucht, die
+  Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
   Vektoren in `shared/testdata/`. Fuzz-Ziele in `shared/store` nur mit
   `-fuzzminimizetime=1s`, sonst bleibt das Verkleinern der Eingaben hängen.
