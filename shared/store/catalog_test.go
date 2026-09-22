@@ -371,6 +371,13 @@ func catalogShape(apps int, app string, versions int, version string) []byte {
 // TestCatalogDecodeCost decodes the costliest shapes of catalog the budget
 // lets through: every one costs less than 32 MiB, and one version more than
 // MaxCatalogVersions is refused before anything is built.
+//
+// The costliest number of versions per app is one past a capacity that
+// append reaches for []Package: decoding has just copied the list into an
+// array about twice as long, and the arrays before it are garbage. Those
+// counts come from the running toolchain, so a larger Package or another
+// growth rule cannot hide the worst case; each gets as many apps as
+// MaxCatalogVersions allows, a price and descriptions that fill the payload.
 func TestCatalogDecodeCost(t *testing.T) {
 	perApp := MaxCatalogVersions / MaxApps
 	// filled builds a shape whose string of every app or version is as long
@@ -379,10 +386,11 @@ func TestCatalogDecodeCost(t *testing.T) {
 		n := (sign.MaxPayload - len(shape(""))) / slots
 		return shape(strings.Repeat("x", n))
 	}
-	cases := []struct {
+	type costCase struct {
 		name string
 		doc  []byte
-	}{
+	}
+	cases := []costCase{
 		{"most apps, each with a price and versions with two needs", catalogShape(MaxApps, `"price":{},`, perApp, `{"needs":["",""]}`)},
 		{"fewest apps, full lists of versions with two needs", catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions, `{"needs":["",""]}`)},
 		{"most apps with long descriptions", filled(MaxApps, func(s string) []byte {
@@ -394,11 +402,26 @@ func TestCatalogDecodeCost(t *testing.T) {
 		{"versions with every field", catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions,
 			`{"version":"","url":"","size":0,"sha256":"","ui":"","needs":["",""],"minNgc":""}`)},
 	}
+	fixed := len(cases)
+	var list []Package
+	for len(list) < MaxVersions {
+		if n := len(list); n > 0 && n == cap(list) {
+			apps := min(MaxApps, MaxCatalogVersions/(n+1))
+			cases = append(cases, costCase{fmt.Sprintf("%d apps of %d versions, one past a capacity of []Package", apps, n+1),
+				filled(apps, func(s string) []byte {
+					return catalogShape(apps, `"price":{},"description":"`+s+`",`, n+1, `{"needs":["",""]}`)
+				})})
+		}
+		list = append(list, Package{})
+	}
+	if len(cases) == fixed {
+		t.Fatal("append reached no capacity of []Package below MaxVersions")
+	}
 	for _, c := range cases {
 		var got Catalog
 		var err error
 		n := allocated(func() { err = catalogBudget.Decode(c.doc, &got) })
-		t.Logf("%s: %d bytes, %.1f MiB allocated", c.name, len(c.doc), float64(n)/(1<<20))
+		t.Logf("%s: %d bytes, %d allocated (%.1f MiB)", c.name, len(c.doc), n, float64(n)/(1<<20))
 		if err != nil || len(c.doc) > sign.MaxPayload {
 			t.Errorf("%s: %d bytes, not inside the budget: %v", c.name, len(c.doc), err)
 		}
@@ -411,6 +434,55 @@ func TestCatalogDecodeCost(t *testing.T) {
 	if n := allocated(func() { _, err = parseCatalog(over) }); n > 64<<10 || err != ErrCatalog {
 		t.Errorf("one app of versions too many: %d bytes allocated, %v", n, err)
 	}
+}
+
+// TestMaxCatalogVersionsRefusesNoValidCatalog: the smallest valid version
+// (five-character version, URL "a", size 1, the two hashes, nothing
+// optional) takes 144 bytes and a comma, so sign.MaxPayload holds fewer
+// valid versions than MaxCatalogVersions, whatever else the catalog holds.
+// The total only bounds what a document the budget lets through costs to
+// decode. A catalog of the smallest versions that fills the payload shows it.
+func TestMaxCatalogVersionsRefusesNoValidCatalog(t *testing.T) {
+	version := func(j int) Package {
+		return Package{Version: fmt.Sprintf("0.%d.%d", j/10, j%10), URL: "a", Size: 1, SHA256: make([]byte, 32), UI: make([]byte, 32)}
+	}
+	b, err := json.Marshal(version(0))
+	if err != nil || len(b) != 144 {
+		t.Fatalf("smallest version: %d bytes, %v", len(b), err)
+	}
+	if n := sign.MaxPayload / (len(b) + 1); n >= MaxCatalogVersions {
+		t.Errorf("%d valid versions fit into sign.MaxPayload", n)
+	}
+	entry := func(i int) Entry {
+		e := Entry{ID: fmt.Sprintf("a.a%03d", i), Name: "A", Publisher: "P"}
+		for j := range MaxVersions {
+			e.Versions = append(e.Versions, version(j))
+		}
+		return e
+	}
+	// Every app takes the same bytes, so the first two tell how many fit.
+	c := Catalog{Store: GlobalID, Seq: 1, Issued: 1, Apps: []Entry{entry(0)}}
+	one, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Apps = append(c.Apps, entry(1))
+	two, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	per := len(two) - len(one)
+	for len(c.Apps) < 1+(sign.MaxPayload-len(one))/per {
+		c.Apps = append(c.Apps, entry(len(c.Apps)))
+	}
+	if b, err = json.Marshal(c); err != nil || len(b) > sign.MaxPayload || len(b)+per <= sign.MaxPayload {
+		t.Fatalf("%d apps in %d bytes: %v", len(c.Apps), len(b), err)
+	}
+	got, err := parseCatalog(b)
+	if err != nil || len(got.Apps)*MaxVersions >= MaxCatalogVersions {
+		t.Errorf("%d apps of %d versions in %d bytes: %v", len(c.Apps), MaxVersions, len(b), err)
+	}
+	t.Logf("%d apps of %d versions in %d bytes", len(c.Apps), MaxVersions, len(b))
 }
 
 // catalogReject is a catalog that VerifyCatalog(catalog, global, lastSeq)
