@@ -1,0 +1,27 @@
+{
+  "name": "datenbank",
+  "noiseKey": "0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tI",
+  "apis": [
+    {
+      "url": "wss://api-1.ngc.test:7443/tunnel",
+      "key": "oaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaE",
+      "tls": "4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"
+    }
+  ],
+  "anchor": {
+    "seq": 1,
+    "hash": "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s"
+  },
+  "db": "/var/lib/ngc/controller/state.db",
+  "dbKey": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3Q",
+  "releaseKey": "pKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKQ",
+  "roles": ["db", "services"],
+  "migrate": {
+    "driver": "mariadb",
+    "nodes": ["db-1.ngc.test:3306", "db-2.ngc.test:3306", "db-3.ngc.test:3306"],
+    "name": "ngc",
+    "user": "ngc_migrate",
+    "password": "migrate-secret",
+    "ca": "-----BEGIN CERTIFICATE-----\nMIIBJjCB2aADAgECAgEBMAUGAytlcDAbMRkwFwYDVQQDExBOR0MgREIgQ0EgKFRl\nc3QpMB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowGzEZMBcGA1UEAxMQ\nTkdDIERCIENBIChUZXN0KTAqMAUGAytlcAMhAEZmJ9Unc8nVzabI/SjqMex7lOaK\nqNQuKtMaddyNJO0Ho0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUwAwEB\n/zAdBgNVHQ4EFgQUtLfktau+b9lzKjCSShWE4L6O77EwBQYDK2VwA0EAtUDIks8P\nCjhgAiKaqPKxdtHPawXm/SArjFSrWd1AlVPCqBYD3LI4YpnwIXlqMmpgjVA8MT1m\np48tXprLImpLAQ==\n-----END CERTIFICATE-----\n"
+  }
+}

@@ -1,0 +1,438 @@
+package core
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"errors"
+	"io"
+	"regexp"
+
+	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
+)
+
+// States of an app for the desktop and the app store.
+const (
+	AppOK          = "ok"
+	AppUnreachable = "unreachable" // its controller has no tunnel to this API
+	AppUnlicensed  = "unlicensed"
+)
+
+// License states in InstalledApp and LicenseResult.
+const (
+	LicenseNone    = "none" // free app
+	LicenseValid   = "valid"
+	LicenseGrace   = "grace"
+	LicenseExpired = "expired"
+)
+
+// Kinds of log entries.
+const (
+	LogLogin       = "login"
+	LogLoginFailed = "login-failed"
+	LogChannel     = "channel"
+	LogTask        = "task" // signed task, with its signature kept by the API
+	LogTrust       = "trust"
+	LogRights      = "rights"
+	LogApp         = "app"
+	LogStore       = "store"
+	LogLicense     = "license"
+	LogUpdate      = "update"
+)
+
+// Levels of a notice.
+const (
+	NoticeInfo  = "info"
+	NoticeWarn  = "warn"
+	NoticeError = "error"
+)
+
+// Me answers ngc.desktop/me.
+type Me struct {
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	Roles         []string    `json:"roles,omitempty"` // from the trust list, where they are never empty; nil is left out, never null
+	Admin         bool        `json:"admin"`
+	PasswordLogin bool        `json:"passwordLogin"` // show the hint to switch to passkeys
+	TOTP          bool        `json:"totp"`
+	Level         trust.Level `json:"level"` // strictest re-confirmation level of the user's roles
+}
+
+// DesktopApp is an entry of the start menu (ngc.desktop/apps).
+type DesktopApp struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Icon    string `json:"icon,omitempty"` // path below ui/
+	// Entry is the page the shell loads first, a path below ui/ as the
+	// manifest's ui.entry names it; empty for core apps and apps without a
+	// UI. Like Icon, Width and Height it comes from the API unsigned: it only
+	// picks among the files of the ui-tar the UI proof covers, and the shell
+	// starts no page that is not a file of that ui-tar.
+	Entry   string   `json:"entry,omitempty"`
+	Width   int      `json:"width,omitzero"`
+	Height  int      `json:"height,omitzero"`
+	Actions []string `json:"actions,omitempty"` // actions this user may use
+	State   string   `json:"state"`
+	Core    bool     `json:"core,omitzero"` // app store and users & rights; their UI is part of the shell
+	// Node is the controller the app's services run on (trust list node ID);
+	// the shell needs it for noisep.E2EPrologue and the controller's Noise
+	// key and never shows it; empty for apps without services.
+	Node string `json:"node,omitempty"`
+}
+
+// TOTPBegin answers ngc.desktop/totp-begin.
+type TOTPBegin struct {
+	Secret string `json:"secret"` // base32, for typing in
+	URI    string `json:"uri"`    // otpauth://totp/…, for the QR code
+}
+
+// UserInfo is a row of ngc.users/list; keys and roles come from the trust list.
+type UserInfo struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Roles     []string `json:"roles,omitempty"`
+	TOTP      bool     `json:"totp"`
+	Locked    bool     `json:"locked"`
+	LastLogin int64    `json:"lastLogin,omitzero"`
+}
+
+// PairCodeResult answers ngc.users/pair-code and ngc.users/join-code.
+type PairCodeResult struct {
+	Code    string `json:"code"` // tunnel.PairCode, for join-code tunnel.JoinCode, as string
+	Expires int64  `json:"expires"`
+}
+
+// Pending is a controller that paired but is not in the trust list yet. The
+// admin compares tunnel.Fingerprint(Key), which the shell computes itself,
+// with the output of the ulh script.
+type Pending struct {
+	Name  string    `json:"name"`
+	Key   enc.Bytes `json:"key"`
+	Since int64     `json:"since"`
+}
+
+// PendingAPI is an API server that asked to join (tunnel.JoinRequest) but is
+// not in the trust list yet (ngc.users/pending-api). The shell adds it as a
+// trust.Node of kind api with exactly these values and Name = Node, once the
+// admin compared tunnel.JoinFingerprint of them, which the shell computes
+// itself, with the output of the new server's ulh script.
+type PendingAPI struct {
+	Node  string    `json:"node"`
+	Noise enc.Bytes `json:"noise"`
+	Sign  enc.Bytes `json:"sign"`
+	TLS   enc.Bytes `json:"tls"`
+	URL   string    `json:"url"`
+	Since int64     `json:"since"`
+}
+
+// NodeInfo is a row of ngc.users/nodes: a controller of the trust list as
+// the API that answers sees it, so that the admin can pick the node of an
+// activate task and see whether a server is up. Roles, Version and Arch are
+// what the controller said in its last hello to this API (tunnel.Hello);
+// nothing here is signed, and a controller refuses a task it cannot carry out.
+type NodeInfo struct {
+	Node    string   `json:"node"`              // node ID in the trust list
+	Online  bool     `json:"online"`            // it has a tunnel to this API now
+	Roles   []string `json:"roles,omitempty"`   // tunnel.Hello.Roles
+	Version string   `json:"version,omitempty"` // tunnel.Hello.Version: its NGC version
+	Arch    string   `json:"arch,omitempty"`    // tunnel.Hello.Arch
+}
+
+// LogEntry is a row of ngc.users/log.
+type LogEntry struct {
+	// ID is 32 lower-case hex characters from 16 random bytes, made by the
+	// API; hex so every database collation orders it like Go.
+	ID     string `json:"id"`
+	Time   int64  `json:"time"`
+	User   string `json:"user,omitempty"`
+	Kind   string `json:"kind"`
+	App    string `json:"app,omitempty"`
+	Action string `json:"action,omitempty"`
+	Node   string `json:"node,omitempty"`
+	Result string `json:"result"` // "ok" or a wire.Code
+	Detail string `json:"detail,omitempty"`
+}
+
+var logID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// ValidLogID reports whether s is the ID of a log entry: 32 lower-case hex
+// characters.
+func ValidLogID(s string) bool { return logID.MatchString(s) }
+
+// SourceInfo is a store in ngc.store/sources.
+type SourceInfo struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Seq     uint64 `json:"seq"`              // newest catalog seen
+	Checked int64  `json:"checked,omitzero"` // last successful fetch
+	Error   string `json:"error,omitempty"`  // German
+}
+
+// CatalogResult answers ngc.store/catalog. The shell verifies it with the
+// store key from the trust list before showing it.
+type CatalogResult struct {
+	Catalog sign.Envelope `json:"catalog"`
+}
+
+// InstalledApp is a row of ngc.store/installed.
+type InstalledApp struct {
+	ID       string `json:"id"`
+	Version  string `json:"version,omitempty"` // empty if only kept data remains
+	Store    string `json:"store"`
+	Node     string `json:"node"`
+	Active   bool   `json:"active"`
+	State    string `json:"state"`
+	License  string `json:"license"`
+	KeptData int64  `json:"keptData,omitzero"` // bytes of data kept after uninstalling
+}
+
+// UploadResult answers ngc.store/upload: what the API read from the package.
+// The shell never signs these values: it computes the package's SHA-256,
+// reads its manifest and computes its UI hash (store.PackageUI) from the file
+// it sent itself, refuses a mismatch with this result and puts its own values
+// into ActivateParams.
+type UploadResult struct {
+	ID      string    `json:"id"`
+	Version string    `json:"version"`
+	SHA256  enc.Bytes `json:"sha256"` // of the package file
+	UI      enc.Bytes `json:"ui"`     // its UI hash (store.PackageUI)
+}
+
+// LicenseResult answers ngc.store/api/license, and ngc.store/controller/license
+// with the state (LicenseOf) of the newest license the controller now holds
+// for App.
+type LicenseResult struct {
+	App   string `json:"app"`
+	State string `json:"state"`
+}
+
+// InstallKey answers ngc.store/install-key; the admin gives it to the shop when buying.
+type InstallKey struct {
+	Installation string    `json:"installation"`
+	Key          enc.Bytes `json:"key"` // X25519
+}
+
+// UpdateInfo is a row of ngc.store/updates: one target on one controller (an
+// NGC part on every node whose tunnel.Components hold it, an app on the node
+// it runs on, system on every node). The API computes the rows from
+// releases, catalogs, the controllers' reports and each target's
+// UpdateSetting (dbapi.SettingUpdate), and stores no row.
+type UpdateInfo struct {
+	Target    string `json:"target"`
+	Node      string `json:"node"`
+	Installed string `json:"installed,omitempty"`
+	// Available is the newest version of Target the API offers for Node. It is
+	// never an app version whose minNgc (store.Package.MinNGC) does not suit
+	// the NGC version of Node (store.SupportsMinNGC with tunnel.Hello.Version;
+	// a version that is no release version, such as 0.0.0-dev, suits no
+	// minNgc), and only from the catalog of the app's own store
+	// (dbapi.App.Store).
+	Available string `json:"available,omitempty"`
+	// SHA256 is the checksum of the file staged on Node for Available once State
+	// is store.UpdateDownloaded; an update by click signs it into InstallParams.
+	// The controller checks the staged file against the release or catalog entry
+	// it verified when staging, so this value only has to match.
+	SHA256 enc.Bytes `json:"sha256,omitempty"`
+	// Key is what a standing approval for an NGC part names (trust.Auto.Key):
+	// the NGC release key the API is configured with. Controllers verify
+	// releases only with their own release key, so a wrong Key can only keep
+	// updates from installing on their own. Empty for apps (the shell takes the
+	// store's key from the trust list) and for system.
+	Key    enc.Bytes `json:"key,omitempty"`
+	Mode   string    `json:"mode"`
+	Window string    `json:"window,omitempty"`
+	// State is store.Update… of the newest report, or store.UpdateNeedsGrants
+	// when Available needs rights the app was not granted (store.Granted of
+	// its catalog entry's needs with dbapi.App.Grants): such a row is never
+	// installed by click or without a user; the admin activates the new
+	// version with the new grants.
+	State string `json:"state,omitempty"`
+}
+
+// TrustResult answers ngc.users/trust, and ngc.users/controller/trust with
+// the newest version the controller verified.
+type TrustResult struct {
+	Seq uint64 `json:"seq"`
+}
+
+// ErrResult reports a result EncodeResult does not send.
+var ErrResult = errors.New("core: result the shell would refuse")
+
+// EncodeResult encodes the result of a core action as the API sends it.
+// encoding/json writes a nil slice as null, which the shell refuses (no null,
+// enc.Budget); EncodeResult writes an empty or nil list as [] and an empty or
+// nil map as {}, so the ten results that are lists (ngc.desktop/apps,
+// ngc.users/list, log, nodes, pending, pending-api and rights,
+// ngc.store/sources, installed and updates) are [] when empty. It encodes with
+// encoding/json/v2, whose omitempty keeps false and 0; the result types mark
+// optional bools and numbers omitzero, which both versions leave out alike.
+// Every failure is ErrResult: a value encoding/json/v2 refuses (invalid
+// UTF-8, a func), a null anywhere else (a nil pointer or interface outside
+// an omitempty field), and a result of more than wire.MaxCallResult bytes.
+func EncodeResult(v any) ([]byte, error) {
+	b, err := jsonv2.Marshal(v, jsonv2.Deterministic(true))
+	if err != nil || len(b) > wire.MaxCallResult || !nullFree(b) {
+		return nil, ErrResult
+	}
+	return b, nil
+}
+
+// nullFree reports whether the JSON value b holds no null.
+func nullFree(b []byte) bool {
+	dec := jsontext.NewDecoder(bytes.NewReader(b))
+	for {
+		tok, err := dec.ReadToken()
+		if err == io.EOF {
+			return true
+		}
+		if err != nil || tok.Kind() == 'n' {
+			return false
+		}
+	}
+}
+
+// Notice is the body of a "notify" control message: the API tells the
+// shell, a controller tells the API.
+type Notice struct {
+	Level string `json:"level"`
+	Text  string `json:"text"` // German
+	App   string `json:"app,omitempty"`
+}
+
+// MaxNotice limits the body of a "notify" control message.
+const MaxNotice = 1024
+
+// ErrNotice reports a malformed notice.
+var ErrNotice = errors.New("core: malformed notice")
+
+// noticeBudget bounds a notice while it is decoded (enc.Budget): it has no
+// array.
+var noticeBudget = enc.Budget{Size: MaxNotice}
+
+// ParseNotice checks the body of a "notify" control message: at most
+// MaxNotice bytes of strict JSON (enc.Budget); Level info, warn or error;
+// Text store.ValidText of at most wire.MaxMessageText bytes; App empty or a
+// valid non-core app ID. Every failure is ErrNotice.
+func ParseNotice(b []byte) (Notice, error) {
+	var n Notice
+	if noticeBudget.Decode(b, &n) != nil {
+		return Notice{}, ErrNotice
+	}
+	switch n.Level {
+	case NoticeInfo, NoticeWarn, NoticeError:
+	default:
+		return Notice{}, ErrNotice
+	}
+	if !store.ValidText(n.Text, wire.MaxMessageText) || (n.App != "" && !validApp(n.App)) {
+		return Notice{}, ErrNotice
+	}
+	return n, nil
+}
+
+// LicenseOf maps a license to the strings in InstalledApp and LicenseResult:
+// nil -> LicenseNone; store.LicenseValid/Grace/Expired -> LicenseValid/Grace/Expired.
+func LicenseOf(l *store.License, now int64) string {
+	if l == nil {
+		return LicenseNone
+	}
+	switch l.State(now) {
+	case store.LicenseValid:
+		return LicenseValid
+	case store.LicenseGrace:
+		return LicenseGrace
+	}
+	return LicenseExpired
+}
+
+// MaxTransferHeader limits the JSON header of a transfer.
+const MaxTransferHeader = 8 << 20
+
+// Transfer is the header of a file the API sends to a controller.
+// Exactly one source: Catalog with Store (app from a store), Release (NGC
+// update) or neither (uploaded app, the signed task names its checksum).
+type Transfer struct {
+	Catalog *sign.Envelope `json:"catalog,omitempty"`
+	Store   string         `json:"store,omitempty"` // empty for an uploaded app; ActivateParams.Store is LocalStore there instead.
+	Release *sign.Envelope `json:"release,omitempty"`
+	License *sign.Envelope `json:"license,omitempty"` // paid apps; the controller checks it with store.VerifyLicenseFor and keeps the newest (dbapi.BlobLicense)
+	Key     enc.Bytes      `json:"key,omitempty"`     // paid apps: content key, unwrapped by the API, which alone holds the installation's private key
+	Size    int64          `json:"size"`
+	SHA256  enc.Bytes      `json:"sha256"`
+}
+
+// Validate checks t, and the form of the envelopes it holds
+// (sign.Envelope.Validate: a catalog or release of at most sign.MaxPayload
+// bytes, a license of at most store.MaxLicense), whose signatures
+// store.VerifyCatalog, VerifyRelease and VerifyLicense check.
+func (t Transfer) Validate() error {
+	ok := t.Size > 0 && t.Size <= store.MaxPackage && len(t.SHA256) == 32 &&
+		!(t.Catalog != nil && t.Release != nil) && (t.Catalog != nil) == (t.Store != "") &&
+		(t.Store == "" || wire.ValidName(t.Store)) &&
+		(len(t.Key) == 0) == (t.License == nil) && (len(t.Key) == 0 || (len(t.Key) == store.KeySize && t.Catalog != nil)) &&
+		(t.Catalog == nil || t.Catalog.Validate(sign.MaxPayload) == nil) &&
+		(t.Release == nil || t.Release.Validate(sign.MaxPayload) == nil) &&
+		(t.License == nil || t.License.Validate(store.MaxLicense) == nil)
+	if !ok {
+		return ErrTransfer
+	}
+	return nil
+}
+
+// WriteTransfer writes the header: 4 bytes length (big endian), then the JSON.
+func WriteTransfer(w io.Writer, t Transfer) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	if len(b) > MaxTransferHeader {
+		return ErrTransfer
+	}
+	head := binary.BigEndian.AppendUint32(nil, uint32(len(b)))
+	_, err = w.Write(append(head, b...))
+	return err
+}
+
+// ReadTransfer reads exactly the header; the file follows in r. Every
+// failure is ErrTransfer.
+func ReadTransfer(r io.Reader) (Transfer, error) {
+	var n [4]byte
+	if _, err := io.ReadFull(r, n[:]); err != nil {
+		return Transfer{}, ErrTransfer
+	}
+	size := binary.BigEndian.Uint32(n[:])
+	if size == 0 || size > MaxTransferHeader {
+		return Transfer{}, ErrTransfer
+	}
+	b := make([]byte, size)
+	if _, err := io.ReadFull(r, b); err != nil {
+		return Transfer{}, ErrTransfer
+	}
+	return parseTransfer(b)
+}
+
+// transferBudget bounds a transfer header while it is decoded (enc.Budget):
+// it has no array, and its envelopes hold bytes.
+var transferBudget = enc.Budget{Size: MaxTransferHeader}
+
+// parseTransfer decodes and checks the JSON of a transfer header.
+func parseTransfer(b []byte) (Transfer, error) {
+	var t Transfer
+	if transferBudget.Decode(b, &t) != nil {
+		return Transfer{}, ErrTransfer
+	}
+	if err := t.Validate(); err != nil {
+		return Transfer{}, err
+	}
+	return t, nil
+}

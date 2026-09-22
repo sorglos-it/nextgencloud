@@ -3,6 +3,17 @@
 > **Für ausführende Agenten:** PFLICHT-SKILL: superpowers:subagent-driven-development (empfohlen)
 > oder superpowers:executing-plans, Aufgabe für Aufgabe. Schritte nutzen Checkboxen (`- [ ]`).
 
+> **Pfade seit 22.09.2026:** Das Repo folgt jetzt dem Projektstruktur-Standard; dieser Plan nennt
+> noch die alten Pfade. `contracts/` ist `shared/` (Importpfad `…/nextgencloud/shared/…`), `api/`
+> ist `apps/server-api/` (`ngc-store`: `apps/cli/`), `controller/` ist `apps/server-controller/`,
+> `db/` ist `apps/server-db/`, `web/` ist `apps/web/`, `tests/browser/` ist `apps/web/tests/`,
+> `scripts/check.sh` ist `tools/check.sh`, `prototype/index.html` ist `docs/prototype.html`.
+>
+> **Vertragstext überholt:** Nach zwei Abschlussprüfungen und ihren Fix-Wellen weicht der Vertrag an
+> vielen Stellen von diesem Plan ab (etwa `tunnel.Open` ohne `User`, Rollen statt `Parts`, der Prolog
+> für Ende zu Ende, Setup mit MAC, TLS-Fingerabdrücke). Maßgeblich sind `shared/` und
+> `shared/README.md`; dieser Plan ist nur noch die Geschichte.
+
 **Ziel:** Die sieben Verträge zwischen den Teilen als Go-Pakete mit Testvektoren, je eine
 `CLAUDE.md` für die vier Teile und ein Grundgerüst, das baut und testet. Danach können vier
 Claude-Sitzungen auf den sieben Servern parallel anfangen, ohne aufeinander zu warten.
@@ -150,7 +161,7 @@ gh api licenses/agpl-3.0 --jq .body > LICENSE
 ```
 MIT License
 
-Copyright (c) 2026 Thomas Weirich (Sorglos)
+Copyright (c) 2026 Sorglos Thomas Weirich
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

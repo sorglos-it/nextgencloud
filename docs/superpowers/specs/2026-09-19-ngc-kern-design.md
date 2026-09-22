@@ -87,7 +87,7 @@ mit Galera und Podman aus den Paketquellen von Debian und Ubuntu, und die instal
 
 ### Lizenz
 
-NGC steht unter der **AGPL-3.0**. `ngc.js` und die Verträge in `contracts/` stehen unter
+NGC steht unter der **AGPL-3.0**. `ngc.js` und die Verträge in `shared/` stehen unter
 **MIT**, damit auch geschlossene, bezahlte Apps möglich sind. Solange alle Rechte bei Thomas
 liegen, kann er Firmen zusätzlich eine kommerzielle Lizenz verkaufen. Nimmt er Code von anderen
 Entwicklern an, braucht er dafür deren schriftliche Zustimmung. Bevor NGC öffentlich wird,
@@ -155,11 +155,11 @@ Servern und einmal komplett auf einem Pi mit SQLite. Installiert wird jeweils ü
 Aufbau auf sieben Servern:
 
 ```
-Browser ─HTTPS─► Web (Apache + web/) ─/api/─► API 1 oder API 2 ─TLS─► DB 1 bis 3 (Galera)
-                                                     ▲
-                                 Tunnel zu jeder API │
-                                                     │
-                                Dienste: ngc-controller ─stdin/stdout─► Dienst (Container)
+Browser ─HTTPS─► Web (Apache + apps/web/) ─/api/─► API 1 oder API 2 ─TLS─► DB 1 bis 3 (Galera)
+                                                          ▲
+                                      Tunnel zu jeder API │
+                                                          │
+                                     Dienste: ngc-controller ─stdin/stdout─► Dienst (Container)
                                             │
                                           SQLite (lokaler Zustand)
 ```
@@ -172,9 +172,10 @@ und spielt die Updates für den Teil ein, der auf seinem Server liegt (4.8). Der
 stehen mehrere Server, auf denen die API läuft, und die Last verteilt sich über diese Server;
 dasselbe für die Datenbank.
 
-- In der PHP-Konfiguration des Webinterface steht die Liste der API-Server mit IP-Adresse und
-  Port. Daraus richtet der Controller auf dem Webserver die Lastverteilung in Apache ein
-  (`mod_proxy_balancer`). Ändert sich die Liste, stellt er Apache selbst um.
+- In der PHP-Konfiguration des Webinterface steht die Liste der API-Server mit Hostname, Port
+  und TLS-Fingerabdruck. Daraus richtet der Controller auf dem Webserver die Lastverteilung in Apache ein
+  (`mod_proxy_balancer`) in einer eigenen Datei (`config.BalancerFile`), die vor seiner Kopplung
+  ngc-web schreibt. Ändert sich die Liste, stellt er Apache selbst um.
 - Apache prüft laufend, welche APIs antworten, und schickt jede neue Verbindung an eine davon.
   Fällt eine API aus, verbindet sich der Browser neu und landet bei einer anderen. Weil die
   Sitzungen in der Datenbank liegen, geht es ohne neue Anmeldung weiter.
@@ -182,7 +183,8 @@ dasselbe für die Datenbank.
   direkt.
 - Ein neuer API-Server kommt über die Vertrauensliste dazu, also nur mit Unterschrift eines
   Admins. Einen fremden Server, der sich als API ausgibt, nehmen Controller und Browser nicht
-  an.
+  an. Er meldet sich mit Adresse und TLS-Fingerabdruck; der Admin vergleicht einen
+  Fingerabdruck über alle Werte mit der Ausgabe des ulh-Skripts.
 - Alle APIs einer Installation teilen sich deren Schlüssel,
   etwa den für die Kauf-Apps. Ein neuer API-Server bekommt sie beim Koppeln von einer laufenden
   API, über eine verschlüsselte Verbindung und nur mit Unterschrift eines Admins.
@@ -195,16 +197,17 @@ API muss nicht offen im Netz stehen.
 
 | Teil | Ordner | Aufgabe | Server im Kern-Aufbau |
 |---|---|---|---|
-| Webinterface | `web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
-| API | `api/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | API 1 und 2 |
-| Controller | `controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
-| Datenbank | `db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
-| Verträge | `contracts/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
-| Installation | `ulh/` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
-| Apps | `apps/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
-| Fremdcode | `vendor/`, `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
-| Prototyp | `prototype/` | Unverändert als Vorlage für den Desktop | – |
-| Tests | `tests/` | Gesamttest über alle Teile; Browser-Tests mit Playwright in `tests/browser/` (4.6) | – |
+| Webinterface | `apps/web/` | Desktop aus dem Prototyp (Fenster, Taskleiste, Startmenü). Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen der mitgelieferten Apps. PHP liefert die Desktop-Seite aus, verwaltet die Liste der APIs und merkt sich den Admin-Schlüssel der Vertrauensliste. | Web |
+| API | `apps/server-api/`, `ngc-store` in `apps/cli/` | Sitzungen und Sitzungszertifikate, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und die Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates. Dazu das Werkzeug `ngc-store`, das Apps packt, verschlüsselt und Kataloge signiert. | API 1 und 2 |
+| Controller | `apps/server-controller/` | Tunnel zur API, Kopplung, Dienste in Containern starten, Ende-zu-Ende-Verschlüsselung, Vertrauensliste und Root-Unterschriften prüfen, Kauf-Apps entschlüsseln, lokaler Zustand, Updates einspielen und zurücknehmen, der Dienst „virtuelles Terminal" | alle sieben |
+| Datenbank | `apps/server-db/` | MariaDB-Galera-Cluster einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, Verschlüsselung der Geheimnisse | DB 1 bis 3 |
+| Verträge | `shared/` | Schnittstellen zwischen den Teilen und Testdaten; gehört dem Koordinator (4.7) | – |
+| Installation | im ulh-Repo: `scripts/ngc-*.sh` | ulh-Skripte je Teil und für „alles auf einem Pi" | – |
+| Mitgelieferte Apps | Oberflächen in `apps/web/`, Dienst des Terminals in `apps/server-controller/` | Fest dabei: **App-Store** und **Benutzer & Rechte**. Zum Aktivieren: **Rechner** aus dem Prototyp (nur Oberfläche) und **Terminal** (Oberfläche und Dienst). | – |
+| Fremdcode | `vendor/` (Go), `apps/web/public/assets/vendor/` (Browser), `THIRD-PARTY.md` | Kopiert und mit Herkunft notiert, Kandidaten in Kapitel 7 | – |
+| Prototyp | `docs/prototype.html` | Unverändert als Vorlage für den Desktop | – |
+| Skripte | `tools/` | `check.sh` vor jedem Commit, später Bauen, Release und der Gesamttest | – |
+| Tests | neben dem Code (Go), `apps/web/tests/` (Browser) | Browser-Tests mit Playwright (4.6); der Gesamttest über alle Teile als Skript in `tools/` | – |
 
 **Regel für mehrere APIs:** Sitzungen und alles Wichtige liegen in der Datenbank, nicht im
 Speicher einer einzelnen API. Jede API kann jede andere ersetzen.
@@ -232,8 +235,10 @@ const t = await ngc.open("terminal", "shell")   // Datenstrom, der offen bleibt
 4. Der Controller prüft selbst, dass am anderen Ende wirklich die Sitzung dieses Benutzers
    sitzt (4.5, Ende-zu-Ende-Verschlüsselung), und startet den Dienst.
 
-Kanalnummern gelten immer nur für eine Verbindung. Der Browser erfährt nie, auf welchem Server
-ein Dienst läuft, und der Dienst bekommt die Sitzung des Browsers nie zu sehen.
+Kanalnummern gelten immer nur für eine Verbindung. Der Browser kennt den Controller, auf dem die
+Dienste einer App laufen, weil die Ende-zu-Ende-Verschlüsselung dessen Schlüssel braucht; die
+Oberfläche zeigt ihn normalen Benutzern nicht an. Der Dienst bekommt die Sitzung des Browsers nie
+zu sehen.
 
 **Schnittstelle zum Dienst.** Für jeden Kanal startet der Controller das Programm des Dienstes
 im Container der App.
@@ -242,9 +247,12 @@ im Container der App.
   stderr landet im Log. Exit-Code 0 heißt Erfolg.
 - Wer fragt, steht in den Umgebungsvariablen `NGC_USER`, `NGC_APP` und `NGC_ACTION`.
 - Das beherrscht jede Programmiersprache, auch ein Bash-Skript.
+- Verlangt ein Update mehr Rechte, spielt der Controller es nicht ein; der Admin aktiviert dann
+  die neue Version mit den neuen Rechten.
 - Jeder Container läuft unter dem eigenen Systembenutzer seiner App. Root-Rechte, das Netz des
   Servers oder andere Sonderrechte bekommt ein Dienst nur, wenn die App das im Manifest angibt
-  und der Admin es beim Aktivieren erlaubt.
+  und der Admin es beim Aktivieren erlaubt. Er erlaubt immer alles, was das Manifest verlangt,
+  oder aktiviert die App nicht.
 - Was in den Daten steht, regeln App und Dienst unter sich, beim Terminal zum Beispiel
   Tastendrücke und Fenstergröße.
 
@@ -340,7 +348,9 @@ Installation öffnen, für die sie gekauft wurde:
    Controller weiter. Erst dort werden die Container-Images der
    Dienste entschlüsselt und geladen. Die Oberfläche entschlüsselt die API für den Browser.
 4. Läuft ein Abo aus, gibt die API den Schlüssel nicht mehr heraus. Nach der Übergangsfrist
-   starten die Controller den Dienst nicht mehr.
+   starten die Controller den Dienst nicht mehr. Erneuerte Lizenzen bringt die API den
+   Controllern über `ngc.store/controller/license`; Unterschrift, Installation und App prüfen die
+   Controller selbst, den Schlüssel der Installation nur die API.
 
 Grenzen:
 
@@ -392,6 +402,9 @@ erhalten, auch wenn die App gelöscht wird.
   Akzentfarbe gilt.
 - Apps müssen in jeder Fenstergröße funktionieren, weil die Oberfläche für Handy und Tablet sie
   später im Vollbild zeigt.
+- Die Shell führt eine Oberfläche nur aus, wenn ihr ui-tar zu einer signierten Prüfsumme passt:
+  aus dem Katalog des Stores oder aus der Freigabe des Admins beim Aktivieren. Eine übernommene
+  API kann keine Oberfläche unterschieben.
 
 **Fest im Kern:** App-Store und Benutzer & Rechte. Beide sind immer aktiv und nur für
 Administratoren sichtbar.
@@ -407,7 +420,9 @@ geht.
 
 **Ersteinrichtung.** Das ulh-Skript der API zeigt am Ende einen Einmal-Code an. Nur mit diesem
 Code lässt sich das erste Admin-Konto anlegen. So kann niemand im Netz eine frisch
-installierte Instanz übernehmen.
+installierte Instanz übernehmen, der nur mithört oder sich zwischen Browser und API schaltet
+(Grenze siehe unten). Der Code geht nie über die Leitung: Browser und API weisen sich mit ihm
+gegenseitig aus (MAC über das Angebot der API und über Fassung 1).
 
 **Anmeldung in zwei Stufen** (am 19.09.2026 abgestimmt).
 
@@ -568,7 +583,8 @@ jedem Kanal neu, anhand von Benutzer, Rolle, App, Aktion und Lizenz.
 
 **Controller.** API und Controller weisen sich gegenseitig mit Schlüsseln aus. Einen Controller
 auf einem anderen Server koppelt man einmalig mit einem Kopplungscode, den die API ausgibt;
-läuft alles auf einer Maschine, koppelt das ulh-Skript automatisch. Der Controller startet nur
+läuft alles auf einer Maschine, koppelt ngc-all den Controller nach der Ersteinrichtung mit einem
+Kopplungscode aus dem Browser. Der Controller startet nur
 Container aktivierter Apps, jeweils unter dem eigenen Systembenutzer der App. Er selbst läuft
 als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein wie möglich.
 
@@ -579,9 +595,9 @@ als root, weil er diese Benutzer anlegen muss. Deshalb bleibt sein Code so klein
 | Browser ↔ Apache | TLS 1.3, ausschließlich AES-256-GCM |
 | Browser ↔ API | zusätzlich Sitzungsschlüssel und AES-256-GCM (siehe Sitzung, Schritt 4) |
 | Browser ↔ Dienst | Ende zu Ende pro Kanal zwischen Shell und Controller: Schlüsselaustausch nach Noise, AES-256-GCM; die API sieht nur verschlüsselte Daten |
-| Apache ↔ API (getrennte Server) | TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an |
-| API ↔ Controller | Tunnel wie bei einem VPN nach dem Noise-Protokoll, auf dem auch WireGuard aufbaut: AES-256-GCM, beide Seiten prüfen gegenseitig ihre Schlüssel. Außen herum zusätzlich TLS, damit der Tunnel durch Firewalls und Proxys kommt. |
-| API ↔ MariaDB | TLS; MariaDB nimmt nur verschlüsselte Verbindungen an |
+| Apache ↔ API (getrennte Server) | TLS 1.3 mit AES-256-GCM; Apache bietet der API nur diese Verschlüsselung an und prüft das Zertifikat der API gegen deren Fingerabdruck (aus der Vertrauensliste, vorher aus ulh) |
+| API ↔ Controller | Tunnel wie bei einem VPN nach dem Noise-Protokoll, auf dem auch WireGuard aufbaut: AES-256-GCM, beide Seiten prüfen gegenseitig ihre Schlüssel. Außen herum zusätzlich TLS, damit der Tunnel durch Firewalls und Proxys kommt, geprüft gegen den Fingerabdruck der API; die Echtheit sichert Noise. |
+| API ↔ MariaDB | TLS; MariaDB nimmt nur verschlüsselte Verbindungen an; API und Controller prüfen das Zertifikat gegen die CA der Installation |
 | Datenbankknoten untereinander | TLS für die Galera-Replikation |
 | MariaDB | eingebaute Verschlüsselung von MariaDB, AES-256 |
 | SQLite (API auf dem Pi, Controller) | ganze Datei mit AES-256 verschlüsselt (XTS) |
@@ -629,6 +645,20 @@ in der App Benutzer & Rechte.
   offen ist. Neuen Geräten könnte er außerdem einen falschen Admin-Schlüssel ausliefern. Dagegen
   helfen die strenge CSP, ein gehärteter Webserver, kurze Sitzungen und die erneute
   Bestätigung: Was bestätigt werden muss, geht ohne den Benutzer nicht.
+- Die Oberfläche einer Store-App darf jeder Store der Vertrauensliste belegen, dessen Katalog die
+  App in dieser Version mit dieser Prüfsumme führt. Eine übernommene API kann deshalb zusammen
+  mit einem feindlichen Store, den der Admin selbst eingetragen hat, einer App eines anderen
+  Stores eine fremde Oberfläche unterschieben. Stores trägt man also nur ein, wenn man ihnen so
+  weit traut wie der Software, die man von dort installiert. Eine festere Bindung kommt mit dem
+  Sicherheitsdurchgang (Plan 7).
+- Welche Version einer App installiert ist, erfährt die Shell von der API. Eine übernommene API
+  kann ihr daher eine ältere, aber signierte Oberfläche zeigen, nie eine, die niemand für diese
+  App signiert hat. Eine Sperre gegen ältere Versionen in der Shell gibt es nicht, weil der
+  Controller ein fehlgeschlagenes Update selbst auf die vorige Version zurücksetzt.
+- Beim ersten Aufruf mit einem nicht vertrauenswürdigen Zertifikat kann ein Angreifer im selben
+  Netz dem Browser eine eigene Shell ausliefern. Gegen sie helfen die MACs der Ersteinrichtung
+  nicht, denn sie liest den Einmal-Code beim Tippen mit. Die Ersteinrichtung macht man deshalb in
+  einem Netz, dem man traut, oder gleich mit einem vertrauenswürdigen Zertifikat.
 - Mit Passwort-Anmeldung ohne vertrauenswürdiges Zertifikat warnt der Browser beim ersten
   Aufruf, und ein Angreifer im selben Netz könnte sich dazwischenschalten. Ein Passwort lässt
   sich außerdem leichter erraten oder abgreifen als ein Stick. Deshalb der dauerhafte Hinweis
@@ -647,8 +677,9 @@ in der App Benutzer & Rechte.
 - Die Verbindungen laufen über TLS, die Daten liegen mit der eingebauten Verschlüsselung von
   MariaDB verschlüsselt (AES-256), Geheimnisse verschlüsselt die API zusätzlich selbst.
 - Die API arbeitet mit einem Datenbankkonto, das nur Daten lesen und schreiben darf. Tabellen
-  anlegen oder ändern darf nur ein eigenes Konto für Migrationen, und das benutzt nur die
-  Installation über ulh.
+  anlegen oder ändern darf nur ein eigenes Konto für Migrationen. Das benutzen nur die
+  Installation über ulh und beim Update genau ein Controller mit der Rolle `db` (4.8); nur dort
+  steht der Zugang in `controller.json`.
 - **SQLite** gibt es an drei Stellen, jeweils mit AES-256 verschlüsselt:
   1. **Alles auf einem Pi:** Wer bei der Installation keinen Datenbankserver will, bekommt
      SQLite statt MariaDB und spart damit Ressourcen.
@@ -702,8 +733,8 @@ in der App Benutzer & Rechte.
   und Verschlüsselung, die Lastverteilung in Apache, Podman auf den Servern mit Diensten, das
   Schlüsselpaar der Installation und die Kopplung von Controllern und weiteren API-Servern. Am Ende zeigen sie den Einmal-Code für den ersten Admin an.
 - Programmdateien lädt ein Skript nur herunter, wenn ihre Signatur stimmt.
-- Solange NGC privat ist, liegen die Skripte im NGC-Repo unter `ulh/` und werden in ulh als
-  eigenes Repository eingebunden.
+- Die Skripte liegen direkt im öffentlichen ulh-Repo (`scripts/ngc-*.sh`, Einträge in dessen
+  `config.yaml`), auch solange NGC privat ist (Entscheidung vom 21.09.2026).
 - Updates spielt danach der Controller ein (4.8). ulh bleibt der Notweg, falls NGC selbst nicht
   mehr startet.
 
@@ -729,7 +760,10 @@ in der App Benutzer & Rechte.
   MariaDB und gegen SQLite.
 - Ein Gesamttest startet API, Controller und einen Test-Dienst und spielt das Erfolgskriterium
   durch (4.1). Er enthält auch Angriffe: eingeschleustes SQL, gefälschte Unterschriften, wieder
-  eingespielte alte Nachrichten und eine gekaufte App, die eine fremde Installation öffnen will.
+  eingespielte alte Nachrichten, eine gekaufte App, die eine fremde Installation öffnen will, eine
+  untergeschobene Oberfläche, ein Mann in der Mitte zwischen Apache und API bei der
+  Ersteinrichtung (fremdes Angebot, fremde Fassung 1) und ein Update, das mehr Rechte verlangt, als
+  die App beim Aktivieren bekam.
 - Der Gesamttest läuft einmal verteilt auf sieben Servern und einmal komplett auf einem Pi.
 - Ausfall: Eine API und ein Datenbankknoten werden im laufenden Betrieb abgeschaltet.
 - Deinstallieren: Mit „Daten aufheben" und späterer Neuinstallation sind die Daten wieder da,
@@ -745,7 +779,7 @@ in der App Benutzer & Rechte.
 - Passwort-Anmeldung: mit Passwort und TOTP anmelden, dann auf Passkey umstellen. Ein
   Mitschnitt zeigt, dass das Passwort den Browser nie verlässt.
 - Das Webinterface prüfen wir automatisch mit Playwright in den Engines von Chrome, Firefox und
-  Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `tests/browser/`, mit
+  Safari. Playwright kommt per npm, aber streng abgegrenzt: nur im Ordner `apps/web/tests/`, mit
   festgeschriebenen Versionen, nur auf Test-Servern und nie nötig, um NGC zu bauen oder
   laufen zu lassen. Thomas: „zum Testen unserer Software darfst du bauen was du willst. solange
   der core davon nicht betroffen wird".
@@ -758,15 +792,15 @@ Server ihres Teils und betreut alle Server, die dazugehören:
 
 | Server | Teil | Ordner | Was dort gebaut wird |
 |---|---|---|---|
-| Web | Webinterface | `web/` | Desktop, Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
-| API 1 und 2 | API | `api/` | Anmeldung mit Passwortschlüssel, TOTP und Passkeys, Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
-| Dienste | Controller | `controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
-| DB 1 bis 3 | Datenbank | `db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
+| Web | Webinterface | `apps/web/` | Desktop, Anmeldung mit Passwort, TOTP oder Passkey, Verschlüsselung im Browser bis zum Dienst, Prüfung der Vertrauensliste, App-Fenster und `ngc.js`, die Oberflächen von App-Store, Benutzer & Rechte, Rechner und Terminal, Anzeige und Einstellung der Updates, dazu der PHP-Teil mit der Liste der API-Server |
+| API 1 und 2 | API | `apps/server-api/`, `apps/cli/` | Anmeldung mit Passwortschlüssel, TOTP und Passkeys, Sitzungen und Zertifikate, Zusammenspiel mehrerer APIs mit gemeinsamen Schlüsseln, Rechte, Weiterleitung, Tunnel zu den Controllern, Apps, Stores, Lizenzen und Schlüssel der Kauf-Apps, Protokoll, Verteilung der Vertrauensliste und der Updates, das Werkzeug `ngc-store` |
+| Dienste | Controller | `apps/server-controller/` | Der Controller, der auf allen sieben Servern läuft: Tunnel zu jeder API, Lastverteilung in Apache auf dem Webserver einrichten, Kopplung, Dienste in Podman-Containern starten, Ende-zu-Ende-Verschlüsselung auf Serverseite, Vertrauensliste, Root-Unterschriften und Dauerfreigaben prüfen, Kauf-Apps entschlüsseln, lokaler Zustand in SQLite, verschlüsselte App-Datenordner, Startaktionen, Updates einspielen und zurücknehmen, dazu der Dienst „virtuelles Terminal" |
+| DB 1 bis 3 | Datenbank | `apps/server-db/` | MariaDB-Galera-Cluster auf DB 1 bis 3 einrichten und absichern, Datenzugriff für API und Controller (MariaDB und SQLite), Migrationen, die auch mit der vorigen API-Version funktionieren, Verschlüsselung der Geheimnisse |
 
-Jeder Teil schreibt auch seine eigenen ulh-Skripte unter `ulh/<teil>/`.
+Jeder Teil schreibt auch sein eigenes ulh-Skript, im ulh-Repo unter `scripts/ngc-<teil>.sh`.
 
 **Zuerst die Verträge.** Bevor jemand baut, legt der Koordinator die Schnittstellen schriftlich
-in `contracts/` fest, und Thomas gibt sie frei:
+in `shared/` fest, und Thomas gibt sie frei:
 
 1. Webinterface ↔ API
 2. API ↔ Controller
@@ -839,6 +873,8 @@ dürfen selbst installiert werden." Die Freigabe liegt beim Controller. Er insta
 Updates, die mit genau diesem Schlüssel signiert und neuer als die installierte Version sind.
 Die API allein kann also weiterhin nichts unterschieben. Bei der Ersteinrichtung unterschreibt
 der erste Admin diese Freigaben für NGC selbst, deshalb ist „automatisch" von Anfang an aktiv.
+Neue Rechte deckt die Freigabe nicht: Verlangt eine neue Version mehr (`needs`), spielt der
+Controller sie weder automatisch noch per Klick ein; der Admin aktiviert sie neu.
 
 **Sicher zurück.** Bei jedem Update bleibt die vorige Version erhalten. Startet der
 aktualisierte Teil nicht sauber, stellt der Controller selbst die alte Version wieder her. Eine
@@ -930,6 +966,78 @@ Sperre in der Datenbank.
 | 19.09.2026 | Vorgabe Thomas: Im Heimnetz ohne vertrauenswürdiges Zertifikat beginnt NGC mit Benutzer und Passwort, TOTP lässt sich dazuschalten, und man stellt auf Passkeys um, sobald es geht. Eine Zertifizierungsstellen-App ist ein Grund, NGC überhaupt zu bauen. Ausgearbeitet in 4.5. |
 | 19.09.2026 | Anmeldung in zwei Stufen abgestimmt: Benutzer und Passwort mit Passwortschlüssel im Browser und zuschaltbarem TOTP, Umstieg auf Passkeys pro Benutzer oder Rolle. Die Zertifizierungsstellen-App rückt direkt hinter den Kern (Teilprojekt 2, vorher 6), die übrigen Teilprojekte rücken eins nach. |
 | 19.09.2026 | Entwurf von Thomas freigegeben, einschließlich der sechs beim Ausformulieren ergänzten Stellen: Fassungsnummern der Vertrauensliste, zweiter eigener Schlüssel ohne Admin, Prüfung der Benutzersitzung bei jedem Kanal, gemeinsame Schlüssel für neue API-Server nur mit Admin-Unterschrift, eine API steuert die Update-Reihenfolge über eine Sperre in der Datenbank, „App samt Daten löschen" in der Stufe Kritisch. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Der Anker der Vertrauensliste ist Nummer und SHA-256 einer Fassung (damit auch der Admin-Schlüssel), nicht der Schlüssel allein. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Ein Container je App, also ein Image je App und Architektur (`services/<arch>.tar`); die Dienste sind Programme darin. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Kern-Apps (`ngc.desktop`, `ngc.users`, `ngc.store`) bedient die API selbst; ihre Kanäle haben keinen eigenen Ende-zu-Ende-Schlüsselaustausch, weil die Sitzung zur API schon so verschlüsselt ist. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Update-Dateien kommen über Kanäle (`stage`, `install`) zum Controller, nicht über Steuernachrichten; über den Steuerkanal läuft nur der Fortschritt. |
+| 19.09.2026 | Beim Schreiben von Plan 0 geklärt: Die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl) ist noch kein Vertrag; sie kommt als Vertragsänderung vor Plan 1 des Webinterface. |
+| 20.09.2026 | Beim Ausführen von Plan 0 geklärt: Bei der Anmeldung unterschreibt der Benutzer mit Passkey oder Passwortschlüssel das Client-Zertifikat, das der Browser gebaut hat (`sign.PurposeClientCert`); einen eigenen Zweck nur für die Anmeldung gibt es nicht. |
+| 20.09.2026 | Beim Ausführen von Plan 0 geklärt: `session.VerifyClient` liefert eine geprüfte Sitzung (`session.Verified`), die nur durch diese Prüfung entsteht. Aufgaben (`task.Input`) nehmen nur eine solche Sitzung an, damit keine ungeprüfte bis zum Controller kommt. |
+| 21.09.2026 | Vorgabe Thomas: Die ulh-Skripte für NGC kommen direkt ins öffentliche ulh (`scripts/ngc-*.sh`, Einträge in dessen `config.yaml`), auch solange NGC privat ist. Kein Unterordner in NGC, kein zweites Repo, ulh bleibt unverändert. Ersetzt die Regel „Skripte im NGC-Repo unter `ulh/`" aus Abschnitt 5. |
+| 21.09.2026 | Nach der Abschlussprüfung von Plan 0: Ende zu Ende bindet der Prolog zusätzlich SHA-256 der Parameter und SHA-256 der Aufgabe, jeweils genau so, wie sie im OPEN stehen; so kann die API weder Parameter ändern noch eine andere gültige Aufgabe unterschieben. Noise-Nachricht 1 und 2 tragen in allen drei Verwendungen keine Nutzlast (je 48 Byte). |
+| 21.09.2026 | Der Controller startet einen Dienst erst, wenn die erste Ende-zu-Ende-Nachricht der Shell entschlüsselt ist; die Shell schickt sie immer, notfalls leer. Ein wieder eingespieltes OPEN bewirkt so nichts. |
+| 21.09.2026 | Ende-zu-Ende-Daten laufen in inneren Rahmen (Daten oder Ende); das Ende des Controllers trägt das Ergebnis. Fehlt das Ende, ist der Datenstrom abgeschnitten und das ist ein Fehler; EOF und CLOSE auf der Leitung sind nur Transport. |
+| 21.09.2026 | Die API gibt das OPEN des Browsers Byte für Byte an den Controller weiter (`tunnel.Open`, Feld `open`). Ein eigenes Feld für den Benutzer gibt es nicht mehr; der Benutzer eines Kanals kommt nur aus dem geprüften Client-Zertifikat. |
+| 21.09.2026 | Die Shell zeigt einen Kopplungscode (und einen Beitrittscode für weitere API-Server) erst, wenn er zu ihrer geprüften Vertrauensliste passt: Anker = ihre neueste Fassung, Schlüssel und Adresse = ein API-Server der Liste. ulh zeigt den Fingerabdruck des Ankers zum Vergleich. |
+| 21.09.2026 | Ob eine Aufgabe root braucht oder kritisch ist, entscheidet der Prüfende nur aus geprüften Daten: Kernliste, Manifest und die Parameter der unterschriebenen Aufgabe, nie aus dem OPEN. Ein OPEN mit Aufgabe hat keine eigenen Parameter. |
+| 21.09.2026 | Kanäle zu einer App sind Root-Aufgaben, wenn ihr Manifest `root` verlangt. Aktivieren gewährt immer alle `needs` des Manifests oder wird abgelehnt. |
+| 21.09.2026 | Die API prüft eine Aufgabe, die sie an einen Controller weiterleitet, vorher selbst, mit dem Ziel-Controller als Node. |
+| 21.09.2026 | Neue Fassungen der Vertrauensliste bekommt ein Controller über den Kanal `ngc.users/controller/trust` (ohne Benutzer), der Browser per HTTP und seitenweise; die Steuernachricht `trust` ist nur noch ein Hinweis. |
+| 21.09.2026 | Der Browser kennt den Controller, auf dem die Dienste einer App laufen (`DesktopApp.node`), weil Ende zu Ende ihn braucht; die Oberfläche zeigt ihn normalen Benutzern nicht. Ersetzt in 4.3 „Der Browser erfährt nie, auf welchem Server ein Dienst läuft“. |
+| 21.09.2026 | Freigabe je Strecke und Richtung, gezählt in Bytes der DATA-Nutzlast, additiv, höchstens 1 MiB offen. Höchstens 64 Kanalnummern je Sitzung und 1024 je Tunnel; eine Nummer zählt, bis sie wieder frei ist, auch beim Schließen. Wer darüber hinausgeht, beendet die Verbindung; ist nur der Tunnel hinter der API voll, antwortet sie dem Browser mit CLOSE E_LIMIT. |
+| 21.09.2026 | Das Ergebnis eines Aufrufs sind alle Daten bis zum Ende, höchstens 8 MiB, für alle Apps; prüfen muss das der Empfänger, bei Ende-zu-Ende-Kanälen also die Shell; was der Öffner schicken darf, steht je Kern-Aktion fest. |
+| 21.09.2026 | Ohne Benutzer öffnet die API nur drei Kern-Aktionen: `ngc.users/controller/trust`, `ngc.store/controller/stage` und `install`. `install` führt der Controller nur mit Dauerfreigabe aus und nur für eine neuere Version; Ausnahme sind Systempakete (Ziel `system`), die keine NGC-Version tragen. |
+| 21.09.2026 | Der globale Store hat die ID `global`, `local` steht für hochgeladene Apps. Die API gibt den globalen Store bei der Ersteinrichtung mit, damit er in Fassung 1 der Vertrauensliste steht. |
+| 21.09.2026 | Migrationen spielt beim Update genau ein Controller mit der Rolle `db` ein; nur dort steht der Zugang des Kontos `ngc_migrate` in `controller.json`. Ändert 4.6 („das benutzt nur die Installation über ulh“). |
+| 21.09.2026 | Begriffe: Rollen eines Servers (`web`, `api`, `db`, `services`) und Softwareteile (`ngc-web`, `ngc-api`, `ngc-controller`). Release-Dateien und Update-Ziele benennen Softwareteile. |
+| 21.09.2026 | JSON von außen ist strikt: keine doppelten oder anders geschriebenen Feldnamen (Go: `encoding/json/v2`, im Browser genauso). Jede Grenze aus den Go-Verträgen gilt auch im JavaScript. |
+| 21.09.2026 | Verlangt eine Rolle zusätzlich das Passwort, unterschreibt ein Passwortschlüssel desselben Benutzers dieselben Zertifikat-Bytes (Zweck `clientcert/v1`). „Nur Passkey“ und „Passwort zusätzlich“ zusammen sind unzulässig. |
+| 21.09.2026 | Weitere API-Server treten mit einem Beitrittscode `ngc-join:…` bei. Die gemeinsamen Schlüssel übergibt die API erst nach der Unterschrift eines Admins; wie, regelt die API selbst. |
+| 21.09.2026 | ulh prüft Programmdateien mit `openssl` (Ed25519 über `ngc/release/v1`, Null-Byte, Nutzlast) und `sha256sum`; dafür installiert es `openssl` und `jq` aus den Paketquellen. |
+| 21.09.2026 | Das Protokoll blättert mit Zeit und ID (Hex aus Kleinbuchstaben), damit bei gleicher Zeit kein Eintrag verloren geht. |
+| 21.09.2026 | Aus der Prüfung von Plan 0, noch nicht im Protokoll: Der Passwortschlüssel entsteht nur mit Argon2id (kein PBKDF2-Ausweg). Die Grenzen für Passkey-Beweise (`MaxPublic`, `MaxSig`, `MaxRSABits`, `MaxAuthData`, `MaxClientData`) gelten auch im Browser. |
+| 21.09.2026 | Kanalnummern: Ein CLOSE wird immer mit CLOSE beantwortet; eine Nummer ist erst wieder frei, wenn CLOSE gesendet und empfangen wurde. Was nach dem eigenen CLOSE für den Kanal noch ankommt, wird verworfen. |
+| 21.09.2026 | „Passwort zusätzlich“ prüft die API bei der Anmeldung. Controller verlassen sich auf den Passkey-Beweis im Client-Zertifikat; ein Passwortbeweis geht nicht an die Controller. |
+| 21.09.2026 | Vertragsnummern: Zwischen Browser und API steht die Nummer im Pfad (`/api/v1/…`). Neue oder geänderte Felder gibt es nur mit neuer Nummer; die API bedient die aktuelle und die vorige Nummer nebeneinander. Im Tunnel nennt `Hello.Contract` die Nummer, die neuere Seite spricht die Sprache der älteren. |
+| 21.09.2026 | `ngc-store` packt und prüft Releases, signiert aber nur Test-Releases mit einer Schlüsseldatei. Der echte Release-Schlüssel bleibt auf dem Hardware-Stick; mit welchem Werkzeug der Stick signiert, wird vor dem ersten Release entschieden. |
+| 22.09.2026 | Leere Listen als Ergebnis sendet die API als `[]`, nie als `null`. |
+| 22.09.2026 | `hello`, `PairRequest`, `JoinRequest` und die Kopplungs- und Beitrittscodes bleiben über Vertragsnummern hinweg gleich; eine Änderung bekommt einen neuen Nachrichtentyp oder ein neues Präfix. |
+| 22.09.2026 | Migrationen: Die API mit der Update-Sperre wählt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten Node-ID; fällt er aus, den nächsten. |
+| 22.09.2026 | ulh installiert nie ein älteres Release als das installierte; dasselbe darf zur Reparatur erneut installiert werden. Das Prüfskript prüft genau die gelisteten Dateien seines Teils und installiert nur diese; eine leere Liste ist ein Fehler. |
+| 22.09.2026 | Oberflächen-Pakete (`ui/`) liest die Shell nur in der kanonischen Form, die NGCs Packer schreibt: USTAR, nur Dateien und Ordner, PAX nur mit `path`, feste Tiefen- und Anzahlgrenzen. Alles andere wird abgelehnt, damit Browser und Go genau dasselbe sehen. |
+| 22.09.2026 | Kataloge: Das Budget begrenzt auch die Summe der Versionen über alle Apps, damit ein signierter Katalog wenig Speicher kostet. |
+| 22.09.2026 | Vorgabe Thomas: Das Repo folgt dem Projektstruktur-Standard. Die Teile liegen unter `apps/`: `web`, `server-api`, `server-controller`, `server-db` und `cli` (das Werkzeug `ngc-store`, gehört zur API). Die Verträge liegen in `shared/` (vorher `contracts/`, Importpfad `github.com/sorglos-it/nextgencloud/shared/…`), Skripte in `tools/` (vorher `scripts/`), der Prototyp in `docs/prototype.html`. Ein Go-Teil hat direkt nur `main.go`, `VERSION` und `CLAUDE.md`, die Logik liegt in `classes/`. Go bleibt ein Modul im Stamm, deshalb bleibt `vendor/` dort: Go verlangt es neben `go.mod` (einzige Ausnahme vom Standard). Webroot ist nur `apps/web/public/`, Fremdcode für den Browser liegt in `apps/web/public/assets/vendor/`, Browser-Tests in `apps/web/tests/`, der Gesamttest kommt als Skript nach `tools/`. Die mitgelieferten Apps haben keinen eigenen Ordner: ihre Oberflächen baut das Webinterface, den Terminal-Dienst der Controller. |
+| 22.09.2026 | Nach der zweiten Abschlussprüfung von Plan 0: Kanäle zu `ngc.store/controller/*` mit Aufgabe öffnet die Shell (`core.ShellOpens`), `stage` und `ngc.users/controller/trust` nur die API ohne Benutzer. Auf einem weitergeleiteten `transfer`-Kanal (`activate`) schickt die Shell nur EOF; Kopf und Datei schreibt die API auf der Tunnel-Strecke, dort gilt `MaxIn`. Die API gibt ihre erste GRANT an die Shell erst nach der des Controllers. |
+| 22.09.2026 | Jeder API-Server steht mit seiner Tunnel-Adresse in `api.json` (`url`, aus ulh `hostname`). Ein neuer API-Server meldet sich mit Adresse und TLS-Fingerabdruck (`tunnel.JoinRequest`, im MAC); die Shell zeigt wartende API-Server (`ngc.users/pending-api`) mit einem Fingerabdruck über alle Werte (`tunnel.JoinFingerprint`), den der Admin mit der Ausgabe von ulh vergleicht. |
+| 22.09.2026 | Ersteinrichtung: Der Einmal-Code geht nie über die Leitung. Die API schickt ihr Angebot (`session.SetupOffer`) mit einem MAC über die genauen Bytes, die Shell Fassung 1 mit einem MAC über deren genaue Bytes, beide mit dem Code als Schlüssel. |
+| 22.09.2026 | Jede interne TLS-Strecke prüft ihre Gegenseite, nirgends wird die Prüfung abgeschaltet. MariaDB: eine CA je Installation (ngc-db), als PEM in `db.ca` und `migrate.ca`; ihr privater Schlüssel kommt nie in answer.yaml, Konfiguration oder Repo. API-Server: SHA-256 ihres TLS-Schlüssels (`tls`) in Vertrauensliste, Kopplungs- und Beitrittscodes, `controller.json` und `web.json`; Controller und Apache vertrauen nur ihm (`tunnel.PinnedTLS`, `config.APITrustFile`). Bevor der Controller des Webservers gekoppelt ist, kommen die Fingerabdrücke aus ulh (`api_pins`). |
+| 22.09.2026 | Tunnel und Sitzungs-WebSocket: Noise prüft beide Enden; TLS darum trägt nur durch Firewalls und Proxys und wird trotzdem geprüft. „Keine Prüfung abschalten“ heißt: keine Verbindung ohne Prüfung; Go pinnt nur mit `InsecureSkipVerify` zusammen mit `VerifyConnection`, beides setzt `tunnel.PinnedTLS`. |
+| 22.09.2026 | Die API gibt bei der Ersteinrichtung den Release-Schlüssel mit (`SetupInfo.releaseKey`); Fassung 1 trägt Dauerfreigaben nur für `ngc-web`, `ngc-api`, `ngc-controller` mit diesem Schlüssel und für `system`. Controller prüfen Releases nur mit ihrem eigenen Release-Schlüssel. |
+| 22.09.2026 | `ngc.store/updates` hat eine Zeile je Ziel und Controller, mit der Prüfsumme der dort bereitgelegten Datei (Update per Klick) und dem Schlüssel für Dauerfreigaben. |
+| 22.09.2026 | Was die Shell unterschreibt oder vergleicht, rechnet sie selbst aus: Prüfsumme, Manifest und UI-Prüfsumme eines hochgeladenen Pakets, Fingerabdrücke wartender Controller und API-Server. Werte der API dienen nur Anzeige und Abgleich. Zwei Ausnahmen: Die Prüfsumme eines Updates per Klick darf aus der Zeile der API kommen, weil der Controller nur eine Datei installiert, die zur unterschriebenen Aufgabe und zum signierten Release oder Katalogeintrag passt; ein neuer API-Server wird mit den Werten aus `ngc.users/pending-api` eingetragen, weil der Admin den Fingerabdruck, den die Shell über genau diese Werte rechnet, mit der Ausgabe von ulh vergleicht. Schlüssel für Dauerfreigaben kommen nie von der API, sondern aus der geprüften Vertrauensliste. |
+| 22.09.2026 | Jede Oberfläche hat eine signierte Prüfsumme über ihr kanonisches ui-tar (`store.PackageUI`): im Katalog je Version (Store) und in `activate` (Admin). Der Controller vergleicht sie beim Aktivieren und Installieren, die Shell prüft das ui-tar vor dem Ausführen gegen den Beweis aus `ngc.desktop/ui-proof` (bei Store-Apps der ganze Katalog, je Store und Fassung zwischengespeichert). So kann eine übernommene API keine Oberfläche unterschieben (4.5: „kann sich in keiner Stufe als Benutzer ausgeben“). Hochgeladene Apps brauchen nach dem Zurücksetzen oder Wechsel des freigebenden Admin-Schlüssels eine neue Aktivierung. |
+| 22.09.2026 | HTTP vor dem WebSocket: Methoden und Statuscodes je Pfad, Fehler als CLOSE-JSON (`wire.Error`, `session.HTTPStatus`), neue Codes `E_LOGIN` und `E_LOCKED`; Cookie `ngc_session` mit `Path=/api/; Secure; HttpOnly; SameSite=Strict`, ohne Domain und Max-Age; `GET /api/v1/trust` nur mit Sitzung, 204, wenn nichts Neueres da ist. |
+| 22.09.2026 | Signierte Dokumente, die bleiben: Release, Katalog und Lizenz bekommen ein neues Feld nur mit neuem Zweck (…/v2), in der Übergangszeit signiert der Herausgeber beide Fassungen, Leser nehmen die, die sie kennen. Manifeste: neue Felder nur mit `minNgc`. Vertrauensliste: neues Format nur mit neuer Vertragsnummer, wenn alle Controller sie sprechen. |
+| 22.09.2026 | ngc-all koppelt seinen Controller nach der Ersteinrichtung mit einem Kopplungscode aus dem Browser (`configure`, `pair_code`). Ersetzt in 4.5 „koppelt das ulh-Skript automatisch“. |
+| 22.09.2026 | Ein Ergebnis gilt nur, wenn sein Kanal mit Erfolg endet (CLOSE `ok`, bei Ende zu Ende das Ende des Controllers mit `ok`). |
+| 22.09.2026 | Texte für Menschen prüft überall dieselbe Regel (`wire.ValidText`), auch die Meldung eines CLOSE. |
+| 22.09.2026 | Einmalwerte in einer geteilten Datenbank räumt die API erst `MaxSkew` nach ihrem Ablauf weg. |
+| 22.09.2026 | Die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl) kommt wie entschieden nach der Freigabe der Verträge, aber vor den Plänen 1 bis 4. Sie braucht eine eigene Schlüsselart oder eine Ausnahme für Rollen nur mit Passkey, weil die Vertrauensliste dort Passwortschlüssel ablehnt. |
+| 22.09.2026 | Kataloge dürfen zusammen höchstens 30.000 Versionen führen (`store.MaxCatalogVersions`, vorher 50.000): Mit der UI-Prüfsumme je Version kostet ein Katalog sonst beim Lesen über 32 MiB. Ein gültiger Katalog passt ohnehin nur mit rund 28.900 Versionen in `sign.MaxPayload`. |
+| 22.09.2026 | Welche Zeichen in Texten für Menschen gelten, legen die Unicode-Tabellen von Go fest (Unicode 17.0 mit Go 1.27); die Shell prüft dieselbe Regel Codepunkt für Codepunkt, unbekannte Zeichen gelten als nicht druckbar. Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung; `TestValidText` hält es an, bis Doku und Testdaten nachgezogen sind. |
+| 22.09.2026 | Die Oberfläche einer Store-App belegt jeder Store der Vertrauensliste, dessen Katalog App, Version und UI-Prüfsumme führt. Eine feste Bindung an den Store über die Aktivierung des Admins ist verworfen: Nach jedem Wechsel des Admin-Schlüssels (etwa ein neues Passwort) müssten sonst alle Apps neu aktiviert werden. Die Grenze steht in 4.5, eine bessere Bindung kommt mit Plan 7. |
+| 22.09.2026 | Welche signierte Version einer Oberfläche die Shell ausführt, entscheidet die API; eine unsignierte kann sie nicht unterschieben. Eine Sperre gegen ältere Versionen in der Shell ist verworfen: Sie würde die Version aussperren, auf die der Controller nach einem fehlgeschlagenen Update zurücksetzt. |
+| 22.09.2026 | Updates: Gespeichert wird je Ziel nur die Einstellung (`update.<ziel>`: Modus und Zeitfenster); den Stand je Server rechnet die API aus Releases, Katalogen und den Meldungen der Controller aus. |
+| 22.09.2026 | Das TLS-Zertifikat einer API ist selbst signiert und 100 Jahre gültig; es trägt kein Vertrauen, das trägt der gepinnte Schlüssel. Erneuert wird es nur mit demselben Schlüssel, ein neuer Schlüssel kommt nur mit neuem Fingerabdruck in der Vertrauensliste. Der Controller mit Rolle `web` vergleicht bei jedem Tunnelaufbau und täglich das Zertifikat, das er über `tunnel.PinnedTLS` bekommt, mit dem in `config.APITrustFile`; weicht es ab (der Schlüssel passt, das prüft der Pin), schreibt er die Datei neu und lädt Apache neu. Für die Installation der API gibt es `store_key` neben `store_url`, beide vorbelegt mit dem offiziellen NGC-Store. |
+| 22.09.2026 | Nach der Prüfung von Fixplan 2: Hosts und Adressen haben eine Grammatik und genau eine Schreibweise (`trust.ValidHost`, `trust.ValidHostPort`, `trust.ValidTunnelURL`, `trust.ValidWebURL`, `trust.ValidOrigin`, `trust.ValidStoreURL`): Tunnel `wss://<host>:<port>/tunnel`, hinter Apache `https://<host>:<port>` (abgeleitet mit `trust.WebURL`), Datenbankknoten `<host>:<port>`, Stores `https://<host>[:<port>][/<pfad>]`, Passkey-Herkunft `https://<host>[:<port>]` ohne den Standard-Port 443 (den schreibt kein Browser mit), dazu Paket-, Release- und Shop-URLs des Katalogs `https://<host>[:<port>][/<pfad>][?<abfrage>]` (signierte Download-Links brauchen die Abfrage). Host als DNS-Name in Kleinbuchstaben, IPv4 oder IPv6 nach RFC 5952; alles ASCII, höchstens 256 Byte, bei den Katalog-URLs 512; `trust.ValidHostPort` trägt keine eigene Grenze (bis 259 Byte), deshalb begrenzt `config.MaxField` einen Datenbankknoten. Sie gilt in Vertrauensliste, Codes, Beitrittsanfragen, allen Konfigurationen und den ulh-Skripten (`testdata/ulh/host.sh`, dort ohne IPv6: ein IPv6-Netz erreicht man über den Hostnamen). Grund: Die Werte landen in Konfigurationen anderer Programme. API-Knoten heißen wie ihre Knoten-ID, auch in den Testdaten. |
+| 22.09.2026 | `core.DesktopApp.entry` nennt die Seite, mit der die Shell eine App-Oberfläche startet (aus `ui.entry` des Manifests). Sie ist nicht signiert und wählt nur unter den Dateien des geprüften ui-tar. |
+| 22.09.2026 | Lizenzen prüfen die Controller selbst (`store.VerifyLicenseFor`: Unterschrift des Stores der App, Installation, App, Form); nur die API prüft den Schlüssel der Installation und die Zahl der Benutzer. Erneuerte Lizenzen bringt die API ohne Benutzer über `ngc.store/controller/license`; ohne Benutzer öffnet sie damit vier Kern-Aktionen (ersetzt „nur drei“ vom 21.09.2026). Nach Ablauf plus Übergangsfrist stoppt der Controller die Dienste, startet keine, lehnt Kanäle mit `E_LICENSE` ab und meldet `unlicensed`; mit einer gültigen Lizenz startet er sie wieder. |
+| 22.09.2026 | Ein Update bekommt nie mehr Rechte als beim Aktivieren (`store.Granted` mit `dbapi.App.Grants`) und kommt nur aus dem Katalog des Stores, aus dem die App aktiviert wurde (`dbapi.App.Store`). Eine Zeile mit mehr Rechten steht auf `needsgrants` (`store.UpdateNeedsGrants`) und wird weder per Klick noch automatisch installiert; der Admin aktiviert die neue Version mit den neuen Rechten. Aktivieren einer installierten App ersetzt sie durch dieselbe oder eine neuere Version, nie eine ältere, und behält die Daten. |
+| 22.09.2026 | `minNgc` vergleicht `store.SupportsMinNGC`; eine NGC-Version, die keine Release-Version ist (etwa `0.0.0-dev`), gilt als älter als jedes `minNgc`. |
+| 22.09.2026 | `ngc.users/nodes` listet die Controller der Vertrauensliste mit Rollen, Online-Zustand, NGC-Version und Architektur aus ihrem `hello` (nicht signiert), damit der Admin das Ziel einer Aktivierung wählt; eine App mit Diensten aktiviert der Controller nur mit Rolle `services`. |
+| 22.09.2026 | Apaches Lastverteilung steht in `config.BalancerFile` (`/etc/ngc/apache-apis.conf`); sie schreiben nur ngc-web bei der Installation und danach der Controller mit Rolle `web`, beide aus `web.json`. Die Form legt der Plan des Webinterface als Vorlage in `shared/ulh.md` fest. |
+| 22.09.2026 | ngc-api zeigt beim Beitritt den Anker des Beitrittscodes wie ngc-controller beim Koppeln. Nach der Ersteinrichtung koppelt man zuerst den Controller des Webservers: Erst er schreibt `trust-anchor.json`. |
+| 22.09.2026 | Vorgabe Thomas: Die Grenze der Ersteinrichtung (Angreifer im selben Netz beim ersten Aufruf ohne vertrauenswürdiges Zertifikat) wird dokumentiert, nicht technisch erzwungen. Empfehlung im Entwurf: in einem Netz einrichten, dem man traut, oder gleich mit einem vertrauenswürdigen Zertifikat (ngc-web bietet Let's Encrypt an). |
 
 ## 7. Fremdcode-Kandidaten
 
@@ -941,10 +1049,10 @@ sein. Übernahme per `go mod vendor`, Herkunft in `THIRD-PARTY.md`.
 | SQLite ohne cgo, Verschlüsselung AES-256-XTS | `github.com/ncruces/go-sqlite3` mit `vfs/xts` | Am 18.09.2026 geprüft: v0.35.5 vom 16.09.2026, AES-256 bei 64-Byte-Schlüssel, reines Go. Lizenz noch prüfen. |
 | MariaDB | `github.com/go-sql-driver/mysql` | zu prüfen (Lizenz vermutlich MPL-2.0) |
 | WebSocket | `github.com/coder/websocket` | zu prüfen |
-| Argon2id | `golang.org/x/crypto/argon2` | zu prüfen |
-| Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`), sonst PBKDF2 aus der Web Crypto API mit hoher Rundenzahl | zu prüfen |
+| Argon2id | `golang.org/x/crypto/argon2` | Übernommen in Plan 0: v0.57.0, BSD-3-Clause, in `shared/proof` |
+| Passwortschlüssel im Browser | Argon2id aus einer kopierten, geprüften JavaScript-Umsetzung (Kandidat: `@noble/hashes`); kein PBKDF2-Ausweg (21.09.2026) | zu prüfen |
 | TOTP | `github.com/pquerna/otp` oder eigene Umsetzung nach RFC 6238 mit dessen Testvektoren; HMAC kommt aus der Standardbibliothek von Go | zu prüfen |
 | WebAuthn (Passkeys, FIDO2) | `github.com/go-webauthn/webauthn` | zu prüfen |
-| Noise-Tunnel | `github.com/flynn/noise` | zu prüfen |
-| Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `tests/browser/` | erlaubt seit 19.09.2026 |
+| Noise-Tunnel | `github.com/flynn/noise` | Übernommen in Plan 0: v1.1.0, BSD-3-Clause, in `shared/noisep` |
+| Browser-Tests (nur Tests, nicht Teil von NGC) | Playwright per npm in `apps/web/tests/` | erlaubt seit 19.09.2026 |
 | Noise im Browser (Ende zu Ende) | JavaScript-Umsetzung ohne npm | zu prüfen; findet sich keine geprüfte, dann eigene Umsetzung des Ablaufs nach der Spezifikation, getestet mit den offiziellen Testvektoren. Die Kryptografie selbst kommt aus der Web Crypto API des Browsers. |

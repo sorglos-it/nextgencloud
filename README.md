@@ -1,44 +1,66 @@
 # NextGenCloud
 
-Short name: **NGC**.
+Kurz **NGC**. Eine offene Alternative zu Synologys DSM: ein Desktop im Browser, der mit nichts als
+einer Anmeldung und einem App-Store beginnt und durch Apps wächst – von einer kleinen Cloud
+oder einer Firewall auf einem Raspberry Pi bis zu verteilten Installationen, in denen
+Webinterface, API, Datenbank und Server-Controller auf eigenen Maschinen laufen.
 
-## Goal
+| Ordner | Zweck | Sprache | Start | Bauen |
+| --- | --- | --- | --- | --- |
+| `apps/web` | Webinterface: der Desktop im Browser | HTML, CSS, JavaScript, PHP | Apache liefert `apps/web/public` aus | – (kein Build-Schritt) |
+| `apps/server-api` | API `ngc-api`: Sitzungen, Rechte, Weiterleitung | Go | `ngc-api -config /etc/ngc/api.json` | `go build -o ngc-api ./apps/server-api` |
+| `apps/server-controller` | Controller `ngc-controller` auf jedem Server: Tunnel, Dienste, Updates | Go | `ngc-controller -config /etc/ngc/controller.json` | `go build -o ngc-controller ./apps/server-controller` |
+| `apps/server-db` | Datenbank: MariaDB und SQLite hinter `dbapi`, Migrationen | Go, SQL | – (Bibliothek für API und Controller) | – |
+| `apps/cli` | Werkzeug `ngc-store`: packt Apps, signiert Kataloge und Lizenzen | Go | `ngc-store pack <directory> <package.ngc>` | `go build -o ngc-store ./apps/cli` |
 
-An open alternative to Synology's DSM: a desktop in the browser that starts with nothing but a
-login and an app store, and grows through apps — from a small cloud or a firewall on a Raspberry
-Pi to distributed setups where web interface, API, database and server controller run on
-separate machines.
+`shared/` enthält die Verträge zwischen den Teilen (Go-Pakete und Testdaten), `tools/` die
+Skripte, `docs/` den Entwurf und den aktuellen Stand.
 
-## Status
+## Start in 3 Schritten
 
-Design phase, no product code yet. The only code is the prototype below.
+Noch läuft nichts: Die Programme sind Grundgerüste, bis die Verträge freigegeben sind.
 
-- Design of the core, in German: [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](docs/superpowers/specs/2026-09-19-ngc-kern-design.md)
-- Current state and next steps: [`docs/STAND.md`](docs/STAND.md)
+1. Go 1.27 oder neuer installieren.
+2. Alles prüfen: `tools/check.sh` (Format, vet, Tests, Bauen für linux/amd64 und arm64).
+3. [`docs/prototype.html`](docs/prototype.html) im Browser öffnen, um den Desktop zu sehen.
 
-## Prototype: NGC Desktop 1.0
+## Stand
 
-[`prototype/index.html`](prototype/index.html) is a desktop user interface that runs in the browser.
-It is a single self-contained HTML file — no framework, no build step, no external dependencies.
-Open it in a browser and it runs.
+Entwurf und Verträge. Die Teile werden gebaut, sobald die Verträge freigegeben sind.
 
-- **Windows** — move, resize from every edge, maximise, minimise, close. Double-clicking the title bar
-  maximises; dragging a window to the top edge maximises it, to the left or right edge snaps it to that
-  half of the screen.
-- **Taskbar at the top** — start button, one button per open window, light/dark switch, clock.
-- **Start menu** — searchable list of all apps, plus "Fenster anordnen" (tile all windows) and
-  "Alle schließen" (close all).
-- **Eight apps** — Explorer, Notizblock, Rechner, Terminal, Malen, Uhr, Einstellungen, Über NGC.
-- **Settings** — six wallpapers, six accent colours, light and dark theme.
-- **Persistence** — theme, wallpaper, accent colour and the notepad text live in the browser's
-  `localStorage`, keys prefixed with `ngc.`.
-- **Mouse, pen and touch** — dragging and resizing use Pointer Events.
+- Entwurf des Kerns: [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](docs/superpowers/specs/2026-09-19-ngc-kern-design.md)
+- Aktueller Stand und nächste Schritte: [`docs/STAND.md`](docs/STAND.md)
+- Verträge: [`shared/README.md`](shared/README.md)
 
-The interface language is German. Keyboard: `Esc` closes the start menu, `Alt`+`F4` closes the focused
-window, the Windows key or `Ctrl`+`Esc` opens and closes the start menu.
+## Prototyp: NGC Desktop 1.0
 
-Still a mock-up: the Explorer shows placeholder files and cannot open them, and the terminal
-("NGC Shell") only knows its ten built-in commands (`help`, `apps`, `open <app>`, `echo`, `date`, `dir`,
-`ver`, `theme`, `cls`, `exit`) — it runs nothing on the host.
+[`docs/prototype.html`](docs/prototype.html) ist eine Desktop-Oberfläche, die im Browser läuft. Sie
+ist eine einzige, in sich geschlossene HTML-Datei – kein Framework, kein Build-Schritt, keine
+fremden Abhängigkeiten. Im Browser öffnen, und sie läuft.
 
-The file is committed unchanged from `W:\ngc\index.html` (5 August 2026).
+- **Fenster** – verschieben, an jeder Kante in der Größe ändern, maximieren, minimieren, schließen.
+  Ein Doppelklick auf die Titelleiste maximiert; ein Fenster, das an den oberen Rand gezogen wird,
+  wird maximiert, am linken oder rechten Rand füllt es diese Hälfte des Bildschirms.
+- **Taskleiste oben** – Startknopf, ein Knopf je offenem Fenster, Umschalter hell/dunkel, Uhr.
+- **Startmenü** – durchsuchbare Liste aller Apps, dazu „Fenster anordnen“ (alle Fenster
+  nebeneinander) und „Alle schließen“.
+- **Acht Apps** – Explorer, Notizblock, Rechner, Terminal, Malen, Uhr, Einstellungen, Über NGC.
+- **Einstellungen** – sechs Hintergründe, sechs Akzentfarben, helles und dunkles Design.
+- **Gespeichert** – Design, Hintergrund, Akzentfarbe und der Text des Notizblocks liegen im
+  `localStorage` des Browsers, unter Schlüsseln mit dem Präfix `ngc.`.
+- **Maus, Stift und Touch** – Ziehen und Größe ändern laufen über Pointer Events.
+
+Die Oberfläche ist deutsch. Tastatur: `Esc` schließt das Startmenü, `Alt`+`F4` schließt das aktive
+Fenster, die Windows-Taste oder `Strg`+`Esc` öffnet und schließt das Startmenü.
+
+Noch eine Attrappe: Der Explorer zeigt Platzhalter-Dateien und kann sie nicht öffnen, und das
+Terminal („NGC Shell“) kennt nur seine zehn eingebauten Befehle (`help`, `apps`, `open <app>`,
+`echo`, `date`, `dir`, `ver`, `theme`, `cls`, `exit`) – es führt nichts auf dem Rechner aus.
+
+Die Datei ist unverändert aus `W:\ngc\index.html` übernommen (5. August 2026).
+
+## Lizenz
+
+NGC steht unter der AGPL-3.0 ([`LICENSE`](LICENSE)). Die Verträge in `shared/`
+([`shared/LICENSE`](shared/LICENSE)) und die App-Bibliothek `ngc.js` stehen unter MIT, damit auch
+geschlossene und kostenpflichtige Apps möglich sind. Fremdcode: [`THIRD-PARTY.md`](THIRD-PARTY.md).

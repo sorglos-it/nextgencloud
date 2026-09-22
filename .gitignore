@@ -6,3 +6,22 @@ Thumbs.db
 .DS_Store
 *.bak
 *.log
+
+# Erzeugtes
+dist/
+bin/
+obj/
+
+# Laufzeitdaten
+apps/*/data/
+
+# Echte Konfiguration und Secrets - nur *.example kommt ins Repo
+apps/*/config/*
+!apps/*/config/*.example
+
+# Browser-Tests (npm nur dort)
+apps/web/tests/node_modules/
+apps/web/tests/test-results/
+
+# Fremdcode gehört ins Repo (vendor/ im Stamm per go mod vendor, JavaScript von Hand kopiert in
+# apps/web/public/assets/vendor/), deshalb fehlt hier die Zeile apps/*/vendor/ aus der Vorlage.

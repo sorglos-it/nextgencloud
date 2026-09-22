@@ -1,0 +1,1275 @@
+package tunnel
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flynn/noise"
+
+	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/internal/golden"
+	"github.com/sorglos-it/nextgencloud/shared/noisep"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
+	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
+	"github.com/sorglos-it/nextgencloud/shared/task"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
+)
+
+var update = flag.Bool("update", false, "rewrite shared/testdata")
+
+// now lies within the client certificates of these tests.
+const now = 1790000100
+
+func mustJSON(t testing.TB, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func testCode() PairCode {
+	return PairCode{URL: "wss://api-1.test:7443/tunnel", Key: bytes.Repeat([]byte{0xA1}, 32), TLS: bytes.Repeat([]byte{0xE1}, 32),
+		Secret: bytes.Repeat([]byte{0x5E}, SecretSize), Anchor: trust.Anchor{Seq: 3, Hash: bytes.Repeat([]byte{0xAB}, 32)}}
+}
+
+func TestPairCode(t *testing.T) {
+	c := testCode()
+	got, err := ParsePairCode(c.String())
+	if err != nil || !reflect.DeepEqual(got, c) {
+		t.Fatalf("round trip: %+v, %v", got, err)
+	}
+	if got, err := ParsePairCode(" \n" + c.String() + "\n"); err != nil || !reflect.DeepEqual(got, c) {
+		t.Errorf("pasted with white space: %+v, %v", got, err)
+	}
+	short := c
+	short.Secret = short.Secret[:8]
+	http := c
+	http.URL = "https://api-1.test:7443/tunnel"
+	shortPin := c
+	shortPin.TLS = shortPin.TLS[:31]
+	noPin := c
+	noPin.TLS = nil
+	// The receiver dials this address and it reaches configurations from
+	// there, so it has to be a tunnel address and nothing else.
+	noPort := c
+	noPort.URL = "wss://api-1.test/tunnel"
+	feed := c
+	feed.URL = "wss://api-1.test:7443/tunnel\x0a"
+	userInfo := c
+	userInfo.URL = "wss://user@api-1.test:7443/tunnel"
+	long := PairPrefix + strings.Repeat("A", MaxPairCode)
+	for _, s := range []string{"", PairPrefix, PairPrefix + "!!", strings.TrimPrefix(c.String(), PairPrefix), short.String(),
+		http.String(), shortPin.String(), noPin.String(), noPort.String(), feed.String(), userInfo.String(), long,
+		JoinCode(c).String(), c.String() + "\nA"} {
+		if _, err := ParsePairCode(s); err != ErrPairCode {
+			t.Errorf("%.40q: %v", s, err)
+		}
+	}
+}
+
+func TestPairRequest(t *testing.T) {
+	c := testCode()
+	ctl := bytes.Repeat([]byte{0xC1}, 32)
+	r := PairRequest{Name: "dienste", Noise: ctl, MAC: PairMAC(c.Secret, ctl, c.Key)}
+	got, err := ParsePairRequest(mustJSON(t, r))
+	if err != nil || got.Verify(c.Secret, c.Key) != nil {
+		t.Fatalf("valid request: %v", err)
+	}
+	swapped := r
+	swapped.Noise = bytes.Repeat([]byte{0xC2}, 32)
+	if swapped.Verify(c.Secret, c.Key) != ErrPair {
+		t.Error("other controller key accepted")
+	}
+	if r.Verify(c.Secret, bytes.Repeat([]byte{0xA2}, 32)) != ErrPair {
+		t.Error("other API key accepted")
+	}
+	if r.Verify(bytes.Repeat([]byte{1}, SecretSize), c.Key) != ErrPair {
+		t.Error("other secret accepted")
+	}
+	for name, mutate := range map[string]func(*PairRequest){
+		"name with a space":     func(r *PairRequest) { r.Name = "a b" },
+		"host name, upper case": func(r *PairRequest) { r.Name = "Dienste" },
+		"host name with a dot":  func(r *PairRequest) { r.Name = "dienste.ngc.test" },
+		"name of 33 characters": func(r *PairRequest) { r.Name = "d" + strings.Repeat("x", 32) },
+		"noise of 31 bytes":     func(r *PairRequest) { r.Noise = r.Noise[:31] },
+		"mac of 31 bytes":       func(r *PairRequest) { r.MAC = r.MAC[:31] },
+		"no noise":              func(r *PairRequest) { r.Noise = nil },
+		"no mac":                func(r *PairRequest) { r.MAC = nil },
+	} {
+		bad := r
+		mutate(&bad)
+		if _, err := ParsePairRequest(mustJSON(t, bad)); err != ErrPair {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := ParsePairRequest([]byte(`{"name":"dienste","name":"dienste"}`)); err != ErrPair {
+		t.Errorf("duplicate member: %v", err)
+	}
+}
+
+// pairChain returns version 1 (trusttest.Genesis) and version 2, in which
+// the admin adds the user alice and the second API server api-2 (NodeKeys(0xA2),
+// TLS pin of APITLS(0xE2, "api-2.test")).
+func pairChain(t testing.TB) []trust.Signed {
+	admin := trusttest.NewSigner(1)
+	g := admin.Sign(t, trusttest.Genesis(admin))
+	l2 := trusttest.Next(t, g)
+	l2.Roles = append(l2.Roles, trust.Role{Name: "user", Level: trust.LevelCritical})
+	l2.Users = append(l2.Users, trust.User{ID: trusttest.ID(0x22), Name: "alice", Roles: []string{"user"},
+		Keys: []proof.UserKey{trusttest.NewSigner(2).Key}})
+	dh, sig := trusttest.NodeKeys(0xA2)
+	_, pin := trusttest.APITLS(0xE2, "api-2.test")
+	api2 := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: dh.Public,
+		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
+	l2.Nodes = slices.Insert(l2.Nodes, 1, api2) // api-1, api-2, ctl-1
+	return []trust.Signed{g, admin.Sign(t, l2)}
+}
+
+// newest opens chain from the anchor of its first version, as the shell does.
+func newest(t testing.TB, chain []trust.Signed) trust.Version {
+	t.Helper()
+	v, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}, chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+type checkCase struct {
+	name  string
+	code  code
+	valid bool
+}
+
+// checkCases: codes as the shell may get them while its newest verified
+// version is version 2 of pairChain. Each invalid one breaks one rule.
+func checkCases(t testing.TB, chain []trust.Signed) []checkCase {
+	v := newest(t, chain)
+	node := func(id string) trust.Node {
+		n, ok := v.List.Node(id)
+		if !ok {
+			t.Fatalf("no node %s", id)
+		}
+		return n
+	}
+	api1, api2, ctl1 := node("api-1"), node("api-2"), node("ctl-1")
+	secret := bytes.Repeat([]byte{0x5E}, SecretSize)
+	newestAnchor := trust.Anchor{Seq: v.List.Seq, Hash: v.Hash}
+	otherHash := slices.Clone(v.Hash)
+	otherHash[len(otherHash)-1] ^= 1
+	c := func(url string, key, pin []byte, a trust.Anchor) code {
+		return code{URL: url, Key: key, TLS: pin, Secret: secret, Anchor: a}
+	}
+	return []checkCase{
+		{"anchor is the newest version, key, URL and pin of api-1", c(api1.URL, api1.Noise, api1.TLS, newestAnchor), true},
+		{"anchor is the newest version, key, URL and pin of api-2", c(api2.URL, api2.Noise, api2.TLS, newestAnchor), true},
+		{"anchor is an older version", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}), false},
+		{"anchor names a version the shell does not know", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: 3, Hash: v.Hash}), false},
+		{"anchor hash differs", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: v.List.Seq, Hash: otherHash}), false},
+		{"anchor with the newest hash but an older seq", c(api1.URL, api1.Noise, api1.TLS, trust.Anchor{Seq: 1, Hash: v.Hash}), false},
+		{"key of a controller", c(api1.URL, ctl1.Noise, api1.TLS, newestAnchor), false},
+		{"URL of no API node", c("wss://api-9.test:7443/tunnel", api1.Noise, api1.TLS, newestAnchor), false},
+		{"key of one API node, URL of another", c(api2.URL, api1.Noise, api1.TLS, newestAnchor), false},
+		{"TLS pin of another API node", c(api1.URL, api1.Noise, api2.TLS, newestAnchor), false},
+	}
+}
+
+func TestPairCodeCheck(t *testing.T) {
+	chain := pairChain(t)
+	v := newest(t, chain)
+	for _, c := range checkCases(t, chain) {
+		got, err := ParsePairCode(PairCode(c.code).String())
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		err = got.Check(v)
+		if c.valid && err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if !c.valid && err != ErrCodeTrust {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrCodeTrust)
+		}
+	}
+	if err := PairCode(checkCases(t, chain)[0].code).Check(trust.Version{}); err != ErrCodeTrust {
+		t.Errorf("no verified version: got %v, want %v", err, ErrCodeTrust)
+	}
+}
+
+func testJoinCode(t testing.TB) JoinCode {
+	return JoinCode(checkCases(t, pairChain(t))[0].code)
+}
+
+// joinURL is the tunnel URL of the new API server api-3.
+const joinURL = "wss://api-3.test:7443/tunnel"
+
+// joinKeys returns the Noise and signing keys of the new API server api-3
+// and the pin of its TLS key.
+func joinKeys() (noiseKey, signKey, tlsPin []byte) {
+	dh, sig := trusttest.NodeKeys(0xA3)
+	_, pin := trusttest.APITLS(0xE3, "api-3.test")
+	return dh.Public, sig.Public().(ed25519.PublicKey), pin
+}
+
+// testJoinRequest returns api-3's join request to the issuer of c.
+func testJoinRequest(c JoinCode) JoinRequest {
+	noise, sig, pin := joinKeys()
+	return JoinRequest{Node: "api-3", Noise: noise, Sign: sig, TLS: pin, URL: joinURL,
+		MAC: JoinMAC(c.Secret, "api-3", noise, sig, pin, c.Key, joinURL)}
+}
+
+func TestJoinCode(t *testing.T) {
+	c := testJoinCode(t)
+	got, err := ParseJoinCode(c.String())
+	if err != nil || !reflect.DeepEqual(got, c) || !strings.HasPrefix(c.String(), JoinPrefix) {
+		t.Fatalf("round trip: %+v, %v", got, err)
+	}
+	short := c
+	short.Key = short.Key[:31]
+	noPin := c
+	noPin.TLS = nil
+	for _, s := range []string{"", JoinPrefix, JoinPrefix + "!!", PairCode(c).String(), short.String(), noPin.String(),
+		JoinPrefix + strings.Repeat("A", MaxPairCode)} {
+		if _, err := ParseJoinCode(s); err != ErrJoinCode {
+			t.Errorf("%.40q: %v", s, err)
+		}
+	}
+
+	chain := pairChain(t)
+	v := newest(t, chain)
+	for _, cc := range checkCases(t, chain) {
+		err := JoinCode(cc.code).Check(v)
+		if cc.valid && err != nil {
+			t.Errorf("check %s: %v", cc.name, err)
+		}
+		if !cc.valid && err != ErrCodeTrust {
+			t.Errorf("check %s: got %v, want %v", cc.name, err, ErrCodeTrust)
+		}
+	}
+
+	r := testJoinRequest(c)
+	parsed, err := ParseJoinRequest(mustJSON(t, r))
+	if err != nil || parsed.Verify(c.Secret, c.Key) != nil || !reflect.DeepEqual(parsed, r) {
+		t.Fatalf("valid join request: %+v, %v", parsed, err)
+	}
+	other := bytes.Repeat([]byte{0x77}, 32)
+	otherURL := "wss://api-4.test:7443/tunnel"
+	// The node ID is under the MAC too: it is the server's ID and name in the
+	// trust list, so the issuing API cannot rename a waiting server.
+	for name, change := range map[string]func(*JoinRequest){
+		"other node ID":           func(r *JoinRequest) { r.Node = "api-4" },
+		"node ID one byte longer": func(r *JoinRequest) { r.Node += "x" },
+		"other noise key":         func(r *JoinRequest) { r.Noise = other },
+		"other sign key":          func(r *JoinRequest) { r.Sign = other },
+		"other TLS pin":           func(r *JoinRequest) { r.TLS = other },
+		"other URL":               func(r *JoinRequest) { r.URL = otherURL },
+		"URL one byte longer":     func(r *JoinRequest) { r.URL += "x" },
+		"noise and sign swapped":  func(r *JoinRequest) { r.Noise, r.Sign = r.Sign, r.Noise },
+		"sign and TLS swapped":    func(r *JoinRequest) { r.Sign, r.TLS = r.TLS, r.Sign },
+	} {
+		bad := r
+		change(&bad)
+		if bad.Verify(c.Secret, c.Key) != ErrJoin {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if r.Verify(c.Secret, other) != ErrJoin {
+		t.Error("other API key accepted")
+	}
+	if r.Verify(bytes.Repeat([]byte{1}, SecretSize), c.Key) != ErrJoin {
+		t.Error("other secret accepted")
+	}
+	if bytes.Equal(r.MAC, PairMAC(c.Secret, r.Noise, c.Key)) {
+		t.Error("join MAC equals the pairing MAC")
+	}
+
+	// The fingerprint changes with every value the new server asks to be
+	// listed with.
+	fp := JoinFingerprint(r.Node, r.Noise, r.Sign, r.TLS, r.URL)
+	if id, err := enc.B64.DecodeString(fp); err != nil || len(id) != 16 {
+		t.Errorf("fingerprint %q: %v", fp, err)
+	}
+	for name, got := range map[string]string{
+		"other node ID":          JoinFingerprint("api-4", r.Noise, r.Sign, r.TLS, r.URL),
+		"other noise key":        JoinFingerprint(r.Node, other, r.Sign, r.TLS, r.URL),
+		"other sign key":         JoinFingerprint(r.Node, r.Noise, other, r.TLS, r.URL),
+		"other TLS pin":          JoinFingerprint(r.Node, r.Noise, r.Sign, other, r.URL),
+		"other URL":              JoinFingerprint(r.Node, r.Noise, r.Sign, r.TLS, otherURL),
+		"noise and sign swapped": JoinFingerprint(r.Node, r.Sign, r.Noise, r.TLS, r.URL),
+		"Noise key alone":        Fingerprint(r.Noise),
+	} {
+		if got == fp {
+			t.Errorf("%s: same fingerprint %s", name, fp)
+		}
+	}
+
+	for name, mutate := range map[string]func(*JoinRequest){
+		"node in upper case":  func(r *JoinRequest) { r.Node = "API-3" },
+		"empty node":          func(r *JoinRequest) { r.Node = "" },
+		"noise of 31 bytes":   func(r *JoinRequest) { r.Noise = r.Noise[:31] },
+		"sign of 33 bytes":    func(r *JoinRequest) { r.Sign = append(slices.Clone(r.Sign), 1) },
+		"TLS pin of 31 bytes": func(r *JoinRequest) { r.TLS = r.TLS[:31] },
+		"no TLS pin":          func(r *JoinRequest) { r.TLS = nil },
+		"URL with https":      func(r *JoinRequest) { r.URL = "https://api-3.test:7443/tunnel" },
+		"no URL":              func(r *JoinRequest) { r.URL = "" },
+		"URL without a port":  func(r *JoinRequest) { r.URL = "wss://api-3.test/tunnel" },
+		"URL with a query":    func(r *JoinRequest) { r.URL = "wss://api-3.test:7443/tunnel?x=1" },
+		"URL host upper case": func(r *JoinRequest) { r.URL = "wss://API-3.test:7443/tunnel" },
+		"URL over MaxURL":     func(r *JoinRequest) { r.URL = "wss://" + trusttest.Host(MaxURL-18+1) + ":7443/tunnel" },
+		"mac of 31 bytes":     func(r *JoinRequest) { r.MAC = r.MAC[:31] },
+	} {
+		bad := r
+		mutate(&bad)
+		if _, err := ParseJoinRequest(mustJSON(t, bad)); err != ErrJoin {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	atMax := r
+	atMax.URL = "wss://" + trusttest.Host(MaxURL-18) + ":7443/tunnel"
+	if _, err := ParseJoinRequest(mustJSON(t, atMax)); err != nil {
+		t.Errorf("URL of MaxURL bytes: %v", err)
+	}
+	if _, err := ParseJoinRequest([]byte(`{"node":"api-3","extra":1}`)); err != ErrJoin {
+		t.Errorf("unknown member: %v", err)
+	}
+}
+
+// serveTLS runs a TLS server with the identity of api-1 (APITLS(0xE1,
+// "api-1.test")) up to maxVersion on a local port and returns its address.
+// After each handshake it writes one byte, which also carries TLS 1.3's
+// session tickets to the client.
+func serveTLS(t *testing.T, maxVersion uint16) string {
+	t.Helper()
+	cert, _ := trusttest.APITLS(0xE1, "api-1.test")
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, MaxVersion: maxVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				c.SetDeadline(time.Now().Add(10 * time.Second))
+				if c.(*tls.Conn).Handshake() == nil {
+					c.Write([]byte{1})
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// dialTLS connects to addr with cfg and reads the server's byte.
+func dialTLS(addr string, cfg *tls.Config) (tls.ConnectionState, error) {
+	c, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, cfg)
+	if err != nil {
+		return tls.ConnectionState{}, err
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.ReadFull(c, make([]byte, 1)); err != nil {
+		return tls.ConnectionState{}, err
+	}
+	return c.ConnectionState(), nil
+}
+
+func TestPinnedTLS(t *testing.T) {
+	cert, pin := trusttest.APITLS(0xE1, "api-1.test")
+	_, otherPin := trusttest.APITLS(0xE2, "api-2.test")
+	certHash := sha256.Sum256(cert.Certificate[0])
+	addr := serveTLS(t, 0)
+	for name, c := range map[string]struct {
+		pins [][]byte
+		want error
+	}{
+		"right pin":              {[][]byte{pin}, nil},
+		"right pin among others": {[][]byte{otherPin, pin}, nil},
+		"other pin":              {[][]byte{otherPin}, errPin},
+		"no pins":                {nil, errPin},
+		"31 bytes of the pin":    {[][]byte{pin[:31]}, errPin},
+		// The pin names the key, not the certificate.
+		"hash of the certificate": {[][]byte{certHash[:]}, errPin},
+	} {
+		state, err := dialTLS(addr, PinnedTLS(c.pins...))
+		if !errors.Is(err, c.want) || (err == nil) != (c.want == nil) {
+			t.Errorf("%s: got %v, want %v", name, err, c.want)
+		}
+		if err == nil && state.Version != tls.VersionTLS13 {
+			t.Errorf("%s: TLS version %x", name, state.Version)
+		}
+	}
+	// The caller's slice may change afterwards; the configuration keeps its own.
+	mine := slices.Clone(pin)
+	cfg := PinnedTLS(mine)
+	mine[0] ^= 1
+	if _, err := dialTLS(addr, cfg); err != nil {
+		t.Errorf("pin changed after the call: %v", err)
+	}
+
+	t.Run("server limited to TLS 1.2", func(t *testing.T) {
+		old := serveTLS(t, tls.VersionTLS12)
+		if _, err := dialTLS(old, PinnedTLS(pin)); err == nil || errors.Is(err, errPin) {
+			t.Errorf("got %v, want a refused handshake", err)
+		}
+	})
+
+	// A resumed session skips the certificate, so the pin is checked again on
+	// the certificate of the session: a configuration with another pin that
+	// resumes the same session is refused.
+	t.Run("resumed session", func(t *testing.T) {
+		cache := tls.NewLRUClientSessionCache(4)
+		pinned := func(pins ...[]byte) (*tls.Config, *bool) {
+			cfg := PinnedTLS(pins...)
+			cfg.ServerName, cfg.ClientSessionCache = "api-1.test", cache
+			resumed, check := new(bool), cfg.VerifyConnection
+			cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+				*resumed = cs.DidResume
+				return check(cs)
+			}
+			return cfg, resumed
+		}
+		cfg, resumed := pinned(pin)
+		if _, err := dialTLS(addr, cfg); err != nil || *resumed {
+			t.Fatalf("first connection: resumed %v, %v", *resumed, err)
+		}
+		cfg, resumed = pinned(pin)
+		if state, err := dialTLS(addr, cfg); err != nil || !*resumed || !state.DidResume {
+			t.Fatalf("second connection with the right pin: resumed %v, %v", *resumed, err)
+		}
+		cfg, resumed = pinned(otherPin)
+		if _, err := dialTLS(addr, cfg); !errors.Is(err, errPin) || !*resumed {
+			t.Errorf("resumed with another pin: resumed %v, %v", *resumed, err)
+		}
+	})
+}
+
+// TestTLSPinScript runs pin.sh, the reference for the ulh scripts, on
+// tls/api.pem. It needs a POSIX shell, openssl, base64 and tr; the Linux
+// servers have them, and there the test must pass.
+func TestTLSPinScript(t *testing.T) {
+	for _, tool := range []string{"sh", "openssl", "base64", "tr"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s missing", tool)
+		}
+	}
+	dir := t.TempDir()
+	for _, name := range []string{"api.pem", "pin.sh"} {
+		b, err := os.ReadFile(filepath.Join(golden.Dir, "tls", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("no certificate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command("sh", append([]string{"pin.sh"}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		code := 0
+		if exit, ok := err.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return string(out), code
+	}
+	_, pin := apiPEM()
+	if out, code := run("api.pem"); out != enc.B64.EncodeToString(pin)+"\n" || code != 0 {
+		t.Errorf("api.pem: %q, exit %d, want %q", out, code, enc.B64.EncodeToString(pin)+"\n")
+	}
+	if out, code := run("other.txt"); out != "" || code != 1 {
+		t.Errorf("no certificate: %q, exit %d", out, code)
+	}
+	if out, code := run(); out != "" || code != 2 {
+		t.Errorf("no argument: %q, exit %d", out, code)
+	}
+}
+
+func testHello() Hello {
+	return Hello{Version: "1.0.0", Contract: Contract, Node: "ctl-1", TrustSeq: 3, Arch: "arm64", OS: "debian-13",
+		Roles: []string{RoleDB, RoleServices}}
+}
+
+func TestHello(t *testing.T) {
+	for name, mutate := range map[string]func(*Hello){
+		"as sent":        func(h *Hello) {},
+		"all roles":      func(h *Hello) { h.Roles = []string{RoleWeb, RoleAPI, RoleDB, RoleServices} },
+		"no roles":       func(h *Hello) { h.Roles = nil },
+		"API side":       func(h *Hello) { h.Node, h.Arch, h.OS, h.Roles = "api-1", "", "", nil },
+		"OS with a plus": func(h *Hello) { h.OS = "ubuntu-24.04+1" },
+	} {
+		h := testHello()
+		mutate(&h)
+		if _, err := ParseHello(mustJSON(t, h)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, mutate := range map[string]func(*Hello){
+		"unknown arch":     func(h *Hello) { h.Arch = "riscv64" },
+		"unknown role":     func(h *Hello) { h.Roles = []string{"mail"} },
+		"old part name":    func(h *Hello) { h.Roles = []string{"ngc-controller"} },
+		"duplicate role":   func(h *Hello) { h.Roles = []string{RoleServices, RoleServices} },
+		"contract 0":       func(h *Hello) { h.Contract = 0 },
+		"no version":       func(h *Hello) { h.Version = "" },
+		"node":             func(h *Hello) { h.Node = "Ctl 1" },
+		"OS with a space":  func(h *Hello) { h.OS = "debian 13" },
+		"OS in upper case": func(h *Hello) { h.OS = "Debian-13" },
+		"OS too long":      func(h *Hello) { h.OS = strings.Repeat("d", 33) },
+	} {
+		bad := testHello()
+		mutate(&bad)
+		if _, err := ParseHello(mustJSON(t, bad)); err != ErrHello {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for _, s := range []string{
+		`{"version":"1.0.0","contract":1,"trustSeq":3,"roles":["web","api","db","services","web"]}`,
+		`{"version":"1.0.0","contract":1,"trustSeq":3,"parts":["services"]}`,
+		`{"version":"1.0.0","contract":1,"trustSeq":3,"roles":null}`,
+		`{"version":"1.0.0","contract":1,"trustSeq":9007199254740992}`,
+	} {
+		if _, err := ParseHello([]byte(s)); err != ErrHello {
+			t.Errorf("%s: %v", s, err)
+		}
+	}
+}
+
+func TestComponents(t *testing.T) {
+	all := []string{RoleWeb, RoleAPI, RoleDB, RoleServices}
+	for mask := 0; mask < 1<<len(all); mask++ {
+		var roles []string
+		for i, r := range all {
+			if mask&(1<<i) != 0 {
+				roles = append(roles, r)
+			}
+		}
+		want := []string{trust.AutoController}
+		if slices.Contains(roles, RoleAPI) {
+			want = []string{trust.AutoAPI, trust.AutoController}
+		}
+		if slices.Contains(roles, RoleWeb) {
+			want = append(want, trust.AutoWeb)
+		}
+		if got := Components(roles); !slices.Equal(got, want) {
+			t.Errorf("%v: got %v, want %v", roles, got, want)
+		}
+	}
+}
+
+func testStatus() Status {
+	return Status{
+		Apps: []AppStatus{
+			{App: "org.sorglos.terminal", Version: "1.0.0", State: StateRunning},
+			{App: "org.sorglos.files", Version: "2.1.0", State: StateStopped},
+			{App: "org.sorglos.mail", Version: "0.9.3", State: StateFailed},
+			{App: "org.sorglos.photos", Version: "1.2.0", State: StateUnlicensed},
+		},
+		Components: map[string]string{trust.AutoController: "1.0.0", trust.AutoAPI: "1.0.0", trust.AutoWeb: "1.0.0"},
+		DiskFree:   1 << 40,
+	}
+}
+
+func TestParseStatus(t *testing.T) {
+	s := testStatus()
+	got, err := ParseStatus(mustJSON(t, s))
+	if err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("round trip: %+v, %v", got, err)
+	}
+	// A controller without apps and without components sends no null.
+	empty := mustJSON(t, Status{})
+	if string(empty) != `{"diskFree":0}` {
+		t.Errorf("empty status encodes as %s", empty)
+	}
+	if _, err := ParseStatus(empty); err != nil {
+		t.Errorf("empty status: %v", err)
+	}
+	apps := func(n int) []AppStatus {
+		a := make([]AppStatus, n)
+		for i := range a {
+			a[i] = AppStatus{App: "org.sorglos.app" + strconv.Itoa(i), Version: "1.0.0", State: StateRunning}
+		}
+		return a
+	}
+	if _, err := ParseStatus(mustJSON(t, Status{Apps: apps(MaxStatusApps)})); err != nil {
+		t.Errorf("%d apps: %v", MaxStatusApps, err)
+	}
+	for name, mutate := range map[string]func(*Status){
+		"core app":              func(s *Status) { s.Apps[0].App = "ngc.store" },
+		"invalid app id":        func(s *Status) { s.Apps[0].App = "Terminal" },
+		"duplicate app":         func(s *Status) { s.Apps[1].App = s.Apps[0].App },
+		"bad version":           func(s *Status) { s.Apps[0].Version = "1.0" },
+		"unknown state":         func(s *Status) { s.Apps[0].State = "paused" },
+		"unknown component":     func(s *Status) { s.Components["ngc-mail"] = "1.0.0" },
+		"old part name":         func(s *Status) { s.Components = map[string]string{"controller": "1.0.0"} },
+		"bad component version": func(s *Status) { s.Components[trust.AutoWeb] = "v1" },
+		"negative diskFree":     func(s *Status) { s.DiskFree = -1 },
+		"one app over the most": func(s *Status) { s.Apps = apps(MaxStatusApps + 1) },
+	} {
+		bad := testStatus()
+		mutate(&bad)
+		if _, err := ParseStatus(mustJSON(t, bad)); err != ErrStatus {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for _, s := range []string{
+		`{"apps":null,"diskFree":0}`,
+		`{"parts":{},"diskFree":0}`,
+		`{"diskFree":0,"diskFree":1}`,
+		`{"diskFree":9007199254740992}`,
+		`{"diskFree":0.5}`,
+	} {
+		if _, err := ParseStatus([]byte(s)); err != ErrStatus {
+			t.Errorf("%s: %v", s, err)
+		}
+	}
+}
+
+// TestStatusFitsOneFrame builds the largest status a controller can send:
+// MaxStatusApps apps with IDs of 100 characters, versions of 20 and the
+// longest state, every component at the longest version and the largest
+// diskFree. As the body of a status control message it must fit one frame.
+func TestStatusFitsOneFrame(t *testing.T) {
+	const version = "999999.999999.999999"
+	s := Status{Components: map[string]string{trust.AutoWeb: version, trust.AutoAPI: version, trust.AutoController: version},
+		DiskFree: 1<<53 - 1}
+	for i := range MaxStatusApps {
+		id := fmt.Sprintf("a.%s%04d", strings.Repeat("b", 94), i)
+		s.Apps = append(s.Apps, AppStatus{App: id, Version: version, State: StateUnlicensed})
+	}
+	if len(s.Apps[0].App) != 100 || !wire.ValidAppID(s.Apps[0].App) || !store.ValidVersion(version) {
+		t.Fatalf("app ID %q or version %q not at the limit", s.Apps[0].App, version)
+	}
+	body := mustJSON(t, s)
+	control := append(append([]byte(`{"t":"status","b":`), body...), '}')
+	t.Logf("largest status: %d bytes as a control message, %d to spare in the frame", len(control), wire.MaxPayload-len(control))
+	if len(control) > wire.MaxPayload*3/4 {
+		t.Errorf("largest status takes %d of %d bytes: too little room left", len(control), wire.MaxPayload)
+	}
+	if _, err := (wire.Frame{Type: wire.TypeData, Channel: wire.ControlChannel, Payload: control}).Encode(); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	c, err := wire.ParseControl(control)
+	if err != nil {
+		t.Fatalf("control message: %v", err)
+	}
+	if _, err := ParseStatus(c.B); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+}
+
+// browserOpen returns the browser's OPEN of the terminal, as the shell wrote
+// it: the white space inside params stays in the bytes the prologue binds.
+func browserOpen() []byte {
+	return []byte(`{"app":"org.sorglos.terminal","service":"terminal","action":"shell","params":{ "cols": 80, "rows": 24 },` +
+		`"window":262144,"e2e":"` + enc.B64.EncodeToString(bytes.Repeat([]byte{7}, wire.HandshakeSize)) + `"}`)
+}
+
+// userProof returns a proof of the right shape; ParseOpen checks only its
+// structure, VerifyOpen checks it for real.
+func userProof() *proof.Proof {
+	return &proof.Proof{Kind: proof.KindPassword, KeyID: enc.B64.EncodeToString(bytes.Repeat([]byte{0x4B}, 16)),
+		Sig: bytes.Repeat([]byte{1}, ed25519.SignatureSize)}
+}
+
+func testOpen() Open {
+	return Open{Open: browserOpen(), Window: wire.DefaultWindow, Client: []byte(`{"inst":"x"}`), Proof: userProof()}
+}
+
+// stageOpen is the OPEN of a channel without a user: the API's own.
+func stageOpen(t testing.TB) Open {
+	inner := wire.Open{App: "ngc.store", Service: "controller", Action: "stage",
+		Params: json.RawMessage(`{"target":"ngc-controller","version":"1.1.0"}`), Window: wire.DefaultWindow}
+	return Open{Open: mustJSON(t, inner), Window: wire.DefaultWindow}
+}
+
+func TestParseOpen(t *testing.T) {
+	o, inner, err := ParseOpen(mustJSON(t, testOpen()))
+	if err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	if !bytes.Equal(o.Open, browserOpen()) || string(inner.Params) != `{ "cols": 80, "rows": 24 }` || inner.App != "org.sorglos.terminal" {
+		t.Errorf("got %s and params %s", o.Open, inner.Params)
+	}
+	if _, inner, err := ParseOpen(mustJSON(t, stageOpen(t))); err != nil || inner.Action != "stage" {
+		t.Errorf("stage without user: %v", err)
+	}
+	for name, mutate := range map[string]func(*Open){
+		"client of MaxCert bytes": func(o *Open) { o.Client = bytes.Repeat([]byte{'x'}, session.MaxCert) },
+		"window MinWindow":        func(o *Open) { o.Window = wire.MinWindow },
+		"window MaxWindow":        func(o *Open) { o.Window = wire.MaxWindow },
+	} {
+		ok := testOpen()
+		mutate(&ok)
+		if _, _, err := ParseOpen(mustJSON(t, ok)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, mutate := range map[string]func(*Open){
+		"inner OPEN invalid":     func(o *Open) { o.Open = bytes.Replace(o.Open, []byte(`262144`), []byte(`10`), 1) },
+		"inner OPEN not JSON":    func(o *Open) { o.Open = []byte("open") },
+		"no inner OPEN":          func(o *Open) { o.Open = nil },
+		"window below MinWindow": func(o *Open) { o.Window = wire.MinWindow - 1 },
+		"window above MaxWindow": func(o *Open) { o.Window = wire.MaxWindow + 1 },
+		"client without proof":   func(o *Open) { o.Proof = nil },
+		"proof without client":   func(o *Open) { o.Client = nil },
+		"client over MaxCert":    func(o *Open) { o.Client = bytes.Repeat([]byte{'x'}, session.MaxCert+1) },
+		"malformed proof":        func(o *Open) { o.Proof.Kind = "totp" },
+	} {
+		bad := testOpen()
+		mutate(&bad)
+		if _, _, err := ParseOpen(mustJSON(t, bad)); err != wire.ErrOpen {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	valid := string(mustJSON(t, testOpen()))
+	for name, s := range map[string]string{
+		"unknown field user": strings.Replace(valid, `{"open":`, `{"user":"`+trusttest.ID(0x21)+`","open":`, 1),
+		"duplicate field":    strings.Replace(valid, `{"open":`, `{"window":262144,"open":`, 1),
+		"proof null":         strings.Replace(valid, `,"proof":{`, `,"proof":null,"x":{`, 1),
+		"open not base64url": strings.Replace(valid, `{"open":"`, `{"open":"=`, 1),
+		"unknown field":      strings.Replace(valid, `{"open":`, `{"extra":1,"open":`, 1),
+	} {
+		if _, _, err := ParseOpen([]byte(s)); err != wire.ErrOpen {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// maximalPasskeyProof has the largest parts proof.Proof.Validate allows.
+func maximalPasskeyProof() *proof.Proof {
+	return &proof.Proof{Kind: proof.KindPasskey, KeyID: enc.B64.EncodeToString(bytes.Repeat([]byte{0x4B}, 16)),
+		Sig: bytes.Repeat([]byte{1}, proof.MaxSig), AuthData: bytes.Repeat([]byte{2}, proof.MaxAuthData),
+		ClientData: bytes.Repeat([]byte{3}, proof.MaxClientData)}
+}
+
+// TestMaxOpenPayload builds the largest OPEN the tunnel must carry: the
+// largest browser OPEN (an app channel with a task and a maximal
+// confirmation), a client certificate of MaxCert bytes and a maximal proof.
+func TestMaxOpenPayload(t *testing.T) {
+	priv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
+	env, err := sign.Sign(priv, sign.PurposeTask, []byte("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := wire.Open{App: "org.sorglos.terminal", Service: "terminal", Action: "shell", Window: wire.MaxWindow,
+		E2E: bytes.Repeat([]byte{7}, wire.HandshakeSize), Task: &env, Confirm: maximalPasskeyProof()}
+	// Start a little below the payload that fills the OPEN, then grow it.
+	env.Payload = nil
+	var largest []byte
+	for n := (wire.MaxBrowserOpen-len(mustJSON(t, inner)))*3/4 - 8; ; n++ {
+		env.Payload = make([]byte, n)
+		b := mustJSON(t, inner)
+		if len(b) > wire.MaxBrowserOpen {
+			break
+		}
+		largest = b
+	}
+	// White space after the value fills the OPEN to its last byte.
+	largest = append(largest, bytes.Repeat([]byte(" "), wire.MaxBrowserOpen-len(largest))...)
+	if _, err := wire.ParseOpen(largest); err != nil {
+		t.Fatalf("browser OPEN of %d bytes: %v", len(largest), err)
+	}
+	outer := mustJSON(t, Open{Open: largest, Window: wire.MaxWindow, Client: bytes.Repeat([]byte{'c'}, session.MaxCert),
+		Proof: maximalPasskeyProof()})
+	t.Logf("browser OPEN %d bytes, tunnel OPEN %d bytes", len(largest), len(outer))
+	// 21,846 characters of base64url for the OPEN, 5,462 for the certificate,
+	// 12,378 for the proof with its member names, the window of 7 digits and
+	// the rest of the JSON: the true maximum, which MaxOpenPayload must hold.
+	if len(outer) != 39735 || len(outer) > wire.MaxOpenPayload {
+		t.Fatalf("largest tunnel OPEN has %d bytes, want 39735 within MaxOpenPayload", len(outer))
+	}
+	if _, _, err := ParseOpen(outer); err != nil {
+		t.Fatalf("largest tunnel OPEN: %v", err)
+	}
+}
+
+// clientCert returns a client certificate of the user admin
+// (trusttest.ID(0x21)) of l, as its payload.
+func clientCert(t testing.TB, l *trust.List) []byte {
+	return mustJSON(t, session.ClientCert{Installation: l.Installation, User: trusttest.ID(0x21),
+		Nonce: bytes.Repeat([]byte{0x31}, session.NonceSize), Sig: bytes.Repeat([]byte{0x32}, 32), DH: bytes.Repeat([]byte{0x33}, 32),
+		Issued: now - 100, Expires: now + 3600})
+}
+
+func TestVerifyOpen(t *testing.T) {
+	admin := trusttest.NewSigner(1)
+	l := trusttest.Genesis(admin)
+	client := clientCert(t, l)
+	withUser := func(signer trusttest.Signer) []byte {
+		p := signer.Prove(sign.PurposeClientCert, client)
+		return mustJSON(t, Open{Open: browserOpen(), Window: wire.DefaultWindow, Client: client, Proof: &p})
+	}
+
+	t.Run("user comes from the certificate", func(t *testing.T) {
+		o, err := VerifyOpen(withUser(admin), l, now)
+		if err != nil || o.Session == nil {
+			t.Fatalf("got %+v, %v", o, err)
+		}
+		if o.Session.Cert().User != trusttest.ID(0x21) || !bytes.Equal(o.Session.Payload(), client) {
+			t.Errorf("user %s", o.Session.Cert().User)
+		}
+		if string(o.Open.Params) != `{ "cols": 80, "rows": 24 }` || o.Window != wire.DefaultWindow {
+			t.Errorf("params %s, window %d", o.Open.Params, o.Window)
+		}
+	})
+	t.Run("certificate signed by a key not in the list", func(t *testing.T) {
+		if _, err := VerifyOpen(withUser(trusttest.NewSigner(9)), l, now); err != session.ErrUser {
+			t.Errorf("got %v, want %v", err, session.ErrUser)
+		}
+	})
+	t.Run("certificate expired", func(t *testing.T) {
+		if _, err := VerifyOpen(withUser(admin), l, now+7200); err != session.ErrExpired {
+			t.Errorf("got %v, want %v", err, session.ErrExpired)
+		}
+	})
+	t.Run("no client certificate", func(t *testing.T) {
+		o, err := VerifyOpen(mustJSON(t, stageOpen(t)), l, now)
+		if err != nil || o.Session != nil || o.Open.Action != "stage" {
+			t.Errorf("got %+v, %v", o, err)
+		}
+	})
+	t.Run("malformed OPEN", func(t *testing.T) {
+		if _, err := VerifyOpen([]byte(`{}`), l, now); err != wire.ErrOpen {
+			t.Errorf("got %v, want %v", err, wire.ErrOpen)
+		}
+	})
+}
+
+// TestTaskSwapBreaksHandshake is the review's probe as a test: an API that
+// holds two valid tasks of the same user for the same target (it can get a
+// second one by failing the shell's first attempt) swaps one for the other in
+// a root app OPEN, adds one to an OPEN without a task, or drops it. The
+// controller verifies whatever task arrives, but the end-to-end prologue
+// binds the task's bytes, so message 1 of the shell fails.
+func TestTaskSwapBreaksHandshake(t *testing.T) {
+	const app, svc, act = "org.sorglos.files", "files", "delete"
+	admin := trusttest.NewSigner(1)
+	l := trusttest.Genesis(admin)
+	ctlDH, _ := trusttest.NodeKeys(0xC1) // ctl-1 in trusttest.Genesis
+	sessPriv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x51}, ed25519.SeedSize))
+	shellDH, err := noisep.Keypair(bytes.NewReader(bytes.Repeat([]byte{0x52}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := mustJSON(t, session.ClientCert{Installation: l.Installation, User: trusttest.ID(0x21),
+		Nonce: bytes.Repeat([]byte{0x31}, session.NonceSize), Sig: enc.Bytes(sessPriv.Public().(ed25519.PublicKey)), DH: shellDH.Public,
+		Issued: now - 100, Expires: now + 3600})
+	certProof := admin.Prove(sign.PurposeClientCert, cert)
+	newTask := func(params string, id byte) *sign.Envelope {
+		env, err := sign.Sign(sessPriv, sign.PurposeTask, mustJSON(t, task.Task{ID: bytes.Repeat([]byte{id}, task.IDSize),
+			Installation: l.Installation, Cert: session.CertHash(cert), Node: "ctl-1", App: app, Service: svc, Action: act,
+			Params: json.RawMessage(params), Issued: now - 10, Expires: now + 200}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &env
+	}
+	taskA, taskB := newTask(`{"path":"/data/everything"}`, 0xA), newTask(`{"path":"/tmp/old.log"}`, 0xB)
+	rule := task.Rule{Root: true, Changes: true, Critical: func(json.RawMessage) (bool, error) { return false, nil }}
+
+	// shell writes the OPEN with tk; its prologue binds the task's bytes.
+	shell := func(tk *sign.Envelope) (wire.Open, *noise.HandshakeState) {
+		var taskBytes []byte
+		if tk != nil {
+			taskBytes = mustJSON(t, tk)
+		}
+		hs, err := noisep.Handshake(true, noisep.E2EPrologue("ctl-1", app, svc, act, nil, taskBytes), shellDH, ctlDH.Public, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg1, _, _, err := hs.WriteMessage(nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wire.Open{App: app, Service: svc, Action: act, Window: wire.DefaultWindow, E2E: msg1, Task: tk}, hs
+	}
+	// controller checks the OPEN the API forwarded and reads message 1 over
+	// the prologue of what arrived.
+	controller := func(o wire.Open) (*noise.HandshakeState, *task.Task, error) {
+		opened, err := VerifyOpen(mustJSON(t, Open{Open: mustJSON(t, o), Window: wire.DefaultWindow, Client: cert, Proof: &certProof}), l, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked, err := task.Check(task.Input{Task: opened.Open.Task, Session: *opened.Session, Node: "ctl-1",
+			App: opened.Open.App, Service: opened.Open.Service, Action: opened.Open.Action, Rule: rule}, l, now)
+		hs, herr := noisep.Handshake(false, noisep.E2EPrologue("ctl-1", opened.Open.App, opened.Open.Service, opened.Open.Action,
+			opened.Open.Params, opened.Open.TaskBytes()), ctlDH, opened.Session.Cert().DH, rand.Reader)
+		if herr != nil {
+			t.Fatal(herr)
+		}
+		if _, _, _, err := hs.ReadMessage(nil, opened.Open.E2E); err != nil {
+			return nil, checked, err
+		}
+		return hs, checked, err
+	}
+
+	t.Run("as the shell sent it", func(t *testing.T) {
+		o, shellHS := shell(taskB)
+		ctlHS, checked, err := controller(o)
+		if err != nil || checked == nil || string(checked.Params) != `{"path":"/tmp/old.log"}` {
+			t.Fatalf("got %+v, %v", checked, err)
+		}
+		msg2, rc1, rc2, err := ctlHS.WriteMessage(nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ic1, ic2, err := shellHS.ReadMessage(nil, msg2)
+		if err != nil {
+			t.Fatalf("shell reads message 2: %v", err)
+		}
+		first, _ := wire.E2E(wire.E2EData, nil)
+		c, _ := noisep.NewTransport(true, ic1, ic2).Seal(first)
+		if _, err := noisep.NewTransport(false, rc1, rc2).Open(c); err != nil {
+			t.Fatalf("controller opens the first message: %v", err)
+		}
+	})
+	for name, swap := range map[string]struct {
+		sent, forwarded *sign.Envelope
+	}{
+		"another valid task swapped in":   {taskB, taskA},
+		"a task added to an OPEN without": {nil, taskA},
+		"the task dropped":                {taskB, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, _ := shell(swap.sent)
+			o.Task = swap.forwarded
+			_, checked, err := controller(o)
+			if swap.forwarded != nil && checked == nil {
+				t.Fatal("the forwarded task no longer verifies, so this case proves nothing")
+			}
+			if err == nil {
+				t.Fatal("the controller read message 1 over the task the API chose")
+			}
+		})
+	}
+}
+
+// allocated returns how many bytes f allocates.
+func allocated(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// hostile returns prefix, then as many empty objects as fit, then suffix:
+// exactly size bytes.
+func hostile(prefix, suffix string, size int) []byte {
+	var b bytes.Buffer
+	b.Grow(size)
+	b.WriteString(prefix + "{}")
+	for b.Len()+len(",{}")+len(suffix) <= size {
+		b.WriteString(",{}")
+	}
+	for b.Len()+len(suffix) < size {
+		b.WriteByte(' ')
+	}
+	b.WriteString(suffix)
+	return b.Bytes()
+}
+
+// members returns prefix, then as many members "xN":"1" as fit, then
+// suffix: exactly size bytes.
+func members(prefix, suffix string, size int) []byte {
+	var b bytes.Buffer
+	b.WriteString(prefix + `"x0":"1"`)
+	for i := 1; b.Len()+len(`,"x`+strconv.Itoa(i)+`":"1"`)+len(suffix) <= size; i++ {
+		b.WriteString(`,"x` + strconv.Itoa(i) + `":"1"`)
+	}
+	for b.Len()+len(suffix) < size {
+		b.WriteByte(' ')
+	}
+	b.WriteString(suffix)
+	return b.Bytes()
+}
+
+// TestParsersBoundAllocation feeds each parser a document of its full size
+// limit with more elements than its contract allows, or an array where it
+// allows none: refusing it must allocate next to nothing.
+func TestParsersBoundAllocation(t *testing.T) {
+	// The largest JSON a code of MaxPairCode characters can carry.
+	codeJSON := (MaxPairCode - len(PairPrefix)) * 3 / 4
+	l := trusttest.Genesis(trusttest.NewSigner(1))
+	cases := []struct {
+		name  string
+		in    []byte
+		parse func([]byte) error
+		want  error
+	}{
+		{"ParseHello", hostile(`{"roles":[`, `]}`, MaxHello),
+			func(b []byte) error { _, err := ParseHello(b); return err }, ErrHello},
+		{"ParseStatus, apps", hostile(`{"apps":[`, `]}`, wire.MaxPayload),
+			func(b []byte) error { _, err := ParseStatus(b); return err }, ErrStatus},
+		{"ParseStatus, components", members(`{"components":{`, `}}`, wire.MaxPayload),
+			func(b []byte) error { _, err := ParseStatus(b); return err }, ErrStatus},
+		{"ParseOpen", hostile(`{"proof":{"sig":[`, `]}}`, wire.MaxOpenPayload),
+			func(b []byte) error { _, _, err := ParseOpen(b); return err }, wire.ErrOpen},
+		{"VerifyOpen", hostile(`{"open":[`, `]}`, wire.MaxOpenPayload),
+			func(b []byte) error { _, err := VerifyOpen(b, l, now); return err }, wire.ErrOpen},
+		{"ParsePairRequest", hostile(`{"noise":[`, `]}`, MaxPairRequest),
+			func(b []byte) error { _, err := ParsePairRequest(b); return err }, ErrPair},
+		{"ParseJoinRequest", hostile(`{"sign":[`, `]}`, MaxPairRequest),
+			func(b []byte) error { _, err := ParseJoinRequest(b); return err }, ErrJoin},
+		{"ParsePairCode", []byte(PairPrefix + enc.B64.EncodeToString(hostile(`{"anchor":{"hash":[`, `]}}`, codeJSON))),
+			func(b []byte) error { _, err := ParsePairCode(string(b)); return err }, ErrPairCode},
+		{"ParseJoinCode", []byte(JoinPrefix + enc.B64.EncodeToString(hostile(`{"url":[`, `]}`, codeJSON))),
+			func(b []byte) error { _, err := ParseJoinCode(string(b)); return err }, ErrJoinCode},
+	}
+	for _, c := range cases {
+		var err error
+		n := allocated(func() { err = c.parse(c.in) })
+		t.Logf("%s: %d bytes allocated", c.name, n)
+		if n > 64<<10 {
+			t.Errorf("%s: %d bytes allocated", c.name, n)
+		}
+		if err != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
+	}
+}
+
+type pairCheckCase struct {
+	Name  string `json:"name"`
+	Code  string `json:"code"`
+	Valid bool   `json:"valid"`
+}
+
+type pairCheckVector struct {
+	Chain []trust.Signed  `json:"chain"`
+	Cases []pairCheckCase `json:"cases"`
+}
+
+type joinVector struct {
+	Code        string    `json:"code"`
+	Secret      enc.Bytes `json:"secret"`
+	APIKey      enc.Bytes `json:"apiKey"`
+	Node        string    `json:"node"`
+	Noise       enc.Bytes `json:"noise"`
+	Sign        enc.Bytes `json:"sign"`
+	TLS         enc.Bytes `json:"tls"`
+	URL         string    `json:"url"`
+	MAC         enc.Bytes `json:"mac"`
+	Fingerprint string    `json:"fingerprint"`
+}
+
+type vector struct {
+	Code          string          `json:"code"`
+	Secret        enc.Bytes       `json:"secret"`
+	APIKey        enc.Bytes       `json:"apiKey"`
+	ControllerKey enc.Bytes       `json:"controllerKey"`
+	MAC           enc.Bytes       `json:"mac"`
+	Fingerprint   string          `json:"fingerprint"`
+	PairCheck     pairCheckVector `json:"pairCheck"`
+	Join          joinVector      `json:"join"`
+	TLSPin        enc.Bytes       `json:"tlsPin"` // the pin of the certificate in tls/api.pem
+}
+
+// apiPEM returns the certificate of APITLS(0xE1, "api-1.test") as PEM, the
+// bytes of tls/api.pem, and the pin of its key.
+func apiPEM() ([]byte, []byte) {
+	cert, pin := trusttest.APITLS(0xE1, "api-1.test")
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), pin
+}
+
+func TestVectors(t *testing.T) {
+	c := testCode()
+	ctl := bytes.Repeat([]byte{0xC1}, 32)
+	v := vector{Code: c.String(), Secret: c.Secret, APIKey: c.Key, ControllerKey: ctl, MAC: PairMAC(c.Secret, ctl, c.Key),
+		Fingerprint: Fingerprint(ctl)}
+	chain := pairChain(t)
+	v.PairCheck.Chain = chain
+	for _, cc := range checkCases(t, chain) {
+		v.PairCheck.Cases = append(v.PairCheck.Cases, pairCheckCase{Name: cc.name, Code: PairCode(cc.code).String(), Valid: cc.valid})
+	}
+	jc := testJoinCode(t)
+	jr := testJoinRequest(jc)
+	v.Join = joinVector{Code: jc.String(), Secret: jc.Secret, APIKey: jc.Key, Node: jr.Node, Noise: jr.Noise, Sign: jr.Sign,
+		TLS: jr.TLS, URL: jr.URL, MAC: jr.MAC, Fingerprint: JoinFingerprint(jr.Node, jr.Noise, jr.Sign, jr.TLS, jr.URL)}
+	certPEM, pin := apiPEM()
+	v.TLSPin = pin
+	golden.CheckBytes(t, *update, "tls/api.pem", certPEM)
+	checkVector(t, v)
+	golden.Check(t, *update, "tunnel.json", v)
+}
+
+// checkVector holds the vector against the Go functions, as an
+// implementation in another language holds it against its own.
+func checkVector(t *testing.T, v vector) {
+	c, err := ParsePairCode(v.Code)
+	if err != nil || !bytes.Equal(c.Secret, v.Secret) || !bytes.Equal(c.Key, v.APIKey) {
+		t.Errorf("code: %+v, %v", c, err)
+	}
+	r := PairRequest{Name: "dienste", Noise: v.ControllerKey, MAC: v.MAC}
+	if r.Verify(v.Secret, v.APIKey) != nil || Fingerprint(v.ControllerKey) != v.Fingerprint {
+		t.Error("pairing MAC or fingerprint")
+	}
+	latest, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(v.PairCheck.Chain[0])}, v.PairCheck.Chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cc := range v.PairCheck.Cases {
+		pc, err := ParsePairCode(cc.Code)
+		if err == nil {
+			err = pc.Check(latest)
+		}
+		if (err == nil) != cc.Valid {
+			t.Errorf("pair check %s: got %v, want valid %v", cc.Name, err, cc.Valid)
+		}
+	}
+	jc, err := ParseJoinCode(v.Join.Code)
+	if err != nil || !bytes.Equal(jc.Secret, v.Join.Secret) || !bytes.Equal(jc.Key, v.Join.APIKey) || jc.Check(latest) != nil {
+		t.Errorf("join code: %+v, %v", jc, err)
+	}
+	jr := JoinRequest{Node: v.Join.Node, Noise: v.Join.Noise, Sign: v.Join.Sign, TLS: v.Join.TLS, URL: v.Join.URL, MAC: v.Join.MAC}
+	if _, err := ParseJoinRequest(mustJSON(t, jr)); err != nil || jr.Verify(v.Join.Secret, v.Join.APIKey) != nil {
+		t.Errorf("join request or MAC: %v", err)
+	}
+	if JoinFingerprint(jr.Node, jr.Noise, jr.Sign, jr.TLS, jr.URL) != v.Join.Fingerprint {
+		t.Error("join fingerprint")
+	}
+	// tlsPin is the pin of the certificate in tls/api.pem, as pin.sh prints it.
+	b, err := os.ReadFile(filepath.Join(golden.Dir, "tls", "api.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, rest := pem.Decode(b)
+	if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 {
+		t.Fatalf("tls/api.pem: %q", b)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || !bytes.Equal(trust.TLSPin(cert.RawSubjectPublicKeyInfo), v.TLSPin) {
+		t.Errorf("tlsPin is not the pin of tls/api.pem: %v", err)
+	}
+}
+
+func FuzzParsePairCode(f *testing.F) {
+	f.Add(testCode().String())
+	f.Add(PairCode(checkCases(f, pairChain(f))[0].code).String())
+	f.Fuzz(func(t *testing.T, s string) {
+		_, _ = ParsePairCode(s)
+	})
+}
+
+// FuzzParseJoinCode checks that every join code ParseJoinCode accepts
+// encodes to one it accepts again, with the same content.
+func FuzzParseJoinCode(f *testing.F) {
+	f.Add(testJoinCode(f).String())
+	f.Add(testCode().String())
+	f.Fuzz(func(t *testing.T, s string) {
+		c, err := ParseJoinCode(s)
+		if err != nil {
+			return
+		}
+		if again, err := ParseJoinCode(c.String()); err != nil || !reflect.DeepEqual(again, c) {
+			t.Fatalf("round trip of %q: %+v, %v", s, again, err)
+		}
+	})
+}
+
+func FuzzParsePairRequest(f *testing.F) {
+	c := testCode()
+	ctl := bytes.Repeat([]byte{0xC1}, 32)
+	f.Add(mustJSON(f, PairRequest{Name: "dienste", Noise: ctl, MAC: PairMAC(c.Secret, ctl, c.Key)}))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		_, _ = ParsePairRequest(b)
+	})
+}
+
+// FuzzParseJoinRequest checks that every join request ParseJoinRequest
+// accepts encodes to one it accepts again, with the same content.
+func FuzzParseJoinRequest(f *testing.F) {
+	f.Add(mustJSON(f, testJoinRequest(testJoinCode(f))))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		r, err := ParseJoinRequest(b)
+		if err != nil {
+			return
+		}
+		if again, err := ParseJoinRequest(mustJSON(t, r)); err != nil || !reflect.DeepEqual(again, r) {
+			t.Fatalf("round trip of %q: %+v, %v", b, again, err)
+		}
+	})
+}
+
+func FuzzParseHello(f *testing.F) {
+	f.Add(mustJSON(f, testHello()))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		_, _ = ParseHello(b)
+	})
+}
+
+// FuzzParseStatus checks that every status ParseStatus accepts encodes to one
+// it accepts again: no null, nothing over its budget.
+func FuzzParseStatus(f *testing.F) {
+	f.Add(mustJSON(f, testStatus()))
+	f.Add([]byte(`{"diskFree":0}`))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		s, err := ParseStatus(b)
+		if err != nil {
+			return
+		}
+		out := mustJSON(t, s)
+		if len(out) > wire.MaxPayload {
+			return // escaping may make it longer, which is not under test here
+		}
+		if _, err := ParseStatus(out); err != nil {
+			t.Fatalf("re-parse of %s: %v", out, err)
+		}
+	})
+}
+
+// FuzzParseOpen checks that the browser's OPEN inside an accepted tunnel OPEN
+// parses again to the same params and task bytes, and that those bytes stand
+// in the OPEN as they are.
+func FuzzParseOpen(f *testing.F) {
+	f.Add(mustJSON(f, testOpen()))
+	f.Add(mustJSON(f, stageOpen(f)))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		o, inner, err := ParseOpen(b)
+		if err != nil {
+			return
+		}
+		again, err := wire.ParseOpen(o.Open)
+		if err != nil || !bytes.Equal(again.Params, inner.Params) || !bytes.Equal(again.TaskBytes(), inner.TaskBytes()) {
+			t.Fatalf("inner OPEN parses differently: %v", err)
+		}
+		if !bytes.Contains(o.Open, inner.Params) || !bytes.Contains(o.Open, inner.TaskBytes()) {
+			t.Fatalf("params or task bytes not in the OPEN")
+		}
+	})
+}
