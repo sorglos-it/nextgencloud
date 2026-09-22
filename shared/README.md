@@ -85,8 +85,8 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   mit `VerifyConnection`; beides setzt `tunnel.PinnedTLS`, sonst steht `InsecureSkipVerify`
   nirgends.
 - **Adressen** haben eine Grammatik und genau eine Schreibweise, denn sie landen in
-  Konfigurationen anderer Programme (Apache, Datenbanktreiber) und im Browser. Jede Art steht
-  über demselben `<host>` und `<port>`:
+  Konfigurationen anderer Programme (Apache, Datenbanktreiber) und im Browser. Alle Arten bauen
+  auf demselben `<host>` und `<port>` auf:
   - Tunnel-Adresse einer API `wss://<host>:<port>/tunnel` (`trust.ValidTunnelURL`:
     `trust.Node.URL`, Kopplungs- und Beitrittscodes, `tunnel.JoinRequest`, `url` in `api.json`,
     `apis` in `controller.json`);
