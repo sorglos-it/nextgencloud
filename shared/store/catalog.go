@@ -309,9 +309,13 @@ func parseLicense(b []byte) (*License, error) {
 	return &l, nil
 }
 
-// VerifyLicense checks the signature of the store st and that the license
-// belongs to this installation and its key.
-func VerifyLicense(env sign.Envelope, st trust.Store, installation string, installKey []byte) (*License, error) {
+// verifyLicense checks everything about a license that needs no secret of
+// the installation: the signature of the store st, the form (Validate), and
+// that st issued it for this installation and this app. VerifyLicense and
+// VerifyLicenseFor both go through it, so the API and a controller can never
+// judge the same license differently: VerifyLicense is this and the key
+// check, nothing else.
+func verifyLicense(env sign.Envelope, st trust.Store, installation, app string) (*License, error) {
 	if err := sign.Verify(env, ed25519.PublicKey(st.Key), sign.PurposeLicense); err != nil {
 		return nil, err
 	}
@@ -319,7 +323,24 @@ func VerifyLicense(env sign.Envelope, st trust.Store, installation string, insta
 	if err != nil {
 		return nil, err
 	}
-	if l.Store != st.ID || l.Installation != installation || !bytes.Equal(l.InstallKey, installKey) {
+	if l.Store != st.ID || l.Installation != installation || l.App != app {
+		return nil, ErrLicense
+	}
+	return l, nil
+}
+
+// VerifyLicense checks the signature of the store st and that the license
+// belongs to this installation, to app and to this installation's key. It is
+// VerifyLicenseFor plus the key check, so it refuses everything a controller
+// refuses and with the same error; the app belongs in it, or a license for a
+// cheap app would unlock an expensive one on the same installation. Only the
+// API runs it, because only the API knows installKey.
+func VerifyLicense(env sign.Envelope, st trust.Store, installation, app string, installKey []byte) (*License, error) {
+	l, err := verifyLicense(env, st, installation, app)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(l.InstallKey, installKey) {
 		return nil, ErrLicense
 	}
 	return l, nil
@@ -334,17 +355,7 @@ func VerifyLicense(env sign.Envelope, st trust.Store, installation string, insta
 // users a per-user license allows. Whether the services may run, State(now)
 // decides: a controller stops them once it is LicenseExpired.
 func VerifyLicenseFor(env sign.Envelope, st trust.Store, installation, app string) (*License, error) {
-	if err := sign.Verify(env, ed25519.PublicKey(st.Key), sign.PurposeLicense); err != nil {
-		return nil, err
-	}
-	l, err := parseLicense(env.Payload)
-	if err != nil {
-		return nil, err
-	}
-	if l.Store != st.ID || l.Installation != installation || l.App != app {
-		return nil, ErrLicense
-	}
-	return l, nil
+	return verifyLicense(env, st, installation, app)
 }
 
 // maxReleaseFiles is the most files a release lists.

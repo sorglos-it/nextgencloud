@@ -199,6 +199,10 @@ func validNeeds(needs []string) bool {
 // grants, what an admin allowed an app when activating it
 // (core.ActivateParams.Grants, kept as dbapi.App.Grants). An update installs
 // only then; the app then runs with its grants reduced to needs.
+//
+// A controller passes the grants from its own database, written when the app
+// was activated, never a value an API sends it: an API that has been taken
+// over can then not widen what an app may do.
 func Granted(needs, grants []string) bool {
 	for _, n := range needs {
 		if !slices.Contains(grants, n) {
