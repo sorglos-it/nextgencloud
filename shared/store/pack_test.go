@@ -293,6 +293,7 @@ func smallBadPackages(t testing.TB) map[string][]byte {
 	out["directory with a size"] = slices.Concat(all, rawHeader("ui/img/", 1, tar.TypeDir), endMarker)
 	out["file where a directory entry needs a directory"] = buildTar(t, append(slices.Clone(good),
 		entry{"ui/img/icons/", nil, tar.TypeDir}, entry{"ui/img", []byte("x"), tar.TypeReg}))
+	out["directory with the name of a file"] = buildTar(t, append(slices.Clone(good), entry{"ui/icon.svg/", nil, tar.TypeDir}))
 	return out
 }
 

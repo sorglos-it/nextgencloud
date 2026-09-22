@@ -246,6 +246,7 @@ func uiCases(t testing.TB) []uiVector {
 		{Name: "file with a trailing slash", Tar: cat(rawFile("ui/t.txt/", "x", nil), end)},
 		{Name: "duplicate", Tar: cat(rawFile("ui/x.txt", "x", nil), rawFile("ui/x.txt", "y", nil), end)},
 		{Name: "directory twice", Tar: cat(header('5', "ui/a/", 0, nil), header('5', "ui/a/", 0, nil), end)},
+		{Name: "directory with the name of a file", Tar: cat(rawFile("ui/a", "x", nil), header('5', "ui/a/", 0, nil), end)},
 		{Name: "entry under a file", Tar: cat(rawFile("ui/x.txt", "x", nil), rawFile("ui/x.txt/y", "y", nil), end)},
 		{Name: "file where a directory is needed", Tar: cat(rawFile("ui/a/b", "x", nil), rawFile("ui/a", "y", nil), end)},
 		{Name: "file where a directory entry needs a directory", Tar: cat(header('5', "ui/a/b/", 0, nil), rawFile("ui/a", "y", nil), end)},
