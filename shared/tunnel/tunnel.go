@@ -109,16 +109,16 @@ type JoinCode struct {
 }
 
 // JoinRequest is what a new API server sends to PathJoin: everything it asks
-// to be listed with as a trust.Node of kind api. The admin compares
-// JoinFingerprint over these values with the output of the new server's ulh
-// script before adding it.
+// to be listed with as a trust.Node of kind api, all of it under the MAC. The
+// admin compares JoinFingerprint over these values with the output of the new
+// server's ulh script before adding it.
 type JoinRequest struct {
-	Node  string    `json:"node"`  // node ID it gets in the trust list (wire.ValidName)
+	Node  string    `json:"node"`  // node ID it gets in the trust list, also its name there (wire.ValidName)
 	Noise enc.Bytes `json:"noise"` // its X25519 key
 	Sign  enc.Bytes `json:"sign"`  // its Ed25519 key for API certificates
 	TLS   enc.Bytes `json:"tls"`   // the pin of its own TLS key (trust.TLSPin)
 	URL   string    `json:"url"`   // its own tunnel URL, wss://host:port/tunnel
-	MAC   enc.Bytes `json:"mac"`   // JoinMAC(secret, Noise, Sign, TLS, key of the issuing API, URL)
+	MAC   enc.Bytes `json:"mac"`   // JoinMAC(secret, Node, Noise, Sign, TLS, key of the issuing API, URL)
 }
 
 // Hello is the first message on channel 0, in both directions.
@@ -323,15 +323,18 @@ func (r PairRequest) Verify(secret, apiKey []byte) error {
 	return nil
 }
 
-// JoinMAC = HMAC-SHA256(secret, "ngc/join/v1" 0x00 noise sign tls apiKey url):
-// noise, sign, tls and apiKey have 32 bytes each, url comes last.
-func JoinMAC(secret, noise, sign, tls, apiKey []byte, url string) []byte {
+// JoinMAC = HMAC-SHA256(secret, "ngc/join/v1" 0x00 node 0x00 noise signKey
+// tlsPin apiKey url): node is a node ID (wire.ValidName), which holds no zero
+// byte; noise, signKey, tlsPin and apiKey have 32 bytes each; url comes last.
+func JoinMAC(secret []byte, node string, noise, signKey, tlsPin, apiKey []byte, url string) []byte {
 	m := hmac.New(sha256.New, secret)
 	m.Write([]byte("ngc/join/v1"))
 	m.Write([]byte{0})
+	m.Write([]byte(node))
+	m.Write([]byte{0})
 	m.Write(noise)
-	m.Write(sign)
-	m.Write(tls)
+	m.Write(signKey)
+	m.Write(tlsPin)
 	m.Write(apiKey)
 	m.Write([]byte(url))
 	return m.Sum(nil)
@@ -339,15 +342,18 @@ func JoinMAC(secret, noise, sign, tls, apiKey []byte, url string) []byte {
 
 // JoinFingerprint names what a joining API asks to be listed with, for the
 // admin to compare: base64url of the first 16 bytes of SHA-256 over
-// "ngc/join-fingerprint/v1", a zero byte, noise, sign, tls and url. The new
-// server's ulh script shows it; the shell computes it from core.PendingAPI.
-func JoinFingerprint(noise, sign, tls []byte, url string) string {
+// "ngc/join-fingerprint/v1", a zero byte, node, a zero byte, noise, signKey,
+// tlsPin and url. The new server's ulh script shows it; the shell computes it
+// from core.PendingAPI.
+func JoinFingerprint(node string, noise, signKey, tlsPin []byte, url string) string {
 	h := sha256.New()
 	h.Write([]byte("ngc/join-fingerprint/v1"))
 	h.Write([]byte{0})
+	h.Write([]byte(node))
+	h.Write([]byte{0})
 	h.Write(noise)
-	h.Write(sign)
-	h.Write(tls)
+	h.Write(signKey)
+	h.Write(tlsPin)
 	h.Write([]byte(url))
 	return enc.B64.EncodeToString(h.Sum(nil)[:16])
 }
@@ -366,7 +372,7 @@ func ParseJoinRequest(b []byte) (JoinRequest, error) {
 
 // Verify checks the MAC with the secret the API issued and its own Noise key.
 func (r JoinRequest) Verify(secret, apiKey []byte) error {
-	if !hmac.Equal(r.MAC, JoinMAC(secret, r.Noise, r.Sign, r.TLS, apiKey, r.URL)) {
+	if !hmac.Equal(r.MAC, JoinMAC(secret, r.Node, r.Noise, r.Sign, r.TLS, apiKey, r.URL)) {
 		return ErrJoin
 	}
 	return nil
