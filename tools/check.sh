@@ -20,6 +20,8 @@ for arch in amd64 arm64; do
 		echo "$bad"
 		exit 1
 	fi
-	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build ./...
+	# -tags modules builds tools/modules.go too, so the vendored modules that no
+	# part imports yet are proven to build for both targets.
+	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -tags modules ./...
 done
 echo "check: ok"
