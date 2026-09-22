@@ -87,6 +87,38 @@ func TestTable(t *testing.T) {
 		t.Errorf("%d of the %d actions without a user exist", n, len(without))
 	}
 
+	// Who opens: the shell every action of service api and the root tasks on
+	// controllers, each with a signed task; stage and ngc.users/controller/trust
+	// only the API, without a user. Every action has someone who opens it.
+	shellRoot := map[string]bool{
+		AppStore + "/" + ServiceController + "/" + ActActivate:   true,
+		AppStore + "/" + ServiceController + "/" + ActDeactivate: true,
+		AppStore + "/" + ServiceController + "/" + ActUninstall:  true,
+		AppStore + "/" + ServiceController + "/" + ActDeleteData: true,
+		AppStore + "/" + ServiceController + "/" + ActInstall:    true,
+	}
+	n = 0
+	for _, a := range All() {
+		key := a.App + "/" + a.Service + "/" + a.Name
+		if want := a.Service == ServiceAPI || shellRoot[key]; ShellOpens(a) != want {
+			t.Errorf("%s: ShellOpens %v", key, ShellOpens(a))
+		}
+		if !ShellOpens(a) && !WithoutUser(a) {
+			t.Errorf("%s: nobody opens it", key)
+		}
+		if shellRoot[key] {
+			n++
+		}
+	}
+	if n != len(shellRoot) {
+		t.Errorf("%d of the %d root tasks the shell opens exist", n, len(shellRoot))
+	}
+	for _, a := range []Action{action(t, AppStore, ServiceController, ActStage), action(t, AppUsers, ServiceController, ActTrust)} {
+		if ShellOpens(a) {
+			t.Errorf("%s/%s/%s: the shell must not open it", a.App, a.Service, a.Name)
+		}
+	}
+
 	join := action(t, AppUsers, ServiceAPI, ActJoinCode)
 	if !join.Admin || join.Root || !join.Changes || join.Flow != FlowCall || join.Params != nil {
 		t.Errorf("join-code: %+v", join)

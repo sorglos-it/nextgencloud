@@ -92,7 +92,8 @@ const (
 	// passes store.WalkUI.
 	FlowOut Flow = "out"
 	// FlowTransfer: API -> controller, a Transfer header, then exactly size
-	// bytes; the result is as for call.
+	// bytes; the result is as for call. When the shell opened the channel
+	// (ShellOpens), it sends EOF at once and no DATA.
 	FlowTransfer Flow = "transfer"
 )
 
@@ -107,7 +108,11 @@ type Action struct {
 	Changes            bool
 	Flow               Flow
 	Params             func() Params // nil: the action takes no parameters
-	MaxIn              int64         // the most bytes of DATA the opener may send before its EOF; 0 for call and out
+	// MaxIn bounds the DATA that feeds the action before its EOF: on FlowIn
+	// what the opener sends, on FlowTransfer what the API sends the
+	// controller — the shell sends none, even when it opened the channel; 0
+	// for call and out.
+	MaxIn int64
 }
 
 // newParams returns a constructor for the parameter type T.
@@ -170,6 +175,16 @@ func Lookup(app, service, name string) (Action, bool) {
 	}
 	return Action{}, false
 }
+
+// ShellOpens reports whether the shell may open a channel for a: every
+// action of service api, and the root tasks of service controller (activate,
+// deactivate, uninstall, delete-data, install), each with a signed task. The
+// API alone opens stage and ngc.users/controller/trust, without a user
+// (WithoutUser), and refuses a shell's OPEN for them with E_FORBIDDEN. On a
+// transfer action the shell opened (activate) it sends EOF at once; the API
+// writes the Transfer header and the file on the tunnel hop (package wire,
+// "Relay").
+func ShellOpens(a Action) bool { return a.Service == ServiceAPI || a.Root }
 
 // WithoutUser reports whether the API may open a channel for action a without
 // a user (tunnel.Open without client certificate): ngc.users/controller/trust
