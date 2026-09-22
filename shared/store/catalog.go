@@ -72,10 +72,15 @@ type Entry struct {
 
 // Package is one version of an app.
 type Package struct {
-	Version   string    `json:"version"`
-	URL       string    `json:"url"` // https URL or a path relative to the catalog
-	Size      int64     `json:"size"`
-	SHA256    enc.Bytes `json:"sha256"`              // of the file as downloaded
+	Version string    `json:"version"`
+	URL     string    `json:"url"` // https URL or a path relative to the catalog
+	Size    int64     `json:"size"`
+	SHA256  enc.Bytes `json:"sha256"` // of the file as downloaded
+	// UI is the SHA-256 of the package's ui-tar (PackageUI) over the plain
+	// package, before a paid app is encrypted; the shell runs the app's UI
+	// only if its ui-tar has this hash, the controller refuses a package whose
+	// ui-tar has another.
+	UI        enc.Bytes `json:"ui"`
 	Encrypted bool      `json:"encrypted,omitempty"` // paid apps (Task 15)
 	Needs     []string  `json:"needs,omitempty"`     // as in the manifest, shown before download
 	MinNGC    string    `json:"minNgc,omitempty"`
@@ -192,7 +197,7 @@ func (e Entry) valid() bool {
 	}
 	for i, p := range e.Versions {
 		if !ValidVersion(p.Version) || (i > 0 && !Newer(p.Version, e.Versions[i-1].Version)) || !validURL(p.URL) ||
-			p.Size <= 0 || p.Size > MaxPackage || len(p.SHA256) != 32 || p.Encrypted != (e.Price != nil) ||
+			p.Size <= 0 || p.Size > MaxPackage || len(p.SHA256) != 32 || len(p.UI) != 32 || p.Encrypted != (e.Price != nil) ||
 			!validNeeds(p.Needs) || (p.MinNGC != "" && !ValidVersion(p.MinNGC)) {
 			return false
 		}

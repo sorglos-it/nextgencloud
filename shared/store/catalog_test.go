@@ -51,14 +51,15 @@ func signJSON(t testing.TB, priv ed25519.PrivateKey, purpose string, v any) sign
 
 func testCatalog() Catalog {
 	sum := bytes.Repeat([]byte{0x01}, 32)
+	ui := bytes.Repeat([]byte{0x06}, 32)
 	return Catalog{Store: GlobalID, Seq: 5, Issued: issued, Apps: []Entry{
 		{ID: "org.sorglos.calculator", Name: "Rechner", Publisher: "Sorglos IT",
-			Versions: []Package{{Version: "1.0.0", URL: "org.sorglos.calculator-1.0.0.ngc", Size: 12345, SHA256: sum}}},
+			Versions: []Package{{Version: "1.0.0", URL: "org.sorglos.calculator-1.0.0.ngc", Size: 12345, SHA256: sum, UI: ui}}},
 		{ID: "org.sorglos.terminal", Name: "Terminal", Publisher: "Sorglos IT",
 			Price: &Price{Model: PriceSubscription, Per: PerSite, Amount: 499, Currency: "EUR", Period: PeriodMonth, Shop: "https://store.ngc.test/buy/terminal"},
 			Versions: []Package{
-				{Version: "1.0.0", URL: "https://cdn.ngc.test/terminal-1.0.0.ngc", Size: 5000000, SHA256: sum, Encrypted: true},
-				{Version: "1.1.0", URL: "https://cdn.ngc.test/terminal-1.1.0.ngc", Size: 5100000, SHA256: sum, Encrypted: true},
+				{Version: "1.0.0", URL: "https://cdn.ngc.test/terminal-1.0.0.ngc", Size: 5000000, SHA256: sum, UI: ui, Encrypted: true},
+				{Version: "1.1.0", URL: "https://cdn.ngc.test/terminal-1.1.0.ngc", Size: 5100000, SHA256: sum, UI: ui, Encrypted: true},
 			}},
 	}}
 }
@@ -116,12 +117,14 @@ func TestCatalogRejects(t *testing.T) {
 		"plain http":          func(c *Catalog) { c.Apps[1].Versions[0].URL = "http://cdn.ngc.test/x.ngc" },
 		"core app":            func(c *Catalog) { c.Apps[0].ID = "ngc.calculator" },
 		"no versions":         func(c *Catalog) { c.Apps[0].Versions = nil },
+		"version without ui":  func(c *Catalog) { c.Apps[0].Versions[0].UI = nil },
 		"more versions than MaxCatalogVersions": func(c *Catalog) {
 			c.Apps = nil
 			for i := range MaxCatalogVersions/MaxVersions + 1 {
 				e := Entry{ID: fmt.Sprintf("org.example.a%05d", i), Name: "App", Publisher: "P"}
 				for j := range MaxVersions {
-					e.Versions = append(e.Versions, Package{Version: fmt.Sprintf("1.0.%d", j), URL: "a.ngc", Size: 1, SHA256: make([]byte, 32)})
+					e.Versions = append(e.Versions, Package{Version: fmt.Sprintf("1.0.%d", j), URL: "a.ngc", Size: 1,
+						SHA256: make([]byte, 32), UI: make([]byte, 32)})
 				}
 				c.Apps = append(c.Apps, e)
 			}
@@ -388,7 +391,7 @@ func TestCatalogDecodeCost(t *testing.T) {
 			return catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions, `{"url":"`+s+`","needs":["",""]}`)
 		})},
 		{"versions with every field", catalogShape(MaxCatalogVersions/MaxVersions, ``, MaxVersions,
-			`{"version":"","url":"","size":0,"sha256":"","needs":["",""],"minNgc":""}`)},
+			`{"version":"","url":"","size":0,"sha256":"","ui":"","needs":["",""],"minNgc":""}`)},
 	}
 	for _, c := range cases {
 		var got Catalog
