@@ -1,0 +1,281 @@
+{
+  "schema": {
+    "n": "int64",
+    "u": "uint32",
+    "s": "string",
+    "t": "bool",
+    "b": "bytes",
+    "list": "[int64]",
+    "map": "{string:int64}",
+    "sub": {
+      "x": "int64",
+      "list": "[int64]"
+    },
+    "subs": "[sub]",
+    "raw": "raw"
+  },
+  "size": 1024,
+  "items": {
+    "list": 4,
+    "map": 2,
+    "raw": -1,
+    "sub/list": 4,
+    "subs": 3,
+    "subs/*/list": 4
+  },
+  "totals": {
+    "subs/*/list": 6
+  },
+  "cases": [
+    {
+      "name": "empty object",
+      "doc": "e30",
+      "valid": true
+    },
+    {
+      "name": "every field",
+      "doc": "eyJuIjotNSwidSI6NywicyI6IsOkIiwidCI6dHJ1ZSwiYiI6IkFRSUQiLCJsaXN0IjpbMSwyLDMsNF0sIm1hcCI6eyJhIjoxLCJiIjoyfSwic3ViIjp7IngiOjEsImxpc3QiOlsxXX0sInN1YnMiOlt7Imxpc3QiOlsxLDJdfSx7Imxpc3QiOlszLDRdfSx7Imxpc3QiOls1LDZdfV0sInJhdyI6eyJrIjpbMSx7InoiOiJ5In1dLCJLIjoyfX0",
+      "valid": true
+    },
+    {
+      "name": "white space around",
+      "doc": "IAkNCnt9CiA",
+      "valid": true
+    },
+    {
+      "name": "largest safe integer",
+      "doc": "eyJuIjo5MDA3MTk5MjU0NzQwOTkxfQ",
+      "valid": true
+    },
+    {
+      "name": "smallest safe integer",
+      "doc": "eyJuIjotOTAwNzE5OTI1NDc0MDk5MX0",
+      "valid": true
+    },
+    {
+      "name": "minus zero in a signed field",
+      "doc": "eyJuIjotMH0",
+      "valid": true
+    },
+    {
+      "name": "unsigned zero",
+      "doc": "eyJ1IjowfQ",
+      "valid": true
+    },
+    {
+      "name": "decimal point on a safe integer in raw",
+      "doc": "eyJyYXciOjkwMDcxOTkyNTQ3NDA5OTEuMH0",
+      "valid": true
+    },
+    {
+      "name": "names differing in case in raw",
+      "doc": "eyJyYXciOnsiayI6MSwiSyI6Mn19",
+      "valid": true
+    },
+    {
+      "name": "escaped control character in a string",
+      "doc": "eyJzIjoiYVx1MDAwMWIifQ",
+      "valid": true
+    },
+    {
+      "name": "bytes with zero trailing bits",
+      "doc": "eyJiIjoiQVEifQ",
+      "valid": true
+    },
+    {
+      "name": "depth 32",
+      "doc": "eyJyYXciOltbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tdXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dfQ",
+      "valid": true
+    },
+    {
+      "name": "document of 1024 bytes",
+      "doc": "eyJzIjoieHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHgifQ",
+      "valid": true
+    },
+    {
+      "name": "empty document",
+      "doc": "",
+      "valid": false
+    },
+    {
+      "name": "only white space",
+      "doc": "IAkNCg",
+      "valid": false
+    },
+    {
+      "name": "byte order mark",
+      "doc": "77u_e30",
+      "valid": false
+    },
+    {
+      "name": "trailing data",
+      "doc": "e30ge30",
+      "valid": false
+    },
+    {
+      "name": "array as the document",
+      "doc": "W10",
+      "valid": false
+    },
+    {
+      "name": "unknown field",
+      "doc": "eyJ4IjoxfQ",
+      "valid": false
+    },
+    {
+      "name": "field name in other case",
+      "doc": "eyJOIjoxfQ",
+      "valid": false
+    },
+    {
+      "name": "duplicate field",
+      "doc": "eyJuIjoxLCJuIjoyfQ",
+      "valid": false
+    },
+    {
+      "name": "duplicate after unescaping",
+      "doc": "eyJuIjoxLCJcdTAwNmUiOjJ9",
+      "valid": false
+    },
+    {
+      "name": "duplicate inside raw",
+      "doc": "eyJyYXciOnsiayI6MSwiayI6Mn19",
+      "valid": false
+    },
+    {
+      "name": "duplicate inside raw after unescaping",
+      "doc": "eyJyYXciOnsiayI6MSwiXHUwMDZiIjoyfX0",
+      "valid": false
+    },
+    {
+      "name": "invalid UTF-8",
+      "doc": "eyJzIjoi_yJ9",
+      "valid": false
+    },
+    {
+      "name": "raw control character in a string",
+      "doc": "eyJzIjoiYQFiIn0",
+      "valid": false
+    },
+    {
+      "name": "lone surrogate escape",
+      "doc": "eyJzIjoiXHVkODAwIn0",
+      "valid": false
+    },
+    {
+      "name": "null field",
+      "doc": "eyJuIjpudWxsfQ",
+      "valid": false
+    },
+    {
+      "name": "null in raw",
+      "doc": "eyJyYXciOltudWxsXX0",
+      "valid": false
+    },
+    {
+      "name": "decimal point in an integer field",
+      "doc": "eyJuIjoxLjB9",
+      "valid": false
+    },
+    {
+      "name": "exponent in an integer field",
+      "doc": "eyJuIjoxZTJ9",
+      "valid": false
+    },
+    {
+      "name": "minus zero in an unsigned field",
+      "doc": "eyJ1IjotMH0",
+      "valid": false
+    },
+    {
+      "name": "negative unsigned",
+      "doc": "eyJ1IjotMX0",
+      "valid": false
+    },
+    {
+      "name": "uint32 overflow",
+      "doc": "eyJ1Ijo0Mjk0OTY3Mjk2fQ",
+      "valid": false
+    },
+    {
+      "name": "integer beyond 2^53-1",
+      "doc": "eyJuIjo5MDA3MTk5MjU0NzQwOTkyfQ",
+      "valid": false
+    },
+    {
+      "name": "fraction on the largest safe integer in raw",
+      "doc": "eyJyYXciOjkwMDcxOTkyNTQ3NDA5OTEuNX0",
+      "valid": false
+    },
+    {
+      "name": "exponent beyond 2^53-1 in raw",
+      "doc": "eyJyYXciOjFlMTZ9",
+      "valid": false
+    },
+    {
+      "name": "number for a string",
+      "doc": "eyJzIjoxfQ",
+      "valid": false
+    },
+    {
+      "name": "string for a number",
+      "doc": "eyJuIjoiMSJ9",
+      "valid": false
+    },
+    {
+      "name": "number for a bool",
+      "doc": "eyJ0IjoxfQ",
+      "valid": false
+    },
+    {
+      "name": "bytes with padding",
+      "doc": "eyJiIjoiQVE9PSJ9",
+      "valid": false
+    },
+    {
+      "name": "bytes with a line feed",
+      "doc": "eyJiIjoiQVFcbiJ9",
+      "valid": false
+    },
+    {
+      "name": "bytes with non-zero trailing bits",
+      "doc": "eyJiIjoiQVIifQ",
+      "valid": false
+    },
+    {
+      "name": "bytes in the standard alphabet",
+      "doc": "eyJiIjoiKy84In0",
+      "valid": false
+    },
+    {
+      "name": "list over its limit",
+      "doc": "eyJsaXN0IjpbMSwyLDMsNCw1XX0",
+      "valid": false
+    },
+    {
+      "name": "map over its limit",
+      "doc": "eyJtYXAiOnsiYSI6MSwiYiI6MiwiYyI6M319",
+      "valid": false
+    },
+    {
+      "name": "list in sub over its limit",
+      "doc": "eyJzdWIiOnsibGlzdCI6WzEsMiwzLDQsNV19fQ",
+      "valid": false
+    },
+    {
+      "name": "total over its limit",
+      "doc": "eyJzdWJzIjpbeyJsaXN0IjpbMSwyLDNdfSx7Imxpc3QiOls0LDUsNl19LHsibGlzdCI6WzddfV19",
+      "valid": false
+    },
+    {
+      "name": "depth 33",
+      "doc": "eyJyYXciOltbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV19",
+      "valid": false
+    },
+    {
+      "name": "document of 1025 bytes",
+      "doc": "eyJzIjoieHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4In0",
+      "valid": false
+    }
+  ]
+}
