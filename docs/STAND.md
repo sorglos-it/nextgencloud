@@ -4,30 +4,29 @@
 
 ## Ziel der nächsten Sitzung
 
-Thomas gibt die Verträge frei. Danach Pull Request nach `main`, Squash-Merge und Etikett
-`vertraege-v1`; dann der Vertrag für die Wiederherstellung und die Pläne 1 bis 4 für die vier Teile.
+Den Vertrag für die Wiederherstellung schreiben (Codes, Zurücksetzen durch einen Admin,
+Notfallbefehl auf dem Server) und die Module aus Kapitel 7 übernehmen. Danach die Pläne 1 bis 4
+für die vier Teile.
 
 ## Stand
 
 | | |
 |---|---|
 | Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden |
-| In Arbeit | Freigabe der Verträge durch Thomas |
+| In Arbeit | nichts; die Verträge sind freigegeben und liegen auf `main` (Etikett `vertraege-v1`, 22.09.2026) |
 | Blockiert | nichts |
 | Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
-1. Thomas gibt die Verträge frei. Danach Pull Request nach `main`, Squash-Merge, Etikett
-   `vertraege-v1`.
-2. Vertrag für die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl auf dem
+1. Vertrag für die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl auf dem
    Server), als Vertragsänderung vor den Plänen 1–4. Braucht eine eigene Schlüsselart oder eine
    Ausnahme für Rollen nur mit Passkey (die Vertrauensliste lehnt dort Passwortschlüssel ab) und
    eine Antwort für hochgeladene Apps, deren freigebender Admin-Schlüssel wechselt.
-3. Die Module aus Entwurf, Kapitel 7 (SQLite, MariaDB-Treiber, WebSocket, WebAuthn/TOTP) prüfen und
+2. Die Module aus Entwurf, Kapitel 7 (SQLite, MariaDB-Treiber, WebSocket, WebAuthn/TOTP) prüfen und
    nach `vendor/` übernehmen, bevor die vier Sitzungen starten; sonst stoßen vier Branches dort
    zusammen. Das lädt Code herunter: vorher Thomas fragen.
-4. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
+3. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
 
 ## Vor dem Bauen zu prüfen
 
@@ -60,8 +59,8 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
 ## Skills
 
-- `superpowers:subagent-driven-development`: Plan 0 und die Fixpläne (fast fertig)
-- `superpowers:finishing-a-development-branch`: am Ende
+- `superpowers:brainstorming` und `superpowers:writing-plans`: Wiederherstellung, dann die Pläne 1–4
+- `superpowers:subagent-driven-development`: die Pläne ausführen
 
 ## Artefakte
 
