@@ -62,6 +62,7 @@ func TestTable(t *testing.T) {
 		AppUsers + "/" + ServiceController + "/" + ActTrust:    session.MaxChain,
 		AppStore + "/" + ServiceAPI + "/" + ActUpload:          store.MaxPackage,
 		AppStore + "/" + ServiceAPI + "/" + ActLicense:         16 << 10,
+		AppStore + "/" + ServiceController + "/" + ActLicense:  16 << 10,
 		AppStore + "/" + ServiceController + "/" + ActActivate: 4 + MaxTransferHeader + store.MaxPackage,
 		AppStore + "/" + ServiceController + "/" + ActStage:    4 + MaxTransferHeader + store.MaxPackage,
 	}
@@ -77,6 +78,7 @@ func TestTable(t *testing.T) {
 		AppUsers + "/" + ServiceController + "/" + ActTrust:   true,
 		AppStore + "/" + ServiceController + "/" + ActStage:   true,
 		AppStore + "/" + ServiceController + "/" + ActInstall: true,
+		AppStore + "/" + ServiceController + "/" + ActLicense: true,
 	}
 	n := 0
 	for _, a := range All() {
@@ -93,8 +95,9 @@ func TestTable(t *testing.T) {
 	}
 
 	// Who opens: the shell every action of service api and the root tasks on
-	// controllers, each with a signed task; stage and ngc.users/controller/trust
-	// only the API, without a user. Every action has someone who opens it.
+	// controllers, each with a signed task; stage, license and
+	// ngc.users/controller/trust only the API, without a user. Every action has
+	// someone who opens it.
 	shellRoot := map[string]bool{
 		AppStore + "/" + ServiceController + "/" + ActActivate:   true,
 		AppStore + "/" + ServiceController + "/" + ActDeactivate: true,
@@ -118,7 +121,8 @@ func TestTable(t *testing.T) {
 	if n != len(shellRoot) {
 		t.Errorf("%d of the %d root tasks the shell opens exist", n, len(shellRoot))
 	}
-	for _, a := range []Action{action(t, AppStore, ServiceController, ActStage), action(t, AppUsers, ServiceController, ActTrust)} {
+	for _, a := range []Action{action(t, AppStore, ServiceController, ActStage), action(t, AppUsers, ServiceController, ActTrust),
+		action(t, AppStore, ServiceController, ActLicense)} {
 		if ShellOpens(a) {
 			t.Errorf("%s/%s/%s: the shell must not open it", a.App, a.Service, a.Name)
 		}
@@ -141,6 +145,15 @@ func TestTable(t *testing.T) {
 	ctlTrust := action(t, AppUsers, ServiceController, ActTrust)
 	if !ctlTrust.Admin || ctlTrust.Root || !ctlTrust.Changes || ctlTrust.Flow != FlowIn || ctlTrust.Params != nil {
 		t.Errorf("ngc.users/controller/trust: %+v", ctlTrust)
+	}
+	// A renewed license is no root task: the controller checks the store's
+	// signature itself, so the API brings it without a user and without a task.
+	ctlLicense := action(t, AppStore, ServiceController, ActLicense)
+	if !ctlLicense.Admin || ctlLicense.Root || !ctlLicense.Changes || ctlLicense.Flow != FlowIn ||
+		ctlLicense.Params == nil || ctlLicense.MaxIn != MaxLicenseIn {
+		t.Errorf("ngc.store/controller/license: %+v", ctlLicense)
+	} else if _, ok := ctlLicense.Params().(*AppParams); !ok {
+		t.Errorf("ngc.store/controller/license takes %T", ctlLicense.Params())
 	}
 	if LocalStore != trust.StoreLocal {
 		t.Errorf("LocalStore %q", LocalStore)

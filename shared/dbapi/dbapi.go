@@ -15,7 +15,7 @@ const (
 	BlobSetting  = "setting"  // ID: setting key
 	BlobTrust    = "trust"    // ID: version number as text, Seq: version number
 	BlobCatalog  = "catalog"  // ID: store, Seq: catalog number
-	BlobLicense  = "license"  // ID: app
+	BlobLicense  = "license"  // ID: app; the newest license of the app: at the API the one it verified (store.VerifyLicense), at a controller the one it verified with store.VerifyLicenseFor
 	BlobRights   = "rights"   // ID: role, Data: core.RoleRights as JSON
 	BlobUI       = "ui"       // ID: "<app>@<version>", Data: the canonical ui-tar of the plain package (store.PackageUI)
 	BlobApproval = "approval" // ID: "<app>@<version>", Data: core.UIProof as JSON (the evidence the version was installed with)

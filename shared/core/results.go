@@ -193,7 +193,9 @@ type UploadResult struct {
 	UI      enc.Bytes `json:"ui"`     // its UI hash (store.PackageUI)
 }
 
-// LicenseResult answers ngc.store/license.
+// LicenseResult answers ngc.store/api/license, and ngc.store/controller/license
+// with the state (LicenseOf) of the newest license the controller now holds
+// for App.
 type LicenseResult struct {
 	App   string `json:"app"`
 	State string `json:"state"`
@@ -340,8 +342,8 @@ type Transfer struct {
 	Catalog *sign.Envelope `json:"catalog,omitempty"`
 	Store   string         `json:"store,omitempty"` // empty for an uploaded app; ActivateParams.Store is LocalStore there instead.
 	Release *sign.Envelope `json:"release,omitempty"`
-	License *sign.Envelope `json:"license,omitempty"` // paid apps
-	Key     enc.Bytes      `json:"key,omitempty"`     // paid apps: content key, unwrapped by the API
+	License *sign.Envelope `json:"license,omitempty"` // paid apps; the controller checks it with store.VerifyLicenseFor and keeps the newest (dbapi.BlobLicense)
+	Key     enc.Bytes      `json:"key,omitempty"`     // paid apps: content key, unwrapped by the API, which alone holds the installation's private key
 	Size    int64          `json:"size"`
 	SHA256  enc.Bytes      `json:"sha256"`
 }

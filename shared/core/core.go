@@ -71,7 +71,7 @@ const (
 // What the opener of a FlowIn channel may send (Action.MaxIn).
 const (
 	MaxTrustIn   = 6 << 20  // ngc.users/api/trust: one trust.Signed as JSON
-	MaxLicenseIn = 16 << 10 // ngc.store/api/license: one signed license (sign.Envelope) as JSON
+	MaxLicenseIn = 16 << 10 // ngc.store/api/license and ngc.store/controller/license: one signed license (sign.Envelope) as JSON
 )
 
 // maxTransferIn is what the API sends on a FlowTransfer channel: the length
@@ -165,6 +165,7 @@ var actions = []Action{
 	{AppStore, ServiceController, ActDeleteData, true, true, true, FlowCall, newParams[AppParams](), 0},
 	{AppStore, ServiceController, ActStage, true, false, false, FlowTransfer, newParams[StageParams](), maxTransferIn},
 	{AppStore, ServiceController, ActInstall, true, true, true, FlowCall, newParams[InstallParams](), 0},
+	{AppStore, ServiceController, ActLicense, true, false, true, FlowIn, newParams[AppParams](), MaxLicenseIn},
 }
 
 // All returns every core action.
@@ -181,9 +182,10 @@ func Lookup(app, service, name string) (Action, bool) {
 }
 
 // ShellOpens reports whether the shell may open a channel for a: every
-// action of service api, and the root tasks of service controller (activate,
-// deactivate, uninstall, delete-data, install), each with a signed task. The
-// API alone opens stage and ngc.users/controller/trust, without a user
+// action of service api, with a signed task only where task.Check asks for
+// one, and the root tasks of service controller (activate, deactivate,
+// uninstall, delete-data, install), always with a signed task. The API alone
+// opens stage, license and ngc.users/controller/trust, without a user
 // (WithoutUser), and refuses a shell's OPEN for them with E_FORBIDDEN. On a
 // transfer action the shell opened (activate) it sends EOF at once; the API
 // writes the Transfer header and the file on the tunnel hop (package wire,
@@ -193,12 +195,15 @@ func ShellOpens(a Action) bool { return a.Service == ServiceAPI || a.Root }
 // WithoutUser reports whether the API may open a channel for action a without
 // a user (tunnel.Open without client certificate): ngc.users/controller/trust
 // (the versions carry their own signatures), ngc.store/controller/stage
-// (nothing is installed) and ngc.store/controller/install (see Unattended).
+// (nothing is installed), ngc.store/controller/install (see Unattended) and
+// ngc.store/controller/license (the license carries the store's signature,
+// which the controller checks with store.VerifyLicenseFor).
 func WithoutUser(a Action) bool {
 	if a.Service != ServiceController {
 		return false
 	}
-	return (a.App == AppUsers && a.Name == ActTrust) || (a.App == AppStore && (a.Name == ActStage || a.Name == ActInstall))
+	return (a.App == AppUsers && a.Name == ActTrust) ||
+		(a.App == AppStore && (a.Name == ActStage || a.Name == ActInstall || a.Name == ActLicense))
 }
 
 // Unattended reports whether an install without a user may run: a standing

@@ -142,7 +142,7 @@ const (
 	StateRunning    AppState = "running"
 	StateStopped    AppState = "stopped"
 	StateFailed     AppState = "failed"
-	StateUnlicensed AppState = "unlicensed" // subscription ran out after the grace period
+	StateUnlicensed AppState = "unlicensed" // its license expired past the grace period (store.License.State): services stopped, none started
 )
 
 // AppStatus reports one app.
@@ -183,8 +183,9 @@ type Opened struct {
 	// Session is nil for a channel without a user. It proves who opened the
 	// channel only together with the end-to-end handshake (its DH key) or a
 	// task (its Sig key): the API keeps the certificate and proof of every
-	// session and can attach any of them; on other channels (stage, trust)
-	// the controller neither authorises nor logs a user by it.
+	// session and can attach any of them. On a channel with neither, the
+	// controller does not authorise or log a user by it; the channels the API
+	// opens without a user (core.WithoutUser) carry none at all.
 	Session *session.Verified
 }
 
