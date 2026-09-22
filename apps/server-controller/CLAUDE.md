@@ -64,9 +64,10 @@ so klein wie möglich.
 - Apps aktivieren, deaktivieren, deinstallieren (`core`, `store`): Paket prüfen (`store.Walk`,
   höchstens `store.MaxDirs` Verzeichnisse), Kauf-Apps entschlüsseln, Image laden, Daten löschen
   oder aufheben. Aktivieren nur, wenn `grants` genau die `needs` des Manifests enthält, sonst
-  `E_FORBIDDEN`. Über das unverschlüsselte Paket rechnest du `store.PackageUI` und vergleichst mit
-  `ui` aus `core.ActivateParams`, bei Store-Apps auch mit `ui` des Katalogeintrags; passt es nicht,
-  `E_VERIFY`. Bei Updates ohne Benutzer vergleichst du mit `ui` des Katalogeintrags.
+  `E_FORBIDDEN`. Über das unverschlüsselte Paket rechnest du `store.PackageUI`: Bei `activate` muss
+  es zu `ui` aus `core.ActivateParams` passen, und bei Store-Apps muss es bei jedem Aktivieren,
+  Installieren und Update, mit oder ohne Benutzer, zu `ui` des Katalogeintrags passen; sonst
+  `E_VERIFY`.
 - Updates einspielen und bei Fehlschlag zurücknehmen; ohne Unterschrift nur mit Dauerfreigabe
   (`core.Unattended`) und nie eine ältere Version. Ohne Benutzer zählt dabei nur, was Release- oder
   Store-Schlüssel signiert haben: Version und SHA-256 nimmst du aus dem geprüften Release oder
@@ -86,13 +87,14 @@ so klein wie möglich.
 - Mit Rolle `web`: Adressen (Host und Port aus `url` jedes API-Knotens) und Fingerabdrücke nimmst du
   aus der Vertrauensliste, holst jedes Zertifikat mit `tunnel.PinnedTLS`, schreibst
   `config.APITrustFile` und `web.json` (`config.SaveWeb`; `apis` mit `url` = `https://<Host>:<Port>`
-  und `tls`), richtest daraus die Lastverteilung in Apache ein und lädst Apache neu. Das tust du,
-  wenn sich die API-Server der Vertrauensliste ändern, und auch, wenn eine Verbindung zu einer API
-  an der Zertifikatsprüfung scheitert: Dann holst du ihr aktuelles Zertifikat neu, nimmst es nur,
-  wenn sein Schlüssel zum Fingerabdruck passt, und lädst Apache neu. Vertrauen trägt nur der
-  Fingerabdruck, nicht das Zertifikat; so sperrt weder ein erneuertes Zertifikat noch ein Datum
-  Apache aus. Den Anker schreibst du mit `config.SaveAnchor`. Vor deiner ersten Fassung der
-  Vertrauensliste hat ngc-web das aus `api_pins` getan.
+  und `tls`), richtest daraus die Lastverteilung in Apache ein und lädst Apache neu, sobald sich die
+  API-Server der Vertrauensliste ändern. Außerdem vergleichst du bei jedem Aufbau eines Tunnels und
+  einmal am Tag das Zertifikat, das du über `tunnel.PinnedTLS` bekommen hast, mit dem in
+  `config.APITrustFile`; weicht es ab (derselbe Schlüssel, das beweist der Fingerabdruck),
+  schreibst du die Datei neu und lädst Apache neu. Vertrauen trägt nur der Fingerabdruck, nicht das
+  Zertifikat; so sperrt weder ein erneuertes Zertifikat noch ein Datum Apache aus. Den Anker
+  schreibst du mit `config.SaveAnchor`. Vor deiner ersten Fassung der Vertrauensliste hat ngc-web
+  das aus `api_pins` getan.
 - Der Dienst „virtuelles Terminal" als Beispiel-Dienst.
 
 ## Tests
