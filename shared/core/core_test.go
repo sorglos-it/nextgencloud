@@ -24,6 +24,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
+	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -1079,6 +1080,14 @@ func examples(t testing.TB) map[string]any {
 	apiDH, apiSign := trusttest.NodeKeys(0xA2)
 	_, apiPin := trusttest.APITLS(0xE2, "api-2.test")
 	_, releaseKey := trusttest.NodeKeys(trusttest.ReleaseFill)
+	// The codes of api-1, anchored in version 1 of trust.json ("genesis").
+	api1, _ := trusttest.NodeKeys(0xA1)
+	_, api1Pin := trusttest.APITLS(0xE1, "api-1.test")
+	anchor := trust.Anchor{Seq: 1, Hash: genesis(t).Hash}
+	pair := tunnel.PairCode{URL: "wss://api-1.test:7443/tunnel", Key: api1.Public, TLS: api1Pin,
+		Secret: bytes.Repeat([]byte{0x5E}, tunnel.SecretSize), Anchor: anchor}
+	join := tunnel.JoinCode{URL: "wss://api-1.test:7443/tunnel", Key: api1.Public, TLS: api1Pin,
+		Secret: bytes.Repeat([]byte{0x5F}, tunnel.SecretSize), Anchor: anchor}
 	return map[string]any{
 		"ngc.desktop/me":         Me{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, Admin: true, PasswordLogin: true, Level: trust.LevelCritical},
 		"ngc.desktop/apps":       []DesktopApp{{ID: "org.sorglos.terminal", Name: "Terminal", Version: "1.0.0", Icon: "icon.svg", Width: 720, Height: 480, Actions: []string{"shell"}, State: AppOK, Node: "ctl-1"}},
@@ -1087,8 +1096,8 @@ func examples(t testing.TB) map[string]any {
 		"ngc.users/list":         []UserInfo{{ID: "ISEhISEhISEhISEhISEhIQ", Name: "admin", Roles: []string{trust.RoleAdmin}, TOTP: true, LastLogin: 1790000000}},
 		"ngc.users/rights":       []RoleRights{{Role: "user", Rights: []string{"org.sorglos.calculator/use"}}},
 		"ngc.users/trust":        TrustResult{Seq: 4},
-		"ngc.users/pair-code":    PairCodeResult{Code: "ngc-pair:…", Expires: 1790086400},
-		"ngc.users/join-code":    PairCodeResult{Code: "ngc-join:…", Expires: 1790086400},
+		"ngc.users/pair-code":    PairCodeResult{Code: pair.String(), Expires: 1790086400},
+		"ngc.users/join-code":    PairCodeResult{Code: join.String(), Expires: 1790086400},
 		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Since: 1790000000}},
 		"ngc.users/pending-api": []PendingAPI{{Node: "api-2", Noise: apiDH.Public, Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)),
 			TLS: apiPin, URL: "wss://api-2.test:7443/tunnel", Since: 1790000000}},
@@ -1132,6 +1141,22 @@ func TestExamples(t *testing.T) {
 	}
 	if _, err := ParseNotice(notice); err != nil {
 		t.Errorf("notice: %v", err)
+	}
+	// The codes parse and fit version 1 of trust.json.
+	g := genesis(t)
+	pair, err := tunnel.ParsePairCode(examples["ngc.users/pair-code"].(PairCodeResult).Code)
+	if err == nil {
+		err = pair.Check(g)
+	}
+	if err != nil {
+		t.Errorf("pairing code: %v", err)
+	}
+	join, err := tunnel.ParseJoinCode(examples["ngc.users/join-code"].(PairCodeResult).Code)
+	if err == nil {
+		err = join.Check(g)
+	}
+	if err != nil {
+		t.Errorf("join code: %v", err)
 	}
 	// A pending API server becomes an API node with exactly its values and
 	// Name = Node.
