@@ -21,6 +21,7 @@ type urlVectors struct {
 	HostPort []urlCase `json:"hostPort"` // ValidHostPort
 	Tunnel   []urlCase `json:"tunnel"`   // ValidTunnelURL; Web is WebURL of the valid ones
 	Web      []urlCase `json:"web"`      // ValidWebURL
+	Origins  []urlCase `json:"origins"`  // ValidOrigin
 	Store    []urlCase `json:"store"`    // ValidStoreURL
 }
 
@@ -76,6 +77,11 @@ func addressCases() urlVectors {
 			{Name: "host name", Value: "db-1.ngc.test:3306", Valid: true},
 			{Name: "IPv4", Value: "192.0.2.5:3306", Valid: true},
 			{Name: "IPv6", Value: "[2001:db8::5]:3306", Valid: true},
+			// The rule bounds the host (253) and the port (5), not the whole:
+			// the longest entry is 259 bytes, and a caller that wants less says
+			// so itself (config.MaxField on config.DB.Nodes).
+			{Name: "longest host and port", Value: h(253) + ":65535", Valid: true},
+			{Name: "host of 254 bytes", Value: h(254) + ":65535"},
 			{Name: "no port", Value: "db-1.ngc.test"},
 			{Name: "port 0", Value: "db-1.ngc.test:0"},
 			{Name: "port 65536", Value: "db-1.ngc.test:65536"},
@@ -122,6 +128,24 @@ func addressCases() urlVectors {
 			{Name: "line feed", Value: "https://api-1.test:7443\x0a"},
 			{Name: "257 bytes", Value: "https://" + h(244) + ":7443"},
 		},
+		Origins: []urlCase{
+			{Name: "host only", Value: "https://ngc.example.org", Valid: true},
+			{Name: "port", Value: "https://ngc.example.org:8443", Valid: true},
+			{Name: "IPv6", Value: "https://[2001:db8::1]:443", Valid: true},
+			{Name: "256 bytes", Value: "https://" + h(248), Valid: true},
+			{Name: "plain http", Value: "http://ngc.example.org"},
+			{Name: "trailing slash", Value: "https://ngc.example.org/"},
+			{Name: "path", Value: "https://ngc.example.org/x"},
+			{Name: "query", Value: "https://ngc.example.org?y=1"},
+			{Name: "fragment", Value: "https://ngc.example.org#z"},
+			{Name: "user info", Value: "https://user@ngc.example.org"},
+			{Name: "host in upper case", Value: "https://NGC.example.org"},
+			{Name: "trailing space", Value: "https://ngc.example.org "},
+			{Name: "line feed", Value: "https://ngc.example.org\x0a"},
+			{Name: "quote", Value: "https://ngc.example.org\""},
+			{Name: "port 0", Value: "https://ngc.example.org:0"},
+			{Name: "257 bytes", Value: "https://" + h(249)},
+		},
 		Store: []urlCase{
 			{Name: "host only", Value: "https://store.ngc.example", Valid: true},
 			{Name: "port", Value: "https://store.ngc.example:8443", Valid: true},
@@ -160,6 +184,7 @@ func TestAddresses(t *testing.T) {
 	check("hostPort", v.HostPort, trust.ValidHostPort)
 	check("tunnel", v.Tunnel, trust.ValidTunnelURL)
 	check("web", v.Web, trust.ValidWebURL)
+	check("origin", v.Origins, trust.ValidOrigin)
 	check("store", v.Store, trust.ValidStoreURL)
 	// Every tunnel address has exactly one address behind Apache, and that one
 	// is an address the web configuration may hold.
@@ -246,14 +271,14 @@ func TestHostScript(t *testing.T) {
 // more than one word, and a URL that net/url reads as the same address.
 func FuzzAddresses(f *testing.F) {
 	v := addressCases()
-	for _, cases := range [][]urlCase{v.Hosts, v.HostPort, v.Tunnel, v.Web, v.Store} {
+	for _, cases := range [][]urlCase{v.Hosts, v.HostPort, v.Tunnel, v.Web, v.Origins, v.Store} {
 		for _, c := range cases {
 			f.Add(c.Value)
 		}
 	}
 	f.Fuzz(func(t *testing.T, s string) {
 		accepted := trust.ValidHost(s) || trust.ValidHostPort(s) || trust.ValidTunnelURL(s) ||
-			trust.ValidWebURL(s) || trust.ValidStoreURL(s)
+			trust.ValidWebURL(s) || trust.ValidOrigin(s) || trust.ValidStoreURL(s)
 		if accepted && !safeASCII(s) {
 			t.Fatalf("%q accepted", s)
 		}
@@ -266,6 +291,15 @@ func FuzzAddresses(f *testing.F) {
 			web, ok := trust.WebURL(s)
 			if !ok || web != "https://"+u.Host || !trust.ValidWebURL(web) {
 				t.Fatalf("tunnel %q: web %q, %v", s, web, ok)
+			}
+		}
+		if trust.ValidOrigin(s) {
+			// A browser writes scheme, host and port and nothing else, so an
+			// origin has no path at all to compare.
+			u, err := neturl.Parse(s)
+			if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+				u.Fragment != "" || u.Path != "" || s != "https://"+u.Host {
+				t.Fatalf("origin %q: %+v, %v", s, u, err)
 			}
 		}
 		if trust.ValidStoreURL(s) {

@@ -60,9 +60,11 @@ const (
 	// MaxField bounds these strings: WebAPI.URL and each of Web.RP.Origins;
 	// API.URL, Listen, Cert, CertKey and StoreURL; DB.Name, User, Password,
 	// Path and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and
-	// WebConfig. The addresses among them keep the grammar of package trust
-	// (ValidTunnelURL, ValidWebURL, ValidStoreURL, ValidHostPort), whose bound
-	// is the same 256 bytes.
+	// WebConfig. The addresses among them keep the grammar of package trust:
+	// ValidTunnelURL, ValidWebURL, ValidStoreURL and ValidOrigin carry this
+	// same bound of 256 bytes themselves, ValidHostPort carries none (its
+	// longest is 259 bytes, a host of 253 and a port of 5), so DB.Validate
+	// bounds a node here.
 	MaxField               = 256
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
@@ -515,7 +517,7 @@ func (w *Web) Validate() error {
 		return ErrConfig
 	}
 	for _, o := range w.RP.Origins {
-		if !strings.HasPrefix(o, "https://") || len(o) > MaxField {
+		if !trust.ValidOrigin(o) {
 			return ErrConfig
 		}
 	}
@@ -552,8 +554,9 @@ func (d *DB) Validate() error {
 		}
 		for _, n := range d.Nodes {
 			// The node goes into the DSN of the driver, where parameters would
-			// follow the host: it holds nothing but host and port.
-			if !trust.ValidHostPort(n) {
+			// follow the host: it holds nothing but host and port. The length is
+			// this package's bound, since ValidHostPort has none of its own.
+			if !trust.ValidHostPort(n) || len(n) > MaxField {
 				return ErrConfig
 			}
 		}

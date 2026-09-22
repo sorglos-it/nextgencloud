@@ -178,6 +178,16 @@
       "valid": true
     },
     {
+      "name": "longest host and port",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.a:65535",
+      "valid": true
+    },
+    {
+      "name": "host of 254 bytes",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aa:65535",
+      "valid": false
+    },
+    {
       "name": "no port",
       "value": "db-1.ngc.test",
       "valid": false
@@ -390,6 +400,88 @@
     {
       "name": "257 bytes",
       "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:7443",
+      "valid": false
+    }
+  ],
+  "origins": [
+    {
+      "name": "host only",
+      "value": "https://ngc.example.org",
+      "valid": true
+    },
+    {
+      "name": "port",
+      "value": "https://ngc.example.org:8443",
+      "valid": true
+    },
+    {
+      "name": "IPv6",
+      "value": "https://[2001:db8::1]:443",
+      "valid": true
+    },
+    {
+      "name": "256 bytes",
+      "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": true
+    },
+    {
+      "name": "plain http",
+      "value": "http://ngc.example.org",
+      "valid": false
+    },
+    {
+      "name": "trailing slash",
+      "value": "https://ngc.example.org/",
+      "valid": false
+    },
+    {
+      "name": "path",
+      "value": "https://ngc.example.org/x",
+      "valid": false
+    },
+    {
+      "name": "query",
+      "value": "https://ngc.example.org?y=1",
+      "valid": false
+    },
+    {
+      "name": "fragment",
+      "value": "https://ngc.example.org#z",
+      "valid": false
+    },
+    {
+      "name": "user info",
+      "value": "https://user@ngc.example.org",
+      "valid": false
+    },
+    {
+      "name": "host in upper case",
+      "value": "https://NGC.example.org",
+      "valid": false
+    },
+    {
+      "name": "trailing space",
+      "value": "https://ngc.example.org ",
+      "valid": false
+    },
+    {
+      "name": "line feed",
+      "value": "https://ngc.example.org\n",
+      "valid": false
+    },
+    {
+      "name": "quote",
+      "value": "https://ngc.example.org\"",
+      "valid": false
+    },
+    {
+      "name": "port 0",
+      "value": "https://ngc.example.org:0",
+      "valid": false
+    },
+    {
+      "name": "257 bytes",
+      "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "valid": false
     }
   ],

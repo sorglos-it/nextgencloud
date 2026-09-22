@@ -599,7 +599,7 @@ func (l *List) validateUsers() error {
 		return ErrInvalid
 	}
 	for _, o := range l.RP.Origins {
-		if !strings.HasPrefix(o, "https://") || len(o) > 256 {
+		if !ValidOrigin(o) {
 			return ErrInvalid
 		}
 	}
