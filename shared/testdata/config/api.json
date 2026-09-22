@@ -1,5 +1,6 @@
 {
   "node": "api-1",
+  "url": "wss://api-1.ngc.test:7443/tunnel",
   "listen": ":7443",
   "cert": "/etc/ngc/tls/api.crt",
   "certKey": "/etc/ngc/tls/api.key",

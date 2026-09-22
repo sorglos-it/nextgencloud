@@ -38,13 +38,20 @@ const (
 	RunDir         = "/run/ngc"
 	APIPort        = 7443
 
+	// APITrustFile holds the certificates of the API servers that Apache's
+	// proxy trusts, each checked against its pin (Web.APIs[i].TLS, later
+	// trust.Node.TLS) before it is written: by ngc-web, then by the controller
+	// with role web.
+	APITrustFile = "/etc/ngc/tls/api-trust.pem"
+
 	ServiceAPI        = "ngc-api.service"
 	ServiceController = "ngc-controller.service"
 
 	MaxConfig = 1 << 20
-	// MaxField bounds these strings: each of Web.APIs and Web.RP.Origins;
-	// API.Listen, Cert, CertKey and StoreURL; DB.Name, User, Password, Path
-	// and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and WebConfig.
+	// MaxField bounds these strings: WebAPI.URL and each of Web.RP.Origins;
+	// API.URL, Listen, Cert, CertKey and StoreURL; DB.Name, User, Password,
+	// Path and each of DB.Nodes; APIRef.URL; Controller.DB, Podman and
+	// WebConfig.
 	MaxField               = 256
 	DefaultSessionLifetime = 43200 // 12 hours
 	DefaultIdleTimeout     = 1800
@@ -188,8 +195,14 @@ func shown(set bool) string {
 
 // Web is /etc/ngc/web.json; the PHP of the web interface reads it too.
 type Web struct {
-	APIs []string `json:"apis"` // https://host:port, Apache balances over them
+	APIs []WebAPI `json:"apis"` // Apache balances over them
 	RP   proof.RP `json:"rp"`   // ID and origins for passkeys: both set, or both empty without passkeys
+}
+
+// WebAPI is an API behind Apache.
+type WebAPI struct {
+	URL string    `json:"url"` // https://<host>:<port>, the listener of the API's tunnel URL
+	TLS enc.Bytes `json:"tls"` // pin of its TLS key (trust.TLSPin); Apache trusts only a certificate with it (APITrustFile)
 }
 
 // DB tells an API which database to use.
@@ -205,7 +218,11 @@ type DB struct {
 
 // API is /etc/ngc/api.json. It holds keys, so the file belongs to root with mode 0600.
 type API struct {
-	Node       string    `json:"node"` // node ID in the trust list
+	Node string `json:"node"` // node ID in the trust list
+	// URL is this API's tunnel address exactly as its node in the trust list
+	// names it: wss://<host>:<port of Listen>/tunnel. Controllers dial it, and
+	// the API puts it into session.SetupInfo and its pairing and join codes.
+	URL        string    `json:"url"`
 	Listen     string    `json:"listen"`
 	Cert       string    `json:"cert"`
 	CertKey    string    `json:"certKey"`
@@ -226,6 +243,9 @@ type API struct {
 type APIRef struct {
 	URL string    `json:"url"`
 	Key enc.Bytes `json:"key"` // its Noise key
+	// TLS is the pin of its TLS key (trust.TLSPin): from the pairing code,
+	// later from the trust list; the controller dials with tunnel.PinnedTLS.
+	TLS enc.Bytes `json:"tls"`
 }
 
 // Controller is /etc/ngc/controller.json, also root and 0600.
@@ -341,6 +361,20 @@ func SaveController(path string, c *Controller) error {
 	return writeAtomic(path, b, 0o600)
 }
 
+// SaveWeb writes web.json (mode 0644, atomically as SaveController does); the
+// controller with role web uses it when the API servers in the trust list change.
+func SaveWeb(path string, w *Web) error {
+	if err := w.Validate(); err != nil {
+		return err
+	}
+	b, err := marshalFile(w)
+	if err != nil {
+		return err
+	}
+	// The PHP of the web interface reads it, and it holds no secret.
+	return writeAtomic(path, b, 0o644)
+}
+
 // fileMarshalers write the secrets themselves, which only a configuration
 // file holds.
 var fileMarshalers = jsonv2.JoinMarshalers(
@@ -447,8 +481,11 @@ func (w *Web) Validate() error {
 	if len(w.APIs) == 0 || len(w.APIs) > maxList {
 		return ErrConfig
 	}
-	for _, u := range w.APIs {
-		if !strings.HasPrefix(u, "https://") || len(u) > MaxField {
+	for i, a := range w.APIs {
+		// An address twice is a mistake: Apache would balance over it twice,
+		// and with two pins it would trust two keys for one server.
+		if !strings.HasPrefix(a.URL, "https://") || len(a.URL) > MaxField || len(a.TLS) != 32 ||
+			slices.ContainsFunc(w.APIs[:i], func(b WebAPI) bool { return b.URL == a.URL }) {
 			return ErrConfig
 		}
 	}
@@ -467,6 +504,7 @@ func (w *Web) Validate() error {
 // Validate checks the API configuration.
 func (a *API) Validate() error {
 	if !wire.ValidName(a.Node) ||
+		!strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField ||
 		a.Listen == "" || len(a.Listen) > MaxField ||
 		a.Cert == "" || len(a.Cert) > MaxField ||
 		a.CertKey == "" || len(a.CertKey) > MaxField ||
@@ -517,7 +555,7 @@ func (c *Controller) Validate() error {
 		return ErrConfig
 	}
 	for _, a := range c.APIs {
-		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField || len(a.Key) != 32 {
+		if !strings.HasPrefix(a.URL, "wss://") || len(a.URL) > MaxField || len(a.Key) != 32 || len(a.TLS) != 32 {
 			return ErrConfig
 		}
 	}
@@ -561,6 +599,7 @@ func (d DB) String() string { return d.LogValue().String() }
 func (a API) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("node", a.Node),
+		slog.String("url", a.URL),
 		slog.String("listen", a.Listen),
 		slog.String("cert", a.Cert),
 		slog.String("certKey", a.CertKey),
@@ -584,7 +623,7 @@ func (a API) String() string { return a.LogValue().String() }
 func (c Controller) LogValue() slog.Value {
 	apis := make([]string, len(c.APIs))
 	for i, a := range c.APIs {
-		apis[i] = a.URL + " " + enc.B64.EncodeToString(a.Key)
+		apis[i] = a.URL + " " + enc.B64.EncodeToString(a.Key) + " " + enc.B64.EncodeToString(a.TLS)
 	}
 	attrs := []slog.Attr{
 		slog.String("node", c.Node),

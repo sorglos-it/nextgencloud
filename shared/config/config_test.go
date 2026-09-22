@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
@@ -23,13 +25,20 @@ func example(t *testing.T, name string) string {
 	return filepath.Join("..", "testdata", "config", name)
 }
 
+// pin returns a TLS pin of the examples: 32 bytes of fill (api-1 0xE1, api-2
+// 0xE2).
+func pin(fill byte) []byte { return bytes.Repeat([]byte{fill}, 32) }
+
 func TestExamples(t *testing.T) {
 	w, err := LoadWeb(example(t, "web.json"))
-	if err != nil || len(w.APIs) != 2 || w.RP.ID != "ngc.example.org" {
+	if err != nil || len(w.APIs) != 2 || w.RP.ID != "ngc.example.org" ||
+		w.APIs[0].URL != "https://api-1.ngc.test:7443" || !bytes.Equal(w.APIs[0].TLS, pin(0xE1)) ||
+		w.APIs[1].URL != "https://api-2.ngc.test:7443" || !bytes.Equal(w.APIs[1].TLS, pin(0xE2)) {
 		t.Fatalf("web: %+v, %v", w, err)
 	}
 	a, err := LoadAPI(example(t, "api.json"))
-	if err != nil || a.Node != "api-1" || a.DB.Driver != DriverMariaDB || len(a.DB.Nodes) != 3 {
+	if err != nil || a.Node != "api-1" || a.URL != "wss://api-1.ngc.test:7443/tunnel" || a.DB.Driver != DriverMariaDB ||
+		len(a.DB.Nodes) != 3 {
 		t.Fatalf("api: %+v, %v", a, err)
 	}
 	if a.SessionLifetime != DefaultSessionLifetime || a.IdleTimeout != DefaultIdleTimeout {
@@ -44,6 +53,14 @@ func TestExamples(t *testing.T) {
 	if err != nil || d.Name != "datenbank" || len(d.Roles) != 2 || d.Roles[0] != tunnel.RoleDB || d.Migrate == nil ||
 		d.Migrate.Driver != DriverMariaDB || d.Migrate.User != "ngc_migrate" || len(d.Migrate.Nodes) != 3 {
 		t.Fatalf("controller with the db role: %+v, %v", d, err)
+	}
+	// Both controllers dial api-1 of web.json, pinned to its TLS key.
+	for _, ctl := range []*Controller{c, d} {
+		for _, api := range ctl.APIs {
+			if api.URL != "wss://api-1.ngc.test:7443/tunnel" || !bytes.Equal(api.TLS, pin(0xE1)) {
+				t.Errorf("%s: api %+v", ctl.Name, api)
+			}
+		}
 	}
 }
 
@@ -129,6 +146,61 @@ func TestSaveControllerInvalid(t *testing.T) {
 	}
 }
 
+// TestSaveWeb: SaveWeb writes web.json so that LoadWeb reads the same back,
+// readable for the PHP of the web interface, with no temporary file left
+// over, and refuses a configuration that fails Validate without writing.
+func TestSaveWeb(t *testing.T) {
+	w, err := LoadWeb(example(t, "web.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As the controller with role web does when a third API server joins.
+	w.APIs = append(w.APIs, WebAPI{URL: "https://api-3.ngc.test:7443", TLS: pin(0xE3)})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "web.json")
+	// An older file only root may read: saving must make it readable again.
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWeb(path, w); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// See TestSaveController for Windows.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+		t.Errorf("mode %v: the PHP of the web interface reads the file", info.Mode().Perm())
+	}
+	if names := dirEntries(t, dir); len(names) != 1 || names[0] != "web.json" {
+		t.Errorf("files left: %v", names)
+	}
+	if again, err := LoadWeb(path); err != nil || !reflect.DeepEqual(again, w) {
+		t.Fatalf("round trip: %+v, %v", again, err)
+	}
+	// Without passkeys the file keeps an empty rp, never a null.
+	w.RP = proof.RP{}
+	if err := SaveWeb(path, w); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || bytes.Contains(b, []byte("null")) {
+		t.Errorf("saved file:\n%s\n%v", b, err)
+	}
+	if again, err := LoadWeb(path); err != nil || !reflect.DeepEqual(again, w) {
+		t.Fatalf("round trip without passkeys: %+v, %v", again, err)
+	}
+
+	w.APIs[2].TLS = nil
+	refused := filepath.Join(t.TempDir(), "web.json")
+	if err := SaveWeb(refused, w); err != ErrConfig {
+		t.Fatalf("API without a pin: got %v, want ErrConfig", err)
+	}
+	if names := dirEntries(t, filepath.Dir(refused)); len(names) != 0 {
+		t.Errorf("files after a refused save: %v", names)
+	}
+}
+
 func TestAnchor(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "trust-anchor.json")
@@ -191,6 +263,15 @@ func origins(n int) []string {
 	return o
 }
 
+// webAPIs returns n valid APIs for web.json, each with its own address and pin.
+func webAPIs(n int) []WebAPI {
+	apis := make([]WebAPI, n)
+	for i := range apis {
+		apis[i] = WebAPI{URL: fmt.Sprintf("https://api-%d.ngc.test:7443", i+1), TLS: pin(byte(0xE1 + i))}
+	}
+	return apis
+}
+
 // TestValidate loads a fresh, known-valid Web/API/Controller from the
 // example files for every case (rather than mutating and restoring one
 // shared value), so a case can never leak a change into a later one: each
@@ -203,9 +284,15 @@ func TestValidate(t *testing.T) {
 		"without passkeys":      {func(w *Web) { w.RP.ID, w.RP.Origins = "", nil }, true},
 		"eight origins":         {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins) }, true},
 		"RP ID of 253 bytes":    {func(w *Web) { w.RP.ID = strings.Repeat(strings.Repeat("a", 62)+".", 4) + "a" }, true},
+		"sixteen apis":          {func(w *Web) { w.APIs = webAPIs(maxList) }, true},
+		"api url of 256 bytes":  {func(w *Web) { w.APIs[1].URL = "https://" + strings.Repeat("x", MaxField-8) }, true},
 		"without apis":          {func(w *Web) { w.APIs = nil }, false},
-		"seventeen apis":        {func(w *Web) { w.APIs = append(origins(16), "https://api-17.ngc.test:7443") }, false},
-		"plain http":            {func(w *Web) { w.APIs = []string{"http://api-1.ngc.test:7443"} }, false},
+		"seventeen apis":        {func(w *Web) { w.APIs = webAPIs(maxList + 1) }, false},
+		"plain http":            {func(w *Web) { w.APIs[0].URL = "http://api-1.ngc.test:7443" }, false},
+		"api url of 257 bytes":  {func(w *Web) { w.APIs[1].URL = "https://" + strings.Repeat("x", MaxField-7) }, false},
+		"api without pin":       {func(w *Web) { w.APIs[1].TLS = nil }, false},
+		"api pin of 31 bytes":   {func(w *Web) { w.APIs[1].TLS = w.APIs[1].TLS[:31] }, false},
+		"api url twice":         {func(w *Web) { w.APIs[1].URL = w.APIs[0].URL }, false},
 		"origin not https":      {func(w *Web) { w.RP.Origins = []string{"http://ngc.example.org"} }, false},
 		"http origin":           {func(w *Web) { w.RP.Origins = append(w.RP.Origins, "http://ngc.example.org") }, false},
 		"nine origins":          {func(w *Web) { w.RP.Origins = origins(trust.MaxOrigins + 1) }, false},
@@ -233,7 +320,11 @@ func TestValidate(t *testing.T) {
 		valid  bool
 	}{
 		"session lifetime of 86400":    {func(a *API) { a.SessionLifetime = session.MaxLifetime }, true},
+		"url of 256 bytes":             {func(a *API) { a.URL = "wss://" + strings.Repeat("x", MaxField-6) }, true},
 		"without node":                 {func(a *API) { a.Node = "" }, false},
+		"without url":                  {func(a *API) { a.URL = "" }, false},
+		"https url":                    {func(a *API) { a.URL = "https://api-1.ngc.test:7443/tunnel" }, false},
+		"url of 257 bytes":             {func(a *API) { a.URL = "wss://" + strings.Repeat("x", MaxField-5) }, false},
 		"short key":                    {func(a *API) { a.NoiseKey = NewSecret([]byte{1}) }, false},
 		"mariadb node no colon":        {func(a *API) { a.DB.Nodes = []string{"db-1"} }, false},
 		"db password too long":         {func(a *API) { a.DB.Password = NewSecretText(strings.Repeat("x", MaxField+1)) }, false},
@@ -263,6 +354,8 @@ func TestValidate(t *testing.T) {
 		"migrate to SQLite":         {func(c *Controller) { c.Migrate = &sqlite }, true},
 		"name":                      {func(c *Controller) { c.Name = "Server 1" }, false},
 		"api url":                   {func(c *Controller) { c.APIs[0].URL = "https://api-1.ngc.test:7443/tunnel" }, false},
+		"api pin of 31 bytes":       {func(c *Controller) { c.APIs[0].TLS = c.APIs[0].TLS[:31] }, false},
+		"api without pin":           {func(c *Controller) { c.APIs[0].TLS = nil }, false},
 		"without apis":              {func(c *Controller) { c.APIs = nil }, false},
 		"unknown role":              {func(c *Controller) { c.Roles = []string{"mail"} }, false},
 		"old part name":             {func(c *Controller) { c.Roles = []string{"ngc-controller"} }, false},
