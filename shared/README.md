@@ -93,9 +93,11 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   - ihre Adresse hinter Apache `https://<host>:<port>` (`trust.WebURL` leitet sie ab,
     `trust.ValidWebURL`: `apis` in `web.json`);
   - Datenbankknoten `<host>:<port>` (`trust.ValidHostPort`);
-  - Herkunft für Passkeys `https://<host>[:<port>]`, sonst nichts (`trust.ValidOrigin`:
-    `rp.origins` der Vertrauensliste und in `web.json`, `proof.RP`), denn mehr schreibt der
-    Browser nicht in die `clientData`, und `proof.Verify` vergleicht sie als Text;
+  - Herkunft für Passkeys `https://<host>`, mit `:<port>` nur, wenn der Port nicht 443 ist, sonst
+    nichts (`trust.ValidOrigin`: `rp.origins` der Vertrauensliste und in `web.json`, `proof.RP`),
+    denn genau so und nicht mehr schreibt der Browser die Herkunft in die `clientData`, und
+    `proof.Verify` vergleicht sie als Text: Ein Eintrag, den ein Browser nie schreibt, passt auf
+    nichts und sperrt alle aus, statt laut zu scheitern;
   - Stores `https://<host>[:<port>][/<pfad>]` (`trust.ValidStoreURL`: `trust.Store.URL`,
     `storeUrl`), Pfadsegmente aus `A-Z a-z 0-9 . _ ~ -` (nicht `.` oder `..`, kein `/` am Ende),
     keine Abfrage;
@@ -493,6 +495,9 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   signierten Dateien: Version und SHA-256 nimmt der Controller aus dem geprüften Release oder
   Katalogeintrag der Datei (dessen `seq` er geprüft hat) und lehnt Parameter ab, die davon
   abweichen, denn die Parameter eines Kanals ohne Benutzer sind nicht unterschrieben.
+  `core.Unattended` sieht weder die Zeile der App noch den Katalog: Ein Ja heißt Dauerfreigabe
+  und Version, nie schon die Erlaubnis zu installieren. Store und Rechte einer App prüft der
+  Controller daneben selbst (`dbapi.App.Store`, `store.Granted`).
 - **Lizenzen auf Controllern:** Die Lizenz einer Kauf-App kommt beim Aktivieren und bei Updates
   im Kopf der Übertragung (`core.Transfer`), eine erneuerte über `ngc.store/controller/license`
   (`in`, Parameter `app`, Inhalt der Umschlag der Lizenz, Ergebnis `core.LicenseResult`).

@@ -89,6 +89,8 @@ so klein wie möglich.
   nimmst du dabei immer aus deiner eigenen Datenbank, wie sie beim Aktivieren hineingeschrieben
   wurden, nie aus einem Wert, den eine API schickt: Sonst könnte eine übernommene API einer App
   mehr erlauben. Danach läuft die App mit den Rechten auf die neuen `needs` zusammengestrichen.
+  Diese beiden Regeln prüfst du auch ohne Benutzer selbst: `core.Unattended` sieht weder die
+  Zeile der App noch den Katalog, sein Ja heißt nur Dauerfreigabe und neuere Version.
   - `activate` einer installierten App mit derselben oder einer neueren Version ersetzt sie samt
     Rechten und behält die Daten; eine ältere Version gibt `E_FORBIDDEN`.
   - Eine App mit Diensten nur auf einem Server mit Rolle `services`, sonst `E_FORBIDDEN`.
