@@ -52,6 +52,10 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 - Kryptografie nur aus der Standardbibliothek oder aus `vendor/`, nichts selbst gebaut.
 - TLS zwischen NGC-Teilen nie ungeprüft: API-Server über ihren Fingerabdruck (`tunnel.PinnedTLS`),
   MariaDB über die CA der Installation (`config.DB.TLSConfig`).
+- Adressen nur nach der Grammatik in `trust` (`trust.ValidHost`, `trust.ValidTunnelURL`,
+  `trust.ValidWebURL`, `trust.ValidStoreURL`, `trust.ValidHostPort`, `trust.ValidOrigin`);
+  nichts davon ungeprüft in Konfigurationen anderer Programme (Apache, Datenbanktreiber)
+  schreiben.
 - Geheimnisse nie ins Log, auch nicht gekürzt (`config.Secret`, `config.SecretText`).
 
 ## Technik
@@ -75,7 +79,8 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
   geht das nur in WSL, dort am 22.09.2026 grün); die Tests, die sich unter Windows oder
   ohne ihre Werkzeuge selbst überspringen (`TestEchoService` in `shared/service`,
   `TestReleaseScript` in `shared/store` mit 31 Fällen, der `openssl`, das echte `jq` und
-  `mktemp` braucht, `TestTLSPinScript` in `shared/tunnel`, der `openssl` braucht, die
+  `mktemp` braucht, `TestTLSPinScript` in `shared/tunnel`, der `openssl` braucht,
+  `TestHostScript` in `shared/trust`, der `sh` und `grep` braucht, die
   Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
   Vektoren in `shared/testdata/`. Fuzz-Ziele in `shared/store` nur mit

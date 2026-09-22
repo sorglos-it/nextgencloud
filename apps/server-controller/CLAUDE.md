@@ -31,7 +31,8 @@ so klein wie möglich.
 - Kanäle: `tunnel.VerifyOpen` prüft das OPEN samt Client-Zertifikat. Der Benutzer eines Kanals ist
   nur `Opened.Session.Cert().User`, und `Opened.Session` beweist ihn nur zusammen mit dem
   Ende-zu-Ende-Handschlag oder einer Aufgabe: Die API kann jedes Zertifikat anhängen, das sie
-  kennt. Auf anderen Kanälen (etwa `stage`) berechtigst und protokollierst du nie nach ihm. Rollen
+  kennt. Auf einem Kanal ohne beides berechtigst und protokollierst du nie nach ihm; die Kanäle,
+  die die API ohne Benutzer öffnet (`core.WithoutUser`), tragen gar keins. Rollen
   mit `passwordToo` hat die API bei der Anmeldung geprüft; du verlässt dich auf den Passkey-Beweis,
   den `session.VerifyClient` dafür verlangt. Kanäle ohne Benutzer nimmst du nur für
   `core.WithoutUser` an, `install` ohne Benutzer nur mit `core.Unattended`. Aufgaben prüfst du mit
@@ -68,6 +69,35 @@ so klein wie möglich.
   es zu `ui` aus `core.ActivateParams` passen, und bei Store-Apps muss es bei jedem Aktivieren,
   Installieren und Update, mit oder ohne Benutzer, zu `ui` des Katalogeintrags passen; sonst
   `E_VERIFY`.
+- Die Lizenz einer Kauf-App kommt beim Aktivieren und bei Updates im Kopf der Übertragung
+  (`core.Transfer`), eine erneuerte über `ngc.store/controller/license` (`in`, ohne Benutzer,
+  Parameter `app`, Antwort `core.LicenseResult`). Du prüfst sie selbst mit
+  `store.VerifyLicenseFor`: der Store aus `dbapi.App.Store`, wie ihn deine Vertrauensliste führt,
+  deine Installation und die App. Ob die App laufen darf, beantwortet erst
+  `store.License.State(now)`; die Prüffunktionen sehen den Ablauf nicht an.
+  - Du behältst je App die neueste (`issued`) in `dbapi.BlobLicense`; eine gleich alte oder
+    ältere ändert nichts, und deine Antwort nennt den Zustand der, die du behältst.
+  - Nach Ablauf plus Übergangsfrist: Dienste der App stoppen, keine mehr starten (auch nicht nach
+    einem Neustart), Kanäle zu ihr mit `E_LICENSE` ablehnen, `unlicensed` melden
+    (`tunnel.StateUnlicensed`). Mit einer gültigen Lizenz startest du sie wieder; die Daten
+    bleiben.
+  - Aktivieren einer Kauf-App mit abgelaufener Lizenz: `E_LICENSE`. Eine App, die du nicht
+    ausführst: `E_NOTFOUND`. Eine Lizenz, die nicht prüft: `E_VERIFY`.
+- Updates und Aktivieren: Du installierst bei Store-Apps nur aus dem Katalog von
+  `dbapi.App.Store` (sonst `E_VERIFY`; bei einer hochgeladenen App steht dort `core.LocalStore`,
+  zu dem es keinen Katalog gibt) und nur, wenn `store.Granted` die neuen `needs` in
+  `dbapi.App.Grants` findet (sonst `E_FORBIDDEN`; ohne Benutzer meldest du `needsgrants`,
+  `store.UpdateNeedsGrants`). Die Rechte nimmst du dabei immer aus deiner eigenen Datenbank, wie
+  sie beim Aktivieren hineingeschrieben wurden, nie aus einem Wert, den eine API schickt: Sonst
+  könnte eine übernommene API einer App mehr erlauben. Danach läuft die App mit den Rechten auf
+  die neuen `needs` zusammengestrichen.
+  Diese beiden Regeln prüfst du auch ohne Benutzer selbst: `core.Unattended` sieht weder die
+  Zeile der App noch den Katalog, sein Ja heißt nur Dauerfreigabe und neuere Version.
+  - `activate` einer installierten App mit derselben oder einer neueren Version ersetzt sie samt
+    Rechten und behält die Daten; eine ältere Version gibt `E_FORBIDDEN`.
+  - Eine App mit Diensten nur auf einem Server mit Rolle `services`, sonst `E_FORBIDDEN`.
+  - `minNgc` vergleichst du mit `store.SupportsMinNGC` gegen deine eigene NGC-Version; ein
+    Entwicklungsstand (keine Release-Version) gilt als älter als jedes `minNgc`.
 - Updates einspielen und bei Fehlschlag zurücknehmen; ohne Unterschrift nur mit Dauerfreigabe
   (`core.Unattended`) und nie eine ältere Version. Ohne Benutzer zählt dabei nur, was Release- oder
   Store-Schlüssel signiert haben: Version und SHA-256 nimmst du aus dem geprüften Release oder
@@ -75,7 +105,7 @@ so klein wie möglich.
   hast) und lehnst Parameter ab, die davon abweichen; die Parameter eines solchen Kanals sind nicht
   unterschrieben. Releases prüfst du nur mit deinem eigenen Release-Schlüssel
   (`config.Controller.ReleaseKey`); eine Dauerfreigabe für einen NGC-Teil zählt nur mit diesem
-  Schlüssel. Eine Version, deren `minNgc` neuer ist als deine NGC-Version, installierst du nie.
+  Schlüssel.
 - Mit Rolle `db` spielst du die Migrationen aus der Datei `ngc-api` ein, mit dem Zugang aus
   `controller.json` (`migrate`), wenn die API, die das Update steuert, dich dafür bestimmt: Sie
   nimmt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten Node-ID, scheitert
@@ -84,17 +114,19 @@ so klein wie möglich.
 - `controller.json` liest du mit `config.LoadController` und schreibst es nur mit
   `config.SaveController`. Schlüssel und Passwörter darin sind `config.Secret` bzw.
   `config.SecretText`; den Wert geben nur `Bytes()` bzw. `Text()`, nie ins Log.
-- Mit Rolle `web`: Adressen (Host und Port aus `url` jedes API-Knotens) und Fingerabdrücke nimmst du
-  aus der Vertrauensliste, holst jedes Zertifikat mit `tunnel.PinnedTLS`, schreibst
-  `config.APITrustFile` und `web.json` (`config.SaveWeb`; `apis` mit `url` = `https://<Host>:<Port>`
-  und `tls`), richtest daraus die Lastverteilung in Apache ein und lädst Apache neu, sobald sich die
-  API-Server der Vertrauensliste ändern. Außerdem vergleichst du bei jedem Aufbau eines Tunnels und
-  einmal am Tag das Zertifikat, das du über `tunnel.PinnedTLS` bekommen hast, mit dem in
-  `config.APITrustFile`; weicht es ab (derselbe Schlüssel, das beweist der Fingerabdruck),
-  schreibst du die Datei neu und lädst Apache neu. Vertrauen trägt nur der Fingerabdruck, nicht das
-  Zertifikat; so sperrt weder ein erneuertes Zertifikat noch ein Datum Apache aus. Den Anker
-  schreibst du mit `config.SaveAnchor`. Vor deiner ersten Fassung der Vertrauensliste hat ngc-web
-  das aus `api_pins` getan.
+- Mit Rolle `web`: Adressen und Fingerabdrücke nimmst du aus der Vertrauensliste, die Adresse
+  hinter Apache leitet `trust.WebURL` aus `url` des Knotens ab; du holst jedes Zertifikat mit
+  `tunnel.PinnedTLS` und schreibst `config.APITrustFile` und `web.json` (`config.SaveWeb`; `apis`
+  mit `url` = `https://<Host>:<Port>` und `tls`), daraus `config.BalancerFile`, genau in der Form
+  der Vorlage in `shared/ulh.md` (Regel „Lastverteilung in Apache“). Erst `apachectl configtest`,
+  dann Apache neu laden – sobald sich die API-Server der Vertrauensliste ändern. Außerdem
+  vergleichst du bei jedem Aufbau eines Tunnels und einmal am Tag das Zertifikat, das du über
+  `tunnel.PinnedTLS` bekommen hast, mit dem in `config.APITrustFile`; weicht es ab (derselbe
+  Schlüssel, das beweist der Fingerabdruck), schreibst du die Datei neu und lädst Apache neu.
+  Vertrauen trägt nur der Fingerabdruck, nicht das Zertifikat; so sperrt weder ein erneuertes
+  Zertifikat noch ein Datum Apache aus. Den Anker schreibst du mit `config.SaveAnchor`. Vor
+  deiner ersten Fassung der Vertrauensliste hat ngc-web `config.APITrustFile` aus `api_pins`
+  geschrieben.
 - Der Dienst „virtuelles Terminal" als Beispiel-Dienst.
 
 ## Tests

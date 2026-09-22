@@ -68,7 +68,9 @@ dunkel. Dazu:
   (`tunnel.Fingerprint` des Schlüssels bzw. `tunnel.JoinFingerprint` über `node`, `noise`, `sign`,
   `tls` und `url`). Einen API-Server nimmst du als `trust.Node` der Art `api` auf, mit genau den
   Werten aus `core.PendingAPI` und `name` = `node`; das ist sicher, weil der Admin
-  `tunnel.JoinFingerprint` über genau diese Werte mit ulh vergleicht.
+  `tunnel.JoinFingerprint` über genau diese Werte mit ulh vergleicht. Seine Adresse muss
+  `trust.ValidTunnelURL` bestehen (sonst lehnt `trust.List.Validate` deine neue Fassung ab); du
+  zeigst sie Zeichen für Zeichen, damit der Admin einen fremden Host erkennt.
 - Ende zu Ende: pro Kanal Noise zum Controller aus `core.DesktopApp` (Feld `node`, nicht
   anzeigen). Prolog `noisep.E2EPrologue` mit SHA-256 von `params` und von `task`, jeweils genau den
   Bytes, die du ins OPEN geschrieben hast (fehlt das Feld: SHA-256 des leeren Texts);
@@ -107,7 +109,10 @@ dunkel. Dazu:
   du die Beweise neu, vor allem die hochgeladener Apps (sie gelten nur, solange Schlüssel und
   Root-Recht des freigebenden Admins darin stehen). Welche signierte Version läuft, entscheidet die
   API, auch eine ältere (etwa nach einem gescheiterten Update, das der Controller zurückgenommen
-  hat); eine Oberfläche, die niemand für diese App signiert hat, führst du nie aus.
+  hat); eine Oberfläche, die niemand für diese App signiert hat, führst du nie aus. Gestartet
+  wird die Seite aus `core.DesktopApp.Entry` – nur, wenn sie eine Datei des geprüften ui-tar ist
+  (`store.ValidPath`, und `store.WalkUI` hat sie geliefert); sonst zeigst du einen Fehler. Der
+  Wert ist nicht signiert und wählt allein unter diesen Dateien.
 - Hochladen (`ngc.store/upload`): SHA-256, Manifest (`store.ParseManifest`) und UI-Prüfsumme
   (`store.PackageUI`, Testdaten `packui.json`) rechnest du aus der Datei, die du schickst. Du liest
   sie wie `store.Walk`, also auch mit PAX-Köpfen und langen GNU-Namen, nicht nur die USTAR-Pakete
@@ -115,6 +120,9 @@ dunkel. Dazu:
   brichst du ab. Unterschrieben werden nur deine eigenen Werte: `core.ActivateParams` mit `sha256`,
   `ui` und `grants` genau gleich den `needs` des Manifests; erlaubt der Admin nicht alle, wird die
   App nicht aktiviert. Bei Store-Apps kommen `sha256` und `ui` aus dem geprüften Katalog.
+- Ziel einer Aktivierung: Der Admin wählt den Knoten aus `ngc.users/nodes` (`core.NodeInfo`); für
+  eine App mit Diensten nur einen Controller, der online ist und die Rolle `services` hat. Die
+  Werte sind unsignierte Hinweise; was er nicht ausführen kann, lehnt der Controller ab.
 - Updates (`ngc.store/updates`): eine Zeile je Ziel und Controller (`core.UpdateInfo`). Ein Update
   per Klick ist je Zeile eine Root-Aufgabe `install` mit `target`, `version` = `available` und
   `sha256` der Zeile (nur bei `state` `downloaded`; bei `system` nur `target`). `sha256` darfst du
@@ -123,7 +131,10 @@ dunkel. Dazu:
   Schlüssel für Dauerfreigaben nimmst du nie von der API: für NGC-Teile den Release-Schlüssel aus
   Fassung 1 (`info.releaseKey` des per MAC geprüften Angebots) oder aus den bestehenden
   Dauerfreigaben deiner geprüften Liste, für Apps den Schlüssel ihres Stores aus der geprüften
-  Vertrauensliste; `key` der Zeile dient nur Anzeige und Abgleich.
+  Vertrauensliste; `key` der Zeile dient nur Anzeige und Abgleich. Für eine Zeile im Zustand
+  `needsgrants` (`store.UpdateNeedsGrants`) gibt es nie ein Update per Klick: Die neue Version
+  braucht mehr Rechte, als die App beim Aktivieren bekommen hat. Du bietest stattdessen die
+  Aktivierung der neuen Version an, mit `grants` = den `needs` des geprüften Katalogeintrags.
 - JSON von außen strikt wie in Go (`shared/README.md`, Abschnitt „Striktes JSON“: Regeln und
   Budgets). Jede Grenze aus den Go-Paketen gilt auch hier. Texte für Menschen prüfst du wie
   `wire.ValidText`, Codepunkt für Codepunkt (`shared/README.md`, Regeln).
@@ -138,7 +149,9 @@ dunkel. Dazu:
   Beweise samt dem NFD-Fall in `proof_kdf.json`, Vertrauensliste, Sitzung samt Ersteinrichtung
   `setup` in `session.json`, Aufgaben, Frames, Kern-Aktionen, Kataloge, ui-tar, Kopplungscodes,
   striktes JSON und Budget in `json.json`, UI-Prüfsummen in `packui.json`, UI-Beweise in
-  `uiproof.json`). Diese Tests laufen ohne API.
+  `uiproof.json`, Hosts und Adressen in `url.json`: `hosts`, `tunnel`, `web`, `origins`,
+  `store`). `core.json` enthält jetzt `ngc.users/nodes`, `entry` in `ngc.desktop/apps` und eine
+  Zeile `needsgrants` in `ngc.store/updates`. Diese Tests laufen ohne API.
 - Ein Test zeigt, dass das Passwort den Browser nie verlässt (Mitschnitt der Anfragen).
 - Angriffe: eine untergeschobene Oberfläche (ui-tar, das nicht zum Beweis passt) und ein Mann in der
   Mitte bei der Ersteinrichtung (Angebot mit fremden Schlüsseln).

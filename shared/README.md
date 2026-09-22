@@ -15,8 +15,8 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | V3 | Controller ↔ Dienst im Container | `service` | `service/echo.sh` |
 | V4 | API und Controller ↔ Datenbank | `dbapi`, `dbapi/memstore`, `dbapi/dbtest` | – (Konformitätstests) |
 | V5 | App-Paket, Katalog, Lizenz, Updates | `store` | `store.json`, `pack.json`, `ui.json`, `packui.json`, `release/` |
-| V6 | Konfiguration, Pfade, ulh | `config`, `ulh.md` | `config/*.json`, `release/`, `tls/` |
-| V7 | Vertrauensliste, Ende zu Ende | `trust`, `trust/trusttest`, `noisep`, `proof` | `trust.json`, `noise.json` |
+| V6 | Konfiguration, Pfade, ulh | `config`, `ulh.md` | `config/*.json`, `release/`, `tls/`, `url.json`, `ulh/` |
+| V7 | Vertrauensliste, Ende zu Ende | `trust`, `trust/trusttest`, `noisep`, `proof` | `trust.json`, `noise.json`, `url.json` |
 
 ## Regeln
 
@@ -69,6 +69,8 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
     Release oder Katalogeintrag passt; ein falscher Wert lässt das Update also nur scheitern.
   - Die Werte eines neuen API-Servers kommen aus `core.PendingAPI`: Der Admin vergleicht
     `tunnel.JoinFingerprint`, den die Shell über genau diese Werte rechnet, mit der Ausgabe von ulh.
+    Seine Adresse ist eine Tunnel-Adresse nach `trust.ValidTunnelURL` (sonst lehnt
+    `trust.List.Validate` die Fassung ab); die Shell zeigt sie Zeichen für Zeichen.
   - Schlüssel für Dauerfreigaben kommen nie von der API: Store-Schlüssel aus der geprüften
     Vertrauensliste der Shell, der Release-Schlüssel aus Fassung 1 (dem per MAC geprüften Angebot
     der Ersteinrichtung) oder aus den bestehenden Dauerfreigaben. `key` in `core.UpdateInfo` dient
@@ -82,15 +84,50 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   eine Verbindung ohne Prüfung. Einen Fingerabdruck prüft Go nur mit `InsecureSkipVerify` zusammen
   mit `VerifyConnection`; beides setzt `tunnel.PinnedTLS`, sonst steht `InsecureSkipVerify`
   nirgends.
+- **Adressen** haben eine Grammatik und genau eine Schreibweise, denn sie landen in
+  Konfigurationen anderer Programme (Apache, Datenbanktreiber) und im Browser. Alle Arten bauen
+  auf demselben `<host>` und `<port>` auf:
+  - Tunnel-Adresse einer API `wss://<host>:<port>/tunnel` (`trust.ValidTunnelURL`:
+    `trust.Node.URL`, Kopplungs- und Beitrittscodes, `tunnel.JoinRequest`, `url` in `api.json`,
+    `apis` in `controller.json`);
+  - ihre Adresse hinter Apache `https://<host>:<port>` (`trust.WebURL` leitet sie ab,
+    `trust.ValidWebURL`: `apis` in `web.json`);
+  - Datenbankknoten `<host>:<port>` (`trust.ValidHostPort`);
+  - Herkunft für Passkeys `https://<host>`, mit `:<port>` nur, wenn der Port nicht 443 ist, sonst
+    nichts (`trust.ValidOrigin`: `rp.origins` der Vertrauensliste und in `web.json`, `proof.RP`),
+    denn genau so und nicht mehr schreibt der Browser die Herkunft in die `clientData`, und
+    `proof.Verify` vergleicht sie als Text: Ein Eintrag, den ein Browser nie schreibt, passt auf
+    nichts und sperrt alle aus, statt laut zu scheitern;
+  - Stores `https://<host>[:<port>][/<pfad>]` (`trust.ValidStoreURL`: `trust.Store.URL`,
+    `storeUrl`), Pfadsegmente aus `A-Z a-z 0-9 . _ ~ -` (nicht `.` oder `..`, kein `/` am Ende),
+    keine Abfrage;
+  - Pakete, Release-Dateien und der Shop-Link eines Katalogs `https://<host>[:<port>]`, dazu
+    wahlweise Pfad und Abfrage aus druckbarem ASCII ohne `"` `'` `<` `>` `\` und `#` (die Regel
+    steht in `store/catalog.go` und ruft `trust.ValidHost` bzw. `trust.ValidHostPort`); eine
+    Abfrage bleibt hier erlaubt, weil Stores Download-Links signieren. Statt einer Adresse darf
+    dort ein Pfad neben dem Katalog stehen (`store.ValidPath`).
+
+  `<host>` ist überall derselbe (`trust.ValidHost`): ein DNS-Name in Kleinbuchstaben (Labels aus
+  `a-z`, `0-9` und `-`, je 1 bis 63 Zeichen, ohne `-` am Anfang oder Ende, das letzte nicht nur
+  aus Ziffern, zusammen höchstens 253), eine IPv4-Adresse ohne führende Nullen oder eine
+  IPv6-Adresse in eckigen Klammern in der Form von RFC 5952 (Kleinbuchstaben, Nullen
+  zusammengefasst, ohne Zone, nicht IPv4-gemappt). `<port>` ist 1 bis 65535 ohne führende Null.
+  Nirgends stehen Zugangsdaten, nirgends ein Anker; alles ist ASCII. Höchstens 256 Byte; nur
+  Pakete, Release-Dateien und Shop-Link dürfen 512 Byte haben, weil ein signierter Download-Link
+  sein Token in der Abfrage trägt. `trust.ValidHostPort` begrenzt nur Host und Port (zusammen bis
+  259 Byte), deshalb setzt `config.MaxField` die Grenze für einen Datenbankknoten.
+  Testdaten: `url.json`; die ulh-Skripte prüfen Hosts wie `testdata/ulh/host.sh`.
 - **Signierte Dokumente, die bleiben:** Release, Katalog und Lizenz bekommen ein neues Feld nur mit
   einem neuen Zweck (`release/v2` usw.) an einem eigenen Ort; in der Übergangszeit signiert der
   Herausgeber beide Fassungen, jeder Leser nimmt die neueste, die er kennt. Ein neues Feld im
   Manifest braucht `minNgc` (im Manifest und im Katalog) mindestens bei der NGC-Version, die es
   liest: Eine Version, deren `minNgc` neuer ist als die NGC-Version des Knotens, bietet die API
-  nicht an, und der Controller installiert sie nicht. Die Vertrauensliste ist eine einzige Kette:
-  ein neues Format nur mit einer neuen Vertragsnummer, sobald alle Controller sie in `hello` nennen;
-  ein Controller, der dabei fehlte, spielt erst sein Update ein und liest dann weiter. Das ui-tar
-  ändert sich nie; eine andere Form wäre eine neue Aktion.
+  nicht an, und der Controller installiert sie nicht (`store.SupportsMinNGC`; eine NGC-Version,
+  die keine Release-Version ist, etwa `0.0.0-dev`, gilt als älter als jedes `minNgc`). Die
+  Vertrauensliste ist eine einzige Kette: ein neues Format nur mit einer neuen Vertragsnummer,
+  sobald alle Controller sie in `hello` nennen; ein Controller, der dabei fehlte, spielt erst
+  sein Update ein und liest dann weiter. Das ui-tar ändert sich nie; eine andere Form wäre eine
+  neue Aktion.
 - **Geheimnisse** in Konfigurationen sind `config.Secret` (Schlüssel) und `config.SecretText`
   (Passwörter). Den Wert geben nur `Bytes()` bzw. `Text()`; fmt, `log/slog` und `json.Marshal`
   zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController`,
@@ -129,16 +166,18 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `sign.json` | ein signierter Umschlag | `sign`: `TestVectors` |
 | `json.json` | Prüfdokument mit jeder Feldart (`schema`), sein Budget (`size`, `items`, `totals`) und gültige und ungültige Fälle (`cases`, das Dokument als base64url) | `enc`: `TestJSONVectors` |
 | `proof.json`, `proof_kdf.json` | Beweise mit Passkey und Passwortschlüssel, gültige und ungültige; Argon2id, auch für ein Passwort, das in NFD getippt wurde (`typed`; `password` ist dessen NFC) | `proof`: `TestProofVectors`, `TestKDFVectors` |
-| `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige | `trust`: `TestVectors` |
-| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
+| `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige, darunter Fassungen mit Adressen, die die Grammatik brechen | `trust`: `TestVectors` |
+| `url.json` | Hosts und Adressen: `hosts`, `hostPort`, `tunnel` (bei gültigen die Adresse hinter Apache nach `trust.WebURL`), `web`, `origins`, `store`, je gültig oder nicht | `trust`: `TestURLVectors` |
+| `ulh/` | `host.sh` (von Hand) prüft Hosts wie die ulh-Skripte, getestet von `TestHostScript` | von Hand |
+| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
 | `task.json` | Root-Aufgabe (`deactivate`) und erneute Bestätigung | `task`: `TestVectors` |
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
 | `tunnel.json` | Kopplungscode (mit `tls`) mit MAC und Fingerabdruck, `pairCheck` (`tunnel.PairCode.Check`), `join` (Beitrittscode und Anfrage mit `node`, `tls`, `url`, MAC nach `tunnel.JoinMAC` und `fingerprint` nach `tunnel.JoinFingerprint`), `tlsPin` (Fingerabdruck von `tls/api.pem`) | `tunnel`: `TestVectors` |
 | `tls/` | `api.pem`: TLS-Zertifikat von `api-1` aus `trust.json`; `pin.sh` (von Hand) rechnet den Fingerabdruck wie `trust.TLSPin`, geprüft von `TestTLSPinScript` | `tunnel`: `TestVectors` |
-| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis (auch `ngc.desktop/ui-proof` und `ngc.users/pending-api`; Kopplungs- und Beitrittscode sind echte Codes zur Fassung „genesis“ aus `trust.json`, `ngc.store/catalog` ein echter Katalog des globalen Stores), dazu `notice`; unter `empty` die neun Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
+| `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis (auch `ngc.desktop/ui-proof` und `ngc.users/pending-api`; Kopplungs- und Beitrittscode sind echte Codes zur Fassung „genesis“ aus `trust.json`, `ngc.store/catalog` ein echter Katalog des globalen Stores; `ngc.users/nodes` die Controller der Vertrauensliste, `entry` in `ngc.desktop/apps` die erste Seite, `ngc.store/updates` mit einer Zeile `needsgrants`), dazu `notice`; unter `empty` die zehn Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
 | `uiproof.json` | UI-Beweise gegen eine Vertrauensliste (`trust`): je Fall App, Version, Beweis, die UI-Prüfsumme, die er belegt, und ob er gilt | `core`: `TestUIProofVectors` |
-| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten (`catalogRejects`, `licenseRejects`, `releaseRejects`) und den Werten zum Prüfen (`store`, `installation`, `installKey`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
+| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten: `catalogRejects` (darunter sieben Adressen, die die Grammatik brechen), `licenseRejects` (darunter eine Lizenz für eine andere App), `releaseRejects`; dazu die Werte zum Prüfen (`store`, `installation`, `installKey`, `licenseApp`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
 | `packui.json` | Pakete, wie `ngc-store pack` sie schreibt, mit dem ui-tar von `store.PackageUI` und dessen SHA-256 | `store`: `TestPackageUIVectors` |
 | `ui.json` | ui-tars, gültige und ungültige (Regeln im Kommentar von `store/ui.go`); bei gültigen unter `files` die Dateien, die `store.WalkUI` liefert. Fälle mit Daten bis `store.MaxUIFile`, `store.MaxUITotal` oder mit `store.MaxEntries` Einträgen stehen nicht darin | `store`: `TestUIVectors` |
 | `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 31 Fällen | `store`: `TestReleaseScriptVector` |
@@ -359,8 +398,8 @@ sie über den Kanal `ngc.users/controller/trust`.
   verlassen sich auf den Passkey-Beweis, den `session.VerifyClient` für solche Benutzer verlangt.
   Das Client-Zertifikat beweist den Benutzer nur zusammen mit dem Ende-zu-Ende-Handschlag
   (Schlüssel `dh`) oder einer Aufgabe (Schlüssel `sig`): Die API hält Zertifikat und Beweis jeder
-  Sitzung und kann jedes anhängen. Auf anderen Kanälen (etwa `stage`) berechtigt und protokolliert
-  der Controller nicht nach ihm.
+  Sitzung und kann jedes anhängen. Auf Kanälen ohne beides berechtigt und protokolliert der
+  Controller nicht nach ihm; die Kanäle ohne Benutzer (`core.WithoutUser`) tragen gar keins.
 
 ### Ende zu Ende
 
@@ -406,9 +445,10 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
     `store.WalkUI` liest sie, alles andere wird abgelehnt.
   - `transfer` (`core.FlowTransfer`): API → Controller, ein Kopf `core.Transfer`
     (`core.WriteTransfer`, `core.ReadTransfer`), danach genau `size` Byte; Ergebnis wie bei `call`.
-- **Wer öffnet:** Die Shell öffnet alle Aktionen des Dienstes `api` und die Root-Aufgaben des
-  Dienstes `controller` (`activate`, `deactivate`, `uninstall`, `delete-data`, `install`), jeweils
-  mit Aufgabe (`core.ShellOpens`); `stage` und `ngc.users/controller/trust` öffnet nur die API,
+- **Wer öffnet:** Die Shell öffnet alle Aktionen des Dienstes `api` (mit Aufgabe nur, wo
+  `task.Check` sie verlangt) und die Root-Aufgaben des Dienstes `controller` (`activate`,
+  `deactivate`, `uninstall`, `delete-data`, `install`), diese immer mit Aufgabe
+  (`core.ShellOpens`); `stage`, `license` und `ngc.users/controller/trust` öffnet nur die API,
   ohne Benutzer, und lehnt ein OPEN der Shell dafür mit `E_FORBIDDEN` ab.
 - **`transfer` mit Aufgabe** (`activate`): Die Shell schickt nach der ersten GRANT sofort EOF und
   keine DATA (sonst `E_PROTOCOL`). Die API schreibt auf der Tunnel-Strecke selbst den Kopf
@@ -433,7 +473,7 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   - die API bei `ngc.store/api/upload` (bis `store.MaxPackage`, 4 GiB), `ngc.users/api/trust` und
     `ngc.store/api/license`;
   - der Controller bei `ngc.store/controller/activate` und `ngc.store/controller/stage`
-    (`transfer`) und bei `ngc.users/controller/trust`.
+    (`transfer`) und bei `ngc.users/controller/trust` und `ngc.store/controller/license`.
 - **Aufgaben:** Ein OPEN mit Aufgabe (`task`) hat keine eigenen Parameter; es gelten die der
   Aufgabe. Ob ein Kanal eine Aufgabe braucht, root ist oder kritisch, entscheidet `task.Check` mit
   einer Regel aus geprüften Daten, nie aus dem OPEN: `core.RuleFor` für Kern-Aktionen (ohne
@@ -447,13 +487,30 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   antwortet mit `core.TrustResult` (seine neueste geprüfte Fassung) oder schließt mit `E_VERIFY`.
 - **Ohne Benutzer** (`tunnel.Open` ohne `client` und `proof`, mit einem OPEN der API) öffnet die
   API nur, was `core.WithoutUser` nennt: `ngc.users/controller/trust`,
-  `ngc.store/controller/stage` und `ngc.store/controller/install`. `install` ohne Benutzer führt
+  `ngc.store/controller/stage`, `ngc.store/controller/install` und
+  `ngc.store/controller/license`. `install` ohne Benutzer führt
   der Controller nur aus, wenn `core.Unattended` zustimmt: Es gibt eine Dauerfreigabe für das Ziel
   und den Schlüssel, der die Datei signiert hat, und die Version ist neuer als die installierte; ist
   nichts installiert, nie. Bei `system` gibt es keinen Versionsvergleich. Es zählen nur die
   signierten Dateien: Version und SHA-256 nimmt der Controller aus dem geprüften Release oder
   Katalogeintrag der Datei (dessen `seq` er geprüft hat) und lehnt Parameter ab, die davon
   abweichen, denn die Parameter eines Kanals ohne Benutzer sind nicht unterschrieben.
+  `core.Unattended` sieht weder die Zeile der App noch den Katalog: Ein Ja heißt Dauerfreigabe
+  und Version, nie schon die Erlaubnis zu installieren. Store und Rechte einer App prüft der
+  Controller daneben selbst (`dbapi.App.Store`, `store.Granted`).
+- **Lizenzen auf Controllern:** Die Lizenz einer Kauf-App kommt beim Aktivieren und bei Updates
+  im Kopf der Übertragung (`core.Transfer`), eine erneuerte über `ngc.store/controller/license`
+  (`in`, Parameter `app`, Inhalt der Umschlag der Lizenz, Ergebnis `core.LicenseResult`).
+  - Der Controller prüft sie mit `store.VerifyLicenseFor`: Unterschrift des Stores, aus dem die
+    App aktiviert wurde, die Installation seiner Vertrauensliste, die App und die Form. Nur die
+    API prüft, ob der Inhaltsschlüssel für den Schlüssel der Installation verpackt ist (sie allein
+    kann ihn auspacken), und die Zahl der Benutzer.
+  - Er behält je App die neueste (`issued`). Ist sie nach `store.License.State` abgelaufen (Ablauf
+    plus Übergangsfrist), stoppt er die Dienste der App, startet keine mehr (auch nicht nach einem
+    Neustart), lehnt Kanäle zu ihr mit `E_LICENSE` ab und meldet `unlicensed`. Kommt eine gültige,
+    startet er sie wieder. Die Daten bleiben.
+  - Die API schickt die neueste Lizenz jeder Kauf-App an jeden Controller, auf dem die App läuft:
+    nach jeder neuen Lizenz und nach jedem Tunnelaufbau.
 - **Oberflächen:** Eine App-Oberfläche führt die Shell erst aus, wenn ihr ui-tar zu einer
   signierten Prüfsumme passt. Die Prüfsumme ist SHA-256 des kanonischen ui-tar (`store.PackageUI`:
   die Dateien unter `ui/` in der Reihenfolge des Pakets, mit `store.UIWriter` geschrieben, ohne
@@ -463,7 +520,9 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   dann lädt sie `ngc.desktop/ui` ganz, vergleicht SHA-256 und liest es erst danach nach den Regeln
   von `store.WalkUI`. Geprüfte Prüfsummen merkt sie sich je App und Version, Kataloge je Store und
   `seq`. Nach jeder neuen Fassung der Vertrauensliste prüft sie die Beweise neu, vor allem die
-  hochgeladener Apps: Ein Store oder der Schlüssel eines Admins kann darin fehlen.
+  hochgeladener Apps: Ein Store oder der Schlüssel eines Admins kann darin fehlen. Die erste Seite
+  nennt `core.DesktopApp.Entry` (aus `ui.entry` des Manifests); sie ist nicht signiert und wählt
+  nur unter den Dateien des geprüften ui-tar; eine Seite, die dort fehlt, startet die Shell nicht.
   - Für eine Store-App bürgt jeder Store der Vertrauensliste, dessen geprüfter Katalog App, Version
     und Prüfsumme führt. Grenze: Eine übernommene API kann zusammen mit einem feindlichen Store, den
     der Admin eingetragen hat, einer App eines anderen Stores eine fremde Oberfläche unterschieben.
@@ -484,6 +543,11 @@ aus der Vertrauensliste. Die Shell findet den Controller in `core.DesktopApp` (F
   der Zeile dient nur Anzeige und Abgleich (Regel „Selbst rechnen“). Controller prüfen Releases nur
   mit ihrem eigenen Release-Schlüssel. Gespeichert ist je Ziel nur die Einstellung (Modus und
   Zeitfenster, `core.UpdateSetting` unter `dbapi.SettingUpdate`); die Zeilen rechnet die API aus.
+  Ein Update bekommt nie mehr Rechte als die App beim Aktivieren (`store.Granted` mit
+  `dbapi.App.Grants`) und kommt nur aus dem Katalog ihres Stores (`dbapi.App.Store`). Verlangt eine
+  neue Version mehr, steht ihre Zeile auf `needsgrants` (`store.UpdateNeedsGrants`): kein Update
+  per Klick, keins automatisch; der Admin aktiviert die neue Version mit den neuen Rechten
+  (`activate`, `grants` = die `needs` aus dem geprüften Katalog).
 
 ## Prüfen
 

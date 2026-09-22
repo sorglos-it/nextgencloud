@@ -36,6 +36,10 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   aus `storeUrl` und `storeKey` in `api.json`) und `releaseKey` aus `api.json`. Eine Anfrage
   prüfst du mit `session.VerifySetup(s, info, code)`; Fehlversuche zählst du (`E_LOCKED`). Sobald
   es einen Admin gibt, antworten beide Methoden `E_NOTFOUND`.
+- Adressen nach der Grammatik (`shared/README.md`, Regel „Adressen“): `url` in `api.json` ist
+  eine Tunnel-Adresse (`trust.ValidTunnelURL`), `storeUrl` eine Store-Adresse
+  (`trust.ValidStoreURL`), und dein Knoten im Angebot der Ersteinrichtung trägt genau dieses
+  `url`. Das ulh-Skript prüft dafür `hostname` mit `host.sh` (`shared/ulh.md`).
 - Eigenes TLS: Dein Zertifikat erzeugst du selbst, selbst signiert für den Host von `url` und deinen
   Schlüssel, 100 Jahre gültig, damit kein Datum Apache aussperrt (`SSLProxyCheckPeerExpire on`).
   Vertrauen trägt nur der Fingerabdruck des Schlüssels (`trust.TLSPin`, SHA-256 des SPKI), nicht
@@ -68,10 +72,10 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   14). `core.EncodeResult` schreibt leere Listen als `[]` und leere Maps als `{}`, lässt optionale
   Felder mit Nullwert weg und gibt `core.ErrResult` für alles, was die Shell ablehnen würde (ein
   übrig gebliebenes `null`, ungültiges UTF-8, mehr als `wire.MaxCallResult` Byte). Das betrifft vor
-  allem die neun Ergebnisse, die als Ganzes eine Liste sind (`ngc.desktop/apps`, `ngc.users/list`,
-  `ngc.users/rights`, `ngc.users/pending`, `ngc.users/pending-api`, `ngc.users/log`,
-  `ngc.store/sources`, `ngc.store/installed`, `ngc.store/updates`); leer stehen sie unter `empty`
-  in `core.json`.
+  allem die zehn Ergebnisse, die als Ganzes eine Liste sind (`ngc.desktop/apps`, `ngc.users/list`,
+  `ngc.users/rights`, `ngc.users/pending`, `ngc.users/pending-api`, `ngc.users/nodes`,
+  `ngc.users/log`, `ngc.store/sources`, `ngc.store/installed`, `ngc.store/updates`); leer stehen
+  sie unter `empty` in `core.json`.
 - Was der Öffner schicken darf (`core.Action.MaxIn`), setzt du bei `ngc.store/api/upload`,
   `ngc.users/api/trust` und `ngc.store/api/license` durch: bei mehr schließt du mit `E_TOOLARGE`.
   Umschläge von außen liest du nur mit `sign.ParseEnvelope` (Lizenzen mit `store.MaxLicense`,
@@ -91,6 +95,10 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   den rechnet die Shell). Neue Fassungen der Vertrauensliste an Controller über den Kanal
   `ngc.users/controller/trust`, an Browser per `GET /api/v1/trust` (`session.TrustChain`,
   seitenweise) und Hinweis `trust`. Ohne Benutzer öffnest du nur, was `core.WithoutUser` nennt.
+- `ngc.users/nodes` (`core.NodeInfo`): eine Zeile je Controller deiner Vertrauensliste, damit der
+  Admin das Ziel einer Aktivierung wählt. `online` heißt: Er hat gerade einen Tunnel zu dir.
+  Rollen, Version und Architektur kommen aus seinem letzten `hello` an dich (`tunnel.Hello`) und
+  fehlen, wenn du nie eines hattest. Nichts davon ist signiert.
 - Beitritt weiterer API-Server: Die `tunnel.JoinRequest` kommt an `tunnel.PathJoin`
   (`tunnel.ParseJoinRequest`, MAC mit `tunnel.JoinRequest.Verify` und dem Geheimnis des Codes, das
   genau einmal gilt: `dbapi.OnceJoin`). Du legst sie als `dbapi.BlobJoin` ab und zeigst sie mit
@@ -98,22 +106,32 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   selbst bei, schickst du deine `tunnel.JoinRequest` per POST an
   `https://<Host und Port aus url des Codes>` + `tunnel.PathJoin`, TLS mit `tunnel.PinnedTLS` und
   dem Fingerabdruck des Codes (`tunnel.JoinCode.TLS`), und holst später die gemeinsamen Schlüssel
-  ebenso gepinnt. Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann
-  jede ersetzen. Wie ein neuer API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel
-  bekommt, legst du selbst fest.
+  ebenso gepinnt. Dein ulh-Skript zeigt dabei nicht nur `tunnel.JoinFingerprint`, sondern auch
+  den Anker aus dem Beitrittscode (Nummer und `tunnel.Fingerprint` des Hashes), wie
+  `ngc-controller` es beim Koppeln tut; der Admin vergleicht ihn mit der Shell (`shared/ulh.md`).
+  Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen.
+  Wie ein neuer API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel bekommt,
+  legst du selbst fest.
 - Apps und Stores: Kataloge prüfen (`store.VerifyCatalog`), Pakete entpacken (`store.Walk`,
   höchstens `store.MaxDirs` Verzeichnisse), Lizenzen prüfen, Schlüssel der Kauf-Apps entpacken
-  (`store.UnwrapKey`) und nur an eigene Controller geben. Der globale Store heißt `global`
-  (`store.GlobalID`), `local` steht für hochgeladene Apps (`core.LocalStore`); einen zweiten Store
-  `global` lehnst du ab. Auf `ngc.store/upload` antwortest du mit `core.UploadResult` (ID, Version,
-  SHA-256 und `store.PackageUI` des Pakets); die Shell gleicht damit nur ab.
+  (`store.UnwrapKey`) und nur an eigene Controller geben. Die neueste Lizenz jeder Kauf-App, die
+  du mit `store.VerifyLicense` geprüft hast, schickst du über `ngc.store/controller/license`
+  (ohne Benutzer, Parameter `{app}`) an jeden Controller, auf dem die App läuft: nach jeder neuen
+  Lizenz und nach jedem Tunnelaufbau. Er prüft sie selbst mit `store.VerifyLicenseFor`; nur du
+  packst den Inhaltsschlüssel aus und zählst die Benutzer einer Lizenz je Benutzer. Der globale
+  Store heißt `global` (`store.GlobalID`), `local` steht für hochgeladene Apps
+  (`core.LocalStore`); einen zweiten Store `global` lehnst du ab. Auf `ngc.store/upload`
+  antwortest du mit `core.UploadResult` (ID, Version, SHA-256 und `store.PackageUI` des Pakets);
+  die Shell gleicht damit nur ab.
 - Oberflächen: `dbapi.BlobUI` hält genau `store.PackageUI` des unverschlüsselten Pakets, und
   `ngc.desktop/ui` liefert diese Bytes unverändert (die Shell liest sie wie `store.WalkUI`). Für
   jede installierte Version hältst du ihren `core.UIProof` in `dbapi.BlobApproval`: bei Store-Apps
   den Katalog ihres Stores, der die Version führt, bei hochgeladenen Apps die Aufgabe `activate`,
   die sie installiert hat, mit dem Client-Zertifikat und dem Beweis ihrer Sitzung. Ihn liefert
   `ngc.desktop/ui-proof`, höchstens `wire.MaxCallResult` Byte; so verliert ein gekürzter Katalog
-  den Beweis nicht.
+  den Beweis nicht. `core.DesktopApp.Entry` nimmst du aus `ui.entry` des Manifests der
+  installierten Version; der Wert ist nicht signiert, deshalb führt die Shell nur eine Seite aus,
+  die auch im geprüften ui-tar liegt.
 - Updates: Reihenfolge Datenbank → APIs → Controller → Webinterface, gesteuert von genau einer API
   über `dbapi.LockUpdate`. Die Migrationen spielt genau ein Controller mit Rolle `db` ein: Die API
   mit der Sperre wählt unter den verbundenen Controllern mit Rolle `db` den mit der kleinsten
@@ -123,7 +141,12 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   und Zeitfenster); die Zeilen speicherst du nicht. `sha256` ist die Prüfsumme der Datei, die nach
   `stage` auf dem Controller liegt, `key` bei NGC-Teilen dein Release-Schlüssel
   (`config.API.ReleaseKey`). Eine Version, deren `minNgc` neuer ist als die NGC-Version des
-  Controllers (`tunnel.Hello.Version`), bietest du nicht an.
+  Controllers (`tunnel.Hello.Version`), bietest du nicht an; verglichen wird mit
+  `store.SupportsMinNGC`. Versionen einer App kommen nur aus dem Katalog ihres eigenen Stores
+  (`dbapi.App.Store`). Verlangt eine neue Version mehr als die `needs`, die beim Aktivieren
+  freigegeben wurden (`store.Granted` gegen `dbapi.App.Grants`), steht die Zeile auf
+  `needsgrants` (`store.UpdateNeedsGrants`): Diese Version installierst du nie, weder per Klick
+  noch automatisch; der Admin aktiviert sie mit den neuen Rechten.
 - Einmalwerte (`dbapi.OnceNonce`, `dbapi.OncePair`, `dbapi.OnceJoin`, `dbapi.OnceTask`) räumst du
   mit `OncePurge(now - session.MaxSkew)` weg (`dbapi.Local.OncePurge`): Sonst könnte eine API mit
   nachgehender Uhr eine Aufgabe noch einmal annehmen, deren ID eine API mit vorgehender Uhr schon
