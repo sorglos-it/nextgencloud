@@ -308,10 +308,15 @@ func TestValidate(t *testing.T) {
 		"api without url":                   func(l *trust.List) { l.Nodes[0].URL = "" },
 		"genesis with prev":                 func(l *trust.List) { l.Prev = make([]byte, 32) },
 		"store without https":               func(l *trust.List) { l.Stores[0].URL = "http://store.ngc.example" },
-		"AutoSystem with a key":             func(l *trust.List) { l.Auto[1].Key = make([]byte, ed25519.PublicKeySize) },
-		"valid target without a key":        func(l *trust.List) { l.Auto[0].Key = nil },
-		"unknown target":                    func(l *trust.List) { l.Auto = append(l.Auto, trust.Auto{Target: "unknown-target"}) },
-		"store named local":                 func(l *trust.List) { l.Stores[0].ID = trust.StoreLocal },
+		// An origin reaches web.json and the browser compares it as text, so it
+		// is scheme, host and port and nothing else (trust.ValidOrigin).
+		"origin with a path":         func(l *trust.List) { l.RP.Origins = []string{"https://ngc.example.org/x"} },
+		"origin with a line feed":    func(l *trust.List) { l.RP.Origins = []string{"https://ngc.example.org\x0a"} },
+		"origin in upper case":       func(l *trust.List) { l.RP.Origins = []string{"https://NGC.example.org"} },
+		"AutoSystem with a key":      func(l *trust.List) { l.Auto[1].Key = make([]byte, ed25519.PublicKeySize) },
+		"valid target without a key": func(l *trust.List) { l.Auto[0].Key = nil },
+		"unknown target":             func(l *trust.List) { l.Auto = append(l.Auto, trust.Auto{Target: "unknown-target"}) },
+		"store named local":          func(l *trust.List) { l.Stores[0].ID = trust.StoreLocal },
 		"core app as standing approval target": func(l *trust.List) {
 			l.Auto = []trust.Auto{l.Auto[0], {Target: "ngc.store", Key: make([]byte, ed25519.PublicKeySize)}, l.Auto[1]}
 		},
@@ -350,6 +355,7 @@ func TestValidate(t *testing.T) {
 		// A pin is a hash: any 32 bytes are one.
 		"API node with another pin of 32 bytes": func(l *trust.List) { l.Nodes[0].TLS = bytes.Repeat([]byte{0x77}, 32) },
 		"passkey with rp":                       func(l *trust.List) { l.Users[0].Keys = append(l.Users[0].Keys, pk) },
+		"origin with a port":                    func(l *trust.List) { l.RP.Origins = []string{"https://ngc.example.org:8443"} },
 		"app as standing approval target": func(l *trust.List) {
 			l.Auto = []trust.Auto{l.Auto[0], {Target: "org.sorglos.terminal", Key: make([]byte, ed25519.PublicKeySize)}, l.Auto[1]}
 		},
