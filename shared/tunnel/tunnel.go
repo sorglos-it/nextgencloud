@@ -34,7 +34,7 @@ const (
 	SecretSize     = 16
 	PairLifetime   = 86400
 	MaxPairCode    = 1024 // also for join codes
-	MaxURL         = 256  // longest PairCode.URL and JoinCode.URL
+	MaxURL         = 256  // longest PairCode.URL and JoinCode.URL: the bound of trust.ValidTunnelURL
 	MaxPairRequest = 4096 // also for join requests
 	MaxHello       = 4096
 	MaxStatusApps  = 256 // at the longest app ID and version a status still fits one frame, with room to spare
@@ -80,7 +80,7 @@ func Components(roles []string) []string {
 // PairPrefix + base64url(JSON). The controller POSTs its PairRequest to
 // https://<host:port of URL> + PathPair, verified with PinnedTLS(TLS).
 type PairCode struct {
-	URL    string       `json:"url"`    // wss://host:port/tunnel of the issuing API
+	URL    string       `json:"url"`    // tunnel address of the issuing API (trust.ValidTunnelURL)
 	Key    enc.Bytes    `json:"key"`    // its Noise key
 	TLS    enc.Bytes    `json:"tls"`    // the pin of the issuing API's TLS key (trust.TLSPin)
 	Secret enc.Bytes    `json:"secret"` // one use, valid for PairLifetime
@@ -101,7 +101,7 @@ type PairRequest struct {
 // trust list, it fetches the shared keys from the issuing API; that exchange
 // is internal to the API part.
 type JoinCode struct {
-	URL    string       `json:"url"`    // wss://host:port/tunnel of the issuing API
+	URL    string       `json:"url"`    // tunnel address of the issuing API (trust.ValidTunnelURL)
 	Key    enc.Bytes    `json:"key"`    // its Noise key
 	TLS    enc.Bytes    `json:"tls"`    // the pin of the issuing API's TLS key (trust.TLSPin)
 	Secret enc.Bytes    `json:"secret"` // one use, valid for PairLifetime
@@ -117,7 +117,7 @@ type JoinRequest struct {
 	Noise enc.Bytes `json:"noise"` // its X25519 key
 	Sign  enc.Bytes `json:"sign"`  // its Ed25519 key for API certificates
 	TLS   enc.Bytes `json:"tls"`   // the pin of its own TLS key (trust.TLSPin)
-	URL   string    `json:"url"`   // its own tunnel URL, wss://host:port/tunnel
+	URL   string    `json:"url"`   // its own tunnel address (trust.ValidTunnelURL)
 	MAC   enc.Bytes `json:"mac"`   // JoinMAC(secret, Node, Noise, Sign, TLS, key of the issuing API, URL)
 }
 
@@ -234,7 +234,7 @@ func parseCode(prefix, s string) (code, bool) {
 	if codeBudget.Decode(b, &c) != nil {
 		return code{}, false
 	}
-	if !strings.HasPrefix(c.URL, "wss://") || len(c.URL) > MaxURL || len(c.Key) != 32 || len(c.TLS) != sha256.Size ||
+	if !trust.ValidTunnelURL(c.URL) || len(c.Key) != 32 || len(c.TLS) != sha256.Size ||
 		len(c.Secret) != SecretSize || c.Anchor.Seq == 0 || len(c.Anchor.Hash) != sha256.Size {
 		return code{}, false
 	}
@@ -359,12 +359,13 @@ func JoinFingerprint(node string, noise, signKey, tlsPin []byte, url string) str
 }
 
 // ParseJoinRequest decodes and checks a join request: a node ID
-// (wire.ValidName), 32 bytes each of Noise, Sign and TLS, a wss:// URL of at
-// most MaxURL bytes and a 32-byte MAC. Verify checks the MAC.
+// (wire.ValidName), 32 bytes each of Noise, Sign and TLS, a tunnel address
+// (trust.ValidTunnelURL, at most MaxURL bytes) and a 32-byte MAC. Verify
+// checks the MAC.
 func ParseJoinRequest(b []byte) (JoinRequest, error) {
 	var r JoinRequest
 	if requestBudget.Decode(b, &r) != nil || !wire.ValidName(r.Node) || len(r.Noise) != 32 || len(r.Sign) != 32 ||
-		len(r.TLS) != sha256.Size || !strings.HasPrefix(r.URL, "wss://") || len(r.URL) > MaxURL || len(r.MAC) != sha256.Size {
+		len(r.TLS) != sha256.Size || !trust.ValidTunnelURL(r.URL) || len(r.MAC) != sha256.Size {
 		return JoinRequest{}, ErrJoin
 	}
 	return r, nil
