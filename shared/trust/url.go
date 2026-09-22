@@ -131,18 +131,25 @@ func ValidWebURL(u string) bool {
 }
 
 // ValidOrigin reports whether o is an origin for passkeys (proof.RP.Origins,
-// config.Web.RP.Origins): exactly "https://" host, with ":" port only if the
-// page is not served on 443, at most 256 bytes. It carries no path, query or
-// fragment, because a browser writes the origin of the page into the client
-// data as scheme, host and port alone, and proof.Verify compares it with
-// these entries as text: anything a browser would never write could only
-// match nothing, and the values go on into web.json.
+// config.Web.RP.Origins): exactly "https://" host, and ":" port only for a
+// port other than 443, at most 256 bytes. It carries no path, query,
+// fragment and no default port, because a browser writes the origin of the
+// page into the client data as scheme and host, with the port only where it
+// is not the default, and proof.Verify compares it with these entries as
+// text. An entry a browser would never write matches nothing, so it would
+// let no one log in at all instead of failing loudly; the values also go on
+// into web.json.
 func ValidOrigin(o string) bool {
 	if len(o) > maxURL {
 		return false
 	}
 	rest, ok := strings.CutPrefix(o, "https://")
-	return ok && (ValidHost(rest) || ValidHostPort(rest))
+	if !ok {
+		return false
+	}
+	// ValidHostPort has parsed the port by then, so the suffix is the port
+	// and not part of an IPv6 host, which ValidHost takes without one.
+	return ValidHost(rest) || (ValidHostPort(rest) && !strings.HasSuffix(rest, ":443"))
 }
 
 // ValidStoreURL reports whether u is the address of a store: "https://", a
