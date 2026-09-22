@@ -1,10 +1,13 @@
 package store
 
 import (
+	"archive/tar"
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -551,6 +554,213 @@ func FuzzWalkUI(f *testing.F) {
 		again, err := rewrite(t, b)
 		if err != nil || !bytes.Equal(again, b) {
 			t.Fatalf("accepted, but UIWriter writes it otherwise: %v", err)
+		}
+	})
+}
+
+// packFile is the entry of a package for a UI file of a test.
+func packFile(s uiSpec) entry { return entry{s.path, s.data, tar.TypeReg} }
+
+// uiTypeflags returns the typeflag of every header block of a ui-tar, in
+// order, up to the end marker.
+func uiTypeflags(b []byte) string {
+	var flags []byte
+	for pos := 0; pos+blockSize <= len(b) && !allNUL(b[pos:pos+blockSize]); {
+		h := b[pos : pos+blockSize]
+		size, _ := octalValue(h[124:136])
+		flags = append(flags, h[156])
+		pos += blockSize + int((size+blockSize-1)/blockSize)*blockSize
+	}
+	return string(flags)
+}
+
+// failingWriter refuses every write with err.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestPackageUI: the ui-tar of a package holds its UI files in the order of
+// the package and no directory, WalkUI reads it, and the hash is its
+// SHA-256. What is not a plain valid package is ErrPackage; an error of w
+// comes back as it is.
+func TestPackageUI(t *testing.T) {
+	index := uiFile("ui/index.html", "<!doctype html><title>Terminal</title>")
+	pngB, icon, pngA := uiFile("ui/img/b.png", "b"), uiFile("ui/icon.svg", "<svg/>"), uiFile("ui/img/a.png", "a")
+	pkg := buildTar(t, []entry{manifestEntry(t), {"ui/", nil, tar.TypeDir}, packFile(index), {"services/", nil, tar.TypeDir},
+		{"services/amd64.tar", []byte("image"), tar.TypeReg}, {"ui/img/", nil, tar.TypeDir}, packFile(pngB), packFile(icon), packFile(pngA)})
+	var out bytes.Buffer
+	m, hash, err := PackageUI(bytes.NewReader(pkg), &out)
+	if err != nil || m.ID != "org.sorglos.terminal" {
+		t.Fatalf("%+v, %v", m, err)
+	}
+	// The package's order, not sorted, and exactly what UIWriter writes for
+	// these files alone.
+	if !bytes.Equal(out.Bytes(), writeUI(t, index, pngB, icon, pngA)) {
+		t.Error("not the UI files of the package in its order")
+	}
+	var paths, dirs []string
+	err = walkUI(bytes.NewReader(out.Bytes()), func(f PackFile, _ io.Reader) error {
+		paths = append(paths, f.Path)
+		return nil
+	}, func(path string) { dirs = append(dirs, path) })
+	if err != nil || len(dirs) != 0 || !slices.Equal(paths, []string{"ui/index.html", "ui/img/b.png", "ui/icon.svg", "ui/img/a.png"}) {
+		t.Errorf("WalkUI: %q, directories %q, %v", paths, dirs, err)
+	}
+	if sum := sha256.Sum256(out.Bytes()); !bytes.Equal(hash, sum[:]) {
+		t.Error("hash is not the SHA-256 of the ui-tar")
+	}
+
+	var sealed bytes.Buffer
+	if err := Encrypt(&sealed, bytes.NewReader(pkg), contentKey, fixedRand(0x24)); err != nil {
+		t.Fatal(err)
+	}
+	for name, bad := range map[string][]byte{
+		"encrypted package": sealed.Bytes(),
+		// The header of the last file, then nothing: archive/tar reports
+		// io.ErrUnexpectedEOF while its data is read.
+		"cut short in the data of a ui file": pkg[:len(pkg)-len(endMarker)-blockSize],
+		// Refused only after every file went to w.
+		"ui entry missing": smallBadPackages(t)["ui entry missing"],
+	} {
+		if m, hash, err := PackageUI(bytes.NewReader(bad), io.Discard); err != ErrPackage || m != nil || hash != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	full := errors.New("disk full")
+	if _, _, err := PackageUI(bytes.NewReader(pkg), failingWriter{full}); err != full {
+		t.Errorf("error of w: %v", err)
+	}
+}
+
+// packUIVector is one case of packui.json: an app package as ngc-store pack
+// writes it (archive/tar with the writer's defaults), the ui-tar PackageUI
+// makes of it and that ui-tar's SHA-256, the app's UI hash.
+type packUIVector struct {
+	Name    string    `json:"name"`
+	Package enc.Bytes `json:"package"`
+	UI      enc.Bytes `json:"ui"`
+	Hash    enc.Bytes `json:"hash"`
+}
+
+// longUIPath is a UI file name of 150 bytes: archive/tar splits it into the
+// prefix and name fields of a USTAR header, a ui-tar needs a PAX header.
+var longUIPath = "ui/" + strings.Repeat("d", 99) + "/" + strings.Repeat("f", 43) + ".css"
+
+// packUICases returns the cases of packui.json. Each ui-tar is written from
+// the files it must hold, not by PackageUI, so the vector states what
+// PackageUI has to make.
+func packUICases(t testing.TB) []packUIVector {
+	t.Helper()
+	dir := func(name string) entry { return entry{name, nil, tar.TypeDir} }
+	image := func(name string) entry { return entry{name, []byte("podman image"), tar.TypeReg} }
+	index := uiFile("ui/index.html", `<!doctype html><title>Terminal</title><link rel="stylesheet" href="css/app.css">`)
+	css := uiFile("ui/css/app.css", "body{margin:0}\n")
+	icon := uiFile("ui/icon.svg", `<svg xmlns="http://www.w3.org/2000/svg"/>`)
+	calcIndex := uiFile("ui/index.html", "<!doctype html><title>Rechner</title>")
+	long := uiFile(longUIPath, "p{margin:0}\n")
+	calculator := &Manifest{ID: "org.sorglos.calculator", Name: "Rechner", Version: "1.0.0", Publisher: "Sorglos IT",
+		UI: &UI{Entry: "index.html"}}
+	backup := &Manifest{ID: "org.sorglos.backup", Name: "Sicherung", Version: "1.0.0", Publisher: "Sorglos IT",
+		Services: []Service{{Name: "backup", Command: []string{"/usr/local/bin/ngc-backup"}}}}
+
+	cases := []struct {
+		name    string
+		entries []entry
+		ui      []uiSpec // the files of the ui-tar, in order
+	}{
+		{"files, directories and an image", []entry{manifestEntry(t), dir("ui/"), packFile(index), dir("ui/css/"), packFile(css),
+			dir("services/"), image("services/amd64.tar"), packFile(icon)}, []uiSpec{index, css, icon}},
+		{"long file name", []entry{manifestOf(t, calculator), packFile(calcIndex), packFile(long)}, []uiSpec{calcIndex, long}},
+		{"no ui files", []entry{manifestOf(t, backup), image("services/amd64.tar"), image("services/arm64.tar")}, nil},
+	}
+	var out []packUIVector
+	for _, c := range cases {
+		ui := writeUI(t, c.ui...)
+		sum := sha256.Sum256(ui)
+		out = append(out, packUIVector{Name: c.name, Package: buildTar(t, c.entries), UI: ui, Hash: sum[:]})
+	}
+	return out
+}
+
+func TestPackageUIVectors(t *testing.T) {
+	cases := packUICases(t)
+	flags := map[string]string{}
+	long := 0
+	for _, c := range cases {
+		var out bytes.Buffer
+		m, hash, err := PackageUI(bytes.NewReader(c.Package), &out)
+		if err != nil || m == nil || !bytes.Equal(out.Bytes(), c.UI) || !bytes.Equal(hash, c.Hash) {
+			t.Errorf("%s: PackageUI differs: %v", c.Name, err)
+		}
+		if _, _, err := walkUIFiles(c.UI); err != nil {
+			t.Errorf("%s: WalkUI: %v", c.Name, err)
+		}
+		flags[c.Name] = uiTypeflags(c.UI)
+		// archive/tar wrote every header as USTAR, so the long name went into
+		// the prefix and name fields.
+		tr := tar.NewReader(bytes.NewReader(c.Package))
+		for {
+			h, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil || h.Format != tar.FormatUSTAR {
+				t.Fatalf("%s: %+v, %v", c.Name, h, err)
+			}
+			if h.Name == longUIPath {
+				long++
+			}
+		}
+	}
+	if long != 1 {
+		t.Errorf("the long name in %d packages", long)
+	}
+	// Directories are left out, and only the long name has a PAX header.
+	want := map[string]string{"files, directories and an image": "000", "long file name": "0x0", "no ui files": ""}
+	if !maps.Equal(flags, want) {
+		t.Errorf("typeflags %q, want %q", flags, want)
+	}
+	golden.Check(t, *update, "packui.json", cases)
+}
+
+// FuzzPackageUI: whatever Walk accepts, PackageUI turns into a ui-tar WalkUI
+// accepts, with the UI files Walk hands out, in the same order and with the
+// same data, and the hash is its SHA-256. What Walk refuses, PackageUI
+// refuses as ErrPackage.
+func FuzzPackageUI(f *testing.F) {
+	for _, c := range packUICases(f) {
+		f.Add([]byte(c.Package))
+	}
+	for _, b := range smallBadPackages(f) {
+		f.Add(b)
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		var paths []string
+		var data [][]byte
+		_, walkErr := Walk(bytes.NewReader(b), func(_ *Manifest, pf PackFile, body io.Reader) error {
+			d, err := io.ReadAll(body)
+			if pf.Kind == KindUI {
+				paths, data = append(paths, pf.Path), append(data, d)
+			}
+			return err
+		})
+		var out bytes.Buffer
+		m, hash, err := PackageUI(bytes.NewReader(b), &out)
+		if walkErr != nil {
+			if err != ErrPackage || m != nil || hash != nil {
+				t.Fatalf("Walk refuses (%v), PackageUI: %v", walkErr, err)
+			}
+			return
+		}
+		if err != nil || m == nil {
+			t.Fatalf("Walk accepts, PackageUI refuses: %v", err)
+		}
+		if sum := sha256.Sum256(out.Bytes()); !bytes.Equal(hash, sum[:]) {
+			t.Fatal("hash is not the SHA-256 of the ui-tar")
+		}
+		gotPaths, gotData, err := walkUIFiles(out.Bytes())
+		if err != nil || !slices.Equal(gotPaths, paths) || !slices.EqualFunc(gotData, data, bytes.Equal) {
+			t.Fatalf("ui-tar holds %q, Walk handed out %q: %v", gotPaths, paths, err)
 		}
 	})
 }
