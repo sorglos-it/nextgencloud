@@ -85,24 +85,36 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   mit `VerifyConnection`; beides setzt `tunnel.PinnedTLS`, sonst steht `InsecureSkipVerify`
   nirgends.
 - **Adressen** haben eine Grammatik und genau eine Schreibweise, denn sie landen in
-  Konfigurationen anderer Programme (Apache, Datenbanktreiber):
+  Konfigurationen anderer Programme (Apache, Datenbanktreiber) und im Browser. Jede Art steht
+  über demselben `<host>` und `<port>`:
   - Tunnel-Adresse einer API `wss://<host>:<port>/tunnel` (`trust.ValidTunnelURL`:
     `trust.Node.URL`, Kopplungs- und Beitrittscodes, `tunnel.JoinRequest`, `url` in `api.json`,
     `apis` in `controller.json`);
   - ihre Adresse hinter Apache `https://<host>:<port>` (`trust.WebURL` leitet sie ab,
     `trust.ValidWebURL`: `apis` in `web.json`);
   - Datenbankknoten `<host>:<port>` (`trust.ValidHostPort`);
+  - Herkunft für Passkeys `https://<host>[:<port>]`, sonst nichts (`trust.ValidOrigin`:
+    `rp.origins` der Vertrauensliste und in `web.json`, `proof.RP`), denn mehr schreibt der
+    Browser nicht in die `clientData`, und `proof.Verify` vergleicht sie als Text;
   - Stores `https://<host>[:<port>][/<pfad>]` (`trust.ValidStoreURL`: `trust.Store.URL`,
-    `storeUrl`).
+    `storeUrl`), Pfadsegmente aus `A-Z a-z 0-9 . _ ~ -` (nicht `.` oder `..`, kein `/` am Ende),
+    keine Abfrage;
+  - Pakete, Release-Dateien und der Shop-Link eines Katalogs `https://<host>[:<port>]`, dazu
+    wahlweise Pfad und Abfrage aus druckbarem ASCII ohne `"` `'` `<` `>` `\` und `#` (die Regel
+    steht in `store/catalog.go` und ruft `trust.ValidHost` bzw. `trust.ValidHostPort`); eine
+    Abfrage bleibt hier erlaubt, weil Stores Download-Links signieren. Statt einer Adresse darf
+    dort ein Pfad neben dem Katalog stehen (`store.ValidPath`).
 
-  `<host>` nach `trust.ValidHost`: ein DNS-Name in Kleinbuchstaben (Labels aus `a-z`, `0-9` und
-  `-`, je 1 bis 63 Zeichen, ohne `-` am Anfang oder Ende, das letzte nicht nur aus Ziffern,
-  zusammen höchstens 253), eine IPv4-Adresse ohne führende Nullen oder eine IPv6-Adresse in
-  eckigen Klammern in der Form von RFC 5952 (Kleinbuchstaben, Nullen zusammengefasst, ohne Zone,
-  nicht IPv4-gemappt). Ports 1 bis 65535 ohne führende Null, Pfadsegmente aus
-  `A-Z a-z 0-9 . _ ~ -` (nicht `.` oder `..`, kein `/` am Ende), keine Zugangsdaten, keine
-  Abfrage, kein Anker; alles ASCII, höchstens 256 Byte. Testdaten: `url.json`; die ulh-Skripte
-  prüfen Hosts wie `testdata/ulh/host.sh`.
+  `<host>` ist überall derselbe (`trust.ValidHost`): ein DNS-Name in Kleinbuchstaben (Labels aus
+  `a-z`, `0-9` und `-`, je 1 bis 63 Zeichen, ohne `-` am Anfang oder Ende, das letzte nicht nur
+  aus Ziffern, zusammen höchstens 253), eine IPv4-Adresse ohne führende Nullen oder eine
+  IPv6-Adresse in eckigen Klammern in der Form von RFC 5952 (Kleinbuchstaben, Nullen
+  zusammengefasst, ohne Zone, nicht IPv4-gemappt). `<port>` ist 1 bis 65535 ohne führende Null.
+  Nirgends stehen Zugangsdaten, nirgends ein Anker; alles ist ASCII. Höchstens 256 Byte; nur
+  Pakete, Release-Dateien und Shop-Link dürfen 512 Byte haben, weil ein signierter Download-Link
+  sein Token in der Abfrage trägt. `trust.ValidHostPort` begrenzt nur Host und Port (zusammen bis
+  259 Byte), deshalb setzt `config.MaxField` die Grenze für einen Datenbankknoten.
+  Testdaten: `url.json`; die ulh-Skripte prüfen Hosts wie `testdata/ulh/host.sh`.
 - **Signierte Dokumente, die bleiben:** Release, Katalog und Lizenz bekommen ein neues Feld nur mit
   einem neuen Zweck (`release/v2` usw.) an einem eigenen Ort; in der Übergangszeit signiert der
   Herausgeber beide Fassungen, jeder Leser nimmt die neueste, die er kennt. Ein neues Feld im
@@ -153,7 +165,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `json.json` | Prüfdokument mit jeder Feldart (`schema`), sein Budget (`size`, `items`, `totals`) und gültige und ungültige Fälle (`cases`, das Dokument als base64url) | `enc`: `TestJSONVectors` |
 | `proof.json`, `proof_kdf.json` | Beweise mit Passkey und Passwortschlüssel, gültige und ungültige; Argon2id, auch für ein Passwort, das in NFD getippt wurde (`typed`; `password` ist dessen NFC) | `proof`: `TestProofVectors`, `TestKDFVectors` |
 | `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige, darunter Fassungen mit Adressen, die die Grammatik brechen | `trust`: `TestVectors` |
-| `url.json` | Hosts und Adressen: `hosts`, `hostPort`, `tunnel` (bei gültigen die Adresse hinter Apache nach `trust.WebURL`), `web`, `store`, je gültig oder nicht | `trust`: `TestURLVectors` |
+| `url.json` | Hosts und Adressen: `hosts`, `hostPort`, `tunnel` (bei gültigen die Adresse hinter Apache nach `trust.WebURL`), `web`, `origins`, `store`, je gültig oder nicht | `trust`: `TestURLVectors` |
 | `ulh/` | `host.sh` (von Hand) prüft Hosts wie die ulh-Skripte, getestet von `TestHostScript` | von Hand |
 | `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
 | `task.json` | Root-Aufgabe (`deactivate`) und erneute Bestätigung | `task`: `TestVectors` |
@@ -163,7 +175,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `tls/` | `api.pem`: TLS-Zertifikat von `api-1` aus `trust.json`; `pin.sh` (von Hand) rechnet den Fingerabdruck wie `trust.TLSPin`, geprüft von `TestTLSPinScript` | `tunnel`: `TestVectors` |
 | `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis (auch `ngc.desktop/ui-proof` und `ngc.users/pending-api`; Kopplungs- und Beitrittscode sind echte Codes zur Fassung „genesis“ aus `trust.json`, `ngc.store/catalog` ein echter Katalog des globalen Stores; `ngc.users/nodes` die Controller der Vertrauensliste, `entry` in `ngc.desktop/apps` die erste Seite, `ngc.store/updates` mit einer Zeile `needsgrants`), dazu `notice`; unter `empty` die zehn Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
 | `uiproof.json` | UI-Beweise gegen eine Vertrauensliste (`trust`): je Fall App, Version, Beweis, die UI-Prüfsumme, die er belegt, und ob er gilt | `core`: `TestUIProofVectors` |
-| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten (`catalogRejects`, `licenseRejects` mit einer Lizenz für eine andere App, `releaseRejects`) und den Werten zum Prüfen (`store`, `installation`, `installKey`, `licenseApp`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
+| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten (`catalogRejects`, darunter sechs Adressen, die die Grammatik brechen, `licenseRejects` mit einer Lizenz für eine andere App, `releaseRejects`) und den Werten zum Prüfen (`store`, `installation`, `installKey`, `licenseApp`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
 | `packui.json` | Pakete, wie `ngc-store pack` sie schreibt, mit dem ui-tar von `store.PackageUI` und dessen SHA-256 | `store`: `TestPackageUIVectors` |
 | `ui.json` | ui-tars, gültige und ungültige (Regeln im Kommentar von `store/ui.go`); bei gültigen unter `files` die Dateien, die `store.WalkUI` liefert. Fälle mit Daten bis `store.MaxUIFile`, `store.MaxUITotal` oder mit `store.MaxEntries` Einträgen stehen nicht darin | `store`: `TestUIVectors` |
 | `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 31 Fällen | `store`: `TestReleaseScriptVector` |
