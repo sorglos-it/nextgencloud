@@ -300,6 +300,30 @@ func setupInfo() SetupInfo {
 		ReleaseKey: enc.Bytes(release.Public().(ed25519.PublicKey)), Store: &global}
 }
 
+// api2Node returns a second API node, api-2 (NodeKeys(0xA2), TLS pin of
+// APITLS(0xE2, "api-2.test")), which sorts after api-1.
+func api2Node() trust.Node {
+	dh, sig := trusttest.NodeKeys(0xA2)
+	_, pin := trusttest.APITLS(0xE2, "api-2.test")
+	return trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "API 2", Noise: dh.Public,
+		Sign: enc.Bytes(sig.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: pin}
+}
+
+// versionOne builds version 1 from info as the package comment says the shell
+// does: the admins of setupList, info's installation, time, API nodes and
+// store, and standing approvals for the three NGC parts with info's release
+// key and for system.
+func versionOne(info SetupInfo) *trust.List {
+	l := setupList(trusttest.NewSigner(1))
+	l.Installation, l.Issued, l.Nodes, l.Stores = info.Installation, info.Now, info.Nodes, nil
+	if info.Store != nil {
+		l.Stores = []trust.Store{*info.Store}
+	}
+	l.Auto = []trust.Auto{{Target: trust.AutoAPI, Key: info.ReleaseKey}, {Target: trust.AutoController, Key: info.ReleaseKey},
+		{Target: trust.AutoWeb, Key: info.ReleaseKey}, {Target: trust.AutoSystem}}
+	return l
+}
+
 // controllerLike returns api-1 of setupInfo as a node of kind controller
 // with the ID ctl-1. It has no root lists, so the budget of the info lets it
 // through, and of trust.ValidAPINode it breaks only the kind.
@@ -487,6 +511,9 @@ func TestParseSetupOffer(t *testing.T) {
 		{"valid", withMAC(infoJSON), testSetupCode, nil},
 		{"without a store", withInfo(func(i *SetupInfo) { i.Store = nil }), testSetupCode, nil},
 		{"MaxSetupNodes API nodes", withInfo(func(i *SetupInfo) { i.Nodes = apiNodes(MaxSetupNodes) }), testSetupCode, nil},
+		{"two API nodes in order", withInfo(func(i *SetupInfo) { i.Nodes = append(i.Nodes, api2Node()) }), testSetupCode, nil},
+		{"store name of 64 bytes", withInfo(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 64) }), testSetupCode, nil},
+		{"store URL of 256 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 256-8) }), testSetupCode, nil},
 		{"info of MaxRequest bytes", withMAC(padded(infoJSON, MaxRequest)), testSetupCode, nil},
 
 		// The answer around the info.
@@ -521,14 +548,29 @@ func TestParseSetupOffer(t *testing.T) {
 		{"release key of 31 bytes", withInfo(func(i *SetupInfo) { i.ReleaseKey = i.ReleaseKey[:31] }), testSetupCode, ErrMessage},
 		{"store other than global", withInfo(func(i *SetupInfo) { i.Store.ID = "other" }), testSetupCode, ErrMessage},
 		{"store key of 31 bytes", withInfo(func(i *SetupInfo) { i.Store.Key = i.Store.Key[:31] }), testSetupCode, ErrMessage},
+		// What version 1 takes as offered must keep the rules of the trust list.
+		{"nodes out of order", withInfo(func(i *SetupInfo) { i.Nodes = []trust.Node{api2Node(), i.Nodes[0]} }), testSetupCode, ErrMessage},
+		{"a node twice", withInfo(func(i *SetupInfo) { i.Nodes = append(i.Nodes, i.Nodes[0]) }), testSetupCode, ErrMessage},
+		{"store without a name", withInfo(func(i *SetupInfo) { i.Store.Name = "" }), testSetupCode, ErrMessage},
+		{"store name with a line feed", withInfo(func(i *SetupInfo) { i.Store.Name = "NGC\nStore" }), testSetupCode, ErrMessage},
+		{"store name of 65 bytes", withInfo(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 65) }), testSetupCode, ErrMessage},
+		{"store URL with http", withInfo(func(i *SetupInfo) { i.Store.URL = "http://store.ngc.example" }), testSetupCode, ErrMessage},
+		{"store URL of 257 bytes", withInfo(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 257-8) }), testSetupCode, ErrMessage},
 	}
 	for _, c := range cases {
 		got, err := ParseSetupOffer(c.body, c.code)
 		if err != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
 		}
-		if err == nil && (got.Installation != info.Installation || len(got.ReleaseKey) != 32) {
+		if err != nil {
+			continue
+		}
+		if got.Installation != info.Installation || len(got.ReleaseKey) != 32 {
 			t.Errorf("%s: got %+v", c.name, got)
+		}
+		// Accepted means that version 1 built from it validates.
+		if err := versionOne(got).Validate(); err != nil {
+			t.Errorf("%s: version 1 from the offer: %v", c.name, err)
 		}
 	}
 	if got, err := ParseSetupOffer(withMAC(infoJSON), testSetupCode); err != nil || !sameJSON(got, info) {
@@ -928,6 +970,15 @@ func setupVectors(t testing.TB) setupVector {
 			{Name: "API node without a TLS pin", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes[0].TLS = nil }), testSetupCode), want: ErrMessage},
 			{Name: "info without a release key", Offer: offer(noRelease, testSetupCode), want: ErrMessage},
 			{Name: "info with a store other than global", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.ID = "other" }), testSetupCode), want: ErrMessage},
+			// Version 1 takes nodes and store as offered, so they keep the
+			// rules of the trust list (trust.List.Validate).
+			{Name: "two API nodes in order", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes = append(i.Nodes, api2Node()) }), testSetupCode), Valid: true},
+			{Name: "info with its nodes out of order", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes = []trust.Node{api2Node(), i.Nodes[0]} }), testSetupCode), want: ErrMessage},
+			{Name: "info with a node twice", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes = append(i.Nodes, i.Nodes[0]) }), testSetupCode), want: ErrMessage},
+			{Name: "info with a store name that is no text", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.Name = "NGC\nStore" }), testSetupCode), want: ErrMessage},
+			{Name: "info with a store name of 65 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.Name = strings.Repeat("S", 65) }), testSetupCode), want: ErrMessage},
+			{Name: "info with a store URL of plain http", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "http://store.ngc.example" }), testSetupCode), want: ErrMessage},
+			{Name: "info with a store URL of 257 bytes", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.URL = "https://" + strings.Repeat("s", 257-8) }), testSetupCode), want: ErrMessage},
 		},
 		Requests: []setupPost{
 			{Name: "valid", Request: post(good, testSetupCode), Valid: true},
@@ -1007,15 +1058,24 @@ func TestVectors(t *testing.T) {
 	setup := setupVectors(t)
 	checkSetupVector(t, setup)
 	// Every offer refused for its info passes the budget of the info, so a
-	// parser with the budget but without the rules behind it fails the vector.
+	// parser with the budget but without the rules behind it fails the vector;
+	// every accepted offer makes a version 1 that validates.
 	for _, c := range setup.Offers {
-		if c.want != ErrMessage {
-			continue
-		}
-		var o SetupOffer
-		var info SetupInfo
-		if err := json.Unmarshal(c.Offer, &o); err != nil || infoBudget.Decode(o.Info, &info) != nil {
-			t.Errorf("offer %s is refused before its rules: %v", c.Name, err)
+		switch {
+		case c.Valid:
+			info, err := ParseSetupOffer(c.Offer, setup.Code)
+			if err == nil {
+				err = versionOne(info).Validate()
+			}
+			if err != nil {
+				t.Errorf("offer %s: version 1 from it: %v", c.Name, err)
+			}
+		case c.want == ErrMessage:
+			var o SetupOffer
+			var info SetupInfo
+			if err := json.Unmarshal(c.Offer, &o); err != nil || infoBudget.Decode(o.Info, &info) != nil {
+				t.Errorf("offer %s is refused before its rules: %v", c.Name, err)
+			}
 		}
 	}
 	golden.Check(t, *update, "session.json", vector{Trust: f.admin.Sign(t, f.list), Now: now, Client: f.client, Proof: f.proof, API: f.api,
@@ -1141,12 +1201,19 @@ func FuzzParseSetup(f *testing.F) {
 // FuzzParseSetupOffer reads the fuzzed bytes twice. As a whole answer: what
 // ParseSetupOffer accepts carries a MAC that holds for the code. As the Info
 // of an answer with a MAC that holds, so the fuzzer reaches the checks behind
-// the MAC: what it accepts keeps the rules of the info.
+// the MAC: what it accepts keeps the rules of the info, and version 1 built
+// from it validates.
 func FuzzParseSetupOffer(f *testing.F) {
 	info := mustJSON(f, setupInfo())
 	f.Add(mustJSON(f, SetupOffer{Info: info, MAC: OfferMAC(testSetupCode, info)}))
 	f.Add(mustJSON(f, SetupOffer{Info: info, MAC: OfferMAC(otherSetupCode, info)}))
 	f.Add(info)
+	for _, c := range setupVectors(f).Offers {
+		var o SetupOffer
+		if json.Unmarshal(c.Offer, &o) == nil {
+			f.Add([]byte(o.Info))
+		}
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if _, err := ParseSetupOffer(b, testSetupCode); err == nil {
 			var o SetupOffer
@@ -1167,14 +1234,16 @@ func FuzzParseSetupOffer(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if !trust.ValidID(got.Installation) || len(got.Nodes) == 0 || len(got.Nodes) > MaxSetupNodes || got.Now <= 0 ||
-			len(got.ReleaseKey) != 32 || (got.Store != nil && (got.Store.ID != trust.StoreGlobal || len(got.Store.Key) != 32)) {
+		if len(got.Nodes) > MaxSetupNodes || (got.Store != nil && got.Store.ID != trust.StoreGlobal) {
 			t.Fatalf("accepted %+v", got)
 		}
 		for _, n := range got.Nodes {
 			if !trust.ValidAPINode(n) {
 				t.Fatalf("accepted node %+v", n)
 			}
+		}
+		if err := versionOne(got).Validate(); err != nil {
+			t.Fatalf("accepted %+v, from which version 1 does not validate: %v", got, err)
 		}
 	})
 }

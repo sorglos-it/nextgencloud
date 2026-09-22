@@ -428,6 +428,43 @@ func TestValidAPINode(t *testing.T) {
 	}
 }
 
+// TestValidStore breaks one rule per case, starting from the global store of
+// Genesis.
+func TestValidStore(t *testing.T) {
+	global := trusttest.Genesis(admin).Stores[0]
+	if !trust.ValidStore(global) {
+		t.Fatal("global store of Genesis refused")
+	}
+	url := func(n int) string { return "https://" + strings.Repeat("s", n-len("https://")) }
+	for name, c := range map[string]struct {
+		mutate func(s *trust.Store)
+		valid  bool
+	}{
+		"another ID":            {func(s *trust.Store) { s.ID = "other" }, true},
+		"URL of 256 bytes":      {func(s *trust.Store) { s.URL = url(256) }, true},
+		"name of 64 bytes":      {func(s *trust.Store) { s.Name = strings.Repeat("S", 64) }, true},
+		"ID local":              {func(s *trust.Store) { s.ID = trust.StoreLocal }, false},
+		"ID not a name":         {func(s *trust.Store) { s.ID = "Global" }, false},
+		"no name":               {func(s *trust.Store) { s.Name = "" }, false},
+		"name with a line feed": {func(s *trust.Store) { s.Name = "NGC\nStore" }, false},
+		"name of 65 bytes":      {func(s *trust.Store) { s.Name = strings.Repeat("S", 65) }, false},
+		"URL with http":         {func(s *trust.Store) { s.URL = "http://store.ngc.example" }, false},
+		"URL of 257 bytes":      {func(s *trust.Store) { s.URL = url(257) }, false},
+		"key of 31 bytes":       {func(s *trust.Store) { s.Key = s.Key[:31] }, false},
+	} {
+		s := global
+		c.mutate(&s)
+		if got := trust.ValidStore(s); got != c.valid {
+			t.Errorf("%s: got %v, want %v", name, got, c.valid)
+		}
+		l := trusttest.Genesis(admin)
+		l.Stores = []trust.Store{s}
+		if err := l.Validate(); (err == nil) != c.valid {
+			t.Errorf("%s: Validate gives %v", name, err)
+		}
+	}
+}
+
 // TestValidID: an ID has exactly one spelling, so a line break or padding
 // around it, which encoding/base64 alone would skip, makes it invalid.
 func TestValidID(t *testing.T) {

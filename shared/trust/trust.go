@@ -166,8 +166,9 @@ func TLSPin(spki []byte) []byte {
 	return h[:]
 }
 
-// maxNodeURL bounds Node.URL, as tunnel.MaxURL bounds the URL of a code.
-const maxNodeURL = 256
+// maxURL bounds Node.URL and Store.URL, as tunnel.MaxURL bounds the URL of a
+// code.
+const maxURL = 256
 
 // ValidAPINode reports whether n is a well-formed API node: of kind api, an
 // ID (wire.ValidName), a name (wire.ValidText, 64), a 32-byte Noise key, a
@@ -175,8 +176,18 @@ const maxNodeURL = 256
 // and no root lists. Validate uses it; session.ParseSetupOffer too.
 func ValidAPINode(n Node) bool {
 	return n.Kind == NodeAPI && validNode(n) && len(n.Sign) == ed25519.PublicKeySize &&
-		strings.HasPrefix(n.URL, "wss://") && len(n.URL) <= maxNodeURL && len(n.TLS) == sha256.Size &&
+		strings.HasPrefix(n.URL, "wss://") && len(n.URL) <= maxURL && len(n.TLS) == sha256.Size &&
 		len(n.RootUsers)+len(n.RootRoles) == 0
+}
+
+// ValidStore reports whether s is a well-formed store: an ID
+// (wire.ValidName) other than StoreLocal, a name (wire.ValidText, 64), an
+// https:// URL of at most 256 bytes and a 32-byte key. Validate uses it;
+// session.ParseSetupOffer too.
+func ValidStore(s Store) bool {
+	// StoreLocal marks uploaded apps, so no catalog key may claim it.
+	return wire.ValidName(s.ID) && s.ID != StoreLocal && wire.ValidText(s.Name, 64) &&
+		strings.HasPrefix(s.URL, "https://") && len(s.URL) <= maxURL && len(s.Key) == ed25519.PublicKeySize
 }
 
 // validNode checks what every node has, whatever its kind: an ID, a name and
@@ -515,9 +526,7 @@ func (l *List) Validate() error {
 		}
 	}
 	for i, s := range l.Stores {
-		// StoreLocal marks uploaded apps, so no catalog key may claim it.
-		if !wire.ValidName(s.ID) || s.ID == StoreLocal || (i > 0 && l.Stores[i-1].ID >= s.ID) || !wire.ValidText(s.Name, 64) ||
-			!strings.HasPrefix(s.URL, "https://") || len(s.URL) > 256 || len(s.Key) != ed25519.PublicKeySize {
+		if !ValidStore(s) || (i > 0 && l.Stores[i-1].ID >= s.ID) {
 			return ErrInvalid
 		}
 	}

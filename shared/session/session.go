@@ -280,8 +280,12 @@ func ParseSetup(b []byte) (Setup, error) {
 // MaxRequest bytes and a 32-byte MAC, else ErrMessage; OfferMAC with code
 // (hmac.Equal) before Info is decoded, else ErrSetup; Info strictly within
 // MaxRequest (nodes at most MaxSetupNodes): a valid installation ID, 1 to
-// MaxSetupNodes nodes each trust.ValidAPINode, Now > 0, a 32-byte ReleaseKey,
-// Store absent or with ID trust.StoreGlobal and a 32-byte key, else ErrMessage.
+// MaxSetupNodes nodes each trust.ValidAPINode, sorted by ID without two of
+// one ID, Now > 0, a 32-byte ReleaseKey, Store absent or with ID
+// trust.StoreGlobal and passing trust.ValidStore, else ErrMessage. These are
+// the rules of trust.List.Validate for what version 1 takes from the offer,
+// so a version 1 built from an accepted offer as the package comment says
+// validates.
 func ParseSetupOffer(b []byte, code string) (SetupInfo, error) {
 	var o SetupOffer
 	if offerBudget.Decode(b, &o) != nil || len(o.Info) == 0 || len(o.Info) > MaxRequest || len(o.MAC) != sha256.Size {
@@ -296,11 +300,13 @@ func ParseSetupOffer(b []byte, code string) (SetupInfo, error) {
 	if infoBudget.Decode(o.Info, &info) != nil || !trust.ValidID(info.Installation) ||
 		len(info.Nodes) == 0 || len(info.Nodes) > MaxSetupNodes || info.Now <= 0 ||
 		len(info.ReleaseKey) != ed25519.PublicKeySize ||
-		(info.Store != nil && (info.Store.ID != trust.StoreGlobal || len(info.Store.Key) != ed25519.PublicKeySize)) {
+		(info.Store != nil && (info.Store.ID != trust.StoreGlobal || !trust.ValidStore(*info.Store))) {
 		return SetupInfo{}, ErrMessage
 	}
-	for _, n := range info.Nodes {
-		if !trust.ValidAPINode(n) {
+	// Version 1 lists the nodes as offered (VerifySetup compares them in
+	// order), and a trust list keeps its nodes sorted by ID.
+	for i, n := range info.Nodes {
+		if !trust.ValidAPINode(n) || (i > 0 && info.Nodes[i-1].ID >= n.ID) {
 			return SetupInfo{}, ErrMessage
 		}
 	}
