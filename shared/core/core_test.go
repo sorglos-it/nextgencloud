@@ -614,6 +614,7 @@ var (
 	uiTerminal   = bytes.Repeat([]byte{0x08}, 32) // org.sorglos.terminal 1.0.0
 	uiTerminal11 = bytes.Repeat([]byte{0x09}, 32) // org.sorglos.terminal 1.1.0
 	uiNotes      = bytes.Repeat([]byte{0x0A}, 32) // org.example.notes 0.1.0, uploaded
+	uiWeather    = bytes.Repeat([]byte{0x0B}, 32) // org.example.weather 2.0.0 of the store other
 )
 
 // uiFixture is the trust list of uiproof.json and the keys its proofs are
@@ -656,6 +657,15 @@ func uiCatalog() store.Catalog {
 		{ID: "org.sorglos.terminal", Name: "Terminal", Publisher: "Sorglos IT", Versions: []store.Package{
 			{Version: "1.0.0", URL: "org.sorglos.terminal-1.0.0.ngc", Size: 5000000, SHA256: bytes.Repeat([]byte{0x02}, 32), UI: uiTerminal},
 			{Version: "1.1.0", URL: "org.sorglos.terminal-1.1.0.ngc", Size: 5100000, SHA256: bytes.Repeat([]byte{0x03}, 32), UI: uiTerminal11},
+		}},
+	}}
+}
+
+// otherCatalog is the catalog of the store other in uiproof.json.
+func otherCatalog() store.Catalog {
+	return store.Catalog{Store: "other", Seq: 2, Issued: 1790000000, Apps: []store.Entry{
+		{ID: "org.example.weather", Name: "Wetter", Publisher: "Other Store", Versions: []store.Package{
+			{Version: "2.0.0", URL: "org.example.weather-2.0.0.ngc", Size: 23456, SHA256: bytes.Repeat([]byte{0x04}, 32), UI: uiWeather},
 		}},
 	}}
 }
@@ -769,6 +779,8 @@ func uiProofCases(t testing.TB, f uiFixture) []uiProofCase {
 
 	return []uiProofCase{
 		{"store app from the global store", terminal, "1.0.0", withCatalog(terminal, "1.0.0", global), uiTerminal, true, nil},
+		{"store app from another listed store", "org.example.weather", "2.0.0", UIProof{App: "org.example.weather", Version: "2.0.0",
+			Store: "other", Catalog: f.catalog(t, otherCatalog(), f.other)}, uiWeather, true, nil},
 		{"uploaded app activated by the admin", notes, "0.1.0", byAdmin, uiNotes, true, nil},
 		{"uploaded app activated by the passkey admin", notes, "0.1.0",
 			f.approval(t, passkeyID, passkeyAdmin, ActActivate, activate(notes, "0.1.0", LocalStore)), uiNotes, true, nil},
@@ -1005,7 +1017,7 @@ func TestUIProofVectors(t *testing.T) {
 			valid++
 		}
 	}
-	if valid != 3 || len(file.Cases) != 22 {
+	if valid != 4 || len(file.Cases) != 23 {
 		t.Errorf("%d cases, %d of them valid", len(file.Cases), valid)
 	}
 }

@@ -17,6 +17,14 @@
       "valid": true
     },
     {
+      "name": "store app from another listed store",
+      "app": "org.example.weather",
+      "version": "2.0.0",
+      "proof": "eyJhcHAiOiJvcmcuZXhhbXBsZS53ZWF0aGVyIiwidmVyc2lvbiI6IjIuMC4wIiwic3RvcmUiOiJvdGhlciIsImNhdGFsb2ciOnsicGF5bG9hZCI6ImV5SnpkRzl5WlNJNkltOTBhR1Z5SWl3aWMyVnhJam95TENKcGMzTjFaV1FpT2pFM09UQXdNREF3TURBc0ltRndjSE1pT2x0N0ltbGtJam9pYjNKbkxtVjRZVzF3YkdVdWQyVmhkR2hsY2lJc0ltNWhiV1VpT2lKWFpYUjBaWElpTENKd2RXSnNhWE5vWlhJaU9pSlBkR2hsY2lCVGRHOXlaU0lzSW5abGNuTnBiMjV6SWpwYmV5SjJaWEp6YVc5dUlqb2lNaTR3TGpBaUxDSjFjbXdpT2lKdmNtY3VaWGhoYlhCc1pTNTNaV0YwYUdWeUxUSXVNQzR3TG01bll5SXNJbk5wZW1VaU9qSXpORFUyTENKemFHRXlOVFlpT2lKQ1FWRkZRa0ZSUlVKQlVVVkNRVkZGUWtGUlJVSkJVVVZDUVZGRlFrRlJSVUpCVVVWQ1FWRkZRa0ZSSWl3aWRXa2lPaUpEZDNOTVEzZHpURU4zYzB4RGQzTk1RM2R6VEVOM2MweERkM05NUTNkelRFTjNjMHhEZDNOTVEzZHpJbjFkZlYxOSIsImtpZCI6InNvdXFzejRmbGFlTWZwVkhWVXctbFEiLCJzaWciOiJfTjFXQmVRWEdOS3JLVlcxbmJRb2R4XzUyS3g3WEJldHY0Qm1FSzRCQzB3TnMzQm1wWXZfYll5VXVWakZkYWRRb1B6WExpVUd4MWtnWEx2OEltZ3FBZyJ9fQ",
+      "ui": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+      "valid": true
+    },
+    {
       "name": "uploaded app activated by the admin",
       "app": "org.example.notes",
       "version": "0.1.0",
