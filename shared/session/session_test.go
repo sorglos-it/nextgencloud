@@ -300,6 +300,15 @@ func setupInfo() SetupInfo {
 		ReleaseKey: enc.Bytes(release.Public().(ed25519.PublicKey)), Store: &global}
 }
 
+// controllerLike returns api-1 of setupInfo as a node of kind controller
+// with the ID ctl-1. It has no root lists, so the budget of the info lets it
+// through, and of trust.ValidAPINode it breaks only the kind.
+func controllerLike() trust.Node {
+	n := setupInfo().Nodes[0]
+	n.ID, n.Kind = "ctl-1", trust.NodeController
+	return n
+}
+
 // setupRequest returns the Setup for s with its MAC made with code.
 func setupRequest(s trust.Signed, code string) Setup {
 	return Setup{MAC: SetupMAC(code, s.Payload), Trust: s}
@@ -462,7 +471,12 @@ func TestParseSetupOffer(t *testing.T) {
 		}
 		return nodes
 	}
-	ctl := trusttest.Genesis(trusttest.NewSigner(1)).Nodes[1]
+	ctl := controllerLike()
+	asAPI := ctl
+	asAPI.Kind = trust.NodeAPI
+	if trust.ValidAPINode(ctl) || !trust.ValidAPINode(asAPI) {
+		t.Fatal("the node of kind controller must break the kind rule and no other")
+	}
 	notJSON := bytes.Repeat([]byte("x"), MaxRequest)
 	cases := []struct {
 		name string
@@ -875,7 +889,6 @@ func setupVectors(t testing.TB) setupVector {
 		return mustJSON(t, i)
 	}
 	later := infoWith(func(i *SetupInfo) { i.Now++ })
-	ctl := trusttest.Genesis(admin).Nodes[1]
 	// Without the member, not with an empty one.
 	noRelease := bytes.Replace(infoWith(func(i *SetupInfo) { i.ReleaseKey = nil }), []byte(`"releaseKey":"",`), nil, 1)
 	if bytes.Contains(noRelease, []byte("releaseKey")) {
@@ -910,7 +923,9 @@ func setupVectors(t testing.TB) setupVector {
 			{Name: "valid", Offer: offer(infoJSON, testSetupCode), Valid: true},
 			{Name: "MAC with another code", Offer: offer(infoJSON, otherSetupCode), want: ErrSetup},
 			{Name: "info changed after the MAC", Offer: mustJSON(t, SetupOffer{Info: later, MAC: OfferMAC(testSetupCode, infoJSON)}), want: ErrSetup},
-			{Name: "info with a controller node", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes = append(i.Nodes, ctl) }), testSetupCode), want: ErrMessage},
+			// Both reach trust.ValidAPINode past the budget, each breaking one of its rules.
+			{Name: "info with a controller node", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes = append(i.Nodes, controllerLike()) }), testSetupCode), want: ErrMessage},
+			{Name: "API node without a TLS pin", Offer: offer(infoWith(func(i *SetupInfo) { i.Nodes[0].TLS = nil }), testSetupCode), want: ErrMessage},
 			{Name: "info without a release key", Offer: offer(noRelease, testSetupCode), want: ErrMessage},
 			{Name: "info with a store other than global", Offer: offer(infoWith(func(i *SetupInfo) { i.Store.ID = "other" }), testSetupCode), want: ErrMessage},
 		},
@@ -991,6 +1006,18 @@ func TestVectors(t *testing.T) {
 	}
 	setup := setupVectors(t)
 	checkSetupVector(t, setup)
+	// Every offer refused for its info passes the budget of the info, so a
+	// parser with the budget but without the rules behind it fails the vector.
+	for _, c := range setup.Offers {
+		if c.want != ErrMessage {
+			continue
+		}
+		var o SetupOffer
+		var info SetupInfo
+		if err := json.Unmarshal(c.Offer, &o); err != nil || infoBudget.Decode(o.Info, &info) != nil {
+			t.Errorf("offer %s is refused before its rules: %v", c.Name, err)
+		}
+	}
 	golden.Check(t, *update, "session.json", vector{Trust: f.admin.Sign(t, f.list), Now: now, Client: f.client, Proof: f.proof, API: f.api,
 		APIRejects: rejects, ClientRejects: clients, Setup: setup})
 }
