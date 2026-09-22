@@ -6,6 +6,7 @@
     "ngc.store/updates": [],
     "ngc.users/list": [],
     "ngc.users/log": [],
+    "ngc.users/nodes": [],
     "ngc.users/pending": [],
     "ngc.users/pending-api": [],
     "ngc.users/rights": []
@@ -145,6 +146,17 @@
       "action": "activate",
       "node": "ctl-1",
       "result": "ok"
+    }
+  ],
+  "ngc.users/nodes": [
+    {
+      "node": "ctl-1",
+      "online": true,
+      "roles": [
+        "services"
+      ],
+      "version": "1.0.0",
+      "arch": "amd64"
     }
   ],
   "ngc.users/pair-code": {

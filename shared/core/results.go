@@ -132,6 +132,19 @@ type PendingAPI struct {
 	Since int64     `json:"since"`
 }
 
+// NodeInfo is a row of ngc.users/nodes: a controller of the trust list as
+// the API that answers sees it, so that the admin can pick the node of an
+// activate task and see whether a server is up. Roles, Version and Arch are
+// what the controller said in its last hello to this API (tunnel.Hello);
+// nothing here is signed, and a controller refuses a task it cannot carry out.
+type NodeInfo struct {
+	Node    string   `json:"node"`              // node ID in the trust list
+	Online  bool     `json:"online"`            // it has a tunnel to this API now
+	Roles   []string `json:"roles,omitempty"`   // tunnel.Hello.Roles
+	Version string   `json:"version,omitempty"` // tunnel.Hello.Version: its NGC version
+	Arch    string   `json:"arch,omitempty"`    // tunnel.Hello.Arch
+}
+
 // LogEntry is a row of ngc.users/log.
 type LogEntry struct {
 	// ID is 32 lower-case hex characters from 16 random bytes, made by the
@@ -249,9 +262,9 @@ var ErrResult = errors.New("core: result the shell would refuse")
 // EncodeResult encodes the result of a core action as the API sends it.
 // encoding/json writes a nil slice as null, which the shell refuses (no null,
 // enc.Budget); EncodeResult writes an empty or nil list as [] and an empty or
-// nil map as {}, so the nine results that are lists (ngc.desktop/apps,
-// ngc.users/list, log, pending, pending-api and rights, ngc.store/sources,
-// installed and updates) are [] when empty. It encodes with
+// nil map as {}, so the ten results that are lists (ngc.desktop/apps,
+// ngc.users/list, log, nodes, pending, pending-api and rights,
+// ngc.store/sources, installed and updates) are [] when empty. It encodes with
 // encoding/json/v2, whose omitempty keeps false and 0; the result types mark
 // optional bools and numbers omitzero, which both versions leave out alike.
 // Every failure is ErrResult: a value encoding/json/v2 refuses (invalid

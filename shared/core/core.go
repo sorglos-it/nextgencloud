@@ -49,6 +49,7 @@ const (
 	ActJoinCode   = "join-code"
 	ActPending    = "pending"
 	ActPendingAPI = "pending-api"
+	ActNodes      = "nodes"
 	ActLog        = "log"
 
 	ActSources    = "sources"
@@ -143,6 +144,7 @@ var actions = []Action{
 	{AppUsers, ServiceAPI, ActJoinCode, true, false, true, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActPending, true, false, false, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActPendingAPI, true, false, false, FlowCall, nil, 0},
+	{AppUsers, ServiceAPI, ActNodes, true, false, false, FlowCall, nil, 0},
 	{AppUsers, ServiceAPI, ActLog, true, false, false, FlowCall, newParams[LogQuery](), 0},
 
 	// The API sends a session.TrustChain (session.ParseTrustChain); the

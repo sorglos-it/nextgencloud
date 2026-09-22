@@ -136,6 +136,10 @@ func TestTable(t *testing.T) {
 	if !pendingAPI.Admin || pendingAPI.Root || pendingAPI.Changes || pendingAPI.Flow != FlowCall || pendingAPI.Params != nil || pendingAPI.MaxIn != 0 {
 		t.Errorf("pending-api: %+v", pendingAPI)
 	}
+	nodes := action(t, AppUsers, ServiceAPI, ActNodes)
+	if !nodes.Admin || nodes.Root || nodes.Changes || nodes.Flow != FlowCall || nodes.Params != nil || nodes.MaxIn != 0 {
+		t.Errorf("nodes: %+v", nodes)
+	}
 	uiProof := action(t, AppDesktop, ServiceAPI, ActUIProof)
 	if uiProof.Admin || uiProof.Root || uiProof.Changes || uiProof.Flow != FlowCall || uiProof.Params == nil || uiProof.MaxIn != 0 {
 		t.Errorf("ui-proof: %+v", uiProof)
@@ -342,7 +346,7 @@ func TestResultsWithoutNull(t *testing.T) {
 	budget := enc.Budget{Size: 1 << 20, Items: map[string]int{"roles": trust.MaxRoles, "actions": 64, "rights": maxRights}}
 	for _, v := range []any{&Me{}, &DesktopApp{}, &UserInfo{}, &RoleRights{}, &LogEntry{}, &Pending{}, &SourceInfo{},
 		&CatalogResult{}, &InstalledApp{}, &UploadResult{}, &LicenseResult{}, &InstallKey{}, &UpdateInfo{}, &TrustResult{},
-		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}, &PendingAPI{}} {
+		&PairCodeResult{}, &TOTPBegin{}, &Notice{}, &Transfer{}, &UIProof{}, &PendingAPI{}, &NodeInfo{}} {
 		b, err := json.Marshal(v)
 		if err != nil {
 			t.Fatal(err)
@@ -1142,6 +1146,7 @@ func examples(t testing.TB) map[string]any {
 		"ngc.users/trust":        TrustResult{Seq: 4},
 		"ngc.users/pair-code":    PairCodeResult{Code: pair.String(), Expires: 1790086400},
 		"ngc.users/join-code":    PairCodeResult{Code: join.String(), Expires: 1790086400},
+		"ngc.users/nodes":        []NodeInfo{{Node: "ctl-1", Online: true, Roles: []string{tunnel.RoleServices}, Version: "1.0.0", Arch: "amd64"}},
 		"ngc.users/pending":      []Pending{{Name: "dienste", Key: bytes.Repeat([]byte{0xC1}, 32), Since: 1790000000}},
 		"ngc.users/pending-api": []PendingAPI{{Node: "api-2", Noise: apiDH.Public, Sign: enc.Bytes(apiSign.Public().(ed25519.PublicKey)),
 			TLS: apiPin, URL: "wss://api-2.test:7443/tunnel", Since: 1790000000}},
@@ -1182,6 +1187,17 @@ func TestExamples(t *testing.T) {
 		// a path a ui-tar can hold.
 		if a.Entry != "" && !store.ValidPath(a.Entry) {
 			t.Errorf("desktop app entry %q", a.Entry)
+		}
+	}
+	// The rows are hints, but they name real nodes and real roles.
+	for _, n := range examples["ngc.users/nodes"].([]NodeInfo) {
+		if !wire.ValidName(n.Node) {
+			t.Errorf("node row %q", n.Node)
+		}
+		for _, r := range n.Roles {
+			if !tunnel.ValidRole(r) {
+				t.Errorf("node %s has role %q", n.Node, r)
+			}
 		}
 	}
 	notice, err := json.Marshal(examples["notice"])
@@ -1336,7 +1352,8 @@ func TestEncodeResult(t *testing.T) {
 	}
 	slices.Sort(lists)
 	want := []string{"ngc.desktop/apps", "ngc.store/installed", "ngc.store/sources", "ngc.store/updates",
-		"ngc.users/list", "ngc.users/log", "ngc.users/pending", "ngc.users/pending-api", "ngc.users/rights"}
+		"ngc.users/list", "ngc.users/log", "ngc.users/nodes", "ngc.users/pending", "ngc.users/pending-api",
+		"ngc.users/rights"}
 	if !slices.Equal(lists, want) {
 		t.Errorf("results that are lists: %q", lists)
 	}
