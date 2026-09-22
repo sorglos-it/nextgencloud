@@ -338,12 +338,18 @@ type Transfer struct {
 	SHA256  enc.Bytes      `json:"sha256"`
 }
 
-// Validate checks t.
+// Validate checks t, and the form of the envelopes it holds
+// (sign.Envelope.Validate: a catalog or release of at most sign.MaxPayload
+// bytes, a license of at most store.MaxLicense), whose signatures
+// store.VerifyCatalog, VerifyRelease and VerifyLicense check.
 func (t Transfer) Validate() error {
 	ok := t.Size > 0 && t.Size <= store.MaxPackage && len(t.SHA256) == 32 &&
 		!(t.Catalog != nil && t.Release != nil) && (t.Catalog != nil) == (t.Store != "") &&
 		(t.Store == "" || wire.ValidName(t.Store)) &&
-		(len(t.Key) == 0) == (t.License == nil) && (len(t.Key) == 0 || (len(t.Key) == store.KeySize && t.Catalog != nil))
+		(len(t.Key) == 0) == (t.License == nil) && (len(t.Key) == 0 || (len(t.Key) == store.KeySize && t.Catalog != nil)) &&
+		(t.Catalog == nil || t.Catalog.Validate(sign.MaxPayload) == nil) &&
+		(t.Release == nil || t.Release.Validate(sign.MaxPayload) == nil) &&
+		(t.License == nil || t.License.Validate(store.MaxLicense) == nil)
 	if !ok {
 		return ErrTransfer
 	}

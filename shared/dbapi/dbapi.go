@@ -125,7 +125,11 @@ type Local interface {
 	// OnceUse marks a value as used and returns its data. It gives
 	// ErrNotFound if it is unknown or expired and ErrUsed on a second use.
 	OnceUse(ctx context.Context, kind string, value []byte, now int64) (string, error)
-	// OncePurge removes values that expired before now.
+	// OncePurge removes values that expired before now. Where several APIs
+	// share one database they pass now minus session.MaxSkew: an API whose
+	// clock runs behind still accepts a task or nonce until its own now
+	// reaches the expiry, and a purge by a faster clock must not free it
+	// earlier. A controller's own database passes now.
 	OncePurge(ctx context.Context, now int64) error
 
 	Close() error

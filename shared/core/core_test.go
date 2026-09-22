@@ -507,10 +507,21 @@ func TestUnattended(t *testing.T) {
 	}
 }
 
+// testKeyID is a key ID of the form sign.Envelope.Validate asks for.
+var testKeyID = sign.KeyID([]byte("test key"))
+
 func testTransfer() Transfer {
-	cat := sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{1}, 64)}
-	lic := sign.Envelope{Payload: []byte(`{}`), KeyID: "k", Sig: bytes.Repeat([]byte{2}, 64)}
+	cat := sign.Envelope{Payload: []byte(`{}`), KeyID: testKeyID, Sig: bytes.Repeat([]byte{1}, 64)}
+	lic := sign.Envelope{Payload: []byte(`{}`), KeyID: testKeyID, Sig: bytes.Repeat([]byte{2}, 64)}
 	return Transfer{Catalog: &cat, Store: "global", License: &lic, Key: bytes.Repeat([]byte{3}, 32), Size: 5000000, SHA256: bytes.Repeat([]byte{4}, 32)}
+}
+
+// testRelease is testTransfer with an NGC release instead of a paid app.
+func testRelease() Transfer {
+	tr := testTransfer()
+	rel := sign.Envelope{Payload: []byte(`{}`), KeyID: testKeyID, Sig: bytes.Repeat([]byte{5}, 64)}
+	tr.Catalog, tr.Store, tr.License, tr.Key, tr.Release = nil, "", nil, nil, &rel
+	return tr
 }
 
 func TestTransfer(t *testing.T) {
@@ -535,12 +546,45 @@ func TestTransfer(t *testing.T) {
 		"zero size":             func(tr *Transfer) { tr.Size = 0 },
 		"invalid store name":    func(tr *Transfer) { tr.Store = "BAD" },
 		"short key":             func(tr *Transfer) { tr.Key = []byte{1} },
+		// The envelopes inside keep the form sign.ParseEnvelope asks for.
+		"catalog with an empty payload":          func(tr *Transfer) { tr.Catalog.Payload = nil },
+		"catalog with a key ID of 21 characters": func(tr *Transfer) { tr.Catalog.KeyID = tr.Catalog.KeyID[:21] },
+		"license payload over store.MaxLicense":  func(tr *Transfer) { tr.License.Payload = make([]byte, store.MaxLicense+1) },
+		"license signature of 65 bytes":          func(tr *Transfer) { tr.License.Sig = append(tr.License.Sig, 0) },
 	} {
 		tr := testTransfer()
 		mutate(&tr)
 		if tr.Validate() != ErrTransfer {
 			t.Errorf("%s accepted", name)
 		}
+	}
+	release := testRelease()
+	if err := release.Validate(); err != nil {
+		t.Errorf("release: %v", err)
+	}
+	release.Release.Sig = release.Release.Sig[:63]
+	if release.Validate() != ErrTransfer {
+		t.Error("release signature of 63 bytes accepted")
+	}
+	atLimit := testTransfer()
+	atLimit.License.Payload = make([]byte, store.MaxLicense)
+	if err := atLimit.Validate(); err != nil {
+		t.Errorf("license payload of store.MaxLicense bytes: %v", err)
+	}
+	// ReadTransfer refuses a header whose envelope WriteTransfer would not
+	// write.
+	bad := testTransfer()
+	bad.Catalog.Payload = nil
+	if err := WriteTransfer(io.Discard, bad); err != ErrTransfer {
+		t.Errorf("WriteTransfer with an empty catalog: %v", err)
+	}
+	head, err := json.Marshal(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	framed := append(binary.BigEndian.AppendUint32(nil, uint32(len(head))), head...)
+	if _, err := ReadTransfer(bytes.NewReader(framed)); err != ErrTransfer {
+		t.Errorf("ReadTransfer with an empty catalog: %v", err)
 	}
 	huge := make([]byte, 4)
 	binary.BigEndian.PutUint32(huge, MaxTransferHeader+1)
@@ -1291,11 +1335,26 @@ func FuzzParseNotice(f *testing.F) {
 }
 
 func FuzzReadTransfer(f *testing.F) {
-	var buf bytes.Buffer
-	_ = WriteTransfer(&buf, testTransfer())
-	f.Add(buf.Bytes())
+	for _, tr := range []Transfer{testTransfer(), testRelease()} {
+		var buf bytes.Buffer
+		if err := WriteTransfer(&buf, tr); err != nil {
+			f.Fatal(err)
+		}
+		f.Add(buf.Bytes())
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
-		_, _ = ReadTransfer(bytes.NewReader(b))
+		tr, err := ReadTransfer(bytes.NewReader(b))
+		if err != nil {
+			return
+		}
+		// What passes, envelopes included, writes back and reads again.
+		var buf bytes.Buffer
+		if err := WriteTransfer(&buf, tr); err != nil {
+			t.Fatalf("%+v: %v", tr, err)
+		}
+		if _, err := ReadTransfer(&buf); err != nil {
+			t.Fatalf("%+v: %v", tr, err)
+		}
 	})
 }
 
