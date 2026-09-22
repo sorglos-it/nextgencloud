@@ -123,11 +123,11 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   Manifest braucht `minNgc` (im Manifest und im Katalog) mindestens bei der NGC-Version, die es
   liest: Eine Version, deren `minNgc` neuer ist als die NGC-Version des Knotens, bietet die API
   nicht an, und der Controller installiert sie nicht (`store.SupportsMinNGC`; eine NGC-Version,
-  die keine Release-Version ist, etwa `0.0.0-dev`, gilt als älter als jedes `minNgc`).
-  Die Vertrauensliste ist eine einzige Kette:
-  ein neues Format nur mit einer neuen Vertragsnummer, sobald alle Controller sie in `hello` nennen;
-  ein Controller, der dabei fehlte, spielt erst sein Update ein und liest dann weiter. Das ui-tar
-  ändert sich nie; eine andere Form wäre eine neue Aktion.
+  die keine Release-Version ist, etwa `0.0.0-dev`, gilt als älter als jedes `minNgc`). Die
+  Vertrauensliste ist eine einzige Kette: ein neues Format nur mit einer neuen Vertragsnummer,
+  sobald alle Controller sie in `hello` nennen; ein Controller, der dabei fehlte, spielt erst
+  sein Update ein und liest dann weiter. Das ui-tar ändert sich nie; eine andere Form wäre eine
+  neue Aktion.
 - **Geheimnisse** in Konfigurationen sind `config.Secret` (Schlüssel) und `config.SecretText`
   (Passwörter). Den Wert geben nur `Bytes()` bzw. `Text()`; fmt, `log/slog` und `json.Marshal`
   zeigen `[secret]`. Eine Konfigurationsdatei schreibt Go nur mit `config.SaveController`,
@@ -177,7 +177,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `tls/` | `api.pem`: TLS-Zertifikat von `api-1` aus `trust.json`; `pin.sh` (von Hand) rechnet den Fingerabdruck wie `trust.TLSPin`, geprüft von `TestTLSPinScript` | `tunnel`: `TestVectors` |
 | `core.json` | ein Beispiel-Ergebnis je Kern-Aktion mit Ergebnis (auch `ngc.desktop/ui-proof` und `ngc.users/pending-api`; Kopplungs- und Beitrittscode sind echte Codes zur Fassung „genesis“ aus `trust.json`, `ngc.store/catalog` ein echter Katalog des globalen Stores; `ngc.users/nodes` die Controller der Vertrauensliste, `entry` in `ngc.desktop/apps` die erste Seite, `ngc.store/updates` mit einer Zeile `needsgrants`), dazu `notice`; unter `empty` die zehn Ergebnisse, die Listen sind, leer, wie `core.EncodeResult` sie schickt (`[]`) | `core`: `TestExamples` |
 | `uiproof.json` | UI-Beweise gegen eine Vertrauensliste (`trust`): je Fall App, Version, Beweis, die UI-Prüfsumme, die er belegt, und ob er gilt | `core`: `TestUIProofVectors` |
-| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten (`catalogRejects`, darunter sechs Adressen, die die Grammatik brechen, `licenseRejects` mit einer Lizenz für eine andere App, `releaseRejects`) und den Werten zum Prüfen (`store`, `installation`, `installKey`, `licenseApp`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
+| `store.json`, `pack.json` | Katalog (mit `ui` je Version), Lizenz und Release, je mit abgelehnten: `catalogRejects` (darunter sieben Adressen, die die Grammatik brechen), `licenseRejects` (darunter eine Lizenz für eine andere App), `releaseRejects`; dazu die Werte zum Prüfen (`store`, `installation`, `installKey`, `licenseApp`, `catalogLastSeq`, `releaseLastSeq`); Verschlüsselung der Kauf-Apps | `store`: `TestVectors`, `TestPackVectors` |
 | `packui.json` | Pakete, wie `ngc-store pack` sie schreibt, mit dem ui-tar von `store.PackageUI` und dessen SHA-256 | `store`: `TestPackageUIVectors` |
 | `ui.json` | ui-tars, gültige und ungültige (Regeln im Kommentar von `store/ui.go`); bei gültigen unter `files` die Dateien, die `store.WalkUI` liefert. Fälle mit Daten bis `store.MaxUIFile`, `store.MaxUITotal` oder mit `store.MaxEntries` Einträgen stehen nicht darin | `store`: `TestUIVectors` |
 | `release/` | signiertes Release mit Release-Schlüssel als PEM und einer Datei; `verify.sh` (von Hand) prüft wie die ulh-Skripte die Datei eines Teils (`verify.sh <Verzeichnis> <Teil> <Arch>`), `TestReleaseScript` in 31 Fällen | `store`: `TestReleaseScriptVector` |

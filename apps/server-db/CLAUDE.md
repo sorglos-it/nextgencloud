@@ -17,7 +17,7 @@ bekommt, den es braucht. `sql/` enthält die nummerierten Migrationen.
 - Knotenadressen sind `<host>:<port>` nach `trust.ValidHostPort` (`shared/README.md`, Regel
   „Adressen“), in `db.nodes` und `migrate.nodes` ebenso wie in `nodes` von `ngc-db`; die Länge
   begrenzt `config.MaxField`. Die Skripte prüfen den Host mit `host.sh`
-  (`shared/testdata/ulh/host.sh`: DNS-Name oder IPv4).
+  (`shared/testdata/ulh/host.sh`: DNS-Name in Kleinbuchstaben oder IPv4, kein IPv6).
 - TLS zu MariaDB: eine CA je Installation. Das Zertifikat eines Knotens nennt genau diesen Host
   (bei IPv4 als IP-Adresse); MariaDB verlangt TLS 1.3. Das Zertifikat der CA (PEM,
   `config.DB.CA`, höchstens `config.MaxCA`) kommt nach `db_ca` (`ngc-api`) und `migrate_ca`

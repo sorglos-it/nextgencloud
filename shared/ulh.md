@@ -34,9 +34,9 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
 - `ngc-api`: `node` (z. B. `api-1`; auch der Name in der Vertrauensliste und Teil des
   Fingerabdrucks beim Beitritt), `hostname` (Name, unter dem Controller und Apache den Server
   erreichen, nach `trust.ValidHost`; die Skripte prüfen wie `shared/testdata/ulh/host.sh`:
-  DNS-Name in Kleinbuchstaben oder IPv4, kein IPv6. Daraus `url` =
-  `wss://<hostname>:7443/tunnel` in `api.json` und das TLS-Zertifikat für diesen Namen),
-  `db_driver`, `db_nodes` (je `<host>:<port>` nach `trust.ValidHostPort`), `db_name`, `db_user`,
+  DNS-Name in Kleinbuchstaben oder IPv4, kein IPv6. Daraus `url` = `wss://<hostname>:7443/tunnel`
+  in `api.json` und das TLS-Zertifikat für diesen Namen), `db_driver`,
+  `db_nodes` (je `<host>:<port>` nach `trust.ValidHostPort`), `db_name`, `db_user`,
   `db_password`, `db_ca` (MariaDB: Zertifikat der CA von `ngc-db`), `store_url` (nach
   `trust.ValidStoreURL`) und `store_key` (der globale Store: Adresse und öffentlicher Schlüssel,
   base64url; nur beide zusammen oder keins, ohne Angabe der offizielle NGC-Store, eine normale
@@ -52,9 +52,9 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   Bindestrich, beginnt mit einem Buchstaben, höchstens 32 Zeichen), `pair_code` (der Kopplungscode
   aus der Shell: `ngc-pair:` und base64url des JSON, geprüft mit `tunnel.ParsePairCode`), `roles`
   (`web`, `api`, `db`, `services`); mit Rolle `db` zusätzlich `migrate_nodes` (je
-  `<host>:<port>` nach `trust.ValidHostPort`), `migrate_name`,
-  `migrate_user` (`ngc_migrate`), `migrate_password` und `migrate_ca` (Zertifikat der CA von
-  `ngc-db`) für `migrate` in `controller.json`
+  `<host>:<port>` nach `trust.ValidHostPort`), `migrate_name`, `migrate_user` (`ngc_migrate`),
+  `migrate_password` und `migrate_ca` (Zertifikat der CA von `ngc-db`) für `migrate` in
+  `controller.json`
 - `ngc-all`: `hostname` (wie bei `ngc-api`, nach `trust.ValidHost` und `host.sh`), `cert_mode`
   für `install`; `pair_code` für `configure` nach der Ersteinrichtung
 

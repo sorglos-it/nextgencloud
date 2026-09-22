@@ -69,7 +69,7 @@ so klein wie möglich.
   es zu `ui` aus `core.ActivateParams` passen, und bei Store-Apps muss es bei jedem Aktivieren,
   Installieren und Update, mit oder ohne Benutzer, zu `ui` des Katalogeintrags passen; sonst
   `E_VERIFY`.
-- Lizenzen einer Kauf-App: Sie kommt beim Aktivieren und bei Updates im Kopf der Übertragung
+- Die Lizenz einer Kauf-App kommt beim Aktivieren und bei Updates im Kopf der Übertragung
   (`core.Transfer`), eine erneuerte über `ngc.store/controller/license` (`in`, ohne Benutzer,
   Parameter `app`, Antwort `core.LicenseResult`). Du prüfst sie selbst mit
   `store.VerifyLicenseFor`: der Store aus `dbapi.App.Store`, wie ihn deine Vertrauensliste führt,
@@ -83,12 +83,14 @@ so klein wie möglich.
     bleiben.
   - Aktivieren einer Kauf-App mit abgelaufener Lizenz: `E_LICENSE`. Eine App, die du nicht
     ausführst: `E_NOTFOUND`. Eine Lizenz, die nicht prüft: `E_VERIFY`.
-- Updates und Aktivieren: Du installierst nur aus dem Katalog von `dbapi.App.Store` (sonst
-  `E_VERIFY`) und nur, wenn `store.Granted` die neuen `needs` in `dbapi.App.Grants` findet (sonst
-  `E_FORBIDDEN`; ohne Benutzer meldest du `needsgrants`, `store.UpdateNeedsGrants`). Die Rechte
-  nimmst du dabei immer aus deiner eigenen Datenbank, wie sie beim Aktivieren hineingeschrieben
-  wurden, nie aus einem Wert, den eine API schickt: Sonst könnte eine übernommene API einer App
-  mehr erlauben. Danach läuft die App mit den Rechten auf die neuen `needs` zusammengestrichen.
+- Updates und Aktivieren: Du installierst bei Store-Apps nur aus dem Katalog von
+  `dbapi.App.Store` (sonst `E_VERIFY`; bei einer hochgeladenen App steht dort `core.LocalStore`,
+  zu dem es keinen Katalog gibt) und nur, wenn `store.Granted` die neuen `needs` in
+  `dbapi.App.Grants` findet (sonst `E_FORBIDDEN`; ohne Benutzer meldest du `needsgrants`,
+  `store.UpdateNeedsGrants`). Die Rechte nimmst du dabei immer aus deiner eigenen Datenbank, wie
+  sie beim Aktivieren hineingeschrieben wurden, nie aus einem Wert, den eine API schickt: Sonst
+  könnte eine übernommene API einer App mehr erlauben. Danach läuft die App mit den Rechten auf
+  die neuen `needs` zusammengestrichen.
   Diese beiden Regeln prüfst du auch ohne Benutzer selbst: `core.Unattended` sieht weder die
   Zeile der App noch den Katalog, sein Ja heißt nur Dauerfreigabe und neuere Version.
   - `activate` einer installierten App mit derselben oder einer neueren Version ersetzt sie samt
@@ -118,13 +120,13 @@ so klein wie möglich.
   mit `url` = `https://<Host>:<Port>` und `tls`), daraus `config.BalancerFile`, genau in der Form
   der Vorlage in `shared/ulh.md` (Regel „Lastverteilung in Apache“). Erst `apachectl configtest`,
   dann Apache neu laden – sobald sich die API-Server der Vertrauensliste ändern. Außerdem
-  vergleichst du bei jedem Aufbau eines Tunnels und
-  einmal am Tag das Zertifikat, das du über `tunnel.PinnedTLS` bekommen hast, mit dem in
-  `config.APITrustFile`; weicht es ab (derselbe Schlüssel, das beweist der Fingerabdruck),
-  schreibst du die Datei neu und lädst Apache neu. Vertrauen trägt nur der Fingerabdruck, nicht das
-  Zertifikat; so sperrt weder ein erneuertes Zertifikat noch ein Datum Apache aus. Den Anker
-  schreibst du mit `config.SaveAnchor`. Vor deiner ersten Fassung der Vertrauensliste hat ngc-web
-  das aus `api_pins` getan.
+  vergleichst du bei jedem Aufbau eines Tunnels und einmal am Tag das Zertifikat, das du über
+  `tunnel.PinnedTLS` bekommen hast, mit dem in `config.APITrustFile`; weicht es ab (derselbe
+  Schlüssel, das beweist der Fingerabdruck), schreibst du die Datei neu und lädst Apache neu.
+  Vertrauen trägt nur der Fingerabdruck, nicht das Zertifikat; so sperrt weder ein erneuertes
+  Zertifikat noch ein Datum Apache aus. Den Anker schreibst du mit `config.SaveAnchor`. Vor
+  deiner ersten Fassung der Vertrauensliste hat ngc-web `config.APITrustFile` aus `api_pins`
+  geschrieben.
 - Der Dienst „virtuelles Terminal" als Beispiel-Dienst.
 
 ## Tests

@@ -109,9 +109,9 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   ebenso gepinnt. Dein ulh-Skript zeigt dabei nicht nur `tunnel.JoinFingerprint`, sondern auch
   den Anker aus dem Beitrittscode (Nummer und `tunnel.Fingerprint` des Hashes), wie
   `ngc-controller` es beim Koppeln tut; der Admin vergleicht ihn mit der Shell (`shared/ulh.md`).
-  Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann
-  jede ersetzen. Wie ein neuer API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel
-  bekommt, legst du selbst fest.
+  Mehrere APIs teilen sich Schlüssel und Sitzungen über die Datenbank; jede kann jede ersetzen.
+  Wie ein neuer API-Server nach der Unterschrift des Admins die gemeinsamen Schlüssel bekommt,
+  legst du selbst fest.
 - Apps und Stores: Kataloge prüfen (`store.VerifyCatalog`), Pakete entpacken (`store.Walk`,
   höchstens `store.MaxDirs` Verzeichnisse), Lizenzen prüfen, Schlüssel der Kauf-Apps entpacken
   (`store.UnwrapKey`) und nur an eigene Controller geben. Die neueste Lizenz jeder Kauf-App, die
@@ -119,10 +119,10 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   (ohne Benutzer, Parameter `{app}`) an jeden Controller, auf dem die App läuft: nach jeder neuen
   Lizenz und nach jedem Tunnelaufbau. Er prüft sie selbst mit `store.VerifyLicenseFor`; nur du
   packst den Inhaltsschlüssel aus und zählst die Benutzer einer Lizenz je Benutzer. Der globale
-  Store heißt `global`
-  (`store.GlobalID`), `local` steht für hochgeladene Apps (`core.LocalStore`); einen zweiten Store
-  `global` lehnst du ab. Auf `ngc.store/upload` antwortest du mit `core.UploadResult` (ID, Version,
-  SHA-256 und `store.PackageUI` des Pakets); die Shell gleicht damit nur ab.
+  Store heißt `global` (`store.GlobalID`), `local` steht für hochgeladene Apps
+  (`core.LocalStore`); einen zweiten Store `global` lehnst du ab. Auf `ngc.store/upload`
+  antwortest du mit `core.UploadResult` (ID, Version, SHA-256 und `store.PackageUI` des Pakets);
+  die Shell gleicht damit nur ab.
 - Oberflächen: `dbapi.BlobUI` hält genau `store.PackageUI` des unverschlüsselten Pakets, und
   `ngc.desktop/ui` liefert diese Bytes unverändert (die Shell liest sie wie `store.WalkUI`). Für
   jede installierte Version hältst du ihren `core.UIProof` in `dbapi.BlobApproval`: bei Store-Apps
