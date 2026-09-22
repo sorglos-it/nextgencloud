@@ -18,10 +18,10 @@ bekommt, den es braucht. `sql/` enthält die nummerierten Migrationen.
   Eintrags in `db.nodes` (`host:port`); MariaDB verlangt TLS 1.3. Das Zertifikat der CA (PEM,
   `config.DB.CA`, höchstens `config.MaxCA`) kommt nach `db_ca` (`ngc-api`) und `migrate_ca`
   (`ngc-controller`); API und Controller prüfen damit jeden Knoten (`config.DB.TLSConfig`), nie eine
-  Verbindung ohne Prüfung.
-  Der private Schlüssel der CA kommt nie in answer.yaml, eine Konfiguration oder das Repo. Wie er
-  verwahrt wird und wie weitere Knoten ihre Zertifikate bekommen, legt dein Plan fest; der
-  Koordinator trägt es in `shared/ulh.md` ein.
+  Verbindung ohne Prüfung. Auch die Replikation zwischen den Galera-Knoten prüft gegen dieselbe CA
+  der Installation. Der private Schlüssel der CA kommt nie in answer.yaml, eine Konfiguration oder
+  das Repo. Wie er verwahrt wird und wie weitere Knoten ihre Zertifikate bekommen, legt dein Plan
+  fest; der Koordinator trägt es in `shared/ulh.md` ein.
 - `dbapi` hat neue Arten bekommen (`dbapi.BlobApproval`, `dbapi.BlobJoin`, `dbapi.OnceJoin`), und
   `dbapi.SettingUpdate` hält je Ziel nur `core.UpdateSetting`: alles Blobs, Einmalwerte und
   Einstellungen, also keine Änderung am Schema.
