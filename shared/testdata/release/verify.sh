@@ -38,9 +38,17 @@ fail() {
 
 # b64url decodes base64url without padding from stdin, as strictly as Go's
 # enc.B64: only the letters A-Z a-z 0-9 - _, and only the one encoding of the
-# bytes (the unused bits of the last letter are zero).
+# bytes (the unused bits of the last letter are zero). The input is the text
+# alone or one line of jq -r. $(...) drops NUL bytes and every newline at the
+# end, so the bytes are checked in a file first: without the letters, only
+# the newline that ends jq's line may be left.
 b64url() {
-	s=$(cat)
+	cat > "$work/b64.in" || return 1
+	case $(tr -d 'A-Za-z0-9_-' < "$work/b64.in" | od -An -tx1 | tr -d ' \n') in
+	'' | 0a) ;;
+	*) return 1 ;;
+	esac
+	s=$(cat "$work/b64.in")
 	case $s in *[!A-Za-z0-9_-]*) return 1 ;; esac
 	case $((${#s} % 4)) in
 	0) pad= ;;

@@ -587,6 +587,11 @@ func TestReleaseScript(t *testing.T) {
 		}), webOnly), webArgs, "signature does not verify"},
 		{"signature with an unused bit set", dir(release(payload(web), unusedBit), webOnly), webArgs, "signature not base64url"},
 		{"payload with padding", dir(release(payload(web), func(m map[string]string) { m["payload"] += "=" }), webOnly), webArgs, "payload not base64url"},
+		// jq -r prints such a text with a second newline, and $(...) drops
+		// newlines at the end and NUL bytes: what remains is valid base64url.
+		{"payload ending in a newline", dir(release(payload(web), func(m map[string]string) { m["payload"] += "\n" }), webOnly), webArgs, "payload not base64url"},
+		{"signature ending in a newline", dir(release(payload(web), func(m map[string]string) { m["sig"] += "\n" }), webOnly), webArgs, "signature not base64url"},
+		{"payload with a NUL byte", dir(release(payload(web), func(m map[string]string) { m["payload"] += "\x00" }), webOnly), webArgs, "payload not base64url"},
 		{"no payload", dir(release(payload(web), func(m map[string]string) { delete(m, "payload") }), webOnly), webArgs, "no payload"},
 		{"wrong hash", dir(release(payload(web), nil), map[string][]byte{"ngc-web-all.tar": []byte("NGC web test filE\n")}), webArgs, "checksum wrong"},
 		{"bytes appended", dir(release(payload(web), nil), map[string][]byte{"ngc-web-all.tar": append(slices.Clone(releaseFile), 'x')}), webArgs, "checksum wrong"},
