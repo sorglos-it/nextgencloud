@@ -1210,7 +1210,7 @@ func TestExamples(t *testing.T) {
 	// An update by click signs a row into InstallParams; a row's key is what
 	// the standing approval of Genesis for its target names.
 	for _, u := range examples["ngc.store/updates"].([]UpdateInfo) {
-		if !store.ValidTarget(u.Target) || !wire.ValidName(u.Node) || (len(u.Key) != 0 && !store.Approved(genesis(t).List, u.Target, u.Key)) {
+		if !store.ValidTarget(u.Target) || !wire.ValidName(u.Node) || (len(u.Key) != 0 && !store.Approved(g.List, u.Target, u.Key)) {
 			t.Errorf("update row %+v", u)
 		}
 		click := InstallParams{Target: u.Target}
@@ -1230,7 +1230,7 @@ func TestExamples(t *testing.T) {
 	p, err := ParseUIProof(b)
 	if err == nil {
 		var ui []byte
-		ui, err = VerifyUIProof(p, p.App, p.Version, genesis(t).List)
+		ui, err = VerifyUIProof(p, p.App, p.Version, g.List)
 		if err == nil && !bytes.Equal(ui, uiTerminal) {
 			t.Errorf("ui-proof proves %x", ui)
 		}
