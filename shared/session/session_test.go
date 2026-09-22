@@ -1073,7 +1073,11 @@ func TestVectors(t *testing.T) {
 		case c.want == ErrMessage:
 			var o SetupOffer
 			var info SetupInfo
-			if err := json.Unmarshal(c.Offer, &o); err != nil || infoBudget.Decode(o.Info, &info) != nil {
+			err := json.Unmarshal(c.Offer, &o)
+			if err == nil {
+				err = infoBudget.Decode(o.Info, &info)
+			}
+			if err != nil {
 				t.Errorf("offer %s is refused before its rules: %v", c.Name, err)
 			}
 		}
