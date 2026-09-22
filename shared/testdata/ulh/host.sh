@@ -5,6 +5,10 @@
 # 2 wrong call.
 # Usage: host.sh <host>
 set -u
+# The character ranges below are the C ranges, whatever locale the admin
+# runs: in another one [a-z] and grep's classes can take other letters.
+LC_ALL=C
+export LC_ALL
 [ $# -eq 1 ] || { echo "usage: host.sh <host>" >&2; exit 2; }
 h=$1
 # Only these characters, so no line break, space or quote gets further.
