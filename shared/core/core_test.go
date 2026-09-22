@@ -749,6 +749,16 @@ func uiProofCases(t testing.TB, f uiFixture) []uiProofCase {
 	withFlipped := byAdmin
 	withFlipped.Task = &flipped
 
+	// The signatures a verifier must check, not only the key IDs.
+	badCatalog := *global
+	badCatalog.Sig = bytes.Clone(badCatalog.Sig)
+	badCatalog.Sig[0] ^= 1
+	badCert := *byAdmin.Proof
+	badCert.Sig = bytes.Clone(badCert.Sig)
+	badCert.Sig[0] ^= 1
+	withBadCert := byAdmin
+	withBadCert.Proof = &badCert
+
 	together := withCatalog(terminal, "1.0.0", global)
 	together.Task, together.Client, together.Proof = byAdmin.Task, byAdmin.Client, byAdmin.Proof
 
@@ -766,21 +776,28 @@ func uiProofCases(t testing.TB, f uiFixture) []uiProofCase {
 		{"catalog of a store not in the list", terminal, "1.0.0", ofThird, nil, true, errProofStore},
 		{"catalog signed by another key", terminal, "1.0.0",
 			withCatalog(terminal, "1.0.0", f.catalog(t, uiCatalog(), f.other)), nil, true, sign.ErrWrongKey},
+		{"flipped catalog signature", terminal, "1.0.0", withCatalog(terminal, "1.0.0", &badCatalog), nil, true, sign.ErrBadSignature},
 		{"version not in the catalog", terminal, "1.2.0", withCatalog(terminal, "1.2.0", global), nil, true, errProofListed},
 		{"app not in the catalog", "org.sorglos.mail", "1.0.0", withCatalog("org.sorglos.mail", "1.0.0", global), nil, true, errProofListed},
+		// The proof holds, but for what the shell did not ask for.
+		{"store app proof for another version than asked", terminal, "1.2.0", withCatalog(terminal, "1.0.0", global), nil, true, errProofForm},
+		{"store app proof for another app than asked", "org.sorglos.mail", "1.0.0", withCatalog(terminal, "1.0.0", global), nil, true, errProofForm},
 		{"uploaded app activated by a user without root on the node", notes, "0.1.0",
 			f.approval(t, aliceID, trusttest.NewSigner(0x31), ActActivate, activate(notes, "0.1.0", LocalStore)), nil, true, errProofRoot},
 		{"task for another app", notes, "0.1.0",
 			f.approval(t, adminID, admin, ActActivate, activate("org.example.other", "0.1.0", LocalStore)), nil, true, errProofTask},
 		{"task for another version", notes, "0.1.0",
 			f.approval(t, adminID, admin, ActActivate, activate(notes, "0.2.0", LocalStore)), nil, true, errProofTask},
-		{"task that is no activate", notes, "0.1.0",
-			f.approval(t, adminID, admin, ActDeactivate, AppParams{App: notes}), nil, true, errProofTask},
+		{"task that is no activate", notes, "0.1.0", // params of an activate, so only the action tells
+			f.approval(t, adminID, admin, ActDeactivate, activate(notes, "0.1.0", LocalStore)), nil, true, errProofTask},
 		{"params naming a store", notes, "0.1.0",
 			f.approval(t, adminID, admin, ActActivate, activate(notes, "0.1.0", trust.StoreGlobal)), nil, true, errProofTask},
 		{"certificate proof by a key not in the list", notes, "0.1.0",
 			f.approval(t, adminID, trusttest.NewSigner(0x77), ActActivate, activate(notes, "0.1.0", LocalStore)), nil, true, session.ErrUser},
+		{"flipped certificate proof", notes, "0.1.0", withBadCert, nil, true, proof.ErrSignature},
 		{"flipped task signature", notes, "0.1.0", withFlipped, nil, true, sign.ErrBadSignature},
+		{"uploaded app proof for another version than asked", notes, "0.2.0", byAdmin, nil, true, errProofForm},
+		{"uploaded app proof for another app than asked", "org.example.other", "0.1.0", byAdmin, nil, true, errProofForm},
 		{"catalog and task together", terminal, "1.0.0", together, nil, false, errProofForm},
 		{"store app without a catalog", terminal, "1.0.0", storeTask, nil, false, errProofForm},
 	}
@@ -988,7 +1005,7 @@ func TestUIProofVectors(t *testing.T) {
 			valid++
 		}
 	}
-	if valid != 3 || len(file.Cases) != 16 {
+	if valid != 3 || len(file.Cases) != 22 {
 		t.Errorf("%d cases, %d of them valid", len(file.Cases), valid)
 	}
 }
