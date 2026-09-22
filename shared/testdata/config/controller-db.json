@@ -21,6 +21,7 @@
     "nodes": ["db-1.ngc.test:3306", "db-2.ngc.test:3306", "db-3.ngc.test:3306"],
     "name": "ngc",
     "user": "ngc_migrate",
-    "password": "migrate-secret"
+    "password": "migrate-secret",
+    "ca": "-----BEGIN CERTIFICATE-----\nMIIBJjCB2aADAgECAgEBMAUGAytlcDAbMRkwFwYDVQQDExBOR0MgREIgQ0EgKFRl\nc3QpMB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowGzEZMBcGA1UEAxMQ\nTkdDIERCIENBIChUZXN0KTAqMAUGAytlcAMhAEZmJ9Unc8nVzabI/SjqMex7lOaK\nqNQuKtMaddyNJO0Ho0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUwAwEB\n/zAdBgNVHQ4EFgQUtLfktau+b9lzKjCSShWE4L6O77EwBQYDK2VwA0EAtUDIks8P\nCjhgAiKaqPKxdtHPawXm/SArjFSrWd1AlVPCqBYD3LI4YpnwIXlqMmpgjVA8MT1m\np48tXprLImpLAQ==\n-----END CERTIFICATE-----\n"
   }
 }

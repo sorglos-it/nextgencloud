@@ -4,8 +4,11 @@ package config
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,6 +46,7 @@ const (
 	// trust.Node.TLS) before it is written: by ngc-web, then by the controller
 	// with role web.
 	APITrustFile = "/etc/ngc/tls/api-trust.pem"
+	MaxCA        = 16 << 10 // DB.CA
 
 	ServiceAPI        = "ngc-api.service"
 	ServiceController = "ngc-controller.service"
@@ -65,6 +69,10 @@ const maxList = 16
 // maxRoles is the number of roles a server can carry (tunnel.RoleWeb,
 // RoleAPI, RoleDB, RoleServices).
 const maxRoles = 4
+
+// maxCACerts is the most certificates DB.CA holds: the installation's CA,
+// and while it is replaced its successor, with room to spare.
+const maxCACerts = 4
 
 // Database drivers.
 const (
@@ -214,6 +222,10 @@ type DB struct {
 	Password SecretText `json:"password,omitzero"`
 	Path     string     `json:"path,omitempty"` // SQLite: file
 	Key      Secret     `json:"key,omitzero"`   // SQLite: 64 bytes for AES-256-XTS
+	// CA is the certificate of the installation's database CA in PEM, which
+	// ngc-db made (MariaDB only). A client verifies every node's certificate
+	// against it and the node's host name (TLSConfig), never without.
+	CA string `json:"ca,omitempty"`
 }
 
 // API is /etc/ngc/api.json. It holds keys, so the file belongs to root with mode 0600.
@@ -534,15 +546,81 @@ func (d *DB) Validate() error {
 				return ErrConfig
 			}
 		}
+		if _, err := parseCA(d.CA); err != nil {
+			return err
+		}
 	case DriverSQLite:
 		if !strings.HasPrefix(d.Path, "/") || len(d.Path) > MaxField || len(d.Key.Bytes()) != 64 || len(d.Nodes) != 0 ||
-			d.Name != "" || d.User != "" || !d.Password.IsZero() {
+			d.Name != "" || d.User != "" || !d.Password.IsZero() || d.CA != "" {
 			return ErrConfig
 		}
 	default:
 		return ErrConfig
 	}
 	return nil
+}
+
+// pemSpace is the white space DB.CA may hold around its PEM blocks.
+const pemSpace = " \t\r\n"
+
+// parseCA returns the certificates of DB.CA: at most MaxCA bytes, 1 to
+// maxCACerts PEM blocks of type CERTIFICATE without headers and with nothing
+// but white space around them, each a certificate x509.ParseCertificate
+// accepts with BasicConstraintsValid and IsCA; ErrConfig otherwise. Validate
+// and TLSConfig both read the field through it, so a client trusts exactly
+// the certificates Validate accepted.
+func parseCA(ca string) ([]*x509.Certificate, error) {
+	if len(ca) > MaxCA {
+		return nil, ErrConfig
+	}
+	var certs []*x509.Certificate
+	rest := []byte(ca)
+	for {
+		rest = bytes.TrimLeft(rest, pemSpace)
+		if len(rest) == 0 {
+			break
+		}
+		if len(certs) == maxCACerts {
+			return nil, ErrConfig
+		}
+		block, after := pem.Decode(rest)
+		// pem.Decode skips whatever comes before a block it can read, even a
+		// broken block. So the block must start right after the white space:
+		// what it consumed holds no later BEGIN line (the body of a block it
+		// returns is base64, which has no '-').
+		if block == nil || bytes.LastIndex(rest[:len(rest)-len(after)], []byte("-----BEGIN")) != 0 ||
+			block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			return nil, ErrConfig
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !cert.BasicConstraintsValid || !cert.IsCA {
+			return nil, ErrConfig
+		}
+		certs = append(certs, cert)
+		rest = after
+	}
+	if len(certs) == 0 {
+		return nil, ErrConfig
+	}
+	return certs, nil
+}
+
+// TLSConfig returns the TLS client configuration for the database node
+// serverName (the host of an entry of Nodes): TLS 1.3, and the node's
+// certificate must chain to CA and name serverName. ErrConfig without a CA
+// (one Validate accepts) or without a server name.
+func (d DB) TLSConfig(serverName string) (*tls.Config, error) {
+	certs, err := parseCA(d.CA)
+	// Without a name crypto/tls refuses to connect, but a database driver may
+	// put in a name of its own; the caller names the node instead.
+	if err != nil || serverName == "" {
+		return nil, ErrConfig
+	}
+	pool := x509.NewCertPool()
+	for _, c := range certs {
+		pool.AddCert(c)
+	}
+	return &tls.Config{RootCAs: pool, ServerName: serverName, MinVersion: tls.VersionTLS13}, nil
 }
 
 // Validate checks the controller configuration.
@@ -588,6 +666,8 @@ func (d DB) LogValue() slog.Value {
 		slog.Attr{Key: "password", Value: d.Password.LogValue()},
 		slog.String("path", d.Path),
 		slog.Attr{Key: "key", Value: d.Key.LogValue()},
+		// Only whether it is set: the certificate is public, but long.
+		slog.Bool("ca", d.CA != ""),
 	)
 }
 
