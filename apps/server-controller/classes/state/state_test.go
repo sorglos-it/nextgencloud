@@ -17,6 +17,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
 
 func newStore(t *testing.T) *Store {
@@ -62,8 +63,43 @@ func TestUseTaskRefusesReplay(t *testing.T) {
 }
 
 func TestVersionsFrom(t *testing.T) {
-	// Fassungen 1 bis 3 ablegen, ab 2 lesen: genau zwei, aufsteigend.
-	// (Testdaten aus trusttest, siehe Aufgabe 3; hier reichen Rohbytes.)
+	ctx := context.Background()
+	s := newStore(t)
+	// Three signed versions, as a controller really keeps them.
+	admin := trusttest.NewSigner(1)
+	want := []trust.Signed{admin.Sign(t, trusttest.Genesis(admin))}
+	for len(want) < 3 {
+		want = append(want, admin.Sign(t, trusttest.Next(t, want[len(want)-1])))
+	}
+	for i, v := range want {
+		if err := s.PutVersion(ctx, v, uint64(i+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Versions(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("versions from 2: %d entries, want 2", len(got))
+	}
+	for i, v := range got {
+		if !bytes.Equal(v.Payload, want[i+1].Payload) {
+			t.Fatalf("entry %d is not the version that was stored", i)
+		}
+		l, err := trust.Parse(v.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Ascending by number, so trust.Open and trust.Advance see the chain
+		// in the order they verify it in.
+		if l.Seq != uint64(i+2) {
+			t.Fatalf("entry %d holds version %d, want %d", i, l.Seq, i+2)
+		}
+	}
+	if seq, err := s.NewestSeq(ctx); err != nil || seq != 3 {
+		t.Fatalf("newest seq = %d, err = %v, want 3, nil", seq, err)
+	}
 }
 
 // signedVersion builds a version of the shape trust.ParseSigned takes: raw
