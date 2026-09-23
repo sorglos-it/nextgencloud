@@ -3,6 +3,8 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
@@ -129,20 +132,54 @@ func TestFileURL(t *testing.T) {
 			t.Errorf("%q: parameters %v, %v", name, q, err)
 		}
 	}
+	// filepath.Join cleans what it builds, so the paths that must stay dirty
+	// are put together by hand.
+	sep := string(filepath.Separator)
 	for label, path := range map[string]string{
-		"empty":         "",
-		"relative":      "x.db",
-		"relative dot":  "./x.db",
-		"question mark": filepath.Join(dir, "x.db?hexkey=00"),
-		"hash":          filepath.Join(dir, "x.db#hexkey=00"),
-		"line feed":     filepath.Join(dir, "x\n.db"),
-		"nul":           filepath.Join(dir, "x\x00.db"),
-		"delete":        filepath.Join(dir, "x\x7f.db"),
-		"too long":      filepath.Join(dir, strings.Repeat("x", config.MaxField)+".db"),
+		"empty":            "",
+		"relative":         "x.db",
+		"relative dot":     "./x.db",
+		"question mark":    filepath.Join(dir, "x.db?hexkey=00"),
+		"hash":             filepath.Join(dir, "x.db#hexkey=00"),
+		"line feed":        filepath.Join(dir, "x\n.db"),
+		"nul":              filepath.Join(dir, "x\x00.db"),
+		"delete":           filepath.Join(dir, "x\x7f.db"),
+		"too long":         filepath.Join(dir, strings.Repeat("x", config.MaxField)+".db"),
+		"step up":          dir + sep + ".." + sep + "x.db",
+		"step here":        dir + sep + "." + sep + "x.db",
+		"two separators":   dir + sep + sep + "x.db",
+		"separator at end": dir + sep + "x.db" + sep,
 	} {
 		if dsn, err := fileURL(path); err == nil {
 			t.Errorf("%s was accepted: %q", label, dsn)
 		}
+	}
+}
+
+// TestConnectorHidesTheKey guards the house rule that a secret never reaches
+// a log, not even by accident. The connector carries the key of the file for
+// the lifetime of the pool, so whatever printing it may happen - a %v of a
+// connection that would not open, say - has to show nothing of the key.
+func TestConnectorHidesTheKey(t *testing.T) {
+	hex := strings.Repeat("5a", keySize)
+	c := connector{hexkey: config.NewSecretText(hex)}
+	for _, printed := range []string{
+		fmt.Sprintf("%v", c), fmt.Sprintf("%+v", c), fmt.Sprintf("%#v", c),
+		fmt.Sprintf("%s", c.hexkey), fmt.Sprint(c.hexkey),
+	} {
+		if strings.Contains(printed, "5a5a") {
+			t.Errorf("the key shows in %q", printed)
+		}
+	}
+	// It is still the key, not a copy that lost something.
+	if c.hexkey.Text() != hex {
+		t.Error("the connector does not hand the key on unchanged")
+	}
+	// And the check is not vacuous: the same field as a plain string, which
+	// is what stood here before, shows the key at the first %v.
+	type plain struct{ hexkey string }
+	if !strings.Contains(fmt.Sprintf("%v", plain{hex}), "5a5a") {
+		t.Error("the check itself does not catch a key in plain sight")
 	}
 }
 
@@ -165,7 +202,7 @@ func TestPragmas(t *testing.T) {
 	}
 	// Hold every connection of the pool at once, so each of them is a new one
 	// and each has to have run the callback.
-	for i := range maxConns {
+	for i := range maxOpenConns {
 		conn, err := db.Conn(ctx)
 		if err != nil {
 			t.Fatalf("connection %d: %v", i, err)
@@ -180,6 +217,74 @@ func TestPragmas(t *testing.T) {
 				t.Errorf("connection %d: %s = %q, want %q", i, pragma, got, value)
 			}
 		}
+	}
+}
+
+// TestPoolKeepsOneConnection pins the shape of the pool: four connections at
+// once, but only one of them stays. Every connection runs a SQLite build of
+// its own, and its memory - up to maxMemory after one large blob - comes back
+// only when the connection closes.
+func TestPoolKeepsOneConnection(t *testing.T) {
+	db, err := OpenDB(testConfig(t, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := db.Stats().MaxOpenConnections; got != maxOpenConns {
+		t.Errorf("%d connections at once, want %d", got, maxOpenConns)
+	}
+	conns := make([]*sql.Conn, maxOpenConns)
+	for i := range conns {
+		if conns[i], err = db.Conn(ctx); err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+	}
+	if got := db.Stats().OpenConnections; got != maxOpenConns {
+		t.Errorf("%d connections open, want %d", got, maxOpenConns)
+	}
+	for i, conn := range conns {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing %d: %v", i, err)
+		}
+	}
+	if st := db.Stats(); st.Idle > maxIdleConns || st.OpenConnections > maxIdleConns {
+		t.Errorf("%d open and %d idle afterwards; at most %d may stay",
+			st.OpenConnections, st.Idle, maxIdleConns)
+	}
+}
+
+// TestLargestBlob writes and reads back a blob of the largest size the store
+// allows. It is the only proof that the memory of the SQLite build carries
+// one: the driver runs SQLite in WebAssembly with a bound of its own, and a
+// connection that runs past that bound does not return an error - it panics.
+// The test takes a few seconds and a few hundred MiB; that is the price of
+// the proof.
+func TestLargestBlob(t *testing.T) {
+	db, err := OpenDB(testConfig(t, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, "CREATE TABLE probe (id INTEGER NOT NULL, a BLOB NOT NULL, PRIMARY KEY (id))"); err != nil {
+		t.Fatal(err)
+	}
+	data := bytes.Repeat([]byte{0x5a}, sqlstore.MaxData)
+	// Both ends carry a mark, so a blob that comes back short or shifted is
+	// not hidden by the sameness of the filling.
+	copy(data, "head")
+	copy(data[len(data)-4:], "tail")
+	if _, err := db.ExecContext(ctx, "INSERT INTO probe (id, a) VALUES (?, ?)", 1, data); err != nil {
+		t.Fatalf("writing %d bytes: %v", len(data), err)
+	}
+	var got []byte
+	if err := db.QueryRowContext(ctx, "SELECT a FROM probe WHERE id = ?", 1).Scan(&got); err != nil {
+		t.Fatalf("reading it back: %v", err)
+	}
+	if len(got) != len(data) {
+		t.Fatalf("%d bytes came back, want %d", len(got), len(data))
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("the blob came back changed")
 	}
 }
 

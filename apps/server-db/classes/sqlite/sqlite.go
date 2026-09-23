@@ -5,12 +5,15 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"time"
 
 	"github.com/ncruces/go-sqlite3"
 	sqlitedriver "github.com/ncruces/go-sqlite3/driver"
@@ -27,11 +30,30 @@ const busyTimeout = 10000 // milliseconds
 // (config.DB.Key carries exactly this many).
 const keySize = 64
 
-// maxConns is how many connections the pool keeps. A handful is plenty for
-// one controller or one Pi, and it keeps the memory of the SQLite build
-// small. Writers take the file lock one after another; busy_timeout and the
-// store's repeat handle the wait.
-const maxConns = 4
+// The pool. Four writers at once are plenty for one controller or one Pi, but
+// only one connection stays: each one runs a SQLite build of its own, and its
+// memory comes back only when the connection closes. With four kept open, the
+// largest blob each of them ever carried would stay paid for until the
+// program ends - on a Pi the most expensive thing in here. An idle connection
+// above the first is therefore dropped after a minute.
+const (
+	maxOpenConns = 4
+	maxIdleConns = 1
+	idleTimeout  = 60 * time.Second
+)
+
+// maxMemory bounds the memory of the SQLite build of one connection. The
+// driver runs SQLite in WebAssembly, and a connection that runs past the
+// bound does not return an error, it panics; the bound is a ceiling, not a
+// reservation, so a connection that stays small stays small.
+//
+// 512 MiB is sqlstore.MaxData (80 MiB, the largest blob) with room for the
+// page cache, the journal and the copy a statement makes while it binds the
+// blob. The driver's own default is 4096 pages (256 MiB) on a 64-bit machine
+// and 512 pages (32 MiB) on a 32-bit one - the largest blob would not fit
+// through a 32-bit build at all, which is one more reason NGC builds only
+// linux/amd64 and linux/arm64.
+const maxMemory = 512 << 20
 
 // OpenDB opens the file named by cfg, encrypted with cfg.Key. It does not
 // create any table: the schema comes from the migrations.
@@ -41,50 +63,95 @@ func OpenDB(cfg config.DB) (*sql.DB, error) {
 	}
 	key := cfg.Key.Bytes()
 	if len(key) != keySize {
+		clear(key)
 		return nil, errors.New("sqlite: the key must be 64 bytes for AES-256-XTS")
 	}
 	// The key is the only value that ever reaches SQL as text instead of as a
 	// placeholder, because PRAGMA takes no placeholder. hex.EncodeToString of
 	// 64 bytes is always 128 characters of 0-9 and a-f, so there is nothing in
-	// it that could end the string or add a statement.
-	hexkey := hex.EncodeToString(key)
+	// it that could end the string or add a statement. It travels on as a
+	// SecretText: printing, logging or encoding it shows "[secret]".
+	hexkey := config.NewSecretText(hex.EncodeToString(key))
 	clear(key) // the copy of the raw key is done with; the hex one the pool keeps
 	dsn, err := fileURL(cfg.Path)
 	if err != nil {
 		return nil, err
 	}
-	db, err := sqlitedriver.Open(dsn, func(c *sqlite3.Conn) error {
-		// Order matters: the key first, because everything after it reads the
-		// file. Temporary files stay in memory so that no part of the data
-		// lands on disk with a random key instead of ours.
-		for _, pragma := range []string{
-			"PRAGMA hexkey='" + hexkey + "'",
-			fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeout),
-			"PRAGMA journal_mode=wal",
-			"PRAGMA synchronous=normal",
-			"PRAGMA temp_store=memory",
-			"PRAGMA foreign_keys=on",
-		} {
-			if err := c.Exec(pragma); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	inner, err := (&sqlitedriver.SQLite{}).OpenConnector(dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(maxConns)
-	db.SetMaxIdleConns(maxConns)
+	db := sql.OpenDB(connector{inner: inner, hexkey: hexkey})
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetConnMaxIdleTime(idleTimeout)
 	return db, nil
+}
+
+// connector opens every connection of the pool. It wraps the driver's own
+// connector for two things the driver cannot be told from outside: the bound
+// on the memory of the SQLite build, and the PRAGMAs the file needs.
+//
+// The bound has to sit here. It is read from the context that opens the
+// connection, and database/sql opens connections from a context of its own -
+// a context handed to a query comes far too late.
+type connector struct {
+	inner  driver.Connector
+	hexkey config.SecretText
+}
+
+// Driver implements database/sql/driver.Connector.
+func (c connector) Driver() driver.Driver { return c.inner.Driver() }
+
+// Connect implements database/sql/driver.Connector.
+func (c connector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.inner.Connect(sqlite3.WithMaxMemory(ctx, maxMemory))
+	if err != nil {
+		return nil, err
+	}
+	if err := c.prepare(ctx, conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// prepare runs on the new connection what the file needs. Order matters: the
+// key first, because everything after it reads the file. Temporary files stay
+// in memory so that no part of the data lands on disk with a random key
+// instead of ours.
+func (c connector) prepare(ctx context.Context, conn driver.Conn) error {
+	raw, ok := conn.(sqlitedriver.Conn)
+	if !ok {
+		return errors.New("sqlite: the driver did not hand out a SQLite connection")
+	}
+	s := raw.Raw()
+	// As the driver does it while it connects: whoever gave up waiting stops
+	// these statements too, and the connection is free again afterwards.
+	if old := s.SetInterrupt(ctx); old != ctx {
+		defer s.SetInterrupt(old)
+	}
+	for _, pragma := range []string{
+		"PRAGMA hexkey='" + c.hexkey.Text() + "'",
+		fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeout),
+		"PRAGMA journal_mode=wal",
+		"PRAGMA synchronous=normal",
+		"PRAGMA temp_store=memory",
+		"PRAGMA foreign_keys=on",
+	} {
+		if err := s.Exec(pragma); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // fileURL turns the path of the configuration into the data source name.
 // Building it with net/url escapes the path, so a path that holds a "?" can
 // never add a URI parameter of its own - "?hexkey=00" would otherwise put a
-// key of the attacker's choosing next to ours. validPath refuses such a path
-// outright, because a file of that name is not what the configuration meant
-// either.
+// key of the attacker's choosing next to ours, and the VFS reads a parameter
+// before it reads our PRAGMA. validPath refuses such a path outright, because
+// the file it would open is not the one the configuration names.
 //
 // _txlock=immediate makes a write transaction take the lock when it begins.
 // Otherwise SQLite takes it at the first write, and two transactions that
@@ -96,7 +163,7 @@ func OpenDB(cfg config.DB) (*sql.DB, error) {
 // that would otherwise be read as the authority.
 func fileURL(path string) (string, error) {
 	if !validPath(path) {
-		return "", errors.New("sqlite: the path must be an absolute file name")
+		return "", errors.New("sqlite: the path must be an absolute, clean file name")
 	}
 	u := url.URL{Scheme: "file", OmitHost: true, Path: path, RawQuery: "vfs=xts&_txlock=immediate"}
 	return u.String(), nil
@@ -106,14 +173,17 @@ func fileURL(path string) (string, error) {
 // configuration asks for an absolute path (config.DB.Validate: it starts with
 // "/"), which on the targets linux/amd64 and linux/arm64 is exactly what
 // filepath.IsAbs says; on a developer's machine it lets the tests run with
-// that machine's own absolute paths.
+// that machine's own absolute paths. It also has to be the short form of
+// itself, so that no "/var/lib/ngc/../../etc/x.db" walks out of the place the
+// installation gave the database.
 //
 // "?" and "#" open the query and the fragment of an SQLite URI, and a control
 // character - NUL above all - ends a name inside SQLite. net/url escapes all
-// of them, so none of them could add a parameter of its own, but each would
-// silently turn into a file of a different name than the configuration names.
+// of them, so none of them could add a parameter of its own: "?" and "#" would
+// become part of the file name, a control character something else again.
+// Either way it would not be the file the configuration names.
 func validPath(path string) bool {
-	if !filepath.IsAbs(path) || len(path) > config.MaxField {
+	if !filepath.IsAbs(path) || len(path) > config.MaxField || path != filepath.Clean(path) {
 		return false
 	}
 	for _, c := range []byte(path) {
