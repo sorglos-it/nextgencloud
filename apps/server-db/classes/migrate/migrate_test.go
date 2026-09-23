@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -280,11 +281,19 @@ func tablesEmpty(t *testing.T, db *sql.DB) {
 // less checked than the rest of the schema.
 func TestRunnerTables(t *testing.T) {
 	for _, stmt := range []string{createSchema, createLock} {
-		if err := checkStatement(stmt); err != nil {
+		form, err := checkStatement(stmt)
+		if err != nil {
 			t.Errorf("%.40q: %v", stmt, err)
+			continue
+		}
+		// They stand written the way a statement runs, so bootstrap can send
+		// them through the same door as a migration - and a later hand that
+		// writes one of them differently finds out here and not in a database.
+		if form != stmt {
+			t.Errorf("the statement does not stand in the form it runs in: %q instead of %q", stmt, form)
 		}
 		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
-			if _, err := sqlstore.Fill(d, stmt); err != nil {
+			if _, err := fill(d, stmt); err != nil {
 				t.Errorf("%.40q: %v", stmt, err)
 			}
 		}
@@ -630,4 +639,134 @@ func TestApplyAfterCrashedOwner(t *testing.T) {
 		t.Fatalf("after the time ran out: %d migrations, %v; want %d", n, err, len(files))
 	}
 	tablesEmpty(t, db)
+}
+
+// unlistedInDB asks the database what came into being and gives back every
+// name that no fixed list carries: a table, an index or a column. This is the
+// one measurement that does not trust the rules at all - it reads back what
+// SQLite really made of the statements it was given.
+func unlistedInDB(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	var bad []string
+	rows, err := db.QueryContext(ctx,
+		"SELECT type, name, tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var kind, name, of string
+		if err := rows.Scan(&kind, &name, &of); err != nil {
+			t.Fatal(err)
+		}
+		switch kind {
+		case "table":
+			if !slices.Contains(sqlstore.Tables, name) {
+				bad = append(bad, "table "+name)
+				continue
+			}
+			tables = append(tables, name)
+		case "index":
+			if !slices.Contains(sqlstore.Tables, of) || !strings.HasPrefix(name, of+"_") {
+				bad = append(bad, "index "+name)
+			}
+		default:
+			bad = append(bad, kind+" "+name)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	// The type a column was given is a name the database wrote down too, so
+	// it is looked up the same way: it has to be one the dialect can make.
+	types := []string{}
+	for _, p := range sqlstore.Placeholders {
+		if typ := strings.TrimSpace(sqlstore.SQLite.Type(p)); typ != "" {
+			types = append(types, typ)
+		}
+	}
+	for _, table := range tables {
+		cols, err := db.QueryContext(ctx, "SELECT name, type FROM pragma_table_info(?)", table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for cols.Next() {
+			var name, typ string
+			if err := cols.Scan(&name, &typ); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(sqlstore.Columns[table], name) {
+				bad = append(bad, "column "+table+"."+name)
+			} else if !slices.Contains(types, typ) {
+				bad = append(bad, "column "+table+"."+name+" of type "+typ)
+			}
+		}
+		cols.Close()
+	}
+	return bad
+}
+
+// runOnSQLite runs finished SQL on a database of its own and reports what the
+// database made of it. A statement the database refuses creates nothing, so
+// its error is no finding here - what is looked for is what came into being.
+func runOnSQLite(t *testing.T, stmts []string, withTables bool) []string {
+	t.Helper()
+	db := openFile(t)
+	if withTables {
+		// The smallest form of every listed table, so that an ALTER TABLE has
+		// something to add to. Only listed names are written.
+		for _, table := range sqlstore.Tables {
+			first := sqlstore.Columns[table][0]
+			if _, err := db.ExecContext(ctx,
+				"CREATE TABLE "+table+" ("+first+" BLOB NOT NULL)"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, s := range stmts {
+		sql, err := sqlstore.Fill(sqlstore.SQLite, s)
+		if err != nil {
+			continue
+		}
+		_, _ = db.ExecContext(ctx, sql)
+	}
+	return unlistedInDB(t, db)
+}
+
+// TestNothingUnlistedIsEverCreated measures against the database and not
+// against the guard. Whatever the rules let through is run on a real SQLite,
+// and then the database is asked what is there: every table, every index and
+// every column has to be a name one of the fixed lists carries. This is where
+// a rule that reads a statement differently from the way the database reads
+// it shows up, whatever the rule believes about it.
+//
+// Every body is run twice, each time on an empty file: once alone, so that a
+// CREATE TABLE really creates, and once on a database that already carries
+// the listed tables, so that an ALTER TABLE really adds.
+func TestNothingUnlistedIsEverCreated(t *testing.T) {
+	// the schema itself first: it has to come out clean
+	files, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema []string
+	for _, f := range files {
+		schema = append(schema, f.Statements...)
+	}
+	if bad := runOnSQLite(t, schema, false); len(bad) > 0 {
+		t.Errorf("the schema itself creates %v", bad)
+	}
+	for name, body := range glued {
+		stmts, err := split(body)
+		if err != nil {
+			continue
+		}
+		t.Errorf("%s was accepted: %q", name, body)
+		for _, withTables := range []bool{false, true} {
+			if bad := runOnSQLite(t, stmts, withTables); len(bad) > 0 {
+				t.Errorf("   the database now carries %v", bad)
+			}
+		}
+	}
 }

@@ -55,6 +55,9 @@ func List() ([]File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("migrate: %s: %w", name, err)
 		}
+		if len(out) == maxFiles {
+			return nil, fmt.Errorf("migrate: there are more than %d migrations", maxFiles)
+		}
 		out = append(out, File{Version: version, Name: name, Statements: stmts})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
@@ -66,10 +69,29 @@ func List() ([]File, error) {
 	return out, nil
 }
 
-// split cuts a migration into statements. A statement ends at a semicolon;
-// checkStatement refuses quotes, so a semicolon can never sit inside a value.
-// A line that starts with -- is a comment.
+// maxFile is the most one migration may be long, maxStatements the most it
+// may carry, and maxFiles the most there may be. The migrations are built
+// into the release file, so none of this comes from outside; a bound belongs
+// on every count all the same. 0001 is the whole schema of NGC and carries
+// fourteen statements.
+const (
+	maxFile       = 1 << 20
+	maxStatements = 256
+	maxFiles      = 999
+)
+
+// split cuts a migration into statements and gives back the form each one
+// runs in. A statement ends at a semicolon; the rules refuse quotes, so a
+// semicolon can never sit inside a value. A line that starts with -- is a
+// comment.
+//
+// What comes back is not the text of the file: it is what checkStatement made
+// of it, written back out of the pieces it measured. That is what Apply runs,
+// so that nothing the rules did not read can reach a database.
 func split(body string) ([]string, error) {
+	if len(body) > maxFile {
+		return nil, fmt.Errorf("a migration is %d bytes long, %d are allowed", len(body), maxFile)
+	}
 	var keep []string
 	for _, line := range strings.Split(body, "\n") {
 		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "--") {
@@ -82,10 +104,14 @@ func split(body string) ([]string, error) {
 		if stmt == "" {
 			continue
 		}
-		if err := checkStatement(stmt); err != nil {
+		form, err := checkStatement(stmt)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, stmt)
+		if len(out) == maxStatements {
+			return nil, fmt.Errorf("a migration carries more than %d statements", maxStatements)
+		}
+		out = append(out, form)
 	}
 	return out, nil
 }
@@ -112,14 +138,17 @@ const (
 
 // The runner's own two tables. They are not in 0001, because the runner needs
 // them before the first migration can run; they keep the rules of a migration
-// all the same. ngc_lock is the table dbapi.LockTake uses later: same row,
-// same columns, same deadline, so the two never disagree about who holds a
-// lock. The runner is stricter in one point, see take.
+// all the same, and they go through fill like every other statement, so the
+// program and not only a test holds them to the rules. That is also why they
+// stand here with a space between every piece: that is the form a statement
+// runs in, see write. ngc_lock is the table dbapi.LockTake uses later: same
+// row, same columns, same deadline, so the two never disagree about who holds
+// a lock. The runner is stricter in one point, see take.
 const (
-	createSchema = "CREATE TABLE ngc_schema (version {{int}} NOT NULL, step {{int}} NOT NULL, " +
-		"done {{int}} NOT NULL, applied {{int}} NOT NULL, PRIMARY KEY (version)){{opts}}"
-	createLock = "CREATE TABLE ngc_lock (name {{key}} NOT NULL, owner {{text}} NOT NULL, " +
-		"until {{int}} NOT NULL, PRIMARY KEY (name)){{opts}}"
+	createSchema = "CREATE TABLE ngc_schema ( version {{int}} NOT NULL , step {{int}} NOT NULL , " +
+		"done {{int}} NOT NULL , applied {{int}} NOT NULL , PRIMARY KEY ( version ) ) {{opts}}"
+	createLock = "CREATE TABLE ngc_lock ( name {{key}} NOT NULL , owner {{text}} NOT NULL , " +
+		"until {{int}} NOT NULL , PRIMARY KEY ( name ) ) {{opts}}"
 	probeSchema = "SELECT version FROM ngc_schema WHERE version = ?"
 	probeLock   = "SELECT owner FROM ngc_lock WHERE name = ?"
 	// The owner is compared in the database, not read out of it: a column
@@ -299,7 +328,9 @@ func bootstrap(ctx context.Context, db *sql.DB, d sqlstore.Dialect) error {
 			rows.Close()
 			continue
 		}
-		stmt, err := sqlstore.Fill(d, pair.create)
+		// The same door every statement of a migration goes through: measured
+		// again here, and what runs has to be what was measured.
+		stmt, err := fill(d, pair.create)
 		if err != nil {
 			return err
 		}
@@ -383,7 +414,7 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 		}
 		defer tx.Rollback()
 		for _, raw := range f.Statements {
-			stmt, err := sqlstore.Fill(d, raw)
+			stmt, err := fill(d, raw)
 			if err != nil {
 				return false, err
 			}
@@ -408,7 +439,7 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 		if err := hold(ctx, db, owner, now); err != nil {
 			return false, err
 		}
-		stmt, err := sqlstore.Fill(d, raw)
+		stmt, err := fill(d, raw)
 		if err != nil {
 			return false, err
 		}

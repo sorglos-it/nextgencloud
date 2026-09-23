@@ -10,11 +10,17 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 )
 
-// maxStatement is the most one statement of a migration may hold. The
-// migrations are built into the release file, so none of this comes from
-// outside; a bound belongs on it all the same, and the widest table of the
-// schema writes less than a tenth of it.
-const maxStatement = 4096
+// maxStatement is the most one statement of a migration may hold, maxName the
+// longest name it may make up. The migrations are built into the release
+// file, so none of this comes from outside; a bound belongs on it all the
+// same, and the widest table of the schema writes less than a tenth of the
+// first. The second is what MariaDB takes for a name: SQLite takes any
+// length, so without the bound the two databases would part company over a
+// name that is simply too long.
+const (
+	maxStatement = 4096
+	maxName      = 64
+)
 
 // forbidden are words a migration may never carry. Some are not portable
 // (IF NOT EXISTS, AUTO_INCREMENT, ENGINE), the others would break the promise
@@ -35,18 +41,46 @@ var kinds = []string{"CREATE TABLE", "CREATE UNIQUE INDEX", "CREATE INDEX", "ALT
 // errOnlyAdd says what the rule is in one sentence the author can act on.
 var errOnlyAdd = errors.New("a migration may only add: no DROP, RENAME or TRUNCATE, because the previous API version keeps running")
 
-// checkStatement checks one statement of a migration.
-func checkStatement(s string) error {
+// checkStatement checks one statement of a migration and gives back the form
+// it runs in: the pieces it was measured in, written back with one space
+// between every two of them.
+//
+// The statement is not handed on unchanged, and that is the point. Three
+// rounds of holes in this guard all came out of one difference: the rules
+// read the text of the file, and the database is given the text after
+// sqlstore.Fill has put the types of the dialect in. Where those two take the
+// text apart differently, a name nobody measured ends up in the database -
+// "kind{{key}}" is two pieces to the rules and one name, kindBLOB, to the
+// database. So what runs is not the text of the file any more; it is written
+// out of the pieces the rules read, see write.
+func checkStatement(s string) (string, error) {
+	t, err := measure(s)
+	if err != nil {
+		return "", err
+	}
+	form := write(t)
+	// The spaces between the pieces make the form a little longer than what
+	// stood in the file, so the bound is kept on the form as well: what is
+	// measured at the door has to be what is measured again where it runs.
+	if len(form) > maxStatement {
+		return "", fmt.Errorf("a statement is %d bytes long, %d are allowed: %.40q", len(form), maxStatement, s)
+	}
+	return form, nil
+}
+
+// measure reads one statement and gives back the pieces it is made of, or
+// says why it is none of ours.
+func measure(s string) ([]token, error) {
 	if len(s) > maxStatement {
-		return fmt.Errorf("a statement is %d bytes long, %d are allowed: %.40q", len(s), maxStatement, s)
+		return nil, fmt.Errorf("a statement is %d bytes long, %d are allowed: %.40q", len(s), maxStatement, s)
 	}
 	if strings.Contains(s, ";") {
-		return fmt.Errorf("a statement holds a semicolon: %.40q", s)
+		return nil, fmt.Errorf("a statement holds a semicolon: %.40q", s)
 	}
 	// No string literal at all: every value goes in as a placeholder, and
 	// without quotes the splitter never has to understand quoting.
 	if strings.ContainsAny(s, "'\"`") {
-		return fmt.Errorf("a statement holds a quote: %.40q", s)
+		return nil, fmt.Errorf("a statement holds a quote: %.40q", s)
 	}
 	// The words are looked for in one line, in upper case and without the
 	// spaces around an =, because ") ENGINE = MyISAM" says exactly what
@@ -57,12 +91,126 @@ func checkStatement(s string) error {
 	for _, w := range forbidden {
 		if strings.Contains(upper, w) {
 			if w == "DROP" || w == "RENAME" || w == "TRUNCATE" {
-				return fmt.Errorf("%w: %.40q", errOnlyAdd, s)
+				return nil, fmt.Errorf("%w: %.40q", errOnlyAdd, s)
 			}
-			return fmt.Errorf("%q is not portable: %.40q", w, s)
+			return nil, fmt.Errorf("%q is not portable: %.40q", w, s)
 		}
 	}
-	return checkForm(s)
+	t, err := tokens(s)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkForm(t, s); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// fill turns one statement of a migration into the SQL one database runs, and
+// it is the only way a statement ever reaches one.
+//
+// Here is where the sentence of this guard is kept: WHAT IS MEASURED HAS TO
+// BE WHAT RUNS. The statement is measured again, at the place where it runs
+// and not only where it was read; the pieces are written back out with the
+// types of this dialect in them; and what sqlstore.Fill made of the same
+// statement has to be that, character for character. It cannot come out
+// otherwise today - write puts a space between every two pieces, so no type
+// can grow together with a name next to it - and if it ever does, because
+// Fill learns something new or a rule reads a piece differently, the run
+// stops here instead of putting a name nobody measured into a database.
+func fill(d sqlstore.Dialect, s string) (string, error) {
+	t, err := measure(s)
+	if err != nil {
+		return "", err
+	}
+	if form := write(t); form != s {
+		return "", fmt.Errorf("a statement does not stand in the form it was measured in, %.60q instead of %.60q", s, form)
+	}
+	want, err := writeFilled(t, d)
+	if err != nil {
+		return "", err
+	}
+	got, err := sqlstore.Fill(d, s)
+	if err != nil {
+		return "", err
+	}
+	if got != want {
+		return "", fmt.Errorf("what would run is not what was measured, %.60q instead of %.60q", got, want)
+	}
+	// The bound is kept on the finished text too, not only on what stood in
+	// the file: what runs is what is measured, and that goes for its length
+	// as much as for its names.
+	if len(got) > maxStatement {
+		return "", fmt.Errorf("a statement is %d bytes long once the column types are in, %d are allowed: %.40q",
+			len(got), maxStatement, s)
+	}
+	return got, nil
+}
+
+// write puts the measured pieces back together as a statement, with one space
+// between every two of them. That space is the whole point of writing it back
+// at all: it is what keeps a column type from growing together with the name
+// in front of it or behind it once Fill has put the type of the dialect in
+// its place. Every statement that runs is written this way, so the pieces the
+// rules read and the text the database is given are the same pieces.
+func write(t []token) string {
+	var b strings.Builder
+	for i, tok := range t {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(piece(tok))
+	}
+	return b.String()
+}
+
+// writeFilled writes the pieces back the way write does, with the column
+// types of one dialect in place of the {{...}}.
+func writeFilled(t []token, d sqlstore.Dialect) (string, error) {
+	var b strings.Builder
+	for i, tok := range t {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if tok.kind != tokType {
+			b.WriteString(piece(tok))
+			continue
+		}
+		// "opts" is the one that may be empty: on SQLite a CREATE TABLE
+		// carries no ending at all.
+		typ := d.Type(tok.text)
+		if typ == "" && tok.text != "opts" {
+			return "", fmt.Errorf("this database has no column type for {{%s}}", tok.text)
+		}
+		// The dialect writes into the statement too, so what it writes is
+		// held to the same two rules as the statement itself: no second
+		// statement behind a semicolon, no quote, and nothing that would look
+		// like another column type. The rules never read this text - it is
+		// the one piece of a statement that does not come out of a migration
+		// - so it is measured here instead.
+		if strings.ContainsAny(typ, ";'\"`") || strings.Contains(typ, "{{") {
+			return "", fmt.Errorf("the column type this database gives for {{%s}} carries a semicolon, a quote or a placeholder: %q",
+				tok.text, typ)
+		}
+		b.WriteString(typ)
+	}
+	return b.String(), nil
+}
+
+// piece writes one measured piece the way it stood.
+func piece(t token) string {
+	switch t.kind {
+	case tokWord:
+		return t.text
+	case tokType:
+		return "{{" + t.text + "}}"
+	case tokOpen:
+		return "("
+	case tokClose:
+		return ")"
+	default:
+		return ","
+	}
 }
 
 // checkForm is the whole rule about names, and it works the other way round
@@ -85,11 +233,7 @@ func checkStatement(s string) error {
 // sqlstore.Columns of that table, <name> has to begin with the table and an
 // underscore. Nothing is read out of a stream of words any more, so no word
 // can stand in for another by looking like it.
-func checkForm(s string) error {
-	t, err := tokens(s)
-	if err != nil {
-		return err
-	}
+func checkForm(t []token, s string) error {
 	c := &cursor{t: t}
 	switch {
 	case c.takeKeyword("ALTER"):
@@ -124,29 +268,38 @@ func tableForm(c *cursor, s string) error {
 	if !c.takeSign(tokOpen) {
 		return unexpected(c, s, "the ( in front of the columns of "+table)
 	}
-	key, cols := false, 0
+	var seen []string
 	for {
 		if c.takeKeyword("PRIMARY") {
 			if !c.takeKeyword("KEY") {
 				return unexpected(c, s, "the word KEY behind PRIMARY")
 			}
-			if key {
-				return fmt.Errorf("%q is given two PRIMARY KEY: %.40q", table, s)
-			}
-			key = true
 			if err := columnList(c, table, s); err != nil {
 				return err
 			}
-		} else if err := columnDef(c, table, s); err != nil {
-			return err
-		} else {
-			cols++
+			// The PRIMARY KEY is a rule of the table, not a column: it stands
+			// last and it stands once. SQLite answers anything else with a
+			// syntax error, and the runner would only find that out on the
+			// database, in the middle of a migration.
+			if c.takeSign(tokComma) {
+				return fmt.Errorf("the table %q carries something behind its PRIMARY KEY, "+
+					"and the PRIMARY KEY stands last and once: %.40q", table, s)
+			}
+			break
 		}
+		name, err := columnDef(c, table, s)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(seen, name) {
+			return fmt.Errorf("the table %q is given the column %q twice: %.40q", table, name, s)
+		}
+		seen = append(seen, name)
 		if !c.takeSign(tokComma) {
 			break
 		}
 	}
-	if cols == 0 {
+	if len(seen) == 0 {
 		return fmt.Errorf("the table %q is given no column: %.40q", table, s)
 	}
 	if !c.takeSign(tokClose) {
@@ -174,6 +327,10 @@ func indexForm(c *cursor, s string) error {
 	name, ok := c.takeName()
 	if !ok {
 		return unexpected(c, s, "the name of the index")
+	}
+	if len(name) > maxName {
+		return fmt.Errorf("the name of the index is %d characters long and MariaDB takes %d: %.40q",
+			len(name), maxName, s)
 	}
 	if !c.takeKeyword("ON") {
 		return unexpected(c, s, "the word ON and the table of the index")
@@ -205,7 +362,7 @@ func alterForm(c *cursor, s string) error {
 		return unexpected(c, s, "the word ADD: an ALTER TABLE adds one column and does nothing else")
 	}
 	c.takeKeyword("COLUMN")
-	if err := columnDef(c, table, s); err != nil {
+	if _, err := columnDef(c, table, s); err != nil {
 		return err
 	}
 	return atEnd(c, s)
@@ -215,25 +372,25 @@ func alterForm(c *cursor, s string) error {
 // the words NOT NULL behind it. Everything else - AUTO_INCREMENT, DEFAULT,
 // AFTER, a second type - is something the five databases do not all read the
 // same way, so the form does not carry it.
-func columnDef(c *cursor, table, s string) error {
+func columnDef(c *cursor, table, s string) (string, error) {
 	name, ok := c.takeName()
 	if !ok {
-		return unexpected(c, s, "the name of a column of "+table)
+		return "", unexpected(c, s, "the name of a column of "+table)
 	}
 	if err := column(table, name, s); err != nil {
-		return err
+		return "", err
 	}
 	typ, ok := c.takeType()
 	if !ok {
-		return unexpected(c, s, "the type of the column "+name+", written {{key}} or {{int}}")
+		return "", unexpected(c, s, "the type of the column "+name+", written {{key}} or {{int}}")
 	}
 	if typ == "opts" {
-		return fmt.Errorf("{{opts}} is the ending of a CREATE TABLE, not the type of the column %q: %.40q", name, s)
+		return "", fmt.Errorf("{{opts}} is the ending of a CREATE TABLE, not the type of the column %q: %.40q", name, s)
 	}
 	if c.takeKeyword("NOT") && !c.takeKeyword("NULL") {
-		return unexpected(c, s, "the word NULL behind NOT")
+		return "", unexpected(c, s, "the word NULL behind NOT")
 	}
-	return nil
+	return name, nil
 }
 
 // columnList reads ( <column> {, <column>} ) and measures every name in it
@@ -242,6 +399,7 @@ func columnList(c *cursor, table, s string) error {
 	if !c.takeSign(tokOpen) {
 		return unexpected(c, s, "the ( in front of the columns of "+table)
 	}
+	var seen []string
 	for {
 		name, ok := c.takeName()
 		if !ok {
@@ -250,6 +408,13 @@ func columnList(c *cursor, table, s string) error {
 		if err := column(table, name, s); err != nil {
 			return err
 		}
+		// A column named twice in one list is where the five databases stop
+		// agreeing: MariaDB refuses it, SQLite takes it and builds the index
+		// anyway. Whatever the two would then do, they would not do the same.
+		if slices.Contains(seen, name) {
+			return fmt.Errorf("the column %q stands twice in one list: %.40q", name, s)
+		}
+		seen = append(seen, name)
 		if !c.takeSign(tokComma) {
 			break
 		}
@@ -330,11 +495,28 @@ func tokens(s string) ([]token, error) {
 			for j < len(s) && isWordByte(s[j]) {
 				j++
 			}
+			// A column type written against the word in front of it is two
+			// pieces here and one name in the database: Fill puts the type in
+			// and "kind{{key}}" becomes the column kindBLOB, which no list
+			// carries and which no later migration could take away again,
+			// because a migration may not DROP.
+			if j < len(s) && s[j] == '{' {
+				return nil, fmt.Errorf("a column type stands against the word %q in front of it, "+
+					"and a space belongs between them: the rules read two pieces here, "+
+					"the database would be given one name: %.40q", s[i:j], s)
+			}
 			out, i = append(out, token{kind: tokWord, text: s[i:j]}), j
 		case c == '{':
 			name, next, err := columnType(s, i)
 			if err != nil {
 				return nil, err
+			}
+			// The same the other way round: "{{key}}NOT NULL" gives the column
+			// the type BLOBNOT and takes its NOT NULL away without a word.
+			if next < len(s) && isWordByte(s[next]) {
+				return nil, fmt.Errorf("a word stands against the column type {{%s}} in front of it, "+
+					"and a space belongs between them: the rules read two pieces here, "+
+					"the database would be given one: %.40q", name, s)
 			}
 			out, i = append(out, token{kind: tokType, text: name}), next
 		case c == '.':

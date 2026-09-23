@@ -1,6 +1,8 @@
 package migrate
 
 import (
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,7 +48,7 @@ func TestCheckStatement(t *testing.T) {
 		// the rules take it too - and measure the column all the same.
 		"ALTER TABLE ngc_app ADD node {{key}} NOT NULL",
 	} {
-		if err := checkStatement(s); err != nil {
+		if _, err := checkStatement(s); err != nil {
 			t.Errorf("%q: %v", s, err)
 		}
 	}
@@ -122,21 +124,34 @@ func TestCheckStatement(t *testing.T) {
 		// replicate.
 		"a table without the ending": "CREATE TABLE ngc_blob (kind {{key}} NOT NULL)",
 		"a table without a column":   "CREATE TABLE ngc_blob (PRIMARY KEY (kind)){{opts}}",
+		// A PRIMARY KEY is a rule of the table and stands last and once.
+		// SQLite answers anything else with a syntax error, which the runner
+		// would only find out on the database, in the middle of a migration.
+		"a PRIMARY KEY in front of the columns": "CREATE TABLE ngc_blob (PRIMARY KEY (kind), kind {{key}} NOT NULL){{opts}}",
+		"a column behind the PRIMARY KEY":       "CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind), id {{key}} NOT NULL){{opts}}",
+		"two PRIMARY KEY":                       "CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind), PRIMARY KEY (id)){{opts}}",
+		// A name given twice is where the five databases stop agreeing:
+		// SQLite takes an index on one column twice, MariaDB refuses it.
+		"the same column twice":                  "CREATE TABLE ngc_blob (kind {{key}} NOT NULL, kind {{key}} NOT NULL){{opts}}",
+		"the same column twice in an index":      "CREATE INDEX ngc_blob_x ON ngc_blob (kind, kind)",
+		"the same column twice in a PRIMARY KEY": "CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind, kind)){{opts}}",
+		// MariaDB takes 64 characters for a name, SQLite as many as one likes.
+		"an index name longer than MariaDB takes": "CREATE INDEX ngc_blob_" + strings.Repeat("x", 200) + " ON ngc_blob (kind)",
 	} {
-		if err := checkStatement(s); err == nil {
+		if _, err := checkStatement(s); err == nil {
 			t.Errorf("%s was accepted: %q", name, s)
 		}
 	}
 	// The message has to say what the rule is, not just that something is
 	// wrong: whoever wrote the migration reads it.
-	if err := checkStatement("DROP TABLE ngc_blob"); err == nil || !strings.Contains(err.Error(), "only add") {
+	if _, err := checkStatement("DROP TABLE ngc_blob"); err == nil || !strings.Contains(err.Error(), "only add") {
 		t.Errorf("the message does not say what the rule is: %v", err)
 	}
 	// A word that does not belong is refused, and the message names it: who
 	// wrote the migration has to see where to look. WHERE is nothing anybody
 	// meant as a column, and a message calling it one would send the author
 	// looking in the wrong place.
-	err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (kind) WHERE nonsense")
+	_, err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (kind) WHERE nonsense")
 	if err == nil {
 		t.Fatal("a statement with a WHERE was accepted")
 	}
@@ -144,7 +159,7 @@ func TestCheckStatement(t *testing.T) {
 		t.Errorf("the message does not say that a word stands where the statement is over: %v", err)
 	}
 	// A name standing where a column belongs is named as what it is not.
-	if err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (nonsense)"); err == nil ||
+	if _, err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (nonsense)"); err == nil ||
 		!strings.Contains(err.Error(), "no column of") {
 		t.Errorf("the message does not say that the name is no column: %v", err)
 	}
@@ -162,8 +177,296 @@ func TestAColumnTypeIsNeverAWord(t *testing.T) {
 		"a type where the column belongs": "ALTER TABLE ngc_app ADD {{key}} node NOT NULL",
 		"the ending as a column type":     "CREATE TABLE ngc_blob (kind {{opts}} NOT NULL){{opts}}",
 	} {
-		if err := checkStatement(s); err == nil {
+		if _, err := checkStatement(s); err == nil {
 			t.Errorf("%s was accepted: %q", name, s)
 		}
 	}
+}
+
+// glued are the statements of this round: a column type written against the
+// word in front of it or behind it. The rules read two pieces there, Fill
+// makes one name out of them, and the database is given a name no list
+// carries. Every line here is measured the whole way in
+// TestAGluedTypeNeverReachesTheDatabase and in
+// TestNothingUnlistedIsEverCreated.
+var glued = map[string]string{
+	"a column type against the column name":        "CREATE TABLE ngc_blob (kind{{key}} NOT NULL, id {{key}} NOT NULL){{opts}}",
+	"a column added with the type against it":      "ALTER TABLE ngc_app ADD node{{key}}",
+	"NOT NULL against the column type":             "CREATE TABLE ngc_blob (kind {{key}}NOT NULL, id {{key}} NOT NULL){{opts}}",
+	"NOT NULL against the type of an added column": "ALTER TABLE ngc_app ADD node {{key}}NOT NULL",
+	"a word behind the ending":                     "CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}x",
+	"a second ending against the first":            "CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}{{opts}}",
+	"a digit against the column type":              "ALTER TABLE ngc_app ADD node {{int}}8 NOT NULL",
+	"an underscore against the column type":        "ALTER TABLE ngc_app ADD node {{key}}_x NOT NULL",
+	"the word COLUMN with the type against it":     "ALTER TABLE ngc_app ADD COLUMN{{key}} node NOT NULL",
+	"the table name with the type against it":      "CREATE TABLE ngc_blob{{key}} (kind {{key}} NOT NULL){{opts}}",
+	"the index name with the type against it":      "CREATE INDEX ngc_blob_{{key}} ON ngc_blob (kind)",
+}
+
+// nameByte says whether a byte may stand inside a name a database reads. It
+// is wider than the rules of a migration on purpose: MariaDB takes a dollar
+// sign and every byte above ASCII in a name written without quotes, so a test
+// that asks what the database sees has to cut the same way the database does.
+func nameByte(c byte) bool {
+	return c == '_' || c == '$' || c >= 0x80 ||
+		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+}
+
+// namesIn cuts finished SQL into the names and words a database reads in it.
+func namesIn(sql string) []string {
+	var out []string
+	for i := 0; i < len(sql); {
+		if !nameByte(sql[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(sql) && nameByte(sql[j]) {
+			j++
+		}
+		out, i = append(out, sql[i:j]), j
+	}
+	return out
+}
+
+// unlisted measures finished SQL - the text a database is given, after Fill -
+// and gives back every name in it that no fixed list carries. It is written
+// the other way round from the rules on purpose: it knows nothing about
+// tokens or forms, it only cuts the text the way a database does and looks
+// every piece up. A rule that reads a statement differently from the way the
+// database reads it shows up here.
+func unlisted(d sqlstore.Dialect, sql string) []string {
+	ok := map[string]bool{}
+	// the words the four forms are made of
+	for _, w := range []string{"CREATE", "TABLE", "UNIQUE", "INDEX", "ALTER", "ADD",
+		"COLUMN", "NOT", "NULL", "PRIMARY", "KEY", "ON"} {
+		ok[w] = true
+	}
+	// the words the dialect's own column types bring along
+	for _, p := range sqlstore.Placeholders {
+		for _, w := range namesIn(d.Type(p)) {
+			ok[w] = true
+		}
+	}
+	table := ""
+	for _, w := range namesIn(sql) {
+		if slices.Contains(sqlstore.Tables, w) {
+			table = w
+		}
+	}
+	for _, c := range sqlstore.Columns[table] {
+		ok[c] = true
+	}
+	var bad []string
+	for _, w := range namesIn(sql) {
+		switch {
+		case ok[w] || ok[strings.ToUpper(w)]:
+		case slices.Contains(sqlstore.Tables, w):
+		case table != "" && strings.HasPrefix(w, table+"_"):
+		default:
+			bad = append(bad, w)
+		}
+	}
+	return bad
+}
+
+// TestAGluedTypeNeverReachesTheDatabase is the sentence of this round as a
+// test: what is measured has to be what runs. Every line above has to be
+// refused - and so that the test would notice if it were not, whatever gets
+// through is filled for both dialects and taken apart again, and every name
+// in it is looked up.
+func TestAGluedTypeNeverReachesTheDatabase(t *testing.T) {
+	for name, body := range glued {
+		stmts, err := split(body)
+		if err != nil {
+			continue
+		}
+		t.Errorf("%s was accepted: %q", name, body)
+		for _, s := range stmts {
+			for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
+				sql, err := sqlstore.Fill(d, s)
+				if err != nil {
+					continue
+				}
+				if bad := unlisted(d, sql); len(bad) > 0 {
+					t.Errorf("   it would put %v into the database: %q", bad, sql)
+				}
+			}
+		}
+	}
+}
+
+// TestEveryStatementRunsAsItWasMeasured is the standing guarantee, on
+// everything that really reaches a database: the statements of every
+// migration on disk and the two tables the runner brings along, for both
+// dialects. Each one is filled the way Apply fills it, and then the finished
+// SQL is taken apart again and every name in it is looked up in the fixed
+// lists. Nothing here trusts the rules: it reads the text the database is
+// given.
+func TestEveryStatementRunsAsItWasMeasured(t *testing.T) {
+	files, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := []string{createSchema, createLock}
+	for _, f := range files {
+		all = append(all, f.Statements...)
+	}
+	for _, s := range all {
+		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
+			sql, err := fill(d, s)
+			if err != nil {
+				t.Errorf("%.40q: %v", s, err)
+				continue
+			}
+			if bad := unlisted(d, sql); len(bad) > 0 {
+				t.Errorf("%v would go into the database: %q", bad, sql)
+			}
+		}
+	}
+}
+
+// TestFillRefusesWhatWasNotMeasured: fill is the only way a statement reaches
+// a database, and it hands on nothing it has not measured itself. A statement
+// that does not stand in the form the rules wrote is refused there, however
+// it got that far - a migration read by an older version of the rules, a
+// constant somebody wrote by hand, a string put together somewhere else.
+func TestFillRefusesWhatWasNotMeasured(t *testing.T) {
+	for name, s := range map[string]string{
+		"a column type against the name": "CREATE TABLE ngc_blob ( kind{{key}} NOT NULL ) {{opts}}",
+		"a word too much":                "CREATE TABLE ngc_blob ( kind {{key}} NOT NULL ) {{opts}} x",
+	} {
+		if _, err := fill(sqlstore.SQLite, s); err == nil {
+			t.Errorf("%s was filled and would have run: %q", name, s)
+		}
+	}
+	// A statement whose pieces are right but which does not stand in the form
+	// the rules wrote is refused for that reason and told so. The author has
+	// to read where to look: the names are all fine, the form is not.
+	_, err := fill(sqlstore.SQLite, "CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}")
+	if err == nil {
+		t.Fatal("a statement in another form was filled and would have run")
+	}
+	if !strings.Contains(err.Error(), "does not stand in the form it was measured in") {
+		t.Errorf("the message does not say that the form is the problem: %v", err)
+	}
+	// What the rules did write runs, and it runs unchanged.
+	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fill(sqlstore.SQLite, form); err != nil {
+		t.Errorf("what the rules wrote does not run: %v", err)
+	}
+}
+
+// TestASplitMigrationIsBounded: the migrations are built in and come from
+// nobody outside, but a bound belongs on every count all the same.
+func TestASplitMigrationIsBounded(t *testing.T) {
+	one := "CREATE INDEX ngc_blob_seq ON ngc_blob (kind);\n"
+	if _, err := split(strings.Repeat(one, maxStatements)); err != nil {
+		t.Errorf("%d statements were refused: %v", maxStatements, err)
+	}
+	if _, err := split(strings.Repeat(one, maxStatements+1)); err == nil {
+		t.Errorf("%d statements were taken", maxStatements+1)
+	}
+	if _, err := split(strings.Repeat("-- comment\n", maxFile)); err == nil {
+		t.Error("a migration far past the bound was read")
+	}
+}
+
+// changing is a dialect that does not give the same answer twice, and rogue
+// is one that writes a second statement into the column type. Neither is
+// anything sqlstore does today - they stand for what fill must not have to
+// trust: the dialect is the one piece of a finished statement that comes from
+// no migration and that no rule ever reads.
+type changing struct {
+	sqlstore.Dialect
+	calls int
+}
+
+func (d *changing) Type(name string) string {
+	d.calls++
+	if d.calls > 1 {
+		return "INTEGER"
+	}
+	return d.Dialect.Type(name)
+}
+
+type rogue struct{ sqlstore.Dialect }
+
+func (rogue) Type(string) string { return "BLOB; CREATE TABLE nonsense (x BLOB)" }
+
+// TestFillTrustsNobodyForTheFinishedText: what runs has to be what was
+// measured, and that holds for the piece the dialect writes as well. A
+// dialect that answers differently the second time is caught by the
+// comparison itself, and one that writes a whole statement into a column type
+// is refused before anything runs.
+func TestFillTrustsNobodyForTheFinishedText(t *testing.T) {
+	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fill(&changing{Dialect: sqlstore.SQLite}, form); err == nil {
+		t.Error("a dialect that changed its answer was filled and would have run")
+	}
+	if _, err := fill(rogue{Dialect: sqlstore.SQLite}, form); err == nil {
+		t.Error("a column type carrying a second statement was filled and would have run")
+	}
+}
+
+// TestFillingNeverGrowsTwoPiecesTogether is the sentence of this round as a
+// property instead of as a list of examples, and it is measured on made-up
+// text, not on anything anybody thought of: whenever the rules can take a
+// text apart at all, writing the pieces back and filling them gives exactly
+// the pieces with the dialect's types in them. Two pieces can never grow into
+// one, whatever stood between them in the file.
+//
+// The second half is that taking the written-back text apart again gives the
+// same pieces. Together the two say that the text a database is given and the
+// text the rules read are the same thing.
+func TestFillingNeverGrowsTwoPiecesTogether(t *testing.T) {
+	// A small alphabet, so that the pieces really run into each other: bare
+	// words, brackets, spaces and whole column types.
+	alphabet := []string{"a", "b", "_", "0", "(", ")", ",", " ", "{", "}",
+		"{{key}}", "{{int}}", "{{opts}}", "kind", "NOT"}
+	r := rand.New(rand.NewPCG(20260923, 4))
+	taken := 0
+	for i := 0; i < 200000; i++ {
+		var b strings.Builder
+		for n := 1 + r.IntN(10); n > 0; n-- {
+			b.WriteString(alphabet[r.IntN(len(alphabet))])
+		}
+		s := b.String()
+		pieces, err := tokens(s)
+		if err != nil {
+			continue
+		}
+		taken++
+		form := write(pieces)
+		again, err := tokens(form)
+		if err != nil || len(again) != len(pieces) {
+			t.Fatalf("the written-back form is read differently: %q -> %q: %v", s, form, err)
+		}
+		for j := range pieces {
+			if again[j] != pieces[j] {
+				t.Fatalf("the written-back form is read differently: %q -> %q", s, form)
+			}
+		}
+		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
+			want, err := writeFilled(pieces, d)
+			if err != nil {
+				continue
+			}
+			got, err := sqlstore.Fill(d, form)
+			if err != nil || got != want {
+				t.Fatalf("filling took %q apart differently: %q instead of %q (%v)", form, got, want, err)
+			}
+		}
+	}
+	if taken < 1000 {
+		t.Fatalf("only %d texts could be taken apart, so the property was hardly measured", taken)
+	}
+	t.Logf("%d of 200000 made-up texts could be taken apart and all of them fill as measured", taken)
 }
