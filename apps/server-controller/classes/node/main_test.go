@@ -129,12 +129,21 @@ func TestMainHelpListsTheCommands(t *testing.T) {
 	}
 }
 
-// A flag stands before the command; the command keeps its own flags.
+// A flag stands before the command; the command keeps its own flags. The
+// answer shows which command ran: only "pair" asks for controller.json, and it
+// is the file this flag names, in a directory of this test alone.
 func TestMainConfigFlagBeforeCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
-	args := []string{"-config", "controller.json", "pair", "-code", pairCode()}
+	cfgPath := filepath.Join(t.TempDir(), "controller.json")
+	args := []string{"-config", cfgPath, "pair", "-code", pairCode()}
 	if code := Main("1.2.3", args, &out, &errOut); code != 1 {
 		t.Fatalf("exit code = %d, want 1 (the command was reached)", code)
+	}
+	if got := errOut.String(); got != msgNoConfig+"\n" {
+		t.Errorf("stderr = %q, want %q (pair read the named file)", got, msgNoConfig+"\n")
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
 	}
 }
 
@@ -386,6 +395,11 @@ func TestPairWritesTheConfigurationAndTheAnchor(t *testing.T) {
 	if cfg.Node != "" {
 		t.Errorf("node = %q, want it cleared", cfg.Node)
 	}
+	// writeController leaves a server that was listed and had an API: this is
+	// a second pairing. It drops both, so the admin is told what to do now.
+	if got := errOut.String(); got != msgListAgain+"\n" {
+		t.Errorf("stderr = %q, want %q", got, msgListAgain+"\n")
+	}
 	if bytes.Equal(cfg.NoiseKey.Bytes(), before.NoiseKey.Bytes()) {
 		t.Error("the key of this controller stayed the same, want a new one")
 	}
@@ -407,11 +421,8 @@ func TestPairWritesTheConfigurationAndTheAnchor(t *testing.T) {
 	if out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
 	}
-	if errOut.Len() != 0 {
-		t.Errorf("stderr = %q, want empty", errOut.String())
-	}
-	if strings.Contains(out.String(), api.code.String()) {
-		t.Error("stdout carried the pairing code")
+	if strings.Contains(out.String()+errOut.String(), api.code.String()) {
+		t.Error("the output carried the pairing code")
 	}
 }
 

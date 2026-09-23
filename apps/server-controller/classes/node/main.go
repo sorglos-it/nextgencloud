@@ -44,16 +44,21 @@ const (
 	usageImage = "Aufruf: ngc-controller image -arch <amd64|arm64> -out <Datei>"
 )
 
-// What "pair" answers when it fails. Each is one fixed German line: the cause
-// would name the file it stumbled over, and that file name may be the pairing
-// code itself (-config), or it would name the address and the answer of a
-// server the code points at.
+// What "pair" answers. Each is one fixed German line: the cause would name the
+// file it stumbled over, and that file name may be the pairing code itself
+// (-config), or it would name the address and the answer of a server the code
+// points at. Each line says what to do next, because whoever reads it is
+// setting up a server and needs the next step, not a report of what happened.
 const (
 	msgNoConfig  = "Die Konfiguration dieses Servers fehlt oder ist unvollständig. Bitte den Server mit ulh einrichten."
-	msgNoKey     = "Der Schlüssel dieses Servers ließ sich nicht erzeugen."
+	msgNoKey     = "Der Schlüssel dieses Servers ließ sich nicht erzeugen. Bitte den Server neu starten und es noch einmal versuchen."
 	msgNotPaired = "Die Kopplung ist gescheitert. Ist der Kopplungscode noch gültig und die API erreichbar?"
 	msgNotSaved  = "Die Kopplung hat geklappt, aber die Konfiguration ließ sich nicht speichern. Bitte mit einem neuen Kopplungscode wiederholen."
-	msgNoAnchor  = "Die Kopplung hat geklappt, aber der Anker ließ sich nicht speichern."
+	msgNoAnchor  = "Die Kopplung hat geklappt, aber der Anker ließ sich nicht speichern. Bitte Platz und Rechte auf dem Server prüfen und mit einem neuen Kopplungscode wiederholen."
+	// Pairing makes a new key, so a server that was already listed is out of
+	// every trust list; it keeps the one API of the code and nothing else.
+	// Only an admin can put it back, and nothing else says so.
+	msgListAgain = "Dieser Server steht jetzt in keiner Vertrauensliste. Bitte ihn in der Verwaltung von NextGenCloud neu eintragen, sonst kann er seine Aufgaben nicht übernehmen."
 )
 
 var errImageUse = errors.New("image takes -arch and -out and nothing else")
@@ -158,14 +163,10 @@ func pair(cfgPath, anchorPath string, args []string, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, usagePair)
 		return 2
 	}
-	// parsePair asked the contract the same question, so this cannot fail.
-	// The value it gives is the code itself: its String is the code, so
-	// nothing here may hand it to fmt.
-	code, err := tunnel.ParsePairCode(opts.Pair.Text())
-	if err != nil {
-		fmt.Fprintln(stderr, usagePair)
-		return 2
-	}
+	// Only opts.Pair carries the code here, and its String hides it. A parsed
+	// tunnel.PairCode does the opposite, its String being the code itself, so
+	// none is made in this function: pairing.Do reads the text, and
+	// pairing.Show takes the anchor alone.
 	cfg, err := config.LoadController(opts.Config)
 	if err != nil {
 		fmt.Fprintln(stderr, msgNoConfig)
@@ -199,7 +200,11 @@ func pair(cfgPath, anchorPath string, args []string, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, msgNoAnchor)
 		return 1
 	}
-	fmt.Fprint(stdout, pairing.Show(code, key.Public))
+	// The two lines the admin compares go to stdout, the one thing left to do
+	// beside them: a pairing that looked like a success and left the server
+	// out of every trust list would be a trap.
+	fmt.Fprint(stdout, pairing.Show(res.Anchor, key.Public))
+	fmt.Fprintln(stderr, msgListAgain)
 	return 0
 }
 

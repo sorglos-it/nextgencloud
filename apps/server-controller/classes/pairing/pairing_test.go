@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -145,8 +146,8 @@ func TestDoRefusesAnyOtherAnswer(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusAccepted, http.StatusForbidden, http.StatusInternalServerError} {
 		srv, seen := api(t, status)
 		code := codeFor(srv, apiNoise.Public, pin, bytes.Repeat([]byte{7}, tunnel.SecretSize))
-		if _, err := Do(t.Context(), input(code)); err == nil {
-			t.Errorf("Do with status %d = nil, want an error", status)
+		if _, err := Do(t.Context(), input(code)); !errors.Is(err, tunnel.ErrPair) {
+			t.Errorf("Do with status %d = %v, want tunnel.ErrPair", status, err)
 		}
 		if n := seen.Load(); n != 1 {
 			t.Errorf("the API saw %d requests, want one", n)
@@ -156,31 +157,37 @@ func TestDoRefusesAnyOtherAnswer(t *testing.T) {
 
 // Everything Do is handed is checked before the one-time secret is spent: a
 // pairing that could never be written to controller.json must not use up the
-// code.
+// code. Which error comes back says which check turned it away: the contract
+// owns the code (tunnel.ErrPairCode), this package owns the rest (ErrInput).
 func TestDoRefusesBadInput(t *testing.T) {
 	apiNoise, _ := trusttest.NodeKeys(apiFill)
 	_, pin := trusttest.APITLS(apiTLSFill, apiHost)
 	srv, seen := api(t, http.StatusNoContent)
 	code := codeFor(srv, apiNoise.Public, pin, bytes.Repeat([]byte{7}, tunnel.SecretSize))
 
-	for name, change := range map[string]func(*Input){
-		"no name":          func(in *Input) { in.Name = "" },
-		"name not a name":  func(in *Input) { in.Name = "Controller 1" },
-		"no roles":         func(in *Input) { in.Roles = nil },
-		"unknown role":     func(in *Input) { in.Roles = []string{"root"} },
-		"role twice":       func(in *Input) { in.Roles = []string{tunnel.RoleServices, tunnel.RoleServices} },
-		"too many roles":   func(in *Input) { in.Roles = []string{tunnel.RoleWeb, tunnel.RoleAPI, tunnel.RoleDB, tunnel.RoleServices, tunnel.RoleWeb} },
-		"no key":           func(in *Input) { in.Noise.Public = nil },
-		"key too short":    func(in *Input) { in.Noise.Public = bytes.Repeat([]byte{1}, 31) },
-		"no code":          func(in *Input) { in.Code = "" },
-		"a join code":      func(in *Input) { in.Code = tunnel.JoinCode(code).String() },
-		"code cut short":   func(in *Input) { in.Code = code.String()[:len(code.String())-4] },
-		"something to say": func(in *Input) { in.Code = "ngc-pair:" + strings.Repeat("a", tunnel.MaxPairCode) },
+	for name, c := range map[string]struct {
+		change func(*Input)
+		want   error
+	}{
+		"no name":         {func(in *Input) { in.Name = "" }, ErrInput},
+		"name not a name": {func(in *Input) { in.Name = "Controller 1" }, ErrInput},
+		"no roles":        {func(in *Input) { in.Roles = nil }, ErrInput},
+		"unknown role":    {func(in *Input) { in.Roles = []string{"root"} }, ErrInput},
+		"role twice":      {func(in *Input) { in.Roles = []string{tunnel.RoleServices, tunnel.RoleServices} }, ErrInput},
+		"too many roles": {func(in *Input) {
+			in.Roles = []string{tunnel.RoleWeb, tunnel.RoleAPI, tunnel.RoleDB, tunnel.RoleServices, tunnel.RoleWeb}
+		}, ErrInput},
+		"no key":           {func(in *Input) { in.Noise.Public = nil }, ErrInput},
+		"key too short":    {func(in *Input) { in.Noise.Public = bytes.Repeat([]byte{1}, 31) }, ErrInput},
+		"no code":          {func(in *Input) { in.Code = "" }, tunnel.ErrPairCode},
+		"a join code":      {func(in *Input) { in.Code = tunnel.JoinCode(code).String() }, tunnel.ErrPairCode},
+		"code cut short":   {func(in *Input) { in.Code = code.String()[:len(code.String())-4] }, tunnel.ErrPairCode},
+		"something to say": {func(in *Input) { in.Code = "ngc-pair:" + strings.Repeat("a", tunnel.MaxPairCode) }, tunnel.ErrPairCode},
 	} {
 		in := input(code)
-		change(&in)
-		if _, err := Do(t.Context(), in); err == nil {
-			t.Errorf("Do with %s = nil, want an error", name)
+		c.change(&in)
+		if _, err := Do(t.Context(), in); !errors.Is(err, c.want) {
+			t.Errorf("Do with %s = %v, want %v", name, err, c.want)
 		}
 	}
 	if n := seen.Load(); n != 0 {
@@ -216,27 +223,18 @@ func TestDoKeepsTheCodeQuiet(t *testing.T) {
 }
 
 // Show is what the admin compares with the shell; it names the two
-// fingerprints and nothing of the code itself.
+// fingerprints and nothing else. It is handed the anchor alone, so the code
+// cannot reach it: a code passed to fmt would print itself.
 func TestShowNamesTheKeyAndTheAnchor(t *testing.T) {
 	ctl, _ := trusttest.NodeKeys(ctlFill)
-	apiNoise, _ := trusttest.NodeKeys(apiFill)
-	_, pin := trusttest.APITLS(apiTLSFill, apiHost)
-	code := tunnel.PairCode{
-		URL:    "wss://" + apiHost + ":7443/tunnel",
-		Key:    apiNoise.Public,
-		TLS:    pin,
-		Secret: bytes.Repeat([]byte{7}, tunnel.SecretSize),
-		Anchor: anchor(),
-	}
-	got := Show(code, ctl.Public)
+	got := Show(anchor(), ctl.Public)
 	want := "Fingerabdruck dieses Controllers: " + tunnel.Fingerprint(ctl.Public) + "\n" +
 		"Anker: Fassung 3, " + tunnel.Fingerprint(anchor().Hash) + "\n"
 	if got != want {
 		t.Errorf("Show = %q, want %q", got, want)
 	}
-	// String() of a code is the code; a Show that formats one hands it out.
-	if strings.Contains(got, code.String()) || strings.Contains(got, tunnel.PairPrefix) {
-		t.Errorf("Show = %q, want the code kept out of it", got)
+	if strings.Contains(got, tunnel.PairPrefix) {
+		t.Errorf("Show = %q, want no code in it", got)
 	}
 }
 
@@ -263,6 +261,11 @@ func FuzzAddress(f *testing.F) {
 		hp := net.JoinHostPort(host, port)
 		if !trust.ValidHostPort(hp) {
 			t.Fatalf("address(%q) = %q, %q, which is no host and port", s, host, port)
+		}
+		// It has to be the address of the code, not just some address: the
+		// request goes where these two say, and nowhere else.
+		if want := strings.TrimSuffix(strings.TrimPrefix(s, "wss://"), "/tunnel"); hp != want {
+			t.Fatalf("address(%q) = %q, %q, want the address %q of the code", s, host, port, want)
 		}
 		raw := "https://" + hp + tunnel.PathPair
 		u, err := url.Parse(raw)
@@ -301,8 +304,10 @@ func TestDoFollowsNoRedirect(t *testing.T) {
 	defer srv.Close()
 
 	code := codeFor(srv, apiNoise.Public, pin, bytes.Repeat([]byte{7}, tunnel.SecretSize))
-	if _, err := Do(t.Context(), input(code)); err == nil {
-		t.Fatal("Do = nil, want an error")
+	// The redirect is taken as the answer it is, and only 204 pairs, so it
+	// comes back as a refused pairing and not as some transport error.
+	if _, err := Do(t.Context(), input(code)); !errors.Is(err, tunnel.ErrPair) {
+		t.Fatalf("Do = %v, want tunnel.ErrPair", err)
 	}
 	if n := elsewhere.Load(); n != 0 {
 		t.Errorf("the other server saw %d requests, want none", n)

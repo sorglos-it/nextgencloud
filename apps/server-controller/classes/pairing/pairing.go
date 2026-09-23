@@ -63,9 +63,15 @@ type Result struct {
 // Do pairs this server with the API the code names: it posts a
 // tunnel.PairRequest to tunnel.PathPair of that API, over TLS checked against
 // the pin of the code, and answers with what controller.json keeps. Only 204
-// pairs; every other answer is tunnel.ErrPair. The secret of the code is good
-// for one pairing, so everything that could keep the result from being used is
-// checked before the request goes out.
+// pairs; every other answer is tunnel.ErrPair.
+//
+// The secret of the code is good for one pairing, so what Do is handed is
+// checked before the request goes out: the code, the name, the roles and the
+// key. That is not all of config.Controller.Validate; the database, its key,
+// the release key, podman and the rest of the file never reach this package.
+// For node.pair they are whole because config.LoadController checked them.
+// Another caller answers for them itself, or a pairing that worked can still
+// end in a configuration that will not save.
 func Do(ctx context.Context, in Input) (Result, error) {
 	// First and before anything else: nothing but ParsePairCode looks at the
 	// text, and its error quotes none of it.
@@ -135,11 +141,13 @@ func Do(ctx context.Context, in Input) (Result, error) {
 }
 
 // Show returns the two lines the admin compares with the display of the shell
-// (shared/ulh.md): the fingerprint of this controller's key, and the anchor of
-// the code by version and fingerprint. Nothing else of the code is named.
-func Show(code tunnel.PairCode, noisePub []byte) string {
+// (shared/ulh.md): the fingerprint of this controller's key, and the anchor by
+// version and fingerprint. It takes the anchor, not the code it came in
+// (Result.Anchor is that anchor), so no caller of Show has to hold a
+// tunnel.PairCode, whose String is the pairing code itself.
+func Show(anchor trust.Anchor, noisePub []byte) string {
 	return fmt.Sprintf("Fingerabdruck dieses Controllers: %s\nAnker: Fassung %d, %s\n",
-		tunnel.Fingerprint(noisePub), code.Anchor.Seq, tunnel.Fingerprint(code.Anchor.Hash))
+		tunnel.Fingerprint(noisePub), anchor.Seq, tunnel.Fingerprint(anchor.Hash))
 }
 
 // address splits the tunnel address of a code into host and port. The host
