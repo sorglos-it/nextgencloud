@@ -15,16 +15,13 @@
 // Playwright brings is one - can tell no right signature from a wrong one, so
 // it refuses every one of them.
 //
-// What is missing here: deriveSeed, the Argon2id that turns the typed
-// password into the 32-byte seed of the password key (Go: proof.DeriveKey).
-// The Web Crypto API has no Argon2id - it has PBKDF2 and nothing else that
-// stretches a password - and cryptography is never built by hand here, so
-// there is nothing to write until an Argon2id sits in the repository under
-// apps/web/public/assets/vendor/ with its line in THIRD-PARTY.md. It is left
-// out rather than stubbed: whoever imports a name this module does not have
-// gets a module that refuses to load, and that is louder than a function that
-// answers wrongly. Everything around it - the seed to the public key, the
-// challenge, every check - stands and is tested.
+// The one exception is Argon2id, which the Web Crypto API does not have - it
+// stretches a password with PBKDF2 and with nothing else. It is not built
+// here either: it is copied into the repository as it was published
+// (apps/web/public/assets/vendor/noble-hashes/, its line in THIRD-PARTY.md,
+// where it comes from and how to check that in its SOURCE.md). deriveSeed
+// hands the work to a worker, so this module pulls those 90 KB only when a
+// password is really derived.
 import { b64decode, b64encode, concat, utf8, fromUtf8, equal } from "./b64.js";
 import { S, A, P, str, bytes, uint32 } from "./json.js";
 import { message, keyIDAsync, verifyRaw, MAX_PAYLOAD } from "./sign.js";
@@ -110,23 +107,95 @@ function validKeyID(s) {
   }
 }
 
-// validateKDF checks the Argon2id parameters against the allowed ranges
-// (Go: proof.KDF.Validate). It answers true or false and never throws.
-export function validateKDF(k) {
+// kdfFields reads the five parameters of a KDF exactly once and hands them
+// back as plain values, or null where they are not the ones the contract
+// allows (Go: proof.KDF.Validate). Once, because Go is given a struct whose
+// fields answer every read alike, while here each one can be a getter: a
+// memory size that reads as 65536 for the check and as something else for
+// Argon2id would carry the whole range away between the two reads. It never
+// throws; a field that fights back is no field.
+function kdfFields(k) {
   try {
-    if (k === null || typeof k !== "object") return false;
+    if (k === null || typeof k !== "object") return null;
     const { alg, salt, m, t, p } = k;
-    if (alg !== KDF_ARGON2ID) return false;
-    if (!(salt instanceof Uint8Array) || salt.length !== SALT_SIZE) return false;
+    if (alg !== KDF_ARGON2ID) return null;
+    if (!(salt instanceof Uint8Array) || salt.length !== SALT_SIZE) return null;
     // Go has uint32 and uint8 and cannot be handed anything else. Here
     // "65536" compares to true against every bound, and undefined to false
     // against all of them: a parameter that is no whole number is no
     // parameter, and is refused before it is compared.
-    if (!Number.isInteger(m) || !Number.isInteger(t) || !Number.isInteger(p)) return false;
-    return m >= MIN_MEM_KIB && m <= MAX_MEM_KIB && t >= 1 && t <= 10 && p >= 1 && p <= 4;
+    if (!Number.isInteger(m) || !Number.isInteger(t) || !Number.isInteger(p)) return null;
+    if (m < MIN_MEM_KIB || m > MAX_MEM_KIB || t < 1 || t > 10 || p < 1 || p > 4) return null;
+    return { salt, m, t, p };
   } catch {
-    return false;
+    return null;
   }
+}
+
+// validateKDF checks the Argon2id parameters against the allowed ranges
+// (Go: proof.KDF.Validate). It answers true or false and never throws.
+export function validateKDF(k) {
+  return kdfFields(k) !== null;
+}
+
+// The worker that computes Argon2id, next to this module rather than at a
+// path of its own, so moving assets/ moves it along.
+const ARGON2_WORKER = new URL("../auth/argon2-worker.js", import.meta.url);
+
+// deriveSeed turns the typed password into the 32-byte seed of the Ed25519
+// password key (Go: proof.DeriveKey, which begins with KDF.Validate just the
+// same and answers ErrKDF).
+//
+// The password is the text the user typed, normalized to NFC and then taken
+// as UTF-8, exactly as the contract writes it down: a password typed in NFD
+// gives the same key, which is what proof_kdf.json holds a case for. Bytes or
+// a number are no password - what is not text has no normal form.
+//
+// Every parameter comes from the KDF of the document and none from a default
+// of the library: a memory size, a number of passes or a parallelism that is
+// missing is an error, never a value quietly filled in. The length of the
+// seed is this module's, not the caller's.
+//
+// The work runs in a worker. Argon2id is meant to be slow - about a second at
+// m=65536, with 64 MiB of working memory - and the window has to keep
+// answering meanwhile. The password's buffer is handed over and not copied,
+// so it lives in one place, which the worker wipes and which is thrown away
+// with the worker.
+export async function deriveSeed(passwordText, kdf) {
+  if (typeof passwordText !== "string") throw new BadProof("proof: a password is text");
+  const k = kdfFields(kdf);
+  if (k === null) throw new BadProof("proof: KDF parameters out of range");
+  const password = utf8(passwordText.normalize("NFC"));
+  return inWorker(password, k);
+}
+
+function inWorker(password, k) {
+  return new Promise((resolve, reject) => {
+    let w;
+    try {
+      w = new Worker(ARGON2_WORKER, { type: "module" });
+    } catch {
+      throw new BadProof("proof: no worker for Argon2id");
+    }
+    // Whatever comes back first ends the worker: an answer, an error of the
+    // worker, a message this side cannot read.
+    const end = (fn) => (e) => {
+      w.terminate();
+      fn(e);
+    };
+    w.onmessage = end((e) => {
+      const seed = e.data;
+      if (seed instanceof Uint8Array && seed.length === ED25519_SIZE) resolve(seed);
+      else reject(new BadProof("proof: Argon2id gave no seed"));
+    });
+    w.onerror = end(() => reject(new BadProof("proof: Argon2id failed")));
+    w.onmessageerror = end(() => reject(new BadProof("proof: Argon2id failed")));
+    // The buffer is transferred, not cloned: after this line the password is
+    // gone from this thread. The salt is the caller's and is copied, so his
+    // KDF keeps it.
+    w.postMessage({ password, salt: k.salt, t: k.t, m: k.m, p: k.p, dkLen: ED25519_SIZE },
+      [password.buffer]);
+  });
 }
 
 // asBytes reads a field that Go holds as enc.Bytes: bytes, or nothing at all

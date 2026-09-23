@@ -120,9 +120,8 @@ test("the challenge is the one Go wrote into the client data", async ({ shell })
 
 // The seed of a password key is the same 32 bytes in Go and here, and the
 // public key that belongs to it has to come out the same as well
-// (ed25519.NewKeyFromSeed). The seeds are taken from the vectors, because the
-// Argon2id that makes them is not in the repository yet - see the head of
-// proof.js.
+// (ed25519.NewKeyFromSeed). This case starts at the seeds of the vectors; the
+// case below starts at the typed password and derives them.
 test("the public key of a seed is the one Go derives", async ({ shell }) => {
   test.skip(!(await hasEd25519(shell, passwordPub)),
     "no Ed25519 in this engine's Web Crypto: it can import no seed and export no public key");
@@ -153,37 +152,101 @@ test("the public key of a seed is the one Go derives", async ({ shell }) => {
   expect(got.usages).toEqual(["sign"]);
 });
 
-// The Argon2id that turns a typed password into the seed is missing on
-// purpose, and the gap is a fact this file holds on to: a later task that
-// adds it removes this case with it. A stub that answered something would be
-// worse than nothing, and a name this module does not have makes every
-// importer of it refuse to load - which is the loudest failure there is.
-test("the password key is still without its Argon2id, and says so by having none", async ({ shell }) => {
-  const got = await shell.evaluate(async () => {
+// The whole way from the typed password to the key, against the same three
+// vectors Go writes (proof.DeriveKey over argon2.IDKey). The third case is
+// the second one typed in NFD: Go has no NFC table and put the case here on
+// purpose, because the browser is the side that normalizes. Nothing here is
+// held against the library alone - every seed is the one Go computed.
+//
+// Argon2id is slow because it is meant to be, so this case also writes down
+// how long it took, and it watches the window while it runs: a timer on the
+// page has to keep firing, or the derivation has taken the one thread the
+// user's clicks need.
+test("the seed of a typed password is the one Go derives with Argon2id", async ({ shell }) => {
+  test.setTimeout(120_000);
+  const got = await shell.evaluate(async (cases) => {
     const p = await import("/assets/js/contracts/proof.js");
-    return {
-      deriveSeed: typeof p.deriveSeed,
-      // What Argon2id is measured against is there and unchanged, so whoever
-      // adds it has the numbers to hand.
-      kdf: [p.KDF_ARGON2ID, p.SALT_SIZE, p.DEFAULT_MEM_KIB, p.DEFAULT_TIME, p.DEFAULT_PAR,
-        p.MIN_MEM_KIB, p.MAX_MEM_KIB],
-      // And the Web Crypto API of this engine really has no Argon2id, so
-      // nothing here is a matter of taste.
-      argon: typeof crypto.subtle.deriveBits === "function"
-        ? await (async () => {
-          try {
-            const k = await crypto.subtle.importKey("raw", new Uint8Array(8), "Argon2id", false, ["deriveBits"]);
-            return k ? "there" : "no key";
-          } catch (e) {
-            return e.name;
-          }
-        })()
-        : "no deriveBits",
+    const { b64encode } = await import("/assets/js/contracts/b64.js");
+    const out = [];
+    for (const c of cases) {
+      // The parameters are taken from the vector, one by one, never from a
+      // default of the library: what is not in the document is not a value.
+      const kdf = { alg: c.kdf.alg, salt: p.saltBytes(c.kdf.salt), m: c.kdf.m, t: c.kdf.t, p: c.kdf.p };
+      let ticks = 0;
+      const timer = setInterval(() => { ticks += 1; }, 20);
+      const started = performance.now();
+      const seed = await p.deriveSeed(c.typed ?? c.password, kdf);
+      const ms = Math.round(performance.now() - started);
+      clearInterval(timer);
+      out.push({
+        seed: b64encode(seed),
+        bytes: seed instanceof Uint8Array ? seed.length : `no bytes but ${typeof seed}`,
+        ms,
+        ticks,
+      });
+    }
+    return out;
+  }, kdfCases);
+  expect(got.map((g) => g.seed)).toEqual(kdfCases.map((c) => c.seed));
+  expect(got.map((g) => g.bytes)).toEqual(kdfCases.map(() => 32));
+  const how = `deriveSeed at m=65536 t=3 p=1: ${got.map((g) => `${g.ms} ms`).join(", ")}`;
+  console.log(how);
+  test.info().annotations.push({ type: "Argon2id", description: how });
+  // Around 45 ticks are due in a second; five is the floor under which the
+  // page was plainly standing still. A derivation on the page's own thread
+  // would land at one or two.
+  expect(got.map((g) => g.ticks >= 5)).toEqual(kdfCases.map(() => true));
+  // Nothing about the public key here: the seeds just came out as the ones of
+  // the vectors, and the case above takes those same seeds to the public keys
+  // of the vectors. The chain from the typed password to the key is closed
+  // across the two, and this half runs in every engine, Ed25519 or not.
+});
+
+// The parameters of Argon2id come from the contract and from nowhere else:
+// a parameter that is missing, out of range or not a whole number is an
+// error, never a default the library would quietly fill in (Go: DeriveKey
+// begins with KDF.Validate and returns ErrKDF). The password is the text the
+// user typed; bytes or a number are no password.
+test("a password key is derived only with the parameters of the contract", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const salt = new Uint8Array(16).fill(7);
+    // The cheapest parameters the contract allows, so a case that wrongly
+    // derives something still answers in a moment.
+    const good = { alg: "argon2id", salt, m: 19456, t: 1, p: 1 };
+    const how = async (name, password, kdf) => {
+      try {
+        const seed = await p.deriveSeed(password, kdf);
+        return [name, `derived ${seed.length} bytes`];
+      } catch (e) {
+        return [name, e.constructor.name];
+      }
     };
+    return [
+      await how("a memory that is missing", "pw", { ...good, m: undefined }),
+      await how("a time that is missing", "pw", { ...good, t: undefined }),
+      await how("a parallelism that is missing", "pw", { ...good, p: undefined }),
+      await how("a memory below the floor", "pw", { ...good, m: 19455 }),
+      await how("a memory above the ceiling", "pw", { ...good, m: 1048577 }),
+      await how("a memory that is text", "pw", { ...good, m: "65536" }),
+      await how("a memory with a fraction", "pw", { ...good, m: 65536.5 }),
+      await how("a time of zero", "pw", { ...good, t: 0 }),
+      await how("a time above the ceiling", "pw", { ...good, t: 11 }),
+      await how("a parallelism of zero", "pw", { ...good, p: 0 }),
+      await how("a parallelism above the ceiling", "pw", { ...good, p: 5 }),
+      await how("a salt of 15 bytes", "pw", { ...good, salt: new Uint8Array(15) }),
+      await how("a salt that is text", "pw", { ...good, salt: "0123456789abcdef" }),
+      await how("another algorithm", "pw", { ...good, alg: "argon2i" }),
+      await how("no KDF at all", "pw", undefined),
+      await how("a KDF that is text", "pw", "argon2id"),
+      await how("a KDF whose memory fights back", "pw", { ...good, get m() { throw new TypeError("no"); } }),
+      await how("a password that is a number", 42, good),
+      await how("a password that is bytes", new Uint8Array(4), good),
+      await how("a password that is missing", undefined, good),
+    ];
   });
-  expect(got.deriveSeed).toBe("undefined");
-  expect(got.kdf).toEqual(["argon2id", 16, 65536, 3, 1, 19456, 1048576]);
-  expect(got.argon).not.toBe("there");
+  const wrong = out.filter(([, answer]) => answer !== "BadProof");
+  expect(wrong).toEqual([]);
 });
 
 // Proof.Validate of Go, rule by rule. There are no vectors for what has to be
