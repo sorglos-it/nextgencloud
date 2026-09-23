@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -26,12 +27,37 @@ const (
 	ptyNumber = 0x80045430 // TIOCGPTN: which /dev/pts/<n> the other end is
 )
 
+// waitLimit bounds how long a test waits for the other process. It is long
+// enough for a loaded server with -race and short enough to end as the failure
+// it is instead of as the timeout of the whole run.
+const waitLimit = 30 * time.Second
+
+// Whether the two tests below really ran is not something a green run shows by
+// itself: pty skips where there is no pseudo terminal. noPTY counts those
+// skips, echoTested the runs that really asked a terminal; TestMain fails a run
+// that only skipped, so nobody takes "ok" for an answer that was never given.
+var noPTY, echoTested atomic.Int64
+
+// TestMain runs the tests of this package and then asks whether the echo was
+// really proven. A run narrowed to other tests never asks for a terminal, so
+// nothing is missing there; a run that wanted one and found none proves
+// nothing about the terminal the controller is built for.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if code == 0 && noPTY.Load() > 0 && echoTested.Load() == 0 {
+		fmt.Fprintln(os.Stderr, "no pseudo terminal on this machine: neither echo test ran, so nothing about the echo of the terminal was proven")
+		code = 1
+	}
+	os.Exit(code)
+}
+
 // pty opens a pseudo terminal and gives back both of its ends: the side a
 // program reads from and writes to, and the side that plays the admin.
 func pty(t *testing.T) (screen, keyboard *os.File) {
 	t.Helper()
 	m, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
+		noPTY.Add(1)
 		t.Skipf("no pseudo terminal here: %v", err)
 	}
 	t.Cleanup(func() { m.Close() })
@@ -163,6 +189,25 @@ func waitForQuestion(t *testing.T, keyboard *os.File) {
 	}
 }
 
+// waitFor waits for the other process, but not for ever. A controller that
+// does not die of the signal any more, or does not end after the code, would
+// otherwise stand here until go test gives up after ten minutes: what is a
+// failure with a name would look like a run that hangs.
+func waitFor(t *testing.T, cmd *exec.Cmd) error {
+	t.Helper()
+	ended := make(chan error, 1)
+	go func() { ended <- cmd.Wait() }()
+	select {
+	case err := <-ended:
+		return err
+	case <-time.After(waitLimit):
+		cmd.Process.Kill()
+		<-ended
+		t.Fatalf("the other process was still running after %s, want it ended", waitLimit)
+		return nil
+	}
+}
+
 // quiet reports whether the other process kept the pairing code to itself.
 func quiet(t *testing.T, out *bytes.Buffer) {
 	t.Helper()
@@ -174,10 +219,11 @@ func quiet(t *testing.T, out *bytes.Buffer) {
 // After the code was entered the terminal shows what is typed again.
 func TestTheEchoIsBackAfterTheCode(t *testing.T) {
 	keyboard, cmd, out := asking(t)
+	echoTested.Add(1)
 	if _, err := keyboard.WriteString(pairCode() + "\n"); err != nil {
 		t.Fatal(err)
 	}
-	err := cmd.Wait()
+	err := waitFor(t, cmd)
 	quiet(t, out)
 	if err != nil {
 		t.Fatalf("the other process failed: %v\n%s", err, out)
@@ -194,10 +240,11 @@ func TestTheEchoIsBackAfterTheCode(t *testing.T) {
 // happened.
 func TestTheEchoIsBackAfterCtrlC(t *testing.T) {
 	keyboard, cmd, out := asking(t)
+	echoTested.Add(1)
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
-	err := cmd.Wait()
+	err := waitFor(t, cmd)
 	quiet(t, out)
 	var ended *exec.ExitError
 	if !errors.As(err, &ended) {

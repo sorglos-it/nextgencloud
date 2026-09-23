@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func TestAskWarnsWhenTheCodeIsVisible(t *testing.T) {
 	var prompt bytes.Buffer
 	got, err := askAtTerminal(pipe(t, code+"\n"), &prompt, func(*os.File) (func() bool, bool) {
 		return nil, false
-	})
+	}, guard)
 	if err != nil || got != code {
 		t.Fatalf("askAtTerminal = %v, want the line it was given", err)
 	}
@@ -87,7 +88,7 @@ func TestAskBreaksTheLineAfterAHiddenCode(t *testing.T) {
 	var prompt bytes.Buffer
 	got, err := askAtTerminal(pipe(t, code+"\n"), &prompt, func(*os.File) (func() bool, bool) {
 		return func() bool { back++; return true }, true
-	})
+	}, guard)
 	if err != nil || got != code {
 		t.Fatalf("askAtTerminal = %v, want the line it was given", err)
 	}
@@ -106,11 +107,87 @@ func TestAskSaysWhenTheEchoStaysOff(t *testing.T) {
 	var prompt bytes.Buffer
 	if _, err := askAtTerminal(pipe(t, pairCode()+"\n"), &prompt, func(*os.File) (func() bool, bool) {
 		return func() bool { return false }, true
-	}); err != nil {
+	}, guard); err != nil {
 		t.Fatalf("askAtTerminal: %v", err)
 	}
 	if !strings.HasSuffix(prompt.String(), msgEchoStuck+"\n") {
 		t.Errorf("prompt = %q, want it to end with %q", prompt.String(), msgEchoStuck)
+	}
+}
+
+// The guard stands before the echo is switched off. A signal in the moment
+// between the two would otherwise leave the shell of the admin dark for good,
+// because nothing would be there to give the echo back. Until the echo is off
+// there is nothing to take back, so the guard first holds a call that does
+// nothing and the real one from that moment on.
+func TestTheGuardStandsBeforeTheEchoGoesOff(t *testing.T) {
+	var order []string
+	var guarded func() bool
+	var back int
+	hide := func(*os.File) (func() bool, bool) {
+		order = append(order, "hide")
+		if guarded == nil {
+			t.Error("the echo goes off before the guard stands")
+			return func() bool { back++; return true }, true
+		}
+		// Before the echo is off, giving it back is a call that does nothing
+		// and cannot fail.
+		if !guarded() {
+			t.Error("the guard fails while there is nothing to give back")
+		}
+		if back != 0 {
+			t.Error("the guard reached a terminal whose echo was never switched off")
+		}
+		return func() bool { back++; return true }, true
+	}
+	watch := func(restore func() bool) func() {
+		order = append(order, "guard")
+		guarded = restore
+		return func() {}
+	}
+	code := pairCode()
+	var prompt bytes.Buffer
+	got, err := askAtTerminal(pipe(t, code+"\n"), &prompt, hide, watch)
+	if err != nil || got != code {
+		t.Fatalf("askAtTerminal = %v, want the line it was given", err)
+	}
+	if len(order) != 2 || order[0] != "guard" || order[1] != "hide" {
+		t.Fatalf("order = %v, want the guard before the echo goes off", order)
+	}
+	// And from the moment the echo is off the guard reaches the terminal:
+	// what it holds is no longer the call that does nothing.
+	if !guarded() || back != 2 {
+		t.Errorf("the echo was given back %d times, want the guard to reach the terminal", back)
+	}
+}
+
+// A signal that arrives in the very moment the question ends may already lie
+// in the channel when the guard looks, and then it is a matter of chance which
+// of the two branches is taken. Whoever pressed Ctrl+C has ended the program,
+// so the signal is read once more after the delivery stopped: dropping it
+// would leave a controller that pairs on as if nothing had happened. Which
+// branch a run takes is chance, so the test runs the moment often enough that
+// both are seen.
+func TestASignalAtTheEndOfTheQuestionIsNotDropped(t *testing.T) {
+	for i := range 32 {
+		sig := make(chan os.Signal, 1)
+		sig <- syscall.SIGINT
+		done := make(chan struct{})
+		close(done)
+		back := 0
+		raised := make(chan os.Signal, 1)
+		watchSignal(sig, done, func() bool { back++; return true }, func(s os.Signal) { raised <- s })
+		select {
+		case s := <-raised:
+			if s != syscall.SIGINT {
+				t.Fatalf("run %d let %v through, want the signal that came in", i, s)
+			}
+		default:
+			t.Fatalf("run %d dropped the signal: the program lives on although it was ended", i)
+		}
+		if back == 0 {
+			t.Fatalf("run %d did not give the echo back", i)
+		}
 	}
 }
 

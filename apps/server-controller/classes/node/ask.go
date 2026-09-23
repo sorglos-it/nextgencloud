@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
@@ -51,6 +52,15 @@ const (
 // line had no end, or the input could not be read. It names none of it.
 var errNoCode = errors.New("node: no pairing code was read")
 
+// hider switches the echo of a terminal off and hands back the call that
+// switches it on again, which reports whether the terminal took it. Only a
+// real terminal has one, so the tests bring their own.
+type hider func(*os.File) (restore func() bool, ok bool)
+
+// watcher puts the guard over the terminal and hands back the call that takes
+// it down again; the tests bring their own for the same reason.
+type watcher func(restore func() bool) (stop func())
+
 // readCode reads the pairing code. At a terminal it asks for it and keeps it
 // off the screen; from a pipe or a file it takes the first line and asks
 // nothing, so the ulh script can hand the code over without putting it into
@@ -61,25 +71,53 @@ func readCode(stdin io.Reader, prompt io.Writer) (string, error) {
 	if !isTTY {
 		return readLine(stdin)
 	}
-	return askAtTerminal(f, prompt, hideInput)
+	return askAtTerminal(f, prompt, hideInput, guard)
+}
+
+// restorer carries the call that gives the terminal its echo back. The guard
+// holds this and not the call itself, because it is installed before the echo
+// is switched off: until then there is nothing to give back and restoring is
+// a call that does nothing. The guard reads it from its own goroutine, so it
+// is handed over atomically.
+type restorer struct{ back atomic.Pointer[func() bool] }
+
+// set names the call that gives the echo back, from the moment it exists.
+func (r *restorer) set(back func() bool) { r.back.Store(&back) }
+
+// restore gives the echo back and reports whether the terminal took it. With
+// nothing to give back there is nothing that could fail.
+func (r *restorer) restore() bool {
+	if back := r.back.Load(); back != nil {
+		return (*back)()
+	}
+	return true
 }
 
 // askAtTerminal asks the admin for the code. hide switches the echo of the
-// terminal off and hands back the call that switches it on again; only a real
-// terminal has one, so the tests bring their own.
-func askAtTerminal(f *os.File, prompt io.Writer, hide func(*os.File) (func() bool, bool)) (string, error) {
+// terminal off and hands back the call that switches it on again; watch puts
+// the guard over it that gives the echo back when a signal ends the program.
+func askAtTerminal(f *os.File, prompt io.Writer, hide hider, watch watcher) (string, error) {
+	// The guard stands before the echo goes off, not behind it: between the
+	// two calls lies a moment in which a signal would leave the admin in
+	// front of a terminal that shows nothing any more. While there is nothing
+	// to give back the guard costs nothing.
+	var back restorer
+	stop := watch(back.restore)
+	defer stop()
 	restore, hidden := hide(f)
 	if hidden {
-		// The guard stands before the question: whoever is asked is covered
-		// from the first moment he could press Ctrl+C.
-		stop := guard(restore)
-		defer stop()
+		// From here the guard reaches the terminal, and whoever is asked is
+		// covered from the first moment he could press Ctrl+C.
+		back.set(restore)
 		defer func() {
 			if !restore() {
 				fmt.Fprintln(prompt, msgEchoStuck)
 			}
 		}()
 	} else {
+		// Nothing was switched off, so there is nothing to give back: the
+		// guard steps down again right away.
+		stop()
 		fmt.Fprintln(prompt, msgEchoOn)
 	}
 	fmt.Fprint(prompt, askCode)
@@ -103,20 +141,50 @@ func guard(restore func() bool) (stop func()) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	done := make(chan struct{})
+	ended := make(chan struct{})
 	go func() {
+		defer close(ended)
+		watchSignal(sig, done, restore, raise)
+	}()
+	// Waiting keeps the order: whoever ends the question goes on only once a
+	// signal that came in at the same moment has been let through, and not
+	// while the program is already pairing.
+	return sync.OnceFunc(func() { close(done); <-ended })
+}
+
+// watchSignal waits for a signal or for the end of the question, gives the
+// terminal its echo back and lets the signal through. It is the guard without
+// its channels, so a test can hand it both.
+func watchSignal(sig chan os.Signal, done <-chan struct{}, restore func() bool, raise func(os.Signal)) {
+	select {
+	case s := <-sig:
+		restore()
+		signal.Stop(sig)
+		raise(s)
+	case <-done:
+		signal.Stop(sig)
+		// A signal that came in a moment before the question ended lies in
+		// the channel, and which of the two branches was taken is then a
+		// matter of chance. signal.Stop only ends the delivery, so after it
+		// the channel holds everything that ever arrived: whoever pressed
+		// Ctrl+C ended the program, and dropping his signal here would leave
+		// a controller that pairs on as if nothing had happened.
 		select {
 		case s := <-sig:
 			restore()
-			signal.Stop(sig)
-			signal.Reset(s) // from here the signal does what it always did
-			if p, err := os.FindProcess(os.Getpid()); err == nil {
-				p.Signal(s)
-			}
-		case <-done:
-			signal.Stop(sig)
+			raise(s)
+		default:
 		}
-	}()
-	return sync.OnceFunc(func() { close(done) })
+	}
+}
+
+// raise lets the signal do what it always did: the program dies of it, so the
+// shell sees what happened and the exit code stays what it was.
+func raise(s os.Signal) {
+	signal.Reset(s)
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		p.Signal(s)
+	}
 }
 
 // terminal reports whether r is the terminal of the admin. A pipe, a file and
