@@ -2,9 +2,11 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
@@ -28,15 +30,39 @@ func genesisSeed(tb testing.TB) []byte {
 	return b
 }
 
+// genesisID returns the installation the genesis list of trusttest names.
+func genesisID(tb testing.TB) string {
+	tb.Helper()
+	_, sg := genesis(tb)
+	l, err := trust.Parse(sg.Payload)
+	if err != nil {
+		tb.Fatalf("genesis: %v", err)
+	}
+	return l.Installation
+}
+
+// newTrusted returns a State whose installation is the one the genesis list
+// names, as the setup writes it before version 1 is signed. Without it no
+// version 1 binds (checkInstallation).
+func newTrusted(tb testing.TB) (*State, dbapi.Store) {
+	tb.Helper()
+	s, db := newState(tb)
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: dbapi.SettingInstallation,
+		Data: []byte(genesisID(tb)), Updated: s.Now()}); err != nil {
+		tb.Fatalf("installation: %v", err)
+	}
+	return s, db
+}
+
 func TestTrustWithoutVersion(t *testing.T) {
 	s, _ := newState(t)
-	if _, err := s.Trust(ctx); err != ErrNoTrust {
+	if _, err := s.Trust(ctx); !errors.Is(err, ErrNoTrust) {
 		t.Fatalf("empty database answered %v", err)
 	}
 }
 
 func TestAddVersionAndChain(t *testing.T) {
-	s, _ := newState(t)
+	s, _ := newTrusted(t)
 	admin, first := genesis(t)
 	v, err := s.AddVersion(ctx, first)
 	if err != nil || v.List.Seq != 1 {
@@ -49,7 +75,7 @@ func TestAddVersionAndChain(t *testing.T) {
 	}
 	// A version that is not the next one is refused, so no one can replay an
 	// old list or skip one.
-	if _, err := s.AddVersion(ctx, second); err != ErrOldVersion {
+	if _, err := s.AddVersion(ctx, second); !errors.Is(err, ErrOldVersion) {
 		t.Fatalf("version 2 twice answered %v", err)
 	}
 	chain, err := s.Chain(ctx, 1)
@@ -67,23 +93,99 @@ func TestAddVersionAndChain(t *testing.T) {
 	if c, err := s.Chain(ctx, 3); err != nil || len(c.Versions) != 0 {
 		t.Fatalf("chain from 3: %v %d", err, len(c.Versions))
 	}
-	if _, err := s.Chain(ctx, 4); err == nil {
-		t.Fatal("chain beyond the newest accepted")
+	if _, err := s.Chain(ctx, 4); !errors.Is(err, ErrOldVersion) {
+		t.Fatalf("chain beyond the newest answered %v", err)
 	}
 }
 
 // TestAddVersionSkipped proves that a gap is refused too: version 3 does not
 // go in while version 2 is missing.
 func TestAddVersionSkipped(t *testing.T) {
-	s, _ := newState(t)
+	s, _ := newTrusted(t)
 	admin, first := genesis(t)
 	if _, err := s.AddVersion(ctx, first); err != nil {
 		t.Fatalf("version 1: %v", err)
 	}
 	second := admin.Sign(t, trusttest.Next(t, first))
 	third := admin.Sign(t, trusttest.Next(t, second))
-	if _, err := s.AddVersion(ctx, third); err != ErrOldVersion {
+	if _, err := s.AddVersion(ctx, third); !errors.Is(err, ErrOldVersion) {
 		t.Fatalf("version 3 without version 2 answered %v", err)
+	}
+}
+
+// TestAddVersionFork proves that a second version with the right number but
+// another version before it is named as what it is, not as an old one: here
+// two chains claim the same number.
+func TestAddVersionFork(t *testing.T) {
+	s, _ := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	l := trusttest.Next(t, first)
+	l.Prev[0] ^= 1 // points at a version that is not the stored one
+	forked := admin.Sign(t, l)
+	if _, err := s.AddVersion(ctx, forked); !errors.Is(err, ErrFork) {
+		t.Fatalf("fork answered %v", err)
+	}
+}
+
+// TestAddVersionOtherInstallation proves that a version of another
+// installation is named as such, although its number and signer fit.
+func TestAddVersionOtherInstallation(t *testing.T) {
+	s, _ := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	l := trusttest.Next(t, first)
+	l.Installation = trusttest.ID(0x12)
+	other := admin.Sign(t, l)
+	if _, err := s.AddVersion(ctx, other); !errors.Is(err, ErrInstallation) {
+		t.Fatalf("other installation answered %v", err)
+	}
+}
+
+// TestForeignRoot proves the one thing that binds version 1: it anchors
+// itself, so a whole list a stranger signed for himself passes trust.Open.
+// Only the installation the setup stored tells it from ours -- both when it
+// comes in through AddVersion and when the row is swapped in the database.
+func TestForeignRoot(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	l, err := trust.Parse(first.Payload)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	l.Installation = trusttest.ID(0x12)
+	foreign := admin.Sign(t, l)
+	// It is a list in its own right: an admin of itself signed it.
+	if _, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(foreign)}, []trust.Signed{foreign}); err != nil {
+		t.Fatalf("the foreign list is not whole, the test proves nothing: %v", err)
+	}
+	if _, err := s.AddVersion(ctx, foreign); !errors.Is(err, ErrInstallation) {
+		t.Fatalf("foreign version 1 answered %v", err)
+	}
+	data, err := json.Marshal(foreign)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobTrust, ID: "1", Seq: 1, Data: data,
+		Updated: s.Now()}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if _, err := s.Refresh(ctx); !errors.Is(err, ErrInstallation) {
+		t.Fatalf("swapped row answered %v", err)
+	}
+}
+
+// TestRootWithoutInstallation proves that version 1 is not taken while the
+// setup wrote no installation ID: nothing would bind it.
+func TestRootWithoutInstallation(t *testing.T) {
+	s, _ := newState(t)
+	_, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); !errors.Is(err, ErrSetting) {
+		t.Fatalf("version 1 without an installation answered %v", err)
 	}
 }
 
@@ -91,14 +193,14 @@ func TestAddVersionSkipped(t *testing.T) {
 // current list does not hold is refused, and not as ErrOldVersion: the number
 // is right, the signer is not.
 func TestAddVersionForeignSigner(t *testing.T) {
-	s, _ := newState(t)
+	s, _ := newTrusted(t)
 	_, first := genesis(t)
 	if _, err := s.AddVersion(ctx, first); err != nil {
 		t.Fatalf("version 1: %v", err)
 	}
 	stranger := trusttest.NewSigner(0x5A)
 	forged := stranger.Sign(t, trusttest.Next(t, first))
-	if _, err := s.AddVersion(ctx, forged); err != trust.ErrSigner {
+	if _, err := s.AddVersion(ctx, forged); !errors.Is(err, trust.ErrSigner) {
 		t.Fatalf("foreign signer answered %v", err)
 	}
 }
@@ -106,18 +208,33 @@ func TestAddVersionForeignSigner(t *testing.T) {
 // TestAddVersionNotOne proves that the first version an installation takes is
 // version 1 and nothing else.
 func TestAddVersionNotOne(t *testing.T) {
-	s, _ := newState(t)
+	s, _ := newTrusted(t)
 	admin, first := genesis(t)
 	second := admin.Sign(t, trusttest.Next(t, first))
-	if _, err := s.AddVersion(ctx, second); err != ErrOldVersion {
+	if _, err := s.AddVersion(ctx, second); !errors.Is(err, ErrOldVersion) {
 		t.Fatalf("version 2 as the first one answered %v", err)
+	}
+}
+
+// TestAddVersionBusy proves that an API which does not get the lock says so
+// instead of writing next to the one that holds it.
+func TestAddVersionBusy(t *testing.T) {
+	s, db := newTrusted(t)
+	_, first := genesis(t)
+	now := s.Now()
+	ok, err := db.LockTake(ctx, trustLock, "api-2", now, now+trustLease)
+	if err != nil || !ok {
+		t.Fatalf("lock: %v", err)
+	}
+	if _, err := s.AddVersion(ctx, first); !errors.Is(err, ErrBusy) {
+		t.Fatalf("busy lock answered %v", err)
 	}
 }
 
 // TestRefreshSeesAnotherAPI proves that an API notices what another API wrote
 // into the shared database.
 func TestRefreshSeesAnotherAPI(t *testing.T) {
-	s, db := newState(t)
+	s, db := newTrusted(t)
 	admin, first := genesis(t)
 	if _, err := s.AddVersion(ctx, first); err != nil {
 		t.Fatalf("version 1: %v", err)
@@ -137,10 +254,44 @@ func TestRefreshSeesAnotherAPI(t *testing.T) {
 	}
 }
 
+// TestChainPages proves that one answer holds at most
+// session.MaxChainVersions versions and says that more follow, and that a
+// fresh API verifies a chain longer than one block up to its newest version.
+func TestChainPages(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	total := uint64(session.MaxChainVersions + 2)
+	prev := first
+	for seq := uint64(2); seq <= total; seq++ {
+		prev = admin.Sign(t, trusttest.Next(t, prev))
+		if _, err := s.AddVersion(ctx, prev); err != nil {
+			t.Fatalf("version %d: %v", seq, err)
+		}
+	}
+	page, err := s.Chain(ctx, 1)
+	if err != nil || len(page.Versions) != session.MaxChainVersions || !page.More {
+		t.Fatalf("first page: %v %d %v", err, len(page.Versions), page.More)
+	}
+	rest, err := s.Chain(ctx, session.MaxChainVersions+1)
+	if err != nil || len(rest.Versions) != 2 || rest.More {
+		t.Fatalf("second page: %v %d %v", err, len(rest.Versions), rest.More)
+	}
+	// A fresh API reads the chain in blocks and arrives at the newest version.
+	other := New(s.Cfg, db, s.Box, s.Pin)
+	other.Now = s.Now
+	v, err := other.Refresh(ctx)
+	if err != nil || v.List.Seq != total {
+		t.Fatalf("fresh API is at %v: %v", v.List, err)
+	}
+}
+
 // TestTrustUsesTheCache proves that Trust answers from the cache: a row that
 // was removed behind its back does not make it forget the version it verified.
 func TestTrustUsesTheCache(t *testing.T) {
-	s, db := newState(t)
+	s, db := newTrusted(t)
 	_, first := genesis(t)
 	if _, err := s.AddVersion(ctx, first); err != nil {
 		t.Fatalf("version 1: %v", err)
@@ -154,7 +305,7 @@ func TestTrustUsesTheCache(t *testing.T) {
 	}
 	// The answer needs the rows themselves, so Chain says so instead of
 	// handing out an empty chain the shell refuses.
-	if _, err := s.Chain(ctx, 1); err != ErrSetting {
+	if _, err := s.Chain(ctx, 1); !errors.Is(err, ErrSetting) {
 		t.Fatalf("chain without its rows answered %v", err)
 	}
 }

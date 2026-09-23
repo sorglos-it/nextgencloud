@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
@@ -52,15 +53,29 @@ func TestEnsureInstallation(t *testing.T) {
 	}
 }
 
+// TestEnsureInstallationBusy proves that an API which does not get the lock
+// hears that waiting helps, and not that a setting is broken.
+func TestEnsureInstallationBusy(t *testing.T) {
+	s, db := newState(t)
+	now := s.Now()
+	ok, err := db.LockTake(ctx, installLock, "api-2", now, now+installLease)
+	if err != nil || !ok {
+		t.Fatalf("lock: %v", err)
+	}
+	if _, err := s.EnsureInstallation(ctx); !errors.Is(err, ErrBusy) {
+		t.Fatalf("busy lock answered %v", err)
+	}
+}
+
 // TestInstallationWithoutSetting proves that an installation which was never
 // set up answers dbapi.ErrNotFound, which EnsureInstallation tells from a
 // broken setting.
 func TestInstallationWithoutSetting(t *testing.T) {
 	s, _ := newState(t)
-	if _, err := s.Installation(ctx); err != dbapi.ErrNotFound {
+	if _, err := s.Installation(ctx); !errors.Is(err, dbapi.ErrNotFound) {
 		t.Fatalf("empty database answered %v", err)
 	}
-	if _, err := s.InstallKey(ctx); err != dbapi.ErrNotFound {
+	if _, err := s.InstallKey(ctx); !errors.Is(err, dbapi.ErrNotFound) {
 		t.Fatalf("install key of an empty database answered %v", err)
 	}
 }
@@ -73,7 +88,7 @@ func TestInstallationMalformed(t *testing.T) {
 		Data: []byte("not-an-id"), Updated: s.Now()}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if _, err := s.Installation(ctx); err != ErrSetting {
+	if _, err := s.Installation(ctx); !errors.Is(err, ErrSetting) {
 		t.Fatalf("malformed installation answered %v", err)
 	}
 }
@@ -90,7 +105,7 @@ func TestInstallKeyWrongBox(t *testing.T) {
 		t.Fatalf("box: %v", err)
 	}
 	s.Box = other
-	if _, err := s.InstallKey(ctx); err != secrets.ErrSealed {
+	if _, err := s.InstallKey(ctx); !errors.Is(err, secrets.ErrSealed) {
 		t.Fatalf("key of another installation answered %v", err)
 	}
 }

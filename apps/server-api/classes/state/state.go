@@ -18,8 +18,14 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 )
 
-// ErrSetting reports a setting the database does not hold or cannot hold.
-var ErrSetting = errors.New("state: setting missing or malformed")
+var (
+	// ErrSetting reports a setting the database does not hold or cannot hold.
+	ErrSetting = errors.New("state: setting missing or malformed")
+	// ErrBusy reports that another API holds the lock for this step. It is its
+	// own error, never ErrSetting: here waiting a moment and asking again
+	// helps, and nothing is broken.
+	ErrBusy = errors.New("state: another API is at this step, try again")
+)
 
 // installLock is the name of the lock EnsureInstallation takes, and
 // installLease the seconds it holds it: long enough for one key pair and two
@@ -29,10 +35,6 @@ const (
 	installLock  = "installation"
 	installLease = 60
 )
-
-// randReader is the source of the installation's key; crypto/rand is the only
-// source NGC uses for keys.
-var randReader = rand.Reader
 
 // State is the runtime state of one API process.
 type State struct {
@@ -82,7 +84,7 @@ func (s *State) InstallKey(ctx context.Context) (*ecdh.PrivateKey, error) {
 
 // EnsureInstallation makes the installation ID and the installation's key
 // pair if they are missing, and returns the ID. A lock keeps two APIs on one
-// database from making two of them.
+// database from making two of them; the API that does not get it hears ErrBusy.
 func (s *State) EnsureInstallation(ctx context.Context) (string, error) {
 	if id, err := s.Installation(ctx); err == nil {
 		return id, nil
@@ -95,7 +97,7 @@ func (s *State) EnsureInstallation(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", ErrSetting
+		return "", ErrBusy
 	}
 	defer func() { _ = s.DB.LockFree(ctx, installLock, s.Cfg.Node) }()
 	// Another API may have been quicker between the two checks.
@@ -106,7 +108,7 @@ func (s *State) EnsureInstallation(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	key, err := ecdh.X25519().GenerateKey(randReader)
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return "", err
 	}

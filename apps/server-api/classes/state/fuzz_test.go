@@ -9,16 +9,23 @@ import (
 )
 
 // FuzzRefresh feeds Refresh with rows a damaged or foreign database could
-// hold. A row it accepts must be a version 1 that trust.Open verifies against
-// the hash Refresh cached, and Chain must hand that very row back; anything
-// else is an error, and nothing panics.
+// hold. A row it accepts must be a version 1 of this installation that
+// trust.Open verifies against the hash Refresh cached, and Chain must hand
+// that very row back; anything else is an error, and nothing panics.
 func FuzzRefresh(f *testing.F) {
+	// The keys and the list are made once: doing it per run would cost more
+	// than the code under test.
+	id := genesisID(f)
 	f.Add(genesisSeed(f))
 	f.Add([]byte("{}"))
 	f.Add([]byte(`{"payload":"","proof":{}}`))
 	f.Add([]byte(`{"payload":"AA","proof":{"kind":"password","keyId":"x","sig":"AA"}}`))
 	f.Fuzz(func(t *testing.T, row []byte) {
 		s, db := newState(t)
+		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: dbapi.SettingInstallation,
+			Data: []byte(id), Updated: s.Now()}); err != nil {
+			t.Fatalf("installation: %v", err)
+		}
 		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobTrust, ID: "1", Seq: 1, Data: row}); err != nil {
 			t.Fatalf("put: %v", err)
 		}
@@ -28,6 +35,9 @@ func FuzzRefresh(f *testing.F) {
 		}
 		if v.List == nil || v.List.Seq != 1 {
 			t.Fatalf("accepted a row that is no version 1: %v", v.List)
+		}
+		if v.List.Installation != id {
+			t.Fatalf("accepted a version of installation %q", v.List.Installation)
 		}
 		sg, err := trust.ParseSigned(row)
 		if err != nil {
