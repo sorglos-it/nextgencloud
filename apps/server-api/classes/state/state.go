@@ -25,6 +25,14 @@ var (
 	// own error, never ErrSetting: here waiting a moment and asking again
 	// helps, and nothing is broken.
 	ErrBusy = errors.New("state: another API is at this step, try again")
+	// ErrDamaged reports that this installation's own stored rows contradict
+	// each other: the trust list in the database names an installation other
+	// than the ID the setup stored. It is its own error and never
+	// ErrInstallation, because the same mismatch means two different things.
+	// Handed in, it is a list of a stranger and the caller's business; found
+	// among our own rows it is damage, and whoever hears "signature invalid"
+	// for that signs again over a database no version he can sign will mend.
+	ErrDamaged = errors.New("state: stored rows contradict each other")
 )
 
 // installLock is the name of the lock EnsureInstallation takes, and

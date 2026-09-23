@@ -104,7 +104,15 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 				// itself, and trust.Open checks that an admin of it did.
 				cur, err = trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}, chain)
 				if err == nil {
-					err = s.checkInstallation(ctx, cur.List.Installation)
+					// Here both sides come out of this installation's own
+					// rows, so a mismatch is not a list somebody handed in:
+					// the rows contradict each other. AddVersion refreshes
+					// before it takes anything, so without this its caller
+					// would be told his signature was invalid for a database
+					// that is damaged.
+					if err = s.checkInstallation(ctx, cur.List.Installation); errors.Is(err, ErrInstallation) {
+						err = ErrDamaged
+					}
 				}
 			} else {
 				cur, err = trust.Advance(cur, chain)

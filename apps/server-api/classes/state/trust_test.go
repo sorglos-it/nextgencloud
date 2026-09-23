@@ -176,8 +176,48 @@ func TestForeignRoot(t *testing.T) {
 		Updated: s.Now()}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if _, err := s.Refresh(ctx); !errors.Is(err, ErrInstallation) {
+	// Read out of our own rows it is no longer a list somebody handed in: the
+	// ID and version 1 both come from this installation, and they contradict
+	// each other.
+	if _, err := s.Refresh(ctx); !errors.Is(err, ErrDamaged) {
 		t.Fatalf("swapped row answered %v", err)
+	}
+	if _, err := s.Refresh(ctx); errors.Is(err, ErrInstallation) {
+		t.Fatal("a damaged row answers like a list of another installation")
+	}
+}
+
+// TestAddVersionOnDamagedRows proves that the damage of our own rows does not
+// turn into the caller's fault on the way in. AddVersion refreshes before it
+// takes anything, and that refresh reads version 1 out of the database and
+// holds it against the stored installation ID. Whoever hears "signature
+// invalid" for that would sign again -- and no version he could sign would
+// mend a database that contradicts itself.
+func TestAddVersionOnDamagedRows(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	l, err := trust.Parse(first.Payload)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	l.Installation = trusttest.ID(0x12)
+	foreign := admin.Sign(t, l)
+	data, err := json.Marshal(foreign)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobTrust, ID: "1", Seq: 1, Data: data,
+		Updated: s.Now()}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	// What is handed in is beside the point: the refresh in front of it
+	// already fails on the stored rows.
+	_, err = s.AddVersion(ctx, first)
+	if !errors.Is(err, ErrDamaged) {
+		t.Fatalf("damaged rows answered %v", err)
+	}
+	if errors.Is(err, ErrInstallation) {
+		t.Fatal("damaged rows answer like a list of another installation")
 	}
 }
 
