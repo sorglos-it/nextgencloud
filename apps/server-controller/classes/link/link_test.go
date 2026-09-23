@@ -940,8 +940,12 @@ func TestAHandlerThatHoldsTheReadingCostsTheTunnel(t *testing.T) {
 		if pings.Load() == 0 {
 			t.Error("the API never saw a ping, so the handler is not what cost the tunnel")
 		}
-		if got := h.seen.Load(); got < 2 {
-			t.Errorf("the handler was called %d times, want the short calls to be what added up", got)
+		// Four calls are a whole ping interval of held reading, so this is the
+		// claim itself and not merely "the handler ran": a tunnel that came
+		// down after one or two short calls came down for some other reason,
+		// and would prove nothing about calls that add up. Measured are eight.
+		if got := h.seen.Load(); got < frames/4 {
+			t.Errorf("the handler was called %d times, want a whole interval of it held by short calls", got)
 		}
 	})
 }

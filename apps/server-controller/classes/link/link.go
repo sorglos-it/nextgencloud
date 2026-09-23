@@ -41,9 +41,12 @@ import (
 
 // Times of one tunnel.
 const (
-	// DialTimeout bounds the whole way in: TLS, the WebSocket handshake, both
-	// Noise messages and the two hellos. An API that answers slowly must not
-	// hold a controller that has other work.
+	// DialTimeout bounds the way in: TLS, the WebSocket handshake, both Noise
+	// messages and the two hellos. An API that answers slowly must not hold a
+	// controller that has other work. It is not the bound on Dial as a whole:
+	// an API that breaks the contract on the way in is told so with a close
+	// message, and that message is written and answered under the deadlines of
+	// the library (Close), so such a dial may take about ten seconds longer.
 	DialTimeout = 30 * time.Second
 	// WriteTimeout bounds one message on the way out: a peer that stops
 	// reading holds the writer at the front this long and no longer. What is
@@ -83,13 +86,16 @@ var (
 //     behind every frame that came in before it. What decides is therefore
 //     how long the reading is held between a ping and its deadline, not how
 //     long one call takes: a queue of short calls costs the tunnel exactly as
-//     one long call does. One call longer than two ping intervals
-//     (2 x tunnel.PingInterval, a minute) is past that deadline for certain -
-//     the ping falls at the latest one interval into the call and then waits
-//     one interval for its pong. The link then counts as dead although the API
-//     is healthy, and Run comes back with an error. Work that may take longer
-//     belongs in a goroutine of its own, which answers with Tunnel.Send. Both
-//     ways of losing the tunnel are measured, see
+//     one long call does. Held over two ping intervals (2 x
+//     tunnel.PingInterval, a minute) the tunnel is gone for certain - the ping
+//     falls at the latest one interval into the hold and then waits one
+//     interval for its pong; the link counts as dead although the API is
+//     healthy, and Run comes back with an error. No length of a single call
+//     is safe on its own, because the holds add up. What a handler must keep
+//     to is therefore not a length but this: give the reading back at once.
+//     Whatever cannot be answered on the spot belongs in a goroutine of its
+//     own, which answers with Tunnel.Send, and Frame returns without waiting
+//     for it. Both ways of losing the tunnel are measured, see
 //     TestAHandlerThatHoldsTheReadingCostsTheTunnel.
 type Handler interface {
 	Frame(t *Tunnel, f wire.Frame) error
@@ -549,6 +555,17 @@ func (t *Tunnel) fail() {
 
 // Close ends the tunnel. It may be called more than once and from any
 // goroutine; whoever runs the tunnel comes back out of Run.
+//
+// It blocks, and against a peer that has gone quiet for about ten seconds:
+// the library writes the close message under a deadline of five seconds and
+// then waits five more for the answering one. Both deadlines are its own and
+// run on context.Background(), so no context of the caller shortens them -
+// neither the one given to Dial or Run nor one of whoever calls Close. What
+// comes after no longer hangs on the peer: the socket is torn down, and the
+// goroutines of the library are waited for under a further bound of fifteen
+// seconds. It also gives an error back, and that error says only that the
+// message did not get out or that no answer came; the tunnel is over either
+// way, and every caller in this package therefore drops it.
 func (t *Tunnel) Close() error {
 	var err error
 	t.once.Do(func() {
