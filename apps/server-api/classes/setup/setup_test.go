@@ -1,8 +1,10 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -254,7 +257,10 @@ func TestSetupAnswersOnlyItsTwoMethods(t *testing.T) {
 		t.Fatalf("offer: %v", err)
 	}
 	body := firstVersion(t, info, trusttest.NewSigner(3), code)
-	for _, m := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodHead} {
+	// OPTIONS and a method of nobody's are in the list too: they take the
+	// same branch, and a branch no test walks is one nobody notices losing.
+	for _, m := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch,
+		http.MethodHead, http.MethodOptions, "SETUP"} {
 		r := httptest.NewRequest(m, session.PathSetup, strings.NewReader(string(body)))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -271,6 +277,11 @@ func TestSetupAnswersOnlyItsTwoMethods(t *testing.T) {
 // TestEnsureCodeSaysNoCodeWhenTheFileHoldsNone proves that what stands in the
 // file decides and not that a file is there: one that holds no code opens no
 // setup, and it is never written over either, whatever put it there.
+//
+// It also proves that the start is told. This is the state a start cut short
+// between making the file and writing it leaves behind, and O_EXCL keeps
+// every later start from writing a code: without a word of its own the admin
+// sees nothing but 404 for good and never learns why.
 func TestEnsureCodeSaysNoCodeWhenTheFileHoldsNone(t *testing.T) {
 	h := newHandler(t)
 	const junk = "not a code\n"
@@ -278,8 +289,18 @@ func TestEnsureCodeSaysNoCodeWhenTheFileHoldsNone(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	ok, err := h.EnsureCode()
-	if err != nil || ok {
-		t.Fatalf("a file that holds no code was taken for one: %v %v", ok, err)
+	if ok || !errors.Is(err, ErrNoCode) {
+		t.Fatalf("a file that holds no code answered %v %v", ok, err)
+	}
+	// An empty file is the same case, and it is the one a crash leaves.
+	if err := os.WriteFile(h.CodeFile, nil, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if ok, err := h.EnsureCode(); ok || !errors.Is(err, ErrNoCode) {
+		t.Fatalf("an empty file answered %v %v", ok, err)
+	}
+	if err := os.WriteFile(h.CodeFile, []byte(junk), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
 	}
 	if b, err := os.ReadFile(h.CodeFile); err != nil || string(b) != junk {
 		t.Fatalf("the file was written over with %q: %v", b, err)
@@ -327,6 +348,132 @@ func TestEnsureCodeKeepsTheCodeItMade(t *testing.T) {
 	}
 	if _, err := os.Stat(h2.CodeFile); !os.IsNotExist(err) {
 		t.Fatalf("the code file is still there: %v", err)
+	}
+}
+
+// TestTheLongTermKeysAreCopiedOnce proves this API's private keys are read
+// out of the configuration once and the public ones held. The offer answers
+// whoever asks, with no login in front of it, and config.Secret.Bytes hands
+// out a fresh copy of the key each time: a handler that reads them per
+// request lets anybody strew as many copies of the long-term keys through
+// memory, core dump and swap file as he sends requests -- in the one state
+// where the installation has no admin and nothing else stands in the way.
+func TestTheLongTermKeysAreCopiedOnce(t *testing.T) {
+	h := newHandler(t)
+	w := httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	if w.Code != 200 {
+		t.Fatalf("offer status %d", w.Code)
+	}
+	first := bytes.Clone(w.Body.Bytes())
+	// Other keys in the configuration change nothing about the answer, since
+	// no request reads them again. One that did would name these instead --
+	// and the signing key here is not even the size of a seed.
+	noiseKey, _ := trusttest.NodeKeys(7)
+	h.S.Cfg.NoiseKey = config.NewSecret(noiseKey.Private)
+	h.S.Cfg.SignKey = config.NewSecret(make([]byte, 5))
+	w = httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	if w.Code != 200 {
+		t.Fatalf("the second offer answered %d", w.Code)
+	}
+	if !bytes.Equal(first, w.Body.Bytes()) {
+		t.Fatal("the second offer names other keys: the private ones were read again")
+	}
+}
+
+// errNoPut is what noPut answers: a database that does not answer, met where
+// a wrong attempt is counted.
+var errNoPut = errors.New("setup_test: the database does not answer")
+
+// noPut is a store that cannot write a lock row and works otherwise. The
+// prefix is the one package lock gives its rows.
+type noPut struct{ dbapi.Store }
+
+func (n noPut) BlobPut(ctx context.Context, b dbapi.Blob) error {
+	if b.Kind == dbapi.BlobSetting && strings.HasPrefix(b.ID, "lock.") {
+		return errNoPut
+	}
+	return n.Store.BlobPut(ctx, b)
+}
+
+// TestOneFaultOfTheDatabaseIsOneStatus proves the handler answers one fault
+// with one status. The same error of the same database was E_UNREACHABLE
+// where the wait is counted and E_INTERNAL where the rows behind the trust
+// list are read; two statuses for one fault tell the far side two different
+// things about one installation.
+func TestOneFaultOfTheDatabaseIsOneStatus(t *testing.T) {
+	h := newHandler(t)
+	codeBytes, _ := os.ReadFile(h.CodeFile)
+	code := strings.TrimSpace(string(codeBytes))
+	w := httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	info, err := session.ParseSetupOffer(w.Body.Bytes(), code)
+	if err != nil {
+		t.Fatalf("offer: %v", err)
+	}
+	// A version sealed with another code: the answer to it is counted, and
+	// that is the write which fails here.
+	body := firstVersion(t, info, trusttest.NewSigner(3), "AAAAA-BBBBB-CCCCC-DDDDD")
+	h.S.DB = noPut{Store: h.S.DB}
+	w = httptest.NewRecorder()
+	h.Serve(w, post(body))
+	want := httpapi.Fault(errNoPut, httpapi.FromRows)
+	c, err := wire.ParseClose(w.Body.Bytes())
+	if err != nil || c.Code != want {
+		t.Fatalf("status %d body %s, wanted %s: %v", w.Code, w.Body, want, err)
+	}
+	if w.Code != 500 {
+		t.Fatalf("status %d", w.Code)
+	}
+}
+
+// TestAnInstallationThatStandsIsAnsweredAsDone proves the answer follows the
+// rows and not the tidying up behind them. Once version 1 is in the rows the
+// setup is over, and every request after it answers 404: an error here would
+// send the admin back to a door that is already shut, and nothing would tell
+// him that his own step went through.
+func TestAnInstallationThatStandsIsAnsweredAsDone(t *testing.T) {
+	h := newHandler(t)
+	codeBytes, _ := os.ReadFile(h.CodeFile)
+	code := strings.TrimSpace(string(codeBytes))
+	w := httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	info, err := session.ParseSetupOffer(w.Body.Bytes(), code)
+	if err != nil {
+		t.Fatalf("offer: %v", err)
+	}
+	body := firstVersion(t, info, trusttest.NewSigner(3), code)
+	// The code file is held from two sides, so that removing it fails on
+	// either kind of system: Windows keeps a file that is open, and Unix
+	// keeps the names in a directory nobody may write in.
+	open, err := os.Open(h.CodeFile)
+	if err != nil {
+		t.Fatalf("hold the file open: %v", err)
+	}
+	defer open.Close()
+	dir := filepath.Dir(h.CodeFile)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod the directory: %v", err)
+	}
+	defer os.Chmod(dir, 0o700)
+	w = httptest.NewRecorder()
+	h.Serve(w, post(body))
+	if w.Code != 204 {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+	if _, err := h.S.Trust(ctx); err != nil {
+		t.Fatalf("version 1 is not in the rows: %v", err)
+	}
+	// Nothing is open any more either way: the setup is over because the rows
+	// say so, and the file is read only while there is no version.
+	w = httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	if w.Code != 404 {
+		t.Fatalf("the offer after the setup answered %d", w.Code)
+	}
+	if _, err := os.Stat(h.CodeFile); err != nil {
+		t.Skip("the code file went after all: nothing was held here")
 	}
 }
 

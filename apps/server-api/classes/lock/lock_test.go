@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -190,11 +191,98 @@ func TestFailuresFiredAtOnceAllCount(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	n, _, err := read(ctx, db, "anna")
+	n, _, _, err := read(ctx, db, "anna")
 	if err != nil || n != tries {
 		t.Fatalf("%d of %d failures counted: %v", n, tries, err)
 	}
 	if wait, _ := Check(ctx, db, "anna", now); wait != maxWait {
 		t.Fatalf("wait after %d failures at once: %d", tries, wait)
+	}
+}
+
+// guard is a store that holds every write of a lock row to the mutex which
+// makes reading a row and writing it back one step. TryLock tells it apart:
+// while the counting is held it cannot be taken, and a write that takes it is
+// one that runs beside a failure being counted.
+type guard struct {
+	dbapi.Local
+	tb testing.TB
+}
+
+func (g *guard) held(what string) {
+	if counting.TryLock() {
+		counting.Unlock()
+		g.tb.Errorf("%s ran without the counting", what)
+	}
+}
+
+func (g *guard) BlobPut(ctx context.Context, b dbapi.Blob) error {
+	g.held("a put of " + b.ID)
+	return g.Local.BlobPut(ctx, b)
+}
+
+func (g *guard) BlobDelete(ctx context.Context, kind, id string) error {
+	g.held("a delete of " + id)
+	return g.Local.BlobDelete(ctx, kind, id)
+}
+
+func (g *guard) BlobFrom(ctx context.Context, kind string, seq uint64) ([]dbapi.Blob, error) {
+	g.held("a walk of the rows")
+	return g.Local.BlobFrom(ctx, kind, seq)
+}
+
+// TestEveryWriteOfALockRowRunsUnderTheCounting proves that removing rows is
+// held to the same step as counting them. A walk hands out a picture of a
+// moment; a failure counted after it makes one of those rows a lock that is
+// running, and a delete that follows the old picture sets that lock to none.
+func TestEveryWriteOfALockRowRunsUnderTheCounting(t *testing.T) {
+	db := &guard{Local: memstore.New(), tb: t}
+	now := int64(1790000000)
+	for i := 0; i < 3; i++ {
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	if err := Clear(ctx, db, "anna"); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if err := Fail(ctx, db, "anna", now); err != nil {
+		t.Fatalf("fail after the clear: %v", err)
+	}
+	if err := Purge(ctx, db, now+keepFor); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+}
+
+// TestNoMoreNamesThanTheTableTakes proves the rows are bounded. Every name
+// that fails writes one, and nobody has to be a user to try a name: without a
+// cap the settings table grows with every made-up name somebody sends.
+func TestNoMoreNamesThanTheTableTakes(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	for i := 0; i < maxRows; i++ {
+		if err := Fail(ctx, db, "name-"+strconv.Itoa(i), now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	if err := Fail(ctx, db, "one name too many", now); !errors.Is(err, ErrFull) {
+		t.Fatalf("the name beyond the cap answered %v", err)
+	}
+	// A name that already counts counts on: whoever fills the table with
+	// names of his own must not buy free tries for the name he is after.
+	if err := Fail(ctx, db, "name-0", now); err != nil {
+		t.Fatalf("a name that already counts: %v", err)
+	}
+	// Rows nobody counts any more turn nobody away: once their time has
+	// passed the table takes names again, without waiting for a purge.
+	if err := Fail(ctx, db, "one name too many", now+keepFor+1); err != nil {
+		t.Fatalf("after the rows had expired: %v", err)
+	}
+	blobs, err := db.BlobFrom(ctx, dbapi.BlobSetting, 0)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(blobs) != 1 {
+		t.Fatalf("%d rows left of %d", len(blobs), maxRows)
 	}
 }

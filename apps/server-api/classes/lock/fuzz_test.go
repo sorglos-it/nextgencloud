@@ -22,6 +22,10 @@ func seeds() [][]byte {
 		[]byte("1"),
 		[]byte(" "),
 		[]byte("-1 -1"),
+		// The largest count a row can hold: one more failure on it is where
+		// the counting would run over into a negative number, and from then
+		// on every answer about the name is a refusal.
+		[]byte("9223372036854775807 1790000000"),
 		[]byte("9999999999999999999999 1"),
 		[]byte("2 1790000000 3"),
 		[]byte("1  1790000000"),
@@ -39,7 +43,7 @@ func TestSeedsAreRowsTheCountingReads(t *testing.T) {
 		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row}); err != nil {
 			t.Fatalf("put %q: %v", row, err)
 		}
-		if _, _, err := read(ctx, db, "anna"); err == nil {
+		if _, _, _, err := read(ctx, db, "anna"); err == nil {
 			taken++
 		}
 	}
