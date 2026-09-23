@@ -150,8 +150,9 @@ func (c connector) prepare(ctx context.Context, conn driver.Conn) error {
 // Building it with net/url escapes the path, so a path that holds a "?" can
 // never add a URI parameter of its own - "?hexkey=00" would otherwise put a
 // key of the attacker's choosing next to ours, and the VFS reads a parameter
-// before it reads our PRAGMA. validPath refuses such a path outright, because
-// the file it would open is not the one the configuration names.
+// before it reads our PRAGMA. validPath refuses such a path on top of that,
+// so that the one thing standing between a file name and a foreign key is
+// never the escaping alone.
 //
 // _txlock=immediate makes a write transaction take the lock when it begins.
 // Otherwise SQLite takes it at the first write, and two transactions that
@@ -177,11 +178,13 @@ func fileURL(path string) (string, error) {
 // itself, so that no "/var/lib/ngc/../../etc/x.db" walks out of the place the
 // installation gave the database.
 //
-// "?" and "#" open the query and the fragment of an SQLite URI, and a control
-// character - NUL above all - ends a name inside SQLite. net/url escapes all
-// of them, so none of them could add a parameter of its own: "?" and "#" would
-// become part of the file name, a control character something else again.
-// Either way it would not be the file the configuration names.
+// "?" and "#" open the query and the fragment of an SQLite URI. Escaped, they
+// come back out of the URI as part of the file name, so the file would be
+// exactly the one the configuration names - but a path that carries URI
+// syntax is not what a configuration of ours means, and the next hand that
+// builds a DSN by pasting strings together would hand over our key with it.
+// A control character is worse: NUL ends a name inside SQLite, so that path
+// would open a file nobody named.
 func validPath(path string) bool {
 	if !filepath.IsAbs(path) || len(path) > config.MaxField || path != filepath.Clean(path) {
 		return false
