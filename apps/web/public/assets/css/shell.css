@@ -1,0 +1,35 @@
+/* The colour marks of docs/prototype.html, taken over unchanged: the shell
+   and every later window read their colours only from these tokens. */
+:root{
+  --bar-h: 44px;
+  --accent: #2f7de1;
+  --accent-2: #16d1c3;
+  --win-bg: #1e2430;
+  --win-fg: #e8ecf3;
+  --win-border: #38414f;
+  --title-bg: #2a3240;
+  --title-bg-active: #333e50;
+  --bar-bg: rgba(20,25,34,.72);
+  --bar-fg: #e8ecf3;
+  --menu-bg: rgba(24,30,40,.92);
+  --shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  --radius: 10px;
+  --field-bg: #151a23;
+  --muted: #97a3b6;
+}
+html[data-theme="light"]{
+  --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
+  --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
+  --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
+  --menu-bg: rgba(250,251,254,.94);
+  --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+  --field-bg:#ffffff; --muted:#5b6a80;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;
+     color:var(--bar-fg);background:#0d1017;-webkit-user-select:none;user-select:none;
+     touch-action:manipulation}
+#root{position:fixed;inset:0}
+.msg{max-width:32rem;margin:20vh auto;padding:1.5rem;text-align:center;color:var(--win-fg);
+     background:var(--win-bg);border:1px solid var(--win-border);border-radius:var(--radius)}
