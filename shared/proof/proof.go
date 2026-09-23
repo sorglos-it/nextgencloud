@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"slices"
 
 	"golang.org/x/crypto/argon2"
@@ -196,6 +197,20 @@ func ValidKeyID(s string) bool {
 type RP struct {
 	ID      string   `json:"id"`                // e.g. "ngc.example.org"
 	Origins []string `json:"origins,omitempty"` // e.g. ["https://ngc.example.org"]
+}
+
+// MaxRPID is the longest relying party ID, the length of a DNS name.
+const MaxRPID = 253
+
+var rpIDPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// ValidRPID reports whether s is a relying party ID: a DNS name in lower case
+// of at most MaxRPID bytes, without scheme, port or path, as WebAuthn asks.
+// config.Web, trust.List.Validate and session.ParseLoginChallenge ask this one
+// function, so what the browser hands to navigator.credentials.get is the same
+// name everywhere and never free text.
+func ValidRPID(s string) bool {
+	return s != "" && len(s) <= MaxRPID && rpIDPattern.MatchString(s)
 }
 
 // Challenge returns the WebAuthn challenge for a payload.

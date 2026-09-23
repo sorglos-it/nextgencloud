@@ -12,10 +12,13 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
 
 - Anmeldung nach `session`: Anfragen nur über `session.ParseLoginStart`, `session.ParseLoginFinish`
   und `session.ParseSetup`; Passwortschlüssel oder Passkey prüfen (`session.VerifyClient`). Die
-  Antwort auf `login/start` baust du nie selbst, sondern mit `session.Challenge` (Geheimnis:
-  `config.API.SecretKey`, `totp` aus `dbapi.User.TOTP`): Sie erfindet für unbekannte Namen eine
-  Antwort, die von einer echten nicht zu unterscheiden ist. Den Benutzer schlägst du auch für
-  unbekannte Namen gleich nach, damit nicht die Laufzeit verrät, was die Antwort verschweigt. Die
+  Antwort auf `login/start` baust du nie selbst, sondern mit `session.Challenge`
+  (`session.ChallengeInput`: `Key` = `config.API.ChallengeKey`, `TOTP` aus `dbapi.User.TOTP`,
+  `TOTPShare` = Anteil der Benutzer mit TOTP in Prozent, den du zählst und merken darfst): Sie
+  erfindet für unbekannte Namen eine Antwort, die von einer echten nicht zu unterscheiden ist, und
+  tut dafür auf beiden Wegen dieselbe Arbeit. Alles davor und danach muss das auch: gleich viele
+  Datenbankabfragen, dieselbe Sperre nach Fehlversuchen und dieselbe Antwortzeit, sonst verrät die
+  Laufzeit, was die Antwort verschweigt. Die
   Nonce aus `session.LoginChallenge` prüft `session.VerifyClient` nicht, das tust du: beim
   Ausgeben mit `dbapi.OnceNonce` und dem Benutzer merken (höchstens `session.ChallengeLifetime`),
   bei der Anmeldung genau einmal verbrauchen (`dbapi.Local.OnceUse`) und mit dem Benutzer des

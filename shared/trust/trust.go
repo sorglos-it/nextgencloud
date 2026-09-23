@@ -491,6 +491,12 @@ func (l *List) Validate() error {
 		len(l.RP.Origins) > MaxOrigins {
 		return ErrInvalid
 	}
+	// The RP ID goes on into the login answer and from there into the
+	// browser's navigator.credentials.get, so it is a DNS name here already
+	// (proof.ValidRPID, the same rule config.Web keeps).
+	if l.RP.ID != "" && !proof.ValidRPID(l.RP.ID) {
+		return ErrInvalid
+	}
 	for i, r := range l.Roles {
 		// A role cannot both forbid password keys and ask for the password.
 		if !wire.ValidName(r.Name) || (i > 0 && l.Roles[i-1].Name >= r.Name) || !validLevel(r.Level) ||

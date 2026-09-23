@@ -937,23 +937,34 @@ type loginBuild struct {
 	Challenge enc.Bytes `json:"challenge"` // what Challenge returns, as JSON
 }
 
-// loginVector is everything about the answer of PathLoginStart: Secret is the
-// installation's secret (config.API.SecretKey) that a made-up answer is
-// derived from, MaxLifetime what this API grants, Built the answers Challenge
-// builds and Cases the answers ParseLoginChallenge decides on.
+// loginVector is everything about the answer of PathLoginStart: Key is the
+// installation's challenge key (config.API.ChallengeKey) a made-up answer is
+// derived from, TOTPShare how many of its users hold a TOTP secret,
+// MaxLifetime what this API grants, Built the answers Challenge builds and
+// Cases the answers ParseLoginChallenge decides on.
 type loginVector struct {
-	Secret      enc.Bytes        `json:"secret"`
+	Key         enc.Bytes        `json:"key"`
+	TOTPShare   int              `json:"totpShare"`
 	MaxLifetime int64            `json:"maxLifetime"`
 	Built       []loginBuild     `json:"built"`
 	Cases       []loginChallenge `json:"cases"`
 }
 
-// The installation secret and session length of the login vector. The secret
-// is config.API.SecretKey, which every API node of an installation shares, so
-// each of them makes up the same answer for one name.
-const loginMaxLifetime = 3600
+// The challenge key, TOTP share and session length of the login vector. The
+// key is config.API.ChallengeKey, which every API node of an installation
+// shares, so each of them makes up the same answer for one name.
+const (
+	loginMaxLifetime = 3600
+	loginTOTPShare   = 60
+)
 
-var loginSecret = bytes.Repeat([]byte{0x57}, 32)
+var loginKey = bytes.Repeat([]byte{0x57}, 32)
+
+// loginInput is the vector's input for one call of Challenge.
+func loginInput(name string, totp bool, nonce []byte, when int64) ChallengeInput {
+	return ChallengeInput{Name: name, TOTP: totp, TOTPShare: loginTOTPShare, Key: loginKey,
+		Nonce: nonce, Now: when, MaxLifetime: loginMaxLifetime}
+}
 
 // loginBuilds: carol is known, the other three names are not. "mallory" comes
 // twice with another nonce, time and TOTP, because only two answers show that
@@ -963,7 +974,7 @@ var loginSecret = bytes.Repeat([]byte{0x57}, 32)
 func loginBuilds(t testing.TB, f fixture) []loginBuild {
 	build := func(name string, totp bool, fill byte, when int64) loginBuild {
 		nonce := bytes.Repeat([]byte{fill}, NonceSize)
-		c, err := Challenge(f.list, name, totp, loginSecret, nonce, when, loginMaxLifetime)
+		c, err := Challenge(f.list, loginInput(name, totp, nonce, when))
 		if err != nil {
 			t.Fatalf("challenge for %q: %v", name, err)
 		}
@@ -988,7 +999,7 @@ func checkLoginBuilds(t *testing.T, f fixture, builds []loginBuild) {
 	first := map[string][]byte{}
 	madeUpPasskeys := false
 	for _, b := range builds {
-		c, err := Challenge(f.list, b.Name, b.TOTP, loginSecret, b.Nonce, b.Now, loginMaxLifetime)
+		c, err := Challenge(f.list, loginInput(b.Name, b.TOTP, b.Nonce, b.Now))
 		if err != nil {
 			t.Fatalf("%s: %v", b.Name, err)
 		}
@@ -1081,6 +1092,13 @@ func loginCases(t testing.TB, f fixture) []loginChallenge {
 	// outside it are each refused.
 	short, long := base.Passkeys[0].KeyID[:21], base.Passkeys[0].KeyID+"A"
 	notB64 := base.Passkeys[0].KeyID[:21] + "+"
+	// An empty list with the member written out; a Go struct leaves it away.
+	emptyList := bytes.Replace(challenge(func(c *LoginChallenge) {
+		c.Passkeys, c.PasswordToo, c.TOTP = nil, false, false
+	}), []byte(`"totp":false`), []byte(`"passkeys":[],"totp":false`), 1)
+	if !bytes.Contains(emptyList, []byte(`"passkeys":[]`)) {
+		t.Fatalf("no empty list in %s", emptyList)
+	}
 	return []loginChallenge{
 		{Name: "valid", Challenge: challenge(func(*LoginChallenge) {}), Valid: true},
 		{Name: "password only, without passkeys", Challenge: challenge(func(c *LoginChallenge) {
@@ -1125,6 +1143,29 @@ func loginCases(t testing.TB, f fixture) []loginChallenge {
 		{Name: "origin that is no passkey origin", Challenge: challenge(func(c *LoginChallenge) {
 			c.RP.Origins = []string{"http://ngc.example.org"}
 		})},
+		// The browser hands rp.id to navigator.credentials.get, so it is a
+		// DNS name and never free text.
+		{Name: "relying party ID with a scheme", Challenge: challenge(func(c *LoginChallenge) {
+			c.RP.ID = "https://ngc.example.org"
+		})},
+		{Name: "relying party ID with a port", Challenge: challenge(func(c *LoginChallenge) {
+			c.RP.ID = "ngc.example.org:443"
+		})},
+		{Name: "relying party ID in capitals", Challenge: challenge(func(c *LoginChallenge) {
+			c.RP.ID = "NGC.example.org"
+		})},
+		{Name: "relying party ID of 254 bytes", Challenge: challenge(func(c *LoginChallenge) {
+			c.RP.ID = trusttest.Host(proof.MaxRPID + 1)
+		})},
+		{Name: "relying party ID of MaxRPID bytes", Challenge: challenge(func(c *LoginChallenge) {
+			c.RP.ID = trusttest.Host(proof.MaxRPID)
+		}), Valid: true},
+		{Name: "now of 0", Challenge: challenge(func(c *LoginChallenge) { c.Now = 0 })},
+		{Name: "now below 0", Challenge: challenge(func(c *LoginChallenge) { c.Now = -1 })},
+		{Name: "maxLifetime of 0", Challenge: challenge(func(c *LoginChallenge) { c.MaxLifetime = 0 })},
+		// A user without a passkey may come with the member written out, not
+		// only with it left away.
+		{Name: "empty passkey list", Challenge: emptyList, Valid: true},
 	}
 }
 
@@ -1301,7 +1342,7 @@ func TestVectors(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
 		}
 	}
-	login := loginVector{Secret: loginSecret, MaxLifetime: loginMaxLifetime,
+	login := loginVector{Key: loginKey, TOTPShare: loginTOTPShare, MaxLifetime: loginMaxLifetime,
 		Built: loginBuilds(t, f), Cases: loginCases(t, f)}
 	checkLoginBuilds(t, f, login.Built)
 	checkLoginCases(t, login.Cases)
@@ -1510,7 +1551,7 @@ func FuzzChallenge(f *testing.F) {
 	f.Add("carol")
 	f.Add("mallory")
 	f.Fuzz(func(t *testing.T, name string) {
-		c, err := Challenge(fx.list, name, false, loginSecret, nonce, now, loginMaxLifetime)
+		c, err := Challenge(fx.list, loginInput(name, false, nonce, now))
 		if err != nil {
 			if trust.ValidLoginName(name) {
 				t.Fatalf("no answer for the login name %q: %v", name, err)
@@ -1521,7 +1562,7 @@ func FuzzChallenge(f *testing.F) {
 		if _, err := ParseLoginChallenge(b); err != nil {
 			t.Fatalf("%q: its own answer is refused: %v", name, err)
 		}
-		again, err := Challenge(fx.list, name, true, loginSecret, nonce, now, loginMaxLifetime)
+		again, err := Challenge(fx.list, loginInput(name, true, nonce, now))
 		if err != nil {
 			t.Fatalf("%q: second call: %v", name, err)
 		}

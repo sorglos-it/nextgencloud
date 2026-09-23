@@ -281,7 +281,9 @@ func ParseLoginStart(b []byte) (LoginStart, error) {
 // JSON within MaxRequest (at most MaxPasskeys passkeys and trust.MaxOrigins
 // origins), a NonceSize nonce, Now above 0, MaxLifetime from 1 to
 // MaxLifetime, Installation and User each an ID, a KDF that validates if one
-// is there, and origins by trust.ValidOrigin. Passkeys may be empty (a user
+// is there, an RP ID by proof.ValidRPID if one is there — the browser hands it
+// to navigator.credentials.get, so it is a DNS name and never free text — and
+// origins by trust.ValidOrigin. Passkeys may be empty (a user
 // without one), but each entry passes PasskeyRef.Validate and names its
 // credential ID and its key ID only once: two entries of one name would leave
 // the browser guessing which key made a proof. A challenge that names
@@ -296,6 +298,7 @@ func ParseLoginChallenge(b []byte) (LoginChallenge, error) {
 		!trust.ValidID(c.Installation) || !trust.ValidID(c.User) ||
 		(c.KDF != nil && c.KDF.Validate() != nil) ||
 		len(c.Passkeys) > MaxPasskeys || len(c.RP.Origins) > trust.MaxOrigins ||
+		(c.RP.ID != "" && !proof.ValidRPID(c.RP.ID)) ||
 		(len(c.Passkeys) > 0 && (c.RP.ID == "" || len(c.RP.Origins) == 0)) {
 		return LoginChallenge{}, ErrMessage
 	}
@@ -315,67 +318,100 @@ func ParseLoginChallenge(b []byte) (LoginChallenge, error) {
 	return c, nil
 }
 
-// unknownLabel keeps the made-up answer's HMAC apart from every other MAC, so
-// the installation secret means one thing here and another wherever else it
-// is used.
-const unknownLabel = "ngc/login-unknown/v1"
+// ChallengeKeyLabel keeps the made-up answer's HMAC apart from every other
+// MAC, so the challenge key means one thing here and nothing elsewhere.
+const ChallengeKeyLabel = "ngc/login-unknown/v1"
 
-// Challenge builds the answer of PathLoginStart for a typed login name.
-// Everything a known user needs stands in the trust list, so it reads no
-// database and nothing else: his passkeys with credential ID and key ID, the
-// KDF of his password key if he has one, PasswordToo from his roles, and the
-// relying party of the list. totp tells whether that user has a TOTP secret
-// (dbapi.User.TOTP is not empty) — the one thing about a user the list does
-// not hold, so the caller looks it up; for a name the list does not know it
-// is ignored.
+// ChallengeInput is what Challenge cannot take from the trust list: the values
+// of this request and the two things only the API knows about users.
+type ChallengeInput struct {
+	Name string // the login name as typed (trust.ValidLoginName)
+	// TOTP tells whether the user of Name holds a TOTP secret
+	// (dbapi.User.TOTP is not empty). It is the one thing about a user the
+	// trust list does not hold, so the API looks it up. For a name the list
+	// does not know it is ignored, and TOTPShare decides instead.
+	TOTP bool
+	// TOTPShare is how many of the installation's users hold a TOTP secret,
+	// in percent (0..100), which the API counts in the database and may keep.
+	// A made-up answer draws its TOTP from it. A coin toss would say no for
+	// half the names of an installation where TOTP is compulsory, and every
+	// one of those answers would stand out as made up.
+	TOTPShare int
+	// Key is config.API.ChallengeKey, the same in every API node of the
+	// installation, so all of them answer one name alike.
+	Key         []byte
+	Nonce       []byte // NonceSize random bytes
+	Now         int64
+	MaxLifetime int64 // longest session this API grants, 1..MaxLifetime
+}
+
+// Challenge builds the answer of PathLoginStart. Everything a known user needs
+// stands in the trust list, so it reads no database and nothing else: his
+// passkeys with credential ID and key ID, the KDF of his password key, and
+// PasswordToo from his roles. The list must have passed trust.List.Validate;
+// a password key without a KDF gives ErrChallenge.
 //
-// For such a name the answer is made up, because an answer of another shape
-// would tell whoever asks which users exist. It is HMAC-SHA256 over
-// unknownLabel, a zero byte and the name, keyed with secret — the API passes
-// config.API.SecretKey, which every API node of the installation shares — so
-// the same name always gets the same answer: the number of passkeys, the
-// lengths of their credential IDs, whether a KDF is there and with which
-// parameters, and TOTP. Values drawn afresh per call would differ between two
-// tries and give the difference away, and values without a secret would be
-// the same in every installation, so anyone could tell them from real ones.
-// What is made up takes its shape from the list itself — credential ID
-// lengths and KDF parameters of real keys, a made-up KDF only where real
-// password keys exist and made-up passkeys only where real ones do — so it
-// looks like this installation's real answers, and no made-up user ID, key ID
-// or credential ID is one the list holds.
+// For a name the list does not know the answer is made up, because an answer
+// of another shape would tell whoever asks which users exist. Its values are
+// HMAC-SHA256 over ChallengeKeyLabel, a zero byte and the name, keyed with
+// in.Key, so the same name gets the same answer as long as the trust list
+// stands: the shape is drawn from the list, so a version that changes it may
+// change the answer, while nonce and time differ with every call by design.
 //
-// nonce is NonceSize random bytes, now the time, maxLifetime the longest
-// session this API grants (1..MaxLifetime). What Challenge returns passes
-// ParseLoginChallenge; it answers ErrChallenge instead of an answer that
-// would not.
-func Challenge(l *trust.List, name string, totp bool, secret, nonce []byte, now, maxLifetime int64) (LoginChallenge, error) {
-	if l == nil || len(secret) == 0 || len(nonce) != NonceSize || !trust.ValidLoginName(name) {
+// What is made up is drawn from what the list really holds: how many users
+// have passkeys alone, a password alone or both, how many passkeys those with
+// passkeys have, the lengths of real credential IDs and the parameters of a
+// real KDF. Fixed odds would be wrong wherever an installation is not average
+// — where every user holds both kinds, an answer with one kind is made up at
+// a glance, and a name with more passkeys than any made-up answer offers is
+// one that exists.
+//
+// Both paths do the same work, and how much depends on the list alone, never
+// on the name: the made-up answer is built every time and dropped for a user
+// the list knows. Time and memory would otherwise tell the two apart although
+// the answers do not, and an unknown name would cost more than a known one on
+// a path nobody has logged in to yet.
+func Challenge(l *trust.List, in ChallengeInput) (LoginChallenge, error) {
+	if l == nil || len(in.Key) == 0 || len(in.Nonce) != NonceSize ||
+		in.TOTPShare < 0 || in.TOTPShare > 100 || !trust.ValidLoginName(in.Name) {
 		return LoginChallenge{}, ErrChallenge
 	}
-	c := LoginChallenge{Nonce: bytes.Clone(nonce), Now: now, MaxLifetime: maxLifetime,
+	c := LoginChallenge{Nonce: bytes.Clone(in.Nonce), Now: in.Now, MaxLifetime: in.MaxLifetime,
 		Installation: l.Installation, RP: l.RP}
-	if u, ok := l.UserByName(name); ok {
-		c.User, c.TOTP, c.PasswordToo = u.ID, totp, l.PasswordToo(u.ID)
-		for _, k := range u.Keys {
-			switch k.Kind {
-			case proof.KindPasskey:
-				c.Passkeys = append(c.Passkeys, PasskeyRef{CredID: bytes.Clone(k.CredID), KeyID: k.ID})
-			case proof.KindPassword:
-				// A user may hold more than one password key; the browser
-				// derives one key, so the first KDF is the one it uses.
-				if c.KDF == nil {
-					kdf := *k.KDF
-					kdf.Salt = bytes.Clone(k.KDF.Salt)
-					c.KDF = &kdf
+	// The whole list is walked either way and the made-up answer is built
+	// either way, so neither the time nor the allocations follow the name.
+	u, known := userByName(l, in.Name)
+	madeUp := makeUpChallenge(l, in)
+	if !known {
+		c.User, c.KDF, c.Passkeys = madeUp.User, madeUp.KDF, madeUp.Passkeys
+		c.TOTP, c.PasswordToo = madeUp.TOTP, madeUp.PasswordToo
+		return finishChallenge(c)
+	}
+	c.User, c.TOTP, c.PasswordToo = u.ID, in.TOTP, l.PasswordToo(u.ID)
+	for _, k := range u.Keys {
+		switch k.Kind {
+		case proof.KindPasskey:
+			c.Passkeys = append(c.Passkeys, PasskeyRef{CredID: bytes.Clone(k.CredID), KeyID: k.ID})
+		case proof.KindPassword:
+			// A user may hold more than one password key; the browser
+			// derives one key, so the first KDF is the one it uses.
+			if c.KDF == nil {
+				if k.KDF == nil {
+					return LoginChallenge{}, ErrChallenge
 				}
+				kdf := *k.KDF
+				kdf.Salt = bytes.Clone(k.KDF.Salt)
+				c.KDF = &kdf
 			}
 		}
-	} else {
-		makeUpChallenge(&c, l, name, secret)
 	}
-	// The answer leaves the API as JSON and the browser reads it with the
-	// rules of ParseLoginChallenge, so it is held against them here: an
-	// answer a browser refuses would tell it that the name is unknown.
+	return finishChallenge(c)
+}
+
+// finishChallenge holds an answer against the rules the browser reads it with
+// (ParseLoginChallenge). An answer a browser refuses would tell it that the
+// name is unknown, so none leaves here.
+func finishChallenge(c LoginChallenge) (LoginChallenge, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return LoginChallenge{}, ErrChallenge
@@ -386,13 +422,86 @@ func Challenge(l *trust.List, name string, totp bool, secret, nonce []byte, now,
 	return c, nil
 }
 
-// makeUpChallenge fills c for a name the list does not know, deriving every
-// value from name and secret so that two calls for one name agree.
-func makeUpChallenge(c *LoginChallenge, l *trust.List, name string, secret []byte) {
-	m := hmac.New(sha256.New, secret)
-	m.Write([]byte(unknownLabel))
+// userByName is trust.List.UserByName without the early return: it looks at
+// every user whether the first matches, the last or none, so the lookup costs
+// the same for every name.
+func userByName(l *trust.List, name string) (trust.User, bool) {
+	var found trust.User
+	known := false
+	for _, u := range l.Users {
+		if u.Name == name {
+			found, known = u, true
+		}
+	}
+	return found, known
+}
+
+// The four forms a user may have. formBothToo is both kinds of key with a role
+// that asks for the password as well, formBothPlain both kinds without one.
+const (
+	formPasskey = iota
+	formPassword
+	formBothToo
+	formBothPlain
+	formCount
+)
+
+// shape is what a trust list says about the answers it really gives: how many
+// users hold which form, how many passkeys those with passkeys hold, how many
+// passkeys it has altogether and the KDF of a password key. A made-up answer
+// draws from it, so it looks like one of this installation's own.
+type shape struct {
+	form     [formCount]int
+	passkeys [trust.MaxKeysPerUser + 1]int // users with n passkeys, n >= 1
+	holders  int                           // users the histogram counts
+	total    int                           // passkeys in the list
+	kdf      *proof.KDF
+}
+
+// listShape walks the list once. It fills counters of a fixed size and no
+// slice that grows with the list, so it costs the walk and nothing more.
+func listShape(l *trust.List) shape {
+	var s shape
+	for _, u := range l.Users {
+		n, password := 0, false
+		for _, k := range u.Keys {
+			switch k.Kind {
+			case proof.KindPasskey:
+				n++
+			case proof.KindPassword:
+				password = true
+				if s.kdf == nil && k.KDF != nil {
+					s.kdf = k.KDF
+				}
+			}
+		}
+		s.total += n
+		if n > 0 && n <= trust.MaxKeysPerUser {
+			s.passkeys[n]++
+			s.holders++
+		}
+		switch {
+		case n > 0 && !password:
+			s.form[formPasskey]++
+		case n == 0 && password:
+			s.form[formPassword]++
+		case n > 0 && l.PasswordToo(u.ID):
+			s.form[formBothToo]++
+		case n > 0:
+			s.form[formBothPlain]++
+		}
+	}
+	return s
+}
+
+// makeUpChallenge derives an answer for a name the list does not know. Only
+// User, KDF, Passkeys, TOTP and PasswordToo of it are used; the rest of a
+// challenge is the same for every name.
+func makeUpChallenge(l *trust.List, in ChallengeInput) LoginChallenge {
+	m := hmac.New(sha256.New, in.Key)
+	m.Write([]byte(ChallengeKeyLabel))
 	m.Write([]byte{0})
-	m.Write([]byte(name))
+	m.Write([]byte(in.Name))
 	seed := m.Sum(nil)
 	// draw hands out the bytes of SHA-256 over the seed and a block number,
 	// so every choice below has its own and none runs out.
@@ -409,89 +518,107 @@ func makeUpChallenge(c *LoginChallenge, l *trust.List, name string, secret []byt
 		stream = stream[1:]
 		return b
 	}
-	// drawn returns n derived bytes that the list does not already hold,
-	// asking taken about their base64url. A collision is all but impossible,
-	// and drawing again costs nothing.
-	drawn := func(n int, taken func(string) bool) enc.Bytes {
-		for {
-			b := make([]byte, n)
-			for i := range b {
-				b[i] = draw()
-			}
-			if s := enc.B64.EncodeToString(b); taken == nil || !taken(s) {
-				return b
+	// below returns a derived number under n, from four bytes so that the
+	// remainder stays even enough for counts as large as a list may reach.
+	below := func(n int) int {
+		v := uint32(draw())<<24 | uint32(draw())<<16 | uint32(draw())<<8 | uint32(draw())
+		if n <= 0 {
+			return 0
+		}
+		return int(v % uint32(n))
+	}
+	drawn := func(n int) enc.Bytes {
+		b := make(enc.Bytes, n)
+		for i := range b {
+			b[i] = draw()
+		}
+		return b
+	}
+	// pick returns the index of counts whose lot the draw falls in, so every
+	// user of the list is one lot and the made-up forms come in the same
+	// proportion as the real ones.
+	pick := func(counts []int, total int) int {
+		lot := below(total)
+		for i, n := range counts {
+			if lot -= n; lot < 0 {
+				return i
 			}
 		}
+		return -1
 	}
 
-	// The shape comes from the list: the credential ID lengths of its
-	// passkeys and the KDF of a password key. Of a kind the list does not
-	// hold, nothing is made up — there would be no real answer to blend in
-	// with, and passkeys without a relying party would be refused.
-	var lengths []int
-	var kdf *proof.KDF
-	for _, u := range l.Users {
-		for _, k := range u.Keys {
-			if k.Kind == proof.KindPasskey {
-				lengths = append(lengths, len(k.CredID))
-			} else if kdf == nil && k.Kind == proof.KindPassword {
-				kdf = k.KDF
-			}
-		}
+	s := listShape(l)
+	var c LoginChallenge
+	// A key ID of 16 derived bytes hits one of the list about as often as a
+	// guessed AES key does, so nothing is compared against the list: the
+	// comparison is what cost the time and the memory, not the collision.
+	c.User = enc.B64.EncodeToString(drawn(sign.KeyIDSize))
+	users := 0
+	for _, n := range s.form {
+		users += n
 	}
-	passwordToo := false
-	for _, r := range l.Roles {
-		passwordToo = passwordToo || r.PasswordToo
-	}
-	withKDF := kdf != nil
-	withPasskeys := len(lengths) > 0 && l.RP.ID != "" && len(l.RP.Origins) > 0
-	if pick := draw(); withKDF && withPasskeys {
-		// Where the list holds both kinds most users hold one of them, so
-		// one draw decides which, and now and then both, as a role with
-		// passwordToo asks. A valid list always leaves one of the two.
-		switch pick % 4 {
-		case 0:
-			withKDF = false
-		case 1, 2:
-			withPasskeys = false
-		}
-	}
-	c.User = enc.B64.EncodeToString(drawn(sign.KeyIDSize, func(s string) bool { _, ok := l.User(s); return ok }))
+	form := pick(s.form[:], users)
+	withPasskeys := (form == formPasskey || form == formBothToo || form == formBothPlain) &&
+		s.total > 0 && proof.ValidRPID(l.RP.ID) && len(l.RP.Origins) > 0
+	withKDF := (form == formPassword || form == formBothToo || form == formBothPlain) && s.kdf != nil
 	if withKDF {
-		k := *kdf
-		k.Salt = drawn(proof.SaltSize, nil)
+		k := *s.kdf
+		k.Salt = drawn(proof.SaltSize)
 		c.KDF = &k
 	}
 	if withPasskeys {
-		// Two entries of one name are refused (ParseLoginChallenge), so a
-		// drawn value must be new to this answer as well as to the list.
-		mine := map[string]bool{}
-		for n := 1 + int(draw())%3; n > 0; n-- {
-			size := lengths[int(draw())%len(lengths)]
-			cred := drawn(size, func(s string) bool { return mine[s] || credTaken(l, s) })
-			key := drawn(sign.KeyIDSize, func(s string) bool {
-				_, _, ok := l.KeyOwner(s)
-				return ok || mine[s]
+		n := pick(s.passkeys[:], s.holders)
+		for i := 0; i < n && i < MaxPasskeys; i++ {
+			c.Passkeys = append(c.Passkeys, PasskeyRef{
+				CredID: drawn(credIDLength(l, below(s.total))),
+				KeyID:  enc.B64.EncodeToString(drawn(sign.KeyIDSize)),
 			})
-			mine[enc.B64.EncodeToString(cred)], mine[enc.B64.EncodeToString(key)] = true, true
-			c.Passkeys = append(c.Passkeys, PasskeyRef{CredID: cred, KeyID: enc.B64.EncodeToString(key)})
 		}
+		c.Passkeys = withoutDoubles(c.Passkeys)
 	}
-	c.TOTP = draw()%2 == 0
-	c.PasswordToo = passwordToo && withKDF && withPasskeys
+	// TOTPShare out of 100, drawn from one byte: an installation where every
+	// user holds TOTP gets it in every made-up answer, one where none does in
+	// none of them, and anything between in that proportion.
+	c.TOTP = int(draw())*100 < in.TOTPShare*256
+	c.PasswordToo = form == formBothToo && withKDF && withPasskeys
+	return c
 }
 
-// credTaken reports whether base64url of a credential ID belongs to a passkey
-// of the list, so no made-up one repeats a real one.
-func credTaken(l *trust.List, cred string) bool {
+// credIDLength returns the length of the i-th passkey credential ID of the
+// list, so a made-up one is as long as a real one. It walks the list, which is
+// the same walk for every name.
+func credIDLength(l *trust.List, i int) int {
+	seen := 0
 	for _, u := range l.Users {
 		for _, k := range u.Keys {
-			if k.Kind == proof.KindPasskey && enc.B64.EncodeToString(k.CredID) == cred {
-				return true
+			if k.Kind != proof.KindPasskey {
+				continue
 			}
+			if seen == i {
+				return len(k.CredID)
+			}
+			seen++
 		}
 	}
-	return false
+	return proof.SaltSize
+}
+
+// withoutDoubles drops an entry whose credential ID an earlier one already
+// has. ParseLoginChallenge refuses two entries of one name, and credential
+// IDs as short as a list may hold let two derived ones meet; dropping one
+// keeps the answer valid without a retry whose count would follow the name.
+func withoutDoubles(refs []PasskeyRef) []PasskeyRef {
+	out := refs[:0]
+	for i, r := range refs {
+		double := false
+		for _, before := range refs[:i] {
+			double = double || bytes.Equal(before.CredID, r.CredID)
+		}
+		if !double {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ParseLoginFinish decodes and checks the body of PathLoginFinish. It checks

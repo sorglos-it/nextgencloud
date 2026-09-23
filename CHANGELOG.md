@@ -9,9 +9,16 @@ Dazu `session.ParseLoginChallenge` mit Grenzen und Testdaten (`login` in `sessio
 
 Dieselbe Stelle weiter: `session.Challenge` baut die Anmelde-Antwort aus der Vertrauensliste, ohne
 Datenbank. Einen unbekannten Benutzernamen beantwortet sie erfunden, fest abgeleitet aus dem Namen
-und dem Geheimnis der Installation (`config.API.SecretKey`), damit derselbe Name immer dieselbe
-Antwort bekommt – sonst verriete der zweite Versuch, welche Benutzer es gibt. Form und Parameter
-stammen aus der Liste, keine erfundene Kennung gehört zu einem echten Schlüssel.
+und dem neuen `config.API.ChallengeKey`, damit derselbe Name dieselbe Antwort bekommt, solange die
+Vertrauensliste steht – sonst verriete der zweite Versuch, welche Benutzer es gibt. Ein eigener
+Schlüssel und nicht `secretKey`: Ein Wechsel des Datenbankschlüssels würfelte jede erfundene
+Antwort neu, während echte gleich blieben.
+
+Die Form der erfundenen Antwort stammt aus der Liste selbst – Anteil der Benutzer je Form,
+Häufigkeit der Passkey-Zahl, Längen echter Credential-IDs, Parameter eines echten `kdf`; für `totp`
+kommt der Anteil vom Aufrufer. Feste Quoten waren in Installationen, die nicht dem Durchschnitt
+entsprechen, sofort als erfunden zu erkennen. Beide Wege tun dieselbe Arbeit, damit nicht Laufzeit
+und Speicher verraten, was die Antwort verschweigt. `rp.id` prüft `proof.ValidRPID` überall gleich.
 
 Recovery-Modus als verbindliche Vorgabe aufgenommen: `docs/recovery-modus.md`, dazu die Zeile in
 `CLAUDE.md`. Root-Sticks mit Quorum, TPM, verschlüsseltes Datenbank-Volume, signierte
