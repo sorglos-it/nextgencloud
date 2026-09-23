@@ -144,7 +144,11 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   bekommen hat, mit dem in dieser Datei; weicht es ab (derselbe Schlüssel, das beweist der
   Fingerabdruck), schreibt er die Datei neu und lädt Apache neu. So sperrt weder ein erneuertes
   Zertifikat noch ein Datum Apache aus. Den Beitritt und die Kopplung führen die Programme aus
-  (`ngc-api`, `ngc-controller`); sie prüfen TLS mit dem Fingerabdruck aus dem Code.
+  (`ngc-api`, `ngc-controller`); sie prüfen TLS mit dem Fingerabdruck aus dem Code. Der
+  Kopplungscode steht dabei nie in der Kommandozeile: `ngc-controller pair` fragt ihn am Terminal
+  ab und nimmt ihn sonst als erste Zeile der Standardeingabe. So reicht das Skript ihn mit einer
+  eingebauten Shell-Anweisung durch (`printf '%s\n' "$pair_code" | ngc-controller pair`) und legt
+  ihn in keine Prozessliste: `/proc/<pid>/cmdline` liest ohne `hidepid` jeder lokale Benutzer.
 - **Lastverteilung in Apache:** `config.BalancerFile` (`/etc/ngc/apache-apis.conf`).
   - Es schreiben nur `ngc-web` bei `install`/`configure` (aus `apis` und `api_pins`, nach der
     Prüfung der Fingerabdrücke) und danach der Controller mit Rolle `web` (aus `web.json`),

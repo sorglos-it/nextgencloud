@@ -37,7 +37,7 @@ func pairCode() string {
 
 func TestMainVersion(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := Main("1.2.3", []string{"-version"}, &out, &errOut); code != 0 {
+	if code := Main("1.2.3", []string{"-version"}, noInput(), &out, &errOut); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	if got := out.String(); !strings.HasPrefix(got, "ngc-controller 1.2.3 (contract ") {
@@ -50,7 +50,7 @@ func TestMainVersion(t *testing.T) {
 
 func TestMainUnknownCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := Main("1.2.3", []string{"frobnicate"}, &out, &errOut); code != 2 {
+	if code := Main("1.2.3", []string{"frobnicate"}, noInput(), &out, &errOut); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 	if !strings.Contains(errOut.String(), "frobnicate") {
@@ -58,12 +58,25 @@ func TestMainUnknownCommand(t *testing.T) {
 	}
 }
 
+// "pair" reads the code from the standard input. A script that pipes nothing
+// in gets one fixed line and pairs nothing.
 func TestMainPairNeedsCode(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := Main("1.2.3", []string{"pair"}, &out, &errOut); code != 2 {
+	if code := Main("1.2.3", []string{"pair"}, noInput(), &out, &errOut); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
+	if got := errOut.String(); got != msgBadCode+"\n" {
+		t.Fatalf("stderr = %q, want %q", got, msgBadCode+"\n")
+	}
 }
+
+// noInput is a standard input that holds nothing: the calls that never get as
+// far as the pairing code use it.
+func noInput() io.Reader { return strings.NewReader("") }
+
+// typed is the standard input of an admin who entered the code, and of the ulh
+// script that pipes it in: one line, then the end.
+func typed(code string) io.Reader { return strings.NewReader(code + "\n") }
 
 // Only something that looks like a command name is repeated. Anything else may
 // be a pasted pairing code, and that must not reach the screen or the journal.
@@ -78,7 +91,7 @@ func TestMainRepeatsOnlyCommandNames(t *testing.T) {
 		strings.Repeat("a", 33),
 	} {
 		var out, errOut bytes.Buffer
-		if code := Main("1.2.3", []string{arg}, &out, &errOut); code != 2 {
+		if code := Main("1.2.3", []string{arg}, noInput(), &out, &errOut); code != 2 {
 			t.Errorf("Main(%q) = %d, want 2", arg, code)
 		}
 		if strings.Contains(out.String()+errOut.String(), arg) {
@@ -100,7 +113,7 @@ func TestMainCommandsNotBuiltYet(t *testing.T) {
 		{"image", "-arch", "arm64", "-out", "terminal-arm64.tar"},
 	} {
 		var out, errOut bytes.Buffer
-		if code := Main("1.2.3", args, &out, &errOut); code != 1 {
+		if code := Main("1.2.3", args, noInput(), &out, &errOut); code != 1 {
 			t.Errorf("Main(%q) = %d, want 1", args, code)
 		}
 		if !strings.Contains(errOut.String(), "Dieser Teil ist noch nicht gebaut.") {
@@ -116,7 +129,7 @@ func TestMainCommandsNotBuiltYet(t *testing.T) {
 // ends well.
 func TestMainHelpListsTheCommands(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := Main("1.2.3", []string{"-h"}, &out, &errOut); code != 0 {
+	if code := Main("1.2.3", []string{"-h"}, noInput(), &out, &errOut); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	for _, want := range []string{"Aufruf: ngc-controller", "pair", "terminal", "hold", "image"} {
@@ -135,8 +148,8 @@ func TestMainHelpListsTheCommands(t *testing.T) {
 func TestMainConfigFlagBeforeCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
 	cfgPath := filepath.Join(t.TempDir(), "controller.json")
-	args := []string{"-config", cfgPath, "pair", "-code", pairCode()}
-	if code := Main("1.2.3", args, &out, &errOut); code != 1 {
+	args := []string{"-config", cfgPath, "pair"}
+	if code := Main("1.2.3", args, typed(pairCode()), &out, &errOut); code != 1 {
 		t.Fatalf("exit code = %d, want 1 (the command was reached)", code)
 	}
 	if got := errOut.String(); got != msgNoConfig+"\n" {
@@ -159,7 +172,7 @@ func TestMainImageNeedsKnownArchAndFile(t *testing.T) {
 		{"image", "-arch", "amd64", "-out", "terminal.tar", "more"},
 	} {
 		var out, errOut bytes.Buffer
-		if code := Main("1.2.3", args, &out, &errOut); code != 2 {
+		if code := Main("1.2.3", args, noInput(), &out, &errOut); code != 2 {
 			t.Errorf("Main(%q) = %d, want 2", args, code)
 		}
 	}
@@ -177,13 +190,14 @@ func TestMainKeepsThePairingCodeQuiet(t *testing.T) {
 		{[]string{code}, 2},                          // pasted without a command
 		{[]string{"-version=" + code}, 2},            // pasted onto a flag that takes no value
 		{[]string{"-config", code}, 1},               // pasted onto the wrong flag: taken as a file name
-		{[]string{"pair", "-code", code, "more"}, 2}, // one word too many
+		{[]string{"pair", code}, 2},                  // pasted behind the command
+		{[]string{"pair", "-code", code, "more"}, 2}, // the flag that is gone, one word too many
 		{[]string{"pair", "-kode", code}, 2},         // flag mistyped
-		{[]string{"pair", "-code=" + code, "-x"}, 2}, // unknown flag behind it
-		{[]string{"pair", "-code"}, 2},               // value missing
+		{[]string{"pair", "-code=" + code, "-x"}, 2}, // the flag that is gone, unknown flag behind it
+		{[]string{"pair", "-code"}, 2},               // the flag that is gone, value missing
 	} {
 		var out, errOut bytes.Buffer
-		if got := Main("1.2.3", c.args, &out, &errOut); got != c.want {
+		if got := Main("1.2.3", c.args, typed(code), &out, &errOut); got != c.want {
 			t.Errorf("Main(%q) = %d, want %d", c.args, got, c.want)
 		}
 		if strings.Contains(out.String()+errOut.String(), code) {
@@ -196,7 +210,7 @@ func TestMainKeepsThePairingCodeQuiet(t *testing.T) {
 // options is how a secret slips out.
 func TestOptionsHideThePairingCode(t *testing.T) {
 	code := pairCode()
-	opts, err := parsePair("/etc/ngc/controller.json", []string{"-code", code})
+	opts, err := parsePair("/etc/ngc/controller.json", nil, typed(code), io.Discard)
 	if err != nil {
 		t.Fatalf("parsePair: %v", err)
 	}
@@ -212,7 +226,7 @@ func TestOptionsHideThePairingCode(t *testing.T) {
 
 func TestParsePairTakesTheCode(t *testing.T) {
 	code := pairCode()
-	opts, err := parsePair("/etc/ngc/controller.json", []string{"-code", code})
+	opts, err := parsePair("/etc/ngc/controller.json", nil, typed(code), io.Discard)
 	if err != nil {
 		t.Fatalf("parsePair: %v", err)
 	}
@@ -224,16 +238,16 @@ func TestParsePairTakesTheCode(t *testing.T) {
 // The contract says what a pairing code is; parsePair asks it, and nothing
 // else gets through.
 func TestParsePairRefusesAnythingElse(t *testing.T) {
-	for _, code := range []string{
-		"",
-		"ABC",
-		"ngc-pair:",
-		"ngc-pair:not-base64!",
-		"ngc-join:" + strings.TrimPrefix(pairCode(), "ngc-pair:"),
-		strings.Repeat("ngc-pair:a", 200),
+	for name, in := range map[string]string{
+		"nothing":            "",
+		"a word":             "ABC\n",
+		"the prefix alone":   "ngc-pair:\n",
+		"no base64":          "ngc-pair:not-base64!\n",
+		"a join code":        "ngc-join:" + strings.TrimPrefix(pairCode(), "ngc-pair:") + "\n",
+		"longer than a code": strings.Repeat("ngc-pair:a", 200) + "\n",
 	} {
-		if _, err := parsePair("/etc/ngc/controller.json", []string{"-code", code}); err == nil {
-			t.Errorf("parsePair(%q) = nil, want an error", code)
+		if _, err := parsePair("/etc/ngc/controller.json", nil, strings.NewReader(in), io.Discard); err == nil {
+			t.Errorf("parsePair took %s, want an error", name)
 		}
 	}
 }
@@ -257,23 +271,27 @@ func args(s string) []string {
 	return strings.Split(s, "\x00")
 }
 
+// Neither the arguments nor the standard input is ever named in a failure:
+// one of them holds the pairing code.
 func FuzzParsePair(f *testing.F) {
-	f.Add("-code\x00" + pairCode())
-	f.Add("-code=" + pairCode())
-	f.Add("-code\x00" + pairCode() + "\x00extra")
-	f.Add("-code\x00ngc-pair:AAAA")
-	f.Add("--\x00-code\x00ABC")
-	f.Add("")
-	f.Fuzz(func(t *testing.T, s string) {
-		opts, err := parsePair("/etc/ngc/controller.json", args(s))
+	f.Add("", pairCode()+"\n")
+	f.Add("", pairCode())
+	f.Add("", "  "+pairCode()+"  \nmore\n")
+	f.Add("", "ngc-pair:AAAA\n")
+	f.Add("-code\x00"+pairCode(), pairCode()+"\n")
+	f.Add("extra", pairCode()+"\n")
+	f.Add("--", "")
+	f.Add("", "")
+	f.Fuzz(func(t *testing.T, argv, in string) {
+		opts, err := parsePair("/etc/ngc/controller.json", args(argv), strings.NewReader(in), io.Discard)
 		if err != nil {
 			return
 		}
 		if _, err := tunnel.ParsePairCode(opts.Pair.Text()); err != nil {
-			t.Fatalf("parsePair(%q) took %v, which is no pairing code", s, opts.Pair)
+			t.Fatal("parsePair took something that is no pairing code")
 		}
 		if opts.Config != "/etc/ngc/controller.json" {
-			t.Fatalf("parsePair(%q) = %+v", s, opts)
+			t.Fatalf("parsePair kept %q as the configuration", opts.Config)
 		}
 	})
 }
@@ -375,7 +393,7 @@ func TestPairWritesTheConfigurationAndTheAnchor(t *testing.T) {
 	before := writeController(t, cfgPath)
 
 	var out, errOut bytes.Buffer
-	if code := pair(cfgPath, anchorPath, []string{"-code", api.code.String()}, &out, &errOut); code != 0 {
+	if code := pair(cfgPath, anchorPath, nil, typed(api.code.String()), &out, &errOut); code != 0 {
 		t.Fatalf("pair = %d, stderr = %q", code, errOut.String())
 	}
 	api.srv.Close() // Close waits for the request, so what it saw is here
@@ -436,7 +454,7 @@ func TestPairNeedsTheConfiguration(t *testing.T) {
 	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
 
 	var out, errOut bytes.Buffer
-	if code := pair(cfgPath, anchorPath, []string{"-code", api.code.String()}, &out, &errOut); code != 1 {
+	if code := pair(cfgPath, anchorPath, nil, typed(api.code.String()), &out, &errOut); code != 1 {
 		t.Fatalf("pair = %d, want 1", code)
 	}
 	if n := api.seen.Load(); n != 0 {
@@ -466,7 +484,7 @@ func TestPairLeavesTheConfigurationAloneWhenItFails(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	if code := pair(cfgPath, anchorPath, []string{"-code", api.code.String()}, &out, &errOut); code != 1 {
+	if code := pair(cfgPath, anchorPath, nil, typed(api.code.String()), &out, &errOut); code != 1 {
 		t.Fatalf("pair = %d, want 1", code)
 	}
 	after, err := os.ReadFile(cfgPath)
@@ -484,5 +502,27 @@ func TestPairLeavesTheConfigurationAloneWhenItFails(t *testing.T) {
 	}
 	if strings.Contains(errOut.String(), api.code.String()) {
 		t.Errorf("stderr = %q, want the pairing code kept out of it", errOut.String())
+	}
+}
+
+// The pairing code no longer travels on the command line, so no text of the
+// program may send an admin there: an argument stands in /proc/<pid>/cmdline,
+// which every local user may read without hidepid. The cases are named, never
+// printed: one of them carries a code.
+func TestNoTextSendsTheCodeToTheCommandLine(t *testing.T) {
+	code := pairCode()
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"-h", []string{"-h"}},
+		{"pair with the old flag", []string{"pair", "-code", code}},
+		{"pair with a pasted code", []string{"pair", code}},
+	} {
+		var out, errOut bytes.Buffer
+		Main("1.2.3", c.args, typed(code), &out, &errOut)
+		if got := out.String() + errOut.String(); strings.Contains(got, "-code") {
+			t.Errorf("%s: the answer names the flag -code: %q", c.name, got)
+		}
 	}
 }

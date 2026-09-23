@@ -11,4 +11,4 @@ import (
 // Version is set when building.
 var Version = "0.0.0-dev"
 
-func main() { os.Exit(node.Main(Version, os.Args[1:], os.Stdout, os.Stderr)) }
+func main() { os.Exit(node.Main(Version, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
