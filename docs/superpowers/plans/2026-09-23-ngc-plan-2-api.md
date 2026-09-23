@@ -1973,8 +1973,11 @@ func newHandler(t *testing.T) *Handler {
 		Cert: "/x", CertKey: "/y",
 		NoiseKey: config.NewSecret(noiseKey.Private), SignKey: config.NewSecret(signKey.Seed()),
 		SecretKey: config.NewSecret(make([]byte, 32)),
-		ReleaseKey: enc.Bytes(make([]byte, 32)), StoreKey: enc.Bytes(make([]byte, 32)),
-		StoreURL: "https://store.ngc.test", SessionLifetime: 43200, IdleTimeout: 1800,
+		// Its own key next to SecretKey; config.API.Validate asks for both
+		// with 32 bytes, so a configuration without it is none.
+		ChallengeKey: config.NewSecret(make([]byte, 32)),
+		ReleaseKey:   enc.Bytes(make([]byte, 32)), StoreKey: enc.Bytes(make([]byte, 32)),
+		StoreURL:     "https://store.ngc.test", SessionLifetime: 43200, IdleTimeout: 1800,
 	}
 	s := state.New(cfg, memstore.New(), box, make([]byte, 32))
 	s.Now = func() int64 { return 1790000000 }
