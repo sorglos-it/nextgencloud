@@ -169,7 +169,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige, darunter Fassungen mit Adressen, die die Grammatik brechen | `trust`: `TestVectors` |
 | `url.json` | Hosts und Adressen: `hosts`, `hostPort`, `tunnel` (bei gültigen die Adresse hinter Apache nach `trust.WebURL`), `web`, `origins`, `store`, je gültig oder nicht | `trust`: `TestURLVectors` |
 | `ulh/` | `host.sh` (von Hand) prüft Hosts wie die ulh-Skripte, getestet von `TestHostScript` | von Hand |
-| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
+| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `login`: Anmelde-Antworten, gültige und ungültige (die gültige nennt beide Passkeys von `carol` aus `trust` mit `credId` und `kid`, dazu ihr `kdf`; abgelehnt werden unter anderem ein Eintrag ohne `kid`, mit falscher Länge, ohne base64url, doppelt oder mit unbekanntem Feld daneben); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
 | `task.json` | Root-Aufgabe (`deactivate`) und erneute Bestätigung | `task`: `TestVectors` |
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
@@ -238,6 +238,7 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | Fassung der Vertrauensliste (Nutzlast) | `trust.Parse` | `sign.MaxPayload` (4 MiB) | `users` 10000, `users/*/roles` 256, `users/*/keys` 16, `roles` 256, `roles/*/black` 256, `roles/*/white` 256, `nodes` 256, `nodes/*/rootUsers` 256, `nodes/*/rootRoles` 256, `stores` 64, `auto` 64, `rp/origins` 8 |
 | Fassung samt Beweis (`trust.Signed`), etwa an `ngc.users/api/trust` | `trust.ParseSigned` | base64url von `sign.MaxPayload` Byte + 64 KiB | keine |
 | Anmeldung, Ersteinrichtung | `session.ParseLoginStart`, `session.ParseLoginFinish`, `session.ParseSetup` | `session.MaxRequest` (64 KiB) | keine |
+| Antwort von `POST /api/v1/login/start` | `session.ParseLoginChallenge` | `session.MaxRequest` | `passkeys` 16 (`session.MaxPasskeys`), `rp/origins` 8 |
 | Angebot der Ersteinrichtung | `session.ParseSetupOffer` | `session.MaxSetupOffer` (128 KiB), darin `info` höchstens `session.MaxRequest` | `info`: `nodes` 16 (`session.MaxSetupNodes`) |
 | Client- und API-Zertifikat | `session.VerifyClient`, `session.VerifyAPI` | `session.MaxCert` (4096) | keine |
 | Antwort von `GET /api/v1/trust` | `session.ParseTrustChain` | `session.MaxChain` (32 MiB) | `versions` 64 |
@@ -266,10 +267,9 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | `controller.json` | `config.LoadController` | `config.MaxConfig` | `apis` 16, `roles` 4, `migrate/nodes` 16 |
 | `trust-anchor.json` | `config.LoadAnchor` | `config.MaxConfig` | keine |
 
-Antworten der API, für die Go keinen Parser hat (etwa `session.LoginChallenge`,
-`session.LoginResult` und die Ergebnisse in `core.json` außer dem UI-Beweis), liest das
-Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14; ein Ergebnis hat höchstens
-`wire.MaxCallResult` Byte.
+Antworten der API, für die Go keinen Parser hat (etwa `session.LoginResult` und die Ergebnisse in
+`core.json` außer dem UI-Beweis), liest das Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14;
+ein Ergebnis hat höchstens `wire.MaxCallResult` Byte.
 
 ## Vor dem WebSocket
 
@@ -291,6 +291,17 @@ Bis zum WebSocket spricht die Shell HTTPS mit JSON (`Content-Type: application/j
 `E_TOOLARGE` (mehr als `session.MaxRequest`), 500 `E_INTERNAL`, 503 `E_UNREACHABLE` (Datenbank nicht
 erreichbar).
 
+- **Anmelde-Antwort** (`session.LoginChallenge`, gelesen mit `session.ParseLoginChallenge`): Nonce,
+  Zeit, Höchstdauer, Installation, Benutzer, `kdf` fürs Passwort, `totp`, `passwordToo`, `rp` und
+  unter `passkeys` je Passkey zwei Werte: `credId` für `allowCredentials` des Browsers und
+  `kid`, die Schlüsselkennung (`sign.KeyID`) für `kid` im Beweis (`proof.Proof.KeyID`). Beide
+  stehen dabei, weil der Browser bei der Anmeldung noch keine Vertrauensliste hat und die
+  Zuordnung Credential-ID → Schlüsselkennung sonst nirgends findet. Ohne Passkey bleibt die Liste
+  leer; sonst hat jeder Eintrag eine Credential-ID von 1 bis `proof.MaxCredID` (1023) Byte und eine
+  Schlüsselkennung nach `proof.ValidKeyID` (base64url von 16 Byte), keine steht zweimal, höchstens
+  `session.MaxPasskeys` (16) Einträge. Die erfundene Antwort für einen unbekannten Namen hält
+  dieselben Regeln ein, sonst verriete eine Antwort, die der Browser ablehnt, dass es den Benutzer
+  nicht gibt. Testdaten: `login` in `session.json`.
 - `E_LOGIN` steht für jede fehlgeschlagene Anmeldung gleich (unbekannter Name, falscher Beweis oder
   TOTP-Code, fehlender Passwortbeweis, verbrauchte oder abgelaufene Nonce) und für eine fehlende
   oder abgelaufene Sitzung. `E_LOCKED` kommt mit `Retry-After` in Sekunden. Die Sperre gilt je

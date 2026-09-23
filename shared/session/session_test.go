@@ -34,10 +34,10 @@ type fixture struct {
 	client []byte
 	proof  proof.Proof
 	api    sign.Envelope
-	// carol's role asks for the password too; she holds a passkey and a
-	// password key.
-	carol                       string
-	carolPasskey, carolPassword trusttest.Signer
+	// carol's role asks for the password too; she holds two passkeys and a
+	// password key, so her login challenge names more than one passkey.
+	carol                                      string
+	carolPasskey, carolPasskey2, carolPassword trusttest.Signer
 }
 
 // newFixture signs everything with the password admin. trusttest.Genesis
@@ -57,9 +57,10 @@ func newFixture(t testing.TB) fixture {
 	l.Nodes = []trust.Node{l.Nodes[0], {ID: "api-2", Kind: trust.NodeAPI, Name: "api-2", Noise: api2DH.Public,
 		Sign: enc.Bytes(api2Sign.Public().(ed25519.PublicKey)), URL: "wss://api-2.test:7443/tunnel", TLS: api2Pin}, l.Nodes[1]}
 	carol, carolPasskey, carolPassword := trusttest.ID(0x23), trusttest.NewPasskey(0x63), trusttest.NewSigner(0x64)
+	carolPasskey2 := trusttest.NewPasskey(0x65)
 	l.Roles = append(l.Roles, trust.Role{Name: "careful", Level: trust.LevelCritical, PasswordToo: true})
 	l.Users = append(l.Users, trust.User{ID: carol, Name: "carol", Roles: []string{"careful"},
-		Keys: []proof.UserKey{carolPasskey.Key, carolPassword.Key}})
+		Keys: []proof.UserKey{carolPasskey.Key, carolPasskey2.Key, carolPassword.Key}})
 	if err := l.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func newFixture(t testing.TB) fixture {
 		t.Fatal(err)
 	}
 	return fixture{list: l, admin: admin, client: client, proof: admin.Prove(sign.PurposeClientCert, client), api: env,
-		carol: carol, carolPasskey: carolPasskey, carolPassword: carolPassword}
+		carol: carol, carolPasskey: carolPasskey, carolPasskey2: carolPasskey2, carolPassword: carolPassword}
 }
 
 // clientCert decodes the fixture's client certificate for a test to change.
@@ -674,6 +675,26 @@ func TestParseLoginFinish(t *testing.T) {
 	})
 }
 
+// TestParseLoginChallenge runs the cases of the vector file, which the web
+// interface runs too, and adds the ones that do not belong in it.
+func TestParseLoginChallenge(t *testing.T) {
+	f := newFixture(t)
+	cases := []parseCase{}
+	for _, c := range loginVectors(t, f) {
+		cases = append(cases, parseCase{c.Name, c.Challenge, c.Valid})
+	}
+	valid := mustJSON(t, LoginChallenge{
+		Nonce: bytes.Repeat([]byte{0x56}, NonceSize), Now: now, MaxLifetime: 3600,
+		Installation: f.list.Installation, User: f.carol,
+		Passkeys: []PasskeyRef{passkeyRef(f.carolPasskey.Key)}, RP: f.list.RP,
+	})
+	cases = append(cases,
+		parseCase{"one passkey and no KDF", valid, true},
+		parseCase{"larger than MaxRequest", append(valid, bytes.Repeat([]byte(" "), MaxRequest)...), false},
+	)
+	checkParse(t, func(b []byte) error { _, err := ParseLoginChallenge(b); return err }, cases)
+}
+
 func TestParseSetup(t *testing.T) {
 	admin := trusttest.NewSigner(1)
 	base := setupRequest(admin.Sign(t, setupList(admin)), testSetupCode)
@@ -887,6 +908,100 @@ func clientRejects(t testing.TB, f fixture) []clientReject {
 	}
 }
 
+// loginChallenge is an answer of PathLoginStart, checked with
+// ParseLoginChallenge. The browser has no trust list while it logs in, so the
+// answer alone must say which passkey makes which proof: an implementation
+// that reads credId and drops kid fails the cases whose kid is missing or
+// malformed, because it cannot tell them from the valid one.
+type loginChallenge struct {
+	Name      string    `json:"name"`
+	Challenge enc.Bytes `json:"challenge"`
+	Valid     bool      `json:"valid"`
+}
+
+// passkeyRef names a passkey of the trust list in a login challenge, as the
+// API builds it from trust.User.Keys.
+func passkeyRef(k proof.UserKey) PasskeyRef { return PasskeyRef{CredID: k.CredID, KeyID: k.ID} }
+
+// loginVectors: the valid answer is carol's, whose role asks for the password
+// too, so it names both of her passkeys and the KDF of her password key; the
+// key IDs are those of her keys in the vector's trust list. Each invalid case
+// breaks one rule.
+func loginVectors(t testing.TB, f fixture) []loginChallenge {
+	base := LoginChallenge{
+		Nonce: bytes.Repeat([]byte{0x56}, NonceSize), Now: now, MaxLifetime: 3600,
+		Installation: f.list.Installation, User: f.carol, KDF: f.carolPassword.Key.KDF,
+		Passkeys: []PasskeyRef{passkeyRef(f.carolPasskey.Key), passkeyRef(f.carolPasskey2.Key)},
+		TOTP:     true, PasswordToo: true, RP: f.list.RP,
+	}
+	challenge := func(mutate func(*LoginChallenge)) []byte {
+		c := base
+		c.Passkeys = append([]PasskeyRef{}, base.Passkeys...)
+		mutate(&c)
+		return mustJSON(t, c)
+	}
+	// Without the member, not with an empty one: a Go struct cannot leave a
+	// key ID out, and an implementation that ignores kid must fail this case.
+	noKeyID := bytes.Replace(challenge(func(c *LoginChallenge) { c.Passkeys[1].KeyID = "" }), []byte(`,"kid":""`), nil, 1)
+	if bytes.Count(noKeyID, []byte(`"kid"`)) != 1 {
+		t.Fatalf("key ID still in %s", noKeyID)
+	}
+	many := make([]PasskeyRef, MaxPasskeys)
+	for i := range many {
+		many[i] = passkeyRef(trusttest.NewPasskey(byte(0x80 + i)).Key)
+	}
+	// A key ID is base64url of 16 bytes (proof.ValidKeyID): 22 characters
+	// from the URL alphabet, so a shorter, a longer and one with a character
+	// outside it are each refused.
+	short, long := base.Passkeys[0].KeyID[:21], base.Passkeys[0].KeyID+"A"
+	notB64 := base.Passkeys[0].KeyID[:21] + "+"
+	return []loginChallenge{
+		{Name: "valid", Challenge: challenge(func(*LoginChallenge) {}), Valid: true},
+		{Name: "password only, without passkeys", Challenge: challenge(func(c *LoginChallenge) {
+			c.Passkeys, c.PasswordToo, c.TOTP = nil, false, false
+		}), Valid: true},
+		{Name: "passkey only, without a KDF", Challenge: challenge(func(c *LoginChallenge) {
+			c.KDF, c.PasswordToo = nil, false
+		}), Valid: true},
+		{Name: "MaxPasskeys passkeys", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys = many }), Valid: true},
+		{Name: "credential ID of MaxCredID bytes", Challenge: challenge(func(c *LoginChallenge) {
+			c.Passkeys[1].CredID = bytes.Repeat([]byte{0x66}, proof.MaxCredID)
+		}), Valid: true},
+		{Name: "passkey without a key ID", Challenge: noKeyID},
+		{Name: "passkey with an empty key ID", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys[1].KeyID = "" })},
+		{Name: "key ID of 21 characters", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys[1].KeyID = short })},
+		{Name: "key ID of 23 characters", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys[1].KeyID = long })},
+		{Name: "key ID that is no base64url", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys[1].KeyID = notB64 })},
+		{Name: "passkey without a credential ID", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys[1].CredID = nil })},
+		{Name: "credential ID over MaxCredID", Challenge: challenge(func(c *LoginChallenge) {
+			c.Passkeys[1].CredID = bytes.Repeat([]byte{0x66}, proof.MaxCredID+1)
+		})},
+		{Name: "the same passkey twice", Challenge: challenge(func(c *LoginChallenge) { c.Passkeys[1] = c.Passkeys[0] })},
+		{Name: "two passkeys with one key ID", Challenge: challenge(func(c *LoginChallenge) {
+			c.Passkeys[1].KeyID = c.Passkeys[0].KeyID
+		})},
+		{Name: "more than MaxPasskeys passkeys", Challenge: challenge(func(c *LoginChallenge) {
+			c.Passkeys = append(append([]PasskeyRef{}, many...), passkeyRef(f.carolPasskey.Key))
+		})},
+		{Name: "passkeys without a relying party", Challenge: challenge(func(c *LoginChallenge) { c.RP = proof.RP{} })},
+		{Name: "unknown field in a passkey",
+			Challenge: bytes.Replace(challenge(func(*LoginChallenge) {}), []byte(`"credId":`), []byte(`"type":"public-key","credId":`), 1)},
+		{Name: "unknown field", Challenge: withMember(challenge(func(*LoginChallenge) {}), `"hint":"passkey"`)},
+		{Name: "duplicate field", Challenge: withMember(challenge(func(*LoginChallenge) {}), `"user":"`+f.carol+`"`)},
+		{Name: "nonce of 31 bytes", Challenge: challenge(func(c *LoginChallenge) { c.Nonce = c.Nonce[:31] })},
+		{Name: "longer than MaxLifetime", Challenge: challenge(func(c *LoginChallenge) { c.MaxLifetime = MaxLifetime + 1 })},
+		{Name: "user that is no ID", Challenge: challenge(func(c *LoginChallenge) { c.User = "carol" })},
+		{Name: "malformed KDF", Challenge: challenge(func(c *LoginChallenge) {
+			k := *base.KDF
+			k.Time = 0
+			c.KDF = &k
+		})},
+		{Name: "origin that is no passkey origin", Challenge: challenge(func(c *LoginChallenge) {
+			c.RP.Origins = []string{"http://ngc.example.org"}
+		})},
+	}
+}
+
 // typedCode is what someone typed and the canonical code
 // NormalizeSetupCode makes of it, empty when it refuses.
 type typedCode struct {
@@ -1035,14 +1150,15 @@ func checkSetupVector(t *testing.T, v setupVector) {
 }
 
 type vector struct {
-	Trust         trust.Signed   `json:"trust"`
-	Now           int64          `json:"now"`
-	Client        enc.Bytes      `json:"client"`
-	Proof         proof.Proof    `json:"proof"`
-	API           sign.Envelope  `json:"api"`
-	APIRejects    []apiReject    `json:"apiRejects"`
-	ClientRejects []clientReject `json:"clientRejects"`
-	Setup         setupVector    `json:"setup"`
+	Trust         trust.Signed     `json:"trust"`
+	Now           int64            `json:"now"`
+	Client        enc.Bytes        `json:"client"`
+	Proof         proof.Proof      `json:"proof"`
+	API           sign.Envelope    `json:"api"`
+	APIRejects    []apiReject      `json:"apiRejects"`
+	ClientRejects []clientReject   `json:"clientRejects"`
+	Login         []loginChallenge `json:"login"`
+	Setup         setupVector      `json:"setup"`
 }
 
 func TestVectors(t *testing.T) {
@@ -1059,6 +1175,8 @@ func TestVectors(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
 		}
 	}
+	logins := loginVectors(t, f)
+	checkLoginVector(t, logins)
 	setup := setupVectors(t)
 	checkSetupVector(t, setup)
 	// Every offer refused for its info passes the budget of the info, so a
@@ -1087,7 +1205,19 @@ func TestVectors(t *testing.T) {
 		}
 	}
 	golden.Check(t, *update, "session.json", vector{Trust: f.admin.Sign(t, f.list), Now: now, Client: f.client, Proof: f.proof, API: f.api,
-		APIRejects: rejects, ClientRejects: clients, Setup: setup})
+		APIRejects: rejects, ClientRejects: clients, Login: logins, Setup: setup})
+}
+
+// checkLoginVector holds the login vector against ParseLoginChallenge, as the
+// web interface holds it against its own parser.
+func checkLoginVector(t *testing.T, cases []loginChallenge) {
+	t.Helper()
+	for _, c := range cases {
+		_, err := ParseLoginChallenge(c.Challenge)
+		if (err == nil) != c.Valid || (err != nil && err != ErrMessage) {
+			t.Errorf("challenge %s: valid=%v, got %v", c.Name, c.Valid, err)
+		}
+	}
 }
 
 // allocated returns how many bytes f allocates.
@@ -1135,6 +1265,9 @@ func TestParsersBoundAllocation(t *testing.T) {
 			func(b []byte) error { _, err := ParseLoginStart(b); return err }, ErrMessage},
 		{"ParseLoginFinish", hostile(`{"proof":{"sig":[`, `]}}`, MaxRequest),
 			func(b []byte) error { _, err := ParseLoginFinish(b); return err }, ErrMessage},
+		// passkeys takes an array, but only MaxPasskeys entries of it.
+		{"ParseLoginChallenge", hostile(`{"passkeys":[`, `]}`, MaxRequest),
+			func(b []byte) error { _, err := ParseLoginChallenge(b); return err }, ErrMessage},
 		{"ParseSetup", hostile(`{"trust":{"payload":[`, `]}}`, MaxRequest),
 			func(b []byte) error { _, err := ParseSetup(b); return err }, ErrMessage},
 		{"ParseSetupOffer", hostile(`{"info":[`, `]}`, MaxSetupOffer),
@@ -1195,6 +1328,43 @@ func FuzzParseLoginFinish(f *testing.F) {
 	f.Fuzz(func(t *testing.T, b []byte) {
 		_, _ = ParseLoginFinish(b)
 		_, _ = ParseLoginStart(b)
+	})
+}
+
+// FuzzParseLoginChallenge seeds with the vector cases and holds what the
+// parser accepts against the rules the browser relies on: at most MaxPasskeys
+// passkeys, each with a credential ID within proof.MaxCredID and a key ID
+// that proof.Proof.Validate would take, and no name twice. Without that a
+// browser could not turn an accepted answer into a proof.
+func FuzzParseLoginChallenge(f *testing.F) {
+	fx := newFixture(f)
+	for _, c := range loginVectors(f, fx) {
+		f.Add([]byte(c.Challenge))
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		c, err := ParseLoginChallenge(b)
+		if err != nil {
+			return
+		}
+		if len(c.Passkeys) > MaxPasskeys {
+			t.Fatalf("accepted %d passkeys", len(c.Passkeys))
+		}
+		keys, creds := map[string]bool{}, map[string]bool{}
+		for _, p := range c.Passkeys {
+			if len(p.CredID) == 0 || len(p.CredID) > proof.MaxCredID {
+				t.Fatalf("accepted passkey %+v", p)
+			}
+			if keys[p.KeyID] || creds[string(p.CredID)] {
+				t.Fatalf("accepted passkey %+v twice", p)
+			}
+			keys[p.KeyID], creds[string(p.CredID)] = true, true
+			// The browser copies the key ID into its proof, so what the
+			// challenge names must pass proof.Proof.Validate there.
+			probe := proof.Proof{Kind: proof.KindPassword, KeyID: p.KeyID, Sig: []byte{1}}
+			if err := probe.Validate(); err != nil {
+				t.Fatalf("key ID %q is none for a proof: %v", p.KeyID, err)
+			}
+		}
 	})
 }
 

@@ -101,6 +101,7 @@ const (
 	MaxRSABits    = 4096
 	MaxAuthData   = 4096
 	MaxClientData = 4096
+	MaxCredID     = 1023 // longest credential ID an authenticator may hand out (WebAuthn, CTAP2)
 )
 
 // minAuthData is the fixed start of WebAuthn authenticator data: SHA-256 of
@@ -132,7 +133,7 @@ func (k UserKey) Validate() error {
 		}
 		return k.KDF.Validate()
 	case KindPasskey:
-		if len(k.CredID) == 0 || len(k.CredID) > 1023 || len(k.Public) > MaxPublic || k.KDF != nil {
+		if len(k.CredID) == 0 || len(k.CredID) > MaxCredID || len(k.Public) > MaxPublic || k.KDF != nil {
 			return ErrKey
 		}
 		_, err := parsePublic(k)
@@ -159,11 +160,7 @@ type Proof struct {
 // passkey proof has 37..MaxAuthData bytes of AuthData and
 // 1..MaxClientData bytes of ClientData.
 func (p Proof) Validate() error {
-	// The length check comes first so an oversized key ID is never decoded.
-	if len(p.KeyID) != enc.B64.EncodedLen(keyIDSize) {
-		return ErrProof
-	}
-	if id, err := enc.B64.DecodeString(p.KeyID); err != nil || len(id) != keyIDSize {
+	if !ValidKeyID(p.KeyID) {
 		return ErrProof
 	}
 	if len(p.Sig) == 0 || len(p.Sig) > MaxSig {
@@ -183,6 +180,19 @@ func (p Proof) Validate() error {
 		return ErrProof
 	}
 	return nil
+}
+
+// ValidKeyID reports whether s names a user key: base64url of 16 bytes, as
+// sign.KeyID writes it. Proof.Validate and everything else that carries a key
+// ID (session.PasskeyRef) ask this one function, so a key ID means the same
+// wherever it travels.
+func ValidKeyID(s string) bool {
+	// The length check comes first so an oversized key ID is never decoded.
+	if len(s) != enc.B64.EncodedLen(keyIDSize) {
+		return false
+	}
+	id, err := enc.B64.DecodeString(s)
+	return err == nil && len(id) == keyIDSize
 }
 
 // RP names the relying party for passkeys.

@@ -13,7 +13,7 @@
 //	PathSetup         POST           Setup        204                              403 E_VERIFY, 404 E_NOTFOUND,
 //	                                                                               429 E_LOCKED
 //	PathLoginStart    POST           LoginStart   200 LoginChallenge, for unknown  429 E_LOCKED
-//	                                              names too
+//	                                              names too (ParseLoginChallenge)
 //	PathLoginFinish   POST           LoginFinish  200 LoginResult and the cookie   401 E_LOGIN, 429 E_LOCKED
 //	PathLogout        POST           -            204, the cookie deleted          401 E_LOGIN
 //	PathTrust?from=N  GET            -            200 TrustChain from N on; 204    401 E_LOGIN, 404 E_NOTFOUND
@@ -97,8 +97,12 @@ const (
 	MaxRequest        = 64 << 10  // largest JSON body before the WebSocket
 	MaxSetupOffer     = 128 << 10 // a SetupOffer as JSON: the base64url of an Info of up to MaxRequest bytes, and the MAC
 	MaxSetupNodes     = 16        // API nodes in one SetupInfo
-	TOTPDigits        = 6
-	TOTPPeriod        = 30 // RFC 6238 with HMAC-SHA1, as authenticator apps expect
+	// MaxPasskeys bounds LoginChallenge.Passkeys. A user holds at most
+	// trust.MaxKeysPerUser keys in the trust list, so no honest answer names
+	// more passkeys than that, and the browser allocates no more either.
+	MaxPasskeys = trust.MaxKeysPerUser
+	TOTPDigits  = 6
+	TOTPPeriod  = 30 // RFC 6238 with HMAC-SHA1, as authenticator apps expect
 )
 
 // Limits of one answer of PathTrust.
@@ -111,15 +115,16 @@ const (
 const maxTrustHint = 64
 
 // Budgets of the documents before the WebSocket (enc.Budget). Only a
-// TrustChain and the Info of a SetupOffer have an array, so any other array
-// is refused.
+// TrustChain, a LoginChallenge and the Info of a SetupOffer have an array, so
+// any other array is refused.
 var (
-	requestBudget = enc.Budget{Size: MaxRequest}    // LoginStart, LoginFinish, Setup
-	offerBudget   = enc.Budget{Size: MaxSetupOffer} // SetupOffer
-	infoBudget    = enc.Budget{Size: MaxRequest, Items: map[string]int{"nodes": MaxSetupNodes}}
-	certBudget    = enc.Budget{Size: MaxCert}      // ClientCert, APICert
-	hintBudget    = enc.Budget{Size: maxTrustHint} // TrustHint
-	chainBudget   = enc.Budget{Size: MaxChain, Items: map[string]int{"versions": MaxChainVersions}}
+	requestBudget   = enc.Budget{Size: MaxRequest}    // LoginStart, LoginFinish, Setup
+	offerBudget     = enc.Budget{Size: MaxSetupOffer} // SetupOffer
+	challengeBudget = enc.Budget{Size: MaxRequest, Items: map[string]int{"passkeys": MaxPasskeys, "rp/origins": trust.MaxOrigins}}
+	infoBudget      = enc.Budget{Size: MaxRequest, Items: map[string]int{"nodes": MaxSetupNodes}}
+	certBudget      = enc.Budget{Size: MaxCert}      // ClientCert, APICert
+	hintBudget      = enc.Budget{Size: maxTrustHint} // TrustHint
+	chainBudget     = enc.Budget{Size: MaxChain, Items: map[string]int{"versions": MaxChainVersions}}
 )
 
 // LoginStart asks for a login challenge.
@@ -130,16 +135,35 @@ type LoginStart struct {
 // LoginChallenge tells the browser how the user logs in. For unknown names
 // the API answers with made-up but stable values.
 type LoginChallenge struct {
-	Nonce        enc.Bytes   `json:"nonce"`
-	Now          int64       `json:"now"`
-	MaxLifetime  int64       `json:"maxLifetime"` // ClientCert.Expires <= Now + MaxLifetime
-	Installation string      `json:"installation"`
-	User         string      `json:"user"`
-	KDF          *proof.KDF  `json:"kdf,omitempty"`      // set if the user may log in with a password
-	Passkeys     []enc.Bytes `json:"passkeys,omitempty"` // credential IDs for allowCredentials
-	TOTP         bool        `json:"totp"`
-	PasswordToo  bool        `json:"passwordToo,omitempty"` // a role asks for a passkey and the password: LoginFinish.Proof by a passkey, plus Password
-	RP           proof.RP    `json:"rp"`
+	Nonce        enc.Bytes    `json:"nonce"`
+	Now          int64        `json:"now"`
+	MaxLifetime  int64        `json:"maxLifetime"` // ClientCert.Expires <= Now + MaxLifetime
+	Installation string       `json:"installation"`
+	User         string       `json:"user"`
+	KDF          *proof.KDF   `json:"kdf,omitempty"`      // set if the user may log in with a password
+	Passkeys     []PasskeyRef `json:"passkeys,omitempty"` // the user's passkeys, empty for a user without one
+	TOTP         bool         `json:"totp"`
+	PasswordToo  bool         `json:"passwordToo,omitempty"` // a role asks for a passkey and the password: LoginFinish.Proof by a passkey, plus Password
+	RP           proof.RP     `json:"rp"`
+}
+
+// PasskeyRef names one passkey the user may log in with: the credential ID for
+// the browser's allowCredentials list, and the key ID that goes into
+// proof.Proof.KeyID. Without the key ID a browser that has never seen the
+// trust list cannot build the proof at all.
+type PasskeyRef struct {
+	CredID enc.Bytes `json:"credId"`
+	KeyID  string    `json:"kid"`
+}
+
+// Validate checks the structure of r: a credential ID of 1..MaxCredID bytes,
+// as proof.UserKey.Validate asks of a passkey, and a key ID by the rule of
+// proof.Proof.Validate, so the browser can put it into the proof unchanged.
+func (r PasskeyRef) Validate() error {
+	if len(r.CredID) == 0 || len(r.CredID) > proof.MaxCredID || !proof.ValidKeyID(r.KeyID) {
+		return ErrMessage
+	}
+	return nil
 }
 
 // ClientCert binds the browser's session keys to a user. The browser builds
@@ -247,6 +271,44 @@ func ParseLoginStart(b []byte) (LoginStart, error) {
 		return LoginStart{}, ErrMessage
 	}
 	return s, nil
+}
+
+// ParseLoginChallenge decodes and checks an answer of PathLoginStart: strict
+// JSON within MaxRequest (at most MaxPasskeys passkeys and trust.MaxOrigins
+// origins), a NonceSize nonce, Now above 0, MaxLifetime from 1 to
+// MaxLifetime, Installation and User each an ID, a KDF that validates if one
+// is there, and origins by trust.ValidOrigin. Passkeys may be empty (a user
+// without one), but each entry passes PasskeyRef.Validate and names its
+// credential ID and its key ID only once: two entries of one name would leave
+// the browser guessing which key made a proof. A challenge that names
+// passkeys also names the relying party, as trust.List.Validate asks of a
+// list with passkeys, so the browser can ask the authenticator. The made-up
+// answer for an unknown name keeps all of this: an answer the browser refuses
+// would tell it that the user does not exist.
+func ParseLoginChallenge(b []byte) (LoginChallenge, error) {
+	var c LoginChallenge
+	if challengeBudget.Decode(b, &c) != nil || len(c.Nonce) != NonceSize || c.Now <= 0 ||
+		c.MaxLifetime < 1 || c.MaxLifetime > MaxLifetime ||
+		!trust.ValidID(c.Installation) || !trust.ValidID(c.User) ||
+		(c.KDF != nil && c.KDF.Validate() != nil) ||
+		len(c.Passkeys) > MaxPasskeys || len(c.RP.Origins) > trust.MaxOrigins ||
+		(len(c.Passkeys) > 0 && (c.RP.ID == "" || len(c.RP.Origins) == 0)) {
+		return LoginChallenge{}, ErrMessage
+	}
+	for _, o := range c.RP.Origins {
+		if !trust.ValidOrigin(o) {
+			return LoginChallenge{}, ErrMessage
+		}
+	}
+	keys, creds := make(map[string]bool, len(c.Passkeys)), make(map[string]bool, len(c.Passkeys))
+	for _, p := range c.Passkeys {
+		cred := string(p.CredID)
+		if p.Validate() != nil || keys[p.KeyID] || creds[cred] {
+			return LoginChallenge{}, ErrMessage
+		}
+		keys[p.KeyID], creds[cred] = true, true
+	}
+	return c, nil
 }
 
 // ParseLoginFinish decodes and checks the body of PathLoginFinish. It checks

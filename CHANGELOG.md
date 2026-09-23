@@ -2,6 +2,11 @@
 
 ## Unveröffentlicht
 
+Vertragsänderung V1: Die Anmelde-Antwort (`session.LoginChallenge`) nennt je Passkey nicht mehr nur
+die Credential-ID, sondern auch die Schlüsselkennung (`kid`), die in den Beweis gehört. Der Browser
+hat bei der Anmeldung noch keine Vertrauensliste; ohne die Kennung kam niemand mit Passkey herein.
+Dazu `session.ParseLoginChallenge` mit Grenzen und Testdaten (`login` in `session.json`).
+
 Recovery-Modus als verbindliche Vorgabe aufgenommen: `docs/recovery-modus.md`, dazu die Zeile in
 `CLAUDE.md`. Root-Sticks mit Quorum, TPM, verschlüsseltes Datenbank-Volume, signierte
 Admin-Datensätze, Stufen enterprise, home und test. Noch kein Code.
