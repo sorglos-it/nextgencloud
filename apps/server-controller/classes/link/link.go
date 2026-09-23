@@ -1,0 +1,552 @@
+// Package link dials the tunnel of this controller to an API and keeps it
+// standing: TLS checked against the pin of that API, Noise_KK inside it, and
+// after the handshake one frame per message (packages tunnel, wire, noisep).
+//
+// Everything that comes in here is hostile, an API of the trust list included:
+// the size of a message is bounded before it is read, every payload goes
+// through the parser of its contract, and nothing that came in is quoted back
+// in an error or a log line of a program that runs as root. A text message, a
+// message that does not decrypt, a frame that does not decode and a control
+// message the API may not send end the link at once and without an answer -
+// there is nothing to say to a peer that is not the one the handshake proved.
+package link
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	mrand "math/rand/v2"
+	"net"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/flynn/noise"
+
+	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/noisep"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/tunnel"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
+)
+
+// Times of one tunnel.
+const (
+	// DialTimeout bounds the whole way in: TLS, the WebSocket handshake, both
+	// Noise messages and the two hellos. An API that answers slowly must not
+	// hold a controller that has other work.
+	DialTimeout = 30 * time.Second
+	// WriteTimeout bounds one message on the way out. A peer that stops
+	// reading must not fill the memory of this side with waiting writers.
+	WriteTimeout = 30 * time.Second
+)
+
+// The errors this package answers with. None of them quotes anything that came
+// in, and none of them says which step failed to whoever is at the other end:
+// what is on the tunnel is either of this contract or the link is over.
+var (
+	ErrConfig = errors.New("link: this controller cannot dial or send with these values")
+	ErrAPI    = errors.New("link: the API cannot be reached")
+	ErrLink   = errors.New("link: the API broke the contract of the tunnel")
+)
+
+// Handler answers the channels an API opens. On a tunnel only the API opens
+// channels, so every frame on a channel of its own goes here, one at a time
+// and in the order it arrived, from the goroutine that runs the tunnel: a
+// handler that takes its time holds the whole link. It writes with
+// Tunnel.Send, and an error of it ends the link.
+//
+// Frame.Payload points into the buffer the next message is read into, so a
+// handler that keeps anything of it copies it first.
+type Handler interface {
+	Frame(t *Tunnel, f wire.Frame) error
+}
+
+// Config is what a tunnel needs. API and Noise come from controller.json;
+// Hello is asked afresh for every dial, because the version, the roles and the
+// newest trust list version of this server change while it runs.
+type Config struct {
+	API   config.APIRef
+	Noise noise.DHKey
+	Hello func() tunnel.Hello
+	// Handler answers the channels the API opens. Without one nothing here
+	// serves channels, and every channel is refused as not reachable.
+	Handler Handler
+	Log     *slog.Logger // nil: slog.Default()
+	Now     func() int64 // nil: time.Now().Unix()
+	// Sleep waits between two attempts of Keep. Only a test sets it, to count
+	// the pauses instead of waiting them out.
+	Sleep func(time.Duration)
+}
+
+// check refuses values this controller cannot dial with, before anything goes
+// out: the address of the API by the grammar of the contract, both keys and
+// the pin by their length, and a hello there has to be.
+func (c Config) check() error {
+	if !trust.ValidTunnelURL(c.API.URL) || len(c.API.Key) != 32 || len(c.API.TLS) != sha256.Size ||
+		len(c.Noise.Public) != 32 || len(c.Noise.Private) != 32 || c.Hello == nil {
+		return ErrConfig
+	}
+	return nil
+}
+
+func (c Config) logger() *slog.Logger {
+	if c.Log != nil {
+		return c.Log
+	}
+	return slog.Default()
+}
+
+func (c Config) now() int64 {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now().Unix()
+}
+
+// Tunnel is one link to one API.
+type Tunnel struct {
+	cfg  Config
+	c    *websocket.Conn
+	tr   *noisep.Transport
+	peer tunnel.Hello
+	// life ends with the tunnel and with nothing else: it is what every read
+	// and every write of this link waits on, so that closing it brings every
+	// goroutine of it back. The context of the dial bounds the way in alone.
+	life  context.Context
+	stop  context.CancelFunc
+	mu    sync.Mutex // one writer at a time
+	once  sync.Once
+	ran   atomic.Bool // Run has begun
+	dead  atomic.Bool // the pong stayed away
+	since int64       // when the tunnel came up
+}
+
+// Dial opens the tunnel to the API of cfg: TLS against its pin, the WebSocket
+// under the subprotocol of the contract, Noise_KK as the initiator, then this
+// controller's hello and the API's. It comes back with a tunnel whose peer has
+// said hello; not a single channel is taken before that (Run).
+func Dial(ctx context.Context, cfg Config) (*Tunnel, error) {
+	if err := cfg.check(); err != nil {
+		return nil, err
+	}
+	name, ok := host(cfg.API.URL)
+	if !ok {
+		return nil, ErrConfig
+	}
+	dial, cancel := context.WithTimeout(ctx, DialTimeout)
+	defer cancel()
+	// The pin stands in for the chain and the names, so the name is only what
+	// SNI carries to a server with several certificates.
+	tlsCfg := tunnel.PinnedTLS(cfg.API.TLS)
+	tlsCfg.ServerName = name
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		// A redirect would carry the handshake somewhere else, perhaps in
+		// clear text. The answer is taken for what it is, and only the 101 of
+		// the address in the configuration opens a tunnel.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	// The connection of a tunnel is taken out of the client at the handshake;
+	// what a failed attempt left lying around is closed here.
+	defer client.CloseIdleConnections()
+	c, _, err := websocket.Dial(dial, cfg.API.URL+"?key="+url.QueryEscape(tunnel.Fingerprint(cfg.Noise.Public)),
+		&websocket.DialOptions{HTTPClient: client, Subprotocols: []string{tunnel.Subprotocol}})
+	if err != nil {
+		return nil, ErrAPI
+	}
+	// A server that does not speak the subprotocol of the tunnel is not the
+	// other end of one; the library lets an answer without it pass.
+	if c.Subprotocol() != tunnel.Subprotocol {
+		c.Close(websocket.StatusProtocolError, "")
+		return nil, ErrLink
+	}
+	// Before the first read: a message of this contract is one frame with the
+	// tag of its Noise message and not a byte more.
+	c.SetReadLimit(wire.MaxFrame + noisep.TagSize)
+	tr, err := handshake(dial, c, cfg)
+	if err != nil {
+		return nil, err
+	}
+	t := &Tunnel{cfg: cfg, c: c, tr: tr, since: cfg.now()}
+	t.life, t.stop = context.WithCancel(context.WithoutCancel(ctx))
+	if err := t.control(dial, wire.CtlHello, cfg.Hello()); err != nil {
+		t.Close()
+		return nil, err
+	}
+	peer, err := t.readHello(dial)
+	if err != nil {
+		t.Close()
+		return nil, err
+	}
+	t.peer = peer
+	return t, nil
+}
+
+// handshake carries out Noise_KK as the initiator: message 1 without a
+// payload, message 2 read and taken only at exactly wire.HandshakeSize bytes.
+// It closes the connection on every failure.
+func handshake(ctx context.Context, c *websocket.Conn, cfg Config) (*noisep.Transport, error) {
+	hs, err := noisep.Handshake(true, []byte(noisep.PrologueTunnel), cfg.Noise, cfg.API.Key, rand.Reader)
+	if err != nil {
+		c.Close(websocket.StatusInternalError, "")
+		return nil, ErrConfig
+	}
+	msg1, _, _, err := hs.WriteMessage(nil, nil)
+	if err != nil || len(msg1) != wire.HandshakeSize {
+		c.Close(websocket.StatusInternalError, "")
+		return nil, ErrConfig
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, msg1); err != nil {
+		c.CloseNow()
+		return nil, ErrAPI
+	}
+	typ, msg2, err := c.Read(ctx)
+	if err != nil {
+		c.CloseNow()
+		return nil, ErrAPI
+	}
+	if typ != websocket.MessageBinary || len(msg2) != wire.HandshakeSize {
+		c.Close(websocket.StatusProtocolError, "")
+		return nil, ErrLink
+	}
+	// Messages 1 and 2 carry an empty payload in every use of Noise in NGC, so
+	// a payload here is a protocol error and nothing to read.
+	payload, cs1, cs2, err := hs.ReadMessage(nil, msg2)
+	if err != nil || len(payload) != 0 || cs1 == nil || cs2 == nil {
+		c.Close(websocket.StatusProtocolError, "")
+		return nil, ErrLink
+	}
+	return noisep.NewTransport(true, cs1, cs2), nil
+}
+
+// readHello reads the hello of the API, the first transport message it sends.
+// The contract of the sender is taken as it is: every part also understands
+// the one before its own, and what a version can be asked for is the question
+// of whoever uses the tunnel, not of the link itself.
+func (t *Tunnel) readHello(ctx context.Context) (tunnel.Hello, error) {
+	plain, err := t.message(ctx)
+	if err != nil {
+		return tunnel.Hello{}, err
+	}
+	f, ctl, err := takeMessage(plain)
+	if err != nil {
+		t.fail()
+		return tunnel.Hello{}, err
+	}
+	if f.Channel != wire.ControlChannel || ctl.T != wire.CtlHello {
+		t.fail()
+		return tunnel.Hello{}, ErrLink
+	}
+	h, err := tunnel.ParseHello(ctl.B)
+	if err != nil {
+		t.fail()
+		return tunnel.Hello{}, ErrLink
+	}
+	return h, nil
+}
+
+// Peer is the hello the API sent. It is read before the first channel and
+// stands for the whole life of the tunnel; the roles are copied, so no caller
+// holds the list of another.
+func (t *Tunnel) Peer() tunnel.Hello {
+	h := t.peer
+	h.Roles = slices.Clone(h.Roles)
+	return h
+}
+
+// Run reads the tunnel until it ends. Every binary message is exactly one
+// Noise transport message whose plaintext is exactly one frame; channel 0
+// carries the control messages the API may send, every other channel goes to
+// the handler. It comes back with nil when the API said goodbye or the tunnel
+// was closed, and with an error when the API broke the contract or the link
+// fell apart.
+func (t *Tunnel) Run(ctx context.Context) error {
+	// One reader at a time: two would take the messages of one Noise session
+	// apart between them. This stands before the close below, so a second
+	// caller does not end the tunnel of the first.
+	if !t.ran.CompareAndSwap(false, true) {
+		return ErrConfig
+	}
+	defer t.Close()
+	// The context of the caller ends the tunnel; from then on the reading
+	// below comes back at once.
+	go func() {
+		select {
+		case <-ctx.Done():
+			t.Close()
+		case <-t.life.Done():
+		}
+	}()
+	go t.ping()
+	for {
+		plain, err := t.message(t.life)
+		if err != nil {
+			// A link this side ended because the other one broke the contract
+			// says so, whatever the socket did afterwards, and a link whose
+			// pong stayed away is gone and not closed: whoever keeps the
+			// tunnel should see both and dial again.
+			if errors.Is(err, ErrLink) || t.dead.Load() || t.life.Err() == nil {
+				return err
+			}
+			return nil
+		}
+		f, ctl, err := takeMessage(plain)
+		if err != nil {
+			t.fail()
+			return err
+		}
+		if f.Channel == wire.ControlChannel {
+			// The hello comes once, before Run; of the two types the API may
+			// send on a tunnel only the goodbye is left here.
+			if ctl.T != wire.CtlBye {
+				t.fail()
+				return ErrLink
+			}
+			return nil
+		}
+		if t.cfg.Handler == nil {
+			// Nothing here serves channels, so the API is told so for this
+			// one and the tunnel stays: its status and its hello are worth
+			// more than the channel.
+			if err := t.Send(wire.Frame{Type: wire.TypeClose, Channel: f.Channel, Payload: closeUnreachable}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := t.cfg.Handler.Frame(t, f); err != nil {
+			t.fail()
+			return err
+		}
+	}
+}
+
+// closeUnreachable is the answer to a channel nothing here serves: the CLOSE
+// payload of the contract with the German text of its code. A fixed value
+// marshals or this package sends nothing at all - Frame.Encode refuses an
+// empty CLOSE payload.
+var closeUnreachable, _ = json.Marshal(wire.Error(wire.CodeUnreachable))
+
+// message reads one transport message and gives back its plaintext. A text
+// message and a message that does not decrypt end the link at once and without
+// an answer.
+func (t *Tunnel) message(ctx context.Context) ([]byte, error) {
+	typ, data, err := t.c.Read(ctx)
+	if err != nil {
+		return nil, ErrAPI
+	}
+	if typ != websocket.MessageBinary {
+		t.fail()
+		return nil, ErrLink
+	}
+	plain, err := t.tr.Open(data)
+	if err != nil {
+		t.fail()
+		return nil, ErrLink
+	}
+	return plain, nil
+}
+
+// takeMessage checks one decrypted message: it is exactly one frame, and a
+// frame on channel 0 is exactly one control message the API may send on a
+// tunnel. Everything else is a reason to end the link. The payload of the
+// frame points into plain.
+func takeMessage(plain []byte) (wire.Frame, wire.Control, error) {
+	f, err := wire.Decode(plain)
+	if err != nil {
+		return wire.Frame{}, wire.Control{}, ErrLink
+	}
+	if f.Channel != wire.ControlChannel {
+		return f, wire.Control{}, nil
+	}
+	if f.Type != wire.TypeData {
+		return wire.Frame{}, wire.Control{}, ErrLink
+	}
+	ctl, err := wire.ParseControl(f.Payload)
+	if err != nil || !wire.ControlAllowed(wire.LinkTunnel, true, ctl.T) {
+		return wire.Frame{}, wire.Control{}, ErrLink
+	}
+	return f, ctl, nil
+}
+
+// Send writes one frame. The writers are serialized: status messages, answers
+// and channels write at the same time, and the counter of the Noise session
+// takes no concurrency - two messages sealed out of order would not decrypt at
+// the other end.
+func (t *Tunnel) Send(f wire.Frame) error {
+	ctx, cancel := context.WithTimeout(t.life, WriteTimeout)
+	defer cancel()
+	return t.write(ctx, f)
+}
+
+// write seals one frame and puts it on the link.
+func (t *Tunnel) write(ctx context.Context, f wire.Frame) error {
+	b, err := f.Encode()
+	if err != nil {
+		return ErrConfig
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	msg, err := t.tr.Seal(b)
+	if err != nil {
+		return ErrConfig
+	}
+	if err := t.c.Write(ctx, websocket.MessageBinary, msg); err != nil {
+		return ErrAPI
+	}
+	return nil
+}
+
+// Control sends one control message on channel 0. Only what a controller may
+// send on a tunnel goes out (wire.ControlAllowed): a type the API would have
+// to end the link over is refused here.
+func (t *Tunnel) Control(typ string, body any) error {
+	if !wire.ControlAllowed(wire.LinkTunnel, false, typ) {
+		return ErrConfig
+	}
+	ctx, cancel := context.WithTimeout(t.life, WriteTimeout)
+	defer cancel()
+	return t.control(ctx, typ, body)
+}
+
+// control sends one control message within ctx, the hello of the dial
+// included.
+func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
+	var raw json.RawMessage
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return ErrConfig
+		}
+		raw = b
+	}
+	p, err := json.Marshal(wire.Control{T: typ, B: raw})
+	if err != nil {
+		return ErrConfig
+	}
+	return t.write(ctx, wire.Frame{Type: wire.TypeData, Channel: wire.ControlChannel, Payload: p})
+}
+
+// ping asks the API every tunnel.PingInterval seconds whether it is still
+// there. A pong that stays away for a whole interval makes the link dead,
+// whatever the socket still says: a tunnel nobody notices is gone would take
+// every channel on it with it.
+func (t *Tunnel) ping() {
+	tick := time.NewTicker(tunnel.PingInterval * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-t.life.Done():
+			return
+		case <-tick.C:
+		}
+		ctx, cancel := context.WithTimeout(t.life, tunnel.PingInterval*time.Second)
+		err := t.c.Ping(ctx)
+		cancel()
+		if err != nil {
+			t.dead.Store(true)
+			t.Close()
+			return
+		}
+	}
+}
+
+// fail ends the link at once and without an answer: what came in was not from
+// the other end of the handshake, or not of this contract.
+func (t *Tunnel) fail() {
+	t.c.Close(websocket.StatusProtocolError, "")
+	t.stop()
+}
+
+// Close ends the tunnel. It may be called more than once and from any
+// goroutine; whoever runs the tunnel comes back out of Run.
+func (t *Tunnel) Close() error {
+	var err error
+	t.once.Do(func() {
+		err = t.c.Close(websocket.StatusNormalClosure, "")
+		t.stop()
+	})
+	return err
+}
+
+// Keep dials again and again until ctx ends. The pause doubles from
+// tunnel.ReconnectMin to tunnel.ReconnectMax and carries up to 20 % jitter, so
+// that seven controllers do not all return in the same second.
+func Keep(ctx context.Context, cfg Config) {
+	log := cfg.logger()
+	sleep := cfg.Sleep
+	if sleep == nil {
+		// Waiting ends with the context as well: a controller that is being
+		// stopped does not sit out a minute first.
+		sleep = func(d time.Duration) {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+			}
+		}
+	}
+	pause := tunnel.ReconnectMin * time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		t, err := Dial(ctx, cfg)
+		if err == nil {
+			// A tunnel that stood begins again at the shortest pause: what
+			// ended it was not an API that is away.
+			pause = tunnel.ReconnectMin * time.Second
+			err = t.Run(ctx)
+			t.Close()
+			log.Info("tunnel ended", "api", cfg.API.URL, "seconds", cfg.now()-t.since)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			log.Warn("tunnel failed", "api", cfg.API.URL, "err", err)
+		}
+		sleep(jitter(pause))
+		pause = grow(pause)
+	}
+}
+
+// grow doubles the pause up to tunnel.ReconnectMax. An API that is away for an
+// hour is asked once a minute and not once a second, and a controller that
+// waits a minute is back within one when it returns.
+func grow(d time.Duration) time.Duration {
+	if d *= 2; d > tunnel.ReconnectMax*time.Second {
+		return tunnel.ReconnectMax * time.Second
+	}
+	return d
+}
+
+// jitter adds up to a fifth of d. Nothing secret hangs on it, so the fast
+// generator of the standard library does: what it is good for is that the
+// pause of every controller is its own.
+func jitter(d time.Duration) time.Duration {
+	return d + time.Duration(mrand.Int64N(int64(d)/5+1))
+}
+
+// host names the API in the TLS handshake. The address went through
+// trust.ValidTunnelURL in check already; it is asked again here so that this
+// stays true of every way into this function.
+func host(u string) (string, bool) {
+	if !trust.ValidTunnelURL(u) {
+		return "", false
+	}
+	h, _, err := net.SplitHostPort(strings.TrimSuffix(strings.TrimPrefix(u, "wss://"), "/tunnel"))
+	if err != nil {
+		return "", false
+	}
+	return h, true
+}
