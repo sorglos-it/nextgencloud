@@ -40,7 +40,11 @@ func TestCheckStatement(t *testing.T) {
 	for _, s := range []string{
 		"CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind)){{opts}}",
 		"CREATE INDEX ngc_blob_seq ON ngc_blob (kind, seq, id)",
+		"CREATE UNIQUE INDEX ngc_user_name ON ngc_user (name)",
 		"ALTER TABLE ngc_app ADD COLUMN node {{key}} NOT NULL",
+		// MariaDB, MySQL and SQLite all take ADD without the word COLUMN, so
+		// the rules take it too - and measure the column all the same.
+		"ALTER TABLE ngc_app ADD node {{key}} NOT NULL",
 	} {
 		if err := checkStatement(s); err != nil {
 			t.Errorf("%q: %v", s, err)
@@ -59,6 +63,19 @@ func TestCheckStatement(t *testing.T) {
 		"IF NOT EXISTS":          "CREATE TABLE IF NOT EXISTS ngc_blob (kind {{key}} NOT NULL){{opts}}",
 		"AUTO_INCREMENT":         "CREATE TABLE ngc_blob (seq {{int}} NOT NULL AUTO_INCREMENT){{opts}}",
 		"an unknown placeholder": "CREATE TABLE ngc_blob (kind {{blob}} NOT NULL){{opts}}",
+		// A column added without the word COLUMN sits in no brackets, so only
+		// the type in front of it shows what it is.
+		"a column added without the word COLUMN": "ALTER TABLE ngc_app ADD nonsense {{key}} NOT NULL",
+		// SQL does not care how an identifier is written: Nonsense and
+		// NGC_OTHER_X are a column and an index like any other.
+		"a column in mixed case": "CREATE TABLE ngc_blob (Nonsense {{key}} NOT NULL){{opts}}",
+		"an index in upper case": "CREATE INDEX NGC_OTHER_X ON ngc_blob (kind)",
+		// A column may carry the name of a word the rules skip between the
+		// columns; it is still a column nobody listed.
+		"a column named like a keyword": "CREATE TABLE ngc_blob (key {{key}} NOT NULL){{opts}}",
+		"an index on such a column":     "CREATE INDEX ngc_blob_x ON ngc_blob (key)",
+		// ENGINE = MyISAM says the same as ENGINE=MyISAM.
+		"an engine with spaces": "CREATE TABLE ngc_blob (kind {{key}} NOT NULL) ENGINE = MyISAM",
 	} {
 		if err := checkStatement(s); err == nil {
 			t.Errorf("%s was accepted: %q", name, s)

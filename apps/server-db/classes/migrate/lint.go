@@ -31,7 +31,12 @@ func checkStatement(s string) error {
 	if strings.ContainsAny(s, "'\"`") {
 		return fmt.Errorf("a statement holds a quote: %.40q", s)
 	}
-	upper := strings.ToUpper(s)
+	// The words are looked for in one line, in upper case and without the
+	// spaces around an =, because ") ENGINE = MyISAM" says exactly what
+	// ") ENGINE=MyISAM" says.
+	upper := strings.ToUpper(strings.Join(strings.Fields(s), " "))
+	upper = strings.ReplaceAll(upper, " =", "=")
+	upper = strings.ReplaceAll(upper, "= ", "=")
 	for _, w := range forbidden {
 		if strings.Contains(upper, w) {
 			if w == "DROP" || w == "RENAME" || w == "TRUNCATE" {
@@ -62,8 +67,11 @@ func checkStatement(s string) error {
 func checkNames(s string) error {
 	var names []string
 	for _, w := range words(s) {
-		if strings.HasPrefix(w, "ngc_") {
-			names = append(names, w)
+		// SQL does not care how an identifier is written, so every name is
+		// measured in lower case: NGC_OTHER_X names what ngc_other_x names,
+		// and upper case is no way past the fixed list.
+		if lower := strings.ToLower(w); strings.HasPrefix(lower, "ngc_") {
+			names = append(names, lower)
 		}
 	}
 	// The table is looked up before the rest is measured against it, because
@@ -136,28 +144,79 @@ func words(s string) []string {
 	})
 }
 
-// keywords are the bare words inside the brackets that are not columns.
+// keywords are the words that stand between the columns of a CREATE TABLE.
 var keywords = []string{"not", "null", "primary", "key", "unique", "add", "column"}
 
-// columnWords returns the words a statement uses as columns: every bare
-// lower-case word inside the brackets that is not a keyword or a table name,
-// plus the column of an ALTER TABLE ... ADD COLUMN.
+// columnWords returns the words a statement uses as columns: the word in
+// front of every column type, the column of an ALTER TABLE ... ADD, and every
+// bare word inside the brackets that is not a name of ours. Everything is
+// measured in lower case, because SQL does not care how an identifier is
+// written.
 func columnWords(s string) []string {
+	out := append(typedWords(s), addWords(s)...)
+	bare := stripTypes(s)
+	open := strings.Index(bare, "(")
+	if open < 0 {
+		return out
+	}
+	// Between the columns of a CREATE TABLE stand NOT NULL, PRIMARY KEY and
+	// UNIQUE, so those words are skipped there. A statement without a column
+	// type - CREATE INDEX - carries nothing but columns in its brackets, and
+	// there even a column called key is measured against the list.
+	defines := strings.Contains(s, "{{")
+	for _, w := range words(bare[open:]) {
+		lower := strings.ToLower(w)
+		if strings.HasPrefix(lower, "ngc_") || (defines && slices.Contains(keywords, lower)) {
+			continue
+		}
+		out = append(out, lower)
+	}
+	return out
+}
+
+// typedWords returns the word in front of every column type: in
+// "kind {{key}} NOT NULL" that is kind. A column is written that way whether
+// it stands in brackets or behind ADD, so this is what catches a column that
+// the brackets alone would miss. {{opts}} is no column type and is skipped.
+func typedWords(s string) []string {
 	var out []string
-	if bare := stripTypes(s); strings.Contains(bare, "(") {
-		open := strings.Index(bare, "(")
-		for _, w := range words(bare[open:]) {
-			lower := strings.ToLower(w)
-			if w != lower || slices.Contains(keywords, lower) || strings.HasPrefix(lower, "ngc_") {
-				continue
-			}
-			out = append(out, lower)
+	for {
+		i := strings.Index(s, "{{")
+		if i < 0 {
+			return out
+		}
+		before, rest := s[:i], s[i+2:]
+		j := strings.Index(rest, "}}")
+		if j < 0 {
+			return out
+		}
+		name := rest[:j]
+		s = rest[j+2:]
+		if name == "opts" {
+			continue
+		}
+		if f := words(before); len(f) > 0 {
+			out = append(out, strings.ToLower(f[len(f)-1]))
 		}
 	}
-	f := strings.Fields(s)
+}
+
+// addWords returns the column of an ALTER TABLE ... ADD. MariaDB, MySQL and
+// SQLite all take ADD without the word COLUMN, so a column added that way is
+// measured like every other one.
+func addWords(s string) []string {
+	var out []string
+	f := words(s)
 	for i, w := range f {
-		if strings.EqualFold(w, "COLUMN") && i+1 < len(f) {
-			out = append(out, strings.ToLower(f[i+1]))
+		if !strings.EqualFold(w, "add") {
+			continue
+		}
+		j := i + 1
+		if j < len(f) && strings.EqualFold(f[j], "column") {
+			j++
+		}
+		if j < len(f) {
+			out = append(out, strings.ToLower(f[j]))
 		}
 	}
 	return out
