@@ -108,9 +108,6 @@ const (
 // the RP ID, one byte of flags and the 4-byte signature counter.
 const minAuthData = 37
 
-// keyIDSize is the length of a key ID in bytes (sign.KeyID).
-const keyIDSize = 16
-
 // UserKey is a key of a user as listed in the trust list.
 type UserKey struct {
 	ID     string    `json:"id"`
@@ -188,11 +185,11 @@ func (p Proof) Validate() error {
 // wherever it travels.
 func ValidKeyID(s string) bool {
 	// The length check comes first so an oversized key ID is never decoded.
-	if len(s) != enc.B64.EncodedLen(keyIDSize) {
+	if len(s) != enc.B64.EncodedLen(sign.KeyIDSize) {
 		return false
 	}
 	id, err := enc.B64.DecodeString(s)
-	return err == nil && len(id) == keyIDSize
+	return err == nil && len(id) == sign.KeyIDSize
 }
 
 // RP names the relying party for passkeys.

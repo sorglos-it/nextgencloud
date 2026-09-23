@@ -355,6 +355,19 @@ func (l *List) User(id string) (User, bool) {
 	return User{}, false
 }
 
+// UserByName returns the user with the login name name. Names are unique in a
+// valid list (Validate), so at most one matches. The list is sorted by ID, not
+// by name, so this walks it; the API looks a typed name up with it
+// (session.Challenge does the same).
+func (l *List) UserByName(name string) (User, bool) {
+	for _, u := range l.Users {
+		if u.Name == name {
+			return u, true
+		}
+	}
+	return User{}, false
+}
+
 // Role returns the role with name.
 func (l *List) Role(name string) (Role, bool) {
 	i, ok := slices.BinarySearchFunc(l.Roles, name, func(r Role, n string) int { return strings.Compare(r.Name, n) })

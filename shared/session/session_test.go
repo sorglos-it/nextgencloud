@@ -680,7 +680,7 @@ func TestParseLoginFinish(t *testing.T) {
 func TestParseLoginChallenge(t *testing.T) {
 	f := newFixture(t)
 	cases := []parseCase{}
-	for _, c := range loginVectors(t, f) {
+	for _, c := range loginCases(t, f) {
 		cases = append(cases, parseCase{c.Name, c.Challenge, c.Valid})
 	}
 	valid := mustJSON(t, LoginChallenge{
@@ -923,11 +923,137 @@ type loginChallenge struct {
 // API builds it from trust.User.Keys.
 func passkeyRef(k proof.UserKey) PasskeyRef { return PasskeyRef{CredID: k.CredID, KeyID: k.ID} }
 
+// loginBuild is one answer Challenge builds: for a known login name from the
+// trust list, for an unknown one made up from the name and the installation's
+// secret. Two answers for one name differ in nonce and time alone — an
+// implementation that hands an unknown name an empty list, or that dices its
+// values, gives other bytes and fails the comparison.
+type loginBuild struct {
+	Name      string    `json:"name"`
+	Known     bool      `json:"known"`
+	TOTP      bool      `json:"totp"` // what the database says of a known user; ignored for an unknown name
+	Nonce     enc.Bytes `json:"nonce"`
+	Now       int64     `json:"now"`
+	Challenge enc.Bytes `json:"challenge"` // what Challenge returns, as JSON
+}
+
+// loginVector is everything about the answer of PathLoginStart: Secret is the
+// installation's secret (config.API.SecretKey) that a made-up answer is
+// derived from, MaxLifetime what this API grants, Built the answers Challenge
+// builds and Cases the answers ParseLoginChallenge decides on.
+type loginVector struct {
+	Secret      enc.Bytes        `json:"secret"`
+	MaxLifetime int64            `json:"maxLifetime"`
+	Built       []loginBuild     `json:"built"`
+	Cases       []loginChallenge `json:"cases"`
+}
+
+// The installation secret and session length of the login vector. The secret
+// is config.API.SecretKey, which every API node of an installation shares, so
+// each of them makes up the same answer for one name.
+const loginMaxLifetime = 3600
+
+var loginSecret = bytes.Repeat([]byte{0x57}, 32)
+
+// loginBuilds: carol is known, the other three names are not. "mallory" comes
+// twice with another nonce, time and TOTP, because only two answers show that
+// they agree. The three unknown names draw the three shapes the fixture's list
+// offers — passkeys alone, a password alone, and both with passwordToo — so a
+// made-up answer is of a shape the installation really has.
+func loginBuilds(t testing.TB, f fixture) []loginBuild {
+	build := func(name string, totp bool, fill byte, when int64) loginBuild {
+		nonce := bytes.Repeat([]byte{fill}, NonceSize)
+		c, err := Challenge(f.list, name, totp, loginSecret, nonce, when, loginMaxLifetime)
+		if err != nil {
+			t.Fatalf("challenge for %q: %v", name, err)
+		}
+		_, known := f.list.UserByName(name)
+		return loginBuild{Name: name, Known: known, TOTP: totp, Nonce: nonce, Now: when, Challenge: mustJSON(t, c)}
+	}
+	return []loginBuild{
+		build("carol", true, 0x58, now),
+		build("mallory", false, 0x58, now),   // passkeys alone
+		build("mallory", true, 0x59, now+60), // the same name again: only nonce and time may differ
+		build("eve", false, 0x58, now),       // a password alone
+		build("trudy", false, 0x58, now),     // both, as a role with passwordToo asks
+	}
+}
+
+// checkLoginBuilds holds the built answers against Challenge, as a second API
+// would: the same name, list and secret give the same bytes but for nonce and
+// time, a known name gives exactly what the list says, and nothing made up
+// names a real user or key.
+func checkLoginBuilds(t *testing.T, f fixture, builds []loginBuild) {
+	t.Helper()
+	first := map[string][]byte{}
+	madeUpPasskeys := false
+	for _, b := range builds {
+		c, err := Challenge(f.list, b.Name, b.TOTP, loginSecret, b.Nonce, b.Now, loginMaxLifetime)
+		if err != nil {
+			t.Fatalf("%s: %v", b.Name, err)
+		}
+		if got := mustJSON(t, c); !bytes.Equal(got, b.Challenge) {
+			t.Errorf("%s: built %s, want %s", b.Name, got, b.Challenge)
+		}
+		if _, err := ParseLoginChallenge(b.Challenge); err != nil {
+			t.Errorf("%s: its own answer is refused: %v", b.Name, err)
+		}
+		u, known := f.list.UserByName(b.Name)
+		if known != b.Known {
+			t.Errorf("%s: known=%v, want %v", b.Name, known, b.Known)
+		}
+		// Nonce and time are the only values two answers for one name may
+		// differ in, so they go before the comparison.
+		c.Nonce, c.Now = nil, 0
+		if b.Known {
+			var want []PasskeyRef
+			for _, k := range u.Keys {
+				if k.Kind == proof.KindPasskey {
+					want = append(want, passkeyRef(k))
+				}
+			}
+			if c.User != u.ID || c.TOTP != b.TOTP || c.PasswordToo != f.list.PasswordToo(u.ID) ||
+				!bytes.Equal(mustJSON(t, c.Passkeys), mustJSON(t, want)) || c.KDF == nil {
+				t.Errorf("%s: %+v does not match the list", b.Name, c)
+			}
+			continue
+		}
+		if _, ok := f.list.User(c.User); ok {
+			t.Errorf("%s: made-up user %s stands in the list", b.Name, c.User)
+		}
+		for _, p := range c.Passkeys {
+			if _, _, ok := f.list.KeyOwner(p.KeyID); ok {
+				t.Errorf("%s: made-up key %s stands in the list", b.Name, p.KeyID)
+			}
+		}
+		madeUpPasskeys = madeUpPasskeys || len(c.Passkeys) > 0
+		if was, seen := first[b.Name]; seen {
+			if got := mustJSON(t, c); !bytes.Equal(was, got) {
+				t.Errorf("%s: two answers differ: %s and %s", b.Name, was, got)
+			}
+		} else {
+			first[b.Name] = mustJSON(t, c)
+		}
+	}
+	if !madeUpPasskeys {
+		t.Error("no made-up answer names a passkey, so an empty list would pass the vector")
+	}
+	// One answer for every unknown name would be as telling as no answer at
+	// all, so the names must differ from each other as well.
+	answers := map[string]bool{}
+	for _, b := range first {
+		answers[string(b)] = true
+	}
+	if len(answers) != len(first) {
+		t.Errorf("%d unknown names share %d made-up answers", len(first), len(answers))
+	}
+}
+
 // loginVectors: the valid answer is carol's, whose role asks for the password
 // too, so it names both of her passkeys and the KDF of her password key; the
 // key IDs are those of her keys in the vector's trust list. Each invalid case
 // breaks one rule.
-func loginVectors(t testing.TB, f fixture) []loginChallenge {
+func loginCases(t testing.TB, f fixture) []loginChallenge {
 	base := LoginChallenge{
 		Nonce: bytes.Repeat([]byte{0x56}, NonceSize), Now: now, MaxLifetime: 3600,
 		Installation: f.list.Installation, User: f.carol, KDF: f.carolPassword.Key.KDF,
@@ -1150,15 +1276,15 @@ func checkSetupVector(t *testing.T, v setupVector) {
 }
 
 type vector struct {
-	Trust         trust.Signed     `json:"trust"`
-	Now           int64            `json:"now"`
-	Client        enc.Bytes        `json:"client"`
-	Proof         proof.Proof      `json:"proof"`
-	API           sign.Envelope    `json:"api"`
-	APIRejects    []apiReject      `json:"apiRejects"`
-	ClientRejects []clientReject   `json:"clientRejects"`
-	Login         []loginChallenge `json:"login"`
-	Setup         setupVector      `json:"setup"`
+	Trust         trust.Signed   `json:"trust"`
+	Now           int64          `json:"now"`
+	Client        enc.Bytes      `json:"client"`
+	Proof         proof.Proof    `json:"proof"`
+	API           sign.Envelope  `json:"api"`
+	APIRejects    []apiReject    `json:"apiRejects"`
+	ClientRejects []clientReject `json:"clientRejects"`
+	Login         loginVector    `json:"login"`
+	Setup         setupVector    `json:"setup"`
 }
 
 func TestVectors(t *testing.T) {
@@ -1175,8 +1301,10 @@ func TestVectors(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", r.Name, err, r.want)
 		}
 	}
-	logins := loginVectors(t, f)
-	checkLoginVector(t, logins)
+	login := loginVector{Secret: loginSecret, MaxLifetime: loginMaxLifetime,
+		Built: loginBuilds(t, f), Cases: loginCases(t, f)}
+	checkLoginBuilds(t, f, login.Built)
+	checkLoginCases(t, login.Cases)
 	setup := setupVectors(t)
 	checkSetupVector(t, setup)
 	// Every offer refused for its info passes the budget of the info, so a
@@ -1205,12 +1333,12 @@ func TestVectors(t *testing.T) {
 		}
 	}
 	golden.Check(t, *update, "session.json", vector{Trust: f.admin.Sign(t, f.list), Now: now, Client: f.client, Proof: f.proof, API: f.api,
-		APIRejects: rejects, ClientRejects: clients, Login: logins, Setup: setup})
+		APIRejects: rejects, ClientRejects: clients, Login: login, Setup: setup})
 }
 
-// checkLoginVector holds the login vector against ParseLoginChallenge, as the
+// checkLoginCases holds the login vector against ParseLoginChallenge, as the
 // web interface holds it against its own parser.
-func checkLoginVector(t *testing.T, cases []loginChallenge) {
+func checkLoginCases(t *testing.T, cases []loginChallenge) {
 	t.Helper()
 	for _, c := range cases {
 		_, err := ParseLoginChallenge(c.Challenge)
@@ -1338,8 +1466,11 @@ func FuzzParseLoginFinish(f *testing.F) {
 // browser could not turn an accepted answer into a proof.
 func FuzzParseLoginChallenge(f *testing.F) {
 	fx := newFixture(f)
-	for _, c := range loginVectors(f, fx) {
+	for _, c := range loginCases(f, fx) {
 		f.Add([]byte(c.Challenge))
+	}
+	for _, b := range loginBuilds(f, fx) {
+		f.Add([]byte(b.Challenge))
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		c, err := ParseLoginChallenge(b)
@@ -1364,6 +1495,38 @@ func FuzzParseLoginChallenge(f *testing.F) {
 			if err := probe.Validate(); err != nil {
 				t.Fatalf("key ID %q is none for a proof: %v", p.KeyID, err)
 			}
+		}
+	})
+}
+
+// FuzzChallenge holds Challenge to its promise, whatever name it is asked
+// about: the answer it gives passes ParseLoginChallenge, and for a name the
+// list does not know, asking again gives the same one whatever the caller
+// says about TOTP. An answer a browser refuses, or one that changes between
+// two tries, would tell whoever asks that the name is unknown.
+func FuzzChallenge(f *testing.F) {
+	fx := newFixture(f)
+	nonce := bytes.Repeat([]byte{0x58}, NonceSize)
+	f.Add("carol")
+	f.Add("mallory")
+	f.Fuzz(func(t *testing.T, name string) {
+		c, err := Challenge(fx.list, name, false, loginSecret, nonce, now, loginMaxLifetime)
+		if err != nil {
+			if trust.ValidLoginName(name) {
+				t.Fatalf("no answer for the login name %q: %v", name, err)
+			}
+			return
+		}
+		b := mustJSON(t, c)
+		if _, err := ParseLoginChallenge(b); err != nil {
+			t.Fatalf("%q: its own answer is refused: %v", name, err)
+		}
+		again, err := Challenge(fx.list, name, true, loginSecret, nonce, now, loginMaxLifetime)
+		if err != nil {
+			t.Fatalf("%q: second call: %v", name, err)
+		}
+		if _, known := fx.list.UserByName(name); !known && !bytes.Equal(b, mustJSON(t, again)) {
+			t.Fatalf("%q: two answers differ: %s and %s", name, b, mustJSON(t, again))
 		}
 	})
 }

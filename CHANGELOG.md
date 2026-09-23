@@ -7,6 +7,12 @@ die Credential-ID, sondern auch die Schlüsselkennung (`kid`), die in den Beweis
 hat bei der Anmeldung noch keine Vertrauensliste; ohne die Kennung kam niemand mit Passkey herein.
 Dazu `session.ParseLoginChallenge` mit Grenzen und Testdaten (`login` in `session.json`).
 
+Dieselbe Stelle weiter: `session.Challenge` baut die Anmelde-Antwort aus der Vertrauensliste, ohne
+Datenbank. Einen unbekannten Benutzernamen beantwortet sie erfunden, fest abgeleitet aus dem Namen
+und dem Geheimnis der Installation (`config.API.SecretKey`), damit derselbe Name immer dieselbe
+Antwort bekommt – sonst verriete der zweite Versuch, welche Benutzer es gibt. Form und Parameter
+stammen aus der Liste, keine erfundene Kennung gehört zu einem echten Schlüssel.
+
 Recovery-Modus als verbindliche Vorgabe aufgenommen: `docs/recovery-modus.md`, dazu die Zeile in
 `CLAUDE.md`. Root-Sticks mit Quorum, TPM, verschlüsseltes Datenbank-Volume, signierte
 Admin-Datensätze, Stufen enterprise, home und test. Noch kein Code.

@@ -147,7 +147,8 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 - **Vertragsfassungen:** Zwischen Browser und API steht die Nummer der Fassung im Pfad, heute
   überall `/api/v1/…` (`session.Path…`, auch die WebSocket-Leitung `session.PathSocket`). Neue
   oder geänderte Felder kommen nur mit einer neuen Nummer, denn striktes JSON lehnt unbekannte
-  Felder ab. Die API bedient die aktuelle und die vorige Nummer nebeneinander, jede unter ihren
+  Felder ab. Diese Regel gilt ab der ersten Veröffentlichung einer Nummer: Solange eine Fassung
+  noch nirgends läuft, ändert eine Vertragsänderung sie an Ort und Stelle. Die API bedient die aktuelle und die vorige Nummer nebeneinander, jede unter ihren
   eigenen Pfaden; eine alte Shell spricht weiter `/api/v1/…`, bis sie aktualisiert ist. Das passt
   zur Reihenfolge der Updates (Datenbank → API → Controller → Webinterface, Entwurf 4.8): Das
   Webinterface ist nie neuer als die API. Im Tunnel nennt `tunnel.Hello` die Fassung (`contract`,
@@ -169,7 +170,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige, darunter Fassungen mit Adressen, die die Grammatik brechen | `trust`: `TestVectors` |
 | `url.json` | Hosts und Adressen: `hosts`, `hostPort`, `tunnel` (bei gültigen die Adresse hinter Apache nach `trust.WebURL`), `web`, `origins`, `store`, je gültig oder nicht | `trust`: `TestURLVectors` |
 | `ulh/` | `host.sh` (von Hand) prüft Hosts wie die ulh-Skripte, getestet von `TestHostScript` | von Hand |
-| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `login`: Anmelde-Antworten, gültige und ungültige (die gültige nennt beide Passkeys von `carol` aus `trust` mit `credId` und `kid`, dazu ihr `kdf`; abgelehnt werden unter anderem ein Eintrag ohne `kid`, mit falscher Länge, ohne base64url, doppelt oder mit unbekanntem Feld daneben); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
+| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `login`: `secret` (das Geheimnis der Installation), `maxLifetime`, `built` (Antworten von `session.Challenge`: für `carol` aus `trust`, erfunden für drei unbekannte Namen, `mallory` zweimal – nur `nonce` und `now` dürfen sich unterscheiden) und `cases` (Antworten für `session.ParseLoginChallenge`, gültige und ungültige: die gültige nennt beide Passkeys von `carol` mit `credId` und `kid`, dazu ihr `kdf`; abgelehnt werden unter anderem ein Eintrag ohne `kid`, mit falscher Länge, ohne base64url, doppelt oder mit unbekanntem Feld daneben); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
 | `task.json` | Root-Aufgabe (`deactivate`) und erneute Bestätigung | `task`: `TestVectors` |
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
@@ -299,9 +300,17 @@ erreichbar).
   Zuordnung Credential-ID → Schlüsselkennung sonst nirgends findet. Ohne Passkey bleibt die Liste
   leer; sonst hat jeder Eintrag eine Credential-ID von 1 bis `proof.MaxCredID` (1023) Byte und eine
   Schlüsselkennung nach `proof.ValidKeyID` (base64url von 16 Byte), keine steht zweimal, höchstens
-  `session.MaxPasskeys` (16) Einträge. Die erfundene Antwort für einen unbekannten Namen hält
-  dieselben Regeln ein, sonst verriete eine Antwort, die der Browser ablehnt, dass es den Benutzer
-  nicht gibt. Testdaten: `login` in `session.json`.
+  `session.MaxPasskeys` (16) Einträge. Testdaten: `login` in `session.json`.
+- Die API baut die Antwort mit `session.Challenge`: Für einen bekannten Benutzer steht alles in der
+  Vertrauensliste (Passkeys, `kdf` seines Passwortschlüssels, `passwordToo` aus seinen Rollen, `rp`);
+  nur `totp` kommt aus der Datenbank (`dbapi.User.TOTP`) und wird übergeben. Einen unbekannten Namen
+  beantwortet sie erfunden, denn eine Antwort anderer Form verriete, welche Benutzer es gibt. Die
+  erfundenen Werte leitet sie fest aus dem Namen und dem Geheimnis der Installation ab (HMAC-SHA256
+  mit `config.API.SecretKey`, den alle API-Knoten teilen), damit derselbe Name immer dieselbe
+  Antwort bekommt – Zahl der Passkeys, Längen der Credential-IDs, ob `kdf` dabei ist und mit
+  welchen Parametern, `totp`. Gewürfelte Werte verrieten den Unterschied schon beim zweiten
+  Versuch. Form und Parameter stammen aus der Liste selbst, und keine erfundene Kennung gehört zu
+  einem echten Schlüssel oder Benutzer.
 - `E_LOGIN` steht für jede fehlgeschlagene Anmeldung gleich (unbekannter Name, falscher Beweis oder
   TOTP-Code, fehlender Passwortbeweis, verbrauchte oder abgelaufene Nonce) und für eine fehlende
   oder abgelaufene Sitzung. `E_LOCKED` kommt mit `Retry-After` in Sekunden. Die Sperre gilt je
