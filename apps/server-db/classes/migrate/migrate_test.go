@@ -641,6 +641,40 @@ func TestApplyAfterCrashedOwner(t *testing.T) {
 	tablesEmpty(t, db)
 }
 
+// schemaRow is one thing the database wrote down: what it is, what it is
+// called and which table it belongs to.
+type schemaRow struct{ kind, name, of string }
+
+// schemaOf reads what SQLite really made of the statements it was given.
+// Left out is only SQLite's own bookkeeping, and it is named piece by piece:
+// sqlite_stat% comes from ANALYZE, sqlite_sequence from AUTOINCREMENT.
+//
+// "sqlite_%" was too wide. It also hid every sqlite_autoindex_*, the name
+// SQLite gives the index it makes for a PRIMARY KEY - so the one measurement
+// that trusts no rule of ours was blind to exactly the indexes no statement
+// had written out by name.
+func schemaOf(t *testing.T, db *sql.DB) []schemaRow {
+	t.Helper()
+	rows, err := db.QueryContext(ctx,
+		"SELECT type, name, tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_stat%' AND name <> 'sqlite_sequence'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []schemaRow
+	for rows.Next() {
+		var r schemaRow
+		if err := rows.Scan(&r.kind, &r.name, &r.of); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // unlistedInDB asks the database what came into being and gives back every
 // name that no fixed list carries: a table, an index or a column. This is the
 // one measurement that does not trust the rules at all - it reads back what
@@ -648,35 +682,28 @@ func TestApplyAfterCrashedOwner(t *testing.T) {
 func unlistedInDB(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 	var bad []string
-	rows, err := db.QueryContext(ctx,
-		"SELECT type, name, tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var tables []string
-	for rows.Next() {
-		var kind, name, of string
-		if err := rows.Scan(&kind, &name, &of); err != nil {
-			t.Fatal(err)
-		}
-		switch kind {
+	for _, r := range schemaOf(t, db) {
+		switch r.kind {
 		case "table":
-			if !slices.Contains(sqlstore.Tables, name) {
-				bad = append(bad, "table "+name)
+			if !slices.Contains(sqlstore.Tables, r.name) {
+				bad = append(bad, "table "+r.name)
 				continue
 			}
-			tables = append(tables, name)
+			tables = append(tables, r.name)
 		case "index":
-			if !slices.Contains(sqlstore.Tables, of) || !strings.HasPrefix(name, of+"_") {
-				bad = append(bad, "index "+name)
+			// An index either carries the name of its table in front, the way
+			// a migration has to write it, or it is the one SQLite made for a
+			// PRIMARY KEY and named itself: sqlite_autoindex_<table>_<n>.
+			// That one belongs to the table of the statement that made it, so
+			// it is as listed as the table is.
+			if !slices.Contains(sqlstore.Tables, r.of) ||
+				!(strings.HasPrefix(r.name, r.of+"_") || strings.HasPrefix(r.name, "sqlite_autoindex_"+r.of+"_")) {
+				bad = append(bad, "index "+r.name)
 			}
 		default:
-			bad = append(bad, kind+" "+name)
+			bad = append(bad, r.kind+" "+r.name)
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
 	}
 	// The type a column was given is a name the database wrote down too, so
 	// it is looked up the same way: it has to be one the dialect can make.
@@ -885,5 +912,34 @@ func TestTheMessageSaysWhichStatement(t *testing.T) {
 		if !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: the message does not say %q: %v", c.name, c.want, err)
 		}
+	}
+}
+
+// TestTheOracleSeesEveryIndex: unlistedInDB is the one measurement that
+// trusts no rule of ours, so it has to see everything the database wrote
+// down. It began by leaving out everything called sqlite_%, and that is the
+// name SQLite gives the index it makes for a PRIMARY KEY - so exactly the
+// indexes nobody wrote out by hand were the ones it could not see. Now only
+// SQLite's own bookkeeping is left out, named piece by piece, and the whole
+// schema of NGC still comes back with nothing unlisted in it.
+func TestTheOracleSeesEveryIndex(t *testing.T) {
+	db := openFile(t)
+	if _, err := Apply(ctx, db, sqlstore.SQLite, "test", 1790000000); err != nil {
+		t.Fatal(err)
+	}
+	// PRIMARY KEY (kind, id) of ngc_blob: SQLite makes an index for it and
+	// names it itself.
+	const autoindex = "sqlite_autoindex_ngc_blob_1"
+	found := false
+	for _, r := range schemaOf(t, db) {
+		if r.name == autoindex {
+			found = r.kind == "index" && r.of == "ngc_blob"
+		}
+	}
+	if !found {
+		t.Errorf("the oracle does not see %s, so it cannot see any index a statement did not name", autoindex)
+	}
+	if bad := unlistedInDB(t, db); len(bad) != 0 {
+		t.Errorf("the schema of NGC carries something unlisted: %v", bad)
 	}
 }

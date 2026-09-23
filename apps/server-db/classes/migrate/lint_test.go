@@ -1,6 +1,9 @@
 package migrate
 
 import (
+	"go/ast"
+	"go/parser"
+	gotoken "go/token" // token is a type of this package
 	"regexp"
 	"slices"
 	"strings"
@@ -736,3 +739,68 @@ func TestABoundBitesBeforeTheWork(t *testing.T) {
 		t.Errorf("the statement past the bound was measured before anybody counted: %v", err)
 	}
 }
+
+// TestTheRunnerDoorIsOpenedOnce reads this package's own source and counts
+// where the runner's door is opened. who is a bool, so a bare true at a call
+// site would let a migration name ngc_schema and ngc_lock: the compiler takes
+// it, every test of behaviour still passes, and the guard of takeTable is
+// gone without a word. So the who of every call has to be one of the two
+// names, never a value and never a variable, and fromRunner stands exactly
+// once - in bootstrap, which makes the two tables before the first migration
+// can run.
+func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
+	// Where the who stands: fill(dialect, statement, who) and
+	// checkStatement(statement, who).
+	where := map[string]int{"fill": 2, "checkStatement": 1}
+	fset := gotoken.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := 0
+	for _, pkg := range pkgs {
+		for name, file := range pkg.Files {
+			if strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				fn, ok := call.Fun.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				i, ok := where[fn.Name]
+				if !ok {
+					return true
+				}
+				if i >= len(call.Args) {
+					t.Errorf("%s: %s is called without a who", fset.Position(call.Pos()), fn.Name)
+					return true
+				}
+				arg, ok := call.Args[i].(*ast.Ident)
+				switch {
+				case !ok || (arg.Name != fromMigrationName && arg.Name != fromRunnerName):
+					t.Errorf("%s: %s is told whose statement it is with something other than %s or %s",
+						fset.Position(call.Args[i].Pos()), fn.Name, fromMigrationName, fromRunnerName)
+				case arg.Name == fromRunnerName:
+					runner++
+				}
+				return true
+			})
+		}
+	}
+	if runner != 1 {
+		t.Errorf("%s stands at %d call sites; it belongs at the one that makes ngc_schema and ngc_lock",
+			fromRunnerName, runner)
+	}
+}
+
+// The two names as the source writes them. A test that reads source code
+// compares names, so the names stand here once.
+const (
+	fromMigrationName = "fromMigration"
+	fromRunnerName    = "fromRunner"
+)
