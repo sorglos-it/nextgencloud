@@ -8,15 +8,18 @@ const v = vectors("json.json");
 
 test("every case of json.json is decided as Go decides it", async ({ shell }) => {
   const results = await shell.evaluate(async ([items, totals, size, cases]) => {
-    const { decode, Budget, S, A, M, str, bool, int, uint, bytes, raw } =
+    const { decode, Budget, S, A, M, str, bool, int, uint32, bytes, raw } =
       await import("/assets/js/contracts/json.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
-    // The shape mirrors the Go struct json.json was made from.
+    // The shape mirrors the Go struct json.json was made from, field for
+    // field as its own "schema" spells it: u is a uint32, not a uint, and
+    // the elements of subs are the same sub as the single one.
+    const sub = S({ x: int, list: A(int) });
     const shape = S({
-      n: int, u: uint, s: str, t: bool, b: bytes,
+      n: int, u: uint32, s: str, t: bool, b: bytes,
       list: A(int), map: M(int),
-      sub: S({ x: int, list: A(int) }),
-      subs: A(S({ list: A(int) })),
+      sub: sub,
+      subs: A(sub),
       raw: raw,
     });
     const budget = new Budget({ size, items, totals });
