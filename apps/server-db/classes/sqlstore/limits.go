@@ -1,10 +1,11 @@
 package sqlstore
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
-	"github.com/sorglos-it/nextgencloud/shared/store"
+	appstore "github.com/sorglos-it/nextgencloud/shared/store" // store is the type of this package
 )
 
 // The bound of every column kind. Go checks each value before it goes into a
@@ -42,9 +43,9 @@ func blob(b []byte) []byte {
 
 // joinList packs a short list of names into one column, separated by a line
 // feed. Every entry a contract allows here (roles: wire.ValidName, grants:
-// store.NeedRoot and store.NeedNetwork) is printable without line breaks, so
-// the separator can never appear inside an entry; joinList refuses anything
-// else instead of writing something splitList could not take apart.
+// appstore.NeedRoot and appstore.NeedNetwork) is printable without line
+// breaks, so the separator can never appear inside an entry; joinList refuses
+// anything else instead of writing something splitList could not take apart.
 func joinList(list []string) (string, bool) {
 	if len(list) > MaxList {
 		return "", false
@@ -66,6 +67,27 @@ func splitList(s string) []string {
 	return strings.Split(s, "\n")
 }
 
+// errBrokenList says a column does not carry a list this store wrote.
+var errBrokenList = errors.New("sqlstore: the list in a column is not one this store wrote")
+
+// readList is the way back out of the database, and it is the only one. A row
+// is a value that comes in like any other - the column is a {{doc}}, which
+// holds a megabyte on MariaDB, while joinList never writes more than MaxList
+// entries of MaxItem bytes. So the length is looked at before the work on it,
+// and what comes out has to be a list joinList would write exactly that way
+// again; anything else is a row nobody of ours wrote, and it is refused
+// instead of turned into a list of any size.
+func readList(s string) ([]string, error) {
+	if len(s) > MaxList*(MaxItem+1) {
+		return nil, errBrokenList
+	}
+	list := splitList(s)
+	if _, ok := joinList(list); !ok {
+		return nil, errBrokenList
+	}
+	return list, nil
+}
+
 // checkSeq guards Blob.Seq: it is a uint64 in the contract, but no unsigned
 // 64-bit column exists in all five databases, so everything above the signed
 // range is refused instead of wrapping around.
@@ -76,11 +98,26 @@ func checkSeq(seq uint64) error {
 	return nil
 }
 
+// errBrokenSeq says a row carries a sequence number this store never wrote.
+var errBrokenSeq = errors.New("sqlstore: the sequence number in a row is below zero")
+
+// readSeq is checkSeq the other way round, for the value coming back out of
+// the column. checkSeq refuses everything above the signed range so that
+// nothing wraps on the way in; a negative number in the row would wrap on the
+// way out, into a sequence number near 2^64 that no caller could make sense
+// of. Nothing of ours writes one, so it is a row nobody of ours wrote.
+func readSeq(n int64) (uint64, error) {
+	if n < 0 {
+		return 0, errBrokenSeq
+	}
+	return uint64(n), nil
+}
+
 // grantsOK reports whether every grant is one the contract knows; an app
-// carries at most store.NeedRoot and store.NeedNetwork.
+// carries at most appstore.NeedRoot and appstore.NeedNetwork.
 func grantsOK(list []string) bool {
 	for _, g := range list {
-		if g != store.NeedRoot && g != store.NeedNetwork {
+		if g != appstore.NeedRoot && g != appstore.NeedNetwork {
 			return false
 		}
 	}
