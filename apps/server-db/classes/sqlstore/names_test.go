@@ -10,17 +10,27 @@ import (
 // every name is a plain lower-case identifier, short enough for Oracle's
 // 30 characters, and none is a word one of the five databases reserves.
 func TestNames(t *testing.T) {
-	for _, table := range Tables {
+	for i, table := range Tables {
+		if slices.Contains(Tables[:i], table) {
+			t.Errorf("Tables names %q twice", table)
+		}
 		cols, ok := Columns[table]
 		if !ok || len(cols) == 0 {
 			t.Errorf("table %q has no columns", table)
 		}
 		checkIdent(t, table)
-		for i, c := range cols {
+		for j, c := range cols {
 			checkIdent(t, c)
-			if slices.Contains(cols[:i], c) {
+			if slices.Contains(cols[:j], c) {
 				t.Errorf("table %q names column %q twice", table, c)
 			}
+		}
+	}
+	// Both directions, because counting alone lets a doubled entry in Tables
+	// pay for a key in Columns that no table of ours is called.
+	for table := range Columns {
+		if !slices.Contains(Tables, table) {
+			t.Errorf("Columns knows table %q, Tables does not", table)
 		}
 	}
 	if len(Columns) != len(Tables) {
@@ -55,6 +65,38 @@ func TestFill(t *testing.T) {
 	for _, bad := range []string{"x {{blob}}", "x {{}}", "x {{ key }}", "x {{key"} {
 		if _, err := Fill(MariaDB, bad); err == nil {
 			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
+
+// TestPlaceholders keeps the list and the dialects from drifting apart. Fill
+// asks the dialect and never the list, so a type a dialect knew but the list
+// did not would slip through unseen. Every name of the list has to work in a
+// migration; the other half can only sample, because no test can try every
+// string a case could be written for.
+func TestPlaceholders(t *testing.T) {
+	for i, p := range Placeholders {
+		if slices.Contains(Placeholders[:i], p) {
+			t.Errorf("Placeholders names %q twice", p)
+		}
+	}
+	for _, d := range []Dialect{MariaDB, SQLite} {
+		for _, p := range Placeholders {
+			if _, err := Fill(d, "x {{"+p+"}}"); err != nil {
+				t.Errorf("%T: %q of Placeholders was refused: %v", d, p, err)
+			}
+			// "opts" is the one name a dialect may answer with nothing.
+			if d.Type(p) == "" && p != "opts" {
+				t.Errorf("%T has no type for %q", d, p)
+			}
+		}
+		for _, p := range []string{"", " ", "blob", "varchar", "KEY", "key ", "Int", "opt", "options"} {
+			if d.Type(p) != "" {
+				t.Errorf("%T answers %q, which is not in Placeholders", d, p)
+			}
+			if _, err := Fill(d, "x {{"+p+"}}"); err == nil {
+				t.Errorf("%T: Fill took %q, which is not in Placeholders", d, p)
+			}
 		}
 	}
 }

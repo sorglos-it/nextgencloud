@@ -1,9 +1,12 @@
 package sqlstore
 
 import (
+	"context"
+	"database/sql/driver"
 	"errors"
 	"io"
 	"net"
+	"os"
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
@@ -94,9 +97,13 @@ func (mariaDialect) Exists(err error) bool {
 
 func (mariaDialect) Gone(err error) bool {
 	// A driver error without a MariaDB number is a broken connection: the
-	// server never answered. Only a read is repeated after it.
+	// server never answered. Only a read is repeated after it. ErrBadConn
+	// belongs in front: the driver returns it far more often than
+	// ErrInvalidConn, and database/sql hands it on unchanged once its own two
+	// tries are spent.
 	return err != nil && mysqlNumber(err) == 0 &&
-		(errors.Is(err, mysql.ErrInvalidConn) || errors.Is(err, mysql.ErrPktSync) || isNetwork(err))
+		(errors.Is(err, driver.ErrBadConn) || errors.Is(err, mysql.ErrInvalidConn) ||
+			errors.Is(err, mysql.ErrPktSync) || isNetwork(err))
 }
 
 func (mariaDialect) DDLInTx() bool { return false }
@@ -132,7 +139,19 @@ func (sqliteDialect) Gone(err error) bool { return errors.Is(err, sqlite3.IOERR)
 func (sqliteDialect) DDLInTx() bool { return true }
 
 // isNetwork reports whether err comes from the network below the driver.
+//
+// What the caller itself gave up on comes first and is refused, however much
+// it looks like a network error: context.DeadlineExceeded and a socket
+// deadline both satisfy net.Error, and the driver hands the context error
+// straight back (packets.go asks mc.canceled before it falls back to
+// ErrInvalidConn). Counting those as a broken connection would repeat on
+// another node what the caller had already abandoned - retries piling up
+// exactly when the database is too slow anyway.
 func isNetwork(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, os.ErrDeadlineExceeded) {
+		return false
+	}
 	var ne net.Error
 	return errors.As(err, &ne) || errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE)

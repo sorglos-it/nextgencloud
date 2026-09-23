@@ -12,12 +12,18 @@ import (
 // complain, SQLite would take anything, and the conformance tests have to
 // come out the same on both.
 const (
-	MaxKey  = 255      // every {{key}} column: IDs, names, kinds, tokens, hashes
-	MaxText = 1024     // every {{text}} column: owner of a lock, detail of a log entry
-	MaxDoc  = 1 << 20  // every {{doc}} column: manifest, certificates, keys, lists
-	MaxData = 80 << 20 // Blob.Data: store.MaxUITotal (64 MiB) plus the tar headers
-	MaxList = 256      // entries of User.Roles or App.Grants (trust allows 256 roles)
-	MaxItem = 64       // one entry of such a list (wire.ValidName is at most 32)
+	MaxKey  = 255     // every {{key}} column: IDs, names, kinds, tokens, hashes
+	MaxText = 1024    // every {{text}} column: owner of a lock, detail of a log entry
+	MaxDoc  = 1 << 20 // every {{doc}} column: manifest, certificates, keys, lists
+	// MaxData is Blob.Data: store.MaxUITotal (64 MiB) plus the tar headers.
+	// Server and driver both have to allow more than this in one packet.
+	// max_allowed_packet is 64 MiB by default on either side, and a full-size
+	// interface already fills those 64 MiB on its own, so without raising it
+	// the largest blob comes back as ErrPktTooLarge instead of being written.
+	// Setting it is part of the cluster setup and of the DSN.
+	MaxData = 80 << 20
+	MaxList = 256 // entries of User.Roles or App.Grants (trust allows 256 roles)
+	MaxItem = 64  // one entry of such a list (wire.ValidName is at most 32)
 )
 
 func okKey(s string) bool  { return len(s) <= MaxKey }
