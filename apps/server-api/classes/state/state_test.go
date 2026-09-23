@@ -109,3 +109,54 @@ func TestInstallKeyWrongBox(t *testing.T) {
 		t.Fatalf("key of another installation answered %v", err)
 	}
 }
+
+// TestEnsureInstallationKeepsTheRoot proves that a missing installation ID is
+// not rolled anew while a version 1 is stored. Version 1 carries the old ID
+// and can never be signed again, so a fresh ID would answer every later
+// Refresh with ErrInstallation for good -- one lost row would cost the
+// installation its trust list.
+func TestEnsureInstallationKeepsTheRoot(t *testing.T) {
+	s, db := newState(t)
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobTrust, ID: "1", Seq: 1,
+		Data: genesisSeed(t), Updated: s.Now()}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if _, err := s.EnsureInstallation(ctx); !errors.Is(err, ErrSetting) {
+		t.Fatalf("missing ID next to version 1 answered %v", err)
+	}
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, dbapi.SettingInstallation); !errors.Is(err, dbapi.ErrNotFound) {
+		t.Fatalf("wrote an installation ID although version 1 is stored: %v", err)
+	}
+}
+
+// lateSetting hands out a malformed installation ID from the second look on.
+// It stands for another API writing the row between the two looks
+// EnsureInstallation takes -- the only way the second one sees anything but
+// what the first one saw.
+type lateSetting struct {
+	dbapi.Store
+	seen int
+}
+
+func (l *lateSetting) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobSetting && id == dbapi.SettingInstallation {
+		if l.seen++; l.seen > 1 {
+			return dbapi.Blob{Kind: kind, ID: id, Data: []byte("not-an-id")}, nil
+		}
+	}
+	return l.Store.BlobGet(ctx, kind, id)
+}
+
+// TestEnsureInstallationBrokenID proves that a broken ID is refused under the
+// lock too, instead of being written over with a fresh one: whatever the old
+// ID was, a version 1 signed with it may already exist somewhere.
+func TestEnsureInstallationBrokenID(t *testing.T) {
+	s, db := newState(t)
+	s.DB = &lateSetting{Store: db}
+	if _, err := s.EnsureInstallation(ctx); !errors.Is(err, ErrSetting) {
+		t.Fatalf("broken ID under the lock answered %v", err)
+	}
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, dbapi.SettingInstallation); !errors.Is(err, dbapi.ErrNotFound) {
+		t.Fatalf("rolled a new installation over the broken one: %v", err)
+	}
+}

@@ -36,6 +36,10 @@ const (
 	installLease = 60
 )
 
+// trustRoot is the ID of the row that holds version 1 of the trust list, the
+// version the installation ID is bound into.
+const trustRoot = "1"
+
 // State is the runtime state of one API process.
 type State struct {
 	Cfg *config.API
@@ -100,9 +104,23 @@ func (s *State) EnsureInstallation(ctx context.Context) (string, error) {
 		return "", ErrBusy
 	}
 	defer func() { _ = s.DB.LockFree(ctx, installLock, s.Cfg.Node) }()
-	// Another API may have been quicker between the two checks.
+	// Another API may have been quicker between the two checks -- and it may
+	// have left a broken row, which is no reason to write over it either.
 	if id, err := s.Installation(ctx); err == nil {
 		return id, nil
+	} else if !errors.Is(err, dbapi.ErrNotFound) {
+		return "", err
+	}
+	// The trust list is rooted in the installation ID: version 1 carries it
+	// inside and is signed over it, and no later version may name another
+	// one. Once that version is stored, a fresh ID would answer every Refresh
+	// with ErrInstallation for good, and no version 2 could mend it. So next
+	// to a stored version 1 a missing ID is a damaged installation, not a new
+	// one -- whoever restores must bring the ID back.
+	if _, err := s.DB.BlobGet(ctx, dbapi.BlobTrust, trustRoot); err == nil {
+		return "", ErrSetting
+	} else if !errors.Is(err, dbapi.ErrNotFound) {
+		return "", err
 	}
 	id, err := secrets.ID()
 	if err != nil {
