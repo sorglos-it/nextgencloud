@@ -4,29 +4,30 @@
 
 ## Ziel der nächsten Sitzung
 
-Den Plan für Arbeitspaket 0 des Recovery-Modus schreiben (Testumgebung in Stufe test: QEMU mit
-OVMF, swtpm, SoftHSM2, CI-Job) und die Sitzung Recovery starten. Parallel dazu die Pläne 1 bis 4
-für die vier Teile.
+Die Vertragsänderung V1.1 abschließen und mit `vertraege-v1.1` etikettieren, den überarbeiteten
+Plan für Recovery-Paket 0 abnehmen und dann die fünf Sitzungen starten: Web, API, Controller,
+Datenbank und Recovery.
 
 ## Stand
 
 | | |
 |---|---|
-| Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden |
-| In Arbeit | nichts; die Verträge sind freigegeben und liegen auf `main` (Etikett `vertraege-v1`, 22.09.2026), die Module aus Kapitel 7 liegen in `vendor/` |
+| Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden. Dazu die Pläne der vier Teile (Web 27, API 30, Controller 25, Datenbank 12 Aufgaben) und der Plan für Recovery-Paket 0 |
+| In Arbeit | Vertragsänderung V1.1 (Passkey-Anmeldung, von Thomas freigegeben) und die Überarbeitung des Plans für Recovery-Paket 0 |
 | Blockiert | nichts |
 | Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
-1. Recovery-Modus nach `docs/recovery-modus.md` (verbindlich seit 23.09.2026), als eigener Strang
-   in einer eigenen Sitzung auf Branch `recovery`, beginnend mit Arbeitspaket 0 in Stufe test.
-   Er ersetzt den bis dahin geplanten Vertrag für die Wiederherstellung. Für NGC noch zu klären: `AdminVerify` kommt
-   nach Go (NGC hat kein PHP-Teilprogramm), `server-recovery` wäre ein neues Teilprogramm in Rust,
-   `lib/` als zentrale Bibliothek gibt es hier noch nicht, und die signierten Admin-Datensätze
-   müssen zur Vertrauensliste passen (Rollen nur mit Passkey, Wechsel des Admin-Schlüssels bei
-   hochgeladenen Apps).
-2. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
+1. Vertragsänderung V1.1 zu Ende bringen (`session.LoginChallenge` nennt je Passkey `credId` und
+   `kid`), Testdaten und die Pläne 1 und 2 nachziehen, Etikett `vertraege-v1.1` setzen.
+2. Den überarbeiteten Plan für Recovery-Paket 0 abnehmen; die VM `ngc-recovery` steht bereit.
+3. Die fünf Sitzungen starten: Web, API, Controller, Datenbank, Recovery.
+4. Recovery-Modus nach `docs/recovery-modus.md`: `AdminVerify` kommt nach Go, weil die Anmeldung
+   in der API liegt (`apps/web` ist nur Einstieg und Oberfläche); `server-recovery` wäre ein
+   neues Teilprogramm in Rust; `lib/` als zentrale Bibliothek gibt es hier noch nicht; und die
+   signierten Admin-Datensätze müssen zur Vertrauensliste passen (Rollen nur mit Passkey,
+   Wechsel des Admin-Schlüssels bei hochgeladenen Apps).
 
 ## Vor dem Bauen zu prüfen
 
@@ -67,6 +68,14 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
 ## Artefakte
 
+- Pläne der vier Teile (23.09.2026): [Webinterface](superpowers/plans/2026-09-23-ngc-plan-1-web.md),
+  [API](superpowers/plans/2026-09-23-ngc-plan-2-api.md),
+  [Controller](superpowers/plans/2026-09-23-ngc-plan-3-controller.md),
+  [Datenbank](superpowers/plans/2026-09-23-ngc-plan-4-db.md); Recovery:
+  [Paket 0](superpowers/plans/2026-09-23-recovery-paket-0-testumgebung.md)
+- Testumgebung des Recovery-Strangs: VM `ngc-recovery` (Debian 13, `ssh ngc-recovery`); Pakete
+  eingerichtet, `sudo` ohne Passwort, **kein** `/dev/kvm` (Proxmox reicht keine Virtualisierung
+  durch), QEMU läuft dort emuliert
 - Entwurf (freigegeben, mit Entscheidungsprotokoll): [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](superpowers/specs/2026-09-19-ngc-kern-design.md)
 - Plan 0: [`docs/superpowers/plans/2026-09-19-ngc-plan-0-vertraege-grundgeruest.md`](superpowers/plans/2026-09-19-ngc-plan-0-vertraege-grundgeruest.md)
   (historisch; maßgeblich sind `shared/` und `shared/README.md`)
