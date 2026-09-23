@@ -60,6 +60,20 @@ final class Config
             if (!is_string($a['url'] ?? null) || !Url::validWebURL($a['url'])) {
                 throw new RuntimeException('web.json: apis[].url');
             }
+            // The same address twice is a mistake: Apache would balance over
+            // it twice, and with two pins it would trust two keys for one
+            // server (config.Web.Validate).
+            if (in_array($a['url'], $c->apis, true)) {
+                throw new RuntimeException('web.json: apis[].url twice');
+            }
+            // The pin is the SHA-256 of the TLS key (trust.TLSPin), so 32
+            // bytes, which enc.Bytes writes as 43 base64url characters. PHP
+            // never uses the pin itself — Apache does — but a short one would
+            // mean the installation is not pinning what it thinks it pins.
+            if (!is_string($a['tls'] ?? null)
+                || preg_match('#^[A-Za-z0-9_-]{43}\z#', $a['tls']) !== 1) {
+                throw new RuntimeException('web.json: apis[].tls');
+            }
             $c->apis[] = $a['url'];
         }
 
