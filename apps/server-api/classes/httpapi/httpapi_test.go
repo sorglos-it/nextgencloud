@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -184,6 +186,9 @@ func TestFaultOfTheState(t *testing.T) {
 		err        error
 		take, read wire.Code
 	}{
+		// The damage of our own rows is never the caller's: whoever hears
+		// "signature invalid" would sign again over a broken database.
+		{state.ErrDamaged, wire.CodeInternal, wire.CodeInternal},
 		// The number comes out of the request on both paths, never out of a
 		// row, so it is a wrong request and not a damaged database.
 		{state.ErrBadVersion, wire.CodeProtocol, wire.CodeProtocol},
@@ -201,11 +206,17 @@ func TestFaultOfTheState(t *testing.T) {
 		{errors.New("some other fault"), wire.CodeInternal, wire.CodeInternal},
 	}
 	for _, c := range cases {
-		if got := TakeFault(c.err); got != c.take {
-			t.Fatalf("take %v: %q instead of %q", c.err, got, c.take)
+		if got := Fault(c.err, FromRequest); got != c.take {
+			t.Fatalf("request %v: %q instead of %q", c.err, got, c.take)
 		}
-		if got := ReadFault(c.err); got != c.read {
-			t.Fatalf("read %v: %q instead of %q", c.err, got, c.read)
+		if got := Fault(c.err, FromRows); got != c.read {
+			t.Fatalf("rows %v: %q instead of %q", c.err, got, c.read)
+		}
+		// An origin nobody named must never be the one that answers 403: the
+		// mistake would be silent and it would send the shell looking for a
+		// fault of its own.
+		if got := Fault(c.err, Origin("")); got == wire.CodeVerify {
+			t.Fatalf("%v answers %q without an origin", c.err, got)
 		}
 		// Every code must carry a message, or the answer would be a CLOSE
 		// payload the shell refuses.
@@ -217,10 +228,191 @@ func TestFaultOfTheState(t *testing.T) {
 	}
 	// A wrapped error keeps its code: the state hands its errors on through
 	// callers that add their own words.
-	if got := TakeFault(fmt.Errorf("add version: %w", state.ErrFork)); got != wire.CodeVerify {
+	if got := Fault(fmt.Errorf("add version: %w", state.ErrFork), FromRequest); got != wire.CodeVerify {
 		t.Fatalf("wrapped fork: %q", got)
 	}
-	if got := ReadFault(fmt.Errorf("chain: %w", state.ErrOldVersion)); got != wire.CodeNotFound {
+	if got := Fault(fmt.Errorf("chain: %w", state.ErrOldVersion), FromRows); got != wire.CodeNotFound {
 		t.Fatalf("wrapped old version: %q", got)
+	}
+}
+
+// everyRoute wires all six routes to one handler, so a test can see whether
+// any of them was reached.
+func everyRoute(h http.HandlerFunc) Routes {
+	return Routes{Setup: h, Login: h, Finish: h, Logout: h, Trust: h, Socket: h}
+}
+
+// TestMuxAnswersAnUncleanPathItself proves that no answer of this package is
+// left to Go's ServeMux. It cleans a path of its own accord and answers the
+// difference with a redirect whose HTML body gives the query string of the
+// request back, without Cache-Control: no-store, without nosniff and without
+// a CLOSE payload; "*" of OPTIONS * it answers with a bare 400. Both go past
+// everything this package promises, and the first one quotes the input.
+func TestMuxAnswersAnUncleanPathItself(t *testing.T) {
+	reached := false
+	mux := everyRoute(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		NoContent(w)
+	}).Mux()
+	for _, target := range []string{
+		"//" + strings.TrimPrefix(session.PathSetup, "/") + "?code=secret",
+		"/api/v1/./setup",
+		"/api/v1/trust/../setup",
+		"/api/v1/setup/",
+		"*",
+	} {
+		method := http.MethodGet
+		if target == "*" {
+			method = http.MethodOptions
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(method, target, nil))
+		if reached {
+			t.Fatalf("%q reached a handler", target)
+		}
+		if w.Code != 404 {
+			t.Fatalf("%q answered %d", target, w.Code)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%q: cache control %q", target, got)
+		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Fatalf("%q: nosniff %q", target, got)
+		}
+		if w.Header().Get("Location") != "" || strings.Contains(w.Body.String(), "secret") {
+			t.Fatalf("%q gave the request back: %q %q", target, w.Header().Get("Location"), w.Body)
+		}
+		c, err := wire.ParseClose(w.Body.Bytes())
+		if err != nil || c.Code != wire.CodeNotFound {
+			t.Fatalf("%q: body %q (%v)", target, w.Body, err)
+		}
+	}
+	// A path that is already clean still reaches its handler.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	if !reached || w.Code != 204 {
+		t.Fatalf("a clean path answered %d, reached %v", w.Code, reached)
+	}
+}
+
+// TestMuxWithoutHandlers proves that a route nobody wired answers instead of
+// panicking. It is a mistake of this program, so it is E_INTERNAL -- and the
+// connection stays whole.
+func TestMuxWithoutHandlers(t *testing.T) {
+	mux := Routes{}.Mux()
+	for _, path := range []string{session.PathSetup, session.PathLoginStart, session.PathLoginFinish,
+		session.PathLogout, session.PathTrust, session.PathSocket} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
+		if w.Code != 500 {
+			t.Fatalf("%s answered %d", path, w.Code)
+		}
+		if _, err := wire.ParseClose(w.Body.Bytes()); err != nil {
+			t.Fatalf("%s: body %q (%v)", path, w.Body, err)
+		}
+	}
+}
+
+// deadlineWriter is a ResponseWriter that can set a read deadline and
+// remembers it; http.NewResponseController finds the method on the writer.
+type deadlineWriter struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+}
+
+func (d *deadlineWriter) SetReadDeadline(t time.Time) error { d.deadline = t; return nil }
+
+// TestBodySetsAReadDeadline proves that the limit on the time is there before
+// the first byte is read. session.MaxRequest bounds how much a body brings,
+// nothing else bounds how long it may take: a sender that drips one byte a
+// minute holds a goroutine of this API for as long as it likes.
+func TestBodySetsAReadDeadline(t *testing.T) {
+	w := &deadlineWriter{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequest(http.MethodPost, session.PathLoginStart, strings.NewReader(`{}`))
+	r.Header.Set("Content-Type", "application/json")
+	before := time.Now()
+	if _, ok := Body(w, r); !ok {
+		t.Fatalf("good body refused with %d", w.Code)
+	}
+	if w.deadline.IsZero() {
+		t.Fatal("read the body without a deadline")
+	}
+	if w.deadline.Before(before) || w.deadline.After(time.Now().Add(readLimit)) {
+		t.Fatalf("deadline %v, now %v, limit %v", w.deadline, before, readLimit)
+	}
+}
+
+// TestBodyAllocatesWhatItReadsOnce proves Body makes its room once instead of
+// doubling a buffer of its own: io.ReadAll starts at 512 bytes and grows to
+// about twice the limit, copying everything again at every step, so one body
+// at the limit costs several times the limit in all.
+func TestBodyAllocatesWhatItReadsOnce(t *testing.T) {
+	body := strings.Repeat("x", session.MaxRequest)
+	const runs = 20
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for i := 0; i < runs; i++ {
+		r := httptest.NewRequest(http.MethodPost, session.PathLoginStart, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		if b, ok := Body(w, r); !ok || len(b) != session.MaxRequest {
+			t.Fatalf("body of the limit: %d %v", len(b), ok)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	// The body, room for one byte more and what the request and the recorder
+	// cost: half the limit again is wide enough for all of it and far under
+	// what a doubling buffer needs.
+	per := (after.TotalAlloc - before.TotalAlloc) / runs
+	if per > uint64(session.MaxRequest+session.MaxRequest/2) {
+		t.Fatalf("%d bytes for a body of %d", per, session.MaxRequest)
+	}
+}
+
+// TestCookieTurnsAwayASecondSession proves that a second cookie of this name
+// is no session at all. r.Cookie hands the first one back, and a neighbouring
+// host or another path of the same host may set one: it would be taken as
+// this API's session without a word.
+func TestCookieTurnsAwayASecondSession(t *testing.T) {
+	token := enc.B64.EncodeToString(bytes.Repeat([]byte{7}, session.TokenSize))
+	other := enc.B64.EncodeToString(bytes.Repeat([]byte{8}, session.TokenSize))
+	r := httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
+	r.Header.Set("Cookie", session.CookieName+"="+token+"; "+session.CookieName+"="+other)
+	if v, ok := Cookie(r); ok {
+		t.Fatalf("took %q out of two in one header", v)
+	}
+	// A browser may send them in two headers just as well.
+	r = httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
+	r.Header.Add("Cookie", session.CookieName+"="+token)
+	r.Header.Add("Cookie", "other=x; "+session.CookieName+"="+other)
+	if v, ok := Cookie(r); ok {
+		t.Fatalf("took %q out of two headers", v)
+	}
+	// One session among other cookies stays one.
+	r = httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
+	r.Header.Set("Cookie", "other=x; "+session.CookieName+"="+token+"; more=y")
+	if v, ok := Cookie(r); !ok || v != token {
+		t.Fatalf("turned away the one session: %q %v", v, ok)
+	}
+}
+
+// TestCookieIsWrittenOnce proves one answer never carries two Set-Cookie
+// lines: with two of them the browser keeps whichever it reads last, and
+// which that is would decide whether a session is set or deleted.
+func TestCookieIsWrittenOnce(t *testing.T) {
+	w := httptest.NewRecorder()
+	SetCookie(w, "abc")
+	ClearCookie(w)
+	set := w.Header().Values("Set-Cookie")
+	if len(set) != 1 || !strings.Contains(set[0], "Max-Age=0") {
+		t.Fatalf("Set-Cookie %q", set)
+	}
+	w = httptest.NewRecorder()
+	ClearCookie(w)
+	SetCookie(w, "abc")
+	set = w.Header().Values("Set-Cookie")
+	if len(set) != 1 || strings.Contains(set[0], "Max-Age=0") {
+		t.Fatalf("Set-Cookie %q", set)
 	}
 }
