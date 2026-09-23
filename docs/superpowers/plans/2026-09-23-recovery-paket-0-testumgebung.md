@@ -2267,10 +2267,9 @@ Zählerstand, falsche PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles
   tragen, weil das Attribut gerade besagt, dass das TPM die Daten selbst erzeugt hat. Für Paket 3
   ist zu entscheiden, ob der DEK im TPM entsteht (dann gilt das Attribut) oder weiter zugeführt
   wird (dann bleibt es CLEAR und die Vorgabe wird an dieser Stelle nachgezogen).
-- **Go auf der VM:** `tools/check.sh` braucht Go 1.27; das Debian-Paket ist in der Regel älter.
-  Der Weg über die amtliche Fassung von go.dev lädt Code aus dem Netz und braucht Thomas' Freigabe.
-- **Echte Sticks** (Nitrokey HSM 2 für `hsm`, YubiKey 5 für `piv`) fehlen; Paket 2 verlangt beide
-  Backends.
+- **Echter HSM-Stick** (Nitrokey HSM 2 für `hsm`) wird vorerst nicht beschafft (Entscheidung
+  Thomas, 23.09.2026); Paket 2 entsteht für `piv` (YubiKey 5, Nitrokey 3) und `softhsm`, die
+  `hsm`-Anbindung bleibt offen.
 ```
 
 - [ ] **Schritt 5: Commit, Tag und Pull Request**
