@@ -1,0 +1,12 @@
+{
+  "name": "ngc-web-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install --with-deps chromium firefox webkit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1"
+  }
+}
