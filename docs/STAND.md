@@ -4,9 +4,9 @@
 
 ## Ziel der nächsten Sitzung
 
-Den Recovery-Modus aus `docs/recovery-modus.md` einplanen: die Anknüpfpunkte an NGC festlegen
-(AdminVerify im Login, Spalten der Admin-Tabelle, Backup, Einlernen bei der Installation), dann
-Arbeitspaket 0 (Testumgebung). Danach die Pläne 1 bis 4 für die vier Teile.
+Den Plan für Arbeitspaket 0 des Recovery-Modus schreiben (Testumgebung in Stufe test: QEMU mit
+OVMF, swtpm, SoftHSM2, CI-Job) und die Sitzung Recovery starten. Parallel dazu die Pläne 1 bis 4
+für die vier Teile.
 
 ## Stand
 
@@ -19,8 +19,9 @@ Arbeitspaket 0 (Testumgebung). Danach die Pläne 1 bis 4 für die vier Teile.
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
-1. Recovery-Modus nach `docs/recovery-modus.md` (verbindlich seit 23.09.2026). Er ersetzt den bis
-   dahin geplanten Vertrag für die Wiederherstellung. Für NGC noch zu klären: `AdminVerify` kommt
+1. Recovery-Modus nach `docs/recovery-modus.md` (verbindlich seit 23.09.2026), als eigener Strang
+   in einer eigenen Sitzung auf Branch `recovery`, beginnend mit Arbeitspaket 0 in Stufe test.
+   Er ersetzt den bis dahin geplanten Vertrag für die Wiederherstellung. Für NGC noch zu klären: `AdminVerify` kommt
    nach Go (NGC hat kein PHP-Teilprogramm), `server-recovery` wäre ein neues Teilprogramm in Rust,
    `lib/` als zentrale Bibliothek gibt es hier noch nicht, und die signierten Admin-Datensätze
    müssen zur Vertrauensliste passen (Rollen nur mit Passkey, Wechsel des Admin-Schlüssels bei
