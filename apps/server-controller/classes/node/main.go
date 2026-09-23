@@ -3,6 +3,8 @@
 package node
 
 import (
+	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,7 +12,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/pairing"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
@@ -38,6 +42,18 @@ const (
 const (
 	usagePair  = "Aufruf: ngc-controller pair -code <Kopplungscode>"
 	usageImage = "Aufruf: ngc-controller image -arch <amd64|arm64> -out <Datei>"
+)
+
+// What "pair" answers when it fails. Each is one fixed German line: the cause
+// would name the file it stumbled over, and that file name may be the pairing
+// code itself (-config), or it would name the address and the answer of a
+// server the code points at.
+const (
+	msgNoConfig  = "Die Konfiguration dieses Servers fehlt oder ist unvollständig. Bitte den Server mit ulh einrichten."
+	msgNoKey     = "Der Schlüssel dieses Servers ließ sich nicht erzeugen."
+	msgNotPaired = "Die Kopplung ist gescheitert. Ist der Kopplungscode noch gültig und die API erreichbar?"
+	msgNotSaved  = "Die Kopplung hat geklappt, aber die Konfiguration ließ sich nicht speichern. Bitte mit einem neuen Kopplungscode wiederholen."
+	msgNoAnchor  = "Die Kopplung hat geklappt, aber der Anker ließ sich nicht speichern."
 )
 
 var errImageUse = errors.New("image takes -arch and -out and nothing else")
@@ -68,7 +84,7 @@ func Main(version string, args []string, stdout, stderr io.Writer) int {
 	case "":
 		return run(version, *cfgPath, stdout, stderr)
 	case "pair":
-		return pair(version, *cfgPath, fs.Args()[1:], stdout, stderr)
+		return pair(*cfgPath, config.AnchorFile, fs.Args()[1:], stdout, stderr)
 	case "terminal":
 		return runTerminal(fs.Args()[1:], stdout, stderr)
 	case "hold":
@@ -129,15 +145,62 @@ func run(version, cfgPath string, stdout, stderr io.Writer) int {
 	return notReady(stderr, "run")
 }
 
-// pair joins this server to an API with the code ulh shows. Task 4 builds it;
-// the flags are read here already, so a wrong call is turned away the same way
-// now as it will be then.
-func pair(version, cfgPath string, args []string, stdout, stderr io.Writer) int {
-	if _, err := parsePair(cfgPath, args); err != nil {
+// pair joins this server to an API with the code ulh shows: it makes the key
+// of this controller, pairs with the API of the code and writes what came
+// back into controller.json and the anchor file. Everything else of this
+// server (name, roles, database, release key) stands in controller.json
+// already, so the file has to be there and to be whole: a pairing whose
+// result could not be written would spend the one-time code for nothing.
+// anchorPath is config.AnchorFile; only a test points it elsewhere.
+func pair(cfgPath, anchorPath string, args []string, stdout, stderr io.Writer) int {
+	opts, err := parsePair(cfgPath, args)
+	if err != nil {
 		fmt.Fprintln(stderr, usagePair)
 		return 2
 	}
-	return notReady(stderr, "pair")
+	// parsePair asked the contract the same question, so this cannot fail.
+	// The value it gives is the code itself: its String is the code, so
+	// nothing here may hand it to fmt.
+	code, err := tunnel.ParsePairCode(opts.Pair.Text())
+	if err != nil {
+		fmt.Fprintln(stderr, usagePair)
+		return 2
+	}
+	cfg, err := config.LoadController(opts.Config)
+	if err != nil {
+		fmt.Fprintln(stderr, msgNoConfig)
+		return 1
+	}
+	key, err := noisep.Keypair(rand.Reader)
+	if err != nil {
+		fmt.Fprintln(stderr, msgNoKey)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pairing.Timeout)
+	defer cancel()
+	res, err := pairing.Do(ctx, pairing.Input{
+		Code: opts.Pair.Text(), Name: cfg.Name, Roles: cfg.Roles, Noise: key,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, msgNotPaired)
+		return 1
+	}
+	// The node ID named this server in a trust list under its old key. With a
+	// new key and a new API it belongs to no one until an admin lists it.
+	cfg.Node = ""
+	cfg.NoiseKey = config.NewSecret(key.Private)
+	cfg.APIs = res.APIs
+	cfg.Anchor = res.Anchor
+	if err := config.SaveController(opts.Config, cfg); err != nil {
+		fmt.Fprintln(stderr, msgNotSaved)
+		return 1
+	}
+	if err := config.SaveAnchor(anchorPath, res.Anchor); err != nil {
+		fmt.Fprintln(stderr, msgNoAnchor)
+		return 1
+	}
+	fmt.Fprint(stdout, pairing.Show(code, key.Public))
+	return 0
 }
 
 // parsePair reads the flags of "pair". The code goes through the contract that

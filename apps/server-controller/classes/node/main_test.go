@@ -3,12 +3,22 @@ package node
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/tls"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
@@ -85,7 +95,6 @@ func TestMainRepeatsOnlyCommandNames(t *testing.T) {
 func TestMainCommandsNotBuiltYet(t *testing.T) {
 	for _, args := range [][]string{
 		nil,
-		{"pair", "-code", pairCode()},
 		{"terminal"},
 		{"hold"},
 		{"image", "-arch", "arm64", "-out", "terminal-arm64.tar"},
@@ -281,4 +290,188 @@ func FuzzParseImage(f *testing.F) {
 			}
 		}
 	})
+}
+
+// testAPI is an API that takes one pairing, and the code that leads to it.
+// got holds what it saw once the server is closed; seen counts every request
+// that reached it, so a test can show that nothing was sent at all.
+type testAPI struct {
+	srv  *httptest.Server
+	code tunnel.PairCode
+	got  *tunnel.PairRequest
+	seen *atomic.Int64
+}
+
+// newAPI starts such an API with the keys of the test installation.
+func newAPI(t *testing.T) testAPI {
+	t.Helper()
+	apiNoise, _ := trusttest.NodeKeys(0xA1)
+	cert, pin := trusttest.APITLS(0xE1, "api-1.test")
+	secret := bytes.Repeat([]byte{7}, tunnel.SecretSize)
+	var got tunnel.PairRequest
+	var seen atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.Add(1)
+		b, _ := io.ReadAll(io.LimitReader(r.Body, tunnel.MaxPairRequest+1))
+		req, err := tunnel.ParsePairRequest(b)
+		if err != nil {
+			t.Errorf("ParsePairRequest: %v", err)
+		}
+		if err := req.Verify(secret, apiNoise.Public); err != nil {
+			t.Errorf("Verify: %v", err)
+		}
+		got = req
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	// A handshake this test turned away belongs in no test output.
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return testAPI{srv: srv, got: &got, seen: &seen, code: tunnel.PairCode{
+		URL:    "wss://" + strings.TrimPrefix(srv.URL, "https://") + "/tunnel",
+		Key:    apiNoise.Public,
+		TLS:    pin,
+		Secret: secret,
+		Anchor: trust.Anchor{Seq: 3, Hash: bytes.Repeat([]byte{9}, sha256.Size)},
+	}}
+}
+
+// writeController writes controller.json as ulh leaves it, with the API and
+// the anchor of an earlier pairing, and returns what it wrote.
+func writeController(t *testing.T, path string) *config.Controller {
+	t.Helper()
+	c := &config.Controller{
+		Node:       "ctl-9",
+		Name:       "ctl-1",
+		NoiseKey:   config.NewSecret(bytes.Repeat([]byte{5}, 32)),
+		APIs:       []config.APIRef{{URL: "wss://api-0.test:7443/tunnel", Key: bytes.Repeat([]byte{6}, 32), TLS: bytes.Repeat([]byte{7}, 32)}},
+		Anchor:     trust.Anchor{Seq: 1, Hash: bytes.Repeat([]byte{8}, sha256.Size)},
+		DB:         "/var/lib/ngc/controller.db",
+		DBKey:      config.NewSecret(bytes.Repeat([]byte{9}, 64)),
+		ReleaseKey: bytes.Repeat([]byte{10}, 32),
+		Roles:      []string{tunnel.RoleServices},
+		Podman:     config.DefaultPodman,
+	}
+	if err := config.SaveController(path, c); err != nil {
+		t.Fatalf("SaveController: %v", err)
+	}
+	return c
+}
+
+func TestPairWritesTheConfigurationAndTheAnchor(t *testing.T) {
+	api := newAPI(t)
+	dir := t.TempDir()
+	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
+	before := writeController(t, cfgPath)
+
+	var out, errOut bytes.Buffer
+	if code := pair(cfgPath, anchorPath, []string{"-code", api.code.String()}, &out, &errOut); code != 0 {
+		t.Fatalf("pair = %d, stderr = %q", code, errOut.String())
+	}
+	api.srv.Close() // Close waits for the request, so what it saw is here
+
+	cfg, err := config.LoadController(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadController: %v", err)
+	}
+	if len(cfg.APIs) != 1 || cfg.APIs[0].URL != api.code.URL ||
+		!bytes.Equal(cfg.APIs[0].Key, api.code.Key) || !bytes.Equal(cfg.APIs[0].TLS, api.code.TLS) {
+		t.Errorf("apis = %+v, want the API of the code", cfg.APIs)
+	}
+	if cfg.Anchor.Seq != api.code.Anchor.Seq || !bytes.Equal(cfg.Anchor.Hash, api.code.Anchor.Hash) {
+		t.Errorf("anchor = %+v, want the anchor of the code", cfg.Anchor)
+	}
+	// The node ID named this server under its old key in another trust list.
+	if cfg.Node != "" {
+		t.Errorf("node = %q, want it cleared", cfg.Node)
+	}
+	if bytes.Equal(cfg.NoiseKey.Bytes(), before.NoiseKey.Bytes()) {
+		t.Error("the key of this controller stayed the same, want a new one")
+	}
+	if cfg.Name != before.Name || !slices.Equal(cfg.Roles, before.Roles) || cfg.DB != before.DB ||
+		!bytes.Equal(cfg.DBKey.Bytes(), before.DBKey.Bytes()) || !bytes.Equal(cfg.ReleaseKey, before.ReleaseKey) {
+		t.Errorf("pairing changed what belongs to this server: %+v", cfg)
+	}
+	a, err := config.LoadAnchor(anchorPath)
+	if err != nil {
+		t.Fatalf("LoadAnchor: %v", err)
+	}
+	if a.Seq != api.code.Anchor.Seq || !bytes.Equal(a.Hash, api.code.Anchor.Hash) {
+		t.Errorf("anchor file = %+v, want the anchor of the code", a)
+	}
+	// Both lines the admin compares with the display of the shell, over the
+	// key the API really got.
+	want := "Fingerabdruck dieses Controllers: " + tunnel.Fingerprint(api.got.Noise) + "\n" +
+		"Anker: Fassung 3, " + tunnel.Fingerprint(api.code.Anchor.Hash) + "\n"
+	if out.String() != want {
+		t.Errorf("stdout = %q, want %q", out.String(), want)
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", errOut.String())
+	}
+	if strings.Contains(out.String(), api.code.String()) {
+		t.Error("stdout carried the pairing code")
+	}
+}
+
+// Without controller.json this server knows neither its name nor its roles,
+// database and release key, and nothing could be written after a pairing. It
+// ends before the one-time code is spent, and it names no path: the path may
+// be the code itself (-config).
+func TestPairNeedsTheConfiguration(t *testing.T) {
+	api := newAPI(t)
+	dir := t.TempDir()
+	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
+
+	var out, errOut bytes.Buffer
+	if code := pair(cfgPath, anchorPath, []string{"-code", api.code.String()}, &out, &errOut); code != 1 {
+		t.Fatalf("pair = %d, want 1", code)
+	}
+	if n := api.seen.Load(); n != 0 {
+		t.Errorf("the API saw %d requests, want none", n)
+	}
+	if _, err := os.Stat(anchorPath); !os.IsNotExist(err) {
+		t.Errorf("os.Stat(anchor) = %v, want it not written", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
+	}
+	if strings.Contains(errOut.String(), cfgPath) || strings.Contains(errOut.String(), api.code.String()) {
+		t.Errorf("stderr = %q, want neither the path nor the code in it", errOut.String())
+	}
+}
+
+// A pairing that fails changes nothing: the server keeps the API it had.
+func TestPairLeavesTheConfigurationAloneWhenItFails(t *testing.T) {
+	api := newAPI(t)
+	api.srv.Close() // nobody answers any more
+	dir := t.TempDir()
+	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
+	writeController(t, cfgPath)
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := pair(cfgPath, anchorPath, []string{"-code", api.code.String()}, &out, &errOut); code != 1 {
+		t.Fatalf("pair = %d, want 1", code)
+	}
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("controller.json changed although the pairing failed")
+	}
+	if _, err := os.Stat(anchorPath); !os.IsNotExist(err) {
+		t.Errorf("os.Stat(anchor) = %v, want it not written", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
+	}
+	if strings.Contains(errOut.String(), api.code.String()) {
+		t.Errorf("stderr = %q, want the pairing code kept out of it", errOut.String())
+	}
 }
