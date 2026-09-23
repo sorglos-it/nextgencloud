@@ -25,3 +25,6 @@ apps/web/tests/test-results/
 
 # Fremdcode gehört ins Repo (vendor/ im Stamm per go mod vendor, JavaScript von Hand kopiert in
 # apps/web/public/assets/vendor/), deshalb fehlt hier die Zeile apps/*/vendor/ aus der Vorlage.
+
+# Pfade dieses Rechners - tools/local.env.example zeigt, was hineingehoert
+tools/local.env

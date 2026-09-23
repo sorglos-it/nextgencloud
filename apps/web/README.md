@@ -13,7 +13,9 @@ The NGC desktop in the browser: login, session, windows, apps.
 
 1. `cd apps/web/tests && npm install && npm run install-browsers`
 2. `npm test`, then `php php/config-test.php` — the contracts check themselves against
-   `shared/testdata/`, no API needed.
+   `shared/testdata/`, no API needed. Is php installed but not on the PATH? Then write
+   `NGC_PHP=<path to php>` into `tools/local.env` (`tools/local.env.example` shows how);
+   `npm test` and `tools/check.sh` both read it.
 3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository.
 
 No build step, no framework. NGC itself never needs npm.
