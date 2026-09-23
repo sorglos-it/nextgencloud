@@ -13,10 +13,6 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
-// nonceSize is the standard nonce of AES-GCM; it is prefixed to every sealed
-// value, so a value carries everything needed to open it but the key.
-const nonceSize = 12
-
 // MaxSecret is the largest plaintext Seal takes. Everything sealed here is a
 // key, a code or a TOTP secret of a few dozen bytes, so the limit is far out
 // of the way; it is there so that nothing coming from outside can ever run
@@ -57,12 +53,15 @@ func NewBox(key config.Secret) (*Box, error) {
 }
 
 // Seal encrypts plain, at most MaxSecret bytes: a fresh nonce, then the
-// sealed value.
+// sealed value. The nonce is prefixed, so a sealed value carries everything
+// needed to open it but the key. Its length comes from the AEAD itself, the
+// only source in this package: a second one would drift apart from it in
+// silence the day the AEAD changes.
 func (b *Box) Seal(plain []byte) ([]byte, error) {
 	if len(plain) > MaxSecret {
 		return nil, ErrSize
 	}
-	nonce, err := Bytes(nonceSize)
+	nonce, err := Bytes(b.aead.NonceSize())
 	if err != nil {
 		return nil, err
 	}
@@ -70,8 +69,8 @@ func (b *Box) Seal(plain []byte) ([]byte, error) {
 }
 
 // Open decrypts a value of Seal. Every failure is ErrSealed alone: the error
-// never quotes the value. The nonce is read with the length the AEAD itself
-// names, so the guard and the slice cannot drift apart from each other.
+// never quotes the value. The nonce is read with the length the AEAD names,
+// the same source Seal writes with, so guard, slice and nonce agree.
 func (b *Box) Open(sealed []byte) ([]byte, error) {
 	n := b.aead.NonceSize()
 	if len(sealed) < n+b.aead.Overhead() {
