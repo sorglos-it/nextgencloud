@@ -96,9 +96,9 @@ const (
 )
 
 // The runner's own two tables. They are not in 0001, because the runner needs
-// them before the first migration can run. ngc_lock is the same table
-// dbapi.LockTake uses later, taken the same way, so the two never disagree
-// about who holds a lock.
+// them before the first migration can run; they keep the rules of a migration
+// all the same. ngc_lock is the table dbapi.LockTake uses later, so the two
+// never disagree about who holds a lock.
 const (
 	createSchema = "CREATE TABLE ngc_schema (version {{int}} NOT NULL, step {{int}} NOT NULL, " +
 		"done {{int}} NOT NULL, applied {{int}} NOT NULL, PRIMARY KEY (version)){{opts}}"
@@ -120,6 +120,11 @@ const (
 // ran. owner names who runs it (a node ID) and shows up in the lock, so an
 // admin can see which server is migrating.
 func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, now int64) (int, error) {
+	// The owner goes into a {{text}} column, so it is bounded here instead of
+	// being cut short by the database.
+	if owner == "" || len(owner) > sqlstore.MaxText {
+		return 0, fmt.Errorf("migrate: the owner has to be 1 to %d bytes", sqlstore.MaxText)
+	}
 	files, err := List()
 	if err != nil {
 		return 0, err
@@ -179,7 +184,9 @@ func bootstrap(ctx context.Context, db *sql.DB, d sqlstore.Dialect) error {
 	return nil
 }
 
-// take takes the migration lock the same way dbapi.LockTake does.
+// take takes the migration lock: the row and the rule of dbapi.LockTake, so
+// the runner and the store never disagree about who holds one. It reports
+// false while somebody else holds it and their time has not passed.
 func take(ctx context.Context, db *sql.DB, owner string, now int64) (bool, error) {
 	res, err := db.ExecContext(ctx, takeLock, []byte(owner), now+lockFor, []byte(lockName), []byte(owner), now)
 	if err != nil {
@@ -193,7 +200,9 @@ func take(ctx context.Context, db *sql.DB, owner string, now int64) (bool, error
 		return true, nil
 	}
 	// Nothing changed: either the lock is held by somebody else, or there is
-	// no row yet. The INSERT tells the two apart.
+	// no row yet. The INSERT tells the two apart. MariaDB counts changed rows
+	// and not matched ones, so an owner who takes their own lock again
+	// without moving the time lands here too; Apply always moves it.
 	if _, err := db.ExecContext(ctx, insertLock, []byte(lockName), []byte(owner), now+lockFor); err != nil {
 		return false, nil
 	}

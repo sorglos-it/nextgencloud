@@ -69,6 +69,22 @@ func tablesEmpty(t *testing.T, db *sql.DB) {
 	}
 }
 
+// TestRunnerTables: the two tables the runner brings along keep the rules of
+// a migration, so nothing about ngc_schema and ngc_lock is less portable or
+// less checked than the rest of the schema.
+func TestRunnerTables(t *testing.T) {
+	for _, stmt := range []string{createSchema, createLock} {
+		if err := checkStatement(stmt); err != nil {
+			t.Errorf("%.40q: %v", stmt, err)
+		}
+		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
+			if _, err := sqlstore.Fill(d, stmt); err != nil {
+				t.Errorf("%.40q: %v", stmt, err)
+			}
+		}
+	}
+}
+
 func TestApply(t *testing.T) {
 	db := openFile(t)
 	files, err := List()
@@ -97,6 +113,24 @@ func TestApply(t *testing.T) {
 	var owner []byte
 	if err := db.QueryRowContext(ctx, probeLock, []byte(dbapi.LockUpdate)).Scan(&owner); err != nil {
 		t.Errorf("the runner took the lock %q of somebody else with it: %v", dbapi.LockUpdate, err)
+	}
+}
+
+// TestApplyNeedsAnOwner: the owner ends up in a column of its own, so it is
+// bounded before the database sees it.
+func TestApplyNeedsAnOwner(t *testing.T) {
+	db := openFile(t)
+	for name, owner := range map[string]string{
+		"no owner":          "",
+		"an owner too long": strings.Repeat("n", sqlstore.MaxText+1),
+	} {
+		if _, err := Apply(ctx, db, sqlstore.SQLite, owner, 1790000000); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	// The longest one the column takes is still good.
+	if _, err := Apply(ctx, db, sqlstore.SQLite, strings.Repeat("n", sqlstore.MaxText), 1790000000); err != nil {
+		t.Errorf("the longest owner was refused: %v", err)
 	}
 }
 
