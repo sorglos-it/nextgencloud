@@ -70,7 +70,8 @@ func Main(version string, args []string, stdout, stderr io.Writer) int {
 }
 
 // run is the controller itself: tunnels to the APIs, services, updates. It is
-// what starts without a command. Task 18 builds it.
+// what starts without a command. Task 24 wires it out of the parts the tasks
+// before it bring.
 func run(version, cfgPath string, stdout, stderr io.Writer) int {
 	return notReady(stderr, "run")
 }
@@ -109,14 +110,15 @@ func runTerminal(args []string, stdout, stderr io.Writer) int {
 }
 
 // hold waits until its container stops, so an app image needs no program of
-// its own. It takes no writers because the finished command says nothing; only
-// this placeholder does, on os.Stderr.
+// its own. Task 23 builds it. It takes no writers because the finished command
+// says nothing; only this placeholder does, on os.Stderr.
 func hold() int {
 	return notReady(os.Stderr, "hold")
 }
 
-// buildImage writes the image of the terminal app for one architecture.
-// Task 23 builds it.
+// buildImage writes the image of the terminal app for one architecture. Task 23
+// makes that image with podman on a build machine instead, so no later task
+// fills this command: which of the two ways stays is the coordinator's call.
 func buildImage(version string, args []string, stdout, stderr io.Writer) int {
 	if _, _, err := parseImage(args); err != nil {
 		fmt.Fprintln(stderr, usageImage)
