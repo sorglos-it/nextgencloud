@@ -26,7 +26,8 @@ const (
 	firstWait = 1
 	maxWait   = 300
 	// keepFor is how long a row with no further failure is kept, so that a
-	// burst of tries does not clear itself at once.
+	// burst of tries does not clear itself at once -- and no longer, so that
+	// a bucket nothing has counted for that long begins at zero again.
 	keepFor = 3600
 	// maxCount is the highest failure count a row holds. From a dozen on the
 	// wait is maxWait whatever the number says, so counting further changes
@@ -60,6 +61,14 @@ const (
 //     locks them out far cheaper, one by one -- which is the price of any
 //     lock per name, and no number of buckets changes it.
 const buckets = 4096
+
+// The two properties key rests on, held by the compiler: a number that is no
+// power of two, or one the 16 bits cannot address, does not translate. No test
+// can hold them -- a wrong number divides the names unevenly and counts on.
+const (
+	_ = uint(0 - buckets&(buckets-1)) // a power of two
+	_ = uint(1<<16 - buckets)         // no more than the 16 bits give out
+)
 
 // maxNow is the largest time these functions take. No clock of this century
 // comes near it, and below it now+keepFor never wraps into a negative time,
@@ -96,14 +105,36 @@ func key(name string) string {
 		digits[n>>12&0xf], digits[n>>8&0xf], digits[n>>4&0xf], digits[n&0xf]})
 }
 
-// read returns the number of failures and the time the wait ends.
-func read(ctx context.Context, db dbapi.Local, name string) (int, int64, error) {
+// expired reports whether a row may be removed, which is the moment the
+// counting reads it as none. A row carries that time twice: Seq holds it for
+// Purge, which decides by it without reading a row, and Updated holds when the
+// row was last written. Both are the caller's own (dbapi: "0 where no order is
+// needed"), and the contract's test never reads a Seq back through BlobGet --
+// so a store that hands one of them back empty must not turn every row into an
+// expired one. That would count every failure as the first, and no wait would
+// ever grow. A row is gone only when both of its times say so. now is a time
+// validNow has taken, so it fits an unsigned number, and now-keepFor cannot
+// run over either.
+func expired(b dbapi.Blob, now int64) bool {
+	return b.Seq <= uint64(now) && b.Updated <= now-keepFor
+}
+
+// read returns the number of failures and the time the wait ends. A row past
+// its keep time reads as none, before anything of it is read: it is the row
+// Purge would have removed, and the lock must behave the same whether a purge
+// was ever wired up and however often it runs. That is what lets the counting
+// of a bucket fall back to zero -- and it is the only thing that ever ends the
+// lock a damaged row lays on its bucket.
+func read(ctx context.Context, db dbapi.Local, name string, now int64) (int, int64, error) {
 	b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(name))
 	if errors.Is(err, dbapi.ErrNotFound) {
 		return 0, 0, nil
 	}
 	if err != nil {
 		return 0, 0, err
+	}
+	if expired(b, now) {
+		return 0, 0, nil
 	}
 	count, until, ok := strings.Cut(string(b.Data), " ")
 	n, err1 := strconv.Atoi(count)
@@ -123,7 +154,7 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 	if !validNow(now) {
 		return 0, ErrLock
 	}
-	_, until, err := read(ctx, db, name)
+	_, until, err := read(ctx, db, name, now)
 	if err != nil || until <= now {
 		return 0, err
 	}
@@ -141,13 +172,19 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 // one write, so counting a name that has failed before costs exactly what
 // counting one nobody has ever sent costs: a difference there would say over
 // the clock what the answers keep quiet.
+//
+// The counting climbs, and it falls back on its own: a bucket that has not
+// counted for keepFor starts at zero, because the row it left behind is past
+// its keep time and reads as none (see read). Nothing outside this package has
+// to run for that, and a first failure after a quiet hour costs what a first
+// failure costs -- not the longest wait there is.
 func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if !validNow(now) {
 		return ErrLock
 	}
 	counting.Lock()
 	defer counting.Unlock()
-	n, until, err := read(ctx, db, name)
+	n, until, err := read(ctx, db, name, now)
 	if err != nil {
 		return err
 	}
@@ -188,6 +225,10 @@ func Clear(ctx context.Context, db dbapi.Local, name string) error {
 // no clock gives removes nothing at all: every row still counting lies ahead
 // of it, and freeing them all at once is exactly what a wrong number must
 // never do.
+//
+// No lock depends on it. A row past its keep time counts as none wherever it
+// is read (see read), so what Purge frees is the space the rows take, not a
+// name: whoever wires it up may run it as often or as seldom as he likes.
 //
 // It holds counting over the whole walk, so nothing is counted between the
 // walk and the deletes that follow it: a row that the walk saw expired would

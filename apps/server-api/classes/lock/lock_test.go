@@ -66,6 +66,44 @@ func TestLockIsTheSameForNamesThatDoNotExist(t *testing.T) {
 	}
 }
 
+// TestTheCountingStartsOverAfterKeepFor holds what makes the wait a wait and
+// not a sentence: a bucket nothing has counted for keepFor begins at zero
+// again. A row says itself how long it is kept, and the counting reads it the
+// same way Purge does -- so the lock behaves the same whether a purge was ever
+// wired up and however often it runs. Without it every bucket climbs to the
+// longest wait once and stays there, and a dozen typos spread over months are
+// enough to get it there.
+func TestTheCountingStartsOverAfterKeepFor(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	// A dozen failures are more than enough for the longest wait there is.
+	for i := 0; i < 12; i++ {
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != maxWait {
+		t.Fatalf("after twelve failures wait %d: %v", wait, err)
+	}
+	// Nothing counts for keepFor. From here the bucket is as new: the first
+	// freeCount failures are free again, and the next costs the first wait.
+	later := now + keepFor
+	for i := 0; i < freeCount; i++ {
+		if err := Fail(ctx, db, "anna", later); err != nil {
+			t.Fatalf("fail %d after keepFor: %v", i, err)
+		}
+		if wait, err := Check(ctx, db, "anna", later); err != nil || wait != 0 {
+			t.Fatalf("failure %d of a bucket at zero waits %d: %v", i+1, wait, err)
+		}
+	}
+	if err := Fail(ctx, db, "anna", later); err != nil {
+		t.Fatalf("the failure after the free ones: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", later); err != nil || wait != firstWait {
+		t.Fatalf("the first wait of a bucket at zero is %d: %v", wait, err)
+	}
+}
+
 func TestPurgeRemovesOnlyExpiredLocks(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
@@ -170,6 +208,38 @@ func TestDamagedRowKeepsTheNameShut(t *testing.T) {
 	}
 }
 
+// TestADamagedRowShutsItsBucketNoLongerThanKeepFor holds the other side of
+// the row above. A row nobody can read shuts its bucket, and that is the safe
+// direction -- but nothing in this package ever repairs it: Fail leaves it
+// alone on purpose, and Clear runs after a login the shut bucket lets nobody
+// make. A row is kept for keepFor, so that is how long the damage lasts, and
+// the next failure writes a row over it that counts again.
+func TestADamagedRowShutsItsBucketNoLongerThanKeepFor(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+		Data: []byte("x y"), Seq: uint64(now + keepFor), Updated: now}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); !errors.Is(err, ErrLock) || wait != 0 {
+		t.Fatalf("while it is kept the damaged row answered %d, %v", wait, err)
+	}
+	later := now + keepFor
+	if wait, err := Check(ctx, db, "anna", later); err != nil || wait != 0 {
+		t.Fatalf("the damaged row still shuts its bucket after keepFor: %d %v", wait, err)
+	}
+	// And the bucket counts from zero again, so nobody is left without a lock
+	// either: the damage is neither a way in nor a way to shut a name for good.
+	for i := 0; i <= freeCount; i++ {
+		if err := Fail(ctx, db, "anna", later); err != nil {
+			t.Fatalf("fail %d on the bucket of a damaged row: %v", i, err)
+		}
+	}
+	if wait, err := Check(ctx, db, "anna", later); err != nil || wait != firstWait {
+		t.Fatalf("the bucket of a damaged row waits %d: %v", wait, err)
+	}
+}
+
 // TestFailuresFiredAtOnceAllCount proves the counting against the way an
 // attacker tries: not one guess after the other but all of them at once. Read
 // and write have to be one step, or every one of them reads the same count
@@ -192,7 +262,7 @@ func TestFailuresFiredAtOnceAllCount(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	n, _, err := read(ctx, db, "anna")
+	n, _, err := read(ctx, db, "anna", now)
 	if err != nil || n != tries {
 		t.Fatalf("%d of %d failures counted: %v", n, tries, err)
 	}
@@ -280,14 +350,24 @@ func TestEveryNameIsCountedHoweverManyHaveFailed(t *testing.T) {
 		t.Fatalf("%d rows for %d names", len(blobs), names)
 	}
 	// A name nobody has tried yet, on a table as full as it gets: it counts
-	// like every other, and it locks.
-	for i := 0; i < 3; i++ {
+	// like every other, and it locks. Whether "anna" shares her bucket with
+	// one of the made-up names is a coincidence of the hash, and the check
+	// must not rest on it -- so her bucket is emptied first and the wait
+	// afterwards is the exact one her own failures ask for. Without that,
+	// made-up names alone could make the last line true.
+	if err := Clear(ctx, db, "anna"); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != 0 {
+		t.Fatalf("an empty bucket waits %d: %v", wait, err)
+	}
+	for i := 0; i <= freeCount; i++ {
 		if err := Fail(ctx, db, "anna", now); err != nil {
 			t.Fatalf("a failure on a new name was not counted: %v", err)
 		}
 	}
-	if wait, err := Check(ctx, db, "anna", now); err != nil || wait <= 0 {
-		t.Fatalf("a new name is free after three failures: %d %v", wait, err)
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != firstWait {
+		t.Fatalf("a new name waits %d after its first failures: %v", wait, err)
 	}
 }
 
@@ -347,5 +427,44 @@ func TestEveryNameFallsInABucket(t *testing.T) {
 	}
 	if len(seen) > buckets {
 		t.Fatalf("%d IDs of %d buckets", len(seen), buckets)
+	}
+}
+
+// stripSeq is a store that hands a row back without the Seq it was written
+// with. dbapi leaves Seq to the caller ("0 where no order is needed") and the
+// contract's own test never reads one back through BlobGet, so a store may
+// well do this.
+type stripSeq struct{ dbapi.Local }
+
+func (s stripSeq) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	b, err := s.Local.BlobGet(ctx, kind, id)
+	b.Seq = 0
+	return b, err
+}
+
+// TestTheCountingHoldsWhereAStoreKeepsNoSeq holds the one way the expiry
+// above could open every lock instead of closing the old ones: a row carries
+// the time it is kept twice, in Seq and in Updated, and a store that drops one
+// of them must not make every row look expired -- that would count every
+// failure as the first and the wait would never grow. So a row counts unless
+// both of its times say it may be gone.
+func TestTheCountingHoldsWhereAStoreKeepsNoSeq(t *testing.T) {
+	db := stripSeq{memstore.New()}
+	now := int64(1790000000)
+	for i := 0; i <= freeCount; i++ {
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != firstWait {
+		t.Fatalf("a store that keeps no Seq counted the failures to a wait of %d: %v", wait, err)
+	}
+	// And the row still expires, by the other of its two times.
+	later := now + keepFor
+	if err := Fail(ctx, db, "anna", later); err != nil {
+		t.Fatalf("fail after keepFor: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", later); err != nil || wait != 0 {
+		t.Fatalf("the first failure of a bucket at zero waits %d: %v", wait, err)
 	}
 }

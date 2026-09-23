@@ -38,12 +38,17 @@ func seeds() [][]byte {
 // rows the counting reads, and not just rows it turns away.
 func TestSeedsAreRowsTheCountingReads(t *testing.T) {
 	db := memstore.New()
+	now := int64(1790000000)
 	taken := 0
 	for _, row := range seeds() {
-		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row}); err != nil {
+		// With the times a row of the counting carries: one past its keep
+		// time is read as none whatever it says, and every seed would count
+		// as one the counting reads.
+		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+			Data: row, Seq: uint64(now + keepFor), Updated: now}); err != nil {
 			t.Fatalf("put %q: %v", row, err)
 		}
-		if _, _, err := read(ctx, db, "anna"); err == nil {
+		if _, _, err := read(ctx, db, "anna", now); err == nil {
 			taken++
 		}
 	}
@@ -65,8 +70,14 @@ func FuzzLockRow(f *testing.F) {
 		db := memstore.New()
 		now := int64(1790000000)
 		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
-			Data: row, Seq: uint64(now + keepFor)}); err != nil {
+			Data: row, Seq: uint64(now + keepFor), Updated: now}); err != nil {
 			t.Fatalf("put: %v", err)
+		}
+		// Whatever a row says, it says it for keepFor at most: once it may be
+		// removed, the counting reads it as none. No row is a wait that never
+		// ends, and none shuts its bucket until somebody wires up a purge.
+		if wait, err := Check(ctx, db, "anna", now+keepFor); err != nil || wait != 0 {
+			t.Fatalf("the row still answers %d after keepFor: %v", wait, err)
 		}
 		wait, err := Check(ctx, db, "anna", now)
 		if err != nil {
