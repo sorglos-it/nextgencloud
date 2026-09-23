@@ -59,6 +59,13 @@ func Host(tunnelURL string) (string, error) {
 // Ensure loads the key and certificate, makes what is missing and returns the
 // certificate with the pin of its key. An existing key is never replaced.
 func Ensure(certFile, keyFile, host string, now time.Time) (tls.Certificate, []byte, error) {
+	// The host is judged before anything is made or written. A host that is
+	// none can never pass use (VerifyHostname), so every start would write a
+	// fresh certificate and throw it away again -- and it would leave behind
+	// a key whose pin goes into the trust list for a host nobody checked.
+	if !trust.ValidHost(host) {
+		return tls.Certificate{}, nil, ErrTLS
+	}
 	key, err := ensureKey(keyFile)
 	if err != nil {
 		return tls.Certificate{}, nil, err

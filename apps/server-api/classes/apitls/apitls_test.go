@@ -280,3 +280,37 @@ func TestFilesWrittenWholeOrNotAtAll(t *testing.T) {
 		t.Fatalf("the key changed: %v", err)
 	}
 }
+
+// TestEnsureRefusesAHostThatIsNone proves the host is judged before anything
+// is made or written. Without that, ensureKey writes the private key first
+// and use throws the fresh certificate away right after (VerifyHostname), so
+// every start writes a new certificate, answers ErrTLS and leaves a key whose
+// pin would go into the trust list for a host nobody checked.
+func TestEnsureRefusesAHostThatIsNone(t *testing.T) {
+	for _, host := range []string{
+		"",                    // no host at all
+		"API-1.ngc.test",      // upper case: a second spelling of one name
+		"api-1.ngc.test:7443", // a port belongs to the address, not the host
+		"192.0.2.01",          // a leading zero: a second spelling of one address
+		"2001:db8::1",         // an IPv6 address without its brackets
+		"-bad.ngc.test",       // a label starting with '-'
+	} {
+		if trust.ValidHost(host) {
+			t.Fatalf("%q is a host after all, the test proves nothing", host)
+		}
+		dir := t.TempDir()
+		certFile, keyFile := filepath.Join(dir, "api.crt"), filepath.Join(dir, "api.key")
+		if _, _, err := Ensure(certFile, keyFile, host, when); !errors.Is(err, ErrTLS) {
+			t.Fatalf("%q answered %v", host, err)
+		}
+		// Nothing is left behind: the key least of all, because it can never
+		// be replaced once it is there.
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read dir: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("%q left %d files behind", host, len(entries))
+		}
+	}
+}
