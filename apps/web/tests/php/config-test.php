@@ -111,6 +111,16 @@ $cases = [
     ['origins without rp.id', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
         . '"rp":{"origins":["https://ngc.example.org"]}}', null, false],
 
+    // Strict JSON: a field nobody reads is a typo or a leftover, never a
+    // reason to carry on.
+    ['unknown field at the top', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],"foo":1}', null, false],
+    ['unknown field in apis[]', '{"apis":[{"url":"https://a.test:7443","tls":"x","foo":1}]}', null, false],
+    ['unknown field in rp', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+        . '"rp":{"id":"ngc.example.org","origins":["https://ngc.example.org"],"foo":1}}', null, false],
+    ['unknown field in the anchor', $goodWeb,
+        '{"seq":1,"hash":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s","foo":1}', false],
+    ['field spelled differently', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],"APIs":1}', null, false],
+
     // The rest of the shape.
     ['apis empty', '{"apis":[]}', null, false],
     ['apis is an object', '{"apis":{"url":"https://a.test:7443"}}', null, false],
@@ -124,6 +134,41 @@ foreach ($cases as [$name, $web, $anchor, $want]) {
     check('config', $name, $want, loads($tmp, $web, $anchor));
 }
 printf("%-9s %d cases\n", 'config', count($cases));
+
+// The message of an unknown field has to name it, and nothing else: that is
+// the only reason index.php is allowed to show.
+/** @return string the message, or '' if the file was accepted */
+function messageOf(string $tmp, string $web): string
+{
+    file_put_contents($tmp . '/web.json', $web);
+    @unlink($tmp . '/anchor.json');
+    try {
+        Config::load($tmp . '/web.json', $tmp . '/anchor.json');
+        return '';
+    } catch (Ngc\ConfigError $e) {
+        return $e->getMessage();
+    } catch (Throwable) {
+        return '(kein ConfigError)';
+    }
+}
+
+$messages = [
+    ['{"apis":[{"url":"https://a.test:7443","tls":"x"}],"foo":1}', 'Unbekanntes Feld in web.json: foo'],
+    ['{"apis":[{"url":"https://a.test:7443","tls":"x","bar":1}]}', 'Unbekanntes Feld in web.json: apis[].bar'],
+    ['{"apis":[{"url":"https://a.test:7443","tls":"x"}],"rp":{"id":"a.test","origins":[],"baz":1}}',
+        'Unbekanntes Feld in web.json: rp.baz'],
+    // A name that is long or odd never reaches the page as it stands.
+    ['{"apis":[{"url":"https://a.test:7443","tls":"x"}],"a<script>b":1}',
+        'Unbekanntes Feld in web.json: (unlesbarer Name)'],
+];
+foreach ($messages as [$web, $want]) {
+    $got = messageOf($tmp, $web);
+    check('message', $want, true, $got === $want);
+    if ($got !== $want) {
+        printf("      got: %s\n", $got);
+    }
+}
+printf("%-9s %d cases\n", 'message', count($messages));
 
 // The shipped files must also produce exactly the values /config.json sends.
 $c = Config::load(__DIR__ . '/../web.json', __DIR__ . '/../trust-anchor.json');

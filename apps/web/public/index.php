@@ -8,6 +8,7 @@ require_once __DIR__ . '/../classes/Config.php';
 require_once __DIR__ . '/../classes/Page.php';
 
 use Ngc\Config;
+use Ngc\ConfigError;
 use Ngc\Page;
 
 // VERSION is the only file read without a contract behind it, and its content
@@ -51,8 +52,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 
 try {
     $config = Config::load($webFile, $anchorFile);
+} catch (ConfigError $e) {
+    // The one reason that may be shown: it names a field of the
+    // configuration, so whoever mistyped it can see which one.
+    Page::fail(500, $e->getMessage());
+    return true;
 } catch (Throwable) {
-    // Never show the reason: it would name paths of the server.
+    // Never show any other reason: it would name paths of the server.
     Page::fail(500, 'NGC ist nicht eingerichtet.');
     return true;
 }

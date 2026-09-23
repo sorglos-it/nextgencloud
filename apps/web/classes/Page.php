@@ -7,14 +7,18 @@ namespace Ngc;
 //
 // The policy stays as tight as the page allows, because this is the document
 // that will hold the session keys. It carries no inline script and no inline
-// style, so neither 'unsafe-inline' nor data: belongs in script-src. App
-// frames that need more get it on the csp attribute of their own frame
-// (Task 21), never by loosening the top document.
+// style, so nothing loosens script-src or style-src. frame-src names no data:
+// either: where app windows come from is still open (Task 21), and that
+// decision is to be taken openly rather than to stand here already. Whatever
+// a frame then needs goes on the csp attribute of that frame.
+//
+// data: stays for images, fonts and media: an embedded icon or font is the
+// normal way, and no code runs from there.
 final class Page
 {
-    public const CSP = "default-src 'none'; script-src 'self'; style-src 'self' data:; "
+    public const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; "
         . "img-src 'self' data:; font-src 'self' data:; media-src data:; connect-src 'self'; "
-        . "frame-src 'self' data:; worker-src 'self'; manifest-src 'none'; "
+        . "frame-src 'self'; worker-src 'self'; manifest-src 'none'; "
         . "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
     public static function headers(string $type): void

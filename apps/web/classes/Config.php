@@ -8,6 +8,7 @@ use RuntimeException;
 // Without a build step there is no autoloader, so each class names what it
 // needs itself.
 require_once __DIR__ . '/Url.php';
+require_once __DIR__ . '/ConfigError.php';
 
 // Config reads the two files ngc-web and the controller with role web write:
 // /etc/ngc/web.json (config.Web) and /etc/ngc/trust-anchor.json (trust.Anchor).
@@ -17,6 +18,10 @@ require_once __DIR__ . '/Url.php';
 // line feed. One stray line feed on the anchor hash would travel into
 // /config.json, the comparison against the real chain would fail, and the
 // shell would raise the alarm and log the person out over a typo.
+//
+// Both files are read strictly: only the fields of the contract may appear,
+// at the top and in the objects below it. An unknown field throws a
+// ConfigError, whose German text names that field and nothing else.
 final class Config
 {
     public const MAX_FILE = 1048576;      // config.MaxConfig
@@ -37,6 +42,7 @@ final class Config
     {
         $c = new self();
         $web = self::readJson($webFile);
+        self::onlyFields($web, ['apis', 'rp'], 'web.json', '');
 
         $apis = $web['apis'] ?? null;
         if (!is_array($apis) || !array_is_list($apis)
@@ -47,7 +53,11 @@ final class Config
             // The address grammar is trust.ValidWebURL; PHP only passes the
             // address on, so it decides every case of url.json the same way
             // and never builds one of its own.
-            if (!is_array($a) || !is_string($a['url'] ?? null) || !Url::validWebURL($a['url'])) {
+            if (!is_array($a)) {
+                throw new RuntimeException('web.json: apis[]');
+            }
+            self::onlyFields($a, ['url', 'tls'], 'web.json', 'apis[].');
+            if (!is_string($a['url'] ?? null) || !Url::validWebURL($a['url'])) {
                 throw new RuntimeException('web.json: apis[].url');
             }
             $c->apis[] = $a['url'];
@@ -63,6 +73,7 @@ final class Config
             if (!is_array($rp)) {
                 throw new RuntimeException('web.json: rp');
             }
+            self::onlyFields($rp, ['id', 'origins'], 'web.json', 'rp.');
             $id = $rp['id'] ?? '';
             $origins = $rp['origins'] ?? [];
             if (!is_string($id) || !is_array($origins) || !array_is_list($origins)) {
@@ -92,6 +103,7 @@ final class Config
         // paired; until then the shell keeps the one of the setup.
         if (is_file($anchorFile)) {
             $a = self::readJson($anchorFile);
+            self::onlyFields($a, ['seq', 'hash'], 'trust-anchor.json', '');
             $seq = $a['seq'] ?? null;
             $hash = $a['hash'] ?? null;
             if (!is_int($seq) || $seq < 1 || $seq > self::MAX_SEQ
@@ -101,6 +113,37 @@ final class Config
             $c->anchor = ['seq' => $seq, 'hash' => $hash];
         }
         return $c;
+    }
+
+    /**
+     * onlyFields is the strict JSON of shared/README.md on the PHP side, the
+     * rule enc.DecodeStrict keeps in Go: a field nobody reads is either a typo
+     * or a leftover from another version, and in both cases the setup has to
+     * fail instead of quietly doing something else than meant.
+     *
+     * @param array<array-key,mixed> $o
+     * @param list<string> $allowed
+     */
+    private static function onlyFields(array $o, array $allowed, string $file, string $prefix): void
+    {
+        foreach (array_keys($o) as $k) {
+            if (!in_array((string)$k, $allowed, true)) {
+                throw new ConfigError(
+                    'Unbekanntes Feld in ' . $file . ': ' . $prefix . self::safeName((string)$k)
+                );
+            }
+        }
+    }
+
+    // safeName keeps the shown name short and plain. The field name comes out
+    // of a file, so without this a long or odd name would travel into the
+    // answer; the person only needs to recognise what they mistyped.
+    private static function safeName(string $k): string
+    {
+        if ($k === '' || strlen($k) > 40 || preg_match('/\A[A-Za-z0-9_.-]+\z/', $k) !== 1) {
+            return '(unlesbarer Name)';
+        }
+        return $k;
     }
 
     /** @return array<string,mixed> */
