@@ -7,12 +7,13 @@ The NGC desktop in the browser: login, session, windows, apps.
 | `public/` | web root; `index.php` is the only entry point, `assets/` holds CSS, JS and vendored code |
 | `classes/` | PHP: reads `/etc/ngc/web.json` and `/etc/ngc/trust-anchor.json` |
 | `templates/` | the page skeleton |
-| `tests/` | Playwright; npm lives only here |
+| `tests/` | Playwright; npm lives only here. `tests/php/` checks the PHP side and needs no npm |
 
 ## Start in 3 steps
 
 1. `cd apps/web/tests && npm install && npm run install-browsers`
-2. `npm test` — the contracts check themselves against `shared/testdata/`, no API needed.
+2. `npm test`, then `php php/config-test.php` — the contracts check themselves against
+   `shared/testdata/`, no API needed.
 3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository.
 
 No build step, no framework. NGC itself never needs npm.
