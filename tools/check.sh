@@ -11,13 +11,32 @@ fi
 go vet ./...
 go test ./...
 # The PHP side of the web interface checks itself against shared/testdata/ and
-# needs nothing but PHP. Without it the one drift it is written to catch would
-# only show when somebody runs it by hand. Where there is no php, say so and
-# carry on, like the Go tests that skip themselves without their tools.
-if command -v php >/dev/null 2>&1; then
-	php apps/web/tests/php/config-test.php
+# needs nothing but PHP. Skipping it quietly would mean the drift it is written
+# to catch never shows in a normal run, so look in the places php is really
+# installed before giving up: NGC_PHP, the PATH, and the Windows development
+# machine, where php is installed but not on the PATH.
+php=""
+if [ -n "${NGC_PHP:-}" ]; then
+	if [ -x "$NGC_PHP" ]; then
+		php="$NGC_PHP"
+	else
+		echo "NGC_PHP is set but not executable: $NGC_PHP"
+		exit 1
+	fi
+elif command -v php >/dev/null 2>&1; then
+	php=php
 else
-	echo "no php: skipping apps/web/tests/php/config-test.php"
+	for cand in /c/esp/php/php82/php.exe "C:/esp/php/php82/php.exe"; do
+		if [ -x "$cand" ]; then
+			php="$cand"
+			break
+		fi
+	done
+fi
+if [ -n "$php" ]; then
+	"$php" apps/web/tests/php/config-test.php
+else
+	echo "no php: skipping apps/web/tests/php/config-test.php (set NGC_PHP to its path)"
 fi
 for arch in amd64 arm64; do
 	# trusttest holds fixed test keys: only test code may import it. The list

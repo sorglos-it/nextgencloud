@@ -18,16 +18,21 @@ $root = dirname(__DIR__, 4);
 $failed = 0;
 $passed = 0;
 
-function check(string $group, string $name, bool $want, bool $got): void
+// $got is null where the code under test threw something it must not throw.
+// That is a failure whichever way the case was expected to go: counting it as
+// "refused" would let an unexpected exception pass every case that expects a
+// refusal, which is half the bolt missing.
+function check(string $group, string $name, bool $want, ?bool $got): void
 {
     global $failed, $passed;
-    if ($want === $got) {
+    if ($got !== null && $want === $got) {
         $passed++;
         return;
     }
     $failed++;
     printf("FAIL  %s: %s — expected %s, got %s\n", $group, $name,
-        $want ? 'valid' : 'invalid', $got ? 'valid' : 'invalid');
+        $want ? 'valid' : 'invalid',
+        $got === null ? 'an exception' : ($got ? 'valid' : 'invalid'));
 }
 
 // --- the address vectors -------------------------------------------------
@@ -113,8 +118,11 @@ printf("%-9s %d cases\n", 'robust', count($nasty) * 4);
 $tmp = sys_get_temp_dir() . '/ngc-web-config-test';
 @mkdir($tmp, 0700, true);
 
-/** Writes the two files and reports whether Config::load accepts them. */
-function loads(string $tmp, string $web, ?string $anchor): bool
+/**
+ * Writes the two files and reports whether Config::load accepts them:
+ * true accepted, false refused, null threw something it must not throw.
+ */
+function loads(string $tmp, string $web, ?string $anchor): ?bool
 {
     file_put_contents($tmp . '/web.json', $web);
     if ($anchor === null) {
@@ -129,11 +137,12 @@ function loads(string $tmp, string $web, ?string $anchor): bool
         // The two failures Config is allowed to have.
         return false;
     } catch (Throwable $e) {
-        // Anything else is a bug, not a rejected file. Saying "accepted"
-        // makes the case fail, so it cannot hide behind a broad catch the way
-        // a ValueError from inet_pton once did.
+        // Anything else is a bug, not a rejected file — whichever way the case
+        // was expected to go. null makes it fail either way; returning a bool
+        // here would let it pass half the time, the way a ValueError from
+        // inet_pton once slipped through a broad catch.
         printf("THREW %s: %s\n", $e::class, $e->getMessage());
-        return true;
+        return null;
     }
 }
 
