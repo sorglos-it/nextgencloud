@@ -27,6 +27,11 @@ var (
 	// error because it is the one fault that points at a swapped list rather
 	// than at a stale or hasty caller.
 	ErrInstallation = errors.New("state: version belongs to another installation")
+	// ErrBadVersion reports a number no version ever has: they are counted
+	// from 1. session.ParseFrom refuses it in the query already, so it is a
+	// mistake inside the API -- and a mistake must never read like a damaged
+	// database.
+	ErrBadVersion = errors.New("state: version numbers start at 1")
 )
 
 // trustLock is the lock that makes reading, verifying and writing one version
@@ -37,6 +42,13 @@ const (
 	trustLock  = "trust"
 	trustLease = 30
 )
+
+// gapProbes is how many numbers above a missing one checkGap asks for before
+// it calls the chain ended. Eight empty reads cost the same whether the chain
+// is whole or not, and they find every hole of up to eight versions for
+// certain. A larger hole needs what the contract has no query for: the newest
+// number the database holds, or an anchor outside it.
+const gapProbes = 8
 
 // chainOverhead is what the JSON of a TrustChain costs besides the stored
 // versions: {"versions":[]} and ,"more":true are 27 bytes, and the commas
@@ -77,31 +89,48 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 	if cur.List != nil {
 		from = cur.List.Seq + 1
 	}
+	// retried marks the one retry checkGap may ask for. More than one means
+	// a row keeps coming and going while this read runs, and then nothing
+	// read here is worth keeping.
+	retried := false
 	for {
 		chain, err := s.readBlock(ctx, from)
 		if err != nil {
 			return trust.Version{}, err
 		}
-		if len(chain) == 0 {
-			break
-		}
-		if cur.List == nil {
-			// Version 1 is the anchor of this installation: it signs itself,
-			// and trust.Open checks that an admin of it did.
-			cur, err = trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}, chain)
-			if err == nil {
-				err = s.checkInstallation(ctx, cur.List.Installation)
+		if len(chain) > 0 {
+			if cur.List == nil {
+				// Version 1 is the anchor of this installation: it signs
+				// itself, and trust.Open checks that an admin of it did.
+				cur, err = trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}, chain)
+				if err == nil {
+					err = s.checkInstallation(ctx, cur.List.Installation)
+				}
+			} else {
+				cur, err = trust.Advance(cur, chain)
 			}
-		} else {
-			cur, err = trust.Advance(cur, chain)
+			if err != nil {
+				return trust.Version{}, err
+			}
+			from = cur.List.Seq + 1
+			if len(chain) == session.MaxChainVersions {
+				// A full block says nothing about what lies above it.
+				continue
+			}
 		}
+		// The database does not hold number from, and from below the end of
+		// the chain and a hole in it look the same.
+		again, err := s.checkGap(ctx, from)
 		if err != nil {
 			return trust.Version{}, err
 		}
-		from = cur.List.Seq + 1
-		if len(chain) < session.MaxChainVersions {
+		if !again {
 			break
 		}
+		if retried {
+			return trust.Version{}, ErrSetting
+		}
+		retried = true
 	}
 	if cur.List == nil {
 		return trust.Version{}, ErrNoTrust
@@ -111,9 +140,10 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 }
 
 // readBlock reads at most session.MaxChainVersions versions from from on, row
-// by row, and stops at the first number that is not there. dbapi.BlobFrom
-// would hand out the whole history in one allocation, and each version may be
-// megabytes: every caller of Chain would pay for all of them.
+// by row, and stops at the first number that is not there; the caller looks
+// above that number with checkGap. dbapi.BlobFrom would hand out the whole
+// history in one allocation, and each version may be megabytes: every caller
+// of Chain would pay for all of them.
 func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, error) {
 	out := make([]trust.Signed, 0, session.MaxChainVersions)
 	for i := uint64(0); i < session.MaxChainVersions; i++ {
@@ -133,6 +163,51 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 		out = append(out, sg)
 	}
 	return out, nil
+}
+
+// checkGap looks above a number the database does not hold. Versions are
+// counted without holes, so a row further up means the database lost the one
+// in between -- and a read that stops at a hole puts an older trust list back
+// in force without a word: keys an admin withdrew would count again, which is
+// what the anchor stands against. Dropping one row is the cheapest way to do
+// that, so it is the one this catches for certain.
+//
+// It answers true when the number is there after all: versions are written in
+// order, so a row above it means another API had just added both, and the
+// caller reads on. A row above a number that stays missing is ErrSetting.
+func (s *State) checkGap(ctx context.Context, missing uint64) (bool, error) {
+	for i := uint64(1); i <= gapProbes; i++ {
+		above, err := s.rowThere(ctx, missing+i)
+		if err != nil {
+			return false, err
+		}
+		if !above {
+			continue
+		}
+		again, err := s.rowThere(ctx, missing)
+		if err != nil {
+			return false, err
+		}
+		if again {
+			return true, nil
+		}
+		return false, ErrSetting
+	}
+	return false, nil
+}
+
+// rowThere reports whether the database holds this version. It does not read
+// it as one: here only its presence counts, and a row that is there is read
+// and verified in the round that follows.
+func (s *State) rowThere(ctx context.Context, seq uint64) (bool, error) {
+	_, err := s.DB.BlobGet(ctx, dbapi.BlobTrust, strconv.FormatUint(seq, 10))
+	if errors.Is(err, dbapi.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // checkInstallation binds the root of the chain to this installation. Version
@@ -251,8 +326,14 @@ func chainFault(cur trust.Version, sg trust.Signed) error {
 // Chain answers GET session.PathTrust: the versions from from on, at most
 // session.MaxChainVersions and session.MaxChain bytes, with More when older
 // answers follow. from one past the newest gives an empty chain (the caller
-// answers 204); anything beyond is ErrOldVersion (404).
+// answers 204); anything beyond is ErrOldVersion (404), and from below 1 is
+// ErrBadVersion, a number that is no version at all.
 func (s *State) Chain(ctx context.Context, from uint64) (session.TrustChain, error) {
+	// A number no version has is answered before the database is asked at
+	// all: nothing about it can be found there.
+	if from < 1 {
+		return session.TrustChain{}, ErrBadVersion
+	}
 	cur, err := s.Refresh(ctx)
 	if err != nil {
 		return session.TrustChain{}, err

@@ -1,8 +1,10 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -307,5 +309,131 @@ func TestTrustUsesTheCache(t *testing.T) {
 	// handing out an empty chain the shell refuses.
 	if _, err := s.Chain(ctx, 1); !errors.Is(err, ErrSetting) {
 		t.Fatalf("chain without its rows answered %v", err)
+	}
+}
+
+// chainOf stores count versions after first, signed by admin, and returns the
+// newest one. The rows it leaves behind are what a fresh API reads back.
+func chainOf(tb testing.TB, s *State, admin trusttest.Signer, first trust.Signed, count int) trust.Signed {
+	tb.Helper()
+	prev := first
+	for i := 0; i < count; i++ {
+		prev = admin.Sign(tb, trusttest.Next(tb, prev))
+		if _, err := s.AddVersion(ctx, prev); err != nil {
+			tb.Fatalf("version %d: %v", i+2, err)
+		}
+	}
+	return prev
+}
+
+// dropRow removes one stored version, the cheapest way for whoever can write
+// the database to put the trust list back on an older state.
+func dropRow(tb testing.TB, db dbapi.Store, seq uint64) {
+	tb.Helper()
+	if err := db.BlobDelete(ctx, dbapi.BlobTrust, strconv.FormatUint(seq, 10)); err != nil {
+		tb.Fatalf("delete %d: %v", seq, err)
+	}
+}
+
+// TestRefreshFindsAHole proves that a missing row is named instead of cutting
+// the chain short in silence. A short read would put an older version of the
+// trust list back in force -- keys an admin withdrew would count again -- and
+// the answer would claim to be the whole chain.
+func TestRefreshFindsAHole(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		gone uint64
+	}{
+		{"in the middle", 3},
+		{"the very first", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, db := newTrusted(t)
+			admin, first := genesis(t)
+			if _, err := s.AddVersion(ctx, first); err != nil {
+				t.Fatalf("version 1: %v", err)
+			}
+			chainOf(t, s, admin, first, 4) // versions 1..5
+			dropRow(t, db, c.gone)
+			fresh := New(s.Cfg, db, s.Box, s.Pin)
+			fresh.Now = s.Now
+			if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
+				t.Fatalf("refresh over the hole answered %v", err)
+			}
+			// The whole point is the answer to the shell: it must not get a
+			// short chain that calls itself complete.
+			if _, err := fresh.Chain(ctx, 1); !errors.Is(err, ErrSetting) {
+				t.Fatalf("chain over the hole answered %v", err)
+			}
+		})
+	}
+}
+
+// TestRefreshFindsAHoleAboveABlock proves the same where the hole sits right
+// above a full block: there the read stops between two blocks, not inside one.
+func TestRefreshFindsAHoleAboveABlock(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	chainOf(t, s, admin, first, session.MaxChainVersions+1) // versions 1..66
+	dropRow(t, db, session.MaxChainVersions+1)              // the first one of the second block
+	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.Now = s.Now
+	if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
+		t.Fatalf("refresh over the hole answered %v", err)
+	}
+}
+
+// TestChainFromZero proves that a number no version ever has is answered as
+// the mistake it is and not as a damaged database. session.ParseFrom refuses
+// 0 in the query already; this is the second line behind it.
+func TestChainFromZero(t *testing.T) {
+	s, _ := newTrusted(t)
+	_, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	if _, err := s.Chain(ctx, 0); !errors.Is(err, ErrBadVersion) {
+		t.Fatalf("chain from 0 answered %v", err)
+	}
+}
+
+// lateRow hides one trust row from the first look and hands it out from the
+// second on. It stands for another API adding versions while this one reads
+// past their numbers: versions are written in order, so a row above a number
+// means that number is there too, and the read must go on instead of calling
+// the chain damaged.
+type lateRow struct {
+	dbapi.Store
+	id   string
+	seen int
+}
+
+func (l *lateRow) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust && id == l.id {
+		if l.seen++; l.seen == 1 {
+			return dbapi.Blob{}, dbapi.ErrNotFound
+		}
+	}
+	return l.Store.BlobGet(ctx, kind, id)
+}
+
+// TestRefreshReadsOnAfterARace proves that the look above a missing number
+// does not turn a busy database into a broken one: a number that is there on
+// the second look is read, and the API arrives at the newest version.
+func TestRefreshReadsOnAfterARace(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	chainOf(t, s, admin, first, 2) // versions 1..3
+	fresh := New(s.Cfg, &lateRow{Store: db, id: "2"}, s.Box, s.Pin)
+	fresh.Now = s.Now
+	v, err := fresh.Refresh(ctx)
+	if err != nil || v.List.Seq != 3 {
+		t.Fatalf("refresh after the race is at %v: %v", v.List, err)
 	}
 }
