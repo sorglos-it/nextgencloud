@@ -63,7 +63,26 @@ sha256sum package/{argon2,blake2,_blake,_md,_u64,utils}.js package/LICENSE
 
 ## Aktualisieren
 
-Dieselbe Prüfung noch einmal, Datei für Datei ersetzen, die Prüfsummen oben neu eintragen,
-und `apps/web/tests` laufen lassen: `npx playwright test contracts/proof.spec.js`. Die drei
-Vektoren aus `shared/testdata/proof_kdf.json` müssen weiter stimmen – sie kommen von Go und
-sind der Maßstab, nicht die Bibliothek.
+Dieselbe Prüfung noch einmal, Datei für Datei ersetzen, die Prüfsummen oben neu eintragen –
+und dann in `apps/web/tests` die **ganze** Mappe laufen lassen, nicht nur eine Datei:
+
+```bash
+cd apps/web/tests && npx playwright test
+```
+
+Wer es abkürzen will, braucht mindestens diese beiden – die erste rechnet die Vektoren nach,
+die zweite fährt den DER-Leser und die `clientData` mit Zufallsdaten:
+
+```bash
+npx playwright test contracts/proof.spec.js contracts/proof-fuzz.spec.js
+```
+
+Was dabei über die Bibliothek entscheidet:
+
+| Fall in `contracts/proof.spec.js` | Prüft |
+| --- | --- |
+| „the seed of a typed password is the one Go derives with Argon2id" | die drei Vektoren aus `shared/testdata/proof_kdf.json` – sie kommen von **Go** und sind der Maßstab, nicht die Bibliothek |
+| „the copied Argon2id agrees with the test vector of RFC 9106, lanes and all" | den veröffentlichten Vektor aus RFC 9106 §5.3, mit **p=4 Spuren**; die Vektoren von Go haben alle nur `p=1` |
+| „a password key is derived only with the parameters of the contract" | dass keine Voreinstellung der Bibliothek durchschlägt |
+
+Und `tools/check.sh` gehört wie immer davor.

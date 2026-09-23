@@ -91,6 +91,48 @@ test("every proof of proof.json is decided as Go decides it", async ({ shell }) 
   expect(got.filter((g) => !g.keyWhole).map((g) => g.name).sort()).toEqual([...new Set(wantBrokenKeys)].sort());
 });
 
+// verify does not run validateProof, because Go does not run it either:
+// proof.Verify checks what it needs itself and leaves authData and clientData
+// of a password proof entirely alone, while Proof.Validate refuses a password
+// proof that carries them. The two therefore have to disagree about one and
+// the same proof - and no vector says so, because proof.json has no password
+// proof with authenticator data that is still valid. This case builds one:
+// the vector "password key", whose signature is right, with authenticator
+// data and client data hung on it. Put validateProof back at the head of
+// verify and this case goes red at once, while every vector stays green.
+test("a password proof that carries what only a passkey may carry still verifies", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, passwordPub)),
+    "no Ed25519 in this engine's Web Crypto: no right signature can come out true here");
+  const c = v.proofs.find((x) => x.name === "password key");
+  expect(c.valid).toBe(true);
+  const got = await shell.evaluate(async (d) => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const key = { ...d.c.key, pub: b64decode(d.c.key.pub), credId: new Uint8Array(0),
+      kdf: { ...d.c.key.kdf, salt: b64decode(d.c.key.kdf.salt) } };
+    const plain = { kind: d.c.proof.kind, kid: d.c.proof.kid, sig: b64decode(d.c.proof.sig),
+      authData: new Uint8Array(0), clientData: new Uint8Array(0) };
+    // The same proof with the two fields a password proof never has. The
+    // signature covers neither of them, so nothing about it changes.
+    const dressed = { ...plain, authData: new Uint8Array(37).fill(9), clientData: new Uint8Array(10).fill(9) };
+    const payload = b64decode(d.c.payload);
+    return {
+      plainVerifies: await p.verify(plain, key, d.rp, d.c.purpose, payload),
+      plainWhole: p.validateProof(plain),
+      dressedVerifies: await p.verify(dressed, key, d.rp, d.c.purpose, payload),
+      dressedWhole: p.validateProof(dressed),
+    };
+  }, { c, rp: v.rp });
+  // The proof as it stands: right by both.
+  expect(got.plainVerifies).toBe(true);
+  expect(got.plainWhole).toBe(true);
+  // And dressed up: Verify of Go says yes, Validate of Go says no. The web
+  // side has to answer exactly as the API does, or it would refuse proofs the
+  // API takes.
+  expect(got.dressedVerifies).toBe(true);
+  expect(got.dressedWhole).toBe(false);
+});
+
 // The challenge a passkey signs is SHA-256 over the bytes a signature would
 // cover. The clientData of the vectors was written by Go, so the challenge in
 // it is the one Go computed: this holds the JavaScript against that number
@@ -152,6 +194,58 @@ test("the public key of a seed is the one Go derives", async ({ shell }) => {
   expect(got.usages).toEqual(["sign"]);
 });
 
+// The Web Crypto API hands out no public key of a private one, so
+// publicFromSeed imports the seed as extractable and reads the JWK. That JWK
+// carries the seed back out as d, base64url text - a second copy of the
+// secret that no code can overwrite, because a string cannot be written to.
+// What publicFromSeed can do is let go of it at once, so nothing that outlives
+// the call holds it any more.
+//
+// This case stands crypto.subtle.exportKey in the way, keeps the very object
+// the engine handed back, and looks at it after publicFromSeed has returned.
+// It says out loud that d was there beforehand, so it cannot go green on an
+// engine that leaves d out to begin with.
+test("the export that gives the public key does not keep the seed", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, passwordPub)),
+    "no Ed25519 in this engine's Web Crypto: it can import no seed and export no JWK");
+  const got = await shell.evaluate(async (c) => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
+    const seed = b64decode(c.seed);
+    const original = crypto.subtle.exportKey;
+    const seen = [];
+    crypto.subtle.exportKey = async function (...a) {
+      const jwk = await original.apply(this, a);
+      // Read now, before publicFromSeed gets its hands on the object.
+      seen.push({ jwk, dWas: typeof jwk.d === "string" && b64encode(b64decode(jwk.d)) === b64encode(seed) });
+      return jwk;
+    };
+    let pub;
+    try {
+      pub = b64encode(await p.publicFromSeed(seed));
+    } finally {
+      delete crypto.subtle.exportKey;
+    }
+    return {
+      pub,
+      exports: seen.length,
+      dWasTheSeed: seen.map((s) => s.dWas),
+      dNow: seen.map((s) => (s.jwk.d === undefined ? "let go" : "still there")),
+      xStill: seen.map((s) => typeof s.jwk.x),
+      restored: crypto.subtle.exportKey === original,
+    };
+  }, kdfCases[0]);
+  expect(got.pub).toBe(kdfCases[0].public);
+  // Exactly one export, and what came back really was the seed.
+  expect(got.exports).toBe(1);
+  expect(got.dWasTheSeed).toEqual([true]);
+  // And it is gone from the object the moment publicFromSeed is done with it.
+  expect(got.dNow).toEqual(["let go"]);
+  // The public half is untouched - only the secret one is dropped.
+  expect(got.xStill).toEqual(["string"]);
+  expect(got.restored).toBe(true);
+});
+
 // The whole way from the typed password to the key, against the same three
 // vectors Go writes (proof.DeriveKey over argon2.IDKey). The third case is
 // the second one typed in NFD: Go has no NFC table and put the case here on
@@ -192,10 +286,18 @@ test("the seed of a typed password is the one Go derives with Argon2id", async (
   const how = `deriveSeed at m=65536 t=3 p=1: ${got.map((g) => `${g.ms} ms`).join(", ")}`;
   console.log(how);
   test.info().annotations.push({ type: "Argon2id", description: how });
-  // Around 45 ticks are due in a second; five is the floor under which the
-  // page was plainly standing still. A derivation on the page's own thread
-  // would land at one or two.
-  expect(got.map((g) => g.ticks >= 5)).toEqual(kdfCases.map(() => true));
+  // The timer is asked for a tick every 20 ms. Measured while these cases
+  // ran, it really gets about 49 a second in Chromium and about 32 in WebKit,
+  // so the floor is one tick per 100 ms of the derivation as it actually
+  // took: a fifth of the slower engine's rate. It has to grow with the
+  // measured time, because a fixed five would still be met by a regression
+  // that took nine tenths of the thread - at m=65536 that is 5 ticks against
+  // the 48 to 60 there are.
+  const tooQuiet = got
+    .filter((g) => g.ticks < Math.floor(g.ms / 100))
+    .map((g) => `only ${g.ticks} ticks while the derivation ran ${g.ms} ms`);
+  expect(tooQuiet).toEqual([]);
+  console.log(`ticks while deriving: ${got.map((g) => `${g.ticks} in ${g.ms} ms`).join(", ")}`);
   // Nothing about the public key here: the seeds just came out as the ones of
   // the vectors, and the case above takes those same seeds to the public keys
   // of the vectors. The chain from the typed password to the key is closed
@@ -247,6 +349,127 @@ test("a password key is derived only with the parameters of the contract", async
   });
   const wrong = out.filter(([, answer]) => answer !== "BadProof");
   expect(wrong).toEqual([]);
+});
+
+// The typed password is meant to live in one place and to be gone right
+// after: deriveSeed hands its buffer to the worker instead of copying it, and
+// the worker wipes it. Where no worker can be made at all, nobody takes the
+// buffer and nobody wipes it, and the bytes of the password would stay on the
+// page's heap for as long as the engine kept them.
+//
+// This case stands TextEncoder in the way to keep the very array the password
+// was encoded into, and hands out a Worker that refuses to be built. It says
+// out loud that those bytes were the password beforehand, so it cannot go
+// green on an encoding that never happened.
+test("the typed password is wiped even where no worker can be made", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const password = "Heimnetz-2026";
+    const want = new TextEncoder().encode(password);
+    const encode = TextEncoder.prototype.encode;
+    const seen = [];
+    TextEncoder.prototype.encode = function (...a) {
+      const u = encode.apply(this, a);
+      seen.push({ u, isPassword: u.length === want.length && want.every((b, i) => u[i] === b) });
+      return u;
+    };
+    const realWorker = globalThis.Worker;
+    globalThis.Worker = class { constructor() { throw new DOMException("no worker here"); } };
+    let answer = "no error";
+    try {
+      const salt = new Uint8Array(16).fill(7);
+      await p.deriveSeed(password, { alg: "argon2id", salt, m: 19456, t: 1, p: 1 });
+      answer = "derived something";
+    } catch (e) {
+      answer = e.constructor.name;
+    } finally {
+      TextEncoder.prototype.encode = encode;
+      globalThis.Worker = realWorker;
+    }
+    const mine = seen.filter((s) => s.isPassword);
+    return {
+      answer,
+      encodings: mine.length,
+      left: mine.map((s) => Array.from(s.u).filter((b) => b !== 0).length),
+    };
+  });
+  // No worker is no seed, and it says so instead of hanging or throwing
+  // something a caller cannot name.
+  expect(got.answer).toBe("BadProof");
+  // The password really was encoded once - otherwise there would be nothing
+  // to wipe and this case would mean nothing.
+  expect(got.encodings).toBe(1);
+  // And not one byte of it is left.
+  expect(got.left).toEqual([0]);
+});
+
+// A worker that is built, takes the password and then never answers would
+// leave deriveSeed open for good - no seed, no error, and the password's
+// bytes sitting in a worker nobody ends. For someone who has just typed his
+// password, a sign-in that neither finishes nor fails is the worst of the
+// three endings, so there is a deadline.
+//
+// This case hands out a Worker that swallows everything in silence and waits
+// for the deadline to run out. It uses the cheapest parameters the contract
+// allows, because the deadline grows with the work Argon2id was asked for.
+test("a worker that never answers ends in an error and not in waiting", async ({ shell }) => {
+  test.setTimeout(180_000);
+  const got = await shell.evaluate(async () => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const realWorker = globalThis.Worker;
+    let built = 0;
+    let ended = 0;
+    globalThis.Worker = class {
+      constructor() { built += 1; }
+      postMessage() {}
+      terminate() { ended += 1; }
+    };
+    const started = performance.now();
+    let answer = "no error";
+    try {
+      const salt = new Uint8Array(16).fill(7);
+      await p.deriveSeed("Heimnetz-2026", { alg: "argon2id", salt, m: 19456, t: 1, p: 1 });
+      answer = "derived something";
+    } catch (e) {
+      answer = e.constructor.name;
+    } finally {
+      globalThis.Worker = realWorker;
+    }
+    return { answer, built, ended, ms: Math.round(performance.now() - started) };
+  });
+  expect(got.answer).toBe("BadProof");
+  expect(got.built).toBe(1);
+  // The worker is ended, so nothing of it and nothing in it is left running.
+  expect(got.ended).toBe(1);
+  // Long enough that no ordinary derivation ever runs into it, and short
+  // enough that a person is still there when it comes.
+  expect(got.ms).toBeGreaterThan(5_000);
+  expect(got.ms).toBeLessThan(60_000);
+  console.log(`a silent worker was given up on after ${got.ms} ms`);
+});
+
+// The three vectors of proof_kdf.json all say m=65536, t=3, p=1, so nothing
+// in this repository holds Argon2id against a parallelism above one - and the
+// way the lanes are woven together is exactly where implementations have gone
+// apart in the past, while validateKDF allows p up to 4.
+//
+// Until the shared vectors cover it, this case holds the copied library
+// against the published test vector of RFC 9106 itself (section 5.3,
+// Argon2id, version 0x13, p=4 lanes, m=32, t=3, with a secret and associated
+// data). It goes at the library directly and not through deriveSeed, because
+// m=32 is far under the floor the contract sets - the point here is the lane
+// arithmetic, not the contract.
+test("the copied Argon2id agrees with the test vector of RFC 9106, lanes and all", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const { argon2id } = await import("/assets/vendor/noble-hashes/argon2.js");
+    const hex = (u) => Array.from(u).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const tag = argon2id(new Uint8Array(32).fill(1), new Uint8Array(16).fill(2), {
+      m: 32, t: 3, p: 4, dkLen: 32, version: 0x13,
+      key: new Uint8Array(8).fill(3), personalization: new Uint8Array(12).fill(4),
+    });
+    return hex(tag);
+  });
+  expect(got).toBe("0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659");
 });
 
 // Proof.Validate of Go, rule by rule. There are no vectors for what has to be

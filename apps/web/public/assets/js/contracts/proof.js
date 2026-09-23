@@ -142,6 +142,29 @@ export function validateKDF(k) {
 // path of its own, so moving assets/ moves it along.
 const ARGON2_WORKER = new URL("../auth/argon2-worker.js", import.meta.url);
 
+// How long a derivation may take before it counts as stuck, rather than as
+// slow. Argon2id's work grows with m and with t; p splits that work into
+// lanes without adding to it, so the budget does not count p.
+//
+// Measured on the machine this was written on, in the slower of the two test
+// engines: m=65536 t=3 took 1.9 to 2.2 s and m=19456 t=2 took 0.44 to 0.46 s,
+// which is about 12 microseconds per KiB-pass. Allowed here are 500 of them,
+// some forty times that, so a phone many times slower than this desktop still
+// finishes well inside the budget; the ten seconds on top are for starting
+// the worker and fetching its module. What misses this has not got slow, it
+// has got stuck - and for someone who has just typed his password, a sign-in
+// that neither finishes nor fails is the worst of the three endings.
+const DERIVE_START_MS = 10_000;
+const DERIVE_PER_KIB_PASS_MS = 0.5;
+
+// wipe clears bytes that are still here. fill(0) on a buffer that has been
+// handed over to a worker throws, and the array's length reads as zero then
+// (measured in both engines), so a wipe asks first: where the transfer went
+// through, nothing is left here to wipe, because the bytes went with it.
+function wipe(u8) {
+  if (u8.length > 0) u8.fill(0);
+}
+
 // deriveSeed turns the typed password into the 32-byte seed of the Ed25519
 // password key (Go: proof.DeriveKey, which begins with KDF.Validate just the
 // same and answers ErrKDF).
@@ -156,11 +179,13 @@ const ARGON2_WORKER = new URL("../auth/argon2-worker.js", import.meta.url);
 // missing is an error, never a value quietly filled in. The length of the
 // seed is this module's, not the caller's.
 //
-// The work runs in a worker. Argon2id is meant to be slow - about a second at
-// m=65536, with 64 MiB of working memory - and the window has to keep
-// answering meanwhile. The password's buffer is handed over and not copied,
-// so it lives in one place, which the worker wipes and which is thrown away
-// with the worker.
+// The work runs in a worker. Argon2id is meant to be slow - measured at
+// m=65536 t=3 it takes about 1.0 s in Chromium and about 2.0 s in WebKit,
+// with 64 MiB of working memory - and the window has to keep answering
+// meanwhile. The password's buffer is handed over and not copied, so it lives
+// in one place: the worker wipes it and is thrown away right after. Where it
+// never gets that far, this side wipes it instead, and a worker that says
+// nothing runs into a deadline rather than into no end at all.
 export async function deriveSeed(passwordText, kdf) {
   if (typeof passwordText !== "string") throw new BadProof("proof: a password is text");
   const k = kdfFields(kdf);
@@ -175,12 +200,24 @@ function inWorker(password, k) {
     try {
       w = new Worker(ARGON2_WORKER, { type: "module" });
     } catch {
-      throw new BadProof("proof: no worker for Argon2id");
+      // Nobody took the buffer, so the password is still here - and it is
+      // wiped before the caller is told, not left behind on the one way out
+      // of this function that never reaches the worker.
+      wipe(password);
+      reject(new BadProof("proof: no worker for Argon2id"));
+      return;
     }
-    // Whatever comes back first ends the worker: an answer, an error of the
-    // worker, a message this side cannot read.
-    const end = (fn) => (e) => {
+    // Whatever comes first ends the worker: an answer, an error of the
+    // worker, a message this side cannot read, or the deadline. Ending it
+    // takes its memory with it, and with that whatever the password left
+    // there.
+    let deadline = 0;
+    const stop = () => {
+      clearTimeout(deadline);
       w.terminate();
+    };
+    const end = (fn) => (e) => {
+      stop();
       fn(e);
     };
     w.onmessage = end((e) => {
@@ -190,11 +227,24 @@ function inWorker(password, k) {
     });
     w.onerror = end(() => reject(new BadProof("proof: Argon2id failed")));
     w.onmessageerror = end(() => reject(new BadProof("proof: Argon2id failed")));
+    // A worker that is built, takes the password and then says nothing - one
+    // the engine killed for want of memory, one whose module never arrived -
+    // would leave this promise open for good. It gets a deadline instead.
+    deadline = setTimeout(() => {
+      stop();
+      reject(new BadProof("proof: Argon2id did not answer"));
+    }, DERIVE_START_MS + k.m * k.t * DERIVE_PER_KIB_PASS_MS);
     // The buffer is transferred, not cloned: after this line the password is
     // gone from this thread. The salt is the caller's and is copied, so his
     // KDF keeps it.
-    w.postMessage({ password, salt: k.salt, t: k.t, m: k.m, p: k.p, dkLen: ED25519_SIZE },
-      [password.buffer]);
+    try {
+      w.postMessage({ password, salt: k.salt, t: k.t, m: k.m, p: k.p, dkLen: ED25519_SIZE },
+        [password.buffer]);
+    } catch {
+      stop();
+      wipe(password);
+      reject(new BadProof("proof: Argon2id failed"));
+    }
   });
 }
 
@@ -278,16 +328,32 @@ export async function privateFromSeed(seed) {
 }
 
 // publicFromSeed gives the public key that belongs to a seed
-// (Go: ed25519.NewKeyFromSeed(seed).Public()). The Web Crypto API hands out
-// no public key of a private one, so the seed is imported once as extractable
-// and its JWK read: that key lives inside this call and nowhere else, while
-// the key privateFromSeed hands out - the one that signs - is never
-// extractable.
+// (Go: ed25519.NewKeyFromSeed(seed).Public()).
+//
+// The Web Crypto API hands out no public key of a private one, and it exports
+// a private key neither as "spki" nor as "raw", so the one way to the public
+// half is to import the seed as extractable and read the JWK. That costs
+// something, and it is written down here rather than talked around: the JWK
+// of a private Ed25519 key is {kty, crv, alg, ext, key_ops, x, d} - measured
+// in the engine, not assumed - and d is the seed once more, as base64url
+// text. A string cannot be written to, so this copy is not wiped the way
+// deriveSeed wipes the password. What can be done is done: the reference to
+// it is let go of at once, so nothing that outlives this call holds it, and
+// the text itself lives on until the garbage collector takes it. The
+// extractable key inside the engine is a second copy no code here can reach
+// either, and goes when the engine lets the key go.
+//
+// This is the one place in the module where the secret knowingly lies there
+// twice. The key privateFromSeed hands out - the one that signs - is never
+// extractable and has none of this.
 export async function publicFromSeed(seed) {
   const extractable = await crypto.subtle.importKey("pkcs8", seedBytes(seed),
     { name: "Ed25519" }, true, ["sign"]);
   const jwk = await crypto.subtle.exportKey("jwk", extractable);
-  return b64decode(jwk.x);
+  const x = jwk.x;
+  jwk.d = undefined;
+  if (typeof x !== "string") throw new BadProof("proof: the export carries no public key");
+  return b64decode(x);
 }
 
 // challenge returns the WebAuthn challenge for a payload: SHA-256 over the

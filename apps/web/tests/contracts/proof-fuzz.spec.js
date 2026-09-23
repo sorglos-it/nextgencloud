@@ -233,19 +233,26 @@ test(`fuzz: true only for the one right proof, ${rounds} inputs from seed ${seed
     return { found, count };
   }, [v, seed, rounds]);
 
+  // What was found comes first, and everything below only means anything
+  // when nothing was: the loop stops at the eighth finding, so a fault in
+  // round five leaves deep, shallow and yes far under their floors as well.
+  // Those floors are here to catch a run that did not really run, not to
+  // report a fault a second, third and fourth time under another name.
   expect(out.found).toEqual([]);
-  // Two thirds of the rounds are deep by the draw above; the floor is at 40
-  // in 100, a good way under it. It counts in rounds and not in a fixed
-  // number, because the rounds are a knob this file advertises itself: a
-  // fixed count would turn every short run red without anything being wrong.
-  expect(out.count.deep).toBeGreaterThan(Math.floor(rounds * 0.4));
-  expect(out.count.shallow).toBeGreaterThan(Math.floor(rounds * 0.15));
-  // Two of the ten spellings hand over the signature of the vector unchanged,
-  // so about a fifth of the deep rounds have to come out true: without this
-  // floor a module that answered false to everything would keep every rule
-  // above. The floor is at 3 in 100 of all rounds, about a third of what the
-  // draw gives.
-  expect(out.count.yes).toBeGreaterThan(Math.floor(rounds * 0.03));
-  // And nothing else ever came out true.
-  expect(out.count.verified).toBe(out.count.yes);
+  if (out.found.length === 0) {
+    // Two thirds of the rounds are deep by the draw above; the floor is at 40
+    // in 100, a good way under it. It counts in rounds and not in a fixed
+    // number, because the rounds are a knob this file advertises itself: a
+    // fixed count would turn every short run red without anything being wrong.
+    expect(out.count.deep).toBeGreaterThan(Math.floor(rounds * 0.4));
+    expect(out.count.shallow).toBeGreaterThan(Math.floor(rounds * 0.15));
+    // Two of the ten spellings hand over the signature of the vector
+    // unchanged, so about a fifth of the deep rounds have to come out true:
+    // without this floor a module that answered false to everything would
+    // keep every rule above. The floor is at 3 in 100 of all rounds, about a
+    // third of what the draw gives.
+    expect(out.count.yes).toBeGreaterThan(Math.floor(rounds * 0.03));
+    // And nothing else ever came out true.
+    expect(out.count.verified).toBe(out.count.yes);
+  }
 });
