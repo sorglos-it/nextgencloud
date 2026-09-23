@@ -4,10 +4,12 @@
 // number beyond 2^53-1, at most MAX_DEPTH levels, arrays and maps only where
 // the budget lists them. JSON.parse alone decides none of this.
 //
-// Go checks the budget in a first pass that builds nothing and then decodes.
-// Here one pass does both: every limit is checked as a container is entered
-// and every element before it is read, so exactly the same documents are
-// refused, and a refused one is never built to its end.
+// Go reads a document twice: a first pass checks it against the budget and
+// knows only the path of each value, a second pass decodes it and knows only
+// the Go type. Here one pass does both, and the two stay just as separate:
+// the path alone says what is counted, the shape alone says what the value
+// becomes. A budget that disagrees with a contract is a mistake in the
+// contract, and the same documents come through as in Go.
 import { b64decode, BadInput } from "./b64.js";
 
 export const RAW = -1;
@@ -15,6 +17,9 @@ export const MAX_DEPTH = 32;
 export const MAX_SAFE_INTEGER = 9007199254740991;
 export const MAX_MEMBERS = 64;
 export const MAX_NAME = 64;
+
+// The most totals one budget may have (Go: enc.maxTotals).
+const MAX_TOTALS = 8;
 
 export class BadJSON extends Error {}
 
@@ -37,6 +42,12 @@ export const M = (of) => ({ k: "map", of });
 
 export class Budget {
   constructor({ size, items = {}, totals = {} }) {
+    // A size that is missing is not a budget without a bound but a budget
+    // that takes nothing: Go's Budget{} has Size 0 and refuses every
+    // document. Everything a caller leaves out closes the gate.
+    if (!Number.isInteger(size) || size < 0) throw new BadJSON("budget: size");
+    if (items === null || typeof items !== "object") throw new BadJSON("budget: items");
+    if (totals === null || typeof totals !== "object") throw new BadJSON("budget: totals");
     this.size = size;
     this.items = items;
     this.totals = totals;
@@ -51,7 +62,9 @@ export function zero(shape) {
     case "bytes": return new Uint8Array(0);
     case "raw": return null;
     case "array": return [];
-    case "map": return {};
+    // A map takes its member names from the document, so it has no prototype
+    // to reach: see Parser.object.
+    case "map": return Object.create(null);
     case "struct": {
       if (shape.ptr) return null;
       const o = {};
@@ -64,8 +77,19 @@ export function zero(shape) {
 
 const WS = new Set([0x20, 0x09, 0x0d, 0x0a]);
 
+// One decoder for the whole module. It is asked for the text of a slice and
+// keeps nothing between calls, which is why one is enough.
+const TEXT = new TextDecoder();
+
 export function decode(input, budget, shape) {
-  const b = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (!(budget instanceof Budget)) throw new BadJSON("no budget");
+  if (shape === null || typeof shape !== "object" || typeof shape.k !== "string") {
+    throw new BadJSON("no shape");
+  }
+  let b;
+  if (input instanceof Uint8Array) b = input;
+  else if (input instanceof ArrayBuffer) b = new Uint8Array(input);
+  else throw new BadJSON("no bytes");
   if (b.length > budget.size) throw new BadJSON("document too large");
   // One fatal decode proves the whole document is valid UTF-8, so the parser
   // below can walk the bytes and slice raw values without checking again.
@@ -76,7 +100,7 @@ export function decode(input, budget, shape) {
   }
   const p = new Parser(b, budget);
   p.ws();
-  const v = p.value(shape, "", 1);
+  const v = p.value(shape, "", 1, false);
   p.ws();
   if (p.i !== b.length) throw new BadJSON("trailing data");
   return v;
@@ -86,16 +110,33 @@ class Parser {
   constructor(b, budget) {
     this.b = b;
     this.i = 0;
-    this.budget = budget;
+    // Maps, not the objects themselves: a path is built from member names of
+    // the document, and on an object a name like "__proto__" would answer
+    // with something the budget never held.
+    this.items = new Map(Object.entries(budget.items));
     this.totals = new Map();
-    for (const path of Object.keys(budget.totals)) {
-      // A total for a path the budget does not list as an array or map is a
-      // mistake in the contract, not in the document.
-      if (!(path in budget.items) || budget.items[path] === RAW) throw new BadJSON("budget");
-      this.totals.set(path, 0);
+    // Go tests the budget itself before it looks at a single byte, and a
+    // budget that is wrong in itself refuses every document, whatever it
+    // holds (enc.go, errLimit and maxTotals). A limit that is no whole
+    // number cannot happen in Go, whose Items is a map[string]int; here it
+    // is a wrong budget just the same.
+    for (const limit of this.items.values()) {
+      if (!Number.isInteger(limit) || (limit < 0 && limit !== RAW)) this.fail("budget");
+    }
+    const totals = Object.entries(budget.totals);
+    if (totals.length > MAX_TOTALS) this.fail("budget");
+    for (const [path, limit] of totals) {
+      // A total for a path the budget does not list as an array or map, or
+      // one that counts down, is a mistake in the contract.
+      const items = this.items.get(path);
+      if (items === undefined || items === RAW) this.fail("budget");
+      if (!Number.isInteger(limit) || limit < 0) this.fail("budget");
+      this.totals.set(path, { limit, n: 0 });
     }
   }
 
+  // fail never repeats the input: an error says which rule was broken, and
+  // nothing about what stood there.
   fail(why) {
     throw new BadJSON(why);
   }
@@ -110,103 +151,59 @@ class Parser {
   }
 
   countTotal(path) {
-    if (!this.totals.has(path)) return;
-    const n = this.totals.get(path) + 1;
-    if (n > this.budget.totals[path]) this.fail("total over its limit");
-    this.totals.set(path, n);
+    const t = this.totals.get(path);
+    if (t === undefined) return;
+    if (++t.n > t.limit) this.fail("total over its limit");
   }
 
-  // MAX_DEPTH counts arrays and objects nested in each other, the top-level
-  // value being level 1. A number or a string inside a container is no level
-  // of its own, so the check sits where a container opens and nowhere else
-  // (Go: enc.MaxDepth, enc.Budget.check).
-  value(shape, path, depth) {
+  // value reads one value. Two things decide, and they never ask each other:
+  // the path says what the budget counts, the shape says what is built. A
+  // shape of null builds nothing - that is what is inside a raw value, where
+  // the contract has no say but the rules that hold everywhere still do.
+  value(shape, path, depth, inRaw) {
     if (this.i >= this.b.length) this.fail("no value");
-    // A path the budget marks RAW keeps its bytes whatever kind of value
-    // stands there. It is decided here and not in object() and array(),
-    // because a raw member may just as well hold a number or a string, and
-    // those two never reach them: {"raw":9007199254740991.0} is a case of
+    // Inside a value the budget marks RAW nothing is counted, no member name
+    // is checked and an array needs no limit, all the way down.
+    const raw = inRaw || this.items.get(path) === RAW;
+    // A raw shape keeps the bytes as they stand and builds nothing, whatever
+    // kind of value stands there: {"raw":9007199254740991.0} is a case of
     // json.json, and Go takes it.
-    if (this.budget.items[path] === RAW) {
-      if (shape.k !== "raw") this.fail("raw where the shape has none");
-      return this.rawValue(depth);
-    }
-    const c = this.b[this.i];
-    if (c === 0x7b) return this.object(shape, path, depth);
-    if (c === 0x5b) return this.array(shape, path, depth);
-    if (c === 0x22) return this.stringValue(shape);
-    if (c === 0x74 || c === 0x66) return this.boolValue(shape);
-    if (c === 0x6e) this.fail("null");
-    if (c === 0x2d || (c >= 0x30 && c <= 0x39)) return this.number(shape);
-    this.fail("unexpected byte");
-  }
-
-  // rawValue keeps the bytes of a value exactly as they stand, from its
-  // opening byte to its closing one: noisep.E2EPrologue hashes them and
-  // signatures cover them. Inside, only the rules that hold everywhere still
-  // apply (depth, numbers, no null, no repeated names).
-  rawValue(depth) {
+    const keep = shape !== null && shape.k === "raw";
+    const inner = keep ? null : shape;
     const start = this.i;
-    this.skip(depth);
-    return this.b.subarray(start, this.i);
-  }
-
-  skip(depth) {
     const c = this.b[this.i];
-    if (c === 0x7b) {
-      if (depth > MAX_DEPTH) this.fail("too deep");
-      this.i++;
-      const seen = new Set();
-      this.ws();
-      if (this.b[this.i] === 0x7d) { this.i++; return; }
-      for (;;) {
-        this.ws();
-        const name = this.stringText();
-        if (seen.has(name)) this.fail("repeated member name");
-        seen.add(name);
-        this.ws();
-        this.want(0x3a);
-        this.ws();
-        this.skip(depth + 1);
-        this.ws();
-        if (this.b[this.i] === 0x2c) { this.i++; continue; }
-        this.want(0x7d);
-        return;
-      }
-    }
-    if (c === 0x5b) {
-      if (depth > MAX_DEPTH) this.fail("too deep");
-      this.i++;
-      this.ws();
-      if (this.b[this.i] === 0x5d) { this.i++; return; }
-      for (;;) {
-        this.ws();
-        this.skip(depth + 1);
-        this.ws();
-        if (this.b[this.i] === 0x2c) { this.i++; continue; }
-        this.want(0x5d);
-        return;
-      }
-    }
-    if (c === 0x22) { this.stringText(); return; }
-    if (c === 0x6e) this.fail("null");
-    if (c === 0x74 || c === 0x66) { this.boolText(); return; }
-    if (c === 0x2d || (c >= 0x30 && c <= 0x39)) {
-      if (!safeNumber(this.numberText())) this.fail("number beyond 2^53-1");
-      return;
-    }
-    this.fail("unexpected byte");
+    let v;
+    if (c === 0x7b) v = this.object(inner, path, depth, raw);
+    else if (c === 0x5b) v = this.array(inner, path, depth, raw);
+    else if (c === 0x22) v = this.stringValue(inner);
+    else if (c === 0x74 || c === 0x66) v = this.boolValue(inner);
+    else if (c === 0x6e) this.fail("null");
+    else if (c === 0x2d || (c >= 0x30 && c <= 0x39)) v = this.number(inner);
+    else this.fail("unexpected byte");
+    // A copy, not a view into the input: noisep.E2EPrologue hashes these
+    // bytes and signatures cover them, so reusing the input buffer may not
+    // change a value that was already checked (Go: json.RawMessage copies).
+    return keep ? this.b.slice(start, this.i) : v;
   }
 
-  // object and array never see a RAW path: value() took it already.
-  object(shape, path, depth) {
+  object(shape, path, depth, inRaw) {
     if (depth > MAX_DEPTH) this.fail("too deep");
-    const limit = this.budget.items[path];
-    const mapped = limit !== undefined;
-    if (mapped ? shape.k !== "map" : shape.k !== "struct") this.fail("object where the shape has none");
-    if (mapped && limit < 0) this.fail("budget");
+    // What the budget says about this path: a path it lists is counted like
+    // a map and its members stand at "*"; a path it does not list is a
+    // struct object with at most MAX_MEMBERS members whose names a Go field
+    // could have. Inside a raw value neither holds.
+    const limit = inRaw ? undefined : this.items.get(path);
+    const counted = limit !== undefined;
+    // What the shape says: a struct takes the members it knows, a map takes
+    // every name the document brings.
+    const struct = shape !== null && shape.k === "struct";
+    const mapped = shape !== null && shape.k === "map";
+    if (shape !== null && !struct && !mapped) this.fail("object where the shape has none");
     this.i++;
-    const out = mapped ? {} : zero({ ...shape, ptr: false });
+    // A map is built without a prototype: its names come from the document,
+    // and "__proto__" has to be a member like any other instead of silently
+    // replacing what the result is built on.
+    const out = struct ? zero({ ...shape, ptr: false }) : mapped ? Object.create(null) : null;
     const seen = new Set();
     let n = 0;
     this.ws();
@@ -214,23 +211,30 @@ class Parser {
     for (;;) {
       this.ws();
       const name = this.stringText();
+      // Repeated names are refused at every depth, inside a raw value too
+      // (Go: DecodeStrict, jsontext.ErrDuplicateName).
       if (seen.has(name)) this.fail("repeated member name");
       seen.add(name);
-      n++;
-      if (mapped) {
-        if (n > limit) this.fail("map over its limit");
+      if (counted) {
+        if (++n > limit) this.fail("map over its limit");
         this.countTotal(path);
-      } else {
-        if (n > MAX_MEMBERS) this.fail("too many members");
+      } else if (!inRaw) {
+        if (++n > MAX_MEMBERS) this.fail("too many members");
         if (nameBytes(name) > MAX_NAME || name.includes("/") || name === "*") this.fail("member name");
-        if (!Object.hasOwn(shape.m, name)) this.fail("unknown member " + name);
+      }
+      let sub = null;
+      if (struct) {
+        if (!Object.hasOwn(shape.m, name)) this.fail("unknown member");
+        sub = shape.m[name];
+      } else if (mapped) {
+        sub = shape.of;
       }
       this.ws();
       this.want(0x3a);
       this.ws();
-      const sub = mapped ? shape.of : shape.m[name];
-      const subPath = path === "" ? (mapped ? "*" : name) : path + "/" + (mapped ? "*" : name);
-      out[name] = this.value(sub, subPath, depth + 1);
+      const subPath = inRaw ? path : join(path, counted ? "*" : name);
+      const v = this.value(sub, subPath, depth + 1, inRaw);
+      if (out !== null) out[name] = v;
       this.ws();
       if (this.b[this.i] === 0x2c) { this.i++; continue; }
       this.want(0x7d);
@@ -238,25 +242,31 @@ class Parser {
     }
   }
 
-  array(shape, path, depth) {
+  array(shape, path, depth, inRaw) {
     if (depth > MAX_DEPTH) this.fail("too deep");
-    const limit = this.budget.items[path];
     // An array whose path the budget does not list is refused: nothing from
-    // outside may grow without a limit.
-    if (limit === undefined || limit < 0) this.fail("array beyond its budget");
-    if (shape.k !== "array") this.fail("array where the shape has none");
+    // outside may grow without a limit. Inside a raw value nothing grows
+    // into memory, so there is nothing to bound.
+    const limit = inRaw ? undefined : this.items.get(path);
+    if (!inRaw && limit === undefined) this.fail("array beyond its budget");
+    const list = shape !== null && shape.k === "array";
+    if (shape !== null && !list) this.fail("array where the shape has none");
     this.i++;
-    const out = [];
-    const sub = path === "" ? "*" : path + "/*";
+    const out = list ? [] : null;
+    const sub = inRaw ? path : join(path, "*");
+    let n = 0;
     this.ws();
     if (this.b[this.i] === 0x5d) { this.i++; return out; }
     for (;;) {
       this.ws();
       // Counted before it is read, so the first element too many is refused
       // unread.
-      if (out.length + 1 > limit) this.fail("array over its limit");
-      this.countTotal(path);
-      out.push(this.value(shape.of, sub, depth + 1));
+      if (!inRaw) {
+        if (++n > limit) this.fail("array over its limit");
+        this.countTotal(path);
+      }
+      const v = this.value(list ? shape.of : null, sub, depth + 1, inRaw);
+      if (out !== null) out.push(v);
       this.ws();
       if (this.b[this.i] === 0x2c) { this.i++; continue; }
       this.want(0x5d);
@@ -266,6 +276,7 @@ class Parser {
 
   stringValue(shape) {
     const s = this.stringText();
+    if (shape === null) return;
     if (shape.k === "str") return s;
     if (shape.k === "bytes") {
       try {
@@ -280,6 +291,7 @@ class Parser {
 
   boolValue(shape) {
     const v = this.boolText();
+    if (shape === null) return;
     if (shape.k !== "bool") this.fail("bool where the shape has none");
     return v;
   }
@@ -297,7 +309,7 @@ class Parser {
   number(shape) {
     const text = this.numberText();
     if (!safeNumber(text)) this.fail("number beyond 2^53-1");
-    if (shape.k === "raw") this.fail("raw where the shape has none");
+    if (shape === null) return;
     const integer = /^-?(0|[1-9][0-9]*)$/.test(text);
     switch (shape.k) {
       case "int":
@@ -335,7 +347,12 @@ class Parser {
       while (this.i < this.b.length && this.b[this.i] >= 0x30 && this.b[this.i] <= 0x39) this.i++;
       if (this.i === e) this.fail("number");
     }
-    return String.fromCharCode(...this.b.subarray(start, this.i));
+    // The decoder reads the whole slice; spreading the bytes into the
+    // arguments of String.fromCharCode would tie the longest number the
+    // parser can read to a limit of the engine - and V8, JavaScriptCore and
+    // SpiderMonkey each stop somewhere else. A RangeError from there is no
+    // answer a contract can give.
+    return TEXT.decode(this.b.subarray(start, this.i));
   }
 
   // stringText reads one JSON string and gives its text after the escapes are
@@ -344,18 +361,17 @@ class Parser {
     this.want(0x22);
     let out = "";
     let chunk = this.i;
-    const dec = new TextDecoder();
     for (;;) {
       if (this.i >= this.b.length) this.fail("string");
       const c = this.b[this.i];
       if (c === 0x22) {
-        out += dec.decode(this.b.subarray(chunk, this.i));
+        out += TEXT.decode(this.b.subarray(chunk, this.i));
         this.i++;
         return out;
       }
       if (c < 0x20) this.fail("control character in a string");
       if (c !== 0x5c) { this.i++; continue; }
-      out += dec.decode(this.b.subarray(chunk, this.i));
+      out += TEXT.decode(this.b.subarray(chunk, this.i));
       this.i++;
       const e = this.b[this.i++];
       const simple = { 0x22: '"', 0x5c: "\\", 0x2f: "/", 0x62: "\b", 0x66: "\f", 0x6e: "\n", 0x72: "\r", 0x74: "\t" };
@@ -395,6 +411,12 @@ class Parser {
   }
 }
 
+// join puts one segment after a path, as Go's appendSegment does: the members
+// of the top-level value stand at their bare name.
+function join(path, segment) {
+  return path === "" ? segment : path + "/" + segment;
+}
+
 function nameBytes(s) {
   let n = 0;
   for (const cp of s) {
@@ -403,6 +425,10 @@ function nameBytes(s) {
   }
   return n;
 }
+
+// The digits of MAX_SAFE_INTEGER, taken from the constant itself: two places
+// with the same number are two places that can drift apart.
+const SAFE_DIGITS = String(MAX_SAFE_INTEGER);
 
 // safeNumber decides on the digits, never on a Number: a Number would round
 // 9007199254740991.4 down to the limit and let it through (Go: enc.safeNumber).
@@ -415,15 +441,14 @@ export function safeNumber(text) {
   let first = 0;
   while (first < all.length && all[first] === "0") first++;
   if (first === all.length) return true;
-  const limit = "9007199254740991";
   const whole = intDigits.length + exp - first;
-  if (whole < limit.length) return true;
-  if (whole > limit.length) return false;
-  for (let j = 0; j < limit.length; j++) {
+  if (whole < SAFE_DIGITS.length) return true;
+  if (whole > SAFE_DIGITS.length) return false;
+  for (let j = 0; j < SAFE_DIGITS.length; j++) {
     const d = first + j < all.length ? all[first + j] : "0";
-    if (d !== limit[j]) return d < limit[j];
+    if (d !== SAFE_DIGITS[j]) return d < SAFE_DIGITS[j];
   }
-  for (let k = first + limit.length; k < all.length; k++) {
+  for (let k = first + SAFE_DIGITS.length; k < all.length; k++) {
     if (all[k] !== "0") return false;
   }
   return true;
