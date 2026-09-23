@@ -12,8 +12,10 @@ import (
 	"crypto/ed25519"
 	json "encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -53,6 +55,11 @@ var errKey = errors.New("setup: key of the wrong size")
 // under that name. The file is never written through (O_EXCL), so the setup
 // stays shut until it is removed by hand -- and whoever starts the API has to
 // be told, or the admin sees nothing but 404 for good and never learns why.
+//
+// A file that cannot be read at all is not this: it may hold exactly the code
+// the admin was given, and removing it over a fault of the rights or of the
+// disk throws that code away. readCode keeps the two apart, and the error of
+// the reading carries its own words.
 var ErrNoCode = errors.New("setup: the code file holds no code")
 
 // Handler serves both methods of session.PathSetup.
@@ -79,7 +86,9 @@ func startContext() context.Context { return context.Background() }
 // yet, and reports whether a code now exists. With a trust list it removes a
 // left-over code file: from then on the setup is closed. A file that is there
 // and holds no code is ErrNoCode -- the setup stays shut, and the start says
-// so instead of leaving the admin at a door that never opens again.
+// so instead of leaving the admin at a door that never opens again. One that
+// cannot be read comes back with the error of the reading and no advice to
+// remove anything: it may hold the code the admin was given.
 func (h *Handler) EnsureCode() (made bool, err error) {
 	ctx := startContext()
 	if _, err := h.S.Trust(ctx); err == nil {
@@ -97,10 +106,13 @@ func (h *Handler) EnsureCode() (made bool, err error) {
 	var f *os.File
 	f, err = os.OpenFile(h.CodeFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, fs.ErrExist) {
-		if _, ok := h.code(); ok {
-			return true, nil
+		// What the file holds decides, and how it failed to say goes on to
+		// the start unchanged: ErrNoCode is the one case that is mended by
+		// removing the file.
+		if _, err := h.readCode(); err != nil {
+			return false, err
 		}
-		return false, ErrNoCode
+		return true, nil
 	}
 	if err != nil {
 		return false, err
@@ -136,25 +148,36 @@ func (h *Handler) EnsureCode() (made bool, err error) {
 	return true, nil
 }
 
-// code reads the one-time code; an unreadable or malformed file means there
-// is no setup.
+// code reads the one-time code; a file that holds none and one that cannot be
+// read both mean there is no setup. Which of the two it was matters only to
+// the start, which says it (EnsureCode), never to an answer.
 func (h *Handler) code() (string, bool) {
+	c, err := h.readCode()
+	return c, err == nil
+}
+
+// readCode reads the one-time code and says which way it failed: the file is
+// not there (fs.ErrNotExist), it is there and holds no code (ErrNoCode), or
+// it could not be read at all -- which is the fault of the rights or of the
+// disk and no reason to remove a file that may hold the code the admin was
+// given.
+func (h *Handler) readCode() (string, error) {
 	f, err := os.Open(h.CodeFile)
 	if err != nil {
-		return "", false
+		return "", err
 	}
 	defer f.Close()
 	// One byte over the limit is enough to tell a file that holds a code from
 	// one that holds something else, and nothing larger is ever read.
 	b, err := io.ReadAll(io.LimitReader(f, maxCodeFile+1))
-	if err != nil || len(b) > maxCodeFile {
-		return "", false
+	if err != nil {
+		return "", fmt.Errorf("setup: the code file cannot be read: %w", err)
 	}
 	c := strings.TrimSpace(string(b))
-	if !session.ValidSetupCode(c) {
-		return "", false
+	if len(b) > maxCodeFile || !session.ValidSetupCode(c) {
+		return "", ErrNoCode
 	}
-	return c, true
+	return c, nil
 }
 
 func (h *Handler) removeCode() error {
@@ -284,7 +307,14 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	// any more, and one that will not go is no reason to call a step undone
 	// that stands. Saying otherwise would send the admin back to a door that
 	// answers 404, with nothing to tell him his own version got through.
-	_ = h.removeCode()
+	//
+	// It is said all the same: until the next start a code that counts lies
+	// on the disk, and a database put back without a trust list in that
+	// window opens the setup with the old code instead of a fresh one. The
+	// name of the file is said and never what stands in it.
+	if err := h.removeCode(); err != nil {
+		slog.Error("the setup code file could not be removed", "file", h.CodeFile, "error", err)
+	}
 	_ = lock.Clear(ctx, h.S.DB, lockName)
 	httpapi.NoContent(w)
 }
@@ -338,6 +368,14 @@ func publicKeys(cfg *config.API) (enc.Bytes, enc.Bytes, error) {
 	if len(seed) != ed25519.SeedSize {
 		return nil, nil, errKey
 	}
-	sign := ed25519.NewKeyFromSeed(seed)
-	return enc.Bytes(noise.PublicKey().Bytes()), enc.Bytes(sign.Public().(ed25519.PublicKey)), nil
+	return enc.Bytes(noise.PublicKey().Bytes()), signPublic(ed25519.NewKeyFromSeed(seed)), nil
+}
+
+// signPublic returns the public key of sign and clears sign. An
+// ed25519.PrivateKey is 64 bytes whose first 32 are the seed, so what is left
+// lying is the signing key of this node itself; Public hands out a copy of
+// its own, which outlives the clearing.
+func signPublic(sign ed25519.PrivateKey) enc.Bytes {
+	defer clear(sign)
+	return enc.Bytes(sign.Public().(ed25519.PublicKey))
 }

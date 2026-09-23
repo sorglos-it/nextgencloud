@@ -3,8 +3,10 @@ package setup
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -508,4 +510,113 @@ func firstVersion(t testing.TB, info session.SetupInfo, admin trusttest.Signer, 
 		t.Fatalf("marshal: %v", err)
 	}
 	return b
+}
+
+// TestACodeFileNobodyCanReadIsNotOneThatHoldsNoCode proves the two cases are
+// told apart. ErrNoCode says the file holds no code, and the way out of it is
+// to remove the file so the next start makes a new one. A file that cannot be
+// read is the other case: it may hold exactly the code the admin was given,
+// and whoever is told to remove it throws that code away over a fault of the
+// rights or of the disk.
+func TestACodeFileNobodyCanReadIsNotOneThatHoldsNoCode(t *testing.T) {
+	h := newHandler(t)
+	if err := os.Remove(h.CodeFile); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	// A directory under the name is a file every system opens and none
+	// reads, so this holds on Windows as it does on Linux.
+	if err := os.Mkdir(h.CodeFile, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	_, err := h.readCode()
+	if err == nil || errors.Is(err, ErrNoCode) {
+		t.Fatalf("a file nobody can read answered %v", err)
+	}
+	if err := os.Remove(h.CodeFile); err != nil {
+		t.Fatalf("remove the directory: %v", err)
+	}
+	// The other case, and the only one to remove: it is there and holds no
+	// code anybody could have been given.
+	if err := os.WriteFile(h.CodeFile, []byte("not a code\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := h.readCode(); !errors.Is(err, ErrNoCode) {
+		t.Fatalf("a file that holds no code answered %v", err)
+	}
+	// Neither of them opens a setup: what cannot be read is no code either.
+	if _, ok := h.code(); ok {
+		t.Fatal("a file that holds no code was taken for one")
+	}
+}
+
+// TestACodeFileThatWillNotGoIsSaidWithoutTheCode proves the admin is told
+// when the code file outlives the setup. Until the next start a valid code
+// lies on the disk: put a database without a trust list back in that window
+// and EnsureCode opens the setup again with the old code instead of a fresh
+// one. The word about it never carries the code itself -- it goes to the log,
+// and the code never does.
+func TestACodeFileThatWillNotGoIsSaidWithoutTheCode(t *testing.T) {
+	h := newHandler(t)
+	codeBytes, _ := os.ReadFile(h.CodeFile)
+	code := strings.TrimSpace(string(codeBytes))
+	w := httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	info, err := session.ParseSetupOffer(w.Body.Bytes(), code)
+	if err != nil {
+		t.Fatalf("offer: %v", err)
+	}
+	body := firstVersion(t, info, trusttest.NewSigner(3), code)
+	// The file is held from two sides, so that removing it fails on either
+	// kind of system: Windows keeps a file that is open, and Unix keeps the
+	// names in a directory nobody may write in.
+	open, err := os.Open(h.CodeFile)
+	if err != nil {
+		t.Fatalf("hold the file open: %v", err)
+	}
+	defer open.Close()
+	dir := filepath.Dir(h.CodeFile)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod the directory: %v", err)
+	}
+	defer os.Chmod(dir, 0o700)
+	var said bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&said, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	w = httptest.NewRecorder()
+	h.Serve(w, post(body))
+	if w.Code != 204 {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(h.CodeFile); err != nil {
+		t.Skip("the code file went after all: nothing was held here")
+	}
+	if said.Len() == 0 {
+		t.Fatal("the code file outlived the setup and nothing was said")
+	}
+	if strings.Contains(said.String(), code) {
+		t.Fatalf("the code itself was said: %s", said.String())
+	}
+	if !strings.Contains(said.String(), h.CodeFile) {
+		t.Fatalf("what was said names no file: %s", said.String())
+	}
+}
+
+// TestTheSigningKeyIsClearedAfterUse proves no copy of the signing key is
+// left lying. An ed25519.PrivateKey is 64 bytes whose first 32 are the seed,
+// so a copy of it is the signing key of this node itself, and this is the one
+// place that makes one.
+func TestTheSigningKeyIsClearedAfterUse(t *testing.T) {
+	_, signKey := trusttest.NodeKeys(1)
+	sign := ed25519.NewKeyFromSeed(signKey.Seed())
+	want := sign.Public().(ed25519.PublicKey)
+	pub := signPublic(sign)
+	if !bytes.Equal(pub, want) {
+		t.Fatalf("public key %x, wanted %x", pub, want)
+	}
+	for _, b := range sign {
+		if b != 0 {
+			t.Fatalf("the private signing key was left in memory: %x", []byte(sign))
+		}
+	}
 }

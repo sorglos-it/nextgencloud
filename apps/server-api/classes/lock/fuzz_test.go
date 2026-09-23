@@ -43,7 +43,7 @@ func TestSeedsAreRowsTheCountingReads(t *testing.T) {
 		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row}); err != nil {
 			t.Fatalf("put %q: %v", row, err)
 		}
-		if _, _, _, err := read(ctx, db, "anna"); err == nil {
+		if _, _, err := read(ctx, db, "anna"); err == nil {
 			taken++
 		}
 	}

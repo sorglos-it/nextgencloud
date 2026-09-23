@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -191,7 +192,7 @@ func TestFailuresFiredAtOnceAllCount(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	n, _, _, err := read(ctx, db, "anna")
+	n, _, err := read(ctx, db, "anna")
 	if err != nil || n != tries {
 		t.Fatalf("%d of %d failures counted: %v", n, tries, err)
 	}
@@ -254,35 +255,97 @@ func TestEveryWriteOfALockRowRunsUnderTheCounting(t *testing.T) {
 	}
 }
 
-// TestNoMoreNamesThanTheTableTakes proves the rows are bounded. Every name
-// that fails writes one, and nobody has to be a user to try a name: without a
-// cap the settings table grows with every made-up name somebody sends.
-func TestNoMoreNamesThanTheTableTakes(t *testing.T) {
+// TestEveryNameIsCountedHoweverManyHaveFailed holds the one thing a table
+// with a cap gave away: a table nobody can add to must not switch the
+// counting off. Whoever fills it with names of his own would otherwise buy
+// unlimited guesses on every name that has no row yet -- and no name has one
+// until its first failure. Nobody has to be a user to try a name, so filling
+// it costs nothing but requests.
+func TestEveryNameIsCountedHoweverManyHaveFailed(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
-	for i := 0; i < maxRows; i++ {
-		if err := Fail(ctx, db, "name-"+strconv.Itoa(i), now); err != nil {
-			t.Fatalf("fail %d: %v", i, err)
+	// Far more made-up names than the counting will ever hold rows for.
+	const names = 16384
+	for i := 0; i < names; i++ {
+		if err := Fail(ctx, db, "made-up-"+strconv.Itoa(i), now); err != nil {
+			t.Fatalf("failure %d on a name of its own: %v", i, err)
 		}
-	}
-	if err := Fail(ctx, db, "one name too many", now); !errors.Is(err, ErrFull) {
-		t.Fatalf("the name beyond the cap answered %v", err)
-	}
-	// A name that already counts counts on: whoever fills the table with
-	// names of his own must not buy free tries for the name he is after.
-	if err := Fail(ctx, db, "name-0", now); err != nil {
-		t.Fatalf("a name that already counts: %v", err)
-	}
-	// Rows nobody counts any more turn nobody away: once their time has
-	// passed the table takes names again, without waiting for a purge.
-	if err := Fail(ctx, db, "one name too many", now+keepFor+1); err != nil {
-		t.Fatalf("after the rows had expired: %v", err)
 	}
 	blobs, err := db.BlobFrom(ctx, dbapi.BlobSetting, 0)
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
-	if len(blobs) != 1 {
-		t.Fatalf("%d rows left of %d", len(blobs), maxRows)
+	// The rows are the counting's own, not one per name that was sent.
+	if len(blobs)*2 >= names {
+		t.Fatalf("%d rows for %d names", len(blobs), names)
+	}
+	// A name nobody has tried yet, on a table as full as it gets: it counts
+	// like every other, and it locks.
+	for i := 0; i < 3; i++ {
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("a failure on a new name was not counted: %v", err)
+		}
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait <= 0 {
+		t.Fatalf("a new name is free after three failures: %d %v", wait, err)
+	}
+}
+
+// mate returns a second name that shares the row of name. It searches, and
+// the search is what it proves: a counting that gives every name a row of its
+// own finds none among a million.
+func mate(tb testing.TB, name string) string {
+	tb.Helper()
+	for i := 0; i < 1<<20; i++ {
+		other := "mate-" + strconv.Itoa(i)
+		if other != name && key(other) == key(name) {
+			return other
+		}
+	}
+	tb.Fatalf("no name among a million shares the row of %q", name)
+	return ""
+}
+
+// TestNamesOfOneRowShareTheCounting states the price of a bounded table: two
+// names can share a row, and then they share the count and the wait. That is
+// what makes the table bounded, and it is why the row may hold nothing of the
+// name -- whoever reads the rows learns which rows count, never which names
+// were tried, and never whether any of them belongs to a user.
+func TestNamesOfOneRowShareTheCounting(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	other := mate(t, "anna")
+	for i := 0; i < 3; i++ {
+		if err := Fail(ctx, db, other, now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	wait, err := Check(ctx, db, "anna", now)
+	if err != nil || wait != 1 {
+		t.Fatalf("the name sharing the row waited %d: %v", wait, err)
+	}
+	// One row, not two: that is the whole of what bounds the table.
+	blobs, err := db.BlobFrom(ctx, dbapi.BlobSetting, 0)
+	if err != nil || len(blobs) != 1 {
+		t.Fatalf("%d rows for two names: %v", len(blobs), err)
+	}
+}
+
+// TestEveryNameFallsInABucket proves the table is bounded by the names alone
+// and needs no cap to be: a name of any length and any bytes gets one of
+// buckets many IDs, all of one size. The ID is the whole row key, so the
+// rows tell nobody which names were tried -- only how many of the buckets
+// count right now.
+func TestEveryNameFallsInABucket(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 8*buckets; i++ {
+		id := key(strings.Repeat("\x00name ", i%7) + strconv.Itoa(i))
+		if !strings.HasPrefix(id, prefix) || len(id) != len(prefix)+4 {
+			t.Fatalf("the ID of a name is %q", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) > buckets {
+		t.Fatalf("%d IDs of %d buckets", len(seen), buckets)
 	}
 }
