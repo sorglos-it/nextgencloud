@@ -74,7 +74,9 @@ func (k *Keeper) Load(ctx context.Context) error {
 // Apply takes the bytes of a session.TrustChain, verifies every version in it
 // and keeps them. It returns the number of the newest version it verified.
 // Errors come back as they are (trust.ErrChain, trust.ErrSigner, …); the
-// caller answers with E_VERIFY.
+// caller answers with E_VERIFY. Load runs first: a keeper that never read the
+// state would start again at the anchor and report a number below the one it
+// already has stored.
 func (k *Keeper) Apply(ctx context.Context, b []byte) (uint64, error) {
 	ch, err := session.ParseTrustChain(b)
 	if err != nil {

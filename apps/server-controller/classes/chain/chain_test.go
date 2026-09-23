@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
@@ -209,4 +211,70 @@ func FuzzApplyFromAnchor(f *testing.F) {
 			t.Fatalf("after a restart the keeper holds %d, want %d", again.Seq(), seq)
 		}
 	})
+}
+
+func TestReadWhileApplying(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	k, st := newKeeper(t, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	bodies := make([][]byte, 0, 8)
+	for prev := v1; len(bodies) < cap(bodies); {
+		prev = admin.Sign(t, trusttest.Next(t, prev))
+		b, err := json.Marshal(session.TrustChain{Versions: []trust.Signed{prev}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, b)
+	}
+	// Several tunnels read the held version while one chain is applied. The
+	// version they see may only ever move forward, and -race (on the Linux
+	// servers) has to find nothing here.
+	var (
+		wg      sync.WaitGroup
+		back    atomic.Bool
+		stop    = make(chan struct{})
+		readers = 4
+	)
+	for range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			last := uint64(0)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if v, ok := k.Current(); ok {
+					if v.List.Seq < last {
+						back.Store(true)
+						return
+					}
+					last = v.List.Seq
+				}
+				_, _ = k.List(), k.Seq()
+			}
+		}()
+	}
+	for _, b := range bodies {
+		if _, err := k.Apply(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if back.Load() {
+		t.Fatal("a reader saw the held version go backwards")
+	}
+	if k.Seq() != uint64(1+len(bodies)) {
+		t.Fatalf("seq = %d, want %d", k.Seq(), 1+len(bodies))
+	}
 }
