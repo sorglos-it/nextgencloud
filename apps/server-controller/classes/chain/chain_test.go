@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -147,6 +150,25 @@ func TestAgainstVectors(t *testing.T) {
 		if again.Seq() != want {
 			t.Errorf("%s: after a restart the keeper holds %d, want %d", v.Name, again.Seq(), want)
 		}
+		if len(v.Chain) < 2 {
+			continue
+		}
+		// The same case over the other path: the first version opens the chain
+		// from the anchor, the rest advances from what the keeper then holds.
+		// A forgery further along has to be turned away here too.
+		split, _ := newKeeper(t, v.Anchor)
+		if err := split.Load(ctx); err != nil {
+			t.Errorf("%s: Load of an empty state: %v", v.Name, err)
+			continue
+		}
+		_, first := split.Apply(ctx, chainBytes(t, v.Chain[0]))
+		last, rest := split.Apply(ctx, chainBytes(t, v.Chain[1:]...))
+		switch {
+		case v.Valid && (first != nil || rest != nil || last != v.Seq):
+			t.Errorf("%s: over Advance = %d, %v / %v, want %d, nil", v.Name, last, first, rest, v.Seq)
+		case !v.Valid && first == nil && rest == nil:
+			t.Errorf("%s: Advance took a chain the contract calls invalid", v.Name)
+		}
 	}
 }
 
@@ -163,6 +185,11 @@ func FuzzApply(f *testing.F) {
 		ctx := context.Background()
 		st := state.New(memstore.New())
 		k := New(st, trust.Anchor{Seq: 1, Hash: make([]byte, 32)})
+		// Apply runs only on a keeper that read the state; on an empty one
+		// that changes nothing, so the anchor stays the only thing in the way.
+		if err := k.Load(ctx); err != nil || k.Seq() != 0 {
+			t.Fatalf("Load of an empty state: seq = %d, err = %v", k.Seq(), err)
+		}
 		if seq, err := k.Apply(ctx, b); err == nil {
 			t.Fatalf("took version %d although no payload hashes to the anchor", seq)
 		}
@@ -196,6 +223,9 @@ func FuzzApplyFromAnchor(f *testing.F) {
 		ctx := context.Background()
 		st := state.New(memstore.New())
 		k := New(st, anchor)
+		if err := k.Load(ctx); err != nil {
+			t.Fatalf("Load of an empty state: %v", err)
+		}
 		seq, err := k.Apply(ctx, b)
 		if err != nil {
 			return
@@ -276,5 +306,158 @@ func TestReadWhileApplying(t *testing.T) {
 	}
 	if k.Seq() != uint64(1+len(bodies)) {
 		t.Fatalf("seq = %d, want %d", k.Seq(), 1+len(bodies))
+	}
+}
+
+// chainBytes packs versions as the body of a session.TrustChain, the way an
+// API sends them.
+func chainBytes(t testing.TB, versions ...trust.Signed) []byte {
+	t.Helper()
+	b, err := json.Marshal(session.TrustChain{Versions: versions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// errStopped is what the local state gives once it takes no more writes. A
+// full disk, a closed database and the cancelled context of a tunnel all look
+// like this to the keeper.
+var errStopped = errors.New("test: the database takes no more writes")
+
+// haltingStore is a local state that can stop in the middle: writesLeft counts
+// the writes that still go through (below zero: all of them), and empty makes
+// it hand out no rows, as a database wiped under a running keeper.
+type haltingStore struct {
+	dbapi.Local
+	writesLeft int
+	empty      bool
+}
+
+func newHaltingStore() *haltingStore {
+	return &haltingStore{Local: memstore.New(), writesLeft: -1}
+}
+
+func (s *haltingStore) BlobPut(ctx context.Context, b dbapi.Blob) error {
+	if s.writesLeft == 0 {
+		return errStopped
+	}
+	if s.writesLeft > 0 {
+		s.writesLeft--
+	}
+	return s.Local.BlobPut(ctx, b)
+}
+
+func (s *haltingStore) BlobFrom(ctx context.Context, kind string, seq uint64) ([]dbapi.Blob, error) {
+	if s.empty {
+		return nil, nil
+	}
+	return s.Local.BlobFrom(ctx, kind, seq)
+}
+
+// TestHalfWrittenChainStaysReadable plays through a write that fails in the
+// middle: versions 2 and 3 are stored, version 4 is not, and the keeper still
+// holds version 1. dbapi.Local has no transaction, so the half chain stays.
+// Nothing may now take a second, different version 2 — it would replace the
+// stored one, version 3 would point at a version that is gone, and no later
+// start could read the list again.
+func TestHalfWrittenChainStaysReadable(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	v2 := admin.Sign(t, trusttest.Next(t, v1))
+	v3 := admin.Sign(t, trusttest.Next(t, v2))
+	v4 := admin.Sign(t, trusttest.Next(t, v3))
+	db := newHaltingStore()
+	st := state.New(db)
+	anchor := trust.Anchor{Seq: 1, Hash: trust.Hash(v1)}
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	k := New(st, anchor)
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	db.writesLeft = 2 // versions 2 and 3 go in, version 4 does not
+	if _, err := k.Apply(ctx, chainBytes(t, v2, v3, v4)); err == nil {
+		t.Fatal("Apply reported success although a write failed")
+	}
+	db.writesLeft = -1
+	// A second version 2: the same predecessor, another time of issue, signed
+	// by the same admin. The verification cannot turn it away — the keeper
+	// still holds version 1, so it fits — and the number it would be stored
+	// under is taken.
+	l := trusttest.Next(t, v1)
+	l.Issued++
+	other2 := admin.Sign(t, l)
+	if _, err := k.Apply(ctx, chainBytes(t, other2)); err == nil {
+		t.Fatal("Apply took a second version 2 over one that is already stored")
+	}
+	// What was stored is a chain from the anchor on, so a restart picks it up
+	// instead of failing for good.
+	again := New(st, anchor)
+	if err := again.Load(ctx); err != nil {
+		t.Fatalf("the stored chain is unreadable after a failed write: %v", err)
+	}
+	if again.Seq() != 3 {
+		t.Fatalf("after a restart the keeper holds %d, want 3", again.Seq())
+	}
+}
+
+// TestLoadForgetsWhatTheStateLost holds Load to what is stored: comes the
+// state back empty, the keeper may not keep a version from before. It would
+// store the next one under a number with nothing before it, and that gap no
+// later Load could read past.
+func TestLoadForgetsWhatTheStateLost(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	db := newHaltingStore()
+	st := state.New(db)
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	k := New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := k.Load(ctx); err != nil || k.Seq() != 1 {
+		t.Fatalf("Load = %v, seq = %d, want nil, 1", err, k.Seq())
+	}
+	db.empty = true
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if k.Seq() != 0 {
+		t.Fatalf("seq = %d after the state came back empty, want 0", k.Seq())
+	}
+}
+
+// TestApplyTellsStoreErrorsApart keeps a failed write apart from a failed
+// verification. The caller answers the errors of trust with E_VERIFY, whose
+// text reads "Unterschrift ungültig."; an admin who reads that after a full
+// disk signs the change again, and a second version under a stored number is
+// exactly what breaks the chain for good.
+func TestApplyTellsStoreErrorsApart(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	db := newHaltingStore()
+	k := New(state.New(db), trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	db.writesLeft = 0 // nothing goes in any more
+	_, err := k.Apply(ctx, chainBytes(t, v1))
+	if !errors.Is(err, ErrStore) {
+		t.Fatalf("Apply on a state that takes no writes = %v, want ErrStore", err)
+	}
+	// It must look like none of the errors that mean a bad version.
+	for _, verify := range []error{trust.ErrAnchor, trust.ErrChain, trust.ErrSigner,
+		trust.ErrInvalid, proof.ErrSignature, session.ErrMessage} {
+		if errors.Is(err, verify) {
+			t.Fatalf("a failed write reports %v", verify)
+		}
+	}
+	// The reason stays readable for the server's own diagnosis.
+	if !errors.Is(err, errStopped) {
+		t.Fatalf("Apply dropped the reason of the failed write: %v", err)
 	}
 }
