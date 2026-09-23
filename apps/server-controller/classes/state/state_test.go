@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -123,7 +124,7 @@ func TestStagedRefusesWhatItCannotStage(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 	good := Staged{Target: "ngc-api", Version: "1.2.0", SHA256: make([]byte, 32),
-		File: "/var/lib/ngc/staged/ngc-api", State: "downloaded", Time: 100}
+		File: config.StageDir + "/ngc-api", State: "downloaded", Time: 100}
 	cases := []struct {
 		name   string
 		damage func(*Staged)
@@ -135,9 +136,13 @@ func TestStagedRefusesWhatItCannotStage(t *testing.T) {
 		{"short checksum", func(st *Staged) { st.SHA256 = make([]byte, 31) }},
 		{"signer that is no key", func(st *Staged) { st.Signer = make([]byte, 31) }},
 		{"negative size", func(st *Staged) { st.Size = -1 }},
+		{"no file", func(st *Staged) { st.File = "" }},
 		{"relative file", func(st *Staged) { st.File = "staged/ngc-api" }},
-		{"file that climbs out", func(st *Staged) { st.File = "/var/lib/ngc/../../etc/shadow" }},
+		{"file outside the staging directory", func(st *Staged) { st.File = "/etc/shadow" }},
+		{"file beside the staging directory", func(st *Staged) { st.File = config.StageDir + "-alt/ngc-api" }},
+		{"file that climbs out", func(st *Staged) { st.File = config.StageDir + "/../../etc/shadow" }},
 		{"unknown state", func(st *Staged) { st.State = "halb" }},
+		{"no time", func(st *Staged) { st.Time = 0 }},
 	}
 	for _, tc := range cases {
 		st := good
@@ -146,10 +151,14 @@ func TestStagedRefusesWhatItCannotStage(t *testing.T) {
 			t.Errorf("%s: err = %v, want ErrInvalid", tc.name, err)
 		}
 	}
-	// The system packages come from apt: no version, no checksum, no signer.
-	system := Staged{Target: "system", File: "/var/lib/ngc/staged/system", State: "available", Time: 1}
+	// The system packages come from apt: nothing lies ready, so no file, no
+	// version, no checksum and no signer.
+	system := Staged{Target: "system", State: "available", Time: 1}
 	if err := s.PutStaged(ctx, system); err != nil {
 		t.Errorf("system: %v", err)
+	}
+	if got, err := s.Staged(ctx, "system"); err != nil || got.File != "" {
+		t.Errorf("system read back: %+v, %v", got, err)
 	}
 	system.Version = "1.2.0"
 	if err := s.PutStaged(ctx, system); !errors.Is(err, dbapi.ErrInvalid) {
@@ -173,9 +182,15 @@ func TestStagedRefusesDamagedRow(t *testing.T) {
 	s := New(db)
 	t.Cleanup(func() { _ = s.Close() })
 	sha := enc.B64.EncodeToString(make([]byte, 32))
+	row := func(file, tail string) string {
+		return `{"target":"ngc-api","version":"1.0.0","sha256":"` + sha + `","size":0,"file":"` + file + `",` + tail + `}`
+	}
 	for _, data := range []string{
-		`{"target":"ngc-api","version":"1.0.0","sha256":"","size":0,"file":"/x","state":"downloaded","time":1}`,
-		`{"target":"ngc-api","version":"1.0.0","sha256":"` + sha + `","size":0,"file":"../etc/shadow","state":"downloaded","time":1}`,
+		`{"target":"ngc-api","version":"1.0.0","sha256":"","size":0,"file":"` + config.StageDir +
+			`/ngc-api","state":"downloaded","time":1}`,
+		row("/etc/shadow", `"state":"downloaded","time":1`),
+		row(config.StageDir+`/../../etc/shadow`, `"state":"downloaded","time":1`),
+		row(config.StageDir+`/ngc-api`, `"state":"downloaded","time":0`),
 		`{"was":"ganz anderes"}`,
 		`nicht einmal JSON`,
 	} {
@@ -183,8 +198,32 @@ func TestStagedRefusesDamagedRow(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := s.Staged(ctx, "ngc-api"); !errors.Is(err, ErrDocument) {
-			t.Errorf("%.40s: err = %v, want ErrDocument", data, err)
+			t.Errorf("%.60s: err = %v, want ErrDocument", data, err)
 		}
+	}
+}
+
+// TestStagedRefusesAnotherTarget guards the key itself: a row that was moved
+// or edited under staged.ngc-api must not answer as the system update, or the
+// caller would run apt where a downloaded file was meant to be installed.
+func TestStagedRefusesAnotherTarget(t *testing.T) {
+	ctx := context.Background()
+	db := memstore.New()
+	s := New(db)
+	t.Cleanup(func() { _ = s.Close() })
+	row := []byte(`{"target":"system","sha256":"","size":0,"state":"available","time":1}`)
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: "staged.ngc-api", Data: row}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Staged(ctx, "ngc-api"); !errors.Is(err, ErrDocument) {
+		t.Fatalf("err = %v, want ErrDocument", err)
+	}
+	// Under its own key the very same row is good.
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: "staged.system", Data: row}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Staged(ctx, "system"); err != nil || got.Target != "system" {
+		t.Fatalf("under its own key: %+v, %v", got, err)
 	}
 }
 
@@ -286,6 +325,47 @@ func TestLicenseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLicenseAtItsLargest(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	// A payload of store.MaxLicense bytes has to fit into the document, or the
+	// largest licence a store may issue could not be kept at all.
+	if err := s.PutLicense(ctx, "org.sorglos.terminal", licenseOf(string(make([]byte, store.MaxLicense))), 1); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := s.License(ctx, "org.sorglos.terminal")
+	if err != nil || len(got.Payload) != store.MaxLicense {
+		t.Fatalf("%d bytes back, err = %v", len(got.Payload), err)
+	}
+}
+
+func TestLicenseRefusesDamagedRow(t *testing.T) {
+	ctx := context.Background()
+	db := memstore.New()
+	s := New(db)
+	t.Cleanup(func() { _ = s.Close() })
+	env := func(payload string) string {
+		return `{"payload":"` + payload + `","kid":"` + sign.KeyID([]byte("store")) +
+			`","sig":"` + enc.B64.EncodeToString(make([]byte, 64)) + `"}`
+	}
+	for _, data := range []string{
+		`{"envelope":null,"issued":1}`,
+		`{"envelope":` + env("e30") + `,"issued":null}`,
+		// enc.MaxSafeInteger + 1. Only the budget refuses this; DecodeStrict
+		// on its own would put it into the int64 and hand it out.
+		`{"envelope":` + env("e30") + `,"issued":9007199254740992}`,
+		`{"envelope":` + env("") + `,"issued":1}`,
+		`{"was":"ganz anderes"}`,
+	} {
+		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobLicense, ID: "org.sorglos.terminal", Data: []byte(data)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.License(ctx, "org.sorglos.terminal"); !errors.Is(err, ErrDocument) {
+			t.Errorf("%.50s: err = %v, want ErrDocument", data, err)
+		}
+	}
+}
+
 func TestAppsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
@@ -320,6 +400,40 @@ func TestAppsRoundTrip(t *testing.T) {
 		if err := s.DeleteApp(ctx, id); !errors.Is(err, dbapi.ErrInvalid) {
 			t.Errorf("DeleteApp(%q): want ErrInvalid", id)
 		}
+	}
+	if err := s.PutApp(ctx, dbapi.App{ID: "org.sorglos.wiki", Version: "1.0"}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Error("PutApp with a version that is none: want ErrInvalid")
+	}
+	// Only kept data remains: such a row carries no version at all.
+	if err := s.PutApp(ctx, dbapi.App{ID: "org.sorglos.wiki", KeptData: 1}); err != nil {
+		t.Errorf("app with kept data only: %v", err)
+	}
+}
+
+// TestAppsRefuseDamagedRow writes past the store, the way a broken database or
+// a root shell would: an app row is input from outside on the way out too.
+func TestAppsRefuseDamagedRow(t *testing.T) {
+	ctx := context.Background()
+	db := memstore.New()
+	s := New(db)
+	t.Cleanup(func() { _ = s.Close() })
+	if err := db.AppPut(ctx, dbapi.App{ID: "org.sorglos.wiki", Version: "kaputt"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.App(ctx, "org.sorglos.wiki"); !errors.Is(err, ErrDocument) {
+		t.Error("App with a version that is none: want ErrDocument")
+	}
+	if _, err := s.Apps(ctx); !errors.Is(err, ErrDocument) {
+		t.Error("Apps with a version that is none: want ErrDocument")
+	}
+	if err := db.AppDelete(ctx, "org.sorglos.wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AppPut(ctx, dbapi.App{ID: "Terminal", Version: "1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apps(ctx); !errors.Is(err, ErrDocument) {
+		t.Error("Apps with an ID that is none: want ErrDocument")
 	}
 }
 
@@ -361,17 +475,18 @@ func TestPurgeFreesExpiredTasks(t *testing.T) {
 
 func FuzzStaged(f *testing.F) {
 	f.Add([]byte(`{"target":"system","sha256":"","size":0,"file":"/x","state":"downloaded","time":1}`))
+	f.Add([]byte(`{"target":"system","sha256":"","size":0,"state":"available","time":1}`))
 	f.Add([]byte(`{"target":"ngc-api","version":"1.2.0","sha256":"` + enc.B64.EncodeToString(make([]byte, 32)) +
-		`","size":17,"seq":4,"file":"/var/lib/ngc/staged/ngc-api","state":"downloaded","time":1}`))
+		`","size":17,"seq":4,"file":"` + config.StageDir + `/ngc-api","state":"downloaded","time":1}`))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		st, err := decodeStaged(b)
 		if err != nil {
 			return
 		}
-		// The target of an accepted row becomes part of a document ID, so it
-		// must stay inside the store's own namespace.
-		if id := stagedID(st.Target); id == componentsKey || id != stagedPrefix+st.Target {
-			t.Fatalf("target %q leaves the staged namespace: %q", st.Target, id)
+		// Every row that gets out names something this server can update; the
+		// document ID is built from that name.
+		if !store.ValidTarget(st.Target) {
+			t.Fatalf("accepted a row for %q, which is no update target", st.Target)
 		}
 		// What the reader hands out, its own writer must store and read again
 		// unchanged: otherwise a row could mean one thing now and another later.

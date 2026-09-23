@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
@@ -48,10 +49,13 @@ var (
 	// room trust.ParseSigned gives it, so a version this store writes is one
 	// it can read back.
 	maxVersion = enc.B64.EncodedLen(sign.MaxPayload) + 64<<10
-	// maxLicenseDoc bounds one licence as a document: the base64url of a payload
-	// of store.MaxLicense bytes plus room for the key ID, the signature, the
-	// member names and the time it was issued.
-	maxLicenseDoc = enc.B64.EncodedLen(store.MaxLicense) + 2<<10
+	// licenseBudget bounds one licence while it is decoded (enc.Budget): the
+	// base64url of a payload of store.MaxLicense bytes plus room for the key
+	// ID, the signature, the member names and the time it was issued. It has
+	// no array, so the budget only bounds its size — and keeps out nulls and
+	// numbers past enc.MaxSafeInteger, which enc.DecodeStrict alone would let
+	// through.
+	licenseBudget = enc.Budget{Size: enc.B64.EncodedLen(store.MaxLicense) + 2<<10}
 )
 
 // components are the NGC parts a server reports; the same three keys
@@ -93,28 +97,33 @@ type Staged struct {
 // slip nor a damaged row gets that far.
 func (st Staged) valid() bool {
 	switch {
-	case !validFile(st.File) || !slices.Contains(updateStates, st.State):
+	case !slices.Contains(updateStates, st.State):
 		return false
-	case st.Size < 0 || st.Time < 0 || st.Seq > enc.MaxSafeInteger:
+	case st.Size < 0 || st.Size > enc.MaxSafeInteger || st.Seq > enc.MaxSafeInteger ||
+		st.Time < 1 || st.Time > enc.MaxSafeInteger:
 		return false
 	case st.Target == trust.AutoSystem:
 		// apt brings the system packages: nothing of ours is downloaded, so
-		// there is no version we picked and no checksum to check, and their
-		// standing approval carries no key either (store.Approved).
-		return st.Version == "" && len(st.SHA256) == 0 && len(st.Signer) == 0
+		// there is usually no file at all, no version we picked and no
+		// checksum to check, and their standing approval carries no key
+		// either (store.Approved).
+		return (st.File == "" || validFile(st.File)) && st.Version == "" &&
+			len(st.SHA256) == 0 && len(st.Signer) == 0
 	default:
 		// An update without a signature is possible (core.Unattended on a
 		// standing approval), so Signer may be empty; a key is a key, though.
 		return store.ValidTarget(st.Target) && store.ValidVersion(st.Version) &&
-			len(st.SHA256) == sha256.Size &&
+			len(st.SHA256) == sha256.Size && validFile(st.File) &&
 			(len(st.Signer) == 0 || len(st.Signer) == ed25519.PublicKeySize)
 	}
 }
 
-// validFile checks the path of a staged file: absolute, bounded, without a
-// step upwards and without a zero byte, so it stays where this server put it.
+// validFile checks the path of a staged file: inside config.StageDir, bounded,
+// without a step upwards and without a zero byte. A later task hands this path
+// to a program running as root, so it may name nothing but a file this server
+// laid ready itself.
 func validFile(p string) bool {
-	if p == "" || len(p) > maxFile || p[0] != '/' || strings.IndexByte(p, 0) >= 0 {
+	if len(p) > maxFile || !strings.HasPrefix(p, config.StageDir+"/") || strings.IndexByte(p, 0) >= 0 {
 		return false
 	}
 	return !slices.Contains(strings.Split(p, "/"), "..")
@@ -182,9 +191,17 @@ func (s *Store) NewestSeq(ctx context.Context) (uint64, error) {
 	return newest.Seq, nil
 }
 
+// validApp checks the row of an app. A row is input from outside on the way
+// out too: its ID names a container and a directory, and its version decides
+// whether an update counts as newer (store.Newer). An app whose version is
+// empty is one of which only kept data remains (dbapi.App).
+func validApp(a dbapi.App) bool {
+	return wire.ValidAppID(a.ID) && (a.Version == "" || store.ValidVersion(a.Version))
+}
+
 // PutApp inserts or replaces the row of an app.
 func (s *Store) PutApp(ctx context.Context, a dbapi.App) error {
-	if !wire.ValidAppID(a.ID) {
+	if !validApp(a) {
 		return dbapi.ErrInvalid
 	}
 	return s.db.AppPut(ctx, a)
@@ -195,11 +212,29 @@ func (s *Store) App(ctx context.Context, id string) (dbapi.App, error) {
 	if !wire.ValidAppID(id) {
 		return dbapi.App{}, dbapi.ErrInvalid
 	}
-	return s.db.AppGet(ctx, id)
+	a, err := s.db.AppGet(ctx, id)
+	if err != nil {
+		return dbapi.App{}, err
+	}
+	if !validApp(a) || a.ID != id {
+		return dbapi.App{}, ErrDocument
+	}
+	return a, nil
 }
 
 // Apps returns every app, ordered by ID.
-func (s *Store) Apps(ctx context.Context) ([]dbapi.App, error) { return s.db.AppList(ctx) }
+func (s *Store) Apps(ctx context.Context) ([]dbapi.App, error) {
+	apps, err := s.db.AppList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range apps {
+		if !validApp(a) {
+			return nil, ErrDocument
+		}
+	}
+	return apps, nil
+}
 
 // DeleteApp removes the row of an app; removing what is not there is no error.
 func (s *Store) DeleteApp(ctx context.Context, id string) error {
@@ -225,7 +260,7 @@ func (s *Store) PutLicense(ctx context.Context, app string, env sign.Envelope, i
 		env.Validate(store.MaxLicense) != nil {
 		return dbapi.ErrInvalid
 	}
-	return s.putJSON(ctx, dbapi.BlobLicense, app, 0, maxLicenseDoc, licenseDoc{Envelope: env, Issued: issued})
+	return s.putJSON(ctx, dbapi.BlobLicense, app, 0, licenseBudget.Size, licenseDoc{Envelope: env, Issued: issued})
 }
 
 // License returns the licence kept for an app and the time it was issued, or
@@ -246,10 +281,8 @@ func (s *Store) License(ctx context.Context, app string) (sign.Envelope, int64, 
 // check of its own contract, the one sign.ParseEnvelope runs.
 func decodeLicense(data []byte) (sign.Envelope, int64, error) {
 	var doc licenseDoc
-	if err := enc.DecodeStrict(data, maxLicenseDoc, &doc); err != nil {
-		return sign.Envelope{}, 0, ErrDocument
-	}
-	if doc.Issued < 1 || doc.Issued > enc.MaxSafeInteger || doc.Envelope.Validate(store.MaxLicense) != nil {
+	if licenseBudget.Decode(data, &doc) != nil || doc.Issued < 1 ||
+		doc.Envelope.Validate(store.MaxLicense) != nil {
 		return sign.Envelope{}, 0, ErrDocument
 	}
 	return doc.Envelope, doc.Issued, nil
@@ -272,7 +305,17 @@ func (s *Store) Staged(ctx context.Context, target string) (Staged, error) {
 	if err != nil {
 		return Staged{}, err
 	}
-	return decodeStaged(data)
+	st, err := decodeStaged(data)
+	if err != nil {
+		return Staged{}, err
+	}
+	// The row has to be the one that was asked for. A row moved or edited
+	// under another key must not answer here: the caller decides by Target
+	// whether apt runs or a downloaded file is installed.
+	if st.Target != target {
+		return Staged{}, ErrDocument
+	}
+	return st, nil
 }
 
 // DeleteStaged forgets the update lying ready for a target; the file itself is
@@ -368,14 +411,13 @@ func (s *Store) blob(ctx context.Context, kind, id string) ([]byte, error) {
 }
 
 // putJSON writes one document, refusing anything over max: what this store
-// writes, it must be able to read back.
+// writes, it must be able to read back. A value that does not fit is the
+// caller's mistake, so it gives dbapi.ErrInvalid, not ErrDocument — that one
+// means a row already in the database is damaged.
 func (s *Store) putJSON(ctx context.Context, kind, id string, seq uint64, max int, v any) error {
 	data, err := json.Marshal(v)
-	if err != nil {
-		return ErrDocument
-	}
-	if len(data) > max {
-		return ErrDocument
+	if err != nil || len(data) > max {
+		return dbapi.ErrInvalid
 	}
 	return s.db.BlobPut(ctx, dbapi.Blob{Kind: kind, ID: id, Seq: seq, Data: data})
 }
