@@ -12,6 +12,7 @@
 package link
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -44,8 +45,11 @@ const (
 	// Noise messages and the two hellos. An API that answers slowly must not
 	// hold a controller that has other work.
 	DialTimeout = 30 * time.Second
-	// WriteTimeout bounds one message on the way out. A peer that stops
-	// reading must not fill the memory of this side with waiting writers.
+	// WriteTimeout bounds one message on the way out: a peer that stops
+	// reading holds the writer at the front this long and no longer. What is
+	// bounded here is the time and not the number - the writers behind it
+	// wait on the lock in the meantime, so a peer that went quiet does cost
+	// this side one waiting goroutine per writer until the tunnel is over.
 	WriteTimeout = 30 * time.Second
 )
 
@@ -60,12 +64,22 @@ var (
 
 // Handler answers the channels an API opens. On a tunnel only the API opens
 // channels, so every frame on a channel of its own goes here, one at a time
-// and in the order it arrived, from the goroutine that runs the tunnel: a
-// handler that takes its time holds the whole link. It writes with
-// Tunnel.Send, and an error of it ends the link.
+// and in the order it arrived, from the goroutine that runs the tunnel. It
+// writes with Tunnel.Send, and an error of it ends the link.
 //
-// Frame.Payload points into the buffer the next message is read into, so a
-// handler that keeps anything of it copies it first.
+// Two things hold for every call of Frame, and whoever writes a handler may
+// count on both:
+//
+//   - f.Payload is good for the length of the call and no longer: the link
+//     may use that memory again afterwards. Whoever keeps anything of it
+//     copies it first.
+//   - The call holds the reading of the whole tunnel, and the tunnel lives on
+//     that reading: the pong of the API is picked up there too. A call that
+//     lasts a whole ping interval (tunnel.PingInterval, 30 seconds) can
+//     therefore cost the tunnel, and one that lasts two is sure to - the ping
+//     runs into its deadline, the link counts as dead although the API is
+//     healthy, and Run comes back with an error. Work that may take longer
+//     belongs in a goroutine of its own, which answers with Tunnel.Send.
 type Handler interface {
 	Frame(t *Tunnel, f wire.Frame) error
 }
@@ -85,6 +99,12 @@ type Config struct {
 	// Sleep waits between two attempts of Keep. Only a test sets it, to count
 	// the pauses instead of waiting them out.
 	Sleep func(time.Duration)
+	// Ping is how long the tunnel waits before it asks the API again whether
+	// it is still there, and how long it then waits for the answer. Only a
+	// test sets it, to sit out a ping in a fraction of a second; without it
+	// the interval of the contract holds. It is a value of this package, not
+	// one of the contract: tunnel.PingInterval stays what goes on the wire.
+	Ping time.Duration
 }
 
 // check refuses values this controller cannot dial with, before anything goes
@@ -110,6 +130,15 @@ func (c Config) now() int64 {
 		return c.Now()
 	}
 	return time.Now().Unix()
+}
+
+// every is the time between two pings and the time the tunnel then waits for
+// the pong.
+func (c Config) every() time.Duration {
+	if c.Ping > 0 {
+		return c.Ping
+	}
+	return tunnel.PingInterval * time.Second
 }
 
 // Tunnel is one link to one API.
@@ -377,11 +406,18 @@ func takeMessage(plain []byte) (wire.Frame, wire.Control, error) {
 	return f, ctl, nil
 }
 
-// Send writes one frame. The writers are serialized: status messages, answers
-// and channels write at the same time, and the counter of the Noise session
-// takes no concurrency - two messages sealed out of order would not decrypt at
-// the other end.
+// Send writes one frame of a channel. The writers are serialized: status
+// messages, answers and channels write at the same time, and the counter of
+// the Noise session takes no concurrency - two messages sealed out of order
+// would not decrypt at the other end.
+//
+// Channel 0 is no channel. What goes there goes through Control, which sends
+// only what a controller may send on a tunnel: a handler that wrote its own
+// control message here would have the API end the link over it.
 func (t *Tunnel) Send(f wire.Frame) error {
+	if f.Channel == wire.ControlChannel {
+		return ErrConfig
+	}
 	ctx, cancel := context.WithTimeout(t.life, WriteTimeout)
 	defer cancel()
 	return t.write(ctx, f)
@@ -426,7 +462,13 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 		if err != nil {
 			return ErrConfig
 		}
-		raw = b
+		// A body that writes itself as null is none. A typed nil pointer is
+		// not nil once it sits in an interface, so the value decides and not
+		// the interface: "b":null is no message of this contract, and the API
+		// would end the tunnel over it (wire.ParseControl).
+		if !bytes.Equal(b, []byte("null")) {
+			raw = b
+		}
 	}
 	p, err := json.Marshal(wire.Control{T: typ, B: raw})
 	if err != nil {
@@ -440,7 +482,7 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 // whatever the socket still says: a tunnel nobody notices is gone would take
 // every channel on it with it.
 func (t *Tunnel) ping() {
-	tick := time.NewTicker(tunnel.PingInterval * time.Second)
+	tick := time.NewTicker(t.cfg.every())
 	defer tick.Stop()
 	for {
 		select {
@@ -448,7 +490,7 @@ func (t *Tunnel) ping() {
 			return
 		case <-tick.C:
 		}
-		ctx, cancel := context.WithTimeout(t.life, tunnel.PingInterval*time.Second)
+		ctx, cancel := context.WithTimeout(t.life, t.cfg.every())
 		err := t.c.Ping(ctx)
 		cancel()
 		if err != nil {
@@ -462,8 +504,8 @@ func (t *Tunnel) ping() {
 // fail ends the link at once and without an answer: what came in was not from
 // the other end of the handshake, or not of this contract.
 func (t *Tunnel) fail() {
-	t.c.Close(websocket.StatusProtocolError, "")
 	t.stop()
+	t.c.Close(websocket.StatusProtocolError, "")
 }
 
 // Close ends the tunnel. It may be called more than once and from any
@@ -471,8 +513,14 @@ func (t *Tunnel) fail() {
 func (t *Tunnel) Close() error {
 	var err error
 	t.once.Do(func() {
-		err = t.c.Close(websocket.StatusNormalClosure, "")
+		// The life of the tunnel ends first. Closing a WebSocket writes the
+		// close message and waits for the answer of the other end, so the
+		// reading runs into an error while that is going on: only a tunnel
+		// that is already over by then tells an orderly end from a broken
+		// link (Run). The close message goes out all the same - it carries a
+		// deadline of its own and none of this one.
 		t.stop()
+		err = t.c.Close(websocket.StatusNormalClosure, "")
 	})
 	return err
 }
@@ -502,12 +550,20 @@ func Keep(ctx context.Context, cfg Config) {
 		}
 		t, err := Dial(ctx, cfg)
 		if err == nil {
-			// A tunnel that stood begins again at the shortest pause: what
-			// ended it was not an API that is away.
-			pause = tunnel.ReconnectMin * time.Second
 			err = t.Run(ctx)
 			t.Close()
-			log.Info("tunnel ended", "api", cfg.API.URL, "seconds", cfg.now()-t.since)
+			stood := cfg.now() - t.since
+			log.Info("tunnel ended", "api", cfg.API.URL, "seconds", stood)
+			// Only a tunnel that really stood begins again at the shortest
+			// pause: what ended that one was not an API that is away. A dial
+			// that got through is no proof of it - an API that plays TLS,
+			// Noise and hello and then drops the tunnel at once would hold
+			// this controller at about a second per attempt for as long as it
+			// likes, and the growing pause is the only bound there is on that
+			// way. A tunnel that lived a ping interval answered a ping.
+			if stood >= tunnel.PingInterval {
+				pause = tunnel.ReconnectMin * time.Second
+			}
 		}
 		if ctx.Err() != nil {
 			return
@@ -521,8 +577,11 @@ func Keep(ctx context.Context, cfg Config) {
 }
 
 // grow doubles the pause up to tunnel.ReconnectMax. An API that is away for an
-// hour is asked once a minute and not once a second, and a controller that
-// waits a minute is back within one when it returns.
+// hour is asked about once a minute and not once a second, and a controller
+// that waits a minute is back within about one when it returns. About: jitter
+// puts up to a fifth on top afterwards, so the longest wait is 72 seconds -
+// tunnel.ReconnectMax is the step this stops at, not a hard bound on the
+// waiting, and nothing hangs on 60 seconds as one.
 func grow(d time.Duration) time.Duration {
 	if d *= 2; d > tunnel.ReconnectMax*time.Second {
 		return tunnel.ReconnectMax * time.Second

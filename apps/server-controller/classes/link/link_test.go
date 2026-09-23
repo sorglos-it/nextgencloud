@@ -75,9 +75,21 @@ func serve(t *testing.T, h http.HandlerFunc) Config {
 // way the API does. It returns nil once it has said what went wrong; the
 // handler then has nothing left to do.
 func accept(t *testing.T, w http.ResponseWriter, r *http.Request) *apiSide {
+	return acceptPinging(t, w, r, nil)
+}
+
+// acceptPinging is accept with an eye on the pings of the controller: onPing
+// sees every one of them and says whether the pong goes back. An API whose
+// pong stays away is a peer that went quiet without the socket saying so - the
+// one thing the ping of the tunnel is there for.
+func acceptPinging(t *testing.T, w http.ResponseWriter, r *http.Request, onPing func() bool) *apiSide {
 	apiKey, _ := trusttest.NodeKeys(apiFill)
 	ctlKey, _ := trusttest.NodeKeys(ctlFill)
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{tunnel.Subprotocol}})
+	opts := &websocket.AcceptOptions{Subprotocols: []string{tunnel.Subprotocol}}
+	if onPing != nil {
+		opts.OnPingReceived = func(context.Context, []byte) bool { return onPing() }
+	}
+	c, err := websocket.Accept(w, r, opts)
 	if err != nil {
 		t.Error(err)
 		return nil
@@ -381,8 +393,17 @@ func TestDialRefusesValuesItCannotUse(t *testing.T) {
 // says, and runs it. It gives back the tunnel and the end of Run.
 func running(t *testing.T, h Handler, after func(*apiSide)) (*Tunnel, <-chan error) {
 	t.Helper()
+	return runningPinging(t, h, nil, nil, after)
+}
+
+// runningPinging is running with an API that watches the pings of the
+// controller (onPing says whether the pong goes back) and with set, which
+// changes the configuration before the dial - the time between two pings above
+// all, which is the half minute of the contract unless a test shortens it.
+func runningPinging(t *testing.T, h Handler, onPing func() bool, set func(*Config), after func(*apiSide)) (*Tunnel, <-chan error) {
+	t.Helper()
 	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		a := accept(t, w, r)
+		a := acceptPinging(t, w, r, onPing)
 		if a == nil {
 			return
 		}
@@ -391,6 +412,9 @@ func running(t *testing.T, h Handler, after func(*apiSide)) (*Tunnel, <-chan err
 		after(a)
 	})
 	cfg.Handler = h
+	if set != nil {
+		set(&cfg)
+	}
 	tn, err := Dial(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
@@ -566,16 +590,224 @@ func TestRunClosesChannelsWithoutAHandler(t *testing.T) {
 	}
 }
 
-// A link whose pong stayed away is gone, not closed: Run says so, so that
-// whoever keeps the tunnel writes a line about it and dials again. The wait
-// for the pong itself is the half minute of the contract and is not waited out
-// here; what is proven is that a dead link is told apart from a closed one.
-func TestRunSaysWhenThePongStayedAway(t *testing.T) {
-	tn, ended := running(t, nil, func(a *apiSide) { a.quiet() })
-	tn.dead.Store(true)
+// pingEvery is the time between two pings in the tests below, and the time the
+// tunnel then waits for the pong. It is short enough for a test to sit it out
+// twice and long enough for a pong to come back over the loopback of a loaded
+// machine; the value of the contract (tunnel.PingInterval) holds everywhere
+// else, see TestTheTestValuesAreTheOnesOfTheContract.
+const pingEvery = 100 * time.Millisecond
+
+// A tunnel that was closed ends as it was closed: Run comes back with nil.
+// Closing writes a close message and waits for the answer of the other end, so
+// the reading runs into an error on the way out either way - the end of the
+// tunnel has to be settled before that, or every orderly end would be reported
+// as a broken link.
+func TestRunEndsWithoutAnErrorWhenTheTunnelIsClosed(t *testing.T) {
+	t.Run("Close", func(t *testing.T) {
+		tn, ended := running(t, nil, func(a *apiSide) { a.quiet() })
+		tn.Close()
+		if err := waitFor(t, ended); err != nil {
+			t.Fatalf("Run = %v, want an orderly end", err)
+		}
+	})
+	t.Run("the context of the caller", func(t *testing.T) {
+		cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
+			a := accept(t, w, r)
+			if a == nil {
+				return
+			}
+			defer a.c.CloseNow()
+			a.greet()
+			a.quiet()
+		})
+		tn, err := Dial(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("Dial: %v", err)
+		}
+		t.Cleanup(func() { tn.Close() })
+		ctx, cancel := context.WithCancel(context.Background())
+		ended := make(chan error, 1)
+		go func() { ended <- tn.Run(ctx) }()
+		for range 1000 {
+			if tn.ran.Load() {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+		if err := waitFor(t, ended); err != nil {
+			t.Fatalf("Run = %v, want an orderly end", err)
+		}
+	})
+}
+
+// The ping goes out again and again, one every interval: a tunnel nobody
+// notices is gone would take every channel on it with it.
+func TestThePingGoesOutAgainAndAgain(t *testing.T) {
+	pinged := make(chan time.Time, 8)
+	tn, ended := runningPinging(t, nil,
+		func() bool {
+			select {
+			case pinged <- time.Now():
+			default:
+			}
+			return true // the API answers as it should
+		},
+		func(c *Config) { c.Ping = pingEvery },
+		func(a *apiSide) { a.quiet() })
+	var first, last time.Time
+	for i := range 3 {
+		select {
+		case at := <-pinged:
+			if i == 0 {
+				first = at
+			}
+			last = at
+		case <-time.After(30 * time.Second):
+			t.Fatalf("the API saw %d pings, want one every %v", i, pingEvery)
+		}
+	}
+	// Three pings lie far more than one interval apart: what is proven is a
+	// ping every interval and not a burst of them at the start. The bound is
+	// below the two intervals they take, because a ticker of the runtime is
+	// allowed to be a hair early and a test may not hang on that hair.
+	if d := last.Sub(first); d < 3*pingEvery/2 {
+		t.Errorf("three pings within %v, want one every %v", d, pingEvery)
+	}
+	if tn.dead.Load() {
+		t.Error("the link counts as dead although every pong came back")
+	}
+	select {
+	case err := <-ended:
+		t.Fatalf("Run ended with %v, want the link to stay while the API answers", err)
+	default:
+	}
 	tn.Close()
+	waitFor(t, ended)
+}
+
+// A link whose pong stayed away is gone, not closed: Run says so, so that
+// whoever keeps the tunnel writes a line about it and dials again. The API
+// here reads everything and keeps only the pong - the socket says nothing, and
+// the ping is the only thing that notices.
+func TestRunSaysWhenThePongStayedAway(t *testing.T) {
+	tn, ended := runningPinging(t, nil,
+		func() bool { return false }, // the pong stays away
+		func(c *Config) { c.Ping = pingEvery },
+		func(a *apiSide) { a.quiet() })
 	if err := waitFor(t, ended); !errors.Is(err, ErrAPI) {
 		t.Fatalf("Run = %v, want the link reported as gone", err)
+	}
+	if !tn.dead.Load() {
+		t.Error("the link ended without the missing pong being noticed")
+	}
+}
+
+// holder holds the reading for as long as the tunnel lives: the handler of an
+// API that answers everything and of a controller that still loses the tunnel.
+type holder struct{ let chan struct{} }
+
+func (h *holder) Frame(t *Tunnel, f wire.Frame) error {
+	select {
+	case <-t.life.Done():
+	case <-time.After(30 * time.Second):
+	}
+	close(h.let)
+	return nil
+}
+
+// A handler that takes longer than one ping interval costs the tunnel: the
+// pong is picked up by the very goroutine the handler is holding, so the ping
+// runs into its deadline although the API is healthy. This is what the doc of
+// Handler promises, and what the channel work has to plan for.
+func TestAHandlerThatHoldsTheReadingCostsTheTunnel(t *testing.T) {
+	var pings atomic.Int64
+	h := &holder{let: make(chan struct{})}
+	tn, ended := runningPinging(t, h,
+		func() bool { pings.Add(1); return true }, // the API answers as it should
+		func(c *Config) { c.Ping = pingEvery },
+		func(a *apiSide) {
+			a.send(wire.Frame{Type: wire.TypeData, Channel: 3, Payload: []byte("x")})
+			a.quiet()
+		})
+	if err := waitFor(t, ended); !errors.Is(err, ErrAPI) {
+		t.Fatalf("Run = %v, want the link reported as gone", err)
+	}
+	if !tn.dead.Load() {
+		t.Error("the tunnel ended without the missing pong being noticed")
+	}
+	if pings.Load() == 0 {
+		t.Error("the API never saw a ping, so the handler is not what cost the tunnel")
+	}
+	<-h.let
+}
+
+// Send carries channels and not control messages: channel 0 goes through
+// Control, which sends only what a controller may send on a tunnel. A handler
+// that wrote its own control message here would have the API end the link.
+func TestSendRefusesChannelZero(t *testing.T) {
+	tn, ended := running(t, nil, func(a *apiSide) { a.quiet() })
+	p, err := json.Marshal(wire.Control{T: wire.CtlTrust})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tn.Send(wire.Frame{Type: wire.TypeData, Channel: wire.ControlChannel, Payload: p}); !errors.Is(err, ErrConfig) {
+		t.Errorf("Send on channel 0 = %v, want it refused", err)
+	}
+	tn.Close()
+	waitFor(t, ended)
+}
+
+// A body that is nothing stays away: an explicit "b":null is no message of
+// this contract, and the API would end the tunnel over it. A typed nil pointer
+// is not nil once it is in an interface, so the value and not the interface
+// decides.
+func TestControlSendsNoNullBody(t *testing.T) {
+	if _, err := wire.ParseControl([]byte(`{"t":"status","b":null}`)); err == nil {
+		t.Fatal("a written-out null is taken by the contract, so this test guards nothing")
+	}
+	sent := make(chan []byte, 1)
+	tn, ended := running(t, nil, func(a *apiSide) {
+		f, err := a.read()
+		if err != nil {
+			a.t.Errorf("read: %v", err)
+			return
+		}
+		sent <- bytes.Clone(f.Payload)
+		a.quiet()
+	})
+	var nothing *tunnel.Status // a typed nil: not nil in an interface
+	if err := tn.Control(wire.CtlStatus, nothing); err != nil {
+		t.Fatalf("Control: %v", err)
+	}
+	select {
+	case p := <-sent:
+		if bytes.Contains(p, []byte("null")) {
+			t.Errorf("the controller sent %s", p)
+		}
+		if c, err := wire.ParseControl(p); err != nil || c.T != wire.CtlStatus {
+			t.Errorf("the API cannot take %s (%v)", p, err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the controller never sent the message")
+	}
+	tn.Close()
+	waitFor(t, ended)
+}
+
+// The answer to a channel nothing here serves is built once, at start. Whoever
+// lets that fail sends an empty CLOSE payload, which Frame.Encode refuses - so
+// the tunnel would end where a channel should have.
+func TestTheAnswerToAChannelNobodyServesIsOne(t *testing.T) {
+	c, err := wire.ParseClose(closeUnreachable)
+	if err != nil {
+		t.Fatalf("the answer to an unserved channel is no CLOSE payload: %v", err)
+	}
+	if c.Code != wire.CodeUnreachable {
+		t.Errorf("close = %+v, want the code of a channel nothing here serves", c)
+	}
+	if _, err := (wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: closeUnreachable}).Encode(); err != nil {
+		t.Errorf("the answer does not go into a frame: %v", err)
 	}
 }
 
@@ -713,6 +945,61 @@ func TestKeepWaitsLongerEachTime(t *testing.T) {
 	}
 	if tries.Load() != 3 {
 		t.Errorf("Keep dialled %d times, want three", tries.Load())
+	}
+}
+
+// Only a tunnel that really stood begins again at the shortest pause. An API
+// that plays TLS, Noise and hello and then says goodbye at once would
+// otherwise hold this controller at about a second per attempt for as long as
+// it likes - the growing pause is the only bound there is on that way.
+func TestOnlyATunnelThatStoodResetsThePause(t *testing.T) {
+	var clock, rounds atomic.Int64
+	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		a := accept(t, w, r)
+		if a == nil {
+			return
+		}
+		defer a.c.CloseNow()
+		a.greet()
+		// The hello of the controller is read by now, so Dial has taken its
+		// own reading of the clock: the fourth tunnel stood a ping interval,
+		// the three before it no time at all.
+		if rounds.Add(1) == 4 {
+			clock.Add(tunnel.PingInterval)
+		}
+		a.control(wire.CtlBye, nil)
+		a.quiet()
+	})
+	cfg.Now = clock.Load
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	var paused []time.Duration
+	cfg.Sleep = func(d time.Duration) {
+		mu.Lock()
+		paused = append(paused, d)
+		n := len(paused)
+		mu.Unlock()
+		if n == 4 {
+			cancel()
+		}
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); Keep(ctx, cfg) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Keep did not end with its context")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paused) != 4 {
+		t.Fatalf("Keep waited %v, want a pause after each of the four tunnels", paused)
+	}
+	for i, want := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, time.Second} {
+		if paused[i] < want || paused[i] >= want+want/5 {
+			t.Errorf("pause %d = %v, want %v with up to a fifth on top", i+1, paused[i], want)
+		}
 	}
 }
 
@@ -868,11 +1155,42 @@ func FuzzTakeMessage(f *testing.F) {
 	})
 }
 
-// The pin of a TLS key is a SHA-256 hash, and the values above are the ones
-// the contract names; this keeps the test honest if one of them ever changes.
+// Everything these tests work with is what the contract says, not a value of
+// their own: whoever changes one of them in shared/ has this test in front of
+// him and not a run that goes green beside the contract.
 func TestTheTestValuesAreTheOnesOfTheContract(t *testing.T) {
 	_, pin := trusttest.APITLS(apiTLSFill, apiHost)
 	if len(pin) != sha256.Size {
-		t.Fatalf("pin of %d bytes", len(pin))
+		t.Errorf("pin of %d bytes, want the SHA-256 the contract pins with", len(pin))
+	}
+	apiKey, _ := trusttest.NodeKeys(apiFill)
+	ctlKey, _ := trusttest.NodeKeys(ctlFill)
+	if len(apiKey.Public) != 32 || len(ctlKey.Public) != 32 || len(ctlKey.Private) != 32 {
+		t.Error("the keys of these tests are not the 32 bytes of the contract")
+	}
+	// The hello of these tests is one the other end takes, and it names the
+	// contract this package speaks.
+	h, err := json.Marshal(hello())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := tunnel.ParseHello(h); err != nil || got.Contract != tunnel.Contract {
+		t.Errorf("the hello of these tests is %s (%v)", h, err)
+	}
+	// The API of these tests reads exactly as much as the link lets in: one
+	// frame and the tag of its Noise message, which is the longest message
+	// Noise carries - no byte of slack on either side (accept, Dial).
+	if wire.MaxFrame+noisep.TagSize != noisep.MaxMessage {
+		t.Errorf("a frame and its tag are %d bytes, the longest Noise message is %d",
+			wire.MaxFrame+noisep.TagSize, noisep.MaxMessage)
+	}
+	// The tests ping faster than the contract; everywhere else the half minute
+	// of the contract holds, and the pauses of Keep are its seconds.
+	if pingEvery >= tunnel.PingInterval*time.Second {
+		t.Errorf("these tests ping every %v, the contract says every %d seconds", pingEvery, tunnel.PingInterval)
+	}
+	if tunnel.ReconnectMin != 1 || tunnel.ReconnectMax != 60 {
+		t.Errorf("the pauses of the contract are %d and %d seconds, the tests count on 1 and 60",
+			tunnel.ReconnectMin, tunnel.ReconnectMax)
 	}
 }

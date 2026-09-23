@@ -32,16 +32,17 @@ const (
 // it is instead of as the timeout of the whole run.
 const waitLimit = 30 * time.Second
 
-// Whether the two tests below really ran is not something a green run shows by
-// itself: pty skips where there is no pseudo terminal. noPTY counts those
-// skips, echoTested the runs that really asked a terminal; TestMain fails a run
-// that only skipped, so nobody takes "ok" for an answer that was never given.
+// Whether the two echo tests really ran is not something a green run shows by
+// itself: where there is no pseudo terminal they skip. noPTY counts the skips
+// of those two alone, echoTested the runs that really asked a terminal;
+// TestMain fails a run that only skipped, so nobody takes "ok" for an answer
+// that was never given.
 var noPTY, echoTested atomic.Int64
 
 // TestMain runs the tests of this package and then asks whether the echo was
-// really proven. A run narrowed to other tests never asks for a terminal, so
-// nothing is missing there; a run that wanted one and found none proves
-// nothing about the terminal the controller is built for.
+// really proven. Only the two echo tests prove it, so only their skips count:
+// a run narrowed to another test proves nothing about the echo either way and
+// must not be made red over it.
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if code == 0 && noPTY.Load() > 0 && echoTested.Load() == 0 {
@@ -57,7 +58,6 @@ func pty(t *testing.T) (screen, keyboard *os.File) {
 	t.Helper()
 	m, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
-		noPTY.Add(1)
 		t.Skipf("no pseudo terminal here: %v", err)
 	}
 	t.Cleanup(func() { m.Close() })
@@ -141,6 +141,17 @@ const childAsk = "NGC_TEST_ASK_CHILD"
 // is the only one a signal may kill without taking the test with it.
 func asking(t *testing.T) (keyboard *os.File, cmd *exec.Cmd, out *bytes.Buffer) {
 	t.Helper()
+	// Only the two tests that go through here prove the echo, so only a
+	// terminal missing here may make the guard of TestMain fire. The count
+	// stands before pty: a terminal that goes away between the two is counted
+	// all the same, and a run that skips here is never taken for a run that
+	// proved something.
+	if f, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0); err != nil {
+		noPTY.Add(1)
+		t.Skipf("no pseudo terminal here: %v", err)
+	} else {
+		f.Close()
+	}
 	screen, keyboard := pty(t)
 	out = &bytes.Buffer{}
 	cmd = exec.Command(os.Args[0], "-test.run=^TestAskInAnotherProcess$", "-test.v")
