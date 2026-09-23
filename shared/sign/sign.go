@@ -26,8 +26,10 @@ const (
 // MaxPayload is the largest payload an envelope may carry.
 const MaxPayload = 4 << 20
 
-// keyIDSize is the length of a key ID in bytes, before base64url (KeyID).
-const keyIDSize = 16
+// KeyIDSize is the length of a key ID in bytes, before base64url (KeyID).
+// proof.ValidKeyID and session.Challenge take it from here, so a key ID has
+// one length in every contract.
+const KeyIDSize = 16
 
 // envelopeSlack is what the JSON of an envelope holds besides the base64url
 // of its payload: member names, key ID, signature and white space.
@@ -82,10 +84,10 @@ func ParseEnvelope(b []byte, maxPayload int) (Envelope, error) {
 func (e Envelope) Validate(maxPayload int) error {
 	maxPayload = min(maxPayload, MaxPayload)
 	if maxPayload < 1 || len(e.Payload) == 0 || len(e.Payload) > maxPayload ||
-		len(e.KeyID) != enc.B64.EncodedLen(keyIDSize) || len(e.Sig) != ed25519.SignatureSize {
+		len(e.KeyID) != enc.B64.EncodedLen(KeyIDSize) || len(e.Sig) != ed25519.SignatureSize {
 		return ErrEnvelope
 	}
-	if id, err := enc.B64.DecodeString(e.KeyID); err != nil || len(id) != keyIDSize {
+	if id, err := enc.B64.DecodeString(e.KeyID); err != nil || len(id) != KeyIDSize {
 		return ErrEnvelope
 	}
 	return nil
@@ -103,7 +105,7 @@ func Message(purpose string, payload []byte) []byte {
 // KeyID identifies a public key: base64url of the first 16 bytes of its SHA-256.
 func KeyID(pub []byte) string {
 	h := sha256.Sum256(pub)
-	return enc.B64.EncodeToString(h[:keyIDSize])
+	return enc.B64.EncodeToString(h[:KeyIDSize])
 }
 
 // Sign signs payload for purpose.

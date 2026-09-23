@@ -39,7 +39,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
   (`Max…`, `Min…`, die Budgets und die Regeln in `Validate`) setzt das JavaScript des Webinterface
   genauso durch, auch die, für die es keine eigenen Testdaten gibt (etwa `trust.MaxAuto`,
   `trust.MaxOrigins`, `trust.MaxRoot`, die Grenzen für Passkey-Beweise `proof.MaxPublic`,
-  `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`). Dazu gehören
+  `proof.MaxSig`, `proof.MaxRSABits`, `proof.MaxAuthData`, `proof.MaxClientData`, `proof.MaxRPID`). Dazu gehören
   die Regeln der Vertrauensliste (`trust.List.Validate`): Keine Rolle ist zugleich `passkeyOnly` und
   `passwordToo`; wer in einer Rolle mit `passkeyOnly` ist, hat keinen Passwortschlüssel, und wer in
   einer Rolle mit `passwordToo` ist, hat einen Passkey und einen Passwortschlüssel. Einzeilige
@@ -147,8 +147,10 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 - **Vertragsfassungen:** Zwischen Browser und API steht die Nummer der Fassung im Pfad, heute
   überall `/api/v1/…` (`session.Path…`, auch die WebSocket-Leitung `session.PathSocket`). Neue
   oder geänderte Felder kommen nur mit einer neuen Nummer, denn striktes JSON lehnt unbekannte
-  Felder ab. Die API bedient die aktuelle und die vorige Nummer nebeneinander, jede unter ihren
-  eigenen Pfaden; eine alte Shell spricht weiter `/api/v1/…`, bis sie aktualisiert ist. Das passt
+  Felder ab. Diese Regel gilt ab der ersten Veröffentlichung einer Nummer: Solange eine Fassung
+  noch nirgends läuft, ändert eine Vertragsänderung sie an Ort und Stelle. Die API bedient die
+  aktuelle und die vorige Nummer nebeneinander, jede unter ihren eigenen Pfaden; eine alte Shell
+  spricht weiter `/api/v1/…`, bis sie aktualisiert ist. Das passt
   zur Reihenfolge der Updates (Datenbank → API → Controller → Webinterface, Entwurf 4.8): Das
   Webinterface ist nie neuer als die API. Im Tunnel nennt `tunnel.Hello` die Fassung (`contract`,
   heute `tunnel.Contract` = 1); die neuere Seite spricht die Fassung der älteren, und beide liegen
@@ -169,7 +171,7 @@ Sie kommt als Vertragsänderung nach der Freigabe der Verträge und vor den Plä
 | `trust.json` | Ketten von Fassungen ab einem Anker, gültige und ungültige, darunter Fassungen mit Adressen, die die Grammatik brechen | `trust`: `TestVectors` |
 | `url.json` | Hosts und Adressen: `hosts`, `hostPort`, `tunnel` (bei gültigen die Adresse hinter Apache nach `trust.WebURL`), `web`, `origins`, `store`, je gültig oder nicht | `trust`: `TestURLVectors` |
 | `ulh/` | `host.sh` (von Hand) prüft Hosts wie die ulh-Skripte, getestet von `TestHostScript` | von Hand |
-| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
+| `session.json` | Client- und API-Zertifikat, dazu abgelehnte (`apiRejects`, `clientRejects`); `login`: `key` (`config.API.ChallengeKey` der Installation), `totpShare`, `maxLifetime`, `built` (Antworten von `session.Challenge`: für `carol` aus `trust`, erfunden für drei unbekannte Namen, `mallory` zweimal – nur `nonce` und `now` dürfen sich unterscheiden) und `cases` (Antworten für `session.ParseLoginChallenge`, gültige und ungültige: die gültige nennt beide Passkeys von `carol` mit `credId` und `kid`, dazu ihr `kdf`; abgelehnt werden unter anderem ein Eintrag ohne `kid`, mit falscher Länge, ohne base64url, doppelt, mit unbekanntem Feld daneben, dazu ein `rp.id`, das kein DNS-Name ist, `now` von 0 und `maxLifetime` von 0); `setup`: Einmal-Code, getippte Formen (`typed`), Angebote (`offers`, darunter eines, dessen Knotenadresse keine Tunnel-Adresse ist) und Anfragen (`requests`) der Ersteinrichtung, gültige und ungültige | `session`: `TestVectors` |
 | `task.json` | Root-Aufgabe (`deactivate`) und erneute Bestätigung | `task`: `TestVectors` |
 | `wire.json` | `frames`, `badFrames`, `grants`, `opens`, `closes`, `e2e` (innere Nachrichten), `controls` (`wire.ControlAllowed`) | `wire`: `TestVectors` |
 | `noise.json` | ein Ende-zu-Ende-Handschlag mit festen Schlüsseln und Transportnachrichten; `prologues`: je ein OPEN mit seinen `params`- und `task`-Bytes (base64url, leer, wenn das Feld fehlt), Prolog und Nachricht 1 | `noisep`: `TestVectors` |
@@ -238,6 +240,7 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | Fassung der Vertrauensliste (Nutzlast) | `trust.Parse` | `sign.MaxPayload` (4 MiB) | `users` 10000, `users/*/roles` 256, `users/*/keys` 16, `roles` 256, `roles/*/black` 256, `roles/*/white` 256, `nodes` 256, `nodes/*/rootUsers` 256, `nodes/*/rootRoles` 256, `stores` 64, `auto` 64, `rp/origins` 8 |
 | Fassung samt Beweis (`trust.Signed`), etwa an `ngc.users/api/trust` | `trust.ParseSigned` | base64url von `sign.MaxPayload` Byte + 64 KiB | keine |
 | Anmeldung, Ersteinrichtung | `session.ParseLoginStart`, `session.ParseLoginFinish`, `session.ParseSetup` | `session.MaxRequest` (64 KiB) | keine |
+| Antwort von `POST /api/v1/login/start` | `session.ParseLoginChallenge` | `session.MaxRequest` | `passkeys` 16 (`session.MaxPasskeys`), `rp/origins` 8 |
 | Angebot der Ersteinrichtung | `session.ParseSetupOffer` | `session.MaxSetupOffer` (128 KiB), darin `info` höchstens `session.MaxRequest` | `info`: `nodes` 16 (`session.MaxSetupNodes`) |
 | Client- und API-Zertifikat | `session.VerifyClient`, `session.VerifyAPI` | `session.MaxCert` (4096) | keine |
 | Antwort von `GET /api/v1/trust` | `session.ParseTrustChain` | `session.MaxChain` (32 MiB) | `versions` 64 |
@@ -266,10 +269,9 @@ Vorher prüft das Budget in einem Durchgang, der nichts aufbaut:
 | `controller.json` | `config.LoadController` | `config.MaxConfig` | `apis` 16, `roles` 4, `migrate/nodes` 16 |
 | `trust-anchor.json` | `config.LoadAnchor` | `config.MaxConfig` | keine |
 
-Antworten der API, für die Go keinen Parser hat (etwa `session.LoginChallenge`,
-`session.LoginResult` und die Ergebnisse in `core.json` außer dem UI-Beweis), liest das
-Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14; ein Ergebnis hat höchstens
-`wire.MaxCallResult` Byte.
+Antworten der API, für die Go keinen Parser hat (etwa `session.LoginResult` und die Ergebnisse in
+`core.json` außer dem UI-Beweis), liest das Webinterface nach den Regeln 1, 3 bis 8 und 12 bis 14;
+ein Ergebnis hat höchstens `wire.MaxCallResult` Byte.
 
 ## Vor dem WebSocket
 
@@ -291,6 +293,38 @@ Bis zum WebSocket spricht die Shell HTTPS mit JSON (`Content-Type: application/j
 `E_TOOLARGE` (mehr als `session.MaxRequest`), 500 `E_INTERNAL`, 503 `E_UNREACHABLE` (Datenbank nicht
 erreichbar).
 
+- **Anmelde-Antwort** (`session.LoginChallenge`, gelesen mit `session.ParseLoginChallenge`): Nonce,
+  Zeit, Höchstdauer, Installation, Benutzer, `kdf` fürs Passwort, `totp`, `passwordToo`, `rp` und
+  unter `passkeys` je Passkey zwei Werte: `credId` für `allowCredentials` des Browsers und
+  `kid`, die Schlüsselkennung (`sign.KeyID`) für `kid` im Beweis (`proof.Proof.KeyID`). Beide
+  stehen dabei, weil der Browser bei der Anmeldung noch keine Vertrauensliste hat und die
+  Zuordnung Credential-ID → Schlüsselkennung sonst nirgends findet. Ohne Passkey bleibt die Liste
+  leer; sonst hat jeder Eintrag (`session.PasskeyRef`) eine Credential-ID von 1 bis
+  `proof.MaxCredID` (1023) Byte und eine Schlüsselkennung nach `proof.ValidKeyID` (base64url von 16
+  Byte), keine steht zweimal, höchstens `session.MaxPasskeys` (16) Einträge. `rp.id` ist ein
+  DNS-Name nach `proof.ValidRPID` (höchstens `proof.MaxRPID` = 253 Byte, Kleinbuchstaben, ohne
+  Schema, Port und Pfad) – der Browser reicht ihn an `navigator.credentials.get` weiter, also nie
+  freier Text. Testdaten: `login` in `session.json`.
+- Die API baut die Antwort mit `session.Challenge` (Eingaben in `session.ChallengeInput`, Fehler
+  `session.ErrChallenge`): Für einen bekannten Benutzer steht alles in der Vertrauensliste
+  (Passkeys, `kdf` seines Passwortschlüssels, `passwordToo` aus seinen Rollen, `rp`); nur `totp`
+  kommt aus der Datenbank (`dbapi.User.TOTP`) und wird übergeben. Einen unbekannten Namen
+  beantwortet sie erfunden, denn eine Antwort anderer Form verriete, welche Benutzer es gibt.
+- Die erfundenen Werte leitet sie fest aus dem Namen und `config.API.ChallengeKey` ab (HMAC-SHA256,
+  Label `session.ChallengeKeyLabel`; alle API-Knoten teilen den Schlüssel), damit derselbe Name
+  immer dieselbe Antwort bekommt, solange die Vertrauensliste steht. Gewürfelte Werte verrieten den
+  Unterschied schon beim zweiten Versuch. Eigener Schlüssel und nicht `secretKey`: Ein Wechsel des
+  Datenbankschlüssels würfelte jede erfundene Antwort neu, während echte gleich blieben – wer
+  davor und danach fragt, hätte alle Namen sortiert.
+- Die Form zieht sie aus der Liste: wie viele Benutzer nur Passkeys, nur ein Passwort oder beides
+  haben, wie viele Passkeys diese halten, Längen echter Credential-IDs und die Parameter eines
+  echten `kdf`. Feste Quoten wären in jeder Installation falsch, die nicht dem Durchschnitt
+  entspricht. Für `totp` weiß die Liste nichts; der Anteil der Benutzer mit TOTP kommt als
+  `TOTPShare` (Prozent) vom Aufrufer, der ihn in der Datenbank zählt und merken darf.
+- Beide Wege tun dieselbe Arbeit: Die erfundene Antwort entsteht immer und wird für einen bekannten
+  Benutzer verworfen, die Namenssuche bricht nie früher ab. Sonst verrieten Laufzeit und Speicher,
+  was die Antwort verschweigt, und ein unbekannter Name kostete mehr als ein bekannter – auf einem
+  Pfad, für den sich noch niemand angemeldet hat.
 - `E_LOGIN` steht für jede fehlgeschlagene Anmeldung gleich (unbekannter Name, falscher Beweis oder
   TOTP-Code, fehlender Passwortbeweis, verbrauchte oder abgelaufene Nonce) und für eine fehlende
   oder abgelaufene Sitzung. `E_LOCKED` kommt mit `Retry-After` in Sekunden. Die Sperre gilt je

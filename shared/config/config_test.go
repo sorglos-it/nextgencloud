@@ -700,7 +700,8 @@ func TestRedaction(t *testing.T) {
 		secrets []string
 	}{
 		{"api", *api, api, "api-1",
-			secretForms([][]byte{api.NoiseKey.Bytes(), api.SignKey.Bytes(), api.SecretKey.Bytes()}, []string{api.DB.Password.Text()})},
+			secretForms([][]byte{api.NoiseKey.Bytes(), api.SignKey.Bytes(), api.SecretKey.Bytes(), api.ChallengeKey.Bytes()},
+				[]string{api.DB.Password.Text()})},
 		{"controller", *ctl, ctl, "datenbank",
 			secretForms([][]byte{ctl.NoiseKey.Bytes(), ctl.DBKey.Bytes()}, []string{ctl.Migrate.Password.Text()})},
 		{"controller with SQLite", *withSQLite, withSQLite, "dienste",

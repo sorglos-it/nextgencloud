@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"slices"
 
 	"golang.org/x/crypto/argon2"
@@ -101,14 +102,12 @@ const (
 	MaxRSABits    = 4096
 	MaxAuthData   = 4096
 	MaxClientData = 4096
+	MaxCredID     = 1023 // longest credential ID an authenticator may hand out (WebAuthn, CTAP2)
 )
 
 // minAuthData is the fixed start of WebAuthn authenticator data: SHA-256 of
 // the RP ID, one byte of flags and the 4-byte signature counter.
 const minAuthData = 37
-
-// keyIDSize is the length of a key ID in bytes (sign.KeyID).
-const keyIDSize = 16
 
 // UserKey is a key of a user as listed in the trust list.
 type UserKey struct {
@@ -132,7 +131,7 @@ func (k UserKey) Validate() error {
 		}
 		return k.KDF.Validate()
 	case KindPasskey:
-		if len(k.CredID) == 0 || len(k.CredID) > 1023 || len(k.Public) > MaxPublic || k.KDF != nil {
+		if len(k.CredID) == 0 || len(k.CredID) > MaxCredID || len(k.Public) > MaxPublic || k.KDF != nil {
 			return ErrKey
 		}
 		_, err := parsePublic(k)
@@ -159,11 +158,7 @@ type Proof struct {
 // passkey proof has 37..MaxAuthData bytes of AuthData and
 // 1..MaxClientData bytes of ClientData.
 func (p Proof) Validate() error {
-	// The length check comes first so an oversized key ID is never decoded.
-	if len(p.KeyID) != enc.B64.EncodedLen(keyIDSize) {
-		return ErrProof
-	}
-	if id, err := enc.B64.DecodeString(p.KeyID); err != nil || len(id) != keyIDSize {
+	if !ValidKeyID(p.KeyID) {
 		return ErrProof
 	}
 	if len(p.Sig) == 0 || len(p.Sig) > MaxSig {
@@ -185,10 +180,37 @@ func (p Proof) Validate() error {
 	return nil
 }
 
+// ValidKeyID reports whether s names a user key: base64url of 16 bytes, as
+// sign.KeyID writes it. Proof.Validate and everything else that carries a key
+// ID (session.PasskeyRef) ask this one function, so a key ID means the same
+// wherever it travels.
+func ValidKeyID(s string) bool {
+	// The length check comes first so an oversized key ID is never decoded.
+	if len(s) != enc.B64.EncodedLen(sign.KeyIDSize) {
+		return false
+	}
+	id, err := enc.B64.DecodeString(s)
+	return err == nil && len(id) == sign.KeyIDSize
+}
+
 // RP names the relying party for passkeys.
 type RP struct {
 	ID      string   `json:"id"`                // e.g. "ngc.example.org"
 	Origins []string `json:"origins,omitempty"` // e.g. ["https://ngc.example.org"]
+}
+
+// MaxRPID is the longest relying party ID, the length of a DNS name.
+const MaxRPID = 253
+
+var rpIDPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// ValidRPID reports whether s is a relying party ID: a DNS name in lower case
+// of at most MaxRPID bytes, without scheme, port or path, as WebAuthn asks.
+// config.Web, trust.List.Validate and session.ParseLoginChallenge ask this one
+// function, so what the browser hands to navigator.credentials.get is the same
+// name everywhere and never free text.
+func ValidRPID(s string) bool {
+	return s != "" && len(s) <= MaxRPID && rpIDPattern.MatchString(s)
 }
 
 // Challenge returns the WebAuthn challenge for a payload.

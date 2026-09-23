@@ -30,6 +30,9 @@ dunkel. Dazu:
 - Anmeldung: Benutzer und Passwort mit Passwortschlüssel im Browser (Argon2id nach `proof.KDF` über
   das Passwort in NFC, auch wenn es in NFD getippt wurde, siehe `proof_kdf.json`; Ed25519), TOTP,
   Passkeys und Sticks (WebAuthn, immer mit Benutzerprüfung). Das Passwort verlässt den Browser nie.
+  Die Anmelde-Antwort nennt je Passkey `credId` **und** `kid`: `credId` kommt in
+  `allowCredentials`, `kid` unverändert in `proof.kid` des Beweises. Du hast zu diesem Zeitpunkt
+  noch keine Vertrauensliste, also rate die Kennung nie und leite sie nie ab.
   Verlangt eine Rolle das Passwort zusätzlich (`session.LoginChallenge.PasswordToo`), kommt `proof`
   von einem Passkey und `password` vom Passwortschlüssel, beide über dieselben Zertifikat-Bytes
   (Zweck `clientcert/v1`).

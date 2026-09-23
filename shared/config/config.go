@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -244,15 +243,22 @@ type API struct {
 	// names it: wss://<host>:<port of Listen>/tunnel (trust.ValidTunnelURL).
 	// Controllers dial it, and the API puts it into session.SetupInfo and its
 	// pairing and join codes.
-	URL        string    `json:"url"`
-	Listen     string    `json:"listen"`
-	Cert       string    `json:"cert"`
-	CertKey    string    `json:"certKey"`
-	DB         DB        `json:"db"`
-	NoiseKey   Secret    `json:"noiseKey"`   // X25519 private key for the tunnel
-	SignKey    Secret    `json:"signKey"`    // Ed25519 private key for API certificates
-	SecretKey  Secret    `json:"secretKey"`  // AES-256 key for secrets in the database, shared by all APIs
-	ReleaseKey enc.Bytes `json:"releaseKey"` // public key of NGC releases
+	URL       string `json:"url"`
+	Listen    string `json:"listen"`
+	Cert      string `json:"cert"`
+	CertKey   string `json:"certKey"`
+	DB        DB     `json:"db"`
+	NoiseKey  Secret `json:"noiseKey"`  // X25519 private key for the tunnel
+	SignKey   Secret `json:"signKey"`   // Ed25519 private key for API certificates
+	SecretKey Secret `json:"secretKey"` // AES-256 key for secrets in the database, shared by all APIs
+	// ChallengeKey keys the made-up login answer for a name no user has
+	// (session.Challenge), 32 bytes, shared by all APIs of the installation
+	// so that each of them answers one name alike. It is its own key and
+	// not SecretKey: rotating the database key would draw every made-up
+	// answer afresh while real ones stayed put, and whoever asked before
+	// and after would have every name sorted.
+	ChallengeKey Secret    `json:"challengeKey"`
+	ReleaseKey   enc.Bytes `json:"releaseKey"` // public key of NGC releases
 	// StoreKey and StoreURL name the global store (ID trust.StoreGlobal); the
 	// API hands it to the shell in session.SetupInfo.Store. StoreURL follows
 	// trust.ValidStoreURL, as trust.Store.URL does.
@@ -497,8 +503,6 @@ func writeAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	return nil
 }
 
-var rpIDPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
-
 // Validate checks the web configuration.
 func (w *Web) Validate() error {
 	if len(w.APIs) == 0 || len(w.APIs) > maxList {
@@ -513,7 +517,7 @@ func (w *Web) Validate() error {
 		}
 	}
 	if (w.RP.ID == "") != (len(w.RP.Origins) == 0) || len(w.RP.Origins) > trust.MaxOrigins ||
-		(w.RP.ID != "" && (len(w.RP.ID) > 253 || !rpIDPattern.MatchString(w.RP.ID))) {
+		(w.RP.ID != "" && !proof.ValidRPID(w.RP.ID)) {
 		return ErrConfig
 	}
 	for _, o := range w.RP.Origins {
@@ -532,6 +536,7 @@ func (a *API) Validate() error {
 		a.Cert == "" || len(a.Cert) > MaxField ||
 		a.CertKey == "" || len(a.CertKey) > MaxField ||
 		len(a.NoiseKey.Bytes()) != 32 || len(a.SignKey.Bytes()) != 32 || len(a.SecretKey.Bytes()) != 32 ||
+		len(a.ChallengeKey.Bytes()) != 32 ||
 		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 ||
 		!trust.ValidStoreURL(a.StoreURL) ||
 		a.SessionLifetime < 300 || a.SessionLifetime > session.MaxLifetime ||
@@ -708,6 +713,7 @@ func (a API) LogValue() slog.Value {
 		slog.Attr{Key: "noiseKey", Value: a.NoiseKey.LogValue()},
 		slog.Attr{Key: "signKey", Value: a.SignKey.LogValue()},
 		slog.Attr{Key: "secretKey", Value: a.SecretKey.LogValue()},
+		slog.Attr{Key: "challengeKey", Value: a.ChallengeKey.LogValue()},
 		slog.String("releaseKey", enc.B64.EncodeToString(a.ReleaseKey)),
 		slog.String("storeKey", enc.B64.EncodeToString(a.StoreKey)),
 		slog.String("storeUrl", a.StoreURL),
