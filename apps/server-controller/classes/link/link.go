@@ -79,16 +79,18 @@ var (
 //     may use that memory again afterwards. Whoever keeps anything of it
 //     copies it first.
 //   - The call holds the reading of the whole tunnel, and the tunnel lives on
-//     that reading: the pong of the API is picked up there too. A call that
-//     lasts longer than two ping intervals (2 x tunnel.PingInterval, a
-//     minute) costs the tunnel for certain - the ping falls at the latest one
-//     interval into the call and then waits one interval for its pong, so the
-//     deadline is past before the call gives the reading back: the link counts
-//     as dead although the API is healthy, and Run comes back with an error. A
-//     shorter call can cost it too, depending on where the ping falls in it.
-//     Work that may take longer belongs in a goroutine of its own, which
-//     answers with Tunnel.Send. Both halves of the number are measured, see
-//     TestAHandlerLongerThanTwoPingsCostsTheTunnel.
+//     that reading: the pong of the API is picked up there too, and it waits
+//     behind every frame that came in before it. What decides is therefore
+//     how long the reading is held between a ping and its deadline, not how
+//     long one call takes: a queue of short calls costs the tunnel exactly as
+//     one long call does. One call longer than two ping intervals
+//     (2 x tunnel.PingInterval, a minute) is past that deadline for certain -
+//     the ping falls at the latest one interval into the call and then waits
+//     one interval for its pong. The link then counts as dead although the API
+//     is healthy, and Run comes back with an error. Work that may take longer
+//     belongs in a goroutine of its own, which answers with Tunnel.Send. Both
+//     ways of losing the tunnel are measured, see
+//     TestAHandlerThatHoldsTheReadingCostsTheTunnel.
 type Handler interface {
 	Frame(t *Tunnel, f wire.Frame) error
 }

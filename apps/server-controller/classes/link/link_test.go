@@ -869,31 +869,29 @@ func TestClosingWhileThePingWaitsIsStillAnOrderlyEnd(t *testing.T) {
 	}
 }
 
-// waiter holds the reading of the tunnel for a fixed time on the first frame
-// and lets every frame after it through.
+// waiter holds the reading of the tunnel for a fixed time on every frame it is
+// given, and counts the frames.
 type waiter struct {
 	hold time.Duration
-	once sync.Once
-	let  chan struct{}
+	seen atomic.Int64
 }
 
 func (w *waiter) Frame(*Tunnel, wire.Frame) error {
-	w.once.Do(func() {
-		time.Sleep(w.hold)
-		close(w.let)
-	})
+	w.seen.Add(1)
+	time.Sleep(w.hold)
 	return nil
 }
 
-// The number the doc of Handler promises, both sides of it. The pong is picked
-// up by the very goroutine the handler holds, and the ping falls at the latest
-// one interval into the call and then waits one interval for its pong: a call
-// that is longer than two intervals is past that deadline for certain, and one
-// that is done well inside a single interval never comes near it.
-func TestAHandlerLongerThanTwoPingsCostsTheTunnel(t *testing.T) {
-	t.Run("longer than two intervals", func(t *testing.T) {
+// What the doc of Handler promises, and what it does not. The pong is picked
+// up by the very goroutine the handler holds, and it waits behind every frame
+// that came in before it: one call longer than two ping intervals costs the
+// tunnel for certain, and so does a queue of calls that are each far shorter
+// than one. The length of a single call is not what decides - the time the
+// reading is held between a ping and its deadline is.
+func TestAHandlerThatHoldsTheReadingCostsTheTunnel(t *testing.T) {
+	t.Run("one call longer than two intervals", func(t *testing.T) {
 		var pings atomic.Int64
-		h := &waiter{hold: 5 * pingEvery / 2, let: make(chan struct{})}
+		h := &waiter{hold: 5 * pingEvery / 2}
 		tn, ended := runningPinging(t, h,
 			func() bool { pings.Add(1); return true }, // the API answers as it should
 			func(c *Config) { c.Ping = pingEvery },
@@ -910,45 +908,40 @@ func TestAHandlerLongerThanTwoPingsCostsTheTunnel(t *testing.T) {
 		if pings.Load() == 0 {
 			t.Error("the API never saw a ping, so the handler is not what cost the tunnel")
 		}
-		<-h.let
+		if h.seen.Load() != 1 {
+			t.Errorf("the handler was called %d times, want the one frame", h.seen.Load())
+		}
 	})
-	t.Run("well inside one interval", func(t *testing.T) {
-		pinged := make(chan struct{}, 4)
-		h := &waiter{hold: pingEvery / 4, let: make(chan struct{})}
+	t.Run("sixteen calls of a quarter interval", func(t *testing.T) {
+		// No single call comes near one interval, but the sixteen of them
+		// hold the reading four intervals on end - and the pong waits behind
+		// the frames that came in before it, so it is just as late.
+		const frames = 16
+		var pings atomic.Int64
+		h := &waiter{hold: pingEvery / 4}
+		if frames*h.hold <= 2*pingEvery {
+			t.Fatalf("%d calls of %v do not add up past two intervals of %v", frames, h.hold, pingEvery)
+		}
 		tn, ended := runningPinging(t, h,
-			func() bool {
-				select {
-				case pinged <- struct{}{}:
-				default:
-				}
-				return true // the API answers as it should
-			},
+			func() bool { pings.Add(1); return true }, // the API answers as it should
 			func(c *Config) { c.Ping = pingEvery },
 			func(a *apiSide) {
-				a.send(wire.Frame{Type: wire.TypeData, Channel: 3, Payload: []byte("x")})
+				for range frames {
+					a.send(wire.Frame{Type: wire.TypeData, Channel: 3, Payload: []byte("x")})
+				}
 				a.quiet()
 			})
-		// Three pings went out and came back while the handler had the
-		// reading: the short call cost the tunnel nothing.
-		for i := range 3 {
-			select {
-			case <-pinged:
-			case <-time.After(30 * time.Second):
-				t.Fatalf("the API saw %d pings, want one every %v", i, pingEvery)
-			}
+		if err := waitFor(t, ended); !errors.Is(err, ErrAPI) {
+			t.Fatalf("Run = %v, want the link reported as gone", err)
 		}
-		<-h.let
-		if tn.dead.Load() {
-			t.Error("the link counts as dead although every pong came back")
+		if !tn.dead.Load() {
+			t.Error("the tunnel ended without the missing pong being noticed")
 		}
-		select {
-		case err := <-ended:
-			t.Fatalf("Run ended with %v, want the link to stay", err)
-		default:
+		if pings.Load() == 0 {
+			t.Error("the API never saw a ping, so the handler is not what cost the tunnel")
 		}
-		tn.Close()
-		if err := waitFor(t, ended); err != nil {
-			t.Fatalf("Run = %v, want an orderly end", err)
+		if got := h.seen.Load(); got < 2 {
+			t.Errorf("the handler was called %d times, want the short calls to be what added up", got)
 		}
 	})
 }
