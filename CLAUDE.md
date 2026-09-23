@@ -17,6 +17,7 @@ Installation oder Boot gearbeitet wird.
 | API | `apps/server-api/`, Werkzeug `ngc-store` in `apps/cli/` | `scripts/ngc-api.sh` | API 1 |
 | Controller | `apps/server-controller/` | `scripts/ngc-controller.sh` | Dienste |
 | Datenbank | `apps/server-db/` | `scripts/ngc-db.sh` | DB 1 |
+| Recovery-Modus (`docs/recovery-modus.md`): `apps/cli-recovery/`, `apps/cli-stick/`, `apps/server-recovery/`, `lib/rust/`, Images in `tools/` | – | – | Recovery |
 | Verträge (`shared/`), `tools/`, `docs/`, Zusammenführen | – | – | Koordinator (Thomas' Rechner) |
 
 Die ulh-Skripte liegen im öffentlichen ulh-Repo (`sorglos-it/ulh`), nicht hier; Regeln dafür in
@@ -99,7 +100,7 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 
 ## Git
 
-- Ein Branch je Teil (`web`, `api`, `controller`, `db`), Pull Request nach `main`. Der Koordinator
+- Ein Branch je Teil (`web`, `api`, `controller`, `db`, `recovery`), Pull Request nach `main`. Der Koordinator
   prüft jeden Pull Request auf Vertrag und Sicherheit und führt ihn zusammen.
 - Im ulh-Repo genauso: Branch `ngc-<teil>`, Pull Request nach dessen `main`. Nur geprüfte Skripte,
   denn jede ulh-Installation holt beim Start `main`.
