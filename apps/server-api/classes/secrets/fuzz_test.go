@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -22,7 +23,7 @@ func FuzzOpen(f *testing.F) {
 	f.Add([]byte{})
 	f.Add(bytes.Repeat([]byte{0}, 28))
 	f.Fuzz(func(t *testing.T, in []byte) {
-		if _, err := b.Open(in); err != nil && err != ErrSealed {
+		if _, err := b.Open(in); err != nil && !errors.Is(err, ErrSealed) {
 			t.Fatalf("open answered %v instead of ErrSealed", err)
 		}
 	})

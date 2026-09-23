@@ -13,8 +13,16 @@ import (
 // without bias.
 const setupAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-// Bytes returns n random bytes.
+// MaxBytes is the most random bytes Bytes hands out at once. Every caller
+// asks for a key, a nonce or a code of a few dozen bytes; the limit keeps a
+// length that went wrong from turning into a huge allocation.
+const MaxBytes = 4096
+
+// Bytes returns n random bytes, 1 to MaxBytes.
 func Bytes(n int) ([]byte, error) {
+	if n <= 0 || n > MaxBytes {
+		return nil, ErrSize
+	}
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return nil, err
