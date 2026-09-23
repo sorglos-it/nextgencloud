@@ -59,7 +59,9 @@ func (mariaDialect) Type(p string) string {
 		return "BIGINT"
 	case "opts":
 		// InnoDB is what Galera replicates; DYNAMIC keeps long keys usable.
-		return " ENGINE=InnoDB ROW_FORMAT=DYNAMIC"
+		// No space in front: a statement carries one between every two of its
+		// pieces already, and a second one would only ever be written here.
+		return "ENGINE=InnoDB ROW_FORMAT=DYNAMIC"
 	}
 	return ""
 }

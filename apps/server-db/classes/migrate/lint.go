@@ -11,16 +11,33 @@ import (
 )
 
 // maxStatement is the most one statement of a migration may hold, maxName the
-// longest name it may make up. The migrations are built into the release
-// file, so none of this comes from outside; a bound belongs on it all the
-// same, and the widest table of the schema writes less than a tenth of the
-// first. The second is what MariaDB takes for a name: SQLite takes any
-// length, so without the bound the two databases would part company over a
-// name that is simply too long.
+// longest name it may make up, maxType the longest column type a dialect may
+// answer with. The migrations are built into the release file, so none of
+// this comes from outside; a bound belongs on it all the same, and the widest
+// table of the schema writes less than a tenth of the first. The second is
+// what MariaDB takes for a name: SQLite takes any length, so without the
+// bound the two databases would part company over a name that is simply too
+// long. The third is the same number again, and VARBINARY(255) writes
+// fourteen.
 const (
 	maxStatement = 4096
 	maxName      = 64
+	maxType      = 64
 )
+
+// who says whose statement is being measured. The two are not the same door.
+// A migration is a file of the release; ngc_schema and ngc_lock belong to the
+// runner, which makes them before the first migration can run, so a migration
+// may not name them - see takeTable.
+type who bool
+
+const (
+	fromMigration who = false
+	fromRunner    who = true
+)
+
+// runnerTables are the two tables the runner makes itself.
+var runnerTables = []string{"ngc_schema", "ngc_lock"}
 
 // forbidden are words a migration may never carry. Some are not portable
 // (IF NOT EXISTS, AUTO_INCREMENT, ENGINE), the others would break the promise
@@ -41,6 +58,16 @@ var kinds = []string{"CREATE TABLE", "CREATE UNIQUE INDEX", "CREATE INDEX", "ALT
 // errOnlyAdd says what the rule is in one sentence the author can act on.
 var errOnlyAdd = errors.New("a migration may only add: no DROP, RENAME or TRUNCATE, because the previous API version keeps running")
 
+// errAddedNullable is the other such sentence. A column that comes later is
+// nullable, and that is the only thing the five databases do the same way:
+// SQLite refuses NOT NULL on a table that holds rows and takes it on an empty
+// one, where every row afterwards fails; MariaDB takes it either way and
+// fills in a default of its own. So the same migration would go green in a
+// test on an empty database and break the real upgrade - the very split this
+// guard is built against.
+var errAddedNullable = errors.New("a column added later is nullable: NOT NULL does not belong in an ALTER TABLE, " +
+	"because SQLite refuses it on a table that holds rows and MariaDB fills in a default of its own")
+
 // checkStatement checks one statement of a migration and gives back the form
 // it runs in: the pieces it was measured in, written back with one space
 // between every two of them.
@@ -53,8 +80,8 @@ var errOnlyAdd = errors.New("a migration may only add: no DROP, RENAME or TRUNCA
 // "kind{{key}}" is two pieces to the rules and one name, kindBLOB, to the
 // database. So what runs is not the text of the file any more; it is written
 // out of the pieces the rules read, see write.
-func checkStatement(s string) (string, error) {
-	t, err := measure(s)
+func checkStatement(s string, w who) (string, error) {
+	t, err := measure(s, w)
 	if err != nil {
 		return "", err
 	}
@@ -70,7 +97,7 @@ func checkStatement(s string) (string, error) {
 
 // measure reads one statement and gives back the pieces it is made of, or
 // says why it is none of ours.
-func measure(s string) ([]token, error) {
+func measure(s string, w who) ([]token, error) {
 	if len(s) > maxStatement {
 		return nil, fmt.Errorf("a statement is %d bytes long, %d are allowed: %.40q", len(s), maxStatement, s)
 	}
@@ -100,7 +127,7 @@ func measure(s string) ([]token, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkForm(t, s); err != nil {
+	if err := checkForm(t, w, s); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -112,14 +139,20 @@ func measure(s string) ([]token, error) {
 // Here is where the sentence of this guard is kept: WHAT IS MEASURED HAS TO
 // BE WHAT RUNS. The statement is measured again, at the place where it runs
 // and not only where it was read; the pieces are written back out with the
-// types of this dialect in them; and what sqlstore.Fill made of the same
-// statement has to be that, character for character. It cannot come out
-// otherwise today - write puts a space between every two pieces, so no type
-// can grow together with a name next to it - and if it ever does, because
-// Fill learns something new or a rule reads a piece differently, the run
-// stops here instead of putting a name nobody measured into a database.
-func fill(d sqlstore.Dialect, s string) (string, error) {
-	t, err := measure(s)
+// types of this dialect in them, each of them measured too; and what
+// sqlstore.Fill made of the same statement has to be that, character for
+// character.
+//
+// What carries the guarantee is the measuring, not the comparison. write puts
+// a space between every two pieces, so no type can grow together with a name
+// next to it, and checkForm has read every piece at the place where it
+// stands; the reviewer measured that the comparison never once fires for a
+// dialect whose Type is a function of its argument. What it does catch is a
+// dialect that answers differently the second time - and it is the standing
+// proof that the two ways of writing the statement out have not drifted
+// apart, so it stays.
+func fill(d sqlstore.Dialect, s string, w who) (string, error) {
+	t, err := measure(s, w)
 	if err != nil {
 		return "", err
 	}
@@ -176,26 +209,75 @@ func writeFilled(t []token, d sqlstore.Dialect) (string, error) {
 			b.WriteString(piece(tok))
 			continue
 		}
-		// "opts" is the one that may be empty: on SQLite a CREATE TABLE
-		// carries no ending at all.
 		typ := d.Type(tok.text)
-		if typ == "" && tok.text != "opts" {
-			return "", fmt.Errorf("this database has no column type for {{%s}}", tok.text)
-		}
-		// The dialect writes into the statement too, so what it writes is
-		// held to the same two rules as the statement itself: no second
-		// statement behind a semicolon, no quote, and nothing that would look
-		// like another column type. The rules never read this text - it is
-		// the one piece of a statement that does not come out of a migration
-		// - so it is measured here instead.
-		if strings.ContainsAny(typ, ";'\"`") || strings.Contains(typ, "{{") {
-			return "", fmt.Errorf("the column type this database gives for {{%s}} carries a semicolon, a quote or a placeholder: %q",
-				tok.text, typ)
+		if err := checkDialectType(tok.text, typ); err != nil {
+			return "", err
 		}
 		b.WriteString(typ)
 	}
 	return b.String(), nil
 }
+
+// endings are the only things a dialect may write where a CREATE TABLE ends.
+// {{opts}} is the one placeholder that is not a column type - on MariaDB it
+// is the engine and the row format, on SQLite there is no ending at all - so
+// it has no form of its own and is held to a list instead. A dialect that
+// needs a different one is written in here, and until it is, nothing unread
+// goes behind a table.
+var endings = []string{"", "ENGINE=InnoDB ROW_FORMAT=DYNAMIC"}
+
+// checkDialectType measures what the dialect answers, at the place where it
+// is written into the statement. This is the one piece of a finished
+// statement that comes out of no migration, so no rule of a migration ever
+// reads it, and it was the last place where a list of forbidden characters
+// still stood: the reviewer wrote "BLOB , heimlich BLOB" past that list and
+// read the extra column back out of a real SQLite. A list of what may not
+// stand there can never be finished - there is always one more way to write a
+// second column - so the type has a form now, the same move that closed the
+// migration side. What the form does not name, it does not allow: a comma, a
+// space, a line break, a comment, a semicolon, a dot, a letter above ASCII, a
+// second word, a default of its own, nothing at all.
+func checkDialectType(name, typ string) error {
+	if name == "opts" {
+		if !slices.Contains(endings, typ) {
+			return fmt.Errorf("the ending this database gives for {{opts}} is in no fixed list: %q", typ)
+		}
+		return nil
+	}
+	if !typeForm(typ) {
+		return fmt.Errorf("the column type this database gives for {{%s}} is not one word "+
+			"with at most a length in brackets behind it: %q", name, typ)
+	}
+	return nil
+}
+
+// typeForm reports whether typ has the shape every one of the five databases
+// writes a column type in: a word beginning with a letter, and at most one
+// (<digits>) behind it - BLOB, INTEGER, VARBINARY(255).
+func typeForm(typ string) bool {
+	if typ == "" || len(typ) > maxType || !isLetter(typ[0]) {
+		return false
+	}
+	i := 0
+	for i < len(typ) && isWordByte(typ[i]) {
+		i++
+	}
+	if i == len(typ) {
+		return true
+	}
+	if typ[i] != '(' {
+		return false
+	}
+	i++
+	digits := i
+	for i < len(typ) && typ[i] >= '0' && typ[i] <= '9' {
+		i++
+	}
+	return i > digits && i == len(typ)-1 && typ[i] == ')'
+}
+
+// isLetter says whether a byte is a letter of ASCII.
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
 // piece writes one measured piece the way it stood.
 func piece(t token) string {
@@ -226,29 +308,29 @@ func piece(t token) string {
 //	    [, PRIMARY KEY ( <column> {, <column>} )] ) {{opts}}
 //	CREATE INDEX <name> ON <table> ( <column> {, <column>} )
 //	CREATE UNIQUE INDEX <name> ON <table> ( <column> {, <column>} )
-//	ALTER TABLE <table> ADD [COLUMN] <column> <type> [NOT NULL]
+//	ALTER TABLE <table> ADD [COLUMN] <column> <type>
 //
 // <table> is read where the form says a table stands and has to be one of
 // sqlstore.Tables, <column> where a column stands and has to be one of
 // sqlstore.Columns of that table, <name> has to begin with the table and an
 // underscore. Nothing is read out of a stream of words any more, so no word
 // can stand in for another by looking like it.
-func checkForm(t []token, s string) error {
+func checkForm(t []token, w who, s string) error {
 	c := &cursor{t: t}
 	switch {
 	case c.takeKeyword("ALTER"):
 		if c.takeKeyword("TABLE") {
-			return alterForm(c, s)
+			return alterForm(c, w, s)
 		}
 	case c.takeKeyword("CREATE"):
 		if c.takeKeyword("TABLE") {
-			return tableForm(c, s)
+			return tableForm(c, w, s)
 		}
 		// CREATE UNIQUE INDEX and CREATE INDEX have the same form; only the
 		// database treats the two differently.
 		c.takeKeyword("UNIQUE")
 		if c.takeKeyword("INDEX") {
-			return indexForm(c, s)
+			return indexForm(c, w, s)
 		}
 	}
 	return fmt.Errorf("a migration carries only %s: %.40q", strings.Join(kinds, ", "), s)
@@ -260,8 +342,8 @@ func checkForm(t []token, s string) error {
 // thing a migration must never do: a table made out of a table of ours would
 // carry the rows along, TOTP secrets and all, it would stand in no list, and
 // because a migration may not DROP, no later one could take it away again.
-func tableForm(c *cursor, s string) error {
-	table, err := takeTable(c, s)
+func tableForm(c *cursor, w who, s string) error {
+	table, err := takeTable(c, w, s)
 	if err != nil {
 		return err
 	}
@@ -290,6 +372,12 @@ func tableForm(c *cursor, s string) error {
 		name, err := columnDef(c, table, s)
 		if err != nil {
 			return err
+		}
+		// A column that is there from the start may say NOT NULL: the table
+		// is being made, so there is no row it could break. One added later
+		// may not, see alterForm.
+		if c.takeKeyword("NOT") && !c.takeKeyword("NULL") {
+			return unexpected(c, s, "the word NULL behind NOT")
 		}
 		if slices.Contains(seen, name) {
 			return fmt.Errorf("the table %q is given the column %q twice: %.40q", table, name, s)
@@ -323,7 +411,7 @@ func tableForm(c *cursor, s string) error {
 // indexForm reads CREATE INDEX <name> ON <table> ( <columns> ) and nothing
 // else. The name has to begin with the table and an underscore, so every
 // index a migration hands out belongs to a table of ours by its name alone.
-func indexForm(c *cursor, s string) error {
+func indexForm(c *cursor, w who, s string) error {
 	name, ok := c.takeName()
 	if !ok {
 		return unexpected(c, s, "the name of the index")
@@ -335,7 +423,7 @@ func indexForm(c *cursor, s string) error {
 	if !c.takeKeyword("ON") {
 		return unexpected(c, s, "the word ON and the table of the index")
 	}
-	table, err := takeTable(c, s)
+	table, err := takeTable(c, w, s)
 	if err != nil {
 		return err
 	}
@@ -349,12 +437,12 @@ func indexForm(c *cursor, s string) error {
 	return atEnd(c, s)
 }
 
-// alterForm reads ALTER TABLE <table> ADD [COLUMN] <column> <type>
-// [NOT NULL] and nothing else. MariaDB, MySQL and SQLite all take ADD without
-// the word COLUMN, and SQLite takes one ADD in a statement, so the form takes
-// one too.
-func alterForm(c *cursor, s string) error {
-	table, err := takeTable(c, s)
+// alterForm reads ALTER TABLE <table> ADD [COLUMN] <column> <type> and
+// nothing else - no NOT NULL, see errAddedNullable. MariaDB, MySQL and SQLite
+// all take ADD without the word COLUMN, and SQLite takes one ADD in a
+// statement, so the form takes one too.
+func alterForm(c *cursor, w who, s string) error {
+	table, err := takeTable(c, w, s)
 	if err != nil {
 		return err
 	}
@@ -365,13 +453,21 @@ func alterForm(c *cursor, s string) error {
 	if _, err := columnDef(c, table, s); err != nil {
 		return err
 	}
+	// NOT NULL gets a sentence of its own instead of the general "something
+	// stands where the statement is over": it is the one thing an author
+	// writes here in good faith, because 0001 says it in every line.
+	if c.takeKeyword("NOT") {
+		return fmt.Errorf("%w: %.40q", errAddedNullable, s)
+	}
 	return atEnd(c, s)
 }
 
-// columnDef reads one column with its type: the name, the type, and at most
-// the words NOT NULL behind it. Everything else - AUTO_INCREMENT, DEFAULT,
-// AFTER, a second type - is something the five databases do not all read the
-// same way, so the form does not carry it.
+// columnDef reads one column with its type: the name and the type, and
+// nothing else. AUTO_INCREMENT, DEFAULT, AFTER, a second type - the five
+// databases do not all read them the same way, so the form does not carry
+// them. Whether NOT NULL may follow is the one thing that differs between the
+// two places a column stands, so the caller reads it: tableForm takes it,
+// alterForm refuses it.
 func columnDef(c *cursor, table, s string) (string, error) {
 	name, ok := c.takeName()
 	if !ok {
@@ -386,9 +482,6 @@ func columnDef(c *cursor, table, s string) (string, error) {
 	}
 	if typ == "opts" {
 		return "", fmt.Errorf("{{opts}} is the ending of a CREATE TABLE, not the type of the column %q: %.40q", name, s)
-	}
-	if c.takeKeyword("NOT") && !c.takeKeyword("NULL") {
-		return "", unexpected(c, s, "the word NULL behind NOT")
 	}
 	return name, nil
 }
@@ -429,13 +522,28 @@ func columnList(c *cursor, table, s string) error {
 // looks it up in the fixed list. The spelling has to be the one the list
 // carries: MariaDB on Linux tells ngc_blob and NGC_BLOB apart, so a name
 // written differently is a second table nobody knows about.
-func takeTable(c *cursor, s string) (string, error) {
+//
+// The runner's own two tables are not for a migration. They are there before
+// the first migration runs, so a statement of a migration about either of
+// them is always either an error or nothing - and the two databases do not
+// even agree on which: SQLite says "already exists", rolls the whole
+// migration back and the server does not start, while MariaDB gives 1050,
+// which the runner steps over, and records the migration as done. That is
+// exactly the split this guard is built against. New columns are impossible
+// for the two anyway, because sqlstore.Columns carries only the ones they
+// have; what is given up is an index on them, and with three columns each
+// nobody needs one.
+func takeTable(c *cursor, w who, s string) (string, error) {
 	name, ok := c.takeName()
 	if !ok {
 		return "", unexpected(c, s, "the name of a table")
 	}
 	if !slices.Contains(sqlstore.Tables, name) {
 		return "", fmt.Errorf("%q is in no fixed list of tables: %.40q", name, s)
+	}
+	if w == fromMigration && slices.Contains(runnerTables, name) {
+		return "", fmt.Errorf("%q belongs to the runner, which makes it before the first migration runs, "+
+			"so a migration may not name it: %.40q", name, s)
 	}
 	return name, nil
 }

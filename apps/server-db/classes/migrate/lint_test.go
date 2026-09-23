@@ -1,7 +1,7 @@
 package migrate
 
 import (
-	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -43,12 +43,12 @@ func TestCheckStatement(t *testing.T) {
 		"CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind)){{opts}}",
 		"CREATE INDEX ngc_blob_seq ON ngc_blob (kind, seq, id)",
 		"CREATE UNIQUE INDEX ngc_user_name ON ngc_user (name)",
-		"ALTER TABLE ngc_app ADD COLUMN node {{key}} NOT NULL",
+		"ALTER TABLE ngc_app ADD COLUMN node {{key}}",
 		// MariaDB, MySQL and SQLite all take ADD without the word COLUMN, so
 		// the rules take it too - and measure the column all the same.
-		"ALTER TABLE ngc_app ADD node {{key}} NOT NULL",
+		"ALTER TABLE ngc_app ADD node {{key}}",
 	} {
-		if _, err := checkStatement(s); err != nil {
+		if _, err := checkStatement(s, fromMigration); err != nil {
 			t.Errorf("%q: %v", s, err)
 		}
 	}
@@ -67,7 +67,7 @@ func TestCheckStatement(t *testing.T) {
 		"an unknown placeholder": "CREATE TABLE ngc_blob (kind {{blob}} NOT NULL){{opts}}",
 		// A column added without the word COLUMN sits in no brackets, so only
 		// the type in front of it shows what it is.
-		"a column added without the word COLUMN": "ALTER TABLE ngc_app ADD nonsense {{key}} NOT NULL",
+		"a column added without the word COLUMN": "ALTER TABLE ngc_app ADD nonsense {{key}}",
 		// SQL does not care how an identifier is written: Nonsense and
 		// NGC_OTHER_X are a column and an index like any other.
 		"a column in mixed case": "CREATE TABLE ngc_blob (Nonsense {{key}} NOT NULL){{opts}}",
@@ -109,13 +109,13 @@ func TestCheckStatement(t *testing.T) {
 		"a table name with a dollar sign": "CREATE TABLE ngc_blob$x (kind {{key}} NOT NULL){{opts}}",
 		"a table name outside ASCII":      "CREATE TABLE ngc_blobä (kind {{key}} NOT NULL){{opts}}",
 		// Whatever follows the form is something no rule has read.
-		"a column added the MySQL way":   "ALTER TABLE ngc_app ADD COLUMN node {{key}} NOT NULL AFTER id",
+		"a column added the MySQL way":   "ALTER TABLE ngc_app ADD COLUMN node {{key}} AFTER id",
 		"an index without columns":       "CREATE INDEX ngc_blob_x ON ngc_blob",
 		"an index with a way of its own": "CREATE INDEX ngc_blob_x ON ngc_blob (kind) USING BTREE",
 		// MariaDB runs what stands in /*! ... */ and reads it as SQL.
 		"a comment MariaDB runs": "CREATE INDEX ngc_blob_x ON ngc_blob (kind) /*!*/",
 		// SQLite takes one ADD in a statement, so the form takes one.
-		"two columns added at once": "ALTER TABLE ngc_app ADD COLUMN node {{key}} NOT NULL, ADD COLUMN id {{key}} NOT NULL",
+		"two columns added at once": "ALTER TABLE ngc_app ADD COLUMN node {{key}}, ADD COLUMN id {{key}}",
 		// A table written in another case is another table: MariaDB on Linux
 		// tells ngc_blob and NGC_BLOB apart.
 		"a table in upper case": "CREATE TABLE NGC_BLOB (kind {{key}} NOT NULL){{opts}}",
@@ -138,20 +138,20 @@ func TestCheckStatement(t *testing.T) {
 		// MariaDB takes 64 characters for a name, SQLite as many as one likes.
 		"an index name longer than MariaDB takes": "CREATE INDEX ngc_blob_" + strings.Repeat("x", 200) + " ON ngc_blob (kind)",
 	} {
-		if _, err := checkStatement(s); err == nil {
+		if _, err := checkStatement(s, fromMigration); err == nil {
 			t.Errorf("%s was accepted: %q", name, s)
 		}
 	}
 	// The message has to say what the rule is, not just that something is
 	// wrong: whoever wrote the migration reads it.
-	if _, err := checkStatement("DROP TABLE ngc_blob"); err == nil || !strings.Contains(err.Error(), "only add") {
+	if _, err := checkStatement("DROP TABLE ngc_blob", fromMigration); err == nil || !strings.Contains(err.Error(), "only add") {
 		t.Errorf("the message does not say what the rule is: %v", err)
 	}
 	// A word that does not belong is refused, and the message names it: who
 	// wrote the migration has to see where to look. WHERE is nothing anybody
 	// meant as a column, and a message calling it one would send the author
 	// looking in the wrong place.
-	_, err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (kind) WHERE nonsense")
+	_, err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (kind) WHERE nonsense", fromMigration)
 	if err == nil {
 		t.Fatal("a statement with a WHERE was accepted")
 	}
@@ -159,7 +159,7 @@ func TestCheckStatement(t *testing.T) {
 		t.Errorf("the message does not say that a word stands where the statement is over: %v", err)
 	}
 	// A name standing where a column belongs is named as what it is not.
-	if _, err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (nonsense)"); err == nil ||
+	if _, err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (nonsense)", fromMigration); err == nil ||
 		!strings.Contains(err.Error(), "no column of") {
 		t.Errorf("the message does not say that the name is no column: %v", err)
 	}
@@ -174,10 +174,10 @@ func TestCheckStatement(t *testing.T) {
 func TestAColumnTypeIsNeverAWord(t *testing.T) {
 	for name, s := range map[string]string{
 		"a type nobody listed":            "CREATE TABLE ngc_blob (kind {{add}} NOT NULL){{opts}}",
-		"a type where the column belongs": "ALTER TABLE ngc_app ADD {{key}} node NOT NULL",
+		"a type where the column belongs": "ALTER TABLE ngc_app ADD {{key}} node",
 		"the ending as a column type":     "CREATE TABLE ngc_blob (kind {{opts}} NOT NULL){{opts}}",
 	} {
-		if _, err := checkStatement(s); err == nil {
+		if _, err := checkStatement(s, fromMigration); err == nil {
 			t.Errorf("%s was accepted: %q", name, s)
 		}
 	}
@@ -212,6 +212,15 @@ func nameByte(c byte) bool {
 		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
+// oneWord is the shape of a column type and knownEndings are the endings
+// there are, both written out here on purpose: the oracle below measures what
+// a database was really given, so what it takes for known has to come from
+// somewhere other than the rules it is measuring.
+var (
+	oneWord      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\([0-9]+\))?$`)
+	knownEndings = []string{"", "ENGINE=InnoDB ROW_FORMAT=DYNAMIC"}
+)
+
 // namesIn cuts finished SQL into the names and words a database reads in it.
 func namesIn(sql string) []string {
 	var out []string
@@ -242,9 +251,23 @@ func unlisted(d sqlstore.Dialect, sql string) []string {
 		"COLUMN", "NOT", "NULL", "PRIMARY", "KEY", "ON"} {
 		ok[w] = true
 	}
-	// the words the dialect's own column types bring along
+	// The words the dialect's own column types bring along - but only out of
+	// a type that keeps the form every type has to keep, and out of an ending
+	// that is one of the two there are. A dialect that answers
+	// "BLOB , heimlich BLOB" would otherwise hand the oracle its own extra
+	// column as a known name, and the oracle would look past exactly what it
+	// is here for. Both are written out again below and not taken from the
+	// rules, so that this cannot go wrong the same way the rules could.
 	for _, p := range sqlstore.Placeholders {
-		for _, w := range namesIn(d.Type(p)) {
+		typ := d.Type(p)
+		if p == "opts" {
+			if !slices.Contains(knownEndings, typ) {
+				continue
+			}
+		} else if !oneWord.MatchString(typ) {
+			continue
+		}
+		for _, w := range namesIn(typ) {
 			ok[w] = true
 		}
 	}
@@ -308,15 +331,23 @@ func TestEveryStatementRunsAsItWasMeasured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all := []string{createSchema, createLock}
+	all := []struct {
+		s string
+		w who
+	}{{createSchema, fromRunner}, {createLock, fromRunner}}
 	for _, f := range files {
-		all = append(all, f.Statements...)
+		for _, s := range f.Statements {
+			all = append(all, struct {
+				s string
+				w who
+			}{s, fromMigration})
+		}
 	}
-	for _, s := range all {
+	for _, c := range all {
 		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
-			sql, err := fill(d, s)
+			sql, err := fill(d, c.s, c.w)
 			if err != nil {
-				t.Errorf("%.40q: %v", s, err)
+				t.Errorf("%.40q: %v", c.s, err)
 				continue
 			}
 			if bad := unlisted(d, sql); len(bad) > 0 {
@@ -336,14 +367,14 @@ func TestFillRefusesWhatWasNotMeasured(t *testing.T) {
 		"a column type against the name": "CREATE TABLE ngc_blob ( kind{{key}} NOT NULL ) {{opts}}",
 		"a word too much":                "CREATE TABLE ngc_blob ( kind {{key}} NOT NULL ) {{opts}} x",
 	} {
-		if _, err := fill(sqlstore.SQLite, s); err == nil {
+		if _, err := fill(sqlstore.SQLite, s, fromMigration); err == nil {
 			t.Errorf("%s was filled and would have run: %q", name, s)
 		}
 	}
 	// A statement whose pieces are right but which does not stand in the form
 	// the rules wrote is refused for that reason and told so. The author has
 	// to read where to look: the names are all fine, the form is not.
-	_, err := fill(sqlstore.SQLite, "CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}")
+	_, err := fill(sqlstore.SQLite, "CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}", fromMigration)
 	if err == nil {
 		t.Fatal("a statement in another form was filled and would have run")
 	}
@@ -351,12 +382,12 @@ func TestFillRefusesWhatWasNotMeasured(t *testing.T) {
 		t.Errorf("the message does not say that the form is the problem: %v", err)
 	}
 	// What the rules did write runs, and it runs unchanged.
-	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}")
+	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}", fromMigration)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := fill(sqlstore.SQLite, form); err != nil {
+	if _, err := fill(sqlstore.SQLite, form, fromMigration); err != nil {
 		t.Errorf("what the rules wrote does not run: %v", err)
 	}
 }
@@ -404,69 +435,304 @@ func (rogue) Type(string) string { return "BLOB; CREATE TABLE nonsense (x BLOB)"
 // comparison itself, and one that writes a whole statement into a column type
 // is refused before anything runs.
 func TestFillTrustsNobodyForTheFinishedText(t *testing.T) {
-	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}")
+	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}", fromMigration)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fill(&changing{Dialect: sqlstore.SQLite}, form); err == nil {
+	if _, err := fill(&changing{Dialect: sqlstore.SQLite}, form, fromMigration); err == nil {
 		t.Error("a dialect that changed its answer was filled and would have run")
 	}
-	if _, err := fill(rogue{Dialect: sqlstore.SQLite}, form); err == nil {
+	if _, err := fill(rogue{Dialect: sqlstore.SQLite}, form, fromMigration); err == nil {
 		t.Error("a column type carrying a second statement was filled and would have run")
 	}
 }
 
 // TestFillingNeverGrowsTwoPiecesTogether is the sentence of this round as a
-// property instead of as a list of examples, and it is measured on made-up
-// text, not on anything anybody thought of: whenever the rules can take a
-// text apart at all, writing the pieces back and filling them gives exactly
-// the pieces with the dialect's types in them. Two pieces can never grow into
-// one, whatever stood between them in the file.
+// property instead of as a list of examples, and it is measured on every list
+// of pieces there is up to six long: two pieces can never grow into one,
+// whatever stood between them in the file.
 //
-// The second half is that taking the written-back text apart again gives the
-// same pieces. Together the two say that the text a database is given and the
-// text the rules read are the same thing.
+// Exhaustive and not made up at random. Eight kinds of piece, lists of one to
+// six: 8 + 8^2 + ... + 8^6 = 299592 lists, every one of them measured. There
+// is no threshold to set and nothing to miss - a random draw could only ever
+// say that it did not happen to find one.
+//
+// Two things are measured for each list. Writing it out and reading it back
+// gives the same pieces, so the text a database is given and the text the
+// rules read are the same thing. And filling the written-out text gives
+// exactly the pieces with this dialect's types in them, so no type can grow
+// together with the name in front of it or behind it.
 func TestFillingNeverGrowsTwoPiecesTogether(t *testing.T) {
-	// A small alphabet, so that the pieces really run into each other: bare
-	// words, brackets, spaces and whole column types.
-	alphabet := []string{"a", "b", "_", "0", "(", ")", ",", " ", "{", "}",
-		"{{key}}", "{{int}}", "{{opts}}", "kind", "NOT"}
-	r := rand.New(rand.NewPCG(20260923, 4))
-	taken := 0
-	for i := 0; i < 200000; i++ {
-		var b strings.Builder
-		for n := 1 + r.IntN(10); n > 0; n-- {
-			b.WriteString(alphabet[r.IntN(len(alphabet))])
+	// Every kind of piece there is, with two bare words so that a word can
+	// stand next to a word: that is the whole alphabet a statement is made of.
+	alphabet := []token{
+		{kind: tokWord, text: "a"},
+		{kind: tokWord, text: "NOT"},
+		{kind: tokType, text: "key"},
+		{kind: tokType, text: "int"},
+		{kind: tokType, text: "opts"},
+		{kind: tokOpen},
+		{kind: tokClose},
+		{kind: tokComma},
+	}
+	const longest = 6
+	dialects := []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite}
+	list := make([]token, 0, longest)
+	count := 0
+	var walk func()
+	walk = func() {
+		if len(list) > 0 {
+			count++
+			form := write(list)
+			again, err := tokens(form)
+			if err != nil || !slices.Equal(again, list) {
+				t.Fatalf("the written-back form is read differently: %q -> %v (%v)", form, again, err)
+			}
+			for _, d := range dialects {
+				want, err := writeFilled(list, d)
+				if err != nil {
+					t.Fatalf("a real dialect was refused for %q: %v", form, err)
+				}
+				got, err := sqlstore.Fill(d, form)
+				if err != nil || got != want {
+					t.Fatalf("filling took %q apart differently: %q instead of %q (%v)", form, got, want, err)
+				}
+			}
 		}
-		s := b.String()
-		pieces, err := tokens(s)
+		if len(list) == longest {
+			return
+		}
+		for _, tok := range alphabet {
+			list = append(list, tok)
+			walk()
+			list = list[:len(list)-1]
+		}
+	}
+	walk()
+	if want := 299592; count != want {
+		t.Fatalf("%d lists of pieces were measured, and there are %d", count, want)
+	}
+}
+
+// wrongType is a dialect that answers a placeholder with something that is
+// not a column type, and wrongEnding one that writes something else where a
+// CREATE TABLE ends. Neither is anything sqlstore does today: they stand for
+// the one piece of a finished statement that comes out of no migration and
+// that no rule of a migration ever reads. Every line below went through the
+// list of forbidden characters that used to stand guard here - the reviewer
+// put "BLOB , heimlich BLOB" through it and read the extra column back out of
+// a real SQLite - which is why the type is held to a form now and the ending
+// to a list.
+type wrongType struct {
+	sqlstore.Dialect
+	typ string
+}
+
+// Only {{key}} is answered wrongly, the way the reviewer measured it: with
+// every column of the statement carrying the same made-up name, SQLite would
+// refuse it for the doubled name and the measurement would be saved by an
+// accident instead of by the guard.
+func (d wrongType) Type(name string) string {
+	if name == "key" {
+		return d.typ
+	}
+	return d.Dialect.Type(name)
+}
+
+type wrongEnding struct {
+	sqlstore.Dialect
+	ending string
+}
+
+func (d wrongEnding) Type(name string) string {
+	if name == "opts" {
+		return d.ending
+	}
+	return d.Dialect.Type(name)
+}
+
+var wrongTypes = map[string]string{
+	"a second column behind a comma":      "BLOB , heimlich BLOB",
+	"a second column behind a space":      "BLOB heimlich",
+	"a second column behind a line break": "BLOB\nheimlich",
+	// A letter above ASCII stands in a MariaDB name without quotes.
+	"a letter outside ASCII": "BLOBäx",
+	// MariaDB runs what stands in /*! ... */ and SQLite reads it as a
+	// comment: the same migration, two schemas.
+	"a comment MariaDB runs":       "BLOB /*!99999 , heimlich BLOB */",
+	"a second statement":           "BLOB; CREATE TABLE nonsense (x BLOB)",
+	"a default of its own":         "BLOB DEFAULT 0",
+	"nothing at all":               "",
+	"a length nobody could mean":   "BLOB(" + strings.Repeat("9", 100) + ")",
+	"a name that is no name":       "(255)",
+	"a type with a table in front": "other.BLOB",
+	// The edges of the form itself.
+	"a bracket that never closes":     "BLOB(1",
+	"a length with nothing in it":     "BLOB()",
+	"something behind the length":     "BLOB(1) ",
+	"a placeholder of its own":        "BLOB{{key}}",
+	"a comment of its own":            "BLOB--x",
+	"a name beginning with no letter": "_BLOB",
+}
+
+var wrongEndings = map[string]string{
+	"a second statement":        "; CREATE TABLE nonsense ( x BLOB )",
+	"a column behind the table": "ENGINE=InnoDB ROW_FORMAT=DYNAMIC , heimlich BLOB",
+	"an ending nobody listed":   "STRICT",
+	// The ending carries no space of its own any more: a statement runs with
+	// one between every two of its pieces, so the old value would write two.
+	// A dialect that brings it back is refused here and not quietly taken.
+	"the old ending with its own space": " ENGINE=InnoDB ROW_FORMAT=DYNAMIC",
+	"a comment MariaDB runs":            "/*!99999 , heimlich BLOB */",
+	"the ending of another kind":        "ENGINE=MyISAM",
+}
+
+// TestAColumnTypeKeepsItsForm: the column type of the dialect is the one
+// piece of a finished statement that no rule of a migration ever reads, so it
+// is measured where it is written in. A list of characters it may not carry
+// can never be finished - there is always one more way to write a second
+// column - so it is held to a form instead: one word, at most with a length
+// in brackets behind it. The ending of a CREATE TABLE has no form of its own
+// and is held to a list.
+//
+// Nothing here trusts the guard: whatever it lets through is run on a real
+// SQLite, and then the database is asked what it made of it.
+func TestAColumnTypeKeepsItsForm(t *testing.T) {
+	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL, seq {{int}} NOT NULL, PRIMARY KEY (kind)){{opts}}", fromMigration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, typ := range wrongTypes {
+		d := wrongType{Dialect: sqlstore.SQLite, typ: typ}
+		sql, err := fill(d, form, fromMigration)
 		if err != nil {
 			continue
 		}
-		taken++
-		form := write(pieces)
-		again, err := tokens(form)
-		if err != nil || len(again) != len(pieces) {
-			t.Fatalf("the written-back form is read differently: %q -> %q: %v", s, form, err)
-		}
-		for j := range pieces {
-			if again[j] != pieces[j] {
-				t.Fatalf("the written-back form is read differently: %q -> %q", s, form)
-			}
-		}
-		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
-			want, err := writeFilled(pieces, d)
-			if err != nil {
-				continue
-			}
-			got, err := sqlstore.Fill(d, form)
-			if err != nil || got != want {
-				t.Fatalf("filling took %q apart differently: %q instead of %q (%v)", form, got, want, err)
-			}
+		t.Errorf("a column type that is %s was filled and would have run: %q -> %q", name, typ, sql)
+		if bad := runOnSQLite(t, d, []string{form}, false); len(bad) > 0 {
+			t.Errorf("   the database now carries %v", bad)
 		}
 	}
-	if taken < 1000 {
-		t.Fatalf("only %d texts could be taken apart, so the property was hardly measured", taken)
+	for name, ending := range wrongEndings {
+		d := wrongEnding{Dialect: sqlstore.SQLite, ending: ending}
+		sql, err := fill(d, form, fromMigration)
+		if err != nil {
+			continue
+		}
+		t.Errorf("an ending that is %s was filled and would have run: %q -> %q", name, ending, sql)
+		if bad := runOnSQLite(t, d, []string{form}, false); len(bad) > 0 {
+			t.Errorf("   the database now carries %v", bad)
+		}
 	}
-	t.Logf("%d of 200000 made-up texts could be taken apart and all of them fill as measured", taken)
+	// What the two real dialects answer keeps the form and runs.
+	for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
+		if _, err := fill(d, form, fromMigration); err != nil {
+			t.Errorf("a real dialect was refused: %v", err)
+		}
+	}
+}
+
+// TestTheOracleSeesWhatTheDialectBringsAlong is a test of a test. unlisted
+// takes the names a dialect's column types bring along as known, which is
+// right for BLOB and VARBINARY - and was wrong for everything else the
+// dialect wrote next to them: a dialect that answers "BLOB , heimlich BLOB"
+// listed its own extra column as known, so the oracle looked past exactly
+// what it is there for. It now takes those names from the form the type has
+// to keep, and the form is written out here and not borrowed from the rules,
+// so the oracle cannot go wrong the same way the rules could.
+func TestTheOracleSeesWhatTheDialectBringsAlong(t *testing.T) {
+	d := wrongType{Dialect: sqlstore.SQLite, typ: "BLOB , heimlich BLOB"}
+	sql := "CREATE TABLE ngc_blob ( kind " + d.Type("key") + " NOT NULL )"
+	if bad := unlisted(d, sql); !slices.Contains(bad, "heimlich") {
+		t.Errorf("the oracle takes what the dialect brought along as listed, so it looks past it: %v", bad)
+	}
+	// And it stays quiet on what the real dialects write.
+	form, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}", fromMigration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, real := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
+		s, err := sqlstore.Fill(real, form)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bad := unlisted(real, s); len(bad) > 0 {
+			t.Errorf("the oracle calls %v unlisted in %q", bad, s)
+		}
+	}
+}
+
+// TestAColumnIsAddedNullable: a column that comes later is nullable. NOT NULL
+// on an ALTER TABLE is the one thing in this guard that runs on one database
+// and not on the other - SQLite refuses it on a table that holds rows,
+// MariaDB fills in a silent default - so a test on an empty database goes
+// green and the real upgrade breaks. What that costs is nothing: a column
+// added later has no value for the rows that are already there, whatever the
+// migration says.
+//
+// A CREATE TABLE keeps NOT NULL: a table that is being made has no rows to
+// break.
+func TestAColumnIsAddedNullable(t *testing.T) {
+	for _, s := range []string{
+		"ALTER TABLE ngc_app ADD COLUMN node {{key}}",
+		"ALTER TABLE ngc_app ADD node {{key}}",
+	} {
+		if _, err := checkStatement(s, fromMigration); err != nil {
+			t.Errorf("%q: %v", s, err)
+		}
+	}
+	for _, s := range []string{
+		"ALTER TABLE ngc_app ADD COLUMN node {{key}} NOT NULL",
+		"ALTER TABLE ngc_app ADD node {{key}} NOT NULL",
+	} {
+		_, err := checkStatement(s, fromMigration)
+		if err == nil {
+			t.Errorf("a column was added as NOT NULL: %q", s)
+			continue
+		}
+		if !strings.Contains(err.Error(), "nullable") {
+			t.Errorf("the message does not say what the rule is: %v", err)
+		}
+	}
+	if _, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind)){{opts}}", fromMigration); err != nil {
+		t.Errorf("a CREATE TABLE lost its NOT NULL: %v", err)
+	}
+}
+
+// TestAMigrationLeavesTheRunnerTablesAlone: ngc_schema and ngc_lock are the
+// runner's own, made before the first migration runs. A statement of a
+// migration about either of them is therefore always either an error or
+// nothing - and the two databases do not even agree on which. SQLite answers
+// "already exists", rolls the whole migration back and the server does not
+// start; MariaDB gives error 1050, the runner steps over it and records the
+// migration as done. That is exactly the split this guard is built against.
+// New columns are impossible for the two anyway, because sqlstore.Columns
+// carries only the ones they have.
+func TestAMigrationLeavesTheRunnerTablesAlone(t *testing.T) {
+	for name, s := range map[string]string{
+		"the table of the runner once more": "CREATE TABLE ngc_schema ( version {{int}} NOT NULL , PRIMARY KEY ( version ) ) {{opts}}",
+		"the lock table once more":          "CREATE TABLE ngc_lock ( name {{key}} NOT NULL , PRIMARY KEY ( name ) ) {{opts}}",
+		"a column on the lock":              "ALTER TABLE ngc_lock ADD until {{int}}",
+		"an index on the lock":              "CREATE INDEX ngc_lock_until ON ngc_lock (until)",
+		"an index on the schema":            "CREATE UNIQUE INDEX ngc_schema_done ON ngc_schema (done)",
+	} {
+		if _, err := checkStatement(s, fromMigration); err == nil {
+			t.Errorf("a migration was allowed to name %s: %q", name, s)
+		}
+	}
+}
+
+// TestABoundBitesBeforeTheWork: a bound that is looked at after the work on
+// the piece past it is not a bound. The migration below carries one statement
+// too many, and that one is a DROP: whichever message comes back says which
+// of the two was looked at first.
+func TestABoundBitesBeforeTheWork(t *testing.T) {
+	one := "CREATE INDEX ngc_blob_seq ON ngc_blob (kind);\n"
+	_, err := split(strings.Repeat(one, maxStatements) + "DROP TABLE ngc_blob;\n")
+	if err == nil {
+		t.Fatal("a migration past the bound was read")
+	}
+	if !strings.Contains(err.Error(), "more than") {
+		t.Errorf("the statement past the bound was measured before anybody counted: %v", err)
+	}
 }

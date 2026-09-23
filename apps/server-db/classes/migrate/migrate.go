@@ -42,6 +42,10 @@ func List() ([]File, error) {
 		if e.IsDir() || path.Ext(name) != ".sql" {
 			continue
 		}
+		// The bound comes before the work on the file past it, not after.
+		if len(out) == maxFiles {
+			return nil, fmt.Errorf("migrate: there are more than %d migrations", maxFiles)
+		}
 		number, _, ok := strings.Cut(name, "-")
 		version, err := strconv.ParseInt(number, 10, 64)
 		if !ok || err != nil || version < 1 || len(number) != 4 {
@@ -54,9 +58,6 @@ func List() ([]File, error) {
 		stmts, err := split(string(body))
 		if err != nil {
 			return nil, fmt.Errorf("migrate: %s: %w", name, err)
-		}
-		if len(out) == maxFiles {
-			return nil, fmt.Errorf("migrate: there are more than %d migrations", maxFiles)
 		}
 		out = append(out, File{Version: version, Name: name, Statements: stmts})
 	}
@@ -104,12 +105,18 @@ func split(body string) ([]string, error) {
 		if stmt == "" {
 			continue
 		}
-		form, err := checkStatement(stmt)
-		if err != nil {
-			return nil, err
-		}
+		// The bound comes before the work on the statement past it, not
+		// after.
 		if len(out) == maxStatements {
 			return nil, fmt.Errorf("a migration carries more than %d statements", maxStatements)
+		}
+		form, err := checkStatement(stmt, fromMigration)
+		if err != nil {
+			// The number says which statement of the file it is: what the
+			// database is given is the form a statement runs in and no longer
+			// the text of the file, so a message that quotes it cannot be
+			// searched for in the .sql any more.
+			return nil, fmt.Errorf("statement %d: %w", len(out)+1, err)
 		}
 		out = append(out, form)
 	}
@@ -329,8 +336,10 @@ func bootstrap(ctx context.Context, db *sql.DB, d sqlstore.Dialect) error {
 			continue
 		}
 		// The same door every statement of a migration goes through: measured
-		// again here, and what runs has to be what was measured.
-		stmt, err := fill(d, pair.create)
+		// again here, and what runs has to be what was measured. The one
+		// difference is who is knocking - these two statements are the only
+		// ones that may name ngc_schema and ngc_lock.
+		stmt, err := fill(d, pair.create, fromRunner)
 		if err != nil {
 			return err
 		}
@@ -413,13 +422,13 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 			return false, err
 		}
 		defer tx.Rollback()
-		for _, raw := range f.Statements {
-			stmt, err := fill(d, raw)
+		for i, raw := range f.Statements {
+			stmt, err := fill(d, raw, fromMigration)
 			if err != nil {
-				return false, err
+				return false, at(i, f, err)
 			}
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				return false, err
+				return false, at(i, f, err)
 			}
 		}
 		// Inside the transaction, so the record of "done" and the check that
@@ -439,12 +448,12 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 		if err := hold(ctx, db, owner, now); err != nil {
 			return false, err
 		}
-		stmt, err := fill(d, raw)
+		stmt, err := fill(d, raw, fromMigration)
 		if err != nil {
-			return false, err
+			return false, at(int(step)+i, f, err)
 		}
 		if _, err := db.ExecContext(ctx, stmt); err != nil && !d.Exists(err) {
-			return false, err
+			return false, at(int(step)+i, f, err)
 		}
 		if _, err := db.ExecContext(ctx, updateStep, step+int64(i)+1, f.Version); err != nil {
 			return false, err
@@ -455,6 +464,15 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 	}
 	_, err = db.ExecContext(ctx, updateDone, int64(len(f.Statements)), int64(1), now, f.Version)
 	return true, err
+}
+
+// at says which statement of the migration went wrong, counted from one. The
+// database is given the form a statement runs in and no longer the text of
+// the file, so an error that quotes it cannot be searched for in the .sql;
+// the running number is what points the author at the right line, and it is
+// the same number the record in ngc_schema counts in.
+func at(i int, f File, err error) error {
+	return fmt.Errorf("statement %d of %d: %w", i+1, len(f.Statements), err)
 }
 
 // state returns how far a migration got: how many statements are recorded and

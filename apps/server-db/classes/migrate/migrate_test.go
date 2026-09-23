@@ -281,7 +281,7 @@ func tablesEmpty(t *testing.T, db *sql.DB) {
 // less checked than the rest of the schema.
 func TestRunnerTables(t *testing.T) {
 	for _, stmt := range []string{createSchema, createLock} {
-		form, err := checkStatement(stmt)
+		form, err := checkStatement(stmt, fromRunner)
 		if err != nil {
 			t.Errorf("%.40q: %v", stmt, err)
 			continue
@@ -293,7 +293,7 @@ func TestRunnerTables(t *testing.T) {
 			t.Errorf("the statement does not stand in the form it runs in: %q instead of %q", stmt, form)
 		}
 		for _, d := range []sqlstore.Dialect{sqlstore.MariaDB, sqlstore.SQLite} {
-			if _, err := fill(d, stmt); err != nil {
+			if _, err := fill(d, stmt, fromRunner); err != nil {
 				t.Errorf("%.40q: %v", stmt, err)
 			}
 		}
@@ -710,7 +710,11 @@ func unlistedInDB(t *testing.T, db *sql.DB) []string {
 // runOnSQLite runs finished SQL on a database of its own and reports what the
 // database made of it. A statement the database refuses creates nothing, so
 // its error is no finding here - what is looked for is what came into being.
-func runOnSQLite(t *testing.T, stmts []string, withTables bool) []string {
+//
+// The dialect is given, because a dialect that answers something else than a
+// column type is one of the things measured here: SQLite runs whatever it is
+// handed, and afterwards the database is asked what came of it.
+func runOnSQLite(t *testing.T, d sqlstore.Dialect, stmts []string, withTables bool) []string {
 	t.Helper()
 	db := openFile(t)
 	if withTables {
@@ -725,7 +729,7 @@ func runOnSQLite(t *testing.T, stmts []string, withTables bool) []string {
 		}
 	}
 	for _, s := range stmts {
-		sql, err := sqlstore.Fill(sqlstore.SQLite, s)
+		sql, err := sqlstore.Fill(d, s)
 		if err != nil {
 			continue
 		}
@@ -754,7 +758,7 @@ func TestNothingUnlistedIsEverCreated(t *testing.T) {
 	for _, f := range files {
 		schema = append(schema, f.Statements...)
 	}
-	if bad := runOnSQLite(t, schema, false); len(bad) > 0 {
+	if bad := runOnSQLite(t, sqlstore.SQLite, schema, false); len(bad) > 0 {
 		t.Errorf("the schema itself creates %v", bad)
 	}
 	for name, body := range glued {
@@ -764,9 +768,122 @@ func TestNothingUnlistedIsEverCreated(t *testing.T) {
 		}
 		t.Errorf("%s was accepted: %q", name, body)
 		for _, withTables := range []bool{false, true} {
-			if bad := runOnSQLite(t, stmts, withTables); len(bad) > 0 {
+			if bad := runOnSQLite(t, sqlstore.SQLite, stmts, withTables); len(bad) > 0 {
 				t.Errorf("   the database now carries %v", bad)
 			}
+		}
+	}
+}
+
+// TestAnAcceptedAlterRunsOnATableThatHoldsRows measures the rule about ALTER
+// TABLE against a real database and not against the guard. A migration only
+// ever meets tables that hold rows, so whatever the rules let an ALTER TABLE
+// say has to run on one.
+func TestAnAcceptedAlterRunsOnATableThatHoldsRows(t *testing.T) {
+	for _, s := range []string{
+		"ALTER TABLE ngc_blob ADD COLUMN id {{key}}",
+		"ALTER TABLE ngc_blob ADD id {{key}}",
+		"ALTER TABLE ngc_blob ADD COLUMN id {{key}} NOT NULL",
+		"ALTER TABLE ngc_blob ADD id {{key}} NOT NULL",
+	} {
+		form, err := checkStatement(s, fromMigration)
+		if err != nil {
+			// Refused by the rules: nothing of it ever reaches a database.
+			continue
+		}
+		sql, err := fill(sqlstore.SQLite, form, fromMigration)
+		if err != nil {
+			t.Errorf("%q: %v", s, err)
+			continue
+		}
+		db := blobWithARow(t)
+		if _, err := db.ExecContext(ctx, sql); err != nil {
+			t.Errorf("the rules accept %q, and a real SQLite refuses it on a table that holds rows: %v", s, err)
+		}
+	}
+}
+
+// TestANotNullColumnPartsTheTwoDatabases is the measurement the rule above rests on,
+// written down so that nobody has to take it on trust. On a table that holds
+// rows SQLite refuses the column outright; on an empty one it takes it and
+// every INSERT afterwards fails. MariaDB runs both without a word, because it
+// fills in a default of its own. So a test on an empty database goes green
+// and the real upgrade breaks - which is why NOT NULL is out of the ALTER
+// form.
+func TestANotNullColumnPartsTheTwoDatabases(t *testing.T) {
+	db := blobWithARow(t)
+	if _, err := db.ExecContext(ctx, "ALTER TABLE ngc_blob ADD id BLOB NOT NULL"); err == nil {
+		t.Error("SQLite took a NOT NULL column on a table that holds rows")
+	} else {
+		t.Logf("a table that holds rows: %v", err)
+	}
+	// The same statement on an empty table: it runs, and the table is
+	// unusable afterwards.
+	empty := openFile(t)
+	if _, err := empty.ExecContext(ctx, "CREATE TABLE ngc_blob (kind BLOB NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := empty.ExecContext(ctx, "ALTER TABLE ngc_blob ADD id BLOB NOT NULL"); err != nil {
+		t.Errorf("an empty table: %v", err)
+	}
+	if _, err := empty.ExecContext(ctx, "INSERT INTO ngc_blob (kind) VALUES (?)", []byte("x")); err == nil {
+		t.Error("a row went into the table, so the half-done column costs nothing after all")
+	} else {
+		t.Logf("an empty table, and then a row: %v", err)
+	}
+}
+
+// blobWithARow gives a database with the smallest ngc_blob there is and one
+// row in it, the way every table a migration meets carries rows. Only listed
+// names are written.
+func blobWithARow(t *testing.T) *sql.DB {
+	t.Helper()
+	db := openFile(t)
+	if _, err := db.ExecContext(ctx, "CREATE TABLE ngc_blob (kind BLOB NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO ngc_blob (kind) VALUES (?)", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// TestTheMessageSaysWhichStatement: the database is given the form a
+// statement runs in and no longer the text of the file, so an error that
+// quotes it cannot be searched for in the .sql any more. The running number
+// of the statement is what points the author at the right line.
+func TestTheMessageSaysWhichStatement(t *testing.T) {
+	table, err := checkStatement("CREATE TABLE ngc_blob (kind {{key}} NOT NULL, PRIMARY KEY (kind)){{opts}}", fromMigration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := checkStatement("CREATE INDEX ngc_blob_seq ON ngc_blob (kind)", fromMigration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		stmts []string
+		want  string
+	}{
+		// A statement that never went through the rules: fill refuses it.
+		{"one the rules never wrote", []string{table, index,
+			"CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}"}, "statement 3 of 3"},
+		// One the database itself refuses: the table is already there.
+		{"one the database refuses", []string{table, table}, "statement 2 of 2"},
+	} {
+		db := openFile(t)
+		if err := bootstrap(ctx, db, sqlstore.SQLite); err != nil {
+			t.Fatal(err)
+		}
+		f := File{Version: 99, Name: "0099-made-up.sql", Statements: c.stmts}
+		_, err := applyOne(ctx, db, sqlstore.SQLite, f, "test", 1790000000)
+		if err == nil {
+			t.Errorf("%s ran", c.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: the message does not say %q: %v", c.name, c.want, err)
 		}
 	}
 }
