@@ -76,6 +76,16 @@ func TestCheckStatement(t *testing.T) {
 		"an index on such a column":     "CREATE INDEX ngc_blob_x ON ngc_blob (key)",
 		// ENGINE = MyISAM says the same as ENGINE=MyISAM.
 		"an engine with spaces": "CREATE TABLE ngc_blob (kind {{key}} NOT NULL) ENGINE = MyISAM",
+		// The name of an index is measured whether or not it starts with
+		// ngc_: x is a name a migration made up like any other, and an index
+		// belongs to the table it is named after.
+		"an index with a name of its own":       "CREATE INDEX x ON ngc_blob (kind)",
+		"a unique index with a name of its own": "CREATE UNIQUE INDEX nonsense ON ngc_blob (kind)",
+		// Four kinds of statement are allowed at all. Everything else falls
+		// on the first words, however harmless it looks and whatever it
+		// creates - nobody has to think of it beforehand.
+		"a view":  "CREATE VIEW nonsense AS SELECT kind FROM ngc_blob",
+		"a right": "GRANT ALL ON ngc_blob TO nonsense",
 	} {
 		if err := checkStatement(s); err == nil {
 			t.Errorf("%s was accepted: %q", name, s)
@@ -85,5 +95,26 @@ func TestCheckStatement(t *testing.T) {
 	// wrong: whoever wrote the migration reads it.
 	if err := checkStatement("DROP TABLE ngc_blob"); err == nil || !strings.Contains(err.Error(), "only add") {
 		t.Errorf("the message does not say what the rule is: %v", err)
+	}
+	// A word that does not belong is refused, and the message says so instead
+	// of calling a keyword a column: WHERE is nothing anybody meant as one,
+	// and a message that claims it was sends the author looking in the wrong
+	// place.
+	err := checkStatement("CREATE INDEX ngc_blob_x ON ngc_blob (kind) WHERE nonsense = 1")
+	if err == nil {
+		t.Fatal("a statement with a WHERE was accepted")
+	}
+	if !strings.Contains(err.Error(), "no column of") || !strings.Contains(err.Error(), "where") {
+		t.Errorf("the message does not name the word and the rule: %v", err)
+	}
+}
+
+// TestAddWordsReadsNoColumnType: the word behind ADD is a column, the name of
+// a column type is not a word of the statement. {{add}} is no placeholder
+// today - the rule must not hang on that, because the next placeholder could
+// be called anything.
+func TestAddWordsReadsNoColumnType(t *testing.T) {
+	if got := addWords("CREATE TABLE ngc_blob (kind {{add}} NOT NULL){{opts}}"); len(got) != 0 {
+		t.Errorf("the name of a column type was read as a word: %q", got)
 	}
 }

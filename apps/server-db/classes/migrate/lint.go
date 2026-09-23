@@ -18,6 +18,14 @@ var forbidden = []string{
 	"ENGINE=", "SERIAL", "IDENTITY", "GENERATED", "CURRENT_TIMESTAMP", "NOW(", "MERGE ",
 }
 
+// kinds are the only statements a migration may carry, and a statement has to
+// begin with one of them. The other rules measure the names inside a
+// statement; this one decides which statements are looked at in the first
+// place, so a CREATE VIEW, a GRANT or anything else that creates something
+// under a name of its own falls on the first words instead of slipping past a
+// rule that never thought of it.
+var kinds = []string{"CREATE TABLE", "CREATE UNIQUE INDEX", "CREATE INDEX", "ALTER TABLE"}
+
 // errOnlyAdd says what the rule is in one sentence the author can act on.
 var errOnlyAdd = errors.New("a migration may only add: no DROP, RENAME or TRUNCATE, because the previous API version keeps running")
 
@@ -45,6 +53,10 @@ func checkStatement(s string) error {
 			return fmt.Errorf("%q is not portable: %.40q", w, s)
 		}
 	}
+	// The kind of statement is decided before anything inside it is read.
+	if !slices.ContainsFunc(kinds, func(k string) bool { return strings.HasPrefix(upper, k+" ") }) {
+		return fmt.Errorf("a migration carries only %s: %.40q", strings.Join(kinds, ", "), s)
+	}
 	// An opening {{ without its }} would leave the rest of the statement
 	// unread by placeholdersIn and by stripTypes, so it is refused here
 	// rather than silently skipped.
@@ -62,11 +74,16 @@ func checkStatement(s string) error {
 // checkNames refuses every word that looks like a table or column of ours but
 // is in neither fixed list. It is deliberately blunt: a statement names
 // exactly one table from the list, every other word starting with ngc_ has to
-// be an index named after that table, and every bare lower-case word inside
-// the brackets has to be a column of it.
+// be an index named after that table, the name a CREATE INDEX gives has to be
+// one too, and every bare word inside the brackets has to be a column of that
+// table. Between the three of them every name a migration hands out comes
+// from a fixed rule, not from whoever wrote the file.
 func checkNames(s string) error {
 	var names []string
-	for _, w := range words(s) {
+	// The names of the column types are taken out first: they are checked
+	// against sqlstore.Placeholders on their own, and none of them is a name
+	// the migration hands out.
+	for _, w := range words(stripTypes(s)) {
 		// SQL does not care how an identifier is written, so every name is
 		// measured in lower case: NGC_OTHER_X names what ngc_other_x names,
 		// and upper case is no way past the fixed list.
@@ -91,9 +108,22 @@ func checkNames(s string) error {
 			return fmt.Errorf("%q is in no fixed list: %.40q", w, s)
 		}
 	}
+	// The name behind INDEX is measured whether or not it begins with ngc_:
+	// a name a migration made up is a name a migration made up, and one
+	// without our prefix would otherwise be read by nobody.
+	for _, w := range indexWords(s) {
+		if !strings.HasPrefix(w, table+"_") {
+			return fmt.Errorf("the index %q does not begin with %q, so it belongs to no table of ours: %.40q", w, table+"_", s)
+		}
+	}
 	for _, w := range columnWords(s) {
 		if !slices.Contains(sqlstore.Columns[table], w) {
-			return fmt.Errorf("column %q is not listed for %q", w, table)
+			// Not "column %q is not listed": a WHERE or a DESC is nothing
+			// anybody meant as a column, and calling it one sends the author
+			// looking in the wrong place. The rule is that nothing else
+			// belongs there at all.
+			return fmt.Errorf("%q is no column of %q, and a statement names nothing but the table, an index of it and its columns: %.40q",
+				w, table, s)
 		}
 	}
 	return nil
@@ -203,10 +233,13 @@ func typedWords(s string) []string {
 
 // addWords returns the column of an ALTER TABLE ... ADD. MariaDB, MySQL and
 // SQLite all take ADD without the word COLUMN, so a column added that way is
-// measured like every other one.
+// measured like every other one. The column types are taken out first: a
+// placeholder called add would otherwise turn the word behind it into a
+// column, and no rule may hang on what the placeholders happen to be called
+// today.
 func addWords(s string) []string {
 	var out []string
-	f := words(s)
+	f := words(stripTypes(s))
 	for i, w := range f {
 		if !strings.EqualFold(w, "add") {
 			continue
@@ -217,6 +250,20 @@ func addWords(s string) []string {
 		}
 		if j < len(f) {
 			out = append(out, strings.ToLower(f[j]))
+		}
+	}
+	return out
+}
+
+// indexWords returns the name every CREATE INDEX gives, in lower case: the
+// word behind INDEX. Like addWords it reads the statement without its column
+// types, so no placeholder can ever stand in for the word INDEX.
+func indexWords(s string) []string {
+	var out []string
+	f := words(stripTypes(s))
+	for i, w := range f {
+		if strings.EqualFold(w, "index") && i+1 < len(f) {
+			out = append(out, strings.ToLower(f[i+1]))
 		}
 	}
 	return out
