@@ -86,8 +86,17 @@ wenn sie dort nicht wiederholt werden.
 Die VM `ngc-recovery` (Proxmox, Debian 13, 4 Kerne, 8 GB RAM, 60 GB Platte) hat Netz für `apt` und
 den Benutzer `berry` mit `sudo` ohne Passwort. **Ohne KVM:** der Host reicht keine Virtualisierung
 durch, QEMU läuft emuliert und dadurch langsam — der QEMU-Testfall braucht darum spürbar länger
-als die TPM-Fälle. Das Repo liegt dort geklont unter `~/nextgencloud`. Alle Befehle dieses Plans laufen auf dieser VM, nicht auf
-Thomas' Windows-Rechner.
+als die TPM-Fälle. **Das Repo bleibt auf Thomas' Rechner.** Die VM bekommt keinen Zugang zum privaten Repo und keine
+Zugangsdaten; sie bekommt nur die Skripte. Vor jedem Lauf werden sie gespiegelt:
+
+```bash
+tar -c tools | ssh ngc-recovery 'mkdir -p ~/ngc && tar -x -C ~/ngc'
+ssh ngc-recovery 'cd ~/ngc && tools/recovery-test.sh'
+```
+
+Jedes Skript findet seinen Platz selbst (`cd "$(dirname "$0")/.."`); das Arbeitsverzeichnis heißt
+auf der VM also `~/ngc/dist/recovery`. Geschrieben, `tools/check.sh` geprüft und committet wird auf
+Thomas' Rechner, wo Go 1.27 steht — auf der VM wird nur ausgeführt.
 
 ## Dateien
 
@@ -191,11 +200,11 @@ install() {
 	# xxd is its own package on Debian 13, and the test environment falls over
 	# without it: every PCR value passes through it.
 	sudo apt-get update
-	# golang-go is here because every commit runs tools/check.sh, which needs a
-	# Go toolchain; procps brings pgrep, which the simulator control uses.
+	# procps brings pgrep, which the simulator control uses. No Go here: the
+	# repository and tools/check.sh stay on the machine that commits.
 	sudo apt-get install -y \
 		qemu-system-x86 ovmf swtpm swtpm-tools softhsm2 opensc tpm2-tools \
-		openssl xxd socat procps golang-go
+		openssl xxd socat procps
 	printf 'Pakete installiert. Weiter mit: tools/recovery-tools.sh\n' >&2
 }
 
@@ -281,20 +290,6 @@ if [ "$major" -lt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -lt 7 ]; }; then
 fi
 
 # --- 2. commands and options ----------------------------------------------
-# tools/check.sh runs before every commit of this package, and it needs Go.
-go_version="$(go version | sed -n 's/.*go\([0-9][0-9.]*\).*/\1/p')"
-go_major="${go_version%%.*}"
-go_rest="${go_version#*.}"
-go_minor="${go_rest%%.*}"
-if [ "$go_major" -lt 1 ] || { [ "$go_major" -eq 1 ] && [ "$go_minor" -lt 27 ]; }; then
-	say "Go $go_version ist zu alt. Die Datei go.mod dieses Repos verlangt Go 1.27."
-	say "Das Debian-Paket golang-go ist dafür meist zu alt. Weg mit der amtlichen Fassung:"
-	say "  curl -LO https://go.dev/dl/go1.27.1.linux-amd64.tar.gz"
-	say "  sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.27.1.linux-amd64.tar.gz"
-	say '  PATH=/usr/local/go/bin:$PATH in ~/.profile eintragen'
-	say "Das lädt Code aus dem Netz — vorher beim Koordinator abklären."
-	exit 1
-fi
 
 for cmd in tpm2_getpolicydigest tpm2_evictcontrol tpm2_policysigned tpm2_policynv \
 	tpm2_policypcr tpm2_policyauthvalue tpm2_policyor tpm2_sessionconfig \
@@ -2339,11 +2334,7 @@ Sitzung. Sie stehen zusätzlich in `CHANGELOG.md` unter „Offen".
 5. **Owner-Auth für den NV-Zähler.** Hier ist die Owner-Hierarchie ohne Passwort, der Zähler ließe
    sich also von jedem Prozess auf der VM erhöhen. Für Paket 3 ist zu entscheiden, wie der Zähler
    geschützt wird: Owner-Auth mit Passwort oder eine eigene Schreib-Policy auf dem NV-Index.
-6. **Go-Toolchain auf der VM.** `tools/check.sh` läuft vor jedem Commit und braucht Go 1.27.
-   `golang-go` aus Debian 13 ist dafür meist zu alt; Aufgabe 1 prüft das und nennt den Weg über die
-   amtliche Fassung von go.dev. Der lädt Code aus dem Netz — bitte einmal freigeben oder einen
-   anderen Weg nennen.
-7. **Stick-PIN in der Prozessliste.** `pkcs11-tool` kann keine PIN aus einer Datei lesen; die
+6. **Stick-PIN in der Prozessliste.** `pkcs11-tool` kann keine PIN aus einer Datei lesen; die
    TEST-PIN steht für die Dauer des Aufrufs in `/proc/<pid>/cmdline`. Vorschlag: für die
    Testumgebung hinnehmen (Abschnitt 13 der Vorgabe erlaubt TEST-PINs im Klartext) und in Paket 2
    über `cryptoki` richtig lösen. Wenn das nicht recht ist: bitte sagen, dann bekommt Paket 0 ein
