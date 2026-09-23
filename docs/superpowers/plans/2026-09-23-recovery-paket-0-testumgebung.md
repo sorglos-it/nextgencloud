@@ -32,10 +32,15 @@ wenn sie dort nicht wiederholt werden.
   Paket steht **nirgends** `|| true`, `|| :`, `2>/dev/null` oder ein anderer Notausgang, der einen
   fehlgeschlagenen Befehl verdeckt. Einzige Ausnahme ist die eine Aufräumzeile im `trap` (siehe
   unten); sie ist dort begründet.
-- **Sitzungen aufräumen.** Jedes Skript, das TPM-Sitzungen anlegt, setzt als Erstes
-  `trap 'tpm2_flushcontext -t >/dev/null 2>&1 || :' EXIT`. Ohne das geht dem TPM nach ein paar
-  Negativtests der Sitzungsspeicher aus. Diese eine Zeile darf Fehler schlucken, weil sie nur
-  aufräumt und nie etwas prüft.
+- **Sitzungen und Objekte aufräumen.** Jedes Skript, das TPM-Sitzungen anlegt, setzt als Erstes
+  `trap 'for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done' EXIT`.
+  `-t` allein räumt nur transiente Objekte ab; eine Sitzung bleibt damit im TPM stehen. Genau das
+  passiert in jedem Negativfall, weil die Freigabe am Ende der Funktion nur auf dem Erfolgspfad
+  erreicht wird — deshalb zusätzlich `-l` (geladene) und `-s` (gesicherte Sitzungen). Sonst wäre
+  nach ein paar Negativfällen kein Sitzungsplatz mehr frei und der nächste Fall scheiterte aus dem
+  falschen Grund. Diese eine Zeile darf Fehler schlucken, weil sie nur aufräumt und nie etwas
+  prüft; die Hilfsfunktion `flush` im Ablauf bleibt bei `-t`, damit sie die laufende Sitzung nicht
+  wegwirft.
 - **Alles nach stderr.** Jede Meldung, jeder Hinweis und jede Fehlermeldung des Skripts geht mit
   `>&2` nach stderr. Auf stdout steht nur das, was ein aufrufendes Skript weiterverarbeitet.
   Sonst verschwinden Meldungen hinter `>/dev/null` und `| grep -q`. Die Ausgabe der aufgerufenen
@@ -95,7 +100,7 @@ Thomas' Windows-Rechner.
 | `tools/recovery-qemu.sh` | `check`: QEMU mit Secure-Boot-OVMF und **eigener** swtpm-Instanz; `stop` |
 | `tools/recovery-policy.sh` | baut die sieben Zweige, versiegelt, öffnet, erhöht den Zähler, fährt die Negativfälle |
 | `tools/recovery-test.sh` | fährt alle Fälle durch, auch die, die scheitern müssen |
-| `tools/recovery-ci.sh` | der CI-Job: von Null an einrichten, alles testen, Protokoll schreiben |
+| `tools/recovery-ci.sh` | der CI-Job: Werkzeuge prüfen, Testumgebung herrichten, alles testen, Protokoll schreiben |
 | `docs/recovery-abnahme.md` | Abnahmeprotokoll: die Paket-Abnahmen und die 18 Kriterien |
 
 Arbeitsverzeichnis `dist/recovery/` (nicht in Git):
@@ -186,9 +191,11 @@ install() {
 	# xxd is its own package on Debian 13, and the test environment falls over
 	# without it: every PCR value passes through it.
 	sudo apt-get update
+	# golang-go is here because every commit runs tools/check.sh, which needs a
+	# Go toolchain; procps brings pgrep, which the simulator control uses.
 	sudo apt-get install -y \
 		qemu-system-x86 ovmf swtpm swtpm-tools softhsm2 opensc tpm2-tools \
-		openssl xxd socat
+		openssl xxd socat procps golang-go
 	printf 'Pakete installiert. Weiter mit: tools/recovery-tools.sh\n' >&2
 }
 
@@ -218,8 +225,9 @@ Datei `tools/recovery-tools.sh`, ausführbar machen:
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Cleanup only, never a check: this is the one line in the package allowed to
-# swallow an error, because a probe that died mid-way leaves objects behind.
-trap 'tpm2_flushcontext -t >/dev/null 2>&1 || :' EXIT
+# swallow an error. -t alone would leave sessions behind, so -l and -s go with
+# it - a probe that died mid-way must not cost the next run its session slots.
+trap 'for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done' EXIT
 
 work="$(pwd)/dist/recovery"
 probe="$work/work/probe"
@@ -273,6 +281,21 @@ if [ "$major" -lt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -lt 7 ]; }; then
 fi
 
 # --- 2. commands and options ----------------------------------------------
+# tools/check.sh runs before every commit of this package, and it needs Go.
+go_version="$(go version | sed -n 's/.*go\([0-9][0-9.]*\).*/\1/p')"
+go_major="${go_version%%.*}"
+go_rest="${go_version#*.}"
+go_minor="${go_rest%%.*}"
+if [ "$go_major" -lt 1 ] || { [ "$go_major" -eq 1 ] && [ "$go_minor" -lt 27 ]; }; then
+	say "Go $go_version ist zu alt. Die Datei go.mod dieses Repos verlangt Go 1.27."
+	say "Das Debian-Paket golang-go ist dafür meist zu alt. Weg mit der amtlichen Fassung:"
+	say "  curl -LO https://go.dev/dl/go1.27.1.linux-amd64.tar.gz"
+	say "  sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.27.1.linux-amd64.tar.gz"
+	say '  PATH=/usr/local/go/bin:$PATH in ~/.profile eintragen'
+	say "Das lädt Code aus dem Netz — vorher beim Koordinator abklären."
+	exit 1
+fi
+
 for cmd in tpm2_getpolicydigest tpm2_evictcontrol tpm2_policysigned tpm2_policynv \
 	tpm2_policypcr tpm2_policyauthvalue tpm2_policyor tpm2_sessionconfig \
 	tpm2_startauthsession tpm2_dictionarylockout tpm2_loadexternal tpm2_verifysignature; do
@@ -368,6 +391,7 @@ fi
 	printf 'SoftHSM2:    %s\n' "$(softhsm2-util --version)"
 	printf 'QEMU:        %s\n' "$(qemu-system-x86_64 --version | head -1)"
 	printf 'OpenSSL:     %s\n' "$(openssl version)"
+	printf 'Go:          %s\n' "$go_version"
 	printf '\nGeprüft und in Ordnung:\n'
 	printf '  tpm2_policysigned kennt --nonce-tpm, --expiration, --raw-data\n'
 	printf '  tpm2_startauthsession kennt --policy-session und --tpmkey-context\n'
@@ -451,7 +475,7 @@ work="$(pwd)/dist/recovery"
 # deep inside recovery-policy.sh - a missing tpm2_policynv must not surface as
 # a failing policy branch three tasks later.
 need="qemu-system-x86_64 swtpm swtpm_setup softhsm2-util pkcs11-tool openssl xxd socat shred
-	tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
+	pgrep go tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
 	tpm2_unseal tpm2_pcrread tpm2_pcrextend tpm2_policypcr tpm2_policysigned
 	tpm2_policyauthvalue tpm2_policynv tpm2_policyor tpm2_nvdefine tpm2_nvincrement
@@ -672,9 +696,9 @@ Datei `tools/recovery-test.sh`, ausführbar machen:
 # Runs every case of work package 0, including the ones that must fail.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Cleanup only: a negative case that failed on purpose leaves objects behind,
-# and the simulator holds just two of them.
-trap 'tpm2_flushcontext -t >/dev/null 2>&1 || :' EXIT
+# Cleanup only: a negative case that failed on purpose leaves its session and
+# its objects in the TPM - the simulator holds only a handful of either.
+trap 'for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done' EXIT
 
 fail() { printf 'FEHLGESCHLAGEN: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok: %s\n' "$1" >&2; }
@@ -759,8 +783,18 @@ start() {
 }
 
 stop() {
-	if [ ! -f "$pidfile" ]; then return 0; fi
-	pid="$(cat "$pidfile")"
+	pid=""
+	if [ -f "$pidfile" ]; then
+		pid="$(cat "$pidfile")"
+	elif pids="$(pgrep -f "tpmstate dir=$dir")"; then
+		# Without a pid file a daemon may still sit on this state directory -
+		# so it gets looked up instead of being left running.
+		pid="$(printf '%s\n' "$pids" | head -1)"
+	fi
+	if [ -z "$pid" ]; then
+		rm -f "$pidfile"
+		return 0
+	fi
 	if ps -p "$pid" >/dev/null; then
 		kill "$pid"
 		# Waiting matters: reset removes the state directory right afterwards,
@@ -1064,8 +1098,9 @@ Datei `tools/recovery-policy.sh`, ausführbar machen:
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tools/recovery-env.sh
-# Cleanup only: a branch that failed on purpose leaves its objects behind.
-trap 'tpm2_flushcontext -t >/dev/null 2>&1 || :' EXIT
+# Cleanup only: a branch that failed on purpose leaves its session behind, and
+# -t alone would not take that one with it.
+trap 'for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done' EXIT
 
 work="$(pwd)/dist/recovery"
 w="$work/work"
@@ -1407,17 +1442,25 @@ open)
 Ausführen: `tools/recovery-test.sh`
 Erwartet: `ok: Zweig eines Stick-Paars (1+2) öffnet mit zwei echten Signaturen`
 
-- [ ] **Schritt 7: Gegenprobe, dass wirklich Sitzungsdaten signiert werden**
+- [ ] **Schritt 7: Zusichern, dass wirklich Sitzungsdaten signiert werden**
 
-Ausführen:
+Das gehört in den Testlauf, nicht in einen Blick von Hand. Ans Ende von `tools/recovery-test.sh`:
+
 ```bash
-wc -c < dist/recovery/work/tosign-1.bin
-cmp dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-2.bin \
-	&& echo "GLEICH — das waere falsch" || echo "verschieden, wie es sein muss"
+# 52 bytes: 48 byte nonce of this session plus 4 byte expiration. Two sticks
+# in one session get different bytes; if they did not, the signature would not
+# hang on the session at all.
+[ "$(wc -c < dist/recovery/work/tosign-1.bin)" -eq 52 ] \
+	|| fail "die zu signierenden Daten sind nicht 52 Byte lang"
+if cmp -s dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-2.bin; then
+	fail "beide Sticks bekommen dieselben Daten zum Signieren"
+fi
+ok "die Sticks signieren je 52 Byte aus ihrer eigenen Sitzung"
 ```
-Erwartet: `52` und `verschieden, wie es sein muss`. 52 Byte sind 48 Byte Nonce plus 4 Byte
-Ablaufzeit. Kämen andere Zahlen heraus oder wären beide Dateien gleich, hinge die Signatur nicht an
-der Sitzung — dann **stoppen und den Koordinator fragen**.
+
+Ausführen: `tools/recovery-test.sh`
+Erwartet: `ok: die Sticks signieren je 52 Byte aus ihrer eigenen Sitzung`. Schlägt einer der beiden
+Fälle fehl, hängt die Signatur nicht an der Sitzung — dann **stoppen und den Koordinator fragen**.
 
 - [ ] **Schritt 8: Commit**
 
@@ -1798,11 +1841,38 @@ zurückweist.
 
 **Schnittstellen:**
 - Liefert: `tools/recovery-policy.sh replay <i> <j>` — ein ehrlicher Durchlauf, dann dieselbe
-  Signatur in einer frischen Sitzung. Rückgabe 0 hieße: das TPM hat den Replay angenommen. Der Test
-  verlangt Rückgabe ungleich 0.
+  Signatur in einer frischen Sitzung.
 - Liefert: `tools/recovery-policy.sh half <i> <j>` — nur Stick i signiert.
+- Liefert: `tools/recovery-policy.sh checkstick <n>` — lässt Stick n eine Testnachricht signieren
+  und prüft die Signatur gegen seinen öffentlichen Schlüssel.
 
-- [ ] **Schritt 1: Tests anhängen (scheitern)**
+**Beide Fälle sagen mit der Rückgabe, warum sie enden** — sonst wäre der Test auch dann grün, wenn
+schon der ehrliche Vorlauf kaputt ist und der Fall gar nichts mehr beweist:
+
+| Rückgabe | Bedeutung |
+| --- | --- |
+| 1 | Das TPM hat abgelehnt. **Nur das ist bestanden.** |
+| 2 | Schon der ehrliche Vorlauf hat nicht geöffnet — der Fall beweist nichts, der Test ist rot |
+| 0 | Das TPM hat angenommen. Rot, und zwar der schlimme Fall |
+
+Der Testlauf verlangt deshalb ausdrücklich Rückgabe **1**, nicht „irgendetwas außer 0".
+
+- [ ] **Schritt 1: Prüfhilfe und Tests anhängen (scheitern)**
+
+Neben `fail` und `ok` am Kopf von `tools/recovery-test.sh` einfügen:
+
+```bash
+# A negative case has to end for the right reason, so the exit code is checked
+# exactly, not just "anything but 0".
+expect_rc() {            # $1 = expected code, rest = the command
+	local want="$1" rc=0
+	shift
+	if "$@" >/dev/null; then rc=0; else rc=$?; fi
+	if [ "$rc" -ne "$want" ]; then
+		fail "$* : Rückgabe $rc, erwartet $want"
+	fi
+}
+```
 
 Ans Ende von `tools/recovery-test.sh`:
 
@@ -1812,17 +1882,21 @@ use_main
 tools/recovery-policy.sh state recovery
 tools/recovery-policy.sh seal
 
-# The proof against a recorded run: same signature, new session.
-if tools/recovery-policy.sh replay 1 2 >/dev/null; then fail "mitgeschnittene Signatur öffnet erneut"; fi
+# The proof against a recorded run: same signature, new session. Exit code 1
+# means the TPM refused; 2 would mean the honest run already failed and the
+# case proves nothing.
+expect_rc 1 tools/recovery-policy.sh replay 1 2
 ok "Replay: eine mitgeschnittene Signatur wird in einer neuen Sitzung abgelehnt"
 
-if tools/recovery-policy.sh half 1 2 >/dev/null; then fail "ein Stick allein öffnet"; fi
+expect_rc 1 tools/recovery-policy.sh half 1 2
 ok "ein Stick allein öffnet nicht, obwohl seine Signatur gültig ist"
 
-# Stick 5 is a real token with a real key. It signs correctly and is still
-# turned away, because it stands in none of the seven branches.
+# Stick 5 is a real token with a real key. First the proof that it can sign at
+# all - without it the next case would pass for the wrong reason.
+tools/recovery-policy.sh checkstick 5
+ok "der fremde Stick signiert gültig"
 if tools/recovery-policy.sh open pair 1 5 >/dev/null; then fail "fremder Stick öffnet"; fi
-ok "ein fremder Stick öffnet nicht, obwohl er gültig signiert"
+ok "ein fremder Stick öffnet trotzdem nicht: er steht in keinem der sieben Zweige"
 
 [ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach den Negativfällen öffnet nichts mehr"
 ok "nach allen Negativfällen öffnet das richtige Paar weiter"
@@ -1852,12 +1926,31 @@ Erwartet: Abbruch, `replay` kennt das Skript noch nicht.
 In `tools/recovery-policy.sh` hinter `bump` einfügen:
 
 ```bash
-# Records one honest run and plays the signature back into a fresh session.
-# The new session hands out a new nonce, so the old signature signs the wrong
-# bytes. Exits non-zero when the TPM refuses - which is what has to happen.
+# Proves a stick can sign at all and that its signature checks out against its
+# own public key. Used before the foreign-stick case, which would otherwise
+# pass for the wrong reason if the token were simply broken.
+checkstick() {           # $1 = stick number
+	printf 'TEST-STICK-PRUEFUNG' > "$w/probe.bin"
+	sign_stick "$1" "$w/probe.bin" "$w/probe.sig"
+	openssl dgst -sha384 -verify "$keys/stick$1.pem" -signature "$w/probe.sig" \
+		"$w/probe.bin" >/dev/null
+	say "Stick $1 signiert gültig"
+}
+
+# Records one honest run and plays the signature back into a fresh session. The
+# new session hands out a new nonce, so the old signature signs the wrong bytes.
+# Exit codes: 1 the TPM refused (the case passed), 2 the honest run already
+# failed (the case proves nothing), 0 the TPM accepted the replay.
 replay() {               # $1 = branch
-	local branch="$1" i="${1%?}"
-	open_branch "$branch" >/dev/null
+	local branch="$1" i="${1%?}" got=""
+	if ! got="$(open_branch "$branch")"; then
+		say "Der ehrliche Vorlauf ist abgebrochen — der Replay-Fall beweist so nichts."
+		return 2
+	fi
+	if [ "$got" != TEST-DEK ]; then
+		say "Der ehrliche Vorlauf öffnet nicht — der Replay-Fall beweist so nichts."
+		return 2
+	fi
 	cp "$w/stick$i.sig" "$w/replay.sig"
 	primary
 	counter
@@ -1866,13 +1959,27 @@ replay() {               # $1 = branch
 	tpm2_policypcr -S "$w/sess.ctx" -l "$pcrs" -f "$w/pcr-recovery.bin" >/dev/null
 	load_stick "$i"
 	say "Spiele eine mitgeschnittene Signatur in eine neue Sitzung ein"
-	policysigned_real "$w/sess.ctx" "$w/stick$i.ctx" "$w/replay.sig"
+	if policysigned_real "$w/sess.ctx" "$w/stick$i.ctx" "$w/replay.sig"; then
+		say "Das TPM hat die mitgeschnittene Signatur angenommen."
+		tpm2_flushcontext "$w/sess.ctx" >/dev/null
+		return 0
+	fi
+	tpm2_flushcontext "$w/sess.ctx" >/dev/null
+	return 1
 }
 
 # Only the first stick of the pair signs - correctly. The branch stays half
-# built, so the closing PolicyOR finds no match.
+# built, so the closing PolicyOR finds no match. Same exit codes as replay.
 half() {                 # $1 = branch
-	local branch="$1" i="${1%?}"
+	local branch="$1" i="${1%?}" got=""
+	if ! got="$(open_branch "$branch")"; then
+		say "Der ehrliche Vorlauf ist abgebrochen — der halbe Zweig beweist so nichts."
+		return 2
+	fi
+	if [ "$got" != TEST-DEK ]; then
+		say "Der ehrliche Vorlauf öffnet nicht — der halbe Zweig beweist so nichts."
+		return 2
+	fi
 	primary
 	counter
 	flush
@@ -1888,7 +1995,13 @@ half() {                 # $1 = branch
 	policy_nv "$w/sess.ctx"
 	tpm2_policyor -S "$w/sess.ctx" -l "sha384:$(branch_list)" >/dev/null
 	flush
-	tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx+file:$pin_platform"
+	if tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx+file:$pin_platform" >/dev/null; then
+		say "Der halbe Zweig hat geöffnet."
+		tpm2_flushcontext "$w/sess.ctx" >/dev/null
+		return 0
+	fi
+	tpm2_flushcontext "$w/sess.ctx" >/dev/null
+	return 1
 }
 ```
 
@@ -1897,30 +2010,42 @@ Den `case` ergänzen:
 ```bash
 replay) branch_of_pair "${2:-}" "${3:-}"; replay "$branch" ;;
 half) branch_of_pair "${2:-}" "${3:-}"; half "$branch" ;;
+checkstick)
+	case "${2:-}" in
+	1|2|3|4|5) checkstick "$2" ;;
+	*) say "Stick-Nummer 1 bis 5 erwartet, nicht: ${2:-}"; exit 1 ;;
+	esac ;;
 ```
 
 und die Aufrufzeile am Ende auf
-`Aufruf: tools/recovery-policy.sh state|seal|open|bump|replay|half|lockout-clear` setzen.
+`Aufruf: tools/recovery-policy.sh state|seal|open|bump|replay|half|checkstick|lockout-clear`
+setzen.
 
 - [ ] **Schritt 4: Test laufen lassen**
 
 Ausführen: `tools/recovery-test.sh`
-Erwartet: die sechs `ok`-Zeilen dieser Aufgabe, darunter
+Erwartet: die sieben `ok`-Zeilen dieser Aufgabe, darunter
 `ok: Replay: eine mitgeschnittene Signatur wird in einer neuen Sitzung abgelehnt`.
 
-- [ ] **Schritt 5: Gegenprobe, dass der Replay-Test kein Selbstläufer ist**
+- [ ] **Schritt 5: Zusichern, dass der Replay-Test kein Selbstläufer ist**
 
-Ausführen:
+Auch das gehört in den Testlauf. Ans Ende von `tools/recovery-test.sh`:
+
 ```bash
-tools/recovery-policy.sh open pair 1 2 >/dev/null
-cp dist/recovery/work/stick1.sig dist/recovery/work/probe.sig
-tools/recovery-policy.sh open pair 1 2 >/dev/null
-cmp dist/recovery/work/probe.sig dist/recovery/work/stick1.sig \
-	&& echo "GLEICH — dann haengt die Signatur nicht an der Sitzung" \
-	|| echo "verschieden, wie es sein muss"
+# Two honest runs in a row have to produce two different signatures. If they
+# did not, the replay case above would pass without proving anything.
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "erster Vergleichslauf öffnet nicht"
+cp dist/recovery/work/stick1.sig dist/recovery/work/vergleich.sig
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "zweiter Vergleichslauf öffnet nicht"
+if cmp -s dist/recovery/work/vergleich.sig dist/recovery/work/stick1.sig; then
+	fail "zwei Sitzungen lassen dieselben Bytes signieren"
+fi
+ok "jede Sitzung lässt andere Bytes signieren"
 ```
-Erwartet: `verschieden, wie es sein muss`. Zwei gleiche Signaturen hießen, dass jede Sitzung
-dieselben Bytes signieren lässt — dann **stoppen und den Koordinator fragen**.
+
+Ausführen: `tools/recovery-test.sh`
+Erwartet: `ok: jede Sitzung lässt andere Bytes signieren`. Schlägt der Fall fehl, hängt die
+Signatur nicht an der Sitzung — dann **stoppen und den Koordinator fragen**.
 
 - [ ] **Schritt 6: Commit**
 
@@ -1936,8 +2061,9 @@ git commit -m "Prove replay, half a branch, a foreign stick and the lockout all 
 ### Aufgabe 11: Der CI-Job
 
 Die Vorgabe (Abschnitt 10) verlangt einen CI-Job, der bei jedem Commit läuft. Was dieses Paket
-liefern kann, ist der Job selbst: **ein** Befehl, der von Null an einrichtet, alles durchfährt und
-ein Protokoll hinterlässt. Wie er ausgelöst wird, entscheidet der Koordinator — das steht am Ende
+liefern kann, ist der Job selbst: **ein** Befehl, der die Werkzeuge prüft, die Testumgebung
+herrichtet, alles durchfährt und ein Protokoll hinterlässt. Nur `tools/recovery-setup.sh install`
+bleibt draußen — es braucht sudo und Netz und läuft einmal je Maschine. Wie er ausgelöst wird, entscheidet der Koordinator — das steht am Ende
 dieses Plans und als offener Punkt in `CHANGELOG.md`.
 
 **Dateien:**
@@ -1954,8 +2080,10 @@ Datei `tools/recovery-ci.sh`, ausführbar machen:
 
 ```bash
 #!/usr/bin/env bash
-# The CI job of work package 0: everything from nothing, in one command, with a
-# log that says what happened. Red means no merge.
+# The CI job of work package 0: check the tools, set the test environment up,
+# run every case, leave a log that says what happened. Red means no merge.
+# "install" stays out: it needs sudo and the network, and a CI run must never
+# reach for apt-get.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p dist/recovery/ci
@@ -1966,10 +2094,12 @@ log="dist/recovery/ci/$(date +%Y%m%d-%H%M%S).log"
 	printf 'Git: %s\n' "$(git rev-parse --short HEAD)"
 } > "$log"
 
-# The test itself must not take the job down: its result has to reach the log
-# and the summary either way.
+# Neither step may take the job down: the result has to reach the log and the
+# summary either way. recovery-test.sh calls "prepare" itself, so the tokens
+# and keys are made there.
 status=0
-if ! tools/recovery-test.sh >> "$log" 2>&1; then status=1; fi
+if ! tools/recovery-tools.sh >> "$log" 2>&1; then status=1; fi
+if [ "$status" -eq 0 ] && ! tools/recovery-test.sh >> "$log" 2>&1; then status=1; fi
 # No symlink: the work directory has to survive being copied anywhere.
 cp "$log" dist/recovery/ci/last.log
 
@@ -2137,6 +2267,13 @@ Zählerstand, falsche PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles
 - **Stick-PIN in der Prozessliste:** `pkcs11-tool` kann keine PIN aus einer Datei lesen. Die
   TEST-PIN steht deshalb für die Dauer des Aufrufs in `/proc/<pid>/cmdline`. Das echte Stick-Modul
   in Paket 2 benutzt `cryptoki` und hat das Problem nicht.
+- **`sensitiveDataOrigin` bleibt CLEAR.** Abschnitt 5 der Vorgabe führt das Attribut für
+  TPM-Objekte auf; ein von außen zugeführtes Geheimnis (`tpm2_create -i`) kann es aber nicht
+  tragen, weil das Attribut gerade besagt, dass das TPM die Daten selbst erzeugt hat. Für Paket 3
+  ist zu entscheiden, ob der DEK im TPM entsteht (dann gilt das Attribut) oder weiter zugeführt
+  wird (dann bleibt es CLEAR und die Vorgabe wird an dieser Stelle nachgezogen).
+- **Go auf der VM:** `tools/check.sh` braucht Go 1.27; das Debian-Paket ist in der Regel älter.
+  Der Weg über die amtliche Fassung von go.dev lädt Code aus dem Netz und braucht Thomas' Freigabe.
 - **Echte Sticks** (Nitrokey HSM 2 für `hsm`, YubiKey 5 für `piv`) fehlen; Paket 2 verlangt beide
   Backends.
 ```
@@ -2183,7 +2320,7 @@ dieses Plans. Die Zeile für Paket 0 im Abnahmeprotokoll füllt **Thomas** aus, 
 
 ## Offene Entscheidungen für den Koordinator
 
-Nichts davon hält die Aufgaben dieses Plans auf; alle sechs Punkte gehören zu Thomas, nicht zur
+Nichts davon hält die Aufgaben dieses Plans auf; alle sieben Punkte gehören zu Thomas, nicht zur
 Sitzung. Sie stehen zusätzlich in `CHANGELOG.md` unter „Offen".
 
 1. **Auslöser des CI-Jobs.** Die Vorgabe verlangt einen Lauf bei jedem Commit. `tools/recovery-ci.sh`
@@ -2202,7 +2339,11 @@ Sitzung. Sie stehen zusätzlich in `CHANGELOG.md` unter „Offen".
 5. **Owner-Auth für den NV-Zähler.** Hier ist die Owner-Hierarchie ohne Passwort, der Zähler ließe
    sich also von jedem Prozess auf der VM erhöhen. Für Paket 3 ist zu entscheiden, wie der Zähler
    geschützt wird: Owner-Auth mit Passwort oder eine eigene Schreib-Policy auf dem NV-Index.
-6. **Stick-PIN in der Prozessliste.** `pkcs11-tool` kann keine PIN aus einer Datei lesen; die
+6. **Go-Toolchain auf der VM.** `tools/check.sh` läuft vor jedem Commit und braucht Go 1.27.
+   `golang-go` aus Debian 13 ist dafür meist zu alt; Aufgabe 1 prüft das und nennt den Weg über die
+   amtliche Fassung von go.dev. Der lädt Code aus dem Netz — bitte einmal freigeben oder einen
+   anderen Weg nennen.
+7. **Stick-PIN in der Prozessliste.** `pkcs11-tool` kann keine PIN aus einer Datei lesen; die
    TEST-PIN steht für die Dauer des Aufrufs in `/proc/<pid>/cmdline`. Vorschlag: für die
    Testumgebung hinnehmen (Abschnitt 13 der Vorgabe erlaubt TEST-PINs im Klartext) und in Paket 2
    über `cryptoki` richtig lösen. Wenn das nicht recht ist: bitte sagen, dann bekommt Paket 0 ein
