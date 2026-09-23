@@ -66,6 +66,12 @@ func (s *State) Trust(ctx context.Context) (trust.Version, error) {
 func (s *State) Refresh(ctx context.Context) (trust.Version, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.refreshLocked(ctx)
+}
+
+// refreshLocked is Refresh with s.mu already held, so that AddVersion can
+// refresh without giving the cache up in the middle of its own step.
+func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 	cur := s.cur
 	from := uint64(1)
 	if cur.List != nil {
@@ -158,11 +164,14 @@ func (s *State) checkInstallation(ctx context.Context, want string) error {
 // Version 1 is taken only while there is none, and only for this installation.
 // The caller has read sg with trust.ParseSigned or session.ParseTrustChain.
 func (s *State) AddVersion(ctx context.Context, sg trust.Signed) (trust.Version, error) {
+	// Reading, verifying and writing is one step for the whole installation.
+	// dbapi.LockTake is atomic across the APIs on one database, but it lets
+	// the same owner take a lock it already holds, so it alone would not keep
+	// two callers inside one API apart: s.mu does that, and it is taken first
+	// and held to the end for exactly that reason.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := s.Now()
-	// Reading, verifying and writing is one step for the whole installation:
-	// dbapi.LockTake is atomic across the APIs on one database, so two of them
-	// cannot store two different versions under the same number and split the
-	// chain.
 	ok, err := s.DB.LockTake(ctx, trustLock, s.Cfg.Node, now, now+trustLease)
 	if err != nil {
 		return trust.Version{}, err
@@ -171,13 +180,9 @@ func (s *State) AddVersion(ctx context.Context, sg trust.Signed) (trust.Version,
 		return trust.Version{}, ErrBusy
 	}
 	defer func() { _ = s.DB.LockFree(ctx, trustLock, s.Cfg.Node) }()
-	if _, err := s.Refresh(ctx); err != nil && !errors.Is(err, ErrNoTrust) {
+	if _, err := s.refreshLocked(ctx); err != nil && !errors.Is(err, ErrNoTrust) {
 		return trust.Version{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Refresh gave the lock back in between, so the cache is read here again
-	// rather than carried over.
 	cur := s.cur
 	var next trust.Version
 	if cur.List == nil {
