@@ -404,3 +404,71 @@ test("an envelope from outside is read within its budget or refused", async ({ s
   // Go: enc.B64.EncodedLen(maxPayload) + 1 KiB, with maxPayload capped at 4 MiB.
   expect(out.sizes).toEqual([Math.floor((4194304 * 8 + 5) / 6) + 1024, Math.floor((15 * 8 + 5) / 6) + 1024]);
 });
+
+// Everything an envelope is made of comes from an object the caller owns, and
+// such an object can fight back: a field behind a getter that throws, or a
+// proxy that throws on every read. Go is handed an Envelope of three typed
+// fields and can meet none of this. The three checks here promise an answer
+// and never an exception - a caller who had to catch one around a signature
+// is a caller who lets one through - so the reads themselves stand inside the
+// guard, not in front of it.
+test("a check of a signature answers false for an envelope that fights back", async ({ shell }) => {
+  const out = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/sign.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const pub = b64decode(d.public);
+    const payload = b64decode(d.envelope.payload);
+    const env = { payload, kid: d.envelope.kid, sig: b64decode(d.envelope.sig) };
+    const boom = () => { throw new TypeError("this field fights back"); };
+    // Two kinds of byte string that are no byte string: one that is bytes to
+    // instanceof and throws when its length is read, and one that throws
+    // before instanceof can even answer.
+    const trap = (u8) => new Proxy(u8, { get: (t, k) => (k === "length" ? boom() : Reflect.get(t, k)) });
+    const hidden = (u8) => new Proxy(u8, { getPrototypeOf: boom });
+    const envelopes = [
+      ["a payload behind a getter that throws", { get payload() { return boom(); }, kid: env.kid, sig: env.sig }],
+      ["a key id behind a getter that throws", { payload, get kid() { return boom(); }, sig: env.sig }],
+      ["a signature behind a getter that throws", { payload, kid: env.kid, get sig() { return boom(); } }],
+      ["an envelope behind a proxy that throws", new Proxy({ ...env }, { get: boom })],
+      ["a payload whose length throws", { payload: trap(payload), kid: env.kid, sig: env.sig }],
+      ["a payload no instanceof can look at", { payload: hidden(payload), kid: env.kid, sig: env.sig }],
+      ["a signature whose length throws", { payload, kid: env.kid, sig: trap(env.sig) }],
+      ["a signature no instanceof can look at", { payload, kid: env.kid, sig: hidden(env.sig) }],
+    ];
+    const wrong = [];
+    for (const [name, e] of envelopes) {
+      const calls = [
+        ["validateEnvelope", () => s.validateEnvelope(e, 4194304)],
+        ["verify", () => s.verify(e, pub, d.purpose)],
+      ];
+      for (const [fn, call] of calls) {
+        try {
+          const got = await call();
+          if (got !== false) wrong.push(`${fn} with ${name}: answered ${JSON.stringify(got)}`);
+        } catch (err) {
+          wrong.push(`${fn} with ${name}: threw ${err.constructor.name}: ${err.message}`);
+        }
+      }
+    }
+    // verifyRaw is handed its three byte strings one by one, so each one
+    // fights back on its own.
+    const msg = s.message(d.purpose, payload);
+    const raws = [
+      ["a key whose length throws", trap(pub), env.sig, msg],
+      ["a key no instanceof can look at", hidden(pub), env.sig, msg],
+      ["a signature whose length throws", pub, trap(env.sig), msg],
+      ["a signature no instanceof can look at", pub, hidden(env.sig), msg],
+      ["a message no instanceof can look at", pub, env.sig, hidden(msg)],
+    ];
+    for (const [name, key, sig, m] of raws) {
+      try {
+        const got = await s.verifyRaw(key, sig, m);
+        if (got !== false) wrong.push(`verifyRaw with ${name}: answered ${JSON.stringify(got)}`);
+      } catch (err) {
+        wrong.push(`verifyRaw with ${name}: threw ${err.constructor.name}: ${err.message}`);
+      }
+    }
+    return wrong;
+  }, v);
+  expect(out).toEqual([]);
+});

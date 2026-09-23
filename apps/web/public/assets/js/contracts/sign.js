@@ -101,17 +101,22 @@ export { keyIDAsync as keyID };
 export function validateEnvelope(env, maxPayload) {
   const max = payloadLimit(maxPayload);
   if (max === 0 || env === null || typeof env !== "object") return false;
-  // The three fields are read once and only the copies are used below, so no
-  // two checks here ever see different bytes. Further than this call it does
-  // not carry: a caller reads env.payload again after a true. Nothing hands
-  // over an envelope that answers a second read with something else - the
-  // only source is parseEnvelope, and that builds a plain object - so the
-  // rule keeps this function honest and is no lock on its callers.
-  const { payload, kid, sig } = env;
-  if (!(payload instanceof Uint8Array) || payload.length === 0 || payload.length > max) return false;
-  if (typeof kid !== "string" || kid.length !== KEY_ID_CHARS) return false;
-  if (!(sig instanceof Uint8Array) || sig.length !== SIG_SIZE) return false;
+  // The reads stand inside the guard, not in front of it. Go is handed an
+  // Envelope of three typed fields; here env is an object whoever calls owns,
+  // and a field behind a getter, a proxy or a length that throws would carry
+  // its exception straight through a caller who wrote `if (validateEnvelope(
+  // ...))`. An exception is no answer, and a check that has none refuses.
   try {
+    // The three fields are read once and only the copies are used below, so
+    // no two checks here ever see different bytes. Further than this call it
+    // does not carry: a caller reads env.payload again after a true. Nothing
+    // hands over an envelope that answers a second read with something else -
+    // the only source is parseEnvelope, and that builds a plain object - so
+    // the rule keeps this function honest and is no lock on its callers.
+    const { payload, kid, sig } = env;
+    if (!(payload instanceof Uint8Array) || payload.length === 0 || payload.length > max) return false;
+    if (typeof kid !== "string" || kid.length !== KEY_ID_CHARS) return false;
+    if (!(sig instanceof Uint8Array) || sig.length !== SIG_SIZE) return false;
     // b64decode refuses every character outside the alphabet and every bit at
     // the end that is not 0, so only the length is left to check.
     return b64decode(kid).length === KEY_ID_SIZE;
@@ -145,10 +150,13 @@ export async function verifyRaw(pubRaw, sig, msg) {
   // throws: a caller who had to catch an exception around a signature is a
   // caller who lets one through the moment the engine surprises him (b64:
   // equal, for the same reason). An engine without Ed25519 lands in the catch
-  // below and refuses every signature instead of accepting any.
-  if (!(pubRaw instanceof Uint8Array) || !(sig instanceof Uint8Array) || !(msg instanceof Uint8Array)) return false;
-  if (pubRaw.length !== KEY_SIZE || sig.length !== SIG_SIZE) return false;
+  // below and refuses every signature instead of accepting any. The three
+  // byte strings are looked at inside the try for the same reason: what a
+  // caller hands over may be a proxy, and then instanceof and length throw
+  // where Go would have had a []byte and nothing to throw.
   try {
+    if (!(pubRaw instanceof Uint8Array) || !(sig instanceof Uint8Array) || !(msg instanceof Uint8Array)) return false;
+    if (pubRaw.length !== KEY_SIZE || sig.length !== SIG_SIZE) return false;
     const key = await crypto.subtle.importKey("raw", pubRaw, { name: "Ed25519" }, false, ["verify"]);
     return (await crypto.subtle.verify({ name: "Ed25519" }, key, sig, msg)) === true;
   } catch {
@@ -159,26 +167,28 @@ export async function verifyRaw(pubRaw, sig, msg) {
 // verify checks env against pubRaw for purpose (Go: sign.Verify).
 export async function verify(env, pubRaw, purpose) {
   if (env === null || typeof env !== "object") return false;
-  const { payload, kid, sig } = env;
-  if (!(payload instanceof Uint8Array) || typeof kid !== "string" || !(sig instanceof Uint8Array)) return false;
-  if (!(pubRaw instanceof Uint8Array)) return false;
-  // In the order Go has it: the size, then the key the envelope names - an
-  // envelope that names another key is refused before any signature is
-  // checked - and only then the signature itself. validateEnvelope is not run
-  // here, because Go does not run it either: the parser of every document
-  // that holds an envelope has run it, and Verify of Go takes a payload of no
-  // bytes (shared/sign: TestSignVerifyEmptyPayload).
-  if (payload.length > MAX_PAYLOAD) return false;
-  // Everything left stands in one try, so that the promise at the top of the
+  // Everything else stands in one try, so that the promise at the top of the
   // file - answers false where it cannot check, never throws - holds for the
-  // whole function and not call by call. Two of them can throw: the hash,
-  // because outside a secure context there is no crypto.subtle at all, and
-  // the message, because it refuses a purpose that is no text - and a purpose
+  // whole function and not call by call. Three things in here can throw: the
+  // envelope itself, because its three fields come from an object the caller
+  // owns and a getter or a proxy may throw on every read; the hash, because
+  // outside a secure context there is no crypto.subtle at all; and the
+  // message, because it refuses a purpose that is no text - and a purpose
   // that is no text is exactly what a misspelled constant hands over
   // (PURPOSE_CATALOGUE for PURPOSE_CATALOG is undefined). Here as everywhere:
   // what cannot be checked is refused, and never with an exception past a
   // caller who wrote `if (await verify(...))`.
   try {
+    const { payload, kid, sig } = env;
+    if (!(payload instanceof Uint8Array) || typeof kid !== "string" || !(sig instanceof Uint8Array)) return false;
+    if (!(pubRaw instanceof Uint8Array)) return false;
+    // In the order Go has it: the size, then the key the envelope names - an
+    // envelope that names another key is refused before any signature is
+    // checked - and only then the signature itself. validateEnvelope is not
+    // run here, because Go does not run it either: the parser of every
+    // document that holds an envelope has run it, and Verify of Go takes a
+    // payload of no bytes (shared/sign: TestSignVerifyEmptyPayload).
+    if (payload.length > MAX_PAYLOAD) return false;
     if (kid !== (await keyIDAsync(pubRaw))) return false;
     return await verifyRaw(pubRaw, sig, message(purpose, payload));
   } catch {
