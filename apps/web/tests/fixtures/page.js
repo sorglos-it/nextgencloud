@@ -15,8 +15,12 @@ export const test = base.extend({
 // test could ever see a violation again. A separate test checks the policy
 // itself (Task 26).
 export const testWithoutCSP = test.extend({
-  context: async ({ browser }, use) => {
-    const ctx = await browser.newContext({ bypassCSP: true });
+  context: async ({ browser, contextOptions }, use) => {
+    // contextOptions carries what the configuration and the project already
+    // decided: baseURL, viewport, the device profile. Building the context
+    // without them would drop all of it, and page.goto("/") would have no
+    // address to go to.
+    const ctx = await browser.newContext({ ...contextOptions, bypassCSP: true });
     await use(ctx);
     await ctx.close();
   },

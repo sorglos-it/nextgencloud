@@ -10,6 +10,15 @@ if [ -n "$files" ] && [ -n "$(gofmt -l $files)" ]; then
 fi
 go vet ./...
 go test ./...
+# The PHP side of the web interface checks itself against shared/testdata/ and
+# needs nothing but PHP. Without it the one drift it is written to catch would
+# only show when somebody runs it by hand. Where there is no php, say so and
+# carry on, like the Go tests that skip themselves without their tools.
+if command -v php >/dev/null 2>&1; then
+	php apps/web/tests/php/config-test.php
+else
+	echo "no php: skipping apps/web/tests/php/config-test.php"
+fi
 for arch in amd64 arm64; do
 	# trusttest holds fixed test keys: only test code may import it. The list
 	# is taken as each target is built (cgo off too), so files built only
