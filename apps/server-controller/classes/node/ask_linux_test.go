@@ -141,17 +141,16 @@ const childAsk = "NGC_TEST_ASK_CHILD"
 // is the only one a signal may kill without taking the test with it.
 func asking(t *testing.T) (keyboard *os.File, cmd *exec.Cmd, out *bytes.Buffer) {
 	t.Helper()
-	// Only the two tests that go through here prove the echo, so only a
-	// terminal missing here may make the guard of TestMain fire. The count
-	// stands before pty: a terminal that goes away between the two is counted
-	// all the same, and a run that skips here is never taken for a run that
-	// proved something.
-	if f, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0); err != nil {
-		noPTY.Add(1)
-		t.Skipf("no pseudo terminal here: %v", err)
-	} else {
-		f.Close()
-	}
+	// Only the two tests that go through here prove the echo, so only their
+	// skips may make the guard of TestMain fire. Counted is every skip of
+	// them and not only the first way out: whichever open of the terminal it
+	// was that failed, a test that gave up before it asked one proved nothing
+	// about the echo, and the guard has to see that.
+	t.Cleanup(func() {
+		if t.Skipped() {
+			noPTY.Add(1)
+		}
+	})
 	screen, keyboard := pty(t)
 	out = &bytes.Buffer{}
 	cmd = exec.Command(os.Args[0], "-test.run=^TestAskInAnotherProcess$", "-test.v")

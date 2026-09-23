@@ -51,6 +51,11 @@ const (
 	// wait on the lock in the meantime, so a peer that went quiet does cost
 	// this side one waiting goroutine per writer until the tunnel is over.
 	WriteTimeout = 30 * time.Second
+	// minPing is the shortest ping interval this package takes. Only a test
+	// sets one at all, and nothing from outside reaches it - but a ticker of a
+	// nanosecond on a program that runs as root is a storm and not an
+	// interval, so it is refused where every other value of Config is.
+	minPing = 10 * time.Millisecond
 )
 
 // The errors this package answers with. None of them quotes anything that came
@@ -75,11 +80,15 @@ var (
 //     copies it first.
 //   - The call holds the reading of the whole tunnel, and the tunnel lives on
 //     that reading: the pong of the API is picked up there too. A call that
-//     lasts a whole ping interval (tunnel.PingInterval, 30 seconds) can
-//     therefore cost the tunnel, and one that lasts two is sure to - the ping
-//     runs into its deadline, the link counts as dead although the API is
-//     healthy, and Run comes back with an error. Work that may take longer
-//     belongs in a goroutine of its own, which answers with Tunnel.Send.
+//     lasts longer than two ping intervals (2 x tunnel.PingInterval, a
+//     minute) costs the tunnel for certain - the ping falls at the latest one
+//     interval into the call and then waits one interval for its pong, so the
+//     deadline is past before the call gives the reading back: the link counts
+//     as dead although the API is healthy, and Run comes back with an error. A
+//     shorter call can cost it too, depending on where the ping falls in it.
+//     Work that may take longer belongs in a goroutine of its own, which
+//     answers with Tunnel.Send. Both halves of the number are measured, see
+//     TestAHandlerLongerThanTwoPingsCostsTheTunnel.
 type Handler interface {
 	Frame(t *Tunnel, f wire.Frame) error
 }
@@ -102,8 +111,9 @@ type Config struct {
 	// Ping is how long the tunnel waits before it asks the API again whether
 	// it is still there, and how long it then waits for the answer. Only a
 	// test sets it, to sit out a ping in a fraction of a second; without it
-	// the interval of the contract holds. It is a value of this package, not
-	// one of the contract: tunnel.PingInterval stays what goes on the wire.
+	// the interval of the contract holds, and anything under minPing is
+	// refused (check). It is a value of this package, not one of the
+	// contract: tunnel.PingInterval stays what goes on the wire.
 	Ping time.Duration
 }
 
@@ -113,6 +123,11 @@ type Config struct {
 func (c Config) check() error {
 	if !trust.ValidTunnelURL(c.API.URL) || len(c.API.Key) != 32 || len(c.API.TLS) != sha256.Size ||
 		len(c.Noise.Public) != 32 || len(c.Noise.Private) != 32 || c.Hello == nil {
+		return ErrConfig
+	}
+	// Zero is the interval of the contract; anything under the floor is a
+	// ticker storm on a program that runs as root.
+	if c.Ping != 0 && c.Ping < minPing {
 		return ErrConfig
 	}
 	return nil
@@ -150,13 +165,22 @@ type Tunnel struct {
 	// life ends with the tunnel and with nothing else: it is what every read
 	// and every write of this link waits on, so that closing it brings every
 	// goroutine of it back. The context of the dial bounds the way in alone.
-	life  context.Context
-	stop  context.CancelFunc
-	mu    sync.Mutex // one writer at a time
-	once  sync.Once
-	ran   atomic.Bool // Run has begun
-	dead  atomic.Bool // the pong stayed away
-	since int64       // when the tunnel came up
+	life context.Context
+	stop context.CancelFunc
+	mu   sync.Mutex // one writer at a time
+	once sync.Once
+	ran  atomic.Bool // Run has begun
+	dead atomic.Bool // the pong stayed away
+	// closing says that this side is ending the tunnel, Close as fail. It is
+	// set before the close message goes out, so whoever afterwards finds the
+	// link broken - the reader in Run, the ping - knows it was this side that
+	// broke it and not the API. The life of the tunnel cannot say that: it
+	// ends after the close message, and until then an orderly end looks like
+	// a link that fell apart.
+	closing atomic.Bool
+	// since is taken once the Noise session stands, so how long a tunnel
+	// stood is measured from just before the two hellos.
+	since int64
 }
 
 // Dial opens the tunnel to the API of cfg: TLS against its pin, the WebSocket
@@ -322,8 +346,11 @@ func (t *Tunnel) Run(ctx context.Context) error {
 			// A link this side ended because the other one broke the contract
 			// says so, whatever the socket did afterwards, and a link whose
 			// pong stayed away is gone and not closed: whoever keeps the
-			// tunnel should see both and dial again.
-			if errors.Is(err, ErrLink) || t.dead.Load() || t.life.Err() == nil {
+			// tunnel should see both and dial again. Everything else is an
+			// orderly end exactly when this side closed the tunnel - and that
+			// is closing and not the life of it, which ends only after the
+			// close message has gone out.
+			if errors.Is(err, ErrLink) || t.dead.Load() || !t.closing.Load() {
 				return err
 			}
 			return nil
@@ -494,6 +521,13 @@ func (t *Tunnel) ping() {
 		err := t.c.Ping(ctx)
 		cancel()
 		if err != nil {
+			// A ping that ends because this side is closing the tunnel says
+			// nothing about the API: the socket was taken away under it. Only
+			// a pong that really stayed away makes the link dead, or an
+			// orderly end would be reported as a peer that went quiet.
+			if t.closing.Load() {
+				return
+			}
 			t.dead.Store(true)
 			t.Close()
 			return
@@ -502,10 +536,13 @@ func (t *Tunnel) ping() {
 }
 
 // fail ends the link at once and without an answer: what came in was not from
-// the other end of the handshake, or not of this contract.
+// the other end of the handshake, or not of this contract. The API is told
+// which of the two by the status of the close message and by nothing else, so
+// that message goes out before anything here is torn down (Close).
 func (t *Tunnel) fail() {
-	t.stop()
+	t.closing.Store(true)
 	t.c.Close(websocket.StatusProtocolError, "")
+	t.stop()
 }
 
 // Close ends the tunnel. It may be called more than once and from any
@@ -513,14 +550,17 @@ func (t *Tunnel) fail() {
 func (t *Tunnel) Close() error {
 	var err error
 	t.once.Do(func() {
-		// The life of the tunnel ends first. Closing a WebSocket writes the
-		// close message and waits for the answer of the other end, so the
-		// reading runs into an error while that is going on: only a tunnel
-		// that is already over by then tells an orderly end from a broken
-		// link (Run). The close message goes out all the same - it carries a
-		// deadline of its own and none of this one.
-		t.stop()
+		// The close message goes out first and the life of the tunnel ends
+		// after it. The other way round the message is lost: the library
+		// hangs a watcher on the context of every read and write, and that
+		// watcher closes the socket hard the moment the context ends - a
+		// close message written afterwards has nothing left to go through.
+		// So the order here is what lets the API tell a controller that shut
+		// down from one that fell over, and closing is what lets Run tell the
+		// same thing apart on this side.
+		t.closing.Store(true)
 		err = t.c.Close(websocket.StatusNormalClosure, "")
+		t.stop()
 	})
 	return err
 }
@@ -560,7 +600,17 @@ func Keep(ctx context.Context, cfg Config) {
 			// Noise and hello and then drops the tunnel at once would hold
 			// this controller at about a second per attempt for as long as it
 			// likes, and the growing pause is the only bound there is on that
-			// way. A tunnel that lived a ping interval answered a ping.
+			// way.
+			//
+			// What the threshold buys is a rate and nothing more: an API that
+			// wants this controller back every second has to keep the tunnel
+			// standing a ping interval of real time first, so it gets one
+			// attempt per interval instead of one per second. It is no proof
+			// that a ping was answered - the ping of a tunnel only starts with
+			// Run and first goes out a whole interval later, so a tunnel can
+			// pass this line before a single pong has come back. Reading since
+			// after the hellos would not make that true either; the honest
+			// word for what stands here is the rate.
 			if stood >= tunnel.PingInterval {
 				pause = tunnel.ReconnectMin * time.Second
 			}
