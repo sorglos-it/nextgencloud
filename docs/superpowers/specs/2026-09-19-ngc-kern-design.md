@@ -1039,6 +1039,8 @@ Sperre in der Datenbank.
 | 22.09.2026 | ngc-api zeigt beim Beitritt den Anker des Beitrittscodes wie ngc-controller beim Koppeln. Nach der Ersteinrichtung koppelt man zuerst den Controller des Webservers: Erst er schreibt `trust-anchor.json`. |
 | 22.09.2026 | Vorgabe Thomas: Die Grenze der Ersteinrichtung (Angreifer im selben Netz beim ersten Aufruf ohne vertrauenswürdiges Zertifikat) wird dokumentiert, nicht technisch erzwungen. Empfehlung im Entwurf: in einem Netz einrichten, dem man traut, oder gleich mit einem vertrauenswürdigen Zertifikat (ngc-web bietet Let's Encrypt an). |
 | 22.09.2026 | Die Module aus Kapitel 7 sind übernommen. Mit allem, was sie mitbringen, liegen 21 Module und rund 20 MB in `vendor/`; jede Lizenz ist mit der AGPL-3.0 vereinbar, `govulncheck` meldet keine erreichbare Lücke. |
+| 23.09.2026 | Vorgabe Thomas: Der Recovery-Modus steht in `docs/recovery-modus.md` und ist verbindlich: Root-Sticks mit Quorum, TPM, verschlüsseltes Datenbank-Volume (LUKS2), signierte Admin-Datensätze, Stufen enterprise, home und test. Er ersetzt den geplanten Vertrag für die Wiederherstellung und die Entscheidung vom 22.09.2026 über einen Notfall-Code aus der Ersteinrichtung. |
+| 23.09.2026 | Offen an der Anbindung: NGC ist in Go, deshalb kommt `AdminVerify` nach Go und `server-recovery` als eigenes Teilprogramm in Rust; `lib/` als zentrale Bibliothek gibt es in NGC noch nicht. |
 | 22.09.2026 | Solange kein Teil die neuen Module einbindet, hält `tools/modules.go` (Bau-Markierung `modules`) sie in `go.mod` und `vendor/`; `tools/check.sh` baut die Datei für beide Ziele mit. Jede Zeile wandert in den Teil, der das Modul zuerst benutzt, die Datei verschwindet mit der letzten Zeile. |
 
 ## 7. Fremdcode-Kandidaten

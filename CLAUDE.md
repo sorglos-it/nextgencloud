@@ -6,6 +6,9 @@ Schritt: `docs/STAND.md`. Verträge: `shared/README.md`. Wie Kanäle laufen: dor
 „Kanäle“; was vor dem WebSocket läuft: Abschnitt „Vor dem WebSocket“; wie JSON von außen geprüft
 wird: Abschnitt „Striktes JSON“.
 
+Recovery-Modus: `docs/recovery-modus.md` lesen, bevor an Login, Admin-Rechten, Datenbank, Backup,
+Installation oder Boot gearbeitet wird.
+
 ## Wer macht was
 
 | Teil | Ordner | ulh-Skript | Sitzung auf Server |
