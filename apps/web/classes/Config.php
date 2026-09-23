@@ -67,11 +67,10 @@ final class Config
                 throw new RuntimeException('web.json: apis[].url twice');
             }
             // The pin is the SHA-256 of the TLS key (trust.TLSPin), so 32
-            // bytes, which enc.Bytes writes as 43 base64url characters. PHP
-            // never uses the pin itself — Apache does — but a short one would
-            // mean the installation is not pinning what it thinks it pins.
-            if (!is_string($a['tls'] ?? null)
-                || preg_match('#^[A-Za-z0-9_-]{43}\z#', $a['tls']) !== 1) {
+            // bytes. PHP never uses the pin itself — Apache does — but a
+            // short one would mean the installation is not pinning what it
+            // thinks it pins.
+            if (!is_string($a['tls'] ?? null) || !self::validBytes32($a['tls'])) {
                 throw new RuntimeException('web.json: apis[].tls');
             }
             $c->apis[] = $a['url'];
@@ -120,13 +119,37 @@ final class Config
             self::onlyFields($a, ['seq', 'hash'], 'trust-anchor.json', '');
             $seq = $a['seq'] ?? null;
             $hash = $a['hash'] ?? null;
+            // The hash is 32 bytes of enc.Bytes as well, so the same rule.
             if (!is_int($seq) || $seq < 1 || $seq > self::MAX_SEQ
-                || !is_string($hash) || preg_match('#^[A-Za-z0-9_-]{43}\z#', $hash) !== 1) {
+                || !is_string($hash) || !self::validBytes32($hash)) {
                 throw new RuntimeException('trust-anchor.json');
             }
             $c->anchor = ['seq' => $seq, 'hash' => $hash];
         }
         return $c;
+    }
+
+    // The alphabet of enc.B64: base64url, in the order that gives each
+    // character its value.
+    private const B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+    // validBytes32 checks 32 bytes the way enc.Bytes writes them: 43
+    // base64url characters without padding.
+    //
+    // Those 43 characters carry 258 bits while 32 bytes are 256, so the last
+    // two bits of the final character are unused and have to be zero. Go's
+    // decoder refuses anything else ("illegal base64 data"), which leaves
+    // exactly 16 of the 64 characters as a last one. Without this, PHP would
+    // take a pin that Go throws out, and web.json would carry a value the
+    // browser believes and the server never accepts — the one kind of
+    // difference this whole file exists to avoid.
+    private static function validBytes32(string $s): bool
+    {
+        if (preg_match('#^[A-Za-z0-9_-]{43}\z#', $s) !== 1) {
+            return false;
+        }
+        $i = strpos(self::B64URL, $s[42]);
+        return $i !== false && $i % 4 === 0;
     }
 
     /**

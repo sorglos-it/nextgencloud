@@ -218,6 +218,27 @@ foreach ($cases as [$name, $web, $anchor, $want]) {
 }
 printf("%-9s %d cases\n", 'config', count($cases));
 
+// --- 32 bytes as enc.Bytes writes them -----------------------------------
+
+// 43 base64url characters carry 258 bits while 32 bytes are 256, so the last
+// two bits of the final character are unused and Go's decoder insists they
+// are zero. Measured against a compiled shared/enc: of the 64 characters
+// exactly these 16 may end such a value. Every last character is tried here,
+// for the pin and for the anchor hash, so PHP can never take one Go throws
+// out — that would put a pin in web.json the browser believes and the server
+// refuses.
+$b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+$goTakes = ['A', 'E', 'I', 'M', 'Q', 'U', 'Y', 'c', 'g', 'k', 'o', 's', 'w', '0', '4', '8'];
+$head = '4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4e';   // 42 characters
+foreach (str_split($b64) as $last) {
+    $want = in_array($last, $goTakes, true);
+    check('bytes32', "pin ending in $last", $want,
+        loads($tmp, '{"apis":[{"url":"https://a.test:7443","tls":"' . $head . $last . '"}]}', null));
+    check('bytes32', "anchor hash ending in $last", $want,
+        loads($tmp, $goodWeb, '{"seq":1,"hash":"' . $head . $last . '"}'));
+}
+printf("%-9s %d cases\n", 'bytes32', strlen($b64) * 2);
+
 // The message of an unknown field has to name it, and nothing else: that is
 // the only reason index.php is allowed to show.
 /** @return string the message, or '' if the file was accepted */
