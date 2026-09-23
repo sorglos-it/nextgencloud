@@ -17,6 +17,10 @@ import { vectors } from "../fixtures/vectors.js";
 //   - the message of an envelope carries the purpose and then exactly the
 //     payload: a signature covers those bytes and no others.
 //   - verify answers false for a key that signed nothing, and never throws.
+//     verify stops at the key id, which no envelope of this run matches, so
+//     verifyRaw is asked as well: that one goes through importKey and verify
+//     of the Web Crypto API, and only then is the signature really held
+//     against a key that signed nothing.
 //   - and enough of the inputs get through at all. Every rule above holds for
 //     a module that refuses everything, so without a floor under the accepted
 //     ones a step backwards stays green.
@@ -131,7 +135,7 @@ test(`fuzz: an envelope or BadEnvelope, ${rounds} inputs from seed ${seed}`, asy
     };
     const found = [];
     const say = (b, why) => { if (found.length < 8) found.push({ input: show(b), why }); };
-    const count = { parsed: 0, valid: 0, refused: 0 };
+    const count = { parsed: 0, valid: 0, refused: 0, raw: 0 };
     const encoder = new TextEncoder();
 
     for (let i = 0; i < rounds && found.length < 8; i++) {
@@ -186,6 +190,17 @@ test(`fuzz: an envelope or BadEnvelope, ${rounds} inputs from seed ${seed}`, asy
       } catch (e) {
         say(b, `verify threw ${e.constructor.name}: ${e.message}`);
       }
+      // The line above never gets past the key id: the stranger's id matches
+      // no envelope of this run, so it proves the key gate and nothing else.
+      // verifyRaw is the same answer one layer down and takes the signature
+      // into importKey and verify of the Web Crypto API - where an engine
+      // that has Ed25519 really checks it, and one that has none refuses it.
+      try {
+        if (await s.verifyRaw(stranger, env.sig, m) !== false) say(b, "a signature held against a key that signed nothing");
+        else count.raw++;
+      } catch (e) {
+        say(b, `verifyRaw threw ${e.constructor.name}: ${e.message}`);
+      }
     }
 
     // validateEnvelope is handed what no parser would give it, and still
@@ -211,13 +226,18 @@ test(`fuzz: an envelope or BadEnvelope, ${rounds} inputs from seed ${seed}`, asy
   }, [v, seed, rounds]);
 
   expect(out.found).toEqual([]);
-  // 716 of the 4000 inputs of this seed are read as an envelope, in both
-  // engines; the floor is at about a third of that. The number belongs to the
-  // engine as much as to the seed - JSON.stringify and the text encoder decide
-  // what the generator writes, and whether a signature can be checked at all
-  // is the engine's answer too - so it is a floor, not a count to match.
-  // Without it a module that had stopped reading anything would keep every
-  // rule above and stay green.
-  expect(out.count.parsed).toBeGreaterThan(240);
+  // About 18 of every 100 inputs of this seed are read as an envelope, in both
+  // engines; the floor is at 6 in 100, about a third of that. It counts in
+  // rounds and not in envelopes, because the rounds are a knob this file
+  // advertises itself: a fixed number would turn every short run into a red
+  // test without anything being wrong. The share belongs to the engine as much
+  // as to the seed - JSON.stringify and the text encoder decide what the
+  // generator writes - so it is a floor, not a count to match. Without it a
+  // module that had stopped reading anything would keep every rule above and
+  // stay green.
+  expect(out.count.parsed).toBeGreaterThan(Math.floor(rounds * 0.06));
   expect(out.count.valid).toBe(out.count.parsed);
+  // Every envelope that was read was held against the stranger's key one layer
+  // down as well, so the Web Crypto API was really asked.
+  expect(out.count.raw).toBe(out.count.parsed);
 });

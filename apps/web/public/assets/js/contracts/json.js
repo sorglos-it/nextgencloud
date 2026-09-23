@@ -27,18 +27,26 @@ export class BadJSON extends Error {}
 // document decodes into. A member that is missing gives the zero value of its
 // shape, as Go does, and the validate function of each contract asks for what
 // has to be there.
-export const str = { k: "str" };
-export const bool = { k: "bool" };
-export const int = { k: "int" };
-export const uint = { k: "uint" };
-export const uint32 = { k: "uint32" };
-export const uint64 = { k: "uint" };
-export const bytes = { k: "bytes" };
-export const raw = { k: "raw" };
-export const S = (members) => ({ k: "struct", m: members, ptr: false });
-export const P = (members) => ({ k: "struct", m: members, ptr: true });
-export const A = (of) => ({ k: "array", of });
-export const M = (of) => ({ k: "map", of });
+//
+// A shape is frozen where it is built, and a struct keeps its members as a
+// copy of its own. Go has types, which nobody can add a field to at run time;
+// here every contract holds its shapes in module variables that whoever runs
+// on the page can reach, and one added member decides what a parser reads:
+// envelopeShape.m.extra = str and sign.parseEnvelope takes envelopes the
+// contract does not describe. The lock sits here, so no contract has to set
+// it for itself and none can forget it.
+export const str = Object.freeze({ k: "str" });
+export const bool = Object.freeze({ k: "bool" });
+export const int = Object.freeze({ k: "int" });
+export const uint = Object.freeze({ k: "uint" });
+export const uint32 = Object.freeze({ k: "uint32" });
+export const uint64 = Object.freeze({ k: "uint" });
+export const bytes = Object.freeze({ k: "bytes" });
+export const raw = Object.freeze({ k: "raw" });
+export const S = (members) => Object.freeze({ k: "struct", m: Object.freeze({ ...members }), ptr: false });
+export const P = (members) => Object.freeze({ k: "struct", m: Object.freeze({ ...members }), ptr: true });
+export const A = (of) => Object.freeze({ k: "array", of });
+export const M = (of) => Object.freeze({ k: "map", of });
 
 export class Budget {
   constructor({ size, items = {}, totals = {} }) {

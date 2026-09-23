@@ -101,10 +101,12 @@ export { keyIDAsync as keyID };
 export function validateEnvelope(env, maxPayload) {
   const max = payloadLimit(maxPayload);
   if (max === 0 || env === null || typeof env !== "object") return false;
-  // The three fields are read once and only the copies are used below: an
-  // envelope built somewhere else could answer a second read with something
-  // else, and then the bytes checked here are not the bytes a caller goes on
-  // with.
+  // The three fields are read once and only the copies are used below, so no
+  // two checks here ever see different bytes. Further than this call it does
+  // not carry: a caller reads env.payload again after a true. Nothing hands
+  // over an envelope that answers a second read with something else - the
+  // only source is parseEnvelope, and that builds a plain object - so the
+  // rule keeps this function honest and is no lock on its callers.
   const { payload, kid, sig } = env;
   if (!(payload instanceof Uint8Array) || payload.length === 0 || payload.length > max) return false;
   if (typeof kid !== "string" || kid.length !== KEY_ID_CHARS) return false;
@@ -167,17 +169,21 @@ export async function verify(env, pubRaw, purpose) {
   // that holds an envelope has run it, and Verify of Go takes a payload of no
   // bytes (shared/sign: TestSignVerifyEmptyPayload).
   if (payload.length > MAX_PAYLOAD) return false;
-  let id;
+  // Everything left stands in one try, so that the promise at the top of the
+  // file - answers false where it cannot check, never throws - holds for the
+  // whole function and not call by call. Two of them can throw: the hash,
+  // because outside a secure context there is no crypto.subtle at all, and
+  // the message, because it refuses a purpose that is no text - and a purpose
+  // that is no text is exactly what a misspelled constant hands over
+  // (PURPOSE_CATALOGUE for PURPOSE_CATALOG is undefined). Here as everywhere:
+  // what cannot be checked is refused, and never with an exception past a
+  // caller who wrote `if (await verify(...))`.
   try {
-    id = await keyIDAsync(pubRaw);
+    if (kid !== (await keyIDAsync(pubRaw))) return false;
+    return await verifyRaw(pubRaw, sig, message(purpose, payload));
   } catch {
-    // Outside a secure context there is no crypto.subtle at all, and the hash
-    // throws where it would otherwise answer. Here as everywhere: what cannot
-    // be checked is refused, and never with an exception past the caller.
     return false;
   }
-  if (kid !== id) return false;
-  return verifyRaw(pubRaw, sig, message(purpose, payload));
 }
 
 // equal belongs to b64 and is handed on from here, so that code which checks

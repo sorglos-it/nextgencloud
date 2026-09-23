@@ -428,3 +428,47 @@ test("depth counts containers, not the values inside them", async ({ shell }) =>
   const wrong = docs.filter(([, , want], i) => want !== results[i]).map(([name]) => name);
   expect(wrong).toEqual([]);
 });
+
+// A shape is a constant of the contract that holds it, and every contract
+// keeps its shapes in module variables that anyone on the page can reach.
+// Whoever can change one decides what a parser reads: sign.envelopeShape with
+// one member more and parseEnvelope takes envelopes the contract does not
+// describe. The lock sits here, where a shape is built, so no contract has to
+// set it for itself.
+test("a shape cannot be changed from outside", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const j = await import("/assets/js/contracts/json.js");
+    const shapes = [
+      ["str", j.str], ["bool", j.bool], ["int", j.int], ["uint", j.uint],
+      ["uint32", j.uint32], ["uint64", j.uint64], ["bytes", j.bytes], ["raw", j.raw],
+      ["S", j.S({ a: j.str })], ["P", j.P({ a: j.str })],
+      ["A", j.A(j.str)], ["M", j.M(j.str)],
+    ];
+    const opened = [];
+    for (const [name, shape] of shapes) {
+      for (const [what, change] of [
+        ["the kind", (x) => { x.k = "map"; }],
+        ["a member of its own", (x) => { x.extra = 1; }],
+        ["a member of the struct", (x) => { if (x.m) x.m.extra = j.str; }],
+        ["what an array or map holds", (x) => { if (x.of) x.of = j.raw; }],
+      ]) {
+        const before = JSON.stringify(shape);
+        try {
+          change(shape);
+        } catch {
+          // Every module is strict, so a frozen shape throws.
+          continue;
+        }
+        if (JSON.stringify(shape) !== before) opened.push(name + ": " + what);
+      }
+    }
+    // The members a caller hands over stay his own: the shape keeps a copy,
+    // so a change to that object afterwards cannot reach the shape either.
+    const members = { a: j.str };
+    const shape = j.S(members);
+    members.b = j.str;
+    return { opened, leaked: Object.hasOwn(shape.m, "b") };
+  });
+  expect(out.opened).toEqual([]);
+  expect(out.leaked).toBe(false);
+});

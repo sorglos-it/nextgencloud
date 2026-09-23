@@ -92,6 +92,16 @@ test("verify answers false and never throws for anything but the right signature
       ["a signature of 63 bytes", env.payload, env.kid, env.sig.subarray(0, 63), pub, d.purpose],
       ["a payload that is missing", undefined, env.kid, env.sig, pub, d.purpose],
       ["a payload that is text", d.envelope.payload, env.kid, env.sig, pub, d.purpose],
+      // A purpose that is not text. Whoever writes PURPOSE_CATALOGUE for
+      // PURPOSE_CATALOG hands over undefined, and the key id of these cases
+      // is the right one, so nothing stops them before the message is built.
+      // The answer has to be false like everything else that cannot be
+      // checked: an exception through `if (await verify(...))` does not close
+      // the gate, it walks past it.
+      ["a purpose that is missing", env.payload, env.kid, env.sig, pub, undefined],
+      ["a purpose that is a number", env.payload, env.kid, env.sig, pub, 7],
+      ["a purpose that is a list", env.payload, env.kid, env.sig, pub, [d.purpose]],
+      ["a purpose with a toString", env.payload, env.kid, env.sig, pub, { toString: () => d.purpose }],
     ];
     const wrong = [];
     for (const [name, payloadIn, kid, sig, key, purpose] of cases) {
@@ -358,10 +368,39 @@ test("an envelope from outside is read within its budget or refused", async ({ s
         if (e.constructor.name !== "BadEnvelope") budgetRefused.push(`${bad}: threw ${e.constructor.name}`);
       }
     }
-    return { wrong, sizes, budgetRefused };
+    // The shape of a contract is a constant of that contract. Whoever can
+    // change envelopeShape decides what parseEnvelope reads: one
+    // envelopeShape.m.extra = str and a member the contract does not know
+    // walks through every envelope from outside. The lock sits where the
+    // shape is built (json.js: S), so no contract has to set it for itself.
+    const opened = [];
+    for (const [what, change] of [
+      ["a member added", (sh) => { sh.m.extra = { k: "str" }; }],
+      ["a member replaced", (sh) => { sh.m.payload = { k: "str" }; }],
+    ]) {
+      const before = JSON.stringify(s.envelopeShape);
+      try {
+        change(s.envelopeShape);
+      } catch {
+        // A module is strict and a frozen shape throws there; the code of
+        // this call is no module, and there the change is dropped without a
+        // word. What counts is that the shape is the same afterwards.
+      }
+      if (JSON.stringify(s.envelopeShape) !== before) opened.push(what);
+    }
+    let afterShape;
+    try {
+      s.parseEnvelope(doc({ ...whole, extra: 1 }), 4194304);
+      afterShape = "read an envelope with a member the contract does not know";
+    } catch (e) {
+      afterShape = e.constructor.name;
+    }
+    return { wrong, sizes, budgetRefused, opened, afterShape };
   }, v);
   expect(out.wrong).toEqual([]);
   expect(out.budgetRefused).toEqual([]);
+  expect(out.opened).toEqual([]);
+  expect(out.afterShape).toBe("BadEnvelope");
   // Go: enc.B64.EncodedLen(maxPayload) + 1 KiB, with maxPayload capped at 4 MiB.
   expect(out.sizes).toEqual([Math.floor((4194304 * 8 + 5) / 6) + 1024, Math.floor((15 * 8 + 5) / 6) + 1024]);
 });
