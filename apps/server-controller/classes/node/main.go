@@ -65,7 +65,15 @@ const (
 	// Pairing makes a new key, so a server that was already listed is out of
 	// every trust list; it keeps the one API of the code and nothing else.
 	// Only an admin can put it back, and nothing else says so.
-	msgListAgain = "Dieser Server steht jetzt in keiner Vertrauensliste. Bitte ihn in der Verwaltung von NextGenCloud neu eintragen, sonst kann er seine Aufgaben nicht übernehmen."
+	//
+	// The half sentence in front is the only word of success on this way: the
+	// two lines on stdout are fingerprints to compare, and without it this
+	// line reads like the report of a failure beside them. "eintragen" fits
+	// both pairings, the first one and a later one: the first time the server
+	// stood in no list before either. Where that happens is said as far as it
+	// is settled - an admin signed in to NextGenCloud - because the contract
+	// knows the list (ngc.users/nodes) but no way through a menu yet.
+	msgListAgain = "Die Kopplung hat geklappt. Dieser Server steht jetzt in keiner Vertrauensliste. Bitte als Administrator bei NextGenCloud anmelden und diesen Server dort eintragen, sonst kann er seine Aufgaben nicht übernehmen."
 )
 
 var (

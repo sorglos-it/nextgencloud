@@ -526,3 +526,47 @@ func TestNoTextSendsTheCodeToTheCommandLine(t *testing.T) {
 		}
 	}
 }
+
+// pairOnce runs a pairing that works and returns what the admin reads on
+// stderr afterwards: the one line that says what is left to do.
+func pairOnce(t *testing.T) string {
+	t.Helper()
+	api := newAPI(t)
+	dir := t.TempDir()
+	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
+	writeController(t, cfgPath)
+	var out, errOut bytes.Buffer
+	if code := pair(cfgPath, anchorPath, nil, typed(api.code.String()), &out, &errOut); code != 0 {
+		t.Fatalf("pair = %d, stderr = %q", code, errOut.String())
+	}
+	return errOut.String()
+}
+
+// The two ways that end badly open with "Die Kopplung hat geklappt, aber"; the
+// way that worked has to say so as well, or its one line reads like the report
+// of a failure. The two lines on stdout are fingerprints to compare, not an
+// answer to that question.
+func TestPairSaysThatItWorked(t *testing.T) {
+	worked, _, _ := strings.Cut(msgNotSaved, ",")
+	if got := pairOnce(t); !strings.HasPrefix(got, worked) {
+		t.Errorf("stderr = %q, want it to open with %q", got, worked)
+	}
+}
+
+// What is left to do, in words that hold wherever the listing ends up sitting.
+// The first pairing of a server never stood in a list, so "neu eintragen" is
+// wrong there; and "die Verwaltung von NextGenCloud" is no place an admin can
+// find, because the contract knows only ngc.users/nodes and no menu.
+func TestPairSaysWhatIsLeftToDo(t *testing.T) {
+	got := pairOnce(t)
+	for _, bad := range []string{"neu eintragen", "Verwaltung"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("stderr = %q, want %q out of it", got, bad)
+		}
+	}
+	for _, want := range []string{"Administrator", "eintragen"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr = %q, want %q in it", got, want)
+		}
+	}
+}
