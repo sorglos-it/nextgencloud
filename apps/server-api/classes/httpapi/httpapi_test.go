@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -342,31 +341,72 @@ func TestBodySetsAReadDeadline(t *testing.T) {
 	}
 }
 
-// TestBodyAllocatesWhatItReadsOnce proves Body makes its room once instead of
-// doubling a buffer of its own: io.ReadAll starts at 512 bytes and grows to
-// about twice the limit, copying everything again at every step, so one body
-// at the limit costs several times the limit in all.
-func TestBodyAllocatesWhatItReadsOnce(t *testing.T) {
-	body := strings.Repeat("x", session.MaxRequest)
-	const runs = 20
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	for i := 0; i < runs; i++ {
-		r := httptest.NewRequest(http.MethodPost, session.PathLoginStart, strings.NewReader(body))
+// offeredReader hands its bytes over and remembers how much room it was
+// offered on the first read and how often it was read at all.
+type offeredReader struct {
+	r     *strings.Reader
+	first int
+	reads int
+}
+
+func (o *offeredReader) Read(p []byte) (int, error) {
+	if o.reads == 0 {
+		o.first = len(p)
+	}
+	o.reads++
+	return o.r.Read(p)
+}
+
+// TestBodyMakesItsRoomOnce proves the room for the whole body stands before
+// the first byte is read, instead of a buffer growing under it. The reader is
+// offered the whole body at once and hands it over at once, so two reads are
+// all it takes: one that fills, one that finds the end. io.ReadAll offers 512
+// bytes first and moves to a new, bigger piece a dozen times over, then
+// copies everything into a right-sized slice -- about twice the limit
+// allocated and every byte moved again, for every body.
+//
+// What the reader is offered, how often it is read and the room that comes
+// back are the promise itself. They say the same on every platform and under
+// the race detector, which no count of allocated bytes does.
+func TestBodyMakesItsRoomOnce(t *testing.T) {
+	const most = session.MaxRequest + 1 + bytes.MinRead
+	// A body of nothing is read once, every other one twice.
+	for _, size := range []int{0, 12, 1 << 10, session.MaxRequest} {
+		src := &offeredReader{r: strings.NewReader(strings.Repeat("x", size))}
+		r := httptest.NewRequest(http.MethodPost, session.PathLoginStart, src)
+		// net/http hands no more body over than Content-Length says, so this
+		// is what the room is made for.
+		r.ContentLength = int64(size)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		if b, ok := Body(w, r); !ok || len(b) != session.MaxRequest {
-			t.Fatalf("body of the limit: %d %v", len(b), ok)
+		b, ok := Body(w, r)
+		if !ok || len(b) != size {
+			t.Fatalf("body of %d: %d %v", size, len(b), ok)
+		}
+		if src.first < size {
+			t.Errorf("a body of %d bytes was first read into room for %d", size, src.first)
+		}
+		if src.reads > 2 {
+			t.Errorf("a body of %d bytes handed over at once took %d reads", size, src.reads)
+		}
+		if cap(b) > size+bytes.MinRead || cap(b) > most {
+			t.Errorf("a body of %d bytes came back with room for %d", size, cap(b))
 		}
 	}
-	runtime.ReadMemStats(&after)
-	// The body, room for one byte more and what the request and the recorder
-	// cost: half the limit again is wide enough for all of it and far under
-	// what a doubling buffer needs.
-	per := (after.TotalAlloc - before.TotalAlloc) / runs
-	if per > uint64(session.MaxRequest+session.MaxRequest/2) {
-		t.Fatalf("%d bytes for a body of %d", per, session.MaxRequest)
+	// A request that does not know its own length (chunked) says -1, and then
+	// the room is the limit -- once.
+	src := &offeredReader{r: strings.NewReader(strings.Repeat("x", session.MaxRequest))}
+	r := httptest.NewRequest(http.MethodPost, session.PathLoginStart, src)
+	r.ContentLength = -1
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	b, ok := Body(w, r)
+	if !ok || len(b) != session.MaxRequest {
+		t.Fatalf("body without a length: %d %v", len(b), ok)
+	}
+	if src.first < session.MaxRequest || src.reads > 2 || cap(b) > most {
+		t.Fatalf("body without a length: room for %d at the first read, %d reads, %d in the end",
+			src.first, src.reads, cap(b))
 	}
 }
 

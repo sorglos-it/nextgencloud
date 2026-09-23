@@ -98,17 +98,22 @@ func Body(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	// One byte over the limit is enough to tell a body that is too large from
 	// one that just fits.
 	limit := int64(session.MaxRequest) + 1
-	// The room is made once, for what the request says it brings and never for
-	// more than the limit. io.ReadAll would start at 512 bytes and double a
-	// buffer of its own up to about twice the limit, copying everything it
-	// has each time. bytes.Buffer asks for bytes.MinRead more room before
-	// every read, so that much is added here once and nothing grows again.
+	// The room is made once and before the first byte is read: as much as the
+	// request says it brings, never more than the limit, plus the read-ahead
+	// bytes.Buffer asks for before every read -- so nothing grows a second
+	// time. The room is never short: net/http hands no more body over than
+	// Content-Length says, and says -1 when it does not know.
+	//
+	// io.ReadAll reads into a chain of ever bigger pieces instead and copies
+	// them all into a right-sized slice at the end: about twice the limit
+	// allocated, and every byte moved once more, for every body.
 	room := limit
 	if n := r.ContentLength; n >= 0 && n < room {
 		room = n
 	}
-	var buf bytes.Buffer
-	buf.Grow(int(room) + bytes.MinRead)
+	// make gives exactly the room asked for, where Buffer.Grow would round it
+	// up to a size of the runtime's choosing.
+	buf := bytes.NewBuffer(make([]byte, 0, int(room)+bytes.MinRead))
 	_, err = buf.ReadFrom(http.MaxBytesReader(w, r.Body, limit))
 	b := buf.Bytes()
 	if err != nil {
