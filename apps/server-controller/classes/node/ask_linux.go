@@ -18,23 +18,35 @@ const (
 	echo   = 0x8    // ECHO in Lflag: the terminal shows what is typed
 )
 
-// termios is struct termios of Linux (termios.h, NCCS = 32), with the same
-// layout on both architectures NGC is built for. The three bytes are the
-// padding the C compiler puts before the two speeds.
+// termios is exactly what the kernel carries over TCGETS and TCSETS: four flag
+// words, the line discipline and the control characters, and nothing behind
+// them. The form is the same on both architectures NGC is built for. The
+// struct of the C library is not this one - it carries two speeds at the end -
+// and other architectures order it differently (mips counts 23 control
+// characters, powerpc puts the line discipline behind them), so whoever ports
+// NGC reads the form off that kernel instead of copying this one.
 type termios struct {
 	Iflag, Oflag, Cflag, Lflag uint32
 	Line                       uint8
-	Cc                         [32]uint8
-	_                          [3]uint8
-	Ispeed, Ospeed             uint32
+	Cc                         [19]uint8
+}
+
+// isTerminal reports whether f is a terminal. Reading the settings of a
+// terminal is the question that only a terminal answers; "is it a character
+// device" is a different one, and the null device answers that with yes -
+// which is what systemd hands a unit as its standard input.
+func isTerminal(f *os.File) bool {
+	var was termios
+	return ioctl(f, tcGets, &was)
 }
 
 // hideInput switches the echo of the terminal f off and returns the call that
-// switches it back on. ok is false when the terminal does not let it happen;
-// the admin then sees what is typed, which is still far less than every local
-// user seeing it in /proc. A pairing is never refused over this: the server
-// would stay unpaired, and the code is spent either way.
-func hideInput(f *os.File) (restore func(), ok bool) {
+// switches it back on; that call reports whether the terminal took it. ok is
+// false when the echo could not be switched off at all. The pairing then goes
+// on with the code visible rather than being refused: what this guards against
+// is /proc, which every local user reads, not the screen of the admin who is
+// typing the code himself - and he is told before he types it (msgEchoOn).
+func hideInput(f *os.File) (restore func() bool, ok bool) {
 	var was termios
 	if !ioctl(f, tcGets, &was) {
 		return nil, false
@@ -44,7 +56,7 @@ func hideInput(f *os.File) (restore func(), ok bool) {
 	if !ioctl(f, tcSets, &quiet) {
 		return nil, false
 	}
-	return func() { ioctl(f, tcSets, &was) }, true
+	return func() bool { return ioctl(f, tcSets, &was) }, true
 }
 
 // ioctl carries one termios to or from the terminal and reports whether the

@@ -8,15 +8,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
-// A pipe, a file and every reader of a test are no terminal. The null device
-// is a character device, as a terminal is, and that is what the check looks
-// at: nothing else tells the two apart on every system NGC is tested on.
+// A pipe, a file and every reader of a test are no terminal. What a terminal
+// is, is asked of the terminal itself; TestTerminalIsOnlyARealTerminal shows
+// that on Linux, where the controller runs and where a test may make one.
 func TestTerminalKnowsWhatItReadsFrom(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -28,22 +30,87 @@ func TestTerminalKnowsWhatItReadsFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { file.Close() })
-	for name, in := range map[string]io.Reader{
-		"a pipe":   r,
-		"a file":   file,
-		"a reader": strings.NewReader("x"),
-	} {
-		if _, ok := terminal(in); ok {
-			t.Errorf("%s counts as a terminal", name)
-		}
-	}
 	dev, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { dev.Close() })
-	if _, ok := terminal(dev); !ok {
-		t.Error("a character device is no terminal here, want it taken for one")
+	for name, in := range map[string]io.Reader{
+		"a pipe":          r,
+		"a file":          file,
+		"a reader":        strings.NewReader("x"),
+		"the null device": dev,
+	} {
+		if _, ok := terminal(in); ok {
+			t.Errorf("%s counts as a terminal", name)
+		}
+	}
+}
+
+// pipe is a terminal as far as these tests need one: askAtTerminal writes the
+// question and reads a line, and a pipe does both. Whether something is a
+// terminal at all is decided before it, in terminal.
+func pipe(t *testing.T, typed string) *os.File {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close(); w.Close() })
+	go func() { w.WriteString(typed); w.Close() }()
+	return r
+}
+
+// Where the echo cannot be switched off the code stands on the screen. That is
+// still far less than every local user reading it in /proc, so the pairing goes
+// on - but it is said before the code is entered, not afterwards.
+func TestAskWarnsWhenTheCodeIsVisible(t *testing.T) {
+	code := pairCode()
+	var prompt bytes.Buffer
+	got, err := askAtTerminal(pipe(t, code+"\n"), &prompt, func(*os.File) (func() bool, bool) {
+		return nil, false
+	})
+	if err != nil || got != code {
+		t.Fatalf("askAtTerminal = %v, want the line it was given", err)
+	}
+	// The terminal echoed the Enter itself, so no line is broken here.
+	if want := msgEchoOn + "\n" + askCode; prompt.String() != want {
+		t.Errorf("prompt = %q, want %q", prompt.String(), want)
+	}
+}
+
+// With the echo off the Enter of the admin is not shown either, so the line is
+// broken here instead - and the warning has no place.
+func TestAskBreaksTheLineAfterAHiddenCode(t *testing.T) {
+	code := pairCode()
+	var back int
+	var prompt bytes.Buffer
+	got, err := askAtTerminal(pipe(t, code+"\n"), &prompt, func(*os.File) (func() bool, bool) {
+		return func() bool { back++; return true }, true
+	})
+	if err != nil || got != code {
+		t.Fatalf("askAtTerminal = %v, want the line it was given", err)
+	}
+	if back != 1 {
+		t.Errorf("the echo was put back %d times, want once", back)
+	}
+	if want := askCode + "\n"; prompt.String() != want {
+		t.Errorf("prompt = %q, want %q", prompt.String(), want)
+	}
+}
+
+// A terminal that does not take the echo back leaves the admin in front of a
+// screen that shows nothing. He is told what to type, because he cannot read
+// what he types any more.
+func TestAskSaysWhenTheEchoStaysOff(t *testing.T) {
+	var prompt bytes.Buffer
+	if _, err := askAtTerminal(pipe(t, pairCode()+"\n"), &prompt, func(*os.File) (func() bool, bool) {
+		return func() bool { return false }, true
+	}); err != nil {
+		t.Fatalf("askAtTerminal: %v", err)
+	}
+	if !strings.HasSuffix(prompt.String(), msgEchoStuck+"\n") {
+		t.Errorf("prompt = %q, want it to end with %q", prompt.String(), msgEchoStuck)
 	}
 }
 
@@ -70,23 +137,6 @@ func TestReadCodeTakesALineWithoutAnEnd(t *testing.T) {
 	got, err := readCode(strings.NewReader(code), io.Discard)
 	if err != nil || got != code {
 		t.Fatalf("readCode = %v, want the line it was given", err)
-	}
-}
-
-// At a terminal the admin is asked. The question is all that is written: what
-// is typed goes to no writer at all.
-func TestReadCodeAsksAtATerminal(t *testing.T) {
-	dev, err := os.Open(os.DevNull) // a character device, as a terminal is
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dev.Close()
-	var prompt bytes.Buffer
-	if _, err := readCode(dev, &prompt); err != nil {
-		t.Fatalf("readCode: %v", err)
-	}
-	if !strings.HasPrefix(prompt.String(), askCode) {
-		t.Errorf("prompt = %q, want it to start with %q", prompt.String(), askCode)
 	}
 }
 
@@ -119,6 +169,34 @@ func TestReadCodeBoundsTheLine(t *testing.T) {
 	}
 	if in.read > maxCodeLine {
 		t.Errorf("readCode read %d bytes, want at most %d", in.read, maxCodeLine)
+	}
+}
+
+// nothing is a reader that hands over neither a byte nor an error. Nothing
+// behind os.Stdin does that, but the controller runs as root: a reader that
+// says nothing must not turn it into a program that spins one core forever.
+type nothing struct{ calls atomic.Int64 }
+
+func (n *nothing) Read([]byte) (int, error) {
+	n.calls.Add(1)
+	return 0, nil
+}
+
+// A reader that gives nothing ends the reading instead of running on.
+func TestReadCodeStopsAtAReaderThatGivesNothing(t *testing.T) {
+	var in nothing
+	done := make(chan error, 1)
+	go func() {
+		_, err := readCode(&in, io.Discard)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("readCode took a reader that gives nothing, want an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("readCode is still reading after %d empty answers, want it to give up", in.calls.Load())
 	}
 }
 
