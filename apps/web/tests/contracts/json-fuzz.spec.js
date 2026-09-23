@@ -12,6 +12,9 @@ import { vectors } from "../fixtures/vectors.js";
 //   - a value it answers with fits the shape it was asked for, down to every
 //     element: nothing from outside may reach a caller in a form the contract
 //     does not describe.
+//   - and enough of the inputs are accepted at all. Both rules above hold
+//     for a parser that refuses everything, so without a floor under the
+//     accepted ones a step backwards stays green.
 //
 // Seed and rounds come from the environment, so a failure can be run again:
 // NGC_FUZZ_SEED=123 NGC_FUZZ_ROUNDS=50000 npm test -- contracts/json-fuzz
@@ -20,7 +23,7 @@ const seed = Number(process.env.NGC_FUZZ_SEED || 20260923) >>> 0;
 const rounds = Number(process.env.NGC_FUZZ_ROUNDS || 6000);
 
 test(`fuzz: value or BadJSON, ${rounds} inputs from seed ${seed}`, async ({ shell }) => {
-  const found = await shell.evaluate(async ([items, totals, size, docs, seed, rounds]) => {
+  const { found, accepted } = await shell.evaluate(async ([items, totals, size, docs, seed, rounds]) => {
     const { decode, Budget, BadJSON, S, P, A, M, str, bool, int, uint32, bytes, raw,
       MAX_SAFE_INTEGER } = await import("/assets/js/contracts/json.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -118,6 +121,7 @@ test(`fuzz: value or BadJSON, ${rounds} inputs from seed ${seed}`, async ({ shel
 
     const corpus = docs.map((d) => b64decode(d));
     const found = [];
+    let accepted = 0;
     const show = (b) => {
       let s = "";
       for (const byte of b.subarray(0, 120)) {
@@ -131,13 +135,17 @@ test(`fuzz: value or BadJSON, ${rounds} inputs from seed ${seed}`, async ({ shel
       else input = encoder.encode(value(1 + upto(4)));
       try {
         const out = decode(input, budget, shape);
+        accepted++;
         if (!fits(out, shape)) found.push({ input: show(input), why: "the value does not fit the shape" });
       } catch (e) {
         if (!(e instanceof BadJSON)) found.push({ input: show(input), why: "threw " + e.constructor.name + ": " + e.message });
       }
     }
-    return found;
+    return { found, accepted };
   }, [v.items, v.totals, v.size, v.cases.map((c) => c.doc), seed, rounds]);
 
   expect(found).toEqual([]);
+  // 220 of the 6000 inputs of this seed reach a value; the floor is well
+  // under that, and only a parser that has stopped accepting falls through it.
+  expect(accepted).toBeGreaterThan(50);
 });
