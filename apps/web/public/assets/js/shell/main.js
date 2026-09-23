@@ -1,5 +1,5 @@
-// Boot of the shell: check the browser, then load the configuration. The
-// rest follows in later tasks.
+// Boot of the shell: check the connection, then the browser, then load the
+// configuration. The rest follows in later tasks.
 const NEEDED = ["Ed25519", "X25519"];
 
 export async function browserFits() {
@@ -26,6 +26,13 @@ function message(text) {
 }
 
 async function start() {
+  // Without a secure connection there is no crypto.subtle at all. Checking
+  // the browser first would blame the browser for it, and the person would
+  // install another one for nothing.
+  if (!window.isSecureContext) {
+    message("NGC braucht eine sichere Verbindung. Bitte die Seite über https:// aufrufen.");
+    return;
+  }
   if (!(await browserFits())) {
     message("Dieser Browser ist zu alt für NGC. Bitte Chrome 137, Firefox 130 oder Safari 17.4 "
       + "oder neuer benutzen.");
@@ -40,4 +47,9 @@ async function start() {
   message("NGC wird geladen …");
 }
 
-start();
+start().catch(() => {
+  // A broken connection or a damaged answer must never leave a white page:
+  // that is exactly the moment when the person needs to be told what to do.
+  message("NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, "
+    + "läuft NGC gerade nicht.");
+});
