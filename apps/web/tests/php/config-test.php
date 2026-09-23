@@ -50,6 +50,64 @@ foreach ($grammars as $group => $fn) {
     printf("%-9s %d cases\n", $group, count($vectors[$group]));
 }
 
+// --- IPv6 against Go, not against the platform ---------------------------
+
+// url.json holds only a handful of IPv6 cases. These are the two classes a
+// differential run against a compiled shared/trust/url.go turned up, where
+// inet_pton and inet_ntop used to answer differently from Go — the second
+// class even differently on Windows than on glibc.
+$ipv6 = [
+    // Six leading zero groups: netip writes exactly this, so it is canonical.
+    ['[::1:0]', true],
+    ['[::68:0]', true],
+    ['[::1:2]', true],
+    ['[::a:b]', true],
+    // The 4-in-6 form, which netip writes as ::ffff:1.2.3.4 instead.
+    ['[::ffff:0:0]', false],
+    ['[::ffff:0:1]', false],
+    ['[::ffff:7f00:1]', false],
+    // The plain rules once more, so a rewrite cannot quietly lose them.
+    ['[::]', true],
+    ['[::1]', true],
+    ['[2001:db8::1]', true],
+    ['[1:0:0:1::]', true],
+    ['[2001:0db8::1]', false],      // leading zero
+    ['[2001:DB8::1]', false],       // upper case
+    ['[2001:db8:0:0:0:0:0:1]', false], // not compressed
+    ['[1::2::3]', false],           // two ::
+    ['[1:2:3:4:5:6:7:8:9]', false], // nine groups
+    ['[1:2:3:4:5:6:7]', false],     // seven groups without ::
+    ['[1:2:3:4:5:6:7:8::]', false], // :: stands for nothing
+    ['[1:0:0:1:0:0:1:1]', false],   // of two equal runs the first is taken
+    ['[1::1:0:0:1:1]', true],       // ... which makes this one the spelling
+];
+foreach ($ipv6 as [$value, $want]) {
+    check('ipv6', $value, $want, Url::validHost($value));
+}
+printf("%-9s %d cases\n", 'ipv6', count($ipv6));
+
+// --- a grammar function answers, it never throws -------------------------
+
+// inet_pton threw a ValueError on a NUL byte, and @ does not suppress
+// exceptions. index.php happened to catch it, but a later caller with a
+// narrower catch would not, so every valid… function has to answer.
+$nasty = [
+    "[\0]", "\0", "a\0b", "[\0::1]", "[::\0]", "[]", "[%]", "[:]", "[::%eth0]",
+    "[" . str_repeat('a', 300) . "]", str_repeat('a', 300), str_repeat(':', 60),
+    "[1:2:3:4:5:6:7:8:9:10:11:12:13:14:15:16]", "https://[\0]:443", "\xff\xfe",
+];
+foreach ($nasty as $value) {
+    foreach (['validHost', 'validHostPort', 'validWebURL', 'validOrigin'] as $fn) {
+        try {
+            $got = Url::$fn($value);
+            check('robust', $fn . ' ' . bin2hex($value), true, $got === false);
+        } catch (Throwable $e) {
+            check('robust', $fn . ' ' . bin2hex($value) . ' threw ' . $e::class, true, false);
+        }
+    }
+}
+printf("%-9s %d cases\n", 'robust', count($nasty) * 4);
+
 // --- Config against real files -------------------------------------------
 
 $tmp = sys_get_temp_dir() . '/ngc-web-config-test';
@@ -67,8 +125,15 @@ function loads(string $tmp, string $web, ?string $anchor): bool
     try {
         Config::load($tmp . '/web.json', $tmp . '/anchor.json');
         return true;
-    } catch (Throwable) {
+    } catch (RuntimeException | JsonException) {
+        // The two failures Config is allowed to have.
         return false;
+    } catch (Throwable $e) {
+        // Anything else is a bug, not a rejected file. Saying "accepted"
+        // makes the case fail, so it cannot hide behind a broad catch the way
+        // a ValueError from inet_pton once did.
+        printf("THREW %s: %s\n", $e::class, $e->getMessage());
+        return true;
     }
 }
 
@@ -79,47 +144,65 @@ $cases = [
     // name, web.json, trust-anchor.json, accepted
     ['the shipped test files', $goodWeb, $goodAnchor, true],
     ['no anchor yet', $goodWeb, null, true],
-    ['no rp block at all', '{"apis":[{"url":"https://a.test:7443","tls":"x"}]}', null, true],
-    ['empty rp block', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],"rp":{}}', null, true],
+    ['no rp block at all', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}]}', null, true],
+    ['empty rp block', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"rp":{}}', null, true],
 
     // Wichtig 1: a trailing line feed must not slip through an anchor.
     ['line feed on the anchor hash', $goodWeb,
         '{"seq":1,"hash":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s\n"}', false],
-    ['line feed on rp.id', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['line feed on rp.id', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org\n","origins":["https://ngc.example.org"]}}', null, false],
 
     // Wichtig 2: the same answers as the vectors, through Config.
-    ['api address without a port', '{"apis":[{"url":"https://a.test","tls":"x"}]}', null, false],
-    ['api address with a path', '{"apis":[{"url":"https://a.test:7443/tunnel","tls":"x"}]}', null, false],
-    ['origin with the default port', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['api address without a port', '{"apis":[{"url":"https://a.test","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}]}', null, false],
+    ['api address with a path', '{"apis":[{"url":"https://a.test:7443/tunnel","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}]}', null, false],
+    ['origin with the default port', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org","origins":["https://ngc.example.org:443"]}}', null, false],
-    ['origin with port 0', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['origin with port 0', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org","origins":["https://ngc.example.org:0"]}}', null, false],
-    ['origin of colons', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['origin of colons', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org","origins":["https://:::"]}}', null, false],
-    ['origin of brackets', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['origin of brackets', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org","origins":["https://]]]"]}}', null, false],
 
     // Wichtig 3: a wrong type has to fail as loudly as a wrong value.
-    ['rp is a string', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],"rp":"ngc"}', null, false],
-    ['rp.id is a number', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['rp is a string', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"rp":"ngc"}', null, false],
+    ['rp.id is a number', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":42,"origins":["https://ngc.example.org"]}}', null, false],
-    ['rp.origins is a string', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['rp.origins is a string', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org","origins":"https://ngc.example.org"}}', null, false],
-    ['rp.id without origins', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['rp.id without origins', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org"}}', null, false],
-    ['origins without rp.id', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['origins without rp.id', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"origins":["https://ngc.example.org"]}}', null, false],
 
     // Strict JSON: a field nobody reads is a typo or a leftover, never a
     // reason to carry on.
-    ['unknown field at the top', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],"foo":1}', null, false],
-    ['unknown field in apis[]', '{"apis":[{"url":"https://a.test:7443","tls":"x","foo":1}]}', null, false],
-    ['unknown field in rp', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],'
+    ['unknown field at the top', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"foo":1}', null, false],
+    ['unknown field in apis[]', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE","foo":1}]}', null, false],
+    ['unknown field in rp', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],'
         . '"rp":{"id":"ngc.example.org","origins":["https://ngc.example.org"],"foo":1}}', null, false],
     ['unknown field in the anchor', $goodWeb,
         '{"seq":1,"hash":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s","foo":1}', false],
-    ['field spelled differently', '{"apis":[{"url":"https://a.test:7443","tls":"x"}],"APIs":1}', null, false],
+    ['field spelled differently', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"APIs":1}', null, false],
+
+    // config.Web.Validate, the two rules the first round left out.
+    ['the same api address twice',
+        '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"},'
+        . '{"url":"https://a.test:7443","tls":"4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uI"}]}', null, false],
+    ['two addresses that differ',
+        '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"},'
+        . '{"url":"https://b.test:7443","tls":"4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uLi4uI"}]}', null, true],
+    ['tls missing', '{"apis":[{"url":"https://a.test:7443"}]}', null, false],
+    ['tls too short', '{"apis":[{"url":"https://a.test:7443","tls":"4eHh"}]}', null, false],
+    ['tls one character too long',
+        '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eEE"}]}', null, false],
+    ['tls outside the alphabet',
+        '{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4e+"}]}', null, false],
+    ['tls is a number', '{"apis":[{"url":"https://a.test:7443","tls":42}]}', null, false],
+    ['a NUL byte in the api address',
+        "{\"apis\":[{\"url\":\"https://[\\u0000]:443\",\"tls\":\"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE\"}]}",
+        null, false],
 
     // The rest of the shape.
     ['apis empty', '{"apis":[]}', null, false],
@@ -153,12 +236,12 @@ function messageOf(string $tmp, string $web): string
 }
 
 $messages = [
-    ['{"apis":[{"url":"https://a.test:7443","tls":"x"}],"foo":1}', 'Unbekanntes Feld in web.json: foo'],
-    ['{"apis":[{"url":"https://a.test:7443","tls":"x","bar":1}]}', 'Unbekanntes Feld in web.json: apis[].bar'],
-    ['{"apis":[{"url":"https://a.test:7443","tls":"x"}],"rp":{"id":"a.test","origins":[],"baz":1}}',
+    ['{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"foo":1}', 'Unbekanntes Feld in web.json: foo'],
+    ['{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE","bar":1}]}', 'Unbekanntes Feld in web.json: apis[].bar'],
+    ['{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"rp":{"id":"a.test","origins":[],"baz":1}}',
         'Unbekanntes Feld in web.json: rp.baz'],
     // A name that is long or odd never reaches the page as it stands.
-    ['{"apis":[{"url":"https://a.test:7443","tls":"x"}],"a<script>b":1}',
+    ['{"apis":[{"url":"https://a.test:7443","tls":"4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eE"}],"a<script>b":1}',
         'Unbekanntes Feld in web.json: (unlesbarer Name)'],
 ];
 foreach ($messages as [$web, $want]) {
