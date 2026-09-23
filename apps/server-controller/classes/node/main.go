@@ -53,27 +53,33 @@ const (
 	msgNoConfig  = "Die Konfiguration dieses Servers fehlt oder ist unvollständig. Bitte den Server mit ulh einrichten."
 	msgNoKey     = "Der Schlüssel dieses Servers ließ sich nicht erzeugen. Bitte den Server neu starten und es noch einmal versuchen."
 	msgNotPaired = "Die Kopplung ist gescheitert. Ist der Kopplungscode noch gültig und die API erreichbar?"
-	msgNotSaved  = "Die Kopplung hat geklappt, aber die Konfiguration ließ sich nicht speichern. Bitte mit einem neuen Kopplungscode wiederholen."
-	msgNoAnchor  = "Die Kopplung hat geklappt, aber der Anker ließ sich nicht speichern. Bitte Platz und Rechte auf dem Server prüfen und mit einem neuen Kopplungscode wiederholen."
+	// msgWorked is the only word of success on this way, and all three lines
+	// that get past the API open with it: the two lines on stdout are
+	// fingerprints to compare, and without this half sentence each of the
+	// three reads like the report of a failure beside them. It stands here
+	// once, so a rewording cannot say something different in one of them.
+	msgWorked   = "Die Kopplung hat geklappt"
+	msgNotSaved = msgWorked + ", aber die Konfiguration ließ sich nicht speichern. Bitte mit einem neuen Kopplungscode wiederholen."
+	msgNoAnchor = msgWorked + ", aber der Anker ließ sich nicht speichern. Bitte Platz und Rechte auf dem Server prüfen und mit einem neuen Kopplungscode wiederholen."
 	// The code no longer stands in the arguments. Whoever still gives the old
 	// flag is told where it goes now; the value behind it is never repeated,
 	// because that value is the code.
 	msgCodeFlag = "Der Kopplungscode wird nicht mehr in der Kommandozeile übergeben. Bitte ngc-controller pair ohne weitere Angaben aufrufen; das Programm fragt den Code dann ab."
 	// Nothing came in, or what came in is no pairing code. It names none of
-	// it: what was typed may be a code with one letter wrong.
-	msgBadCode = "Kein gültiger Kopplungscode. Bitte den Code aus der Shell vollständig einfügen und es noch einmal versuchen."
+	// it: what was typed may be a code with one letter wrong. Where the code
+	// comes from is named the way the line below names it: whoever reads "die
+	// Shell" at a bash prompt takes it for the shell he is standing in.
+	msgBadCode = "Kein gültiger Kopplungscode. Bitte den Code aus NextGenCloud vollständig einfügen und es noch einmal versuchen."
 	// Pairing makes a new key, so a server that was already listed is out of
 	// every trust list; it keeps the one API of the code and nothing else.
 	// Only an admin can put it back, and nothing else says so.
 	//
-	// The half sentence in front is the only word of success on this way: the
-	// two lines on stdout are fingerprints to compare, and without it this
-	// line reads like the report of a failure beside them. "eintragen" fits
-	// both pairings, the first one and a later one: the first time the server
-	// stood in no list before either. Where that happens is said as far as it
-	// is settled - an admin signed in to NextGenCloud - because the contract
-	// knows the list (ngc.users/nodes) but no way through a menu yet.
-	msgListAgain = "Die Kopplung hat geklappt. Dieser Server steht jetzt in keiner Vertrauensliste. Bitte als Administrator bei NextGenCloud anmelden und diesen Server dort eintragen, sonst kann er seine Aufgaben nicht übernehmen."
+	// "eintragen" fits both pairings, the first one and a later one: the first
+	// time the server stood in no list before either. Where that happens is
+	// said as far as it is settled - an admin signed in to NextGenCloud -
+	// because the contract knows the list (ngc.users/nodes) but no way through
+	// a menu yet.
+	msgListAgain = msgWorked + ". Dieser Server steht jetzt in keiner Vertrauensliste. Bitte als Administrator bei NextGenCloud anmelden und diesen Server dort eintragen, sonst kann er seine Aufgaben nicht übernehmen."
 )
 
 var (
@@ -180,6 +186,29 @@ func run(version, cfgPath string, stdout, stderr io.Writer) int {
 // anchorPath is config.AnchorFile; only a test points it elsewhere. stdin is
 // where the code comes in: the terminal of the admin or the ulh script.
 func pair(cfgPath, anchorPath string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// The call is answered before anything at all is read, and the value
+	// behind a flag is never looked at: that value may be the code.
+	if err := pairUse(args); err != nil {
+		if errors.Is(err, errCodeFlag) {
+			fmt.Fprintln(stderr, msgCodeFlag)
+		} else {
+			fmt.Fprintln(stderr, usagePair)
+		}
+		return 2
+	}
+	// The configuration is read before the admin is asked. A code is good for
+	// one pairing and for thirty seconds: whoever pastes it into the question
+	// on a server without controller.json has spent it and needs a new one,
+	// and nothing of the pairing could have been written anyway.
+	cfg, err := config.LoadController(cfgPath)
+	if err != nil {
+		fmt.Fprintln(stderr, msgNoConfig)
+		return 1
+	}
+	// Only opts.Pair carries the code here, and its String hides it. A parsed
+	// tunnel.PairCode does the opposite, its String being the code itself, so
+	// none is made in this function: pairing.Do reads the text, and
+	// pairing.Show takes the anchor alone.
 	opts, err := parsePair(cfgPath, args, stdin, stderr)
 	if err != nil {
 		switch {
@@ -191,15 +220,6 @@ func pair(cfgPath, anchorPath string, args []string, stdin io.Reader, stdout, st
 			fmt.Fprintln(stderr, usagePair)
 		}
 		return 2
-	}
-	// Only opts.Pair carries the code here, and its String hides it. A parsed
-	// tunnel.PairCode does the opposite, its String being the code itself, so
-	// none is made in this function: pairing.Do reads the text, and
-	// pairing.Show takes the anchor alone.
-	cfg, err := config.LoadController(opts.Config)
-	if err != nil {
-		fmt.Fprintln(stderr, msgNoConfig)
-		return 1
 	}
 	key, err := noisep.Keypair(rand.Reader)
 	if err != nil {
@@ -246,16 +266,8 @@ func pair(cfgPath, anchorPath string, args []string, stdin io.Reader, stdout, st
 func parsePair(cfgPath string, args []string, stdin io.Reader, prompt io.Writer) (Options, error) {
 	// Before the input is touched: a call with the old flag is answered, not
 	// half carried out, and the value of that flag is never looked at.
-	if codeFlag(args) {
-		return Options{}, errCodeFlag
-	}
-	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		return Options{}, errPairUse
-	}
-	if fs.NArg() != 0 {
-		return Options{}, errPairUse
+	if err := pairUse(args); err != nil {
+		return Options{}, err
 	}
 	code, err := readCode(stdin, prompt)
 	if err != nil {
@@ -265,6 +277,24 @@ func parsePair(cfgPath string, args []string, stdin io.Reader, prompt io.Writer)
 		return Options{}, err
 	}
 	return Options{Config: cfgPath, Pair: config.NewSecretText(code)}, nil
+}
+
+// pairUse reads the call of "pair" and nothing else: the command takes no
+// flag and no further word. It touches no input, so a wrong call is answered
+// before the admin is asked for anything and before any file is opened.
+func pairUse(args []string) error {
+	if codeFlag(args) {
+		return errCodeFlag
+	}
+	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return errPairUse
+	}
+	if fs.NArg() != 0 {
+		return errPairUse
+	}
+	return nil
 }
 
 // codeFlag reports whether the call still carries -code, the flag that once

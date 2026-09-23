@@ -50,7 +50,9 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   `apis`)
 - `ngc-controller`: `name` (Name des Servers nach `wire.ValidName`: Kleinbuchstaben, Ziffern und
   Bindestrich, beginnt mit einem Buchstaben, höchstens 32 Zeichen), `pair_code` (der Kopplungscode
-  aus der Shell: `ngc-pair:` und base64url des JSON, geprüft mit `tunnel.ParsePairCode`), `roles`
+  aus der Shell: `ngc-pair:` und base64url des JSON, geprüft mit `tunnel.ParsePairCode`; nie in der
+  Kommandozeile, das Skript reicht ihn mit `printf '%s\n' "$pair_code" | ngc-controller pair`
+  durch), `roles`
   (`web`, `api`, `db`, `services`); mit Rolle `db` zusätzlich `migrate_nodes` (je
   `<host>:<port>` nach `trust.ValidHostPort`), `migrate_name`, `migrate_user` (`ngc_migrate`),
   `migrate_password` und `migrate_ca` (Zertifikat der CA von `ngc-db`) für `migrate` in

@@ -59,10 +59,13 @@ func TestMainUnknownCommand(t *testing.T) {
 }
 
 // "pair" reads the code from the standard input. A script that pipes nothing
-// in gets one fixed line and pairs nothing.
+// in gets one fixed line and pairs nothing. The server is set up here because
+// the configuration is read before the code is asked for.
 func TestMainPairNeedsCode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "controller.json")
+	writeController(t, cfgPath)
 	var out, errOut bytes.Buffer
-	if code := Main("1.2.3", []string{"pair"}, noInput(), &out, &errOut); code != 2 {
+	if code := Main("1.2.3", []string{"-config", cfgPath, "pair"}, noInput(), &out, &errOut); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 	if got := errOut.String(); got != msgBadCode+"\n" {
@@ -471,6 +474,68 @@ func TestPairNeedsTheConfiguration(t *testing.T) {
 	}
 }
 
+// silent is a standard input that reports whether anything was taken out of
+// it. It is how a test shows that the admin was never asked.
+type silent struct{ read bool }
+
+func (s *silent) Read([]byte) (int, error) {
+	s.read = true
+	return 0, io.EOF
+}
+
+// The pairing code is good for one pairing and for thirty seconds. Whoever is
+// asked for it on a server without controller.json pastes it and hears only
+// afterwards that the configuration is missing: the code is spent, and a new
+// one has to be fetched. So the configuration is read before the question.
+func TestPairLoadsTheConfigurationBeforeItAsks(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
+	var in silent
+	var out, errOut bytes.Buffer
+	if code := pair(cfgPath, anchorPath, nil, &in, &out, &errOut); code != 1 {
+		t.Fatalf("pair = %d, want 1", code)
+	}
+	if in.read {
+		t.Error("pair asked for the code although the configuration is missing")
+	}
+	if got := errOut.String(); got != msgNoConfig+"\n" {
+		t.Errorf("stderr = %q, want %q", got, msgNoConfig+"\n")
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
+	}
+}
+
+// Two lines point at the same place, so both have to call it the same. An
+// admin who reads "die Shell" at a bash prompt takes it for the shell he is
+// standing in; the place the code comes from and the place the server is
+// listed is NextGenCloud, and that is the name both lines use.
+func TestTheMessagesSayTheSameThing(t *testing.T) {
+	for name, msg := range map[string]string{
+		"msgBadCode": msgBadCode, "msgListAgain": msgListAgain,
+	} {
+		if strings.Contains(msg, "Shell") {
+			t.Errorf("%s = %q, want the word Shell out of it", name, msg)
+		}
+		if !strings.Contains(msg, "NextGenCloud") {
+			t.Errorf("%s = %q, want it to name NextGenCloud", name, msg)
+		}
+	}
+	// The one word of success on this way, the same in all three lines that
+	// get past the API. A test that cut it out of one of them would let a
+	// rewording pass without a word.
+	if msgWorked != "Die Kopplung hat geklappt" {
+		t.Errorf("msgWorked = %q, want the word of success", msgWorked)
+	}
+	for name, msg := range map[string]string{
+		"msgNotSaved": msgNotSaved, "msgNoAnchor": msgNoAnchor, "msgListAgain": msgListAgain,
+	} {
+		if !strings.HasPrefix(msg, msgWorked) {
+			t.Errorf("%s = %q, want it to open with the word of success", name, msg)
+		}
+	}
+}
+
 // A pairing that fails changes nothing: the server keeps the API it had.
 func TestPairLeavesTheConfigurationAloneWhenItFails(t *testing.T) {
 	api := newAPI(t)
@@ -547,9 +612,8 @@ func pairOnce(t *testing.T) string {
 // of a failure. The two lines on stdout are fingerprints to compare, not an
 // answer to that question.
 func TestPairSaysThatItWorked(t *testing.T) {
-	worked, _, _ := strings.Cut(msgNotSaved, ",")
-	if got := pairOnce(t); !strings.HasPrefix(got, worked) {
-		t.Errorf("stderr = %q, want it to open with %q", got, worked)
+	if got := pairOnce(t); !strings.HasPrefix(got, msgWorked) {
+		t.Errorf("stderr = %q, want it to open with %q", got, msgWorked)
 	}
 }
 
