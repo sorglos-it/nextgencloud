@@ -1,11 +1,12 @@
 # Stand: NGC (NextGenCloud)
 
-**Zuletzt aktualisiert:** 22.09.2026
+**Zuletzt aktualisiert:** 23.09.2026
 
 ## Ziel der nächsten Sitzung
 
-Den Vertrag für die Wiederherstellung schreiben (Codes, Zurücksetzen durch einen Admin,
-Notfallbefehl auf dem Server). Danach die Pläne 1 bis 4 für die vier Teile.
+Den Recovery-Modus aus `docs/recovery-modus.md` einplanen: die Anknüpfpunkte an NGC festlegen
+(AdminVerify im Login, Spalten der Admin-Tabelle, Backup, Einlernen bei der Installation), dann
+Arbeitspaket 0 (Testumgebung). Danach die Pläne 1 bis 4 für die vier Teile.
 
 ## Stand
 
@@ -18,10 +19,12 @@ Notfallbefehl auf dem Server). Danach die Pläne 1 bis 4 für die vier Teile.
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
-1. Vertrag für die Wiederherstellung (Codes, Zurücksetzen durch einen Admin, Notfallbefehl auf dem
-   Server), als Vertragsänderung vor den Plänen 1–4. Braucht eine eigene Schlüsselart oder eine
-   Ausnahme für Rollen nur mit Passkey (die Vertrauensliste lehnt dort Passwortschlüssel ab) und
-   eine Antwort für hochgeladene Apps, deren freigebender Admin-Schlüssel wechselt.
+1. Recovery-Modus nach `docs/recovery-modus.md` (verbindlich seit 23.09.2026). Er ersetzt den bis
+   dahin geplanten Vertrag für die Wiederherstellung. Für NGC noch zu klären: `AdminVerify` kommt
+   nach Go (NGC hat kein PHP-Teilprogramm), `server-recovery` wäre ein neues Teilprogramm in Rust,
+   `lib/` als zentrale Bibliothek gibt es hier noch nicht, und die signierten Admin-Datensätze
+   müssen zur Vertrauensliste passen (Rollen nur mit Passkey, Wechsel des Admin-Schlüssels bei
+   hochgeladenen Apps).
 2. Pläne 1–4 schreiben (Webinterface, API, Controller, Datenbank), dann die vier Sitzungen starten.
 
 ## Vor dem Bauen zu prüfen
