@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,6 +54,33 @@ func (d *stepwise) Exists(err error) bool {
 	}
 	return false
 }
+
+// atType gets a test into the middle of a run without a second process:
+// sqlstore.Fill asks the dialect for every column type, so do runs while the
+// runner is filling the nth one. Like stepwise it records every statement on
+// its own, the way MariaDB does.
+type atType struct {
+	sqlstore.Dialect
+	nth   int
+	calls int
+	do    func()
+}
+
+func (*atType) DDLInTx() bool { return false }
+
+func (d *atType) Type(name string) string {
+	d.calls++
+	if d.calls == d.nth {
+		d.do()
+	}
+	return d.Dialect.Type(name)
+}
+
+// noDuplicate stands for a database that answers the INSERT of the lock with
+// something that is not a duplicate key - a connection that broke, say.
+type noDuplicate struct{ sqlstore.Dialect }
+
+func (noDuplicate) Duplicate(error) bool { return false }
 
 // tablesEmpty checks that every listed table is there and holds no row.
 // ngc_schema is the exception: it holds what ran.
@@ -113,6 +141,157 @@ func TestApply(t *testing.T) {
 	var owner []byte
 	if err := db.QueryRowContext(ctx, probeLock, []byte(dbapi.LockUpdate)).Scan(&owner); err != nil {
 		t.Errorf("the runner took the lock %q of somebody else with it: %v", dbapi.LockUpdate, err)
+	} else if string(owner) != "test" {
+		t.Errorf("the lock %q now belongs to %q", dbapi.LockUpdate, owner)
+	}
+	// Its own lock the runner does give back, so the next server is not kept
+	// waiting for the rest of the 900 seconds.
+	if err := db.QueryRowContext(ctx, probeLock, []byte(lockName)).Scan(&owner); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the lock of the migrations is still there: %q, %v", owner, err)
+	}
+}
+
+// TestApplyWhileLockedBySameOwner: a second process under the same node ID is
+// a second process. Whoever holds the migration lock holds it until their
+// time has passed, and the runner never hands DDL to two servers at once
+// because the name on the row happens to match.
+func TestApplyWhileLockedBySameOwner(t *testing.T) {
+	db := openFile(t)
+	if err := bootstrap(ctx, db, sqlstore.SQLite); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, insertLock, []byte(lockName), []byte("one"), int64(1790009999)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := Apply(ctx, db, sqlstore.SQLite, "one", 1790000001); err == nil {
+		t.Fatalf("a second run under the same name migrated: %d", n)
+	} else if !strings.Contains(err.Error(), "another server") {
+		t.Errorf("the message does not say why: %v", err)
+	}
+	if level, err := Level(ctx, db); err != nil || level != 0 {
+		t.Errorf("it migrated anyway: level %d, %v", level, err)
+	}
+}
+
+// TestApplyStopsWhenTheLockChangesHands: the lock has a time limit, so a run
+// that takes longer than lockFor can find it in somebody else's hands in the
+// middle. From there on the runner touches nothing: it stops with a message
+// instead of writing DDL and a record next to the server that took over.
+func TestApplyStopsWhenTheLockChangesHands(t *testing.T) {
+	db := openFile(t)
+	d := &atType{Dialect: sqlstore.SQLite}
+	// The runner's own tables first: from here on the counter is the
+	// migration's own, and Apply finds them and asks for no type of its own.
+	if err := bootstrap(ctx, db, d); err != nil {
+		t.Fatal(err)
+	}
+	d.calls, d.nth = 0, 3
+	d.do = func() {
+		// What a takeover after lockFor seconds leaves behind.
+		if _, err := db.ExecContext(ctx, "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ?",
+			[]byte("somebody-else"), int64(1790009999), []byte(lockName)); err != nil {
+			t.Error(err)
+		}
+	}
+	n, err := Apply(ctx, db, d, "test", 1790000000)
+	if err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("the run carried on without the lock: %d, %v", n, err)
+	}
+	if level, err := Level(ctx, db); err != nil || level != 0 {
+		t.Errorf("the migration was recorded as done: level %d, %v", level, err)
+	}
+	// It stopped where it noticed, instead of running the file to the end.
+	var count int64
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ngc_app").Scan(&count); err == nil {
+		t.Error("the run went on to the next statement")
+	}
+}
+
+// TestApplyGivesTheLockBackAfterACancel: a run that is cut short still gives
+// its lock back. Over the context of the run the DELETE would be cut short
+// too, and the lock would sit there for the rest of the 900 seconds.
+func TestApplyGivesTheLockBackAfterACancel(t *testing.T) {
+	db := openFile(t)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	d := &atType{Dialect: sqlstore.SQLite, do: cancel}
+	if err := bootstrap(ctx, db, d); err != nil {
+		t.Fatal(err)
+	}
+	d.calls, d.nth = 0, 3
+	if _, err := Apply(runCtx, db, d, "test", 1790000000); err == nil {
+		t.Fatal("the cut short run reported success")
+	}
+	var owner []byte
+	if err := db.QueryRowContext(ctx, probeLock, []byte(lockName)).Scan(&owner); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the lock is still held by %q: %v", owner, err)
+	}
+}
+
+// TestApplyRefusesANonsenseRecord: step comes out of the database and is used
+// to cut the list of statements. A number larger than the file - a migration
+// shortened afterwards, a row changed by hand - is a mistake to report, not a
+// reason to take the program down.
+func TestApplyRefusesANonsenseRecord(t *testing.T) {
+	db := openFile(t)
+	d := &stepwise{Dialect: sqlstore.SQLite}
+	files, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap(ctx, db, d); err != nil {
+		t.Fatal(err)
+	}
+	f := files[0]
+	if _, err := db.ExecContext(ctx, insertState, f.Version, int64(len(f.Statements)+1), int64(0), int64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, db, d, "test", 1790000000); err == nil {
+		t.Fatal("a record past the end of the file was taken")
+	} else if !strings.Contains(err.Error(), "the migration changed") {
+		t.Errorf("the message does not say what is wrong: %v", err)
+	}
+}
+
+// TestTakeReportsItsOwnError: a lock the runner cannot write is not the same
+// as a lock somebody else holds. The first is the runner's own problem and
+// has to be readable; reading it as "busy" hides a broken database behind a
+// message about another server.
+func TestTakeReportsItsOwnError(t *testing.T) {
+	db := openFile(t)
+	d := noDuplicate{Dialect: sqlstore.SQLite}
+	if err := bootstrap(ctx, db, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, insertLock, []byte(lockName), []byte("someone-else"), int64(1790009999)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Apply(ctx, db, d, "test", 1790000001)
+	if err == nil {
+		t.Fatal("the run went on")
+	}
+	if strings.Contains(err.Error(), "another server") {
+		t.Errorf("the error of the database was reported as a held lock: %v", err)
+	}
+}
+
+// TestApplyNeedsATime: now is bounded like every other value that comes in,
+// so now+lockFor can never wrap around into the past.
+func TestApplyNeedsATime(t *testing.T) {
+	// The bound of migrate.go, written out once more: a bound that moves has
+	// to be a decision, not an accident.
+	const latest = 1 << 40
+	db := openFile(t)
+	for name, now := range map[string]int64{
+		"a time before the epoch": -1,
+		"a time past every date":  latest + 1,
+	} {
+		if _, err := Apply(ctx, db, sqlstore.SQLite, "test", now); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if _, err := Apply(ctx, db, sqlstore.SQLite, "test", latest); err != nil {
+		t.Errorf("the latest time was refused: %v", err)
 	}
 }
 
