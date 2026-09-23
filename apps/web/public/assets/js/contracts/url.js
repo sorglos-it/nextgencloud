@@ -34,7 +34,11 @@ function validIPv4(h) {
   const parts = h.split(".");
   if (parts.length !== 4) return false;
   for (const p of parts) {
-    if (!allDigits(p) || p.length > 3 || (p.length > 1 && p[0] === "0") || Number(p) > 255) return false;
+    // The length comes first: a field of more than three digits is no field,
+    // and Go's netip stops at the fourth character too. Asking allDigits
+    // first would read a part of any length to the end before throwing it
+    // away, which is work an address from outside would decide on.
+    if (p.length > 3 || !allDigits(p) || (p.length > 1 && p[0] === "0") || Number(p) > 255) return false;
   }
   return true;
 }

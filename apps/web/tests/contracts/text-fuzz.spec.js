@@ -11,8 +11,8 @@ import { test, expect } from "../fixtures/page.js";
 //     no spacing character but the ASCII space. Those categories are asked
 //     for here, not the list of the allowed ones, so the criterion does not
 //     repeat the rule it checks.
-//   - an accepted name, app id, path, login name, version, id or code is
-//     itself such a text: they are all shown to people.
+//   - an accepted name, app id, path, login name, version, id, log id or
+//     code is itself such a text: they are all shown to people.
 //   - an accepted path leads nowhere else: no leading slash, no backslash, no
 //     empty segment and no segment "." or ".." or one that begins with a dot.
 //   - newer orders versions strictly: nothing is newer than itself, and of
@@ -59,7 +59,13 @@ test(`fuzz: nothing but printable text, ${rounds} inputs from seed ${seed}`, asy
         // An id is 22 characters whose last four bits belong to no byte.
         case 4: return from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", 21) +
           (upto(2) === 0 ? "AQgw"[upto(4)] : "BR");
-        case 5: return from("0123456789abcdefABCDEF", 30 + upto(4));
+        // A log id is 32 lower-case hex digits and nothing else. Half of
+        // these are exactly that, so the floor below stands on something;
+        // the other half are the near misses that upper case and a digit too
+        // few or too many make, and hardly any of those gets through.
+        case 5: return upto(2) === 0
+          ? from("0123456789abcdef", 32)
+          : from("0123456789abcdefABCDEF", 30 + upto(4));
         case 6: return from("0123456789", 4 + upto(4));
         default: return from("abcdefghijklmnopqrstuvwxyz0123456789-._", 1 + upto(70));
       }
@@ -77,7 +83,8 @@ test(`fuzz: nothing but printable text, ${rounds} inputs from seed ${seed}`, asy
     const controlLike = /\p{C}/u;
     const spacing = /\p{Z}/u;
     const bad = [];
-    const count = { text: 0, name: 0, appID: 0, path: 0, login: 0, version: 0, id: 0, totp: 0 };
+    const count = { text: 0, name: 0, appID: 0, path: 0, login: 0, version: 0, id: 0, totp: 0,
+      logID: 0, core: 0 };
     const say = (why, s) => {
       if (bad.length < 12) bad.push({ why, input: JSON.stringify(s).slice(0, 120) });
     };
@@ -132,6 +139,10 @@ test(`fuzz: nothing but printable text, ${rounds} inputs from seed ${seed}`, asy
       const id = answer("validID", t.validID, s);
       const logID = answer("validLogID", t.validLogID, s);
       const totp = answer("validTOTP", t.validTOTP, s);
+      // coreApp asks for a prefix, not for a grammar: it belongs to no
+      // alsoText line, because "ngc." and any byte after it is what it says
+      // yes to. The floor below is the whole rule the fuzz has for it.
+      const core = answer("coreApp", t.coreApp, s);
       alsoText("a name", name, 32);
       alsoText("an app id", appID, 100);
       alsoText("a path", path, 200);
@@ -144,7 +155,9 @@ test(`fuzz: nothing but printable text, ${rounds} inputs from seed ${seed}`, asy
       if (appID) count.appID++;
       if (login) count.login++;
       if (id) count.id++;
+      if (logID) count.logID++;
       if (totp) count.totp++;
+      if (core) count.core++;
       if (path) {
         count.path++;
         if (s.startsWith("/") || s.includes("\\") || s.includes("//")) say("a path that leaves its folder", s);
@@ -178,8 +191,11 @@ test(`fuzz: nothing but printable text, ${rounds} inputs from seed ${seed}`, asy
   }, [seed, rounds]);
 
   expect(out.bad).toEqual([]);
-  // A floor under every check, at about a third of what this seed reaches.
-  const floors = { text: 2200, name: 750, appID: 600, path: 3500, login: 2400, version: 400, id: 200, totp: 100 };
+  // A floor under every check, at about a third of what the seeds tried
+  // reach. The numbers above the floors move with the engine's tables and
+  // with every change to the generator, so a third is the room they get.
+  const floors = { text: 2200, name: 750, appID: 600, path: 3500, login: 2400, version: 400, id: 200, totp: 100,
+    logID: 200, core: 60 };
   const low = Object.entries(floors)
     .filter(([name, floor]) => !(out.count[name] >= floor))
     .map(([name, floor]) => `${name}: ${out.count[name]} accepted, ${floor} wanted`);
