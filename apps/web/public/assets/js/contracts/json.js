@@ -116,8 +116,11 @@ class Parser {
     this.totals.set(path, n);
   }
 
+  // MAX_DEPTH counts arrays and objects nested in each other, the top-level
+  // value being level 1. A number or a string inside a container is no level
+  // of its own, so the check sits where a container opens and nowhere else
+  // (Go: enc.MaxDepth, enc.Budget.check).
   value(shape, path, depth) {
-    if (depth > MAX_DEPTH) this.fail("too deep");
     if (this.i >= this.b.length) this.fail("no value");
     // A path the budget marks RAW keeps its bytes whatever kind of value
     // stands there. It is decided here and not in object() and array(),
@@ -149,9 +152,9 @@ class Parser {
   }
 
   skip(depth) {
-    if (depth > MAX_DEPTH) this.fail("too deep");
     const c = this.b[this.i];
     if (c === 0x7b) {
+      if (depth > MAX_DEPTH) this.fail("too deep");
       this.i++;
       const seen = new Set();
       this.ws();
@@ -172,6 +175,7 @@ class Parser {
       }
     }
     if (c === 0x5b) {
+      if (depth > MAX_DEPTH) this.fail("too deep");
       this.i++;
       this.ws();
       if (this.b[this.i] === 0x5d) { this.i++; return; }
@@ -196,6 +200,7 @@ class Parser {
 
   // object and array never see a RAW path: value() took it already.
   object(shape, path, depth) {
+    if (depth > MAX_DEPTH) this.fail("too deep");
     const limit = this.budget.items[path];
     const mapped = limit !== undefined;
     if (mapped ? shape.k !== "map" : shape.k !== "struct") this.fail("object where the shape has none");
@@ -234,6 +239,7 @@ class Parser {
   }
 
   array(shape, path, depth) {
+    if (depth > MAX_DEPTH) this.fail("too deep");
     const limit = this.budget.items[path];
     // An array whose path the budget does not list is refused: nothing from
     // outside may grow without a limit.

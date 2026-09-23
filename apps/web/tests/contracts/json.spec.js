@@ -8,18 +8,18 @@ const v = vectors("json.json");
 
 test("every case of json.json is decided as Go decides it", async ({ shell }) => {
   const results = await shell.evaluate(async ([items, totals, size, cases]) => {
-    const { decode, Budget, S, A, M, str, bool, int, uint32, bytes, raw } =
+    const { decode, Budget, S, P, A, M, str, bool, int, uint32, bytes, raw } =
       await import("/assets/js/contracts/json.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
     // The shape mirrors the Go struct json.json was made from, field for
-    // field as its own "schema" spells it: u is a uint32, not a uint, and
-    // the elements of subs are the same sub as the single one.
-    const sub = S({ x: int, list: A(int) });
+    // field: u is a uint32, sub is a pointer (missing gives null, not an
+    // empty object), and the elements of subs are that same struct by value.
+    const subMembers = { x: int, list: A(int) };
     const shape = S({
       n: int, u: uint32, s: str, t: bool, b: bytes,
       list: A(int), map: M(int),
-      sub: sub,
-      subs: A(sub),
+      sub: P(subMembers),
+      subs: A(S(subMembers)),
       raw: raw,
     });
     const budget = new Budget({ size, items, totals });
@@ -52,4 +52,35 @@ test("base64url is strict", async ({ shell }) => {
     roundTrip: true, len: true, padding: false, lineFeed: false, standard: false,
     trailingBits: false, lonely: false, empty: true,
   });
+});
+
+// json.json has no case for this, and a differential run against the compiled
+// shared/enc found the shell one level stricter than Go: MAX_DEPTH counts the
+// arrays and objects nested in each other, and a number or a string inside
+// the innermost one is not a level of its own. The top-level object is level
+// 1 and the raw value level 2, so 31 containers below it still fit.
+test("depth counts containers, not the values inside them", async ({ shell }) => {
+  const docs = [];
+  for (let d = 30; d <= 33; d++) {
+    docs.push(["arrays, empty leaf, " + d, '{"raw":' + "[".repeat(d) + "]".repeat(d) + "}", d <= 31]);
+    docs.push(["arrays, number leaf, " + d, '{"raw":' + "[".repeat(d) + "1" + "]".repeat(d) + "}", d <= 31]);
+    docs.push(["objects, number leaf, " + d, '{"raw":' + '{"a":'.repeat(d) + "1" + "}".repeat(d) + "}", d <= 31]);
+    docs.push(["objects, string leaf, " + d, '{"raw":' + '{"a":'.repeat(d) + '"x"' + "}".repeat(d) + "}", d <= 31]);
+  }
+  const results = await shell.evaluate(async (texts) => {
+    const { decode, Budget, S, raw } = await import("/assets/js/contracts/json.js");
+    const budget = new Budget({ size: 1024, items: { raw: -1 }, totals: {} });
+    const shape = S({ raw: raw });
+    return texts.map((t) => {
+      try {
+        decode(new TextEncoder().encode(t), budget, shape);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }, docs.map(([, text]) => text));
+
+  const wrong = docs.filter(([, , want], i) => want !== results[i]).map(([name]) => name);
+  expect(wrong).toEqual([]);
 });
