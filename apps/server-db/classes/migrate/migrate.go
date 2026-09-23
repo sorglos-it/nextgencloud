@@ -6,7 +6,9 @@ package migrate
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -99,6 +101,15 @@ const (
 	maxNow   = 1 << 40 // seconds since 1970, the year 36812
 )
 
+// runBytes is how much chance goes into the owner of the lock behind the node
+// ID, and maxOwner is the longest node ID that leaves room for it: node ID,
+// one slash and 2*runBytes hex characters together stay inside a {{text}}
+// column.
+const (
+	runBytes = 16
+	maxOwner = sqlstore.MaxText - 2*runBytes - 1
+)
+
 // The runner's own two tables. They are not in 0001, because the runner needs
 // them before the first migration can run; they keep the rules of a migration
 // all the same. ngc_lock is the table dbapi.LockTake uses later: same row,
@@ -111,7 +122,11 @@ const (
 		"until {{int}} NOT NULL, PRIMARY KEY (name)){{opts}}"
 	probeSchema = "SELECT version FROM ngc_schema WHERE version = ?"
 	probeLock   = "SELECT owner FROM ngc_lock WHERE name = ?"
-	selectLock  = "SELECT owner, until FROM ngc_lock WHERE name = ?"
+	// The owner is compared in the database, not read out of it: a column
+	// holds whatever was written into it, and nothing unbounded belongs in
+	// the program.
+	holdLock    = "SELECT until FROM ngc_lock WHERE name = ? AND owner = ?"
+	selectUntil = "SELECT until FROM ngc_lock WHERE name = ?"
 	selectState = "SELECT step, done FROM ngc_schema WHERE version = ?"
 	selectLevel = "SELECT version FROM ngc_schema WHERE done = ? ORDER BY version DESC"
 	insertState = "INSERT INTO ngc_schema (version, step, done, applied) VALUES (?, ?, ?, ?)"
@@ -135,13 +150,14 @@ type querier interface {
 }
 
 // Apply runs every migration that has not run yet and returns how many it
-// ran. owner names who runs it (a node ID) and shows up in the lock, so an
-// admin can see which server is migrating.
+// ran. owner names who runs it (a node ID); what goes into the lock is that
+// name and a part of its own for this one run, so an admin sees which server
+// is migrating and no two runs are ever taken for one.
 func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, now int64) (int, error) {
-	// The owner goes into a {{text}} column, so it is bounded here instead of
-	// being cut short by the database.
-	if owner == "" || len(owner) > sqlstore.MaxText {
-		return 0, fmt.Errorf("migrate: the owner has to be 1 to %d bytes", sqlstore.MaxText)
+	// The name and the run part behind it go into a {{text}} column together,
+	// so both are bounded here instead of being cut short by the database.
+	if owner == "" || len(owner) > maxOwner {
+		return 0, fmt.Errorf("migrate: the owner has to be 1 to %d bytes", maxOwner)
 	}
 	if now < 0 || now > maxNow {
 		return 0, fmt.Errorf("migrate: the time has to be 0 to %d", int64(maxNow))
@@ -153,32 +169,37 @@ func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, no
 	if err := bootstrap(ctx, db, d); err != nil {
 		return 0, err
 	}
-	taken, err := take(ctx, db, d, owner, now)
+	run, err := runOwner(owner)
+	if err != nil {
+		return 0, err
+	}
+	taken, err := take(ctx, db, d, run, now)
 	if err != nil {
 		return 0, err
 	}
 	if !taken {
-		// Both reasons are named, because the runner cannot tell them apart
-		// and the second one is the one an admin has to wait out.
+		// Both reasons are named, because the runner cannot tell them apart,
+		// and with them how long the wait is: whoever installs NGC is no
+		// expert, and "in 340 seconds" is something to act on.
 		return 0, fmt.Errorf("migrate: the lock is held: another server is running the migrations, "+
-			"or a run died and its %d seconds are not over", lockFor)
+			"or a run died before it gave the lock back - %s", freeIn(ctx, db, now))
 	}
 	defer func() {
 		// The lock goes back over a context of its own: where the run was cut
 		// short, the DELETE would be cut short with it and the lock would
 		// stand for the rest of lockFor, for no reason.
-		if _, err := db.ExecContext(context.WithoutCancel(ctx), freeLock, []byte(lockName), []byte(owner)); err != nil {
+		if _, err := db.ExecContext(context.WithoutCancel(ctx), freeLock, []byte(lockName), []byte(run)); err != nil {
 			slog.Warn("cannot give the lock of the migrations back", "error", err)
 		}
 	}()
 	done := 0
 	for _, f := range files {
 		// The lock has a deadline, so before every migration the runner makes
-		// sure it is still his.
-		if err := hold(ctx, db, owner, now); err != nil {
+		// sure it is still this run's.
+		if err := hold(ctx, db, run, now); err != nil {
 			return done, fmt.Errorf("migrate: %w", err)
 		}
-		ran, err := applyOne(ctx, db, d, f, owner, now)
+		ran, err := applyOne(ctx, db, d, f, run, now)
 		if err != nil {
 			return done, fmt.Errorf("migrate: %s: %w", f.Name, err)
 		}
@@ -189,21 +210,67 @@ func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, no
 	return done, nil
 }
 
-// hold reports an error while the migration lock is not the runner's own any
+// runOwner puts a part of its own behind the node ID, new for every run. The
+// lock belongs to one run, not to one machine: two processes on a node carry
+// one node ID, and with that alone in the row the second one would look like
+// the first - it could take the lock over while the first is still writing,
+// and neither of them could ever notice. runBytes bytes from crypto/rand tell
+// two runs apart past any doubt, and hex keeps the row readable for whoever
+// looks at it.
+func runOwner(node string) (string, error) {
+	b := make([]byte, runBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("migrate: no random number for the owner of the lock: %w", err)
+	}
+	return node + "/" + hex.EncodeToString(b), nil
+}
+
+// freeIn says in how long the lock is free again. The deadline comes out of
+// the database, so it is measured before it is used: only one that a run of
+// ours could have written - later than now, at most lockFor seconds away -
+// gives a number. A row that is gone again or carries anything else names the
+// rule instead, because a number nobody should trust is worse than none.
+func freeIn(ctx context.Context, db *sql.DB, now int64) string {
+	var until int64
+	if err := db.QueryRowContext(ctx, selectUntil, []byte(lockName)).Scan(&until); err == nil &&
+		until > now && until <= now+lockFor {
+		return "it is free again in " + seconds(until-now)
+	}
+	return "it is free again in at most " + seconds(lockFor)
+}
+
+// seconds writes a number of seconds the way it is read aloud.
+func seconds(n int64) string {
+	if n == 1 {
+		return "1 second"
+	}
+	return fmt.Sprintf("%d seconds", n)
+}
+
+// hold reports an error while the migration lock is not this run's own any
 // more. now stands still for the whole run - it comes in, the runner has no
 // clock of its own - so the deadline cannot be moved; what can be done is to
-// notice that the time ran out and somebody else took over, and to stop
-// before writing DDL next to them.
+// notice that somebody else took over, and to stop before writing DDL next to
+// them.
+//
+// The owner is compared by the database. That way the answer is one number
+// however long the row is: a column takes whatever was written into it, and
+// SQLite enforces no length at all.
+//
+// The deadline is looked at too, although this run can never fail on it: its
+// own row says now+lockFor out of the same standing-still now. What the
+// second test does is refuse a row that carries this run's name and a
+// deadline this run did not write - nothing writes one today - so that a
+// deadline that has passed is never read as a lock in hand, whoever wrote it.
 func hold(ctx context.Context, q querier, owner string, now int64) error {
-	var got []byte
 	var until int64
-	switch err := q.QueryRowContext(ctx, selectLock, []byte(lockName)).Scan(&got, &until); {
+	switch err := q.QueryRowContext(ctx, holdLock, []byte(lockName), []byte(owner)).Scan(&until); {
 	case errors.Is(err, sql.ErrNoRows):
 		return errLockLost
 	case err != nil:
 		return err
 	}
-	if string(got) != owner || until <= now {
+	if until <= now {
 		return errLockLost
 	}
 	return nil
@@ -242,9 +309,11 @@ func bootstrap(ctx context.Context, db *sql.DB, d sqlstore.Dialect) error {
 //
 // Held means held, whoever holds it: unlike dbapi.LockTake the runner does
 // not let the same owner take a lock that is still running. Two processes
-// under one node ID are two processes, and this is the lock that keeps two
-// servers from writing DDL at the same time - the one place where taking it
-// twice is worse than waiting. What that costs is a node that restarts inside
+// under one node ID are two processes - and each of them carries a run of its
+// own in the name anyway (runOwner), so neither can ever present the other's
+// - and this is the lock that keeps two servers from writing DDL at the same
+// time, the one place where taking it twice is worse than waiting. What that
+// costs is a node that restarts inside
 // the 900 seconds and has to wait them out, with a message that says so; the
 // runner cannot tell that restart from a second process, and waiting is the
 // safe reading of the two.

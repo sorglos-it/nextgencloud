@@ -82,6 +82,159 @@ type noDuplicate struct{ sqlstore.Dialect }
 
 func (noDuplicate) Duplicate(error) bool { return false }
 
+// spy passes every question on to the database and keeps the last one, so a
+// test can see what hold asks and with how many values.
+type spy struct {
+	db    *sql.DB
+	query string
+	args  []any
+}
+
+func (s *spy) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	s.query, s.args = query, args
+	return s.db.QueryRowContext(ctx, query, args...)
+}
+
+// ownerInTheLock runs the migrations under a node ID and gives back what
+// stood in the lock row while they were running.
+func ownerInTheLock(t *testing.T, node string) string {
+	t.Helper()
+	db := openFile(t)
+	d := &atType{Dialect: sqlstore.SQLite}
+	if err := bootstrap(ctx, db, d); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	// The first type of the first statement: the run is under way and the
+	// lock is taken. Which statement that is does not matter, so nothing here
+	// changes when 0001 does.
+	d.calls, d.nth = 0, 1
+	d.do = func() {
+		if err := db.QueryRowContext(ctx, probeLock, []byte(lockName)).Scan(&got); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := Apply(ctx, db, d, node, 1790000000); err != nil {
+		t.Fatal(err)
+	}
+	return string(got)
+}
+
+// TestTheLockCarriesARunOfItsOwn: the lock belongs to one run, not to one
+// machine. Two processes on a node carry one node ID, so the node ID alone
+// would make the second one look like the first: it could take the lock over
+// while the first is still writing, and neither of them could ever notice.
+func TestTheLockCarriesARunOfItsOwn(t *testing.T) {
+	a, b := ownerInTheLock(t, "node"), ownerInTheLock(t, "node")
+	if !strings.HasPrefix(a, "node") {
+		t.Errorf("the lock does not say which node is migrating: %q", a)
+	}
+	if a == "node" {
+		t.Fatalf("the lock holds the node ID itself, so two runs of one node cannot be told apart: %q", a)
+	}
+	if a == b {
+		t.Errorf("two runs of one node wrote the same owner: %q", a)
+	}
+	if len(a) > sqlstore.MaxText {
+		t.Errorf("the owner is %d bytes, the column takes %d", len(a), sqlstore.MaxText)
+	}
+}
+
+// TestApplyStopsWhenTheSameNameTakesOver is the same story as
+// TestApplyStopsWhenTheLockChangesHands, told with the name the run carries
+// itself: a second process on the same node. It is the one that used to go
+// wrong - the run kept writing, recorded the migration as done and deleted
+// the lock of the process that had taken over.
+func TestApplyStopsWhenTheSameNameTakesOver(t *testing.T) {
+	db := openFile(t)
+	d := &atType{Dialect: sqlstore.SQLite}
+	if err := bootstrap(ctx, db, d); err != nil {
+		t.Fatal(err)
+	}
+	d.calls, d.nth = 0, 1
+	d.do = func() {
+		// What a second process under the same node ID leaves behind when it
+		// takes the lock over after lockFor seconds.
+		if _, err := db.ExecContext(ctx, "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ?",
+			[]byte("node"), int64(1790009999), []byte(lockName)); err != nil {
+			t.Error(err)
+		}
+	}
+	if n, err := Apply(ctx, db, d, "node", 1790000000); err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("the run carried on although another process of the node had taken over: %d, %v", n, err)
+	}
+	if level, err := Level(ctx, db); err != nil || level != 0 {
+		t.Errorf("the migration was recorded as done: level %d, %v", level, err)
+	}
+	// The row belongs to the one who took over, and a run that lost the lock
+	// gives back nothing.
+	var owner []byte
+	if err := db.QueryRowContext(ctx, probeLock, []byte(lockName)).Scan(&owner); err != nil {
+		t.Fatalf("the run deleted the lock of the process that had taken over: %v", err)
+	}
+	if string(owner) != "node" {
+		t.Errorf("the lock now belongs to %q", owner)
+	}
+}
+
+// TestApplyNamesTheTimeLeft: whoever installs NGC is no expert. "in 340
+// seconds" is something to act on, "up to 900 seconds" is a shrug.
+func TestApplyNamesTheTimeLeft(t *testing.T) {
+	db := openFile(t)
+	if err := bootstrap(ctx, db, sqlstore.SQLite); err != nil {
+		t.Fatal(err)
+	}
+	const now = 1790000000
+	if _, err := db.ExecContext(ctx, insertLock, []byte(lockName), []byte("someone-else"), int64(now+340)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Apply(ctx, db, sqlstore.SQLite, "test", now)
+	if err == nil {
+		t.Fatal("the run went on while the lock was held")
+	}
+	if !strings.Contains(err.Error(), "340 seconds") {
+		t.Errorf("the message does not say how long is left: %v", err)
+	}
+	// A deadline out of the database is measured before it is used: one that
+	// no run of ours could have written names the rule instead of a number
+	// nobody should trust.
+	for name, until := range map[string]int64{
+		"a deadline one second past what a run may hold": now + lockFor + 1,
+		"a deadline past every date":                     1 << 62,
+	} {
+		if _, err := db.ExecContext(ctx, "UPDATE ngc_lock SET until = ? WHERE name = ?", until, []byte(lockName)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Apply(ctx, db, sqlstore.SQLite, "test", now)
+		if err == nil || !strings.Contains(err.Error(), "at most 900 seconds") {
+			t.Errorf("%s was passed on: %v", name, err)
+		}
+	}
+}
+
+// TestHoldReadsNoOwnerOutOfTheDatabase: an owner column holds whatever
+// somebody wrote into it, and SQLite enforces no length. So hold asks whether
+// the row is still its own and lets the database compare - then nothing of
+// any length comes into the program, whatever stands there.
+func TestHoldReadsNoOwnerOutOfTheDatabase(t *testing.T) {
+	db := openFile(t)
+	if err := bootstrap(ctx, db, sqlstore.SQLite); err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("x", 2*sqlstore.MaxText)
+	if _, err := db.ExecContext(ctx, insertLock, []byte(lockName), []byte(huge), int64(1790009999)); err != nil {
+		t.Fatal(err)
+	}
+	s := &spy{db: db}
+	if err := hold(ctx, s, "test", 1790000000); !errors.Is(err, errLockLost) {
+		t.Errorf("a lock that is not ours was taken as ours: %v", err)
+	}
+	if len(s.args) != 2 || strings.Contains(strings.ToLower(s.query), "select owner") {
+		t.Errorf("hold carries the owner into the program instead of letting the database compare it: %q, %d values",
+			s.query, len(s.args))
+	}
+}
+
 // tablesEmpty checks that every listed table is there and holds no row.
 // ngc_schema is the exception: it holds what ran.
 func tablesEmpty(t *testing.T, db *sql.DB) {
@@ -179,13 +332,23 @@ func TestApplyWhileLockedBySameOwner(t *testing.T) {
 // instead of writing DDL and a record next to the server that took over.
 func TestApplyStopsWhenTheLockChangesHands(t *testing.T) {
 	db := openFile(t)
+	files, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files[0].Statements) < 2 {
+		t.Fatal("the first migration holds one statement, so there is no middle to stop in")
+	}
 	d := &atType{Dialect: sqlstore.SQLite}
 	// The runner's own tables first: from here on the counter is the
 	// migration's own, and Apply finds them and asks for no type of its own.
 	if err := bootstrap(ctx, db, d); err != nil {
 		t.Fatal(err)
 	}
-	d.calls, d.nth = 0, 3
+	// The first type of the first statement, so the takeover happens in the
+	// middle of the run whatever 0001 holds. A number taken from the file
+	// would quietly test another spot as soon as the file changes.
+	d.calls, d.nth = 0, 1
 	d.do = func() {
 		// What a takeover after lockFor seconds leaves behind.
 		if _, err := db.ExecContext(ctx, "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ?",
@@ -200,10 +363,14 @@ func TestApplyStopsWhenTheLockChangesHands(t *testing.T) {
 	if level, err := Level(ctx, db); err != nil || level != 0 {
 		t.Errorf("the migration was recorded as done: level %d, %v", level, err)
 	}
-	// It stopped where it noticed, instead of running the file to the end.
-	var count int64
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ngc_app").Scan(&count); err == nil {
-		t.Error("the run went on to the next statement")
+	// It stopped at the statement it was in instead of running the file to
+	// the end: one of them is recorded, and the file holds more.
+	var step, done int64
+	if err := db.QueryRowContext(ctx, selectState, files[0].Version).Scan(&step, &done); err != nil {
+		t.Fatal(err)
+	}
+	if step != 1 || done != 0 {
+		t.Errorf("the record says %d of %d statements, done = %d", step, len(files[0].Statements), done)
 	}
 }
 
@@ -218,7 +385,9 @@ func TestApplyGivesTheLockBackAfterACancel(t *testing.T) {
 	if err := bootstrap(ctx, db, d); err != nil {
 		t.Fatal(err)
 	}
-	d.calls, d.nth = 0, 3
+	// Cut short in the middle of the first statement, so this too hangs on
+	// the run and not on the shape of 0001.
+	d.calls, d.nth = 0, 1
 	if _, err := Apply(runCtx, db, d, "test", 1790000000); err == nil {
 		t.Fatal("the cut short run reported success")
 	}
@@ -295,21 +464,26 @@ func TestApplyNeedsATime(t *testing.T) {
 	}
 }
 
-// TestApplyNeedsAnOwner: the owner ends up in a column of its own, so it is
-// bounded before the database sees it.
+// TestApplyNeedsAnOwner: what goes into the column is the node ID and the run
+// part behind it, so the bound counts both and is measured before the
+// database sees anything.
 func TestApplyNeedsAnOwner(t *testing.T) {
 	db := openFile(t)
 	for name, owner := range map[string]string{
 		"no owner":          "",
-		"an owner too long": strings.Repeat("n", sqlstore.MaxText+1),
+		"an owner too long": strings.Repeat("n", maxOwner+1),
 	} {
 		if _, err := Apply(ctx, db, sqlstore.SQLite, owner, 1790000000); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
-	// The longest one the column takes is still good.
-	if _, err := Apply(ctx, db, sqlstore.SQLite, strings.Repeat("n", sqlstore.MaxText), 1790000000); err != nil {
+	// The longest node ID is still good, and what it writes into the lock
+	// stays inside the column.
+	if _, err := Apply(ctx, db, sqlstore.SQLite, strings.Repeat("n", maxOwner), 1790000000); err != nil {
 		t.Errorf("the longest owner was refused: %v", err)
+	}
+	if got := ownerInTheLock(t, strings.Repeat("n", maxOwner)); len(got) > sqlstore.MaxText {
+		t.Errorf("the owner of the longest node is %d bytes, the column takes %d", len(got), sqlstore.MaxText)
 	}
 }
 
