@@ -99,6 +99,7 @@ func (s *spy) QueryRowContext(ctx context.Context, query string, args ...any) *s
 // stood in the lock row while they were running.
 func ownerInTheLock(t *testing.T, node string) string {
 	t.Helper()
+	firstStatementHasAType(t)
 	db := openFile(t)
 	d := &atType{Dialect: sqlstore.SQLite}
 	if err := bootstrap(ctx, db, d); err != nil {
@@ -146,6 +147,7 @@ func TestTheLockCarriesARunOfItsOwn(t *testing.T) {
 // wrong - the run kept writing, recorded the migration as done and deleted
 // the lock of the process that had taken over.
 func TestApplyStopsWhenTheSameNameTakesOver(t *testing.T) {
+	firstStatementHasAType(t)
 	db := openFile(t)
 	d := &atType{Dialect: sqlstore.SQLite}
 	if err := bootstrap(ctx, db, d); err != nil {
@@ -229,9 +231,32 @@ func TestHoldReadsNoOwnerOutOfTheDatabase(t *testing.T) {
 	if err := hold(ctx, s, "test", 1790000000); !errors.Is(err, errLockLost) {
 		t.Errorf("a lock that is not ours was taken as ours: %v", err)
 	}
-	if len(s.args) != 2 || strings.Contains(strings.ToLower(s.query), "select owner") {
-		t.Errorf("hold carries the owner into the program instead of letting the database compare it: %q, %d values",
-			s.query, len(s.args))
+	// What is checked is the property, not how many values the query happens
+	// to bind: the owner is compared in the database and never read out of it.
+	// A question that grows another condition stays right; one that starts
+	// reading the column does not.
+	if strings.Contains(strings.ToLower(s.query), "select owner") || !strings.Contains(s.query, "owner = ?") {
+		t.Errorf("hold does not let the database compare the owner: %q", s.query)
+	}
+}
+
+// firstStatementHasAType guards the tests that stop the runner at the first
+// Dialect.Type call. That call is in the first statement of the first
+// migration only while that statement carries a {{...}}: a CREATE INDEX at
+// the top of 0001 would move the spot without a word, and the tests would go
+// red with a message about something else entirely.
+func firstStatementHasAType(t *testing.T) {
+	t.Helper()
+	files, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files[0].Statements) < 2 {
+		t.Fatal("the first migration holds one statement, so there is no middle to stop in")
+	}
+	if !strings.Contains(files[0].Statements[0], "{{") {
+		t.Fatal("the first statement of the first migration carries no {{...}}, so the first Dialect.Type call " +
+			"is no longer inside it - point the tests at the statement that carries one")
 	}
 }
 
@@ -331,13 +356,11 @@ func TestApplyWhileLockedBySameOwner(t *testing.T) {
 // middle. From there on the runner touches nothing: it stops with a message
 // instead of writing DDL and a record next to the server that took over.
 func TestApplyStopsWhenTheLockChangesHands(t *testing.T) {
+	firstStatementHasAType(t)
 	db := openFile(t)
 	files, err := List()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(files[0].Statements) < 2 {
-		t.Fatal("the first migration holds one statement, so there is no middle to stop in")
 	}
 	d := &atType{Dialect: sqlstore.SQLite}
 	// The runner's own tables first: from here on the counter is the
@@ -378,6 +401,7 @@ func TestApplyStopsWhenTheLockChangesHands(t *testing.T) {
 // its lock back. Over the context of the run the DELETE would be cut short
 // too, and the lock would sit there for the rest of the 900 seconds.
 func TestApplyGivesTheLockBackAfterACancel(t *testing.T) {
+	firstStatementHasAType(t)
 	db := openFile(t)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

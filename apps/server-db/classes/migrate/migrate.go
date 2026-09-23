@@ -217,6 +217,13 @@ func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, no
 // and neither of them could ever notice. runBytes bytes from crypto/rand tell
 // two runs apart past any doubt, and hex keeps the row readable for whoever
 // looks at it.
+//
+// Whoever wants the node ID back out of the owner: do not cut at the last
+// slash. A node ID may carry one itself, and the runner cuts nothing back -
+// the run part is always the last 2*runBytes characters, so the node ID is
+// everything in front of the slash before them. Apply takes a node ID of at
+// most maxOwner bytes (991) for exactly this reason: node ID, slash and run
+// part together stay inside sqlstore.MaxText.
 func runOwner(node string) (string, error) {
 	b := make([]byte, runBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -313,10 +320,9 @@ func bootstrap(ctx context.Context, db *sql.DB, d sqlstore.Dialect) error {
 // own in the name anyway (runOwner), so neither can ever present the other's
 // - and this is the lock that keeps two servers from writing DDL at the same
 // time, the one place where taking it twice is worse than waiting. What that
-// costs is a node that restarts inside
-// the 900 seconds and has to wait them out, with a message that says so; the
-// runner cannot tell that restart from a second process, and waiting is the
-// safe reading of the two.
+// costs is a node that restarts inside the 900 seconds and has to wait them
+// out, with a message that says so; the runner cannot tell that restart from
+// a second process, and waiting is the safe reading of the two.
 func take(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, now int64) (bool, error) {
 	res, err := db.ExecContext(ctx, takeLock, []byte(owner), now+lockFor, []byte(lockName), now)
 	if err != nil {
