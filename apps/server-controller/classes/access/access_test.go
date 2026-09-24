@@ -6,6 +6,8 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
@@ -249,6 +251,38 @@ func TestCheckRefusesReplayedTask(t *testing.T) {
 	}
 	d, cl := Check(context.Background(), r)
 	wantClose(t, d, cl, wire.CodeVerify)
+}
+
+// TestCheckRefusesReplayedTaskAtOnce is the replay in the same instant:
+// several channels of one tunnel carry the same signed task, and only the
+// store can tell them apart. Exactly one may run.
+func TestCheckRefusesReplayedTaskAtOnce(t *testing.T) {
+	f := newFixture(t)
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+	r := f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)))
+	st := state.New(memstore.New())
+	defer st.Close()
+	r.Tasks = st
+	const channels = 16
+	var wg sync.WaitGroup
+	var open atomic.Int64
+	for range channels {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, cl := Check(context.Background(), r)
+			switch {
+			case cl == nil:
+				open.Add(1)
+			case cl.Code != wire.CodeVerify:
+				t.Errorf("CLOSE %s, want E_VERIFY for a task that has run", cl.Code)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := open.Load(); got != 1 {
+		t.Fatalf("%d of %d channels opened, want exactly one", got, channels)
+	}
 }
 
 func TestCheckRefusesRootTaskWithoutRootPermission(t *testing.T) {
