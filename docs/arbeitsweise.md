@@ -33,7 +33,33 @@ während sie den alten behoben.
 - Zahlen altern: „18 Mikrosekunden" gilt für **einen** Rechner. Schreib
   Verhältnisse, oder sag dazu, worauf gemessen wurde.
 
-## 2. Ein Test, dessen Voraussetzung nicht hergestellt ist, beweist nichts
+**Die Durchsicht ist ein eigener Arbeitsschritt, kein Nebenbei.** Ein Umsetzer
+hat sie zum Schluss getrennt gemacht und dabei **sechs** weitere falsche Sätze
+gefunden — zweimal dieselbe Klasse, im selben Commit, der sie reparieren
+sollte. Wer sie nebenbei macht, findet sie nicht.
+
+## 2. Grüne Tests beweisen nichts, wenn sie nicht rot werden können
+
+Der teuerste Befund dieses Projekts: ein Prüfer hat einen absichtlich
+**falschen** Baustein gebaut — einen, der erst liest und dann schreibt, wo es
+eine einzige Anweisung sein muss. **Kein einziger Test des Repos hat es
+bemerkt**: nicht der gemeinsame Vertragstest, nicht ein eigens geschriebener
+Wettlauf mit 256 × 16 gleichzeitigen Zugriffen.
+
+Zwei Gründe, und beide sind lehrreich:
+
+- Der Vertragstest ließ beim Wettlauf das **Anlegen** konkurrieren, nie das
+  **Verbrauchen**. Die Eigenschaft, um die es ging, war überhaupt nicht geprüft.
+- Und die Testdatenbank **rettete** den falschen Baustein zufällig: der zweite
+  Zugriff prallte ab, die Transaktion wurde wiederholt, und beim zweiten Anlauf
+  stimmte das Ergebnis. Auf der Produktionsdatenbank wäre derselbe Code falsch.
+
+**Bau den falschen Baustein und sieh nach, ob dein Test ihn fängt.** Eine
+Mutation, die grün bleibt, ist der Beweis, dass die Prüfung fehlt. Dasselbe hat
+an anderer Stelle gezeigt, dass eine Sperre fremde Sperren löschen könnte, ohne
+dass ein Test rot wird.
+
+## 3. Ein Test, dessen Voraussetzung nicht hergestellt ist, beweist nichts
 
 Ein Pflichttest **hoffte** auf einen blockierten Schreibvorgang, statt ihn
 herzustellen. Auf Windows entstand er, auf Linux schluckte ihn der Puffer nach
@@ -45,7 +71,7 @@ sicher. Fünf Läufe grün, Streuung 440 ms.
 **Stell die Bedingung her. Und lass den Test laut scheitern, wenn sie doch nicht
 entsteht** — sonst rutscht er still durch.
 
-## 3. Eine Grenze ist erst belegt, wenn ein Fall beide Seiten festnagelt
+## 4. Eine Grenze ist erst belegt, wenn ein Fall beide Seiten festnagelt
 
 Genau auf der Grenze muss es durchgehen, eins darüber abgelehnt werden. Ein
 Test, der nur die Überschreitung prüft, bliebe auch grün, wenn die Grenze bei
@@ -55,7 +81,7 @@ Gefunden: ein Schutz gegen Zurückstellen der Uhr brach ab **genau zwei
 Stunden** — der Test maß bei einer Stunde und einer Sekunde, also knapp
 darunter. Neun Abstände später war es dicht.
 
-## 4. Miss, ob dein Messgerät überhaupt misst
+## 5. Miss, ob dein Messgerät überhaupt misst
 
 Ein Zeittest verglich zwei Codewege und war „fünfzig Läufe ohne Flattern" grün.
 Nachgemessen: **23 von 25 Einzelmessungen waren glatt null.** Die Uhr des
@@ -66,7 +92,7 @@ Bei Zeitmessungen: Stapel von mindestens 2000 Läufen, verschränkte Arme, und
 eine **Null-Kontrolle** (derselbe Arm zweimal). Oder ganz ohne Uhr bauen — das
 ist fast immer möglich und immer besser.
 
-## 5. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
+## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
 Abdeckung tragen, **drückt er den Annahme-Anteil aktiv herunter** — gemessen von
@@ -79,7 +105,7 @@ und miss den Anteil über die **festen Saaten**.
 Und prüf die Prüfung: in einem Fall erhöhte der Kanarienvogel **beide** Zähler,
 sodass die Anteilsschranke rechnerisch nie anschlagen konnte.
 
-## 6. Ein Wächter, der auf gutem Code rot wird, wird abgeschaltet
+## 7. Ein Wächter, der auf gutem Code rot wird, wird abgeschaltet
 
 Ein Quelltext-Wächter über SQL brauchte fünf Runden. Zwei Erkenntnisse:
 
@@ -98,7 +124,7 @@ Und: **jede Runde neue Mechanik bringt neue Löcher.** Ab einem Punkt heißt die
 Anweisung „schließen und Zusagen engen, **kein neuer Erkennungsmechanismus**" —
 Verbote sind erlaubt, Erkennung nicht.
 
-## 7. Ein Fehler im Auftrag ist ein Fund, kein Hindernis
+## 8. Ein Fehler im Auftrag ist ein Fund, kein Hindernis
 
 **Acht** Auftragsfehler haben Umsetzer in NGC gefunden. Jedes Mal war die
 Meldung wertvoller als der Code. Darunter:
@@ -112,7 +138,7 @@ Meldung wertvoller als der Code. Darunter:
 **Folge dem eingefrorenen Vertrag, nicht dem Auftrag** — das wurde dreimal so
 entschieden. Und melde es, statt es still zu umgehen.
 
-## 8. Die Anweisung des Koordinators steht unter derselben Regel
+## 9. Die Anweisung des Koordinators steht unter derselben Regel
 
 **Dreimal** hat ein Umsetzer eine Vorgabe von mir berichtigt, weil ich eine
 Nebenwirkung nicht durchgerechnet hatte. Jedes Mal hatte er recht.
@@ -125,7 +151,7 @@ es ging.
 
 **Kommt dir eine Anweisung nicht stimmig vor: frag, bevor du sie ausführst.**
 
-## 9. Im Zweifel die sichere Seite
+## 10. Im Zweifel die sichere Seite
 
 Steht Sicherheit gegen Bequemlichkeit, gegen Geschwindigkeit oder gegen Aufwand:
 **sichere Seite, Preis in einem Satz nennen, weitermachen.** Nur fragen, wenn
@@ -139,12 +165,12 @@ Drittel eines Zeitunterschieds wegnimmt und dafür eine **unbegrenzte,
 unauthentifizierte Schreiberlaubnis** auf eine Tabelle ohne Aufräumen eintauscht,
 ist keiner.
 
-## 10. Zwei Commits: erst der rote Test, dann der Code
+## 11. Zwei Commits: erst der rote Test, dann der Code
 
 Sonst ist „rot vor grün" nicht belegbar. Ein Prüfer konnte es nicht bestätigen,
 weil beides in einem Commit lag.
 
-## 11. Der Prüfer greift an, statt zu lesen
+## 12. Der Prüfer greift an, statt zu lesen
 
 Was in NGC funktioniert hat:
 
@@ -158,7 +184,7 @@ Was in NGC funktioniert hat:
 - **Zählen statt lesen.** „Keine Datei bindet X ein" wurde ausgezählt: neun
   geprüft, null Treffer, eine absichtliche Ausnahme in den Testdaten.
 
-## 12. Was ehrlich offen bleibt, bleibt ehrlich offen
+## 13. Was ehrlich offen bleibt, bleibt ehrlich offen
 
 „Ungeklärt" ist erlaubt — **unbegründet weglassen** nicht.
 
@@ -178,7 +204,9 @@ das — und der Koordinator entscheidet, ob sie gebraucht wird.
 1. Auftrag lesen. Widersprüche **melden**, nicht umgehen.
 2. Erst der Test, der fehlschlägt — eigener Commit.
 3. Dann der Code. Grenzen beidseitig. Voraussetzungen herstellen.
-4. Jeden Satz, den du schreibst, gegen den Code lesen.
-5. Zahlen messen, Herkunft dazuschreiben.
-6. Im Zweifel die sichere Seite, Preis nennen.
-7. Was nicht messbar war, offen melden.
+4. **Bau den falschen Baustein** und sieh nach, ob dein Test ihn fängt.
+5. Jeden Satz, den du schreibst, gegen den Code lesen — als **eigenen Schritt**
+   am Ende, nicht nebenbei.
+6. Zahlen messen, Herkunft dazuschreiben.
+7. Im Zweifel die sichere Seite, Preis nennen.
+8. Was nicht messbar war, offen melden.
