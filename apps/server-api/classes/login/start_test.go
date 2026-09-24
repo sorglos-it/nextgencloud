@@ -222,6 +222,12 @@ func TestStartSaysSoWhenTheNonceCannotBeKept(t *testing.T) {
 	if s := log.String(); strings.Contains(s, fx.PasswordName) || strings.Contains(s, fx.PasswordUser) {
 		t.Fatalf("the line names the request: %s", s)
 	}
+	// Nor does it carry the database's own error. The only values a driver
+	// could quote back from that statement are the nonce and the user ID, and
+	// a nonce in the server log is what the standing rule keeps out of it.
+	if s := log.String(); strings.Contains(s, noOnceError) {
+		t.Fatalf("the line carries the error of the database: %s", s)
+	}
 	// One second before the window is over it is still quiet.
 	now = testNow + nonceWarnTTL - 1
 	raw(t, h, fx.PasswordName)

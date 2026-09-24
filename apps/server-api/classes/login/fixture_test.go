@@ -183,11 +183,15 @@ func (c *callLog) LogAdd(ctx context.Context, e core.LogEntry) error {
 }
 
 // noOnce reads but cannot write a one-time value: a full disk, a read replica,
-// a locked table, a quota that ran out.
+// a locked table, a quota that ran out. Its error stands for the one a real
+// driver hands back, which may quote the values of the statement -- here the
+// nonce and the user ID -- and which therefore never reaches the log.
 type noOnce struct{ dbapi.Store }
 
+const noOnceError = "memstore: the one-time values cannot be written"
+
 func (noOnce) OnceCreate(context.Context, string, []byte, string, int64) error {
-	return errors.New("memstore: the one-time values cannot be written")
+	return errors.New(noOnceError)
 }
 
 // strictID refuses an empty user ID. Nothing in the contract says it may not:

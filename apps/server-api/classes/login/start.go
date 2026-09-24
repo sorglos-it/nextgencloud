@@ -152,12 +152,18 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		// to; whoever runs it would be left with "nothing works and I do not
 		// know why". So it is said out loud -- once per nonceWarnTTL and
 		// without a word of the request, so that it costs no answer and cannot
-		// be made to fill a disk by asking often. What the line carries besides
-		// the fixed text is the database's own error.
+		// be made to fill a disk by asking often.
+		//
+		// The line is the fixed text and nothing else, the error of the
+		// database included. A driver may quote the values of the statement
+		// back in its error, and the values of this one are the nonce and the
+		// user ID: a nonce belongs in no log, not even shortened (CLAUDE.md,
+		// "Regeln für sicheres Programmieren"). What the line has to say -- the
+		// database cannot be written -- it says without them, and whoever needs
+		// the cause gets it from the database itself.
 		if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil &&
 			h.warn.take(now, nonceWarnTTL) {
-			slog.Error("a login challenge could not be kept; logins fail until the database can be written again",
-				"error", err)
+			slog.Error("a login challenge could not be kept; logins fail until the database can be written again")
 		}
 	}
 	if b := mustJSON(w, c); b != nil {
