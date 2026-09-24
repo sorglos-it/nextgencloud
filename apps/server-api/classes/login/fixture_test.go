@@ -203,9 +203,47 @@ func (c *callLog) OnceCreate(ctx context.Context, kind string, value []byte, dat
 	return c.Store.OnceCreate(ctx, kind, value, data, expires)
 }
 
+func (c *callLog) OnceUse(ctx context.Context, kind string, value []byte, now int64) (string, error) {
+	c.add("OnceUse " + kind)
+	return c.Store.OnceUse(ctx, kind, value, now)
+}
+
 func (c *callLog) LogAdd(ctx context.Context, e core.LogEntry) error {
 	c.add("LogAdd")
 	return c.Store.LogAdd(ctx, e)
+}
+
+// sessionWatch says whether a session was ever written. It is the canary of
+// FuzzFinish: it is asked after every single body, and no body the fuzzer can
+// build steers around it -- a session is written here or nowhere.
+type sessionWatch struct {
+	dbapi.Store
+	mu   sync.Mutex
+	seen bool
+}
+
+func (s *sessionWatch) SessionPut(ctx context.Context, row dbapi.Session) error {
+	s.mu.Lock()
+	s.seen = true
+	s.mu.Unlock()
+	return s.Store.SessionPut(ctx, row)
+}
+
+// made reports whether a session was written since this store was wrapped.
+func (s *sessionWatch) made() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seen
+}
+
+// clearCounting removes what the counting of failed logins left behind. A day
+// past the clock of these tests is past the keep time of every row they write,
+// and lock.Purge touches its own rows and no other setting.
+func clearCounting(tb testing.TB, h *Handler) {
+	tb.Helper()
+	if err := lock.Purge(ctx, h.S.DB, testNow+24*3600); err != nil {
+		tb.Fatalf("purge: %v", err)
+	}
 }
 
 // noOnce reads but cannot write a one-time value: a full disk, a read replica,

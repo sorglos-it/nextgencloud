@@ -12,6 +12,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
 
 // startSeeds returns the bodies FuzzStartBody begins with: two names the trust
@@ -162,6 +163,112 @@ func FuzzStartBody(f *testing.F) {
 		now, err := settings(h)
 		if err != nil || !maps.Equal(now, before) {
 			t.Fatalf("settings after %q are %v, were %v (%v)", body, now, before, err)
+		}
+	})
+}
+
+// finishSeeds returns the bodies FuzzFinish begins with. The first three are
+// real: a certificate of a user of this installation, the proof over exactly
+// its bytes and everything else the API asks for -- only the nonce is one
+// nobody ever handed out, so they run through every check and are refused at
+// the last one. Without such a body among the seeds a green run would say
+// nothing about the path behind the parser, and that path is where a session
+// is made. The rest are shapes the parser turns away.
+//
+// They are built without asking the handler for a challenge, so they are the
+// same bytes in every run and a corpus keeps its meaning.
+func finishSeeds(tb testing.TB, h *Handler, fx fixture) [][]byte {
+	tb.Helper()
+	c := session.LoginChallenge{
+		User: fx.PasswordUser, Nonce: madeUpNonce,
+		Now: testNow, MaxLifetime: h.S.Cfg.SessionLifetime,
+	}
+	return [][]byte{
+		finishBody(tb, fx, fx.Password, c, ""),
+		finishBody(tb, fx, fx.Password, c, "000000"),
+		finishBody(tb, fx, trusttest.NewSigner(200), c, ""),
+		[]byte(`{"cert":"AAAA","proof":{"kind":"password","kid":"AAAAAAAAAAAAAAAAAAAAAA","sig":"AA"}}`),
+		[]byte(`{"cert":"","proof":{}}`),
+		[]byte(`{}`),
+		[]byte("null"),
+	}
+}
+
+// TestFinishSeedsReachTheLastCheck is what makes a green FuzzFinish mean
+// something, and it is measured over the seeds and not over a run: a fuzzer
+// steers where the coverage is, and the coverage of this handler lies in the
+// ways it refuses. So the share of bodies that get through to the far end is
+// counted here, on a fixed list nobody steers.
+//
+// At least one seed has to reach the nonce, which is the last check of all:
+// it is behind the proof, behind the lifetime, behind the password of a role
+// that asks for one and behind TOTP. At least one has to be turned away by the
+// parser, or the target would never try the shape the browser really sends.
+// And none of them makes a session.
+func TestFinishSeedsReachTheLastCheck(t *testing.T) {
+	h, fx := newFixture(t)
+	seeds := finishSeeds(t, h, fx)
+	watch := &sessionWatch{Store: h.S.DB}
+	rec := &callLog{Store: watch}
+	h.S.DB = rec
+	deep, refused := 0, 0
+	for _, body := range seeds {
+		clearCounting(t, h)
+		rec.reset()
+		w := httptest.NewRecorder()
+		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+		switch w.Code {
+		case 400:
+			refused++
+		case 401:
+			if slices.Contains(rec.list(), "OnceUse "+dbapi.OnceNonce) {
+				deep++
+			}
+		default:
+			t.Fatalf("a seed answered %d: %q", w.Code, body)
+		}
+	}
+	if deep == 0 {
+		t.Fatalf("no seed of %d reached the nonce: the target only ever tries the door", len(seeds))
+	}
+	if refused == 0 {
+		t.Fatal("no seed was turned away by the parser")
+	}
+	if watch.made() {
+		t.Fatal("a seed made a session")
+	}
+}
+
+// FuzzFinish feeds POST session.PathLoginFinish with everything. Whatever
+// comes, the answer is a status of the contract, no cookie leaves the handler
+// and no session row is written. The last two are the canary, and they are
+// asked after every single body: a body that made a session would be caught by
+// the very next one too, however the run went.
+func FuzzFinish(f *testing.F) {
+	h, fx := newFixture(f)
+	watch := &sessionWatch{Store: h.S.DB}
+	h.S.DB = watch
+	for _, body := range finishSeeds(f, h, fx) {
+		f.Add(body)
+	}
+	f.Fuzz(func(t *testing.T, body []byte) {
+		// The counting of failed logins is put back to nothing before every
+		// body. Without it the third body of one bucket shuts it, and from
+		// there every following one is answered 429 in front of the whole
+		// login -- the run would be spent at the door this target is about.
+		clearCounting(t, h)
+		w := httptest.NewRecorder()
+		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+		switch w.Code {
+		case 400, 401, 413, 429, 500, 503:
+		default:
+			t.Fatalf("status %d for %q", w.Code, body)
+		}
+		if len(w.Result().Cookies()) != 0 {
+			t.Fatalf("a fuzzed body got a cookie: %q", body)
+		}
+		if watch.made() {
+			t.Fatalf("a fuzzed body made a session: %q", body)
 		}
 	})
 }

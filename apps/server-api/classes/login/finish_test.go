@@ -61,8 +61,10 @@ func TestFinishMakesASession(t *testing.T) {
 	if bytes.Contains(row.APIKey, sessionKeyOf(t, h, row)) {
 		t.Fatal("the private session key lies in the clear")
 	}
-	// A login that worked clears what failures were counted for the name and
-	// writes the row back without them.
+	// A login that worked writes the row back: the row's own two numbers at
+	// zero and the time of this login, which ngc.users/list shows. What the
+	// wait is counted in is another thing entirely and stays where it is --
+	// see TestFinishLeavesTheCountingAlone.
 	user, err := h.S.DB.UserGet(ctx, fx.PasswordUser)
 	if err != nil || user.Failures != 0 || user.LastLogin != h.S.Now() {
 		t.Fatalf("user row %+v (%v)", user, err)
@@ -449,12 +451,13 @@ func passwordToo(t *testing.T, h *Handler, fx fixture) (passkey, password trustt
 	return fx.Passkey, extra
 }
 
-// certBytes builds the client certificate the user signs.
-func certBytes(t *testing.T, fx fixture, c session.LoginChallenge, s trusttest.Signer) []byte {
-	t.Helper()
+// certBytes builds the client certificate the user signs. It takes testing.TB
+// and not *testing.T, because FuzzFinish builds its seeds from *testing.F.
+func certBytes(tb testing.TB, fx fixture, c session.LoginChallenge, s trusttest.Signer) []byte {
+	tb.Helper()
 	dh, err := noisep.Keypair(zeroReader{})
 	if err != nil {
-		t.Fatalf("keypair: %v", err)
+		tb.Fatalf("keypair: %v", err)
 	}
 	cert := session.ClientCert{
 		Installation: fx.Installation, User: c.User, Nonce: c.Nonce,
@@ -463,24 +466,24 @@ func certBytes(t *testing.T, fx fixture, c session.LoginChallenge, s trusttest.S
 	}
 	b, err := json.Marshal(cert)
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		tb.Fatalf("marshal: %v", err)
 	}
 	return b
 }
 
 // finishBody builds the body of login/finish: the certificate, the proof over
 // exactly its bytes and, if wanted, a TOTP code.
-func finishBody(t *testing.T, fx fixture, s trusttest.Signer, c session.LoginChallenge, code string) []byte {
-	t.Helper()
-	return finishWith(t, fx, s, nil, c, code)
+func finishBody(tb testing.TB, fx fixture, s trusttest.Signer, c session.LoginChallenge, code string) []byte {
+	tb.Helper()
+	return finishWith(tb, fx, s, nil, c, code)
 }
 
 // finishWith adds the second proof a role with passwordToo asks for; it covers
 // exactly the same bytes as the first.
-func finishWith(t *testing.T, fx fixture, s trusttest.Signer, pw *trusttest.Signer,
+func finishWith(tb testing.TB, fx fixture, s trusttest.Signer, pw *trusttest.Signer,
 	c session.LoginChallenge, code string) []byte {
-	t.Helper()
-	payload := certBytes(t, fx, c, s)
+	tb.Helper()
+	payload := certBytes(tb, fx, c, s)
 	f := session.LoginFinish{Cert: enc.Bytes(payload), Proof: s.Prove(sign.PurposeClientCert, payload), TOTP: code}
 	if pw != nil {
 		p := pw.Prove(sign.PurposeClientCert, payload)
@@ -488,7 +491,7 @@ func finishWith(t *testing.T, fx fixture, s trusttest.Signer, pw *trusttest.Sign
 	}
 	b, err := json.Marshal(f)
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		tb.Fatalf("marshal: %v", err)
 	}
 	return b
 }
