@@ -3733,14 +3733,22 @@ export function encodeOpen(o) {
 CLOSE, Codes und Meldungen:
 
 ```js
+// `__proto__: null`, damit die Tabelle nichts erbt. Hier wird zwar nur mit
+// festen Namen zugegriffen, aber eine Codetabelle mit Erbschaft ist die Form,
+// die eine Datei weiter zur Lücke wurde (siehe MESSAGES).
 export const CODES = {
+  __proto__: null,
   FORBIDDEN: "E_FORBIDDEN", UNREACHABLE: "E_UNREACHABLE", EXIT: "E_EXIT", TIMEOUT: "E_TIMEOUT",
   LIMIT: "E_LIMIT", PROTOCOL: "E_PROTOCOL", CONFIRM: "E_CONFIRM", LICENSE: "E_LICENSE",
   NOTFOUND: "E_NOTFOUND", VERIFY: "E_VERIFY", INTERNAL: "E_INTERNAL", TOOLARGE: "E_TOOLARGE",
   LOGIN: "E_LOGIN", LOCKED: "E_LOCKED",
 };
 
-const MESSAGES = {
+// Eine Map, kein Objektliteral: bei `{…}` ist `"toString" in MESSAGES` wahr und
+// `MESSAGES["constructor"]` gibt eine Funktion zurück — der Prüfer unten hätte
+// `{"status":"error","code":"toString"}` angenommen und `message("constructor")`
+// mit einer Funktion beantwortet. Go weist beides ab. In Aufgabe 10 gemessen.
+const MESSAGES = new Map(Object.entries({
   E_FORBIDDEN: "Keine Berechtigung.",
   E_UNREACHABLE: "Dienst nicht erreichbar.",
   E_EXIT: "Dienst mit Fehler beendet.",
@@ -3755,9 +3763,9 @@ const MESSAGES = {
   E_TOOLARGE: "Zu viele Daten.",
   E_LOGIN: "Anmeldung fehlgeschlagen.",
   E_LOCKED: "Zu viele Fehlversuche. Bitte später erneut versuchen.",
-};
+}));
 
-export const message = (code) => MESSAGES[code] ?? "";
+export const message = (code) => MESSAGES.get(code) ?? "";
 
 const closeShape = S({ status: str, code: str, message: str, exitCode: P({}) });
 const closeBudget = new Budget({ size: MAX_CLOSE_PAYLOAD });
@@ -3769,7 +3777,7 @@ export function parseClose(p) {
   if (c.status === "ok") {
     if (c.code !== "") throw new BadFrame("close");
   } else if (c.status === "error") {
-    if (!(c.code in MESSAGES)) throw new BadFrame("close");
+    if (!MESSAGES.has(c.code)) throw new BadFrame("close");
   } else {
     throw new BadFrame("close");
   }
