@@ -503,24 +503,31 @@ func TestCheckRefusesDeactivatedApp(t *testing.T) {
 // certificate and proves nothing at all: a row of the database under a core
 // app ID. core.Lookup does not know the service, so it falls to the app
 // branch, and wire.Open.Validate forbids the end-to-end handshake for a core
-// app ID — the one accepted channel that would carry a user without a task
-// and without a handshake. A core app ID is never an app of this controller.
+// app ID — an accepted channel there would carry a user with nothing that
+// binds them to it. What makes an ID a core app ID is the prefix
+// (wire.CoreApp), not the three names, so every one of them is asked.
 func TestCheckRefusesAppChannelForCoreApp(t *testing.T) {
 	f := newFixture(t)
-	r := f.request(f.withUser(t, wire.Open{App: core.AppStore, Service: testService, Action: testAction,
-		Window: wire.DefaultWindow}))
-	// The row is there, and its manifest is the one of a real app: only the
-	// key it is filed under says ngc.store.
-	rows := installed()
-	rows[core.AppStore] = dbapi.App{ID: core.AppStore, Version: "1.0.0", Store: trust.StoreGlobal, Node: node,
-		Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
-	r.Apps = rows
-	d, cl := Check(context.Background(), r)
-	if cl == nil {
-		t.Fatalf("channel accepted for a core app ID: user %q, task %v, handshake %d bytes",
-			d.User, d.Task != nil, len(d.Opened.Open.E2E))
+	// ngc.other is no app of this installation and no core app of the
+	// contract either: the prefix alone has to be enough.
+	for _, app := range []string{core.AppDesktop, core.AppUsers, core.AppStore, "ngc.other"} {
+		t.Run(app, func(t *testing.T) {
+			r := f.request(f.withUser(t, wire.Open{App: app, Service: testService, Action: testAction,
+				Window: wire.DefaultWindow}))
+			// The row is there, and its manifest is the one of a real app:
+			// only the key it is filed under says ngc.
+			rows := installed()
+			rows[app] = dbapi.App{ID: app, Version: "1.0.0", Store: trust.StoreGlobal, Node: node,
+				Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
+			r.Apps = rows
+			d, cl := Check(context.Background(), r)
+			if cl == nil {
+				t.Fatalf("channel accepted for a core app ID: user %q, task %v, handshake %d bytes",
+					d.User, d.Task != nil, len(d.Opened.Open.E2E))
+			}
+			wantClose(t, d, cl, wire.CodeNotFound)
+		})
 	}
-	wantClose(t, d, cl, wire.CodeNotFound)
 }
 
 // TestCheckRefusesActionOnAnotherService is the escalation the OPEN would buy
