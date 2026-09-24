@@ -557,13 +557,19 @@ func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
 
 // argLits are the literals that stand as an argument of a call, or are called
 // on the spot. Those run where they stand; a literal given a name runs where
-// the name is called, and it is read there instead. What a defer or a go
-// carries is read nowhere at all - see the note on the rule.
+// the name is called, and it is read there instead. A defer or a go is read
+// the same way as in firstStmtIn, through onTheSpot: a literal invoked inside
+// one of its arguments runs at the defer, the one the defer carries does not.
 func argLits(n ast.Node) map[*ast.FuncLit]bool {
 	out := map[*ast.FuncLit]bool{}
-	ast.Inspect(n, func(x ast.Node) bool {
-		switch x.(type) {
-		case *ast.DeferStmt, *ast.GoStmt:
+	var visit func(ast.Node) bool
+	visit = func(x ast.Node) bool {
+		switch s := x.(type) {
+		case *ast.DeferStmt:
+			onTheSpot(s.Call, visit)
+			return false
+		case *ast.GoStmt:
+			onTheSpot(s.Call, visit)
 			return false
 		}
 		call, ok := x.(*ast.CallExpr)
@@ -579,7 +585,8 @@ func argLits(n ast.Node) map[*ast.FuncLit]bool {
 			out[lit] = true
 		}
 		return true
-	})
+	}
+	ast.Inspect(n, visit)
 	return out
 }
 
@@ -653,6 +660,20 @@ func (c *checker) atDriver(sel *ast.SelectorExpr) bool {
 	return t == nil || !sameNamed(t, c.self)
 }
 
+// onTheSpot reads what a deferred or started call works out where it stands:
+// its arguments, and the receiver of a method. Go settles those at the defer
+// or the go and keeps only the call itself for later, so a statement in them
+// runs before everything below. Only the body of the called function is left
+// out, and the note beside the rule says so.
+func onTheSpot(call *ast.CallExpr, visit func(ast.Node) bool) {
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+		ast.Inspect(sel.X, visit)
+	}
+	for _, a := range call.Args {
+		ast.Inspect(a, visit)
+	}
+}
+
 // sameNamed compares two types without minding how many pointers stand in
 // front of them.
 func sameNamed(a, b types.Type) bool {
@@ -694,7 +715,8 @@ func sameNamed(a, b types.Type) bool {
 // and TestEverySQLIsAConstant - through the second one because what it gave
 // the driver was a constant, only not the one it was handed.
 //
-// What a defer or a go carries is not read at all: see the note on the rule.
+// Of a defer or a go, only the body of the called function is left out; what
+// it settles on the spot is read there: see the note on the rule.
 type says int
 
 const (
@@ -706,13 +728,18 @@ const (
 
 func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, seenLit map[*ast.FuncLit]bool) (verdict says, pos token.Pos) {
 	here := argLits(n)
-	ast.Inspect(n, func(x ast.Node) bool {
+	var visit func(ast.Node) bool
+	visit = func(x ast.Node) bool {
 		if verdict != saysNothing || x == nil {
 			return false
 		}
-		switch x.(type) {
-		case *ast.DeferStmt, *ast.GoStmt:
-			return false // runs at a time this reading does not name
+		switch s := x.(type) {
+		case *ast.DeferStmt:
+			onTheSpot(s.Call, visit)
+			return false
+		case *ast.GoStmt:
+			onTheSpot(s.Call, visit)
+			return false
 		}
 		if lit, ok := x.(*ast.FuncLit); ok && !here[lit] {
 			return false // it runs where its name is called
@@ -756,7 +783,8 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 			}
 		}
 		return true
-	})
+	}
+	ast.Inspect(n, visit)
 	return verdict, pos
 }
 
@@ -802,13 +830,17 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     beside a correct OnceUse passes. dbapi.Store keeps the name in place,
 //     but it forbids no method beside it: what keeps a second one out today
 //     is that nothing calls it, not this rule.
-//   - What a defer or a go carries is not read at all. A reading of it that
-//     takes the written order for the run order is wrong in both directions,
-//     because Go runs defers backwards: it calls a right store wrong and lets
-//     a wrong one through. A named gap is better than either. A statement in
-//     a defer runs after the body, so
-//     a read there is no read in front of the write; what stays uncovered is
-//     a OnceUse that speaks only from defers, and that one is refused for
+//   - Of a defer or a go, only the body of the called function is left out.
+//     Go settles the arguments and the receiver where the defer stands, so a
+//     statement in either of those runs before everything under it and is
+//     read there - five stores that hide the read in an argument or in a
+//     receiver are refused, one of them with the call to the driver written
+//     out in the argument. What is left out runs later: a deferred body
+//     after the whole method, so a statement in it is none in front of the
+//     write. A started one is not ordered at all and may run before the
+//     write, so leaving that one out is a gap and not a deduction. Uncovered
+//     with it: the order among several defers, which Go runs backwards, and
+//     a OnceUse that speaks only from those bodies - that one is refused for
 //     what it is, with the guard saying it can find no statement rather than
 //     that the store is wrong. Both faces of it were measured: the right one
 //     and the wrong one are refused alike, on that ground.
