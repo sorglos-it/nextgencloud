@@ -34,10 +34,11 @@ import (
 // draws the line around that: no other package under apps/server-db touches a
 // database without a guard of its own.
 //
-// TestTheGuardCatchesWhatSlippedPast below runs it against the twelve
-// packages under testdata/: four are written the way this store writes and
-// have to stay silent, eight carry one hole each, and every one of those
-// eight was measured green against an earlier guard.
+// TestTheGuardCatchesWhatSlippedPast below runs it against every package
+// under testdata/: some are written the way this store writes and have to
+// stay silent, the rest carry one hole each, and every one of those holes was
+// measured green against an earlier guard. Which packages those are stands in
+// one table there, and that table is compared against the directory.
 
 // dbMethods are the ways a statement or a value reaches the driver.
 var dbMethods = map[string]bool{
@@ -282,10 +283,14 @@ func (c *checker) read() {
 // A variable written in more than one place is written down more than once,
 // and the guard then says so instead of reading the first of them.
 //
-// A write into a part of a variable - vals[1] = ... - counts as a write of
-// the whole variable. It stands nowhere the reading of a row could pick it
-// up, so the variable has to become unreadable by it, the same way append
-// makes it unreadable.
+// An assignment to a part of a variable - vals[1] = ..., vals[1:2] = ... -
+// counts as a write of the whole variable: it stands nowhere the reading of
+// the row could pick it up, so the variable becomes unreadable by it, the way
+// append already makes it unreadable. Only an assignment counts. copy into a
+// part of the row, a write through a second name for the same row, and a
+// helper that writes into a row it was handed are writes as well and are
+// **not** counted here - following them would need a reading this guard does
+// not have.
 func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
 	if call, ok := single(rhs); ok {
 		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && isPrepare(sel.Sel.Name) {
@@ -312,10 +317,12 @@ func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
 	}
 }
 
-// isPrepare names the two methods that make a prepared statement. The two
-// names stand here written out: a method called PrepareAnything of somebody
-// else gives back whatever it likes, and taking its result for a prepared
-// statement would take the statement argument off the next call.
+// isPrepare names the two methods of database/sql that make a prepared
+// statement. The two names stand here written out because a method called
+// PrepareAnything gives back whatever it likes, and taking its result for a
+// prepared statement would take the statement argument off the next call.
+// Whose method it is stays unchecked: a Prepare or PrepareContext of a
+// foreign type that gives back something else would still be believed.
 func isPrepare(name string) bool { return name == "Prepare" || name == "PrepareContext" }
 
 // rootOf is the variable a write goes into: vals of vals[1], of vals[1:2] and
@@ -420,9 +427,14 @@ func guard(p *pkgSource) (finds []find, calls, values int) {
 // field, a variable or a constant of this module that happens to be called
 // Query is none of the driver's business and stays silent. Refused is a name
 // of dbMethods that stands outside call position and is either a method - the
-// shape a method value has - or something this guard cannot resolve at all,
-// which under this package means the driver, because database/sql is the one
-// thing left unresolved here.
+// shape a method value has - or something this guard cannot resolve at all.
+//
+// Unresolved is everything outside this module: ownModule reads this module's
+// packages from source and nothing else, and the files of this package import
+// fourteen foreign packages, the driver among them. So the second branch is
+// wider than the driver, and a data field of a foreign type carrying one of
+// these eight names would be a false alarm. It is the strict direction on
+// purpose; measured in this package today: none.
 func (c *checker) noMethodValues() {
 	for _, file := range c.p.files {
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -445,8 +457,9 @@ func (c *checker) noMethodValues() {
 
 // noReflect refuses reflect in this package. A name reached through reflect
 // is a string, so no reading of identifiers can see it: the whole of the
-// guard above would be silent on it. This is a ban, not a measurement - the
-// store has no use for reflect, and nothing under apps/server-db imports it.
+// guard above would be silent on it. This is a ban, not a measurement. That
+// nothing else under apps/server-db imports reflect either is measured, in
+// TestNobodyElseUnderServerDBSpeaksToADatabase.
 func (c *checker) noReflect() {
 	for _, file := range c.p.files {
 		for _, imp := range file.Imports {
@@ -858,6 +871,11 @@ var atTheDatabase = map[string]string{
 // names one of the driver's methods has to stand in atTheDatabase with the
 // reason why it is allowed to. A new package that speaks to the database
 // without a guard is a failure here, not a quiet hole.
+//
+// It also measures the one sentence noReflect leans on: no file under
+// apps/server-db imports reflect. Through reflect the name of a method is a
+// string, and no reading of identifiers - here or in a sister package - would
+// see it.
 func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
 	root := filepath.Join(moduleRoot(t), "apps", "server-db")
 	seen, looked := map[string]bool{}, 0
@@ -880,6 +898,12 @@ func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
 			return err
 		}
 		pkg := file.Name.Name
+		for _, imp := range file.Imports {
+			if imp.Path.Value == `"reflect"` {
+				t.Errorf("%s: package %s imports reflect; a method called through it carries its "+
+					"name as a string, and no guard under apps/server-db reads strings", path, pkg)
+			}
+		}
 		if !atDatabase(file) {
 			return nil
 		}
@@ -923,16 +947,18 @@ func atDatabase(file *ast.File) bool {
 	return found
 }
 
-// TestTheGuardCatchesWhatSlippedPast runs the guard against the twelve
-// packages under testdata. Four of them - clean, prepared, valueslice,
-// namesake - are written the way this store writes and have to stay silent: a
-// guard that is red on good code is switched off, and then it guards nothing.
-// The other eight carry one hole each, and every one of those was measured
-// green against an earlier guard; namesake was measured red against one,
-// although nothing is wrong with it. The table below is the count: what is
-// written here is what runs.
+// TestTheGuardCatchesWhatSlippedPast runs the guard against every package
+// under testdata. The ones with an empty want are written the way this store
+// writes and have to stay silent: a guard that is red on good code is
+// switched off, and then it guards nothing. The others carry one hole each,
+// and every one of those was measured green against an earlier guard;
+// namesake was measured red against one, although nothing is wrong with it.
+//
+// How many there are is not written down anywhere: the table is compared
+// against the directory, so a package added there without a line here is a
+// failure, and a line here without a package there is one too.
 func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
-	for _, c := range []struct{ dir, want string }{
+	table := []struct{ dir, want string }{
 		{"clean", ""},
 		{"prepared", ""},
 		{"valueslice", ""},
@@ -945,8 +971,38 @@ func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 		{"slot", "cannot see which values stand in vals"},
 		{"prepname", "the statement is put together at run time"},
 		{"mirror", "imports reflect"},
-	} {
+	}
+	listed := map[string]bool{}
+	for _, c := range table {
+		if listed[c.dir] {
+			t.Errorf("testdata/%s stands twice in the table", c.dir)
+		}
+		listed[c.dir] = true
+	}
+	dirs, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	there := map[string]bool{}
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		there[d.Name()] = true
+		if !listed[d.Name()] {
+			t.Errorf("testdata/%s is not in the table, so nothing runs against it", d.Name())
+		}
+	}
+	for dir := range listed {
+		if !there[dir] {
+			t.Errorf("the table names testdata/%s, and no such package stands there", dir)
+		}
+	}
+	for _, c := range table {
 		t.Run(c.dir, func(t *testing.T) {
+			if !there[c.dir] {
+				t.Skip("the line above says what is missing")
+			}
 			finds, calls, values := guard(readPackage(t, filepath.Join("testdata", c.dir)))
 			if calls < 5 || values < 10 {
 				t.Fatalf("the package under test is too small to say anything: %d calls, %d values", calls, values)

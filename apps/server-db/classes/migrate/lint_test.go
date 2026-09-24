@@ -748,17 +748,23 @@ func TestABoundBitesBeforeTheWork(t *testing.T) {
 // it, every test of behaviour still passes, and the guard of takeTable is
 // gone without a word.
 //
-// Measured is every function of this package that takes a who, and the list
-// of them is not written by hand: go/types is asked which ones they are, so a
-// function that gets the mark tomorrow is measured the day it is written. The
-// asking goes over the package scope, and a method does not stand there, so
-// carrying the mark on a method is refused outright - that is what keeps
-// "every function" true instead of nearly true. At each measured call the who
-// is either one of the two constants or the who the function around the call
-// got itself and hands on - nothing else, and no value at all. Taking such a
-// function as a value instead of calling it is refused as well. fromRunner
-// stands exactly once, in bootstrap, which makes the two tables before the
-// first migration can run.
+// Measured is every function of this package's **scope** that takes a who,
+// and the list of them is not written by hand: go/types is asked which ones
+// they are, so a package function that gets the mark tomorrow is measured the
+// day it is written.
+//
+// Two carriers do not stand in that scope and are therefore not measured but
+// refused: a method, and a function literal. Both bans are below, and neither
+// looks for a way in - they simply say where the mark may stand. Nothing else
+// is claimed here: a carrier this package might one day get in some third
+// shape would be neither measured nor refused, and the reading would have to
+// be widened for it.
+//
+// At each measured call the who is either one of the two constants or the who
+// the function around the call got itself and hands on - nothing else, and no
+// value at all. Taking such a function as a value instead of calling it is
+// refused as well. fromRunner stands exactly once, in bootstrap, which makes
+// the two tables before the first migration can run.
 //
 // What an identifier stands for comes from go/types, not from its name: this
 // package has a local w of its own in measure, and only the object behind the
@@ -838,22 +844,36 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 	if len(doors) == 0 {
 		t.Fatal("no function of this package takes a who; the guard would measure nothing")
 	}
-	// A method carrying the mark would stand outside the package scope and
-	// outside the counting above. It is refused instead of being looked for:
-	// the mark belongs on a package function, and there it is measured.
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv == nil {
-				continue
-			}
-			for _, field := range fn.Type.Params.List {
-				if info.Types[field.Type].Type == whoType.Type() {
-					t.Errorf("%s: the method %s takes a who; the mark belongs on a function of the "+
-						"package, which is where it is measured", fset.Position(field.Pos()), fn.Name.Name)
-				}
+	// A method and a function literal both stand outside the package scope and
+	// outside the counting above. Neither is looked for, both are refused: the
+	// mark belongs on a package function, and there it is measured. A literal
+	// is the cheaper of the two ways past the counting - var f = func(s
+	// string, w who) … and then f(s, true) opens the runner's door without a
+	// word.
+	takesWho := func(params *ast.FieldList) bool {
+		for _, field := range params.List {
+			if info.Types[field.Type].Type == whoType.Type() {
+				return true
 			}
 		}
+		return false
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FuncDecl:
+				if x.Recv != nil && takesWho(x.Type.Params) {
+					t.Errorf("%s: the method %s takes a who; the mark belongs on a function of the "+
+						"package, which is where it is measured", fset.Position(x.Pos()), x.Name.Name)
+				}
+			case *ast.FuncLit:
+				if takesWho(x.Type.Params) {
+					t.Errorf("%s: a function literal takes a who; the mark belongs on a function of "+
+						"the package, which is where it is measured", fset.Position(x.Pos()))
+				}
+			}
+			return true
+		})
 	}
 	called := map[*types.Func]int{}
 	callee := map[*ast.Ident]bool{}
