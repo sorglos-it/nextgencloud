@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -312,6 +313,84 @@ func TestFinishDoesNotLockANameAKeyOfNobodyNamed(t *testing.T) {
 	h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+fx.PasswordName+`"}`))
 	if w.Code != 200 {
 		t.Fatalf("the name was locked by a key nobody owns: %d", w.Code)
+	}
+}
+
+// TestFinishSaysSoWhenAFailureCannotBeCounted holds the one thing login/finish
+// swallows to the rule login/start keeps for the nonce it cannot store. A
+// failure that cannot be counted must not become an answer of its own: E_LOGIN
+// is what every failed login gets, and a 503 here would say over the status
+// what the answer keeps quiet -- and it would say it for the attempts that got
+// the proof right, because those are the ones that reach the counting last.
+//
+// Swallowed, but not silent: with the counting off nothing at all slows
+// guessing down, and no answer says so. The line is said once per window and
+// names nothing of the request, so it costs no answer and cannot be made to
+// fill a disk by asking often.
+func TestFinishSaysSoWhenAFailureCannotBeCounted(t *testing.T) {
+	h, fx := newFixture(t)
+	now := testNow
+	h.S.Now = func() int64 { return now }
+	c := start(t, h, fx.PasswordName)
+	c.Nonce = madeUpNonce
+	body := finishBody(t, fx, fx.Password, c, "")
+	// Only now, so that the challenge above is a real one: what this stands
+	// for is a database that has stopped taking settings, not one that never
+	// took any.
+	h.S.DB = noCount{Store: h.S.DB}
+	log := capturedLog(t)
+	try := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+		return w
+	}
+	for range 20 {
+		if w := try(); w.Code != 401 {
+			t.Fatalf("a failure that cannot be counted answered %d: %s", w.Code, w.Body)
+		}
+	}
+	if lines := strings.Count(log.String(), "\n"); lines != 1 {
+		t.Fatalf("%d lines for 20 requests, want 1:\n%s", lines, log)
+	}
+	if s := log.String(); strings.Contains(s, fx.PasswordName) || strings.Contains(s, fx.PasswordUser) {
+		t.Fatalf("the line names the request: %s", s)
+	}
+	// Nor the error of the database: a driver may quote the values of the
+	// statement back, and those are the bucket of a login name and its count.
+	if s := log.String(); strings.Contains(s, noCountError) {
+		t.Fatalf("the line carries the error of the database: %s", s)
+	}
+	// One second before the window is over it is still quiet.
+	now = testNow + lockWarnTTL - 1
+	try()
+	if lines := strings.Count(log.String(), "\n"); lines != 1 {
+		t.Fatalf("%d lines after %d seconds, want 1", lines, lockWarnTTL-1)
+	}
+	// On the second itself it is said again, so a failure that lasts does not
+	// fall silent after the first window.
+	now = testNow + lockWarnTTL
+	try()
+	if lines := strings.Count(log.String(), "\n"); lines != 2 {
+		t.Fatalf("%d lines after %d seconds, want 2:\n%s", lines, lockWarnTTL, log)
+	}
+}
+
+// TestFinishAndStartDoNotSilenceEachOther: the two lines stand for two
+// different failures of the database -- one-time values that cannot be kept
+// and settings that cannot be written -- and a store can have one without the
+// other. So neither may take the other's turn to speak.
+func TestFinishAndStartDoNotSilenceEachOther(t *testing.T) {
+	h, fx := newFixture(t)
+	c := start(t, h, fx.PasswordName)
+	c.Nonce = madeUpNonce
+	body := finishBody(t, fx, fx.Password, c, "")
+	h.S.DB = noCount{Store: noOnce{Store: h.S.DB}}
+	log := capturedLog(t)
+	w := httptest.NewRecorder()
+	h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+	raw(t, h, fx.PasswordName)
+	if lines := strings.Count(log.String(), "\n"); lines != 2 {
+		t.Fatalf("%d lines for both failures, want 2:\n%s", lines, log)
 	}
 }
 

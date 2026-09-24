@@ -220,6 +220,18 @@ func (noOnce) OnceCreate(context.Context, string, []byte, string, int64) error {
 	return errors.New(noOnceError)
 }
 
+// noCount reads but cannot write a setting. The counting of failed logins
+// keeps its buckets among the settings (classes/lock), so with this store no
+// failure is counted at all and nothing holds up guessing. Its error stands
+// for the one a real driver hands back, which may quote the values of the
+// statement -- here the bucket of a login name and the count -- and which
+// therefore never reaches the log.
+type noCount struct{ dbapi.Store }
+
+const noCountError = "memstore: the settings cannot be written"
+
+func (noCount) BlobPut(context.Context, dbapi.Blob) error { return errors.New(noCountError) }
+
 // strictID refuses an empty user ID. Nothing in the contract says it may not:
 // dbapi/dbtest pins UserGet only for a name nobody has, never for the empty ID,
 // and memstore refuses an empty ID in UserPut with dbapi.ErrInvalid, so a store
