@@ -338,9 +338,19 @@ if [ ! -S "$state/sock" ]; then
 	exit 1
 fi
 export TPM2TOOLS_TCTI="swtpm:path=$state/sock"
-if ! tpm2_getcap pcrs | grep -q sha384; then
-	stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384."
+# tpm2_getcap pcrs always lists all four bank names, allocated or not:
+# an empty bank prints as "sha384: [ ]", a populated one as
+# "sha384: [ 0, 1, ... ]". Measured on tpm2-tools 5.7: a simulator set up
+# with --pcr-banks sha256 only still answers with a literal "sha384", so
+# "grep -q sha384" is true either way. Only a digit right after the
+# opening bracket proves the bank is really there.
+if ! caps="$(tpm2_getcap pcrs)"; then
+	stop_and_ask "Das TPM antwortet nicht auf tpm2_getcap pcrs."
 fi
+case "$caps" in
+*'sha384: [ '[0-9]*) ;;
+*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384." ;;
+esac
 
 # --- 4. the one unmeasured point: does the PIN come out of a file? --------
 flush
@@ -461,7 +471,10 @@ Inhalt von `tools/recovery-env.sh`:
 ```bash
 #!/usr/bin/env bash
 # Checks that the recovery test environment has everything it needs. Every
-# other script starts with this, so a missing package fails early and says so.
+# script from task 3 on starts with this, so a missing package fails early
+# and says so. The two before it cannot: recovery-setup.sh installs the
+# tools this one demands, recovery-tools.sh writes the werkzeuge.txt it
+# demands.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 work="$(pwd)/dist/recovery"
@@ -470,7 +483,7 @@ work="$(pwd)/dist/recovery"
 # deep inside recovery-policy.sh - a missing tpm2_policynv must not surface as
 # a failing policy branch three tasks later.
 need="qemu-system-x86_64 swtpm swtpm_setup softhsm2-util pkcs11-tool openssl xxd socat shred
-	pgrep go tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
+	pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
 	tpm2_unseal tpm2_pcrread tpm2_pcrextend tpm2_policypcr tpm2_policysigned
 	tpm2_policyauthvalue tpm2_policynv tpm2_policyor tpm2_nvdefine tpm2_nvincrement
@@ -510,11 +523,23 @@ pcr_bank() {
 	# The whole policy is SHA-384. swtpm allocates no SHA-384 bank unless it is
 	# asked for, and a missing bank would turn into a failing branch instead of
 	# a clear message.
-	if ! tpm2_getcap pcrs | grep -q sha384; then
+	# See the note in task 1: the bank name is printed whether or not the
+	# bank exists, so only a digit right after the bracket proves it.
+	# A command substitution in a case word would swallow a failing
+	# tpm2_getcap: capture it in a condition instead.
+	local caps
+	if ! caps="$(tpm2_getcap pcrs)"; then
+		printf 'Das TPM ist ueber TPM2TOOLS_TCTI=%s nicht erreichbar.\n' "$TPM2TOOLS_TCTI" >&2
+		exit 1
+	fi
+	case "$caps" in
+	*'sha384: [ '[0-9]*) ;;
+	*)
 		printf 'Dieses TPM hat keine SHA-384-PCR-Bank.\n' >&2
 		printf 'Neu einrichten mit: tools/recovery-swtpm.sh reset main\n' >&2
 		exit 1
-	fi
+		;;
+	esac
 	printf 'PCR-Bank sha384: vorhanden\n' >&2
 }
 
