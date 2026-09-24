@@ -564,12 +564,14 @@ func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
 //
 // Under a defer or a go that direction is the wrong one, and only a literal
 // called on the spot counts. What such a call settles there is the function
-// it calls at the end, so a literal handed over inside it - straight, or
-// through a helper that gives it back - is that later body and no statement
-// in front of the write; deferwrap is the right store refused for it. One
-// called on the spot does speak at the defer, and deferlit is the hole that
-// stays caught. A defer or a go is reached through onTheSpot, the same way
-// firstStmtIn reads the two.
+// it keeps for later, so a literal handed over inside it - straight, or
+// through a helper that gives it back - is that later body. A deferred body
+// runs after the whole method and is no statement in front of the write; a
+// started one is not ordered at all, and leaving that one out is the gap the
+// note beside the rule names. deferwrap is the right store that was refused
+// for this, deferlit the hole that stays caught, because a literal called on
+// the spot does speak at the defer. A defer or a go is reached through
+// onTheSpot, the same way firstStmtIn reads the two.
 //
 // A literal called on the spot inside such a later body is marked as well,
 // and nothing reads it: to reach one, firstStmtIn would have to step into the
@@ -688,13 +690,13 @@ func (c *checker) atDriver(sel *ast.SelectorExpr) bool {
 // either runs before everything below. defer s.trace()() is the everyday
 // shape of that, and defer closers[s.pick()]() another.
 //
-// Nothing is skipped here. The body of what is finally called is left out a
-// step later and by the two readers: firstStmtIn steps into a function
-// literal only where argLits says it runs, and argLits marks no literal that
-// a defer or a go hands on. The note beside the rule says what that leaves
-// uncovered. A literal written straight into the defer was skipped here once
-// as well; taking that skip out left all twenty-five packages as they were,
-// because such a literal is dropped a step later either way.
+// Nothing is skipped here. What is finally called is left out a step later:
+// firstStmtIn walks into a function literal standing in a defer or a go only
+// where argLits marks it, and argLits marks no literal that one of the two
+// hands on. The note beside the rule says what that leaves uncovered. A
+// literal written straight into the defer was skipped here once as well;
+// taking that skip out left all twenty-five packages as they were, because
+// such a literal is dropped a step later either way.
 func onTheSpot(call *ast.CallExpr, visit func(ast.Node) bool) {
 	ast.Inspect(call.Fun, visit)
 	for _, a := range call.Args {
