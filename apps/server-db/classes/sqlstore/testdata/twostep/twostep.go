@@ -2,7 +2,7 @@
 // the database what the state of the value is, decides in Go, and only then
 // writes the mark. Two callers read the same unused row and both hand the
 // one-time value out - a login taken twice, a task run twice. Every statement
-// is a constant and every value comes from blob, so the other four rules of
+// is a constant and every value comes from blob, so the four other rules of
 // the guard have nothing to say here; the hole is the order alone.
 //
 // It is the shape that runs without a transaction. The one inside a

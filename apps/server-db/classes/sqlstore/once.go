@@ -56,8 +56,9 @@ func (s *store) OnceCreate(ctx context.Context, kind string, value []byte, data 
 //
 // That the write comes first is held by TestOnceUseDecidesWithItsWrite: it
 // reads this package and refuses a OnceUse that asks the database about the
-// value before it writes the mark. It finds this method by its name, and
-// nothing but dbapi.Store keeps that name here.
+// value before it writes the mark. It finds this method by its name, and two
+// things keep that name here: dbapi.Store asks for it, so a rename does not
+// build, and the test says so itself when it finds no OnceUse at all.
 func (s *store) OnceUse(ctx context.Context, kind string, value []byte, now int64) (string, error) {
 	// A key the columns cannot hold is one OnceCreate refused to write, so it
 	// is unknown, and that answer is given here instead of in the database -

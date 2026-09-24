@@ -15,14 +15,15 @@ import (
 	"testing"
 )
 
-// The guard of this file reads the package's own source and refuses four
+// The guard of this file reads the package's own source and refuses five
 // things: a statement that is not a constant, a value that reaches the
 // database as a byte slice from anywhere but blob, a way of reaching the
-// driver that it cannot follow, and the import of reflect, through which a
-// method carries its name as a string and no reading of identifiers sees it.
-// That is how "SQL only with placeholders" and "nothing nil where every
-// column is NOT NULL" are kept, instead of trusting everyone to remember
-// them.
+// driver that it cannot follow, the import of reflect, through which a method
+// carries its name as a string and no reading of identifiers sees it, and a
+// OnceUse that asks the database about the value before it writes the mark.
+// That is how "SQL only with placeholders", "nothing nil where every column
+// is NOT NULL" and "the one-time value is spent by the write that hands it
+// out" are kept, instead of trusting everyone to remember them.
 //
 // It asks go/types what a name stands for, never what it is called: a local
 // variable may carry the name of a constant, and only the object behind the
@@ -483,20 +484,19 @@ func (c *checker) noReflect() {
 	}
 }
 
-// writeVerbs open a statement that changes rows. bodyWords are what tell a
-// statement from an ordinary string that happens to begin with one of those
-// words: every statement of this store names a table with FROM, INTO or SET,
-// or brings VALUES, and a sentence in a message does not.
+// writeVerbs open a statement that changes rows.
 var writeVerbs = map[string]bool{"UPDATE": true, "INSERT": true, "DELETE": true, "REPLACE": true}
 
-var bodyWords = map[string]bool{"FROM": true, "INTO": true, "SET": true, "VALUES": true}
-
-// statementWrites says whether e is a statement of this store at all, and
-// whether that statement changes rows. A statement that opens with WITH is
-// decided on its words and not on its first one: a common table expression
-// may end in an UPDATE just as well as in a SELECT, and only the whole of it
-// tells the two apart. Whole words are compared, so a column called updated
-// is no UPDATE.
+// statementWrites says whether a statement changes rows. It is asked only of
+// what stands where a statement stands at a call to the driver, never of a
+// string found somewhere in a body: a message may open with the word select,
+// and an earlier reading of every expression called limits.go a statement for
+// exactly that reason.
+//
+// One that opens with WITH is decided on its words and not on its first one:
+// a common table expression may end in an UPDATE just as well as in a SELECT,
+// and only the whole of it tells the two apart. Whole words are compared, so
+// a column called updated is no UPDATE.
 func statementWrites(p *pkgSource, e ast.Expr) (write, is bool) {
 	tv, ok := p.info.Types[e]
 	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
@@ -506,21 +506,9 @@ func statementWrites(p *pkgSource, e ast.Expr) (write, is bool) {
 	if len(w) == 0 {
 		return false, false
 	}
-	body := false
-	for _, x := range w[1:] {
-		if bodyWords[x] {
-			body = true
-			break
-		}
-	}
-	if !body {
-		return false, false
-	}
 	switch {
 	case writeVerbs[w[0]]:
 		return true, true
-	case w[0] == "SELECT":
-		return false, true
 	case w[0] == "WITH":
 		for _, x := range w[1:] {
 			if writeVerbs[x] {
@@ -529,7 +517,7 @@ func statementWrites(p *pkgSource, e ast.Expr) (write, is bool) {
 		}
 		return false, true
 	}
-	return false, false
+	return false, true // anything else is read at best
 }
 
 // ownFunc is the function a call names, when this module declares it.
@@ -558,10 +546,37 @@ func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
 	return lit
 }
 
+// litPlaces sorts the function literals of n by when they run. here is those
+// that run where they stand: an argument of a call, or a literal called on
+// the spot. later is those a defer or a go carries, in the order they are
+// written - a deferred one runs after everything else in the body, so it can
+// only be the first statement when the body holds none, and a started one
+// runs at no time this reading could name. A literal given a name is in
+// neither: it runs where the name is called, and it is read there.
+func litPlaces(n ast.Node) (here map[*ast.FuncLit]bool, later []*ast.FuncLit) {
+	off := map[*ast.FuncLit]bool{}
+	ast.Inspect(n, func(x ast.Node) bool {
+		var call *ast.CallExpr
+		switch s := x.(type) {
+		case *ast.DeferStmt:
+			call = s.Call
+		case *ast.GoStmt:
+			call = s.Call
+		default:
+			return true
+		}
+		if lit, ok := call.Fun.(*ast.FuncLit); ok {
+			off[lit] = true
+			later = append(later, lit)
+		}
+		return true
+	})
+	return argLits(n, off), later
+}
+
 // argLits are the literals that stand as an argument of a call, or are called
-// on the spot. Those run where they stand; a literal given a name runs where
-// the name is called, and it is read there instead.
-func argLits(n ast.Node) map[*ast.FuncLit]bool {
+// on the spot, less the ones a defer or a go carries.
+func argLits(n ast.Node, off map[*ast.FuncLit]bool) map[*ast.FuncLit]bool {
 	out := map[*ast.FuncLit]bool{}
 	ast.Inspect(n, func(x ast.Node) bool {
 		call, ok := x.(*ast.CallExpr)
@@ -569,11 +584,11 @@ func argLits(n ast.Node) map[*ast.FuncLit]bool {
 			return true
 		}
 		for _, a := range call.Args {
-			if lit, ok := a.(*ast.FuncLit); ok {
+			if lit, ok := a.(*ast.FuncLit); ok && !off[lit] {
 				out[lit] = true
 			}
 		}
-		if lit, ok := call.Fun.(*ast.FuncLit); ok {
+		if lit, ok := call.Fun.(*ast.FuncLit); ok && !off[lit] {
 			out[lit] = true
 		}
 		return true
@@ -581,49 +596,118 @@ func argLits(n ast.Node) map[*ast.FuncLit]bool {
 	return out
 }
 
+// bound is what the parameters of the function being read stand for at the
+// call that led into it, already resolved. Without it a helper that is handed
+// its statement would carry no statement the guard can see.
+type bound map[*types.Var]ast.Expr
+
+// resolve follows a name through the parameters it was bound to, so that the
+// expression handed back is the one the caller really wrote.
+func (c *checker) resolve(e ast.Expr, b bound) ast.Expr {
+	for range 8 { // a chain of helpers, not a cycle
+		v, ok := c.varOf(e)
+		if !ok {
+			return e
+		}
+		next, ok := b[v]
+		if !ok || next == e {
+			return e
+		}
+		e = next
+	}
+	return e
+}
+
+// bind maps the parameters of fn to the arguments of call, each of them
+// resolved in the binding the call itself stands in. A variadic tail is left
+// out: nothing hands a statement that way.
+func (c *checker) bind(fn *types.Func, call *ast.CallExpr, b bound) bound {
+	out := bound{}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return out
+	}
+	ps := sig.Params()
+	n := ps.Len()
+	if sig.Variadic() {
+		n--
+	}
+	for i := range n {
+		if i >= len(call.Args) {
+			break
+		}
+		out[ps.At(i)] = c.resolve(call.Args[i], b)
+	}
+	return out
+}
+
 // firstStmtIn is the first statement n gives the database, read in the order
-// the source has it. A call of a function of this package, and a call of a
-// name that holds a function literal, are read at the place they stand, so a
-// statement moved into a helper counts where the helper is called and not
-// where it is written. Each is read once: a loop through the same helper adds
-// nothing, and a cycle would not end.
-func (c *checker) firstStmtIn(n ast.Node, seen map[*types.Func]bool, seenLit map[*ast.FuncLit]bool) (write bool, pos token.Pos, found bool) {
-	here := argLits(n)
+// the source has it. Only what stands where a statement stands at a call of
+// dbMethods is read - never a string found somewhere in a body, because a
+// message may open with the word select and is no statement.
+//
+// A call of a function of this package, and a call of a name that holds a
+// function literal, are read at the place they stand, so a statement moved
+// into a helper counts where the helper is called and not where it is
+// written; a statement handed to that helper as a parameter is followed
+// through bind. Each is read once: a loop through the same helper adds
+// nothing, and a cycle would not end. A statement the guard cannot resolve to
+// a constant is passed over, not reported: TestEverySQLIsAConstant is what
+// holds that side, and a second opinion on it here could only be wrong.
+func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, seenLit map[*ast.FuncLit]bool) (write bool, pos token.Pos, found bool) {
+	here, later := litPlaces(n)
 	ast.Inspect(n, func(x ast.Node) bool {
 		if found || x == nil {
 			return false
 		}
 		if lit, ok := x.(*ast.FuncLit); ok && !here[lit] {
-			return false // it runs where its name is called
-		}
-		if e, ok := x.(ast.Expr); ok {
-			if w, is := statementWrites(c.p, e); is {
-				write, pos, found = w, e.Pos(), true
-				return false
-			}
+			return false // it runs elsewhere, or later
 		}
 		call, ok := x.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && dbMethods[sel.Sel.Name] {
+			i := c.stmtIndex(call, sel, skipCtx(sel.Sel.Name))
+			if i >= 0 && i < len(call.Args) {
+				stmt := c.resolve(call.Args[i], b)
+				if w, is := statementWrites(c.p, stmt); is {
+					write, pos, found = w, call.Args[i].Pos(), true
+					return false
+				}
+			}
+			return true
+		}
 		var body ast.Node
+		next := bound{}
 		if fn := c.ownFunc(call); fn != nil && !seen[fn] {
 			seen[fn] = true
 			if d := c.decl[fn]; d != nil && d.Body != nil {
-				body = d.Body
+				body, next = d.Body, c.bind(fn, call, b)
 			}
 		} else if lit := c.litOf(call); lit != nil && !seenLit[lit] {
 			seenLit[lit] = true
 			body = lit.Body
 		}
 		if body != nil {
-			if w, p, ok := c.firstStmtIn(body, seen, seenLit); ok {
+			if w, p, ok := c.firstStmtIn(body, next, seen, seenLit); ok {
 				write, pos, found = w, p, true
 				return false
 			}
 		}
 		return true
 	})
+	// What a defer or a go carries runs after the body, so it is read only
+	// when the body gave the database nothing at all.
+	for _, lit := range later {
+		if found || seenLit[lit] {
+			break
+		}
+		seenLit[lit] = true
+		if w, p, ok := c.firstStmtIn(lit.Body, b, seen, seenLit); ok {
+			write, pos, found = w, p, true
+		}
+	}
 	return write, pos, found
 }
 
@@ -644,12 +728,31 @@ func (c *checker) firstStmtIn(n ast.Node, seen map[*types.Func]bool, seenLit map
 // a property nobody needs refuses an allowed change one day - and is then
 // switched off, together with the half that was needed.
 //
-// This is the one thing no run of this repository can measure. Two steps
-// without a transaction are caught by TestOnlyOneUseGetsTheValue, but only on
-// a machine of two processors or more; two steps inside one transaction are
-// caught by no run at all, because SQLite's own transactions save such a
-// store and MariaDB is in no run here. Read from the source, both are caught
-// on any machine, and neither answer flutters.
+// Why from the source and not from a run: two steps without a transaction
+// are caught by TestOnlyOneUseGetsTheValue, but only on a machine of two
+// processors or more; two steps inside one transaction are caught by no run
+// here at all, because SQLite's own transactions save such a store and
+// MariaDB is in no run of this repository. Read from the source, both are
+// caught on any machine, and neither answer flutters.
+//
+// What it does not hold, so that nobody takes it for more - all four
+// measured, none of them a guess:
+//
+//   - It reads the order, not that the count decides. A OnceUse that writes
+//     first and throws the row count away comes through it. Four other tests
+//     of this package catch that one, TestOnlyOneUseGetsTheValue among them
+//     even at a single processor, because such a store is not sometimes
+//     wrong but always.
+//   - A read through an interface method of this package comes through: the
+//     method has no body here to read, the way Dialect has none. So does one
+//     through a function held in a struct field, and one through a method
+//     taken as a value - for those two nothing says which body runs. Only a
+//     name of dbMethods taken as a value is refused, and that by
+//     noMethodValues, not here.
+//   - It holds the one method called OnceUse. A second, two-step OnceUseV2
+//     beside a correct OnceUse passes. dbapi.Store keeps the name in place,
+//     but it forbids no method beside it: what keeps a second one out today
+//     is that nothing calls it, not this rule.
 func (c *checker) onceUseWritesFirst() {
 	for _, file := range c.p.files {
 		for _, d := range file.Decls {
@@ -657,7 +760,7 @@ func (c *checker) onceUseWritesFirst() {
 			if !ok || fn.Name.Name != "OnceUse" || fn.Body == nil {
 				continue
 			}
-			write, pos, found := c.firstStmtIn(fn.Body, map[*types.Func]bool{}, map[*ast.FuncLit]bool{})
+			write, pos, found := c.firstStmtIn(fn.Body, bound{}, map[*types.Func]bool{}, map[*ast.FuncLit]bool{})
 			switch {
 			case !found:
 				c.reportAtomic(fn.Pos(), "OnceUse gives the database no statement the guard can find, "+

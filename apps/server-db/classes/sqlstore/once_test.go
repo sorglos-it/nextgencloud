@@ -213,14 +213,16 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 //
 // How wide the machine is does decide, and that is why there are 32 racers
 // and 400 rounds and not 8 and 40. Against such a store, ten runs each, the
-// smaller numbers caught nothing at all at GOMAXPROCS 1 and 2 and three of
-// ten at 4 - on a two-core CI runner, and on the Pi that sqlite.go builds
-// this store for, the very shape this test is here to catch would have come
+// smaller numbers caught none of ten at GOMAXPROCS 1 and 2 and three of ten
+// at 4 - on a two-core CI runner, and on the Pi that sqlite.go builds this
+// store for, the very shape this test is here to catch would have come
 // through silently. With these numbers it is five of five from two
 // processors upwards, at a cost of about three seconds.
 //
 // The floor, so that nobody reads more into a green run than is there: at
-// GOMAXPROCS 1 even 32 by 400 catches nothing. A single-threaded runner
+// GOMAXPROCS 1 even 32 by 400 caught none of five here and one of five for
+// a second reader. These are counts of a scattering, not a bound, and no run
+// of this may be leaned on at that width. A single-threaded runner
 // measures none of this, whatever the numbers say.
 //
 // What it does not catch, said plainly so nobody takes it for more: a store
