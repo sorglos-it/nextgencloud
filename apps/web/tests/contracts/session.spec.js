@@ -242,6 +242,46 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   });
 });
 
+// Fixrunde 1, W1: verifyApproval had no test at all, though session.json
+// carries the pair for it. client + proof is a certificate of the user admin
+// signed with his password key, and his role asks for no password on top, so
+// it stands. clientRejects holds the other side: carol's certificate with
+// carol's password key, and her role "careful" has passwordToo - a password
+// key alone approves nothing there, which is the one rule this function has
+// beyond verifyClient's.
+test("verifyApproval decides the certificates of session.json as Go does", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no proof");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const t = await import("/assets/js/contracts/trust.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const list = await t.parseList(b64decode(d.trust.payload));
+    const asProof = (p) => ({
+      kind: p.kind, kid: p.kid, sig: b64decode(p.sig),
+      authData: p.authData === undefined ? new Uint8Array(0) : b64decode(p.authData),
+      clientData: p.clientData === undefined ? new Uint8Array(0) : b64decode(p.clientData),
+    });
+    const check = async (client, p) => {
+      try {
+        const c = await s.verifyApproval(b64decode(client), asProof(p), list);
+        return "approved by " + c.user;
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return {
+      good: await check(d.client, d.proof),
+      rejects: await Promise.all(d.clientRejects.map((r) => check(r.client, r.proof))),
+    };
+  }, v);
+  // The good pair is the user admin's own certificate; every reject is
+  // refused, and for the reason Go gives it.
+  expect(got.good).toBe("approved by ISEhISEhISEhISEhISEhIQ");
+  expect(got.rejects).toEqual(v.clientRejects.map(() => "session: proof is not by a key of this user"));
+});
+
 // Fixrunde 1, K2: Go is handed an int64 for now and can be handed nothing
 // else. Here both comparisons of the time check are false against undefined,
 // NaN, text or an object, so a certificate that expired long ago comes
