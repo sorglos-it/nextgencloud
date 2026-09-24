@@ -102,19 +102,20 @@ var (
 //     how long the reading is held between a ping and its deadline, not how
 //     long one call takes: a queue of short calls costs the tunnel exactly as
 //     one long call does. Held over two ping intervals (2 x
-//     tunnel.PingInterval, a minute) the tunnel is gone for certain - the ping
-//     falls at the latest one interval into the hold and then waits one
-//     interval for its pong; the link counts as dead although the API is
-//     healthy, and Run comes back with an error. The one thing that puts that
-//     off: a ping that gave up while a message of this side stood in the
-//     socket is skipped and the next interval asks again (ping), so a handler
-//     that holds the reading and writes at the same time is measured by the
-//     intervals in which it did not write. No length of a single call
-//     is safe on its own, because the holds add up. What a handler must keep
-//     to is therefore not a length but this: give the reading back at once.
-//     Whatever cannot be answered on the spot belongs in a goroutine of its
-//     own, which answers with Tunnel.Send, and Frame returns without waiting
-//     for it. Both ways of losing the tunnel are measured, see
+//     tunnel.PingInterval, a minute) the tunnel is lost unless this side is
+//     writing at the same time - the ping falls at the latest one interval
+//     into the hold and then waits one interval for its pong; the link counts
+//     as dead although the API is healthy, and Run comes back with an error.
+//     The one thing that puts that off: a ping that gave up while a message of
+//     this side stood in the socket is skipped and the next interval asks
+//     again (ping), so a handler that holds the reading and writes at the same
+//     time is measured by the intervals in which it did not write. No length
+//     of a single call is safe on its own, because the holds add up. What a
+//     handler must keep to is therefore not a length but this: give the
+//     reading back at once. Whatever cannot be answered on the spot belongs
+//     in a goroutine of its own, which answers with Tunnel.Send, and Frame
+//     returns without waiting for it. Both ways of losing the tunnel are
+//     measured, see
 //     TestAHandlerThatHoldsTheReadingCostsTheTunnel.
 type Handler interface {
 	Frame(t *Tunnel, f wire.Frame) error
@@ -212,6 +213,17 @@ type Tunnel struct {
 	// through the same lock of the library as every message of ours, so a
 	// ping that gave up while one of them stood there gave up over this side
 	// and says nothing about the API (ping).
+	//
+	// One holder of that lock this count does not see: the read loop of the
+	// library answers a ping of the API itself, out of the goroutine of Run,
+	// with a pong over the same lock and for up to five seconds
+	// (vendor .../read.go:303, :323). So if the API pings while the socket of
+	// this side is blocked, a ping of ours can still lose the lock at
+	// writing == 0 and the link be called dead although the API is healthy.
+	// It is the one gap left in this bookkeeping, it is narrow - it needs a
+	// ping of the API to fall into those seconds - and closing it would need
+	// a second count that this package has no hook for: the library offers a
+	// callback before the pong (OnPingReceived) and none after it.
 	writing atomic.Int64
 	// since is taken once the Noise session stands, so how long a tunnel
 	// stood is measured from just before the two hellos.
@@ -479,9 +491,12 @@ func takeMessage(plain []byte) (wire.Frame, wire.Control, error) {
 //
 // A write that comes to a stand in the socket - a peer that has stopped
 // reading - takes the ping of this tunnel the lock it needs for its own
-// frame. That costs the tunnel nothing: such a ping is skipped and asked
-// again one interval later (ping). What it does cost is the bound of the
-// write itself, and that one is WriteTimeout.
+// frame. Such a ping is skipped and asked again one interval later (ping),
+// so it does not cost the tunnel its life - but it does cost it its
+// heartbeat for as long as the write stands: for that while nothing here
+// would notice a peer that went quiet, and a write that stands for the whole
+// of WriteTimeout leaves the tunnel that long unwatched. WriteTimeout is
+// also the bound of the write itself.
 func (t *Tunnel) Send(f wire.Frame) error {
 	if f.Channel == wire.ControlChannel {
 		return ErrConfig
@@ -505,10 +520,15 @@ func (t *Tunnel) write(ctx context.Context, f wire.Frame) error {
 	}
 	// Raised around the write and nothing else: what the ping asks is whether
 	// a message of ours stood in the socket, not whether one was on its way
-	// through this package.
+	// through this package. Lowered by defer, not by the next statement: a
+	// panic in the library would otherwise leave the count up for good, and a
+	// count that is up for good silences the ping of this tunnel for ever -
+	// WriteTimeout does not catch that either, because no write is running
+	// any more. It runs before mu is given up, so nobody sees a free lock and
+	// a message still standing in the socket.
 	t.writing.Add(1)
+	defer t.writing.Add(-1)
 	err = t.c.Write(ctx, websocket.MessageBinary, msg)
-	t.writing.Add(-1)
 	if err != nil {
 		return ErrAPI
 	}
@@ -575,6 +595,14 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 // interval, or a socket that broke under it. Both mean the same thing, and
 // that is what dead says - this tunnel can no longer be vouched for, whatever
 // the socket still claims.
+//
+// One holder of the same lock is not counted, and there the old mistake can
+// still happen: the read loop of the library answers a ping of the API with a
+// pong over that lock and for up to five seconds (read.go:303, :323). A ping
+// of ours that loses the lock to it finds writing == 0 and makes the link
+// dead although the API is healthy. It takes a ping of the API falling into
+// those seconds, and closing it would take a count this package has no hook
+// for (writing).
 func (t *Tunnel) ping() {
 	tick := time.NewTicker(t.cfg.every())
 	defer tick.Stop()

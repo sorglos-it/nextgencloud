@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -950,21 +953,162 @@ func TestAHandlerThatHoldsTheReadingCostsTheTunnel(t *testing.T) {
 	})
 }
 
-// stuffFrames bounds what the writer below puts into the socket: the tunnel
-// carries at most one wire.MaxFrame per message, so this is about sixteen
-// megabytes. A loopback that swallows all of it without ever making a write
-// wait is a machine this test cannot set up its case on, and it says so
+// pipeBuffer is the read buffer the pipe below puts on the connection it
+// accepts from the controller, so that the window of that connection stays
+// closed instead of growing with what is written into it. It is small enough
+// for that and large enough that the handshake and the two hellos go through
+// it without a word.
+//
+// What it buys, measured against the same tests with the line taken out: on
+// Linux a write came to a stand after 2.5 MB instead of after 4.3 to 5.2 MB.
+// It is therefore not what makes the case - the bar is - but it halves what
+// has to go in before the case stands, and it takes the ceiling off the
+// receive tuning of the host.
+const pipeBuffer = 4096
+
+// pipe is a TCP forwarder between the controller and the test API, and it is
+// there for one thing: to make the case of the tests below instead of hoping
+// for it. Barred (bar), nothing this side writes reaches the API any more,
+// so the only room left for it is the window of the accepted connection and
+// the send buffer of the controller - the next write of this side comes to a
+// stand in the socket and stands there until the way is open again (free).
+// Measured: 0.2 to 0.5 MB on Windows, 2.5 MB on Linux, and in eight runs of
+// the two tests below the write stood every time.
+//
+// Without the bar the API alone has to be slower than the writer, and that
+// is what it used to be: with the bar taken out again, the long case below
+// went red in one of two runs on Linux with "the case of this test is gone"
+// and green in the other. That is the coin flip this pipe is here to end.
+type pipe struct {
+	URL      string
+	held     chan struct{} // closed: the way to the API is barred
+	freed    chan struct{} // closed: it is open again
+	barOnce  sync.Once
+	freeOnce sync.Once
+	in       atomic.Pointer[net.TCPConn] // the connection of the controller
+	why      atomic.Value                // string: why the read buffer stayed as it was
+}
+
+// piped starts a forwarder in front of the API at target and gives back the
+// address the controller is to dial instead. The pin of the API is a pin on
+// its key and not on a name (tunnel.PinnedTLS), so putting another address in
+// front of it changes nothing the controller checks.
+func piped(t *testing.T, target string) *pipe {
+	t.Helper()
+	u, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := u.Host
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &pipe{held: make(chan struct{}), freed: make(chan struct{})}
+	u.Host = ln.Addr().String()
+	p.URL = u.String()
+	t.Cleanup(func() { p.free(); ln.Close() })
+	go p.run(ln, api)
+	return p
+}
+
+// run takes the connection of the controller and pumps both ways. Only the
+// way to the API can be barred; what comes back from the API always gets
+// through, so the hello of the API and every frame it sends arrive as they
+// would without the pipe.
+func (p *pipe) run(ln net.Listener, api string) {
+	for {
+		in, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		if c, ok := in.(*net.TCPConn); ok {
+			p.in.Store(c)
+			if err := c.SetReadBuffer(pipeBuffer); err != nil {
+				p.why.Store(", and the read buffer of the pipe stayed as it was: " + err.Error())
+			}
+		} else {
+			p.why.Store(", and the pipe did not get a TCP connection to put a read buffer on")
+		}
+		out, err := net.Dial("tcp", api)
+		if err != nil {
+			in.Close()
+			return
+		}
+		go p.toAPI(in, out)
+		go func() {
+			defer in.Close()
+			defer out.Close()
+			io.Copy(in, out)
+		}()
+	}
+}
+
+// toAPI is the way that can be barred. What has been read when the bar goes
+// up is held, not thrown away: it goes on its way as soon as the way is open
+// again, and so does everything behind it.
+func (p *pipe) toAPI(in, out net.Conn) {
+	defer in.Close()
+	defer out.Close()
+	b := make([]byte, 32*1024)
+	for {
+		n, err := in.Read(b)
+		if n > 0 {
+			select {
+			case <-p.held:
+				<-p.freed
+			default:
+			}
+			if _, err := out.Write(b[:n]); err != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// bar shuts the way to the API. free opens it again and gives the accepted
+// connection a wide read buffer back, and that second half is not tidiness:
+// what the controller queued up behind the bar is megabytes on Linux - its
+// send buffer - and through the small window that made the case it trickled
+// out so slowly that the ping the fast test waits for afterwards did not
+// reach the API within nineteen seconds and the tunnel counted as gone. With
+// the buffer widened here the same test is through in two.
+func (p *pipe) bar() { p.barOnce.Do(func() { close(p.held) }) }
+
+func (p *pipe) free() {
+	p.freeOnce.Do(func() {
+		if c := p.in.Load(); c != nil {
+			c.SetReadBuffer(1 << 20)
+		}
+		close(p.freed)
+	})
+}
+
+// reason says why no write came to a stand, as far as the pipe knows it.
+func (p *pipe) reason() string {
+	s, _ := p.why.Load().(string)
+	return s
+}
+
+// stuffFor bounds how long the writer below fills the socket. With the way to
+// the API barred a write comes to a stand as soon as the send buffer of the
+// controller is full, which took under a second everywhere it was measured,
+// so this is not a measure of how much has to go in - it is the deadline
+// against a machine on which nothing ever waits, and there the test says so
 // instead of writing for ever.
-const stuffFrames = 256
+const stuffFor = 10 * time.Second
 
 // stuffer is the handler the promise of Handler asks for, word for word: it
 // gives the reading back at once and answers from a goroutine of its own with
-// Tunnel.Send. What it writes is more than the socket takes while the API
-// reads nothing, so one of those writes stands in the socket - and a write of
-// this side standing in the socket is what takes the ping the lock it needs
-// for its own frame.
+// Tunnel.Send. With the pipe barred one of those writes comes to a stand in
+// the socket - and a write of this side standing in the socket is what takes
+// the ping the lock it needs for its own frame.
 type stuffer struct {
 	start sync.Once
+	halts sync.Once
 	stop  chan struct{}
 	done  chan struct{}
 	sent  atomic.Int64
@@ -974,12 +1118,16 @@ func newStuffer() *stuffer {
 	return &stuffer{stop: make(chan struct{}), done: make(chan struct{})}
 }
 
+// halt tells the writer to stop after the write it is in. It may be called
+// more than once and from anywhere.
+func (s *stuffer) halt() { s.halts.Do(func() { close(s.stop) }) }
+
 func (s *stuffer) Frame(t *Tunnel, f wire.Frame) error {
 	s.start.Do(func() {
 		go func() {
 			defer close(s.done)
 			p := make([]byte, wire.MaxPayload)
-			for range stuffFrames {
+			for deadline := time.Now().Add(stuffFor); time.Now().Before(deadline); {
 				select {
 				case <-s.stop:
 					return
@@ -995,44 +1143,76 @@ func (s *stuffer) Frame(t *Tunnel, f wire.Frame) error {
 	return nil // the reading is given back at once, as the promise says
 }
 
-// congested dials a tunnel whose API says hello, sends one frame and then
-// reads nothing at all until drain is closed, and whose handler fills the
-// socket from a goroutine of its own. pings counts what the API sees.
-func congested(t *testing.T, every time.Duration, drain <-chan struct{}, pings *atomic.Int64) (*Tunnel, <-chan error, *stuffer) {
+// congested dials a tunnel through a pipe that is barred as soon as the
+// tunnel stands, and whose handler writes into it from a goroutine of its
+// own. The API behaves as any API does: it says hello, sends one frame to
+// start the writer and reads everything that reaches it - what nothing
+// reaches it through is the pipe. pings counts what the API sees; when drain
+// closes, the way is open again and the writer stops.
+func congested(t *testing.T, every time.Duration, drain <-chan struct{}, pings *atomic.Int64) (*Tunnel, <-chan error, *stuffer, *pipe) {
 	t.Helper()
 	s := newStuffer()
-	t.Cleanup(func() { close(s.stop) })
+	t.Cleanup(s.halt)
+	var p *pipe
 	tn, ended := runningPinging(t, s,
 		func() bool { pings.Add(1); return true }, // the API answers every ping it sees
-		func(c *Config) { c.Ping = every },
+		func(c *Config) {
+			c.Ping = every
+			p = piped(t, c.API.URL)
+			c.API.URL = p.URL
+		},
 		func(a *apiSide) {
-			// The one frame starts the writer. From here the API reads
-			// nothing, so the socket fills up and a write of this side comes
-			// to a stand in it.
 			a.send(wire.Frame{Type: wire.TypeData, Channel: 3, Payload: []byte("x")})
-			<-drain
 			a.quiet()
 		})
-	return tn, ended, s
+	// Before the tunnel is closed again the way has to be open, or the close
+	// message stands in the pipe and Close sits out its five seconds.
+	t.Cleanup(p.free)
+	// From here nothing of this side reaches the API any more. The handshake
+	// and the two hellos are through: Dial only comes back once it has read
+	// the hello of the API.
+	p.bar()
+	go func() {
+		<-drain
+		p.free()
+		s.halt()
+	}()
+	return tn, ended, s, p
 }
 
-// waitWriting waits until a write of this side stands in the socket. That is
-// the case both tests below are about, and a machine whose loopback takes
-// sixteen megabytes without ever making a writer wait would prove nothing.
-func waitWriting(t *testing.T, tn *Tunnel, s *stuffer) {
+// holdWriting is how long a write of this side has to stand in the socket
+// before the tests below take their case as made. A single reading of 1
+// proves nothing: writing is up only while t.c.Write runs, and between two
+// messages of the stuffer - encode, seal, the lock - it is 0 quite regularly.
+// A write that really came to a stand stands until WriteTimeout, which is a
+// hundred times this.
+const holdWriting = 300 * time.Millisecond
+
+// waitWriting waits until a write of this side has stood in the socket for
+// holdWriting without a break. That is the case both tests below are about,
+// and a machine on which it does not come about gets a red test with a
+// reason, not a green one without a case.
+func waitWriting(t *testing.T, tn *Tunnel, s *stuffer, p *pipe) {
 	t.Helper()
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+	var since time.Time
+	for deadline := time.Now().Add(stuffFor + 20*time.Second); time.Now().Before(deadline); {
 		if tn.writing.Load() > 0 {
-			return
-		}
-		select {
-		case <-s.done:
-			t.Fatalf("all %d messages went into the socket without one of them waiting: this machine buffers more than the test can fill", s.sent.Load())
-		default:
+			if since.IsZero() {
+				since = time.Now()
+			} else if time.Since(since) >= holdWriting {
+				return
+			}
+		} else {
+			since = time.Time{}
+			select {
+			case <-s.done:
+				t.Fatalf("the writer put %d messages into the socket and not one of them came to a stand although the way to the API is barred%s", s.sent.Load(), p.reason())
+			default:
+			}
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("no write of this side ever came to a stand in the socket although the API reads nothing")
+	t.Fatalf("no write of this side stood in the socket for %v in one piece although the way to the API is barred%s", holdWriting, p.reason())
 }
 
 // A ping that lost to a write of this side says nothing about the API. The
@@ -1055,8 +1235,8 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 		const every = 12 * time.Second
 		drain := make(chan struct{})
 		var pings atomic.Int64
-		tn, ended, s := congested(t, every, drain, &pings)
-		waitWriting(t, tn, s)
+		tn, ended, s, p := congested(t, every, drain, &pings)
+		waitWriting(t, tn, s, p)
 		began := time.Now()
 		// A second and a half past the moment the old code gave up.
 		for deadline := began.Add(every + 5*time.Second + 3*time.Second/2); time.Now().Before(deadline); {
@@ -1073,8 +1253,9 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		// From here the API reads again, so the write that stood in the
-		// socket gets out and the tunnel can be closed the orderly way.
+		// From here the way to the API is open again, so the write that
+		// stood in the socket gets out and the tunnel can be closed the
+		// orderly way.
 		close(drain)
 		if err := waitFor(t, endedAfter(t, tn, ended)); err != nil {
 			t.Fatalf("Run = %v, want an orderly end", err)
@@ -1083,14 +1264,15 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 	t.Run("one interval, in a fraction of a second", func(t *testing.T) {
 		// The same rule at an interval a test can sit out. Here the ping runs
 		// into its own deadline and not into the five seconds of the library,
-		// and the answer has to be the same one. Afterwards the API reads
-		// again, and the next ping has to reach it: a ping skipped over a
-		// write of ours may not cost the tunnel its heartbeat for good.
+		// and the answer has to be the same one. Afterwards the way to the
+		// API is open again, and the next ping has to reach it: a ping
+		// skipped over a write of ours may not cost the tunnel its heartbeat
+		// for good.
 		const every = 300 * time.Millisecond
 		drain := make(chan struct{})
 		var pings atomic.Int64
-		tn, ended, s := congested(t, every, drain, &pings)
-		waitWriting(t, tn, s)
+		tn, ended, s, p := congested(t, every, drain, &pings)
+		waitWriting(t, tn, s, p)
 		began := time.Now()
 		// Three intervals: two pings ran into the lock and gave up there.
 		for deadline := began.Add(3 * every); time.Now().Before(deadline); {
@@ -1102,12 +1284,20 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 				t.Fatalf("Run = %v after %v, want the tunnel still standing", err, time.Since(began).Round(time.Millisecond))
 			default:
 			}
+			// The same guard as in the case above, and this case needs it
+			// just as much: a socket that ran empty under it would let every
+			// ping through, and then the test would be green without ever
+			// touching what it is about - green with the fix and green
+			// without it.
+			if tn.writing.Load() == 0 {
+				t.Fatalf("no write of this side stands in the socket any more after %v: the case of this test is gone", time.Since(began).Round(time.Millisecond))
+			}
 			time.Sleep(5 * time.Millisecond)
 		}
 		close(drain)
 		for deadline := time.Now().Add(30 * time.Second); pings.Load() == 0; {
 			if !time.Now().Before(deadline) {
-				t.Fatal("the API saw no ping although it reads again: a skipped ping cost the tunnel its heartbeat")
+				t.Fatal("the API saw no ping although the way to it is open again: a skipped ping cost the tunnel its heartbeat")
 			}
 			if tn.dead.Load() {
 				t.Fatal("the tunnel counted as gone although the API answers every ping it sees")
@@ -1123,6 +1313,36 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 			t.Fatalf("Run = %v, want an orderly end", err)
 		}
 	})
+}
+
+// A panic on the way through the write may not leave a message of this side
+// standing in the count. The count is what the ping asks before it calls a
+// link dead, and it skips itself as long as the count is up: a count that
+// stayed up would take the ping of this tunnel away for good, and nothing
+// else would notice, because WriteTimeout bounds a write that is running and
+// here none is running any more.
+//
+// The panic is made with a context that is nil, which the library walks into
+// at vendor .../conn.go:290 (the select there reads ctx.Done()). The nil
+// context is only the way in; what is tested is the way out, and that it is
+// really a panic and not a plain error is checked, or the test would say
+// nothing.
+func TestAPanicInTheWriteLeavesNothingStandingInTheSocket(t *testing.T) {
+	tn, ended := running(t, nil, func(a *apiSide) { a.quiet() })
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the write came back without a panic, so this test proves nothing: find another way in")
+			}
+		}()
+		//nolint:staticcheck // the nil context is what makes the library panic
+		tn.write(nil, wire.Frame{Type: wire.TypeData, Channel: 3, Payload: []byte("x")})
+	}()
+	if got := tn.writing.Load(); got != 0 {
+		t.Errorf("writing = %d after a panic in the write, want 0: the ping of this tunnel would skip itself for ever", got)
+	}
+	tn.Close()
+	waitFor(t, ended)
 }
 
 // endedAfter closes the tunnel and hands the end of Run on, so a test that
