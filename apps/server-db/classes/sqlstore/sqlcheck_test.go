@@ -67,11 +67,14 @@ func skipCtx(method string) int {
 const modulePath = "github.com/sorglos-it/nextgencloud/"
 
 // find is one place the guard refuses. sql tells the two halves apart: the
-// statement, or the values that go with it.
+// statement, or the values that go with it. atomic is the third question,
+// about the order in which one method speaks, and it is reported on its own
+// because it is neither of those two.
 type find struct {
-	sql bool
-	pos token.Position
-	msg string
+	sql    bool
+	atomic bool
+	pos    token.Position
+	msg    string
 }
 
 func (f find) String() string { return f.pos.String() + ": " + f.msg }
@@ -237,6 +240,10 @@ func (c *checker) report(sql bool, pos token.Pos, format string, a ...any) {
 	c.finds = append(c.finds, find{sql: sql, pos: c.p.fset.Position(pos), msg: fmt.Sprintf(format, a...)})
 }
 
+func (c *checker) reportAtomic(pos token.Pos, format string, a ...any) {
+	c.finds = append(c.finds, find{atomic: true, pos: c.p.fset.Position(pos), msg: fmt.Sprintf(format, a...)})
+}
+
 // read walks the package once and collects everything the guard needs: every
 // call with the functions around it, which identifiers stand in call
 // position, the declaration of every function, where each variable was given
@@ -390,6 +397,7 @@ func guard(p *pkgSource) (finds []find, calls, values int) {
 	c.read()
 	c.noMethodValues()
 	c.noReflect()
+	c.onceUseWritesFirst()
 	for _, cl := range c.all {
 		sel, ok := cl.call.Fun.(*ast.SelectorExpr)
 		if !ok || !dbMethods[sel.Sel.Name] {
@@ -470,6 +478,188 @@ func (c *checker) noReflect() {
 			if imp.Path.Value == `"reflect"` {
 				c.report(true, imp.Pos(), "this package imports reflect; a method called through it "+
 					"carries its name as a string, and the guard of this file reads identifiers")
+			}
+		}
+	}
+}
+
+// writeVerbs open a statement that changes rows. bodyWords are what tell a
+// statement from an ordinary string that happens to begin with one of those
+// words: every statement of this store names a table with FROM, INTO or SET,
+// or brings VALUES, and a sentence in a message does not.
+var writeVerbs = map[string]bool{"UPDATE": true, "INSERT": true, "DELETE": true, "REPLACE": true}
+
+var bodyWords = map[string]bool{"FROM": true, "INTO": true, "SET": true, "VALUES": true}
+
+// statementWrites says whether e is a statement of this store at all, and
+// whether that statement changes rows. A statement that opens with WITH is
+// decided on its words and not on its first one: a common table expression
+// may end in an UPDATE just as well as in a SELECT, and only the whole of it
+// tells the two apart. Whole words are compared, so a column called updated
+// is no UPDATE.
+func statementWrites(p *pkgSource, e ast.Expr) (write, is bool) {
+	tv, ok := p.info.Types[e]
+	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
+		return false, false
+	}
+	w := strings.Fields(strings.ToUpper(constant.StringVal(tv.Value)))
+	if len(w) == 0 {
+		return false, false
+	}
+	body := false
+	for _, x := range w[1:] {
+		if bodyWords[x] {
+			body = true
+			break
+		}
+	}
+	if !body {
+		return false, false
+	}
+	switch {
+	case writeVerbs[w[0]]:
+		return true, true
+	case w[0] == "SELECT":
+		return false, true
+	case w[0] == "WITH":
+		for _, x := range w[1:] {
+			if writeVerbs[x] {
+				return true, true
+			}
+		}
+		return false, true
+	}
+	return false, false
+}
+
+// ownFunc is the function a call names, when this module declares it.
+func (c *checker) ownFunc(call *ast.CallExpr) *types.Func {
+	id := calleeIdent(call)
+	if id == nil {
+		return nil
+	}
+	fn, _ := c.p.info.Uses[id].(*types.Func)
+	return fn
+}
+
+// litOf is the function literal a called name stands for, when the name was
+// given one in exactly one place. More than one place and the guard says
+// nothing: it cannot know which of them runs.
+func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
+	v, ok := c.varOf(call.Fun)
+	if !ok {
+		return nil
+	}
+	ws := c.made[v]
+	if len(ws) != 1 {
+		return nil
+	}
+	lit, _ := ws[0].expr.(*ast.FuncLit)
+	return lit
+}
+
+// argLits are the literals that stand as an argument of a call, or are called
+// on the spot. Those run where they stand; a literal given a name runs where
+// the name is called, and it is read there instead.
+func argLits(n ast.Node) map[*ast.FuncLit]bool {
+	out := map[*ast.FuncLit]bool{}
+	ast.Inspect(n, func(x ast.Node) bool {
+		call, ok := x.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		for _, a := range call.Args {
+			if lit, ok := a.(*ast.FuncLit); ok {
+				out[lit] = true
+			}
+		}
+		if lit, ok := call.Fun.(*ast.FuncLit); ok {
+			out[lit] = true
+		}
+		return true
+	})
+	return out
+}
+
+// firstStmtIn is the first statement n gives the database, read in the order
+// the source has it. A call of a function of this package, and a call of a
+// name that holds a function literal, are read at the place they stand, so a
+// statement moved into a helper counts where the helper is called and not
+// where it is written. Each is read once: a loop through the same helper adds
+// nothing, and a cycle would not end.
+func (c *checker) firstStmtIn(n ast.Node, seen map[*types.Func]bool, seenLit map[*ast.FuncLit]bool) (write bool, pos token.Pos, found bool) {
+	here := argLits(n)
+	ast.Inspect(n, func(x ast.Node) bool {
+		if found || x == nil {
+			return false
+		}
+		if lit, ok := x.(*ast.FuncLit); ok && !here[lit] {
+			return false // it runs where its name is called
+		}
+		if e, ok := x.(ast.Expr); ok {
+			if w, is := statementWrites(c.p, e); is {
+				write, pos, found = w, e.Pos(), true
+				return false
+			}
+		}
+		call, ok := x.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var body ast.Node
+		if fn := c.ownFunc(call); fn != nil && !seen[fn] {
+			seen[fn] = true
+			if d := c.decl[fn]; d != nil && d.Body != nil {
+				body = d.Body
+			}
+		} else if lit := c.litOf(call); lit != nil && !seenLit[lit] {
+			seenLit[lit] = true
+			body = lit.Body
+		}
+		if body != nil {
+			if w, p, ok := c.firstStmtIn(body, seen, seenLit); ok {
+				write, pos, found = w, p, true
+				return false
+			}
+		}
+		return true
+	})
+	return write, pos, found
+}
+
+// onceUseWritesFirst refuses a OnceUse that asks the database about the value
+// before it writes the mark. What it hands out has to be decided by the write
+// itself - one UPDATE that matches only a row still unused and still in time,
+// and the count of rows it changed - because two callers that read the same
+// unused row both hand the same one-time value out. A login taken twice and a
+// task run twice are what that costs, so this is a rule and not a taste.
+//
+// A read after the write is what the method is for and says nothing here: the
+// order alone is refused. UPDATE ... RETURNING passes as well, although it
+// comes through QueryRow - it is the statement that is read, never the name
+// of the method.
+//
+// This is the one thing no run of this repository can measure. Two steps
+// without a transaction are caught by TestOnlyOneUseGetsTheValue, but only on
+// a machine of two processors or more; two steps inside one transaction are
+// caught by nothing at all, because SQLite's own transactions save such a
+// store and MariaDB is in no run here. Read from the source it is neither
+// flaky nor tied to a machine.
+func (c *checker) onceUseWritesFirst() {
+	for _, file := range c.p.files {
+		for _, d := range file.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "OnceUse" || fn.Body == nil {
+				continue
+			}
+			write, pos, found := c.firstStmtIn(fn.Body, map[*types.Func]bool{}, map[*ast.FuncLit]bool{})
+			switch {
+			case !found:
+				c.reportAtomic(fn.Pos(), "OnceUse gives the database no statement the guard can find, "+
+					"so nothing here says the value is spent by the write that hands it out")
+			case !write:
+				c.reportAtomic(pos, "the first statement it gives the database only reads, "+
+					"so what OnceUse hands out was decided by that read and not by the write")
 			}
 		}
 	}
@@ -831,7 +1021,7 @@ func (c *checker) fromString(v ast.Expr) bool {
 func TestEverySQLIsAConstant(t *testing.T) {
 	finds, calls, _ := guard(readPackage(t, "."))
 	for _, f := range finds {
-		if f.sql {
+		if f.sql && !f.atomic {
 			t.Errorf("%s", f)
 		}
 	}
@@ -851,13 +1041,46 @@ func TestEverySQLIsAConstant(t *testing.T) {
 func TestEveryByteSliceComesFromBlob(t *testing.T) {
 	finds, _, values := guard(readPackage(t, "."))
 	for _, f := range finds {
-		if !f.sql {
+		if !f.sql && !f.atomic {
 			t.Errorf("%s", f)
 		}
 	}
 	if values < 15 {
 		t.Errorf("only %d values given to the database were measured", values)
 	}
+}
+
+// TestOnceUseDecidesWithItsWrite: the value OnceUse hands out is spent by the
+// write that hands it out, and not by a read in front of it. The two shapes
+// that break it - a read and a write without a transaction, and the same two
+// inside one - are both refused here, and testdata/twostep carries the first
+// of them so that this rule is measured and not only written down.
+//
+// It is read from the source, so it holds on a machine of one processor and
+// without MariaDB, where TestOnlyOneUseGetsTheValue measures nothing.
+func TestOnceUseDecidesWithItsWrite(t *testing.T) {
+	finds, _, _ := guard(readPackage(t, "."))
+	for _, f := range finds {
+		if f.atomic {
+			t.Errorf("%s", f)
+		}
+	}
+	// This package has a OnceUse, so a run that found none read past it.
+	if !hasOnceUse(readPackage(t, ".")) {
+		t.Error("no OnceUse was read at all, so this test measured nothing")
+	}
+}
+
+// hasOnceUse says whether the package declares the method this rule is about.
+func hasOnceUse(p *pkgSource) bool {
+	for _, file := range p.files {
+		for _, d := range file.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "OnceUse" && fn.Body != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // atTheDatabase are the packages under apps/server-db that may touch a
