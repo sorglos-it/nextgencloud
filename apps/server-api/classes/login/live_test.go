@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
 
 func TestLiveAndLogout(t *testing.T) {
@@ -100,6 +103,46 @@ func TestLiveEndsASessionTheConfigNoLongerAllows(t *testing.T) {
 	}
 	if _, err := h.S.DB.SessionGet(ctx, session.TokenHash(raw)); !isNotFound(err) {
 		t.Fatalf("the row of the ended session is still there: %v", err)
+	}
+}
+
+// withdrawPasswordUser signs the version after fx.Signed with the user of
+// loginOnce taken out of it. The passkey admin signs: he is an admin of
+// version 1 and stays in version 2, so the chain is whole and the one thing
+// that changed is that the list no longer holds the user who is logged in.
+func withdrawPasswordUser(t *testing.T, h *Handler, fx fixture) {
+	t.Helper()
+	l := trusttest.Next(t, fx.Signed)
+	l.Users = slices.DeleteFunc(l.Users, func(u trust.User) bool { return u.ID == fx.PasswordUser })
+	if _, err := h.S.AddVersion(ctx, fx.Passkey.Sign(t, l)); err != nil {
+		t.Fatalf("version 2 without the user: %v", err)
+	}
+}
+
+// TestLiveEndsASessionTheTrustListNoLongerHolds is the third of the three ends
+// Live knows, and the one nothing held to a test before: with the error of
+// session.VerifyClient dropped, every other test of this package stayed green.
+//
+// Both halves are asserted, because the two are different promises: the
+// request is refused, and the row is gone. A session whose user an admin took
+// out of the list must not lie around until its own expiry.
+func TestLiveEndsASessionTheTrustListNoLongerHolds(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	r := getCookie(session.PathTrust, cookie)
+	if _, ok := h.Live(ctx, r); !ok {
+		t.Fatal("the session was not open before the user was withdrawn")
+	}
+	withdrawPasswordUser(t, h, fx)
+	if _, ok := h.Live(ctx, r); ok {
+		t.Fatal("a session of a user the trust list no longer holds stayed open")
+	}
+	raw, err := enc.B64.DecodeString(cookie)
+	if err != nil {
+		t.Fatalf("cookie: %v", err)
+	}
+	if _, err := h.S.DB.SessionGet(ctx, session.TokenHash(raw)); !isNotFound(err) {
+		t.Fatalf("the row of the withdrawn user's session is still there: %v", err)
 	}
 }
 
