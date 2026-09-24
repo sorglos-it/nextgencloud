@@ -3234,12 +3234,26 @@ export const validSetupCode = (s) => typeof s === "string" && CODE.test(s);
 
 // normalizeSetupCode turns what someone typed into the canonical code: spaces,
 // tabs and '-' are dropped, a-z becomes upper case, then exactly 20 characters
-// of the alphabet without I, O, 0 and 1, in groups of five.
+// of the alphabet without I, O, 0 and 1, in groups of five. null where that is
+// not possible, including for anything that is no string at all.
+//
+// It walks UTF-16 units and folds a-z alone, which is Go's byte loop
+// character for character: every unit of a character outside ASCII is 0x80 or
+// above and is refused here, as every one of its UTF-8 bytes is there. The
+// task brief wrote this loop over code points with toUpperCase() instead, and
+// that one differs in exactly one place - measured over every code point
+// outside ASCII, surrogates apart: U+017F, the long s 'ſ', upper-cases to a
+// single "S", so the brief's loop makes "ſBCDE-FGHJK-MNPQR-STUVW" the code
+// "SBCDE-FGHJK-MNPQR-STUVW" while Go's NormalizeSetupCode, run on the same
+// input, answers false. A shell that takes what the API's own normalizer
+// would not is a second rule, so this one stays Go's.
 export function normalizeSetupCode(s) {
+  if (typeof s !== "string") return null;
   const c = [];
-  for (const ch of s) {
-    if (ch === " " || ch === "\t" || ch === "-") continue;
-    const u = ch.toUpperCase();
+  for (let i = 0; i < s.length; i++) {
+    let u = s[i];
+    if (u === " " || u === "\t" || u === "-") continue;
+    if (u >= "a" && u <= "z") u = String.fromCharCode(s.charCodeAt(i) - 32);
     if (c.length === 20 || !/^[A-HJ-NP-Z2-9]$/.test(u)) return null;
     c.push(u);
   }
