@@ -1202,16 +1202,19 @@ Erwartet: FAIL.
 Ausführen: `go test ./apps/server-controller/classes/e2e/`
 Erwartet: PASS.
 
-- [ ] **Step 5: Fuzz-Test für die inneren Nachrichten**
+- [ ] **Step 5: Fuzz-Ziel für die inneren Nachrichten**
 
-```go
-func FuzzInner(f *testing.F) {
-	f.Add([]byte{1})
-	f.Fuzz(func(t *testing.T, b []byte) { _, _ = wire.ParseE2E(b, false) })
-}
-```
+Ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
 
-Zusätzlich ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
+**Nicht** zusätzlich ein Ziel, das nur `wire.ParseE2E(b, false)` ruft und nichts prüft. Genau das
+stand hier bis zum 24.09.2026, und die Prüfung von Aufgabe 9 hat es gemessen: es kann für dieses
+Paket **nie rot werden** — in keiner von 21 Mutationen schlug es an. `shared/wire` hat mit
+`FuzzParseE2E` längst ein Ziel mit echtem Orakel; ein zweites ohne Zusicherung kostet Rechenzeit
+und täuscht Abdeckung vor.
+
+Die Regel dahinter, sie gilt für jedes Fuzz-Ziel in diesem Plan: **ein Ziel, das nichts zusichert,
+bewacht nichts.** Entweder prüft der Rumpf eine Eigenschaft, oder das Ziel gehört dorthin, wo die
+Eigenschaft geprüft werden kann.
 
 - [ ] **Step 6: Prüfen und committen**
 
