@@ -39,9 +39,12 @@ func TestLockTakeAgainWithTheSameTime(t *testing.T) {
 // TestLockFreeOnlyTheOwner: the DELETE of LockFree names the name and the
 // owner, and that second half is the whole of the method - one that dropped
 // every row of a name would take the rollout lock away from whoever holds it,
-// from another API and on another node. Nothing else in this package runs
-// LockFree against an open database, so without this the second half of that
-// statement is free to fall away unnoticed.
+// from another API and on another node. Only one other call in this package
+// reaches an open database with it, and it gives the lock back as the very
+// owner that took it (TestOnceAndLockBounds); the three in
+// TestALongValueNeverReachesTheDatabase run against a closed one. None of
+// them can tell the owner half from nothing, so without this test it is free
+// to fall away unnoticed.
 //
 // It is measured the only way a lock can be: by asking a third owner whether
 // it is still held.
@@ -68,8 +71,9 @@ func TestLockFreeOnlyTheOwner(t *testing.T) {
 // TestLockTakeWhenTheTimeIsReached: a lock is free again exactly when its time
 // is reached, not a second later. That is the until <= ? of the statement, and
 // it is measured here on a row that is really there - LockTake refuses an
-// until below the now it is given, so the other side of the same comparison in
-// TestOnceAndLockBounds never reaches the database at all.
+// until at or below the now it is given, so both cases of that bound in
+// TestOnceAndLockBounds, the one exactly at the now and the one below it, are
+// answered before the database ever sees them.
 func TestLockTakeWhenTheTimeIsReached(t *testing.T) {
 	s := open(t)
 	const now, until = 1790000000, 1790000060
