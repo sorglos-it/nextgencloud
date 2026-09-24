@@ -226,8 +226,14 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 // What it does not catch, said plainly so nobody takes it for more: a store
 // that puts those same two steps inside one transaction comes through green
 // here - measured, against exactly such a store. SQLite's own transactions
-// save it, and nothing in this run can tell that apart from a store that is
-// right. That shape needs MariaDB in the run, and it is still open.
+// save it, and nothing this test does can tell that apart from a store that
+// is right.
+//
+// That shape, and this one below one processor, are held instead by
+// TestOnceUseDecidesWithItsWrite, which reads the source and asks whether the
+// first statement OnceUse gives the database writes. Both shapes were
+// measured against it, and it caught both where every other test of this
+// package stayed green.
 func TestOnlyOneUseGetsTheValue(t *testing.T) {
 	const racers, rounds = 32, 400
 	s := open(t)
