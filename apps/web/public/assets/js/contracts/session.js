@@ -156,7 +156,7 @@ const apiNodes = (l) => (Array.isArray(l?.nodes) ? l.nodes : [])
 // verifyAPI checks an API certificate: signed by an API node of the trust
 // list, bound to the client certificate client and never valid longer than it,
 // so a session cannot outlive the user's approval (Go: session.VerifyAPI).
-// Every deviation throws.
+// Every deviation throws, a now that is no whole number included.
 export async function verifyAPI(env, l, client, now) {
   // The envelope belongs to the caller, so each of its fields may be a getter
   // or a proxy trap that answers two reads with two values. The three are read
@@ -199,7 +199,15 @@ export async function verifyAPI(env, l, client, now) {
     || c.exp > cc.exp) {
     throw new Error("session: malformed certificate");
   }
-  if (now < c.iat - MAX_SKEW || now >= c.exp) {
+  // Go takes an int64 for now and can be handed nothing else. Here both
+  // comparisons below are false against undefined, NaN, an object or text -
+  // and a caller who forgets the fourth argument hands over undefined - so a
+  // certificate that expired long ago would come through. A now that is no
+  // whole number is no point in time, and a certificate whose validity cannot
+  // be established at it is refused with the same error the check itself
+  // gives. json.js says the same of a missing budget size: everything a
+  // caller leaves out closes the gate (Fixrunde 1, K2).
+  if (!Number.isSafeInteger(now) || now < c.iat - MAX_SKEW || now >= c.exp) {
     throw new Error("session: certificate not valid at this time");
   }
   return c;
