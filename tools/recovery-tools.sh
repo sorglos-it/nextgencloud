@@ -6,15 +6,6 @@
 # noticing. So the assumptions get proven, not trusted.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Cleanup only, never a check: this is the one line in the package allowed to
-# swallow an error. -t alone would leave sessions behind, so -l and -s go with
-# it - a probe that died mid-way must not cost the next run its session slots.
-# The daemon joins the same trap: a STOPP or any other abort must not leave a
-# swtpm process behind for the next run to trip over.
-trap '
-	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
-	if [ -f "$state/swtpm.pid" ]; then kill "$(cat "$state/swtpm.pid")" >/dev/null 2>&1 || :; fi
-' EXIT
 
 work="$(pwd)/dist/recovery"
 probe="$work/work/probe"
@@ -22,6 +13,23 @@ state="$work/tpm/probe"
 txt="$work/werkzeuge.txt"
 handle=0x81000002        # the probe uses its own handle, not the policy's
 checked=()                # "Geprüft und in Ordnung" lines, filled as checks pass
+
+# Cleanup only, never a check: everything in this trap may swallow an error -
+# it only tidies up and must run no matter how the script ends. -t alone would
+# leave sessions behind, so -l and -s go with it - a probe that died mid-way
+# must not cost the next run its session slots. The daemon and the PIN-copy
+# files join it for the same reason: the success path handles them inline,
+# but a STOPP or a signal must not skip them. Registered after work/probe/
+# state above are set, not before (a failure in between would otherwise die
+# on "state: unbound variable" inside the trap itself). INT/TERM/HUP are
+# trapped alongside EXIT, not only EXIT - measured: EXIT alone missed the
+# daemon in 2 of 5 SIGTERM runs, because bash does not guarantee the EXIT
+# trap runs when a signal ends the process.
+trap '
+	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
+	if [ -f "$state/swtpm.pid" ]; then kill "$(cat "$state/swtpm.pid")" >/dev/null 2>&1 || :; fi
+	shred -u "$probe/pin-second.txt" "$probe/pin-wrong.txt" >/dev/null 2>&1 || :
+' INT TERM HUP EXIT
 
 say() { printf '%s\n' "$*" >&2; }
 stop_and_ask() {
@@ -73,31 +81,43 @@ minor="${rest%%.*}"
 if [ "$major" -lt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -lt 7 ]; }; then
 	stop_and_ask "tpm2-tools $version ist älter als 5.7, gegen die dieser Plan geschrieben ist."
 fi
+checked+=("  tpm2-tools $version ist 5.7 oder neuer")
 
 # --- 2. commands and options ----------------------------------------------
 
-for cmd in tpm2 tpm2_getpolicydigest tpm2_evictcontrol tpm2_policysigned tpm2_policynv \
-	tpm2_policypcr tpm2_policyauthvalue tpm2_policyor tpm2_sessionconfig \
-	tpm2_startauthsession tpm2_dictionarylockout tpm2_loadexternal tpm2_verifysignature \
-	swtpm swtpm_setup softhsm2-util qemu-system-x86_64 openssl; do
+tools_needed=(tpm2 tpm2_getpolicydigest tpm2_evictcontrol tpm2_policysigned tpm2_policynv
+	tpm2_policypcr tpm2_policyauthvalue tpm2_policyor tpm2_sessionconfig
+	tpm2_startauthsession tpm2_dictionarylockout tpm2_loadexternal tpm2_verifysignature
+	swtpm swtpm_setup softhsm2-util qemu-system-x86_64 openssl)
+for cmd in "${tools_needed[@]}"; do
 	if ! command -v "$cmd" >/dev/null; then
 		stop_and_ask "Der Befehl $cmd fehlt. Ohne ihn ist die Policy nicht baubar."
 	fi
 done
+checked+=("  alle ${#tools_needed[@]} benötigten Befehle sind vorhanden")
 
-help_of() {              # $1 = command; both streams, some tools help() to stderr
-	"$1" --help > "$probe/help.txt" 2>&1
-	cat "$probe/help.txt"
+help_of() {              # $1 = command
+	# A single command, so its exit status IS the function's exit status: no
+	# later command can mask a failing "--help" the way the previous "cat" did
+	# (page="$(help_of ...)" silently kept going past a failed --help, because
+	# without "shopt -s inherit_errexit" bash only looks at the LAST command's
+	# status inside a $( ) - measured root cause, not a guess). 2>&1 stays as a
+	# defensive habit: measured, none of the seven commands used here write
+	# anything to stderr for --help, but a future one might.
+	"$1" --help 2>&1
 }
 need_opt() {             # $1 = command, rest = long options that must exist
-	local cmd="$1" opt page
+	local cmd="$1" opt opt_re page
 	shift
 	page="$(help_of "$cmd")"
 	for opt in "$@"; do
 		# Anchored: a plain substring grep also passes an option that does not
 		# exist but is a prefix of a real one (--pcr-l inside --pcr-list) - the
-		# one case this check exists to catch is a renamed option.
-		if ! printf '%s\n' "$page" | grep -qE -- "(^|[^-[:alnum:]])${opt}([]=, |]|$)"; then
+		# one case this check exists to catch is a renamed option. Escaped:
+		# none of today's option names need it, but $opt still ends up in an
+		# ERE, so a future name with a metacharacter must not over-match.
+		opt_re="$(printf '%s' "$opt" | sed 's/[][\.^$*+?(){}|]/\\&/g')"
+		if ! printf '%s\n' "$page" | grep -qE -- "(^|[^-[:alnum:]])${opt_re}([]=, |]|$)"; then
 			stop_and_ask "$cmd kennt $opt nicht."
 		fi
 	done
@@ -205,12 +225,22 @@ tpm2_startauthsession --policy-session -S "$probe/sess3.ctx" -g sha384 \
 tpm2_sessionconfig --enable-encrypt --enable-decrypt "$probe/sess3.ctx" >/dev/null
 tpm2_policyauthvalue -S "$probe/sess3.ctx" >/dev/null
 flush
-if got3="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess3.ctx+file:$pin_wrong")"; then
+if got3="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess3.ctx+file:$pin_wrong" 2>"$probe/wrong-pin.err")"; then
+	cat "$probe/wrong-pin.err" >&2
 	stop_and_ask "tpm2-tools öffnet mit falschem PIN-Inhalt aus einer Datei - der Dateiinhalt wird nicht wirklich geprüft."
 fi
 tpm2_flushcontext "$probe/sess3.ctx" >/dev/null
-shred -u "$pin_second" "$pin_wrong"
-checked+=("  Plattform-PIN: Dateiinhalt zählt, nicht der Pfad (anderer Pfad/gleicher Inhalt gelingt, falscher Inhalt scheitert)")
+# Must fail for THIS reason - a wrong auth value, TPM error 0x98E - and not
+# for some unrelated one (a bad context, a TCTI hiccup, ...), or a green run
+# would prove nothing about the file's content actually being checked. Kept
+# in a file and only shown when it is not the expected error, so a passing
+# run's stderr stays readable instead of showing four raw ERROR lines that
+# look like a failure.
+if ! grep -q '0x98E' "$probe/wrong-pin.err"; then
+	cat "$probe/wrong-pin.err" >&2
+	stop_and_ask "Das Öffnen mit falschem PIN-Inhalt ist zwar gescheitert, aber nicht mit dem erwarteten TPM-Fehler (0x98E, Auth-Wert falsch)."
+fi
+checked+=("  Plattform-PIN: Dateiinhalt zählt, nicht der Pfad (anderer Pfad/gleicher Inhalt gelingt, falscher Inhalt scheitert mit Auth-Fehler)")
 
 tpm2_evictcontrol -C o -c "$handle" >/dev/null
 
