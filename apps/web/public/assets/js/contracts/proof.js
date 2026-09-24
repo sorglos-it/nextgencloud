@@ -156,6 +156,18 @@ const ARGON2_WORKER = new URL("../auth/argon2-worker.js", import.meta.url);
 // that neither finishes nor fails is the worst of the three endings.
 const DERIVE_START_MS = 10_000;
 const DERIVE_PER_KIB_PASS_MS = 0.5;
+// And a ceiling, because the parameters come from a document the server
+// stored and not from this page. The contract still allows m=1 GiB and t=10,
+// and the budget above would give that 87 minutes - which, for the person who
+// has just typed his password, is the same as no deadline at all. The number
+// is not invented: 108 s is the budget of the heaviest parameters anyone
+// actually uses (m=65536, t=3), so two minutes clears everything that is
+// really derived and cuts off only what the contract has yet to narrow
+// (V1.2). Its cost is named: on a phone many times slower than this desktop,
+// the very largest parameter sets the contract still allows could now run
+// into the ceiling and fail. A sign-in that fails is still a better ending
+// than one that never comes back.
+const DERIVE_MAX_MS = 120_000;
 
 // wipe clears bytes that are still here. fill(0) on a buffer that has been
 // handed over to a worker throws, and the array's length reads as zero then
@@ -186,6 +198,15 @@ function wipe(u8) {
 // in one place: the worker wipes it and is thrown away right after. Where it
 // never gets that far, this side wipes it instead, and a worker that says
 // nothing runs into a deadline rather than into no end at all.
+//
+// That holds for the buffer, and only for it. The text itself is beyond this
+// module in exactly the way publicFromSeed's JWK is: the string the caller
+// handed in, and the one .normalize("NFC") makes of it - the same string
+// again where it was already NFC, a second one where it was not - cannot be
+// written to and live until the garbage collector takes them, and the caller
+// holds the first of them anyway. What the worker is given can be cleared and
+// is; the typed text cannot, and that is said here rather than covered by
+// "one place".
 export async function deriveSeed(passwordText, kdf) {
   if (typeof passwordText !== "string") throw new BadProof("proof: a password is text");
   const k = kdfFields(kdf);
@@ -233,7 +254,7 @@ function inWorker(password, k) {
     deadline = setTimeout(() => {
       stop();
       reject(new BadProof("proof: Argon2id did not answer"));
-    }, DERIVE_START_MS + k.m * k.t * DERIVE_PER_KIB_PASS_MS);
+    }, Math.min(DERIVE_START_MS + k.m * k.t * DERIVE_PER_KIB_PASS_MS, DERIVE_MAX_MS));
     // The buffer is transferred, not cloned: after this line the password is
     // gone from this thread. The salt is the caller's and is copied, so his
     // KDF keeps it.
@@ -314,6 +335,10 @@ export async function validateUserKey(k) {
 const ED25519_PKCS8 = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b,
   0x65, 0x70, 0x04, 0x22, 0x04, 0x20]);
 
+// seedBytes builds that document. concat makes a new array and copies the
+// seed into it, so every call here puts a second copy of the secret on the
+// heap - one that importSeed wipes again, because unlike a string it can be
+// written to.
 function seedBytes(seed) {
   if (!(seed instanceof Uint8Array) || seed.length !== ED25519_SIZE) {
     throw new BadProof("proof: a seed is 32 bytes");
@@ -321,10 +346,25 @@ function seedBytes(seed) {
   return concat(ED25519_PKCS8, seed);
 }
 
+// importSeed is the one door to the Web Crypto API for a seed, for both
+// functions below. The document is wiped as soon as the import is through,
+// whichever way it went: the API copies what it is given before it returns,
+// so the key that comes out owes the wiped bytes nothing (measured - the key
+// still signs, and the test says so). The seed the caller handed in is his
+// and is not touched; what this module made of it is this module's to clear.
+async function importSeed(seed, extractable) {
+  const der = seedBytes(seed);
+  try {
+    return await crypto.subtle.importKey("pkcs8", der, { name: "Ed25519" }, extractable, ["sign"]);
+  } finally {
+    wipe(der);
+  }
+}
+
 // privateFromSeed makes the password key of a seed. Not extractable: once
 // imported, the key cannot leave the browser again.
 export async function privateFromSeed(seed) {
-  return crypto.subtle.importKey("pkcs8", seedBytes(seed), { name: "Ed25519" }, false, ["sign"]);
+  return importSeed(seed, false);
 }
 
 // publicFromSeed gives the public key that belongs to a seed
@@ -333,22 +373,28 @@ export async function privateFromSeed(seed) {
 // The Web Crypto API hands out no public key of a private one, and it exports
 // a private key neither as "spki" nor as "raw", so the one way to the public
 // half is to import the seed as extractable and read the JWK. That costs
-// something, and it is written down here rather than talked around: the JWK
-// of a private Ed25519 key is {kty, crv, alg, ext, key_ops, x, d} - measured
-// in the engine, not assumed - and d is the seed once more, as base64url
-// text. A string cannot be written to, so this copy is not wiped the way
-// deriveSeed wipes the password. What can be done is done: the reference to
-// it is let go of at once, so nothing that outlives this call holds it, and
-// the text itself lives on until the garbage collector takes it. The
-// extractable key inside the engine is a second copy no code here can reach
-// either, and goes when the engine lets the key go.
+// something, and it is counted out here rather than talked around. While this
+// call runs, the seed stands in four places:
 //
-// This is the one place in the module where the secret knowingly lies there
-// twice. The key privateFromSeed hands out - the one that signs - is never
-// extractable and has none of this.
+//   1. the caller's array, which is his and is not touched here;
+//   2. the PKCS#8 document importSeed builds - bytes, and wiped;
+//   3. d of the exported JWK, the seed once more as base64url text - measured
+//      in the engine, not assumed, the JWK being {kty, crv, alg, ext,
+//      key_ops, x, d};
+//   4. the extractable key inside the engine.
+//
+// Two of them can be cleared from here and are. The other two cannot: a
+// string cannot be written to, so d is only let go of at once - nothing that
+// outlives this call holds it, and the text itself lives until the garbage
+// collector takes it - and the engine's key goes when the engine lets it go.
+// Both are named rather than promised away.
+//
+// This is the one place in the module where a copy of the secret is knowingly
+// left standing. The key privateFromSeed hands out - the one that signs - is
+// never extractable and makes no JWK: there the only copy left is the
+// engine's own, which is the key itself.
 export async function publicFromSeed(seed) {
-  const extractable = await crypto.subtle.importKey("pkcs8", seedBytes(seed),
-    { name: "Ed25519" }, true, ["sign"]);
+  const extractable = await importSeed(seed, true);
   const jwk = await crypto.subtle.exportKey("jwk", extractable);
   const x = jwk.x;
   jwk.d = undefined;

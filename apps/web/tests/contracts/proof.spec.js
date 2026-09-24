@@ -246,6 +246,82 @@ test("the export that gives the public key does not keep the seed", async ({ she
   expect(got.restored).toBe(true);
 });
 
+// The Web Crypto API imports an Ed25519 seed in one form only: a PKCS#8
+// document, sixteen bytes of head and the seed behind them. Building that
+// document means copying the seed into a new array, so both privateFromSeed
+// and publicFromSeed make a second copy of the secret on the page's heap.
+//
+// Unlike the JWK's d, that copy is bytes and not text, so it can be written
+// to - and it is, as soon as the import has taken it. The import copies what
+// it is given before it returns, so wiping afterwards costs the key nothing;
+// this case signs with the imported key and verifies the signature against
+// the public half to prove exactly that.
+//
+// It stands crypto.subtle.importKey in the way and keeps the very arrays that
+// were handed in. It says out loud that the seed was in them beforehand, so
+// it cannot go green on a call that never happened.
+test("the PKCS#8 copy of the seed does not stay behind", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, passwordPub)),
+    "no Ed25519 in this engine's Web Crypto: it imports no seed at all");
+  const got = await shell.evaluate(async (c) => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
+    const seed = b64decode(c.seed);
+    const original = crypto.subtle.importKey;
+    const seen = [];
+    crypto.subtle.importKey = function (format, data, ...rest) {
+      // Only the PKCS#8 documents of this module; the raw import below is the
+      // public key and carries no secret.
+      if (format === "pkcs8" && data instanceof Uint8Array) {
+        const tail = data.subarray(data.length - seed.length);
+        seen.push({ data, len: data.length, was: seed.every((b, i) => tail[i] === b) });
+      }
+      return original.call(this, format, data, ...rest);
+    };
+    let pub;
+    let signs = false;
+    try {
+      pub = b64encode(await p.publicFromSeed(seed));
+      // The same seed through the other door, and the key it gives has to
+      // still work: wiping the document after the import must not have taken
+      // anything the key needed.
+      const key = await p.privateFromSeed(seed);
+      const msg = new TextEncoder().encode("ngc");
+      const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, msg);
+      const half = await crypto.subtle.importKey("raw", b64decode(c.public), { name: "Ed25519" },
+        false, ["verify"]);
+      signs = await crypto.subtle.verify({ name: "Ed25519" }, half, sig, msg);
+    } finally {
+      delete crypto.subtle.importKey;
+    }
+    return {
+      pub,
+      signs,
+      imports: seen.length,
+      lens: seen.map((s) => s.len),
+      wasTheSeed: seen.map((s) => s.was),
+      left: seen.map((s) => Array.from(s.data).filter((b) => b !== 0).length),
+      callersSeed: b64encode(seed),
+      restored: crypto.subtle.importKey === original,
+    };
+  }, kdfCases[0]);
+  expect(got.pub).toBe(kdfCases[0].public);
+  // Two documents, one per door, and each of them 16 bytes of head and 32 of
+  // seed.
+  expect(got.imports).toBe(2);
+  expect(got.lens).toEqual([48, 48]);
+  // They really did carry the seed - otherwise this case would mean nothing.
+  expect(got.wasTheSeed).toEqual([true, true]);
+  // And not one byte of either is left, head and all.
+  expect(got.left).toEqual([0, 0]);
+  // The seed the caller handed in is his and stays untouched: only the copy
+  // this module made is wiped.
+  expect(got.callersSeed).toBe(kdfCases[0].seed);
+  // And the key that came out of the wiped document still signs.
+  expect(got.signs).toBe(true);
+  expect(got.restored).toBe(true);
+});
+
 // The whole way from the typed password to the key, against the same three
 // vectors Go writes (proof.DeriveKey over argon2.IDKey). The third case is
 // the second one typed in NFD: Go has no NFC table and put the case here on
@@ -409,44 +485,74 @@ test("the typed password is wiped even where no worker can be made", async ({ sh
 // password, a sign-in that neither finishes nor fails is the worst of the
 // three endings, so there is a deadline.
 //
-// This case hands out a Worker that swallows everything in silence and waits
-// for the deadline to run out. It uses the cheapest parameters the contract
-// allows, because the deadline grows with the work Argon2id was asked for.
-test("a worker that never answers ends in an error and not in waiting", async ({ shell }) => {
-  test.setTimeout(180_000);
-  const got = await shell.evaluate(async () => {
-    const p = await import("/assets/js/contracts/proof.js");
-    const realWorker = globalThis.Worker;
-    let built = 0;
-    let ended = 0;
-    globalThis.Worker = class {
-      constructor() { built += 1; }
-      postMessage() {}
-      terminate() { ended += 1; }
-    };
-    const started = performance.now();
-    let answer = "no error";
-    try {
+// The deadline is a number this module works out, so this case reads that
+// number instead of waiting for it: it hands out a Worker that swallows
+// everything in silence, stands setTimeout in the way, writes down the
+// milliseconds that were asked for and then lets the timer run at once.
+//
+// That holds three things in one go, where waiting held one. The budget grows
+// with the work Argon2id was asked for - m times t, and p not at all, because
+// lanes split that work without adding to it. It stops at two minutes however
+// large the parameters of the document are, and those parameters come from a
+// document the server stored, not from this page. And the way out really ends
+// the worker and answers BadProof instead of leaving the promise open.
+//
+// What it does not hold is the wall clock: the timer is real, but it is asked
+// for zero. That trade is deliberate and it is the whole point - waiting the
+// deadlines out cost forty seconds of every run and held nothing in return
+// but "more than 5 s and less than 60 s", which every one of these five
+// numbers would have passed.
+test("the deadline of a derivation is the work it was asked for, capped at two minutes",
+  async ({ shell }) => {
+    const got = await shell.evaluate(async () => {
+      const p = await import("/assets/js/contracts/proof.js");
+      const realWorker = globalThis.Worker;
+      const realTimeout = globalThis.setTimeout;
       const salt = new Uint8Array(16).fill(7);
-      await p.deriveSeed("Heimnetz-2026", { alg: "argon2id", salt, m: 19456, t: 1, p: 1 });
-      answer = "derived something";
-    } catch (e) {
-      answer = e.constructor.name;
-    } finally {
-      globalThis.Worker = realWorker;
-    }
-    return { answer, built, ended, ms: Math.round(performance.now() - started) };
+      const runs = [];
+      // The cheapest the contract allows, twice the passes, four lanes,
+      // today's defaults, and the most the contract allows.
+      const cases = [{ m: 19456, t: 1, p: 1 }, { m: 19456, t: 2, p: 1 }, { m: 19456, t: 1, p: 4 },
+        { m: 65536, t: 3, p: 1 }, { m: 1048576, t: 10, p: 1 }];
+      for (const c of cases) {
+        let built = 0;
+        let ended = 0;
+        const asked = [];
+        globalThis.Worker = class {
+          constructor() { built += 1; }
+          postMessage() {}
+          terminate() { ended += 1; }
+        };
+        globalThis.setTimeout = function (fn, ms, ...rest) {
+          asked.push(ms);
+          return realTimeout.call(globalThis, fn, 0, ...rest);
+        };
+        let answer = "no error";
+        try {
+          await p.deriveSeed("Heimnetz-2026", { alg: "argon2id", salt, m: c.m, t: c.t, p: c.p });
+          answer = "derived something";
+        } catch (e) {
+          answer = e.constructor.name;
+        } finally {
+          globalThis.setTimeout = realTimeout;
+          globalThis.Worker = realWorker;
+        }
+        runs.push({ asked, answer, built, ended });
+      }
+      return runs;
+    });
+    // Ten seconds of start-up and half a millisecond per KiB-pass: 19 728,
+    // 29 456, 19 728 again because p does not count, and 108 304. The last
+    // one would come to 5 252 880 - twenty-two minutes, which is no deadline
+    // at all for the person sitting in front of it - and stops at 120 000.
+    expect(got.map((r) => r.asked)).toEqual([[19_728], [29_456], [19_728], [108_304], [120_000]]);
+    // Every one of them ends the same way: exactly one worker, ended, so
+    // nothing of it and nothing in it is left running, and the caller is told
+    // instead of left waiting.
+    expect(got.map((r) => r.built)).toEqual([1, 1, 1, 1, 1]);
+    expect(got.map((r) => r.ended)).toEqual([1, 1, 1, 1, 1]);
+    expect(got.map((r) => r.answer)).toEqual(["BadProof", "BadProof", "BadProof", "BadProof", "BadProof"]);
   });
-  expect(got.answer).toBe("BadProof");
-  expect(got.built).toBe(1);
-  // The worker is ended, so nothing of it and nothing in it is left running.
-  expect(got.ended).toBe(1);
-  // Long enough that no ordinary derivation ever runs into it, and short
-  // enough that a person is still there when it comes.
-  expect(got.ms).toBeGreaterThan(5_000);
-  expect(got.ms).toBeLessThan(60_000);
-  console.log(`a silent worker was given up on after ${got.ms} ms`);
-});
 
 // The three vectors of proof_kdf.json all say m=65536, t=3, p=1, so nothing
 // in this repository holds Argon2id against a parallelism above one - and the
