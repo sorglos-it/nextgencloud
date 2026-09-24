@@ -240,10 +240,13 @@ test("a field that changes between the check and the writing never reaches the b
     // with whatever it likes and stays instanceof Uint8Array, so neither the
     // type check nor the length check alone says anything about the bytes
     // that are really there. Measured here rather than assumed.
+    //
+    // Every read gets the lie, not only the first: a check and a writer that
+    // both went by length would agree with each other on the wrong answer,
+    // and only looking at what was written catches that as well.
     const lying = (real, says) => {
       const u = utf8(real);
-      let reads = 0;
-      Object.defineProperty(u, "length", { get() { return ++reads === 1 ? says : u.byteLength; } });
+      Object.defineProperty(u, "length", { get() { return says; } });
       return u;
     };
     const liar = lying('{"a":1}', 0);
@@ -254,8 +257,8 @@ test("a field that changes between the check and the writing never reaches the b
     let writtenLiar;
     try {
       writtenLiar = fromUtf8(task.encodeTask(t));
-    } catch {
-      writtenLiar = "refused";
+    } catch (e) {
+      writtenLiar = "refused: " + e.message;
     }
 
     return {
@@ -263,19 +266,17 @@ test("a field that changes between the check and the writing never reaches the b
       validateReads: most(a.n), encodeReads: most(b.n),
       exp: drifting("exp", undefined, 1890000060),
       node: drifting("node", undefined, "other"),
-      stillBytes,
-      // The check and the writer agree about the params either way: the text
-      // the bytes really hold is what both of them go by, and a length that
-      // answers 0 once cannot make one of them see empty params while the
-      // other writes seven bytes into the signature.
-      liarAgrees: okLiar === (writtenLiar !== "refused")
-        && (writtenLiar === "refused" || writtenLiar.includes('"params":{"a":1}')),
+      stillBytes, okLiar, writtenLiar,
     };
   });
   expect(out.validateReads).toBe(1);
   expect(out.encodeReads).toBe(1);
   expect(out.stillBytes).toBe(true);
-  expect(out.liarAgrees).toBe(true);
+  // Neither the check nor the writer asks the params for a length: both go by
+  // the text the bytes really hold, so a length that always answers 0 changes
+  // nothing - the params are valid and they stand in the bytes.
+  expect(out.okLiar).toBe(true);
+  expect(out.writtenLiar).toContain('"params":{"a":1}');
   // Two truthful reads, then a different value. Whatever comes out, the exp
   // and the node in the bytes are ones a check has seen.
   expect(out.exp.written).not.toBe(1890000060);
