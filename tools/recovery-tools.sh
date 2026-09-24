@@ -169,6 +169,49 @@ if [ "$got" != TEST-PROBE-SECRET ]; then
 	stop_and_ask "tpm2-tools nimmt die PIN nicht aus einer Datei (session:…+file:…). Die PIN kommt nicht auf die Kommandozeile."
 fi
 checked+=("  Plattform-PIN aus Datei (session:…+file:…) funktioniert")
+
+# Symmetry gap: the check above reads the same path at seal and unseal time,
+# so a consistent misreading of "file:..." (e.g. taken as a literal string)
+# would pass unnoticed too. Close it without ever putting the PIN on a
+# command line: a second file with the SAME content, at a DIFFERENT path,
+# must still open the object - that only holds if the content is read, not
+# the spec string. A third file with WRONG content must fail to open it.
+pin_second="$probe/pin-second.txt"
+pin_wrong="$probe/pin-wrong.txt"
+cp "$pin_platform" "$pin_second"
+flush
+tpm2_startauthsession --policy-session -S "$probe/sess2.ctx" -g sha384 \
+	--tpmkey-context "$handle" >/dev/null
+tpm2_sessionconfig --enable-encrypt --enable-decrypt "$probe/sess2.ctx" >/dev/null
+tpm2_policyauthvalue -S "$probe/sess2.ctx" >/dev/null
+flush
+if ! got2="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess2.ctx+file:$pin_second")"; then
+	stop_and_ask "Derselbe PIN-Inhalt aus einer anderen Datei öffnet nicht - die PIN wird nicht zuverlässig aus dem Dateiinhalt gelesen."
+fi
+tpm2_flushcontext "$probe/sess2.ctx" >/dev/null
+if [ "$got2" != TEST-PROBE-SECRET ]; then
+	stop_and_ask "Derselbe PIN-Inhalt aus einer anderen Datei öffnet nicht - die PIN wird nicht zuverlässig aus dem Dateiinhalt gelesen."
+fi
+
+# This attempt bumps the primary's DA counter (a real, measured TPM error:
+# "the authorization HMAC check failed and DA counter incremented"). Harmless
+# here - swtpm_setup --overwrite discards this whole instance at the top of
+# the next run - but worth knowing before Paket 1 reuses this pattern against
+# state that persists.
+printf '%s' 'WRONG-TEST-PIN' > "$pin_wrong"
+flush
+tpm2_startauthsession --policy-session -S "$probe/sess3.ctx" -g sha384 \
+	--tpmkey-context "$handle" >/dev/null
+tpm2_sessionconfig --enable-encrypt --enable-decrypt "$probe/sess3.ctx" >/dev/null
+tpm2_policyauthvalue -S "$probe/sess3.ctx" >/dev/null
+flush
+if got3="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess3.ctx+file:$pin_wrong")"; then
+	stop_and_ask "tpm2-tools öffnet mit falschem PIN-Inhalt aus einer Datei - der Dateiinhalt wird nicht wirklich geprüft."
+fi
+tpm2_flushcontext "$probe/sess3.ctx" >/dev/null
+shred -u "$pin_second" "$pin_wrong"
+checked+=("  Plattform-PIN: Dateiinhalt zählt, nicht der Pfad (anderer Pfad/gleicher Inhalt gelingt, falscher Inhalt scheitert)")
+
 tpm2_evictcontrol -C o -c "$handle" >/dev/null
 
 if [ -c /dev/kvm ]; then
