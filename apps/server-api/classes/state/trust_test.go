@@ -487,10 +487,22 @@ type noRow struct{ dbapi.Store }
 
 func (n noRow) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
 	if kind == dbapi.BlobTrust {
-		return dbapi.Blob{}, errors.New("memstore: the database is not answering")
+		return dbapi.Blob{}, errNoAnswer
 	}
 	return n.Store.BlobGet(ctx, kind, id)
 }
+
+// A refresh asks the trust rows two ways, and a store that is away answers
+// neither: without this the double would still hand out the query checkGap
+// makes, and which of the two failed first would decide the test.
+func (n noRow) BlobFrom(ctx context.Context, kind string, seq uint64) ([]dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		return nil, errNoAnswer
+	}
+	return n.Store.BlobFrom(ctx, kind, seq)
+}
+
+var errNoAnswer = errors.New("memstore: the database is not answering")
 
 // TestRefreshNamesTheFaultOfItsOwnRows proves a refresh says which of the two
 // it ran into, because past this package there is nothing but the name to go

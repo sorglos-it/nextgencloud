@@ -73,13 +73,14 @@ func TestTrustNeedsASessionAndPages(t *testing.T) {
 //
 // What that second walk costs is not the stored versions read again -- a
 // refresh that is up to date reads none of them. Measured on this fixture,
-// which holds one version: nine reads, rows 2 to 10, every one of them a row
-// that is not there (state.gapProbes). Nine reads that find nothing are what
-// the trust rows cost per look here, and paying them twice was the whole of
-// it.
+// which holds one version: two questions, the row after the newest and the one
+// query that asks whether the store holds anything above it, and both answer
+// with nothing. Paying those twice was the whole of it.
 //
 // One look is counted rather than written down: what it costs is state's
-// business (gapProbes), and what this test is about is that it happens once.
+// business, and what this test is about is that it happens once. It was nine
+// reads when this was written and is two now, and the test did not have to
+// change for that -- which is the point of counting looks.
 func TestTrustLooksAtTheListOnce(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)

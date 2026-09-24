@@ -355,14 +355,25 @@ func threeVersions(t *testing.T) (*Handler, string) {
 // arm the one place that picks the code would answer a store that is down like
 // a database that is broken.
 //
-// One fault is left that no arm of httpapi.Fault can even out, measured rather
-// than assumed: every trust row gone at once. The warm node still holds a list
-// and finds its row missing (E_INTERNAL, 500); the cold node has no list to
-// have lost and cannot tell that from an installation before its setup, so it
-// says state.ErrNoTrust (E_NOTFOUND, 404). The two are not looking at the same
-// thing, and state.checkGap names the same limit: a hole this wide needs the
-// newest number the store holds, or an anchor outside it, and the contract has
-// a query for neither.
+// The third case is the one that stood here as the fault no arm could even
+// out: every trust row gone at once. The warm node still holds a list and
+// finds its row missing (E_INTERNAL); the cold node found no list at all and
+// said state.ErrNoTrust, which is 404 -- the very answer the contract's table
+// keeps for a from above the newest version, so the shell was told it was
+// ahead of a server that had lost everything.
+//
+// The sentence that stood here said the contract has a query for neither the
+// newest number the store holds nor an anchor outside it. Both halves were
+// wrong, and the difference between a limit and an excuse is exactly that:
+// dbapi.BlobFrom is the first, and state.checkGap asks it now; trust.Anchor
+// with config.LoadAnchor and trust-anchor.json is the second, and
+// state.refreshLocked builds an anchor of its own besides. Neither was
+// missing. Neither was wired up.
+//
+// What tells the cold node apart needed neither of them in the end, and it
+// sits in Live: login/finish asks for the trust list before it writes a
+// session row, so a request that came this far with a session proves a list
+// stood once.
 func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 	for _, c := range []struct {
 		name   string

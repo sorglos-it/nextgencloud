@@ -216,23 +216,36 @@ func (c *callLog) LogAdd(ctx context.Context, e core.LogEntry) error {
 	return c.Store.LogAdd(ctx, e)
 }
 
-// trustReads counts the reads of the trust rows. What one look at the list
-// costs follows state.gapProbes and is none of this package's business, so
-// what its tests assert is how many looks there were, never how many rows one
-// look reads.
+// trustReads counts what the trust rows are asked, both ways a look at them
+// asks: row by row and the one query that walks above the newest
+// (state.checkGap). Both are counted because either alone would let a change
+// in package state move cost from one to the other without a test noticing.
+// What one look costs is still none of this package's business: what its tests
+// assert is how many looks there were.
 type trustReads struct {
 	dbapi.Store
 	mu sync.Mutex
 	n  int
 }
 
+func (c *trustReads) count() {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+}
+
 func (c *trustReads) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
 	if kind == dbapi.BlobTrust {
-		c.mu.Lock()
-		c.n++
-		c.mu.Unlock()
+		c.count()
 	}
 	return c.Store.BlobGet(ctx, kind, id)
+}
+
+func (c *trustReads) BlobFrom(ctx context.Context, kind string, seq uint64) ([]dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		c.count()
+	}
+	return c.Store.BlobFrom(ctx, kind, seq)
 }
 
 // take returns what was read since the last take and starts counting again.
@@ -316,8 +329,9 @@ func (noSession) SessionGet(context.Context, []byte) (dbapi.Session, error) {
 	return dbapi.Session{}, errors.New(storeDownError)
 }
 
-// noTrust cannot read a row of the trust list. It leaves every other row
-// alone, so a request gets as far as the list and no further.
+// noTrust cannot read a row of the trust list, neither one by one nor through
+// the query that walks above the newest (state.checkGap). It leaves every
+// other row alone, so a request gets as far as the list and no further.
 type noTrust struct{ dbapi.Store }
 
 func (n noTrust) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
@@ -325,6 +339,13 @@ func (n noTrust) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, erro
 		return dbapi.Blob{}, errors.New(storeDownError)
 	}
 	return n.Store.BlobGet(ctx, kind, id)
+}
+
+func (n noTrust) BlobFrom(ctx context.Context, kind string, seq uint64) ([]dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		return nil, errors.New(storeDownError)
+	}
+	return n.Store.BlobFrom(ctx, kind, seq)
 }
 
 // noTouch cannot write the time a session was last seen, which is the last
