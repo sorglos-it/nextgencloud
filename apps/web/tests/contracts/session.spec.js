@@ -241,3 +241,70 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
     reads: 1,
   });
 });
+
+// Fixrunde 1, K2: Go is handed an int64 for now and can be handed nothing
+// else. Here both comparisons of the time check are false against undefined,
+// NaN, text or an object, so a certificate that expired long ago comes
+// through - and verifyApproval leaves the time out on purpose, which makes
+// this the one place where the shell asks whether a session still holds. A
+// numeric string and a fraction are in the list because Go has neither: the
+// string compares like a number and would pass unnoticed.
+test("verifyAPI takes no now that is not a whole number", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const sign = await import("/assets/js/contracts/sign.js");
+    const proof = await import("/assets/js/contracts/proof.js");
+    const { b64decode, b64encode, utf8 } = await import("/assets/js/contracts/b64.js");
+    const seed = new Uint8Array(32).fill(9);
+    const priv = await proof.privateFromSeed(seed);
+    const pub = await proof.publicFromSeed(seed);
+    const client = b64decode(d.client);
+    const cc = JSON.parse(new TextDecoder().decode(client));
+    const payload = utf8(JSON.stringify({
+      inst: cc.inst, node: "api-1", client: b64encode(await s.certHash(client)),
+      dh: b64encode(new Uint8Array(32)), iat: cc.iat, exp: cc.exp,
+    }));
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
+      sign.message(sign.PURPOSE_API_CERT, payload)));
+    const env = { payload, kid: await sign.keyID(pub), sig };
+    const node = {
+      id: "api-1", kind: "api", name: "api-1", noise: new Uint8Array(32), sign: pub,
+      url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [],
+    };
+    const list = { installation: cc.inst, nodes: [node] };
+    const check = async (...now) => {
+      try {
+        await s.verifyAPI(env, list, client, ...now);
+        return "accepted";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return {
+      valid: await check(d.now),
+      tenYearsAfterExp: await check(d.now + 10 * 365 * 24 * 3600),
+      undef: await check(undefined),
+      nan: await check(NaN),
+      text: await check("later"),
+      numericText: await check(String(d.now)),
+      fraction: await check(d.now + 0.5),
+      object: await check({}),
+      missing: await check(),
+    };
+  }, v);
+  const refused = "session: certificate not valid at this time";
+  expect(got).toEqual({
+    valid: "accepted",
+    tenYearsAfterExp: refused,
+    undef: refused,
+    nan: refused,
+    text: refused,
+    numericText: refused,
+    fraction: refused,
+    object: refused,
+    missing: refused,
+  });
+});
