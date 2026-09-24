@@ -8,23 +8,35 @@ const v = vectors("trust.json");
 // too, not only NewPasskey - so an engine without it can verify no signature
 // in this file at all, and every "valid" chain would come back refused
 // instead of decided (measured: exactly that, on the WebKit Playwright
-// brings). Named and narrow, same probe and same reasoning as sign.spec.js's
-// hasEd25519, moved here because trust.spec.js has no vectors.public of its
-// own to import as a quick check.
-async function hasEd25519(shell) {
-  return shell.evaluate(async () => {
+// brings). Probes with a real key read out of the first vector, not an
+// arbitrary buffer: an engine that has Ed25519 but rejects a 32-byte value
+// that is not a point on the curve would otherwise be skipped by mistake,
+// for the wrong reason (Round 1 finding K5 - an earlier version of this probe
+// used new Uint8Array(32), and the first report's claim of "same probe shape"
+// as sign.spec.js's real-key probe was wrong; corrected here, and named as
+// wrong rather than quietly replaced).
+async function hasEd25519(shell, firstCase) {
+  return shell.evaluate(async (c) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const payload = JSON.parse(new TextDecoder().decode(b64decode(c.chain[0].payload)));
+    let pub = null;
+    for (const u of payload.users) {
+      for (const k of u.keys) {
+        if (k.kind === "password") pub = k.pub;
+      }
+    }
     try {
-      await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "Ed25519" }, false, ["verify"]);
+      await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
       return true;
     } catch {
       return false;
     }
-  });
+  }, firstCase);
 }
 
 test("every chain of trust.json is decided as Go decides it", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell)),
+  test.skip(!(await hasEd25519(shell, v[0])),
     "no Ed25519 in this engine's Web Crypto: it cannot verify any signature in trust.json");
   const got = await shell.evaluate(async (cases) => {
     const t = await import("/assets/js/contracts/trust.js");
@@ -98,31 +110,30 @@ test("the limits without their own vectors hold too", async ({ shell }) => {
   expect(out).toEqual({ autoOver: true, originsOver: true, rootUsersOver: true });
 });
 
-// The test above pins MaxAuto, MaxOrigins and MaxRoot on the "over" side
-// alone, through the decode budget (which rejects an oversized array before
-// validateList ever runs, because the list under test is otherwise invalid -
-// its users array is empty). A guard that fired at any size over 0 would
-// leave that test green too. This one pins both sides of each limit through
-// validateList itself, on a structurally valid list: exactly the maximum
-// is accepted, one more is refused. No real cryptography is needed, because
-// validateList (via proof.validateUserKeySync) checks a key's shape only,
-// never its signature or id === keyID(pub) - that check runs later, in
-// parseList's async pass. This closes the open item named in Task 6.
-test("MAX_AUTO, MAX_ORIGINS and MAX_ROOT are pinned on both sides, not just over", async ({ shell }) => {
+// Round 1 finding Wichtig 5: the test below used to pin only MAX_AUTO,
+// MAX_ORIGINS and MAX_ROOT - three of trust.js's nine MAX_* constants. The
+// other six (MAX_USERS, MAX_NODES, MAX_ROLES, MAX_STORES, MAX_KEYS_PER_USER,
+// MAX_ENTRIES) had neither a vector nor a case: a wrongly copied constant on
+// any of them would stay green, exactly the error class Wichtig 2 found. All
+// nine now go through the same rig, both sides, through validateList itself -
+// no real cryptography needed, since validateList (via
+// proof.validateUserKeySync) checks a key's shape only, never its signature
+// or id === keyID(pub).
+test("all nine MAX_* limits are pinned on both sides, not just over", async ({ shell }) => {
+  test.setTimeout(60_000);
   const out = await shell.evaluate(async () => {
     const t = await import("/assets/js/contracts/trust.js");
+    const { b64encode } = await import("/assets/js/contracts/b64.js");
     const id = "EREREREREREREREREREREQ"; // 16 bytes, valid ID shape (also used by the vectors above)
     const keyId = "AAAAAAAAAAAAAAAAAAAAAA"; // 16 zero bytes, valid key-id shape
+    const validKey = (kid) => ({
+      id: kid, kind: "password", alg: "EdDSA", pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
     const validList = (patch) => ({
       seq: 1, prev: new Uint8Array(0), issued: 1, installation: id,
       rp: { id: "", origins: [] },
-      users: [{
-        id, name: "admin", roles: ["admin"],
-        keys: [{
-          id: keyId, kind: "password", alg: "EdDSA", pub: new Uint8Array(32), credId: new Uint8Array(0),
-          kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
-        }],
-      }],
+      users: [{ id, name: "admin", roles: ["admin"], keys: [validKey(keyId)] }],
       roles: [{ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false }],
       nodes: [], stores: [], auto: [],
       ...patch,
@@ -130,7 +141,7 @@ test("MAX_AUTO, MAX_ORIGINS and MAX_ROOT are pinned on both sides, not just over
     // Same length throughout (3-digit, zero-padded), so ascending index order
     // is ascending string order too - unpadded "a9" > "a10" would break the
     // sorted-target rule before the count limit is ever reached.
-    const pad = (i) => String(i).padStart(3, "0");
+    const pad = (i, n = 3) => String(i).padStart(n, "0");
     const autoEntries = (n) => Array.from({ length: n },
       (_, i) => ({ target: "app" + pad(i) + ".b", key: new Uint8Array(32) }));
     const originEntries = (n) => Array.from({ length: n }, (_, i) => "https://a" + i + ".example");
@@ -139,6 +150,44 @@ test("MAX_AUTO, MAX_ORIGINS and MAX_ROOT are pinned on both sides, not just over
       id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32),
       sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers: rootUsersList, rootRoles: [],
     }]);
+
+    // A 16-byte ID whose base64url text does not sort the way its own byte
+    // value does (base64url's alphabet order is not byte order: "0"-"9" sit
+    // below "A"-"Z" in ASCII despite standing for the higher 6-bit values) -
+    // so N distinct IDs are sorted as text after encoding, not built already
+    // in order. marker keeps two pools (user IDs, key IDs) from ever
+    // colliding with each other or with the fixed ids above.
+    const sortedIds = (n, marker) => {
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const b = new Uint8Array(16);
+        b[0] = marker;
+        new DataView(b.buffer).setUint32(12, i);
+        out.push(b64encode(b));
+      }
+      return out.sort();
+    };
+    const manyUsers = (n) => {
+      const uids = sortedIds(n, 0x10), kids = sortedIds(n, 0x20);
+      return uids.map((uid, i) => ({ id: uid, name: "u" + i, roles: ["admin"], keys: [validKey(kids[i])] }));
+    };
+    const manyNodes = (n) => Array.from({ length: n }, (_, i) => ({
+      id: "ctl" + pad(i, 4), kind: "controller", name: "n", noise: new Uint8Array(32),
+      sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [],
+    }));
+    const emptyRole = (name) => ({ name, level: "off", black: [], white: [], passkeyOnly: false, passwordToo: false });
+    const manyRoles = (extra) => {
+      const names = Array.from({ length: extra }, (_, i) => "role" + pad(i, 4));
+      names.push("admin");
+      names.sort();
+      return names.map(emptyRole);
+    };
+    const manyStores = (n) => Array.from({ length: n }, (_, i) => ({
+      id: "store" + pad(i), name: "s", url: "https://s" + i + ".example", key: new Uint8Array(32),
+    }));
+    const manyKeys = (n) => sortedIds(n, 0x30).map(validKey);
+    const manyEntries = (n) => Array.from({ length: n }, (_, i) => "node/n" + i);
+
     return {
       autoAtLimit: t.validateList(validList({ auto: autoEntries(64) })),
       autoOverLimit: t.validateList(validList({ auto: autoEntries(65) })),
@@ -146,11 +195,332 @@ test("MAX_AUTO, MAX_ORIGINS and MAX_ROOT are pinned on both sides, not just over
       originsOverLimit: t.validateList(validList({ rp: { id: "", origins: originEntries(9) } })),
       rootAtLimit: t.validateList(validList({ nodes: controller(rootUsers(256)) })),
       rootOverLimit: t.validateList(validList({ nodes: controller(rootUsers(257)) })),
+
+      usersAtLimit: t.validateList(validList({ users: manyUsers(10000) })),
+      usersOverLimit: t.validateList(validList({ users: manyUsers(10001) })),
+      nodesAtLimit: t.validateList(validList({ nodes: manyNodes(256) })),
+      nodesOverLimit: t.validateList(validList({ nodes: manyNodes(257) })),
+      rolesAtLimit: t.validateList(validList({ roles: manyRoles(255) })),
+      rolesOverLimit: t.validateList(validList({ roles: manyRoles(256) })),
+      storesAtLimit: t.validateList(validList({ stores: manyStores(64) })),
+      storesOverLimit: t.validateList(validList({ stores: manyStores(65) })),
+      keysAtLimit: t.validateList(validList({ users: [{ id, name: "admin", roles: ["admin"], keys: manyKeys(16) }] })),
+      keysOverLimit: t.validateList(validList({ users: [{ id, name: "admin", roles: ["admin"], keys: manyKeys(17) }] })),
+      entriesAtLimit: t.validateList(validList({
+        roles: [emptyRole("admin"), { ...emptyRole("extra"), black: manyEntries(256) }],
+      })),
+      entriesOverLimit: t.validateList(validList({
+        roles: [emptyRole("admin"), { ...emptyRole("extra"), black: manyEntries(257) }],
+      })),
     };
   });
   expect(out).toEqual({
     autoAtLimit: true, autoOverLimit: false,
     originsAtLimit: true, originsOverLimit: false,
     rootAtLimit: true, rootOverLimit: false,
+    usersAtLimit: true, usersOverLimit: false,
+    nodesAtLimit: true, nodesOverLimit: false,
+    rolesAtLimit: true, rolesOverLimit: false,
+    storesAtLimit: true, storesOverLimit: false,
+    keysAtLimit: true, keysOverLimit: false,
+    entriesAtLimit: true, entriesOverLimit: false,
   });
+});
+
+// Round 1 finding Wichtig 1: Go refuses a non-empty rp.id that is not a
+// relying party ID - a DNS name in lower case, no scheme, no port, no path,
+// at most 253 bytes (shared/proof/proof.go:212, ValidRPID; checked from
+// shared/trust/trust.go:497). trust.js's validateList did not have this line
+// at all. None of the 24 vectors ever sets an invalid rp.id - all 52
+// payloads carry "ngc.example.org" - so this is this task's own case, built
+// directly against validateList; both sides of the 253-byte limit too.
+test("rp.id is checked against Go's relying party grammar, both sides", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const id = "EREREREREREREREREREREQ";
+    const keyId = "AAAAAAAAAAAAAAAAAAAAAA";
+    const withRPID = (rpId) => t.validateList({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: id,
+      rp: { id: rpId, origins: [] },
+      users: [{
+        id, name: "admin", roles: ["admin"],
+        keys: [{ id: keyId, kind: "password", alg: "EdDSA", pub: new Uint8Array(32), credId: new Uint8Array(0),
+          kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 } }],
+      }],
+      roles: [{ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false }],
+      nodes: [], stores: [], auto: [],
+    });
+    return {
+      empty: withRPID(""), // no passkey in this list, so this is Go's own zero value, never checked
+      valid: withRPID("ngc.example.org"),
+      scheme: withRPID("https://ngc.example.org"),
+      upperCase: withRPID("NGC.example.org"),
+      withPort: withRPID("ngc.example.org:8443"),
+      atLimit: withRPID("a".repeat(253)),
+      overLimit: withRPID("a".repeat(254)),
+    };
+  });
+  expect(out).toEqual({
+    empty: true, valid: true, scheme: false, upperCase: false, withPort: false,
+    atLimit: true, overLimit: false,
+  });
+});
+
+// Round 1 finding Wichtig 2: signedBudget borrowed sign.envelopeBudget's size,
+// whose 1 KiB slack (ENVELOPE_SLACK) is sized for a plain envelope's kid+sig,
+// not for a trust.Signed carrying a full proof.Proof. Go sizes it with 64 KiB
+// of slack on purpose (shared/trust/trust.go:222, "plus 64 KiB for the proof
+// (at most about 12 KiB)"). A maximal passkey proof alone is 12 290 base64
+// characters (sig 1366 + authData 5462 + clientData 5462) - well past 1 KiB,
+// well inside 64 KiB. No test called parseSigned at all before this one.
+test("parseSigned leaves room for a maximal proof next to a payload at the cap", async ({ shell }) => {
+  test.setTimeout(60_000);
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const { b64encode } = await import("/assets/js/contracts/b64.js");
+    const MAX_PAYLOAD = 4 << 20;
+    const doc = JSON.stringify({
+      payload: b64encode(new Uint8Array(MAX_PAYLOAD)),
+      proof: {
+        kind: "passkey", kid: "AAAAAAAAAAAAAAAAAAAAAA",
+        sig: b64encode(new Uint8Array(1024)),
+        authData: b64encode(new Uint8Array(4096)),
+        clientData: b64encode(new Uint8Array(4096)),
+      },
+    });
+    const bytes = new TextEncoder().encode(doc);
+    try {
+      const s = t.parseSigned(bytes);
+      return { threw: false, payloadLength: s.payload.length };
+    } catch (e) {
+      return { threw: true, message: String(e && e.message) };
+    }
+  });
+  expect(out).toEqual({ threw: false, payloadLength: 4 << 20 });
+});
+
+// Round 1 findings Wichtig 3 and Wichtig 4: validateList, validAPINode and
+// validStore are exported (trust.js's own interface list names the last two),
+// so all three can be handed anything, not only what decode() already shaped
+// through userKeyShape/nodeShape/storeShape. Three things pinned here:
+//  (a) validateList never throws, not even on {} - it promises -> boolean,
+//      and l.prev.length on an absent l.prev threw a TypeError before this
+//      fix, regardless of every other field.
+//  (b) a same-length string does not stand in for Uint8Array on any of the
+//      byte fields these paths check (noise, sign, tls, key) - the neighbor
+//      modules (b64.js's equal, text.js's validText) check the type before
+//      the length for exactly this reason, spelled out in their own
+//      comments, and this task's own brief said so too.
+//  (c) a key whose id is not a string (here: a bare {}) is refused on its
+//      own, synchronously, in validateUserKeySync - not left to the
+//      duplicate-key-id check (which would never catch it: two distinct {}
+//      objects are never === to each other, so keys.has(k.id) would never
+//      flag them as the same id) and not left to the id === keyID(pub) check
+//      (which only runs later, asynchronously, and is unreachable through
+//      parseList in the first place - userKeyShape already forces id to be a
+//      string there; only the exported validateList can be handed one).
+test("validateList and the exported node/store checks refuse wrong-typed bytes, and never throw", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const id = "EREREREREREREREREREREQ";
+    const validKey = () => ({
+      id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+      pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const base = (extra) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: id,
+      rp: { id: "", origins: [] },
+      users: [{ id, name: "admin", roles: ["admin"], keys: [validKey()] }],
+      roles: [{ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false }],
+      nodes: [], stores: [], auto: [],
+      ...extra,
+    });
+    const thirtyTwoCharString = "A".repeat(32); // same .length as 32 bytes, is not bytes
+    const apiNode = (noise, sign, tls) => ({
+      id: "api-1", kind: "api", name: "n", noise, sign, url: "wss://api-1.test:7443/tunnel", tls,
+      rootUsers: [], rootRoles: [],
+    });
+    const store = (key) => ({ id: "store", name: "Store", url: "https://s.example", key });
+
+    let emptyObjectThrew = false, emptyObjectResult;
+    try {
+      emptyObjectResult = t.validateList({});
+    } catch {
+      emptyObjectThrew = true;
+    }
+
+    return {
+      emptyObjectThrew, emptyObjectResult,
+      apiNodeRealBytes: t.validAPINode(apiNode(new Uint8Array(32), new Uint8Array(32), new Uint8Array(32))),
+      apiNodeStringNoise: t.validAPINode(apiNode(thirtyTwoCharString, new Uint8Array(32), new Uint8Array(32))),
+      apiNodeStringSign: t.validAPINode(apiNode(new Uint8Array(32), thirtyTwoCharString, new Uint8Array(32))),
+      apiNodeStringTLS: t.validAPINode(apiNode(new Uint8Array(32), new Uint8Array(32), thirtyTwoCharString)),
+      storeRealBytes: t.validStore(store(new Uint8Array(32))),
+      storeStringKey: t.validStore(store(thirtyTwoCharString)),
+      listStringNoiseOnController: t.validateList(base({
+        nodes: [{ id: "ctl-1", kind: "controller", name: "n", noise: thirtyTwoCharString,
+          sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [] }],
+      })),
+      listStringAutoKey: t.validateList(base({ auto: [{ target: "ngc-web", key: thirtyTwoCharString }] })),
+      objectId: t.validateList(base({
+        users: [{ id, name: "admin", roles: ["admin"], keys: [{ ...validKey(), id: {} }] }],
+      })),
+    };
+  });
+  expect(out).toEqual({
+    emptyObjectThrew: false, emptyObjectResult: false,
+    apiNodeRealBytes: true, apiNodeStringNoise: false, apiNodeStringSign: false, apiNodeStringTLS: false,
+    storeRealBytes: true, storeStringKey: false,
+    listStringNoiseOnController: false, listStringAutoKey: false,
+    objectId: false,
+  });
+});
+
+// Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
+// tlsPin had no test calling them - the previous report described their
+// doubt-case behavior (unknown user/role/node grant nothing) by reading the
+// code next to Go, never by running it. Pinned here. Also K2: a white-list
+// entry "node/undefined" is a well-formed entry (validName("undefined") is
+// true), and matches's old `op.node !== ""` treated a caller's forgotten
+// op.node (undefined) as this literal text via "node/" + undefined -
+// excusing an operation that was never about any node. op.node ?? "" closes
+// it, matching Go's zero value "". The role is level "critical" and the op
+// is critical on purpose: at level "off" the correct and the buggy path both
+// end in false (the fallthrough default and the wrongful white-list match
+// agree by coincidence), which would make this case pass whether or not the
+// bug is fixed. At "critical", the correct path (no white-list match, fall
+// through to the level check, op.critical is true) and the buggy path (an
+// accidental match excuses it) disagree - true vs. false - so this only goes
+// green once matches actually stops matching on a node nobody named.
+test("the decision functions grant nothing on doubt, matching Go", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const adminId = "EREREREREREREREREREREQ";
+    const key = () => ({
+      id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+      pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const list = {
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: adminId,
+      rp: { id: "", origins: [] },
+      users: [{ id: adminId, name: "admin", roles: ["admin"], keys: [key()] }],
+      roles: [
+        { name: "admin", level: "off", black: [], white: [], passkeyOnly: false, passwordToo: false },
+        { name: "white", level: "critical", black: [], white: ["node/undefined"], passkeyOnly: false, passwordToo: false },
+      ],
+      nodes: [
+        { id: "api-1", kind: "api", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(32),
+          url: "wss://api-1.test:7443/tunnel", tls: new Uint8Array(32), rootUsers: [], rootRoles: [] },
+        { id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(0),
+          url: "", tls: new Uint8Array(0), rootUsers: [adminId], rootRoles: [] },
+      ],
+      stores: [], auto: [],
+    };
+    const unknownUser = "ISEhISEhISEhISEhISEhIQ";
+    const listWithGhostRole = { ...list,
+      users: [{ id: adminId, name: "admin", roles: ["ghost"], keys: [key()] }] };
+    const listWhiteUser = { ...list,
+      users: [{ id: adminId, name: "admin", roles: ["white"], keys: [key()] }] };
+
+    return {
+      needsConfirmUnknownUser: t.needsConfirm(list, unknownUser, { app: "a", action: "b", node: "" }),
+      needsConfirmUnknownRole: t.needsConfirm(listWithGhostRole, adminId, { app: "a", action: "b", node: "" }),
+      mayRootUnknownNode: t.mayRoot(list, adminId, "ghost-node"),
+      mayRootUnknownUser: t.mayRoot(list, unknownUser, "ctl-1"),
+      mayRootNotController: t.mayRoot(list, adminId, "api-1"),
+      mayRootRealController: t.mayRoot(list, adminId, "ctl-1"),
+      passwordTooUnknownUser: t.passwordToo(list, unknownUser),
+      keyOwnerEmptyList: t.keyOwner({ ...list, users: [] }, "AAAAAAAAAAAAAAAAAAAAAA"),
+      // K2: node deliberately left off op, like a caller might forget it.
+      needsConfirmNodelessOp: t.needsConfirm(listWhiteUser, adminId, { app: "zzz", action: "zzz", critical: true }),
+    };
+  });
+  expect(out).toEqual({
+    needsConfirmUnknownUser: true,
+    needsConfirmUnknownRole: true,
+    mayRootUnknownNode: false,
+    mayRootUnknownUser: false,
+    mayRootNotController: false,
+    mayRootRealController: true,
+    passwordTooUnknownUser: false,
+    keyOwnerEmptyList: null,
+    needsConfirmNodelessOp: true,
+  });
+});
+
+// Round 1 finding Wichtig 6 (continued): tlsPin and encodeList had no test
+// either. tlsPin is checked against a direct digest of the same input, twice,
+// for the same answer. encodeList is checked byte for byte against Go's
+// field order and omitempty (shared/trust/trust.go's struct tags): prev
+// absent at seq 1, a role without white/black omitting both, a role with one
+// white entry keeping only that one, an API node with every optional byte
+// field present, a controller with them all empty and so omitted, one store,
+// one auto entry.
+test("tlsPin hashes deterministically and encodeList matches Go's field order and omitempty", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const { equal, b64encode } = await import("/assets/js/contracts/b64.js");
+    const spki = new Uint8Array(20).fill(7);
+    const pinA = await t.tlsPin(spki);
+    const pinB = await t.tlsPin(spki);
+    const direct = new Uint8Array(await crypto.subtle.digest("SHA-256", spki));
+
+    const adminId = "EREREREREREREREREREREQ";
+    const list = {
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: adminId,
+      rp: { id: "", origins: [] },
+      users: [{
+        id: adminId, name: "admin", roles: ["admin"],
+        keys: [{ id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+          pub: new Uint8Array(32), credId: new Uint8Array(0),
+          kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 } }],
+      }],
+      roles: [
+        { name: "admin", level: "off", black: [], white: [], passkeyOnly: false, passwordToo: false },
+        { name: "white", level: "off", black: [], white: ["node/undefined"], passkeyOnly: false, passwordToo: false },
+      ],
+      nodes: [
+        { id: "api-1", kind: "api", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(32),
+          url: "wss://api-1.test:7443/tunnel", tls: new Uint8Array(32), rootUsers: [], rootRoles: [] },
+        { id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(0),
+          url: "", tls: new Uint8Array(0), rootUsers: [adminId], rootRoles: [] },
+      ],
+      stores: [{ id: "global", name: "NGC Store", url: "https://store.example", key: new Uint8Array(32) }],
+      auto: [{ target: "system", key: new Uint8Array(0) }],
+    };
+    const expected = {
+      seq: 1, issued: 1, installation: adminId,
+      rp: { id: "" },
+      users: [{
+        id: adminId, name: "admin", roles: ["admin"],
+        keys: [{ id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+          pub: b64encode(new Uint8Array(32)),
+          kdf: { alg: "argon2id", salt: b64encode(new Uint8Array(16)), m: 65536, t: 3, p: 1 } }],
+      }],
+      roles: [
+        { name: "admin", level: "off" },
+        { name: "white", level: "off", white: ["node/undefined"] },
+      ],
+      nodes: [
+        { id: "api-1", kind: "api", name: "n", noise: b64encode(new Uint8Array(32)),
+          sign: b64encode(new Uint8Array(32)), url: "wss://api-1.test:7443/tunnel",
+          tls: b64encode(new Uint8Array(32)) },
+        { id: "ctl-1", kind: "controller", name: "n", noise: b64encode(new Uint8Array(32)),
+          rootUsers: [adminId] },
+      ],
+      stores: [{ id: "global", name: "NGC Store", url: "https://store.example", key: b64encode(new Uint8Array(32)) }],
+      auto: [{ target: "system" }],
+    };
+    const encoded = new TextDecoder().decode(t.encodeList(list));
+    return {
+      tlsPinRepeats: equal(pinA, pinB), tlsPinMatchesDigest: equal(pinA, direct),
+      encodedMatches: encoded === JSON.stringify(expected),
+      encoded, expected: JSON.stringify(expected),
+    };
+  });
+  expect(out.tlsPinRepeats).toBe(true);
+  expect(out.tlsPinMatchesDigest).toBe(true);
+  expect(out.encoded).toBe(out.expected);
 });
