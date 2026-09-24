@@ -89,16 +89,19 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 // The code is that same rule said to the caller, and a question that could
 // not be asked never carries E_LOGIN: the contract keeps that word for a
 // session that is missing or has run out (shared/README.md), and this one is
-// neither. Reading the session row, reading the trust list and touching the
-// session are E_UNREACHABLE, a stored proof this API cannot read back and a
-// session key it cannot open are E_INTERNAL -- the database against this API's
-// own row and its own key. Without that difference a hiccup of the database
-// would send every user of the installation to the login screen.
+// neither. Without that difference a hiccup of the database would send every
+// user of the installation to the login screen.
 //
-// One edge of that is not clean: a trust list whose rows contradict each other
-// is the installation's doing and not the database's, and it is answered
-// E_UNREACHABLE all the same. state.Refresh hands both back as one error, and
-// telling them apart here would mean naming every error package state has.
+// Three of the codes are picked here, because the error is the store's own and
+// only this step knows what it was asking for: reading the session row and
+// touching the session are E_UNREACHABLE, a stored proof this API cannot read
+// back and a session key it cannot open are E_INTERNAL -- the database against
+// this API's own row and its own key. What the trust list answers is picked by
+// httpapi.Fault instead, which is the one place that reads an error of package
+// state, so that the same damage does not answer one thing here and another
+// where the same list is read out (login/trust.go). That also brings in a code
+// no failure of this step carried before: an installation with no trust list
+// at all is E_NOTFOUND, the contract's word for a thing that is not there.
 //
 // Nothing about the session itself is told apart, and the cookie and the row
 // are read by sessionRow, which says why.
@@ -175,11 +178,18 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// to ask.
 	v, err := h.S.Refresh(ctx)
 	if err != nil {
-		// One code for every cause of it, and it is never E_LOGIN. The store
-		// not answering is the plain case; rows of the trust list that
-		// contradict each other end up here too, and both are mended from
-		// outside this request, so both leave the caller the same thing to do.
-		return nil, wire.CodeUnreachable, false
+		// httpapi.Fault picks it, the same one place that picks the code when
+		// this very list is read out for the answer (login/trust.go). The two
+		// steps meet one damage at different times -- a node with nothing
+		// cached finds a missing version here, one that is up to date finds it
+		// down there -- and going through one place is what keeps the answer
+		// from following which node was asked. FromRows, because the version
+		// came out of this installation's own rows and the caller brought
+		// nothing to it.
+		//
+		// None of what it can answer here is E_LOGIN, which is the whole point
+		// of reading it out of the error at all.
+		return nil, httpapi.Fault(err, httpapi.FromRows), false
 	}
 	verified, err := session.VerifyClient(row.Cert, p, v.List, now)
 	if err != nil {

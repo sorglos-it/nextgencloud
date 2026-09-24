@@ -201,8 +201,17 @@ func TestFaultOfTheState(t *testing.T) {
 		{state.ErrOldVersion, wire.CodeVerify, wire.CodeNotFound},
 		{state.ErrNoTrust, wire.CodeNotFound, wire.CodeNotFound},
 		{state.ErrBusy, wire.CodeInternal, wire.CodeInternal},
+		// The store answered and what it said is wrong: asking again brings
+		// the same answer, so it is not the code that says come back.
 		{state.ErrSetting, wire.CodeInternal, wire.CodeInternal},
-		{errors.New("some other fault"), wire.CodeInternal, wire.CodeInternal},
+		// Nothing of package state's own: the store itself did not answer, and
+		// that is over when it answers again. This is the one class the two
+		// origins cannot tell apart either, because neither side chose it.
+		{errors.New("some other fault"), wire.CodeUnreachable, wire.CodeUnreachable},
+		{fmt.Errorf("blob get: %w", errors.New("no route to host")), wire.CodeUnreachable, wire.CodeUnreachable},
+		// A store error wrapped in one of state's own words stays that word:
+		// state says which of the two it is, and the wrapping does not.
+		{fmt.Errorf("%w: %w", state.ErrSetting, errors.New("broken chain")), wire.CodeInternal, wire.CodeInternal},
 	}
 	for _, c := range cases {
 		if got := Fault(c.err, FromRequest); got != c.take {

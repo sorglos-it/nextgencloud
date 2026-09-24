@@ -30,6 +30,11 @@ const (
 // caller his signature was wrong, so only FromRequest can lead to it: an
 // origin nobody named is answered like FromRows, which blames nobody.
 //
+// It also tells the two kinds of "nobody's fault" apart, which is what every
+// caller of it would otherwise do differently: a store that did not answer is
+// E_UNREACHABLE and over when it answers again, rows that are wrong are
+// E_INTERNAL and stay wrong until somebody mends them.
+//
 // Fault reads no errors of other packages. A bad signature is E_VERIFY on the
 // setup path and E_LOGIN on the login paths, because no answer of a login may
 // say what failed; a missing row (dbapi.ErrNotFound) is the normal case for
@@ -64,15 +69,30 @@ func Fault(err error, from Origin) wire.Code {
 			return wire.CodeVerify
 		}
 		return wire.CodeInternal
+	case errors.Is(err, state.ErrDamaged), errors.Is(err, state.ErrSetting),
+		errors.Is(err, state.ErrBusy):
+		// The store answered, and what it answered with is wrong: rows of this
+		// installation's own that contradict each other or do not read. The
+		// caller can do nothing about any of them, and neither can a retry.
+		//
+		// ErrBusy rests on there being one API on one database, where nobody
+		// else holds the lock: with a second one it would pass by itself in a
+		// moment, and 500 tells the far side not to try again. On the day a
+		// second API joins, ErrBusy belongs apart with its own answer --
+		// E_LOCKED is not it, that one belongs to the failed logins alone
+		// (with Retry-After, counted in the buckets of package lock).
+		return wire.CodeInternal
 	}
-	// state.ErrDamaged, state.ErrSetting, state.ErrBusy and anything else: the
-	// caller can do nothing about any of them.
+	// Nothing of package state's own is left, so this came up through it from
+	// the store: a database that is away, a table that is locked, a disk that
+	// is full. None of that is broken for good, so it is the one answer that
+	// says come back -- and the difference is not decoration. The same damage
+	// is met at two different steps depending on what a node has cached, and
+	// without this arm the step would decide the answer: a hole in the trust
+	// rows reads as ErrSetting either way (500), while a store that says
+	// nothing reads as its own error either way (503).
 	//
-	// ErrBusy rests on there being one API on one database, where nobody else
-	// holds the lock: with a second one it would pass by itself in a moment,
-	// and 500 tells the far side not to try again. On the day a second API
-	// joins, ErrBusy belongs here with its own answer -- E_LOCKED is not it,
-	// that one belongs to the failed logins alone (with Retry-After, counted
-	// in the buckets of package lock).
-	return wire.CodeInternal
+	// It rests on package state naming its own faults: the errors above, and
+	// nothing of package trust left unnamed on the way out (state.ownRows).
+	return wire.CodeUnreachable
 }

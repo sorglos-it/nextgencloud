@@ -404,6 +404,12 @@ func (n noPut) BlobPut(ctx context.Context, b dbapi.Blob) error {
 // where the wait is counted and E_INTERNAL where the rows behind the trust
 // list are read; two statuses for one fault tell the far side two different
 // things about one installation.
+//
+// The one status is E_UNREACHABLE and no longer E_INTERNAL: a store that does
+// not write is away rather than broken, and httpapi.Fault now says so for
+// every error that is none of package state's own. The status is read here and
+// not only the code, because one of the two has been wrong before while the
+// other was right.
 func TestOneFaultOfTheDatabaseIsOneStatus(t *testing.T) {
 	h := newHandler(t)
 	codeBytes, _ := os.ReadFile(h.CodeFile)
@@ -425,7 +431,7 @@ func TestOneFaultOfTheDatabaseIsOneStatus(t *testing.T) {
 	if err != nil || c.Code != want {
 		t.Fatalf("status %d body %s, wanted %s: %v", w.Code, w.Body, want, err)
 	}
-	if w.Code != 500 {
+	if w.Code != 503 {
 		t.Fatalf("status %d", w.Code)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -103,6 +104,7 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 				// Version 1 is the anchor of this installation: it signs
 				// itself, and trust.Open checks that an admin of it did.
 				cur, err = trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}, chain)
+				err = ownRows(err)
 				if err == nil {
 					// Here both sides come out of this installation's own
 					// rows, so a mismatch is not a list somebody handed in:
@@ -116,6 +118,7 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 				}
 			} else {
 				cur, err = trust.Advance(cur, chain)
+				err = ownRows(err)
 			}
 			if err != nil {
 				return trust.Version{}, err
@@ -145,6 +148,24 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 	}
 	s.cur = cur
 	return cur, nil
+}
+
+// ownRows is what a fault of trust.Open or trust.Advance means inside a
+// refresh: both the version held so far and the rows just read came out of
+// this installation's own store, so nothing about it is a list somebody handed
+// in -- it is the stored rows no longer holding together, which is the same
+// damage readBlock answers when a row does not even parse. Nobody outside can
+// mend it by signing again, and ErrSetting is the word for that here.
+//
+// It matters past the wording: with it, the only errors that leave this
+// package unnamed are the store's own, and httpapi.Fault reads them as a store
+// that did not answer. AddVersion keeps trust's errors as they are -- there
+// the version came from the caller, and his signature is his business.
+func ownRows(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrSetting, err)
 }
 
 // readBlock reads at most session.MaxChainVersions versions from from on, row

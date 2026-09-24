@@ -442,6 +442,67 @@ func TestRefreshFindsAHoleAboveABlock(t *testing.T) {
 	}
 }
 
+// noRow answers every read of a trust row with an error of its own: the store
+// is away, not wrong. dbapi.ErrNotFound is the one answer it does not give,
+// because that one says the row is not there, which is an answer.
+type noRow struct{ dbapi.Store }
+
+func (n noRow) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		return dbapi.Blob{}, errors.New("memstore: the database is not answering")
+	}
+	return n.Store.BlobGet(ctx, kind, id)
+}
+
+// TestRefreshNamesTheFaultOfItsOwnRows proves a refresh says which of the two
+// it ran into, because past this package there is nothing but the name to go
+// by: rows of this installation's own that do not hold together are ErrSetting,
+// and an error carrying no name of this package is the store itself.
+//
+// Both sides of a refresh come out of the same store, so a chain that does not
+// chain is never a caller's doing and nothing anybody signs will mend it.
+// Handed on as package trust's own error it would read one package further out
+// (httpapi.Fault) like a store that did not answer -- something to try again
+// in a moment, which it is not.
+func TestRefreshNamesTheFaultOfItsOwnRows(t *testing.T) {
+	s, db := newTrusted(t)
+	_, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	// Version 1 stored a second time as version 2: it reads as a version and
+	// it is signed by an admin of the list, and it does not follow the one
+	// before it. That is what trust.Open sees, and it is our own row.
+	b, err := db.BlobGet(ctx, dbapi.BlobTrust, "1")
+	if err != nil {
+		t.Fatalf("row 1: %v", err)
+	}
+	b.ID, b.Seq = "2", 2
+	if err := db.BlobPut(ctx, b); err != nil {
+		t.Fatalf("row 2: %v", err)
+	}
+	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.Now = s.Now
+	if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
+		t.Fatalf("a stored chain that does not hold together answered %v", err)
+	}
+	// The other half of the same sentence, and the one that makes it worth
+	// anything: a store that did not answer must keep none of this package's
+	// names, or the place that reads them could not tell the two apart.
+	away := New(s.Cfg, noRow{Store: db}, s.Box, s.Pin)
+	away.Now = s.Now
+	_, err = away.Refresh(ctx)
+	if err == nil {
+		t.Fatal("a store that answers nothing was refreshed from")
+	}
+	for _, named := range []error{ErrSetting, ErrDamaged, ErrNoTrust, ErrBusy,
+		ErrBadVersion, ErrOldVersion, ErrFork, ErrInstallation} {
+		if errors.Is(err, named) {
+			t.Fatalf("a store that did not answer came back as %v", named)
+		}
+	}
+}
+
 // TestChainFromZero proves that a number no version ever has is answered as
 // the mistake it is and not as a damaged database. session.ParseFrom refuses
 // 0 in the query already; this is the second line behind it.

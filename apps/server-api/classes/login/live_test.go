@@ -285,8 +285,8 @@ func threeVersions(t *testing.T) (*Handler, string) {
 	return h, cookie
 }
 
-// TestOneDamageIsOneAnswerOnEveryNode holds one fault of one installation to
-// one answer, whichever node of it answers.
+// TestOneFaultIsOneAnswerOnEveryNode holds the two faults below to one answer
+// each, whichever node of the installation is asked.
 //
 // A version missing from the trust rows is met at two different steps. A node
 // with nothing cached walks into it while it brings the list up to date
@@ -294,15 +294,24 @@ func threeVersions(t *testing.T) (*Handler, string) {
 // it. A node that is up to date already walks past it there -- it asks only
 // above its newest -- and meets it when it reads the rows out for the answer
 // (state.Chain). Two steps, and before this two answers for the one hole: 503
-// on the cold node, 500 on the warm one. Whoever reads that learns which node
-// he reached, not what is wrong with the installation.
+// on the cold node, 500 on the warm one. Whoever read that learned which node
+// he had reached, not what was wrong with the installation.
 //
-// The second damage is the other class, and the one httpapi.Fault has to keep
+// The second fault is the other class, and the one httpapi.Fault has to keep
 // apart from the first: a store that answers nothing is over when it answers
 // again, which is E_UNREACHABLE, and it says so on both nodes. Without that
 // arm the one place that picks the code would answer a store that is down like
 // a database that is broken.
-func TestOneDamageIsOneAnswerOnEveryNode(t *testing.T) {
+//
+// One fault is left that no arm of httpapi.Fault can even out, measured rather
+// than assumed: every trust row gone at once. The warm node still holds a list
+// and finds its row missing (E_INTERNAL, 500); the cold node has no list to
+// have lost and cannot tell that from an installation before its setup, so it
+// says state.ErrNoTrust (E_NOTFOUND, 404). The two are not looking at the same
+// thing, and state.checkGap names the same limit: a hole this wide needs the
+// newest number the store holds, or an anchor outside it, and the contract has
+// a query for neither.
+func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		damage func(t *testing.T, h *Handler)

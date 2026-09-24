@@ -19,7 +19,12 @@ import (
 )
 
 var (
-	// ErrSetting reports a setting the database does not hold or cannot hold.
+	// ErrSetting reports a row of this installation's own that is missing or
+	// is not what it has to be: a setting the database does not hold or cannot
+	// hold, and a stored version of the trust list that does not read or does
+	// not hold together with the ones around it (refreshLocked, readBlock,
+	// checkGap, Chain). The store answered; what it answered with is wrong,
+	// and nobody outside mends that by asking again or by signing again.
 	ErrSetting = errors.New("state: setting missing or malformed")
 	// ErrBusy reports that another API holds the lock for this step. It is its
 	// own error, never ErrSetting: here waiting a moment and asking again
