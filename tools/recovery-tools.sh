@@ -55,10 +55,17 @@ trap cleanup EXIT
 # the gap, not stopping was.
 # Each handler below must end with its own exit, at the conventional
 # 128+signal status, so a signal-terminated run reads as one downstream
-# instead of as an ordinary exit.
-trap 'cleanup; exit 129' HUP
-trap 'cleanup; exit 130' INT
-trap 'cleanup; exit 143' TERM
+# instead of as an ordinary exit. Each also removes $txt itself, not just
+# via cleanup (which also backs the plain EXIT trap and must never touch
+# $txt, or it would delete a just-finished successful run's own report): a
+# signal landing while the final block is still writing it can leave a
+# truncated werkzeuge.txt behind (measured, reproducible - 7 of 24 lines,
+# missing everything from the "Geprüft und in Ordnung" heading on). Task 2
+# only checks that the file exists, so a stale truncated one would pass
+# where a missing one would correctly stop it.
+trap 'cleanup; rm -f "$txt" >/dev/null 2>&1 || :; exit 129' HUP
+trap 'cleanup; rm -f "$txt" >/dev/null 2>&1 || :; exit 130' INT
+trap 'cleanup; rm -f "$txt" >/dev/null 2>&1 || :; exit 143' TERM
 
 say() { printf '%s\n' "$*" >&2; }
 stop_and_ask() {
