@@ -472,8 +472,8 @@ func TestCheckAppChannel(t *testing.T) {
 	})
 }
 
-// TestCheckAnswersInternalForItsOwnFaults: what the opener sent is beyond
-// reproach in all three, and the fault is this server's. E_NOTFOUND would
+// TestCheckAnswersInternalForItsOwnFaults: in every case here what the opener
+// sent is beyond reproach and the fault is this server's. E_NOTFOUND would
 // tell the opener that something of theirs was wrong, and E_VERIFY would
 // blame their signature.
 func TestCheckAnswersInternalForItsOwnFaults(t *testing.T) {

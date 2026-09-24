@@ -64,7 +64,9 @@ type Decision struct {
 	Core   bool        // a core action of this controller, not a channel to an app
 	// Task is the task this check verified, or nil. Nil does not say that the
 	// OPEN carried none: a channel without a user is decided without ever
-	// looking at one, and whatever it brought is thrown away unread.
+	// checking one, however wrong the task it brought. Its shape was read all
+	// the same — wire.ParseOpen refuses an envelope that is none before this
+	// package decides anything.
 	Task *task.Task
 	// User is empty, or the user of the certificate — and set only where the
 	// signature of a task or the end-to-end handshake that follows binds the
@@ -83,7 +85,10 @@ type Decision struct {
 func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 	// A Request without the store is this program wired wrong, and this line
 	// is what keeps the mistake from being fatal: the controller runs as
-	// root, and the next channel an API opens would take it down.
+	// root, and a channel that reaches the missing half would take it down.
+	// Which channel that is depends on the half — an app channel asks Apps,
+	// a signed task asks Tasks — so both are answered here, before either is
+	// reached.
 	if r.Apps == nil || r.Tasks == nil {
 		return refuse(wire.CodeInternal)
 	}
@@ -129,10 +134,11 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 	} else {
 		// A core app ID names no app of this controller: core.Lookup has just
 		// said this is none of their actions, and a manifest may not carry
-		// such an ID at all (store.Manifest.Validate). It would also be a
-		// channel carrying a certificate without an end-to-end handshake,
-		// which wire.Open.Validate allows only for core app IDs: a user on
-		// the channel with nothing that binds them to it.
+		// such an ID at all (store.Manifest.Validate). This refuses the OPEN
+		// whether it carries a certificate or not; the one that carries one
+		// would be a channel with a user and nothing binding them to it,
+		// since wire.Open.Validate keeps the end-to-end handshake off every
+		// core app ID.
 		if wire.CoreApp(open.App) {
 			return refuse(wire.CodeNotFound)
 		}
