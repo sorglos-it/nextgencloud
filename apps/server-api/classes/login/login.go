@@ -1,6 +1,7 @@
-// Package login serves the login and what hangs on it over HTTP: today
-// login/start and login/finish, and in this package later logout and GET
-// session.PathTrust. Every failed login answers E_LOGIN alike
+// Package login serves the login and what hangs on it over HTTP: login/start,
+// login/finish, logout and GET session.PathTrust, and with them the question
+// every later path asks first -- which session is behind this cookie (Live).
+// Every failed login answers E_LOGIN alike
 // (shared/README.md, "Vor dem WebSocket"), so no answer tells which part
 // failed or whether a user exists.
 package login
@@ -75,9 +76,10 @@ func userByName(l *trust.List, name string) (trust.User, bool) {
 }
 
 // mustJSON encodes an answer of the API (session.LoginChallenge,
-// session.LoginResult): fixed structs of strings, numbers and bytes, so
-// encoding cannot fail; a failure all the same answers E_INTERNAL and gives
-// nil back, and the caller writes nothing more. session.Challenge has already
+// session.LoginResult, session.TrustChain): fixed structs of strings, numbers,
+// bools and bytes, and one list of such structs, so encoding cannot fail; a
+// failure all the same answers E_INTERNAL and gives nil back, and the caller
+// writes nothing more. session.Challenge has already
 // held its answer against session.ParseLoginChallenge, so what is written here
 // is what the browser accepts -- FuzzStartBody reads every answer back with
 // that same parser.
