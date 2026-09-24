@@ -101,18 +101,34 @@ const trustHintShape = S({ seq: uint });
 // encodeClientCert writes the certificate in the field order of Go's
 // session.ClientCert. These exact bytes are what the user signs (purpose
 // clientcert/v1) and what certHash hashes, so they are built once and kept.
-// Whatever goes wrong while writing - a field that is no byte string, a
-// getter that throws, a value JSON.stringify refuses - becomes this one
-// error, as trust.encodeList answers one for a list it cannot write.
+//
+// Go's json.Marshal writes all seven fields every time - the struct carries
+// no omitempty - while JSON.stringify leaves out a member whose value is
+// undefined. A certificate with a field nobody filled in would therefore go
+// unnoticed into the very bytes the user signs with a passkey, and only the
+// API would say no: a gesture spent for nothing. So the fields are read once
+// into locals, those are held against the check the API applies too
+// (validateClientCert, Go: ClientCert.Validate), and only then written
+// (Fixrunde 1, W2).
+//
+// There is one way out of here for every failure: a field that is no byte
+// string or no ID, a getter or a proxy that throws, and a value
+// JSON.stringify refuses - a BigInt passes every check a number passes and is
+// no JSON number - all end at the one error below, as trust.encodeList
+// answers one for a list it cannot write.
 export function encodeClientCert(c) {
   try {
-    return utf8(JSON.stringify({
-      inst: c.inst, user: c.user, nonce: b64encode(c.nonce),
-      sig: b64encode(c.sig), dh: b64encode(c.dh), iat: c.iat, exp: c.exp,
-    }));
+    const { inst, user, nonce, sig, dh, iat, exp } = c ?? {};
+    if (validateClientCert({ inst, user, nonce, sig, dh, iat, exp })) {
+      return utf8(JSON.stringify({
+        inst, user, nonce: b64encode(nonce),
+        sig: b64encode(sig), dh: b64encode(dh), iat, exp,
+      }));
+    }
   } catch {
-    throw new Error("session: cannot encode this certificate");
+    // Falls through to the one error, like a check that answered false.
   }
+  throw new Error("session: cannot encode this certificate");
 }
 
 // validateClientCert checks the fields of a client certificate (Go:
