@@ -265,6 +265,55 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   });
 });
 
+// Fixrunde 2: encodeSetupInfoNodes read nodes.length twice, which my own fix
+// of the round before put there. Array.isArray is true for a proxy over an
+// array, and a length that answers 17 and then 16 passes both bounds although
+// neither read passes both: 17 nodes go into version 1 past MAX_SETUP_NODES.
+// One read into a local is what closes that.
+//
+// What one read cannot do is make a lying length honest - a proxy that says 1
+// where the array holds nothing is believed, before the fix and after - so
+// the second row pins that limit rather than claiming it away. Whoever hands
+// this function a proxy is past every promise the file makes; what it does
+// promise is that the length it decided on is the one length it saw.
+test("encodeSetupInfoNodes decides on the length it read", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const s = await import("/assets/js/contracts/session.js");
+    const lying = (target, first) => {
+      let n = 0;
+      return new Proxy(target, {
+        get(t, k, r) {
+          if (k === "length") {
+            n++;
+            return n === 1 ? first : s.MAX_SETUP_NODES;
+          }
+          return Reflect.get(t, k, r);
+        },
+      });
+    };
+    const out = (x) => {
+      try {
+        const r = s.encodeSetupInfoNodes(x);
+        return Array.isArray(r) ? "nodes:" + r.length : "no array: " + String(r);
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return {
+      // 17 first, MAX_SETUP_NODES after: neither bound refuses the pair.
+      pastTheLimit: out({ nodes: lying(new Array(s.MAX_SETUP_NODES + 1).fill({ id: "api-1" }), s.MAX_SETUP_NODES + 1) }),
+      // 1 first over an empty array: one read believes it, and says so.
+      emptyButSaysOne: out({ nodes: lying([], 1) }),
+      plainTooMany: out({ nodes: new Array(s.MAX_SETUP_NODES + 1).fill({ id: "api-1" }) }),
+    };
+  });
+  expect(got).toEqual({
+    pastTheLimit: "session: malformed message",
+    emptyButSaysOne: "nodes:16",
+    plainTooMany: "session: malformed message",
+  });
+});
+
 // Fixrunde 2: W2 was not carried through. validateClientCert names iat and
 // exp but never asks whether they are numbers, and Go's ClientCert has both
 // as int64 - json.Unmarshal refuses a string, a boolean and a fraction alike.
