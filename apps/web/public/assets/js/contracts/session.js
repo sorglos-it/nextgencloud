@@ -158,6 +158,17 @@ const apiNodes = (l) => (Array.isArray(l?.nodes) ? l.nodes : [])
 // so a session cannot outlive the user's approval (Go: session.VerifyAPI).
 // Every deviation throws.
 export async function verifyAPI(env, l, client, now) {
+  // The envelope belongs to the caller, so each of its fields may be a getter
+  // or a proxy trap that answers two reads with two values. The three are read
+  // once here and only these copies are used below: the signature is checked
+  // over the same bytes the certificate is then read from, never over a first
+  // read while a second one is decoded - that second read would hand back a
+  // certificate no API node ever signed. Go is given a sign.Envelope of three
+  // typed fields, which answer every read alike; sign.js and proof.js read
+  // their own fields once for this reason, and validateClientCert above says
+  // it too (Fixrunde 1, K1).
+  if (env === null || typeof env !== "object") throw new Error("session: malformed certificate");
+  const { payload, kid, sig } = env;
   const cc = decode(client, certBudget, clientCertShape);
   // A key id is the first 16 bytes of the SHA-256 of the key, so finding the
   // node that signed this envelope costs one hash per API node of the list -
@@ -169,7 +180,7 @@ export async function verifyAPI(env, l, client, now) {
   // there and the hash itself almost nothing (Chromium: 10 ms and 3 ms).
   const nodes = apiNodes(l);
   const ids = await Promise.all(nodes.map((n) => keyID(n.sign)));
-  const node = nodes[ids.indexOf(env?.kid)] ?? null;
+  const node = nodes[ids.indexOf(kid)] ?? null;
   // Go marks "none found" with the zero trust.Node and asks `if node.ID == ""`
   // afterwards, so a node whose ID is empty is no node there either - refused
   // even when its key made the signature. A list that came through
@@ -178,10 +189,10 @@ export async function verifyAPI(env, l, client, now) {
   if (node === null || node.id === "") throw new Error("session: malformed certificate");
   // Go hands sign.Verify's own error on; here a signature that cannot be
   // checked answers false and this one error says so.
-  if (!(await verifyEnvelope(env, node.sign, PURPOSE_API_CERT))) {
+  if (!(await verifyEnvelope({ payload, kid, sig }, node.sign, PURPOSE_API_CERT))) {
     throw new Error("session: bad signature");
   }
-  const c = decode(env.payload, certBudget, apiCertShape);
+  const c = decode(payload, certBudget, apiCertShape);
   if (c.inst !== l.installation || c.node !== node.id
     || !equal(c.client, await certHash(client))
     || c.dh.length !== KEY_SIZE || c.iat <= 0 || c.exp <= c.iat || c.exp - c.iat > MAX_LIFETIME
