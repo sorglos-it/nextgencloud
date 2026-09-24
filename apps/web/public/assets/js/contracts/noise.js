@@ -45,8 +45,10 @@ async function importPrivate(raw) {
 async function importPublic(raw) {
   try {
     return await crypto.subtle.importKey("raw", raw, { name: "X25519" }, false, []);
-  } catch {
-    // Engines that do not take "raw" for X25519 read the SubjectPublicKeyInfo.
+  } catch (err) {
+    // Engines that do not take "raw" for X25519 read the SubjectPublicKeyInfo;
+    // any other failure is real and must reach the caller, not be replaced.
+    if (err.name !== "NotSupportedError" && err.name !== "DataError") throw err;
     return crypto.subtle.importKey("spki", concat(X25519_SPKI, raw), { name: "X25519" }, false, []);
   }
 }
@@ -81,6 +83,12 @@ function nonce(n) {
   return b;
 }
 
+// MAX_NONCE guards Number precision, not the Noise limit: past 2**53 a
+// double can no longer represent every integer, so n++ can silently stop
+// moving and two messages would end up sharing one key/IV pair. Go does not
+// need this (n is a uint64 there); here n is a plain Number.
+const MAX_NONCE = Number.MAX_SAFE_INTEGER - 1;
+
 class CipherState {
   constructor(key) {
     this.keyRaw = key;
@@ -96,7 +104,9 @@ class CipherState {
   }
 
   async seal(plain, ad = new Uint8Array(0)) {
+    if (!(plain instanceof Uint8Array)) throw new Error("noise: not bytes");
     if (plain.length > MAX_PLAINTEXT) throw new Error("noise: message too large");
+    if (this.n > MAX_NONCE) throw new Error("noise: nonce counter exhausted");
     const out = new Uint8Array(await crypto.subtle.encrypt(
       { name: "AES-GCM", iv: nonce(this.n), additionalData: ad, tagLength: 128 }, await this.aes(), plain));
     this.n++;
@@ -104,7 +114,9 @@ class CipherState {
   }
 
   async open(cipher, ad = new Uint8Array(0)) {
+    if (!(cipher instanceof Uint8Array)) throw new Error("noise: not bytes");
     if (cipher.length > MAX_MESSAGE) throw new Error("noise: message too large");
+    if (this.n > MAX_NONCE) throw new Error("noise: nonce counter exhausted");
     const out = new Uint8Array(await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: nonce(this.n), additionalData: ad, tagLength: 128 }, await this.aes(), cipher));
     this.n++;
@@ -128,8 +140,10 @@ export class Transport {
 }
 
 export class HandshakeKK {
-  // Use of() outside tests; forTest() only fixes the ephemeral key so the
-  // vectors of noise.json can be reproduced.
+  // Use of() outside tests. forTest() also takes the static key as raw bytes
+  // instead of a CryptoKey and, because publicOf() has to read the public
+  // part back out, imports it as extractable - the opposite of what
+  // newKeypair() promises. Fine to reproduce noise.json, never for a real key.
   static async of(initiator, prologue, staticPriv, staticPub, peerPub) {
     return HandshakeKK.build(initiator, prologue, staticPriv, staticPub, peerPub, null);
   }
@@ -146,6 +160,7 @@ export class HandshakeKK {
     h.s = { priv: staticPriv, pub: staticPub };
     h.rs = peerPub;
     h.fixedEphemeral = ephemeralPrivRaw;
+    h.splitCalled = false;
     const name = utf8(PROTOCOL);
     // The protocol name is 28 bytes, so it is padded with zeros to 32.
     h.hash = concat(name, new Uint8Array(32 - name.length));
@@ -228,8 +243,13 @@ export class HandshakeKK {
   }
 
   // split ends the handshake: c1 carries initiator to responder, c2 the other
-  // way, and each cipher state starts its counter at 0.
+  // way, and each cipher state starts its counter at 0. ck never changes
+  // here, so a second call would derive the same k1/k2 again and hand out a
+  // second CipherState that reuses every nonce the first one will ever use -
+  // the same key and IV encrypting two different messages. split() runs once.
   async split() {
+    if (this.splitCalled) throw new Error("noise: split already called");
+    this.splitCalled = true;
     const [k1, k2] = await hkdf(this.ck, new Uint8Array(0), 2);
     return this.initiator ? new Transport(new CipherState(k1), new CipherState(k2))
       : new Transport(new CipherState(k2), new CipherState(k1));
