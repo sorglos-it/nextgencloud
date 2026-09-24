@@ -185,3 +185,59 @@ test("an API node without an ID is no node, as in Go", async ({ shell }) => {
   }, v);
   expect(got).toBe("session: malformed certificate");
 });
+
+// Fixrunde 1, K1: the envelope is a caller's object, so every field of it may
+// be a getter that answers two reads with two values. The signature is checked
+// over one read of env.payload and the certificate decoded from another: what
+// comes back then is bytes no API node ever signed. sign.js and proof.js read
+// every field once for exactly this reason, and validateClientCert above says
+// so in as many words. The envelope here signs a DH key of 0x01 bytes and
+// hands out 0xaa bytes on the second read, so what the answer carries says
+// which of the two the shell believed.
+test("verifyAPI uses the payload it checked, not a second read of it", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const sign = await import("/assets/js/contracts/sign.js");
+    const proof = await import("/assets/js/contracts/proof.js");
+    const { b64decode, b64encode, utf8 } = await import("/assets/js/contracts/b64.js");
+    const seed = new Uint8Array(32).fill(9);
+    const priv = await proof.privateFromSeed(seed);
+    const pub = await proof.publicFromSeed(seed);
+    const client = b64decode(d.client);
+    const cc = JSON.parse(new TextDecoder().decode(client));
+    const hash = b64encode(await s.certHash(client));
+    const cert = (fill) => utf8(JSON.stringify({
+      inst: cc.inst, node: "api-1", client: hash, dh: b64encode(new Uint8Array(32).fill(fill)),
+      iat: cc.iat, exp: cc.exp,
+    }));
+    const signed = cert(0x01), other = cert(0xaa);
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
+      sign.message(sign.PURPOSE_API_CERT, signed)));
+    let reads = 0;
+    const env = {
+      get payload() { reads++; return reads === 1 ? signed : other; },
+      kid: await sign.keyID(pub), sig,
+    };
+    const node = {
+      id: "api-1", kind: "api", name: "api-1", noise: new Uint8Array(32), sign: pub,
+      url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [],
+    };
+    const list = { installation: cc.inst, nodes: [node] };
+    try {
+      const c = await s.verifyAPI(env, list, client, d.now);
+      return { answer: "accepted", dh: b64encode(c.dh), reads };
+    } catch (e) {
+      return { answer: e.message, dh: "", reads };
+    }
+  }, v);
+  // The signature is over the 0x01 payload, so that is the one certificate
+  // this envelope stands for, and env.payload is read exactly once.
+  expect(got).toEqual({
+    answer: "accepted",
+    dh: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+    reads: 1,
+  });
+});
