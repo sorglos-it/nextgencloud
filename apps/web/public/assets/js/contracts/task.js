@@ -9,12 +9,13 @@
 // the writer with another would put something into a signature that no check
 // ever saw.
 //
-// The imports differ from the task brief's own block in five names, all of
-// them added: fromUtf8 and encodedLen from b64.js and BadJSON from json.js,
-// which the single-read rule below needs; verify from sign.js and certHash
-// from session.js, which verifyApproval needs - it stands in the brief's
-// interface list with no line of code behind it, so it is built here after
-// Go's task.VerifyApproval.
+// The imports differ from the task brief's own block in six names, all of
+// them added and none of the brief's own left out. fromUtf8 and encodedLen
+// from b64.js are what the single-read rule needs, in parts below. BadInput
+// and BadJSON are the two errors parseTask folds into the one error Go has
+// there. verify from sign.js and certHash from session.js belong to
+// verifyApproval, which stands in the brief's interface list with no line of
+// code behind it and is built here after Go's task.VerifyApproval.
 import { b64encode, utf8, fromUtf8, equal, encodedLen, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes, int, raw, RAW } from "./json.js";
 import { validName, validAppID, validID } from "./text.js";
@@ -26,20 +27,22 @@ import { keyOwner } from "./trust.js";
 export const ID_SIZE = 16;
 export const MAX_LIFETIME = 300;
 export const MAX_TASK = 16 << 10;
-// What wire.MaxParams bounds in Go: the params of one task. The shell has no
-// wire module, so the number stands here, with the one contract that reads it.
+// Go keeps this in wire.MaxParams, which bounds the params of a task and the
+// params an OPEN carries itself. The shell has no wire module, so the number
+// stands here, in the one contract that reads it today - the same reason
+// session.httpStatus spells out Go's wire.Code as strings.
 export const MAX_PARAMS = 8 << 10;
 
 // A task's cert is a SHA-256 (Go: sha256.Size), and buildTask gives a task
-// the lifetime the shell needs for one channel - well inside MAX_LIFETIME,
-// which is what a verifier still accepts.
+// the lifetime the shell needs for one channel, well under MAX_LIFETIME,
+// which is the most a verifier still accepts.
 const CERT_SIZE = 32;
 const LIFETIME = 120;
 
-// How many base64url characters exactly ID_SIZE and CERT_SIZE bytes take.
-// encodedLen grows with every further byte, so no other byte count gives
-// either of these two lengths, and a text of ID_CHARS characters came from
-// ID_SIZE bytes and from no other number of them.
+// How many base64url characters ID_SIZE and CERT_SIZE bytes take. encodedLen
+// grows with every further byte and so gives no two byte counts the same
+// length: a base64url of ID_CHARS characters came out of ID_SIZE bytes and
+// out of no other number of them.
 const ID_CHARS = encodedLen(ID_SIZE);
 const CERT_CHARS = encodedLen(CERT_SIZE);
 
@@ -48,6 +51,9 @@ export const taskShape = S({
   params: raw, iat: int, exp: int,
 });
 
+// taskBudget bounds a task while it is decoded: a task holds no array of its
+// own, so only its size is counted, and its params stay raw bytes, which the
+// rule and core read and this contract does not.
 const taskBudget = new Budget({ size: MAX_TASK, items: { params: RAW } });
 
 // paramsBudget measures the params on their own, the way Go's
@@ -76,11 +82,20 @@ export function parseTask(payload) {
 // "\"x\"" and "5" are none, and a repeated member name is no params at all.
 //
 // Go asks IsValid of a value its own decoder has already read; here the same
-// decoder that read the task reads the params again, which is as strict on
-// every point the decoder already decided and stricter on two the contract
-// never lets through anyway: a null anywhere and more than MAX_DEPTH levels
-// are refused by enc and by json.js before Validate is ever reached. So what
-// comes out of buildTask is a task the verifier of either language takes.
+// decoder that read the task reads the params again. On a task that came from
+// parseTask that is the very decoder that just made these bytes, so it decides
+// nothing anew. On a task the shell builds it is stricter than Go's IsValid on
+// one point the wire never carries anyway: a null, which enc and json.js
+// refuse everywhere, raw values included.
+//
+// One place is milder, and it is the one thing buildTask can make that no
+// verifier reads back: the levels are counted from the params' own first byte
+// here and from the task's first byte there, so params nested exactly
+// MAX_DEPTH levels deep pass this check and are one level too deep once they
+// sit inside a task. Measured against this file, level by level: one below
+// MAX_DEPTH is read back, exactly MAX_DEPTH passes here and the verifier
+// refuses the task, one above is refused here. It costs a refusal, never an
+// acceptance.
 function validParams(text) {
   if (text === "") return true;
   try {
@@ -93,17 +108,26 @@ function validParams(text) {
 
 // parts reads a task once and gives back the ten pieces encodeTask writes, or
 // null for a task that is none. It is the one place that looks at a caller's
-// task, so validateTask and encodeTask can never disagree about it.
+// task: validateTask is one call of it and nothing else, and encodeTask writes
+// what its own call checked, never a second reading of the same task.
 //
 // The byte fields are turned into their base64url here and held against
 // ID_CHARS and CERT_CHARS, instead of being asked for a length and encoded
-// again later. A Uint8Array may carry an own length property that answers two
-// reads with two numbers and still passes instanceof, so a length checked
-// here and read again by b64encode would let a check pass for one byte string
-// while another went into the signature (measured in task 8 for
-// session.encodeClientCert, which is the same shape). The same for the
-// params: fromUtf8 hands back the text the bytes really hold, and both the
-// check and the writer go by that text.
+// again later. A Uint8Array may carry an own length property that answers
+// every read with whatever it likes and still passes instanceof - measured,
+// with the bytes still there behind it - so a length checked here and read
+// again by b64encode would let a check pass for one byte string while another
+// went into the signature (measured in task 8 for session.encodeClientCert,
+// which is the same shape). What ID_CHARS pins is therefore the number of
+// elements that one walk read: a length that lies still makes a wrong id, but
+// the same wrong one in the check and in the signed bytes, never two.
+//
+// The params have no length read at all: fromUtf8 hands back the text the
+// bytes really hold, whatever length says, and both the check and the writer
+// go by that text. Measured against the two lines the brief had, which both
+// decided on params.length: params that really hold an object, with a length
+// that answers 0, are valid there too - and the signed task then carries no
+// params at all, so the action runs with none.
 //
 // The guard stands in front of the try, the way sign.validateEnvelope and
 // session.validateClientCert have it: what is no object at all is refused
@@ -165,8 +189,12 @@ export function encodeTask(t) {
   }).slice(0, -1);
   const tail = JSON.stringify({ iat: p.iat, exp: p.exp }).slice(1);
   // params stays raw: its bytes go in unchanged, as the prologue hashes them.
-  // Go's Task has omitempty there and no other field has it, so params is the
-  // one member that may be missing and node is written even when it is empty.
+  // They travel through a text on the way, and come out the same bytes:
+  // fromUtf8 in parts refuses everything that is not valid UTF-8, and valid
+  // UTF-8 has exactly one spelling per text, so utf8 below writes back what
+  // was read. Go's Task has omitempty on params and on no other field, so
+  // params is the one member that may be missing and node is written even
+  // when it is empty.
   const mid = p.params === "" ? "" : ',"params":' + p.params;
   return utf8(head + mid + "," + tail);
 }
@@ -179,15 +207,25 @@ export function buildTask({ inst, certHash: cert, node, app, service, action, pa
     id, inst, cert, node: node || "", app, service, action,
     params: params || null, iat: now, exp: now + LIFETIME,
   };
-  // A now that is no whole number makes an exp that is none either - text
-  // even makes exp text, because + joins two strings - and parts refuses
-  // both, so nothing is signed for a point in time nobody named.
+  // t is this function's own object of plain members, so the check and the
+  // writing below read the same values out of it; only params is the caller's,
+  // and both of them go by the text those bytes really hold.
+  //
+  // A now that is no whole number makes an exp that is none either - a now of
+  // text makes exp text, because a + next to a string joins instead of adding
+  // - and parts refuses both, so nothing is signed for a point in time nobody
+  // named.
   if (!validateTask(t)) throw new Error("task: malformed task");
   const bytes = encodeTask(t);
   if (bytes.length > MAX_TASK) throw new Error("task: too large");
   return { task: t, bytes };
 }
 
+// signTask puts the session key's signature over the bytes encodeTask made.
+// Go has none of this - only the shell signs tasks. It is no member of the
+// -> boolean family and says no by throwing: an engine without Ed25519, a key
+// that cannot sign and a sessionSignKey that is none all end in a rejected
+// promise, and nothing comes back that could pass for an envelope.
 export async function signTask(sessionSignKey, bytes) {
   const { privateKey, kid } = sessionSignKey ?? {};
   const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateKey,
