@@ -553,6 +553,89 @@ test("mayRoot, matches and needsConfirm refuse array-like lists instead of throw
   });
 });
 
+// Fixrunde 4: the coordinator named user, role, node, keyOwner and
+// passwordToo as the same gap a third time - exported, an array-only method
+// (.find, for...of, .some) on a caller-supplied list, no Array.isArray
+// first. Closed here, all five at once, not in slices. user/role/node
+// answer null on a malformed list, matching what they already answer for
+// "not found" - a malformed list is exactly that kind of not-found. keyOwner
+// answers null the same way for a malformed l.users, but for one user's own
+// malformed keys specifically it skips just that user (continue) rather
+// than aborting the whole search: a bad entry for one user must not hide a
+// real key that a different, well-formed user actually owns - proven below
+// by two users in one list, only the second one findable.
+// passwordToo is the one case that is NOT "false/null is the safe answer":
+// true here means the login flow demands a password on top of a passkey
+// (Go: session.VerifyClient already requires the passkey either way;
+// PasswordToo only ever adds to that, never replaces it), so answering
+// false on doubt would silently accept a weaker login than Go would have
+// required - the opposite direction from mayRoot/matches/needsConfirm, where
+// refusing was the safe answer. passwordToo therefore answers true (require
+// the extra factor) when u.roles is not a proper array.
+test("user, role, node, keyOwner and passwordToo refuse array-like lists instead of throwing", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const adminId = "EREREREREREREREREREREQ";
+    const otherId = "AAAAAAAAAAAAAAAAAAAAAA";
+    const key = (kid) => ({
+      id: kid, kind: "password", alg: "EdDSA", pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const arrayLike = (...items) => {
+      const o = { length: items.length };
+      items.forEach((v, i) => { o[i] = v; });
+      return o;
+    };
+    const safe = (fn) => { try { return { threw: false, value: fn() }; } catch { return { threw: true, value: null }; } };
+    const realKid = "gICAgICAgICAgICAgICAgA";
+
+    const listWith = (extra) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: adminId,
+      rp: { id: "", origins: [] },
+      users: [{ id: adminId, name: "admin", roles: ["admin"], keys: [key("AAAAAAAAAAAAAAAAAAAAAA")] }],
+      roles: [{ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false }],
+      nodes: [{ id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(0),
+        url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [] }],
+      stores: [], auto: [],
+      ...extra,
+    });
+
+    return {
+      userUsersArrayLike: safe(() => t.user(listWith({ users: arrayLike({ id: adminId, roles: ["admin"], keys: [] }) }), adminId)),
+      roleRolesArrayLike: safe(() => t.role(listWith({ roles: arrayLike({ name: "admin", level: "critical" }) }), "admin")),
+      nodeNodesArrayLike: safe(() => t.node(listWith({ nodes: arrayLike({ id: "ctl-1", kind: "controller" }) }), "ctl-1")),
+      keyOwnerUsersArrayLike: safe(() => t.keyOwner(listWith({ users: arrayLike({ id: adminId, keys: [key(realKid)] }) }), realKid)),
+      // one malformed user (keys as an array-like), one real user who owns
+      // the searched key: keyOwner must skip the first, not abort, and
+      // still find the second. Reduced to the two ids that matter, not the
+      // whole {user, key} shape - Uint8Array fields do not round-trip
+      // through evaluate()'s JSON boundary as Uint8Array, so comparing the
+      // full objects here would test the serialization, not keyOwner.
+      keyOwnerSkipsOneBadUser: safe(() => {
+        const found = t.keyOwner(listWith({
+          users: [
+            { id: adminId, name: "admin", roles: ["admin"], keys: arrayLike(key("AAAAAAAAAAAAAAAAAAAAAA")) },
+            { id: otherId, name: "other", roles: ["admin"], keys: [key(realKid)] },
+          ],
+        }), realKid);
+        return found && { userId: found.user.id, keyId: found.key.id };
+      }),
+      passwordTooUserRolesArrayLike: safe(() => t.passwordToo(listWith({
+        users: [{ id: adminId, name: "admin", roles: arrayLike("admin"), keys: [key("AAAAAAAAAAAAAAAAAAAAAA")] }],
+      }), adminId)),
+    };
+  });
+  const flat = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.threw ? "threw" : v.value]));
+  expect(flat).toEqual({
+    userUsersArrayLike: null,
+    roleRolesArrayLike: null,
+    nodeNodesArrayLike: null,
+    keyOwnerUsersArrayLike: null,
+    keyOwnerSkipsOneBadUser: { userId: "AAAAAAAAAAAAAAAAAAAAAA", keyId: "gICAgICAgICAgICAgICAgA" },
+    passwordTooUserRolesArrayLike: true,
+  });
+});
+
 // Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
 // tlsPin had no test calling them - the previous report described their
 // doubt-case behavior (unknown user/role/node grant nothing) by reading the
