@@ -394,13 +394,19 @@ func TestTrustSeedsReachTheAnswers(t *testing.T) {
 }
 
 // FuzzTrustRequest feeds GET session.PathTrust with any cookie and any from.
-// Whatever comes, the answer is one of the contract's, a chain that leaves the
-// handler is one the shell reads and verifies, and nothing is left behind.
+// Every input is asked the same four questions, and they are asked after it
+// and not counted over the run: the answer is one of the contract's, its body
+// is what that status carries, nothing was counted against anybody, and
+// nothing was written into the log. Where a chain came out, it is read back
+// with the shell's own parser and verified from its own anchor.
 //
-// The chain is the canary and it is asked after every single body, not counted
-// over the run: an answer the browser would refuse, or one whose versions do
-// not hang together, is caught by the very next input as well as by the one
-// that made it.
+// What a run really spends its time on, said plainly: a token is
+// session.TokenSize random bytes, so all but the seeded cookie are refused at
+// the door, and the chain itself is reached by the seeds at the start of every
+// run rather than by the fuzzer. The door is what is being fuzzed there --
+// httpapi.Cookie, session.ParseFrom and the status the pair of them lead to --
+// and TestTrustSeedsReachTheAnswers is what says the room behind it was
+// entered at all.
 func FuzzTrustRequest(f *testing.F) {
 	h, fx := newFixture(f)
 	cookie := loginOnce(f, h, fx)

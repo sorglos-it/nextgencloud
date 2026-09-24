@@ -3,7 +3,6 @@ package login
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
@@ -103,21 +102,20 @@ func TestLiveEndsASessionTheConfigNoLongerAllows(t *testing.T) {
 }
 
 // lockRows counts the rows the counting of failed logins keeps. They are
-// settings like any other, and the two spaces of classes/lock are what tells
-// them from the rest.
+// settings like any other, and classes/lock names its two spaces nowhere a
+// test can read them -- so they are counted the other way round: the fixture
+// and a login that works write one setting between them, the installation ID,
+// and every further setting of these tests is a row of that counting.
 func lockRows(t *testing.T, h *Handler) int {
 	t.Helper()
 	all, err := settings(h)
 	if err != nil {
 		t.Fatalf("settings: %v", err)
 	}
-	n := 0
-	for id := range all {
-		if strings.HasPrefix(id, "lock.") || strings.HasPrefix(id, "lockkey.") {
-			n++
-		}
+	if _, ok := all[dbapi.SettingInstallation]; !ok {
+		t.Fatal("the installation ID is no longer a setting: this count no longer means what it says")
 	}
-	return n
+	return len(all) - 1
 }
 
 // TestPurgeFreesOnlyWhatIsPastItsTime holds the housekeeping round to both
