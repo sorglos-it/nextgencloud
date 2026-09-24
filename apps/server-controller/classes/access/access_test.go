@@ -395,6 +395,31 @@ func TestCheckWithoutUserIgnoresTheTask(t *testing.T) {
 	})
 }
 
+// TestCheckOpensUnattendedInstall is the only action of the contract that is
+// both a root task and one the API may open without a user:
+// ngc.store/controller/install. Without a certificate no task is checked at
+// all, so nothing here asks for the signature a root task otherwise costs —
+// what pays for this channel is the standing approval, which the controller
+// checks afterwards (core.Unattended). A guard that turned every root action
+// away on a channel without a user would shut the unattended install, and
+// this is the one channel that would say so.
+func TestCheckOpensUnattendedInstall(t *testing.T) {
+	f := newFixture(t)
+	o := coreOpen(core.AppStore, core.ActInstall, nil)
+	o.Params = mustJSON(t, core.InstallParams{Target: testApp, Version: "1.0.0",
+		SHA256: bytes.Repeat([]byte{0x01}, 32)})
+	d, cl := Check(context.Background(), f.request(withoutUser(t, o)))
+	if cl != nil {
+		t.Fatalf("CLOSE %+v, want the channel to open", *cl)
+	}
+	if !d.Core || d.Action.Name != core.ActInstall || !d.Action.Root {
+		t.Errorf("action %+v, core %v, want the root action install", d.Action, d.Core)
+	}
+	if d.User != "" || d.UserName != "" || d.Task != nil || d.Opened.Session != nil {
+		t.Errorf("channel without a user carries user %q and task %v", d.User, d.Task != nil)
+	}
+}
+
 func TestCheckRefusesShellOpenOfStage(t *testing.T) {
 	f := newFixture(t)
 	o := coreOpen(core.AppStore, core.ActStage, nil)
