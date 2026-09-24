@@ -264,6 +264,33 @@ func TestFinishLocksAfterFailures(t *testing.T) {
 	}
 }
 
+// TestFinishLeavesTheCountingAlone: a login that worked must not clear the
+// bucket of the name. A bucket holds every name that falls into it
+// (classes/lock, buckets) and a login name is free to choose, so whoever puts
+// a name of their own into every bucket would have their count wiped by every
+// successful login anybody makes. Clearing is not needed either: a row past
+// its keep time reads as none by itself (apps/server-api/CLAUDE.md, the login
+// section). Only the setup clears its own bucket, which is no login name.
+func TestFinishLeavesTheCountingAlone(t *testing.T) {
+	h, fx := newFixture(t)
+	failLogin(t, h, fx.PasswordName)
+	failLogin(t, h, fx.PasswordName)
+	c := start(t, h, fx.PasswordName)
+	w := httptest.NewRecorder()
+	h.Finish(w, jsonPost(session.PathLoginFinish, string(finishBody(t, fx, fx.Password, c, ""))))
+	if w.Code != 200 {
+		t.Fatalf("the login answered %d: %s", w.Code, w.Body)
+	}
+	// The third failure of the bucket is the one that lays the wait -- unless
+	// the login took the first two away.
+	failLogin(t, h, fx.PasswordName)
+	w = httptest.NewRecorder()
+	h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+fx.PasswordName+`"}`))
+	if w.Code != 429 {
+		t.Fatalf("the login cleared what was counted for the bucket: %d", w.Code)
+	}
+}
+
 // TestFinishDoesNotLockANameAKeyOfNobodyNamed pins the other half of the
 // bucket: a proof by a key the trust list does not hold names no user, so the
 // failure is counted for the key and not for whatever user the certificate
