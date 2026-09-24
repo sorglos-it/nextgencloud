@@ -1,16 +1,21 @@
 // What this controller tells an API about itself: the hello at the start of a
-// tunnel, the status the API asks for, the progress of an update and a notice
-// for the admins. Every one of them goes out as the control message of its
-// contract, and none of them asks the API for anything - this is a controller
-// telling, not a controller asking.
+// tunnel, the status of this server, the progress of an update and a notice for
+// the admins. Every one of them goes out as the control message of its
+// contract, and not one of them is an answer to a question: the API may send no
+// status, no update and no notice on a tunnel (wire.ControlAllowed), so none of
+// these is asked for. This is a controller telling.
 //
 // The parts of the controller that answer these questions are built by later
 // tasks, so each of them comes in as a function of ReportConfig. A part that is
 // not wired yet is not the same as one that was asked and did not answer: where
 // there is nothing to ask, the answer is the quiet one - no app counts as
 // running, every app counts as licensed, and a message without a tunnel goes
-// into the log of this server. Where there is something and it fails, the app
-// is left out of the status altogether (appState).
+// into the log of this server.
+//
+// Where there is something and it fails, the two sides part: an app whose
+// licence or engine failed is left out of the status altogether (appState),
+// while a send that failed costs the message nothing but its way out - it goes
+// into the log of this server and the Reporter carries on (Notify, Update).
 
 package node
 
@@ -224,17 +229,22 @@ func (r *Reporter) Status(ctx context.Context) (tunnel.Status, error) {
 // (tunnel.Status and tunnel.AppStatus have three each, none about time), so the
 // row stays away and the reason goes into the log of this controller.
 //
-// What that costs, said plainly: in the message itself an app nobody could ask
-// about looks like one the limit of 256 swallowed. The log line is what tells
-// them apart on this server.
+// What that costs, said plainly: in the message the app looks like one that is
+// not installed on this server at all - the same picture a core app and a row
+// without a version leave, and on a server with more than 256 apps to report,
+// the same one the limit leaves. It costs no other app its place: the limit
+// counts the rows that went in, and a row that is left out never gets that far.
+// The log line is what tells them apart on this server.
 //
 // And the log line is all there is: no notice goes out from here, and that is a
-// decision and not something forgotten. Status is asked again and again, so a
-// notice per status would repeat itself as often as the API asks; the only
-// usable rule would be "only when it changes", and a change needs the answer of
-// the round before, which this Reporter keeps nowhere - it holds its
-// configuration and nothing else. Anything else ("once per app and tunnel")
-// would be a rule made up on the spot, and a rule made up on the spot is
+// decision and not something forgotten. A status is nothing the API asks for -
+// it may send none (wire.ControlAllowed) - this side sends one of its own
+// accord, again and again, so a notice per status would repeat itself just as
+// often. The only usable rule would be "only when it changes", and a change
+// needs the answer of the round before. This Reporter has nowhere of its own to
+// keep it: its own fields do not change after it was built. It could be written
+// into the database behind ReportConfig.State - but that would be new state to
+// keep, and a rule invented here to go with it, and a rule invented here is
 // exactly what was taken out of this function when failed went. The answer of
 // the round before belongs where such a history is kept anyway, which is the
 // task that brings the engine (ReportConfig.Running), not here.
