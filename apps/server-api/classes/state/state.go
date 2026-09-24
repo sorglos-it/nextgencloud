@@ -32,7 +32,8 @@ var (
 	ErrBusy = errors.New("state: another API is at this step, try again")
 	// ErrRefused reports a version handed in that package trust would not
 	// take, for a reason chainFault puts no finer name to: the signature over
-	// it, or a payload that no longer reads. The caller brought it, so it is
+	// it, a payload that no longer reads, or something package trust saw that
+	// this package will not name for it. The caller brought it, so it is
 	// neither a row of ours nor the store -- and an error with no name of this
 	// package reads as the store one package further out (httpapi.Fault). The
 	// cause rides along for whoever reads it.

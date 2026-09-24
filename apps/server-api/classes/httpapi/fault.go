@@ -101,9 +101,9 @@ func Fault(err error, from Origin) wire.Code {
 	// nothing reads as its own error either way (503).
 	//
 	// It rests on two things, and both are kept elsewhere. Package state names
-	// every fault of its own that is not the store: the errors above, and
-	// nothing of package trust left unnamed on the way out (state.ownRows for
-	// a row of ours, state.handedIn for a version brought in). And whoever
+	// the faults of its own that a run can reach: the errors above, and nothing
+	// of package trust left unnamed on the way out (state.ownRows for a row of
+	// ours, state.handedIn for a version brought in). And whoever
 	// hands Fault an error of his own package answers that one first, because
 	// Fault cannot read it -- setup/fault is where that is done for the two
 	// this API has, a configured key that will not parse and a damaged row of
