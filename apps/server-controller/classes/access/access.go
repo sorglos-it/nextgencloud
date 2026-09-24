@@ -127,6 +127,12 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		if app, err = r.Apps.App(ctx, open.App); err != nil {
 			return refuse(wire.CodeNotFound)
 		}
+		// An app this controller does not run answers nothing. deactivate is
+		// a root task a user signed for, so the row deciding here is what
+		// that task bought.
+		if !app.Active {
+			return refuse(wire.CodeNotFound)
+		}
 		// The manifest comes from this controller's own database, written
 		// when the app was activated; a row that cannot be read is this
 		// server's fault, not the opener's.
