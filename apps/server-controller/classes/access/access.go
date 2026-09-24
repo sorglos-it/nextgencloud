@@ -125,6 +125,14 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		if m, err = store.ParseManifest(app.Manifest); err != nil {
 			return refuse(wire.CodeInternal)
 		}
+		// The manifest says which service an action runs on. The OPEN names
+		// one too, and the two have to be the same: an action matched by its
+		// name alone would let any OPEN put a service of its choice under the
+		// rule of the tamest action the app has.
+		act, ok := m.Action(open.Action)
+		if !ok || act.Service != open.Service {
+			return refuse(wire.CodeNotFound)
+		}
 		// What the action may demand — root, changes, confirmation — comes
 		// from that manifest alone, never from the OPEN or its params.
 		if rule, err = store.RuleFor(m, open.Action); err != nil {
