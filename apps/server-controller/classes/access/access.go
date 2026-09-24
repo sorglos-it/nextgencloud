@@ -110,6 +110,14 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		}
 		rule = core.RuleFor(a)
 	} else {
+		// A core app ID names no app of this controller: core.Lookup has just
+		// said this is none of their actions, and a manifest may not carry
+		// such an ID at all (store.Manifest.Validate). It would also be the
+		// one channel that carries a certificate without an end-to-end
+		// handshake, which wire.Open.Validate allows only for core app IDs.
+		if wire.CoreApp(open.App) {
+			return refuse(wire.CodeNotFound)
+		}
 		// Only the core actions of core.WithoutUser run without a user, so an
 		// app channel without a certificate is refused — before the lookup,
 		// since no answer of the database could let it through.
