@@ -37,13 +37,13 @@ const (
 	maxCount = 1 << 20
 )
 
-// buckets is how many rows the counting has, and every name falls in one of
-// them (key). Nobody has to be a user to try a name, so a row per name would
-// let anybody grow the settings table with made-up names; a cap on the rows
-// would bound it, but then a name with no row of its own could not be counted
-// once the table is full, and filling it would switch the counting off for
-// every name that matters. Buckets bound the table by their number alone, so
-// every name is countable at every moment and no walk of the table stands in
+// buckets is how many rows each of the two countings has, and every name falls
+// in one of them (key). Nobody has to be a user to try a name, so a row per
+// name would let anybody grow the settings table with made-up names; a cap on
+// the rows would bound it, but then a name with no row of its own could not be
+// counted once the table is full, and filling it would switch the counting off
+// for every name that matters. Buckets bound the table by their number alone,
+// so every name is countable at every moment and no walk of the table stands in
 // front of a failure.
 //
 // 4096 of them, and a power of two so that the 16 bits below divide among
@@ -53,10 +53,10 @@ const (
 //     30 accounts the chance is about a tenth, with 10 about one in a
 //     hundred, and what they share is the count and the wait of at most
 //     maxWait (see Fail).
-//   - The rows stay small: 4096 of about 40 bytes is well under a quarter of
-//     a megabyte, even after somebody has hit every bucket. Purge reads them
-//     all at once (dbapi.BlobFrom takes no limit), and this number is what
-//     bounds that read.
+//   - The rows stay small: two countings of 4096 rows of about 40 bytes are
+//     under half a megabyte together, even after somebody has hit every bucket
+//     of both. Purge reads them all at once (dbapi.BlobFrom takes no limit),
+//     and twice this number is what bounds that read.
 //   - Locking every bucket out costs a dozen failures each and has to be
 //     repeated every maxWait. Whoever knows the names of an installation
 //     locks them out far cheaper, one by one -- which is the price of any
@@ -66,7 +66,8 @@ const buckets = 4096
 // The two countings this package keeps, and the whole reason they are two.
 // Every row ID begins with one of these, so a row of one counting can never be
 // a row of the other -- whatever the two strings hash to, and whoever chose
-// them.
+// them. That is the whole of the separation; see key, where the row ID is
+// built.
 //
 // nameSpace counts login names. It is the counting of the contract
 // (shared/README.md, "Vor dem WebSocket": the wait holds per login name), and
@@ -81,9 +82,11 @@ const buckets = 4096
 // lay that name's wait. Kept apart, the worst such a search buys is the row of
 // another key ID.
 //
-// The prefixes must stay disjoint: neither may be a prefix of the other, or
-// Purge would take rows of the wrong counting (it tells them apart by exactly
-// this).
+// Purge does not tell the two apart and does not need to: it takes the rows of
+// both and leaves every other setting alone (see there). What it does need is
+// that neither prefix may be the whole of a setting ID that belongs to nobody
+// here -- both are asked for with strings.HasPrefix, so an ID that begins with
+// one of them is taken as a row of this package.
 const (
 	nameSpace = "lock."
 	keySpace  = "lockkey."
@@ -317,10 +320,11 @@ func Clear(ctx context.Context, db dbapi.Local, name string) error {
 	return db.BlobDelete(ctx, dbapi.BlobSetting, key(nameSpace, name))
 }
 
-// Purge removes lock rows whose time has passed. Other settings stay. A time
-// no clock gives removes nothing at all: every row still counting lies ahead
-// of it, and freeing them all at once is exactly what a wrong number must
-// never do.
+// Purge removes lock rows whose time has passed, of both countings at once.
+// Other settings stay. It never tells the two apart -- it takes the union of
+// them, which is all a walk that frees space has to do. A time no clock gives
+// removes nothing at all: every row still counting lies ahead of it, and
+// freeing them all at once is exactly what a wrong number must never do.
 //
 // No lock depends on it, for every row this package writes. Purge asks a row
 // the same question the counting asks (see expired), and such a row carries
@@ -337,8 +341,9 @@ func Clear(ctx context.Context, db dbapi.Local, name string) error {
 // It holds counting over the whole walk, so nothing is counted between the
 // walk and the deletes that follow it: a row that the walk saw expired would
 // otherwise be a lock somebody has just set, and removing it would set that
-// lock to none. The walk is bounded by buckets rows and the other settings,
-// and no failure of a login waits on more than that.
+// lock to none. The walk is bounded by twice buckets rows -- the two countings
+// have that many each -- and the other settings, and no failure of a login
+// waits on more than that.
 func Purge(ctx context.Context, db dbapi.Local, now int64) error {
 	if !validNow(now) {
 		return ErrLock
