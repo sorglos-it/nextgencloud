@@ -136,7 +136,7 @@ func TestFinishRefusesACertificateBeyondTheSessionLifetime(t *testing.T) {
 // the code of the moment, and only with it.
 func TestFinishTakesTheTOTPCode(t *testing.T) {
 	h, fx := newFixture(t)
-	code := withTOTP(t, h, fx)
+	code := withTOTP(t, h, fx.PasswordUser, fx.PasswordName)
 	c := start(t, h, fx.PasswordName)
 	if !c.TOTP {
 		t.Fatal("the challenge does not ask for the code")
@@ -222,7 +222,7 @@ func TestFinishAnswersEveryFailureAlike(t *testing.T) {
 			return body
 		}},
 		{"a wrong TOTP code", func(t *testing.T, h *Handler, fx fixture) []byte {
-			withTOTP(t, h, fx)
+			withTOTP(t, h, fx.PasswordUser, fx.PasswordName)
 			return finishBody(t, fx, fx.Password, start(t, h, fx.PasswordName), "000000")
 		}},
 	}
@@ -478,25 +478,24 @@ func TestFinishRefusesABadBody(t *testing.T) {
 // certificate that carries it is refused at the last door and nowhere earlier.
 var madeUpNonce = bytes.Repeat([]byte{0xA5}, session.NonceSize)
 
-// withTOTP gives the password user a second factor and returns the code of
-// testNow.
-func withTOTP(t *testing.T, h *Handler, fx fixture) string {
-	t.Helper()
-	begin, sealed, err := h.BeginTOTP(fx.PasswordName)
+// withTOTP gives the user a second factor and returns the code of testNow.
+func withTOTP(tb testing.TB, h *Handler, user, name string) string {
+	tb.Helper()
+	begin, sealed, err := h.BeginTOTP(name)
 	if err != nil {
-		t.Fatalf("begin: %v", err)
+		tb.Fatalf("begin: %v", err)
 	}
-	row, err := h.S.DB.UserGet(ctx, fx.PasswordUser)
+	row, err := h.S.DB.UserGet(ctx, user)
 	if err != nil {
-		t.Fatalf("user: %v", err)
+		tb.Fatalf("user: %v", err)
 	}
 	row.TOTP = sealed
 	if err := h.S.DB.UserPut(ctx, row); err != nil {
-		t.Fatalf("user: %v", err)
+		tb.Fatalf("user: %v", err)
 	}
 	code, err := codeOf(begin.Secret)
 	if err != nil {
-		t.Fatalf("code: %v", err)
+		tb.Fatalf("code: %v", err)
 	}
 	return code
 }
@@ -505,17 +504,30 @@ func withTOTP(t *testing.T, h *Handler, fx fixture) string {
 // the password in addition. Every member of such a role has to hold a passkey
 // and a password key (trust.List.Validate), so both admins get the key they
 // were missing. It returns the two keys of fx.PasskeyUser.
-func passwordToo(t *testing.T, h *Handler, fx fixture) (passkey, password trusttest.Signer) {
-	t.Helper()
+func passwordToo(tb testing.TB, h *Handler, fx fixture) (passkey, password trusttest.Signer) {
+	tb.Helper()
 	extra, mate := trusttest.NewSigner(3), trusttest.NewPasskey(4)
-	l := trusttest.Next(t, fx.Signed)
+	l := trusttest.Next(tb, fx.Signed)
 	l.Roles[0].PasswordToo = true
 	l.Users[0].Keys = append(l.Users[0].Keys, extra.Key)
 	l.Users[1].Keys = append(l.Users[1].Keys, mate.Key)
-	if _, err := h.S.AddVersion(ctx, fx.Password.Sign(t, l)); err != nil {
-		t.Fatalf("version 2: %v", err)
+	if _, err := h.S.AddVersion(ctx, fx.Password.Sign(tb, l)); err != nil {
+		tb.Fatalf("version 2: %v", err)
 	}
 	return fx.Passkey, extra
+}
+
+// everything is the installation the fuzz target works against: a role that
+// asks for the password in addition, and a user of that role who holds a TOTP
+// secret. Without both, the guards in front of session.VerifyPassword and
+// checkTOTP are false for every body there is -- they hang on the installation
+// and not on the request -- and no run of the fuzzer enters either. It returns
+// the two keys of fx.PasskeyUser and that user's code at testNow.
+func everything(tb testing.TB) (*Handler, fixture, trusttest.Signer, trusttest.Signer, string) {
+	tb.Helper()
+	h, fx := newFixture(tb)
+	passkey, password := passwordToo(tb, h, fx)
+	return h, fx, passkey, password, withTOTP(tb, h, fx.PasskeyUser, fx.PasskeyName)
 }
 
 // certBytes builds the client certificate the user signs. It takes testing.TB

@@ -167,28 +167,39 @@ func FuzzStartBody(f *testing.F) {
 	})
 }
 
-// finishSeeds returns the bodies FuzzFinish begins with. The first two are
-// real: a certificate of a user of this installation, the proof over exactly
-// its bytes and everything else the API asks for -- only the nonce is one
-// nobody ever handed out, so they run through every check and are refused at
-// the last one. Without such a body among the seeds a green run would say
-// nothing about the path behind the parser, and that path is where a session
-// is made. The third carries a key the trust list does not hold, which is the
-// shape a wrong password really has: the browser derives another key from it,
-// and no list knows that one. The rest are shapes the parser turns away.
+// finishSeeds returns the bodies FuzzFinish begins with, one per place a login
+// can be refused. They are built without asking the handler for a challenge, so
+// they are the same bytes in every run and a corpus keeps its meaning; the
+// nonce is one nobody ever handed out, so not one of them can make a session.
 //
-// They are built without asking the handler for a challenge, so they are the
-// same bytes in every run and a corpus keeps its meaning.
-func finishSeeds(tb testing.TB, h *Handler, fx fixture) [][]byte {
+//	0  everything the API asks for and only the nonce wrong -- it runs through
+//	   the proof, the password of the role and the code, and is refused at the
+//	   last check of all
+//	1  the same with a wrong code
+//	2  the same without the password the role asks for
+//	3  the same with a password proof by a key nobody holds
+//	4  a proof by a key nobody holds, which is the shape a wrong password
+//	   really has: the browser derives another key from it, and no list knows
+//	   that one
+//	5  a body the parser reads and session.VerifyClient refuses as a
+//	   certificate
+//	6..8  shapes the parser turns away
+//
+// Without 0 among them a green run would say nothing about the path behind the
+// parser, and that path is where a session is made.
+func finishSeeds(tb testing.TB, h *Handler, fx fixture, passkey, password trusttest.Signer, code string) [][]byte {
 	tb.Helper()
 	c := session.LoginChallenge{
-		User: fx.PasswordUser, Nonce: madeUpNonce,
+		User: fx.PasskeyUser, Nonce: madeUpNonce,
 		Now: testNow, MaxLifetime: h.S.Cfg.SessionLifetime,
 	}
+	nobody := trusttest.NewSigner(200)
 	return [][]byte{
-		finishBody(tb, fx, fx.Password, c, ""),
-		finishBody(tb, fx, fx.Password, c, "000000"),
-		finishBody(tb, fx, trusttest.NewSigner(200), c, ""),
+		finishWith(tb, fx, passkey, &password, c, code),
+		finishWith(tb, fx, passkey, &password, c, "000000"),
+		finishBody(tb, fx, passkey, c, code),
+		finishWith(tb, fx, passkey, &nobody, c, code),
+		finishBody(tb, fx, nobody, c, code),
 		[]byte(`{"cert":"AAAA","proof":{"kind":"password","kid":"AAAAAAAAAAAAAAAAAAAAAA","sig":"AA"}}`),
 		[]byte(`{"cert":"","proof":{}}`),
 		[]byte(`{}`),
@@ -199,49 +210,25 @@ func finishSeeds(tb testing.TB, h *Handler, fx fixture) [][]byte {
 // TestFinishSeedsReachTheLastCheck is what makes a green FuzzFinish mean
 // something, and it is measured over the seeds and not over a run: a fuzzer
 // steers where the coverage is, and the coverage of this handler lies in the
-// ways it refuses. So the share of bodies that get through to the far end is
-// counted here, on a fixed list nobody steers.
+// ways it refuses.
 //
-// At least one seed has to reach the nonce, which is the last check of all:
-// it is behind the proof, behind the lifetime, behind the password of a role
-// that asks for one and behind TOTP. At least one has to be turned away by the
-// parser, or the target would never try the shape the browser really sends.
-// And none of them makes a session.
+// How far a body came is read off the calls it made. UserGet is behind the
+// proof, the lifetime and the password of the role, and the row it fetches
+// carries a TOTP secret -- so a body that reaches it had its password taken and
+// its code looked at. OnceUse is behind the code as well. That makes the three
+// stages tellable apart without a clock:
+//
+//   - seed 0 reaches the nonce: password and code were right
+//   - seed 1 stops between the two: checkTOTP ran and refused the code
+//   - seeds 2 and 3 stop in front of both, and seed 3 carries a password proof
+//     -- only session.VerifyPassword can have turned it away
 func TestFinishSeedsReachTheLastCheck(t *testing.T) {
-	h, fx := newFixture(t)
-	seeds := finishSeeds(t, h, fx)
-	watch := &sessionWatch{Store: h.S.DB}
-	rec := &callLog{Store: watch}
-	h.S.DB = rec
-	deep, refused := 0, 0
-	for _, body := range seeds {
-		clearCounting(t, h)
-		rec.reset()
-		w := httptest.NewRecorder()
-		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
-		switch w.Code {
-		case 400:
-			refused++
-		case 401:
-			if slices.Contains(rec.list(), "OnceUse "+dbapi.OnceNonce) {
-				deep++
-			}
-		default:
-			t.Fatalf("a seed answered %d: %q", w.Code, body)
-		}
-	}
-	if deep == 0 {
-		t.Fatalf("no seed of %d reached the nonce: the target only ever tries the door", len(seeds))
-	}
-	if refused == 0 {
-		t.Fatal("no seed was turned away by the parser")
-	}
-	// The two checks in the middle hang on the installation and not on the
-	// body: v.List.PasswordToo and len(row.TOTP) > 0 are what Finish asks
-	// before it runs session.VerifyPassword and checkTOTP. Where no user of
-	// the fixture answers them, no seed and no fuzzed body can ever enter
-	// either -- they are code the whole run walks past, and counting seeds
-	// says nothing about them.
+	h, fx, passkey, password, code := everything(t)
+	// Said plainly first, because it is the fixture and not the seeds that
+	// decides it: v.List.PasswordToo and len(row.TOTP) > 0 are what Finish
+	// asks before session.VerifyPassword and checkTOTP, and both hang on the
+	// installation. Where no user answers them, no body the fuzzer can build
+	// enters either -- whatever the seeds below then seem to measure.
 	v, err := h.S.Trust(ctx)
 	if err != nil {
 		t.Fatalf("trust: %v", err)
@@ -265,6 +252,46 @@ func TestFinishSeedsReachTheLastCheck(t *testing.T) {
 	if secrets == 0 {
 		t.Fatal("no user of this installation holds a TOTP secret: checkTOTP is code no body reaches")
 	}
+	seeds := finishSeeds(t, h, fx, passkey, password, code)
+	watch := &sessionWatch{Store: h.S.DB}
+	rec := &callLog{Store: watch}
+	h.S.DB = rec
+	// how far each seed came: "" in front of the row, "user" at the code,
+	// "nonce" at the last check, "parser" not even past the parser.
+	got := make([]string, len(seeds))
+	for i, body := range seeds {
+		clearCounting(t, h)
+		rec.reset()
+		w := httptest.NewRecorder()
+		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+		calls := rec.list()
+		switch {
+		case w.Code == 400:
+			got[i] = "parser"
+		case w.Code != 401:
+			t.Fatalf("seed %d answered %d: %q", i, w.Code, body)
+		case slices.Contains(calls, "OnceUse "+dbapi.OnceNonce):
+			got[i] = "nonce"
+		case slices.Contains(calls, "UserGet"):
+			got[i] = "user"
+		}
+	}
+	want := []string{"nonce", "user", "", "", "", "", "parser", "parser", "parser"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the seeds reached %v, want %v", got, want)
+	}
+	// And a share, not a single one: most of the list has to get past the
+	// parser, or the target would spend its run on shapes the browser never
+	// sends.
+	past := 0
+	for _, g := range got {
+		if g != "parser" {
+			past++
+		}
+	}
+	if past*2 <= len(seeds) {
+		t.Fatalf("%d of %d seeds got past the parser", past, len(seeds))
+	}
 	if watch.made() {
 		t.Fatal("a seed made a session")
 	}
@@ -276,17 +303,17 @@ func TestFinishSeedsReachTheLastCheck(t *testing.T) {
 // asked after every single body: a body that made a session would be caught by
 // the very next one too, however the run went.
 func FuzzFinish(f *testing.F) {
-	h, fx := newFixture(f)
+	h, fx, passkey, password, code := everything(f)
 	watch := &sessionWatch{Store: h.S.DB}
 	h.S.DB = watch
-	for _, body := range finishSeeds(f, h, fx) {
+	for _, body := range finishSeeds(f, h, fx, passkey, password, code) {
 		f.Add(body)
 	}
 	f.Fuzz(func(t *testing.T, body []byte) {
 		// The counting of failed logins is put back to nothing before every
-		// body. Without it the third body of one bucket shuts it, and from
-		// there every following one is answered 429 in front of the whole
-		// login -- the run would be spent at the door this target is about.
+		// body. Without it the third body of one row shuts it, and from there
+		// every following one is answered 429 in front of the whole login --
+		// the run would be spent at the door this target is about.
 		clearCounting(t, h)
 		w := httptest.NewRecorder()
 		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
