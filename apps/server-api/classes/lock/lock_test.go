@@ -550,54 +550,63 @@ func TestARowKeepsCountingUnlessItHasLostBothTimes(t *testing.T) {
 // behind the counting, the next read takes it for expired, and the lock that
 // was running is gone together with the count. A wait must not be something
 // anybody turns off by turning a clock.
+//
+// It walks several distances, because one alone held almost nothing. A cap
+// that took the keep time out of a row no further ahead than keepFor let every
+// distance from 2*keepFor on straight through -- the wait fell to 0 and the
+// count started at zero again -- and the one distance this test used to run,
+// keepFor+1, is the last one short of it. A lock against the clock has to hold
+// however far the clock is turned, so the distances below cross that line and
+// go well past it.
 func TestTheCountingsClockNeverRunsBackwards(t *testing.T) {
-	db := memstore.New()
 	now := int64(1790000000)
-	for i := 0; i < 4; i++ {
-		if err := Fail(ctx, db, "anna", now); err != nil {
-			t.Fatalf("fail %d: %v", i, err)
+	for _, back := range []int64{now - keepFor - 1, now - 2*keepFor, now - 2*keepFor - 1, now - 100*keepFor} {
+		db := memstore.New()
+		for i := 0; i < 4; i++ {
+			if err := Fail(ctx, db, "anna", now); err != nil {
+				t.Fatalf("fail %d: %v", i, err)
+			}
 		}
-	}
-	before, err := Check(ctx, db, "anna", now)
-	if err != nil || before == 0 {
-		t.Fatalf("the lock before the clock moved: %d %v", before, err)
-	}
-	back := now - keepFor - 1
-	if err := Fail(ctx, db, "anna", back); err != nil {
-		t.Fatalf("fail on a clock set back: %v", err)
-	}
-	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != before {
-		t.Fatalf("the clock going back left a wait of %d instead of %d: %v", wait, before, err)
-	}
-	// And the counting stands where it stood, not at zero: the failures after
-	// it are not free again.
-	if err := Fail(ctx, db, "anna", now); err != nil {
-		t.Fatalf("fail after the clock was right again: %v", err)
-	}
-	if wait, err := Check(ctx, db, "anna", now); err != nil || wait <= before {
-		t.Fatalf("the failure after the clock went back waits %d, the one before %d: %v", wait, before, err)
+		before, err := Check(ctx, db, "anna", now)
+		if err != nil || before == 0 {
+			t.Fatalf("the lock before the clock moved: %d %v", before, err)
+		}
+		if err := Fail(ctx, db, "anna", back); err != nil {
+			t.Fatalf("fail on a clock set back by %d: %v", now-back, err)
+		}
+		if wait, err := Check(ctx, db, "anna", now); err != nil || wait != before {
+			t.Fatalf("the clock going back by %d left a wait of %d instead of %d: %v", now-back, wait, before, err)
+		}
+		// And the counting stands where it stood, not at zero: the failures
+		// after it are not free again.
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("fail after the clock was right again: %v", err)
+		}
+		if wait, err := Check(ctx, db, "anna", now); err != nil || wait <= before {
+			t.Fatalf("after the clock went back by %d a failure waits %d, the one before %d: %v", now-back, wait, before, err)
+		}
 	}
 }
 
-// TestAClockJumpedForwardShutsABucketNoLongerThanTwiceKeepFor holds the other
-// side of the row above, and it is the side a real machine walks into: a small
-// server with no clock of its own starts at a wrong time and NTP pulls it
-// forward as soon as the network stands. One failure counted while the clock
-// was fast leaves a keep time that far ahead, the row carries it on, and the
-// bucket stays shut for as long as the clock was wrong -- not for as long as
-// the counting ever asks for. Holding the later of the two times is what keeps
-// a clock set back from ending a wait; it must not let a clock set forward
-// begin one that outlasts the failures by days.
-func TestAClockJumpedForwardShutsABucketNoLongerThanTwiceKeepFor(t *testing.T) {
-	now := int64(1790000000)
-	// Twice the keep time after the last failure the bucket is free, and its
-	// row is one a purge takes. A row kept further ahead than that is one no
-	// purge of any time a clock gives ever reaches.
-	over := now + 2*keepFor
-
+// TestAClockThatRanAheadShutsItsBucketUntilItHasCaughtUp states the price of
+// the row above, and it is a price, not something anybody wanted. Of the two
+// keep times a row can carry the later one stands (see kept in Fail), so a row
+// written while the clock ran ahead keeps its bucket shut until the clock has
+// caught up with it: for as long as the clock was ahead, and far longer than
+// the failures themselves ask for. The price is taken knowingly, because the
+// other side is worse -- capping the time a row brings along puts a running
+// lock back within reach of whoever can turn the clock, from 2*keepFor of it
+// on, which is the line the row above walks across. It heals by itself and
+// needs nobody to run anything; what would end it for good is a time of its
+// own in dbapi (on the list for V1.2), not another line here.
+func TestAClockThatRanAheadShutsItsBucketUntilItHasCaughtUp(t *testing.T) {
 	db := memstore.New()
-	if err := Fail(ctx, db, "anna", now+100*keepFor); err != nil {
-		t.Fatalf("fail while the clock was fast: %v", err)
+	now := int64(1790000000)
+	// How far the clock was ahead when the first failure was counted.
+	const ahead = 100 * keepFor
+
+	if err := Fail(ctx, db, "anna", now+ahead); err != nil {
+		t.Fatalf("fail while the clock ran ahead: %v", err)
 	}
 	// The clock is right again, and the name goes on trying.
 	for i := 0; i < 3; i++ {
@@ -605,34 +614,35 @@ func TestAClockJumpedForwardShutsABucketNoLongerThanTwiceKeepFor(t *testing.T) {
 			t.Fatalf("fail %d: %v", i, err)
 		}
 	}
-	if wait, err := Check(ctx, db, "anna", now+1); err != nil || wait == 0 {
-		t.Fatalf("the failures set no lock at all: %d %v", wait, err)
+	// Four failures ask for 2 s. What the bucket answers is the longest wait
+	// there is, and it answers that until the clock has all but caught up.
+	if wait, err := Check(ctx, db, "anna", now+1); err != nil || wait != maxWait {
+		t.Fatalf("the bucket answers %d, not the longest wait there is: %v", wait, err)
 	}
-	if wait, err := Check(ctx, db, "anna", over); err != nil || wait != 0 {
-		t.Fatalf("the bucket is still shut %d s after the last failure: %d %v", over-now, wait, err)
+	if wait, err := Check(ctx, db, "anna", now+ahead-1); err != nil || wait != 1 {
+		t.Fatalf("one second before the clock caught up the bucket answers %d: %v", wait, err)
 	}
-	if err := Purge(ctx, db, over); err != nil {
-		t.Fatalf("purge: %v", err)
-	}
-	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
-		t.Fatalf("the purge left the row of the fast clock: %v", err)
+	// From the second the clock has caught up the bucket is free again: the
+	// price is as long as the clock was ahead, and no longer.
+	if wait, err := Check(ctx, db, "anna", now+ahead); err != nil || wait != 0 {
+		t.Fatalf("the bucket is still shut %d s after the failures: %d %v", ahead, wait, err)
 	}
 
-	// The same holds where the keep time does not come off a clock at all but
-	// out of the row, at the end of the range a time may have.
-	far := memstore.New()
-	if err := far.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
-		Data: []byte("9 " + strconv.FormatInt(now+maxWait, 10)),
-		Seq:  uint64(maxNow + keepFor), Updated: maxNow}); err != nil {
-		t.Fatalf("put: %v", err)
+	// The other direction is not this case, and a comment here once named it
+	// as if it were: a clock that is behind and gets pulled forward -- a small
+	// server without a clock of its own at its first round of NTP -- leaves
+	// rows behind the clock, and a row behind the clock frees its bucket, it
+	// never shuts one.
+	late := memstore.New()
+	for i := 0; i < 4; i++ {
+		if err := Fail(ctx, late, "anna", now); err != nil {
+			t.Fatalf("fail %d on the clock that is behind: %v", i, err)
+		}
 	}
-	if err := Fail(ctx, far, "anna", now); err != nil {
-		t.Fatalf("fail over a row kept to the end of the range: %v", err)
+	if wait, err := Check(ctx, late, "anna", now); err != nil || wait == 0 {
+		t.Fatalf("the failures set no lock at all: %d %v", wait, err)
 	}
-	if err := Purge(ctx, far, over); err != nil {
-		t.Fatalf("purge: %v", err)
-	}
-	if _, err := far.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
-		t.Fatalf("a row kept to the end of the range outlived the purge: %v", err)
+	if wait, err := Check(ctx, late, "anna", now+ahead); err != nil || wait != 0 {
+		t.Fatalf("a clock pulled forward left a wait of %d: %v", wait, err)
 	}
 }

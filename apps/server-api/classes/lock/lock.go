@@ -25,9 +25,11 @@ const (
 	freeCount = 2
 	firstWait = 1
 	maxWait   = 300
-	// keepFor is how long a row with no further failure is kept, so that a
-	// burst of tries does not clear itself at once -- and no longer, so that
-	// a bucket nothing has counted for that long begins at zero again.
+	// keepFor is how long a row is kept past the latest time a failure of its
+	// bucket was counted at, so that a burst of tries does not clear itself at
+	// once -- and no longer, so that a bucket nothing has counted for that long
+	// begins at zero again. That latest time can lie ahead of the clock, and
+	// what that costs stands at kept in Fail.
 	keepFor = 3600
 	// maxCount is the highest failure count a row holds. From a dozen on the
 	// wait is maxWait whatever the number says, so counting further changes
@@ -188,8 +190,9 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 // to run for that, and a first failure after a quiet hour costs what a first
 // failure costs -- not the longest wait there is. The hour is counted from the
 // latest time a failure of that bucket was counted at, so setting a clock back
-// does not shorten it; and never from further ahead than keepFor, so setting a
-// clock forward does not stretch it beyond twice the hour.
+// does not shorten it. A time that lies ahead of the clock stretches it by as
+// much as it lies ahead: that is the price of the same line, and it stands with
+// the line (see kept below).
 func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if !validNow(now) {
 		return ErrLock
@@ -216,27 +219,32 @@ func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if until < now+wait {
 		until = now + wait
 	}
-	// A failure moves the keep time of a row neither backwards nor further than
-	// keepFor forwards: of the time this failure is counted at and the one the
-	// row already carries, the later one stands, and no later than keepFor
-	// ahead of this failure. A clock set back further than keepFor would
-	// otherwise leave a row whose two times both say expired as soon as the
-	// clock is right again, and the lock that was running would be gone with
-	// the count -- a wait must not be something anybody turns off by turning a
-	// clock. A clock set forward is that same door from the other side, and the
-	// one a small server without a clock of its own goes through when NTP pulls
-	// it forward: the row would carry that time on and shut its bucket for as
-	// long as the clock was fast, which is not a wait any failure here asks
-	// for. Capped, a row is kept at most 2*keepFor past the clock that wrote
-	// it, and that is what holds it in reach of a purge: a Seq past maxNow lies
-	// beyond every time validNow lets through, and no purge would ever take
-	// that row. The cap leaves only a now within 2*keepFor of maxNow itself,
-	// which is no clock of this century. seen is a time out of the row, so it
-	// is taken only where it is one a clock gives, and kept + keepFor cannot
-	// run over.
+	// A failure never moves the keep time of a row backwards: of the time this
+	// failure is counted at and the one the row already carries, the later one
+	// stands. A clock set back further than keepFor would otherwise leave a row
+	// whose two times both say expired as soon as the clock is right again, and
+	// the lock that was running would be gone with the count -- a wait must not
+	// be something anybody turns off by turning a clock. seen is a time out of
+	// the row, so it is taken only where it is one a clock gives, and kept +
+	// keepFor cannot run over.
+	//
+	// The price of that line, chosen and not overlooked: a failure counted
+	// while the clock ran ahead leaves a row whose keep time lies that far
+	// ahead, and the bucket stays shut until the clock has caught up with it --
+	// for as long as the clock was ahead, which is no wait any failure here
+	// asks for. It heals by itself and needs nobody to run anything. The other
+	// side was measured and is worse: cap the time a row brings along at keepFor
+	// ahead, and a clock set back by 2*keepFor or more drops a lock that is
+	// running to no wait at all and its count to zero -- whoever can turn the
+	// clock turns the lock off. Out of one reading the two cannot be told apart:
+	// "the row lies ahead because the clock ran ahead" and "the clock is behind
+	// right now" are the same shape, a keep time above now. So this takes the
+	// side that keeps the lock. Telling them apart needs a time this package is
+	// not given -- a source of its own in dbapi, which is on the list for V1.2 --
+	// and no further line here does it.
 	kept := now
 	if validNow(seen) && seen > kept {
-		kept = min(seen, now+keepFor)
+		kept = seen
 	}
 	// Seq and Updated are the time the row may be removed. A walk of the rows
 	// gets both (dbapi.BlobFrom), so Purge asks them the same question the
