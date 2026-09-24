@@ -694,6 +694,40 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 					copy(p.AuthData[:32], bytes.Repeat([]byte{0x3C}, 32))
 				})
 			}},
+		{"client data that is not JSON at all", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) {
+					p.ClientData = enc.Bytes("not json at all")
+				})
+			}},
+		{"client data that parses and crosses origins", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) {
+					p.ClientData = enc.Bytes(`{"type":"webauthn.get","crossOrigin":true}`)
+				})
+			}},
+		{"authenticator data saying nobody was verified", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.AuthData[32] = 0 })
+			}},
+		{"a password signature of one byte", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasswordName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Password, func(p *proof.Proof) { p.Sig = p.Sig[:1] })
+			}},
+		{"a passkey signature of one byte", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.Sig = p.Sig[:1] })
+			}},
 		// The two below are controls, not findings: they are the ways out of
 		// session.VerifyClient that the choice at blindProof rests on being
 		// alike, and nobody had ever measured them.
