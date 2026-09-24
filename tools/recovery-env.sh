@@ -10,7 +10,14 @@ work="$(pwd)/dist/recovery"
 # this script runs only on the VM (measured: report has the details).
 # ps is called by four of the scripts and is still not on the list: it comes out
 # of the same package as pgrep - measured, dpkg -S names procps for both - so
-# the pgrep entry already answers for it.
+# the pgrep entry already answers for it. Coreutils works the same way, only
+# wider: the package calls seventeen of its programs without naming one of them
+# here - dirname, seq, head, cut, tr, cat, ls, mkdir, mv, cp, rm, chmod, sort,
+# wc, date, sleep and the timeout around swtpm_ioctl in recovery-swtpm.sh.
+# Measured with dpkg -S: every one of them, and the shred on the list below,
+# come out of coreutils, so that one entry answers for the lot - and it really
+# does, tried with coreutils out of the PATH, shred then stands among the
+# missing.
 need="qemu-system-x86_64 swtpm swtpm_setup swtpm_ioctl softhsm2-util pkcs11-tool openssl xxd socat shred
 	pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal

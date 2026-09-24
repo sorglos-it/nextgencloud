@@ -173,7 +173,7 @@ start() {
 # with it. Measured: a simulator restarted without this step answers PCR 0 with
 # all zero, and the proof that the firmware measured would be lost.
 resume() {
-	local pid
+	local pid rc
 	if [ "$name" != qemu ]; then
 		printf 'resume gibt es nur für die Instanz qemu.\n' >&2
 		exit 1
@@ -186,15 +186,28 @@ resume() {
 		exit 1
 	fi
 	# Needs the control channel to itself. QEMU holds it as long as it runs, and
-	# a unixio control channel takes one client at a time - measured, this call
-	# then waits for it and does NOT come back on its own. There is no time
-	# limit around it on purpose, because there is nothing sensible to do after
-	# one: whoever calls resume has to have ended the machine first and to have
-	# waited for it, and tools/recovery-qemu.sh does exactly that before it
-	# gets here.
-	if ! swtpm_ioctl -v --unix "$sock.ctrl"; then
-		printf 'Der flüchtige Zustand der Instanz qemu lässt sich nicht sichern.\n' >&2
-		printf 'Prüfen: läuft die virtuelle Maschine noch und hält den Steuerkanal?\n' >&2
+	# a unixio control channel takes one client at a time - and on that this
+	# call does not fail fast, it waits. Measured three times by hand against a
+	# running machine: it comes back only after 20.0 s, and then with
+	# swtpm_ioctl's own "Connection timed out" and EXIT=1. That limit belongs to
+	# a foreign tool, nothing here promises it, and twenty silent seconds are a
+	# poor answer in any case. So the wait gets a limit of our own, 10 s, and a
+	# message that says what to do. It cannot strike where it should not: inside
+	# tools/recovery-qemu.sh the machine is provably gone before this runs, and
+	# the call then costs 2-64 ms (19 runs, idle up to sixty-four busy
+	# processes). timeout is coreutils, the same package as the seq, cut, head
+	# and shred this package already uses. EXIT=124 gets its own message:
+	# "still held" and "broken" need different answers.
+	rc=0
+	timeout 10 swtpm_ioctl -v --unix "$sock.ctrl" || rc=$?
+	if [ "$rc" -eq 124 ]; then
+		printf 'Der Steuerkanal der Instanz qemu ist nach 10 s noch belegt.\n' >&2
+		printf 'Prüfen: läuft die virtuelle Maschine noch? Beenden mit: tools/recovery-qemu.sh stop\n' >&2
+		exit 1
+	fi
+	if [ "$rc" -ne 0 ]; then
+		printf 'Der flüchtige Zustand der Instanz qemu lässt sich nicht sichern (EXIT=%s).\n' "$rc" >&2
+		printf 'Die Zeilen darüber sagen, woran es lag.\n' >&2
 		exit 1
 	fi
 	if [ ! -s "$dir/tpm2-00.volatilestate" ]; then
@@ -207,8 +220,16 @@ resume() {
 	# Without this the simulator sits there uninitialised: it was started with
 	# no --flags on purpose, so the state just saved gets loaded here instead of
 	# a fresh startup clearing the very PCRs this is about.
-	if ! swtpm_ioctl -i --unix "$sock.ctrl"; then
-		printf 'Der gesicherte Zustand lässt sich nicht wieder einspielen.\n' >&2
+	# Same limit for the same reason: this control channel is fresh, but nothing
+	# in the code guarantees that nobody else got to it first, and a wait whose
+	# end belongs to a foreign tool is not one to leave standing.
+	rc=0
+	timeout 10 swtpm_ioctl -i --unix "$sock.ctrl" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		printf 'Der gesicherte Zustand lässt sich nicht wieder einspielen (EXIT=%s).\n' "$rc" >&2
+		if [ "$rc" -eq 124 ]; then
+			printf 'Der Steuerkanal ist nach 10 s noch belegt - hält etwas anderes den Simulator?\n' >&2
+		fi
 		exit 1
 	fi
 }

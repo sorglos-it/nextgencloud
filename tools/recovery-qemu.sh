@@ -36,10 +36,17 @@ is_our_qemu() {          # $1 = PID
 
 # True only for a live simulator of the instance qemu: the number out of its pid
 # file, put to the same question recovery-swtpm.sh puts it to - the state
-# directory has to stand on the command line. The pid file alone, without the
-# process list behind it, because reset wrote it moments ago in this same run.
-# A look at that file and one ps, and -ww for the same reason as above -
-# measured, that line is 233 characters long and COLUMNS=80 cuts it to 80.
+# directory has to stand on the command line. Only the pid file, without the
+# pgrep branch that swtpm_pid in recovery-swtpm.sh has, because reset wrote that
+# file moments ago in this same run. What that costs is named here rather than
+# hidden: a live simulator whose pid file went missing reads as dead. A false
+# red, so the safe direction, but the message at the call site then blames
+# SIGKILL while the missing file is the cause.
+# One cat and one ps, and -ww for the same reason as above. No fixed length is
+# claimed for that line: it carries the state directory three times over, so its
+# length moves with the project path - measured 215 characters for a check-out
+# in ~/ngc, and more for every path deeper than that. Far past 80 in any case,
+# and COLUMNS=80 cuts it to 80.
 qemu_swtpm_alive() {
 	local pid args
 	pid="$(cat "$work/tpm/qemu/swtpm.pid" 2>/dev/null || :)"
@@ -72,19 +79,22 @@ stop_qemu() {
 			say "QEMU endet nicht (PID $pid). Von Hand beenden: kill -9 $pid"
 			exit 1
 		fi
-		# No waiting time behind this, and that is measured: the loop above only
-		# ends once the process is gone from the list, and a process that is
-		# gone has had its end of the control channel closed by the kernel. So
-		# resume can have it at once - measured on this VM in 9 runs, idle and
-		# with all four cores under load, swtpm_ioctl answers EXIT=0 in 2-7 ms
-		# right afterwards. A fixed second here claimed a need that is not
-		# there.
+		# No waiting time behind this, and that is measured. The loop above ends
+		# on either of two things, the process gone or 100 passes used up, and
+		# the check right after it is what settles the difference: used-up
+		# passes end the script at exit 1, so whoever reaches this line has a
+		# process that is gone from the list - and a process that is gone has
+		# had its end of the control channel closed by the kernel. So resume
+		# can have it at once: measured on this VM in 19 runs, EXIT=0 every
+		# time, swtpm_ioctl answers in 2-3 ms idle, 4-8 ms with four busy
+		# processes, 8-18 ms with sixteen and 64 ms with sixty-four. A fixed
+		# second here claimed a need that is not there.
 	fi
 	rm -f "$pidfile"
 }
 
 check() {
-	local sock answer model grenze fertig
+	local sock answer model grenze fertig beginn
 	# Only check needs an environment; stop calls nothing that this check looks
 	# for. Asked here and not at the top of the file for a measured reason: with
 	# werkzeuge.txt missing, stop used to die on this line, EXIT=1, and the
@@ -132,29 +142,45 @@ check() {
 	# socat only sees EOF when that sleep ends, quick machine or not. It is gone:
 	# QEMU closes the line after our EOF, and socat then ends without sitting
 	# out its half second (its own manual says so, and measured, 9 runs, the
-	# whole exchange takes 5-16 ms). An answer cut short would leave model
-	# empty, and that is caught below.
+	# whole exchange takes 5-16 ms). An answer cut short leaves model empty; what
+	# happens then is decided at the assignment further down, not here.
 	answer="$(printf '%s\n' '{"execute":"qmp_capabilities"}' '{"execute":"query-tpm"}' \
 		| socat - "UNIX-CONNECT:$qmp")"
 
 	# The firmware is what has to be waited for, and on what it says, not on the
 	# clock: BdsDxe is the boot phase, and by the time it speaks PCR 0 is
 	# finished. Measured, not reasoned: on this VM (4 emulated cores, QEMU
-	# 10.0.13, swtpm 0.7.1, no KVM) the line comes after 4.3-4.5 s idle and 6.1 s
-	# with all four cores under load, and in 9 runs PCR 0 read out right at it
-	# was bit for bit the value the old 30 s wait produced. The limit below is
-	# no waiting time - whoever gets there sooner goes on at once - it is the
-	# stop for a firmware that never reports at all, and about ten times the
-	# slowest run measured.
+	# 10.0.13, swtpm 0.7.1, no KVM), 19 runs, and the whole spread is machine
+	# load - 4.2-4.5 s idle, 6.1-6.5 s with four busy processes, 23.1-33.9 s
+	# with sixteen, 93.7-97.2 s with sixty-four. PCR 0 read out right at the
+	# marker came back bit for bit the same value in every run where it was
+	# captured, five of them, idle and with sixteen busy processes.
+	# The limit below is no waiting time - whoever gets there sooner goes on at
+	# once - it is the stop for a firmware that never reports at all. It counts
+	# seconds, and that had to be put right: the loop used to count grenze * 10
+	# passes of grep + sleep 0.1, a pass costs more than its 0.1 s, so the wait
+	# drifted away from the number in the message and stretched with the
+	# machine's load. Measured against a marker that never comes, same check,
+	# only the loop different: passes end it at 61.9 s and still say 60, seconds
+	# end it at 59.7 s. And with sixty-four busy processes the passes stretched
+	# so far that a check ran green to the end after 103.6 s, nominal limit 60.
+	# The message prints the very count the loop ran to, so the two cannot come
+	# apart again; SECONDS counts in whole seconds, so the wait sits within a
+	# second of the number printed.
+	# 60 s is 1.8 times the slowest marker measured here with four busy
+	# processes per core - a thin margin, and it is meant to be read as one.
+	# Sixty-four of them need longer than the limit, and from now on that stops
+	# the run instead of stretching it.
 	grenze=60                # Sekunden
 	fertig=""
-	for _ in $(seq "$((grenze * 10))"); do
+	beginn="$SECONDS"
+	while [ "$((SECONDS - beginn))" -lt "$grenze" ]; do
 		if grep -q 'BdsDxe:' "$serial" 2>/dev/null; then fertig=ja; break; fi
 		sleep 0.1
 	done
 	if [ -z "$fertig" ]; then
-		say "Die Firmware meldet auch nach $grenze s nicht das Ende ihrer Startphase."
-		say "Prüfen: was steht in $serial?"
+		say "Die Firmware meldet auch nach $((SECONDS - beginn)) s nicht das Ende ihrer Startphase."
+		say "Prüfen: was steht in $serial? War die Maschine ausgelastet?"
 		stop_qemu
 		exit 1
 	fi
@@ -162,7 +188,7 @@ check() {
 	# The whole proof hangs on the simulator outliving the machine - that is
 	# what the SIGKILL above is for. Asked right here, where the requirement is,
 	# so that a stop_qemu turned into an orderly end says so at this line
-	# instead of failing two steps further on. Costs one ps.
+	# instead of failing two steps further on. Costs one cat and one ps.
 	if ! qemu_swtpm_alive; then
 		say "Der Simulator der Instanz qemu hat die Maschine nicht überlebt."
 		say "Das Ende der Maschine muss SIGKILL sein: bei einem geordneten Ende schickt"
@@ -171,7 +197,16 @@ check() {
 		exit 1
 	fi
 
-	model="$(printf '%s' "$answer" | grep -o '"model": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+	# No match is not a failure here - the emptiness IS the answer, and the check
+	# below is where it is given. The "|| :" is what makes that true: grep finds
+	# nothing, pipefail hands the pipeline a 1, and without it errexit would end
+	# the script on this very line, silently, before a single message. Measured
+	# on a cut-short answer: without it EXIT=1 and not one of those lines, with
+	# it all three of them and EXIT=1. Folding it back into
+	# local model="$(...)" would swallow the 1 as well, behind local's own exit
+	# status - and that is the one thing the separate local line at the top of
+	# check exists to prevent.
+	model="$(printf '%s' "$answer" | grep -o '"model": *"[^"]*"' | head -1 | cut -d'"' -f4)" || :
 	if [ -z "$model" ]; then
 		say "QEMU meldet kein TPM."
 		say "Prüfen: läuft swtpm (tools/recovery-swtpm.sh start qemu)?"
