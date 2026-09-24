@@ -45,11 +45,20 @@ type Live struct {
 //
 // The chain is checked again on every request and not only at the login: a
 // user the trust list no longer holds, or whose key an admin took away, loses
-// the session with the next request instead of at the end of the day. The
-// price is chosen and not overlooked -- that is the user's proof verified once
-// per request, the same public-key work the login paid for. The list it is
-// checked against is cached (state.Trust); the verification is not, and
-// nothing here caches its answer.
+// the session with the next request instead of at the end of the day.
+//
+// Two prices are chosen for that, not overlooked. One is the user's proof
+// verified once per request, the same public-key work the login paid for;
+// nothing here caches that answer. The other is the list it is checked
+// against, read out of the database on every call (state.Refresh) where the
+// cache (state.Trust) would have cost nothing -- a handful of reads of the
+// trust rows per request, and GET session.PathTrust pays them twice, because
+// state.Chain refreshes once more for its own answer. Whoever builds the
+// WebSocket calls Live when the connection opens, not once per message.
+//
+// Reading it is also a question that can now fail on every request, where the
+// cache could only fail until it was filled once. A failed read leaves the
+// session where it is, by the rule above.
 //
 // No path here carries a login name, and the only string the caller picks is
 // the cookie: httpapi.Cookie takes nothing but base64url no longer than a
@@ -83,7 +92,13 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, bool) {
 		_ = h.S.DB.SessionDelete(ctx, token)
 		return nil, false
 	}
-	v, err := h.S.Trust(ctx)
+	// The list is read out of the database and not out of the cache
+	// (state.Trust), because the cache of an API is only as new as the last
+	// version that API itself wrote: the node where an admin withdraws a key
+	// has the new list at once, every other node has the old one until
+	// something refreshes it. Live is the step that decides, so it is the step
+	// that has to ask.
+	v, err := h.S.Refresh(ctx)
 	if err != nil {
 		return nil, false
 	}
