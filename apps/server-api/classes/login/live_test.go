@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
@@ -143,6 +144,31 @@ func TestLiveEndsASessionTheTrustListNoLongerHolds(t *testing.T) {
 	}
 	if _, err := h.S.DB.SessionGet(ctx, session.TokenHash(raw)); !isNotFound(err) {
 		t.Fatalf("the row of the withdrawn user's session is still there: %v", err)
+	}
+}
+
+// TestLiveSeesAWithdrawalAnotherAPIWrote holds the order of the two steps: the
+// trust list is brought up to date before the session is decided on, not
+// after. It takes a second API of the installation to see it at all, because
+// the one that writes a version has the new list in its cache already.
+//
+// The second API shares the database and keeps a cache of its own. It takes
+// the session once, which fills that cache, and only then does the admin
+// withdraw the user on the first API. Reading the cache instead of the
+// database leaves the second API answering out of a list that is one version
+// behind -- it keeps the session open and hands out that very list.
+func TestLiveSeesAWithdrawalAnotherAPIWrote(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	other := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	other.S.Now = h.S.Now
+	r := getCookie(session.PathTrust, cookie)
+	if _, ok := other.Live(ctx, r); !ok {
+		t.Fatal("the second API refused a session that is open")
+	}
+	withdrawPasswordUser(t, h, fx)
+	if _, ok := other.Live(ctx, r); ok {
+		t.Fatal("the second API kept a session the trust list no longer holds")
 	}
 }
 
