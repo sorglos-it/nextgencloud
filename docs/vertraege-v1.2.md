@@ -191,6 +191,13 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     als Beispiel liest, kommt zum Gegenteil. Ein Satz im Vertrag erspart der
     naechsten Umsetzung dieselbe Auslegung. (controller, Aufgabe 6, Fixrunde 2)
 
+28. **Der Vertrag widerspricht sich bei `OSRelease` selbst — gemessen.**
+    `wire.ValidName` lässt keinen Punkt zu und weist damit `ubuntu-24.04` ab —
+    **genau das Beispiel, das der Vertrag für dieses Feld selbst nennt.** Der
+    Controller hat sich deshalb eine eigene Regel genommen und an
+    `tunnel.ParseHello` festgenagelt, statt eine zweite Kopie zu pflegen. Eine
+    der beiden Stellen muss nachziehen. (controller, Aufgabe 7)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
