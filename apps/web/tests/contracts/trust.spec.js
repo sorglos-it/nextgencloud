@@ -305,7 +305,10 @@ test("parseSigned leaves room for a maximal proof next to a payload at the cap",
 // through userKeyShape/nodeShape/storeShape. Three things pinned here:
 //  (a) validateList never throws, not even on {} - it promises -> boolean,
 //      and l.prev.length on an absent l.prev threw a TypeError before this
-//      fix, regardless of every other field.
+//      fix, regardless of every other field. This one check was still not
+//      the whole promise: a null element inside an otherwise-real array
+//      (isArray([null]) is true) threw further down, past every guard named
+//      here, until Fixrunde 6 wrapped the whole function - see there.
 //  (b) a same-length string does not stand in for Uint8Array on any of the
 //      byte fields these paths check (noise, sign, tls, key) - the neighbor
 //      modules (b64.js's equal, text.js's validText) check the type before
@@ -698,6 +701,62 @@ test("encodeList answers one controlled error instead of an arbitrary one", asyn
 // through to the level check, op.critical is true) and the buggy path (an
 // accidental match excuses it) disagree - true vs. false - so this only goes
 // green once matches actually stops matching on a node nobody named.
+
+// Fixrunde 6: the tenth appearance of this class in this task, found by the
+// closing review measuring trust.js's own "Never throws" comment on
+// validateList against what the code actually does. isArray(l.users) is
+// true for l.users = [null]: the array itself is real, Array.isArray only
+// ever asks about the array, never its contents, so an element that is
+// itself null (or any other non-object) still throws two lines later
+// wherever that element is read as if it were a real user/role/node/store/
+// auto entry - and the same shape of gap sits in validAPINode(null),
+// validStore(null/undefined) (n/s itself is null, not a field of it) and
+// keyOwner (a user's own keys containing null). No isArray/isBytes guard
+// closes this one - null is exactly as much an object as a real one is, by
+// Array.isArray's own accounting - so the fix here is the one sign.js's own
+// validateEnvelope already uses for the identical reason, quoted in its own
+// comment: "An exception is no answer, and a check that has none refuses."
+test("validateList, validAPINode, validStore and keyOwner never throw, not even on a null element", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const id = "EREREREREREREREREREREQ";
+    const validKey = () => ({
+      id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+      pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const base = (extra) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: id,
+      rp: { id: "", origins: [] },
+      users: [{ id, name: "admin", roles: ["admin"], keys: [validKey()] }],
+      roles: [{ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false }],
+      nodes: [], stores: [], auto: [],
+      ...extra,
+    });
+    const safe = (fn) => { try { return { threw: false, value: fn() }; } catch { return { threw: true, value: null }; } };
+
+    return {
+      usersNull: safe(() => t.validateList(base({ users: [null] }))),
+      rolesNull: safe(() => t.validateList(base({ roles: [null] }))),
+      nodesNull: safe(() => t.validateList(base({ nodes: [null] }))),
+      storesNull: safe(() => t.validateList(base({ stores: [null] }))),
+      autoNull: safe(() => t.validateList(base({ auto: [null] }))),
+      apiNodeNull: safe(() => t.validAPINode(null)),
+      storeNull: safe(() => t.validStore(null)),
+      storeUndefined: safe(() => t.validStore(undefined)),
+      keyOwnerKeysNull: safe(() => t.keyOwner(base({
+        users: [{ id, name: "admin", roles: ["admin"], keys: [null] }],
+      }), "AAAAAAAAAAAAAAAAAAAAAA")),
+    };
+  });
+  const flat = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.threw ? "threw" : v.value]));
+  expect(flat).toEqual({
+    usersNull: false, rolesNull: false, nodesNull: false, storesNull: false, autoNull: false,
+    apiNodeNull: false, storeNull: false, storeUndefined: false,
+    keyOwnerKeysNull: null,
+  });
+});
+
 test("the decision functions grant nothing on doubt, matching Go", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const t = await import("/assets/js/contracts/trust.js");

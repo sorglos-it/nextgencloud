@@ -102,74 +102,79 @@ const isBytes = (v, n) => v instanceof Uint8Array && v.length === n;
 const isArray = Array.isArray;
 
 // validateList checks structure, order and references of l, the rules of
-// trust.List.Validate point by point. Never throws (Round 1 finding
-// Wichtig 4: validateList({}) threw a TypeError at l.prev.length instead of
-// answering false, though the interface promises -> boolean) - the guard
-// below on l.prev is both the first rule Go checks and, being first, the one
-// that stands between an arbitrary argument and every other read in this
-// function. l.rp?.origins (optional chaining) doubles as the guard for l.rp
-// itself being absent or not an object: read on a missing l.rp, .origins is
-// undefined and isArray(undefined) is false, so a list with no rp at all is
-// refused right here instead of throwing three lines later at l.rp.id.
+// trust.List.Validate point by point. Never throws - Round 1's l.prev guard
+// and the isArray/isBytes checks added since are the precise, reasoned
+// rejections named at each of them; the try below is the backstop for what
+// those do not individually name. Fixrunde 6, the closing review: measured
+// still throwing on l.users/roles/nodes/stores/auto containing a null
+// element - isArray([null]) is true (Array.isArray only ever asks about the
+// array, never its contents), so the element is read two lines later as if
+// it were a real user/role/node/store/auto entry. Same fix and the same
+// reason sign.js's validateEnvelope already states for the identical
+// problem: "An exception is no answer, and a check that has none refuses."
 export function validateList(l) {
-  if (!l || !(l.prev instanceof Uint8Array)) return false;
-  if (l.seq === 0 || (l.seq === 1) !== (l.prev.length === 0) || (l.seq > 1 && l.prev.length !== 32)) return false;
-  if (l.issued <= 0 || !validID(l.installation)) return false;
-  if (!isArray(l.users) || !isArray(l.roles) || !isArray(l.nodes) || !isArray(l.stores) || !isArray(l.auto)
-    || !isArray(l.rp?.origins)) return false;
-  if (l.users.length === 0 || l.users.length > MAX_USERS || l.roles.length > MAX_ROLES
-    || l.nodes.length > MAX_NODES || l.stores.length > MAX_STORES || l.auto.length > MAX_AUTO
-    || l.rp.origins.length > MAX_ORIGINS) return false;
-  // The RP ID goes on into the login answer and from there into the
-  // browser's navigator.credentials.get, so it is a DNS name here already
-  // (proof.validRPID, the same rule config.Web keeps). Round 1 finding
-  // Wichtig 1: this check was missing outright; none of the 24 vectors ever
-  // sets an invalid rp.id (all 52 payloads carry "ngc.example.org"), so its
-  // absence never turned a test red on its own.
-  if (l.rp.id !== "" && !proof.validRPID(l.rp.id)) return false;
+  try {
+    if (!l || !(l.prev instanceof Uint8Array)) return false;
+    if (l.seq === 0 || (l.seq === 1) !== (l.prev.length === 0) || (l.seq > 1 && l.prev.length !== 32)) return false;
+    if (l.issued <= 0 || !validID(l.installation)) return false;
+    if (!isArray(l.users) || !isArray(l.roles) || !isArray(l.nodes) || !isArray(l.stores) || !isArray(l.auto)
+      || !isArray(l.rp?.origins)) return false;
+    if (l.users.length === 0 || l.users.length > MAX_USERS || l.roles.length > MAX_ROLES
+      || l.nodes.length > MAX_NODES || l.stores.length > MAX_STORES || l.auto.length > MAX_AUTO
+      || l.rp.origins.length > MAX_ORIGINS) return false;
+    // The RP ID goes on into the login answer and from there into the
+    // browser's navigator.credentials.get, so it is a DNS name here already
+    // (proof.validRPID, the same rule config.Web keeps). Round 1 finding
+    // Wichtig 1: this check was missing outright; none of the 24 vectors ever
+    // sets an invalid rp.id (all 52 payloads carry "ngc.example.org"), so its
+    // absence never turned a test red on its own.
+    if (l.rp.id !== "" && !proof.validRPID(l.rp.id)) return false;
 
-  for (let i = 0; i < l.roles.length; i++) {
-    const r = l.roles[i];
-    // A role cannot both forbid password keys and ask for the password.
-    if (!validName(r.name) || (i > 0 && l.roles[i - 1].name >= r.name) || !validLevel(r.level)
-      || !validEntries(r.black) || !validEntries(r.white) || (r.passkeyOnly && r.passwordToo)) return false;
-  }
-  if (!role(l, ROLE_ADMIN)) return false;
-  if (!validateUsersSync(l)) return false;
+    for (let i = 0; i < l.roles.length; i++) {
+      const r = l.roles[i];
+      // A role cannot both forbid password keys and ask for the password.
+      if (!validName(r.name) || (i > 0 && l.roles[i - 1].name >= r.name) || !validLevel(r.level)
+        || !validEntries(r.black) || !validEntries(r.white) || (r.passkeyOnly && r.passwordToo)) return false;
+    }
+    if (!role(l, ROLE_ADMIN)) return false;
+    if (!validateUsersSync(l)) return false;
 
-  for (let i = 0; i < l.nodes.length; i++) {
-    const n = l.nodes[i];
-    if (i > 0 && l.nodes[i - 1].id >= n.id) return false;
-    if (n.kind === NODE_API) {
-      if (!validAPINode(n)) return false;
-    } else if (n.kind === NODE_CONTROLLER) {
-      // Signing keys, addresses and TLS pins belong to API nodes: nobody
-      // dials a controller.
-      if (!validNode(n) || !isBytes(n.sign, 0) || n.url !== "" || !isBytes(n.tls, 0)
-        || !isArray(n.rootUsers) || !isArray(n.rootRoles)
-        || n.rootUsers.length > MAX_ROOT || n.rootRoles.length > MAX_ROOT) return false;
-      for (const id of n.rootUsers) if (!user(l, id)) return false;
-      for (const r of n.rootRoles) if (!role(l, r)) return false;
-    } else {
-      return false;
+    for (let i = 0; i < l.nodes.length; i++) {
+      const n = l.nodes[i];
+      if (i > 0 && l.nodes[i - 1].id >= n.id) return false;
+      if (n.kind === NODE_API) {
+        if (!validAPINode(n)) return false;
+      } else if (n.kind === NODE_CONTROLLER) {
+        // Signing keys, addresses and TLS pins belong to API nodes: nobody
+        // dials a controller.
+        if (!validNode(n) || !isBytes(n.sign, 0) || n.url !== "" || !isBytes(n.tls, 0)
+          || !isArray(n.rootUsers) || !isArray(n.rootRoles)
+          || n.rootUsers.length > MAX_ROOT || n.rootRoles.length > MAX_ROOT) return false;
+        for (const id of n.rootUsers) if (!user(l, id)) return false;
+        for (const r of n.rootRoles) if (!role(l, r)) return false;
+      } else {
+        return false;
+      }
     }
-  }
-  for (let i = 0; i < l.stores.length; i++) {
-    if (!validStore(l.stores[i]) || (i > 0 && l.stores[i - 1].id >= l.stores[i].id)) return false;
-  }
-  for (let i = 0; i < l.auto.length; i++) {
-    const a = l.auto[i];
-    if (i > 0 && l.auto[i - 1].target >= a.target) return false;
-    if (a.target === AUTO_SYSTEM) {
-      if (!isBytes(a.key, 0)) return false;
-    } else if (a.target === AUTO_WEB || a.target === AUTO_API || a.target === AUTO_CONTROLLER
-      || (validAppID(a.target) && !coreApp(a.target))) {
-      if (!isBytes(a.key, 32)) return false;
-    } else {
-      return false;
+    for (let i = 0; i < l.stores.length; i++) {
+      if (!validStore(l.stores[i]) || (i > 0 && l.stores[i - 1].id >= l.stores[i].id)) return false;
     }
+    for (let i = 0; i < l.auto.length; i++) {
+      const a = l.auto[i];
+      if (i > 0 && l.auto[i - 1].target >= a.target) return false;
+      if (a.target === AUTO_SYSTEM) {
+        if (!isBytes(a.key, 0)) return false;
+      } else if (a.target === AUTO_WEB || a.target === AUTO_API || a.target === AUTO_CONTROLLER
+        || (validAppID(a.target) && !coreApp(a.target))) {
+        if (!isBytes(a.key, 32)) return false;
+      } else {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
   }
-  return true;
 }
 
 // validateUsersSync checks each user, the rules of trust.List.validateUsers
@@ -419,15 +424,24 @@ export const user = (l, id) => (isArray(l?.users) && l.users.find((u) => u.id ==
 export const role = (l, name) => (isArray(l?.roles) && l.roles.find((r) => r.name === name)) || null;
 export const node = (l, id) => (isArray(l?.nodes) && l.nodes.find((n) => n.id === id)) || null;
 
+// Fixrunde 6: wrapped the same way validateList now is, for the same
+// element-can-be-null reason - isArray(u.keys) says the array is real, not
+// that a null inside it is a key. Answers null on any such exception, its
+// own already-declared "not found" - which, here too, a bad user or a bad
+// key is a case of.
 export function keyOwner(l, kid) {
-  if (!isArray(l?.users)) return null;
-  for (const u of l.users) {
-    // A malformed keys on one user must not hide a real key a different,
-    // well-formed user actually owns: skip just that user, not the search.
-    if (!isArray(u?.keys)) continue;
-    for (const k of u.keys) if (k.id === kid) return { user: u, key: k };
+  try {
+    if (!isArray(l?.users)) return null;
+    for (const u of l.users) {
+      // A malformed keys on one user must not hide a real key a different,
+      // well-formed user actually owns: skip just that user, not the search.
+      if (!isArray(u?.keys)) continue;
+      for (const k of u.keys) if (k.id === kid) return { user: u, key: k };
+    }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export function passwordToo(l, userID) {
@@ -496,13 +510,31 @@ const matches = (entries, op) => {
 // finding K4) - validAPINode below is the one exported surface that needs it.
 const validNode = (n) => validName(n.id) && validText(n.name, 64) && isBytes(n.noise, 32);
 
-export const validAPINode = (n) => n.kind === NODE_API && validNode(n) && isBytes(n.sign, 32)
-  && validTunnelURL(n.url) && isBytes(n.tls, 32)
-  && isArray(n.rootUsers) && isArray(n.rootRoles) && n.rootUsers.length + n.rootRoles.length === 0;
+// Fixrunde 6: n.kind is read before validNode(n) or any isArray/isBytes
+// guard gets a chance to run, so validAPINode(null) (or any non-object n)
+// threw at that first read, not at a checked field - wrapped the same way
+// validateList now is, for the same reason.
+export const validAPINode = (n) => {
+  try {
+    return n.kind === NODE_API && validNode(n) && isBytes(n.sign, 32)
+      && validTunnelURL(n.url) && isBytes(n.tls, 32)
+      && isArray(n.rootUsers) && isArray(n.rootRoles) && n.rootUsers.length + n.rootRoles.length === 0;
+  } catch {
+    return false;
+  }
+};
 
-// StoreLocal marks uploaded apps, so no catalog key may claim it.
-export const validStore = (s) => validName(s.id) && s.id !== STORE_LOCAL && validText(s.name, 64)
-  && validStoreURL(s.url) && isBytes(s.key, 32);
+// StoreLocal marks uploaded apps, so no catalog key may claim it. Fixrunde 6:
+// s.id is read before any guard, same reason as validAPINode above -
+// validStore(null) and validStore(undefined) both threw there.
+export const validStore = (s) => {
+  try {
+    return validName(s.id) && s.id !== STORE_LOCAL && validText(s.name, 64)
+      && validStoreURL(s.url) && isBytes(s.key, 32);
+  } catch {
+    return false;
+  }
+};
 
 export async function tlsPin(spki) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", spki));
