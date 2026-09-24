@@ -21,6 +21,7 @@ import (
 type Handler struct {
 	S     *state.State
 	share shareCache
+	warn  warnThrottle
 }
 
 // New returns a Handler.
@@ -38,16 +39,22 @@ func (h *Handler) userOf(l *trust.List, id string) (trust.User, bool) { return l
 // Measured on a list of the ten thousand users one may hold (trust.MaxUsers):
 // trust.List.UserByName answers a name at the front of that list in a time too
 // short to measure at all and walks the whole list for one nobody has, and that
-// walk is a quarter to a half of what session.Challenge itself costs on the
-// same list -- so the time says what the answer keeps quiet. Through the walk
-// here those same two names cost the same. Only the ratios are written down:
-// the microseconds behind them belong to one machine and age with it.
+// walk is a part of what session.Challenge itself costs on the same list, not a
+// rounding error of it -- so the time says what the answer keeps quiet. Through
+// the walk here those same two names came out alike.
 //
 // What no walk makes even is how long one comparison takes, which follows the
 // letters of the name and not the list: a name that shares its length and its
-// first bytes with many of the list's own costs about twice what a short one
-// costs -- and it costs that whether it exists or not, which is the question
+// first bytes with many of the list's own costs a multiple of what a short one
+// does -- and it costs that whether it exists or not, which is the question
 // this walk is about.
+//
+// Neither of the two says by how much, on purpose. On the machine this was
+// measured on the walk came to a fifth to a quarter of session.Challenge, and
+// the long name to about twice the short one; a second machine measured that
+// second ratio at five. The ratios move with the machine as much as the
+// microseconds do, so a number here would read as a promise about the next
+// machine.
 func userByName(l *trust.List, name string) (trust.User, bool) {
 	var found trust.User
 	known := false

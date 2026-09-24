@@ -1,7 +1,9 @@
 package login
 
 import (
+	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
@@ -10,6 +12,31 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
+
+// nonceWarnTTL is how seldom a login challenge that could not be kept is said
+// out loud. The line stands for a state of the database and not for a request,
+// so one of them per five minutes says everything there is to say -- and
+// login/start has no brake in front of it, so anything oftener would be a way
+// to fill a disk by asking.
+const nonceWarnTTL = 300
+
+// warnThrottle hands out the turn to say one line, at most one per window.
+type warnThrottle struct {
+	mu   sync.Mutex
+	last int64
+	said bool
+}
+
+// take reports whether the line may be said now, and takes the turn if so.
+func (t *warnThrottle) take(now, every int64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.said && now-t.last < every {
+		return false
+	}
+	t.last, t.said = now, true
+	return true
+}
 
 // Start answers POST session.PathLoginStart with a challenge, for names that
 // do not exist too.
@@ -60,27 +87,33 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 	// finds, and the time it saves follows whether the name exists (see there).
 	//
 	// The row is read for every name by the name, never by the ID of the user
-	// the list gave -- a name nobody has has no ID, and UserGet with an empty
-	// one is a call the contract promises no answer for: dbapi.Store.UserPut
-	// refuses it with dbapi.ErrInvalid already, dbapi/dbtest pins UserGet only
-	// for a name nobody has, and a store that refuses it would answer every
-	// unknown name E_UNREACHABLE and every known one with a challenge. By the
-	// name both go the same way, and the database's own query log no longer
-	// carries a "where id = ''" that only unknown names produce.
+	// the list gave: a name nobody has has no ID. What an empty ID gives is not
+	// in the contract -- dbapi/dbtest pins UserGet only for a name that is not
+	// there, and memstore refuses an empty ID in UserPut with dbapi.ErrInvalid,
+	// so a store that refuses it here too is within the contract. It would then
+	// answer every unknown name E_UNREACHABLE and every known one a challenge.
+	// By the name both go the same way, and the database's own query log no
+	// longer carries a "where id = ''" that only unknown names produce.
 	//
-	// A row that is not there is no failure, and the row of a name the list
-	// does not know changes nothing: session.Challenge ignores the TOTP of a
-	// name it cannot place and draws it from the share instead. What is left
-	// between the two -- handing a row back against saying there is none, and
-	// the one write below -- came out under what two batches of the same name
-	// differ by on the machine this was measured on
-	// (TestStartTakesTheSameTimeForAnUnknownName measures all three).
+	// No error of this call becomes an answer of its own either, and that is
+	// the same rule one door further on: what UserByName gives for a name
+	// nobody has is not in the contract at all -- it carries no doc comment,
+	// and dbapi/dbtest pins it only for a name that exists. A store that says
+	// so with an error of its own instead of dbapi.ErrNotFound would tell the
+	// two names apart again. A database that is really gone misses both names
+	// alike, the challenge is built either way, and the login that follows
+	// fails with E_LOGIN.
+	//
+	// A row that is not there means no TOTP, and for a name the list does not
+	// know not even that matters: session.Challenge ignores the TOTP of a name
+	// it cannot place and draws it from the share instead. What is left between
+	// the two -- handing a row back against saying there is none, and the one
+	// write below -- came out under what two batches of the same name differ by
+	// on the machine this was measured on
+	// (TestStartTakesTheSameTimeForAnUnknownName measures both names and the
+	// same name twice).
 	u, known := userByName(v.List, req.Name)
-	row, err := h.S.DB.UserByName(ctx, req.Name)
-	if err != nil && !isNotFound(err) {
-		httpapi.Fail(w, wire.CodeUnreachable)
-		return
-	}
+	row, _ := h.S.DB.UserByName(ctx, req.Name)
 	// session.Challenge builds the whole answer, for a name nobody has too:
 	// it walks the list and builds the made-up answer either way, so neither
 	// the shape of the answer nor the time it takes says whether the user
@@ -114,12 +147,18 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		// finds no nonce and fails with E_LOGIN, which is what a wrong
 		// password gets, so nothing is let through either.
 		//
-		// It is not logged. A line written only for names that exist would
-		// hand the same answer to whoever reads the log, and login/start has
-		// no brake anybody has to get past to write it. Whoever runs the
-		// installation hears of a database that cannot be written from the
-		// database.
-		_ = h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime)
+		// Swallowed, but not silent. Every login of the installation then
+		// fails with E_LOGIN and nothing outside says why, where the 503 used
+		// to; whoever runs it would be left with "nothing works and I do not
+		// know why". So it is said out loud -- once per nonceWarnTTL and
+		// without a word of the request, so that it costs no answer and cannot
+		// be made to fill a disk by asking often. What the line carries besides
+		// the fixed text is the database's own error.
+		if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil &&
+			h.warn.take(now, nonceWarnTTL) {
+			slog.Error("a login challenge could not be kept; logins fail until the database can be written again",
+				"error", err)
+		}
 	}
 	if b := mustJSON(w, c); b != nil {
 		httpapi.Answer(w, http.StatusOK, b)
