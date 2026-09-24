@@ -11,6 +11,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -18,6 +19,7 @@ import (
 type Live struct {
 	Token    []byte           // session.TokenHash of the cookie value
 	Row      dbapi.Session    // as the database holds it, with Seen set to now
+	Trust    trust.Version    // the trust list this session was decided on
 	Verified session.Verified // the chain back to the user's key
 	APIKey   []byte           // the API's private session key, opened
 }
@@ -162,7 +164,7 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 		return nil, wire.CodeUnreachable, false
 	}
 	row.Seen = now
-	return &Live{Token: token, Row: row, Verified: verified, APIKey: key}, "", true
+	return &Live{Token: token, Row: row, Trust: v, Verified: verified, APIKey: key}, "", true
 }
 
 // Logout answers POST session.PathLogout: the session row is removed and the

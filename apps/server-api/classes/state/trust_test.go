@@ -56,6 +56,17 @@ func newTrusted(tb testing.TB) (*State, dbapi.Store) {
 	return s, db
 }
 
+// upToDate brings the state up to date and hands the version on, the way
+// every caller of Chain has to before it may answer at all.
+func upToDate(tb testing.TB, s *State) trust.Version {
+	tb.Helper()
+	v, err := s.Refresh(ctx)
+	if err != nil {
+		tb.Fatalf("refresh: %v", err)
+	}
+	return v
+}
+
 func TestTrustWithoutVersion(t *testing.T) {
 	s, _ := newState(t)
 	if _, err := s.Trust(ctx); !errors.Is(err, ErrNoTrust) {
@@ -80,22 +91,23 @@ func TestAddVersionAndChain(t *testing.T) {
 	if _, err := s.AddVersion(ctx, second); !errors.Is(err, ErrOldVersion) {
 		t.Fatalf("version 2 twice answered %v", err)
 	}
-	chain, err := s.Chain(ctx, 1)
+	cur := upToDate(t, s)
+	chain, err := s.Chain(ctx, cur, 1)
 	if err != nil || len(chain.Versions) != 2 || chain.More {
 		t.Fatalf("chain from 1: %v %d %v", err, len(chain.Versions), chain.More)
 	}
 	if _, err := trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain.Versions[0])}, chain.Versions); err != nil {
 		t.Fatalf("chain does not verify: %v", err)
 	}
-	from2, err := s.Chain(ctx, 2)
+	from2, err := s.Chain(ctx, cur, 2)
 	if err != nil || len(from2.Versions) != 1 {
 		t.Fatalf("chain from 2: %v", err)
 	}
 	// One past the newest is no error: the caller answers 204.
-	if c, err := s.Chain(ctx, 3); err != nil || len(c.Versions) != 0 {
+	if c, err := s.Chain(ctx, cur, 3); err != nil || len(c.Versions) != 0 {
 		t.Fatalf("chain from 3: %v %d", err, len(c.Versions))
 	}
-	if _, err := s.Chain(ctx, 4); !errors.Is(err, ErrOldVersion) {
+	if _, err := s.Chain(ctx, cur, 4); !errors.Is(err, ErrOldVersion) {
 		t.Fatalf("chain beyond the newest answered %v", err)
 	}
 }
@@ -313,11 +325,12 @@ func TestChainPages(t *testing.T) {
 			t.Fatalf("version %d: %v", seq, err)
 		}
 	}
-	page, err := s.Chain(ctx, 1)
+	cur := upToDate(t, s)
+	page, err := s.Chain(ctx, cur, 1)
 	if err != nil || len(page.Versions) != session.MaxChainVersions || !page.More {
 		t.Fatalf("first page: %v %d %v", err, len(page.Versions), page.More)
 	}
-	rest, err := s.Chain(ctx, session.MaxChainVersions+1)
+	rest, err := s.Chain(ctx, cur, session.MaxChainVersions+1)
 	if err != nil || len(rest.Versions) != 2 || rest.More {
 		t.Fatalf("second page: %v %d %v", err, len(rest.Versions), rest.More)
 	}
@@ -347,7 +360,7 @@ func TestTrustUsesTheCache(t *testing.T) {
 	}
 	// The answer needs the rows themselves, so Chain says so instead of
 	// handing out an empty chain the shell refuses.
-	if _, err := s.Chain(ctx, 1); !errors.Is(err, ErrSetting) {
+	if _, err := s.Chain(ctx, v, 1); !errors.Is(err, ErrSetting) {
 		t.Fatalf("chain without its rows answered %v", err)
 	}
 }
@@ -401,9 +414,12 @@ func TestRefreshFindsAHole(t *testing.T) {
 				t.Fatalf("refresh over the hole answered %v", err)
 			}
 			// The whole point is the answer to the shell: it must not get a
-			// short chain that calls itself complete.
-			if _, err := fresh.Chain(ctx, 1); !errors.Is(err, ErrSetting) {
-				t.Fatalf("chain over the hole answered %v", err)
+			// short chain that calls itself complete. The refresh above is
+			// what finds the hole, and a caller whose refresh failed has no
+			// version to hand Chain -- which is the one thing Chain still
+			// answers by itself.
+			if _, err := fresh.Chain(ctx, trust.Version{}, 1); !errors.Is(err, ErrNoTrust) {
+				t.Fatalf("chain without a version answered %v", err)
 			}
 		})
 	}
@@ -435,7 +451,7 @@ func TestChainFromZero(t *testing.T) {
 	if _, err := s.AddVersion(ctx, first); err != nil {
 		t.Fatalf("version 1: %v", err)
 	}
-	if _, err := s.Chain(ctx, 0); !errors.Is(err, ErrBadVersion) {
+	if _, err := s.Chain(ctx, upToDate(t, s), 0); !errors.Is(err, ErrBadVersion) {
 		t.Fatalf("chain from 0 answered %v", err)
 	}
 }

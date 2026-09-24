@@ -55,7 +55,7 @@ func FuzzRefresh(f *testing.F) {
 		if err != nil || again.List == nil || again.List.Seq != 1 || !bytes.Equal(again.Hash, v.Hash) {
 			t.Fatalf("second refresh walked back: %v %v", again.List, err)
 		}
-		c, err := s.Chain(ctx, 1)
+		c, err := s.Chain(ctx, again, 1)
 		if err != nil || len(c.Versions) != 1 || !bytes.Equal(c.Versions[0].Payload, sg.Payload) {
 			t.Fatalf("chain from 1: %v %d", err, len(c.Versions))
 		}

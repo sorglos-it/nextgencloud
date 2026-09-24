@@ -23,7 +23,8 @@ import (
 // and package state answer besides those, this path hands on as it is.
 func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if _, code, ok := h.Live(ctx, r); !ok {
+	live, code, ok := h.Live(ctx, r)
+	if !ok {
 		httpapi.Fail(w, code)
 		return
 	}
@@ -32,7 +33,10 @@ func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 		httpapi.Fail(w, wire.CodeProtocol)
 		return
 	}
-	chain, err := h.S.Chain(ctx, from)
+	// The version Live brought up to date, handed on rather than fetched
+	// again: one request looks at the trust rows once, and the chain that goes
+	// out is the very list this session was decided on.
+	chain, err := h.S.Chain(ctx, live.Trust, from)
 	if err != nil {
 		// httpapi.Fault is the one place that picks the code for an error of
 		// package state, so no path answers one of them its own way.

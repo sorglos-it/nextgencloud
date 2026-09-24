@@ -336,15 +336,21 @@ func chainFault(cur trust.Version, sg trust.Signed) error {
 // answers follow. from one past the newest gives an empty chain (the caller
 // answers 204); anything beyond is ErrOldVersion (404), and from below 1 is
 // ErrBadVersion, a number that is no version at all.
-func (s *State) Chain(ctx context.Context, from uint64) (session.TrustChain, error) {
+//
+// cur is the version the caller brought up to date itself (Refresh), not one
+// Chain fetches for itself. Every caller of this has to be up to date before
+// it may answer at all, so fetching it here again would walk the trust rows a
+// second time for one request -- and it would answer out of a list the caller
+// never decided on. A caller with no version hands in the zero one and is told
+// so rather than read as version 0.
+func (s *State) Chain(ctx context.Context, cur trust.Version, from uint64) (session.TrustChain, error) {
 	// A number no version has is answered before the database is asked at
 	// all: nothing about it can be found there.
 	if from < 1 {
 		return session.TrustChain{}, ErrBadVersion
 	}
-	cur, err := s.Refresh(ctx)
-	if err != nil {
-		return session.TrustChain{}, err
+	if cur.List == nil {
+		return session.TrustChain{}, ErrNoTrust
 	}
 	newest := cur.List.Seq
 	if from > newest+1 {
