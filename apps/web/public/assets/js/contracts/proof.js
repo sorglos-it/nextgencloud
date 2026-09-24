@@ -91,8 +91,12 @@ export const rpShape = S({ id: str, origins: A(str) });
 export const userKeyShape = S({ id: str, kind: str, alg: str, pub: bytes, credId: bytes, kdf: kdfShape });
 export const proofShape = S({ kind: str, kid: str, sig: bytes, authData: bytes, clientData: bytes });
 
-// The longest relying party ID, the length of a DNS name.
-const MAX_RP_ID = 253;
+// The longest relying party ID, the length of a DNS name. Exported since
+// task 8: Go has it as proof.MaxRPID, and a later task that looks for the
+// number should find it rather than write 253 a second time. The name stays
+// MAX_RP_ID, the one this file already uses - a second name for one number is
+// the drift this file warns about elsewhere.
+export const MAX_RP_ID = 253;
 const RP_ID = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 // validRPID reports whether s is a relying party ID: a DNS name in lower case

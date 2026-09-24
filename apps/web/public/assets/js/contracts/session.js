@@ -204,13 +204,22 @@ export async function verifyAPI(env, l, client, now) {
   const { payload, kid, sig } = env;
   const cc = decode(client, certBudget, clientCertShape);
   // A key id is the first 16 bytes of the SHA-256 of the key, so finding the
-  // node that signed this envelope costs one hash per API node of the list -
-  // up to trust.MAX_NODES of them. They are computed as one Promise.all
-  // instead of one await at a time, the way trust.parseList batches a user's
-  // keys. Measured over a list of 256 API nodes whose signer is the last one,
-  // in the WebKit Playwright brings: 3894 ms one await at a time, 30 ms as
-  // one Promise.all - a round trip to the Web Crypto API costs about 15 ms
-  // there and the hash itself almost nothing (Chromium: 10 ms and 3 ms).
+  // node that signed this envelope costs one hash per API node of the list.
+  // They are computed as one Promise.all instead of one await at a time, the
+  // way trust.parseList batches a user's keys. Measured over a list of 256 API
+  // nodes whose signer is the last one, in the WebKit Playwright brings:
+  // 3894 ms one await at a time, 30 ms as one Promise.all - a round trip to
+  // the Web Crypto API costs about 15 ms there and the hash itself almost
+  // nothing (Chromium: 10 ms and 3 ms).
+  //
+  // The group is as large as the list has API nodes: trust.MAX_NODES = 256
+  // for a list that came through trust.parseList, whose budget counts them,
+  // and whatever a hand-built one holds otherwise. trust.parseList bounds its
+  // own groups at MAX_KEYS_PER_USER = 16 because it makes one per user and
+  // would otherwise start MAX_USERS x 16 of them at once; here there is one
+  // group in all, and its size is the number the measurement above is of
+  // (Fixrunde 1: the earlier wording said "up to trust.MAX_NODES of them",
+  // which holds for a parsed list and for no other).
   const nodes = apiNodes(l);
   const ids = await Promise.all(nodes.map((n) => keyID(n.sign)));
   const node = nodes[ids.indexOf(kid)] ?? null;
