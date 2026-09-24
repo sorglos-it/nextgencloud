@@ -26,17 +26,19 @@ type Live struct {
 // too old, has been idle too long or whose user the trust list no longer
 // holds, and it hands nothing back for any other failure either.
 //
-// Which failures end the session and which leave the row where it is, is the
-// difference between the session being wrong and this installation being
-// unable to answer. A time that has passed and a chain that no longer holds
-// the user belong to the session; a database that cannot be reached, a proof
-// this API itself wrote and cannot read back, and a session key it cannot open
-// belong to the installation -- and a session thrown away for one of those
-// does not come back when the cause is mended. The wrong secret key in a
-// configuration would otherwise cost every session of the installation the
-// first time anybody asked, where a restart with the right one costs none.
+// Which failures end the session and which leave the row where it is, is one
+// rule: a no ends it, a question that could not be asked does not. The clock
+// and the configuration say no, and so does session.VerifyClient -- whether
+// because an admin took the user's key away or because the row itself no
+// longer reads as a certificate of this installation. A database that cannot
+// be reached, a trust list that cannot be read, a proof this API wrote and
+// cannot read back, and a session key that cannot be opened are not answers at
+// all, and a session thrown away for one of them does not come back when the
+// cause is mended: the wrong secret key in a configuration would cost every
+// session of the installation the first time anybody asked, where a restart
+// with the right one costs none.
 //
-// Either way no session is handed back, so nothing rests on that choice but
+// Either way no session is handed back, so nothing rests on that rule but
 // whether the row survives. Nothing says any of it out loud: a delete that
 // fails leaves a row Live refuses on every later request just the same, so
 // there is no protection here that could be switched off quietly.
@@ -45,7 +47,9 @@ type Live struct {
 // user the trust list no longer holds, or whose key an admin took away, loses
 // the session with the next request instead of at the end of the day. The
 // price is chosen and not overlooked -- that is the user's proof verified once
-// per request, the same work the login did, with no cache in front of it.
+// per request, the same public-key work the login paid for. The list it is
+// checked against is cached (state.Trust); the verification is not, and
+// nothing here caches its answer.
 //
 // No path here carries a login name, and the only string the caller picks is
 // the cookie: httpapi.Cookie takes nothing but base64url no longer than a
@@ -131,29 +135,34 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // Purge is the housekeeping round: sessions, one-time values and the counting
-// of failed logins. It is meant to run every minute at one API of the
-// installation; nothing in this package wires it up.
+// of failed logins. It runs at one API of the installation, as often as
+// whoever wires it up likes; nothing in this package wires it up, and nothing
+// hangs on the cadence.
 //
-// Nothing hangs on it running, which is what makes the times below free to
-// choose at all. A session past one of its ends is refused by Live whether or
-// not anything ever removed it, and a row of the counting past its keep time
-// reads as none before it is read (classes/lock, read). What Purge frees is
-// the space those rows take.
+// Nothing hangs on it running at all, which is what makes the times below
+// free to choose. All three refuse what is past its time without it: Live
+// reads the end of a session out of the row, dbapi.Local.OnceUse answers an
+// expired value ErrNotFound, and a row of the counting past its keep time
+// reads as none before anything of it is read (classes/lock, read). What
+// Purge frees is the space those rows take.
 //
 // Expired one-time values are freed only session.MaxSkew after their time.
-// They are the one kind here that another API still has to find: a nonce or a
-// task ID is taken exactly once, and an API whose clock runs behind accepts it
+// They are the one kind here another API still has to find: a nonce or a task
+// ID is taken exactly once, and an API whose clock runs behind accepts it
 // until its own clock reaches the expiry, so a faster API's walk must not have
 // freed it by then (dbapi.Local.OncePurge).
 //
-// Sessions and the counting take the clock as it is, and what that costs is
-// the same room, not taken. A session freed early is one every API refuses
-// anyway: each reads the end out of the row itself. A row of the counting
-// freed early puts a bucket back to zero up to that much before its keep time
-// would have, which is the fall to zero that keep time makes a moment later --
-// as long as no wait the counting lays reaches that far. Nothing here holds
-// those two to each other; whoever moves maxWait or keepFor in classes/lock
-// looks at this line.
+// Sessions and the counting take the clock as it is, and the price is named.
+// A session freed by a fast clock is gone for an API whose clock runs behind
+// as well, which logs its user out up to that much early -- the error on the
+// safe side, and the only one of the two: nothing is let in that would have
+// been kept out. For the counting the same early walk puts a bucket back to
+// zero before its keep time would have, which is the fall to zero the keep
+// time makes a moment later -- and it cannot drop a wait that is still
+// running, because a row is freed only once it is past its keep time and no
+// wait the counting lays runs that long. That holds while classes/lock's
+// keepFor stays at least its maxWait plus session.MaxSkew. Nothing holds those
+// three to each other, so whoever moves one of them reads this line.
 func (h *Handler) Purge(ctx context.Context) error {
 	now := h.S.Now()
 	if err := h.S.DB.SessionPurge(ctx, now); err != nil {

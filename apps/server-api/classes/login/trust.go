@@ -33,11 +33,13 @@ func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	}
 	chain, err := h.S.Chain(ctx, from)
 	if err != nil {
-		// httpapi.FromRows: every version of this answer is read out of this
-		// installation's own rows, so the number in the request is the only
-		// thing about it the caller can have got wrong. That is what turns
-		// state.ErrOldVersion into the 404 above; everything else package
-		// state can answer here is the installation's own and is E_INTERNAL.
+		// httpapi.Fault is the one place that picks the code for an error of
+		// package state, so no path answers one of them its own way.
+		// FromRows says which side the version came from: it is read out of
+		// this installation's own rows, and the number in the request is the
+		// only part of it the caller brought. That is what makes
+		// state.ErrOldVersion the 404 of the contract's table here, where the
+		// same error on the setup path is the caller's bad signature.
 		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
 		return
 	}
