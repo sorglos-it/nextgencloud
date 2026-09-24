@@ -639,6 +639,11 @@ func (c *checker) firstStmtIn(n ast.Node, seen map[*types.Func]bool, seenLit map
 // comes through QueryRow - it is the statement that is read, never the name
 // of the method.
 //
+// LockTake is left out although it would pass this rule today: which owner
+// holds a lock does not rest on the same property, and a rule that nails down
+// a property nobody needs refuses an allowed change one day - and is then
+// switched off, together with the half that was needed.
+//
 // This is the one thing no run of this repository can measure. Two steps
 // without a transaction are caught by TestOnlyOneUseGetsTheValue, but only on
 // a machine of two processors or more; two steps inside one transaction are

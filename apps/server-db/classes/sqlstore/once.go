@@ -53,6 +53,11 @@ func (s *store) OnceCreate(ctx context.Context, kind string, value []byte, data 
 // the deciding, so no SELECT ... FOR UPDATE is needed, which SQLite has not
 // got anyway. It changes only a row that is neither used nor expired, so a
 // second use matches nothing and then reads why.
+//
+// That the write comes first is held by TestOnceUseDecidesWithItsWrite: it
+// reads this package and refuses a OnceUse that asks the database about the
+// value before it writes the mark. It finds this method by its name, and
+// nothing but dbapi.Store keeps that name here.
 func (s *store) OnceUse(ctx context.Context, kind string, value []byte, now int64) (string, error) {
 	// A key the columns cannot hold is one OnceCreate refused to write, so it
 	// is unknown, and that answer is given here instead of in the database -
