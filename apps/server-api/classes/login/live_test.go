@@ -268,6 +268,73 @@ func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 	}
 }
 
+// TestLogoutEndsASessionTheRestOfLiveCannotRead holds the logout to the one
+// thing it is for: ending the session. Removing the row of one's own cookie
+// wants neither the trust list nor a proof that still reads back, so neither
+// may stand in its way -- and both did. A damaged proof answered 500 and an
+// unreadable list 503, the row stayed, and its owner had no way at all to end
+// a session that was his.
+//
+// The two damages stand in one test because they are one rule. Whoever changes
+// the logout so that it reads either of them again has to make both of these
+// go red, and there is nowhere in between.
+//
+// The last case is the step the logout does still take, and the reason it
+// cannot simply delete and answer 204: a store that will not say whether there
+// is a row leaves it nothing to end, and E_LOGIN would tell the shell the one
+// thing about the session that is not so.
+func TestLogoutEndsASessionTheRestOfLiveCannotRead(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		damage func(t *testing.T, h *Handler, cookie string)
+		status int
+		code   wire.Code // empty where the answer is the 204, which has no body
+	}{
+		{"the stored proof is damaged", damageProof, 204, ""},
+		{"the trust list cannot be read", func(_ *testing.T, h *Handler, _ string) {
+			h.S.DB = noTrust{h.S.DB}
+		}, 204, ""},
+		{"the session row cannot be read", func(_ *testing.T, h *Handler, _ string) {
+			h.S.DB = noSession{h.S.DB}
+		}, 503, wire.CodeUnreachable},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, fx := newFixture(t)
+			cookie := loginOnce(t, h, fx)
+			token := tokenOf(t, cookie)
+			// The store of the fixture, kept before a double takes its place:
+			// the row is asked for at the end through the one that answers.
+			plain := h.S.DB
+			c.damage(t, h, cookie)
+			w := httptest.NewRecorder()
+			h.Logout(w, jsonPostCookie(session.PathLogout, cookie))
+			if w.Code != c.status {
+				t.Fatalf("the logout answered %d %s, want %d", w.Code, w.Body, c.status)
+			}
+			if c.status != 204 {
+				cl, err := wire.ParseClose(w.Body.Bytes())
+				if err != nil || cl.Code != c.code {
+					t.Fatalf("the logout answered %q (%v), want %q", cl.Code, err, c.code)
+				}
+				// Nothing was said about the session, so the row stays.
+				if _, err := plain.SessionGet(ctx, token); err != nil {
+					t.Fatalf("the session was ended over a step that failed: %v", err)
+				}
+				return
+			}
+			if _, err := plain.SessionGet(ctx, token); !isNotFound(err) {
+				t.Fatalf("the session is still there after the logout: %v", err)
+			}
+			// The cookie goes with the row and not before it: a cookie left
+			// behind names a session nobody can reach to end.
+			cookies := w.Result().Cookies()
+			if len(cookies) != 1 || cookies[0].Value != "" {
+				t.Fatalf("cookies after the logout: %+v", cookies)
+			}
+		})
+	}
+}
+
 // TestADamagedProofCostsNoLookAtTheList holds the order of two steps of Live:
 // the stored proof is read before the trust list is. Reading the proof is one
 // json.Unmarshal and one Validate over a row this API wrote itself; reading
