@@ -15,7 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -399,6 +398,18 @@ func (n noPut) BlobPut(ctx context.Context, b dbapi.Blob) error {
 	return n.Store.BlobPut(ctx, b)
 }
 
+// noRead answers every read of a trust row with the very error noPut answers
+// a write with: one fault of one database, met at the step that reads instead
+// of at the one that writes.
+type noRead struct{ dbapi.Store }
+
+func (n noRead) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		return dbapi.Blob{}, errNoPut
+	}
+	return n.Store.BlobGet(ctx, kind, id)
+}
+
 // badLock hands out a row of the counting that nothing can read. The store
 // answers; what it answers with is wrong, which is the other kind of fault and
 // the one httpapi.Fault cannot see -- lock.ErrLock is package lock's word, not
@@ -449,11 +460,13 @@ func TestADamagedRowOfTheCountingIsNoOutage(t *testing.T) {
 // list are read; two statuses for one fault tell the far side two different
 // things about one installation.
 //
-// The one status is E_UNREACHABLE and no longer E_INTERNAL: a store that does
-// not write is away rather than broken, and httpapi.Fault now says so for
-// every error that is none of package state's own. The status is read here and
-// not only the code, because one of the two has been wrong before while the
-// other was right.
+// The one status is E_INTERNAL. A write that was refused is an answer of the
+// store, not a silence, and what refused it -- a full disk, a read-only mount,
+// a right that is missing, a constraint -- is not over when the database
+// answers again. 503 is the contract's word for a database that cannot be
+// reached (shared/README.md), and it sends the admin of a first setup into a
+// wait that nothing ends. The status is read here and not only the code,
+// because one of the two has been wrong before while the other was right.
 func TestOneFaultOfTheDatabaseIsOneStatus(t *testing.T) {
 	h := newHandler(t)
 	codeBytes, _ := os.ReadFile(h.CodeFile)
@@ -470,13 +483,22 @@ func TestOneFaultOfTheDatabaseIsOneStatus(t *testing.T) {
 	h.S.DB = noPut{Store: h.S.DB}
 	w = httptest.NewRecorder()
 	h.Serve(w, post(body))
-	want := fault(errNoPut, httpapi.FromRows)
 	c, err := wire.ParseClose(w.Body.Bytes())
-	if err != nil || c.Code != want {
-		t.Fatalf("status %d body %s, wanted %s: %v", w.Code, w.Body, want, err)
+	if err != nil || c.Code != wire.CodeInternal {
+		t.Fatalf("status %d body %s, wanted %s: %v", w.Code, w.Body, wire.CodeInternal, err)
 	}
-	if w.Code != 503 {
+	if w.Code != 500 {
 		t.Fatalf("status %d", w.Code)
+	}
+	// The same error of the same database at the other step: the first thing
+	// every request of this handler does is read the trust rows.
+	other := newHandler(t)
+	other.S.DB = noRead{Store: other.S.DB}
+	w = httptest.NewRecorder()
+	other.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	c, err = wire.ParseClose(w.Body.Bytes())
+	if err != nil || c.Code != wire.CodeInternal || w.Code != 500 {
+		t.Fatalf("the read answered %d %s: %v", w.Code, w.Body, err)
 	}
 }
 
