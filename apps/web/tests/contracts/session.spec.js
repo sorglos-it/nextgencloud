@@ -242,6 +242,47 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   });
 });
 
+// Fixrunde 1, small: encodeSetupInfoNodes is exported and answers whatever it
+// is handed. It broke the discipline of its own file - a raw TypeError for
+// null, and undefined for an object without nodes, which whoever builds
+// version 1 from it would write as "nodes": undefined. It takes what
+// parseSetupOffer produces, so that is what it accepts: 1 to MAX_SETUP_NODES
+// nodes, and one controlled error for everything else.
+test("encodeSetupInfoNodes takes an offer's nodes or refuses", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const s = await import("/assets/js/contracts/session.js");
+    const out = (x) => {
+      try {
+        const r = s.encodeSetupInfoNodes(x);
+        return Array.isArray(r) ? "nodes:" + r.length : "no array: " + String(r);
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return {
+      good: out({ nodes: [{ id: "api-1" }, { id: "api-2" }] }),
+      empty: out({ nodes: [] }),
+      tooMany: out({ nodes: new Array(s.MAX_SETUP_NODES + 1).fill({ id: "api-1" }) }),
+      noNodes: out({}),
+      notArray: out({ nodes: 5 }),
+      nul: out(null),
+      undef: out(undefined),
+      number: out(5),
+    };
+  });
+  const refused = "session: malformed message";
+  expect(got).toEqual({
+    good: "nodes:2",
+    empty: refused,
+    tooMany: refused,
+    noNodes: refused,
+    notArray: refused,
+    nul: refused,
+    undef: refused,
+    number: refused,
+  });
+});
+
 // Fixrunde 1, W2: Go's json.Marshal writes all seven fields of
 // session.ClientCert every time - the struct has no omitempty anywhere.
 // JSON.stringify leaves out a member whose value is undefined, so a field
