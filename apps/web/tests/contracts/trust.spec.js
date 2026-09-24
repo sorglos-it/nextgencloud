@@ -685,23 +685,6 @@ test("encodeList answers one controlled error instead of an arbitrary one", asyn
   expect(out.nestedCredId).toEqual({ threw: true, message: "trust: cannot encode this list" });
 });
 
-// Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
-// tlsPin had no test calling them - the previous report described their
-// doubt-case behavior (unknown user/role/node grant nothing) by reading the
-// code next to Go, never by running it. Pinned here. Also K2: a white-list
-// entry "node/undefined" is a well-formed entry (validName("undefined") is
-// true), and matches's old `op.node !== ""` treated a caller's forgotten
-// op.node (undefined) as this literal text via "node/" + undefined -
-// excusing an operation that was never about any node. op.node ?? "" closes
-// it, matching Go's zero value "". The role is level "critical" and the op
-// is critical on purpose: at level "off" the correct and the buggy path both
-// end in false (the fallthrough default and the wrongful white-list match
-// agree by coincidence), which would make this case pass whether or not the
-// bug is fixed. At "critical", the correct path (no white-list match, fall
-// through to the level check, op.critical is true) and the buggy path (an
-// accidental match excuses it) disagree - true vs. false - so this only goes
-// green once matches actually stops matching on a node nobody named.
-
 // Fixrunde 6: the tenth appearance of this class in this task, found by the
 // closing review measuring trust.js's own "Never throws" comment on
 // validateList against what the code actually does. isArray(l.users) is
@@ -711,12 +694,27 @@ test("encodeList answers one controlled error instead of an arbitrary one", asyn
 // wherever that element is read as if it were a real user/role/node/store/
 // auto entry - and the same shape of gap sits in validAPINode(null),
 // validStore(null/undefined) (n/s itself is null, not a field of it) and
-// keyOwner (a user's own keys containing null). No isArray/isBytes guard
-// closes this one - null is exactly as much an object as a real one is, by
-// Array.isArray's own accounting - so the fix here is the one sign.js's own
-// validateEnvelope already uses for the identical reason, quoted in its own
-// comment: "An exception is no answer, and a check that has none refuses."
-test("validateList, validAPINode, validStore and keyOwner never throw, not even on a null element", async ({ shell }) => {
+// keyOwner (a user's own keys containing null). For the elements inside a
+// list, no isArray/isBytes guard closes this - null is exactly as much an
+// object as a real one is, by Array.isArray's own accounting - so the fix
+// there is the one sign.js's own validateEnvelope already uses for the
+// identical reason, quoted in its own comment: "An exception is no answer,
+// and a check that has none refuses." For the two arguments that are
+// themselves null or missing it is the other way round, which Fixrunde 7/K1
+// corrected: sign.js guards those in front of its try, and validAPINode and
+// validStore now do too, so apiNodeNull/storeNull/storeUndefined below are
+// answered by that one-line guard and never reach the try. The two getter
+// cases are what is left for the try alone - a real object whose field
+// throws on being read, which no guard in front of it can see.
+//
+// The title said "never throw" until Fixrunde 7 and no longer does, because
+// of keyOwner: its try now sits inside the user loop, so the one read in
+// front of that loop (l?.users, and iterating it) is as unguarded as the
+// same read in user/role/node, which never had a try at all. Measured: a
+// list whose users getter throws throws out of all four alike. What this
+// test pins for keyOwner is what its name now says and what W1 was about -
+// a null element answers instead of throwing - not a blanket promise.
+test("validateList, validAPINode, validStore and keyOwner do not throw on a null element", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const t = await import("/assets/js/contracts/trust.js");
     const id = "EREREREREREREREREREREQ";
@@ -744,6 +742,8 @@ test("validateList, validAPINode, validStore and keyOwner never throw, not even 
       apiNodeNull: safe(() => t.validAPINode(null)),
       storeNull: safe(() => t.validStore(null)),
       storeUndefined: safe(() => t.validStore(undefined)),
+      apiNodeGetterThrows: safe(() => t.validAPINode({ get kind() { throw new Error("boom"); } })),
+      storeGetterThrows: safe(() => t.validStore({ get id() { throw new Error("boom"); } })),
       keyOwnerKeysNull: safe(() => t.keyOwner(base({
         users: [{ id, name: "admin", roles: ["admin"], keys: [null] }],
       }), "AAAAAAAAAAAAAAAAAAAAAA")),
@@ -753,6 +753,7 @@ test("validateList, validAPINode, validStore and keyOwner never throw, not even 
   expect(flat).toEqual({
     usersNull: false, rolesNull: false, nodesNull: false, storesNull: false, autoNull: false,
     apiNodeNull: false, storeNull: false, storeUndefined: false,
+    apiNodeGetterThrows: false, storeGetterThrows: false,
     keyOwnerKeysNull: null,
   });
 });
@@ -805,6 +806,22 @@ test("keyOwner skips a user whose keys hold a null and still finds a later user'
   });
 });
 
+// Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
+// tlsPin had no test calling them - the previous report described their
+// doubt-case behavior (unknown user/role/node grant nothing) by reading the
+// code next to Go, never by running it. Pinned here. Also K2: a white-list
+// entry "node/undefined" is a well-formed entry (validName("undefined") is
+// true), and matches's old `op.node !== ""` treated a caller's forgotten
+// op.node (undefined) as this literal text via "node/" + undefined -
+// excusing an operation that was never about any node. op.node ?? "" closes
+// it, matching Go's zero value "". The role is level "critical" and the op
+// is critical on purpose: at level "off" the correct and the buggy path both
+// end in false (the fallthrough default and the wrongful white-list match
+// agree by coincidence), which would make this case pass whether or not the
+// bug is fixed. At "critical", the correct path (no white-list match, fall
+// through to the level check, op.critical is true) and the buggy path (an
+// accidental match excuses it) disagree - true vs. false - so this only goes
+// green once matches actually stops matching on a node nobody named.
 test("the decision functions grant nothing on doubt, matching Go", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const t = await import("/assets/js/contracts/trust.js");

@@ -424,24 +424,32 @@ export const user = (l, id) => (isArray(l?.users) && l.users.find((u) => u.id ==
 export const role = (l, name) => (isArray(l?.roles) && l.roles.find((r) => r.name === name)) || null;
 export const node = (l, id) => (isArray(l?.nodes) && l.nodes.find((n) => n.id === id)) || null;
 
-// Fixrunde 6: wrapped the same way validateList now is, for the same
-// element-can-be-null reason - isArray(u.keys) says the array is real, not
-// that a null inside it is a key. Answers null on any such exception, its
-// own already-declared "not found" - which, here too, a bad user or a bad
-// key is a case of.
+// Fixrunde 6 needed a try here for the same element-can-be-null reason as
+// validateList: isArray(u.keys) says the array is real, not that a null
+// inside it is a key. Fixrunde 7 moved that try inside the user loop, where
+// it belongs. Around the loop it caught the exception and returned - which is
+// exactly the abort the line below promises not to do, and it hid a real key
+// a later, well-formed user owns. One user per try, one continue per failure:
+// a user whose keys throw on being read is skipped like one whose keys is not
+// an array at all. If no user is left to search, the loop ends and the answer
+// is the same null this function already gives for "not found". What stands
+// in front of the loop - reading l?.users, and iterating it - is outside the
+// try and stays as unguarded as the same read is in user/role/node above:
+// there is no next user to skip to there. Measured, so it is not read as more
+// than it is: a list whose users getter throws throws out of all four alike.
 export function keyOwner(l, kid) {
-  try {
-    if (!isArray(l?.users)) return null;
-    for (const u of l.users) {
+  if (!isArray(l?.users)) return null;
+  for (const u of l.users) {
+    try {
       // A malformed keys on one user must not hide a real key a different,
       // well-formed user actually owns: skip just that user, not the search.
       if (!isArray(u?.keys)) continue;
       for (const k of u.keys) if (k.id === kid) return { user: u, key: k };
+    } catch {
+      continue;
     }
-    return null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 export function passwordToo(l, userID) {
@@ -511,10 +519,19 @@ const matches = (entries, op) => {
 const validNode = (n) => validName(n.id) && validText(n.name, 64) && isBytes(n.noise, 32);
 
 // Fixrunde 6: n.kind is read before validNode(n) or any isArray/isBytes
-// guard gets a chance to run, so validAPINode(null) (or any non-object n)
-// threw at that first read, not at a checked field - wrapped the same way
-// validateList now is, for the same reason.
+// guard gets a chance to run, so validAPINode(null) and validAPINode()
+// threw at that first read instead of answering false. Fixrunde 7, K2:
+// those two are the whole list, measured - a number, a string, a boolean, a
+// symbol, a bigint, an array or a function all read n.kind as undefined and
+// were already refused one comparison later, and "non-object" would not
+// even name null, since typeof null is "object". So the explicit guard
+// sign.js's validateEnvelope writes in front of its own try (env === null
+// || typeof env !== "object") is enough for both of them, and it now stands
+// here too, in front rather than instead of the try. The try stays behind
+// it for what it alone can catch: a field of a real object that throws on
+// being read - a getter or a proxy trap - which no guard in front sees.
 export const validAPINode = (n) => {
+  if (n === null || typeof n !== "object") return false;
   try {
     return n.kind === NODE_API && validNode(n) && isBytes(n.sign, 32)
       && validTunnelURL(n.url) && isBytes(n.tls, 32)
@@ -524,10 +541,12 @@ export const validAPINode = (n) => {
   }
 };
 
-// StoreLocal marks uploaded apps, so no catalog key may claim it. Fixrunde 6:
-// s.id is read before any guard, same reason as validAPINode above -
-// validStore(null) and validStore(undefined) both threw there.
+// StoreLocal marks uploaded apps, so no catalog key may claim it. s.id is
+// read before any guard, exactly as n.kind is above, and the same guard and
+// the same try behind it answer it: validStore(null) and validStore() threw
+// there, every other type was already refused by validName(undefined).
 export const validStore = (s) => {
+  if (s === null || typeof s !== "object") return false;
   try {
     return validName(s.id) && s.id !== STORE_LOCAL && validText(s.name, 64)
       && validStoreURL(s.url) && isBytes(s.key, 32);
