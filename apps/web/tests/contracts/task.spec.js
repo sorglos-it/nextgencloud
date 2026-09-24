@@ -125,14 +125,15 @@ const GO_CASES = [
 // decoder that fills them refuses everything else. JavaScript hands a
 // contract whatever a caller has, and a string, a boolean and a fraction all
 // compare against a number as if they were one: "1790000000" > 0 is true,
-// true - 1 is 0, and 1790000060.5 - 1790000000 is under 300. So each of these
+// 2 - true is 1, and 1790000060.5 - 1790000000 is under 300. So each of these
 // would have walked through a check written with > and - alone.
 //
-// The last one is the only place where this file is stricter than Go's
-// Validate by itself: Go takes 2^53 for an Issued, and the contract's own
-// decoder refuses every number above 2^53-1 (enc.safeNumber, json.js:
-// safeNumber), so a task carrying one never arrives over the wire in either
-// language. The limit is the API's, not the engine's.
+// The last case is the one place in these two tables where Go can be handed
+// the value at all and answers differently: measured, Go's Validate takes
+// 2^53 for an Issued. The contract's own decoder refuses every number above
+// 2^53-1 (enc.safeNumber, json.js: safeNumber), so a task carrying one
+// arrives over the wire in neither language. The limit is the API's, not the
+// engine's.
 const JS_CASES = [
   ["iat as text", { iat: "1790000000" }, false],
   ["exp as text", { exp: "1790000060" }, false],
@@ -152,6 +153,9 @@ test("validateTask decides every field as Go's task.Task.Validate does", async (
     const { utf8 } = await import("/assets/js/contracts/b64.js");
     // A value the case table describes: bytes by length and fill, params by
     // their text, an object of exactly n bytes for the two params bounds.
+    // Everything else - a plain string, a number, an array - is handed on as
+    // it stands, which is what the cases that give a field the wrong type
+    // need.
     const value = (x) => {
       if (x === null || typeof x !== "object") return x;
       if (Array.isArray(x)) return x;
@@ -175,8 +179,9 @@ test("validateTask decides every field as Go's task.Task.Validate does", async (
   const want = {};
   for (const [name, , ok] of [...GO_CASES, ...JS_CASES]) want[name] = ok;
   expect(out).toEqual(want);
-  // MAX_PARAMS is what the two params bounds above are of, so the file says
-  // the number rather than the test alone.
+  // The two params bounds above already pin where the limit stands; this line
+  // pins that the module carries it under the name Go gives it, so a reader
+  // of task.js finds the number and not only this test.
   expect(await shell.evaluate(async () => (await import("/assets/js/contracts/task.js")).MAX_PARAMS))
     .toBe(8 << 10);
 });
@@ -214,9 +219,11 @@ test("a field that changes between the check and the writing never reaches the b
     const most = (n) => Math.max(...Object.values(n));
 
     // A getter that tells the truth twice and lies from the third read on.
-    // The brief's validateTask read exp three times on its own - once against
-    // iat, once for the lifetime - so the third read was the one that landed
-    // in the signed bytes, with no check ever having seen it.
+    // The brief's validateTask read exp twice on its own - once against iat,
+    // once for the lifetime - and its encodeTask read it once more, so the
+    // third read was the one that landed in the signed bytes, with no check
+    // ever having seen it. Its node went the same way: twice in the check,
+    // once in the writing.
     const drifting = (field, good, evil) => {
       const t = base();
       let reads = 0;
@@ -298,8 +305,8 @@ test("verifyApproval ties the task to the certificate, its installation and one 
       const client = b64decode(d.client);
       const payload = b64decode(d.task.payload);
       const env = () => ({ payload, kid: d.task.kid, sig: b64decode(d.task.sig) });
-      // The certificate the way Go gets it: what session.VerifyApproval
-      // returned for these very bytes.
+      // The certificate the way Go's task.VerifyApproval says it gets it:
+      // what session.verifyApproval returned for these very bytes.
       const cert = await session.verifyApproval(client, {
         kind: d.clientProof.kind, kid: d.clientProof.kid, sig: b64decode(d.clientProof.sig),
       }, list);
@@ -312,8 +319,11 @@ test("verifyApproval ties the task to the certificate, its installation and one 
       };
 
       const good = await run(env(), cert, client);
-      // Another certificate of the same shape, bound to other bytes: the task
-      // says which certificate hash it belongs to, so this one is not it.
+      // The same certificate with one digit of its iat changed: certHash then
+      // gives another hash, and the task names the hash of the bytes it
+      // belongs to, so these are not them. verifyApproval never reads these
+      // bytes as a certificate - it only hashes them - which is why any
+      // change at all is enough here.
       const otherClient = utf8(fromUtf8(client).replace('"iat":1790000000', '"iat":1790000001'));
       // Go compares the task's inst against the certificate's, not against
       // the list's, so a certificate of another installation is refused here
@@ -395,8 +405,9 @@ test("verifyConfirm answers false where it cannot check, and reads the proof onc
       reads: Math.max(...Object.values(n)),
       wrongUser: await task.verifyConfirm(proof(), env, list, otherUser),
       noSuchKey: await task.verifyConfirm({ ...proof(), kid: "AAAAAAAAAAAAAAAAAAAAAA" }, env, list, cert.user),
-      // Nothing here is an answer this contract can give, so all of them are
-      // false - the -> boolean family never throws (sign.verify, proof.verify).
+      // None of these can be checked, so each of them answers false: the
+      // -> boolean family says no by answering, never by throwing, the way
+      // sign.verify and proof.verify do.
       nulls: await junk(null, null, null, null),
       numbers: await junk(7, 7, 7, 7),
       noArgs: await junk(),
