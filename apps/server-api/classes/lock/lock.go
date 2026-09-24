@@ -123,30 +123,31 @@ func expired(b dbapi.Blob, now int64) bool {
 	return b.Seq <= uint64(now) && b.Updated <= now-keepFor
 }
 
-// read returns the number of failures and the time the wait ends. A row past
-// its keep time reads as none, before anything of it is read: it is the row
-// Purge would have removed, and the lock must behave the same whether a purge
-// was ever wired up and however often it runs. That is what lets the counting
-// of a bucket fall back to zero -- and it is the only thing that ever ends the
-// lock a damaged row lays on its bucket.
-func read(ctx context.Context, db dbapi.Local, name string, now int64) (int, int64, error) {
+// read returns the number of failures, the time the wait ends, and the time
+// the row was last written at (0 where there is no row the counting reads). A
+// row past its keep time reads as none, before anything of it is read: it is
+// the row Purge would have removed, and the lock must behave the same whether
+// a purge was ever wired up and however often it runs. That is what lets the
+// counting of a bucket fall back to zero -- and it is the only thing that ever
+// ends the lock a damaged row lays on its bucket.
+func read(ctx context.Context, db dbapi.Local, name string, now int64) (int, int64, int64, error) {
 	b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(name))
 	if errors.Is(err, dbapi.ErrNotFound) {
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if expired(b, now) {
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
 	count, until, ok := strings.Cut(string(b.Data), " ")
 	n, err1 := strconv.Atoi(count)
 	u, err2 := strconv.ParseInt(until, 10, 64)
 	if !ok || err1 != nil || err2 != nil || n < 0 || u < 0 {
-		return 0, 0, ErrLock
+		return 0, 0, 0, ErrLock
 	}
-	return n, u, nil
+	return n, u, b.Updated, nil
 }
 
 // Check returns how many seconds name still has to wait, 0 when it is free.
@@ -158,7 +159,7 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 	if !validNow(now) {
 		return 0, ErrLock
 	}
-	_, until, err := read(ctx, db, name, now)
+	_, until, _, err := read(ctx, db, name, now)
 	if err != nil || until <= now {
 		return 0, err
 	}
@@ -181,14 +182,16 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 // counted for keepFor starts at zero, because the row it left behind is past
 // its keep time and reads as none (see read). Nothing outside this package has
 // to run for that, and a first failure after a quiet hour costs what a first
-// failure costs -- not the longest wait there is.
+// failure costs -- not the longest wait there is. The hour is counted from the
+// latest time a failure of that bucket was counted at, so setting a clock back
+// does not shorten it.
 func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if !validNow(now) {
 		return ErrLock
 	}
 	counting.Lock()
 	defer counting.Unlock()
-	n, until, err := read(ctx, db, name, now)
+	n, until, seen, err := read(ctx, db, name, now)
 	if err != nil {
 		return err
 	}
@@ -208,12 +211,24 @@ func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if until < now+wait {
 		until = now + wait
 	}
+	// A failure never moves the keep time of a row backwards: of the time this
+	// failure is counted at and the one the row already carries, the later one
+	// stands. A clock set back further than keepFor would otherwise leave a row
+	// whose two times both say expired as soon as the clock is right again, and
+	// the lock that was running would be gone with the count -- a wait must not
+	// be something anybody turns off by turning a clock. seen is a time out of
+	// the row, so it is taken only where it is one a clock gives, and kept +
+	// keepFor cannot run over.
+	kept := now
+	if validNow(seen) && seen > kept {
+		kept = seen
+	}
 	// Seq and Updated are the time the row may be removed. A walk of the rows
 	// gets both (dbapi.BlobFrom), so Purge asks them the same question the
 	// counting asks and needs nothing of the data (see expired).
 	return db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(name),
-		Seq: uint64(now + keepFor), Data: []byte(strconv.Itoa(n) + " " + strconv.FormatInt(until, 10)),
-		Updated: now})
+		Seq: uint64(kept + keepFor), Data: []byte(strconv.Itoa(n) + " " + strconv.FormatInt(until, 10)),
+		Updated: kept})
 }
 
 // Clear removes the row after a successful login. It goes through the same

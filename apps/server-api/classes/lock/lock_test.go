@@ -303,7 +303,7 @@ func TestFailuresFiredAtOnceAllCount(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	n, _, err := read(ctx, db, "anna", now)
+	n, _, _, err := read(ctx, db, "anna", now)
 	if err != nil || n != tries {
 		t.Fatalf("%d of %d failures counted: %v", n, tries, err)
 	}
@@ -537,5 +537,40 @@ func TestARowKeepsCountingUnlessItHasLostBothTimes(t *testing.T) {
 	}
 	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != 0 {
 		t.Fatalf("a row with neither of its two times waits %d: %v", wait, err)
+	}
+}
+
+// TestTheCountingsClockNeverRunsBackwards holds a lock against the clock. A
+// clock set back further than a row is kept, one failure counted at that time,
+// and the clock right again: the row would otherwise carry times that lie
+// behind the counting, the next read takes it for expired, and the lock that
+// was running is gone together with the count. A wait must not be something
+// anybody turns off by turning a clock.
+func TestTheCountingsClockNeverRunsBackwards(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	for i := 0; i < 4; i++ {
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	before, err := Check(ctx, db, "anna", now)
+	if err != nil || before == 0 {
+		t.Fatalf("the lock before the clock moved: %d %v", before, err)
+	}
+	back := now - keepFor - 1
+	if err := Fail(ctx, db, "anna", back); err != nil {
+		t.Fatalf("fail on a clock set back: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != before {
+		t.Fatalf("the clock going back left a wait of %d instead of %d: %v", wait, before, err)
+	}
+	// And the counting stands where it stood, not at zero: the failures after
+	// it are not free again.
+	if err := Fail(ctx, db, "anna", now); err != nil {
+		t.Fatalf("fail after the clock was right again: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait <= before {
+		t.Fatalf("the failure after the clock went back waits %d, the one before %d: %v", wait, before, err)
 	}
 }

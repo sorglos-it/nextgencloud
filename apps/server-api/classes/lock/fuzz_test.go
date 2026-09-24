@@ -48,7 +48,7 @@ func TestSeedsAreRowsTheCountingReads(t *testing.T) {
 			Data: row, Seq: uint64(now + keepFor), Updated: now}); err != nil {
 			t.Fatalf("put %q: %v", row, err)
 		}
-		if _, _, err := read(ctx, db, "anna", now); err == nil {
+		if _, _, _, err := read(ctx, db, "anna", now); err == nil {
 			taken++
 		}
 	}
