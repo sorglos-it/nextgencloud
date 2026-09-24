@@ -532,13 +532,19 @@ export async function parseSetupOffer(b, code) {
 // have refused that version (Fixrunde 1).
 //
 // info.nodes and its length are each read once. Array.isArray is true for a
-// proxy over an array, so a length asked twice could answer 17 for "more than
-// none" and MAX_SETUP_NODES for "not too many", and 17 nodes would go into
-// version 1 although neither read passes both bounds (Fixrunde 2). Out of one
-// read, the length that decides is the length that was seen. It is not the
-// length the array really has: a proxy that says 1 where it holds nothing is
-// believed here, and that is as far as a check on a caller's object reaches -
-// what parseSetupOffer hands over is a plain array out of decode().
+// proxy over an array, so a length asked twice let one read answer "more than
+// none" and another "not too many": a 17 that only had to clear the lower
+// bound, a MAX_SETUP_NODES that only had to clear the upper one, and 17 nodes
+// into version 1 (Fixrunde 2). What was missing was one value that answers
+// both questions, which is what the local below is; that a value can pass
+// both is no news, MAX_SETUP_NODES itself does (Fixrunde 3: this said
+// "neither read passes both bounds", which the second read plainly does).
+//
+// The length that decides is therefore the length that was seen, and that is
+// not the length the array really has: a proxy that says 1 where it holds
+// nothing is believed here, as is a MAX_SETUP_NODES over 17 entries. That is
+// as far as a check on a caller's object reaches - what parseSetupOffer hands
+// over is a plain array out of decode().
 //
 // Every way this can fail leaves through the one error: no nodes, a length
 // outside the two bounds, and a getter or a proxy trap that throws -

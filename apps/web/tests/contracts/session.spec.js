@@ -267,15 +267,19 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
 
 // Fixrunde 2: encodeSetupInfoNodes read nodes.length twice, which my own fix
 // of the round before put there. Array.isArray is true for a proxy over an
-// array, and a length that answers 17 and then 16 passes both bounds although
-// neither read passes both: 17 nodes go into version 1 past MAX_SETUP_NODES.
-// One read into a local is what closes that.
+// array, so one read could answer "more than none" and another "not too
+// many": the 17 below only has to clear the lower bound and the
+// MAX_SETUP_NODES after it only the upper one, and 17 nodes go into version 1.
+// What was missing is one value that answers both questions, which the local
+// in the code now is. (Fixrunde 3: this said "neither read passes both
+// bounds" - the second read, MAX_SETUP_NODES itself, plainly does.)
 //
 // What one read cannot do is make a lying length honest - a proxy that says 1
-// where the array holds nothing is believed, before the fix and after - so
-// the second row pins that limit rather than claiming it away. Whoever hands
-// this function a proxy is past every promise the file makes; what it does
-// promise is that the length it decided on is the one length it saw.
+// where the array holds nothing is believed, before the fix and after, and so
+// would a MAX_SETUP_NODES over 17 entries - so the second row pins that limit
+// rather than claiming it away. Whoever hands this function a proxy is past
+// every promise the file makes; what it does promise is that the length it
+// decided on is the one length it saw.
 test("encodeSetupInfoNodes decides on the length it read", async ({ shell }) => {
   const got = await shell.evaluate(async () => {
     const s = await import("/assets/js/contracts/session.js");
