@@ -225,14 +225,30 @@ export async function verifyApproval(payload, p, l) {
   if (!validateClientCert(c) || c.inst !== l.installation) {
     throw new Error("session: malformed certificate");
   }
-  const found = trust.keyOwner(l, p?.kid);
-  if (found === null || found.user.id !== c.user
-    || (found.key.kind !== proof.KIND_PASSKEY && trust.passwordToo(l, found.user.id))) {
+  // The proof, the key and the user all belong to the caller, so each field
+  // is read once here and only these copies travel on - the same reason K1
+  // gives for the envelope, and the reason Go has nothing of the kind: it is
+  // handed a proof.Proof by value, and KeyOwner returns a copy of the user
+  // and of the key. Both fields below decide the one rule this function has
+  // beyond a signature check, so a second read is not a detail: a kind that
+  // reads "passkey" here and "password" inside proof.verify skips the rule
+  // and then matches the proof, and an id that reads as the certificate's
+  // user here and as another user in trust.passwordToo asks the question
+  // about the wrong user. proof.verify reads the key's id, kind, alg and pub
+  // and nothing else, so those four are what the copy carries.
+  const { kind: proofKind, kid, sig, authData, clientData } = p ?? {};
+  const found = trust.keyOwner(l, kid);
+  if (found === null) throw new Error("session: proof is not by a key of this user");
+  const ownerID = found.user.id;
+  const { id, kind, alg, pub } = found.key;
+  const key = { id, kind, alg, pub };
+  if (ownerID !== c.user || (kind !== proof.KIND_PASSKEY && trust.passwordToo(l, ownerID))) {
     throw new Error("session: proof is not by a key of this user");
   }
   // Go returns proof.Verify's own error here; proof.verify answers true or
   // false, and this is the error that says false.
-  if (!(await proof.verify(p, found.key, l.rp, PURPOSE_CLIENT_CERT, payload))) {
+  const copy = { kind: proofKind, kid, sig, authData, clientData };
+  if (!(await proof.verify(copy, key, l.rp, PURPOSE_CLIENT_CERT, payload))) {
     throw new Error("session: bad signature");
   }
   return c;
