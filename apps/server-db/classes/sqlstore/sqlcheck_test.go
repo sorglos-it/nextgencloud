@@ -1209,6 +1209,7 @@ func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 		{"prepname", "the statement is put together at run time"},
 		{"mirror", "imports reflect"},
 		{"twostep", "the first statement it gives the database only reads"},
+		{"sentence", ""},
 	}
 	listed := map[string]bool{}
 	for _, c := range table {
