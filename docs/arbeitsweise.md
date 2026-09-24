@@ -200,6 +200,29 @@ und miss den Anteil über die **festen Saaten**.
 Und prüf die Prüfung: in einem Fall erhöhte der Kanarienvogel **beide** Zähler,
 sodass die Anteilsschranke rechnerisch nie anschlagen konnte.
 
+## 6a. Eine zweite Verteidigungslinie entwaffnet die erste
+
+Eine Funktion prüfte vor dem Schreiben, ob der Name schon einem anderen gehört.
+Diese Zeile war gemessen: nahm man sie heraus, wurden ein Test **und** eine
+Gruppe des Vertrags rot. Dann kam — zu Recht — eine zweite Absicherung dazu, die
+denselben Fall am Datenbankindex abfängt.
+
+Danach ließ sich die erste Prüfung **samt Abfrage und Konstante** löschen, und
+nichts wurde rot. Sie ist nicht falsch geworden; sie ist nur nicht mehr
+unterscheidbar. Beim nächsten Aufräumen fliegt sie raus, weil kein Test sie
+hält — und der Kommentar, der sich um sie dreht, steht dann über nichts.
+
+**Deshalb: wenn du eine zweite Linie einziehst, sieh nach, was die erste noch
+misst.** Die Mutation, die sie früher gekippt hat, überlebt jetzt. Entweder die
+erste Linie bekommt eine Zusicherung über das, was **nur sie** leistet — hier:
+in derselben Transaktion zu sitzen, nicht dasselbe Ergebnis zu liefern —, oder
+sie geht mit der Begründung weg, dass die zweite sie ersetzt. Beides ist in
+Ordnung. Sie unbewacht stehen zu lassen ist es nicht.
+
+Das ist die Spiegelseite von Regel 7: dort wird ein Wächter abgeschaltet, weil
+er zu oft irrt; hier verschwindet eine Prüfung, weil niemand mehr merkt, dass es
+sie gibt.
+
 ## 7. Ein Wächter, der auf gutem Code rot wird, wird abgeschaltet
 
 Ein Quelltext-Wächter über SQL brauchte fünf Runden. Zwei Erkenntnisse:
