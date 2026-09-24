@@ -645,33 +645,88 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Password, nil)
 			}},
+		{"a proof of a kind the key is not", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				// A passkey's key ID under a password proof: verifyCert lets
+				// it through -- the key is a passkey, which is what the roles
+				// ask about -- and proof.Verify turns it away at p.Kind
+				// against key.Kind, before any cryptography.
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) {
+					p.Kind = proof.KindPassword
+					p.AuthData, p.ClientData = nil, nil
+				})
+			}},
+		{"a passkey naming another relying party", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				// The assertion is whole and its client data holds; only the
+				// hash of the RP ID at the front of the authenticator data is
+				// another one. package proof refuses that before the
+				// signature.
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) {
+					copy(p.AuthData[:32], bytes.Repeat([]byte{0x3C}, 32))
+				})
+			}},
+		// The two below are controls, not findings: they are the ways out of
+		// session.VerifyClient that the choice at blindProof rests on being
+		// alike, and nobody had ever measured them.
+		{"a certificate the check refuses before the key", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				// session.ErrCert: the certificate is no certificate, and
+				// verifyCert stops before it looks up the key at all.
+				c := start(t, h, fx.PasswordName)
+				c.Nonce = madeUpNonce
+				payload := certBytes(t, fx, c, fx.Password)
+				p := fx.Password.Prove(sign.PurposeClientCert, payload)
+				one := session.LoginFinish{Cert: enc.Bytes("not a certificate"), Proof: p}
+				other := one
+				other.Proof.KeyID = nobodysKeyID
+				return mustMarshal(t, one), mustMarshal(t, other)
+			}},
+		{"a certificate whose time has passed", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				// session.ErrExpired: the proof is checked in full and the
+				// time is looked at afterwards, so the known side has paid
+				// for a verification by then.
+				c := start(t, h, fx.PasswordName)
+				c.Nonce = madeUpNonce
+				c.Now = testNow - 2*h.S.Cfg.SessionLifetime
+				return twoBodies(t, fx, c, fx.Password, nil)
+			}},
 	}
 	h, fx := newFixture(t)
 	open := 0
+	// Every shape is measured, and a shape that fails does not end the run:
+	// the whole table is what says which of them are alike and which are not,
+	// and a run that stops at the first one hides the rest.
 	for _, form := range forms {
 		held, nobodys := form.build(t, h, fx)
-		a, b, again := medianOf(t, h, form.name, held), medianOf(t, h, form.name, nobodys), medianOf(t, h, form.name, held)
+		a, b, again := timeThemFinish(t, h, form.name, held, nobodys)
 		t.Logf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
 			form.name, a, b, again)
 		// The null control first: one body against itself, measured the same
-		// way. It is held to the factor of the comparison, so the test can
-		// tell "the two are alike" from "this machine cannot tell anything
-		// apart today".
+		// way and in the same turns. It is held to the factor of the
+		// comparison, so the test can tell "the two are alike" from "this
+		// machine cannot tell anything apart today".
 		if a > 2*again || again > 2*a {
-			t.Fatalf("%s, the same body twice: %v and %v -- this machine cannot measure a factor of two today",
+			t.Errorf("%s, the same body twice: %v and %v -- this machine cannot measure a factor of two today",
 				form.name, a, again)
+			continue
 		}
 		if !form.holds {
 			open++
 			continue
 		}
 		if a > 2*b || b > 2*a {
-			t.Fatalf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
+			t.Errorf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
 				form.name, a, b, again)
 		}
 	}
 	if open != 1 {
-		t.Fatalf("%d shapes are written down as open, want 1: whoever closes one takes its flag out here", open)
+		t.Errorf("%d shapes are written down as open, want 1: whoever closes one takes its flag out here", open)
 	}
 }
 
@@ -702,16 +757,31 @@ func mustMarshal(tb testing.TB, f session.LoginFinish) []byte {
 	return b
 }
 
-// medianOf measures five batches and returns the middle one, so one slow batch
-// a busy machine throws in does not decide the answer.
-func medianOf(t *testing.T, h *Handler, what string, body []byte) time.Duration {
+// timedBatches is how many batches each of the three measurements of a shape
+// takes. The median of them drops the one slow batch a busy machine throws in,
+// which an average would not.
+const timedBatches = 5
+
+// timeThemFinish measures the two bodies and the first one again, turn by turn
+// and not one block after another: a machine that gets slower or faster while
+// the test runs does so for all three, where three blocks in a row would hand
+// that drift to the comparison as a finding. It is the shape timeThem uses for
+// login/start, and it was lost once here -- the numbers it gave were then a
+// third block against a first.
+func timeThemFinish(t *testing.T, h *Handler, what string, held, nobodys []byte) (a, b, again time.Duration) {
 	t.Helper()
-	d := make([]time.Duration, 5)
-	for i := range d {
-		d[i] = timedFinish(t, h, what, body)
+	da := make([]time.Duration, timedBatches)
+	db := make([]time.Duration, timedBatches)
+	dc := make([]time.Duration, timedBatches)
+	for i := range timedBatches {
+		da[i] = timedFinish(t, h, what, held)
+		db[i] = timedFinish(t, h, what, nobodys)
+		dc[i] = timedFinish(t, h, what, held)
 	}
-	slices.Sort(d)
-	return d[len(d)/2]
+	slices.Sort(da)
+	slices.Sort(db)
+	slices.Sort(dc)
+	return da[timedBatches/2], db[timedBatches/2], dc[timedBatches/2]
 }
 
 // timedFinish runs timedRuns requests with body and returns what one took. It
