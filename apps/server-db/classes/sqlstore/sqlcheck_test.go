@@ -620,7 +620,9 @@ func (c *checker) resolve(e ast.Expr, b bound) ast.Expr {
 
 // bind maps the parameters of fn to the arguments of call, each of them
 // resolved in the binding the call itself stands in. A variadic tail is left
-// out: nothing hands a statement that way.
+// out: every helper here takes its statement in a place of its own, and one
+// handed in the tail would be passed over rather than reported, the same as
+// any statement the guard cannot resolve.
 func (c *checker) bind(fn *types.Func, call *ast.CallExpr, b bound) bound {
 	out := bound{}
 	sig, ok := fn.Type().(*types.Signature)
