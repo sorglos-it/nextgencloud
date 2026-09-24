@@ -529,12 +529,27 @@ export async function parseSetupOffer(b, code) {
 // nodes, and nothing else: it is exported, and it answered null with a raw
 // TypeError and an object without nodes with undefined - which whoever builds
 // version 1 from it would have written as no nodes at all, and the API would
-// have refused that version (Fixrunde 1). info.nodes is read once, and one
-// error stands for every way this can fail, encodeClientCert's shape above.
+// have refused that version (Fixrunde 1).
+//
+// info.nodes and its length are each read once. Array.isArray is true for a
+// proxy over an array, so a length asked twice could answer 17 for "more than
+// none" and MAX_SETUP_NODES for "not too many", and 17 nodes would go into
+// version 1 although neither read passes both bounds (Fixrunde 2). Out of one
+// read, the length that decides is the length that was seen. It is not the
+// length the array really has: a proxy that says 1 where it holds nothing is
+// believed here, and that is as far as a check on a caller's object reaches -
+// what parseSetupOffer hands over is a plain array out of decode().
+//
+// Every way this can fail leaves through the one error: no nodes, a length
+// outside the two bounds, and a getter or a proxy trap that throws -
+// encodeClientCert's shape above.
 export function encodeSetupInfoNodes(info) {
   try {
     const nodes = info?.nodes;
-    if (Array.isArray(nodes) && nodes.length > 0 && nodes.length <= MAX_SETUP_NODES) return nodes;
+    if (Array.isArray(nodes)) {
+      const n = nodes.length;
+      if (n > 0 && n <= MAX_SETUP_NODES) return nodes;
+    }
   } catch {
     // Falls through to the one error, like a length that did not fit.
   }
