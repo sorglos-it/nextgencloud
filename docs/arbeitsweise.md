@@ -92,6 +92,20 @@ Bei Zeitmessungen: Stapel von mindestens 2000 Läufen, verschränkte Arme, und
 eine **Null-Kontrolle** (derselbe Arm zweimal). Oder ganz ohne Uhr bauen — das
 ist fast immer möglich und immer besser.
 
+**Und rechne die Nachweisgrenze aus, bevor du eine Kampagne fährst.** Ich habe
+ein Paket 25-mal laufen lassen, um einen Fehlschlag auszuschließen, und „0 von
+25" gemeldet. Die Rate war 1 zu 2000 — die Wahrscheinlichkeit, dass 25 Läufe
+nichts finden, lag bei 99 %. Die Kampagne hat nichts entlastet und drei Viertel
+einer Stunde gekostet; der richtige Griff waren 20 000 Läufe **eines** Tests in
+zehn Sekunden.
+
+Dieselbe Frage gilt für jeden nebenläufigen Test, der eingecheckt wird: **ab
+welcher Maschine misst er noch?** Eine Wettlaufprobe fiel auf einer 64-Kern-Kiste
+in jedem Lauf — und auf zwei Kernen in **keinem einzigen von zehn**. Auf dem CI-
+Läufer und auf dem Einplatinenrechner, für die der Code gebaut wird, hätte sie
+nie etwas gefangen, und ihr Kommentar behauptete das Gegenteil. Miss die
+Untergrenze und **schreib sie hin**, statt sie stillschweigend zu unterschreiten.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
@@ -119,6 +133,20 @@ Ein Quelltext-Wächter über SQL brauchte fünf Runden. Zwei Erkenntnisse:
 
 **Miss jede neue Strenge gegen die Formen, die die nächsten Aufgaben brauchen.**
 Sechsmal gemessen, dann war klar, dass der Wächter überlebt.
+
+**Und das ist die Reihenfolge, in der ein Wächter gebaut wird: erst das falsche
+Rot messen, dann die Regel schreiben.** Ein Umsetzer hat zehn Nachbauten
+angelegt, bevor er eine Zeile Wächter schrieb — neun zulässige Formen und drei
+kaputte. **Vier der neun zulässigen waren in seiner ersten Fassung rot** und
+haben die Regel je einmal geändert: eine Helfermethode, eine Closure vor dem
+Schreiben, eine gewöhnliche Zeichenkette, die mit „select" anfing, und ein
+`WITH … UPDATE`-CTE. Ohne diese Messung wäre der Wächter mit vier eingebauten
+Fehlalarmen in den Baum gegangen — und beim ersten davon abgeschaltet worden.
+
+Und wenn eine Regel eine Eigenschaft festnageln würde, die **niemand braucht**:
+lass sie weg. Dieselbe Regel wäre auf einer Nachbarfunktion grün gewesen; sie
+dort auch anzuwenden hätte nur den Tag vorbereitet, an dem eine zulässige
+Änderung an ihr scheitert und jemand den **ganzen** Wächter herausnimmt.
 
 Und: **jede Runde neue Mechanik bringt neue Löcher.** Ab einem Punkt heißt die
 Anweisung „schließen und Zusagen engen, **kein neuer Erkennungsmechanismus**" —
