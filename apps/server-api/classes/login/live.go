@@ -64,8 +64,19 @@ type Live struct {
 // the cookie: httpapi.Cookie takes nothing but base64url no longer than a
 // token, and the length below nothing but exactly a token. So the question the
 // login paths have to keep quiet -- does this name exist -- is not asked here
-// at all, and what a request costs follows only whether a token this API
-// handed out came back, which nobody can pick.
+// at all. For anybody who holds no token, what a request costs follows one
+// thing: whether a token this API itself drew came back, and session.TokenSize
+// random bytes are not something anybody picks.
+//
+// Past that, the work is not the same for everybody. session.VerifyClient
+// looks the key up through every user and every key of the list
+// (trust.List.KeyOwner), asks the roles of that user when the key is a
+// password key (PasswordToo), and proves the certificate with a single
+// ed25519.Verify for a password key where a passkey is a whole WebAuthn
+// assertion (proof.Verify). So what an answered request costs does follow
+// whose session it is, and most of all which kind of key opened it. Whoever
+// could time that holds the cookie already and no name stands behind it -- but
+// the difference is real, and nothing here evens it out.
 func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, bool) {
 	value, ok := httpapi.Cookie(r)
 	if !ok {
@@ -154,12 +165,15 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 // whoever wires it up likes; nothing in this package wires it up, and nothing
 // hangs on the cadence.
 //
-// Nothing hangs on it running at all, which is what makes the times below
-// free to choose. All three refuse what is past its time without it: Live
-// reads the end of a session out of the row, dbapi.Local.OnceUse answers an
-// expired value ErrNotFound, and a row of the counting past its keep time
-// reads as none before anything of it is read (classes/lock, read). What
-// Purge frees is the space those rows take.
+// Nothing hangs on it running at all. All three refuse what is past its time
+// without it: Live reads the end of a session out of the row,
+// dbapi.Local.OnceUse answers an expired value ErrNotFound, and a row of the
+// counting past its keep time reads as none before anything of it is read
+// (classes/lock, read). What Purge frees is the space those rows take.
+//
+// That does not leave the times below free to choose. One of the three has to
+// be held back, and a test holds it there: hand OncePurge the plain clock and
+// TestPurgeFreesOnlyWhatIsPastItsTime goes red.
 //
 // Expired one-time values are freed only session.MaxSkew after their time.
 // They are the one kind here another API still has to find: a nonce or a task
