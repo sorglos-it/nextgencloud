@@ -24,8 +24,9 @@ type Handler struct {
 	// Two turns to speak, not one: a login challenge that cannot be kept
 	// (login/start) and a failed login that cannot be counted (login/finish)
 	// are two failures of the database, and a store can have one without the
-	// other -- one-time values and settings are not one table. Sharing a turn
-	// would let either of them keep the other quiet.
+	// other -- the two are written by calls of their own, OnceCreate and
+	// BlobPut. Sharing a turn would let either of them keep the other quiet,
+	// and the second one is the one nothing else says out loud.
 	warnNonce warnThrottle
 	warnLock  warnThrottle
 }
