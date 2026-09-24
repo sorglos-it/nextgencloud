@@ -4,6 +4,11 @@
 # It does not set a machine up - tools/recovery-setup.sh install and
 # tools/recovery-tools.sh have to have been through first.
 # Careful: it empties dist/recovery/work. Nothing may be parked there.
+# What a finished run leaves standing, so nobody has to guess: the simulator of
+# instance main keeps running, 0x81000001 stays persistent inside it, and
+# dist/recovery/work still holds the files of the last case. Only the virtual
+# machine and the simulator of instance qemu are ended, by cleanup below. Ending
+# main by hand: tools/recovery-swtpm.sh stop main.
 set -euo pipefail
 shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
@@ -139,10 +144,97 @@ use_main
 
 tools/recovery-swtpm.sh reset main
 use_main
+
+# The guard in recovery-policy.sh is the most important repair of this task, and
+# nothing here could notice it going away: measured, before this case existed
+# the guard could be taken out and the run stayed green, because every other
+# call below sets TPM2TOOLS_TCTI to our own simulator first and so can never
+# reach the guard. This one call can. The value points at a socket that does not exist - deliberately NOT at
+# /dev/tpmrm0, the machine's own TPM: a case that is only harmless while the
+# code it tests is correct is not a test. Measured, so that this holds even if
+# every guard were gone: swtpm:path=<no such file> ends at "Could not load
+# tcti" and reaches for nothing else, while an EMPTY variable is the one that
+# goes for /dev/tpmrm0 and /dev/tpm0. What is checked is the guard's own
+# sentence, not merely a non-zero exit - measured, with the guard cut out the
+# script quietly overwrites the foreign value with its own and succeeds.
+fremd="swtpm:path=$PWD/dist/recovery/work/kein-simulator.sock"
+if wache="$(TPM2TOOLS_TCTI="$fremd" tools/recovery-policy.sh state normal 2>&1)"; then
+	fail "recovery-policy.sh nimmt ein fremdes TPM2TOOLS_TCTI an"
+fi
+case "$wache" in
+*"zeigt nicht auf den Simulator der Instanz main"*) ;;
+*) fail "recovery-policy.sh weist ein fremdes TPM2TOOLS_TCTI nicht selbst ab" ;;
+esac
+ok "ein fremdes TPM2TOOLS_TCTI hält recovery-policy.sh an"
+
 tools/recovery-policy.sh state normal
 tools/recovery-policy.sh seal pcr
+# Removed first so a leftover from an earlier run cannot answer for this one.
+rm -f dist/recovery/work/sess-attrs.txt
 [ "$(tools/recovery-policy.sh open pcr)" = "TEST-DEK" ] || fail "Normalstart-Zweig öffnet nicht"
 ok "Zweig 1: Normalstart über PCR 11 = Produktiv-UKI"
+
+# Three promises of recovery-policy.sh sit in the attributes of the sealed
+# object, and not one of them can be read off the script that sets them:
+# measured, before this case existed userwithauth in that line left the whole
+# run green - and with it set, "tpm2_unseal -c <ctx>" hands out the secret with
+# no policy session at all, PCR 11 deliberately standing on the other branch.
+# With this case the same manipulation ends at 0xd2, and noda at 0x492, both
+# tried. In work package 6 the real DEK hangs on this object. So the
+# attributes are read back off the object. 0x92 is fixedtpm|fixedparent|
+# adminwithpolicy and nothing besides: userwithauth (0x40) would make the policy
+# optional, noda (0x400) would switch off the dictionary lock the platform PIN
+# needs from task 7 on, sensitiveDataOrigin (0x20) would mean the TPM had made
+# the secret up itself.
+#
+# The handle is written out here instead of asked of the script under test: "the
+# primary key sits at 0x81000001" is a promise of the interface, and measured,
+# before this line existed the script moved to 0x81000042 and the run stayed
+# green - with the key then sitting there for good.
+seal_handle=0x81000001
+if ! handles="$(tpm2_getcap handles-persistent)"; then
+	fail "Das TPM antwortet nicht auf die Frage nach seinen persistenten Handles"
+fi
+case "$handles" in
+*"$seal_handle"*) ;;
+*) fail "Der Primärschlüssel steht nicht unter $seal_handle" ;;
+esac
+tpm2_flushcontext -t >/dev/null 2>&1 || :
+tpm2_load -C "$seal_handle" -u dist/recovery/work/seal.pub -r dist/recovery/work/seal.priv \
+	-c dist/recovery/work/pruefung.ctx >/dev/null \
+	|| fail "Das versiegelte Objekt lässt sich nicht laden"
+pub="$(tpm2_readpublic -c dist/recovery/work/pruefung.ctx)"
+tpm2_flushcontext -t >/dev/null 2>&1 || :
+# The value stands on the line after "attributes:"; three further "raw:" lines
+# in the same output belong to other fields, so the line alone is not enough.
+attrs=""
+naechste=0
+while IFS= read -r zeile; do
+	case "$zeile" in
+	"attributes:") naechste=1 ;;
+	"  raw: "*)
+		if [ "$naechste" = 1 ]; then attrs="${zeile#  raw: }"; fi
+		naechste=0
+		;;
+	esac
+done <<< "$pub"
+# One sentence for both ways this can go wrong, because it is true of both:
+# with 0xd2 the policy stops being the only way in, with 0x492 the dictionary
+# lock is off. Naming the raw value is what lets the reader look it up.
+[ "$attrs" = 0x92 ] \
+	|| fail "Das Siegel trägt $attrs statt 0x92. Erlaubt ist allein fixedtpm|fixedparent|adminwithpolicy; jede weitere Eigenschaft schwächt den Schutz des versiegelten Inhalts."
+
+# The other half of the same promise. Dropping the salt alone is already caught
+# by case 1 - measured, a session with parameter encryption but without salt has
+# no session key and tpm2_unseal answers 0x996 "unsupported symmetric algorithm
+# or key size". Dropping the parameter encryption alone is what this catches.
+sitzung="$(cat dist/recovery/work/sess-attrs.txt)" \
+	|| fail "Die Policy-Sitzung hat ihre Eigenschaften nicht hinterlegt"
+case "$sitzung" in
+*"continuesession|decrypt|encrypt"*) ;;
+*) fail "Die Policy-Sitzung verschlüsselt ihre Parameter nicht (siehe dist/recovery/work/sess-attrs.txt) - das entsiegelte Geheimnis fährt dann offen über die Sitzung" ;;
+esac
+ok "Siegel und Sitzung tragen genau die zugesagten Eigenschaften"
 
 # Criterion 4 in miniature: one more extend stands for an image changed by a
 # single byte. The branch must stay shut.

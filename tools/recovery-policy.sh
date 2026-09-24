@@ -56,13 +56,33 @@ fi' EXIT
 # The branch of the specification covers PCR 0-7 and 11, and that has to go in
 # as TWO assertions. Not a matter of taste: measured with tpm2-tools 5.7, one
 # tpm2_policypcr -f over nine PCRs dies with "Could not hash pcr values", while
-# eight go through - a value file carries at most TPM2_MAX_NUM_DIGESTS = 8
-# digests. The same call without -f works at any count, because then the TPM
-# reads its own PCRs instead, and that is exactly what must not happen here:
-# sealing has to name the state of a branch, not take the one that happens to
-# be there. Two assertions bind the same nine PCRs; the TPM checks each against
-# its own values. What counts is that sealing and opening walk them in the same
-# order, and policy_branch is what guarantees that.
+# eight go through. The limit counts DIGESTS, not PCR indices - measured on this
+# simulator, nine spread over two banks (sha256:0,1,2,3 + sha384:0,1,2,3,4) die
+# the same way and eight over two banks pass: a value file carries at most
+# TPM2_MAX_NUM_DIGESTS = 8. Two assertions bind the same nine PCRs; the TPM
+# checks each against its own values. What counts is that sealing and opening
+# walk them in the same order, and policy_branch is what guarantees that.
+#
+# What -f does here, stated against the code and not against the intention:
+# pcr_files below calls tpm2_pcrread on EVERY call, while sealing exactly as
+# while opening. So only PCR 11 is named in this branch - 0 to 7 are taken as
+# they happen to stand at that moment, and -f then only hands the TPM back the
+# values it just gave us. Bound they are either way: extend PCR 7 after sealing
+# and tpm2_unseal answers 0x99D "a policy check failed", measured.
+#
+# For PCR 11 it is the other way round, and that is what -f is really for here:
+# pcr11_after computes the value, so the branch can be sealed against a PCR 11
+# the TPM is not standing on at all. The test leans on exactly that - it seals
+# while PCR 11 holds the recovery image and the policy names the productive one,
+# and the branch stays shut.
+#
+# The consequence belongs to tasks 7 and 8, so it is written down here: sealing
+# the recovery branch while the machine sits in the normal boot binds the NORMAL
+# boot's PCR 0-7, and the recovery boot will then not open it. On real hardware
+# 4 and 7 differ between the two branches; on the simulator nothing boots and
+# both are zero, which is why nothing here ever notices. Whoever needs 0-7 named
+# the way PCR 11 already is has to fill pcr-boot.bin from somewhere other than
+# tpm2_pcrread.
 pcrs_boot="sha384:0,1,2,3,4,5,6,7"
 pcrs_uki="sha384:11"
 handle=0x81000001
@@ -126,7 +146,20 @@ set_pcr_state() {        # $1 = normal|recovery
 # exactly once. Handing it around as a context file instead would occupy one of
 # the three transient slots in every single call.
 primary() {
-	if tpm2_getcap handles-persistent | grep -q "$handle"; then return 0; fi
+	# Captured, not piped into grep. Two reasons, both about the same silence:
+	# a TPM that does not answer fails with an empty list, and "not in the list"
+	# would then create a second primary key over the top of the first. And
+	# grep -q leaves early, so a listing longer than the pipe buffer would put
+	# SIGPIPE on the left-hand side of the pipe, which under pipefail makes the
+	# whole line fail - the same wrong answer, only rarer. Out of reach today
+	# (three persistent handles fit in one buffer many times over), and out of
+	# reach for good this way.
+	local handles
+	if ! handles="$(tpm2_getcap handles-persistent)"; then
+		say "Das TPM antwortet nicht auf die Frage nach seinen persistenten Handles"
+		exit 1
+	fi
+	case "$handles" in *"$handle"*) return 0 ;; esac
 	flush
 	tpm2_createprimary -C o -g sha384 -G ecc384 -c "$w/primary.ctx" >/dev/null
 	tpm2_evictcontrol -C o -c "$w/primary.ctx" "$handle" >/dev/null
@@ -137,15 +170,23 @@ primary() {
 # The policy session - the one that carries the unsealed secret home - is
 # salted against the primary key and uses parameter encryption, as section 6 of
 # the specification demands, so the pattern moves to work package 3 unchanged.
-# Proven, not assumed: tpm2_sessionconfig reports it as
-# "continuesession|decrypt|encrypt".
+# The two halves hold each other up, measured: a policy session with encryption
+# switched on but WITHOUT the salt has no session key, and tpm2_unseal answers
+# 0x996 "unsupported symmetric algorithm or key size". Losing the salt therefore
+# already shuts the branch; losing only the encryption would not, which is why
+# the attributes are written out below for recovery-test.sh to check. A promise
+# about a session, checked against the script that opens the session, is none.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
 # tpm2-tools 5.7: --tpmkey-context on a session without --policy-session is
 # refused with "Trial sessions cannot be additionally used as encrypt/decrypt
-# session", EXIT=2 - the tool turns the salt into encrypt/decrypt attributes,
-# and a trial session may not carry those. It has nothing to protect either: it
-# transports no secret, it only computes a digest that is public anyway.
+# session", EXIT=2. The refusal is that tool's own check and nothing deeper -
+# a trial session CAN carry those attributes: tpm2_sessionconfig
+# --enable-encrypt --enable-decrypt on one succeeds (EXIT=0, read back as
+# continuesession|decrypt|encrypt) and the TPM still takes tpm2_policypcr on it
+# afterwards. Only salting it at the start is refused. It has nothing to protect
+# either: it transports no secret, it only computes a digest that is public
+# anyway.
 new_session() {          # $1 = context file, $2 = trial|policy
 	primary
 	flush
@@ -153,6 +194,10 @@ new_session() {          # $1 = context file, $2 = trial|policy
 	policy)
 		tpm2_startauthsession --policy-session -S "$1" -g sha384 --tpmkey-context "$handle" >/dev/null
 		tpm2_sessionconfig --enable-encrypt --enable-decrypt "$1" >/dev/null
+		# Read back off the session the TPM actually holds, and left behind for
+		# recovery-test.sh: this is the very session open_branch unseals with,
+		# not a second one built to look good.
+		tpm2_sessionconfig "$1" > "$w/sess-attrs.txt"
 		;;
 	trial)
 		tpm2_startauthsession -S "$1" -g sha384 >/dev/null
@@ -204,9 +249,15 @@ seal() {                 # $1 = branch
 	# is no PIN in this branch yet, so nothing here suffers from it either way.
 	# userwithauth is absent too: only the policy may open this object, never a
 	# plain password. sensitiveDataOrigin stays CLEAR because the data comes
-	# from outside (-i). All three read back from the sealed object:
-	# tpm2_readpublic says attributes fixedtpm|fixedparent|adminwithpolicy, raw
-	# 0x92.
+	# from outside (-i).
+	#
+	# userwithauth is the one that matters, and it was measured, not reasoned:
+	# with it in this line the object reads back as 0xd2 - and then
+	# "tpm2_unseal -c <ctx>" hands out the secret with no policy session at all,
+	# PCR 11 deliberately standing on the wrong branch. The whole policy is then
+	# decoration. In work package 6 the real DEK hangs on this object. That is
+	# why recovery-test.sh reads these attributes back off the sealed object and
+	# insists on 0x92: this line here cannot vouch for itself.
 	tpm2_create -C "$handle" -g sha384 -u "$w/seal.pub" -r "$w/seal.priv" \
 		-i "$w/secret.bin" -L "$w/branch-$1.digest" \
 		-a "fixedtpm|fixedparent|adminwithpolicy" >/dev/null

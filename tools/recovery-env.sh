@@ -10,7 +10,15 @@ work="$(pwd)/dist/recovery"
 # this script runs only on the VM (measured: report has the details).
 # ps is called by four of the scripts and is still not on the list: it comes out
 # of the same package as pgrep - measured, dpkg -S names procps for both - so
-# the pgrep entry already answers for it. Coreutils goes the other way round:
+# the pgrep entry already answers for it. grep and sed get no such stand-in and
+# so are named below: dpkg -S puts each of them in a package of its own, called
+# grep and sed, and the paragraph on coreutils does not cover them. Both are
+# really called - grep further down in this script and in recovery-qemu.sh,
+# recovery-setup.sh and recovery-tools.sh, sed in the latter two. Counted, not
+# guessed: recovery-policy.sh used to call grep as well and no longer does.
+# Tried: with one of them missing from the PATH the loop below names it and ends
+# at EXIT=1, grep included - the loop runs before this script greps anything.
+# Coreutils goes the other way round:
 # shred and the timeout that bounds swtpm_ioctl in recovery-swtpm.sh are named
 # below, and dpkg -S puts them in the same package as the twenty more this
 # package relies on without naming them - basename, cat, chmod, cp, cut, date,
@@ -22,8 +30,8 @@ work="$(pwd)/dist/recovery"
 # harmless only because this check comes before the first use of $work; move it
 # and the wrong working directory is suddenly real.
 need="qemu-system-x86_64 swtpm swtpm_setup swtpm_ioctl softhsm2-util pkcs11-tool openssl xxd socat shred
-	timeout pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
-	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
+	timeout pgrep grep sed tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
+	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal tpm2_readpublic
 	tpm2_unseal tpm2_pcrread tpm2_pcrextend tpm2_policypcr tpm2_policysigned
 	tpm2_policyauthvalue tpm2_policynv tpm2_policyor tpm2_nvdefine tpm2_nvincrement
 	tpm2_nvread tpm2_nvreadpublic tpm2_getcap tpm2_getrandom tpm2_verifysignature
