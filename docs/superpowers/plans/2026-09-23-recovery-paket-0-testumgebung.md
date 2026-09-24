@@ -2328,8 +2328,11 @@ Sitzung. Sie stehen zusätzlich in `CHANGELOG.md` unter „Offen".
 3. **Prüf-Notebook ohne Netz.** Abschnitt 11 der Vorgabe zählt es zu Paket 0. Es ist ein Gerät, kein
    Code. Wer stellt es, und reicht bis dahin die VM?
 4. **Echte Sticks.** Paket 2 verlangt die Backends `hsm` (Nitrokey HSM 2 oder YubiHSM 2) und `piv`
-   (YubiKey 5 ab 5.7 oder Nitrokey 3). Beschaffung anstoßen, sonst steht Paket 2 still, sobald
-   `softhsm` fertig ist.
+   (YubiKey 5, jede 5.x; Nitrokey 3). Für `piv` ist **nichts zu beschaffen**: Thomas hat drei
+   YubiKey 5, an zweien ist Firmware 5.4.3 gemessen. Die frühere Zeile „ab 5.7“ war zu streng —
+   P-384 in PIV gibt es seit YubiKey 4, 5.7 bringt nur RSA-3072/4096 und 25519 dazu; Einzelheiten
+   in `.superpowers/sdd/recovery/root-sticks.md`. Zu beschaffen ist nur `hsm`, und das braucht
+   allein die Stufe „enterprise“.
 5. **Owner-Auth für den NV-Zähler.** Hier ist die Owner-Hierarchie ohne Passwort, der Zähler ließe
    sich also von jedem Prozess auf der VM erhöhen. Für Paket 3 ist zu entscheiden, wie der Zähler
    geschützt wird: Owner-Auth mit Passwort oder eine eigene Schreib-Policy auf dem NV-Index.
