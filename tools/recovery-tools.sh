@@ -5,6 +5,12 @@
 # option differently, and a wrong guess would weaken the policy without anyone
 # noticing. So the assumptions get proven, not trusted.
 set -euo pipefail
+# Without this, "x=$(f)" for a multi-statement f only looks at f's LAST
+# command for errexit purposes - exactly the hole that let a failing --help
+# hide behind a later "cat" (fixed, but the fix only holds as long as no
+# future edit gives a helper a second statement or a condition). This makes
+# the whole class impossible instead of relying on that being remembered.
+shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
 
 work="$(pwd)/dist/recovery"
@@ -14,22 +20,33 @@ txt="$work/werkzeuge.txt"
 handle=0x81000002        # the probe uses its own handle, not the policy's
 checked=()                # "Geprüft und in Ordnung" lines, filled as checks pass
 
-# Cleanup only, never a check: everything in this trap may swallow an error -
-# it only tidies up and must run no matter how the script ends. -t alone would
+# Cleanup only, never a check: everything below may swallow an error - it
+# only tidies up and must run no matter how the script ends. This is the
+# ONLY place any of it happens - there is no inline shred or kill anywhere
+# else in this script, on the success path or otherwise. -t alone would
 # leave sessions behind, so -l and -s go with it - a probe that died mid-way
-# must not cost the next run its session slots. The daemon and the PIN-copy
-# files join it for the same reason: the success path handles them inline,
-# but a STOPP or a signal must not skip them. Registered after work/probe/
-# state above are set, not before (a failure in between would otherwise die
-# on "state: unbound variable" inside the trap itself). INT/TERM/HUP are
-# trapped alongside EXIT, not only EXIT - measured: EXIT alone missed the
-# daemon in 2 of 5 SIGTERM runs, because bash does not guarantee the EXIT
-# trap runs when a signal ends the process.
-trap '
+# must not cost the next run its session slots; the daemon and the PIN-copy
+# files ride along for the same reason. Registered after work/probe/state
+# above are set, not before (a failure in between would otherwise die on
+# "state: unbound variable" inside the trap itself).
+cleanup() {
 	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
 	if [ -f "$state/swtpm.pid" ]; then kill "$(cat "$state/swtpm.pid")" >/dev/null 2>&1 || :; fi
 	shred -u "$probe/pin-second.txt" "$probe/pin-wrong.txt" >/dev/null 2>&1 || :
-' INT TERM HUP EXIT
+}
+trap cleanup EXIT
+# A trap that only cleans up and returns does not end the script - bash keeps
+# going past it. Measured: mid-run SIGTERM could still finish normally, exit
+# 0, full green werkzeuge.txt - whoever pressed Ctrl+C gets a report from the
+# run they tried to stop. Reproducing it needs REPEATED signals in this
+# script's tight timing (a single SIGTERM/SIGHUP at one point in time already
+# measured 0 of 26 orphans - cleanup was never the gap, not stopping was).
+# Each handler below must end with its own exit, at the conventional
+# 128+signal status, so a signal-terminated run reads as one downstream
+# instead of as an ordinary exit.
+trap 'cleanup; exit 129' HUP
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 say() { printf '%s\n' "$*" >&2; }
 stop_and_ask() {
@@ -109,7 +126,12 @@ help_of() {              # $1 = command
 need_opt() {             # $1 = command, rest = long options that must exist
 	local cmd="$1" opt opt_re page
 	shift
-	page="$(help_of "$cmd")"
+	# Routed through stop_and_ask like every other check here: our users are
+	# not experienced, and a wordless exit on a broken --help would be a
+	# riddle for them, unlike the German plain text every other abort gives.
+	if ! page="$(help_of "$cmd")"; then
+		stop_and_ask "$cmd --help ist fehlgeschlagen. Ohne die Hilfe-Ausgabe lässt sich nicht prüfen, ob $cmd die nötigen Optionen kennt."
+	fi
 	for opt in "$@"; do
 		# Anchored: a plain substring grep also passes an option that does not
 		# exist but is a prefix of a real one (--pcr-l inside --pcr-list) - the
@@ -230,13 +252,15 @@ if got3="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess3.ctx+file:$pin_
 	stop_and_ask "tpm2-tools öffnet mit falschem PIN-Inhalt aus einer Datei - der Dateiinhalt wird nicht wirklich geprüft."
 fi
 tpm2_flushcontext "$probe/sess3.ctx" >/dev/null
+chmod 660 "$probe/wrong-pin.err"
 # Must fail for THIS reason - a wrong auth value, TPM error 0x98E - and not
 # for some unrelated one (a bad context, a TCTI hiccup, ...), or a green run
 # would prove nothing about the file's content actually being checked. Kept
 # in a file and only shown when it is not the expected error, so a passing
 # run's stderr stays readable instead of showing four raw ERROR lines that
-# look like a failure.
-if ! grep -q '0x98E' "$probe/wrong-pin.err"; then
+# look like a failure. Anchored on the closing paren: "0x98E" alone also
+# matches an unrelated code like 0x98EF.
+if ! grep -q 'Esys_Unseal(0x98E)' "$probe/wrong-pin.err"; then
 	cat "$probe/wrong-pin.err" >&2
 	stop_and_ask "Das Öffnen mit falschem PIN-Inhalt ist zwar gescheitert, aber nicht mit dem erwarteten TPM-Fehler (0x98E, Auth-Wert falsch)."
 fi
