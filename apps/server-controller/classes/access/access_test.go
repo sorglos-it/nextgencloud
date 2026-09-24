@@ -395,14 +395,14 @@ func TestCheckWithoutUserIgnoresTheTask(t *testing.T) {
 	})
 }
 
-// TestCheckOpensUnattendedInstall is the only action of the contract that is
-// both a root task and one the API may open without a user:
+// TestCheckOpensUnattendedInstall covers the only action of the contract that
+// is both a root task and one the API may open without a user:
 // ngc.store/controller/install. Without a certificate no task is checked at
 // all, so nothing here asks for the signature a root task otherwise costs —
 // what pays for this channel is the standing approval, which the controller
-// checks afterwards (core.Unattended). A guard that turned every root action
-// away on a channel without a user would shut the unattended install, and
-// this is the one channel that would say so.
+// will check afterwards (core.Unattended). A guard that turned every root
+// action away on a channel without a user would shut the unattended install,
+// and this is the one channel that would say so.
 func TestCheckOpensUnattendedInstall(t *testing.T) {
 	f := newFixture(t)
 	o := coreOpen(core.AppStore, core.ActInstall, nil)
@@ -639,13 +639,10 @@ func TestCheckRefusesCoreAppIDWithoutACertificate(t *testing.T) {
 	// controller.
 	r := f.request(withoutUser(t, wire.Open{App: core.AppUsers, Service: testService, Action: testAction,
 		Window: wire.DefaultWindow}))
-	// The row is there under that ID: the E_NOTFOUND below is the guard's, not
-	// the answer of a lookup that found nothing. Without the guard this channel
-	// ends one guard later as E_FORBIDDEN.
-	rows := installed()
-	rows[core.AppUsers] = dbapi.App{ID: core.AppUsers, Version: "1.0.0", Store: trust.StoreGlobal, Node: node,
-		Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
-	r.Apps = rows
+	// Nothing is filed under that ID, and nothing needs to be: this channel
+	// carries no certificate, so the app branch never reaches the lookup. The
+	// E_NOTFOUND below can only be the guard's — without it the channel ends
+	// one guard later as E_FORBIDDEN.
 	d, cl := Check(context.Background(), r)
 	wantClose(t, d, cl, wire.CodeNotFound)
 }
