@@ -472,6 +472,87 @@ test("validateList refuses wrong-typed lists on every array field, and never thr
   });
 });
 
+// Fixrunde 3, point 2: mayRoot, matches (private, exercised through
+// needsConfirm) and needsConfirm have the identical shape of gap as the
+// validateList family just closed - an array-only method (.includes, .some)
+// called on a list-typed argument the caller controls, with no
+// Array.isArray first. Flagged in the Fixrunde 2 report rather than folded
+// in unasked; now closed on the coordinator's explicit instruction. An
+// array-like plain object ({length, 0, 1, ...}) throws at each of these
+// (none of the three has a length-only fast path the way validAPINode's
+// rootUsers/rootRoles sum did, so every case here is a throw, not a silent
+// wrong accept - verified empirically below, not assumed from the Wichtig 4
+// pattern). needsConfirm's safe default for a malformed u.roles is `true`
+// (needs confirming), matching its own existing "unknown user always
+// confirms" rule - a malformed value is exactly the kind of doubt that rule
+// already exists for. matches's safe default is `false` (no match), which is
+// the safe direction on both of its call sites: a malformed r.black no
+// longer forces a confirm by accident, but does not skip it either (falls
+// through to the level check); a malformed r.white no longer grants a
+// bypass by accident either.
+test("mayRoot, matches and needsConfirm refuse array-like lists instead of throwing", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const adminId = "EREREREREREREREREREREQ";
+    const key = () => ({
+      id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+      pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const arrayLike = (...items) => {
+      const o = { length: items.length };
+      items.forEach((v, i) => { o[i] = v; });
+      return o;
+    };
+    const safe = (fn) => { try { return { threw: false, value: fn() }; } catch { return { threw: true, value: null }; } };
+
+    const list = (userRoles, roleWhite) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: adminId,
+      rp: { id: "", origins: [] },
+      users: [{ id: adminId, name: "admin", roles: userRoles, keys: [key()] }],
+      roles: [
+        { name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false },
+        { name: "white", level: "critical", black: [], white: roleWhite, passkeyOnly: false, passwordToo: false },
+      ],
+      nodes: [{ id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(0),
+        url: "", tls: new Uint8Array(0), rootUsers: [adminId], rootRoles: ["admin"] }],
+      stores: [], auto: [],
+    });
+    const withControllerRoots = (rootUsers, rootRoles) => ({
+      ...list(["admin"], []),
+      nodes: [{ id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(0),
+        url: "", tls: new Uint8Array(0), rootUsers, rootRoles }],
+    });
+    // rootUsers deliberately does NOT list adminId here: mayRoot's first
+    // check (n.rootUsers.includes(userID)) must fail so the call actually
+    // reaches u.roles.some(...), the line under test - with the list()
+    // default (rootUsers: [adminId]) the first check alone would return
+    // true and the malformed u.roles would never be read at all.
+    const userRolesCase = (userRoles) => ({
+      ...list(userRoles, []),
+      nodes: [{ id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(0),
+        url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: ["admin"] }],
+    });
+
+    return {
+      mayRootRootUsers: safe(() => t.mayRoot(withControllerRoots(arrayLike(adminId), []), adminId, "ctl-1")),
+      mayRootRootRoles: safe(() => t.mayRoot(withControllerRoots([], arrayLike("admin")), adminId, "ctl-1")),
+      mayRootUserRoles: safe(() => t.mayRoot(userRolesCase(arrayLike("admin")), adminId, "ctl-1")),
+      needsConfirmUserRoles: safe(() => t.needsConfirm(list(arrayLike("admin"), []), adminId, { app: "a", action: "b" })),
+      needsConfirmWhite: safe(() => t.needsConfirm(
+        { ...list(["white"], arrayLike("app/a")), users: [{ id: adminId, name: "admin", roles: ["white"], keys: [key()] }] },
+        adminId, { app: "a", action: "b", critical: true },
+      )),
+    };
+  });
+  const flat = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.threw ? "threw" : v.value]));
+  expect(flat).toEqual({
+    mayRootRootUsers: false, mayRootRootRoles: false, mayRootUserRoles: false,
+    needsConfirmUserRoles: true, // malformed roles: doubt, same direction as "unknown user"
+    needsConfirmWhite: true, // malformed white-list must not excuse a critical op either
+  });
+});
+
 // Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
 // tlsPin had no test calling them - the previous report described their
 // doubt-case behavior (unknown user/role/node grant nothing) by reading the
