@@ -8,12 +8,19 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 )
 
 // TestLockTakeAgainWithTheSameTime is the trap of the UPDATE-then-INSERT
 // shape: MariaDB counts changed rows by default, so taking a lock again with
 // the very same time would look like "no row" and end in an INSERT that
 // fails. The driver is set to count matched rows instead; this test holds it.
+//
+// On SQLite it holds nothing of the sort, and that is all this run measures:
+// SQLite counts every row its UPDATE went through, so the second take passes
+// here whatever MariaDB would answer. No MariaDB connection is opened
+// anywhere in this repository yet, so the sentence above is a promise to the
+// task that writes that DSN and not a measurement of today.
 func TestLockTakeAgainWithTheSameTime(t *testing.T) {
 	s := open(t)
 	const now, until = 1790000000, 1790000060
@@ -55,9 +62,36 @@ func TestOnceUseTellsApart(t *testing.T) {
 	}
 }
 
-// TestOnceAndLockBounds nails every bound of these two from both sides:
-// exactly on it goes through, one byte or one second past it is refused. A
-// bound measured only from the far side could sit anywhere.
+// TestAnExpiredAndSpentValueIsNotFound pins what the contract leaves open. It
+// names both answers for OnceUse and does not order them, so a value that is
+// spent and past its time could be either; two stores of one contract that
+// disagree here would make the conformance test of task 7 impossible to
+// write. The order is taken from memstore, the reference beside this store,
+// and taken by running it instead of by reading it.
+//
+// This one test came with the code and not before it, unlike the rest of this
+// file: the question only turned up while the switch of OnceUse was read back
+// against its own comment.
+func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
+	const expires, after = 1790000100, 1790000200
+	for name, s := range map[string]dbapi.Store{"sqlstore": open(t), "memstore": memstore.New()} {
+		value := bytes.Repeat([]byte{7}, 32)
+		if err := s.OnceCreate(ctx, dbapi.OnceNonce, value, "u-admin", expires); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if data, err := s.OnceUse(ctx, dbapi.OnceNonce, value, expires-1); err != nil || data != "u-admin" {
+			t.Fatalf("%s, first use: %q, %v", name, data, err)
+		}
+		if _, err := s.OnceUse(ctx, dbapi.OnceNonce, value, after); !errors.Is(err, dbapi.ErrNotFound) {
+			t.Errorf("%s, spent and expired: %v, want ErrNotFound", name, err)
+		}
+	}
+}
+
+// TestOnceAndLockBounds nails every bound of these two from both sides: the
+// longest key and the shortest span still go through, one byte more and one
+// second less do not. A bound measured only from the far side could sit
+// anywhere.
 func TestOnceAndLockBounds(t *testing.T) {
 	s := open(t)
 	key := strings.Repeat("k", sqlstore.MaxKey)
@@ -137,7 +171,7 @@ func TestALongValueNeverReachesTheDatabase(t *testing.T) {
 // TestOncePurgeFreesTheValueAgain measures both sides of the purge: the value
 // that expires exactly at now goes, the one a second later stays. That the
 // row is really gone is measured by writing the same value again - a value
-// still there gives ErrUsed, used or not.
+// still there gives ErrUsed although nobody ever used it.
 func TestOncePurgeFreesTheValueAgain(t *testing.T) {
 	s := open(t)
 	const now = 1790000100
@@ -203,15 +237,16 @@ func TestOnceCreateTakesTheSeeds(t *testing.T) {
 			t.Errorf("%.20q: %v", c.kind, err)
 		}
 	}
-	if taken < 5 {
-		t.Errorf("only %d of the seeds were taken; the target is measuring nothing but refusals", taken)
+	if taken != 5 {
+		t.Errorf("%d of the ten seeds were taken, and five of them are meant to be", taken)
 	}
 }
 
-// FuzzOnceCreate: whatever comes in, OnceCreate refuses it as ErrInvalid or
-// writes a row that OnceUse finds again and gives back unchanged. Which of
-// the two it has to be is decided from the lengths alone and measured on
-// every input, so nothing the fuzzer sends can make the target say less.
+// FuzzOnceCreate: whatever comes in, OnceCreate refuses it as ErrInvalid, or
+// it takes it - the first time by writing a row that OnceUse finds again and
+// gives back unchanged, a second time with ErrUsed. Which of the two it has
+// to be is decided from the lengths alone and measured on every input, so
+// nothing the fuzzer sends can make the target say less.
 func FuzzOnceCreate(f *testing.F) {
 	for _, c := range onceSeeds() {
 		f.Add(c.kind, c.value, c.data)

@@ -151,23 +151,13 @@ func wait(ctx context.Context, try int) bool {
 	}
 }
 
-// Not written yet: Once..., Lock... (task 5), User..., Session..., Pending...
-// (task 6), Log... (task 7). Each line goes away with its task. No test takes
-// the answer of one of them for a final one; the single test that calls them,
-// TestTheRestIsNotWrittenYet, holds nothing but that they are still
-// provisional, and it is meant to go red the moment one of them is built -
-// that is what takes a finished method out of the list below instead of
-// leaving it lying here.
-
-func (s *store) OnceCreate(context.Context, string, []byte, string, int64) error {
-	return errors.ErrUnsupported
-}
-
-func (s *store) OnceUse(context.Context, string, []byte, int64) (string, error) {
-	return "", errors.ErrUnsupported
-}
-
-func (s *store) OncePurge(context.Context, int64) error { return errors.ErrUnsupported }
+// Not written yet: User..., Session..., Pending... (task 6), Log... (task 7).
+// Each line goes away with its task; Once... and Lock... went with task 5 and
+// stand in once.go now. No test takes the answer of one of them for a final
+// one; the single test that calls them, TestTheRestIsNotWrittenYet, holds
+// nothing but that they are still provisional, and it is meant to go red the
+// moment one of them is built - that is what takes a finished method out of
+// the list below instead of leaving it lying here.
 
 func (s *store) UserPut(context.Context, dbapi.User) error { return errors.ErrUnsupported }
 
@@ -208,9 +198,3 @@ func (s *store) LogAdd(context.Context, core.LogEntry) error { return errors.Err
 func (s *store) LogQuery(context.Context, core.LogQuery) ([]core.LogEntry, error) {
 	return nil, errors.ErrUnsupported
 }
-
-func (s *store) LockTake(context.Context, string, string, int64, int64) (bool, error) {
-	return false, errors.ErrUnsupported
-}
-
-func (s *store) LockFree(context.Context, string, string) error { return errors.ErrUnsupported }
