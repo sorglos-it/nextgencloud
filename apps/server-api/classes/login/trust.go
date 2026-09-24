@@ -13,8 +13,9 @@ import (
 // key and every node of the installation.
 //
 // The session comes first and the number after it, so a request without one is
-// turned away before anything of it is read. What the session holds is nothing
-// this path needs; that there is one is the whole of it.
+// turned away before anything of it is read. One thing of the session is used
+// after that: the trust list Live brought up to date in order to decide on it,
+// which is the list this answer is then built from.
 //
 // Three answers of its own besides the chain, all of them from the contract's
 // table: a number that is no version is E_PROTOCOL, the one past the newest is
@@ -34,8 +35,9 @@ func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The version Live brought up to date, handed on rather than fetched
-	// again: one request looks at the trust rows once, and the chain that goes
-	// out is the very list this session was decided on.
+	// again: the list is brought up to date once for this request and not
+	// twice, and the chain that goes out is the very one this session was
+	// decided on.
 	chain, err := h.S.Chain(ctx, live.Trust, from)
 	if err != nil {
 		// httpapi.Fault is the one place that picks the code for an error of
