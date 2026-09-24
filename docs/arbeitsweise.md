@@ -380,6 +380,21 @@ Und wenn du den Gegenfall gebaut hast und er fällt: schreib in den Bericht, was
 er kostet. „An zwölf Fällen gemessen, drei unterscheiden sich" ist eine Aussage.
 „Es gibt keinen anderen Weg" ist keine.
 
+**Ein widerlegtes „geht nicht" kippt die Entscheidung nicht — es verbessert
+ihren Grund.** Ein Umsetzer schrieb, keine Prüfung in seinem Paket könne einem
+Fehler ansehen, auf wessen Seite er entstand. Der Prüfer hat zwei gebaut, die
+alle vier eigenen Fälle fangen. Die Entscheidung, sie dort **nicht** einzubauen,
+blieb trotzdem richtig — aus einem Grund, den vorher keiner der beiden hatte:
+die vier Fälle hängen allein an der Konfiguration, und die ist für den ganzen
+Prozess konstant. Ein Kanal kann daran nicht scheitern, ohne dass alle daran
+scheitern. Der Platz für die Prüfung ist der Programmstart, nicht der
+Verbindungsaufbau — dort kostete sie einen Rechenschritt an der teuersten
+Stelle, je Verbindung.
+
+Deshalb ist „geht nicht" auch als Begründung schlecht, selbst wenn sie zufällig
+stimmt: sie sagt nichts über das Problem. „Gehört woanders hin, weil …" hält,
+und hält auch dann noch, wenn jemand den Weg findet.
+
 ---
 
 ## Kurzfassung für den Anfang einer Aufgabe
