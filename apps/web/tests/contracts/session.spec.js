@@ -3,8 +3,45 @@ import { vectors } from "../fixtures/vectors.js";
 
 const v = vectors("session.json");
 
+// Does the Web Crypto API of this engine know Ed25519? Chromium here does,
+// and proof.spec.js says the same of Chrome, Safari 17 and Firefox 130; the
+// WebKit that Playwright brings answers NotSupportedError to importKey -
+// measured for this list's own keys, for "raw" and for "spki" alike. The
+// first test needs both: trust.parseList imports every passkey of this list
+// as spki (proof.importPublic), and sign.verify imports the node's signing
+// key as raw. Without them parseList refuses the list before the first
+// certificate is looked at, and no right signature can come out true - which
+// is the right answer for an engine that cannot check, and no test of this
+// contract (measured there: "trust: invalid list" from the first line, and
+// "session: bad signature" from a hand-built list that gets past it). The
+// four tests below it need no Ed25519 and run on every engine.
+//
+// Probed with a real key out of this vector's own list, as trust.spec.js and
+// proof.spec.js probe: an engine that has Ed25519 but rejects a made-up
+// 32-byte value would otherwise be skipped for the wrong reason.
+async function hasEd25519(shell, signed) {
+  return shell.evaluate(async (s) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const list = JSON.parse(new TextDecoder().decode(b64decode(s.payload)));
+    let pub = null;
+    for (const u of list.users) {
+      for (const k of u.keys) {
+        if (k.kind === "password") pub = k.pub;
+      }
+    }
+    try {
+      await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, signed);
+}
+
 test("the API certificate is checked against the trust list", async ({ shell }) => {
   test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no signature");
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const t = await import("/assets/js/contracts/trust.js");

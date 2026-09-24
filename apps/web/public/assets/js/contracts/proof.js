@@ -111,8 +111,11 @@ export const validRPID = (s) => typeof s === "string" && s !== "" && s.length <=
 export const saltBytes = (s) => b64decode(s);
 
 // validKeyID reports whether s names a user key: base64url of 16 bytes, as
-// sign.keyID writes it (Go: proof.ValidKeyID).
-function validKeyID(s) {
+// sign.keyID writes it (Go: proof.ValidKeyID). Exported since task 8, where
+// session.validatePasskeyRef holds the key ID of a passkey to it: a passkey
+// the login answer offers and the proof the shell then builds name the key
+// by the same rule, as Go's PasskeyRef.Validate and Proof.Validate do.
+export function validKeyID(s) {
   // The length comes first, so an oversized key id is never decoded.
   if (typeof s !== "string" || s.length !== KEY_ID_CHARS) return false;
   try {
