@@ -18,8 +18,8 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
-// AppLookup returns the row of an app this controller runs, or an error for
-// one it does not; state.Store.App answers it.
+// AppLookup returns the row of an app this controller runs; any error says
+// there is no row to open a channel for. state.Store.App answers it.
 type AppLookup interface {
 	App(ctx context.Context, id string) (dbapi.App, error)
 }
@@ -30,12 +30,15 @@ type TaskOnce interface {
 	UseTask(ctx context.Context, id []byte, expires, now int64) error
 }
 
-// Request is one OPEN to decide on. Apps and Tasks are the controller's own
-// store: every rule and every task ID comes from there, never from the OPEN.
+// Request is one OPEN to decide on. Apps and Tasks are this controller's own
+// store — the manifest an app channel is judged by, and the IDs of the tasks
+// that have run — and both must be set.
 type Request struct {
 	// Payload is the OPEN payload as it arrived on the tunnel, unchanged.
 	// This package parses it itself, because only the parse that checks the
-	// client certificate says who opened the channel.
+	// client certificate says who opened the channel: a tunnel.Opened that
+	// came from anywhere else carries no session, and every channel would
+	// look like one without a user.
 	Payload []byte
 	// List is the newest trust list version this controller has verified.
 	// Without it nothing can be checked at all.
@@ -95,9 +98,10 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 			return refuse(wire.CodeNotFound)
 		}
 		if withUser {
-			// With a certificate the shell is the opener, and it may open
-			// only what core.ShellOpens lists: stage, license and
-			// ngc.users/controller/trust are the API's alone.
+			// The channel carries a certificate, so it is judged as a user's,
+			// and a user opens only what core.ShellOpens allows. What that
+			// leaves of this service — stage, license and
+			// ngc.users/controller/trust — the API opens on its own.
 			if !core.ShellOpens(a) {
 				return refuse(wire.CodeForbidden)
 			}
@@ -106,10 +110,9 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		}
 		rule = core.RuleFor(a)
 	} else {
-		// An app channel always carries the user who opened it; only the core
-		// actions of core.WithoutUser run without one. Refusing before the
-		// lookup keeps a request that can never be allowed away from the
-		// database.
+		// Only the core actions of core.WithoutUser run without a user, so an
+		// app channel without a certificate is refused — before the lookup,
+		// since no answer of the database could let it through.
 		if !withUser {
 			return refuse(wire.CodeForbidden)
 		}
@@ -122,8 +125,8 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		if m, err = store.ParseManifest(app.Manifest); err != nil {
 			return refuse(wire.CodeInternal)
 		}
-		// The rule of an app action comes from that manifest alone, never
-		// from the OPEN or its params.
+		// What the action may demand — root, changes, confirmation — comes
+		// from that manifest alone, never from the OPEN or its params.
 		if rule, err = store.RuleFor(m, open.Action); err != nil {
 			return refuse(wire.CodeNotFound)
 		}
@@ -145,16 +148,16 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 			// signed task cannot open a second channel.
 			if err := r.Tasks.UseTask(ctx, tk.ID, tk.Expires, r.Now); err != nil {
 				if errors.Is(err, dbapi.ErrUsed) {
-					return refuse(wire.CodeVerify)
+					return refuse(wire.CodeVerify) // this task has run already
 				}
-				return refuse(wire.CodeInternal)
+				return refuse(wire.CodeInternal) // the store could not answer
 			}
 		}
 		// The API can attach any certificate it holds. What binds this
 		// channel to the user is the signature of the task, or the
-		// end-to-end handshake whose message 1 stands in the OPEN. With
-		// neither, the channel names no user: nothing here is authorised or
-		// logged by one.
+		// end-to-end handshake that follows, whose message 1 stands in the
+		// OPEN. With neither, the channel names no user: nothing is
+		// authorised or logged by one.
 		if tk != nil || len(open.E2E) != 0 {
 			user = o.Session.Cert().User
 			// session.VerifyClient found the key of this user in this list,
@@ -167,8 +170,9 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 }
 
 // taskCode is the code a failed task check closes the channel with: the shell
-// may ask the user to confirm and try again, it may be told that it has no
-// root permission here, and everything else is a signature that did not hold.
+// may ask the user to confirm and try again, it may be told that the user has
+// no root permission here, and everything else — from a bad signature to a
+// task made out for something else or for another time — ends it as E_VERIFY.
 func taskCode(err error) wire.Code {
 	switch {
 	case errors.Is(err, task.ErrNoTask), errors.Is(err, task.ErrConfirm):
