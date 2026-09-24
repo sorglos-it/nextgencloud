@@ -1,6 +1,7 @@
 package login
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -25,6 +27,39 @@ import (
 // so one of them per five minutes says everything there is to say -- and every
 // failed login would say it, which is a line per wrong password.
 const lockWarnTTL = 300
+
+// blindKey and blindSig are what a proof by a key nobody holds is measured
+// against. session.VerifyClient turns such a proof away before it ever checks
+// a signature, where a proof by a key somebody holds costs a whole
+// verification -- and login/start hands the key ID of a passkey out, real for
+// a name that exists and made up for one nobody has (session.PasskeyRef). The
+// difference is the question "does this name exist" once more, asked with a
+// clock: measured at 108 µs against 40 µs on one machine before this was here.
+//
+// The key is this package's own, from a fixed seed that is worth nothing --
+// nothing of NGC is signed with it, and the answer of the verification is
+// thrown away. blindSig really is a signature, so the verification runs to its
+// end instead of stopping at one that is malformed.
+var blindKey, blindSig = blindPair()
+
+func blindPair() (ed25519.PublicKey, []byte) {
+	priv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x5B}, ed25519.SeedSize))
+	return priv.Public().(ed25519.PublicKey), ed25519.Sign(priv, nil)
+}
+
+// blindProof does one signature verification over the bytes the real one would
+// have covered. It gives the answer back so that the call is not work a
+// compiler may drop; it is never true, and no caller reads it.
+//
+// It is one Ed25519 verification whatever the proof says it is. A passkey
+// proof the list knows runs through session/proof's WebAuthn assertion
+// instead, which hashes about as much and verifies one signature as well, but
+// which also turns a malformed assertion away before that -- so a passkey
+// proof whose client data is nonsense still costs less with a key the list
+// holds than without one. What that leaves is written in the report.
+func blindProof(payload []byte) bool {
+	return ed25519.Verify(blindKey, sign.Message(sign.PurposeClientCert, payload), blindSig)
+}
 
 // errSignKey reports a signing key of the wrong size in the configuration;
 // config.API.Validate refuses such a file, so it can only mean the key was
@@ -123,6 +158,13 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 
 	verified, err := session.VerifyClient(f.Cert, f.Proof, v.List, now)
 	if err != nil {
+		// The work the real path would have done and this one did not: a key
+		// nobody holds is turned away before any signature is looked at. Only
+		// there -- session.ErrCert is the certificate itself being refused,
+		// which happens before the key is even reached and costs both alike.
+		if !known && !errors.Is(err, session.ErrCert) {
+			_ = blindProof(f.Cert)
+		}
 		deny()
 		return
 	}
