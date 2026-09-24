@@ -414,9 +414,12 @@ func TestCheckAppChannel(t *testing.T) {
 	})
 	t.Run("every channel changes something", func(t *testing.T) {
 		// store.RuleFor says Changes for every app action, and a role at
-		// level hardcore has every change confirmed.
-		f.list.Roles[0].Level = trust.LevelHardcore
-		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, testService, testAction))))
+		// level hardcore has every change confirmed. On a fixture of its
+		// own: raising the level of the shared one would decide the other
+		// channels here too, and only the order in this file would hide it.
+		h := newFixture(t)
+		h.list.Roles[0].Level = trust.LevelHardcore
+		d, cl := Check(context.Background(), h.request(h.withUser(t, h.appOpen(testApp, testService, testAction))))
 		wantClose(t, d, cl, wire.CodeConfirm)
 	})
 	t.Run("app this controller does not run", func(t *testing.T) {
