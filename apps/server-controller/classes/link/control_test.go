@@ -82,6 +82,9 @@ func TestControlSendsNothingTheAPIMustRefuse(t *testing.T) {
 		{"notify", wire.CtlNotify, core.Notice{Level: "laut", Text: "Etwas ist geschehen."}},
 		{"bye", wire.CtlBye, tunnel.Status{DiskFree: 1}},
 		{"status without a body", wire.CtlStatus, nil},
+		// A second hello: the contract lets a controller send one, and the API
+		// would end the link over it all the same, so it stays here.
+		{"a second hello", wire.CtlHello, tunnel.Hello{Version: "1.0.0", Contract: tunnel.Contract}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			sent := make(chan []byte, 1)

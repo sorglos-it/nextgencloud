@@ -326,11 +326,12 @@ func TestOSRelease(t *testing.T) {
 		{name: "a version that is no name", content: "ID=debian\nVERSION_ID=\"13 (trixie)\"\n"},
 		{name: "the last line without an end", content: "ID=debian\nVERSION_ID=13", want: "debian-13"},
 		{name: "windows line ends", content: "ID=debian\r\nVERSION_ID=\"13\"\r\n", want: "debian-13"},
-		// Ten megabytes in one line is no line of this file, and ten megabytes
-		// of lines are more than the reader takes: both end without an answer,
-		// and neither costs more than the 64 KiB the reader is given.
+		// Ten megabytes in one line is no line of this file, and a megabyte of
+		// lines is more than the reader takes: both end without an answer,
+		// although the second one has the answer standing in it - behind the
+		// 64 KiB the reader is given, where nothing of this file reaches.
 		{name: "ten megabytes in one line", content: strings.Repeat("x", 10<<20), wantErr: true},
-		{name: "ten megabytes of lines", content: strings.Repeat("x=y\n", 2<<20) + "ID=debian\nVERSION_ID=13\n"},
+		{name: "a megabyte of lines and the answer behind it", content: strings.Repeat("x=y\n", 1<<18) + "ID=debian\nVERSION_ID=13\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			p := filepath.Join(dir, "os-release")
@@ -355,17 +356,55 @@ func TestOSRelease(t *testing.T) {
 	}
 }
 
+// osReleaseSeeds are the fixed inputs FuzzOSRelease starts from. They stand
+// here and not in the target itself because the test below measures over them
+// what a run of the fuzzer cannot: how many of them reach the accepting way at
+// all. The fuzzer steers its own inputs, and the rejecting ways carry the
+// coverage, so a share it counted would sink whatever the parser does.
+var osReleaseSeeds = [][]byte{
+	[]byte("ID=debian\nVERSION_ID=\"13\"\n"),
+	[]byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"),
+	[]byte("ID=\"\"\nVERSION_ID=\n"),
+	[]byte("ID=debian\nnonsense\n=\nVERSION_ID=13"),
+	[]byte(strings.Repeat("x", 70<<10)),
+}
+
+// More than half the seeds have to come out with a name. The check of the
+// contract inside FuzzOSRelease only runs on an answer, so seeds that all ended
+// empty would leave it a clean run that checked nothing.
+func TestOSReleaseSeedsReachTheAnswer(t *testing.T) {
+	named := 0
+	for _, s := range osReleaseSeeds {
+		got, err := parseOSRelease(s)
+		if err != nil {
+			continue
+		}
+		if got != "" {
+			named++
+		}
+	}
+	if named*2 <= len(osReleaseSeeds) {
+		t.Errorf("%d of %d seeds come out with a name, want more than half", named, len(osReleaseSeeds))
+	}
+}
+
 // Whatever the file says, what comes out is either nothing or a value the hello
 // of the contract carries - the parser of the API is what decides that, not a
 // rule written twice. The canary runs the same way at every input and cannot be
 // steered away: a parser that answered nothing at all for everything would look
 // like a clean run otherwise.
+//
+// One thing to know before reading a run of this: the counter stands still at
+// "0/sec" for as long as a worker is minimizing a newly interesting input, and
+// this parser is handed inputs of 64 KiB, which cost about a millisecond each -
+// so a minimization of one of them takes the default minute and the run looks
+// stalled. It is not. Measured at the same commit: with -fuzzminimizetime 100x
+// the same target holds about 225 000 inputs a second and 4.5 million of them
+// in twenty seconds.
 func FuzzOSRelease(f *testing.F) {
-	f.Add([]byte("ID=debian\nVERSION_ID=\"13\"\n"))
-	f.Add([]byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"))
-	f.Add([]byte("ID=\"\"\nVERSION_ID=\n"))
-	f.Add([]byte("ID=debian\nnonsense\n=\nVERSION_ID=13"))
-	f.Add([]byte(strings.Repeat("x", 70<<10)))
+	for _, s := range osReleaseSeeds {
+		f.Add(s)
+	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if canary, err := parseOSRelease([]byte("ID=debian\nVERSION_ID=\"13\"\n")); err != nil || canary != "debian-13" {
 			t.Fatalf("the canary reads %q (%v), want debian-13", canary, err)

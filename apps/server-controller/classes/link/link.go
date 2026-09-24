@@ -197,6 +197,10 @@ type Tunnel struct {
 	c    *websocket.Conn
 	tr   *noisep.Transport
 	peer tunnel.Hello
+	// speaks is the version of the contract both ends talk: the older of the
+	// two (control.go). Like peer it is written in Dial, before the tunnel is
+	// handed out, and only read afterwards.
+	speaks int
 	// frames is where every frame of a channel goes (frameHook). Dial puts
 	// the channel machinery of this tunnel here; only a test puts something
 	// else in, between Dial and Run and never later - Run reads it and
@@ -336,6 +340,13 @@ func Dial(ctx context.Context, cfg Config) (*Tunnel, error) {
 		return nil, err
 	}
 	t.peer = peer
+	// The two ends settle which version of the contract they speak, and a
+	// tunnel whose ends are too far apart ends here rather than later on a
+	// message one of them cannot read.
+	if err := t.agree(peer); err != nil {
+		t.Close()
+		return nil, err
+	}
 	return t, nil
 }
 
@@ -575,9 +586,16 @@ func (t *Tunnel) write(ctx context.Context, f wire.Frame) error {
 
 // Control sends one control message on channel 0. Only what a controller may
 // send on a tunnel goes out (wire.ControlAllowed): a type the API would have
-// to end the link over is refused here.
+// to end the link over is refused here, and so is a body its own contract does
+// not take (checkBody in control.go).
+//
+// The hello is refused too, although the contract lets a controller send one.
+// It is the first message of a tunnel and comes once (tunnel.Hello), and Run
+// ends the link over a second one from the API - so a second one from this side
+// is a message the API would have to end the link over as well. The dial sends
+// the one hello there is; whoever wants to greet again dials again.
 func (t *Tunnel) Control(typ string, body any) error {
-	if !wire.ControlAllowed(wire.LinkTunnel, false, typ) {
+	if !wire.ControlAllowed(wire.LinkTunnel, false, typ) || typ == wire.CtlHello {
 		return ErrConfig
 	}
 	ctx, cancel := context.WithTimeout(t.life, WriteTimeout)
@@ -601,6 +619,12 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 		if !bytes.Equal(b, []byte("null")) {
 			raw = b
 		}
+	}
+	// Nothing leaves this side that the API would have to refuse: the body goes
+	// through the parser of its contract first (checkBody). This stands here
+	// and not in Control, so the hello of the dial goes through it too.
+	if err := checkBody(typ, raw); err != nil {
+		return err
 	}
 	p, err := json.Marshal(wire.Control{T: typ, B: raw})
 	if err != nil {

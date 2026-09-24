@@ -1394,8 +1394,11 @@ func TestControlSendsNoNullBody(t *testing.T) {
 		sent <- bytes.Clone(f.Payload)
 		a.quiet()
 	})
+	// The goodbye is the one message of this contract that carries no body, so
+	// it is the one a typed nil may be handed to: everything else is refused
+	// for its body before the null could ever reach the wire (checkBody).
 	var nothing *tunnel.Status // a typed nil: not nil in an interface
-	if err := tn.Control(wire.CtlStatus, nothing); err != nil {
+	if err := tn.Control(wire.CtlBye, nothing); err != nil {
 		t.Fatalf("Control: %v", err)
 	}
 	select {
@@ -1403,7 +1406,7 @@ func TestControlSendsNoNullBody(t *testing.T) {
 		if bytes.Contains(p, []byte("null")) {
 			t.Errorf("the controller sent %s", p)
 		}
-		if c, err := wire.ParseControl(p); err != nil || c.T != wire.CtlStatus {
+		if c, err := wire.ParseControl(p); err != nil || c.T != wire.CtlBye {
 			t.Errorf("the API cannot take %s (%v)", p, err)
 		}
 	case <-time.After(30 * time.Second):
