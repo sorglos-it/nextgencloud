@@ -642,9 +642,9 @@ func (c *checker) firstStmtIn(n ast.Node, seen map[*types.Func]bool, seenLit map
 // This is the one thing no run of this repository can measure. Two steps
 // without a transaction are caught by TestOnlyOneUseGetsTheValue, but only on
 // a machine of two processors or more; two steps inside one transaction are
-// caught by nothing at all, because SQLite's own transactions save such a
-// store and MariaDB is in no run here. Read from the source it is neither
-// flaky nor tied to a machine.
+// caught by no run at all, because SQLite's own transactions save such a
+// store and MariaDB is in no run here. Read from the source, both are caught
+// on any machine, and neither answer flutters.
 func (c *checker) onceUseWritesFirst() {
 	for _, file := range c.p.files {
 		for _, d := range file.Decls {

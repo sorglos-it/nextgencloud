@@ -229,11 +229,12 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 // save it, and nothing this test does can tell that apart from a store that
 // is right.
 //
-// That shape, and this one below one processor, are held instead by
-// TestOnceUseDecidesWithItsWrite, which reads the source and asks whether the
-// first statement OnceUse gives the database writes. Both shapes were
-// measured against it, and it caught both where every other test of this
-// package stayed green.
+// That shape, and this one on a machine too narrow for it, are held instead
+// by TestOnceUseDecidesWithItsWrite, which reads the source and asks whether
+// the first statement OnceUse gives the database writes. Both were measured
+// against it: the transactional one it caught while every other test of this
+// package stayed green, and the one without a transaction it caught at a
+// single processor, where this test measures nothing.
 func TestOnlyOneUseGetsTheValue(t *testing.T) {
 	const racers, rounds = 32, 400
 	s := open(t)
