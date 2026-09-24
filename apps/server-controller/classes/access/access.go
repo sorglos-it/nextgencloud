@@ -81,9 +81,9 @@ type Decision struct {
 // decision or the CLOSE the channel ends with, never both: a refusal says
 // nothing but its code.
 func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
-	// A Request without the store is this program wired wrong. It is worth a
-	// line all the same: the controller runs as root, and a channel of an API
-	// must not be able to end it with a nil access.
+	// A Request without the store is this program wired wrong, and this line
+	// is what keeps the mistake from being fatal: the controller runs as
+	// root, and the next channel an API opens would take it down.
 	if r.Apps == nil || r.Tasks == nil {
 		return refuse(wire.CodeInternal)
 	}
@@ -129,9 +129,10 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 	} else {
 		// A core app ID names no app of this controller: core.Lookup has just
 		// said this is none of their actions, and a manifest may not carry
-		// such an ID at all (store.Manifest.Validate). It would also be the
-		// one channel that carries a certificate without an end-to-end
-		// handshake, which wire.Open.Validate allows only for core app IDs.
+		// such an ID at all (store.Manifest.Validate). It would also be a
+		// channel carrying a certificate without an end-to-end handshake,
+		// which wire.Open.Validate allows only for core app IDs: a user on
+		// the channel with nothing that binds them to it.
 		if wire.CoreApp(open.App) {
 			return refuse(wire.CodeNotFound)
 		}
