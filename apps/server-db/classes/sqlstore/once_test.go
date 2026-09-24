@@ -116,6 +116,58 @@ func TestOnceUseTellsApart(t *testing.T) {
 	}
 }
 
+// TestOnceUseTellsTheKindsApart: the key is (kind, token), so one token may
+// stand under two kinds at once, and both reads after the UPDATE have to name
+// the kind as well - the one that gives the data back (onceRead) and the one
+// that says why nothing matched (onceState). A value that exists only once
+// measures neither of them, and nothing else in this package writes one token
+// under two kinds.
+//
+// onceState is read only when the UPDATE matched nothing, so it needs an
+// expired row of one kind beside a valid row of the other; with two rows in
+// the same state both answers are the same and the kind cannot be seen at
+// all. Each kind takes the expired part in turn below, and the nonce row is
+// written first both times, so no order a read without the kind might fall
+// back on lets both cases through.
+func TestOnceUseTellsTheKindsApart(t *testing.T) {
+	s := open(t)
+	const now, late, early int64 = 1790000150, 1790000200, 1790000100
+	value := bytes.Repeat([]byte{4}, 32)
+	if err := s.OnceCreate(ctx, dbapi.OnceNonce, value, "u-nonce", late); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.OnceCreate(ctx, dbapi.OnceTask, value, "u-task", late); err != nil {
+		t.Fatal(err)
+	}
+	// onceRead: each use gives back its own kind's data, not the other one's.
+	if data, err := s.OnceUse(ctx, dbapi.OnceTask, value, now); err != nil || data != "u-task" {
+		t.Errorf("the task value: %q, %v, want u-task", data, err)
+	}
+	if data, err := s.OnceUse(ctx, dbapi.OnceNonce, value, now); err != nil || data != "u-nonce" {
+		t.Errorf("the nonce value: %q, %v, want u-nonce", data, err)
+	}
+	// onceState: the reason for a miss comes from the row of its own kind.
+	for _, c := range []struct {
+		spent       string
+		token       byte
+		nonce, task int64
+	}{
+		{dbapi.OnceTask, 5, late, early},
+		{dbapi.OnceNonce, 6, early, late},
+	} {
+		token := bytes.Repeat([]byte{c.token}, 32)
+		if err := s.OnceCreate(ctx, dbapi.OnceNonce, token, "n", c.nonce); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.OnceCreate(ctx, dbapi.OnceTask, token, "t", c.task); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.OnceUse(ctx, c.spent, token, now); !errors.Is(err, dbapi.ErrNotFound) {
+			t.Errorf("the expired %s value beside a valid one of the other kind: %v, want ErrNotFound", c.spent, err)
+		}
+	}
+}
+
 // TestAnExpiredAndSpentValueIsNotFound pins what the contract leaves open. It
 // names both answers for OnceUse and does not order them, so a value that is
 // spent and past its time could be either; two stores of one contract that
