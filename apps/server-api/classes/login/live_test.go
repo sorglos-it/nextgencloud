@@ -267,6 +267,82 @@ func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 	}
 }
 
+// threeVersions is an installation whose trust list has three versions, with a
+// session of the password user open. Three is the fewest that lets a hole sit
+// in the middle of the chain, which is where the two nodes below meet it at
+// different steps.
+func threeVersions(t *testing.T) (*Handler, string) {
+	t.Helper()
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	second := fx.Passkey.Sign(t, trusttest.Next(t, fx.Signed))
+	if _, err := h.S.AddVersion(ctx, second); err != nil {
+		t.Fatalf("version 2: %v", err)
+	}
+	if _, err := h.S.AddVersion(ctx, fx.Passkey.Sign(t, trusttest.Next(t, second))); err != nil {
+		t.Fatalf("version 3: %v", err)
+	}
+	return h, cookie
+}
+
+// TestOneDamageIsOneAnswerOnEveryNode holds one fault of one installation to
+// one answer, whichever node of it answers.
+//
+// A version missing from the trust rows is met at two different steps. A node
+// with nothing cached walks into it while it brings the list up to date
+// (state.Refresh, inside Live): it reads version 1, misses 2 and finds 3 above
+// it. A node that is up to date already walks past it there -- it asks only
+// above its newest -- and meets it when it reads the rows out for the answer
+// (state.Chain). Two steps, and before this two answers for the one hole: 503
+// on the cold node, 500 on the warm one. Whoever reads that learns which node
+// he reached, not what is wrong with the installation.
+//
+// The second damage is the other class, and the one httpapi.Fault has to keep
+// apart from the first: a store that answers nothing is over when it answers
+// again, which is E_UNREACHABLE, and it says so on both nodes. Without that
+// arm the one place that picks the code would answer a store that is down like
+// a database that is broken.
+func TestOneDamageIsOneAnswerOnEveryNode(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		damage func(t *testing.T, h *Handler)
+		status int
+		code   wire.Code
+	}{
+		{"a version is missing from the rows", func(t *testing.T, h *Handler) {
+			if err := h.S.DB.BlobDelete(ctx, dbapi.BlobTrust, "2"); err != nil {
+				t.Fatalf("the hole: %v", err)
+			}
+		}, 500, wire.CodeInternal},
+		{"the store answers no trust row at all", func(_ *testing.T, h *Handler) {
+			h.S.DB = noTrust{h.S.DB}
+		}, 503, wire.CodeUnreachable},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			warm, cookie := threeVersions(t)
+			c.damage(t, warm)
+			// The cold node is built after the damage and shares the store, so
+			// it meets the same installation with an empty cache.
+			cold := New(state.New(warm.S.Cfg, warm.S.DB, warm.S.Box, warm.S.Pin))
+			cold.S.Now = warm.S.Now
+			for _, node := range []struct {
+				what string
+				h    *Handler
+			}{{"the warm node", warm}, {"the cold node", cold}} {
+				w := httptest.NewRecorder()
+				node.h.Trust(w, getCookie(session.PathTrust+"?from=1", cookie))
+				if w.Code != c.status {
+					t.Fatalf("%s answered %d %s, want %d", node.what, w.Code, w.Body, c.status)
+				}
+				cl, err := wire.ParseClose(w.Body.Bytes())
+				if err != nil || cl.Code != c.code {
+					t.Fatalf("%s answered %q (%v), want %q", node.what, cl.Code, err, c.code)
+				}
+			}
+		})
+	}
+}
+
 // TestLogoutEndsASessionTheRestOfLiveCannotRead holds the logout to the one
 // thing it is for: ending the session. Removing the row of one's own cookie
 // wants neither the trust list nor a proof that still reads back, so neither
