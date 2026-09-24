@@ -748,21 +748,20 @@ func TestABoundBitesBeforeTheWork(t *testing.T) {
 // it, every test of behaviour still passes, and the guard of takeTable is
 // gone without a word.
 //
-// Measured are the four functions that carry the mark, each at the place it
-// stands in a call: checkStatement(statement, who), measure(statement, who),
-// fill(dialect, statement, who) and takeTable(cursor, who, statement). At
+// Measured is every function of this package that takes a who, and the list
+// of them is not written by hand: go/types is asked which ones they are, so a
+// function that gets the mark tomorrow is measured the day it is written. At
 // each of them the who is either one of the two constants or the who the
 // function around the call got itself and hands on - nothing else, and no
-// value at all. fromRunner stands exactly once, in bootstrap, which makes the
-// two tables before the first migration can run.
+// value at all. Taking such a function as a value instead of calling it is
+// refused as well. fromRunner stands exactly once, in bootstrap, which makes
+// the two tables before the first migration can run.
 //
 // What an identifier stands for comes from go/types, not from its name: this
 // package has a local w of its own in measure, and only the object behind the
 // name says whether a w at a call is the mark or something else that took the
 // name.
 func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
-	// Where the who stands in a call of each of the four.
-	where := map[string]int{"checkStatement": 1, "measure": 1, "fill": 2, "takeTable": 1}
 	fset := gotoken.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
 	if err != nil {
@@ -785,8 +784,8 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 		Defs:  map[*ast.Ident]types.Object{},
 	}
 	// Nothing asked about here lives outside this package: who, its two
-	// constants and the four functions are all declared in lint.go, so the
-	// imports are left unresolved and the errors that come of that are
+	// constants and every function that carries it are declared in lint.go, so
+	// the imports are left unresolved and the errors that come of that are
 	// ignored. An identifier the reading below cannot resolve is reported.
 	conf := types.Config{
 		Importer:                 nowhere{},
@@ -810,6 +809,65 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 	if whoType == nil {
 		t.Fatal("who is not declared in this package")
 	}
+	// The doors, counted out by go/types instead of by hand: every function of
+	// this package with a parameter of type who, and where that parameter
+	// stands in a call.
+	doors := map[*types.Func]int{}
+	for _, name := range pkg.Scope().Names() {
+		fn, ok := pkg.Scope().Lookup(name).(*types.Func)
+		if !ok {
+			continue
+		}
+		sig, ok := fn.Type().(*types.Signature)
+		if !ok {
+			continue
+		}
+		for i := range sig.Params().Len() {
+			if sig.Params().At(i).Type() != whoType.Type() {
+				continue
+			}
+			if _, twice := doors[fn]; twice {
+				t.Errorf("%s takes the mark twice, and the guard measures one place only", name)
+			}
+			doors[fn] = i
+		}
+	}
+	if len(doors) == 0 {
+		t.Fatal("no function of this package takes a who; the guard would measure nothing")
+	}
+	called := map[*types.Func]int{}
+	callee := map[*ast.Ident]bool{}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok {
+					callee[id] = true
+				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					callee[sel.Sel] = true
+				}
+			}
+			return true
+		})
+	}
+	// A function that carries the mark and is taken as a value is opened
+	// somewhere no reading of arguments can follow.
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || callee[id] || info.Defs[id] != nil {
+				return true
+			}
+			if fn, ok := info.Uses[id].(*types.Func); ok {
+				if _, door := doors[fn]; door {
+					t.Errorf("%s: %s carries the mark and is taken as a value here; "+
+						"what it is then given stands nowhere the guard can read",
+						fset.Position(id.Pos()), fn.Name())
+				}
+			}
+			return true
+		})
+	}
 	runner, seen := 0, 0
 	for _, file := range files {
 		var stack []ast.Node
@@ -827,11 +885,16 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 			if !ok {
 				return true
 			}
-			i, ok := where[fn.Name]
+			obj, ok := info.Uses[fn].(*types.Func)
+			if !ok {
+				return true
+			}
+			i, ok := doors[obj]
 			if !ok {
 				return true
 			}
 			seen++
+			called[obj]++
 			if i >= len(call.Args) {
 				t.Errorf("%s: %s is called without a who", fset.Position(call.Pos()), fn.Name)
 				return true
@@ -861,10 +924,16 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 			return true
 		})
 	}
-	// A guard that measured nothing says nothing: the four functions above
-	// stand at more than one call site each.
-	if seen < 9 {
-		t.Errorf("only %d calls carrying a who were measured", seen)
+	// A guard that measured nothing says nothing. Every door has to be opened
+	// somewhere, and the count follows the doors instead of a number written
+	// down once.
+	if seen < len(doors) {
+		t.Errorf("%d functions carry the mark and only %d calls of them were measured", len(doors), seen)
+	}
+	for fn := range doors {
+		if called[fn] == 0 {
+			t.Errorf("%s carries the mark and nobody calls it", fn.Name())
+		}
 	}
 	if runner != 1 {
 		t.Errorf("%s stands at %d call sites; it belongs at the one that makes ngc_schema and ngc_lock",

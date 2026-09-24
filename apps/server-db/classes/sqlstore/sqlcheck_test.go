@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,24 +15,28 @@ import (
 	"testing"
 )
 
-// The guard of this file reads the package's own source and refuses two
-// things: a statement that is not a constant, and a value that reaches the
-// database as a byte slice from anywhere but blob. That is how "SQL only with
-// placeholders" and "nothing nil where every column is NOT NULL" are kept,
-// instead of trusting everyone to remember them.
+// The guard of this file reads the package's own source and refuses three
+// things: a statement that is not a constant, a value that reaches the
+// database as a byte slice from anywhere but blob, and a way of reaching the
+// driver that it cannot follow. That is how "SQL only with placeholders" and
+// "nothing nil where every column is NOT NULL" are kept, instead of trusting
+// everyone to remember them.
 //
 // It asks go/types what a name stands for, never what it is called: a local
 // variable may carry the name of a constant, and only the object behind the
 // name says which of the two is meant. It reads whole files, not only the
-// bodies of function declarations, so a call in a function literal at a
-// package var is read like any other. What it cannot resolve it reports, so a
+// bodies of function declarations. What it cannot resolve it reports, so a
 // hole comes out as a failure and not as a pass.
 //
+// It reads exactly one package. TestNobodyElseUnderServerDBSpeaksToADatabase
+// draws the line around that: no other package under apps/server-db touches a
+// database without a guard of its own.
+//
 // TestTheGuardCatchesWhatSlippedPast below runs it against testdata/, where
-// four packages carry one hole each. Three of those four were measured green
-// against the guard this one replaces.
+// five packages are written the way this store writes and five carry one hole
+// each. Every hole there was measured green against an earlier guard.
 
-// dbMethods are the ways a statement reaches the driver.
+// dbMethods are the ways a statement or a value reaches the driver.
 var dbMethods = map[string]bool{
 	"Exec": true, "ExecContext": true,
 	"Query": true, "QueryContext": true,
@@ -39,11 +44,11 @@ var dbMethods = map[string]bool{
 	"Prepare": true, "PrepareContext": true,
 }
 
-// stmtPlace is where the statement stands in a call of one of dbMethods:
-// second when a context comes first, which is exactly what Context in the
-// name says. The place is read off the name of the method, never off the name
-// of a variable.
-func stmtPlace(method string) int {
+// skipCtx is how many arguments of such a call stand in front of the
+// statement: one when a context comes first, which is what Context in the
+// name says. It is read off the name of the method, never off the name of a
+// variable.
+func skipCtx(method string) int {
 	if strings.HasSuffix(method, "Context") {
 		return 1
 	}
@@ -52,17 +57,20 @@ func stmtPlace(method string) int {
 
 // modulePath is the import path of this module. Packages under it are read
 // from source, everything else is left unresolved on purpose: every name this
-// guard asks about is declared either in this package or in a struct of the
-// contract, and reading the standard library from source as well was measured
-// at 7.9 s against 5 ms for none of it.
+// guard asks about is declared in this module, and reading the standard
+// library from source as well was measured at 7.9 s against 5 ms for none of
+// it.
 const modulePath = "github.com/sorglos-it/nextgencloud/"
 
-// find is one place the guard refuses. sql tells the two guards apart.
+// find is one place the guard refuses. sql tells the two halves apart: the
+// statement, or the values that go with it.
 type find struct {
 	sql bool
 	pos token.Position
 	msg string
 }
+
+func (f find) String() string { return f.pos.String() + ": " + f.msg }
 
 // pkgSource is one package, parsed and type-checked.
 type pkgSource struct {
@@ -77,13 +85,6 @@ type pkgSource struct {
 type callAt struct {
 	call *ast.CallExpr
 	in   []ast.Node
-}
-
-// atDB is a call that gives the database a statement, and where the statement
-// stands in it. A helper of this package may carry two, as put does.
-type atDB struct {
-	callAt
-	stmt []int
 }
 
 // ownModule resolves the packages of this module from source and nothing
@@ -187,42 +188,6 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// calls are every call of the package, each with the functions it stands in,
-// and callee holds the identifier that names the function of a call. Whole
-// files are read: a call in a function literal at a package var counts like
-// any other.
-func (p *pkgSource) calls() ([]callAt, map[*ast.Ident]bool) {
-	var out []callAt
-	callee := map[*ast.Ident]bool{}
-	for _, file := range p.files {
-		var stack []ast.Node
-		ast.Inspect(file, func(n ast.Node) bool {
-			if n == nil {
-				stack = stack[:len(stack)-1]
-				return false
-			}
-			stack = append(stack, n)
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			var in []ast.Node
-			for _, up := range stack {
-				switch up.(type) {
-				case *ast.FuncDecl, *ast.FuncLit:
-					in = append(in, up)
-				}
-			}
-			out = append(out, callAt{call: call, in: in})
-			if id := calleeIdent(call); id != nil {
-				callee[id] = true
-			}
-			return true
-		})
-	}
-	return out, callee
-}
-
 // calleeIdent is the identifier that names the function of a call, be it
 // plain or a method.
 func calleeIdent(call *ast.CallExpr) *ast.Ident {
@@ -235,146 +200,439 @@ func calleeIdent(call *ast.CallExpr) *ast.Ident {
 	return nil
 }
 
-// guard reads one package and reports every statement that is not a constant
-// and every value that reaches the database as a byte slice from anywhere but
-// blob. It also says how many database calls and how many values it measured:
-// a guard that measured nothing says nothing.
-func guard(p *pkgSource) (finds []find, calls, values int) {
-	all, callee := p.calls()
-	report := func(sql bool, pos token.Pos, format string, a ...any) {
-		finds = append(finds, find{sql: sql, pos: p.fset.Position(pos), msg: fmt.Sprintf(format, a...)})
+// at is one function of the package together with one of its arguments.
+type at struct {
+	fn *types.Func
+	i  int
+}
+
+// where is a value and the functions it was written in, so that a parameter
+// found in it can be traced to the right call sites.
+type where struct {
+	expr ast.Expr
+	in   []ast.Node
+}
+
+// checker holds one run of the guard.
+type checker struct {
+	p      *pkgSource
+	all    []callAt
+	callee map[*ast.Ident]bool
+	decl   map[*types.Func]*ast.FuncDecl
+	made   map[*types.Var][]where // where a variable was given its value
+	prep   map[*types.Var]bool    // variables holding a prepared statement
+	finds  []find
+	calls  int
+	values int
+	stmt   map[at]bool
+	vals   map[at]bool
+	asked  map[*types.Func]bool
+}
+
+func (c *checker) report(sql bool, pos token.Pos, format string, a ...any) {
+	c.finds = append(c.finds, find{sql: sql, pos: c.p.fset.Position(pos), msg: fmt.Sprintf(format, a...)})
+}
+
+// read walks the package once and collects everything the guard needs: every
+// call with the functions around it, which identifiers stand in call
+// position, the declaration of every function, where each variable was given
+// its value, and which variables hold a prepared statement. Whole files are
+// read, so a call in a function literal at a package var counts like any
+// other.
+func (c *checker) read() {
+	for _, file := range c.p.files {
+		var stack []ast.Node
+		ast.Inspect(file, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return false
+			}
+			stack = append(stack, n)
+			var in []ast.Node
+			for _, up := range stack {
+				switch up.(type) {
+				case *ast.FuncDecl, *ast.FuncLit:
+					in = append(in, up)
+				}
+			}
+			switch x := n.(type) {
+			case *ast.CallExpr:
+				c.all = append(c.all, callAt{call: x, in: in})
+				if id := calleeIdent(x); id != nil {
+					c.callee[id] = true
+				}
+			case *ast.FuncDecl:
+				if fn, ok := c.p.info.Defs[x.Name].(*types.Func); ok {
+					c.decl[fn] = x
+				}
+			case *ast.AssignStmt:
+				c.made1(x.Lhs, x.Rhs, in)
+			case *ast.ValueSpec:
+				c.made1(idents(x.Names), x.Values, in)
+			}
+			return true
+		})
 	}
-	// handed holds the functions of this package that give one of their own
-	// parameters to the driver, and which parameter that is.
-	handed := map[*types.Func][]int{}
-	var given []atDB
-	for _, c := range all {
-		sel, ok := c.call.Fun.(*ast.SelectorExpr)
+}
+
+// made1 writes down where the variables on the left were given their value.
+// A variable written in more than one place is written down more than once,
+// and the guard then says so instead of reading the first of them.
+func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
+	if call, ok := single(rhs); ok {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && strings.HasPrefix(sel.Sel.Name, "Prepare") {
+			if v, ok := c.varOf(lhs[0]); ok {
+				c.prep[v] = true
+			}
+		}
+	}
+	if len(lhs) != len(rhs) {
+		return
+	}
+	for i, l := range lhs {
+		if v, ok := c.varOf(l); ok {
+			c.made[v] = append(c.made[v], where{expr: rhs[i], in: in})
+		}
+	}
+}
+
+func (c *checker) varOf(e ast.Expr) (*types.Var, bool) {
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	if v, ok := c.p.info.Defs[id].(*types.Var); ok {
+		return v, true
+	}
+	v, ok := c.p.info.Uses[id].(*types.Var)
+	return v, ok
+}
+
+func idents(names []*ast.Ident) []ast.Expr {
+	out := make([]ast.Expr, len(names))
+	for i, n := range names {
+		out[i] = n
+	}
+	return out
+}
+
+func single(rhs []ast.Expr) (*ast.CallExpr, bool) {
+	if len(rhs) != 1 {
+		return nil, false
+	}
+	call, ok := rhs[0].(*ast.CallExpr)
+	return call, ok
+}
+
+// guard reads one package and reports what it refuses. It also says how many
+// database calls and how many values it measured: a guard that measured
+// nothing says nothing.
+func guard(p *pkgSource) (finds []find, calls, values int) {
+	c := &checker{
+		p: p, callee: map[*ast.Ident]bool{}, decl: map[*types.Func]*ast.FuncDecl{},
+		made: map[*types.Var][]where{}, prep: map[*types.Var]bool{},
+		stmt: map[at]bool{}, vals: map[at]bool{}, asked: map[*types.Func]bool{},
+	}
+	c.read()
+	c.noMethodValues()
+	for _, cl := range c.all {
+		sel, ok := cl.call.Fun.(*ast.SelectorExpr)
 		if !ok || !dbMethods[sel.Sel.Name] {
 			continue
 		}
-		at := stmtPlace(sel.Sel.Name)
-		if at >= len(c.call.Args) {
-			report(true, c.call.Pos(), "%s is called without a statement", sel.Sel.Name)
-			continue
-		}
-		calls++
-		given = append(given, atDB{callAt: c, stmt: []int{at}})
-		p.checkStmt(report, c, c.call.Args[at], handed)
-	}
-	// Every call of a function that hands its parameter to the driver is
-	// asked the same question. A use of such a function that is not a call is
-	// refused: taken as a value it is run where the guard cannot follow.
-	for _, fn := range slices.SortedFunc(maps(handed), func(a, b *types.Func) int {
-		return strings.Compare(a.Name(), b.Name())
-	}) {
-		places := handed[fn]
-		sites := 0
-		for _, c := range all {
-			id := calleeIdent(c.call)
-			if id == nil || p.info.Uses[id] != types.Object(fn) {
+		c.calls++
+		skip := skipCtx(sel.Sel.Name)
+		i := c.stmtIndex(cl.call, sel, skip)
+		if i >= 0 {
+			if i >= len(cl.call.Args) {
+				c.report(true, cl.call.Pos(), "%s is called without a statement", sel.Sel.Name)
 				continue
 			}
-			sites++
-			for _, at := range places {
-				if at >= len(c.call.Args) {
-					report(true, c.call.Pos(), "%s is called without the statement", fn.Name())
-					continue
-				}
-				if !p.constString(c.call.Args[at]) {
-					report(true, c.call.Args[at].Pos(), "%s is given a statement that is no constant", fn.Name())
-				}
-			}
-			given = append(given, atDB{callAt: c, stmt: places})
+			c.checkStmt(cl.call.Args[i], cl.in)
 		}
-		if sites == 0 {
-			report(true, fn.Pos(), "%s hands its argument to the driver, and nobody calls it", fn.Name())
-		}
-		for _, file := range p.files {
-			ast.Inspect(file, func(n ast.Node) bool {
-				id, ok := n.(*ast.Ident)
-				if !ok || p.info.Uses[id] != types.Object(fn) || callee[id] {
-					return true
-				}
-				report(true, id.Pos(), "%s is taken as a value here, and it hands its argument to the driver; "+
-					"what it is given then stands nowhere the guard can read", fn.Name())
-				return true
-			})
-		}
-	}
-	// Every value that goes with a statement.
-	for _, g := range given {
-		first := slices.Min(g.stmt)
-		for i := first + 1; i < len(g.call.Args); i++ {
-			if slices.Contains(g.stmt, i) {
-				continue
-			}
-			arg := g.call.Args[i]
-			if g.call.Ellipsis != token.NoPos && i == len(g.call.Args)-1 && p.forwards(arg, g.in, handed) {
-				continue // the caller's values, measured at the caller
-			}
-			for _, v := range flatten(arg) {
-				values++
-				p.checkValue(report, v)
+		for j := skip; j < len(cl.call.Args); j++ {
+			if j != i {
+				c.scanValue(cl.call.Args[j], cl.in)
 			}
 		}
 	}
-	slices.SortFunc(finds, func(a, b find) int {
-		if c := strings.Compare(a.pos.Filename, b.pos.Filename); c != 0 {
-			return c
+	slices.SortFunc(c.finds, func(a, b find) int {
+		if n := strings.Compare(a.pos.Filename, b.pos.Filename); n != 0 {
+			return n
 		}
 		return a.pos.Offset - b.pos.Offset
 	})
-	return finds, calls, values
+	return c.finds, c.calls, c.values
 }
 
-// maps gives the keys of a map as a sequence, so the report comes out in the
-// same order every run.
-func maps(m map[*types.Func][]int) func(func(*types.Func) bool) {
-	return func(yield func(*types.Func) bool) {
-		for fn := range m {
-			if !yield(fn) {
-				return
+// noMethodValues refuses a way to the driver that no reading of arguments can
+// follow: the method itself taken as a value. e := s.db.ExecContext and then
+// e(ctx, built, raw) hands over a statement and its values at a call the
+// guard cannot recognise as one. Every name of dbMethods therefore has to
+// stand either in call position or as the declaration of a method of this
+// package.
+func (c *checker) noMethodValues() {
+	for _, file := range c.p.files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || !dbMethods[id.Name] || c.callee[id] || c.p.info.Defs[id] != nil {
+				return true
 			}
+			c.report(true, id.Pos(), "%s is taken as a value here; what it is then given "+
+				"stands nowhere the guard can read", id.Name)
+			return true
+		})
+	}
+}
+
+// stmtIndex says where the statement of a database call stands, or -1 when
+// the call carries none. A prepared statement carries none: sql.Stmt has
+// Exec, Query and QueryRow without a statement of their own, and that is the
+// textbook form for a row written many times. Two signs say so, and one is
+// enough: the receiver is a variable that came out of Prepare, or the
+// argument where a statement would stand is of a type that is no string.
+func (c *checker) stmtIndex(call *ast.CallExpr, sel *ast.SelectorExpr, skip int) int {
+	if strings.HasPrefix(sel.Sel.Name, "Prepare") {
+		return skip // this one always carries a statement
+	}
+	if v, ok := c.varOf(sel.X); ok && c.prep[v] {
+		return -1
+	}
+	if skip >= len(call.Args) {
+		return -1
+	}
+	if t := c.p.info.Types[call.Args[skip]].Type; t != nil {
+		b, ok := t.Underlying().(*types.Basic)
+		if !ok || (b.Kind() != types.Invalid && b.Info()&types.IsString == 0) {
+			return -1
 		}
 	}
+	return skip
 }
 
 // checkStmt refuses anything but a constant. A constant expression is one
 // go/types has a value for while it reads the source, so nothing a run puts
 // together can be one - and that holds however the expression is named. A
 // parameter is not refused; it is followed to the call sites of its function
-// instead, because a helper is exactly where a statement built at run time
-// would be handed in.
-func (p *pkgSource) checkStmt(report func(bool, token.Pos, string, ...any), c callAt, arg ast.Expr, handed map[*types.Func][]int) {
-	if p.constString(arg) {
+// instead, and from there on outwards, because a helper is exactly where a
+// statement built at run time would be handed in.
+func (c *checker) checkStmt(arg ast.Expr, in []ast.Node) {
+	if c.p.constString(arg) {
 		return
 	}
 	id, ok := arg.(*ast.Ident)
 	if !ok {
-		report(true, arg.Pos(), "the statement is put together at run time")
+		c.report(true, arg.Pos(), "the statement is put together at run time")
 		return
 	}
-	v, ok := p.info.Uses[id].(*types.Var)
+	v, ok := c.p.info.Uses[id].(*types.Var)
 	if !ok {
-		report(true, arg.Pos(), "the statement is %s, and that is no constant of this package", id.Name)
+		c.report(true, arg.Pos(), "the statement is %s, and that is no constant", id.Name)
 		return
 	}
-	fn, at, lit := p.paramOf(v, c.in)
+	fn, i, lit := c.p.paramOf(v, in)
 	switch {
 	case lit:
-		report(true, arg.Pos(), "the statement is a parameter of a function literal, and a literal has no call sites the guard could read")
+		c.report(true, arg.Pos(), "the statement is a parameter of a function literal, "+
+			"and a literal has no call sites the guard could read")
 	case fn == nil:
-		report(true, arg.Pos(), "the statement is the variable %s, and that is no constant of this package", id.Name)
-	case !slices.Contains(handed[fn], at):
-		handed[fn] = append(handed[fn], at)
+		c.report(true, arg.Pos(), "the statement is the variable %s, and that is no constant", id.Name)
+	default:
+		c.traceStmt(fn, i)
 	}
+}
+
+// traceStmt asks the same question of every call of fn that was asked where
+// fn hands its parameter to the driver. A use of fn that is not a call is
+// refused: taken as a value it is run where the guard cannot see.
+func (c *checker) traceStmt(fn *types.Func, i int) {
+	if c.stmt[at{fn, i}] {
+		return
+	}
+	c.stmt[at{fn, i}] = true
+	sites := 0
+	for _, cl := range c.all {
+		id := calleeIdent(cl.call)
+		if id == nil || c.p.info.Uses[id] != types.Object(fn) {
+			continue
+		}
+		sites++
+		if i >= len(cl.call.Args) {
+			c.report(true, cl.call.Pos(), "%s is called without the statement", fn.Name())
+			continue
+		}
+		c.checkStmt(cl.call.Args[i], cl.in)
+	}
+	if sites == 0 {
+		c.report(true, fn.Pos(), "%s hands its argument to the driver, and nobody calls it", fn.Name())
+	}
+	c.noValueUse(fn)
+}
+
+// noValueUse refuses a function of this package that reaches the driver being
+// taken as a value instead of called.
+func (c *checker) noValueUse(fn *types.Func) {
+	if c.asked[fn] {
+		return
+	}
+	c.asked[fn] = true
+	for _, file := range c.p.files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || c.p.info.Uses[id] != types.Object(fn) || c.callee[id] {
+				return true
+			}
+			c.report(true, id.Pos(), "%s is taken as a value here, and it reaches the driver; "+
+				"what it is given then stands nowhere the guard can read", fn.Name())
+			return true
+		})
+	}
+}
+
+// scanValue opens up everything a row of values can be written as, and
+// measures what is left at the end of it: a []any written out at the call, a
+// []any in a variable of its own, a []any handed on as a parameter, and a
+// []any a function of this package returns. All four are good code and all
+// four are the near form for a row of ten columns, so all four are followed
+// instead of refused.
+func (c *checker) scanValue(e ast.Expr, in []ast.Node) {
+	switch x := e.(type) {
+	case *ast.CompositeLit:
+		if c.anySlice(c.p.info.Types[x].Type) {
+			for _, el := range x.Elts {
+				c.scanValue(el, in)
+			}
+			return
+		}
+	case *ast.CallExpr:
+		if fn, ok := c.p.info.Uses[calleeIdentOr(x)].(*types.Func); ok && c.anySlice(result(fn)) {
+			c.traceReturns(fn)
+			return
+		}
+	case *ast.Ident:
+		if v, ok := c.p.info.Uses[x].(*types.Var); ok && c.anySlice(v.Type()) {
+			if fn, i, lit := c.p.paramOf(v, in); fn != nil && !lit {
+				c.traceValues(fn, i)
+				return
+			}
+			if made := c.made[v]; len(made) == 1 {
+				c.scanValue(made[0].expr, made[0].in)
+				return
+			}
+			c.report(false, x.Pos(), "the guard cannot see which values stand in %s: "+
+				"it is written in %d places", x.Name, len(c.made[v]))
+			return
+		}
+	}
+	c.values++
+	c.checkValue(e)
+}
+
+// traceValues measures the values at every call of fn that fills its
+// argument i.
+func (c *checker) traceValues(fn *types.Func, i int) {
+	if c.vals[at{fn, i}] {
+		return
+	}
+	c.vals[at{fn, i}] = true
+	sig, _ := fn.Type().(*types.Signature)
+	spread := sig != nil && sig.Variadic() && i == sig.Params().Len()-1
+	sites := 0
+	for _, cl := range c.all {
+		id := calleeIdent(cl.call)
+		if id == nil || c.p.info.Uses[id] != types.Object(fn) {
+			continue
+		}
+		sites++
+		if i >= len(cl.call.Args) {
+			if !spread { // a variadic call may carry no value at all
+				c.report(false, cl.call.Pos(), "%s is called without the values", fn.Name())
+			}
+			continue
+		}
+		if spread && cl.call.Ellipsis == token.NoPos {
+			// The values were written out one by one at this call.
+			for j := i; j < len(cl.call.Args); j++ {
+				c.scanValue(cl.call.Args[j], cl.in)
+			}
+			continue
+		}
+		c.scanValue(cl.call.Args[i], cl.in)
+	}
+	if sites == 0 {
+		c.report(false, fn.Pos(), "%s gives the driver values, and nobody calls it", fn.Name())
+	}
+	c.noValueUse(fn)
+}
+
+// traceReturns measures the values a function of this package puts together
+// and gives back as a row.
+func (c *checker) traceReturns(fn *types.Func) {
+	if c.vals[at{fn, -1}] {
+		return
+	}
+	c.vals[at{fn, -1}] = true
+	decl := c.decl[fn]
+	if decl == nil || decl.Body == nil {
+		c.report(false, fn.Pos(), "the values come out of %s, and the guard cannot read it", fn.Name())
+		return
+	}
+	found := 0
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		for _, r := range ret.Results {
+			if c.anySlice(c.p.info.Types[r].Type) {
+				found++
+				c.scanValue(r, []ast.Node{decl})
+			}
+		}
+		return true
+	})
+	if found == 0 {
+		c.report(false, fn.Pos(), "%s is read for the values it gives back, and it gives none", fn.Name())
+	}
+}
+
+// calleeIdentOr is calleeIdent for a call, and a name nothing resolves for
+// anything else, so that a lookup on it comes back empty instead of panicking.
+func calleeIdentOr(call *ast.CallExpr) *ast.Ident {
+	if id := calleeIdent(call); id != nil {
+		return id
+	}
+	return &ast.Ident{}
+}
+
+// result is the single type a function gives back, or nil.
+func result(fn *types.Func) types.Type {
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 1 {
+		return nil
+	}
+	return sig.Results().At(0).Type()
+}
+
+// anySlice reports whether the type is a slice of an interface - the shape a
+// row of values travels in.
+func (c *checker) anySlice(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	s, ok := t.Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+	_, ok = s.Elem().Underlying().(*types.Interface)
+	return ok
 }
 
 // constString reports whether an expression is a string constant. go/types
 // works its value out while it reads the source, so no value of a run can be
 // part of it; a name that stands for a variable never has one, however the
-// variable is called.
+// variable is called. A constant of another package of this module counts as
+// well - it is resolved from source, and a constant is a constant.
 func (p *pkgSource) constString(e ast.Expr) bool {
 	tv, ok := p.info.Types[e]
 	return ok && tv.Value != nil && tv.Value.Kind() == constant.String
@@ -383,11 +641,11 @@ func (p *pkgSource) constString(e ast.Expr) bool {
 // paramOf says which function around the call has v as its parameter, and in
 // which place, counted the way a call writes them. A parameter of a function
 // literal is reported as such.
-func (p *pkgSource) paramOf(v *types.Var, in []ast.Node) (fn *types.Func, at int, lit bool) {
-	for i := len(in) - 1; i >= 0; i-- {
+func (p *pkgSource) paramOf(v *types.Var, in []ast.Node) (fn *types.Func, i int, lit bool) {
+	for k := len(in) - 1; k >= 0; k-- {
 		var sig *types.Signature
 		var obj *types.Func
-		switch f := in[i].(type) {
+		switch f := in[k].(type) {
 		case *ast.FuncDecl:
 			obj, _ = p.info.Defs[f.Name].(*types.Func)
 			if obj == nil {
@@ -409,50 +667,24 @@ func (p *pkgSource) paramOf(v *types.Var, in []ast.Node) (fn *types.Func, at int
 	return nil, 0, false
 }
 
-// forwards reports whether the value spread at a call is the caller's own
-// variadic parameter, handed on by a function whose call sites are measured
-// anyway.
-func (p *pkgSource) forwards(e ast.Expr, in []ast.Node, handed map[*types.Func][]int) bool {
-	id, ok := e.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	v, ok := p.info.Uses[id].(*types.Var)
-	if !ok {
-		return false
-	}
-	fn, _, _ := p.paramOf(v, in)
-	return fn != nil && handed[fn] != nil
-}
-
-// flatten opens a []any{...} written at a call: the values of the store stand
-// in one of those.
-func flatten(e ast.Expr) []ast.Expr {
-	lit, ok := e.(*ast.CompositeLit)
-	if !ok {
-		return []ast.Expr{e}
-	}
-	return lit.Elts
-}
-
 // checkValue refuses every value that goes to the database as a byte slice
 // from anywhere but blob or a conversion of a string. A nil byte slice binds
 // as NULL on MariaDB, where every column is NOT NULL; the SQLite driver of
 // this project writes an empty blob for it instead, so a forgotten blob can
 // go red nowhere but here.
-func (p *pkgSource) checkValue(report func(bool, token.Pos, string, ...any), v ast.Expr) {
-	t := p.info.Types[v].Type
+func (c *checker) checkValue(v ast.Expr) {
+	t := c.p.info.Types[v].Type
 	if t == nil {
-		report(false, v.Pos(), "the guard cannot tell what %s is", types.ExprString(v))
+		c.report(false, v.Pos(), "the guard cannot tell what %s is", types.ExprString(v))
 		return
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		switch u.Kind() {
 		case types.Invalid:
-			report(false, v.Pos(), "the guard cannot tell what %s is", types.ExprString(v))
+			c.report(false, v.Pos(), "the guard cannot tell what %s is", types.ExprString(v))
 		case types.UntypedNil:
-			report(false, v.Pos(), "%s is nil, and every column is NOT NULL", types.ExprString(v))
+			c.report(false, v.Pos(), "%s is nil, and every column is NOT NULL", types.ExprString(v))
 		}
 		return
 	case *types.Slice:
@@ -460,20 +692,20 @@ func (p *pkgSource) checkValue(report func(bool, token.Pos, string, ...any), v a
 		if !ok || b.Kind() != types.Uint8 {
 			break
 		}
-		if p.fromBlob(v) || p.fromString(v) {
+		if c.fromBlob(v) || c.fromString(v) {
 			return
 		}
-		report(false, v.Pos(), "%s goes to the database as a byte slice that neither blob nor a conversion "+
+		c.report(false, v.Pos(), "%s goes to the database as a byte slice that neither blob nor a conversion "+
 			"of a string made; a nil one binds as NULL, and every column is NOT NULL", types.ExprString(v))
 		return
 	}
-	report(false, v.Pos(), "%s is no value this store gives the database: a number, a bool, a string, "+
+	c.report(false, v.Pos(), "%s is no value this store gives the database: a number, a bool, a string, "+
 		"or a byte slice out of blob or a conversion of a string", types.ExprString(v))
 }
 
 // fromBlob reports whether the value is blob(...) - the function of this
 // package, not one that happens to be called that.
-func (p *pkgSource) fromBlob(v ast.Expr) bool {
+func (c *checker) fromBlob(v ast.Expr) bool {
 	call, ok := v.(*ast.CallExpr)
 	if !ok {
 		return false
@@ -482,18 +714,18 @@ func (p *pkgSource) fromBlob(v ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	obj := p.info.Uses[id]
-	return obj != nil && obj == p.pkg.Scope().Lookup("blob")
+	obj := c.p.info.Uses[id]
+	return obj != nil && obj == c.p.pkg.Scope().Lookup("blob")
 }
 
 // fromString reports whether the value is a conversion of a string into
 // bytes. Such a conversion never gives nil.
-func (p *pkgSource) fromString(v ast.Expr) bool {
+func (c *checker) fromString(v ast.Expr) bool {
 	call, ok := v.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 || !p.info.Types[call.Fun].IsType() {
+	if !ok || len(call.Args) != 1 || !c.p.info.Types[call.Fun].IsType() {
 		return false
 	}
-	t := p.info.Types[call.Args[0]].Type
+	t := c.p.info.Types[call.Args[0]].Type
 	if t == nil {
 		return false
 	}
@@ -502,13 +734,14 @@ func (p *pkgSource) fromString(v ast.Expr) bool {
 }
 
 // TestEverySQLIsAConstant: every statement this package gives the database is
-// a constant, at the call to the driver and at every call site of the two
-// helpers that take one as a parameter.
+// a constant, at the call to the driver and at every call site of the helpers
+// that take one as a parameter, however many levels deep. No way to the
+// driver is left that the guard cannot follow.
 func TestEverySQLIsAConstant(t *testing.T) {
 	finds, calls, _ := guard(readPackage(t, "."))
 	for _, f := range finds {
 		if f.sql {
-			t.Errorf("%s: %s", f.pos, f.msg)
+			t.Errorf("%s", f)
 		}
 	}
 	// A test that measured nothing says nothing: the store speaks to the
@@ -528,7 +761,7 @@ func TestEveryByteSliceComesFromBlob(t *testing.T) {
 	finds, _, values := guard(readPackage(t, "."))
 	for _, f := range finds {
 		if !f.sql {
-			t.Errorf("%s: %s", f.pos, f.msg)
+			t.Errorf("%s", f)
 		}
 	}
 	if values < 15 {
@@ -536,18 +769,100 @@ func TestEveryByteSliceComesFromBlob(t *testing.T) {
 	}
 }
 
-// TestTheGuardCatchesWhatSlippedPast runs the guard against five small
-// packages under testdata: one written the way this store writes, and four
-// that are that one with a single hole cut into it. shadow, literal and
-// rawbytes were measured green against the guard this one replaces, handoff
-// is the hole this one would have had. The clean one has to stay silent -
-// four holes found by a guard that is red on everything would prove nothing.
+// atTheDatabase are the packages under apps/server-db that may touch a
+// database, with what holds them. The guard above reads one package; without
+// this list its promise would stop at its own directory, because a call in
+// another package of this module is not read here at all.
+var atTheDatabase = map[string]string{
+	"sqlstore": "the guard of this file",
+	"migrate":  "checkStatement, fill and the tests beside them: it runs the statements of the migrations, and they are measured there",
+	"sqlite":   "it opens the encrypted file and sets its PRAGMAs on the driver's own connection; it runs no statement of the store",
+}
+
+// TestNobodyElseUnderServerDBSpeaksToADatabase draws the line the guard above
+// needs. Every package under apps/server-db that imports database/sql or
+// names one of the driver's methods has to stand in atTheDatabase with the
+// reason why it is allowed to. A new package that speaks to the database
+// without a guard is a failure here, not a quiet hole.
+func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
+	root := filepath.Join(moduleRoot(t), "apps", "server-db")
+	seen, looked := map[string]bool{}, 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" || d.Name() == "vendor" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		looked++
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		pkg := file.Name.Name
+		if !atDatabase(file) {
+			return nil
+		}
+		seen[pkg] = true
+		if _, ok := atTheDatabase[pkg]; !ok {
+			t.Errorf("%s: package %s touches a database, and nothing says what guards it; "+
+				"give it one and write it into atTheDatabase", path, pkg)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if looked < 3 {
+		t.Errorf("only %d source files were read under %s", looked, root)
+	}
+	for pkg := range atTheDatabase {
+		if !seen[pkg] {
+			t.Errorf("atTheDatabase names %s, and no package of that name touches a database any more", pkg)
+		}
+	}
+}
+
+// atDatabase reports whether a file imports database/sql or names one of the
+// driver's methods. The second catches a file that got its handle through an
+// interface of somebody else.
+func atDatabase(file *ast.File) bool {
+	for _, imp := range file.Imports {
+		if imp.Path.Value == `"database/sql"` {
+			return true
+		}
+	}
+	found := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if ok && dbMethods[sel.Sel.Name] {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// TestTheGuardCatchesWhatSlippedPast runs the guard against the packages
+// under testdata. Five of them are written the way this store writes and have
+// to stay silent - a guard that is red on good code is switched off, and then
+// it guards nothing. The other five carry one hole each, and every one of
+// those was measured green against an earlier guard.
 func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 	for _, c := range []struct{ dir, want string }{
 		{"clean", ""},
+		{"prepared", ""},
+		{"valueslice", ""},
 		{"shadow", "the statement is the variable blobDelete"},
 		{"literal", "the statement is the variable stmt"},
 		{"handoff", "exec is taken as a value"},
+		{"methodvalue", "ExecContext is taken as a value"},
 		{"rawbytes", "data goes to the database as a byte slice"},
 	} {
 		t.Run(c.dir, func(t *testing.T) {
@@ -557,7 +872,7 @@ func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 			}
 			if c.want == "" {
 				for _, f := range finds {
-					t.Errorf("%s: %s", f.pos, f.msg)
+					t.Errorf("%s", f)
 				}
 				return
 			}
