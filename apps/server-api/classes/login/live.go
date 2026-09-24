@@ -3,10 +3,13 @@ package login
 import (
 	"context"
 	json "encoding/json/v2"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -107,9 +110,11 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 // the fifth, the trust list, answers is picked by
 // httpapi.Fault instead, which is the one place that reads an error of package
 // state, so that the same damage does not answer one thing here and another
-// where the same list is read out (login/trust.go). That also brings in a code
-// no failure of this step carried before: an installation with no trust list
-// at all is E_NOTFOUND, the contract's word for a thing that is not there.
+// where the same list is read out (login/trust.go). One thing of that fifth
+// step is said here before Fault is asked, because only this step knows it: a
+// list that is not there at all means an installation before its setup
+// everywhere else, and here it cannot, because a session got this far. The
+// line that turns it into state.ErrSetting says the rest.
 //
 // Nothing about the session itself is told apart, and the cookie and the row
 // are read by sessionRow, which says why.
@@ -185,6 +190,32 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// refreshes it. Live is the step that decides, so it is the step that has
 	// to ask.
 	v, err := h.S.Refresh(ctx)
+	if errors.Is(err, state.ErrNoTrust) {
+		// Here that error cannot mean what it means everywhere else. An
+		// installation with no list yet has handed out no session either --
+		// login/finish asks for the list before it writes the row (state.Trust)
+		// -- and a row of the request's cookie is what got this far. So a list
+		// that is not there now is one the rows lost, which is the word
+		// ErrSetting carries.
+		//
+		// The old error is said in words and not wrapped with %w on purpose:
+		// httpapi.Fault asks for state.ErrNoTrust before it asks for
+		// state.ErrSetting, so one that still carried it would come out
+		// E_NOTFOUND all the same. Measured -- it did.
+		//
+		// It matters to the shell and not only to the log. E_NOTFOUND is what
+		// the contract's table gives for a from above the newest version: "you
+		// are ahead, there is nothing newer". A shell told that goes on working
+		// from the list it holds, while the installation has lost its own --
+		// the same rule this package writes down at state.ErrBadVersion, that a
+		// fault of the installation must never read like an ordinary answer.
+		//
+		// It is also what makes the two nodes agree. One that still holds a
+		// list finds the row of its own newest version gone (state.Chain,
+		// E_INTERNAL); one with an empty cache finds no list at all, and
+		// without this line it answered the one thing the other never says.
+		err = fmt.Errorf("%w: the installation has a session and no trust list", state.ErrSetting)
+	}
 	if err != nil {
 		// httpapi.Fault picks it, the same one place that picks the code when
 		// this very list is read out for the answer (login/trust.go). The two

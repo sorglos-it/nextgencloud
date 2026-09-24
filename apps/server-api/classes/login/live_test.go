@@ -378,6 +378,13 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 		{"the store answers no trust row at all", func(_ *testing.T, h *Handler) {
 			h.S.DB = noTrust{h.S.DB}
 		}, 503, wire.CodeUnreachable},
+		{"every trust row is gone", func(t *testing.T, h *Handler) {
+			for _, id := range []string{"1", "2", "3"} {
+				if err := h.S.DB.BlobDelete(ctx, dbapi.BlobTrust, id); err != nil {
+					t.Fatalf("drop row %s: %v", id, err)
+				}
+			}
+		}, 500, wire.CodeInternal},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			warm, cookie := threeVersions(t)
