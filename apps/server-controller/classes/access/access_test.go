@@ -117,17 +117,18 @@ func (f fixture) appOpen(app, service, action string) wire.Open {
 	return wire.Open{App: app, Service: service, Action: action, Window: wire.DefaultWindow, E2E: f.e2e}
 }
 
-// task returns a task of this admin for an action on the controller on,
+// task returns a task of this admin for a service and action on the
+// controller on,
 // signed by whoever holds seed. The session key of the certificate comes from
 // sessionSeed; any other seed is a stranger's key.
-func (f fixture) task(t testing.TB, seed []byte, on, app, action string, params any) *sign.Envelope {
+func (f fixture) task(t testing.TB, seed []byte, on, app, service, action string, params any) *sign.Envelope {
 	t.Helper()
 	var raw json.RawMessage
 	if params != nil {
 		raw = mustJSON(t, params)
 	}
 	payload := mustJSON(t, task.Task{ID: bytes.Repeat([]byte{0x61}, task.IDSize), Installation: f.list.Installation,
-		Cert: session.CertHash(f.client), Node: on, App: app, Service: core.ServiceController, Action: action,
+		Cert: session.CertHash(f.client), Node: on, App: app, Service: service, Action: action,
 		Params: raw, Issued: issued, Expires: issued + 60})
 	env, err := sign.Sign(ed25519.NewKeyFromSeed(seed), sign.PurposeTask, payload)
 	if err != nil {
@@ -243,7 +244,7 @@ func noDecision(d Decision) bool {
 
 func TestCheckAcceptsSignedRootTask(t *testing.T) {
 	f := newFixture(t)
-	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env))))
 	if cl != nil {
 		t.Fatalf("CLOSE %+v, want the channel to open", *cl)
@@ -267,21 +268,21 @@ func TestCheckAcceptsSignedRootTask(t *testing.T) {
 
 func TestCheckRefusesForgedTask(t *testing.T) {
 	f := newFixture(t)
-	env := f.task(t, strangerSeed, node, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, strangerSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env))))
 	wantClose(t, d, cl, wire.CodeVerify)
 }
 
 func TestCheckRefusesSwappedTask(t *testing.T) {
 	f := newFixture(t)
-	env := f.task(t, sessionSeed, node, core.AppStore, core.ActDeactivate, core.AppParams{App: testApp})
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActDeactivate, core.AppParams{App: testApp})
 	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppStore, core.ActUninstall, env))))
 	wantClose(t, d, cl, wire.CodeVerify)
 }
 
 func TestCheckRefusesReplayedTask(t *testing.T) {
 	f := newFixture(t)
-	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	payload := f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env))
 	r := f.request(payload)
 	// The real store of this controller, so the test proves what it remembers,
@@ -301,7 +302,7 @@ func TestCheckRefusesReplayedTask(t *testing.T) {
 // store can tell them apart. Exactly one may run.
 func TestCheckRefusesReplayedTaskAtOnce(t *testing.T) {
 	f := newFixture(t)
-	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	r := f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)))
 	st := state.New(memstore.New())
 	defer st.Close()
@@ -330,7 +331,7 @@ func TestCheckRefusesReplayedTaskAtOnce(t *testing.T) {
 
 func TestCheckRefusesRootTaskWithoutRootPermission(t *testing.T) {
 	f := newFixture(t)
-	env := f.task(t, sessionSeed, otherNode, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, sessionSeed, otherNode, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	r := f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)))
 	r.Node = otherNode
 	d, cl := Check(context.Background(), r)
@@ -342,7 +343,7 @@ func TestCheckAsksForConfirmation(t *testing.T) {
 	// The list has the one role admin. At level root every root task needs a
 	// fresh confirmation, and this OPEN carries none.
 	f.list.Roles[0].Level = trust.LevelRoot
-	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env))))
 	wantClose(t, d, cl, wire.CodeConfirm)
 }
@@ -362,7 +363,7 @@ func TestCheckWithoutUserOnlyForListedActions(t *testing.T) {
 		}
 	})
 	t.Run("activate", func(t *testing.T) {
-		env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+		env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 		d, cl := Check(context.Background(), f.request(withoutUser(t, coreOpen(core.AppStore, core.ActActivate, env))))
 		wantClose(t, d, cl, wire.CodeForbidden)
 	})
@@ -463,25 +464,38 @@ func TestCheckAnswersInternalForItsOwnFaults(t *testing.T) {
 		wantClose(t, d, cl, wire.CodeInternal)
 	})
 	t.Run("the task store cannot answer", func(t *testing.T) {
-		env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+		env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 		r := f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)))
 		r.Tasks = errOnce{}
 		d, cl := Check(context.Background(), r)
 		wantClose(t, d, cl, wire.CodeInternal)
 	})
-	t.Run("no store at all", func(t *testing.T) {
-		// A Request without them is this program wired wrong, and a service
-		// running as root may not fall over for it.
-		defer func() {
-			if p := recover(); p != nil {
-				t.Fatalf("Check panicked without a store: %v", p)
+	// A Request without the store is this program wired wrong, and a service
+	// running as root may not fall over for it — half wired is the way it
+	// would really happen, and each half is reached by a channel of its own:
+	// the app store by an app channel, the task store by a signed task.
+	for _, missing := range []string{"no store at all", "no app store", "no task store"} {
+		t.Run(missing, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("Check panicked on %s: %v", missing, p)
+				}
+			}()
+			r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
+			switch missing {
+			case "no store at all":
+				r.Apps, r.Tasks = nil, nil
+			case "no app store":
+				r.Apps = nil
+			case "no task store":
+				env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
+				r = f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)))
+				r.Tasks = nil
 			}
-		}()
-		r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
-		r.Apps, r.Tasks = nil, nil
-		d, cl := Check(context.Background(), r)
-		wantClose(t, d, cl, wire.CodeInternal)
-	})
+			d, cl := Check(context.Background(), r)
+			wantClose(t, d, cl, wire.CodeInternal)
+		})
+	}
 }
 
 // TestCheckRefusesDeactivatedApp: deactivate is a root task, and a user paid
@@ -571,7 +585,7 @@ func TestCheckRefusesMalformedOpen(t *testing.T) {
 // one would be the same bytes, but nothing would say so: the accepted channels of the
 // tests above, the refused ones, and bare rubbish.
 func (f fixture) seeds(t testing.TB) [][]byte {
-	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+	env := f.task(t, sessionSeed, node, core.AppStore, core.ServiceController, core.ActActivate, activateParams())
 	stage := coreOpen(core.AppStore, core.ActStage, nil)
 	stage.Params = json.RawMessage(`{"target":"` + testApp + `","version":"1.0.0"}`)
 	return [][]byte{
