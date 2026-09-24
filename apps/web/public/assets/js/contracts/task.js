@@ -88,8 +88,9 @@ export function parseTask(payload) {
 // one point the wire never carries anyway: a null, which enc and json.js
 // refuse everywhere, raw values included.
 //
-// One place is milder, and it is the one thing buildTask can make that no
-// verifier reads back: the levels are counted from the params' own first byte
+// One place is milder, and it lets buildTask make a task no verifier reads
+// back - the only such gap found here: the levels are counted from the
+// params' own first byte
 // here and from the task's first byte there, so params nested exactly
 // MAX_DEPTH levels deep pass this check and are one level too deep once they
 // sit inside a task. Measured against this file, level by level: one below
@@ -119,8 +120,13 @@ function validParams(text) {
 // again by b64encode would let a check pass for one byte string while another
 // went into the signature (measured in task 8 for session.encodeClientCert,
 // which is the same shape). What ID_CHARS pins is therefore the number of
-// elements that one walk read: a length that lies still makes a wrong id, but
-// the same wrong one in the check and in the signed bytes, never two.
+// elements that one walk read, not what the array holds. Measured: an id of
+// no bytes whose length answers ID_SIZE is valid here, and the base64url of
+// ID_SIZE zero bytes is what goes into the signature - a wrong id, but the
+// same wrong one in the check and in the bytes, and the same again on a
+// second call. Never two. buildTask cannot reach it, because it makes its own
+// id from crypto.getRandomValues; only a task handed straight to encodeTask
+// or validateTask can carry such an array.
 //
 // The params have no length read at all: fromUtf8 hands back the text the
 // bytes really hold, whatever length says, and both the check and the writer
