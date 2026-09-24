@@ -69,6 +69,43 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     es dicht; der Vertragstest hält aber weniger, als der Code zusagt.
     (api, Aufgabe 5, Fixrunde 4)
 
+23. **`dbtest` kann einen falschen Store nicht von einem richtigen
+    unterscheiden — gemessen.** Ein absichtlich **zweischrittiges** `OnceUse`
+    (lesen, dann bedingungslos schreiben) besteht `once`, `locks`,
+    `concurrent once` und `concurrent lock` **alle**, dazu einen eigenen
+    Wettlauf mit 256 × 16 Goroutinen. Zwei Gründe: `concurrent once` lässt
+    **`OnceCreate`** um die Wette laufen, **nie `OnceUse`** — die Atomarität des
+    *Verbrauchens* misst der Vertragstest **überhaupt nicht**. Und SQLite rettet
+    den falschen Store: der zweite Leser bekommt beim Hochstufen `BUSY`, die
+    Transaktion wird verworfen und wiederholt, der zweite Durchgang sieht
+    `used = 1`. **Auf MariaDB/InnoDB wäre derselbe Code falsch** — ein `SELECT`
+    in REPEATABLE READ sperrt nichts, beide sähen `used = 0`, beide gewännen.
+    **Das ist der wichtigste Punkt dieser Liste:** solange `dbtest` das nicht
+    misst, ist „atomar" für jeden künftigen Store eine Zusage ohne Prüfung.
+    **Stand 24.09.2026: die eine Hälfte ist geschlossen.** Gemessen:
+    zwei Schritte **ohne** Transaktion — die Form, die man tatsächlich falsch
+    schreibt — fängt eine Probe im Paket sofort und stabil, 12 von 12 Läufen
+    rot, und sie fällt sogar bei einem Verbindungspool von **eins**, weil die
+    Zweischrittigkeit selbst die Bedingung ist. Offen bleibt nur noch die Form
+    mit zwei Schritten **in** einer Transaktion: dort rettet SQLites
+    WAL-Schnappschuss plus `write()`-Retry den falschen Store, und erst
+    MariaDB im Lauf zeigt es. Dazu: `dbtest.Run` hängt bis heute **nur an
+    `memstore`** — `concurrent once` fasst `sqlstore` überhaupt nicht an.
+    (db, Aufgabe 5, Fixrunde 1)
+
+24. **Sieben Antworten laufen zwischen `sqlstore` und `memstore` auseinander**,
+    alle einer Klasse: **zu lange Eingaben**. `sqlstore` gibt `ErrInvalid` bzw.
+    `ErrNotFound`, `memstore` gibt `nil` bzw. `(true, nil)`. `dbtest` prüft
+    zu lange Eingaben nirgends, deshalb fällt es nicht auf. (db, Aufgabe 5)
+
+25. **`dbtest` nagelt nicht fest, dass ein Einmalwert an `(kind, token)` hängt.**
+    Gemessen: `onceRead` **und** `onceState` dürfen ihr `kind` verlieren
+    (`WHERE ? IS NOT NULL AND token = ?`) und das ganze Paket bleibt grün,
+    obwohl der Primärschlüssel beides umfasst — zwei Zeilen dürfen denselben
+    Token unter verschiedenen Arten tragen, und nichts legt das je an. Ein
+    Store, der die Arten verwechselt, kommt durch den Vertragstest.
+    (db, Aufgabe 5, Fixrunde 1)
+
 ## shared/session — Einrichtung
 
 10. **Das unauthentifizierte GET-Angebot ist Klartext**: Installations-ID,
@@ -104,6 +141,47 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     `wire.ParseControl` ab und kostet den Tunnel.** Erzeuger müssen das Feld
     weglassen. Gehört in den Auftrag der Aufgabe, die Steuernachrichten erzeugt —
     und als Satz in den Vertrag. (controller → api)
+
+19. **`trust.List.UserByName` verrät den Namen über die Zeit.** Gemessen auf
+    10 000 Benutzern: ein Name **vorn** in der Liste kostet 0 µs, ein Name, den
+    es **nicht gibt**, 18 µs — der frühe Ausstieg folgt der Stelle des Namens.
+    Der API schreibt sich deshalb sieben eigene Zeilen ohne frühen Ausstieg
+    (20,6 gegen 20,6 µs). **Der Vertrag sollte es selbst richtig machen**, sonst
+    tut es jeder Aufrufer einzeln — oder vergisst es.
+    Dazu: der Kommentar an dieser Funktion behauptet, `session.Challenge`
+    benutze sie. Tut sie nicht. (api, Aufgabe 6)
+
+20. **Leere DATA-Frames und EOF kosten keine Freigabe.** Damit kann eine
+    Gegenstelle die Warteschlange eines Kanals **umsonst** verlängern. Der
+    Controller behilft sich, indem er die Zahl wartender Frames auf das
+    begrenzt, was die gegebene Freigabe hätte bezahlen können — das ist eine
+    erfundene Regel für eine Vertragslücke und gehört in den Vertrag.
+    (controller, Aufgabe 6)
+
+21. **Der Nonce der Anmeldung sollte sich selbst tragen.** Heute schreibt
+    `login/start` für einen **bekannten** Namen eine Zeile in die
+    Einmalwerte-Tabelle und für einen unbekannten nicht — gemessen 2,20 µs
+    Unterschied (9,2 %). Symmetrisch schreiben wäre eine **unbegrenzte,
+    unauthentifizierte** Schreiberlaubnis auf eine Tabelle ohne Obergrenze,
+    deren `OncePurge` nirgends verdrahtet ist. Sauber: Nonce = Zufall + MAC über
+    Benutzer-ID und Ablauf mit `ChallengeKey`; `login/finish` prüft den MAC
+    **ohne** Datenbank und legt die Zeile erst dort an, wo jeder Versuch schon
+    einen `lock.Fail` kostet. Braucht Platz im Feld → `shared/session`.
+    (api, Aufgabe 6)
+
+22. **`dbtest` nagelt `UserGet(ctx, "")` nicht fest.** Geprüft wird nur ein
+    Name, den es nicht gibt — nie die **leere** ID. `memstore` gibt dort
+    `ErrNotFound`, `UserPut` gibt für eine leere ID aber `ErrInvalid`. Baut ein
+    zweiter Store das spiegelbildlich, antwortet die Anmeldung für jeden
+    unbekannten Namen anders als für jeden bekannten. Eine Zeile in `dbtest`.
+    (api, Aufgabe 6)
+
+26. **Der Vertrag beendet die Leitung für ein Streu-Frame, das eine Nummer zu
+    viel machen würde** (`shared/wire/wire.go:45-47`). Seit der Controller für
+    **jedes** CLOSE die Nummer zurückgibt, kann ein CLOSE auf eine freie
+    Nummer gar keine Nummer mehr zu viel machen — der Code ist damit strenger
+    als der Vertrag, den er an dieser Stelle zitiert. Eins von beidem muss
+    nachziehen. (controller, Aufgabe 6, Fixrunde 1)
 
 ## shared/README.md und Querschnitt
 
