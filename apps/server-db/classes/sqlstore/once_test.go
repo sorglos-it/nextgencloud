@@ -206,12 +206,22 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 // twice, a task run twice.
 //
 // It measures that here and now, on SQLite, without -race and without
-// MariaDB. In that shape the read and the write are two separate calls
-// through database/sql, and each takes a connection and gives it back again,
-// so another goroutine comes in between them however small the pool is - the
-// two steps themselves are the condition, not the four connections this store
-// opens. Measured against such a store at a pool of one as well: red there
-// too, in the very first round.
+// MariaDB. The size of the pool is not what decides: in that shape the read
+// and the write are two separate calls through database/sql, each takes a
+// connection and gives it back again, and against such a store the probe is
+// red at a pool of one just as at the four this store opens.
+//
+// How wide the machine is does decide, and that is why there are 32 racers
+// and 400 rounds and not 8 and 40. Against such a store, ten runs each, the
+// smaller numbers caught nothing at all at GOMAXPROCS 1 and 2 and three of
+// ten at 4 - on a two-core CI runner, and on the Pi that sqlite.go builds
+// this store for, the very shape this test is here to catch would have come
+// through silently. With these numbers it is five of five from two
+// processors upwards, at a cost of about three seconds.
+//
+// The floor, so that nobody reads more into a green run than is there: at
+// GOMAXPROCS 1 even 32 by 400 catches nothing. A single-threaded runner
+// measures none of this, whatever the numbers say.
 //
 // What it does not catch, said plainly so nobody takes it for more: a store
 // that puts those same two steps inside one transaction comes through green
@@ -219,7 +229,7 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 // save it, and nothing in this run can tell that apart from a store that is
 // right. That shape needs MariaDB in the run, and it is still open.
 func TestOnlyOneUseGetsTheValue(t *testing.T) {
-	const racers, rounds = 8, 40
+	const racers, rounds = 32, 400
 	s := open(t)
 	for round := range rounds {
 		value := append(bytes.Repeat([]byte{0x5a}, 30), byte(round>>8), byte(round))
