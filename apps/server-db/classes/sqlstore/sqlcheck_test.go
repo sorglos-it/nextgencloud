@@ -555,30 +555,52 @@ func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
 	return lit
 }
 
-// argLits are the literals that stand as an argument of a call, or are called
-// on the spot. Those run where they stand; a literal given a name runs where
-// the name is called, and it is read there instead. A defer or a go is read
-// the same way as in firstStmtIn, through onTheSpot: a literal invoked inside
-// one of its arguments runs at the defer, the one the defer carries does not.
+// argLits are the literals that run where they stand: one handed to a call as
+// an argument, and one called on the spot. A literal given a name runs where
+// the name is called, and it is read there instead. Whether a function runs
+// the literal it is handed is its own business and is not read here; taking
+// it for one that runs is the strict direction, and litarg is the hole that
+// rests on it.
+//
+// Under a defer or a go that direction is the wrong one, and only a literal
+// called on the spot counts. What such a call settles there is the function
+// it calls at the end, so a literal handed over inside it - straight, or
+// through a helper that gives it back - is that later body and no statement
+// in front of the write; deferwrap is the right store refused for it. One
+// called on the spot does speak at the defer, and deferlit is the hole that
+// stays caught. A defer or a go is reached through onTheSpot, the same way
+// firstStmtIn reads the two.
+//
+// A literal called on the spot inside such a later body is marked as well,
+// and nothing reads it: to reach one, firstStmtIn would have to step into the
+// literal the defer hands on, and that one is never marked.
 func argLits(n ast.Node) map[*ast.FuncLit]bool {
 	out := map[*ast.FuncLit]bool{}
+	held := false // inside what a defer or a go hands on to be called later
 	var visit func(ast.Node) bool
+	later := func(call *ast.CallExpr) bool {
+		was := held
+		held = true
+		onTheSpot(call, visit)
+		held = was
+		return false
+	}
 	visit = func(x ast.Node) bool {
 		switch s := x.(type) {
 		case *ast.DeferStmt:
-			onTheSpot(s.Call, visit)
-			return false
+			return later(s.Call)
 		case *ast.GoStmt:
-			onTheSpot(s.Call, visit)
-			return false
+			return later(s.Call)
 		}
 		call, ok := x.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		for _, a := range call.Args {
-			if lit, ok := a.(*ast.FuncLit); ok {
-				out[lit] = true
+		if !held {
+			for _, a := range call.Args {
+				if lit, ok := a.(*ast.FuncLit); ok {
+					out[lit] = true
+				}
 			}
 		}
 		if lit, ok := call.Fun.(*ast.FuncLit); ok {
@@ -843,7 +865,11 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     in the argument, one behind defer s.trace()() and one behind an index.
 //     What is left out runs later: a deferred body
 //     after the whole method, so a statement in it is none in front of the
-//     write. A started one is not ordered at all and may run before the
+//     write. A function literal handed over there is such a body and is left
+//     out with it, even where a helper hands it back for the defer to call -
+//     one right store that reads the row that way stays silent, while a
+//     literal called on the spot in an argument speaks at the defer and is
+//     read. A started one is not ordered at all and may run before the
 //     write, so leaving that one out is a gap and not a deduction. Uncovered
 //     with it: the order among several defers, which Go runs backwards, and
 //     a OnceUse that speaks only from those bodies - that one is refused for
