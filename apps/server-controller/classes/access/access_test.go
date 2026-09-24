@@ -388,6 +388,21 @@ func TestCheckAppChannel(t *testing.T) {
 	})
 }
 
+// TestCheckRefusesDeactivatedApp: deactivate is a root task, and a user paid
+// a signed task for it. An app this controller does not run answers nothing
+// (apps/server-controller/CLAUDE.md), whatever its row still holds.
+func TestCheckRefusesDeactivatedApp(t *testing.T) {
+	f := newFixture(t)
+	r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
+	rows := installed()
+	app := rows[testApp]
+	app.Active = false
+	rows[testApp] = app
+	r.Apps = rows
+	d, cl := Check(context.Background(), r)
+	wantClose(t, d, cl, wire.CodeNotFound)
+}
+
 // TestCheckRefusesAppChannelForCoreApp is the channel that carries a
 // certificate and proves nothing at all: a row of the database under a core
 // app ID. core.Lookup does not know the service, so it falls to the app
