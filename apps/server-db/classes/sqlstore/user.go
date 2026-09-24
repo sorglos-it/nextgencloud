@@ -56,20 +56,46 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // free name: on Galera one of them loses the certification and repeats, and
 // then it sees the name.
 //
-// The unique index ngc_user_name stands behind that check, and its answer is
-// translated into the same one. Two writers can get past the SELECT together
-// - on MariaDB without Galera nothing certifies them apart - and then the
-// index refuses the second. dbapi promises "the same name for another ID
-// gives ErrInvalid", so a caller that asks errors.Is for it may not be handed
-// a driver error instead. The translation stands around the whole
-// transaction, because the UPDATE renames where the INSERT adds, and both run
-// against that index. The primary key cannot reach it: the UPDATE in front
-// matches the row with that ID, and the driver counts matched rows, so the
-// INSERT is not run for a user that is already there.
+// That the check sits there is what TestTheNameCheckSitsInTheTransaction
+// holds, and it holds it by reading the source, because no answer of this
+// method says it any more. The unique index ngc_user_name gives the same word
+// on both ways, so taking the check out - or moving it in front of the
+// transaction, where a second writer slips between it and the write - leaves
+// every test that asks this store a question green, and every group of the
+// contract with it. Measured, all three shapes; that guard is the only thing
+// that sees them. It is not its answer that makes the check worth its
+// statement, it is its place, so its place is what is measured.
 //
-// The race is not measurable on SQLite, so what is measured is the
-// translation: TestADuplicateNameIsErrInvalid makes the SELECT miss a row the
-// index still sees, which is the shape a second writer has.
+// dbapi promises "the same name for another ID gives ErrInvalid", so a caller
+// that asks errors.Is for it may not be handed a driver error instead. Both
+// statements of the write can meet that index, and each of them answers where
+// it stands, not from one translation around them both:
+//
+//   - The UPDATE renames onto a name the SELECT did not see - a writer one
+//     statement behind, or a row nobody of ours wrote. Only the name index
+//     can stop it, so its duplicate is ErrInvalid on the spot.
+//   - The INSERT can meet either index, and which one it was decides the
+//     answer. So it is asked, the way put asks it: back to the UPDATE. If it
+//     matches a row now, somebody was faster with this ID and writing on top
+//     of that row is the answer, not an error. If it matches nothing, no row
+//     carries this ID and the INSERT can only have met the name - ErrInvalid.
+//
+// That second round is the correction of a sentence that stood here and was
+// wrong: "the primary key cannot reach it". It does, and one translation for
+// both statements could not tell it apart. Two writers adding the same ID
+// that is not there yet both miss with the UPDATE, and the second breaks on
+// the primary key - which Duplicate reports as well, sqliteDialect names
+// CONSTRAINT_PRIMARYKEY itself. That valid input came back as ErrInvalid, the
+// contract's word for "the name belongs to another ID".
+//
+// Splitting the translation is what keeps the two measurable.
+// TestADuplicateNameIsErrInvalid plants a row whose name is taken and whose
+// ID is empty, so the SELECT lets both ways through - once into the INSERT,
+// once into the UPDATE - and each of the two places answers its half alone.
+// What no test reaches is the other end of the round, where the second UPDATE
+// finds the row the primary key stopped the INSERT on: that is the race
+// itself, and on SQLite there is none, because a writer holds the database
+// while it writes.
 func (s *store) UserPut(ctx context.Context, u dbapi.User) error {
 	roles, ok := joinList(u.Roles)
 	if u.ID == "" || u.Name == "" || !okKey(u.ID) || !okKey(u.Name) || !ok || !okDoc(u.TOTP) {
@@ -83,25 +109,39 @@ func (s *store) UserPut(ctx context.Context, u dbapi.User) error {
 		case other != "" && other != u.ID:
 			return dbapi.ErrInvalid
 		}
-		res, err := tx.ExecContext(ctx, userUpdate, []byte(u.Name), []byte(roles), blob(u.TOTP),
-			u.Locked, int64(u.Failures), u.LastLogin, []byte(u.ID))
-		if err != nil {
-			return err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n > 0 {
+		for round := range 2 {
+			res, err := tx.ExecContext(ctx, userUpdate, []byte(u.Name), []byte(roles), blob(u.TOTP),
+				u.Locked, int64(u.Failures), u.LastLogin, []byte(u.ID))
+			if err != nil {
+				if s.d.Duplicate(err) {
+					return dbapi.ErrInvalid // the rename met the name index
+				}
+				return err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				return nil
+			}
+			if round == 1 {
+				// The INSERT met an index and no row carries this ID, so it
+				// was the name. put answers an error of its own here, because
+				// a row it writes has nothing but its primary key to meet.
+				return dbapi.ErrInvalid
+			}
+			if _, err := tx.ExecContext(ctx, userInsert, []byte(u.ID), []byte(u.Name), []byte(roles),
+				blob(u.TOTP), u.Locked, int64(u.Failures), u.LastLogin); err != nil {
+				if !s.d.Duplicate(err) {
+					return err
+				}
+				continue // the primary key or the name: the UPDATE says which
+			}
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, userInsert, []byte(u.ID), []byte(u.Name), []byte(roles),
-			blob(u.TOTP), u.Locked, int64(u.Failures), u.LastLogin)
-		return err
+		return nil
 	})
-	if s.d.Duplicate(err) {
-		return dbapi.ErrInvalid
-	}
 	return err
 }
 

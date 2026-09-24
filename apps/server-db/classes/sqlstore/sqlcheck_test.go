@@ -1368,6 +1368,159 @@ func hasOnceUse(p *pkgSource) bool {
 	return false
 }
 
+// TestTheNameCheckSitsInTheTransaction: UserPut asks whose the name is inside
+// the transaction it writes in, and in front of the write. It is read from the
+// source, because no answer of UserPut says it any more.
+//
+// That is the whole reason this test exists. The check was measured once: on
+// f048e83, taking its refusal out turned TestUserNameIsUnique and dbtest's
+// users group red. Since the index error is translated, both ways give
+// ErrInvalid, and the check can be deleted whole - statement, constant and all
+// - with every test that asks this store a question staying green, and every
+// group of the contract with it. A second line of defence had made the first
+// one indistinguishable, and a line no test holds is a line the next tidy-up
+// removes, with the comment that turns on it left standing over nothing. This
+// test is the only thing that sees it go.
+//
+// What the check is worth is not its answer but its place, so its place is
+// what is read: userIDOf is named once in the package, that one place stands
+// inside the function literal UserPut hands to write - the transaction - and
+// in front of the first write of that literal, with the refusal between the
+// two. Moving the question in front of the transaction, where a second writer
+// fits between it and the write, fails here as surely as deleting it.
+//
+// It does not read the condition the refusal is written with, only that one
+// stands between the question and the write. Two writers can pass the check
+// together on a database that does not certify them apart, and the index
+// behind it is what holds the promise then; this holds the statement that
+// makes the common case answer before anything is written, and nothing else.
+func TestTheNameCheckSitsInTheTransaction(t *testing.T) {
+	p := readPackage(t, ".")
+	lit, found := txBodyOf(p, "UserPut")
+	if !found {
+		t.Fatal("no UserPut was read at all, so this test measured nothing")
+	}
+	if lit == nil {
+		t.Fatal("UserPut gives write no function literal, so there is no transaction to read here")
+	}
+	at := func(pos token.Pos) string { return p.fset.Position(pos).String() }
+	inside := func(pos token.Pos) bool { return pos > lit.Pos() && pos < lit.End() }
+	if !constDeclared(p, "userIDOf") {
+		t.Fatal("userIDOf is not declared any more: nothing asks whose the name is")
+	}
+	read, update, insert := constUses(p, "userIDOf"), constUses(p, "userUpdate"), constUses(p, "userInsert")
+	if len(update) == 0 || len(insert) == 0 || !inside(update[0]) || !inside(insert[0]) {
+		t.Fatalf("%s: the literal UserPut gives write holds neither of its two writes, "+
+			"so this test read the wrong one", at(lit.Pos()))
+	}
+	switch {
+	case len(read) == 0:
+		t.Fatalf("%s: userIDOf is named nowhere, so nothing asks whose the name is before the write",
+			at(lit.Pos()))
+	case len(read) > 1:
+		t.Fatalf("%s: userIDOf is asked in %d places, and this test can say of none of them "+
+			"that it is the one in front of the write", at(read[0]), len(read))
+	case !inside(read[0]):
+		t.Fatalf("%s: the name is asked about outside the transaction UserPut writes in, "+
+			"so a second writer fits between the question and the write", at(read[0]))
+	case read[0] > update[0]:
+		t.Fatalf("%s: the name is asked about after the write, not in front of it", at(read[0]))
+	}
+	for _, pos := range invalidReturns(p, lit) {
+		if pos > read[0] && pos < update[0] {
+			return
+		}
+	}
+	t.Errorf("%s: nothing between the question and the write answers dbapi.ErrInvalid, "+
+		"so the answer to a name that belongs to another ID is left to the index alone", at(read[0]))
+}
+
+// txBodyOf is the transaction of a method: the function literal it gives
+// store.write. It says as well whether the method was found at all, so a
+// renamed one comes out as a failure and not as a pass.
+func txBodyOf(p *pkgSource, method string) (*ast.FuncLit, bool) {
+	for _, file := range p.files {
+		for _, d := range file.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != method || fn.Body == nil {
+				continue
+			}
+			var lit *ast.FuncLit
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok || lit != nil {
+					return lit == nil
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				f, isFunc := p.info.Uses[sel.Sel].(*types.Func)
+				if !isFunc || f.Name() != "write" || f.Pkg() != p.pkg || len(call.Args) == 0 {
+					return true
+				}
+				if l, ok := call.Args[len(call.Args)-1].(*ast.FuncLit); ok {
+					lit = l
+				}
+				return true
+			})
+			return lit, true
+		}
+	}
+	return nil, false
+}
+
+// constDeclared says whether the package declares a constant of this name.
+func constDeclared(p *pkgSource, name string) bool {
+	_, ok := p.pkg.Scope().Lookup(name).(*types.Const)
+	return ok
+}
+
+// constUses gives every place a constant of this package is named, in the
+// order of the source. It asks go/types what the name stands for, so a local
+// variable that carries the same name is not one of them.
+func constUses(p *pkgSource, name string) []token.Pos {
+	var at []token.Pos
+	for _, file := range p.files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if c, ok := p.info.Uses[id].(*types.Const); ok && c.Name() == name && c.Pkg() == p.pkg {
+				at = append(at, id.Pos())
+			}
+			return true
+		})
+	}
+	slices.Sort(at)
+	return at
+}
+
+// invalidReturns gives every place inside n where dbapi.ErrInvalid is
+// returned.
+func invalidReturns(p *pkgSource, n ast.Node) []token.Pos {
+	var at []token.Pos
+	ast.Inspect(n, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		for _, r := range ret.Results {
+			sel, ok := r.(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			if obj := p.info.Uses[sel.Sel]; obj != nil && obj.Name() == "ErrInvalid" &&
+				obj.Pkg() != nil && obj.Pkg().Name() == "dbapi" {
+				at = append(at, ret.Pos())
+			}
+		}
+		return true
+	})
+	return at
+}
+
 // atTheDatabase are the packages under apps/server-db that may touch a
 // database, with what holds them. The guard above reads one package; without
 // this list its promise would stop at its own directory, because a call in

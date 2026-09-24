@@ -188,7 +188,21 @@ func TestOneWriteAndOneDelete(t *testing.T) {
 // row, so it is planted with SQL of the test's own, the way
 // TestAUserRowNobodyOfOursWrote plants its column. The SELECT then reads an
 // empty ID and lets the write through, exactly as it would for a writer that
-// was still one statement behind, and the INSERT walks into the index.
+// was still one statement behind.
+//
+// Three ways give that answer, and all three are walked here: the SELECT, the
+// INSERT into the index, and the UPDATE renaming into it. They are one test
+// because a caller may not tell them apart - it asks errors.Is and gets one
+// word.
+//
+// Two of the three this test holds on its own: take the translation off the
+// UPDATE, or the answer off the second round behind the INSERT, and it goes
+// red. That is what UserPut translating at each statement is for; with one
+// translation around both, either of the two could go and nothing here would
+// notice. The third, the SELECT in front, it does not hold - the index gives
+// the same word, so the whole check can be deleted with this test green.
+// TestTheNameCheckSitsInTheTransaction is what holds that one, by reading
+// where it stands.
 func TestADuplicateNameIsErrInvalid(t *testing.T) {
 	s, db := openDB(t)
 	if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, failures, "+
@@ -196,18 +210,30 @@ func TestADuplicateNameIsErrInvalid(t *testing.T) {
 		[]byte(""), int64(0), int64(0), int64(0)); err != nil {
 		t.Fatal(err)
 	}
+	// No row carries "u-admin", so the INSERT runs and meets the index. The
+	// second round of the write then finds no row of that ID either, which is
+	// what says the index meant the name and not the primary key.
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
-		t.Errorf("the index answered with %v, want ErrInvalid", err)
+		t.Errorf("the INSERT answered with %v, want ErrInvalid", err)
 	}
-	// The way in front is still the way in front: where the SELECT sees the
-	// name, it answers before a write runs at all, and the translation behind
-	// it leaves that untouched. Both halves have to give the same error,
-	// otherwise a caller could tell them apart.
+	// The way in front: where the SELECT sees the name, it answers before a
+	// write runs at all. Nothing here can tell that from the two behind it -
+	// that is the point of the contract - so this only walks the way.
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-other", Name: "chef"}); err != nil {
 		t.Fatalf("a free name: %v", err)
 	}
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "chef"}); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("the SELECT answered with %v, want ErrInvalid", err)
+	}
+	// The third way: u-other is there, so the rename is an UPDATE, and it
+	// walks into the same index. Nothing but the name can stop that
+	// statement, so it is the one place that answers this half.
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-other", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("the UPDATE answered with %v, want ErrInvalid", err)
+	}
+	// The failed rename wrote nothing: the transaction it stood in rolled back.
+	if got, err := s.UserGet(ctx, "u-other"); err != nil || got.Name != "chef" {
+		t.Errorf("after the refused rename: %+v, %v", got, err)
 	}
 }
 

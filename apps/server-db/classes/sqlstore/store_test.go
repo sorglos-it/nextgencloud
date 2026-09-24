@@ -87,13 +87,28 @@ func TestBlobRoundTrip(t *testing.T) {
 // come out the same on MariaDB and on SQLite.
 //
 // The three blocks after the blob and app lines hold the bounds task 6
-// brought, and every one of them came without a measurement: taken out of
-// user.go, not one test of this package and no group of the contract went
-// red. joinList gets two lines, because it refuses two different things about
-// a roles list - too many entries, and the separator inside one. On SQLite
-// nothing else would have caught any of them either: it takes a value of any
-// length where MariaDB cuts it or answers with an error, which is the whole
-// reason these checks are made in Go and not left to the database.
+// brought: fifteen lines for fourteen checks of user.go, and every one of
+// those checks came without a measurement - taken out, not one test of this
+// package and no group of the contract went red. Two of the lines fall to one
+// check, the joinList of UserPut: joinList refuses four things about a roles
+// list - too many entries, an empty entry, an entry too long, a line break
+// inside one - and these two lines take two of the four. All four stand in
+// TestList, which asks joinList itself, and readList meets them from the
+// other side in FuzzReadList; what nothing asked was whether UserPut asks at
+// all.
+//
+// "user without an id" and "pending without a name" are the two of the six
+// emptiness checks that nothing held: both could be taken out with everything
+// staying green, while an empty name, an empty token, an empty session user
+// and an empty pending key all bite somewhere. The first of them carries the
+// ground TestADuplicateNameIsErrInvalid stands on - that UserPut writes no
+// row with an empty ID, so such a row has to be planted with SQL of the
+// test's own.
+//
+// On SQLite nothing else would have caught any of them either: it takes a
+// value of any length where MariaDB cuts it or answers with an error, which
+// is the whole reason these checks are made in Go and not left to the
+// database.
 func TestLimits(t *testing.T) {
 	s := open(t)
 	long := string(bytes.Repeat([]byte("x"), sqlstore.MaxKey+1))
@@ -114,6 +129,7 @@ func TestLimits(t *testing.T) {
 		"app without id":     s.AppPut(ctx, dbapi.App{}),
 		"grant nobody knows": s.AppPut(ctx, dbapi.App{ID: "org.sorglos.terminal", Grants: []string{"everything"}}),
 
+		"user without an id":  s.UserPut(ctx, dbapi.User{Name: "admin"}),
 		"user id too long":    s.UserPut(ctx, dbapi.User{ID: long, Name: "admin"}),
 		"user name too long":  s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: long}),
 		"totp too long":       s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin", TOTP: longDoc}),
@@ -127,8 +143,9 @@ func TestLimits(t *testing.T) {
 		"api key too long":  s.SessionPut(ctx, dbapi.Session{Token: key, User: "u-admin", APIKey: longDoc}),
 		"api cert too long": s.SessionPut(ctx, dbapi.Session{Token: key, User: "u-admin", APICert: longDoc}),
 
-		"pending name too long": s.PendingPut(ctx, dbapi.Pending{Name: long, Key: key}),
-		"pending key too long":  s.PendingPut(ctx, dbapi.Pending{Name: "web", Key: longKey}),
+		"pending without a name": s.PendingPut(ctx, dbapi.Pending{Key: key}),
+		"pending name too long":  s.PendingPut(ctx, dbapi.Pending{Name: long, Key: key}),
+		"pending key too long":   s.PendingPut(ctx, dbapi.Pending{Name: "web", Key: longKey}),
 	} {
 		if !errors.Is(err, dbapi.ErrInvalid) {
 			t.Errorf("%s: %v, want ErrInvalid", name, err)
