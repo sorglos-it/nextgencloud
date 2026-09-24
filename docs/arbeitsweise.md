@@ -338,6 +338,36 @@ schon sechs Revisionen später auf ganz anderen Code. Der Messbericht gehört in
 den Bericht. In den Code gehören zwei Zeilen Begründung — und statt einer
 Zeilennummer der **Name** der Stelle, denn Namen wandern mit.
 
+### Den Gegenfall baust du, du denkst ihn nicht
+
+Die zählebigste Sorte ist der Absolutsatz: „nur", „immer", „nie", „das einzige",
+„kann nicht", „es gibt keinen anderen Weg". Er klingt nach Sorgfalt und ist in
+Wahrheit die Stelle, an der jemand aufgehört hat zu prüfen.
+
+Ein Umsetzer hat es nach der dritten Runde in Folge selbst so gesagt, und er hat
+recht: **den Gegenfall zu bauen statt ihn zu überlegen gehört als fester Schritt
+ins Gegenlesen** — nicht in den Auftrag der jeweiligen Runde.
+
+Wie oft das trägt, ist gemessen. In einer einzigen Datei fielen drei solcher
+Sätze nacheinander, jeder in dem Commit, der den vorigen reparieren sollte:
+
+- „nur eine Aufgabe, die direkt an `encodeTask` geht, kann so ein Array tragen" —
+  ein zweiter Weg stand zwanzig Zeilen weiter in derselben Datei.
+- „und beim zweiten Aufruf dasselbe. Nie zwei." — ein `Proxy` über ein
+  `Uint8Array` besteht `instanceof` und liefert zwei verschiedene Antworten.
+- „das Zurücklesen ist **der einzige** Weg, das zuzusagen" — die Alternative
+  bestand alle acht Tests und alle Angriffsfälle.
+
+Der dritte Satz ist der lehrreiche: die Alternative war **nicht besser**, sie war
+nur **möglich**. Der Satz hätte gestimmt, wenn er den Grund genannt hätte statt
+der Einzigkeit. Genau so schreibst du ihn: **warum du diesen Weg wählst**, nicht
+dass es keinen anderen gäbe. Das ist auch die ehrlichere Aussage, denn sie bleibt
+wahr, wenn jemand später einen zweiten Weg findet.
+
+Und wenn du den Gegenfall gebaut hast und er fällt: schreib in den Bericht, was
+er kostet. „An zwölf Fällen gemessen, drei unterscheiden sich" ist eine Aussage.
+„Es gibt keinen anderen Weg" ist keine.
+
 ---
 
 ## Kurzfassung für den Anfang einer Aufgabe
