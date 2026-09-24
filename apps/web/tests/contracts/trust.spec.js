@@ -710,8 +710,10 @@ test("encodeList answers one controlled error instead of an arbitrary one", asyn
 // The title said "never throw" until Fixrunde 7 and no longer does, because
 // of keyOwner: its try now sits inside the user loop, so the one read in
 // front of that loop (l?.users, and iterating it) is as unguarded as the
-// same read in user/role/node, which never had a try at all. Measured: a
-// list whose users getter throws throws out of all four alike. What this
+// matching read in user/role/node, which never had a try at all. Measured: each
+// of the four throws at its own field - keyOwner and user at l.users, role
+// at l.roles, node at l.nodes. A throwing users getter alone does not reach
+// role or node, which never read that field at all. What this
 // test pins for keyOwner is what its name now says and what W1 was about -
 // a null element answers instead of throwing - not a blanket promise.
 test("validateList, validAPINode, validStore and keyOwner do not throw on a null element", async ({ shell }) => {

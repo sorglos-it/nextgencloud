@@ -434,9 +434,13 @@ export const node = (l, id) => (isArray(l?.nodes) && l.nodes.find((n) => n.id ==
 // an array at all. If no user is left to search, the loop ends and the answer
 // is the same null this function already gives for "not found". What stands
 // in front of the loop - reading l?.users, and iterating it - is outside the
-// try and stays as unguarded as the same read is in user/role/node above:
-// there is no next user to skip to there. Measured, so it is not read as more
-// than it is: a list whose users getter throws throws out of all four alike.
+// try and stays as unguarded as each of user/role/node leaves its own such
+// read above: there is no next user to skip to there. Measured, so it is not
+// read as more than it is: all four throw, but each at its own field only -
+// keyOwner and user at l.users, role at l.roles, node at l.nodes. A throwing
+// users getter alone leaves role and node untouched, because neither ever
+// reads that field; both answer the null they give for any list without a
+// match.
 export function keyOwner(l, kid) {
   if (!isArray(l?.users)) return null;
   for (const u of l.users) {
@@ -541,10 +545,12 @@ export const validAPINode = (n) => {
   }
 };
 
-// StoreLocal marks uploaded apps, so no catalog key may claim it. s.id is
-// read before any guard, exactly as n.kind is above, and the same guard and
-// the same try behind it answer it: validStore(null) and validStore() threw
-// there, every other type was already refused by validName(undefined).
+// StoreLocal marks uploaded apps, so no catalog key may claim it. s.id was
+// read at the very start, before anything in this function could refuse it -
+// the same problem n.kind had above - so validStore(null) and validStore()
+// threw at that first read, while every other type was already refused by
+// validName(undefined). Fixrunde 7, K1: the guard sign.js writes now stands
+// in front of the same try here too, and answers those two.
 export const validStore = (s) => {
   if (s === null || typeof s !== "object") return false;
   try {
