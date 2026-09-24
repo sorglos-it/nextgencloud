@@ -44,11 +44,11 @@ func TestSeedsAreRowsTheCountingReads(t *testing.T) {
 		// With the times a row of the counting carries: one past its keep
 		// time is read as none whatever it says, and every seed would count
 		// as one the counting reads.
-		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 			Data: row, Seq: uint64(now + keepFor), Updated: now}); err != nil {
 			t.Fatalf("put %q: %v", row, err)
 		}
-		if _, _, _, err := read(ctx, db, "anna", now); err == nil {
+		if _, _, _, err := read(ctx, db, nameSpace, "anna", now); err == nil {
 			taken++
 		}
 	}
@@ -69,7 +69,7 @@ func FuzzLockRow(f *testing.F) {
 	f.Fuzz(func(t *testing.T, row []byte) {
 		db := memstore.New()
 		now := int64(1790000000)
-		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 			Data: row, Seq: uint64(now + keepFor), Updated: now}); err != nil {
 			t.Fatalf("put: %v", err)
 		}
@@ -95,7 +95,7 @@ func FuzzLockRow(f *testing.F) {
 			if err := Fail(ctx, db, "anna", now); !errors.Is(err, ErrLock) {
 				t.Fatalf("fail on a row check refuses answered %v", err)
 			}
-			b, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna"))
+			b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna"))
 			if err != nil || !bytes.Equal(b.Data, row) {
 				t.Fatalf("the row was written over: %v", err)
 			}
@@ -117,7 +117,7 @@ func FuzzLockRow(f *testing.F) {
 		// However damaged the row was, what is written back counts and is
 		// removed again: a row that outlived every purge would lock a name
 		// out for good.
-		b, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna"))
+		b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna"))
 		if err != nil {
 			t.Fatalf("row after fail: %v", err)
 		}
@@ -127,7 +127,7 @@ func FuzzLockRow(f *testing.F) {
 		if err := Purge(ctx, db, now+keepFor); err != nil {
 			t.Fatalf("purge: %v", err)
 		}
-		if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
+		if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna")); !errors.Is(err, dbapi.ErrNotFound) {
 			t.Fatalf("the row survived its own purge: %v", err)
 		}
 	})

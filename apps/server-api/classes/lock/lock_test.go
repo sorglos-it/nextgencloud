@@ -47,7 +47,7 @@ func TestLockGrowsAndClears(t *testing.T) {
 	if err := Clear(ctx, db, "anna"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); err == nil {
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna")); err == nil {
 		t.Fatal("clear left the row")
 	}
 }
@@ -117,7 +117,7 @@ func TestPurgeRemovesOnlyExpiredLocks(t *testing.T) {
 	if err := Purge(ctx, db, now+3600); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
-	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); err == nil {
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna")); err == nil {
 		t.Fatal("expired lock kept")
 	}
 	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, dbapi.SettingInstallation); err != nil {
@@ -136,7 +136,7 @@ func TestPurgeFreesNothingOnATimeNoClockGives(t *testing.T) {
 	}
 	for _, bad := range []int64{-1, 0, -1790000000} {
 		err := Purge(ctx, db, bad)
-		if _, kept := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); kept != nil {
+		if _, kept := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna")); kept != nil {
 			t.Fatalf("purge at %d freed the lock: %v", bad, kept)
 		}
 		if !errors.Is(err, ErrLock) {
@@ -168,7 +168,7 @@ func TestPurgeFreesNoRowTheCountingStillReads(t *testing.T) {
 	now := int64(1790000000)
 	// A row of a store that keeps no Seq: its keep time is in Updated alone,
 	// and the counting reads it as the longest wait there is.
-	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 		Data: []byte("9 1790000300"), Updated: now}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestPurgeFreesNoRowTheCountingStillReads(t *testing.T) {
 	if err := Purge(ctx, db, later); err != nil {
 		t.Fatalf("purge after keepFor: %v", err)
 	}
-	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna")); !errors.Is(err, dbapi.ErrNotFound) {
 		t.Fatalf("the purge kept a row the counting reads as none: %v", err)
 	}
 }
@@ -200,7 +200,7 @@ func TestPurgeFreesNoRowTheCountingStillReads(t *testing.T) {
 func TestWaitIsNeverLongerThanTheLongestOne(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
-	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 		Data: []byte("3 8000000000000000000"), Seq: uint64(now + keepFor)}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestWaitIsNeverLongerThanTheLongestOne(t *testing.T) {
 func TestAFurtherFailureNeverShortensTheWait(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
-	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 		Data: []byte("1 1790000200"), Seq: uint64(now + keepFor)}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestDamagedRowKeepsTheNameShut(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
 	row := []byte("x y")
-	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 		Data: row, Seq: uint64(now + keepFor)}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestDamagedRowKeepsTheNameShut(t *testing.T) {
 	if err := Fail(ctx, db, "anna", now); !errors.Is(err, ErrLock) {
 		t.Fatalf("fail answered %v", err)
 	}
-	b, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna"))
+	b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(nameSpace, "anna"))
 	if err != nil || !bytes.Equal(b.Data, row) {
 		t.Fatalf("the damaged row was replaced by %q: %v", b.Data, err)
 	}
@@ -262,7 +262,7 @@ func TestDamagedRowKeepsTheNameShut(t *testing.T) {
 func TestADamagedRowShutsItsBucketNoLongerThanKeepFor(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
-	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 		Data: []byte("x y"), Seq: uint64(now + keepFor), Updated: now}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestFailuresFiredAtOnceAllCount(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	n, _, _, err := read(ctx, db, "anna", now)
+	n, _, _, err := read(ctx, db, nameSpace, "anna", now)
 	if err != nil || n != tries {
 		t.Fatalf("%d of %d failures counted: %v", n, tries, err)
 	}
@@ -423,7 +423,7 @@ func mate(tb testing.TB, name string) string {
 	tb.Helper()
 	for i := 0; i < 1<<20; i++ {
 		other := "mate-" + strconv.Itoa(i)
-		if other != name && key(other) == key(name) {
+		if other != name && key(nameSpace, other) == key(nameSpace, name) {
 			return other
 		}
 	}
@@ -464,8 +464,8 @@ func TestNamesOfOneRowShareTheCounting(t *testing.T) {
 func TestEveryNameFallsInABucket(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 8*buckets; i++ {
-		id := key(strings.Repeat("\x00name ", i%7) + strconv.Itoa(i))
-		if !strings.HasPrefix(id, prefix) || len(id) != len(prefix)+4 {
+		id := key(nameSpace, strings.Repeat("\x00name ", i%7)+strconv.Itoa(i))
+		if !strings.HasPrefix(id, nameSpace) || len(id) != len(nameSpace)+4 {
 			t.Fatalf("the ID of a name is %q", id)
 		}
 		seen[id] = true
@@ -525,8 +525,8 @@ func TestARowKeepsCountingUnlessItHasLostBothTimes(t *testing.T) {
 	now := int64(1790000000)
 	row := []byte("9 1790000300")
 	for _, b := range []dbapi.Blob{
-		{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row, Seq: uint64(now + keepFor)},
-		{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row, Updated: now},
+		{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"), Data: row, Seq: uint64(now + keepFor)},
+		{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"), Data: row, Updated: now},
 	} {
 		if err := db.BlobPut(ctx, b); err != nil {
 			t.Fatalf("put: %v", err)
@@ -535,7 +535,7 @@ func TestARowKeepsCountingUnlessItHasLostBothTimes(t *testing.T) {
 			t.Fatalf("a row with one of its two times waits %d: %v", wait, err)
 		}
 	}
-	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(nameSpace, "anna"),
 		Data: row}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -644,5 +644,59 @@ func TestAClockThatRanAheadShutsItsBucketUntilItHasCaughtUp(t *testing.T) {
 	}
 	if wait, err := Check(ctx, late, "anna", now+ahead); err != nil || wait != 0 {
 		t.Fatalf("a clock pulled forward left a wait of %d: %v", wait, err)
+	}
+}
+
+// TestTheTwoCountingsNeverShareARow is the whole reason there are two spaces.
+// key hashes every string into the same 4096 buckets, and the key ID of a
+// proof comes out of the request -- whoever sends one picks the bucket. In one
+// space a few thousand tries would find a key ID that falls into the row of any
+// login name, and three failed logins would then lay that name's wait, with no
+// key and no session. The space is what stops it, and nothing else does: the
+// two strings below are of one bucket.
+func TestTheTwoCountingsNeverShareARow(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	const name = "anna"
+	bucket := strings.TrimPrefix(key(nameSpace, name), nameSpace)
+	id := ""
+	for i := 0; i < 1<<20 && id == ""; i++ {
+		if try := strconv.Itoa(i); strings.TrimPrefix(key(keySpace, try), keySpace) == bucket {
+			id = try
+		}
+	}
+	if id == "" {
+		t.Fatalf("no key ID of the bucket of %q found", name)
+	}
+	if key(nameSpace, name) == key(keySpace, id) {
+		t.Fatalf("one row for both: %q", key(nameSpace, name))
+	}
+	// Far more failures than any wait needs, all for the key ID.
+	for i := 0; i < 12; i++ {
+		if err := FailKey(ctx, db, id, now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	if wait, err := CheckKey(ctx, db, id, now); err != nil || wait == 0 {
+		t.Fatalf("the key ID was not counted at all: %d %v", wait, err)
+	}
+	if wait, err := Check(ctx, db, name, now); err != nil || wait != 0 {
+		t.Fatalf("%q waits %d because of a key ID of its bucket", name, wait)
+	}
+	// Clear belongs to the names, so it never frees a key ID's row either.
+	if err := Clear(ctx, db, name); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if wait, err := CheckKey(ctx, db, id, now); err != nil || wait == 0 {
+		t.Fatalf("clearing %q freed the row of a key ID: %d %v", name, wait, err)
+	}
+	// Purge takes the rows of both countings; a row of the second one left
+	// behind would grow the table without bound.
+	if err := Purge(ctx, db, now+2*keepFor); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	rows, err := db.BlobFrom(ctx, dbapi.BlobSetting, 0)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("purge left %d rows (%v)", len(rows), err)
 	}
 }

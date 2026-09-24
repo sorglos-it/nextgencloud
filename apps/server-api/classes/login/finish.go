@@ -62,36 +62,33 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := h.S.Now()
-	// The bucket of the wait is the login name of the key's owner: the
-	// contract counts per login name, and login/start reads the same bucket by
-	// that name, so a run of failed logins is a wait there too.
+	// Whose wait this attempt counts against. A key the trust list holds names
+	// its owner, and then it is the owner's login name: the contract counts per
+	// login name, and login/start reads that same row by the name it was asked
+	// for, so a run of failed logins is a wait there too.
 	//
-	// A key the list does not hold names no user, and then the bucket is the
-	// key ID. Not the user the certificate claims to be: anybody may write any
-	// user into a certificate, so that would let anybody lock out any name --
-	// and the wait login/start answers afterwards would say whether that name
-	// exists, because a name nobody has gets a made-up user ID nothing else
-	// ever counts for. A key ID is of one shape for every attempt and says
-	// nothing about anybody.
+	// A key the list does not hold names nobody, and then the key ID counts for
+	// itself -- in the counting of the key IDs, which is a set of rows of its
+	// own (lock.CheckKey, lock.FailKey). Both halves of that matter:
 	//
-	// What this does not close, and what no bucket taken from a body can: a
-	// challenge that carries a passkey hands its key ID out
-	// (session.PasskeyRef), and for a name nobody has that ID is made up and
-	// belongs to no user. So failed logins carrying it lock the name if it
-	// exists and nothing at all if it does not, and login/start afterwards
-	// answers 429 against 200 -- measured, one challenge, three failures and
-	// one more challenge. The wait per login name costs the other half of that
-	// anyway: whoever knows the names of an installation locks them out one by
-	// one (classes/lock, buckets). What is new is that it also says which names
-	// those are. Closing it needs something this path is not given: login/finish
-	// learns no login name, only the user ID in the certificate, where the
-	// contract counts per name (shared/README.md, "Vor dem WebSocket"). It is a
-	// question for V1.2 and not one to be settled here.
-	bucket := "key/" + f.Proof.KeyID
-	if owner, _, found := v.List.KeyOwner(f.Proof.KeyID); found {
-		bucket = owner.Name
-	}
-	wait, err := lock.Check(ctx, h.S.DB, bucket, now)
+	//   - Not the user the certificate claims to be: anybody may write any user
+	//     into a certificate, so that would let anybody lock out any name.
+	//   - And not the key ID in the counting of the names either, which is what
+	//     the first version of this file did. lock.key hashes every string into
+	//     the same 4096 rows, and the key ID comes straight out of the request:
+	//     a few thousand tries at home find one that falls into the row of any
+	//     name one likes, and three requests then lay that name's wait -- no
+	//     key, no session, no passkey. Measured before it was split, and it is
+	//     what TestFinishCannotLockANameWithAChosenKeyID holds shut.
+	//
+	// What no choice of row closes: login/start hands the key ID of a passkey
+	// out (session.PasskeyRef), real for a name that exists and made up for one
+	// nobody has, so failed logins carrying a real one lock that name and the
+	// answer of login/start afterwards says so. Closing that needs something
+	// this path is not given -- login/finish learns no login name, only the
+	// user ID in the certificate -- and it is a question for V1.2.
+	owner, _, known := v.List.KeyOwner(f.Proof.KeyID)
+	wait, err := waitOf(ctx, h.S.DB, owner.Name, f.Proof.KeyID, known, now)
 	if err != nil {
 		httpapi.Fail(w, wire.CodeUnreachable)
 		return
@@ -117,7 +114,8 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		// database included. A driver may quote the values of the statement
 		// back, and the values of this one are the bucket of a login name and
 		// its count; whoever needs the cause gets it from the database itself.
-		if err := lock.Fail(ctx, h.S.DB, bucket, now); err != nil && h.warnLock.take(now, lockWarnTTL) {
+		if err := countFailure(ctx, h.S.DB, owner.Name, f.Proof.KeyID, known, now); err != nil &&
+			h.warnLock.take(now, lockWarnTTL) {
 			slog.Error("a failed login could not be counted; nothing holds up guessing until the database can be written again")
 		}
 		httpapi.Fail(w, wire.CodeLogin)
@@ -164,16 +162,16 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// OnceUse hands back the user ID login/start kept beside it, and a nonce
 	// that was never kept -- every one of a made-up challenge -- is not there
 	// at all.
-	owner, err := h.S.DB.OnceUse(ctx, dbapi.OnceNonce, cert.Nonce, now)
-	if err != nil || owner != cert.User {
+	nonceUser, err := h.S.DB.OnceUse(ctx, dbapi.OnceNonce, cert.Nonce, now)
+	if err != nil || nonceUser != cert.User {
 		deny()
 		return
 	}
-	// The list holds this user: session.VerifyClient took the certificate
-	// against a key of theirs, and a key belongs to the user it is listed
-	// under (trust.List.KeyOwner). So the row written below carries the name
-	// and the roles the list says, not those an older row may still hold.
-	u, _ := v.List.User(cert.User)
+	// owner is this user, and the list is where it comes from:
+	// session.VerifyClient took the certificate against a key of theirs, and
+	// verifying it means the key was found and owner.ID == cert.User. So the
+	// row written below carries the name and the roles the list says, not
+	// those an older row may still hold.
 	res, token, err := h.newSession(ctx, verified, f.Cert, f.Proof)
 	if err != nil {
 		// Of the things newSession can fail at -- the write of the session
@@ -195,7 +193,7 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// Failures and Locked are the row's own two numbers and not that counting;
 	// nothing maintains them today, so a login sets them where a login leaves
 	// them. LastLogin is what ngc.users/list shows (core.UserInfo).
-	row.ID, row.Name, row.Roles = u.ID, u.Name, u.Roles
+	row.ID, row.Name, row.Roles = owner.ID, owner.Name, owner.Roles
 	row.Failures, row.Locked, row.LastLogin = 0, 0, now
 	if err := h.S.DB.UserPut(ctx, row); err != nil {
 		httpapi.Fail(w, wire.CodeUnreachable)
@@ -210,6 +208,28 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// certificate for.
 	httpapi.SetCookie(w, token)
 	httpapi.Answer(w, http.StatusOK, b)
+}
+
+// waitOf and countFailure are the one place that picks between the two
+// countings, so the choice cannot be made differently in two spots. known is
+// what trust.List.KeyOwner said: with it the login name counts, without it the
+// key ID, and the two never share a row (classes/lock, nameSpace and keySpace).
+//
+// Both are asked on every attempt, whichever way known fell, so the two make
+// the same one read and the same one read-and-write -- a difference there would
+// say over the clock what the answers keep quiet.
+func waitOf(ctx context.Context, db dbapi.Local, name, keyID string, known bool, now int64) (int64, error) {
+	if known {
+		return lock.Check(ctx, db, name, now)
+	}
+	return lock.CheckKey(ctx, db, keyID, now)
+}
+
+func countFailure(ctx context.Context, db dbapi.Local, name, keyID string, known bool, now int64) error {
+	if known {
+		return lock.Fail(ctx, db, name, now)
+	}
+	return lock.FailKey(ctx, db, keyID, now)
 }
 
 // newSession makes the keys of the API's side of the session, signs the API

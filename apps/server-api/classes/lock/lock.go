@@ -21,7 +21,6 @@ import (
 // Counting: the first freeCount failures are free (a typo costs nothing),
 // then the wait doubles from firstWait up to maxWait.
 const (
-	prefix    = "lock."
 	freeCount = 2
 	firstWait = 1
 	maxWait   = 300
@@ -64,6 +63,32 @@ const (
 //     lock per name, and no number of buckets changes it.
 const buckets = 4096
 
+// The two countings this package keeps, and the whole reason they are two.
+// Every row ID begins with one of these, so a row of one counting can never be
+// a row of the other -- whatever the two strings hash to, and whoever chose
+// them.
+//
+// nameSpace counts login names. It is the counting of the contract
+// (shared/README.md, "Vor dem WebSocket": the wait holds per login name), and
+// login/start reads it by the name it was asked for.
+//
+// keySpace counts the key ID of a proof whose key the trust list does not
+// hold. Such a proof names no user, so there is no name to count it for -- and
+// the key ID comes out of the request, which means whoever sends it picks the
+// string. In one counting with the names that is an open door: key hashes
+// every string into the same buckets, so a few thousand tries find a key ID
+// that falls into the row of any name one likes, and three failed logins then
+// lay that name's wait. Kept apart, the worst such a search buys is the row of
+// another key ID.
+//
+// The prefixes must stay disjoint: neither may be a prefix of the other, or
+// Purge would take rows of the wrong counting (it tells them apart by exactly
+// this).
+const (
+	nameSpace = "lock."
+	keySpace  = "lockkey."
+)
+
 // The two properties key rests on, held by the compiler: a number that is no
 // power of two, or one the 16 bits cannot address, does not translate. No test
 // can hold them -- a wrong number divides the names unevenly and counts on.
@@ -101,15 +126,20 @@ var counting sync.Mutex
 // validNow reports whether now is a time a clock of this API gives.
 func validNow(now int64) bool { return now >= 1 && now <= maxNow }
 
-// key is the setting ID of a name: its bucket, taken from the first two bytes
-// of its SHA-256 and written as four hex digits, so every row is of one size
-// and holds nothing of the name. There are only buckets many of them, which
-// is what bounds the table; two names that fall in one share their count.
-func key(name string) string {
+// key is the setting ID of a name in one counting: the space it is counted in
+// and its bucket, taken from the first two bytes of its SHA-256 and written as
+// four hex digits, so every row is of one size and holds nothing of the name.
+// There are only buckets many of them per space, which is what bounds the
+// table; two names of one space that fall in one bucket share their count.
+//
+// The hash says nothing about the space, so two strings of different spaces
+// that hash alike still get two rows -- the space is what keeps them apart,
+// and it is the only thing that does.
+func key(space, name string) string {
 	h := sha256.Sum256([]byte(name))
 	n := binary.BigEndian.Uint16(h[:2]) % buckets
 	const digits = "0123456789abcdef"
-	return prefix + string([]byte{
+	return space + string([]byte{
 		digits[n>>12&0xf], digits[n>>8&0xf], digits[n>>4&0xf], digits[n&0xf]})
 }
 
@@ -136,8 +166,8 @@ func expired(b dbapi.Blob, now int64) bool {
 // a purge was ever wired up and however often it runs. That is what lets the
 // counting of a bucket fall back to zero -- and it is the only thing that ever
 // ends the lock a damaged row lays on its bucket.
-func read(ctx context.Context, db dbapi.Local, name string, now int64) (int, int64, int64, error) {
-	b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(name))
+func read(ctx context.Context, db dbapi.Local, space, name string, now int64) (int, int64, int64, error) {
+	b, err := db.BlobGet(ctx, dbapi.BlobSetting, key(space, name))
 	if errors.Is(err, dbapi.ErrNotFound) {
 		return 0, 0, 0, nil
 	}
@@ -162,10 +192,22 @@ func read(ctx context.Context, db dbapi.Local, name string, now int64) (int, int
 // forward and came back, a number that went wrong -- would otherwise shut a
 // name out for as long as that number happens to say.
 func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, error) {
+	return check(ctx, db, nameSpace, name, now)
+}
+
+// CheckKey is Check for the key ID of a proof whose key the trust list does
+// not hold. It reads the other counting, and nothing it is ever asked about
+// can reach a login name's row -- see nameSpace and keySpace for why that
+// matters.
+func CheckKey(ctx context.Context, db dbapi.Local, keyID string, now int64) (int64, error) {
+	return check(ctx, db, keySpace, keyID, now)
+}
+
+func check(ctx context.Context, db dbapi.Local, space, name string, now int64) (int64, error) {
 	if !validNow(now) {
 		return 0, ErrLock
 	}
-	_, until, _, err := read(ctx, db, name, now)
+	_, until, _, err := read(ctx, db, space, name, now)
 	if err != nil || until <= now {
 		return 0, err
 	}
@@ -194,12 +236,23 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 // much as it lies ahead: that is the price of the same line, and it stands with
 // the line (see kept below).
 func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
+	return fail(ctx, db, nameSpace, name, now)
+}
+
+// FailKey is Fail for the key ID of a proof whose key the trust list does not
+// hold. It counts in the other counting, so no failure it is ever given lays
+// a wait on a login name -- see nameSpace and keySpace.
+func FailKey(ctx context.Context, db dbapi.Local, keyID string, now int64) error {
+	return fail(ctx, db, keySpace, keyID, now)
+}
+
+func fail(ctx context.Context, db dbapi.Local, space, name string, now int64) error {
 	if !validNow(now) {
 		return ErrLock
 	}
 	counting.Lock()
 	defer counting.Unlock()
-	n, until, seen, err := read(ctx, db, name, now)
+	n, until, seen, err := read(ctx, db, space, name, now)
 	if err != nil {
 		return err
 	}
@@ -249,7 +302,7 @@ func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	// Seq and Updated are the time the row may be removed. A walk of the rows
 	// gets both (dbapi.BlobFrom), so Purge asks them the same question the
 	// counting asks and needs nothing of the data (see expired).
-	return db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(name),
+	return db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(space, name),
 		Seq: uint64(kept + keepFor), Data: []byte(strconv.Itoa(n) + " " + strconv.FormatInt(until, 10)),
 		Updated: kept})
 }
@@ -261,7 +314,7 @@ func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 func Clear(ctx context.Context, db dbapi.Local, name string) error {
 	counting.Lock()
 	defer counting.Unlock()
-	return db.BlobDelete(ctx, dbapi.BlobSetting, key(name))
+	return db.BlobDelete(ctx, dbapi.BlobSetting, key(nameSpace, name))
 }
 
 // Purge removes lock rows whose time has passed. Other settings stay. A time
@@ -297,7 +350,8 @@ func Purge(ctx context.Context, db dbapi.Local, now int64) error {
 		return err
 	}
 	for _, b := range blobs {
-		if !strings.HasPrefix(b.ID, prefix) || !expired(b, now) {
+		ours := strings.HasPrefix(b.ID, nameSpace) || strings.HasPrefix(b.ID, keySpace)
+		if !ours || !expired(b, now) {
 			continue
 		}
 		if err := db.BlobDelete(ctx, dbapi.BlobSetting, b.ID); err != nil {
