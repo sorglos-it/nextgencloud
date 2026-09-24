@@ -12,7 +12,9 @@
 //
 // The channels of a tunnel are in channel.go: the numbers, their states, the
 // credit of both directions and the limits of the contract. Run hands every
-// frame of a channel there and gets the reading back at once.
+// frame of a channel there; every handler runs in a goroutine of its own, and
+// the one thing that holds the reading is the answer to a frame that opens or
+// ends nothing, which is written on the spot (channels.take).
 //
 // A text message, a message that does not decrypt, a frame that does not
 // decode and a control message the API may not send end the link at once and

@@ -566,8 +566,9 @@ func (k *keeper) frames() []wire.Frame {
 	return append([]wire.Frame(nil), k.got...)
 }
 
-// Everything on a channel goes to the handler, and channel 0 does not.
-func TestRunHandsChannelsToTheHandler(t *testing.T) {
+// Everything on a channel goes to the hook Run hands its frames to, and
+// channel 0 does not.
+func TestRunHandsChannelsToTheFrameHook(t *testing.T) {
 	k := &keeper{}
 	open, err := json.Marshal(tunnel.Open{Open: []byte("{}"), Window: wire.MinWindow})
 	if err != nil {

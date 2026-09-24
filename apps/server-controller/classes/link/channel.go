@@ -36,6 +36,14 @@ var ErrClosed = errors.New("link: the channel is closed")
 //     of the API, and with the tunnel. A handler that waits on anything waits
 //     on it too.
 //
+// What o says about the user, and what it does not: this package reads the
+// OPEN only as far as it must to run the channel (tunnel.ParseOpen), because
+// it holds no trust list. **o.Session is therefore always nil here** - not
+// because the channel has no user, but because nobody has looked yet. Whoever
+// authorises takes Channel.OpenPayload and checks it himself
+// (tunnel.VerifyOpen); o.Session alone would say "channel without a user",
+// and those are allowed for core.WithoutUser only.
+//
 // What a handler has to keep to: it writes through its Channel and nowhere
 // else. Every write goes through the one write lock of the tunnel (Tunnel.Send),
 // so a write that comes to a stand costs this tunnel its heartbeat for as long
@@ -46,9 +54,15 @@ type Handler interface {
 	Open(ctx context.Context, ch *Channel, o tunnel.Opened) error
 }
 
-// Inbound is one thing that arrived on a channel: DATA with its bytes, or the
+// Inbound is one thing that arrived on a channel: DATA with its bytes, or an
 // EOF of the API. A CLOSE is none of it - it ends the channel, and Recv says
 // so with ErrClosed.
+//
+// They come as they came in. This hop counts the credit and nothing else: that
+// the API sends its EOF once and no DATA behind it is a rule of the contract
+// this side does not enforce, so a second EOF and DATA after one are handed on
+// like everything else, and so is DATA that came in before a CLOSE. Whoever
+// reads a channel decides what to make of that.
 type Inbound struct {
 	Kind wire.Type // wire.TypeData or wire.TypeEOF
 	Data []byte    // the payload of a DATA; it belongs to whoever received it
@@ -65,7 +79,10 @@ var (
 )
 
 // Channel is one channel of a tunnel. Everything of it may be used from any
-// goroutine; the frames of one Send do not interleave with those of another.
+// goroutine at the same time: the frames of one Send do not interleave with
+// those of another, and a Send that is waiting for credit holds nothing that a
+// Grant of the other direction needs - a handler that reads and writes at once
+// can always grant, which is what gets its own Send going again.
 type Channel struct {
 	c      *channels
 	num    uint32
@@ -73,10 +90,15 @@ type Channel struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// wmu is the write lock of this channel: one frame of it at a time, so
-	// that the pieces of two Sends do not come apart on the wire and nothing
-	// of this side goes out after its CLOSE. Whoever holds it holds mu for no
-	// longer than the bookkeeping, and never while writing.
+	// smu holds one Send at a time, so that the pieces of two Sends do not
+	// come apart on the wire. It is held while a Send waits for credit; wmu is
+	// not, so waiting for credit holds up no GRANT of the other direction.
+	smu sync.Mutex
+	// wmu is the write lock of this channel: one frame at a time, and the gate
+	// the CLOSE closes. Whoever writes takes it, looks under mu whether the
+	// CLOSE of this side is claimed, and only then writes - so nothing of this
+	// channel can go out behind that CLOSE. Order: smu, then wmu, then mu; mu
+	// is never held while writing.
 	wmu sync.Mutex
 
 	mu    sync.Mutex
@@ -148,10 +170,17 @@ func (ch *Channel) Recv(ctx context.Context) (Inbound, error) {
 		}
 		select {
 		case <-ch.data:
-		case <-ctx.Done():
-			return Inbound{}, ctx.Err()
 		case <-ch.ctx.Done():
 			return Inbound{}, ErrClosed
+		case <-ctx.Done():
+			// The channel ends the context of its handler, so at the end of a
+			// channel both of these are ready at once and the runtime takes
+			// whichever it likes. What happened is the channel: whoever waits
+			// here gets one answer for it and not two by turns.
+			if ch.ctx.Err() != nil {
+				return Inbound{}, ErrClosed
+			}
+			return Inbound{}, ctx.Err()
 		}
 	}
 }
@@ -165,14 +194,14 @@ func (ch *Channel) Send(b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
-	ch.wmu.Lock()
-	defer ch.wmu.Unlock()
+	ch.smu.Lock()
+	defer ch.smu.Unlock()
 	for len(b) > 0 {
 		n, err := ch.reserve(len(b))
 		if err != nil {
 			return err
 		}
-		if err := ch.c.send(wire.Frame{Type: wire.TypeData, Channel: ch.num, Payload: b[:n]}); err != nil {
+		if err := ch.write(wire.Frame{Type: wire.TypeData, Channel: ch.num, Payload: b[:n]}); err != nil {
 			return err
 		}
 		b = b[n:]
@@ -180,9 +209,25 @@ func (ch *Channel) Send(b []byte) error {
 	return nil
 }
 
+// write puts one frame of this channel on the tunnel, unless the CLOSE of this
+// side is claimed. Taking the write lock and looking at that in one go is what
+// makes the CLOSE the last frame of this side on this number: a frame that got
+// here first is written before it, one that comes later is not written at all.
+func (ch *Channel) write(f wire.Frame) error {
+	ch.wmu.Lock()
+	defer ch.wmu.Unlock()
+	ch.mu.Lock()
+	over := ch.closing || ch.peer
+	ch.mu.Unlock()
+	if over {
+		return ErrClosed
+	}
+	return ch.c.send(f)
+}
+
 // reserve takes credit for up to want bytes off the allowance and waits until
-// there is some. It gives the credit up before the frame is written: nothing
-// else sends on this channel while Send holds wmu.
+// there is some. It holds no write lock while it waits, so a handler that is
+// waiting for credit can still grant in the other direction.
 func (ch *Channel) reserve(want int) (int, error) {
 	for {
 		ch.mu.Lock()
@@ -219,8 +264,8 @@ func (ch *Channel) reserve(want int) (int, error) {
 // EOF says that this side has nothing more to send. It may be sent once, and
 // only before the CLOSE of this side.
 func (ch *Channel) EOF() error {
-	ch.wmu.Lock()
-	defer ch.wmu.Unlock()
+	ch.smu.Lock()
+	defer ch.smu.Unlock()
 	ch.mu.Lock()
 	switch {
 	case ch.closing || ch.peer:
@@ -232,7 +277,7 @@ func (ch *Channel) EOF() error {
 	}
 	ch.eof = true
 	ch.mu.Unlock()
-	return ch.c.send(wire.Frame{Type: wire.TypeEOF, Channel: ch.num})
+	return ch.write(wire.Frame{Type: wire.TypeEOF, Channel: ch.num})
 }
 
 // Grant gives the API credit for credit bytes of DATA payload. The first GRANT
@@ -242,9 +287,18 @@ func (ch *Channel) EOF() error {
 // wire.MaxWindow. Values the contract does not allow are refused here and not
 // sent: they would cost the channel at the other end.
 func (ch *Channel) Grant(credit uint32, handshake []byte) error {
-	if credit == 0 || credit > wire.MaxWindow || (len(handshake) != 0 && len(handshake) != wire.HandshakeSize) {
+	// A GRANT of nothing is none of the contract (wire.ParseGrant), and a
+	// handshake is Noise message 2 or nothing. What is above the window is not
+	// asked here: the allowance below catches it, whatever this side already
+	// granted.
+	if credit == 0 || (len(handshake) != 0 && len(handshake) != wire.HandshakeSize) {
 		return ErrConfig
 	}
+	// The write lock before the bookkeeping, as everywhere: between looking
+	// whether the CLOSE of this side is claimed and writing, nothing of this
+	// channel may slip in - least of all that CLOSE itself.
+	ch.wmu.Lock()
+	defer ch.wmu.Unlock()
 	ch.mu.Lock()
 	switch {
 	case ch.closing || ch.peer:
@@ -265,8 +319,6 @@ func (ch *Channel) Grant(credit uint32, handshake []byte) error {
 	ch.in += uint64(credit)
 	ch.first = true
 	ch.mu.Unlock()
-	ch.wmu.Lock()
-	defer ch.wmu.Unlock()
 	return ch.c.send(wire.Frame{Type: wire.TypeGrant, Channel: ch.num, Payload: wire.Grant(credit, handshake)})
 }
 
@@ -342,9 +394,25 @@ const (
 )
 
 // take takes one frame of a channel. It is called from the goroutine that runs
-// the tunnel, one frame at a time and in the order they arrived, and it gives
-// that goroutine back at once: what a channel does with its frames happens in
-// the goroutine of that channel.
+// the tunnel, one frame at a time and in the order they arrived. What a channel
+// does with its frames happens in the goroutine of that channel, so a handler
+// never holds this one.
+//
+// One thing here does hold it, and it has to: the answer to a frame that opens
+// or ends nothing - CLOSE E_PROTOCOL, CLOSE E_UNREACHABLE - is written from
+// right here, so that it is out before the next frame is taken (a test can
+// count on that, and so can the API). That costs at most two waits of
+// WriteTimeout: one for the write lock of that channel, if a Send of it is
+// standing in the socket, and one for the write itself. The ping of the tunnel
+// is skipped while a write of this side runs, so the link lives through it
+// (see Tunnel.Send), but for that while nothing here would notice a peer that
+// went quiet.
+//
+// The error of that write is not passed on: it means the socket is gone or the
+// deadline ran out, and in both cases the library has already torn the socket
+// down, so the very next read of Run comes back with an error and ends the
+// tunnel there. Ending it from here would take the answer away from every
+// other channel on it for nothing.
 func (c *channels) take(f wire.Frame) error {
 	ch, o, do, err := c.route(f)
 	if err != nil {
@@ -375,6 +443,12 @@ func (c *channels) route(f wire.Frame) (*Channel, tunnel.Opened, what, error) {
 		}
 		ch = c.hold(f.Channel)
 		if f.Type != wire.TypeOpen {
+			// A CLOSE here is a protocol error like every other stray frame -
+			// and it is the CLOSE of the API for that number all the same. The
+			// API answers no CLOSE with a second one, so counting it is what
+			// gives the number back once the answer of this side is out;
+			// without it the number would be lost for the life of the tunnel.
+			ch.peer = f.Type == wire.TypeClose
 			return ch, tunnel.Opened{}, protocol, nil
 		}
 		if c.h == nil {
@@ -433,25 +507,41 @@ func (c *channels) route(f wire.Frame) (*Channel, tunnel.Opened, what, error) {
 		ch.out += uint64(credit)
 		wake(ch.credit)
 	case wire.TypeClose:
+		// A CLOSE counts as received whatever stands in it: the API sends no
+		// second one, so a number whose CLOSE this side threw away would never
+		// come back. What does not parse is answered with the protocol error
+		// all the same.
+		ch.peer = true
+		ch.cancel()
 		if _, err := wire.ParseClose(f.Payload); err != nil {
 			return ch, tunnel.Opened{}, protocol, nil
 		}
 		// The channel is over; the end of its handler writes the one CLOSE
 		// this side owes for it.
-		ch.peer = true
-		ch.cancel()
 	}
 	return nil, tunnel.Opened{}, nothing, nil
 }
 
+// queueCost is what one waiting frame costs this side in bookkeeping: the size
+// of an Inbound, measured in TestAChannelQueuesNoMoreThanItsCreditPaysFor.
+const queueCost = 32
+
 // room says whether one more frame may wait for the handler. A DATA frame with
-// an empty payload costs no credit, and an EOF costs none either, so the
-// credit in bytes alone does not bound how many frames may pile up in front of
-// a handler that does not read. The count does: as many frames as the credit
-// granted for them could have paid for, one byte each, and one for the EOF. A
-// peer that keeps to the contract never reaches it - every frame it may send
-// is one it has paid for.
-func (ch *Channel) room() bool { return uint64(len(ch.queue)) <= ch.in+ch.bytes }
+// an empty payload costs no credit, and an EOF costs none either, so the credit
+// in bytes alone does not bound what may pile up in front of a handler that
+// does not read. The memory does: a waiting frame costs queueCost bytes
+// whatever it carries, and this side keeps no more of them than the credit it
+// granted would pay for at that price - so a byte of credit is at most two
+// bytes of memory here, not thirty-three. On top of that come two frames: an
+// empty DATA and an EOF are both of the contract before this side has granted
+// anything at all, and those two are taken.
+//
+// It is a rule of this controller and not of the contract, which counts bytes
+// and says nothing about the number of frames: a peer that splits its credit
+// into pieces smaller than queueCost bytes is closed with E_PROTOCOL here and
+// might not be somewhere else. With the smallest window that is 130 waiting
+// frames.
+func (ch *Channel) room() bool { return uint64(len(ch.queue)) < (ch.in+ch.bytes)/queueCost+2 }
 
 // hold puts a number into the state of this tunnel. The caller holds mu.
 func (c *channels) hold(num uint32) *Channel {

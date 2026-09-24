@@ -443,17 +443,13 @@ func TestAChannelRefusesWhatTheContractForbids(t *testing.T) {
 		if ch.Num() != 1 || ch.Window() != wire.MinWindow {
 			t.Errorf("channel %d with a window of %d, want the number and the window of the OPEN", ch.Num(), ch.Window())
 		}
-		// A GRANT of nothing, one above the window of the contract, a first
-		// one below its floor, and one with a handshake that is not Noise
-		// message 2.
-		if err := ch.Grant(0, nil); !errors.Is(err, ErrConfig) {
-			t.Errorf("Grant of nothing = %v, want it refused", err)
+		// A first GRANT below the floor of the contract, one above its window,
+		// and one with a handshake that is not Noise message 2.
+		if err := ch.Grant(wire.MinWindow-1, nil); !errors.Is(err, ErrConfig) {
+			t.Errorf("Grant below MinWindow = %v, want it refused", err)
 		}
 		if err := ch.Grant(wire.MaxWindow+1, nil); !errors.Is(err, ErrConfig) {
 			t.Errorf("Grant above MaxWindow = %v, want it refused", err)
-		}
-		if err := ch.Grant(wire.MinWindow-1, nil); !errors.Is(err, ErrConfig) {
-			t.Errorf("Grant below MinWindow = %v, want it refused", err)
 		}
 		if err := ch.Grant(wire.MinWindow, make([]byte, wire.HandshakeSize-1)); !errors.Is(err, ErrConfig) {
 			t.Errorf("Grant with a short handshake = %v, want it refused", err)
@@ -461,10 +457,14 @@ func TestAChannelRefusesWhatTheContractForbids(t *testing.T) {
 		if err := ch.Grant(wire.MinWindow, make([]byte, wire.HandshakeSize)); err != nil {
 			t.Errorf("the first GRANT with Noise message 2 = %v, want it out", err)
 		}
-		// Message 2 travels in the first GRANT and in no other, and what is
-		// granted never goes above the window of the contract.
+		// Message 2 travels in the first GRANT and in no other; a GRANT of
+		// nothing is none of the contract even when the floor is behind us;
+		// and what is granted never goes above the window of the contract.
 		if err := ch.Grant(wire.MinWindow, make([]byte, wire.HandshakeSize)); !errors.Is(err, ErrConfig) {
 			t.Errorf("a handshake in a later GRANT = %v, want it refused", err)
+		}
+		if err := ch.Grant(0, nil); !errors.Is(err, ErrConfig) {
+			t.Errorf("Grant of nothing = %v, want it refused", err)
 		}
 		if err := ch.Grant(wire.MaxWindow, nil); !errors.Is(err, ErrConfig) {
 			t.Errorf("a GRANT above MaxWindow = %v, want it refused", err)
@@ -1021,7 +1021,7 @@ func FuzzChannelFrames(f *testing.F) {
 		// own check and would otherwise carry this one on its own.
 		//
 		// Over the seeds the share says something: their frames are fixed, and
-		// 13 of 16 are taken - a third is the line, so a seed that is refused
+		// 10 of 15 are taken - a third is the line, so a seed that is refused
 		// from now on says so and one added later needs no hand count. In a
 		// fuzzing run the share says nothing: the fuzzer is paid in coverage,
 		// and the ways of saying no are where the coverage lies, so it learns
