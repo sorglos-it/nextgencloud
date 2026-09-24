@@ -188,13 +188,19 @@ if [ ! -S "$state/sock" ]; then
 	exit 1
 fi
 export TPM2TOOLS_TCTI="swtpm:path=$state/sock"
-# tpm2_getcap lists sha384 by name whether or not it is allocated - only a
-# populated list (all 24 PCRs, same check as recovery-env.sh's pcr-bank)
-# proves the --pcr-banks request above actually took.
-caps="$(tpm2_getcap pcrs)"
-case "$caps" in
+if ! caps="$(tpm2_getcap pcrs)"; then
+	stop_and_ask "Das TPM antwortet nicht (tpm2_getcap pcrs ist fehlgeschlagen)."
+fi
+# Isolated first because case's * crosses newlines (measured: without this,
+# a later bank's "23" can satisfy the pattern). Against the shapes swtpm
+# actually produces - all 24 PCRs or none - requiring 23 here is enough.
+bank_line=""
+while IFS= read -r pcr_line; do
+	case "$pcr_line" in *'sha384: ['*) bank_line="$pcr_line" ;; esac
+done <<< "$caps"
+case "$bank_line" in
 *'sha384: [ '[0-9]*' 23 ]'*) ;;
-*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384." ;;
+*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384 (oder eine andere tpm2-tools-Fassung schreibt das Format anders)." ;;
 esac
 checked+=("  PCR-Bank sha384 vorhanden")
 
