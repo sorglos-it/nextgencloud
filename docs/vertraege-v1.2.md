@@ -183,6 +183,14 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     als der Vertrag, den er an dieser Stelle zitiert. Eins von beidem muss
     nachziehen. (controller, Aufgabe 6, Fixrunde 1)
 
+27. **Der Vertrag sagt nicht, was mit Frames nach dem CLOSE der Gegenseite
+    passiert.** Der Controller hat entschieden, DATA nach dem CLOSE der API
+    anzunehmen und auszuliefern, ohne mit `E_PROTOCOL` zu antworten — und die
+    Entscheidung haengt daran, dass man die Klammer in „neither open nor
+    closing (never opened, or free again)“ als **abschliessend** liest. Wer sie
+    als Beispiel liest, kommt zum Gegenteil. Ein Satz im Vertrag erspart der
+    naechsten Umsetzung dieselbe Auslegung. (controller, Aufgabe 6, Fixrunde 2)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
