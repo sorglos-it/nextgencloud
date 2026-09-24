@@ -36,18 +36,39 @@ import (
 // can never collide with one (a name has no '/').
 const lockName = "setup/code"
 
-// fault is httpapi.Fault with the errors of the two packages besides state
-// that reach this handler answered first. Fault reads errors of package state
-// and says so; everything it does not know it reads as the store not
-// answering, which is right for a driver's own error handed up through any of
-// the three and wrong for these two. Both are broken rather than away: a key
-// of the configuration that will not parse is mended in api.json, a lock row
-// that does not read is mended in the database, and no retry does either.
+// fault is httpapi.Fault with the one answer this handler may not give taken
+// out. Fault reads the errors of package state and the store's own three;
+// what is left it reads as the store not answering, which is E_UNREACHABLE --
+// the contract's word for a database that cannot be reached
+// (shared/README.md).
+//
+// This handler cannot stand behind that word. It writes as much as it reads:
+// an installation ID and a key, version 1, and a row of the counting for every
+// wrong attempt. A write that was refused is an answer and not a silence, and
+// what refuses one -- a full disk, a read-only mount, a right that is missing,
+// a constraint -- is not over when the database answers again. Two of them it
+// does know by name, and both are broken rather than away: a key of the
+// configuration that will not parse is mended in api.json, a lock row that
+// does not read is mended in the database. For the rest it cannot tell which
+// of the two it was, and a default is exactly what catches whatever nobody
+// understood -- promising that it passes is a claim with nothing behind it.
+//
+// The imbalance settles it. An admin who hears 503 in the first setup is told
+// to come back, and comes back to the same thing; his signed version 1 is
+// gone and nothing said why. 500 costs him, in the passing case, the one try
+// he makes anyway.
+//
+// What is given up with the arm was built for the other handler: there one
+// damage is met at two steps depending on what a node holds in its cache, and
+// E_UNREACHABLE is what makes both nodes answer alike (login/live.go). That
+// split cannot arise here -- Serve answers 404 as soon as there is a trust
+// list, so while this handler answers at all there is no cached list for one
+// node to hold and another to lack.
 func fault(err error, from httpapi.Origin) wire.Code {
-	if errors.Is(err, errKey) || errors.Is(err, lock.ErrLock) {
-		return wire.CodeInternal
+	if code := httpapi.Fault(err, from); code != wire.CodeUnreachable {
+		return code
 	}
-	return httpapi.Fault(err, from)
+	return wire.CodeInternal
 }
 
 // maxCodeFile bounds what the code file may hold before a byte of it is read:
