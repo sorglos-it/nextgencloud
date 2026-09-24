@@ -508,7 +508,7 @@ func TestAChannelRefusesWhatTheContractForbids(t *testing.T) {
 		t.Fatal("the handler never came back")
 	}
 	if !m.settle() {
-		t.Fatal("the channel never wrote its CLOSE")
+		t.Fatal("the channel never wrote its CLOSE and gave its number back")
 	}
 	// One GRANT that was refused is one that never went out: what stands here
 	// is the first GRANT with message 2, the one up to MaxWindow, the EOF and
@@ -563,7 +563,7 @@ func TestTheCloseOfThisSideIsTheLastFrame(t *testing.T) {
 		t.Fatalf("the answer to the OPEN ended the link: %v", err)
 	}
 	if !m.settle() {
-		t.Fatal("the channel never wrote its CLOSE")
+		t.Fatal("the channel never wrote its CLOSE and gave its number back")
 	}
 	var got []wire.Type
 	for _, f := range m.frames() {
@@ -833,7 +833,7 @@ func TestACloseThatDoesNotParseStillCounts(t *testing.T) {
 		t.Fatalf("CLOSE that does not parse: %v", err)
 	}
 	if !m.settle() {
-		t.Fatal("the channel never wrote its CLOSE")
+		t.Fatal("the channel never wrote its CLOSE and gave its number back")
 	}
 	if n := m.prot.Load(); n != 1 {
 		t.Errorf("the CLOSE that does not parse was answered %d times with the protocol error, want once", n)
@@ -877,7 +877,7 @@ func TestTheProtocolAnswerBeatsTheEndOfTheHandler(t *testing.T) {
 	}
 	<-woken
 	if !m.settle() {
-		t.Fatal("the channel never wrote its CLOSE")
+		t.Fatal("the channel never wrote its CLOSE and gave its number back")
 	}
 	if n := m.prot.Load(); n != 1 {
 		t.Fatalf("the one CLOSE of this side said the protocol error %d times, want once", n)
@@ -947,7 +947,7 @@ func TestDataAfterTheCloseOfTheAPIIsHandedOn(t *testing.T) {
 		t.Errorf("the handler was given %q, want %q", payloads, want)
 	}
 	if !m.settle() {
-		t.Fatal("the channel never wrote its CLOSE")
+		t.Fatal("the channel never wrote its CLOSE and gave its number back")
 	}
 	if n := m.prot.Load(); n != 0 {
 		t.Errorf("%d protocol errors went out over DATA after the CLOSE of the API, want none", n)
@@ -1019,7 +1019,7 @@ func TestSendSplitsAtTheLargestFrame(t *testing.T) {
 		t.Fatalf("OPEN: %v", err)
 	}
 	if !m.settle() {
-		t.Fatal("the channel never wrote its CLOSE")
+		t.Fatal("the channel never wrote its CLOSE and gave its number back")
 	}
 	var got []int
 	for _, f := range m.frames() {
@@ -1270,7 +1270,7 @@ func channelFrames(t *testing.T, b []byte, tried, taken *atomic.Int64) {
 	}
 	m.stop()
 	if !m.settle() {
-		t.Fatal("a channel of this input never wrote its CLOSE")
+		t.Fatal("a channel of this input never wrote its CLOSE and gave its number back")
 	}
 	m.c.mu.Lock()
 	defer m.c.mu.Unlock()
