@@ -370,6 +370,39 @@ schon sechs Revisionen später auf ganz anderen Code. Der Messbericht gehört in
 den Bericht. In den Code gehören zwei Zeilen Begründung — und statt einer
 Zeilennummer der **Name** der Stelle, denn Namen wandern mit.
 
+### Die Commit-Nachricht gehört dazu — und sie ist die teuerste
+
+Ein Kommentar lässt sich immer berichtigen. Eine Commit-Nachricht nur, solange
+niemand den Commit hat: kein Remote, kein anderer Baum, nichts darüber. Danach
+steht sie für immer da.
+
+Dreimal an einem Tag stand in einer Nachricht etwas, das die Messung nicht
+trägt. Einmal behauptete sie ungemessen, ein Kanal ende an einer bestimmten
+Prüfung — gemessen endete er eine Prüfung später. Einmal sagte sie „fünf Fälle
+kamen durch Paket und Vertrag", wo es vier waren — **in dem Commit, der falsche
+Behauptungen reparierte**, gefunden vom Umsetzer beim Gegenlesen der eigenen,
+gerade erst berichtigten Nachricht.
+
+Also: **lies deine Commit-Nachricht gegen dieselbe Messung wie den Code.** Und
+wenn du sie berichtigen musst, prüf zuerst, ob du darfst — `git log`, das
+Remote, die anderen Arbeitsbäume. Die Regel „Historie nie umschreiben" schützt
+**geteilte** Historie; wo nichts geteilt ist, ist ein Amend kein Umschreiben.
+Frag im Zweifel, statt eine Ausnahme auf einen zweiten Zweck auszudehnen.
+
+### Prüf, was du committet hast, nicht was du daliegen hast
+
+Ein Skript lief im Arbeitsbaum grün und war im Commit als `100644` abgelegt —
+aus dem Commit heraus brach derselbe Lauf mit `EXIT=126` ab. Aufgefallen ist es
+nur, weil der Umsetzer zum Schluss aus `git archive HEAD` gelaufen ist statt aus
+seinem Verzeichnis. Dieselbe Sache steckt schon einmal in der Historie dieses
+Projekts.
+
+Das Ausführbar-Bit ist nur der häufigste Fall. Alles, was im Arbeitsbaum anders
+ist als im Commit — eine nicht vorgemerkte Datei, ein `.gitignore`, ein
+Dateimodus, eine Zeilenendung —, macht aus „bei mir läuft es" eine Aussage über
+etwas, das niemand sonst bekommt. **Der letzte Lauf einer Aufgabe geht aus dem
+Commit**, nicht aus dem Baum.
+
 ### Den Gegenfall baust du, du denkst ihn nicht
 
 Die zählebigste Sorte ist der Absolutsatz: „nur", „immer", „nie", „das einzige",
