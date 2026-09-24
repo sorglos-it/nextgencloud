@@ -5,11 +5,17 @@
 # option differently, and a wrong guess would weaken the policy without anyone
 # noticing. So the assumptions get proven, not trusted.
 set -euo pipefail
-# Without this, "x=$(f)" for a multi-statement f only looks at f's LAST
-# command for errexit purposes - exactly the hole that let a failing --help
-# hide behind a later "cat" (fixed, but the fix only holds as long as no
-# future edit gives a helper a second statement or a condition). This makes
-# the whole class impossible instead of relying on that being remembered.
+# Closes one specific hole: without this, x=$(f) for a multi-statement f
+# only looks at f's LAST command for errexit purposes - exactly what let a
+# failing --help hide behind a later "cat" (fixed separately, by making
+# help_of one statement). Measured, what this does NOT close: declaring and
+# assigning in the same local statement, e.g. local x=$(f), still reports
+# exit 0 regardless of what f returned - local's own status, not the
+# substitution's, is what set -e sees there. And a call inside a tested
+# condition (if/while) is exempt from errexit on purpose, by design, not a
+# bug - no shopt closes that either. Declare and assign on separate lines
+# (need_opt already does) avoids the first; a checking function must never
+# itself be used as a condition.
 shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
 
@@ -22,13 +28,17 @@ checked=()                # "Geprüft und in Ordnung" lines, filled as checks pa
 
 # Cleanup only, never a check: everything below may swallow an error - it
 # only tidies up and must run no matter how the script ends. This is the
-# ONLY place any of it happens - there is no inline shred or kill anywhere
-# else in this script, on the success path or otherwise. -t alone would
-# leave sessions behind, so -l and -s go with it - a probe that died mid-way
-# must not cost the next run its session slots; the daemon and the PIN-copy
-# files ride along for the same reason. Registered after work/probe/state
-# above are set, not before (a failure in between would otherwise die on
-# "state: unbound variable" inside the trap itself).
+# only place the daemon and the two PIN-copy files get cleaned up - not a
+# second safeguard next to an inline one, there is no inline shred or kill
+# for THEM anywhere else. -t alone would leave sessions behind, so -l and -s
+# go with it - a probe that died mid-way must not cost the next run its
+# session slots. One separate, real exception this trap does NOT cover:
+# secret.bin further down has its own inline shred -u, a different
+# mechanism; measured, a signal landing in its narrow window (created,
+# shredded a beat later - about 30ms of a roughly 680ms run) leaves it
+# behind. Registered after work/probe/state above are set, not before (a
+# failure in between would otherwise die on "state: unbound variable" inside
+# the trap itself).
 cleanup() {
 	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
 	if [ -f "$state/swtpm.pid" ]; then kill "$(cat "$state/swtpm.pid")" >/dev/null 2>&1 || :; fi
@@ -36,11 +46,13 @@ cleanup() {
 }
 trap cleanup EXIT
 # A trap that only cleans up and returns does not end the script - bash keeps
-# going past it. Measured: mid-run SIGTERM could still finish normally, exit
-# 0, full green werkzeuge.txt - whoever pressed Ctrl+C gets a report from the
-# run they tried to stop. Reproducing it needs REPEATED signals in this
-# script's tight timing (a single SIGTERM/SIGHUP at one point in time already
-# measured 0 of 26 orphans - cleanup was never the gap, not stopping was).
+# going past it. Measured, reliably, with a single signal (6 of 6): mid-run
+# SIGTERM still lets the run finish normally, exit 0, full green
+# werkzeuge.txt - whoever pressed Ctrl+C gets a report from the run they
+# tried to stop. That is separate from round 2's orphaned-daemon finding,
+# which needed REPEATED signals to reproduce - a single SIGTERM/SIGHUP at one
+# point in time already measured 0 of 26 orphans there; cleanup was never
+# the gap, not stopping was.
 # Each handler below must end with its own exit, at the conventional
 # 128+signal status, so a signal-terminated run reads as one downstream
 # instead of as an ordinary exit.
