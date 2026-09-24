@@ -626,6 +626,28 @@ func TestCheckRefusesAppChannelForCoreApp(t *testing.T) {
 	}
 }
 
+// TestCheckRefusesCoreAppIDWithoutACertificate nails the order of the two
+// guards the app branch opens with. The core app ID is refused first, which is
+// what access.go claims of it: the OPEN ends the same way whether it carries a
+// certificate or not, and the answer is E_NOTFOUND both times. Put the guard
+// for the missing certificate in front and this channel ends as E_FORBIDDEN
+// instead — with every other test of the repo still green.
+func TestCheckRefusesCoreAppIDWithoutACertificate(t *testing.T) {
+	f := newFixture(t)
+	// ngc.users/controller/trust is the channel the API really does open
+	// without a user; the same ID on any other service is no app of this
+	// controller.
+	r := f.request(withoutUser(t, wire.Open{App: core.AppUsers, Service: testService, Action: testAction,
+		Window: wire.DefaultWindow}))
+	// The row is there under that ID, so nothing but the guard can refuse.
+	rows := installed()
+	rows[core.AppUsers] = dbapi.App{ID: core.AppUsers, Version: "1.0.0", Store: trust.StoreGlobal, Node: node,
+		Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
+	r.Apps = rows
+	d, cl := Check(context.Background(), r)
+	wantClose(t, d, cl, wire.CodeNotFound)
+}
+
 // TestCheckRefusesActionOnAnotherService is the escalation the OPEN would buy
 // if only the name of the action were matched: run is the manifest's harmless
 // action on the service files, admin carries the critical wipe. An OPEN that
