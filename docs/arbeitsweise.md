@@ -143,6 +143,18 @@ Läufer und auf dem Einplatinenrechner, für die der Code gebaut wird, hätte si
 nie etwas gefangen, und ihr Kommentar behauptete das Gegenteil. Miss die
 Untergrenze und **schreib sie hin**, statt sie stillschweigend zu unterschreiten.
 
+**Und beim Mutieren: eine Mutation, die nicht übersetzt, ist keine überlebende
+Mutation.** Ein Prüfer baute eine Mutation, sah „kein Test rot" und hätte sie
+als überlebend gemeldet — bis er nachschaute: sie hatte gar nicht gebaut,
+`go test` war am Übersetzungsfehler gescheitert, und „kein Test rot" hieß „kein
+Test gelaufen". Die kompilierende Fassung starb dann an zwölf Tests.
+
+Dieses Messgerät irrt also **in die gefährliche Richtung**: es meldet eine Lücke
+im Schutz, wo in Wahrheit nichts gemessen wurde — und eine gemeldete Lücke
+kostet eine Runde, in der jemand einen Test für etwas baut, das längst geprüft
+ist. Prüf bei jeder Mutation zuerst, dass sie **baut**, und zähl die Tests, die
+gelaufen sind, nicht nur die, die rot wurden.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
