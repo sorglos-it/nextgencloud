@@ -131,7 +131,8 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	}
 	// The list holds this user: session.VerifyClient took the certificate
 	// against a key of theirs, and a key belongs to the user it is listed
-	// under (trust.List.KeyOwner). So the name below is theirs.
+	// under (trust.List.KeyOwner). So the row written below carries the name
+	// and the roles the list says, not those an older row may still hold.
 	u, _ := v.List.User(cert.User)
 	res, token, err := h.newSession(ctx, verified, f.Cert, f.Proof)
 	if err != nil {
@@ -143,11 +144,17 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		httpapi.Fail(w, wire.CodeUnreachable)
 		return
 	}
-	// A login that worked ends the wait and writes the row back without the
-	// failures. A Clear that does not work leaves the count standing, which
-	// costs the user a wait they can see and wait out -- nothing is let
-	// through by it, so it is no reason to refuse a login that was right.
-	_ = lock.Clear(ctx, h.S.DB, u.Name)
+	// The counting is left where it is: a login that worked clears no bucket.
+	// A bucket holds every name that falls into it and a login name is free to
+	// choose, so whoever puts a name of their own into every bucket would have
+	// their count wiped by every successful login anybody makes. Nothing has to
+	// be cleared either -- a row past its keep time reads as none by itself
+	// (classes/lock, read) -- and the price is named: the user's own bucket
+	// stays counted until then (apps/server-api/CLAUDE.md, the login section).
+	//
+	// Failures and Locked are the row's own two numbers and not that counting;
+	// nothing maintains them today, so a login sets them where a login leaves
+	// them. LastLogin is what ngc.users/list shows (core.UserInfo).
 	row.ID, row.Name, row.Roles = u.ID, u.Name, u.Roles
 	row.Failures, row.Locked, row.LastLogin = 0, 0, now
 	if err := h.S.DB.UserPut(ctx, row); err != nil {
