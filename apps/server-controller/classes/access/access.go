@@ -18,8 +18,9 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
-// AppLookup returns the row of an app this controller runs; any error says
-// there is no row to open a channel for. state.Store.App answers it.
+// AppLookup returns the row of an app this controller runs. Only
+// dbapi.ErrNotFound says there is no such app; every other error is this
+// server's own fault. state.Store.App answers it.
 type AppLookup interface {
 	App(ctx context.Context, id string) (dbapi.App, error)
 }
@@ -40,8 +41,12 @@ type Request struct {
 	// came from anywhere else carries no session, and every channel would
 	// look like one without a user.
 	Payload []byte
-	// List is the newest trust list version this controller has verified.
-	// Without it nothing can be checked at all.
+	// List is the newest trust list version this controller has verified, and
+	// it must not change while the check runs. The certificate, the root
+	// permission, the re-confirmation and the user's name are read from it
+	// one after the other: a caller that writes a new version into the same
+	// list has the certificate checked against one and the root permission
+	// against the next. Without a list nothing can be checked at all.
 	List  *trust.List
 	Node  string // this controller's node ID
 	Now   int64
@@ -57,9 +62,15 @@ type Decision struct {
 	Opened tunnel.Opened
 	Action core.Action // the core action; the zero value on an app channel
 	Core   bool        // a core action of this controller, not a channel to an app
-	Task   *task.Task  // the verified task, nil where none was needed and none came
-	// User is the user this channel is authorised and logged by, or empty:
-	// then the channel proves none, whatever certificate it carries.
+	// Task is the task this check verified, or nil. Nil does not say that the
+	// OPEN carried none: a channel without a user is decided without ever
+	// looking at one, and whatever it brought is thrown away unread.
+	Task *task.Task
+	// User is empty, or the user of the certificate — and set only where the
+	// signature of a task or the end-to-end handshake that follows binds the
+	// channel to them. Empty means the channel proves no user at all,
+	// whatever certificate it carries: nothing may be authorised or logged
+	// by one then.
 	User     string
 	UserName string          // that user's login name in the trust list
 	App      dbapi.App       // the row of the app on an app channel
