@@ -3,12 +3,16 @@ package login
 import (
 	"bytes"
 	"context"
+	"errors"
+	"slices"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -104,4 +108,95 @@ func failLogin(t *testing.T, h *Handler, name string) {
 	if err := lock.Fail(ctx, h.S.DB, name, h.S.Now()); err != nil {
 		t.Fatalf("fail: %v", err)
 	}
+}
+
+// The databases below stand for the states a real one gets into. Each wraps
+// the fixture's store and changes one call, so everything else still works and
+// a request runs to its end.
+
+// callLog writes down every call a request makes, in order. It is how the path
+// of a known name is held against the path of one nobody has without a clock:
+// a clock of 1 ms resolution sees nothing of a request of 30 µs, a list of
+// calls sees everything.
+type callLog struct {
+	dbapi.Store
+	mu sync.Mutex
+	in []string
+}
+
+func (c *callLog) add(s string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.in = append(c.in, s)
+}
+
+// list returns what was called since the last reset.
+func (c *callLog) list() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.in)
+}
+
+func (c *callLog) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.in = nil
+}
+
+func (c *callLog) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	c.add("BlobGet " + kind)
+	return c.Store.BlobGet(ctx, kind, id)
+}
+
+// UserGet names an empty ID apart: it is the one argument no name of a request
+// ever gives, so a call with it can only come from a lookup that had no user.
+func (c *callLog) UserGet(ctx context.Context, id string) (dbapi.User, error) {
+	if id == "" {
+		c.add("UserGet(empty id)")
+	} else {
+		c.add("UserGet")
+	}
+	return c.Store.UserGet(ctx, id)
+}
+
+func (c *callLog) UserByName(ctx context.Context, name string) (dbapi.User, error) {
+	c.add("UserByName")
+	return c.Store.UserByName(ctx, name)
+}
+
+func (c *callLog) UserList(ctx context.Context) ([]dbapi.User, error) {
+	c.add("UserList")
+	return c.Store.UserList(ctx)
+}
+
+func (c *callLog) OnceCreate(ctx context.Context, kind string, value []byte, data string, expires int64) error {
+	c.add("OnceCreate " + kind)
+	return c.Store.OnceCreate(ctx, kind, value, data, expires)
+}
+
+func (c *callLog) LogAdd(ctx context.Context, e core.LogEntry) error {
+	c.add("LogAdd")
+	return c.Store.LogAdd(ctx, e)
+}
+
+// noOnce reads but cannot write a one-time value: a full disk, a read replica,
+// a locked table, a quota that ran out.
+type noOnce struct{ dbapi.Store }
+
+func (noOnce) OnceCreate(context.Context, string, []byte, string, int64) error {
+	return errors.New("memstore: the one-time values cannot be written")
+}
+
+// strictID refuses a user ID the contract calls invalid, as dbapi.Store.UserPut
+// does already (dbapi.ErrInvalid). dbapi/dbtest pins UserGet only for a name
+// nobody has, never for the empty ID, so apps/server-db may answer it either
+// way -- and a login that asks with an empty ID would then answer one thing for
+// a known name and another for every other.
+type strictID struct{ dbapi.Store }
+
+func (s strictID) UserGet(ctx context.Context, id string) (dbapi.User, error) {
+	if id == "" {
+		return dbapi.User{}, dbapi.ErrInvalid
+	}
+	return s.Store.UserGet(ctx, id)
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -81,11 +82,88 @@ func TestTOTPShareIsKeptForAWhile(t *testing.T) {
 }
 
 // brokenList is a database whose UserList fails and whose every other call
-// works, so a login/start runs through it to the end.
-type brokenList struct{ dbapi.Store }
+// works, so a login/start runs through it to the end. It counts the calls: a
+// count that failed must be tried again as seldom as one that worked, or a
+// database that is down is asked once per login instead of once per shareTTL.
+type brokenList struct {
+	dbapi.Store
+	calls int
+	ok    bool // count the users instead of failing
+}
 
-func (brokenList) UserList(context.Context) ([]dbapi.User, error) {
+func (b *brokenList) UserList(ctx context.Context) ([]dbapi.User, error) {
+	b.calls++
+	if b.ok {
+		return b.Store.UserList(ctx)
+	}
 	return nil, errors.New("memstore: the database is gone")
+}
+
+// TestTOTPShareAsksTheDatabaseOncePerKeepTime holds the failed count to the
+// same keep time as the one that worked. Otherwise every login walks the user
+// table again -- and on a real database that is not an error that comes back
+// at once but a connection that has to time out first, once per login.
+func TestTOTPShareAsksTheDatabaseOncePerKeepTime(t *testing.T) {
+	h, _ := newFixture(t)
+	now := testNow
+	h.S.Now = func() int64 { return now }
+	db := &brokenList{Store: h.S.DB, ok: true}
+	h.S.DB = db
+	for range 100 {
+		h.totpShare(ctx)
+	}
+	if db.calls != 1 {
+		t.Fatalf("a database that answers was asked %d times for 100 logins, want 1", db.calls)
+	}
+	// The keep time is over and the database is gone: one try, not a hundred.
+	db.ok, now = false, testNow+shareTTL
+	for range 100 {
+		h.totpShare(ctx)
+	}
+	if db.calls != 2 {
+		t.Fatalf("a database that is gone was asked %d times for 100 logins, want 2", db.calls)
+	}
+	// And a try that failed does not shut the counting off either: once the
+	// keep time is over again, it is tried again.
+	now = testNow + 2*shareTTL
+	h.totpShare(ctx)
+	if db.calls != 3 {
+		t.Fatalf("%d calls once the keep time was over again, want 3", db.calls)
+	}
+}
+
+// slowList holds its caller inside UserList until it is let go.
+type slowList struct {
+	dbapi.Store
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *slowList) UserList(ctx context.Context) ([]dbapi.User, error) {
+	s.entered <- struct{}{}
+	<-s.release
+	return s.Store.UserList(ctx)
+}
+
+// TestTOTPShareDoesNotHoldUpOtherLogins: the count runs outside the lock, so a
+// database that answers slowly holds up the one login that counts and no other.
+// The lock is held only long enough to take the turn, which is what keeps it at
+// one count per shareTTL.
+func TestTOTPShareDoesNotHoldUpOtherLogins(t *testing.T) {
+	h, _ := newFixture(t)
+	slow := &slowList{Store: h.S.DB, entered: make(chan struct{}), release: make(chan struct{})}
+	h.S.DB = slow
+	defer close(slow.release)
+	counting := make(chan int, 1)
+	go func() { counting <- h.totpShare(ctx) }()
+	<-slow.entered // the first login is inside the database now
+	second := make(chan int, 1)
+	go func() { second <- h.totpShare(ctx) }()
+	select {
+	case <-second:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a second login waited behind the count")
+	}
 }
 
 func TestTOTPShareSurvivesADatabaseFailure(t *testing.T) {
@@ -93,7 +171,7 @@ func TestTOTPShareSurvivesADatabaseFailure(t *testing.T) {
 	// same -- a made-up answer has to be built for every name, however the
 	// database is doing.
 	h, fx := newFixture(t)
-	h.S.DB = brokenList{Store: h.S.DB}
+	h.S.DB = &brokenList{Store: h.S.DB}
 	if got := h.totpShare(ctx); got != 0 {
 		t.Fatalf("share without a count %d, want 0", got)
 	}
@@ -112,7 +190,7 @@ func TestTOTPShareSurvivesADatabaseFailure(t *testing.T) {
 	if got := h2.totpShare(ctx); got != 25 {
 		t.Fatalf("first count %d, want 25", got)
 	}
-	h2.S.DB = brokenList{Store: h2.S.DB}
+	h2.S.DB = &brokenList{Store: h2.S.DB}
 	now = testNow + shareTTL
 	if got := h2.totpShare(ctx); got != 25 {
 		t.Fatalf("share after a failed count %d, want the kept 25", got)

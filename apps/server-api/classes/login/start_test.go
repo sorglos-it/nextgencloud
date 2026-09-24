@@ -12,6 +12,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -131,14 +132,90 @@ func TestStartTakesTheSamePathForAnUnknownName(t *testing.T) {
 			t.Fatalf("%q was locked by asking", name)
 		}
 	}
-	// 3. Time does not tell them apart either: session.Challenge walks the
-	//    whole list and builds the made-up answer both ways, so the medians of
-	//    many runs stay within a factor of two. The factor is generous on
-	//    purpose — this test may not become flaky on a loaded machine; it only
-	//    catches an early return that was put back in.
-	a, b := median(t, h, fx.PasswordName), median(t, h, "nobody")
-	if a > 2*b || b > 2*a {
-		t.Fatalf("known %v, unknown %v", a, b)
+	// 3. Time used to stand here, measured over 25 requests. On a clock that
+	//    resolves a millisecond that is 25 zeroes, and "0 > 2*0" is false, so
+	//    the comparison passed whatever the handler did. What the two names do
+	//    inside now stands in TestStartMakesTheSameDatabaseCallsForEveryName,
+	//    which needs no clock at all, and the time in
+	//    TestStartTakesTheSameTimeForAnUnknownName, which measures batches a
+	//    clock can see.
+}
+
+// TestStartMakesTheSameDatabaseCallsForEveryName is the clock-free half of
+// "the same path": the calls a request makes, in order. Two names may differ
+// in exactly one thing, the nonce row that is kept for a real user, and in
+// nothing else -- not in which call is made, not in how often, and not in
+// whether a row is asked for by an ID no name has.
+func TestStartMakesTheSameDatabaseCallsForEveryName(t *testing.T) {
+	h, fx := newFixture(t)
+	rec := &callLog{Store: h.S.DB}
+	h.S.DB = rec
+	// One request first: it counts the TOTP share, which is then kept for
+	// shareTTL, so it belongs to no name in particular.
+	raw(t, h, "warmup")
+	rec.reset()
+	raw(t, h, fx.PasswordName)
+	known := rec.list()
+	rec.reset()
+	raw(t, h, "nobody")
+	unknown := rec.list()
+
+	if len(known) != len(unknown)+1 || !slices.Equal(known[:len(unknown)], unknown) {
+		t.Fatalf("known %v, unknown %v", known, unknown)
+	}
+	if last := known[len(known)-1]; last != "OnceCreate "+dbapi.OnceNonce {
+		t.Fatalf("the one call a known name makes more is %q", last)
+	}
+	for _, call := range slices.Concat(known, unknown) {
+		if call == "UserGet(empty id)" {
+			t.Fatalf("a row was asked for by an empty ID: %v", known)
+		}
+		if call == "LogAdd" {
+			t.Fatal("login/start wrote a log entry")
+		}
+	}
+}
+
+// TestStartAnswersTheSameWhenTheNonceCannotBeStored holds the one call a known
+// name makes more to the same rule as the rest: a database that reads but
+// cannot write -- a full disk, a read replica, a locked table -- must not turn
+// that one call into an answer of its own. It would be a perfect oracle, with
+// one request per name and no measuring at all.
+//
+// The login fails later with E_LOGIN, which is the answer a wrong password
+// gets too, so nothing is lost by answering here.
+func TestStartAnswersTheSameWhenTheNonceCannotBeStored(t *testing.T) {
+	h, fx := newFixture(t)
+	h.S.DB = noOnce{Store: h.S.DB}
+	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
+	if known.Code != 200 || unknown.Code != 200 {
+		t.Fatalf("known %d, unknown %d: %s", known.Code, unknown.Code, known.Body)
+	}
+	if !maps.EqualFunc(known.Header(), unknown.Header(), slices.Equal[[]string]) {
+		t.Fatalf("headers %v vs %v", known.Header(), unknown.Header())
+	}
+	for _, w := range []*httptest.ResponseRecorder{known, unknown} {
+		if _, err := session.ParseLoginChallenge(w.Body.Bytes()); err != nil {
+			t.Fatalf("the browser would refuse this answer: %v", err)
+		}
+	}
+}
+
+// TestStartNeverAsksForAUserWithAnEmptyID pins what dbapi/dbtest leaves open.
+// A name nobody has has no ID, and a lookup by that empty ID is a call the
+// contract never promised an answer for: UserPut already refuses it with
+// dbapi.ErrInvalid, and apps/server-db -- a stub today -- may do the same for
+// UserGet. Then every unknown name would answer 503 and every known one 200.
+// The name is looked up by the name, which is the one form both have.
+func TestStartNeverAsksForAUserWithAnEmptyID(t *testing.T) {
+	h, fx := newFixture(t)
+	h.S.DB = strictID{Store: h.S.DB}
+	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
+	if known.Code != 200 || unknown.Code != 200 {
+		t.Fatalf("known %d, unknown %d: %s", known.Code, unknown.Code, unknown.Body)
+	}
+	if _, err := session.ParseLoginChallenge(unknown.Body.Bytes()); err != nil {
+		t.Fatalf("the browser would refuse the made-up answer: %v", err)
 	}
 }
 
@@ -201,18 +278,66 @@ func fields(t *testing.T, w *httptest.ResponseRecorder) string {
 	return strings.Join(slices.Sorted(maps.Keys(m)), ",")
 }
 
-// median times 25 runs and returns the middle one. The median ignores the one
-// slow run a busy machine throws in, which an average would not.
-func median(t *testing.T, h *Handler, name string) time.Duration {
-	t.Helper()
-	d := make([]time.Duration, 25)
-	for i := range d {
-		start := time.Now()
-		raw(t, h, name)
-		d[i] = time.Since(start)
+// TestStartTakesTheSameTimeForAnUnknownName is the half that needs a clock.
+// The factor of two is generous on purpose -- this test may not become flaky on
+// a loaded machine; it catches a shortcut that was put back in, not a few
+// percent. The null control says what the machine's own spread is, so the test
+// can tell "the two names are alike" from "this machine cannot tell anything
+// apart today" -- and timed refuses a batch the clock did not see, which is
+// what the 25 single requests that stood here did not do.
+func TestStartTakesTheSameTimeForAnUnknownName(t *testing.T) {
+	h, fx := newFixture(t)
+	known, unknown, again := timeThem(t, h, fx.PasswordName, "nobody", fx.PasswordName, 5)
+	// The null control first: one name against itself, measured the same way
+	// and in the same batches.
+	if known > 2*again || again > 2*known {
+		t.Fatalf("the same name twice: %v and %v -- this machine cannot measure a factor of two today", known, again)
 	}
-	slices.Sort(d)
-	return d[len(d)/2]
+	if known > 2*unknown || unknown > 2*known {
+		t.Fatalf("known %v, unknown %v (the same name twice: %v and %v)", known, unknown, known, again)
+	}
+}
+
+// timedRuns is how many requests one measurement takes. A request takes tens of
+// microseconds and a clock may resolve a millisecond: 25 requests are then 25
+// zeroes, and "0 > 2*0" is false, so a comparison of them passes whatever the
+// handler does. Two thousand requests are tens of milliseconds, which every
+// clock a test runs on sees.
+const timedRuns = 2000
+
+// timedFloor is the shortest batch this test believes. Below it the clock, not
+// the handler, is what was measured, and no comparison of such numbers means
+// anything.
+const timedFloor = 5 * time.Millisecond
+
+// timed runs timedRuns requests for name and returns what one of them took.
+func timed(t *testing.T, h *Handler, name string) time.Duration {
+	t.Helper()
+	start := time.Now()
+	for range timedRuns {
+		raw(t, h, name)
+	}
+	d := time.Since(start)
+	if d < timedFloor {
+		t.Fatalf("%d requests for %q took %v: the clock did not see them", timedRuns, name, d)
+	}
+	return d / timedRuns
+}
+
+// timeThem measures the three names in turn, batches times each, and returns
+// the median batch of each. Turn by turn, so a machine that gets slower or
+// faster while the test runs does so for all three; the median drops the one
+// slow batch a busy machine throws in, which an average would not.
+func timeThem(t *testing.T, h *Handler, a, b, c string, batches int) (time.Duration, time.Duration, time.Duration) {
+	t.Helper()
+	da, db, dc := make([]time.Duration, batches), make([]time.Duration, batches), make([]time.Duration, batches)
+	for i := range batches {
+		da[i], db[i], dc[i] = timed(t, h, a), timed(t, h, b), timed(t, h, c)
+	}
+	slices.Sort(da)
+	slices.Sort(db)
+	slices.Sort(dc)
+	return da[batches/2], db[batches/2], dc[batches/2]
 }
 
 // jsonPost builds a POST with the right content type.

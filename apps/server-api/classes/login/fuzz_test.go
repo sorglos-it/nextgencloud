@@ -31,6 +31,23 @@ func startSeeds(fx fixture) [][]byte {
 	}
 }
 
+// settings returns every setting row with its contents. The counting of failed
+// logins keeps its buckets among them, so this is what says whether login/start
+// laid a lock on anybody -- by their contents and not by their number, because
+// a second failure in a bucket that already has a row writes that row and adds
+// none.
+func settings(h *Handler) (map[string]string, error) {
+	blobs, err := h.S.DB.BlobFrom(ctx, dbapi.BlobSetting, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(blobs))
+	for _, b := range blobs {
+		out[b.ID] = string(b.Data)
+	}
+	return out, nil
+}
+
 // shape lists the field names of an answer, sorted, so two answers can be
 // held against each other without their values, which differ by design.
 func shape(b []byte) string {
@@ -96,9 +113,11 @@ func FuzzStartBody(f *testing.F) {
 	}
 	shapes := realShapes(f, h, fx)
 	// The settings the fixture left behind: only the installation ID. The
-	// counting of failed logins writes its rows here too, so a row more than
-	// this is a lock login/start laid on somebody.
-	before, err := h.S.DB.BlobFrom(ctx, dbapi.BlobSetting, 0)
+	// counting of failed logins writes its rows here too, so anything else
+	// here afterwards is a lock login/start laid on somebody. Their contents
+	// are held too and not only their number: a failure counted into a bucket
+	// that already has a row changes that row and adds none.
+	before, err := settings(h)
 	if err != nil {
 		f.Fatalf("settings: %v", err)
 	}
@@ -140,9 +159,9 @@ func FuzzStartBody(f *testing.F) {
 		if err != nil || len(entries) != 0 {
 			t.Fatalf("login/start logged %d entries (%v)", len(entries), err)
 		}
-		now, err := h.S.DB.BlobFrom(ctx, dbapi.BlobSetting, 0)
-		if err != nil || len(now) != len(before) {
-			t.Fatalf("%d settings after %q, were %d (%v)", len(now), body, len(before), err)
+		now, err := settings(h)
+		if err != nil || !maps.Equal(now, before) {
+			t.Fatalf("settings after %q are %v, were %v (%v)", body, now, before, err)
 		}
 	})
 }
