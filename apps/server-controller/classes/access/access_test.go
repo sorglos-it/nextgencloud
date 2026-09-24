@@ -31,9 +31,14 @@ const (
 	// the fixture adds, where nobody may.
 	node      = "ctl-1"
 	otherNode = "ctl-2"
-	// testApp is the app the fixture has installed, with the one action run.
-	testApp    = "org.sorglos.terminal"
-	testAction = "run"
+	// testApp is the app the fixture has installed: the action run on the
+	// service files, and the privileged wipe on the service admin.
+	testApp     = "org.sorglos.terminal"
+	testService = "files"
+	testAction  = "run"
+	// adminService carries wipe, which the manifest marks critical.
+	adminService = "admin"
+	adminAction  = "wipe"
 
 	issued = 1790000000
 	now    = issued + 10
@@ -105,8 +110,8 @@ func coreOpen(app, action string, env *sign.Envelope) wire.Open {
 
 // appOpen is the browser OPEN of an app channel, which always carries message
 // 1 of the end-to-end handshake.
-func (f fixture) appOpen(app, action string) wire.Open {
-	return wire.Open{App: app, Service: "files", Action: action, Window: wire.DefaultWindow, E2E: f.e2e}
+func (f fixture) appOpen(app, service, action string) wire.Open {
+	return wire.Open{App: app, Service: service, Action: action, Window: wire.DefaultWindow, E2E: f.e2e}
 }
 
 // task returns a task of this admin for an action on the controller on,
@@ -136,13 +141,19 @@ func activateParams() core.ActivateParams {
 		UI: bytes.Repeat([]byte{0x02}, 32), Store: trust.StoreGlobal}
 }
 
-// manifest is the manifest of the installed app: one service, the one action
-// run, and no needs, so store.RuleFor gives a rule that is neither root nor
-// critical.
-func manifest() []byte {
-	return []byte(`{"id":"` + testApp + `","name":"Terminal","version":"1.0.0","publisher":"Sorglos",` +
-		`"services":[{"name":"files","command":["/bin/terminal"]}],` +
-		`"actions":[{"name":"` + testAction + `","title":"Ausführen","service":"files"}]}`)
+// manifest is the manifest of the installed app, the shape the escalation
+// needs: the harmless run on the service files, and wipe on the service
+// admin, which the manifest marks critical. No needs, so run's rule is
+// neither root nor critical.
+func manifest() []byte { return manifestFor(testApp) }
+
+// manifestFor is that manifest under another app ID.
+func manifestFor(id string) []byte {
+	return []byte(`{"id":"` + id + `","name":"Terminal","version":"1.0.0","publisher":"Sorglos",` +
+		`"services":[{"name":"` + testService + `","command":["/bin/terminal"]},` +
+		`{"name":"` + adminService + `","command":["/bin/wipe"]}],` +
+		`"actions":[{"name":"` + testAction + `","title":"Ausführen","service":"` + testService + `"},` +
+		`{"name":"` + adminAction + `","title":"Löschen","service":"` + adminService + `","critical":true}]}`)
 }
 
 // apps answers for the apps of this controller, as state.Store does.
@@ -339,7 +350,7 @@ func TestCheckRefusesShellOpenOfStage(t *testing.T) {
 func TestCheckAppChannel(t *testing.T) {
 	f := newFixture(t)
 	t.Run("the manifest of the installed app decides", func(t *testing.T) {
-		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, testAction))))
+		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, testService, testAction))))
 		if cl != nil {
 			t.Fatalf("CLOSE %+v, want the channel to open", *cl)
 		}
@@ -354,15 +365,15 @@ func TestCheckAppChannel(t *testing.T) {
 		}
 	})
 	t.Run("app this controller does not run", func(t *testing.T) {
-		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen("org.sorglos.other", testAction))))
+		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen("org.sorglos.other", testService, testAction))))
 		wantClose(t, d, cl, wire.CodeNotFound)
 	})
 	t.Run("action the manifest does not have", func(t *testing.T) {
-		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, "delete"))))
+		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, testService, "delete"))))
 		wantClose(t, d, cl, wire.CodeNotFound)
 	})
 	t.Run("damaged manifest", func(t *testing.T) {
-		r := f.request(f.withUser(t, f.appOpen(testApp, testAction)))
+		r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
 		broken := installed()
 		app := broken[testApp]
 		app.Manifest = []byte(`{"id":`)
@@ -372,9 +383,20 @@ func TestCheckAppChannel(t *testing.T) {
 		wantClose(t, d, cl, wire.CodeInternal)
 	})
 	t.Run("without a user", func(t *testing.T) {
-		d, cl := Check(context.Background(), f.request(withoutUser(t, f.appOpen(testApp, testAction))))
+		d, cl := Check(context.Background(), f.request(withoutUser(t, f.appOpen(testApp, testService, testAction))))
 		wantClose(t, d, cl, wire.CodeForbidden)
 	})
+}
+
+// TestCheckRefusesActionOnAnotherService is the escalation the OPEN would buy
+// if only the name of the action were matched: run is the manifest's harmless
+// action on the service files, admin carries the critical wipe. An OPEN that
+// names the service admin and the action run must find nothing, not the
+// privileged service under the harmless action's rule.
+func TestCheckRefusesActionOnAnotherService(t *testing.T) {
+	f := newFixture(t)
+	d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, adminService, testAction))))
+	wantClose(t, d, cl, wire.CodeNotFound)
 }
 
 // TestCheckRefusesCoreAPIAction: the actions of service api run in the API,
@@ -412,7 +434,7 @@ func seeds(t testing.TB) [][]byte {
 	stage.Params = json.RawMessage(`{"target":"` + testApp + `","version":"1.0.0"}`)
 	return [][]byte{
 		f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)),
-		f.withUser(t, f.appOpen(testApp, testAction)),
+		f.withUser(t, f.appOpen(testApp, testService, testAction)),
 		withoutUser(t, coreOpen(core.AppUsers, core.ActTrust, nil)),
 		withoutUser(t, stage),
 		f.withUser(t, coreOpen(core.AppStore, core.ActActivate, nil)),
