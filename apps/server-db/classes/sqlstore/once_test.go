@@ -120,8 +120,8 @@ func TestOnceUseTellsApart(t *testing.T) {
 // stand under two kinds at once, and both reads after the UPDATE have to name
 // the kind as well - the one that gives the data back (onceRead) and the one
 // that says why nothing matched (onceState). A value that exists only once
-// measures neither of them, and nothing else in this package writes one token
-// under two kinds.
+// measures neither of them: take the kind out of either statement and every
+// other test of this package still comes through green.
 //
 // onceState is read only when the UPDATE matched nothing, so it needs an
 // expired row of one kind beside a valid row of the other; with two rows in
@@ -208,8 +208,10 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 // It measures that here and now, on SQLite, without -race and without
 // MariaDB. In that shape the read and the write are two separate calls
 // through database/sql, and each takes a connection and gives it back again,
-// so another goroutine gets in between them whatever the pool holds. The two
-// steps themselves are the condition, not maxOpenConns.
+// so another goroutine comes in between them however small the pool is - the
+// two steps themselves are the condition, not the four connections this store
+// opens. Measured against such a store at a pool of one as well: red there
+// too, in the very first round.
 //
 // What it does not catch, said plainly so nobody takes it for more: a store
 // that puts those same two steps inside one transaction comes through green
