@@ -1,6 +1,7 @@
 package login
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +10,15 @@ import (
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
 func TestLiveAndLogout(t *testing.T) {
@@ -98,11 +102,7 @@ func TestLiveEndsASessionTheConfigNoLongerAllows(t *testing.T) {
 	if _, ok := h.Live(ctx, r); ok {
 		t.Fatal("a session outlived a lifetime the installation had shortened")
 	}
-	raw, err := enc.B64.DecodeString(cookie)
-	if err != nil {
-		t.Fatalf("cookie: %v", err)
-	}
-	if _, err := h.S.DB.SessionGet(ctx, session.TokenHash(raw)); !isNotFound(err) {
+	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); !isNotFound(err) {
 		t.Fatalf("the row of the ended session is still there: %v", err)
 	}
 }
@@ -138,11 +138,7 @@ func TestLiveEndsASessionTheTrustListNoLongerHolds(t *testing.T) {
 	if _, ok := h.Live(ctx, r); ok {
 		t.Fatal("a session of a user the trust list no longer holds stayed open")
 	}
-	raw, err := enc.B64.DecodeString(cookie)
-	if err != nil {
-		t.Fatalf("cookie: %v", err)
-	}
-	if _, err := h.S.DB.SessionGet(ctx, session.TokenHash(raw)); !isNotFound(err) {
+	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); !isNotFound(err) {
 		t.Fatalf("the row of the withdrawn user's session is still there: %v", err)
 	}
 }
@@ -169,6 +165,104 @@ func TestLiveSeesAWithdrawalAnotherAPIWrote(t *testing.T) {
 	withdrawPasswordUser(t, h, fx)
 	if _, ok := other.Live(ctx, r); ok {
 		t.Fatal("the second API kept a session the trust list no longer holds")
+	}
+}
+
+// damageProof writes the session's stored proof back as something no parser
+// reads. The row is this API's own, so nothing about it is the caller's fault.
+func damageProof(t *testing.T, h *Handler, cookie string) {
+	t.Helper()
+	row, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie))
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	row.Proof = []byte("{")
+	if err := h.S.DB.SessionPut(ctx, row); err != nil {
+		t.Fatalf("damaged proof: %v", err)
+	}
+}
+
+// tokenOf is the token of a cookie value, as the database keeps it.
+func tokenOf(t *testing.T, cookie string) []byte {
+	t.Helper()
+	raw, err := enc.B64.DecodeString(cookie)
+	if err != nil {
+		t.Fatalf("cookie: %v", err)
+	}
+	return session.TokenHash(raw)
+}
+
+// TestAStepLiveCouldNotTakeIsNoLogout holds the answer apart from E_LOGIN. The
+// contract keeps that one for a session that is missing or has run out
+// (shared/README.md), so a step of Live that could not be taken must not carry
+// it: a database that hiccups would otherwise send every user of the
+// installation to the login screen, and take the logout that would end the
+// session properly away in the same breath. Both paths of this package are
+// asked, because both read the answer out of the same call.
+//
+// The five steps below are every one Live takes that can fail without the
+// session being the reason. Three of them are the store not answering, which
+// is over when it answers again: E_UNREACHABLE. Two are this API's own row and
+// its own key, which a retry does not mend: E_INTERNAL.
+func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		take   func(t *testing.T, h *Handler, cookie string)
+		status int
+		code   wire.Code
+	}{
+		{"the session row cannot be read", func(_ *testing.T, h *Handler, _ string) {
+			h.S.DB = noSession{h.S.DB}
+		}, 503, wire.CodeUnreachable},
+		{"the trust list cannot be read", func(_ *testing.T, h *Handler, _ string) {
+			h.S.DB = noTrust{h.S.DB}
+		}, 503, wire.CodeUnreachable},
+		{"the session cannot be touched", func(_ *testing.T, h *Handler, _ string) {
+			h.S.DB = noTouch{h.S.DB}
+		}, 503, wire.CodeUnreachable},
+		{"the stored proof is damaged", damageProof, 500, wire.CodeInternal},
+		{"the session key does not open", func(t *testing.T, h *Handler, _ string) {
+			box, err := secrets.NewBox(config.NewSecret(bytes.Repeat([]byte{3}, 32)))
+			if err != nil {
+				t.Fatalf("box: %v", err)
+			}
+			h.S.Box = box
+		}, 500, wire.CodeInternal},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, fx := newFixture(t)
+			cookie := loginOnce(t, h, fx)
+			token := tokenOf(t, cookie)
+			// The store of the fixture, kept before a double takes its place:
+			// the row is asked for at the end through the one that answers.
+			plain := h.S.DB
+			c.take(t, h, cookie)
+			for _, call := range []struct {
+				what string
+				run  func(w *httptest.ResponseRecorder)
+			}{
+				{"GET " + session.PathTrust, func(w *httptest.ResponseRecorder) {
+					h.Trust(w, getCookie(session.PathTrust+"?from=1", cookie))
+				}},
+				{"POST " + session.PathLogout, func(w *httptest.ResponseRecorder) {
+					h.Logout(w, jsonPostCookie(session.PathLogout, cookie))
+				}},
+			} {
+				w := httptest.NewRecorder()
+				call.run(w)
+				if w.Code != c.status {
+					t.Fatalf("%s answered %d, want %d", call.what, w.Code, c.status)
+				}
+				cl, err := wire.ParseClose(w.Body.Bytes())
+				if err != nil || cl.Code != c.code {
+					t.Fatalf("%s answered %q (%v), want %q", call.what, cl.Code, err, c.code)
+				}
+			}
+			// None of it was an answer about the session, so the row stays.
+			if _, err := plain.SessionGet(ctx, token); err != nil {
+				t.Fatalf("the session was ended over a step that failed: %v", err)
+			}
+		})
 	}
 }
 
@@ -200,10 +294,6 @@ func lockRows(t *testing.T, h *Handler) int {
 func TestPurgeFreesOnlyWhatIsPastItsTime(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
-	raw, err := enc.B64.DecodeString(cookie)
-	if err != nil {
-		t.Fatalf("cookie: %v", err)
-	}
 	day := int64(24 * 3600)
 	old := testNow - day
 	stale := session.TokenHash([]byte("a session of yesterday"))
@@ -241,7 +331,7 @@ func TestPurgeFreesOnlyWhatIsPastItsTime(t *testing.T) {
 	if _, err := h.S.DB.SessionGet(ctx, stale); !isNotFound(err) {
 		t.Fatalf("the session of yesterday is still there: %v", err)
 	}
-	if _, err := h.S.DB.SessionGet(ctx, session.TokenHash(raw)); err != nil {
+	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); err != nil {
 		t.Fatalf("the open session was purged: %v", err)
 	}
 	if _, err := h.S.DB.OnceUse(ctx, dbapi.OnceNonce, []byte("gone"), testNow); !isNotFound(err) {

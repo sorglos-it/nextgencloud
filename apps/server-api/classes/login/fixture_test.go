@@ -273,6 +273,41 @@ const noCountError = "memstore: the settings cannot be written"
 
 func (noCount) BlobPut(context.Context, dbapi.Blob) error { return errors.New(noCountError) }
 
+// The three below take one step of Live away from it. Each stands for a
+// database that is gone, or gone for one table, and their error stands for the
+// one a real driver hands back. dbapi.ErrNotFound is the one answer none of
+// them gives: that one says the row is not there, and these say nobody
+// answered.
+
+const storeDownError = "memstore: the database is not answering"
+
+// noSession cannot read a session row.
+type noSession struct{ dbapi.Store }
+
+func (noSession) SessionGet(context.Context, []byte) (dbapi.Session, error) {
+	return dbapi.Session{}, errors.New(storeDownError)
+}
+
+// noTrust cannot read a row of the trust list. It leaves every other row
+// alone, so a request gets as far as the list and no further.
+type noTrust struct{ dbapi.Store }
+
+func (n noTrust) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		return dbapi.Blob{}, errors.New(storeDownError)
+	}
+	return n.Store.BlobGet(ctx, kind, id)
+}
+
+// noTouch cannot write the time a session was last seen, which is the last
+// step of Live and the only one of the three that comes after the session has
+// been decided on.
+type noTouch struct{ dbapi.Store }
+
+func (noTouch) SessionTouch(context.Context, []byte, int64) error {
+	return errors.New(storeDownError)
+}
+
 // strictID refuses an empty user ID. Nothing in the contract says it may not:
 // dbapi/dbtest pins UserGet only for a name nobody has, never for the empty ID,
 // and memstore refuses an empty ID in UserPut with dbapi.ErrInvalid, so a store
