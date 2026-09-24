@@ -345,11 +345,17 @@ export TPM2TOOLS_TCTI="swtpm:path=$state/sock"
 # "grep -q sha384" is true either way. Only a digit right after the
 # opening bracket proves the bank is really there.
 if ! caps="$(tpm2_getcap pcrs)"; then
-	stop_and_ask "Das TPM antwortet nicht auf tpm2_getcap pcrs."
+	stop_and_ask "Das TPM antwortet nicht (tpm2_getcap pcrs ist fehlgeschlagen)."
 fi
-case "$caps" in
-*'sha384: [ '[0-9]*) ;;
-*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384." ;;
+# Isolate the sha384 line first: case's * crosses newlines, so without this
+# a later bank's "23" can satisfy the pattern (measured).
+bank_line=""
+while IFS= read -r pcr_line; do
+	case "$pcr_line" in *'sha384: ['*) bank_line="$pcr_line" ;; esac
+done <<< "$caps"
+case "$bank_line" in
+*'sha384: [ '[0-9]*' 23 ]'*) ;;
+*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384 (oder eine andere tpm2-tools-Fassung schreibt das Format anders)." ;;
 esac
 
 # --- 4. the one unmeasured point: does the PIN come out of a file? --------
@@ -470,18 +476,15 @@ Inhalt von `tools/recovery-env.sh`:
 
 ```bash
 #!/usr/bin/env bash
-# Checks that the recovery test environment has everything it needs. Every
-# script from task 3 on starts with this, so a missing package fails early
-# and says so. The two before it cannot: recovery-setup.sh installs the
-# tools this one demands, recovery-tools.sh writes the werkzeuge.txt it
-# demands.
+# Checks that the recovery test environment has everything it needs.
 set -euo pipefail
+shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
 work="$(pwd)/dist/recovery"
 
-# Every tool the package actually calls, including the ones that only appear
-# deep inside recovery-policy.sh - a missing tpm2_policynv must not surface as
-# a failing policy branch three tasks later.
+# Every tool the package calls, including ones only used deep inside
+# recovery-policy.sh. No "go": recovery-setup.sh never installs it, and
+# this script runs only on the VM (measured: report has the details).
 need="qemu-system-x86_64 swtpm swtpm_setup softhsm2-util pkcs11-tool openssl xxd socat shred
 	pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
@@ -497,7 +500,7 @@ done
 # secure-boot build is the one work package 8 will sign against.
 for file in /usr/share/OVMF/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_VARS_4M.ms.fd \
 	/usr/lib/softhsm/libsofthsm2.so; do
-	if [ ! -f "$file" ]; then missing="$missing $(basename "$file")"; fi
+	if [ ! -s "$file" ]; then missing="$missing $(basename "$file")"; fi
 done
 
 if [ -n "$missing" ]; then
@@ -506,10 +509,11 @@ if [ -n "$missing" ]; then
 	exit 1
 fi
 
-# KVM is deliberately not required: this VM gets no virtualisation from its
-# host, so QEMU runs emulated. Everything works, only slower.
-if [ ! -f "$work/werkzeuge.txt" ]; then
-	printf 'Die Werkzeuge sind noch nicht geprüft: %s fehlt.\n' "$work/werkzeuge.txt" >&2
+# More than bare existence: nothing can trap SIGKILL or a lost VM, so a
+# half-written file could still be sitting here. The trailing KVM line is
+# the last thing a finished run writes.
+if [ ! -s "$work/werkzeuge.txt" ] || ! grep -q '^KVM: ' "$work/werkzeuge.txt"; then
+	printf 'Die Werkzeuge sind noch nicht geprüft: %s fehlt oder ist unvollständig.\n' "$work/werkzeuge.txt" >&2
 	printf 'Prüfen mit: tools/recovery-tools.sh\n' >&2
 	exit 1
 fi
@@ -520,29 +524,36 @@ pcr_bank() {
 		printf 'Setzen mit: export TPM2TOOLS_TCTI="$(tools/recovery-swtpm.sh tcti main)"\n' >&2
 		exit 1
 	fi
-	# The whole policy is SHA-384. swtpm allocates no SHA-384 bank unless it is
-	# asked for, and a missing bank would turn into a failing branch instead of
-	# a clear message.
-	# See the note in task 1: the bank name is printed whether or not the
-	# bank exists, so only a digit right after the bracket proves it.
-	# A command substitution in a case word would swallow a failing
-	# tpm2_getcap: capture it in a condition instead.
+	# tpm2_getcap lists sha384 by name whether or not it is allocated - only a
+	# populated list proves the bank exists. Captured first (not piped into
+	# grep) so an unreachable TPM gets its own message instead of "no bank".
 	local caps
 	if ! caps="$(tpm2_getcap pcrs)"; then
-		printf 'Das TPM ist ueber TPM2TOOLS_TCTI=%s nicht erreichbar.\n' "$TPM2TOOLS_TCTI" >&2
+		printf 'Das TPM ist über TPM2TOOLS_TCTI=%s nicht erreichbar.\n' "$TPM2TOOLS_TCTI" >&2
+		printf 'Prüfen: läuft der Simulator? tools/recovery-swtpm.sh reset main\n' >&2
 		exit 1
 	fi
-	case "$caps" in
-	*'sha384: [ '[0-9]*) ;;
+	# Isolated first because case's * crosses newlines (measured: without
+	# this, a later bank's "23" can satisfy the pattern). Against the shapes
+	# swtpm actually produces - all 24 PCRs or none - requiring 23 here is enough.
+	local bank_line=""
+	while IFS= read -r pcr_line; do
+		case "$pcr_line" in *'sha384: ['*) bank_line="$pcr_line" ;; esac
+	done <<< "$caps"
+	case "$bank_line" in
+	*'sha384: [ '[0-9]*' 23 ]'*) printf 'PCR-Bank sha384: vorhanden\n' >&2 ;;
 	*)
-		printf 'Dieses TPM hat keine SHA-384-PCR-Bank.\n' >&2
-		printf 'Neu einrichten mit: tools/recovery-swtpm.sh reset main\n' >&2
+		printf 'Dieses TPM hat keine SHA-384-PCR-Bank (oder eine andere tpm2-tools-Fassung schreibt das Format anders).\n' >&2
+		printf 'Neu einrichten mit: tools/recovery-swtpm.sh reset main. Hilft das nicht: tpm2_getcap pcrs von Hand ansehen.\n' >&2
 		exit 1
 		;;
 	esac
-	printf 'PCR-Bank sha384: vorhanden\n' >&2
 }
 
+if [ "$#" -gt 1 ]; then
+	printf 'Aufruf: tools/recovery-env.sh [pcr-bank]\n' >&2
+	exit 1
+fi
 case "${1:-}" in
 "") printf 'Umgebung: vollständig\n' >&2 ;;
 pcr-bank) pcr_bank ;;
