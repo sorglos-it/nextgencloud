@@ -2,6 +2,7 @@ package login
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"maps"
 	"net/http/httptest"
@@ -9,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/session"
@@ -294,28 +297,90 @@ func TestFinishLeavesTheCountingAlone(t *testing.T) {
 	}
 }
 
-// TestFinishDoesNotLockANameAKeyOfNobodyNamed pins the other half of the
-// bucket: a proof by a key the trust list does not hold names no user, so the
-// failure is counted for the key and not for whatever user the certificate
-// claims to be. Otherwise anybody could lock a name out by claiming it -- and
-// worse, the answer of login/start afterwards would say whether that name
-// exists.
-func TestFinishDoesNotLockANameAKeyOfNobodyNamed(t *testing.T) {
-	h, fx := newFixture(t)
-	c := start(t, h, fx.PasswordName)
-	body := finishBody(t, fx, trusttest.NewSigner(200), c, "")
-	for i := range 4 {
+// TestFinishCannotLockANameWithAChosenKeyID is the deterministic form of the
+// property the first version of this file got wrong. A failed login whose key
+// the trust list does not hold must not reach the counting of any login name
+// -- otherwise three requests lock any name out, with no key, no session and
+// no passkey, and the answer of login/start afterwards says whether that name
+// exists at all.
+//
+// The key ID is not left to chance: it is searched until the counting would
+// put it in the same row as the victim's name, in both shapes that matter --
+// the bare key ID and the "key/" the first version built. A test that picks an
+// arbitrary key ID misses that row with 4095 of 4096 and is green for nothing.
+func TestFinishCannotLockANameWithAChosenKeyID(t *testing.T) {
+	shapes := []struct {
+		name string
+		of   func(string) string
+	}{
+		{"the bare key ID", func(id string) string { return id }},
+		{`"key/" and the key ID`, func(id string) string { return "key/" + id }},
+	}
+	for _, shape := range shapes {
+		h, fx := newFixture(t)
+		kid := keyIDInTheRowOf(t, fx.PasswordName, shape.of)
+		c := start(t, h, fx.PasswordName)
+		body := finishWithKeyID(t, fx, c, kid)
+		for i := range 4 {
+			w := httptest.NewRecorder()
+			h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+			if w.Code != 401 && w.Code != 429 {
+				t.Fatalf("%s: attempt %d answered %d", shape.name, i, w.Code)
+			}
+		}
 		w := httptest.NewRecorder()
-		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
-		if w.Code != 401 && w.Code != 429 {
-			t.Fatalf("attempt %d answered %d", i, w.Code)
+		h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+fx.PasswordName+`"}`))
+		if w.Code != 200 {
+			t.Fatalf("%s: %q was locked out by a key ID nobody holds: %d",
+				shape.name, fx.PasswordName, w.Code)
 		}
 	}
-	w := httptest.NewRecorder()
-	h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+fx.PasswordName+`"}`))
-	if w.Code != 200 {
-		t.Fatalf("the name was locked by a key nobody owns: %d", w.Code)
+}
+
+// keyIDInTheRowOf returns a key ID the counting would keep in the same row as
+// name, once of is applied to it. It asks the counting itself instead of
+// rebuilding its hash here, so it cannot drift from it: one failure leaves one
+// row behind, and clearing name's row takes that row away only when the two
+// share it. There are 4096 rows, so a few thousand tries find one.
+func keyIDInTheRowOf(tb testing.TB, name string, of func(string) string) string {
+	tb.Helper()
+	var raw [16]byte
+	for i := range 1 << 20 {
+		binary.BigEndian.PutUint64(raw[8:], uint64(i))
+		id := enc.B64.EncodeToString(raw[:])
+		db := memstore.New()
+		if err := lock.Fail(ctx, db, of(id), testNow); err != nil {
+			tb.Fatalf("fail: %v", err)
+		}
+		if err := lock.Clear(ctx, db, name); err != nil {
+			tb.Fatalf("clear: %v", err)
+		}
+		rows, err := db.BlobFrom(ctx, dbapi.BlobSetting, 0)
+		if err != nil {
+			tb.Fatalf("rows: %v", err)
+		}
+		if len(rows) == 0 {
+			return id
+		}
 	}
+	tb.Fatalf("no key ID found that shares the row of %q", name)
+	return ""
+}
+
+// finishWithKeyID builds a body whose proof names kid. The signature is one of
+// the user's own and holds for nothing under that name, which is all this
+// needs: a key ID nobody holds is turned away before any signature is looked
+// at.
+func finishWithKeyID(tb testing.TB, fx fixture, c session.LoginChallenge, kid string) []byte {
+	tb.Helper()
+	payload := certBytes(tb, fx, c, fx.Password)
+	p := fx.Password.Prove(sign.PurposeClientCert, payload)
+	p.KeyID = kid
+	b, err := json.Marshal(session.LoginFinish{Cert: enc.Bytes(payload), Proof: p})
+	if err != nil {
+		tb.Fatalf("marshal: %v", err)
+	}
+	return b
 }
 
 // TestFinishSaysSoWhenAFailureCannotBeCounted holds the one thing login/finish
