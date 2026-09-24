@@ -620,9 +620,12 @@ func (m *machine) frames() []wire.Frame {
 	return append([]wire.Frame(nil), m.out...)
 }
 
-// settle waits until every channel of the machine has written its CLOSE, so
-// that no goroutine of a channel is still on its way when the numbers are
-// looked at - and so that a test leaves none behind.
+// settle waits until every channel of the machine has written its CLOSE and
+// every number whose two closes are both in is really given back, so that no
+// goroutine of a channel is still on its way when the numbers are looked at -
+// and so that a test leaves none behind. The giving back comes after the write
+// and outside the lock of the channel, so waiting for the write alone would let
+// a count of the numbers see one that is on its way out.
 func (m *machine) settle() bool {
 	for i := range 10000 {
 		if m.quiet() {
@@ -645,9 +648,11 @@ func (m *machine) quiet() bool {
 	defer m.c.mu.Unlock()
 	for _, ch := range m.c.m {
 		ch.mu.Lock()
-		done := ch.closed
+		done, both := ch.closed, ch.closed && ch.peer
 		ch.mu.Unlock()
-		if !done {
+		// A number that is still here although both closes are in is one whose
+		// goroutine has not given it back yet.
+		if !done || both {
 			return false
 		}
 	}
