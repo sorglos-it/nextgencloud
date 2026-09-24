@@ -164,21 +164,23 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 
 	verified, err := session.VerifyClient(f.Cert, f.Proof, v.List, now)
 	if err != nil {
-		// session.ErrUser is the one answer session.verifyCert gives after the
-		// certificate itself was read and before it checks a signature: the
+		// session.ErrUser is the one answer session.verifyCert gives after it
+		// has read the certificate and before it looks at any signature: the
 		// key belongs to nobody, or it belongs to another user than the
-		// certificate names, or a role wants a passkey and this is not one.
-		// Those three cost nothing where every other way out of VerifyClient
-		// has paid for a verification already (a proof that does not hold, a
-		// certificate whose time has passed) or has stopped before the key was
-		// ever reached (session.ErrCert). So this is where one is spent, and
-		// it is spent on both sides of the question: a key nobody holds gives
-		// ErrUser, and so does a certificate naming the wrong user with a key
-		// the list holds.
+		// certificate names, or a role wants a passkey and this is not one. A
+		// key nobody holds gives it, and a certificate naming the wrong user
+		// with a key the list does hold gives it too -- so a verification
+		// spent here is spent on both sides of the question "does this name
+		// exist", which is what it is for.
 		//
-		// It was hung on the key alone before, and that closed one shape and
-		// tore another open -- the second one this way round, with the known
-		// side the cheap one. Four shapes are measured now, not one.
+		// It hung on the key alone before, and that closed one shape and tore
+		// another open, that one with the known side the cheap one. What is
+		// still not closed, and is not claimed to be: package proof refuses
+		// some proofs cheaply as well -- a passkey whose client data is
+		// nonsense, a proof of a kind the key is not -- and there the known
+		// side pays nothing while this side pays a whole verification. That
+		// shape is measured, named and left open in
+		// TestFinishTakesTheSameTimeForAKeyNobodyHolds and at blindProof.
 		if errors.Is(err, session.ErrUser) {
 			_ = blindProof(f.Cert)
 		}
