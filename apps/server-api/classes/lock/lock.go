@@ -79,8 +79,11 @@ const maxNow = 1 << 62
 // and a time no clock gives. Both leave the name locked rather than free: a
 // row that cannot be read must not be counted as nothing. One shape is outside
 // that word, and only one: a row a store hands back without either of its two
-// times is no longer to be told from a row that is not there, and it reads as
-// none (see expired). Losing one of the two leaves the row counting.
+// times is no longer to be told from a row that is not there, and from the
+// clock's keepFor second on it reads as none (see expired) -- before that
+// second an Updated of 0 still lies inside the keep time and the row counts on,
+// which is no clock of this century but is what the word covers. Losing one of
+// the two leaves the row counting.
 var ErrLock = errors.New("lock: malformed lock row")
 
 // counting makes reading a row and writing it back one step within this
@@ -109,8 +112,9 @@ func key(name string) string {
 }
 
 // expired reports whether a row may be removed, which is the moment the
-// counting reads it as none. It is the one question Purge asks of a row too,
-// so what a purge frees and what the counting reads as none cannot come apart.
+// counting reads it as none. It is the one question Purge asks of a row too, so
+// the two cannot come apart over what they ask -- only over what a store hands
+// each of them, which is stated at Purge.
 // A row carries that time twice: Seq, which dbapi leaves to the caller ("0
 // where no order is needed"), and Updated, which holds when the row was last
 // written. The contract's own test reads Data and Updated back through BlobGet
@@ -184,7 +188,8 @@ func Check(ctx context.Context, db dbapi.Local, name string, now int64) (int64, 
 // to run for that, and a first failure after a quiet hour costs what a first
 // failure costs -- not the longest wait there is. The hour is counted from the
 // latest time a failure of that bucket was counted at, so setting a clock back
-// does not shorten it.
+// does not shorten it; and never from further ahead than keepFor, so setting a
+// clock forward does not stretch it beyond twice the hour.
 func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if !validNow(now) {
 		return ErrLock
@@ -211,17 +216,27 @@ func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if until < now+wait {
 		until = now + wait
 	}
-	// A failure never moves the keep time of a row backwards: of the time this
-	// failure is counted at and the one the row already carries, the later one
-	// stands. A clock set back further than keepFor would otherwise leave a row
-	// whose two times both say expired as soon as the clock is right again, and
-	// the lock that was running would be gone with the count -- a wait must not
-	// be something anybody turns off by turning a clock. seen is a time out of
-	// the row, so it is taken only where it is one a clock gives, and kept +
-	// keepFor cannot run over.
+	// A failure moves the keep time of a row neither backwards nor further than
+	// keepFor forwards: of the time this failure is counted at and the one the
+	// row already carries, the later one stands, and no later than keepFor
+	// ahead of this failure. A clock set back further than keepFor would
+	// otherwise leave a row whose two times both say expired as soon as the
+	// clock is right again, and the lock that was running would be gone with
+	// the count -- a wait must not be something anybody turns off by turning a
+	// clock. A clock set forward is that same door from the other side, and the
+	// one a small server without a clock of its own goes through when NTP pulls
+	// it forward: the row would carry that time on and shut its bucket for as
+	// long as the clock was fast, which is not a wait any failure here asks
+	// for. Capped, a row is kept at most 2*keepFor past the clock that wrote
+	// it, and that is what holds it in reach of a purge: a Seq past maxNow lies
+	// beyond every time validNow lets through, and no purge would ever take
+	// that row. The cap leaves only a now within 2*keepFor of maxNow itself,
+	// which is no clock of this century. seen is a time out of the row, so it
+	// is taken only where it is one a clock gives, and kept + keepFor cannot
+	// run over.
 	kept := now
 	if validNow(seen) && seen > kept {
-		kept = seen
+		kept = min(seen, now+keepFor)
 	}
 	// Seq and Updated are the time the row may be removed. A walk of the rows
 	// gets both (dbapi.BlobFrom), so Purge asks them the same question the
@@ -246,10 +261,17 @@ func Clear(ctx context.Context, db dbapi.Local, name string) error {
 // of it, and freeing them all at once is exactly what a wrong number must
 // never do.
 //
-// No lock depends on it. It takes a row exactly when the counting reads it as
-// none, because both ask the row the same question (see expired), so what
-// Purge frees is the space the rows take, not a name: whoever wires it up may
-// run it as often or as seldom as he likes.
+// No lock depends on it, for every row this package writes. Purge asks a row
+// the same question the counting asks (see expired), and such a row carries
+// Seq = Updated + keepFor, which makes the two halves of that question the one
+// question -- so it takes that row exactly when the counting reads it as none.
+// The two reach a row by different calls, the counting through BlobGet and this
+// walk through BlobFrom, and dbapi's own test pins Updated only through the
+// first and Seq only through the second; with a row of other times, where the
+// two halves do not fall together, a store that hands one of them back empty on
+// one of the two paths can therefore free a row the counting still reads. What
+// Purge frees for the rows written here is the space they take, not a name:
+// whoever wires it up may run it as often or as seldom as he likes.
 //
 // It holds counting over the whole walk, so nothing is counted between the
 // walk and the deletes that follow it: a row that the walk saw expired would

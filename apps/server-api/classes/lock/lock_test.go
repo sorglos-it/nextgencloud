@@ -152,13 +152,17 @@ func TestPurgeFreesNothingOnATimeNoClockGives(t *testing.T) {
 	}
 }
 
-// TestPurgeFreesNoRowTheCountingStillReads holds Purge to the counting: a row
-// goes exactly when the counting reads it as none, because both ask the same
-// question of it (see expired). Where the two could come apart is a store that
-// hands Seq back empty -- dbapi leaves Seq to the caller and the contract's own
-// test never reads one back through BlobGet -- and there a purge would be the
-// way out of a lock that is still running. Whoever wires Purge up may run it as
-// often as he likes, and this is what that rests on.
+// TestPurgeFreesNoRowTheCountingStillReads holds Purge to the counting: both
+// ask the same question of a row (see expired), so a purge is no way out of a
+// lock that is still running. The row below is the one where that could come
+// apart: a store that hands Seq back empty -- dbapi leaves Seq to the caller
+// and the contract's own test never reads one back through BlobGet -- leaves
+// the keep time in Updated alone. Whoever wires Purge up may run it as often as
+// he likes, and this is what that rests on. How far it reaches is a row of the
+// times this package writes, where Seq = Updated + keepFor makes the two halves
+// of the question one; a row of other times can still be read one way through
+// BlobGet and another through BlobFrom, and that is stated at Purge, not held
+// here.
 func TestPurgeFreesNoRowTheCountingStillReads(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
@@ -572,5 +576,63 @@ func TestTheCountingsClockNeverRunsBackwards(t *testing.T) {
 	}
 	if wait, err := Check(ctx, db, "anna", now); err != nil || wait <= before {
 		t.Fatalf("the failure after the clock went back waits %d, the one before %d: %v", wait, before, err)
+	}
+}
+
+// TestAClockJumpedForwardShutsABucketNoLongerThanTwiceKeepFor holds the other
+// side of the row above, and it is the side a real machine walks into: a small
+// server with no clock of its own starts at a wrong time and NTP pulls it
+// forward as soon as the network stands. One failure counted while the clock
+// was fast leaves a keep time that far ahead, the row carries it on, and the
+// bucket stays shut for as long as the clock was wrong -- not for as long as
+// the counting ever asks for. Holding the later of the two times is what keeps
+// a clock set back from ending a wait; it must not let a clock set forward
+// begin one that outlasts the failures by days.
+func TestAClockJumpedForwardShutsABucketNoLongerThanTwiceKeepFor(t *testing.T) {
+	now := int64(1790000000)
+	// Twice the keep time after the last failure the bucket is free, and its
+	// row is one a purge takes. A row kept further ahead than that is one no
+	// purge of any time a clock gives ever reaches.
+	over := now + 2*keepFor
+
+	db := memstore.New()
+	if err := Fail(ctx, db, "anna", now+100*keepFor); err != nil {
+		t.Fatalf("fail while the clock was fast: %v", err)
+	}
+	// The clock is right again, and the name goes on trying.
+	for i := 0; i < 3; i++ {
+		if err := Fail(ctx, db, "anna", now); err != nil {
+			t.Fatalf("fail %d: %v", i, err)
+		}
+	}
+	if wait, err := Check(ctx, db, "anna", now+1); err != nil || wait == 0 {
+		t.Fatalf("the failures set no lock at all: %d %v", wait, err)
+	}
+	if wait, err := Check(ctx, db, "anna", over); err != nil || wait != 0 {
+		t.Fatalf("the bucket is still shut %d s after the last failure: %d %v", over-now, wait, err)
+	}
+	if err := Purge(ctx, db, over); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
+		t.Fatalf("the purge left the row of the fast clock: %v", err)
+	}
+
+	// The same holds where the keep time does not come off a clock at all but
+	// out of the row, at the end of the range a time may have.
+	far := memstore.New()
+	if err := far.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+		Data: []byte("9 " + strconv.FormatInt(now+maxWait, 10)),
+		Seq:  uint64(maxNow + keepFor), Updated: maxNow}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := Fail(ctx, far, "anna", now); err != nil {
+		t.Fatalf("fail over a row kept to the end of the range: %v", err)
+	}
+	if err := Purge(ctx, far, over); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if _, err := far.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
+		t.Fatalf("a row kept to the end of the range outlived the purge: %v", err)
 	}
 }
