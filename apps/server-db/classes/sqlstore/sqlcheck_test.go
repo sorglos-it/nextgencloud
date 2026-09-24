@@ -15,12 +15,14 @@ import (
 	"testing"
 )
 
-// The guard of this file reads the package's own source and refuses three
+// The guard of this file reads the package's own source and refuses four
 // things: a statement that is not a constant, a value that reaches the
-// database as a byte slice from anywhere but blob, and a way of reaching the
-// driver that it cannot follow. That is how "SQL only with placeholders" and
-// "nothing nil where every column is NOT NULL" are kept, instead of trusting
-// everyone to remember them.
+// database as a byte slice from anywhere but blob, a way of reaching the
+// driver that it cannot follow, and the import of reflect, through which a
+// method carries its name as a string and no reading of identifiers sees it.
+// That is how "SQL only with placeholders" and "nothing nil where every
+// column is NOT NULL" are kept, instead of trusting everyone to remember
+// them.
 //
 // It asks go/types what a name stands for, never what it is called: a local
 // variable may carry the name of a constant, and only the object behind the
@@ -32,9 +34,10 @@ import (
 // draws the line around that: no other package under apps/server-db touches a
 // database without a guard of its own.
 //
-// TestTheGuardCatchesWhatSlippedPast below runs it against testdata/, where
-// five packages are written the way this store writes and five carry one hole
-// each. Every hole there was measured green against an earlier guard.
+// TestTheGuardCatchesWhatSlippedPast below runs it against the twelve
+// packages under testdata/: four are written the way this store writes and
+// have to stay silent, eight carry one hole each, and every one of those
+// eight was measured green against an earlier guard.
 
 // dbMethods are the ways a statement or a value reaches the driver.
 var dbMethods = map[string]bool{
@@ -278,12 +281,25 @@ func (c *checker) read() {
 // made1 writes down where the variables on the left were given their value.
 // A variable written in more than one place is written down more than once,
 // and the guard then says so instead of reading the first of them.
+//
+// A write into a part of a variable - vals[1] = ... - counts as a write of
+// the whole variable. It stands nowhere the reading of a row could pick it
+// up, so the variable has to become unreadable by it, the same way append
+// makes it unreadable.
 func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
 	if call, ok := single(rhs); ok {
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && strings.HasPrefix(sel.Sel.Name, "Prepare") {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && isPrepare(sel.Sel.Name) {
 			if v, ok := c.varOf(lhs[0]); ok {
 				c.prep[v] = true
 			}
+		}
+	}
+	for _, l := range lhs {
+		if _, ok := l.(*ast.Ident); ok {
+			continue
+		}
+		if v, ok := c.varOf(rootOf(l)); ok {
+			c.made[v] = append(c.made[v], where{expr: l, in: in})
 		}
 	}
 	if len(lhs) != len(rhs) {
@@ -292,6 +308,35 @@ func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
 	for i, l := range lhs {
 		if v, ok := c.varOf(l); ok {
 			c.made[v] = append(c.made[v], where{expr: rhs[i], in: in})
+		}
+	}
+}
+
+// isPrepare names the two methods that make a prepared statement. The two
+// names stand here written out: a method called PrepareAnything of somebody
+// else gives back whatever it likes, and taking its result for a prepared
+// statement would take the statement argument off the next call.
+func isPrepare(name string) bool { return name == "Prepare" || name == "PrepareContext" }
+
+// rootOf is the variable a write goes into: vals of vals[1], of vals[1:2] and
+// of (vals)[1].
+func rootOf(e ast.Expr) ast.Expr {
+	for {
+		switch x := e.(type) {
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.SliceExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.SelectorExpr:
+			e = x.X
+		case *ast.TypeAssertExpr:
+			e = x.X
+		default:
+			return e
 		}
 	}
 }
@@ -335,6 +380,7 @@ func guard(p *pkgSource) (finds []find, calls, values int) {
 	}
 	c.read()
 	c.noMethodValues()
+	c.noReflect()
 	for _, cl := range c.all {
 		sel, ok := cl.call.Fun.(*ast.SelectorExpr)
 		if !ok || !dbMethods[sel.Sel.Name] {
@@ -368,15 +414,27 @@ func guard(p *pkgSource) (finds []find, calls, values int) {
 // noMethodValues refuses a way to the driver that no reading of arguments can
 // follow: the method itself taken as a value. e := s.db.ExecContext and then
 // e(ctx, built, raw) hands over a statement and its values at a call the
-// guard cannot recognise as one. Every name of dbMethods therefore has to
-// stand either in call position or as the declaration of a method of this
-// package.
+// guard cannot recognise as one.
+//
+// Which name is meant is decided on the object, not on the name alone: a
+// field, a variable or a constant of this module that happens to be called
+// Query is none of the driver's business and stays silent. Refused is a name
+// of dbMethods that stands outside call position and is either a method - the
+// shape a method value has - or something this guard cannot resolve at all,
+// which under this package means the driver, because database/sql is the one
+// thing left unresolved here.
 func (c *checker) noMethodValues() {
 	for _, file := range c.p.files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
 			if !ok || !dbMethods[id.Name] || c.callee[id] || c.p.info.Defs[id] != nil {
 				return true
+			}
+			obj, known := c.p.info.Uses[id]
+			if known {
+				if _, method := obj.(*types.Func); !method {
+					return true // a field, a variable, a constant: not the driver
+				}
 			}
 			c.report(true, id.Pos(), "%s is taken as a value here; what it is then given "+
 				"stands nowhere the guard can read", id.Name)
@@ -385,14 +443,30 @@ func (c *checker) noMethodValues() {
 	}
 }
 
+// noReflect refuses reflect in this package. A name reached through reflect
+// is a string, so no reading of identifiers can see it: the whole of the
+// guard above would be silent on it. This is a ban, not a measurement - the
+// store has no use for reflect, and nothing under apps/server-db imports it.
+func (c *checker) noReflect() {
+	for _, file := range c.p.files {
+		for _, imp := range file.Imports {
+			if imp.Path.Value == `"reflect"` {
+				c.report(true, imp.Pos(), "this package imports reflect; a method called through it "+
+					"carries its name as a string, and the guard of this file reads identifiers")
+			}
+		}
+	}
+}
+
 // stmtIndex says where the statement of a database call stands, or -1 when
 // the call carries none. A prepared statement carries none: sql.Stmt has
 // Exec, Query and QueryRow without a statement of their own, and that is the
 // textbook form for a row written many times. Two signs say so, and one is
-// enough: the receiver is a variable that came out of Prepare, or the
-// argument where a statement would stand is of a type that is no string.
+// enough: the receiver is a variable that came out of Prepare or
+// PrepareContext - those two names and no other - or the argument where a
+// statement would stand is of a type that is no string.
 func (c *checker) stmtIndex(call *ast.CallExpr, sel *ast.SelectorExpr, skip int) int {
-	if strings.HasPrefix(sel.Sel.Name, "Prepare") {
+	if isPrepare(sel.Sel.Name) {
 		return skip // this one always carries a statement
 	}
 	if v, ok := c.varOf(sel.X); ok && c.prep[v] {
@@ -849,21 +923,28 @@ func atDatabase(file *ast.File) bool {
 	return found
 }
 
-// TestTheGuardCatchesWhatSlippedPast runs the guard against the packages
-// under testdata. Five of them are written the way this store writes and have
-// to stay silent - a guard that is red on good code is switched off, and then
-// it guards nothing. The other five carry one hole each, and every one of
-// those was measured green against an earlier guard.
+// TestTheGuardCatchesWhatSlippedPast runs the guard against the twelve
+// packages under testdata. Four of them - clean, prepared, valueslice,
+// namesake - are written the way this store writes and have to stay silent: a
+// guard that is red on good code is switched off, and then it guards nothing.
+// The other eight carry one hole each, and every one of those was measured
+// green against an earlier guard; namesake was measured red against one,
+// although nothing is wrong with it. The table below is the count: what is
+// written here is what runs.
 func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 	for _, c := range []struct{ dir, want string }{
 		{"clean", ""},
 		{"prepared", ""},
 		{"valueslice", ""},
+		{"namesake", ""},
 		{"shadow", "the statement is the variable blobDelete"},
 		{"literal", "the statement is the variable stmt"},
 		{"handoff", "exec is taken as a value"},
 		{"methodvalue", "ExecContext is taken as a value"},
 		{"rawbytes", "data goes to the database as a byte slice"},
+		{"slot", "cannot see which values stand in vals"},
+		{"prepname", "the statement is put together at run time"},
+		{"mirror", "imports reflect"},
 	} {
 		t.Run(c.dir, func(t *testing.T) {
 			finds, calls, values := guard(readPackage(t, filepath.Join("testdata", c.dir)))
