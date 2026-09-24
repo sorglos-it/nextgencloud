@@ -684,6 +684,36 @@ func TestCheckRefusesMalformedOpen(t *testing.T) {
 	wantClose(t, d, cl, wire.CodeVerify)
 }
 
+// TestOnlyATaskOrAHandshakeCanNameAUser fences the last rule of Check, the
+// one no test tells from "if true": with a certificate but neither a task nor
+// the end-to-end handshake, a channel names no user. Put "if true" there and
+// every test of this package stays green, because one guard per branch keeps
+// that case from ever arriving. Give way either one and the rule turns live
+// and unwatched, so both are nailed below: the core branch in its two halves,
+// the app branch in one.
+func TestOnlyATaskOrAHandshakeCanNameAUser(t *testing.T) {
+	// A core channel of a user reaches the rule only through core.ShellOpens,
+	// and on service controller that leaves the root actions alone.
+	for _, a := range core.All() {
+		if a.Service == core.ServiceController && core.ShellOpens(a) && !a.Root {
+			t.Errorf("%s/%s/%s: a shell may open it without a signed task, and nothing would bind the "+
+				"certificate of that channel to its user", a.App, a.Service, a.Name)
+		}
+	}
+	// A root action without a task never gets that far: task.Check asks for
+	// one, so tk is never nil on a core channel that is accepted.
+	f := newFixture(t)
+	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, nil))))
+	wantClose(t, d, cl, wire.CodeConfirm)
+	// An app channel always carries message 1: an OPEN of an app that is no
+	// core app and brings none is not even read.
+	o := f.appOpen(testApp, testService, testAction)
+	o.E2E = nil
+	if _, err := wire.ParseOpen(mustJSON(t, o)); err == nil {
+		t.Error("an OPEN of an app channel without message 1 parses")
+	}
+}
+
 // seeds are the payloads FuzzCheck starts from, of this fixture: a second
 // one would be the same bytes, but nothing would say so: the accepted channels of the
 // tests above, the refused ones, and bare rubbish.
