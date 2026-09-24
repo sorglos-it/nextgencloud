@@ -1428,6 +1428,8 @@ func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 		{"gocall", "the first statement it gives the database only reads"},
 		{"deferindex", "the first statement it gives the database only reads"},
 		{"defertimer", ""},
+		{"deferwrap", ""},
+		{"litarg", "the first statement it gives the database only reads"},
 	}
 	listed := map[string]bool{}
 	for _, c := range table {
