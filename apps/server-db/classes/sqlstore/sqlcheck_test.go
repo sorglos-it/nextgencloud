@@ -688,13 +688,15 @@ func (c *checker) atDriver(sel *ast.SelectorExpr) bool {
 // either runs before everything below. defer s.trace()() is the everyday
 // shape of that, and defer closers[s.pick()]() another.
 //
-// A literal standing in the defer itself is the one thing skipped, because
-// nothing of it is worked out there. What is left out is the body of whatever
-// is finally called, and the note beside the rule says so.
+// Nothing is skipped here. The body of what is finally called is left out a
+// step later and by the two readers: firstStmtIn steps into a function
+// literal only where argLits says it runs, and argLits marks no literal that
+// a defer or a go hands on. The note beside the rule says what that leaves
+// uncovered. A literal written straight into the defer was skipped here once
+// as well; taking that skip out left all twenty-five packages as they were,
+// because such a literal is dropped a step later either way.
 func onTheSpot(call *ast.CallExpr, visit func(ast.Node) bool) {
-	if _, lit := call.Fun.(*ast.FuncLit); !lit {
-		ast.Inspect(call.Fun, visit)
-	}
+	ast.Inspect(call.Fun, visit)
 	for _, a := range call.Args {
 		ast.Inspect(a, visit)
 	}
