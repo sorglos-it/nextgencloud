@@ -283,14 +283,13 @@ func (c *checker) read() {
 // A variable written in more than one place is written down more than once,
 // and the guard then says so instead of reading the first of them.
 //
-// An assignment to a part of a variable - vals[1] = ..., vals[1:2] = ... -
-// counts as a write of the whole variable: it stands nowhere the reading of
-// the row could pick it up, so the variable becomes unreadable by it, the way
-// append already makes it unreadable. Only an assignment counts. copy into a
-// part of the row, a write through a second name for the same row, and a
-// helper that writes into a row it was handed are writes as well and are
-// **not** counted here - following them would need a reading this guard does
-// not have.
+// An assignment to a part of a variable - vals[1] = ... - counts as a write
+// of the whole variable: it stands nowhere the reading of the row could pick
+// it up, so the variable becomes unreadable by it, the way append already
+// makes it unreadable. Only an assignment counts. copy into a part of the row,
+// a write through a second name for the same row, and a helper that writes
+// into a row it was handed are writes as well and are **not** counted here -
+// following them would need a reading this guard does not have.
 func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
 	if call, ok := single(rhs); ok {
 		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && isPrepare(sel.Sel.Name) {
@@ -325,14 +324,17 @@ func (c *checker) made1(lhs []ast.Expr, rhs []ast.Expr, in []ast.Node) {
 // foreign type that gives back something else would still be believed.
 func isPrepare(name string) bool { return name == "Prepare" || name == "PrepareContext" }
 
-// rootOf is the variable a write goes into: vals of vals[1], of vals[1:2] and
-// of (vals)[1].
+// rootOf is the name a write goes into, with the indexing, the parentheses,
+// the pointer, the field and the type assertion around it taken off: vals of
+// vals[1] and of (vals)[1], p of (*p)[1], s of s.row[1], v of v.([]any)[1]. Where a second name stands between
+// the write and the row, the name that comes out is that second one and the
+// row itself stays readable - the same limit the comment at made1 names. A
+// slice expression is not in the list: vals[1:2] = ... is no Go, a slice
+// expression is never addressable.
 func rootOf(e ast.Expr) ast.Expr {
 	for {
 		switch x := e.(type) {
 		case *ast.IndexExpr:
-			e = x.X
-		case *ast.SliceExpr:
 			e = x.X
 		case *ast.StarExpr:
 			e = x.X
@@ -457,9 +459,11 @@ func (c *checker) noMethodValues() {
 
 // noReflect refuses reflect in this package. A name reached through reflect
 // is a string, so no reading of identifiers can see it: the whole of the
-// guard above would be silent on it. This is a ban, not a measurement. That
-// nothing else under apps/server-db imports reflect either is measured, in
-// TestNobodyElseUnderServerDBSpeaksToADatabase.
+// guard above would be silent on it. This is a ban, not a measurement of
+// need. The same ban on every program file under apps/server-db outside
+// testdata/ and vendor/ stands in TestNobodyElseUnderServerDBSpeaksToADatabase;
+// testdata/ is left out of it on purpose, because one package there imports
+// reflect as its hole.
 func (c *checker) noReflect() {
 	for _, file := range c.p.files {
 		for _, imp := range file.Imports {
@@ -872,10 +876,15 @@ var atTheDatabase = map[string]string{
 // reason why it is allowed to. A new package that speaks to the database
 // without a guard is a failure here, not a quiet hole.
 //
-// It also measures the one sentence noReflect leans on: no file under
-// apps/server-db imports reflect. Through reflect the name of a method is a
-// string, and no reading of identifiers - here or in a sister package - would
-// see it.
+// It carries the same ban as noReflect, over every package instead of one:
+// no program file under apps/server-db outside testdata/ and vendor/ may
+// import reflect. Through reflect the name of a method is a string, and no
+// reading of identifiers - here or in a sister package - would see it.
+// testdata/ is skipped on purpose, because the package mirror there imports
+// reflect as its hole; test files are not read here either. It is a ban, not
+// a measurement of need: no program file outside testdata/ imports reflect
+// today, and an exception would belong in a table with a reason, the way
+// atTheDatabase carries one.
 func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
 	root := filepath.Join(moduleRoot(t), "apps", "server-db")
 	seen, looked := map[string]bool{}, 0

@@ -748,10 +748,11 @@ func TestABoundBitesBeforeTheWork(t *testing.T) {
 // it, every test of behaviour still passes, and the guard of takeTable is
 // gone without a word.
 //
-// Measured is every function of this package's **scope** that takes a who,
-// and the list of them is not written by hand: go/types is asked which ones
-// they are, so a package function that gets the mark tomorrow is measured the
-// day it is written.
+// Measured is every function of this package's scope that takes a who, and
+// the list of them is not written by hand: go/types is asked which ones they
+// are, so a package function that gets the mark tomorrow is measured the day
+// it is written. An alias of who counts as who, here and at every other place
+// in this test that compares the type.
 //
 // Two carriers do not stand in that scope and are therefore not measured but
 // refused: a method, and a function literal. Both bans are below, and neither
@@ -832,7 +833,7 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 			continue
 		}
 		for i := range sig.Params().Len() {
-			if sig.Params().At(i).Type() != whoType.Type() {
+			if types.Unalias(sig.Params().At(i).Type()) != types.Unalias(whoType.Type()) {
 				continue
 			}
 			if _, twice := doors[fn]; twice {
@@ -847,29 +848,34 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 	// A method and a function literal both stand outside the package scope and
 	// outside the counting above. Neither is looked for, both are refused: the
 	// mark belongs on a package function, and there it is measured. A literal
-	// is the cheaper of the two ways past the counting - var f = func(s
-	// string, w who) … and then f(s, true) opens the runner's door without a
-	// word.
-	takesWho := func(params *ast.FieldList) bool {
+	// would be the cheaper of the two ways past the counting - var f = func(s
+	// string, w who) … and then f(s, true) would open the runner's door
+	// without a word - so it is refused here.
+	//
+	// An alias of who is the same type and is compared as one: the comparison
+	// goes over types.Unalias, because an alias is an object of its own and a
+	// plain comparison of the two would let type mark = who through.
+	who := types.Unalias(whoType.Type())
+	takesWho := func(params *ast.FieldList) (*ast.Field, bool) {
 		for _, field := range params.List {
-			if info.Types[field.Type].Type == whoType.Type() {
-				return true
+			if types.Unalias(info.Types[field.Type].Type) == who {
+				return field, true
 			}
 		}
-		return false
+		return nil, false
 	}
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.FuncDecl:
-				if x.Recv != nil && takesWho(x.Type.Params) {
+				if field, yes := takesWho(x.Type.Params); yes && x.Recv != nil {
 					t.Errorf("%s: the method %s takes a who; the mark belongs on a function of the "+
-						"package, which is where it is measured", fset.Position(x.Pos()), x.Name.Name)
+						"package, which is where it is measured", fset.Position(field.Pos()), x.Name.Name)
 				}
 			case *ast.FuncLit:
-				if takesWho(x.Type.Params) {
+				if field, yes := takesWho(x.Type.Params); yes {
 					t.Errorf("%s: a function literal takes a who; the mark belongs on a function of "+
-						"the package, which is where it is measured", fset.Position(x.Pos()))
+						"the package, which is where it is measured", fset.Position(field.Pos()))
 				}
 			}
 			return true
@@ -985,7 +991,7 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 // functions around the call.
 func isWhoParam(info *types.Info, obj types.Object, whoType types.Object, stack []ast.Node) bool {
 	v, ok := obj.(*types.Var)
-	if !ok || v.Type() != whoType.Type() {
+	if !ok || types.Unalias(v.Type()) != types.Unalias(whoType.Type()) {
 		return false
 	}
 	for _, n := range stack {
