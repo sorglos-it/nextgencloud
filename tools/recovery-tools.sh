@@ -188,9 +188,14 @@ if [ ! -S "$state/sock" ]; then
 	exit 1
 fi
 export TPM2TOOLS_TCTI="swtpm:path=$state/sock"
-if ! tpm2_getcap pcrs | grep -q sha384; then
-	stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384."
-fi
+# tpm2_getcap lists sha384 by name whether or not it is allocated - only a
+# populated list (all 24 PCRs, same check as recovery-env.sh's pcr-bank)
+# proves the --pcr-banks request above actually took.
+caps="$(tpm2_getcap pcrs)"
+case "$caps" in
+*'sha384: [ '[0-9]*' 23 ]'*) ;;
+*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384." ;;
+esac
 checked+=("  PCR-Bank sha384 vorhanden")
 
 # --- 4. the one unmeasured point: does the PIN come out of a file? --------
