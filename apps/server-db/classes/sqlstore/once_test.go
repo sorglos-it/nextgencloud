@@ -35,6 +35,54 @@ func TestLockTakeAgainWithTheSameTime(t *testing.T) {
 	}
 }
 
+// TestLockFreeOnlyTheOwner: the DELETE of LockFree names the name and the
+// owner, and that second half is the whole of the method - one that dropped
+// every row of a name would take the rollout lock away from whoever holds it,
+// from another API and on another node. Nothing else in this package runs
+// LockFree against an open database, so without this the second half of that
+// statement is free to fall away unnoticed.
+//
+// It is measured the only way a lock can be: by asking a third owner whether
+// it is still held.
+func TestLockFreeOnlyTheOwner(t *testing.T) {
+	s := open(t)
+	const now, until = 1790000000, 1790000060
+	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-1", now, until); err != nil || !ok {
+		t.Fatalf("take: %v, %v", ok, err)
+	}
+	if err := s.LockFree(ctx, dbapi.LockUpdate, "api-2"); err != nil {
+		t.Fatalf("another owner gives it back: %v", err)
+	}
+	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-3", now, until); err != nil || ok {
+		t.Errorf("after another owner gave it back: %v, %v, want false", ok, err)
+	}
+	if err := s.LockFree(ctx, dbapi.LockUpdate, "api-1"); err != nil {
+		t.Fatalf("the owner gives it back: %v", err)
+	}
+	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-3", now, until); err != nil || !ok {
+		t.Errorf("after the owner gave it back: %v, %v, want true", ok, err)
+	}
+}
+
+// TestLockTakeWhenTheTimeIsReached: a lock is free again exactly when its time
+// is reached, not a second later. That is the until <= ? of the statement, and
+// it is measured here on a row that is really there - LockTake refuses an
+// until below the now it is given, so the other side of the same comparison in
+// TestOnceAndLockBounds never reaches the database at all.
+func TestLockTakeWhenTheTimeIsReached(t *testing.T) {
+	s := open(t)
+	const now, until = 1790000000, 1790000060
+	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-1", now, until); err != nil || !ok {
+		t.Fatalf("take: %v, %v", ok, err)
+	}
+	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-2", until-1, until+60); err != nil || ok {
+		t.Errorf("one second before the time is reached: %v, %v, want false", ok, err)
+	}
+	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-2", until, until+60); err != nil || !ok {
+		t.Errorf("exactly when the time is reached: %v, %v, want true", ok, err)
+	}
+}
+
 // TestOnceUseTellsApart: an unknown or expired value is ErrNotFound, a second
 // use is ErrUsed. The two must not be mixed up, because the API answers a
 // login with them.
@@ -68,6 +116,11 @@ func TestOnceUseTellsApart(t *testing.T) {
 // disagree here would make the conformance test of task 7 impossible to
 // write. The order is taken from memstore, the reference beside this store,
 // and taken by running it instead of by reading it.
+//
+// The two do not agree everywhere, and this test says nothing about the rest:
+// memstore has no columns and so no bounds, so an input past MaxKey or
+// MaxText is refused here and taken there. That difference belongs to the
+// stores and not to the contract, and it stands on the same list as this case.
 //
 // This one test came with the code and not before it, unlike the rest of this
 // file: the question only turned up while the switch of OnceUse was read back
@@ -103,6 +156,15 @@ func TestOnceAndLockBounds(t *testing.T) {
 	// The shortest span a lock may be taken for is one second.
 	if ok, err := s.LockTake(ctx, key, text, now, now+1); err != nil || !ok {
 		t.Errorf("name of %d and owner of %d bytes: %v, %v", sqlstore.MaxKey, sqlstore.MaxText, ok, err)
+	}
+	// LockFree on the bound too, and it has to reach the database: the row is
+	// really deleted, so another owner gets the lock at the same now, which a
+	// call that quietly gave nil would not do.
+	if err := s.LockFree(ctx, key, text); err != nil {
+		t.Errorf("LockFree, name of %d and owner of %d bytes: %v", sqlstore.MaxKey, sqlstore.MaxText, err)
+	}
+	if ok, err := s.LockTake(ctx, key, "api-1", now, now+1); err != nil || !ok {
+		t.Errorf("after LockFree on the bound: %v, %v, want true", ok, err)
 	}
 	for name, err := range map[string]error{
 		"empty kind":     s.OnceCreate(ctx, "", []byte("v"), "", expires),
