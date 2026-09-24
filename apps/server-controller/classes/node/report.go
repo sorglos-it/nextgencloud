@@ -5,10 +5,12 @@
 // telling, not a controller asking.
 //
 // The parts of the controller that answer these questions are built by later
-// tasks, so each of them comes in as a function of ReportConfig. What is not
-// wired yet is answered the way a controller that cannot ask answers: no app
-// counts as running, every app counts as licensed, and a message without a
-// tunnel goes into the log of this server.
+// tasks, so each of them comes in as a function of ReportConfig. A part that is
+// not wired yet is not the same as one that was asked and did not answer: where
+// there is nothing to ask, the answer is the quiet one - no app counts as
+// running, every app counts as licensed, and a message without a tunnel goes
+// into the log of this server. Where there is something and it fails, the app
+// is left out of the status altogether (appState).
 
 package node
 
@@ -150,13 +152,21 @@ func arch() string {
 // Status is what this server is doing: every app it knows with its version and
 // its state, the NGC parts its roles carry, and the space left for app data.
 //
-// Left out is everything the contract would refuse, because a status the API
-// refuses costs the tunnel and tells it nothing: a row whose ID is no app ID or
-// is one of NGC's own (wire.CoreApp), and a row without a release version - an
-// app of which only kept data remains has none (dbapi.App), and a status has no
-// room for one. Left out too is everything past tunnel.MaxStatusApps, on a
-// server that has more. The API shows this list and decides nothing by it, so a
-// short list costs nobody anything.
+// Four kinds of row are left out. Two of them the contract cannot carry, and a
+// status the API refuses costs the tunnel and tells it nothing: a row of NGC's
+// own (wire.CoreApp), which the API serves itself, and a row without a release
+// version - an app of which only kept data remains has none (dbapi.App). The
+// third is every row behind the one that filled the list to
+// tunnel.MaxStatusApps. The fourth is every app this server could not ask
+// about (appState).
+//
+// A row with an ID that is no app ID is not among them: such a row never gets
+// this far, because state.Store.Apps refuses the whole read over it
+// (state.ErrDocument), and that error comes back out of here. A damaged
+// database is nothing to report around.
+//
+// The API shows this list and decides nothing by it, so a short list costs
+// nobody anything.
 func (r *Reporter) Status(ctx context.Context) (tunnel.Status, error) {
 	apps, err := r.cfg.State.Apps(ctx)
 	if err != nil {
@@ -167,10 +177,16 @@ func (r *Reporter) Status(ctx context.Context) (tunnel.Status, error) {
 		if len(s.Apps) == tunnel.MaxStatusApps {
 			break
 		}
-		if !wire.ValidAppID(a.ID) || wire.CoreApp(a.ID) || !store.ValidVersion(a.Version) {
+		// The version is either a release version or empty: state.Store.Apps
+		// lets nothing else through, so the empty one is the only case here.
+		if wire.CoreApp(a.ID) || a.Version == "" {
 			continue
 		}
-		s.Apps = append(s.Apps, tunnel.AppStatus{App: a.ID, Version: a.Version, State: r.appState(ctx, a)})
+		st, ok := r.appState(ctx, a)
+		if !ok {
+			continue
+		}
+		s.Apps = append(s.Apps, tunnel.AppStatus{App: a.ID, Version: a.Version, State: st})
 	}
 	comp, err := r.cfg.State.Components(ctx)
 	if err != nil && !errors.Is(err, dbapi.ErrNotFound) {
@@ -193,37 +209,49 @@ func (r *Reporter) Status(ctx context.Context) (tunnel.Status, error) {
 	return s, nil
 }
 
-// appState is what one app is doing. The licence is asked first: one that ran
-// out past its grace period stops the app's services and starts none
-// (store.LicenseExpired), so such an app is unlicensed and not merely stopped.
+// appState is what one app is doing, and whether that can be said at all. The
+// licence is asked first: one that ran out past its grace period stops the
+// app's services and starts none (store.LicenseExpired), so such an app is
+// unlicensed and not merely stopped.
 //
-// An engine that cannot answer leaves the app failed. The contract has no word
-// for "nobody knows" (tunnel.AppState), and of the four it has, failed is the
-// one an admin should see - an app nobody can ask about is a problem on this
-// server. What went wrong goes into the log of this controller beside it.
-func (r *Reporter) appState(ctx context.Context, a dbapi.App) tunnel.AppState {
+// Two things end with nothing to say, and they are the only two: the licence
+// could not be read, or the engine does not say whether the app runs. Both give
+// false, and Status then leaves the app out of the report. None of the four
+// words of the contract is bent over them, failed least of all: failed is a
+// state an app is really in, and the one an admin acts on - a second meaning
+// "nobody could ask" would make it the one word of the four that says two
+// things. The contract has no word for that and no field to carry it
+// (tunnel.Status and tunnel.AppStatus have three each, none about time), so the
+// row stays away and the reason goes into the log of this controller.
+//
+// What that costs, said plainly: in the message itself an app nobody could ask
+// about looks like one the limit of 256 swallowed. The log line is what tells
+// them apart on this server.
+func (r *Reporter) appState(ctx context.Context, a dbapi.App) (tunnel.AppState, bool) {
 	if r.cfg.Licensed != nil {
 		ok, err := r.cfg.Licensed(ctx, a)
 		if err != nil {
-			r.log().Warn("the licence of an app could not be read", "app", a.ID, "err", err)
-			return tunnel.StateFailed
+			r.log().Warn("the licence of an app could not be read, it stays out of the status",
+				"app", a.ID, "err", err)
+			return "", false
 		}
 		if !ok {
-			return tunnel.StateUnlicensed
+			return tunnel.StateUnlicensed, true
 		}
 	}
 	if r.cfg.Running == nil {
-		return tunnel.StateStopped
+		return tunnel.StateStopped, true
 	}
 	up, err := r.cfg.Running(ctx, a.ID)
 	if err != nil {
-		r.log().Warn("the engine does not say whether an app runs", "app", a.ID, "err", err)
-		return tunnel.StateFailed
+		r.log().Warn("the engine does not say whether an app runs, it stays out of the status",
+			"app", a.ID, "err", err)
+		return "", false
 	}
 	if up {
-		return tunnel.StateRunning
+		return tunnel.StateRunning, true
 	}
-	return tunnel.StateStopped
+	return tunnel.StateStopped, true
 }
 
 // Notify tells the API something an admin should read: level is one of

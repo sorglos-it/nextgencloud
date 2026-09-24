@@ -7,9 +7,10 @@
 // takeMessage lets through the two types the API may send (wire.ControlAllowed:
 // the hello and the goodbye), and after the dial Run lets only the goodbye
 // through, because the hello comes once and before it. Anything else ends the
-// link at once and without an answer. Measured with both of them taken out in
-// turn: either one alone still ends the link over a status of the API, and only
-// with both gone does it get through.
+// link at once and without an answer. Measured, each of the two taken out on
+// its own and then both: with only takeMessage's line gone a status of the API
+// still ends the link, with only Run's line gone it still ends the link, and
+// only with both gone does it get through.
 //
 // What goes out is checked here, in checkBody, which every control message of
 // this side goes through - the hello of the dial included.

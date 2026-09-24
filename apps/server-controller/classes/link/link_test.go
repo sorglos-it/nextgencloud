@@ -1381,7 +1381,7 @@ func TestSendRefusesChannelZero(t *testing.T) {
 // is not nil once it is in an interface, so the value and not the interface
 // decides.
 func TestControlSendsNoNullBody(t *testing.T) {
-	if _, err := wire.ParseControl([]byte(`{"t":"status","b":null}`)); err == nil {
+	if _, err := wire.ParseControl([]byte(`{"t":"bye","b":null}`)); err == nil {
 		t.Fatal("a written-out null is taken by the contract, so this test guards nothing")
 	}
 	sent := make(chan []byte, 1)
