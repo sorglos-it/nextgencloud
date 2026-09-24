@@ -757,6 +757,54 @@ test("validateList, validAPINode, validStore and keyOwner never throw, not even 
   });
 });
 
+// Fixrunde 7: the eleventh appearance of this class, and the first one made
+// by the commit that closed the tenth. Fixrunde 6 wrapped keyOwner's whole
+// body in one try, which turned the "skip just that user, not the search"
+// line inside it into its own opposite: a user whose keys hold a null now
+// ended the search, so a real key a later, well-formed user owns came back
+// as "not found". Fixrunde 4 had proven and pinned that skipping for the
+// array-like shape (keyOwnerSkipsOneBadUser above) - but the null-element
+// case that came with Fixrunde 6 has only one user, and with nothing left to
+// find, aborting and skipping both answer null. Two users is the only shape
+// that tells them apart: the broken one first, the owner of the searched key
+// second. onlyBroken below is the one-user case next to it, answering null
+// either way, so the difference between the two is on record and not just
+// asserted in prose.
+test("keyOwner skips a user whose keys hold a null and still finds a later user's key", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const brokenId = "EREREREREREREREREREREQ", goodId = "AAAAAAAAAAAAAAAAAAAAAA";
+    const realKid = "gICAgICAgICAgICAgICAgA";
+    const key = (kid) => ({
+      id: kid, kind: "password", alg: "EdDSA", pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const listWith = (users) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: brokenId,
+      rp: { id: "", origins: [] }, users,
+      roles: [{ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false }],
+      nodes: [], stores: [], auto: [],
+    });
+    const safe = (fn) => { try { return { threw: false, value: fn() }; } catch { return { threw: true, value: null }; } };
+    // Reduced to the two ids that matter, not the whole {user, key} shape,
+    // for the same reason keyOwnerSkipsOneBadUser above is: Uint8Array
+    // fields do not round-trip through evaluate()'s JSON boundary as
+    // Uint8Array, so comparing the full objects would test that boundary.
+    const find = (users) => safe(() => {
+      const found = t.keyOwner(listWith(users), realKid);
+      return found && { userId: found.user.id, keyId: found.key.id };
+    });
+    const broken = { id: brokenId, name: "broken", roles: ["admin"], keys: [null] };
+    const good = { id: goodId, name: "good", roles: ["admin"], keys: [key(realKid)] };
+    return { brokenFirst: find([broken, good]), onlyBroken: find([broken]) };
+  });
+  const flat = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.threw ? "threw" : v.value]));
+  expect(flat).toEqual({
+    brokenFirst: { userId: "AAAAAAAAAAAAAAAAAAAAAA", keyId: "gICAgICAgICAgICAgICAgA" },
+    onlyBroken: null,
+  });
+});
+
 test("the decision functions grant nothing on doubt, matching Go", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const t = await import("/assets/js/contracts/trust.js");
