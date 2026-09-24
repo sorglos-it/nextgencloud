@@ -29,6 +29,11 @@ async function hasEd25519(shell, signed) {
         if (k.kind === "password") pub = k.pub;
       }
     }
+    // Outside the try on purpose: without a password key in this list,
+    // b64decode(null) would land in the catch below and skip both tests as
+    // "no Ed25519 here", on an engine that has it. A vector file that loses
+    // its password key must fail loudly instead (Fixrunde 1).
+    if (typeof pub !== "string") throw new Error("session.json's trust list holds no password key to probe with");
     try {
       await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
       return true;
