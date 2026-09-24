@@ -259,6 +259,10 @@ export async function hash(signed) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", signed.payload));
 }
 
+// chain (here and in advance) is not guarded the way validateList's and
+// encodeList's fields now are: a malformed chain rejects this promise
+// instead of answering a wrong true/false/value, which is what every fix in
+// this task was actually about, so there is nothing here for that fix to close.
 export async function open(anchor, chain) {
   if (chain.length === 0) throw new Error("trust: no anchor");
   const h = await hash(chain[0]);
@@ -325,18 +329,33 @@ function onlyOwnKeys(prev, next, id) {
 // a list, for the one user whose keys do not count toward the comparison;
 // encodeList writes that null literally, exactly as Go's json.Marshal would
 // for a nil slice on a field with no omitempty.
+//
+// Fixrunde 5: encodeList is exported and takes caller data, the same
+// criterion as every other function this task closed - that it is normally
+// handed parseList's own output does not change that; exported means
+// someone can call it another way. Unlike those other functions it has no
+// natural false/null to fall back to (its job is to produce bytes, not
+// decide or look something up), so the whole body runs inside one try:
+// whatever is wrong, and at whatever depth in encodeUser/encodeUserKey/
+// encodeRole/encodeNode/encodeStore/encodeAuto it sits at, this answers the
+// one controlled error parseList/parseSigned already promise on their own
+// failures, not whichever uncontrolled exception happened to surface first.
 export function encodeList(l) {
-  const o = { seq: l.seq };
-  if (l.prev.length > 0) o.prev = b64encode(l.prev);
-  o.issued = l.issued;
-  o.installation = l.installation;
-  o.rp = encodeRP(l.rp);
-  o.users = l.users.map(encodeUser);
-  o.roles = l.roles.map(encodeRole);
-  if (l.nodes.length > 0) o.nodes = l.nodes.map(encodeNode);
-  if (l.stores.length > 0) o.stores = l.stores.map(encodeStore);
-  if (l.auto.length > 0) o.auto = l.auto.map(encodeAuto);
-  return utf8(JSON.stringify(o));
+  try {
+    const o = { seq: l.seq };
+    if (l.prev.length > 0) o.prev = b64encode(l.prev);
+    o.issued = l.issued;
+    o.installation = l.installation;
+    o.rp = encodeRP(l.rp);
+    o.users = l.users.map(encodeUser);
+    o.roles = l.roles.map(encodeRole);
+    if (l.nodes.length > 0) o.nodes = l.nodes.map(encodeNode);
+    if (l.stores.length > 0) o.stores = l.stores.map(encodeStore);
+    if (l.auto.length > 0) o.auto = l.auto.map(encodeAuto);
+    return utf8(JSON.stringify(o));
+  } catch {
+    throw new Error("trust: cannot encode this list");
+  }
 }
 
 function encodeRP(rp) {
