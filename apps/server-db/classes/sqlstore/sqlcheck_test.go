@@ -556,21 +556,33 @@ func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
 }
 
 // argLits are the literals that run where they stand: one handed to a call as
-// an argument, and one called on the spot. A literal given a name runs where
-// the name is called, and it is read there instead. Whether a function runs
-// the literal it is handed is its own business and is not read here; taking
-// it for one that runs is the strict direction, and litarg is the hole that
-// rests on it.
+// an argument, and one called on the spot. A literal given a name is meant to
+// be read where the name is called instead, and litOf is what reaches it -
+// but only where the name was written in exactly one place. Written in two,
+// litOf gives up and no one else looks, so a read in such a literal, called
+// before the write, goes through. The comment at litOf names that limit; here
+// it is what this way of reading costs. Whether a function runs the literal
+// it is handed is its own business and is not read here; taking it for one
+// that runs is the strict direction, and litarg is the hole that rests on it.
+// What that direction costs is a right store refused: one that hands the read
+// to a collector before the write and runs the collected functions only after
+// it. The read is marked where it is handed over, and the store comes out
+// wrong. Both prices stand beside the rule.
 //
 // Under a defer or a go that direction is the wrong one, and only a literal
 // called on the spot counts. What such a call settles there is the function
-// it keeps for later, so a literal handed over inside it - straight, or
-// through a helper that gives it back - is that later body. A deferred body
+// it keeps for later, so a literal handed over inside it is taken for that
+// later body. What the call it goes to does with it is not read: a helper
+// that hands it back for the defer to call and one that runs it where it
+// stands are the same shape here, and both are left out. A deferred body
 // runs after the whole method and is no statement in front of the write; a
 // started one is not ordered at all, and leaving that one out is the gap the
 // note beside the rule names. deferwrap is the right store that was refused
 // for this, deferlit the hole that stays caught, because a literal called on
-// the spot does speak at the defer. A defer or a go is reached through
+// the spot does speak at the defer. What it costs is a helper that runs the
+// literal on the spot and hands back an empty function: that read really is
+// the first the method gives the database, and it goes through. The note
+// beside the rule names that shape too. A defer or a go is reached through
 // onTheSpot, the same way firstStmtIn reads the two.
 //
 // A literal called on the spot inside such a later body is marked as well,
@@ -867,19 +879,45 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     either runs before everything under it - eight stores that hide the
 //     read that way are refused, one with the call to the driver written out
 //     in the argument, one behind defer s.trace()() and one behind an index.
-//     What is left out runs later: a deferred body
-//     after the whole method, so a statement in it is none in front of the
-//     write. A function literal handed over there is such a body and is left
-//     out with it, even where a helper hands it back for the defer to call -
-//     one right store that reads the row that way stays silent, while a
-//     literal called on the spot in an argument speaks at the defer and is
-//     read. A started one is not ordered at all and may run before the
-//     write, so leaving that one out is a gap and not a deduction. Uncovered
-//     with it: the order among several defers, which Go runs backwards, and
-//     a OnceUse that speaks only from those bodies - that one is refused for
-//     what it is, with the guard saying it can find no statement rather than
-//     that the store is wrong. Both faces of it were measured: the right one
-//     and the wrong one are refused alike, on that ground.
+//     What is left out runs later: a deferred body after the whole method,
+//     so a statement in it is none in front of the write. Every function
+//     literal handed over there is left out with it, and what the call it
+//     goes to does with the literal is not read - so this too is a gap and
+//     not a deduction. Where a helper hands the literal back for the defer
+//     to call, leaving it out is right, and one right store that reads the
+//     row that way stays silent, while a literal called on the spot in an
+//     argument speaks at the defer and is read. Where the helper runs the
+//     literal instead and hands back a function that does nothing, leaving
+//     it out is wrong: the read is then the first statement the method gives
+//     the database, and it comes through. Both shapes were refused
+//     together, and one change turned both silent at once: without reading
+//     the helper they cannot be told apart, so closing the false alarm on
+//     the right store paid for it with this hole. That was measured on a
+//     store built for it, and no package under testdata holds it, so
+//     nothing here keeps it measured. A started one is not ordered at all
+//     and may run before the write, so leaving that one out is a gap and
+//     not a deduction. Uncovered with it: the order among several defers,
+//     which Go runs backwards, and a OnceUse that speaks only from those
+//     bodies - that one is refused for what it is, with the guard saying it
+//     can find no statement rather than that the store is wrong. Both faces
+//     of it were measured: the right one and the wrong one are refused
+//     alike, on that ground.
+//   - Outside a defer or a go, a function literal handed to a call as an
+//     argument is read as if it ran at that call. Whether it does is the
+//     called function's business and is not read, and the strict direction
+//     costs a right store. One that hands the read to a collector before the
+//     write, and runs the collected functions only after it, is refused all
+//     the same: the guard names that read as the first statement. It was
+//     measured on a store built for it, before the false alarm on the
+//     deferred shape was closed and after, and refused both times - so that
+//     change neither made it nor mended it. No package under testdata holds
+//     it, so nothing here keeps it measured.
+//   - A literal given a name is followed only where the name was written in
+//     exactly one place. Written in two, litOf gives up: the guard cannot say
+//     which of the two bodies runs, so it reads neither, and a read in such a
+//     literal, called before the write, comes through without a word. This
+//     was measured on a store built for it, silent before that same change
+//     and after it. No package under testdata holds it.
 //   - Preparing is not speaking. stmtIndex counts a PrepareContext as the
 //     place a statement is given, so a prepared read counts where it is
 //     prepared and not where it is run. Nothing in this package prepares a
@@ -1433,6 +1471,14 @@ func atDatabase(file *ast.File) bool {
 // How many there are is not written down anywhere: the table is compared
 // against the directory, so a package added there without a line here is a
 // failure, and a line here without a package there is one too.
+//
+// clean holds no line of its own. Its whole body stands, in order and
+// unchanged, in prepared, in namesake and in valueslice as well - those three
+// are clean plus more, and only its own doc comment and its package line are
+// not in them. So there is nothing in it that is only in it, and nobody need
+// look for a change that turns clean red and leaves those three silent. That
+// is how it is built: the smallest shape, kept to show that the guard is not
+// red on everything.
 func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 	table := []struct{ dir, want string }{
 		{"clean", ""},

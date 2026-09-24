@@ -5,9 +5,16 @@
 // it.
 //
 // It is here because a literal standing in an argument is taken for one that
-// runs there, and under a defer that is wrong: what the defer settles on the
-// spot is the function it will call, never the body of it. A guard red on
-// this shape would be switched off, and then it guards nothing.
+// runs there, and under this defer that is wrong: what this defer settles on
+// the spot is the function it will call, and wrap only hands the body on. A
+// guard red on this shape would be switched off, and then it guards nothing.
+//
+// It is not wrong under every defer. A helper that calls the literal where it
+// stands and hands back a function that does nothing works the body out on
+// the spot, and telling that apart from wrap means reading the helper, which
+// the guard does not do. So this package being silent has a price, and the
+// note beside the rule in sqlcheck_test.go names it: that other shape is a
+// wrong store and comes through.
 package deferwrap
 
 type result struct{}
