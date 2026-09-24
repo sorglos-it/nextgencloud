@@ -420,7 +420,7 @@ func TestDialRefusesValuesItCannotUse(t *testing.T) {
 
 // running dials a tunnel to an API that says hello and then does what serve
 // says, and runs it. It gives back the tunnel and the end of Run.
-func running(t *testing.T, h Handler, after func(*apiSide)) (*Tunnel, <-chan error) {
+func running(t *testing.T, h frameHook, after func(*apiSide)) (*Tunnel, <-chan error) {
 	t.Helper()
 	return runningPinging(t, h, nil, nil, after)
 }
@@ -429,7 +429,7 @@ func running(t *testing.T, h Handler, after func(*apiSide)) (*Tunnel, <-chan err
 // controller (onPing says whether the pong goes back) and with set, which
 // changes the configuration before the dial - the time between two pings above
 // all, which is the half minute of the contract unless a test shortens it.
-func runningPinging(t *testing.T, h Handler, onPing func() bool, set func(*Config), after func(*apiSide)) (*Tunnel, <-chan error) {
+func runningPinging(t *testing.T, h frameHook, onPing func() bool, set func(*Config), after func(*apiSide)) (*Tunnel, <-chan error) {
 	t.Helper()
 	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		a := acceptPinging(t, w, r, onPing)
@@ -440,13 +440,17 @@ func runningPinging(t *testing.T, h Handler, onPing func() bool, set func(*Confi
 		a.greet()
 		after(a)
 	})
-	cfg.Handler = h
 	if set != nil {
 		set(&cfg)
 	}
 	tn, err := Dial(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
+	}
+	// Between Dial and Run: nothing has been read yet, and Run is the only
+	// reader of this from here on.
+	if h != nil {
+		tn.frames = h
 	}
 	t.Cleanup(func() { tn.Close() })
 	ended := make(chan error, 1)
@@ -549,7 +553,7 @@ type keeper struct {
 	got []wire.Frame
 }
 
-func (k *keeper) Frame(t *Tunnel, f wire.Frame) error {
+func (k *keeper) frame(t *Tunnel, f wire.Frame) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.got = append(k.got, wire.Frame{Type: f.Type, Channel: f.Channel, Payload: bytes.Clone(f.Payload)})
@@ -586,11 +590,13 @@ func TestRunHandsChannelsToTheHandler(t *testing.T) {
 }
 
 // Without a handler nothing here serves channels, so every channel the API
-// opens is closed as not reachable - and the link stays.
+// opens is closed as not reachable - and the link stays. A frame that opens
+// nothing is another matter: a number that was never opened is a protocol
+// error whether anything serves channels or not (channel_test.go).
 func TestRunClosesChannelsWithoutAHandler(t *testing.T) {
 	answered := make(chan wire.Close, 1)
 	_, ended := running(t, nil, func(a *apiSide) {
-		a.send(wire.Frame{Type: wire.TypeData, Channel: 5, Payload: []byte("x")})
+		a.send(openFrame(t, 5, wire.MinWindow))
 		f, err := a.read()
 		if err != nil {
 			a.t.Errorf("read: %v", err)
@@ -678,7 +684,7 @@ func TestRunEndsWithoutAnErrorWhenTheTunnelIsClosed(t *testing.T) {
 // times in ten.
 type echo struct{}
 
-func (echo) Frame(t *Tunnel, f wire.Frame) error {
+func (echo) frame(t *Tunnel, f wire.Frame) error {
 	return t.Send(wire.Frame{Type: wire.TypeData, Channel: f.Channel, Payload: []byte("ok")})
 }
 
@@ -744,12 +750,12 @@ func TestTheAPISeesHowTheTunnelEnded(t *testing.T) {
 				}
 				saw <- a.ending()
 			})
-			cfg.Handler = echo{}
 			cfg.Ping = pingEvery
 			tn, err := Dial(context.Background(), cfg)
 			if err != nil {
 				t.Fatalf("Dial: %v", err)
 			}
+			tn.frames = echo{}
 			t.Cleanup(func() { tn.Close() })
 			ended := make(chan error, 1)
 			go func() { ended <- tn.Run(context.Background()) }()
@@ -879,13 +885,13 @@ type waiter struct {
 	seen atomic.Int64
 }
 
-func (w *waiter) Frame(*Tunnel, wire.Frame) error {
+func (w *waiter) frame(*Tunnel, wire.Frame) error {
 	w.seen.Add(1)
 	time.Sleep(w.hold)
 	return nil
 }
 
-// What the doc of Handler promises, and what it does not. The pong is picked
+// What the doc of frameHook promises, and what it does not. The pong is picked
 // up by the very goroutine the handler holds, and it waits behind every frame
 // that came in before it: one call longer than two ping intervals costs the
 // tunnel for certain, and so does a queue of calls that are each far shorter
@@ -1101,7 +1107,7 @@ func (p *pipe) reason() string {
 // instead of writing for ever.
 const stuffFor = 10 * time.Second
 
-// stuffer is the handler the promise of Handler asks for, word for word: it
+// stuffer is what the promise of frameHook asks for, word for word: it
 // gives the reading back at once and answers from a goroutine of its own with
 // Tunnel.Send. With the pipe barred one of those writes comes to a stand in
 // the socket - and a write of this side standing in the socket is what takes
@@ -1122,7 +1128,7 @@ func newStuffer() *stuffer {
 // more than once and from anywhere.
 func (s *stuffer) halt() { s.halts.Do(func() { close(s.stop) }) }
 
-func (s *stuffer) Frame(t *Tunnel, f wire.Frame) error {
+func (s *stuffer) frame(t *Tunnel, f wire.Frame) error {
 	s.start.Do(func() {
 		go func() {
 			defer close(s.done)

@@ -6,9 +6,13 @@
 // the size of a message is bounded before it is read, every payload goes
 // through the parser of its contract, and no error and no log line of this
 // package quotes anything that came in - this is a program that runs as root.
-// A handler is the one way past that: Run passes an error of it on as it is
-// and Keep writes it to the log, so a handler that puts something from the
-// tunnel into its error puts it into the log of the controller.
+// A handler is the one way past that: the error of a handler is written to the
+// log as it is (channels), so a handler that puts something from the tunnel
+// into its error puts it into the log of the controller.
+//
+// The channels of a tunnel are in channel.go: the numbers, their states, the
+// credit of both directions and the limits of the contract. Run hands every
+// frame of a channel there and gets the reading back at once.
 //
 // A text message, a message that does not decrypt, a frame that does not
 // decode and a control message the API may not send end the link at once and
@@ -85,12 +89,14 @@ var (
 	ErrLink   = errors.New("link: the API broke the contract of the tunnel")
 )
 
-// Handler answers the channels an API opens. On a tunnel only the API opens
-// channels, so every frame on a channel of its own goes here, one at a time
-// and in the order it arrived, from the goroutine that runs the tunnel. It
-// writes with Tunnel.Send, and an error of it ends the link.
+// frameHook is what Run hands every frame of a channel to, one at a time and
+// in the order it arrived, from the goroutine that runs the tunnel. What sits
+// here in a running controller is the channel machinery of this package
+// (channels), which gives the reading back at once and serves every channel in
+// a goroutine of its own; only a test puts something else in, to see the frames
+// as they come or to hold the reading on purpose.
 //
-// Two things hold for every call of Frame, and whoever writes a handler may
+// Two things hold for every call of frame, and whoever puts something here may
 // count on both:
 //
 //   - f.Payload is good for the length of the call and no longer: the link
@@ -108,16 +114,16 @@ var (
 //     as dead although the API is healthy, and Run comes back with an error.
 //     The one thing that puts that off: a ping that gave up while a write of
 //     this side was running is skipped and the next interval asks again
-//     (ping), so a handler that holds the reading and writes at the same time
-//     is measured by the intervals in which it did not write. No length of a
-//     single call is safe on its own, because the holds add up. What a
-//     handler must keep to is therefore not a length but this: give the
-//     reading back at once. Whatever cannot be answered on the spot belongs
-//     in a goroutine of its own, which answers with Tunnel.Send, and Frame
-//     returns without waiting for it. Both ways of losing the tunnel are
-//     measured, see TestAHandlerThatHoldsTheReadingCostsTheTunnel.
-type Handler interface {
-	Frame(t *Tunnel, f wire.Frame) error
+//     (ping), so whoever holds the reading and writes at the same time is
+//     measured by the intervals in which it did not write. No length of a
+//     single call is safe on its own, because the holds add up. What has to
+//     be kept to here is therefore not a length but this: give the reading
+//     back at once. Whatever cannot be answered on the spot belongs in a
+//     goroutine of its own, which answers with Tunnel.Send, and frame returns
+//     without waiting for it. Both ways of losing the tunnel are measured,
+//     see TestAHandlerThatHoldsTheReadingCostsTheTunnel.
+type frameHook interface {
+	frame(t *Tunnel, f wire.Frame) error
 }
 
 // Config is what a tunnel needs. API and Noise come from controller.json;
@@ -189,6 +195,11 @@ type Tunnel struct {
 	c    *websocket.Conn
 	tr   *noisep.Transport
 	peer tunnel.Hello
+	// frames is where every frame of a channel goes (frameHook). Dial puts
+	// the channel machinery of this tunnel here; only a test puts something
+	// else in, between Dial and Run and never later - Run reads it and
+	// nothing writes it again.
+	frames frameHook
 	// life ends with the tunnel and with nothing else: it is what every read
 	// and every write of this link waits on, so that closing it brings every
 	// goroutine of it back. The context of the dial bounds the way in alone.
@@ -310,6 +321,9 @@ func Dial(ctx context.Context, cfg Config) (*Tunnel, error) {
 	}
 	t := &Tunnel{cfg: cfg, c: c, tr: tr, since: cfg.now()}
 	t.life, t.stop = context.WithCancel(context.WithoutCancel(ctx))
+	// The channels of this tunnel live as long as it does and write through
+	// its one write lock.
+	t.frames = newChannels(t.life, cfg.Handler, t.Send, cfg.logger())
 	if err := t.control(dial, wire.CtlHello, cfg.Hello()); err != nil {
 		t.Close()
 		return nil, err
@@ -448,27 +462,15 @@ func (t *Tunnel) Run(ctx context.Context) error {
 			}
 			return nil
 		}
-		if t.cfg.Handler == nil {
-			// Nothing here serves channels, so the API is told so for this
-			// one and the tunnel stays: its status and its hello are worth
-			// more than the channel.
-			if err := t.Send(wire.Frame{Type: wire.TypeClose, Channel: f.Channel, Payload: closeUnreachable}); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := t.cfg.Handler.Frame(t, f); err != nil {
+		// Everything else belongs to a channel. What comes back from there is
+		// an error only when the link itself is over - the answer to one
+		// channel is written there and is none of this loop's business.
+		if err := t.frames.frame(t, f); err != nil {
 			t.fail()
 			return err
 		}
 	}
 }
-
-// closeUnreachable is the answer to a channel nothing here serves: the CLOSE
-// payload of the contract with the German text of its code. A fixed value
-// marshals or this package sends nothing at all - Frame.Encode refuses an
-// empty CLOSE payload.
-var closeUnreachable, _ = json.Marshal(wire.Error(wire.CodeUnreachable))
 
 // message reads one transport message and gives back its plaintext. A text
 // message and a message that does not decrypt end the link at once and without
