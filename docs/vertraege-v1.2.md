@@ -273,6 +273,41 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     deren Grenze auf — so macht es Go. Das gehört als Satz in den Vertrag, nicht
     nur in den Kopf des nächsten Umsetzers. (web, Zeile 18)
 
+## Der eine kritische Punkt
+
+33b. **Wer die Datenbank schreiben kann, nimmt jede Rücknahme zurück — und kann die
+    Anlage übernehmen. Gebaut, nicht vermutet.**
+
+    Die Vertrauensliste liegt als Folge von Fassungen in der Datenbank. Wer Zeilen
+    löschen oder schreiben kann, dreht sie zurück, und jeder in den verlorenen
+    Fassungen **entzogene Schlüssel nimmt wieder an**. Gemessen an einer Sitzung,
+    nicht an einer Fehlermeldung.
+
+    Eine Prüfung dagegen gab es (`state.checkGap`), sie sah aber nur Löcher bis zu
+    acht Fassungen Breite. Die API-Aufgabe 8 hat sie auf **jede** Breite erweitert
+    — und dann hat die Prüfung zwei Formen gefunden, die je **eine Anweisung mehr**
+    kosten und wieder durchgehen:
+
+    - die Kette **abschneiden** statt ein Loch hineinzuschneiden (oben nichts, also
+      ist die Kette zu Ende),
+    - den `Seq` der obersten Zeile **senken**. `Seq` ist kein Merkmal des Speichers,
+      sondern ein Feld, das der Schreiber setzt; `memstore` legt es wörtlich ab und
+      besteht `dbtest` trotzdem vollständig.
+
+    Dazu, derselbe Angreifer: Zeile 1 löschen, und ein **neu gestarteter Knoten
+    öffnet die Erstinstallations-Tür wieder** (gemessen: alter Knoten 404, neuer
+    Knoten 200 mit frischem Einrichtungsangebot).
+
+    **Der Satz, um den es geht:** gegen einen Schreiber der Datenbank kann keine
+    Prüfung halten, die **in** der Datenbank liegt. Nur ein Anker außerhalb kann es.
+    Den gibt es als Typ (`trust.Anchor`) und als Datei (`config.LoadAnchor`,
+    `trust-anchor.json`) — er wird heute nur nicht vorgerückt. **Das ist Punkt 6
+    dieser Liste**, und damit ist Punkt 6 nicht eine Sparmaßnahme, sondern die
+    Bedingung dafür, dass der Entzug eines Schlüssels überhaupt hält.
+
+    Bis dahin bleibt es offen, und die Kommentare im Code sagen es so.
+    (api, Aufgabe 8)
+
 ## Nicht vergessen
 
 - Die Zahlen aus Punkt 1 und 3 sind **gemessen**, nicht geschätzt. Wer sie in den
