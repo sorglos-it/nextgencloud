@@ -25,9 +25,24 @@ import (
 // inner message held says nothing that belongs in the log of this server.
 // All of them end the channel, and which CLOSE it ends with is the caller's
 // to pick — what the shell did wrong is E_PROTOCOL, what this controller did
-// wrong is E_INTERNAL. ErrEnded is both, told apart by where it came from:
-// out of Open the shell wrote after its own end, out of Data or End this
-// side did.
+// wrong is E_INTERNAL. Which value carries which blame was measured, not
+// reasoned out, and one of the four carries none at all:
+//
+//   - ErrChannel is this side. Both ways to it mean the channel handed over
+//     has no end-to-end side at all: no session — access refuses an app
+//     channel that has none — or a message 1 of another size, which
+//     wire.ParseOpen lets through for no app OPEN.
+//   - ErrEnded and ErrMessage are either side, told apart by the method they
+//     came out of: out of Open the shell did it, out of Data or End this
+//     side did.
+//   - ErrHandshake says nothing about whose fault it was, and no check in
+//     this package can make it say: message 1 fails to open exactly the same
+//     way whether the shell damaged it or this controller was handed the
+//     wrong static key or the wrong node ID for its prologue
+//     (TestAcceptCannotSayWhoseFaultTheHandshakeWas builds all three). End
+//     it with E_INTERNAL. That names our own misconfiguration right and the
+//     shell's damaged message 1 wrong, and it is that way round on purpose:
+//     the other one sends whoever runs this server looking at the user.
 var (
 	ErrChannel   = errors.New("e2e: channel carries no end-to-end handshake")
 	ErrHandshake = errors.New("e2e: end-to-end handshake failed")
@@ -40,7 +55,8 @@ var (
 // touch different fields — Open only peerEnded and the receiving cipher
 // state, Data and End only ended, sent and the sending one — so one goroutine
 // may read while another writes. Two that write, or two that read, must not
-// run at once.
+// run at once. Sent reads what Data writes, so it belongs to the writing
+// side: ask it in the goroutine that writes, or once that one has stopped.
 type Session struct {
 	tr *noisep.Transport
 	// ended and peerEnded carry the one rule of the inner messages that wire
@@ -55,6 +71,13 @@ type Session struct {
 // the Noise message 2 for the first GRANT. static is this controller's own
 // Noise key pair, nodeID its node in the trust list: the prologue binds both
 // ends to this one channel of this one controller.
+//
+// o must be the tunnel.Opened access.Check decided on, not one parsed a
+// second time: access judges on the params and the task of the OPEN, and the
+// prologue below hashes those same bytes. Handing over a different Opened
+// binds the channel to something nobody checked. Inside here they are read
+// once, but across the package boundary it is the caller's to keep, the way
+// access.Request.List is.
 func Accept(o tunnel.Opened, nodeID string, static noise.DHKey) (*Session, []byte, error) {
 	// The peer key is the dh of the client certificate, and nothing else
 	// names it. An app channel always carries one — access refuses one

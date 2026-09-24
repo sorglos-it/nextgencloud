@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -444,9 +445,14 @@ func TestReaderAndWriterRunAtOnce(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
+	// Both goroutines wait on start, so neither can be through before the
+	// other begins: without it they may run one after the other and the
+	// detector never sees the two directions overlap.
+	start := make(chan struct{})
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		<-start
 		for _, ct := range in {
 			if _, err := s.Open(ct); err != nil {
 				errs[0] = err
@@ -456,6 +462,7 @@ func TestReaderAndWriterRunAtOnce(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
+		<-start
 		for range n {
 			if _, err := s.Data([]byte("total 0\n")); err != nil {
 				errs[1] = err
@@ -463,6 +470,7 @@ func TestReaderAndWriterRunAtOnce(t *testing.T) {
 			}
 		}
 	}()
+	close(start)
 	wg.Wait()
 	if errs[0] != nil || errs[1] != nil {
 		t.Fatalf("reading %v, writing %v", errs[0], errs[1])
@@ -499,12 +507,194 @@ func TestAcceptRefusesAMessageOneOfAnotherSize(t *testing.T) {
 	if len(msg1) == wire.HandshakeSize {
 		t.Fatal("message 1 with a payload is not longer")
 	}
-	// wire.ParseOpen keeps such an OPEN out, so the Opened is built by hand
-	// the way a caller of this package could hand one over.
+	// wire.ParseOpen keeps such an OPEN out — measured here, because the doc
+	// of ErrChannel rests on it — so the Opened is built by hand the way a
+	// caller of this package could hand one over.
+	if _, err := wire.ParseOpen(openJSON(terminalParams, nil, msg1)); err == nil {
+		t.Fatal("wire.ParseOpen read an app OPEN whose message 1 has another size")
+	}
 	o := opened(t, openJSON(terminalParams, nil, make([]byte, wire.HandshakeSize)), client.Public)
 	o.Open.E2E = msg1
 	if _, _, err := Accept(o, node, ctl); err == nil {
 		t.Fatal("Accept read a message 1 that carried a payload")
+	}
+}
+
+// TestAcceptCannotSayWhoseFaultTheHandshakeWas builds the three ways message
+// 1 fails to open — one of them the shell's, two of them this controller's
+// own configuration — and holds all three to the one value ErrHandshake. The
+// doc of that error rests on this: because nothing here tells them apart,
+// the caller may not read a protocol error of the shell out of it. Whoever
+// ever does tell them apart fails here, and changes that doc with it.
+func TestAcceptCannotSayWhoseFaultTheHandshakeWas(t *testing.T) {
+	client, _ := trusttest.NodeKeys(0x52)
+	ctl, _ := trusttest.NodeKeys(0xC1)
+	payload, _ := shellOpen(t, client, ctl, terminalParams, nil)
+	// The shell's doing: one flipped bit in message 1.
+	damaged := opened(t, payload, client.Public)
+	damaged.Open.E2E = bytes.Clone(damaged.Open.E2E)
+	damaged.Open.E2E[0] ^= 1
+	_, _, shellsFault := Accept(damaged, node, ctl)
+	// Ours: a static key of this controller that is no X25519 key at all.
+	_, _, shortKey := Accept(opened(t, payload, client.Public), node,
+		noise.DHKey{Private: ctl.Private[:16], Public: ctl.Public})
+	// Ours again, and the one no check could catch: the right key, the wrong
+	// node ID, so this controller hashes another prologue than the shell.
+	_, _, wrongNode := Accept(opened(t, payload, client.Public), "ctl-2", ctl)
+	for _, c := range []struct {
+		name string
+		err  error
+	}{{"a damaged message 1", shellsFault}, {"a static key of 16 bytes", shortKey}, {"the wrong node ID", wrongNode}} {
+		if !errors.Is(c.err, ErrHandshake) {
+			t.Fatalf("%s gives %v, want ErrHandshake", c.name, c.err)
+		}
+	}
+}
+
+// TestEndRefusesAnOutcomeThatIsNoClose guards what seal promises: End goes
+// through wire.E2E, which reads the outcome as a CLOSE payload, so no
+// malformed end reaches the wire. An End that built its inner message itself
+// would let all three of these through.
+func TestEndRefusesAnOutcomeThatIsNoClose(t *testing.T) {
+	for _, cl := range []wire.Close{
+		{},                // no status at all
+		{Status: "weird"}, // a status wire does not know
+		{Status: wire.StatusOK, Code: wire.CodeProtocol}, // ok carries no code
+	} {
+		s, _ := channel(t, terminalParams, nil)
+		ct, err := s.End(cl)
+		if err == nil {
+			t.Errorf("End(%+v) sealed %d bytes, want a refusal", cl, len(ct))
+		}
+	}
+}
+
+// TestEachFailureNamesItsOwnError holds the four errors apart. Which CLOSE
+// the caller ends the channel with hangs on them alone (see their doc), so a
+// site answering with the wrong one — or two of them that are one value —
+// sends the caller the wrong way. The wanted error is named, not compared by
+// value: two that were made equal have to fail here, not cancel out.
+func TestEachFailureNamesItsOwnError(t *testing.T) {
+	named := []struct {
+		name string
+		err  error
+	}{{"ErrChannel", ErrChannel}, {"ErrHandshake", ErrHandshake}, {"ErrEnded", ErrEnded}, {"ErrMessage", ErrMessage}}
+	// inner builds one inner message of the shell, sealed for s.
+	inner := func(t testing.TB, shell *noisep.Transport, kind byte, body []byte) []byte {
+		t.Helper()
+		plain, err := wire.E2E(kind, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ct, err := shell.Seal(plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ct
+	}
+	// closed is a session whose own end has gone out.
+	closed := func(t testing.TB) *Session {
+		t.Helper()
+		s, _ := channel(t, terminalParams, nil)
+		if _, err := s.End(wire.Close{Status: wire.StatusOK}); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	// afterTheShellsEnd is a session that has read the shell's end.
+	afterTheShellsEnd := func(t testing.TB) (*Session, *noisep.Transport) {
+		t.Helper()
+		s, shell := channel(t, terminalParams, nil)
+		if _, err := s.Open(inner(t, shell, wire.E2EEnd, nil)); err != nil {
+			t.Fatal(err)
+		}
+		return s, shell
+	}
+	cases := []struct {
+		name string
+		want string
+		run  func(t *testing.T) error
+	}{
+		{"a channel without a session", "ErrChannel", func(t *testing.T) error {
+			v := vectors(t)
+			o, err := wire.ParseOpen(v.Prologues[0].Open)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = Accept(tunnel.Opened{Open: o, Window: wire.DefaultWindow}, node, key(v.RespStatic))
+			return err
+		}},
+		{"a message 1 of another size", "ErrChannel", func(t *testing.T) error {
+			client, _ := trusttest.NodeKeys(0x52)
+			ctlKey, _ := trusttest.NodeKeys(0xC1)
+			payload, _ := shellOpen(t, client, ctlKey, terminalParams, nil)
+			o := opened(t, payload, client.Public)
+			o.Open.E2E = append(bytes.Clone(o.Open.E2E), 'x')
+			_, _, err := Accept(o, node, ctlKey)
+			return err
+		}},
+		{"a damaged message 1", "ErrHandshake", func(t *testing.T) error {
+			client, _ := trusttest.NodeKeys(0x52)
+			ctlKey, _ := trusttest.NodeKeys(0xC1)
+			payload, _ := shellOpen(t, client, ctlKey, terminalParams, nil)
+			o := opened(t, payload, client.Public)
+			o.Open.E2E = bytes.Clone(o.Open.E2E)
+			o.Open.E2E[0] ^= 1
+			_, _, err := Accept(o, node, ctlKey)
+			return err
+		}},
+		{"the shell writes after its own end", "ErrEnded", func(t *testing.T) error {
+			s, shell := afterTheShellsEnd(t)
+			_, err := s.Open(inner(t, shell, wire.E2EData, []byte("late\n")))
+			return err
+		}},
+		{"Data after our own end", "ErrEnded", func(t *testing.T) error {
+			_, err := closed(t).Data([]byte("late\n"))
+			return err
+		}},
+		{"End after our own end", "ErrEnded", func(t *testing.T) error {
+			_, err := closed(t).End(wire.Close{Status: wire.StatusOK})
+			return err
+		}},
+		{"a ciphertext nobody sealed", "ErrMessage", func(t *testing.T) error {
+			s, _ := channel(t, terminalParams, nil)
+			_, err := s.Open(bytes.Repeat([]byte{0}, wire.HandshakeSize))
+			return err
+		}},
+		{"a plaintext that is no inner message", "ErrMessage", func(t *testing.T) error {
+			s, shell := channel(t, terminalParams, nil)
+			// Kind 9 is neither E2EData nor E2EEnd, so wire.E2E would not
+			// build it and the shell has to seal it by hand.
+			ct, err := shell.Seal([]byte{9})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.Open(ct)
+			return err
+		}},
+		{"Data above the plaintext limit", "ErrMessage", func(t *testing.T) error {
+			s, _ := channel(t, terminalParams, nil)
+			_, err := s.Data(make([]byte, wire.MaxE2EPlaintext))
+			return err
+		}},
+		{"an end that is no CLOSE", "ErrMessage", func(t *testing.T) error {
+			s, _ := channel(t, terminalParams, nil)
+			_, err := s.End(wire.Close{Status: "weird"})
+			return err
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.run(t)
+			if err == nil {
+				t.Fatalf("no error, want %s", c.want)
+			}
+			for _, n := range named {
+				if got, want := errors.Is(err, n.err), n.name == c.want; got != want {
+					t.Errorf("errors.Is(err, %s) = %v, want %v (err is %v)", n.name, got, want, err)
+				}
+			}
+		})
 	}
 }
 
