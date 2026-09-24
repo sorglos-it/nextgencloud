@@ -111,11 +111,11 @@ const trustHintShape = S({ seq: uint });
 // written (Fixrunde 1, W2).
 //
 // That check is what the API will hold these bytes to as well, in its two
-// steps: json.Unmarshal reads them into Go's session.ClientCert, where iat
-// and exp are int64 and a string, a boolean or a fraction is no certificate
-// at all, and ClientCert.Validate then asks the rest. Since Fixrunde 2
-// validateClientCert asks both halves, so a certificate that comes out of
-// here is one the API reads.
+// steps: it decodes them into Go's session.ClientCert (certBudget.Decode),
+// where iat and exp are int64 and a string, a boolean or a fraction is no
+// certificate at all, and ClientCert.Validate then asks the rest. Since
+// Fixrunde 2 validateClientCert asks both halves, so a certificate that comes
+// out of here is one the API reads.
 //
 // There is one way out of here for every failure: a field that is no byte
 // string, no ID or no whole number, and a getter or a proxy that throws, all
@@ -148,8 +148,8 @@ export function encodeClientCert(c) {
 // seven fields are read once into locals and only those are compared, so no
 // two checks here can see two different values of one field.
 //
-// Go has Issued and Expires as int64, and json.Unmarshal refuses a string, a
-// boolean and a fraction for one. The comparisons below take all three - a
+// Go has Issued and Expires as int64, and a decoder that fills one refuses a
+// string, a boolean and a fraction. The comparisons below take all three - a
 // string compares like the number it spells, true counts as 1, a fraction is
 // a number like any other - so they are held to Number.isSafeInteger first,
 // the line verifyAPI uses for now. A BigInt got as far as JSON.stringify
