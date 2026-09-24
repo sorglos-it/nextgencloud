@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -155,6 +157,21 @@ func manifestFor(id string) []byte {
 		`{"name":"` + adminService + `","command":["/bin/wipe"]}],` +
 		`"actions":[{"name":"` + testAction + `","title":"Ausführen","service":"` + testService + `"},` +
 		`{"name":"` + adminAction + `","title":"Löschen","service":"` + adminService + `","critical":true}]}`)
+}
+
+// withNeeds is that manifest with needs, which makes every one of its actions
+// a root action (store.RuleFor).
+func withNeeds(need string) []byte {
+	return []byte(strings.TrimSuffix(string(manifest()), "}") + `,"needs":["` + need + `"]}`)
+}
+
+// rows is the one app of the fixture with another manifest.
+func rows(m []byte) apps {
+	r := installed()
+	app := r[testApp]
+	app.Manifest = m
+	r[testApp] = app
+	return r
 }
 
 // apps answers for the apps of this controller, as state.Store does.
@@ -378,6 +395,27 @@ func TestCheckAppChannel(t *testing.T) {
 		if d.Manifest == nil || d.Manifest.ID != testApp || d.App.ID != testApp {
 			t.Errorf("app %q, manifest %v", d.App.ID, d.Manifest)
 		}
+	})
+	// Three channels whose OPEN asks for nothing special: what they cost is
+	// decided by the manifest alone, and each of the three fields of
+	// store.RuleFor decides one of them. Without a task every one ends in
+	// E_CONFIRM, and the shell asks the user.
+	t.Run("critical in the manifest", func(t *testing.T) {
+		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, adminService, adminAction))))
+		wantClose(t, d, cl, wire.CodeConfirm)
+	})
+	t.Run("the manifest needs root", func(t *testing.T) {
+		r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
+		r.Apps = rows(withNeeds(store.NeedRoot))
+		d, cl := Check(context.Background(), r)
+		wantClose(t, d, cl, wire.CodeConfirm)
+	})
+	t.Run("every channel changes something", func(t *testing.T) {
+		// store.RuleFor says Changes for every app action, and a role at
+		// level hardcore has every change confirmed.
+		f.list.Roles[0].Level = trust.LevelHardcore
+		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen(testApp, testService, testAction))))
+		wantClose(t, d, cl, wire.CodeConfirm)
 	})
 	t.Run("app this controller does not run", func(t *testing.T) {
 		d, cl := Check(context.Background(), f.request(f.withUser(t, f.appOpen("org.sorglos.other", testService, testAction))))
