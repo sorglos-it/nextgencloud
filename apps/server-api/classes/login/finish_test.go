@@ -580,12 +580,62 @@ func finishWith(tb testing.TB, fx fixture, s trusttest.Signer, pw *trusttest.Sig
 // tests holds.
 var nobodysKeyID = enc.B64.EncodeToString(bytes.Repeat([]byte{0x5A}, 16))
 
-// openShapes is how many of the shapes in
-// TestFinishTakesTheSameTimeForAKeyNobodyHolds are known not to be alike. It is
-// a number and not a remark, so that closing one of them without taking its
-// flag out is a failing test and not a comment nobody reads. It has been wrong
-// twice by being a sentence.
-const openShapes = 3
+// The ways proof.Verify can answer a proof the certificate check let through
+// without ever doing the public-key operation. They are read off its code, one
+// by one, and not collected from what somebody happened to find: that number
+// was guessed three times and was too small three times. Each of them costs a
+// key the trust list holds almost nothing, where a key nobody holds pays the
+// whole of blindProof -- so each is a shape login/finish answers in two
+// different times.
+//
+//	proof.Verify
+//	  p.Kind != key.Kind                     -> ErrKeyMismatch      [1]
+//	  password: ed25519.Verify says no        -> ErrSignature        [6]
+//	                without reading the message, for a signature that is
+//	                not 64 bytes or whose last byte has high bits set
+//	  passkey:  verifyAssertion
+//	    client data is no JSON               -> ErrClientData       [2]
+//	    type, crossOrigin, challenge, origin -> ErrClientData       [3]
+//	    the RP ID hashes to something else   -> ErrAuthData         [4]
+//	    the flags say not present/verified   -> ErrNoUV             [5]
+//	    the primitive says no                -> ErrSignature        [7]
+//	                without the curve, for a signature ASN.1 cannot read or
+//	                whose length the algorithm refuses
+//
+// Every other early answer of proof.Verify is held off before the request ever
+// reaches it, and that is what makes this list a list and not a sample:
+//
+//   - key.ID != sign.KeyID(key.Public), a password key of the wrong algorithm
+//     or length, a public key parsePublic refuses, and the two default arms:
+//     trust.List.Validate calls proof.UserKey.Validate on every key of every
+//     version, and it asks all of those.
+//   - p.KeyID != key.ID: trust.List.KeyOwner looked the key up by that very ID.
+//   - len(p.Sig) > MaxSig, client data longer than MaxClientData, authenticator
+//     data outside 37..MaxAuthData: session.ParseLoginFinish calls
+//     proof.Proof.Validate before any of this runs.
+//
+// The two ErrSignature lines are the ones the enumeration nearly missed. They
+// are not "before the signature check" -- they are inside it, and they cost
+// nothing all the same, which is what the clock sees.
+const (
+	branchKeyMismatch  = "ErrKeyMismatch: the proof is of a kind the key is not"
+	branchClientParse  = "ErrClientData: the client data is no JSON"
+	branchClientFields = "ErrClientData: the client data says something else"
+	branchAuthData     = "ErrAuthData: the authenticator data names another relying party"
+	branchNoUV         = "ErrNoUV: the authenticator data says nobody was verified"
+	branchPasswordSig  = "ErrSignature: ed25519.Verify refuses the signature unread"
+	branchPasskeySig   = "ErrSignature: the assertion's own primitive refuses the signature unread"
+)
+
+// openBranches is that enumeration as a list the test can hold itself to.
+var openBranches = []string{branchKeyMismatch, branchClientParse, branchClientFields,
+	branchAuthData, branchNoUV, branchPasswordSig, branchPasskeySig}
+
+// openShapes is how many bodies below stand for those branches -- one more than
+// there are branches, because two of them reach ErrClientData by its second
+// door. It is a number and not a remark, so that closing one of them without
+// taking its flag out is a failing test and not a comment nobody reads.
+const openShapes = 8
 
 // TestFinishTakesTheSameTimeForAKeyNobodyHolds is the question login/start
 // answers alike for every name, asked once more with a clock: login/start hands
@@ -594,19 +644,26 @@ const openShapes = 3
 // same question. Every pair below differs in that one field and in nothing
 // else.
 //
-// Eight shapes, because one is not the property, and four is not either. The
-// first version of this test measured a single shape and was green while two
-// others were wide open -- one of them torn open by the very change that closed
-// the first. The second version measured four and was green while two more were
-// open. A shape that is not measured is a shape nobody knows about, and the way
-// to find out has been the same every time: add one and look.
+// Thirteen shapes, and the number stopped being a guess with this list. One
+// shape was measured first and was green while two were wide open -- one of
+// them torn open by the very change that closed the first. Then four, and two
+// more were open. Then eight, and five more were open. Each time the answer was
+// "add one and look", and each time the next look found more.
 //
-// Five of them are alike today and are held to the factor:
+// So this time the shapes were not collected, they were read off proof.Verify
+// branch by branch: openBranches above names every way it can answer without
+// ever doing the public-key operation, and says for every other early answer
+// which check ahead of it makes that answer unreachable. The table below has a
+// body for each of them, and the test holds itself to that above the
+// measurement: every open shape names a branch of the list, and every branch of
+// the list has a shape.
+//
+// Five shapes are alike today and are held to the factor:
 //
 //   - a password key with the user the certificate names: the known side runs
 //     proof.Verify inside session.VerifyClient
-//   - a passkey whose assertion is whole and whose signature is wrong: the
-//     known side runs the whole assertion
+//   - a passkey whose assertion is whole and whose signature is of the right
+//     length but wrong: the known side runs the whole assertion
 //   - a certificate naming another user than the key belongs to: session.
 //     verifyCert gives ErrUser without ever checking a signature, and so this
 //     side spends one
@@ -615,16 +672,14 @@ const openShapes = 3
 //     two controls, not findings -- they are what the choice at blindProof
 //     rests on, and nobody had measured them
 //
-// Three are not alike, and all three for one reason: package proof refuses a
-// proof before any cryptography, so the known side pays nothing where this one
-// pays a whole verification.
-//
-//   - a passkey whose client data is nonsense
-//   - a proof of a kind the key is not
-//   - a passkey whose authenticator data names another relying party
-//
-// They are written down here with holds false instead of being left out, and
+// Eight are not alike, and all eight for one reason: proof.Verify answers them
+// without the public-key operation, so the known side pays almost nothing where
+// this one pays the whole of blindProof. They carry the branch they reach, and
 // openShapes counts them, so closing one without taking its flag out fails.
+//
+// What this test cannot do, and must not be read as doing: find a shape nobody
+// wrote down. That is what the enumeration above is for, and the enumeration is
+// read by people.
 //
 // The factor of two and the null control are those of
 // TestStartTakesTheSameTimeForAnUnknownName, for the reasons given there. What
@@ -634,32 +689,34 @@ const openShapes = 3
 func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 	forms := []struct {
 		name string
-		// holds is whether the two sides have to cost the same today. The one
-		// that does not is written down instead of being left out: it needs
-		// more than a line, and it belongs with the question login/start
-		// leaves open (report of task 7, findings 1 and 2).
-		holds bool
-		build func(t *testing.T, h *Handler, fx fixture) (held, nobodys []byte)
+		// branch is empty where the two sides have to cost the same today, and
+		// otherwise names the answer of proof.Verify that makes them differ
+		// (see openBranches). A shape that is not alike is written down with
+		// its branch instead of being left out: closing them needs more than a
+		// line, and it belongs with the question login/start leaves open
+		// (report of task 7, findings 1 and 2).
+		branch string
+		build  func(t *testing.T, h *Handler, fx fixture) (held, nobodys []byte)
 	}{
-		{"a password key over the user it belongs to", true,
+		{"a password key over the user it belongs to", "",
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasswordName)
 				c.Nonce = madeUpNonce
 				return finishBody(t, fx, fx.Password, c, ""), finishWithKeyID(t, fx, c, nobodysKeyID)
 			}},
-		{"a passkey whose signature is wrong", true,
+		{"a passkey whose signature is wrong", "",
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasskeyName)
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.Sig[0] ^= 0xFF })
 			}},
-		{"a passkey whose client data is nonsense", false,
+		{"a passkey whose client data is nonsense", branchClientFields,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasskeyName)
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.ClientData = enc.Bytes(`{}`) })
 			}},
-		{"a certificate naming another user than the key", true,
+		{"a certificate naming another user than the key", "",
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// The certificate is of the passkey user, the proof by the
 				// password user's key: session.verifyCert finds the key, sees
@@ -669,7 +726,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Password, nil)
 			}},
-		{"a proof of a kind the key is not", false,
+		{"a proof of a kind the key is not", branchKeyMismatch,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// A passkey's key ID under a password proof: verifyCert lets
 				// it through -- the key is a passkey, which is what the roles
@@ -682,7 +739,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 					p.AuthData, p.ClientData = nil, nil
 				})
 			}},
-		{"a passkey naming another relying party", false,
+		{"a passkey naming another relying party", branchAuthData,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// The assertion is whole and its client data holds; only the
 				// hash of the RP ID at the front of the authenticator data is
@@ -694,7 +751,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 					copy(p.AuthData[:32], bytes.Repeat([]byte{0x3C}, 32))
 				})
 			}},
-		{"client data that is not JSON at all", true,
+		{"client data that is not JSON at all", branchClientParse,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasskeyName)
 				c.Nonce = madeUpNonce
@@ -702,7 +759,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 					p.ClientData = enc.Bytes("not json at all")
 				})
 			}},
-		{"client data that parses and crosses origins", true,
+		{"client data that parses and crosses origins", branchClientFields,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasskeyName)
 				c.Nonce = madeUpNonce
@@ -710,19 +767,19 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 					p.ClientData = enc.Bytes(`{"type":"webauthn.get","crossOrigin":true}`)
 				})
 			}},
-		{"authenticator data saying nobody was verified", true,
+		{"authenticator data saying nobody was verified", branchNoUV,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasskeyName)
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.AuthData[32] = 0 })
 			}},
-		{"a password signature of one byte", true,
+		{"a password signature of one byte", branchPasswordSig,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasswordName)
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Password, func(p *proof.Proof) { p.Sig = p.Sig[:1] })
 			}},
-		{"a passkey signature of one byte", true,
+		{"a passkey signature of one byte", branchPasskeySig,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				c := start(t, h, fx.PasskeyName)
 				c.Nonce = madeUpNonce
@@ -731,7 +788,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 		// The two below are controls, not findings: they are the ways out of
 		// session.VerifyClient that the choice at blindProof rests on being
 		// alike, and nobody had ever measured them.
-		{"a certificate the check refuses before the key", true,
+		{"a certificate the check refuses before the key", "",
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// session.ErrCert: the certificate is no certificate, and
 				// verifyCert stops before it looks up the key at all.
@@ -744,7 +801,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				other.Proof.KeyID = nobodysKeyID
 				return mustMarshal(t, one), mustMarshal(t, other)
 			}},
-		{"a certificate whose time has passed", true,
+		{"a certificate whose time has passed", "",
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// session.ErrExpired: the proof is checked in full and the
 				// time is looked at afterwards, so the known side has paid
@@ -755,8 +812,32 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				return twoBodies(t, fx, c, fx.Password, nil)
 			}},
 	}
+	// The table is held to the enumeration before a single request is sent, so
+	// a machine that cannot measure anything today still says whether somebody
+	// has edited the list: every open shape names a branch of openBranches, and
+	// every branch has a shape.
+	open, covered := 0, map[string]bool{}
+	for _, form := range forms {
+		if form.branch == "" {
+			continue
+		}
+		open++
+		if !slices.Contains(openBranches, form.branch) {
+			t.Errorf("%q names the branch %q, which openBranches does not have", form.name, form.branch)
+		}
+		covered[form.branch] = true
+	}
+	if open != openShapes {
+		t.Errorf("%d shapes are written down as open, want %d: whoever closes one takes its flag out here",
+			open, openShapes)
+	}
+	for _, b := range openBranches {
+		if !covered[b] {
+			t.Errorf("no shape reaches %q: an enumerated branch nobody measures is one nobody knows about", b)
+		}
+	}
+
 	h, fx := newFixture(t)
-	open := 0
 	// Every shape is measured, and a shape that fails does not end the run:
 	// the whole table is what says which of them are alike and which are not,
 	// and a run that stops at the first one hides the rest.
@@ -774,18 +855,13 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				form.name, a, again)
 			continue
 		}
-		if !form.holds {
-			open++
+		if form.branch != "" {
 			continue
 		}
 		if a > 2*b || b > 2*a {
 			t.Errorf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
 				form.name, a, b, again)
 		}
-	}
-	if open != openShapes {
-		t.Errorf("%d shapes are written down as open, want %d: whoever closes one takes its flag out here",
-			open, openShapes)
 	}
 }
 

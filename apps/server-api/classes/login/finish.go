@@ -31,8 +31,8 @@ const lockWarnTTL = 300
 // blindKey and blindSig are what a proof by a key nobody holds is measured
 // against. session.VerifyClient turns such a proof away with session.ErrUser
 // before it ever checks a signature, and for many proofs a key the list holds
-// pays a whole verification there instead -- for many and not for all, which is
-// the whole difficulty and is written out at blindProof. And login/start hands
+// pays for the public-key operation there instead -- for many and not for all,
+// which is the whole difficulty and is written out at blindProof. And login/start hands
 // the key ID of a passkey out, real for a name that exists and made up for one
 // nobody has (session.PasskeyRef), so the difference is the question "does this
 // name exist" once more, asked with a clock: measured at 108 µs against 40 µs
@@ -54,22 +54,19 @@ func blindPair() (ed25519.PublicKey, []byte) {
 // compiler may drop; it is never true, and no caller reads it.
 //
 // It is one Ed25519 verification whatever the proof says it is, and that is
-// where it stops being an exact mirror. package proof refuses some proofs
-// before any cryptography, and with a key the list holds those then cost
-// nothing at all where this pays in full. Three such shapes are known and
-// measured:
+// where it stops being an exact mirror. proof.Verify can answer a proof without
+// ever doing the public-key operation, and with a key the list holds those
+// answers then cost almost nothing where this pays in full. There are seven
+// such ways, read off that function branch by branch and written out at
+// openBranches in the test: the proof being of a kind the key is not, four
+// refusals of a passkey assertion before its signature, and the two signature
+// primitives themselves saying no to a signature they will not even read.
 //
-//   - a passkey whose client data is nonsense
-//   - a proof of a kind the key is not
-//   - a passkey whose authenticator data names another relying party
-//
-// All three are this function's own doing: before it was here the two sides
+// All seven are this function's own doing: before it was here the two sides
 // were alike there, both cheap. Closing them needs more than a line and belongs
 // with the question login/start leaves open, so
-// TestFinishTakesTheSameTimeForAKeyNobodyHolds carries them as the shapes it
-// does not hold to the factor and counts them in openShapes -- three today, and
-// a number rather than a sentence because a sentence said "one" twice while it
-// was two and then three.
+// TestFinishTakesTheSameTimeForAKeyNobodyHolds carries a body for each of them
+// as the shapes it does not hold to the factor.
 func blindProof(payload []byte) bool {
 	return ed25519.Verify(blindKey, sign.Message(sign.PurposeClientCert, payload), blindSig)
 }
@@ -183,12 +180,13 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		//
 		// It hung on the key alone before, and that closed one shape and tore
 		// another open, that one with the known side the cheap one. What is
-		// still not closed, and is not claimed to be: package proof refuses
-		// some proofs cheaply as well, and there the known side pays nothing
-		// while this side pays a whole verification. Three such shapes are
-		// known; they are listed at blindProof, measured in
-		// TestFinishTakesTheSameTimeForAKeyNobodyHolds and counted there, so
-		// the number cannot quietly grow again.
+		// still not closed, and is not claimed to be: proof.Verify can answer
+		// cheaply as well, and there the known side pays nothing while this
+		// side pays a whole verification. Seven such ways are enumerated at
+		// blindProof and at openBranches in the test, and one body for each of
+		// them is measured. The enumeration is what bounds them -- no test
+		// notices a shape nobody has written down, which is how this number
+		// grew from one to three to eight.
 		if errors.Is(err, session.ErrUser) {
 			_ = blindProof(f.Cert)
 		}
