@@ -227,6 +227,17 @@ func (r *Reporter) Status(ctx context.Context) (tunnel.Status, error) {
 // What that costs, said plainly: in the message itself an app nobody could ask
 // about looks like one the limit of 256 swallowed. The log line is what tells
 // them apart on this server.
+//
+// And the log line is all there is: no notice goes out from here, and that is a
+// decision and not something forgotten. Status is asked again and again, so a
+// notice per status would repeat itself as often as the API asks; the only
+// usable rule would be "only when it changes", and a change needs the answer of
+// the round before, which this Reporter keeps nowhere - it holds its
+// configuration and nothing else. Anything else ("once per app and tunnel")
+// would be a rule made up on the spot, and a rule made up on the spot is
+// exactly what was taken out of this function when failed went. The answer of
+// the round before belongs where such a history is kept anyway, which is the
+// task that brings the engine (ReportConfig.Running), not here.
 func (r *Reporter) appState(ctx context.Context, a dbapi.App) (tunnel.AppState, bool) {
 	if r.cfg.Licensed != nil {
 		ok, err := r.cfg.Licensed(ctx, a)
