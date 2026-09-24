@@ -167,13 +167,15 @@ func FuzzStartBody(f *testing.F) {
 	})
 }
 
-// finishSeeds returns the bodies FuzzFinish begins with. The first three are
+// finishSeeds returns the bodies FuzzFinish begins with. The first two are
 // real: a certificate of a user of this installation, the proof over exactly
 // its bytes and everything else the API asks for -- only the nonce is one
 // nobody ever handed out, so they run through every check and are refused at
 // the last one. Without such a body among the seeds a green run would say
 // nothing about the path behind the parser, and that path is where a session
-// is made. The rest are shapes the parser turns away.
+// is made. The third carries a key the trust list does not hold, which is the
+// shape a wrong password really has: the browser derives another key from it,
+// and no list knows that one. The rest are shapes the parser turns away.
 //
 // They are built without asking the handler for a challenge, so they are the
 // same bytes in every run and a corpus keeps its meaning.
