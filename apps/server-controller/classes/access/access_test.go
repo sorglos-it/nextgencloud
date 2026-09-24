@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -172,6 +173,20 @@ func installed() apps {
 	return apps{testApp: {ID: testApp, Version: "1.0.0", Store: trust.StoreGlobal, Node: node, Active: true,
 		Manifest: manifest(), SHA256: bytes.Repeat([]byte{0x01}, 32)}}
 }
+
+// errApps answers every lookup with a failure that is not dbapi.ErrNotFound,
+// the way a damaged row (state.ErrDocument) or a database that is not there
+// would.
+type errApps struct{}
+
+func (errApps) App(context.Context, string) (dbapi.App, error) {
+	return dbapi.App{}, errors.New("no database")
+}
+
+// errOnce cannot remember a task ID: not a replay, a store that failed.
+type errOnce struct{}
+
+func (errOnce) UseTask(context.Context, []byte, int64, int64) error { return errors.New("no database") }
 
 // freeOnce takes every task ID: what a controller that has seen none answers.
 type freeOnce struct{}
@@ -385,6 +400,49 @@ func TestCheckAppChannel(t *testing.T) {
 	t.Run("without a user", func(t *testing.T) {
 		d, cl := Check(context.Background(), f.request(withoutUser(t, f.appOpen(testApp, testService, testAction))))
 		wantClose(t, d, cl, wire.CodeForbidden)
+	})
+}
+
+// TestCheckAnswersInternalForItsOwnFaults: what the opener sent is beyond
+// reproach in all three, and the fault is this server's. E_NOTFOUND would
+// tell the opener that something of theirs was wrong, and E_VERIFY would
+// blame their signature.
+func TestCheckAnswersInternalForItsOwnFaults(t *testing.T) {
+	f := newFixture(t)
+	t.Run("the app store cannot answer", func(t *testing.T) {
+		r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
+		r.Apps = errApps{}
+		d, cl := Check(context.Background(), r)
+		wantClose(t, d, cl, wire.CodeInternal)
+	})
+	t.Run("the row names another app than its manifest", func(t *testing.T) {
+		r := f.request(f.withUser(t, f.appOpen("org.sorglos.other", testService, testAction)))
+		rows := installed()
+		rows["org.sorglos.other"] = dbapi.App{ID: "org.sorglos.other", Version: "1.0.0", Store: trust.StoreGlobal,
+			Node: node, Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
+		r.Apps = rows
+		d, cl := Check(context.Background(), r)
+		wantClose(t, d, cl, wire.CodeInternal)
+	})
+	t.Run("the task store cannot answer", func(t *testing.T) {
+		env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
+		r := f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env)))
+		r.Tasks = errOnce{}
+		d, cl := Check(context.Background(), r)
+		wantClose(t, d, cl, wire.CodeInternal)
+	})
+	t.Run("no store at all", func(t *testing.T) {
+		// A Request without them is this program wired wrong, and a service
+		// running as root may not fall over for it.
+		defer func() {
+			if p := recover(); p != nil {
+				t.Fatalf("Check panicked without a store: %v", p)
+			}
+		}()
+		r := f.request(f.withUser(t, f.appOpen(testApp, testService, testAction)))
+		r.Apps, r.Tasks = nil, nil
+		d, cl := Check(context.Background(), r)
+		wantClose(t, d, cl, wire.CodeInternal)
 	})
 }
 
