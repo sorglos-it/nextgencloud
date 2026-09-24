@@ -218,6 +218,29 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     Liste aber von Hand baut, umgeht das. Ein `PasswordToo`, das den gefundenen
     Benutzer nimmt, löscht die zweite Suche und damit die Frage. (web, Aufgabe 8)
 
+31. **Was eine *gültige* Anfrage kostet, verrät die Anmeldeart.** Der API-Strang
+    hat vier Runden darauf verwendet, den Preis einer **abgelehnten** Anfrage
+    von ihrem Inhalt zu lösen. Bei angenommener Anfrage bleibt er am Schlüssel
+    hängen: `proof.Verify` verzweigt nach Schlüsselart — ein `ed25519.Verify`
+    beim Passwortschlüssel, die ganze WebAuthn-Assertion beim Passkey
+    (`shared/proof/proof.go:234-245`); dazu läuft `KeyOwner` linear über
+    `l.Users` × `u.Keys` (`shared/trust/trust.go:390-399`) und `PasswordToo`
+    über die Rollen (`:405-416`). Wer die Laufzeit von außen misst, ohne den
+    Inhalt zu sehen, unterscheidet damit systematisch, **wie** sich jemand
+    anmeldet — eine Aussage über den Benutzer, die dieser Pfad nicht macht.
+    Gegen Netzrauschen heute klein (zehner µs), aber der Vertrag sagt dazu
+    nichts, und Punkt 30 räumt nur die Hälfte der Ursache weg. (api, Aufgabe 8)
+
+32. **Der Vertrag sagt nicht, ob die `params`-Bytes kanonisch sind — und die
+    beiden Seiten entscheiden verschieden.** Gemessen: Gos `json.Marshal`
+    **verdichtet** eine `json.RawMessage`, `params "  {}"` wird zu
+    `"params":{}`; die Shell schreibt die Bytes wörtlich und liefert
+    `"params":  {}`. Beide lesen beides zurück, und für die Shell ist ihr
+    Verhalten sogar das einzig richtige, weil sie die **unterschriebenen** Bytes
+    exakt nachbauen muss. Genau deshalb muss der Vertrag sagen, welche Form
+    unterschrieben wird — sonst hängt die Gültigkeit einer Signatur an der
+    Implementierung, die sie erzeugt hat. (web, Aufgabe 9)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
