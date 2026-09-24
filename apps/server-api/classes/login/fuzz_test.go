@@ -236,6 +236,35 @@ func TestFinishSeedsReachTheLastCheck(t *testing.T) {
 	if refused == 0 {
 		t.Fatal("no seed was turned away by the parser")
 	}
+	// The two checks in the middle hang on the installation and not on the
+	// body: v.List.PasswordToo and len(row.TOTP) > 0 are what Finish asks
+	// before it runs session.VerifyPassword and checkTOTP. Where no user of
+	// the fixture answers them, no seed and no fuzzed body can ever enter
+	// either -- they are code the whole run walks past, and counting seeds
+	// says nothing about them.
+	v, err := h.S.Trust(ctx)
+	if err != nil {
+		t.Fatalf("trust: %v", err)
+	}
+	asked, secrets := 0, 0
+	for _, u := range v.List.Users {
+		if v.List.PasswordToo(u.ID) {
+			asked++
+		}
+		row, err := h.S.DB.UserGet(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("user %s: %v", u.ID, err)
+		}
+		if len(row.TOTP) > 0 {
+			secrets++
+		}
+	}
+	if asked == 0 {
+		t.Fatal("no role of this installation asks for the password too: session.VerifyPassword is code no body reaches")
+	}
+	if secrets == 0 {
+		t.Fatal("no user of this installation holds a TOTP secret: checkTOTP is code no body reaches")
+	}
 	if watch.made() {
 		t.Fatal("a seed made a session")
 	}
