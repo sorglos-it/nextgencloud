@@ -64,3 +64,42 @@ func TestTrustNeedsASessionAndPages(t *testing.T) {
 		t.Fatalf("new version: %d", w.Code)
 	}
 }
+
+// TestTrustLooksAtTheListOnce holds this path to one look at the trust rows.
+// Live brings the list up to date before it decides on the session, and the
+// answer is built from that same version: fetching it a second time inside
+// state.Chain would read every row again, and it would answer out of a list
+// the session was never checked against.
+//
+// One look is counted rather than written down: what it costs is state's
+// business (gapProbes), and what this test is about is that it happens once.
+func TestTrustLooksAtTheListOnce(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	c := &trustReads{Store: h.S.DB}
+	h.S.DB = c
+	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+		t.Fatal("the session was refused")
+	}
+	once := c.take()
+	if once == 0 {
+		t.Fatal("Live read no row of the trust list at all")
+	}
+	w := httptest.NewRecorder()
+	h.Trust(w, getCookie(session.PathTrust+"?from=2", cookie))
+	if w.Code != 204 {
+		t.Fatalf("from=2: %d", w.Code)
+	}
+	if got := c.take(); got != once {
+		t.Fatalf("the nothing-new cost %d reads, want the %d of one look", got, once)
+	}
+	w = httptest.NewRecorder()
+	h.Trust(w, getCookie(session.PathTrust+"?from=1", cookie))
+	if w.Code != 200 {
+		t.Fatalf("from=1: %d", w.Code)
+	}
+	// On top of the one look comes the one row the answer itself carries.
+	if got := c.take(); got != once+1 {
+		t.Fatalf("the chain cost %d reads, want %d", got, once+1)
+	}
+}
