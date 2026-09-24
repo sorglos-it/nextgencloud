@@ -29,12 +29,14 @@ pidfile="$dir/swtpm.pid"
 
 # True only for a live swtpm that carries THIS instance's state directory on
 # its own command line. A number on its own proves nothing: it is handed out
-# again, and any process may merely mention the directory. Measured: ps prints
-# the whole line here, no truncation.
+# again, and any process may merely mention the directory. -ww is not
+# decoration: without it ps cuts the line to the width in COLUMNS, and
+# measured, an exported COLUMNS=80 cut it to 80 characters and made a running
+# simulator invisible here.
 is_this_swtpm() {        # $1 = PID
 	local args
 	[ -n "${1:-}" ] || return 1
-	args="$(ps -p "$1" -o args= 2>/dev/null)" || return 1
+	args="$(ps -ww -p "$1" -o args= 2>/dev/null)" || return 1
 	case "$args " in
 	"swtpm "*" --tpmstate dir=$dir "*) return 0 ;;
 	esac
@@ -57,10 +59,12 @@ swtpm_pid() {
 		fi
 	fi
 	# A missing or stale pid file does not mean no daemon: one can still sit on
-	# this state directory, and reset would pull it out from under it. Every
-	# hit is asked, not just the first - pgrep hands back the oldest one first,
-	# and that can be a stranger.
-	if found="$(pgrep -f "tpmstate dir=$dir")"; then
+	# this state directory, and reset would pull it out from under it. Asked by
+	# program name, not by path: pgrep -f reads its pattern as an expression,
+	# and measured, a single square bracket in the path made the search come
+	# back empty while the simulator was running. Every hit then has to answer
+	# the same question as the pid file did.
+	if found="$(pgrep -x swtpm)"; then
 		while IFS= read -r candidate; do
 			if is_this_swtpm "$candidate"; then
 				printf '%s\n' "$candidate"
@@ -102,7 +106,10 @@ start() {
 	# leaves one behind that a plain existence test takes for finished -
 	# measured, an empty one gets the simulator no further than "Could not
 	# initialize libtpms". The stamp goes down only after swtpm_setup has
-	# returned, and by rename, so it is there wholly or not at all.
+	# returned, and by rename, so it is there wholly or not at all. A state
+	# directory from before this stamp existed carries none, so it gets
+	# manufactured once more - for main that is what reset does anyway, for
+	# qemu it means the instance starts over exactly once.
 	if [ ! -s "$dir/einrichtung.txt" ]; then
 		# --createek is enough here. The EK certificate needs root and
 		# /var/lib/swtpm-localca, and checking it against the manufacturer CA
@@ -121,6 +128,9 @@ start() {
 		--ctrl "type=unixio,path=$sock.ctrl" "${flags[@]}" --daemon --pid "file=$pidfile"; then
 		printf 'Der Simulator %s lässt sich nicht starten. Die Zeilen darüber sagen, woran es lag.\n' "$name" >&2
 		printf 'Hilft das nicht weiter: Zustand wegwerfen mit tools/recovery-swtpm.sh reset %s\n' "$name" >&2
+		if [ "$name" = main ]; then
+			printf 'Achtung: reset main leert dabei auch %s/work.\n' "$work" >&2
+		fi
 		exit 1
 	fi
 	# Guards against a machine slower than this one: measured, this swtpm has

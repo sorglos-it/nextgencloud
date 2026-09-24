@@ -13,28 +13,39 @@ if [ "$#" -ne 0 ]; then
 	exit 1
 fi
 
+# Whatever the caller had set is not ours and is dropped here, before the trap
+# exists: the run addresses the simulator through use_main and nothing else.
+unset TPM2TOOLS_TCTI
+
 fail() { printf 'FEHLGESCHLAGEN: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok: %s\n' "$1" >&2; }
 use_main() {
 	TPM2TOOLS_TCTI="$(tools/recovery-swtpm.sh tcti main)"
 	export TPM2TOOLS_TCTI
+	# Kept so cleanup can tell our simulator from anything else that might be
+	# in this variable by then.
+	tcti_main="$TPM2TOOLS_TCTI"
 }
 
 cleanup() {
-	# Only ever against the simulator. Until use_main has run there is no TCTI,
-	# and tpm2_flushcontext falls back to the default device - on a machine
-	# with a real TPM that is /dev/tpmrm0, and -t would then apply to THAT one.
-	# The redirection below would hide it completely.
-	if [ -n "${TPM2TOOLS_TCTI:-}" ]; then
+	# Only ever against OUR simulator, and "is it set" is not that question -
+	# measured, a caller who had exported TPM2TOOLS_TCTI=device:/dev/tpmrm0 got
+	# three tpm2_flushcontext out of this, aimed at that device, and the
+	# redirection below hid them completely.
+	if [ -n "${tcti_main:-}" ] && [ "${TPM2TOOLS_TCTI:-}" = "$tcti_main" ]; then
 		# A case that failed on purpose leaves its session and its objects
 		# behind, and the simulator holds only a handful of either. There is
 		# nothing to clean yet - the cases that must fail come later.
 		for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
 	fi
 	# The qemu simulator is started in the middle of the run; a case failing
-	# after that must not leave it standing.
+	# after that must not leave it standing. Its reason and its outcome stay
+	# visible: a tidy-up that fails in silence leaves a simulator behind and
+	# nobody learns of it.
 	if [ -n "${qemu_running:-}" ]; then
-		tools/recovery-swtpm.sh stop qemu >/dev/null 2>&1 || :
+		if ! tools/recovery-swtpm.sh stop qemu; then
+			printf 'Achtung: der Simulator der Instanz qemu läuft noch. Beenden mit: tools/recovery-swtpm.sh stop qemu\n' >&2
+		fi
 	fi
 }
 trap cleanup EXIT
@@ -94,8 +105,11 @@ ok "reset stellt ein jungfräuliches TPM und ein leeres Arbeitsverzeichnis her"
 # the same machine, and a reset reaching across would throw away the state the
 # virtual machine sits on. Asked of a real second simulator, not read off the
 # code.
-tools/recovery-swtpm.sh start qemu
+# The flag goes up BEFORE the start, not after: start forks the daemon and can
+# still fail behind it - measured, a start that gave up after the fork left the
+# simulator standing because cleanup had never been told about it.
 qemu_running=ja
+tools/recovery-swtpm.sh start qemu
 if ! qemu_pid="$(cat dist/recovery/tpm/qemu/swtpm.pid)" || [ -z "$qemu_pid" ]; then
 	fail "Die Instanz qemu hinterlässt keine brauchbare PID-Datei"
 fi
@@ -103,8 +117,9 @@ tools/recovery-swtpm.sh reset main
 use_main
 # Neither the number alone nor the program name alone: numbers are handed out
 # again, and "swtpm" would also fit the other instance. The command line
-# carries the state directory, and that is what settles it.
-qemu_args="$(ps -p "$qemu_pid" -o args= || :)"
+# carries the state directory, and that is what settles it. -ww because ps
+# otherwise cuts the line to the width in COLUMNS.
+qemu_args="$(ps -ww -p "$qemu_pid" -o args= || :)"
 case "$qemu_args " in
 *" --tpmstate dir=$PWD/dist/recovery/tpm/qemu "*) ;;
 *) fail "reset main beendet den Simulator der Instanz qemu" ;;

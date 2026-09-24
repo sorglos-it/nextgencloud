@@ -27,7 +27,8 @@ handle=0x81000002        # the probe uses its own handle, not the policy's
 checked=()                # "Geprüft und in Ordnung" lines, filled as checks pass
 
 # Cleanup only, never a check: everything below may swallow an error - it
-# only tidies up and must run no matter how the script ends. This is the
+# only tidies up and must run no matter how the script ends. What it reaches
+# for, it first makes sure is its own - the two conditions inside. This is the
 # only place the daemon and the two PIN-copy files get cleaned up - not a
 # second safeguard next to an inline one, there is no inline shred or kill
 # for THEM anywhere else. -t alone would leave sessions behind, so -l and -s
@@ -40,8 +41,24 @@ checked=()                # "Geprüft und in Ordnung" lines, filled as checks pa
 # failure in between would otherwise die on "state: unbound variable" inside
 # the trap itself).
 cleanup() {
-	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
-	if [ -f "$state/swtpm.pid" ]; then kill "$(cat "$state/swtpm.pid")" >/dev/null 2>&1 || :; fi
+	local pid="" args=""
+	# Only ever against the probe's OWN simulator. The TCTI is exported far
+	# below this trap, and an inherited one can name the machine's real TPM -
+	# measured, a failure in the option checks left three tpm2_flushcontext
+	# pointed at the default device, and the redirection here hid that.
+	if [ "${TPM2TOOLS_TCTI:-}" = "swtpm:path=$state/sock" ]; then
+		for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
+	fi
+	# Not the number on its own: measured, a pid file naming a stranger got
+	# that stranger killed right here. The command line has to name this state
+	# directory; -ww because ps otherwise cuts it to the width in COLUMNS.
+	if [ -f "$state/swtpm.pid" ]; then
+		pid="$(cat "$state/swtpm.pid" 2>/dev/null || :)"
+		if [ -n "$pid" ]; then args="$(ps -ww -p "$pid" -o args= 2>/dev/null || :)"; fi
+		case "$args " in
+		"swtpm "*" --tpmstate dir=$state "*) kill "$pid" >/dev/null 2>&1 || : ;;
+		esac
+	fi
 	shred -u "$probe/pin-second.txt" "$probe/pin-wrong.txt" >/dev/null 2>&1 || :
 }
 trap cleanup EXIT
