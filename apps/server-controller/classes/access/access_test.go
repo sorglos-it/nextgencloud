@@ -59,7 +59,8 @@ var (
 // of the certificate and the certificate with the user's proof over it.
 type fixture struct {
 	list      *trust.List
-	client    []byte // the client certificate payload, exactly as the proof covers it
+	admin     trusttest.Signer // the user of the certificate; also signs re-confirmations
+	client    []byte           // the client certificate payload, exactly as the proof covers it
 	certProof proof.Proof
 	e2e       []byte // Noise message 1 of an app channel; core apps carry none
 }
@@ -82,7 +83,7 @@ func newFixture(t testing.TB) fixture {
 	client := mustJSON(t, session.ClientCert{Installation: l.Installation, User: trusttest.ID(0x21),
 		Nonce: bytes.Repeat([]byte{0x53}, session.NonceSize), Sig: enc.Bytes(sessSig.Public().(ed25519.PublicKey)),
 		DH: sessDH.Public, Issued: issued, Expires: issued + 3600})
-	return fixture{list: l, client: client, certProof: admin.Prove(sign.PurposeClientCert, client),
+	return fixture{list: l, admin: admin, client: client, certProof: admin.Prove(sign.PurposeClientCert, client),
 		e2e: bytes.Repeat([]byte{0x54}, wire.HandshakeSize)}
 }
 
@@ -495,6 +496,34 @@ func TestCheckAnswersInternalForItsOwnFaults(t *testing.T) {
 			d, cl := Check(context.Background(), r)
 			wantClose(t, d, cl, wire.CodeInternal)
 		})
+	}
+}
+
+// TestCheckOpensCriticalActionWithConfirmation is the way through that every
+// refusal above has to leave open: the critical wipe of the manifest, on the
+// service the manifest gives it, with a task signed by the session key and
+// the user's re-confirmation over that task. A gate that lets nothing through
+// is no gate.
+func TestCheckOpensCriticalActionWithConfirmation(t *testing.T) {
+	f := newFixture(t)
+	env := f.task(t, sessionSeed, node, testApp, adminService, adminAction, nil)
+	o := f.appOpen(testApp, adminService, adminAction)
+	o.Task = env
+	confirm := f.admin.Prove(sign.PurposeConfirm, env.Payload)
+	o.Confirm = &confirm
+	d, cl := Check(context.Background(), f.request(f.withUser(t, o)))
+	if cl != nil {
+		t.Fatalf("CLOSE %+v, want the channel to open", *cl)
+	}
+	if d.Task == nil || d.User != trusttest.ID(0x21) || d.UserName != "admin" {
+		t.Errorf("task %v, user %q (%q)", d.Task != nil, d.User, d.UserName)
+	}
+	if d.Core || d.Manifest == nil || d.Manifest.ID != testApp {
+		t.Errorf("core %v, manifest %v", d.Core, d.Manifest)
+	}
+	// The channel that opened is the critical one, not some tamer namesake.
+	if d.Opened.Open.Service != adminService || d.Opened.Open.Action != adminAction {
+		t.Errorf("opened %s/%s", d.Opened.Open.Service, d.Opened.Open.Action)
 	}
 }
 
