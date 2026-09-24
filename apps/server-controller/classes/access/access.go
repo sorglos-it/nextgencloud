@@ -70,6 +70,12 @@ type Decision struct {
 // decision or the CLOSE the channel ends with, never both: a refusal says
 // nothing but its code.
 func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
+	// A Request without the store is this program wired wrong. It is worth a
+	// line all the same: the controller runs as root, and a channel of an API
+	// must not be able to end it with a nil access.
+	if r.Apps == nil || r.Tasks == nil {
+		return refuse(wire.CodeInternal)
+	}
 	// Nothing can be checked without the trust list: no certificate, no task,
 	// no root permission. A controller that has verified no version yet
 	// therefore opens no channel at all, not even one without a user.
@@ -125,7 +131,12 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 			return refuse(wire.CodeForbidden)
 		}
 		if app, err = r.Apps.App(ctx, open.App); err != nil {
-			return refuse(wire.CodeNotFound)
+			// Only "there is no such app" is the opener's answer. A damaged
+			// row or a store that cannot answer is this server's fault.
+			if errors.Is(err, dbapi.ErrNotFound) {
+				return refuse(wire.CodeNotFound)
+			}
+			return refuse(wire.CodeInternal)
 		}
 		// An app this controller does not run answers nothing. deactivate is
 		// a root task a user signed for, so the row deciding here is what
@@ -134,9 +145,15 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 			return refuse(wire.CodeNotFound)
 		}
 		// The manifest comes from this controller's own database, written
-		// when the app was activated; a row that cannot be read is this
-		// server's fault, not the opener's.
+		// when the app was activated; a manifest that cannot be read leaves
+		// no rule to judge by, and that is this server's fault.
 		if m, err = store.ParseManifest(app.Manifest); err != nil {
+			return refuse(wire.CodeInternal)
+		}
+		// Row, manifest and OPEN have to name one app. A row that answers
+		// under another ID, or carries the manifest of another app, would put
+		// this channel under a rule that belongs to something else.
+		if app.ID != open.App || m.ID != open.App {
 			return refuse(wire.CodeInternal)
 		}
 		// The manifest says which service an action runs on. The OPEN names
