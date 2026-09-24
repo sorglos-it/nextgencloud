@@ -370,6 +370,32 @@ func TestCheckWithoutUserOnlyForListedActions(t *testing.T) {
 	})
 }
 
+// TestCheckWithoutUserIgnoresTheTask: a channel without a user is decided
+// without ever checking a task — the one it carries is not looked at, however
+// wrong it is. What still holds is the shape: the OPEN has to be an OPEN, and
+// wire.ParseOpen sees the envelope before this package decides anything.
+func TestCheckWithoutUserIgnoresTheTask(t *testing.T) {
+	f := newFixture(t)
+	t.Run("a task nobody asks for is never read", func(t *testing.T) {
+		// Everything about it is wrong: a stranger's key, another node,
+		// another action.
+		env := f.task(t, strangerSeed, otherNode, core.AppStore, core.ServiceController, core.ActUninstall,
+			core.UninstallParams{App: testApp})
+		d, cl := Check(context.Background(), f.request(withoutUser(t, coreOpen(core.AppUsers, core.ActTrust, env))))
+		if cl != nil {
+			t.Fatalf("CLOSE %+v, want the channel to open", *cl)
+		}
+		if d.Task != nil || d.User != "" {
+			t.Errorf("task %v, user %q", d.Task != nil, d.User)
+		}
+	})
+	t.Run("but the OPEN has to be an OPEN", func(t *testing.T) {
+		broken := sign.Envelope{Payload: enc.Bytes("x"), KeyID: "k", Sig: enc.Bytes{1}}
+		d, cl := Check(context.Background(), f.request(withoutUser(t, coreOpen(core.AppUsers, core.ActTrust, &broken))))
+		wantClose(t, d, cl, wire.CodeVerify)
+	})
+}
+
 func TestCheckRefusesShellOpenOfStage(t *testing.T) {
 	f := newFixture(t)
 	o := coreOpen(core.AppStore, core.ActStage, nil)
