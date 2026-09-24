@@ -9,13 +9,19 @@ cd "$(dirname "$0")/.."
 # Cleanup only, never a check: this is the one line in the package allowed to
 # swallow an error. -t alone would leave sessions behind, so -l and -s go with
 # it - a probe that died mid-way must not cost the next run its session slots.
-trap 'for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done' EXIT
+# The daemon joins the same trap: a STOPP or any other abort must not leave a
+# swtpm process behind for the next run to trip over.
+trap '
+	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
+	if [ -f "$state/swtpm.pid" ]; then kill "$(cat "$state/swtpm.pid")" >/dev/null 2>&1 || :; fi
+' EXIT
 
 work="$(pwd)/dist/recovery"
 probe="$work/work/probe"
 state="$work/tpm/probe"
 txt="$work/werkzeuge.txt"
 handle=0x81000002        # the probe uses its own handle, not the policy's
+checked=()                # "Geprüft und in Ordnung" lines, filled as checks pass
 
 say() { printf '%s\n' "$*" >&2; }
 stop_and_ask() {
@@ -40,14 +46,20 @@ CONF
 
 # TEST PINs in files with mode 0600: a PIN on the command line is readable in
 # /proc/<pid>/cmdline by every user on the machine. Stage "test" of the
-# specification prescribes "PIN source: file" anyway.
-for entry in stick:12345678 so:87654321 platform:1234; do
-	f="$work/pin/${entry%%:*}.txt"
-	if [ ! -f "$f" ]; then
-		printf '%s' "${entry##*:}" > "$f"
+# specification prescribes "PIN source: file" anyway. umask closes the window
+# between printf and chmod; chmod stays unconditional so a file that was
+# already sitting there with looser rights gets corrected too, not only a
+# freshly created one.
+(
+	umask 077
+	for entry in stick:12345678 so:87654321 platform:1234; do
+		f="$work/pin/${entry%%:*}.txt"
+		if [ ! -f "$f" ]; then
+			printf '%s' "${entry##*:}" > "$f"
+		fi
 		chmod 600 "$f"
-	fi
-done
+	done
+)
 pin_platform="$work/pin/platform.txt"
 
 # --- 1. versions ----------------------------------------------------------
@@ -64,17 +76,17 @@ fi
 
 # --- 2. commands and options ----------------------------------------------
 
-for cmd in tpm2_getpolicydigest tpm2_evictcontrol tpm2_policysigned tpm2_policynv \
+for cmd in tpm2 tpm2_getpolicydigest tpm2_evictcontrol tpm2_policysigned tpm2_policynv \
 	tpm2_policypcr tpm2_policyauthvalue tpm2_policyor tpm2_sessionconfig \
-	tpm2_startauthsession tpm2_dictionarylockout tpm2_loadexternal tpm2_verifysignature; do
+	tpm2_startauthsession tpm2_dictionarylockout tpm2_loadexternal tpm2_verifysignature \
+	swtpm swtpm_setup softhsm2-util qemu-system-x86_64 openssl; do
 	if ! command -v "$cmd" >/dev/null; then
 		stop_and_ask "Der Befehl $cmd fehlt. Ohne ihn ist die Policy nicht baubar."
 	fi
 done
 
-# --help of some tools exits non-zero; the grep below is the check that counts.
-help_of() {              # $1 = command
-	if "$1" --help > "$probe/help.txt" 2>&1; then :; fi
+help_of() {              # $1 = command; both streams, some tools help() to stderr
+	"$1" --help > "$probe/help.txt" 2>&1
 	cat "$probe/help.txt"
 }
 need_opt() {             # $1 = command, rest = long options that must exist
@@ -82,10 +94,14 @@ need_opt() {             # $1 = command, rest = long options that must exist
 	shift
 	page="$(help_of "$cmd")"
 	for opt in "$@"; do
-		if ! printf '%s\n' "$page" | grep -q -- "$opt"; then
+		# Anchored: a plain substring grep also passes an option that does not
+		# exist but is a prefix of a real one (--pcr-l inside --pcr-list) - the
+		# one case this check exists to catch is a renamed option.
+		if ! printf '%s\n' "$page" | grep -qE -- "(^|[^-[:alnum:]])${opt}([]=, |]|$)"; then
 			stop_and_ask "$cmd kennt $opt nicht."
 		fi
 	done
+	checked+=("  $cmd kennt $*")
 }
 need_opt tpm2_policysigned --nonce-tpm --expiration --raw-data
 need_opt tpm2_startauthsession --policy-session --tpmkey-context
@@ -114,6 +130,7 @@ export TPM2TOOLS_TCTI="swtpm:path=$state/sock"
 if ! tpm2_getcap pcrs | grep -q sha384; then
 	stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384."
 fi
+checked+=("  PCR-Bank sha384 vorhanden")
 
 # --- 4. the one unmeasured point: does the PIN come out of a file? --------
 flush
@@ -144,11 +161,14 @@ tpm2_startauthsession --policy-session -S "$probe/sess.ctx" -g sha384 \
 tpm2_sessionconfig --enable-encrypt --enable-decrypt "$probe/sess.ctx" >/dev/null
 tpm2_policyauthvalue -S "$probe/sess.ctx" >/dev/null
 flush
-got="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess.ctx+file:$pin_platform")"
+if ! got="$(tpm2_unseal -c "$probe/p.ctx" -p "session:$probe/sess.ctx+file:$pin_platform")"; then
+	stop_and_ask "tpm2-tools nimmt die PIN nicht aus einer Datei (session:…+file:…). Die PIN kommt nicht auf die Kommandozeile."
+fi
 tpm2_flushcontext "$probe/sess.ctx" >/dev/null
 if [ "$got" != TEST-PROBE-SECRET ]; then
 	stop_and_ask "tpm2-tools nimmt die PIN nicht aus einer Datei (session:…+file:…). Die PIN kommt nicht auf die Kommandozeile."
 fi
+checked+=("  Plattform-PIN aus Datei (session:…+file:…) funktioniert")
 tpm2_evictcontrol -C o -c "$handle" >/dev/null
 
 if [ -c /dev/kvm ]; then
@@ -165,16 +185,8 @@ fi
 	printf 'QEMU:        %s\n' "$(qemu-system-x86_64 --version | head -1)"
 	printf 'OpenSSL:     %s\n' "$(openssl version)"
 	printf '\nGeprüft und in Ordnung:\n'
-	printf '  tpm2_policysigned kennt --nonce-tpm, --expiration, --raw-data\n'
-	printf '  tpm2_startauthsession kennt --policy-session und --tpmkey-context\n'
-	printf '  tpm2_sessionconfig kennt --enable-encrypt und --enable-decrypt\n'
-	printf '  tpm2_policypcr kennt --pcr-list und --pcr\n'
-	printf '  tpm2_policynv kennt --input\n'
-	printf '  tpm2_dictionarylockout kennt --max-tries und die beiden Sperrzeiten\n'
-	printf '  PCR-Bank sha384 vorhanden\n'
-	printf '  Plattform-PIN aus Datei (session:…+file:…) funktioniert\n'
+	printf '%s\n' "${checked[@]}"
 	printf '\nKVM: %s\n' "$kvm"
 } > "$txt"
 
-kill "$(cat "$state/swtpm.pid")"
 say "Werkzeuge geprüft: $txt"
