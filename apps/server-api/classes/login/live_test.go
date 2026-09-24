@@ -1,8 +1,10 @@
 package login
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
@@ -184,5 +186,54 @@ func TestPurgeFreesOnlyWhatIsPastItsTime(t *testing.T) {
 	}
 	if got := lockRows(t, h); got != 1 {
 		t.Fatalf("%d rows of the counting are left, want the one counted just now", got)
+	}
+}
+
+// TestPurgeRunsBesideRequests puts the housekeeping round next to the requests
+// it shares a database with. Purge is the first thing this package means to
+// run on a timer, so it is the first that runs while requests are being
+// answered -- and it holds the counting of classes/lock over a walk of every
+// setting, which every failed login wants for itself.
+//
+// Without goroutines somewhere in this package, a run under -race says nothing
+// about any of that: it reports races it sees, and it sees only what ran. The
+// outcome is deterministic all the same, which is why it can be asserted: no
+// session of this fixture is past its time, so no order of the calls below may
+// end the one that is open.
+func TestPurgeRunsBesideRequests(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	const each = 25
+	var wg sync.WaitGroup
+	fail := make(chan error, each)
+	for range each {
+		wg.Add(4)
+		go func() { defer wg.Done(); fail <- h.Purge(ctx) }()
+		go func() {
+			defer wg.Done()
+			if _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+				fail <- errors.New("an open session was refused while Purge ran")
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			h.Trust(httptest.NewRecorder(), getCookie(session.PathTrust+"?from=1", cookie))
+		}()
+		// A login that fails counts one failure, which is the one thing that
+		// wants the lock Purge holds over its walk.
+		go func() {
+			defer wg.Done()
+			h.Finish(httptest.NewRecorder(), jsonPost(session.PathLoginFinish, `{"cert":"AAAA","proof":{"kind":"password","kid":"AAAAAAAAAAAAAAAAAAAAAA","sig":"AA"}}`))
+		}()
+	}
+	wg.Wait()
+	close(fail)
+	for err := range fail {
+		if err != nil {
+			t.Fatalf("beside the requests: %v", err)
+		}
+	}
+	if _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+		t.Fatal("the open session did not survive the housekeeping")
 	}
 }
