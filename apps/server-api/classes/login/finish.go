@@ -52,7 +52,7 @@ func blindPair() (ed25519.PublicKey, []byte) {
 // compiler may drop; it is never true, and no caller reads it.
 //
 // It is one Ed25519 verification whatever the proof says it is. A passkey
-// proof the list knows runs through session/proof's WebAuthn assertion
+// proof the list knows runs through package proof's WebAuthn assertion
 // instead, which hashes about as much and verifies one signature as well, but
 // which also turns a malformed assertion away before that -- so a passkey
 // proof whose client data is nonsense still costs less with a key the list
@@ -147,8 +147,9 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		//
 		// The line is the fixed text and nothing else, the error of the
 		// database included. A driver may quote the values of the statement
-		// back, and the values of this one are the bucket of a login name and
-		// its count; whoever needs the cause gets it from the database itself.
+		// back, and the values of this one are the row of a login name or of a
+		// key ID and the count in it; whoever needs the cause gets it from the
+		// database itself.
 		if err := countFailure(ctx, h.S.DB, owner.Name, f.Proof.KeyID, known, now); err != nil &&
 			h.warnLock.take(now, lockWarnTTL) {
 			slog.Error("a failed login could not be counted; nothing holds up guessing until the database can be written again")
