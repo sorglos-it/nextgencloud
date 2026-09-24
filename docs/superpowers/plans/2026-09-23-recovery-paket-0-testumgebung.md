@@ -153,7 +153,10 @@ will, prüft zuerst dort.
 | SoftHSM2 | kennt nur `CKM_ECDSA` (roh), **kein** ECDSA-SHA384. Also außerhalb hashen (`openssl dgst -sha384 -binary`) und den Hash mit `--mechanism ECDSA --signature-format openssl` signieren lassen — genau wie ein echter HSM-Stick. `tpm2_policysigned … -f ecdsa` nimmt das Ergebnis an |
 | Öffentlicher Stick-Schlüssel | `pkcs11-tool … --read-object --type pubkey --label stick1 --output-file stick1.der`, dann `openssl ec -pubin -inform DER -in stick1.der -pubout -out stick1.pem`, laden mit `tpm2_loadexternal -C o -G ecc -g sha384 -u stick1.pem -c stick1.ctx` |
 | PCR-Bank | `swtpm_setup --tpm2 --tpm-state <dir> --createek --pcr-banks sha256,sha384 --overwrite` legt sha384 an; `--create-ek-cert`/`--create-platform-cert` braucht root und bleibt weg |
-| Simulator starten | `swtpm socket --tpm2 --tpmstate dir=$D --server type=unixio,path=$D/sock --ctrl type=unixio,path=$D/sock.ctrl --flags not-need-init,startup-clear --daemon --pid file=$D/pid`, dann `TPM2TOOLS_TCTI="swtpm:path=$D/sock"`. Für QEMU ist `$D/sock.ctrl` der richtige Socket |
+| Simulator starten | `swtpm socket --tpm2 --tpmstate dir=$D --server type=unixio,path=$D/sock --ctrl type=unixio,path=$D/sock.ctrl --flags not-need-init,startup-clear --daemon --pid file=$D/pid`, dann `TPM2TOOLS_TCTI="swtpm:path=$D/sock"` |
+| Simulator **für QEMU** starten | Dieselbe Zeile **ohne `--server`** und ohne `--flags`: nur `--ctrl type=unixio,path=$D/sock.ctrl`. QEMUs `-tpmdev emulator` reicht seinen eigenen Datenkanal per `CMD_SET_DATAFD` über den Steuerkanal, und swtpm weist das ab, wenn schon einer gebunden ist. Gemessen in Aufgabe 5: mit `--server` scheitert der QEMU-Start mit `tpm-emulator: Failed to send CMD_SET_DATAFD`, ohne kommt die Maschine hoch und QMP meldet `"model": "tpm-tis"` |
+| Woran PCR 0 hängt | An der Firmware **und an der Maschinenkonfiguration**. Gemessen in Aufgabe 5: drei OVMF-Dateien geben drei verschiedene Werte; eine gealterte OVMF-Variablendatei ändert nichts; **dieselbe Firmware mit `-m 2048` statt `-m 1024` gibt einen anderen Wert** (deterministisch, zwei Läufe). Für Paket 8 (Versiegeln) heißt das: jede Änderung an der QEMU-Zeile bricht ein Siegel, das an PCR 0 hängt — gehört ins Abnahmeprotokoll. Deshalb prüft Paket 0 zu Recht „nicht Null" statt eines festen Werts |
+| PCR dieser Instanz lesen | Geht **nicht** über eine TCTI, solange QEMU läuft: der Datensocket darf nicht existieren, und QEMU hält den einzigen `unixio`-Steuerkanal. Auch **nach** dem Ende der VM nur auf einem Weg — QEMU schickt bei QMP `quit` **und** bei SIGTERM ein `CMD_SHUTDOWN` und nimmt den Simulator mit; **nur SIGKILL lässt ihn stehen**. Danach `swtpm_ioctl -v --unix $D/sock.ctrl` (schreibt `tpm2-00.volatilestate`), swtpm beenden, auf demselben `--tpmstate`-Verzeichnis mit `--server` neu starten und über `tcti swtpm` lesen. Aufgabe 5 nennt das Verb `resume` |
 
 Ungeprüft ist genau **ein** Punkt: ob tpm2-tools die Plattform-PIN aus einer Datei nimmt
 (`-p "session:sess.ctx+file:…"`). Aufgabe 1 prüft ihn mit einem kleinen Durchlauf; scheitert er,
@@ -797,7 +800,16 @@ start() {
 	if [ "$name" = qemu ]; then
 		# QEMU initialises the TPM itself over the control channel, so this
 		# instance must not be started up in advance.
-		swtpm socket --tpm2 --tpmstate "dir=$dir" --server "type=unixio,path=$sock" \
+		#
+		# And it gets NO data channel of its own: -tpmdev emulator hands its
+		# own one over the control channel with CMD_SET_DATAFD, and swtpm
+		# refuses that when a --server channel is already bound. Measured in
+		# task 5: with --server the QEMU start fails with
+		# "tpm-emulator: Failed to send CMD_SET_DATAFD"; with --ctrl alone the
+		# machine comes up and QMP reports "model": "tpm-tis". Reading this
+		# instance's PCRs therefore does not work through a tcti - see the
+		# resume verb below.
+		swtpm socket --tpm2 --tpmstate "dir=$dir" \
 			--ctrl "type=unixio,path=$sock.ctrl" --daemon --pid "file=$pidfile"
 	else
 		swtpm socket --tpm2 --tpmstate "dir=$dir" --server "type=unixio,path=$sock" \
