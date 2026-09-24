@@ -3,11 +3,14 @@ package login
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"slices"
 	"sync"
 	"testing"
+
+	"github.com/pquerna/otp/totp"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
@@ -50,7 +53,11 @@ func newFixture(tb testing.TB) (*Handler, fixture) {
 	if err != nil {
 		tb.Fatalf("box: %v", err)
 	}
-	noise, signKey := trusttest.NodeKeys(1)
+	// The keys of "api-1" in trusttest.Genesis, not keys of their own: the API
+	// certificate this node signs has to verify against the node of that name
+	// in the trust list (session.VerifyAPI), and a key nobody there holds
+	// would leave every session unverifiable.
+	noise, signKey := trusttest.NodeKeys(0xA1)
 	cfg := &config.API{
 		Node: "api-1", URL: "wss://api-1.ngc.test:7443/tunnel", Listen: ":7443",
 		Cert: "/x", CertKey: "/y",
@@ -102,6 +109,25 @@ func newFixture(tb testing.TB) (*Handler, fixture) {
 	}
 	return New(s), fx
 }
+
+// zeroReader gives a fixed session key, so the tests stay deterministic; the
+// API itself always uses crypto/rand.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 7
+	}
+	return len(p), nil
+}
+
+// sigPub returns the Ed25519 key the session signs tasks with. The tests reuse
+// the user's own key, which is enough: the API only checks that the proof over
+// the certificate holds.
+func sigPub(s trusttest.Signer) []byte { return s.Priv.Public().(ed25519.PublicKey) }
+
+// codeOf returns the TOTP code of secret at testNow.
+func codeOf(secret string) (string, error) { return totp.GenerateCode(secret, timeOf(testNow)) }
 
 // failLogin counts one failed attempt for name, as login/finish does.
 func failLogin(t *testing.T, h *Handler, name string) {
