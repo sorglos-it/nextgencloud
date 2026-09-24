@@ -84,17 +84,39 @@ const signedBudget = new Budget({ size: encodedLen(MAX_PAYLOAD) + SIGNED_SLACK }
 // which only ever sees this module's own decode() output.
 const isBytes = (v, n) => v instanceof Uint8Array && v.length === n;
 
+// The list-shaped counterpart of isBytes (Fixrunde 2: Wichtig 4 widened from
+// bytes to every array field checked by .length without confirming it is an
+// array first). A plain object with a length property and numeric keys - an
+// "array-like" - is not caught by any .length comparison: {length: 0} passes
+// a === 0 or a + === 0 check exactly as [] would, and {length: 1, 0: <a
+// genuinely valid element>} passes both a length bound and, wherever a field
+// is walked by index (l.users, l.roles, l.nodes, l.stores, l.auto,
+// validAPINode's rootUsers/rootRoles sum) is read back out as if it were a
+// real array member. Where a field is instead walked with for...of, .find,
+// .some or .every (rp.origins, a user's roles/keys, a controller's
+// rootUsers/rootRoles, role(), validEntries), an array-like throws there
+// instead, because a plain object has no Symbol.iterator and none of the
+// array prototype methods - still not `false`, still a break of this
+// module's "-> boolean, never throws" promise. Both failure modes close with
+// the same one-line guard.
+const isArray = Array.isArray;
+
 // validateList checks structure, order and references of l, the rules of
 // trust.List.Validate point by point. Never throws (Round 1 finding
 // Wichtig 4: validateList({}) threw a TypeError at l.prev.length instead of
 // answering false, though the interface promises -> boolean) - the guard
 // below on l.prev is both the first rule Go checks and, being first, the one
 // that stands between an arbitrary argument and every other read in this
-// function.
+// function. l.rp?.origins (optional chaining) doubles as the guard for l.rp
+// itself being absent or not an object: read on a missing l.rp, .origins is
+// undefined and isArray(undefined) is false, so a list with no rp at all is
+// refused right here instead of throwing three lines later at l.rp.id.
 export function validateList(l) {
   if (!l || !(l.prev instanceof Uint8Array)) return false;
   if (l.seq === 0 || (l.seq === 1) !== (l.prev.length === 0) || (l.seq > 1 && l.prev.length !== 32)) return false;
   if (l.issued <= 0 || !validID(l.installation)) return false;
+  if (!isArray(l.users) || !isArray(l.roles) || !isArray(l.nodes) || !isArray(l.stores) || !isArray(l.auto)
+    || !isArray(l.rp?.origins)) return false;
   if (l.users.length === 0 || l.users.length > MAX_USERS || l.roles.length > MAX_ROLES
     || l.nodes.length > MAX_NODES || l.stores.length > MAX_STORES || l.auto.length > MAX_AUTO
     || l.rp.origins.length > MAX_ORIGINS) return false;
@@ -124,6 +146,7 @@ export function validateList(l) {
       // Signing keys, addresses and TLS pins belong to API nodes: nobody
       // dials a controller.
       if (!validNode(n) || !isBytes(n.sign, 0) || n.url !== "" || !isBytes(n.tls, 0)
+        || !isArray(n.rootUsers) || !isArray(n.rootRoles)
         || n.rootUsers.length > MAX_ROOT || n.rootRoles.length > MAX_ROOT) return false;
       for (const id of n.rootUsers) if (!user(l, id)) return false;
       for (const r of n.rootRoles) if (!role(l, r)) return false;
@@ -167,6 +190,7 @@ function validateUsersSync(l) {
   for (let i = 0; i < l.users.length; i++) {
     const u = l.users[i];
     if (!validID(u.id) || (i > 0 && l.users[i - 1].id >= u.id) || !validLoginName(u.name) || names.has(u.name)
+      || !isArray(u.roles) || !isArray(u.keys)
       || u.roles.length === 0 || u.keys.length === 0 || u.keys.length > MAX_KEYS_PER_USER) return false;
     names.add(u.name);
     let passkeyOnly = false, passwordToo = false;
@@ -414,7 +438,8 @@ const matches = (entries, op) => {
 const validNode = (n) => validName(n.id) && validText(n.name, 64) && isBytes(n.noise, 32);
 
 export const validAPINode = (n) => n.kind === NODE_API && validNode(n) && isBytes(n.sign, 32)
-  && validTunnelURL(n.url) && isBytes(n.tls, 32) && n.rootUsers.length + n.rootRoles.length === 0;
+  && validTunnelURL(n.url) && isBytes(n.tls, 32)
+  && isArray(n.rootUsers) && isArray(n.rootRoles) && n.rootUsers.length + n.rootRoles.length === 0;
 
 // StoreLocal marks uploaded apps, so no catalog key may claim it.
 export const validStore = (s) => validName(s.id) && s.id !== STORE_LOCAL && validText(s.name, 64)
@@ -427,8 +452,11 @@ export async function tlsPin(spki) {
 const validLevel = (l) => l === LEVEL_OFF || l === LEVEL_CRITICAL || l === LEVEL_ROOT || l === LEVEL_HARDCORE;
 
 function validEntries(entries) {
-  if (entries.length > MAX_ENTRIES) return false;
+  if (!isArray(entries) || entries.length > MAX_ENTRIES) return false;
   return entries.every((e) => {
+    // Array.isArray(entries) alone says nothing about what is inside it -
+    // .startsWith below is a string method, called directly on e.
+    if (typeof e !== "string") return false;
     if (e.startsWith("node/")) return validName(e.slice(5));
     if (e.startsWith("app/")) {
       const rest = e.slice(4);
