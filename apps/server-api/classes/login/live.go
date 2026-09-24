@@ -68,10 +68,13 @@ type Live struct {
 // verified once per request, the same public-key work the login paid for;
 // nothing here caches that answer. The other is the list it is checked
 // against, read out of the database on every call (state.Refresh) where the
-// cache (state.Trust) would have cost nothing -- a handful of reads of the
-// trust rows per request, and GET session.PathTrust pays them twice, because
-// state.Chain refreshes once more for its own answer. Whoever builds the
-// WebSocket calls Live when the connection opens, not once per message.
+// cache (state.Trust) would have cost nothing: a handful of reads of the trust
+// rows per request, and state.Refresh holds the write mutex of its package
+// over all of them, so the requests of one API wait for one another instead of
+// running side by side. GET session.PathTrust pays that once and not twice --
+// state.Chain is handed the version this step brought up to date (Live.Trust)
+// rather than fetching one of its own. Whoever builds the WebSocket calls Live
+// when the connection opens, not once per message.
 //
 // Reading it is also a question that can now fail on every request, where the
 // cache could only fail until it was filled once. A failed read leaves the
@@ -86,14 +89,16 @@ type Live struct {
 // random bytes are not something anybody picks.
 //
 // Past that, the work is not the same for everybody. session.VerifyClient
-// looks the key up through every user and every key of the list
-// (trust.List.KeyOwner), asks the roles of that user when the key is a
-// password key (PasswordToo), and proves the certificate with a single
-// ed25519.Verify for a password key where a passkey is a whole WebAuthn
-// assertion (proof.Verify). So what an answered request costs does follow
-// whose session it is, and most of all which kind of key opened it. Whoever
-// could time that holds the cookie already and no name stands behind it -- but
-// the difference is real, and nothing here evens it out.
+// walks the users of the list and their keys until it reaches the one the
+// proof names and stops there (trust.List.KeyOwner), asks the roles of that
+// user when the key is a password key (PasswordToo), and proves the
+// certificate with a single ed25519.Verify for a password key where a passkey
+// is a whole WebAuthn assertion (proof.Verify). Every user and every key is
+// what that walk costs at worst, for a key nobody holds, and the stop is why
+// the rest is not the same for everybody: what an answered request costs
+// follows whose session it is, and most of all which kind of key opened it.
+// Whoever could time that holds the cookie already and no name stands behind
+// it -- but the difference is real, and nothing here evens it out.
 func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, bool) {
 	value, ok := httpapi.Cookie(r)
 	if !ok {
@@ -137,10 +142,10 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	}
 	// The list is read out of the database and not out of the cache
 	// (state.Trust), because the cache of an API is only as new as the last
-	// version that API itself wrote: the node where an admin withdraws a key
-	// has the new list at once, every other node has the old one until
-	// something refreshes it. Live is the step that decides, so it is the step
-	// that has to ask.
+	// refresh on that node: the node where an admin withdraws a key has the
+	// new list at once, every other node has the old one until something
+	// refreshes it. Live is the step that decides, so it is the step that has
+	// to ask.
 	v, err := h.S.Refresh(ctx)
 	if err != nil {
 		// One code for every cause of it, and it is never E_LOGIN. The store

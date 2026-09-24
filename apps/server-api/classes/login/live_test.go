@@ -121,8 +121,10 @@ func withdrawPasswordUser(t *testing.T, h *Handler, fx fixture) {
 }
 
 // TestLiveEndsASessionTheTrustListNoLongerHolds is the third of the three ends
-// Live knows, and the one nothing held to a test before: with the error of
-// session.VerifyClient dropped, every other test of this package stayed green.
+// Live knows, and the one nothing held to a test before. With the error of
+// session.VerifyClient dropped, two tests of this package fall, and both were
+// laid in the round that closed this hole: this one, and
+// TestLiveSeesAWithdrawalAnotherAPIWrote two commits later.
 //
 // Both halves are asserted, because the two are different promises: the
 // request is refused, and the row is gone. A session whose user an admin took
