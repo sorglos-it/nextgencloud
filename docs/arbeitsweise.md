@@ -170,6 +170,14 @@ ist keiner.
 Sonst ist „rot vor grün" nicht belegbar. Ein Prüfer konnte es nicht bestätigen,
 weil beides in einem Commit lag.
 
+**Ausnahme, und sie ist keine Aufweichung:** Wenn du einen Fehler in **bereits
+angenommenem** Code behebst, gibt es keinen sinnvollen roten Commit — der rote
+Zustand ist der Stand, der schon im Zweig liegt. Dann gilt: **erst messen, dann
+beheben**, und die Rotmessung wörtlich in Bericht und Commit-Nachricht. Ein
+Umsetzer hat das gegen meine Anweisung so gemacht und Bescheid gesagt. Er hatte
+recht. Was zählt, ist der Beleg, dass es vorher fiel — nicht die Zahl der
+Commits.
+
 ## 12. Der Prüfer greift an, statt zu lesen
 
 Was in NGC funktioniert hat:
