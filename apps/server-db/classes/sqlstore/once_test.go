@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
@@ -142,6 +143,67 @@ func TestAnExpiredAndSpentValueIsNotFound(t *testing.T) {
 		}
 		if _, err := s.OnceUse(ctx, dbapi.OnceNonce, value, after); !errors.Is(err, dbapi.ErrNotFound) {
 			t.Errorf("%s, spent and expired: %v, want ErrNotFound", name, err)
+		}
+	}
+}
+
+// TestOnlyOneUseGetsTheValue: of concurrent OnceUse calls for one value
+// exactly one may come back with the data. OnceUse decides in a single
+// UPDATE, so this holds; a store that reads the row first and writes after it
+// hands the same one-time value to several callers at once - a login taken
+// twice, a task run twice.
+//
+// It measures that here and now, on SQLite, without -race and without
+// MariaDB. In that shape the read and the write are two separate calls
+// through database/sql, and each takes a connection and gives it back again,
+// so another goroutine gets in between them whatever the pool holds. The two
+// steps themselves are the condition, not maxOpenConns.
+//
+// What it does not catch, said plainly so nobody takes it for more: a store
+// that puts those same two steps inside one transaction comes through green
+// here - measured, against exactly such a store. SQLite's own transactions
+// save it, and nothing in this run can tell that apart from a store that is
+// right. That shape needs MariaDB in the run, and it is still open.
+func TestOnlyOneUseGetsTheValue(t *testing.T) {
+	const racers, rounds = 8, 40
+	s := open(t)
+	for round := range rounds {
+		value := append(bytes.Repeat([]byte{0x5a}, 30), byte(round>>8), byte(round))
+		if err := s.OnceCreate(ctx, dbapi.OnceTask, value, "u-admin", 1790000100); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		got := make([]string, racers)
+		errs := make([]error, racers)
+		for i := range racers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				got[i], errs[i] = s.OnceUse(ctx, dbapi.OnceTask, value, 1790000000)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		ok, used, other := 0, 0, 0
+		for i := range racers {
+			switch {
+			case errs[i] == nil:
+				ok++
+				if got[i] != "u-admin" {
+					t.Errorf("round %d: data %q, want u-admin", round, got[i])
+				}
+			case errors.Is(errs[i], dbapi.ErrUsed):
+				used++
+			default:
+				other++
+				t.Logf("round %d, racer %d: %v", round, i, errs[i])
+			}
+		}
+		if ok != 1 || used != racers-1 {
+			t.Fatalf("round %d: %d got the value, %d ErrUsed, %d other - want 1 and %d",
+				round, ok, used, other, racers-1)
 		}
 	}
 }
