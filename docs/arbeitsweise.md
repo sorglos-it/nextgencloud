@@ -155,6 +155,18 @@ kostet eine Runde, in der jemand einen Test für etwas baut, das längst geprüf
 ist. Prüf bei jeder Mutation zuerst, dass sie **baut**, und zähl die Tests, die
 gelaufen sind, nicht nur die, die rot wurden.
 
+**Und `go test -overlay` misst nicht alles.** Ein Wächter, der den Quelltext
+selbst liest — er parst sein Verzeichnis, statt den übersetzten Code zu prüfen —
+sieht die Overlay-Datei gar nicht: er liest die Datei auf der Platte. Eine
+Mutation gegen so einen Wächter meldet **grün**, und zwar zuverlässig, egal was
+man ändert. Das ist derselbe Irrtum in dieselbe Richtung wie oben, nur leiser:
+nichts bricht, nichts warnt, die Zahl stimmt scheinbar.
+
+Wenn du einen Wächter misst, der Dateien liest, dann miss auf einer **Kopie**
+(`git archive`), nicht über ein Overlay. Und prüf es einmal ausdrücklich nach:
+mutier den Wächter so, dass er **sicher** anschlagen müsste. Bleibt er grün,
+misst du die falsche Datei.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
