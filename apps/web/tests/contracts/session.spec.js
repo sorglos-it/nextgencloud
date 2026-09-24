@@ -52,16 +52,34 @@ test("the API certificate is checked against the trust list", async ({ shell }) 
     const check = async (e) => {
       try {
         await s.verifyAPI(env(e), list, client, d.now);
-        return true;
-      } catch {
-        return false;
+        return "accepted";
+      } catch (err) {
+        return err.message;
       }
     };
     return { good: await check(d.api), rejects: await Promise.all(d.apiRejects.map((r) => check(r.api))) };
   }, v);
-  expect(got.good).toBe(true);
-  const wrong = v.apiRejects.filter((r, i) => got.rejects[i]).map((r) => r.name);
-  expect(wrong).toEqual([]);
+  expect(got.good).toBe("accepted");
+  // Fixrunde 1, on the coordinator's decision against his own brief: each
+  // case is held to the reason, not only to being refused - one that fails
+  // earlier than it is meant to would go unnoticed otherwise. Go has three
+  // here: ErrCert for a key no node of the list has, a payload that does not
+  // read and every field that does not match; the signature's own error; and
+  // ErrExpired for the time.
+  const cert = "session: malformed certificate";
+  const reason = {
+    "signed by a key that is no API node": cert,
+    "signed for another purpose": "session: bad signature",
+    "other installation": cert,
+    "other node name": cert,
+    "bound to another client certificate": cert,
+    "DH key of 31 bytes": cert,
+    "longer than MaxLifetime": cert,
+    "outlives the client certificate": cert,
+    "expired at now": "session: certificate not valid at this time",
+    "not yet valid at now": "session: certificate not valid at this time",
+  };
+  expect(got.rejects).toEqual(v.apiRejects.map((r) => reason[r.name]));
 });
 
 test("every login challenge is decided as Go decides it", async ({ shell }) => {
