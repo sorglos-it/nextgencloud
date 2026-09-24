@@ -148,10 +148,27 @@ export async function certHash(payload) {
 // object, leave it empty or drop that entry: the answer is then the same
 // "no node signed this" the caller gets for a list without a match, and
 // Array.isArray says nothing about what lies inside an array. There is no try
-// here: a kind or a sign that throws on being read carries its exception out
-// of verifyAPI, which refuses this envelope either way.
-const apiNodes = (l) => (Array.isArray(l?.nodes) ? l.nodes : [])
-  .filter((n) => n?.kind === trust.NODE_API && n.sign instanceof Uint8Array);
+// here: a kind, an id or a sign that throws on being read carries its
+// exception out of verifyAPI, which refuses this envelope either way.
+//
+// Fixrunde 1, after K1: the list is the caller's, so nodes and the three
+// fields of each node are read once and what goes back is this module's own
+// object. verifyAPI reads the id twice - for "is this a node at all" and for
+// "is this the node the certificate names" - and the key twice, to find the
+// node and to check the signature; out of one read each, those pairs cannot
+// disagree. Go walks a []trust.Node of typed fields and has nothing to
+// disagree with.
+const apiNodes = (l) => {
+  const ns = l?.nodes;
+  if (!Array.isArray(ns)) return [];
+  const out = [];
+  for (const n of ns) {
+    if (n === null || typeof n !== "object") continue;
+    const { kind, id, sign } = n;
+    if (kind === trust.NODE_API && sign instanceof Uint8Array) out.push({ id, sign });
+  }
+  return out;
+};
 
 // verifyAPI checks an API certificate: signed by an API node of the trust
 // list, bound to the client certificate client and never valid longer than it,
