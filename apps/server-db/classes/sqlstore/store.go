@@ -151,47 +151,14 @@ func wait(ctx context.Context, try int) bool {
 	}
 }
 
-// Not written yet: User..., Session..., Pending... (task 6), Log... (task 7).
-// Each line goes away with its task; Once... and Lock... went with task 5 and
-// stand in once.go now. No test takes the answer of one of them for a final
-// one; the single test that calls them, TestTheRestIsNotWrittenYet, holds
-// nothing but that they are still provisional, and it is meant to go red the
-// moment one of them is built - that is what takes a finished method out of
-// the list below instead of leaving it lying here.
-
-func (s *store) UserPut(context.Context, dbapi.User) error { return errors.ErrUnsupported }
-
-func (s *store) UserGet(context.Context, string) (dbapi.User, error) {
-	return dbapi.User{}, errors.ErrUnsupported
-}
-
-func (s *store) UserByName(context.Context, string) (dbapi.User, error) {
-	return dbapi.User{}, errors.ErrUnsupported
-}
-
-func (s *store) UserList(context.Context) ([]dbapi.User, error) { return nil, errors.ErrUnsupported }
-
-func (s *store) UserDelete(context.Context, string) error { return errors.ErrUnsupported }
-
-func (s *store) SessionPut(context.Context, dbapi.Session) error { return errors.ErrUnsupported }
-
-func (s *store) SessionGet(context.Context, []byte) (dbapi.Session, error) {
-	return dbapi.Session{}, errors.ErrUnsupported
-}
-
-func (s *store) SessionTouch(context.Context, []byte, int64) error { return errors.ErrUnsupported }
-
-func (s *store) SessionDelete(context.Context, []byte) error { return errors.ErrUnsupported }
-
-func (s *store) SessionPurge(context.Context, int64) error { return errors.ErrUnsupported }
-
-func (s *store) PendingPut(context.Context, dbapi.Pending) error { return errors.ErrUnsupported }
-
-func (s *store) PendingList(context.Context) ([]dbapi.Pending, error) {
-	return nil, errors.ErrUnsupported
-}
-
-func (s *store) PendingDelete(context.Context, []byte) error { return errors.ErrUnsupported }
+// Not written yet: Log... (task 7). Each line goes away with its task;
+// Once... and Lock... went with task 5 and stand in once.go now, User...,
+// Session... and Pending... with task 6 and stand in user.go. No test takes
+// the answer of one of them for a final one; the single test that calls them,
+// TestTheRestIsNotWrittenYet, holds nothing but that they are still
+// provisional, and it is meant to go red the moment one of them is built -
+// that is what takes a finished method out of the list below instead of
+// leaving it lying here.
 
 func (s *store) LogAdd(context.Context, core.LogEntry) error { return errors.ErrUnsupported }
 

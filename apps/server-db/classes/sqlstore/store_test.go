@@ -340,34 +340,17 @@ func TestAGrantNobodyKnowsDoesNotComeBackOut(t *testing.T) {
 	}
 }
 
-// TestTheRestIsNotWrittenYet: every method of dbapi.Store that tasks 6 and 7
-// bring answers errors.ErrUnsupported until then, and nothing in here is
-// allowed to look like it works. Task 5 took Once... and Lock... out of the
-// list; they are measured in once_test.go now.
+// TestTheRestIsNotWrittenYet: every method of dbapi.Store that task 7 brings
+// answers errors.ErrUnsupported until then, and nothing in here is allowed to
+// look like it works. Task 5 took Once... and Lock... out of the list, task 6
+// User..., Session... and Pending...; they are measured in once_test.go and
+// user_test.go now.
 func TestTheRestIsNotWrittenYet(t *testing.T) {
 	s := open(t)
-	_, userGet := s.UserGet(ctx, "u-1")
-	_, userByName := s.UserByName(ctx, "admin")
-	_, userList := s.UserList(ctx)
-	_, sessionGet := s.SessionGet(ctx, []byte("t"))
-	_, pendingList := s.PendingList(ctx)
 	_, logQuery := s.LogQuery(ctx, core.LogQuery{Limit: 1})
 	for name, err := range map[string]error{
-		"UserGet":       userGet,
-		"UserByName":    userByName,
-		"UserList":      userList,
-		"SessionGet":    sessionGet,
-		"PendingList":   pendingList,
-		"LogAdd":        s.LogAdd(ctx, core.LogEntry{Kind: "app"}),
-		"LogQuery":      logQuery,
-		"UserPut":       s.UserPut(ctx, dbapi.User{ID: "u-1"}),
-		"UserDelete":    s.UserDelete(ctx, "u-1"),
-		"SessionPut":    s.SessionPut(ctx, dbapi.Session{Token: []byte("t")}),
-		"SessionTouch":  s.SessionTouch(ctx, []byte("t"), 1790000000),
-		"SessionDelete": s.SessionDelete(ctx, []byte("t")),
-		"SessionPurge":  s.SessionPurge(ctx, 1790000000),
-		"PendingPut":    s.PendingPut(ctx, dbapi.Pending{Name: "ctl-1"}),
-		"PendingDelete": s.PendingDelete(ctx, []byte("k")),
+		"LogAdd":   s.LogAdd(ctx, core.LogEntry{Kind: "app"}),
+		"LogQuery": logQuery,
 	} {
 		if !errors.Is(err, errors.ErrUnsupported) {
 			t.Errorf("%s: %v, want ErrUnsupported", name, err)
