@@ -191,11 +191,43 @@ Was in NGC funktioniert hat:
 Ein Umsetzer meldete drei Minuten ohne Ergebnis auf einer Engine als ungeklärt.
 Eingegrenzt stellte sich heraus: eine Schleife brauchte dort **5,4 Minuten** für
 die größte zulässige Liste. Auf einem iPhone wäre die Seite unbenutzbar gewesen.
-Nach dem Umbau: 20 Sekunden im Extremfall, unter einer Zehntelsekunde im
-Normalfall.
+Nach dem Umbau: 20 Sekunden im Extremfall, **769 Millisekunden** im Normalfall.
+
+Und die 769 Millisekunden sind selbst ein Fall für Regel 1. Ich hatte sie aus
+0,97 ms je Schlüssel **hochgerechnet** und „unter einer Zehntelsekunde" gesagt —
+gemessen war es das **Achtfache**, weil die Bündelung je **Nutzer** läuft und
+nicht je Schlüssel. Die Regel lautet: rund 15 ms mal Zahl der Nutzer.
+Hochrechnen ist kein Messen, auch dann nicht, wenn der Ausgangswert gemessen war.
 
 Wer eine Zahl nennt, sagt dazu, **wie** gemessen wurde. Wer eine nicht hat, sagt
 das — und der Koordinator entscheidet, ob sie gebraucht wird.
+
+## 14. Der Satz daneben ist der häufigste Fehler, den dieses Projekt macht
+
+Elfmal hat ein Kommentar das Gegenteil dessen behauptet, was der Code tut.
+**Siebenmal davon im selben Commit, der genau diese Klasse reparieren sollte.**
+Es ist mit Abstand die häufigste Fundart hier — häufiger als jeder Denkfehler
+im Code.
+
+Beispiele, alle gemessen:
+
+- „Wirft nie" an einer Funktion, die bei einem `null` in einer echten Liste warf.
+- Ein Kommentar schrieb dem **Vertrag** zu, was bloß eine der Umsetzungen tut —
+  in dem Commit, der diese Verwechslung abstellen sollte.
+- Ein Satz behauptete, nichts sonst im Paket rufe eine Funktion auf; vier Zeilen
+  weiter tat es derselbe Commit.
+- Ein Satz versprach „überspringt nur diesen einen Nutzer" — die Änderung darüber
+  hatte das Überspringen gerade abgeschafft.
+
+**Deshalb:** Gegenlesen ist ein **eigener Schritt am Ende**, nicht etwas nebenbei.
+Nimm jeden Satz, den du geschrieben oder stehen gelassen hast, und such die
+Codezeile, die ihn wahr macht. Findest du sie nicht, ist der Satz falsch.
+
+**Und schreib nicht die Messung in den Quelltext.** In einem Fall waren rund 40
+von 102 Zeilen Mess-Erzählung; die darin genannten fremden Zeilennummern zeigten
+schon sechs Revisionen später auf ganz anderen Code. Der Messbericht gehört in
+den Bericht. In den Code gehören zwei Zeilen Begründung — und statt einer
+Zeilennummer der **Name** der Stelle, denn Namen wandern mit.
 
 ---
 
