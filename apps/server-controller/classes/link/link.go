@@ -4,11 +4,16 @@
 //
 // Everything that comes in here is hostile, an API of the trust list included:
 // the size of a message is bounded before it is read, every payload goes
-// through the parser of its contract, and nothing that came in is quoted back
-// in an error or a log line of a program that runs as root. A text message, a
-// message that does not decrypt, a frame that does not decode and a control
-// message the API may not send end the link at once and without an answer -
-// there is nothing to say to a peer that is not the one the handshake proved.
+// through the parser of its contract, and no error and no log line of this
+// package quotes anything that came in - this is a program that runs as root.
+// A handler is the one way past that: Run passes an error of it on as it is
+// and Keep writes it to the log, so a handler that puts something from the
+// tunnel into its error puts it into the log of the controller.
+//
+// A text message, a message that does not decrypt, a frame that does not
+// decode and a control message the API may not send end the link at once and
+// without an answer - there is nothing to say to a peer that is not the one
+// the handshake proved.
 package link
 
 import (
@@ -46,13 +51,23 @@ const (
 	// controller that has other work. It is not the bound on Dial as a whole:
 	// an API that breaks the contract on the way in is told so with a close
 	// message, and that message is written and answered under the deadlines of
-	// the library (Close), so such a dial may take about ten seconds longer.
+	// the library (Close), so such a dial may take up to about ten seconds
+	// longer - about five against an API that has simply gone quiet, because
+	// the waiting for the answering message only begins once ours got out.
 	DialTimeout = 30 * time.Second
 	// WriteTimeout bounds one message on the way out: a peer that stops
 	// reading holds the writer at the front this long and no longer. What is
 	// bounded here is the time and not the number - the writers behind it
 	// wait on the lock in the meantime, so a peer that went quiet does cost
 	// this side one waiting goroutine per writer until the tunnel is over.
+	//
+	// Half a minute is the bound and not a time a tunnel lives through. From
+	// five seconds on, a ping that falls into such a write no longer gets its
+	// own frame out and is skipped instead (ping). And when the deadline
+	// itself runs out, the library closes the socket hard: it hangs a watcher
+	// on the context of every write (vendor .../conn.go:170-181). So this is
+	// at the same time the longest a peer may refuse to read before this
+	// tunnel is over.
 	WriteTimeout = 30 * time.Second
 	// minPing is the shortest ping interval this package takes. Only a test
 	// sets one at all, and nothing from outside reaches it - but a ticker of a
@@ -90,7 +105,11 @@ var (
 //     tunnel.PingInterval, a minute) the tunnel is gone for certain - the ping
 //     falls at the latest one interval into the hold and then waits one
 //     interval for its pong; the link counts as dead although the API is
-//     healthy, and Run comes back with an error. No length of a single call
+//     healthy, and Run comes back with an error. The one thing that puts that
+//     off: a ping that gave up while a message of this side stood in the
+//     socket is skipped and the next interval asks again (ping), so a handler
+//     that holds the reading and writes at the same time is measured by the
+//     intervals in which it did not write. No length of a single call
 //     is safe on its own, because the holds add up. What a handler must keep
 //     to is therefore not a length but this: give the reading back at once.
 //     Whatever cannot be answered on the spot belongs in a goroutine of its
@@ -178,7 +197,7 @@ type Tunnel struct {
 	mu   sync.Mutex // one writer at a time
 	once sync.Once
 	ran  atomic.Bool // Run has begun
-	dead atomic.Bool // the pong stayed away
+	dead atomic.Bool // the ping found the link gone, and not through this side
 	// closing says that this side is ending the tunnel, Close as fail. It is
 	// set before the close message goes out, so whoever afterwards finds the
 	// link broken - the reader in Run, the ping - knows it was this side that
@@ -186,6 +205,14 @@ type Tunnel struct {
 	// ends after the close message, and until then an orderly end looks like
 	// a link that fell apart.
 	closing atomic.Bool
+	// writing counts the messages of this side that stand in the socket right
+	// now. Only write raises it, around t.c.Write and nothing else, and mu
+	// above keeps it at one - it is a number and not a flag because a number
+	// cannot be set twice by mistake. What it is for: the ping frame goes
+	// through the same lock of the library as every message of ours, so a
+	// ping that gave up while one of them stood there gave up over this side
+	// and says nothing about the API (ping).
+	writing atomic.Int64
 	// since is taken once the Noise session stands, so how long a tunnel
 	// stood is measured from just before the two hellos.
 	since int64
@@ -352,8 +379,8 @@ func (t *Tunnel) Run(ctx context.Context) error {
 		plain, err := t.message(t.life)
 		if err != nil {
 			// A link this side ended because the other one broke the contract
-			// says so, whatever the socket did afterwards, and a link whose
-			// pong stayed away is gone and not closed: whoever keeps the
+			// says so, whatever the socket did afterwards, and a link the
+			// ping found gone is gone and not closed: whoever keeps the
 			// tunnel should see both and dial again. Everything else is an
 			// orderly end exactly when this side closed the tunnel - and that
 			// is closing and not the life of it, which ends only after the
@@ -449,6 +476,12 @@ func takeMessage(plain []byte) (wire.Frame, wire.Control, error) {
 // Channel 0 is no channel. What goes there goes through Control, which sends
 // only what a controller may send on a tunnel: a handler that wrote its own
 // control message here would have the API end the link over it.
+//
+// A write that comes to a stand in the socket - a peer that has stopped
+// reading - takes the ping of this tunnel the lock it needs for its own
+// frame. That costs the tunnel nothing: such a ping is skipped and asked
+// again one interval later (ping). What it does cost is the bound of the
+// write itself, and that one is WriteTimeout.
 func (t *Tunnel) Send(f wire.Frame) error {
 	if f.Channel == wire.ControlChannel {
 		return ErrConfig
@@ -470,7 +503,13 @@ func (t *Tunnel) write(ctx context.Context, f wire.Frame) error {
 	if err != nil {
 		return ErrConfig
 	}
-	if err := t.c.Write(ctx, websocket.MessageBinary, msg); err != nil {
+	// Raised around the write and nothing else: what the ping asks is whether
+	// a message of ours stood in the socket, not whether one was on its way
+	// through this package.
+	t.writing.Add(1)
+	err = t.c.Write(ctx, websocket.MessageBinary, msg)
+	t.writing.Add(-1)
+	if err != nil {
 		return ErrAPI
 	}
 	return nil
@@ -513,9 +552,29 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 }
 
 // ping asks the API every tunnel.PingInterval seconds whether it is still
-// there. A pong that stays away for a whole interval makes the link dead,
-// whatever the socket still says: a tunnel nobody notices is gone would take
-// every channel on it with it.
+// there and waits one interval for the answer. It is the only thing that
+// notices a peer which went quiet without the socket saying so, and a tunnel
+// nobody notices is gone would take every channel on it with it.
+//
+// Two ways a ping can fail are of this side's own making, and neither may be
+// laid at the API's door:
+//
+//   - This side is closing the tunnel, so the socket was taken away under the
+//     ping (closing).
+//   - A message of this side stands in the socket (writing). The ping frame
+//     goes through the same lock of the library as every message
+//     (writeFrameMu, vendor .../write.go:289), and the library gives that
+//     lock up after five seconds for a control frame
+//     (write.go:276-277) while a write of ours may stand in it up to
+//     WriteTimeout. The ping then never got its frame out - the API does not
+//     even see it - so there is nothing it could answer.
+//
+// The first ends the ping, the second skips it: the tunnel is none the worse
+// for a ping it never got to ask, and the next interval asks again. What is left
+// makes the link dead: a ping that did get out and got no pong within the
+// interval, or a socket that broke under it. Both mean the same thing, and
+// that is what dead says - this tunnel can no longer be vouched for, whatever
+// the socket still claims.
 func (t *Tunnel) ping() {
 	tick := time.NewTicker(t.cfg.every())
 	defer tick.Stop()
@@ -527,19 +586,23 @@ func (t *Tunnel) ping() {
 		}
 		ctx, cancel := context.WithTimeout(t.life, t.cfg.every())
 		err := t.c.Ping(ctx)
+		// Read before anything else runs: what counts is whether a message of
+		// ours stood in the socket when the ping gave up, not whether one was
+		// there at some point while it waited.
+		mine := t.writing.Load() > 0
 		cancel()
-		if err != nil {
-			// A ping that ends because this side is closing the tunnel says
-			// nothing about the API: the socket was taken away under it. Only
-			// a pong that really stayed away makes the link dead, or an
-			// orderly end would be reported as a peer that went quiet.
-			if t.closing.Load() {
-				return
-			}
-			t.dead.Store(true)
-			t.Close()
+		if err == nil {
+			continue
+		}
+		if t.closing.Load() {
 			return
 		}
+		if mine {
+			continue
+		}
+		t.dead.Store(true)
+		t.Close()
+		return
 	}
 }
 
@@ -547,6 +610,14 @@ func (t *Tunnel) ping() {
 // the other end of the handshake, or not of this contract. The API is told
 // which of the two by the status of the close message and by nothing else, so
 // that message goes out before anything here is torn down (Close).
+//
+// One thing can take that status away: a Close of the caller at the same
+// moment. Whichever of the two reaches the library first writes its own
+// message, and the other one then only waits for it - so an API that broke
+// the contract while its controller was shutting down can see the normal
+// closure of that shutdown instead. Nothing here sends anything afterwards to
+// put it right, and nothing may: the peer is not the one the handshake
+// proved.
 func (t *Tunnel) fail() {
 	t.closing.Store(true)
 	t.c.Close(websocket.StatusProtocolError, "")
@@ -556,16 +627,31 @@ func (t *Tunnel) fail() {
 // Close ends the tunnel. It may be called more than once and from any
 // goroutine; whoever runs the tunnel comes back out of Run.
 //
-// It blocks, and against a peer that has gone quiet for about ten seconds:
-// the library writes the close message under a deadline of five seconds and
-// then waits five more for the answering one. Both deadlines are its own and
-// run on context.Background(), so no context of the caller shortens them -
-// neither the one given to Dial or Run nor one of whoever calls Close. What
-// comes after no longer hangs on the peer: the socket is torn down, and the
-// goroutines of the library are waited for under a further bound of fifteen
-// seconds. It also gives an error back, and that error says only that the
-// message did not get out or that no answer came; the tunnel is over either
-// way, and every caller in this package therefore drops it.
+// It blocks, against a peer that has gone quiet for up to about ten seconds:
+// the library writes the close message under a deadline of five seconds
+// (vendor .../close.go:185) and waits five more for the answering one
+// (close.go:199). The second wait only begins once the first one worked
+// (close.go:157-161), so a peer that neither reads nor answers costs about
+// five seconds; the ten are the peer that takes almost the whole first
+// deadline to read the message and then never answers. Both deadlines are the
+// library's own and run on context.Background(), so no context of the caller
+// shortens them - neither the one given to Dial or Run nor one of whoever
+// calls Close.
+//
+// What comes after no longer hangs on the peer: the socket is torn down, and
+// the goroutines of the library are waited for under a further bound of
+// fifteen seconds (close.go:231). One case is the exception: fail closes
+// outside the once above, so Close and fail can meet, and whichever of the
+// two reaches the library second finds it already closing and then does
+// nothing but sit out those fifteen seconds (close.go:102-107) - what it
+// waits for there is the other one, which is still standing in front of the
+// peer.
+//
+// It also gives an error back, and that error has three sources: the close
+// message did not get out or no answer came, the socket did not tear down
+// cleanly, or the goroutines did not come back within the fifteen seconds.
+// The tunnel is over in each of them, and every caller in this package
+// therefore drops it.
 func (t *Tunnel) Close() error {
 	var err error
 	t.once.Do(func() {
