@@ -120,7 +120,7 @@ Policy(DEK) = PolicyOR(
 - Nach jeder Recovery: Zähler +1, DEK mit c+1 neu versiegeln.
 - Stick-Ersatz oder Listen-Wechsel: Slot B und Recovery-Policy je Server neu erzeugen, neues Wiederherstellungsblatt.
 - Slot B ist TPM-unabhängig: Weg bei totem Server.
-- TPM-Sessions immer mit Salt und Parameterverschlüsselung. DA-Lockout: 3 Versuche, 24 h. EK-Zertifikat gegen Hersteller-CA prüfen.
+- TPM-Sessions immer mit Salt und Parameterverschlüsselung — gemeint sind die Sessions, die wirklich etwas tragen (Policy, HMAC). **Trial-Sessions sind ausgenommen:** sie rechnen nur einen Digest aus, der ohnehin öffentlich ist, und tpm2-tools lässt Salt für sie gar nicht zu (gemessen an 5.7: „Trial sessions cannot be additionally used as encrypt/decrypt session“). DA-Lockout: 3 Versuche, 24 h. EK-Zertifikat gegen Hersteller-CA prüfen.
 
 ---
 
@@ -237,7 +237,7 @@ Paket 4 vor 5 (Slot B braucht Stick-Keys). Paket 8 vor 9 (nur fertige Images hä
 7. Live-System oder fremdes OS auf dem Server: Volume bleibt zu
 8. Admin-Datensatz direkt in der DB eingetragen: Login verweigert, Alarm
 9. 3 falsche Stick-PINs: Stick gesperrt; 3 falsche Plattform-PINs: TPM 24 h gesperrt, Produktivbetrieb läuft
-10. Logic-Analyzer am TPM-Bus zeigt nur verschlüsselte Sessions
+10. Logic-Analyzer am TPM-Bus zeigt nur verschlüsselte Sessions — außer Trial-Sessions, die nichts Geheimes übertragen
 11. Portscan und Konsole in der Recovery-Umgebung: kein Netz, keine Shell, kein Login
 12. Audit-Eintrag beim Zeugen signiert vorhanden, Alarm an alle Kontakte innerhalb 60 s
 13. Recovery-Account erzwingt Passwortwechsel + Token-Registrierung, verfällt nach 24 h

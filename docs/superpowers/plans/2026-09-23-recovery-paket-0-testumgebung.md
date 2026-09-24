@@ -57,8 +57,12 @@ wenn sie dort nicht wiederholt werden.
 - **Sitzungen gesalzen und verschlüsselt.** Jede Sitzung wird mit
   `tpm2_startauthsession --tpmkey-context 0x81000001` gegen den Primärschlüssel gesalzen und danach mit
   `tpm2_sessionconfig --enable-encrypt --enable-decrypt <sitzung>` auf Parameterverschlüsselung
-  gestellt — auch die Trial-Sitzungen, damit das Muster genau so nach Paket 3 wandert. Die Vorgabe
-  (Abschnitt 6) verlangt das ohne Einschränkung auf echte Hardware.
+  gestellt. **Trial-Sitzungen sind ausgenommen:** tpm2-tools 5.7 weist die Kombination ab
+  („Trial sessions cannot be additionally used as encrypt/decrypt session“, zweimal
+  unabhängig gemessen), und sie ist auch nicht nötig — eine Trial-Sitzung rechnet nur einen Digest
+  aus, der ohnehin öffentlich ist, und überträgt nie ein Geheimnis über den Bus. Echte Sitzungen
+  (`--policy-session`, HMAC) nehmen das Salz an, ebenfalls gemessen. Entscheidung von Thomas am
+  24.09.2026; Abschnitt 6 der Vorgabe und Abnahmekriterium 10 sind entsprechend geengt.
 - **`expiration` ist immer 0** (`tpm2_policysigned -t 0`). Keine Autorisierung gilt länger als die
   eine Sitzung, in der sie entsteht.
 - **Objektplätze freiräumen.** swtpm hält nur zwei transiente Objekte. Vor jedem Befehl, der ein
@@ -386,7 +390,6 @@ fi
 	printf 'SoftHSM2:    %s\n' "$(softhsm2-util --version)"
 	printf 'QEMU:        %s\n' "$(qemu-system-x86_64 --version | head -1)"
 	printf 'OpenSSL:     %s\n' "$(openssl version)"
-	printf 'Go:          %s\n' "$go_version"
 	printf '\nGeprüft und in Ordnung:\n'
 	printf '  tpm2_policysigned kennt --nonce-tpm, --expiration, --raw-data\n'
 	printf '  tpm2_startauthsession kennt --policy-session und --tpmkey-context\n'
