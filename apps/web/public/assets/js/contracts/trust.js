@@ -2,15 +2,19 @@
 // permissions, stores, the re-confirmation policy and standing approvals. An
 // admin signs every version; the shell verifies the chain from a pinned anchor
 // itself, so the API can hand the list on but never forge it (Go: trust).
-// b64encode joins the given import list here: encodeList (below) is prose in
-// the task brief, not given code, and needs it to write bytes as base64url -
-// the deviation is named in the task report rather than hand-duplicated.
-import { b64decode, b64encode, equal, utf8 } from "./b64.js";
-import { decode, Budget, S, P, A, str, bool, bytes, uint, uint32 } from "./json.js";
+//
+// Two of the imports below differ from the task brief's own line, both named
+// in the Round 1 report: b64encode and encodedLen, for encodeList and
+// signedBudget - both were prose in the brief, not given code, so the given
+// import line never accounted for them. b64decode, P and uint32 were in that
+// line but are not used anywhere in this file (Round 1 finding K3) and are
+// left out.
+import { b64encode, encodedLen, equal, utf8 } from "./b64.js";
+import { decode, Budget, S, A, str, bool, bytes, uint } from "./json.js";
 import { validName, validAppID, coreApp, validText, validID, validLoginName } from "./text.js";
 import { validTunnelURL, validStoreURL, validOrigin } from "./url.js";
 import * as proof from "./proof.js";
-import { MAX_PAYLOAD, PURPOSE_TRUST_LIST, envelopeBudget } from "./sign.js";
+import { MAX_PAYLOAD, PURPOSE_TRUST_LIST } from "./sign.js";
 
 export const ROLE_ADMIN = "admin";
 export const MAX_USERS = 10000, MAX_NODES = 256, MAX_ROLES = 256, MAX_STORES = 64;
@@ -57,25 +61,50 @@ const listBudget = new Budget({
   },
 });
 
-const signedBudget = new Budget({ size: envelopeBudget(MAX_PAYLOAD).size });
+// The base64url of a payload of MAX_PAYLOAD bytes, plus 64 KiB for the proof
+// (at most about 12 KiB - a maximal passkey proof alone is 12 290 base64
+// characters: sig 1366 + authData 5462 + clientData 5462), member names and
+// white space (Go: shared/trust/trust.go, signedBudget). Round 1 finding
+// Wichtig 2: this used to borrow sign.envelopeBudget(MAX_PAYLOAD).size, whose
+// 1 KiB ENVELOPE_SLACK is sized for a plain envelope's kid+sig - 64512 bytes
+// too little for a trust.Signed, which carries a full proof.Proof. It closes
+// (refuses a bit more than it should), never opens, but a real admin-signed
+// version with a large payload and a large proof would be refused by the
+// browser and accepted by every Go node - measured, in the test this fixes.
+const SIGNED_SLACK = 64 << 10;
+const signedBudget = new Budget({ size: encodedLen(MAX_PAYLOAD) + SIGNED_SLACK });
+
+// A byte string is a Uint8Array or it is not one - not an ArrayBuffer, and
+// not same-length text: "A".repeat(32) has a .length of 32 same as 32 real
+// bytes, and would pass n.noise.length === 32 unnoticed (Round 1 finding
+// Wichtig 4; the same reasoning b64.js's equal and text.js's validText give
+// for checking the type before the length). validateList, validAPINode and
+// validStore are exported and so can be handed anything, not only what
+// decode() already shaped through nodeShape/storeShape - unlike parseList,
+// which only ever sees this module's own decode() output.
+const isBytes = (v, n) => v instanceof Uint8Array && v.length === n;
 
 // validateList checks structure, order and references of l, the rules of
-// trust.List.Validate point by point.
-//
-// STILL TO CHECK: Go additionally refuses a non-empty rp.id that is not a
-// valid relying party ID (proof.ValidRPID, shared/trust/trust.go). Nothing in
-// this module's own dependency list (b64, json, text, url, proof, sign)
-// exposes that check, and the task brief's own code for this function - which
-// this implementation follows literally - does not include it either. Kept
-// as a known, flagged gap rather than a validator invented outside the
-// interfaces this task was given; see the task report.
+// trust.List.Validate point by point. Never throws (Round 1 finding
+// Wichtig 4: validateList({}) threw a TypeError at l.prev.length instead of
+// answering false, though the interface promises -> boolean) - the guard
+// below on l.prev is both the first rule Go checks and, being first, the one
+// that stands between an arbitrary argument and every other read in this
+// function.
 export function validateList(l) {
-  if (!l) return false;
+  if (!l || !(l.prev instanceof Uint8Array)) return false;
   if (l.seq === 0 || (l.seq === 1) !== (l.prev.length === 0) || (l.seq > 1 && l.prev.length !== 32)) return false;
   if (l.issued <= 0 || !validID(l.installation)) return false;
   if (l.users.length === 0 || l.users.length > MAX_USERS || l.roles.length > MAX_ROLES
     || l.nodes.length > MAX_NODES || l.stores.length > MAX_STORES || l.auto.length > MAX_AUTO
     || l.rp.origins.length > MAX_ORIGINS) return false;
+  // The RP ID goes on into the login answer and from there into the
+  // browser's navigator.credentials.get, so it is a DNS name here already
+  // (proof.validRPID, the same rule config.Web keeps). Round 1 finding
+  // Wichtig 1: this check was missing outright; none of the 24 vectors ever
+  // sets an invalid rp.id (all 52 payloads carry "ngc.example.org"), so its
+  // absence never turned a test red on its own.
+  if (l.rp.id !== "" && !proof.validRPID(l.rp.id)) return false;
 
   for (let i = 0; i < l.roles.length; i++) {
     const r = l.roles[i];
@@ -94,7 +123,7 @@ export function validateList(l) {
     } else if (n.kind === NODE_CONTROLLER) {
       // Signing keys, addresses and TLS pins belong to API nodes: nobody
       // dials a controller.
-      if (!validNode(n) || n.sign.length !== 0 || n.url !== "" || n.tls.length !== 0
+      if (!validNode(n) || !isBytes(n.sign, 0) || n.url !== "" || !isBytes(n.tls, 0)
         || n.rootUsers.length > MAX_ROOT || n.rootRoles.length > MAX_ROOT) return false;
       for (const id of n.rootUsers) if (!user(l, id)) return false;
       for (const r of n.rootRoles) if (!role(l, r)) return false;
@@ -109,10 +138,10 @@ export function validateList(l) {
     const a = l.auto[i];
     if (i > 0 && l.auto[i - 1].target >= a.target) return false;
     if (a.target === AUTO_SYSTEM) {
-      if (a.key.length !== 0) return false;
+      if (!isBytes(a.key, 0)) return false;
     } else if (a.target === AUTO_WEB || a.target === AUTO_API || a.target === AUTO_CONTROLLER
       || (validAppID(a.target) && !coreApp(a.target))) {
-      if (a.key.length !== 32) return false;
+      if (!isBytes(a.key, 32)) return false;
     } else {
       return false;
     }
@@ -368,18 +397,28 @@ export function needsConfirm(l, userID, op) {
   });
 }
 
-const matches = (entries, op) => entries.some((e) =>
-  e === "app/" + op.app || e === "app/" + op.app + "/" + op.action
-  || (op.node !== "" && e === "node/" + op.node));
+// Round 1 finding K2: op.node !== "" was true for op.node === undefined too,
+// and "node/" + undefined then compared equal to a white-list entry
+// "node/undefined" (a well-formed entry: validName("undefined") is true) -
+// excusing an operation that was never about any node, in the opening
+// direction. nd falls back to Go's own zero value "" for a caller who left
+// op.node unset, same as Go's Op.Node would read for a zero-value Op.
+const matches = (entries, op) => {
+  const nd = op.node ?? "";
+  return entries.some((e) =>
+    e === "app/" + op.app || e === "app/" + op.app + "/" + op.action || (nd !== "" && e === "node/" + nd));
+};
 
-export const validNode = (n) => validName(n.id) && validText(n.name, 64) && n.noise.length === 32;
+// Not part of this task's interface list and unexported in Go too (Round 1
+// finding K4) - validAPINode below is the one exported surface that needs it.
+const validNode = (n) => validName(n.id) && validText(n.name, 64) && isBytes(n.noise, 32);
 
-export const validAPINode = (n) => n.kind === NODE_API && validNode(n) && n.sign.length === 32
-  && validTunnelURL(n.url) && n.tls.length === 32 && n.rootUsers.length + n.rootRoles.length === 0;
+export const validAPINode = (n) => n.kind === NODE_API && validNode(n) && isBytes(n.sign, 32)
+  && validTunnelURL(n.url) && isBytes(n.tls, 32) && n.rootUsers.length + n.rootRoles.length === 0;
 
 // StoreLocal marks uploaded apps, so no catalog key may claim it.
 export const validStore = (s) => validName(s.id) && s.id !== STORE_LOCAL && validText(s.name, 64)
-  && validStoreURL(s.url) && s.key.length === 32;
+  && validStoreURL(s.url) && isBytes(s.key, 32);
 
 export async function tlsPin(spki) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", spki));

@@ -91,6 +91,21 @@ export const rpShape = S({ id: str, origins: A(str) });
 export const userKeyShape = S({ id: str, kind: str, alg: str, pub: bytes, credId: bytes, kdf: kdfShape });
 export const proofShape = S({ kind: str, kid: str, sig: bytes, authData: bytes, clientData: bytes });
 
+// The longest relying party ID, the length of a DNS name.
+const MAX_RP_ID = 253;
+const RP_ID = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+// validRPID reports whether s is a relying party ID: a DNS name in lower case
+// of at most MAX_RP_ID bytes, without scheme, port or path, as WebAuthn asks
+// (Go: proof.ValidRPID). trust.validateList asks this one function for a
+// non-empty rp.id, the same rule Go's trust.List.Validate and config.Web
+// keep - url.js already has a very similar validDNSName for hosts, but it is
+// not exported and is a little stricter than WebAuthn's own grammar (it also
+// refuses an all-digit last label, which an RP ID grammar has no reason to),
+// so it is not reused here for something that is a different rule with a
+// different owner.
+export const validRPID = (s) => typeof s === "string" && s !== "" && s.length <= MAX_RP_ID && RP_ID.test(s);
+
 // saltBytes reads the salt of a KDF as it stands in a document: base64url,
 // strictly, as everywhere else.
 export const saltBytes = (s) => b64decode(s);
@@ -305,21 +320,30 @@ export function validateProof(p) {
 }
 
 // validateUserKeySync checks the structure of a key of the trust list, like
-// validateUserKey below, but without the two checks the Web Crypto API can
-// only answer as a promise: id === keyID(pub) (a SHA-256) and, for a passkey,
-// that pub actually imports as alg's kind of key. trust.js calls it from
-// validateList, which is synchronous and runs once over a whole list; the
-// deferred checks run once more per key, afterwards, in trust.parseList -
-// which is why this function alone under-accepts a key that validateUserKey
-// would refuse (Go has no such gap: crypto/sha256 and x509.ParsePKIXPublicKey
-// are synchronous, so proof.UserKey.Validate checks everything in one call).
-// It answers true or false and never throws.
+// validateUserKey below, but without the two checks only the Web Crypto API
+// can answer as a promise: id === keyID(pub) (a SHA-256) and, for a passkey,
+// that pub actually imports as alg's kind of key. Everything that can be
+// decided without a promise is decided right here, including that id is a
+// string in the first place - the sync/async split is about which checks
+// need crypto, not about id specifically, and skipping the type check too
+// would over-accept a key whose id is not a string at all, not just one
+// whose id is a string that happens to be wrong: with no type check here,
+// validateUsersSync's own keys.has(k.id)/keys.add(k.id) duplicate-key-id
+// check goes quiet for such a key (Round 1 finding Wichtig 3 - two objects
+// such as k.id = {} are never === to each other, so a Set never calls them
+// the same id, and the earlier version of this function let that reach the
+// Set at all). trust.js calls this one from validateList, which is
+// synchronous and runs once over a whole list; the two deferred checks run
+// once more per key, afterwards, in trust.parseList (Go has no such gap:
+// crypto/sha256 and x509.ParsePKIXPublicKey are synchronous, so
+// proof.UserKey.Validate checks everything in one call). It answers true or
+// false and never throws.
 export function validateUserKeySync(k) {
   try {
     if (k === null || typeof k !== "object") return false;
-    const { kind, alg, pub, kdf } = k;
+    const { id, kind, alg, pub, kdf } = k;
     const cred = asBytes(k.credId);
-    if (!(pub instanceof Uint8Array) || cred === null) return false;
+    if (typeof id !== "string" || !(pub instanceof Uint8Array) || cred === null) return false;
     if (kind === KIND_PASSWORD) {
       // Go: KDF is a pointer, and a password key without one is no key.
       return alg === ALG_EDDSA && pub.length === ED25519_SIZE && cred.length === 0 && validateKDF(kdf);
@@ -335,15 +359,16 @@ export function validateUserKeySync(k) {
 }
 
 // validateUserKey checks the structure of a key of the trust list
-// (Go: proof.UserKey.Validate): validateUserKeySync, plus id === keyID(pub)
-// and, for a passkey, that pub imports as alg's kind of key - the two checks
-// only the Web Crypto API can answer, which is why this one is a promise.
-// It answers true or false and never throws.
+// (Go: proof.UserKey.Validate): validateUserKeySync (which already confirms
+// id is a string), plus id === keyID(pub) and, for a passkey, that pub
+// imports as alg's kind of key - the two checks only the Web Crypto API can
+// answer, which is why this one is a promise. It answers true or false and
+// never throws.
 export async function validateUserKey(k) {
   try {
     if (!validateUserKeySync(k)) return false;
     const { id, kind, alg, pub } = k;
-    if (typeof id !== "string" || id !== (await keyIDAsync(pub))) return false;
+    if (id !== (await keyIDAsync(pub))) return false;
     if (kind === KIND_PASSKEY) return (await importPublic(alg, pub)) !== null;
     return true;
   } catch {
