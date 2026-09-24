@@ -198,14 +198,25 @@ func tokenOf(t *testing.T, cookie string) []byte {
 // contract keeps that one for a session that is missing or has run out
 // (shared/README.md), so a step of Live that could not be taken must not carry
 // it: a database that hiccups would otherwise send every user of the
-// installation to the login screen, and take the logout that would end the
-// session properly away in the same breath. Both paths of this package are
-// asked, because both read the answer out of the same call.
+// installation to the login screen.
+//
+// GET session.PathTrust is the path that is asked. The logout used to read its
+// answer out of this same call and no longer does -- it takes sessionRow, and
+// TestLogoutEndsASessionTheRestOfLiveCannotRead holds it to the 204 for the
+// two of the five steps it does not take at all.
 //
 // The five steps below are every one Live takes that can fail without the
-// session being the reason. Three of them are the store not answering, which
-// is over when it answers again: E_UNREACHABLE. Two are this API's own row and
-// its own key, which a retry does not mend: E_INTERNAL.
+// session saying no. Three of them are the store not answering, which is over
+// when it answers again: E_UNREACHABLE. Two are this API's own row and its own
+// key, which a retry does not mend: E_INTERNAL.
+//
+// They are not every step that can fail over a row of this API's own: row.Cert
+// is a sixth, inside session.VerifyClient, and it is answered the other way
+// round on purpose -- E_LOGIN, and the row goes. A certificate that no longer
+// reads is a session that can never be proved again, so ending it mends
+// itself, where a proof that no longer reads leaves a row nothing can use.
+// TestLogoutEndsASessionTheRestOfLiveCannotRead is what keeps that difference
+// from costing its owner the session.
 func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -239,26 +250,14 @@ func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 			// the row is asked for at the end through the one that answers.
 			plain := h.S.DB
 			c.take(t, h, cookie)
-			for _, call := range []struct {
-				what string
-				run  func(w *httptest.ResponseRecorder)
-			}{
-				{"GET " + session.PathTrust, func(w *httptest.ResponseRecorder) {
-					h.Trust(w, getCookie(session.PathTrust+"?from=1", cookie))
-				}},
-				{"POST " + session.PathLogout, func(w *httptest.ResponseRecorder) {
-					h.Logout(w, jsonPostCookie(session.PathLogout, cookie))
-				}},
-			} {
-				w := httptest.NewRecorder()
-				call.run(w)
-				if w.Code != c.status {
-					t.Fatalf("%s answered %d, want %d", call.what, w.Code, c.status)
-				}
-				cl, err := wire.ParseClose(w.Body.Bytes())
-				if err != nil || cl.Code != c.code {
-					t.Fatalf("%s answered %q (%v), want %q", call.what, cl.Code, err, c.code)
-				}
+			w := httptest.NewRecorder()
+			h.Trust(w, getCookie(session.PathTrust+"?from=1", cookie))
+			if w.Code != c.status {
+				t.Fatalf("GET %s answered %d, want %d", session.PathTrust, w.Code, c.status)
+			}
+			cl, err := wire.ParseClose(w.Body.Bytes())
+			if err != nil || cl.Code != c.code {
+				t.Fatalf("GET %s answered %q (%v), want %q", session.PathTrust, cl.Code, err, c.code)
 			}
 			// None of it was an answer about the session, so the row stays.
 			if _, err := plain.SessionGet(ctx, token); err != nil {

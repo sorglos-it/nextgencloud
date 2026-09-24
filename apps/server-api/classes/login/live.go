@@ -24,6 +24,51 @@ type Live struct {
 	APIKey   []byte           // the API's private session key, opened
 }
 
+// sessionRow is the row of the request's cookie, and with it the code the
+// caller answers when there is none. It is the first steps of Live, and by
+// itself the whole of what the logout takes.
+//
+// The clock comes in rather than being read here, so that one request asks it
+// once: the three ends below, the certificate session.VerifyClient proves and
+// the time Live writes back are then the same moment, not three readings of a
+// clock that may cross a second in between.
+//
+// Nothing about the session itself is told apart. A cookie no row answers and
+// a cookie no parser takes get the same E_LOGIN, so the one thing a stranger
+// could ask -- is this token one of yours -- stays unanswered:
+// dbapi.ErrNotFound is the store's word for a row that is not there, and it is
+// the only one of the store's answers that leads to E_LOGIN at all.
+func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([]byte, dbapi.Session, wire.Code, bool) {
+	value, ok := httpapi.Cookie(r)
+	if !ok {
+		return nil, dbapi.Session{}, wire.CodeLogin, false
+	}
+	raw, err := enc.B64.DecodeString(value)
+	if err != nil || len(raw) != session.TokenSize {
+		return nil, dbapi.Session{}, wire.CodeLogin, false
+	}
+	// Only the hash of the token is stored, so a dump of the database holds
+	// nothing anybody could send back as a cookie.
+	token := session.TokenHash(raw)
+	row, err := h.S.DB.SessionGet(ctx, token)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, dbapi.Session{}, wire.CodeLogin, false
+		}
+		return nil, dbapi.Session{}, wire.CodeUnreachable, false
+	}
+	// The three ends of a session: the time the certificate itself names, the
+	// idle time and the whole lifetime. The last is not the second reading of
+	// the first -- login/finish takes no certificate reaching further than the
+	// lifetime configured then, and an installation that has shortened it
+	// since ends the sessions it handed out under the longer one here.
+	if now >= row.Expires || now-row.Seen > h.S.Cfg.IdleTimeout || now-row.Created > h.S.Cfg.SessionLifetime {
+		_ = h.S.DB.SessionDelete(ctx, token)
+		return nil, dbapi.Session{}, wire.CodeLogin, false
+	}
+	return token, row, "", true
+}
+
 // Live returns the session of the request's cookie, and with it the code the
 // caller answers when there is none. It ends a session that is too old, has
 // been idle too long or whose user the trust list no longer holds, and it
@@ -48,23 +93,22 @@ type Live struct {
 // session are E_UNREACHABLE, a stored proof this API cannot read back and a
 // session key it cannot open are E_INTERNAL -- the database against this API's
 // own row and its own key. Without that difference a hiccup of the database
-// would send every user of the installation to the login screen, and refuse
-// the logout that would end the session properly in the same breath.
+// would send every user of the installation to the login screen.
 //
 // One edge of that is not clean: a trust list whose rows contradict each other
 // is the installation's doing and not the database's, and it is answered
 // E_UNREACHABLE all the same. state.Refresh hands both back as one error, and
 // telling them apart here would mean naming every error package state has.
 //
-// Nothing about the session itself is told apart. A cookie no row answers and
-// a cookie no parser takes get the same E_LOGIN, so the one thing a stranger
-// could ask -- is this token one of yours -- stays unanswered:
-// dbapi.ErrNotFound is the store's word for a row that is not there, and it is
-// the only one of the store's answers that leads to E_LOGIN at all.
+// Nothing about the session itself is told apart, and the cookie and the row
+// are read by sessionRow, which says why.
 //
-// A delete that fails is not said out loud, and nothing rests on it: a row
-// Live refuses once it refuses on every later request too, so there is no
-// protection here that could be switched off quietly.
+// A delete that fails is not said out loud, and nothing rests on it: nothing
+// here is kept out by the row being gone. Every later request reads the row
+// again and asks the clock, the configuration and the list afresh, so a row
+// that stayed behind is refused again for as long as its reason stands -- and
+// taken again once the reason is gone, which an admin who puts a withdrawn key
+// back can do.
 //
 // The chain is checked again on every request and not only at the login: a
 // user the trust list no longer holds, or whose key an admin took away, loses
@@ -106,33 +150,10 @@ type Live struct {
 // Whoever could time that holds the cookie already and no name stands behind
 // it -- but the difference is real, and nothing here evens it out.
 func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, bool) {
-	value, ok := httpapi.Cookie(r)
-	if !ok {
-		return nil, wire.CodeLogin, false
-	}
-	raw, err := enc.B64.DecodeString(value)
-	if err != nil || len(raw) != session.TokenSize {
-		return nil, wire.CodeLogin, false
-	}
-	// Only the hash of the token is stored, so a dump of the database holds
-	// nothing anybody could send back as a cookie.
-	token := session.TokenHash(raw)
-	row, err := h.S.DB.SessionGet(ctx, token)
-	if err != nil {
-		if isNotFound(err) {
-			return nil, wire.CodeLogin, false
-		}
-		return nil, wire.CodeUnreachable, false
-	}
 	now := h.S.Now()
-	// The three ends of a session: the time the certificate itself names, the
-	// idle time and the whole lifetime. The last is not the second reading of
-	// the first -- login/finish takes no certificate reaching further than the
-	// lifetime configured then, and an installation that has shortened it
-	// since ends the sessions it handed out under the longer one here.
-	if now >= row.Expires || now-row.Seen > h.S.Cfg.IdleTimeout || now-row.Created > h.S.Cfg.SessionLifetime {
-		_ = h.S.DB.SessionDelete(ctx, token)
-		return nil, wire.CodeLogin, false
+	token, row, code, ok := h.sessionRow(ctx, r, now)
+	if !ok {
+		return nil, code, false
 	}
 	// The proof is this API's own row, written with this same encoder from a
 	// proof session.ParseLoginFinish had already bounded, so nothing unbounded
@@ -179,19 +200,35 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 }
 
 // Logout answers POST session.PathLogout: the session row is removed and the
-// cookie deleted. Without a session it is E_LOGIN, which is what the contract's
-// table gives -- and it is also the answer when Live ended the session itself,
-// because then there is none left to end. A step Live could not take carries
-// its own code instead: the session is still there, and E_LOGIN would tell the
-// shell the one thing about it that is not so.
+// cookie deleted.
+//
+// It takes sessionRow and not Live, and that is the whole difference between
+// the two paths of this package. Removing the row of one's own cookie wants no
+// trust list and no proof that still reads back, so neither may keep a session
+// alive that its owner is ending: what Live checks past that point decides who
+// is told things, and none of it decides who may stop being told them. Before
+// that split a damaged proof (E_INTERNAL) or a store that would not hand out
+// the trust rows (E_UNREACHABLE) left the session standing until its own
+// expiry, with nothing its owner could do about it.
+//
+// Nobody past the row is asked about either, and nothing is given up by that:
+// whoever holds the cookie can open the session outright, so being able to
+// close it too takes nothing away that was there.
+//
+// Without a session it is E_LOGIN, which is what the contract's table gives --
+// and it is also the answer when the session had run out already, because then
+// there is none left to end. Reading the row is the one step left here that
+// can fail without the session being the reason, and it carries its own code:
+// a store that will not say whether there is a row leaves nothing to end, and
+// E_LOGIN would tell the shell the one thing about it that is not so.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	live, code, ok := h.Live(ctx, r)
+	token, _, code, ok := h.sessionRow(ctx, r, h.S.Now())
 	if !ok {
 		httpapi.Fail(w, code)
 		return
 	}
-	if err := h.S.DB.SessionDelete(ctx, live.Token); err != nil {
+	if err := h.S.DB.SessionDelete(ctx, token); err != nil {
 		// The cookie stays with the session: deleting it beside a row that is
 		// still there would leave a session open that nobody can reach to end.
 		httpapi.Fail(w, wire.CodeUnreachable)
