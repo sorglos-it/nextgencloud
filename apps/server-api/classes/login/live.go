@@ -121,6 +121,18 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 		_ = h.S.DB.SessionDelete(ctx, token)
 		return nil, wire.CodeLogin, false
 	}
+	// The proof is this API's own row, written with this same encoder from a
+	// proof session.ParseLoginFinish had already bounded, so nothing unbounded
+	// is read back here. Validate all the same: the row is what the check
+	// below is given, and a row that has been damaged must not reach it.
+	//
+	// It comes before the list because it is the cheaper of the two and it
+	// needs nothing from it: session.VerifyClient is the first step that wants
+	// both, so a row that never gets that far costs no look at the trust rows.
+	var p proof.Proof
+	if err := json.Unmarshal(row.Proof, &p); err != nil || p.Validate() != nil {
+		return nil, wire.CodeInternal, false
+	}
 	// The list is read out of the database and not out of the cache
 	// (state.Trust), because the cache of an API is only as new as the last
 	// version that API itself wrote: the node where an admin withdraws a key
@@ -134,14 +146,6 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 		// contradict each other end up here too, and both are mended from
 		// outside this request, so both leave the caller the same thing to do.
 		return nil, wire.CodeUnreachable, false
-	}
-	// The proof is this API's own row, written with this same encoder from a
-	// proof session.ParseLoginFinish had already bounded, so nothing unbounded
-	// is read back here. Validate all the same: the row is what the check
-	// below is given, and a row that has been damaged must not reach it.
-	var p proof.Proof
-	if err := json.Unmarshal(row.Proof, &p); err != nil || p.Validate() != nil {
-		return nil, wire.CodeInternal, false
 	}
 	verified, err := session.VerifyClient(row.Cert, p, v.List, now)
 	if err != nil {
