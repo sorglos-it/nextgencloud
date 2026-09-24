@@ -209,6 +209,15 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     wenn `speak()` sagt, dass die Gegenstelle mindestens V1.2 spricht — die
     Fassungslogik dafür steht seit Aufgabe 7. (controller, Aufgabe 7)
 
+30. **`trust.List.PasswordToo` sucht den Benutzer ein zweites Mal — gemessen.**
+    `trust.go:405-406` nimmt **nicht** den Benutzer, den `KeyOwner` gerade
+    zurückgegeben hat, sondern sucht ihn über die ID neu; `session.go:832` ruft
+    es genau so. `KeyOwner` läuft linear, `User` binär — eine Liste mit zwei
+    Benutzern derselben ID lässt die beiden also auf **verschiedene** Zeilen
+    zeigen, **ohne jeden Getter**. `validateList` weist doppelte IDs ab, wer die
+    Liste aber von Hand baut, umgeht das. Ein `PasswordToo`, das den gefundenen
+    Benutzer nimmt, löscht die zweite Suche und damit die Frage. (web, Aufgabe 8)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
