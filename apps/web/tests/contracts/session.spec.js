@@ -282,6 +282,70 @@ test("verifyApproval decides the certificates of session.json as Go does", async
   expect(got.rejects).toEqual(v.clientRejects.map(() => "session: proof is not by a key of this user"));
 });
 
+// Fixrunde 1, the third place K1 sent me looking for. verifyApproval reads
+// two fields of the trust list twice, and both reads decide the one rule this
+// function has of its own: a user whose role asks for the password too is
+// approved by a passkey alone. found.key.kind is read here and again inside
+// proof.verify, and found.user.id is read for the comparison with the
+// certificate and again for trust.passwordToo. A getter that answers the
+// first read with "passkey" and the second with "password", or the first with
+// carol's id and the second with the admin's, turns the rejected vector into
+// an accepted approval. Go is handed values: KeyOwner returns a copy of the
+// user and of the key, so no second read of anything exists there.
+test("verifyApproval decides on the key and the owner it read, not on a second read", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no proof");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const t = await import("/assets/js/contracts/trust.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const list = await t.parseList(b64decode(d.trust.payload));
+    const reject = d.clientRejects[0];
+    const client = b64decode(reject.client);
+    // The user of the refused certificate (carol, role "careful"), and the
+    // user of the good one (admin, whose role asks for no password on top).
+    const owner = JSON.parse(new TextDecoder().decode(client)).user;
+    const other = JSON.parse(new TextDecoder().decode(b64decode(d.client))).user;
+    const p = {
+      kind: reject.proof.kind, kid: reject.proof.kid, sig: b64decode(reject.proof.sig),
+      authData: new Uint8Array(0), clientData: new Uint8Array(0),
+    };
+    const withKeys = (f) => ({ ...list, users: list.users.map((u) => ({ ...u, keys: u.keys.map(f) })) });
+    const kindGetter = withKeys((k) => {
+      if (k.id !== reject.proof.kid) return k;
+      let n = 0;
+      return { ...k, get kind() { n++; return n === 1 ? "passkey" : "password"; } };
+    });
+    const idGetter = {
+      ...list,
+      users: list.users.map((u) => {
+        if (u.id !== owner) return u;
+        let n = 0;
+        return { ...u, get id() { n++; return n === 1 ? owner : n === 2 ? other : "x"; } };
+      }),
+    };
+    const check = async (l) => {
+      try {
+        const c = await s.verifyApproval(client, p, l);
+        return "approved by " + c.user;
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return { plain: await check(list), kindGetter: await check(kindGetter), idGetter: await check(idGetter) };
+  }, v);
+  // The plain list refuses for the reason Go gives. With one read per field,
+  // the key stays the passkey it claimed to be - and a password proof is no
+  // proof by a passkey - and the owner stays carol, whose role asks for the
+  // password too.
+  expect(got).toEqual({
+    plain: "session: proof is not by a key of this user",
+    kindGetter: "session: bad signature",
+    idGetter: "session: proof is not by a key of this user",
+  });
+});
+
 // Fixrunde 1, K2: Go is handed an int64 for now and can be handed nothing
 // else. Here both comparisons of the time check are false against undefined,
 // NaN, text or an object, so a certificate that expired long ago comes
