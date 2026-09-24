@@ -232,10 +232,17 @@ export async function parseList(payload) {
   const l = decode(payload, listBudget, listShape);
   if (!validateList(l)) throw new Error("trust: invalid list");
   // The key id is the hash of the key, so a list may not claim another one.
+  // One key's check does not depend on any other's, so a user's keys run as
+  // one Promise.all group instead of one sequential await at a time -
+  // bounded by construction, since MAX_KEYS_PER_USER caps every group at 16,
+  // never all of a list's keys (up to MAX_USERS x MAX_KEYS_PER_USER) at once
+  // (Fixrunde 3: sequential awaiting measured at ~15.3 ms per key in
+  // WebKit's Web Crypto - about 340x Chromium's ~0.045 ms - which alone
+  // accounted for the whole cost of parsing a large list; see the task
+  // report for the batched number).
   for (const u of l.users) {
-    for (const k of u.keys) {
-      if (!(await proof.validateUserKey(k))) throw new Error("trust: invalid list");
-    }
+    const oks = await Promise.all(u.keys.map((k) => proof.validateUserKey(k)));
+    if (oks.some((ok) => !ok)) throw new Error("trust: invalid list");
   }
   return l;
 }
@@ -398,9 +405,16 @@ export function passwordToo(l, userID) {
   return !!u && u.roles.some((n) => role(l, n)?.passwordToo);
 }
 
+// Fixrunde 3, point 2: mayRoot, needsConfirm and matches below are exported
+// (or, for matches, reached from an exported function) and take an l a
+// caller can build by hand, same as validateList's own family - .includes
+// and .some are array-only methods with no Array.isArray first, so an
+// array-like plain object threw here instead of being refused. Closes the
+// same gap Wichtig 4 closed, on the coordinator's decision.
 export function mayRoot(l, userID, nodeID) {
   const n = node(l, nodeID), u = user(l, userID);
   if (!n || !u || n.kind !== NODE_CONTROLLER) return false;
+  if (!isArray(n.rootUsers) || !isArray(n.rootRoles) || !isArray(u.roles)) return false;
   if (n.rootUsers.includes(userID)) return true;
   return u.roles.some((r) => n.rootRoles.includes(r));
 }
@@ -408,7 +422,8 @@ export function mayRoot(l, userID, nodeID) {
 // op is {app, action, node, root, critical, changes}.
 export function needsConfirm(l, userID, op) {
   const u = user(l, userID);
-  if (!u) return true; // an unknown user always confirms
+  // A malformed u.roles is the same kind of doubt as no user at all: confirm.
+  if (!u || !isArray(u.roles)) return true;
   return u.roles.some((name) => {
     const r = role(l, name);
     if (!r) return true;
@@ -427,7 +442,12 @@ export function needsConfirm(l, userID, op) {
 // excusing an operation that was never about any node, in the opening
 // direction. nd falls back to Go's own zero value "" for a caller who left
 // op.node unset, same as Go's Op.Node would read for a zero-value Op.
+// A malformed entries (Fixrunde 3, point 2) answers false on both of its
+// call sites in needsConfirm, which is the safe direction either way: a
+// malformed black no longer forces a confirm by accident, but level checks
+// still can; a malformed white no longer grants a bypass by accident.
 const matches = (entries, op) => {
+  if (!isArray(entries)) return false;
   const nd = op.node ?? "";
   return entries.some((e) =>
     e === "app/" + op.app || e === "app/" + op.app + "/" + op.action || (nd !== "" && e === "node/" + nd));
