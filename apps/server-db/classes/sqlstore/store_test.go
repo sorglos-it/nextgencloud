@@ -21,8 +21,10 @@ import (
 var ctx = context.Background()
 
 // open gives a test a fresh store on its own encrypted file. The schema comes
-// from the migrations, never from a CREATE TABLE in a test.
-func open(t *testing.T) dbapi.Store {
+// from the migrations, never from a CREATE TABLE in a test. It takes a
+// testing.TB and not a *testing.T, because a fuzz target opens its one store
+// on the *testing.F.
+func open(t testing.TB) dbapi.Store {
 	t.Helper()
 	s, _ := openDB(t)
 	return s
@@ -31,7 +33,7 @@ func open(t *testing.T) dbapi.Store {
 // openDB gives the database along with the store, for the tests that read the
 // rows back the way the database really holds them instead of through the
 // store that wrote them.
-func openDB(t *testing.T) (dbapi.Store, *sql.DB) {
+func openDB(t testing.TB) (dbapi.Store, *sql.DB) {
 	t.Helper()
 	cfg := config.DB{
 		Driver: config.DriverSQLite,
