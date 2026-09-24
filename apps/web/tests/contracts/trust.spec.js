@@ -636,6 +636,52 @@ test("user, role, node, keyOwner and passwordToo refuse array-like lists instead
   });
 });
 
+// Fixrunde 5: encodeList closes the same criterion once more - exported,
+// takes caller data ("dass die Liste normalerweise aus parseList kommt,
+// hilft nicht: exportiert heisst, jemand ruft es anders auf" - the
+// coordinator's decision). It has no natural false/null to answer, though:
+// its job is to produce bytes, not decide or look something up, so unlike
+// every function fixed so far in this task there is no single safe fallback
+// value. What it can promise instead is what parseList/parseSigned already
+// promise on their own failures: one controlled, named error instead of
+// whatever uncontrolled exception happens to surface from deep inside
+// l.users.map/encodeUser/encodeUserKey's own field reads, at whatever depth
+// the first malformed field sits at. Proven at two depths below, not just
+// the top level: a top-level field (users, an array-like) and a byte field
+// nested two calls down (a user's own key's credId).
+test("encodeList answers one controlled error instead of an arbitrary one", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const adminId = "EREREREREREREREREREREQ";
+    const key = () => ({
+      id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+      pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const arrayLike = (...items) => {
+      const o = { length: items.length };
+      items.forEach((v, i) => { o[i] = v; });
+      return o;
+    };
+    const safe = (fn) => { try { fn(); return { threw: false, message: null }; } catch (e) { return { threw: true, message: String(e && e.message) }; } };
+    const list = (extra) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: adminId,
+      rp: { id: "", origins: [] }, users: [{ id: adminId, name: "admin", roles: ["admin"], keys: [key()] }],
+      roles: [{ name: "admin", level: "critical" }], nodes: [], stores: [], auto: [],
+      ...extra,
+    });
+
+    return {
+      topLevelUsers: safe(() => t.encodeList(list({ users: arrayLike(key()) }))),
+      nestedCredId: safe(() => t.encodeList(list({
+        users: [{ id: adminId, name: "admin", roles: ["admin"], keys: [{ ...key(), credId: arrayLike(1) }] }],
+      }))),
+    };
+  });
+  expect(out.topLevelUsers).toEqual({ threw: true, message: "trust: cannot encode this list" });
+  expect(out.nestedCredId).toEqual({ threw: true, message: "trust: cannot encode this list" });
+});
+
 // Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
 // tlsPin had no test calling them - the previous report described their
 // doubt-case behavior (unknown user/role/node grant nothing) by reading the
