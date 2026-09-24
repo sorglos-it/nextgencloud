@@ -32,6 +32,14 @@ während sie den alten behoben.
   Ein Umsetzer hat so zwei eigene Fehler gefunden, bevor sie eingecheckt waren.
 - Zahlen altern: „18 Mikrosekunden" gilt für **einen** Rechner. Schreib
   Verhältnisse, oder sag dazu, worauf gemessen wurde.
+- **Und der tückischste Satz ist der über die eigene Arbeit.** Ein Umsetzer
+  meldete, seine Runde sei „netto kleiner" geworden — nachgezählt war sie um
+  34 Zeilen gewachsen. Er hat den Grund selbst benannt: er hatte die drei
+  entfernten Namen gezählt und die 33 neuen nicht, und die größte neue Funktion
+  als „kleine Sache aus vorhandenem Werkzeug" verbucht. **Das war ein Satz über
+  seine Absicht, nicht über den Code** — und ich hatte ihn ungeprüft
+  weitergegeben. Wer zusagt, etwas sei kleiner, schneller oder einfacher
+  geworden, legt die zwei Zahlen daneben.
 
 **Die Durchsicht ist ein eigener Arbeitsschritt, kein Nebenbei.** Ein Umsetzer
 hat sie zum Schluss getrennt gemacht und dabei **sechs** weitere falsche Sätze
