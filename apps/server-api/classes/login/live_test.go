@@ -423,9 +423,15 @@ func TestLogoutEndsASessionTheRestOfLiveCannotRead(t *testing.T) {
 // the stored proof is read before the trust list is. Reading the proof is one
 // json.Unmarshal and one Validate over a row this API wrote itself; reading
 // the list is a walk of the trust rows, and what it brings back is wanted
-// first by session.VerifyClient, which stands below both. Either order refuses
-// the same session, so the order shows in nothing but the cost -- and the cost
-// is the whole of why it is this way round.
+// first by session.VerifyClient, which stands below both. The cost is why it
+// is this way round.
+//
+// Either order refuses the same session, and while only one of the two is
+// wrong the order shows in nothing but the cost. Where both are wrong at once
+// it decides the answer as well, which is the second half below: the step that
+// runs first is the one that names the fault. That is not a reason of its own
+// to read the proof first -- it only means the cheap step gets to speak, and
+// the proof is the one this API wrote itself.
 func TestADamagedProofCostsNoLookAtTheList(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
@@ -437,6 +443,14 @@ func TestADamagedProofCostsNoLookAtTheList(t *testing.T) {
 	}
 	if got := c.take(); got != 0 {
 		t.Fatalf("a damaged proof cost %d reads of the trust list", got)
+	}
+	// A damaged proof and a store that will not hand out the list. With the
+	// proof read first the answer is about the proof; the other way round it
+	// would call the database away over a row that is broken, and the
+	// database would be mended by waiting, which this is not.
+	h.S.DB = noTrust{h.S.DB}
+	if _, code, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
+		t.Fatalf("a damaged proof beside a list nobody can read answered %q (open %v)", code, ok)
 	}
 }
 
