@@ -125,11 +125,19 @@ func appColumns(a *dbapi.App, active *int64, grants *string) []any {
 
 // appDone puts the two converted columns into the App. What the grants
 // column carries is measured like anything that comes in from outside: a row
-// of the store's own database is no different, see readList.
+// of the store's own database is no different, see readList. What AppPut
+// refuses to write is refused on the way out as well - the list goes on into
+// the interface, and a grant nobody knows has no business there.
+//
+// grantsOK stands here and not in readList because readList also reads
+// User.Roles from task 6 on, and a role is no grant.
 func appDone(a *dbapi.App, active int64, grants string) error {
 	list, err := readList(grants)
 	if err != nil {
 		return err
+	}
+	if !grantsOK(list) {
+		return errBrokenGrants
 	}
 	a.Active, a.Grants = active == 1, list
 	return nil

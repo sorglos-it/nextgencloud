@@ -220,11 +220,12 @@ func TestAppListReadsTheSameRow(t *testing.T) {
 // nothing but its ID; the same row written twice is one row; and the store
 // made nothing of its own - the schema is what the migrations left behind.
 //
-// The NULL is the one check here that cannot fail on SQLite: this driver
-// binds a nil []byte as an empty blob, measured. MariaDB's binds it as NULL,
-// and every column is NOT NULL, so a row without blob() would be written on
-// SQLite and refused on MariaDB. The check stands for the database that is
-// not in this test.
+// The NULL is the one check here that proves nothing on SQLite and cannot
+// fail on it: this driver binds a nil []byte as an empty blob, measured.
+// MariaDB's binds it as NULL, and every column is NOT NULL, so a row without
+// blob() would be written on SQLite and refused on MariaDB. The check stands
+// for the database that is not in this test; the one that does measure it
+// here is TestEveryByteSliceComesFromBlob, which reads the source.
 func TestWhatStandsInTheDatabase(t *testing.T) {
 	s, db := openDB(t)
 	full := dbapi.App{ID: "org.sorglos.terminal", Version: "1.0.0", Store: "global", Node: "ctl-1",
@@ -309,6 +310,31 @@ func TestARowNobodyOfOursWrote(t *testing.T) {
 	}
 	if list, err := s.AppList(ctx); err == nil {
 		t.Errorf("AppList took the same row: %+v", list)
+	}
+}
+
+// TestAGrantNobodyKnowsDoesNotComeBackOut: AppPut refuses a grant the
+// contract does not know, and the way back out refuses it too. What is
+// forbidden while writing may not appear while reading: the list of AppList
+// goes on into the interface. The row is planted with SQL of the test's own,
+// because the store has no way of writing one.
+func TestAGrantNobodyKnowsDoesNotComeBackOut(t *testing.T) {
+	s, db := openDB(t)
+	bad := dbapi.App{ID: "org.sorglos.terminal", Grants: []string{"\x00"}}
+	if err := s.AppPut(ctx, bad); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Fatalf("writing it: %v, want ErrInvalid", err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO ngc_app (id, version, store, node, active, manifest, "+
+		"sha256, grants, kept_data, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[]byte(bad.ID), []byte(""), []byte(""), []byte(""), int64(0), []byte(""),
+		[]byte(""), []byte("\x00"), int64(0), int64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := s.AppGet(ctx, bad.ID); err == nil {
+		t.Errorf("AppGet handed out the grants %q", a.Grants)
+	}
+	if list, err := s.AppList(ctx); err == nil {
+		t.Errorf("AppList handed out the same row: %+v", list)
 	}
 }
 

@@ -152,8 +152,12 @@ func wait(ctx context.Context, try int) bool {
 }
 
 // Not written yet: Once..., Lock... (task 5), User..., Session..., Pending...
-// (task 6), Log... (task 7). Each line goes away with its task, and no test
-// may ever lean on one of them.
+// (task 6), Log... (task 7). Each line goes away with its task. No test takes
+// the answer of one of them for a final one; the single test that calls them,
+// TestTheRestIsNotWrittenYet, holds nothing but that they are still
+// provisional, and it is meant to go red the moment one of them is built -
+// that is what takes a finished method out of the list below instead of
+// leaving it lying here.
 
 func (s *store) OnceCreate(context.Context, string, []byte, string, int64) error {
 	return errors.ErrUnsupported

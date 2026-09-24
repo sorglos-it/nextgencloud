@@ -1,9 +1,11 @@
 package migrate
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	gotoken "go/token" // token is a type of this package
+	"go/types"
 	"regexp"
 	"slices"
 	"strings"
@@ -744,53 +746,125 @@ func TestABoundBitesBeforeTheWork(t *testing.T) {
 // where the runner's door is opened. who is a bool, so a bare true at a call
 // site would let a migration name ngc_schema and ngc_lock: the compiler takes
 // it, every test of behaviour still passes, and the guard of takeTable is
-// gone without a word. So the who of every call has to be one of the two
-// names, never a value and never a variable, and fromRunner stands exactly
-// once - in bootstrap, which makes the two tables before the first migration
-// can run.
+// gone without a word.
+//
+// Measured are the four functions that carry the mark, each at the place it
+// stands in a call: checkStatement(statement, who), measure(statement, who),
+// fill(dialect, statement, who) and takeTable(cursor, who, statement). At
+// each of them the who is either one of the two constants or the who the
+// function around the call got itself and hands on - nothing else, and no
+// value at all. fromRunner stands exactly once, in bootstrap, which makes the
+// two tables before the first migration can run.
+//
+// What an identifier stands for comes from go/types, not from its name: this
+// package has a local w of its own in measure, and only the object behind the
+// name says whether a w at a call is the mark or something else that took the
+// name.
 func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
-	// Where the who stands: fill(dialect, statement, who) and
-	// checkStatement(statement, who).
-	where := map[string]int{"fill": 2, "checkStatement": 1}
+	// Where the who stands in a call of each of the four.
+	where := map[string]int{"checkStatement": 1, "measure": 1, "fill": 2, "takeTable": 1}
 	fset := gotoken.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := 0
+	var files []*ast.File
 	for _, pkg := range pkgs {
 		for name, file := range pkg.Files {
-			if strings.HasSuffix(name, "_test.go") {
-				continue
+			if !strings.HasSuffix(name, "_test.go") {
+				files = append(files, file)
 			}
-			ast.Inspect(file, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				fn, ok := call.Fun.(*ast.Ident)
-				if !ok {
-					return true
-				}
-				i, ok := where[fn.Name]
-				if !ok {
-					return true
-				}
-				if i >= len(call.Args) {
-					t.Errorf("%s: %s is called without a who", fset.Position(call.Pos()), fn.Name)
-					return true
-				}
-				arg, ok := call.Args[i].(*ast.Ident)
-				switch {
-				case !ok || (arg.Name != fromMigrationName && arg.Name != fromRunnerName):
-					t.Errorf("%s: %s is told whose statement it is with something other than %s or %s",
-						fset.Position(call.Args[i].Pos()), fn.Name, fromMigrationName, fromRunnerName)
-				case arg.Name == fromRunnerName:
-					runner++
-				}
-				return true
-			})
 		}
+	}
+	slices.SortFunc(files, func(a, b *ast.File) int {
+		return strings.Compare(fset.Position(a.Pos()).Filename, fset.Position(b.Pos()).Filename)
+	})
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Uses:  map[*ast.Ident]types.Object{},
+		Defs:  map[*ast.Ident]types.Object{},
+	}
+	// Nothing asked about here lives outside this package: who, its two
+	// constants and the four functions are all declared in lint.go, so the
+	// imports are left unresolved and the errors that come of that are
+	// ignored. An identifier the reading below cannot resolve is reported.
+	conf := types.Config{
+		Importer:                 nowhere{},
+		Error:                    func(error) {},
+		DisableUnusedImportCheck: true,
+	}
+	pkg, _ := conf.Check("migrate", fset, files, info)
+	if pkg == nil {
+		t.Fatal("the package could not be read at all")
+	}
+	marks := map[string]types.Object{
+		fromMigrationName: pkg.Scope().Lookup(fromMigrationName),
+		fromRunnerName:    pkg.Scope().Lookup(fromRunnerName),
+	}
+	for name, obj := range marks {
+		if obj == nil {
+			t.Fatalf("%s is not declared in this package", name)
+		}
+	}
+	whoType := pkg.Scope().Lookup("who")
+	if whoType == nil {
+		t.Fatal("who is not declared in this package")
+	}
+	runner, seen := 0, 0
+	for _, file := range files {
+		var stack []ast.Node
+		ast.Inspect(file, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return false
+			}
+			stack = append(stack, n)
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			fn, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			i, ok := where[fn.Name]
+			if !ok {
+				return true
+			}
+			seen++
+			if i >= len(call.Args) {
+				t.Errorf("%s: %s is called without a who", fset.Position(call.Pos()), fn.Name)
+				return true
+			}
+			arg, ok := call.Args[i].(*ast.Ident)
+			if !ok {
+				t.Errorf("%s: %s is told whose statement it is with something that is no name at all",
+					fset.Position(call.Args[i].Pos()), fn.Name)
+				return true
+			}
+			switch obj := info.Uses[arg]; {
+			case obj == nil:
+				t.Errorf("%s: the guard cannot tell what %s stands for",
+					fset.Position(arg.Pos()), arg.Name)
+			case obj == marks[fromMigrationName]:
+			case obj == marks[fromRunnerName]:
+				runner++
+			case isWhoParam(info, obj, whoType, stack):
+				// The who the function around the call got itself: the door
+				// it opens is the one its own caller opened, and that call is
+				// measured here too.
+			default:
+				t.Errorf("%s: %s is told whose statement it is with %s, which is neither %s nor %s "+
+					"nor the who this function was given", fset.Position(arg.Pos()), fn.Name, arg.Name,
+					fromMigrationName, fromRunnerName)
+			}
+			return true
+		})
+	}
+	// A guard that measured nothing says nothing: the four functions above
+	// stand at more than one call site each.
+	if seen < 9 {
+		t.Errorf("only %d calls carrying a who were measured", seen)
 	}
 	if runner != 1 {
 		t.Errorf("%s stands at %d call sites; it belongs at the one that makes ngc_schema and ngc_lock",
@@ -798,8 +872,44 @@ func TestTheRunnerDoorIsOpenedOnce(t *testing.T) {
 	}
 }
 
+// isWhoParam reports whether obj is a parameter of type who of one of the
+// functions around the call.
+func isWhoParam(info *types.Info, obj types.Object, whoType types.Object, stack []ast.Node) bool {
+	v, ok := obj.(*types.Var)
+	if !ok || v.Type() != whoType.Type() {
+		return false
+	}
+	for _, n := range stack {
+		var sig *types.Signature
+		switch f := n.(type) {
+		case *ast.FuncDecl:
+			if fn, ok := info.Defs[f.Name].(*types.Func); ok {
+				sig, _ = fn.Type().(*types.Signature)
+			}
+		case *ast.FuncLit:
+			sig, _ = info.Types[f].Type.(*types.Signature)
+		}
+		if sig == nil {
+			continue
+		}
+		for i := range sig.Params().Len() {
+			if sig.Params().At(i) == v {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nowhere resolves no import at all. See the note in the test above.
+type nowhere struct{}
+
+func (nowhere) Import(path string) (*types.Package, error) {
+	return nil, fmt.Errorf("migrate: %s is not read here", path)
+}
+
 // The two names as the source writes them. A test that reads source code
-// compares names, so the names stand here once.
+// looks them up by name once and works with the objects behind them.
 const (
 	fromMigrationName = "fromMigration"
 	fromRunnerName    = "fromRunner"

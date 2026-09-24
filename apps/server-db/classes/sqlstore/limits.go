@@ -113,6 +113,9 @@ func readSeq(n int64) (uint64, error) {
 	return uint64(n), nil
 }
 
+// errBrokenGrants says a column carries a grant this store never wrote.
+var errBrokenGrants = errors.New("sqlstore: a grant in a column is not one this store wrote")
+
 // grantsOK reports whether every grant is one the contract knows; an app
 // carries at most appstore.NeedRoot and appstore.NeedNetwork.
 func grantsOK(list []string) bool {
