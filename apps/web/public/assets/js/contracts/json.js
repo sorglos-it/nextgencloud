@@ -38,6 +38,13 @@ export class BadJSON extends Error {}
 export const str = Object.freeze({ k: "str" });
 export const bool = Object.freeze({ k: "bool" });
 export const int = Object.freeze({ k: "int" });
+// optInt is an integer that may be missing, Go's *int with omitempty:
+// wire.Close has its exit code that way. A number reads the same as int; only
+// the value of a member that is not there differs, and it has to differ,
+// because 0 is an exit code a program really returns. With the zero of int
+// the two would be one answer, and "the service ended with 0" would read as
+// "the service named no code".
+export const optInt = Object.freeze({ k: "int", opt: true });
 export const uint = Object.freeze({ k: "uint" });
 export const uint32 = Object.freeze({ k: "uint32" });
 export const uint64 = Object.freeze({ k: "uint" });
@@ -66,7 +73,9 @@ export function zero(shape) {
   switch (shape.k) {
     case "str": return "";
     case "bool": return false;
-    case "int": case "uint": case "uint32": return 0;
+    // A number that may be missing (optInt) answers null where it is missing,
+    // which is Go's nil *int; every other number answers 0.
+    case "int": case "uint": case "uint32": return shape.opt === true ? null : 0;
     case "bytes": return new Uint8Array(0);
     case "raw": return null;
     case "array": return [];
