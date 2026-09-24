@@ -14,13 +14,14 @@ import (
 // TestLockTakeAgainWithTheSameTime is the trap of the UPDATE-then-INSERT
 // shape: MariaDB counts changed rows by default, so taking a lock again with
 // the very same time would look like "no row" and end in an INSERT that
-// fails. The driver is set to count matched rows instead; this test holds it.
+// fails. The driver has to be set to count matched rows instead, and no
+// driver in this repository is: no MariaDB connection is opened anywhere yet,
+// so there is nowhere for the flag to stand. The task that writes that DSN
+// owes it.
 //
-// On SQLite it holds nothing of the sort, and that is all this run measures:
-// SQLite counts every row its UPDATE went through, so the second take passes
-// here whatever MariaDB would answer. No MariaDB connection is opened
-// anywhere in this repository yet, so the sentence above is a promise to the
-// task that writes that DSN and not a measurement of today.
+// Until then this test holds nothing of the sort, and that is all this run
+// measures: SQLite counts every row its UPDATE went through, so the second
+// take passes here whatever MariaDB would answer.
 func TestLockTakeAgainWithTheSameTime(t *testing.T) {
 	s := open(t)
 	const now, until = 1790000000, 1790000060
