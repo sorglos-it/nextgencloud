@@ -9,8 +9,9 @@ const v = vectors("task.json");
 // raw. The WebKit that Playwright brings has neither - measured in task 8 for
 // this same list - and then no right signature can come out true, which is
 // the right answer for an engine that cannot check and no test of this
-// contract. The two tests that decide on form alone need no crypto and run on
-// every engine.
+// contract. The four tests that decide on form alone need no crypto and run
+// on every engine; buildTask asks for crypto.getRandomValues, which every
+// engine has.
 //
 // Probed with a real key out of this vector's own list, the way session.spec.js
 // and trust.spec.js probe: an engine that has Ed25519 but rejects a made-up
@@ -35,6 +36,24 @@ async function hasEd25519(shell, signed) {
       return false;
     }
   }, signed);
+}
+
+// Can this engine make an Ed25519 key of its own and sign with it? That is
+// what the signTask test needs, and it is not the question above: hasEd25519
+// asks whether a key can be imported and a signature checked. Asked with the
+// very calls that test then makes, so an engine is never skipped for a reason
+// that is not its own.
+async function canSignEd25519(shell) {
+  return shell.evaluate(async () => {
+    try {
+      const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+      await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey, new Uint8Array([1]));
+      await crypto.subtle.exportKey("raw", pair.publicKey);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 test("a task signs with the session key and binds to the certificate", async ({ shell }) => {
@@ -424,4 +443,242 @@ test("verifyConfirm answers false where it cannot check, and reads the proof onc
   expect(out.noArgs).toBe(false);
   expect(out.throwingList).toBe(false);
   expect(out.throwingProof).toBe(false);
+});
+
+// buildTask and signTask are the two of the eleven interfaces that have no
+// counterpart in Go and no vector: only the shell builds and signs tasks. Up
+// to this round nothing ran them at all, and a run would have found what the
+// first case below now pins: the version before this one walked the caller's
+// cert twice, once for the check and once for the writing, and a cert that
+// answers the two walks differently was checked as one certificate and signed
+// as another.
+//
+// No crypto here beyond crypto.getRandomValues, which every engine has, so
+// this test runs where the signature tests are skipped.
+test("buildTask signs exactly the task it checked, and hands back what the bytes hold", async ({ shell }) => {
+  test.setTimeout(120_000);
+  const out = await shell.evaluate(async () => {
+    const task = await import("/assets/js/contracts/task.js");
+    const { utf8, fromUtf8, b64encode, equal } = await import("/assets/js/contracts/b64.js");
+
+    const args = (over) => ({
+      inst: "EREREREREREREREREREREQ", certHash: new Uint8Array(32).fill(7),
+      node: "ctl-1", app: "ngc.store", service: "controller", action: "deactivate",
+      params: utf8('{"a":1}'), now: 1790000000, ...over,
+    });
+    // Bytes that answer the first walk over them with one value and the
+    // second with another. A Proxy passes instanceof Uint8Array and answers
+    // every index itself, so nothing short of walking only once keeps the two
+    // apart - a length check cannot, and neither can a copy taken after the
+    // check.
+    const walking = (n, first, second) => {
+      let seen = 0, run = 0;
+      return new Proxy(new Uint8Array(n), {
+        get(t, k, r) {
+          if (k === "length") return n;
+          if (typeof k === "string" && /^[0-9]+$/.test(k)) {
+            const v = (run === 0 ? first : second)[Number(k)];
+            if (++seen % n === 0) run++;
+            return v;
+          }
+          return Reflect.get(t, k, r);
+        },
+      });
+    };
+    // Is the task that comes back the task these bytes hold? parseTask is
+    // what every verifier runs on them, so its answer is the measure.
+    const holds = (r) => {
+      const t = task.parseTask(r.bytes);
+      return equal(r.task.id, t.id) && r.task.inst === t.inst && equal(r.task.cert, t.cert)
+        && r.task.node === t.node && r.task.app === t.app && r.task.service === t.service
+        && r.task.action === t.action && r.task.iat === t.iat && r.task.exp === t.exp
+        && (r.task.params === null ? t.params === null : equal(r.task.params, t.params));
+    };
+
+    const plain = task.buildTask(args({}));
+    const certA = new Uint8Array(32).fill(7), certB = new Uint8Array(32).fill(9);
+    const drift = task.buildTask(args({ certHash: walking(32, certA, certB) }));
+    // A cert of no bytes at all whose length answers 32. b64encode walks it
+    // once and writes the base64url of 32 zero bytes - a wrong certificate,
+    // but the one the bytes and the task both name.
+    const liar = new Uint8Array(0);
+    Object.defineProperty(liar, "length", { get() { return 32; } });
+    const lying = task.buildTask(args({ certHash: liar }));
+
+    const refused = {};
+    for (const [name, over] of [
+      ["nothing at all", null], ["now as text", { now: "1790000000" }],
+      ["now a fraction", { now: 1790000000.5 }], ["no now", { now: undefined }],
+      ["no certHash", { certHash: undefined }], ["certHash of 31 bytes", { certHash: new Uint8Array(31) }],
+      ["certHash as text", { certHash: "x".repeat(32) }], ["app that is no app id", { app: "ngcstore" }],
+      ["params that are an array", { params: utf8("[1,2]") }],
+      ["params beyond MAX_PARAMS", { params: utf8('{"a":"' + "x".repeat(8193 - 8) + '"}') }],
+    ]) {
+      try {
+        task.buildTask(over === null ? undefined : args(over));
+        refused[name] = "accepted";
+      } catch (e) {
+        refused[name] = e.message;
+      }
+    }
+
+    return {
+      // The plain case: a valid task, the lifetime buildTask gives it, an id
+      // of ID_SIZE bytes, and the bytes and the task saying the same thing.
+      valid: task.validateTask(plain.task),
+      lifetime: plain.task.exp - plain.task.iat,
+      iat: plain.task.iat === 1790000000,
+      idSize: plain.task.id.length,
+      plainHolds: holds(plain),
+      rebuilt: equal(task.encodeTask(plain.task), plain.bytes),
+      // An id nobody else gets: two calls, two ids.
+      twoIDs: b64encode(task.buildTask(args({})).task.id)
+        !== b64encode(task.buildTask(args({})).task.id),
+      // node left out is the empty node Go writes for a core action.
+      noNode: task.buildTask(args({ node: undefined })).task.node,
+      // The drifting cert: whichever walk won, the task and the bytes name
+      // the same certificate, and it is the one that was checked.
+      driftHolds: holds(drift),
+      driftIsFirstWalk: JSON.parse(fromUtf8(drift.bytes)).cert === b64encode(certA),
+      lyingHolds: holds(lying),
+      lyingCertSize: lying.task.cert.length,
+      // Nothing the caller handed over is part of the answer.
+      ownArrays: lying.task.cert !== liar,
+      refused,
+    };
+  });
+  expect(out.valid).toBe(true);
+  expect(out.lifetime).toBe(120);
+  expect(out.iat).toBe(true);
+  expect(out.idSize).toBe(16);
+  expect(out.plainHolds).toBe(true);
+  expect(out.rebuilt).toBe(true);
+  expect(out.twoIDs).toBe(true);
+  expect(out.noNode).toBe("");
+  // The three the version before this one got wrong.
+  expect(out.driftHolds).toBe(true);
+  expect(out.driftIsFirstWalk).toBe(true);
+  expect(out.lyingHolds).toBe(true);
+  expect(out.lyingCertSize).toBe(32);
+  expect(out.ownArrays).toBe(true);
+  expect(out.refused).toEqual({
+    "nothing at all": "task: malformed task",
+    "now as text": "task: malformed task",
+    "now a fraction": "task: malformed task",
+    "no now": "task: malformed task",
+    "no certHash": "task: malformed task",
+    "certHash of 31 bytes": "task: malformed task",
+    "certHash as text": "task: malformed task",
+    "app that is no app id": "task: malformed task",
+    "params that are an array": "task: malformed task",
+    "params beyond MAX_PARAMS": "task: malformed task",
+  });
+});
+
+test("signTask signs those very bytes, for purpose task/v1 and under the key's own id", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await canSignEd25519(shell)),
+    "this engine's Web Crypto makes no Ed25519 key and signs nothing with one");
+  const out = await shell.evaluate(async () => {
+    const task = await import("/assets/js/contracts/task.js");
+    const sign = await import("/assets/js/contracts/sign.js");
+    const { utf8, equal } = await import("/assets/js/contracts/b64.js");
+
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const pub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    // sign.verify refuses an envelope that names another key before it looks
+    // at any signature, so the key id has to be the one sign.keyID makes.
+    const key = { privateKey: pair.privateKey, kid: await sign.keyID(pub) };
+    const fields = {
+      inst: "EREREREREREREREREREREQ", certHash: new Uint8Array(32).fill(7),
+      node: "ctl-1", app: "ngc.store", service: "controller", action: "deactivate",
+      params: utf8('{"a":1}'), now: 1790000000,
+    };
+    const built = task.buildTask(fields);
+    const env = await task.signTask(key, built.bytes);
+    const other = task.buildTask({ ...fields, node: "ctl-2" });
+
+    const rejects = async (k, b) => {
+      try {
+        const e = await task.signTask(k, b);
+        return "gave back " + JSON.stringify(Object.keys(e));
+      } catch {
+        return "rejected";
+      }
+    };
+    const stranger = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+
+    return {
+      // The envelope carries the bytes it was given, not a copy of something
+      // else, and names the key that signed.
+      payload: equal(env.payload, built.bytes),
+      kid: env.kid === key.kid,
+      sigSize: env.sig.length,
+      // The signature checks out for this purpose and for no other: the
+      // purpose is part of what is signed (sign.message).
+      good: await sign.verify(env, pub, sign.PURPOSE_TASK),
+      wrongPurpose: await sign.verify(env, pub, sign.PURPOSE_CONFIRM),
+      // ... and it covers these bytes and no others.
+      wrongPayload: await sign.verify({ ...env, payload: other.bytes }, pub, sign.PURPOSE_TASK),
+      // ... and only under this key.
+      wrongKey: await sign.verify(env,
+        new Uint8Array(await crypto.subtle.exportKey("raw", stranger.publicKey)), sign.PURPOSE_TASK),
+      // signTask is no member of the -> boolean family: where it cannot sign
+      // it rejects, and nothing comes back that could pass for an envelope.
+      noKey: await rejects(null, built.bytes),
+      noPrivateKey: await rejects({ kid: key.kid }, built.bytes),
+      noBytes: await rejects(key, null),
+    };
+  });
+  expect(out.payload).toBe(true);
+  expect(out.kid).toBe(true);
+  expect(out.sigSize).toBe(64);
+  expect(out.good).toBe(true);
+  expect(out.wrongPurpose).toBe(false);
+  expect(out.wrongPayload).toBe(false);
+  expect(out.wrongKey).toBe(false);
+  expect(out.noKey).toBe("rejected");
+  expect(out.noPrivateKey).toBe("rejected");
+  expect(out.noBytes).toBe("rejected");
+});
+
+// The numbers and the shape this contract stands on. The tables above decide
+// where the bounds lie; this pins that the module carries them under the
+// names Go gives them, and that nobody can move the shape out from under
+// parseTask (json.js: S freezes it, the way proof.spec.js and sign.spec.js
+// check for their own shapes).
+test("the limits and the shape are the ones Go has", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const task = await import("/assets/js/contracts/task.js");
+    const before = JSON.stringify(task.taskShape);
+    try {
+      task.taskShape.m.extra = { k: "str" };
+      task.taskShape.m.cert = { k: "str" };
+    } catch {
+      // A module is strict and a frozen shape throws there; the code of this
+      // call is neither, and the write is dropped without a word. What counts
+      // is that the shape is the same afterwards.
+    }
+    return {
+      ID_SIZE: task.ID_SIZE, MAX_LIFETIME: task.MAX_LIFETIME,
+      MAX_TASK: task.MAX_TASK, MAX_PARAMS: task.MAX_PARAMS,
+      members: Object.keys(task.taskShape.m),
+      kinds: Object.values(task.taskShape.m).map((s) => s.k),
+      opened: JSON.stringify(task.taskShape) !== before,
+    };
+  });
+  // Go: task.IDSize, task.MaxLifetime, task.MaxTask, wire.MaxParams.
+  expect(out.ID_SIZE).toBe(16);
+  expect(out.MAX_LIFETIME).toBe(300);
+  expect(out.MAX_TASK).toBe(16 << 10);
+  expect(out.MAX_PARAMS).toBe(8 << 10);
+  // The ten fields of Go's task.Task, in the order the struct has them: that
+  // order is what encodeTask writes and what the prologue hashes.
+  expect(out.members).toEqual([
+    "id", "inst", "cert", "node", "app", "service", "action", "params", "iat", "exp",
+  ]);
+  expect(out.kinds).toEqual([
+    "bytes", "str", "bytes", "str", "str", "str", "str", "raw", "int", "int",
+  ]);
+  expect(out.opened).toBe(false);
 });
