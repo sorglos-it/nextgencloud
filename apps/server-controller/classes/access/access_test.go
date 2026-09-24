@@ -640,7 +640,8 @@ func TestCheckRefusesCoreAppIDWithoutACertificate(t *testing.T) {
 	r := f.request(withoutUser(t, wire.Open{App: core.AppUsers, Service: testService, Action: testAction,
 		Window: wire.DefaultWindow}))
 	// The row is there under that ID: the E_NOTFOUND below is the guard's, not
-	// the answer of a lookup that found nothing.
+	// the answer of a lookup that found nothing. Without the guard this channel
+	// ends one guard later as E_FORBIDDEN.
 	rows := installed()
 	rows[core.AppUsers] = dbapi.App{ID: core.AppUsers, Version: "1.0.0", Store: trust.StoreGlobal, Node: node,
 		Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
