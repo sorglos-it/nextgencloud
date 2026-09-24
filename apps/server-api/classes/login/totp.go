@@ -27,6 +27,13 @@ func timeOf(now int64) time.Time { return time.Unix(now, 0).UTC() }
 // dbapi.User.TOTP, and it is the only one checkTOTP reads -- so a dump of the
 // database is no second factor. Nothing is written here: whoever calls this
 // keeps the sealed secret until the user has confirmed it with a code.
+//
+// Kept where, and that is the warning: the sealed secret is bound to nothing.
+// secrets.Box.Seal takes no associated data, so a sealed secret out of one
+// user's row opens in another's and works there. It has to stay on the server
+// between this answer and the code that confirms it -- handed to the client
+// and taken back, it would let whoever ever saw one row's secret set it as
+// anybody's second factor.
 func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer: "NGC", AccountName: name, Period: session.TOTPPeriod,

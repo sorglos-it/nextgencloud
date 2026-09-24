@@ -31,7 +31,11 @@ type Handler struct {
 	warnLock  warnThrottle
 }
 
-// New returns a Handler.
+// New returns a Handler. One per process: everything the Handler holds besides
+// the state counts or throttles for the whole installation -- the two turns to
+// speak above and the kept TOTP share (shareCache). A second Handler of the
+// same process would say every line a second time and count the share a second
+// time, so whoever wires the routes hands the same one to every path.
 func New(s *state.State) *Handler { return &Handler{S: s} }
 
 // userByName finds a user of the trust list by login name. It looks at every
