@@ -1,5 +1,5 @@
 // Package login serves the login and what hangs on it over HTTP: today
-// login/start, and in this package later login/finish, logout and GET
+// login/start and login/finish, and in this package later logout and GET
 // session.PathTrust. Every failed login answers E_LOGIN alike
 // (shared/README.md, "Vor dem WebSocket"), so no answer tells which part
 // failed or whether a user exists.
@@ -26,9 +26,6 @@ type Handler struct {
 
 // New returns a Handler.
 func New(s *state.State) *Handler { return &Handler{S: s} }
-
-// userOf finds a user of the trust list by ID.
-func (h *Handler) userOf(l *trust.List, id string) (trust.User, bool) { return l.User(id) }
 
 // userByName finds a user of the trust list by login name. It looks at every
 // user whether the first matches, the last or none, where trust.List.UserByName
