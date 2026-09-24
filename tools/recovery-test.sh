@@ -136,3 +136,24 @@ ok "reset main lässt die Instanz qemu in Ruhe"
 tools/recovery-qemu.sh check
 ok "QEMU mit Secure-Boot-OVMF, eigener TPM-Instanz und Messung der Firmware"
 use_main
+
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state normal
+tools/recovery-policy.sh seal pcr
+[ "$(tools/recovery-policy.sh open pcr)" = "TEST-DEK" ] || fail "Normalstart-Zweig öffnet nicht"
+ok "Zweig 1: Normalstart über PCR 11 = Produktiv-UKI"
+
+# Criterion 4 in miniature: one more extend stands for an image changed by a
+# single byte. The branch must stay shut.
+anders="$(printf 'TEST-EIN-BYTE-ANDERS' | openssl dgst -sha384 -binary | xxd -p -c 96 | tr -d '\n')"
+tpm2_pcrextend "11:sha384=$anders" >/dev/null
+if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet trotz geänderter PCR"; fi
+ok "geänderte PCR 11 sperrt den Normalzweig"
+
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state recovery
+tools/recovery-policy.sh seal pcr
+if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet im Recovery-Zustand"; fi
+ok "im Recovery-Zustand bleibt der Normalzweig zu"
