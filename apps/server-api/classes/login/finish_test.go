@@ -5,10 +5,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"maps"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -559,4 +561,78 @@ func finishWith(tb testing.TB, fx fixture, s trusttest.Signer, pw *trusttest.Sig
 		tb.Fatalf("marshal: %v", err)
 	}
 	return b
+}
+
+// nobodysKeyID is a key ID of the right shape that no trust list of these
+// tests holds.
+var nobodysKeyID = enc.B64.EncodeToString(bytes.Repeat([]byte{0x5A}, 16))
+
+// TestFinishTakesTheSameTimeForAKeyNobodyHolds is the question login/start
+// answers alike for every name, asked once more with a clock. session.
+// VerifyClient turns a proof by a key the list does not hold away before it
+// ever checks a signature, where a proof by a key somebody holds costs a whole
+// verification -- and login/start hands the key ID of a passkey out, real for a
+// name that exists and made up for one nobody has (session.PasskeyRef). The two
+// bodies below differ in that one field and in nothing else.
+//
+// The factor of two and the null control are those of
+// TestStartTakesTheSameTimeForAnUnknownName, for the reasons given there. What
+// this cannot measure is a database that is not a map: UserGet and OnceUse lie
+// on the path of the key the list holds and not on the other, and on a real
+// database those are two round trips (see the report of task 7, the difference
+// between the four failures).
+func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
+	h, fx := newFixture(t)
+	c := start(t, h, fx.PasswordName)
+	c.Nonce = madeUpNonce
+	held := finishBody(t, fx, fx.Password, c, "")
+	nobodys := finishWithKeyID(t, fx, c, nobodysKeyID)
+	var a, b, again []time.Duration
+	for range 5 {
+		a = append(a, timedFinish(t, h, "a key the list holds", held))
+		b = append(b, timedFinish(t, h, "a key nobody holds", nobodys))
+		again = append(again, timedFinish(t, h, "a key the list holds", held))
+	}
+	slices.Sort(a)
+	slices.Sort(b)
+	slices.Sort(again)
+	held0, nobodys0, null := a[2], b[2], again[2]
+	// The null control first: one body against itself, measured the same way.
+	if held0 > 2*null || null > 2*held0 {
+		t.Fatalf("the same body twice: %v and %v -- this machine cannot measure a factor of two today",
+			held0, null)
+	}
+	if held0 > 2*nobodys0 || nobodys0 > 2*held0 {
+		t.Fatalf("a key the list holds %v, a key nobody holds %v (the same body twice: %v and %v)",
+			held0, nobodys0, held0, null)
+	}
+}
+
+// timedFinish runs timedRuns requests with body and returns what one took. It
+// refuses a batch that was not a refused login and one the clock did not see,
+// for the reasons timed gives.
+func timedFinish(t *testing.T, h *Handler, what string, body []byte) time.Duration {
+	t.Helper()
+	first := 0
+	start := time.Now()
+	for i := range timedRuns {
+		// The counting is put back to nothing before every request: after
+		// three failures the row answers 429 in front of the whole login, and
+		// what followed would be the time of two refusals. It costs both
+		// bodies the same.
+		clearCounting(t, h)
+		w := httptest.NewRecorder()
+		h.Finish(w, jsonPost(session.PathLoginFinish, string(body)))
+		if i == 0 {
+			first = w.Code
+		}
+	}
+	d := time.Since(start)
+	if first != http.StatusUnauthorized {
+		t.Fatalf("%s answered %d: what follows would not be the time of a refused login", what, first)
+	}
+	if d < timedFloor {
+		t.Fatalf("%d requests for %s took %v: the clock did not see them", timedRuns, what, d)
+	}
+	return d / timedRuns
 }
