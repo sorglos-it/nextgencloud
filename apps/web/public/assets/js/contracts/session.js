@@ -490,4 +490,19 @@ export async function parseSetupOffer(b, code) {
 // and whoever builds version 1 from it leaves those nodes as they are. Go has
 // no such function: there the API compares and the shell builds, and this is
 // the one place in the shell that knows the rule.
-export const encodeSetupInfoNodes = (info) => info.nodes;
+//
+// What it takes is what parseSetupOffer gives out, 1 to MAX_SETUP_NODES
+// nodes, and nothing else: it is exported, and it answered null with a raw
+// TypeError and an object without nodes with undefined - which whoever builds
+// version 1 from it would have written as no nodes at all, and the API would
+// have refused that version (Fixrunde 1). info.nodes is read once, and one
+// error stands for every way this can fail, encodeClientCert's shape above.
+export function encodeSetupInfoNodes(info) {
+  try {
+    const nodes = info?.nodes;
+    if (Array.isArray(nodes) && nodes.length > 0 && nodes.length <= MAX_SETUP_NODES) return nodes;
+  } catch {
+    // Falls through to the one error, like a length that did not fit.
+  }
+  throw new Error("session: malformed message");
+}
