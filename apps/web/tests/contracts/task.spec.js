@@ -555,7 +555,16 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
   expect(out.rebuilt).toBe(true);
   expect(out.twoIDs).toBe(true);
   expect(out.noNode).toBe("");
-  // The three the version before this one got wrong.
+  // The case against the two-walk version before this one. Of these five,
+  // two carry it: measured against that version rebuilt, driftIsFirstWalk
+  // and ownArrays go red and the other three stay green. driftHolds stays
+  // green because the proxy above answers alike from the second walk on, so
+  // even the two-walk version hands back a task that agrees with its bytes.
+  // lyingCertSize stays green because the lying array answers 32 as well.
+  // And lyingHolds stays green because equal compares with xor and
+  // undefined ^ 0 is 0, so a cert of no bytes measures equal to 32 zero
+  // bytes. Those three say what the promise looks like; the other two are
+  // what would notice it breaking.
   expect(out.driftHolds).toBe(true);
   expect(out.driftIsFirstWalk).toBe(true);
   expect(out.lyingHolds).toBe(true);

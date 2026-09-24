@@ -42,7 +42,9 @@ const LIFETIME = 120;
 // How many base64url characters ID_SIZE and CERT_SIZE bytes take. encodedLen
 // grows with every further byte and so gives no two byte counts the same
 // length: a base64url of ID_CHARS characters came out of ID_SIZE bytes and
-// out of no other number of them.
+// out of no other number of them. Measured from 0 to 8192 bytes: every step
+// up, no two byte counts sharing a length, and b64encode's own output as many
+// characters as encodedLen names.
 const ID_CHARS = encodedLen(ID_SIZE);
 const CERT_CHARS = encodedLen(CERT_SIZE);
 
@@ -52,13 +54,15 @@ export const taskShape = S({
 });
 
 // taskBudget bounds a task while it is decoded: a task holds no array of its
-// own, so only its size is counted, and its params stay raw bytes, which the
-// rule and core read and this contract does not.
+// own, so only its size is counted, and its params stay raw bytes. What
+// stands inside them is for the rule and the core; this contract reads them
+// as one value and no further, in validParams below.
 const taskBudget = new Budget({ size: MAX_TASK, items: { params: RAW } });
 
 // paramsBudget measures the params on their own, the way Go's
-// wire.ValidParams does: at most MAX_PARAMS bytes, and nothing inside them is
-// counted or named - the rule and core read them, not this contract.
+// wire.ValidParams does: at most MAX_PARAMS bytes, and again nothing inside
+// them is counted or named - validParams asks whether they are one JSON
+// object and never what stands in it.
 const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
 
 // parseTask reads a task payload. Everything the decoder finds wrong is this
@@ -110,8 +114,11 @@ function validParams(text) {
 // document, or null for a task that is none. It is the one place that looks
 // at a caller's task: validateTask is one call of it and nothing else,
 // encodeTask writes what its own call checked, and buildTask writes what its
-// own call checked and reads that document back - never a second reading of
-// the same task.
+// own call checked and reads that document back. Measured with a counting
+// getter on each of the ten fields: one validateTask and one encodeTask
+// answer every one of them exactly once, highest count 1. verifyApproval is
+// the one function here that reads a task twice over, and the task it reads
+// is its own - see there.
 //
 // The byte fields are turned into their base64url here and held against
 // ID_CHARS and CERT_CHARS, instead of being asked for a length and encoded
@@ -120,19 +127,31 @@ function validParams(text) {
 // with the bytes still there behind it - so a length checked here and read
 // again by b64encode would let a check pass for one byte string while another
 // went into the signature (measured in task 8 for session.encodeClientCert,
-// which is the same shape). What ID_CHARS pins is therefore the number of
-// elements that one walk read, not what the array holds. Measured: an id of
+// which is the same shape). b64encode asks for that length once per three
+// bytes on its way through - measured, 7 reads for ID_SIZE and 12 for
+// CERT_SIZE in one call - so a length is nothing this file could hold still
+// anyway; the text that came out of the walk is. What ID_CHARS pins is
+// therefore the number of elements that one walk read, not what the array
+// holds. Measured: an id of
 // no bytes whose length answers ID_SIZE is valid here, and the base64url of
 // ID_SIZE zero bytes is what goes into the signature - a wrong id, but the
 // same wrong one in the check and in the bytes of that one call.
 //
-// Across two calls nothing is promised, and nothing can be. A Proxy around a
-// Uint8Array passes instanceof, answers every index itself and may answer a
-// different byte on each walk; measured against this file, two encodeTask
+// Across two calls nothing is promised here. A Proxy with a get trap of its
+// own passes instanceof Uint8Array, answers every index itself and may answer
+// a different byte on each walk; measured against this file, two encodeTask
 // calls over one such id wrote "YWFhYWFhYWFhYWFhYWFhYQ" and then
-// "YmJiYmJiYmJiYmJiYmJiYg". Whoever has to hold a task and its bytes together
-// must therefore make both out of one call, which is what buildTask does
-// below. Its id is out of reach for this, because it comes from
+// "YmJiYmJiYmJiYmJiYmJiYg". (A Proxy without that trap gets no further than
+// b64encode: the length of a Uint8Array is an accessor that wants the array
+// itself for this, and a proxy is not it - measured, a TypeError, which parts
+// answers with null like any other refusal.) Such a promise is not
+// impossible, and saying so would be wrong: built and measured, a WeakMap
+// from the caller's array to its first walk's base64url makes the second call
+// write what the first wrote. It is not built here, because it would have the
+// module remember every array a caller ever handed it and would still say
+// nothing about what stands behind that first walk. Whoever has to hold a
+// task and its bytes together makes both out of one call instead, which is
+// what buildTask does below. Its id is out of reach for this, because it comes from
 // crypto.getRandomValues into an array of its own, but its cert and its
 // params are the caller's: it reads them in exactly this one walk, and what
 // it hands back comes out of the document that walk produced.
@@ -182,7 +201,9 @@ function parts(t) {
 }
 
 // validateTask checks the fields of t (Go: Task.Validate). It answers true or
-// false and never throws.
+// false and never throws - measured against a getter that throws, a revoked
+// Proxy, a Symbol.toPrimitive that throws, a Proxy whose get trap throws and
+// a getter that runs itself out of stack: false, five times over.
 export const validateTask = (t) => parts(t) !== null;
 
 // write puts one reading of a task into the bytes Go's json.Marshal writes
@@ -201,7 +222,11 @@ function write(p) {
   // params stay raw: the bytes go in as the text they hold, because the
   // prologue hashes exactly these bytes. Measured over all 1112064 code
   // points UTF-8 has: utf8(fromUtf8(x)) gives x again for every one of them
-  // but one, so the text carries the bytes through. The exception is a U+FEFF
+  // but one, so the text carries the bytes through. Bytes that are no UTF-8
+  // never become text at all - fromUtf8 decodes with fatal: true and throws
+  // instead - so a stray byte inside the params is a refusal here and never a
+  // quiet replacement character (measured, both in a string and behind the
+  // object). The exception is a U+FEFF
   // at the very front, which TextDecoder drops as a byte order mark: params
   // that begin with one are written without it, and params that are nothing
   // but one are written as no params at all. Go refuses both - measured
@@ -241,15 +266,24 @@ export function encodeTask(t) {
 // of what that walk read, and the task that comes back out of the document.
 // Nothing the caller handed over is part of the answer.
 //
-// Reading the document back is also the only way to promise what a caller
-// needs here, which is that task and bytes say the same thing: what comes
-// back is then the task every verifier reads out of exactly these bytes, down
-// to the white space a raw params value may sit behind - measured against
-// shared/task, Go decodes all of it to the same id, cert and params. That
-// white space is the one thing the task no longer carries: hand params in
-// behind two spaces and encodeTask of the task that comes back is two bytes
-// shorter than these bytes, because the document keeps them and no reader of
-// it does. Go's json.Marshal drops them too.
+// Reading the document back is not the only way to hold task and bytes
+// together. The other one was built: assemble the task straight out of the
+// same one walk - b64decode of the id and cert text, utf8 of the params text
+// - and leave parseTask out. Measured over twelve cases inside the same call,
+// it gives the same task as the read-back in nine, the walking cert, the
+// lying length and the BOM among them. It differs in three, and all three are
+// params handed in with white space around them: there the alternative hands
+// back the caller's text with that white space, while every verifier reads
+// the task without it.
+//
+// That is why the read-back is the one chosen, and not because there is
+// nothing else: it checks the promise on the very document the caller gets,
+// so what comes back is the task a verifier reads out of exactly these bytes
+// - measured against shared/task, Go decodes all of it to the same id, cert
+// and params. The white space is the one thing the task no longer carries:
+// hand params in behind two spaces and encodeTask of the task that comes back
+// is two bytes shorter than these bytes, because the document keeps them and
+// no reader of it does. Go's json.Marshal drops them too.
 //
 // Measured against the version before this one, which walked the caller's
 // cert twice, once for validateTask and once for encodeTask: a cert that
@@ -275,15 +309,26 @@ export function buildTask({ inst, certHash: cert, node, app, service, action, pa
   });
   if (p === null) throw new Error("task: malformed task");
   const bytes = write(p);
+  // This one cannot fire today, and it stays. Measured: the largest document
+  // that gets this far is 8604 bytes against MAX_TASK 16384 - params at
+  // MAX_PARAMS, an app of 100 characters, node, service and action of 32 each
+  // and iat and exp at the largest whole number Number.isSafeInteger takes.
+  // Take the line out and all eight tests stay green, so no mutation belongs
+  // to it; what it is, is written here instead. The 7780 bytes of headroom
+  // are not this file's to keep: every limit that makes them stands somewhere
+  // else - MAX_PARAMS after Go's wire.MaxParams, the app id and name limits
+  // in text.js - and the day one of them grows, this is the line that catches
+  // the overflow before anything is signed.
   if (bytes.length > MAX_TASK) throw new Error("task: too large");
-  // parseTask is the one place that says what a document holds, so it says it
-  // here too. It refuses a document parts lets through and a verifier does
-  // not: params nested exactly MAX_DEPTH levels deep, which are one level too
-  // deep inside a task (see validParams). That refusal used to fall to the
-  // verifier; now it falls here, where the shell still has the task. Of 414
-  // further params shapes that parts accepts - member counts around
-  // MAX_MEMBERS, names around MAX_NAME, long arrays and strings, the number
-  // bounds, white space - it refused none.
+  // parseTask is what every verifier runs on these bytes, so it runs here
+  // too. There is one document parts lets through and parseTask does not:
+  // params nested exactly MAX_DEPTH levels deep, which are one level too deep
+  // inside a task (see validParams). No verifier reads that document back
+  // either - the refusal used to fall to the verifier and falls here now,
+  // where the shell still has the task. Of 414 further params shapes that
+  // parts accepts - member counts around MAX_MEMBERS, names around MAX_NAME,
+  // long arrays and strings, the number bounds, white space - parseTask
+  // refused none.
   return { task: parseTask(bytes), bytes };
 }
 
@@ -328,6 +373,13 @@ export async function verifyApproval(env, cert, client) {
   if (!(await verifyEnvelope({ payload, kid, sig }, certSig, PURPOSE_TASK))) {
     throw new Error("task: bad signature");
   }
+  // t is read more than once below - validateTask walks all ten fields, then
+  // inst and cert are read again here, measured with counting getters: two
+  // apiece. That is the one place in this file where a task is read twice,
+  // and it is safe because the task is not the caller's: parseTask just built
+  // it out of payload, so no field of it can answer two readings differently.
+  // On a caller's task the same lines would be the very drift parts exists to
+  // stop.
   const t = parseTask(payload);
   if (!validateTask(t) || t.inst !== certInst || !equal(t.cert, await certHash(client))) {
     throw new Error("task: malformed task");
