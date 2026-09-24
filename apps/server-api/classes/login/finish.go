@@ -51,12 +51,17 @@ func blindPair() (ed25519.PublicKey, []byte) {
 // have covered. It gives the answer back so that the call is not work a
 // compiler may drop; it is never true, and no caller reads it.
 //
-// It is one Ed25519 verification whatever the proof says it is. A passkey
-// proof the list knows runs through package proof's WebAuthn assertion
-// instead, which hashes about as much and verifies one signature as well, but
-// which also turns a malformed assertion away before that -- so a passkey
-// proof whose client data is nonsense still costs less with a key the list
-// holds than without one. What that leaves is written in the report.
+// It is one Ed25519 verification whatever the proof says it is, and that is
+// where it stops being an exact mirror. A passkey the list holds runs through
+// package proof's WebAuthn assertion, which hashes about as much and verifies
+// one signature as well -- but which turns a malformed assertion away before
+// any of that. So a passkey proof whose client data is nonsense costs less
+// with a key the list holds than without one, and that asymmetry is this
+// function's own doing: before it was here the two sides were alike there,
+// both cheap. Measured and written down (report of task 7, fixing round 2);
+// closing it needs more than a line and belongs with the question login/start
+// leaves open, so TestFinishTakesTheSameTimeForAKeyNobodyHolds carries that
+// shape as the one it does not hold to the factor.
 func blindProof(payload []byte) bool {
 	return ed25519.Verify(blindKey, sign.Message(sign.PurposeClientCert, payload), blindSig)
 }
@@ -159,11 +164,22 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 
 	verified, err := session.VerifyClient(f.Cert, f.Proof, v.List, now)
 	if err != nil {
-		// The work the real path would have done and this one did not: a key
-		// nobody holds is turned away before any signature is looked at. Only
-		// there -- session.ErrCert is the certificate itself being refused,
-		// which happens before the key is even reached and costs both alike.
-		if !known && !errors.Is(err, session.ErrCert) {
+		// session.ErrUser is the one answer session.verifyCert gives after the
+		// certificate itself was read and before it checks a signature: the
+		// key belongs to nobody, or it belongs to another user than the
+		// certificate names, or a role wants a passkey and this is not one.
+		// Those three cost nothing where every other way out of VerifyClient
+		// has paid for a verification already (a proof that does not hold, a
+		// certificate whose time has passed) or has stopped before the key was
+		// ever reached (session.ErrCert). So this is where one is spent, and
+		// it is spent on both sides of the question: a key nobody holds gives
+		// ErrUser, and so does a certificate naming the wrong user with a key
+		// the list holds.
+		//
+		// It was hung on the key alone before, and that closed one shape and
+		// tore another open -- the second one this way round, with the known
+		// side the cheap one. Four shapes are measured now, not one.
+		if errors.Is(err, session.ErrUser) {
 			_ = blindProof(f.Cert)
 		}
 		deny()
