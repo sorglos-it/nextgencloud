@@ -44,13 +44,6 @@ const (
 	trustLease = 30
 )
 
-// gapProbes is how many numbers above a missing one checkGap asks for before
-// it calls the chain ended. Eight empty reads cost the same whether the chain
-// is whole or not, and they find every hole of up to eight versions for
-// certain. A larger hole needs what the contract has no query for: the newest
-// number the database holds, or an anchor outside it.
-const gapProbes = 8
-
 // chainOverhead is what the JSON of a TrustChain costs besides the stored
 // versions: {"versions":[]} and ,"more":true are 27 bytes, and the commas
 // between at most session.MaxChainVersions versions are one each. Chain keeps
@@ -170,9 +163,11 @@ func ownRows(err error) error {
 
 // readBlock reads at most session.MaxChainVersions versions from from on, row
 // by row, and stops at the first number that is not there; the caller looks
-// above that number with checkGap. dbapi.BlobFrom would hand out the whole
-// history in one allocation, and each version may be megabytes: every caller
-// of Chain would pay for all of them.
+// above that number with checkGap. Row by row and not dbapi.BlobFrom, which
+// takes no limit: it would hand out every version from from on in one
+// allocation, and each of them may be megabytes. checkGap asks that query all
+// the same, but only where the chain has already ended -- there a whole chain
+// answers it with nothing, and only a damaged one pays.
 func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, error) {
 	out := make([]trust.Signed, 0, session.MaxChainVersions)
 	for i := uint64(0); i < session.MaxChainVersions; i++ {
@@ -195,48 +190,50 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 }
 
 // checkGap looks above a number the database does not hold. Versions are
-// counted without holes, so a row further up means the database lost the one
+// counted without holes, so a row further up means the database lost the ones
 // in between -- and a read that stops at a hole puts an older trust list back
 // in force without a word: keys an admin withdrew would count again, which is
-// what the anchor stands against. Dropping one row is the cheapest way to do
-// that, so it is the one this catches for certain.
+// what the anchor stands against.
+//
+// It asks the store what it still holds from that number on, in one query,
+// rather than looking at a fixed count of numbers above it. A fixed count is
+// what dropping rows is measured against, and dropping ten costs whoever can
+// write the database no more than dropping one: eight looks above the hole
+// found every hole of up to eight versions and let a wider one through in
+// silence. This lets none through.
+//
+// It rests on one thing, and that one is held elsewhere: a trust row carries
+// its version number in Seq. Every writer of one sets it (AddVersion), and the
+// store's own contract test pins the query over exactly this kind
+// (shared/dbapi/dbtest, BlobFrom over dbapi.BlobTrust).
 //
 // It answers true when the number is there after all: versions are written in
 // order, so a row above it means another API had just added both, and the
 // caller reads on. A row above a number that stays missing is ErrSetting.
+//
+// The price is paid where the damage is. On a whole chain the answer is empty
+// -- one query in place of eight reads that all miss, so a refresh of an
+// up-to-date node costs one read of a row that is not there and one query that
+// answers with nothing, where it cost nine such reads before. Over a hole the
+// answer carries every row above it, data and all, because
+// dbapi.BlobFrom takes no limit; a refresh that ends in ErrSetting caches
+// nothing, so every request pays that again until somebody mends the rows.
+// That is the side to be on: the other one is an installation that runs on a
+// trust list somebody rolled back and says nothing.
 func (s *State) checkGap(ctx context.Context, missing uint64) (bool, error) {
-	for i := uint64(1); i <= gapProbes; i++ {
-		above, err := s.rowThere(ctx, missing+i)
-		if err != nil {
-			return false, err
-		}
-		if !above {
-			continue
-		}
-		again, err := s.rowThere(ctx, missing)
-		if err != nil {
-			return false, err
-		}
-		if again {
-			return true, nil
-		}
-		return false, ErrSetting
-	}
-	return false, nil
-}
-
-// rowThere reports whether the database holds this version. It does not read
-// it as one: here only its presence counts, and a row that is there is read
-// and verified in the round that follows.
-func (s *State) rowThere(ctx context.Context, seq uint64) (bool, error) {
-	_, err := s.DB.BlobGet(ctx, dbapi.BlobTrust, strconv.FormatUint(seq, 10))
-	if errors.Is(err, dbapi.ErrNotFound) {
-		return false, nil
-	}
+	above, err := s.DB.BlobFrom(ctx, dbapi.BlobTrust, missing)
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	if len(above) == 0 {
+		return false, nil
+	}
+	// The rows come ordered by Seq, so the first is the lowest number the
+	// store still holds at or above the missing one.
+	if above[0].Seq == missing {
+		return true, nil
+	}
+	return false, ErrSetting
 }
 
 // checkInstallation binds the root of the chain to this installation. Version
