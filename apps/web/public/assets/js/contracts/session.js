@@ -169,11 +169,11 @@ export async function certHash(payload) {
 //
 // Fixrunde 1, after K1: the list is the caller's, so nodes and the three
 // fields of each node are read once and what goes back is this module's own
-// object. verifyAPI reads the id twice - for "is this a node at all" and for
-// "is this the node the certificate names" - and the key twice, to find the
-// node and to check the signature; out of one read each, those pairs cannot
-// disagree. Go walks a []trust.Node of typed fields and has nothing to
-// disagree with.
+// object. verifyAPI looks at the id twice - for "is this a node at all" and
+// for "is this the node the certificate names" - and at the key twice, to
+// find the node and to check the signature; both pairs now come out of the
+// single read each field got here, so neither pair can disagree with itself.
+// Go walks a []trust.Node of typed fields and has nothing to disagree with.
 const apiNodes = (l) => {
   const ns = l?.nodes;
   if (!Array.isArray(ns)) return [];
@@ -242,13 +242,15 @@ export async function verifyAPI(env, l, client, now) {
     throw new Error("session: malformed certificate");
   }
   // Go takes an int64 for now and can be handed nothing else. Here both
-  // comparisons below are false against undefined, NaN, an object or text -
-  // and a caller who forgets the fourth argument hands over undefined - so a
-  // certificate that expired long ago would come through. A now that is no
-  // whole number is no point in time, and a certificate whose validity cannot
-  // be established at it is refused with the same error the check itself
-  // gives. json.js says the same of a missing budget size: everything a
-  // caller leaves out closes the gate (Fixrunde 1, K2).
+  // comparisons below are false against undefined, NaN, an object and text
+  // that is no number - and a caller who forgets the fourth argument hands
+  // over undefined - so a certificate that expired long ago came through; a
+  // numeric string, which is no int64 either, compares like the number it
+  // spells and came through as well. A now that is no whole number is no
+  // point in time, and a certificate whose validity cannot be established at
+  // it is refused, with the same error the check itself gives. json.js says
+  // the same of a missing budget size: everything a caller leaves out closes
+  // the gate (Fixrunde 1, K2).
   if (!Number.isSafeInteger(now) || now < c.iat - MAX_SKEW || now >= c.exp) {
     throw new Error("session: certificate not valid at this time");
   }
@@ -267,17 +269,23 @@ export async function verifyApproval(payload, p, l) {
   if (!validateClientCert(c) || c.inst !== l.installation) {
     throw new Error("session: malformed certificate");
   }
-  // The proof, the key and the user all belong to the caller, so each field
-  // is read once here and only these copies travel on - the same reason K1
-  // gives for the envelope, and the reason Go has nothing of the kind: it is
-  // handed a proof.Proof by value, and KeyOwner returns a copy of the user
-  // and of the key. Both fields below decide the one rule this function has
-  // beyond a signature check, so a second read is not a detail: a kind that
-  // reads "passkey" here and "password" inside proof.verify skips the rule
-  // and then matches the proof, and an id that reads as the certificate's
-  // user here and as another user in trust.passwordToo asks the question
-  // about the wrong user. proof.verify reads the key's id, kind, alg and pub
-  // and nothing else, so those four are what the copy carries.
+  // The proof, the key and the user belong to the caller, so every field this
+  // function reads of them it reads once, and the copies are what go on to
+  // proof.verify - the same reason K1 gives for the envelope, and the reason
+  // Go needs none of it: it is handed a proof.Proof by value, and KeyOwner
+  // returns a copy of the user and of the key. The kind decides the one rule
+  // this function has beyond a signature check, so a second read was no
+  // detail: a key that read "passkey" here and "password" inside proof.verify
+  // skipped the rule and then matched the proof. proof.verify reads the key's
+  // id, kind, alg and pub and nothing else, so those four are what the copy
+  // carries.
+  //
+  // One read is left that this file does not own: trust.passwordToo looks the
+  // user up in l all over again, and Go's List.PasswordToo does the same - it
+  // calls List.User with the ID instead of using the user KeyOwner returned.
+  // A list whose ids answer two reads differently therefore fools that lookup
+  // in both languages, and a hand-built list with two users of one ID fools
+  // Go with no getter at all. The test says so at the line that measures it.
   const { kind: proofKind, kid, sig, authData, clientData } = p ?? {};
   const found = trust.keyOwner(l, kid);
   if (found === null) throw new Error("session: proof is not by a key of this user");
