@@ -38,14 +38,19 @@ cleanup() {
 		# nothing to clean yet - the cases that must fail come later.
 		for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
 	fi
-	# The qemu simulator is started in the middle of the run; a case failing
-	# after that must not leave it standing. Its reason and its outcome stay
-	# visible: a tidy-up that fails in silence leaves a simulator behind and
-	# nobody learns of it.
-	if [ -n "${qemu_running:-}" ]; then
-		if ! tools/recovery-swtpm.sh stop qemu; then
-			printf 'Achtung: der Simulator der Instanz qemu läuft noch. Beenden mit: tools/recovery-swtpm.sh stop qemu\n' >&2
-		fi
+	# The qemu simulator and the virtual machine are both started in the middle
+	# of the run; a case failing after that must not leave either standing.
+	# Asked unconditionally, NOT only when a flag says so: the flag says what
+	# this run meant to start, and what is actually running is a different
+	# question - a run that ended between the two would answer it wrongly. Both
+	# calls are harmless when there is nothing to end. Their reason and their
+	# outcome stay visible: a tidy-up that fails in silence leaves a process
+	# behind and nobody learns of it.
+	if ! tools/recovery-qemu.sh stop; then
+		printf 'Achtung: die virtuelle Maschine läuft noch. Beenden mit: tools/recovery-qemu.sh stop\n' >&2
+	fi
+	if ! tools/recovery-swtpm.sh stop qemu; then
+		printf 'Achtung: der Simulator der Instanz qemu läuft noch. Beenden mit: tools/recovery-swtpm.sh stop qemu\n' >&2
 	fi
 }
 trap cleanup EXIT
@@ -105,10 +110,10 @@ ok "reset stellt ein jungfräuliches TPM und ein leeres Arbeitsverzeichnis her"
 # the same machine, and a reset reaching across would throw away the state the
 # virtual machine sits on. Asked of a real second simulator, not read off the
 # code.
-# The flag goes up BEFORE the start, not after: start forks the daemon and can
-# still fail behind it - measured, a start that gave up after the fork left the
-# simulator standing because cleanup had never been told about it.
-qemu_running=ja
+# No flag tells cleanup about this start any more, and that is deliberate:
+# start forks the daemon and can still fail behind it - measured, a start that
+# gave up after the fork left the simulator standing because cleanup had never
+# been told about it. cleanup now asks the machine itself, every time.
 tools/recovery-swtpm.sh start qemu
 if ! qemu_pid="$(cat dist/recovery/tpm/qemu/swtpm.pid)" || [ -z "$qemu_pid" ]; then
 	fail "Die Instanz qemu hinterlässt keine brauchbare PID-Datei"
@@ -126,5 +131,8 @@ case "$qemu_args " in
 esac
 [ -s dist/recovery/tpm/qemu/tpm2-00.permall ] || fail "reset main wirft den Zustand der Instanz qemu weg"
 tools/recovery-swtpm.sh stop qemu
-qemu_running=""
 ok "reset main lässt die Instanz qemu in Ruhe"
+
+tools/recovery-qemu.sh check
+ok "QEMU mit Secure-Boot-OVMF, eigener TPM-Instanz und Messung der Firmware"
+use_main
