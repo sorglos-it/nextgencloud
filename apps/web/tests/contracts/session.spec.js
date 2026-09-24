@@ -140,3 +140,48 @@ test("the version 1 the shell builds is the one the API accepts", async ({ shell
   expect(got).toEqual(v.setup.requests.map((c) => c.name === "MAC with another code"
     || c.name === "MAC over other bytes" ? false : true));
 });
+
+// Go's VerifyAPI marks "no node signed this" with the zero trust.Node and asks
+// afterwards `if node.ID == ""`, so an API node whose ID is empty is no node
+// there either - it is refused even when its key made the signature. A list
+// that passed trust.validateList holds no such node (validName refuses ""),
+// but verifyAPI is exported and takes the list its caller hands it, so the
+// two have to answer that list alike. No vector carries this case: the
+// certificate is signed here, with a key of this page, so that the signature
+// really checks out and the node is the only thing left that can refuse it.
+test("an API node without an ID is no node, as in Go", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const sign = await import("/assets/js/contracts/sign.js");
+    const proof = await import("/assets/js/contracts/proof.js");
+    const { b64decode, b64encode, utf8 } = await import("/assets/js/contracts/b64.js");
+    const seed = new Uint8Array(32).fill(7);
+    const priv = await proof.privateFromSeed(seed);
+    const pub = await proof.publicFromSeed(seed);
+    const client = b64decode(d.client);
+    const cc = JSON.parse(new TextDecoder().decode(client));
+    // Everything about this certificate is right but the node it names.
+    const payload = utf8(JSON.stringify({
+      inst: cc.inst, node: "", client: b64encode(await s.certHash(client)),
+      dh: b64encode(new Uint8Array(32)), iat: cc.iat, exp: cc.exp,
+    }));
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
+      sign.message(sign.PURPOSE_API_CERT, payload)));
+    const env = { payload, kid: await sign.keyID(pub), sig };
+    const node = {
+      id: "", kind: "api", name: "", noise: new Uint8Array(32), sign: pub,
+      url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [],
+    };
+    const list = { installation: cc.inst, nodes: [node] };
+    try {
+      await s.verifyAPI(env, list, client, d.now);
+      return "accepted";
+    } catch (e) {
+      return e.message;
+    }
+  }, v);
+  expect(got).toBe("session: malformed certificate");
+});
