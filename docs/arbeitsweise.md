@@ -200,6 +200,38 @@ und miss den Anteil über die **festen Saaten**.
 Und prüf die Prüfung: in einem Fall erhöhte der Kanarienvogel **beide** Zähler,
 sodass die Anteilsschranke rechnerisch nie anschlagen konnte.
 
+## 5a. Prüf die Eigenschaft am Gegenstand, nicht am Weg dorthin
+
+Ein Testlauf legte ein verschlüsseltes Objekt an und prüfte, dass jeder Schritt
+gelang. Er prüfte **nie**, welche Eigenschaften das Objekt am Ende trug. Setzte
+jemand ein einziges Attribut dazu, blieb der Lauf grün — und das Objekt ließ sich
+ohne jede Prüfung öffnen.
+
+Das wurde repariert, richtig: der Test liest die Attribute jetzt **am Objekt
+selbst** zurück. Dann hat ein Prüfer dieselbe Frage an alles andere gestellt, und
+sieben Antworten waren dieselbe. Jede dieser Änderungen ließ den Lauf grün:
+
+- die eine Zeile löschen, die den Systemzustand an das Siegel bindet — danach
+  öffnet es in jedem Zustand
+- das Löschen des Geheimnisses durch nichts ersetzen — danach liegt es im Klartext
+- den Hash von SHA-384 auf SHA-1 stellen — dasselbe Objekt, schwächere Kette
+- den Schlüssel von 384 auf 256 Bit — dasselbe Objekt, schwächerer Schutz
+- die gesicherte Firmware gegen die ungesicherte tauschen
+
+**Alle sieben haben dieselbe Form:** geprüft wurde, was das Skript **tut**, nicht
+was am Ende **dasteht**. Ein Schritt, der gelingt, sagt nichts darüber, ob er das
+Richtige bewirkt hat.
+
+Dieselbe Sorte in einem anderen Strang: eine Datenbankzeile wurde geschrieben und
+der Erfolg geprüft — dass die Spalten die richtigen Werte trugen, prüfte nichts.
+Vertauschte man zwei davon, blieb alles grün.
+
+**Deshalb: nach jedem Schritt, der etwas Bleibendes anlegt, frag nicht „ging es
+gut?", sondern „was steht jetzt da?"** — und lies es von dort zurück, wo es liegt,
+nicht aus der Variablen, aus der du es geschrieben hast. Wo das nicht geht, sag im
+Bericht, dass die Eigenschaft ungeprüft ist; sie fällt sonst beim ersten Umbau weg,
+ohne dass etwas rot wird.
+
 ## 6a. Eine zweite Verteidigungslinie entwaffnet die erste
 
 Eine Funktion prüfte vor dem Schreiben, ob der Name schon einem anderen gehört.
