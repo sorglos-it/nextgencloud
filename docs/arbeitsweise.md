@@ -191,6 +191,16 @@ Was in NGC funktioniert hat:
   gemessen" war noch falsch, nachdem der konkrete Weg zu war.
 - **Zählen statt lesen.** „Keine Datei bindet X ein" wurde ausgezählt: neun
   geprüft, null Treffer, eine absichtliche Ausnahme in den Testdaten.
+- **Mutieren statt glauben.** Der wirksamste Griff überhaupt: bau die Behebung
+  gedanklich zurück und sieh nach, ob der neue Test dann wirklich fällt. Ein
+  Prüfer hat 28 Mutationen gefahren, 24 wurden gefangen — die vier
+  Überlebenden waren vier echte Lücken, von denen keine im Bericht stand.
+- **Gegen alten Code messen, ohne den Baum anzufassen: `go test -overlay`.**
+  Wo mehrere Sitzungen denselben Arbeitsbaum teilen, sind `git stash`,
+  `git checkout` und Hin-und-Her-Editieren verboten — sie reißen anderen den
+  Boden weg. Mit `-overlay` misst man den alten Stand, ohne eine Datei zu
+  berühren. Ein Prüfer hat damit 200 von 200 Läufen gegen den Stand vor dem Fix
+  belegt, während vier andere Stränge weiterarbeiteten.
 
 ## 13. Was ehrlich offen bleibt, bleibt ehrlich offen
 
