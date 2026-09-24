@@ -8,6 +8,9 @@ work="$(pwd)/dist/recovery"
 # Every tool the package calls, including ones only used deep inside
 # recovery-policy.sh. No "go": recovery-setup.sh never installs it, and
 # this script runs only on the VM (measured: report has the details).
+# ps is called by four of the scripts and is still not on the list: it comes out
+# of the same package as pgrep - measured, dpkg -S names procps for both - so
+# the pgrep entry already answers for it.
 need="qemu-system-x86_64 swtpm swtpm_setup swtpm_ioctl softhsm2-util pkcs11-tool openssl xxd socat shred
 	pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
