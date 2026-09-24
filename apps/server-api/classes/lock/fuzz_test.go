@@ -73,9 +73,12 @@ func FuzzLockRow(f *testing.F) {
 			Data: row, Seq: uint64(now + keepFor), Updated: now}); err != nil {
 			t.Fatalf("put: %v", err)
 		}
-		// Whatever a row says, it says it for keepFor at most: once it may be
-		// removed, the counting reads it as none. No row is a wait that never
-		// ends, and none shuts its bucket until somebody wires up a purge.
+		// What is fuzzed is the data; the two times above are the ones Fail
+		// writes. So whatever the data of such a row says, it says it for
+		// keepFor at most: once those times say the row may be removed, the
+		// counting reads it as none. No data makes a wait that never ends, and
+		// none shuts its bucket until somebody wires up a purge. Rows a store
+		// hands back with times of its own are not what this walks.
 		if wait, err := Check(ctx, db, "anna", now+keepFor); err != nil || wait != 0 {
 			t.Fatalf("the row still answers %d after keepFor: %v", wait, err)
 		}

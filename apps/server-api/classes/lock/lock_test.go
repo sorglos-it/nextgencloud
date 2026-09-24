@@ -152,6 +152,45 @@ func TestPurgeFreesNothingOnATimeNoClockGives(t *testing.T) {
 	}
 }
 
+// TestPurgeFreesNoRowTheCountingStillReads holds Purge to the counting: a row
+// goes exactly when the counting reads it as none, because both ask the same
+// question of it (see expired). Where the two could come apart is a store that
+// hands Seq back empty -- dbapi leaves Seq to the caller and the contract's own
+// test never reads one back through BlobGet -- and there a purge would be the
+// way out of a lock that is still running. Whoever wires Purge up may run it as
+// often as he likes, and this is what that rests on.
+func TestPurgeFreesNoRowTheCountingStillReads(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	// A row of a store that keeps no Seq: its keep time is in Updated alone,
+	// and the counting reads it as the longest wait there is.
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+		Data: []byte("9 1790000300"), Updated: now}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != maxWait {
+		t.Fatalf("before the purge the row waits %d: %v", wait, err)
+	}
+	if err := Purge(ctx, db, now); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != maxWait {
+		t.Fatalf("the purge freed a lock that was still running: %d %v", wait, err)
+	}
+	// And once the counting reads the row as none, the purge takes it: what is
+	// kept is the row that still counts, not every row.
+	later := now + keepFor
+	if wait, err := Check(ctx, db, "anna", later); err != nil || wait != 0 {
+		t.Fatalf("after keepFor the row still waits %d: %v", wait, err)
+	}
+	if err := Purge(ctx, db, later); err != nil {
+		t.Fatalf("purge after keepFor: %v", err)
+	}
+	if _, err := db.BlobGet(ctx, dbapi.BlobSetting, key("anna")); !errors.Is(err, dbapi.ErrNotFound) {
+		t.Fatalf("the purge kept a row the counting reads as none: %v", err)
+	}
+}
+
 // TestWaitIsNeverLongerThanTheLongestOne proves that no row shuts a name out
 // for longer than the counting itself ever asks for.
 func TestWaitIsNeverLongerThanTheLongestOne(t *testing.T) {
@@ -212,8 +251,10 @@ func TestDamagedRowKeepsTheNameShut(t *testing.T) {
 // the row above. A row nobody can read shuts its bucket, and that is the safe
 // direction -- but nothing in this package ever repairs it: Fail leaves it
 // alone on purpose, and Clear runs after a login the shut bucket lets nobody
-// make. A row is kept for keepFor, so that is how long the damage lasts, and
-// the next failure writes a row over it that counts again.
+// make. A row is kept as long as its own two times say, and the row below
+// carries the times this package writes: keepFor, so that is how long the
+// damage lasts here, and the next failure writes a row over it that counts
+// again. What a row of other times is kept for is not what this holds.
 func TestADamagedRowShutsItsBucketNoLongerThanKeepFor(t *testing.T) {
 	db := memstore.New()
 	now := int64(1790000000)
@@ -466,5 +507,35 @@ func TestTheCountingHoldsWhereAStoreKeepsNoSeq(t *testing.T) {
 	}
 	if wait, err := Check(ctx, db, "anna", later); err != nil || wait != 0 {
 		t.Fatalf("the first failure of a bucket at zero waits %d: %v", wait, err)
+	}
+}
+
+// TestARowKeepsCountingUnlessItHasLostBothTimes pins how far the two times
+// carry, and where they stop. A store that hands back one of them keeps the
+// counting: the row still answers the wait it holds. A store that hands back
+// neither leaves nothing to tell the row from one that is not there, and it
+// reads as none -- that is the one shape the counting cannot hold, and it is
+// what the word about a row that cannot be counted is narrowed to.
+func TestARowKeepsCountingUnlessItHasLostBothTimes(t *testing.T) {
+	db := memstore.New()
+	now := int64(1790000000)
+	row := []byte("9 1790000300")
+	for _, b := range []dbapi.Blob{
+		{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row, Seq: uint64(now + keepFor)},
+		{Kind: dbapi.BlobSetting, ID: key("anna"), Data: row, Updated: now},
+	} {
+		if err := db.BlobPut(ctx, b); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		if wait, err := Check(ctx, db, "anna", now); err != nil || wait != maxWait {
+			t.Fatalf("a row with one of its two times waits %d: %v", wait, err)
+		}
+	}
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key("anna"),
+		Data: row}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if wait, err := Check(ctx, db, "anna", now); err != nil || wait != 0 {
+		t.Fatalf("a row with neither of its two times waits %d: %v", wait, err)
 	}
 }

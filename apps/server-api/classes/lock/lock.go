@@ -76,8 +76,11 @@ const (
 const maxNow = 1 << 62
 
 // ErrLock reports a lock row the database cannot hold or that is malformed,
-// and a time no clock gives. Both leave the name locked rather than free:
-// what cannot be counted must not be counted as nothing.
+// and a time no clock gives. Both leave the name locked rather than free: a
+// row that cannot be read must not be counted as nothing. One shape is outside
+// that word, and only one: a row a store hands back without either of its two
+// times is no longer to be told from a row that is not there, and it reads as
+// none (see expired). Losing one of the two leaves the row counting.
 var ErrLock = errors.New("lock: malformed lock row")
 
 // counting makes reading a row and writing it back one step within this
@@ -106,15 +109,16 @@ func key(name string) string {
 }
 
 // expired reports whether a row may be removed, which is the moment the
-// counting reads it as none. A row carries that time twice: Seq holds it for
-// Purge, which decides by it without reading a row, and Updated holds when the
-// row was last written. Both are the caller's own (dbapi: "0 where no order is
-// needed"), and the contract's test never reads a Seq back through BlobGet --
-// so a store that hands one of them back empty must not turn every row into an
-// expired one. That would count every failure as the first, and no wait would
-// ever grow. A row is gone only when both of its times say so. now is a time
-// validNow has taken, so it fits an unsigned number, and now-keepFor cannot
-// run over either.
+// counting reads it as none. It is the one question Purge asks of a row too,
+// so what a purge frees and what the counting reads as none cannot come apart.
+// A row carries that time twice: Seq, which dbapi leaves to the caller ("0
+// where no order is needed"), and Updated, which holds when the row was last
+// written. The contract's own test reads Data and Updated back through BlobGet
+// and a Seq only through BlobFrom, so a store that hands Seq back empty must
+// not turn every row into an expired one. That would count every failure as
+// the first, and no wait would ever grow. A row is gone only when both of its
+// times say so. now is a time validNow has taken, so it fits an unsigned
+// number, and now-keepFor cannot run over either.
 func expired(b dbapi.Blob, now int64) bool {
 	return b.Seq <= uint64(now) && b.Updated <= now-keepFor
 }
@@ -204,8 +208,9 @@ func Fail(ctx context.Context, db dbapi.Local, name string, now int64) error {
 	if until < now+wait {
 		until = now + wait
 	}
-	// Seq is the time the row may be removed, so Purge can skip the rows that
-	// still count without reading them.
+	// Seq and Updated are the time the row may be removed. A walk of the rows
+	// gets both (dbapi.BlobFrom), so Purge asks them the same question the
+	// counting asks and needs nothing of the data (see expired).
 	return db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: key(name),
 		Seq: uint64(now + keepFor), Data: []byte(strconv.Itoa(n) + " " + strconv.FormatInt(until, 10)),
 		Updated: now})
@@ -226,9 +231,10 @@ func Clear(ctx context.Context, db dbapi.Local, name string) error {
 // of it, and freeing them all at once is exactly what a wrong number must
 // never do.
 //
-// No lock depends on it. A row past its keep time counts as none wherever it
-// is read (see read), so what Purge frees is the space the rows take, not a
-// name: whoever wires it up may run it as often or as seldom as he likes.
+// No lock depends on it. It takes a row exactly when the counting reads it as
+// none, because both ask the row the same question (see expired), so what
+// Purge frees is the space the rows take, not a name: whoever wires it up may
+// run it as often or as seldom as he likes.
 //
 // It holds counting over the whole walk, so nothing is counted between the
 // walk and the deletes that follow it: a row that the walk saw expired would
@@ -246,7 +252,7 @@ func Purge(ctx context.Context, db dbapi.Local, now int64) error {
 		return err
 	}
 	for _, b := range blobs {
-		if !strings.HasPrefix(b.ID, prefix) || b.Seq > uint64(now) {
+		if !strings.HasPrefix(b.ID, prefix) || !expired(b, now) {
 			continue
 		}
 		if err := db.BlobDelete(ctx, dbapi.BlobSetting, b.ID); err != nil {
