@@ -803,9 +803,10 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     but it forbids no method beside it: what keeps a second one out today
 //     is that nothing calls it, not this rule.
 //   - What a defer or a go carries is not read at all. A reading of it that
-//     took the written order for the run order was wrong in both directions -
-//     it called a right store wrong and let a wrong one through - and a named
-//     gap is better than that. A statement in a defer runs after the body, so
+//     takes the written order for the run order is wrong in both directions,
+//     because Go runs defers backwards: it calls a right store wrong and lets
+//     a wrong one through. A named gap is better than either. A statement in
+//     a defer runs after the body, so
 //     a read there is no read in front of the write; what stays uncovered is
 //     a OnceUse that speaks only from defers, and that one is refused for
 //     what it is, with the guard saying it can find no statement rather than
@@ -813,8 +814,9 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     and the wrong one are refused alike, on that ground.
 //   - Preparing is not speaking. stmtIndex counts a PrepareContext as the
 //     place a statement is given, so a prepared read counts where it is
-//     prepared and not where it is run. Both come out the same here, because
-//     nothing prepares a statement it does not then run.
+//     prepared and not where it is run. Nothing in this package prepares a
+//     statement at all, and in the two shapes measured for it the prepared
+//     statement was the one run as well, so the two places fell together.
 func (c *checker) onceUseWritesFirst() {
 	for _, file := range c.p.files {
 		for _, d := range file.Decls {
