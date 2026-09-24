@@ -196,11 +196,12 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 // what the anchor stands against.
 //
 // It asks the store what it still holds from that number on, in one query,
-// rather than looking at a fixed count of numbers above it. A fixed count is
-// what dropping rows is measured against, and dropping ten costs whoever can
-// write the database no more than dropping one: eight looks above the hole
-// found every hole of up to eight versions and let a wider one through in
-// silence. This lets none through.
+// rather than looking at a fixed count of numbers above it. A fixed count only
+// raises what the damage costs, and it raises it by nothing that is scarce:
+// eight looks above the hole found every hole of up to eight versions, and
+// dropping nine rows instead of one asks of the same writer eight more
+// statements at the same moment, after which the read ended in silence. This
+// lets no width through.
 //
 // It rests on one thing, and that one is held elsewhere: a trust row carries
 // its version number in Seq. Every writer of one sets it (AddVersion), and the

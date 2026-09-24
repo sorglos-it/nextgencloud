@@ -453,9 +453,9 @@ func TestRefreshFindsAHoleAboveABlock(t *testing.T) {
 
 // TestRefreshFindsAHoleWiderThanTheProbes proves a hole is found however wide
 // it is. Dropping one row was what the look above a missing number caught for
-// certain, and dropping ten costs whoever can write the database the same nine
-// statements it costs to drop one. What it bought him was the whole point of
-// the look: every node with an empty cache -- which is every node after a
+// certain, and dropping ten asks of whoever can write the database nine more
+// statements and nothing else -- the same access, the same moment. What those
+// nine bought him was the whole point of the look: every node with an empty cache -- which is every node after a
 // restart -- read version 1 as the newest and said no error at all, so every
 // key an admin withdrew in 2..11 counted again.
 func TestRefreshFindsAHoleWiderThanTheProbes(t *testing.T) {
