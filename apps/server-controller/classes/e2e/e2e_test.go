@@ -445,9 +445,11 @@ func TestReaderAndWriterRunAtOnce(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
-	// Both goroutines wait on start, so neither can be through before the
-	// other begins: without it they may run one after the other and the
-	// detector never sees the two directions overlap.
+	// Both goroutines wait on start, so neither begins before the other is
+	// released: without it the first may be through before the second has
+	// even been spawned. It does not force an overlap — close(start) frees
+	// both, and the scheduler may still run all 64 rounds of the one before
+	// the other — it only makes one likely enough for the detector to see.
 	start := make(chan struct{})
 	wg.Add(2)
 	go func() {
@@ -520,12 +522,19 @@ func TestAcceptRefusesAMessageOneOfAnotherSize(t *testing.T) {
 	}
 }
 
-// TestAcceptCannotSayWhoseFaultTheHandshakeWas builds the three ways message
-// 1 fails to open — one of them the shell's, two of them this controller's
-// own configuration — and holds all three to the one value ErrHandshake. The
-// doc of that error rests on this: because nothing here tells them apart,
-// the caller may not read a protocol error of the shell out of it. Whoever
-// ever does tell them apart fails here, and changes that doc with it.
+// TestAcceptCannotSayWhoseFaultTheHandshakeWas builds three of the ways
+// message 1 fails to open — one of them the shell's, two of them this
+// controller's own configuration — and holds all three to the one value
+// ErrHandshake. The doc of that error rests on this: as Accept stands,
+// nothing here tells them apart, so the caller may not read a protocol error
+// of the shell out of it.
+//
+// The name promises more than the measurement, and the doc of ErrHandshake
+// says which part: our own two are catchable where the configuration is
+// loaded, and belong there. What is left over for Accept is the shell's
+// damaged message 1 and an OPEN the API put on the wrong controller — those
+// two do look alike from here. Whoever tells them apart in Accept fails
+// here, and changes that doc with it.
 func TestAcceptCannotSayWhoseFaultTheHandshakeWas(t *testing.T) {
 	client, _ := trusttest.NodeKeys(0x52)
 	ctl, _ := trusttest.NodeKeys(0xC1)
@@ -538,8 +547,11 @@ func TestAcceptCannotSayWhoseFaultTheHandshakeWas(t *testing.T) {
 	// Ours: a static key of this controller that is no X25519 key at all.
 	_, _, shortKey := Accept(opened(t, payload, client.Public), node,
 		noise.DHKey{Private: ctl.Private[:16], Public: ctl.Public})
-	// Ours again, and the one no check could catch: the right key, the wrong
-	// node ID, so this controller hashes another prologue than the shell.
+	// Ours again: the right key, the wrong node ID, so this controller hashes
+	// another prologue than the shell. A check does catch this one, only not
+	// in here — our static key is what our node ID carries in the trust list
+	// (trust.Node.Noise). From inside Accept it is bit for bit the API
+	// putting another controller's OPEN on us, and that one is not ours.
 	_, _, wrongNode := Accept(opened(t, payload, client.Public), "ctl-2", ctl)
 	for _, c := range []struct {
 		name string

@@ -25,8 +25,10 @@ import (
 // inner message held says nothing that belongs in the log of this server.
 // All of them end the channel, and which CLOSE it ends with is the caller's
 // to pick — what the shell did wrong is E_PROTOCOL, what this controller did
-// wrong is E_INTERNAL. Which value carries which blame was measured, not
-// reasoned out, and one of the four carries none at all:
+// wrong is E_INTERNAL. Three parties can be at fault here, not two: the API
+// sits between the shell and us, and the doc of tunnel.Opened lets it "put
+// any OPEN here". Which value carries which blame was measured, not reasoned
+// out, and one of the four carries none at all:
 //
 //   - ErrChannel is this side. Both ways to it mean the channel handed over
 //     has no end-to-end side at all: no session — access refuses an app
@@ -35,14 +37,29 @@ import (
 //   - ErrEnded and ErrMessage are either side, told apart by the method they
 //     came out of: out of Open the shell did it, out of Data or End this
 //     side did.
-//   - ErrHandshake says nothing about whose fault it was, and no check in
-//     this package can make it say: message 1 fails to open exactly the same
-//     way whether the shell damaged it or this controller was handed the
-//     wrong static key or the wrong node ID for its prologue
-//     (TestAcceptCannotSayWhoseFaultTheHandshakeWas builds all three). End
-//     it with E_INTERNAL. That names our own misconfiguration right and the
-//     shell's damaged message 1 wrong, and it is that way round on purpose:
-//     the other one sends whoever runs this server looking at the user.
+//   - ErrHandshake says nothing about whose fault it was. Message 1 fails to
+//     open the same way for causes of all three parties. Ours: a static key
+//     that is no pair, or one that is not what our node ID stands for, or a
+//     wrong node ID in the prologue. The shell's: a damaged message 1, or an
+//     old copy of our key. The API's: an OPEN meant for another controller
+//     put on this one — from here that is bit for bit our own wrong node ID,
+//     with our configuration right. End it with E_INTERNAL. That names our
+//     own right and the shell's and the API's wrong, and it is that way
+//     round on purpose: the other one sends whoever runs this server looking
+//     at the user.
+//     Ours are catchable — just not here. A static key whose public half
+//     derives from its private one (curve25519) catches the pair; a public
+//     half equal to what our node ID carries in the trust list
+//     (trust.Node.Noise) catches the key that is someone else's and the node
+//     ID that is not ours. Neither check reads anything the channel brings:
+//     their input is the key pair, our node ID and the trust list, and those
+//     three are one process's configuration. A controller that has them
+//     wrong has them wrong for every channel, not for this one. So their
+//     place is where the own identity and each new version of the trust list
+//     are loaded — refuse to start there, rather than pay an X25519 step per
+//     channel at the most expensive point of the channel setup.
+//     TestAcceptCannotSayWhoseFaultTheHandshakeWas holds three of the causes
+//     on this one value; whoever tells them apart in Accept fails there.
 var (
 	ErrChannel   = errors.New("e2e: channel carries no end-to-end handshake")
 	ErrHandshake = errors.New("e2e: end-to-end handshake failed")
@@ -73,11 +90,17 @@ type Session struct {
 // ends to this one channel of this one controller.
 //
 // o must be the tunnel.Opened access.Check decided on, not one parsed a
-// second time: access judges on the params and the task of the OPEN, and the
-// prologue below hashes those same bytes. Handing over a different Opened
-// binds the channel to something nobody checked. Inside here they are read
-// once, but across the package boundary it is the caller's to keep, the way
-// access.Request.List is.
+// second time — and its two halves are bound in different ways. access
+// decides on app, service and action (core.Lookup) and on the task with its
+// confirm (task.Check); the params reach no decision of that package, the
+// word does not occur in it, and access.go is all of it. What binds the
+// params is this prologue: "Only two things bind it to what the shell sent",
+// says the doc of tunnel.Opened — this prologue, which hashes params and
+// task, and the signature of the task. So a second Opened would bind the
+// channel to a task access never saw, and to params nothing else in this
+// controller ever looks at. Inside here they are read once, but across the
+// package boundary it is the caller's to keep, the way access.Request.List
+// is.
 func Accept(o tunnel.Opened, nodeID string, static noise.DHKey) (*Session, []byte, error) {
 	// The peer key is the dh of the client certificate, and nothing else
 	// names it. An app channel always carries one — access refuses one
@@ -102,6 +125,11 @@ func Accept(o tunnel.Opened, nodeID string, static noise.DHKey) (*Session, []byt
 	prologue := noisep.E2EPrologue(nodeID, o.Open.App, o.Open.Service, o.Open.Action,
 		o.Open.Params, o.Open.TaskBytes())
 	hs, err := noisep.Handshake(false, prologue, static, o.Session.Cert().DH, rand.Reader)
+	// Dead branch 1 of 4 in this package, measured: a panic in its place
+	// leaves every test green. For Noise_KK without a PSK NewHandshakeState
+	// answers with no error at all (state.go:317 of the vendored
+	// github.com/flynn/noise), so this branch is what keeps the package off
+	// a foreign library's word.
 	if err != nil {
 		return nil, nil, ErrHandshake
 	}
@@ -111,6 +139,11 @@ func Accept(o tunnel.Opened, nodeID string, static noise.DHKey) (*Session, []byt
 		return nil, nil, ErrHandshake
 	}
 	msg2, cs1, cs2, err := hs.WriteMessage(nil, nil)
+	// Dead branch 2 of 4 is the size half: dropping it leaves every test
+	// green. It stays as a belt beside the braces, but it proves nothing.
+	// What carries instead: after message 2 the pattern of Noise_KK is used
+	// up, so WriteMessage hands out both cipher states, and a nil one would
+	// panic in every round trip the tests run.
 	if err != nil || len(msg2) != wire.HandshakeSize {
 		return nil, nil, ErrHandshake
 	}
@@ -156,6 +189,8 @@ func (s *Session) Data(b []byte) ([]byte, error) {
 // follows this one.
 func (s *Session) End(cl wire.Close) ([]byte, error) {
 	body, err := json.Marshal(cl)
+	// Dead branch 3 of 4, measured: wire.Close holds two string types, a
+	// string and a *int, and json.Marshal has nothing to fail on in those.
 	if err != nil {
 		return nil, ErrMessage
 	}
@@ -183,6 +218,11 @@ func (s *Session) seal(kind byte, body []byte) ([]byte, error) {
 		return nil, ErrMessage
 	}
 	ct, err := s.tr.Seal(plain)
+	// Dead branch 4 of 4, measured: wire.E2E above holds a data body under
+	// wire.MaxE2EPlaintext and an end under a CLOSE payload, both below
+	// noisep.MaxPlaintext, so the size half of Seal has nothing left to
+	// refuse. What remains of it is the nonce run out after 2^64 messages
+	// (vendor/github.com/flynn/noise/state.go:56) — no test goes there.
 	if err != nil {
 		return nil, ErrMessage
 	}
