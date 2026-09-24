@@ -38,6 +38,20 @@ hat sie zum Schluss getrennt gemacht und dabei **sechs** weitere falsche Sätze
 gefunden — zweimal dieselbe Klasse, im selben Commit, der sie reparieren
 sollte. Wer sie nebenbei macht, findet sie nicht.
 
+**Und wenn dieselbe Sache dreimal in Folge eine Runde braucht, ist meistens
+nicht die Behebung falsch, sondern eine Zahl geraten.** Ein Leck wurde über drei
+Runden geschlossen; jedes Mal stimmte die Behebung, und jedes Mal war die
+**Anzahl der noch offenen Fälle** eine Schätzung, die der nächste Prüfer
+widerlegte. Gelöst hat es erst, sie zu einer Konstante mit eigener Zusicherung
+zu machen (`const openShapes = 3`), gegengeprüft in **beide** Richtungen: eine
+Form mehr und eine weniger müssen den Test rot machen. Eine Zahl in Prosa ist
+eine Behauptung; eine Zahl, an der ein Test hängt, ist eine Zusage.
+
+**Zähl auch nach, ob dein Messgerät alle Fälle erreicht hat.** In derselben
+Aufgabe beendete der erste Fehlschlag den Lauf — die letzten drei Formen wurden
+deshalb **nie gemessen**, und die Tabelle im Bericht sah trotzdem vollständig
+aus.
+
 ## 2. Grüne Tests beweisen nichts, wenn sie nicht rot werden können
 
 Der teuerste Befund dieses Projekts: ein Prüfer hat einen absichtlich
