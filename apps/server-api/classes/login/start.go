@@ -59,11 +59,24 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 	// userByName and not trust.List.UserByName: that one stops at the name it
 	// finds, and the time it saves follows whether the name exists (see there).
 	//
-	// The row is read for every name, known or not, and a missing row is no
-	// failure -- a name nobody has simply has none, and asking for it must cost
-	// what asking for a real one costs.
+	// The row is read for every name by the name, never by the ID of the user
+	// the list gave -- a name nobody has has no ID, and UserGet with an empty
+	// one is a call the contract promises no answer for: dbapi.Store.UserPut
+	// refuses it with dbapi.ErrInvalid already, dbapi/dbtest pins UserGet only
+	// for a name nobody has, and a store that refuses it would answer every
+	// unknown name E_UNREACHABLE and every known one with a challenge. By the
+	// name both go the same way, and the database's own query log no longer
+	// carries a "where id = ''" that only unknown names produce.
+	//
+	// A row that is not there is no failure, and the row of a name the list
+	// does not know changes nothing: session.Challenge ignores the TOTP of a
+	// name it cannot place and draws it from the share instead. What is left
+	// between the two -- handing a row back against saying there is none, and
+	// the one write below -- came out under what two batches of the same name
+	// differ by on the machine this was measured on
+	// (TestStartTakesTheSameTimeForAnUnknownName measures all three).
 	u, known := userByName(v.List, req.Name)
-	row, err := h.S.DB.UserGet(ctx, u.ID)
+	row, err := h.S.DB.UserByName(ctx, req.Name)
 	if err != nil && !isNotFound(err) {
 		httpapi.Fail(w, wire.CodeUnreachable)
 		return
@@ -89,10 +102,24 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		// Only a real nonce is kept. The made-up answer carries one that was
 		// never stored, so login/finish fails with E_LOGIN like any other
 		// wrong attempt -- the same answer a wrong password gets.
-		if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil {
-			httpapi.Fail(w, wire.CodeUnreachable)
-			return
-		}
+		//
+		// A row that cannot be written changes nothing about the answer, and
+		// that is the whole point: this is the one call a known name makes
+		// that an unknown one does not, so it is the one call whose failure
+		// must not show. A database that reads but cannot write -- a full
+		// disk, a read replica, a locked table, a quota that ran out -- would
+		// otherwise answer every name that exists E_UNREACHABLE and every
+		// other one with a challenge: one request per name, no measuring, no
+		// noise, and the whole made-up answer undone. The login that follows
+		// finds no nonce and fails with E_LOGIN, which is what a wrong
+		// password gets, so nothing is let through either.
+		//
+		// It is not logged. A line written only for names that exist would
+		// hand the same answer to whoever reads the log, and login/start has
+		// no brake anybody has to get past to write it. Whoever runs the
+		// installation hears of a database that cannot be written from the
+		// database.
+		_ = h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime)
 	}
 	if b := mustJSON(w, c); b != nil {
 		httpapi.Answer(w, http.StatusOK, b)

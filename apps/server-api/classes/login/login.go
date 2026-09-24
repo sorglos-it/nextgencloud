@@ -35,18 +35,19 @@ func (h *Handler) userOf(l *trust.List, id string) (trust.User, bool) { return l
 // same reason and says so; TestUserByNameLooksAtEveryUser holds this one to it
 // without a clock.
 //
-// Measured on a list of the ten thousand users one may hold (trust.MaxUsers),
-// next to the 70 to 90 microseconds session.Challenge takes on that list:
-// trust.List.UserByName answers a name at the front of the list in a time too
-// short to measure and walks the whole list -- 18 microseconds -- for one
-// nobody has, so the time says what the answer keeps quiet. Through this walk
-// the same two names cost 20.6 and 20.6 microseconds.
+// Measured on a list of the ten thousand users one may hold (trust.MaxUsers):
+// trust.List.UserByName answers a name at the front of that list in a time too
+// short to measure at all and walks the whole list for one nobody has, and that
+// walk is a quarter to a half of what session.Challenge itself costs on the
+// same list -- so the time says what the answer keeps quiet. Through the walk
+// here those same two names cost the same. Only the ratios are written down:
+// the microseconds behind them belong to one machine and age with it.
 //
 // What no walk makes even is how long one comparison takes, which follows the
 // letters of the name and not the list: a name that shares its length and its
-// first bytes with many of the list's own costs 41 microseconds where a short
-// one costs 21 -- and it costs that whether it exists or not, which is the
-// question this walk is about.
+// first bytes with many of the list's own costs about twice what a short one
+// costs -- and it costs that whether it exists or not, which is the question
+// this walk is about.
 func userByName(l *trust.List, name string) (trust.User, bool) {
 	var found trust.User
 	known := false

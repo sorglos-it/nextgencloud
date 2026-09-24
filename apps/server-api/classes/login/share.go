@@ -11,12 +11,16 @@ import (
 // table scan in front of every login.
 const shareTTL = 300
 
-// shareCache keeps the last counted share with the time it was counted.
+// shareCache keeps the last counted share and the time the count was last
+// tried. Tried, not counted: a try that failed sets it too, so a database that
+// cannot be reached is asked once per shareTTL like one that answers. Counting
+// on every login was the shape of it before, and on a real database that is no
+// error that comes back at once but a connection that has to time out first.
 type shareCache struct {
 	mu      sync.Mutex
 	percent int
-	counted int64
-	ok      bool
+	tried   int64
+	asked   bool // whether it was ever tried, so that a small clock is no gate
 }
 
 // totpShare returns how many of the installation's users hold a TOTP secret,
@@ -24,16 +28,24 @@ type shareCache struct {
 // A database that cannot be reached gives the last counted value, and 0 if
 // there is none: a made-up answer must still be built, and it must be built
 // the same way for every name, so this never fails the request.
+//
+// The lock is held to take the turn and given back before the database is
+// asked, so the one login that counts waits on it and no other. Two logins at
+// once cannot both count: the turn is taken under the lock.
 func (h *Handler) totpShare(ctx context.Context) int {
 	now := h.S.Now()
 	h.share.mu.Lock()
-	defer h.share.mu.Unlock()
-	if h.share.ok && now-h.share.counted < shareTTL {
-		return h.share.percent
+	kept := h.share.percent
+	if h.share.asked && now-h.share.tried < shareTTL {
+		h.share.mu.Unlock()
+		return kept
 	}
+	h.share.tried, h.share.asked = now, true
+	h.share.mu.Unlock()
+
 	users, err := h.S.DB.UserList(ctx)
 	if err != nil {
-		return h.share.percent
+		return kept
 	}
 	with := 0
 	for _, u := range users {
@@ -41,11 +53,12 @@ func (h *Handler) totpShare(ctx context.Context) int {
 			with++
 		}
 	}
+	percent := 0
 	if len(users) > 0 {
-		h.share.percent = with * 100 / len(users)
-	} else {
-		h.share.percent = 0
+		percent = with * 100 / len(users)
 	}
-	h.share.counted, h.share.ok = now, true
-	return h.share.percent
+	h.share.mu.Lock()
+	h.share.percent = percent
+	h.share.mu.Unlock()
+	return percent
 }
