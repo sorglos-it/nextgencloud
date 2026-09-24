@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Checks that the recovery test environment has everything it needs. Every
-# script from recovery-swtpm.sh on calls this first.
+# Checks that the recovery test environment has everything it needs.
 set -euo pipefail
 shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
@@ -57,10 +56,14 @@ pcr_bank() {
 		printf 'Prüfen: läuft der Simulator? tools/recovery-swtpm.sh reset main\n' >&2
 		exit 1
 	fi
-	# Requires PCR 23 too, not just a first digit: swtpm allocates a bank's
-	# full 24 PCRs or none, so this is the point where "vorhanden" is actually
-	# true rather than merely "the name appears in the output".
-	case "$caps" in
+	# Isolated first because case's * crosses newlines (measured: without
+	# this, a later bank's "23" can satisfy the pattern). Against the shapes
+	# swtpm actually produces - all 24 PCRs or none - requiring 23 here is enough.
+	local bank_line=""
+	while IFS= read -r pcr_line; do
+		case "$pcr_line" in *'sha384: ['*) bank_line="$pcr_line" ;; esac
+	done <<< "$caps"
+	case "$bank_line" in
 	*'sha384: [ '[0-9]*' 23 ]'*) printf 'PCR-Bank sha384: vorhanden\n' >&2 ;;
 	*)
 		printf 'Dieses TPM hat keine SHA-384-PCR-Bank (oder eine andere tpm2-tools-Fassung schreibt das Format anders).\n' >&2
