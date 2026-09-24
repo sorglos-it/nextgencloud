@@ -198,6 +198,17 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     `tunnel.ParseHello` festgenagelt, statt eine zweite Kopie zu pflegen. Eine
     der beiden Stellen muss nachziehen. (controller, Aufgabe 7)
 
+29. **`tunnel.AppState` braucht ein fünftes Wort für „weiss niemand“.** Heute
+    hat der Vertrag vier Zustände, und `ParseStatus` beendet die Leitung über
+    jeden fünften. Eine Maschine, die nicht antwortet, lässt sich damit gar
+    nicht berichten: der Controller lässt die Zeile deshalb weg statt `failed`
+    zu schreiben, denn `failed` wäre sonst als einziges der vier Wörter
+    doppeldeutig — und ausgerechnet das, auf das der Admin reagieren soll. Der
+    Preis: eine unerreichbare App ist nicht von einer zu unterscheiden, die der
+    256er-Deckel verschluckt hat. Das fünfte Wort darf erst gesendet werden,
+    wenn `speak()` sagt, dass die Gegenstelle mindestens V1.2 spricht — die
+    Fassungslogik dafür steht seit Aufgabe 7. (controller, Aufgabe 7)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
