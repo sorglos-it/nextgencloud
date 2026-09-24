@@ -13,9 +13,13 @@ cd "$(dirname "$0")/.."
 work="$(pwd)/dist/recovery"
 
 usage() {
-	printf 'Aufruf: tools/recovery-swtpm.sh start|stop|reset|tcti [main|qemu]\n' >&2
+	printf 'Aufruf: tools/recovery-swtpm.sh start|stop|reset|resume|tcti [main|qemu]\n' >&2
 	exit 1
 }
+
+# Set by resume alone, and read by start: it decides whether this start gets a
+# data channel. Empty everywhere else, so nothing but resume can switch one on.
+datenkanal=""
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then usage; fi
 name="${2:-main}"
@@ -86,10 +90,26 @@ ask_tpm() {
 }
 
 start() {
-	local pid flags=()
+	local pid flags=() channel=() sichtbar
 	mkdir -p "$dir" "$work/work"
+	# The data channel is what the tpm2 tools talk to, and main always has it.
+	# The instance qemu must NOT have one while the virtual machine hangs on
+	# it: QEMU hands its OWN data channel in over the control channel with
+	# CMD_SET_DATAFD, and swtpm rejects that - and ends itself right after -
+	# when one is already bound. Measured: with --server the attach dies with
+	# "Failed to send CMD_SET_DATAFD", without it QEMU comes up. Only resume
+	# adds the channel afterwards, once the machine is gone, so the PCRs can be
+	# read out. Do not put --server back for qemu.
+	if [ "$name" = main ] || [ -n "$datenkanal" ]; then
+		channel=(--server "type=unixio,path=$sock")
+		sichtbar="$sock"
+	else
+		# Without a data channel no $sock is ever laid down, so the control
+		# socket is the only thing that can prove this simulator is up.
+		sichtbar="$sock.ctrl"
+	fi
 	pid="$(swtpm_pid)"
-	if [ -n "$pid" ] && [ -S "$sock" ]; then
+	if [ -n "$pid" ] && [ -S "$sichtbar" ]; then
 		# Already up - and that is not taken on trust: measured, a stranger on
 		# the process list plus a socket file left lying around got a
 		# "started" out of this with no simulator running anywhere.
@@ -124,7 +144,7 @@ start() {
 		# control channel, so it must not be started up in advance.
 		flags=(--flags not-need-init,startup-clear)
 	fi
-	if ! swtpm socket --tpm2 --tpmstate "dir=$dir" --server "type=unixio,path=$sock" \
+	if ! swtpm socket --tpm2 --tpmstate "dir=$dir" "${channel[@]}" \
 		--ctrl "type=unixio,path=$sock.ctrl" "${flags[@]}" --daemon --pid "file=$pidfile"; then
 		printf 'Der Simulator %s lässt sich nicht starten. Die Zeilen darüber sagen, woran es lag.\n' "$name" >&2
 		printf 'Hilft das nicht weiter: Zustand wegwerfen mit tools/recovery-swtpm.sh reset %s\n' "$name" >&2
@@ -136,15 +156,61 @@ start() {
 	# Guards against a machine slower than this one: measured, this swtpm has
 	# its socket bound before it returns. What decides is the check below.
 	for _ in $(seq 50); do
-		if [ -S "$sock" ]; then break; fi
+		if [ -S "$sichtbar" ]; then break; fi
 		sleep 0.1
 	done
-	if [ ! -S "$sock" ]; then
+	if [ ! -S "$sichtbar" ]; then
 		printf 'Der Simulator %s ist nicht gestartet: %s\n' "$name" "$dir" >&2
 		printf 'Prüfen: swtpm --version, Rechte auf dem Verzeichnis, alter Socket im Weg\n' >&2
 		exit 1
 	fi
 	ask_tpm
+}
+
+# Brings the data channel to the instance qemu AFTER the virtual machine is
+# gone, so its PCRs can be read. The volatile state is what carries them: it
+# has to be written out while this simulator still lives, because stop takes it
+# with it. Measured: a simulator restarted without this step answers PCR 0 with
+# all zero, and the proof that the firmware measured would be lost.
+resume() {
+	local pid
+	if [ "$name" != qemu ]; then
+		printf 'resume gibt es nur für die Instanz qemu.\n' >&2
+		exit 1
+	fi
+	pid="$(swtpm_pid)"
+	if [ -z "$pid" ]; then
+		printf 'Die Instanz qemu läuft nicht, es gibt nichts zu übernehmen.\n' >&2
+		printf 'Prüfen: hat die virtuelle Maschine den Simulator mitgenommen? Ein geordnetes\n' >&2
+		printf 'Ende von QEMU (QMP quit oder SIGTERM) tut genau das - es muss SIGKILL sein.\n' >&2
+		exit 1
+	fi
+	# Needs the control channel to itself. QEMU holds it as long as it runs, and
+	# a unixio control channel takes one client at a time - measured, this call
+	# then waits for it and does NOT come back on its own. There is no time
+	# limit around it on purpose, because there is nothing sensible to do after
+	# one: whoever calls resume has to have ended the machine first and to have
+	# waited for it, and tools/recovery-qemu.sh does exactly that before it
+	# gets here.
+	if ! swtpm_ioctl -v --unix "$sock.ctrl"; then
+		printf 'Der flüchtige Zustand der Instanz qemu lässt sich nicht sichern.\n' >&2
+		printf 'Prüfen: läuft die virtuelle Maschine noch und hält den Steuerkanal?\n' >&2
+		exit 1
+	fi
+	if [ ! -s "$dir/tpm2-00.volatilestate" ]; then
+		printf 'swtpm hat keinen flüchtigen Zustand hinterlegt: %s\n' "$dir/tpm2-00.volatilestate" >&2
+		exit 1
+	fi
+	stop
+	datenkanal=ja
+	start
+	# Without this the simulator sits there uninitialised: it was started with
+	# no --flags on purpose, so the state just saved gets loaded here instead of
+	# a fresh startup clearing the very PCRs this is about.
+	if ! swtpm_ioctl -i --unix "$sock.ctrl"; then
+		printf 'Der gesicherte Zustand lässt sich nicht wieder einspielen.\n' >&2
+		exit 1
+	fi
 }
 
 stop() {
@@ -197,6 +263,7 @@ case "$1" in
 start) start ;;
 stop) stop ;;
 reset) reset ;;
+resume) resume ;;
 tcti) printf 'swtpm:path=%s\n' "$sock" ;;
 *) usage ;;
 esac
