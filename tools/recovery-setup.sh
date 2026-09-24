@@ -17,7 +17,14 @@ install() {
 	printf 'Pakete installiert. Weiter mit: tools/recovery-tools.sh\n' >&2
 }
 
+prepare() {
+	# Stub: fails on purpose until the next commit fills it in.
+	printf 'prepare ist noch nicht gebaut.\n' >&2
+	exit 1
+}
+
 case "${1:-}" in
 install) install ;;
-*) printf 'Aufruf: tools/recovery-setup.sh install\n' >&2; exit 1 ;;
+prepare) prepare ;;
+*) printf 'Aufruf: tools/recovery-setup.sh install|prepare\n' >&2; exit 1 ;;
 esac
