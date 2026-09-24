@@ -17,9 +17,16 @@ import (
 
 // Live is a session that is open right now.
 type Live struct {
-	Token    []byte           // session.TokenHash of the cookie value
-	Row      dbapi.Session    // as the database holds it, with Seen set to now
-	Trust    trust.Version    // the trust list this session was decided on
+	Token []byte        // session.TokenHash of the cookie value
+	Row   dbapi.Session // as the database holds it, with Seen set to now
+	// Trust is the trust list this session was decided on. Its List is the
+	// cached one of package state, and state.Trust and state.Refresh say the
+	// same thing about it at both ends it comes from: read it, never change
+	// it. Nothing on the way here copies it, so this field carries that rule
+	// into every handler -- a write through it would reach the list every
+	// other request of this process is holding at that moment, and no test of
+	// this package would see it happen.
+	Trust    trust.Version
 	Verified session.Verified // the chain back to the user's key
 	APIKey   []byte           // the API's private session key, opened
 }

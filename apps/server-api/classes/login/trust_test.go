@@ -68,8 +68,15 @@ func TestTrustNeedsASessionAndPages(t *testing.T) {
 // TestTrustLooksAtTheListOnce holds this path to one look at the trust rows.
 // Live brings the list up to date before it decides on the session, and the
 // answer is built from that same version: fetching it a second time inside
-// state.Chain would read every row again, and it would answer out of a list
-// the session was never checked against.
+// state.Chain would walk the rows above the newest a second time, and it would
+// answer out of a list the session was never checked against.
+//
+// What that second walk costs is not the stored versions read again -- a
+// refresh that is up to date reads none of them. Measured on this fixture,
+// which holds one version: nine reads, rows 2 to 10, every one of them a row
+// that is not there (state.gapProbes). Nine reads that find nothing are what
+// the trust rows cost per look here, and paying them twice was the whole of
+// it.
 //
 // One look is counted rather than written down: what it costs is state's
 // business (gapProbes), and what this test is about is that it happens once.

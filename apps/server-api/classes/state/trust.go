@@ -371,6 +371,19 @@ func (s *State) Chain(ctx context.Context, cur trust.Version, from uint64) (sess
 		return session.TrustChain{}, ErrBadVersion
 	}
 	if cur.List == nil {
+		// ErrNoTrust carries two things from here on, and only one of them is
+		// true of this line: the installation has no list, which is what every
+		// other place that answers it means -- and the caller brought no
+		// version, which is a mistake inside the API dressed as a missing
+		// list. The second reads as the 404 of the contract's table, which is
+		// what the rule at ErrBadVersion says must never happen: a fault of
+		// the API must not look like a database that is not there.
+		//
+		// No caller can reach it today. Outside this package's own tests only
+		// login/trust.go calls Chain, and it hands on the version Live
+		// refreshed, which is a version or else Live answered instead. Whoever
+		// adds the second caller reads this: a version of nothing is his own
+		// fault, not the installation's.
 		return session.TrustChain{}, ErrNoTrust
 	}
 	newest := cur.List.Seq
