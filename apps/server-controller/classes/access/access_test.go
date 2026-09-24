@@ -560,10 +560,10 @@ func TestCheckRefusesMalformedOpen(t *testing.T) {
 	wantClose(t, d, cl, wire.CodeVerify)
 }
 
-// seeds are the payloads FuzzCheck starts from: the accepted channels of the
+// seeds are the payloads FuzzCheck starts from, of this fixture: a second
+// one would be the same bytes, but nothing would say so: the accepted channels of the
 // tests above, the refused ones, and bare rubbish.
-func seeds(t testing.TB) [][]byte {
-	f := newFixture(t)
+func (f fixture) seeds(t testing.TB) [][]byte {
 	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
 	stage := coreOpen(core.AppStore, core.ActStage, nil)
 	stage.Params = json.RawMessage(`{"target":"` + testApp + `","version":"1.0.0"}`)
@@ -634,7 +634,7 @@ func canary(t *testing.T, d Decision, cl *wire.Close) {
 func TestSeedsReachCheck(t *testing.T) {
 	f := newFixture(t)
 	var open, refused int
-	for i, b := range seeds(t) {
+	for i, b := range f.seeds(t) {
 		d, cl := Check(context.Background(), f.request(b))
 		canary(t, d, cl)
 		if cl == nil {
@@ -652,7 +652,7 @@ func TestSeedsReachCheck(t *testing.T) {
 
 func FuzzCheck(f *testing.F) {
 	fx := newFixture(f)
-	for _, b := range seeds(f) {
+	for _, b := range fx.seeds(f) {
 		f.Add(b)
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
