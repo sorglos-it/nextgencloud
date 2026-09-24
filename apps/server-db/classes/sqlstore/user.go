@@ -55,12 +55,27 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // sits in the same transaction as the write, so two APIs cannot both take a
 // free name: on Galera one of them loses the certification and repeats, and
 // then it sees the name.
+//
+// The unique index ngc_user_name stands behind that check, and its answer is
+// translated into the same one. Two writers can get past the SELECT together
+// - on MariaDB without Galera nothing certifies them apart - and then the
+// index refuses the second. dbapi promises "the same name for another ID
+// gives ErrInvalid", so a caller that asks errors.Is for it may not be handed
+// a driver error instead. The translation stands around the whole
+// transaction, because the UPDATE renames where the INSERT adds, and both run
+// against that index. The primary key cannot reach it: the UPDATE in front
+// matches the row with that ID, and the driver counts matched rows, so the
+// INSERT is not run for a user that is already there.
+//
+// The race is not measurable on SQLite, so what is measured is the
+// translation: TestADuplicateNameIsErrInvalid makes the SELECT miss a row the
+// index still sees, which is the shape a second writer has.
 func (s *store) UserPut(ctx context.Context, u dbapi.User) error {
 	roles, ok := joinList(u.Roles)
 	if u.ID == "" || u.Name == "" || !okKey(u.ID) || !okKey(u.Name) || !ok || !okDoc(u.TOTP) {
 		return dbapi.ErrInvalid
 	}
-	return s.write(ctx, func(tx *sql.Tx) error {
+	err := s.write(ctx, func(tx *sql.Tx) error {
 		var other string
 		switch err := tx.QueryRowContext(ctx, userIDOf, []byte(u.Name)).Scan(&other); {
 		case err != nil && !errors.Is(err, sql.ErrNoRows):
@@ -84,6 +99,10 @@ func (s *store) UserPut(ctx context.Context, u dbapi.User) error {
 			blob(u.TOTP), u.Locked, int64(u.Failures), u.LastLogin)
 		return err
 	})
+	if s.d.Duplicate(err) {
+		return dbapi.ErrInvalid
+	}
+	return err
 }
 
 func (s *store) UserGet(ctx context.Context, id string) (dbapi.User, error) {
@@ -138,17 +157,37 @@ func (s *store) UserDelete(ctx context.Context, id string) error {
 
 // A value of this file reaches the driver as a conversion of a string where
 // it comes from one, and through blob where it is a byte slice already - a
-// token, a Noise key, a secret. That is the way OnceUse passes its value: the
-// length checks below already keep a nil slice out, and the call is what the
-// guard in sqlcheck_test.go reads - it follows the shape, not the reasoning.
+// token, a Noise key, a secret. That is the way OnceUse passes its value, and
+// the call is what the guard in sqlcheck_test.go reads: it follows the shape,
+// not the reasoning.
 //
-// Where no length check stands in front of it, in SessionGet, SessionTouch,
-// SessionDelete and PendingDelete, blob turns a nil token into an empty one,
-// and that changes no answer: SessionPut and PendingPut refuse an empty token
-// and an empty key, so no row carries one, and an empty token matches as
-// little as NULL did. TestAnEmptyTokenIsNobodysSession measures both halves
-// of that - the refusal as well as the answer, because without the refusal
-// the empty token would be a key like any other.
+// blob is the defence, not the length check in front of it. okDoc(nil) is
+// true, so nothing but blob keeps a nil out of u.TOTP, v.Cert, v.Proof,
+// v.APIKey and v.APICert; only the len(v.Token) == 0 and len(p.Key) == 0 of
+// SessionPut and PendingPut keep one out, and only for those two values. A
+// nil byte slice binds as NULL - the vendored driver says so itself, "Handle
+// []byte(nil) as a NULL value" in packets.go - and every column of the
+// migration is NOT NULL, so on MariaDB those five write a row the database
+// refuses the moment blob goes. The SQLite driver of this
+// project binds an empty blob instead, so there the same row is written and
+// no test of behaviour can see the difference: measured both ways round, with
+// the five calls taken out the whole package and the contract stay green and
+// TestEveryByteSliceComesFromBlob goes red on its own. That guard reads the
+// source, and it is the only thing holding these five calls.
+//
+// Where no check stands in front of it at all - the token of SessionGet,
+// SessionTouch and SessionDelete, the key of PendingDelete - blob turns a nil
+// into an empty one, and that changes no answer: SessionPut and PendingPut
+// refuse an empty token and an empty key, so no row this store writes carries
+// one, and an empty token matches as little as NULL did. A row nobody of ours
+// wrote could carry one, the way TestAUserRowNobodyOfOursWrote plants a roles
+// column, and such a row would answer a nil token where a NULL would have
+// matched nothing - NULL is equal to nothing in SQL, not even to NULL. The
+// store writes no such row. In oneUser the argument is a conversion of a
+// string and never nil, so blob is the shape there and nothing more.
+// TestAnEmptyTokenIsNobodysSession measures both halves - the refusal as well
+// as the answer, because without the refusal the empty token would be a key
+// like any other.
 func (s *store) SessionPut(ctx context.Context, v dbapi.Session) error {
 	if len(v.Token) == 0 || v.User == "" || len(v.Token) > MaxKey || !okKey(v.User) ||
 		!okDoc(v.Cert) || !okDoc(v.Proof) || !okDoc(v.APIKey) || !okDoc(v.APICert) {

@@ -1317,9 +1317,12 @@ func TestEverySQLIsAConstant(t *testing.T) {
 
 // TestEveryByteSliceComesFromBlob: every value that goes with a statement is
 // a number, a string turned into bytes, or a byte slice out of blob. This is
-// the one place it can be measured - see checkValue - and tasks 5 to 7 bring
-// five more nillable fields: User.TOTP, Session.Cert, Proof, APIKey, APICert
-// and Pending.Key.
+// the one place it can be measured - see checkValue. Task 5 brought one
+// nillable field, the value of OnceCreate and OnceUse; task 6 brings seven
+// more: User.TOTP, Session.Token, Cert, Proof, APIKey, APICert and
+// Pending.Key. Five of those seven have nothing but blob in front of them,
+// because okDoc(nil) is true; only Session.Token and Pending.Key are kept out
+// by a length check as well, and user.go says what that is worth.
 func TestEveryByteSliceComesFromBlob(t *testing.T) {
 	finds, _, values := guard(readPackage(t, "."))
 	for _, f := range finds {

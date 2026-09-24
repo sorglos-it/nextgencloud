@@ -100,6 +100,117 @@ func TestSessionAndPending(t *testing.T) {
 	}
 }
 
+// TestOneWriteAndOneDelete: what the INSERT writes and what the DELETE
+// removes, with nothing in between to cover either up.
+//
+// Half the INSERT was unguarded, and a second write is what covered it.
+// TestUserNameIsUnique puts the same user twice, and the second put is an
+// UPDATE that sets every column: it repairs whatever the INSERT got wrong
+// before the test reads the row. Measured on this package and on every group
+// of the contract - last_login written as 0, cert and proof the wrong way
+// round and created written as 0 passed all of it, and roles written empty
+// passed everything but dbtest's aliasing group. Here every row is written
+// once and read back column for column.
+//
+// The delete is the same hole from the other side: nothing anywhere removed a
+// session that was there. dbtest.testSessions deletes after its purge already
+// took the row, TestAnEmptyTokenIsNobodysSession deletes with a token no row
+// carries, and both ask nothing but err == nil - so "DELETE ... AND 1 = 0"
+// passed the package and the contract as well. Here the session is there, and
+// it has to be gone afterwards.
+func TestOneWriteAndOneDelete(t *testing.T) {
+	s := open(t)
+	u := dbapi.User{ID: "u-admin", Name: "admin", Roles: []string{"admin", "user"},
+		TOTP: []byte("secret"), Locked: 1790000600, Failures: 3, LastLogin: 1790000200}
+	if err := s.UserPut(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UserGet(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != u.ID || got.Name != u.Name || strings.Join(got.Roles, ",") != "admin,user" ||
+		string(got.TOTP) != "secret" || got.Locked != u.Locked || got.Failures != u.Failures ||
+		got.LastLogin != u.LastLogin {
+		t.Errorf("one write left %+v, want %+v", got, u)
+	}
+
+	// Every byte slice of the session differs from every other, so a column
+	// read or written in the wrong place cannot pass for its neighbour.
+	token := bytes.Repeat([]byte{0x11}, 32)
+	v := dbapi.Session{Token: token, User: "u-admin", Cert: []byte("cert"), Proof: []byte("proof"),
+		APIKey: []byte("api-key"), APICert: []byte("api-cert"),
+		Created: 1790000001, Expires: 1790003602, Seen: 1790000003}
+	if err := s.SessionPut(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	gotV, err := s.SessionGet(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotV.Token, v.Token) || gotV.User != v.User || !bytes.Equal(gotV.Cert, v.Cert) ||
+		!bytes.Equal(gotV.Proof, v.Proof) || !bytes.Equal(gotV.APIKey, v.APIKey) ||
+		!bytes.Equal(gotV.APICert, v.APICert) || gotV.Created != v.Created ||
+		gotV.Expires != v.Expires || gotV.Seen != v.Seen {
+		t.Errorf("one write left %+v, want %+v", gotV, v)
+	}
+
+	p := dbapi.Pending{Name: "web", Key: bytes.Repeat([]byte{0xC1}, 32), Since: 1790000100}
+	if err := s.PendingPut(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.PendingList(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %+v, %v", list, err)
+	}
+	if !bytes.Equal(list[0].Key, p.Key) || list[0].Name != p.Name || list[0].Since != p.Since {
+		t.Errorf("one write left %+v, want %+v", list[0], p)
+	}
+
+	// The session is there, so a delete that names it has to take it.
+	if err := s.SessionDelete(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionGet(ctx, token); !errors.Is(err, dbapi.ErrNotFound) {
+		t.Errorf("after delete: %v, want ErrNotFound", err)
+	}
+}
+
+// TestADuplicateNameIsErrInvalid: dbapi promises that the same name for
+// another ID gives ErrInvalid, and the store owes that answer however the
+// name turns out to be taken - by the SELECT of UserPut or by the unique
+// index ngc_user_name behind it. Without the translation the caller gets the
+// driver's "UNIQUE constraint failed" and errors.Is finds nothing in it.
+//
+// The race that reaches the index - two writers past the SELECT together - is
+// not measurable on SQLite, so the shape is made instead of waited for: a row
+// whose name is taken and whose ID is empty. UserPut refuses to write such a
+// row, so it is planted with SQL of the test's own, the way
+// TestAUserRowNobodyOfOursWrote plants its column. The SELECT then reads an
+// empty ID and lets the write through, exactly as it would for a writer that
+// was still one statement behind, and the INSERT walks into the index.
+func TestADuplicateNameIsErrInvalid(t *testing.T) {
+	s, db := openDB(t)
+	if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, failures, "+
+		"last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(""), []byte("admin"), []byte(""),
+		[]byte(""), int64(0), int64(0), int64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("the index answered with %v, want ErrInvalid", err)
+	}
+	// The way in front is still the way in front: where the SELECT sees the
+	// name, it answers before a write runs at all, and the translation behind
+	// it leaves that untouched. Both halves have to give the same error,
+	// otherwise a caller could tell them apart.
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-other", Name: "chef"}); err != nil {
+		t.Fatalf("a free name: %v", err)
+	}
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "chef"}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("the SELECT answered with %v, want ErrInvalid", err)
+	}
+}
+
 // TestAUserRowNobodyOfOursWrote: the roles column is a value from outside
 // like any other. A column longer than joinList ever writes would become a
 // list of any size, so the way back out refuses it - what appDone does for
