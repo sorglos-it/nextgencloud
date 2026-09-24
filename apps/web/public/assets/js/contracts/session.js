@@ -170,7 +170,12 @@ export async function verifyAPI(env, l, client, now) {
   const nodes = apiNodes(l);
   const ids = await Promise.all(nodes.map((n) => keyID(n.sign)));
   const node = nodes[ids.indexOf(env?.kid)] ?? null;
-  if (node === null) throw new Error("session: malformed certificate");
+  // Go marks "none found" with the zero trust.Node and asks `if node.ID == ""`
+  // afterwards, so a node whose ID is empty is no node there either - refused
+  // even when its key made the signature. A list that came through
+  // trust.validateList holds none (validName refuses ""), but this takes the
+  // list its caller hands it, and the two answer that list alike.
+  if (node === null || node.id === "") throw new Error("session: malformed certificate");
   // Go hands sign.Verify's own error on; here a signature that cannot be
   // checked answers false and this one error says so.
   if (!(await verifyEnvelope(env, node.sign, PURPOSE_API_CERT))) {
