@@ -336,11 +336,16 @@ func FuzzFinish(f *testing.F) {
 }
 
 // trustSeeds returns the pairs FuzzTrustRequest begins with: the cookie of an
-// open session against every number the contract answers differently, and two
-// cookies that are no session at all. The cookie is the one thing the fuzzer
-// cannot find by itself -- a token is session.TokenSize random bytes -- so
-// without it among the seeds the run would never reach an answer with a chain
-// in it, and everything behind the door would go unvisited.
+// open session against every number the contract answers differently, and
+// three cookies that are no session at all. The cookie is the one thing the
+// fuzzer cannot find by itself -- a token is session.TokenSize random bytes --
+// so without it among the seeds the run would never reach an answer with a
+// chain in it, and everything behind the door would go unvisited.
+//
+// The last pair but one is the one that shows the order of the two steps in
+// Trust: no cookie and a number the contract refuses. Only where both are
+// wrong at once does it matter which of them is looked at first, and the
+// answer says which it was.
 func trustSeeds(cookie string) []struct{ cookie, from string } {
 	return []struct{ cookie, from string }{
 		{cookie, "1"},                // the whole chain
@@ -351,6 +356,7 @@ func trustSeeds(cookie string) []struct{ cookie, from string } {
 		{cookie, "x"},                // no number
 		{cookie, "9007199254740992"}, // past what a browser counts exactly
 		{"", "1"},                    // no cookie
+		{"", "x"},                    // no cookie and no number either
 		{"AAAA", "1"},                // a cookie that is no token
 	}
 }
@@ -424,6 +430,15 @@ func FuzzTrustRequest(f *testing.F) {
 		case 200, 204, 400, 401, 404, 500, 503:
 		default:
 			t.Fatalf("status %d for cookie %q from %q", w.Code, cookie, from)
+		}
+		// Without a cookie there is no session, whatever from says, and the
+		// contract has one answer for that. This is the whole of what the
+		// order of the two steps in Trust shows from the outside: read the
+		// number first and a request that brings neither is told which of its
+		// two faults was looked at, which is one word more than a stranger
+		// gets today.
+		if cookie == "" && w.Code != 401 {
+			t.Fatalf("no cookie and from %q answered %d, not 401", from, w.Code)
 		}
 		switch w.Code {
 		case 200:
