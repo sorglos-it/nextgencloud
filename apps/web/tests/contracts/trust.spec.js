@@ -377,6 +377,101 @@ test("validateList and the exported node/store checks refuse wrong-typed bytes, 
   });
 });
 
+// Round 1 was told Wichtig 4 covers bytes fields; the coordinator's Fixrunde 1
+// review widened it to every array-shaped field checked by .length without
+// first confirming it is an array - rootUsers/rootRoles named directly, "und
+// alles andere". A plain object with a length property and numeric keys
+// (an "array-like") is not caught by a .length comparison at all, and is not
+// caught downstream either wherever the real content at each index is itself
+// genuinely valid - proven per field below, empirically, rather than assumed:
+// some fields (nodes, stores, auto, users, roles - a JSON body can carry
+// {"nodes":{"length":1,"0":{...}}} as easily as a real array) take a forged
+// element and are wrongly ACCEPTED; fields only ever walked with for...of
+// (rp.origins, a user's roles/keys, a controller's rootUsers/rootRoles) throw
+// instead, because a plain object has no Symbol.iterator - still not `false`,
+// still a violation of "-> boolean, never throws". validAPINode's own
+// rootUsers/rootRoles check is length-only (n.rootUsers.length +
+// n.rootRoles.length === 0, no loop), so {length: 0} alone wrongly accepts
+// there. Also covers l.rp being absent entirely (not just its origins), a
+// role's black/white the same way, and one step further found while tracing
+// this same call graph: a black/white entry that is not a string at all
+// (entries.every called .startsWith directly on each entry, with no typeof
+// guard - Array.isArray(entries) alone does not stop a non-string element
+// inside a real array).
+test("validateList refuses wrong-typed lists on every array field, and never throws", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const id = "EREREREREREREREREREREQ";
+    const validKey = () => ({
+      id: "AAAAAAAAAAAAAAAAAAAAAA", kind: "password", alg: "EdDSA",
+      pub: new Uint8Array(32), credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16), m: 65536, t: 3, p: 1 },
+    });
+    const validUser = () => ({ id, name: "admin", roles: ["admin"], keys: [validKey()] });
+    const validRole = () => ({ name: "admin", level: "critical", black: [], white: [], passkeyOnly: false, passwordToo: false });
+    const validAPI = () => ({
+      id: "api-1", kind: "api", name: "n", noise: new Uint8Array(32), sign: new Uint8Array(32),
+      url: "wss://api-1.test:7443/tunnel", tls: new Uint8Array(32), rootUsers: [], rootRoles: [],
+    });
+    const validStoreObj = () => ({ id: "store", name: "s", url: "https://s.example", key: new Uint8Array(32) });
+    const validAuto = () => ({ target: "ngc-web", key: new Uint8Array(32) });
+    const base = (extra) => ({
+      seq: 1, prev: new Uint8Array(0), issued: 1, installation: id,
+      rp: { id: "", origins: [] },
+      users: [validUser()], roles: [validRole()], nodes: [], stores: [], auto: [],
+      ...extra,
+    });
+    // An array-like: a plain object with a length property and numeric keys,
+    // not an array - Array.isArray is false, [...x] throws (no iterator),
+    // but x.length and x[i] both read exactly as they would on a real array.
+    const arrayLike = (...items) => {
+      const o = { length: items.length };
+      items.forEach((v, i) => { o[i] = v; });
+      return o;
+    };
+    // Every case below is run through this: catches a throw as its own
+    // outcome (threw: true) rather than letting one throw take out every
+    // other property in the same object literal, and records whether the
+    // call, if it returned at all, said true or false.
+    const safe = (fn) => { try { return { threw: false, value: fn() }; } catch { return { threw: true, value: null }; } };
+
+    const withController = (rootUsers, rootRoles) => [{
+      id: "ctl-1", kind: "controller", name: "n", noise: new Uint8Array(32),
+      sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers, rootRoles,
+    }];
+
+    return {
+      users: safe(() => t.validateList({ ...base(), users: arrayLike(validUser()) })),
+      roles: safe(() => t.validateList({ ...base(), roles: arrayLike(validRole()) })),
+      nodes: safe(() => t.validateList({ ...base(), nodes: arrayLike(validAPI()) })),
+      stores: safe(() => t.validateList({ ...base(), stores: arrayLike(validStoreObj()) })),
+      auto: safe(() => t.validateList({ ...base(), auto: arrayLike(validAuto()) })),
+      origins: safe(() => t.validateList({ ...base(), rp: { id: "", origins: arrayLike("https://a.example") } })),
+      rpMissing: safe(() => t.validateList({ ...base(), rp: undefined })),
+
+      controllerRootUsers: safe(() => t.validateList(base({ nodes: withController(arrayLike(id), []) }))),
+      controllerRootRoles: safe(() => t.validateList(base({ nodes: withController([], arrayLike("admin")) }))),
+      apiNodeRootUsers: safe(() => t.validAPINode({ ...validAPI(), rootUsers: arrayLike(), rootRoles: [] })),
+      apiNodeRootRoles: safe(() => t.validAPINode({ ...validAPI(), rootUsers: [], rootRoles: arrayLike() })),
+
+      userRoles: safe(() => t.validateList(base({ users: [{ ...validUser(), roles: arrayLike("admin") }] }))),
+      userKeys: safe(() => t.validateList(base({ users: [{ ...validUser(), keys: arrayLike(validKey()) }] }))),
+
+      roleBlack: safe(() => t.validateList(base({ roles: [{ ...validRole(), black: arrayLike("node/x") }] }))),
+      roleWhite: safe(() => t.validateList(base({ roles: [{ ...validRole(), white: arrayLike("node/x") }] }))),
+      roleBlackNonStringEntry: safe(() => t.validateList(base({ roles: [{ ...validRole(), black: [42] }] }))),
+    };
+  });
+  const flat = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.threw ? "threw" : v.value]));
+  expect(flat).toEqual({
+    users: false, roles: false, nodes: false, stores: false, auto: false, origins: false, rpMissing: false,
+    controllerRootUsers: false, controllerRootRoles: false,
+    apiNodeRootUsers: false, apiNodeRootRoles: false,
+    userRoles: false, userKeys: false,
+    roleBlack: false, roleWhite: false, roleBlackNonStringEntry: false,
+  });
+});
+
 // Round 1 finding Wichtig 6: passwordToo, mayRoot, needsConfirm, keyOwner and
 // tlsPin had no test calling them - the previous report described their
 // doubt-case behavior (unknown user/role/node grant nothing) by reading the
