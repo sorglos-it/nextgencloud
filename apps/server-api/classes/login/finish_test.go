@@ -580,6 +580,13 @@ func finishWith(tb testing.TB, fx fixture, s trusttest.Signer, pw *trusttest.Sig
 // tests holds.
 var nobodysKeyID = enc.B64.EncodeToString(bytes.Repeat([]byte{0x5A}, 16))
 
+// openShapes is how many of the shapes in
+// TestFinishTakesTheSameTimeForAKeyNobodyHolds are known not to be alike. It is
+// a number and not a remark, so that closing one of them without taking its
+// flag out is a failing test and not a comment nobody reads. It has been wrong
+// twice by being a sentence.
+const openShapes = 3
+
 // TestFinishTakesTheSameTimeForAKeyNobodyHolds is the question login/start
 // answers alike for every name, asked once more with a clock: login/start hands
 // the key ID of a passkey out, real for a name that exists and made up for one
@@ -587,20 +594,37 @@ var nobodysKeyID = enc.B64.EncodeToString(bytes.Repeat([]byte{0x5A}, 16))
 // same question. Every pair below differs in that one field and in nothing
 // else.
 //
-// Four shapes, because one is not the property. The first version of this test
-// measured a single one and was green while two others were wide open -- and
-// one of those two was torn open by the very change that closed the first. A
-// shape that is not measured is a shape nobody knows about:
+// Eight shapes, because one is not the property, and four is not either. The
+// first version of this test measured a single shape and was green while two
+// others were wide open -- one of them torn open by the very change that closed
+// the first. The second version measured four and was green while two more were
+// open. A shape that is not measured is a shape nobody knows about, and the way
+// to find out has been the same every time: add one and look.
+//
+// Five of them are alike today and are held to the factor:
 //
 //   - a password key with the user the certificate names: the known side runs
 //     proof.Verify inside session.VerifyClient
 //   - a passkey whose assertion is whole and whose signature is wrong: the
 //     known side runs the whole assertion
-//   - a passkey whose client data is nonsense: package proof turns it away
-//     before any cryptography, so the known side pays nothing -- the one shape
-//     still open, see below
 //   - a certificate naming another user than the key belongs to: session.
-//     verifyCert gives ErrUser without ever checking a signature
+//     verifyCert gives ErrUser without ever checking a signature, and so this
+//     side spends one
+//   - a certificate the check refuses before it looks the key up at all
+//     (session.ErrCert), and one whose time has passed (session.ErrExpired):
+//     two controls, not findings -- they are what the choice at blindProof
+//     rests on, and nobody had measured them
+//
+// Three are not alike, and all three for one reason: package proof refuses a
+// proof before any cryptography, so the known side pays nothing where this one
+// pays a whole verification.
+//
+//   - a passkey whose client data is nonsense
+//   - a proof of a kind the key is not
+//   - a passkey whose authenticator data names another relying party
+//
+// They are written down here with holds false instead of being left out, and
+// openShapes counts them, so closing one without taking its flag out fails.
 //
 // The factor of two and the null control are those of
 // TestStartTakesTheSameTimeForAnUnknownName, for the reasons given there. What
@@ -645,7 +669,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				c.Nonce = madeUpNonce
 				return twoBodies(t, fx, c, fx.Password, nil)
 			}},
-		{"a proof of a kind the key is not", true,
+		{"a proof of a kind the key is not", false,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// A passkey's key ID under a password proof: verifyCert lets
 				// it through -- the key is a passkey, which is what the roles
@@ -658,7 +682,7 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 					p.AuthData, p.ClientData = nil, nil
 				})
 			}},
-		{"a passkey naming another relying party", true,
+		{"a passkey naming another relying party", false,
 			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
 				// The assertion is whole and its client data holds; only the
 				// hash of the RP ID at the front of the authenticator data is
@@ -725,8 +749,9 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 				form.name, a, b, again)
 		}
 	}
-	if open != 1 {
-		t.Errorf("%d shapes are written down as open, want 1: whoever closes one takes its flag out here", open)
+	if open != openShapes {
+		t.Errorf("%d shapes are written down as open, want %d: whoever closes one takes its flag out here",
+			open, openShapes)
 	}
 }
 

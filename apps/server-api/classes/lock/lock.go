@@ -55,19 +55,22 @@ const (
 //     maxWait (see Fail).
 //   - The rows stay small: two countings of 4096 rows of about 40 bytes are
 //     under half a megabyte together, even after somebody has hit every bucket
-//     of both. Purge reads them all at once (dbapi.BlobFrom takes no limit),
-//     and twice this number is what bounds that read.
+//     of both. Purge reads them all at once (dbapi.BlobFrom takes no limit and
+//     hands back every setting there is, not only these), so twice this number
+//     is what bounds this package's share of that read and nothing more.
 //   - Locking every bucket out costs a dozen failures each and has to be
 //     repeated every maxWait. Whoever knows the names of an installation
 //     locks them out far cheaper, one by one -- which is the price of any
 //     lock per name, and no number of buckets changes it.
 const buckets = 4096
 
-// The two countings this package keeps, and the whole reason they are two.
-// Every row ID begins with one of these, so a row of one counting can never be
-// a row of the other -- whatever the two strings hash to, and whoever chose
-// them. That is the whole of the separation; see key, where the row ID is
-// built.
+// The two countings this package keeps, and the whole reason they are two. A
+// row ID is one of these and then exactly four hex digits out of the hash (see
+// key), so two row IDs are equal only where the two spaces are: the tail is of
+// one fixed length and carries no space, and these two strings differ. That is
+// what keeps a row of one counting from ever being a row of the other --
+// whatever the two names hash to, and whoever chose them. Nothing else does,
+// and in particular Purge does not (see below).
 //
 // nameSpace counts login names. It is the counting of the contract
 // (shared/README.md, "Vor dem WebSocket": the wait holds per login name), and
@@ -84,9 +87,9 @@ const buckets = 4096
 //
 // Purge does not tell the two apart and does not need to: it takes the rows of
 // both and leaves every other setting alone (see there). What it does need is
-// that neither prefix may be the whole of a setting ID that belongs to nobody
-// here -- both are asked for with strings.HasPrefix, so an ID that begins with
-// one of them is taken as a row of this package.
+// that no setting ID belonging to nobody here may begin with either of them --
+// it asks for both with strings.HasPrefix, so an ID that begins with one is
+// taken as a row of this package and freed once its time has passed.
 const (
 	nameSpace = "lock."
 	keySpace  = "lockkey."

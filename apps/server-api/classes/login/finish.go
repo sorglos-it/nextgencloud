@@ -29,12 +29,14 @@ import (
 const lockWarnTTL = 300
 
 // blindKey and blindSig are what a proof by a key nobody holds is measured
-// against. session.VerifyClient turns such a proof away before it ever checks
-// a signature, where a proof by a key somebody holds costs a whole
-// verification -- and login/start hands the key ID of a passkey out, real for
-// a name that exists and made up for one nobody has (session.PasskeyRef). The
-// difference is the question "does this name exist" once more, asked with a
-// clock: measured at 108 µs against 40 µs on one machine before this was here.
+// against. session.VerifyClient turns such a proof away with session.ErrUser
+// before it ever checks a signature, and for many proofs a key the list holds
+// pays a whole verification there instead -- for many and not for all, which is
+// the whole difficulty and is written out at blindProof. And login/start hands
+// the key ID of a passkey out, real for a name that exists and made up for one
+// nobody has (session.PasskeyRef), so the difference is the question "does this
+// name exist" once more, asked with a clock: measured at 108 µs against 40 µs
+// on one machine before this was here.
 //
 // The key is this package's own, from a fixed seed that is worth nothing --
 // nothing of NGC is signed with it, and the answer of the verification is
@@ -52,16 +54,22 @@ func blindPair() (ed25519.PublicKey, []byte) {
 // compiler may drop; it is never true, and no caller reads it.
 //
 // It is one Ed25519 verification whatever the proof says it is, and that is
-// where it stops being an exact mirror. A passkey the list holds runs through
-// package proof's WebAuthn assertion, which hashes about as much and verifies
-// one signature as well -- but which turns a malformed assertion away before
-// any of that. So a passkey proof whose client data is nonsense costs less
-// with a key the list holds than without one, and that asymmetry is this
-// function's own doing: before it was here the two sides were alike there,
-// both cheap. Measured and written down (report of task 7, fixing round 2);
-// closing it needs more than a line and belongs with the question login/start
-// leaves open, so TestFinishTakesTheSameTimeForAKeyNobodyHolds carries that
-// shape as the one it does not hold to the factor.
+// where it stops being an exact mirror. package proof refuses some proofs
+// before any cryptography, and with a key the list holds those then cost
+// nothing at all where this pays in full. Three such shapes are known and
+// measured:
+//
+//   - a passkey whose client data is nonsense
+//   - a proof of a kind the key is not
+//   - a passkey whose authenticator data names another relying party
+//
+// All three are this function's own doing: before it was here the two sides
+// were alike there, both cheap. Closing them needs more than a line and belongs
+// with the question login/start leaves open, so
+// TestFinishTakesTheSameTimeForAKeyNobodyHolds carries them as the shapes it
+// does not hold to the factor and counts them in openShapes -- three today, and
+// a number rather than a sentence because a sentence said "one" twice while it
+// was two and then three.
 func blindProof(payload []byte) bool {
 	return ed25519.Verify(blindKey, sign.Message(sign.PurposeClientCert, payload), blindSig)
 }
@@ -176,11 +184,11 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		// It hung on the key alone before, and that closed one shape and tore
 		// another open, that one with the known side the cheap one. What is
 		// still not closed, and is not claimed to be: package proof refuses
-		// some proofs cheaply as well -- a passkey whose client data is
-		// nonsense, a proof of a kind the key is not -- and there the known
-		// side pays nothing while this side pays a whole verification. That
-		// shape is measured, named and left open in
-		// TestFinishTakesTheSameTimeForAKeyNobodyHolds and at blindProof.
+		// some proofs cheaply as well, and there the known side pays nothing
+		// while this side pays a whole verification. Three such shapes are
+		// known; they are listed at blindProof, measured in
+		// TestFinishTakesTheSameTimeForAKeyNobodyHolds and counted there, so
+		// the number cannot quietly grow again.
 		if errors.Is(err, session.ErrUser) {
 			_ = blindProof(f.Cert)
 		}
