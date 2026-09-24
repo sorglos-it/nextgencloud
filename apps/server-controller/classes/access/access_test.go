@@ -754,8 +754,19 @@ func TestCheckWithoutTrustListTakesOnlyTheFirstChain(t *testing.T) {
 		wantClose(t, d, cl, wire.CodeUnreachable)
 	})
 
-	// An OPEN that cannot be read is not the first chain either.
+	// An OPEN that cannot be read is not the first chain either. This one
+	// fences no mark of its own: firstChain refuses it twice over, once at the
+	// parse and once at the lookup, because tunnel.ParseOpen gives back zero
+	// values with its error and three empty names are in no core action. A
+	// mutation that drops the parse check survives the package for exactly
+	// that reason — measured, and written at the check itself. What the
+	// subtest holds is the answer, and the fact the equality rests on: the day
+	// core.Lookup finds something under three empty names, the check is
+	// load-bearing and this line goes red first.
 	t.Run("an open that is none", func(t *testing.T) {
+		if _, ok := core.Lookup("", "", ""); ok {
+			t.Fatal("core.Lookup finds an action under three empty names")
+		}
 		d, cl := Check(context.Background(), f.unlisted([]byte(`{}`)))
 		wantClose(t, d, cl, wire.CodeUnreachable)
 	})

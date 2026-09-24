@@ -32,8 +32,8 @@ func TestApplyAdvancesAndPersists(t *testing.T) {
 	if err := k.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if k.Seq() != 1 {
-		t.Fatalf("seq = %d, want 1", k.Seq())
+	if k.TrustSeq() != 1 {
+		t.Fatalf("seq = %d, want 1", k.TrustSeq())
 	}
 	v2 := admin.Sign(t, trusttest.Next(t, v1))
 	b, err := json.Marshal(session.TrustChain{Versions: []trust.Signed{v2}})
@@ -49,8 +49,8 @@ func TestApplyAdvancesAndPersists(t *testing.T) {
 	if err := k2.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if k2.Seq() != 2 {
-		t.Fatalf("after reload seq = %d, want 2", k2.Seq())
+	if k2.TrustSeq() != 2 {
+		t.Fatalf("after reload seq = %d, want 2", k2.TrustSeq())
 	}
 }
 
@@ -73,8 +73,8 @@ func TestApplyRefusesForgedVersion(t *testing.T) {
 	if _, err := k.Apply(ctx, b); err == nil {
 		t.Fatal("Apply took a version signed by an unknown key")
 	}
-	if k.Seq() != 1 {
-		t.Fatalf("seq = %d after a refused version, want 1", k.Seq())
+	if k.TrustSeq() != 1 {
+		t.Fatalf("seq = %d after a refused version, want 1", k.TrustSeq())
 	}
 }
 
@@ -116,9 +116,13 @@ func TestAgainstVectors(t *testing.T) {
 	}
 	for _, v := range vs {
 		k, st := newKeeper(t, v.Anchor)
-		// Nothing is stored yet, so the keeper starts empty and waits.
-		if err := k.Load(ctx); err != nil || k.Seq() != 0 {
-			t.Fatalf("%s: Load of an empty state: seq = %d, err = %v", v.Name, k.Seq(), err)
+		// Nothing is stored yet, so the keeper starts empty and waits — and it
+		// asks for the chain from its anchor on, which is what the number
+		// below the anchor says. The two cases with an anchor of 2 are what
+		// hold this apart from a plain 0.
+		if err := k.Load(ctx); err != nil || k.TrustSeq() != v.Anchor.Seq-1 {
+			t.Fatalf("%s: Load of an empty state: seq = %d, want %d, err = %v",
+				v.Name, k.TrustSeq(), v.Anchor.Seq-1, err)
 		}
 		body, err := json.Marshal(session.TrustChain{Versions: v.Chain})
 		if err != nil {
@@ -133,12 +137,14 @@ func TestAgainstVectors(t *testing.T) {
 			t.Errorf("%s: Apply took a chain the contract calls invalid", v.Name)
 			continue
 		}
-		want := uint64(0)
+		// What was refused leaves the keeper asking from its anchor on, the
+		// same as before the chain arrived.
+		want := v.Anchor.Seq - 1
 		if v.Valid {
 			want = v.Seq
 		}
-		if k.Seq() != want {
-			t.Errorf("%s: keeper holds %d, want %d", v.Name, k.Seq(), want)
+		if k.TrustSeq() != want {
+			t.Errorf("%s: keeper holds %d, want %d", v.Name, k.TrustSeq(), want)
 		}
 		// What was taken has to come back on its own after a restart; what was
 		// refused must have left nothing behind.
@@ -147,8 +153,8 @@ func TestAgainstVectors(t *testing.T) {
 			t.Errorf("%s: after a restart: %v", v.Name, err)
 			continue
 		}
-		if again.Seq() != want {
-			t.Errorf("%s: after a restart the keeper holds %d, want %d", v.Name, again.Seq(), want)
+		if again.TrustSeq() != want {
+			t.Errorf("%s: after a restart the keeper holds %d, want %d", v.Name, again.TrustSeq(), want)
 		}
 		if len(v.Chain) < 2 {
 			continue
@@ -187,14 +193,14 @@ func FuzzApply(f *testing.F) {
 		k := New(st, trust.Anchor{Seq: 1, Hash: make([]byte, 32)})
 		// Apply runs only on a keeper that read the state; on an empty one
 		// that changes nothing, so the anchor stays the only thing in the way.
-		if err := k.Load(ctx); err != nil || k.Seq() != 0 {
-			t.Fatalf("Load of an empty state: seq = %d, err = %v", k.Seq(), err)
+		if err := k.Load(ctx); err != nil || k.TrustSeq() != 0 {
+			t.Fatalf("Load of an empty state: seq = %d, err = %v", k.TrustSeq(), err)
 		}
 		if seq, err := k.Apply(ctx, b); err == nil {
 			t.Fatalf("took version %d although no payload hashes to the anchor", seq)
 		}
-		if k.Seq() != 0 {
-			t.Fatalf("keeper holds %d after a refused chain", k.Seq())
+		if k.TrustSeq() != 0 {
+			t.Fatalf("keeper holds %d after a refused chain", k.TrustSeq())
 		}
 		// A refused chain leaves nothing in the state either, so the next
 		// start finds no version the keeper never verified.
@@ -230,15 +236,15 @@ func FuzzApplyFromAnchor(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if seq != k.Seq() {
-			t.Fatalf("Apply returned %d, the keeper holds %d", seq, k.Seq())
+		if seq != k.TrustSeq() {
+			t.Fatalf("Apply returned %d, the keeper holds %d", seq, k.TrustSeq())
 		}
 		again := New(st, anchor)
 		if err := again.Load(ctx); err != nil {
 			t.Fatalf("what Apply took came back as %v", err)
 		}
-		if again.Seq() != seq {
-			t.Fatalf("after a restart the keeper holds %d, want %d", again.Seq(), seq)
+		if again.TrustSeq() != seq {
+			t.Fatalf("after a restart the keeper holds %d, want %d", again.TrustSeq(), seq)
 		}
 	})
 }
@@ -290,7 +296,7 @@ func TestReadWhileApplying(t *testing.T) {
 					}
 					last = v.List.Seq
 				}
-				_, _ = k.List(), k.Seq()
+				_, _ = k.List(), k.TrustSeq()
 			}
 		}()
 	}
@@ -304,8 +310,8 @@ func TestReadWhileApplying(t *testing.T) {
 	if back.Load() {
 		t.Fatal("a reader saw the held version go backwards")
 	}
-	if k.Seq() != uint64(1+len(bodies)) {
-		t.Fatalf("seq = %d, want %d", k.Seq(), 1+len(bodies))
+	if k.TrustSeq() != uint64(1+len(bodies)) {
+		t.Fatalf("seq = %d, want %d", k.TrustSeq(), 1+len(bodies))
 	}
 }
 
@@ -399,8 +405,8 @@ func TestHalfWrittenChainStaysReadable(t *testing.T) {
 	if err := again.Load(ctx); err != nil {
 		t.Fatalf("the stored chain is unreadable after a failed write: %v", err)
 	}
-	if again.Seq() != 3 {
-		t.Fatalf("after a restart the keeper holds %d, want 3", again.Seq())
+	if again.TrustSeq() != 3 {
+		t.Fatalf("after a restart the keeper holds %d, want 3", again.TrustSeq())
 	}
 }
 
@@ -418,15 +424,15 @@ func TestLoadForgetsWhatTheStateLost(t *testing.T) {
 		t.Fatal(err)
 	}
 	k := New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
-	if err := k.Load(ctx); err != nil || k.Seq() != 1 {
-		t.Fatalf("Load = %v, seq = %d, want nil, 1", err, k.Seq())
+	if err := k.Load(ctx); err != nil || k.TrustSeq() != 1 {
+		t.Fatalf("Load = %v, seq = %d, want nil, 1", err, k.TrustSeq())
 	}
 	db.empty = true
 	if err := k.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if k.Seq() != 0 {
-		t.Fatalf("seq = %d after the state came back empty, want 0", k.Seq())
+	if k.TrustSeq() != 0 {
+		t.Fatalf("seq = %d after the state came back empty, want 0", k.TrustSeq())
 	}
 }
 
@@ -459,5 +465,108 @@ func TestApplyTellsStoreErrorsApart(t *testing.T) {
 	// The reason stays readable for the server's own diagnosis.
 	if !errors.Is(err, errStopped) {
 		t.Fatalf("Apply dropped the reason of the failed write: %v", err)
+	}
+}
+
+// TestAFreshKeeperAsksFromItsAnchorOn holds the number a controller reports
+// between pairing and its first chain, and the reason it is not 0: an API
+// answers a hello with the versions after TrustSeq, and the first of them has
+// to be the anchored one. A controller paired once the list has moved past its
+// first version is anchored above 1, so 0 would ask for a chain it must
+// refuse.
+func TestAFreshKeeperAsksFromItsAnchorOn(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	v2 := admin.Sign(t, trusttest.Next(t, v1))
+	v3 := admin.Sign(t, trusttest.Next(t, v2))
+
+	k, _ := newKeeper(t, trust.Anchor{Seq: 2, Hash: trust.Hash(v2)})
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := k.TrustSeq(); got != 1 {
+		t.Fatalf("a keeper anchored at 2 and holding nothing asks from %d on, want 2", got+1)
+	}
+	if k.List() != nil {
+		t.Fatal("a keeper that verified nothing hands out a list")
+	}
+	// What an API sends after a reported 0: the chain from version 1 on. It is
+	// signed just as well as any other and is still not this controller's
+	// chain, so it is the sender's fault and not this server's — which is why
+	// it may not look like the anchor this server itself carries.
+	_, err := k.Apply(ctx, chainBytes(t, v1, v2))
+	if !errors.Is(err, trust.ErrAnchor) {
+		t.Fatalf("a chain from version 1 to a keeper anchored at 2 = %v, want trust.ErrAnchor", err)
+	}
+	if errors.Is(err, ErrNoAnchor) {
+		t.Fatal("a chain that misses the anchor is reported as this server's own anchor failing")
+	}
+	if got := k.TrustSeq(); got != 1 {
+		t.Fatalf("after the refused chain the keeper asks from %d on, want 2", got+1)
+	}
+	// And what it sends after the reported 1: the chain from the anchored
+	// version on, which is the one trust.Open takes.
+	seq, err := k.Apply(ctx, chainBytes(t, v2, v3))
+	if err != nil || seq != 3 {
+		t.Fatalf("the chain from the anchor on = %d, %v, want 3, nil", seq, err)
+	}
+	if got := k.TrustSeq(); got != 3 {
+		t.Fatalf("the keeper reports %d, want the version it verified", got)
+	}
+}
+
+// TestAnAnchorThatPinsNothingIsThisServersFault holds the other half of the
+// split: an anchor without a number or without a hash is this installation's
+// own, and it may not be told as a fault of what arrived (ErrNoAnchor ->
+// E_INTERNAL, trust.ErrAnchor -> E_VERIFY).
+func TestAnAnchorThatPinsNothingIsThisServersFault(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	for _, a := range []trust.Anchor{
+		{Seq: 0, Hash: trust.Hash(v1)},
+		{Seq: 1},
+		{Seq: 1, Hash: []byte{0x01}},
+	} {
+		k, _ := newKeeper(t, a)
+		if err := k.Load(ctx); !errors.Is(err, ErrNoAnchor) {
+			t.Errorf("Load with anchor %+v = %v, want ErrNoAnchor", a, err)
+		}
+		if _, err := k.Apply(ctx, chainBytes(t, v1)); !errors.Is(err, ErrNoAnchor) {
+			t.Errorf("Apply with anchor %+v = %v, want ErrNoAnchor", a, err)
+		}
+		// Nothing below 1 exists to ask from, so such a keeper reports 0 and
+		// the number never wraps around.
+		if a.Seq == 0 && k.TrustSeq() != 0 {
+			t.Errorf("a keeper without an anchor number reports %d, want 0", k.TrustSeq())
+		}
+	}
+}
+
+// TestApplyRefusesUntilTheStateWasRead holds what Load is for: a keeper that
+// never read the state does not know what is already stored, so it may not
+// verify from the anchor and write the first version over one that is there.
+// It answers ErrStore, which the caller names E_INTERNAL — this server's
+// fault, not the sender's.
+func TestApplyRefusesUntilTheStateWasRead(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	k, st := newKeeper(t, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if _, err := k.Apply(ctx, chainBytes(t, v1)); !errors.Is(err, ErrStore) {
+		t.Fatalf("Apply before Load = %v, want ErrStore", err)
+	}
+	// And nothing of the chain went into the state on the way.
+	if seq, err := st.NewestSeq(ctx); err != nil || seq != 0 {
+		t.Fatalf("Apply before Load left version %d behind (%v)", seq, err)
+	}
+	// After Load the same chain goes through, so what stood in the way was the
+	// unread state and nothing about the chain.
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if seq, err := k.Apply(ctx, chainBytes(t, v1)); err != nil || seq != 1 {
+		t.Fatalf("Apply after Load = %d, %v, want 1, nil", seq, err)
 	}
 }

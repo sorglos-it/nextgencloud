@@ -19,7 +19,12 @@
 // a line in the log of this controller (link.Handler), and which channels
 // arrive is the API's to choose, so a peer would be writing that log. Every
 // refusal is written as the CLOSE of the channel instead, and what must be
-// watched all the same is counted (HandshakeFailures).
+// watched all the same is counted (HandshakeFailures, StoreFailures).
+//
+// No line of this package is written per channel. A local fault an operator
+// has to see — the trust list that cannot be kept — writes once and is counted
+// from then on (trust.go), because how often a channel meets that fault is the
+// API's to choose and how often it is written must not be.
 //
 // What this build carries out is ngc.users/controller/trust (trust.go) and
 // the end-to-end handshake of an app channel. The core actions that install,
@@ -66,6 +71,13 @@ type Deps struct {
 	// Noise is this controller's own static Noise key pair, the one its node
 	// carries in the trust list (trust.Node.Noise). e2e.Accept answers the
 	// shell's message 1 with it.
+	//
+	// A zero key here lets no app channel come off at all: every handshake
+	// fails, and it fails the way a shell that names another controller fails,
+	// so nothing in the log tells the two apart. What says it is
+	// HandshakeFailures — a server whose key is missing counts one for every
+	// app channel it ever sees and never a single one that came off, and that
+	// is the shape an operator reads it by.
 	Noise noise.DHKey
 	// Chain holds the trust list. Every channel reads the newest verified
 	// version once, at its start, and decides on that one to its end.
@@ -77,7 +89,8 @@ type Deps struct {
 	// Now is the clock of the checks, in seconds. nil: time.Now().Unix().
 	Now func() int64
 	// Log is where this package writes. nil: slog.Default(). Nothing a peer
-	// can bring about is written here (see the doc of this package).
+	// brings about is written here more than once, and almost all of it not at
+	// all (see the doc of this package).
 	Log *slog.Logger
 }
 
@@ -118,6 +131,12 @@ type Server struct {
 	// puts a line there for every channel it opens.
 	// TestAHandshakeThatFailsIsCountedAndNotWritten holds both halves.
 	handshakes atomic.Uint64
+	// storeFails counts the channels that met a trust list this server could
+	// not keep. The first of them writes a line, the rest only count: the
+	// fault is local and does not change from channel to channel, while how
+	// many channels arrive is the API's to choose.
+	// TestATrustListThatCannotBeKeptWritesOneLineForManyChannels holds it.
+	storeFails atomic.Uint64
 }
 
 // New returns the server of these dependencies.
@@ -131,6 +150,12 @@ func New(d Deps) *Server {
 // since it started. Nothing of them reaches the log (see Server.handshakes),
 // so this number is what says that they happen at all.
 func (s *Server) HandshakeFailures() uint64 { return s.handshakes.Load() }
+
+// StoreFailures is how many channels this server had to refuse because it
+// could not keep its trust list. Only the first of them reached the log (see
+// Server.storeFails), so this number is what says how long it has been going
+// on.
+func (s *Server) StoreFailures() uint64 { return s.storeFails.Load() }
 
 // Open answers one channel of a tunnel and fulfils link.Handler. It comes
 // back once the channel has its CLOSE, and always with nil: what went wrong
@@ -182,6 +207,16 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) 
 		// controller's — this build just does not carry it out yet. Nothing
 		// is read and nothing is granted: a channel that cannot be served is
 		// over before it costs this server a byte.
+		//
+		// The same state has two codes, and that is worth knowing while it
+		// lasts: with a trust list a stage, install or license channel gets
+		// here and ends E_INTERNAL, without one it never gets past
+		// access.firstChain and ends E_UNREACHABLE. Both mean "this build does
+		// not carry that action out". Once the tasks that bring them are in,
+		// the line above is gone and with it the difference; until then the
+		// second code is the honest one of the two, because without a list
+		// this server really cannot be reached for anything but its first
+		// chain.
 		return s.end(ch, wire.Error(wire.CodeInternal))
 	}
 	// The first GRANT is the credit the API sends its input with; what this
@@ -229,6 +264,16 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) 
 // at most core.Action.MaxIn bytes. What this side took off the channel it
 // grants again at once, so the API may go on sending without ever holding
 // more than the first GRANT gave it.
+//
+// It keeps the whole input in memory, and it does so for every action alike.
+// What this build serves is bounded by the MaxIn of ngc.users/controller/trust,
+// 33554432 bytes — but a tunnel may hold wire.MaxTunnelChannels numbers at
+// once, so even that is 32 GiB in a process running as root. The controller
+// actions of core.All that carry a file are already written and only not
+// served yet: ngc.store/controller/stage and activate stand at 4303355908
+// bytes each (core.maxTransferIn, measured). Whoever serves them reads the
+// input of a FlowTransfer channel as it flows instead of holding it, and this
+// function is where that fork belongs.
 func (s *Server) read(ctx context.Context, ch *link.Channel, a core.Action) ([]byte, *wire.Close) {
 	var (
 		in  []byte

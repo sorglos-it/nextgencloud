@@ -253,8 +253,12 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 //     task, no app.
 //   - The other way round is why a certificate has to be turned away here
 //     and not further down: session.VerifyClient would take the list into
-//     trust.List.User, which reads l.Users — on a nil list that is a crash,
-//     in a program that runs as root.
+//     session.verifyCert, which compares c.Installation against l.Installation
+//     before it asks the list anything else — on a nil list that is a crash, in
+//     a program that runs as root. Measured with the panic caught and its
+//     stack read: session.go:828, by way of tunnel.VerifyOpen and
+//     session.VerifyClient. trust.List.User, which an earlier reading of this
+//     named, is never reached.
 //
 // Four marks, and every one of them is fenced by a subtest of
 // TestCheckWithoutTrustListTakesOnlyTheFirstChain. Whoever widens one of them
@@ -264,6 +268,15 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 func firstChain(r Request) (Decision, *wire.Close) {
 	// ParseOpen is the parse that needs no list; VerifyOpen would be the same
 	// call without a proof, but only this one says so at the door.
+	//
+	// This refusal changes no answer, and that is measured, not assumed:
+	// ParseOpen gives back two zero values with its error, and three empty
+	// names find nothing in core.Lookup, so an OPEN that is none is turned away
+	// by mark 2 whether this line stands or not. A mutation that drops it
+	// survives the whole package. It stays because reading on from values that
+	// mean nothing is how the next mark comes to be read from a payload nobody
+	// checked; the subtest "an open that is none" holds the answer and the
+	// lookup this rests on.
 	o, inner, err := tunnel.ParseOpen(r.Payload)
 	if err != nil {
 		return refuse(wire.CodeUnreachable)

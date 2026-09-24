@@ -37,6 +37,19 @@ var ErrTooMany = errors.New("chain: more versions than one keeper holds")
 // start could read past.
 var ErrStore = errors.New("chain: the local state could not be used")
 
+// ErrNoAnchor reports that this controller's own anchor pins nothing: without
+// a number or without a SHA-256 it matches no version at all (validAnchor,
+// config.Controller). It is this server's fault, so the caller answers
+// E_INTERNAL.
+//
+// It is told apart from trust.ErrAnchor on purpose: that one comes out of the
+// verification and says that the chain which arrived does not begin at the
+// anchored version. Since a controller that has verified nothing opens the
+// trust channel too (access.firstChain), a peer can bring that one about with
+// a chain that is signed perfectly well and simply starts somewhere else, and
+// what a peer brings about is E_VERIFY and not "Interner Fehler."
+var ErrNoAnchor = errors.New("chain: the anchor of this controller pins nothing")
+
 // Keeper holds the newest verified version of the trust list. Several tunnels
 // read it at once, so every access goes through mu.
 type Keeper struct {
@@ -57,9 +70,16 @@ func New(st *state.Store, a trust.Anchor) *Keeper { return &Keeper{st: st, ancho
 // Load verifies what is stored, from the anchor on, and is what lets Apply
 // run. While nothing is stored it leaves the keeper empty and gives no error:
 // the controller then runs on until an API sends the first chain.
+//
+// It has to run before the first channel does: a keeper that never read the
+// state refuses every Apply with ErrStore
+// (TestApplyRefusesUntilTheStateWasRead), so whoever builds the server around
+// a keeper calls this first and lets a failure of it end the start. No program
+// does yet — only the tests of this package and of serve build a keeper at
+// all, so "never loaded" is what a first wiring gets if it forgets this.
 func (k *Keeper) Load(ctx context.Context) error {
 	if !k.validAnchor() {
-		return trust.ErrAnchor
+		return ErrNoAnchor
 	}
 	// The whole call holds the lock: Load and Apply both decide from what the
 	// keeper holds, so the newer version must not be replaced by an older one
@@ -112,7 +132,7 @@ func (k *Keeper) Apply(ctx context.Context, b []byte) (uint64, error) {
 		return 0, trust.ErrChain
 	}
 	if !k.validAnchor() {
-		return 0, trust.ErrAnchor
+		return 0, ErrNoAnchor
 	}
 	// One writer at a time: two chains arriving over two tunnels must not
 	// interleave between the check and the write.
@@ -184,15 +204,39 @@ func (k *Keeper) List() *trust.List {
 	return k.cur.List
 }
 
-// Seq returns the number of the newest verified version, or 0 while there is
-// none. An API asks for the versions after it.
-func (k *Keeper) Seq() uint64 {
+// TrustSeq is the number this controller puts into tunnel.Hello.TrustSeq, and
+// it is the number after which it needs versions: what this side asks of an
+// API is the chain from TrustSeq+1 on. That is the contract's own way of
+// counting through the list — session.TrustChain answers "versions from N
+// (inclusive) on" and whoever read them asks again from the one after the
+// last — and the only thing that changes for a controller is that the versions
+// come on a channel instead of over session.PathTrust (package wire, CtlTrust).
+//
+// While a version is verified, that is its number. While none is — between
+// pairing and the first chain — it is the one below the anchor, because the
+// chain then has to begin at the anchored version itself: Apply opens it with
+// trust.Open, which compares chain[0] against the anchor and refuses anything
+// else. A controller that said 0 here would be sent the chain from version 1
+// on, and a controller anchored above 1 would refuse it — which is every
+// controller paired once the list has moved past its first version, since
+// pairing hands out the anchor of the list as it stands then
+// (tunnel.PairCode.Anchor). Anchored at 1, the two numbers are the same, and
+// that is why nothing showed while only that case was measured.
+//
+// The number does not say that a version was verified: Current and List say
+// that, and only they. An anchor without a number leaves it at 0 — there is
+// nothing below 1 — and such an anchor pins nothing at all, so the keeper
+// takes no chain either way (validAnchor, ErrNoAnchor).
+func (k *Keeper) TrustSeq() uint64 {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	if k.cur.List == nil {
+	if k.cur.List != nil {
+		return k.cur.List.Seq
+	}
+	if k.anchor.Seq == 0 {
 		return 0
 	}
-	return k.cur.List.Seq
+	return k.anchor.Seq - 1
 }
 
 // validAnchor reports whether the anchor can pin a version at all. An anchor

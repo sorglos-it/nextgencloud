@@ -76,9 +76,11 @@ type ReportConfig struct {
 	Roles   []string // config.Controller.Roles
 	OS      string   // what OSRelease read, e.g. debian-13; empty if it read nothing
 	State   *state.Store
-	// TrustSeq is the newest trust list version this controller has verified
-	// (chain.Keeper.Seq). nil: 0, which is what a controller that has verified
-	// none says.
+	// TrustSeq is the number after which this controller needs versions of the
+	// trust list, and chain.Keeper.TrustSeq is what answers it: the number of
+	// the newest version it verified, or the one below its anchor while it has
+	// verified none. nil: 0, which asks for the chain from version 1 on and is
+	// right only for a controller anchored at 1.
 	TrustSeq func() uint64
 	// Running says whether an app is up. The engine of the container task
 	// (runtime.Engine.Running) has this signature, and what it takes there is
@@ -121,8 +123,8 @@ func (r *Reporter) log() *slog.Logger {
 // Hello is the hello of this controller, asked afresh for every dial: the
 // version of this build and the contract it was built against, the node and the
 // roles of the configuration, the architecture the binary was built for, the
-// operating system under it and the newest trust list version it has verified.
-// It fits link.Config.Hello.
+// operating system under it and the trust list version after which it needs the
+// chain (ReportConfig.TrustSeq). It fits link.Config.Hello.
 //
 // Node stays empty until an admin has put this server in a trust list. That is
 // no fault of this controller's and no reason not to dial: what the API makes

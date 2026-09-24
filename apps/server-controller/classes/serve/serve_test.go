@@ -522,9 +522,34 @@ func TestTrustChannelAnswersWithNewestSeq(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	if seq := w.keep.Seq(); seq != 2 {
+	if seq := w.keep.TrustSeq(); seq != 2 {
 		t.Errorf("the keeper holds version %d, want the one it just verified", seq)
 	}
+}
+
+// fresh puts a controller between pairing and its first chain in place of the
+// one newWorld built: a keeper over an empty state, anchored at a, and a
+// server over that keeper. load says whether the keeper read the state — one
+// that never did refuses every chain (chain.Keeper.Load), which is the case
+// TestATrustListThatCannotBeKeptWritesOneLineForManyChannels needs.
+func (w *world) fresh(t *testing.T, a trust.Anchor, load bool) *chain.Keeper {
+	t.Helper()
+	st := state.New(memstore.New())
+	t.Cleanup(func() { st.Close() })
+	k := chain.New(st, a)
+	if load {
+		if err := k.Load(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if k.List() != nil {
+			t.Fatal("a controller that stored nothing holds a list")
+		}
+	}
+	ctlKey, _ := trusttest.NodeKeys(ctlFill)
+	w.keep, w.st = k, st
+	w.srv = New(Deps{Node: node, Noise: ctlKey, Chain: k, State: st,
+		Now: func() int64 { return now }, Log: w.log})
+	return k
 }
 
 // A controller between pairing and its first chain: it holds the anchor and
@@ -535,19 +560,15 @@ func TestTrustChannelAnswersWithNewestSeq(t *testing.T) {
 // ordinary way.
 func TestAFreshControllerTakesItsFirstChain(t *testing.T) {
 	w := newWorld(t)
-	fresh := state.New(memstore.New())
-	t.Cleanup(func() { fresh.Close() })
-	k := chain.New(fresh, trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)})
-	if err := k.Load(context.Background()); err != nil {
-		t.Fatal(err)
+	k := w.fresh(t, trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)}, true)
+	// Anchored at 1, so the number it reports is 0 and the chain an API sends
+	// after it starts at version 1 — the anchored one. That the two numbers
+	// agree here is what hid the case below for a whole round:
+	// TestAFreshControllerAnchoredInTheMiddleTakesItsFirstChain is a
+	// controller anchored anywhere else.
+	if seq := k.TrustSeq(); seq != 0 {
+		t.Fatalf("a controller anchored at 1 asks from %d on, want 1", seq+1)
 	}
-	if k.List() != nil {
-		t.Fatal("a controller that stored nothing holds a list")
-	}
-	ctlKey, _ := trusttest.NodeKeys(ctlFill)
-	w.keep, w.st = k, fresh
-	w.srv = New(Deps{Node: node, Noise: ctlKey, Chain: k, State: fresh,
-		Now: func() int64 { return now }, Log: w.log})
 	v1, v2 := w.v1, w.next(t)
 	ended := w.tunnel(t, func(a *apiSide) {
 		// The anchor's own version is the first link of the chain.
@@ -581,8 +602,116 @@ func TestAFreshControllerTakesItsFirstChain(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	if seq := k.Seq(); seq != 2 {
+	if seq := k.TrustSeq(); seq != 2 {
 		t.Errorf("the keeper holds version %d, want the second one it verified", seq)
+	}
+}
+
+// The controller a pairing produces once the list has moved past its first
+// version: anchored somewhere in the middle of the chain, holding nothing. What it puts into its
+// hello is the number after which it needs versions, and an API answers that
+// with the chain from the anchored version on — the only chain trust.Open
+// takes. A controller that said 0 here would be sent the chain from version 1,
+// and would have to refuse it.
+func TestAFreshControllerAnchoredInTheMiddleTakesItsFirstChain(t *testing.T) {
+	w := newWorld(t)
+	v1 := w.v1
+	v2 := w.admin.Sign(t, trusttest.Next(t, v1))
+	v3 := w.admin.Sign(t, trusttest.Next(t, v2))
+	k := w.fresh(t, trust.Anchor{Seq: 2, Hash: trust.Hash(v2)}, true)
+	if seq := k.TrustSeq(); seq != 1 {
+		t.Fatalf("a controller anchored at 2 asks from %d on, want 2", seq+1)
+	}
+	ended := w.tunnel(t, func(a *apiSide) {
+		// What an API sends after a reported 0: versions 1 and 2. Signed as
+		// well as any other chain, and still not this controller's, so it is
+		// refused as the sender's fault.
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, v1, v2))
+		a.eof(1)
+		wantCode(t, a.closed(1), wire.CodeVerify)
+		a.shut(1)
+		// What it sends after the reported 1: versions 2 and 3.
+		a.open(2, trustOpen(t))
+		a.data(2, chainOf(t, v2, v3))
+		a.eof(2)
+		out, cl := a.result(2)
+		if cl.Status != wire.StatusOK || cl.Code != "" {
+			t.Fatalf("the first chain ended with %+v, want status ok", cl)
+		}
+		var got core.TrustResult
+		if err := json.Unmarshal(out, &got); err != nil || got.Seq != 3 {
+			t.Errorf("the controller answered %q (%v), want seq 3", out, err)
+		}
+		a.shut(2)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if seq := k.TrustSeq(); seq != 3 {
+		t.Errorf("the keeper holds version %d, want the newest of the chain it took", seq)
+	}
+}
+
+// A chain that misses the anchor is the fault of what was sent, and it has to
+// be named as one. The admin reads E_VERIFY as "Unterschrift ungültig." and
+// E_INTERNAL as "Interner Fehler."; the first sends him to look at what the
+// API handed over, the second at his own server, and here the API is the one
+// that sent the wrong window.
+func TestASignedVersionPastTheAnchorIsTheSendersFault(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	k := w.fresh(t, trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)}, true)
+	ended := w.tunnel(t, func(a *apiSide) {
+		// Version 2, signed by the admin of the list and correct in every way
+		// — only it is not the version this controller is anchored at.
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, v2))
+		a.eof(1)
+		wantCode(t, a.closed(1), wire.CodeVerify)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if seq := k.TrustSeq(); seq != 0 {
+		t.Errorf("the keeper holds version %d after a chain it refused", seq)
+	}
+	// Nothing of it reached the log: the fault came in from outside.
+	if n := w.notes.n.Load(); n != 0 {
+		t.Errorf("a chain that missed the anchor wrote %d lines", n)
+	}
+}
+
+// A trust list this server cannot keep is a local fault and worth a line — but
+// only one. How many channels meet it is the API's to choose, and a line for
+// each would let a peer fill this server's log. A keeper that never read its
+// state is that fault today: nothing outside the tests of chain calls Load.
+func TestATrustListThatCannotBeKeptWritesOneLineForManyChannels(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	w.fresh(t, trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)}, false)
+	const channels = 5
+	ended := w.tunnel(t, func(a *apiSide) {
+		for n := uint32(1); n <= channels; n++ {
+			a.open(n, trustOpen(t))
+			a.data(n, chainOf(t, v2))
+			a.eof(n)
+			wantCode(t, a.closed(n), wire.CodeInternal)
+			a.shut(n)
+		}
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if n := w.notes.n.Load(); n != 1 {
+		t.Errorf("%d channels wrote %d lines, want 1", channels, n)
+	}
+	if got := w.srv.StoreFailures(); got != channels {
+		t.Errorf("StoreFailures = %d, want %d", got, channels)
 	}
 }
 
@@ -603,7 +732,7 @@ func TestTrustChannelRefusesBrokenChain(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	if seq := w.keep.Seq(); seq != 1 {
+	if seq := w.keep.TrustSeq(); seq != 1 {
 		t.Errorf("the keeper holds version %d, want the one it held before the broken chain", seq)
 	}
 }
@@ -626,7 +755,7 @@ func TestInputAboveMaxInClosesWithTooLarge(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	if seq := w.keep.Seq(); seq != 1 {
+	if seq := w.keep.TrustSeq(); seq != 1 {
 		t.Errorf("the keeper holds version %d, want nothing of an input it refused", seq)
 	}
 }
@@ -743,7 +872,7 @@ func TestAnInputCutOffBeforeItsEOFChangesNothing(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	if seq := w.keep.Seq(); seq != 1 {
+	if seq := w.keep.TrustSeq(); seq != 1 {
 		t.Errorf("the keeper holds version %d, want nothing of an input that was cut off", seq)
 	}
 }
@@ -850,6 +979,41 @@ func TestAppChannelWaitsNoLongerThanTheFirstTimeout(t *testing.T) {
 	}
 }
 
+// A controller wired without its own Noise key answers every app channel the
+// way it answers an attack: E_INTERNAL, counted, and not a line anywhere. That
+// is the price of not letting a peer write the log, and this is the shape an
+// operator reads it by — HandshakeFailures climbing with every app channel
+// while not one of them ever comes off.
+func TestAServerWithoutItsNoiseKeyRefusesEveryAppChannelTheSameWay(t *testing.T) {
+	w := newWorld(t)
+	w.srv = New(Deps{Node: node, Chain: w.keep, State: w.st,
+		Now: func() int64 { return now }, Log: w.log})
+	payload, _ := w.appOpen(t, nil)
+	const channels = 3
+	ended := w.tunnel(t, func(a *apiSide) {
+		for num := uint32(1); num <= channels; num++ {
+			a.send(wire.Frame{Type: wire.TypeOpen, Channel: num, Payload: payload})
+			f := a.want(wire.TypeClose, num)
+			cl, err := wire.ParseClose(f.Payload)
+			if err != nil {
+				t.Errorf("CLOSE of channel %d: %v", num, err)
+			}
+			wantCode(t, cl, wire.CodeInternal)
+			a.shut(num)
+		}
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if got := w.srv.HandshakeFailures(); got != channels {
+		t.Errorf("HandshakeFailures = %d, want %d", got, channels)
+	}
+	if n := w.notes.n.Load(); n != 0 {
+		t.Errorf("a missing Noise key wrote %d lines, want none", n)
+	}
+}
+
 // A handshake that does not come off is counted and nothing of it is written:
 // an OPEN whose prologue names another controller is one a shell may send as
 // often as it likes, and a line per channel would be its to write.
@@ -895,8 +1059,8 @@ func TestTheListOfAChannelDoesNotChangeUnderIt(t *testing.T) {
 	if _, err := w.keep.Apply(context.Background(), chainOf(t, w.next(t))); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if w.keep.Seq() != 2 {
-		t.Fatalf("the keeper holds version %d after a second one was applied", w.keep.Seq())
+	if w.keep.TrustSeq() != 2 {
+		t.Fatalf("the keeper holds version %d after a second one was applied", w.keep.TrustSeq())
 	}
 	if held.Seq != seq || len(held.Users) != users || len(held.Nodes) != nodes {
 		t.Errorf("the list handed out before is now seq %d with %d users and %d nodes, want %d/%d/%d",
@@ -1039,7 +1203,7 @@ func TestChannelsRunSideBySideWhileTheListMovesOn(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	if seq := w.keep.Seq(); seq != 2 {
+	if seq := w.keep.TrustSeq(); seq != 2 {
 		t.Errorf("the keeper holds version %d, want the one the trust channel verified", seq)
 	}
 	if n := w.srv.HandshakeFailures(); n != failing {
