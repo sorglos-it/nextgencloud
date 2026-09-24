@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Set here rather than inside prepare: stop reads work and key_id reads
+# Set here rather than inside prepare: stop reads work and key_ids reads
 # module, and a variable that only exists while prepare runs would make those
 # two die with an English bash message if anything ever called them first.
 work="$(pwd)/dist/recovery"
@@ -23,15 +23,26 @@ install() {
 	printf 'Pakete installiert. Weiter mit: tools/recovery-tools.sh\n' >&2
 }
 
-# Every abort that is cured by throwing the tokens away ends here, because
-# they all have the same way out: a token and its key file only mean anything
-# together, so both go together. The two aborts that this does NOT cure - a
-# SoftHSM2 that will not answer, and files recovery-tools.sh never wrote -
-# carry their own hint and do not come through here. Never call this from
-# inside a $( ): an exit there ends only the subshell (measured).
-stop() {                 # $1 = what went wrong, in German
+# Every abort that is cured by throwing a token away ends here. $2, when it is
+# given, is the number of the ONE stick that is broken, and then only that one
+# goes: the other four keep their keys, and from task 6 on the stick's own
+# name is sealed into the policy digest, so a key thrown away for nothing
+# takes everything sealed on it along. Measured: --delete-token removes
+# exactly that one token directory, needs no PIN, and leaves the other four
+# keys byte for byte as they were.
+# Three aborts do NOT come through here, because throwing tokens away does not
+# cure them, and they carry their own hint: a SoftHSM2 that will not answer,
+# files that recovery-tools.sh never wrote, and a wrong subcommand.
+# Never call this from inside a $( ): an exit there ends only the subshell
+# (measured).
+stop() {                 # $1 = what went wrong, in German; $2 = stick number, optional
 	printf '%s\n' "$1" >&2
-	printf 'Wegwerfen und neu anlegen: rm -rf %s/softhsm/tokens/* %s/keys/stick*\n' "$work" "$work" >&2
+	if [ -n "${2:-}" ]; then
+		printf 'Nur diesen Stick wegwerfen: SOFTHSM2_CONF=%s/softhsm/softhsm2.conf softhsm2-util --delete-token --token TEST-STICK-%s && rm -f %s/keys/stick%s.*\n' \
+			"$work" "$2" "$work" "$2" >&2
+	else
+		printf 'Alle wegwerfen und neu anlegen: rm -rf %s/softhsm/tokens/* %s/keys/stick*\n' "$work" "$work" >&2
+	fi
 	printf 'Danach noch einmal: tools/recovery-setup.sh prepare\n' >&2
 	exit 1
 }
@@ -61,13 +72,19 @@ has_token() {            # $1 = token label
 		sed 's/[[:space:]]*$//' | grep -Fx -- "$1" >/dev/null
 }
 
-# Writes the number of the object named $2, nothing when the token has no
-# object of that name. Returns non-zero only when the listing itself failed,
-# so the caller can tell "not there" from "could not ask" and answer in German
-# either way. It must not call stop itself: it runs inside a $( ), where an
-# exit ends only the subshell (measured).
-key_id() {               # $1 = token label, $2 = object name, $3 = pubkey|privkey, $4 = user PIN
-	local objects login=()
+# Writes ONE LINE PER OBJECT named $2: its number, or "-" when that object
+# carries no number at all. No line at all means the token has no object of
+# that name. Both odd shapes are real, not precaution - measured: pkcs11-tool
+# prints the ID line only for an object that has a CKA_ID, and a keypair made
+# without --id has none; and --keypairgen onto a name that is already taken
+# succeeds and leaves a SECOND object of that name behind. Reading the ID
+# lines alone would turn the first into "no key" and the second into a number
+# of two lines.
+# Returns non-zero only when the listing itself failed, so "not there" stays
+# tellable from "could not ask". It must not call stop: it runs inside a $( ),
+# where an exit ends only the subshell (measured).
+key_ids() {              # $1 = token label, $2 = object name, $3 = pubkey|privkey, $4 = user PIN
+	local objects fields line login=() open=no id=""
 	# The private half is shown only to someone who logs in. Measured: without
 	# a login the private listing comes back EMPTY with exit 0, which would
 	# read as "no key" for every stick. The price is the test PIN in the
@@ -76,16 +93,57 @@ key_id() {               # $1 = token label, $2 = object name, $3 = pubkey|privk
 	# cannot sign would otherwise surface only in task 10. $4 itself travels as
 	# a function argument, which no other process can read.
 	if [ "$3" = privkey ]; then login=(--login --pin "$4"); fi
-	# --label filters, and it filters exactly - measured: stick1 finds stick1
-	# and not stick12, stick finds nothing. So the listing holds that one
-	# object and the ID line below is the one that was asked for.
+	# --label filters, and measured it filters exactly: stick1 finds stick1 and
+	# not stick12, stick finds nothing. The name is compared again below all
+	# the same, so the answer does not hang on that staying true.
 	objects="$(pkcs11-tool --module "$module" --token-label "$1" "${login[@]}" \
 		--list-objects --type "$3" --label "$2")" || return 1
-	printf '%s\n' "$objects" | sed -n 's/^[[:space:]]*ID:[[:space:]]*//p' | sed 's/[[:space:]]*$//'
+	# Boiled down to one "label <name>" or "id <number>" line each, anchored on
+	# the field name: the uri line carries the same name and the same number
+	# and must not be counted as a second object. pkcs11-tool prints an
+	# object's label first and its ID right after it, so the next label line
+	# closes the object before it.
+	fields="$(printf '%s\n' "$objects" |
+		sed -n -e 's/^[[:space:]]*label:[[:space:]]*/label /p' \
+		       -e 's/^[[:space:]]*ID:[[:space:]]*/id /p' |
+		sed 's/[[:space:]]*$//')"
+	while IFS= read -r line; do
+		case "$line" in
+		"label $2")
+			if [ "$open" = yes ]; then printf '%s\n' "${id:--}"; fi
+			open=yes
+			id=""
+			;;
+		"label "*)
+			if [ "$open" = yes ]; then printf '%s\n' "${id:--}"; fi
+			open=no
+			id=""
+			;;
+		"id "*)
+			if [ "$open" = yes ]; then id="${line#id }"; fi
+			;;
+		esac
+	done <<< "$fields"
+	if [ "$open" = yes ]; then printf '%s\n' "${id:--}"; fi
+}
+
+# The one question both halves have to answer: is exactly one key of that name
+# there, and does it carry the number the plan gives it? Each no gets its own
+# sentence, because the four of them are four different states and the user
+# should not have to guess which one they are in.
+check_ids() {            # $1 = key_ids output, $2 = "private"|"öffentliche", $3 = token label,
+                         # $4 = key name, $5 = wanted number, $6 = stick number
+	case "$1" in
+	"$5") ;;
+	*$'\n'*) stop "In $3 liegen zwei $2 Schlüssel mit dem Namen $4. Welcher gilt, ist nicht zu entscheiden." "$6" ;;
+	"") stop "In $3 fehlt der $2 Schlüssel $4. So ist der Stick unbrauchbar." "$6" ;;
+	"-") stop "Der $2 Schlüssel $4 in $3 trägt gar keine Nummer, gebraucht wird $5." "$6" ;;
+	*) stop "Der $2 Schlüssel $4 in $3 trägt die Nummer $1 statt $5." "$6" ;;
+	esac
 }
 
 prepare() {
-	local file pin so_pin n label priv_id pub_id text fingerprint fingerprints distinct
+	local file pin so_pin n label priv_ids pub_ids text fingerprint fingerprints distinct
 	tools/recovery-env.sh
 	export SOFTHSM2_CONF="$work/softhsm/softhsm2.conf"
 	# recovery-env.sh checks the programs and recovery-tools.sh's report, not
@@ -115,68 +173,69 @@ prepare() {
 				stop "Das Token $label lässt sich nicht anlegen."
 			fi
 		fi
-		# The PRIVATE half is what decides here. Only it can sign, and it is
-		# the half nobody sees without logging in - asking the public one, as
-		# this did before, calls a token ready that can never sign.
-		if ! priv_id="$(key_id "$label" "stick$n" privkey "$pin")"; then
-			stop "Das Token $label lässt sich nicht öffnen. Stimmt die PIN in $work/pin/stick.txt noch?"
+		# Both halves get asked, every run: the private one because only it can
+		# sign and only a login shows it at all, the public one because it is
+		# what ends up in the .pem file.
+		if ! priv_ids="$(key_ids "$label" "stick$n" privkey "$pin")"; then
+			stop "Das Token $label lässt sich nicht öffnen. Stimmt die PIN in $work/pin/stick.txt noch?" "$n"
 		fi
-		if [ -z "$priv_id" ]; then
-			# Generated only when the name is free on BOTH halves. Measured:
-			# --keypairgen on a name that is already taken succeeds and leaves
-			# TWO objects of that name behind. So a half-filled token gets
-			# thrown away, not topped up.
-			if ! pub_id="$(key_id "$label" "stick$n" pubkey "$pin")"; then
-				stop "Das Token $label lässt sich nicht lesen."
-			fi
-			if [ -n "$pub_id" ]; then
-				stop "In $label liegt nur die öffentliche Hälfte von stick$n. Unterschreiben kann dieser Stick damit nicht."
-			fi
+		if ! pub_ids="$(key_ids "$label" "stick$n" pubkey "$pin")"; then
+			stop "Das Token $label lässt sich nicht lesen." "$n"
+		fi
+		if [ -z "$priv_ids" ] && [ -z "$pub_ids" ]; then
+			# Generated only onto a name that is free on BOTH halves. Measured:
+			# --keypairgen onto a taken name succeeds and leaves TWO objects of
+			# that name behind, and then nothing says which of them counts. A
+			# half-filled token is refused below, not topped up here.
 			if ! pkcs11-tool --module "$module" --token-label "$label" --login --pin "$pin" \
 				--keypairgen --key-type EC:secp384r1 --label "stick$n" --id "0$n"; then
-				stop "Für $label lässt sich kein Schlüsselpaar erzeugen."
+				stop "Für $label lässt sich kein Schlüsselpaar erzeugen." "$n"
 			fi
-			if ! priv_id="$(key_id "$label" "stick$n" privkey "$pin")"; then
-				stop "Das Token $label lässt sich nach dem Erzeugen nicht öffnen."
+			if ! priv_ids="$(key_ids "$label" "stick$n" privkey "$pin")"; then
+				stop "Das Token $label lässt sich nach dem Erzeugen nicht öffnen." "$n"
+			fi
+			if ! pub_ids="$(key_ids "$label" "stick$n" pubkey "$pin")"; then
+				stop "Das Token $label lässt sich nach dem Erzeugen nicht lesen." "$n"
 			fi
 		fi
 		# Number and curve are only demanded where the key is generated, and
-		# that step is skipped for a key that is already there - so both get
-		# asked here, every stick, every run. The private half's number is
-		# read out; the public half's is asked by --read-object below, which
-		# looks for name AND number and answers "object not found" when the
-		# number differs (measured).
-		if [ "$priv_id" != "0$n" ]; then
-			stop "Der private Schlüssel stick$n in $label trägt die Nummer $priv_id statt 0$n."
-		fi
+		# that step is skipped for a key that is already there - so they get
+		# asked here, every stick, every run: the number for both halves right
+		# now, the curve further down, on the public key that ends up in the
+		# file (the two halves of a pair share it).
+		check_ids "$priv_ids" "private" "$label" "stick$n" "0$n" "$n"
+		check_ids "$pub_ids" "öffentliche" "$label" "stick$n" "0$n" "$n"
 		# Read out on every run, not only when the file is missing. Tokens and
 		# key files can be thrown away separately, and measured: a kept keys/
 		# beside an emptied tokens/ otherwise leaves all five files holding
 		# keys that no token has any more, and the run still reports success.
+		# Name and number are settled by the check above, so what is left to
+		# fail here is the reading and the writing - the message says so
+		# instead of naming a cause it does not know.
 		if ! pkcs11-tool --module "$module" --token-label "$label" --read-object \
 			--type pubkey --label "stick$n" --id "0$n" \
 			--output-file "$work/keys/stick$n.der"; then
-			stop "In $label ist kein öffentlicher Schlüssel stick$n mit der Nummer 0$n zu finden."
+			stop "Der öffentliche Schlüssel stick$n aus $label kam nicht in $work/keys/stick$n.der an. Die Zeilen darüber sagen, woran es lag." "$n"
 		fi
 		if ! openssl ec -pubin -inform DER -in "$work/keys/stick$n.der" -pubout \
 			-out "$work/keys/stick$n.pem"; then
-			stop "Der Schlüssel von $label lässt sich nicht nach $work/keys/stick$n.pem umschreiben."
+			stop "Der Schlüssel von $label lässt sich nicht nach $work/keys/stick$n.pem umschreiben." "$n"
 		fi
 		# Captured first: reading the status of openssl out of a case or a
 		# local would lose it.
 		if ! text="$(openssl ec -pubin -in "$work/keys/stick$n.pem" -noout -text 2>/dev/null)"; then
-			stop "Die abgelegte Datei $work/keys/stick$n.pem ist kein lesbarer Schlüssel."
+			stop "Die abgelegte Datei $work/keys/stick$n.pem ist kein lesbarer Schlüssel." "$n"
 		fi
 		case "$text" in
 		*'NIST CURVE: P-384'*) ;;
-		*) stop "$label hat keinen secp384r1-Schlüssel, den die Vorgabe verlangt." ;;
+		*) stop "$label hat keinen secp384r1-Schlüssel, den die Vorgabe verlangt." "$n" ;;
 		esac
 		# One line per stick, so two equal keys really do collapse into one.
 		# Read from standard input on purpose: sha256sum puts the file name in
 		# its line, and five names always differ, so the count below would
 		# reach five whatever the keys are.
 		if ! fingerprint="$(sha256sum < "$work/keys/stick$n.pem")"; then
-			stop "Die Datei $work/keys/stick$n.pem lässt sich nicht noch einmal lesen."
+			stop "Die Datei $work/keys/stick$n.pem lässt sich nicht noch einmal lesen." "$n"
 		fi
 		fingerprints="$fingerprints$fingerprint"$'\n'
 	done
@@ -186,7 +245,8 @@ prepare() {
 	# Counting the lines of openssl's text dump instead would count how varied
 	# the text is, not how many keys there are - measured: five IDENTICAL
 	# P-384 keys already give ten different lines, so a "fewer than five"
-	# threshold can never be undercut.
+	# threshold can never be undercut. No stick number here on purpose: which
+	# two of them share the key is exactly what this does not know.
 	distinct="$(printf '%s' "$fingerprints" | sort -u | wc -l)"
 	if [ "$distinct" -ne 5 ]; then
 		stop "Zwei Test-Sticks haben denselben Schlüssel. Das darf nicht sein."
