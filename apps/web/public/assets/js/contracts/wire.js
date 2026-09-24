@@ -8,7 +8,26 @@
 // comes out of an object or an argument the caller owns, so each is read
 // exactly once and only the copy is used afterwards: a field that answers the
 // check with one value and the writer with another would put a frame on the
-// link that no check ever saw. viewOf below is that rule for bytes.
+// link that no check ever saw. viewOf below is that rule for bytes where the
+// answer is an error, bytesOrNull where it is true or false, and every
+// function that is handed bytes reaches one of the two. Through viewOf:
+// encodeFrame, decodeFrame, grant, parseGrant, parseOpen, parseClose,
+// parseE2E, parseControl. Through bytesOrNull, for the members of an object a
+// caller built: validateOpen, parseOpen, validParams, encodeOpen, e2e,
+// encodeControl. Counted from the call sites in this file, eight for viewOf
+// and eleven for bytesOrNull; parseOpen is in both lists, once for the
+// document and once for its members.
+//
+// The document itself went through neither in parseOpen, parseClose and
+// parseControl until this round: they handed the caller's object straight to
+// decode, which keeps it and asks length in eight more places after the
+// budget has been measured against the first reading. A subclass whose first
+// reading is small therefore carried a
+// document of any size past the bound - measured at 22063, 70027 and 5015
+// bytes against bounds of 16384, 65514 and 4096, and measured against
+// shared/wire, Go refuses all three and takes the same document cut to the
+// bound. The test "a document whose length lies is refused by every parser"
+// builds them.
 //
 // The imports differ from the task brief's own block in nine names, counted
 // by the two sets and not by hand. Five are added: fromUtf8 and BadInput from
@@ -47,11 +66,11 @@ export const E2E_DATA = 1, E2E_END = 2;
 // The payload of the task envelope in an OPEN: Go's task.MaxTask, which wire
 // holds as an unexported maxTask of its own because wire cannot import task.
 // The same layering decides here: task.js is built on session.js and proof.js,
-// while this module is the frame layer under them. Since this round task.js
-// takes MAX_PARAMS from here, so the way back is not open at all any more: it
-// would be a ring. The number therefore stands twice, as it does in Go, and
-// unexported here as there; task.js holds the exported MAX_TASK, which is
-// where a task itself is read.
+// while this module is the frame layer under them. Since task.js takes
+// MAX_PARAMS and validParams from here, the way back is not open at all any
+// more: it would be a ring. The number therefore stands twice, as it does in
+// Go, and unexported here as there; task.js holds the exported MAX_TASK,
+// which is where a task itself is read.
 const MAX_TASK = 16 << 10;
 
 // The largest channel number, and the largest credit: both are uint32 in Go,
@@ -209,9 +228,18 @@ export const openShape = S({
 const openBudget = new Budget({ size: MAX_BROWSER_OPEN, items: { params: RAW } });
 
 export function parseOpen(p) {
+  // The bytes are read once, here: decode keeps the object it is handed and
+  // asks length again for every step of the parse, so a subclass whose first
+  // reading is small walks an OPEN of any size past the budget - measured, a
+  // document of 22063 bytes was taken where the bound is 16384, and Go's
+  // ParseOpen refuses exactly those bytes. viewOf also settles what the raw
+  // members are made of: slice keeps the class it was called on, so without
+  // it parseOpen(p).params is the caller's subclass again, and those are the
+  // bytes the end-to-end prologue hashes.
+  const v = viewOf(p, "open payload");
   let o;
   try {
-    o = decode(p, openBudget, openShape);
+    o = decode(v, openBudget, openShape);
   } catch (e) {
     // What the decoder found is nothing a caller has to tell apart, and its
     // text quotes the input. Only the errors of the contracts are folded in;
@@ -306,10 +334,11 @@ function validTaskEnvelope(env) {
   }
 }
 
-// paramsBudget measures the params on their own, as task.js does for the
-// params of a task: at most MAX_PARAMS bytes, and nothing inside them counted
-// or named - the question is whether they are one JSON object, never what
-// stands in it.
+// paramsBudget measures the params on their own: at most MAX_PARAMS bytes,
+// and nothing inside them counted or named - the question is whether they are
+// one JSON object, never what stands in it. It stands here once. task.js held
+// the same three lines until this round and now asks validParams below, the
+// way Go's task.Validate asks wire.ValidParams.
 const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
 
 // validParams reports whether the params are empty or one JSON object of at
@@ -317,9 +346,11 @@ const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
 // which is paramsShape and jsontext.Value.IsValid together). Until this round
 // it was Go's unexported paramsShape under the exported name, which said yes
 // to '{"a":', '{"a":01}', '{"a":1,"a":2}' and '{' - all four refused by Go,
-// measured. The one file that reads this module reads a number out of it
-// (task.js, MAX_PARAMS) and asks nothing, so that cost nothing today; it
-// would have cost the next caller who asks before building.
+// measured. When that stood, the one file reading this module took a number
+// out of it and asked nothing, so it cost nothing that day. Since this round
+// task.js asks: a change here moves a task's answer too, which the test
+// "validateTask decides every field as Go's task.Task.Validate does" catches -
+// measured, a single byte changed in the line below turns it red.
 //
 // decode is what scans, and it is the decoder parseOpen reads an OPEN with,
 // so the two agree by construction. It also gives back the bytes of the one
@@ -469,9 +500,12 @@ const closeShape = S({ status: str, code: str, message: str, exitCode: optInt })
 const closeBudget = new Budget({ size: MAX_CLOSE_PAYLOAD });
 
 export function parseClose(p) {
+  // Read once, as in parseOpen: measured, a CLOSE of 5015 bytes was taken
+  // where the bound is 4096, and Go's ParseClose refuses those bytes.
+  const v = viewOf(p, "close");
   let c;
   try {
-    c = decode(p, closeBudget, closeShape);
+    c = decode(v, closeBudget, closeShape);
   } catch (e) {
     if (e instanceof BadJSON || e instanceof BadInput) throw new BadFrame("close");
     throw e;
@@ -593,9 +627,14 @@ const controlShape = S({ t: str, b: raw });
 const controlBudget = new Budget({ size: MAX_PAYLOAD, items: { b: RAW } });
 
 export function parseControl(p) {
+  // Read once, as in parseOpen: measured, a control message of 70027 bytes
+  // was taken where the bound is 65514, and Go's ParseControl refuses those
+  // bytes. The body is a raw value, so without this it came back as the
+  // caller's subclass as well - measured, as parseOpen's params did.
+  const v = viewOf(p, "control");
   let c;
   try {
-    c = decode(p, controlBudget, controlShape);
+    c = decode(v, controlBudget, controlShape);
   } catch (e) {
     if (e instanceof BadJSON || e instanceof BadInput) throw new BadFrame("control");
     throw e;

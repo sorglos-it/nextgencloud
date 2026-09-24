@@ -228,6 +228,74 @@ test("a payload whose length lies is refused, not half written", async ({ shell 
   expect(got.innerOK).toBe(true);
 });
 
+// The same lie, one layer up: parseOpen, parseClose and parseControl handed
+// their argument to decode, which keeps the object and reads length in eight
+// more places after the budget has been measured against the first reading.
+// So a subclass that answers 0 once walked a document of any size past the
+// bound. Each document below is one whose members are all there and whose
+// space to the closing brace is white space, which is JSON, so it stays one
+// valid document at any size. All six were measured against shared/wire
+// first: ParseOpen, ParseControl and ParseClose refuse 22063, 70027 and 5015
+// bytes and take the very same document cut to 16384, 65514 and 4096. What
+// refuses them is the bound, not the document.
+test("a document whose length lies is refused by every parser", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const w = await import("/assets/js/contracts/wire.js");
+    const { utf8 } = await import("/assets/js/contracts/b64.js");
+    // The lie is armed only after the bytes are in, so nothing the test
+    // itself does uses it up.
+    const lying = (b) => {
+      let lie = false;
+      class Shifty extends Uint8Array {
+        get length() {
+          if (!lie) return this.byteLength;
+          lie = false;
+          return 0;
+        }
+      }
+      const a = new Shifty(b.length);
+      a.set(b);
+      lie = true;
+      return a;
+    };
+    const padded = (n, head) => {
+      const b = new Uint8Array(n);
+      b.fill(0x20);
+      b.set(utf8(head), 0);
+      b[n - 1] = 0x7d;
+      return b;
+    };
+    const takes = (fn) => { try { fn(); return true; } catch { return false; } };
+    const rows = [
+      [22063, w.MAX_BROWSER_OPEN,
+        '{"app":"ngc.desktop","service":"api","action":"apps","params":{"a":1},"window":262144',
+        (x) => w.parseOpen(x)],
+      [70027, w.MAX_PAYLOAD, '{"t":"bye"', (x) => w.parseControl(x)],
+      [5015, w.MAX_CLOSE_PAYLOAD, '{"status":"error","code":"E_EXIT"', (x) => w.parseClose(x)],
+    ];
+    const open = utf8('{"app":"ngc.desktop","service":"api","action":"apps","window":262144,"params":{"a":1}}');
+    return {
+      over: rows.map(([n, , head, fn]) => takes(() => fn(padded(n, head)))),
+      lied: rows.map(([n, , head, fn]) => takes(() => fn(lying(padded(n, head))))),
+      bound: rows.map(([, n, head, fn]) => takes(() => fn(padded(n, head)))),
+      // The raw members are cut out of the bytes the parser holds, and slice
+      // keeps the class it was called on. Without the single reading above,
+      // parseOpen(p).params is the caller's subclass - and those are the
+      // bytes the end-to-end prologue hashes.
+      params: Object.getPrototypeOf(w.parseOpen(lying(open)).params) === Uint8Array.prototype,
+      body: Object.getPrototypeOf(w.parseControl(lying(utf8('{"t":"bye","b":{"why":"x"}}'))).b)
+        === Uint8Array.prototype,
+    };
+  });
+  // Over the bound: refused whether length tells the truth once or twice.
+  expect(got.over).toEqual([false, false, false]);
+  expect(got.lied).toEqual([false, false, false]);
+  // The same document at the bound is taken, so what refuses it is the size.
+  expect(got.bound).toEqual([true, true, true]);
+  expect(got.params).toBe(true);
+  expect(got.body).toBe(true);
+});
+
 // Go's Grant makes a payload for any uint32, and ParseGrant is the one that
 // refuses 0 and more than MaxWindow (measured: Grant(0) builds four bytes that
 // ParseGrant then turns down). The two stay apart here as well.
@@ -631,14 +699,19 @@ test("validParams asks the whole question Go's ValidParams asks", async ({ shell
       })(),
     };
   }, cases);
-  const wrong = cases.filter(([, , here], i) => here !== got.decides[i]).map(([name]) => name);
-  expect(wrong).toEqual([]);
-  // The whole price against Go, counted from the table and not by hand.
-  expect(cases.filter(([, , here, go]) => here !== go).map(([name]) => name)).toEqual([
+  // The price against Go, read out of what the code answered and not out of
+  // the table's own third column: with `here` on both sides these two would
+  // compare the table with itself, and no change to wire.js could make them
+  // red. The Go column is the measurement; got.decides is this run.
+  expect(cases.filter(([, , , go], i) => got.decides[i] !== go).map(([name]) => name)).toEqual([
     "a null member", "nesting one past the limit", "a number past 2^53-1",
     "an exponent no double holds",
   ]);
-  expect(cases.filter(([, , here, go]) => here && !go)).toEqual([]);
+  // Nothing this file takes is anything Go turns down.
+  expect(cases.filter(([, , , go], i) => got.decides[i] && !go).map(([name]) => name)).toEqual([]);
+  // And every row still answers what the third column says it answers.
+  const wrong = cases.filter(([, , here], i) => here !== got.decides[i]).map(([name]) => name);
+  expect(wrong).toEqual([]);
   expect(got.bytes).toEqual([false, true, false]);
   expect(got.open).toEqual([true, false, false]);
   expect(got.parses).toBe(true);

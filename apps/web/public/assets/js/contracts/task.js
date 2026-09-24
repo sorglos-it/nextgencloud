@@ -9,13 +9,16 @@
 // the writer with another would put something into a signature that no check
 // ever saw.
 //
-// The imports differ from the task brief's own block in six names, all of
-// them added and none of the brief's own left out. fromUtf8 and encodedLen
-// from b64.js are what the single-read rule needs, in parts below. BadInput
-// and BadJSON are the two errors parseTask folds into the one error Go has
-// there. verify from sign.js and certHash from session.js belong to
-// verifyApproval, which stands in the brief's interface list with no line of
-// code behind it and is built here after Go's task.VerifyApproval.
+// The imports differ from the task brief's own block in eight names, counted
+// by the two sets and not by hand; all eight are added and none of the
+// brief's own is left out. fromUtf8 and encodedLen from b64.js are what the
+// single-read rule needs, in parts below. BadInput and BadJSON are the two
+// errors parseTask folds into the one error Go has there. verify from sign.js
+// and certHash from session.js belong to verifyApproval, which stands in the
+// brief's interface list with no line of code behind it and is built here
+// after Go's task.VerifyApproval. MAX_PARAMS and validParams come from
+// wire.js, where Go keeps both as well - the comment said six until this
+// round and had been one short since MAX_PARAMS arrived.
 import { b64encode, utf8, fromUtf8, equal, encodedLen, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes, int, raw, RAW } from "./json.js";
 import { validName, validAppID, validID } from "./text.js";
@@ -23,7 +26,7 @@ import * as proof from "./proof.js";
 import { message, verify as verifyEnvelope, PURPOSE_TASK, PURPOSE_CONFIRM } from "./sign.js";
 import { certHash } from "./session.js";
 import { keyOwner } from "./trust.js";
-import { MAX_PARAMS } from "./wire.js";
+import { MAX_PARAMS, validParams as wireValidParams } from "./wire.js";
 
 export const ID_SIZE = 16;
 export const MAX_LIFETIME = 300;
@@ -61,12 +64,6 @@ export const taskShape = S({
 // as one value and no further, in validParams below.
 const taskBudget = new Budget({ size: MAX_TASK, items: { params: RAW } });
 
-// paramsBudget measures the params on their own, the way Go's
-// wire.ValidParams does: at most MAX_PARAMS bytes, and again nothing inside
-// them is counted or named - validParams asks whether they are one JSON
-// object and never what stands in it.
-const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
-
 // parseTask reads a task payload. Everything the decoder finds wrong is this
 // one error, as it is one error in Go (task.ErrTask): which rule a document
 // broke is nothing a caller has to tell apart, and an error of the engine
@@ -80,33 +77,32 @@ export function parseTask(payload) {
   }
 }
 
-// validParams mirrors Go's wire.ValidParams over the text the params hold:
-// nothing at all, or at most MAX_PARAMS bytes that are exactly one JSON
-// object. decode gives back the bytes of that one value with the white space
-// around it left off, which is what Go's jsontext.Value.Kind reads through as
-// well - measured against Go: "  {}" is an object there and here, "[1,2]",
-// "\"x\"" and "5" are none, and a repeated member name is no params at all.
+// validParams is wire.validParams over the text the params hold, as Go's
+// task.Validate asks wire.ValidParams of its own: nothing at all, or at most
+// MAX_PARAMS bytes that are exactly one JSON object. Until this round a
+// paramsBudget of its own stood here as well, over the same MAX_PARAMS and
+// with the same two items, and under it a body that asked the decoder the
+// same question, its last line the same line - one question with two places
+// to drift, where Go keeps it in one. The name is now defined once in the
+// tree, in wire.js; grep over public/assets/js finds no second const.
 //
-// Go asks IsValid of a value its own decoder has already read; here the same
-// decoder that read the task reads the params again. On a task that came from
-// parseTask that is the very decoder that just made these bytes, so it decides
-// nothing anew. On a task the shell builds it is stricter than Go's IsValid on
-// one point the wire never carries anyway: a null, which enc and json.js
-// refuse everywhere, raw values included.
-//
-// One place is milder: the levels are counted from the params' own first byte
+// What that check costs against Go's IsValid is written out where it stands,
+// in wire.js. One place is milder and belongs here, because it is measured
+// against this file: the levels are counted from the params' own first byte
 // here and from the task's first byte there, so params nested exactly
 // MAX_DEPTH levels deep pass this check and are one level too deep once they
-// sit inside a task. Measured against this file, level by level: one below
-// MAX_DEPTH is read back, exactly MAX_DEPTH passes here, one above is refused
-// here. It costs a refusal, never an acceptance - encodeTask writes the task
-// at MAX_DEPTH and no verifier reads it back, while buildTask refuses it,
-// because it reads its own document back before it hands anything over.
+// sit inside a task. Measured level by level: one below MAX_DEPTH is read
+// back, exactly MAX_DEPTH passes here, one above is refused here. It costs a
+// refusal, never an acceptance - encodeTask writes the task at MAX_DEPTH and
+// no verifier reads it back, while buildTask refuses it, because it reads its
+// own document back before it hands anything over.
+//
+// The catch is this file's own, not wire's: an error of the engine is an
+// answer of false here and travels on there. That difference is older than
+// this round and is not touched by it.
 function validParams(text) {
-  if (text === "") return true;
   try {
-    const v = decode(utf8(text), paramsBudget, raw);
-    return v.length > 0 && v[0] === 0x7b;
+    return wireValidParams(utf8(text));
   } catch {
     return false;
   }
