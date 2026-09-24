@@ -47,6 +47,21 @@ zu machen (`const openShapes = 3`), gegengeprüft in **beide** Richtungen: eine
 Form mehr und eine weniger müssen den Test rot machen. Eine Zahl in Prosa ist
 eine Behauptung; eine Zahl, an der ein Test hängt, ist eine Zusage.
 
+**Und wenn du zählst, zähl nach der Eigenschaft, nicht nach dem Ort.** Dieselbe
+Zahl wuchs von eins auf drei auf fünf auf acht. Der Ausweg war, die Fälle
+**aufzuzählen** statt zu schätzen — aber die erste Aufzählung war **auch** falsch,
+weil sie nach der Stelle im Code gebaut war („die Zweige **vor** der
+Signaturprüfung") und die gesuchte Eigenschaft die **Kosten** sind. Eine Prüfung
+kann mitten in der Signaturprüfung liegen und trotzdem nichts kosten: Go gibt
+bei einer Signatur falscher Länge sofort `false` zurück, ohne die Nachricht
+anzusehen. Nach Kosten aufgezählt waren es sieben statt fünf.
+
+Was die Sache endgültig geschlossen hat, sind **zwei statische Zusicherungen**,
+die **vor** jeder Messung laufen und deshalb nie flattern: jede gemessene Form
+nennt einen Zweig der Liste, und **jeder Zweig der Liste hat eine Form**. Damit
+ist die Zahl keine Zahl mehr, sondern eine Zuordnung — und ein Zweig, den
+niemand aufgeschrieben hat, fällt auf, statt still zu bleiben.
+
 **Zähl auch nach, ob dein Messgerät alle Fälle erreicht hat.** In derselben
 Aufgabe beendete der erste Fehlschlag den Lauf — die letzten drei Formen wurden
 deshalb **nie gemessen**, und die Tabelle im Bericht sah trotzdem vollständig
