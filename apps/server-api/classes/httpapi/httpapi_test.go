@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -210,6 +211,16 @@ func TestFaultOfTheState(t *testing.T) {
 		// The store answered and what it said is wrong: asking again brings
 		// the same answer, so it is not the code that says come back.
 		{state.ErrSetting, wire.CodeInternal, wire.CodeInternal},
+		// The three sentinels package dbapi has of its own, and they are all
+		// three of them: the store answered, and what it answered is that the
+		// call was wrong, that the value was taken already, or that the row is
+		// not there. None of the three is a store that did not answer, and no
+		// waiting turns any of them into another answer.
+		{dbapi.ErrInvalid, wire.CodeInternal, wire.CodeInternal},
+		{dbapi.ErrUsed, wire.CodeInternal, wire.CodeInternal},
+		{dbapi.ErrNotFound, wire.CodeInternal, wire.CodeInternal},
+		// They reach here through callers that add their own words.
+		{fmt.Errorf("lock take: %w", dbapi.ErrInvalid), wire.CodeInternal, wire.CodeInternal},
 		// Nothing of package state's own: the store itself did not answer, and
 		// that is over when it answers again. This is the one class the two
 		// origins cannot tell apart either, because neither side chose it.
