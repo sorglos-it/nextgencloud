@@ -89,6 +89,11 @@ stop_qemu() {
 		# time, swtpm_ioctl answers in 2-3 ms idle, 4-8 ms with four busy
 		# processes, 8-18 ms with sixteen and 64 ms with sixty-four. A fixed
 		# second here claimed a need that is not there.
+		# The budget above stays a pass count on purpose, same reason as at the
+		# QMP socket: no message here names a time, and under load a stretching
+		# budget is the friendly direction. Measured cost: 0 extra passes in
+		# every run, 10-11 ms idle and 48 ms with sixteen busy processes,
+		# against 100 passes.
 	fi
 	rm -f "$pidfile"
 }
@@ -126,6 +131,13 @@ check() {
 		-serial "file:$serial" \
 		-qmp "unix:$qmp,server,nowait" -daemonize -pidfile "$pidfile"
 
+	# A pass budget, not a clock, and unlike the marker loop below that is the
+	# right shape here: no message of this loop names a time, so nothing can
+	# drift apart, and a budget that stretches with the machine's load gives a
+	# slow machine more room instead of less. What it costs is measured, not
+	# guessed: -daemonize returns only once the socket is bound, so the first
+	# look already finds it - 0 extra passes in every run, 2-3 ms idle and 12 ms
+	# with sixteen busy processes, against a budget of 100 passes.
 	for _ in $(seq 100); do
 		if [ -S "$qmp" ]; then break; fi
 		sleep 0.1

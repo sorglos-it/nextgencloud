@@ -12,11 +12,15 @@ work="$(pwd)/dist/recovery"
 # of the same package as pgrep - measured, dpkg -S names procps for both - so
 # the pgrep entry already answers for it. Coreutils goes the other way round:
 # shred and the timeout that bounds swtpm_ioctl in recovery-swtpm.sh are named
-# below, and dpkg -S puts them in the same package as the sixteen more this
-# package calls without naming them - dirname, seq, head, cut, tr, cat, ls,
-# mkdir, mv, cp, rm, chmod, sort, wc, date, sleep. Tried, not assumed: with
-# coreutils out of the PATH both of the named ones stand among the missing and
-# the check stops before anything else runs.
+# below, and dpkg -S puts them in the same package as the twenty more this
+# package relies on without naming them - basename, cat, chmod, cp, cut, date,
+# dirname, head, ls, mkdir, mv, rm, seq, sha256sum, sleep, sort, tr, uname, wc,
+# and the env that stands in all six shebangs. Tried, not assumed: with
+# coreutils out of the PATH both named ones stand among the missing and the run
+# ends at EXIT=1. Not before everything else, though - the cd in line 5 loses
+# its dirname first and says so, and the script carries on from /. That stays
+# harmless only because this check comes before the first use of $work; move it
+# and the wrong working directory is suddenly real.
 need="qemu-system-x86_64 swtpm swtpm_setup swtpm_ioctl softhsm2-util pkcs11-tool openssl xxd socat shred
 	timeout pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal

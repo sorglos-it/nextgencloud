@@ -154,7 +154,12 @@ start() {
 		exit 1
 	fi
 	# Guards against a machine slower than this one: measured, this swtpm has
-	# its socket bound before it returns. What decides is the check below.
+	# its socket bound before it returns - 0 extra passes in every run, 2 ms
+	# idle and 12 ms with sixteen busy processes, against a budget of 50
+	# passes. It stays a pass count and not a clock: no message here names a
+	# time, so nothing can drift apart, and a budget that stretches with the
+	# load gives a slow machine more room instead of less. What decides is the
+	# check below.
 	for _ in $(seq 50); do
 		if [ -S "$sichtbar" ]; then break; fi
 		sleep 0.1
@@ -192,10 +197,16 @@ resume() {
 	# swtpm_ioctl's own "Connection timed out" and EXIT=1. That limit belongs to
 	# a foreign tool, nothing here promises it, and twenty silent seconds are a
 	# poor answer in any case. So the wait gets a limit of our own, 10 s, and a
-	# message that says what to do. It cannot strike where it should not: inside
-	# tools/recovery-qemu.sh the machine is provably gone before this runs, and
-	# the call then costs 2-64 ms (19 runs, idle up to sixty-four busy
-	# processes). timeout is coreutils, the same package as the seq, cut, head
+	# message that says what to do. It sits wide of the normal case, and that is
+	# all it does: inside tools/recovery-qemu.sh the machine is provably gone
+	# before this runs, and the call then costs 2-64 ms (19 runs, idle up to
+	# sixty-four busy processes), so 10 s is a thousandfold clear of it. It is
+	# no proof that the machine is the culprit, though - measured, a simulator
+	# halted with SIGSTOP right after the marker gives EXIT=124 just the same,
+	# with not one QEMU left on the process list. That is why the message below
+	# names both causes instead of picking one; the same misreading was written
+	# out for qemu_swtpm_alive in recovery-qemu.sh and belongs here too.
+	# timeout is coreutils, the same package as the seq, cut, head
 	# and shred this package already uses, and it stands on the tool list for
 	# itself. EXIT=124 gets its own message: "still held" and "broken" need
 	# different answers. Nothing of swtpm_ioctl's own is lost to the limit:
@@ -206,8 +217,12 @@ resume() {
 	rc=0
 	timeout 10 swtpm_ioctl -v --unix "$sock.ctrl" || rc=$?
 	if [ "$rc" -eq 124 ]; then
-		printf 'Der Steuerkanal der Instanz qemu ist nach 10 s noch belegt.\n' >&2
-		printf 'Prüfen: läuft die virtuelle Maschine noch? Beenden mit: tools/recovery-qemu.sh stop\n' >&2
+		printf 'Der flüchtige Zustand der Instanz qemu lässt sich nicht sichern (EXIT=124):\n' >&2
+		printf 'der Steuerkanal antwortet nach 10 s nicht. Zwei Ursachen kommen in Frage.\n' >&2
+		printf '1. Die virtuelle Maschine läuft noch und hält den Kanal.\n' >&2
+		printf '   Nachsehen: pgrep -f qemu-system-x86_64, beenden: tools/recovery-qemu.sh stop\n' >&2
+		printf '2. Die Maschine ist weg, der Simulator antwortet trotzdem nicht.\n' >&2
+		printf '   Nachsehen: ps -o stat= -p "$(cat %s)" - ein T heißt angehalten.\n' "$pidfile" >&2
 		exit 1
 	fi
 	if [ "$rc" -ne 0 ]; then
@@ -230,11 +245,17 @@ resume() {
 	# end belongs to a foreign tool is not one to leave standing.
 	rc=0
 	timeout 10 swtpm_ioctl -i --unix "$sock.ctrl" || rc=$?
+	if [ "$rc" -eq 124 ]; then
+		printf 'Der gesicherte Zustand lässt sich nicht wieder einspielen (EXIT=124):\n' >&2
+		printf 'der Steuerkanal antwortet nach 10 s nicht. Zwei Ursachen kommen in Frage.\n' >&2
+		printf '1. Es hält noch jemand anders den Kanal dieses eben gestarteten Simulators.\n' >&2
+		printf '2. Der Simulator selbst antwortet nicht.\n' >&2
+		printf '   Nachsehen: ps -o stat= -p "$(cat %s)" - ein T heißt angehalten.\n' "$pidfile" >&2
+		exit 1
+	fi
 	if [ "$rc" -ne 0 ]; then
 		printf 'Der gesicherte Zustand lässt sich nicht wieder einspielen (EXIT=%s).\n' "$rc" >&2
-		if [ "$rc" -eq 124 ]; then
-			printf 'Der Steuerkanal ist nach 10 s noch belegt - hält etwas anderes den Simulator?\n' >&2
-		fi
+		printf 'Die Zeilen darüber sagen, woran es lag.\n' >&2
 		exit 1
 	fi
 }
@@ -259,7 +280,9 @@ stop() {
 	fi
 	# Waited out, not fired and forgotten: kill only asks. When stop returns,
 	# the simulator has to be gone - reset deletes the state directory in the
-	# very next line, and start puts a new one on it.
+	# very next line, and start puts a new one on it. Measured, same shape as
+	# the other pass budgets in this package: 0 extra passes in every run, 9-12
+	# ms idle and 26-37 ms with sixteen busy processes, against 100 passes.
 	for _ in $(seq 100); do
 		if ! is_this_swtpm "$pid"; then break; fi
 		sleep 0.1
