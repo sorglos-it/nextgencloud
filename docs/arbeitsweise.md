@@ -143,6 +143,20 @@ Schreiben, eine gewöhnliche Zeichenkette, die mit „select" anfing, und ein
 `WITH … UPDATE`-CTE. Ohne diese Messung wäre der Wächter mit vier eingebauten
 Fehlalarmen in den Baum gegangen — und beim ersten davon abgeschaltet worden.
 
+**Und trotzdem reicht das nicht: der Prüfer muss eigene Formen bauen.** Derselbe
+Wächter, nach zehn eigenen Nachbauten für dicht erklärt, wurde vom Prüfer mit
+**neun anderen** noch einmal gefragt — **fünf davon rot**. Die schlimmste: ein
+gewöhnlicher Satz in einer Fehlermeldung, in einer Datei, die mit der geprüften
+Funktion nichts zu tun hat, schaltete den Wächter rot und behauptete dabei, diese
+Zeile sei die erste Anweisung an die Datenbank. Sie ist keine Anweisung und geht
+an keine Datenbank.
+
+Wer eine Regel schreibt, kennt seine eigenen blinden Flecken nicht — deshalb ist
+„Ich habe zehn Formen gemessen" eine Aussage über zehn Formen und keine über die
+Regel. **Frag bei jedem Wächter: welche Gestalt gewöhnlichen Codes habe ich nicht
+gebaut, weil ich sie mir nicht vorstellen konnte?** Und lass die Frage von
+jemandem noch einmal stellen, der die Regel nicht geschrieben hat.
+
 Und wenn eine Regel eine Eigenschaft festnageln würde, die **niemand braucht**:
 lass sie weg. Dieselbe Regel wäre auf einer Nachbarfunktion grün gewesen; sie
 dort auch anzuwenden hätte nur den Tag vorbereitet, an dem eine zulässige
