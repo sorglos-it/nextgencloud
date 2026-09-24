@@ -36,6 +36,20 @@ import (
 // can never collide with one (a name has no '/').
 const lockName = "setup/code"
 
+// fault is httpapi.Fault with the errors of the two packages besides state
+// that reach this handler answered first. Fault reads errors of package state
+// and says so; everything it does not know it reads as the store not
+// answering, which is right for a driver's own error handed up through any of
+// the three and wrong for these two. Both are broken rather than away: a key
+// of the configuration that will not parse is mended in api.json, a lock row
+// that does not read is mended in the database, and no retry does either.
+func fault(err error, from httpapi.Origin) wire.Code {
+	if errors.Is(err, errKey) || errors.Is(err, lock.ErrLock) {
+		return wire.CodeInternal
+	}
+	return httpapi.Fault(err, from)
+}
+
 // maxCodeFile bounds what the code file may hold before a byte of it is read:
 // the canonical code is 23 characters, and a little white space around it is
 // all that may stand besides. Anything larger is no code file of ours.
@@ -197,7 +211,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 	} else if !errors.Is(err, state.ErrNoTrust) {
 		// The list was read out of our own rows, so nothing about it is the
 		// caller's doing -- least of all a signature of his.
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+		httpapi.Fail(w, fault(err, httpapi.FromRows))
 		return
 	}
 	code, ok := h.code()
@@ -223,7 +237,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) offer(w http.ResponseWriter, r *http.Request, code string) {
 	info, err := h.info(r.Context())
 	if err != nil {
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+		httpapi.Fail(w, fault(err, httpapi.FromRows))
 		return
 	}
 	raw, err := json.Marshal(info)
@@ -250,7 +264,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	// handler: one error of the database, one status.
 	wait, err := lock.Check(ctx, h.S.DB, lockName, now)
 	if err != nil {
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+		httpapi.Fail(w, fault(err, httpapi.FromRows))
 		return
 	}
 	if wait > 0 {
@@ -267,7 +281,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	// hands out free tries.
 	fail := func(answer wire.Code) {
 		if err := lock.Fail(ctx, h.S.DB, lockName, now); err != nil {
-			httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+			httpapi.Fail(w, fault(err, httpapi.FromRows))
 			return
 		}
 		httpapi.Fail(w, answer)
@@ -281,7 +295,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	if err != nil {
 		// Our own rows and our own configuration: the caller brought none of
 		// it, and counting his attempt for it would be wrong too.
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+		httpapi.Fail(w, fault(err, httpapi.FromRows))
 		return
 	}
 	if _, err := session.VerifySetup(s, info, code); err != nil {
@@ -299,7 +313,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 		// installation's chain is his. state.ErrDamaged is not: rows of our
 		// own that contradict each other fall to E_INTERNAL, because no
 		// version he can sign would mend them.
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRequest))
+		httpapi.Fail(w, fault(err, httpapi.FromRequest))
 		return
 	}
 	// The code has done its work and goes. What keeps the setup shut from here

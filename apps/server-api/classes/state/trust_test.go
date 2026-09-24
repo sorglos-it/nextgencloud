@@ -254,8 +254,17 @@ func TestAddVersionForeignSigner(t *testing.T) {
 	}
 	stranger := trusttest.NewSigner(0x5A)
 	forged := stranger.Sign(t, trusttest.Next(t, first))
-	if _, err := s.AddVersion(ctx, forged); !errors.Is(err, trust.ErrSigner) {
+	_, err := s.AddVersion(ctx, forged)
+	if !errors.Is(err, trust.ErrSigner) {
 		t.Fatalf("foreign signer answered %v", err)
+	}
+	// And it says whose fault it is, which package trust's own error does not:
+	// the version was handed in. Without that name it would leave this package
+	// unnamed, and an error with no name of this package is read one package
+	// further out (httpapi.Fault) as the store not answering -- come back in a
+	// moment, for a signature no moment mends.
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("a version refused by package trust carries no name of ours: %v", err)
 	}
 }
 

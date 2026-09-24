@@ -69,6 +69,14 @@ func Fault(err error, from Origin) wire.Code {
 			return wire.CodeVerify
 		}
 		return wire.CodeInternal
+	case errors.Is(err, state.ErrRefused):
+		// Package trust would not take the version that was handed in, and
+		// state puts no finer name to it. By the rule above that is the
+		// caller's -- but E_INTERNAL is what it answered before it had a name
+		// at all, and saying E_VERIFY for it is the setup path's decision and
+		// not this one's. What matters here is that it is not the store: no
+		// waiting mends a version that does not verify.
+		return wire.CodeInternal
 	case errors.Is(err, state.ErrDamaged), errors.Is(err, state.ErrSetting),
 		errors.Is(err, state.ErrBusy):
 		// The store answered, and what it answered with is wrong: rows of this
@@ -92,7 +100,19 @@ func Fault(err error, from Origin) wire.Code {
 	// rows reads as ErrSetting either way (500), while a store that says
 	// nothing reads as its own error either way (503).
 	//
-	// It rests on package state naming its own faults: the errors above, and
-	// nothing of package trust left unnamed on the way out (state.ownRows).
+	// It rests on two things, and both are kept elsewhere. Package state names
+	// every fault of its own that is not the store: the errors above, and
+	// nothing of package trust left unnamed on the way out (state.ownRows for
+	// a row of ours, state.handedIn for a version brought in). And whoever
+	// hands Fault an error of his own package answers that one first, because
+	// Fault cannot read it -- setup/fault is where that is done for the two
+	// this API has, a configured key that will not parse and a damaged row of
+	// the counting.
+	//
+	// What is left over are the guards package state keeps for cases that
+	// cannot arise -- writing out a version it has just read, rolling an ID,
+	// sealing a key it made a line earlier. Should one of those ever fail, the
+	// word here would be the wrong one; naming each of them is the rebuild of
+	// that package's errors this arm was meant to save.
 	return wire.CodeUnreachable
 }

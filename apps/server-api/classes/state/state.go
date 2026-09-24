@@ -30,6 +30,13 @@ var (
 	// own error, never ErrSetting: here waiting a moment and asking again
 	// helps, and nothing is broken.
 	ErrBusy = errors.New("state: another API is at this step, try again")
+	// ErrRefused reports a version handed in that package trust would not
+	// take, for a reason chainFault puts no finer name to: the signature over
+	// it, or a payload that no longer reads. The caller brought it, so it is
+	// neither a row of ours nor the store -- and an error with no name of this
+	// package reads as the store one package further out (httpapi.Fault). The
+	// cause rides along for whoever reads it.
+	ErrRefused = errors.New("state: the version handed in was refused")
 	// ErrDamaged reports that this installation's own stored rows contradict
 	// each other: the trust list in the database names an installation other
 	// than the ID the setup stored. It is its own error and never

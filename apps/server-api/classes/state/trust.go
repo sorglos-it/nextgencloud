@@ -291,11 +291,13 @@ func (s *State) AddVersion(ctx context.Context, sg trust.Signed) (trust.Version,
 	var next trust.Version
 	if cur.List == nil {
 		next, err = trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(sg)}, []trust.Signed{sg})
+		err = handedIn(err)
 		if err == nil {
 			err = s.checkInstallation(ctx, next.List.Installation)
 		}
 	} else {
 		next, err = trust.Advance(cur, []trust.Signed{sg})
+		err = handedIn(err)
 	}
 	switch {
 	case err == nil:
@@ -337,7 +339,7 @@ func (s *State) AddVersion(ctx context.Context, sg trust.Signed) (trust.Version,
 func chainFault(cur trust.Version, sg trust.Signed) error {
 	next, err := trust.Parse(sg.Payload)
 	if err != nil {
-		return err
+		return handedIn(err)
 	}
 	switch {
 	case next.Installation != cur.List.Installation:
@@ -348,8 +350,26 @@ func chainFault(cur trust.Version, sg trust.Signed) error {
 		return ErrFork
 	}
 	// trust.Advance saw something this does not know: hand its error on rather
-	// than name a fault that may not be the one.
-	return trust.ErrChain
+	// than name a fault that may not be the one. Whose fault it is is named
+	// all the same -- the version was handed in.
+	return handedIn(trust.ErrChain)
+}
+
+// handedIn names a fault of package trust over a version the caller brought:
+// trust would not take it, and this package puts no finer name to it than
+// that. It is neither a row of ours (ownRows) nor the store, and those three
+// are what httpapi.Fault has to tell apart -- an error with no name of this
+// package is read there as the store not answering, which asks the caller to
+// try again with a version no waiting will mend.
+//
+// The cause rides along, so the two faults AddVersion tells apart by it --
+// trust.ErrChain, and trust.ErrAnchor for the very first version -- are still
+// found through it.
+func handedIn(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrRefused, err)
 }
 
 // Chain answers GET session.PathTrust: the versions from from on, at most

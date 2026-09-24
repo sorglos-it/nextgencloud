@@ -201,6 +201,12 @@ func TestFaultOfTheState(t *testing.T) {
 		{state.ErrOldVersion, wire.CodeVerify, wire.CodeNotFound},
 		{state.ErrNoTrust, wire.CodeNotFound, wire.CodeNotFound},
 		{state.ErrBusy, wire.CodeInternal, wire.CodeInternal},
+		// Package trust would not take the version handed in. It is the
+		// caller's and no waiting mends it, so whatever else it is, it is not
+		// the store.
+		{state.ErrRefused, wire.CodeInternal, wire.CodeInternal},
+		{fmt.Errorf("%w: %w", state.ErrRefused, errors.New("trust: bad signer")),
+			wire.CodeInternal, wire.CodeInternal},
 		// The store answered and what it said is wrong: asking again brings
 		// the same answer, so it is not the code that says come back.
 		{state.ErrSetting, wire.CodeInternal, wire.CodeInternal},

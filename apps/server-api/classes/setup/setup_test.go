@@ -399,6 +399,50 @@ func (n noPut) BlobPut(ctx context.Context, b dbapi.Blob) error {
 	return n.Store.BlobPut(ctx, b)
 }
 
+// badLock hands out a row of the counting that nothing can read. The store
+// answers; what it answers with is wrong, which is the other kind of fault and
+// the one httpapi.Fault cannot see -- lock.ErrLock is package lock's word, not
+// package state's, and every error Fault does not know reads there as a store
+// that did not answer.
+type badLock struct{ dbapi.Store }
+
+func (n badLock) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobSetting && strings.HasPrefix(id, "lock.") {
+		// Seq and Updated are what keep it from reading as a row past its keep
+		// time, which would be no row at all (classes/lock, expired).
+		return dbapi.Blob{Kind: kind, ID: id, Seq: 1 << 62, Data: []byte("not a lock row"),
+			Updated: 1 << 40}, nil
+	}
+	return n.Store.BlobGet(ctx, kind, id)
+}
+
+// TestADamagedRowOfTheCountingIsNoOutage proves the handler answers a lock row
+// that does not read as what it is: broken, and mended in the database. E_
+// UNREACHABLE would send the admin away to wait for a database that is there
+// and answering.
+func TestADamagedRowOfTheCountingIsNoOutage(t *testing.T) {
+	h := newHandler(t)
+	codeBytes, _ := os.ReadFile(h.CodeFile)
+	code := strings.TrimSpace(string(codeBytes))
+	w := httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	info, err := session.ParseSetupOffer(w.Body.Bytes(), code)
+	if err != nil {
+		t.Fatalf("offer: %v", err)
+	}
+	body := firstVersion(t, info, trusttest.NewSigner(3), code)
+	h.S.DB = badLock{Store: h.S.DB}
+	w = httptest.NewRecorder()
+	h.Serve(w, post(body))
+	if w.Code != 500 {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+	c, err := wire.ParseClose(w.Body.Bytes())
+	if err != nil || c.Code != wire.CodeInternal {
+		t.Fatalf("answered %q: %v", c.Code, err)
+	}
+}
+
 // TestOneFaultOfTheDatabaseIsOneStatus proves the handler answers one fault
 // with one status. The same error of the same database was E_UNREACHABLE
 // where the wait is counted and E_INTERNAL where the rows behind the trust
@@ -426,7 +470,7 @@ func TestOneFaultOfTheDatabaseIsOneStatus(t *testing.T) {
 	h.S.DB = noPut{Store: h.S.DB}
 	w = httptest.NewRecorder()
 	h.Serve(w, post(body))
-	want := httpapi.Fault(errNoPut, httpapi.FromRows)
+	want := fault(errNoPut, httpapi.FromRows)
 	c, err := wire.ParseClose(w.Body.Bytes())
 	if err != nil || c.Code != want {
 		t.Fatalf("status %d body %s, wanted %s: %v", w.Code, w.Body, want, err)
