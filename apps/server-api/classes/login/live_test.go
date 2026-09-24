@@ -266,6 +266,27 @@ func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 	}
 }
 
+// TestADamagedProofCostsNoLookAtTheList holds the order of two steps of Live:
+// the stored proof is read before the trust list is. Reading the proof is one
+// json.Unmarshal and one Validate over a row this API wrote itself; reading
+// the list is a walk of the trust rows, and what it brings back is wanted
+// first by session.VerifyClient, which stands below both. Either order refuses
+// the same session, so the order shows in nothing but the cost -- and the cost
+// is the whole of why it is this way round.
+func TestADamagedProofCostsNoLookAtTheList(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	damageProof(t, h, cookie)
+	c := &trustReads{Store: h.S.DB}
+	h.S.DB = c
+	if _, code, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
+		t.Fatalf("a damaged proof answered %q (open %v)", code, ok)
+	}
+	if got := c.take(); got != 0 {
+		t.Fatalf("a damaged proof cost %d reads of the trust list", got)
+	}
+}
+
 // lockRows counts the rows the counting of failed logins keeps. They are
 // settings like any other, and classes/lock names its two spaces nowhere a
 // test can read them -- so they are counted the other way round: the fixture

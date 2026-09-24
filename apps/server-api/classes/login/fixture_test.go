@@ -216,6 +216,33 @@ func (c *callLog) LogAdd(ctx context.Context, e core.LogEntry) error {
 	return c.Store.LogAdd(ctx, e)
 }
 
+// trustReads counts the reads of the trust rows. What one look at the list
+// costs is state.gapProbes and none of this package's business, so the tests
+// that use it count one look first and hold the rest against that number.
+type trustReads struct {
+	dbapi.Store
+	mu sync.Mutex
+	n  int
+}
+
+func (c *trustReads) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind == dbapi.BlobTrust {
+		c.mu.Lock()
+		c.n++
+		c.mu.Unlock()
+	}
+	return c.Store.BlobGet(ctx, kind, id)
+}
+
+// take returns what was read since the last take and starts counting again.
+func (c *trustReads) take() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.n
+	c.n = 0
+	return n
+}
+
 // sessionWatch says whether a session was ever written. It is the canary of
 // FuzzFinish: it is asked after every single body, and no body the fuzzer can
 // build steers around it -- a session is written here or nowhere.
