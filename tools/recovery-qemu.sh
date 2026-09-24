@@ -161,17 +161,20 @@ check() {
 	# passes of grep + sleep 0.1, a pass costs more than its 0.1 s, so the wait
 	# drifted away from the number in the message and stretched with the
 	# machine's load. Measured against a marker that never comes, same check,
-	# only the loop different: passes end it at 61.9 s and still say 60, seconds
-	# end it at 59.7 s. And with sixty-four busy processes the passes stretched
-	# so far that a check ran green to the end after 103.6 s, nominal limit 60.
-	# The message prints the very count the loop ran to, so the two cannot come
-	# apart again; SECONDS counts in whole seconds, so the wait sits within a
-	# second of the number printed.
-	# 60 s is 1.8 times the slowest marker measured here with four busy
-	# processes per core - a thin margin, and it is meant to be read as one.
-	# Sixty-four of them need longer than the limit, and from now on that stops
-	# the run instead of stretching it.
-	grenze=60                # Sekunden
+	# only the loop different, limit still at the old 60: passes end it at
+	# 61.9 s and still say 60, seconds end it at 59.7 s. And with sixty-four
+	# busy processes the passes stretched so far that a check ran green to the
+	# end after 103.6 s against that same nominal 60. The message prints the
+	# very count the loop ran to, so the two cannot come apart again; SECONDS
+	# counts in whole seconds, so the wait sits within a second of the number
+	# printed.
+	# The 180 comes straight out of the measurements above, same counting of
+	# busy processes: 5.3 times the slowest run with sixteen of them, and still
+	# 1.9 times the slowest with sixty-four. 60 s was only 1.8 times that
+	# sixteen-process figure, and for a check that is meant to run on every
+	# commit that is a flake waiting to happen. It is paid only where the
+	# firmware really never reports at all: three minutes instead of one.
+	grenze=180               # Sekunden
 	fertig=""
 	beginn="$SECONDS"
 	while [ "$((SECONDS - beginn))" -lt "$grenze" ]; do

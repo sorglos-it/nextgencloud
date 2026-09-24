@@ -196,8 +196,13 @@ resume() {
 	# tools/recovery-qemu.sh the machine is provably gone before this runs, and
 	# the call then costs 2-64 ms (19 runs, idle up to sixty-four busy
 	# processes). timeout is coreutils, the same package as the seq, cut, head
-	# and shred this package already uses. EXIT=124 gets its own message:
-	# "still held" and "broken" need different answers.
+	# and shred this package already uses, and it stands on the tool list for
+	# itself. EXIT=124 gets its own message: "still held" and "broken" need
+	# different answers. Nothing of swtpm_ioctl's own is lost to the limit:
+	# timeout leaves the child's stderr alone - measured against a socket that
+	# is not there, three runs each way, byte for byte the same 42-byte message
+	# with the limit and without - and at EXIT=124 swtpm_ioctl has said nothing
+	# yet, because its own word on the matter would only come at its 20 s.
 	rc=0
 	timeout 10 swtpm_ioctl -v --unix "$sock.ctrl" || rc=$?
 	if [ "$rc" -eq 124 ]; then

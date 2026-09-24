@@ -10,16 +10,15 @@ work="$(pwd)/dist/recovery"
 # this script runs only on the VM (measured: report has the details).
 # ps is called by four of the scripts and is still not on the list: it comes out
 # of the same package as pgrep - measured, dpkg -S names procps for both - so
-# the pgrep entry already answers for it. Coreutils works the same way, only
-# wider: the package calls seventeen of its programs without naming one of them
-# here - dirname, seq, head, cut, tr, cat, ls, mkdir, mv, cp, rm, chmod, sort,
-# wc, date, sleep and the timeout around swtpm_ioctl in recovery-swtpm.sh.
-# Measured with dpkg -S: every one of them, and the shred on the list below,
-# come out of coreutils, so that one entry answers for the lot - and it really
-# does, tried with coreutils out of the PATH, shred then stands among the
-# missing.
+# the pgrep entry already answers for it. Coreutils goes the other way round:
+# shred and the timeout that bounds swtpm_ioctl in recovery-swtpm.sh are named
+# below, and dpkg -S puts them in the same package as the sixteen more this
+# package calls without naming them - dirname, seq, head, cut, tr, cat, ls,
+# mkdir, mv, cp, rm, chmod, sort, wc, date, sleep. Tried, not assumed: with
+# coreutils out of the PATH both of the named ones stand among the missing and
+# the check stops before anything else runs.
 need="qemu-system-x86_64 swtpm swtpm_setup swtpm_ioctl softhsm2-util pkcs11-tool openssl xxd socat shred
-	pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
+	timeout pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
 	tpm2_unseal tpm2_pcrread tpm2_pcrextend tpm2_policypcr tpm2_policysigned
 	tpm2_policyauthvalue tpm2_policynv tpm2_policyor tpm2_nvdefine tpm2_nvincrement
