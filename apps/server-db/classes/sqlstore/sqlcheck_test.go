@@ -1462,11 +1462,35 @@ func atDatabase(file *ast.File) bool {
 }
 
 // TestTheGuardCatchesWhatSlippedPast runs the guard against every package
-// under testdata. The ones with an empty want are written the way this store
-// writes and have to stay silent: a guard that is red on good code is
-// switched off, and then it guards nothing. The others carry one hole each,
-// and every one of those was measured green against an earlier guard;
+// under testdata. A want says what the guard does with that package and
+// nothing else: empty means it has to stay silent, a text means it has to
+// say that much. Whether the store in the package is right is a second
+// question, and the package comment there answers it.
+//
+// For most lines the two answers agree. An empty want then means a store
+// written the way this store writes: a guard that is red on good code is
+// switched off, and then it guards nothing. A text then means one hole cut
+// in, and every one of those was measured green against an earlier guard;
 // namesake was measured red against one, although nothing is wrong with it.
+//
+// Three lines are here because the two answers do not agree. Each of the
+// three was measured against the guard, not guessed:
+//
+//   - runnow is silent and the store is wrong. A helper works the read out
+//     at the defer, and without reading that helper the guard cannot tell it
+//     from the one in deferwrap, which only hands the body on. This gap is
+//     what closing the false alarm on deferwrap cost.
+//   - litmulti is silent and the store is wrong. The read stands in a
+//     literal whose name was written in two places, and litOf follows a name
+//     to its literal only where it was written in exactly one.
+//   - armlater is red and the store is right. The read is handed to a
+//     collector before the write and runs only after it, and a literal in an
+//     argument is read as if it ran at that call. Only the held-back rebuild
+//     of argLits mends that one.
+//
+// So a red here is read against the line, never against the store. Should
+// runnow or litmulti go red one day, or armlater go silent, the guard got
+// better and the line is what has to follow.
 //
 // How many there are is not written down anywhere: the table is compared
 // against the directory, so a package added there without a line here is a
@@ -1506,6 +1530,9 @@ func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 		{"defertimer", ""},
 		{"deferwrap", ""},
 		{"litarg", "the first statement it gives the database only reads"},
+		{"runnow", ""},
+		{"litmulti", ""},
+		{"armlater", "the first statement it gives the database only reads"},
 	}
 	listed := map[string]bool{}
 	for _, c := range table {
