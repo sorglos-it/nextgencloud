@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
@@ -48,8 +49,6 @@ var (
 // of the certificate and the certificate with the user's proof over it.
 type fixture struct {
 	list      *trust.List
-	admin     trusttest.Signer
-	sessSig   ed25519.PrivateKey
 	client    []byte // the client certificate payload, exactly as the proof covers it
 	certProof proof.Proof
 	e2e       []byte // Noise message 1 of an app channel; core apps carry none
@@ -73,8 +72,8 @@ func newFixture(t testing.TB) fixture {
 	client := mustJSON(t, session.ClientCert{Installation: l.Installation, User: trusttest.ID(0x21),
 		Nonce: bytes.Repeat([]byte{0x53}, session.NonceSize), Sig: enc.Bytes(sessSig.Public().(ed25519.PublicKey)),
 		DH: sessDH.Public, Issued: issued, Expires: issued + 3600})
-	return fixture{list: l, admin: admin, sessSig: sessSig, client: client,
-		certProof: admin.Prove(sign.PurposeClientCert, client), e2e: bytes.Repeat([]byte{0x54}, wire.HandshakeSize)}
+	return fixture{list: l, client: client, certProof: admin.Prove(sign.PurposeClientCert, client),
+		e2e: bytes.Repeat([]byte{0x54}, wire.HandshakeSize)}
 }
 
 // request is the OPEN payload as a request of this controller, with the app
@@ -108,9 +107,9 @@ func (f fixture) appOpen(app, action string) wire.Open {
 	return wire.Open{App: app, Service: "files", Action: action, Window: wire.DefaultWindow, E2E: f.e2e}
 }
 
-// task returns a task of this admin for an action on node, signed by whoever
-// holds seed. The session key of the certificate is sessionSeed; any other
-// seed is a stranger's key.
+// task returns a task of this admin for an action on the controller on,
+// signed by whoever holds seed. The session key of the certificate comes from
+// sessionSeed; any other seed is a stranger's key.
 func (f fixture) task(t testing.TB, seed []byte, on, app, action string, params any) *sign.Envelope {
 	t.Helper()
 	var raw json.RawMessage
@@ -263,6 +262,8 @@ func TestCheckRefusesRootTaskWithoutRootPermission(t *testing.T) {
 
 func TestCheckAsksForConfirmation(t *testing.T) {
 	f := newFixture(t)
+	// The list has the one role admin. At level root every root task needs a
+	// fresh confirmation, and this OPEN carries none.
 	f.list.Roles[0].Level = trust.LevelRoot
 	env := f.task(t, sessionSeed, node, core.AppStore, core.ActActivate, activateParams())
 	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppStore, core.ActActivate, env))))
@@ -388,13 +389,18 @@ func seeds(t testing.TB) [][]byte {
 	}
 }
 
+// codes are the refusals this package answers with; no channel may end with
+// anything else.
+var codes = []wire.Code{wire.CodeUnreachable, wire.CodeVerify, wire.CodeNotFound, wire.CodeForbidden,
+	wire.CodeConfirm, wire.CodeInternal}
+
 // canary is what must hold for every answer, whatever came in: a refusal says
 // nothing but its code, and an accepted channel never carries a user the OPEN
 // did not prove.
 func canary(t *testing.T, d Decision, cl *wire.Close) {
 	t.Helper()
 	if cl != nil {
-		if cl.Status != wire.StatusError || cl.Code == "" || cl.Message != cl.Code.Message() {
+		if cl.Status != wire.StatusError || !slices.Contains(codes, cl.Code) || cl.Message != cl.Code.Message() {
 			t.Fatalf("CLOSE %+v", *cl)
 		}
 		if !noDecision(d) {
@@ -409,6 +415,12 @@ func canary(t *testing.T, d Decision, cl *wire.Close) {
 			t.Fatalf("accepted without a user: %+v", d)
 		}
 		return
+	}
+	// A root task of this controller runs on a signed task or not at all. The
+	// one root action the API may open without a user is install, and that
+	// channel came back above.
+	if d.Core && d.Action.Root && d.Task == nil {
+		t.Fatalf("root action without a task: %+v", d)
 	}
 	if d.User != "" && d.User != d.Opened.Session.Cert().User {
 		t.Fatalf("user %q is not the one of the certificate %q", d.User, d.Opened.Session.Cert().User)
