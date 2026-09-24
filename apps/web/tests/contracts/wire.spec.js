@@ -629,6 +629,14 @@ test("parseControl and encodeControl keep Go's rules", async ({ shell }) => {
 // answers yes, and Go's own ParseOpen refuses all four as well (measured), so
 // no params an OPEN could have carried are turned down here. No row is the
 // other way round.
+//
+// Both counts below read got.decides, so a change to wire.js moves them.
+// Measured with validParams put back on the pure shape: the first names 13
+// of the 27 rows, and with the first taken out of the way the second names
+// 12 - the 13 without "white space before", which the shape answers no to
+// and Go yes. The commit that made these two read the code said four for the
+// second; four is the number of rows in the table's own price, not the
+// number the mutation brings out.
 test("validParams asks the whole question Go's ValidParams asks", async ({ shell }) => {
   const nest = (n) => '{"a":'.repeat(n) + "1" + "}".repeat(n);
   const cases = [
