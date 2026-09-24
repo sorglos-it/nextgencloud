@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -35,11 +36,13 @@ const (
 // E_UNREACHABLE and over when it answers again, rows that are wrong are
 // E_INTERNAL and stay wrong until somebody mends them.
 //
-// Fault reads no errors of other packages. A bad signature is E_VERIFY on the
-// setup path and E_LOGIN on the login paths, because no answer of a login may
-// say what failed; a missing row (dbapi.ErrNotFound) is the normal case for
-// the setup and a damaged database for the trust list. Only the handler knows
-// which, so it answers those itself.
+// Of other packages it reads one, and only what that one says about itself:
+// the three sentinels package dbapi gives its stores. Everything else of
+// another package is the handler's to answer. A bad signature is E_VERIFY on
+// the setup path and E_LOGIN on the login paths, because no answer of a login
+// may say what failed; a missing row (dbapi.ErrNotFound) is the normal case
+// for the setup and a damaged database for the trust list, and only the
+// handler knows which, so it says so itself before it asks here at all.
 func Fault(err error, from Origin) wire.Code {
 	switch {
 	case errors.Is(err, state.ErrBadVersion):
@@ -90,6 +93,21 @@ func Fault(err error, from Origin) wire.Code {
 		// E_LOCKED is not it, that one belongs to the failed logins alone
 		// (with Retry-After, counted in the buckets of package lock).
 		return wire.CodeInternal
+	case errors.Is(err, dbapi.ErrNotFound), errors.Is(err, dbapi.ErrUsed),
+		errors.Is(err, dbapi.ErrInvalid):
+		// The store answered, and all three say so: the row is not there, the
+		// value was taken already, the call was wrong. None of them is a
+		// database that is away, and asking again brings the same answer --
+		// ErrInvalid and ErrUsed because nothing about the call changes by
+		// waiting, ErrNotFound because a row that is not there is an answer.
+		//
+		// These three are dbapi's whole set, which is the reason they stand
+		// here rather than in a handler: what the arm below claims is right
+		// only if what must stay out of it can be listed to the end, and for
+		// the store's own words it can be. An error of a package that is not
+		// dbapi or state is its handler's, and setup/fault is where this API
+		// does that.
+		return wire.CodeInternal
 	}
 	// Nothing of package state's own is left, so this came up through it from
 	// the store: a database that is away, a table that is locked, a disk that
@@ -103,11 +121,12 @@ func Fault(err error, from Origin) wire.Code {
 	// It rests on two things, and both are kept elsewhere. Package state names
 	// the faults of its own that a run can reach: the errors above, and nothing
 	// of package trust left unnamed on the way out (state.ownRows for a row of
-	// ours, state.handedIn for a version brought in). And whoever
-	// hands Fault an error of his own package answers that one first, because
-	// Fault cannot read it -- setup/fault is where that is done for the two
-	// this API has, a configured key that will not parse and a damaged row of
-	// the counting.
+	// ours, state.handedIn for a version brought in). And whoever hands Fault
+	// an error of a package it does not read answers that one first --
+	// setup/fault is where that is done for the two this API has, a configured
+	// key that will not parse and a damaged row of the counting. The store's
+	// own three are the exception, and they are read above rather than left to
+	// the handlers because every path that touches a store can meet them.
 	//
 	// What is left over are the guards package state keeps for cases that
 	// cannot arise -- writing out a version it has just read, rolling an ID,
