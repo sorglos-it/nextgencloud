@@ -17,6 +17,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -580,44 +581,137 @@ func finishWith(tb testing.TB, fx fixture, s trusttest.Signer, pw *trusttest.Sig
 var nobodysKeyID = enc.B64.EncodeToString(bytes.Repeat([]byte{0x5A}, 16))
 
 // TestFinishTakesTheSameTimeForAKeyNobodyHolds is the question login/start
-// answers alike for every name, asked once more with a clock. session.
-// VerifyClient turns a proof by a key the list does not hold away before it
-// ever checks a signature, where a proof by a key somebody holds costs a whole
-// verification -- and login/start hands the key ID of a passkey out, real for a
-// name that exists and made up for one nobody has (session.PasskeyRef). The two
-// bodies below differ in that one field and in nothing else.
+// answers alike for every name, asked once more with a clock: login/start hands
+// the key ID of a passkey out, real for a name that exists and made up for one
+// nobody has (session.PasskeyRef), so what a proof carrying it costs is that
+// same question. Every pair below differs in that one field and in nothing
+// else.
+//
+// Four shapes, because one is not the property. The first version of this test
+// measured a single one and was green while two others were wide open -- and
+// one of those two was torn open by the very change that closed the first. A
+// shape that is not measured is a shape nobody knows about:
+//
+//   - a password key with the user the certificate names: the known side runs
+//     proof.Verify inside session.VerifyClient
+//   - a passkey whose assertion is whole and whose signature is wrong: the
+//     known side runs the whole assertion
+//   - a passkey whose client data is nonsense: package proof turns it away
+//     before any cryptography, so the known side pays nothing -- the one shape
+//     still open, see below
+//   - a certificate naming another user than the key belongs to: session.
+//     verifyCert gives ErrUser without ever checking a signature
 //
 // The factor of two and the null control are those of
 // TestStartTakesTheSameTimeForAnUnknownName, for the reasons given there. What
-// this cannot measure is a database that is not a map: UserGet and OnceUse lie
-// on the path of the key the list holds and not on the other, and on a real
-// database those are two round trips (see the report of task 7, the difference
-// between the four failures).
+// no clock here measures is a database that is not a map: UserGet and OnceUse
+// lie on the path of a proof that holds and not on the other, and on a real
+// database those are two round trips (report of task 7, finding 6).
 func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
+	forms := []struct {
+		name string
+		// holds is whether the two sides have to cost the same today. The one
+		// that does not is written down instead of being left out: it needs
+		// more than a line, and it belongs with the question login/start
+		// leaves open (report of task 7, findings 1 and 2).
+		holds bool
+		build func(t *testing.T, h *Handler, fx fixture) (held, nobodys []byte)
+	}{
+		{"a password key over the user it belongs to", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasswordName)
+				c.Nonce = madeUpNonce
+				return finishBody(t, fx, fx.Password, c, ""), finishWithKeyID(t, fx, c, nobodysKeyID)
+			}},
+		{"a passkey whose signature is wrong", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.Sig[0] ^= 0xFF })
+			}},
+		{"a passkey whose client data is nonsense", false,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Passkey, func(p *proof.Proof) { p.ClientData = enc.Bytes(`{}`) })
+			}},
+		{"a certificate naming another user than the key", true,
+			func(t *testing.T, h *Handler, fx fixture) ([]byte, []byte) {
+				// The certificate is of the passkey user, the proof by the
+				// password user's key: session.verifyCert finds the key, sees
+				// the two names do not match and gives ErrUser -- without
+				// checking a signature.
+				c := start(t, h, fx.PasskeyName)
+				c.Nonce = madeUpNonce
+				return twoBodies(t, fx, c, fx.Password, nil)
+			}},
+	}
 	h, fx := newFixture(t)
-	c := start(t, h, fx.PasswordName)
-	c.Nonce = madeUpNonce
-	held := finishBody(t, fx, fx.Password, c, "")
-	nobodys := finishWithKeyID(t, fx, c, nobodysKeyID)
-	var a, b, again []time.Duration
-	for range 5 {
-		a = append(a, timedFinish(t, h, "a key the list holds", held))
-		b = append(b, timedFinish(t, h, "a key nobody holds", nobodys))
-		again = append(again, timedFinish(t, h, "a key the list holds", held))
+	open := 0
+	for _, form := range forms {
+		held, nobodys := form.build(t, h, fx)
+		a, b, again := medianOf(t, h, form.name, held), medianOf(t, h, form.name, nobodys), medianOf(t, h, form.name, held)
+		t.Logf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
+			form.name, a, b, again)
+		// The null control first: one body against itself, measured the same
+		// way. It is held to the factor of the comparison, so the test can
+		// tell "the two are alike" from "this machine cannot tell anything
+		// apart today".
+		if a > 2*again || again > 2*a {
+			t.Fatalf("%s, the same body twice: %v and %v -- this machine cannot measure a factor of two today",
+				form.name, a, again)
+		}
+		if !form.holds {
+			open++
+			continue
+		}
+		if a > 2*b || b > 2*a {
+			t.Fatalf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
+				form.name, a, b, again)
+		}
 	}
-	slices.Sort(a)
-	slices.Sort(b)
-	slices.Sort(again)
-	held0, nobodys0, null := a[2], b[2], again[2]
-	// The null control first: one body against itself, measured the same way.
-	if held0 > 2*null || null > 2*held0 {
-		t.Fatalf("the same body twice: %v and %v -- this machine cannot measure a factor of two today",
-			held0, null)
+	if open != 1 {
+		t.Fatalf("%d shapes are written down as open, want 1: whoever closes one takes its flag out here", open)
 	}
-	if held0 > 2*nobodys0 || nobodys0 > 2*held0 {
-		t.Fatalf("a key the list holds %v, a key nobody holds %v (the same body twice: %v and %v)",
-			held0, nobodys0, held0, null)
+}
+
+// twoBodies builds a body and its twin, which names a key ID nobody holds and
+// differs in nothing else. bend changes the proof after it was made, so a
+// signature that does not hold or client data that is nonsense reaches the
+// handler as the browser would have sent it.
+func twoBodies(tb testing.TB, fx fixture, c session.LoginChallenge, s trusttest.Signer,
+	bend func(*proof.Proof)) (held, nobodys []byte) {
+	tb.Helper()
+	payload := certBytes(tb, fx, c, s)
+	p := s.Prove(sign.PurposeClientCert, payload)
+	if bend != nil {
+		bend(&p)
 	}
+	one := session.LoginFinish{Cert: enc.Bytes(payload), Proof: p}
+	other := one
+	other.Proof.KeyID = nobodysKeyID
+	return mustMarshal(tb, one), mustMarshal(tb, other)
+}
+
+func mustMarshal(tb testing.TB, f session.LoginFinish) []byte {
+	tb.Helper()
+	b, err := json.Marshal(f)
+	if err != nil {
+		tb.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+// medianOf measures five batches and returns the middle one, so one slow batch
+// a busy machine throws in does not decide the answer.
+func medianOf(t *testing.T, h *Handler, what string, body []byte) time.Duration {
+	t.Helper()
+	d := make([]time.Duration, 5)
+	for i := range d {
+		d[i] = timedFinish(t, h, what, body)
+	}
+	slices.Sort(d)
+	return d[len(d)/2]
 }
 
 // timedFinish runs timedRuns requests with body and returns what one took. It
