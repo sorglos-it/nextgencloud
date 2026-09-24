@@ -241,6 +241,26 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     unterschrieben wird — sonst hängt die Gültigkeit einer Signatur an der
     Implementierung, die sie erzeugt hat. (web, Aufgabe 9)
 
+33. **Ein führendes U+FEFF in den `params` wird auf den beiden Seiten
+    verschieden behandelt — gemessen.** `TextDecoder` verschluckt es: es ist der
+    **einzige** von 1 112 064 Code Points, der nicht zurückkommt. Die Shell
+    unterschreibt `params` mit BOM also **ohne** ihn, und `params`, die nur ein
+    BOM sind, gelten ihr als **gar keine** `params`. Go weist beides ab
+    (`shared/wire.ValidParams`). Die Shell macht aus einer Eingabe, die Go
+    zurückweist, still eine gültige — und zwar genau in den Bytes, die
+    unterschrieben werden.
+
+    Nicht gefährlich, und deshalb zurückgestellt: Prüfung und Unterschrift
+    sehen **dieselben** Bytes, es driftet nichts auseinander. Der Preis ist,
+    dass ein Aufrufer `params` unterschrieben bekommt, die er so nicht
+    übergeben hat. Beide naheliegenden Abhilfen scheiden in der Aufgabe selbst
+    aus — eine zweite Lesung der Aufrufer-Bytes ist genau das, was die
+    `x.length`-Familie verbietet, und der Decoder liegt in `b64.js`. Die
+    Richtung, damit sie niemand neu herleitet:
+    `new TextDecoder('utf-8', {ignoreBOM: true})` erhält das BOM, dann weisen
+    beide Seiten dasselbe ab. Gehört zum selben Schnitt wie Punkt 32.
+    (web, Aufgabe 9)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
