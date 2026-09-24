@@ -143,6 +143,26 @@ Läufer und auf dem Einplatinenrechner, für die der Code gebaut wird, hätte si
 nie etwas gefangen, und ihr Kommentar behauptete das Gegenteil. Miss die
 Untergrenze und **schreib sie hin**, statt sie stillschweigend zu unterschreiten.
 
+**Eine Grenze, die unter Last nachgibt, ist keine.** Eine Warteschleife war als
+„60 Sekunden" dokumentiert und zählte in Wahrheit **Durchläufe**: 600 mal
+prüfen, dazwischen ein Zehntel Sekunde schlafen. Im Leerlauf kam das hin. Unter
+Last wuchs sie mit — der Lauf, der rot hätte werden müssen, kam **grün nach 103
+Sekunden** durch. Genau dann, wenn die Grenze gebraucht wird, war sie weg.
+
+**Aber der naheliegende Schluss ist falsch.** „Also immer die Uhr" stimmt nicht.
+Am selben Skript hingen vier weitere Durchlaufkonten, und dort ist das
+Durchlaufkonto die **sichere** Form — gemessen und begründet:
+
+- Keine dieser Meldungen nennt eine Zeit. Es kann also nichts auseinanderlaufen
+  zwischen dem, was dasteht, und dem, was gilt.
+- Ein Durchlaufkonto **dehnt** sich unter Last, eine Sekundengrenze **kappt**.
+  Wo das Warten nur eine Anlaufverzögerung überbrückt, ist Dehnen richtig.
+
+Die Regel ist also nicht „Uhr statt Durchläufe", sondern: **ein Durchlaufkonto
+ist falsch, sobald etwas daneben eine Zeit behauptet.** Sagt niemand eine Zahl
+zu, zählt ruhig Durchläufe — und schreib trotzdem hin, was du gemessen hast
+(bei diesen vier: null Zusatzdurchläufe, 2–12 ms, Deckel tausendfach großzügig).
+
 **Und beim Mutieren: eine Mutation, die nicht übersetzt, ist keine überlebende
 Mutation.** Ein Prüfer baute eine Mutation, sah „kein Test rot" und hätte sie
 als überlebend gemeldet — bis er nachschaute: sie hatte gar nicht gebaut,
