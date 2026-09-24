@@ -661,10 +661,14 @@ func (c *checker) atDriver(sel *ast.SelectorExpr) bool {
 }
 
 // onTheSpot reads what a deferred or started call works out where it stands:
-// its arguments, and the receiver of a method. Go settles those at the defer
-// or the go and keeps only the call itself for later, so a statement in them
-// runs before everything below. Only the body of the called function is left
-// out, and the note beside the rule says so.
+// the expression that names the function, and the arguments. Go settles both
+// at the defer or the go and keeps only the call for later, so a statement in
+// either runs before everything below. defer s.trace()() is the everyday
+// shape of that, and defer closers[s.pick()]() another.
+//
+// A literal standing in the defer itself is the one thing skipped, because
+// nothing of it is worked out there. What is left out is the body of whatever
+// is finally called, and the note beside the rule says so.
 func onTheSpot(call *ast.CallExpr, visit func(ast.Node) bool) {
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		ast.Inspect(sel.X, visit)
@@ -715,8 +719,9 @@ func sameNamed(a, b types.Type) bool {
 // and TestEverySQLIsAConstant - through the second one because what it gave
 // the driver was a constant, only not the one it was handed.
 //
-// Of a defer or a go, only the body of the called function is left out; what
-// it settles on the spot is read there: see the note on the rule.
+// Of a defer or a go, what it settles where it stands is read there - the
+// expression naming the function, and the arguments - and the body of what is
+// finally called is left out: see the note on the rule.
 type says int
 
 const (
@@ -830,12 +835,13 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     beside a correct OnceUse passes. dbapi.Store keeps the name in place,
 //     but it forbids no method beside it: what keeps a second one out today
 //     is that nothing calls it, not this rule.
-//   - Of a defer or a go, only the body of the called function is left out.
-//     Go settles the arguments and the receiver where the defer stands, so a
-//     statement in either of those runs before everything under it and is
-//     read there - five stores that hide the read in an argument or in a
-//     receiver are refused, one of them with the call to the driver written
-//     out in the argument. What is left out runs later: a deferred body
+//   - Of a defer or a go, what it settles where it stands is read, and the
+//     body of what is finally called is left out. Go settles the expression
+//     naming the function and the arguments right there, so a statement in
+//     either runs before everything under it - eight stores that hide the
+//     read that way are refused, one with the call to the driver written out
+//     in the argument, one behind defer s.trace()() and one behind an index.
+//     What is left out runs later: a deferred body
 //     after the whole method, so a statement in it is none in front of the
 //     write. A started one is not ordered at all and may run before the
 //     write, so leaving that one out is a gap and not a deduction. Uncovered
@@ -1413,6 +1419,15 @@ func TestTheGuardCatchesWhatSlippedPast(t *testing.T) {
 		{"mirror", "imports reflect"},
 		{"twostep", "the first statement it gives the database only reads"},
 		{"sentence", ""},
+		{"deferarg", "the first statement it gives the database only reads"},
+		{"deferhelp", "the first statement it gives the database only reads"},
+		{"deferrecv", "the first statement it gives the database only reads"},
+		{"deferlit", "the first statement it gives the database only reads"},
+		{"goarg", "the first statement it gives the database only reads"},
+		{"defercall", "the first statement it gives the database only reads"},
+		{"gocall", "the first statement it gives the database only reads"},
+		{"deferindex", "the first statement it gives the database only reads"},
+		{"defertimer", ""},
 	}
 	listed := map[string]bool{}
 	for _, c := range table {
