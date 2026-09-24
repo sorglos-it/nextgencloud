@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -117,6 +118,57 @@ func withdrawPasswordUser(t *testing.T, h *Handler, fx fixture) {
 	l.Users = slices.DeleteFunc(l.Users, func(u trust.User) bool { return u.ID == fx.PasswordUser })
 	if _, err := h.S.AddVersion(ctx, fx.Passkey.Sign(t, l)); err != nil {
 		t.Fatalf("version 2 without the user: %v", err)
+	}
+}
+
+// TestAWithdrawalSurvivesTheRowsBeingDropped is the withdrawal above, put back
+// in force by whoever can write the database -- the damage state.checkGap
+// stands against, done past the width it caught.
+//
+// Version 2 takes the user out, ten more versions follow, and then the rows 2
+// to 11 are dropped. Version 12 still stands, so nothing is missing at the top
+// and no node that is up to date notices anything. A node with an empty cache
+// reads version 1, misses 2 and finds nothing in the numbers above it, so it
+// takes version 1 for the newest: the list that still holds the user. The
+// session of a user an admin withdrew ten versions ago is open again, on every
+// node that was restarted since.
+//
+// It is asked of a cold node, because that is the one that walks the chain up
+// from the bottom. The node that wrote the versions holds the newest in its
+// cache and asks only above it, where nothing is missing.
+func TestAWithdrawalSurvivesTheRowsBeingDropped(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	r := getCookie(session.PathTrust, cookie)
+	l := trusttest.Next(t, fx.Signed)
+	l.Users = slices.DeleteFunc(l.Users, func(u trust.User) bool { return u.ID == fx.PasswordUser })
+	prev := fx.Passkey.Sign(t, l)
+	if _, err := h.S.AddVersion(ctx, prev); err != nil {
+		t.Fatalf("version 2 without the user: %v", err)
+	}
+	for i := 3; i <= 12; i++ {
+		prev = fx.Passkey.Sign(t, trusttest.Next(t, prev))
+		if _, err := h.S.AddVersion(ctx, prev); err != nil {
+			t.Fatalf("version %d: %v", i, err)
+		}
+	}
+	for seq := 2; seq <= 11; seq++ {
+		if err := h.S.DB.BlobDelete(ctx, dbapi.BlobTrust, strconv.Itoa(seq)); err != nil {
+			t.Fatalf("drop row %d: %v", seq, err)
+		}
+	}
+	cold := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	cold.S.Now = h.S.Now
+	live, code, ok := cold.Live(ctx, r)
+	if ok {
+		t.Fatalf("the cold node took the session of a withdrawn user and read version %d as the newest",
+			live.Trust.List.Seq)
+	}
+	// The rows contradict each other, which is the installation's damage and
+	// not the session's: E_LOGIN here would send the user to the login screen
+	// for it, and 404 would tell the shell there is nothing newer to fetch.
+	if code != wire.CodeInternal {
+		t.Fatalf("the cold node answered %q", code)
 	}
 }
 

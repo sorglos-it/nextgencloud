@@ -451,6 +451,35 @@ func TestRefreshFindsAHoleAboveABlock(t *testing.T) {
 	}
 }
 
+// TestRefreshFindsAHoleWiderThanTheProbes proves a hole is found however wide
+// it is. Dropping one row was what the look above a missing number caught for
+// certain, and dropping ten costs whoever can write the database the same nine
+// statements it costs to drop one. What it bought him was the whole point of
+// the look: every node with an empty cache -- which is every node after a
+// restart -- read version 1 as the newest and said no error at all, so every
+// key an admin withdrew in 2..11 counted again.
+func TestRefreshFindsAHoleWiderThanTheProbes(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	chainOf(t, s, admin, first, 11) // versions 1..12
+	for seq := uint64(2); seq <= 11; seq++ {
+		dropRow(t, db, seq)
+	}
+	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.Now = s.Now
+	v, err := fresh.Refresh(ctx)
+	if !errors.Is(err, ErrSetting) {
+		seq := uint64(0)
+		if v.List != nil {
+			seq = v.List.Seq
+		}
+		t.Fatalf("a refresh over a hole of ten answered version %d, %v", seq, err)
+	}
+}
+
 // noRow answers every read of a trust row with an error of its own: the store
 // is away, not wrong. dbapi.ErrNotFound is the one answer it does not give,
 // because that one says the row is not there, which is an answer.
