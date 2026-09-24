@@ -201,9 +201,9 @@ func tokenOf(t *testing.T, cookie string) []byte {
 // installation to the login screen.
 //
 // GET session.PathTrust is the path that is asked. The logout used to read its
-// answer out of this same call and no longer does -- it takes sessionRow, and
-// TestLogoutEndsASessionTheRestOfLiveCannotRead holds it to the 204 for the
-// two of the five steps it does not take at all.
+// answer out of this same call and no longer does -- it takes sessionRow, so
+// of the five steps below it takes one. For two of the other four,
+// TestLogoutEndsASessionTheRestOfLiveCannotRead holds it to the 204.
 //
 // The five steps below are every one Live takes that can fail without the
 // session saying no. Three of them are the store not answering, which is over
@@ -363,10 +363,10 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 // the logout so that it reads either of them again has to make both of these
 // go red, and there is nowhere in between.
 //
-// The last case is the step the logout does still take, and the reason it
-// cannot simply delete and answer 204: a store that will not say whether there
-// is a row leaves it nothing to end, and E_LOGIN would tell the shell the one
-// thing about the session that is not so.
+// The last case is the one step of Live the logout does still take, and the
+// reason it cannot simply delete and answer 204: a store that will not say
+// whether there is a row leaves it nothing to end, and E_LOGIN would tell the
+// shell the one thing about the session that is not so.
 func TestLogoutEndsASessionTheRestOfLiveCannotRead(t *testing.T) {
 	for _, c := range []struct {
 		name   string

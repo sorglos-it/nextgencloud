@@ -32,8 +32,8 @@ type Live struct {
 }
 
 // sessionRow is the row of the request's cookie, and with it the code the
-// caller answers when there is none. It is the first steps of Live, and by
-// itself the whole of what the logout takes.
+// caller answers when there is none. It is the first steps of Live, and
+// everything the logout asks before it deletes.
 //
 // The clock comes in rather than being read here, so that one request asks it
 // once: the three ends below, the certificate session.VerifyClient proves and
@@ -99,11 +99,12 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 // neither. Without that difference a hiccup of the database would send every
 // user of the installation to the login screen.
 //
-// Three of the codes are picked here, because the error is the store's own and
-// only this step knows what it was asking for: reading the session row and
-// touching the session are E_UNREACHABLE, a stored proof this API cannot read
-// back and a session key it cannot open are E_INTERNAL -- the database against
-// this API's own row and its own key. What the trust list answers is picked by
+// Four of the steps get their code from this file, because the error is the
+// store's own or this API's own and only the step knows what it was asking
+// for: reading the session row and touching the session are E_UNREACHABLE, a
+// stored proof this API cannot read back and a session key it cannot open are
+// E_INTERNAL -- the database against this API's own row and its own key. What
+// the fifth, the trust list, answers is picked by
 // httpapi.Fault instead, which is the one place that reads an error of package
 // state, so that the same damage does not answer one thing here and another
 // where the same list is read out (login/trust.go). That also brings in a code
@@ -142,7 +143,7 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 //
 // No path here carries a login name, and the only string the caller picks is
 // the cookie: httpapi.Cookie takes nothing but base64url no longer than a
-// token, and the length below nothing but exactly a token. So the question the
+// token, and sessionRow nothing but exactly a token. So the question the
 // login paths have to keep quiet -- does this name exist -- is not asked here
 // at all. For anybody who holds no token, what a request costs follows one
 // thing: whether a token this API itself drew came back, and session.TokenSize
@@ -228,16 +229,18 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 // the trust rows (E_UNREACHABLE) left the session standing until its own
 // expiry, with nothing its owner could do about it.
 //
-// Nobody past the row is asked about either, and nothing is given up by that:
-// whoever holds the cookie can open the session outright, so being able to
-// close it too takes nothing away that was there.
+// Nobody past the row is asked about either, and nothing is given up by that.
+// The cookie is the session: whoever holds it either opens the session with it
+// or, where the list no longer holds its user, has it ended for him at the
+// next request anyway (Live). Closing it himself takes nothing away.
 //
 // Without a session it is E_LOGIN, which is what the contract's table gives --
 // and it is also the answer when the session had run out already, because then
-// there is none left to end. Reading the row is the one step left here that
-// can fail without the session being the reason, and it carries its own code:
-// a store that will not say whether there is a row leaves nothing to end, and
-// E_LOGIN would tell the shell the one thing about it that is not so.
+// there is none left to end. Two steps are left that can fail without the
+// session being the reason, and both carry E_UNREACHABLE: a store that will
+// not say whether there is a row leaves nothing to end, and one that will not
+// remove the row leaves the session open. E_LOGIN would tell the shell, for
+// either of them, the one thing about the session that is not so.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token, _, code, ok := h.sessionRow(ctx, r, h.S.Now())
