@@ -3,7 +3,9 @@ package login
 import (
 	"encoding/json"
 	"maps"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -12,7 +14,9 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
 // startSeeds returns the bodies FuzzStartBody begins with: two names the trust
@@ -327,6 +331,129 @@ func FuzzFinish(f *testing.F) {
 		}
 		if watch.made() {
 			t.Fatalf("a fuzzed body made a session: %q", body)
+		}
+	})
+}
+
+// trustSeeds returns the pairs FuzzTrustRequest begins with: the cookie of an
+// open session against every number the contract answers differently, and two
+// cookies that are no session at all. The cookie is the one thing the fuzzer
+// cannot find by itself -- a token is session.TokenSize random bytes -- so
+// without it among the seeds the run would never reach an answer with a chain
+// in it, and everything behind the door would go unvisited.
+func trustSeeds(cookie string) []struct{ cookie, from string } {
+	return []struct{ cookie, from string }{
+		{cookie, "1"},                // the whole chain
+		{cookie, "2"},                // one past the newest: nothing new
+		{cookie, "3"},                // beyond that: no such version
+		{cookie, "0"},                // no version has that number
+		{cookie, ""},                 // from missing
+		{cookie, "x"},                // no number
+		{cookie, "9007199254740992"}, // past what a browser counts exactly
+		{"", "1"},                    // no cookie
+		{"AAAA", "1"},                // a cookie that is no token
+	}
+}
+
+// trustRequest builds GET session.PathTrust?from=... with cookie as the value
+// of the session cookie, and with no cookie at all for the empty string. The
+// cookie goes into the header as it stands, so httpapi.Cookie sees what a
+// browser or a neighbour would really send.
+func trustRequest(cookie, from string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
+	r.URL.RawQuery = "from=" + url.QueryEscape(from)
+	if cookie != "" {
+		r.Header.Set("Cookie", session.CookieName+"="+cookie)
+	}
+	return r
+}
+
+// TestTrustSeedsReachTheAnswers is what makes a green FuzzTrustRequest mean
+// something. It is measured over the fixed seeds and never over a run: a
+// fuzzer steers towards coverage, and the coverage of this handler lies in its
+// refusals, so a share counted while it runs is a share it pushes down.
+//
+// The bound is the answers themselves and not a count: every status the
+// contract gives this path has to come out of the seeds -- the chain, the
+// nothing-new, the two refusals of a number and the missing session. A seed
+// list that lost the cookie would fail here and not somewhere far away.
+func TestTrustSeedsReachTheAnswers(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	seen := map[int]bool{}
+	for _, s := range trustSeeds(cookie) {
+		w := httptest.NewRecorder()
+		h.Trust(w, trustRequest(s.cookie, s.from))
+		seen[w.Code] = true
+	}
+	for _, want := range []int{200, 204, 400, 401, 404} {
+		if !seen[want] {
+			t.Fatalf("no seed is answered %d; the seeds reach %v", want, slices.Sorted(maps.Keys(seen)))
+		}
+	}
+}
+
+// FuzzTrustRequest feeds GET session.PathTrust with any cookie and any from.
+// Whatever comes, the answer is one of the contract's, a chain that leaves the
+// handler is one the shell reads and verifies, and nothing is left behind.
+//
+// The chain is the canary and it is asked after every single body, not counted
+// over the run: an answer the browser would refuse, or one whose versions do
+// not hang together, is caught by the very next input as well as by the one
+// that made it.
+func FuzzTrustRequest(f *testing.F) {
+	h, fx := newFixture(f)
+	cookie := loginOnce(f, h, fx)
+	for _, s := range trustSeeds(cookie) {
+		f.Add(s.cookie, s.from)
+	}
+	before, err := settings(h)
+	if err != nil {
+		f.Fatalf("settings: %v", err)
+	}
+	f.Fuzz(func(t *testing.T, cookie, from string) {
+		w := httptest.NewRecorder()
+		h.Trust(w, trustRequest(cookie, from))
+		switch w.Code {
+		case 200, 204, 400, 401, 404, 500, 503:
+		default:
+			t.Fatalf("status %d for cookie %q from %q", w.Code, cookie, from)
+		}
+		switch w.Code {
+		case 200:
+			c, err := session.ParseTrustChain(w.Body.Bytes())
+			if err != nil {
+				t.Fatalf("the shell would refuse the chain for from %q: %v", from, err)
+			}
+			n, err := session.ParseFrom(from)
+			if err != nil {
+				t.Fatalf("a chain was given for a from the contract refuses: %q", from)
+			}
+			if _, err := trust.Open(trust.Anchor{Seq: n, Hash: trust.Hash(c.Versions[0])}, c.Versions); err != nil {
+				t.Fatalf("the chain for from %q does not verify: %v", from, err)
+			}
+		case 204:
+			if w.Body.Len() != 0 {
+				t.Fatalf("204 carried %d bytes", w.Body.Len())
+			}
+		default:
+			cl, err := wire.ParseClose(w.Body.Bytes())
+			if err != nil {
+				t.Fatalf("status %d is no CLOSE payload: %v", w.Code, err)
+			}
+			if cl.Status != wire.StatusError || session.HTTPStatus(cl.Code) != w.Code {
+				t.Fatalf("code %q with status %d", cl.Code, w.Code)
+			}
+		}
+		// Asking for the trust list is no failed login, whatever the cookie
+		// says: the counting keeps its buckets among the settings.
+		now, err := settings(h)
+		if err != nil || !maps.Equal(now, before) {
+			t.Fatalf("settings after cookie %q from %q are %v, were %v (%v)", cookie, from, now, before, err)
+		}
+		entries, err := h.S.DB.LogQuery(ctx, core.LogQuery{Limit: 1})
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("the trust list logged %d entries (%v)", len(entries), err)
 		}
 	})
 }

@@ -316,7 +316,7 @@ func capturedLog(t *testing.T) *bytes.Buffer {
 }
 
 // loginOnce runs the whole login and returns the cookie value.
-func loginOnce(t *testing.T, h *Handler, fx fixture) string {
+func loginOnce(t testing.TB, h *Handler, fx fixture) string {
 	t.Helper()
 	c := start(t, h, fx.PasswordName)
 	w := httptest.NewRecorder()

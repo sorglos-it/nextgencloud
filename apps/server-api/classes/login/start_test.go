@@ -310,7 +310,7 @@ func TestStartRefusesABadName(t *testing.T) {
 }
 
 // start runs login/start and returns the challenge.
-func start(t *testing.T, h *Handler, name string) session.LoginChallenge {
+func start(t testing.TB, h *Handler, name string) session.LoginChallenge {
 	t.Helper()
 	w := httptest.NewRecorder()
 	h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+name+`"}`))
