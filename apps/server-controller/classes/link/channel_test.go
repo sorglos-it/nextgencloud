@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/coder/websocket"
 
@@ -442,8 +443,15 @@ func TestAChannelRefusesWhatTheContractForbids(t *testing.T) {
 		if ch.Num() != 1 || ch.Window() != wire.MinWindow {
 			t.Errorf("channel %d with a window of %d, want the number and the window of the OPEN", ch.Num(), ch.Window())
 		}
-		// A first GRANT below the floor of the contract, and one with a
-		// handshake that is not Noise message 2.
+		// A GRANT of nothing, one above the window of the contract, a first
+		// one below its floor, and one with a handshake that is not Noise
+		// message 2.
+		if err := ch.Grant(0, nil); !errors.Is(err, ErrConfig) {
+			t.Errorf("Grant of nothing = %v, want it refused", err)
+		}
+		if err := ch.Grant(wire.MaxWindow+1, nil); !errors.Is(err, ErrConfig) {
+			t.Errorf("Grant above MaxWindow = %v, want it refused", err)
+		}
 		if err := ch.Grant(wire.MinWindow-1, nil); !errors.Is(err, ErrConfig) {
 			t.Errorf("Grant below MinWindow = %v, want it refused", err)
 		}
@@ -647,14 +655,10 @@ func (m *machine) quiet() bool {
 }
 
 // live says whether the machine holds num as a channel that is still running:
-// not closed by this side, not closed by the API. It is what a frame that was
-// taken leaves behind, and a frame that was refused - or dropped after one's
-// own CLOSE - does not.
+// not closed by this side, not closed by the API.
 func (m *machine) live(num uint32) bool {
-	m.c.mu.Lock()
-	ch, ok := m.c.m[num]
-	m.c.mu.Unlock()
-	if !ok {
+	ch := m.channel(num)
+	if ch == nil {
 		return false
 	}
 	ch.mu.Lock()
@@ -662,39 +666,316 @@ func (m *machine) live(num uint32) bool {
 	return !ch.closing && !ch.peer
 }
 
+// shut says whether this side has claimed the CLOSE of num - everything that
+// comes for such a number is dropped without an answer, and no test may count
+// that as taken.
+func (m *machine) shut(num uint32) bool {
+	ch := m.channel(num)
+	if ch == nil {
+		return false
+	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.closing
+}
+
+// ready waits until the channel has booked the credit of its first GRANT: the
+// handler grants in a goroutine of its own, and what the API may send hangs on
+// that booking.
+func (m *machine) ready(num uint32) bool {
+	for range 10000 {
+		ch := m.channel(num)
+		if ch == nil {
+			return false
+		}
+		ch.mu.Lock()
+		booked := ch.in > 0
+		ch.mu.Unlock()
+		if booked {
+			return true
+		}
+		runtime.Gosched()
+	}
+	return false
+}
+
+func (m *machine) channel(num uint32) *Channel {
+	m.c.mu.Lock()
+	defer m.c.mu.Unlock()
+	return m.c.m[num]
+}
+
+// held counts the numbers the machine does not call free.
+func (m *machine) held() int {
+	m.c.mu.Lock()
+	defer m.c.mu.Unlock()
+	return len(m.c.m)
+}
+
 // A DATA frame with an empty payload costs no credit, and neither does an EOF,
-// so the credit in bytes alone does not bound how many frames may wait for a
-// handler that does not read. The count does: this side takes no more frames
-// than the credit it granted could have paid for, one byte each, and the frame
-// above that closes the channel.
-func TestAChannelQueuesNoMoreFramesThanItsCreditCouldPay(t *testing.T) {
+// so the credit in bytes alone does not bound how much a handler that does not
+// read may have waiting in front of it. What bounds it is the memory: a frame
+// that waits costs queueCost bytes of bookkeeping, and this side takes no more
+// of them than the credit it granted would pay for at that price - plus the two
+// a peer may send before the first GRANT of this side.
+func TestAChannelQueuesNoMoreThanItsCreditPaysFor(t *testing.T) {
+	// An Inbound really costs what the rule in channel.go reckons with
+	// (queueCost). Whoever makes it bigger has this line in front of him and
+	// not a bound that quietly grew.
+	const cost = 32
+	if got := uintptr(unsafe.Sizeof(Inbound{})); got != cost {
+		t.Fatalf("an Inbound is %d bytes, the queue reckons with %d", got, cost)
+	}
+	eof := func(num uint32) wire.Frame { return wire.Frame{Type: wire.TypeEOF, Channel: num} }
+	t.Run("before the first grant", func(t *testing.T) {
+		// Nothing is granted yet, and an empty DATA and an EOF are both of the
+		// contract: both are taken, the frame after them is not.
+		m := newMachine(opener(func(ctx context.Context, _ *Channel, _ tunnel.Opened) error {
+			<-ctx.Done()
+			return nil
+		}))
+		defer m.stop()
+		if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+			t.Fatalf("OPEN: %v", err)
+		}
+		for range 2 {
+			if err := m.c.take(wire.Frame{Type: wire.TypeData, Channel: 1}); err != nil {
+				t.Fatalf("the link ended over a frame that costs nothing: %v", err)
+			}
+		}
+		if n := m.prot.Load(); n != 0 {
+			t.Fatalf("%d frames were refused, want the two before the first GRANT taken", n)
+		}
+		if err := m.c.take(eof(1)); err != nil {
+			t.Fatalf("the frame above the count ended the link (%v), want it to end the channel", err)
+		}
+		if n := m.prot.Load(); n != 1 {
+			t.Errorf("the frame above the count was answered %d times with the protocol error, want once", n)
+		}
+	})
+	t.Run("with the smallest window granted", func(t *testing.T) {
+		m := newMachine(holding(nil))
+		defer m.stop()
+		if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+			t.Fatalf("OPEN: %v", err)
+		}
+		if !m.ready(1) {
+			t.Fatal("the channel never granted")
+		}
+		room := wire.MinWindow/cost + 2
+		for range room {
+			if err := m.c.take(eof(1)); err != nil {
+				t.Fatalf("the link ended over a frame that costs nothing: %v", err)
+			}
+		}
+		if n := m.prot.Load(); n != 0 {
+			t.Fatalf("%d of %d frames were refused, want every frame the credit pays for taken", n, room)
+		}
+		if err := m.c.take(eof(1)); err != nil {
+			t.Fatalf("the frame above the count ended the link (%v), want it to end the channel", err)
+		}
+		if n := m.prot.Load(); n != 1 {
+			t.Errorf("the frame above the count was answered %d times with the protocol error, want once", n)
+		}
+	})
+}
+
+// A CLOSE on a number that is free is a protocol error like every other frame
+// there - and it is the CLOSE of the API for that number all the same. The API
+// answers no CLOSE with a second one, so the number is free again as soon as
+// the answer of this side is out; anything else loses a number for the life of
+// the tunnel.
+func TestACloseOnAFreeNumberGivesTheNumberBack(t *testing.T) {
+	m := newMachine(holding(nil))
+	defer m.stop()
+	// One more than the tunnel may hold at a time: if a single one of them
+	// stayed, the last would end the link.
+	for num := uint32(1); num <= wire.MaxTunnelChannels+1; num++ {
+		if err := m.c.take(closeFrame(t, num, wire.Close{Status: wire.StatusOK})); err != nil {
+			t.Fatalf("the link ended at the %d. CLOSE on a free number: %v", num, err)
+		}
+		if n := m.held(); n != 0 {
+			t.Fatalf("%d numbers are still taken after a CLOSE on a free number", n)
+		}
+	}
+	if n := m.prot.Load(); n != wire.MaxTunnelChannels+1 {
+		t.Errorf("%d of the stray closes were answered, want every one of them", n)
+	}
+	// The number really is usable again.
+	if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+		t.Fatalf("OPEN after the CLOSE: %v", err)
+	}
+	if !m.live(1) {
+		t.Error("the number did not open a channel again")
+	}
+}
+
+// A CLOSE this hop cannot read is no reason to lose the number either: it is
+// answered with the protocol error, and it counts as the CLOSE of the API.
+func TestACloseThatDoesNotParseStillCounts(t *testing.T) {
 	m := newMachine(holding(nil))
 	defer m.stop()
 	if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
 		t.Fatalf("OPEN: %v", err)
 	}
-	// The grant is written by the goroutine of the channel, and the credit is
-	// what the count hangs on: wait for it to be out.
-	for range 10000 {
-		if len(m.frames()) > 0 {
-			break
-		}
-		time.Sleep(time.Millisecond)
+	if err := m.c.take(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: []byte("{}")}); err != nil {
+		t.Fatalf("CLOSE that does not parse: %v", err)
 	}
-	empty := wire.Frame{Type: wire.TypeEOF, Channel: 1}
-	for range wire.MinWindow + 1 {
-		if err := m.c.take(empty); err != nil {
-			t.Fatalf("the link ended over a frame that costs nothing: %v", err)
-		}
-	}
-	if n := m.prot.Load(); n != 0 {
-		t.Fatalf("%d frames were refused, want every frame the credit could have paid for taken", n)
-	}
-	if err := m.c.take(empty); err != nil {
-		t.Fatalf("the frame above the count ended the link (%v), want it to end the channel", err)
+	if !m.settle() {
+		t.Fatal("the channel never wrote its CLOSE")
 	}
 	if n := m.prot.Load(); n != 1 {
-		t.Errorf("the frame above the count was answered %d times with the protocol error, want once", n)
+		t.Errorf("the CLOSE that does not parse was answered %d times with the protocol error, want once", n)
+	}
+	if n := m.held(); n != 0 {
+		t.Errorf("%d numbers are still taken, want the number back", n)
+	}
+}
+
+// The limit counts every number that is not free, and a number that a stray
+// frame made this side answer is one of them: the frame that would make one too
+// many ends the link, the one below it does not.
+func TestTheStrayFrameVariantOfTheChannelLimit(t *testing.T) {
+	m := newMachine(holding(nil))
+	defer m.stop()
+	// An EOF on a number nobody opened: answered, and the number waits for the
+	// CLOSE of the API.
+	for num := uint32(1); num <= wire.MaxTunnelChannels; num++ {
+		if err := m.c.take(wire.Frame{Type: wire.TypeEOF, Channel: num}); err != nil {
+			t.Fatalf("the link ended at the %d. stray frame: %v", num, err)
+		}
+	}
+	if n := m.held(); n != wire.MaxTunnelChannels {
+		t.Fatalf("%d numbers are taken, want every one of the stray frames to hold its number", n)
+	}
+	if err := m.c.take(wire.Frame{Type: wire.TypeEOF, Channel: wire.MaxTunnelChannels + 1}); !errors.Is(err, ErrLink) {
+		t.Errorf("the stray frame above the limit = %v, want the link ended over it", err)
+	}
+}
+
+// Send cuts what it is given into frames of the contract: the largest frame is
+// full, the byte above it is the next one.
+func TestSendSplitsAtTheLargestFrame(t *testing.T) {
+	m := newMachine(opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
+		return ch.Send(make([]byte, wire.MaxPayload+1))
+	}))
+	defer m.stop()
+	if err := m.c.take(openFrame(t, 1, wire.MaxPayload+1)); err != nil {
+		t.Fatalf("OPEN: %v", err)
+	}
+	if !m.settle() {
+		t.Fatal("the channel never wrote its CLOSE")
+	}
+	var got []int
+	for _, f := range m.frames() {
+		if f.Type == wire.TypeData {
+			got = append(got, len(f.Payload))
+		}
+	}
+	if want := []int{wire.MaxPayload, 1}; !slices.Equal(got, want) {
+		t.Errorf("Send wrote frames of %v bytes, want %v", got, want)
+	}
+}
+
+// A Recv that is waiting when the channel ends says that the channel is over,
+// and says it every time. The context of the handler ends with the channel, so
+// both ways out of that wait are ready at once - whichever the runtime takes,
+// the answer has to be the same one.
+func TestRecvAtTheEndAlwaysSaysTheChannelIsOver(t *testing.T) {
+	for i := range 200 {
+		waiting := make(chan struct{})
+		got := make(chan error, 1)
+		m := newMachine(opener(func(ctx context.Context, ch *Channel, _ tunnel.Opened) error {
+			close(waiting)
+			_, err := ch.Recv(ctx)
+			got <- err
+			return nil
+		}))
+		if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+			t.Fatalf("OPEN: %v", err)
+		}
+		<-waiting
+		runtime.Gosched()
+		if err := m.c.take(closeFrame(t, 1, wire.Close{Status: wire.StatusOK})); err != nil {
+			t.Fatalf("CLOSE: %v", err)
+		}
+		select {
+		case err := <-got:
+			if !errors.Is(err, ErrClosed) {
+				t.Fatalf("run %d: Recv = %v, want the one answer for a channel that is over", i, err)
+			}
+		case <-time.After(answer):
+			t.Fatal("Recv never came back")
+		}
+		m.stop()
+	}
+}
+
+// Nothing of a channel goes out behind its CLOSE - not even a GRANT that was
+// already on its way when the CLOSE was claimed. Here the handler grants
+// without a pause while the CLOSE is claimed from the reading goroutine: the
+// two really race for the write, and the order on the wire has to hold every
+// single time. The frames are not kept, only their order, so the run stays
+// small.
+func TestNoGrantGoesOutBehindTheClose(t *testing.T) {
+	for i := range 200 {
+		var closed, behind atomic.Bool
+		var grants atomic.Int64
+		send := func(f wire.Frame) error {
+			switch f.Type {
+			case wire.TypeClose:
+				closed.Store(true)
+			case wire.TypeGrant:
+				if closed.Load() {
+					behind.Store(true)
+				}
+				grants.Add(1)
+			}
+			return nil
+		}
+		granting := make(chan struct{})
+		ctx, stop := context.WithCancel(context.Background())
+		h := opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
+			if err := ch.Grant(wire.MinWindow, nil); err != nil {
+				return nil
+			}
+			// Many granters at once: the locks of the channel are contended,
+			// goroutines are handed the processor back and forth, and one of
+			// them is very likely to stand between its own check and its write
+			// at the moment the CLOSE is claimed. Refused or out, both are
+			// right - what may not happen is a GRANT behind the CLOSE.
+			var wg sync.WaitGroup
+			for range 32 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for ch.Grant(1, nil) == nil {
+					}
+				}()
+			}
+			close(granting)
+			wg.Wait()
+			return nil
+		})
+		c := newChannels(ctx, h, send, slog.New(slog.DiscardHandler))
+		if err := c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+			t.Fatalf("OPEN: %v", err)
+		}
+		<-granting
+		// The CLOSE is claimed while the grants are really running, not before
+		// the handler got going: otherwise the two never meet.
+		for grants.Load() < 200 {
+			runtime.Gosched()
+		}
+		// An OPEN for a number that is open: a protocol error, and the answer
+		// to it is the CLOSE of this side.
+		if err := c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+			t.Fatalf("the second OPEN ended the link: %v", err)
+		}
+		if behind.Load() {
+			t.Fatalf("run %d: a GRANT went out behind the CLOSE of this side", i)
+		}
+		stop()
 	}
 }
 
@@ -726,21 +1007,27 @@ func canonical(t testing.TB, typ wire.Type) []byte {
 // only their doors. How many frames it got through is counted: a target that
 // is only ever told no proves nothing, and the count says so.
 func FuzzChannelFrames(f *testing.F) {
-	f.Add([]byte{1, 0, 0, 0, 1})
-	f.Add([]byte{0x81, 0, 0, 0x82, 0, 0, 0x84, 0, 0})
-	f.Add([]byte{0x81, 0, 0, 0x85, 0, 0, 0x82, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8})
+	// The first byte of a record picks the type (1 + b%5) and asks with its
+	// high bit for a payload of the contract: 0x82 OPEN, 0x83 DATA, 0x84 EOF,
+	// 0x80 CLOSE, 0x81 GRANT. The second picks the number (1 + b%8).
+	f.Add([]byte{1, 0, 0, 0, 1})                                  // the seed of the task: DATA on a number nobody opened
+	f.Add([]byte{0x82, 0, 0, 0x83, 0, 0, 0x84, 0, 0, 0x80, 0, 0}) // OPEN, DATA, EOF, CLOSE on one number
+	f.Add([]byte{0x82, 0, 0, 0x81, 0, 0, 0x83, 0, 0, 0x80, 0, 0}) // OPEN, GRANT, DATA, CLOSE
+	f.Add([]byte{0x83, 1, 0, 0x80, 1, 0})                         // a stray frame and the CLOSE that gives its number back
+	f.Add([]byte{0x82, 0, 0, 0x82, 0, 0, 0x80, 0, 0, 0x82, 0, 0}) // an OPEN for a number that is open, then the number again
 	var tried, taken atomic.Int64
 	f.Cleanup(func() {
-		// Over the seeds the share says something: their frames are fixed.
-		// In a fuzzing run it says nothing - the fuzzer is paid in coverage,
-		// and the ways of saying no are where the coverage lies, so it learns
-		// to drive any such share down: measured over a fresh corpus 45 % of
-		// the frames taken, and under 5 % after a minute of fuzzing. What
-		// holds there is the canary below, on every single input.
+		// Counted are only the frames of the input; the canary below has its
+		// own check and would otherwise carry this one on its own.
 		//
-		// Over the seeds as they stand 7 of 13 frames are taken; a third is
-		// the line, so a seed that is refused from now on says so and a seed
-		// added later does not have to be counted in by hand.
+		// Over the seeds the share says something: their frames are fixed, and
+		// 13 of 16 are taken - a third is the line, so a seed that is refused
+		// from now on says so and one added later needs no hand count. In a
+		// fuzzing run the share says nothing: the fuzzer is paid in coverage,
+		// and the ways of saying no are where the coverage lies, so it learns
+		// to drive any such share down (measured: 45 % over a fresh corpus,
+		// under 5 % after a minute). What holds there is the canary, on every
+		// single input.
 		if n := tried.Load(); !fuzzing() && n > 0 && taken.Load()*3 < n {
 			f.Errorf("only %d of %d frames were taken, want the states behind the parsers reached", taken.Load(), n)
 		}
@@ -753,18 +1040,16 @@ func FuzzChannelFrames(f *testing.F) {
 func channelFrames(t *testing.T, b []byte, tried, taken *atomic.Int64) {
 	m := newMachine(holding(nil))
 	defer m.stop()
-	// The canary runs before every input, on a number the frames below
-	// cannot reach: an OPEN of the contract opens a channel, and a frame
-	// this side has room for is taken. A machine that says no to
-	// everything fails here on every input, whatever the count below
-	// says - and the count alone could be talked down by a fuzzer that
-	// learns to steer into the refusals.
+	// The canary runs before every input, on a number the frames below cannot
+	// reach: an OPEN of the contract opens a channel, and a frame this side has
+	// room for is taken. A machine that says no to everything fails here on
+	// every single input - the share further down could be talked out of it by
+	// a fuzzer that learns to steer into the refusals, this cannot. It counts
+	// for itself and not into that share.
 	for _, f := range []wire.Frame{openFrame(t, canary, wire.MinWindow), {Type: wire.TypeEOF, Channel: canary}} {
-		tried.Add(1)
 		if err := m.c.take(f); err != nil || !m.live(canary) {
 			t.Fatalf("the machine did not take %v on the number of the canary (%v)", f.Type, err)
 		}
-		taken.Add(1)
 	}
 	sent := make(map[uint32]bool)
 	closed := make(map[uint32]bool)
@@ -792,7 +1077,11 @@ func channelFrames(t *testing.T, b []byte, tried, taken *atomic.Int64) {
 		if err != nil {
 			continue
 		}
+		// A frame for a number this side has closed is dropped without an
+		// answer; that is no state to reach, and it is not counted as taken.
+		dropped := m.shut(num)
 		tried.Add(1)
+		before := m.prot.Load()
 		if err := m.c.take(fr); err != nil {
 			if !errors.Is(err, ErrLink) {
 				t.Fatalf("the machine ended the link with %v, want the one error of a broken contract", err)
@@ -805,12 +1094,15 @@ func channelFrames(t *testing.T, b []byte, tried, taken *atomic.Int64) {
 		if typ == wire.TypeClose {
 			closed[num] = true
 		}
-		// Taken means taken: the number is a channel that is still
-		// running afterwards. A frame that was answered with E_PROTOCOL
-		// and one that was dropped after this side's own CLOSE both leave
-		// a number that is not, and neither counts here.
-		if m.live(num) {
+		if !dropped && m.prot.Load() == before {
 			taken.Add(1)
+		}
+		// What this side granted is booked by the goroutine of the channel.
+		// Waiting for it is not a kindness to the fuzzer: the API cannot send
+		// before it has seen the GRANT either, and this side books before it
+		// writes - so the booking is always in when the DATA arrives.
+		if typ == wire.TypeOpen && m.live(num) {
+			m.ready(num)
 		}
 	}
 	m.stop()
