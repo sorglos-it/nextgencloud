@@ -166,14 +166,14 @@ func TestStatusReportsOnlyTheComponentsOfTheseRoles(t *testing.T) {
 	}
 }
 
-// What an app is doing: the engine says running or stopped, a licence that ran
-// out past its grace period says unlicensed, and an engine that cannot answer
-// at all leaves the app as failed - the contract has no word for "nobody
-// knows", and an app nobody can ask about is something an admin should see.
+// What an app is doing: the engine says running or stopped, and a licence that
+// ran out past its grace period says unlicensed. Two rows are left out instead,
+// because the contract could not carry them: one of which only kept data
+// remains, and one of NGC's own, which the API serves itself.
 func TestStatusSaysWhatTheAppsAreDoing(t *testing.T) {
 	ctx := context.Background()
 	st := newState(t)
-	for _, id := range []string{"org.sorglos.a", "org.sorglos.b", "org.sorglos.c", "org.sorglos.d"} {
+	for _, id := range []string{"org.sorglos.a", "org.sorglos.b", "org.sorglos.c"} {
 		if err := st.PutApp(ctx, dbapi.App{ID: id, Version: "1.0.0"}); err != nil {
 			t.Fatal(err)
 		}
@@ -183,17 +183,16 @@ func TestStatusSaysWhatTheAppsAreDoing(t *testing.T) {
 	if err := st.PutApp(ctx, dbapi.App{ID: "org.sorglos.gone"}); err != nil {
 		t.Fatal(err)
 	}
-	broken := errors.New("the engine does not answer")
+	// A core app is no app of this list either, and the state of a controller
+	// really can hold such a row: the ID passes wire.ValidAppID.
+	if !wire.ValidAppID("ngc.web") || !wire.CoreApp("ngc.web") {
+		t.Fatal("ngc.web is no core app ID, so this case guards nothing")
+	}
+	if err := st.PutApp(ctx, dbapi.App{ID: "ngc.web", Version: "1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
 	r := reporterFor(t, st, func(c *ReportConfig) {
-		c.Running = func(_ context.Context, app string) (bool, error) {
-			switch app {
-			case "org.sorglos.a":
-				return true, nil
-			case "org.sorglos.d":
-				return false, broken
-			}
-			return false, nil
-		}
+		c.Running = func(_ context.Context, app string) (bool, error) { return app == "org.sorglos.a", nil }
 		c.Licensed = func(_ context.Context, a dbapi.App) (bool, error) {
 			return a.ID != "org.sorglos.c", nil
 		}
@@ -206,7 +205,6 @@ func TestStatusSaysWhatTheAppsAreDoing(t *testing.T) {
 		"org.sorglos.a": tunnel.StateRunning,
 		"org.sorglos.b": tunnel.StateStopped,
 		"org.sorglos.c": tunnel.StateUnlicensed,
-		"org.sorglos.d": tunnel.StateFailed,
 	}
 	if len(s.Apps) != len(want) {
 		t.Fatalf("apps = %+v, want %d of them", s.Apps, len(want))
@@ -215,6 +213,62 @@ func TestStatusSaysWhatTheAppsAreDoing(t *testing.T) {
 		if a.State != want[a.App] {
 			t.Errorf("%s = %q, want %q", a.App, a.State, want[a.App])
 		}
+	}
+}
+
+// An app this server could not ask about is left out of the status, and it is
+// not called failed: failed is a state an app is in, and an admin acts on it.
+// There are two ways to end up unable to ask, and both leave the row out - the
+// licence could not be read, or the engine does not say whether the app runs.
+// The status of the other apps goes out all the same.
+func TestStatusLeavesOutWhatItCouldNotAsk(t *testing.T) {
+	ctx := context.Background()
+	for name, c := range map[string]struct {
+		mute func(*ReportConfig, error)
+	}{
+		"the licence could not be read": {func(c *ReportConfig, broken error) {
+			c.Licensed = func(_ context.Context, a dbapi.App) (bool, error) {
+				if a.ID == "org.sorglos.quiet" {
+					return false, broken
+				}
+				return true, nil
+			}
+		}},
+		"the engine does not answer": {func(c *ReportConfig, broken error) {
+			c.Running = func(_ context.Context, app string) (bool, error) {
+				if app == "org.sorglos.quiet" {
+					return false, broken
+				}
+				return true, nil
+			}
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := newState(t)
+			for _, id := range []string{"org.sorglos.loud", "org.sorglos.quiet"} {
+				if err := st.PutApp(ctx, dbapi.App{ID: id, Version: "1.0.0"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			broken := errors.New("nobody answers")
+			r := reporterFor(t, st, func(cfg *ReportConfig) {
+				cfg.Running = func(context.Context, string) (bool, error) { return true, nil }
+				cfg.Licensed = func(context.Context, dbapi.App) (bool, error) { return true, nil }
+				c.mute(cfg, broken)
+			})
+			s, err := r.Status(ctx)
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if len(s.Apps) != 1 || s.Apps[0].App != "org.sorglos.loud" {
+				t.Fatalf("apps = %+v, want only the one that answered", s.Apps)
+			}
+			// And nothing of the four words stands in for "nobody could ask":
+			// the row is gone, not relabelled.
+			if s.Apps[0].State != tunnel.StateRunning {
+				t.Errorf("the app that answered = %q, want running", s.Apps[0].State)
+			}
+		})
 	}
 }
 
