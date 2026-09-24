@@ -389,12 +389,23 @@ function encodeAuto(a) {
   return o;
 }
 
-export const user = (l, id) => l.users.find((u) => u.id === id) || null;
-export const role = (l, name) => l.roles.find((r) => r.name === name) || null;
-export const node = (l, id) => l.nodes.find((n) => n.id === id) || null;
+// Fixrunde 4: user, role, node, keyOwner and passwordToo are the third and,
+// per the coordinator, last appearance in this task of the pattern
+// mayRoot/matches/needsConfirm and validateList's own family already
+// closed - exported, an array-only method on an l the caller controls, no
+// Array.isArray first. l?.users (optional chaining) doubles as the guard
+// for l itself being missing, the same trick validateList's l.rp?.origins
+// uses.
+export const user = (l, id) => (isArray(l?.users) && l.users.find((u) => u.id === id)) || null;
+export const role = (l, name) => (isArray(l?.roles) && l.roles.find((r) => r.name === name)) || null;
+export const node = (l, id) => (isArray(l?.nodes) && l.nodes.find((n) => n.id === id)) || null;
 
 export function keyOwner(l, kid) {
+  if (!isArray(l?.users)) return null;
   for (const u of l.users) {
+    // A malformed keys on one user must not hide a real key a different,
+    // well-formed user actually owns: skip just that user, not the search.
+    if (!isArray(u?.keys)) continue;
     for (const k of u.keys) if (k.id === kid) return { user: u, key: k };
   }
   return null;
@@ -402,7 +413,16 @@ export function keyOwner(l, kid) {
 
 export function passwordToo(l, userID) {
   const u = user(l, userID);
-  return !!u && u.roles.some((n) => role(l, n)?.passwordToo);
+  if (!u) return false;
+  // Unlike mayRoot/matches/needsConfirm, false is not the safe answer here:
+  // true means the login flow demands a password in addition to a passkey
+  // (Go: session.VerifyClient already requires the passkey either way -
+  // PasswordToo only ever adds to that, never replaces it), so answering
+  // false on doubt would silently accept a weaker login than Go would have
+  // required. A malformed u.roles therefore answers true: require the extra
+  // factor rather than skip it.
+  if (!isArray(u.roles)) return true;
+  return u.roles.some((n) => role(l, n)?.passwordToo);
 }
 
 // Fixrunde 3, point 2: mayRoot, needsConfirm and matches below are exported
