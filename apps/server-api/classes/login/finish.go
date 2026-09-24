@@ -32,10 +32,11 @@ const lockWarnTTL = 300
 var errSignKey = errors.New("login: signing key of the wrong size")
 
 // Finish answers POST session.PathLoginFinish. Here the checks of a login come
-// together: the proof over the client certificate against the trust list, the
-// password of a role that asks for it, the TOTP code of a user who holds a
-// secret, and the nonce, which is spent exactly once. Only then are the
-// session, the API certificate and the cookie made.
+// together, in this order: the proof over the client certificate against the
+// trust list, the end that certificate names against this API's own session
+// lifetime, the password of a role that asks for it, the TOTP code of a user
+// who holds a secret, and the nonce, which is spent exactly once. Only then are
+// the session, the API certificate and the cookie made.
 //
 // Every one of those checks answers E_LOGIN with the same body, whatever was
 // wrong (shared/README.md, "Vor dem WebSocket"): an unknown name, a proof by a
@@ -72,6 +73,20 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// exists, because a name nobody has gets a made-up user ID nothing else
 	// ever counts for. A key ID is of one shape for every attempt and says
 	// nothing about anybody.
+	//
+	// What this does not close, and what no bucket taken from a body can: a
+	// challenge that carries a passkey hands its key ID out
+	// (session.PasskeyRef), and for a name nobody has that ID is made up and
+	// belongs to no user. So failed logins carrying it lock the name if it
+	// exists and nothing at all if it does not, and login/start afterwards
+	// answers 429 against 200 -- measured, one challenge, three failures and
+	// one more challenge. The wait per login name costs the other half of that
+	// anyway: whoever knows the names of an installation locks them out one by
+	// one (classes/lock, buckets). What is new is that it also says which names
+	// those are. Closing it needs something this path is not given: login/finish
+	// learns no login name, only the user ID in the certificate, where the
+	// contract counts per name (shared/README.md, "Vor dem WebSocket"). It is a
+	// question for V1.2 and not one to be settled here.
 	bucket := "key/" + f.Proof.KeyID
 	if owner, _, found := v.List.KeyOwner(f.Proof.KeyID); found {
 		bucket = owner.Name
