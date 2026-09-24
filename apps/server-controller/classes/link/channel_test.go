@@ -681,9 +681,11 @@ func (m *machine) shut(num uint32) bool {
 
 // ready waits until the channel has booked the credit of its first GRANT: the
 // handler grants in a goroutine of its own, and what the API may send hangs on
-// that booking.
+// that booking. It waits the way settle does - first only handing the processor
+// on, then really sleeping, so that a run on a loaded machine does not come
+// back with "never granted" for a goroutine that was merely never scheduled.
 func (m *machine) ready(num uint32) bool {
-	for range 10000 {
+	for i := range 10000 {
 		ch := m.channel(num)
 		if ch == nil {
 			return false
@@ -694,7 +696,11 @@ func (m *machine) ready(num uint32) bool {
 		if booked {
 			return true
 		}
-		runtime.Gosched()
+		if i < 1000 {
+			runtime.Gosched()
+			continue
+		}
+		time.Sleep(time.Millisecond)
 	}
 	return false
 }
@@ -832,6 +838,150 @@ func TestACloseThatDoesNotParseStillCounts(t *testing.T) {
 	}
 }
 
+// The protocol error this hop decided on is what its one CLOSE says, even when
+// the handler of the channel is coming back at the very same moment. A CLOSE
+// that cannot be read is answered with the protocol error and it also ends the
+// channel, so the handler wakes and its end wants to write the one CLOSE of
+// this side too: the two race for it. Here the handler is let all the way
+// through between the decision and the write, which is the interleaving take
+// runs into about once in two thousand times.
+func TestTheProtocolAnswerBeatsTheEndOfTheHandler(t *testing.T) {
+	woken := make(chan struct{})
+	m := newMachine(opener(func(ctx context.Context, ch *Channel, _ tunnel.Opened) error {
+		if err := ch.Grant(wire.MinWindow, nil); err != nil {
+			return err
+		}
+		<-ctx.Done()
+		close(woken)
+		return nil
+	}))
+	defer m.stop()
+	if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+		t.Fatalf("OPEN: %v", err)
+	}
+	if !m.ready(1) {
+		t.Fatal("the channel never granted")
+	}
+	// What take does, cut in two: route decides on the answer and ends the
+	// channel, and the handler is let all the way back before take would write.
+	// Nothing of take is skipped by stopping here - by this point the CLOSE of
+	// this number is claimed, so the write take does for it has nothing left to
+	// do either way.
+	if _, _, _, err := m.c.route(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: []byte("{}")}); err != nil {
+		t.Fatalf("the CLOSE that does not parse ended the link: %v", err)
+	}
+	<-woken
+	if !m.settle() {
+		t.Fatal("the channel never wrote its CLOSE")
+	}
+	if n := m.prot.Load(); n != 1 {
+		t.Fatalf("the one CLOSE of this side said the protocol error %d times, want once", n)
+	}
+	if n := m.held(); n != 0 {
+		t.Errorf("%d numbers are still taken, want the number back", n)
+	}
+}
+
+// DATA that comes in after the CLOSE of the API is taken and handed on. The
+// contract forbids the API to send it - "after its CLOSE a side sends nothing
+// more on the channel" - but it does not make it a protocol error: that is a
+// frame for a number "that is neither open nor closing (never opened, or free
+// again)", and a number whose CLOSE is in while the CLOSE of this side is still
+// owed is neither of those two. So this hop does with it what it does with
+// every other rule it is not told to police - it counts the credit and hands
+// the frame on, and whoever reads the channel decides what to make of a byte
+// that came after the end.
+func TestDataAfterTheCloseOfTheAPIIsHandedOn(t *testing.T) {
+	read := make(chan struct{})
+	got := make(chan []Inbound, 1)
+	m := newMachine(opener(func(ctx context.Context, ch *Channel, _ tunnel.Opened) error {
+		if err := ch.Grant(wire.MinWindow, nil); err != nil {
+			return err
+		}
+		// Not before the test has put both frames in: this is about what a
+		// handler is given, not about how fast it asks.
+		<-read
+		var in []Inbound
+		for {
+			one, err := ch.Recv(ctx)
+			if err != nil {
+				got <- in
+				return nil
+			}
+			in = append(in, one)
+		}
+	}))
+	defer m.stop()
+	if err := m.c.take(openFrame(t, 1, wire.MinWindow)); err != nil {
+		t.Fatalf("OPEN: %v", err)
+	}
+	if !m.ready(1) {
+		t.Fatal("the channel never granted")
+	}
+	if err := m.c.take(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("before")}); err != nil {
+		t.Fatalf("DATA before the CLOSE: %v", err)
+	}
+	if err := m.c.take(closeFrame(t, 1, wire.Close{Status: wire.StatusOK})); err != nil {
+		t.Fatalf("CLOSE of the API: %v", err)
+	}
+	if err := m.c.take(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("after")}); err != nil {
+		t.Fatalf("DATA after the CLOSE: %v", err)
+	}
+	close(read)
+	var in []Inbound
+	select {
+	case in = <-got:
+	case <-time.After(answer):
+		t.Fatal("the handler never came back")
+	}
+	var payloads []string
+	for _, one := range in {
+		payloads = append(payloads, string(one.Data))
+	}
+	if want := []string{"before", "after"}; !slices.Equal(payloads, want) {
+		t.Errorf("the handler was given %q, want %q", payloads, want)
+	}
+	if !m.settle() {
+		t.Fatal("the channel never wrote its CLOSE")
+	}
+	if n := m.prot.Load(); n != 0 {
+		t.Errorf("%d protocol errors went out over DATA after the CLOSE of the API, want none", n)
+	}
+	if n := m.held(); n != 0 {
+		t.Errorf("%d numbers are still taken, want the number back", n)
+	}
+}
+
+// A stray CLOSE is answered even when the tunnel is full. The limit ends the
+// link for a frame that would make one number too many, and this is none: the
+// CLOSE of the API for that number is already in, so the number is free again
+// as soon as the answer of this side is out - before the next frame is taken.
+// An OPEN beyond the limit still ends the link.
+func TestAStrayCloseAtTheLimitDoesNotEndTheLink(t *testing.T) {
+	m := newMachine(holding(nil))
+	defer m.stop()
+	for num := uint32(1); num <= wire.MaxTunnelChannels; num++ {
+		if err := m.c.take(openFrame(t, num, wire.MinWindow)); err != nil {
+			t.Fatalf("the link ended at the %d. OPEN: %v", num, err)
+		}
+	}
+	if n := m.held(); n != wire.MaxTunnelChannels {
+		t.Fatalf("%d numbers are taken, want the tunnel full", n)
+	}
+	if err := m.c.take(closeFrame(t, wire.MaxTunnelChannels+1, wire.Close{Status: wire.StatusOK})); err != nil {
+		t.Fatalf("the stray CLOSE on a full tunnel = %v, want the link to stay", err)
+	}
+	if n := m.prot.Load(); n != 1 {
+		t.Errorf("the stray CLOSE was answered %d times with the protocol error, want once", n)
+	}
+	if n := m.held(); n != wire.MaxTunnelChannels {
+		t.Errorf("%d numbers are taken after the stray CLOSE, want just as many as before it", n)
+	}
+	if err := m.c.take(openFrame(t, wire.MaxTunnelChannels+1, wire.MinWindow)); !errors.Is(err, ErrLink) {
+		t.Errorf("the OPEN above the limit = %v, want the link ended over it", err)
+	}
+}
+
 // The limit counts every number that is not free, and a number that a stray
 // frame made this side answer is one of them: the frame that would make one too
 // many ends the link, the one below it does not.
@@ -918,6 +1068,14 @@ func TestRecvAtTheEndAlwaysSaysTheChannelIsOver(t *testing.T) {
 // single time. The frames are not kept, only their order, so the run stays
 // small.
 func TestNoGrantGoesOutBehindTheClose(t *testing.T) {
+	// Measured against code without the fix: red 10 of 10 runs with more than
+	// one processor, green 5 of 5 with GOMAXPROCS=1 - with one processor a
+	// granter is never preempted between its check and its write, so the two
+	// never meet. The test would pass there without proving anything, so it
+	// says so instead.
+	if runtime.GOMAXPROCS(0) < 2 {
+		t.Skip("this race needs more than one processor")
+	}
 	for i := range 200 {
 		var closed, behind atomic.Bool
 		var grants atomic.Int64
