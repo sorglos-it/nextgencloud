@@ -93,10 +93,10 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		return refuse(wire.CodeInternal)
 	}
 	// Nothing can be checked without the trust list: no certificate, no task,
-	// no root permission. A controller that has verified no version yet
-	// therefore opens no channel at all, not even one without a user.
+	// no root permission. One channel runs all the same, and it is the only
+	// one — the one that brings the first version (firstChain).
 	if r.List == nil {
-		return refuse(wire.CodeUnreachable)
+		return firstChain(r)
 	}
 	o, err := tunnel.VerifyOpen(r.Payload, r.List, r.Now)
 	if err != nil {
@@ -224,6 +224,65 @@ func Check(ctx context.Context, r Request) (Decision, *wire.Close) {
 		}
 	}
 	return Decision{Opened: o, Action: a, Core: isCore, Task: tk, User: user, UserName: name, App: app, Manifest: m}, nil
+}
+
+// firstChain decides the one channel a controller may run while it has
+// verified no version of the trust list: ngc.users/controller/trust, the
+// channel the API sends the first chain on. Everything else is refused, the
+// way everything was refused here before.
+//
+// Why this one is not a hole in the gate, and what it rests on:
+//
+//   - A controller between pairing and its first chain holds an anchor and
+//     nothing else. Pairing gives it no version — tunnel.PairCode carries a
+//     trust.Anchor, a number and a hash, and PathPair answers 204 with a body
+//     that carries nothing — and no contract path lets a controller fetch
+//     one: it speaks PathTunnel, PathPair and PathJoin, while
+//     session.PathTrust belongs to the browser. The contract says it outright
+//     (package wire, CtlTrust): controllers get versions on this channel.
+//   - So the state is one the design means: chain.Keeper.Load "leaves the
+//     keeper empty and gives no error: the controller then runs on until an
+//     API sends the first chain", and Apply verifies that chain from the
+//     anchor (trust.Open) and not from a list. The anchor is the root here,
+//     and refusing this channel would leave a paired server no way ever to
+//     get a list.
+//   - The exception gives nothing away, because a channel without a
+//     certificate never reads the list anyway: tunnel.VerifyOpen answers
+//     before session.VerifyClient when there is no proof. What this decision
+//     leaves out is what could not be checked — and so it names no user, no
+//     task, no app.
+//   - The other way round is why a certificate has to be turned away here
+//     and not further down: session.VerifyClient would take the list into
+//     trust.List.User, which reads l.Users — on a nil list that is a crash,
+//     in a program that runs as root.
+//
+// Four marks, and every one of them is fenced by a subtest of
+// TestCheckWithoutTrustListTakesOnlyTheFirstChain. Whoever widens one of them
+// turns that subtest red. Widening this is not a convenience: any second
+// action here would be one this server carries out for an API it has not yet
+// been able to check.
+func firstChain(r Request) (Decision, *wire.Close) {
+	// ParseOpen is the parse that needs no list; VerifyOpen would be the same
+	// call without a proof, but only this one says so at the door.
+	o, inner, err := tunnel.ParseOpen(r.Payload)
+	if err != nil {
+		return refuse(wire.CodeUnreachable)
+	}
+	// Mark 1: no certificate and no proof.
+	if len(o.Client) != 0 || o.Proof != nil {
+		return refuse(wire.CodeUnreachable)
+	}
+	// Mark 2: this one action and no other. The name is compared in all three
+	// of its parts, so no app of its own can carry an action called trust in
+	// here.
+	a, ok := core.Lookup(inner.App, inner.Service, inner.Action)
+	if !ok || a.App != core.AppUsers || a.Service != core.ServiceController || a.Name != core.ActTrust {
+		return refuse(wire.CodeUnreachable)
+	}
+	// Marks 3 and 4: the decision carries no session and no user (nothing
+	// verified one), and no task (nothing could check one). Everything else
+	// of a Decision stays at its zero value for the same reason.
+	return Decision{Opened: tunnel.Opened{Open: inner, Window: o.Window}, Action: a, Core: true}, nil
 }
 
 // taskCode is the code a failed task check closes the channel with: the shell

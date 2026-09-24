@@ -667,14 +667,114 @@ func TestCheckRefusesCoreAPIAction(t *testing.T) {
 	wantClose(t, d, cl, wire.CodeNotFound)
 }
 
-// TestCheckWithoutTrustList: a controller that has verified no list can check
-// nothing, and must not fall back to letting a channel without a user through.
-func TestCheckWithoutTrustList(t *testing.T) {
-	f := newFixture(t)
-	r := f.request(withoutUser(t, coreOpen(core.AppUsers, core.ActTrust, nil)))
+// unlisted is a request of a controller that has verified no version of the
+// trust list yet: the state a server is in between pairing and its first
+// chain.
+func (f fixture) unlisted(payload []byte) Request {
+	r := f.request(payload)
 	r.List = nil
-	d, cl := Check(context.Background(), r)
-	wantClose(t, d, cl, wire.CodeUnreachable)
+	return r
+}
+
+// TestCheckWithoutTrustListTakesOnlyTheFirstChain fences the one exception of
+// this gate in all four of its marks. A controller that has verified no
+// version can check nothing — and would therefore never get one either, since
+// the chain that would give it one arrives on a channel. The channel that
+// brings it is let through, and it alone.
+//
+// Each subtest below is one mark of that exception. Take a mark out of Check
+// and the subtest named after it turns red.
+func TestCheckWithoutTrustListTakesOnlyTheFirstChain(t *testing.T) {
+	f := newFixture(t)
+
+	// Mark 3 and 4: what the decision carries. Nothing of this channel names
+	// a user or a task, so nothing downstream can authorise or log one.
+	t.Run("the first chain runs and names nobody", func(t *testing.T) {
+		d, cl := Check(context.Background(), f.unlisted(withoutUser(t, coreOpen(core.AppUsers, core.ActTrust, nil))))
+		if cl != nil {
+			t.Fatalf("CLOSE %+v, want the channel that brings the first version to open", *cl)
+		}
+		if !d.Core || d.Action.App != core.AppUsers || d.Action.Service != core.ServiceController ||
+			d.Action.Name != core.ActTrust {
+			t.Errorf("action %+v, core %v, want ngc.users/controller/trust", d.Action, d.Core)
+		}
+		if d.Opened.Session != nil || d.User != "" || d.UserName != "" {
+			t.Errorf("the channel names user %q (%q) and carries a session %v, want none of the three",
+				d.User, d.UserName, d.Opened.Session != nil)
+		}
+		if d.Task != nil {
+			t.Errorf("the channel carries task %+v, want none: nothing can verify one without a list", *d.Task)
+		}
+		if d.App.ID != "" || d.Manifest != nil {
+			t.Errorf("the channel carries app %q and a manifest %v, want neither", d.App.ID, d.Manifest != nil)
+		}
+		if d.Opened.Open.App != core.AppUsers || d.Opened.Window != wire.DefaultWindow {
+			t.Errorf("the decision carries OPEN %+v with window %d", d.Opened.Open, d.Opened.Window)
+		}
+	})
+
+	// Mark 2: a certificate. Without a list nothing can check one, and
+	// session.VerifyClient would read the users of a list that is not there.
+	t.Run("with a certificate", func(t *testing.T) {
+		d, cl := Check(context.Background(), f.unlisted(f.withUser(t, coreOpen(core.AppUsers, core.ActTrust, nil))))
+		wantClose(t, d, cl, wire.CodeUnreachable)
+	})
+
+	// Mark 1: the action. The three other core actions the API may open
+	// without a user are none of this exception.
+	for _, name := range []string{core.ActStage, core.ActInstall, core.ActLicense} {
+		t.Run("another action without a user: "+name, func(t *testing.T) {
+			a, ok := core.Lookup(core.AppStore, core.ServiceController, name)
+			if !ok || !core.WithoutUser(a) {
+				t.Fatalf("%s is not a core action the API opens without a user", name)
+			}
+			d, cl := Check(context.Background(), f.unlisted(withoutUser(t, coreOpen(core.AppStore, name, nil))))
+			wantClose(t, d, cl, wire.CodeUnreachable)
+		})
+	}
+
+	// Mark 1 again, in its other half: what is no core action at all. The
+	// certificate is left off on purpose — with one this channel is already
+	// turned away by the mark above and would never reach the lookup, so it
+	// would fence nothing here.
+	t.Run("an app channel without a certificate", func(t *testing.T) {
+		d, cl := Check(context.Background(), f.unlisted(withoutUser(t, f.appOpen(testApp, testService, testAction))))
+		wantClose(t, d, cl, wire.CodeUnreachable)
+	})
+	// And with one it is refused twice over: by the certificate and by the
+	// lookup. It fences neither mark on its own and is here for the case
+	// itself, which is the one a shell really sends.
+	t.Run("an app channel with a certificate", func(t *testing.T) {
+		d, cl := Check(context.Background(), f.unlisted(f.withUser(t, f.appOpen(testApp, testService, testAction))))
+		wantClose(t, d, cl, wire.CodeUnreachable)
+	})
+	t.Run("an action of service api", func(t *testing.T) {
+		o := wire.Open{App: core.AppDesktop, Service: core.ServiceAPI, Action: core.ActMe, Window: wire.DefaultWindow}
+		d, cl := Check(context.Background(), f.unlisted(withoutUser(t, o)))
+		wantClose(t, d, cl, wire.CodeUnreachable)
+	})
+
+	// An OPEN that cannot be read is not the first chain either.
+	t.Run("an open that is none", func(t *testing.T) {
+		d, cl := Check(context.Background(), f.unlisted([]byte(`{}`)))
+		wantClose(t, d, cl, wire.CodeUnreachable)
+	})
+}
+
+// TestCheckWithATrustListDecidesAsBefore: the exception is the missing list
+// and nothing else. With a list the same two OPENs go the way they always
+// went — the one without a certificate through, the one with a certificate
+// refused as E_FORBIDDEN, because a shell may not open this action
+// (core.ShellOpens). The codes differ from the ones above on purpose: without
+// a list nothing can be said about a certificate at all, with one it can.
+func TestCheckWithATrustListDecidesAsBefore(t *testing.T) {
+	f := newFixture(t)
+	if _, cl := Check(context.Background(),
+		f.request(withoutUser(t, coreOpen(core.AppUsers, core.ActTrust, nil)))); cl != nil {
+		t.Errorf("CLOSE %+v, want the channel to open with a list as it does without one", *cl)
+	}
+	d, cl := Check(context.Background(), f.request(f.withUser(t, coreOpen(core.AppUsers, core.ActTrust, nil))))
+	wantClose(t, d, cl, wire.CodeForbidden)
 }
 
 // TestCheckRefusesMalformedOpen: whatever cannot be read is a failed check.

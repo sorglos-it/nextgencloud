@@ -527,6 +527,65 @@ func TestTrustChannelAnswersWithNewestSeq(t *testing.T) {
 	}
 }
 
+// A controller between pairing and its first chain: it holds the anchor and
+// has stored no version. That is the state the design means (chain.Keeper
+// takes its first chain from the anchor), and it is the one a controller
+// cannot get out of on its own — the chain arrives on a channel. So the
+// channel runs, the first version lands, and the one after it lands on the
+// ordinary way.
+func TestAFreshControllerTakesItsFirstChain(t *testing.T) {
+	w := newWorld(t)
+	fresh := state.New(memstore.New())
+	t.Cleanup(func() { fresh.Close() })
+	k := chain.New(fresh, trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)})
+	if err := k.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if k.List() != nil {
+		t.Fatal("a controller that stored nothing holds a list")
+	}
+	ctlKey, _ := trusttest.NodeKeys(ctlFill)
+	w.keep, w.st = k, fresh
+	w.srv = New(Deps{Node: node, Noise: ctlKey, Chain: k, State: fresh,
+		Now: func() int64 { return now }, Log: w.log})
+	v1, v2 := w.v1, w.next(t)
+	ended := w.tunnel(t, func(a *apiSide) {
+		// The anchor's own version is the first link of the chain.
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, v1))
+		a.eof(1)
+		out, cl := a.result(1)
+		if cl.Status != wire.StatusOK || cl.Code != "" {
+			t.Fatalf("the first chain ended with %+v, want status ok", cl)
+		}
+		var got core.TrustResult
+		if err := json.Unmarshal(out, &got); err != nil || got.Seq != 1 {
+			t.Errorf("the controller answered %q (%v), want seq 1", out, err)
+		}
+		a.shut(1)
+		// From here the ordinary way carries it: the controller now has a
+		// list, and the next version goes through the check like any other.
+		a.open(2, trustOpen(t))
+		a.data(2, chainOf(t, v2))
+		a.eof(2)
+		out, cl = a.result(2)
+		if cl.Status != wire.StatusOK || cl.Code != "" {
+			t.Errorf("the second chain ended with %+v, want status ok", cl)
+		}
+		if err := json.Unmarshal(out, &got); err != nil || got.Seq != 2 {
+			t.Errorf("the controller answered %q (%v), want seq 2", out, err)
+		}
+		a.shut(2)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if seq := k.Seq(); seq != 2 {
+		t.Errorf("the keeper holds version %d, want the second one it verified", seq)
+	}
+}
+
 // A chain that does not verify changes nothing: the channel ends with
 // E_VERIFY and the controller still holds the version it held before.
 func TestTrustChannelRefusesBrokenChain(t *testing.T) {
