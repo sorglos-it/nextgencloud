@@ -118,10 +118,9 @@ func (f fixture) appOpen(app, service, action string) wire.Open {
 	return wire.Open{App: app, Service: service, Action: action, Window: wire.DefaultWindow, E2E: f.e2e}
 }
 
-// task returns a task of this admin for a service and action on the
-// controller on,
-// signed by whoever holds seed. The session key of the certificate comes from
-// sessionSeed; any other seed is a stranger's key.
+// task returns a task of this admin for an app, service and action on the
+// controller on, signed by whoever holds seed. The session key of the
+// certificate comes from sessionSeed; any other seed is a stranger's key.
 func (f fixture) task(t testing.TB, seed []byte, on, app, service, action string, params any) *sign.Envelope {
 	t.Helper()
 	var raw json.RawMessage
