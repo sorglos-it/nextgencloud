@@ -242,6 +242,58 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   });
 });
 
+// Fixrunde 1, W2: Go's json.Marshal writes all seven fields of
+// session.ClientCert every time - the struct has no omitempty anywhere.
+// JSON.stringify leaves out a member whose value is undefined, so a field
+// nobody filled in would be quietly missing from the very bytes the user then
+// signs with a passkey, and the API would refuse what it gets: a burnt
+// gesture and no error on the way. A BigInt is in the list because it passes
+// every check a number passes and is no JSON number.
+test("encodeClientCert writes all seven fields or refuses", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const s = await import("/assets/js/contracts/session.js");
+    const { fromUtf8 } = await import("/assets/js/contracts/b64.js");
+    const good = {
+      inst: "EREREREREREREREREREREQ", user: "ISEhISEhISEhISEhISEhIQ",
+      nonce: new Uint8Array(32), sig: new Uint8Array(32), dh: new Uint8Array(32),
+      iat: 1790000000, exp: 1790003600,
+    };
+    const out = (c) => {
+      try {
+        return fromUtf8(s.encodeClientCert(c));
+      } catch (e) {
+        return e.message;
+      }
+    };
+    const without = (name) => {
+      const c = { ...good };
+      delete c[name];
+      return out(c);
+    };
+    return {
+      good: out(good),
+      iatUndefined: out({ ...good, iat: undefined }),
+      expMissing: without("exp"),
+      userUndefined: out({ ...good, user: undefined }),
+      iatNaN: out({ ...good, iat: NaN }),
+      bigint: out({ ...good, iat: 1n, exp: 2n }),
+      nul: out(null),
+    };
+  });
+  const zeros = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const refused = "session: cannot encode this certificate";
+  expect(got).toEqual({
+    good: `{"inst":"EREREREREREREREREREREQ","user":"ISEhISEhISEhISEhISEhIQ","nonce":"${zeros}",`
+      + `"sig":"${zeros}","dh":"${zeros}","iat":1790000000,"exp":1790003600}`,
+    iatUndefined: refused,
+    expMissing: refused,
+    userUndefined: refused,
+    iatNaN: refused,
+    bigint: refused,
+    nul: refused,
+  });
+});
+
 // Fixrunde 1, the same question asked of verifyAPI's node: its id is read
 // once for "is this a node at all" and once for "is this the node the
 // certificate names", and its sign once to find it and once to check the
