@@ -638,11 +638,17 @@ prepare() {
 	done
 
 	# Five sticks, five different keys: if two matched, every "any pair opens"
-	# test would pass for the wrong reason.
-	distinct=$(for n in 1 2 3 4 5; do
-		openssl ec -pubin -in "$work/keys/stick$n.pem" -noout -text | tail -n +2
-	done | sort -u | wc -l)
-	if [ "$distinct" -lt 5 ]; then
+	# test would pass for the wrong reason. One line per stick, not the text
+	# of the key: a single P-384 key is already ten lines, so counting those
+	# never falls below five (measured: five identical keys gave ten). Read
+	# from standard input, or sha256sum writes the file name into the line and
+	# all five differ whatever the keys are.
+	fingerprints=""
+	for n in 1 2 3 4 5; do
+		fingerprints="$fingerprints$(sha256sum < "$work/keys/stick$n.pem")\n"
+	done
+	distinct="$(printf '%b' "$fingerprints" | sort -u | wc -l)"
+	if [ "$distinct" -ne 5 ]; then
 		printf 'Zwei Test-Sticks haben denselben Schlüssel. Das darf nicht sein.\n' >&2
 		printf 'Token wegwerfen und neu anlegen: rm -rf %s/softhsm/tokens/* %s/keys/stick*\n' \
 			"$work" "$work" >&2
@@ -662,8 +668,9 @@ prepare) prepare ;;
 esac
 ```
 
-**Zur PIN:** `pkcs11-tool` hat keine Option, die PIN aus einer Datei zu lesen. Die PIN kommt
-deshalb aus `dist/recovery/pin/stick.txt` (Rechte 0600) und steht für die Dauer des Aufrufs in der
+**Zur PIN:** Weder `pkcs11-tool` noch `softhsm2-util --init-token` kann die PIN aus einer Datei
+lesen — `--pin` und `--so-pin` nehmen sie nur auf der Befehlszeile. Die PIN kommt deshalb aus
+`dist/recovery/pin/stick.txt` (Rechte 0600) und steht für die Dauer jedes dieser Aufrufe in der
 Prozessliste. Das ist hier tragbar, weil es eine TEST-PIN eines SoftHSM2-Token ist (Vorgabe,
 Abschnitt 13); das echte Stick-Modul in Paket 2 benutzt `cryptoki` und hat das Problem nicht. Der
 Punkt steht am Ende dieses Plans unter „Offene Entscheidungen für den Koordinator".
@@ -678,7 +685,7 @@ Erwartet: `Fünf Test-Sticks bereit (1-4 Quorum, 5 Reserve)`.
 Ausführen:
 ```bash
 for n in 1 2 3 4 5; do
-	openssl ec -pubin -in dist/recovery/keys/stick$n.pem -noout -text | tail -n +2
+	sha256sum < dist/recovery/keys/stick$n.pem
 done | sort -u | wc -l
 ```
 Erwartet: `5`. Steht dort weniger, ist die Einrichtung fehlerhaft — nicht weitermachen.
