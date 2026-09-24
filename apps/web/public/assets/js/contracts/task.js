@@ -88,15 +88,14 @@ export function parseTask(payload) {
 // one point the wire never carries anyway: a null, which enc and json.js
 // refuse everywhere, raw values included.
 //
-// One place is milder, and it lets buildTask make a task no verifier reads
-// back - the only such gap found here: the levels are counted from the
-// params' own first byte
+// One place is milder: the levels are counted from the params' own first byte
 // here and from the task's first byte there, so params nested exactly
 // MAX_DEPTH levels deep pass this check and are one level too deep once they
 // sit inside a task. Measured against this file, level by level: one below
-// MAX_DEPTH is read back, exactly MAX_DEPTH passes here and the verifier
-// refuses the task, one above is refused here. It costs a refusal, never an
-// acceptance.
+// MAX_DEPTH is read back, exactly MAX_DEPTH passes here, one above is refused
+// here. It costs a refusal, never an acceptance - encodeTask writes the task
+// at MAX_DEPTH and no verifier reads it back, while buildTask refuses it,
+// because it reads its own document back before it hands anything over.
 function validParams(text) {
   if (text === "") return true;
   try {
@@ -123,10 +122,18 @@ function validParams(text) {
 // elements that one walk read, not what the array holds. Measured: an id of
 // no bytes whose length answers ID_SIZE is valid here, and the base64url of
 // ID_SIZE zero bytes is what goes into the signature - a wrong id, but the
-// same wrong one in the check and in the bytes, and the same again on a
-// second call. Never two. buildTask cannot reach it, because it makes its own
-// id from crypto.getRandomValues; only a task handed straight to encodeTask
-// or validateTask can carry such an array.
+// same wrong one in the check and in the bytes of that one call.
+//
+// Across two calls nothing is promised, and nothing can be. A Proxy around a
+// Uint8Array passes instanceof, answers every index itself and may answer a
+// different byte on each walk; measured against this file, two encodeTask
+// calls over one such id wrote "YWFhYWFhYWFhYWFhYWFhYQ" and then
+// "YmJiYmJiYmJiYmJiYmJiYg". Whoever has to hold a task and its bytes together
+// must therefore make both out of one call, which is what buildTask does
+// below. Its id is out of reach for this, because it comes from
+// crypto.getRandomValues into an array of its own, but its cert and its
+// params are the caller's: it reads them in exactly this one walk, and what
+// it hands back comes out of the document that walk produced.
 //
 // The params have no length read at all: fromUtf8 hands back the text the
 // bytes really hold, whatever length says, and both the check and the writer
@@ -176,9 +183,38 @@ function parts(t) {
 // false and never throws.
 export const validateTask = (t) => parts(t) !== null;
 
-// encodeTask writes the task in the field order of Go's task.Task; these
-// exact bytes are what the session key signs and what the end-to-end prologue
-// hashes.
+// write puts one reading of a task into the bytes Go's json.Marshal writes
+// for task.Task, field for field in its order; these exact bytes are what the
+// session key signs and what the end-to-end prologue hashes. It takes the
+// pieces and never a task, so that what is written is always what parts read
+// and checked, never a second reading of the same object: encodeTask below is
+// one reading and this, buildTask is one reading, this, and a reading of the
+// document that came out.
+function write(p) {
+  const head = JSON.stringify({
+    id: p.id, inst: p.inst, cert: p.cert, node: p.node,
+    app: p.app, service: p.service, action: p.action,
+  }).slice(0, -1);
+  const tail = JSON.stringify({ iat: p.iat, exp: p.exp }).slice(1);
+  // params stay raw: the bytes go in as the text they hold, because the
+  // prologue hashes exactly these bytes. Measured over all 1112064 code
+  // points UTF-8 has: utf8(fromUtf8(x)) gives x again for every one of them
+  // but one, so the text carries the bytes through. The exception is a U+FEFF
+  // at the very front, which TextDecoder drops as a byte order mark: params
+  // that begin with one are written without it, and params that are nothing
+  // but one are written as no params at all. Go refuses both - measured
+  // against shared/task, wire.ValidParams says false for a leading BOM -
+  // while this file takes them. Closing it needs either a second reading of
+  // the caller's bytes, which is the very thing parts exists to avoid, or a
+  // decoder of its own in b64.js. Reported, not closed here.
+  //
+  // Go's Task has omitempty on params and on no other field, so params is the
+  // one member that may be missing and node is written even when it is empty.
+  const mid = p.params === "" ? "" : ',"params":' + p.params;
+  return utf8(head + mid + "," + tail);
+}
+
+// encodeTask writes the task t.
 //
 // It refuses a task it would not also call valid, for the reason
 // session.encodeClientCert gives: Go's json.Marshal writes every field of the
@@ -189,42 +225,64 @@ export const validateTask = (t) => parts(t) !== null;
 export function encodeTask(t) {
   const p = parts(t);
   if (p === null) throw new Error("task: cannot encode this task");
-  const head = JSON.stringify({
-    id: p.id, inst: p.inst, cert: p.cert, node: p.node,
-    app: p.app, service: p.service, action: p.action,
-  }).slice(0, -1);
-  const tail = JSON.stringify({ iat: p.iat, exp: p.exp }).slice(1);
-  // params stays raw: its bytes go in unchanged, as the prologue hashes them.
-  // They travel through a text on the way, and come out the same bytes:
-  // fromUtf8 in parts refuses everything that is not valid UTF-8, and valid
-  // UTF-8 has exactly one spelling per text, so utf8 below writes back what
-  // was read. Go's Task has omitempty on params and on no other field, so
-  // params is the one member that may be missing and node is written even
-  // when it is empty.
-  const mid = p.params === "" ? "" : ',"params":' + p.params;
-  return utf8(head + mid + "," + tail);
+  return write(p);
 }
 
 // buildTask makes the task for one channel. Its lifetime is short, so a task
 // that leaks is useless soon; the verifier remembers its id until it expires.
+//
+// inst, node, app, service, action and now are the caller's values and go
+// into the task as they stand. certHash and params are the caller's bytes,
+// and bytes are the one kind of value here that can answer two readings
+// differently (see parts). So the caller's bytes are walked exactly once, by
+// parts, and everything after that is this function's own: the document out
+// of what that walk read, and the task that comes back out of the document.
+// Nothing the caller handed over is part of the answer.
+//
+// Reading the document back is also the only way to promise what a caller
+// needs here, which is that task and bytes say the same thing: what comes
+// back is then the task every verifier reads out of exactly these bytes, down
+// to the white space a raw params value may sit behind - measured against
+// shared/task, Go decodes all of it to the same id, cert and params. That
+// white space is the one thing the task no longer carries: hand params in
+// behind two spaces and encodeTask of the task that comes back is two bytes
+// shorter than these bytes, because the document keeps them and no reader of
+// it does. Go's json.Marshal drops them too.
+//
+// Measured against the version before this one, which walked the caller's
+// cert twice, once for validateTask and once for encodeTask: a cert that
+// answered the first walk with 32 sevens and the second with 32 nines was
+// checked as the one and signed as the other, and a 0-byte array whose length
+// answers 32 bound the task to 32 zero bytes while the returned task.cert
+// stayed empty. The price is one decode of the document per call: measured on
+// V8, 0.0116 ms for the vector's params and 0.0387 ms for params at
+// MAX_PARAMS, out of 0.0229 ms and 0.1003 ms for the whole call.
 export function buildTask({ inst, certHash: cert, node, app, service, action, params, now } = {}) {
-  const id = crypto.getRandomValues(new Uint8Array(ID_SIZE));
-  const t = {
-    id, inst, cert, node: node || "", app, service, action,
-    params: params || null, iat: now, exp: now + LIFETIME,
-  };
-  // t is this function's own object of plain members, so the check and the
-  // writing below read the same values out of it; only params is the caller's,
-  // and both of them go by the text those bytes really hold.
-  //
+  // The id is this function's own array, filled in place, so nothing the
+  // caller answers can reach it and nothing depends on what getRandomValues
+  // gives back.
+  const id = new Uint8Array(ID_SIZE);
+  crypto.getRandomValues(id);
   // A now that is no whole number makes an exp that is none either - a now of
   // text makes exp text, because a + next to a string joins instead of adding
   // - and parts refuses both, so nothing is signed for a point in time nobody
   // named.
-  if (!validateTask(t)) throw new Error("task: malformed task");
-  const bytes = encodeTask(t);
+  const p = parts({
+    id, inst, cert, node: node || "", app, service, action,
+    params: params || null, iat: now, exp: now + LIFETIME,
+  });
+  if (p === null) throw new Error("task: malformed task");
+  const bytes = write(p);
   if (bytes.length > MAX_TASK) throw new Error("task: too large");
-  return { task: t, bytes };
+  // parseTask is the one place that says what a document holds, so it says it
+  // here too. It refuses a document parts lets through and a verifier does
+  // not: params nested exactly MAX_DEPTH levels deep, which are one level too
+  // deep inside a task (see validParams). That refusal used to fall to the
+  // verifier; now it falls here, where the shell still has the task. Of 414
+  // further params shapes that parts accepts - member counts around
+  // MAX_MEMBERS, names around MAX_NAME, long arrays and strings, the number
+  // bounds, white space - it refused none.
+  return { task: parseTask(bytes), bytes };
 }
 
 // signTask puts the session key's signature over the bytes encodeTask made.
