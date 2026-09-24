@@ -106,17 +106,16 @@ var (
 //     writing at the same time - the ping falls at the latest one interval
 //     into the hold and then waits one interval for its pong; the link counts
 //     as dead although the API is healthy, and Run comes back with an error.
-//     The one thing that puts that off: a ping that gave up while a message of
-//     this side stood in the socket is skipped and the next interval asks
-//     again (ping), so a handler that holds the reading and writes at the same
-//     time is measured by the intervals in which it did not write. No length
-//     of a single call is safe on its own, because the holds add up. What a
+//     The one thing that puts that off: a ping that gave up while a write of
+//     this side was running is skipped and the next interval asks again
+//     (ping), so a handler that holds the reading and writes at the same time
+//     is measured by the intervals in which it did not write. No length of a
+//     single call is safe on its own, because the holds add up. What a
 //     handler must keep to is therefore not a length but this: give the
 //     reading back at once. Whatever cannot be answered on the spot belongs
 //     in a goroutine of its own, which answers with Tunnel.Send, and Frame
 //     returns without waiting for it. Both ways of losing the tunnel are
-//     measured, see
-//     TestAHandlerThatHoldsTheReadingCostsTheTunnel.
+//     measured, see TestAHandlerThatHoldsTheReadingCostsTheTunnel.
 type Handler interface {
 	Frame(t *Tunnel, f wire.Frame) error
 }
@@ -206,24 +205,57 @@ type Tunnel struct {
 	// ends after the close message, and until then an orderly end looks like
 	// a link that fell apart.
 	closing atomic.Bool
-	// writing counts the messages of this side that stand in the socket right
-	// now. Only write raises it, around t.c.Write and nothing else, and mu
-	// above keeps it at one - it is a number and not a flag because a number
-	// cannot be set twice by mistake. What it is for: the ping frame goes
-	// through the same lock of the library as every message of ours, so a
-	// ping that gave up while one of them stood there gave up over this side
-	// and says nothing about the API (ping).
+	// writing counts the writes of this side that are running: it goes up
+	// just before t.c.Write and down when write returns. That is less than
+	// "the bytes of this side that stand in the socket", and the difference
+	// matters: once the kernel has taken the bytes into the send buffer,
+	// Write comes back and this falls to 0 while those bytes are still on
+	// their way out.
+	//
+	// That gap was measured, in the tests of this package and by accident:
+	// with about two and a half megabytes of ours lying in the send buffer
+	// and writing at 0, the link was called dead inside nineteen seconds
+	// although the API answered every ping it saw. Which of the two it was -
+	// a ping frame queued behind that backlog, or a ping that could not put
+	// its own frame into a full buffer - was not told apart, and for this
+	// count it makes no difference: neither is a write of ours running. So
+	// what is caught here is a write that is standing, not a socket that is
+	// full.
+	//
+	// Only write raises it, around t.c.Write and nothing else, and mu above
+	// keeps it at one - it is a number and not a flag because a number cannot
+	// be set twice by mistake. What it is for: the ping frame goes through
+	// the same lock of the library as every message of ours, so a ping that
+	// gave up while one of them was in t.c.Write gave up over this side and
+	// says nothing about the API (ping).
 	//
 	// One holder of that lock this count does not see: the read loop of the
 	// library answers a ping of the API itself, out of the goroutine of Run,
-	// with a pong over the same lock and for up to five seconds
-	// (vendor .../read.go:303, :323). So if the API pings while the socket of
-	// this side is blocked, a ping of ours can still lose the lock at
-	// writing == 0 and the link be called dead although the API is healthy.
-	// It is the one gap left in this bookkeeping, it is narrow - it needs a
-	// ping of the API to fall into those seconds - and closing it would need
-	// a second count that this package has no hook for: the library offers a
-	// callback before the pong (OnPingReceived) and none after it.
+	// with a pong over the same lock and under a deadline of five seconds
+	// (vendor .../read.go:303, :323, write.go:277). Two things can come of
+	// that, and only the first one a count could ever step in front of:
+	//
+	//   - A ping of ours loses the lock to that pong and finds writing == 0,
+	//     so the link is called dead although the API is healthy. Narrow: it
+	//     takes a ping of the API to fall into those seconds.
+	//   - A write of ours holds the lock longer than those five seconds - it
+	//     may hold it up to WriteTimeout - and then the read loop does not
+	//     get the lock for the pong at all (conn.go:286-292). handleControl
+	//     gives that back as an error, and the error is the end of the
+	//     reading: read.go:202 and :208 -> reader (:382-384) -> Conn.Read ->
+	//     message, where every error of Conn.Read becomes ErrAPI -> Run,
+	//     which hands it out because this side was not the one closing. The
+	//     tunnel is gone at once. No bookkeeping helps here, because it is
+	//     not our ping that fails.
+	//
+	// What sets both off is a ping of the API. Nothing in this tree sends
+	// one - t.c.Ping in ping below is the only ping in the whole program -
+	// and the contract names an interval (tunnel.PingInterval) without saying
+	// who asks, so an API that pings is allowed and plausible, but that it
+	// happens is not shown anywhere. Closing the first case would need a
+	// second count this package has no hook for: the library offers a
+	// callback before the pong (OnPingReceived) and none after it. The second
+	// case cannot be closed here at all.
 	writing atomic.Int64
 	// since is taken once the Noise session stands, so how long a tunnel
 	// stood is measured from just before the two hellos.
@@ -519,13 +551,15 @@ func (t *Tunnel) write(ctx context.Context, f wire.Frame) error {
 		return ErrConfig
 	}
 	// Raised around the write and nothing else: what the ping asks is whether
-	// a message of ours stood in the socket, not whether one was on its way
-	// through this package. Lowered by defer, not by the next statement: a
-	// panic in the library would otherwise leave the count up for good, and a
-	// count that is up for good silences the ping of this tunnel for ever -
-	// WriteTimeout does not catch that either, because no write is running
-	// any more. It runs before mu is given up, so nobody sees a free lock and
-	// a message still standing in the socket.
+	// a write of ours was running and holding the lock of the library, not
+	// whether a message was on its way through this package - and not, for
+	// that matter, whether bytes of ours are still in the send buffer of the
+	// socket, which this cannot say (writing). Lowered by defer, not by the
+	// next statement: a panic in the library would otherwise leave the count
+	// up for good, and a count that is up for good silences the ping of this
+	// tunnel for ever - WriteTimeout does not catch that either, because no
+	// write is running any more. It runs before mu is given up, so nobody
+	// sees a free lock and a write of ours still counted as running.
 	t.writing.Add(1)
 	defer t.writing.Add(-1)
 	err = t.c.Write(ctx, websocket.MessageBinary, msg)
@@ -581,11 +615,11 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 //
 //   - This side is closing the tunnel, so the socket was taken away under the
 //     ping (closing).
-//   - A message of this side stands in the socket (writing). The ping frame
-//     goes through the same lock of the library as every message
+//   - A write of this side is running and holding the lock (writing). The
+//     ping frame goes through the same lock of the library as every message
 //     (writeFrameMu, vendor .../write.go:289), and the library gives that
 //     lock up after five seconds for a control frame
-//     (write.go:276-277) while a write of ours may stand in it up to
+//     (write.go:276-277) while a write of ours may hold it up to
 //     WriteTimeout. The ping then never got its frame out - the API does not
 //     even see it - so there is nothing it could answer.
 //
@@ -596,13 +630,21 @@ func (t *Tunnel) control(ctx context.Context, typ string, body any) error {
 // that is what dead says - this tunnel can no longer be vouched for, whatever
 // the socket still claims.
 //
-// One holder of the same lock is not counted, and there the old mistake can
-// still happen: the read loop of the library answers a ping of the API with a
-// pong over that lock and for up to five seconds (read.go:303, :323). A ping
-// of ours that loses the lock to it finds writing == 0 and makes the link
-// dead although the API is healthy. It takes a ping of the API falling into
-// those seconds, and closing it would take a count this package has no hook
-// for (writing).
+// Two things this does not cover, both set off by a ping of the API, which
+// nothing in this tree sends today (writing has them in full):
+//
+//   - The read loop of the library answers such a ping over the same lock.
+//     A ping of ours that loses the lock to it finds writing == 0 and makes
+//     the link dead although the API is healthy.
+//   - If a write of ours holds that lock longer than the five seconds the
+//     pong has, the pong is not written at all, and that error ends the
+//     reading and with it Run. The tunnel is gone at once, and skipping a
+//     ping would not have helped: it is not our ping that fails there.
+//
+// What this count does say is bounded too: it is up while t.c.Write runs and
+// not while bytes of ours stand in the send buffer, so a ping whose frame
+// went in behind a backlog can still be called a peer that went quiet
+// (writing).
 func (t *Tunnel) ping() {
 	tick := time.NewTicker(t.cfg.every())
 	defer tick.Stop()
@@ -614,9 +656,9 @@ func (t *Tunnel) ping() {
 		}
 		ctx, cancel := context.WithTimeout(t.life, t.cfg.every())
 		err := t.c.Ping(ctx)
-		// Read before anything else runs: what counts is whether a message of
-		// ours stood in the socket when the ping gave up, not whether one was
-		// there at some point while it waited.
+		// Read before anything else runs: what counts is whether a write of
+		// ours was running when the ping gave up, not whether one ran at
+		// some point while it waited.
 		mine := t.writing.Load() > 0
 		cancel()
 		if err == nil {
