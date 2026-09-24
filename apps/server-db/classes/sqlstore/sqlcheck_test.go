@@ -235,6 +235,15 @@ type checker struct {
 	stmt   map[at]bool
 	vals   map[at]bool
 	asked  map[*types.Func]bool
+	self   types.Type // the store whose OnceUse is being read; it is never the driver
+}
+
+// receiverOf is the type a method is declared on, or nil for a function.
+func (c *checker) receiverOf(fn *ast.FuncDecl) types.Type {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return nil
+	}
+	return c.p.info.Types[fn.Recv.List[0].Type].Type
 }
 
 func (c *checker) report(sql bool, pos token.Pos, format string, a ...any) {
@@ -487,37 +496,37 @@ func (c *checker) noReflect() {
 // writeVerbs open a statement that changes rows.
 var writeVerbs = map[string]bool{"UPDATE": true, "INSERT": true, "DELETE": true, "REPLACE": true}
 
-// statementWrites says whether a statement changes rows. It is asked only of
-// what stands where a statement stands at a call to the driver, never of a
-// string found somewhere in a body: a message may open with the word select,
-// and an earlier reading of every expression called limits.go a statement for
-// exactly that reason.
+// mustWrite says whether a statement changes rows. It is asked only of what
+// stands where a statement stands at a call to the driver, never of a string
+// found somewhere in a body: a message may open with the word select, and an
+// earlier reading of every expression called limits.go a statement for
+// exactly that reason. Anything it cannot read as a write counts as a read,
+// which is the strict direction.
 //
 // One that opens with WITH is decided on its words and not on its first one:
 // a common table expression may end in an UPDATE just as well as in a SELECT,
 // and only the whole of it tells the two apart. Whole words are compared, so
 // a column called updated is no UPDATE.
-func statementWrites(p *pkgSource, e ast.Expr) (write, is bool) {
+func mustWrite(p *pkgSource, e ast.Expr) bool {
 	tv, ok := p.info.Types[e]
 	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
-		return false, false
+		return false
 	}
 	w := strings.Fields(strings.ToUpper(constant.StringVal(tv.Value)))
 	if len(w) == 0 {
-		return false, false
+		return false
 	}
-	switch {
-	case writeVerbs[w[0]]:
-		return true, true
-	case w[0] == "WITH":
+	if writeVerbs[w[0]] {
+		return true
+	}
+	if w[0] == "WITH" {
 		for _, x := range w[1:] {
 			if writeVerbs[x] {
-				return true, true
+				return true
 			}
 		}
-		return false, true
 	}
-	return false, true // anything else is read at best
+	return false
 }
 
 // ownFunc is the function a call names, when this module declares it.
@@ -546,49 +555,27 @@ func (c *checker) litOf(call *ast.CallExpr) *ast.FuncLit {
 	return lit
 }
 
-// litPlaces sorts the function literals of n by when they run. here is those
-// that run where they stand: an argument of a call, or a literal called on
-// the spot. later is those a defer or a go carries, in the order they are
-// written - a deferred one runs after everything else in the body, so it can
-// only be the first statement when the body holds none, and a started one
-// runs at no time this reading could name. A literal given a name is in
-// neither: it runs where the name is called, and it is read there.
-func litPlaces(n ast.Node) (here map[*ast.FuncLit]bool, later []*ast.FuncLit) {
-	off := map[*ast.FuncLit]bool{}
-	ast.Inspect(n, func(x ast.Node) bool {
-		var call *ast.CallExpr
-		switch s := x.(type) {
-		case *ast.DeferStmt:
-			call = s.Call
-		case *ast.GoStmt:
-			call = s.Call
-		default:
-			return true
-		}
-		if lit, ok := call.Fun.(*ast.FuncLit); ok {
-			off[lit] = true
-			later = append(later, lit)
-		}
-		return true
-	})
-	return argLits(n, off), later
-}
-
 // argLits are the literals that stand as an argument of a call, or are called
-// on the spot, less the ones a defer or a go carries.
-func argLits(n ast.Node, off map[*ast.FuncLit]bool) map[*ast.FuncLit]bool {
+// on the spot. Those run where they stand; a literal given a name runs where
+// the name is called, and it is read there instead. What a defer or a go
+// carries is read nowhere at all - see the note on the rule.
+func argLits(n ast.Node) map[*ast.FuncLit]bool {
 	out := map[*ast.FuncLit]bool{}
 	ast.Inspect(n, func(x ast.Node) bool {
+		switch x.(type) {
+		case *ast.DeferStmt, *ast.GoStmt:
+			return false
+		}
 		call, ok := x.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 		for _, a := range call.Args {
-			if lit, ok := a.(*ast.FuncLit); ok && !off[lit] {
+			if lit, ok := a.(*ast.FuncLit); ok {
 				out[lit] = true
 			}
 		}
-		if lit, ok := call.Fun.(*ast.FuncLit); ok && !off[lit] {
+		if lit, ok := call.Fun.(*ast.FuncLit); ok {
 			out[lit] = true
 		}
 		return true
@@ -602,27 +589,34 @@ func argLits(n ast.Node, off map[*ast.FuncLit]bool) map[*ast.FuncLit]bool {
 type bound map[*types.Var]ast.Expr
 
 // resolve follows a name through the parameters it was bound to, so that the
-// expression handed back is the one the caller really wrote.
-func (c *checker) resolve(e ast.Expr, b bound) ast.Expr {
+// expression handed back is the one the caller really wrote. It gives up on a
+// name that is written to anywhere: a parameter a helper overwrites with a
+// statement of its own still leads back to the caller's, and that one is then
+// the wrong answer. Giving up here means the place is reported, which is what
+// the head of this file asks for - a hole comes out as a failure.
+func (c *checker) resolve(e ast.Expr, b bound) (ast.Expr, bool) {
 	for range 8 { // a chain of helpers, not a cycle
 		v, ok := c.varOf(e)
 		if !ok {
-			return e
+			return e, true // a constant, or something with no name of its own
+		}
+		if len(c.made[v]) > 0 {
+			return e, false // written somewhere; which value stands here is not said
 		}
 		next, ok := b[v]
 		if !ok || next == e {
-			return e
+			return e, false // a name the guard did not follow into this body
 		}
 		e = next
 	}
-	return e
+	return e, false
 }
 
 // bind maps the parameters of fn to the arguments of call, each of them
 // resolved in the binding the call itself stands in. A variadic tail is left
 // out: every helper here takes its statement in a place of its own, and one
-// handed in the tail would be passed over rather than reported, the same as
-// any statement the guard cannot resolve.
+// handed in the tail would be reported where it reaches the driver, the same
+// as any statement the guard cannot follow.
 func (c *checker) bind(fn *types.Func, call *ast.CallExpr, b bound) bound {
 	out := bound{}
 	sig, ok := fn.Type().(*types.Signature)
@@ -638,9 +632,48 @@ func (c *checker) bind(fn *types.Func, call *ast.CallExpr, b bound) bound {
 		if i >= len(call.Args) {
 			break
 		}
-		out[ps.At(i)] = c.resolve(call.Args[i], b)
+		if e, ok := c.resolve(call.Args[i], b); ok {
+			out[ps.At(i)] = e
+		}
 	}
 	return out
+}
+
+// atDriver says whether this call hands a statement to the driver. The name
+// alone does not say it: a method of the store itself may be called Query
+// without any database behind it, and reading the name on its own made the
+// rule red on such a package. The receiver decides - the store never is the
+// driver, whatever its methods are called. A receiver go/types could not
+// place is taken for the driver, which is the strict direction.
+func (c *checker) atDriver(sel *ast.SelectorExpr) bool {
+	if !dbMethods[sel.Sel.Name] {
+		return false
+	}
+	t := c.p.info.Types[sel.X].Type
+	return t == nil || !sameNamed(t, c.self)
+}
+
+// sameNamed compares two types without minding how many pointers stand in
+// front of them.
+func sameNamed(a, b types.Type) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	for {
+		p, ok := a.(*types.Pointer)
+		if !ok {
+			break
+		}
+		a = p.Elem()
+	}
+	for {
+		p, ok := b.(*types.Pointer)
+		if !ok {
+			break
+		}
+		b = p.Elem()
+	}
+	return types.Identical(a, b)
 }
 
 // firstStmtIn is the first statement n gives the database, read in the order
@@ -653,30 +686,55 @@ func (c *checker) bind(fn *types.Func, call *ast.CallExpr, b bound) bound {
 // into a helper counts where the helper is called and not where it is
 // written; a statement handed to that helper as a parameter is followed
 // through bind. Each is read once: a loop through the same helper adds
-// nothing, and a cycle would not end. A statement the guard cannot resolve to
-// a constant is passed over, not reported: TestEverySQLIsAConstant is what
-// holds that side, and a second opinion on it here could only be wrong.
-func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, seenLit map[*ast.FuncLit]bool) (write bool, pos token.Pos, found bool) {
-	here, later := litPlaces(n)
+// nothing, and a cycle would not end.
+//
+// What stands at the statement and cannot be followed to a constant is
+// reported, not passed over. An earlier reading passed it over, and a helper
+// that overwrote the statement it was handed then came through both this rule
+// and TestEverySQLIsAConstant - through the second one because what it gave
+// the driver was a constant, only not the one it was handed.
+//
+// What a defer or a go carries is not read at all: see the note on the rule.
+type says int
+
+const (
+	saysNothing says = iota
+	saysWrite
+	saysRead
+	saysUnknown
+)
+
+func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, seenLit map[*ast.FuncLit]bool) (verdict says, pos token.Pos) {
+	here := argLits(n)
 	ast.Inspect(n, func(x ast.Node) bool {
-		if found || x == nil {
+		if verdict != saysNothing || x == nil {
 			return false
 		}
+		switch x.(type) {
+		case *ast.DeferStmt, *ast.GoStmt:
+			return false // runs at a time this reading does not name
+		}
 		if lit, ok := x.(*ast.FuncLit); ok && !here[lit] {
-			return false // it runs elsewhere, or later
+			return false // it runs where its name is called
 		}
 		call, ok := x.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && dbMethods[sel.Sel.Name] {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && c.atDriver(sel) {
 			i := c.stmtIndex(call, sel, skipCtx(sel.Sel.Name))
 			if i >= 0 && i < len(call.Args) {
-				stmt := c.resolve(call.Args[i], b)
-				if w, is := statementWrites(c.p, stmt); is {
-					write, pos, found = w, call.Args[i].Pos(), true
-					return false
+				pos = call.Args[i].Pos()
+				stmt, ok := c.resolve(call.Args[i], b)
+				switch {
+				case !ok:
+					verdict = saysUnknown
+				case mustWrite(c.p, stmt):
+					verdict = saysWrite
+				default:
+					verdict = saysRead
 				}
+				return false
 			}
 			return true
 		}
@@ -692,25 +750,14 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 			body = lit.Body
 		}
 		if body != nil {
-			if w, p, ok := c.firstStmtIn(body, next, seen, seenLit); ok {
-				write, pos, found = w, p, true
+			if v, p := c.firstStmtIn(body, next, seen, seenLit); v != saysNothing {
+				verdict, pos = v, p
 				return false
 			}
 		}
 		return true
 	})
-	// What a defer or a go carries runs after the body, so it is read only
-	// when the body gave the database nothing at all.
-	for _, lit := range later {
-		if found || seenLit[lit] {
-			break
-		}
-		seenLit[lit] = true
-		if w, p, ok := c.firstStmtIn(lit.Body, b, seen, seenLit); ok {
-			write, pos, found = w, p, true
-		}
-	}
-	return write, pos, found
+	return verdict, pos
 }
 
 // onceUseWritesFirst refuses a OnceUse that asks the database about the value
@@ -737,8 +784,8 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 // MariaDB is in no run of this repository. Read from the source, both are
 // caught on any machine, and neither answer flutters.
 //
-// What it does not hold, so that nobody takes it for more - all four
-// measured, none of them a guess:
+// What it does not hold, so that nobody takes it for more. Each of these was
+// measured against a store built for it, none of them is a guess:
 //
 //   - It reads the order, not that the count decides. A OnceUse that writes
 //     first and throws the row count away comes through it. Four other tests
@@ -755,6 +802,19 @@ func (c *checker) firstStmtIn(n ast.Node, b bound, seen map[*types.Func]bool, se
 //     beside a correct OnceUse passes. dbapi.Store keeps the name in place,
 //     but it forbids no method beside it: what keeps a second one out today
 //     is that nothing calls it, not this rule.
+//   - What a defer or a go carries is not read at all. A reading of it that
+//     took the written order for the run order was wrong in both directions -
+//     it called a right store wrong and let a wrong one through - and a named
+//     gap is better than that. A statement in a defer runs after the body, so
+//     a read there is no read in front of the write; what stays uncovered is
+//     a OnceUse that speaks only from defers, and that one is refused for
+//     what it is, with the guard saying it can find no statement rather than
+//     that the store is wrong. Both faces of it were measured: the right one
+//     and the wrong one are refused alike, on that ground.
+//   - Preparing is not speaking. stmtIndex counts a PrepareContext as the
+//     place a statement is given, so a prepared read counts where it is
+//     prepared and not where it is run. Both come out the same here, because
+//     nothing prepares a statement it does not then run.
 func (c *checker) onceUseWritesFirst() {
 	for _, file := range c.p.files {
 		for _, d := range file.Decls {
@@ -762,14 +822,18 @@ func (c *checker) onceUseWritesFirst() {
 			if !ok || fn.Name.Name != "OnceUse" || fn.Body == nil {
 				continue
 			}
-			write, pos, found := c.firstStmtIn(fn.Body, bound{}, map[*types.Func]bool{}, map[*ast.FuncLit]bool{})
-			switch {
-			case !found:
+			c.self = c.receiverOf(fn)
+			verdict, pos := c.firstStmtIn(fn.Body, bound{}, map[*types.Func]bool{}, map[*ast.FuncLit]bool{})
+			switch verdict {
+			case saysNothing:
 				c.reportAtomic(fn.Pos(), "OnceUse gives the database no statement the guard can find, "+
 					"so nothing here says the value is spent by the write that hands it out")
-			case !write:
+			case saysRead:
 				c.reportAtomic(pos, "the first statement it gives the database only reads, "+
 					"so what OnceUse hands out was decided by that read and not by the write")
+			case saysUnknown:
+				c.reportAtomic(pos, "the first statement OnceUse gives the database cannot be "+
+					"followed to the one written here, so nothing says it is the write that decides")
 			}
 		}
 	}
