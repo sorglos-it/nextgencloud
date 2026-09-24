@@ -242,6 +242,63 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   });
 });
 
+// Fixrunde 1, the same question asked of verifyAPI's node: its id is read
+// once for "is this a node at all" and once for "is this the node the
+// certificate names", and its sign once to find it and once to check the
+// signature. A getter that answers "api-1" first and "api-9" second lets a
+// certificate name a node that did not sign it. (The key survives such a
+// getter on its own: sign.verify derives the key id again and compares it
+// with the envelope's, so a second, other key is refused there. The id has no
+// such second line.)
+test("verifyAPI binds the certificate to the node it found", async ({ shell }) => {
+  test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.trust)),
+    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const sign = await import("/assets/js/contracts/sign.js");
+    const proof = await import("/assets/js/contracts/proof.js");
+    const { b64decode, b64encode, utf8 } = await import("/assets/js/contracts/b64.js");
+    const seed = new Uint8Array(32).fill(9);
+    const priv = await proof.privateFromSeed(seed);
+    const pub = await proof.publicFromSeed(seed);
+    const client = b64decode(d.client);
+    const cc = JSON.parse(new TextDecoder().decode(client));
+    // The certificate names api-9; the node that signs is api-1.
+    const payload = utf8(JSON.stringify({
+      inst: cc.inst, node: "api-9", client: b64encode(await s.certHash(client)),
+      dh: b64encode(new Uint8Array(32)), iat: cc.iat, exp: cc.exp,
+    }));
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
+      sign.message(sign.PURPOSE_API_CERT, payload)));
+    const env = { payload, kid: await sign.keyID(pub), sig };
+    const rest = {
+      kind: "api", name: "api-1", noise: new Uint8Array(32), sign: pub,
+      url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [],
+    };
+    let n = 0;
+    const node = { ...rest, get id() { n++; return n === 1 ? "api-1" : "api-9"; } };
+    const check = async (nodes) => {
+      try {
+        await s.verifyAPI(env, { installation: cc.inst, nodes }, client, d.now);
+        return "accepted";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return {
+      getter: await check([node]),
+      plain: await check([{ ...rest, id: "api-1" }]),
+    };
+  }, v);
+  // Both are the same certificate against the same key: it names api-9, the
+  // node that signed is api-1, and that is no session either way.
+  expect(got).toEqual({
+    getter: "session: malformed certificate",
+    plain: "session: malformed certificate",
+  });
+});
+
 // Fixrunde 1, W1: verifyApproval had no test at all, though session.json
 // carries the pair for it. client + proof is a certificate of the user admin
 // signed with his password key, and his role asks for no password on top, so
