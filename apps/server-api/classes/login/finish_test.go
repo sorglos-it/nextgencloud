@@ -318,10 +318,9 @@ func TestFinishDoesNotLockANameAKeyOfNobodyNamed(t *testing.T) {
 
 // TestFinishSaysSoWhenAFailureCannotBeCounted holds the one thing login/finish
 // swallows to the rule login/start keeps for the nonce it cannot store. A
-// failure that cannot be counted must not become an answer of its own: E_LOGIN
-// is what every failed login gets, and a 503 here would say over the status
-// what the answer keeps quiet -- and it would say it for the attempts that got
-// the proof right, because those are the ones that reach the counting last.
+// failure that cannot be counted stays E_LOGIN: the login failed, and that is
+// what E_LOGIN says; a 503 would tell the user the service is down when it was
+// their password.
 //
 // Swallowed, but not silent: with the counting off nothing at all slows
 // guessing down, and no answer says so. The line is said once per window and

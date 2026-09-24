@@ -162,7 +162,7 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		// database cannot be written -- it says without them, and whoever needs
 		// the cause gets it from the database itself.
 		if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil &&
-			h.warn.take(now, nonceWarnTTL) {
+			h.warnNonce.take(now, nonceWarnTTL) {
 			slog.Error("a login challenge could not be kept; logins fail until the database can be written again")
 		}
 	}

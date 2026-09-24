@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	json "encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
@@ -18,6 +19,12 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
+
+// lockWarnTTL is how seldom a failed login that could not be counted is said
+// out loud. The line stands for a state of the database and not for a request,
+// so one of them per five minutes says everything there is to say -- and every
+// failed login would say it, which is a line per wrong password.
+const lockWarnTTL = 300
 
 // errSignKey reports a signing key of the wrong size in the configuration;
 // config.API.Validate refuses such a file, so it can only mean the key was
@@ -79,7 +86,25 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deny := func() {
-		_ = lock.Fail(ctx, h.S.DB, bucket, now)
+		// The answer is E_LOGIN whether the failure was counted or not: the
+		// login failed, and that is what E_LOGIN says. A 503 would tell the
+		// user the service is down when it was their password, and it would be
+		// the one status of this handler that follows the state of the
+		// database instead of the login.
+		//
+		// Swallowed, but not silent. With the counting off, nothing slows
+		// guessing down at all and no answer says so -- every attempt is
+		// answered exactly as before. So it is said out loud, once per
+		// lockWarnTTL and without a word of the request, so that it costs no
+		// answer and cannot be made to fill a disk by asking often.
+		//
+		// The line is the fixed text and nothing else, the error of the
+		// database included. A driver may quote the values of the statement
+		// back, and the values of this one are the bucket of a login name and
+		// its count; whoever needs the cause gets it from the database itself.
+		if err := lock.Fail(ctx, h.S.DB, bucket, now); err != nil && h.warnLock.take(now, lockWarnTTL) {
+			slog.Error("a failed login could not be counted; nothing holds up guessing until the database can be written again")
+		}
 		httpapi.Fail(w, wire.CodeLogin)
 	}
 
