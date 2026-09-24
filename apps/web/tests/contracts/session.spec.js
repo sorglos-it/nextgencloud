@@ -265,6 +265,58 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   });
 });
 
+// Fixrunde 2: W2 was not carried through. validateClientCert names iat and
+// exp but never asks whether they are numbers, and Go's ClientCert has both
+// as int64 - json.Unmarshal refuses a string, a boolean and a fraction alike.
+// So the check that encodeClientCert holds a certificate against let three
+// kinds of value through, and the shell would have had the user sign them
+// with a passkey for the API to refuse: the very damage the fix was for.
+// Number.isSafeInteger, the same line K2 uses for now. A BigInt is in the
+// list because it passed the check and was stopped only by JSON.stringify -
+// one step further than a check should let anything get.
+test("validateClientCert takes whole numbers for iat and exp", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const s = await import("/assets/js/contracts/session.js");
+    const good = {
+      inst: "EREREREREREREREREREREQ", user: "ISEhISEhISEhISEhISEhIQ",
+      nonce: new Uint8Array(32), sig: new Uint8Array(32), dh: new Uint8Array(32),
+      iat: 1790000000, exp: 1790003600,
+    };
+    const out = {};
+    const cases = {
+      good,
+      strings: { ...good, iat: "1790000000", exp: "1790086400" },
+      boolean: { ...good, iat: true, exp: 2 },
+      fraction: { ...good, iat: 1.5, exp: 2.5 },
+      bigint: { ...good, iat: 1n, exp: 2n },
+    };
+    for (const [name, c] of Object.entries(cases)) {
+      let valid, written;
+      try {
+        valid = s.validateClientCert(c);
+      } catch (e) {
+        valid = "threw: " + e.message;
+      }
+      try {
+        s.encodeClientCert(c);
+        written = "written";
+      } catch (e) {
+        written = e.message;
+      }
+      out[name] = { valid, written };
+    }
+    return out;
+  });
+  const no = { valid: false, written: "session: cannot encode this certificate" };
+  expect(got).toEqual({
+    good: { valid: true, written: "written" },
+    strings: no,
+    boolean: no,
+    fraction: no,
+    bigint: no,
+  });
+});
+
 // Fixrunde 1, small: encodeSetupInfoNodes is exported and answers whatever it
 // is handed. It broke the discipline of its own file - a raw TypeError for
 // null, and undefined for an object without nodes, which whoever builds
