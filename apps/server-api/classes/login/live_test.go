@@ -26,7 +26,7 @@ func TestLiveAndLogout(t *testing.T) {
 	cookie := loginOnce(t, h, fx)
 	r := httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
-	live, ok := h.Live(ctx, r)
+	live, _, ok := h.Live(ctx, r)
 	if !ok || live.Verified.Cert().User != fx.PasswordUser {
 		t.Fatalf("live %v %+v", ok, live)
 	}
@@ -39,8 +39,8 @@ func TestLiveAndLogout(t *testing.T) {
 	if w.Code != 204 {
 		t.Fatalf("logout %d", w.Code)
 	}
-	if _, ok := h.Live(ctx, r); ok {
-		t.Fatal("the session survived the logout")
+	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+		t.Fatalf("after the logout the session answered %q (open %v)", code, ok)
 	}
 }
 
@@ -50,16 +50,16 @@ func TestLiveEndsAfterIdleAndLifetime(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
 	h.S.Now = func() int64 { return testNow + h.S.Cfg.IdleTimeout + 1 }
-	if _, ok := h.Live(ctx, r); ok {
-		t.Fatal("an idle session stayed alive")
+	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+		t.Fatalf("an idle session answered %q (open %v)", code, ok)
 	}
 	cookie = loginOnce(t, h, fx)
 	r = httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
 	base := h.S.Now()
 	h.S.Now = func() int64 { return base + h.S.Cfg.SessionLifetime + 1 }
-	if _, ok := h.Live(ctx, r); ok {
-		t.Fatal("a session outlived its lifetime")
+	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+		t.Fatalf("a session past its lifetime answered %q (open %v)", code, ok)
 	}
 }
 
@@ -70,8 +70,8 @@ func TestLiveRefusesABadCookie(t *testing.T) {
 		if value != "" {
 			r.AddCookie(&http.Cookie{Name: session.CookieName, Value: value})
 		}
-		if _, ok := h.Live(ctx, r); ok {
-			t.Fatalf("cookie %q was taken", value)
+		if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+			t.Fatalf("cookie %q answered %q (taken %v)", value, code, ok)
 		}
 	}
 }
@@ -94,13 +94,13 @@ func TestLiveEndsASessionTheConfigNoLongerAllows(t *testing.T) {
 	h.S.Cfg.SessionLifetime, h.S.Cfg.IdleTimeout = 600, 300
 	for _, at := range []int64{200, 400} {
 		h.S.Now = func() int64 { return testNow + at }
-		if _, ok := h.Live(ctx, r); !ok {
+		if _, _, ok := h.Live(ctx, r); !ok {
 			t.Fatalf("the session was gone after %d seconds", at)
 		}
 	}
 	h.S.Now = func() int64 { return testNow + 601 }
-	if _, ok := h.Live(ctx, r); ok {
-		t.Fatal("a session outlived a lifetime the installation had shortened")
+	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+		t.Fatalf("a session outlived a shortened lifetime: %q (open %v)", code, ok)
 	}
 	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); !isNotFound(err) {
 		t.Fatalf("the row of the ended session is still there: %v", err)
@@ -131,12 +131,12 @@ func TestLiveEndsASessionTheTrustListNoLongerHolds(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
 	r := getCookie(session.PathTrust, cookie)
-	if _, ok := h.Live(ctx, r); !ok {
+	if _, _, ok := h.Live(ctx, r); !ok {
 		t.Fatal("the session was not open before the user was withdrawn")
 	}
 	withdrawPasswordUser(t, h, fx)
-	if _, ok := h.Live(ctx, r); ok {
-		t.Fatal("a session of a user the trust list no longer holds stayed open")
+	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+		t.Fatalf("a session of a withdrawn user answered %q (open %v)", code, ok)
 	}
 	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); !isNotFound(err) {
 		t.Fatalf("the row of the withdrawn user's session is still there: %v", err)
@@ -159,12 +159,12 @@ func TestLiveSeesAWithdrawalAnotherAPIWrote(t *testing.T) {
 	other := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
 	other.S.Now = h.S.Now
 	r := getCookie(session.PathTrust, cookie)
-	if _, ok := other.Live(ctx, r); !ok {
+	if _, _, ok := other.Live(ctx, r); !ok {
 		t.Fatal("the second API refused a session that is open")
 	}
 	withdrawPasswordUser(t, h, fx)
-	if _, ok := other.Live(ctx, r); ok {
-		t.Fatal("the second API kept a session the trust list no longer holds")
+	if _, code, ok := other.Live(ctx, r); ok || code != wire.CodeLogin {
+		t.Fatalf("the second API kept a withdrawn user's session: %q (open %v)", code, ok)
 	}
 }
 
@@ -370,7 +370,7 @@ func TestPurgeRunsBesideRequests(t *testing.T) {
 		go func() { defer wg.Done(); fail <- h.Purge(ctx) }()
 		go func() {
 			defer wg.Done()
-			if _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+			if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 				fail <- errors.New("an open session was refused while Purge ran")
 			}
 		}()
@@ -392,7 +392,7 @@ func TestPurgeRunsBesideRequests(t *testing.T) {
 			t.Fatalf("beside the requests: %v", err)
 		}
 	}
-	if _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 		t.Fatal("the open session did not survive the housekeeping")
 	}
 }

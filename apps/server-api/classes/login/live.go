@@ -22,9 +22,10 @@ type Live struct {
 	APIKey   []byte           // the API's private session key, opened
 }
 
-// Live returns the session of the request's cookie. It ends a session that is
-// too old, has been idle too long or whose user the trust list no longer
-// holds, and it hands nothing back for any other failure either.
+// Live returns the session of the request's cookie, and with it the code the
+// caller answers when there is none. It ends a session that is too old, has
+// been idle too long or whose user the trust list no longer holds, and it
+// hands nothing back for any other failure either.
 //
 // Which failures end the session and which leave the row where it is, is one
 // rule: a no ends it, a question that could not be asked does not. The clock
@@ -38,10 +39,24 @@ type Live struct {
 // session of the installation the first time anybody asked, where a restart
 // with the right one costs none.
 //
-// Either way no session is handed back, so nothing rests on that rule but
-// whether the row survives. Nothing says any of it out loud: a delete that
-// fails leaves a row Live refuses on every later request just the same, so
-// there is no protection here that could be switched off quietly.
+// The code is that same rule said to the caller. E_LOGIN is the contract's
+// word for a session that is missing or has run out (shared/README.md), so
+// only a no carries it. A question that could not be asked is E_UNREACHABLE
+// where the store did not answer -- the session row, the trust list, the touch
+// -- and E_INTERNAL where this API's own row or its own key is unusable: the
+// first is over once the database answers again, the second is not. Without
+// that difference a hiccup of the database would send every user of the
+// installation to the login screen, and refuse the logout that would end the
+// session properly in the same breath.
+//
+// Nothing of the session itself is told apart that way. Every cookie that is
+// no session of this API gets the same E_LOGIN, whether a row was there or
+// not: dbapi.ErrNotFound is the store's answer that there is none, and it is
+// the only one of its answers that leads there.
+//
+// A delete that fails is not said out loud, and nothing rests on it: a row
+// Live refuses once it refuses on every later request too, so there is no
+// protection here that could be switched off quietly.
 //
 // The chain is checked again on every request and not only at the login: a
 // user the trust list no longer holds, or whose key an admin took away, loses
@@ -77,21 +92,24 @@ type Live struct {
 // whose session it is, and most of all which kind of key opened it. Whoever
 // could time that holds the cookie already and no name stands behind it -- but
 // the difference is real, and nothing here evens it out.
-func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, bool) {
+func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, bool) {
 	value, ok := httpapi.Cookie(r)
 	if !ok {
-		return nil, false
+		return nil, wire.CodeLogin, false
 	}
 	raw, err := enc.B64.DecodeString(value)
 	if err != nil || len(raw) != session.TokenSize {
-		return nil, false
+		return nil, wire.CodeLogin, false
 	}
 	// Only the hash of the token is stored, so a dump of the database holds
 	// nothing anybody could send back as a cookie.
 	token := session.TokenHash(raw)
 	row, err := h.S.DB.SessionGet(ctx, token)
 	if err != nil {
-		return nil, false
+		if isNotFound(err) {
+			return nil, wire.CodeLogin, false
+		}
+		return nil, wire.CodeUnreachable, false
 	}
 	now := h.S.Now()
 	// The three ends of a session: the time the certificate itself names, the
@@ -101,7 +119,7 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, bool) {
 	// since ends the sessions it handed out under the longer one here.
 	if now >= row.Expires || now-row.Seen > h.S.Cfg.IdleTimeout || now-row.Created > h.S.Cfg.SessionLifetime {
 		_ = h.S.DB.SessionDelete(ctx, token)
-		return nil, false
+		return nil, wire.CodeLogin, false
 	}
 	// The list is read out of the database and not out of the cache
 	// (state.Trust), because the cache of an API is only as new as the last
@@ -111,7 +129,11 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, bool) {
 	// that has to ask.
 	v, err := h.S.Refresh(ctx)
 	if err != nil {
-		return nil, false
+		// One code for every cause of it, and it is never E_LOGIN. The store
+		// not answering is the plain case; rows of the trust list that
+		// contradict each other end up here too, and both are mended from
+		// outside this request, so both leave the caller the same thing to do.
+		return nil, wire.CodeUnreachable, false
 	}
 	// The proof is this API's own row, written with this same encoder from a
 	// proof session.ParseLoginFinish had already bounded, so nothing unbounded
@@ -119,35 +141,37 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, bool) {
 	// below is given, and a row that has been damaged must not reach it.
 	var p proof.Proof
 	if err := json.Unmarshal(row.Proof, &p); err != nil || p.Validate() != nil {
-		return nil, false
+		return nil, wire.CodeInternal, false
 	}
 	verified, err := session.VerifyClient(row.Cert, p, v.List, now)
 	if err != nil {
 		_ = h.S.DB.SessionDelete(ctx, token)
-		return nil, false
+		return nil, wire.CodeLogin, false
 	}
 	key, err := h.S.Box.Open(row.APIKey)
 	if err != nil {
-		return nil, false
+		return nil, wire.CodeInternal, false
 	}
 	// Seen moves only once everything above has held, so a request that is
 	// refused never keeps a session alive.
 	if err := h.S.DB.SessionTouch(ctx, token, now); err != nil {
-		return nil, false
+		return nil, wire.CodeUnreachable, false
 	}
 	row.Seen = now
-	return &Live{Token: token, Row: row, Verified: verified, APIKey: key}, true
+	return &Live{Token: token, Row: row, Verified: verified, APIKey: key}, "", true
 }
 
 // Logout answers POST session.PathLogout: the session row is removed and the
 // cookie deleted. Without a session it is E_LOGIN, which is what the contract's
 // table gives -- and it is also the answer when Live ended the session itself,
-// because then there is none left to end.
+// because then there is none left to end. A step Live could not take carries
+// its own code instead: the session is still there, and E_LOGIN would tell the
+// shell the one thing about it that is not so.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	live, ok := h.Live(ctx, r)
+	live, code, ok := h.Live(ctx, r)
 	if !ok {
-		httpapi.Fail(w, wire.CodeLogin)
+		httpapi.Fail(w, code)
 		return
 	}
 	if err := h.S.DB.SessionDelete(ctx, live.Token); err != nil {

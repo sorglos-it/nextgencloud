@@ -16,14 +16,15 @@ import (
 // turned away before anything of it is read. What the session holds is nothing
 // this path needs; that there is one is the whole of it.
 //
-// Three answers besides the chain, all of them from the contract's table: a
-// number that is no version is E_PROTOCOL, the one past the newest is 204 --
-// the shell asks with the number after the last it has, and that is the
-// ordinary "nothing new" -- and anything beyond that is E_NOTFOUND.
+// Three answers of its own besides the chain, all of them from the contract's
+// table: a number that is no version is E_PROTOCOL, the one past the newest is
+// 204 -- the shell asks with the number after the last it has, and that is the
+// ordinary "nothing new" -- and anything beyond that is E_NOTFOUND. What Live
+// and package state answer besides those, this path hands on as it is.
 func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if _, ok := h.Live(ctx, r); !ok {
-		httpapi.Fail(w, wire.CodeLogin)
+	if _, code, ok := h.Live(ctx, r); !ok {
+		httpapi.Fail(w, code)
 		return
 	}
 	from, err := session.ParseFrom(r.URL.Query().Get("from"))
