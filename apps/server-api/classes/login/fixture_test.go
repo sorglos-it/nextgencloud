@@ -217,8 +217,9 @@ func (c *callLog) LogAdd(ctx context.Context, e core.LogEntry) error {
 }
 
 // trustReads counts the reads of the trust rows. What one look at the list
-// costs is state.gapProbes and none of this package's business, so the tests
-// that use it count one look first and hold the rest against that number.
+// costs follows state.gapProbes and is none of this package's business, so
+// what its tests assert is how many looks there were, never how many rows one
+// look reads.
 type trustReads struct {
 	dbapi.Store
 	mu sync.Mutex
