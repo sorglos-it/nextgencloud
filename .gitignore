@@ -25,3 +25,9 @@ apps/web/tests/test-results/
 
 # Fremdcode gehört ins Repo (vendor/ im Stamm per go mod vendor, JavaScript von Hand kopiert in
 # apps/web/public/assets/vendor/), deshalb fehlt hier die Zeile apps/*/vendor/ aus der Vorlage.
+
+# Oertliche Einstellungen der Werkzeuge: tools/check.sh liest sie, wenn sie da
+# ist, und sie gehoert niemandem ausser der Maschine, auf der sie liegt. Drei
+# Pruefer haben gemeldet, dass ein "git add -A" einer anderen Sitzung sie
+# sonst mitnimmt - im geteilten Arbeitsbaum ist das kein Restrisiko.
+tools/local.env
