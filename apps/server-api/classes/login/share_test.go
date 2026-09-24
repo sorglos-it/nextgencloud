@@ -132,9 +132,12 @@ func TestTOTPShareAsksTheDatabaseOncePerKeepTime(t *testing.T) {
 	}
 }
 
-// slowList holds its caller inside UserList until it is let go.
+// slowList holds its caller inside UserList until it is let go, and then hands
+// back users if it was given any -- the picture the database had when the call
+// began, which is what a slow call brings back.
 type slowList struct {
 	dbapi.Store
+	users   []dbapi.User
 	entered chan struct{}
 	release chan struct{}
 }
@@ -142,7 +145,45 @@ type slowList struct {
 func (s *slowList) UserList(ctx context.Context) ([]dbapi.User, error) {
 	s.entered <- struct{}{}
 	<-s.release
+	if s.users != nil {
+		return s.users, nil
+	}
 	return s.Store.UserList(ctx)
+}
+
+// TestTOTPShareKeepsTheYoungerCount: the lock holds only while the turn is
+// taken, so a count that lasts longer than shareTTL runs on while the next one
+// takes its turn. The older one must not put its number over the younger one's
+// -- the kept share would otherwise be a number from one count with the time of
+// another, and it would go backwards.
+func TestTOTPShareKeepsTheYoungerCount(t *testing.T) {
+	h, _ := newFixture(t)
+	now := testNow
+	h.S.Now = func() int64 { return now }
+	setUsers(t, h, 4, 0)
+	stale := []dbapi.User{{ID: trusttest.ID(0x50), Name: "old"}}
+	slow := &slowList{Store: h.S.DB, users: stale,
+		entered: make(chan struct{}), release: make(chan struct{})}
+	h.S.DB = slow
+	older := make(chan int, 1)
+	go func() { older <- h.totpShare(ctx) }()
+	<-slow.entered // the older count took the turn at testNow and hangs
+
+	// The keep time passes, the users change, and a second login counts them.
+	now = testNow + shareTTL
+	h.S.DB = slow.Store
+	setUsers(t, h, 4, 4)
+	if got := h.totpShare(ctx); got != 100 {
+		t.Fatalf("the younger count gave %d, want 100", got)
+	}
+	// Now the older one comes back with 0 of one user.
+	close(slow.release)
+	if got := <-older; got != 0 {
+		t.Fatalf("the older count gave %d, want 0", got)
+	}
+	if got := h.totpShare(ctx); got != 100 {
+		t.Fatalf("the older count wrote over the younger one: %d, want 100", got)
+	}
 }
 
 // TestTOTPShareDoesNotHoldUpOtherLogins: the count runs outside the lock, so a

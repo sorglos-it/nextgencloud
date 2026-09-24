@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"sync"
 	"testing"
@@ -148,8 +149,10 @@ func (c *callLog) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, err
 	return c.Store.BlobGet(ctx, kind, id)
 }
 
-// UserGet names an empty ID apart: it is the one argument no name of a request
-// ever gives, so a call with it can only come from a lookup that had no user.
+// UserGet names an empty ID apart, because that is the call this must catch:
+// a name nobody has has no user and therefore no ID, so a lookup by the ID
+// asks with an empty one -- which is what it did before, and what told the two
+// names apart on any store that refuses it.
 func (c *callLog) UserGet(ctx context.Context, id string) (dbapi.User, error) {
 	if id == "" {
 		c.add("UserGet(empty id)")
@@ -187,11 +190,12 @@ func (noOnce) OnceCreate(context.Context, string, []byte, string, int64) error {
 	return errors.New("memstore: the one-time values cannot be written")
 }
 
-// strictID refuses a user ID the contract calls invalid, as dbapi.Store.UserPut
-// does already (dbapi.ErrInvalid). dbapi/dbtest pins UserGet only for a name
-// nobody has, never for the empty ID, so apps/server-db may answer it either
-// way -- and a login that asks with an empty ID would then answer one thing for
-// a known name and another for every other.
+// strictID refuses an empty user ID. Nothing in the contract says it may not:
+// dbapi/dbtest pins UserGet only for a name nobody has, never for the empty ID,
+// and memstore refuses an empty ID in UserPut with dbapi.ErrInvalid, so a store
+// that refuses it here too is within the contract. A login that asks with an
+// empty ID would then answer one thing for a known name and another for every
+// other.
 type strictID struct{ dbapi.Store }
 
 func (s strictID) UserGet(ctx context.Context, id string) (dbapi.User, error) {
@@ -199,4 +203,31 @@ func (s strictID) UserGet(ctx context.Context, id string) (dbapi.User, error) {
 		return dbapi.User{}, dbapi.ErrInvalid
 	}
 	return s.Store.UserGet(ctx, id)
+}
+
+// oddMiss answers a name it does not hold with an error of its own instead of
+// dbapi.ErrNotFound. Nothing in the contract forbids it: dbapi.Store.UserByName
+// carries no doc comment at all, and dbapi/dbtest pins it only for a name that
+// exists -- there is no negative case. A login that turned this into an answer
+// of its own would tell known names from unknown ones again.
+type oddMiss struct{ dbapi.Store }
+
+func (o oddMiss) UserByName(ctx context.Context, name string) (dbapi.User, error) {
+	u, err := o.Store.UserByName(ctx, name)
+	if errors.Is(err, dbapi.ErrNotFound) {
+		return dbapi.User{}, errors.New("server-db: unknown user")
+	}
+	return u, err
+}
+
+// capturedLog sends what the API says out loud into a buffer, for this test
+// only. No test of this package runs in parallel, so the default logger is
+// this test's alone while it runs.
+func capturedLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	before := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(before) })
+	return &buf
 }

@@ -201,6 +201,65 @@ func TestStartAnswersTheSameWhenTheNonceCannotBeStored(t *testing.T) {
 	}
 }
 
+// TestStartSaysSoWhenTheNonceCannotBeKept: swallowing the failure keeps the
+// answer alike, but it must not make the failure invisible. Every login then
+// fails with E_LOGIN and nothing outside says why, where a 503 used to. The
+// line is said once per window and names nothing of the request, so it is
+// neither floodable nor an answer to whoever reads the log.
+func TestStartSaysSoWhenTheNonceCannotBeKept(t *testing.T) {
+	h, fx := newFixture(t)
+	now := testNow
+	h.S.Now = func() int64 { return now }
+	h.S.DB = noOnce{Store: h.S.DB}
+	log := capturedLog(t)
+	for range 20 {
+		raw(t, h, fx.PasswordName)
+		raw(t, h, "nobody")
+	}
+	if lines := strings.Count(log.String(), "\n"); lines != 1 {
+		t.Fatalf("%d lines for 40 requests, want 1:\n%s", lines, log)
+	}
+	if s := log.String(); strings.Contains(s, fx.PasswordName) || strings.Contains(s, fx.PasswordUser) {
+		t.Fatalf("the line names the request: %s", s)
+	}
+	// One second before the window is over it is still quiet.
+	now = testNow + nonceWarnTTL - 1
+	raw(t, h, fx.PasswordName)
+	if lines := strings.Count(log.String(), "\n"); lines != 1 {
+		t.Fatalf("%d lines after %d seconds, want 1", lines, nonceWarnTTL-1)
+	}
+	// On the second itself it is said again, so a failure that lasts does not
+	// fall silent after the first minute.
+	now = testNow + nonceWarnTTL
+	raw(t, h, fx.PasswordName)
+	if lines := strings.Count(log.String(), "\n"); lines != 2 {
+		t.Fatalf("%d lines after %d seconds, want 2:\n%s", lines, nonceWarnTTL, log)
+	}
+}
+
+// TestStartAnswersWhenTheRowCannotBeRead moves the hole of K-2 one door
+// further and shuts it there. What dbapi.Store.UserByName gives for a name
+// nobody has is not in the contract: it carries no doc comment, and
+// dbapi/dbtest pins it only for a name that exists. A store that answers
+// anything but dbapi.ErrNotFound would tell the two names apart again, so no
+// error of that call becomes an answer of its own.
+func TestStartAnswersWhenTheRowCannotBeRead(t *testing.T) {
+	h, fx := newFixture(t)
+	h.S.DB = oddMiss{Store: h.S.DB}
+	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
+	if known.Code != 200 || unknown.Code != 200 {
+		t.Fatalf("known %d, unknown %d: %s", known.Code, unknown.Code, unknown.Body)
+	}
+	if !maps.EqualFunc(known.Header(), unknown.Header(), slices.Equal[[]string]) {
+		t.Fatalf("headers %v vs %v", known.Header(), unknown.Header())
+	}
+	for _, w := range []*httptest.ResponseRecorder{known, unknown} {
+		if _, err := session.ParseLoginChallenge(w.Body.Bytes()); err != nil {
+			t.Fatalf("the browser would refuse this answer: %v", err)
+		}
+	}
+}
+
 // TestStartNeverAsksForAUserWithAnEmptyID pins what dbapi/dbtest leaves open.
 // A name nobody has has no ID, and a lookup by that empty ID is a call the
 // contract never promised an answer for: UserPut already refuses it with
@@ -283,8 +342,14 @@ func fields(t *testing.T, w *httptest.ResponseRecorder) string {
 // a loaded machine; it catches a shortcut that was put back in, not a few
 // percent. The null control says what the machine's own spread is, so the test
 // can tell "the two names are alike" from "this machine cannot tell anything
-// apart today" -- and timed refuses a batch the clock did not see, which is
-// what the 25 single requests that stood here did not do.
+// apart today" -- and timed refuses a batch the clock did not see, and one that
+// was not answered, neither of which the 25 single requests that stood here did.
+//
+// The null control is held to the same factor as the comparison itself. Here it
+// stayed within about a tenth where the factor allows a doubling, which is what
+// makes the factor usable; whoever ever draws the factor tighter has to draw it
+// tighter for the null control first, or the test starts reporting the machine
+// as a finding.
 func TestStartTakesTheSameTimeForAnUnknownName(t *testing.T) {
 	h, fx := newFixture(t)
 	known, unknown, again := timeThem(t, h, fx.PasswordName, "nobody", fx.PasswordName, 5)
@@ -298,30 +363,60 @@ func TestStartTakesTheSameTimeForAnUnknownName(t *testing.T) {
 	}
 }
 
-// timedRuns is how many requests one measurement takes. A request takes tens of
-// microseconds and a clock may resolve a millisecond: 25 requests are then 25
-// zeroes, and "0 > 2*0" is false, so a comparison of them passes whatever the
-// handler does. Two thousand requests are tens of milliseconds, which every
-// clock a test runs on sees.
-const timedRuns = 2000
-
 // timedFloor is the shortest batch this test believes. Below it the clock, not
 // the handler, is what was measured, and no comparison of such numbers means
 // anything.
 const timedFloor = 5 * time.Millisecond
 
+// timeBatch runs runs requests for name and returns how long they took
+// altogether and the status of the first. It fails nothing itself, so a test
+// can hold it against a name that is refused; timed is where the two answers
+// are judged.
+func timeBatch(h *Handler, name string, runs int) (time.Duration, int) {
+	first := 0
+	start := time.Now()
+	for i := range runs {
+		w := httptest.NewRecorder()
+		h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+name+`"}`))
+		if i == 0 {
+			first = w.Code
+		}
+	}
+	return time.Since(start), first
+}
+
 // timed runs timedRuns requests for name and returns what one of them took.
+// Two things are refused: a batch that was not answered, and one the clock did
+// not see. Without the first, a handler that refuses both names quickly would
+// be compared as though it had answered -- and if it were quick enough, the
+// floor would then blame the clock for it.
 func timed(t *testing.T, h *Handler, name string) time.Duration {
 	t.Helper()
-	start := time.Now()
-	for range timedRuns {
-		raw(t, h, name)
+	d, code := timeBatch(h, name, timedRuns)
+	if code != http.StatusOK {
+		t.Fatalf("%q answered %d: what follows would be the time of a refusal, not of an answer", name, code)
 	}
-	d := time.Since(start)
 	if d < timedFloor {
 		t.Fatalf("%d requests for %q took %v: the clock did not see them", timedRuns, name, d)
 	}
 	return d / timedRuns
+}
+
+// TestTimedSeesAnAnswerThatIsNotOne holds timeBatch to handing the status back.
+// A locked name answers 429 in a fraction of the time a challenge takes, so a
+// measurement that does not look at the answer would compare two refusals and
+// call them alike.
+func TestTimedSeesAnAnswerThatIsNotOne(t *testing.T) {
+	h, _ := newFixture(t)
+	for range 3 {
+		failLogin(t, h, "anna")
+	}
+	if _, code := timeBatch(h, "anna", 8); code != http.StatusTooManyRequests {
+		t.Fatalf("a locked name answered %d", code)
+	}
+	if _, code := timeBatch(h, "anna", 0); code != 0 {
+		t.Fatalf("a batch of no requests answered %d", code)
+	}
 }
 
 // timeThem measures the three names in turn, batches times each, and returns
