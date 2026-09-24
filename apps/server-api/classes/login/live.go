@@ -41,20 +41,26 @@ type Live struct {
 // session of the installation the first time anybody asked, where a restart
 // with the right one costs none.
 //
-// The code is that same rule said to the caller. E_LOGIN is the contract's
-// word for a session that is missing or has run out (shared/README.md), so
-// only a no carries it. A question that could not be asked is E_UNREACHABLE
-// where the store did not answer -- the session row, the trust list, the touch
-// -- and E_INTERNAL where this API's own row or its own key is unusable: the
-// first is over once the database answers again, the second is not. Without
-// that difference a hiccup of the database would send every user of the
-// installation to the login screen, and refuse the logout that would end the
-// session properly in the same breath.
+// The code is that same rule said to the caller, and a question that could
+// not be asked never carries E_LOGIN: the contract keeps that word for a
+// session that is missing or has run out (shared/README.md), and this one is
+// neither. Reading the session row, reading the trust list and touching the
+// session are E_UNREACHABLE, a stored proof this API cannot read back and a
+// session key it cannot open are E_INTERNAL -- the database against this API's
+// own row and its own key. Without that difference a hiccup of the database
+// would send every user of the installation to the login screen, and refuse
+// the logout that would end the session properly in the same breath.
 //
-// Nothing of the session itself is told apart that way. Every cookie that is
-// no session of this API gets the same E_LOGIN, whether a row was there or
-// not: dbapi.ErrNotFound is the store's answer that there is none, and it is
-// the only one of its answers that leads there.
+// One edge of that is not clean: a trust list whose rows contradict each other
+// is the installation's doing and not the database's, and it is answered
+// E_UNREACHABLE all the same. state.Refresh hands both back as one error, and
+// telling them apart here would mean naming every error package state has.
+//
+// Nothing about the session itself is told apart. A cookie no row answers and
+// a cookie no parser takes get the same E_LOGIN, so the one thing a stranger
+// could ask -- is this token one of yours -- stays unanswered:
+// dbapi.ErrNotFound is the store's word for a row that is not there, and it is
+// the only one of the store's answers that leads to E_LOGIN at all.
 //
 // A delete that fails is not said out loud, and nothing rests on it: a row
 // Live refuses once it refuses on every later request too, so there is no
