@@ -106,10 +106,12 @@ function validParams(text) {
   }
 }
 
-// parts reads a task once and gives back the ten pieces encodeTask writes, or
-// null for a task that is none. It is the one place that looks at a caller's
-// task: validateTask is one call of it and nothing else, and encodeTask writes
-// what its own call checked, never a second reading of the same task.
+// parts reads a task once and gives back the ten pieces write puts into a
+// document, or null for a task that is none. It is the one place that looks
+// at a caller's task: validateTask is one call of it and nothing else,
+// encodeTask writes what its own call checked, and buildTask writes what its
+// own call checked and reads that document back - never a second reading of
+// the same task.
 //
 // The byte fields are turned into their base64url here and held against
 // ID_CHARS and CERT_CHARS, instead of being asked for a length and encoded
@@ -285,11 +287,13 @@ export function buildTask({ inst, certHash: cert, node, app, service, action, pa
   return { task: parseTask(bytes), bytes };
 }
 
-// signTask puts the session key's signature over the bytes encodeTask made.
-// Go has none of this - only the shell signs tasks. It is no member of the
-// -> boolean family and says no by throwing: an engine without Ed25519, a key
-// that cannot sign and a sessionSignKey that is none all end in a rejected
-// promise, and nothing comes back that could pass for an envelope.
+// signTask puts the session key's signature over a task's bytes, the ones
+// buildTask hands back or encodeTask writes. Go has none of this - only the
+// shell signs tasks. It is no member of the -> boolean family and says no by
+// throwing: an engine without Ed25519, a key that cannot sign, a
+// sessionSignKey that is none and bytes that are none all end in a rejected
+// promise, and nothing comes back that could pass for an envelope - measured,
+// the last three of them.
 export async function signTask(sessionSignKey, bytes) {
   const { privateKey, kid } = sessionSignKey ?? {};
   const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateKey,
