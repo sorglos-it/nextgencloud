@@ -388,6 +388,30 @@ func TestCheckAppChannel(t *testing.T) {
 	})
 }
 
+// TestCheckRefusesAppChannelForCoreApp is the channel that carries a
+// certificate and proves nothing at all: a row of the database under a core
+// app ID. core.Lookup does not know the service, so it falls to the app
+// branch, and wire.Open.Validate forbids the end-to-end handshake for a core
+// app ID — the one accepted channel that would carry a user without a task
+// and without a handshake. A core app ID is never an app of this controller.
+func TestCheckRefusesAppChannelForCoreApp(t *testing.T) {
+	f := newFixture(t)
+	r := f.request(f.withUser(t, wire.Open{App: core.AppStore, Service: testService, Action: testAction,
+		Window: wire.DefaultWindow}))
+	// The row is there, and its manifest is the one of a real app: only the
+	// key it is filed under says ngc.store.
+	rows := installed()
+	rows[core.AppStore] = dbapi.App{ID: core.AppStore, Version: "1.0.0", Store: trust.StoreGlobal, Node: node,
+		Active: true, Manifest: manifestFor(testApp), SHA256: bytes.Repeat([]byte{0x01}, 32)}
+	r.Apps = rows
+	d, cl := Check(context.Background(), r)
+	if cl == nil {
+		t.Fatalf("channel accepted for a core app ID: user %q, task %v, handshake %d bytes",
+			d.User, d.Task != nil, len(d.Opened.Open.E2E))
+	}
+	wantClose(t, d, cl, wire.CodeNotFound)
+}
+
 // TestCheckRefusesActionOnAnotherService is the escalation the OPEN would buy
 // if only the name of the action were matched: run is the manifest's harmless
 // action on the service files, admin carries the critical wipe. An OPEN that
