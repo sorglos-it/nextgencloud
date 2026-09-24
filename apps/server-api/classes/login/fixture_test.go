@@ -6,6 +6,8 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
@@ -310,4 +313,34 @@ func capturedLog(t *testing.T) *bytes.Buffer {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(before) })
 	return &buf
+}
+
+// loginOnce runs the whole login and returns the cookie value.
+func loginOnce(t *testing.T, h *Handler, fx fixture) string {
+	t.Helper()
+	c := start(t, h, fx.PasswordName)
+	w := httptest.NewRecorder()
+	h.Finish(w, jsonPost(session.PathLoginFinish, string(finishBody(t, fx, fx.Password, c, ""))))
+	if w.Code != 200 {
+		t.Fatalf("login: %d %s", w.Code, w.Body)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies %+v", cookies)
+	}
+	return cookies[0].Value
+}
+
+// getCookie builds a GET with the session cookie.
+func getCookie(path, cookie string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
+	return r
+}
+
+// jsonPostCookie builds a POST with the session cookie and no body.
+func jsonPostCookie(path, cookie string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, path, nil)
+	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
+	return r
 }
