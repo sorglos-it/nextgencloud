@@ -73,6 +73,6 @@ func Fault(err error, from Origin) wire.Code {
 	// and 500 tells the far side not to try again. On the day a second API
 	// joins, ErrBusy belongs here with its own answer -- E_LOCKED is not it,
 	// that one belongs to the failed logins alone (with Retry-After, counted
-	// per login name).
+	// in the buckets of package lock).
 	return wire.CodeInternal
 }

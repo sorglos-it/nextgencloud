@@ -32,8 +32,21 @@ Der Vermittler und die Firewall zwischen Oberfläche und Servern. Führt nie App
   `session.HTTPStatus`, Inhalt `wire.Error`, jede Antwort mit `Cache-Control: no-store`, Anfragen
   nur mit `Content-Type: application/json`; das Cookie mit `session.CookieAttributes`; `from` nur
   über `session.ParseFrom`. Jede fehlgeschlagene Anmeldung ist gleich `E_LOGIN`, nach zu vielen
-  Fehlversuchen kommt `E_LOCKED` mit `Retry-After`. Die Sperre führst du je Anmeldename, auch für
-  Namen, die es nicht gibt, damit auch `E_LOCKED` nie verrät, ob ein Benutzer existiert.
+  Fehlversuchen kommt `E_LOCKED` mit `Retry-After`. Die Sperre (`classes/lock`) zählt in 4096
+  Eimern statt je Anmeldename: der Eimer kommt aus dem Hash des Namens, jeder Name fällt in genau
+  einen, und gezählt werden auch Namen, die es nicht gibt – so verrät `E_LOCKED` nie, ob ein
+  Benutzer existiert, und eine feste Zahl kleiner Zeilen begrenzt die Tabelle, die sonst jeder mit
+  erfundenen Namen vollschreiben könnte. Zeilen je Name kosteten außerdem einen Tabellenlauf je
+  neuem Namen, und der war messbar. Der Preis steht bei `buckets`: zwei Namen einer Anlage können
+  sich einen Eimer teilen.
+  Gezählt wird nur in `login/finish`; `login/start` fragt die Sperre nur ab und zählt nie, damit
+  das bloße Fragen nach einem Namen niemanden aussperrt. `lock.Clear` rufst du bei der Anmeldung
+  **nicht** auf: Es löscht den ganzen Eimer, also würde jede erfolgreiche Anmeldung die Zählung
+  eines Angreifers zurücksetzen, der sich bei frei wählbarem Anmeldenamen gezielt in jeden Eimer
+  legt. Nötig ist es nicht – eine abgelaufene Zeile liest sich von selbst als Null, die Zählung
+  baut sich nach `keepFor` ohne Zutun ab. Der Preis: der eigene Eimer wird nach einer
+  erfolgreichen Anmeldung nicht sofort frei. Nur die Ersteinrichtung räumt ihren eigenen Eimer
+  (`setup/code`), der kein Anmeldename ist.
   `GET /api/v1/trust` antwortet nur mit Sitzung, und mit 204, wenn nichts Neueres da ist.
 - Ersteinrichtung: Den Einmal-Code (`session.ValidSetupCode`) kann nur root lesen (ulh zeigt ihn),
   und er kommt nie ins Log. `GET /api/v1/setup` antwortet mit `session.SetupOffer`: dein
