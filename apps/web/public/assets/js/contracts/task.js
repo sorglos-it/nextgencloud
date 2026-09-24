@@ -23,15 +23,17 @@ import * as proof from "./proof.js";
 import { message, verify as verifyEnvelope, PURPOSE_TASK, PURPOSE_CONFIRM } from "./sign.js";
 import { certHash } from "./session.js";
 import { keyOwner } from "./trust.js";
+import { MAX_PARAMS } from "./wire.js";
 
 export const ID_SIZE = 16;
 export const MAX_LIFETIME = 300;
 export const MAX_TASK = 16 << 10;
 // Go keeps this in wire.MaxParams, which bounds the params of a task and the
-// params an OPEN carries itself. The shell has no wire module, so the number
-// stands here, in the one contract that reads it today - the same reason
-// session.httpStatus spells out Go's wire.Code as strings.
-export const MAX_PARAMS = 8 << 10;
+// params an OPEN carries itself. Since wire.js exists the number stands
+// there, once; it is handed on from here so that a caller who reads tasks
+// keeps reading one name. wire.js imports nothing from this file, so the two
+// do not point at each other.
+export { MAX_PARAMS };
 
 // A task's cert is a SHA-256 (Go: sha256.Size), and buildTask gives a task
 // the lifetime the shell needs for one channel, well under MAX_LIFETIME,

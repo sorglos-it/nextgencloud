@@ -550,3 +550,178 @@ test("parseControl and encodeControl keep Go's rules", async ({ shell }) => {
   expect(got.allowed).toEqual([true, false, false, true, false]);
   expect(got.coreApp).toEqual([true, false, false]);
 });
+
+// validParams is Go's exported ValidParams - the shape and the scan of the
+// whole value together - and not its unexported paramsShape, which is what
+// parseOpen alone still uses. Every answer in the fourth column was measured
+// against shared/wire with wire.ValidParams over exactly these bytes.
+//
+// The four rows where the two differ are named in the table and counted
+// below, so the price cannot quietly grow: this file answers no where Go
+// answers yes, and Go's own ParseOpen refuses all four as well (measured), so
+// no params an OPEN could have carried are turned down here. No row is the
+// other way round.
+test("validParams asks the whole question Go's ValidParams asks", async ({ shell }) => {
+  const nest = (n) => '{"a":'.repeat(n) + "1" + "}".repeat(n);
+  const cases = [
+    // [name, params, here, Go's ValidParams]
+    ["nothing", "", true, true],
+    ["an object", "{}", true, true],
+    ["a member", '{"a":1}', true, true],
+    ["white space before", " {}", true, true],
+    ["white space after", "{} ", true, true],
+    ["__proto__ as a member name", '{"__proto__":1}', true, true],
+    ["minus zero", '{"a":-0}', true, true],
+    ["nesting at the limit", nest(32), true, true],
+    ["a value that breaks off", '{"a":', false, false],
+    ["a leading zero", '{"a":01}', false, false],
+    ["a repeated name", '{"a":1,"a":2}', false, false],
+    ["a repeated name deeper down", '{"a":{"b":1,"b":2}}', false, false],
+    ["a brace and no more", "{", false, false],
+    ["an array", "[1,2]", false, false],
+    ["a string", '"x"', false, false],
+    ["null", "null", false, false],
+    ["something after the value", '{"a":1}x', false, false],
+    ["a comma before the brace", '{"a":1,}', false, false],
+    ["a number that starts with a dot", '{"a":.5}', false, false],
+    ["NaN", '{"a":NaN}', false, false],
+    ["single quotes", "{'a':1}", false, false],
+    ["a comment", '{"a":1}/*x*/', false, false],
+    ["a lone surrogate escape", '{"a":"\\ud800"}', false, false],
+    // The four rows where this file is stricter than Go's ValidParams. Go's
+    // ParseOpen refuses every one of them too: enc.DecodeStrict allows no
+    // null, no nesting past MaxDepth and no number past 2^53-1, raw values
+    // included. The price is a no for params that no OPEN could carry.
+    ["a null member", '{"a":null}', false, true],
+    ["nesting one past the limit", nest(33), false, true],
+    ["a number past 2^53-1", '{"a":9007199254740993}', false, true],
+    ["an exponent no double holds", '{"a":1e400}', false, true],
+  ];
+  const got = await shell.evaluate(async (list) => {
+    const w = await import("/assets/js/contracts/wire.js");
+    const { utf8 } = await import("/assets/js/contracts/b64.js");
+    const filled = (n) => { const b = new Uint8Array(n); b.fill(0x20); b[0] = 0x7b; b[n - 1] = 0x7d; return b; };
+    return {
+      decides: list.map(([, text]) => w.validParams(utf8(text))),
+      // Bytes that are no text at all, and the two sizes at the edge. 8192
+      // bytes are taken, 8193 are not - MAX_PARAMS, which the budget holds.
+      bytes: [
+        w.validParams(new Uint8Array([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d])),
+        w.validParams(filled(8192)),
+        w.validParams(filled(8193)),
+      ],
+      // validateOpen is Go's Open.Validate, so it asks validParams and not
+      // the shape alone: an OPEN a caller built with params that break off is
+      // refused here, where until this round it was taken.
+      open: [
+        w.validateOpen({ app: "ngc.desktop", service: "api", action: "apps", window: 262144,
+          e2e: new Uint8Array(0), params: utf8('{"a":1}') }),
+        w.validateOpen({ app: "ngc.desktop", service: "api", action: "apps", window: 262144,
+          e2e: new Uint8Array(0), params: utf8('{"a":') }),
+        w.validateOpen({ app: "ngc.desktop", service: "api", action: "apps", window: 262144,
+          e2e: new Uint8Array(0), params: utf8('{"a":1,"a":2}') }),
+      ],
+      // parseOpen keeps Go's other way through, validate(false): the decoder
+      // has read these params already, and the answer is the same.
+      parses: (() => {
+        try {
+          w.parseOpen(utf8('{"app":"ngc.desktop","service":"api","action":"apps","params":{"a":1},"window":262144}'));
+          return true;
+        } catch { return false; }
+      })(),
+    };
+  }, cases);
+  const wrong = cases.filter(([, , here], i) => here !== got.decides[i]).map(([name]) => name);
+  expect(wrong).toEqual([]);
+  // The whole price against Go, counted from the table and not by hand.
+  expect(cases.filter(([, , here, go]) => here !== go).map(([name]) => name)).toEqual([
+    "a null member", "nesting one past the limit", "a number past 2^53-1",
+    "an exponent no double holds",
+  ]);
+  expect(cases.filter(([, , here, go]) => here && !go)).toEqual([]);
+  expect(got.bytes).toEqual([false, true, false]);
+  expect(got.open).toEqual([true, false, false]);
+  expect(got.parses).toBe(true);
+});
+
+// CODES is frozen and has no prototype. A plain object answers CODES.toString
+// with a function, so a caller who reads CODES[name] for a name from outside
+// would hand errorClose something that is no code at all; and a table anyone
+// may write to lets whoever else runs on the page turn E_FORBIDDEN into
+// another code between the shell reading it and the CLOSE going out. Neither
+// is caught by the message table, which is a Map of its own.
+test("the code table carries only its own names and cannot be written over", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const w = await import("/assets/js/contracts/wire.js");
+    const inherited = ["toString", "constructor", "hasOwnProperty", "valueOf", "isPrototypeOf", "__proto__"];
+    // Strict mode throws over a frozen object, sloppy mode does not; either
+    // way what counts is the value afterwards.
+    const tried = (fn) => { try { fn(); } catch { /* frozen */ } };
+    tried(() => { w.CODES.FORBIDDEN = "E_LOGIN"; });
+    tried(() => { w.CODES.MADE_UP = "E_MADEUP"; });
+    tried(() => { delete w.CODES.EXIT; });
+    return {
+      prototype: Object.getPrototypeOf(w.CODES),
+      frozen: Object.isFrozen(w.CODES),
+      inherited: inherited.map((n) => w.CODES[n] === undefined),
+      forbidden: w.CODES.FORBIDDEN,
+      added: w.CODES.MADE_UP === undefined,
+      exit: w.CODES.EXIT,
+      names: Object.keys(w.CODES),
+    };
+  });
+  expect(got.prototype).toBe(null);
+  expect(got.frozen).toBe(true);
+  expect(got.inherited).toEqual([true, true, true, true, true, true]);
+  expect(got.forbidden).toBe("E_FORBIDDEN");
+  expect(got.added).toBe(true);
+  expect(got.exit).toBe("E_EXIT");
+  expect(got.names).toEqual([
+    "FORBIDDEN", "UNREACHABLE", "EXIT", "TIMEOUT", "LIMIT", "PROTOCOL", "CONFIRM", "LICENSE",
+    "NOTFOUND", "VERIFY", "INTERNAL", "TOOLARGE", "LOGIN", "LOCKED",
+  ]);
+});
+
+// No error of this module repeats what it was given. A marker is put into
+// every field a message could pick it up from - the type of a control
+// message, a member name, an app id, a status, a code, the bytes of a frame -
+// and every call below has to throw and to answer without the marker. The
+// decoder's own errors name rules and no input either, and they are folded
+// into BadFrame before they leave, so a text from there cannot carry one out.
+test("no error repeats what it was given", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const w = await import("/assets/js/contracts/wire.js");
+    const { utf8 } = await import("/assets/js/contracts/b64.js");
+    const m = "Zq7marker7qZ";
+    const out = [];
+    const call = (name, fn) => {
+      try { fn(); out.push([name, null]); } catch (e) { out.push([name, String(e && e.message)]); }
+    };
+    call("control type", () => w.parseControl(utf8('{"t":"' + m + '"}')));
+    call("control type written", () => w.encodeControl({ t: m }));
+    call("control member", () => w.parseControl(utf8('{"t":"bye","' + m + '":1}')));
+    call("close code", () => w.parseClose(utf8('{"status":"error","code":"' + m + '"}')));
+    call("close status", () => w.parseClose(utf8('{"status":"' + m + '"}')));
+    call("close written", () => w.encodeClose({ status: "error", code: m, message: m }));
+    call("open app", () => w.parseOpen(utf8('{"app":"' + m + '","service":"api","action":"apps","window":262144}')));
+    call("open member", () => w.parseOpen(utf8('{"' + m + '":1}')));
+    call("open app written", () => w.encodeOpen({ app: m, service: "api", action: "apps", window: 262144 }));
+    call("open params written", () => w.encodeOpen({ app: "ngc.desktop", service: "api", action: "apps",
+      window: 262144, params: utf8('{"' + m + '"') }));
+    call("frame bytes", () => w.decodeFrame(utf8(m)));
+    call("frame type", () => w.encodeFrame({ type: m, channel: 1, payload: new Uint8Array(0) }));
+    call("frame payload", () => w.encodeFrame({ type: w.TYPE_DATA, channel: 1, payload: m }));
+    call("grant bytes", () => w.parseGrant(utf8(m)));
+    call("grant credit", () => w.grant(m, null));
+    call("e2e kind", () => w.e2e(m, null));
+    call("e2e end body", () => w.e2e(w.E2E_END, utf8(m)));
+    call("e2e side", () => w.parseE2E(utf8(m), m));
+    call("e2e plaintext", () => w.parseE2E(utf8(m), true));
+    return { out, marker: m };
+  });
+  // Every call has to have thrown: a test that passes because nothing was
+  // refused would say nothing about the messages.
+  expect(got.out.filter(([, message]) => message === null).map(([name]) => name)).toEqual([]);
+  expect(got.out.filter(([, message]) => message.includes(got.marker)).map(([name]) => name)).toEqual([]);
+  expect(got.out.length).toBe(19);
+});

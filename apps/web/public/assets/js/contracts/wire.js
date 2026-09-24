@@ -10,18 +10,19 @@
 // check with one value and the writer with another would put a frame on the
 // link that no check ever saw. viewOf below is that rule for bytes.
 //
-// The imports differ from the task brief's own block in nine names. Four are
-// added: fromUtf8 and BadInput from b64.js and BadJSON from json.js, which the
-// encoders and the folding of the decoder's errors need, and optInt from
-// json.js, the shape this task adds there for the exit code. Five are left
-// out: A, bool and int from json.js, which nothing here uses (the brief's own
-// code does not either), and sign.validateEnvelope, on purpose - see
-// validTaskEnvelope.
+// The imports differ from the task brief's own block in nine names, counted
+// by the two sets and not by hand. Five are added: fromUtf8 and BadInput from
+// b64.js and BadJSON from json.js, which the encoders and the folding of the
+// decoder's errors need, optInt from json.js, the shape this task adds there
+// for the exit code, and sign.SIG_SIZE, the one number the task envelope
+// below is measured by. Four are left out: A, bool and int from json.js,
+// which nothing here uses (the brief's own code does not either), and
+// sign.validateEnvelope, on purpose - see validTaskEnvelope.
 import { concat, utf8, fromUtf8, b64encode, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, P, str, uint32, bytes, raw, optInt, RAW } from "./json.js";
 import { validName, validAppID, coreApp, validText } from "./text.js";
 import { proofShape, validateProof } from "./proof.js";
-import { envelopeShape } from "./sign.js";
+import { envelopeShape, SIG_SIZE } from "./sign.js";
 
 export const TYPE_OPEN = 1, TYPE_DATA = 2, TYPE_EOF = 3, TYPE_CLOSE = 4, TYPE_GRANT = 5;
 export const HEADER_SIZE = 5;
@@ -44,17 +45,14 @@ export const E2E_FIRST_TIMEOUT = 30;
 export const E2E_DATA = 1, E2E_END = 2;
 
 // The payload of the task envelope in an OPEN: Go's task.MaxTask, which wire
-// holds as maxTask of its own because wire cannot import task. The same
-// layering decides here: task.js is built on session.js and proof.js, while
-// this module is the frame layer under them, so an import from here into
-// task.js would point the layers backwards. The number also stands in task.js
-// as MAX_TASK, which is where a task itself is read.
+// holds as an unexported maxTask of its own because wire cannot import task.
+// The same layering decides here: task.js is built on session.js and proof.js,
+// while this module is the frame layer under them. Since this round task.js
+// takes MAX_PARAMS from here, so the way back is not open at all any more: it
+// would be a ring. The number therefore stands twice, as it does in Go, and
+// unexported here as there; task.js holds the exported MAX_TASK, which is
+// where a task itself is read.
 const MAX_TASK = 16 << 10;
-
-// An Ed25519 signature (Go: ed25519.SignatureSize). sign.js holds the same
-// number for itself and does not export it; the one place that needs it here
-// is validTaskEnvelope below.
-const SIG_SIZE = 64;
 
 // The largest channel number, and the largest credit: both are uint32 in Go,
 // where the compiler answers for them; here a check has to.
@@ -63,8 +61,11 @@ const MAX_UINT32 = 4294967295;
 // Everything a document or a caller gets wrong is this one error, as it is
 // one error per parser in Go (ErrFrame, ErrOpen, ErrClose, ErrControl,
 // ErrE2E): which rule was broken is nothing a caller has to tell apart, and
-// no message here repeats a single byte of the input - the JSON decoder's own
-// errors quote member names and parts of what stood there.
+// no message here repeats anything of what it was given - the errors folded
+// in here are the contracts' own, whose texts name a rule and never what
+// stood there. The test "no error repeats what it was given" puts a marker
+// into every field a message could pick it up from and reads every message
+// back.
 export class BadFrame extends Error {}
 
 const EMPTY = new Uint8Array(0);
@@ -218,11 +219,29 @@ export function parseOpen(p) {
     if (e instanceof BadJSON || e instanceof BadInput) throw new BadFrame("open payload");
     throw e;
   }
-  if (!validateOpen(o)) throw new BadFrame("open payload");
+  // decode has read every byte of the params already - one JSON value, valid
+  // UTF-8, no repeated name at any depth - so only their shape is still open
+  // here. That is Go's validate(false), which ParseOpen uses for the same
+  // reason; scanning the largest params a second time would double what they
+  // cost, and the answer cannot change.
+  if (!validateFields(o, false)) throw new BadFrame("open payload");
   return o;
 }
 
+// validateOpen checks the fields of o and is Go's exported Open.Validate,
+// which is validate(true): the OPEN it is asked about is one a caller built
+// and no decoder has read, so the params get the full scan of validParams.
+// The name says the exported function and has to do what it does - a caller
+// who asks before building and gets a yes for an OPEN the other side refuses
+// is worse off than one who never asked.
 export function validateOpen(o) {
+  return validateFields(o, true);
+}
+
+// validateFields is Go's Open.validate(scanParams): the same rules in the
+// same order, with scanParams saying whether the params still need the scan
+// of the whole value.
+function validateFields(o, scanParams) {
   if (o === null || typeof o !== "object") return false;
   // The whole body stands inside the guard, as sign.validateEnvelope's does:
   // o is an object a caller owns, and a field behind a getter or a proxy that
@@ -236,7 +255,7 @@ export function validateOpen(o) {
     const e2e = bytesOrNull(o.e2e);
     if (params === undefined || e2e === undefined) return false;
     if (!validAppID(app) || !validName(service) || !validName(action)) return false;
-    if (!validParams(params)) return false;
+    if (!(scanParams ? validParams(params) : paramsShape(params))) return false;
     if (!Number.isInteger(window) || window < MIN_WINDOW || window > MAX_WINDOW) return false;
     // Core apps run in the API, inside the session's own Noise session; every
     // other app gets Noise message 1 of its end-to-end handshake.
@@ -287,20 +306,64 @@ function validTaskEnvelope(env) {
   }
 }
 
+// paramsBudget measures the params on their own, as task.js does for the
+// params of a task: at most MAX_PARAMS bytes, and nothing inside them counted
+// or named - the question is whether they are one JSON object, never what
+// stands in it.
+const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
+
 // validParams reports whether the params are empty or one JSON object of at
-// most MAX_PARAMS bytes (Go: wire.paramsShape, the check ParseOpen uses).
-// Whether what stands inside them is valid JSON at all is the strict
-// decoder's answer, not this one's: it has already read every byte of them,
-// checked the UTF-8 and refused a repeated name at any depth, and scanning
-// the largest params a second time would double what they cost. A raw value
-// the decoder keeps begins at the value itself - measured against shared/wire,
-// Go's json.RawMessage keeps no white space around it either - so the first
-// byte is the whole question of shape.
+// most MAX_PARAMS bytes that is valid JSON throughout (Go: wire.ValidParams,
+// which is paramsShape and jsontext.Value.IsValid together). Until this round
+// it was Go's unexported paramsShape under the exported name, which said yes
+// to '{"a":', '{"a":01}', '{"a":1,"a":2}' and '{' - all four refused by Go,
+// measured. The one file that reads this module reads a number out of it
+// (task.js, MAX_PARAMS) and asks nothing, so that cost nothing today; it
+// would have cost the next caller who asks before building.
+//
+// decode is what scans, and it is the decoder parseOpen reads an OPEN with,
+// so the two agree by construction. It also gives back the bytes of the one
+// value with the white space around it left off, which is what Go's
+// jsontext.Value.Kind reads through as well, so v[0] is the kind: measured
+// against shared/wire, " {}" is an object there and here.
+//
+// The price of using that decoder rather than Go's IsValid, measured over 30
+// inputs against shared/wire: 4 answers differ, all four the other way round
+// from before - this says no where Go's ValidParams says yes, for {"a":null},
+// for nesting past MAX_DEPTH, for a number past 2^53-1 and for 1e400. Go's
+// own ParseOpen refuses all four as well (enc.DecodeStrict allows no null, no
+// deeper nesting and no unsafe number, raw values included), so no OPEN that
+// the other side would take is turned down here. Nothing is looser than Go.
+// The one place that stays milder is the one task.js names for the same
+// check: the levels are counted from the params' own first byte, so params
+// nested exactly MAX_DEPTH deep pass here and are one level too deep once
+// they sit inside an OPEN - Go's ValidParams counts them the same way.
 export function validParams(rawValue) {
   const p = bytesOrNull(rawValue);
   if (p === undefined) return false;
   if (p === null || p.length === 0) return true;
-  return p.length <= MAX_PARAMS && p[0] === 0x7b;
+  let v;
+  try {
+    // The size bound is the budget's, so it is not written out again here.
+    v = decode(p, paramsBudget, raw);
+  } catch (e) {
+    // What the decoder decides is an answer, not an error; one of the engine
+    // stays as it is, as it does in parseOpen.
+    if (e instanceof BadJSON || e instanceof BadInput) return false;
+    throw e;
+  }
+  return v.length > 0 && v[0] === 0x7b;
+}
+
+// paramsShape is validParams without the scan of the whole value, for params
+// enc.DecodeStrict has already read (Go: wire.paramsShape). Only validateFields
+// with scanParams false reaches it, and that is only parseOpen - as in Go,
+// where nothing but ParseOpen reaches validate(false). The raw value the
+// decoder hands over begins at the value itself, so its first byte is its
+// kind; a caller's own params, which may carry white space, go the other way,
+// through validParams.
+function paramsShape(p) {
+  return p === null || p.length === 0 || (p.length <= MAX_PARAMS && p[0] === 0x7b);
 }
 
 // encodeOpen writes the OPEN in the field order of Go's wire.Open. These exact
@@ -310,9 +373,9 @@ export function validParams(rawValue) {
 // while parseOpen reads them back as the objects task and confirm.
 //
 // What it hands back is held against parseOpen before it leaves. The rules
-// are then written once, in validateOpen, instead of a second time here, and
-// params a caller built by hand get the full scan of the decoder that
-// validParams leaves to it. An OPEN is at most MAX_BROWSER_OPEN bytes and a
+// are then written once, in validateFields, instead of a second time here,
+// and the params a caller built by hand are read by the same decoder that
+// reads an OPEN from outside. An OPEN is at most MAX_BROWSER_OPEN bytes and a
 // channel opens once, so the second read costs nothing that matters.
 export function encodeOpen(o) {
   if (o === null || typeof o !== "object") throw new BadFrame("open");
@@ -356,6 +419,13 @@ function rawText(v) {
   }
 }
 
+// CODES is the table a caller names a code by. It is frozen and has no
+// prototype, and both are held by the test "the code table carries only its
+// own names and cannot be written over": a plain object answers CODES.toString
+// with a function, so CODES[name] for a name from outside would hand
+// errorClose something that is no code, and a table anyone may write to lets
+// whoever else runs on the page turn E_FORBIDDEN into another code between
+// the shell reading it and the CLOSE going out.
 export const CODES = Object.freeze({
   __proto__: null,
   FORBIDDEN: "E_FORBIDDEN", UNREACHABLE: "E_UNREACHABLE", EXIT: "E_EXIT", TIMEOUT: "E_TIMEOUT",
@@ -428,6 +498,14 @@ export const errorClose = (code) => ({ status: "error", code, message: message(c
 // encodeClose writes a CLOSE payload and holds it against parseClose before
 // it leaves, for the same reason encodeOpen does: the rules stand once, and a
 // CLOSE the other side would drop never goes out.
+//
+// That makes it stricter than Go in one measured place, and only in the
+// direction that costs nothing: encodeClose(errorClose("nope")) throws, while
+// Go's json.Marshal(wire.Error("nope")) writes {"status":"error","code":"nope"}
+// and hands the bytes on. Measured against shared/wire, Go's own ParseClose
+// refuses exactly those bytes and Close.Validate answers no to them, so what
+// is blocked here is a CLOSE the other side would have dropped - never one it
+// would have taken.
 export function encodeClose(c) {
   if (c === null || typeof c !== "object") throw new BadFrame("close");
   const { status, code, message: text, exitCode } = c;

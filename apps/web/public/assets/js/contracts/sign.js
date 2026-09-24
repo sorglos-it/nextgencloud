@@ -36,9 +36,11 @@ export const MAX_PAYLOAD = 4 << 20;
 // can drift apart.
 const KEY_ID_SIZE = 16;
 const KEY_ID_CHARS = encodedLen(KEY_ID_SIZE);
-// Go: ed25519.PublicKeySize and ed25519.SignatureSize.
+// Go: ed25519.PublicKeySize and ed25519.SignatureSize. The signature size is
+// exported because wire.js needs it too, for the task envelope an OPEN
+// carries: a second 64 in that file would be a second place to change.
 const KEY_SIZE = 32;
-const SIG_SIZE = 64;
+export const SIG_SIZE = 64;
 // What the JSON of an envelope holds besides the base64url of its payload:
 // member names, key id, signature and white space (Go: envelopeSlack).
 const ENVELOPE_SLACK = 1 << 10;
