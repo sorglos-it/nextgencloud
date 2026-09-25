@@ -96,8 +96,9 @@ function parseHeader(b) {
   let mode = "0000644\u0000";
   if (flag === 0x35) mode = "0000755\u0000";
   else if (flag !== 0x30 && flag !== 0x78) throw new BadPackage("typeflag");
-  // The name ends at its first NUL. indexOf reads the whole block, so a NUL
-  // that stands behind the field is no end of a name.
+  // The name ends at its first NUL. indexOf searches the whole block and not
+  // just the field, so the clamp below is what keeps a NUL behind the field
+  // from ending a name: a field of 100 bytes without one is a name of 100.
   let n = b.indexOf(0, 0);
   if (n < 0 || n > NAME_FIELD) n = NAME_FIELD;
   const size = octal(b.subarray(124, 136));

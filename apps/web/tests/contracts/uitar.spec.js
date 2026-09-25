@@ -218,11 +218,23 @@ test("what the reader checked is what it hands out", async ({ shell }) => {
     } catch (e) {
       lying = "refused: " + e.message;
     }
-    return { afterOverwrite, lying };
+
+    // What is no bytes at all is this module's own error and not the byte
+    // layer's: a caller of uitar tells its errors apart by module.
+    const notBytes = ["x", null, undefined, [1, 2, 3], new ArrayBuffer(8)].map((x) => {
+      try {
+        u.walkUI(x);
+        return "taken";
+      } catch (e) {
+        return e instanceof u.BadPackage ? "BadPackage" : "other: " + e;
+      }
+    });
+    return { afterOverwrite, lying, notBytes };
   });
 
   expect(out.afterOverwrite).toEqual([1, 2, 3, 4]);
   expect(out.lying).toEqual(["ui/x.bin:4:1,2,3,4"]);
+  expect(out.notBytes).toEqual(["BadPackage", "BadPackage", "BadPackage", "BadPackage", "BadPackage"]);
 });
 
 test("UIWriter writes the one form walkUI reads, and keeps its rules", async ({ shell }) => {
