@@ -528,9 +528,15 @@ func namedRows(t *testing.T, db *sql.DB, name string) int {
 // again. Here there is nothing to put it into - the questions and the write
 // take the one argument - so that form cannot be written at all.
 //
-// Taking this call out again and writing s.UserPut straight leaves the package
-// 142/0 green and that check still dead: what is lost is not the refusal but
-// the two ways above going quiet again. Measured as well.
+// Nothing holds that this call stays here, and that is a decision and not an
+// oversight. Writing s.UserPut straight again leaves the package 142/0 green,
+// measured, and the refusal itself stays caught; what goes is the two ways
+// above going quiet once more. No question put to the store can see that,
+// because what would be lost is not behaviour of the store but two questions
+// this file asked. Only a guard over this file's own source could, and it
+// would have to name this function by hand: red on a rename or a move that
+// changes nothing, and whoever took the call out would take the guard with
+// it. A gap written down beats a guard the next one switches off.
 func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 	t.Helper()
 	if have, err := s.UserGet(ctx, u.ID); err != nil || have.Name == u.Name {
@@ -599,6 +605,9 @@ func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 // refusals sit on opposite sides - at the second writer the user asking is the
 // full one and the row holding the name is the empty one, at the rename it is
 // the other way round - so a condition either way round drops one of them.
+// TestOnlyOneWriterGetsAName carries the same thing, on alternate rounds
+// because both sides of its refusals are racers; each of the two catches all
+// four on its own, measured with the other one left out of the run.
 //
 // One shape nothing in this package reaches, said plainly so that it is a
 // known open mutant and not a hole somebody thinks is covered: a question that
@@ -668,6 +677,20 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 // Nor does this test hold anything while the index stands: with it, both
 // unreachable-check shapes above came through here green.
 //
+// The racers of every other round carry something in every field but ID and
+// Name, and the rounds between carry the zero value of each. Same reason as at
+// TestTheCheckAloneRefusesATakenName, which says it at length: a refusal
+// standing between rows alike in every column can be hung on any one of them
+// with nothing going red. Here both sides of a refusal are racers, so one
+// round cannot have a full asker and an empty holder at once - which of the
+// 32 wins is not ours to say - and the two shapes are put on alternate rounds
+// instead. That is measured and not argued. With every racer empty, as they
+// stood, all four ways past the check left this test green, while their four
+// opposites - the same conditions turned round - were red; every racer full
+// would have swapped exactly that, which is why neither shape alone will do.
+// Alternating, all eight are red here, each on its own, with the test beside
+// it left out of the run.
+//
 // And what nothing on SQLite holds: whether MariaDB or Galera would let two
 // transactions past this check together. SQLite gives one writer the database
 // at a time, so what is measured here is that the check is inside that one
@@ -678,6 +701,7 @@ func TestOnlyOneWriterGetsAName(t *testing.T) {
 	s, db := withoutTheNameIndex(t)
 	for round := range rounds {
 		name := "n" + strconv.Itoa(round)
+		full := round%2 == 0
 		var wg sync.WaitGroup
 		start := make(chan struct{})
 		errs := make([]error, racers)
@@ -685,11 +709,16 @@ func TestOnlyOneWriterGetsAName(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				<-start
-				errs[i] = s.UserPut(ctx, dbapi.User{
+				u := dbapi.User{
 					ID:   "u" + strconv.Itoa(round) + "-" + strconv.Itoa(i),
 					Name: name,
-				})
+				}
+				if full {
+					u.Roles, u.TOTP = []string{"user"}, []byte("secret")
+					u.Locked, u.Failures, u.LastLogin = 1790000600, 3, 1790000200
+				}
+				<-start
+				errs[i] = s.UserPut(ctx, u)
 			}()
 		}
 		close(start)
