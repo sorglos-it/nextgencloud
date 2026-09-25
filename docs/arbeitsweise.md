@@ -810,6 +810,35 @@ Daraus folgt nicht „gründlicher berichtigen", sondern etwas Einfacheres:
 eine schreibst, frag dich, ob der Satz auch ohne sie trägt. Meistens ja — und
 dann lass sie weg.
 
+### Auf der anderen Seite heißt dieselbe Sache anders
+
+Der Koordinator hatte eine Verschärfung bewilligt — **unter der Bedingung**, dass
+der eingefrorene Vertrag auf der anderen Sprachseite dasselbe tut. Er konnte
+nicht sagen, wie man das dort überhaupt misst: die Fehlerform war „ein Gegenstand
+lügt über seine Länge", und diese Sprache hat gar keinen Längen-Getter, über den
+sich lügen ließe.
+
+Der Umsetzer hat das Gegenstück gefunden, statt „nicht prüfbar" zu schreiben: ein
+Feld, das **mehr echte Bytes trägt, als es meldet**. Damit ließ sich dieselbe
+Frage stellen — und die Antwort war eindeutig, aus einem Lauf statt aus einer
+Auslegung:
+
+| Aufruf | gemeldet / echt | Ergebnis |
+| --- | --- | --- |
+| Budget 7 | 7 gemeldet, 100 echt | **genommen** |
+| Budget 6 | 7 gemeldet, 100 echt | abgewiesen |
+| Verschlüsseln | an der Grenze, mehr dahinter | **genommen** |
+
+**Der Vertrag ignoriert, was jenseits der gemeldeten Länge liegt, und entscheidet
+auf der gemeldeten Zahl allein.** Damit war die Verschärfung blockiert — nicht
+weil sie schlecht wäre, sondern weil die zwei Seiten sonst auseinandergelaufen
+wären. Eingezäunt statt zugemacht, mit der Messung im Kommentar.
+
+**Bevor du „nicht prüfbar" schreibst, such das Gegenstück.** Eine Eigenschaft hat
+auf der anderen Seite fast immer eine Entsprechung — sie heißt nur anders. Und
+ein Vertrag, der eine Nachsicht festhält, hält sie für beide Seiten: ihn auf
+einer Seite zu verschärfen heißt, ihn zu brechen.
+
 ### Wer den Zweig hochschiebt, gibt die Nachricht aus der Hand
 
 Der Koordinator hat fünf Arbeitszweige aufs Remote geschoben, damit fremde
