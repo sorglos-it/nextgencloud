@@ -287,6 +287,15 @@ const ENTRIES = {
   "b64.equal#0": "view",
   "b64.equal#1": "view",
   "b64.viewOf#0": "view",
+  // core.parseResult takes a result's bytes at #1, and it is not here: no
+  // filling the walk has at #0 is an action of the table, so the probe never
+  // gets past the lookup and no reading is ever recorded for it. Named
+  // because a list entry for a place the probe cannot reach turns this red
+  // ("in the list, but the probe never reached it"), and somebody would
+  // otherwise add one and take it out again. What holds those bytes is
+  // core.spec.js "a result over MaxCallResult is refused".
+  "core.parseNotice#0": "view",
+  "core.parseUIProof#0": "view",
   "json.decode#0": "view",
   "noise.HandshakeKK.build#1": "view",
   "noise.HandshakeKK.build#3": "view",
@@ -432,7 +441,21 @@ const NEEDS_X25519 = [
 // made this round necessary (an ordinary array rewritten in a microtask). What
 // holds those is sign.spec.js "verifyRaw decides on a copy no getter can
 // reach", which measures answers instead of touches.
-const CALLABLES = 141;
+//
+// 190 since contracts/core.js joined the directory: 141 and 49 more, and the
+// 49 were measured, not counted off the source - the same tree with and
+// without that one file, 193 against 144 in chromium. Eleven of them are its
+// exported functions. The other 38 are Array.prototype, and that is worth
+// knowing before the next contract exports a table: core.ACTIONS is an array,
+// the walk finds no own function on it and goes up its prototype chain, so
+// at, concat, copyWithin, join, push, sort, splice and thirty-one more are
+// counted here and called with the probe. They record nothing - a typed array
+// converted to a number goes through %TypedArray%.prototype.join, which reads
+// the internal length and not the getter - and the ones that would rearrange
+// the table throw instead, because ACTIONS and every row of it are frozen. An
+// exported array costs 38 here; an exported object of the same rows costs
+// none, because its prototype is Object.prototype and the walk stops there.
+const CALLABLES = 190;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
