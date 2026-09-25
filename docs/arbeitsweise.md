@@ -695,6 +695,42 @@ gewinnt der Vertrag. Dann wird gemeldet und eingezäunt, nicht verschärft — z
 Seiten, die auseinanderlaufen, sind schlimmer als eine bekannte Lücke. Das ist
 eine Messung, keine Auslegung: nachsehen, was die andere Seite wirklich tut.
 
+### Eine Suche beweist keine Abwesenheit
+
+Der Recovery-Strang hat drei Runden lang eine Zusage verschärft: das entsiegelte
+Geheimnis fährt nicht offen über die Leitung, und nach dem Lauf liegt es nirgends
+herum. Jede Runde fand einen neuen Weg, jede Runde wurde die Suche breiter — von
+einer Differenz zu einer Richtung, von einer Richtung zu einer Buchführung, von
+zwei Schreibweisen zu sechs, von einem Unterordner auf den ganzen Baum.
+
+Dann hat ein Prüfer das Geheimnis in **zwei Anfragen zu je vier Byte** geschickt.
+Keine Nachricht trug alle acht. **Ohne jede Kodierung.** Alles grün. Und das
+Werkzeug hatte das Stückeln **von selbst** gewählt — Zerteilen ist keine Kunst,
+das macht der Protokollstapel.
+
+Daneben: dieselbe Datei mit zurückgestelltem Zeitstempel (was `cp -p` und
+`tar -xp` ohnehin tun), eine Ablage **über** dem Projektstamm, das Geheimnis in
+**Dezimal** statt Hex, und das Geheimnis **im Dateinamen**.
+
+**Eine Nadelsuche kann nie beweisen, dass etwas nicht entwichen ist.** Jede
+Erweiterung findet den nächsten Fall und schließt keinen einzigen künftigen.
+
+Daraus folgt **nicht**, dass man aufhört zu suchen — die Suche fängt echte
+Fehler, und jede billige, gemessene Erweiterung ist es wert. Es folgt etwas
+anderes:
+
+> **Der Anspruch muss der Prüfung entsprechen, nicht der Absicht.**
+
+Wo `ok "das Geheimnis fährt nur an der einen bekannten Stelle"` steht, muss
+stehen, **was der Lauf wirklich gesehen hat** — welche Schreibweisen, welcher
+Baum, welches Zeitfenster, und dass alles andere ungeprüft ist. Ein Satz, der
+mehr verspricht, als gemessen wurde, ist gefährlicher als gar keiner: der
+Nächste hört auf zu suchen.
+
+Der Prüfer hat es so zusammengefasst, und daran erkennt man den Unterschied:
+**die Dateisuche hatte sechs Schreibweisen gelernt, die Leitungsprüfung kannte
+weiter genau eine.**
+
 ### Ein Zaun an der falschen Zeile ist kein Zaun
 
 Zweimal am selben Tag stand ein ehrlicher Hinweis am falschen Ort.
