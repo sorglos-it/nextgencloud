@@ -2,6 +2,7 @@ package sqlstore_test
 
 import (
 	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -479,37 +480,49 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 // keeps - the schema is held by TestUserNameIsUnique and by the migration
 // lint, and nothing here touches the database any other test meets.
 //
-// The proof runs twice, at the top and again from a t.Cleanup, and that is the
-// correction of a fixture that proved itself once. A proof at the top says the
-// index was gone when the store was handed over; it says nothing about the run
-// that follows. Measured on 2a21a26, where it ran once: one line behind it,
+// The proof runs at the top, at every namedRows the test asks, and once more
+// from a t.Cleanup, and the last two of those places are each the correction
+// of a fixture that had one fewer. A proof at the top says the index was gone
+// when the store was handed over; it says nothing about the run that follows.
+// Measured on 2a21a26, where it ran once: one line behind it,
 // CREATE UNIQUE INDEX ngc_user_name ON ngc_user (name), left the package 142/0
 // green with that proof passing - and with the index answering again, both
 // tests below held nothing at all. On that drift the whole refusal deleted
 // (case false: in place of the condition) was 142/0 too, where it is 140/2
-// without it. Through the second run the same drift is 140/2 in both tests,
-// each naming the index.
+// without it. Through the cleanup run the same drift is 141/2 in both tests on
+// this tree, each naming the index.
 //
-// Both runs are the one function nameIndexGone, not two copies of a proof that
-// could drift apart, and it plants and removes its own two rows by ID: the
-// second run leaves every row the test wrote where it is.
+// All three runs are the one function nameIndexGone, not copies of a proof
+// that could drift apart, and it plants and removes its own two rows: every
+// row the test wrote is left where it is.
 //
-// And what the second run does not catch, measured while it was being written:
-// a t.Cleanup registered after this one that drops the index again. Cleanups
-// run last-registered-first, so that one goes before this proof and the
-// package is 143/0 green with the index standing the whole run.
+// Why the proof in the body, and what was written here before it. The cleanup
+// run does not catch a t.Cleanup registered after this one that drops the
+// index again: cleanups run last-registered-first, so that one goes before
+// this proof, and with the index standing the whole run the package was 143/0
+// green. What used to stand here was that no further proof closes that, the
+// reason given being the order itself - a third proof beaten by a cleanup
+// registered after the third, a proof at every namedRows by one registered
+// after that.
 //
-// No further proof closes that, and the reason is the order itself and not the
-// proof. Whoever writes a line here can write it after the last one, and the
-// last one registered is the first one run: a third proof would be beaten by a
-// cleanup registered after the third, a proof at every namedRows by one
-// registered after that. It is an endless step backwards, not a race anyone
-// wins - a test cannot make itself immune to arbitrary changes in the file it
-// is written in. So it is named here, and the next one need not try again.
-// Same kind as the two set out at TestTheCheckAloneRefusesATakenName.
-func withoutTheNameIndex(t *testing.T) (dbapi.Store, *sql.DB) {
+// Half of that is true and half of it was never measured. A proof registered
+// as a cleanup can be beaten by a later cleanup; a proof in the test body
+// cannot be touched by any cleanup at all, because cleanups run after the body
+// has finished. The proof at every namedRows is in the body. Measured on this
+// tree against exactly that drift - the index made again here and a t.Cleanup
+// registered after this one dropping it - 141/2 in both fences, each naming
+// the index, where without the body proof it is 143/0 green. The whole repair
+// costs about 0.4 s: three runs of the three tests it touches, 2.87 s before
+// it and 3.24 s after.
+//
+// So the sentence that ended the search was the error, not the shape it turned
+// down. What a test cannot do is make itself immune to arbitrary changes in
+// the file it is written in; that is still true, and it is no licence to leave
+// a shape unmeasured because an argument says it would not hold.
+func withoutTheNameIndex(t *testing.T) (dbapi.Store, fixture) {
 	t.Helper()
 	s, db := openDB(t)
+	f := fixture{db: db, standing: nameIndexGone}
 	if _, err := db.ExecContext(ctx, "DROP INDEX ngc_user_name"); err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +538,21 @@ func withoutTheNameIndex(t *testing.T) (dbapi.Store, *sql.DB) {
 				"refused, not the check in UserPut: %v", err)
 		}
 	})
-	return s, db
+	return s, f
+}
+
+// fixture is what withoutTheNameIndex and throughAViewWithoutAnID hand back
+// beside the store: the database behind it, and that fixture's own proof that
+// it is still standing.
+//
+// The two travel together so that counting rows cannot be written without
+// re-proving the fixture the rows are counted in, and so that no test can pair
+// itself with the other fixture's proof. That is why namedRows takes this and
+// not a bare *sql.DB, and it is enough, because every use of the database in
+// the three tests these two fixtures carry is a namedRows.
+type fixture struct {
+	db       *sql.DB
+	standing func(*testing.T, *sql.DB) error
 }
 
 // nameIndexGone is the whole proof that ngc_user_name is not there: two rows
@@ -537,16 +564,46 @@ func withoutTheNameIndex(t *testing.T) (dbapi.Store, *sql.DB) {
 // name or a trigger doing the same work would answer that question and not the
 // other one.
 //
-// It removes its own two rows by ID and leaves every other row alone, so
-// withoutTheNameIndex can run it a second time when the test is done without
-// touching what the test wrote.
+// The name and the two IDs are rolled fresh on every call, and that is the
+// whole of it: a proof that asks with a name written in the source asks a
+// question whoever writes the source already knows. Measured on this tree with
+// the fixed name it used to carry, one line after the DROP:
+//
+//	CREATE UNIQUE INDEX ngc_user_name2 ON ngc_user (name) WHERE name <> x'7477696365'
+//
+// x'7477696365' is "twice", the name this proof used to ask with, as a BLOB
+// because the column holds one. Both runs of the proof came through honestly
+// and passed, the index stood the whole run for every other name, and the
+// package was 143/0 green with both fences below holding nothing. A proof at
+// every namedRows does not see it either - measured, 143/0, because it asks
+// with the same literal. It is not the number of proofs that was wrong, it is
+// the name they ask with.
+//
+// The IDs are rolled for the same reason and it is the same measurement: the
+// predicate written over id instead, WHERE id NOT IN (x'752d6f6e65',
+// x'752d74776f') - "u-one" and "u-two", the IDs this proof used to plant - is
+// 143/0 green with the name rolled but the IDs left standing. With both rolled
+// each of the two lines is 141/2, caught at the top of the fixture.
+//
+// What this does not close, said plainly: the other five columns are still
+// written with the values below. A predicate over one of those cannot pick out
+// these rows and nothing else - locked = 0 holds for most rows the tests here
+// write - so it spares this proof only by sparing much of the table with it,
+// which is the narrowed-question shape already named at the fences and not
+// this one. That is not measured here, and looking for the next shape is not
+// what this change is.
+//
+// It removes its own two rows by ID and leaves every other row alone, so it
+// can run again at every namedRows and once more when the test is done,
+// without touching what the test wrote.
 func nameIndexGone(t *testing.T, db *sql.DB) error {
 	t.Helper()
-	ids := []string{"u-one", "u-two"}
+	name := rand.Text()
+	ids := []string{"one-" + name, "two-" + name}
 	var refused error
 	for _, id := range ids {
 		if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, "+
-			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte("twice"),
+			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte(name),
 			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil && refused == nil {
 			refused = err
 		}
@@ -562,10 +619,20 @@ func nameIndexGone(t *testing.T, db *sql.DB) error {
 // namedRows is how many rows of ngc_user carry that name, asked of the
 // database and not of the store: what a writer was told and what stands there
 // are two different things, and both tests below want both.
-func namedRows(t *testing.T, db *sql.DB, name string) int {
+//
+// It proves the fixture is still standing before it counts, and that is the
+// one place a proof cannot be reached from a t.Cleanup, because cleanups run
+// after the body. The reasoning and the numbers are at withoutTheNameIndex.
+// The proof plants rows of its own under a name nobody can name in advance, so
+// it can never be the name being counted here.
+func namedRows(t *testing.T, f fixture, name string) int {
 	t.Helper()
+	if err := f.standing(t, f.db); err != nil {
+		t.Fatalf("the fixture this test runs in was not standing when its rows were counted, so "+
+			"from here on it held nothing: %v", err)
+	}
 	var n int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM ngc_user WHERE name = ?",
+	if err := f.db.QueryRowContext(ctx, "SELECT count(*) FROM ngc_user WHERE name = ?",
 		[]byte(name)).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -716,17 +783,21 @@ func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 //     "admin". The check is then dead exactly on the database the comment at
 //     UserPut names it for.
 //
-// Neither is left open for want of another round. Nine ways were found in
-// seven, and a tenth while the fixture above was being repaired, each in a
-// shape the round before had not thought of - hung on a field, the question
-// narrowed, hung on the dialect, the fixture undermined, the fixture's own
-// repair undone by the order cleanups run in. A test cannot make itself immune
-// to arbitrary changes in the source it measures. That is the nature of the
-// thing and not a weakness of these two. What stands written here is what was
-// measured; a sentence promising more than that is worse than none, because
-// the next reader stops looking.
+// Neither is left open for want of another round. Eleven ways were found in
+// eight, each in a shape the round before had not thought of - hung on a
+// field, the question narrowed, hung on the dialect, the fixture undermined,
+// the fixture's repair undone by the order cleanups run in, and the fixture's
+// proof spared by name from an index that guarded everything else. The last
+// two are closed, by a proof in the test body and by a proof that rolls its
+// name fresh; both are set out at withoutTheNameIndex and nameIndexGone. A
+// test cannot make itself immune to arbitrary changes in the source it
+// measures. That is the nature of the thing and not a weakness of these two.
+// What stands written here is what was measured; a sentence promising more
+// than that is worse than none, because the next reader stops looking - and so
+// is a sentence turning a shape down unmeasured, which is how the tenth stayed
+// open a round longer than it had to.
 func TestTheCheckAloneRefusesATakenName(t *testing.T) {
-	s, db := withoutTheNameIndex(t)
+	s, f := withoutTheNameIndex(t)
 	// evil carries something in every field but ID and Name, u-admin the zero
 	// value of each. Four ways past the check live or die on that; see above.
 	evil := dbapi.User{ID: "u-evil", Name: "admin", Roles: []string{"user"},
@@ -737,7 +808,7 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	if err := s.UserPut(ctx, evil); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("the second writer was told %v, want ErrInvalid", err)
 	}
-	if n := namedRows(t, db, "admin"); n != 1 {
+	if n := namedRows(t, f, "admin"); n != 1 {
 		t.Errorf("%d rows carry the name admin, want 1", n)
 	}
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "chef"}); err != nil {
@@ -751,7 +822,7 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	if err := renameOntoTaken(t, s, dbapi.User{ID: "u-admin", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("the rename onto a taken name was told %v, want ErrInvalid", err)
 	}
-	if n := namedRows(t, db, "admin"); n != 1 {
+	if n := namedRows(t, f, "admin"); n != 1 {
 		t.Errorf("%d rows carry the name admin after the refused rename, want 1", n)
 	}
 }
@@ -810,13 +881,14 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 // && s.d.DDLInTx(), each green across all 143 with both fences run, and the
 // last of them dead on MariaDB, which is the database it is written for. The
 // four are set out at TestTheCheckAloneRefusesATakenName, with what each one
-// lets through. They are named and not closed: nine ways in seven rounds and a
-// tenth on the fixture's repair, each a shape the round before had not thought
-// of, and no test immunises itself against arbitrary changes to the source it
-// measures. The promise here is the one that was measured.
+// lets through. They are named and not closed: eleven ways in eight rounds,
+// each a shape the round before had not thought of, the last two of them
+// against the fixture rather than the check and both now closed. No test
+// immunises itself against arbitrary changes to the source it measures. The
+// promise here is the one that was measured.
 func TestOnlyOneWriterGetsAName(t *testing.T) {
 	const racers, rounds = 32, 400
-	s, db := withoutTheNameIndex(t)
+	s, f := withoutTheNameIndex(t)
 	fullRounds := 0
 	for round := range rounds {
 		name := "n" + strconv.Itoa(round)
@@ -859,7 +931,7 @@ func TestOnlyOneWriterGetsAName(t *testing.T) {
 				}
 			}
 		}
-		if rows := namedRows(t, db, name); ok != 1 || rows != 1 {
+		if rows := namedRows(t, f, name); ok != 1 || rows != 1 {
 			t.Fatalf("round %d: %d writers were told they got %q and %d rows carry it - "+
 				"want 1 and 1; %d got ErrInvalid, %d something else",
 				round, ok, name, rows, invalid, other)
@@ -893,17 +965,22 @@ func TestOnlyOneWriterGetsAName(t *testing.T) {
 // SELECT - and the conclusion drawn from them was not. Neither ground says
 // anything about what the name ngc_user has to stand for.
 //
-// The index has to go with it. With the index in place the mutant below is
-// green: the INSERT meets ngc_user_name in the table behind the view, and
-// UserPut comes back with ErrInvalid after all, for the wrong reason.
-// Measured, mutant and all: 143/0 with the index, 142/1 without it.
+// The index has to go with it. With the index in place the INSERT meets
+// ngc_user_name in the table behind the view, and UserPut comes back with
+// ErrInvalid after all, for the wrong reason. Measured: with the index left
+// standing it is 142/1 whether the mutant is there or not, because this
+// fixture's own proof refuses to start - two rows under one name are refused,
+// which is exactly what it asks about. Without the index it is 143/0 clean and
+// 142/1 with the mutant. What used to stand here, 143/0 with the index, was
+// never measurable on this tree: the proof above sits in the way of it.
 //
 // SQLite only, like countChangedRows above: it is a shape made for one
 // question, on a database of its own, and nothing else in this package meets
 // it.
-func throughAViewWithoutAnID(t *testing.T) (dbapi.Store, *sql.DB) {
+func throughAViewWithoutAnID(t *testing.T) (dbapi.Store, fixture) {
 	t.Helper()
 	s, db := openDB(t)
+	f := fixture{db: db, standing: theViewAnswers}
 	for _, stmt := range []string{
 		"DROP INDEX ngc_user_name",
 		"ALTER TABLE ngc_user RENAME TO ngc_user_rows",
@@ -930,7 +1007,7 @@ func throughAViewWithoutAnID(t *testing.T) (dbapi.Store, *sql.DB) {
 				"test held nothing: %v", err)
 		}
 	})
-	return s, db
+	return s, f
 }
 
 // theViewAnswers is the whole proof that the fixture above is standing, and it
@@ -940,23 +1017,30 @@ func throughAViewWithoutAnID(t *testing.T) (dbapi.Store, *sql.DB) {
 // the one thing this fixture is for. It takes its own two rows away again and
 // leaves every other row where it is.
 //
-// It runs twice, at the top and from a t.Cleanup, for the reason written out
-// at withoutTheNameIndex: a proof that runs once at the top proves something
-// about the setup and nothing about the run.
+// It runs at the top, at every namedRows and from a t.Cleanup, for the reason
+// written out at withoutTheNameIndex: a proof that runs once at the top proves
+// something about the setup and nothing about the run, and only the run in the
+// body is out of reach of a later cleanup.
+//
+// Its name and its two IDs are rolled fresh on every call, for the reason
+// written out at nameIndexGone: a proof that asks with a name from the source
+// asks a question whoever writes the source already knows, and a partial index
+// sparing exactly that name lets the proof pass while it guards every other.
 func theViewAnswers(t *testing.T, db *sql.DB) error {
 	t.Helper()
-	ids := []string{"v-one", "v-two"}
+	name := rand.Text()
+	ids := []string{"one-" + name, "two-" + name}
 	var bad error
 	for _, id := range ids {
 		if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, "+
-			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte("twice"),
+			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte(name),
 			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil && bad == nil {
 			bad = fmt.Errorf("two rows under one name were refused, so something still keeps the "+
 				"name unique and the refusal below need not be UserPut's: %w", err)
 		}
 	}
 	var other string
-	err := db.QueryRowContext(ctx, "SELECT id FROM ngc_user WHERE name = ?", []byte("twice")).Scan(&other)
+	err := db.QueryRowContext(ctx, "SELECT id FROM ngc_user WHERE name = ?", []byte(name)).Scan(&other)
 	if err == nil && bad == nil {
 		bad = fmt.Errorf("the question about a taken name answered %q, so the view is not in "+
 			"front of ngc_user and nothing here makes that question fail", other)
@@ -996,17 +1080,17 @@ func theViewAnswers(t *testing.T, db *sql.DB) error {
 // mean asking for the fixture's own error by its text, which is the fixture
 // speaking and not the store, so it is written down instead of built.
 func TestAFailedQuestionIsNotAFreeName(t *testing.T) {
-	s, db := throughAViewWithoutAnID(t)
+	s, f := throughAViewWithoutAnID(t)
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := namedRows(t, db, "admin"); n != 1 {
+	if n := namedRows(t, f, "admin"); n != 1 {
 		t.Fatalf("%d rows carry the name admin before the second writer, want 1", n)
 	}
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); err == nil {
 		t.Error("the second writer was told <nil>, want the error the question came back with")
 	}
-	if n := namedRows(t, db, "admin"); n != 1 {
+	if n := namedRows(t, f, "admin"); n != 1 {
 		t.Errorf("%d rows carry the name admin, want 1", n)
 	}
 }
