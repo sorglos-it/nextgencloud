@@ -432,7 +432,21 @@ const NEEDS_X25519 = [
 // made this round necessary (an ordinary array rewritten in a microtask). What
 // holds those is sign.spec.js "verifyRaw decides on a copy no getter can
 // reach", which measures answers instead of touches.
-const CALLABLES = 141;
+//
+// 144 since pack.js: packageUI, sha256Stream and testTar, three more and not
+// one line in ENTRIES - measured, not counted by hand, by running this guard
+// with the file and without it and taking the difference it reported.
+//
+// That it adds NO place is worth saying, because it is the blind spot and not
+// a clean bill. packageUI is handed a ReadableStream, so the probe never
+// becomes the bytes it works on: those arrive as chunks INSIDE, from whoever
+// wrote the source, and a chunk is exactly the kind of object this whole file
+// is about - a Uint8Array may define length. The walk cannot reach them at
+// any filling. What holds that door is pack.spec.js "a chunk that lies about
+// its size decides nothing", which hands packageUI a source whose every chunk
+// reports one byte less than it holds and asserts the hashes come out
+// unmoved; taking b64.bytesOf out of the reader turns it red, measured.
+const CALLABLES = 144;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
@@ -498,7 +512,9 @@ test("every place that takes caller bytes decides on the number it works with", 
     //
     // It reaches as far as /assets/js/. Code a contract took from somewhere
     // else - /assets/vendor/ - is a question for THIRD-PARTY.md and not for
-    // this guard, and no contract imports any today.
+    // this guard. pack.js is the first contract that takes any: the SHA-256
+    // with update/digest that a package of 4 GiB needs, which the Web Crypto
+    // API does not have. It is deliberately not reported here.
     const knownPaths = new Set(names.map((n) => base + n + ".js"));
     const unlisted = new Set();
     const wanted = /^\/assets\/js\/.+\.js$/;
