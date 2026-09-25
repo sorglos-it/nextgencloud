@@ -6,9 +6,15 @@
 # Careful: it empties dist/recovery/work. Nothing may be parked there.
 # What a finished run leaves standing, so nobody has to guess: the simulator of
 # instance main keeps running, 0x81000001 stays persistent inside it, and
-# dist/recovery/work still holds the files of the last case. Only the virtual
-# machine and the simulator of instance qemu are ended, by cleanup below. Ending
-# main by hand: tools/recovery-swtpm.sh stop main.
+# dist/recovery/work still holds the files of the last case - the sealed object,
+# the PCR value files and the contexts. The unsealed secret is NOT among them,
+# and that is not a hope: the case right before the first branch searches the
+# whole directory for it. Measured why that matters - with shred -u turned
+# into a no-op the run stayed green nine times over while work/secret.bin lay
+# there with the secret in it, and the promise in this very paragraph is what
+# made it lie there for good. In work package 6 that file is the real DEK.
+# Only the virtual machine and the simulator of instance qemu are ended, by
+# cleanup below. Ending main by hand: tools/recovery-swtpm.sh stop main.
 set -euo pipefail
 shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
@@ -74,6 +80,25 @@ nv_has() {               # $1 = NV-Index, z. B. 0x1500016
 	case "$list" in
 	*"$1"*) return 0 ;;
 	esac
+	return 1
+}
+
+# Fishes one field out of a tpm2_readpublic output: the "raw:" line that comes
+# right after the field's own name. The line on its own is not enough - the
+# same output holds a "raw:" for name-alg, attributes, type, curve-id and more,
+# all spelled the same way. Says nothing itself and returns 1 when the field is
+# not there at all, so the call site decides what that means. Safe inside a
+# $( ): it ends in return, never in fail.
+rohwert() {              # $1 = Feldname, $2 = Ausgabe von tpm2_readpublic
+	local zeile treffer=""
+	while IFS= read -r zeile; do
+		case "$zeile" in
+		"$1:") treffer=ja ;;
+		"  raw: "*)
+			if [ "$treffer" = ja ]; then printf '%s' "${zeile#  raw: }"; return 0; fi
+			;;
+		esac
+	done <<< "$2"
 	return 1
 }
 
@@ -149,29 +174,60 @@ use_main
 # nothing here could notice it going away: measured, before this case existed
 # the guard could be taken out and the run stayed green, because every other
 # call below sets TPM2TOOLS_TCTI to our own simulator first and so can never
-# reach the guard. This one call can. The value points at a socket that does not exist - deliberately NOT at
-# /dev/tpmrm0, the machine's own TPM: a case that is only harmless while the
-# code it tests is correct is not a test. Measured, so that this holds even if
-# every guard were gone: swtpm:path=<no such file> ends at "Could not load
-# tcti" and reaches for nothing else, while an EMPTY variable is the one that
-# goes for /dev/tpmrm0 and /dev/tpm0. What is checked is the guard's own
-# sentence, not merely a non-zero exit - measured, with the guard cut out the
-# script quietly overwrites the foreign value with its own and succeeds.
+# reach the guard. This one call can. The value points at a socket that does
+# not exist - deliberately NOT at /dev/tpmrm0, the machine's own TPM: a case
+# that is only harmless while the code it tests is correct is not a test.
+# Measured, so that this holds even if every guard were gone:
+# swtpm:path=<no such file> ends at "Could not load tcti" and reaches for
+# nothing else, while an EMPTY variable is the one that goes for /dev/tpmrm0
+# and /dev/tpm0.
+#
+# Two things are asked, and the guard's wording is not one of them. It used to
+# be, for a reason that was the wrong way round: with the guard cut out the run
+# does not end at all, it runs through - so the exit status IS the difference,
+# measured. What the wording cannot catch is a guard in the WRONG PLACE, and
+# that one was built: the check moved to the foot of the script says its piece
+# and ends at exit 1, exactly as it should, and has extended PCR 11 on the way
+# there. So PCR 11 is read before and after and has to be the same. That holds
+# through any rewording of the message, and it is what caught the case above.
+tpm2_pcrread -o dist/recovery/work/pcr11-vorher.bin sha384:11 >/dev/null
+vorher="$(xxd -p -c 96 < dist/recovery/work/pcr11-vorher.bin | tr -d '\n')"
 fremd="swtpm:path=$PWD/dist/recovery/work/kein-simulator.sock"
 if wache="$(TPM2TOOLS_TCTI="$fremd" tools/recovery-policy.sh state normal 2>&1)"; then
-	fail "recovery-policy.sh nimmt ein fremdes TPM2TOOLS_TCTI an"
+	fail "recovery-policy.sh nimmt ein fremdes TPM2TOOLS_TCTI an: $wache"
 fi
-case "$wache" in
-*"zeigt nicht auf den Simulator der Instanz main"*) ;;
-*) fail "recovery-policy.sh weist ein fremdes TPM2TOOLS_TCTI nicht selbst ab" ;;
-esac
+tpm2_pcrread -o dist/recovery/work/pcr11-nachher.bin sha384:11 >/dev/null
+nachher="$(xxd -p -c 96 < dist/recovery/work/pcr11-nachher.bin | tr -d '\n')"
+[ "$vorher" = "$nachher" ] \
+	|| fail "Der abgewiesene Aufruf hat PCR 11 trotzdem erweitert - er hat also am TPM gearbeitet."
 ok "ein fremdes TPM2TOOLS_TCTI hält recovery-policy.sh an"
 
+geheim="TEST-DEK"
 tools/recovery-policy.sh state normal
 tools/recovery-policy.sh seal pcr
+
+# What the sealing has to leave behind, and above all what it must not. The
+# secret is handed to the TPM through a file, and shred -u is what takes that
+# file away again - measured, with shred -u replaced by a no-op the run stayed
+# green nine times over and dist/recovery/work/secret.bin lay there with the
+# secret in it. Asked of the whole directory and not of that one name, because
+# that is the promise the head of this file makes: work/ stays standing, so
+# nothing in it may carry the secret - a later step parking it under another
+# name falls under this too. grep -l prints names, never content, so nothing of
+# the secret reaches this run's output even when the case goes red. In work
+# package 6 this is the real DEK.
+rc=0
+traeger="$(grep -rlF "$geheim" dist/recovery/work)" || rc=$?
+case "$rc" in
+0) fail "Das Geheimnis steht nach dem Siegeln im Klartext in: $traeger" ;;
+1) ;;
+*) fail "Die Suche nach dem Klartext in dist/recovery/work ist fehlgeschlagen (grep sagt $rc)" ;;
+esac
+ok "das Siegeln lässt das Geheimnis nirgends im Klartext liegen"
+
 # Removed first so a leftover from an earlier run cannot answer for this one.
-rm -f dist/recovery/work/sess-attrs.txt
-[ "$(tools/recovery-policy.sh open pcr)" = "TEST-DEK" ] || fail "Normalstart-Zweig öffnet nicht"
+rm -f dist/recovery/work/sess.ctx
+[ "$(tools/recovery-policy.sh open pcr)" = "$geheim" ] || fail "Normalstart-Zweig öffnet nicht"
 ok "Zweig 1: Normalstart über PCR 11 = Produktiv-UKI"
 
 # Three promises of recovery-policy.sh sit in the attributes of the sealed
@@ -203,38 +259,63 @@ tpm2_flushcontext -t >/dev/null 2>&1 || :
 tpm2_load -C "$seal_handle" -u dist/recovery/work/seal.pub -r dist/recovery/work/seal.priv \
 	-c dist/recovery/work/pruefung.ctx >/dev/null \
 	|| fail "Das versiegelte Objekt lässt sich nicht laden"
-pub="$(tpm2_readpublic -c dist/recovery/work/pruefung.ctx)"
+pub="$(tpm2_readpublic -c dist/recovery/work/pruefung.ctx)" \
+	|| fail "Das versiegelte Objekt lässt sich nicht auslesen"
 tpm2_flushcontext -t >/dev/null 2>&1 || :
-# The value stands on the line after "attributes:"; three further "raw:" lines
-# in the same output belong to other fields, so the line alone is not enough.
-attrs=""
-naechste=0
-while IFS= read -r zeile; do
-	case "$zeile" in
-	"attributes:") naechste=1 ;;
-	"  raw: "*)
-		if [ "$naechste" = 1 ]; then attrs="${zeile#  raw: }"; fi
-		naechste=0
-		;;
-	esac
-done <<< "$pub"
+attrs="$(rohwert attributes "$pub")" || fail "Das Siegel nennt keine Eigenschaften"
 # One sentence for both ways this can go wrong, because it is true of both:
 # with 0xd2 the policy stops being the only way in, with 0x492 the dictionary
 # lock is off. Naming the raw value is what lets the reader look it up.
 [ "$attrs" = 0x92 ] \
 	|| fail "Das Siegel trägt $attrs statt 0x92. Erlaubt ist allein fixedtpm|fixedparent|adminwithpolicy; jede weitere Eigenschaft schwächt den Schutz des versiegelten Inhalts."
 
+# Two fields above the attributes, in the very same output, and nobody read it:
+# the name algorithm of the sealed object. 0xc is sha384. Measured, sha384
+# turned into sha1 all through recovery-policy.sh seals and opens exactly as
+# before, the run stays green and the attributes still read 0x92 - and the
+# policy digest that guards the secret is then a SHA-1 digest.
+namealg="$(rohwert name-alg "$pub")" || fail "Das Siegel nennt keinen Namensalgorithmus"
+[ "$namealg" = 0xc ] \
+	|| fail "Das Siegel rechnet mit Namensalgorithmus $namealg statt 0xc (SHA-384) - die Policy, die es schützt, ist dann ein Digest dieses Verfahrens."
+
+# The primary key wraps the private part of the seal, and up to here only its
+# handle was ever looked at, never the key itself. Measured, ecc384 turned into
+# ecc256 runs through without a word - and that weaker key is then what the
+# sealed blob hangs on. Read off the TPM, where the key really is: 0x23 is ecc,
+# curve-id 0x4 is NIST p384, 0xc is sha384.
+ppub="$(tpm2_readpublic -c "$seal_handle")" \
+	|| fail "Der Primärschlüssel unter $seal_handle lässt sich nicht auslesen"
+ptyp="$(rohwert type "$ppub")" || fail "Der Primärschlüssel nennt keine Art"
+pkurve="$(rohwert curve-id "$ppub")" || fail "Der Primärschlüssel nennt keine Kurve"
+pnamealg="$(rohwert name-alg "$ppub")" || fail "Der Primärschlüssel nennt keinen Namensalgorithmus"
+if [ "$ptyp" != 0x23 ] || [ "$pkurve" != 0x4 ] || [ "$pnamealg" != 0xc ]; then
+	fail "Der Primärschlüssel ist nicht ECC NIST p384 mit SHA-384 (gelesen: type=$ptyp, curve-id=$pkurve, name-alg=$pnamealg) - er umschließt den privaten Teil des Siegels."
+fi
+
 # The other half of the same promise. Dropping the salt alone is already caught
 # by case 1 - measured, a session with parameter encryption but without salt has
 # no session key and tpm2_unseal answers 0x996 "unsupported symmetric algorithm
 # or key size". Dropping the parameter encryption alone is what this catches.
-sitzung="$(cat dist/recovery/work/sess-attrs.txt)" \
-	|| fail "Die Policy-Sitzung hat ihre Eigenschaften nicht hinterlegt"
+#
+# Asked of the TPM, like the attributes above, and no longer of a file:
+# open_branch hands its session on instead of flushing it, and
+# tpm2_sessionconfig loads that context back out of the TPM. The old way was no
+# check - measured, with the encryption taken out and one printf of this very
+# sentence put in its place the run stayed green nine times over. What stays is
+# named in the report: this script still cannot tell that the session it is
+# handed is the one that unsealed.
+if ! sitzung="$(tpm2_sessionconfig dist/recovery/work/sess.ctx 2>&1)"; then
+	fail "Die Policy-Sitzung steht nach dem Öffnen nicht mehr im TPM - recovery-policy.sh hat sie nicht übergeben"
+fi
+# Taken away again right here: the handover ends with this run, not with the
+# next reset. Its digest is empty by now (the TPM clears it once the session
+# has authorised something), so it opens nothing any more either way.
+tpm2_flushcontext dist/recovery/work/sess.ctx >/dev/null 2>&1 || :
 case "$sitzung" in
 *"continuesession|decrypt|encrypt"*) ;;
-*) fail "Die Policy-Sitzung verschlüsselt ihre Parameter nicht (siehe dist/recovery/work/sess-attrs.txt) - das entsiegelte Geheimnis fährt dann offen über die Sitzung" ;;
+*) fail "Die Policy-Sitzung verschlüsselt ihre Parameter nicht - das entsiegelte Geheimnis fährt dann offen über die Sitzung. Gelesen: $sitzung" ;;
 esac
-ok "Siegel und Sitzung tragen genau die zugesagten Eigenschaften"
+ok "Siegel, Sitzung und Primärschlüssel tragen genau die zugesagten Eigenschaften"
 
 # Criterion 4 in miniature: one more extend stands for an image changed by a
 # single byte. The branch must stay shut.
@@ -242,6 +323,24 @@ anders="$(printf 'TEST-EIN-BYTE-ANDERS' | openssl dgst -sha384 -binary | xxd -p 
 tpm2_pcrextend "11:sha384=$anders" >/dev/null
 if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet trotz geänderter PCR"; fi
 ok "geänderte PCR 11 sperrt den Normalzweig"
+
+# The same question for the eight other PCRs of the branch, and it needed a case
+# of its own: they hang on the FIRST of the two tpm2_policypcr calls in
+# recovery-policy.sh, and measured, that one line can be deleted without any of
+# the cases that stood here before going red - nine times ok, EXIT=0 - while the
+# seal then opens with PCR 7 extended, which is exactly what it must not do.
+# Nothing above this line is changed for it: the three calls below are the ones
+# case 1 opened with, so the only difference is the extend of PCR 7 between
+# sealing and opening.
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state normal
+tools/recovery-policy.sh seal pcr
+tpm2_pcrextend "7:sha384=$anders" >/dev/null
+if tools/recovery-policy.sh open pcr >/dev/null; then
+	fail "Normalzweig öffnet trotz geänderter PCR 7 - an PCR 0 bis 7 ist er dann gar nicht gebunden"
+fi
+ok "geänderte PCR 7 sperrt den Normalzweig"
 
 tools/recovery-swtpm.sh reset main
 use_main

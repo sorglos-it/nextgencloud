@@ -200,6 +200,31 @@ check() {
 		exit 1
 	fi
 	stop_qemu
+
+	# "Secure boot OVMF" is a claim about the firmware, and until now nothing
+	# asked it: the TPM connection and the PCR 0 check below look exactly the
+	# same either way. Measured, the file in the -drive line above swapped for
+	# /usr/share/OVMF/OVMF_CODE_4M.fd - same size, different sha256, plainly a
+	# different build - and this check stayed green from end to end.
+	# The firmware answers on the serial line, and it answers with what secure
+	# boot is FOR: the build carries an EFI shell of its own that nobody signed.
+	# Measured on this VM, same variable file, same devices, only the firmware
+	# different - without secure boot the machine starts that shell
+	# (BdsDxe: loading Boot0001 "EFI Internal Shell" from Fv(...)), with secure
+	# boot it never does and says it has nothing to boot. So this is no wording
+	# check tacked on: it is the refusal itself. A firmware that puts the
+	# sentence differently ends the check red, which is the safe direction.
+	# No second wait for it either: with the secure-boot build that very line IS
+	# the BdsDxe marker the loop above already waited for.
+	if ! grep -q 'No bootable option or device was found' "$serial"; then
+		say "Die Firmware hat kein Secure Boot durchgesetzt: das unsignierte"
+		say "EFI-Shell-Abbild dieses OVMF-Baus wurde gestartet."
+		say "Prüfen: steht in der -drive-Zeile OVMF_CODE_4M.secboot.fd?"
+		say "Was steht in $serial?"
+		exit 1
+	fi
+	say "Secure Boot ist scharf: das unsignierte Abbild lief nicht an"
+
 	# The whole proof hangs on the simulator outliving the machine - that is
 	# what the SIGKILL above is for. Asked right here, where the requirement is,
 	# so that a stop_qemu turned into an orderly end says so at this line

@@ -49,8 +49,16 @@ export TPM2TOOLS_TCTI
 # reason. Here the variable can no longer be empty when the trap exists, and
 # the test is asked anyway: a guard that relies on the lines above it staying
 # in that order is no guard.
+#
+# The saved sessions, -s, are the one exception: a run that really opened its
+# branch hands that one session on to its caller and says so with uebergabe.
+# open_branch is where the reason stands. Everything else keeps the old
+# behaviour - every failed run included, and that is the case the -s was added
+# for.
+uebergabe=""
 trap 'if [ "${TPM2TOOLS_TCTI:-}" = "$tcti_main" ]; then
-	for h in -t -l -s; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
+	for h in -t -l; do tpm2_flushcontext "$h" >/dev/null 2>&1 || :; done
+	if [ -z "$uebergabe" ]; then tpm2_flushcontext -s >/dev/null 2>&1 || :; fi
 fi' EXIT
 
 # The branch of the specification covers PCR 0-7 and 11, and that has to go in
@@ -69,6 +77,13 @@ fi' EXIT
 # they happen to stand at that moment, and -f then only hands the TPM back the
 # values it just gave us. Bound they are either way: extend PCR 7 after sealing
 # and tpm2_unseal answers 0x99D "a policy check failed", measured.
+#
+# That binding hangs on one line, and nothing but a case of its own notices it
+# going: measured, with the first of the two tpm2_policypcr calls below deleted
+# the test run stayed green from end to end, nine times ok and EXIT=0 - and the
+# seal then opened with PCR 7 extended, which is the very thing the paragraph
+# above promises it will not. recovery-test.sh now does it the other way round:
+# seal, extend PCR 7, the branch has to stay shut.
 #
 # For PCR 11 it is the other way round, and that is what -f is really for here:
 # pcr11_after computes the value, so the branch can be sealed against a PCR 11
@@ -148,7 +163,13 @@ set_pcr_state() {        # $1 = normal|recovery
 primary() {
 	# Captured, not piped into grep. Two reasons, both about the same silence:
 	# a TPM that does not answer fails with an empty list, and "not in the list"
-	# would then create a second primary key over the top of the first. And
+	# sends the run down the branch below. What that costs was measured, not
+	# reasoned, because the reasoning was wrong: the key is NOT replaced.
+	# tpm2_createprimary goes through, and the tpm2_evictcontrol behind it is
+	# refused by the TPM itself with 0x14C "NV Index or persistent object
+	# already defined" - the persistent handles are the same list before and
+	# after. What is lost is the message: the run ends on a TPM error about a
+	# handle instead of on the sentence below, which names the real cause. And
 	# grep -q leaves early, so a listing longer than the pipe buffer would put
 	# SIGPIPE on the left-hand side of the pipe, which under pipefail makes the
 	# whole line fail - the same wrong answer, only rarer. Out of reach today
@@ -173,9 +194,13 @@ primary() {
 # The two halves hold each other up, measured: a policy session with encryption
 # switched on but WITHOUT the salt has no session key, and tpm2_unseal answers
 # 0x996 "unsupported symmetric algorithm or key size". Losing the salt therefore
-# already shuts the branch; losing only the encryption would not, which is why
-# the attributes are written out below for recovery-test.sh to check. A promise
-# about a session, checked against the script that opens the session, is none.
+# already shuts the branch; losing only the encryption would not. That is what
+# open_branch leaves the session standing for: recovery-test.sh loads it back
+# out of the TPM and asks the TPM what it is made of. This script used to write
+# the answer into a file instead, and that was no check at all - measured, with
+# the encryption taken out and one printf of the expected sentence put in its
+# place the run stayed green nine times over, while the session that really
+# unsealed carried nothing but continuesession.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
 # tpm2-tools 5.7: --tpmkey-context on a session without --policy-session is
@@ -194,10 +219,6 @@ new_session() {          # $1 = context file, $2 = trial|policy
 	policy)
 		tpm2_startauthsession --policy-session -S "$1" -g sha384 --tpmkey-context "$handle" >/dev/null
 		tpm2_sessionconfig --enable-encrypt --enable-decrypt "$1" >/dev/null
-		# Read back off the session the TPM actually holds, and left behind for
-		# recovery-test.sh: this is the very session open_branch unseals with,
-		# not a second one built to look good.
-		tpm2_sessionconfig "$1" > "$w/sess-attrs.txt"
 		;;
 	trial)
 		tpm2_startauthsession -S "$1" -g sha384 >/dev/null
@@ -249,7 +270,10 @@ seal() {                 # $1 = branch
 	# is no PIN in this branch yet, so nothing here suffers from it either way.
 	# userwithauth is absent too: only the policy may open this object, never a
 	# plain password. sensitiveDataOrigin stays CLEAR because the data comes
-	# from outside (-i).
+	# from outside (-i) - and that third one is not this line's doing at all:
+	# measured, the same call with sensitivedataorigin added is refused by the
+	# TPM with 0x2C2 "inconsistent attributes". Of the three promises that
+	# 0x92 covers, two can be broken here and the third the TPM keeps by itself.
 	#
 	# userwithauth is the one that matters, and it was measured, not reasoned:
 	# with it in this line the object reads back as 0xd2 - and then
@@ -258,6 +282,14 @@ seal() {                 # $1 = branch
 	# decoration. In work package 6 the real DEK hangs on this object. That is
 	# why recovery-test.sh reads these attributes back off the sealed object and
 	# insists on 0x92: this line here cannot vouch for itself.
+	#
+	# The -g below is read back with them, and for the same reason: it is the
+	# name algorithm of the sealed object, and the policy digest that guards it
+	# is a digest of that algorithm. Measured, sha384 turned into sha1 all
+	# through this file seals and opens exactly as before and the run stays
+	# green - with the whole branch then resting on SHA-1. tpm2_readpublic
+	# prints it two fields above the attributes, in the very output the test
+	# already reads.
 	tpm2_create -C "$handle" -g sha384 -u "$w/seal.pub" -r "$w/seal.priv" \
 		-i "$w/secret.bin" -L "$w/branch-$1.digest" \
 		-a "fixedtpm|fixedparent|adminwithpolicy" >/dev/null
@@ -275,7 +307,18 @@ open_branch() {          # $1 = branch
 	# The secret goes to stdout because the test compares it. The real version
 	# in work package 6 uses tpm2_unseal -o and never lets it near a terminal.
 	tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx"
-	tpm2_flushcontext "$w/sess.ctx" >/dev/null
+	# And the session stays, together with its context file. Only while the TPM
+	# still holds it can the caller ask the TPM itself what that session was
+	# made of, and that is how recovery-test.sh checks the parameter encryption
+	# now. The old line here flushed it, and nothing outside this script could
+	# then see anything but a file this script had written.
+	# It costs nothing, and that was measured too, not assumed: the TPM empties
+	# a policy session's digest the moment it has authorised something. The
+	# handed-over session reads back as Session-Digest: 00...00, and unsealing
+	# with it a second time gets nothing out. Whoever takes it flushes it
+	# (tpm2_flushcontext "$w/sess.ctx"); a reset of the simulator takes it
+	# anyway, and a run that does NOT get here loses it to the trap.
+	uebergabe=ja
 }
 
 case "${1:-}" in
