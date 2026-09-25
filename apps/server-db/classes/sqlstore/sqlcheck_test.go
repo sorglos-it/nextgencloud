@@ -1399,11 +1399,15 @@ func hasOnceUse(p *pkgSource) bool {
 // f048e83, taking its refusal out turned TestUserNameIsUnique and dbtest's
 // users group red. Since the index error is translated, both ways give
 // ErrInvalid, and the check can be deleted whole - statement, constant and all
-// - with every test that asks this store a question staying green, and no
 // group of the contract going red with it. A second line of defence had made
 // the first one indistinguishable, and a line no test holds is a line the next
 // tidy-up removes, with the comment that turns on it left standing over
 // nothing.
+//
+// Both counts above that name a group of the contract came by hand. dbtest.Run
+// is called once in the whole tree, against memstore, and nothing here imports
+// dbtest, so go test ./... drives no group of the contract against this store.
+// The note at TestOneWriteAndOneDelete in user_test.go says it in full.
 //
 // What this test reads, exactly. userIDOf is named once in the package, and
 // three things are read about that one place: what the call it is an argument

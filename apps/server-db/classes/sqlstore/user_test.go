@@ -126,6 +126,17 @@ func TestSessionAndPending(t *testing.T) {
 // carries, and both ask nothing but err == nil - so "DELETE ... AND 1 = 0"
 // turned nothing in this package red and no group of the contract either. Here
 // the session is there, and it has to be gone afterwards.
+//
+// Where the contract counts above come from, because no standing run gives
+// them. dbtest.Run has one call site in the whole tree - memstore's own test,
+// against memstore.New() - and nothing under apps/server-db imports dbtest at
+// all: no build tag, no environment switch. So go test ./... runs no group of
+// the contract against this store, and every count above that names a group
+// came from a run made by hand for the measurement and not kept. Read them as
+// what a hand-made run answered once, not as a guard standing today: what
+// holds this store day to day is this package alone. The package comment of
+// dbtest says otherwise; shared/ is the coordinator's, so it is reported and
+// not changed here.
 func TestOneWriteAndOneDelete(t *testing.T) {
 	s := open(t)
 	u := dbapi.User{ID: "u-admin", Name: "admin", Roles: []string{"admin", "user"},
@@ -489,8 +500,10 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 // green with that proof passing - and with the index answering again, both
 // tests below held nothing at all. On that drift the whole refusal deleted
 // (case false: in place of the condition) was 142/0 too, where it is 140/2
-// without it. Through the cleanup run the same drift is 141/2 in both tests on
-// this tree, each naming the index.
+// without it. On this tree that same drift is 141/2 in both tests, and both of
+// the runs added since catch it, each naming the index: the proof at every
+// namedRows reports first, from the test body, and the cleanup run reports
+// after it.
 //
 // All three runs are the one function nameIndexGone, not copies of a proof
 // that could drift apart, and it plants and removes its own two rows: every
@@ -512,8 +525,9 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 // tree against exactly that drift - the index made again here and a t.Cleanup
 // registered after this one dropping it - 141/2 in both fences, each naming
 // the index, where without the body proof it is 143/0 green. The whole repair
-// costs about 0.4 s: three runs of the three tests it touches, 2.87 s before
-// it and 3.24 s after.
+// costs about 0.4 s: measured over three runs of the three tests it touches,
+// one run took 2.87 s before it and 3.24 s after. Both numbers are one run and
+// not the three added up.
 //
 // So the sentence that ended the search was the error, not the shape it turned
 // down. What a test cannot do is make itself immune to arbitrary changes in
@@ -585,13 +599,47 @@ type fixture struct {
 // 143/0 green with the name rolled but the IDs left standing. With both rolled
 // each of the two lines is 141/2, caught at the top of the fixture.
 //
-// What this does not close, said plainly: the other five columns are still
-// written with the values below. A predicate over one of those cannot pick out
-// these rows and nothing else - locked = 0 holds for most rows the tests here
-// write - so it spares this proof only by sparing much of the table with it,
-// which is the narrowed-question shape already named at the fences and not
-// this one. That is not measured here, and looking for the next shape is not
-// what this change is.
+// What this does not close, and why no further fence is written for it.
+// Rolling the values does not make these two rows unfindable, because it is
+// not their values that tell them from the rest of the table - it is their
+// shape, and the shape stands fixed in the source above. The name is always 26
+// bytes, both IDs are always 30, and each ID opens with one of the two
+// four-byte prefixes written there.
+// Every one of those is a handle: a partial index built on any one of them
+// spares this proof and guards every name these tests write. Measured on this
+// tree, one line after the DROP in withoutTheNameIndex, each on its own:
+//
+//	CREATE UNIQUE INDEX ngc_user_name2 ON ngc_user (name)
+//	    WHERE substr(id,1,4) NOT IN (x'6f6e652d', x'74776f2d')
+//	CREATE UNIQUE INDEX ngc_user_name2 ON ngc_user (name) WHERE length(name) <> 26
+//	CREATE UNIQUE INDEX ngc_user_name2 ON ngc_user (name) WHERE length(id) <> 30
+//
+// x'6f6e652d' and x'74776f2d' are "one-" and "two-" as BLOBs, because the
+// column holds one. All three are 143/0 green, with all three runs of this
+// proof coming through. Beside the third of them the whole refusal deleted
+// (case false: in place of the condition in UserPut) is 143/0 too, where that
+// deletion alone is 141/2 - so under any of the three both fences below hold
+// nothing at all. The same shape carries against the other fixture: built on
+// ngc_user_rows, either predicate over id leaves the mutant
+// TestAFailedQuestionIsNotAFreeName is for - other = "" in place of return err
+// - 143/0 green, where alone it is 142/1.
+//
+// More rolling does not help, and that is why this is written down instead of
+// answered. A name of random length still has a length. These two rows have to
+// be findable by this proof, or it could not take them away again, and they
+// have to be tellable from every other row, or they would not be its rows at
+// all. Every property that does that telling is a handle for a predicate that
+// spares them. So no fence is built here and none is owed: what this measures
+// is the boundary itself, that this proof cannot immunise itself against a
+// change to the file it stands in. That sentence was already written at
+// withoutTheNameIndex; these three lines are the number under it.
+//
+// The other five columns are the weaker case of the same thing and stay as
+// they were: they are written with the values below, and a predicate over one
+// of them cannot pick out these rows and nothing else - locked = 0 holds for
+// most rows the tests here write - so it spares this proof only by sparing
+// much of the table with it, which is the narrowed-question shape already
+// named at the fences.
 //
 // It removes its own two rows by ID and leaves every other row alone, so it
 // can run again at every namedRows and once more when the test is done,
@@ -783,19 +831,31 @@ func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 //     "admin". The check is then dead exactly on the database the comment at
 //     UserPut names it for.
 //
-// Neither is left open for want of another round. Eleven ways were found in
-// eight, each in a shape the round before had not thought of - hung on a
+// Neither is left open for want of another round. Twelve ways were found in
+// nine, each in a shape the round before had not thought of - hung on a
 // field, the question narrowed, hung on the dialect, the fixture undermined,
-// the fixture's repair undone by the order cleanups run in, and the fixture's
-// proof spared by name from an index that guarded everything else. The last
-// two are closed, by a proof in the test body and by a proof that rolls its
-// name fresh; both are set out at withoutTheNameIndex and nameIndexGone. A
-// test cannot make itself immune to arbitrary changes in the source it
-// measures. That is the nature of the thing and not a weakness of these two.
-// What stands written here is what was measured; a sentence promising more
-// than that is worse than none, because the next reader stops looking - and so
-// is a sentence turning a shape down unmeasured, which is how the tenth stayed
-// open a round longer than it had to.
+// the fixture's repair undone by the order cleanups run in, the fixture's
+// proof spared by name from an index that guarded everything else, and that
+// same index spared instead by the shape of what the proof plants.
+//
+// The tenth and the eleventh are closed in the shape they were measured in, by
+// a proof in the test body and by a proof that rolls its name and its two IDs
+// fresh; both are set out at withoutTheNameIndex and nameIndexGone. The
+// twelfth is not closed and nothing here is built for it. Its measurement is
+// at nameIndexGone: a partial index that spares just the rows that proof
+// plants - by their fixed prefix, or by the length of the name, or by the
+// length of the ID - leaves both fences holding nothing, 143/0 even with the
+// refusal deleted whole. No further rolling reaches it, because the proof's
+// rows have to be tellable from every other row to be its rows at all, and
+// whatever tells them carries the predicate that spares them.
+//
+// A test cannot make itself immune to arbitrary changes in the source it
+// measures. That is the nature of the thing and not a weakness of these two,
+// and the twelfth way is that sentence with a number under it rather than a
+// new gap. What stands written here is what was measured; a sentence promising
+// more than that is worse than none, because the next reader stops looking -
+// and so is a sentence turning a shape down unmeasured, which is how the tenth
+// stayed open a round longer than it had to.
 func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	s, f := withoutTheNameIndex(t)
 	// evil carries something in every field but ID and Name, u-admin the zero
@@ -881,11 +941,14 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 // && s.d.DDLInTx(), each green across all 143 with both fences run, and the
 // last of them dead on MariaDB, which is the database it is written for. The
 // four are set out at TestTheCheckAloneRefusesATakenName, with what each one
-// lets through. They are named and not closed: eleven ways in eight rounds,
-// each a shape the round before had not thought of, the last two of them
-// against the fixture rather than the check and both now closed. No test
-// immunises itself against arbitrary changes to the source it measures. The
-// promise here is the one that was measured.
+// lets through. They are named and not closed: twelve ways in nine rounds,
+// each a shape the round before had not thought of, the last three of them
+// against the fixture rather than the check. The tenth and the eleventh are
+// closed in the shape they were measured in; the twelfth is not, and nothing
+// here is built for it - a partial index that spares just the rows the
+// fixture's proof plants leaves both fences holding nothing, measured at
+// nameIndexGone. No test immunises itself against arbitrary changes to the
+// source it measures. The promise here is the one that was measured.
 func TestOnlyOneWriterGetsAName(t *testing.T) {
 	const racers, rounds = 32, 400
 	s, f := withoutTheNameIndex(t)
@@ -1026,6 +1089,13 @@ func throughAViewWithoutAnID(t *testing.T) (dbapi.Store, fixture) {
 // written out at nameIndexGone: a proof that asks with a name from the source
 // asks a question whoever writes the source already knows, and a partial index
 // sparing exactly that name lets the proof pass while it guards every other.
+//
+// The bound on that is written out at nameIndexGone too, and it is measured
+// against this fixture as well: what is rolled here is the values and not the
+// shape, so a partial index on ngc_user_rows keyed on the shape of these two
+// rows - substr(id,1,4) NOT IN (x'6f6e652d', x'74776f2d'), or length(id) <> 30
+// - lets this proof through while it guards the rest, and the mutant the test
+// below is for goes green with it, 143/0 where alone it is 142/1.
 func theViewAnswers(t *testing.T, db *sql.DB) error {
 	t.Helper()
 	name := rand.Text()
