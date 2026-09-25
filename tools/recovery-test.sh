@@ -204,9 +204,11 @@ geheim="TEST-DEK"
 #             once - and it is what makes a swtpm recording searchable.
 #   fillers   UTF-16 in either byte order, NUL padding, "T E S T - D E K", a
 #             base64 block broken into lines: the file is read once with NUL
-#             bytes and white space dropped, and every needle above is looked
-#             for through that as well. No needle carries white space itself, so
-#             dropping it can never break one.
+#             bytes and white space dropped, and the needles above - the raw
+#             bytes and the three base64 strings - are looked for through that.
+#             None of them carries white space itself, so dropping it can never
+#             break one. The hex pass needs no help here: it drops everything
+#             that is not a hex digit anyway, NUL and white space with it.
 #
 # NOT reached, fenced rather than claimed: the secret compressed, encrypted, or
 # encoded in yet another alphabet (base32, base85, quoted-printable); split
@@ -221,20 +223,24 @@ for vor in 0 1 2; do
 	nadeln+=(-e "$(printf '%s' "${geheim:ab:n}" | openssl base64 -A)")
 done
 
-# Says whether one file carries the secret in any of those shapes, and says it
-# with yes or no alone: the call site puts the NAME into the message, because a
-# check that prints the secret to prove that the secret is nowhere is no check.
+# Says whether one file carries the secret in any of those shapes: yes, no, or a
+# stop. Yes and no alone, never a line of the file - the call site puts the NAME
+# into the message, because a check that prints the secret to prove the secret is
+# nowhere is no check at all.
 # grep -c and not grep -q: -q stops at the first hit, the normalising tr ahead
 # of it then dies of SIGPIPE, and with pipefail the whole pipeline would report
 # a failure exactly when it found something. Counting reads the input to the end
-# and only ever prints a number.
+# and only ever prints a number - and a run of pipes that printed no number at
+# all did not search, which is the third answer and ends the run.
 # LC_ALL=C because these are bytes and not text: sed and tr in a UTF-8 locale
 # stumble over sequences that are not characters.
 schreibweise_drin() {    # $1 = Datei
 	local n
 	n="$(LC_ALL=C tr -d '\000 \011\012\015' < "$1" | grep -caF "${nadeln[@]}" || :)"
+	[ -n "$n" ] || fail "$1 ließ sich nicht durchsuchen - eine Datei, die niemand lesen kann, ist genau die, in der ein entwichenes Geheimnis bequem läge."
 	[ "$n" -eq 0 ] || return 0
 	n="$(LC_ALL=C sed 's/0[xX]//g' "$1" | LC_ALL=C tr -cd '0-9A-Fa-f' | grep -ciF "$geheim_hex" || :)"
+	[ -n "$n" ] || fail "$1 ließ sich nicht auf die Hex-Schreibweise durchsuchen - siehe oben."
 	[ "$n" -eq 0 ] || return 0
 	return 1
 }
@@ -752,7 +758,7 @@ tools/recovery-swtpm.sh stop main || fail "Der mitschneidende Simulator lässt s
 mitschnitt_laeuft=""
 shred -u "$mit" || fail "Der Mitschnitt lässt sich nicht sicher löschen: $mit"
 [ ! -e "$mit" ] || fail "Der Mitschnitt liegt nach shred -u immer noch da: $mit"
-ok "das entsiegelte Geheimnis fährt nicht offen über die Leitung"
+ok "der Klartext fährt über die Leitung nur an der einen bekannten Stelle"
 
 tools/recovery-swtpm.sh reset main
 use_main
