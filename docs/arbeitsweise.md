@@ -299,6 +299,45 @@ sie war — nicht, weil es nicht ginge, sondern weil fünf Commits darüber neu
 gebaut werden müssten. Ein widerlegter Grund macht die Entscheidung nicht
 verkehrt; er verlangt einen **richtigen** Grund.
 
+### Ein Getter ist Code — lesen heißt ausführen
+
+Der teuerste Irrtum dieser Sitzung sah aus wie ein Sicherheitsgewinn. Über zwei
+Zeilen, die die Länge eines fremden Gegenstands prüfen, stand:
+
+> „Sie können nur **abweisen**. Was an ihnen vorbeikommt, wird unten ein zweites
+> Mal entschieden."
+
+Der Koordinator hat darauf eine Entscheidung gegründet — die Zeilen bleiben,
+weil ihr Wegräumen *lockerer* wäre. Ein Prüfer hat es gemessen, mit einem
+Gegenstand, dessen Länge beim **ersten** Lesen eine Marke umlegt, sodass die
+Sicht darunter andere Bytes sieht:
+
+| Stand | Antwort auf die Fälschung |
+| --- | --- |
+| mit den zwei Zeilen | **ja** |
+| ohne sie | **nein** |
+
+**Die Prüfung war das Werkzeug der Fälschung.** Ein Getter ist Code; ihn zu lesen
+heißt, ihn laufen zu lassen, und was er dabei tut, ändert alles Folgende. Eine
+Prüfung, die den Gegenstand **anfasst**, weist nicht nur ab — sie entscheidet mit.
+
+Und die zweite Hälfte, ohne die man nur die Seite wechselt: dieselbe Messreihe
+kannte einen **zweiten** feindlichen Gegenstand, dessen Länge nicht umlegt,
+sondern **wirft** — und der bekam ohne die zwei Zeilen ein Ja. **Keine der
+beiden Fassungen war gegen beide sicher.**
+
+Die Frage war also nie „Zeile rein oder raus". Sie lautet: **die Entscheidung auf
+etwas heben, das der Gegenstand nicht mehr beeinflussen kann** — einmal eine
+Sicht bilden und ab da nur noch die Sicht befragen.
+
+Zwei Regeln fallen daraus:
+
+- **Fass den fremden Gegenstand genau einmal an, so früh wie möglich, und
+  entscheide danach nur noch auf dem, was du dabei gewonnen hast.**
+- **Wenn zwei Angriffe in entgegengesetzte Richtungen zeigen, ist keine der
+  beiden Seiten die Antwort.** Dass eine Änderung den einen Fall repariert, sagt
+  nichts, solange der andere ungemessen ist — such den Gegenfall zum Gegenfall.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
