@@ -462,7 +462,7 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 // check was made unreachable, once by wrapping it in a condition UserPut has
 // already refused above (len(u.ID) == 0) and once by asking the question and
 // throwing its answer away, and with the index in place the race below stayed
-// green against both, 400 rounds of 32 writers each.
+// green against both, 400 rounds of 32 writers each, three runs apiece.
 //
 // So the fixture is the same kind as countChangedRows above: SQL of the
 // test's own, on a database of its own, that takes away one of two things
@@ -515,9 +515,9 @@ func namedRows(t *testing.T, db *sql.DB, name string) int {
 // can never hold, and the question asked with its answer thrown away. Both
 // compile, both run, and on aa718c6 both left all 139 tests of this package
 // green, the guard included, and every group of the contract with them. Here
-// each of them is red at the second writer, at once and in every run: "the
-// second writer was told <nil>, want ErrInvalid", and two rows carrying the
-// name.
+// each of them is red at the second writer, at once, in five runs of five:
+// "the second writer was told <nil>, want ErrInvalid", and two rows carrying
+// the name.
 //
 // It costs no race to see it. Two writers one after the other are two
 // writers, and a check whose answer never reaches the write lets the second
