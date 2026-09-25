@@ -824,7 +824,7 @@ func TestAnAnchorCopiedFromElsewhereBlamesEverySender(t *testing.T) {
 // A trust list this server cannot keep is a local fault and worth a line — but
 // only one. How many channels meet it is the API's to choose, and a line for
 // each would let a peer fill this server's log. A keeper that never read its
-// state is that fault today: nothing outside the tests of chain calls Load.
+// state is that fault today: nothing outside tests calls Load.
 func TestATrustListThatCannotBeKeptWritesOneLineForManyChannels(t *testing.T) {
 	w := newWorld(t)
 	v2 := w.next(t)
