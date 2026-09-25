@@ -228,6 +228,24 @@ const LEGAL = {
   // that refused on it never built a view at all. With the view first that
   // reading cannot happen any more, so it is no longer allowed: a length with
   // no view behind it is now a finding for these places too.
+  //
+  // NOTHING IS "open" ANY MORE, and whoever makes a place open again should
+  // read this first. The three verifyRaw positions were the only ones and they
+  // are "copy" now. The kind is kept because the shape may come back, and with
+  // it the gap it is known to have: the order rule below finds the first B and
+  // refuses an L before it, so it holds only while the view's FIRST reading is
+  // byteLength. A body that reads its four in the order B,L,F,O reads each
+  // exactly once, shows 1/1/1/1, and passes - measured green - and a hostile
+  // buffer getter steers the bytes there, because buffer is read after the
+  // length that was supposed to come last.
+  //
+  // That gap was not closed, and the reason is that it is not worth closing:
+  // it guards an ORDER, and the round that wrote this comment measured a shape
+  // no order can guard - an ordinary array, no getter anywhere, rewritten in a
+  // microtask while the engine is awaited (see sign.verifyRaw below). A place
+  // that handles a caller's bytes should be "copy" and hand the engine bytes
+  // of its own. If you are about to write "open" instead, that is the thing to
+  // weigh, and this is the measurement to weigh it against.
   open: [VIEW, VIEW_AND_LENGTH],
   // A "copy" place may show nothing but the two numbers. Any reading of buffer
   // or byteOffset here is a finding and means somebody put a view back - a
@@ -555,6 +573,34 @@ test("every place that takes caller bytes decides on the number it works with", 
       for (const [k, v] of Object.entries(o)) {
         if (typeof v === "function") add(`${name}.${k}`, v.length, (...a) => v.apply(o, a));
         else if (v !== null && typeof v === "object") walkObject(`${name}.${k}`, v, depth + 1);
+      }
+      // AND THE METHODS AN EXPORTED INSTANCE INHERITS. Object.entries gives own
+      // enumerable properties only, so until this round a whole contract could
+      // stand in contracts/ and be walked by nothing:
+      //
+      //   class Frame { seal(payload) { ...reads payload.length beside its view... } }
+      //   export const frame = new Frame();
+      //
+      // Measured: the file in contracts/, imported by sign.js, its seal putting
+      // 70000 bytes through a bound of 65519 - and this test GREEN, with the
+      // server log showing the file fetched. Neither door caught it: the walk
+      // saw an object with no own functions, and CALLABLES did not move because
+      // nothing exported was a function or a class. That is the exact shape of
+      // noise.Transport.seal, which is the one this whole file exists for.
+      //
+      // Only own data properties that are functions are taken. A getter is left
+      // alone on purpose: reading one is running the module's code at walk
+      // time, and a guard that changes what it measures by measuring it is
+      // worth nothing. Object.prototype is where the chain stops.
+      let proto = Object.getPrototypeOf(o);
+      while (proto && proto !== Object.prototype) {
+        for (const k of Object.getOwnPropertyNames(proto)) {
+          if (k === "constructor") continue;
+          const d = Object.getOwnPropertyDescriptor(proto, k);
+          if (!d || typeof d.value !== "function") continue;
+          add(`${name}.${k}`, d.value.length, (...a) => d.value.apply(o, a));
+        }
+        proto = Object.getPrototypeOf(proto);
       }
     };
     for (const n of names) {
