@@ -1066,6 +1066,39 @@ Und der Preis gehört gemessen, nicht geschätzt: eine Kopie ist bei zweiunddrei
 Byte nichts und bei einer großen Nachricht vielleicht etwas. Wer die sichere
 Ebene wählt, sagt dazu, was sie kostet.
 
+### Und die Gestalt, die die Entscheidung bewies
+
+Der Nachtrag zu dieser Regel ist der Fall, der sie endgültig belegt hat — er kam,
+**nachdem** entschieden war, die Ebene zu wechseln, und er hätte auf der alten
+Ebene nie gefunden werden können.
+
+Sieben Bauarten hatten alle eines gemeinsam: irgendwo lief ein Getter des
+Aufrufers, und die Verteidigung bestand darin, ihn seltener, später oder in
+anderer Reihenfolge laufen zu lassen. Die achte lief **ohne jeden Getter**. Ein
+ganz gewöhnliches Byte-Feld, und die Umschreibung nur **vorgemerkt**:
+
+| | |
+| --- | --- |
+| Was jede synchrone Prüfung sah | Müll |
+| Was die Engine bekam | die echte Unterschrift |
+| Antwort | **ja** |
+
+Es wurde nichts gelesen. Keine Zählung, keine Reihenfolgeprüfung, kein
+Lesungsprotokoll kann das sehen — die Lücke sitzt zwischen der synchronen Prüfung
+und dem späteren Aufruf, und in dieses Fenster passt jede Änderung am fremden
+Speicher.
+
+**Daran erkennt man den Ebenenfehler im Nachhinein am klarsten:** die sieben
+Gestalten sahen wie Gegner aus, die man einzeln schlägt; die achte zeigte, dass
+sie alle nur Erscheinungen **einer** Annahme waren — *die Bytes, die ich geprüft
+habe, sind die Bytes, die verarbeitet werden*. Solange die Engine auf fremden
+Speicher sieht, ist diese Annahme falsch, unabhängig davon, wer wann was liest.
+
+Der Preis der richtigen Ebene wurde gemessen und ist klein: bei vier Megabyte
+**1,3 Millisekunden** und acht Megabyte Spitze, bei zweiunddreißig Byte gar
+nicht messbar. Wer die Ebene wechselt, nennt die Zahl — dann ist es eine
+Entscheidung und keine Hoffnung.
+
 ## Kurzfassung für den Anfang einer Aufgabe
 
 1. Auftrag lesen. Widersprüche **melden**, nicht umgehen.
