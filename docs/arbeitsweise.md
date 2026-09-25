@@ -273,6 +273,32 @@ in die Zeitschranke rennt, sagt nichts über die Eigenschaft, er sagt nur, dass
 etwas stehenblieb. Der Umsetzer hat es so benannt statt es als Fang zu verkaufen
 — und den Fall dem statischen Prüfer überlassen, der ihn umsonst mitnimmt.
 
+### Frag das Remote, nicht den Koordinator
+
+Der Koordinator hatte eine Regel richtig — „eine Nachricht, die auf dem Remote
+liegt, wird nicht mehr berichtigt" — und sie auf sechs Commits angewandt, von
+denen **keiner** dort lag. Er hatte den Zweig einmal hochgeschoben und angenommen,
+das Remote sei mit den späteren Commits mitgewandert.
+
+Der Prüfer hat nicht geglaubt, sondern gefragt:
+
+    git ls-remote origin refs/heads/api   →   af2c186
+
+Sechs Commits darüber, keiner oben. Die Auskunft, auf der eine Entscheidung
+ruhte, war schlicht falsch.
+
+**Eine Anweisung des Koordinators steht unter derselben Regel wie alles andere**
+(Regel 9) — und der billigste Weg, das zu prüfen, ist oft **ein Befehl**. Wo eine
+Anweisung eine Tatsache über den Zustand der Welt behauptet („liegt auf origin",
+„hat keinen Aufrufer", „ist eingefroren"), frag den Zustand selbst. Es kostet eine
+Zeile und hat in dieser Sitzung mehrfach eine Entscheidung gedreht.
+
+Und die Kehrseite, die derselbe Prüfer mitgeliefert hat: **daraus folgt nicht
+automatisch die andere Handlung.** Die Nachricht ganz unten blieb trotzdem, wie
+sie war — nicht, weil es nicht ginge, sondern weil fünf Commits darüber neu
+gebaut werden müssten. Ein widerlegter Grund macht die Entscheidung nicht
+verkehrt; er verlangt einen **richtigen** Grund.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
