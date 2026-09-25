@@ -135,9 +135,10 @@ check() {
 	# struck out on its own and the whole test run afterwards: fourteen ok and
 	# EXIT=0 both times, the PCR 7 check below among them. The firmware measures
 	# nothing about either of them, so nothing here can see them go - catching it
-	# needs a guest system that tries the write, and work package 0 boots none.
-	# No promise for later is made here; the comment at the PCR 7 check below
-	# says the same thing from the other end.
+	# needs a GUEST SYSTEM that tries the write, and work package 0 has none: what
+	# boots here is the firmware, and it finds nothing startable, which is what
+	# the serial check below leans on. No promise for later is made here; the
+	# comment at the PCR 7 check says the same thing from the other end.
 	qemu-system-x86_64 -machine q35,smm=on -m 1024 -no-reboot -display none \
 		-global driver=cfi.pflash01,property=secure,value=on \
 		-drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd" \
