@@ -621,6 +621,32 @@ Was in NGC funktioniert hat:
   berühren. Ein Prüfer hat damit 200 von 200 Läufen gegen den Stand vor dem Fix
   belegt, während vier andere Stränge weiterarbeiteten.
 
+### Ein aufzählbarer Zeitpunkt schlägt einen geratenen
+
+Ein Angriff hing an einem Zeitpunkt: die Bytes werden getauscht, **während** die
+Engine arbeitet. Zwei Umsetzer haben dafür Werkzeuge gebaut und dabei gemeldet,
+welche **nicht** gehen — verkettete Microtasks landen alle in einem Durchlauf,
+verkettetes `setTimeout(0)` überschießt die Millisekundenklemme. Das war ehrlich
+und half. Sie hängten den Tausch dann an die Zusage des Engine-Aufrufs selbst und
+maßen **dreizehn** Momente.
+
+Der Prüfer hat etwas anderes gebaut: **einen gemeinsamen Zähler über alle
+Engine-Aufrufe**, und getauscht wird nach dem **k-ten** aufgelösten Versprechen.
+Damit ist der Zeitpunkt kein Kunstgriff mehr, sondern eine **Zahl** — k läuft von
+eins bis zur Zahl der Aufrufe des ehrlichen Laufs, und die Stichprobe ist
+vollständig für diese Stelle statt „was mir eingefallen ist".
+
+Ergebnis: **zweiundzwanzig** Momente statt dreizehn, davon zehn gefälscht auf dem
+alten Stand und null auf dem neuen, in zwei Umgebungen zeichengleich.
+
+**Wo dein Angriff einen Zeitpunkt braucht, mach den Zeitpunkt zählbar.** Ein
+Werkzeug, das „irgendwann dazwischen" trifft, misst, was dir eingefallen ist. Ein
+Werkzeug, das „nach dem k-ten Schritt" trifft, misst die Stelle — und sagt dir
+nebenbei, wie viele Schritte es überhaupt gibt.
+
+Und was daraus **nicht** folgt: eine Stichprobe über alle Momente **eines**
+Laufs ist noch kein Beweis. Der Prüfer hat es selbst dazugeschrieben.
+
 ## 13. Was ehrlich offen bleibt, bleibt ehrlich offen
 
 ### Zäun die Lücke ein, die du nicht schließt
