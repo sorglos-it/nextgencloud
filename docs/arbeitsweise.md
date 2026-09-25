@@ -304,6 +304,21 @@ in die Zeitschranke rennt, sagt nichts über die Eigenschaft, er sagt nur, dass
 etwas stehenblieb. Der Umsetzer hat es so benannt statt es als Fang zu verkaufen
 — und den Fall dem statischen Prüfer überlassen, der ihn umsonst mitnimmt.
 
+### Ein Punkt sagt nicht, ob sich etwas ansammelt
+
+Eine Aufgabe sollte belegen, dass ein Paket von 4 GiB nie ganz im Speicher
+liegt. Die erste Runde maß **einen** Punkt: 4 GiB hinein, 32 MiB gehalten. Die
+Zahl war richtig und sagte trotzdem nicht, was sie sagen sollte — aus einem
+einzelnen Punkt folgt nicht, dass nichts mitwächst.
+
+Die zweite Runde maß eine **Reihe**: 256 MiB, 1 GiB, 4 GiB — gehalten
+**68,7 / 68,7 / 67,7 MiB**. Sechzehnfache Eingabe, und die Zahl bewegt sich
+nicht. **Das Flache ist die Aussage**, nicht die Höhe.
+
+Wo du behauptest, dass etwas **nicht** mitwächst, miss mindestens drei Punkte,
+die weit genug auseinanderliegen, dass ein Mitwachsen auffallen müsste. Ein
+Punkt beweist eine Höhe. Nur eine Reihe beweist eine Steigung.
+
 ### Ein Zusammenbruch verdeckt den einen echten Roten
 
 Ein Lauf einer Aufgabe brach in einer Maschine mit **127 roten Fällen** ein. Die
@@ -868,6 +883,22 @@ Und die Gegenprobe dazu ist billig: **nimm die Eigenschaft weg, die der Name
 behauptet, und sieh nach, ob er rot wird.** Wird er es nicht, zählt er etwas
 anderes.
 
+### Ein Mutant, der grün bleibt, kann auch Tiefe heißen
+
+Die übliche Lesart stimmt meistens: bleibt ein Mutant grün, fehlt ein Zaun. Sie
+stimmt nicht immer. Eine Mutation entfernte die Auffangregel für `..` im Pfad —
+und der Lauf blieb grün, weil ein **zweites** Modul denselben Pfad noch einmal
+mit seiner eigenen Regel ablehnt. Dasselbe galt für eine Tar-Gestalt, die an
+zwei Stellen stirbt.
+
+Das ist kein fehlender Zaun, das ist ein Zaun zu viel — Tiefe. Und es ist genau
+der Grund, warum eine **dritte** Gestalt nötig war, die nur an **einer** Stelle
+abgelehnt wird: erst die fängt die Mutation.
+
+Also: bleibt ein Mutant grün, hast du zwei Möglichkeiten und musst zwischen
+ihnen **messen**, nicht raten. Such die zweite Stelle. Findest du sie, schreib
+sie hin — und bau die Gestalt, die nur durch die erste läuft.
+
 ### Ein Zaun an der falschen Zeile ist kein Zaun
 
 Zweimal am selben Tag stand ein ehrlicher Hinweis am falschen Ort.
@@ -1095,6 +1126,23 @@ ist, ist er sofort falsch statt glaubhaft richtig.
 **Verweise auf Namen, nicht auf Zeilen.** Eine Zeilennummer im Fließtext sagt
 nichts darüber, worauf sie zeigt, sie altert mit dem nächsten Commit, und ihre
 Fehler sehen aus wie Treffer.
+
+### Fünf Stränge bringen fünf Kopien derselben Konstante mit
+
+Fünf Sitzungen bauten gleichzeitig je einen Vertrag, jede in ihrem eigenen Baum,
+jede sauber. Erst das Zusammenführen zeigte, was keine von ihnen sehen konnte:
+**`MAX_PACKAGE` und `MAX_MANIFEST` standen danach zweimal da, `MAX_ENTRIES`
+dreimal.** Auf der Go-Seite ist jede davon **eine** Konstante.
+
+Niemand hat etwas falsch gemacht. Jeder brauchte die Zahl, keiner konnte den
+Baum der anderen sehen, und ein Brief nennt nun einmal die Werte, die seine
+Aufgabe braucht. Die Doppelung entsteht **durch die Parallelität selbst**.
+
+Daraus folgt zweierlei. Beim Aufteilen: sag jedem Strang, welches Modul eine
+geteilte Zahl **besitzt**, auch wenn dieses Modul noch gar nicht existiert.
+Und beim Zusammenführen: such ausdrücklich nach Konstanten, die jetzt mehrfach
+dastehen — der Lauf bleibt grün, solange die Kopien gleich sind, und genau
+deshalb findet ihn kein Test.
 
 ### Auf der anderen Seite heißt dieselbe Sache anders
 
