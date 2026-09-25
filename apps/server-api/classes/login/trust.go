@@ -22,6 +22,9 @@ import (
 // 204 -- the shell asks with the number after the last it has, and that is the
 // ordinary "nothing new" -- and anything beyond that is E_NOTFOUND. What Live
 // and package state answer besides those, this path hands on as it is.
+//
+// That 204 is the one answer of the three that reads no row, and what it does
+// and does not promise is written at the branch itself.
 func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	live, code, ok := h.Live(ctx, r)
@@ -51,6 +54,16 @@ func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(chain.Versions) == 0 {
+		// Nothing newer than the version this session was decided on, and no
+		// row was read to say it. On a node whose store has lost the trust
+		// rows this answers "nothing new" knowingly, about a list the store
+		// can no longer show -- it is no word that the store still holds it,
+		// and it is not meant as one. That gap is
+		// TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost, which the same
+		// node's Live walks into in this very request; only an anchor outside
+		// the database shuts it, the open V1.2 point that test names.
+		// TestTheTwoNodesPartWhereTheAnswerNeedsNoRow holds this answer and
+		// says why going to look instead would buy nothing.
 		httpapi.NoContent(w)
 		return
 	}
