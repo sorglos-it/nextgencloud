@@ -459,6 +459,27 @@ Hochrechnen ist kein Messen, auch dann nicht, wenn der Ausgangswert gemessen war
 Wer eine Zahl nennt, sagt dazu, **wie** gemessen wurde. Wer eine nicht hat, sagt
 das — und der Koordinator entscheidet, ob sie gebraucht wird.
 
+### Der Mutant muss die alten Tests überleben
+
+Die Empfindlichkeitsprüfung hat eine Falle, in die der Koordinator dieses
+Projekts selbst gelaufen ist. Er verlangte für einen neuen Zaun die Mutation
+„der Melder reicht **0** durch statt der Zahl, die er halten soll". Der Umsetzer
+baute sie, sie starb — und meldete zurück, dass das **nichts beweist**: sie starb
+auch an einem Test, der **vorher schon dastand**.
+
+Er baute den richtigen dazu: nicht 0, sondern eine **feste Zahl, die zufällig die
+des alten Tests ist**. Die überlebt jeden alten Test und stirbt nur am neuen
+Zaun. Erst das zeigt, dass der Zaun etwas hält, was ohne ihn offen wäre.
+
+**Also: ein Mutant, der auch an einem vorher vorhandenen Test stirbt, prüft
+deinen neuen Zaun nicht.** Er prüft den alten Test. Bau ihn so, dass er an allem
+Alten vorbeikommt, und weis das ausdrücklich nach — sonst hast du einen Zaun, von
+dem du nur weißt, dass er neben einem funktionierenden Test steht.
+
+Das ist die schärfere Fassung von „ein Test, der aus dem falschen Grund rot
+wird, zählt nicht": hier wird der **richtige** Test rot, nur eben nicht der, um
+den es ging.
+
 ## 14. Der Satz daneben ist der häufigste Fehler, den dieses Projekt macht
 
 Elfmal hat ein Kommentar das Gegenteil dessen behauptet, was der Code tut.
