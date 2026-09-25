@@ -201,29 +201,27 @@ check() {
 	fi
 	stop_qemu
 
-	# "Secure boot OVMF" is a claim about the firmware, and until now nothing
-	# asked it: the TPM connection and the PCR 0 check below look exactly the
-	# same either way. Measured, the file in the -drive line above swapped for
-	# /usr/share/OVMF/OVMF_CODE_4M.fd - same size, different sha256, plainly a
-	# different build - and this check stayed green from end to end.
-	# The firmware answers on the serial line, and it answers with what secure
-	# boot is FOR: the build carries an EFI shell of its own that nobody signed.
-	# Measured on this VM, same variable file, same devices, only the firmware
-	# different - without secure boot the machine starts that shell
-	# (BdsDxe: loading Boot0001 "EFI Internal Shell" from Fv(...)), with secure
-	# boot it never does and says it has nothing to boot. So this is no wording
-	# check tacked on: it is the refusal itself. A firmware that puts the
-	# sentence differently ends the check red, which is the safe direction.
-	# No second wait for it either: with the secure-boot build that very line IS
-	# the BdsDxe marker the loop above already waited for.
+	# Which OVMF build is in the -drive line above, asked of the machine and not
+	# of the file name. The ordinary build carries an EFI shell of its own that
+	# nobody signed and starts it (BdsDxe: loading Boot0001 "EFI Internal
+	# Shell"); the secure-boot build brings nothing startable at all and says so.
+	# And that is the whole of what this line settles - it is NOT a proof that
+	# secure boot is armed, which is what it used to claim. Measured, same
+	# firmware, only the variable file swapped for the key-less
+	# OVMF_VARS_4M.fd: the machine then sits in setup mode, secure boot checks
+	# nothing, and this very line still finds its sentence. The difference
+	# between a green and a red run here is the CODE build, nothing else. What
+	# secure boot really does is asked of PCR 7 below.
+	# No second wait for it: with the secure-boot build that very line IS the
+	# BdsDxe marker the loop above already waited for.
 	if ! grep -q 'No bootable option or device was found' "$serial"; then
-		say "Die Firmware hat kein Secure Boot durchgesetzt: das unsignierte"
-		say "EFI-Shell-Abbild dieses OVMF-Baus wurde gestartet."
+		say "Dieser OVMF-Bau bringt etwas Startbares mit und hat es gestartet:"
+		say "das unsignierte EFI-Shell-Abbild des gewöhnlichen Baus."
 		say "Prüfen: steht in der -drive-Zeile OVMF_CODE_4M.secboot.fd?"
 		say "Was steht in $serial?"
 		exit 1
 	fi
-	say "Secure Boot ist scharf: das unsignierte Abbild lief nicht an"
+	say "OVMF-Bau ohne startbares Abbild: der Secure-Boot-Bau, wie erwartet"
 
 	# The whole proof hangs on the simulator outliving the machine - that is
 	# what the SIGKILL above is for. Asked right here, where the requirement is,
@@ -276,6 +274,55 @@ check() {
 		exit 1
 	fi
 	say "Firmware hat gemessen: PCR 0 ist nicht mehr leer"
+
+	# And here secure boot itself, at the object instead of at the way to it.
+	# PCR 7 is the register the firmware writes its secure boot state into: the
+	# state variable, PK, KEK, db and dbx. So a fixed value is the only thing in
+	# this whole check that can tell an armed machine from one in setup mode.
+	# Four combinations measured on this VM (ovmf 2025.02-8+deb13u1, QEMU
+	# 10.0.13, swtpm 0.7.1), the two secure-boot ones twice each with the same
+	# result, and the wanted value below has come out of every check run since:
+	#
+	#   CODE secboot + VARS from .ms.fd  -> B05BC00A...  (this is the one wanted)
+	#   CODE secboot + VARS without keys -> 98441C7F...  (setup mode)
+	#   CODE ordinary, either VARS       -> 384A798E...
+	#
+	# PCR 0 does not settle it: it is the same for both variable files, so the
+	# swap that matters most stays invisible there. The serial check above is
+	# the same story - measured, it stays green in setup mode.
+	# What this value does NOT cover, measured and written down rather than
+	# hoped away: taking away
+	# "-global driver=cfi.pflash01,property=secure,value=on" leaves PCR 7 at the
+	# wanted value. That switch decides whether the variable store can be written
+	# from outside SMM, and the firmware measures nothing about it. Catching it
+	# needs a guest system that tries the write, and work package 0 has none.
+	# The price of a fixed value is named too: a new OVMF makes this line red,
+	# and somebody has to measure the new value and put it here. That is the
+	# safe direction - the other way round is a check that stays green while
+	# secure boot is off.
+	local pcr7 pcr7_soll pcr7_setup
+	pcr7_soll="B05BC00A1298206F8250D1931B1418EA40FDC61463ABBFB23F18AB753C7252C0E21B0AB00A08DCEDFEFB07DC8AB393FC"
+	pcr7_setup="98441C7F7625D10058C47683AEC486CE311C633235EB555593A7EE791121E3578AE72D04ECEF661F272D59058B77AF35"
+	tpm2_pcrread -o "$work/work/qemu-pcr7.bin" sha384:7 >/dev/null
+	pcr7="$(xxd -p -u -c 96 "$work/work/qemu-pcr7.bin" | tr -d '\n')"
+	if [ "$pcr7" = "$pcr7_setup" ]; then
+		say "Secure Boot ist NICHT scharf: die Maschine steht im Setup-Modus, sie hat keine Schlüssel."
+		say "Geprüft wird dann gar nichts, auch nicht die Signatur eines Abbilds."
+		say "Prüfen: $vars muss aus /usr/share/OVMF/OVMF_VARS_4M.ms.fd entstanden sein."
+		say "Löschen und neu anlegen lassen: rm -f $vars"
+		exit 1
+	fi
+	if [ "$pcr7" != "$pcr7_soll" ]; then
+		say "PCR 7 passt nicht zum erwarteten Secure-Boot-Zustand."
+		say "  gelesen:  $pcr7"
+		say "  erwartet: $pcr7_soll"
+		say "Zwei Ursachen kommen in Frage."
+		say "1. Firmware oder Variablendatei sind andere geworden (z. B. ein OVMF-Update)."
+		say "   Dann neu messen und den Sollwert in diesem Skript nachziehen."
+		say "2. Der Secure-Boot-Zustand der Maschine ist ein anderer als vorgesehen."
+		exit 1
+	fi
+	say "Secure Boot ist scharf: PCR 7 trägt den erwarteten Zustand"
 }
 
 case "${1:-}" in

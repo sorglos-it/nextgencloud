@@ -13,7 +13,8 @@ cd "$(dirname "$0")/.."
 work="$(pwd)/dist/recovery"
 
 usage() {
-	printf 'Aufruf: tools/recovery-swtpm.sh start|stop|reset|resume|tcti [main|qemu]\n' >&2
+	printf 'Aufruf: tools/recovery-swtpm.sh start|stop|reset|resume|tcti [main|qemu] [mitschnitt]\n' >&2
+	printf 'mitschnitt gibt es nur für start und reset der Instanz main - siehe Kommentar im Skript.\n' >&2
 	exit 1
 }
 
@@ -21,12 +22,42 @@ usage() {
 # data channel. Empty everywhere else, so nothing but resume can switch one on.
 datenkanal=""
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then usage; fi
+# Set by the third argument alone, and read by start: it decides whether this
+# simulator writes the wire down. DANGEROUS, and the danger is the point of the
+# thing: --log level=20 puts every byte that travels between the tpm2 tools and
+# the TPM into a file, the sealed secret included - measured, TEST-DEK stands
+# twice in the clear in a run of seal, both times inside TPM2_CC_Create. That is
+# bearable here (a throw-away VM, a secret that is the string TEST-DEK) and it
+# would be a catastrophe in the real installation, where work package 6 hangs
+# the real DEK on the same commands. So it never switches itself on: nothing but
+# this one argument sets it, it is refused for the instance the virtual machine
+# hangs on, and the caller that asks for it is the one that takes the recording
+# away again (recovery-test.sh shreds it and then checks it is gone). Whoever
+# needs it while a simulator is already up has to go through reset: start
+# returns early on a live instance and would leave it running without the log.
+mitschnitt=""
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then usage; fi
 name="${2:-main}"
 case "$name" in
 main|qemu) ;;
 *) printf 'Unbekannte Instanz: %s (erlaubt: main, qemu)\n' "$name" >&2; exit 1 ;;
 esac
+if [ "$#" -eq 3 ]; then
+	if [ "$3" != mitschnitt ]; then usage; fi
+	# Only where the recording is wanted AND can be tidied up again: the policy
+	# instance, and only when this call really starts a simulator.
+	case "$1" in
+	start|reset) ;;
+	*) printf 'Den Mitschnitt gibt es nur bei start und reset.\n' >&2; exit 1 ;;
+	esac
+	if [ "$name" != main ]; then
+		printf 'Den Mitschnitt gibt es nur für die Instanz main.\n' >&2
+		printf 'Die Instanz qemu behält ihr work-Verzeichnis über reset hinweg, dort bliebe er liegen.\n' >&2
+		exit 1
+	fi
+	mitschnitt=ja
+fi
 dir="$work/tpm/$name"
 sock="$dir/sock"
 pidfile="$dir/swtpm.pid"
@@ -90,8 +121,14 @@ ask_tpm() {
 }
 
 start() {
-	local pid flags=() channel=() sichtbar
+	local pid flags=() channel=() protokoll=() sichtbar
 	mkdir -p "$dir" "$work/work"
+	# In work/, deliberately: that is the one directory recovery-test.sh empties,
+	# searches for the plaintext and has reset throw away, so the recording falls
+	# under the same rules as the secret.bin of recovery-policy.sh.
+	if [ -n "$mitschnitt" ]; then
+		protokoll=(--log "file=$work/work/wire-$name.log,level=20")
+	fi
 	# The data channel is what the tpm2 tools talk to, and main always has it.
 	# The instance qemu must NOT have one while the virtual machine hangs on
 	# it: QEMU hands its OWN data channel in over the control channel with
@@ -144,7 +181,7 @@ start() {
 		# control channel, so it must not be started up in advance.
 		flags=(--flags not-need-init,startup-clear)
 	fi
-	if ! swtpm socket --tpm2 --tpmstate "dir=$dir" "${channel[@]}" \
+	if ! swtpm socket --tpm2 --tpmstate "dir=$dir" "${channel[@]}" "${protokoll[@]}" \
 		--ctrl "type=unixio,path=$sock.ctrl" "${flags[@]}" --daemon --pid "file=$pidfile"; then
 		printf 'Der Simulator %s lässt sich nicht starten. Die Zeilen darüber sagen, woran es lag.\n' "$name" >&2
 		printf 'Hilft das nicht weiter: Zustand wegwerfen mit tools/recovery-swtpm.sh reset %s\n' "$name" >&2
@@ -299,6 +336,11 @@ reset() {
 	stop
 	rm -rf "$dir"
 	if [ "$name" = main ]; then
+		# Whoever switches the recording on takes it away again, and rm is not
+		# how a file with a secret in it goes away. It normally has been shredded
+		# by its caller long before this line; what is caught here is the run
+		# that died in between, or a machine that was restarted under it.
+		shred -u "$work/work/wire-$name.log" 2>/dev/null || :
 		# A second run has to start from nothing. Careful: work/ is NOT per
 		# instance the way tpm/<instanz>/ above is - it is the shared working
 		# surface, and this empties it for everyone. Nothing may be parked there.

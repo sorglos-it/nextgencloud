@@ -194,13 +194,21 @@ primary() {
 # The two halves hold each other up, measured: a policy session with encryption
 # switched on but WITHOUT the salt has no session key, and tpm2_unseal answers
 # 0x996 "unsupported symmetric algorithm or key size". Losing the salt therefore
-# already shuts the branch; losing only the encryption would not. That is what
-# open_branch leaves the session standing for: recovery-test.sh loads it back
-# out of the TPM and asks the TPM what it is made of. This script used to write
-# the answer into a file instead, and that was no check at all - measured, with
-# the encryption taken out and one printf of the expected sentence put in its
-# place the run stayed green nine times over, while the session that really
-# unsealed carried nothing but continuesession.
+# already shuts the branch; losing only the encryption would not.
+#
+# What checks the encryption, said against the code and not against the wish:
+# open_branch leaves its session standing so recovery-test.sh can load the
+# CONTEXT FILE with tpm2_sessionconfig. That reads the attributes out of a
+# tpm2-tools file; the TPM only has to still hold the context for the file to
+# load. It is therefore a statement this script makes about itself, and a weak
+# one - measured, one tpm2_sessionconfig --enable-encrypt --enable-decrypt on
+# the same file AFTER the tpm2_unseal keeps the whole run green while the secret
+# came out of the TPM in the clear. An earlier version wrote the sentence into a
+# file of its own; that was worse, but not different in kind.
+# The property itself - the unsealed secret does not travel in the open - is
+# asked of the wire: recovery-test.sh has swtpm write it down (--log level=20)
+# and counts how often the plaintext crosses. Honest run 2, both in the Create
+# of the sealing, none in the opening; with the encryption gone 3.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
 # tpm2-tools 5.7: --tpmkey-context on a session without --policy-session is
@@ -288,7 +296,7 @@ seal() {                 # $1 = branch
 	# is a digest of that algorithm. Measured, sha384 turned into sha1 all
 	# through this file seals and opens exactly as before and the run stays
 	# green - with the whole branch then resting on SHA-1. tpm2_readpublic
-	# prints it two fields above the attributes, in the very output the test
+	# prints it immediately above the attributes, in the very output the test
 	# already reads.
 	tpm2_create -C "$handle" -g sha384 -u "$w/seal.pub" -r "$w/seal.priv" \
 		-i "$w/secret.bin" -L "$w/branch-$1.digest" \
