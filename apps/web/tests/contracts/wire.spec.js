@@ -630,13 +630,18 @@ test("parseControl and encodeControl keep Go's rules", async ({ shell }) => {
 // no params an OPEN could have carried are turned down here. No row is the
 // other way round.
 //
-// Both counts below read got.decides, so a change to wire.js moves them.
-// Measured with validParams put back on the pure shape: the first names 13
-// of the 27 rows, and with the first taken out of the way the second names
-// 12 - the 13 without "white space before", which the shape answers no to
-// and Go yes. The commit that made these two read the code said four for the
-// second; four is the number of rows in the table's own price, not the
-// number the mutation brings out.
+// Both counts below read got.decides, so a change to wire.js moves them, and
+// since this round they are split by direction instead of by "differs at all":
+// the first names the rows where this file is stricter than Go, the second the
+// rows where it is looser. Until this round the first named every row that
+// differed at all, so the second was a subset of it and could never be the
+// only one red - a row it caught was a row the first caught too. The two sets
+// are disjoint now and their union is the old first one, so nothing is given
+// up. Measured with validParams put back on the pure shape, each red on its
+// own: the first names one row, "white space before", against the four it
+// expects - the other four stop being stricter, because the shape takes them;
+// and the second names twelve, where it expects none. One and twelve are the
+// thirteen the old first assertion named.
 test("validParams asks the whole question Go's ValidParams asks", async ({ shell }) => {
   const nest = (n) => '{"a":'.repeat(n) + "1" + "}".repeat(n);
   const cases = [
@@ -711,11 +716,14 @@ test("validParams asks the whole question Go's ValidParams asks", async ({ shell
   // the table's own third column: with `here` on both sides these two would
   // compare the table with itself, and no change to wire.js could make them
   // red. The Go column is the measurement; got.decides is this run.
-  expect(cases.filter(([, , , go], i) => got.decides[i] !== go).map(([name]) => name)).toEqual([
+  //
+  // The rows where this file is stricter: it says no, Go says yes.
+  expect(cases.filter(([, , , go], i) => !got.decides[i] && go).map(([name]) => name)).toEqual([
     "a null member", "nesting one past the limit", "a number past 2^53-1",
     "an exponent no double holds",
   ]);
-  // Nothing this file takes is anything Go turns down.
+  // And the other direction, which has to stay empty: nothing this file takes
+  // is anything Go turns down.
   expect(cases.filter(([, , , go], i) => got.decides[i] && !go).map(([name]) => name)).toEqual([]);
   // And every row still answers what the third column says it answers.
   const wrong = cases.filter(([, , here], i) => here !== got.decides[i]).map(([name]) => name);

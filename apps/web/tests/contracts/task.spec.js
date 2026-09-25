@@ -309,6 +309,106 @@ test("a field that changes between the check and the writing never reaches the b
   expect(out.node.written).not.toBe("other");
 });
 
+// The fourth door of the family the round before this one closed in wire.js,
+// and it stands in the other file of that very commit. parseTask handed the
+// caller's object straight to decode, which keeps it and asks length again in
+// the parser after the budget has been measured against the first reading. A
+// Uint8Array subclass whose first reading is 0 therefore walked a task of any
+// size past MAX_TASK, and parseTask(x).params came back as that same subclass,
+// because slice keeps the class it was called on - and those are the bytes the
+// end-to-end prologue hashes.
+//
+// Each document below is one buildTask wrote, with white space between its
+// last member and the closing brace; that is JSON, so it stays one valid task
+// document at any size. Measured against shared/task first, through
+// task.VerifyApproval and through the same enc.Budget that parseTask mirrors:
+// both refuse 16385, 22063 and 70027 bytes ("enc: input too large") and take
+// the very same document cut to 16384. What refuses them is the bound, not the
+// document.
+//
+// No crypto beyond crypto.getRandomValues, so this runs where the signature
+// tests are skipped.
+test("parseTask measures a task by one reading of its length", async ({ shell }) => {
+  test.setTimeout(120_000);
+  const out = await shell.evaluate(async () => {
+    const task = await import("/assets/js/contracts/task.js");
+    const { utf8 } = await import("/assets/js/contracts/b64.js");
+    const base = task.buildTask({
+      inst: "EREREREREREREREREREREQ", certHash: new Uint8Array(32).fill(7),
+      node: "ctl-1", app: "ngc.store", service: "controller", action: "deactivate",
+      params: utf8('{"a":1}'), now: 1790000000,
+    }).bytes;
+    // n bytes: the document without its closing brace, white space, the brace.
+    const padded = (n) => {
+      const b = new Uint8Array(n);
+      b.fill(0x20);
+      b.set(base.subarray(0, base.length - 1), 0);
+      b[n - 1] = 0x7d;
+      return b;
+    };
+    // The lie is armed only after the bytes are in, so nothing the test itself
+    // does uses it up.
+    const lying = (b) => {
+      let lie = false;
+      class Shifty extends Uint8Array {
+        get length() {
+          if (!lie) return this.byteLength;
+          lie = false;
+          return 0;
+        }
+      }
+      const a = new Shifty(b.length);
+      a.set(b);
+      lie = true;
+      return a;
+    };
+    const takes = (b) => {
+      try {
+        task.parseTask(b);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const message = (b) => {
+      try {
+        task.parseTask(b);
+        return "taken";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    const sizes = [16385, 22063, 70027];
+    const buffer = base.buffer.slice(base.byteOffset, base.byteOffset + base.byteLength);
+    return {
+      over: sizes.map((n) => takes(padded(n))),
+      lied: sizes.map((n) => takes(lying(padded(n)))),
+      bound: takes(padded(task.MAX_TASK)),
+      boundLied: takes(lying(padded(task.MAX_TASK))),
+      // slice keeps the class it was called on, so without the single reading
+      // the raw member comes back as the caller's own subclass.
+      plainParams: Object.getPrototypeOf(task.parseTask(lying(base)).params) === Uint8Array.prototype,
+      notBytes: [message(null), message("{}"), message(buffer)],
+    };
+  });
+  expect(out.over).toEqual([false, false, false]);
+  expect(out.lied).toEqual([false, false, false]);
+  // The same document at the bound is taken, whether its length tells the
+  // truth once or twice, so what refuses the three above is their size.
+  expect(out.bound).toBe(true);
+  expect(out.boundLied).toBe(true);
+  expect(out.plainParams).toBe(true);
+  // Everything refused is this contract's one error, whatever it was handed.
+  // The ArrayBuffer is the one thing this now turns down that decode would
+  // have taken: Go's decoder is handed a []byte and nothing else, wire.js took
+  // the same step in the round before, and no caller in this tree hands one
+  // over - every call passes utf8(...), b64decode(...) or the bytes buildTask
+  // wrote.
+  expect(out.notBytes).toEqual([
+    "task: malformed task", "task: malformed task", "task: malformed task",
+  ]);
+});
+
 test("verifyApproval ties the task to the certificate, its installation and one reading of the payload",
   async ({ shell }) => {
     test.setTimeout(120_000);
@@ -378,6 +478,121 @@ test("verifyApproval ties the task to the certificate, its installation and one 
     // Either the first reading all the way through, or a refusal - never the
     // task the second reading brought.
     expect(out.driftedNode).not.toBe("ctl-2");
+  });
+
+// The same door one function further, and the heaviest of the family: it gets
+// past a size bound that stands behind a signature. verifyApproval read
+// payload.length for its own bound and then handed the same object to the
+// signature check and to parseTask. Measured with a counting getter on
+// chromium, over the 245-byte document this test builds: 303 readings of that
+// one length in a single run. The count grows with the document, because the
+// parser asks again at every step; the first five are the bound here, the one
+// in sign.verify, two in concat and the budget in decode - read off a stack
+// trace, not guessed. With a subclass that answers 0 on readings 1 and 5, the
+// bound here and the budget there, a 70027-byte task therefore ran all the way
+// through: a signature right in every byte, validateTask, the installation and
+// the certificate binding, and the task came back. Measured against
+// shared/task, Go's VerifyApproval refuses exactly these bytes and takes the
+// same document cut to 16384.
+//
+// The certificate here is the two fields this function reads of what
+// session.verifyApproval returned: the installation and the session key that
+// signs tasks. signTask puts no bound on what it signs, so every payload below
+// carries a signature that is right in every byte and its size is the only
+// thing left that can refuse it.
+test("verifyApproval decides on one reading of the payload and decodes those very bytes",
+  async ({ shell }) => {
+    test.setTimeout(120_000);
+    test.skip(!(await canSignEd25519(shell)),
+      "this engine's Web Crypto makes no Ed25519 key and signs nothing with one");
+    const out = await shell.evaluate(async () => {
+      const task = await import("/assets/js/contracts/task.js");
+      const sign = await import("/assets/js/contracts/sign.js");
+      const session = await import("/assets/js/contracts/session.js");
+      const { utf8 } = await import("/assets/js/contracts/b64.js");
+
+      const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+      const pub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+      const key = { privateKey: pair.privateKey, kid: await sign.keyID(pub) };
+      const inst = "EREREREREREREREREREREQ";
+      const client = utf8("the client certificate whose hash the task names");
+      const cert = { inst, sig: pub };
+      const base = task.buildTask({
+        inst, certHash: await session.certHash(client), node: "ctl-1", app: "ngc.store",
+        service: "controller", action: "deactivate", params: utf8('{"a":1}'), now: 1790000000,
+      }).bytes;
+      const padded = (n) => {
+        const b = new Uint8Array(n);
+        b.fill(0x20);
+        b.set(base.subarray(0, base.length - 1), 0);
+        b[n - 1] = 0x7d;
+        return b;
+      };
+      // A payload that counts every reading of its length and answers 0 on the
+      // ones named. Counting starts after the bytes are in, so nothing the
+      // test itself does is counted.
+      const counting = (b, liesOn) => {
+        let n = 0;
+        class Shifty extends Uint8Array {
+          get length() {
+            n += 1;
+            return liesOn.includes(n) ? 0 : this.byteLength;
+          }
+        }
+        const a = new Shifty(b.length);
+        a.set(b);
+        n = 0;
+        return { a, reads: () => n };
+      };
+      const run = async (bytes, liesOn) => {
+        const env = await task.signTask(key, bytes);
+        const { a, reads } = counting(bytes, liesOn);
+        let field = 0;
+        const watched = { kid: env.kid, sig: env.sig };
+        Object.defineProperty(watched, "payload", {
+          enumerable: true,
+          get() {
+            field += 1;
+            return a;
+          },
+        });
+        try {
+          const t = await task.verifyApproval(watched, cert, client);
+          return { ok: true, app: t.app, node: t.node, reads: reads(), field,
+            plainParams: Object.getPrototypeOf(t.params) === Uint8Array.prototype };
+        } catch (e) {
+          return { ok: false, err: e.message, reads: reads(), field };
+        }
+      };
+      return {
+        good: await run(base, []),
+        big: await run(padded(70027), []),
+        bigLying: await run(padded(70027), [1, 5]),
+        bound: await run(padded(task.MAX_TASK), []),
+        boundLying: await run(padded(task.MAX_TASK), [1, 5]),
+      };
+    });
+    // The task comes through, and its own length is not what anything here
+    // decides on: the view is built from buffer, byteOffset and byteLength,
+    // and every reader below sees that one view.
+    expect(out.good.ok).toBe(true);
+    expect(out.good.app).toBe("ngc.store");
+    expect(out.good.node).toBe("ctl-1");
+    // The field itself is read once, as it was before this round.
+    expect(out.good.field).toBe(1);
+    expect(out.good.reads).toBe(0);
+    // slice keeps the class it was called on: the params of the task that
+    // comes back were the caller's subclass until this round.
+    expect(out.good.plainParams).toBe(true);
+    // Over the bound: refused whether the length tells the truth or lies.
+    expect(out.big.ok).toBe(false);
+    expect(out.bigLying.ok).toBe(false);
+    expect(out.bigLying.err).toBe("task: malformed task");
+    expect(out.bigLying.reads).toBe(0);
+    // The same document at the bound is taken, so what refuses the two above
+    // is their size and not anything the document says.
+    expect(out.bound.ok).toBe(true);
+    expect(out.boundLying.ok).toBe(true);
   });
 
 test("verifyConfirm answers false where it cannot check, and reads the proof once", async ({ shell }) => {

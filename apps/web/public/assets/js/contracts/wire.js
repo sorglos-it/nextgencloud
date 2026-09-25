@@ -12,22 +12,36 @@
 // answer is an error, bytesOrNull where it is true or false, and every
 // function that is handed bytes reaches one of the two. Through viewOf:
 // encodeFrame, decodeFrame, grant, parseGrant, parseOpen, parseClose,
-// parseE2E, parseControl. Through bytesOrNull, for the members of an object a
-// caller built: validateOpen, parseOpen, validParams, encodeOpen, e2e,
-// encodeControl. Counted from the call sites in this file, eight for viewOf
-// and eleven for bytesOrNull; parseOpen is in both lists, once for the
-// document and once for its members.
+// parseE2E, parseControl. Through bytesOrNull: validateOpen, parseOpen,
+// validParams, encodeOpen, e2e, encodeControl. Counted from the call sites in
+// this file, eight for viewOf and eleven for bytesOrNull; parseOpen is in both
+// lists, once for the document and once for its members. Nothing but this
+// count holds the two lists: a new function that takes bytes and calls neither
+// helper turns no test red, which is why a guard that walks the export list is
+// its own task and not this comment.
+//
+// What goes through bytesOrNull is a member of an object a caller built in
+// three of the six - validateOpen, encodeOpen, encodeControl. In validParams
+// and e2e it is an argument, and in parseOpen the object belongs to the
+// decoder, which built it out of bytes this module had already made a view of.
+// The rule is the same in all six; only the reason differs.
 //
 // The document itself went through neither in parseOpen, parseClose and
-// parseControl until this round: they handed the caller's object straight to
-// decode, which keeps it and asks length in eight more places after the
-// budget has been measured against the first reading. A subclass whose first
-// reading is small therefore carried a
+// parseControl until the round before this one: they handed the caller's
+// object straight to decode, which keeps it and asks length in eight more
+// places after the budget has been measured against the first reading. A
+// subclass whose first reading is small therefore carried a
 // document of any size past the bound - measured at 22063, 70027 and 5015
 // bytes against bounds of 16384, 65514 and 4096, and measured against
 // shared/wire, Go refuses all three and takes the same document cut to the
 // bound. The test "a document whose length lies is refused by every parser"
-// builds them.
+// builds them. Three of the eight call sites above are those three, and the
+// message of that commit said viewOf had been there for the other eight;
+// counted over the file before it and after it, it was there for five.
+//
+// viewOf is exported since this round, for task.js, which had the same hole in
+// parseTask and verifyApproval. One definition in the tree, as with MAX_PARAMS
+// and SIG_SIZE; task.js folds the BadFrame it throws into its own one error.
 //
 // The imports differ from the task brief's own block in nine names, counted
 // by the two sets and not by hand. Five are added: fromUtf8 and BadInput from
@@ -100,7 +114,12 @@ const EMPTY = new Uint8Array(0);
 // frame of 65520 bytes - over MaxFrame, which the other side drops and the
 // link ends on. The test "a payload whose length lies is refused, not half
 // written" builds exactly that payload.
-function viewOf(v, why) {
+//
+// Exported for task.js, which asks the same question of a task payload and
+// folds the BadFrame into its own one error. Go's wire has no counterpart for
+// it and needs none: what it is handed is a []byte, whose length the compiler
+// answers for.
+export function viewOf(v, why) {
   if (!(v instanceof Uint8Array)) throw new BadFrame(why);
   try {
     return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
@@ -337,20 +356,24 @@ function validTaskEnvelope(env) {
 // paramsBudget measures the params on their own: at most MAX_PARAMS bytes,
 // and nothing inside them counted or named - the question is whether they are
 // one JSON object, never what stands in it. It stands here once. task.js held
-// the same three lines until this round and now asks validParams below, the
-// way Go's task.Validate asks wire.ValidParams.
+// the same three lines until the round before this one and now asks
+// validParams below, the way Go's task.Validate asks wire.ValidParams.
 const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
 
 // validParams reports whether the params are empty or one JSON object of at
 // most MAX_PARAMS bytes that is valid JSON throughout (Go: wire.ValidParams,
-// which is paramsShape and jsontext.Value.IsValid together). Until this round
-// it was Go's unexported paramsShape under the exported name, which said yes
-// to '{"a":', '{"a":01}', '{"a":1,"a":2}' and '{' - all four refused by Go,
-// measured. When that stood, the one file reading this module took a number
-// out of it and asked nothing, so it cost nothing that day. Since this round
-// task.js asks: a change here moves a task's answer too, which the test
-// "validateTask decides every field as Go's task.Task.Validate does" catches -
-// measured, a single byte changed in the line below turns it red.
+// which is paramsShape and jsontext.Value.IsValid together). Until the first
+// fix round it was Go's unexported paramsShape under the exported name, which
+// said yes to '{"a":', '{"a":01}', '{"a":1,"a":2}' and '{' - all four refused
+// by Go, measured. When that stood, the one file reading this module took a
+// number out of it and asked nothing, so it cost nothing that day. Since the
+// round before this one task.js asks: a change here moves a task's answer too,
+// which the test "validateTask decides every field as Go's Task.Validate does"
+// catches -
+// measured, a single byte changed in the last line of the function below,
+// `> 0` to `> 2`, turns it red. The round before this one wrote "the line
+// below" here, and that is the signature line, which was never the one
+// measured.
 //
 // decode is what scans, and it is the decoder parseOpen reads an OPEN with,
 // so the two agree by construction. It also gives back the bytes of the one

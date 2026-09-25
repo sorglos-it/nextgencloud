@@ -3,22 +3,57 @@
 // user's key in the trust list (Go: task).
 //
 // Go is handed a Task whose ten fields have their types from the compiler,
-// and an int64 wherever a point in time stands. Here every one of them comes
-// out of an object the caller owns, so each is read exactly once and only the
-// copy is used afterwards: a field that answers the check with one value and
-// the writer with another would put something into a signature that no check
-// ever saw.
+// and an int64 wherever a point in time stands. Here each of the ten comes out
+// of an object the caller owns, so parts below reads each of them exactly once
+// - measured with a counting getter on all ten, highest count 1 - and what it
+// checks and what write puts into the signature come out of that one reading.
+// A field that answered the check with one value and the writer with another
+// would put something into a signature that no check ever saw.
 //
-// The imports differ from the task brief's own block in eight names, counted
-// by the two sets and not by hand; all eight are added and none of the
-// brief's own is left out. fromUtf8 and encodedLen from b64.js are what the
-// single-read rule needs, in parts below. BadInput and BadJSON are the two
-// errors parseTask folds into the one error Go has there. verify from sign.js
-// and certHash from session.js belong to verifyApproval, which stands in the
+// Reading a field once is not the same as holding still what the field points
+// at, and that is where this file was open until this round. A Uint8Array
+// subclass may define length: the field is read once, and the object behind it
+// can still answer one reader differently from the next. Two entries handed
+// such an object on to more than one reader - parseTask to decode, which keeps
+// it and asks length again at every step of the parser, and verifyApproval to
+// its own bound, to the signature check and to parseTask. Measured on
+// chromium: a subclass answering 0 on readings 1 and 5 walked a 70027-byte
+// task through a bound of 16384 and all the way out of verifyApproval,
+// signature, form and binding included. Both now go through wire.viewOf, which
+// asks buffer, byteOffset and byteLength once and builds the one view every
+// reader below sees. The two tests named at payloadView build it.
+//
+// Every other place in this file that is handed a caller's bytes is a
+// different case, and none of them is changed. Walked through, so the list
+// above is not read as "and nowhere else":
+//
+//   - validateTask, encodeTask and buildTask all reach the caller's bytes
+//     through parts, and parts does not hold the length of id, cert and params
+//     still at all: it goes by what one walk over them produced. Why, and what
+//     that does and does not promise, stands at parts.
+//   - signTask has no check for a second reading to disagree with: it signs.
+//     Measured, with a length that answers 0 on the first read and the truth
+//     afterwards, sign.message runs into a RangeError out of concat and the
+//     promise is rejected; with a first read of 99 it signs 99 bytes, of which
+//     the last 92 are zeros, and that signature does not verify over the bytes
+//     the array really holds. Either way nothing comes back that a verifier
+//     takes.
+//   - verifyConfirm reads env.payload once and hands it to proof.verify, which
+//     is where that contract answers for it.
+//   - verifyApproval's own client bytes go to certHash and nowhere else, one
+//     read, and what comes back is this module's hash of whatever they held.
+//
+// The imports differ from the task brief's own block in ten names, counted by
+// the two sets and not by hand; all ten are added and none of the brief's own
+// is left out. fromUtf8 and encodedLen from b64.js are what the single-read
+// rule needs, in parts below. BadInput and BadJSON are the two errors
+// parseTask folds into the one error Go has there. verify from sign.js and
+// certHash from session.js belong to verifyApproval, which stands in the
 // brief's interface list with no line of code behind it and is built here
 // after Go's task.VerifyApproval. MAX_PARAMS and validParams come from
-// wire.js, where Go keeps both as well - the comment said six until this
-// round and had been one short since MAX_PARAMS arrived.
+// wire.js, where Go keeps both as well - the comment said six until the round
+// before this one and had been one short since MAX_PARAMS arrived. viewOf and
+// BadFrame come from there too, since this round.
 import { b64encode, utf8, fromUtf8, equal, encodedLen, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes, int, raw, RAW } from "./json.js";
 import { validName, validAppID, validID } from "./text.js";
@@ -26,7 +61,7 @@ import * as proof from "./proof.js";
 import { message, verify as verifyEnvelope, PURPOSE_TASK, PURPOSE_CONFIRM } from "./sign.js";
 import { certHash } from "./session.js";
 import { keyOwner } from "./trust.js";
-import { MAX_PARAMS, validParams as wireValidParams } from "./wire.js";
+import { MAX_PARAMS, validParams as wireValidParams, viewOf, BadFrame } from "./wire.js";
 
 export const ID_SIZE = 16;
 export const MAX_LIFETIME = 300;
@@ -64,13 +99,48 @@ export const taskShape = S({
 // as one value and no further, in validParams below.
 const taskBudget = new Budget({ size: MAX_TASK, items: { params: RAW } });
 
+// payloadView is wire.viewOf under this file's one error: one view of the
+// bytes a caller handed over, built from buffer, byteOffset and byteLength,
+// which every reader of that payload then uses. wire.js holds the definition
+// and this file asks for it, the way it asks for MAX_PARAMS and validParams -
+// a second copy would be a second place to change.
+//
+// Two tests build the case it closes: "parseTask measures a task by one
+// reading of its length" and "verifyApproval decides on one reading of the
+// payload and decodes those very bytes". The first also pins what it costs: an
+// ArrayBuffer, which decode would have taken and this turns down. Go's decoder
+// is handed a []byte and nothing else, wire.js took the same step one round
+// earlier, and no caller that means to read a task hands one over: of the
+// seven call sites of parseTask in this tree - two here and five in its test -
+// six are handed bytes this file wrote or b64decode produced, and the seventh
+// is the one line of the test that hands over a null, a string and that one
+// ArrayBuffer, to hold this refusal down.
+function payloadView(b) {
+  try {
+    return viewOf(b, "task: malformed task");
+  } catch (e) {
+    if (e instanceof BadFrame) throw new Error("task: malformed task");
+    throw e;
+  }
+}
+
 // parseTask reads a task payload. Everything the decoder finds wrong is this
 // one error, as it is one error in Go (task.ErrTask): which rule a document
 // broke is nothing a caller has to tell apart, and an error of the engine
 // stays as it is and shows up as the mistake it would be.
+//
+// The payload is the caller's object, and decode keeps it: the budget is
+// measured against one reading of length and the parser asks again at every
+// step. Until this round the object went in as it stood, so a subclass whose
+// first reading was 0 walked a task of any size past MAX_TASK - measured,
+// 16385, 22063 and 70027 bytes, and measured against shared/task, Go refuses
+// all three and takes the same document cut to 16384. The raw params came back
+// as that subclass too, because slice keeps the class it was called on, and
+// those are the bytes the end-to-end prologue hashes.
 export function parseTask(payload) {
+  const b = payloadView(payload);
   try {
-    return decode(payload, taskBudget, taskShape);
+    return decode(b, taskBudget, taskShape);
   } catch (e) {
     if (e instanceof BadJSON || e instanceof BadInput) throw new Error("task: malformed task");
     throw e;
@@ -354,16 +424,27 @@ export async function verifyApproval(env, cert, client) {
   if (env === null || typeof env !== "object" || cert === null || typeof cert !== "object") {
     throw new Error("task: malformed task");
   }
-  // The envelope and the certificate belong to the caller, so their fields
-  // are read once here and only these copies go on. The payload above all:
-  // the signature has to cover the very bytes the task is then decoded from,
-  // and a second read would check a signature over one document and hand back
-  // another - the hole task 8 found in session.verifyAPI.
-  const { payload, kid, sig } = env;
+  // The envelope and the certificate belong to the caller, so their fields are
+  // read once here. The payload above all: the signature has to cover the very
+  // bytes the task is then decoded from, and a second read of the field would
+  // check a signature over one document and hand back another - the hole task 8
+  // found in session.verifyAPI.
+  const { payload: given, kid, sig } = env;
   const { inst: certInst, sig: certSig } = cert;
+  // Reading the field once is not yet holding the bytes still, and that is what
+  // this line does. Until this round the object went on as it stood, to the
+  // bound below, then to the signature check and then to parseTask, and a
+  // subclass that answers 0 on the first and the fifth reading of its length
+  // put a 70027-byte task through all three - measured, right signature, right
+  // form, right binding, and the task came back. Measured against shared/task,
+  // Go's VerifyApproval refuses those very bytes: what it holds is a []byte,
+  // whose length the compiler answers for. From here on nothing reads the
+  // caller's length again - measured with a counting getter, 303 readings in
+  // one run before, none after.
+  const payload = payloadView(given);
   // Before any signature is checked, as Go has it: a payload beyond MAX_TASK
   // costs nothing but the look.
-  if (!(payload instanceof Uint8Array) || payload.length > MAX_TASK) {
+  if (payload.length > MAX_TASK) {
     throw new Error("task: malformed task");
   }
   // Go hands sign.Verify's own error on; verifyEnvelope answers true or false
