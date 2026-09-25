@@ -118,6 +118,37 @@ Gefunden: ein Schutz gegen Zurückstellen der Uhr brach ab **genau zwei
 Stunden** — der Test maß bei einer Stunde und einer Sekunde, also knapp
 darunter. Neun Abstände später war es dicht.
 
+### Eine weitergereichte Zahl ist keine gemessene Zahl
+
+Eine Aufzählung wanderte durch fünf Hände: **drei** Stellen sagte der erste
+Bericht. Der Koordinator schrieb „die drei Stellen" in seine Fundliste. Der
+Umsetzer berichtigte zwei und fand die dritte nicht, weil sie nicht auf der Liste
+stand. Der Prüfer fand eine **vierte** in einer Datei, die im Diff gar nicht
+vorkam. Und als endlich jemand **zählte** statt zu übernehmen, waren es **sechs**
+— zwei davon in Produktionscode, nicht in Tests.
+
+Der unangenehmste war der sechste: er stand in genau dem Kommentar, den die
+Runde davor bearbeitet hatte. Wer einen Text anfasst, liest ihn nicht.
+
+Und der Zähler fand beim Zählen einen Fehler in seiner **eigenen** Arbeit: sein
+Zusatz begann mit „beide Zählungen **oben**", während die dritte Behauptung
+desselben Kommentars **unter** seinem Absatz stand. Er hatte mitten
+hineingeschrieben und nur nach oben gesehen.
+
+**Eine Zahl, die du nicht selbst gezählt hast, ist eine Behauptung wie jede
+andere** — und sie hat die unangenehme Eigenschaft, unterwegs bestätigt zu
+klingen: je öfter sie weitergereicht wird, desto sicherer wirkt sie, obwohl
+niemand seither nachgesehen hat.
+
+Deshalb: **wer eine Zahl weitergibt, sagt dazu, ob er sie gezählt oder übernommen
+hat.** Und wer nach ihr handelt, zählt sie einmal selbst — es kostet eine
+Minute und war hier sechsmal nötig.
+
+Dazu gehört die Kehrseite, die derselbe Umsetzer geliefert hat: **sag, wo du die
+Grenze gezogen hast.** Er hat acht Stellen ausdrücklich *nicht* mitgezählt und
+sie einzeln benannt. Damit ist seine Sechs nachprüfbar statt geglaubt — und wer
+die Grenze anders zieht, sieht sofort, worüber er streitet.
+
 ## 5. Miss, ob dein Messgerät überhaupt misst
 
 Ein Zeittest verglich zwei Codewege und war „fünfzig Läufe ohne Flattern" grün.
