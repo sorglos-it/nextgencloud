@@ -216,6 +216,28 @@ Code-Kommentar.
 Wer Zahlen vergleicht, sagt dazu, **worauf** gemessen wurde — und vergleicht nur,
 was auf demselben Aufbau gemessen ist.
 
+### Die gefährlichste Messung ist die richtige auf die falsche Frage
+
+Ein Prüfer maß, dass ein bestimmtes Systemregister **deterministisch** ist: zwei
+Firmware-Bauten, zwei Läufe, stabile und verschiedene Werte. Die Messung war
+sauber, und sie widerlegte ein „geht nicht", zu Recht.
+
+Der Koordinator zog daraus, dass dieses Register die beiden **Betriebszweige**
+trennen könne — und lag damit falsch. Die Tabelle, die er später bestellte, zeigte
+es: von acht Registern trennt genau **eines** die Zweige, und es ist nicht dieses.
+Das gemessene folgt dem **Zertifikat**; beide Zweige sind mit demselben Schlüssel
+signiert, also ist es in beiden gleich. Die erste Messung hatte
+**Firmware-Bauten** unterschieden, nicht Zweige.
+
+Beide Zahlen waren richtig. Zwischen ihnen lag eine Frage, die niemand
+ausgesprochen hatte.
+
+**Deshalb: schreib neben jede Zahl die Frage, die sie beantwortet** — nicht nur,
+wie gemessen wurde (Regel 1), sondern **worauf sie eine Antwort ist.** Und bevor
+du eine Messung für eine Entscheidung benutzt, für die sie nicht gemacht wurde,
+bestell die Tabelle. Eine halbe Stunde Messen ist billiger als ein Entwurf, der
+auf dem Simulator funktioniert und auf echter Hardware nicht aufgeht.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
