@@ -574,6 +574,33 @@ zwei Schreibweisen — roh und als Mitschnitt-Hexdump. Es lag als schlichter
 gesehen. **Wer nach etwas sucht, sucht nach jeder Form, in der es dastehen kann**
 — nicht nach den zwei, die bisher aufgefallen sind.
 
+### Strenger machen ist erlaubt — und muss dastehen
+
+„Schwäch nie einen abgenommenen Test ab" hat eine Gegenrichtung, die zweimal
+gebraucht wurde und beide Male fast falsch gelaufen wäre.
+
+Ein Umsetzer fand, dass er vier abgenommene Tests rot machen würde, wenn er einen
+Baustein **abweisen** ließe statt eine Lüge zu ignorieren. Er hat es **nicht**
+getan und es vorgelegt: „Ich halte abweisen für die sicherere Variante und sage
+es, statt es durchzudrücken." Richtig — und die Antwort war trotzdem ja.
+
+Der Unterschied ist die **Richtung**:
+
+- **Lockerer machen** ist nie erlaubt. Ein Test, der nach der Änderung etwas
+  durchlässt, was er vorher abgewiesen hat, ist abgeschwächt — egal wie
+  aufgeräumt die Änderung sonst ist. Im selben Bericht stand dafür das Beispiel:
+  eine saubere Umstellung hätte einen Prüfer dazu gebracht, eine gefälschte
+  Eingabe mit **ja** zu beantworten. Die Umstellung wurde nicht gemacht.
+- **Strenger machen** ist erlaubt, wenn die alte Erwartung eine **Nachsicht**
+  festhielt und keine Anforderung. Dann gehört in jeden geänderten Test der Satz,
+  **dass** sie eine Nachsicht war — sonst liest der Nächste eine gekippte Zusage
+  und stellt sie zurück.
+
+Und eine Schranke darüber: Steht die Nachsicht in einem **eingefrorenen Vertrag**,
+gewinnt der Vertrag. Dann wird gemeldet und eingezäunt, nicht verschärft — zwei
+Seiten, die auseinanderlaufen, sind schlimmer als eine bekannte Lücke. Das ist
+eine Messung, keine Auslegung: nachsehen, was die andere Seite wirklich tut.
+
 ### Ein Zaun an der falschen Zeile ist kein Zaun
 
 Zweimal am selben Tag stand ein ehrlicher Hinweis am falschen Ort.
