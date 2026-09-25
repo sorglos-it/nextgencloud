@@ -85,10 +85,22 @@ export function message(purpose, payload) {
 // keyIDAsync identifies a public key: base64url of the first 16 bytes of its
 // SHA-256 (Go: sign.KeyID).
 export async function keyIDAsync(pub) {
-  // What is hashed is the view, not the caller's object: under node the
-  // digest asks the object for its size, in the browsers it takes the bytes
-  // out of the internal slot, and an id that depended on which engine asked
-  // would be two ids for one key.
+  // What is hashed is the view, not the caller's object. The reason that stood
+  // here - "under node the digest asks the object for its size, in the browsers
+  // it takes the bytes out of the internal slot" - is measured FALSE: over six
+  // shapes in node 24, chromium 140 and webkit 26, crypto.subtle.digest takes
+  // the INTERNAL bytes in all three. A length that answers half, double or
+  // throws changes no hash in any of them, so there never were two ids for one
+  // key and this line never closed that.
+  //
+  // What the three do differ in is which property the digest TOUCHES: node
+  // reads byteLength - and throws where that getter throws - while chromium and
+  // webkit read nothing at all. The view is what ends that difference here, and
+  // that is the whole gain: it is what lets bytes.spec.js keep ONE list of
+  // readings for every engine. The price is measured as well, and it is the
+  // same in all three: once the view is built, a byteLength that lies decides
+  // how many bytes are hashed - half the bytes, half the hash - where the raw
+  // digest hashed them all.
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", viewOf(pub, "sign: key is not bytes")));
   return b64encode(h.subarray(0, KEY_ID_SIZE));
 }
@@ -205,7 +217,12 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // 8b6fa87 and are true from 03cbe8c on. The Web Crypto API refuses a view
     // onto shared memory; the copy is ordinary memory, so it verifies. The
     // bytes are honest and true is the right answer. proof.validateUserKey
-    // carries the same flip since Fixrunde 5, for the same reason.
+    // carries the same flip from 4abaa15 on, not from this round: measured, a
+    // passkey on shared memory is false on 03cbe8c and true from 4abaa15. With
+    // THIS commit the flip reaches three more places - session.verifyAPI's
+    // client certificate, trust.open and trust.advance, each refused by the
+    // digest before and taken now, measured in node 24 - where the commit
+    // message names proof.js alone.
     //
     // (A Proxy has no such slots: there
     // `new Uint8Array(v)` consults one thing only, its Symbol.iterator. A plain
@@ -340,6 +357,40 @@ export async function verify(env, pubRaw, purpose) {
     //
     // 4abaa15 is on origin, so its commit message keeps the wrong sentence;
     // this is where the correction stands.
+    //
+    // AND WHY THIS IS NOT THE SHAPE the other three have. task.payloadCopy,
+    // session.certCopy and trust.payloadCopy go view first, bound on the view,
+    // copy out of the view. The round before gave bytes.spec.js as the reason
+    // for the difference, and that reason does not hold: the three "copy"
+    // positions that file pins are verifyRaw's, and sign.verify stands in no
+    // list of that file at all. It has nothing to say about this line.
+    //
+    // Two view forms were measured against the one that stands here. WITHOUT an
+    // agrees() on the payload the view form is simply wrong: a payload whose
+    // length THROWS comes through, where sign.spec.js "a check of a signature
+    // answers false for an envelope that fights back" holds it to false. WITH
+    // agrees() kept it answers every test in the tree the same - the review of
+    // this commit built it and ran the suite green - and it is still not taken,
+    // for a reason no test in the tree asks about:
+    //
+    // viewOf believes buffer, byteOffset and byteLength - it must, that is
+    // what a view is made of - and all three are the caller's getters, where
+    // bytesOf reads no property at all. The other three functions
+    // may believe them, because what they verify is what they HAND BACK: the
+    // copy is parsed and returned, so the caller acts on the very bytes the
+    // signature covered. verify hands nothing back. It answers true or false
+    // about an envelope the caller keeps and reads again itself, so the bytes
+    // it decides on have to be the bytes that object really holds - which is
+    // bytesOf straight off it, out of the internal slots, where no getter can
+    // be installed.
+    //
+    // Measured in node 24: a 64-byte payload whose only lie is `get buffer()`,
+    // naming another document of the same size that the same key really signed.
+    // With the view in front, verify answers TRUE over that other document
+    // while the caller reading the object itself gets its own bytes; as it
+    // stands here it answers false, and true only under the signature over the
+    // bytes the object holds. Every number that object reports is honest, so
+    // agrees() cannot see it: it compares counts, never bytes.
     const count = payload.length;
     if (count > MAX_PAYLOAD) return false;
     const load = bytesOf(payload, "sign: payload is not bytes");

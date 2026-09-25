@@ -186,10 +186,60 @@ export function validateClientCert(c) {
 
 // certHash is the SHA-256 of a client certificate payload (Go: CertHash).
 export async function certHash(payload) {
-  // The view is hashed, not the caller's object. A task is bound to the
-  // certificate by this hash, so a hash that depended on which engine asked
-  // the object for its size would bind a task to two different certificates.
+  // The view is hashed, not the caller's object - sign.keyIDAsync carries the
+  // measurement for all of these. Short: the digest takes the internal bytes in
+  // node 24, chromium 140 and webkit 26 alike, so this was never about one
+  // certificate getting two hashes. What the view buys is that the READING is
+  // the same in every engine; what it costs is that a byteLength which lies now
+  // decides how much is hashed.
   return new Uint8Array(await crypto.subtle.digest("SHA-256", viewOf(payload, "session: not bytes")));
+}
+
+// certCopy holds a caller's bytes still: it copies them into a buffer of ours,
+// which the caller holds no reference to and can never touch again. Reading a
+// FIELD once is not the same as holding the bytes it names; the bytes behind
+// it are the caller's buffer, and an ordinary Uint8Array rewritten while the
+// engine is awaited answers two readings with two documents - measured, the
+// API certificate below had its signature checked over a dh key of 0x01 bytes
+// and decoded one of 0xaa, in node 24 and in chromium alike.
+//
+// The repair itself is sign.verify's and proof.verify's - decide on a COPY no
+// getter and no later write can reach. The ORDER around it is this file's own
+// and not theirs: the view first, so its own number bounds the document before
+// anything is allocated, and then the copy made OUT OF THAT VIEW, which is
+// what makes "the bound checked the number that is worked with" true by
+// construction. That order may be had here because what is copied is what is
+// HANDED ON - the copy is what gets decoded and returned - and sign.verify,
+// which hands nothing back, may not; the measurement stands there. The round
+// before named bytes.spec.js as the reason for the difference, and that was
+// wrong: the three positions that file pins are verifyRaw's, and sign.verify
+// stands in no list of it at all. task.payloadCopy is the same function under
+// task's own error.
+//
+// Nothing here asks the caller for a length, so the RULE stays as the tree
+// settled it (bytes.spec.js, "a length that disagrees with the view is ignored,
+// not refused"). What DID move are verifyAPI's own answers, and the round
+// before let the sentence about the rule stand as though it covered them.
+// Measured in node 24 against 4abaa15: an API certificate whose length lies or
+// throws went from "session: bad signature" to accepted, and a client
+// certificate whose bytes sit on a SharedArrayBuffer from the digest's own
+// refusal to accepted. Each of them carries HONEST bytes, and the signature is
+// checked over the copy that is then decoded, so nothing is forged - it is the
+// leniency task.verifyApproval already had, arriving here.
+//
+// One error got better with it and nowhere says so: past MAX_CERT the client
+// certificate answered "document too large" - json.js's own words, out of a
+// budget - and answers "session: malformed certificate" now, measured. The
+// bound is this file's, so the error is this file's too.
+function certCopy(b, max) {
+  try {
+    const view = viewOf(b, "session: malformed certificate");
+    if (view.length > max) throw new BadInput("session: malformed certificate");
+    return bytesOf(view, "session: malformed certificate");
+  } catch (e) {
+    if (e instanceof BadInput) throw new Error("session: malformed certificate");
+    throw e;
+  }
 }
 
 // apiNodes picks the API nodes of a list that carry a signing key, in the
@@ -208,36 +258,6 @@ export async function certHash(payload) {
 // find the node and to check the signature; both pairs now come out of the
 // single read each field got here, so neither pair can disagree with itself.
 // Go walks a []trust.Node of typed fields and has nothing to disagree with.
-// certCopy holds a caller's bytes still: it copies them into a buffer of ours,
-// which the caller holds no reference to and can never touch again. Reading a
-// FIELD once is not the same as holding the bytes it names; the bytes behind
-// it are the caller's buffer, and an ordinary Uint8Array rewritten while the
-// engine is awaited answers two readings with two documents - measured, the
-// API certificate below had its signature checked over a dh key of 0x01 bytes
-// and decoded one of 0xaa, in node 24 and in chromium alike.
-//
-// The repair itself is sign.verify's and proof.verify's - decide on a COPY no
-// getter and no later write can reach. The ORDER around it is this file's own
-// and not theirs: the view first, so its own number bounds the document before
-// anything is allocated, and then the copy made OUT OF THAT VIEW, which is
-// what makes "the bound checked the number that is worked with" true by
-// construction. sign.verify copies straight off the caller's object instead,
-// because bytes.spec.js holds its three positions to touching neither buffer
-// nor byteOffset. Nothing here asks the caller for a length, so the leniency
-// the tree settled on stays untouched (bytes.spec.js, "a length that disagrees
-// with the view is ignored, not refused").
-// task.payloadCopy is the same function under task's own error.
-function certCopy(b, max) {
-  try {
-    const view = viewOf(b, "session: malformed certificate");
-    if (view.length > max) throw new BadInput("session: malformed certificate");
-    return bytesOf(view, "session: malformed certificate");
-  } catch (e) {
-    if (e instanceof BadInput) throw new Error("session: malformed certificate");
-    throw e;
-  }
-}
-
 const apiNodes = (l) => {
   const ns = l?.nodes;
   if (!Array.isArray(ns)) return [];

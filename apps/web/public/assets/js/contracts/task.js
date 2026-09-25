@@ -161,8 +161,11 @@ function payloadView(b) {
 // its own measurement - bytes.spec.js, "a length that disagrees with the view
 // is ignored, not refused" - and it is Go's own behaviour for a slice whose
 // capacity runs past its length. A first version of this fix tied the caller's
-// count to the copy and refused the mismatch; it turned that test's boundLying
-// case from taken to refused, and it was wrong to. Fixrunde 5's W1 is about
+// count to the copy and refused the mismatch; it turned the boundLying case
+// from taken to refused, and it was wrong to. That case stands in
+// task.spec.js, "verifyApproval decides on one reading of the payload and
+// decodes those very bytes" - not in the bytes.spec.js test named just above,
+// which is what "that test's boundLying case" read as. Fixrunde 5's W1 is about
 // the bound checking the number that is worked with, and step 3 gives that
 // without touching the leniency.
 function payloadCopy(b, max) {

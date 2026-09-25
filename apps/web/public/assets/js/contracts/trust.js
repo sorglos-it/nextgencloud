@@ -262,11 +262,13 @@ export function parseSigned(b) {
 
 export async function hash(signed) {
   // The view is hashed, not the caller's object - session.certHash does the
-  // same and for the same reason: under node the digest asks the object for
-  // its size, in the browsers it takes the bytes out of the internal slot, and
-  // a hash that depended on which engine asked would be two hashes for one
-  // version. held() below hands this a copy of its own, so this line only
-  // matters for a caller that reaches hash directly.
+  // same, and sign.keyIDAsync carries the measurement for all three. Short: the
+  // digest takes the internal bytes in node 24, chromium 140 and webkit 26
+  // alike, so one version never had two hashes; what the view buys is that the
+  // READING is the same in every engine, and what it costs is that a byteLength
+  // which lies now decides how much is hashed. held() below hands this a copy
+  // of its own, so this line only matters for a caller that reaches hash
+  // directly.
   return new Uint8Array(await crypto.subtle.digest("SHA-256",
     viewOf(signed.payload, "trust: invalid list")));
 }
@@ -293,9 +295,23 @@ export async function hash(signed) {
 // this file's own and not theirs - the view comes first
 // so its own number bounds the version before anything is allocated, and the
 // copy is made OUT OF THAT VIEW - which is what makes the bound check the very
-// number that is worked with, without asking the caller for a length and so
-// without touching the leniency the tree settled on (bytes.spec.js, "a length
-// that disagrees with the view is ignored, not refused").
+// number that is worked with, without asking the caller for a length. That
+// order may be had here because what is copied is what is HANDED ON: the
+// signature, the parse and the hash are all of the copy, and what goes back is
+// read out of it, so a caller never acts on other bytes than the ones that were
+// checked. sign.verify hands nothing back and therefore may not have this
+// order; the measurement stands in that file.
+//
+// Asking the caller for no length leaves the RULE as the tree settled it
+// (bytes.spec.js, "a length that disagrees with the view is ignored, not
+// refused"). It does NOT leave the ANSWERS of the two functions below alone,
+// and the round before let the sentence about the rule stand as though it did.
+// Measured in node 24 against 4abaa15: through advance, a version whose length
+// lies or throws went from "trust: bad signature" to taken, and one whose bytes
+// sit on a SharedArrayBuffer from the digest's own refusal to taken; through
+// open, the SharedArrayBuffer one did. All of them carry HONEST bytes, and the
+// signature, the parse and the hash are of one copy, so nothing is forged - it
+// is the leniency task.verifyApproval already had, arriving here.
 //
 // The proof is taken the way task.verifyConfirm takes it: its five fields read
 // once, into an object of ours, because keyOwner is asked for the key kid

@@ -391,7 +391,10 @@ export async function validateUserKey(k) {
     // a microtask swap between the two lets a key whose id is the hash of one
     // public key import as another: validateUserKey then reports as valid a key
     // whose id and whose imported public half are two different keys. Measured
-    // true on the parent of this change, in chromium AND node, false after.
+    // true on 03cbe8c, in chromium AND node, and false from 4abaa15 on, where
+    // this copy landed. Stands are named by their commit and not as "the
+    // parent": that word travels, and read from here the parent is 4abaa15,
+    // which already answers the new way.
     // The same shape as proof.verify. (What a CALLER does with its own
     // reference to k.pub afterwards is the separate view-into-caller-memory gap
     // named in the round-4 findings; this makes validateUserKey itself decide
@@ -399,11 +402,12 @@ export async function validateUserKey(k) {
     //
     // One input answers differently than before this copy, and it is named
     // rather than fenced: a passkey whose bytes sit on a SharedArrayBuffer was
-    // false on the parent and is true here (27 inputs run against both stands
-    // in one process, this the single difference). The Web Crypto API refuses
-    // a view onto shared memory; the copy is ordinary memory, so the import
-    // succeeds. The bytes are honest and true is the right answer - the same
-    // flip b64.bytesOf brought to sign.js, now in this file too.
+    // false on 03cbe8c and is true from 4abaa15 on (27 inputs run against both
+    // stands in one process, this the single difference). The Web Crypto API
+    // refuses a view onto shared memory; the copy is ordinary memory, so the
+    // import succeeds. The bytes are honest and true is the right answer - the
+    // same flip b64.bytesOf brought to sign.js, and from a8b1eaa on to
+    // session.verifyAPI and to trust.open and advance as well.
     const pubC = bytesOf(pub, "proof: key is not bytes");
     if (!agrees(pub, pubC)) return false;
     if (id !== (await keyIDAsync(pubC))) return false;
@@ -535,10 +539,10 @@ export async function verify(p, key, rp, purpose, payload) {
     // closes one file over. An ordinary Uint8Array whose bytes are swapped in a
     // microtask answers the id over a key the caller TRUSTS and hands the Web
     // Crypto API the ATTACKER's own, which he has signed with, and the proof is
-    // accepted for the wrong key. Measured true on the parent of this change,
-    // in chromium AND node, for a password proof and for a passkey; false after
-    // it. The repair is sign.verify's: decide on a copy no getter and no later
-    // write can reach.
+    // accepted for the wrong key. Measured true on 03cbe8c, in chromium AND
+    // node, for a password proof and for a passkey, and false from 4abaa15 on,
+    // where this copy landed. The repair is sign.verify's: decide on a copy no
+    // getter and no later write can reach.
     const pubC = bytesOf(pub, "proof: key is not bytes");
     const loadC = bytesOf(payload, "proof: payload is not bytes");
     // After the copies these can only refuse - the bytes that will be verified
@@ -552,11 +556,20 @@ export async function verify(p, key, rp, purpose, payload) {
     if (kid !== id || kind !== keyKind) return false;
     // A COST bound, and only that. It reads the caller's own count, so a
     // length that lies puts any number of bytes past it - measured, the engine
-    // was handed 65536 bytes with MAX_SIG at 1024 - and it is left as it is:
-    // the bytes still have to be a signature over this message by this key,
-    // and EdDSA refuses one of that size outright. Nothing is forged by it;
-    // what it buys is that an honest caller does not pay for a huge signature,
-    // and what it does not buy is a guarantee about a dishonest one.
+    // was handed 65536 bytes with MAX_SIG at 1024. The round before said that
+    // of every branch; it is true of two. An EdDSA and an RS256 passkey hand
+    // crypto.subtle.verify the caller's sig as it stands, so those bytes really
+    // do reach the engine. An ES256 passkey does not: derToRaw runs first and
+    // reads DER in its shortest form only, so a blob of that size is refused
+    // before any key is imported. Nor does a password proof: it goes through
+    // sign.verifyRaw, which copies the signature and refuses anything that is
+    // not SIG_SIZE bytes on the COPY, where a length cannot lie.
+    //
+    // Where it does hold it is left as it is: the bytes still have to be a
+    // signature over this message by this key, and EdDSA refuses one of that
+    // size outright. Nothing is forged by it; what it buys is that an honest
+    // caller does not pay for a huge signature, and what it does not buy is a
+    // guarantee about a dishonest one.
     if (sig.length > MAX_SIG) return false;
     if (keyKind === KIND_PASSWORD) {
       if (alg !== ALG_EDDSA || pubC.length !== ED25519_SIZE) return false;
