@@ -22,7 +22,7 @@
 // where it comes from and how to check that in its SOURCE.md). deriveSeed
 // hands the work to a worker, so this module pulls those 90 KB only when a
 // password is really derived.
-import { b64decode, b64encode, concat, utf8, fromUtf8, equal } from "./b64.js";
+import { b64decode, b64encode, concat, utf8, fromUtf8, equal, viewOf } from "./b64.js";
 import { S, A, P, str, bytes, uint32 } from "./json.js";
 import { message, keyIDAsync, verifyRaw, MAX_PAYLOAD } from "./sign.js";
 
@@ -393,10 +393,19 @@ const ED25519_PKCS8 = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 
 // heap - one that importSeed wipes again, because unlike a string it can be
 // written to.
 function seedBytes(seed) {
-  if (!(seed instanceof Uint8Array) || seed.length !== ED25519_SIZE) {
+  // One view: the size that is checked and the bytes that go into the PKCS#8
+  // document are the same ones. Handing the caller's object to the check and
+  // then to concat read it twice, and measured under node a seed of 33 real
+  // bytes whose length answered 32 was taken and imported as a key - chromium
+  // refused it, so the answer depended on the engine.
+  let v;
+  try {
+    v = viewOf(seed, "proof: a seed is 32 bytes");
+  } catch {
     throw new BadProof("proof: a seed is 32 bytes");
   }
-  return concat(ED25519_PKCS8, seed);
+  if (v.length !== ED25519_SIZE) throw new BadProof("proof: a seed is 32 bytes");
+  return concat(ED25519_PKCS8, v);
 }
 
 // importSeed is the one door to the Web Crypto API for a seed, for both

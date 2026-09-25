@@ -183,6 +183,16 @@ test("encodeFrame and decodeFrame keep Go's edges", async ({ shell }) => {
 // payload that says 0 the first time and 65515 the second passes the check
 // and goes out as a frame of 65520 bytes, over MaxFrame, which the other side
 // drops and the link ends on.
+//
+// What this holds is a LENIENCY, not a bound: a length that disagrees with
+// the object's own view is ignored here, and the real bytes decide. That is
+// deliberate and it is the frozen Go contract's own behaviour - measured, a
+// slice whose capacity is larger than its length is taken everywhere in
+// shared/ and works on the reported number. Refusing instead was built and
+// measured and turned down for that reason. The whole of it, with the
+// measurement, stands in bytes.spec.js, "a length that disagrees with the
+// view is ignored, not refused", which names this test. Do not flip this
+// expectation without reading that one.
 test("a payload whose length lies is refused, not half written", async ({ shell }) => {
   const got = await shell.evaluate(async () => {
     const w = await import("/assets/js/contracts/wire.js");
@@ -238,6 +248,16 @@ test("a payload whose length lies is refused, not half written", async ({ shell 
 // first: ParseOpen, ParseControl and ParseClose refuse 22063, 70027 and 5015
 // bytes and take the very same document cut to 16384, 65514 and 4096. What
 // refuses them is the bound, not the document.
+//
+// What this holds is a LENIENCY, not a bound: a length that disagrees with
+// the object's own view is ignored here, and the real bytes decide. That is
+// deliberate and it is the frozen Go contract's own behaviour - measured, a
+// slice whose capacity is larger than its length is taken everywhere in
+// shared/ and works on the reported number. Refusing instead was built and
+// measured and turned down for that reason. The whole of it, with the
+// measurement, stands in bytes.spec.js, "a length that disagrees with the
+// view is ignored, not refused", which names this test. Do not flip this
+// expectation without reading that one.
 test("a document whose length lies is refused by every parser", async ({ shell }) => {
   const got = await shell.evaluate(async () => {
     const w = await import("/assets/js/contracts/wire.js");

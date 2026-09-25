@@ -31,9 +31,20 @@ export class BadInput extends Error {}
 // twenty places asked a caller's object for its size more than once. Eleven
 // of them through json.decode - a document of 70027 bytes came out of
 // sign.parseEnvelope through a budget of 2390 - six through concat below, one
-// through b64encode below, and two through equal below. The guard "every
-// entry that takes caller bytes asks for their size once" walks every export
-// of every contract and holds that number down.
+// through b64encode below, and two through equal below.
+//
+// Asking once is not the property, though, and the round after that measured
+// why: noise.Transport.seal asked exactly once and put 70000 bytes through a
+// bound of 65519 all the same, because it asked the object and then handed
+// that same object to the Web Crypto API, which takes the bytes out of the
+// internal slot. The property is that the number checked against is the
+// number worked with, and this function is what makes it hold: the view it
+// answers with is a plain Uint8Array, so the bound, the indexes, the copy and
+// the engine all read that one number. The guard "every place that takes
+// caller bytes decides on the number it works with" holds it, and it holds it
+// by reading which properties were touched - buffer, byteOffset and
+// byteLength once each and length not at all is this function and nothing
+// else - and not by counting.
 export function viewOf(v, why) {
   if (!(v instanceof Uint8Array)) throw new BadInput(why);
   try {

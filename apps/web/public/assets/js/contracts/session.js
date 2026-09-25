@@ -10,7 +10,7 @@
 // verifyAPI needs to find the node that signed and to check its signature.
 // Left out: b64decode, envelopeBudget, validText and validTOTP, none of which
 // this file uses - the same reading task 7 gave trust.js's own import line.
-import { b64encode, concat, utf8, equal } from "./b64.js";
+import { b64encode, concat, utf8, equal, viewOf } from "./b64.js";
 import { decode, Budget, S, P, A, str, bool, bytes, uint, int } from "./json.js";
 import { validID } from "./text.js";
 import { validOrigin } from "./url.js";
@@ -127,10 +127,24 @@ const trustHintShape = S({ seq: uint });
 export function encodeClientCert(c) {
   try {
     const { inst, user, nonce, sig, dh, iat, exp } = c ?? {};
-    if (validateClientCert({ inst, user, nonce, sig, dh, iat, exp })) {
+    // One view of each byte field, and that view is both what the check
+    // measures and what is written. The three fields are the caller's
+    // objects: the check asks each for its size and b64encode asks again,
+    // and the two askings need not answer alike. Measured on the stand
+    // before this line: a nonce of no bytes whose length answered 32 was
+    // taken by the check and written as the empty string - the check said
+    // 32 bytes, the writing wrote none. Round before that it was written as
+    // the 43 characters of 32 zero bytes, which agreed with the check and
+    // was a certificate for a nonce nobody held. Neither is what a caller
+    // handed over, and now neither can happen: viewOf refuses what is no
+    // bytes, and the check sees the size the writing will use.
+    const n = viewOf(nonce, "session: nonce is not bytes");
+    const s = viewOf(sig, "session: signature is not bytes");
+    const d = viewOf(dh, "session: dh is not bytes");
+    if (validateClientCert({ inst, user, nonce: n, sig: s, dh: d, iat, exp })) {
       return utf8(JSON.stringify({
-        inst, user, nonce: b64encode(nonce),
-        sig: b64encode(sig), dh: b64encode(dh), iat, exp,
+        inst, user, nonce: b64encode(n),
+        sig: b64encode(s), dh: b64encode(d), iat, exp,
       }));
     }
   } catch {
@@ -172,7 +186,10 @@ export function validateClientCert(c) {
 
 // certHash is the SHA-256 of a client certificate payload (Go: CertHash).
 export async function certHash(payload) {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
+  // The view is hashed, not the caller's object. A task is bound to the
+  // certificate by this hash, so a hash that depended on which engine asked
+  // the object for its size would bind a task to two different certificates.
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", viewOf(payload, "session: not bytes")));
 }
 
 // apiNodes picks the API nodes of a list that carry a signing key, in the

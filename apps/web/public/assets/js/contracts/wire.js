@@ -15,13 +15,14 @@
 // parseE2E, parseControl. Through bytesOrNull: validateOpen, parseOpen,
 // validParams, encodeOpen, e2e, encodeControl. Counted from the call sites in
 // this file, eight for viewOf and eleven for bytesOrNull; parseOpen is in both
-// lists, once for the document and once for its members. That guard is built
-// since this round and stands in tests/contracts/bytes.spec.js: it walks the
-// exports of every contract, hands each of them a byte array that counts how
-// often it is asked for its size, and holds every one of them at one reading.
-// A new function here that takes bytes and calls neither helper turns it red.
-// The two counts above it does not hold - a helper may be called any number
-// of times - and they stay as the last round wrote them.
+// lists, once for the document and once for its members. That guard stands in
+// tests/contracts/bytes.spec.js: it walks every callable of every contract -
+// the exported functions, and since this round the statics and the methods of
+// the exported classes and whatever hangs off an exported object as well -
+// and holds each of them to one reading of the caller's bytes, the one viewOf
+// makes. A new function here that takes bytes and calls neither helper turns
+// it red. The two counts above it does not hold - a helper may be called any
+// number of times - and they stay as the last round wrote them.
 //
 // What goes through bytesOrNull is a member of an object a caller built in
 // three of the six - validateOpen, encodeOpen, encodeControl. In validParams

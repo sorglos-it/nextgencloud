@@ -13,7 +13,7 @@
 // nowhere else. An engine whose Web Crypto has no Ed25519 - the WebKit that
 // Playwright brings is one - can tell no right signature from a wrong one, so
 // it refuses every one of them.
-import { b64encode, b64decode, concat, utf8, equal, encodedLen, BadInput } from "./b64.js";
+import { b64encode, b64decode, concat, utf8, equal, encodedLen, viewOf, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes } from "./json.js";
 
 // Purposes. Nothing here is derived from another: each one is the text Go
@@ -85,8 +85,11 @@ export function message(purpose, payload) {
 // keyIDAsync identifies a public key: base64url of the first 16 bytes of its
 // SHA-256 (Go: sign.KeyID).
 export async function keyIDAsync(pub) {
-  if (!(pub instanceof Uint8Array)) throw new BadInput("sign: key is not bytes");
-  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", pub));
+  // What is hashed is the view, not the caller's object: under node the
+  // digest asks the object for its size, in the browsers it takes the bytes
+  // out of the internal slot, and an id that depended on which engine asked
+  // would be two ids for one key.
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", viewOf(pub, "sign: key is not bytes")));
   return b64encode(h.subarray(0, KEY_ID_SIZE));
 }
 
@@ -157,10 +160,42 @@ export async function verifyRaw(pubRaw, sig, msg) {
   // caller hands over may be a proxy, and then instanceof and length throw
   // where Go would have had a []byte and nothing to throw.
   try {
+    // THE NEXT TWO LINES STAY. They read the caller's own length, which every
+    // other place in this tree has stopped doing, and they look like a leftover
+    // of that round. They are not.
+    //
+    // They are what makes the promise above hold for an object that fights
+    // back: a length behind a getter that throws is read here, inside the try,
+    // and the catch answers false. Take them out and that read never happens,
+    // a real signature behind a hostile object is answered true instead of
+    // false, and the accepted test "a check of a signature answers false for
+    // an envelope that fights back" goes red at three places. That answer
+    // would not be wrong - the bytes are real and the signature is over them,
+    // which is the line this tree takes everywhere else - but it is looser
+    // than what stands here today, and nobody loosens that by tidying up.
+    //
+    // They can only refuse. Whatever gets past them is decided a second time,
+    // below, on the views - so they add a refusal and decide nothing. The
+    // guard in tests/contracts/bytes.spec.js lists these two argument
+    // positions as "open" for exactly this reason and holds them to building
+    // their views all the same.
     if (!(pubRaw instanceof Uint8Array) || !(sig instanceof Uint8Array) || !(msg instanceof Uint8Array)) return false;
     if (pubRaw.length !== KEY_SIZE || sig.length !== SIG_SIZE) return false;
-    const key = await crypto.subtle.importKey("raw", pubRaw, { name: "Ed25519" }, false, ["verify"]);
-    return (await crypto.subtle.verify({ name: "Ed25519" }, key, sig, msg)) === true;
+    // And the decision itself is made on the views. The Web Crypto API takes
+    // the bytes an object really holds out of its internal slot, so measuring
+    // the object and then handing that same object over checks one number and
+    // works with another - the shape that let noise.Transport.seal put 70000
+    // bytes through a bound of 65519 with a single reading. Here the engine
+    // caught it either way in chromium and webkit, and that was luck and not
+    // structure: Ed25519 has one key size, so importKey refused what got past
+    // the check. The sizes are decided on the views now, and the views are
+    // what the engine is handed, so it no longer rests on the engine.
+    const k = viewOf(pubRaw, "sign: key is not bytes");
+    const s = viewOf(sig, "sign: signature is not bytes");
+    const m = viewOf(msg, "sign: message is not bytes");
+    if (k.length !== KEY_SIZE || s.length !== SIG_SIZE) return false;
+    const key = await crypto.subtle.importKey("raw", k, { name: "Ed25519" }, false, ["verify"]);
+    return (await crypto.subtle.verify({ name: "Ed25519" }, key, s, m)) === true;
   } catch {
     return false;
   }

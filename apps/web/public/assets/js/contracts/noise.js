@@ -5,7 +5,7 @@
 //
 // The cryptography itself comes from the Web Crypto API; only the order of
 // the steps is written out here, straight from the Noise specification.
-import { b64decode, concat, utf8 } from "./b64.js";
+import { b64decode, concat, utf8, viewOf } from "./b64.js";
 
 export const PROLOGUE_SESSION = "ngc/session/v1";
 export const PROLOGUE_TUNNEL = "ngc/tunnel/v1";
@@ -20,9 +20,29 @@ const X25519_PKCS8 = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0
   0x65, 0x6e, 0x04, 0x22, 0x04, 0x20]);
 const X25519_SPKI = new Uint8Array([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00]);
 
+// bytesOf is viewOf under this module's own error. Every byte string that
+// comes in from outside passes here first, and what the steps below work on
+// is the view and never the caller's object: the Web Crypto API takes the
+// bytes an object really holds out of its internal slot, so a size read off
+// the object beside it is a second number, and a check against that second
+// number decides about something the cryptography never sees. Measured on the
+// stand before this round, with a length that answered 2: Transport.seal put
+// 70000 bytes through MAX_PLAINTEXT of 65519 and handed back 70016 bytes of
+// ciphertext, and Transport.open put those 70016 back through MAX_MESSAGE of
+// 65535 - one reading of the length each, so counting readings never saw it.
+function bytesOf(v, why) {
+  try {
+    return viewOf(v, why);
+  } catch {
+    // A caller of noise tells its errors apart by module, not by where inside
+    // the module the bytes were refused.
+    throw new Error("noise: " + why);
+  }
+}
+
 export async function e2ePrologue(controllerID, app, service, action, params, task) {
-  const p = new Uint8Array(await crypto.subtle.digest("SHA-256", params));
-  const t = new Uint8Array(await crypto.subtle.digest("SHA-256", task));
+  const p = new Uint8Array(await crypto.subtle.digest("SHA-256", bytesOf(params, "not bytes")));
+  const t = new Uint8Array(await crypto.subtle.digest("SHA-256", bytesOf(task, "not bytes")));
   let b = utf8(PROLOGUE_E2E);
   for (const s of [controllerID, app, service, action]) {
     b = concat(b, new Uint8Array([0]), utf8(s));
@@ -104,21 +124,24 @@ class CipherState {
   }
 
   async seal(plain, ad = new Uint8Array(0)) {
-    if (!(plain instanceof Uint8Array)) throw new Error("noise: not bytes");
-    if (plain.length > MAX_PLAINTEXT) throw new Error("noise: message too large");
+    // The bound is measured on the view, and the view is what is encrypted.
+    const p = bytesOf(plain, "not bytes");
+    if (p.length > MAX_PLAINTEXT) throw new Error("noise: message too large");
     if (this.n > MAX_NONCE) throw new Error("noise: nonce counter exhausted");
     const out = new Uint8Array(await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce(this.n), additionalData: ad, tagLength: 128 }, await this.aes(), plain));
+      { name: "AES-GCM", iv: nonce(this.n), additionalData: bytesOf(ad, "not bytes"), tagLength: 128 },
+      await this.aes(), p));
     this.n++;
     return out;
   }
 
   async open(cipher, ad = new Uint8Array(0)) {
-    if (!(cipher instanceof Uint8Array)) throw new Error("noise: not bytes");
-    if (cipher.length > MAX_MESSAGE) throw new Error("noise: message too large");
+    const c = bytesOf(cipher, "not bytes");
+    if (c.length > MAX_MESSAGE) throw new Error("noise: message too large");
     if (this.n > MAX_NONCE) throw new Error("noise: nonce counter exhausted");
     const out = new Uint8Array(await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: nonce(this.n), additionalData: ad, tagLength: 128 }, await this.aes(), cipher));
+      { name: "AES-GCM", iv: nonce(this.n), additionalData: bytesOf(ad, "not bytes"), tagLength: 128 },
+      await this.aes(), c));
     this.n++;
     return out;
   }
@@ -149,8 +172,12 @@ export class HandshakeKK {
   }
 
   static async forTest(initiator, prologue, staticPrivRaw, peerPub, ephemeralPrivRaw) {
-    const staticPriv = await importPrivate(staticPrivRaw);
-    const staticPub = await publicOf(staticPrivRaw);
+    // One view, and both the key that is imported and the public half that is
+    // read back out of it come from that one view: two separate readings of
+    // the caller's object could hand the two halves different bytes.
+    const raw = bytesOf(staticPrivRaw, "not bytes");
+    const staticPriv = await importPrivate(raw);
+    const staticPub = await publicOf(raw);
     return HandshakeKK.build(initiator, prologue, staticPriv, staticPub, peerPub, ephemeralPrivRaw);
   }
 
@@ -159,7 +186,9 @@ export class HandshakeKK {
     h.initiator = initiator;
     h.s = { priv: staticPriv, pub: staticPub };
     h.rs = peerPub;
-    h.fixedEphemeral = ephemeralPrivRaw;
+    // Viewed here, where it comes in, and not again in ephemeral(), which
+    // imports it and reads its public half back out: one view for both.
+    h.fixedEphemeral = ephemeralPrivRaw == null ? null : bytesOf(ephemeralPrivRaw, "not bytes");
     h.splitCalled = false;
     const name = utf8(PROTOCOL);
     // The protocol name is 28 bytes, so it is padded with zeros to 32.
@@ -213,12 +242,17 @@ export class HandshakeKK {
   }
 
   async readMessage1(msg) {
-    if (msg.length !== HANDSHAKE_SIZE) throw new Error("noise: message 1");
-    this.re = msg.subarray(0, 32);
+    // The size that is checked and the bytes that are split apart come out of
+    // one view: subarray takes the real length out of the internal slot, so a
+    // msg whose own length answered 48 while it held more used to be checked
+    // as a handshake and split as whatever it really was.
+    const m = bytesOf(msg, "message 1");
+    if (m.length !== HANDSHAKE_SIZE) throw new Error("noise: message 1");
+    this.re = m.subarray(0, 32);
     await this.mixHash(this.re);
     await this.mixKey(await dh(this.s.priv, this.re));
     await this.mixKey(await dh(this.s.priv, this.rs));
-    const payload = await this.decryptAndHash(msg.subarray(32));
+    const payload = await this.decryptAndHash(m.subarray(32));
     // Messages 1 and 2 never carry a payload in NGC.
     if (payload.length !== 0) throw new Error("noise: message 1 payload");
   }
@@ -233,12 +267,13 @@ export class HandshakeKK {
   }
 
   async readMessage2(msg) {
-    if (msg.length !== HANDSHAKE_SIZE) throw new Error("noise: message 2");
-    this.re = msg.subarray(0, 32);
+    const m = bytesOf(msg, "message 2");
+    if (m.length !== HANDSHAKE_SIZE) throw new Error("noise: message 2");
+    this.re = m.subarray(0, 32);
     await this.mixHash(this.re);
     await this.mixKey(await dh(this.e.priv, this.re));
     await this.mixKey(await dh(this.s.priv, this.re));
-    const payload = await this.decryptAndHash(msg.subarray(32));
+    const payload = await this.decryptAndHash(m.subarray(32));
     if (payload.length !== 0) throw new Error("noise: message 2 payload");
   }
 

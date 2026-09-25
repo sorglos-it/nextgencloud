@@ -328,6 +328,16 @@ test("a field that changes between the check and the writing never reaches the b
 //
 // No crypto beyond crypto.getRandomValues, so this runs where the signature
 // tests are skipped.
+//
+// What this holds is a LENIENCY, not a bound: a length that disagrees with
+// the object's own view is ignored here, and the real bytes decide. That is
+// deliberate and it is the frozen Go contract's own behaviour - measured, a
+// slice whose capacity is larger than its length is taken everywhere in
+// shared/ and works on the reported number. Refusing instead was built and
+// measured and turned down for that reason. The whole of it, with the
+// measurement, stands in bytes.spec.js, "a length that disagrees with the
+// view is ignored, not refused", which names this test. Do not flip this
+// expectation without reading that one.
 test("parseTask measures a task by one reading of its length", async ({ shell }) => {
   test.setTimeout(120_000);
   const out = await shell.evaluate(async () => {
@@ -500,6 +510,16 @@ test("verifyApproval ties the task to the certificate, its installation and one 
 // signs tasks. signTask puts no bound on what it signs, so every payload below
 // carries a signature that is right in every byte and its size is the only
 // thing left that can refuse it.
+//
+// What this holds is a LENIENCY, not a bound: a length that disagrees with
+// the object's own view is ignored here, and the real bytes decide. That is
+// deliberate and it is the frozen Go contract's own behaviour - measured, a
+// slice whose capacity is larger than its length is taken everywhere in
+// shared/ and works on the reported number. Refusing instead was built and
+// measured and turned down for that reason. The whole of it, with the
+// measurement, stands in bytes.spec.js, "a length that disagrees with the
+// view is ignored, not refused", which names this test. Do not flip this
+// expectation without reading that one.
 test("verifyApproval decides on one reading of the payload and decodes those very bytes",
   async ({ shell }) => {
     test.setTimeout(120_000);

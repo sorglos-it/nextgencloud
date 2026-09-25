@@ -9,7 +9,7 @@
 // import line never accounted for them. b64decode, P and uint32 were in that
 // line but are not used anywhere in this file (Round 1 finding K3) and are
 // left out.
-import { b64encode, encodedLen, equal, utf8 } from "./b64.js";
+import { b64encode, encodedLen, equal, utf8, viewOf } from "./b64.js";
 import { decode, Budget, S, A, str, bool, bytes, uint } from "./json.js";
 import { validName, validAppID, coreApp, validText, validID, validLoginName } from "./text.js";
 import { validTunnelURL, validStoreURL, validOrigin } from "./url.js";
@@ -562,7 +562,10 @@ export const validStore = (s) => {
 };
 
 export async function tlsPin(spki) {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", spki));
+  // The view is hashed, not the caller's object: a pin is compared against a
+  // server's certificate, and a hash that depended on which engine asked the
+  // object for its size would be two pins for one certificate.
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", viewOf(spki, "trust: pin is not bytes")));
 }
 
 const validLevel = (l) => l === LEVEL_OFF || l === LEVEL_CRITICAL || l === LEVEL_ROOT || l === LEVEL_HARDCORE;

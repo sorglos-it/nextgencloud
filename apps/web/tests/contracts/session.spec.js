@@ -463,6 +463,80 @@ test("encodeClientCert writes all seven fields or refuses", async ({ shell }) =>
   });
 });
 
+// Fixrunde 1 after the guard, W1: nonce, sig and dh are the caller's objects,
+// and encodeClientCert had the check ask each of them for its size and
+// b64encode ask again. The two askings need not answer alike, and then the
+// certificate that is written is not the one that was checked. Measured on
+// the two stands before this test:
+//
+//   a nonce of no bytes whose length answers 32
+//     two rounds ago: written as the 43 characters of 32 zero bytes - which
+//       agreed with the check, and was a certificate for a nonce nobody held;
+//     one round ago: written as the empty string - the check said 32 bytes
+//       and the writing wrote none.
+//
+// Neither is what a caller handed over. Now one view of each field is made
+// where it comes in, and the check and the writing are handed that same view,
+// so what is written is the bytes the object really holds or nothing at all.
+// This is the one place of its kind that this round closes; the wider
+// question - every byte field of every caller's object - is measured and
+// written down elsewhere and is not this round's.
+test("encodeClientCert writes the bytes it checked", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const s = await import("/assets/js/contracts/session.js");
+    const { fromUtf8, b64encode } = await import("/assets/js/contracts/b64.js");
+    // No bytes at all, and a length that says 32.
+    const lying = () => {
+      class Liar extends Uint8Array {
+        get length() { return 32; }
+      }
+      return new Liar(0);
+    };
+    // 32 real bytes of 7, and a length that answers 32, then 0, then 32 ...
+    const walking = () => {
+      let n = 0;
+      class Walker extends Uint8Array {
+        get length() { return n++ % 2 === 0 ? 32 : 0; }
+      }
+      const a = new Walker(32);
+      new Uint8Array(a.buffer).fill(7);
+      return a;
+    };
+    const good = {
+      inst: "EREREREREREREREREREREQ", user: "ISEhISEhISEhISEhISEhIQ",
+      nonce: new Uint8Array(32), sig: new Uint8Array(32), dh: new Uint8Array(32),
+      iat: 1790000000, exp: 1790003600,
+    };
+    const out = (c) => {
+      try {
+        return fromUtf8(s.encodeClientCert(c));
+      } catch (e) {
+        return e.message;
+      }
+    };
+    const field = (text, name) => JSON.parse(text)[name];
+    return {
+      lyingNonce: out({ ...good, nonce: lying() }),
+      lyingSig: out({ ...good, sig: lying() }),
+      lyingDh: out({ ...good, dh: lying() }),
+      // A length that walks changes nothing: the view holds the real bytes,
+      // and the real bytes are what is checked and what is written.
+      walkingNonce: field(out({ ...good, nonce: walking() }), "nonce"),
+      sevens: b64encode(new Uint8Array(32).fill(7)),
+      // The check still says true for these three on their own - it reads
+      // their length, as every check of a caller's byte field in this tree
+      // still does. It is encodeClientCert that no longer writes against it.
+      checkStillTakesLyingNonce: s.validateClientCert({ ...good, nonce: lying() }),
+    };
+  });
+  const refused = "session: cannot encode this certificate";
+  expect(got.lyingNonce).toBe(refused);
+  expect(got.lyingSig).toBe(refused);
+  expect(got.lyingDh).toBe(refused);
+  expect(got.walkingNonce).toBe(got.sevens);
+  expect(got.checkStillTakesLyingNonce).toBe(true);
+});
+
 // Fixrunde 1, the same question asked of verifyAPI's node: its id is read
 // once for "is this a node at all" and once for "is this the node the
 // certificate names", and its sign once to find it and once to check the
