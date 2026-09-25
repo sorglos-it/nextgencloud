@@ -184,7 +184,8 @@ func TestAWithdrawalSurvivesTheRowsBeingDropped(t *testing.T) {
 // Live knows, and the one nothing held to a test before. With the error of
 // session.VerifyClient dropped, two tests of this package fall, and both were
 // laid in the round that closed this hole: this one, and
-// TestLiveSeesAWithdrawalAnotherAPIWrote two commits later.
+// TestLiveSeesAWithdrawalAnotherAPIWrote in the very next commit (ec0db22,
+// then 5820503 -- measured with git log -S).
 //
 // Both halves are asserted, because the two are different promises: the
 // request is refused, and the row is gone. A session whose user an admin took
@@ -327,6 +328,104 @@ func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 	}
 }
 
+// TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway holds the three
+// calls that read, touch and remove the session row to the contract's table,
+// where before they all read every failure as a database that is away.
+//
+// Two of the four cases are the one the contract names outright: E_LOGIN
+// stands for a session that is missing or has run out (shared/README.md), and
+// a store that says the row is not there is saying exactly that. It happens
+// without anything being broken -- a logout of the same cookie on another
+// node, or the housekeeping round, between the read and the write -- and 503
+// told the shell to come back later for a session that was over.
+//
+// The other two are the store's "the call was wrong". It is an answer and not
+// a silence, so no waiting mends it, and httpapi.Fault already reads all three
+// of dbapi's words that way for every other row of the installation. Reading
+// them one way there and another way here is what this holds shut.
+//
+// Both paths are asked, because the two do not share the step: GET
+// session.PathTrust goes through Live, the logout through sessionRow and its
+// own delete.
+func TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway(t *testing.T) {
+	trust := func(h *Handler, w *httptest.ResponseRecorder, cookie string) {
+		h.Trust(w, getCookie(session.PathTrust+"?from=1", cookie))
+	}
+	logout := func(h *Handler, w *httptest.ResponseRecorder, cookie string) {
+		h.Logout(w, jsonPostCookie(session.PathLogout, cookie))
+	}
+	for _, c := range []struct {
+		name   string
+		damage func(h *Handler)
+		ask    func(h *Handler, w *httptest.ResponseRecorder, cookie string)
+		status int
+		code   wire.Code
+	}{
+		{"the row is gone when the session is touched",
+			func(h *Handler) { h.S.DB = touchGone{h.S.DB} }, trust, 401, wire.CodeLogin},
+		{"the row is gone when the logout removes it",
+			func(h *Handler) { h.S.DB = deleteGone{h.S.DB} }, logout, 401, wire.CodeLogin},
+		{"the store calls the session read a wrong call",
+			func(h *Handler) { h.S.DB = oddGet{h.S.DB} }, trust, 500, wire.CodeInternal},
+		{"the logout meets that same wrong call",
+			func(h *Handler) { h.S.DB = oddGet{h.S.DB} }, logout, 500, wire.CodeInternal},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, fx := newFixture(t)
+			cookie := loginOnce(t, h, fx)
+			c.damage(h)
+			w := httptest.NewRecorder()
+			c.ask(h, w, cookie)
+			if w.Code != c.status {
+				t.Fatalf("answered %d %s, want %d", w.Code, w.Body, c.status)
+			}
+			cl, err := wire.ParseClose(w.Body.Bytes())
+			if err != nil || cl.Code != c.code {
+				t.Fatalf("answered %q (%v), want %q", cl.Code, err, c.code)
+			}
+		})
+	}
+}
+
+// TestARefusedRequestDoesNotMoveSeen holds the order of the last two steps of
+// Live: the session key is opened before Seen is written, so a request that is
+// refused never keeps the session alive.
+//
+// Opening the key is the one step above the touch that leaves the row where it
+// is -- the two ends and the trust list end the session, and the proof is read
+// before either. So it is the only step that can show the order at all, and
+// with the touch moved above it nothing else in this package changes: the
+// request is refused with the same E_INTERNAL, only the session lives on.
+//
+// The clock is moved first, because Seen is already now at the login and a
+// write of the same number would prove nothing.
+func TestARefusedRequestDoesNotMoveSeen(t *testing.T) {
+	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
+	token := tokenOf(t, cookie)
+	before, err := h.S.DB.SessionGet(ctx, token)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	h.S.Now = func() int64 { return testNow + 60 }
+	box, err := secrets.NewBox(config.NewSecret(bytes.Repeat([]byte{3}, 32)))
+	if err != nil {
+		t.Fatalf("box: %v", err)
+	}
+	h.S.Box = box
+	if _, code, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
+		t.Fatalf("a session key that does not open answered %q (open %v)", code, ok)
+	}
+	after, err := h.S.DB.SessionGet(ctx, token)
+	if err != nil {
+		t.Fatalf("the row of the refused session is gone: %v", err)
+	}
+	if after.Seen != before.Seen {
+		t.Fatalf("a refused request moved Seen from %d to %d, so it kept the session alive",
+			before.Seen, after.Seen)
+	}
+}
+
 // threeVersions is an installation whose trust list has three versions, with a
 // session of the password user open. Three is the fewest that lets a hole sit
 // in the middle of the chain, which is where the two nodes below meet it at
@@ -397,8 +496,14 @@ func threeVersions(t *testing.T) (*Handler, string) {
 // What this test holds is the answer, and only the answer. The two nodes do
 // not agree on what they decided: on the warm node state.Refresh still hands
 // Live the cached version and no error, and the 500 comes out of state.Chain
-// one step further on. This test asks for a chain, so it sees that step. The
-// note at that read in live.go says what a caller who does not see it gets.
+// one step further on. This test asks with from=1, so the warm node has to
+// read a row the damage took away, and both nodes meet it.
+//
+// That is the half of the query space where they agree, and it is not the half
+// the shell asks in. Where the answer needs no row the warm node gives it out
+// of the version it holds and the cold node still has none:
+// TestTheTwoNodesPartWhereTheAnswerNeedsNoRow drives that half, says what was
+// measured there, and says why it is right.
 func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -447,6 +552,103 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 	}
 }
 
+// TestTheTwoNodesPartWhereTheAnswerNeedsNoRow drives the query the shell
+// really sends, which the test above does not: the shell asks with the number
+// after the last version it holds (login/trust.go), and for a shell that is up
+// to date that is one past the newest. state.Chain answers that one out of the
+// version alone -- nothing newer, 204 -- without reading a row at all. So on a
+// node whose store has lost the trust rows the ordinary poll comes back 204,
+// while the same damage on a cold node is 500 before the number is even read.
+// With a hole in the middle instead of the whole chain gone, the warm node
+// even answers 200 out of the rows that are left.
+//
+// Both answers are right, and this is the promise of the test above said
+// exactly. The cold node holds no version and may decide nothing. The warm
+// node holds the newest version there ever was, and "nothing newer" is true of
+// it; it is also the answer that gives a shell asking one version behind 500
+// on both nodes, so nothing is hidden from anybody who is not already up to
+// date.
+//
+// What the 204 keeps quiet is that the store can no longer show that version
+// -- and that is the gap TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost
+// already fences, not a second one. The same node's Live keeps the session
+// open on the same list in the same request, so a 500 here would be one node
+// saying two things about one list in one breath.
+//
+// The other way was measured and turned down. To answer 500 here, state.Chain
+// would have to read the newest row back on the 204 path: the most common
+// request of the installation, and a trust row may be megabytes
+// (state.readBlock). Against a writer of the database it buys nothing --
+// dropping the rows above a hole and lowering the top row's Seq both leave a
+// row standing to be read, and both go through today
+// (TestKnownGap_TruncatingTheChainRollsItBack,
+// TestKnownGap_LoweringTheTopRowsSeqRollsItBack). Only an anchor outside the
+// database settles it, which is point 6 of docs/vertraege-v1.2.md.
+//
+// Nothing here is a fence nobody else holds, and that is worth writing down.
+// The warm node's decision is held by
+// TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost and its price by
+// TestTrustLooksAtTheListOnce, and every way of making the warm node refuse
+// that was built falls to one of those two first -- measured, both ways.
+// What this test adds is the answer that goes out over HTTP, which neither of
+// them reads, and the record that 204 was chosen here rather than overlooked.
+func TestTheTwoNodesPartWhereTheAnswerNeedsNoRow(t *testing.T) {
+	type ask struct {
+		from string
+		warm int
+	}
+	for _, c := range []struct {
+		name   string
+		damage func(t *testing.T, h *Handler)
+		asks   []ask
+	}{
+		{"a version is missing from the rows", func(t *testing.T, h *Handler) {
+			if err := h.S.DB.BlobDelete(ctx, dbapi.BlobTrust, "2"); err != nil {
+				t.Fatalf("the hole: %v", err)
+			}
+			// from=4 is the ordinary poll of a shell that holds all three;
+			// from=3 is one that holds two and asks for the third, which is a
+			// row the hole left standing.
+		}, []ask{{"4", 204}, {"3", 200}}},
+		{"every trust row is gone", func(t *testing.T, h *Handler) {
+			for _, id := range []string{"1", "2", "3"} {
+				if err := h.S.DB.BlobDelete(ctx, dbapi.BlobTrust, id); err != nil {
+					t.Fatalf("drop row %s: %v", id, err)
+				}
+			}
+		}, []ask{{"4", 204}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			warm, cookie := threeVersions(t)
+			c.damage(t, warm)
+			// The cold node is built after the damage and shares the store, so
+			// it meets the same installation with an empty cache.
+			cold := New(state.New(warm.S.Cfg, warm.S.DB, warm.S.Box, warm.S.Pin))
+			cold.S.Now = warm.S.Now
+			for _, a := range c.asks {
+				w := httptest.NewRecorder()
+				warm.Trust(w, getCookie(session.PathTrust+"?from="+a.from, cookie))
+				if w.Code != a.warm {
+					t.Fatalf("the warm node answered from=%s with %d %s, want %d. If that is "+
+						"the warm node made to refuse, the decision was taken back: correct the "+
+						"note at the Refresh call in login/live.go and this test with it",
+						a.from, w.Code, w.Body, a.warm)
+				}
+				w = httptest.NewRecorder()
+				cold.Trust(w, getCookie(session.PathTrust+"?from="+a.from, cookie))
+				if w.Code != 500 {
+					t.Fatalf("the cold node answered from=%s with %d %s, want 500",
+						a.from, w.Code, w.Body)
+				}
+				cl, err := wire.ParseClose(w.Body.Bytes())
+				if err != nil || cl.Code != wire.CodeInternal {
+					t.Fatalf("the cold node answered from=%s with %q (%v)", a.from, cl.Code, err)
+				}
+			}
+		})
+	}
+}
+
 // TestLogoutEndsASessionTheRestOfLiveCannotRead holds the logout to the one
 // thing it is for: ending the session. Removing the row of one's own cookie
 // wants neither the trust list nor a proof that still reads back, so neither
@@ -458,10 +660,18 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 // the logout so that it reads either of them again has to make both of these
 // go red, and there is nowhere in between.
 //
-// The last case is the one step of Live the logout does still take, and the
-// reason it cannot simply delete and answer 204: a store that will not say
-// whether there is a row leaves it nothing to end, and E_LOGIN would tell the
-// shell the one thing about the session that is not so.
+// The last two cases are the two steps the logout does take, and the reason it
+// cannot simply delete and answer 204. A store that will not say whether there
+// is a row leaves it nothing to end; one that will not remove the row leaves
+// the session open, and until this case stood, dropping the error of that
+// delete altogether left the whole suite green -- the logout said 204 and
+// cleared the cookie over a session that was still there. E_LOGIN would tell
+// the shell, for either of them, the one thing about the session that is not
+// so.
+//
+// The cookie is asserted for both, and it is the half the status alone does
+// not hold: a cookie deleted beside a row that is still there names a session
+// nobody can reach to end.
 func TestLogoutEndsASessionTheRestOfLiveCannotRead(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -475,6 +685,9 @@ func TestLogoutEndsASessionTheRestOfLiveCannotRead(t *testing.T) {
 		}, 204, ""},
 		{"the session row cannot be read", func(_ *testing.T, h *Handler, _ string) {
 			h.S.DB = noSession{h.S.DB}
+		}, 503, wire.CodeUnreachable},
+		{"the session row cannot be removed", func(_ *testing.T, h *Handler, _ string) {
+			h.S.DB = noDelete{h.S.DB}
 		}, 503, wire.CodeUnreachable},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -498,6 +711,9 @@ func TestLogoutEndsASessionTheRestOfLiveCannotRead(t *testing.T) {
 				// Nothing was said about the session, so the row stays.
 				if _, err := plain.SessionGet(ctx, token); err != nil {
 					t.Fatalf("the session was ended over a step that failed: %v", err)
+				}
+				if cookies := w.Result().Cookies(); len(cookies) != 0 {
+					t.Fatalf("the cookie was cleared beside a session that is still open: %+v", cookies)
 				}
 				return
 			}

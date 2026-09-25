@@ -34,6 +34,43 @@ type Live struct {
 	APIKey   []byte           // the API's private session key, opened
 }
 
+// sessionFault is the code for an error of one of the three calls that read,
+// touch or remove the session row. All three ask about that one row, so the
+// store's own words mean here what the contract says they mean about a
+// session, and not what the same word means about any other row.
+//
+// dbapi.ErrNotFound is a session that is not there, and the contract gives
+// E_LOGIN for a session that is missing or has run out (shared/README.md). It
+// is that answer however the row went: never written at all, or taken away
+// while this request ran -- a logout of the same cookie on another node, or
+// the housekeeping round past its expiry (Purge, dbapi.SessionPurge). A
+// session that ran out and still has its row is refused by sessionRow's own
+// check of the three ends, with this same word.
+//
+// httpapi.Fault reads the same dbapi.ErrNotFound as
+// E_INTERNAL and is right to: it is handed an error and not a question, so it
+// cannot know that a missing row was the answer here, and its own comment says
+// the handler has to say so before it asks.
+//
+// The store's other two words are answers as well, and no waiting turns either
+// into a row: the call was wrong (ErrInvalid), the value was taken already
+// (ErrUsed). Neither is a session that is missing, so neither may carry
+// E_LOGIN; neither is a database that is away, so neither may carry
+// E_UNREACHABLE. That is the reading httpapi.Fault gives dbapi's whole set,
+// and this is that same reading rather than a second one beside it.
+//
+// Everything left never reached the store or was never answered by it, and it
+// is over when the store answers again: E_UNREACHABLE.
+func sessionFault(err error) wire.Code {
+	switch {
+	case errors.Is(err, dbapi.ErrNotFound):
+		return wire.CodeLogin
+	case errors.Is(err, dbapi.ErrInvalid), errors.Is(err, dbapi.ErrUsed):
+		return wire.CodeInternal
+	}
+	return wire.CodeUnreachable
+}
+
 // sessionRow is the row of the request's cookie, and with it the code the
 // caller answers when there is none. It is the first steps of Live, and
 // everything the logout asks before it deletes.
@@ -46,8 +83,9 @@ type Live struct {
 // Nothing about the session itself is told apart. A cookie no row answers and
 // a cookie no parser takes get the same E_LOGIN, so the one thing a stranger
 // could ask -- is this token one of yours -- stays unanswered:
-// dbapi.ErrNotFound is the store's word for a row that is not there, and it is
-// the only one of the store's answers that leads to E_LOGIN at all.
+// dbapi.ErrNotFound is the store's word for a row that is not there, and
+// sessionFault keeps it the only one of the store's answers that leads to
+// E_LOGIN at all.
 func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([]byte, dbapi.Session, wire.Code, bool) {
 	value, ok := httpapi.Cookie(r)
 	if !ok {
@@ -62,10 +100,7 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 	token := session.TokenHash(raw)
 	row, err := h.S.DB.SessionGet(ctx, token)
 	if err != nil {
-		if isNotFound(err) {
-			return nil, dbapi.Session{}, wire.CodeLogin, false
-		}
-		return nil, dbapi.Session{}, wire.CodeUnreachable, false
+		return nil, dbapi.Session{}, sessionFault(err), false
 	}
 	// The three ends of a session: the time the certificate itself names, the
 	// idle time and the whole lifetime. The last is not the second reading of
@@ -102,15 +137,23 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 // neither. Without that difference a hiccup of the database would send every
 // user of the installation to the login screen.
 //
+// The store saying the row is not there is on the other side of that line, in
+// both steps that ask about it: it is an answer and it is the very thing the
+// contract gives E_LOGIN for, so it carries it (sessionFault). The row is
+// then gone and nothing here threw it away.
+//
 // Four of the steps get their code from this file, because the error is the
 // store's own or this API's own and only the step knows what it was asking
-// for: reading the session row and touching the session are E_UNREACHABLE, a
-// stored proof this API cannot read back and a session key it cannot open are
-// E_INTERNAL -- the database against this API's own row and its own key. What
-// the fifth, the trust list, answers is picked by
-// httpapi.Fault instead, which is the one place that reads an error of package
-// state, so that the same damage does not answer one thing here and another
-// where the same list is read out (login/trust.go). One thing of that fifth
+// for. Reading the session row and touching the session both ask about that
+// one row, so both go through sessionFault, which says what each of the
+// store's own three words means about a session; only a store that did not
+// answer at all is E_UNREACHABLE there. A stored proof this API cannot read
+// back and a session key it cannot open are E_INTERNAL -- the database
+// against this API's own row and its own key. What the fifth, the trust list,
+// answers is picked by httpapi.Fault instead, which is the one place that
+// reads an error of package state, so that the same damage does not answer
+// one thing here and another where the same list is read out
+// (login/trust.go). One thing of that fifth
 // step is said here before Fault is asked, because only this step knows it: a
 // list that is not there at all means an installation before its setup
 // everywhere else, and here it cannot, because a session got this far. The
@@ -195,15 +238,28 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// cached version itself. So a node that holds one decides on it even
 	// where the rows below are gone: with every trust row of the
 	// installation dropped, state.Refresh here hands back the cached version
-	// and no error at all -- measured, version 3 and err nil. What answers
-	// 500 for GET session.PathTrust is the step after this one, state.Chain,
-	// which goes to the rows for the versions it is to send. A caller of Live
-	// that does not go on to Chain -- the WebSocket above -- gets no error and
-	// decides the session on a list the store no longer holds. Reading the
-	// cached version back would cost one read more than this does today, not
-	// one per row of the chain -- measured against a chain of 8 versions, a
-	// warm Live costs 2 reads of the trust rows here and would cost 3 there.
-	// Nothing here pays that one extra read, and nothing here pretends to.
+	// and no error at all -- measured, version 3 and err nil.
+	//
+	// What answers 500 for GET session.PathTrust is the step after this one,
+	// state.Chain -- but only where the request asks for a version whose row
+	// is gone. The query the shell really sends asks for none of them: it asks
+	// from the number after the last version it holds, and that one Chain
+	// answers out of the version alone (204, nothing newer). So the ordinary
+	// poll of a shell that is up to date comes back 204 on a node whose list
+	// the store has lost, measured, and a caller of Live that never goes on to
+	// Chain at all -- the WebSocket above -- decides the session on that same
+	// list without an error either.
+	//
+	// Both are one gap and not two, and it is the gap
+	// TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost fences. Making Chain go
+	// and look would cost the newest row read back on that poll, which is the
+	// most common request of the installation and a row that may be megabytes
+	// (state.readBlock), and it would still catch only a store that lost the
+	// row: a writer who leaves one standing gets past it either way
+	// (state.checkGap names two such forms, both fenced in knowngap_test.go).
+	// What settles it is an anchor outside the database, point 6 of
+	// docs/vertraege-v1.2.md. Nothing here pays that read, and nothing here
+	// pretends to. TestTheTwoNodesPartWhereTheAnswerNeedsNoRow holds it.
 	v, err := h.S.Refresh(ctx)
 	if errors.Is(err, state.ErrNoTrust) {
 		// Here that error cannot mean what it means everywhere else. An
@@ -225,10 +281,15 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 		// the same rule this package writes down at state.ErrBadVersion, that a
 		// fault of the installation must never read like an ordinary answer.
 		//
-		// It is also what makes the two nodes agree. One that still holds a
-		// list finds the row of its own newest version gone (state.Chain,
-		// E_INTERNAL); one with an empty cache finds no list at all, and
-		// without this line it answered the one thing the other never says.
+		// It is also what makes the two nodes agree wherever the answer needs
+		// a row the damage took away. One that still holds a list finds the
+		// row gone in state.Chain (E_INTERNAL); one with an empty cache finds
+		// no list at all, and without this line it answered E_NOTFOUND, the
+		// one thing the other never says.
+		//
+		// Where the answer needs no row they part all the same, and that is
+		// not this line's doing: the note at the Refresh call above says what
+		// the ordinary poll gets on each of them, and why it is left that way.
 		err = fmt.Errorf("%w: the installation has a session and no trust list", state.ErrSetting)
 	}
 	if err != nil {
@@ -255,9 +316,16 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 		return nil, wire.CodeInternal, false
 	}
 	// Seen moves only once everything above has held, so a request that is
-	// refused never keeps a session alive.
+	// refused never keeps a session alive. TestARefusedRequestDoesNotMoveSeen
+	// holds this step under the one above it, which is the only one of them
+	// that leaves the row where it is.
+	//
+	// The row can be gone by the time this write lands -- a logout of the same
+	// cookie on another node, or the housekeeping round, between the read
+	// above and here -- and then the session is over rather than the store
+	// away, which is what sessionFault answers for the store's own word.
 	if err := h.S.DB.SessionTouch(ctx, token, now); err != nil {
-		return nil, wire.CodeUnreachable, false
+		return nil, sessionFault(err), false
 	}
 	row.Seen = now
 	return &Live{Token: token, Row: row, Trust: v, Verified: verified, APIKey: key}, "", true
@@ -282,11 +350,18 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 //
 // Without a session it is E_LOGIN, which is what the contract's table gives --
 // and it is also the answer when the session had run out already, because then
-// there is none left to end. Two steps are left that can fail without the
-// session being the reason, and both carry E_UNREACHABLE: a store that will
-// not say whether there is a row leaves nothing to end, and one that will not
-// remove the row leaves the session open. E_LOGIN would tell the shell, for
-// either of them, the one thing about the session that is not so.
+// there is none left to end. Two steps can fail past that, and both go through
+// sessionFault: a store that will not say whether there is a row leaves
+// nothing to end, and one that will not remove the row leaves the session
+// open, so both are E_UNREACHABLE -- E_LOGIN would tell the shell, for either
+// of them, the one thing about the session that is not so. The one failure of
+// the second step that is about the session is the row being gone already, a
+// second logout of the same cookie or the housekeeping round between the read
+// and the delete, and there E_LOGIN is right by the same table: there is
+// nothing left to end, which is what this path answers for a session that had
+// run out anyway.
+//
+// TestLogoutEndsASessionTheRestOfLiveCannotRead holds both steps.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token, _, code, ok := h.sessionRow(ctx, r, h.S.Now())
@@ -297,7 +372,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.S.DB.SessionDelete(ctx, token); err != nil {
 		// The cookie stays with the session: deleting it beside a row that is
 		// still there would leave a session open that nobody can reach to end.
-		httpapi.Fail(w, wire.CodeUnreachable)
+		httpapi.Fail(w, sessionFault(err))
 		return
 	}
 	httpapi.ClearCookie(w)

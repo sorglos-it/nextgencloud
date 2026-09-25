@@ -314,11 +314,11 @@ const noCountError = "memstore: the settings cannot be written"
 
 func (noCount) BlobPut(context.Context, dbapi.Blob) error { return errors.New(noCountError) }
 
-// The three below take one step of Live away from it. Each stands for a
-// database that is gone, or gone for one table, and their error stands for the
-// one a real driver hands back. dbapi.ErrNotFound is the one answer none of
-// them gives: that one says the row is not there, and these say nobody
-// answered.
+// The four below take one step of Live, or the one step past it the logout
+// takes, away from it. Each stands for a database that is gone, or gone for
+// one table, and their error stands for the one a real driver hands back. None
+// of the store's own three words is among them: those say something about the
+// row, and these say nobody answered.
 
 const storeDownError = "memstore: the database is not answering"
 
@@ -355,6 +355,44 @@ type noTouch struct{ dbapi.Store }
 
 func (noTouch) SessionTouch(context.Context, []byte, int64) error {
 	return errors.New(storeDownError)
+}
+
+// noDelete cannot remove a session row. It is the second of the two steps the
+// logout takes, and the one no test reached before: a logout that answered
+// 204 over it would tell its owner a session was ended that is still open.
+type noDelete struct{ dbapi.Store }
+
+func (noDelete) SessionDelete(context.Context, []byte) error {
+	return errors.New(storeDownError)
+}
+
+// The three below answer with the store's own words instead of an error of a
+// driver, and that is the whole difference to the four above: each of them is
+// an answer about the row, and the contract's table has an answer of its own
+// for it (login/live.go, sessionFault).
+
+// touchGone loses the session row between the read and the touch: a logout of
+// the same cookie on another node, or the housekeeping round, at that moment.
+type touchGone struct{ dbapi.Store }
+
+func (touchGone) SessionTouch(context.Context, []byte, int64) error { return dbapi.ErrNotFound }
+
+// deleteGone loses the session row before the logout removes it: the same two
+// neighbours, one step further on.
+type deleteGone struct{ dbapi.Store }
+
+func (deleteGone) SessionDelete(context.Context, []byte) error { return dbapi.ErrNotFound }
+
+// oddGet calls the session read a wrong call. Nothing this package sends can
+// earn it -- the token is session.TokenSize bytes this API drew itself -- so
+// it is the installation and never the session, and no waiting mends it.
+// Nothing in the contract forbids a store from saying it: dbapi.ErrInvalid is
+// one of the three words dbapi gives its stores, and dbapi.Store.SessionGet
+// carries no doc comment that rules it out.
+type oddGet struct{ dbapi.Store }
+
+func (oddGet) SessionGet(context.Context, []byte) (dbapi.Session, error) {
+	return dbapi.Session{}, dbapi.ErrInvalid
 }
 
 // strictID refuses an empty user ID. Nothing in the contract says it may not:
