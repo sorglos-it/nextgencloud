@@ -269,27 +269,45 @@ function uiHeader(flag, name, size) {
 // refuses everything, because half an archive may not go on to look like a
 // whole one. The shell needs it to compute the UI hash of a package an admin
 // uploads, the same way ngc-store, the API and the controller compute it.
+//
+// Every method takes a hash as its last argument, and it is optional. Left out,
+// nothing changes: the archive comes back at close and whoever wants its
+// checksum hashes it there. Named, the writer feeds it every block as it is
+// written, which is what a package of 4 GiB needs - pack.packageUI reads such a
+// package as a stream and may keep only the ui-tar, so the UI hash has to grow
+// with the archive instead of being taken afterwards. Go does the same and in
+// the same place: store.PackageUI hands NewUIWriter an io.MultiWriter of the
+// output and a sha256, so there too the hash cannot differ from what was
+// written. What the hash gets is taken from the blocks this writer pushed, not
+// written out a second time, for exactly that reason.
 export class UIWriter {
   #parts = [];
   #tree = newTree();
   #n = 0;
   #total = 0;
   #done = false;
+  #hash = null;
+  #bare = false;
 
   // dir adds the directory "ui" or "ui/<validPath>".
-  dir(path) {
-    this.#add(path, true, null);
+  dir(path, hash) {
+    this.#add(path, true, null, hash);
   }
 
   // file adds the file "ui/<validPath>" with data as its contents.
-  file(path, data) {
-    this.#add(path, false, data);
+  file(path, data, hash) {
+    this.#add(path, false, data, hash);
   }
 
   // close writes the end marker and answers with the whole archive. Nothing
   // may follow it.
-  close() {
+  close(hash) {
     if (this.#done) throw new BadPackage("closed");
+    const h = this.#into(hash);
+    // The end marker, the last thing the archive holds and so the last thing
+    // the hash gets. Made here and not kept as a module constant: a block of
+    // NUL bytes that everybody shares is a block anybody could write into.
+    if (h) h.update(new Uint8Array(2 * BLOCK));
     this.#done = true;
     let n = 2 * BLOCK; // the end marker, two blocks of NUL bytes
     for (const p of this.#parts) n += p.length;
@@ -303,9 +321,39 @@ export class UIWriter {
     return out;
   }
 
-  #add(path, dir, data) {
+  // into answers with the hash every entry of this writer is written into, or
+  // null where nobody is hashing. The rule it holds is why the hash is named at
+  // each call and still cannot come out as half a hash: ALL THE CALLS OR NONE
+  // OF THEM, and all of them the same hash.
+  //
+  // Without it the parameter would be a quiet way to get a wrong answer, and in
+  // both directions. A caller that hands it to file and forgets it at close
+  // gets a checksum over an archive with no end marker; one that forgets it at
+  // file and hands it to close gets a checksum over the end marker ALONE - 1024
+  // NUL bytes, which is a real ui-tar's checksum, the empty one, so the number
+  // looks entirely ordinary and means nothing. Both are refused here, where the
+  // mistake is, and not found later by a shell whose hash nobody can match.
+  //
+  // Naming none anywhere stays allowed and is the old form, byte for byte: a
+  // writer whose archive nobody is hashing while it grows.
+  #into(hash) {
+    if (hash === undefined || hash === null) {
+      if (this.#hash !== null) throw new BadPackage("hash");
+      this.#bare = true;
+      return null;
+    }
+    if (typeof hash.update !== "function") throw new BadPackage("hash");
+    if (this.#bare) throw new BadPackage("hash");
+    if (this.#hash === null) this.#hash = hash;
+    else if (this.#hash !== hash) throw new BadPackage("hash");
+    return this.#hash;
+  }
+
+  #add(path, dir, data, hash) {
     if (this.#done) throw new BadPackage("closed");
     this.#done = true; // until the entry is written in full
+    const h = this.#into(hash);
+    const from = this.#parts.length;
     if (typeof path !== "string") throw new BadPackage("path");
     // The caller's bytes become ours here, so the size below and the bytes
     // written further down are one and the same: a caller who rewrites what
@@ -339,6 +387,11 @@ export class UIWriter {
       const pad = (BLOCK - (size % BLOCK)) % BLOCK;
       if (pad > 0) this.#parts.push(new Uint8Array(pad));
     }
+    // The hash gets the blocks this entry put into the archive, exactly those
+    // and only once the entry is whole - an entry that was refused wrote
+    // nothing and must weigh nothing. Taken from #parts rather than written a
+    // second time, so what is hashed cannot drift from what close hands out.
+    if (h) for (let i = from; i < this.#parts.length; i++) h.update(this.#parts[i]);
     this.#done = false;
   }
 }

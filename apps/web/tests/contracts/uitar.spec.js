@@ -308,3 +308,110 @@ test("UIWriter writes the one form walkUI reads, and keeps its rules", async ({ 
   expect(out.goesOn).toBe(false);
   expect(out.copied).toEqual([9, 9, 9, 9]);
 });
+
+// The optional hash, and why it exists at all: pack.packageUI reads a package
+// of up to 4 GiB as a stream and may keep only the ui-tar, so the UI hash has
+// to grow with the archive instead of being taken from it afterwards. Go has
+// it in the same place - store.PackageUI hands NewUIWriter an io.MultiWriter
+// of the output and a sha256.
+//
+// What is held here is the one property that makes it worth having: THE HASH
+// IS THE ARCHIVE. Not "a hash of roughly the same bytes" - the same digest,
+// down to the byte, as hashing what close hands out. Anything less and the
+// shell would sign a number nobody can check.
+test("the hash a writer fills is the archive it hands out", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const u = await import("/assets/js/contracts/uitar.js");
+    const { sha256 } = await import("/assets/vendor/noble-hashes/sha2.js");
+    const { b64encode, equal } = await import("/assets/js/contracts/b64.js");
+    const enc = new TextEncoder();
+    const long = "ui/" + "d".repeat(99) + "/" + "f".repeat(43) + ".css";
+
+    // Every shape the writer can put into an archive: nothing at all, a file,
+    // a directory, a file whose data is not a whole block, and a name too long
+    // for the header field, which costs a PAX block.
+    const shapes = {
+      empty: [],
+      one: [["file", "ui/index.html", "<!doctype html>"]],
+      dirsAndFiles: [["dir", "ui"], ["file", "ui/index.html", "x"], ["dir", "ui/css"],
+        ["file", "ui/css/app.css", "body{color:#191919}"]],
+      exactBlock: [["file", "ui/b.bin", "y".repeat(512)]],
+      longName: [["file", "ui/index.html", "x"], ["file", long, "a{}"]],
+    };
+    const res = {};
+    for (const [name, steps] of Object.entries(shapes)) {
+      // Once with a hash, once without, and the two archives compared.
+      const h = sha256.create();
+      const withHash = new u.UIWriter();
+      const plain = new u.UIWriter();
+      for (const [kind, path, data] of steps) {
+        if (kind === "dir") { withHash.dir(path, h); plain.dir(path); }
+        else { withHash.file(path, enc.encode(data), h); plain.file(path, enc.encode(data)); }
+      }
+      const archive = withHash.close(h);
+      const old = plain.close();
+      res[name] = {
+        // The archive is unchanged by being hashed as it is written.
+        sameArchive: equal(archive, old),
+        // And the running hash is the digest of that archive.
+        sameDigest: b64encode(h.digest())
+          === b64encode(new Uint8Array(await crypto.subtle.digest("SHA-256", archive))),
+        // The reader still takes it, so this is a ui-tar and not just bytes.
+        reads: (() => { try { u.walkUI(archive); return true; } catch { return false; } })(),
+      };
+    }
+
+    const refused = (make) => { try { make(); return false; } catch { return true; } };
+    return {
+      shapes: res,
+      // Half a hash is no hash: whichever call names one first binds the
+      // writer, and a later call that forgets it or names another is refused.
+      forgotAtClose: refused(() => {
+        const w = new u.UIWriter();
+        w.file("ui/a", enc.encode("x"), sha256.create());
+        w.close();
+      }),
+      forgotAtFile: refused(() => {
+        const w = new u.UIWriter();
+        w.file("ui/a", enc.encode("x"));
+        w.close(sha256.create());
+      }),
+      twoHashes: refused(() => {
+        const w = new u.UIWriter();
+        w.file("ui/a", enc.encode("x"), sha256.create());
+        w.file("ui/b", enc.encode("y"), sha256.create());
+      }),
+      notAHash: refused(() => new u.UIWriter().close({})),
+      // An entry the writer refused wrote nothing, so it must weigh nothing
+      // either. Two hashes side by side, because a refusal poisons the writer
+      // and no archive can be finished afterwards to compare - which is the
+      // documented behaviour and not a gap: half an archive may not go on to
+      // look like a whole one.
+      refusedEntryIsNotHashed: (() => {
+        const h1 = sha256.create(), h2 = sha256.create();
+        const w1 = new u.UIWriter();
+        w1.file("ui/index.html", enc.encode("x"), h1);
+        try { w1.file("/etc/passwd", enc.encode("bad"), h1); } catch { /* refused */ }
+        const w2 = new u.UIWriter();
+        w2.file("ui/index.html", enc.encode("x"), h2);
+        return b64encode(h1.digest()) === b64encode(h2.digest());
+      })(),
+      // And the writer really is done after one: close is refused too.
+      refusalPoisons: refused(() => {
+        const h = sha256.create();
+        const w = new u.UIWriter();
+        try { w.file("/etc/passwd", enc.encode("bad"), h); } catch { /* refused */ }
+        w.close(h);
+      }),
+    };
+  });
+  for (const [name, r] of Object.entries(out.shapes)) {
+    expect(r, name).toEqual({ sameArchive: true, sameDigest: true, reads: true });
+  }
+  expect(out.forgotAtClose).toBe(true);
+  expect(out.forgotAtFile).toBe(true);
+  expect(out.twoHashes).toBe(true);
+  expect(out.notAHash).toBe(true);
+  expect(out.refusedEntryIsNotHashed).toBe(true);
+  expect(out.refusalPoisons).toBe(true);
+});
