@@ -304,6 +304,30 @@ in die Zeitschranke rennt, sagt nichts über die Eigenschaft, er sagt nur, dass
 etwas stehenblieb. Der Umsetzer hat es so benannt statt es als Fang zu verkaufen
 — und den Fall dem statischen Prüfer überlassen, der ihn umsonst mitnimmt.
 
+### Ein Zusammenbruch verdeckt den einen echten Roten
+
+Ein Lauf einer Aufgabe brach in einer Maschine mit **127 roten Fällen** ein. Die
+Erklärung war richtig und binnen Minuten belegt: die Maschine startete auf diesem
+Rechner überhaupt nicht, dieselben 127 fielen auch in einem Baum ohne eine Zeile
+dieser Aufgabe. Umgebungsbedingt, kein Fund — und so stand es im Bericht.
+
+**Einer der 127 war kein Rauschen.** Der neue Test dieser Aufgabe fehlte die
+Weiche für Maschinen ohne Ed25519, die fünfunddreißig Geschwistertests seit jeher
+tragen. Er fällt dort **deterministisch**, und schlimmer: ohne Ed25519 lehnt die
+geprüfte Funktion auch den **guten** Fall ab, der Test sichert dann gar nichts
+mehr zu. Gefunden hat ihn erst der Lauf nach dem Zusammenführen, in einer
+Maschine, die wieder startete.
+
+Eine Erklärung, die 127 Rote deckt, deckt 126 und **versteckt den einen**. Wer
+einen Massenausfall erklärt hat, ist damit fertig, ihn zu *verstehen* — nicht
+damit, ihn zu *lesen*. Einmal Stück für Stück durchsehen, ob eine Zeile aus der
+Reihe fällt: eine andere Fehlermeldung, eine andere Datei, ein anderer Zeitpunkt.
+
+Dieselbe Regel gilt für den unerklärten Roten, den man **nicht** wegerklären
+kann. Ein einzelner roter `-race`-Lauf dieser Sitzung blieb ungeklärt; fünfzehn
+Wiederholungen waren grün. Er ist als **ungeklärt** vermerkt, nicht als erledigt.
+Beide Fälle sind dieselbe Versuchung, einmal von oben und einmal von unten.
+
 ### Frag das Remote, nicht den Koordinator
 
 Der Koordinator hatte eine Regel richtig — „eine Nachricht, die auf dem Remote
