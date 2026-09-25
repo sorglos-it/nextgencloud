@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "../fixtures/page.js";
 
 // The ninth case of one mistake, caught by a rule instead of by hand.
@@ -8,7 +10,9 @@ import { test, expect } from "../fixtures/page.js";
 // length. Eight times that was found one at a time and fixed one at a time.
 // This test is the ninth, and it is not a case: it walks every callable of
 // every contract and holds each place that takes a caller's bytes to one
-// reading of them.
+// reading of them. "Every contract" was a list of eleven names by hand until
+// this round, and a twelfth file beside them was walked by nobody; it is the
+// contents of contracts/ now, subfolders and all.
 //
 // THE PROPERTY: the number that was checked against is the number that is
 // worked with.
@@ -53,9 +57,76 @@ import { test, expect } from "../fixtures/page.js";
 // there, not here. A probe cannot be handed to seven members at once without
 // their askings running into one number, so this test names the property it
 // can decide for certain and leaves the other one where its reason is.
+//
+// And it holds the argument positions a function DECLARES, which is not the
+// same as the positions it takes. The walk asks f.length, and f.length counts
+// neither a rest parameter nor a parameter with a default: b64.concat(...parts)
+// has f.length === 0, so the list below knows b64.concat#0 and nothing about
+// the second part a caller hands it, or any after it. Those positions do the
+// same work as the first - concat views every part in one map - but that is
+// read off the source here and not measured, and nothing stops a later body
+// from treating part 2 differently from part 1. Named, not closed: handing the
+// probe to several positions at once makes their readings run into one number
+// and decides nothing about either.
 
-// The modules this walks.
-const MODULES = ["b64", "json", "noise", "proof", "session", "sign", "task", "text", "trust", "url", "wire"];
+// The modules this walks, read off the directory and not written down.
+//
+// It was a list of eleven names by hand until this round, and the review put a
+// twelfth contract beside them: contracts/frame.js, a parser with a bound of
+// 65519 and no caller anywhere. The whole run stayed green - 116 passed, this
+// guard among them - and a probe took 70000 bytes through that bound. A list by
+// hand cannot go red for a file nobody wrote into it, and the "unlisted" check
+// below did not help: it only ever sees a module that one of the listed eleven
+// imports, and a new entry point has no importer yet. The same hole covered a
+// contract in a subfolder, because no name on that list could carry a path.
+//
+// So the list is the directory. Every .js under contracts/ is walked,
+// subfolders included, and a module in a subfolder carries its path in its
+// name: contracts/sub/frame.js is "sub/frame" and its places read
+// "sub/frame.parseFrame#0". Put a contract anywhere in there and it is walked
+// from that moment, its callables raise the count against CALLABLES below, and
+// every place in it that takes a caller's bytes has to be entered in ENTRIES
+// before this is green again.
+//
+// Measured in chromium, the same contract planted at both places, each as the
+// only change in a copy:
+//
+//   contracts/frame.js         list by hand: 116 passed. Directory:
+//                              "frame.parseFrame#0: not in the list,
+//                              reads 1/0/0/0"
+//   contracts/sub/frame.js     list by hand: 116 passed. Directory:
+//                              "sub/frame.parseFrame#0: not in the list,
+//                              reads 1/0/0/0"
+//
+// and in both green runs a probe took 70000 bytes through that contract's
+// bound of 65519. A contract that takes no caller bytes at all runs into
+// CALLABLES instead and not into the list of places: measured, 141 against
+// 140.
+//
+// What the directory cannot answer for is a contract OUTSIDE contracts/, and
+// the "unlisted" check is what covers that. Measured the same way: a contract
+// at /assets/js/frame.js with one import of it in wire.js left the list by
+// hand at 116 passed, and here it is named - "/assets/js/frame.js". Where that
+// ends is worth saying: a file outside contracts/ that NO contract imports is
+// reached by neither check, and it is also reached by nothing else in the
+// tree. The moment anything in contracts/ imports it, it is named.
+const CONTRACTS_DIR = fileURLToPath(new URL("../../public/assets/js/contracts/", import.meta.url));
+const MODULES = moduleNames(CONTRACTS_DIR);
+
+function moduleNames(dir, prefix = "") {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (e.isDirectory()) out.push(...moduleNames(`${dir}/${e.name}`, `${prefix}${e.name}/`));
+    else if (e.name.endsWith(".js")) out.push(prefix + e.name.slice(0, -3));
+  }
+  return out;
+}
+
+// The three the walk itself leans on: it makes a Budget and a shape out of
+// json, a handshake out of noise and decodes a key with b64. If one of them is
+// renamed or moved into a subfolder the walk would quietly do less, so it says
+// so instead.
+const NEEDED = ["b64", "json", "noise"];
 
 // The sizes the probe is run at. A probe that knows one size checks one size:
 // a reading that only starts above some number stays invisible below it, and
@@ -92,6 +163,34 @@ const MODULES = ["b64", "json", "noise", "proof", "session", "sign", "task", "te
 // here is shown before that work starts - the reading of the size is the
 // first thing each of these places does. Whoever raises this ceiling now
 // knows what it costs and what it found.
+//
+// AND THESE 39 SIZES ARE A SAMPLE, NOT A SWEEP. The review found what that
+// costs and it was measured again here: a second view in json.decode, taken
+// after the gate and only for a first view between 5000 and 6000 bytes - a
+// band no size below touches - left the whole run green, and a probe put 70000
+// bytes through a budget of 6000. Measured in chromium, the mutation as the
+// only change in a copy: 116 passed on the stand this round started from and
+// 117 here, the probe counted in each.
+//
+// That second view DOES touch the object, and it would read 0/2/1/1 - the
+// reading this guard refuses. It is invisible all the same, because it only
+// happens at sizes no probe is ever run at. The 39 cover every bound the
+// contracts DECLARE, and a second reading need not sit at a bound at all.
+//
+// It is not closed here, and the decision is deliberate. More sizes do not
+// close it: any list is finite, so a band of one single size dodges whatever
+// is added, and adding 5000..6000 would kill that one mutation and not its
+// shape. A measure that does not hang on sizes would have to decide from the
+// OUTCOME of a call instead of from the readings, and the 63 places share no
+// outcome - they answer objects, strings, booleans and exceptions - so there
+// is nothing to compare against for all of them. What would close it is
+// reading the source for a second view rather than running the code, and that
+// is a different kind of test and a round of its own.
+//
+// So it is named and fenced: what this guard decides, it decides AT THE SIZES
+// IT RUNS. A place whose second reading exists only inside a band no probe
+// visits is invisible to it, and whoever reads a green run should know that
+// much. The sizes are returned and asserted below for exactly that reason.
 const SIZES = [
   0, 1, 2, 3, 4, 7, 8,
   15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65,
@@ -105,9 +204,10 @@ const SIZES = [
 //   list    the probe stood in for an array here, not for bytes: the place
 //           reads length because that is the array's own length, and it never
 //           looks at the bytes at all. One of them, and it is named.
-//   open    a place that reads length beside its view. It is not held by this
-//           test beyond "the view is built"; the reason and the measurement
-//           stand next to the name below.
+//   open    a place that reads length BESIDE its view and AFTER it. The order
+//           is held as well as the numbers, and this round is why: the same
+//           1/1/1/1 is safe in one order and an open door in the other. The
+//           reason and the measurement stand next to the names below.
 // The view, and the view with the one extra reading of length beside it.
 const VIEW = "0/1/1/1";
 const VIEW_AND_LENGTH = "1/1/1/1";
@@ -116,7 +216,13 @@ const LIST = "1/0/0/0";
 const LEGAL = {
   view: [VIEW],
   list: [LIST],
-  open: [VIEW_AND_LENGTH, LIST],
+  // An "open" place either refused on its view before it got to the length -
+  // that is VIEW - or read both, which is VIEW_AND_LENGTH. LIST was legal here
+  // until this round, because the length used to be read first and a place
+  // that refused on it never built a view at all. With the view first that
+  // reading cannot happen any more, so it is no longer allowed: a length with
+  // no view behind it is now a finding for these places too.
+  open: [VIEW, VIEW_AND_LENGTH],
 };
 
 // Every place that takes a caller's bytes, as name#argument, with the reading
@@ -191,22 +297,40 @@ const ENTRIES = {
   "sign.keyIDAsync#0": "view",
   "sign.message#1": "view",
   "sign.parseEnvelope#0": "view",
-  // verifyRaw builds its views and decides the two sizes on them, and it also
-  // reads the caller's own length once, in the two lines it had before this
-  // round and which are kept word for word. Those two lines can only refuse:
-  // whatever gets past them is decided a second time on the view. They are
-  // kept because an accepted test - "a check of a signature answers false for
-  // an envelope that fights back" - rests on them: a length that throws on
-  // being read is how that test hands over an object that fights back, and
-  // with no reading of length at all the throw never happens and a real
-  // signature behind a hostile object is answered true. That answer is not
-  // wrong - the bytes are real and the signature is over them - but it is
-  // looser than what stands today, and loosening an accepted assurance is not
-  // this round's to do. Measured on both engines: an Ed25519 key of 33 real
-  // bytes whose length says 32 is refused either way, before and after.
+  // verifyRaw builds its three views first and decides every number on them,
+  // and only after that does it ask the caller's objects for their size. Both
+  // halves are needed, and neither one alone is safe - measured in chromium
+  // over a real Ed25519 signature, with the two hostile objects that have
+  // opposite outcomes:
+  //
+  //                                            flipping   throwing
+  //   length first, then the view (f24686c)    true       false
+  //   the view only, no length read            false      true
+  //   the view first, then the length          false      false
+  //
+  // The flipping object is a buffer of 33 bytes, 32 of real key and one of
+  // rubbish, whose length getter sets a flag and whose byteLength answers 33
+  // before that flag and 32 after it. A getter is code: reading length runs
+  // it, and the view built one line later is then the 32 real bytes of a key
+  // nobody handed over. The throwing object is the proxy the accepted test
+  // "a check of a signature answers false for an envelope that fights back"
+  // uses, whose length throws - with no reading of length at all that throw
+  // never happens and a real signature behind it is answered true.
+  //
+  // So the length is read, and it is read last, where it can only refuse. That
+  // is what "open" now means and what the order rule below holds. The third
+  // position joined the other two: on f24686c a message whose length throws
+  // was answered true, because the message's length was never read.
+  //
+  // Reading a caller's length is not peculiar to this place, and the round
+  // before this one said it was: trust.js's isBytes and session's
+  // validateClientCert read the length of objects the caller owns as well, and
+  // the head of this file counts 27 permeable fields of that same shape. What
+  // is peculiar here is only that it happens on an argument, which is what
+  // this guard walks.
   "sign.verifyRaw#0": "open",
   "sign.verifyRaw#1": "open",
-  "sign.verifyRaw#2": "view",
+  "sign.verifyRaw#2": "open",
   "task.parseTask#0": "view",
   "task.signTask#1": "view",
   // open(anchor, chain) - chain is a list of signed lists, and length is that
@@ -252,6 +376,12 @@ const NEEDS_X25519 = [
 // past the walk. A callable the probe cannot reach - because no filling gives
 // it arguments that get that far - is still counted here, so a new one turns
 // this red until somebody has said whether it takes a caller's bytes.
+//
+// Since the module list comes off the directory, this number is what a NEW
+// CONTRACT runs into: a file added anywhere under contracts/ brings its
+// callables with it and the count no longer matches. That is the one line the
+// twelfth contract of the review would have had to pass, and on a list by hand
+// it never reached it.
 const CALLABLES = 140;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
@@ -265,37 +395,76 @@ test("every place that takes caller bytes decides on the number it works with", 
   test.setTimeout(180000);
   const got = await shell.evaluate(async ({ names, sizes }) => {
     const base = "/assets/js/contracts/";
+    // What the page had already fetched before this test imported anything.
+    // Everything that turns up under /assets/js/ from here on was pulled in by
+    // the contracts, so the shell's own modules need no exception by name -
+    // and a list of exceptions by name is the very thing this round took out.
+    const already = new Set(
+      performance.getEntriesByType("resource").map((r) => new URL(r.name, location.href).pathname),
+    );
     const mods = {};
     for (const n of names) mods[n] = await import(base + n + ".js");
 
-    // ---- what the contracts import of each other has to stand in the list --
+    // ---- what the contracts import has to stand in the list ---------------
     //
     // Two ways, and the union is asserted. The engine's own record of what it
     // fetched is exact and cannot be fooled by anything written in a comment,
     // and it sees an import() whose name is put together at run time as well;
     // the text is read on top of it for an import that no run reached.
     //
+    // Both were too narrow until this round, and the same two shapes walked
+    // past both. The record matched only /assets/js/contracts/<one name>.js,
+    // so a module in a subfolder - whose name carries a slash - matched
+    // nothing. The text matched only "./<one name>.js", so a "../frame.js" out
+    // of contracts/ and a "./sub/frame.js" into one matched nothing either.
+    // Measured on the stand this round started from: a contract in a subfolder
+    // and a contract beside contracts/ each left the whole run green. The
+    // record now reads every path under /assets/js/, and the text every
+    // relative specifier, resolved against the module it stands in, so what is
+    // reported is a path and not a guessed name.
+    //
+    // A path the page already had is skipped, unless it is a contract: a
+    // contract is looked at whatever fetched it, and for everything else the
+    // two checks cover each other - a static import is seen in the text even
+    // where the shell had fetched the file before this test ran.
+    //
     // The round before this one matched every "./x.js" anywhere in the
     // source, so naming a module in a comment turned the guard red - the kind
-    // of red that gets a guard switched off. Now the keyword has to stand in
-    // front of the name. Measured, all three in chromium: a comment that says
-    // a module once lived in "./zzz.js" leaves this green; a real
-    // import ... from "./zzz.js" turns it red; and an
-    // import("./" + "zzz" + ".js"), which no text match can see, turns it red
-    // through the engine's record. What is left is a comment that quotes a
-    // whole import line, from "./x.js" and all - narrow enough to live with,
-    // and it names a module that ought to be in the list anyway.
-    const known = new Set(names);
+    // of red that gets a guard switched off. The keyword still has to stand in
+    // front of the name, and the three cases were measured again for the wider
+    // pattern, in chromium, each as the only change in a copy. They had to be
+    // aimed somewhere else to mean anything: a zzz.js INSIDE contracts/ is on
+    // the directory's list now and being imported is no finding at all, so the
+    // three below put it at /assets/js/zzz.js and let wire.js reach for it.
+    //
+    //   a comment naming "../zzz.js"           green - 2 passed
+    //   import { ZZZ } from "../zzz.js"        red, names /assets/js/zzz.js
+    //   import("../" + "zzz" + ".js")          red, names /assets/js/zzz.js
+    //                                          through the engine's record
+    //
+    // What is left is a comment that quotes a whole import line, from
+    // "../x.js" and all - narrow enough to live with, and it names a module
+    // that ought to be walked anyway.
+    //
+    // It reaches as far as /assets/js/. Code a contract took from somewhere
+    // else - /assets/vendor/ - is a question for THIRD-PARTY.md and not for
+    // this guard, and no contract imports any today.
+    const knownPaths = new Set(names.map((n) => base + n + ".js"));
     const unlisted = new Set();
-    const wanted = /\/assets\/js\/contracts\/([A-Za-z0-9_-]+)\.js$/;
+    const wanted = /^\/assets\/js\/.+\.js$/;
+    const consider = (path) => {
+      if (wanted.test(path) && !knownPaths.has(path)) unlisted.add(path);
+    };
     for (const r of performance.getEntriesByType("resource")) {
-      const m = wanted.exec(new URL(r.name, location.href).pathname);
-      if (m && !known.has(m[1])) unlisted.add(m[1]);
+      const path = new URL(r.name, location.href).pathname;
+      if (already.has(path) && !path.startsWith(base)) continue;
+      consider(path);
     }
-    const written = /(?:\bfrom|\bimport)\s*\(?\s*"\.\/([A-Za-z0-9_-]+)\.js"/g;
+    const written = /(?:\bfrom|\bimport)\s*\(?\s*"(\.{1,2}\/[^"\n]*?\.js)"/g;
     for (const n of names) {
-      const src = await (await fetch(base + n + ".js")).text();
-      for (const m of src.matchAll(written)) if (!known.has(m[1])) unlisted.add(m[1]);
+      const from = new URL(base + n + ".js", location.href);
+      const src = await (await fetch(from)).text();
+      for (const m of src.matchAll(written)) consider(new URL(m[1], from).pathname);
     }
 
     // ---- the probe ------------------------------------------------------
@@ -311,19 +480,27 @@ test("every place that takes caller bytes decides on the number it works with", 
     // One class for the whole run and one set of counters beside it, cleared
     // before each call. Making the class inside the probe cost webkit two
     // minutes for the same answer chromium gives in three and a half seconds.
-    let cL = 0, cB = 0, cF = 0, cO = 0;
+    // Beside the four counters, the ORDER the four were read in, as one letter
+    // each. A counter cannot tell a length read before the view from one read
+    // after it, and that difference is the whole of the finding this round
+    // started from: reading length runs the caller's getter, and a getter that
+    // sets a flag changes the byteLength the view is built from one line later.
+    // Same counters, opposite answer. So the order is read as well, and it is
+    // what holds the places marked "open" below.
+    let cL = 0, cB = 0, cF = 0, cO = 0, seq = "";
     class Probe extends Uint8Array {
-      get length() { cL++; return super.length; }
-      get byteLength() { cB++; return super.byteLength; }
-      get buffer() { cF++; return super.buffer; }
-      get byteOffset() { cO++; return super.byteOffset; }
+      get length() { cL++; seq += "L"; return super.length; }
+      get byteLength() { cB++; seq += "B"; return super.byteLength; }
+      get buffer() { cF++; seq += "F"; return super.buffer; }
+      get byteOffset() { cO++; seq += "O"; return super.byteOffset; }
     }
     const probe = (size) => {
       // Built from the pool's buffer, so nothing is copied and nothing is
       // read through the getters while it is being made.
       const a = new Probe(POOL.buffer, 0, size);
       cL = cB = cF = cO = 0;
-      return { a, read: () => `${cL}/${cB}/${cF}/${cO}` };
+      seq = "";
+      return { a, read: () => `${cL}/${cB}/${cF}/${cO}`, order: () => seq };
     };
 
     // ---- what the walk finds to call ------------------------------------
@@ -394,8 +571,11 @@ test("every place that takes caller bytes decides on the number it works with", 
     // as every combination and covers the ones that want two kinds at once -
     // json.decode wants a Budget and a shape, and no single value is both.
     // The 32- and 64-byte arrays are in WIDE because a key and a signature
-    // have those sizes, and without them verifyRaw turns its neighbour down
-    // before it ever views the probe.
+    // have those sizes. Since verifyRaw builds its three views before it
+    // decides anything, the probe is viewed there whatever its neighbours
+    // are - but the reading that says so, the one with the length in it, only
+    // happens for a key of 32 and a signature of 64, and "open" is not
+    // satisfied without it.
     const BUDGET = new mods.json.Budget({ size: 1 << 20 });
     const WIDE = [undefined, null, true, 0, 1, 1024, 16384, "", "x", {}, [],
       new Uint8Array(0), new Uint8Array(2), new Uint8Array(32), new Uint8Array(64),
@@ -405,8 +585,8 @@ test("every place that takes caller bytes decides on the number it works with", 
     // the sweep over all the others takes the first filling that reached the
     // bytes at each of them. Three because 2 is the smallest document a
     // parser gets into, and 32 and 64 are the sizes a key and a signature
-    // have - without them verifyRaw turns its neighbour down before either
-    // of them is ever viewed. Taking one filling per base into the sweep
+    // have - without them verifyRaw refuses on its views before it ever asks
+    // either of them for a length. Taking one filling per base into the sweep
     // instead of all of them is a cost decision and it is measured: webkit
     // spends about 3 ms in each crypto.subtle.digest where chromium spends
     // 0.05, so the full cross product at every size cost webkit two minutes
@@ -428,8 +608,9 @@ test("every place that takes caller bytes decides on the number it works with", 
       if (sig === "0/0/0/0") return;
       const key = `${c.name}#${pos}`;
       let e = found.get(key);
-      if (!e) found.set(key, (e = new Set()));
-      e.add(sig);
+      if (!e) found.set(key, (e = { sigs: new Set(), orders: new Set() }));
+      e.sigs.add(sig);
+      e.orders.add(p.order());
     };
     const argsFor = (c, pos, r, a) => {
       if ("wide" in r) {
@@ -464,9 +645,9 @@ test("every place that takes caller bytes decides on the number it works with", 
           let taken = false;
           for (const r of recipes) {
             const p = probe(b);
-            const before = found.get(`${c.name}#${pos}`)?.size ?? 0;
+            const before = found.get(`${c.name}#${pos}`)?.sigs.size ?? 0;
             await attempt(c, pos, argsFor(c, pos, r, p.a), p);
-            const after = found.get(`${c.name}#${pos}`)?.size ?? 0;
+            const after = found.get(`${c.name}#${pos}`)?.sigs.size ?? 0;
             if (p.read() === "0/0/0/0" && after === before) continue;
             // The first filling of this base that reached the bytes is the
             // one the sweep over the other sizes rides on.
@@ -487,7 +668,7 @@ test("every place that takes caller bytes decides on the number it works with", 
 
     const entries = {};
     for (const [k, v] of [...found].sort((a, b) => a[0].localeCompare(b[0]))) {
-      entries[k] = [...v].sort();
+      entries[k] = { sigs: [...v.sigs].sort(), orders: [...v.orders].sort() };
     }
     return {
       unlisted: [...unlisted].sort(),
@@ -531,8 +712,13 @@ test("every place that takes caller bytes decides on the number it works with", 
     }
   }, { names: MODULES, sizes: SIZES });
 
-  // No contract imports a module this test does not walk.
+  // Nothing under /assets/js/ was pulled in that this test does not walk -
+  // neither a contract in a subfolder nor one beside contracts/.
   expect(got.unlisted).toEqual([]);
+  // The directory gave a list, and the three modules the walk itself leans on
+  // are in it. Without this a rename would make the walk quietly do less
+  // instead of saying so.
+  expect(MODULES).toEqual(expect.arrayContaining(NEEDED));
   // Every exported class with methods of its own has an instance to walk.
   expect(got.classesWithMethods).toEqual(CLASSES);
   // The sizes the probe was run at, said out loud: a probe that knows one
@@ -553,13 +739,27 @@ test("every place that takes caller bytes decides on the number it works with", 
   // else is named with the reading it showed, so a failure reads as the list
   // of places to look at.
   const wrong = [];
-  for (const [name, sigs] of Object.entries(got.entries)) {
+  for (const [name, e] of Object.entries(got.entries)) {
     const kind = ENTRIES[name];
-    if (!kind) { wrong.push(`${name}: not in the list, reads ${sigs.join(" ")}`); continue; }
+    if (!kind) { wrong.push(`${name}: not in the list, reads ${e.sigs.join(" ")}`); continue; }
     if (outOfReach.has(name)) { wrong.push(`${name}: reached although ${where}`); continue; }
-    for (const s of sigs) if (!LEGAL[kind].includes(s)) wrong.push(`${name} (${kind}): reads ${s}`);
-    if (kind === "open" && !sigs.includes(VIEW_AND_LENGTH)) {
-      wrong.push(`${name} (open): never built its view, reads ${sigs.join(" ")}`);
+    for (const s of e.sigs) if (!LEGAL[kind].includes(s)) wrong.push(`${name} (${kind}): reads ${s}`);
+    if (kind === "open") {
+      // The length read has to be reached at all - otherwise "open" would be
+      // a line nobody ever walked - and it has to come AFTER the view. The
+      // view is finished at the first byteLength, because that is the last of
+      // the three arguments viewOf builds it from; a length read before it can
+      // still move what the view will be, and that is what this refuses.
+      if (!e.sigs.includes(VIEW_AND_LENGTH)) {
+        wrong.push(`${name} (open): its length is never read, reads ${e.sigs.join(" ")}`);
+      }
+      for (const o of e.orders) {
+        const l = o.indexOf("L");
+        const b = o.indexOf("B");
+        if (l !== -1 && (b === -1 || l < b)) {
+          wrong.push(`${name} (open): reads length before its view, order ${o}`);
+        }
+      }
     }
   }
   for (const name of Object.keys(ENTRIES)) {
@@ -617,6 +817,27 @@ test("every place that takes caller bytes decides on the number it works with", 
 // number, so a lie can only make a call work on the bytes the object really
 // holds - which is what a caller who told the truth would have got. The
 // eight cases below are the whole of it.
+//
+// AND WHAT RED MEANS HERE, because a fence that does not say so is a fence
+// somebody deletes. The guard above says it for itself and this one did not.
+// There are two answers and no third.
+//
+//   - A case answers what a REFUSAL looks like - an error text where bytes
+//     were expected, a shorter output, a false where true stood. Then somebody
+//     has made the byte layer fail-closed, and the question is not this test
+//     but the frozen Go side above: the contract works on the reported number
+//     and refuses on it, and a side that refuses more than the other is the
+//     thing the contract exists to prevent. Raise it with whoever owns
+//     shared/, and do not take the case out to get green.
+//   - A case answers something LOOSER - more bytes than the view holds, a
+//     budget that lets through what it should not, a comparison that says true
+//     for bytes that differ. Then it is a finding and not a chore: the single
+//     number has stopped being single somewhere, which is the whole mistake
+//     this file is about.
+//
+// What is never the answer is changing an expected value to whatever came
+// back. That is the one edit that makes this test stop holding anything, and
+// it is the same edit as widening LEGAL above.
 test("a length that disagrees with the view is ignored, not refused", async ({ shell }) => {
   const got = await shell.evaluate(async () => {
     const b64 = await import("/assets/js/contracts/b64.js");

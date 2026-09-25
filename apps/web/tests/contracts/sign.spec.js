@@ -472,3 +472,111 @@ test("a check of a signature answers false for an envelope that fights back", as
   }, v);
   expect(out).toEqual([]);
 });
+
+// What the guard next door cannot see, and what this round was found by.
+//
+// tests/contracts/bytes.spec.js reads WHICH properties a place touched and in
+// what order, and it holds the three positions of verifyRaw to reading length
+// after the view. That is a rule about the code. This is the same property
+// measured on the outcome: two objects that fight back in opposite ways, and
+// both have to be answered false.
+//
+// The two are opposites, and that is why neither half of verifyRaw is enough
+// on its own. Measured in chromium, each of the three stands built as the only
+// change in a copy:
+//
+//                                            flipping   throwing
+//   length first, then the view (f24686c)    true       false
+//   the view only, no length read            false      true
+//   the view first, then the length          false      false
+//
+// The flipping object holds 33 real bytes, 32 of key and one of rubbish. Its
+// length getter sets a flag and its byteLength answers 33 before that flag and
+// 32 after it, so READING the length changes what the next view will be. An
+// honest reading sees 33 bytes and refuses; a reading that happens before the
+// view is built hands the engine the 32 real bytes of a key nobody offered as
+// a key, together with a signature that is genuinely over them.
+//
+// The throwing object is the proxy of the test above, whose length throws. It
+// needs the length to be read at all, or nothing throws and a real signature
+// behind it is answered true.
+//
+// The table is the key and the signature. The message behaves differently and
+// it is measured too, because a case nobody has measured is a case nobody
+// knows: a message whose length moves the view was answered false on every one
+// of the three stands, though not for the same reason - the signature is over
+// the honest bytes, so a view of one byte more fails to verify whatever else
+// happens. A message whose length THROWS did follow the table: true on the
+// first two stands and false here. That third position is new to this round;
+// before it, only the key and the signature were asked for a length at all.
+//
+// Reach, and it belongs in the same breath: only from JavaScript of this same
+// origin. Nothing from the network can hand a contract an object with a getter
+// on it.
+test("verifyRaw decides on the view and no getter can move it", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, v.public)),
+    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/sign.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const pub = b64decode(d.public);
+    const sig = b64decode(d.envelope.sig);
+    const msg = s.message(d.purpose, b64decode(d.envelope.payload));
+
+    // n+1 real bytes, of which the first n are the honest ones. Reading length
+    // turns the object's own byteLength from n+1 into n.
+    const flipping = (real) => {
+      class Trick extends Uint8Array {
+        get length() { this.flipped = true; return real.length; }
+        get byteLength() { return this.flipped ? real.length : real.length + 1; }
+      }
+      const buf = new ArrayBuffer(real.length + 1);
+      new Uint8Array(buf).set(real, 0);
+      new Uint8Array(buf)[real.length] = 0xff;
+      return new Trick(buf, 0, real.length + 1);
+    };
+    const throwing = (real) => new Proxy(real, {
+      get: (t, k) => {
+        if (k === "length") throw new TypeError("this field fights back");
+        return Reflect.get(t, k);
+      },
+    });
+
+    const out = {};
+    // That the flipping object really flips, said out loud: a later round that
+    // makes these objects harmless must not leave this test green.
+    const probe = flipping(pub);
+    out.flipBefore = probe.byteLength;
+    void probe.length;
+    out.flipAfter = probe.byteLength;
+
+    const answers = [];
+    const run = async (name, a, b, c) => {
+      try {
+        const r = await s.verifyRaw(a, b, c);
+        if (r !== false) answers.push(`${name}: answered ${JSON.stringify(r)}`);
+      } catch (e) {
+        answers.push(`${name}: threw ${e.constructor.name}: ${e.message}`);
+      }
+    };
+    // The honest answer first, so a run in which nothing verifies at all - a
+    // key that no longer matches its signature, say - cannot look like a run in
+    // which everything was refused on purpose.
+    out.honest = await s.verifyRaw(pub, sig, msg);
+    await run("a key whose length moves the view", flipping(pub), sig, msg);
+    await run("a key whose length throws", throwing(pub), sig, msg);
+    await run("a signature whose length moves the view", pub, flipping(sig), msg);
+    await run("a signature whose length throws", pub, throwing(sig), msg);
+    await run("a message whose length moves the view", pub, sig, flipping(msg));
+    await run("a message whose length throws", pub, sig, throwing(msg));
+    out.wrong = answers;
+    return out;
+  }, v);
+  // The honest signature still verifies, so the six refusals below are
+  // refusals and not a broken vector.
+  expect(got.honest).toBe(true);
+  // And the hostile object is hostile: one reading of its length moves what a
+  // view built afterwards would hold.
+  expect([got.flipBefore, got.flipAfter]).toEqual([33, 32]);
+  expect(got.wrong).toEqual([]);
+});

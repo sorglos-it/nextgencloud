@@ -160,40 +160,79 @@ export async function verifyRaw(pubRaw, sig, msg) {
   // caller hands over may be a proxy, and then instanceof and length throw
   // where Go would have had a []byte and nothing to throw.
   try {
-    // THE NEXT TWO LINES STAY. They read the caller's own length, which every
-    // other place in this tree has stopped doing, and they look like a leftover
-    // of that round. They are not.
+    // THE VIEWS COME FIRST, AND NOTHING IS DECIDED BEFORE THEM. This order is
+    // the whole of it, and the round before this one had it the other way
+    // round with a wrong reason written above it in capitals. That reason said
+    // the two length lines "can only refuse. Whatever gets past them is
+    // decided a second time, below, on the views." A getter is code: reading
+    // length runs it, and what it does while it runs changes the view that is
+    // built afterwards. So a check that reads length does not only refuse - it
+    // helps decide which bytes become the view.
     //
-    // They are what makes the promise above hold for an object that fights
-    // back: a length behind a getter that throws is read here, inside the try,
-    // and the catch answers false. Take them out and that read never happens,
-    // a real signature behind a hostile object is answered true instead of
-    // false, and the accepted test "a check of a signature answers false for
-    // an envelope that fights back" goes red at three places. That answer
-    // would not be wrong - the bytes are real and the signature is over them,
-    // which is the line this tree takes everywhere else - but it is looser
-    // than what stands here today, and nobody loosens that by tidying up.
+    // Measured in chromium over a real Ed25519 signature over the real bytes,
+    // with a buffer of 33 bytes holding 32 of real key and one of rubbish:
     //
-    // They can only refuse. Whatever gets past them is decided a second time,
-    // below, on the views - so they add a refusal and decide nothing. The
-    // guard in tests/contracts/bytes.spec.js lists these two argument
-    // positions as "open" for exactly this reason and holds them to building
-    // their views all the same.
-    if (!(pubRaw instanceof Uint8Array) || !(sig instanceof Uint8Array) || !(msg instanceof Uint8Array)) return false;
-    if (pubRaw.length !== KEY_SIZE || sig.length !== SIG_SIZE) return false;
-    // And the decision itself is made on the views. The Web Crypto API takes
-    // the bytes an object really holds out of its internal slot, so measuring
-    // the object and then handing that same object over checks one number and
-    // works with another - the shape that let noise.Transport.seal put 70000
-    // bytes through a bound of 65519 with a single reading. Here the engine
-    // caught it either way in chromium and webkit, and that was luck and not
-    // structure: Ed25519 has one key size, so importKey refused what got past
-    // the check. The sizes are decided on the views now, and the views are
-    // what the engine is handed, so it no longer rests on the engine.
+    //   class Trick extends Uint8Array {
+    //     get length()     { this.flipped = true; return 32; }
+    //     get byteLength() { return this.flipped ? 32 : 33; }
+    //   }
+    //
+    //   length read first, then the view   verifyRaw answered true
+    //   the view first, then length        verifyRaw answers false
+    //
+    // Reading length turned the object's own byteLength from 33 into 32, so
+    // the view built next was the 32 real bytes of a key that nobody handed
+    // over as a key. An honest reading sees 33 bytes and refuses.
+    //
+    // viewOf asks buffer, byteOffset and byteLength once each and answers with
+    // a plain Uint8Array. From this line on every number comes off that view -
+    // the two sizes, the key the engine imports, the bytes it verifies - and
+    // no getter of the caller's can reach any of them. It also stands in for
+    // the instanceof check that used to be here: what is no Uint8Array leaves
+    // viewOf as a BadInput, and the catch below answers false for it, which is
+    // the same answer as before.
+    //
+    // The engine is handed the views for the same reason. The Web Crypto API
+    // takes the bytes an object really holds out of its internal slot, so
+    // measuring the object and then handing that same object over checks one
+    // number and works with another - the shape that let noise.Transport.seal
+    // put 70000 bytes through a bound of 65519 with a single reading. Here the
+    // engine caught it either way in chromium and webkit, and that was luck
+    // and not structure: Ed25519 has one key size, so importKey refused what
+    // got past the check. Now the sizes are decided on the views and the views
+    // are what the engine gets, so it no longer rests on the engine.
     const k = viewOf(pubRaw, "sign: key is not bytes");
     const s = viewOf(sig, "sign: signature is not bytes");
     const m = viewOf(msg, "sign: message is not bytes");
     if (k.length !== KEY_SIZE || s.length !== SIG_SIZE) return false;
+    // AND ONLY NOW the caller's own objects are asked for their size. After
+    // the views they can steer nothing: the bytes are settled, so this line
+    // can only refuse, which is what the line above it was wrongly said to do.
+    //
+    // It keeps an accepted assurance: "a check of a signature answers false
+    // for an envelope that fights back" hands over a length behind a getter
+    // that throws, and with no reading of length at all that throw never
+    // happens and a real signature behind a hostile object is answered true.
+    // Measured the same way as the flipping object above: with the views first
+    // and no reading of length, the throwing object is answered true; with
+    // this line, false. Neither order alone is safe against both, and that is
+    // why this stands after the views and not before them.
+    //
+    // A length that disagrees with its view is refused here, not ignored the
+    // way b64.viewOf ignores it. That is a refusal and never an acceptance, so
+    // it lets nothing through that the byte layer would have stopped, and it
+    // is exactly as strict as what stood here before: measured in chromium on
+    // both stands, a 32-byte object whose length says 33 is refused either
+    // way, and an honest subarray of a larger buffer - length and view agree
+    // at 32 - verifies either way. It is held for all three arguments and not
+    // only for the two with a fixed size, because the promise at the top of
+    // this function is made for all three.
+    //
+    // tests/contracts/bytes.spec.js marks these three positions "open" and
+    // holds them to reading length AFTER the view and never before it; the
+    // order is what that guard reads, and sign.spec.js "verifyRaw decides on
+    // the view and no getter can move it" measures both hostile objects.
+    if (pubRaw.length !== k.length || sig.length !== s.length || msg.length !== m.length) return false;
     const key = await crypto.subtle.importKey("raw", k, { name: "Ed25519" }, false, ["verify"]);
     return (await crypto.subtle.verify({ name: "Ed25519" }, key, s, m)) === true;
   } catch {
