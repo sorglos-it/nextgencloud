@@ -513,10 +513,24 @@ func onceRow(t *testing.T, db *sql.DB, value []byte) (rows int, used int64) {
 // back when its body answers an error, so a method that wrote and then failed
 // leaves nothing behind.
 //
-// OnceUse is the one method in this package where that rollback has any work
-// to do, and that is why it is the one under test here. UserPut cannot show
-// it: all seven of its ways out answer before anything of theirs is written,
-// so there is never anything to take back - measured, one exit at a time.
+// OnceUse is the one method in this package where that rollback is measured
+// to have work to do, and that is why it is the one under test here. UserPut
+// has eight ways out that answer an error, not seven: the initial name
+// question and its rejection, the UPDATE meeting the index or failing
+// outright, the second round's own question and its rejection, and the
+// INSERT's own failure - seven in all, and each one reads, from the source,
+// as running before any statement of the write has matched a row.
+//
+// The eighth does not belong on that list: the RowsAffected error right
+// behind an UPDATE that has already run. Where that UPDATE met an existing
+// row - the ordinary case of a user written again or renamed - the row has
+// already changed by the time this exit answers. Whether a driver can take
+// that path at all - succeed at the statement and then fail to report how
+// many rows it touched - is not measured, here or anywhere in this package,
+// so it is named and left open, not claimed either way. put and LockTake are
+// built the same way and would carry the same question if it were asked of
+// them.
+//
 // OnceUse writes the mark first, on purpose, because the UPDATE is what
 // decides; only then does it read the row for the data it hands out. Between
 // those two the transaction can fail, and then the mark may not stand: the

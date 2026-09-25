@@ -332,9 +332,8 @@ func TestAnEmptyTokenIsNobodysSession(t *testing.T) {
 // trigger takes it out of the statement altogether. Nothing this test asks
 // turns on the difference - it reads the answers of UserPut and the row
 // afterwards, and both are the same either way. Every column of ngc_user is
-// NOT NULL, so
-// the WHEN compares values and never NULL, where an equality would be neither
-// true nor false and the row would be counted after all.
+// NOT NULL, so the WHEN compares values and never NULL, where an equality
+// would be neither true nor false and the row would be counted after all.
 const countChangedRows = `CREATE TRIGGER ngc_user_counts_changed_rows BEFORE UPDATE ON ngc_user
 FOR EACH ROW WHEN NEW.name = OLD.name AND NEW.roles = OLD.roles AND NEW.totp = OLD.totp
  AND NEW.locked = OLD.locked AND NEW.failures = OLD.failures AND NEW.last_login = OLD.last_login
@@ -525,6 +524,17 @@ func namedRows(t *testing.T, db *sql.DB, name string) int {
 //
 // The last two lines are here so that a store which simply refuses everything
 // cannot pass: renaming has to free the name again.
+//
+// Every line above drives the insert path: a new ID asking for a name that
+// is or is not free. The rename path - an ID this table already carries,
+// asking for a different row's name - is the same check asked a different
+// question, and nothing above asks it. A check that rejects only where no
+// row yet carries u.ID answers every line above exactly as UserPut does,
+// guard included, and on 94e4809 it compiled, ran, and left all 142 tests of
+// this package green. u-admin already carries a row here - renamed to
+// "chef" two lines up - so asking for u-evil's "admin" is that path, and it
+// is red under that check at once: the rename comes back <nil> and two rows
+// carry "admin".
 func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	s, db := withoutTheNameIndex(t)
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); err != nil {
@@ -541,6 +551,14 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	}
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); err != nil {
 		t.Errorf("the freed name stayed taken: %v", err)
+	}
+	// The rename path: u-admin already carries a row, and asks here for the
+	// name u-evil's row carries.
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("the rename onto a taken name was told %v, want ErrInvalid", err)
+	}
+	if n := namedRows(t, db, "admin"); n != 1 {
+		t.Errorf("%d rows carry the name admin after the refused rename, want 1", n)
 	}
 }
 
