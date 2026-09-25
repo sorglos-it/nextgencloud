@@ -566,6 +566,47 @@ und hält auch dann noch, wenn jemand den Weg findet.
 
 ---
 
+## 15. Beim dritten Mal baust du den Wächter, nicht die Reparatur
+
+Ein Strang hatte eine Fehlerform, die immer gleich aussieht: ein Gegenstand, der
+seine eigene Länge angibt, gibt bei der **zweiten** Lesung eine andere Zahl an
+als bei der ersten. Wer die Länge zweimal liest — einmal zum Prüfen, einmal zum
+Verarbeiten —, prüft etwas anderes, als er verarbeitet.
+
+Acht Fälle, über mehrere Runden, jeder einzeln gefunden und einzeln repariert.
+Der achte war der teuerste: eine Funktion las die Länge in einem einzigen Lauf
+**303-mal**; mit einer Lüge auf der ersten und der fünften Lesung ging ein
+Auftrag von 70 027 Byte durch eine Grenze von 16 384 — mit gültiger Unterschrift,
+richtiger Form und richtiger Bindung. Und im selben Bericht stand der Satz, der
+diese Regel ausgelöst hat:
+
+> „Ein Wächter hätte alle vier auf einmal gefunden."
+
+Das Signal ist nicht der dritte **Fehler**. Es ist der dritte Fehler **derselben
+Form**. Ab da ist jede weitere Einzelreparatur die teurere Wahl: Sie kostet eine
+Runde, findet genau einen Fall, und der nächste liegt schon daneben.
+
+**Wenn du dieselbe Form zum dritten Mal reparierst, halt an und bau statt dessen
+den Wächter.** Vier Dinge gehören dazu:
+
+- **Er gehört dorthin, wo die Sache herkommt**, nicht dorthin, wo der letzte Fall
+  aufgetreten ist. Der Helfer, der die Bytes einmal festhält, gehört zur
+  Byte-Ebene — dann findet der Wächter dort alle Aufrufer statt nur die zwei,
+  die gerade wehgetan haben.
+- **Er zählt die Eingänge, und die Zahl ist Teil der Zusicherung.** Ein Wächter,
+  der nur sagt „die, die ich kenne, sind sauber", übersieht den neunten, den
+  jemand nächste Woche danebenlegt.
+- **Er wird empfindlichkeitsgeprüft wie jeder Zaun** (Regel 13): ein Mutant, der
+  einen Eingang wieder zweimal lesen lässt, muss ihn rot machen — an **seiner
+  eigenen** Zusicherung.
+- **Er darf auf gutem Code nicht rot werden** (Regel 7), sonst schaltet ihn der
+  Nächste ab. Also benennt er genau die Eigenschaft und nicht ihre Umgebung.
+
+Und der ehrliche Teil: Solange der Wächter nicht steht, gehört jeder bekannte,
+nicht reparierte Fall in den Bericht — mit der Messung, nicht als Vermutung. Der
+Umsetzer hat den fünften Fall genannt, obwohl er ihn nicht nachgeprüft hatte, und
+**das ausdrücklich dazugeschrieben**. Genau so.
+
 ## Kurzfassung für den Anfang einer Aufgabe
 
 1. Auftrag lesen. Widersprüche **melden**, nicht umgehen.
