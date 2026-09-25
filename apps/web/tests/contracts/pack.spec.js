@@ -79,7 +79,13 @@ test("a package with a link, an absolute path or a sparse entry is refused", asy
         { name: "", flag: 0x78, data: record("GNU.sparse.major=1") },
         { name: "ui/x", flag: 0x30, size: 0 },
       )),
-      noManifest: await bad(() => p.testTar([index])),
+      // A package that would be taken whole, if only its manifest were called
+      // manifest.json. Measured: with an entry whose CONTENTS are not a
+      // manifest either, this case was refused by the parser and stayed green
+      // when the name rule was taken out - two rules, one case, and the wrong
+      // one answering. A valid manifest under a wrong name leaves the name
+      // rule alone to refuse it.
+      noManifest: await bad(() => p.testTar([{ ...manifest, name: "app.json" }, index])),
     };
   });
   expect(out).toEqual({

@@ -15,14 +15,19 @@
 // counted signed, a V7 header without magic - are read here too, and the
 // refusing is left where Go leaves it: in the rules of Walk.
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
-import { UIWriter, BadPackage, MAX_UI_FILE, MAX_UI_TOTAL, MAX_DIRS } from "./uitar.js";
-import { parseManifest } from "./catalog.js";
+import { UIWriter, BadPackage, MAX_ENTRIES, MAX_UI_FILE, MAX_UI_TOTAL, MAX_DIRS } from "./uitar.js";
+import { parseManifest, MAX_PACKAGE, MAX_MANIFEST } from "./catalog.js";
 import { validPath } from "./text.js";
 import { bytesOf } from "./b64.js";
 
-export const MAX_PACKAGE = 4 * 1024 * 1024 * 1024;
-export const MAX_MANIFEST = 64 << 10;
-export const MAX_ENTRIES = 10000;
+// Every limit this module holds a package to belongs to another one, and is
+// taken from there rather than written down again. In Go there is one
+// store.MaxPackage, one store.MaxManifest and one store.MaxEntries, and Walk
+// and the ui-tar share them; a second copy here would be a number that can
+// drift from the one the rest of the shell decides by, and the drift would
+// show as a package the API takes and the shell will not weigh. They are
+// re-exported because this is where a caller reading a package looks for them.
+export { MAX_PACKAGE, MAX_MANIFEST, MAX_ENTRIES };
 const BLOCK = 512;
 // What archive/tar reads of a PAX block or a GNU long name before it gives up
 // (maxSpecialFileSize). It is the one place a meta header's data is held whole,
