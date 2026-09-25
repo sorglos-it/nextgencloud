@@ -330,7 +330,9 @@ func TestAStepLiveCouldNotTakeIsNoLogout(t *testing.T) {
 
 // TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway holds the three
 // calls that read, touch and remove the session row to the contract's table,
-// where before they all read every failure as a database that is away.
+// where before, two of the three -- touch and remove -- read every failure as
+// a database that is away; only the read already turned a missing row into
+// E_LOGIN on its own.
 //
 // Two of the four cases are the one the contract names outright: E_LOGIN
 // stands for a session that is missing or has run out (shared/README.md), and
@@ -391,11 +393,15 @@ func TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway(t *testing.T) {
 // Live: the session key is opened before Seen is written, so a request that is
 // refused never keeps the session alive.
 //
-// Opening the key is the one step above the touch that leaves the row where it
-// is -- the two ends and the trust list end the session, and the proof is read
-// before either. So it is the only step that can show the order at all, and
-// with the touch moved above it nothing else in this package changes: the
-// request is refused with the same E_INTERNAL, only the session lives on.
+// Opening the key is one of three steps above the touch that leave the row
+// where it is -- the others are the proof being read and the trust list being
+// read -- and TestAStepLiveCouldNotTakeIsNoLogout in this same file holds all
+// three to that. What ends the session before the touch is the two ends and
+// the check against the list (session.VerifyClient), not the reading of it.
+// Of the three, only the key sits right above the touch, so it is the only
+// one that can show this order at all, and with the touch moved above it
+// nothing else in this package changes: the request is refused with the same
+// E_INTERNAL, only the session lives on.
 //
 // The clock is moved first, because Seen is already now at the login and a
 // write of the same number would prove nothing.
@@ -631,7 +637,8 @@ func TestTheTwoNodesPartWhereTheAnswerNeedsNoRow(t *testing.T) {
 				if w.Code != a.warm {
 					t.Fatalf("the warm node answered from=%s with %d %s, want %d. If that is "+
 						"the warm node made to refuse, the decision was taken back: correct the "+
-						"note at the Refresh call in login/live.go and this test with it",
+						"note at the Refresh call in login/live.go, the one at the 204 in "+
+						"login/trust.go, and this test with it",
 						a.from, w.Code, w.Body, a.warm)
 				}
 				w = httptest.NewRecorder()

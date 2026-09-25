@@ -105,8 +105,8 @@ func Fault(err error, from Origin) wire.Code {
 		// here rather than in a handler: what the arm below claims is right
 		// only if what must stay out of it can be listed to the end, and for
 		// the store's own words it can be. An error of a package that is not
-		// dbapi or state is its handler's, and setup/fault is where this API
-		// does that.
+		// dbapi or state is its handler's, and the fault function of package
+		// setup is where this API does that.
 		return wire.CodeInternal
 	}
 	// Nothing of package state's own is left, so this came up through it from
@@ -129,7 +129,7 @@ func Fault(err error, from Origin) wire.Code {
 	// here first and then turns every E_UNREACHABLE of the whole path into
 	// E_INTERNAL, which is the right word for those two and for a setup that
 	// cannot write. The login paths answer their own the same way, one step
-	// earlier: login.sessionFault says what each of the three below means about
+	// earlier: login.sessionFault says what each of the three above means about
 	// a session row before anything of it reaches here. The store's own three
 	// are the exception, and they are read above rather than left to the
 	// handlers because every path that touches a store can meet them.

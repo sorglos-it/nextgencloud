@@ -224,7 +224,7 @@ func TestKnownGap_LoweringTheTopRowsSeqRollsItBack(t *testing.T) {
 // two above, with point 6 of docs/vertraege-v1.2.md, because a node that
 // checked its cached version against an anchor outside the database would see
 // this too. If this test goes red, correct the note at the Refresh call in
-// login/live.go and retire it.
+// login/live.go and the one at the 204 in login/trust.go, and retire it.
 func TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
@@ -241,19 +241,22 @@ func TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost(t *testing.T) {
 	v, err := h.S.Refresh(ctx)
 	if err != nil || v.List == nil || v.List.Seq != 3 {
 		t.Fatalf("the gap is shut -- Refresh now answers %v, %v. "+
-			"Correct the note at the Refresh call in login/live.go and retire this test", v.List, err)
+			"Correct the note at the Refresh call in login/live.go, the one at the 204 in "+
+			"login/trust.go, and retire this test", v.List, err)
 	}
 	// And this is why the answer of GET /trust looks right anyway: the step
 	// after this one does go to the rows, and finds them gone.
 	if _, err := h.S.Chain(ctx, v, 1); err == nil {
 		t.Fatal("state.Chain answered without the rows, so the 500 of GET /trust no longer comes " +
-			"from there. Correct the note at the Refresh call in login/live.go and retire this test")
+			"from there. Correct the note at the Refresh call in login/live.go, the one at the " +
+			"204 in login/trust.go, and retire this test")
 	}
 	// The gap itself, and not the reassurance above: a caller of Live that
 	// does not go on to Chain sees none of that. It decides the session live,
 	// on a list the store has already lost.
 	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 		t.Fatal("the gap is shut -- the warm node refused a session on the list the store lost. " +
-			"Correct the note at the Refresh call in login/live.go and retire this test")
+			"Correct the note at the Refresh call in login/live.go, the one at the 204 in " +
+			"login/trust.go, and retire this test")
 	}
 }

@@ -384,8 +384,9 @@ type deleteGone struct{ dbapi.Store }
 func (deleteGone) SessionDelete(context.Context, []byte) error { return dbapi.ErrNotFound }
 
 // oddGet calls the session read a wrong call. Nothing this package sends can
-// earn it -- the token is session.TokenSize bytes this API drew itself -- so
-// it is the installation and never the session, and no waiting mends it.
+// earn it -- what reaches SessionGet is session.TokenHash of session.TokenSize
+// random bytes this API drew itself -- so it is the installation and never
+// the session, and no waiting mends it.
 // Nothing in the contract forbids a store from saying it: dbapi.ErrInvalid is
 // one of the three words dbapi gives its stores, and dbapi.Store.SessionGet
 // carries no doc comment that rules it out.

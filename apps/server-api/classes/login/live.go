@@ -244,11 +244,13 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// state.Chain -- but only where the request asks for a version whose row
 	// is gone. The query the shell really sends asks for none of them: it asks
 	// from the number after the last version it holds, and that one Chain
-	// answers out of the version alone (204, nothing newer). So the ordinary
-	// poll of a shell that is up to date comes back 204 on a node whose list
-	// the store has lost, measured, and a caller of Live that never goes on to
-	// Chain at all -- the WebSocket above -- decides the session on that same
-	// list without an error either.
+	// answers out of the version alone (204, nothing newer); a from asking
+	// further ahead than that is answered the same way, out of the version
+	// alone and no row read for it either (404, state.ErrOldVersion). So the
+	// ordinary poll of a shell that is up to date comes back 204 on a node
+	// whose list the store has lost, measured, and a caller of Live that never
+	// goes on to Chain at all -- the WebSocket above -- decides the session on
+	// that same list without an error either.
 	//
 	// Both are one gap and not two, and it is the gap
 	// TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost fences. Making Chain go
@@ -354,13 +356,17 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 // there is none left to end. Two steps can fail past that, and both go through
 // sessionFault: a store that will not say whether there is a row leaves
 // nothing to end, and one that will not remove the row leaves the session
-// open, so both are E_UNREACHABLE -- E_LOGIN would tell the shell, for either
-// of them, the one thing about the session that is not so. The one failure of
-// the second step that is about the session is the row being gone already, a
-// second logout of the same cookie or the housekeeping round between the read
-// and the delete, and there E_LOGIN is right by the same table: there is
-// nothing left to end, which is what this path answers for a session that had
-// run out anyway.
+// open, so a store that does not answer at all is E_UNREACHABLE either way --
+// E_LOGIN would tell the shell, for either of them, the one thing about the
+// session that is not so. The one failure of the second step that is about
+// the session is the row being gone already, a second logout of the same
+// cookie or the housekeeping round between the read and the delete, and there
+// E_LOGIN is right by the same table: there is nothing left to end, which is
+// what this path answers for a session that had run out anyway. A store that
+// calls the call itself wrong (dbapi.ErrInvalid, dbapi.ErrUsed) is E_INTERNAL
+// instead, the same sessionFault gives every other row -- measured for the
+// read, which answers 500 through the logout just as it does through Live
+// (TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway).
 //
 // TestLogoutEndsASessionTheRestOfLiveCannotRead holds both steps.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -371,8 +377,10 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.S.DB.SessionDelete(ctx, token); err != nil {
-		// The cookie stays with the session: deleting it beside a row that is
-		// still there would leave a session open that nobody can reach to end.
+		// The cookie stays with the session either way: beside a row that is
+		// still there, clearing it would leave a session open that nobody can
+		// reach to end; beside a row already gone, it names nothing left to
+		// end, and sessionRow refuses it again on the next request regardless.
 		httpapi.Fail(w, sessionFault(err))
 		return
 	}
