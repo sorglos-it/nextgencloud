@@ -198,11 +198,16 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // bytesOf reads no property of a real array: `new Uint8Array(v)` copies out
     // of the internal slots, which is where the truth lives and where no
     // getter can be installed - so a subclass that overrides all four accessors
-    // is not consulted once, measured. (A Proxy has no such slots and is copied
-    // through its length and its indexes; it too ends up as one settled copy,
-    // which is the property.) It also stands in for the instanceof check that
-    // used to be here - what is no Uint8Array leaves it as a BadInput and the
-    // catch below answers false, the same answer as before.
+    // is not consulted once, measured. (A Proxy has no such slots: there
+    // `new Uint8Array(v)` consults one thing only, its Symbol.iterator. A plain
+    // Proxy over a typed array inherits that array's iterator, which throws at
+    // the proxy receiver, so bytesOf answers BadInput - not through length or
+    // an index, neither of which is read. A Proxy that carries its OWN iterator
+    // is copied through it and may yield any bytes at all, measured [9,9] out of
+    // a 4-byte target; it still ends up as one settled copy, and agrees below
+    // refuses it because its count is not the caller's.) It also stands in for
+    // the instanceof check that used to be here - what is no Uint8Array leaves
+    // it as a BadInput and the catch below answers false, the same as before.
     const k = bytesOf(pubRaw, "sign: key is not bytes");
     const s = bytesOf(sig, "sign: signature is not bytes");
     const m = bytesOf(msg, "sign: message is not bytes");
@@ -248,7 +253,10 @@ export async function verifyRaw(pubRaw, sig, msg) {
 
 // agrees asks a caller's object whether it owns up to the bytes it handed
 // over. It runs only after those bytes are copied out of reach, so it decides
-// nothing about them and can do nothing but refuse.
+// nothing about them and can do nothing but refuse. It stays module-private -
+// it reads length on purpose, and bytes.spec walks every EXPORT and would
+// rightly flag a byte-taking export that reads length; proof.js keeps its own
+// copy of this one line for the same reason.
 function agrees(v, copied) {
   return v.length === copied.length && v.byteLength === copied.length;
 }
@@ -288,6 +296,17 @@ export async function verify(env, pubRaw, purpose) {
     // against the other. Copying once is what makes the id and the signature
     // belong to the same key.
     const pub = bytesOf(pubRaw, "sign: key is not bytes");
+    // The payload is bounded on its OWN count BEFORE it is copied, so a payload
+    // past the limit is refused without ever being allocated. Measured on a
+    // 64 MiB payload: refused in a fraction of a millisecond, where copying it
+    // first and refusing after spent about 15 ms in chromium and 9 in node and
+    // peaked at twice the memory (the original plus its copy). This reads the
+    // caller's count once; agrees() below ties that count to the copy, so the
+    // early read can only refuse - a getter that answered small here and handed
+    // over a larger buffer is turned away at the copy, never verified - and
+    // load.length stays as the authoritative bound on the bytes a Proxy with
+    // its own iterator could still make larger than its count.
+    if (payload instanceof Uint8Array && payload.length > MAX_PAYLOAD) return false;
     const load = bytesOf(payload, "sign: payload is not bytes");
     // Same as in verifyRaw, and for the same reason: after the copies these
     // can only refuse, so an object that fights back is still answered false.

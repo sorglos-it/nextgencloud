@@ -22,9 +22,19 @@
 // where it comes from and how to check that in its SOURCE.md). deriveSeed
 // hands the work to a worker, so this module pulls those 90 KB only when a
 // password is really derived.
-import { b64decode, b64encode, concat, utf8, fromUtf8, equal, viewOf } from "./b64.js";
+import { b64decode, b64encode, concat, utf8, fromUtf8, equal, viewOf, bytesOf } from "./b64.js";
 import { S, A, P, str, bytes, uint32 } from "./json.js";
 import { message, keyIDAsync, verifyRaw, MAX_PAYLOAD } from "./sign.js";
+
+// agrees asks a caller's object whether it owns up to the bytes it handed over,
+// after those bytes are copied out of reach: it decides nothing and can only
+// refuse. It is sign.agrees, kept here as its own private line rather than
+// imported, because sign keeps it unexported (bytes.spec walks every export and
+// would rightly flag a byte-taking export that reads length, which this does on
+// purpose). verify and validateUserKey below hold their copies to it.
+function agrees(v, copied) {
+  return v.length === copied.length && v.byteLength === copied.length;
+}
 
 // Kind tells password keys and passkeys apart (Go: proof.Kind).
 export const KIND_PASSWORD = "password";
@@ -375,8 +385,21 @@ export async function validateUserKey(k) {
   try {
     if (!validateUserKeySync(k)) return false;
     const { id, kind, alg, pub } = k;
-    if (id !== (await keyIDAsync(pub))) return false;
-    if (kind === KIND_PASSKEY) return (await importPublic(alg, pub)) !== null;
+    // One copy, and both async checks read it, so the id and the import decide
+    // on the same bytes. Without it the caller's object is read twice across
+    // the await on the hash - for the id, then (a passkey) for the import - and
+    // a microtask swap between the two lets a key whose id is the hash of one
+    // public key import as another: validateUserKey then reports as valid a key
+    // whose id and whose imported public half are two different keys. Measured
+    // true on the parent of this change, in chromium AND node, false after.
+    // The same shape as proof.verify. (What a CALLER does with its own
+    // reference to k.pub afterwards is the separate view-into-caller-memory gap
+    // named in the round-4 findings; this makes validateUserKey itself decide
+    // on one settled reading.)
+    const pubC = bytesOf(pub, "proof: key is not bytes");
+    if (!agrees(pub, pubC)) return false;
+    if (id !== (await keyIDAsync(pubC))) return false;
+    if (kind === KIND_PASSKEY) return (await importPublic(alg, pubC)) !== null;
     return true;
   } catch {
     return false;
@@ -485,33 +508,45 @@ export async function challenge(purpose, payload) {
 export async function verify(p, key, rp, purpose, payload) {
   try {
     if (p === null || typeof p !== "object" || key === null || typeof key !== "object") return false;
-    // Every field is read once and only the copy is used after that. Go is
-    // handed structs whose fields answer every read the same way; here a
-    // field can be a getter, and one that answered the length check with 64
-    // bytes and the Web Crypto API with a megabyte would carry MAX_SIG away
-    // between the two reads. The same for the algorithm: read twice, it could
-    // name one kind of key to importPublic and another to the check itself.
     const { kind, kid, sig } = p;
     const { id, kind: keyKind, alg, pub } = key;
     if (!(pub instanceof Uint8Array) || !(sig instanceof Uint8Array)) return false;
+    // The key's bytes and the payload are copied out of the caller's reach
+    // ONCE, here, and everything below reads the copies. Without it this
+    // function reads the key twice from the caller's object - for its id and
+    // again for the signature - across the await on the hash, and two readings
+    // of one hostile object are two keys: this is the same forgery sign.verify
+    // closes one file over. An ordinary Uint8Array whose bytes are swapped in a
+    // microtask answers the id over a key the caller TRUSTS and hands the Web
+    // Crypto API the ATTACKER's own, which he has signed with, and the proof is
+    // accepted for the wrong key. Measured true on the parent of this change,
+    // in chromium AND node, for a password proof and for a passkey; false after
+    // it. The repair is sign.verify's: decide on a copy no getter and no later
+    // write can reach.
+    const pubC = bytesOf(pub, "proof: key is not bytes");
+    const loadC = bytesOf(payload, "proof: payload is not bytes");
+    // After the copies these can only refuse - the bytes that will be verified
+    // are already settled - so an object whose numbers disagree with what it
+    // handed over is turned away, exactly as in sign.verifyRaw.
+    if (!agrees(pub, pubC) || !agrees(payload, loadC)) return false;
     // In the order Go has it: the key first - a key whose id is not the hash
     // of its public key is no key - then the key the proof names, and only
     // then anything that costs.
-    if (typeof id !== "string" || id !== (await keyIDAsync(pub))) return false;
+    if (typeof id !== "string" || id !== (await keyIDAsync(pubC))) return false;
     if (kid !== id || kind !== keyKind) return false;
     if (sig.length > MAX_SIG) return false;
     if (keyKind === KIND_PASSWORD) {
-      if (alg !== ALG_EDDSA || pub.length !== ED25519_SIZE) return false;
+      if (alg !== ALG_EDDSA || pubC.length !== ED25519_SIZE) return false;
       // The one Ed25519 check of the web side, the same one sign.verify uses.
       // Go looks at neither authData nor clientData of a password proof, and
       // neither does this.
-      return await verifyRaw(pub, sig, message(purpose, payload));
+      return await verifyRaw(pubC, sig, message(purpose, loadC));
     }
     if (keyKind === KIND_PASSKEY) {
       const auth = asBytes(p.authData);
       const client = asBytes(p.clientData);
       if (auth === null || client === null) return false;
-      return await verifyAssertion({ sig, auth, client, alg, pub }, rp, await challenge(purpose, payload));
+      return await verifyAssertion({ sig, auth, client, alg, pub: pubC }, rp, await challenge(purpose, loadC));
     }
     return false;
   } catch {

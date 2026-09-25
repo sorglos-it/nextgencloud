@@ -997,3 +997,129 @@ test("a proof, a key and the relying party are read once", async ({ shell }) => 
   expect(out.keyReads.pub).toBe(1);
   expect(out.rpReads.origins).toBe(1);
 });
+
+// The three tests below close the gap the counting test above leaves open. Its
+// name promises the byte object is read once, but it only counts reads of the
+// FIELD NAMES on the container: every object it hands over answers each field
+// with one unchanging value. The forgery needs no getter on the container at
+// all - it is an ordinary Uint8Array whose bytes are swapped in a microtask
+// that lands between the id and the signature, out of reach of any read count.
+// Each of these was true on the parent of this change (a forgery accepted),
+// measured in chromium and node, and is false after it. bytes.spec.js does not
+// walk proof.verify, so nothing else held these.
+
+test("proof.verify reads the password key once, so the id and the signature are one key's", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, passwordPub)),
+    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  const got = await shell.evaluate(async () => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const s = await import("/assets/js/contracts/sign.js");
+    const purpose = "clientcert/v1";
+    const payload = new Uint8Array([1, 2, 3, 4, 5]);
+    const msg = s.message(purpose, payload);
+    const mine = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const trusted = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const minePub = new Uint8Array(await crypto.subtle.exportKey("raw", mine.publicKey));
+    const trustedPub = new Uint8Array(await crypto.subtle.exportKey("raw", trusted.publicKey));
+    const mineSig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, mine.privateKey, msg));
+    const idMine = await s.keyID(minePub);
+    const idTrusted = await s.keyID(trustedPub);
+    const out = {};
+    // The attacker's signature is genuine under his own key and no good under
+    // the trusted one, so a false below is a refusal of the swap.
+    out.signatureIsGenuine = await p.verify({ kind: "password", kid: idMine, sig: mineSig },
+      { id: idMine, kind: "password", alg: "EdDSA", pub: minePub }, null, purpose, payload);
+    out.signatureIsNotTheTrustedKeys = await s.verifyRaw(trustedPub, mineSig, msg);
+    // The proof names the TRUSTED key and carries the ATTACKER's signature. The
+    // key is trusted now, the attacker's one microtask later - between the id
+    // and the signature.
+    const twoFaced = new Uint8Array(trustedPub.length);
+    twoFaced.set(trustedPub);
+    out.plainArray = Object.getPrototypeOf(twoFaced) === Uint8Array.prototype;
+    queueMicrotask(() => twoFaced.set(minePub));
+    out.accepted = await p.verify({ kind: "password", kid: idTrusted, sig: mineSig },
+      { id: idTrusted, kind: "password", alg: "EdDSA", pub: twoFaced }, null, purpose, payload);
+    out.swapHappened = Array.from(twoFaced).join() === Array.from(minePub).join();
+    return out;
+  });
+  expect(got.signatureIsGenuine).toBe(true);
+  expect(got.signatureIsNotTheTrustedKeys).toBe(false);
+  expect(got.plainArray).toBe(true);
+  expect(got.swapHappened).toBe(true);
+  expect(got.accepted).toBe(false);
+});
+
+test("proof.verify reads the passkey once, so the id and the assertion are one key's", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, passwordPub)),
+    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  const got = await shell.evaluate(async () => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const s = await import("/assets/js/contracts/sign.js");
+    const b64 = await import("/assets/js/contracts/b64.js");
+    const enc = new TextEncoder();
+    const purpose = "clientcert/v1";
+    const payload = new Uint8Array([1, 2, 3, 4, 5]);
+    const rpID = "ex.test", origin = "https://ex.test";
+    const mine = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const trusted = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const mineSpki = new Uint8Array(await crypto.subtle.exportKey("spki", mine.publicKey));
+    const trustedSpki = new Uint8Array(await crypto.subtle.exportKey("spki", trusted.publicKey));
+    const ch = await p.challenge(purpose, payload);
+    const client = enc.encode(JSON.stringify({ type: "webauthn.get", challenge: b64.b64encode(ch), origin }));
+    const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(rpID)));
+    const auth = new Uint8Array(37); auth.set(rpHash, 0); auth[32] = 0x05; auth[36] = 1;
+    const cdHash = new Uint8Array(await crypto.subtle.digest("SHA-256", client));
+    const signed = new Uint8Array(auth.length + cdHash.length); signed.set(auth, 0); signed.set(cdHash, auth.length);
+    const mineSig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, mine.privateKey, signed));
+    const rp = { id: rpID, origins: [origin] };
+    const credId = new Uint8Array([9, 9, 9, 9]);
+    const idMine = await s.keyID(mineSpki);
+    const idTrusted = await s.keyID(trustedSpki);
+    const out = {};
+    // The attacker's assertion is genuine under his own key.
+    out.honest = await p.verify({ kind: "passkey", kid: idMine, sig: mineSig, authData: auth, clientData: client },
+      { id: idMine, kind: "passkey", alg: "EdDSA", pub: mineSpki, credId }, rp, purpose, payload);
+    // The proof names the TRUSTED key; the key imports as the attacker's one
+    // microtask later, between the id and the import that checks the assertion.
+    const twoFaced = new Uint8Array(trustedSpki.length);
+    twoFaced.set(trustedSpki);
+    queueMicrotask(() => twoFaced.set(mineSpki));
+    out.accepted = await p.verify({ kind: "passkey", kid: idTrusted, sig: mineSig, authData: auth, clientData: client },
+      { id: idTrusted, kind: "passkey", alg: "EdDSA", pub: twoFaced, credId }, rp, purpose, payload);
+    out.swapHappened = Array.from(twoFaced).join() === Array.from(mineSpki).join();
+    return out;
+  });
+  expect(got.honest).toBe(true);
+  expect(got.swapHappened).toBe(true);
+  expect(got.accepted).toBe(false);
+});
+
+test("validateUserKey reads the key once, so the id and the import are one key's", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, passwordPub)),
+    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  const got = await shell.evaluate(async () => {
+    const p = await import("/assets/js/contracts/proof.js");
+    const s = await import("/assets/js/contracts/sign.js");
+    const mine = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const mineSpki = new Uint8Array(await crypto.subtle.exportKey("spki", mine.publicKey));
+    const idMine = await s.keyID(mineSpki);
+    // A is junk that does NOT import as an EdDSA key; the id certifies A. B is
+    // the attacker's real key, which DOES import. A and B share length so set
+    // works. Read twice, the id is over A and the import is of B - a key whose
+    // id and imported half are two different keys. Read once, A is used for
+    // both and importPublic(A) is null.
+    const A = new Uint8Array(mineSpki.length).fill(0xAB);
+    const idA = await s.keyID(A);
+    const out = {};
+    out.honest = await p.validateUserKey({ id: idMine, kind: "passkey", alg: "EdDSA", pub: mineSpki, credId: new Uint8Array([1, 2, 3]) });
+    const twoFaced = new Uint8Array(A.length);
+    twoFaced.set(A);
+    queueMicrotask(() => twoFaced.set(mineSpki));
+    out.accepted = await p.validateUserKey({ id: idA, kind: "passkey", alg: "EdDSA", pub: twoFaced, credId: new Uint8Array([1, 2, 3]) });
+    out.swapHappened = Array.from(twoFaced).join() === Array.from(mineSpki).join();
+    return out;
+  });
+  expect(got.honest).toBe(true);
+  expect(got.swapHappened).toBe(true);
+  expect(got.accepted).toBe(false);
+});

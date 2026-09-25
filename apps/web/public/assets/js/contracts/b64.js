@@ -88,9 +88,15 @@ export function viewOf(v, why) {
 // the one place a getter cannot be installed. So a subclass that overrides
 // length, byteLength, buffer or byteOffset is not consulted at all, and the
 // copy is the honest bytes even when every accessor lies. (An object that is
-// no typed array but passes instanceof - a Proxy - has no such slots, so it is
-// copied through its length and its indexes instead. It still ends up as one
-// settled copy, which is the property: what was checked is what is used.)
+// no typed array but passes instanceof - a Proxy over one - has no such slots:
+// there `new Uint8Array(v)` consults one thing only, its Symbol.iterator,
+// never a length or an index - measured, node and chromium. A plain Proxy
+// inherits the typed-array iterator, which throws at the proxy receiver, so
+// this answers BadInput; a Proxy carrying its OWN iterator is copied through
+// it and may yield any bytes at all, measured [9,9] out of a 4-byte target.
+// Either way the result is one settled copy of whatever was read, and what a
+// caller checks against that copy - see sign.verifyRaw's agrees - is what it
+// uses.)
 //
 // The number is therefore taken once and cannot move afterwards. A caller's
 // own length and byteLength may still be compared against it - see
