@@ -480,6 +480,23 @@ Das ist die schärfere Fassung von „ein Test, der aus dem falschen Grund rot
 wird, zählt nicht": hier wird der **richtige** Test rot, nur eben nicht der, um
 den es ging.
 
+Und die Regel hat einen Ausgang, den du nicht nehmen darfst. Als derselbe
+Koordinator gleich darauf einen zweiten Zaun bestellte, prüfte der Umsetzer ihn
+an der neuen Regel — und sie ging nicht auf: die naheliegende Mutation starb auch
+an einem Test aus der Runde davor. Der bequeme Weg wäre gewesen, dem **alten**
+Test seine Zusicherung wegzunehmen, damit der neue einzigartig dasteht. Er hat es
+nicht getan und dazugeschrieben, warum:
+
+> „Ich schwäche keinen abgenommenen Test, damit ein neuer einzigartig aussieht."
+
+Statt dessen hat er eine **schärfere** Mutation gesucht und gefunden: nicht „eine
+Zeile je Kanal", sondern „still beim ersten Kanal, eine Zeile bei jedem weiteren"
+— genau die Vervielfachung, die ein Riegel für die erste Zeile offen lässt. Die
+kommt an allem Alten vorbei und kippt nur den neuen Zaun.
+
+**Wenn dein Mutant an einem alten Test hängenbleibt, ist das eine Aufgabe für den
+Mutanten, nie für den alten Test.** Deckung wird dazugebaut, nicht umverteilt.
+
 ## 14. Der Satz daneben ist der häufigste Fehler, den dieses Projekt macht
 
 Elfmal hat ein Kommentar das Gegenteil dessen behauptet, was der Code tut.
