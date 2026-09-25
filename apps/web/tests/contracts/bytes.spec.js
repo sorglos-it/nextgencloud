@@ -131,7 +131,7 @@ const NEEDED = ["b64", "json", "noise"];
 // The sizes the probe is run at. A probe that knows one size checks one size:
 // a reading that only starts above some number stays invisible below it, and
 // that is how the round before this one was walked past. Every bound the
-// eleven contracts declare for a byte string has a size above it and a size
+// twelve contracts declare for a byte string has a size above it and a size
 // below it here, and the small end is dense because that is where the fixed
 // sizes sit.
 //
@@ -141,7 +141,8 @@ const NEEDED = ["b64", "json", "noise"];
 //   63..65                     NONCE/TOKEN/KEY/CERT/HASH_SIZE and ID_SIZE
 //                              (32), HANDSHAKE_SIZE (48), SIG_SIZE and
 //                              MAX_TRUST_HINT (64)
-//   1023..1025                 MAX_CRED_ID (1023), MAX_PUBLIC and MAX_SIG
+//   1023..1025                 MAX_CRED_ID (1023), MAX_PUBLIC and MAX_SIG,
+//                              and tunnel.MAX_PAIR_CODE (1024)
 //   2390, 2391                 the envelope budget of parseEnvelope(b, 1024)
 //   4096, 4097                 MAX_CERT, MAX_AUTH_DATA, MAX_CLIENT_DATA
 //   8192, 8193                 MAX_PARAMS
@@ -409,7 +410,7 @@ const NEEDS_X25519 = [
   "noise.Transport.open#0", "noise.Transport.seal#0",
 ];
 
-// How many callables the eleven modules hold, counted the way the walk below
+// How many callables the twelve modules hold, counted the way the walk below
 // counts them: every exported function, every static and every method of an
 // exported class, and every function that hangs off an exported object, as
 // deep as three levels. The round before this one counted exported functions
@@ -432,7 +433,22 @@ const NEEDS_X25519 = [
 // made this round necessary (an ordinary array rewritten in a microtask). What
 // holds those is sign.spec.js "verifyRaw decides on a copy no getter can
 // reach", which measures answers instead of touches.
-const CALLABLES = 141;
+//
+// 148 since contracts/tunnel.js: its six functions and its one error class.
+// The number was MEASURED and not counted up - this test named 148 against 141
+// and that is where the line below comes from - because a count by hand is
+// exactly the kind of thing that ends up off by the class nobody thought of.
+//
+// AND IT ADDED NO LINE TO ENTRIES, which is the part worth reading. A new
+// contract usually brings places with it; tunnel brings four arguments that
+// take a caller's bytes - the key of fingerprint and the three keys of
+// joinFingerprint - and the probe records NOTHING for any of them. They go
+// through b64.bytesOf, which reads no property at all, so there is no reading
+// for a list of readings to hold. A fingerprint is a statement about bytes that
+// are used after it is compared, so the copy is what makes the statement true;
+// what would turn this red is somebody putting a view back, and then the four
+// would turn up here as places that are "not in the list".
+const CALLABLES = 148;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
