@@ -3899,7 +3899,12 @@ git commit -m "Add frames, channels and error codes" --trailer "Co-Authored-By: 
 **Interfaces:**
 - Produces: `MAX_ENTRIES = 10000`, `MAX_DIRS = 1000`, `MAX_UI_FILE = 16777216`,
   `MAX_UI_TOTAL = 67108864`, `BLOCK = 512`, `walkUI(bytes) -> [{path, size, data}]`,
-  `class UIWriter` mit `dir(path)`, `file(path, data)`, `close() -> Uint8Array`,
+  `class UIWriter` mit `dir(path)`, `file(path, data, hash?)`, `close(hash?) -> Uint8Array`,
+  **Der zweite Parameter ist der Hash aus Aufgabe 12** (`sha256Stream`), in den der
+  Schreiber alles mitschreibt, was er ausgibt. Ohne ihn kann Aufgabe 12 ein Paket
+  von 4 GiB nicht in EINEM Durchgang pruefen. Diese Zeile nannte ihn frueher nicht,
+  waehrend Aufgabe 12 ihn im Text verlangte - ein Widerspruch zwischen zwei Aufgaben,
+  genau das, was dieser Block verhindern soll.
   `class BadPackage extends Error`.
 - Consumes: `text.js` (`validPath`).
 
@@ -4204,6 +4209,17 @@ test("the shell computes the UI hash of a package itself", async ({ shell }) => 
   expect(got.every((g) => g.pkgHash)).toBe(true);
 });
 
+// ACHTUNG: jeder dieser Angriffe steht unten als ERSTER Eintrag des Archivs und
+// wird deshalb von der Regel "Manifest zuerst" abgelehnt, nicht von seiner eigenen.
+// Gemessen: mit dieser Fassung bleibt der Lauf gruen, auch wenn man die
+// Typeflag-Pruefung ganz entfernt - vier der fuenf Faelle messen nichts.
+// Stell jedem Angriff einen annehmbaren Rahmen voran (Manifest zuerst), damit er
+// bis zu seiner Regel kommt.
+//
+// Und der Sparse-Fall hat die falsche Gestalt: `flag 0x53` ('S') ist die alte
+// GNU-Form. Gefaehrlich ist heute ein GEWOEHNLICHER '0'-Eintrag mit einem
+// PAX-Satz `GNU.sparse.*` - so steht es weiter unten auch im Text. Beide Formen
+// gehoeren geprueft.
 test("a package with a link, an absolute path or a sparse entry is refused", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const p = await import("/assets/js/contracts/pack.js");
