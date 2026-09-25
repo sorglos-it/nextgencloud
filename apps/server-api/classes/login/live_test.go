@@ -393,15 +393,16 @@ func TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway(t *testing.T) {
 // Live: the session key is opened before Seen is written, so a request that is
 // refused never keeps the session alive.
 //
-// Opening the key is one of three steps above the touch that leave the row
-// where it is -- the others are the proof being read and the trust list being
-// read -- and TestAStepLiveCouldNotTakeIsNoLogout in this same file holds all
-// three to that. What ends the session before the touch is the two ends and
-// the check against the list (session.VerifyClient), not the reading of it.
-// Of the three, only the key sits right above the touch, so it is the only
-// one that can show this order at all, and with the touch moved above it
-// nothing else in this package changes: the request is refused with the same
-// E_INTERNAL, only the session lives on.
+// Opening the key is one of four steps above the touch that leave the row
+// where it is -- the others are the session row being read, the proof being
+// read and the trust list being read -- and TestAStepLiveCouldNotTakeIsNoLogout
+// in this same file holds all four to that, the session row as its first
+// case. What ends the session before the touch is the two ends and the check
+// against the list (session.VerifyClient), not the reading of it. Of the
+// four, only the key sits right above the touch, so it is the only one that
+// can show this order at all, and with the touch moved above it nothing else
+// in this package changes: the request is refused with the same E_INTERNAL,
+// only the session lives on.
 //
 // The clock is moved first, because Seen is already now at the login and a
 // write of the same number would prove nothing.
@@ -637,8 +638,9 @@ func TestTheTwoNodesPartWhereTheAnswerNeedsNoRow(t *testing.T) {
 				if w.Code != a.warm {
 					t.Fatalf("the warm node answered from=%s with %d %s, want %d. If that is "+
 						"the warm node made to refuse, the decision was taken back: correct the "+
-						"note at the Refresh call in login/live.go, the one at the 204 in "+
-						"login/trust.go, and this test with it",
+						"note at the Refresh call in login/live.go, the one beside "+
+						"state.ErrSetting there, the one at the 204 in login/trust.go, and this "+
+						"test with it",
 						a.from, w.Code, w.Body, a.warm)
 				}
 				w = httptest.NewRecorder()

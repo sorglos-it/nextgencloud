@@ -262,7 +262,10 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// What settles it is an anchor outside the database, which is on the V1.2
 	// list and which knowngap_test.go names by its point. Nothing here pays
 	// that read, and nothing here pretends to.
-	// TestTheTwoNodesPartWhereTheAnswerNeedsNoRow holds it.
+	// TestTheTwoNodesPartWhereTheAnswerNeedsNoRow holds the 204 half of it
+	// under damage, and TestTrustLooksAtTheListOnce counts it on the ordinary
+	// path. The far side, a from asking further ahead still, rests on being
+	// the same shape in state.Chain alone and carries no count of its own.
 	v, err := h.S.Refresh(ctx)
 	if errors.Is(err, state.ErrNoTrust) {
 		// Here that error cannot mean what it means everywhere else. An
@@ -320,8 +323,8 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	}
 	// Seen moves only once everything above has held, so a request that is
 	// refused never keeps a session alive. TestARefusedRequestDoesNotMoveSeen
-	// holds this step under the one above it, which is the only one of them
-	// that leaves the row where it is.
+	// holds this step under the one above it, the only one of the four that
+	// leaves the row where it is and sits directly above the touch.
 	//
 	// The row can be gone by the time this write lands -- a logout of the same
 	// cookie on another node, or the housekeeping round, between the read
@@ -364,8 +367,9 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 // E_LOGIN is right by the same table: there is nothing left to end, which is
 // what this path answers for a session that had run out anyway. A store that
 // calls the call itself wrong (dbapi.ErrInvalid, dbapi.ErrUsed) is E_INTERNAL
-// instead, the same sessionFault gives every other row -- measured for the
-// read, which answers 500 through the logout just as it does through Live
+// instead, the same as sessionFault gives for every other of the three
+// calls on this one row -- measured for the read, which answers 500
+// through the logout just as it does through Live
 // (TestTheStoresOwnWordAboutASessionIsNotADatabaseThatIsAway).
 //
 // TestLogoutEndsASessionTheRestOfLiveCannotRead holds both steps.

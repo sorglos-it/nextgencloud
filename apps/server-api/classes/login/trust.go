@@ -23,8 +23,11 @@ import (
 // ordinary "nothing new" -- and anything beyond that is E_NOTFOUND. What Live
 // and package state answer besides those, this path hands on as it is.
 //
-// That 204 is the one answer of the three that reads no row, and what it does
-// and does not promise is written at the branch itself.
+// None of the three reads a row: E_PROTOCOL never reaches Chain at all,
+// since session.ParseFrom refuses it first, and 204 and E_NOTFOUND both come
+// out of the cached version alone (state/trust.go:441-447), before Chain
+// asks the store anything. What the 204 branch does and does not promise on
+// top of that is written at the branch itself.
 func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	live, code, ok := h.Live(ctx, r)

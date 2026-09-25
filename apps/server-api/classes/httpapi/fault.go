@@ -106,7 +106,9 @@ func Fault(err error, from Origin) wire.Code {
 		// only if what must stay out of it can be listed to the end, and for
 		// the store's own words it can be. An error of a package that is not
 		// dbapi or state is its handler's, and the fault function of package
-		// setup is where this API does that.
+		// setup is one place this API does that -- login/start.go and
+		// login/login.go answer their own errors from secrets and json the
+		// same way, without coming through here.
 		return wire.CodeInternal
 	}
 	// Nothing of package state's own is left, so this came up through it from
