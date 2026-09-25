@@ -181,13 +181,23 @@ export const shellOpens = (a) => a?.service === SERVICE_API || a?.root === true;
 // critical decides whether an action needs re-confirmation at level
 // "critical"; the answer comes from the signed params, never from the OPEN.
 //
-// Go switches on the TYPE of the params and answers false when there are
-// none; this switches on the action, so an uninstall without params answers
-// true here where Go answers false. That is the safer of the two and it costs
-// nothing: both are root tasks, and Go's RuleFor never asks either of them
-// without params - it refuses params-less activate and uninstall outright
-// (core.paramsDecide). An uninstall whose keepData nobody named is one that
-// deletes the app's data, and that is what "critical" is for.
+// ONE ANSWER HERE IS NOT GO'S, DELIBERATELY. Go switches on the TYPE of the
+// params, so with no params at all it reaches its default and says false for
+// every action but upload and delete-data. This switches on the action - there
+// are no types to switch on - and an uninstall without params therefore
+// answers TRUE where Go answers false. Everything else matches.
+//
+// It was kept on purpose and not made to match, and the reason is that Go
+// never gets there: RuleFor refuses a params-less activate or uninstall
+// outright (core.paramsDecide), so Go's false is the answer to a question its
+// own contract does not ask. An uninstall whose keepData nobody named is one
+// that deletes the app's data, and that is what "critical" is for. The price
+// is one re-confirmation too many on a path that should not exist.
+//
+// core.spec.js "shellOpens and critical decide for every row as Go decides"
+// pins it: it computes Go's rule over Go's own table and names uninstall as
+// the single row that answers otherwise, so the difference cannot spread to a
+// second row unnoticed.
 export function critical(a, params) {
   if (a?.name === ACT_ACTIVATE) return (params?.grants?.length ?? 0) > 0;
   if (a?.name === ACT_UNINSTALL) return !params?.keepData;
@@ -564,7 +574,7 @@ const RESULTS = {
   "ngc.users/join-code": { shape: pairCodeShape, items: {}, check: (v) => checkCode(v, "ngc-join:") },
   "ngc.users/pending": {
     shape: A(pendingShape), items: { "": trust.MAX_NODES },
-    check: (v) => every(v, checkPending) && unique(v, (p) => p.name),
+    check: (v) => every(v, checkPending) && unique(v, (p) => b64encode(p.key)),
   },
   "ngc.users/pending-api": {
     shape: A(pendingAPIShape), items: { "": trust.MAX_NODES },
@@ -660,10 +670,20 @@ function checkDesktopApp(v) {
     && APP_STATES.has(v.state) && (v.node === "" || validName(v.node));
 }
 
+// A RULE OF THE SHELL, NOT OF THE CONTRACT. Go has no ParseTOTPBegin - it
+// only writes this answer (EncodeResult) - so the alphabet, the 16 to 64
+// characters and the prefix are all chosen here, from what Go's TOTP secret
+// and otpauth URI look like today. The secret is what the user types into an
+// authenticator app; the URI carries it again for the QR code, and nothing
+// but an otpauth URI belongs in one.
+//
+// The price: an API that one day writes the secret in another alphabet, or
+// longer, or the URI with another scheme, sends something legitimate that the
+// shell refuses - and then nobody can switch TOTP on at all, because
+// ngc.desktop/totp-begin is the only way in. It is a refusal and never a hole,
+// so it is the safe side; but if the secret ever changes shape, this line
+// changes with it, and the failure will look like a broken server.
 function checkTOTPBegin(v) {
-  // The secret is what the user types into an authenticator app: base32
-  // without padding, as Go writes it. The URI carries it again for the QR
-  // code, and nothing but an otpauth URI ever goes into one.
   return /^[A-Z2-7]{16,64}$/.test(v.secret)
     && v.uri.startsWith("otpauth://totp/") && validText(v.uri, MAX_URI);
 }
@@ -678,6 +698,16 @@ function checkRoleRights(v) {
     && v.rights.every(validRight);
 }
 
+// A RULE OF THE SHELL, NOT OF THE CONTRACT. Go has one type for both answers
+// (PairCodeResult) and asks nothing of the text; this holds each of the two
+// actions to its own prefix, because a pairing code and a joining code are
+// shown to the admin for different jobs and a swapped pair would have them
+// paste the wrong one into the wrong script.
+//
+// The price: if the API ever answers ngc.users/pair-code with a code of
+// another kind - or the prefixes in tunnel change - the shell refuses an
+// answer that is perfectly good, and no controller can be paired until this
+// line follows. A refusal, never a hole.
 function checkCode(v, prefix) {
   return v.code.startsWith(prefix) && validText(v.code, MAX_CODE) && whole(v.expires) && v.expires > 0;
 }
@@ -898,8 +928,28 @@ const roles = (v, max) => v.length <= max && noDuplicate(v) && v.every(validName
 
 const every = (v, check) => v.every((e) => check(e));
 
-// unique answers whether no two rows of a list carry the same id. A Set, not
-// the pairwise walk Go uses for its short lists: these lists run to 10000
+// unique answers whether no two rows of a list carry the same id.
+//
+// A RULE OF THE SHELL, NOT OF THE CONTRACT. Go writes these lists
+// (EncodeResult) and asks nothing of them. It is here because the shell shows
+// a list and then acts on the row the user picked, and every one of these
+// actions names its row by ONE field: set-rights names a role, ui and ui-proof
+// name an app and no node, and a trust list holds one user, one node and one
+// store per id. Two rows under one such id are therefore not two things to
+// choose between - the second one is unreachable, and whichever the shell
+// picked would decide silently.
+//
+// The price: an API that legitimately repeats a row has its whole answer
+// refused, and the page stays empty instead of showing something. So the field
+// is the one the actions name and never the whole row, and a list whose rows
+// are legitimately keyed by two things is NOT held to this rule:
+// ngc.store/installed carries an app AND a node in Go, the same app may run on
+// two controllers, and it is left out here for that reason. ngc.users/pending
+// is held to its key and not to its name, because two controllers an admin has
+// not added yet may well be called the same and are told apart by the
+// fingerprint of that key. A refusal, never a hole.
+//
+// A Set, not the pairwise walk Go uses for its short lists: these run to 10000
 // rows, and refusing a bad answer may not cost the shell a second of work.
 function unique(v, idOf) {
   const seen = new Set();
