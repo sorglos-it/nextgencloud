@@ -205,6 +205,17 @@ zählten verschiedene Dinge als „Lesung". Wer eine Zahl in einen Kommentar
 schreibt, schreibt dazu, **was** sie zählt; sonst ist der nächste Widerspruch
 schon eingebaut.
 
+Und Zahlen aus **zwei Aufbauten** gehören nicht in dieselbe Differenz. Der
+Koordinator stellte in einer Fundliste drei Kosten nebeneinander — 10, 11 und 3 —
+und schloss „sieben weniger". Nachgemessen auf **einer** Installation waren es 10,
+11 und **1**: die 3 stammte von einer Installation mit drei Fassungen, die 10 und
+11 von einer mit zwölf. Der Schluss stimmte zufällig in der Richtung und war in
+der Zahl falsch, und aus der Fundliste wanderte er wörtlich in einen
+Code-Kommentar.
+
+Wer Zahlen vergleicht, sagt dazu, **worauf** gemessen wurde — und vergleicht nur,
+was auf demselben Aufbau gemessen ist.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
@@ -652,6 +663,19 @@ Zwei Dinge daran sind die Regel:
   Zusicherung, die auf einer Behauptung über deinen eigenen Prüfstand steht.
 
 „Nicht prüfbar" bleibt eine ehrliche Antwort. Sie ist nur die **zweite**.
+
+### Ein Satz kann im Moment seiner Berichtigung falsch werden
+
+Der schnellste Fall dieser Regel dauerte einen Commit. Eine Doku sagte, welche
+Pakete ein bestimmtes Ding überhaupt bauen. Sie wurde in einer Fixrunde
+berichtigt — und **dieselbe Fixrunde** legte in einem dritten Paket einen neuen
+Aufrufer an. Der berichtigte Satz war falsch, bevor jemand ihn zum zweiten Mal
+gelesen hatte.
+
+Daraus folgt nicht „gründlicher berichtigen", sondern etwas Einfacheres:
+**Aufzählungen, wer etwas benutzt, verrotten bei jedem neuen Aufrufer.** Wenn du
+eine schreibst, frag dich, ob der Satz auch ohne sie trägt. Meistens ja — und
+dann lass sie weg.
 
 ## 15. Beim dritten Mal baust du den Wächter, nicht die Reparatur
 
