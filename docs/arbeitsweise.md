@@ -1031,6 +1031,41 @@ nicht reparierte Fall in den Bericht — mit der Messung, nicht als Vermutung. D
 Umsetzer hat den fünften Fall genannt, obwohl er ihn nicht nachgeprüft hatte, und
 **das ausdrücklich dazugeschrieben**. Genau so.
 
+### Wenn fünf Runden fünf neue Gestalten finden, war die Reparatur die falsche Ebene
+
+Regel 15 sagt: beim dritten Fehler derselben Form baust du den Wächter. Der
+Web-Strang hat das getan, und der Wächter war gut — er fand beim ersten Lauf
+fünfzehn Fälle, die acht Runden Handsuche übersehen hatten.
+
+Danach ging es trotzdem weiter. Fünf Runden, fünf Prüfungen, jedes Mal eine
+**neue Gestalt** desselben Fehlers: ein Gegenstand, dessen Länge beim Lesen
+umlegt · einer, der wirft · einer, der den Puffer **umschreibt** und die ehrliche
+Zahl zurückgibt · einer, bei dem das Lesen die Länge **wachsen** lässt. Jede
+Runde schloss die gemessenen Fälle sauber. Die nächste Prüfung fand die nächste
+Gestalt.
+
+**Das ist ein anderes Signal als der dritte Fehler derselben Form.** Der dritte
+Fehler sagt: bau den Wächter. Die fünfte neue **Gestalt** sagt: die Reparatur
+sitzt auf der falschen Ebene.
+
+Hier war die Ursache ein Satz, der für jede Gestalt gilt: **ein Getter ist Code
+und läuft an jeder Stelle, an der jemand den Gegenstand anfasst.** Solange die
+Prüfung den fremden Gegenstand befragt und die Engine danach auf denselben
+Speicher sieht, gibt es immer eine weitere Gestalt.
+
+Der Ausweg hat deshalb nichts mehr mit Lesen zu tun: **der Engine wird eine Kopie
+gegeben, nicht die Sicht auf den fremden Puffer.** Was der Aufrufer nicht mehr
+anfassen kann, kann er nicht mehr steuern — gleich welcher Bauart.
+
+**Das Muster, an dem du es erkennst:** Wenn du dieselbe Zusicherung zum dritten
+Mal *verschärfst* und beim vierten Mal wieder eine neue Gestalt kommt, hör auf,
+die Prüfung zu verbessern. Frag statt dessen, welche **Annahme** allen Gestalten
+gemeinsam ist — und ob man sie wegnehmen kann, statt sie besser zu prüfen.
+
+Und der Preis gehört gemessen, nicht geschätzt: eine Kopie ist bei zweiunddreißig
+Byte nichts und bei einer großen Nachricht vielleicht etwas. Wer die sichere
+Ebene wählt, sagt dazu, was sie kostet.
+
 ## Kurzfassung für den Anfang einer Aufgabe
 
 1. Auftrag lesen. Widersprüche **melden**, nicht umgehen.
