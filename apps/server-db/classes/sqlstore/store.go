@@ -104,9 +104,40 @@ func (s *store) query(ctx context.Context, fn func() error) error {
 
 // put writes a row that may or may not be there. Neither MERGE nor ON
 // DUPLICATE KEY is portable, so it is UPDATE first and INSERT when nothing
-// matched. The driver counts matched rows, not changed ones (MariaDB gets
-// ClientFoundRows for it), so writing the same values again counts as a hit
-// and does not turn into an INSERT.
+// matched. That writing the same values again counts as a hit and does not
+// turn into an INSERT is the driver's word and not this method's: the driver
+// has to count the rows the UPDATE matched and not the ones it really
+// changed, which on MariaDB is the ClientFoundRows flag of the DSN. No
+// MariaDB connection is opened anywhere in this repository yet, so nothing
+// sets it today, and whoever writes that DSN has to - the same debt LockTake
+// names.
+//
+// Whoever writes it owes something before it, and this is the place that says
+// so, because after the connection stands it is too late. UserPut had this
+// very shape and stopped resting on the count: it asks the database whether a
+// row carries this key instead of reading it off n, and so it answers the
+// same under either counting rule, which
+// TestUserPutAnswersTheSameHoweverRowsAreCounted holds by running both. put
+// can be given the same. The key it would ask with is already here - each of
+// the four callers names it in its WHERE, at the end of updateArgs, one
+// argument or two - and what is missing is only that this signature does not
+// say which of those arguments it is. That is the shape of today's
+// parameters, not an obstacle in the thing, and the sentence that stood here
+// before - that put does not know its key - said the second when it meant the
+// first.
+//
+// It has not been given the same because nobody has been asked for it: put
+// carries BlobPut and AppPut as well, which belong to the tasks before this
+// one, and a change here is a change to all four. Until somebody is asked,
+// this is what stands: on a driver that counts changed rows, writing a row
+// again byte for byte comes back from here as "the row is neither there nor
+// addable" - the UPDATE finds nothing to change, the INSERT behind it breaks
+// on the primary key, and the second round finds nothing again. The review of
+// round 4 measured that, with a trigger that turns the counting round, for
+// all four callers - SessionPut, PendingPut, BlobPut, AppPut - against <nil>
+// without the trigger. TestBlobRoundTrip promises the opposite in as many
+// words, "Writing the very same row again must work", and SQLite cannot show
+// the break because it counts every row its UPDATE went through.
 func (s *store) put(ctx context.Context, update string, updateArgs []any, insert string, insertArgs []any) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		for round := range 2 {

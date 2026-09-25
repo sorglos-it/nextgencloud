@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
@@ -240,8 +242,13 @@ func TestADuplicateNameIsErrInvalid(t *testing.T) {
 	// whole, not the rollback behind it: no way through UserPut writes before
 	// the statement that fails, so there is never anything for a rollback to
 	// take back. Measured - store.write committing instead of rolling back in
-	// the error case leaves this line green, and everything else in this
-	// package with it.
+	// the error case leaves this line green.
+	//
+	// That reason is about UserPut and it was once written down as though it
+	// were about the package, which it is not: OnceUse writes its mark before
+	// it reads the row, and there a rollback has work. The same mutation is
+	// caught by TestAFailedWriteTakesBackWhatItWrote in once_test.go, and
+	// before that test nothing in this package caught it at all.
 	if got, err := s.UserGet(ctx, "u-other"); err != nil || got.Name != "chef" {
 		t.Errorf("after the refused rename: %+v, %v", got, err)
 	}
@@ -317,8 +324,15 @@ func TestAnEmptyTokenIsNobodysSession(t *testing.T) {
 // MariaDB connection yet and so nobody sets that flag today.
 //
 // RAISE(IGNORE) in a BEFORE UPDATE trigger drops that one row from the
-// statement and leaves it with the values it already had, which is exactly
-// what the other counting rule does. Every column of ngc_user is NOT NULL, so
+// statement and leaves it with the values it already had, so the statement
+// counts it the way the other counting rule counts it. That much the two are
+// the same, and that much is all this fixture needs. They are not the same
+// throughout, and nothing here may be read as saying they are: MariaDB does
+// touch the row it matched and only leaves it out of the count, while the
+// trigger takes it out of the statement altogether. Nothing this test asks
+// turns on the difference - it reads the answers of UserPut and the row
+// afterwards, and both are the same either way. Every column of ngc_user is
+// NOT NULL, so
 // the WHEN compares values and never NULL, where an equality would be neither
 // true nor false and the row would be counted after all.
 const countChangedRows = `CREATE TRIGGER ngc_user_counts_changed_rows BEFORE UPDATE ON ngc_user
@@ -435,4 +449,171 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 		t.Fatal(err)
 	}
 	return n
+}
+
+// withoutTheNameIndex gives back the store with the unique index
+// ngc_user_name dropped, and measures that it really is gone before anything
+// rests on that.
+//
+// Why a test takes the index away at all. With it in place the promise "a
+// name belongs to one ID" is kept whatever UserPut does about it, so nothing
+// a caller can ask this store tells the check in the transaction apart from
+// the index behind it. That is measured and not feared: on aa718c6 the whole
+// check was made unreachable, once by wrapping it in a condition UserPut has
+// already refused above (len(u.ID) == 0) and once by asking the question and
+// throwing its answer away, and with the index in place the race below stayed
+// green against both, 400 rounds of 32 writers each.
+//
+// So the fixture is the same kind as countChangedRows above: SQL of the
+// test's own, on a database of its own, that takes away one of two things
+// which answer alike, so the other one has to answer alone. What the two
+// tests below hold is what this store's own code keeps, not what its schema
+// keeps - the schema is held by TestUserNameIsUnique and by the migration
+// lint, and nothing here touches the database any other test meets.
+func withoutTheNameIndex(t *testing.T) (dbapi.Store, *sql.DB) {
+	t.Helper()
+	s, db := openDB(t)
+	if _, err := db.ExecContext(ctx, "DROP INDEX ngc_user_name"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"u-one", "u-two"} {
+		if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, "+
+			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte("twice"),
+			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil {
+			t.Fatalf("two rows under one name were refused, so the index is still there and "+
+				"this test would hold nothing: %v", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM ngc_user"); err != nil {
+		t.Fatal(err)
+	}
+	return s, db
+}
+
+// namedRows is how many rows of ngc_user carry that name, asked of the
+// database and not of the store: what a writer was told and what stands there
+// are two different things, and both tests below want both.
+func namedRows(t *testing.T, db *sql.DB, name string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM ngc_user WHERE name = ?",
+		[]byte(name)).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestTheCheckAloneRefusesATakenName: one writer after the other, with the
+// index gone. A second ID may not be told it has a name that is taken, and it
+// may not have it in the database either.
+//
+// This is the behaviour behind TestTheNameCheckSitsInTheTransaction, which
+// can only read the source. A guard over the syntax tree cannot say that a
+// statement runs and that its answer gates the write - that is a property of
+// the run, not of the shape - and three ways past it were found in three
+// rounds, the last two of them these: the check wrapped in a condition that
+// can never hold, and the question asked with its answer thrown away. Both
+// compile, both run, and on aa718c6 both left all 139 tests of this package
+// green, the guard included, and every group of the contract with them. Here
+// each of them is red at the second writer, at once and in every run: "the
+// second writer was told <nil>, want ErrInvalid", and two rows carrying the
+// name.
+//
+// It costs no race to see it. Two writers one after the other are two
+// writers, and a check whose answer never reaches the write lets the second
+// one through whether or not anything ran at the same time.
+//
+// The last two lines are here so that a store which simply refuses everything
+// cannot pass: renaming has to free the name again.
+func TestTheCheckAloneRefusesATakenName(t *testing.T) {
+	s, db := withoutTheNameIndex(t)
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("the second writer was told %v, want ErrInvalid", err)
+	}
+	if n := namedRows(t, db, "admin"); n != 1 {
+		t.Errorf("%d rows carry the name admin, want 1", n)
+	}
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "chef"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); err != nil {
+		t.Errorf("the freed name stayed taken: %v", err)
+	}
+}
+
+// TestOnlyOneWriterGetsAName: of writers racing for one free name exactly one
+// is told he got it, and exactly one row carries it. With the index gone, so
+// what holds that is the place of the check and nothing else.
+//
+// What this one holds and the test above does not: a check written in front
+// of the write but asked outside the transaction. Lifted out of the literal
+// and put to s.db - the pool, the last committed state - UserPut still
+// refuses a second writer who comes afterwards, so the test above stays
+// green; racing, every writer whose question ran before the first commit sees
+// a free name and takes it. Measured against exactly that shape: red in five
+// runs of five at GOMAXPROCS 1, 2 and 3, and inside the first rounds from 8
+// processors upwards, with three to fifteen writers told they had the name.
+// With 400 rounds of 32 it is five of five that low; with 200 it was two of
+// three at two and at three processors, which is what the 400 are for.
+// Against the store as it stands: green in five runs at full width and at 1,
+// 2 and 4 processors, about 2.7 seconds.
+//
+// What it does not hold, said plainly. A check asked of s.db while standing
+// inside the transaction does not answer wrong here; it takes a second
+// connection of the pool while the transaction holds the only writer -
+// maxOpenConns is 4 against 32 racers - and this test then does not fail, it
+// runs into the timeout of go test (measured against a 45 s bound: "test
+// timed out"). That shape is the one the guard sees in the source at no cost.
+// Nor does this test hold anything while the index stands: with it, both
+// unreachable-check shapes above came through here green.
+//
+// And what nothing on SQLite holds: whether MariaDB or Galera would let two
+// transactions past this check together. SQLite gives one writer the database
+// at a time, so what is measured here is that the check is inside that one
+// writer's transaction, not that a multi-master engine certifies the two
+// apart.
+func TestOnlyOneWriterGetsAName(t *testing.T) {
+	const racers, rounds = 32, 400
+	s, db := withoutTheNameIndex(t)
+	for round := range rounds {
+		name := "n" + strconv.Itoa(round)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make([]error, racers)
+		for i := range racers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs[i] = s.UserPut(ctx, dbapi.User{
+					ID:   "u" + strconv.Itoa(round) + "-" + strconv.Itoa(i),
+					Name: name,
+				})
+			}()
+		}
+		close(start)
+		wg.Wait()
+		ok, invalid, other := 0, 0, 0
+		for i := range racers {
+			switch {
+			case errs[i] == nil:
+				ok++
+			case errors.Is(errs[i], dbapi.ErrInvalid):
+				invalid++
+			default:
+				other++
+				if other <= 2 {
+					t.Logf("round %d, racer %d: %v", round, i, errs[i])
+				}
+			}
+		}
+		if rows := namedRows(t, db, name); ok != 1 || rows != 1 {
+			t.Fatalf("round %d: %d writers were told they got %q and %d rows carry it - "+
+				"want 1 and 1; %d got ErrInvalid, %d something else",
+				round, ok, name, rows, invalid, other)
+		}
+	}
 }

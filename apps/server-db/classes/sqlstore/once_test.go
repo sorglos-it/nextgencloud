@@ -2,6 +2,7 @@ package sqlstore_test
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -478,4 +479,88 @@ func FuzzOnceCreate(f *testing.F) {
 			t.Fatalf("%d bytes of data came back as %d bytes: %v", len(data), len(got), err)
 		}
 	})
+}
+
+// onceLosesItsRow takes away the row an UPDATE on ngc_once has just touched,
+// so that everything the same transaction wants to read of it afterwards
+// finds nothing. It is SQL of the test's own, planted on a database of its
+// own, the same way countChangedRows in user_test.go plants the other way of
+// counting: no driver has to be rebuilt to put a store in front of a failure
+// it cannot otherwise be put in front of.
+const onceLosesItsRow = `CREATE TRIGGER ngc_once_loses_its_row AFTER UPDATE ON ngc_once
+FOR EACH ROW BEGIN DELETE FROM ngc_once WHERE kind = NEW.kind AND token = NEW.token; END`
+
+// onceRow is how many rows of ngc_once carry that value and what stands in
+// their used column, asked of the database. used is -1 where there is no row,
+// so a missing row and an unused one can never be read for one another.
+func onceRow(t *testing.T, db *sql.DB, value []byte) (rows int, used int64) {
+	t.Helper()
+	used = -1
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM ngc_once WHERE kind = ? AND token = ?",
+		[]byte(dbapi.OnceTask), value).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows == 1 {
+		if err := db.QueryRowContext(ctx, "SELECT used FROM ngc_once WHERE kind = ? AND token = ?",
+			[]byte(dbapi.OnceTask), value).Scan(&used); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return rows, used
+}
+
+// TestAFailedWriteTakesBackWhatItWrote: store.write rolls the transaction
+// back when its body answers an error, so a method that wrote and then failed
+// leaves nothing behind.
+//
+// OnceUse is the one method in this package where that rollback has any work
+// to do, and that is why it is the one under test here. UserPut cannot show
+// it: all seven of its ways out answer before anything of theirs is written,
+// so there is never anything to take back - measured, one exit at a time.
+// OnceUse writes the mark first, on purpose, because the UPDATE is what
+// decides; only then does it read the row for the data it hands out. Between
+// those two the transaction can fail, and then the mark may not stand: the
+// caller was told the value was not his, and the next caller has to be able
+// to get it.
+//
+// The failure is planted, because nothing a caller may pass reaches that gap.
+// The trigger removes the row the UPDATE just marked, so the SELECT behind it
+// finds none, OnceUse hands that error up, and store.write is left with a
+// transaction that has written. The fixture is measured first, on a second
+// value of its own: marked by hand, the row has to be gone, or the trigger
+// never fired and this test would hold nothing.
+//
+// Measured, and this is the whole point of the test: with write rolling back,
+// the row is there again and unused (rows left: 1, used: 0). With write
+// committing in the error case instead, the row is gone for good (rows left:
+// 0, used: -1) - the value is spent and nobody ever got it. That mutation was
+// run against the whole package on aa718c6 and again here, and it is this
+// test alone that goes red with it; before it, nothing in the package did.
+func TestAFailedWriteTakesBackWhatItWrote(t *testing.T) {
+	s, db := openDB(t)
+	value := bytes.Repeat([]byte{0x5a}, 32)
+	fixture := bytes.Repeat([]byte{0x5b}, 32)
+	for _, v := range [][]byte{value, fixture} {
+		if err := s.OnceCreate(ctx, dbapi.OnceTask, v, "u-admin", 1790000100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, onceLosesItsRow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE ngc_once SET used = ? WHERE kind = ? AND token = ?",
+		int64(1), []byte(dbapi.OnceTask), fixture); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := onceRow(t, db, fixture); rows != 0 {
+		t.Fatalf("a marked row left %d rows standing, so the trigger never fired and this "+
+			"test would hold nothing", rows)
+	}
+	if data, err := s.OnceUse(ctx, dbapi.OnceTask, value, 1790000000); err == nil {
+		t.Fatalf("OnceUse handed out %q from the row it had just lost", data)
+	}
+	if rows, used := onceRow(t, db, value); rows != 1 || used != 0 {
+		t.Errorf("after the failed OnceUse: rows left: %d, used: %d - want 1 and 0; "+
+			"the mark of a transaction that failed is still standing", rows, used)
+	}
 }

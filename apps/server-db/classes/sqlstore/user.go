@@ -57,16 +57,29 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // free name: on Galera one of them loses the certification and repeats, and
 // then it sees the name.
 //
-// That the check sits there is what TestTheNameCheckSitsInTheTransaction
-// holds, and it holds it by reading the source, because no answer of this
-// method says it any more. The unique index ngc_user_name gives the same word
-// on both ways, so taking the check out, asking it of the pool instead of this
-// transaction, or leaving it written where it stands and running it from a
-// defer all leave every test that asks this store a question green, and no
-// group of the contract goes red with any of them. Measured, all of those
-// shapes; that guard is the only thing that sees them. It is not its answer
-// that makes the check worth its statement, it is its place, so its place is
-// what is measured.
+// That the check sits there is held twice over, because neither way holds it
+// alone.
+//
+// TestTheNameCheckSitsInTheTransaction reads the source. It has to, because
+// no answer of this method says where the check is: the unique index
+// ngc_user_name gives the same word on both ways, so taking the check out,
+// asking it of the pool instead of this transaction, or leaving it written
+// where it stands and running it from a defer all leave every test that asks
+// this store a question green, and no group of the contract goes red with any
+// of them. Measured, all of those shapes.
+//
+// But a guard over the syntax tree can say where a statement is written and
+// never that it runs and that its answer gates this write - that is a
+// property of the run, not of the shape - and three ways past it were found
+// in three rounds, each one a shape the round before had not thought of. So
+// TestTheCheckAloneRefusesATakenName and TestOnlyOneWriterGetsAName ask this
+// method instead, on a database whose ngc_user_name has been dropped, where
+// the check is the only thing left that can answer. The two shapes the guard
+// could not see - the check under a condition that can never hold, and the
+// question asked with its answer thrown away - are red there at once, and the
+// guard stays green on both. It is not the answer of the check that makes it
+// worth its statement, it is its place; the guard measures that place in the
+// file, and those two measure it in the run.
 //
 // dbapi promises "the same name for another ID gives ErrInvalid", so a caller
 // that asks errors.Is for it may not be handed a driver error instead. Both

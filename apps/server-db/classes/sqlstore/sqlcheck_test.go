@@ -111,28 +111,31 @@ func (m *ownModule) Import(path string) (*types.Package, error) {
 		return nil, fmt.Errorf("sqlcheck: %s is outside this module", path)
 	}
 	dir := filepath.Join(m.root, filepath.FromSlash(strings.TrimPrefix(path, modulePath)))
-	files, _, err := parseOwn(m.fset, dir)
+	files, err := parseOwn(m.fset, dir)
 	if err != nil {
 		return nil, err
 	}
 	conf := types.Config{Importer: m, Error: func(error) {}, DisableUnusedImportCheck: true}
 	// Checked under its import path and not under the name in its files, so a
-	// guard can tell two packages of the same name apart; the name parseOwn
-	// reads says no more here than that the directory holds a package at all.
+	// guard can tell two packages of the same name apart. readPackage does the
+	// same with importPath, which is this line read backwards, and parseOwn
+	// gives no name back to either of them.
 	pkg, _ := conf.Check(path, m.fset, files, nil)
 	m.done[path] = pkg
 	return pkg, nil
 }
 
 // parseOwn reads the source files of one package, without its tests: a test
-// may write any SQL it likes, only the program is held to the rule.
-func parseOwn(fset *token.FileSet, dir string) ([]*ast.File, string, error) {
+// may write any SQL it likes, only the program is held to the rule. It gives
+// no package name back: everything here checks a package under its import
+// path, and the name in the files would say no more than that the directory
+// holds a package at all.
+func parseOwn(fset *token.FileSet, dir string) ([]*ast.File, error) {
 	pkgs, err := parser.ParseDir(fset, dir, nil, 0)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	var files []*ast.File
-	name := ""
 	for pkgName, pkg := range pkgs {
 		if strings.HasSuffix(pkgName, "_test") {
 			continue
@@ -142,42 +145,59 @@ func parseOwn(fset *token.FileSet, dir string) ([]*ast.File, string, error) {
 				continue
 			}
 			files = append(files, file)
-			name = pkgName
 		}
 	}
 	if len(files) == 0 {
-		return nil, "", fmt.Errorf("sqlcheck: %s holds no source of its own", dir)
+		return nil, fmt.Errorf("sqlcheck: %s holds no source of its own", dir)
 	}
 	// The order of a map is not the order of a message.
 	slices.SortFunc(files, func(a, b *ast.File) int {
 		return strings.Compare(fset.Position(a.Pos()).Filename, fset.Position(b.Pos()).Filename)
 	})
-	return files, name, nil
+	return files, nil
 }
 
-// readPackage parses and type-checks the package in dir.
+// readPackage parses and type-checks the package in dir, under its import
+// path and not under the name in its files - the same way ownModule.Import
+// checks the packages it resolves, and for the same reason.
 func readPackage(t *testing.T, dir string) *pkgSource {
 	t.Helper()
 	fset := token.NewFileSet()
-	files, name, err := parseOwn(fset, dir)
+	files, err := parseOwn(fset, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	root := moduleRoot(t)
 	info := &types.Info{
 		Types: map[ast.Expr]types.TypeAndValue{},
 		Uses:  map[*ast.Ident]types.Object{},
 		Defs:  map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{
-		Importer:                 &ownModule{root: moduleRoot(t), fset: fset, done: map[string]*types.Package{}},
+		Importer:                 &ownModule{root: root, fset: fset, done: map[string]*types.Package{}},
 		Error:                    func(error) {},
 		DisableUnusedImportCheck: true,
 	}
-	pkg, _ := conf.Check(name, fset, files, info)
+	pkg, _ := conf.Check(importPath(t, root, dir), fset, files, info)
 	if pkg == nil {
 		t.Fatalf("%s could not be read at all", dir)
 	}
 	return &pkgSource{fset: fset, files: files, info: info, pkg: pkg}
+}
+
+// importPath is the path a directory of this module is imported under. It is
+// the way back from ownModule.Import, which turns a path into a directory.
+func importPath(t *testing.T, root, dir string) string {
+	t.Helper()
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return modulePath + filepath.ToSlash(rel)
 }
 
 // moduleRoot is the directory that holds go.mod.
@@ -1383,34 +1403,65 @@ func hasOnceUse(p *pkgSource) bool {
 // group of the contract going red with it. A second line of defence had made
 // the first one indistinguishable, and a line no test holds is a line the next
 // tidy-up removes, with the comment that turns on it left standing over
-// nothing. This test is the only thing that sees it go.
+// nothing.
 //
-// What the check is worth is not its answer but its place. Where it is written
-// is not that place, and two ways past a guard that read no more than that
-// were measured on the tree below - both compile, both run, and both leave
-// this package and every group of the contract this store answers green:
+// What this test reads, exactly. userIDOf is named once in the package, and
+// three things are read about that one place: what the call it is an argument
+// of runs on - the very *sql.Tx this literal was handed, which go/types says
+// by the object behind the name and not by the name tx; where that call
+// stands - a statement of the literal's own body, neither inside a function
+// literal of its own nor behind defer or go; and what stands between it and
+// the first write of the literal - a return of dbapi.ErrInvalid belonging to
+// the literal itself. Place, receiver, form. Three properties of the file.
 //
-//   - the question asked of s.db instead of the transaction. That takes a
-//     second connection of the pool - maxOpenConns is 4, so it does not even
-//     wait - and reads the last committed state, not the transaction it is
-//     meant to guard. Every other writer fits between it and the write.
-//   - the question left standing where it is, inside a function literal of its
-//     own that defer calls. It then runs after the write, however far in front
-//     of it it is written.
+// What it does not read: whether that statement ever runs, and whether its
+// answer has anything to do with the write. It cannot. That is a property of
+// the run, and no walk over a syntax tree decides it. Two shapes past this
+// guard were measured, both of which compile, both of which run, and both of
+// which left all 139 tests of this package green and every group of the
+// contract with them:
 //
-// So the place is read off the thing and not off the file. userIDOf is named
-// once in the package; that one place is an argument of a method call on the
-// very *sql.Tx this literal was handed, which go/types says by the object
-// behind the name and not by the name tx; the call stands in a statement of
-// the literal's own body, neither inside a function literal of its own nor
-// behind defer or go; and it stands in front of the first write of that
-// literal, with a refusal of the literal itself between the two.
+//   - the whole check wrapped in a condition UserPut has already refused
+//     above, if len(u.ID) == 0. Every word of it stands where this test wants
+//     it, and it never runs.
+//   - the question asked of the transaction and its answer thrown away,
+//     QueryContext and rows.Close(), with the refusal left standing behind it
+//     over a variable nothing ever writes.
 //
-// It does not read the condition the refusal is written with, only that one
-// stands between the question and the write. Two writers can pass the check
-// together on a database that does not certify them apart, and the index
-// behind it is what holds the promise then; this holds the statement that
-// makes the common case answer before anything is written, and nothing else.
+// They were the second and the third way past this guard, in three rounds of
+// review, each a shape the round before had not thought of. So this test is
+// not what holds the property. TestTheCheckAloneRefusesATakenName and
+// TestOnlyOneWriterGetsAName hold it, by asking UserPut itself on a database
+// whose ngc_user_name has been dropped; both shapes above are red there at
+// once. This one stays because it is cheap and because it catches the plain
+// relapses in the source, before anything has to run: the check deleted, the
+// refusal deleted, the question moved to the pool, the question deferred -
+// measured, each of those red here.
+//
+// Where it is stricter than the property. That is a debt and not a virtue: a
+// guard that goes red on good code gets switched off, and then it guards
+// nothing, so both places where this one does are written down.
+//
+//   - tx2 := tx, and the question asked of tx2. The same transaction under a
+//     second name, and the store is right; this test refuses it, because
+//     following a value would mean following every way a value can take.
+//     Measured: this test goes red on it and the two behaviour tests above
+//     stay green, which is the two of them saying the store is still right.
+//   - the check pulled out into a method of its own that takes the *sql.Tx as
+//     a parameter. userIDOf is then not named inside the literal at all, so
+//     the first switch below answers "the name is asked about outside the
+//     transaction UserPut writes in" - which it is not. Nothing here follows
+//     a call into another function, and a tidy-up that reaches for that shape
+//     is not wrong.
+//
+// Both are refusals of this test and not of the store. Should either be
+// wanted, this test is what has to be rebuilt, and the two behaviour tests
+// are what say whether the store is still right while that happens.
+//
+// One more thing it does not read: the condition the refusal is written with,
+// only that a refusal stands between the question and the write. Two writers
+// can pass the check together on a database that does not certify them apart,
+// and the index behind it is what holds the promise then.
 func TestTheNameCheckSitsInTheTransaction(t *testing.T) {
 	p := readPackage(t, ".")
 	lit, found := txBodyOf(p, "UserPut")
