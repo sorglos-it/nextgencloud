@@ -22,13 +22,18 @@ einer anderen wirklich gebraucht.
 | `_blake.js` | Rundenkonstanten von BLAKE2 | `cabbff61d1f373bac45594ad758df7c42e176464ddbb94b44f5533fa977a4f56` |
 | `_md.js` | Grundgerüst der Hashfunktionen | `60cf3010fda89e3e4d3f0e7ff1ce249e9c467f34b4fd41b6fd6101d9f69be763` |
 | `_u64.js` | 64-Bit-Rechnen in zwei 32-Bit-Hälften | `b09da8c07fe8187c07649494cdb7cd0bcf13df90b506a9473d19e4d5f8c2e102` |
+| `sha2.js` | SHA-256 mit `update`/`digest` fürs Hochladen |  `471746bba6ec4c6238ca41358d1d3b40b6ff31cf3363f0b4d550c649c1a8e83b` |
 | `utils.js` | Byte- und Prüfhelfer | `037ad49adb78168b6b699598fd33f85f7877456b1d28b4d032e2a1a16807947c` |
 | `LICENSE` | die MIT-Lizenz; sie verlangt, dass sie mitgeht | `4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec` |
 
-Nicht kopiert ist alles andere des Pakets, auch `sha2.js`: Es benutzt bisher niemand.
-Wer später ein SHA-256 mit `update`/`digest` braucht (Dateien bis 4 GiB beim Hochladen),
-holt `sha2.js` auf demselben Weg nach – es hängt an denselben `_md.js`, `_u64.js` und
-`utils.js`, die hier schon liegen.
+`sha2.js` kam am 25.09.2026 dazu, auf genau dem hier beschriebenen Weg. Gebraucht wird es
+von `contracts/pack.js`: Beim Hochladen wird eine Datei von bis zu 4 GiB in **einem**
+Durchgang gelesen und dabei geprüft, und dafür braucht es ein SHA-256, das `update` und
+`digest` kann. Die Web Crypto API des Browsers kann das nicht – sie hasht nur einen Puffer
+am Stück, was hieße, 4 GiB im Speicher zu halten. Es hängt an denselben `_md.js`, `_u64.js`
+und `utils.js`, die hier schon lagen: **keine einzige Datei kam dadurch zusätzlich dazu.**
+
+Nicht kopiert ist alles andere des Pakets: Es benutzt bisher niemand.
 
 ## Warum 2.4.0 und nicht 1.8.0
 
@@ -58,7 +63,7 @@ curl -s https://registry.npmjs.org/@noble/hashes/2.4.0 > meta.json      # dist.t
 curl -sL https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz > hashes.tgz
 openssl dgst -sha512 -binary hashes.tgz | openssl base64 -A             # muss dist.integrity sein
 tar -xzf hashes.tgz                                                     # erst danach auspacken
-sha256sum package/{argon2,blake2,_blake,_md,_u64,utils}.js package/LICENSE
+sha256sum package/{argon2,blake2,_blake,_md,_u64,sha2,utils}.js package/LICENSE
 ```
 
 ## Aktualisieren
