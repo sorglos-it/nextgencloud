@@ -213,6 +213,12 @@ const VIEW = "0/1/1/1";
 const VIEW_AND_LENGTH = "1/1/1/1";
 // Only length, and no byte property at all: the probe was never read as bytes.
 const LIST = "1/0/0/0";
+// A place that takes a COPY of the caller's bytes and then asks the caller's
+// own two numbers, to refuse an object that will not own up to them. The
+// copy reads nothing - b64.bytesOf goes to the internal slots, where no getter
+// can be installed - so buffer and byteOffset stay at 0, and that is what says
+// no window onto the caller's memory was ever opened.
+const COPY_AND_NUMBERS = "1/1/0/0";
 const LEGAL = {
   view: [VIEW],
   list: [LIST],
@@ -223,6 +229,12 @@ const LEGAL = {
   // reading cannot happen any more, so it is no longer allowed: a length with
   // no view behind it is now a finding for these places too.
   open: [VIEW, VIEW_AND_LENGTH],
+  // A "copy" place may show nothing but the two numbers. Any reading of buffer
+  // or byteOffset here is a finding and means somebody put a view back - a
+  // window onto memory the caller still holds, which is the one thing these
+  // places exist not to have. Only one reading is legal, so it is also what
+  // proves the two numbers are reached at all.
+  copy: [COPY_AND_NUMBERS],
 };
 
 // Every place that takes a caller's bytes, as name#argument, with the reading
@@ -297,40 +309,51 @@ const ENTRIES = {
   "sign.keyIDAsync#0": "view",
   "sign.message#1": "view",
   "sign.parseEnvelope#0": "view",
-  // verifyRaw builds its three views first and decides every number on them,
-  // and only after that does it ask the caller's objects for their size. Both
-  // halves are needed, and neither one alone is safe - measured in chromium
-  // over a real Ed25519 signature, with the two hostile objects that have
-  // opposite outcomes:
+  // verifyRaw no longer builds a view on the caller's memory at all, and the
+  // three positions moved from "open" to "copy" because of it.
+  //
+  // Five rounds argued here about the ORDER of the readings. The table this
+  // comment used to carry is why the argument never ended - two hostile
+  // objects with opposite outcomes, so that whichever order refused the one
+  // accepted the other:
   //
   //                                            flipping   throwing
   //   length first, then the view (f24686c)    true       false
   //   the view only, no length read            false      true
   //   the view first, then the length          false      false
   //
-  // The flipping object is a buffer of 33 bytes, 32 of real key and one of
-  // rubbish, whose length getter sets a flag and whose byteLength answers 33
-  // before that flag and 32 after it. A getter is code: reading length runs
-  // it, and the view built one line later is then the 32 real bytes of a key
-  // nobody handed over. The throwing object is the proxy the accepted test
-  // "a check of a signature answers false for an envelope that fights back"
-  // uses, whose length throws - with no reading of length at all that throw
-  // never happens and a real signature behind it is answered true.
+  // and each round a new shape turned up that the newest order did not cover.
+  // The measurement that ended it needs no getter at all, so no order could
+  // ever have covered it and neither can this guard, which watches which
+  // properties were touched:
   //
-  // So the length is read, and it is read last, where it can only refuse. That
-  // is what "open" now means and what the order rule below holds. The third
-  // position joined the other two: on f24686c a message whose length throws
-  // was answered true, because the message's length was never read.
+  //   const plain = new Uint8Array(64).fill(0x5a);   // an ordinary array
+  //   queueMicrotask(() => plain.set(realSignature));
+  //   await verifyRaw(pub, plain, msg);              // on 8b6fa87: true
   //
-  // Reading a caller's length is not peculiar to this place, and the round
-  // before this one said it was: trust.js's isBytes and session's
-  // validateClientCert read the length of objects the caller owns as well, and
-  // the head of this file counts 27 permeable fields of that same shape. What
-  // is peculiar here is only that it happens on an argument, which is what
-  // this guard walks.
-  "sign.verifyRaw#0": "open",
-  "sign.verifyRaw#1": "open",
-  "sign.verifyRaw#2": "open",
+  // Every synchronous check saw rubbish; crypto.subtle.verify got the real
+  // signature, because the rewrite lands during the awaits. An ordinary array
+  // touches no property out of the ordinary, so a counter of touches sees
+  // nothing, and a rule about order has nothing to order.
+  //
+  // So verifyRaw stopped handing out a window onto the caller's memory:
+  // b64.bytesOf copies the bytes into a buffer of ours before anything is
+  // decided, every size is taken off that copy, and the engine gets the copy.
+  // The caller's own length and byteLength are still read - that is the "1/1"
+  // below - but now only to REFUSE an object that will not own up to the bytes
+  // it handed over, which keeps the accepted assurance "a check of a signature
+  // answers false for an envelope that fights back". They decide nothing about
+  // the bytes, because the bytes are already out of reach when they run.
+  //
+  // What this guard holds here now is the 0/0 half, and it is the stronger
+  // half: buffer and byteOffset are NEVER touched, so no view onto the
+  // caller's memory is built at any size. sign.spec.js "verifyRaw decides on a
+  // copy no getter can reach" holds the rest - seven shapes at three arguments
+  // and the plain array besides, each handing over rubbish and revealing the
+  // bytes that would verify only through its trick.
+  "sign.verifyRaw#0": "copy",
+  "sign.verifyRaw#1": "copy",
+  "sign.verifyRaw#2": "copy",
   "task.parseTask#0": "view",
   "task.signTask#1": "view",
   // open(anchor, chain) - chain is a list of signed lists, and length is that
@@ -382,7 +405,16 @@ const NEEDS_X25519 = [
 // callables with it and the count no longer matches. That is the one line the
 // twelfth contract of the review would have had to pass, and on a list by hand
 // it never reached it.
-const CALLABLES = 140;
+// 141 since b64.bytesOf joined the byte layer beside viewOf. It shows up in
+// this count and in no list of places below, and that is correct and worth
+// saying: it reads NO property of its argument at all, so the probe records
+// nothing for it and there is nothing for a list of readings to hold. Which is
+// also this guard's own blind spot, named where somebody will find it - a
+// function that touches nothing is invisible here, and so is the shape that
+// made this round necessary (an ordinary array rewritten in a microtask). What
+// holds those is sign.spec.js "verifyRaw decides on a copy no getter can
+// reach", which measures answers instead of touches.
+const CALLABLES = 141;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
@@ -744,6 +776,18 @@ test("every place that takes caller bytes decides on the number it works with", 
     if (!kind) { wrong.push(`${name}: not in the list, reads ${e.sigs.join(" ")}`); continue; }
     if (outOfReach.has(name)) { wrong.push(`${name}: reached although ${where}`); continue; }
     for (const s of e.sigs) if (!LEGAL[kind].includes(s)) wrong.push(`${name} (${kind}): reads ${s}`);
+    if (kind === "copy") {
+      // No view onto the caller's memory, at any size. buffer and byteOffset
+      // are the two properties a view is built from, and a "copy" place must
+      // never touch either: what it works on is its own. The reading above
+      // already says so; this says it again as an order, so a failure names
+      // the property and not just a count.
+      for (const o of e.orders) {
+        if (o.includes("F") || o.includes("O")) {
+          wrong.push(`${name} (copy): builds a view on the caller, order ${o}`);
+        }
+      }
+    }
     if (kind === "open") {
       // The length read has to be reached at all - otherwise "open" would be
       // a line nobody ever walked - and it has to come AFTER the view. The

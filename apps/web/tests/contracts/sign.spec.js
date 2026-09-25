@@ -513,70 +513,244 @@ test("a check of a signature answers false for an envelope that fights back", as
 // Reach, and it belongs in the same breath: only from JavaScript of this same
 // origin. Nothing from the network can hand a contract an object with a getter
 // on it.
-test("verifyRaw decides on the view and no getter can move it", async ({ shell }) => {
+// Seven shapes of one mistake, at all three arguments, and the reason this
+// test is built as a sweep and not as a list of the shapes somebody thought
+// of. Five rounds stood here. Each fenced the shapes it had measured by
+// putting the readings in a new order; each time the next measurement found a
+// shape the new order did not cover, because a getter is code and runs
+// wherever the object is touched. The shape that ended the argument needs no
+// getter at all:
+//
+//   const plain = new Uint8Array(64).fill(0x5a);   // an ordinary array
+//   queueMicrotask(() => plain.set(realSignature));
+//   await verifyRaw(pub, plain, msg);              // on 8b6fa87: true
+//
+// Every synchronous check saw rubbish; the engine got the real signature,
+// because the rewrite lands during the awaits. No arrangement of readings can
+// see that, and no guard that watches WHICH PROPERTIES WERE TOUCHED can see it
+// either - an ordinary array touches nothing unusual. So the fence is no
+// longer an order. verifyRaw copies the caller's bytes out of reach before it
+// decides anything, and what the caller cannot reach it cannot steer.
+//
+// Every object below hands over RUBBISH and reveals the bytes that would
+// verify only through its trick. So every answer here must be false, and a
+// true is not a strictness wobble but a forgery: the engine would have
+// verified bytes that no check ever saw.
+test("verifyRaw decides on a copy no getter can reach", async ({ shell }) => {
+  test.skip(!(await hasEd25519(shell, v.public)),
+    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/sign.js");
+    const { b64decode, bytesOf, viewOf } = await import("/assets/js/contracts/b64.js");
+    const pub = b64decode(d.public);
+    const sig = b64decode(d.envelope.sig);
+    const msg = s.message(d.purpose, b64decode(d.envelope.payload));
+    const out = {};
+
+    // A buffer of n (or n+1) rubbish bytes, and `reveal()` writes the bytes
+    // that would verify into it. Nothing here starts out honest.
+    const bed = (real, extra) => {
+      const ab = new ArrayBuffer(real.length + (extra || 0));
+      const raw = new Uint8Array(ab);
+      raw.fill(0x5a);
+      return { ab, raw, n: real.length, reveal: () => raw.set(real) };
+    };
+    const SHAPES = {
+      // reading length reveals the bytes and shrinks the reported byteLength
+      umlegend: (real) => { const b = bed(real, 1); return new (class extends Uint8Array {
+        get length() { b.reveal(); this.f = 1; return b.n; }
+        get byteLength() { return this.f ? b.n : b.n + 1; } })(b.ab, 0, b.n + 1); },
+      // an honest number that is never given: the getter fights back
+      werfend: (real) => { const b = bed(real, 0); return new (class extends Uint8Array {
+        get length() { b.reveal(); throw new TypeError("this field fights back"); } })(b.ab); },
+      // the honest number, and the buffer rewritten while it is read
+      umschreibend: (real) => { const b = bed(real, 0); return new (class extends Uint8Array {
+        get length() { b.reveal(); return b.n; } })(b.ab); },
+      // the mirror of umlegend: the reported byteLength grows instead
+      wachsend: (real) => { const b = bed(real, 1); return new (class extends Uint8Array {
+        get length() { b.reveal(); this.g = 1; return b.n; }
+        get byteLength() { return this.g ? b.n + 1 : b.n; } })(b.ab, 0, b.n + 1); },
+      // every reading honest, and the rewrite handed in afterwards
+      nachreichend: (real) => { const b = bed(real, 0); return new (class extends Uint8Array {
+        get length() { queueMicrotask(b.reveal); return b.n; } })(b.ab); },
+      // the buffer taken away underneath, from either getter
+      entziehendL: (real) => { const b = bed(real, 0); return new (class extends Uint8Array {
+        get length() { b.reveal(); try { structuredClone(b.ab, { transfer: [b.ab] }); } catch { /* gone already */ } return b.n; } })(b.ab); },
+      entziehendB: (real) => { const b = bed(real, 0); return new (class extends Uint8Array {
+        get byteLength() { b.reveal(); try { structuredClone(b.ab, { transfer: [b.ab] }); } catch { /* gone already */ } return b.n; } })(b.ab); },
+      // a Proxy that answers the second reading of every index differently
+      wechselnd: (real) => { const t = new Uint8Array(real.length).fill(0x5a); const c = new Map();
+        return new Proxy(t, { get(tt, p, r) {
+          const k = (c.get(p) ?? 0) + 1; c.set(p, k);
+          if (p === "length" || p === "byteLength") return real.length;
+          if (typeof p === "string" && p >= "0" && p <= "999999" && String(Number(p)) === p) {
+            return k === 1 ? 0x5a : real[Number(p)];
+          }
+          return Reflect.get(tt, p, r);
+        } }); },
+    };
+
+    // That the shapes really are hostile, said out loud: a later round that
+    // makes these objects harmless must not leave this test green.
+    const witness = SHAPES.umlegend(pub);
+    out.flipBefore = witness.byteLength;
+    void witness.length;
+    out.flipAfter = witness.byteLength;
+    const rewriter = SHAPES.umschreibend(pub);
+    const beforeRead = Array.from(new Uint8Array(rewriter.buffer).slice(0, 4));
+    void rewriter.length;
+    out.rewrote = beforeRead.join() !== Array.from(new Uint8Array(rewriter.buffer).slice(0, 4)).join();
+
+    // The honest answer first, so a run in which nothing verifies at all
+    // cannot look like a run in which everything was refused on purpose.
+    out.honest = await s.verifyRaw(pub, sig, msg);
+
+    const wrong = [];
+    for (const [name, make] of Object.entries(SHAPES)) {
+      for (const [where, real] of [["key", pub], ["sig", sig], ["msg", msg]]) {
+        const a = [pub, sig, msg];
+        a[where === "key" ? 0 : where === "sig" ? 1 : 2] = make(real);
+        try {
+          const r = await s.verifyRaw(a[0], a[1], a[2]);
+          if (r !== false) wrong.push(`${name} at ${where}: answered ${JSON.stringify(r)}`);
+        } catch (e) {
+          wrong.push(`${name} at ${where}: threw ${e.constructor.name}: ${e.message}`);
+        }
+      }
+    }
+    // And the shape that needs no getter at all: an ordinary array whose
+    // rewrite is simply scheduled. This is the one no ordering could reach.
+    for (const [where, real] of [["key", pub], ["sig", sig], ["msg", msg]]) {
+      const a = [pub, sig, msg];
+      const plain = new Uint8Array(real.length).fill(0x5a);
+      a[where === "key" ? 0 : where === "sig" ? 1 : 2] = plain;
+      queueMicrotask(() => plain.set(real));
+      const r = await s.verifyRaw(a[0], a[1], a[2]);
+      if (r !== false) wrong.push(`a plain array rewritten in a microtask at ${where}: answered ${JSON.stringify(r)}`);
+    }
+    out.wrong = wrong;
+
+    // THE COPY READS NOTHING AT THE OBJECT. Every accessor an object has for
+    // its bytes throws; if the copying consulted any of them it could not come
+    // back with the bytes at all. viewOf on the same object is the contrast:
+    // it must read three of them, so it refuses.
+    class AllThrow extends Uint8Array {
+      get length() { throw new Error("length"); }
+      get byteLength() { throw new Error("byteLength"); }
+      get buffer() { throw new Error("buffer"); }
+      get byteOffset() { throw new Error("byteOffset"); }
+    }
+    const src = new Uint8Array([1, 2, 3, 4]);
+    const sealed = new AllThrow(src.buffer, 0, 4);
+    try { out.copiedThroughThrowingAccessors = Array.from(bytesOf(sealed, "x")); }
+    catch (e) { out.copiedThroughThrowingAccessors = "threw " + e.constructor.name; }
+    try { viewOf(sealed, "x"); out.viewOfSameObject = "answered"; }
+    catch (e) { out.viewOfSameObject = "threw " + e.constructor.name; }
+
+    // And the whole ordered log of the byte properties verifyRaw touches on a
+    // caller's object: two readings, both AFTER the copy, and never buffer or
+    // byteOffset - because nothing is ever built on the caller's memory.
+    let seq = "";
+    class Probe extends Uint8Array {
+      get length() { seq += "L"; return super.length; }
+      get byteLength() { seq += "B"; return super.byteLength; }
+      get buffer() { seq += "F"; return super.buffer; }
+      get byteOffset() { seq += "O"; return super.byteOffset; }
+    }
+    const copyOf = (a) => new Probe(a.buffer.slice(a.byteOffset, a.byteOffset + a.length));
+    out.touched = {};
+    for (const [where, real] of [["key", pub], ["sig", sig], ["msg", msg]]) {
+      const a = [pub, sig, msg];
+      a[where === "key" ? 0 : where === "sig" ? 1 : 2] = copyOf(real);
+      seq = "";
+      out.touched[where] = { order: seq, answer: await s.verifyRaw(a[0], a[1], a[2]) };
+      out.touched[where].order = seq;
+    }
+    return out;
+  }, v);
+
+  // The honest signature still verifies, so the refusals below are refusals
+  // and not a broken vector.
+  expect(got.honest).toBe(true);
+  // The shapes are hostile: one reading of length moves what a view built
+  // afterwards would hold, and one of them rewrites the buffer outright.
+  expect([got.flipBefore, got.flipAfter]).toEqual([33, 32]);
+  expect(got.rewrote).toBe(true);
+  // Seven shapes at three arguments, and the plain array at three more: every
+  // one of them refused. A name here is a forgery, not a wobble.
+  expect(got.wrong).toEqual([]);
+  // The copying consulted no accessor of the caller's: all four throw and the
+  // bytes still come back, where viewOf - which must read three of them -
+  // refuses.
+  expect(got.copiedThroughThrowingAccessors).toEqual([1, 2, 3, 4]);
+  expect(got.viewOfSameObject).toBe("threw BadInput");
+  // And the whole reading verifyRaw does at a caller's object is length and
+  // byteLength, in that order, after the copy. No buffer, no byteOffset:
+  // nothing is built on the caller's memory, so nothing of the caller's can
+  // move what the engine is given.
+  for (const where of ["key", "sig", "msg"]) {
+    expect(got.touched[where]).toEqual({ order: "LB", answer: true });
+  }
+});
+
+// One reading of the key, for both things that are done with it.
+//
+// verify does two separate things with the key it is handed: it works out the
+// id and compares it against the one the envelope names, and it checks the
+// signature. Two readings of one object are two byte strings whenever the
+// object is not honest - and that is not untidiness, it is a forged envelope:
+// the id is worked out over a key the caller trusts, so the envelope passes
+// for that key, and the signature is then checked against a key the attacker
+// owns and has signed with. Both halves answer truthfully about the bytes they
+// were given. The envelope is still accepted for the wrong key.
+//
+// The object below needs no getter at all. It is an ordinary Uint8Array whose
+// bytes are swapped in a microtask, which lands while the id is being awaited -
+// between the two readings, and out of reach of any rule about order.
+//
+// This test was written because a mutant survived without it: `verify` reading
+// pubRaw twice instead of its one copy left every other test in this file
+// green.
+test("verify reads the key once, so the id and the signature are one key's", async ({ shell }) => {
   test.skip(!(await hasEd25519(shell, v.public)),
     "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/sign.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
-    const pub = b64decode(d.public);
-    const sig = b64decode(d.envelope.sig);
-    const msg = s.message(d.purpose, b64decode(d.envelope.payload));
+    const trusted = b64decode(d.public);
+    const payload = b64decode(d.envelope.payload);
+    const msg = s.message(d.purpose, payload);
 
-    // n+1 real bytes, of which the first n are the honest ones. Reading length
-    // turns the object's own byteLength from n+1 into n.
-    const flipping = (real) => {
-      class Trick extends Uint8Array {
-        get length() { this.flipped = true; return real.length; }
-        get byteLength() { return this.flipped ? real.length : real.length + 1; }
-      }
-      const buf = new ArrayBuffer(real.length + 1);
-      new Uint8Array(buf).set(real, 0);
-      new Uint8Array(buf)[real.length] = 0xff;
-      return new Trick(buf, 0, real.length + 1);
-    };
-    const throwing = (real) => new Proxy(real, {
-      get: (t, k) => {
-        if (k === "length") throw new TypeError("this field fights back");
-        return Reflect.get(t, k);
-      },
-    });
-
+    // A key of the attacker's own, and a signature that is genuinely his.
+    const mine = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const minePub = new Uint8Array(await crypto.subtle.exportKey("raw", mine.publicKey));
+    const mineSig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, mine.privateKey, msg));
     const out = {};
-    // That the flipping object really flips, said out loud: a later round that
-    // makes these objects harmless must not leave this test green.
-    const probe = flipping(pub);
-    out.flipBefore = probe.byteLength;
-    void probe.length;
-    out.flipAfter = probe.byteLength;
+    // The signature really is his, so a false below is a refusal of the swap
+    // and not a signature that never verified anywhere.
+    out.signatureIsGenuine = await s.verifyRaw(minePub, mineSig, msg);
+    out.signatureIsNotTheTrustedKeys = await s.verifyRaw(trusted, mineSig, msg);
 
-    const answers = [];
-    const run = async (name, a, b, c) => {
-      try {
-        const r = await s.verifyRaw(a, b, c);
-        if (r !== false) answers.push(`${name}: answered ${JSON.stringify(r)}`);
-      } catch (e) {
-        answers.push(`${name}: threw ${e.constructor.name}: ${e.message}`);
-      }
-    };
-    // The honest answer first, so a run in which nothing verifies at all - a
-    // key that no longer matches its signature, say - cannot look like a run in
-    // which everything was refused on purpose.
-    out.honest = await s.verifyRaw(pub, sig, msg);
-    await run("a key whose length moves the view", flipping(pub), sig, msg);
-    await run("a key whose length throws", throwing(pub), sig, msg);
-    await run("a signature whose length moves the view", pub, flipping(sig), msg);
-    await run("a signature whose length throws", pub, throwing(sig), msg);
-    await run("a message whose length moves the view", pub, sig, flipping(msg));
-    await run("a message whose length throws", pub, sig, throwing(msg));
-    out.wrong = answers;
+    // The envelope names the TRUSTED key and carries the ATTACKER's signature.
+    const env = { payload, kid: await s.keyID(trusted), sig: mineSig };
+    // An ordinary array: the trusted key now, the attacker's key one microtask
+    // later - that is, between working out the id and checking the signature.
+    const twoFaced = new Uint8Array(trusted.length);
+    twoFaced.set(trusted);
+    out.plainArray = Object.getPrototypeOf(twoFaced) === Uint8Array.prototype;
+    queueMicrotask(() => twoFaced.set(minePub));
+    out.accepted = await s.verify(env, twoFaced, d.purpose);
+    out.swapHappened = Array.from(twoFaced).join() === Array.from(minePub).join();
     return out;
   }, v);
-  // The honest signature still verifies, so the six refusals below are
-  // refusals and not a broken vector.
-  expect(got.honest).toBe(true);
-  // And the hostile object is hostile: one reading of its length moves what a
-  // view built afterwards would hold.
-  expect([got.flipBefore, got.flipAfter]).toEqual([33, 32]);
-  expect(got.wrong).toEqual([]);
+  // The attacker's signature verifies under his own key and not under the
+  // trusted one, so the setup is a real forgery attempt.
+  expect(got.signatureIsGenuine).toBe(true);
+  expect(got.signatureIsNotTheTrustedKeys).toBe(false);
+  // Nothing exotic was needed: an ordinary array, and the swap did happen.
+  expect(got.plainArray).toBe(true);
+  expect(got.swapHappened).toBe(true);
+  // And the envelope is refused: the id and the signature were decided on one
+  // and the same reading of the key.
+  expect(got.accepted).toBe(false);
 });

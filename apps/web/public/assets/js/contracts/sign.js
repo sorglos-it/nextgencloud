@@ -13,7 +13,7 @@
 // nowhere else. An engine whose Web Crypto has no Ed25519 - the WebKit that
 // Playwright brings is one - can tell no right signature from a wrong one, so
 // it refuses every one of them.
-import { b64encode, b64decode, concat, utf8, equal, encodedLen, viewOf, BadInput } from "./b64.js";
+import { b64encode, b64decode, concat, utf8, equal, encodedLen, viewOf, bytesOf, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes } from "./json.js";
 
 // Purposes. Nothing here is derived from another: each one is the text Go
@@ -160,84 +160,91 @@ export async function verifyRaw(pubRaw, sig, msg) {
   // caller hands over may be a proxy, and then instanceof and length throw
   // where Go would have had a []byte and nothing to throw.
   try {
-    // THE VIEWS COME FIRST, AND NOTHING IS DECIDED BEFORE THEM. This order is
-    // the whole of it, and the round before this one had it the other way
-    // round with a wrong reason written above it in capitals. That reason said
-    // the two length lines "can only refuse. Whatever gets past them is
-    // decided a second time, below, on the views." A getter is code: reading
-    // length runs it, and what it does while it runs changes the view that is
-    // built afterwards. So a check that reads length does not only refuse - it
-    // helps decide which bytes become the view.
+    // THE COPIES COME FIRST, AND THE CALLER IS NOT ASKED ANYTHING BEFORE THEM.
     //
-    // Measured in chromium over a real Ed25519 signature over the real bytes,
-    // with a buffer of 33 bytes holding 32 of real key and one of rubbish:
+    // Five rounds stood here and argued about ORDER: read the lengths first,
+    // or build the views first. Each round fenced the shapes it had measured
+    // and the next measurement found a new one, because a getter is code and
+    // runs wherever the object is touched. The shapes, all measured:
     //
-    //   class Trick extends Uint8Array {
-    //     get length()     { this.flipped = true; return 32; }
-    //     get byteLength() { return this.flipped ? 32 : 33; }
+    //   umlegend       reading length makes byteLength shrink 33 -> 32
+    //   werfend        the length getter throws
+    //   umschreibend   the length getter rewrites the buffer the view is on
+    //   wachsend       reading length makes byteLength grow 32 -> 33
+    //
+    // umlegend and wachsend are mirrors: whichever order refuses the one
+    // accepts the other, which is why the argument never converged. And the
+    // measurement that ended it found a shape no order can reach at all:
+    //
+    //   class T extends Uint8Array {
+    //     get length() { queueMicrotask(() => raw.set(realSignature)); return 64; }
     //   }
     //
-    //   length read first, then the view   verifyRaw answered true
-    //   the view first, then length        verifyRaw answers false
+    //   every synchronous check saw   90 90 90 90   (rubbish)
+    //   crypto.subtle.verify got      118 213 135 142  (the real signature)
+    //   verifyRaw answered            true
     //
-    // Reading length turned the object's own byteLength from 33 into 32, so
-    // the view built next was the 32 real bytes of a key that nobody handed
-    // over as a key. An honest reading sees 33 bytes and refuses.
+    // The buffer is rewritten after the last check, while the engine is
+    // awaited. No arrangement of synchronous readings can see it, because at
+    // every moment a reading could have looked, the bytes were honest rubbish.
     //
-    // viewOf asks buffer, byteOffset and byteLength once each and answers with
-    // a plain Uint8Array. From this line on every number comes off that view -
-    // the two sizes, the key the engine imports, the bytes it verifies - and
-    // no getter of the caller's can reach any of them. It also stands in for
-    // the instanceof check that used to be here: what is no Uint8Array leaves
-    // viewOf as a BadInput, and the catch below answers false for it, which is
-    // the same answer as before.
+    // So the ordering argument is over, and what replaces it is not a better
+    // order but a different object. b64.bytesOf copies the caller's bytes into
+    // a buffer of ours. The caller holds no reference to it and can never
+    // touch it again, whatever shape it has and whenever it tries. The engine
+    // is handed the copies; every size is taken off the copies; nothing below
+    // this line reads a byte the caller could still have changed.
     //
-    // The engine is handed the views for the same reason. The Web Crypto API
-    // takes the bytes an object really holds out of its internal slot, so
-    // measuring the object and then handing that same object over checks one
-    // number and works with another - the shape that let noise.Transport.seal
-    // put 70000 bytes through a bound of 65519 with a single reading. Here the
-    // engine caught it either way in chromium and webkit, and that was luck
-    // and not structure: Ed25519 has one key size, so importKey refused what
-    // got past the check. Now the sizes are decided on the views and the views
-    // are what the engine gets, so it no longer rests on the engine.
-    const k = viewOf(pubRaw, "sign: key is not bytes");
-    const s = viewOf(sig, "sign: signature is not bytes");
-    const m = viewOf(msg, "sign: message is not bytes");
+    // bytesOf reads NO property of the object: `new Uint8Array(v)` copies out
+    // of the internal slots, which is where the truth lives and where no
+    // getter can be installed. It also stands in for the instanceof check that
+    // used to be here - what is no Uint8Array leaves it as a BadInput and the
+    // catch below answers false, the same answer as before.
+    const k = bytesOf(pubRaw, "sign: key is not bytes");
+    const s = bytesOf(sig, "sign: signature is not bytes");
+    const m = bytesOf(msg, "sign: message is not bytes");
     if (k.length !== KEY_SIZE || s.length !== SIG_SIZE) return false;
-    // AND ONLY NOW the caller's own objects are asked for their size. After
-    // the views they can steer nothing: the bytes are settled, so this line
-    // can only refuse, which is what the line above it was wrongly said to do.
+    // AND ONLY NOW the caller's own objects are asked for their numbers - and
+    // now that sentence is true, which is the whole gain. The five rounds each
+    // wrote some version of "after this point the caller can steer nothing",
+    // and on a view it was never true: the view kept pointing at the caller's
+    // buffer, so a getter running here still decided which bytes the engine
+    // would see. On a copy it is true by construction. These readings can only
+    // REFUSE. Whatever they run, whatever they rewrite, whatever they take
+    // away - the bytes that will be verified were settled three lines up.
     //
-    // It keeps an accepted assurance: "a check of a signature answers false
-    // for an envelope that fights back" hands over a length behind a getter
-    // that throws, and with no reading of length at all that throw never
-    // happens and a real signature behind a hostile object is answered true.
-    // Measured the same way as the flipping object above: with the views first
-    // and no reading of length, the throwing object is answered true; with
-    // this line, false. Neither order alone is safe against both, and that is
-    // why this stands after the views and not before them.
+    // Because they can only refuse, their order among themselves does not
+    // matter either, and that is measured and not assumed: the seven shapes at
+    // the three positions answer the same with this line reversed.
     //
-    // A length that disagrees with its view is refused here, not ignored the
-    // way b64.viewOf ignores it. That is a refusal and never an acceptance, so
-    // it lets nothing through that the byte layer would have stopped, and it
-    // is exactly as strict as what stood here before: measured in chromium on
-    // both stands, a 32-byte object whose length says 33 is refused either
-    // way, and an honest subarray of a larger buffer - length and view agree
-    // at 32 - verifies either way. It is held for all three arguments and not
-    // only for the two with a fixed size, because the promise at the top of
-    // this function is made for all three.
+    // They are here to keep an accepted assurance - "a check of a signature
+    // answers false for an envelope that fights back". An object whose numbers
+    // disagree with the bytes it handed over is refused: one that throws, one
+    // that lies, one that threw its own buffer away between the copy and here.
+    // byteLength is asked beside length because an object can lie in either,
+    // and on a copy asking more is free of risk.
     //
-    // tests/contracts/bytes.spec.js marks these three positions "open" and
-    // holds them to reading length AFTER the view and never before it; the
-    // order is what that guard reads, and sign.spec.js "verifyRaw decides on
-    // the view and no getter can move it" measures both hostile objects.
-    if (pubRaw.length !== k.length || sig.length !== s.length || msg.length !== m.length) return false;
+    // An honest object always agrees with its copy, so nothing honest is
+    // refused here: a plain array, and an honest subarray of a larger buffer,
+    // pass with length and byteLength both equal to the copy - measured.
+    //
+    // tests/contracts/bytes.spec.js marks these three positions "copy" and
+    // holds them to touching no byte property of the caller at all; sign.spec.js
+    // "verifyRaw decides on a copy no getter can reach" measures all seven
+    // shapes at all three positions.
+    if (!agrees(pubRaw, k) || !agrees(sig, s) || !agrees(msg, m)) return false;
     const key = await crypto.subtle.importKey("raw", k, { name: "Ed25519" }, false, ["verify"]);
     return (await crypto.subtle.verify({ name: "Ed25519" }, key, s, m)) === true;
   } catch {
     return false;
   }
+}
+
+// agrees asks a caller's object whether it owns up to the bytes it handed
+// over. It runs only after those bytes are copied out of reach, so it decides
+// nothing about them and can do nothing but refuse.
+function agrees(v, copied) {
+  return v.length === copied.length && v.byteLength === copied.length;
 }
 
 // verify checks env against pubRaw for purpose (Go: sign.Verify).
@@ -264,9 +271,24 @@ export async function verify(env, pubRaw, purpose) {
     // run here, because Go does not run it either: the parser of every
     // document that holds an envelope has run it, and Verify of Go takes a
     // payload of no bytes (shared/sign: TestSignVerifyEmptyPayload).
-    if (payload.length > MAX_PAYLOAD) return false;
-    if (kid !== (await keyIDAsync(pubRaw))) return false;
-    return await verifyRaw(pubRaw, sig, message(purpose, payload));
+    // The key and the payload are copied here, ONCE, and everything below
+    // works on those copies. Without that this function reads each of them
+    // twice from the caller's object - the key for its id and again for the
+    // signature, the payload for its bound and again for the message - and two
+    // readings of one hostile object are two different byte strings. That is
+    // not a stricter kind of hygiene, it is a forgery: an object that answers
+    // the first reading with a trusted key and the second with the attacker's
+    // own passes `kid` against the trusted one and has the signature checked
+    // against the other. Copying once is what makes the id and the signature
+    // belong to the same key.
+    const pub = bytesOf(pubRaw, "sign: key is not bytes");
+    const load = bytesOf(payload, "sign: payload is not bytes");
+    // Same as in verifyRaw, and for the same reason: after the copies these
+    // can only refuse, so an object that fights back is still answered false.
+    if (!agrees(pubRaw, pub) || !agrees(payload, load)) return false;
+    if (load.length > MAX_PAYLOAD) return false;
+    if (kid !== (await keyIDAsync(pub))) return false;
+    return await verifyRaw(pub, sig, message(purpose, load));
   } catch {
     return false;
   }

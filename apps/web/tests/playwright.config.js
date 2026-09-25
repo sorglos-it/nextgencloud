@@ -5,7 +5,14 @@ import { defineConfig, devices } from "@playwright/test";
 
 // The built-in PHP server stands in for Apache: index.php is the only entry
 // point there too, and assets/ is served straight from the file system.
-const port = 8099;
+//
+// NGC_WEB_TEST_PORT moves it. Two runs of this suite at once - two sessions on
+// one machine, or a measurement beside the run it is measured against - both
+// bind the same socket, and the second one does not fail cleanly: it finds a
+// server already answering on that port and tests the OTHER working tree
+// without saying so. A port per run is the cheapest way to make that
+// impossible. 8099 stays the default, so nothing that does not set it changes.
+const port = Number(process.env.NGC_WEB_TEST_PORT) || 8099;
 
 // Where php is, in the same four steps as tools/check.sh: NGC_PHP, then
 // tools/local.env (not in git, one NGC_PHP=<path> line), then php from the

@@ -54,6 +54,60 @@ export function viewOf(v, why) {
   }
 }
 
+// bytesOf answers with the caller's bytes as bytes of our own: a fresh array
+// on a fresh buffer, which the caller holds no reference to and can therefore
+// never touch again. viewOf is the single reading; this is the single reading
+// AND the end of the caller's reach.
+//
+// Why a view is not enough, measured. A view is built on the caller's buffer,
+// so it keeps answering with whatever that buffer holds at the moment it is
+// read. Five rounds fenced five shapes that use this - a length getter that
+// relays, that throws, that rewrites the buffer, that makes byteLength grow -
+// each round by putting the readings in a new order, and each round the next
+// measurement found a shape the new order did not cover. The sixth measurement
+// ended the argument, because it found one that NO order can cover:
+//
+//   class T extends Uint8Array {
+//     get length() { queueMicrotask(() => raw.set(realSignature)); return 64; }
+//   }
+//
+//   every synchronous check saw   90 90 90 90   (rubbish)
+//   crypto.subtle.verify got      118 213 135 142  (the real signature)
+//   verifyRaw answered            true
+//
+// The buffer is rewritten in a microtask, after the last check and while the
+// engine is awaited. There is no synchronous order to get right: at every
+// moment a check could have looked, the bytes were rubbish. Ordering ends
+// here, and the only thing left that works is to stop handing out a window
+// onto somebody else's memory. What the caller cannot reach, the caller
+// cannot steer - whatever the shape.
+//
+// It reads NO property of v. `new Uint8Array(v)` on a typed array copies out
+// of the internal slots [[ViewedArrayBuffer]], [[ByteOffset]] and
+// [[ArrayLength]], which is where the truth about an object's bytes lives and
+// the one place a getter cannot be installed. So a subclass that overrides
+// length, byteLength, buffer or byteOffset is not consulted at all, and the
+// copy is the honest bytes even when every accessor lies. (An object that is
+// no typed array but passes instanceof - a Proxy - has no such slots, so it is
+// copied through its length and its indexes instead. It still ends up as one
+// settled copy, which is the property: what was checked is what is used.)
+//
+// The number is therefore taken once and cannot move afterwards. A caller's
+// own length and byteLength may still be compared against it - see
+// sign.verifyRaw - and such a comparison can now only REFUSE, because the
+// bytes are already out of reach before it runs. That is the difference the
+// five rounds were missing: a reading before the bytes are settled helps
+// decide them, a reading after can only throw the call away.
+export function bytesOf(v, why) {
+  if (!(v instanceof Uint8Array)) throw new BadInput(why);
+  try {
+    return new Uint8Array(v);
+  } catch {
+    // A buffer taken away underneath it, or a Proxy whose traps throw.
+    throw new BadInput(why);
+  }
+}
+
 export function encodedLen(n) {
   return Math.floor((n * 8 + 5) / 6);
 }
