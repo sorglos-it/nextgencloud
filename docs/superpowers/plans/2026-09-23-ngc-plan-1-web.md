@@ -68,6 +68,13 @@ Diese Regeln gelten in jeder Aufgabe, auch wenn sie dort nicht wiederholt werden
   Firefox 130, Safari 17.4. Fehlt eines davon, zeigt die Shell eine Meldung auf Deutsch und lädt
   nichts weiter.
 - **Reihenfolge:** erst der fehlschlagende Test, dann der Code (TDD).
+- **Der Byte-Waechter** `apps/web/tests/contracts/bytes.spec.js` laeuft ueber jeden
+  Export jedes Vertrags. Er liest den Ordner `contracts/` selbst aus, findet eine
+  neue Datei also allein. Von Hand gepflegt sind **drei** Stellen, nicht zwei:
+  `ENTRIES` (die benannten Eingaenge), `CALLABLES` (die Anzahl) und `CLASSES` (die
+  ausgefuehrten Klassen). Wer eine Klasse mit Methoden exportiert, faellt sonst in
+  die `noInstance`-Zusicherung. Die neuen Zahlen **misst** man: der Waechter meldet
+  die tatsaechliche, wenn die eingetragene nicht stimmt.
 - **Dateirechte und Pfade:** Alle Pfade in diesem Plan sind relativ zum Repo-Stamm.
 
 ---
@@ -3952,6 +3959,11 @@ test("the size limits are checked at the header, before any data is read", async
         for (let i = 0; i < u.MAX_ENTRIES; i++) w.file("ui/f" + i, new Uint8Array(0));
         u.walkUI(w.close());
       }),
+      // ACHTUNG, diese zwei Faelle messen nicht, was ihr Name sagt: der
+      // UIWriter haelt dieselben Grenzen und wirft schon beim Schreiben, also
+      // wird walkUI nie gerufen und fails() faengt den Wurf des SCHREIBERS.
+      // Gemessen wird damit die Schreibseite, nicht die Leseseite. Bau die
+      // Bloecke roh und mit eigener Pruefsumme, so wie Gos TestWalkUILimits.
       entriesOver: fails(() => {
         const w = new u.UIWriter();
         for (let i = 0; i <= u.MAX_ENTRIES; i++) w.file("ui/f" + i, new Uint8Array(0));
@@ -4358,7 +4370,11 @@ test("a catalog is only taken from its own store, and never an older one", async
     return {
       good: await ok(d.catalog, 0),
       rollback: await ok(d.catalog, d.catalogLastSeq + 1),
-      rejects: await Promise.all(d.catalogRejects.map((r) => ok(r.catalog, 0))),
+      // Jeder Ablehnungsfall bringt sein eigenes lastSeq mit: "older than the
+      // last one seen" traegt 6 und MUSS bei 0 angenommen werden. Mit der 0 ist
+      // dieser Test gegen einen Pruefer ganz ohne Rueckroll-Pruefung gruen -
+      // also ein Test, der fuer seine eigene Sache nicht scheitern kann.
+      rejects: await Promise.all(d.catalogRejects.map((r) => ok(r.catalog, r.lastSeq))),
       otherStore: await ok(d.catalog, 0) && !(await (async () => {
         try {
           await c.verifyCatalog(env(d.catalog), { ...store, id: "other" }, 0);
@@ -4428,11 +4444,16 @@ spielt niemand zurück.
 
 `parseManifest(bytes)` liest das Manifest mit `manifestBudget` und prüft es wie
 `store.ParseManifest`: `id` ein `validAppID` ohne Kern-Präfix, `name`/`publisher`/`version`,
-`icon` und `ui.entry` je ein `validPath`, `ui.width`/`ui.height` 0 oder 100 bis 4096, Aktionen mit
+`icon` und `ui.entry` je ein `validPath`, `ui.width`/`ui.height` 0 oder 200 bis 4000, Aktionen mit
 `validName`, `title` als `validText`, `service` aus den Diensten, `timeout` 0 bis 3600, Dienste mit
 `validName` und `command` mit 1 bis 32 Teilen, davon der erste absolut, `start` leer oder eine
-Aktion, `runtime` leer oder `podman`, `needs` wie im Katalog, `cpu` 0 bis 64000, `memory` 0 bis
-262144, `minNgc` leer oder `validVersion`.
+Aktion, `runtime` leer oder `podman`, `needs` wie im Katalog, `cpu` 0 oder 100 bis 64000, `memory`
+0 oder 16 bis 65536, `minNgc` leer oder `validVersion`.
+
+Diese drei Grenzen standen hier weiter als in Go und sind gegen
+`shared/store/manifest.go` berichtigt (`size` und die Zeile fuer `cpu`/`memory`).
+Eine Shell, die annimmt, was der Parser der API ablehnt, waere eine zweite Regel;
+der eingefrorene Vertrag gilt.
 
 Dazu die kleinen Regeln:
 
