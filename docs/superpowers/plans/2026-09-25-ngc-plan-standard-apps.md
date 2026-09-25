@@ -169,9 +169,11 @@ zwischen Benutzern bräuchte einen Dienst und bekommt einen eigenen Plan.
 
 ## 5. Gemeinsame Regeln für alle Apps
 
-- **Kein Framework, kein Build-Schritt:** HTML, CSS und ES-Module wie im Webinterface. Kein
-  `eval`, kein `new Function`, kein `innerHTML`. Texte kommen über `textContent`, Grafik über
-  Canvas oder SVG-Elemente aus `createElementNS`.
+- **Kein Framework, kein Build-Schritt:** HTML, CSS und klassische Skripte. Keine ES-Module: Die
+  Shell baut jede Datei als `data:`-Adresse ins Dokument ein (Plan 1, Aufgabe 22), und ein Modul
+  aus einer `data:`-Adresse kann keine weiteren Module laden. Kein `eval`, kein `new Function`,
+  kein `innerHTML`. Texte kommen über `textContent`, Grafik über Canvas oder SVG-Elemente aus
+  `createElementNS`. Weil der iframe keine eigene Herkunft hat, gibt es auch kein `localStorage`.
 - **Fremde Inhalte sind Daten:** SVG, Markdown, HTML-Dokumente, E-Mails und Dateinamen werden nie
   als HTML eingefügt. SVG zeigt der Bildbetrachter nur über `<img>` an, wo Skripte nicht laufen.
   Markdown wird von einem eigenen Parser in DOM-Knoten übersetzt, der nur eine feste Liste von
@@ -260,6 +262,11 @@ Welle 2 ist der Minensucher: Er ist die kleinste App und prüft den ganzen Weg o
 - Es gibt keinen zentralen Dateibereich. Wo Dateien liegen, bestimmt die App, die gerade läuft
   (Baustein B2). Das hat nichts mit Teilprojekt 7 „Fileserver“ zu tun: Der Fileserver ist die
   grafische Oberfläche, um einen Fileserver (SMB, NFS) einzurichten.
+- Jede App bekommt ihre eigene Sitzung, damit die Apps parallel entstehen. Zuerst starten nur die
+  acht Apps, die weder einen Dienst noch einen Baustein aus Abschnitt 3 brauchen: Minensucher,
+  2048, Solitär, Sudoku, Schach, Uhr, Einheitenumrechner und Zeichentabelle. Sie bauen Logik,
+  Oberfläche und Tests; gepackt wird, sobald `ngc.js` aus Plan 1 steht. Die übrigen Apps starten
+  wellenweise, sobald ihre Bausteine im Vertrag stehen.
 
 **Offen:**
 
@@ -267,11 +274,10 @@ Welle 2 ist der Minensucher: Er ist die kleinste App und prüft den ganzen Weg o
    B3, B4, B7 vor Welle 2 und B5, B6 mit Welle 3?
 2. **Sonderrechte (B7):** Ist eine feste Liste mit Klartext-Namen wie `host.read-stats` richtig,
    statt „Netz / root / sonstiges“ wie im Entwurf bisher?
-3. **Wer baut die Apps in `ngc-storeapps`:** eine eigene Sitzung „Apps“, oder die Web-Sitzung?
-4. **Grundausstattung ab Werk:** Über den Store mit Auswahl in der Ersteinrichtung (Abschnitt 7),
+3. **Grundausstattung ab Werk:** Über den Store mit Auswahl in der Ersteinrichtung (Abschnitt 7),
    oder fest im Kern wie App-Store und Benutzer & Rechte?
-5. **Neue Fremdmodule:** pdf.js für den PDF-Betrachter. Weitere wird es für Vorschaubilder
+4. **Neue Fremdmodule:** pdf.js für den PDF-Betrachter. Weitere wird es für Vorschaubilder
    (HEIC, RAW) und Musik-Tags geben, falls wir sie nicht selbst schreiben wollen. Soll ich sie
    einzeln anfragen, wenn die Welle kommt?
-6. **Einstellungen:** Soll die Einstellung der Updates aus Plan 1 in die App Einstellungen
+5. **Einstellungen:** Soll die Einstellung der Updates aus Plan 1 in die App Einstellungen
    umziehen, oder bleibt sie im App-Store?
