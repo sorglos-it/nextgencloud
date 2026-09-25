@@ -692,10 +692,14 @@ func TestASignedVersionPastTheAnchorIsTheSendersFault(t *testing.T) {
 // come back, an anchor that pins nothing is a configuration that will not, and
 // only the first of them is counted and written.
 //
-// Three anchors, because there are three ways to hold none: without a number,
-// without a hash, and with a hash that is no SHA-256 (chain.validAnchor). All
-// three are read before Apply asks whether the state was ever loaded, so none
-// of them needs a keeper that read it.
+// Three anchors here, but the wire cannot tell them apart: chain.Keeper.Apply
+// turns all three into the same chain.ErrNoAnchor, so this test reaches one
+// answer three times over, not three. That each is refused on its own —
+// without a number, without a hash, with a hash that is no SHA-256
+// (chain.validAnchor) — is what TestAnAnchorThatPinsNothingIsThisServersFault
+// in chain holds. This test stays: it costs nothing and still walks the path
+// over the wire, and all three are read before Apply asks whether the state
+// was ever loaded, so none of them needs a keeper that read it.
 func TestAnAnchorThatPinsNothingEndsEveryChannelWithoutALine(t *testing.T) {
 	w := newWorld(t)
 	v2 := w.next(t)
@@ -779,6 +783,13 @@ func TestManyChannelsAtOneAnchorThatPinsNothingWriteNoLine(t *testing.T) {
 // the anchor is the wrong one, so what goes out is the code for a wrong chain.
 // Whoever finds a second word on which version this controller's anchor names
 // can tell the two apart, and changes this test first.
+//
+// This gap cannot be fenced any tighter on its own: the same line — trust's
+// final return nil, refuse(wire.CodeVerify) — is what
+// TestAFreshControllerAnchoredInTheMiddleTakesItsFirstChain and
+// TestASignedVersionPastTheAnchorIsTheSendersFault fall through to as well,
+// each for a chain of its own. Red here on its own is that gap closing, not a
+// fence breaking: fix the comment above first, then retire this test.
 func TestAnAnchorCopiedFromElsewhereBlamesEverySender(t *testing.T) {
 	w := newWorld(t)
 	// Version 1 of a second installation: the same admin, correct in every

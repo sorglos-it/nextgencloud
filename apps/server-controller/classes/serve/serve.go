@@ -143,7 +143,8 @@ type Server struct {
 	// not keep. The first of them writes a line, the rest only count: the
 	// fault is local and does not change from channel to channel, while how
 	// many channels arrive is the API's to choose.
-	// TestATrustListThatCannotBeKeptWritesOneLineForManyChannels holds it.
+	// TestATrustListThatCannotBeKeptWritesOneLineForManyChannels and
+	// TestTheFirstChannelThatCannotKeepTheTrustListWritesTheLine hold it.
 	storeFails atomic.Uint64
 }
 

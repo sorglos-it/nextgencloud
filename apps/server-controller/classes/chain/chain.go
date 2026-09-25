@@ -81,8 +81,8 @@ func New(st *state.Store, a trust.Anchor) *Keeper { return &Keeper{st: st, ancho
 // while the other is E_INTERNAL. Only a chain that got past all three meets
 // this gate. Whoever builds the server around a keeper therefore calls this
 // first and lets a failure of it end the start. No program does yet — only
-// the tests of this package and of serve build a keeper at all, so "never
-// loaded" is what a first wiring gets if it forgets this.
+// tests build a keeper at all, so "never loaded" is what a first wiring gets
+// if it forgets this.
 func (k *Keeper) Load(ctx context.Context) error {
 	if !k.validAnchor() {
 		return ErrNoAnchor
