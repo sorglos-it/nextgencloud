@@ -201,14 +201,20 @@ primary() {
 # CONTEXT FILE with tpm2_sessionconfig. That reads the attributes out of a
 # tpm2-tools file; the TPM only has to still hold the context for the file to
 # load. It is therefore a statement this script makes about itself, and a weak
-# one - measured, one tpm2_sessionconfig --enable-encrypt --enable-decrypt on
-# the same file AFTER the tpm2_unseal keeps the whole run green while the secret
-# came out of the TPM in the clear. An earlier version wrote the sentence into a
-# file of its own; that was worse, but not different in kind.
+# one - measured at the state before the wire case existed, the encryption taken
+# out AND one tpm2_sessionconfig --enable-encrypt --enable-decrypt put on the
+# same file AFTER the tpm2_unseal kept the whole run green while the secret came
+# out of the TPM in the clear. An earlier version wrote the sentence into a file
+# of its own; that was worse, but not different in kind. Today the same change
+# ends the run at the wire case, with eleven ok behind it - this check goes
+# green through it, exactly as it did then.
 # The property itself - the unsealed secret does not travel in the open - is
 # asked of the wire: recovery-test.sh has swtpm write it down (--log level=20)
-# and counts how often the plaintext crosses. Honest run 2, both in the Create
-# of the sealing, none in the opening; with the encryption gone 3.
+# and counts how often the plaintext crosses, and in which direction. Honest run
+# 2 hits, both in what the tools SENT during the Create of the sealing, and not
+# one in anything the TPM answered. That last number is the one that is checked,
+# and it has no counterpart here: whatever this script does with its sessions,
+# the secret must never come back out in the clear.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
 # tpm2-tools 5.7: --tpmkey-context on a session without --policy-session is
@@ -315,11 +321,14 @@ open_branch() {          # $1 = branch
 	# The secret goes to stdout because the test compares it. The real version
 	# in work package 6 uses tpm2_unseal -o and never lets it near a terminal.
 	tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx"
-	# And the session stays, together with its context file. Only while the TPM
-	# still holds it can the caller ask the TPM itself what that session was
-	# made of, and that is how recovery-test.sh checks the parameter encryption
-	# now. The old line here flushed it, and nothing outside this script could
-	# then see anything but a file this script had written.
+	# And the session stays, together with its context file. What that is worth
+	# is written out at new_session above, and it is less than this comment used
+	# to claim: recovery-test.sh reads the CONTEXT FILE with tpm2_sessionconfig,
+	# the TPM only has to still hold the context for the file to load, and the
+	# parameter encryption is NOT checked there - the wire case at the foot of
+	# recovery-test.sh does that. What the handover is still good for is the
+	# plain forgetting of the switch, with a clearer message than the wire gives.
+	# The old line here flushed the session, and then not even that was possible.
 	# It costs nothing, and that was measured too, not assumed: the TPM empties
 	# a policy session's digest the moment it has authorised something. The
 	# handed-over session reads back as Session-Digest: 00...00, and unsealing

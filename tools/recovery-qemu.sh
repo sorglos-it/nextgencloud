@@ -112,6 +112,11 @@ check() {
 	# policy tests would change exactly the PCR state they seal against.
 	tools/recovery-swtpm.sh reset qemu
 	sock="$work/tpm/qemu/sock"
+	# Laid down once and then used for good: the firmware writes into this file,
+	# so a copy from an earlier run - and from an earlier OVMF - quietly outlives
+	# every check after it. No fault today, because PCR 7 below reads the state
+	# the machine really booted with and a wrong one goes red there. Whoever
+	# wants a fresh one deletes it: rm -f "$vars".
 	if [ ! -f "$vars" ]; then cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd "$vars"; fi
 	rm -f "$qmp" "$serial"
 
@@ -121,6 +126,18 @@ check() {
 	# No accel=kvm: this host passes no virtualisation through, QEMU emulates.
 	# -pidfile is what is_our_qemu knows the VM by; where it stands does not
 	# matter, but without it stop no longer finds the machine.
+	#
+	# TWO SWITCHES ON THIS COMMAND ARE CHECKED BY NO CASE OF THIS PACKAGE, and
+	# they are the two that matter for security: "smm=on" in -machine and
+	# "property=secure,value=on" in the -global line. Together they are what
+	# keeps the variable store writable from system management mode alone, so
+	# that a guest cannot overwrite the secure boot keys. Measured, each one
+	# struck out on its own and the whole test run afterwards: fourteen ok and
+	# EXIT=0 both times, the PCR 7 check below among them. The firmware measures
+	# nothing about either of them, so nothing here can see them go - catching it
+	# needs a guest system that tries the write, and work package 0 boots none.
+	# No promise for later is made here; the comment at the PCR 7 check below
+	# says the same thing from the other end.
 	qemu-system-x86_64 -machine q35,smm=on -m 1024 -no-reboot -display none \
 		-global driver=cfi.pflash01,property=secure,value=on \
 		-drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd" \
@@ -293,9 +310,12 @@ check() {
 	# What this value does NOT cover, measured and written down rather than
 	# hoped away: taking away
 	# "-global driver=cfi.pflash01,property=secure,value=on" leaves PCR 7 at the
-	# wanted value. That switch decides whether the variable store can be written
-	# from outside SMM, and the firmware measures nothing about it. Catching it
-	# needs a guest system that tries the write, and work package 0 has none.
+	# wanted value, and so does taking away "smm=on" from the -machine line.
+	# The two together decide whether the variable store can be written from
+	# outside system management mode, and the firmware measures nothing about
+	# either. Catching them needs a guest system that tries the write, and work
+	# package 0 has none. Both are named at the command itself as well, where
+	# they stand.
 	# The price of a fixed value is named too: a new OVMF makes this line red,
 	# and somebody has to measure the new value and put it here. That is the
 	# safe direction - the other way round is a check that stays green while
