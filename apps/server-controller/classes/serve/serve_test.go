@@ -729,6 +729,45 @@ func TestAnAnchorThatPinsNothingEndsEveryChannelWithoutALine(t *testing.T) {
 	}
 }
 
+// The same fault over one tunnel, many channels: not one of them writes. This
+// is the half three servers cannot hold, and it is the half that matters, because
+// how many channels arrive is the API's to choose and not this server's. A line
+// in that branch would be a line a peer can ask for as often as it likes, on a
+// controller whose anchor it cannot repair by asking.
+//
+// Eight is enough to see a slip: a rule that writes once per channel gives
+// eight, one that writes every channel but the first gives seven, and both are
+// as far from none as any number is.
+func TestManyChannelsAtOneAnchorThatPinsNothingWriteNoLine(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	// One controller, one anchor that pins nothing — here an anchor file that
+	// carries a number and no hash — and every channel of one tunnel meeting
+	// it.
+	w.fresh(t, trust.Anchor{Seq: 1}, false)
+	const channels = 8
+	ended := w.tunnel(t, func(a *apiSide) {
+		for n := uint32(1); n <= channels; n++ {
+			a.open(n, trustOpen(t))
+			a.data(n, chainOf(t, v2))
+			a.eof(n)
+			wantCode(t, a.closed(n), wire.CodeInternal)
+			a.shut(n)
+		}
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if n := w.notes.n.Load(); n != 0 {
+		t.Errorf("%d channels at an anchor that pins nothing wrote %d lines, want none", channels, n)
+	}
+	if got := w.srv.StoreFailures(); got != 0 {
+		t.Errorf("StoreFailures = %d after %d such channels, want 0: an anchor that pins nothing is no store that failed",
+			got, channels)
+	}
+}
+
 // An anchor of this controller that is well formed and still not this
 // installation's — paired against another installation, or an anchor file
 // copied off a second server — answers a faultless chain with E_VERIFY, which
