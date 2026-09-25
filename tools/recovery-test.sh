@@ -8,16 +8,20 @@
 # instance main keeps running, 0x81000001 stays persistent inside it, and
 # dist/recovery/work still holds the files of the last case - the sealed object,
 # the PCR value files and the contexts. The unsealed secret is NOT among them,
-# and that is not a hope: this file searches the WHOLE of dist/recovery for it
-# three times over - after the sealing, after the first opening and as its LAST
-# case - in both shapes it can take: the characters themselves and the hex dump
-# of a swtpm recording.
-# The whole tree and not work/ alone, and that is measured, not tidiness: with
-# "tpm2_unseal ... | tee $work/dek.bin" in open_branch - one level above work/ -
-# the run stayed green, fourteen ok and EXIT=0, and dist/recovery/dek.bin lay
-# there afterwards with the secret in it, mode 0664, FOR GOOD. Nothing ever
-# empties that level: reset takes work/ and the state directory of its own
-# instance, and neither of them is it.
+# and that is not a hope: this file searches for it three times over - after the
+# sealing, after the first opening and as its LAST case.
+# WHERE it searches, and the level is measured, not guessed: the whole of dist/,
+# plus every file anywhere under the project that THIS RUN created or changed
+# (dist/.lauf-stempel dates the start of the run). Twice the level has been too
+# low. With "tpm2_unseal ... | tee $work/dek.bin" a search over work/ alone left
+# the run green, fourteen ok and EXIT=0, while dist/recovery/dek.bin held the
+# secret, mode 0664, FOR GOOD - nothing ever empties that level. With the search
+# over dist/recovery alone a dist/dek.bin one level further up did the same. So
+# the question is no longer which directory but which FILES this run touched,
+# and the answer to that does not have a level.
+# WHAT it searches for: every shape the same eight bytes can stand in, not the
+# two that happened to turn up. The list and the reason stand at schreibweisen
+# below; what it does NOT reach stands there too.
 # Measured why each of the three points is there: with shred -u turned
 # into a no-op the run stayed green nine times over while work/secret.bin lay
 # there with the secret in it; with the search only in the middle of the run, as
@@ -44,17 +48,30 @@ fi
 # exists: the run addresses the simulator through use_main and nothing else.
 unset TPM2TOOLS_TCTI
 
+# Dates the start of this run: whatever is newer than this file, this run made,
+# and that is what the plaintext search asks instead of asking for a directory.
+# Written here and nowhere later - a case that ran before the stamp existed
+# would be invisible to the search. Empty, so it carries nothing itself, and
+# taken away again by cleanup.
+stempel="dist/.lauf-stempel"
+mkdir -p dist
+: > "$stempel"
+
 # Set by fail alone and read by cleanup: whoever looks at a run that ended badly
 # looks for the word FEHLGESCHLAGEN, and a case that dies on a bare command
 # never printed it. Measured at the state before these two lines, and no
 # hypothetical: tools/recovery-qemu.sh check ends its own failures with a
 # message and exit 1, errexit took the run with it - EXIT=1, three ok, and NOT
 # ONE FEHLGESCHLAGEN line. It is not the only call of its shape either:
-# counted, twenty-two more bare calls of a tool or of a tpm2 command stand in
-# this file, nineteen at the left margin and three inside the loop over the
-# eight boot PCRs. So the answer is not twenty-three || fail, each with a
-# wording of its own to keep in step, but the one place every single one of them
-# passes through on the way out.
+# twenty-four statements in this file call a tool or a tpm2 command without a
+# || fail of their own - twenty-one at the left margin and three inside the loop
+# over the eight boot PCRs; eleven others do have one. Counted by a machine and
+# not by eye, because the last count came out one too low: the continuation
+# lines have to be joined first, or every statement whose || fail stands on the
+# line below is counted as bare, and the one call that takes no argument at all
+# (tools/recovery-env.sh) has to be counted with them. So the answer is not
+# twenty-four || fail, each with a wording of its own to keep in step, but the
+# one place every single one of them passes through on the way out.
 fehler_gemeldet=""
 # Set only while a simulator of instance main is writing the wire down, and read
 # only by cleanup. Empty everywhere else, so nothing but the wire case can make
@@ -84,7 +101,10 @@ cleanup() {
 	# The recording simulator first, and only then the file it writes into:
 	# shred takes the name away, the open descriptor survives it, and every
 	# further TPM call of this run would land in a file nothing can search any
-	# more. Ended over its PID file, never by name - that is what stop does.
+	# more. That is what stop does: it takes the PID out of the PID file, and
+	# only when that is missing or stale does it ask pgrep -x for the program
+	# name - every candidate, from either source, has to carry
+	# "--tpmstate dir=" of THIS instance before anything is killed.
 	# Only ever the instance this run put a recording on; a main without one
 	# keeps running, as the head of this file promises.
 	if [ -n "${mitschnitt_laeuft:-}" ]; then
@@ -121,6 +141,9 @@ cleanup() {
 	if ! tools/recovery-swtpm.sh stop qemu; then
 		printf 'Achtung: der Simulator der Instanz qemu läuft noch. Beenden mit: tools/recovery-swtpm.sh stop qemu\n' >&2
 	fi
+	# The stamp has done its work; a finished run leaves exactly what the head
+	# of this file lists and nothing else.
+	rm -f "$stempel"
 }
 trap cleanup EXIT
 
@@ -161,59 +184,116 @@ rohwert() {              # $1 = Feldname, $2 = Ausgabe von tpm2_readpublic
 }
 
 geheim="TEST-DEK"
-# The same secret as the TPM sees it on the wire. swtpm writes its recording as
-# a hex dump, sixteen bytes to a line, so nothing that looks for the characters
-# TEST-DEK will ever find it there - measured, grep -F comes back empty on a
-# recording that provably carries it twice.
+# schreibweisen: every shape the same eight bytes can stand in. Twice a shape
+# walked past a search that only knew the shapes which had already turned up -
+# first the hex dump of a recording, which grep -F cannot see at all, then the
+# same dump WITHOUT the spaces, which the wire search insisted on. So this is no
+# longer a list of incidents but of encodings, and two of them are covered by
+# normalising the FILE instead of by adding a needle, which takes every
+# separator and every spelling of upper and lower case with them at once:
+#
+#   raw       TEST-DEK                        needle
+#   base64    VEVTVC1E U1QtREVL RVNULURF      needle, one per phase: the secret
+#             can begin at any of the three positions of a base64 group, and
+#             each needle is the run of whole groups made of secret bytes alone
+#             - what stands before and after them depends on foreign bytes.
+#   hex       544553542D44454B                the file is read a second time
+#             with "0x" dropped and everything that is not a hex digit dropped,
+#             and searched case-blind. That one pass takes "54 45 ...",
+#             "544553...", "54:45:...", "\x54\x45..." and "0x54, 0x45, ..." at
+#             once - and it is what makes a swtpm recording searchable.
+#   fillers   UTF-16 in either byte order, NUL padding, "T E S T - D E K", a
+#             base64 block broken into lines: the file is read once with NUL
+#             bytes and white space dropped, and every needle above is looked
+#             for through that as well. No needle carries white space itself, so
+#             dropping it can never break one.
+#
+# NOT reached, fenced rather than claimed: the secret compressed, encrypted, or
+# encoded in yet another alphabet (base32, base85, quoted-printable); split
+# across two files; or held only in memory or in swap. A file this run never
+# touched and that does not lie under dist/ is not looked at either - see
+# klartext_suche for why that is the age of the file and not its place.
 geheim_hex="$(printf '%s' "$geheim" | xxd -p -u | tr -d '\n')"
+nadeln=(-e "$geheim")
+for vor in 0 1 2; do
+	ab=$(( (3 - vor) % 3 ))
+	n=$(( (${#geheim} - ab) / 3 * 3 ))
+	nadeln+=(-e "$(printf '%s' "${geheim:ab:n}" | openssl base64 -A)")
+done
 
-# Which way a message of the recording went. swtpm writes a header line above
-# the bytes of every message, and the header names the direction:
-# " SWTPM_IO_Read: length N" is what the tools SENT to the TPM, and
-# " SWTPM_IO_Write: length N" is what the TPM ANSWERED. Read off a real
-# recording, not off the manual: state, seal and open together leave 248
-# messages carrying bytes on this simulator - 87 requests, 87 answers and 74 on
-# the control channel (Ctrl Cmd, Ctrl Rsp). The control channel belongs to
-# neither direction, so only "alle" takes it along. "Data client disconnected"
-# stands in the recording too, 124 times, and carries no bytes at all.
-# Its own function because both places that close a message ask it, and a rule
-# that stands in two places drifts apart.
-zaehlrichtung() {        # $1 = alle|anfrage|antwort, $2 = Kopfzeile des Blocks
-	case "$1" in
-	alle) return 0 ;;
-	anfrage) case "$2" in ' SWTPM_IO_Read: '*) return 0 ;; esac ;;
-	antwort) case "$2" in ' SWTPM_IO_Write: '*) return 0 ;; esac ;;
-	esac
+# Says whether one file carries the secret in any of those shapes, and says it
+# with yes or no alone: the call site puts the NAME into the message, because a
+# check that prints the secret to prove that the secret is nowhere is no check.
+# grep -c and not grep -q: -q stops at the first hit, the normalising tr ahead
+# of it then dies of SIGPIPE, and with pipefail the whole pipeline would report
+# a failure exactly when it found something. Counting reads the input to the end
+# and only ever prints a number.
+# LC_ALL=C because these are bytes and not text: sed and tr in a UTF-8 locale
+# stumble over sequences that are not characters.
+schreibweise_drin() {    # $1 = Datei
+	local n
+	n="$(LC_ALL=C tr -d '\000 \011\012\015' < "$1" | grep -caF "${nadeln[@]}" || :)"
+	[ "$n" -eq 0 ] || return 0
+	n="$(LC_ALL=C sed 's/0[xX]//g' "$1" | LC_ALL=C tr -cd '0-9A-Fa-f' | grep -ciF "$geheim_hex" || :)"
+	[ "$n" -eq 0 ] || return 0
 	return 1
 }
 
-# Counts how often the secret crosses the wire in a swtpm recording, in the
-# direction asked for. Every run of hex lines is one message; the bytes of a
-# message are put back together first, because the eight bytes of the secret can
-# sit astride a line break.
+# One line for one message of a swtpm recording: which way it went, the four
+# bytes that name it, and whether the secret stands in its bytes. swtpm writes a
+# header line above the bytes of every message, and the header says which of
+# them it is. Read off a real recording, not off the manual - state, seal and
+# open together leave 372 messages on this simulator:
+#   " SWTPM_IO_Read: length N"   anfrage    what the tools SENT       87
+#   " SWTPM_IO_Write: length N"  antwort    what the TPM ANSWERED     87
+#   " Ctrl Cmd/Rsp: length N"    steuerung  the control channel       74
+#   "Data client disconnected"   abbruch    no bytes at all          124
+# Those four are ALL of them, measured; anything else is "unbekannt", and that
+# is not a harmless remainder but the alarm: a swtpm whose header lines are
+# spelled differently would otherwise leave the accounting below adding up over
+# a direction nobody reads any more. The counts themselves are a measurement,
+# not a promise - nothing here asserts them.
+# Its own function because both places that close a message call it, and a rule
+# that stands in two places drifts apart.
+nachrichtzeile() {       # $1 = Kopfzeile, $2 = Bytes der Nachricht, hex
+	local art cc
+	case "$1" in
+	' SWTPM_IO_Read: '*) art=anfrage ;;
+	' SWTPM_IO_Write: '*) art=antwort ;;
+	' Ctrl Cmd: '*|' Ctrl Rsp: '*) art=steuerung ;;
+	'Data client disconnected') art=abbruch ;;
+	*) art=unbekannt ;;
+	esac
+	# Tag (2 bytes) and size (4) come first, then the four bytes that name the
+	# message: the command code in a request, the response code in an answer.
+	# Read off a real recording. A message too short to carry one says so
+	# instead of guessing.
+	cc="${2:12:8}"
+	[ -n "$cc" ] || cc="-"
+	case "$2" in
+	*"$geheim_hex"*) printf '%s %s ja\n' "$art" "$cc" ;;
+	*) printf '%s %s nein\n' "$art" "$cc" ;;
+	esac
+}
+
+# Walks a swtpm recording and puts one nachrichtzeile out for every message.
+# Every run of hex lines is one message; the bytes are put back together first,
+# because the eight bytes of the secret can sit astride a line break.
 # Plain bash on purpose: awk is mawk on this machine, a package of its own, and
 # the tool list in recovery-env.sh would have to grow for a handful of lines.
-# Only ever returns a number, never fails the run: the call site decides what a
-# number means, and this runs inside a $( ) where fail would end the subshell.
-leitungstreffer() {      # $1 = Mitschnitt, $2 = alle|anfrage|antwort
-	local zeile="" puffer="" kopf="" treffer=0
+# Never fails the run itself: the call site decides what the lines mean, and
+# this runs inside a $( ) where fail would end the subshell alone.
+leitungszeilen() {       # $1 = Mitschnitt
+	local zeile="" puffer="" kopf=""
 	local hexzeile='^ ([0-9A-F][0-9A-F] )+$'
-	# A direction this function does not know must not quietly count nothing:
-	# that is zero hits, and zero hits is what every call site here takes for
-	# good news. Ending with 1 makes the $( ) of the call site fail, and errexit
-	# takes the run with it - the loud way round.
-	case "$2" in
-	alle|anfrage|antwort) ;;
-	*) return 1 ;;
-	esac
 	while IFS= read -r zeile; do
 		if [[ "$zeile" =~ $hexzeile ]]; then
 			puffer="$puffer${zeile// /}"
 			continue
 		fi
-		if zaehlrichtung "$2" "$kopf"; then
-			case "$puffer" in *"$geheim_hex"*) treffer=$((treffer + 1)) ;; esac
-		fi
+		# Empty only before the first header of the file, where there is no
+		# message yet to put out.
+		if [ -n "$kopf" ]; then nachrichtzeile "$kopf" "$puffer"; fi
 		puffer=""
 		# This line is the header of the message whose bytes follow.
 		kopf="$zeile"
@@ -222,51 +302,56 @@ leitungstreffer() {      # $1 = Mitschnitt, $2 = alle|anfrage|antwort
 	# loop never saw it. A file that ends with one leaves zeile empty, and then
 	# the line below does nothing.
 	if [[ "$zeile" =~ $hexzeile ]]; then puffer="$puffer${zeile// /}"; fi
-	if zaehlrichtung "$2" "$kopf"; then
-		case "$puffer" in *"$geheim_hex"*) treffer=$((treffer + 1)) ;; esac
-	fi
-	printf '%s\n' "$treffer"
+	if [ -n "$kopf" ]; then nachrichtzeile "$kopf" "$puffer"; fi
 }
 
-# Searches the whole tree the ceremony works in for the secret, in both shapes
-# it can take: the characters themselves, and the hex dump of a swtpm recording.
-# The promise in the head of this file is about the TREE, not about one file
-# name and not about one directory - a step that parks the secret under another
-# name falls under it, and so does one that parks it one level up. Measured why
-# the level matters: with "tpm2_unseal ... | tee $work/dek.bin" in open_branch
-# the search over work/ alone left the run green, fourteen ok and EXIT=0, while
-# dist/recovery/dek.bin held the secret - and no reset ever takes that one away.
-# Measured rather than reasoned, that last part: the file was still lying there
-# a whole run later and made the NEXT run red.
-# grep -l prints names, never content, so nothing of the secret reaches this
-# run's output even when the case goes red.
-# find and not a glob, for the hex dump too: a glob walks neither
-# subdirectories nor names that begin with a dot, and dist/recovery has both
-# (tpm/main/.lock, softhsm/tokens/<uuid>/...). Measured what the whole tree
-# costs: 0.2 s for the 69 files a finished run leaves, the 528 KiB OVMF variable
-# file among them, and the search runs three times - 13.8 against 13.6 s for the
-# whole test.
+# Searches every file this run can have written to, in every shape of
+# schreibweisen above. TWO lists, because one alone has been wrong twice:
+#  - the whole of dist/, whatever its age. A leftover of an EARLIER run carries
+#    no fresh timestamp, and that is not a thought but a thing that happened:
+#    with "tpm2_unseal ... | tee $work/dek.bin" the file dist/recovery/dek.bin
+#    was still lying there a whole run later and made the NEXT run red. No reset
+#    ever takes that level away - reset takes work/ and the state directory of
+#    its own instance, and neither of them is it.
+#  - every file under the project that is newer than the stamp this run wrote
+#    before its first case. THAT is what makes the level stop mattering: a step
+#    that parks the secret one directory further up, beside the scripts or in
+#    the project root, is caught without this function knowing where to look.
+#    The checked-in scripts carry the secret themselves and are older than the
+#    stamp - which is exactly why the age of a file and not its place decides.
+# Nothing of the file ever reaches this run's output: schreibweise_drin answers
+# yes or no, and only the NAME goes into the message.
+# find and not a glob: a glob walks neither subdirectories nor names that begin
+# with a dot, and dist/recovery has both (tpm/main/.lock,
+# softhsm/tokens/<uuid>/...). The status of each find is asked for its own sake:
+# an empty answer out of a tree that cannot be read is not the same as "nothing
+# in it", and only the second may pass as good news. A file that is gone between
+# the listing and the look is skipped - the simulator tidies its own state up
+# underneath - but one that is there and unreadable stops the run, because an
+# unreadable file is exactly where an escaped secret would be comfortable.
+# What it costs, measured and not guessed: 67 to 68 files lie under dist/ when a
+# run is through - the count wobbles with the contexts the last case leaves -
+# the 528 KiB OVMF variable file among them, and the search runs three times;
+# the whole test grew from 16.7 s to 19.3 s. The walk over the project is the
+# cheap half: over a tree of 8550 files, the size of a whole NGC checkout, find
+# takes 71 ms.
 klartext_suche() {       # $1 = Zeitpunkt, für die Meldung
-	local rc=0 traeger liste datei n
-	traeger="$(grep -rlF "$geheim" dist/recovery)" || rc=$?
-	case "$rc" in
-	0) fail "Das Geheimnis steht $1 im Klartext in: $traeger" ;;
-	1) ;;
-	*) fail "Die Suche nach dem Klartext in dist/recovery ist fehlgeschlagen (grep sagt $rc)" ;;
-	esac
-	if ! liste="$(find dist/recovery -type f)"; then
-		fail "Die Dateiliste von dist/recovery lässt sich nicht erstellen - die Suche nach dem Hexdump hat dann nichts abgesucht."
+	local liste neu datei
+	if ! liste="$(find dist -type f)"; then
+		fail "Die Dateiliste von dist lässt sich nicht erstellen - die Klartextsuche hat dann nichts abgesucht."
 	fi
-	# The status of the search is asked for its own sake: an empty answer from a
-	# file that cannot be read is not the same as "nothing in it", and only the
-	# first of the two may pass as good news.
+	if ! neu="$(find . -path ./dist -prune -o -newer "$stempel" -type f -print)"; then
+		fail "Die Liste der in diesem Lauf angefassten Dateien lässt sich nicht erstellen - die Klartextsuche hat dann nichts abgesucht."
+	fi
 	while IFS= read -r datei; do
 		[ -n "$datei" ] || continue
-		if ! n="$(leitungstreffer "$datei" alle)"; then
-			fail "Die Suche nach dem Hexdump in $datei ist fehlgeschlagen."
+		[ -e "$datei" ] || continue
+		[ -r "$datei" ] || fail "$datei lässt sich nicht lesen - die Klartextsuche $1 hat diese Datei dann nicht abgesucht."
+		if schreibweise_drin "$datei"; then
+			fail "Das Geheimnis steht $1 in: $datei"
 		fi
-		[ "$n" -eq 0 ] || fail "Das Geheimnis steht $1 als Hexdump der Leitung in: $datei"
-	done <<< "$liste"
+	done <<< "$liste
+$neu"
 }
 
 # A syntax error in any script must show up here, not three cases later.
@@ -570,41 +655,53 @@ ok "jede der acht Boot-PCR 0 bis 7 sperrt den Normalzweig für sich allein"
 #
 # So the wire itself is looked at. swtpm writes it down with --log level=20; the
 # recording carries the plaintext and is therefore handled like secret.bin.
-# What comes out of it, measured on this simulator:
 #
-#   honest run:  2 hits, both in the TPM2_CC_Create of the sealing (twice
-#                because the TPM answers the first one with 0x922 TPM_RC_RETRY
-#                and ESAPI sends it again), and both of them in what the tools
-#                SENT. Not one hit in anything the TPM answered.
-#   either attack above:  one more hit, and it sits in an ANSWER - the unseal
-#                reply in the clear.
+# THE MEASURE IS A LEDGER OVER NAMED HITS, and it took four ways of getting the
+# plaintext out to arrive at it. Three earlier measures each caught the ways
+# that had already been seen and let the next one through:
+#   a difference ("the opening must not RAISE the count") - broken by a seal()
+#     that checks its own work with a bare unseal, because its plaintext answer
+#     is already inside the base value; 14 ok, EXIT=0;
+#   a direction ("nothing in an answer may carry it") - broken by taking the
+#     recovered plaintext and sending it to the TPM as an unencrypted REQUEST
+#     (tpm2_hash); measured with the counting of this very file: 3 requests, 0
+#     answers, 14 ok, EXIT=0;
+#   and both of them took their base value in the MIDDLE of the ceremony, where
+#     everything the sealing had already put on the wire was invisible.
+# What stands here instead asks nothing about directions or differences. It
+# takes the WHOLE recording, both directions at once, from before the ceremony
+# to after it, and demands: every single hit sits at one named, known place, and
+# there are exactly as many of them as that place explains.
 #
-# THE PROPERTY IS THE DIRECTION, and it took a third way to show why. A version
-# of this case asked only that the opening does not RAISE the count, and that is
-# a difference, not a property: measured, a seal() that checks its own work with
-# a bare unseal afterwards puts its plaintext answer on the wire (SWTPM_IO_Write,
-# 125 bytes) BEFORE the count is taken for the first time, and the run stayed
-# green, fourteen ok and EXIT=0. The line that closes all three ways at once
-# carries no number at all: no hit may stand in anything the TPM answered.
+# The named place, and it is the open point of this package, not a fault of this
+# case: tpm2_create -i hands the secret to the TPM in the clear, because sealing
+# runs without any session at all. Twice, because the TPM answers the first
+# attempt with 0x922 TPM_RC_RETRY and ESAPI sends it again. So: two hits, both
+# requests, both TPM2_CC_Create - and nothing else anywhere. In work package 0
+# that is TEST-DEK; before work package 6 it has to be decided. Whoever secures
+# the sealing has to change befund_erwartet with it.
+# One ledger catches all three: one hit more in a request (a fourth way), one
+# hit more in an answer (a bare unseal), and a swtpm whose header lines are
+# spelled differently - the hits then no longer land on a known direction and
+# the ledger does not add up.
 #
-# The counter-proof is the same recording read the other way round. A direction
-# filter that matched nothing would make the property green for the wrong
-# reason - so the requests are asked as well, and the plaintext of the sealing
-# provably stands there. The two hold each other up, and all three ways of
-# breaking the filter were built and measured on a HEALTHY run: one that matches
-# nothing loses the requests and goes red at the counter-proof, one that matches
-# everything puts the sealing's 2 hits into the answers and goes red at the
-# property, and an inverted one loses the requests too.
-# That the recording grew at all is asked too - a dead recording has no hits
-# either - and the old difference is kept as what it is: it catches a plaintext
-# crossing that the opening adds in the OTHER direction, which the property
-# above says nothing about.
-#
-# That plaintext flows during the SEALING is not a fault of this case but the
-# open point from the last round: tpm2_create -i runs without any session at
-# all. In work package 0 that is TEST-DEK; before work package 6 it has to be
-# decided.
+# Two counter-proofs, because a ledger over an unread recording adds up
+# beautifully. Both arms of the direction reading are asked SEPARATELY: the
+# recording has to hold at least one message of each of the four kinds
+# (anfrage, antwort, steuerung, abbruch) and not one of the kind "unbekannt".
+# Breaking either arm alone - renaming the request header or the answer header -
+# makes exactly that arm empty and the case red. And the recording has to hold
+# the OPENING itself: a request that names TPM2_CC_Unseal. That is sharper than
+# asking whether the file grew, which the earlier version did: a recording
+# without the opening in it explains nothing about the opening.
 mit="dist/recovery/work/wire-main.log"
+# The two commands this case names, as the four bytes they stand as in a
+# request. Read off a real recording, not off the manual.
+cc_create=00000153      # TPM2_CC_Create - the sealing, and the one known leak
+cc_unseal=0000015E      # TPM2_CC_Unseal - the opening, proof the recording has it
+# The whole ledger: exactly these hits, and no others anywhere in the recording.
+befund_erwartet="anfrage $cc_create
+anfrage $cc_create"
 # The counter-case first: without the test asking for one, no recording
 # comes into being at all.
 tools/recovery-swtpm.sh reset main
@@ -622,36 +719,35 @@ use_main
 [ -f "$mit" ] || fail "Der angeforderte Mitschnitt ist nicht entstanden: $mit"
 tools/recovery-policy.sh state normal
 tools/recovery-policy.sh seal pcr
-treffer_vor="$(leitungstreffer "$mit" alle)"
-[ "$treffer_vor" -ge 1 ] \
-	|| fail "Die Suche findet den Klartext nicht einmal dort, wo das Siegeln ihn nachweislich hinschreibt - sie taugt dann auch als Beleg fürs Öffnen nichts."
-laenge_vor="$(wc -c < "$mit")"
 rm -f dist/recovery/work/sess.ctx
 [ "$(tools/recovery-policy.sh open pcr)" = "$geheim" ] || fail "Normalstart-Zweig öffnet im Leitungsfall nicht"
-[ "$(wc -c < "$mit")" -gt "$laenge_vor" ] \
-	|| fail "Der Mitschnitt ist beim Öffnen nicht gewachsen - er wird nicht geschrieben, und die Prüfungen darunter sagen dann nichts."
-# The property, over the WHOLE recording and without a number: nothing the TPM
-# answered may carry the secret. Every way the plaintext can come back out - the
-# encryption dropped, a second session handed over in its place, a bare unseal
-# anywhere inside seal - ends in an answer, and this one line is where all three
-# of them die.
-antworttreffer="$(leitungstreffer "$mit" antwort)"
-anfragetreffer="$(leitungstreffer "$mit" anfrage)"
-[ "$anfragetreffer" -ge 1 ] \
-	|| fail "Die Richtungsprüfung findet den Klartext nicht einmal in den Anfragen, wo das Siegeln ihn nachweislich hinschreibt - die Null in den Antworten beweist dann nichts."
-[ "$antworttreffer" -eq 0 ] \
-	|| fail "Das TPM hat das Geheimnis im Klartext zurückgeschickt: $antworttreffer Treffer in einer Antwort (SWTPM_IO_Write). Irgendwo in diesem Lauf wird ohne Parameterverschlüsselung entsiegelt."
-# And the old difference on top, because it asks something the line above does
-# not: a crossing the OPENING adds in the other direction.
-treffer_nach="$(leitungstreffer "$mit" alle)"
-[ "$treffer_nach" -eq "$treffer_vor" ] \
-	|| fail "Das Öffnen schickt den Klartext zusätzlich über die Leitung: $treffer_nach statt $treffer_vor Treffer im Mitschnitt."
+# The whole recording at once, and no value taken anywhere in the middle of the
+# ceremony: these lines cover the sealing and the opening together.
+zeilen="$(leitungszeilen "$mit")"
+# The instrument before the measurement. Each arm on its own, because a
+# counter-proof that only breaks one arm secures only that one.
+for art in anfrage antwort steuerung abbruch; do
+	grep -q "^$art " <<< "$zeilen" \
+		|| fail "Im Mitschnitt steht keine einzige Nachricht der Art '$art'. Die Buchführung darunter liest dann eine Richtung, die es für sie nicht gibt - vermutlich hat swtpm seine Kopfzeilen umbenannt."
+done
+if grep -q '^unbekannt ' <<< "$zeilen"; then
+	fail "Der Mitschnitt enthält Nachrichten, deren Kopfzeile dieser Test nicht kennt. Die Buchführung darunter ordnet sie keiner Richtung zu - vermutlich hat swtpm seine Kopfzeilen umbenannt."
+fi
+grep -q "^anfrage $cc_unseal " <<< "$zeilen" \
+	|| fail "Im Mitschnitt steht keine Anfrage TPM2_CC_Unseal ($cc_unseal). Das Öffnen ist dann gar nicht aufgezeichnet, und die Buchführung darunter sagt nichts über das Öffnen."
+# The ledger. Every hit, both directions, the whole run - and each one has to
+# sit at the one named place.
+befund="$(sed -n 's/ ja$//p' <<< "$zeilen" | sort)"
+[ "$befund" = "$befund_erwartet" ] \
+	|| fail "Der Klartext steht im Mitschnitt woanders als an der einen bekannten Stelle. Erwartet waren nur die zwei Anfragen des Siegelns (TPM2_CC_Create, $cc_create), gefunden wurde: $(printf '%s' "$befund" | tr '\n' ';')"
 # Away with it, and looked at afterwards to see that it is away. The same
 # handling as secret.bin gets: the recording carries the plaintext, and in work
 # package 6 that would be the real DEK. The simulator goes first: shred takes
 # the name, the open descriptor survives it, and everything this run still does
-# at the TPM would land where nothing can search it. Ended over its PID file,
-# never by name.
+# at the TPM would land where nothing can search it. stop takes the PID out of
+# the PID file and only falls back to the program name when that is missing or
+# stale; either way the candidate has to carry "--tpmstate dir=" of this
+# instance before it is killed.
 tools/recovery-swtpm.sh stop main || fail "Der mitschneidende Simulator lässt sich nicht beenden - er schriebe in die gleich gelöschte Datei weiter."
 mitschnitt_laeuft=""
 shred -u "$mit" || fail "Der Mitschnitt lässt sich nicht sicher löschen: $mit"
@@ -673,4 +769,4 @@ ok "im Recovery-Zustand bleibt der Normalzweig zu"
 # speaks about: the files of the last case, and the recording of the wire must
 # not be among them.
 klartext_suche "nach dem vollen Lauf"
-ok "auch nach dem vollen Lauf liegt das Geheimnis nirgends in dist/recovery"
+ok "auch nach dem vollen Lauf liegt das Geheimnis in keiner Schreibweise irgendwo, was dieser Lauf angefasst hat"

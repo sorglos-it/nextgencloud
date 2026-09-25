@@ -208,13 +208,15 @@ primary() {
 # of its own; that was worse, but not different in kind. Today the same change
 # ends the run at the wire case, with eleven ok behind it - this check goes
 # green through it, exactly as it did then.
-# The property itself - the unsealed secret does not travel in the open - is
-# asked of the wire: recovery-test.sh has swtpm write it down (--log level=20)
-# and counts how often the plaintext crosses, and in which direction. Honest run
-# 2 hits, both in what the tools SENT during the Create of the sealing, and not
-# one in anything the TPM answered. That last number is the one that is checked,
-# and it has no counterpart here: whatever this script does with its sessions,
-# the secret must never come back out in the clear.
+# The property itself - the secret travels nowhere in the open except where it
+# is known to - is asked of the wire: recovery-test.sh has swtpm write it down
+# (--log level=20) and keeps a ledger over the whole recording, both directions
+# at once. Honest run: 2 hits, both in what the tools SENT during the Create of
+# the sealing, and that is the ONE named place - tpm2_create -i runs without any
+# session at all. Every hit has to sit there, and there may be no others, in
+# either direction. That is what has no counterpart here: whatever this script
+# does with its sessions, and wherever it might send the plaintext on to, the
+# ledger has to come out at those two and nothing else.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
 # tpm2-tools 5.7: --tpmkey-context on a session without --policy-session is
