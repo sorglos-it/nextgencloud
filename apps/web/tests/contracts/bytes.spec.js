@@ -287,6 +287,14 @@ const ENTRIES = {
   "b64.equal#0": "view",
   "b64.equal#1": "view",
   "b64.viewOf#0": "view",
+  // Both hand their argument straight to json.decode, which is the one view
+  // the document is read through; neither asks the caller's object anything
+  // of its own. catalog.verifyCatalog is in no line here on purpose: the
+  // bytes it decides on come out of an envelope's payload member, not out of
+  // an argument, and it copies them (b64.bytesOf reads no property, so the
+  // probe records nothing). What holds that copy is catalog.spec.js.
+  "catalog.parseManifest#0": "view",
+  "catalog.parseUpdateReport#0": "view",
   "json.decode#0": "view",
   "noise.HandshakeKK.build#1": "view",
   "noise.HandshakeKK.build#3": "view",
@@ -432,7 +440,16 @@ const NEEDS_X25519 = [
 // made this round necessary (an ordinary array rewritten in a microtask). What
 // holds those is sign.spec.js "verifyRaw decides on a copy no getter can
 // reach", which measures answers instead of touches.
-const CALLABLES = 141;
+// 149 since contracts/catalog.js: six exported functions (verifyCatalog,
+// parseManifest, parseUpdateReport, validTarget, granted, approved) and two
+// exported error classes (BadCatalog, Rollback), which are callables here
+// because the walk builds every exported class with new. Its two exported
+// shapes raise the count by nothing - they hold no function at any depth - and
+// that is the difference between an export the walk calls and one it only
+// reads. The number was MEASURED, by letting this line stay at 141 and reading
+// what the failure named; adding up what a file ought to hold is how a
+// callable nobody counted slips in beside a number that looks right.
+const CALLABLES = 149;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
