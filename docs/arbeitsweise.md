@@ -731,6 +731,31 @@ Der Prüfer hat es so zusammengefasst, und daran erkennt man den Unterschied:
 **die Dateisuche hatte sechs Schreibweisen gelernt, die Leitungsprüfung kannte
 weiter genau eine.**
 
+### Ein Test, dessen Name mehr verspricht, als er zählt
+
+Eine Unterschriftsprüfung las denselben Gegenstand zweimal — einmal für die
+Schlüsselkennung, einmal für die Prüfung — mit einem `await` dazwischen. Tauscht
+jemand die Bytes in diesem Fenster, gilt die Kennung für den vertrauten und die
+Unterschrift für den fremden Schlüssel: **eine Fälschung wird angenommen.**
+
+Zwei Dateien weiter stand derselbe Fehler noch einmal. Dort gab es sogar einen
+Test dafür, und er hieß:
+
+> „a proof, a key and the relying party are **read once**"
+
+Er zählte die Lesungen der **Feldnamen am Behälter** — nicht die Lesungen des
+**Byte-Gegenstands**, um den es ging. Der Name sagte die Eigenschaft, der Code
+zählte die Umgebung. Deshalb war die Stelle sechs Runden lang unsichtbar,
+während eine Tür weiter mit großem Aufwand dieselbe Klasse geschlossen wurde.
+
+**Ein Testname ist eine Behauptung.** Lies ihn und frag: zählt der Rumpf wirklich
+das, was der Name sagt — am selben Gegenstand, auf derselben Ebene? Ein Name, der
+mehr verspricht, ist schlimmer als gar kein Test: er beendet die Suche.
+
+Und die Gegenprobe dazu ist billig: **nimm die Eigenschaft weg, die der Name
+behauptet, und sieh nach, ob er rot wird.** Wird er es nicht, zählt er etwas
+anderes.
+
 ### Ein Zaun an der falschen Zeile ist kein Zaun
 
 Zweimal am selben Tag stand ein ehrlicher Hinweis am falschen Ort.
