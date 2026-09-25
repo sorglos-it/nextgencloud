@@ -80,3 +80,26 @@ Nenn sie nicht noch einmal:
 Behaupte nichts, was du nicht ausgeführt hast. Widerspricht deine Messung einem
 Kommentar oder einer Commit-Nachricht, ist deine Messung der Befund — nenn beide
 Zahlen.
+
+## Wo dein Ergebnis hingehört
+
+Schreib deine Antwort **zusätzlich** in eine Datei und schieb sie hoch — sonst
+erreicht sie den Koordinator nicht, denn er kann deine Sitzung nicht sehen.
+
+```bash
+git fetch origin pruefergebnisse || true
+git checkout -B pruefergebnisse origin/pruefergebnisse 2>/dev/null || git checkout -B pruefergebnisse origin/main
+mkdir -p docs/pruefergebnisse
+# Antwort nach docs/pruefergebnisse/<name-dieses-auftrags>.md schreiben
+git add docs/pruefergebnisse/<name-dieses-auftrags>.md
+git commit -m "Ergebnis: <name-dieses-auftrags>" -- docs/pruefergebnisse/<name-dieses-auftrags>.md
+git push origin pruefergebnisse
+```
+
+**Das ist die einzige Ausnahme vom „nichts committen, nichts pushen".** Sie gilt
+nur für diese eine Ergebnisdatei, nur auf dem Zweig `pruefergebnisse`, und für
+keine Änderung am geprüften Code. Alles andere bleibt wie oben.
+
+Schreib dazu, was du **nicht** geschafft hast und warum. Ein ehrliches „nicht
+geprüft" ist brauchbar; eine Vermutung, die wie eine Messung aussieht, ist es
+nicht.
