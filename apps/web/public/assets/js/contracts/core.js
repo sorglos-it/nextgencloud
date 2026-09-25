@@ -92,6 +92,22 @@ const FLOW_IN = "in";
 const FLOW_OUT = "out";
 const FLOW_TRANSFER = "transfer";
 
+// What the opener of a FlowIn channel may send, and what the API sends a
+// controller on a FlowTransfer channel: the length of the header, the header,
+// the file (Go: MaxTrustIn, MaxLicenseIn, store.MaxPackage, session.MaxChain,
+// maxTransferIn).
+//
+// MAX_TRANSFER_IN belongs to the action, not to whoever opened the channel.
+// The shell sends nothing on a transfer channel even when it opened one
+// itself - it sends EOF at once, and the API writes the header and the file
+// on the tunnel hop - so 0 would read as the shell's own bound and not as the
+// contract's. The task brief had 0 in both transfer rows; shared/core/core.go
+// is frozen and has maxTransferIn, and the frozen side is what counts.
+const MAX_TRUST_IN = 6 << 20;
+const MAX_LICENSE_IN = 16 << 10;
+const MAX_PACKAGE = 4 * 1024 * 1024 * 1024;
+const MAX_TRANSFER_IN = 4 + MAX_TRANSFER_HEADER + MAX_PACKAGE;
+
 // The actions of the built-in apps: what the shell asks the API for, and the
 // root tasks the API forwards to a controller (Go: core).
 //
@@ -113,29 +129,29 @@ export const ACTIONS = Object.freeze([
   [APP_USERS, SERVICE_API, ACT_LIST, true, false, false, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_RIGHTS, true, false, false, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_SET_RIGHTS, true, false, true, FLOW_CALL, 0],
-  [APP_USERS, SERVICE_API, ACT_TRUST, true, false, true, FLOW_IN, 6 << 20],
+  [APP_USERS, SERVICE_API, ACT_TRUST, true, false, true, FLOW_IN, MAX_TRUST_IN],
   [APP_USERS, SERVICE_API, ACT_PAIR_CODE, true, false, true, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_JOIN_CODE, true, false, true, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_PENDING, true, false, false, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_PENDING_API, true, false, false, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_NODES, true, false, false, FLOW_CALL, 0],
   [APP_USERS, SERVICE_API, ACT_LOG, true, false, false, FLOW_CALL, 0],
-  [APP_USERS, SERVICE_CONTROLLER, ACT_TRUST, true, false, true, FLOW_IN, 32 << 20],
+  [APP_USERS, SERVICE_CONTROLLER, ACT_TRUST, true, false, true, FLOW_IN, session.MAX_CHAIN],
   [APP_STORE, SERVICE_API, ACT_SOURCES, true, false, false, FLOW_CALL, 0],
   [APP_STORE, SERVICE_API, ACT_CATALOG, true, false, false, FLOW_CALL, 0],
   [APP_STORE, SERVICE_API, ACT_INSTALLED, true, false, false, FLOW_CALL, 0],
-  [APP_STORE, SERVICE_API, ACT_UPLOAD, true, false, true, FLOW_IN, 4 * 1024 * 1024 * 1024],
-  [APP_STORE, SERVICE_API, ACT_LICENSE, true, false, true, FLOW_IN, 16 << 10],
+  [APP_STORE, SERVICE_API, ACT_UPLOAD, true, false, true, FLOW_IN, MAX_PACKAGE],
+  [APP_STORE, SERVICE_API, ACT_LICENSE, true, false, true, FLOW_IN, MAX_LICENSE_IN],
   [APP_STORE, SERVICE_API, ACT_INSTALL_KEY, true, false, false, FLOW_CALL, 0],
   [APP_STORE, SERVICE_API, ACT_UPDATES, true, false, false, FLOW_CALL, 0],
   [APP_STORE, SERVICE_API, ACT_SET_UPDATE, true, false, true, FLOW_CALL, 0],
-  [APP_STORE, SERVICE_CONTROLLER, ACT_ACTIVATE, true, true, true, FLOW_TRANSFER, 0],
+  [APP_STORE, SERVICE_CONTROLLER, ACT_ACTIVATE, true, true, true, FLOW_TRANSFER, MAX_TRANSFER_IN],
   [APP_STORE, SERVICE_CONTROLLER, ACT_DEACTIVATE, true, true, true, FLOW_CALL, 0],
   [APP_STORE, SERVICE_CONTROLLER, ACT_UNINSTALL, true, true, true, FLOW_CALL, 0],
   [APP_STORE, SERVICE_CONTROLLER, ACT_DELETE_DATA, true, true, true, FLOW_CALL, 0],
-  [APP_STORE, SERVICE_CONTROLLER, ACT_STAGE, true, false, false, FLOW_TRANSFER, 0],
+  [APP_STORE, SERVICE_CONTROLLER, ACT_STAGE, true, false, false, FLOW_TRANSFER, MAX_TRANSFER_IN],
   [APP_STORE, SERVICE_CONTROLLER, ACT_INSTALL, true, true, true, FLOW_CALL, 0],
-  [APP_STORE, SERVICE_CONTROLLER, ACT_LICENSE, true, false, true, FLOW_IN, 16 << 10],
+  [APP_STORE, SERVICE_CONTROLLER, ACT_LICENSE, true, false, true, FLOW_IN, MAX_LICENSE_IN],
 ].map(([app, service, name, admin, root, changes, flow, maxIn]) =>
   Object.freeze({ app, service, name, admin, root, changes, flow, maxIn })));
 
