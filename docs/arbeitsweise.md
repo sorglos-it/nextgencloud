@@ -545,6 +545,26 @@ Hochrechnen ist kein Messen, auch dann nicht, wenn der Ausgangswert gemessen war
 Wer eine Zahl nennt, sagt dazu, **wie** gemessen wurde. Wer eine nicht hat, sagt
 das — und der Koordinator entscheidet, ob sie gebraucht wird.
 
+### Ein Zaun an der falschen Zeile ist kein Zaun
+
+Zweimal am selben Tag stand ein ehrlicher Hinweis am falschen Ort.
+
+Im einen Fall hatte der Koordinator verlangt, an einer Antwort müsse stehen, dass
+sie **wissentlich** über eine möglicherweise verlorene Liste ergeht. Der Satz
+stand danach in derselben Datei — aber drei Schritte von der Zeile entfernt, die
+die Antwort schreibt, und in der Datei, die den Zweig tatsächlich enthält, stand
+**gar nichts**. Der Umsetzer hat nachgesehen, statt es abzuhaken, und ihn dorthin
+gesetzt, wo ihn trifft, wer den Zweig liest.
+
+Im anderen war eine bekannte Lücke benannt — **170 Zeilen unter dem Schalter**,
+um den es ging, während der Kommentar direkt am Schalter vier andere Dinge
+erklärte und zu den beiden Sicherheitsschaltern schwieg.
+
+**Der Prüfstein ist nicht „steht es in der Datei", sondern „trifft es den, der
+die Stelle liest".** Wer einen Zaun aus Worten baut, setzt ihn an die Zeile, die
+jemand ändern wird — und fragt sich: wenn ich in einem Jahr nur diese zehn Zeilen
+sehe, weiß ich dann, was ich nicht annehmen darf?
+
 ### Der Mutant muss die alten Tests überleben
 
 Die Empfindlichkeitsprüfung hat eine Falle, in die der Koordinator dieses
