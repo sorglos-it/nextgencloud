@@ -7,13 +7,13 @@
 import { el, button, text, clear } from "./dom.js";
 import * as core from "../contracts/core.js";
 import { Win } from "./window.js";
+import { calcApp } from "../apps/calc.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
 } from "./theme.js";
 
 // The apps whose face the web interface itself builds: app id to the function
-// that fills the window's body. Empty for now - the calculator is the first
-// one and follows in its own commit. Everything else needs its verified user
+// that fills the window's body. Everything else needs its verified user
 // interface and the sandboxed frame it runs in (Task 22).
 //
 // TO BE MOVED WITH TASK 22. Whatever stands here mounts straight into
@@ -27,6 +27,7 @@ import {
 // more.
 const BUILTIN = {
   __proto__: null,
+  "ngc.calc": calcApp,
 };
 
 // Accent colours in the order of theme.js, with the name the swatch carries
