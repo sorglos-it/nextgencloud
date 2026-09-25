@@ -134,9 +134,10 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 // verified once per request, the same public-key work the login paid for;
 // nothing here caches that answer. The other is the list it is checked
 // against, read out of the database on every call (state.Refresh) where the
-// cache (state.Trust) would have cost nothing: a handful of reads of the trust
-// rows per request, and state.Refresh holds the write mutex of its package
-// over all of them, so the requests of one API wait for one another instead of
+// cache (state.Trust) would have cost nothing: two questions of the trust
+// rows per request, both of which come back empty once nothing new has
+// landed, and state.Refresh holds the write mutex of its package over all of
+// them, so the requests of one API wait for one another instead of
 // running side by side. GET session.PathTrust pays that once and not twice --
 // state.Chain is handed the version this step brought up to date (Live.Trust)
 // rather than fetching one of its own. Whoever builds the WebSocket calls Live

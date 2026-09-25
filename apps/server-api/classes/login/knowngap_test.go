@@ -31,9 +31,16 @@ import (
 // What that costs the attacker is not one shape: two of the three below cost
 // one statement more than the hole TestAWithdrawalSurvivesTheRowsBeingDropped
 // fences (eleven against its ten). The third -- a warm node deciding on a
-// list the store has already lost -- costs three, seven fewer than the hole
-// that is caught: it is the cheapest of the three, not the most expensive,
-// and that is a statement about the danger and not only about the count.
+// list the store has already lost -- is the cheapest of the three, but not by
+// the seven a straight subtraction once suggested: that compared three,
+// measured on TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost's own
+// three-version chain, against the ten above from a twelve-version chain --
+// two installations, not one difference. Measured on that same
+// twelve-version chain instead, a warm node only has to lose the one row it
+// already cached: with version 12 alone dropped and versions 1 through 11
+// left standing, Refresh still answers version 12 with no error, and Live
+// still says ok=true. One statement, cheaper than either of the two above
+// it, and that is a statement about the danger and not only about the count.
 
 // withdrawnAtTwelve builds the installation these gaps are measured on:
 // version 2 takes the logged-in password user out of the trust list, and ten
@@ -111,7 +118,8 @@ func TestKnownGap_TruncatingTheChainRollsItBack(t *testing.T) {
 	// Said out loud, because this is the damage and not a detail: the session
 	// is open again, on the list that still holds the withdrawn user.
 	if live.Trust.List.Seq != 1 {
-		t.Fatalf("expected the rolled-back version 1, got %d", live.Trust.List.Seq)
+		t.Fatalf("the gap is shut -- the rolled-back version was %d, not 1. "+
+			"Correct the comment at state.checkGap and retire this test", live.Trust.List.Seq)
 	}
 	if !slices.ContainsFunc(live.Trust.List.Users, func(u trust.User) bool { return u.ID == fx.PasswordUser }) {
 		t.Fatal("version 1 no longer holds the withdrawn user, so this test is not measuring the rollback")
@@ -182,7 +190,8 @@ func TestKnownGap_LoweringTheTopRowsSeqRollsItBack(t *testing.T) {
 			"Correct the comment at state.checkGap and retire this test", code)
 	}
 	if live.Trust.List.Seq != 1 {
-		t.Fatalf("expected the rolled-back version 1, got %d", live.Trust.List.Seq)
+		t.Fatalf("the gap is shut -- the rolled-back version was %d, not 1. "+
+			"Correct the comment at state.checkGap and retire this test", live.Trust.List.Seq)
 	}
 }
 
