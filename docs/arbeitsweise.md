@@ -1155,6 +1155,38 @@ Der Preis der richtigen Ebene wurde gemessen und ist klein: bei vier Megabyte
 nicht messbar. Wer die Ebene wechselt, nennt die Zahl — dann ist es eine
 Entscheidung und keine Hoffnung.
 
+### Gewürfelt sind die Werte, nicht die Gestalt
+
+Zwölf Umgehungen an einer Eigenschaft, und die zwölfte ist die lehrreichste.
+
+Eine Vorrichtung bewies zu Beginn und am Ende, dass ein Datenbankindex wirklich
+weg war. Der elfte Weg hatte den **festen Namen** ausgenutzt, mit dem der Beweis
+fragte: ein Teilindex, der genau diesen Namen ausspart, lässt beide Beweisläufe
+ehrlich bestehen und bewacht alles andere. Die Reparatur war naheliegend und
+richtig — Name und Kennungen werden jetzt **je Aufruf frisch gewürfelt**.
+
+Dann kam der zwölfte:
+
+    WHERE length(name) <> 26
+    WHERE length(id)   <> 30
+    WHERE substr(id,1,4) NOT IN (…)
+
+Der gewürfelte Name ist **immer 26 Zeichen** lang. Die Kennung wird aus einer
+festen Vorsilbe gebaut. **Gewürfelt waren die Werte, nicht die Gestalt** — und
+die Gestalt genügt vollkommen, um genau die zwei Beweiszeilen auszusparen.
+
+Daran ist nichts zu reparieren, und das ist der Punkt: **die Beweiszeilen müssen
+unterscheidbar sein, sonst fände der Beweis sie nicht — und jede Eigenschaft, die
+sie unterscheidbar macht, ist ein Griff.** Auch ein Name zufälliger Länge hat
+eine Länge. Auch eine Zeile ohne jedes Merkmal ist „die Zeile, die es zur
+Beweiszeit gab".
+
+**Wenn du zum zwölften Mal dieselbe Zusicherung verteidigst, verteidigst du keine
+Eigenschaft mehr, sondern dich selbst gegen den Nächsten, der die Datei
+bearbeitet.** Das kann kein Test. Schreib den letzten Weg als Beleg dafür hin,
+dass die Reihe endet, und hör auf — nicht, weil es genug wäre, sondern weil der
+nächste Zaun dieselbe Lücke unter anderem Namen hätte.
+
 ## Kurzfassung für den Anfang einer Aufgabe
 
 1. Auftrag lesen. Widersprüche **melden**, nicht umgehen.
