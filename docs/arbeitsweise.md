@@ -639,6 +639,35 @@ zwei Schreibweisen — roh und als Mitschnitt-Hexdump. Es lag als schlichter
 gesehen. **Wer nach etwas sucht, sucht nach jeder Form, in der es dastehen kann**
 — nicht nach den zwei, die bisher aufgefallen sind.
 
+### Vorrichtungen aus lauter Nullwerten prüfen lauter Nullwerte
+
+Acht Umgehungen an einer einzigen Eigenschaft, alle von frischen Prüfern
+gefunden, keine von dem, der die Prüfung gebaut hat. Die achte war die
+lehrreichste, weil sie nichts mit der Prüfung zu tun hatte, sondern mit ihren
+**Daten**.
+
+Beide Verhaltenszäune schrieben Datensätze, bei denen jedes Feld außer Kennung
+und Name der Nullwert war. Also ließ sich die Ablehnung an ein beliebiges
+anderes Feld hängen —
+
+    case ... && len(u.Roles) == 0:
+
+— und alles blieb grün, obwohl damit praktisch **kein echter Datensatz mehr
+geprüft** war: die Vertragsprüfung selbst schreibt Rollen. Dieselbe Lücke gab es
+auf der SQL-Seite, ohne den Programmcode überhaupt anzufassen: die Frage um
+`AND locked = 0` verengt, fertig.
+
+**Eine Vorrichtung aus Nullwerten pinnt die Eigenschaft nur für Nullwerte.**
+Jedes Feld, das dein Test nicht besetzt, ist ein Haken, an den jemand eine
+Bedingung hängen kann.
+
+Und die Hälfte, die der Umsetzer hinzugefügt hat und die die Anweisung nicht
+hatte: **besetze nicht alle Seiten gleich.** Wären beide Datensätze voll
+gewesen, hätte die **umgekehrte** Bedingung (`len(u.Roles) != 0`) überlebt. Die
+zwei Ablehnungen müssen sich **über Kreuz** unterscheiden — auf der einen Seite
+fragt der volle und hält der leere, auf der anderen andersherum. Erst dann gibt
+es kein Feld mehr, das in beiden Fällen dasselbe sagt.
+
 ### Strenger machen ist erlaubt — und muss dastehen
 
 „Schwäch nie einen abgenommenen Test ab" hat eine Gegenrichtung, die zweimal
