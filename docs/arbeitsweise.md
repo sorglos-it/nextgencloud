@@ -187,6 +187,24 @@ Wenn du einen Wächter misst, der Dateien liest, dann miss auf einer **Kopie**
 mutier den Wächter so, dass er **sicher** anschlagen müsste. Bleibt er grün,
 misst du die falsche Datei.
 
+Auch die Werkzeuge daneben lügen. Zwei Fälle aus einer einzigen Runde:
+
+- `git status` meldete eine geänderte Datei, die **nicht** geändert war. Der
+  Umsetzer hat nicht geglaubt und nicht ignoriert, sondern den **Blob-Hash**
+  verglichen: identisch mit `HEAD`, null Diffzeilen — ein Stat-Cache-Fehlalarm.
+  Wer so etwas ignoriert, übersieht irgendwann eine echte Änderung; wer es
+  glaubt, jagt ein Gespenst oder committet fremde Arbeit. Nachsehen ist billig.
+- `go test -list` gab in einer Schleife **117** Tests, wo es 124 sind. Er hat
+  gegengezählt und die abweichende Zahl gemeldet, obwohl sie folgenlos war.
+
+Und wenn zwei Messungen sich widersprechen, ist die Frage nie „wer hat recht",
+sondern **„was zählt welches Instrument"**. Zwei Prüfer maßen dieselben Kosten
+und kamen auf 1 → 2 und auf 2 → 3. Beide waren sich über den **Aufschlag** einig
+(+1, unabhängig von der Kettenlänge) und uneinig über den Ausgangswert — sie
+zählten verschiedene Dinge als „Lesung". Wer eine Zahl in einen Kommentar
+schreibt, schreibt dazu, **was** sie zählt; sonst ist der nächste Widerspruch
+schon eingebaut.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
