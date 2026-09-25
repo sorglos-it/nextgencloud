@@ -622,6 +622,37 @@ und hält auch dann noch, wenn jemand den Weg findet.
 
 ---
 
+### Und das fehlende Fremdsystem baust du auch
+
+Der stärkste Fall dieser Regel kam beim Datenbankteil. Eine Funktion schloss aus
+einer Zeilenzahl auf einen Sachverhalt, und diese Zahl zählt je nach Treiber
+Getroffenes oder Geändertes. Auf der hier verfügbaren Datenbank fällt das nie
+auf; die andere gibt es in diesem Projekt nirgends.
+
+Der Koordinator hat deshalb ausdrücklich **kein Rezept** vorgeschrieben, sondern
+ein Kriterium — „die Antwort darf nicht davon abhängen, wie gezählt wird" — und
+dazugesagt: *geht das hier nicht zu fahren, sag mir warum, mit der Messung, und
+zäun die Lücke statt dessen ein.*
+
+Der Umsetzer hat den Ausweg nicht genommen. Er hat die fehlende Zählweise
+**nachgebaut**: ein Trigger auf der vorhandenen Datenbank, der einen Schreibsatz,
+der nichts ändert, still verwirft — danach zählt sie genau wie die andere.
+Gemessen: unveränderter Schreibsatz 0 statt 1, echter 1. Damit war der Fehler
+zuerst **vorgeführt**, dann behoben, und der Test fährt dasselbe Skript nun
+**zweimal, je Zählweise**, und hält, dass beide dasselbe antworten.
+
+Zwei Dinge daran sind die Regel:
+
+- **Ein fehlendes Fremdsystem ist selten ein Grund, nicht zu messen.** Oft
+  braucht es nur die eine Eigenschaft, um die es geht — und die lässt sich auf
+  dem vorhandenen System herstellen. Such danach, bevor du „nicht prüfbar"
+  schreibst.
+- **Die Vorrichtung ist selbst ein Messgerät** (Regel 5). Er hat sie mitgemessen:
+  Trigger weg, und die Prüfung der Vorrichtung wird rot. Ohne das hättest du eine
+  Zusicherung, die auf einer Behauptung über deinen eigenen Prüfstand steht.
+
+„Nicht prüfbar" bleibt eine ehrliche Antwort. Sie ist nur die **zweite**.
+
 ## 15. Beim dritten Mal baust du den Wächter, nicht die Reparatur
 
 Ein Strang hatte eine Fehlerform, die immer gleich aussieht: ein Gegenstand, der
