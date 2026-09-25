@@ -274,6 +274,27 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     beide Seiten dasselbe ab. Gehört zum selben Schnitt wie Punkt 32.
     (web, Aufgabe 9)
 
+35. **Zwei Sätze des Vertrags behaupten eine Prüfung, die es nicht gibt.**
+    `shared/dbapi/dbtest/dbtest.go:2-3` sagt „Every implementation in
+    apps/server-db/ has to pass Run, against MariaDB and SQLite", und
+    `shared/dbapi/dbapi.go:3` sagt „dbtest checks every implementation".
+
+    Gemessen: **`dbtest.Run` hat genau eine Aufrufstelle im ganzen Baum** —
+    `shared/dbapi/memstore/memstore_test.go:12`, gegen `memstore.New()`. Keine
+    Datei unter `apps/` importiert `dbtest`; keine Build-Tags, keine
+    Umgebungsschalter. **Der Store, der später produktiv läuft, wird vom
+    Vertragslauf nicht geprüft.**
+
+    Die Messungen der Umsetzer waren echt — sie haben `dbtest.Run` jede Runde von
+    Hand gegen `sqlstore` verdrahtet und gefahren. Nur fährt es im Repo niemand,
+    also fängt `go test ./...` einen Vertragsbruch dort **nicht**.
+
+    Beim Schnitt gehört beides entschieden: der Satz auf das zurücknehmen, was
+    gilt — **und** `sqlstore` an den Vertragslauf anschließen, denn sonst prüft
+    die Zusage dauerhaft den falschen Store. Die drei Kommentare in `sqlstore`
+    sagen inzwischen dazu, dass ihre Messung von Hand kam. (db, Aufgabe 6,
+    BLOCKED gemeldet)
+
 ## shared/README.md und Querschnitt
 
 14. **`shared/README.md:229` sagt „Wert", wo „Container" stehen muss.**
