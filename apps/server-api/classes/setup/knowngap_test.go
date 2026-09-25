@@ -110,7 +110,8 @@ func TestKnownGap_ARestartedNodeReopensTheSetupDoor(t *testing.T) {
 		t.Fatalf("trust after the takeover: %v", err)
 	}
 	if v.List.Seq != 1 || len(v.List.Users) != 1 {
-		t.Fatalf("expected the stranger's version 1 with his one admin, got version %d with %d user(s)",
-			v.List.Seq, len(v.List.Users))
+		t.Fatalf("the gap is shut -- the takeover left version %d with %d user(s) instead of the "+
+			"stranger's version 1 with his one admin. Correct the comment at fault() in setup.go "+
+			"and retire this test", v.List.Seq, len(v.List.Users))
 	}
 }

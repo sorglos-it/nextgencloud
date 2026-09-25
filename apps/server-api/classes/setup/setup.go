@@ -80,13 +80,16 @@ const lockName = "setup/code"
 // database cannot hold against whoever writes it, and the anchor outside it
 // (trust.Anchor, config.LoadAnchor) is in the contract and not wired here.
 //
-// What the arm costs is said too, and it is not only the two names below.
-// Everything Fault reads as the store not answering comes out E_INTERNAL
-// here, a database that is genuinely away included, and this arm is the last
-// step before the answer goes out. So nothing on this path can say 503 any
-// more -- whoever one day wants a legitimate "come back later" here has to
-// take the word back off this rule first, and there is no finer place left to
-// hang it on.
+// What the arm costs is said too. The two it knows by name, errKey and
+// lock.ErrLock, are not caught before it any more: 9b60c69 took both cases out
+// of this function, so they reach httpapi.Fault like everything else, come
+// back E_UNREACHABLE because it does not read them, and are turned into
+// E_INTERNAL by the one line below. They are right about them -- but so is
+// everything else the arm catches, a database that is genuinely away included,
+// and this is the last step before the answer goes out. So nothing on this
+// path can say 503 any more -- whoever one day wants a legitimate "come back
+// later" here has to take the word back off this rule first, and with the two
+// cases gone there is no finer place left to hang it on.
 func fault(err error, from httpapi.Origin) wire.Code {
 	if code := httpapi.Fault(err, from); code != wire.CodeUnreachable {
 		return code

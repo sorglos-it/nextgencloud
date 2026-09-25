@@ -122,11 +122,17 @@ func Fault(err error, from Origin) wire.Code {
 	// the faults of its own that a run can reach: the errors above, and nothing
 	// of package trust left unnamed on the way out (state.ownRows for a row of
 	// ours, state.handedIn for a version brought in). And whoever hands Fault
-	// an error of a package it does not read answers that one first --
-	// setup/fault is where that is done for the two this API has, a configured
-	// key that will not parse and a damaged row of the counting. The store's
-	// own three are the exception, and they are read above rather than left to
-	// the handlers because every path that touches a store can meet them.
+	// an error of a package it does not read has to answer that one himself.
+	// This API has two, a configured key that will not parse and a damaged row
+	// of the counting, and the fault function of package setup answers both --
+	// no longer by name and no longer before this call, since 9b60c69: it asks
+	// here first and then turns every E_UNREACHABLE of the whole path into
+	// E_INTERNAL, which is the right word for those two and for a setup that
+	// cannot write. The login paths answer their own the same way, one step
+	// earlier: login.sessionFault says what each of the three below means about
+	// a session row before anything of it reaches here. The store's own three
+	// are the exception, and they are read above rather than left to the
+	// handlers because every path that touches a store can meet them.
 	//
 	// What is left over are the guards package state keeps for cases that
 	// cannot arise -- writing out a version it has just read, rolling an ID,
