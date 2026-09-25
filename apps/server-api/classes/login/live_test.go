@@ -122,8 +122,15 @@ func withdrawPasswordUser(t *testing.T, h *Handler, fx fixture) {
 }
 
 // TestAWithdrawalSurvivesTheRowsBeingDropped is the withdrawal above, put back
-// in force by whoever can write the database -- the damage state.checkGap
-// stands against, done past the width it caught.
+// in force by whoever can write the database -- done past the width
+// state.checkGap caught before, and caught now.
+//
+// It holds one form and not the property. Two others cost one statement more
+// than this test does and are open: cutting the chain above the hole, and
+// lowering the Seq of the row above it. Both were built and both go through,
+// so neither can be asserted refused here the way this one is -- what a test
+// of them would pin is today's answer, which is that the session comes back.
+// state.checkGap says why that is not a fault of this package to mend.
 //
 // Version 2 takes the user out, ten more versions follow, and then the rows 2
 // to 11 are dropped. Version 12 still stands, so nothing is missing at the top
@@ -366,14 +373,30 @@ func threeVersions(t *testing.T) (*Handler, string) {
 // newest number the store holds nor an anchor outside it. Both halves were
 // wrong, and the difference between a limit and an excuse is exactly that:
 // dbapi.BlobFrom is the first, and state.checkGap asks it now; trust.Anchor
-// with config.LoadAnchor and trust-anchor.json is the second, and
-// state.refreshLocked builds an anchor of its own besides. Neither was
-// missing. Neither was wired up.
+// with config.LoadAnchor and trust-anchor.json is the second. Neither was
+// missing.
+//
+// What is not wired up is the file, and only the file: config.LoadAnchor,
+// config.SaveAnchor and config.AnchorFile have no caller in this project
+// outside shared/config, and trust-anchor.json is written on the web machine.
+// The type is wired up everywhere -- state.refreshLocked and state.AddVersion
+// build a trust.Anchor every time they open a chain, out of the rows
+// themselves, and session and tunnel carry one too. That is why an anchor that
+// comes from outside is a small change
+// later and not a new mechanism, and it is the only thing that would hold
+// against a writer of the database (state.checkGap says which forms get past
+// what is there now).
 //
 // What tells the cold node apart needed neither of them in the end, and it
 // sits in Live: login/finish asks for the trust list before it writes a
 // session row, so a request that came this far with a session proves a list
 // stood once.
+//
+// What this test holds is the answer, and only the answer. The two nodes do
+// not agree on what they decided: on the warm node state.Refresh still hands
+// Live the cached version and no error, and the 500 comes out of state.Chain
+// one step further on. This test asks for a chain, so it sees that step. The
+// note at that read in live.go says what a caller who does not see it gets.
 func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 	for _, c := range []struct {
 		name   string

@@ -189,6 +189,18 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// new list at once, every other node has the old one until something
 	// refreshes it. Live is the step that decides, so it is the step that has
 	// to ask.
+	//
+	// What it asks for is what lies above the cached version, never the
+	// cached version itself. So a node that holds one decides on it even
+	// where the rows below are gone: with every trust row of the
+	// installation dropped, state.Refresh here hands back the cached version
+	// and no error at all -- measured, version 3 and err nil. What answers
+	// 500 for GET session.PathTrust is the step after this one, state.Chain,
+	// which goes to the rows for the versions it is to send. A caller of Live
+	// that does not go on to Chain -- the WebSocket above -- gets no error and
+	// decides the session on a list the store no longer holds. Reading the
+	// cached version back would cost a read of every row of the chain on every
+	// request; nothing here pays that, and nothing here pretends to.
 	v, err := h.S.Refresh(ctx)
 	if errors.Is(err, state.ErrNoTrust) {
 		// Here that error cannot mean what it means everywhere else. An

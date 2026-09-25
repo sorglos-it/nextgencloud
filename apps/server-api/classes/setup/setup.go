@@ -60,10 +60,33 @@ const lockName = "setup/code"
 //
 // What is given up with the arm was built for the other handler: there one
 // damage is met at two steps depending on what a node holds in its cache, and
-// E_UNREACHABLE is what makes both nodes answer alike (login/live.go). That
-// split cannot arise here -- Serve answers 404 as soon as there is a trust
-// list, so while this handler answers at all there is no cached list for one
-// node to hold and another to lack.
+// E_UNREACHABLE is what makes both nodes answer alike (login/live.go).
+//
+// The split arises here too, and saying otherwise was wrong. Serve asks
+// state.Trust, which answers out of the cache, so a node that ran the setup
+// holds version 1 whether the row is still there or not. Built: node A runs
+// the setup, the row of version 1 is dropped -- one statement -- and node B is
+// started afterwards. A answers 404 and B answers 200 with a setup offer of
+// its own.
+//
+// It is not a difference of status. The node that starts after the row is gone
+// has the first setup open again, for the installation that stood: the
+// installation ID is a row of its own and was not touched, so the offer names
+// it, and a version 1 signed by a key nobody of that installation ever held is
+// taken -- measured, 204, and the installation then runs on that stranger's
+// list with his one admin in it. Whoever can drop a row can take the
+// installation, and no answer this handler picks changes that. The line
+// against it is the same one state.checkGap carries: a check that reads the
+// database cannot hold against whoever writes it, and the anchor outside it
+// (trust.Anchor, config.LoadAnchor) is in the contract and not wired here.
+//
+// What the arm costs is said too, and it is not only the two names below.
+// Everything Fault reads as the store not answering comes out E_INTERNAL
+// here, a database that is genuinely away included, and this arm is the last
+// step before the answer goes out. So nothing on this path can say 503 any
+// more -- whoever one day wants a legitimate "come back later" here has to
+// take the word back off this rule first, and there is no finer place left to
+// hang it on.
 func fault(err error, from httpapi.Origin) wire.Code {
 	if code := httpapi.Fault(err, from); code != wire.CodeUnreachable {
 		return code

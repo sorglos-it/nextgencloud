@@ -192,21 +192,50 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 // checkGap looks above a number the database does not hold. Versions are
 // counted without holes, so a row further up means the database lost the ones
 // in between -- and a read that stops at a hole puts an older trust list back
-// in force without a word: keys an admin withdrew would count again, which is
-// what the anchor stands against.
+// in force without a word: keys an admin withdrew would count again.
 //
 // It asks the store what it still holds from that number on, in one query,
-// rather than looking at a fixed count of numbers above it. A fixed count only
-// raises what the damage costs, and it raises it by nothing that is scarce:
-// eight looks above the hole found every hole of up to eight versions, and
-// dropping nine rows instead of one asks of the same writer eight more
-// statements at the same moment, after which the read ended in silence. This
-// lets no width through.
+// rather than looking at a fixed count of numbers above it. What that changes
+// is the width of the hole it sees, and it sees every width now: eight looks
+// above the hole found holes of up to eight versions, and dropping nine rows
+// instead of one asks of the same writer eight more statements at the same
+// moment. No width of hole gets past this.
 //
-// It rests on one thing, and that one is held elsewhere: a trust row carries
-// its version number in Seq. Every writer of one sets it (AddVersion), and the
-// store's own contract test pins the query over exactly this kind
-// (shared/dbapi/dbtest, BlobFrom over dbapi.BlobTrust).
+// The width was never what stood between that damage and the installation,
+// and this check does not stand there either. It reads the very rows the
+// damage is done to, so whoever writes them shapes what it sees. Two forms of
+// the same attack cost one statement more than the hole and are not caught,
+// both built (login.TestAWithdrawalSurvivesTheRowsBeingDropped is the hole;
+// these two were measured beside it, on the same twelve versions where
+// version 2 withdrew the user):
+//
+//	rows 2..11 gone              ErrSetting, the cold node refuses the session
+//	rows 2..12 gone, chain cut   version 1, no error, the session is open again
+//	rows 2..11 gone, Seq of
+//	row 12 lowered to 0          the same
+//
+// Neither is an oversight here. Above a chain that was cut there is nothing,
+// and the end of a chain and the end of what the store holds are the same
+// sight from below. Seq is not something the store knows about a trust row
+// either: it is a field the writer hands in, and dbapi.BlobPut lays it down as
+// given -- the row itself still reads as version 12, data and signature whole.
+// Against a writer of the database no check that lives in the database holds.
+// Only something outside it can say which version is the newest, and the
+// contract has that thing: trust.Anchor with config.LoadAnchor and
+// trust-anchor.json, written today by the controller and by nothing on this
+// machine. Wiring it is on the V1.2 list.
+//
+// So what this is: cheaper on the hot path than the eight looks it replaced,
+// and one form of the attack shut -- not the promise that an older list cannot
+// be put back in force.
+//
+// For the form it does catch it rests on a trust row carrying its version
+// number in Seq, and that rests on AddVersion, which is this API's own writer
+// and not the one the attack assumes. shared/dbapi/dbtest does not hold it up:
+// it writes the trust rows with Seq equal to the ID itself and then checks
+// that BlobFrom filters and sorts by Seq, so what it pins is the query, never
+// which Seq a trust row must carry. Measured -- memstore passes dbtest in full
+// and falls to the lowered Seq all the same.
 //
 // It answers true when the number is there after all: versions are written in
 // order, so a row above it means another API had just added both, and the
@@ -219,8 +248,10 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 // answer carries every row above it, data and all, because
 // dbapi.BlobFrom takes no limit; a refresh that ends in ErrSetting caches
 // nothing, so every request pays that again until somebody mends the rows.
-// That is the side to be on: the other one is an installation that runs on a
-// trust list somebody rolled back and says nothing.
+// That is the side to be on for a hole: the other one is an installation that
+// runs on a trust list somebody rolled back and says nothing. For the two
+// forms above there is no side to be on here, because there is nothing left
+// for this function to see.
 func (s *State) checkGap(ctx context.Context, missing uint64) (bool, error) {
 	above, err := s.DB.BlobFrom(ctx, dbapi.BlobTrust, missing)
 	if err != nil {
@@ -243,8 +274,10 @@ func (s *State) checkGap(ctx context.Context, missing uint64) (bool, error) {
 // including one a stranger wrote for himself. The installation ID the setup
 // stored before version 1 was signed is the one value here that does not come
 // out of the same row, so it decides. Whoever can write the database can
-// change that row too; the anchor that would settle it outside the database is
-// not in the contract yet.
+// change that row too, and no check that reads it can tell. The thing that
+// would settle it from outside the database is in the contract and not wired
+// to this API: trust.Anchor, config.LoadAnchor, trust-anchor.json. The same
+// line stands at checkGap, and for the same reason.
 func (s *State) checkInstallation(ctx context.Context, want string) error {
 	id, err := s.Installation(ctx)
 	// No ID at all means the setup did not run before version 1 was signed.
