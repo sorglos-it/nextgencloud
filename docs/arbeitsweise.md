@@ -545,6 +545,35 @@ Hochrechnen ist kein Messen, auch dann nicht, wenn der Ausgangswert gemessen war
 Wer eine Zahl nennt, sagt dazu, **wie** gemessen wurde. Wer eine nicht hat, sagt
 das — und der Koordinator entscheidet, ob sie gebraucht wird.
 
+### Eine Gegenprobe, die einen Arm kaputt macht, sichert einen Arm
+
+Eine Prüfung hatte zwei Hälften: sie zählte Treffer in **Anfragen** und Treffer
+in **Antworten**. Der Umsetzer hat die Gegenprobe gebaut, die diese Regel
+verlangt — Filter trifft nichts, Filter trifft alles, Filter vertauscht — und
+alle drei wurden rot. Er schrieb in die Commit-Nachricht, alle drei Wege seien
+gebaut und gingen rot.
+
+Der Prüfer hat die Arme **einzeln** kaputt gemacht:
+
+| kaputt | Lauf |
+| --- | --- |
+| Anfrage-Arm trifft nichts | rot |
+| **Antwort-Arm trifft nichts** | **grün, alles ok** |
+
+Der Arm, der die Eigenschaft trug, war durch nichts abgesichert. Eine
+Fremdänderung, die nur die eine Kopfzeile umbenennt, hätte den Lauf **grün**
+gelassen — also genau das Gegenteil dessen, was im Bericht als Bedenken stand.
+
+**Hat deine Prüfung mehrere Arme, mach jeden einzeln kaputt und verlange für
+jeden Rot.** Eine Gegenprobe, die den Prüfer als Ganzes abschaltet, sagt nur,
+dass er überhaupt etwas tut.
+
+Dieselbe Runde hat die Schwesterform geliefert: Gesucht wurde ein Geheimnis in
+zwei Schreibweisen — roh und als Mitschnitt-Hexdump. Es lag als schlichter
+`xxd -p`-Dump **mitten im durchsuchten Baum** und wurde von beiden Hälften nicht
+gesehen. **Wer nach etwas sucht, sucht nach jeder Form, in der es dastehen kann**
+— nicht nach den zwei, die bisher aufgefallen sind.
+
 ### Ein Zaun an der falschen Zeile ist kein Zaun
 
 Zweimal am selben Tag stand ein ehrlicher Hinweis am falschen Ort.
