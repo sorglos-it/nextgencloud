@@ -583,7 +583,7 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 // row standing to be read, and both go through today
 // (TestKnownGap_TruncatingTheChainRollsItBack,
 // TestKnownGap_LoweringTheTopRowsSeqRollsItBack). Only an anchor outside the
-// database settles it, which is point 6 of docs/vertraege-v1.2.md.
+// database settles it, and that is the open point those two name.
 //
 // Nothing here is a fence nobody else holds, and that is worth writing down.
 // The warm node's decision is held by

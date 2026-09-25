@@ -257,9 +257,10 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// (state.readBlock), and it would still catch only a store that lost the
 	// row: a writer who leaves one standing gets past it either way
 	// (state.checkGap names two such forms, both fenced in knowngap_test.go).
-	// What settles it is an anchor outside the database, point 6 of
-	// docs/vertraege-v1.2.md. Nothing here pays that read, and nothing here
-	// pretends to. TestTheTwoNodesPartWhereTheAnswerNeedsNoRow holds it.
+	// What settles it is an anchor outside the database, which is on the V1.2
+	// list and which knowngap_test.go names by its point. Nothing here pays
+	// that read, and nothing here pretends to.
+	// TestTheTwoNodesPartWhereTheAnswerNeedsNoRow holds it.
 	v, err := h.S.Refresh(ctx)
 	if errors.Is(err, state.ErrNoTrust) {
 		// Here that error cannot mean what it means everywhere else. An
