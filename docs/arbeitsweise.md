@@ -382,6 +382,39 @@ Was in NGC funktioniert hat:
 
 ## 13. Was ehrlich offen bleibt, bleibt ehrlich offen
 
+### Zäun die Lücke ein, die du nicht schließt
+
+Ein Umsetzer hatte vier Angriffe gebaut, die eine Lücke belegen, die er nicht
+schließen durfte — die Abhilfe lag hinter einem eingefrorenen Vertrag. Er hat
+die Lücke im Kommentar benannt und die Angriffe in seinem Kratzordner gelassen,
+mit der Begründung: ein Test, der sie festhielte, schriebe das kaputte Verhalten
+fest.
+
+Der Einwand klingt richtig und ist es nicht. **Ein Test über eine bekannte Lücke
+ist keine Zustimmung zu ihr, sondern ihre Quittung.** Wird sie eines Tages
+geschlossen, geht er **rot** — und jemand muss hinsehen und den Kommentar
+nachziehen, der bis dahin ehrlich war und in dem Moment still falsch wird. Ohne
+den Zaun merkt es niemand.
+
+Ein anderer Strang war nach zehn Runden über dieselbe Frage schon dort: zwei
+Lücken und ein lebender Fehlalarm stehen dort als eingecheckte Pakete. Die Zeile
+sagt, was der Code **tut**; der Kommentar daneben, ob das **richtig** ist. Und
+der Satz, der es zusammenfasst, stammt von dort: **ein Kommentar verrottet, ein
+Paket nicht.**
+
+**Der Zaun muss empfindlich sein, sonst ist er Dekoration.** Fahr jeden Test
+gegen einen Mutanten, der die **Reparatur** nachbildet, und verlang, dass er an
+**seiner eigenen** Zusicherung mit **seiner eigenen** Meldung rot wird. Wird er
+aus einem anderen Grund rot, zählt es nicht — ein Umsetzer hat genau das bemerkt
+(sein Mutant sperrte schon einen früheren Schritt, der Test fiel an der falschen
+Stelle) und ihn neu gebaut, statt das Rot mitzunehmen.
+
+Und benenne die Tests so, dass niemand sie für eine Zusage hält:
+`TestKnownGap_TruncatingTheChainRollsItBack`, nicht `TestGapIsCaught`. In den
+Rumpf gehören drei Sätze: **das ist eine Lücke, kein Sollverhalten**; woran sie
+hängt; und dass Rot heißt, den Kommentar zu berichtigen und den Test in Rente zu
+schicken.
+
 „Ungeklärt" ist erlaubt — **unbegründet weglassen** nicht.
 
 Ein Umsetzer meldete drei Minuten ohne Ergebnis auf einer Engine als ungeklärt.
