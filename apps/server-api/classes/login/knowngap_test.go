@@ -28,19 +28,32 @@ import (
 // of today rot into false ones the day somebody fixes this, and nobody finds
 // out -- a comment rots, a checked-in test does not.
 //
-// What that costs the attacker is not one shape: two of the three below cost
-// one statement more than the hole TestAWithdrawalSurvivesTheRowsBeingDropped
-// fences (eleven against its ten). The third -- a warm node deciding on a
-// list the store has already lost -- is the cheapest of the three, but not by
-// the seven a straight subtraction once suggested: that compared three,
-// measured on TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost's own
-// three-version chain, against the ten above from a twelve-version chain --
-// two installations, not one difference. Measured on that same
-// twelve-version chain instead, a warm node only has to lose the one row it
-// already cached: with version 12 alone dropped and versions 1 through 11
-// left standing, Refresh still answers version 12 with no error, and Live
-// still says ok=true. One statement, cheaper than either of the two above
-// it, and that is a statement about the danger and not only about the count.
+// What they cost the attacker is two questions and not one, because they are
+// not all the same damage. The first two below put an older list back in
+// force: the session of a user an admin withdrew is open again, on a list that
+// still holds him. That is the very damage
+// TestAWithdrawalSurvivesTheRowsBeingDropped fences, so the two prices
+// compare -- eleven statements each against its ten.
+//
+// The third is a different damage and no price of it belongs in that
+// subtraction. A warm node deciding on a list the store has lost puts nothing
+// back in force: it goes on deciding on the newest version there ever was.
+// Measured on the very twelve-version chain of the two above, with version 2
+// withdrawing the user: drop the row of version 12 alone and Refresh still
+// answers version 12 with no error -- and the withdrawn user's session is
+// refused all the same, E_LOGIN, because version 12 is the list that
+// withdrew him. Drop all twelve and it is the same answer. On that
+// installation there is no number of statements at all that buys an attacker
+// what the two above buy for eleven.
+//
+// So no number stands here for the third. What it is, is written out at
+// TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost, which measures it where
+// it can be seen: a user no version ever withdrew, and a node answering
+// ok=true out of a version the store can no longer show. On that
+// three-version installation one statement reaches it -- dropping the row of
+// version 3 alone leaves Refresh answering version 3 with no error and Live
+// saying ok=true, measured -- and that one statement and the eleven above
+// buy two different things.
 
 // withdrawnAtTwelve builds the installation these gaps are measured on:
 // version 2 takes the logged-in password user out of the trust list, and ten
@@ -233,7 +246,8 @@ func TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost(t *testing.T) {
 	// And this is why the answer of GET /trust looks right anyway: the step
 	// after this one does go to the rows, and finds them gone.
 	if _, err := h.S.Chain(ctx, v, 1); err == nil {
-		t.Fatal("state.Chain answered without the rows, so the 500 of GET /trust no longer comes from there")
+		t.Fatal("state.Chain answered without the rows, so the 500 of GET /trust no longer comes " +
+			"from there. Correct the note at the Refresh call in login/live.go and retire this test")
 	}
 	// The gap itself, and not the reassurance above: a caller of Live that
 	// does not go on to Chain sees none of that. It decides the session live,
