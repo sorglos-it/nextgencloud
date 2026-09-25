@@ -9,7 +9,7 @@
 // import line never accounted for them. b64decode, P and uint32 were in that
 // line but are not used anywhere in this file (Round 1 finding K3) and are
 // left out.
-import { b64encode, encodedLen, equal, utf8, viewOf } from "./b64.js";
+import { b64encode, encodedLen, equal, utf8, viewOf, bytesOf, BadInput } from "./b64.js";
 import { decode, Budget, S, A, str, bool, bytes, uint } from "./json.js";
 import { validName, validAppID, coreApp, validText, validID, validLoginName } from "./text.js";
 import { validTunnelURL, validStoreURL, validOrigin } from "./url.js";
@@ -261,22 +261,92 @@ export function parseSigned(b) {
 }
 
 export async function hash(signed) {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", signed.payload));
+  // The view is hashed, not the caller's object - session.certHash does the
+  // same and for the same reason: under node the digest asks the object for
+  // its size, in the browsers it takes the bytes out of the internal slot, and
+  // a hash that depended on which engine asked would be two hashes for one
+  // version. held() below hands this a copy of its own, so this line only
+  // matters for a caller that reaches hash directly.
+  return new Uint8Array(await crypto.subtle.digest("SHA-256",
+    viewOf(signed.payload, "trust: invalid list")));
 }
 
-// chain (here and in advance) is not guarded the way validateList's and
+// held holds one signed version still, and it is what open and advance work
+// on instead of the caller's own object.
+//
+// FIXRUNDE 5, K1. Both functions below read s.payload SEVERAL times across
+// their awaits - advance for the signature, then for the list, then for the
+// hash; open for the anchor hash and then for the list - and on the caller's
+// buffer those readings need not be one document. Measured in node 24 and in
+// chromium, with an ordinary Uint8Array rewritten while the engine was
+// awaited:
+//
+//   advance  the signer was checked over the honest version and the list that
+//            came back carried an API signing key nobody ever signed for.
+//   open     above version 1 nothing checks a signature at all, so the anchor
+//            hash is the whole binding - and it bound the reading the parse
+//            did not use. Same forged API key, out of an anchor that matched.
+//
+// The repair is sign.verify's and proof.verify's: b64.bytesOf copies the bytes
+// into a buffer of ours, which the caller holds no reference to and can never
+// touch again, and every reading below is of that copy. The order around it is
+// this file's own and not theirs - the view comes first
+// so its own number bounds the version before anything is allocated, and the
+// copy is made OUT OF THAT VIEW - which is what makes the bound check the very
+// number that is worked with, without asking the caller for a length and so
+// without touching the leniency the tree settled on (bytes.spec.js, "a length
+// that disagrees with the view is ignored, not refused").
+//
+// The proof is taken the way task.verifyConfirm takes it: its five fields read
+// once, into an object of ours, because keyOwner is asked for the key kid
+// names and proof.verify then checks the signature - and read twice, kid could
+// name one key to the first and another to the second.
+//
+// A malformed version still rejects the promise rather than answering a wrong
+// value; it is now this file's own error and no longer whatever the engine
+// threw when the digest was handed something that is not bytes.
+function held(s) {
+  if (s === null || typeof s !== "object") throw new Error("trust: invalid list");
+  const { payload, proof: p } = s;
+  if (p === null || typeof p !== "object") throw new Error("trust: invalid list");
+  const { kind, kid, sig, authData, clientData } = p;
+  return {
+    payload: payloadCopy(payload),
+    proof: { kind, kid, sig, authData, clientData },
+  };
+}
+
+function payloadCopy(b) {
+  try {
+    const view = viewOf(b, "trust: invalid list");
+    // parseSigned holds a version to this same bound; a chain that never went
+    // through it is held to it here, before anything is allocated.
+    if (view.length > MAX_PAYLOAD) throw new BadInput("trust: invalid list");
+    return bytesOf(view, "trust: invalid list");
+  } catch (e) {
+    if (e instanceof BadInput) throw new Error("trust: invalid list");
+    throw e;
+  }
+}
+
+// chain itself (here and in advance) is not guarded the way validateList's and
 // encodeList's fields now are: a malformed chain rejects this promise
 // instead of answering a wrong true/false/value, which is what every fix in
 // this task was actually about, so there is nothing here for that fix to close.
+// What IS closed since Fixrunde 5 is each element of it - see held above.
 export async function open(anchor, chain) {
   if (chain.length === 0) throw new Error("trust: no anchor");
-  const h = await hash(chain[0]);
+  // chain[0] is taken ONCE. It used to be read three times over - for the
+  // hash, for the list and for the signature - and on a caller's array those
+  // three need not even be the same element.
+  const first = held(chain[0]);
+  const h = await hash(first);
   if (!equal(h, anchor.hash)) throw new Error("trust: does not match the anchor");
-  const l = await parseList(chain[0].payload);
+  const l = await parseList(first.payload);
   if (l.seq !== anchor.seq) throw new Error("trust: does not match the anchor");
   if (l.seq === 1) {
     // Version 1 signs itself, so only an admin of it may have signed.
-    const u = await verifySigner(l, chain[0]);
+    const u = await verifySigner(l, first);
     if (!u.roles.includes(ROLE_ADMIN)) throw new Error("trust: signer may not make this change");
   }
   return advance({ list: l, hash: h }, chain.slice(1));
@@ -285,14 +355,17 @@ export async function open(anchor, chain) {
 export async function advance(cur, chain) {
   if (!cur.list) throw new Error("trust: broken chain");
   for (const s of chain) {
-    const u = await verifySigner(cur.list, s);
-    const next = await parseList(s.payload);
+    // One reading of this version, and the signature, the list and the hash
+    // are all of those same bytes.
+    const v = held(s);
+    const u = await verifySigner(cur.list, v);
+    const next = await parseList(v.payload);
     if (next.seq !== cur.list.seq + 1 || !equal(next.prev, cur.hash)
       || next.installation !== cur.list.installation) throw new Error("trust: broken chain");
     if (!u.roles.includes(ROLE_ADMIN) && !onlyOwnKeys(cur.list, next, u.id)) {
       throw new Error("trust: signer may not make this change");
     }
-    cur = { list: next, hash: await hash(s) };
+    cur = { list: next, hash: await hash(v) };
   }
   return cur;
 }

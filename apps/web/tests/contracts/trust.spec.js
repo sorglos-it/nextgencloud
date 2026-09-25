@@ -955,3 +955,138 @@ test("tlsPin hashes deterministically and encodeList matches Go's field order an
   expect(out.tlsPinMatchesDigest).toBe(true);
   expect(out.encoded).toBe(out.expected);
 });
+
+// Fixrunde 5, K1: the same class as task.verifyApproval and session.verifyAPI,
+// twice over in this file.
+//
+// advance read s.payload three times across its awaits - for the signature,
+// for the list and for the hash - and open read chain[0] three times as well:
+// for the anchor hash, for the list and for the signature. Each of those
+// readings is of the caller's buffer, and an ordinary Uint8Array rewritten
+// while the engine is awaited answers them with different documents.
+//
+// Measured on 4abaa15 in node 24 and in chromium, with a forged version whose
+// API node carries a signing key one byte different from the one that was
+// signed for - the key every later signature of that node is checked against:
+//
+//   advance  signer checked over the honest version, forged list returned.
+//   open     ABOVE VERSION 1 NOTHING CHECKS A SIGNATURE AT ALL, so the anchor
+//            hash is the whole binding - and it bound the reading the parse
+//            did not use. Forged list returned out of an anchor that matched.
+//
+// The forged version on its own is refused: by the signature in advance, by
+// the anchor in open. It came back because it was never what was checked.
+test("advance and open decide on the version they checked, not what the buffer holds after",
+  async ({ shell }) => {
+    test.setTimeout(120_000);
+    test.skip(!(await hasEd25519(shell, v[0])),
+      "no Ed25519 in this engine's Web Crypto: it cannot verify any signature in trust.json");
+    const c = v.find((x) => x.valid && x.chain.length >= 2 && x.anchor.seq === 1);
+    expect(c === undefined).toBe(false);
+    const out = await shell.evaluate(async (d) => {
+      const t = await import("/assets/js/contracts/trust.js");
+      const { b64decode } = await import("/assets/js/contracts/b64.js");
+
+      const proofOf = (p) => ({
+        kind: p.kind, kid: p.kid, sig: b64decode(p.sig),
+        authData: p.authData ? b64decode(p.authData) : new Uint8Array(0),
+        clientData: p.clientData ? b64decode(p.clientData) : new Uint8Array(0),
+      });
+      // What a caller of these two acts on, boiled down: the version and the
+      // signing key of every API node.
+      const name = (l) => l.seq + " api=" + (l.nodes || []).filter((n) => n.kind === "api")
+        .map((n) => n.id + ":" + Array.from(n.sign.subarray(0, 4)).join(".")).join(",");
+      // One character of the API node's signing key, inside the JSON, so the
+      // forgery keeps the byte count and the key stays a decodable 32 bytes.
+      const forge = (a) => {
+        const txt = new TextDecoder().decode(a);
+        const m = /"kind":"api"[\s\S]*?"sign":"./.exec(txt);
+        const at = m.index + m[0].length - 1;
+        const b = new TextEncoder().encode(
+          txt.slice(0, at) + (txt[at] === "a" ? "b" : "a") + txt.slice(at + 1));
+        return b.length === a.length ? b : null;
+      };
+
+      const after = (method, k, b, to) => {
+        const proto = Object.getPrototypeOf(crypto.subtle);
+        const orig = proto[method];
+        let n = 0;
+        Object.defineProperty(proto, method, {
+          configurable: true, writable: true,
+          value: function (...args) {
+            const p = Reflect.apply(orig, this, args);
+            if (++n !== k) return p;
+            return p.then((x) => { b.set(to); return x; });
+          },
+        });
+        return () => Object.defineProperty(proto, method,
+          { configurable: true, writable: true, value: orig });
+      };
+
+      const first = { payload: b64decode(d.chain[0].payload), proof: proofOf(d.chain[0].proof) };
+      const one = await t.parseList(first.payload);
+      const cur = { list: one, hash: await t.hash(first) };
+      const honestBytes = b64decode(d.chain[1].payload);
+      const forged = forge(honestBytes);
+      if (forged === null) return { error: "no same-length forgery" };
+      const signedName = name(await t.parseList(honestBytes));
+
+      const step = async (payload, undo) => {
+        try {
+          const got = await t.advance({ list: cur.list, hash: cur.hash },
+            [{ payload, proof: proofOf(d.chain[1].proof) }]);
+          return name(got.list);
+        } catch (e) {
+          return "refused: " + e.message;
+        } finally {
+          if (undo) undo();
+        }
+      };
+      // The anchor is version 2, so open takes it as the root and checks no
+      // signature over it (l.seq === 1 is false).
+      const anchor = { seq: 2, hash: await t.hash({ payload: honestBytes }) };
+      const root = async (payload, undo) => {
+        try {
+          const got = await t.open(anchor, [{ payload, proof: proofOf(d.chain[1].proof) }]);
+          return name(got.list);
+        } catch (e) {
+          return "refused: " + e.message;
+        } finally {
+          if (undo) undo();
+        }
+      };
+
+      const res = { signedName };
+      res.advanceHonest = await step(new Uint8Array(honestBytes));
+      res.advanceAlone = await step(new Uint8Array(forged));
+      const a = new Uint8Array(honestBytes);
+      // proof.verifyRaw calls crypto.subtle.verify once for this password
+      // proof, so this is "the signer has just been checked".
+      res.advanceSwapped = await step(a, after("verify", 1, a, forged));
+      res.advanceHappened = a.every((b, i) => b === forged[i]);
+
+      res.openHonest = await root(new Uint8Array(honestBytes));
+      res.openAlone = await root(new Uint8Array(forged));
+      const o = new Uint8Array(honestBytes);
+      // The first digest of open() is the anchor hash, which is the only thing
+      // binding these bytes at all above version 1.
+      res.openSwapped = await root(o, after("digest", 1, o, forged));
+      res.openHappened = o.every((b, i) => b === forged[i]);
+      return res;
+    }, c);
+
+    expect(out.error).toBe(undefined);
+    // The honest version comes through both ways, and the forged one comes
+    // through neither: advance refuses it on the signature, open on the anchor.
+    expect(out.advanceHonest).toBe(out.signedName);
+    expect(out.advanceAlone).toBe("refused: trust: bad signature");
+    expect(out.openHonest).toBe(out.signedName);
+    expect(out.openAlone).toBe("refused: trust: does not match the anchor");
+    // Both swaps really happened, so a green line cannot mean they never fired.
+    expect(out.advanceHappened).toBe(true);
+    expect(out.openHappened).toBe(true);
+    // THE TWO LINES THIS TEST IS FOR. On 4abaa15 both came back as the forged
+    // list, whose API node carries a key nobody signed for.
+    expect(out.advanceSwapped).toBe(out.signedName);
+    expect(out.openSwapped).toBe(out.signedName);
+  });

@@ -366,7 +366,7 @@ const ENTRIES = {
   // What this guard holds here now is the 0/0 half, and it is the stronger
   // half: buffer and byteOffset are NEVER touched, so no view onto the
   // caller's memory is built at any size. sign.spec.js "verifyRaw decides on a
-  // copy no getter can reach" holds the rest - seven shapes at three arguments
+  // copy no getter can reach" holds the rest - eight shapes at three arguments
   // and the plain array besides, each handing over rubbish and revealing the
   // bytes that would verify only through its trick.
   "sign.verifyRaw#0": "copy",

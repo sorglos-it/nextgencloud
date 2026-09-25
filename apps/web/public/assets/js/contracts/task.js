@@ -60,7 +60,7 @@
 // before this one and had been one short since MAX_PARAMS arrived. viewOf is
 // the ninth; it came from wire.js for one round and comes from b64.js since
 // this one, which is why BadFrame is gone again and the count fell by one.
-import { b64encode, utf8, fromUtf8, equal, encodedLen, viewOf, BadInput } from "./b64.js";
+import { b64encode, utf8, fromUtf8, equal, encodedLen, viewOf, bytesOf, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes, int, raw, RAW } from "./json.js";
 import { validName, validAppID, validID } from "./text.js";
 import * as proof from "./proof.js";
@@ -126,6 +126,50 @@ const taskBudget = new Budget({ size: MAX_TASK, items: { params: RAW } });
 function payloadView(b) {
   try {
     return viewOf(b, "task: malformed task");
+  } catch (e) {
+    if (e instanceof BadInput) throw new Error("task: malformed task");
+    throw e;
+  }
+}
+
+// payloadCopy is payloadView's counterpart for the one place that must not
+// hand a view on: a signature is checked over these bytes and the task is
+// then decoded from them, across an await, so a VIEW is not enough. A view
+// keeps pointing at the caller's buffer, and an ordinary Uint8Array rewritten
+// while the engine is awaited therefore had the signature checked over one
+// document and handed back ANOTHER - measured in node 24 and in chromium,
+// signature over ctl-1/deactivate, ctl-2/reactivate returned, the second
+// document refused on its own with "task: bad signature". That is
+// sign.verify's and proof.verify's hole, in this file, and the repair is
+// theirs: bytesOf copies the bytes into a buffer of ours, which the caller
+// holds no reference to and can never touch again.
+//
+// The three steps, and why they are in this order:
+//
+//   1. The VIEW, which payloadView already built and every reader of a task
+//      already decides on. Its own number is byteLength, not the caller's
+//      length, so nothing here asks the caller for a count at all.
+//   2. The bound, on the view's number, BEFORE the copy - a task past MAX_TASK
+//      costs nothing but the look and is never allocated, as before.
+//   3. The copy, made OUT OF THE VIEW. That is what makes the sentence above
+//      true by construction rather than by a second check: the copy holds the
+//      view's bytes, so the number the bound looked at is the number that is
+//      worked with, and it takes no equality test to say so.
+//
+// What this deliberately does NOT do is refuse an object whose length
+// disagrees with its view. That leniency is the tree's settled decision, with
+// its own measurement - bytes.spec.js, "a length that disagrees with the view
+// is ignored, not refused" - and it is Go's own behaviour for a slice whose
+// capacity runs past its length. A first version of this fix tied the caller's
+// count to the copy and refused the mismatch; it turned that test's boundLying
+// case from taken to refused, and it was wrong to. Fixrunde 5's W1 is about
+// the bound checking the number that is worked with, and step 3 gives that
+// without touching the leniency.
+function payloadCopy(b, max) {
+  try {
+    const view = viewOf(b, "task: malformed task");
+    if (view.length > max) throw new BadInput("task: malformed task");
+    return bytesOf(view, "task: malformed task");
   } catch (e) {
     if (e instanceof BadInput) throw new Error("task: malformed task");
     throw e;
@@ -450,22 +494,24 @@ export async function verifyApproval(env, cert, client) {
   // found in session.verifyAPI.
   const { payload: given, kid, sig } = env;
   const { inst: certInst, sig: certSig } = cert;
-  // Reading the field once is not yet holding the bytes still, and that is what
-  // this line does. Until this round the object went on as it stood, to the
-  // bound below, then to the signature check and then to parseTask, and a
-  // subclass that answers 0 on the first and the fifth reading of its length
-  // put a 70027-byte task through all three - measured, right signature, right
-  // form, right binding, and the task came back. Measured against shared/task,
-  // Go's VerifyApproval refuses those very bytes: what it holds is a []byte,
-  // whose length the compiler answers for. From here on nothing reads the
-  // caller's length again - measured with a counting getter, 303 readings in
-  // one run before, none after.
-  const payload = payloadView(given);
-  // Before any signature is checked, as Go has it: a payload beyond MAX_TASK
-  // costs nothing but the look.
-  if (payload.length > MAX_TASK) {
-    throw new Error("task: malformed task");
-  }
+  // Reading the field once is not yet holding the bytes still, and holding
+  // them still is what this line does. The round before built a VIEW here and
+  // wrote that the signature covers "the very bytes the task is then decoded
+  // from"; measured, it did not. A view keeps pointing at the caller's buffer,
+  // so an ordinary Uint8Array rewritten while the engine was awaited had the
+  // signature checked over document A and parseTask read document B out of the
+  // same view - ctl-1/deactivate signed, ctl-2/reactivate returned, in node 24
+  // and in chromium alike. payloadCopy takes the bytes out of the caller's
+  // reach, bound and all, and everything below works on that copy: the
+  // signature, the parse and the binding all see one document, and it is the
+  // one that was signed.
+  //
+  // The older reading this line also closes stays closed: a subclass that
+  // answers 0 on the first and the fifth reading of its length put a
+  // 70027-byte task through the bound, the signature and the binding, and the
+  // task came back. Go's VerifyApproval refuses those very bytes - what it
+  // holds is a []byte, whose length the compiler answers for.
+  const payload = payloadCopy(given, MAX_TASK);
   // Go hands sign.Verify's own error on; verifyEnvelope answers true or false
   // and this one error says false.
   if (!(await verifyEnvelope({ payload, kid, sig }, certSig, PURPOSE_TASK))) {

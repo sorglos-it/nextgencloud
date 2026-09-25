@@ -198,7 +198,16 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // bytesOf reads no property of a real array: `new Uint8Array(v)` copies out
     // of the internal slots, which is where the truth lives and where no
     // getter can be installed - so a subclass that overrides all four accessors
-    // is not consulted once, measured. (A Proxy has no such slots: there
+    // is not consulted once, measured.
+    //
+    // One honest input answers differently than it did before the copy, and it
+    // is named rather than fenced: bytes on a SharedArrayBuffer were false on
+    // 8b6fa87 and are true from 03cbe8c on. The Web Crypto API refuses a view
+    // onto shared memory; the copy is ordinary memory, so it verifies. The
+    // bytes are honest and true is the right answer. proof.validateUserKey
+    // carries the same flip since Fixrunde 5, for the same reason.
+    //
+    // (A Proxy has no such slots: there
     // `new Uint8Array(v)` consults one thing only, its Symbol.iterator. A plain
     // Proxy over a typed array inherits that array's iterator, which throws at
     // the proxy receiver, so bytesOf answers BadInput - not through length or
@@ -222,8 +231,13 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // away - the bytes that will be verified were settled three lines up.
     //
     // Because they can only refuse, their order among themselves does not
-    // matter either, and that is measured and not assumed: the seven shapes at
-    // the three positions answer the same with this line reversed.
+    // matter for what can be FORGED, and that is measured and not assumed: the
+    // eight shapes at the three positions answer the same with this line
+    // reversed. Said exactly, because the round before said it too loosely and
+    // W1 is what that cost: what the order cannot change is the set of inputs
+    // that come back TRUE. It could still change which of two wrong inputs is
+    // refused first, and hence which error a caller sees - here there is only
+    // one answer, false, so nothing is left for it to change.
     //
     // They are here to keep an accepted assurance - "a check of a signature
     // answers false for an envelope that fights back". An object whose numbers
@@ -240,7 +254,7 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // holds them to reading the caller's two NUMBERS - the line below is that
     // reading - and to never touching buffer or byteOffset, which are what a
     // view onto the caller's memory would be built from. sign.spec.js
-    // "verifyRaw decides on a copy no getter can reach" measures all seven
+    // "verifyRaw decides on a copy no getter can reach" measures all eight
     // shapes at all three positions, and "verify reads the key once" measures
     // the envelope.
     if (!agrees(pubRaw, k) || !agrees(sig, s) || !agrees(msg, m)) return false;
@@ -296,21 +310,52 @@ export async function verify(env, pubRaw, purpose) {
     // against the other. Copying once is what makes the id and the signature
     // belong to the same key.
     const pub = bytesOf(pubRaw, "sign: key is not bytes");
-    // The payload is bounded on its OWN count BEFORE it is copied, so a payload
-    // past the limit is refused without ever being allocated. Measured on a
-    // 64 MiB payload: refused in a fraction of a millisecond, where copying it
-    // first and refusing after spent about 15 ms in chromium and 9 in node and
-    // peaked at twice the memory (the original plus its copy). This reads the
-    // caller's count once; agrees() below ties that count to the copy, so the
-    // early read can only refuse - a getter that answered small here and handed
-    // over a larger buffer is turned away at the copy, never verified - and
-    // load.length stays as the authoritative bound on the bytes a Proxy with
-    // its own iterator could still make larger than its count.
-    if (payload instanceof Uint8Array && payload.length > MAX_PAYLOAD) return false;
+    // The payload is bounded BEFORE it is copied, so a payload past the limit
+    // is refused without ever being allocated. Measured on 64 MiB: refused in
+    // 0.011 ms with no ArrayBuffer taken at all, against 15.8 ms and a full
+    // 64 MiB when the copy came first (node 24; chromium 0 ms against 15.7 ms,
+    // where a browser hands out no count of the buffers it holds and the time
+    // carries the point on its own).
+    //
+    // FIXRUNDE 5, W1. The round before wrote "so the early read can only
+    // refuse", and that sentence was measured FALSE. The bound was a SECOND
+    // reading of the caller's count: it ate the first answer and agrees() took
+    // the next one, so a length getter that answers 0 once and the truth
+    // afterwards went from refused to ACCEPTED (03cbe8c false, 4abaa15 true),
+    // and the same getter the other way round - truth first, lie after - went
+    // from accepted to refused (true, then false). No forgery either way: what
+    // is verified is the copy, under a real signature over those very bytes.
+    // But the set of inputs this function refuses MOVED instead of only
+    // growing, and not moving it was the whole reason the bound was allowed to
+    // come forward. Measured in node 24 and in chromium, identical.
+    //
+    // So the caller's count is read ONCE, into count. That one number is what
+    // the bound looks at AND what is tied to the copy two lines down, so the
+    // bound really does check the number that is worked with, and the reading
+    // count is back at the one 03cbe8c had. Measured after this change in both
+    // engines: 1 reading; the lying getter DECIDED the same as on 03cbe8c both
+    // ways round - lie first refused, truth first taken, which is the half
+    // that says nothing formerly accepted is refused now either - and 64 MiB
+    // still refused without a byte copied.
+    //
+    // 4abaa15 is on origin, so its commit message keeps the wrong sentence;
+    // this is where the correction stands.
+    const count = payload.length;
+    if (count > MAX_PAYLOAD) return false;
     const load = bytesOf(payload, "sign: payload is not bytes");
     // Same as in verifyRaw, and for the same reason: after the copies these
     // can only refuse, so an object that fights back is still answered false.
-    if (!agrees(pubRaw, pub) || !agrees(payload, load)) return false;
+    // agrees() is spelled out for the payload rather than called, because its
+    // length reading is the one already taken above - calling it would put the
+    // second reading straight back.
+    if (!agrees(pubRaw, pub)) return false;
+    if (count !== load.length || payload.byteLength !== load.length) return false;
+    // This cannot fire any more: the line above holds count equal to
+    // load.length and the bound above holds count at MAX_PAYLOAD. It stays as
+    // the bound on the BYTES rather than on a number - a Proxy with an
+    // iterator of its own hands bytesOf as many bytes as it likes, whatever
+    // its count says - so the day the tie above is loosened, this is what
+    // catches it.
     if (load.length > MAX_PAYLOAD) return false;
     if (kid !== (await keyIDAsync(pub))) return false;
     return await verifyRaw(pub, sig, message(purpose, load));

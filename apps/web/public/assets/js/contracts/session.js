@@ -10,7 +10,7 @@
 // verifyAPI needs to find the node that signed and to check its signature.
 // Left out: b64decode, envelopeBudget, validText and validTOTP, none of which
 // this file uses - the same reading task 7 gave trust.js's own import line.
-import { b64encode, concat, utf8, equal, viewOf } from "./b64.js";
+import { b64encode, concat, utf8, equal, viewOf, bytesOf, BadInput } from "./b64.js";
 import { decode, Budget, S, P, A, str, bool, bytes, uint, int } from "./json.js";
 import { validID } from "./text.js";
 import { validOrigin } from "./url.js";
@@ -208,6 +208,36 @@ export async function certHash(payload) {
 // find the node and to check the signature; both pairs now come out of the
 // single read each field got here, so neither pair can disagree with itself.
 // Go walks a []trust.Node of typed fields and has nothing to disagree with.
+// certCopy holds a caller's bytes still: it copies them into a buffer of ours,
+// which the caller holds no reference to and can never touch again. Reading a
+// FIELD once is not the same as holding the bytes it names; the bytes behind
+// it are the caller's buffer, and an ordinary Uint8Array rewritten while the
+// engine is awaited answers two readings with two documents - measured, the
+// API certificate below had its signature checked over a dh key of 0x01 bytes
+// and decoded one of 0xaa, in node 24 and in chromium alike.
+//
+// The repair itself is sign.verify's and proof.verify's - decide on a COPY no
+// getter and no later write can reach. The ORDER around it is this file's own
+// and not theirs: the view first, so its own number bounds the document before
+// anything is allocated, and then the copy made OUT OF THAT VIEW, which is
+// what makes "the bound checked the number that is worked with" true by
+// construction. sign.verify copies straight off the caller's object instead,
+// because bytes.spec.js holds its three positions to touching neither buffer
+// nor byteOffset. Nothing here asks the caller for a length, so the leniency
+// the tree settled on stays untouched (bytes.spec.js, "a length that disagrees
+// with the view is ignored, not refused").
+// task.payloadCopy is the same function under task's own error.
+function certCopy(b, max) {
+  try {
+    const view = viewOf(b, "session: malformed certificate");
+    if (view.length > max) throw new BadInput("session: malformed certificate");
+    return bytesOf(view, "session: malformed certificate");
+  } catch (e) {
+    if (e instanceof BadInput) throw new Error("session: malformed certificate");
+    throw e;
+  }
+}
+
 const apiNodes = (l) => {
   const ns = l?.nodes;
   if (!Array.isArray(ns)) return [];
@@ -235,8 +265,21 @@ export async function verifyAPI(env, l, client, now) {
   // their own fields once for this reason, and validateClientCert above says
   // it too (Fixrunde 1, K1).
   if (env === null || typeof env !== "object") throw new Error("session: malformed certificate");
-  const { payload, kid, sig } = env;
-  const cc = decode(client, certBudget, clientCertShape);
+  const { payload: given, kid, sig } = env;
+  // Fixrunde 5, K1: reading the field once was only half of it. Both byte
+  // strings here are read TWICE across the awaits below - the payload for the
+  // signature and again for the decode, the client certificate for its own
+  // decode and again for certHash - and on the caller's buffer those two
+  // readings need not be the same document. Both are copied here, once, and
+  // everything below works on the copies: the signature covers the very bytes
+  // the certificate is decoded from, and the hash the certificate is bound to
+  // is the hash of the very bytes the caller's own certificate was read from.
+  // The client certificate is taken first, as it was before this round: it is
+  // the first thing this function looked at, and bytes.spec.js's probe reaches
+  // this argument only because nothing refuses ahead of it.
+  const cert = certCopy(client, MAX_CERT);
+  const payload = certCopy(given, MAX_CERT);
+  const cc = decode(cert, certBudget, clientCertShape);
   // A key id is the first 16 bytes of the SHA-256 of the key, so finding the
   // node that signed this envelope costs one hash per API node of the list.
   // They are computed as one Promise.all instead of one await at a time, the
@@ -270,7 +313,7 @@ export async function verifyAPI(env, l, client, now) {
   }
   const c = decode(payload, certBudget, apiCertShape);
   if (c.inst !== l.installation || c.node !== node.id
-    || !equal(c.client, await certHash(client))
+    || !equal(c.client, await certHash(cert))
     || c.dh.length !== KEY_SIZE || c.iat <= 0 || c.exp <= c.iat || c.exp - c.iat > MAX_LIFETIME
     || c.exp > cc.exp) {
     throw new Error("session: malformed certificate");

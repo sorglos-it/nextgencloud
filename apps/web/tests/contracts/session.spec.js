@@ -775,3 +775,99 @@ test("verifyAPI takes no now that is not a whole number", async ({ shell }) => {
     missing: refused,
   });
 });
+
+// Fixrunde 5, K1. The test above holds env.payload to one reading of the
+// FIELD, and that is where the round before stopped. Reading the field once
+// is not holding the bytes still: what the field names is the caller's
+// buffer, and verifyAPI carried it across the await on the signature into
+// decode. An ordinary Uint8Array - no getter anywhere, so the test above sees
+// nothing - rewritten while the engine is awaited therefore had the signature
+// checked over one certificate and another one decoded out of the same bytes.
+//
+// Measured on 4abaa15 in node 24 and in chromium: the signature covers a
+// certificate whose dh key is all 0x01, and the certificate that came back
+// carried 0xaa - the key the whole session would then be encrypted under.
+// That certificate on its own is refused with "session: bad signature".
+//
+// The swap is hung on crypto.subtle.verify, which sign.verifyRaw calls exactly
+// once here, so the moment is "the signature has just been checked" and needs
+// no timing luck. A plain queueMicrotask is too EARLY for this function -
+// measured - because verifyAPI awaits a Promise.all of key ids before the
+// signature is ever looked at.
+test("verifyAPI decodes the certificate it checked, not what the buffer holds after",
+  async ({ shell }) => {
+    test.setTimeout(120_000);
+    test.skip(!(await hasEd25519(shell, v.trust)),
+      "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+    const out = await shell.evaluate(async (d) => {
+      const s = await import("/assets/js/contracts/session.js");
+      const sign = await import("/assets/js/contracts/sign.js");
+      const proof = await import("/assets/js/contracts/proof.js");
+      const { b64decode, b64encode, utf8 } = await import("/assets/js/contracts/b64.js");
+
+      const seed = new Uint8Array(32).fill(9);
+      const priv = await proof.privateFromSeed(seed);
+      const pub = await proof.publicFromSeed(seed);
+      const client = b64decode(d.client);
+      const cc = JSON.parse(new TextDecoder().decode(client));
+      const hash = b64encode(await s.certHash(client));
+      const cert = (fill) => utf8(JSON.stringify({
+        inst: cc.inst, node: "api-1", client: hash, dh: b64encode(new Uint8Array(32).fill(fill)),
+        iat: cc.iat, exp: cc.exp,
+      }));
+      const signed = cert(0x01), other = cert(0xaa);
+      const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
+        sign.message(sign.PURPOSE_API_CERT, signed)));
+      const kid = await sign.keyID(pub);
+      const node = {
+        id: "api-1", kind: "api", name: "api-1", noise: new Uint8Array(32), sign: pub,
+        url: "", tls: new Uint8Array(0), rootUsers: [], rootRoles: [],
+      };
+      const list = { installation: cc.inst, nodes: [node] };
+
+      const after = (method, k, b, to) => {
+        const proto = Object.getPrototypeOf(crypto.subtle);
+        const orig = proto[method];
+        let n = 0;
+        Object.defineProperty(proto, method, {
+          configurable: true, writable: true,
+          value: function (...args) {
+            const p = Reflect.apply(orig, this, args);
+            if (++n !== k) return p;
+            return p.then((x) => { b.set(to); return x; });
+          },
+        });
+        return () => Object.defineProperty(proto, method,
+          { configurable: true, writable: true, value: orig });
+      };
+
+      const call = async (payload, undo) => {
+        try {
+          const c = await s.verifyAPI({ payload, kid, sig }, list, client, d.now);
+          return "dh=" + b64encode(c.dh).slice(0, 8);
+        } catch (e) {
+          return "refused: " + e.message;
+        } finally {
+          if (undo) undo();
+        }
+      };
+
+      // The controls run with no hook installed: the counter is per
+      // installation, and a hook standing through them would spend its one
+      // call on the first control.
+      const honest = await call(new Uint8Array(signed));
+      const alone = await call(new Uint8Array(other));
+      const swapped = new Uint8Array(signed);
+      const undo = after("verify", 1, swapped, other);
+      const got = await call(swapped, undo);
+      return {
+        honest, alone, swapped: got,
+        happened: swapped.every((b, i) => b === other[i]),
+      };
+    }, v);
+    expect(out.honest).toBe("dh=AQEBAQEB");
+    expect(out.alone).toBe("refused: session: bad signature");
+    expect(out.happened).toBe(true);
+    // THE LINE THIS TEST IS FOR. On 4abaa15 this was "dh=qqqqqqqq".
+    expect(out.swapped).toBe("dh=AQEBAQEB");
+  });

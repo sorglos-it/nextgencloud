@@ -754,3 +754,94 @@ test("verify reads the key once, so the id and the signature are one key's", asy
   // and the same reading of the key.
   expect(got.accepted).toBe(false);
 });
+
+// Fixrunde 5, W1: the early size bound reads the caller's count ONCE.
+//
+// The round before pulled the bound in front of the copy so a payload past
+// MAX_PAYLOAD is never allocated, and wrote beside it that the early read "can
+// only refuse". Measured, it could do more than refuse: it was a SECOND
+// reading of the caller's count. The bound ate the first answer and agrees()
+// took the next, so one and the same length getter decided differently
+// depending on which of its two answers landed where.
+//
+// Measured in node 24 and in chromium, identical, with bytes that are always
+// honest and only the length getter lying:
+//
+//                          03cbe8c   4abaa15   here
+//   lie first, truth after   false     TRUE     false
+//   truth first, lie after   TRUE      false    TRUE
+//   readings of length         1         2        1
+//
+// Neither is a forgery - what is verified is the copy, under a real signature
+// over those very bytes - but the set of inputs this function refuses MOVED
+// instead of only growing, and not moving it was the whole reason the bound
+// was allowed to come forward. One reading puts it back and keeps the saving:
+// 64 MiB is still refused without a byte of it copied (node: 0.013 ms and no
+// ArrayBuffer taken, against 15.8 ms and a full 64 MiB on 03cbe8c; chromium
+// 0 ms against 15.7 ms).
+//
+// 4abaa15 is on origin, so its commit message keeps the wrong sentence. The
+// correction stands in sign.js and here.
+test("the early size bound reads the caller's count once, and only refuses", async ({ shell }) => {
+  test.setTimeout(120_000);
+  const out = await shell.evaluate(async () => {
+    const sign = await import("/assets/js/contracts/sign.js");
+    let pair;
+    try {
+      pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    } catch {
+      return { noEd25519: true };
+    }
+    const pub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const kid = await sign.keyID(pub);
+    const purpose = sign.PURPOSE_CATALOG;
+    const body = new TextEncoder().encode('{"hello":"a document with an honest signature"}');
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey,
+      sign.message(purpose, body)));
+
+    // Every payload below carries the SAME honest bytes; only what its length
+    // getter says about them differs, and only on which reading it says it.
+    const run = async (answer) => {
+      let n = 0;
+      class Shifty extends Uint8Array {
+        get length() { n += 1; return answer(n, this.byteLength); }
+      }
+      const b = new Shifty(body.length);
+      b.set(body);
+      n = 0;
+      const ok = await sign.verify({ payload: b, kid, sig }, pub, purpose);
+      return { answer: ok, reads: n };
+    };
+
+    const res = {
+      honest: await run((n, real) => real),
+      lieFirst: await run((n, real) => (n === 1 ? 0 : real)),
+      truthFirst: await run((n, real) => (n === 1 ? real : 0)),
+    };
+    // And the saving the bound is there for: 64 MiB past MAX_PAYLOAD, refused
+    // without a copy. The time is the whole measurement here - a browser hands
+    // out no count of the ArrayBuffers it holds - and 64 MiB cannot be copied
+    // in single-digit milliseconds, so a copy would show.
+    const big = new Uint8Array(64 << 20);
+    const t0 = performance.now();
+    res.big = await sign.verify({ payload: big, kid, sig }, pub, purpose);
+    res.bigMs = performance.now() - t0;
+    return res;
+  });
+  test.skip(out.noEd25519 === true,
+    "this engine's Web Crypto makes no Ed25519 key and signs nothing with one");
+
+  // An honest object verifies, and its count is asked exactly once.
+  expect(out.honest).toEqual({ answer: true, reads: 1 });
+  // A getter that lies once and tells the truth afterwards is refused
+  // whichever way round it lies, and both times after ONE reading. On
+  // 4abaa15: two readings, and lieFirst answered true.
+  expect(out.lieFirst).toEqual({ answer: false, reads: 1 });
+  // And one that tells the truth first is taken, exactly as on 03cbe8c: the
+  // number checked is the number tied to the copy, so nothing that used to be
+  // accepted is refused now either. On 4abaa15 this answered false.
+  expect(out.truthFirst).toEqual({ answer: true, reads: 1 });
+  // 64 MiB is refused, and refused cheaply.
+  expect(out.big).toBe(false);
+  expect(out.bigMs).toBeLessThan(5);
+});

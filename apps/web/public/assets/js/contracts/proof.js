@@ -396,6 +396,14 @@ export async function validateUserKey(k) {
     // reference to k.pub afterwards is the separate view-into-caller-memory gap
     // named in the round-4 findings; this makes validateUserKey itself decide
     // on one settled reading.)
+    //
+    // One input answers differently than before this copy, and it is named
+    // rather than fenced: a passkey whose bytes sit on a SharedArrayBuffer was
+    // false on the parent and is true here (27 inputs run against both stands
+    // in one process, this the single difference). The Web Crypto API refuses
+    // a view onto shared memory; the copy is ordinary memory, so the import
+    // succeeds. The bytes are honest and true is the right answer - the same
+    // flip b64.bytesOf brought to sign.js, now in this file too.
     const pubC = bytesOf(pub, "proof: key is not bytes");
     if (!agrees(pub, pubC)) return false;
     if (id !== (await keyIDAsync(pubC))) return false;
@@ -512,7 +520,15 @@ export async function verify(p, key, rp, purpose, payload) {
     const { id, kind: keyKind, alg, pub } = key;
     if (!(pub instanceof Uint8Array) || !(sig instanceof Uint8Array)) return false;
     // The key's bytes and the payload are copied out of the caller's reach
-    // ONCE, here, and everything below reads the copies. Without it this
+    // ONCE, here, and every reading of THOSE TWO below is of the copies.
+    //
+    // Fixrunde 5: the round before wrote "everything below reads the copies",
+    // and that reached too far. sig, authData and clientData are NOT copied -
+    // they go on as the caller's own objects, to verifyAssertion and from
+    // there to the Web Crypto API. That is named rather than changed: a
+    // signature is not a trusted reference, it is the thing being tested, and
+    // whatever bytes reach the engine either match the key and the message or
+    // they do not. What it does cost is named at MAX_SIG below. Without this
     // function reads the key twice from the caller's object - for its id and
     // again for the signature - across the await on the hash, and two readings
     // of one hostile object are two keys: this is the same forgery sign.verify
@@ -534,6 +550,13 @@ export async function verify(p, key, rp, purpose, payload) {
     // then anything that costs.
     if (typeof id !== "string" || id !== (await keyIDAsync(pubC))) return false;
     if (kid !== id || kind !== keyKind) return false;
+    // A COST bound, and only that. It reads the caller's own count, so a
+    // length that lies puts any number of bytes past it - measured, the engine
+    // was handed 65536 bytes with MAX_SIG at 1024 - and it is left as it is:
+    // the bytes still have to be a signature over this message by this key,
+    // and EdDSA refuses one of that size outright. Nothing is forged by it;
+    // what it buys is that an honest caller does not pay for a huge signature,
+    // and what it does not buy is a guarantee about a dishonest one.
     if (sig.length > MAX_SIG) return false;
     if (keyKind === KIND_PASSWORD) {
       if (alg !== ALG_EDDSA || pubC.length !== ED25519_SIZE) return false;

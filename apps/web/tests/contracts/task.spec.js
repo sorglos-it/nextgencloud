@@ -931,3 +931,109 @@ test("the limits and the shape are the ones Go has", async ({ shell }) => {
   ]);
   expect(out.opened).toBe(false);
 });
+
+// Fixrunde 5, K1. The round before held env.payload to ONE reading of the
+// field and wrote above the line that the signature covers "the very bytes the
+// task is then decoded from". Reading the field once is not holding the bytes
+// still: the object behind it is the caller's buffer, and verifyApproval kept
+// a VIEW of it across the await on the signature. An ordinary Uint8Array -
+// no getter anywhere, nothing a counter of readings can see - rewritten while
+// the engine is awaited therefore had the signature checked over document A
+// and parseTask read document B out of the same view.
+//
+// Measured on 4abaa15 in node 24 and in chromium: signature over
+// ctl-1/deactivate, ctl-2/reactivate returned. Document B on its own is
+// refused with "task: bad signature", so nothing signed it; it came back
+// because it was never the document that was checked.
+//
+// The swap is hung on the Web Crypto call itself rather than on a count of
+// microtask turns, and that is worth writing down: a microtask that queues a
+// microtask runs its whole chain inside ONE drain, so 48 of them land where 1
+// lands (measured), and a chain of setTimeout(0) overshoots, because every
+// Web Crypto call here finishes inside the 1 ms node clamps a timer to
+// (measured). A microtask chained onto crypto.subtle.verify's own promise
+// lands strictly after the signature was checked and strictly before the
+// caller resumes, in either engine, with no timing luck.
+test("verifyApproval decodes the document it checked, not what the buffer holds after",
+  async ({ shell }) => {
+    test.setTimeout(120_000);
+    test.skip(!(await canSignEd25519(shell)),
+      "this engine's Web Crypto makes no Ed25519 key and signs nothing with one");
+    const out = await shell.evaluate(async () => {
+      const task = await import("/assets/js/contracts/task.js");
+      const sign = await import("/assets/js/contracts/sign.js");
+      const session = await import("/assets/js/contracts/session.js");
+      const { utf8 } = await import("/assets/js/contracts/b64.js");
+
+      const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+      const pub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+      const inst = "EREREREREREREREREREREQ";
+      const client = utf8("the client certificate whose hash the task names");
+      const cert = { inst, sig: pub };
+      const ch = await session.certHash(client);
+      const build = (node, action) => task.buildTask({
+        inst, certHash: ch, node, app: "ngc.store",
+        service: "controller", action, params: utf8('{"a":1}'), now: 1790000000,
+      }).bytes;
+      // Two documents of the same length, so one can be written over the other.
+      const signed = build("ctl-1", "deactivate");
+      const other = build("ctl-2", "reactivate");
+      const kid = await sign.keyID(pub);
+      const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey,
+        sign.message(sign.PURPOSE_TASK, signed)));
+
+      // The bytes of b become other in a microtask chained onto the k-th call
+      // of one SubtleCrypto method: after the engine has what it was given,
+      // before the caller reads again.
+      const after = (method, k, b, other) => {
+        const proto = Object.getPrototypeOf(crypto.subtle);
+        const orig = proto[method];
+        let n = 0;
+        Object.defineProperty(proto, method, {
+          configurable: true, writable: true,
+          value: function (...args) {
+            const p = Reflect.apply(orig, this, args);
+            if (++n !== k) return p;
+            return p.then((v) => { b.set(other); return v; });
+          },
+        });
+        return () => Object.defineProperty(proto, method,
+          { configurable: true, writable: true, value: orig });
+      };
+
+      const call = async (payload, undo) => {
+        try {
+          const t = await task.verifyApproval({ payload, kid, sig }, cert, client);
+          return t.node + "/" + t.action;
+        } catch (e) {
+          return "refused: " + e.message;
+        } finally {
+          if (undo) undo();
+        }
+      };
+
+      // The two controls run FIRST and with no hook installed at all: the
+      // counter is per installation, and a hook that stood through them would
+      // have spent its one call on the first control and fired nowhere near
+      // the run it is for.
+      const honest = await call(new Uint8Array(signed));
+      const alone = await call(new Uint8Array(other));
+      const swapped = new Uint8Array(signed);
+      // crypto.subtle.verify is called exactly once in this flow, by
+      // sign.verifyRaw, so this moment is "the signature has just been checked".
+      const undo = after("verify", 1, swapped, other);
+      const got = await call(swapped, undo);
+      return {
+        honest, alone, swapped: got,
+        // The swap really happened, so a green line cannot mean it never fired.
+        happened: swapped.every((b, i) => b === other[i]),
+      };
+    });
+    expect(out.honest).toBe("ctl-1/deactivate");
+    // Document B carries no signature of its own.
+    expect(out.alone).toBe("refused: task: bad signature");
+    expect(out.happened).toBe(true);
+    // THE LINE THIS TEST IS FOR: what comes back is the document that was
+    // checked. On 4abaa15 this was "ctl-2/reactivate".
+    expect(out.swapped).toBe("ctl-1/deactivate");
+  });

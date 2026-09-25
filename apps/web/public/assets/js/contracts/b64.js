@@ -61,7 +61,7 @@ export function viewOf(v, why) {
 //
 // Why a view is not enough, measured. A view is built on the caller's buffer,
 // so it keeps answering with whatever that buffer holds at the moment it is
-// read. Five rounds fenced five shapes that use this - a length getter that
+// read. Five rounds fenced four shapes that use this - a length getter that
 // relays, that throws, that rewrites the buffer, that makes byteLength grow -
 // each round by putting the readings in a new order, and each round the next
 // measurement found a shape the new order did not cover. The sixth measurement
