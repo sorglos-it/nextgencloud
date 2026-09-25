@@ -548,7 +548,7 @@ tools/recovery-policy.sh seal pcr
 # in its head is about what a FINISHED run leaves behind, and ten more sealings
 # follow this line.
 klartext_suche "nach dem Siegeln"
-ok "nach dem Siegeln findet die Suche die acht Byte in keiner ihrer Schreibweisen in den beiden Dateilisten"
+ok "nach dem Siegeln findet die Suche die acht Byte in keiner ihrer bekannten Schreibweisen in den beiden Dateilisten"
 
 # Removed first so a leftover from an earlier run cannot answer for this one.
 rm -f dist/recovery/work/sess.ctx
@@ -565,7 +565,7 @@ ok "Zweig 1: Normalstart über PCR 11 = Produktiv-UKI"
 # there with the secret in it in between. In work package 6 that is the real
 # DEK.
 klartext_suche "nach dem Öffnen"
-ok "auch nach dem Öffnen findet die Suche die acht Byte in keiner ihrer Schreibweisen in den beiden Dateilisten"
+ok "auch nach dem Öffnen findet die Suche die acht Byte in keiner ihrer bekannten Schreibweisen in den beiden Dateilisten"
 
 # Three promises of recovery-policy.sh sit in the attributes of the sealed
 # object, and not one of them can be read off the script that sets them:
@@ -742,8 +742,21 @@ ok "jede der acht Boot-PCR 0 bis 7 sperrt den Normalzweig für sich allein"
 # anybody is tempted to believe it does: the same eight bytes carried out in TWO
 # TPM2_CC_PCR_Extend, four in each digest, walk past BOTH ledgers - EXIT=0 and
 # fourteen ok. 00000182 is one of the fifteen, and neither request holds all
-# eight bytes. A leak that keeps to the known commands and splits is invisible
-# to everything this case does.
+# eight bytes. A leak that keeps to the known commands is invisible to
+# everything this case does.
+#
+# A seventh way, and it needs no second command: the same two digests as
+# above, WHOLE and in order, in ONE unencrypted TPM2_CC_PCR_Extend request (81
+# bytes, cc 00000182, one of the fifteen) - 54455354 00 2D44454B 00..., all
+# eight bytes of the secret back to back, broken only by ONE stray NUL.
+# EXIT=0, fourteen ok, needle hits still two: the NUL sits between the
+# needle's two halves in the hex dump, so "544553542D44454B" never occurs
+# there as one run, and ledger 1 counts nothing here to add to the two hits
+# sealing already leaves. Counter-proof, and it is the whole of the finding:
+# the identical digest WITHOUT that one NUL byte dies at eleven ok, caught by
+# ledger 1 as a third hit. One byte decides red or green here - not a call to
+# build an eighth fence, but the sharpest measure yet of what a needle search
+# can promise.
 #
 # How ledger 1 got its shape, because three earlier measures each caught the
 # ways that had already been seen and let the next one through:
@@ -884,7 +897,7 @@ tools/recovery-swtpm.sh stop main || fail "Der mitschneidende Simulator lässt s
 mitschnitt_laeuft=""
 shred -u "$mit" || fail "Der Mitschnitt lässt sich nicht sicher löschen: $mit"
 [ ! -e "$mit" ] || fail "Der Mitschnitt liegt nach shred -u immer noch da: $mit"
-ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und es fahren nur die 15 bekannten Befehle über die Leitung"
+ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und die Anfragen tragen nur die 15 bekannten Befehle"
 
 tools/recovery-swtpm.sh reset main
 use_main
@@ -901,4 +914,4 @@ ok "im Recovery-Zustand bleibt der Normalzweig zu"
 # speaks about: the files of the last case, and the recording of the wire must
 # not be among them.
 klartext_suche "nach dem vollen Lauf"
-ok "auch nach dem vollen Lauf findet die Suche die acht Byte in keiner ihrer Schreibweisen in den beiden Dateilisten"
+ok "auch nach dem vollen Lauf findet die Suche die acht Byte in keiner ihrer bekannten Schreibweisen in den beiden Dateilisten"
