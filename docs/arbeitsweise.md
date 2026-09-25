@@ -232,6 +232,34 @@ nicht aus der Variablen, aus der du es geschrieben hast. Wo das nicht geht, sag 
 Bericht, dass die Eigenschaft ungeprüft ist; sie fällt sonst beim ersten Umbau weg,
 ohne dass etwas rot wird.
 
+### Und der Wächter selbst ist ein Gegenstand
+
+Der schärfste Fall kam später, weil er die Regel auf sich selbst anwendet. Ein
+Strang baute einen **Wächter** — einen Test, der über den Syntaxbaum prüft, dass
+eine bestimmte Abfrage *innerhalb der Transaktion* steht. Er war gemessen: drei
+Umbauten, die die Absicherung wegnehmen, machten ihn rot. Er sah gut aus.
+
+Er prüfte `pos > lit.Pos() && pos < lit.End()` — also **wo der Aufruf im
+Quelltext steht**. Zwei Umstellungen ließen ihn grün:
+
+- die Abfrage auf dem Verbindungspool statt auf der Transaktion laufen lassen —
+  eine einzige Zeile. Sie nimmt dann eine zweite Verbindung und liest den zuletzt
+  festgeschriebenen Stand, sieht also nicht einmal die eigene Transaktion. Genau
+  die Eigenschaft, die der Wächter im Namen trägt, war offen.
+- dieselben Zeilen in eine Closure stecken und per `defer` aufrufen — sie
+  **stehen** davor und **laufen** danach.
+
+Der Wächter maß die Textstelle und behauptete, den Ablauf zu messen. Ein
+Prüfwerkzeug ist selbst ein Gegenstand: **frag bei jedem Wächter, welche
+Eigenschaft er wirklich liest, und bau die zwei Umstellungen, die diese
+Eigenschaft unberührt lassen und die gemeinte zerstören.** Bleibt er dabei grün,
+prüft er den Weg, nicht den Gegenstand.
+
+Die Reparatur hat dieselbe Form wie überall in dieser Regel: nicht "steht es an
+der richtigen Stelle", sondern "ist es **dieses** Ding" — der Aufruf muss auf
+demselben Transaktionsobjekt erfolgen (über die Identität der Variablen, nicht
+über ihren Namen) und eine direkte Anweisung des Rumpfes sein.
+
 ## 6a. Eine zweite Verteidigungslinie entwaffnet die erste
 
 Eine Funktion prüfte vor dem Schreiben, ob der Name schon einem anderen gehört.
