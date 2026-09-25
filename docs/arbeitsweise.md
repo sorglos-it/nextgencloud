@@ -1053,6 +1053,25 @@ Daraus folgt nicht „gründlicher berichtigen", sondern etwas Einfacheres:
 eine schreibst, frag dich, ob der Satz auch ohne sie trägt. Meistens ja — und
 dann lass sie weg.
 
+### Eine Zeilennummer ist keine Quellenangabe
+
+Der Koordinator hat eine Berichtigung angeordnet — und in die Anweisung selbst
+eine Zeilennummer geschrieben, die er von einem Prüfer übernommen und nie
+nachgeschlagen hatte. Zwei Dinge waren falsch, und die Nummer ist nur das eine:
+
+- In diesem Baum steht der gemeinte Test auf **415**, nicht auf 526.
+- Zeile 526 ist nicht leer. Dort steht ein Kommentar **in einem auskommentierten
+  Block**. Wer die Angabe nachschlägt, findet etwas, das wie Code aussieht — und
+  hält eine falsche Quelle für bestätigt.
+
+Der Umsetzer hat den Test stattdessen **beim Namen** genannt. Das ist richtig und
+es hält: ein Name übersteht jede eingefügte Zeile darüber, und wenn er falsch
+ist, ist er sofort falsch statt glaubhaft richtig.
+
+**Verweise auf Namen, nicht auf Zeilen.** Eine Zeilennummer im Fließtext sagt
+nichts darüber, worauf sie zeigt, sie altert mit dem nächsten Commit, und ihre
+Fehler sehen aus wie Treffer.
+
 ### Auf der anderen Seite heißt dieselbe Sache anders
 
 Der Koordinator hatte eine Verschärfung bewilligt — **unter der Bedingung**, dass
