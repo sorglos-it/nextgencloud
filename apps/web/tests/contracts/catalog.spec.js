@@ -3,8 +3,42 @@ import { vectors } from "../fixtures/vectors.js";
 
 const v = vectors("store.json");
 
+// Whether this engine's Web Crypto can read the store's key at all. Every
+// catalog of store.json is signed with Ed25519, so on an engine without it
+// verifyCatalog answers "bad signature" for the good catalog as well as for
+// the sixteen bad ones - and a run that asserts the sixteen refusals while the
+// good one is refused too asserts nothing.
+//
+// MEASURED, AND IT IS WHY THIS STANDS HERE. The WebKit that Playwright brings
+// answers crypto.subtle.importKey for Ed25519 with "NotSupportedError: The
+// operation is not supported."; chromium reads the key. Without this skip the
+// whole suite is red on webkit for a reason that lies in the engine and not in
+// the tree, which is the one thing that gets a guard switched off. The eight
+// tests of proof.spec.js, the nine of session.spec.js and core.spec.js's UI
+// proofs have carried the same skip since they were written; this test was
+// merged in without it, and a webkit run that fell over for another reason
+// hid that from the round that wrote it.
+//
+// The probe is the key this test verifies with, and a vector file that lost it
+// fails loudly instead of skipping: a missing key must never look like a
+// missing algorithm.
+async function hasEd25519(shell, pub) {
+  return shell.evaluate(async (p) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    if (typeof p !== "string" || p === "") throw new Error("store.json holds no store key to probe with");
+    try {
+      await crypto.subtle.importKey("raw", b64decode(p), { name: "Ed25519" }, false, ["verify"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, pub);
+}
+
 test("a catalog is only taken from its own store, and never an older one", async ({ shell }) => {
   test.setTimeout(120_000);
+  test.skip(!(await hasEd25519(shell, v.storeKey)),
+    "no Ed25519 in this engine's Web Crypto: it reads the store's key for no catalog, good or bad");
   const got = await shell.evaluate(async (d) => {
     const c = await import("/assets/js/contracts/catalog.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");

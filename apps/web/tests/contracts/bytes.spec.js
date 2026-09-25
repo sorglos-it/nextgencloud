@@ -130,10 +130,12 @@ const NEEDED = ["b64", "json", "noise"];
 
 // The sizes the probe is run at. A probe that knows one size checks one size:
 // a reading that only starts above some number stays invisible below it, and
-// that is how the round before this one was walked past. Every bound the
-// eleven contracts declare for a byte string has a size above it and a size
-// below it here, and the small end is dense because that is where the fixed
-// sizes sit.
+// that is how the round before this one was walked past. Every bound a
+// contract declares for a byte string BELOW THE CEILING THIS LIST STOPS AT has
+// a size above it and a size below it here, and the small end is dense because
+// that is where the fixed sizes sit. The bounds above that ceiling are named
+// where the ceiling is, and the four contracts of this round added three more
+// to them.
 //
 //   0,1,2,3,4,7,8              nothing, and the edges of the three-byte step
 //                              b64encode walks in
@@ -156,13 +158,22 @@ const NEEDED = ["b64", "json", "noise"];
 // four bounds above this line - sign.MAX_PAYLOAD 4 MiB, the signed-list
 // budget of 5657942, wire.MAX_CALL_RESULT 8 MiB and session.MAX_CHAIN
 // 32 MiB - were run, straddled on both sides: the test took 2.7 minutes
-// instead of a few seconds on chromium and came back with the same 63 places
-// and the same readings, to the character. The cost is b64encode, concat and
-// equal, which have no bound at all and do their whole work at whatever size
-// they are handed. Nothing was bought, because everything a size can show
-// here is shown before that work starts - the reading of the size is the
-// first thing each of these places does. Whoever raises this ceiling now
+// instead of a few seconds on chromium and came back with the 63 places that
+// round had and the same readings, to the character. The cost is b64encode,
+// concat and equal, which have no bound at all and do their whole work at
+// whatever size they are handed. Nothing was bought, because everything a size
+// can show here is shown before that work starts - the reading of the size is
+// the first thing each of these places does. Whoever raises this ceiling now
 // knows what it costs and what it found.
+//
+// The four contracts of this round put three more bounds above the ceiling,
+// and the same decision covers them: uitar.MAX_UI_FILE 16 MiB and
+// MAX_UI_TOTAL 64 MiB, and catalog.MAX_PACKAGE 4 GiB. Nothing was bought there
+// either, and for a plainer reason than the measurement above - walkUI takes
+// the archive through b64.bytesOf, which reads no property of the object at
+// all, so the probe records 0/0/0/0 for it at every size a run could reach.
+// A size cannot show what a place never asks for. What holds those is
+// uitar.spec.js by answers, as CALLABLES says below.
 //
 // AND THESE 39 SIZES ARE A SAMPLE, NOT A SWEEP. The review found what that
 // costs and it was measured again here: a second view in json.decode, taken
@@ -181,7 +192,7 @@ const NEEDED = ["b64", "json", "noise"];
 // close it: any list is finite, so a band of one single size dodges whatever
 // is added, and adding 5000..6000 would kill that one mutation and not its
 // shape. A measure that does not hang on sizes would have to decide from the
-// OUTCOME of a call instead of from the readings, and the 63 places share no
+// OUTCOME of a call instead of from the readings, and the 67 places share no
 // outcome - they answer objects, strings, booleans and exceptions - so there
 // is nothing to compare against for all of them. What would close it is
 // reading the source for a second view rather than running the code, and that
@@ -287,6 +298,33 @@ const ENTRIES = {
   "b64.equal#0": "view",
   "b64.equal#1": "view",
   "b64.viewOf#0": "view",
+  // The four the round of catalog.js and core.js added. Each of them hands its
+  // argument to json.decode and to nothing else, so the one view is decode's
+  // own and the reading is the plain 0/1/1/1 - measured here, not read off the
+  // source. Their bounds are straddled by SIZES above: MAX_MANIFEST 65536 at
+  // 65535/65536/65537, MAX_REPORT 4096 at 4096/4097, MAX_NOTICE 1024 at
+  // 1023/1024/1025. parseUIProof's is wire.MAX_CALL_RESULT, 8 MiB, one of the
+  // four bounds the ceiling deliberately stops below - the reason and its cost
+  // stand at SIZES.
+  //
+  // AND ONE PLACE OF core.js IS NOT HERE THAT TAKES A CALLER'S BYTES:
+  // core.parseResult#1. It cannot be entered, because a line for a place the
+  // probe never reaches turns this red by itself - and the probe never reaches
+  // it. parseResult(a, b) looks its action up in ACTIONS first and throws
+  // before it ever sees b, and no filling in WIDE or NARROW is one of the 33
+  // rows of that table. So the guard walks the callable, counts it in
+  // CALLABLES, and measures nothing about its bytes.
+  //
+  // What it does with them, read off the source and not measured: it hands b
+  // to json.decode, or to parseUIProof, which hands it to json.decode. Both
+  // are in this list as "view", so the reading is one view either way - but
+  // that is an argument and not a measurement, and whoever widens the fillings
+  // to reach it would turn the argument into one. Named, not closed, the way
+  // the sizes above are.
+  "catalog.parseManifest#0": "view",
+  "catalog.parseUpdateReport#0": "view",
+  "core.parseNotice#0": "view",
+  "core.parseUIProof#0": "view",
   "json.decode#0": "view",
   "noise.HandshakeKK.build#1": "view",
   "noise.HandshakeKK.build#3": "view",
@@ -409,10 +447,12 @@ const NEEDS_X25519 = [
   "noise.Transport.open#0", "noise.Transport.seal#0",
 ];
 
-// How many callables the eleven modules hold, counted the way the walk below
-// counts them: every exported function, every static and every method of an
-// exported class, and every function that hangs off an exported object, as
-// deep as three levels. The round before this one counted exported functions
+// How many callables the modules under contracts/ hold, counted the way the
+// walk below counts them: every exported function, every static and every
+// method of an exported class, and every function that hangs off an exported
+// object, as deep as three levels - AND, since the walk goes up the prototype
+// chain of an exported object, every method that object INHERITS. The round
+// before this one counted exported functions
 // only, and an export that is no function slipped past the count as well as
 // past the walk. A callable the probe cannot reach - because no filling gives
 // it arguments that get that far - is still counted here, so a new one turns
@@ -433,14 +473,86 @@ const NEEDS_X25519 = [
 // holds those is sign.spec.js "verifyRaw decides on a copy no getter can
 // reach", which measures answers instead of touches.
 //
-// 147 since contracts/uitar.js: the guard counted it, it was not worked out on
-// paper. Six, and the walk names them - BadPackage and walkUI, the UIWriter
-// constructor and its dir, file and close. Not one of them stands in ENTRIES,
-// and that is the blind spot above at its widest: walkUI takes a copy of the
-// whole archive and UIWriter.file a copy of its data, both through bytesOf,
-// which reads no property at all, so the probe records nothing for either.
-// uitar.spec.js holds them by answers instead, the way sign.spec.js does.
-const CALLABLES = 147;
+// 211 since four contracts arrived at once - uitar, catalog, core and tunnel,
+// each built in a tree of its own and all four merged into this one. Each of
+// those trees measured the number for ITSELF beside the same 141, and the four
+// numbers reported were 147, 149, 190 and 148. THOSE NUMBERS DO NOT ADD, and
+// reading them as if they did is the one mistake to avoid here: each counts
+// 141 plus its own contract. Their four DIFFERENCES add, and whether they do
+// was the question this round had to answer, because nobody had ever had all
+// four in one tree:
+//
+//   uitar    +6    BadPackage and walkUI, the UIWriter constructor and its
+//                  dir, file and close                               141 -> 147
+//   catalog  +8    BadCatalog, Rollback, verifyCatalog, parseManifest,
+//                  validTarget, parseUpdateReport, granted, approved 141 -> 149
+//   tunnel   +7    BadCode, fingerprint, joinFingerprint,
+//                  parsePairCode, parseJoinCode, checkCode,
+//                  components                                        141 -> 148
+//   core    +49    eleven of its own - critical, encodeParams, lookup,
+//                  lookupByKey, parseNotice, parseResult, parseUIProof,
+//                  shellOpens, validRight, validateParams,
+//                  verifyUIProof - and 38 that are not its own at all
+//                                                                    141 -> 190
+//
+// 141 + 6 + 8 + 7 + 49 = 211, and the guard on the merged tree counts 211.
+// Measured, not worked out on paper: nothing any of the four brought moves
+// what another brought, so the four rounds may be read as four independent
+// additions and this number as their sum.
+//
+// AND 38 OF THE 211 ARE NOT CONTRACT CODE AT ALL. They are core.ACTIONS.at,
+// .concat, .map, .push, .sort and the rest of Array.prototype, counted because
+// core exports ACTIONS as a frozen ARRAY and the walk goes up the prototype
+// chain of an exported object. That walk is there on purpose and it must stay
+// - it is what caught `export const frame = new Frame()`, whose seal put 70000
+// bytes through a bound of 65519 with this guard green - but the price is that
+// an array export drags the engine's whole Array.prototype into the count.
+// core.ACTIONS holds 33 frozen rows and not one function of its own; the 38
+// belong to the engine.
+//
+// SO PART OF THIS NUMBER MEASURES THE DATA STRUCTURE AND THE ENGINE, NOT THE
+// TREE, and there are two ways it can go red with nothing here changed. A
+// contract that exports a plain object instead of an array moves it without
+// any code being added or taken away. And an engine that GROWS an
+// Array.prototype method moves it too - the four that landed most recently,
+// toReversed, toSorted, toSpliced and with, are in these 38 today, and the
+// next one to land would make 212 out of 211 on the engine that has it first.
+// Measured this round: chromium, webkit and node 24 all count 211, so the
+// engines agree today. If a later round finds this red at 212 and the four
+// modules are untouched, the answer is to look at Array.prototype before
+// looking at the tree - and to say so here, the way this paragraph does.
+//
+// Of the 70 the four brought, FOUR stand in ENTRIES and 66 do not, and the
+// split says exactly what this guard can and cannot see.
+//
+// In: catalog.parseManifest, catalog.parseUpdateReport, core.parseNotice and
+// core.parseUIProof. Each hands its argument to json.decode, decode builds the
+// one view, and the probe measures it.
+//
+// Out, 66 of them, and not one by oversight. They divide exactly:
+//
+//   19  uitar's 6, tunnel's 7 and the other 6 of catalog. Those that take a
+//       caller's bytes take a COPY: walkUI the whole archive, UIWriter.file
+//       its data, fingerprint and joinFingerprint the keys they hash,
+//       verifyCatalog the payload it verifies, approved the key it compares -
+//       all through bytesOf, which reads no property of the object at all, so
+//       the probe records 0/0/0/0 and there is nothing for a list of readings
+//       to hold. That is the blind spot named above at its widest.
+//       uitar.spec.js, tunnel.spec.js and catalog.spec.js hold those places by
+//       ANSWERS instead, the way sign.spec.js does. The rest of the 19 are
+//       error classes and functions that take no bytes at all.
+//    1  core.parseResult, which DOES take a caller's byte string and which the
+//       probe never reaches. The note at the four lines in ENTRIES says why,
+//       and what is known about it without a measurement.
+//   38  Array.prototype, the engine's own and handed nothing.
+//    8  the rest of core - critical, encodeParams, lookup, lookupByKey,
+//       shellOpens, validRight, validateParams, verifyUIProof. No ARGUMENT of
+//       any of them is a caller's byte string, which is what this list holds;
+//       where they reach bytes at all they reach them inside an object the
+//       caller handed over - verifyUIProof the certificate, encodeParams the
+//       two hashes - and take them out of reach with bytesOf before deciding
+//       anything, so the probe sees nothing there either.
+const CALLABLES = 211;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
