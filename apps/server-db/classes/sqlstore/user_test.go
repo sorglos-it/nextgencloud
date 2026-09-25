@@ -497,10 +497,16 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 // And what the second run does not catch, measured while it was being written:
 // a t.Cleanup registered after this one that drops the index again. Cleanups
 // run last-registered-first, so that one goes before this proof and the
-// package is 143/0 green with the index standing the whole run. It is the
-// same kind as the two written down at TestTheCheckAloneRefusesATakenName - a
-// change to the source these tests are written in, which no test shuts out -
-// and it is named here rather than chased with a third proof.
+// package is 143/0 green with the index standing the whole run.
+//
+// No further proof closes that, and the reason is the order itself and not the
+// proof. Whoever writes a line here can write it after the last one, and the
+// last one registered is the first one run: a third proof would be beaten by a
+// cleanup registered after the third, a proof at every namedRows by one
+// registered after that. It is an endless step backwards, not a race anyone
+// wins - a test cannot make itself immune to arbitrary changes in the file it
+// is written in. So it is named here, and the next one need not try again.
+// Same kind as the two set out at TestTheCheckAloneRefusesATakenName.
 func withoutTheNameIndex(t *testing.T) (dbapi.Store, *sql.DB) {
 	t.Helper()
 	s, db := openDB(t)
@@ -978,9 +984,17 @@ func theViewAnswers(t *testing.T, db *sql.DB) error {
 //
 // What is asked of the answer is that there is one, not which one it is. The
 // error the driver gives for a NULL it cannot read is the fixture's, not the
-// store's, and the store owes only that it does not swallow it. What one row
-// and not two says is the same thing from the database's side, and it is the
-// half that cannot be argued with.
+// store's, and the store owes here only that it does not swallow it. What one
+// row and not two says is the same thing from the database's side, and it is
+// the half that cannot be argued with.
+//
+// The other half is open, and this is what it costs. A store that swallows the
+// driver's error and answers one of its own passes here: return dbapi.ErrInvalid
+// in place of return err is 143/0 green, measured. The caller is then told "the
+// name belongs to another ID" where the truth is that the question could not be
+// asked, and errors.Is finds nothing of the failure in it. Holding that would
+// mean asking for the fixture's own error by its text, which is the fixture
+// speaking and not the store, so it is written down instead of built.
 func TestAFailedQuestionIsNotAFreeName(t *testing.T) {
 	s, db := throughAViewWithoutAnID(t)
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); err != nil {
