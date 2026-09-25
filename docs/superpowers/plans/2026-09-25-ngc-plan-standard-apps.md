@@ -1,6 +1,6 @@
 # NGC Plan Standard-Apps: Die Grundausstattung des Desktops
 
-> **Stand:** Entwurf vom 25.09.2026, noch nicht abgestimmt. Die offenen Fragen in Abschnitt 10
+> **Stand:** Entwurf vom 25.09.2026, teilweise abgestimmt (Abschnitt 10). Die offenen Fragen dort
 > muss Thomas entscheiden. Danach kommen die Entscheidungen ins Protokoll des Entwurfs. Jede
 > Welle bekommt dann einen eigenen Umsetzungsplan mit Aufgaben im Stil von Plan 1.
 
@@ -13,7 +13,8 @@ wir sie bauen.
 **Entwurf:** [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](../specs/2026-09-19-ngc-kern-design.md),
 Abschnitte 3 (Teilprojekt 7 „Apps“), 4.3 (Container), 4.4 (Apps) und 4.6 (Daten) ·
 **Verträge:** [`shared/README.md`](../../../shared/README.md) ·
-**Kern-Apps:** [Plan 1](2026-09-23-ngc-plan-1-web.md), Aufgabe 25
+**Kern-Apps:** [Plan 1](2026-09-23-ngc-plan-1-web.md), Aufgabe 25 ·
+**Quellcode der Store-Apps:** privates Repo `ngc-storeapps`
 
 ---
 
@@ -45,25 +46,31 @@ Jedes Sonderrecht steht einzeln im Manifest. Der Dienst bekommt nur die Pfade un
 braucht, nie „root allgemein“, wenn es sich vermeiden lässt. Jede Aktion, die etwas ändert, ist
 eine eigene Aktion mit eigenem Recht, zum Beispiel „Laufwerk formatieren“.
 
-## 3. Was der Plattform noch fehlt
+## 3. Was NGC selbst noch können muss
 
-Viele Apps brauchen dieselben Bausteine, die es im Kern noch nicht gibt. Wir bauen sie einmal in
-`ngc.js`, API und Controller und nicht in jeder App einzeln. Das sind Vertragsänderungen in
-`shared/`, also Sache des Koordinators. Sie kommen vor die Apps, die sie brauchen.
+**Worum es geht:** Eine App läuft im Browser in einem abgeschotteten Fenster (iframe). Sie darf
+dort fast nichts selbst: nichts speichern, keine Datei hochladen oder herunterladen, keine andere
+App aufrufen, nicht in die Zwischenablage schreiben. Das ist gewollt, denn so kann eine
+fremde App nichts anrichten. Viele Apps brauchen aber genau diese Dinge. Deshalb muss NGC sie
+einmal zentral anbieten, also Webinterface, API und Controller, und die Apps fragen über
+`ngc.js` danach. Ohne diese Bausteine kann zum Beispiel der Bildbetrachter kein Bild öffnen, das
+der Dateimanager anzeigt, und Paint kann kein Bild speichern.
 
-| Nr. | Baustein | Wozu | Wer braucht ihn |
+Jeder Baustein ist eine Änderung an den Verträgen in `shared/`, also Sache des Koordinators. Er
+muss fertig sein, bevor die erste App kommt, die ihn braucht.
+
+| Nr. | Baustein | Was er ermöglicht | Wer ihn braucht |
 |---|---|---|---|
-| P1 | **App-Speicher**: kleiner Schlüssel-Wert-Speicher je App und Benutzer (Vorschlag 64 KiB), verwaltet von der API | Einstellungen, Fenstergröße, Spielstände, zuletzt geöffnete Dateien, ohne dass jede App einen Dienst braucht | fast alle, vor allem Art O |
-| P2 | **Gemeinsamer Dateibereich**: „Meine Dateien“ je Benutzer und freigegebene Ordner für Gruppen, verwaltet von einem Dienst mit Sonderrechten | Apps sehen dieselben Dateien, statt jede in ihrem eigenen Datenordner | Dateimanager, alle Editoren und Betrachter, Fotos, Musik, Sicherung |
-| P3 | **Öffnen mit**: Apps melden im Manifest Dateitypen an; `ngc.open` übergibt der Ziel-App einen Verweis auf eine Datei, nur mit dem Recht für genau diese Datei | Doppelklick im Dateimanager öffnet den passenden Betrachter | Dateimanager und alle Betrachter und Editoren |
-| P4 | **Hochladen und Herunterladen**: die Shell nimmt Dateien per Auswahl oder Ziehen an und gibt Dateien zum Speichern heraus | Der iframe darf beides nicht selbst | Dateimanager, Paint, Editoren, Sicherung |
-| P5 | **Benachrichtigungen**: `ngc.notify` für die Oberfläche; Dienste können über die API eine Mitteilung an einen Benutzer schicken | Hinweise wie „Sicherung fertig“ oder „Termin in 10 Minuten“ | Kalender, Uhr, Sicherung, Aufgabenplaner, Chat |
-| P6 | **Zwischenablage**: Kopieren aus dem iframe heraus über die Shell | In abgeschotteten iframes ist die Zwischenablage eingeschränkt | Editoren, Rechner, Zeichentabelle |
-| P7 | **Sonderrechte-Katalog**: feste Liste der Sonderrechte, die ein Manifest verlangen darf (z. B. `host.read-stats`, `host.journal`, `files.users`, `disks.manage`, `net.outbound`) | Der Admin sieht beim Aktivieren verständlich, was eine App darf; es gibt kein freies „alles“ | alle Apps der Art S |
+| B1 | **Einstellungen merken**: ein kleiner Speicher je App und Benutzer (Vorschlag 64 KiB), den die API verwaltet | Eine App merkt sich Einstellungen, Fenstergröße, zuletzt geöffnete Dateien oder Bestzeiten, ohne dafür einen eigenen Dienst zu brauchen | fast alle, vor allem Apps ohne Dienst |
+| B2 | **Ordner für Apps**: Eine App meldet im Manifest, dass sie Ordner auf dem Server braucht und wofür. Welcher Ordner das ist, legt der Admin beim Aktivieren fest; der Controller bindet ihn in den Container ein | Wo Dateien liegen, bestimmt die App, die gerade läuft: der Dateimanager die Ordner, die der Admin ihm gibt, Fotos ihren Bilderordner, Notizen ihren eigenen Datenordner. Es gibt keinen zentralen Dateibereich | Dateimanager, Fotos, Musik, Sicherung |
+| B3 | **Öffnen mit**: Apps melden im Manifest an, welche Dateitypen sie öffnen. Die App, in der die Datei liegt, reicht sie über `ngc.open` an die Ziel-App weiter, und zwar nur diese eine Datei | Doppelklick im Dateimanager öffnet das Bild im Bildbetrachter, obwohl der Bildbetrachter selbst keinen Ordner hat | Dateimanager und alle Betrachter und Editoren |
+| B4 | **Hochladen und Herunterladen**: Die Shell nimmt Dateien per Auswahl oder Ziehen an und gibt Dateien zum Speichern auf den eigenen Rechner heraus | Der abgeschottete iframe darf beides nicht selbst | Dateimanager, Paint, Editoren, Sicherung |
+| B5 | **Benachrichtigungen**: `ngc.notify` für die Oberfläche; ein Dienst kann über die API einem Benutzer eine Mitteilung schicken | Hinweise wie „Sicherung fertig“ oder „Termin in 10 Minuten“, auch wenn das Fenster der App zu ist | Kalender, Uhr, Sicherung, Aufgabenplaner, Chat |
+| B6 | **Zwischenablage**: Kopieren aus der App heraus läuft über die Shell | Im abgeschotteten iframe ist die Zwischenablage gesperrt | Editoren, Rechner, Zeichentabelle |
+| B7 | **Liste der Sonderrechte**: feste Namen für alles, was eine App über ihren Container hinaus darf, zum Beispiel `host.read-stats` („Auslastung der Server lesen“), `host.journal`, `disks.manage`, `net.outbound` | Der Admin sieht beim Aktivieren in Klartext, was eine App darf, statt nur „Netz / root / sonstiges“ | alle Apps der Art S |
 
-**Empfehlung:** Die Bausteine P1, P3, P4 und P7 kommen zuerst, weil ohne sie keine der Apps der
-ersten Welle sauber funktioniert. Den gemeinsamen Dateibereich (P2) liefert die App Dateimanager
-mit, er wird aber im Vertrag beschrieben, damit andere Apps ihn nutzen können.
+**Empfehlung:** B1, B2, B3, B4 und B7 zuerst. Ohne sie funktioniert keine App der Welle 2 richtig.
+B5 und B6 können mit Welle 3 kommen.
 
 ## 4. Die Apps im Überblick
 
@@ -76,31 +83,31 @@ Abschnitt 8.
 |---|---|---|---|---|
 | **App-Store** | Kern | siehe Plan 1 | – | 0 |
 | **Benutzer & Rechte** | Kern | siehe Plan 1, mit dem Protokoll der API | – | 0 |
-| **Dateimanager** | S (`files.users`) | Ordner durchsuchen, Listen- und Kachelansicht, hochladen, herunterladen, umbenennen, verschieben, kopieren, löschen in den Papierkorb, Ordner an Benutzer und Gruppen freigeben, Suche nach Namen, Öffnen mit | P2, P3, P4 | 2 |
-| **Einstellungen** | S (einzelne Rechte je Bereich) | Eigenes Konto (Passwort, TOTP, Passkeys, Sitzungen), Aussehen (hell, dunkel, Akzentfarbe, Hintergrund), Sprache und Zeitzone, Updates (die Anzeige aus Plan 1 zieht hierher), Servername und Zertifikat nur anzeigen | P1 | 2 |
-| **Ressourcenmonitor** | S (`host.read-stats`) | CPU, RAM, Datenträger und Netz je Server als Verlauf der letzten Stunde; Liste der Container mit Verbrauch; nur lesen | P7 | 2 |
-| **Systemprotokoll** | S (`host.journal`) | Das Journal der Server lesen, filtern nach Server, Dienst, Stufe und Zeit, als Text herunterladen. Das Protokoll der API bleibt in Benutzer & Rechte | P4, P7 | 3 |
-| **Dienste** | S (`host.services`) | Container aller Apps mit Zustand, Neustart, Logausgabe eines Dienstes. Kein Paketzentrum, das ist der App-Store | P7 | 3 |
-| **Speichermanager** | S (`disks.read`, `disks.manage`) | Laufwerke, Partitionen, Belegung und SMART-Werte anzeigen. Formatieren und Einbinden erst in der zweiten Fassung und nur als Root-Aufgabe mit Unterschrift | P7 | 4 |
-| **Sicherung** | S (`files.users`, `backup.targets`) | Sicherungen des Dateibereichs und der App-Daten auf ein Laufwerk oder einen Netzordner planen, verschlüsselt mit AES-256-GCM, Versionen, einzelne Dateien und ganze Stände zurückspielen | P2, P5, P7 | 4 |
+| **Dateimanager** | S (Ordner nach Freigabe) | Ordner durchsuchen, Listen- und Kachelansicht, hochladen, herunterladen, umbenennen, verschieben, kopieren, löschen in den Papierkorb, Unterordner an Benutzer und Gruppen freigeben, Suche nach Namen, Öffnen mit | B2, B3, B4 | 2 |
+| **Einstellungen** | S (einzelne Rechte je Bereich) | Eigenes Konto (Passwort, TOTP, Passkeys, Sitzungen), Aussehen (hell, dunkel, Akzentfarbe, Hintergrund), Sprache und Zeitzone, Updates (die Anzeige aus Plan 1 zieht hierher), Servername und Zertifikat nur anzeigen | B1 | 2 |
+| **Ressourcenmonitor** | S (`host.read-stats`) | CPU, RAM, Datenträger und Netz je Server als Verlauf der letzten Stunde; Liste der Container mit Verbrauch; nur lesen | B7 | 2 |
+| **Systemprotokoll** | S (`host.journal`) | Das Journal der Server lesen, filtern nach Server, Dienst, Stufe und Zeit, als Text herunterladen. Das Protokoll der API bleibt in Benutzer & Rechte | B4, B7 | 3 |
+| **Dienste** | S (`host.services`) | Container aller Apps mit Zustand, Neustart, Logausgabe eines Dienstes. Kein Paketzentrum, das ist der App-Store | B7 | 3 |
+| **Speichermanager** | S (`disks.read`, `disks.manage`) | Laufwerke, Partitionen, Belegung und SMART-Werte anzeigen. Formatieren und Einbinden erst in der zweiten Fassung und nur als Root-Aufgabe mit Unterschrift | B7 | 4 |
+| **Sicherung** | S (Ordner nach Freigabe, `backup.targets`) | Sicherungen der freigegebenen Ordner und der App-Daten auf ein Laufwerk oder einen Netzordner planen, verschlüsselt mit AES-256-GCM, Versionen, einzelne Dateien und ganze Stände zurückspielen | B2, B5, B7 | 4 |
 | **Hilfe** | O | Handbuch für Benutzer und Admins, Suche, Einführung beim ersten Start | – | 2 |
 
-Benachrichtigungen sind keine eigene App. Das Mitteilungszentrum gehört in die Shell (P5).
+Benachrichtigungen sind keine eigene App. Das Mitteilungszentrum gehört in die Shell (B5).
 
 ### 4.2 Zubehör
 
 | App | Art | Erste Fassung | Braucht | Welle |
 |---|---|---|---|---|
 | **Rechner** | Kern | siehe Plan 1; später wissenschaftlich und Programmierer (Hex, Bin, Bitoperationen) | – | 0 |
-| **Uhr** | O | Weltzeit, Stoppuhr, Timer und Wecker, solange das Fenster offen ist | P1, später P5 | 2 |
-| **Zeichentabelle** | O | Unicode-Zeichen und Emoji nach Name und Block suchen und kopieren, begrenzt auf das, was `wire.ValidText` erlaubt | P6 | 2 |
+| **Uhr** | O | Weltzeit, Stoppuhr, Timer und Wecker, solange das Fenster offen ist | B1, später B5 | 2 |
+| **Zeichentabelle** | O | Unicode-Zeichen und Emoji nach Name und Block suchen und kopieren, begrenzt auf das, was `wire.ValidText` erlaubt | B6 | 2 |
 | **Einheitenumrechner** | O | Länge, Fläche, Gewicht, Temperatur, Datenmengen (auch KB/KiB), Zeit. Ohne Währung, denn die bräuchte Netz | – | 2 |
-| **Paint** | O | Stift, Pinsel, Radierer, Linie, Rechteck, Ellipse, Füllen, Text, Farbwähler, Rückgängig, Größe ändern; öffnen und speichern als PNG | P3, P4 | 2 |
-| **Texteditor** | O | Mehrere Tabs, Suchen und Ersetzen, Zeilennummern, Syntaxhervorhebung für die gängigen Konfigurationsformate, Zeichensatz UTF-8; öffnet und speichert Dateien aus dem Dateibereich | P2, P3, P6 | 2 |
-| **Notizen** | D | Notizen mit Markdown, Ordner, Suche, an Benutzer freigeben | P6 | 3 |
-| **Aufgaben** | D | Listen, Fälligkeit, Erinnerung, an Gruppen freigeben | P5 | 3 |
-| **Kalender** | D | Tag, Woche, Monat, Termine mit Wiederholung, mehrere Kalender, freigeben. CalDAV für Handys erst in der zweiten Fassung, denn dafür braucht der Dienst einen eigenen Zugang von außen | P5 | 3 |
-| **Kontakte** | D | Adressbuch, Gruppen, Import und Export als vCard. CardDAV wie beim Kalender später | P4 | 3 |
+| **Paint** | O | Stift, Pinsel, Radierer, Linie, Rechteck, Ellipse, Füllen, Text, Farbwähler, Rückgängig, Größe ändern; öffnen und speichern als PNG | B3, B4 | 2 |
+| **Texteditor** | O | Mehrere Tabs, Suchen und Ersetzen, Zeilennummern, Syntaxhervorhebung für die gängigen Konfigurationsformate, Zeichensatz UTF-8; öffnet und speichert Dateien, die andere Apps über „Öffnen mit“ übergeben | B3, B4, B6 | 2 |
+| **Notizen** | D | Notizen mit Markdown, Ordner, Suche, an Benutzer freigeben | B6 | 3 |
+| **Aufgaben** | D | Listen, Fälligkeit, Erinnerung, an Gruppen freigeben | B5 | 3 |
+| **Kalender** | D | Tag, Woche, Monat, Termine mit Wiederholung, mehrere Kalender, freigeben. CalDAV für Handys erst in der zweiten Fassung, denn dafür braucht der Dienst einen eigenen Zugang von außen | B5 | 3 |
+| **Kontakte** | D | Adressbuch, Gruppen, Import und Export als vCard. CardDAV wie beim Kalender später | B4 | 3 |
 
 **Zurückgestellt:** *Bildschirmfoto* und *Zwischenablage-Verlauf*. Die Shell kann den Inhalt
 fremder iframes nicht abfotografieren, und eine Bildschirmaufnahme geht nur mit Nachfrage des
@@ -111,31 +118,31 @@ widerspricht der Abschottung und lohnt den Aufwand nicht.
 
 | App | Art | Erste Fassung | Braucht | Welle |
 |---|---|---|---|---|
-| **Bildbetrachter** | O | PNG, JPEG, GIF, WebP, SVG (nur als Bild, nie eingebettet); Zoom, Drehen, Vollbild, Blättern im Ordner, EXIF-Daten anzeigen | P2, P3 | 2 |
-| **Medienplayer** | O | Audio und Video in den Formaten, die der Browser selbst abspielt; Wiedergabeliste aus einem Ordner; Untertitel (WebVTT) | P2, P3 | 2 |
-| **PDF-Betrachter** | O | Seiten anzeigen, suchen, zoomen, drucken. Der eingebaute PDF-Betrachter des Browsers läuft in abgeschotteten iframes nicht; wir brauchen pdf.js (Apache-2.0, vereinbar mit der AGPL) | P2, P3, neues Modul | 3 |
-| **Archiv** | D | ZIP und TAR ansehen und entpacken, ZIP erstellen. Entpackt wird im Dienst in Go, nach denselben Regeln wie `store.Walk`: keine absoluten Pfade, kein `..`, keine Links, feste Größen und Anzahl | P2, P3 | 3 |
-| **Fotos** | D mit `files.users` | Galerie über den Dateibereich, Zeitleiste nach Aufnahmedatum, Alben, Vorschaubilder im Dienst erzeugt | P2 | 4 |
-| **Musik** | D mit `files.users` | Bibliothek nach Interpret und Album aus den Tags, Wiedergabelisten | P2 | 4 |
+| **Bildbetrachter** | O | PNG, JPEG, GIF, WebP, SVG (nur als Bild, nie eingebettet); Zoom, Drehen, Vollbild, Blättern im Ordner, EXIF-Daten anzeigen | B3 | 2 |
+| **Medienplayer** | O | Audio und Video in den Formaten, die der Browser selbst abspielt; Wiedergabeliste aus einem Ordner; Untertitel (WebVTT) | B3 | 2 |
+| **PDF-Betrachter** | O | Seiten anzeigen, suchen, zoomen, drucken. Der eingebaute PDF-Betrachter des Browsers läuft in abgeschotteten iframes nicht; wir brauchen pdf.js (Apache-2.0, vereinbar mit der AGPL) | B3, neues Modul | 3 |
+| **Archiv** | D | ZIP und TAR ansehen und entpacken, ZIP erstellen. Entpackt wird im Dienst in Go, nach denselben Regeln wie `store.Walk`: keine absoluten Pfade, kein `..`, keine Links, feste Größen und Anzahl | B3 | 3 |
+| **Fotos** | D mit Ordner nach Freigabe | Galerie über den Bilderordner, Zeitleiste nach Aufnahmedatum, Alben, Vorschaubilder im Dienst erzeugt | B2, B3 | 4 |
+| **Musik** | D mit Ordner nach Freigabe | Bibliothek nach Interpret und Album aus den Tags, Wiedergabelisten | B2, B3 | 4 |
 
 ### 4.4 Verwaltung
 
 | App | Art | Erste Fassung | Braucht | Welle |
 |---|---|---|---|---|
 | **Terminal** | Kern | siehe Plan 1 | – | 0 |
-| **Aufgabenplaner** | S (`host.tasks`) | Zeitgesteuerte Aufgaben: Befehl mit Argumentliste (nie `sh -c`), Zeitplan, letzte Läufe mit Ausgabe, Benachrichtigung bei Fehlern. Anlegen und Ändern ist eine Root-Aufgabe | P5, P7 | 3 |
-| **Netzwerkwerkzeuge** | S (`net.outbound`) | Ping, DNS-Abfrage, Traceroute, Portprüfung. Ziele nur nach `trust.ValidHost` und `trust.ValidHostPort`, Anzahl und Takt begrenzt, damit die App kein Werkzeug für Angriffe wird | P7 | 3 |
-| **Passwort-Tresor** | D | Zugangsdaten für Benutzer und Gruppen. Ver- und entschlüsselt wird im Browser mit Web Crypto (AES-256-GCM), der Dienst sieht nur Chiffretext. Schlüssel je Benutzer, für Gruppen mit dem öffentlichen Schlüssel jedes Mitglieds verschlüsselt | P6 | 4 |
+| **Aufgabenplaner** | S (`host.tasks`) | Zeitgesteuerte Aufgaben: Befehl mit Argumentliste (nie `sh -c`), Zeitplan, letzte Läufe mit Ausgabe, Benachrichtigung bei Fehlern. Anlegen und Ändern ist eine Root-Aufgabe | B5, B7 | 3 |
+| **Netzwerkwerkzeuge** | S (`net.outbound`) | Ping, DNS-Abfrage, Traceroute, Portprüfung. Ziele nur nach `trust.ValidHost` und `trust.ValidHostPort`, Anzahl und Takt begrenzt, damit die App kein Werkzeug für Angriffe wird | B7 | 3 |
+| **Passwort-Tresor** | D | Zugangsdaten für Benutzer und Gruppen. Ver- und entschlüsselt wird im Browser mit Web Crypto (AES-256-GCM), der Dienst sieht nur Chiffretext. Schlüssel je Benutzer, für Gruppen mit dem öffentlichen Schlüssel jedes Mitglieds verschlüsselt | B6 | 4 |
 | **Zertifikate** | – | gehört zu Teilprojekt 2 (NGC-Zertifizierungsstelle) und bekommt dort seinen Entwurf | – | eigenes Teilprojekt |
 
 ### 4.5 Büro und Kommunikation
 
 | App | Art | Erste Fassung | Braucht | Welle |
 |---|---|---|---|---|
-| **Chat** | D | Nachrichten zwischen Benutzern der Installation, Einzel- und Gruppengespräche, Dateien über den Dateibereich teilen | P2, P5 | 4 |
-| **Mail** | S (`net.outbound` zu den eingetragenen Servern) | IMAP und SMTP zu einem bestehenden Postfach, so wie im Entwurf als Beispiel beschrieben: Oberfläche im Browser, Versand über den Dienst | P5 | 5 |
-| **Textverarbeitung** | O | Dokumente mit Überschriften, Listen, Tabellen und Bildern, gespeichert als HTML-Teilmenge oder Markdown, Export als PDF über den Druckdialog. Kein .docx in der ersten Fassung | P2, P3, P4 | 5 |
-| **Tabellenkalkulation** | O | Tabellen mit Formeln (eigener Parser, kein `eval`), CSV öffnen und speichern. Kein .xlsx in der ersten Fassung | P2, P3, P4 | 5 |
+| **Chat** | D | Nachrichten zwischen Benutzern der Installation, Einzel- und Gruppengespräche, Dateien anhängen | B4, B5 | 4 |
+| **Mail** | S (`net.outbound` zu den eingetragenen Servern) | IMAP und SMTP zu einem bestehenden Postfach, so wie im Entwurf als Beispiel beschrieben: Oberfläche im Browser, Versand über den Dienst | B5 | 5 |
+| **Textverarbeitung** | O | Dokumente mit Überschriften, Listen, Tabellen und Bildern, gespeichert als HTML-Teilmenge oder Markdown, Export als PDF über den Druckdialog. Kein .docx in der ersten Fassung | B3, B4 | 5 |
+| **Tabellenkalkulation** | O | Tabellen mit Formeln (eigener Parser, kein `eval`), CSV öffnen und speichern. Kein .xlsx in der ersten Fassung | B3, B4 | 5 |
 
 Mail, Textverarbeitung und Tabellenkalkulation sind jeweils groß genug für einen eigenen
 Entwurf. Hier stehen sie nur, damit die Plattform-Bausteine sie nicht vergessen.
@@ -147,11 +154,11 @@ gute erste Apps für das Paketformat, weil sie nur eine Oberfläche haben.
 
 | App | Art | Erste Fassung | Braucht | Welle |
 |---|---|---|---|---|
-| **Minensucher** | O | Drei Stufen (9×9/10, 16×16/40, 30×16/99) und eine eigene Größe; erster Klick nie auf eine Mine; Fahnen; Doppelklick deckt Nachbarn auf; Zeit und Minenzähler | P1 für Bestzeiten | 2 |
-| **2048** | O | 4×4-Feld; Pfeiltasten, WASD und Wischen; Punkte; einen Zug rückgängig; Weiterspielen nach 2048 | P1 | 2 |
-| **Solitär** | O | Klondike mit 1 oder 3 Karten ziehen; Ziehen und Ablegen mit Maus und Finger; Doppelklick legt ab; Rückgängig; automatisches Ablegen am Ende; Karten selbst als SVG gezeichnet | P1 | 3 |
-| **Sudoku** | O | Vier Stufen; jedes Rätsel hat genau eine Lösung; Notizen; Fehleranzeige schaltbar; Hinweis | P1 | 3 |
-| **Schach** | O | Zwei Spieler an einem Gerät; alle Regeln einschließlich Rochade, en passant, Umwandlung, Patt, 50 Züge, dreifacher Wiederholung; Zugliste; Brett drehen | P1 | 3 |
+| **Minensucher** | O | Drei Stufen (9×9/10, 16×16/40, 30×16/99) und eine eigene Größe; erster Klick nie auf eine Mine; Fahnen; Doppelklick deckt Nachbarn auf; Zeit und Minenzähler | B1 für Bestzeiten | 2 |
+| **2048** | O | 4×4-Feld; Pfeiltasten, WASD und Wischen; Punkte; einen Zug rückgängig; Weiterspielen nach 2048 | B1 | 2 |
+| **Solitär** | O | Klondike mit 1 oder 3 Karten ziehen; Ziehen und Ablegen mit Maus und Finger; Doppelklick legt ab; Rückgängig; automatisches Ablegen am Ende; Karten selbst als SVG gezeichnet | B1 | 3 |
+| **Sudoku** | O | Vier Stufen; jedes Rätsel hat genau eine Lösung; Notizen; Fehleranzeige schaltbar; Hinweis | B1 | 3 |
+| **Schach** | O | Zwei Spieler an einem Gerät; alle Regeln einschließlich Rochade, en passant, Umwandlung, Patt, 50 Züge, dreifacher Wiederholung; Zugliste; Brett drehen | B1 | 3 |
 
 Die Namen sind bewusst deutsch und allgemein, denn „Minesweeper“ und „Tetris“ sind Markennamen.
 „2048“ ist ein freies Spiel (MIT). Wir bauen es neu und übernehmen keinen Code.
@@ -184,7 +191,7 @@ zwischen Benutzern bräuchte einen Dienst und bekommt einen eigenen Plan.
 
 ## 6. Bauteile, die mehrere Apps teilen
 
-- **Dateiauswahl und Speichern-Dialog** (von der Shell gestellt, damit keine App den Dateibereich
+- **Dateiauswahl und Speichern-Dialog** (von der Shell gestellt, damit keine App fremde Ordner
   selbst durchsuchen muss)
 - **Liste und Kacheln mit Mehrfachauswahl** (Dateimanager, Fotos, Musik, Archiv)
 - **Verlauf als Liniendiagramm** (Ressourcenmonitor, Dienste)
@@ -213,10 +220,10 @@ ulh, damit sie sich als eigene Apps mit Bestätigung einspielen lassen.
 | Welle | Inhalt | Warum in dieser Reihenfolge |
 |---|---|---|
 | 0 | App-Store, Benutzer & Rechte, Rechner, Terminal | läuft in Plan 1 |
-| 1 | Plattform-Bausteine P1, P3, P4, P7 und P2 als Vertrag | ohne sie kann keine App der Welle 2 Dateien öffnen oder etwas speichern |
+| 1 | Bausteine B1, B2, B3, B4 und B7 (Abschnitt 3) | ohne sie kann keine App der Welle 2 Dateien öffnen oder etwas speichern |
 | 2 | Dateimanager, Einstellungen, Ressourcenmonitor, Hilfe, Texteditor, Bildbetrachter, Medienplayer, Uhr, Zeichentabelle, Einheitenumrechner, Paint, Minensucher, 2048 | Die Grundausstattung; dazu kleine Apps der Art O, die den Weg vom Packen bis zum Fenster früh prüfen |
-| 3 | P5 und P6, Notizen, Aufgaben, Kalender, Kontakte, PDF-Betrachter, Archiv, Systemprotokoll, Dienste, Aufgabenplaner, Netzwerkwerkzeuge, Solitär, Sudoku, Schach | Apps mit eigenem Dienst und die ersten weiteren Sonderrechte |
-| 4 | Speichermanager, Sicherung, Fotos, Musik, Passwort-Tresor, Chat | größere Apps, die auf Dateibereich und Benachrichtigungen aufbauen |
+| 3 | B5 und B6, Notizen, Aufgaben, Kalender, Kontakte, PDF-Betrachter, Archiv, Systemprotokoll, Dienste, Aufgabenplaner, Netzwerkwerkzeuge, Solitär, Sudoku, Schach | Apps mit eigenem Dienst und die ersten weiteren Sonderrechte |
+| 4 | Speichermanager, Sicherung, Fotos, Musik, Passwort-Tresor, Chat | größere Apps, die auf Ordnern und Benachrichtigungen aufbauen |
 | 5 | Mail, Textverarbeitung, Tabellenkalkulation | je ein eigener Entwurf |
 
 Innerhalb einer Welle ist jede App ein eigener kleiner Pull Request. Der erste Pull Request der
@@ -235,7 +242,7 @@ Welle 2 ist der Minensucher: Er ist die kleinste App und prüft den ganzen Weg o
   `shared/testdata/` geprüft.
 - **Sonderrechte:** Für jede App der Art S prüft ein Test, dass der Dienst ohne das jeweilige Recht
   abgelehnt wird und mit dem Recht nur an die erlaubten Pfade kommt. Beim Dateimanager gehört
-  dazu: kein Zugriff auf fremde Ordner, keine Links aus dem Dateibereich heraus, kein `..`.
+  dazu: kein Zugriff auf fremde Ordner, keine Links aus dem freigegebenen Ordner heraus, kein `..`.
 - **Spiele:** Minensucher (erster Klick nie auf eine Mine), 2048 (jede Zahl verschmilzt pro Zug
   höchstens einmal), Solitär (jedes Mischen enthält alle 52 Karten genau einmal), Sudoku (jedes
   Rätsel hat genau eine Lösung), Schach (Zuggenerator gegen die bekannten Perft-Werte bis
@@ -244,22 +251,27 @@ Welle 2 ist der Minensucher: Er ist die kleinste App und prüft den ganzen Weg o
   `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval`, `new Function`, `fetch` oder `WebSocket`
   vorkommt.
 
-## 10. Offene Fragen an Thomas
+## 10. Entscheidungen und offene Fragen
 
-1. **Wo liegt der Quellcode der Store-Apps, und wer baut sie?** Sie gehören nicht nach
-   `apps/web/`. Vorschlag: ein eigenes Repo für die Apps des globalen Stores mit einer eigenen
-   Sitzung „Apps“; oder ein Ordner hier nach dem Projektstruktur-Standard.
-2. **Plattform-Bausteine P1 bis P7:** Sollen alle kommen, und in welcher Reihenfolge? P1 und P2
-   berühren Web, API, DB und Controller gleichzeitig.
-3. **Gemeinsamer Dateibereich (P2):** Wo liegen die Dateien der Benutzer? Vorschlag: ein eigener
-   Ordner auf dem Server der Dienste, verschlüsselt wie die App-Daten, verwaltet vom Dienst des
-   Dateimanagers. Oder gehört das schon zum Teilprojekt 7 „Fileserver“ (SMB/NFS)?
-4. **Sonderrechte (P7):** Ist ein fester Katalog von Rechten wie `host.read-stats` richtig, statt
-   „Netz / root / sonstiges“ wie im Entwurf bisher?
-5. **Grundausstattung ab Werk:** Über den Store mit Auswahl in der Ersteinrichtung (Abschnitt 7),
+**Entschieden am 25.09.2026:**
+
+- Der Quellcode aller Store-Apps liegt im privaten Repo `ngc-storeapps`, nicht hier. Hier bleiben
+  nur die Kern-Apps aus Plan 1 und die Bausteine aus Abschnitt 3.
+- Es gibt keinen zentralen Dateibereich. Wo Dateien liegen, bestimmt die App, die gerade läuft
+  (Baustein B2). Das hat nichts mit Teilprojekt 7 „Fileserver“ zu tun: Der Fileserver ist die
+  grafische Oberfläche, um einen Fileserver (SMB, NFS) einzurichten.
+
+**Offen:**
+
+1. **Bausteine B1 bis B7 (Abschnitt 3):** Sollen alle kommen, und passt die Reihenfolge B1, B2,
+   B3, B4, B7 vor Welle 2 und B5, B6 mit Welle 3?
+2. **Sonderrechte (B7):** Ist eine feste Liste mit Klartext-Namen wie `host.read-stats` richtig,
+   statt „Netz / root / sonstiges“ wie im Entwurf bisher?
+3. **Wer baut die Apps in `ngc-storeapps`:** eine eigene Sitzung „Apps“, oder die Web-Sitzung?
+4. **Grundausstattung ab Werk:** Über den Store mit Auswahl in der Ersteinrichtung (Abschnitt 7),
    oder fest im Kern wie App-Store und Benutzer & Rechte?
-6. **Neue Fremdmodule:** pdf.js für den PDF-Betrachter. Weitere wird es für Vorschaubilder
+5. **Neue Fremdmodule:** pdf.js für den PDF-Betrachter. Weitere wird es für Vorschaubilder
    (HEIC, RAW) und Musik-Tags geben, falls wir sie nicht selbst schreiben wollen. Soll ich sie
    einzeln anfragen, wenn die Welle kommt?
-7. **Einstellungen:** Soll die Einstellung der Updates aus Plan 1 in die App Einstellungen
+6. **Einstellungen:** Soll die Einstellung der Updates aus Plan 1 in die App Einstellungen
    umziehen, oder bleibt sie im App-Store?
