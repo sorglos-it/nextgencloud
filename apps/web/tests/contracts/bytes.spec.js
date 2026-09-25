@@ -432,14 +432,40 @@ const NEEDS_X25519 = [
 // made this round necessary (an ordinary array rewritten in a microtask). What
 // holds those is sign.spec.js "verifyRaw decides on a copy no getter can
 // reach", which measures answers instead of touches.
-const CALLABLES = 141;
+//
+// 147 since contracts/uitar.js: the guard counted it, it was not worked out on
+// paper. Six, and the walk names them - BadPackage and walkUI, the UIWriter
+// constructor and its dir, file and close. Not one of them stands in ENTRIES,
+// and that is the blind spot above at its widest: walkUI takes a copy of the
+// whole archive and UIWriter.file a copy of its data, both through bytesOf,
+// which reads no property at all, so the probe records nothing for either.
+// uitar.spec.js holds them by answers instead, the way sign.spec.js does.
+const CALLABLES = 147;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
 // only a finished handshake makes. The list is pinned and the factory below
 // answers for it, so an exported class that grows methods of its own turns
 // this red until somebody has written down how one of them is made.
-const CLASSES = ["noise.HandshakeKK", "noise.Transport"];
+//
+// uitar.UIWriter joined it with the ui-tar contract, and it is the first entry
+// that needs no crypto at all: new UIWriter() is the whole of it. What it does
+// need saying is that it goes dead after its first refusal - a writer that
+// refused an entry refuses everything after it, so that half an archive cannot
+// go on to look like a whole one - and the walk hands every method the probe
+// on ONE instance. So dir is reached and refuses the probe as a path, and file
+// and close then answer "closed" without ever looking at bytes. That is why no
+// place of uitar stands in ENTRIES: nothing there ever reads a property of a
+// caller's object. Both places that take a caller's bytes - walkUI and
+// UIWriter.file - take a copy through b64.bytesOf, which reads nothing, and
+// this guard's own blind spot (named at CALLABLES) is exactly that. What holds
+// them instead is uitar.spec.js "what the reader checked is what it hands out"
+// and "UIWriter writes the one form walkUI reads", which rewrite the caller's
+// bytes after the call and measure the answer.
+const CLASSES = ["noise.HandshakeKK", "noise.Transport", "uitar.UIWriter"];
+// The two of them an engine without X25519 cannot make. UIWriter is not among
+// them, so it must have an instance on every engine.
+const HANDSHAKE_CLASSES = ["noise.HandshakeKK", "noise.Transport"];
 
 test("every place that takes caller bytes decides on the number it works with", async ({ shell }) => {
   test.setTimeout(180000);
@@ -559,7 +585,7 @@ test("every place that takes caller bytes decides on the number it works with", 
     // as well: an export that is no plain function used to be walked as one,
     // f(...) without new, which throws at the first line and shows nothing.
     const isClass = (f) => /^\s*class[\s{]/.test(Function.prototype.toString.call(f));
-    const CLASS_NAMES = ["noise.HandshakeKK", "noise.Transport"];
+    const CLASS_NAMES = ["noise.HandshakeKK", "noise.Transport", "uitar.UIWriter"];
     const instances = await makeInstances(mods);
     const callables = [];
     const seen = new Set();
@@ -764,6 +790,9 @@ test("every place that takes caller bytes decides on the number it works with", 
     // tree can make a Transport, so nothing else can walk seal and open -
     // which is why they stood open with the guard green.
     async function makeInstances(m) {
+      // A UIWriter needs nothing but itself, so it is made before the try: an
+      // engine that runs no handshake must still walk its three methods.
+      const out = { "uitar.UIWriter": new m.uitar.UIWriter() };
       try {
         const n = m.noise;
         const rnd = (k) => crypto.getRandomValues(new Uint8Array(k));
@@ -782,10 +811,13 @@ test("every place that takes caller bytes decides on the number it works with", 
         const hr = await n.HandshakeKK.forTest(false, pro, rPriv, iPub, rnd(32));
         await hr.readMessage1(await hi.writeMessage1());
         await hi.readMessage2(await hr.writeMessage2());
-        return { "noise.HandshakeKK": hi, "noise.Transport": await hi.split() };
+        out["noise.HandshakeKK"] = hi;
+        out["noise.Transport"] = await hi.split();
+        return out;
       } catch (e) {
-        // No instances, and then the pinned list of classes is what says so.
-        return { failed: String(e) };
+        // No handshake, and then the pinned list of classes is what says so.
+        out.failed = String(e);
+        return out;
       }
     }
   }, { names: MODULES, sizes: SIZES });
@@ -807,7 +839,7 @@ test("every place that takes caller bytes decides on the number it works with", 
   // ten places behind it are all reached or none of them is, and which it was
   // stands in the message of every failure below.
   const noHandshake = got.noInstance.length > 0;
-  expect(got.noInstance).toEqual(noHandshake ? CLASSES : []);
+  expect(got.noInstance).toEqual(noHandshake ? HANDSHAKE_CLASSES : []);
   const outOfReach = noHandshake ? new Set(NEEDS_X25519) : new Set();
   const where = noHandshake
     ? `this engine makes no Noise_KK handshake (${got.whyNoInstance}), so ${NEEDS_X25519.length} places are out of reach`
