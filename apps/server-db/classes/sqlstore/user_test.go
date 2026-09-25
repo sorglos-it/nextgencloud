@@ -478,24 +478,79 @@ func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 
 // tests below hold is what this store's own code keeps, not what its schema
 // keeps - the schema is held by TestUserNameIsUnique and by the migration
 // lint, and nothing here touches the database any other test meets.
+//
+// The proof runs twice, at the top and again from a t.Cleanup, and that is the
+// correction of a fixture that proved itself once. A proof at the top says the
+// index was gone when the store was handed over; it says nothing about the run
+// that follows. Measured on 2a21a26, where it ran once: one line behind it,
+// CREATE UNIQUE INDEX ngc_user_name ON ngc_user (name), left the package 142/0
+// green with that proof passing - and with the index answering again, both
+// tests below held nothing at all. On that drift the whole refusal deleted
+// (case false: in place of the condition) was 142/0 too, where it is 140/2
+// without it. Through the second run the same drift is 140/2 in both tests,
+// each naming the index.
+//
+// Both runs are the one function nameIndexGone, not two copies of a proof that
+// could drift apart, and it plants and removes its own two rows by ID: the
+// second run leaves every row the test wrote where it is.
+//
+// And what the second run does not catch, measured while it was being written:
+// a t.Cleanup registered after this one that drops the index again. Cleanups
+// run last-registered-first, so that one goes before this proof and the
+// package is 143/0 green with the index standing the whole run. It is the
+// same kind as the two written down at TestTheCheckAloneRefusesATakenName - a
+// change to the source these tests are written in, which no test shuts out -
+// and it is named here rather than chased with a third proof.
 func withoutTheNameIndex(t *testing.T) (dbapi.Store, *sql.DB) {
 	t.Helper()
 	s, db := openDB(t)
 	if _, err := db.ExecContext(ctx, "DROP INDEX ngc_user_name"); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"u-one", "u-two"} {
+	if err := nameIndexGone(t, db); err != nil {
+		t.Fatalf("two rows under one name were refused before this test began, so the index is "+
+			"still there and this test would hold nothing: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := nameIndexGone(t, db); err != nil {
+			t.Errorf("two rows under one name were refused after this test was done, so "+
+				"ngc_user_name stood again: something between the proof above and here put it "+
+				"back, and while it stood this test held nothing - it is the index that "+
+				"refused, not the check in UserPut: %v", err)
+		}
+	})
+	return s, db
+}
+
+// nameIndexGone is the whole proof that ngc_user_name is not there: two rows
+// under one name are written, and its own two rows are taken away again. It
+// gives back what the database said to the first of the two that was refused.
+//
+// Two rows and not a look into sqlite_master, because the question is whether
+// anything refuses a second row under a taken name - an index under another
+// name or a trigger doing the same work would answer that question and not the
+// other one.
+//
+// It removes its own two rows by ID and leaves every other row alone, so
+// withoutTheNameIndex can run it a second time when the test is done without
+// touching what the test wrote.
+func nameIndexGone(t *testing.T, db *sql.DB) error {
+	t.Helper()
+	ids := []string{"u-one", "u-two"}
+	var refused error
+	for _, id := range ids {
 		if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, "+
 			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte("twice"),
-			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil {
-			t.Fatalf("two rows under one name were refused, so the index is still there and "+
-				"this test would hold nothing: %v", err)
+			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil && refused == nil {
+			refused = err
 		}
 	}
-	if _, err := db.ExecContext(ctx, "DELETE FROM ngc_user"); err != nil {
-		t.Fatal(err)
+	for _, id := range ids {
+		if _, err := db.ExecContext(ctx, "DELETE FROM ngc_user WHERE id = ?", []byte(id)); err != nil {
+			t.Error(err)
+		}
 	}
-	return s, db
+	return refused
 }
 
 // namedRows is how many rows of ngc_user carry that name, asked of the
@@ -523,20 +578,28 @@ func namedRows(t *testing.T, db *sql.DB, name string) int {
 // Through here each of those is red on the spot.
 //
 // One value and not two questions beside a write, because two can drift apart:
-// measured, with the questions written out at the call site and a fresh ID put
-// into the write alone, the package stayed 142/0 green and that check lived
-// again. Here there is nothing to put it into - the questions and the write
-// take the one argument - so that form cannot be written at all.
+// measured then, with the questions written out at the call site and a fresh
+// ID put into the write alone, the package stayed green and that check lived
+// again. That one is not re-measured on this tree, so it carries no count.
+// Here there is nothing to put it into - the questions and the write take the
+// one argument - so that form cannot be written at all.
 //
 // Nothing holds that this call stays here, and that is a decision and not an
-// oversight. Writing s.UserPut straight again leaves the package 142/0 green,
-// measured, and the refusal itself stays caught; what goes is the two ways
-// above going quiet once more. No question put to the store can see that,
-// because what would be lost is not behaviour of the store but two questions
-// this file asked. Only a guard over this file's own source could, and it
-// would have to name this function by hand: red on a rename or a move that
-// changes nothing, and whoever took the call out would take the guard with
-// it. A gap written down beats a guard the next one switches off.
+// oversight. Writing s.UserPut straight again leaves the package 143/0 green,
+// measured on this tree, and the refusal itself stays caught; what goes is the
+// two ways above going quiet once more. No question put to the store can see
+// that, because what would be lost is not behaviour of the store but two
+// questions this file asked.
+//
+// Two guards over this file's own source could, and neither is built. One
+// names this function by hand: red on a rename or a move that changes nothing,
+// and whoever took the call out would take the guard with it. The other is the
+// form the reasoning here used to miss - a general check for unexported
+// identifiers nobody uses, staticcheck's U1000 and its like, which names
+// nothing by hand, survives a rename and cannot be carried off with the call.
+// It is not measured: this repository has no linter, so whether it would catch
+// this is an expectation and not a number. Naming it is what this paragraph
+// owes; building a linter for one function is not.
 func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 	t.Helper()
 	if have, err := s.UserGet(ctx, u.ID); err != nil || have.Name == u.Name {
@@ -598,28 +661,64 @@ func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 // That is not decoration and may not be tidied away. Both refusals below would
 // otherwise stand between rows alike in every column, and the refusal could
 // then be hung on any one of them with nothing going red. Measured, four of
-// those, each green across all 142 tests of this package while both writers
-// were empty and red once they were not: len(u.Roles) == 0, len(u.TOTP) == 0
-// and u.LastLogin == 0 added to the rejection, and "AND locked = 0" added to
-// the question itself, which does not touch the Go code at all. The two
-// refusals sit on opposite sides - at the second writer the user asking is the
-// full one and the row holding the name is the empty one, at the rename it is
-// the other way round - so a condition either way round drops one of them.
+// those, each green across all 142 tests of the tree they were measured on
+// while both writers were empty, and red once they were not: len(u.Roles) == 0,
+// len(u.TOTP) == 0 and u.LastLogin == 0 added to the rejection, and
+// "AND locked = 0" added to the question itself, which does not touch the Go
+// code at all. Re-measured here, where the package is 143: all four are 141/2,
+// red in this test and in the race beside it. The two refusals sit on opposite
+// sides - at the second writer the user asking is the full one and the row
+// holding the name is the empty one, at the rename it is the other way round -
+// so a condition either way round drops one of them.
 // TestOnlyOneWriterGetsAName carries the same thing, on alternate rounds
 // because both sides of its refusals are racers; each of the two catches all
 // four on its own, measured with the other one left out of the run.
 //
-// One shape nothing in this package reaches, said plainly so that it is a
-// known open mutant and not a hole somebody thinks is covered: a question that
-// fails reading as "the name is free", other = "" in place of return err where
-// the Scan answers an error that is not sql.ErrNoRows. Measured, green across
-// all 142. Nothing here can make that Scan fail. Every column of ngc_user is
-// NOT NULL, so no row a test can plant makes a scan of id into a string fail,
-// and no schema or trigger of a test's own breaks the question alone: every
-// column it reads the UPDATE and the INSERT behind it read too, and SQLite has
-// no trigger on SELECT. It would take a driver of the test's own that fails
-// one statement text and lets the rest through, and this package has no
-// fixture of that kind.
+// One shape this test does not reach, and what used to stand here about it was
+// wrong. A question that fails reading as "the name is free" - other = "" in
+// place of return err where the Scan answers an error that is not
+// sql.ErrNoRows - is green here, and this comment said it would take a driver
+// of the test's own, on two grounds. Both grounds hold: every column of
+// ngc_user is NOT NULL, so no row a test can plant makes a scan of id into a
+// string fail, and SQLite has no trigger on SELECT. Neither of them says what
+// the name ngc_user has to stand for, and the conclusion drawn from them did.
+// A view whose id column reads NULL, with INSTEAD-OF triggers carrying the
+// write through to the table behind it, makes that Scan fail without taking a
+// column from the INSERT or the UPDATE. TestAFailedQuestionIsNotAFreeName is
+// that fixture, and the mutant is red there: the second writer is told <nil>
+// and two rows carry the name.
+//
+// What this test and TestOnlyOneWriterGetsAName hold, and what they do not.
+// They hold the property for the rows they write and the conditions they run:
+// with ngc_user_name gone, a writer asking for a name another ID holds is
+// refused, and one row carries that name. A change that narrows the check to
+// something these two do not write, or hangs it on something they do not vary,
+// they do not see. Two of those are measured on this tree, each on its own,
+// each green across all 143 with both fences run:
+//
+//   - Narrowed by a column. Every name here is short and every ID is short, so
+//     AND length(name) < 10 in userIDOf, && len(other) > 3 and && len(u.ID) >= 4
+//     on the refusal are all green. The first of them, measured: a user named
+//     "administrator" is told <nil> and two rows carry that name. (A fourth,
+//     AND length(id) < 10, is red now - not through these two but through the
+//     view of TestAFailedQuestionIsNotAFreeName, where that column is NULL and
+//     the narrowed question matches nothing.)
+//   - Hung on the dialect. && s.d.DDLInTx() is true on SQLite and false on
+//     MariaDB: green here, and green in every group of the contract this store
+//     answers. Measured against a dialect that wraps SQLite and answers
+//     DDLInTx false: the second writer is told <nil> and two rows carry
+//     "admin". The check is then dead exactly on the database the comment at
+//     UserPut names it for.
+//
+// Neither is left open for want of another round. Nine ways were found in
+// seven, and a tenth while the fixture above was being repaired, each in a
+// shape the round before had not thought of - hung on a field, the question
+// narrowed, hung on the dialect, the fixture undermined, the fixture's own
+// repair undone by the order cleanups run in. A test cannot make itself immune
+// to arbitrary changes in the source it measures. That is the nature of the
+// thing and not a weakness of these two. What stands written here is what was
+// measured; a sentence promising more than that is worse than none, because
+// the next reader stops looking.
 func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	s, db := withoutTheNameIndex(t)
 	// evil carries something in every field but ID and Name, u-admin the zero
@@ -696,12 +795,29 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 // at a time, so what is measured here is that the check is inside that one
 // writer's transaction, not that a multi-master engine certifies the two
 // apart.
+//
+// What this test holds is the place of the check for the names it races and
+// the shapes it writes - short names, short IDs, every field either full or
+// zero. A check narrowed to something outside that, or hung on something this
+// test does not vary, stands untouched here: measured, AND length(name) < 10
+// in userIDOf, && len(other) > 3 and && len(u.ID) >= 4 on the refusal, and
+// && s.d.DDLInTx(), each green across all 143 with both fences run, and the
+// last of them dead on MariaDB, which is the database it is written for. The
+// four are set out at TestTheCheckAloneRefusesATakenName, with what each one
+// lets through. They are named and not closed: nine ways in seven rounds and a
+// tenth on the fixture's repair, each a shape the round before had not thought
+// of, and no test immunises itself against arbitrary changes to the source it
+// measures. The promise here is the one that was measured.
 func TestOnlyOneWriterGetsAName(t *testing.T) {
 	const racers, rounds = 32, 400
 	s, db := withoutTheNameIndex(t)
+	fullRounds := 0
 	for round := range rounds {
 		name := "n" + strconv.Itoa(round)
 		full := round%2 == 0
+		if full {
+			fullRounds++
+		}
 		var wg sync.WaitGroup
 		start := make(chan struct{})
 		errs := make([]error, racers)
@@ -742,5 +858,141 @@ func TestOnlyOneWriterGetsAName(t *testing.T) {
 				"want 1 and 1; %d got ErrInvalid, %d something else",
 				round, ok, name, rows, invalid, other)
 		}
+	}
+	// Both shapes have to have raced, or half the eight above go quiet. Nothing
+	// this test asks of the store can say that, so it is counted here: measured,
+	// full := true and full := false each left this test green without it.
+	if fullRounds != rounds/2 {
+		t.Errorf("%d of %d rounds raced writers carrying something in every field, want %d - "+
+			"with one shape alone four of the eight ways past the check are green here",
+			fullRounds, rounds, rounds/2)
+	}
+}
+
+// throughAViewWithoutAnID puts a view in front of ngc_user whose id column
+// reads NULL, with INSTEAD-OF triggers carrying the INSERT and the UPDATE
+// through to the table behind it, and takes the unique index away as
+// withoutTheNameIndex does.
+//
+// What it is for. The question UserPut asks in front of its write - SELECT id
+// FROM ngc_user WHERE name = ? - reads that one column into a Go string, and a
+// NULL cannot be read into one: the question fails where it used to answer.
+// The write does not, because a view replaces the column that is read without
+// taking one away from the INSERT and the UPDATE behind it.
+//
+// This corrects a sentence that stood at TestTheCheckAloneRefusesATakenName
+// and was wrong. It said this shape would take a driver of the test's own, on
+// two grounds that are both true - every column of ngc_user is NOT NULL, so no
+// row a test can plant makes that scan fail, and SQLite has no trigger on
+// SELECT - and the conclusion drawn from them was not. Neither ground says
+// anything about what the name ngc_user has to stand for.
+//
+// The index has to go with it. With the index in place the mutant below is
+// green: the INSERT meets ngc_user_name in the table behind the view, and
+// UserPut comes back with ErrInvalid after all, for the wrong reason.
+// Measured, mutant and all: 143/0 with the index, 142/1 without it.
+//
+// SQLite only, like countChangedRows above: it is a shape made for one
+// question, on a database of its own, and nothing else in this package meets
+// it.
+func throughAViewWithoutAnID(t *testing.T) (dbapi.Store, *sql.DB) {
+	t.Helper()
+	s, db := openDB(t)
+	for _, stmt := range []string{
+		"DROP INDEX ngc_user_name",
+		"ALTER TABLE ngc_user RENAME TO ngc_user_rows",
+		"CREATE VIEW ngc_user (id, name, roles, totp, locked, failures, last_login) AS " +
+			"SELECT NULL, name, roles, totp, locked, failures, last_login FROM ngc_user_rows",
+		"CREATE TRIGGER ngc_user_insert INSTEAD OF INSERT ON ngc_user BEGIN " +
+			"INSERT INTO ngc_user_rows (id, name, roles, totp, locked, failures, last_login) VALUES " +
+			"(NEW.id, NEW.name, NEW.roles, NEW.totp, NEW.locked, NEW.failures, NEW.last_login); END",
+		"CREATE TRIGGER ngc_user_update INSTEAD OF UPDATE ON ngc_user BEGIN " +
+			"UPDATE ngc_user_rows SET name = NEW.name, roles = NEW.roles, totp = NEW.totp, " +
+			"locked = NEW.locked, failures = NEW.failures, last_login = NEW.last_login " +
+			"WHERE name = OLD.name; END",
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := theViewAnswers(t, db); err != nil {
+		t.Fatalf("before this test began: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := theViewAnswers(t, db); err != nil {
+			t.Errorf("after this test was done, so it did not stand while the test ran and this "+
+				"test held nothing: %v", err)
+		}
+	})
+	return s, db
+}
+
+// theViewAnswers is the whole proof that the fixture above is standing, and it
+// is both halves of it at once: two rows go in under one name, so nothing
+// refuses a duplicate name any more, and the question UserPut asks about that
+// name comes back with something that cannot be read into a string, which is
+// the one thing this fixture is for. It takes its own two rows away again and
+// leaves every other row where it is.
+//
+// It runs twice, at the top and from a t.Cleanup, for the reason written out
+// at withoutTheNameIndex: a proof that runs once at the top proves something
+// about the setup and nothing about the run.
+func theViewAnswers(t *testing.T, db *sql.DB) error {
+	t.Helper()
+	ids := []string{"v-one", "v-two"}
+	var bad error
+	for _, id := range ids {
+		if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, "+
+			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(id), []byte("twice"),
+			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil && bad == nil {
+			bad = fmt.Errorf("two rows under one name were refused, so something still keeps the "+
+				"name unique and the refusal below need not be UserPut's: %w", err)
+		}
+	}
+	var other string
+	err := db.QueryRowContext(ctx, "SELECT id FROM ngc_user WHERE name = ?", []byte("twice")).Scan(&other)
+	if err == nil && bad == nil {
+		bad = fmt.Errorf("the question about a taken name answered %q, so the view is not in "+
+			"front of ngc_user and nothing here makes that question fail", other)
+	}
+	for _, id := range ids {
+		if _, err := db.ExecContext(ctx, "DELETE FROM ngc_user_rows WHERE id = ?", []byte(id)); err != nil {
+			t.Error(err)
+		}
+	}
+	return bad
+}
+
+// TestAFailedQuestionIsNotAFreeName: the question in front of the write
+// answers three ways - a row, no row, or an error - and the third one may not
+// be taken for the second. A store that reads "I could not ask" as "the name
+// is free" writes the second row and tells its writer he got the name.
+//
+// With the index gone and the view in front, UserPut's SELECT cannot read what
+// it is given. Measured, other = "" in place of return err where the Scan
+// answers an error that is not sql.ErrNoRows: the second writer is told <nil>
+// and two rows carry "admin", where the store as it stands hands the driver's
+// error on and one row carries it. Until this test that mutant was green
+// across the whole package, and written down at
+// TestTheCheckAloneRefusesATakenName as a shape nothing here could reach.
+//
+// What is asked of the answer is that there is one, not which one it is. The
+// error the driver gives for a NULL it cannot read is the fixture's, not the
+// store's, and the store owes only that it does not swallow it. What one row
+// and not two says is the same thing from the database's side, and it is the
+// half that cannot be argued with.
+func TestAFailedQuestionIsNotAFreeName(t *testing.T) {
+	s, db := throughAViewWithoutAnID(t)
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := namedRows(t, db, "admin"); n != 1 {
+		t.Fatalf("%d rows carry the name admin before the second writer, want 1", n)
+	}
+	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); err == nil {
+		t.Error("the second writer was told <nil>, want the error the question came back with")
+	}
+	if n := namedRows(t, db, "admin"); n != 1 {
+		t.Errorf("%d rows carry the name admin, want 1", n)
 	}
 }

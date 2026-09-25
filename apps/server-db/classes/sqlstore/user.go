@@ -81,6 +81,13 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // worth its statement, it is its place; the guard measures that place in the
 // file, and those two measure it in the run.
 //
+// The question in front of the write has a third answer besides a row and no
+// row, and that is an error. Read as "no row" it lets the write through, so a
+// second writer takes the name and is told he got it.
+// TestAFailedQuestionIsNotAFreeName holds that one, on a database where a view
+// puts a NULL where the id is read: the question fails there, and the INSERT
+// and the UPDATE behind it do not.
+//
 // dbapi promises "the same name for another ID gives ErrInvalid", so a caller
 // that asks errors.Is for it may not be handed a driver error instead. Both
 // statements of the write can meet an index, and each of them answers where
