@@ -33,33 +33,32 @@ import { vectors } from "../fixtures/vectors.js";
 //     for a reader that refuses everything, so without a floor under the
 //     accepted ones a step backwards stays green.
 //
-// THIS TARGET IS RED, AND IT IS RED ON PURPOSE. The chunking rule above does
-// not hold for the package hash today, and nothing was changed to make it
-// hold: what a fuzz target finds is the result, not a reason to move the
-// fence. Measured, in chromium and in WebKit alike, over the smallest package
-// that shows it - manifest.json, ui/index.html, the two zero blocks of the end
-// marker, and one more entry behind them, 4096 bytes in all, of which the
-// archive is the first 3072:
+// THIS RULE WAS RED WHEN IT WAS WRITTEN, AND IT IS WHY THE READER DRAINS THE
+// STREAM. The smallest case that showed it - manifest.json, ui/index.html, the
+// two zero blocks of the end marker, and one more entry behind them, 4096
+// bytes of which the archive is the first 3072 - gave two hashes out of one
+// package, in chromium and in WebKit alike:
 //
 //   chunks of 1 byte, and of 512   packageSha256 = t4c48EeX5LGYyR6NJawjLo8PSECla8AiorkpwR_5NAA
 //   chunks of 4096, and the whole  packageSha256 = teY7PHfN30mgW0Vk_BLt7-N4LKroA1JXa7VxXdzhoHw
 //
-// The first is the SHA-256 of the 3072 bytes the reader worked on, the second
-// the SHA-256 of all 4096. Both come out of the same bytes; which one a caller
-// gets depends on where the source happens to cut its pieces, and a Blob or a
-// fetch body cuts them where it likes. The cause is in TarReader.#more, which
-// hashes each piece as it ARRIVES: once the archive ends before the stream
-// does, the tail of the last piece is hashed although it was never read - or
-// is not, if the cut fell earlier.
+// The first is the SHA-256 of the 3072 bytes the reader had worked on, the
+// second of all 4096 - and which one a caller got depended on where the source
+// happened to cut its pieces, which a Blob or a fetch body decides for itself.
+// The cause was TarReader.#more, which hashes a piece as it ARRIVES: the tail
+// of the last piece went into the checksum although nobody read it.
 //
-// So "the checksum covers exactly the bytes this reader worked on", which is
-// what pack.js says of it, is true for some chunkings and false for others,
-// and the package hash the shell signs is not a function of the package alone.
-// The ui-tar and the UI hash are the same under every chunking; only the
-// package hash moves. Whoever fixes it has to decide WHICH of the two it is
-// meant to be - the whole file, which means draining the stream to its end, or
-// the archive, which means hashing what is taken rather than what arrives -
-// and this rule stands here unchanged until then.
+// The contract settled it: store.Package.SHA256 is "of the file as downloaded"
+// (shared/store/catalog.go), with Size beside it as the same file's size and
+// UI as the other object. So packageUI now reads the stream to its end, the
+// rule below is green under every chunking, and this paragraph stays because
+// the next reader of TarReader.#more deserves to know what the drain is for.
+// The rule itself was never touched to get there.
+//
+// Measured again after the drain, in both engines: all four chunkings answer
+// teY7PHfN30mgW0Vk_BLt7-N4LKroA1JXa7VxXdzhoHw, which is the SHA-256 of all
+// 4096 bytes - the second of the two above, the file's. The ui-tar and its
+// hash never moved and have not moved now.
 //
 // Seed and rounds come from the environment, so a failure can be run again:
 // NGC_FUZZ_SEED=123 NGC_FUZZ_ROUNDS=5000 npm test -- contracts/pack-fuzz

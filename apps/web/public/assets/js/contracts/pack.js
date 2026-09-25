@@ -102,6 +102,25 @@ export async function packageUI(stream) {
     }
     throw new BadPackage("entry");
   }
+  // The archive is over; the FILE may not be. The package hash is the hash of
+  // the file as downloaded - Go says it in words at store.Package.SHA256, "of
+  // the file as downloaded", with Size beside it as that same file's size and
+  // UI as the other object, the ui-tar's checksum. Two fields, two things. So
+  // whatever stands behind the end marker is read here and hashed too.
+  //
+  // WITHOUT THIS THE HASH IS NOT THE PACKAGE'S. #more hashes a piece as it
+  // ARRIVES, so the tail of the last piece went into the checksum although
+  // nobody ever read it - or did not, if the cut fell earlier. Measured over
+  // one package of 4096 bytes whose archive is the first 3072: pieces of 1 and
+  // of 512 bytes gave the hash of the 3072, pieces of 4096 and the whole file
+  // the hash of the 4096. Both out of the same bytes. A Blob or a fetch body
+  // cuts where it likes, so the same package had two hashes and which one a
+  // caller got was the network's decision (contracts/pack-fuzz.spec.js).
+  //
+  // Nothing is held while it reads: drain keeps the one piece it has, exactly
+  // as the walk above does. Whether bytes behind the end marker make a package
+  // invalid is a DIFFERENT question, and it is not answered here.
+  await r.drain();
   const entry = manifest.ui ? "ui/" + manifest.ui.entry : null;
   if ((entry && !tree.files.has(entry))
     || (manifest.icon !== "" && !tree.files.has("ui/" + manifest.icon))
@@ -143,10 +162,14 @@ function newTree() {
 }
 
 // TarReader hands out one entry at a time and never holds more of the package
-// than the piece it was asked for. Every byte it takes from the stream goes
-// into the package hash once, in order, as the COPY that is then parsed - so
-// the checksum covers exactly the bytes this reader worked on, and a source
+// than the piece it was asked for. Every byte of the stream goes into the
+// package hash once, in order, as the COPY that is then parsed - so a source
 // that refills one buffer cannot put different bytes into the two.
+//
+// EVERY byte, and not only the ones an entry was made of: the checksum is the
+// FILE's, so what the archive does not claim is read and hashed as well (see
+// drain, and the reason at the call in packageUI). That is what makes the
+// checksum a property of the package rather than of the pieces it arrived in.
 class TarReader {
   #reader;
   #hash;
@@ -179,6 +202,20 @@ class TarReader {
     this.#chunk = c;
     this.#off = 0;
     return true;
+  }
+
+  // drain reads what is left of the stream once the archive is over, so the
+  // package hash is the file's and not the archive's. Every piece goes through
+  // #more, which hashes it and holds the total against MAX_PACKAGE, and none
+  // of them is kept: the one before is dropped the moment the next arrives,
+  // exactly as it is while the entries are read.
+  async drain() {
+    while (await this.#more());
+    // The last piece goes too. What follows in packageUI is the ui-tar being
+    // joined - up to 84 MiB - and there is no reason for a piece of the
+    // package to be alive beside it.
+    this.#chunk = new Uint8Array(0);
+    this.#off = 0;
   }
 
   // #take moves n bytes out of the stream, into out when there is one and into
