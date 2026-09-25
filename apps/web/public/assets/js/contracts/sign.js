@@ -195,9 +195,12 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // is handed the copies; every size is taken off the copies; nothing below
     // this line reads a byte the caller could still have changed.
     //
-    // bytesOf reads NO property of the object: `new Uint8Array(v)` copies out
+    // bytesOf reads no property of a real array: `new Uint8Array(v)` copies out
     // of the internal slots, which is where the truth lives and where no
-    // getter can be installed. It also stands in for the instanceof check that
+    // getter can be installed - so a subclass that overrides all four accessors
+    // is not consulted once, measured. (A Proxy has no such slots and is copied
+    // through its length and its indexes; it too ends up as one settled copy,
+    // which is the property.) It also stands in for the instanceof check that
     // used to be here - what is no Uint8Array leaves it as a BadInput and the
     // catch below answers false, the same answer as before.
     const k = bytesOf(pubRaw, "sign: key is not bytes");
@@ -228,10 +231,13 @@ export async function verifyRaw(pubRaw, sig, msg) {
     // refused here: a plain array, and an honest subarray of a larger buffer,
     // pass with length and byteLength both equal to the copy - measured.
     //
-    // tests/contracts/bytes.spec.js marks these three positions "copy" and
-    // holds them to touching no byte property of the caller at all; sign.spec.js
+    // tests/contracts/bytes.spec.js marks these three positions "copy": it
+    // holds them to reading the caller's two NUMBERS - the line below is that
+    // reading - and to never touching buffer or byteOffset, which are what a
+    // view onto the caller's memory would be built from. sign.spec.js
     // "verifyRaw decides on a copy no getter can reach" measures all seven
-    // shapes at all three positions.
+    // shapes at all three positions, and "verify reads the key once" measures
+    // the envelope.
     if (!agrees(pubRaw, k) || !agrees(sig, s) || !agrees(msg, m)) return false;
     const key = await crypto.subtle.importKey("raw", k, { name: "Ed25519" }, false, ["verify"]);
     return (await crypto.subtle.verify({ name: "Ed25519" }, key, s, m)) === true;
