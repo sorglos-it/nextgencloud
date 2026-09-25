@@ -128,6 +128,19 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     lange zu bleibt, wie eine vorgehende Uhr vorging. **Sauber lösbar nur mit
     einer monotonen Quelle im Vertrag.** (api, Aufgabe 5, nach fünf Fixrunden)
 
+34. **`Hello.TrustSeq` sagt nicht, was sein Name verspricht.** Der eingefrorene
+    Vertrag beschreibt das Feld an `tunnel.go:132` nur im Kommentar; Code gibt es
+    auf keiner Seite. Der Controller füllt es jetzt, und zwar richtig für seinen
+    Zweck: Er nennt die Fassung, **ab der er die Kette braucht** — nach dem
+    Pairing ist das Anker minus eins. Ein frisch gepaarter Controller meldet also
+    `1`, **ohne je eine Fassung geprüft zu haben**.
+
+    Wer das Feld in einer Oberfläche als „geprüft bis" anzeigt, zeigt eine
+    Fassung, die nie geprüft wurde. Beim Schnitt muss im Vertrag stehen, was die
+    Zahl ist: **eine Fenstermarke, keine Quittung.** Und die Gegenpflicht
+    gehört dazu — die API muss die Kette ab `TrustSeq + 1` liefern, sonst bleibt
+    ein gepaarter Controller ausgesperrt. (controller, Aufgabe 10)
+
 ## shared/wire — Nachrichten
 
 12. **`shared/wire/wire.go` nimmt an, der Browser hinke immer hinterher. Das
