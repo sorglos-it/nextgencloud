@@ -6028,9 +6028,14 @@ test("a window opens, moves, maximizes and closes", async ({ shell }) => {
   const win = shell.locator(".win", { hasText: "Rechner" });
   await expect(win).toBeVisible();
   const before = await win.boundingBox();
-  await shell.locator(".win .titlebar", { hasText: "Rechner" }).hover();
+  // hover() setzt die Maus in die MITTE der Titelleiste, nicht an before.x.
+  // Ein absolutes move(before.x + 120, ...) zieht das Fenster deshalb nach
+  // LINKS, und die Zusicherung unten kann nie wahr werden. Gemessen. Es muss
+  // vom Griff aus gerechnet werden, nicht vom linken Fensterrand.
+  const grip = await shell.locator(".win .titlebar", { hasText: "Rechner" }).boundingBox();
+  await shell.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
   await shell.mouse.down();
-  await shell.mouse.move(before.x + 120, before.y + 80);
+  await shell.mouse.move(grip.x + grip.width / 2 + 120, grip.y + grip.height / 2 + 80);
   await shell.mouse.up();
   const after = await win.boundingBox();
   expect(Math.round(after.x - before.x)).toBeGreaterThan(80);
