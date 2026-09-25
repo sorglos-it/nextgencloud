@@ -32,19 +32,24 @@
 //     still at all: it goes by what one walk over them produced. Why, and what
 //     that does and does not promise, stands at parts.
 //   - signTask has no check for a second reading to disagree with: it signs.
-//     Measured, with a length that answers 0 on the first read and the truth
-//     afterwards, sign.message runs into a RangeError out of concat and the
-//     promise is rejected; with a first read of 99 it signs 99 bytes, of which
-//     the last 92 are zeros, and that signature does not verify over the bytes
-//     the array really holds. Either way nothing comes back that a verifier
-//     takes.
+//     Measured against sign.message as it stood before this round, with a
+//     length that answers 0 on the first read and the truth afterwards, it
+//     ran into a RangeError out of concat and the promise was rejected; a
+//     first read of 99 signed 99 bytes, of which the last 92 were zeros -
+//     but that is the shape only while the real task is at most 99 bytes,
+//     which a task never is. Measured again this round: 7 real bytes give
+//     those 92 zeros, 99 give none, and 100 and 245 give the same RangeError
+//     as the 0 case. Either way nothing came back that a verifier takes.
+//     Since this round the question does not arise: concat asks each part for
+//     its size once, so signTask signs the bytes the array holds and no
+//     others.
 //   - verifyConfirm reads env.payload once and hands it to proof.verify, which
 //     is where that contract answers for it.
 //   - verifyApproval's own client bytes go to certHash and nowhere else, one
 //     read, and what comes back is this module's hash of whatever they held.
 //
-// The imports differ from the task brief's own block in ten names, counted by
-// the two sets and not by hand; all ten are added and none of the brief's own
+// The imports differ from the task brief's own block in nine names, counted by
+// the two sets and not by hand; all nine are added and none of the brief's own
 // is left out. fromUtf8 and encodedLen from b64.js are what the single-read
 // rule needs, in parts below. BadInput and BadJSON are the two errors
 // parseTask folds into the one error Go has there. verify from sign.js and
@@ -52,16 +57,17 @@
 // brief's interface list with no line of code behind it and is built here
 // after Go's task.VerifyApproval. MAX_PARAMS and validParams come from
 // wire.js, where Go keeps both as well - the comment said six until the round
-// before this one and had been one short since MAX_PARAMS arrived. viewOf and
-// BadFrame come from there too, since this round.
-import { b64encode, utf8, fromUtf8, equal, encodedLen, BadInput } from "./b64.js";
+// before this one and had been one short since MAX_PARAMS arrived. viewOf is
+// the ninth; it came from wire.js for one round and comes from b64.js since
+// this one, which is why BadFrame is gone again and the count fell by one.
+import { b64encode, utf8, fromUtf8, equal, encodedLen, viewOf, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, str, bytes, int, raw, RAW } from "./json.js";
 import { validName, validAppID, validID } from "./text.js";
 import * as proof from "./proof.js";
 import { message, verify as verifyEnvelope, PURPOSE_TASK, PURPOSE_CONFIRM } from "./sign.js";
 import { certHash } from "./session.js";
 import { keyOwner } from "./trust.js";
-import { MAX_PARAMS, validParams as wireValidParams, viewOf, BadFrame } from "./wire.js";
+import { MAX_PARAMS, validParams as wireValidParams } from "./wire.js";
 
 export const ID_SIZE = 16;
 export const MAX_LIFETIME = 300;
@@ -99,11 +105,13 @@ export const taskShape = S({
 // as one value and no further, in validParams below.
 const taskBudget = new Budget({ size: MAX_TASK, items: { params: RAW } });
 
-// payloadView is wire.viewOf under this file's one error: one view of the
+// payloadView is b64.viewOf under this file's one error: one view of the
 // bytes a caller handed over, built from buffer, byteOffset and byteLength,
-// which every reader of that payload then uses. wire.js holds the definition
-// and this file asks for it, the way it asks for MAX_PARAMS and validParams -
-// a second copy would be a second place to change.
+// which every reader of that payload then uses. b64.js holds the definition
+// and this file asks for it, the way it asks wire.js for MAX_PARAMS and
+// validParams - a second copy would be a second place to change. It stood in
+// wire.js for one round and moved to the byte layer in this one, so the fold
+// below is now of a BadInput and no longer of a BadFrame.
 //
 // Two tests build the case it closes: "parseTask measures a task by one
 // reading of its length" and "verifyApproval decides on one reading of the
@@ -119,7 +127,7 @@ function payloadView(b) {
   try {
     return viewOf(b, "task: malformed task");
   } catch (e) {
-    if (e instanceof BadFrame) throw new Error("task: malformed task");
+    if (e instanceof BadInput) throw new Error("task: malformed task");
     throw e;
   }
 }
@@ -195,31 +203,42 @@ function validParams(text) {
 // with the bytes still there behind it - so a length checked here and read
 // again by b64encode would let a check pass for one byte string while another
 // went into the signature (measured in task 8 for session.encodeClientCert,
-// which is the same shape). b64encode asks for that length once per three
+// which is the same shape). b64encode asked for that length once per three
 // bytes on its way through - measured, 7 reads for ID_SIZE and 12 for
-// CERT_SIZE in one call - so a length is nothing this file could hold still
-// anyway; the text that came out of the walk is. What ID_CHARS pins is
-// therefore the number of elements that one walk read, not what the array
-// holds. Measured: an id of
-// no bytes whose length answers ID_SIZE is valid here, and the base64url of
-// ID_SIZE zero bytes is what goes into the signature - a wrong id, but the
-// same wrong one in the check and in the bytes of that one call.
+// CERT_SIZE in one call - so a length was nothing this file could hold still,
+// and the text that came out of the walk was the only thing both checks could
+// share. Since this round b64encode asks b64.viewOf once and encodes out of
+// that one view, which is the bytes the array really holds. The way the check
+// is written here does not change: the text is still what both look at, and
+// it costs nothing.
 //
-// Across two calls nothing is promised here. A Proxy with a get trap of its
-// own passes instanceof Uint8Array, answers every index itself and may answer
-// a different byte on each walk; measured against this file, two encodeTask
-// calls over one such id wrote "YWFhYWFhYWFhYWFhYWFhYQ" and then
-// "YmJiYmJiYmJiYmJiYmJiYg". (A Proxy without that trap gets no further than
-// b64encode: the length of a Uint8Array is an accessor that wants the array
-// itself for this, and a proxy is not it - measured, a TypeError, which parts
-// answers with null like any other refusal.) Such a promise is not
-// impossible, and saying so would be wrong: built and measured, a WeakMap
-// from the caller's array to its first walk's base64url makes the second call
-// write what the first wrote. It is not built here, because it would have the
-// module remember every array a caller ever handed it and would still say
-// nothing about what stands behind that first walk. Whoever has to hold a
-// task and its bytes together makes both out of one call instead, which is
-// what buildTask does below. Its id is out of reach for this, because it comes from
+// What that moved, measured against this file before and after: an id of no
+// real bytes whose length answers ID_SIZE was valid here and put the base64url
+// of ID_SIZE zeros into the signature; it is refused now, because the view is
+// of the empty buffer and its base64url is ID_CHARS characters short. And a
+// Proxy over bytes with a get trap of its own, which passes instanceof, used
+// to answer every index itself and could answer a different byte on each
+// walk: two encodeTask calls over one such id wrote
+// "YWFhYWFhYWFhYWFhYWFhYQ" and then "YmJiYmJiYmJiYmJiYmJiYg". Now only buffer,
+// byteOffset and byteLength are asked of it, and the index trap never stands
+// between the encoder and a byte. Measured, both ways such a proxy can go: a
+// trap that forwards those three to the array itself gives the memory, and
+// two calls write the same thing, twice "AAAAAAAAAAAAAAAAAAAAAA" over 16 zero
+// bytes; a trap that forwards them with the proxy as the receiver cannot,
+// because those accessors want the array, and parts answers null - which is
+// the proxy the test builds. A Proxy with no get trap at all gets no further
+// either way, and for the same reason - measured, a TypeError before and a
+// BadInput now, both of which parts answers with null like any other
+// refusal.
+//
+// What is still not promised here is a second call over an object whose
+// buffer itself is written between the two. That such a promise is possible
+// is not in doubt: built and measured, a WeakMap from the caller's array to
+// its first walk's base64url makes the second call write what the first
+// wrote. It is not built here, because it would have the module remember
+// every array a caller ever handed it. Whoever has to hold a task and its
+// bytes together makes both out of one call instead, which is what buildTask
+// does below. Its id is out of reach for this, because it comes from
 // crypto.getRandomValues into an array of its own, but its cert and its
 // params are the caller's: it reads them in exactly this one walk, and what
 // it hands back comes out of the document that walk produced.

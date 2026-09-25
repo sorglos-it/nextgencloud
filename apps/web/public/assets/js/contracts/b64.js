@@ -11,12 +11,50 @@ for (let i = 0; i < 64; i++) REV[ALPHABET.charCodeAt(i)] = i;
 
 export class BadInput extends Error {}
 
+// viewOf answers with a plain view of the bytes v holds. Go is handed a
+// []byte, whose length is the slice's own and cannot change between two
+// looks. Here v is an object the caller owns: a subclass of Uint8Array may
+// define length, and then a check that reads it and a reader that reads it
+// again see two different numbers. buffer, byteOffset and byteLength are
+// therefore asked once, here, and the view built from them is the single
+// reading that every check, every size and every copy afterwards uses.
+//
+// It stands in this module because this is the byte layer: everything the
+// contracts are handed from outside is bytes, and every one of them passes
+// here. wire.js had it first, for frames, and task.js asked wire.js for it;
+// both now ask this file, so the tree holds one definition, as it does for
+// MAX_PARAMS and SIG_SIZE. Each of them folds the BadInput into its own one
+// error, because a caller of wire or task tells its errors apart by module
+// and not by where inside the module the bytes were refused.
+//
+// What it closes, measured over the contracts as they stood before it moved:
+// twenty places asked a caller's object for its size more than once. Eleven
+// of them through json.decode - a document of 70027 bytes came out of
+// sign.parseEnvelope through a budget of 2390 - six through concat below, one
+// through b64encode below, and two through equal below. The guard "every
+// entry that takes caller bytes asks for their size once" walks every export
+// of every contract and holds that number down.
+export function viewOf(v, why) {
+  if (!(v instanceof Uint8Array)) throw new BadInput(why);
+  try {
+    return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  } catch {
+    throw new BadInput(why);
+  }
+}
+
 export function encodedLen(n) {
   return Math.floor((n * 8 + 5) / 6);
 }
 
-export function b64encode(u8) {
-  if (!(u8 instanceof Uint8Array)) throw new BadInput("base64url: not bytes");
+export function b64encode(bytes) {
+  // The caller's object is asked for its size once, and the loop below reads
+  // the view's length instead - once per three bytes, which is where this
+  // used to go wrong: a caller's length that answered the first read with 0
+  // and the truth afterwards turned 32 real bytes into the empty string,
+  // measured, and a check on that text would have held for a key nobody
+  // encoded.
+  const u8 = viewOf(bytes, "base64url: not bytes");
   let out = "";
   let i = 0;
   for (; i + 3 <= u8.length; i += 3) {
@@ -79,16 +117,22 @@ export function fromUtf8(u8) {
 }
 
 export function concat(...parts) {
+  // Each part is asked for its size once and only the view goes on. The old
+  // body read every part's length twice, once to size the output and once to
+  // step the cursor, and the copy in between takes the bytes the array really
+  // holds. Measured: a part of 32 bytes whose second reading answered 0 wrote
+  // the next part over its first byte - concat(a, b) came back as 33 bytes
+  // with b at offset 0 - and sign.message signed that. A first reading of 0
+  // instead made the output too small and out.set threw a RangeError out of a
+  // function that promises BadInput.
+  const views = parts.map((p) => viewOf(p, "concat: not bytes"));
   let n = 0;
-  for (const p of parts) {
-    if (!(p instanceof Uint8Array)) throw new BadInput("concat: not bytes");
-    n += p.length;
-  }
+  for (const v of views) n += v.length;
   const out = new Uint8Array(n);
   let o = 0;
-  for (const p of parts) {
-    out.set(p, o);
-    o += p.length;
+  for (const v of views) {
+    out.set(v, o);
+    o += v.length;
   }
   return out;
 }
@@ -100,9 +144,24 @@ export function equal(a, b) {
   // bytes do, but "a" ^ "b" is 0, so a comparison that took strings would
   // answer true for any two of the same length - quietly, and exactly where
   // it is asked whether a signature is right.
-  if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) return false;
-  if (a.length !== b.length) return false;
+  //
+  // Each side is asked for its size once, through viewOf, and the loop runs
+  // over that view. The old body read a.length twice, once against b.length
+  // and once as the bound of the loop: a first reading that matched b and a
+  // second of 0 left the loop body unrun, diff at 0 and the answer true -
+  // measured, true for two 32-byte arrays that differ in every byte, which is
+  // exactly the answer a MAC comparison may never give. A caller who hands
+  // over something that is no bytes gets false as before, so this function
+  // keeps its promise to answer and never throw.
+  let x, y;
+  try {
+    x = viewOf(a, "equal");
+    y = viewOf(b, "equal");
+  } catch {
+    return false;
+  }
+  if (x.length !== y.length) return false;
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
   return diff === 0;
 }

@@ -15,10 +15,13 @@
 // parseE2E, parseControl. Through bytesOrNull: validateOpen, parseOpen,
 // validParams, encodeOpen, e2e, encodeControl. Counted from the call sites in
 // this file, eight for viewOf and eleven for bytesOrNull; parseOpen is in both
-// lists, once for the document and once for its members. Nothing but this
-// count holds the two lists: a new function that takes bytes and calls neither
-// helper turns no test red, which is why a guard that walks the export list is
-// its own task and not this comment.
+// lists, once for the document and once for its members. That guard is built
+// since this round and stands in tests/contracts/bytes.spec.js: it walks the
+// exports of every contract, hands each of them a byte array that counts how
+// often it is asked for its size, and holds every one of them at one reading.
+// A new function here that takes bytes and calls neither helper turns it red.
+// The two counts above it does not hold - a helper may be called any number
+// of times - and they stay as the last round wrote them.
 //
 // What goes through bytesOrNull is a member of an object a caller built in
 // three of the six - validateOpen, encodeOpen, encodeControl. In validParams
@@ -39,19 +42,22 @@
 // message of that commit said viewOf had been there for the other eight;
 // counted over the file before it and after it, it was there for five.
 //
-// viewOf is exported since this round, for task.js, which had the same hole in
-// parseTask and verifyApproval. One definition in the tree, as with MAX_PARAMS
-// and SIG_SIZE; task.js folds the BadFrame it throws into its own one error.
+// viewOf was exported from here for one round, for task.js, which had the
+// same hole in parseTask and verifyApproval. Since this round the definition
+// stands in b64.js and both modules ask that file for it - one definition in
+// the tree, as with MAX_PARAMS and SIG_SIZE - and what is left here is the
+// fold into this module's own error.
 //
-// The imports differ from the task brief's own block in nine names, counted
-// by the two sets and not by hand. Five are added: fromUtf8 and BadInput from
+// The imports differ from the task brief's own block in ten names, counted
+// by the two sets and not by hand. Six are added: fromUtf8 and BadInput from
 // b64.js and BadJSON from json.js, which the encoders and the folding of the
 // decoder's errors need, optInt from json.js, the shape this task adds there
-// for the exit code, and sign.SIG_SIZE, the one number the task envelope
-// below is measured by. Four are left out: A, bool and int from json.js,
-// which nothing here uses (the brief's own code does not either), and
-// sign.validateEnvelope, on purpose - see validTaskEnvelope.
-import { concat, utf8, fromUtf8, b64encode, BadInput } from "./b64.js";
+// for the exit code, sign.SIG_SIZE, the one number the task envelope below is
+// measured by, and b64.viewOf, which this round moved out of this file. Four
+// are left out: A, bool and int from json.js, which nothing here uses (the
+// brief's own code does not either), and sign.validateEnvelope, on purpose -
+// see validTaskEnvelope.
+import { concat, utf8, fromUtf8, b64encode, viewOf as bytesView, BadInput } from "./b64.js";
 import { decode, Budget, BadJSON, S, P, str, uint32, bytes, raw, optInt, RAW } from "./json.js";
 import { validName, validAppID, coreApp, validText } from "./text.js";
 import { proofShape, validateProof } from "./proof.js";
@@ -103,28 +109,28 @@ export class BadFrame extends Error {}
 
 const EMPTY = new Uint8Array(0);
 
-// viewOf answers with a plain view of the bytes v holds. Go is handed a
-// []byte, whose length is the slice's own and cannot change between two
-// looks. Here v is an object the caller owns: a subclass of Uint8Array may
-// define length, and then a check that reads it and a writer that reads it
-// again see two different numbers. buffer, byteOffset and byteLength are
-// therefore asked once, here, and the view built from them is the single
-// reading that every check, every size and every copy below uses. Without it
-// a payload that says 0 for the check and 65515 for the copy leaves as a
-// frame of 65520 bytes - over MaxFrame, which the other side drops and the
-// link ends on. The test "a payload whose length lies is refused, not half
+// viewOf is b64.viewOf under this file's one error: one view of the bytes a
+// caller handed over, built from buffer, byteOffset and byteLength, which
+// every check, every size and every copy below then uses. Without it a
+// payload that says 0 for the check and 65515 for the copy leaves as a frame
+// of 65520 bytes - over MaxFrame, which the other side drops and the link
+// ends on. The test "a payload whose length lies is refused, not half
 // written" builds exactly that payload.
 //
-// Exported for task.js, which asks the same question of a task payload and
-// folds the BadFrame into its own one error. Go's wire has no counterpart for
-// it and needs none: what it is handed is a []byte, whose length the compiler
-// answers for.
-export function viewOf(v, why) {
-  if (!(v instanceof Uint8Array)) throw new BadFrame(why);
+// The definition stood here until this round, because frames were where it
+// first hurt, and task.js asked this module for it. It now stands in b64.js,
+// the byte layer every one of the contracts reaches, where the guard sees all
+// of its callers and not only the two that happened to hurt. What is left
+// here is the fold into BadFrame; a caller of this module tells its errors
+// apart by module and not by where inside it the bytes were refused. Go's
+// wire has no counterpart for any of it and needs none: what it is handed is
+// a []byte, whose length the compiler answers for.
+function viewOf(v, why) {
   try {
-    return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  } catch {
-    throw new BadFrame(why);
+    return bytesView(v, why);
+  } catch (e) {
+    if (e instanceof BadInput) throw new BadFrame(why);
+    throw e;
   }
 }
 
@@ -135,9 +141,8 @@ export function viewOf(v, why) {
 // and never throw.
 function bytesOrNull(v) {
   if (v === null || v === undefined) return null;
-  if (!(v instanceof Uint8Array)) return undefined;
   try {
-    return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+    return bytesView(v, "bytes");
   } catch {
     return undefined;
   }
@@ -368,12 +373,11 @@ const paramsBudget = new Budget({ size: MAX_PARAMS, items: { "": RAW } });
 // by Go, measured. When that stood, the one file reading this module took a
 // number out of it and asked nothing, so it cost nothing that day. Since the
 // round before this one task.js asks: a change here moves a task's answer too,
-// which the test "validateTask decides every field as Go's Task.Validate does"
-// catches -
-// measured, a single byte changed in the last line of the function below,
-// `> 0` to `> 2`, turns it red. The round before this one wrote "the line
-// below" here, and that is the signature line, which was never the one
-// measured.
+// which the test "validateTask decides every field as Go's
+// task.Task.Validate does" catches - measured, a single byte changed in the
+// last line of the function below, `> 0` to `> 2`, turns it red. The round
+// before this one wrote "the line below" here, and that is the signature
+// line, which was never the one measured.
 //
 // decode is what scans, and it is the decoder parseOpen reads an OPEN with,
 // so the two agree by construction. It also gives back the bytes of the one

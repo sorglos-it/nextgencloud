@@ -10,7 +10,7 @@
 // the path alone says what is counted, the shape alone says what the value
 // becomes. A budget that disagrees with a contract is a mistake in the
 // contract, and the same documents come through as in Go.
-import { b64decode, BadInput } from "./b64.js";
+import { b64decode, viewOf, BadInput } from "./b64.js";
 
 export const RAW = -1;
 export const MAX_DEPTH = 32;
@@ -103,10 +103,30 @@ export function decode(input, budget, shape) {
   if (shape === null || typeof shape !== "object" || typeof shape.k !== "string") {
     throw new BadJSON("no shape");
   }
+  // The document is asked for its size once, here, and the budget and the
+  // parser both work on that one view. Until this round the caller's object
+  // went in as it stood: the budget was measured against the first reading of
+  // length and the parser asked the same object again at every step, so a
+  // subclass whose first reading was small carried a document of any size
+  // past the bound. Measured over the ten parsers that reach this function,
+  // each with a lie on the first reading alone: 70027 bytes came back out of
+  // sign.parseEnvelope through a budget of 2390, and 5 MB, 40 MB and 70027
+  // bytes walked past the bounds of session.parseLoginResult,
+  // session.parseTrustChain and session.parseTrustHint into their own checks.
+  // This is the one place all ten share, and none of them needs a guard of
+  // its own (Go: enc.DecodeStrict is handed a []byte, whose length the
+  // compiler answers for).
+  //
+  // An ArrayBuffer is no longer taken. Go's decoder is handed a []byte and
+  // nothing else; wire.js turned it down two rounds ago and task.js one round
+  // ago, for that reason, and no caller in this tree hands one over.
   let b;
-  if (input instanceof Uint8Array) b = input;
-  else if (input instanceof ArrayBuffer) b = new Uint8Array(input);
-  else throw new BadJSON("no bytes");
+  try {
+    b = viewOf(input, "no bytes");
+  } catch (e) {
+    if (e instanceof BadInput) throw new BadJSON("no bytes");
+    throw e;
+  }
   if (b.length > budget.size) throw new BadJSON("document too large");
   // One fatal decode proves the whole document is valid UTF-8, so the parser
   // below can walk the bytes and slice raw values without checking again.

@@ -661,12 +661,13 @@ test("verifyConfirm answers false where it cannot check, and reads the proof onc
 });
 
 // buildTask and signTask are the two of the eleven interfaces that have no
-// counterpart in Go and no vector: only the shell builds and signs tasks. Up
-// to this round nothing ran them at all, and a run would have found what the
-// first case below now pins: the version before this one walked the caller's
-// cert twice, once for the check and once for the writing, and a cert that
-// answers the two walks differently was checked as one certificate and signed
-// as another.
+// counterpart in Go and no vector: only the shell builds and signs tasks. The
+// version two rounds ago walked the caller's cert twice, once for the check
+// and once for the writing, so a cert that answers the two walks differently
+// was checked as one certificate and signed as another; this test was written
+// to pin that down and did it by naming which walk won. Since b64.viewOf the
+// encoder asks once and reads the memory, so such a cert is refused outright
+// and stands in the refusal table below with the rest.
 //
 // No crypto here beyond crypto.getRandomValues, which every engine has, so
 // this test runs where the signature tests are skipped.
@@ -683,9 +684,10 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
     });
     // Bytes that answer the first walk over them with one value and the
     // second with another. A Proxy passes instanceof Uint8Array and answers
-    // every index itself, so nothing short of walking only once keeps the two
-    // apart - a length check cannot, and neither can a copy taken after the
-    // check.
+    // every index itself, so nothing that walks it twice keeps the two apart -
+    // a length check cannot, and neither can a copy taken after the check. A
+    // view of its buffer would, and that is what b64.viewOf asks for; a proxy
+    // cannot answer for a buffer, so it is refused instead.
     const walking = (n, first, second) => {
       let seen = 0, run = 0;
       return new Proxy(new Uint8Array(n), {
@@ -710,15 +712,12 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
         && (r.task.params === null ? t.params === null : equal(r.task.params, t.params));
     };
 
-    const plain = task.buildTask(args({}));
+    const cert7 = new Uint8Array(32).fill(7);
+    const plain = task.buildTask(args({ certHash: cert7 }));
     const certA = new Uint8Array(32).fill(7), certB = new Uint8Array(32).fill(9);
-    const drift = task.buildTask(args({ certHash: walking(32, certA, certB) }));
-    // A cert of no bytes at all whose length answers 32. b64encode walks it
-    // once and writes the base64url of 32 zero bytes - a wrong certificate,
-    // but the one the bytes and the task both name.
+    // A cert of no bytes at all whose length answers 32.
     const liar = new Uint8Array(0);
     Object.defineProperty(liar, "length", { get() { return 32; } });
-    const lying = task.buildTask(args({ certHash: liar }));
 
     const refused = {};
     for (const [name, over] of [
@@ -728,6 +727,14 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
       ["certHash as text", { certHash: "x".repeat(32) }], ["app that is no app id", { app: "ngcstore" }],
       ["params that are an array", { params: utf8("[1,2]") }],
       ["params beyond MAX_PARAMS", { params: utf8('{"a":"' + "x".repeat(8193 - 8) + '"}') }],
+      // The two cases this test was written for. Up to this round both got
+      // in: the drifting proxy was walked twice and its first walk decided,
+      // and the lying array wrote the base64url of 32 zero bytes. Since
+      // b64.viewOf they do not get in at all - it asks buffer, byteOffset and
+      // byteLength once and encodes the memory behind them, which a proxy
+      // cannot answer for and an array of no bytes answers with none.
+      ["certHash that walks differently twice", { certHash: walking(32, certA, certB) }],
+      ["certHash of no bytes whose length says 32", { certHash: liar }],
     ]) {
       try {
         task.buildTask(over === null ? undefined : args(over));
@@ -751,14 +758,12 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
         !== b64encode(task.buildTask(args({})).task.id),
       // node left out is the empty node Go writes for a core action.
       noNode: task.buildTask(args({ node: undefined })).task.node,
-      // The drifting cert: whichever walk won, the task and the bytes name
-      // the same certificate, and it is the one that was checked.
-      driftHolds: holds(drift),
-      driftIsFirstWalk: JSON.parse(fromUtf8(drift.bytes)).cert === b64encode(certA),
-      lyingHolds: holds(lying),
-      lyingCertSize: lying.task.cert.length,
-      // Nothing the caller handed over is part of the answer.
-      ownArrays: lying.task.cert !== liar,
+      // The cert that is written is the one the caller handed over, byte for
+      // byte, and it is this module's own array - nothing the caller still
+      // holds is part of the answer.
+      certIsTheCallers: JSON.parse(fromUtf8(plain.bytes)).cert === b64encode(cert7),
+      certHolds: equal(plain.task.cert, cert7),
+      ownArrays: plain.task.cert !== cert7,
       refused,
     };
   });
@@ -770,20 +775,18 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
   expect(out.rebuilt).toBe(true);
   expect(out.twoIDs).toBe(true);
   expect(out.noNode).toBe("");
-  // The case against the two-walk version before this one. Of these five,
-  // two carry it: measured against that version rebuilt, driftIsFirstWalk
-  // and ownArrays go red and the other three stay green. driftHolds stays
-  // green because the proxy above answers alike from the second walk on, so
-  // even the two-walk version hands back a task that agrees with its bytes.
-  // lyingCertSize stays green because the lying array answers 32 as well.
-  // And lyingHolds stays green because equal compares with xor and
-  // undefined ^ 0 is 0, so a cert of no bytes measures equal to 32 zero
-  // bytes. Those three say what the promise looks like; the other two are
-  // what would notice it breaking.
-  expect(out.driftHolds).toBe(true);
-  expect(out.driftIsFirstWalk).toBe(true);
-  expect(out.lyingHolds).toBe(true);
-  expect(out.lyingCertSize).toBe(32);
+  // What the drifting proxy and the lying array used to be here for now
+  // stands in the refusal table below. Until this round buildTask took both:
+  // the proxy was walked twice and the first walk was what got signed, the
+  // lying array wrote the base64url of 32 zero bytes, and this test held the
+  // first of the two down by comparing the written cert with the first walk.
+  // Since b64.viewOf neither gets past parts, so there is no first walk to
+  // pin and no wrong certificate to name - an object that answers two walks
+  // differently is one the encoder never asks twice. What is left here is the
+  // honest case: the cert that is written is the caller's, and the array that
+  // comes back is not.
+  expect(out.certIsTheCallers).toBe(true);
+  expect(out.certHolds).toBe(true);
   expect(out.ownArrays).toBe(true);
   expect(out.refused).toEqual({
     "nothing at all": "task: malformed task",
@@ -796,6 +799,8 @@ test("buildTask signs exactly the task it checked, and hands back what the bytes
     "app that is no app id": "task: malformed task",
     "params that are an array": "task: malformed task",
     "params beyond MAX_PARAMS": "task: malformed task",
+    "certHash that walks differently twice": "task: malformed task",
+    "certHash of no bytes whose length says 32": "task: malformed task",
   });
 });
 
