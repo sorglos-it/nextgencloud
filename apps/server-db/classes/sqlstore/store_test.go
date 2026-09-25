@@ -110,6 +110,12 @@ func TestBlobRoundTrip(t *testing.T) {
 // value of any length where MariaDB cuts it or answers with an error, which
 // is the whole reason these checks are made in Go and not left to the
 // database.
+//
+// The two counts above that name a group of the contract came by hand.
+// dbtest.Run is called once in the whole tree, against memstore, and nothing
+// under apps/server-db imports dbtest, so go test ./... drives no group of the
+// contract against this store. The note at TestOneWriteAndOneDelete in
+// user_test.go says it in full.
 func TestLimits(t *testing.T) {
 	s := open(t)
 	long := string(bytes.Repeat([]byte("x"), sqlstore.MaxKey+1))

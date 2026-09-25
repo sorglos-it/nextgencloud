@@ -1404,10 +1404,11 @@ func hasOnceUse(p *pkgSource) bool {
 // tidy-up removes, with the comment that turns on it left standing over
 // nothing.
 //
-// Both counts above that name a group of the contract came by hand. dbtest.Run
-// is called once in the whole tree, against memstore, and nothing here imports
-// dbtest, so go test ./... drives no group of the contract against this store.
-// The note at TestOneWriteAndOneDelete in user_test.go says it in full.
+// Every count in this comment that names a group of the contract came by hand,
+// the two above and the one below. dbtest.Run is called once in the whole tree,
+// against memstore, and nothing here imports dbtest, so go test ./... drives no
+// group of the contract against this store. The note at TestOneWriteAndOneDelete
+// in user_test.go says it in full.
 //
 // What this test reads, exactly. userIDOf is named once in the package, and
 // three things are read about that one place: what the call it is an argument

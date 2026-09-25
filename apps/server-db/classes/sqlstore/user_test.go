@@ -831,6 +831,12 @@ func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 //     "admin". The check is then dead exactly on the database the comment at
 //     UserPut names it for.
 //
+// Both counts in this comment that name a group of the contract - the one on
+// aa718c6 above and the one in the dialect line - came by hand. dbtest.Run is
+// called once in the whole tree, against memstore, so go test ./... drives no
+// group of the contract against this store. The note at TestOneWriteAndOneDelete
+// says it in full.
+//
 // Neither is left open for want of another round. Twelve ways were found in
 // nine, each in a shape the round before had not thought of - hung on a
 // field, the question narrowed, hung on the dialect, the fixture undermined,
