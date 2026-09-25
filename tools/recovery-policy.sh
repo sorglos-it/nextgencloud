@@ -208,15 +208,20 @@ primary() {
 # of its own; that was worse, but not different in kind. Today the same change
 # ends the run at the wire case, with eleven ok behind it - this check goes
 # green through it, exactly as it did then.
-# The property itself - the secret travels nowhere in the open except where it
-# is known to - is asked of the wire: recovery-test.sh has swtpm write it down
-# (--log level=20) and keeps a ledger over the whole recording, both directions
-# at once. Honest run: 2 hits, both in what the tools SENT during the Create of
-# the sealing, and that is the ONE named place - tpm2_create -i runs without any
-# session at all. Every hit has to sit there, and there may be no others, in
-# either direction. That is what has no counterpart here: whatever this script
-# does with its sessions, and wherever it might send the plaintext on to, the
-# ledger has to come out at those two and nothing else.
+# The wire is looked at instead, and it is worth saying exactly how far that
+# reaches: recovery-test.sh has swtpm write the traffic down (--log level=20)
+# and then SEARCHES that recording for the eight bytes, over the whole run and
+# in both directions. Honest run: 2 hits, both in what the tools SENT during the
+# Create of the sealing, and that is the ONE named place - tpm2_create -i runs
+# without any session at all. Every hit has to sit there and there may be no
+# others; on top of that the set of command codes has to be the fifteen of an
+# honest run. Both are searches, and a search that finds nothing has NOT shown
+# that the secret stayed in. Measured ways past it, green at 14 x ok: the
+# plaintext split over two requests, or sent base64-encoded. They are listed at
+# that case. So what the wire case gives this script is not the property but a
+# much narrower sentence - whatever it does with its sessions, the recording of
+# a run must carry no further hit of those eight bytes and no sixteenth command
+# - and that is still more than anything here can say about itself.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
 # tpm2-tools 5.7: --tpmkey-context on a session without --policy-session is

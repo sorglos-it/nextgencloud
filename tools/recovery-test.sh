@@ -7,21 +7,30 @@
 # What a finished run leaves standing, so nobody has to guess: the simulator of
 # instance main keeps running, 0x81000001 stays persistent inside it, and
 # dist/recovery/work still holds the files of the last case - the sealed object,
-# the PCR value files and the contexts. The unsealed secret is NOT among them,
-# and that is not a hope: this file searches for it three times over - after the
-# sealing, after the first opening and as its LAST case.
-# WHERE it searches, and the level is measured, not guessed: the whole of dist/,
-# plus every file anywhere under the project that THIS RUN created or changed
-# (dist/.lauf-stempel dates the start of the run). Twice the level has been too
-# low. With "tpm2_unseal ... | tee $work/dek.bin" a search over work/ alone left
-# the run green, fourteen ok and EXIT=0, while dist/recovery/dek.bin held the
-# secret, mode 0664, FOR GOOD - nothing ever empties that level. With the search
-# over dist/recovery alone a dist/dek.bin one level further up did the same. So
-# the question is no longer which directory but which FILES this run touched,
-# and the answer to that does not have a level.
-# WHAT it searches for: every shape the same eight bytes can stand in, not the
-# two that happened to turn up. The list and the reason stand at schreibweisen
-# below; what it does NOT reach stands there too.
+# the PCR value files and the contexts. What this file says about the unsealed
+# secret is what a SEARCH says and nothing more: three times over - after the
+# sealing, after the first opening and as its LAST case - it looks for the eight
+# bytes, in the shapes below and in the files below, and finds them nowhere.
+# A search that finds nothing has not shown that nothing is there. So the reach
+# is written down here instead of being implied, in both directions.
+# WHERE it looks, measured and not guessed: the whole of dist/, plus every file
+# under the PROJECT ROOT whose mtime is newer than dist/.lauf-stempel, the file
+# this run writes before its first case. Twice that reach has been too small:
+# with "tpm2_unseal ... | tee $work/dek.bin" a search over work/ alone left the
+# run green, fourteen ok and EXIT=0, while dist/recovery/dek.bin held the
+# secret, mode 0664, FOR GOOD - nothing ever empties that level; and with the
+# search over dist/recovery alone a dist/dek.bin one level further up did the
+# same. Its two edges TODAY, both measured green and neither of them closed
+# here: a file the run writes OUTSIDE the project root - /tmp/leck.bin - lies
+# above the walk and is never looked at, so the level has not stopped mattering,
+# it has moved up to the project root; and a file whose timestamp is put back
+# afterwards (touch -t, and that is what cp -p, tar -xp and unzip do of their
+# own accord) is no longer newer than the stamp and drops out of the list. The
+# NAME of a file is never looked at at all - only its contents.
+# WHAT it looks for: the shapes listed at schreibweisen below, which is a finite
+# list and not "every shape". Two of them are measured to go straight through
+# it: the eight bytes written as decimal or as octal numbers. What else is out
+# stands at that list.
 # Measured why each of the three points is there: with shred -u turned
 # into a no-op the run stayed green nine times over while work/secret.bin lay
 # there with the secret in it; with the search only in the middle of the run, as
@@ -184,11 +193,12 @@ rohwert() {              # $1 = Feldname, $2 = Ausgabe von tpm2_readpublic
 }
 
 geheim="TEST-DEK"
-# schreibweisen: every shape the same eight bytes can stand in. Twice a shape
-# walked past a search that only knew the shapes which had already turned up -
-# first the hex dump of a recording, which grep -F cannot see at all, then the
-# same dump WITHOUT the spaces, which the wire search insisted on. So this is no
-# longer a list of incidents but of encodings, and two of them are covered by
+# schreibweisen: the shapes of the same eight bytes this search knows. Not every
+# shape - the list is finite and the fence below says where it ends. Twice a
+# shape walked past a search that only knew the shapes which had already turned
+# up - first the hex dump of a recording, which grep -F cannot see at all, then
+# the same dump WITHOUT the spaces, which the wire search insisted on. So this is
+# no longer a list of incidents but of encodings, and two of them are covered by
 # normalising the FILE instead of by adding a needle, which takes every
 # separator and every spelling of upper and lower case with them at once:
 #
@@ -203,18 +213,32 @@ geheim="TEST-DEK"
 #             "544553...", "54:45:...", "\x54\x45..." and "0x54, 0x45, ..." at
 #             once - and it is what makes a swtpm recording searchable.
 #   fillers   UTF-16 in either byte order, NUL padding, "T E S T - D E K", a
-#             base64 block broken into lines: the file is read once with NUL
-#             bytes and white space dropped, and the needles above - the raw
-#             bytes and the three base64 strings - are looked for through that.
-#             None of them carries white space itself, so dropping it can never
-#             break one. The hex pass needs no help here: it drops everything
-#             that is not a hex digit anyway, NUL and white space with it.
+#             base64 block broken into lines: the file is read once with NUL,
+#             space, tab, LF and CR dropped - those five and no others, so a
+#             vertical tab or a form feed between the bytes stays standing and
+#             the needle does not match through it - and the needles above, the
+#             raw bytes and the three base64 strings, are looked for through
+#             that. None of them carries white space itself, so dropping it can
+#             never break one. The hex pass needs no help here: it drops
+#             everything that is not a hex digit anyway, those five with it.
 #
-# NOT reached, fenced rather than claimed: the secret compressed, encrypted, or
-# encoded in yet another alphabet (base32, base85, quoted-printable); split
-# across two files; or held only in memory or in swap. A file this run never
-# touched and that does not lie under dist/ is not looked at either - see
-# klartext_suche for why that is the age of the file and not its place.
+# NOT reached, fenced rather than claimed. Every shape in the first three
+# bullets was put to schreibweise_drin itself, one file each, and it answered
+# no to all of them - while raw, hex, base64 and "T E S T - D E K" came back
+# yes in the same pass:
+#   - the eight bytes as DECIMAL numbers (84,69,83,84,45,68,69,75) or as OCTAL
+#     (124105123124055104105113). Both are number systems like hex, and hex is
+#     covered - these are not;
+#   - a VERTICAL TAB or a FORM FEED between the bytes. Those two are white space
+#     and the tr above does not drop them, which is why they are named there;
+#   - the secret in the NAME of a file (work/schluessel-TEST-DEK.txt): nothing
+#     here ever looks at a name, only at contents;
+#   - the secret compressed, encrypted, or written in yet another alphabet
+#     (base32, base85, quoted-printable);
+#   - split across two files; or held only in memory or in swap.
+# And a file this run never touched that does not lie under dist/ is not looked
+# at at all - see klartext_suche for what that list really is, and for its two
+# measured edges.
 geheim_hex="$(printf '%s' "$geheim" | xxd -p -u | tr -d '\n')"
 nadeln=(-e "$geheim")
 for vor in 0 1 2; do
@@ -272,8 +296,17 @@ nachrichtzeile() {       # $1 = Kopfzeile, $2 = Bytes der Nachricht, hex
 	esac
 	# Tag (2 bytes) and size (4) come first, then the four bytes that name the
 	# message: the command code in a request, the response code in an answer.
-	# Read off a real recording. A message too short to carry one says so
-	# instead of guessing.
+	# Read off a real recording. A message with nothing at all at that offset
+	# says "-" instead of guessing - but ONLY a message of six bytes or fewer
+	# reaches that. At seven to nine bytes the cut takes whatever is there and
+	# a SHORTENED code would stand here, silently (nine bytes leave "000001").
+	# Measured over a whole honest recording, 372 messages: that window is not
+	# reached. 198 messages are too short to carry a code at all - 124 abbruch
+	# with no bytes and 74 steuerung with four or five - and every one of them
+	# lands on the empty side. The shortest request is 14 bytes, the shortest
+	# answer 10, and not one cc field comes out shortened. If one ever did, it
+	# would be a code the ledger below does not know, and the run would go red -
+	# the safe direction.
 	cc="${2:12:8}"
 	[ -n "$cc" ] || cc="-"
 	case "$2" in
@@ -297,8 +330,13 @@ leitungszeilen() {       # $1 = Mitschnitt
 			puffer="$puffer${zeile// /}"
 			continue
 		fi
-		# Empty only before the first header of the file, where there is no
-		# message yet to put out.
+		# Empty before the first header of the file, where there is no message
+		# yet to put out - and again after every EMPTY line, because an empty
+		# line is not a hex line and becomes the new kopf. Measured on the
+		# recording of an honest run, the one that gives those 372 messages:
+		# not a single empty line in it, so today the second case never
+		# happens. If swtpm ever writes one, the message ahead of it is put
+		# out and the one behind it is silently not.
 		if [ -n "$kopf" ]; then nachrichtzeile "$kopf" "$puffer"; fi
 		puffer=""
 		# This line is the header of the message whose bytes follow.
@@ -311,20 +349,31 @@ leitungszeilen() {       # $1 = Mitschnitt
 	if [ -n "$kopf" ]; then nachrichtzeile "$kopf" "$puffer"; fi
 }
 
-# Searches every file this run can have written to, in every shape of
-# schreibweisen above. TWO lists, because one alone has been wrong twice:
+# Searches two lists of files, in the shapes of schreibweisen above. TWO,
+# because one alone has been wrong twice - and neither of them is "every file
+# this run can have written to", which is the sentence this used to carry:
 #  - the whole of dist/, whatever its age. A leftover of an EARLIER run carries
 #    no fresh timestamp, and that is not a thought but a thing that happened:
 #    with "tpm2_unseal ... | tee $work/dek.bin" the file dist/recovery/dek.bin
 #    was still lying there a whole run later and made the NEXT run red. No reset
 #    ever takes that level away - reset takes work/ and the state directory of
 #    its own instance, and neither of them is it.
-#  - every file under the project that is newer than the stamp this run wrote
-#    before its first case. THAT is what makes the level stop mattering: a step
-#    that parks the secret one directory further up, beside the scripts or in
-#    the project root, is caught without this function knowing where to look.
-#    The checked-in scripts carry the secret themselves and are older than the
-#    stamp - which is exactly why the age of a file and not its place decides.
+#  - every file UNDER THE PROJECT ROOT whose mtime is newer than the stamp this
+#    run wrote before its first case. That widens the reach from one directory
+#    to the project: a step that parks the secret one directory further up,
+#    beside the scripts or in the project root, is caught without this function
+#    knowing where to look. The checked-in scripts carry the secret themselves
+#    and are older than the stamp - which is why the age of a file decides
+#    within that tree and not its place.
+# The level has therefore not stopped mattering, it has moved up to the project
+# root, and the age is not "what this run wrote" but "what is newer than the
+# stamp". Both edges are measured green, and this round closes neither:
+#    /tmp/leck.bin, written BY the run, lies above the tree and is never seen;
+#    and work/spur.txt followed by "touch -t 202001010000" is inside the tree,
+#    carries the secret raw, and is no longer newer than the stamp - which is
+#    what cp -p, tar -xp and unzip do to a file without being asked.
+# The NAME of a file is never looked at, only its contents: a file called
+# work/schluessel-TEST-DEK.txt passes.
 # Nothing of the file ever reaches this run's output: schreibweise_drin answers
 # yes or no, and only the NAME goes into the message.
 # find and not a glob: a glob walks neither subdirectories nor names that begin
@@ -337,9 +386,13 @@ leitungszeilen() {       # $1 = Mitschnitt
 # unreadable file is exactly where an escaped secret would be comfortable.
 # What it costs, measured and not guessed: 67 to 68 files lie under dist/ when a
 # run is through - the count wobbles with the contexts the last case leaves -
-# the 528 KiB OVMF variable file among them, and the search runs three times;
-# the whole test grew from 16.7 s to 19.3 s. The walk over the project is the
-# cheap half: over a tree of 8550 files, the size of a whole NGC checkout, find
+# the 528 KiB OVMF variable file among them, and the search runs three times.
+# What that costs in the whole run is NOT measurable: three runs each of the
+# state before this search grew and of the state after it came out at 17,7 /
+# 17,8 / 17,9 s against 17,7 / 17,7 / 17,9 s, one machine, back to back. An
+# earlier version of this line claimed 16,7 s against 19,3 s; that was not
+# measured that way and is withdrawn. The walk over the project is the cheap
+# half: over a tree of 8550 files, the size of a whole NGC checkout, find
 # takes 71 ms.
 klartext_suche() {       # $1 = Zeitpunkt, für die Meldung
 	local liste neu datei
@@ -495,7 +548,7 @@ tools/recovery-policy.sh seal pcr
 # in its head is about what a FINISHED run leaves behind, and ten more sealings
 # follow this line.
 klartext_suche "nach dem Siegeln"
-ok "das Siegeln lässt das Geheimnis nirgends im Klartext liegen"
+ok "nach dem Siegeln findet die Suche die acht Byte in keiner ihrer Schreibweisen in den beiden Dateilisten"
 
 # Removed first so a leftover from an earlier run cannot answer for this one.
 rm -f dist/recovery/work/sess.ctx
@@ -512,7 +565,7 @@ ok "Zweig 1: Normalstart über PCR 11 = Produktiv-UKI"
 # there with the secret in it in between. In work package 6 that is the real
 # DEK.
 klartext_suche "nach dem Öffnen"
-ok "auch das Öffnen legt das Geheimnis nirgends ab"
+ok "auch nach dem Öffnen findet die Suche die acht Byte in keiner ihrer Schreibweisen in den beiden Dateilisten"
 
 # Three promises of recovery-policy.sh sit in the attributes of the sealed
 # object, and not one of them can be read off the script that sets them:
@@ -662,31 +715,64 @@ ok "jede der acht Boot-PCR 0 bis 7 sperrt den Normalzweig für sich allein"
 # So the wire itself is looked at. swtpm writes it down with --log level=20; the
 # recording carries the plaintext and is therefore handled like secret.bin.
 #
-# THE MEASURE IS A LEDGER OVER NAMED HITS, and it took four ways of getting the
-# plaintext out to arrive at it. Three earlier measures each caught the ways
-# that had already been seen and let the next one through:
+# WHAT THIS CASE CHECKS, AND IT IS LESS THAN THE SENTENCE ABOVE. It runs two
+# searches over the recording, and both of them are NEEDLE SEARCHES:
+#   1. a ledger over the hits of the eight bytes, in the one spelling swtpm
+#      writes them in;
+#   2. a ledger over the SET of command codes the requests carry.
+# A NEEDLE SEARCH CAN NEVER SHOW THAT THE SECRET HAS NOT GOT OUT. It can only
+# say that these needles turned up in these places. Two ways past ledger 1 are
+# measured, both green at 14 x ok against the state before ledger 2 existed, and
+# both are fenced here, not claimed away - widening the needle does not close
+# them, it only moves them:
+#   - the plaintext SPLIT over two requests. Measured: hashing 1020 filler
+#     bytes plus the secret makes tpm2_hash break its input at 1024 bytes of
+#     its own accord, one TPM2_CC_SequenceUpdate ends with 54455354 and the
+#     next begins with 2D44454B. No message carries all eight bytes, so ledger
+#     1 finds nothing to add up. Splitting is not a trick - the TPM stack does
+#     it by itself;
+#   - the plaintext ENCODED. Measured: base64 of the same eight bytes in one
+#     unencrypted request goes through untouched, because the bytes on the wire
+#     are those of "VEVTVC1ERUs=".
+# Ledger 2 catches both of them - each adds 0000013E, 0000015C and 00000186 to
+# the code set, and each dies at eleven ok - and that is ALL it does. It is a
+# cheap, measured improvement and no proof of anything. The file search has two
+# measured ways past it of its own; they stand at klartext_suche.
+# That ledger 2 closes nothing is measured too, and this is the case to read if
+# anybody is tempted to believe it does: the same eight bytes carried out in TWO
+# TPM2_CC_PCR_Extend, four in each digest, walk past BOTH ledgers - EXIT=0 and
+# fourteen ok. 00000182 is one of the fifteen, and neither request holds all
+# eight bytes. A leak that keeps to the known commands and splits is invisible
+# to everything this case does.
+#
+# How ledger 1 got its shape, because three earlier measures each caught the
+# ways that had already been seen and let the next one through:
 #   a difference ("the opening must not RAISE the count") - broken by a seal()
 #     that checks its own work with a bare unseal, because its plaintext answer
 #     is already inside the base value; 14 ok, EXIT=0;
 #   a direction ("nothing in an answer may carry it") - broken by taking the
 #     recovered plaintext and sending it to the TPM as an unencrypted REQUEST
 #     (tpm2_hash); measured with the counting of this very file: 3 requests, 0
-#     answers, 14 ok, EXIT=0;
+#     answers, 14 ok, EXIT=0. The command code that way carries depends on how
+#     tpm2_hash is fed: 0000017D (TPM2_CC_Hash) from a file, 0000015C
+#     (TPM2_CC_SequenceUpdate) from a pipe - both measured, the earlier report
+#     names only the first;
 #   and both of them took their base value in the MIDDLE of the ceremony, where
 #     everything the sealing had already put on the wire was invisible.
-# What stands here instead asks nothing about directions or differences. It
-# takes the WHOLE recording, both directions at once, from before the ceremony
-# to after it, and demands: every single hit sits at one named, known place, and
-# there are exactly as many of them as that place explains.
+# Ledger 1 asks nothing about directions or differences. It takes the WHOLE
+# recording, both directions at once, from before the ceremony to after it, and
+# demands: every hit of the needle sits at one named, known place, and there are
+# exactly as many of them as that place explains.
 #
 # The named place, and it is the open point of this package, not a fault of this
 # case: tpm2_create -i hands the secret to the TPM in the clear, because sealing
 # runs without any session at all. Twice, because the TPM answers the first
 # attempt with 0x922 TPM_RC_RETRY and ESAPI sends it again. So: two hits, both
-# requests, both TPM2_CC_Create - and nothing else anywhere. In work package 0
-# that is TEST-DEK; before work package 6 it has to be decided. Whoever secures
-# the sealing has to change befund_erwartet with it.
-# One ledger catches all three: one hit more in a request (a fourth way), one
+# requests, both TPM2_CC_Create - and no further hit of the needle anywhere in
+# the recording. In work package 0 that is TEST-DEK; before work package 6 it
+# has to be decided. Whoever secures the sealing has to change befund_erwartet
+# with it.
+# Ledger 1 catches three things: one hit more in a request (a fourth way), one
 # hit more in an answer (a bare unseal), and a swtpm whose header lines are
 # spelled differently - the hits then no longer land on a known direction and
 # the ledger does not add up.
@@ -705,9 +791,35 @@ mit="dist/recovery/work/wire-main.log"
 # request. Read off a real recording, not off the manual.
 cc_create=00000153      # TPM2_CC_Create - the sealing, and the one known leak
 cc_unseal=0000015E      # TPM2_CC_Unseal - the opening, proof the recording has it
-# The whole ledger: exactly these hits, and no others anywhere in the recording.
+# Ledger 1: exactly these hits of the needle, and no others anywhere in the
+# recording.
 befund_erwartet="anfrage $cc_create
 anfrage $cc_create"
+# Ledger 2, and what it is worth stands at the head of this case: the SET of
+# command codes the requests of an honest run carry - fifteen, sorted, measured
+# on three runs in a row with the same fifteen and the same counts each time.
+# It is not a search for the secret at all; it is a fence around the commands.
+# Both ways that walk past ledger 1 need tpm2_hash, and tpm2_hash needs
+# 00000186 / 0000015C / 0000013E - none of which is in this set. That is the
+# whole of what it buys.
+# A maintenance point like the two of the retry: another tpm2-tools, another
+# ESAPI, another swtpm can move this set, and then the case goes red and names
+# what it found. That is the safe direction, and the message says what to do.
+cc_erwartet="00000120
+00000131
+00000153
+00000157
+0000015E
+00000161
+00000162
+00000165
+00000173
+00000176
+0000017A
+0000017E
+0000017F
+00000182
+00000189"
 # The counter-case first: without the test asking for one, no recording
 # comes into being at all.
 tools/recovery-swtpm.sh reset main
@@ -741,11 +853,25 @@ if grep -q '^unbekannt ' <<< "$zeilen"; then
 fi
 grep -q "^anfrage $cc_unseal " <<< "$zeilen" \
 	|| fail "Im Mitschnitt steht keine Anfrage TPM2_CC_Unseal ($cc_unseal). Das Öffnen ist dann gar nicht aufgezeichnet, und die Buchführung darunter sagt nichts über das Öffnen."
-# The ledger. Every hit, both directions, the whole run - and each one has to
-# sit at the one named place.
+# Ledger 1. Every hit of the needle, both directions, the whole run - and each
+# one has to sit at the one named place.
 befund="$(sed -n 's/ ja$//p' <<< "$zeilen" | sort)"
 [ "$befund" = "$befund_erwartet" ] \
-	|| fail "Der Klartext steht im Mitschnitt woanders als an der einen bekannten Stelle. Erwartet waren nur die zwei Anfragen des Siegelns (TPM2_CC_Create, $cc_create), gefunden wurde: $(printf '%s' "$befund" | tr '\n' ';')"
+	|| fail "Die acht Byte stehen im Mitschnitt noch woanders als an der einen bekannten Stelle. Erwartet waren nur die zwei Anfragen des Siegelns (TPM2_CC_Create, $cc_create), gefunden wurde: $(printf '%s' "$befund" | tr '\n' ';')"
+# Ledger 2: the set of command codes, sorted and without repeats. sort -u and
+# not uniq alone, because the codes do not turn up in blocks. Only requests are
+# asked: in an ANSWER those four bytes are the response code, and a response
+# code in a set of command codes would be a different thing with the same shape.
+# grep -vxF and no second tool: -F takes the whole variable as a list of fixed
+# patterns, -x makes each one a whole line. The || : is for the case that says
+# everything is fine - grep finds nothing and returns 1, and pipefail would
+# take the run with it.
+cc_befund="$(sed -n 's/^anfrage \([0-9A-F-]*\) .*/\1/p' <<< "$zeilen" | sort -u)"
+if [ "$cc_befund" != "$cc_erwartet" ]; then
+	cc_zuviel="$(grep -vxF "$cc_erwartet" <<< "$cc_befund" | tr '\n' ' ' || :)"
+	cc_fehlt="$(grep -vxF "$cc_befund" <<< "$cc_erwartet" | tr '\n' ' ' || :)"
+	fail "Der Lauf schickt andere Befehle über die Leitung als die fünfzehn bekannten. Zu viel: ${cc_zuviel:--}, zu wenig: ${cc_fehlt:--}. Ein zusätzlicher Befehl kann ein Weg sein, den Klartext an der Buchführung darüber vorbeizutragen; ein fehlender heißt, dass andere Werkzeuge im Spiel sind und die Liste nachzuziehen ist."
+fi
 # Away with it, and looked at afterwards to see that it is away. The same
 # handling as secret.bin gets: the recording carries the plaintext, and in work
 # package 6 that would be the real DEK. The simulator goes first: shred takes
@@ -758,7 +884,7 @@ tools/recovery-swtpm.sh stop main || fail "Der mitschneidende Simulator lässt s
 mitschnitt_laeuft=""
 shred -u "$mit" || fail "Der Mitschnitt lässt sich nicht sicher löschen: $mit"
 [ ! -e "$mit" ] || fail "Der Mitschnitt liegt nach shred -u immer noch da: $mit"
-ok "der Klartext fährt über die Leitung nur an der einen bekannten Stelle"
+ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und es fahren nur die 15 bekannten Befehle über die Leitung"
 
 tools/recovery-swtpm.sh reset main
 use_main
@@ -768,11 +894,11 @@ if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet 
 ok "im Recovery-Zustand bleibt der Normalzweig zu"
 
 # And the same search once more, right at the end. The head of this file says
-# what a FINISHED run leaves standing and concludes from it that the secret is
-# not among it - and until now nothing asked that question at the end. The
+# what a FINISHED run leaves standing, and this is the only place that looks at
+# THAT state - until now nothing asked the question at the end at all. The
 # search sat in the middle of the run, and what saw to it that nothing was left
 # afterwards was a later "reset main", not a check. This is the state the head
 # speaks about: the files of the last case, and the recording of the wire must
 # not be among them.
 klartext_suche "nach dem vollen Lauf"
-ok "auch nach dem vollen Lauf liegt das Geheimnis in keiner Schreibweise irgendwo, was dieser Lauf angefasst hat"
+ok "auch nach dem vollen Lauf findet die Suche die acht Byte in keiner ihrer Schreibweisen in den beiden Dateilisten"
