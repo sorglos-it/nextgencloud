@@ -111,12 +111,15 @@ func (m *ownModule) Import(path string) (*types.Package, error) {
 		return nil, fmt.Errorf("sqlcheck: %s is outside this module", path)
 	}
 	dir := filepath.Join(m.root, filepath.FromSlash(strings.TrimPrefix(path, modulePath)))
-	files, name, err := parseOwn(m.fset, dir)
+	files, _, err := parseOwn(m.fset, dir)
 	if err != nil {
 		return nil, err
 	}
 	conf := types.Config{Importer: m, Error: func(error) {}, DisableUnusedImportCheck: true}
-	pkg, _ := conf.Check(name, m.fset, files, nil)
+	// Checked under its import path and not under the name in its files, so a
+	// guard can tell two packages of the same name apart; the name parseOwn
+	// reads says no more here than that the directory holds a package at all.
+	pkg, _ := conf.Check(path, m.fset, files, nil)
 	m.done[path] = pkg
 	return pkg, nil
 }
@@ -1368,26 +1371,40 @@ func hasOnceUse(p *pkgSource) bool {
 	return false
 }
 
-// TestTheNameCheckSitsInTheTransaction: UserPut asks whose the name is inside
-// the transaction it writes in, and in front of the write. It is read from the
+// TestTheNameCheckSitsInTheTransaction: UserPut asks whose the name is on the
+// transaction it writes in, and in front of the write. It is read from the
 // source, because no answer of UserPut says it any more.
 //
 // That is the whole reason this test exists. The check was measured once: on
 // f048e83, taking its refusal out turned TestUserNameIsUnique and dbtest's
 // users group red. Since the index error is translated, both ways give
 // ErrInvalid, and the check can be deleted whole - statement, constant and all
-// - with every test that asks this store a question staying green, and every
-// group of the contract with it. A second line of defence had made the first
-// one indistinguishable, and a line no test holds is a line the next tidy-up
-// removes, with the comment that turns on it left standing over nothing. This
-// test is the only thing that sees it go.
+// - with every test that asks this store a question staying green, and no
+// group of the contract going red with it. A second line of defence had made
+// the first one indistinguishable, and a line no test holds is a line the next
+// tidy-up removes, with the comment that turns on it left standing over
+// nothing. This test is the only thing that sees it go.
 //
-// What the check is worth is not its answer but its place, so its place is
-// what is read: userIDOf is named once in the package, that one place stands
-// inside the function literal UserPut hands to write - the transaction - and
-// in front of the first write of that literal, with the refusal between the
-// two. Moving the question in front of the transaction, where a second writer
-// fits between it and the write, fails here as surely as deleting it.
+// What the check is worth is not its answer but its place. Where it is written
+// is not that place, and two ways past a guard that read no more than that
+// were measured on the tree below - both compile, both run, and both leave
+// this package and every group of the contract this store answers green:
+//
+//   - the question asked of s.db instead of the transaction. That takes a
+//     second connection of the pool - maxOpenConns is 4, so it does not even
+//     wait - and reads the last committed state, not the transaction it is
+//     meant to guard. Every other writer fits between it and the write.
+//   - the question left standing where it is, inside a function literal of its
+//     own that defer calls. It then runs after the write, however far in front
+//     of it it is written.
+//
+// So the place is read off the thing and not off the file. userIDOf is named
+// once in the package; that one place is an argument of a method call on the
+// very *sql.Tx this literal was handed, which go/types says by the object
+// behind the name and not by the name tx; the call stands in a statement of
+// the literal's own body, neither inside a function literal of its own nor
+// behind defer or go; and it stands in front of the first write of that
+// literal, with a refusal of the literal itself between the two.
 //
 // It does not read the condition the refusal is written with, only that one
 // stands between the question and the write. Two writers can pass the check
@@ -1425,6 +1442,31 @@ func TestTheNameCheckSitsInTheTransaction(t *testing.T) {
 			"so a second writer fits between the question and the write", at(read[0]))
 	case read[0] > update[0]:
 		t.Fatalf("%s: the name is asked about after the write, not in front of it", at(read[0]))
+	}
+	tx := txParamOf(p, lit)
+	if tx == nil {
+		t.Fatalf("%s: the literal UserPut gives write takes no transaction of its own under a name, "+
+			"so nothing here can say what the question is asked of", at(lit.Pos()))
+	}
+	call := callCarrying(lit, read[0])
+	switch {
+	case call == nil:
+		t.Fatalf("%s: userIDOf is no argument of a call, so nothing asks it", at(read[0]))
+	case receiverOf(p, call) != tx:
+		t.Fatalf("%s: the name is asked of %s and not of the *sql.Tx this literal was handed. "+
+			"Anything else runs on a connection of its own and cannot even see this transaction, "+
+			"so every other writer fits between the question and the write; a second name "+
+			"holding this very transaction is refused here too, because this reads the "+
+			"parameter and follows nothing",
+			at(call.Pos()), types.ExprString(call.Fun))
+	}
+	switch st := statementOf(lit, read[0]); {
+	case st == nil:
+		t.Fatalf("%s: the question stands inside a function literal of its own, so where it is "+
+			"written says nothing about when it runs", at(read[0]))
+	case isLaterThanItLooks(st):
+		t.Fatalf("%s: the question is deferred, so it runs after the write however far in front "+
+			"of it it is written", at(st.Pos()))
 	}
 	for _, pos := range invalidReturns(p, lit) {
 		if pos > read[0] && pos < update[0] {
@@ -1497,12 +1539,107 @@ func constUses(p *pkgSource, name string) []token.Pos {
 	return at
 }
 
+// txParamOf is the transaction a function literal was handed, as the object
+// go/types made of its parameter. That object is what a call is compared
+// against and never the name, so a variable that merely carries the name tx
+// is not this transaction. A name that really holds it is refused as well -
+// tx2 := tx and the call on tx2 - and on purpose: following where a value
+// travelled would mean following every way it can travel, while the statement
+// this guard is for is written on the parameter itself. store.write hands its
+// literal one thing and nothing else, so one parameter under one name is the
+// shape; anything else is no transaction this test can follow.
+func txParamOf(p *pkgSource, lit *ast.FuncLit) *types.Var {
+	if lit.Type.Params == nil || len(lit.Type.Params.List) != 1 ||
+		len(lit.Type.Params.List[0].Names) != 1 {
+		return nil
+	}
+	v, _ := p.info.Defs[lit.Type.Params.List[0].Names[0]].(*types.Var)
+	return v
+}
+
+// callCarrying is the innermost call that takes what stands at pos as one of
+// its own arguments.
+func callCarrying(n ast.Node, pos token.Pos) *ast.CallExpr {
+	var found *ast.CallExpr
+	ast.Inspect(n, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		for _, arg := range call.Args {
+			if arg.Pos() <= pos && pos < arg.End() {
+				found = call // outermost first, so the last one written down is the innermost
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// receiverOf is the variable a method is called on, where the call is a method
+// call on a plain name. A field, the result of another call or a function of
+// the package gives nothing, and the caller says so instead of guessing.
+func receiverOf(p *pkgSource, call *ast.CallExpr) *types.Var {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	v, _ := p.info.Uses[id].(*types.Var)
+	return v
+}
+
+// statementOf is the statement of the literal's own body that holds pos, and
+// nothing where pos stands inside a function literal nested in it: there the
+// place in the source says nothing about when it runs, because what runs is
+// the call of that literal and not its text.
+func statementOf(lit *ast.FuncLit, pos token.Pos) ast.Stmt {
+	for _, st := range lit.Body.List {
+		if pos < st.Pos() || pos >= st.End() {
+			continue
+		}
+		nested := false
+		ast.Inspect(st, func(n ast.Node) bool {
+			if inner, ok := n.(*ast.FuncLit); ok && pos > inner.Pos() && pos < inner.End() {
+				nested = true
+			}
+			return !nested
+		})
+		if nested {
+			return nil
+		}
+		return st
+	}
+	return nil
+}
+
+// isLaterThanItLooks reports whether a statement runs at another time than the
+// one its place gives it: defer runs it when the literal is done, go runs it
+// beside everything.
+func isLaterThanItLooks(st ast.Stmt) bool {
+	switch st.(type) {
+	case *ast.DeferStmt, *ast.GoStmt:
+		return true
+	}
+	return false
+}
+
 // invalidReturns gives every place inside n where dbapi.ErrInvalid is
-// returned.
+// returned. It stops at a function literal nested in n: a return there ends
+// that literal and not the one asked about, so it answers the caller nothing.
+//
+// dbapi is told by the path its package was imported under and not by its
+// name, because a package of that name can stand anywhere.
 func invalidReturns(p *pkgSource, n ast.Node) []token.Pos {
 	var at []token.Pos
-	ast.Inspect(n, func(n ast.Node) bool {
-		ret, ok := n.(*ast.ReturnStmt)
+	ast.Inspect(n, func(node ast.Node) bool {
+		if _, ok := node.(*ast.FuncLit); ok && node != n {
+			return false
+		}
+		ret, ok := node.(*ast.ReturnStmt)
 		if !ok {
 			return true
 		}
@@ -1512,7 +1649,7 @@ func invalidReturns(p *pkgSource, n ast.Node) []token.Pos {
 				continue
 			}
 			if obj := p.info.Uses[sel.Sel]; obj != nil && obj.Name() == "ErrInvalid" &&
-				obj.Pkg() != nil && obj.Pkg().Name() == "dbapi" {
+				obj.Pkg() != nil && obj.Pkg().Path() == modulePath+"shared/dbapi" {
 				at = append(at, ret.Pos())
 			}
 		}

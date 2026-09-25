@@ -12,6 +12,7 @@ const (
 	userByID   = "SELECT id, name, roles, totp, locked, failures, last_login FROM ngc_user WHERE id = ?"
 	userByName = "SELECT id, name, roles, totp, locked, failures, last_login FROM ngc_user WHERE name = ?"
 	userIDOf   = "SELECT id FROM ngc_user WHERE name = ?"
+	userWithID = "SELECT id FROM ngc_user WHERE id = ?"
 	userUpdate = "UPDATE ngc_user SET name = ?, roles = ?, totp = ?, locked = ?, failures = ?, last_login = ? WHERE id = ?"
 	userInsert = "INSERT INTO ngc_user (id, name, roles, totp, locked, failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	userList   = "SELECT id, name, roles, totp, locked, failures, last_login FROM ngc_user ORDER BY name"
@@ -59,26 +60,44 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // That the check sits there is what TestTheNameCheckSitsInTheTransaction
 // holds, and it holds it by reading the source, because no answer of this
 // method says it any more. The unique index ngc_user_name gives the same word
-// on both ways, so taking the check out - or moving it in front of the
-// transaction, where a second writer slips between it and the write - leaves
-// every test that asks this store a question green, and every group of the
-// contract with it. Measured, all three shapes; that guard is the only thing
-// that sees them. It is not its answer that makes the check worth its
-// statement, it is its place, so its place is what is measured.
+// on both ways, so taking the check out, asking it of the pool instead of this
+// transaction, or leaving it written where it stands and running it from a
+// defer all leave every test that asks this store a question green, and no
+// group of the contract goes red with any of them. Measured, all of those
+// shapes; that guard is the only thing that sees them. It is not its answer
+// that makes the check worth its statement, it is its place, so its place is
+// what is measured.
 //
 // dbapi promises "the same name for another ID gives ErrInvalid", so a caller
 // that asks errors.Is for it may not be handed a driver error instead. Both
-// statements of the write can meet that index, and each of them answers where
+// statements of the write can meet an index, and each of them answers where
 // it stands, not from one translation around them both:
 //
 //   - The UPDATE renames onto a name the SELECT did not see - a writer one
-//     statement behind, or a row nobody of ours wrote. Only the name index
-//     can stop it, so its duplicate is ErrInvalid on the spot.
+//     statement behind, or a row nobody of ours wrote. It leaves the ID alone,
+//     so the primary key is not in its way, and ngc_user carries no unique
+//     index besides that one and ngc_user_name: only the name can stop this
+//     statement, so its duplicate is ErrInvalid on the spot. A second unique
+//     index on this table would come out here as "the name belongs to another
+//     ID" and say nothing about itself.
 //   - The INSERT can meet either index, and which one it was decides the
-//     answer. So it is asked, the way put asks it: back to the UPDATE. If it
-//     matches a row now, somebody was faster with this ID and writing on top
-//     of that row is the answer, not an error. If it matches nothing, no row
-//     carries this ID and the INSERT can only have met the name - ErrInvalid.
+//     answer. So the database is asked whether a row carries this ID. If one
+//     does, somebody was faster with it, and writing on top of that row is the
+//     answer and not an error. If none does, the INSERT can only have met the
+//     name - ErrInvalid.
+//
+// Asked, and not counted. How many rows an UPDATE affected is not one number
+// everywhere: it is the rows it matched, or only the rows it really changed,
+// depending on the driver - on MariaDB that is the ClientFoundRows flag of the
+// DSN, and nothing in this repository opens a MariaDB connection yet, so
+// nobody sets it today. put rests on that flag and says so, LockTake beside it
+// names who will have to set it, and put has no key of its own to ask the
+// database with; here the key is at hand. Read off the count, the answer of
+// this method would hang on that flag: the same user written again unchanged
+// leaves a driver that counts changed rows nothing to count, the INSERT behind
+// it then breaks on the primary key, and a valid repeated write would come
+// back as ErrInvalid. TestUserPutAnswersTheSameHoweverRowsAreCounted makes
+// SQLite count the other way and puts both sets of answers side by side.
 //
 // That second round is the correction of a sentence that stood here and was
 // wrong: "the primary key cannot reach it". It does, and one translation for
@@ -92,10 +111,11 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // TestADuplicateNameIsErrInvalid plants a row whose name is taken and whose
 // ID is empty, so the SELECT lets both ways through - once into the INSERT,
 // once into the UPDATE - and each of the two places answers its half alone.
-// What no test reaches is the other end of the round, where the second UPDATE
-// finds the row the primary key stopped the INSERT on: that is the race
-// itself, and on SQLite there is none, because a writer holds the database
-// while it writes.
+// The other end of the round, where the row is there after all, is reached
+// from the counting side: with rows counted as changed the second UPDATE finds
+// the row it had nothing to change in. What no test reaches is the race, where
+// another writer puts that row there between the two statements, because on
+// SQLite a writer holds the database while it writes.
 func (s *store) UserPut(ctx context.Context, u dbapi.User) error {
 	roles, ok := joinList(u.Roles)
 	if u.ID == "" || u.Name == "" || !okKey(u.ID) || !okKey(u.Name) || !ok || !okDoc(u.TOTP) {
@@ -126,9 +146,21 @@ func (s *store) UserPut(ctx context.Context, u dbapi.User) error {
 				return nil
 			}
 			if round == 1 {
-				// The INSERT met an index and no row carries this ID, so it
-				// was the name. put answers an error of its own here, because
-				// a row it writes has nothing but its primary key to meet.
+				// The INSERT met an index, and this UPDATE has written
+				// whatever there was to write. Which index it was is asked of
+				// the database and not read off n, because n is 0 here both
+				// where no row carries this ID and where a driver that counts
+				// changed rows found nothing to change in the row that does.
+				var have string
+				switch err := tx.QueryRowContext(ctx, userWithID, []byte(u.ID)).Scan(&have); {
+				case err == nil:
+					return nil
+				case !errors.Is(err, sql.ErrNoRows):
+					return err
+				}
+				// No row carries this ID, so it was the name. put answers an
+				// error of its own here, because a row it writes has nothing
+				// but its primary key to meet.
 				return dbapi.ErrInvalid
 			}
 			if _, err := tx.ExecContext(ctx, userInsert, []byte(u.ID), []byte(u.Name), []byte(roles),
@@ -211,9 +243,10 @@ func (s *store) UserDelete(ctx context.Context, id string) error {
 // refuses the moment blob goes. The SQLite driver of this
 // project binds an empty blob instead, so there the same row is written and
 // no test of behaviour can see the difference: measured both ways round, with
-// the five calls taken out the whole package and the contract stay green and
-// TestEveryByteSliceComesFromBlob goes red on its own. That guard reads the
-// source, and it is the only thing holding these five calls.
+// the five calls taken out this whole package stays green and no group of the
+// contract goes red either, and TestEveryByteSliceComesFromBlob goes red on
+// its own. That guard reads the source, and it is the only thing holding these
+// five calls.
 //
 // Where no check stands in front of it at all - the token of SessionGet,
 // SessionTouch and SessionDelete, the key of PendingDelete - blob turns a nil

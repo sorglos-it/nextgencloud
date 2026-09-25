@@ -2,7 +2,9 @@ package sqlstore_test
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -106,18 +108,21 @@ func TestSessionAndPending(t *testing.T) {
 // Half the INSERT was unguarded, and a second write is what covered it.
 // TestUserNameIsUnique puts the same user twice, and the second put is an
 // UPDATE that sets every column: it repairs whatever the INSERT got wrong
-// before the test reads the row. Measured on this package and on every group
-// of the contract - last_login written as 0, cert and proof the wrong way
-// round and created written as 0 passed all of it, and roles written empty
-// passed everything but dbtest's aliasing group. Here every row is written
-// once and read back column for column.
+// before the test reads the row. Measured against the test files as they
+// stood before this test was written, on this package and on every group of
+// the contract this store answers - all of them but log, which is
+// ErrUnsupported until task 7 and red in every run: last_login written as 0,
+// cert and proof the wrong way round and created written as 0 turned none of
+// them red, and roles written empty turned none of them red but dbtest's
+// aliasing group. Here every row is written once and read back column for
+// column.
 //
 // The delete is the same hole from the other side: nothing anywhere removed a
 // session that was there. dbtest.testSessions deletes after its purge already
 // took the row, TestAnEmptyTokenIsNobodysSession deletes with a token no row
 // carries, and both ask nothing but err == nil - so "DELETE ... AND 1 = 0"
-// passed the package and the contract as well. Here the session is there, and
-// it has to be gone afterwards.
+// turned nothing in this package red and no group of the contract either. Here
+// the session is there, and it has to be gone afterwards.
 func TestOneWriteAndOneDelete(t *testing.T) {
 	s := open(t)
 	u := dbapi.User{ID: "u-admin", Name: "admin", Roles: []string{"admin", "user"},
@@ -231,7 +236,12 @@ func TestADuplicateNameIsErrInvalid(t *testing.T) {
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-other", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("the UPDATE answered with %v, want ErrInvalid", err)
 	}
-	// The failed rename wrote nothing: the transaction it stood in rolled back.
+	// The failed rename wrote nothing. That is the one statement being refused
+	// whole, not the rollback behind it: no way through UserPut writes before
+	// the statement that fails, so there is never anything for a rollback to
+	// take back. Measured - store.write committing instead of rolling back in
+	// the error case leaves this line green, and everything else in this
+	// package with it.
 	if got, err := s.UserGet(ctx, "u-other"); err != nil || got.Name != "chef" {
 		t.Errorf("after the refused rename: %+v, %v", got, err)
 	}
@@ -297,4 +307,132 @@ func TestAnEmptyTokenIsNobodysSession(t *testing.T) {
 	if _, err := s.SessionGet(ctx, token); err != nil {
 		t.Errorf("the session was removed by a delete that named no token: %v", err)
 	}
+}
+
+// countChangedRows makes SQLite count the way MariaDB counts without the
+// ClientFoundRows flag of its DSN: an UPDATE that finds a row it has nothing
+// to change in affects no row. SQLite counts every row its UPDATE went
+// through, so without this the two counting rules cannot be told apart here at
+// all - and they have to be, because nothing in this repository opens a
+// MariaDB connection yet and so nobody sets that flag today.
+//
+// RAISE(IGNORE) in a BEFORE UPDATE trigger drops that one row from the
+// statement and leaves it with the values it already had, which is exactly
+// what the other counting rule does. Every column of ngc_user is NOT NULL, so
+// the WHEN compares values and never NULL, where an equality would be neither
+// true nor false and the row would be counted after all.
+const countChangedRows = `CREATE TRIGGER ngc_user_counts_changed_rows BEFORE UPDATE ON ngc_user
+FOR EACH ROW WHEN NEW.name = OLD.name AND NEW.roles = OLD.roles AND NEW.totp = OLD.totp
+ AND NEW.locked = OLD.locked AND NEW.failures = OLD.failures AND NEW.last_login = OLD.last_login
+BEGIN SELECT RAISE(IGNORE); END`
+
+// TestUserPutAnswersTheSameHoweverRowsAreCounted: what UserPut answers may not
+// hang on whether the driver counts the rows an UPDATE matched or only the
+// ones it really changed. Both are in use - it is the ClientFoundRows flag of
+// the MariaDB DSN, which no connection in this repository sets today - and a
+// method whose answer turns on it answers differently on two databases that
+// are both doing what they promise.
+//
+// It is the same script twice, once on each counting rule, and what it holds
+// is that the two runs say the same things in the same order. Whether those
+// things are the right ones is held elsewhere: TestUserNameIsUnique and
+// TestADuplicateNameIsErrInvalid ask that of the run with rows matched, which
+// is the one SQLite gives on its own.
+//
+// The line that needs the second run is the second put of the same user, byte
+// for byte. With rows counted as changed the UPDATE finds nothing to change,
+// the INSERT behind it breaks on the primary key, and a valid repeated write
+// used to come back as ErrInvalid: the contract's word for "the name belongs
+// to another ID", for a user putting himself back exactly as he was.
+//
+// The fixture is measured before the script runs. A trigger that did not fire
+// would leave both runs on one and the same database, and this test would be
+// green while holding nothing.
+func TestUserPutAnswersTheSameHoweverRowsAreCounted(t *testing.T) {
+	admin := dbapi.User{ID: "u-admin", Name: "admin", Roles: []string{"admin", "user"},
+		TOTP: []byte("secret"), Locked: 1790000600, Failures: 3, LastLogin: 1790000200}
+	var said [2][]string
+	for run, changedRows := range []bool{false, true} {
+		counting := "with rows matched"
+		if changedRows {
+			counting = "with rows changed"
+		}
+		s, db := openDB(t)
+		if changedRows {
+			if _, err := db.ExecContext(ctx, countChangedRows); err != nil {
+				t.Fatalf("%s: the trigger that turns the counting round: %v", counting, err)
+			}
+		}
+		say := func(what string, err error) { said[run] = append(said[run], what+": "+fmt.Sprint(err)) }
+		say("a user nobody wrote yet", s.UserPut(ctx, admin))
+
+		want := int64(1)
+		if changedRows {
+			want = 0
+		}
+		if n := countedRows(t, db, admin, admin.LastLogin); n != want {
+			t.Fatalf("%s: an UPDATE with the values already in the row counted %d rows, want %d; "+
+				"this run does not count the way it says it does", counting, n, want)
+		}
+		if n := countedRows(t, db, admin, admin.LastLogin+1); n != 1 {
+			t.Fatalf("%s: an UPDATE that really changes the row counted %d rows, want 1", counting, n)
+		}
+		if n := countedRows(t, db, admin, admin.LastLogin); n != 1 {
+			t.Fatalf("%s: an UPDATE that changes the row back counted %d rows, want 1", counting, n)
+		}
+
+		say("the same user again, byte for byte", s.UserPut(ctx, admin))
+		chef := admin
+		chef.Name = "chef"
+		say("the same user under a new name", s.UserPut(ctx, chef))
+		say("that user again, byte for byte", s.UserPut(ctx, chef))
+		say("another ID on the name he now has", s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "chef"}))
+
+		// A name the SELECT of UserPut cannot see, so the INSERT walks into
+		// the index: the row carries an empty ID, which this store never
+		// writes, the way TestADuplicateNameIsErrInvalid plants it.
+		if _, err := db.ExecContext(ctx, "INSERT INTO ngc_user (id, name, roles, totp, locked, "+
+			"failures, last_login) VALUES (?, ?, ?, ?, ?, ?, ?)", []byte(""), []byte("taken"),
+			[]byte(""), []byte(""), int64(0), int64(0), int64(0)); err != nil {
+			t.Fatal(err)
+		}
+		say("a name only the index sees", s.UserPut(ctx, dbapi.User{ID: "u-new", Name: "taken"}))
+
+		got, err := s.UserGet(ctx, admin.ID)
+		say(fmt.Sprintf("the row of %s is %q %v %q %d %d %d", admin.ID, got.Name, got.Roles,
+			got.TOTP, got.Locked, got.Failures, got.LastLogin), err)
+	}
+	for i, line := range said[0] {
+		other := "nothing"
+		if i < len(said[1]) {
+			other = said[1][i]
+		}
+		if line != other {
+			t.Errorf("the counting changed the answer\n  with rows matched: %s\n  with rows changed: %s",
+				line, other)
+		}
+	}
+	if len(said[1]) != len(said[0]) {
+		t.Errorf("with rows matched %d answers were taken and with rows changed %d",
+			len(said[0]), len(said[1]))
+	}
+}
+
+// countedRows writes the row of u with SQL of the test's own and gives back
+// how many rows the database says it affected. It sets every column of
+// ngc_user, the way the UPDATE of UserPut does, so what the database counts
+// here is what it counts there.
+func countedRows(t *testing.T, db *sql.DB, u dbapi.User, lastLogin int64) int64 {
+	t.Helper()
+	res, err := db.ExecContext(ctx, "UPDATE ngc_user SET name = ?, roles = ?, totp = ?, locked = ?, "+
+		"failures = ?, last_login = ? WHERE id = ?", []byte(u.Name), []byte(strings.Join(u.Roles, "\n")),
+		u.TOTP, u.Locked, int64(u.Failures), lastLogin, []byte(u.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

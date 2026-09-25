@@ -98,12 +98,13 @@ func TestBlobRoundTrip(t *testing.T) {
 // all.
 //
 // "user without an id" and "pending without a name" are the two of the six
-// emptiness checks that nothing held: both could be taken out with everything
-// staying green, while an empty name, an empty token, an empty session user
-// and an empty pending key all bite somewhere. The first of them carries the
-// ground TestADuplicateNameIsErrInvalid stands on - that UserPut writes no
-// row with an empty ID, so such a row has to be planted with SQL of the
-// test's own.
+// emptiness checks that nothing held: before these two lines stood here both
+// could be taken out of user.go with nothing in this package going red and no
+// group of the contract either, while an empty name, an empty token, an empty
+// session user and an empty pending key all bite somewhere. The first of them
+// carries the ground TestADuplicateNameIsErrInvalid stands on - that UserPut
+// writes no row with an empty ID, so such a row has to be planted with SQL of
+// the test's own.
 //
 // On SQLite nothing else would have caught any of them either: it takes a
 // value of any length where MariaDB cuts it or answers with an error, which
