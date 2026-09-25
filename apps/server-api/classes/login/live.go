@@ -199,8 +199,10 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// which goes to the rows for the versions it is to send. A caller of Live
 	// that does not go on to Chain -- the WebSocket above -- gets no error and
 	// decides the session on a list the store no longer holds. Reading the
-	// cached version back would cost a read of every row of the chain on every
-	// request; nothing here pays that, and nothing here pretends to.
+	// cached version back would cost one read more than this does today, not
+	// one per row of the chain -- measured against a chain of 8 versions, a
+	// warm Live costs 2 reads of the trust rows here and would cost 3 there.
+	// Nothing here pays that one extra read, and nothing here pretends to.
 	v, err := h.S.Refresh(ctx)
 	if errors.Is(err, state.ErrNoTrust) {
 		// Here that error cannot mean what it means everywhere else. An

@@ -222,8 +222,9 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 // Against a writer of the database no check that lives in the database holds.
 // Only something outside it can say which version is the newest, and the
 // contract has that thing: trust.Anchor with config.LoadAnchor and
-// trust-anchor.json, written today by the controller and by nothing on this
-// machine. Wiring it is on the V1.2 list.
+// trust-anchor.json, meant for the controller to write once it exists --
+// apps/server-controller/main.go today only logs that it is not built and
+// stops, so nothing writes that file yet. Wiring it is on the V1.2 list.
 //
 // So what this is: cheaper on the hot path than the eight looks it replaced,
 // and one form of the attack shut -- not the promise that an older list cannot

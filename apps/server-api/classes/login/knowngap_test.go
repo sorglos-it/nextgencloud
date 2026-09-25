@@ -28,8 +28,12 @@ import (
 // of today rot into false ones the day somebody fixes this, and nobody finds
 // out -- a comment rots, a checked-in test does not.
 //
-// Each of them costs the attacker one statement more than the hole
-// TestAWithdrawalSurvivesTheRowsBeingDropped fences, which is caught.
+// What that costs the attacker is not one shape: two of the three below cost
+// one statement more than the hole TestAWithdrawalSurvivesTheRowsBeingDropped
+// fences (eleven against its ten). The third -- a warm node deciding on a
+// list the store has already lost -- costs three, seven fewer than the hole
+// that is caught: it is the cheapest of the three, not the most expensive,
+// and that is a statement about the danger and not only about the count.
 
 // withdrawnAtTwelve builds the installation these gaps are measured on:
 // version 2 takes the logged-in password user out of the trust list, and ten
@@ -201,6 +205,7 @@ func TestKnownGap_LoweringTheTopRowsSeqRollsItBack(t *testing.T) {
 // login/live.go and retire it.
 func TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost(t *testing.T) {
 	h, fx := newFixture(t)
+	cookie := loginOnce(t, h, fx)
 	prev := fx.Signed
 	for i := 2; i <= 3; i++ {
 		prev = fx.Passkey.Sign(t, trusttest.Next(t, prev))
@@ -220,5 +225,12 @@ func TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost(t *testing.T) {
 	// after this one does go to the rows, and finds them gone.
 	if _, err := h.S.Chain(ctx, v, 1); err == nil {
 		t.Fatal("state.Chain answered without the rows, so the 500 of GET /trust no longer comes from there")
+	}
+	// The gap itself, and not the reassurance above: a caller of Live that
+	// does not go on to Chain sees none of that. It decides the session live,
+	// on a list the store has already lost.
+	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+		t.Fatal("the gap is shut -- the warm node refused a session on the list the store lost. " +
+			"Correct the note at the Refresh call in login/live.go and retire this test")
 	}
 }

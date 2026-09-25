@@ -126,11 +126,12 @@ func withdrawPasswordUser(t *testing.T, h *Handler, fx fixture) {
 // state.checkGap caught before, and caught now.
 //
 // It holds one form and not the property. Two others cost one statement more
-// than this test does and are open: cutting the chain above the hole, and
-// lowering the Seq of the row above it. Both were built and both go through,
-// so neither can be asserted refused here the way this one is -- what a test
-// of them would pin is today's answer, which is that the session comes back.
-// state.checkGap says why that is not a fault of this package to mend.
+// than this test does: cutting the chain above the hole, and lowering the Seq
+// of the row above it. Both go through today, and both are held now, by
+// TestKnownGap_TruncatingTheChainRollsItBack and
+// TestKnownGap_LoweringTheTopRowsSeqRollsItBack in knowngap_test.go, in this
+// same package. state.checkGap says why none of the three is a fault of this
+// package to mend.
 //
 // Version 2 takes the user out, ten more versions follow, and then the rows 2
 // to 11 are dropped. Version 12 still stands, so nothing is missing at the top
@@ -378,14 +379,15 @@ func threeVersions(t *testing.T) (*Handler, string) {
 //
 // What is not wired up is the file, and only the file: config.LoadAnchor,
 // config.SaveAnchor and config.AnchorFile have no caller in this project
-// outside shared/config, and trust-anchor.json is written on the web machine.
-// The type is wired up everywhere -- state.refreshLocked and state.AddVersion
-// build a trust.Anchor every time they open a chain, out of the rows
-// themselves, and session and tunnel carry one too. That is why an anchor that
-// comes from outside is a small change
-// later and not a new mechanism, and it is the only thing that would hold
-// against a writer of the database (state.checkGap says which forms get past
-// what is there now).
+// outside shared/config, and nothing writes trust-anchor.json today --
+// apps/server-controller/main.go, the one program meant to write it, logs
+// that it is not built yet and stops. The type is wired up everywhere --
+// state.refreshLocked and state.AddVersion build a trust.Anchor every time
+// they open a chain, out of the rows themselves, and session and tunnel
+// carry one too. That is why an anchor that comes from outside is a small
+// change later and not a new mechanism, and it is the only thing that would
+// hold against a writer of the database (state.checkGap says which forms get
+// past what is there now).
 //
 // What tells the cold node apart needed neither of them in the end, and it
 // sits in Live: login/finish asks for the trust list before it writes a

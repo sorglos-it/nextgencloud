@@ -91,8 +91,9 @@ func TestKnownGap_ARestartedNodeReopensTheSetupDoor(t *testing.T) {
 		t.Fatalf("node B offer: %v", err)
 	}
 	if bInfo.Installation != stood {
-		t.Fatalf("node B offers the setup for %q and not for the installation that stood (%q), "+
-			"so the takeover below is measuring something else", bInfo.Installation, stood)
+		t.Fatalf("the gap is shut -- node B offered %q instead of reusing the installation that "+
+			"stood (%q), so it no longer hands a fresh cache the stored ID for free. Correct the "+
+			"comment at fault() in setup.go and retire this test", bInfo.Installation, stood)
 	}
 
 	// The takeover itself: a key of nobody's signs version 1 for that
