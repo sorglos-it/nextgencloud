@@ -238,6 +238,41 @@ du eine Messung für eine Entscheidung benutzt, für die sie nicht gemacht wurde
 bestell die Tabelle. Eine halbe Stunde Messen ist billiger als ein Entwurf, der
 auf dem Simulator funktioniert und auf echter Hardware nicht aufgeht.
 
+### Die Nachbarzusage misst mit — und deckt die deine zu
+
+Der Koordinator verlangte eine Verhaltensprobe: zwei Schreiber gegeneinander,
+und keiner darf denselben Namen bekommen. Die Form hatte in einem anderen Strang
+sofort und stabil gefangen.
+
+Hier fing sie **nie**. 32 Schreiber, 400 Runden, drei Läufe je Fassung — grün
+gegen den richtigen Code **und grün gegen beide kaputten**. Der Grund: ein
+eindeutiger Datenbankindex hält dieselbe Zusage allein. Nimmt man die Prüfung
+heraus, läuft der Verlierer in den Index, die Wiederholung findet keine Zeile mit
+seiner Kennung und antwortet mit **demselben Fehlerwort** — gleicher Zustand,
+gleiche Antwort, nichts zu sehen.
+
+**Eine Probe misst, was am Ende herauskommt, nicht wer es bewirkt hat.** Liegt
+neben deiner Prüfung eine zweite Zusage, die dasselbe garantiert, misst du sie.
+
+Der Umsetzer hat es so gelöst: in der Vorrichtung den **Index weggenommen** —
+mit eigenem SQL, und zuerst gemessen, dass er wirklich weg ist. Danach braucht es
+gar keinen Wettlauf mehr: ein **sequenzieller** zweiter Schreiber nimmt den
+belegten Namen, 5 von 5 rot in 0,04 Sekunden. Die Prüfung steht dann allein da
+und muss selbst tragen.
+
+Also: **frag vor jeder Verhaltensprobe, was die Eigenschaft sonst noch halten
+könnte, und nimm es für die Dauer der Probe weg.** Bleibt sie dann grün, hast du
+die Antwort.
+
+### Ein Test, der in die Uhr läuft, ist kein Zaun
+
+Eine der Mutationen antwortete nicht falsch — sie hungerte den Verbindungspool
+aus (vier Verbindungen gegen zweiunddreißig Wettläufer) und endete in
+`panic: test timed out`. Das sieht aus wie ein Fang und ist keiner: ein Lauf, der
+in die Zeitschranke rennt, sagt nichts über die Eigenschaft, er sagt nur, dass
+etwas stehenblieb. Der Umsetzer hat es so benannt statt es als Fang zu verkaufen
+— und den Fall dem statischen Prüfer überlassen, der ihn umsonst mitnimmt.
+
 ## 6. Ein Fuzz-Ziel, das den Annahme-Anteil kumuliert, taugt nicht
 
 Der Fuzzer optimiert auf Code-Abdeckung. Weil die **Ablehnungswege** die
@@ -698,6 +733,27 @@ Daraus folgt nicht „gründlicher berichtigen", sondern etwas Einfacheres:
 **Aufzählungen, wer etwas benutzt, verrotten bei jedem neuen Aufrufer.** Wenn du
 eine schreibst, frag dich, ob der Satz auch ohne sie trägt. Meistens ja — und
 dann lass sie weg.
+
+### Wer den Zweig hochschiebt, gibt die Nachricht aus der Hand
+
+Der Koordinator hat fünf Arbeitszweige aufs Remote geschoben, damit fremde
+Sitzungen sie prüfen können. Gute Entscheidung — mit einem Preis, den er nicht
+mitgedacht hat: **ab diesem Moment lässt sich keine Commit-Nachricht darin mehr
+berichtigen.** Ein `commit-tree` samt `update-ref` bräuchte danach einen
+erzwungenen Push, und der ist verboten.
+
+Ein Umsetzer bekam kurz darauf den Auftrag, genau so eine Nachricht zu
+berichtigen. Er hat es **nicht** getan, sondern nachgesehen, worauf das Remote
+steht, und die Berichtigung statt dessen in den Code und in die **nächste**
+Nachricht geschrieben.
+
+Daraus zwei Dinge:
+
+- **Berichtige eine Nachricht, solange sie dir gehört** — kein Remote, nichts
+  darüber, kein zweiter Arbeitsbaum. Danach ist sie Geschichte.
+- **Schieb einen Zweig erst hoch, wenn du seine Nachrichten nicht mehr anfassen
+  willst.** Der Zugewinn (fremde Augen) ist es oft wert; nur muss man wissen,
+  was man dafür hergibt.
 
 ## 15. Beim dritten Mal baust du den Wächter, nicht die Reparatur
 
