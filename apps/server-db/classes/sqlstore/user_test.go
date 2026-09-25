@@ -239,16 +239,25 @@ func TestADuplicateNameIsErrInvalid(t *testing.T) {
 		t.Errorf("the UPDATE answered with %v, want ErrInvalid", err)
 	}
 	// The failed rename wrote nothing. That is the one statement being refused
-	// whole, not the rollback behind it: no way through UserPut writes before
-	// the statement that fails, so there is never anything for a rollback to
-	// take back. Measured - store.write committing instead of rolling back in
-	// the error case leaves this line green.
+	// whole, not the rollback behind it: the way out taken here answers before
+	// any statement of the write has matched a row, so there is nothing for a
+	// rollback to take back. Measured - store.write committing instead of
+	// rolling back in the error case leaves this line green.
 	//
-	// That reason is about UserPut and it was once written down as though it
-	// were about the package, which it is not: OnceUse writes its mark before
-	// it reads the row, and there a rollback has work. The same mutation is
-	// caught by TestAFailedWriteTakesBackWhatItWrote in once_test.go, and
-	// before that test nothing in this package caught it at all.
+	// It read "no way through UserPut writes before the statement that fails",
+	// and that claims more than was counted. Seven of UserPut's eight ways out
+	// that answer an error read that way from the source; the eighth - the
+	// RowsAffected error right behind an UPDATE that has already run - does not,
+	// and where that UPDATE met an existing row it has already changed it by
+	// then. Whether a driver can take that path at all is not measured, here or
+	// anywhere in this package, so it is named and left open.
+	//
+	// The rest of that reason is about UserPut and was once written down as
+	// though it were about the package, which it is not: OnceUse writes its mark
+	// before it reads the row, and there a rollback has work. The same mutation
+	// is caught by TestAFailedWriteTakesBackWhatItWrote in once_test.go, which
+	// carries the same count of eight, and before that test nothing in this
+	// package caught it at all.
 	if got, err := s.UserGet(ctx, "u-other"); err != nil || got.Name != "chef" {
 		t.Errorf("after the refused rename: %+v, %v", got, err)
 	}
@@ -502,6 +511,39 @@ func namedRows(t *testing.T, db *sql.DB, name string) int {
 	return n
 }
 
+// renameOntoTaken asks UserPut for the rename path - an ID this table already
+// carries, asking for a name another row holds - and asks first that both
+// halves of that are really so.
+//
+// It takes one value and asks its questions of that same value, because the
+// dependency has to be carried by the code and not by a comment beside it.
+// Measured on d2b34b4, where the comment was all there was: a UserDelete of
+// u-admin above the rename, and a fresh ID in the rename itself, each left the
+// package 142/0 green while the check that only refuses new IDs lived again.
+// Through here each of those is red on the spot.
+//
+// One value and not two questions beside a write, because two can drift apart:
+// measured, with the questions written out at the call site and a fresh ID put
+// into the write alone, the package stayed 142/0 green and that check lived
+// again. Here there is nothing to put it into - the questions and the write
+// take the one argument - so that form cannot be written at all.
+//
+// Taking this call out again and writing s.UserPut straight leaves the package
+// 142/0 green and that check still dead: what is lost is not the refusal but
+// the two ways above going quiet again. Measured as well.
+func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
+	t.Helper()
+	if have, err := s.UserGet(ctx, u.ID); err != nil || have.Name == u.Name {
+		t.Fatalf("%s has to carry a row of its own under another name here, or this is no"+
+			" rename: %+v, %v", u.ID, have, err)
+	}
+	if have, err := s.UserByName(ctx, u.Name); err != nil || have.ID == u.ID {
+		t.Fatalf("another ID has to hold %q here, or this asks for a free name: %+v, %v",
+			u.Name, have, err)
+	}
+	return s.UserPut(ctx, u)
+}
+
 // TestTheCheckAloneRefusesATakenName: one writer after the other, with the
 // index gone. A second ID may not be told it has a name that is taken, and it
 // may not have it in the database either.
@@ -522,25 +564,63 @@ func namedRows(t *testing.T, db *sql.DB, name string) int {
 // writers, and a check whose answer never reaches the write lets the second
 // one through whether or not anything ran at the same time.
 //
-// The last two lines are here so that a store which simply refuses everything
-// cannot pass: renaming has to free the name again.
+// The put of "chef" and the one behind it are here so that a store which
+// simply refuses everything cannot pass: renaming has to free the name again.
 //
-// Every line above drives the insert path: a new ID asking for a name that
-// is or is not free. The rename path - an ID this table already carries,
-// asking for a different row's name - is the same check asked a different
-// question, and nothing above asks it. A check that rejects only where no
-// row yet carries u.ID answers every line above exactly as UserPut does,
-// guard included, and on 94e4809 it compiled, ran, and left all 142 tests of
-// this package green. u-admin already carries a row here - renamed to
-// "chef" two lines up - so asking for u-evil's "admin" is that path, and it
-// is red under that check at once: the rename comes back <nil> and two rows
-// carry "admin".
+// No UserPut before renameOntoTaken renames onto a taken name, and that is not
+// the same as saying they all drive the insert path, which is what stood here
+// and was wrong. Measured with a probe on each statement UserPut can run: two
+// of them reach the INSERT, one is refused by the check before any statement
+// runs, and UserPut(u-admin, "chef") reaches the UPDATE - it is itself
+// already the rename path, it just renames onto a name that is free, which the
+// check lets through. What none of them asks is an ID this table already
+// carries, asking for a name another row holds.
+//
+// A check that rejects only where no row yet carries u.ID answers every one of
+// them exactly as UserPut does, guard included, and on 94e4809 it compiled,
+// ran, and left all 142 tests of this package green. u-admin already carries a
+// row by then - renamed to "chef" two statements above, eight lines of source
+// - so asking there for u-evil's "admin" is that path, and it is red under
+// that check at once: the rename comes back <nil> and two rows carry "admin".
+//
+// renameOntoTaken is what makes that line the rename path and not a comment
+// saying so; what it asks and what was measured without it stand there.
+//
+// Every writer here carries either something or nothing in every field but ID
+// and Name, and never the same one twice. u-evil carries roles, a TOTP secret,
+// a lock, failures and a last login; u-admin carries the zero value of each.
+// That is not decoration and may not be tidied away. Both refusals below would
+// otherwise stand between rows alike in every column, and the refusal could
+// then be hung on any one of them with nothing going red. Measured, four of
+// those, each green across all 142 tests of this package while both writers
+// were empty and red once they were not: len(u.Roles) == 0, len(u.TOTP) == 0
+// and u.LastLogin == 0 added to the rejection, and "AND locked = 0" added to
+// the question itself, which does not touch the Go code at all. The two
+// refusals sit on opposite sides - at the second writer the user asking is the
+// full one and the row holding the name is the empty one, at the rename it is
+// the other way round - so a condition either way round drops one of them.
+//
+// One shape nothing in this package reaches, said plainly so that it is a
+// known open mutant and not a hole somebody thinks is covered: a question that
+// fails reading as "the name is free", other = "" in place of return err where
+// the Scan answers an error that is not sql.ErrNoRows. Measured, green across
+// all 142. Nothing here can make that Scan fail. Every column of ngc_user is
+// NOT NULL, so no row a test can plant makes a scan of id into a string fail,
+// and no schema or trigger of a test's own breaks the question alone: every
+// column it reads the UPDATE and the INSERT behind it read too, and SQLite has
+// no trigger on SELECT. It would take a driver of the test's own that fails
+// one statement text and lets the rest through, and this package has no
+// fixture of that kind.
 func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	s, db := withoutTheNameIndex(t)
+	// evil carries something in every field but ID and Name, u-admin the zero
+	// value of each. Four ways past the check live or die on that; see above.
+	evil := dbapi.User{ID: "u-evil", Name: "admin", Roles: []string{"user"},
+		TOTP: []byte("secret"), Locked: 1790000600, Failures: 3, LastLogin: 1790000200}
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
+	if err := s.UserPut(ctx, evil); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("the second writer was told %v, want ErrInvalid", err)
 	}
 	if n := namedRows(t, db, "admin"); n != 1 {
@@ -549,12 +629,12 @@ func TestTheCheckAloneRefusesATakenName(t *testing.T) {
 	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "chef"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UserPut(ctx, dbapi.User{ID: "u-evil", Name: "admin"}); err != nil {
+	if err := s.UserPut(ctx, evil); err != nil {
 		t.Errorf("the freed name stayed taken: %v", err)
 	}
-	// The rename path: u-admin already carries a row, and asks here for the
-	// name u-evil's row carries.
-	if err := s.UserPut(ctx, dbapi.User{ID: "u-admin", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
+	// The rename path, asked through renameOntoTaken so that the state it rests
+	// on is asked of the same value the write is given.
+	if err := renameOntoTaken(t, s, dbapi.User{ID: "u-admin", Name: "admin"}); !errors.Is(err, dbapi.ErrInvalid) {
 		t.Errorf("the rename onto a taken name was told %v, want ErrInvalid", err)
 	}
 	if n := namedRows(t, db, "admin"); n != 1 {
