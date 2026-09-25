@@ -72,11 +72,17 @@ func New(st *state.Store, a trust.Anchor) *Keeper { return &Keeper{st: st, ancho
 // the controller then runs on until an API sends the first chain.
 //
 // It has to run before the first channel does: a keeper that never read the
-// state refuses every Apply with ErrStore
-// (TestApplyRefusesUntilTheStateWasRead), so whoever builds the server around
-// a keeper calls this first and lets a failure of it end the start. No program
-// does yet — only the tests of this package and of serve build a keeper at
-// all, so "never loaded" is what a first wiring gets if it forgets this.
+// state keeps no version at all, and what it answers is ErrStore
+// (TestApplyRefusesUntilTheStateWasRead). Not to every Apply, though: Apply
+// reads the bytes it was given, counts the versions in them and looks at its
+// own anchor before it ever asks whether the state was read, so a body that
+// does not parse comes back as the parse error and an anchor that pins
+// nothing as ErrNoAnchor — unread state or not, and one of them is E_VERIFY
+// while the other is E_INTERNAL. Only a chain that got past all three meets
+// this gate. Whoever builds the server around a keeper therefore calls this
+// first and lets a failure of it end the start. No program does yet — only
+// the tests of this package and of serve build a keeper at all, so "never
+// loaded" is what a first wiring gets if it forgets this.
 func (k *Keeper) Load(ctx context.Context) error {
 	if !k.validAnchor() {
 		return ErrNoAnchor

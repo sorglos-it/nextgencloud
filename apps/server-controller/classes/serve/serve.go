@@ -75,9 +75,17 @@ type Deps struct {
 	// A zero key here lets no app channel come off at all: every handshake
 	// fails, and it fails the way a shell that names another controller fails,
 	// so nothing in the log tells the two apart. What says it is
-	// HandshakeFailures — a server whose key is missing counts one for every
-	// app channel it ever sees and never a single one that came off, and that
-	// is the shape an operator reads it by.
+	// HandshakeFailures: on a server without its key that counter takes every
+	// app channel which reached the handshake, so it rises as fast as app
+	// channels arrive instead of standing at the odd shell that opened the
+	// wrong one, and that is the shape an operator reads it by.
+	//
+	// What it does not count is an app channel access turned away before the
+	// handshake — one without a certificate, one for an app this controller
+	// does not run, any of them while there is no trust list yet. Measured: an
+	// app channel without a certificate ends E_FORBIDDEN and leaves the
+	// counter at 0. The number is of the channels that got past the gate, not
+	// of the app channels this server saw.
 	Noise noise.DHKey
 	// Chain holds the trust list. Every channel reads the newest verified
 	// version once, at its start, and decides on that one to its end.

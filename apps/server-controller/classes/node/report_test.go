@@ -14,12 +14,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
+	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -87,6 +90,53 @@ func TestHelloNamesNodeRolesAndContract(t *testing.T) {
 	if again := r.Hello(); again.Roles[0] != tunnel.RoleWeb {
 		t.Errorf("the second hello has the roles of the first: %v", again.Roles)
 	}
+}
+
+// The number in the hello is the keeper's, and it stays the keeper's. This
+// test is the wiring itself, written the way whoever builds the server around
+// a keeper and a Reporter has to write it: ReportConfig.TrustSeq is
+// chain.Keeper.TrustSeq itself, not a number read off it once at the start.
+//
+// What it fences are the two quiet mistakes, and both of them compile, dial
+// and look right. A wiring that leaves the field nil sends 0, and the API then
+// answers with the chain from version 1 on while this controller is anchored
+// at 2 and refuses every version it gets (E_VERIFY). A wiring that reads the
+// number off the keeper once at the start is right until the first chain lands
+// and stale from then on. The two assertions are those two: the number is the
+// keeper's before any chain arrived, and it is the keeper's again after one
+// did, because Hello is asked afresh for every dial.
+func TestTheHelloCarriesTheNumberTheKeeperHolds(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	v2 := admin.Sign(t, trusttest.Next(t, v1))
+	v3 := admin.Sign(t, trusttest.Next(t, v2))
+	// A controller paired once the list had moved on: anchored at 2, holding
+	// nothing. Anchored at 1 the wrong wiring and the right one give the same
+	// number, which is why this one is anchored higher.
+	st := newState(t)
+	k := chain.New(st, trust.Anchor{Seq: 2, Hash: trust.Hash(v2)})
+	if err := k.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	r := reporterFor(t, st, func(c *ReportConfig) { c.TrustSeq = k.TrustSeq })
+	if got := r.Hello().TrustSeq; got != k.TrustSeq() || got != 1 {
+		t.Fatalf("the hello of a controller anchored at 2 asks from %d on, want from 2 on (TrustSeq 1); the keeper says %d",
+			got+1, k.TrustSeq())
+	}
+	// The chain that number asks for, and the number afterwards.
+	b, err := json.Marshal(session.TrustChain{Versions: []trust.Signed{v2, v3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq, err := k.Apply(ctx, b); err != nil || seq != 3 {
+		t.Fatalf("Apply = %d, %v, want 3 and no error", seq, err)
+	}
+	if got := r.Hello().TrustSeq; got != k.TrustSeq() || got != 3 {
+		t.Errorf("after the chain the hello says %d, want the 3 the keeper holds", got)
+	}
+	// And it goes out as a hello of the contract, number and all.
+	mustParseHello(t, r.Hello())
 }
 
 // mustParseHello sends h through the parser of the contract, the one the API

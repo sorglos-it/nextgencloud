@@ -685,6 +685,92 @@ func TestASignedVersionPastTheAnchorIsTheSendersFault(t *testing.T) {
 	}
 }
 
+// An anchor of this controller that pins nothing is this server's own fault,
+// and this is that fault at the wire: the channel ends E_INTERNAL, not a line
+// is written, and StoreFailures does not move. The counter is what separates
+// the two local faults — a store that could not be used is a state that may
+// come back, an anchor that pins nothing is a configuration that will not, and
+// only the first of them is counted and written.
+//
+// Three anchors, because there are three ways to hold none: without a number,
+// without a hash, and with a hash that is no SHA-256 (chain.validAnchor). All
+// three are read before Apply asks whether the state was ever loaded, so none
+// of them needs a keeper that read it.
+func TestAnAnchorThatPinsNothingEndsEveryChannelWithoutALine(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	for _, c := range []struct {
+		name   string
+		anchor trust.Anchor
+	}{
+		{"without a number", trust.Anchor{Hash: trust.Hash(w.v1)}},
+		{"without a hash", trust.Anchor{Seq: 1}},
+		{"with a hash that is no SHA-256", trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)[:16]}},
+	} {
+		w.fresh(t, c.anchor, false)
+		ended := w.tunnel(t, func(a *apiSide) {
+			a.open(1, trustOpen(t))
+			a.data(1, chainOf(t, v2))
+			a.eof(1)
+			wantCode(t, a.closed(1), wire.CodeInternal)
+			a.shut(1)
+			a.bye()
+		})
+		if err := waitFor(t, ended); err != nil {
+			t.Fatalf("an anchor %s: Run = %v, want an orderly end after bye", c.name, err)
+		}
+		if got := w.srv.StoreFailures(); got != 0 {
+			t.Errorf("an anchor %s counted %d store failures, want 0: an anchor that pins nothing is no store that failed",
+				c.name, got)
+		}
+	}
+	if n := w.notes.n.Load(); n != 0 {
+		t.Errorf("three anchors that pin nothing wrote %d lines, want none", n)
+	}
+}
+
+// An anchor of this controller that is well formed and still not this
+// installation's — paired against another installation, or an anchor file
+// copied off a second server — answers a faultless chain with E_VERIFY, which
+// reads "Unterschrift ungültig." to the admin. Such a controller turns away
+// every API there is and names each of them at fault.
+//
+// This test is no approval of that. It is the receipt on the gap serve/trust.go
+// names and cannot close: out of one chain nothing says whether the chain or
+// the anchor is the wrong one, so what goes out is the code for a wrong chain.
+// Whoever finds a second word on which version this controller's anchor names
+// can tell the two apart, and changes this test first.
+func TestAnAnchorCopiedFromElsewhereBlamesEverySender(t *testing.T) {
+	w := newWorld(t)
+	// Version 1 of a second installation: the same admin, correct in every
+	// way, and no version of this controller's list. Its hash is a SHA-256
+	// like any other, so an anchor file holding it is readable and looks right
+	// (chain.validAnchor answers yes).
+	other := trusttest.Genesis(w.admin)
+	other.Installation = trusttest.ID(0x12)
+	if err := other.Validate(); err != nil {
+		t.Fatalf("version 1 of the second installation: %v", err)
+	}
+	foreign := w.admin.Sign(t, other)
+	k := w.fresh(t, trust.Anchor{Seq: 1, Hash: trust.Hash(foreign)}, true)
+	ended := w.tunnel(t, func(a *apiSide) {
+		// What this controller's own API sends: version 1 of its own
+		// installation, signed by an admin of it and faultless.
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, w.v1))
+		a.eof(1)
+		wantCode(t, a.closed(1), wire.CodeVerify)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if seq := k.TrustSeq(); seq != 0 {
+		t.Errorf("the keeper holds version %d after a chain its anchor refused", seq)
+	}
+}
+
 // A trust list this server cannot keep is a local fault and worth a line — but
 // only one. How many channels meet it is the API's to choose, and a line for
 // each would let a peer fill this server's log. A keeper that never read its
@@ -712,6 +798,34 @@ func TestATrustListThatCannotBeKeptWritesOneLineForManyChannels(t *testing.T) {
 	}
 	if got := w.srv.StoreFailures(); got != channels {
 		t.Errorf("StoreFailures = %d, want %d", got, channels)
+	}
+}
+
+// The one line belongs to the first channel that meets the fault, and a single
+// channel is that first one. This is the half the count of many channels
+// cannot hold: a server with one API and one such channel is the case an
+// operator most needs to see, and a rule that wrote from the second channel on
+// would leave exactly that one silent.
+func TestTheFirstChannelThatCannotKeepTheTrustListWritesTheLine(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	w.fresh(t, trust.Anchor{Seq: 1, Hash: trust.Hash(w.v1)}, false)
+	ended := w.tunnel(t, func(a *apiSide) {
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, v2))
+		a.eof(1)
+		wantCode(t, a.closed(1), wire.CodeInternal)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if n := w.notes.n.Load(); n != 1 {
+		t.Errorf("one channel that could not keep the trust list wrote %d lines, want 1", n)
+	}
+	if got := w.srv.StoreFailures(); got != 1 {
+		t.Errorf("StoreFailures = %d, want 1", got)
 	}
 }
 

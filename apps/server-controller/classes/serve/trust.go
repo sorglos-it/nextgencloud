@@ -21,11 +21,14 @@ import (
 // API can hand a list on but never forge one (core.WithoutUser).
 //
 // Which failure ends the channel with which code follows chain.Keeper.Apply:
-// what the verification refused is the fault of what was sent (E_VERIFY), and
-// what the local state or this server's own anchor refused is the fault of
-// this server (E_INTERNAL). Telling those apart is what keeps an admin from
-// being sent to sign the same change again over a store that cannot write:
-// E_VERIFY reads "Unterschrift ungültig." to him.
+// what the local state refused, what this installation's own chain grew past
+// and an anchor of this server that pins nothing are this server's fault
+// (E_INTERNAL), and everything else — what the parser and the verification
+// refused — is answered as the fault of what was sent (E_VERIFY). Telling those
+// apart is what keeps an admin from being sent to sign the same change again
+// over a store that cannot write: E_VERIFY reads "Unterschrift ungültig." to
+// him. Where that answer can be wrong, and why nothing here can tell, stands
+// at the E_VERIFY of this function.
 func (s *Server) trust(ctx context.Context, _ access.Decision, in []byte) (any, *wire.Close) {
 	seq, err := s.d.Chain.Apply(ctx, in)
 	switch {
@@ -57,9 +60,28 @@ func (s *Server) trust(ctx context.Context, _ access.Decision, in []byte) (any, 
 	// among it: a controller that has verified nothing opens this channel too
 	// (access.firstChain), so a chain that begins anywhere but at the anchored
 	// version arrives here — signed perfectly well and still not this
-	// controller's chain. That is the fault of what was sent, the same fault a
-	// controller with a list answers E_VERIFY when a version does not follow
-	// the one it holds (trust.ErrChain), and it gets the same code.
-	// TestASignedVersionPastTheAnchorIsTheSendersFault holds it.
+	// controller's chain. A controller that holds a list answers E_VERIFY when
+	// a version does not follow the one it holds (trust.ErrChain), and a chain
+	// that does not meet the anchor is the same shape of fault, so it gets the
+	// same code. TestASignedVersionPastTheAnchorIsTheSendersFault holds it.
+	//
+	// What this code says is that the chain and the anchor do not meet, and
+	// out of one chain nothing here can say which of the two is wrong. Only an
+	// anchor that pins nothing at all is told apart, and only because it is
+	// readable as such without any chain (chain.ErrNoAnchor, the case above,
+	// "without a number or without a SHA-256"). An anchor that is well formed
+	// and still not this installation's — a controller paired against another
+	// installation, an anchor file copied from a second server — is a fault of
+	// this server that looks exactly like a chain from somewhere else, and it
+	// leaves here as E_VERIFY: such a controller turns away every sender there
+	// is and names every one of them at fault. That is measured and fenced,
+	// not supposed, in TestAnAnchorCopiedFromElsewhereBlamesEverySender.
+	//
+	// It is no hole — nothing gets in that way — but it sends the operator to
+	// the API while the anchor of his own controller is the wrong one. Telling
+	// the two apart would take a second, independent word on which version this
+	// controller's anchor names, and there is none to be had: the anchor comes
+	// out of the pairing and is the word in doubt, and the only versions that
+	// ever reach a controller are the ones on this channel.
 	return nil, refuse(wire.CodeVerify)
 }
