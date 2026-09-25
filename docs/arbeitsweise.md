@@ -508,6 +508,37 @@ es ging.
 
 **Kommt dir eine Anweisung nicht stimmig vor: frag, bevor du sie ausführst.**
 
+### Der teuerste Satz ist der, der die Suche beendet
+
+Der Koordinator hat einen Weg bewusst offengelassen und den Grund dazugegeben —
+das ist richtig, denn eine benannte Lücke ist besser als eine verschwiegene.
+Sein Grund lautete: *ein Beweis an dieser Stelle würde ohnehin von einem
+Aufräumer geschlagen, der danach angemeldet wird. Kein Wettlauf, den jemand
+gewinnt; der Nächste braucht es nicht noch einmal zu versuchen.*
+
+Der Prüfer hat es gemessen: **Aufräumer laufen nach dem Rumpf.** Ein Beweis
+**im** Rumpf ist für sie unerreichbar. Der Beweis fängt den Weg, kostet eine
+Dreiviertelsekunde, und ist damit genau das, wovon der Satz abgeraten hat.
+
+Die erste Hälfte des Grundes stimmte sogar — ein dritter Beweis *als Aufräumer*
+wird geschlagen. Die zweite nicht. Und weil der Satz im Code stand, wäre er die
+nächsten Jahre die Antwort auf jede Nachfrage gewesen.
+
+**Eine benannte Lücke trägt ihren Grund mit, und der Grund wird geprüft wie eine
+Zusicherung.** Wer schreibt „das geht nicht, deshalb lassen wir es", hat eine
+Behauptung über die Welt aufgestellt — dieselbe Sorte, die Regel 1 misst. Der
+Unterschied zu jeder anderen falschen Zusage ist nur, dass diese hier **niemanden
+rot werden lässt**: sie beendet die Suche, und danach sieht niemand mehr hin.
+
+Zwei Dinge folgen:
+
+- **Miss den Grund, bevor du ihn hinschreibst** — besonders, wenn er „geht
+  nicht" oder „bringt nichts" sagt. Ein Satz, der zum Aufhören rät, verdient mehr
+  Prüfung als einer, der zur Arbeit rät.
+- **Und schreib ihn so, dass er widerlegbar ist.** „Ein Aufräumer schlägt jeden
+  Beweis" lässt sich prüfen und war falsch. „Das lohnt sich nicht" lässt sich
+  nicht prüfen und wäre nie aufgefallen.
+
 ## 10. Im Zweifel die sichere Seite
 
 Steht Sicherheit gegen Bequemlichkeit, gegen Geschwindigkeit oder gegen Aufwand:
