@@ -1,5 +1,12 @@
-// Boot of the shell: check the connection, then the browser, then load the
-// configuration. The rest follows in later tasks.
+// Boot of the shell: the look, then the connection, then the browser, then
+// the configuration, then the desktop.
+import { startDesktop } from "./desktop.js";
+import { initTheme } from "./theme.js";
+// A STAND-IN, and the only line of the shell that knows about it. Task 17
+// builds shell/channel.js; then this import and the two lines that use it
+// below change, fake-link.js is deleted, and nothing else moves.
+import { fakeLink } from "./fake-link.js";
+
 const NEEDED = ["Ed25519", "X25519"];
 
 export async function browserFits() {
@@ -26,6 +33,9 @@ function message(text) {
 }
 
 async function start() {
+  // The theme first, before anything is drawn: the page would otherwise be
+  // painted dark and repainted light one frame later.
+  initTheme();
   // Without a secure connection there is no crypto.subtle at all. Checking
   // the browser first would blame the browser for it, and the person would
   // install another one for nothing.
@@ -44,7 +54,11 @@ async function start() {
     return;
   }
   window.__ngcConfig = await res.json();
-  message("NGC wird geladen …");
+  // PULLED FORWARD AND UNFINISHED. There is no login yet (Tasks 19 and 20) and
+  // no session (Task 17), so the desktop starts straight away and gets the
+  // stand-in instead of a channel. When the login lands, it runs between the
+  // configuration and this line and hands over the session it opened.
+  startDesktop(document.getElementById("root"), { link: fakeLink(), session: null, trust: null });
 }
 
 start().catch(() => {

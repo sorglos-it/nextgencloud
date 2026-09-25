@@ -16,6 +16,7 @@
   --radius: 10px;
   --field-bg: #151a23;
   --muted: #97a3b6;
+  --page-bg: #0d1017;
 }
 html[data-theme="light"]{
   --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
@@ -24,12 +25,200 @@ html[data-theme="light"]{
   --menu-bg: rgba(250,251,254,.94);
   --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
   --field-bg:#ffffff; --muted:#5b6a80;
+  --page-bg:#e7ecf4;
+}
+/* The default while nobody has chosen a design. It bites only where the
+   document carries no data-theme at all: with JavaScript off, and where
+   theme.js found no storage to remember a choice in and handed the decision
+   here. A chosen theme always writes the attribute and wins. */
+@media (prefers-color-scheme: light){
+  html:not([data-theme]){
+    --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
+    --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
+    --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
+    --menu-bg: rgba(250,251,254,.94);
+    --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+    --field-bg:#ffffff; --muted:#5b6a80;
+    --page-bg:#e7ecf4;
+  }
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;
-     color:var(--bar-fg);background:#0d1017;-webkit-user-select:none;user-select:none;
+     color:var(--bar-fg);background:var(--page-bg);-webkit-user-select:none;user-select:none;
      touch-action:manipulation}
 #root{position:fixed;inset:0}
 .msg{max-width:32rem;margin:20vh auto;padding:1.5rem;text-align:center;color:var(--win-fg);
      background:var(--win-bg);border:1px solid var(--win-border);border-radius:var(--radius)}
+
+/* Everything that can be reached with a keyboard says so. The shell is one
+   page with no browser chrome inside it: without a visible ring there is no
+   way to tell where you are. */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- Desktop ---------- */
+#desktop{position:fixed;inset:var(--bar-h) 0 0 0;overflow:hidden}
+#wallpaper{position:absolute;inset:0;background-size:cover;background-position:center;
+           transition:background .3s}
+#icons{position:absolute;inset:12px auto 12px 12px;display:flex;flex-direction:column;
+       flex-wrap:wrap;align-content:flex-start;gap:4px;max-height:calc(100% - 24px)}
+.dicon{width:92px;padding:10px 4px 8px;border:1px solid transparent;border-radius:8px;
+       text-align:center;cursor:pointer;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);
+       background:none;font:inherit;display:flex;flex-direction:column;align-items:center;gap:4px}
+.dicon:hover{background:rgba(255,255,255,.12)}
+.dicon.off{opacity:.55}
+.dicon .g{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
+          font-size:20px;font-weight:600;border-radius:10px;color:#fff;
+          background:linear-gradient(135deg,var(--accent),var(--accent-2));text-shadow:none}
+.dicon .n{font-size:12px;word-break:break-word;overflow:hidden;max-height:2.9em}
+
+/* ---------- Taskleiste (oben) ---------- */
+#taskbar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);display:flex;align-items:center;
+         gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(18px) saturate(150%);
+         border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000}
+#startbtn{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;
+          border-radius:8px;cursor:pointer;font:inherit;font-weight:600;color:#fff;
+          background:linear-gradient(135deg,var(--accent),var(--accent-2));
+          box-shadow:0 2px 8px rgba(0,0,0,.3)}
+#startbtn:hover{filter:brightness(1.12)}
+#startbtn.open{filter:brightness(.9)}
+#startbtn .logo{font-size:16px}
+#tasks{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden}
+.task{display:flex;align-items:center;gap:7px;height:34px;max-width:190px;padding:0 12px;
+      border-radius:8px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;
+      background:rgba(127,127,127,.14);border:1px solid transparent;color:var(--bar-fg)}
+.task:hover{background:rgba(127,127,127,.26)}
+.task.active{background:rgba(127,127,127,.32);border-color:rgba(127,127,127,.45)}
+.task.min{opacity:.6}
+.task .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tray{display:flex;align-items:center;gap:12px;padding-right:4px;white-space:nowrap}
+#tray button{background:none;border:0;color:inherit;font:inherit;cursor:pointer;opacity:.85;
+             font-size:16px}
+#tray button:hover{opacity:1}
+#clock{text-align:right;line-height:1.15;font-variant-numeric:tabular-nums;font-size:12.5px}
+#clock b{display:block;font-size:13.5px;font-weight:600}
+
+/* ---------- Startmenü ---------- */
+#startmenu{position:fixed;top:calc(var(--bar-h) + 6px);left:8px;width:min(420px,calc(100vw - 16px));
+           max-height:min(620px,calc(100vh - var(--bar-h) - 20px));background:var(--menu-bg);
+           backdrop-filter:blur(22px) saturate(150%);border:1px solid rgba(127,127,127,.30);
+           border-radius:14px;box-shadow:var(--shadow);z-index:100001;display:none;
+           flex-direction:column;overflow:hidden;color:var(--win-fg)}
+#startmenu.open{display:flex;animation:pop .13s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1}}
+#smsearch{margin:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--win-border);
+          background:var(--field-bg);color:var(--win-fg);font:inherit;outline:none}
+#smsearch:focus{border-color:var(--accent)}
+#smhead,#smlookhead{padding:0 16px 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+                    color:var(--muted)}
+#smlist{overflow:auto;padding:8px;display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px}
+.smitem{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px;
+        border-radius:10px;cursor:pointer;text-align:center;font-size:12.5px}
+.smitem:hover{background:rgba(127,160,220,.20)}
+.smitem.off{opacity:.55}
+.smitem .g{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+           font-size:18px;font-weight:600;border-radius:9px;color:#fff;
+           background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.smitem .n{overflow:hidden;word-break:break-word;max-height:2.9em}
+.smempty{padding:14px;color:var(--muted)}
+#smlook{padding:4px 12px 10px;border-top:1px solid rgba(127,127,127,.25)}
+#smfoot{display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(127,127,127,.25)}
+#smfoot button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--win-border);
+               background:transparent;color:inherit;font:inherit;cursor:pointer}
+#smfoot button:hover{background:rgba(127,160,220,.2)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.swatches{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.swatches button{width:28px;height:28px;border-radius:50%;border:2px solid transparent;
+                 cursor:pointer;padding:0}
+.swatches button.on{border-color:var(--win-fg)}
+.wpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
+.wpgrid button{height:40px;border-radius:8px;border:2px solid transparent;cursor:pointer;
+               background-size:cover;padding:0}
+.wpgrid button.on{border-color:var(--accent)}
+
+/* ---------- Fenster ---------- */
+.win{position:absolute;display:flex;flex-direction:column;min-width:240px;min-height:150px;
+     background:var(--win-bg);color:var(--win-fg);border:1px solid var(--win-border);
+     border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.win.min{display:none}
+.win.max{border-radius:0}
+.win.anim{transition:left .16s,top .16s,width .16s,height .16s}
+.titlebar{display:flex;align-items:center;height:36px;padding-left:12px;gap:8px;
+          background:var(--title-bg);border-bottom:1px solid var(--win-border);cursor:default;
+          flex:0 0 auto;touch-action:none}
+.win.focus .titlebar{background:var(--title-bg-active)}
+.titlebar .g{display:flex;align-items:center;justify-content:center;width:20px;height:20px;
+             font-size:12px;font-weight:600;border-radius:6px;color:#fff;
+             background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.titlebar .t{flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+             white-space:nowrap;opacity:.9}
+.win.focus .titlebar .t{opacity:1}
+.wbtns{display:flex;height:100%}
+.wbtn{width:44px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
+      line-height:1;opacity:.8}
+.wbtn:hover{background:rgba(127,127,127,.25);opacity:1}
+.wbtn.close:hover{background:#e13e3e;color:#fff}
+.body{flex:1;overflow:auto;position:relative;background:var(--win-bg)}
+.rs{position:absolute;z-index:5}
+.rs.e{right:0;top:0;width:6px;height:100%;cursor:ew-resize}
+.rs.s{left:0;bottom:0;height:6px;width:100%;cursor:ns-resize}
+.rs.w{left:0;top:0;width:6px;height:100%;cursor:ew-resize}
+.rs.n{left:0;top:0;height:6px;width:100%;cursor:ns-resize}
+.rs.se{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
+.rs.sw{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
+.win.max .rs{display:none}
+#snaphint{position:absolute;border:2px solid var(--accent);background:rgba(47,125,225,.22);
+          border-radius:8px;display:none;pointer-events:none;z-index:99999}
+
+/* The frame an app runs in. It fills the window's body edge to edge: a border
+   of the shell around an app's page would read as part of the app. Empty
+   until Task 22 builds the sandboxed frame; the rule stands here so the app
+   that gets one does not first have to be framed by hand. */
+.appframe{display:block;width:100%;height:100%;border:0;background:var(--win-bg)}
+
+/* ---------- App-Inhalte ---------- */
+.pad{padding:16px}
+.app p{margin:0 0 10px}
+.muted{color:var(--muted)}
+button.b,.b{padding:7px 12px;border-radius:7px;border:1px solid var(--win-border);
+            background:var(--field-bg);color:var(--win-fg);font:inherit;cursor:pointer}
+button.b:hover{border-color:var(--accent)}
+button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
+
+/* Rechner */
+.calc{display:flex;flex-direction:column;height:100%;padding:10px;gap:8px}
+.calc .disp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:8px;
+            padding:10px 12px;text-align:right;font-variant-numeric:tabular-nums}
+.calc .disp .e{font-size:12px;color:var(--muted);min-height:16px;overflow:hidden}
+.calc .disp .v{font-size:28px;font-weight:600;overflow:hidden}
+.calc .keys{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.calc .keys button{border-radius:8px;border:1px solid var(--win-border);background:var(--title-bg);
+                   color:var(--win-fg);font:15px/1 inherit;cursor:pointer}
+.calc .keys button:hover{background:rgba(127,160,220,.25)}
+.calc .keys button.op{background:var(--field-bg)}
+.calc .keys button.eq{background:var(--accent);color:#fff;border-color:transparent}
+
+/* ---------- Meldungen ---------- */
+/* One strip at the bottom edge, for one message at a time. The live region
+   stays in the page whether it holds anything or not, because a region that
+   appears only when there is news is announced by nobody. */
+.noticebar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;
+           align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));z-index:100002}
+.status,.alert{margin:0;padding:10px 14px;border-radius:10px;border:1px solid var(--win-border);
+               background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.status:empty{display:none}
+.status.warn{border-color:#d2932a}
+.status.error{border-color:#e13e3e}
+/* A serious failure that stops the shell: not a strip that goes away, a box
+   that stays and says what to do. */
+.alert{display:block;max-width:32rem;margin:20vh auto;text-align:center;border-color:#e13e3e}
+.noticeclose{border:1px solid var(--win-border);background:var(--win-bg);color:var(--win-fg);
+             border-radius:10px;width:34px;height:34px;font:inherit;cursor:pointer}
+.noticeclose[hidden]{display:none}
+.noticeclose:hover{border-color:var(--accent)}
+
+@media (max-width:640px){
+  #icons{display:none}
+  .task .lbl{display:none}
+}
