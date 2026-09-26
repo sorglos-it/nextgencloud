@@ -2,6 +2,7 @@
 // the configuration, then the desktop.
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
+import { loadConfig } from "../net/config.js";
 // A STAND-IN, and the only line of the shell that knows about it. Task 17
 // builds shell/channel.js and Task 20 shell/trust.js; then this import and
 // the two lines that use it below change, fake-link.js is deleted, and
@@ -49,19 +50,30 @@ async function start() {
       + "oder neuer benutzen.");
     return;
   }
-  const res = await fetch("/config.json", { cache: "no-store" });
-  if (!res.ok) {
+  // The configuration says where the shell connects, which trust list it
+  // believes and which party a passkey is asked for, so it goes through its
+  // contract and not through res.json(). Whatever it does not hold up to gets
+  // the same sentence a missing installation gets - the person must not be
+  // left guessing, and must learn nothing about the shape of the file either.
+  let config;
+  try {
+    config = await loadConfig();
+  } catch {
     message("NGC ist nicht eingerichtet.");
     return;
   }
-  window.__ngcConfig = await res.json();
   // PULLED FORWARD AND UNFINISHED. There is no login yet (Tasks 19 and 20) and
   // no session (Task 17), so the desktop starts straight away and gets the
   // stand-in instead of a channel and an opened trust list. When the login
   // lands, it runs between the configuration and this line and hands over the
   // session and the list it opened.
+  //
+  // config is handed on rather than parked on window: nothing reads it yet,
+  // and the moment something does - the login needs rp, the session needs
+  // apis - it takes it from here. A global would be one more thing anything
+  // else on the page could write between the check above and that read.
   const { link, trust } = await fakeWorld();
-  startDesktop(document.getElementById("root"), { link, session: null, trust });
+  startDesktop(document.getElementById("root"), { link, session: null, trust, config });
 }
 
 start().catch(() => {
