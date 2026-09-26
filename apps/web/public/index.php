@@ -67,6 +67,13 @@ switch ($path) {
     case '/':
         Page::render(__DIR__ . '/../templates/desktop.php', []);
         break;
+    // An app window. It is a document of its own because only a document
+    // fetched over http gets a policy of its own: a frame built with srcdoc
+    // inherits this page's, and then the app's scripts are held to a
+    // script-src written for the shell. See Page::FRAME_CSP.
+    case '/frame.html':
+        Page::frame(__DIR__ . '/assets/js/shell/frame-boot.js');
+        break;
     case '/config.json':
         try {
             // Build the body first: a failure here must still be able to
