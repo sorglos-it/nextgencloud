@@ -8,6 +8,7 @@ import { el, button, text, clear } from "./dom.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { calcApp } from "../apps/calc.js";
+import { usersApp } from "../apps/users.js";
 import { UICache, openAppUI } from "./appframe.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
@@ -35,6 +36,13 @@ import {
 const BUILTIN = {
   __proto__: null,
   "ngc.calc": calcApp,
+  // "Benutzer und Rechte" belongs here and not in the frame, and the contract
+  // says so: core.AppParams refuses a core app ("ngc.") for ngc.desktop/ui
+  // and for ngc.desktop/ui-proof alike, so an app of NGC's own can never be
+  // asked for a user interface. The calculator stands here for want of that
+  // decision; this one stands here because there is no other place it could
+  // stand.
+  "ngc.users": usersApp,
 };
 
 // Accent colours in the order of theme.js, with the name the swatch carries
@@ -537,7 +545,12 @@ class Desktop {
     const mount = BUILTIN[appID];
     if (typeof mount === "function") {
       try {
-        win.onClose = mount(win) || null;
+        // What a built-in app is given: the link to the API, the verified
+        // trust list, the session and the apps this desktop knows about. The
+        // calculator takes none of it and ignores the second argument.
+        win.onClose = mount(win, {
+          link: this.link, trust: this.trust, session: this.session, apps: this.appList,
+        }) || null;
       } catch {
         this.placeholder(win, "Diese App konnte nicht geöffnet werden.",
           "Bitte das Fenster schließen und es noch einmal versuchen.");

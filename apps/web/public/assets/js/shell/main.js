@@ -72,8 +72,14 @@ async function start() {
   // and the moment something does - the login needs rp, the session needs
   // apis - it takes it from here. A global would be one more thing anything
   // else on the page could write between the check above and that read.
-  const { link, trust } = await fakeWorld();
-  startDesktop(document.getElementById("root"), { link, session: null, trust, config });
+  // The session is null while there is no login (Tasks 19 and 20). It is
+  // taken from the stand-in rather than written as null here, so that the one
+  // line which will hand over the real session is already the line that runs:
+  // "Benutzer und Rechte" asks the session to sign a new trust list and for
+  // the API's clock, and says plainly that it cannot change anything while
+  // there is none.
+  const { link, trust, session } = await fakeWorld();
+  startDesktop(document.getElementById("root"), { link, session: session ?? null, trust, config });
 }
 
 start().catch(() => {
