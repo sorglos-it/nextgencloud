@@ -682,6 +682,17 @@ export function startDesktop(root, { link, session, trust, releaseKey } = {}) {
   const d = new Desktop(root, { link, session, trust, releaseKey });
   applyWallpaper(localStorageWallpaper());
   if (link && typeof link.onNotice === "function") link.onNotice((b) => d.noticeBytes(b));
+  // A new version of the trust list takes every proof with it. A user
+  // interface was proven against the list that was in force when it was put
+  // in the cache, and a newer version may have taken its store's key away or
+  // an admin's right to run root tasks - so nothing proven under the old one
+  // counts any more, and the apps are asked for again with the new one.
+  if (trust && typeof trust.onChange === "function") {
+    trust.onChange(() => {
+      d.uiCache.clear();
+      d.load();
+    });
+  }
   d.load();
   return d;
 }

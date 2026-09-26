@@ -22,6 +22,14 @@
      size that is drawn and the size that is reckoned with are one number. */
   --win-min-w: 240px;
   --win-min-h: 150px;
+  /* The one colour that means "stop". It stands with the others because the
+     shell reads every colour from these tokens, and an alarm painted in a
+     hex value of its own would be the one thing a theme cannot follow. */
+  --alarm: #ff7b72;
+  /* What lies over the rest of the screen while the alarm stands. It is a
+     token of its own because the two designs need different weights: the
+     same near-black over a light page reads as a fault in the page. */
+  --alarm-veil: rgba(6,9,16,.86);
 }
 html[data-theme="light"]{
   --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
@@ -31,6 +39,7 @@ html[data-theme="light"]{
   --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
   --field-bg:#ffffff; --muted:#5b6a80;
   --page-bg:#e7ecf4;
+  --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
 }
 /* The default while nobody has chosen a design. It bites only where the
    document carries no data-theme at all: with JavaScript off, and where
@@ -45,6 +54,7 @@ html[data-theme="light"]{
     --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
     --field-bg:#ffffff; --muted:#5b6a80;
     --page-bg:#e7ecf4;
+    --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
   }
 }
 *{box-sizing:border-box}
@@ -253,6 +263,20 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .confirmbox input{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--win-border);
                   background:var(--field-bg);color:var(--win-fg);font:inherit}
 .confirmrow{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+
+/* ---------- Alarm der Vertrauensliste ---------- */
+/* Over everything, including a question that is still open: this one is not
+   one of several things on the screen, it is the only one left. There is
+   nothing to press in it on purpose - see shell/trustlist.js. */
+.alarmback{position:fixed;inset:0;background:var(--alarm-veil);display:flex;align-items:center;
+           justify-content:center;z-index:100010;padding:16px}
+.alarmbox{width:min(460px,100%);padding:20px 22px;border-radius:12px;border:2px solid var(--alarm);
+          background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.alarmhead{margin:0 0 12px;font-size:17px;color:var(--alarm)}
+.alarmbox p{margin:0 0 10px}
+.alarmmain{font-weight:600}
+.alarmfoot{margin:16px 0 0;color:var(--muted);font-size:12.5px}
+.alarmbox:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
 /* ---------- Meldungen ---------- */
 /* One strip at the bottom edge, for one message at a time. The live region

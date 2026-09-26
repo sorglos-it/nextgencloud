@@ -335,11 +335,11 @@ function encodeAppParams(params) {
 async function verifiedUI(app, link, trust, cache) {
   const kept = cache ? cache.get(app.id, app.version) : null;
   // A hit was proven against the trust list that was in force when it was put
-  // in. NOTHING EMPTIES IT YET: the list never moves while there is no Task
-  // 20 to move it, and that task's own step is to call cache.clear() at every
-  // new version. Until then a desktop lives as long as its list does, so the
-  // two cannot come apart - but this is the line to read first if they ever
-  // do.
+  // in. WHAT EMPTIES IT: startDesktop hangs a listener on the trust store's
+  // onChange (Task 20), and every new version of the list calls cache.clear()
+  // before the apps are asked for again. So a hit can only ever have been
+  // proven against the list that is in force now - and this is the line to
+  // read first if the two ever come apart.
   if (kept !== null) return kept;
   const list = trustList(trust);
   const want = await uiHash(app, link, list);
