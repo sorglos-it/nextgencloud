@@ -71,12 +71,21 @@ switch ($path) {
         try {
             // Build the body first: a failure here must still be able to
             // become an error page.
-            $body = json_encode([
-                'version' => $version,
-                'anchor' => $config->anchor,
-                'rp' => $config->rp,
-                'apis' => $config->apis,
-            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            //
+            // An installation whose web controller is not paired yet has no
+            // anchor, and the member is left out rather than written as
+            // null. Strict JSON has no null on either side - Go answers
+            // enc.ErrNull and the shell's json.js refuses it the same way -
+            // so "anchor": null was a body the shell could not read at all.
+            // Leaving the member out is what Go's omitempty does for exactly
+            // this case, and net/config.js reads an absent anchor as none.
+            $payload = ['version' => $version];
+            if ($config->anchor !== null) {
+                $payload['anchor'] = $config->anchor;
+            }
+            $payload['rp'] = $config->rp;
+            $payload['apis'] = $config->apis;
+            $body = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         } catch (Throwable) {
             Page::fail(500, 'NGC ist nicht eingerichtet.');
             return true;
