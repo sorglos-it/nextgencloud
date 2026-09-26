@@ -3,10 +3,12 @@
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 import { loadConfig } from "../net/config.js";
+import { anchorFor, NOT_SET_UP } from "./trustlist.js";
 // A STAND-IN, and the only line of the shell that knows about it. Task 17
-// builds shell/channel.js and Task 20 shell/trust.js; then this import and
-// the two lines that use it below change, fake-link.js is deleted, and
-// nothing else moves.
+// built net/link.js and Task 20 shell/trustlist.js; what is still missing is
+// the login (Task 18), which is what gives the session cookie that
+// GET /api/v1/trust needs. With it, the two lines that use the stand-in below
+// change, fake-link.js is deleted, and nothing else moves.
 import { fakeWorld } from "./fake-link.js";
 
 const NEEDED = ["Ed25519", "X25519"];
@@ -62,11 +64,35 @@ async function start() {
     message("NGC ist nicht eingerichtet.");
     return;
   }
-  // PULLED FORWARD AND UNFINISHED. There is no login yet (Tasks 19 and 20) and
-  // no session (Task 17), so the desktop starts straight away and gets the
-  // stand-in instead of a channel, a session and an opened trust list. When
-  // the login lands, it runs between the configuration and this line and
-  // hands over the session, the list it opened and the release key it pinned.
+  // THE ROOT OF ALL OF IT: which keys this workplace believes. The anchor
+  // comes from the page's own server, or - while the web controller is not
+  // paired and /config.json therefore carries none - out of what the initial
+  // setup left in this browser. Without it there is no trust list to check
+  // anything against, and nothing may be shown at all; the sentence names
+  // what is missing instead of leaving the person with a page that does
+  // nothing. Task 19 puts the initial setup in the place of that message.
+  let anchor;
+  try {
+    anchor = await anchorFor(config);
+  } catch {
+    anchor = null;
+  }
+  if (anchor === null) {
+    message(NOT_SET_UP);
+    return;
+  }
+  // PULLED FORWARD AND UNFINISHED. There is no login yet (Task 18), so there
+  // is no session cookie, and GET /api/v1/trust answers 401 without one: the
+  // desktop starts straight away and gets the stand-in instead of an opened
+  // trust list. THE ONE LINE THAT IS STILL MISSING, and where it goes - right
+  // here, after the login has the cookie and before startDesktop:
+  //
+  //   const trust = await startTrust({ anchor, installation, link });
+  //
+  // startTrust (shell/trustlist.js) opens the chain against this anchor,
+  // follows it to the newest version, keeps it up to date from the session's
+  // trust hints and raises the alarm when it breaks. Its answer goes to
+  // startDesktop in place of the stand-in's `trust`.
   //
   // config is handed on rather than parked on window: nothing reads it yet,
   // and the moment something does - the login needs rp, the session needs
