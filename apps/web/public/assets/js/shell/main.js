@@ -3,9 +3,10 @@
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 // A STAND-IN, and the only line of the shell that knows about it. Task 17
-// builds shell/channel.js; then this import and the two lines that use it
-// below change, fake-link.js is deleted, and nothing else moves.
-import { fakeLink } from "./fake-link.js";
+// builds shell/channel.js and Task 20 shell/trust.js; then this import and
+// the two lines that use it below change, fake-link.js is deleted, and
+// nothing else moves.
+import { fakeWorld } from "./fake-link.js";
 
 const NEEDED = ["Ed25519", "X25519"];
 
@@ -56,9 +57,11 @@ async function start() {
   window.__ngcConfig = await res.json();
   // PULLED FORWARD AND UNFINISHED. There is no login yet (Tasks 19 and 20) and
   // no session (Task 17), so the desktop starts straight away and gets the
-  // stand-in instead of a channel. When the login lands, it runs between the
-  // configuration and this line and hands over the session it opened.
-  startDesktop(document.getElementById("root"), { link: fakeLink(), session: null, trust: null });
+  // stand-in instead of a channel and an opened trust list. When the login
+  // lands, it runs between the configuration and this line and hands over the
+  // session and the list it opened.
+  const { link, trust } = await fakeWorld();
+  startDesktop(document.getElementById("root"), { link, session: null, trust });
 }
 
 start().catch(() => {
