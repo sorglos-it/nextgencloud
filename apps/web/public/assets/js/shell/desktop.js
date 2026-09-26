@@ -55,6 +55,8 @@ class Desktop {
     this.uid = 0;
     this.appList = [];
     this.noticeTimer = 0;
+    // Which tile of the start menu carries the one tabindex of the list.
+    this.active = 0;
 
     clear(root);
     this.buildBar(root);
@@ -128,6 +130,12 @@ class Desktop {
         const first = this.list.querySelector(".smitem");
         if (first) first.click();
       }
+      // Type, then press down: that is how somebody without a mouse gets
+      // from the search into the list. Without it the search is a dead end.
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        this.moveActive("first");
+      }
     });
 
     const head = el("div", null, "Alle Apps");
@@ -140,10 +148,78 @@ class Desktop {
     // reader that the shell would then break.
     this.list.setAttribute("role", "menu");
     this.list.setAttribute("aria-label", "Alle Apps");
+    // A role="menu" is walked with the arrow keys and is ONE stop on the way
+    // through with Tab. Round 1 found the shell saying "menu" and doing
+    // neither: the arrows did nothing, and every tile was a tab stop of its
+    // own - a thousand of them with a thousand apps. Either the word goes or
+    // the behaviour comes; the behaviour is what the people this is built
+    // for need, so here it is.
+    //
+    // Real focus moves from tile to tile, so there is no aria-activedescendant:
+    // where the focus is IS where the focus is, and one answer beats two.
+    this.list.addEventListener("keydown", (e) => this.listKey(e));
 
     menu.append(this.search, head, this.list, this.buildLook(), this.buildFoot());
+    // Tab comes round inside the open menu instead of walking off into the
+    // desktop behind it - into controls the menu is covering, which is where
+    // round 1 found it going.
+    menu.addEventListener("keydown", (e) => this.trapTab(e));
     root.append(menu);
     this.menu = menu;
+  }
+
+  // The things in the menu that Tab stops at, in the order it meets them.
+  // The list contributes exactly one: whichever tile carries the roving
+  // tabindex at this moment.
+  tabStops() {
+    return [...this.menu.querySelectorAll('input, button, [role="menuitem"][tabindex="0"]')];
+  }
+
+  trapTab(e) {
+    if (e.key !== "Tab") return;
+    const stops = this.tabStops();
+    const i = stops.indexOf(document.activeElement);
+    if (i === -1) return;
+    const next = e.shiftKey ? i - 1 : i + 1;
+    if (next >= 0 && next < stops.length) return;
+    e.preventDefault();
+    stops[e.shiftKey ? stops.length - 1 : 0].focus();
+  }
+
+  // The keys a menu promises: down and right go on, up and left go back,
+  // Home and End go to the ends, and it comes round at both.
+  listKey(e) {
+    const keys = {
+      __proto__: null,
+      ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: "first", End: "last",
+    };
+    const how = keys[e.key];
+    if (how === undefined) return;
+    e.preventDefault();
+    this.moveActive(how);
+  }
+
+  items() {
+    return [...this.list.querySelectorAll(".smitem")];
+  }
+
+  // markActive keeps exactly one tile reachable with Tab. Anything else is a
+  // list of tab stops as long as the person has apps.
+  markActive(i) {
+    const items = this.items();
+    if (!items.length) return;
+    this.active = Math.max(0, Math.min(items.length - 1, i));
+    items.forEach((it, n) => { it.tabIndex = n === this.active ? 0 : -1; });
+  }
+
+  moveActive(how) {
+    const items = this.items();
+    if (!items.length) return;
+    const i = how === "first" ? 0
+      : how === "last" ? items.length - 1
+        : (this.active + how + items.length) % items.length;
+    this.markActive(i);
+    items[this.active].focus();
   }
 
   // The look of the desktop, right in the start menu: light or dark, one of
@@ -289,6 +365,11 @@ class Desktop {
   // ---- the start menu ------------------------------------------------------
   toggleMenu(open) {
     const o = open === undefined ? !this.menu.classList.contains("open") : open;
+    // The focus has to leave before the menu does. A menu that closes over
+    // the element holding the focus leaves it on <body>, and from there the
+    // next Tab starts again at the top of the page - which is where round 1
+    // found it after Escape and after every app start.
+    const hadFocus = !o && this.menu.contains(document.activeElement);
     this.menu.classList.toggle("open", o);
     this.startBtn.classList.toggle("open", o);
     this.startBtn.setAttribute("aria-expanded", o ? "true" : "false");
@@ -297,6 +378,8 @@ class Desktop {
       this.renderMenu("");
       this.markLook();
       this.search.focus();
+    } else if (hadFocus) {
+      this.startBtn.focus();
     }
   }
 
@@ -309,17 +392,29 @@ class Desktop {
       return;
     }
     for (const a of hits) this.list.append(this.menuItem(a));
+    // The tiles are built anew on every keystroke in the search, so the one
+    // tab stop has to be set anew with them.
+    this.markActive(0);
   }
 
   menuItem(a) {
     const it = el("div", "smitem");
     it.setAttribute("role", "menuitem");
-    it.tabIndex = 0;
+    // -1 for now; markActive hands the one 0 out once the list is complete.
+    it.tabIndex = -1;
     it.append(this.glyph(a), el("span", "n", a.name));
     if (a.state !== "ok") it.classList.add("off");
+    // Clicking a tile focuses it, and then it is the one the arrows carry on
+    // from: the mouse and the keyboard must not hold two different places.
+    it.addEventListener("focus", () => this.markActive(this.items().indexOf(it)));
     const open = () => {
-      this.openApp(a.id);
+      // Closing first, opening second, on purpose. Closing puts the focus
+      // back on the Start button, which is where it belongs if no window
+      // opens; if one does, the next line moves it on into that window. The
+      // other order would close over the focus that was just placed.
       this.toggleMenu(false);
+      const win = this.openApp(a.id);
+      if (win) win.el.focus();
     };
     it.addEventListener("click", open);
     it.addEventListener("keydown", (e) => {
