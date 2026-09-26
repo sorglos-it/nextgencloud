@@ -41,6 +41,12 @@ export class ApiError extends Error {
 // json.js names the rule that broke and quotes nothing, but an answer of
 // PathLoginFinish holds a certificate, and a text about it has no business in
 // the shell's error path.
+//
+// THE PRICE, so the next person debugging this knows where it went: the
+// developer console sees "E_PROTOCOL" and never the rule that broke - not
+// "repeated member name", not "number beyond 2^53-1". Whoever needs it puts
+// a breakpoint on the throw below and reads the caught error there; it is
+// not logged, because the answer it is about may hold a certificate.
 function parse(parser, raw) {
   try {
     return parser(raw);
@@ -62,15 +68,19 @@ function retrySeconds(text) {
   return Number(text);
 }
 
-// read takes the body of an answer and stops at limit while it is still
-// arriving, so nothing bigger than the contract allows is ever held in one
-// piece. A parser's budget cannot do that: it counts once the whole answer is
-// in memory, which is one round trip too late.
+// readBounded takes the body of an answer and stops at limit while it is
+// still arriving, so nothing bigger than the contract allows is ever held in
+// one piece. A parser's budget cannot do that: it counts once the whole
+// answer is in memory, which is one round trip too late.
 //
 // null means the body ran past limit. What that means is the caller's to
 // decide: too much of an answer that was going to be read is E_TOOLARGE, too
 // much where a CLOSE was due is simply no CLOSE.
-async function read(res, limit) {
+//
+// Exported for net/config.js, its second caller: /config.json is no path of
+// the API, but it needs the same bound, and a bound written twice is a bound
+// that gets it right once.
+export async function readBounded(res, limit) {
   // An answer without a body has no stream to read; some engines give null
   // here rather than an empty one.
   if (res.body === null) return new Uint8Array(0);
@@ -148,7 +158,7 @@ async function call(path, method, body, maxBody, maxAnswer) {
   if (res.status === 204) return null;
   // An error answer carries a CLOSE and nothing longer; a good one carries
   // what its own contract bounds.
-  const raw = await read(res, res.ok ? maxAnswer : wire.MAX_CLOSE_PAYLOAD);
+  const raw = await readBounded(res, res.ok ? maxAnswer : wire.MAX_CLOSE_PAYLOAD);
   if (raw === null) throw new ApiError(res.ok ? wire.CODES.TOOLARGE : wire.CODES.UNREACHABLE);
   if (res.ok) return raw;
   // The error is recognised by the code in the CLOSE JSON, not by the status.
@@ -175,6 +185,17 @@ async function needBytes(path, method, body, maxBody, maxAnswer) {
   return raw;
 }
 
+// done is call for a path whose whole answer the contract gives as 204.
+// shared/README.md, "Vor dem WebSocket", names 204 for PathSetup POST and
+// PathLogout and no other success at all, so no other one is taken: a shell
+// that called an installation set up on an answer nobody specified would be
+// believing a proxy, not the API.
+async function done(path, method, body, maxBody) {
+  if (await call(path, method, body, maxBody, wire.MAX_CLOSE_PAYLOAD) !== null) {
+    throw new ApiError(wire.CODES.PROTOCOL);
+  }
+}
+
 // getSetupOffer asks for the offer while no admin exists. It hands back the
 // bytes: only the caller has the one-time code that session.parseSetupOffer
 // checks the MAC with, and the code never leaves that caller.
@@ -182,12 +203,8 @@ export function getSetupOffer() {
   return needBytes(session.PATH_SETUP, "GET", null, 0, session.MAX_SETUP_OFFER);
 }
 
-// postSetup sends version 1 of the trust list with its MAC. The answer is a
-// 204; anything else that is not an error is read and dropped, because a
-// setup that worked must not fail over a proxy that rewrote the status.
-export async function postSetup(body) {
-  await call(session.PATH_SETUP, "POST", body, session.MAX_REQUEST, wire.MAX_CLOSE_PAYLOAD);
-}
+// postSetup sends version 1 of the trust list with its MAC.
+export const postSetup = (body) => done(session.PATH_SETUP, "POST", body, session.MAX_REQUEST);
 
 // loginStart asks for the challenge. The API holds LoginStart.Name to
 // trust.ValidLoginName before it looks anything up (session.ParseLoginStart),
@@ -213,9 +230,7 @@ export async function loginFinish(body) {
 
 // logout ends the session. The API deletes the cookie; there is nothing here
 // to clear, because the cookie is HttpOnly and this code never saw it.
-export async function logout() {
-  await call(session.PATH_LOGOUT, "POST", null, 0, wire.MAX_CLOSE_PAYLOAD);
-}
+export const logout = () => done(session.PATH_LOGOUT, "POST", null, 0);
 
 // trustChain fetches the versions from "from" on, or null when there is
 // nothing newer.

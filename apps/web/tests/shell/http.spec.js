@@ -179,6 +179,38 @@ test("a name that is no login name is not sent", async ({ shell }) => {
   expect(seen.n).toBe(0);
 });
 
+// shared/README.md, "Vor dem WebSocket", gives PathSetup POST and PathLogout
+// a 204 and no other success at all. Taking any 2xx would mean the shell
+// calls an installation set up on an answer nobody specified - it would be
+// believing a proxy rather than the API.
+test("a 200 where the contract says 204 is no success", async ({ shell }) => {
+  await mock(shell, "/api/v1/setup", 200, "{}");
+  await mock(shell, "/api/v1/logout", 200, "");
+  const out = await shell.evaluate(async () => {
+    const http = await import("/assets/js/net/http.js");
+    const codes = [];
+    for (const call of [() => http.postSetup(new Uint8Array(1)), () => http.logout()]) {
+      try { await call(); codes.push("taken"); } catch (e) { codes.push(e.code); }
+    }
+    return codes;
+  });
+  expect(out).toEqual(["E_PROTOCOL", "E_PROTOCOL"]);
+});
+
+test("a 204 where the contract says 204 is success", async ({ shell }) => {
+  await mock(shell, "/api/v1/setup", 204, "");
+  await mock(shell, "/api/v1/logout", 204, "");
+  const out = await shell.evaluate(async () => {
+    const http = await import("/assets/js/net/http.js");
+    const got = [];
+    for (const call of [() => http.postSetup(new Uint8Array(1)), () => http.logout()]) {
+      try { got.push(await call() === undefined ? "ok" : "value"); } catch (e) { got.push(e.code); }
+    }
+    return got;
+  });
+  expect(out).toEqual(["ok", "ok"]);
+});
+
 test("the socket address is this page's own, as wss", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const http = await import("/assets/js/net/http.js");
