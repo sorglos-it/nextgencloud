@@ -39,9 +39,17 @@ export const MAX_CONFIG = 8 << 10;
 // itself against, so it has to be that many bytes and no other number.
 const HASH_SIZE = 32;
 
+// P and not S for the anchor: an installation whose web controller is not
+// paired has none, and strict JSON has no null to say that with (Go:
+// enc.ErrNull, and json.js refuses a null just the same), so the member is
+// absent and P reads an absent member as null. index.php writes it that way
+// for exactly this reason.
 const anchorShape = P({ seq: uint, hash: bytes });
 const rpShape = S({ id: str, origins: A(str) });
 const configShape = S({ version: str, anchor: anchorShape, rp: rpShape, apis: A(str) });
+// The items are the ones config.webBudget counts in Go, name for name. The
+// size is not: Go bounds the FILE on disk with config.MaxConfig (1 MiB),
+// while this bounds the answer to a browser, which holds far less.
 const configBudget = new Budget({
   size: MAX_CONFIG,
   items: { apis: MAX_APIS, "rp/origins": MAX_ORIGINS },
