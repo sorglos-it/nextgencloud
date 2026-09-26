@@ -17,6 +17,11 @@
   --field-bg: #151a23;
   --muted: #97a3b6;
   --page-bg: #0d1017;
+  /* The smallest a window may be. It stands here because this is where a
+     window is drawn; window.js reads these two and lays out by them, so the
+     size that is drawn and the size that is reckoned with are one number. */
+  --win-min-w: 240px;
+  --win-min-h: 150px;
 }
 html[data-theme="light"]{
   --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
@@ -138,9 +143,11 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
 .wpgrid button.on{border-color:var(--accent)}
 
 /* ---------- Fenster ---------- */
-.win{position:absolute;display:flex;flex-direction:column;min-width:240px;min-height:150px;
+.win{position:absolute;display:flex;flex-direction:column;
+     min-width:var(--win-min-w);min-height:var(--win-min-h);
      background:var(--win-bg);color:var(--win-fg);border:1px solid var(--win-border);
      border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.win:focus{outline:none}
 .win.min{display:none}
 .win.max{border-radius:0}
 .win.anim{transition:left .16s,top .16s,width .16s,height .16s}

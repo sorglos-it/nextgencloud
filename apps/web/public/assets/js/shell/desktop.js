@@ -6,7 +6,7 @@
 // look and handling are taken from it, that habit is not.
 import { el, button, text, clear } from "./dom.js";
 import * as core from "../contracts/core.js";
-import { Win } from "./window.js";
+import { Win, minSize } from "./window.js";
 import { calcApp } from "../apps/calc.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
@@ -357,6 +357,12 @@ class Desktop {
       const bytes = await this.link.call(action.app, action.service, action.name);
       list = core.parseResult(action, bytes);
     } catch {
+      // ONE BAD APP THROWS THE WHOLE LIST AWAY, and that is meant. The list
+      // arrives as one answer from one API; if any part of it broke the
+      // contract, there is no way to tell which of the rest was tampered
+      // with too. Showing "the good ones" would be showing a list somebody
+      // else chose. So none of them is shown.
+      //
       // Why the answer was no good is nothing the person can act on, and
       // saying more would describe the inside of the server.
       this.notice("error", "Die Liste der Apps konnte nicht geladen werden.");
@@ -367,6 +373,10 @@ class Desktop {
     this.renderMenu("");
   }
 
+  // The icons fill columns from the left and stop at the desktop's edge. Past
+  // roughly a hundred apps the last of them are behind that edge and cannot
+  // be clicked - which is all right: the way to an app among a hundred is the
+  // search in the start menu, not a wall of icons to read through.
   renderIcons() {
     clear(this.icons);
     for (const a of this.appList) {
@@ -444,20 +454,38 @@ class Desktop {
   }
 
   // ---- windows -------------------------------------------------------------
+  // tile lays the open windows out side by side.
+  //
+  // It asks the stylesheet how small a window may be drawn (minSize) before
+  // it decides how many fit across. Round 1 found what happens otherwise: on
+  // a 375 px phone it made three 187 px columns, .win{min-width} drew 240,
+  // and one window stood 52 px off the edge where nothing can reach it. A
+  // column narrower than a window is not a column.
   tile() {
     const list = [...this.windows.values()].filter((w) => !w.min);
     if (!list.length) return;
     const a = this.area();
-    const cols = Math.ceil(Math.sqrt(list.length));
+    const min = minSize();
+    // As square a grid as the windows allow, but never more columns than fit
+    // at the smallest a window may be - and never fewer than one, because a
+    // desktop narrower than one window still has to show it.
+    const fitting = Math.max(1, Math.floor(a.w / min.w));
+    const cols = Math.max(1, Math.min(Math.ceil(Math.sqrt(list.length)), fitting));
     const rows = Math.ceil(list.length / cols);
+    const cw = Math.max(min.w, Math.floor(a.w / cols));
+    const ch = Math.max(min.h, Math.floor(a.h / rows));
     list.forEach((w, i) => {
       const c = i % cols, r = Math.floor(i / cols);
-      const cw = Math.floor(a.w / cols), ch = Math.floor(a.h / rows);
+      // The last clamp is for the desktop too small to hold the grid at all:
+      // then the tiles overlap rather than walk off the edge, because a
+      // window half outside is a window that cannot be closed.
+      const left = Math.max(0, Math.min(c * cw, a.w - cw));
+      const top = Math.max(0, Math.min(r * ch, a.h - ch));
       w.max = false;
       w.el.classList.remove("max");
       w.el.classList.add("anim");
       setTimeout(() => w.el.classList.remove("anim"), 200);
-      Object.assign(w.el.style, { left: c * cw + "px", top: r * ch + "px", width: cw + "px", height: ch + "px" });
+      Object.assign(w.el.style, { left: left + "px", top: top + "px", width: cw + "px", height: ch + "px" });
     });
   }
 

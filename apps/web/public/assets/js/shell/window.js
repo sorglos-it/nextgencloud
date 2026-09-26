@@ -9,11 +9,40 @@ import { el, button, text } from "./dom.js";
 
 // The smallest a window may get. Below that the title bar's three buttons
 // stop fitting and the window can no longer be closed by clicking.
-const MIN_W = 240;
-const MIN_H = 150;
+//
+// THE NUMBER LIVES IN THE STYLESHEET, in --win-min-w and --win-min-h, and
+// .win{min-width} draws from the same two. Round 1 found why that matters:
+// tile() divided the desktop into 187 px columns while the browser drew 240,
+// and a window stood 52 px off the edge of a phone screen. Two numbers that
+// mean the same thing will drift; one of them has to know the other, and the
+// one that draws is the one to ask.
+//
+// The fallbacks are what the stylesheet says today. They are reached only if
+// the stylesheet did not load at all, and then the window would be unstyled
+// anyway - a number here is better than NaN.
+const MIN_FALLBACK = { w: 240, h: 150 };
+let measuredMin = null;
+
+export function minSize() {
+  if (measuredMin) return measuredMin;
+  const cs = getComputedStyle(document.documentElement);
+  const w = parseInt(cs.getPropertyValue("--win-min-w"), 10);
+  const h = parseInt(cs.getPropertyValue("--win-min-h"), 10);
+  measuredMin = {
+    w: Number.isFinite(w) && w > 0 ? w : MIN_FALLBACK.w,
+    h: Number.isFinite(h) && h > 0 ? h : MIN_FALLBACK.h,
+  };
+  return measuredMin;
+}
 
 // How close to an edge the pointer has to come before the window docks there.
 const SNAP_EDGE = 12;
+
+// How far the pointer has to travel before a press counts as a drag. It only
+// decides when a maximized window is torn loose, and it has to be larger than
+// the jitter of a hand double-clicking and smaller than a movement anybody
+// means.
+const TEAR = 4;
 
 // How much of a window has to stay on the desktop while it is dragged: enough
 // of the title bar to grab it again.
@@ -30,6 +59,10 @@ export class Win {
     this.onClose = null;
 
     this.el = el("div", "win");
+    // A window can be given the focus without being a tab stop: the desktop
+    // sends it there when the app is started, so the keyboard carries on
+    // inside the window it just asked for instead of at the top of the page.
+    this.el.tabIndex = -1;
     const bar = el("div", "titlebar");
     // The glyph says nothing a screen reader needs; the title right beside it
     // says all of it. Without aria-hidden the window's name would read
@@ -125,12 +158,18 @@ export class Win {
     this.focus();
   }
 
-  toggleMax() {
+  // animate is false where the caller reads the new size back straight away:
+  // during the .win.anim cross-fade offsetWidth still answers the OLD size,
+  // and round 1 found what that costs - a window torn loose from maximized
+  // jumped to the left edge of the screen every time.
+  toggleMax(animate = true) {
     const a = this.desktop.area();
     // The animation class comes off again by itself: a window left in
     // transition would drag with a delay for the rest of its life.
-    this.el.classList.add("anim");
-    setTimeout(() => this.el.classList.remove("anim"), 200);
+    if (animate) {
+      this.el.classList.add("anim");
+      setTimeout(() => this.el.classList.remove("anim"), 200);
+    }
     if (this.max) {
       Object.assign(this.el.style, this.prev || { left: "60px", top: "40px", width: "600px", height: "420px" });
       this.max = false;
@@ -165,7 +204,7 @@ export class Win {
 
   // ---- dragging (mouse, pen and finger, all through pointer events) --------
   makeDraggable(bar) {
-    let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false, snap = null;
+    let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false, torn = false, snap = null;
 
     bar.addEventListener("dblclick", (e) => {
       if (!e.target.closest(".wbtn")) this.toggleMax();
@@ -175,16 +214,13 @@ export class Win {
       if (e.target.closest(".wbtn") || e.button === 2) return;
       this.focus();
       dragging = true;
+      torn = false;
       snap = null;
-      if (this.max) {
-        // Tear a maximized window loose under the pointer: it keeps the spot
-        // on the title bar that was grabbed, so it does not jump away.
-        const rel = e.clientX / this.desktop.area().w;
-        this.toggleMax();
-        const w = this.el.offsetWidth;
-        this.el.style.left = Math.max(0, e.clientX - w * rel) + "px";
-        this.el.style.top = "0px";
-      }
+      // A maximized window is NOT torn loose here. Round 1: pressing the
+      // title bar restored it, and the double click that followed maximized
+      // it again - four double clicks, four times maximized, and the one
+      // gesture everybody tries first could not make a window small again.
+      // The tearing waits for a real drag; see the pointermove below.
       sx = e.clientX; sy = e.clientY;
       ox = this.el.offsetLeft; oy = this.el.offsetTop;
       // Pointer capture keeps the moves coming even when the pointer leaves
@@ -195,6 +231,26 @@ export class Win {
 
     bar.addEventListener("pointermove", (e) => {
       if (!dragging) return;
+      if (this.max && !torn) {
+        // Below the threshold this is still a click, not a drag, and a click
+        // on a title bar does nothing. Above it, tear the window loose under
+        // the pointer: it keeps the spot on the title bar that was grabbed,
+        // so it does not jump away.
+        if (Math.abs(e.clientX - sx) < TEAR && Math.abs(e.clientY - sy) < TEAR) return;
+        torn = true;
+        const rel = sx / this.desktop.area().w;
+        // No cross-fade: offsetWidth is read on the very next line, and
+        // during a transition it answers the size the window is leaving.
+        this.toggleMax(false);
+        const w = this.el.offsetWidth;
+        this.el.style.left = Math.max(0, sx - w * rel) + "px";
+        this.el.style.top = "0px";
+        // The drag carries on from where the small window now stands, while
+        // sx and sy stay the point that was grabbed - so the window follows
+        // the pointer by exactly what it has moved since.
+        ox = this.el.offsetLeft;
+        oy = this.el.offsetTop;
+      }
       const a = this.desktop.area(), W = this.el.offsetWidth;
       let nx = ox + e.clientX - sx;
       let ny = oy + e.clientY - sy;
@@ -263,12 +319,28 @@ export class Win {
       });
       h.addEventListener("pointermove", (e) => {
         if (!on) return;
+        const min = minSize();
         const dx = e.clientX - sx, dy = e.clientY - sy;
         let l = ox, t = oy, w = ow, hh = oh;
-        if (dir.includes("e")) w = Math.max(MIN_W, ow + dx);
-        if (dir.includes("s")) hh = Math.max(MIN_H, oh + dy);
-        if (dir.includes("w")) { w = Math.max(MIN_W, ow - dx); l = ox + (ow - w); }
-        if (dir.includes("n")) { hh = Math.max(MIN_H, oh - dy); t = Math.max(0, oy + (oh - hh)); }
+        if (dir.includes("e")) w = Math.max(min.w, ow + dx);
+        if (dir.includes("s")) hh = Math.max(min.h, oh + dy);
+        // West and north drag the NEAR edge, so the far one must not move.
+        // Both are written as "hold the far edge, put the near one where it
+        // may go, and let the size follow" - round 1 found what the other way
+        // round costs: the top was clamped at the desktop's edge and the
+        // height went on growing, so the bottom edge walked 193 px down the
+        // screen. Only the top is clamped, because only the top has the
+        // taskbar above it that a window must not go behind.
+        if (dir.includes("w")) {
+          const right = ox + ow;
+          l = Math.min(right - min.w, ox + dx);
+          w = right - l;
+        }
+        if (dir.includes("n")) {
+          const bottom = oy + oh;
+          t = Math.min(bottom - min.h, Math.max(0, oy + dy));
+          hh = bottom - t;
+        }
         Object.assign(this.el.style, { left: l + "px", top: t + "px", width: w + "px", height: hh + "px" });
       });
       const end = (e) => {

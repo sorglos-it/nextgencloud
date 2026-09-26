@@ -274,3 +274,89 @@ test("a maximized window keeps filling the desktop when it changes size", async 
     expect(await geom(win)).toEqual({ left: "0px", top: "0px", width: a.w + "px", height: a.h + "px", max: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// The four findings of round 1 that live in window.js (K1, K2, K4).
+// ---------------------------------------------------------------------------
+
+test("a double click on the title bar maximizes and restores, over and over", async ({ shell }) => {
+  // K1. Four double clicks used to leave the window maximized four times:
+  // pointerdown tore the maximized window loose and dblclick put it straight
+  // back. This is the first gesture anybody tries on a window.
+  const win = await openApp(shell, "Rechner");
+  await place(win, 300, 200, 360, 260);
+  const bar = win.locator(".titlebar");
+  const beat = { position: { x: 40, y: 18 } };
+  for (let i = 0; i < 2; i++) {
+    await bar.dblclick(beat);
+    await shell.waitForTimeout(300);
+    await expect(win).toHaveClass(/max/);
+    await bar.dblclick(beat);
+    await shell.waitForTimeout(300);
+    await expect(win).not.toHaveClass(/max/);
+    expect(await geom(win)).toEqual({
+      left: "300px", top: "200px", width: "360px", height: "260px", max: false,
+    });
+  }
+});
+
+test("a maximized window torn loose keeps the spot that was grabbed", async ({ shell }) => {
+  // K2. The width was read in the middle of the .win.anim cross-fade, so it
+  // was still the maximized one and the window jumped to left:0 - the left
+  // edge of the screen, where it is easy to lose.
+  const win = await openApp(shell, "Rechner");
+  const a = await area(shell);
+  await place(win, 300, 200, 360, 260);
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).toHaveClass(/max/);
+  await shell.waitForTimeout(300);
+  const grabX = 400;
+  const bar = win.locator(".titlebar");
+  const bb = await bar.boundingBox();
+  await shell.mouse.move(grabX, bb.y + bb.height / 2);
+  await shell.mouse.down();
+  await shell.mouse.move(grabX, bb.y + bb.height / 2 + 120, { steps: 10 });
+  await shell.mouse.up();
+  await shell.waitForTimeout(300);
+  const g = await geom(win);
+  expect(g.max).toBe(false);
+  expect(g.width).toBe("360px");
+  // The point under the pointer stays where it was: it sat grabX/a.w of the
+  // way across the maximized window, so it sits there in the small one too.
+  const want = Math.round(grabX - 360 * (grabX / a.w));
+  expect(Math.abs(parseInt(g.left, 10) - want)).toBeLessThanOrEqual(2);
+});
+
+test("a press on a maximized title bar alone does not tear it loose", async ({ shell }) => {
+  // The other half of K1: only a real drag tears a maximized window loose.
+  // A press that goes nowhere is a click, and a click on a title bar does
+  // nothing at all.
+  const win = await openApp(shell, "Rechner");
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).toHaveClass(/max/);
+  await shell.waitForTimeout(300);
+  const bar = win.locator(".titlebar");
+  const bb = await bar.boundingBox();
+  await shell.mouse.move(bb.x + 40, bb.y + bb.height / 2);
+  await shell.mouse.down();
+  await shell.mouse.up();
+  await shell.waitForTimeout(300);
+  await expect(win).toHaveClass(/max/);
+});
+
+test("pulling the north edge past the top leaves the bottom edge where it was", async ({ shell }) => {
+  // K4. The top was clamped at the desktop's edge but the height kept
+  // growing, so the bottom edge walked down the screen with it.
+  const win = await openApp(shell, "Rechner");
+  await place(win, 400, 10, 400, 300);
+  const h = win.locator(".rs.n");
+  const hb = await h.boundingBox();
+  await shell.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+  await shell.mouse.down();
+  await shell.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2 - 200, { steps: 10 });
+  await shell.mouse.up();
+  const g = await geom(win);
+  expect(parseInt(g.top, 10)).toBe(0);
+  // 10 + 300 was the bottom before, and it is the bottom after.
+  expect(parseInt(g.top, 10) + parseInt(g.height, 10)).toBe(310);
+});
