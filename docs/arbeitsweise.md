@@ -1220,6 +1220,34 @@ Daraus zwei Dinge:
   willst.** Der Zugewinn (fremde Augen) ist es oft wert; nur muss man wissen,
   was man dafür hergibt.
 
+### Und dieselbe Form nach innen: dein eigener Zähler
+
+Alle Fälle oben handeln vom Gegenstand eines **Aufrufers**, der sich zwischen
+zwei Lesungen ändert. Die gefährlichste Fassung dieser Form kam aus der eigenen
+Tasche.
+
+Der Entwurf für die Sitzungsleitung baute die Nonce so:
+
+    const iv = ivFrom(this.n);        // lesen
+    const out = await crypto.subtle.encrypt(…, iv, …);   // warten
+    this.n++;                         // erhöhen
+
+Zwei Aufrufe, die sich überlappen, lesen **dieselbe** Zahl. Für einen Zähler
+wäre das ein Zählfehler; für eine **Nonce** ist es der Totalschaden: eine Nonce,
+zwei Klartexte, und die Vertraulichkeit eines AEAD ist dahin. Kein Aufrufer muss
+dafür lügen, keine Lücke muss offenstehen — es genügt, dass zweimal gesendet
+wird, bevor das erste `await` zurückkommt.
+
+Gefunden wurde es beim Bauen, nicht von einem Test: ein Test hätte zwei
+gleichzeitige Sendungen anstoßen müssen, und der naheliegende Test schickt eine.
+Repariert mit einer **Sendekette** und einer **Empfangsschleife** — die Zahl wird
+genommen und erhöht, bevor irgendetwas wartet.
+
+**Also: wo du einen Wert nimmst, der sich pro Benutzung ändern muss, nimm ihn
+und schreib ihn fort, bevor du wartest.** Zwischen `lesen` und `erhöhen` darf
+kein `await` stehen. Und wenn dir das wie eine Kleinigkeit vorkommt: dieselbe
+Form, nach außen gerichtet, hat diesen Strang zehn Runden gekostet.
+
 ## 15. Beim dritten Mal baust du den Wächter, nicht die Reparatur
 
 Ein Strang hatte eine Fehlerform, die immer gleich aussieht: ein Gegenstand, der
