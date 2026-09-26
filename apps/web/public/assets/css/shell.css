@@ -172,9 +172,9 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
           border-radius:8px;display:none;pointer-events:none;z-index:99999}
 
 /* The frame an app runs in. It fills the window's body edge to edge: a border
-   of the shell around an app's page would read as part of the app. Empty
-   until Task 22 builds the sandboxed frame; the rule stands here so the app
-   that gets one does not first have to be framed by hand. */
+   of the shell around an app's page would read as part of the app. The frame
+   has an origin of its own, so nothing of this stylesheet reaches inside it -
+   an app brings its own look and is told the shell's through ngc.js. */
 .appframe{display:block;width:100%;height:100%;border:0;background:var(--win-bg)}
 
 /* ---------- App-Inhalte ---------- */

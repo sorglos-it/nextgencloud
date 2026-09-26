@@ -8,23 +8,30 @@ import { el, button, text, clear } from "./dom.js";
 import * as core from "../contracts/core.js";
 import { Win } from "./window.js";
 import { calcApp } from "../apps/calc.js";
+import { UICache, openAppUI } from "./appframe.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
 } from "./theme.js";
 
 // The apps whose face the web interface itself builds: app id to the function
-// that fills the window's body. Everything else needs its verified user
-// interface and the sandboxed frame it runs in (Task 22).
+// that fills the window's body. Every other app runs in the fenced frame of
+// appframe.js, against its signed user interface.
 //
-// TO BE MOVED WITH TASK 22. Whatever stands here mounts straight into
-// win.body, because ngc.js and the sandboxed frame do not exist yet. It has
-// to end up in that frame like every other app: an app that ships with NGC
-// must not behave differently from an app out of the store, or the frame is
-// only ever tested by the apps nobody wrote yet, and a built-in app would
-// quietly keep powers - same origin, the whole DOM of the shell, localStorage
-// - that a store app is refused. When appframe.js lands, this table maps the
-// app id to its entry inside the frame and nothing mounts into win.body any
-// more.
+// STILL HERE AFTER TASK 22, AND WHY. The frame exists now and a real app runs
+// in it, so the frame is no longer tested only by apps nobody wrote. The
+// calculator cannot follow it yet, and the reason is the contract and not the
+// work: core.AppParams refuses a core app ("ngc.") for both ngc.desktop/ui
+// and ngc.desktop/ui-proof, so "ngc.calc" can never be asked for a user
+// interface, let alone a proof of one. Moving it means first deciding what it
+// IS - an app of the store like org.sorglos.calculator, which is what
+// shared/testdata calls it, or a surface NGC ships and vouches for itself -
+// and that decision belongs with Task 25, which builds the surfaces of the
+// apps that ship with NGC.
+//
+// What it costs while it stands here, named so that nobody has to find it
+// again: the calculator runs in the shell's own origin, with the whole DOM of
+// the shell and localStorage in reach - exactly what the frame takes away
+// from every other app.
 const BUILTIN = {
   __proto__: null,
   "ngc.calc": calcApp,
@@ -47,6 +54,13 @@ class Desktop {
     // desktop asks nothing of them today.
     this.session = session ?? null;
     this.trust = trust ?? null;
+
+    // The user interfaces that have already been proven, one cache for the
+    // whole desktop: an app that is closed and opened again is not fetched
+    // and not checked a second time. Task 20 empties it at every new version
+    // of the trust list, which is what ties a proof to the list it was
+    // checked against.
+    this.uiCache = new UICache();
 
     this.windows = new Map();
     this.focused = null;
@@ -424,12 +438,12 @@ class Desktop {
           "Bitte das Fenster schließen und es noch einmal versuchen.");
       }
     } else {
-      // TO BE REPLACED WITH TASK 22 (and 23, 24 for the two core apps). Every
-      // other app needs its verified user interface in a sandboxed frame; the
-      // shell does not have one yet, so it says so instead of showing an
-      // empty window.
-      this.placeholder(win, "Diese App ist noch nicht fertig.",
-        "Sie kommt mit einem der nächsten Schritte.");
+      // Every other app: its signed user interface, in the fenced frame.
+      // openAppUI takes the window over from here - it fills it, or it says
+      // why it will not - and it owns win.onClose from its first line, so a
+      // window closed while the interface is still on its way takes its
+      // listeners with it.
+      openAppUI(win, { app: a, link: this.link, trust: this.trust, cache: this.uiCache });
     }
     return win;
   }
