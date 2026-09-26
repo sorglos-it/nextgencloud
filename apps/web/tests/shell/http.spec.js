@@ -48,6 +48,35 @@ test("an error is recognised by the code in the CLOSE JSON, not by the status", 
     message: "Zu viele Fehlversuche. Bitte später erneut versuchen." });
 });
 
+// The case above cannot fail for the thing its name claims, measured.
+// session.httpStatus pairs E_LOCKED with 429 and E_UNREACHABLE with 503, and
+// those are exactly the two answers the brief's cases play back - so a shell
+// that read res.status, mapped it back and never opened the body at all
+// passed both of them, and every other case in this file with them: nine
+// green. The two below are the answers where the status and the body
+// disagree, and there the body is the only one that may decide. A proxy that
+// rewrites a status while passing the payload through is the ordinary way
+// they come apart.
+test("a 500 that carries an E_LOCKED CLOSE is E_LOCKED, not E_INTERNAL", async ({ shell }) => {
+  await mock(shell, "/api/v1/login/start", 500,
+    JSON.stringify({ status: "error", code: "E_LOCKED", message: "Zu viele Fehlversuche. Bitte später erneut versuchen." }));
+  const out = await shell.evaluate(async () => {
+    const http = await import("/assets/js/net/http.js");
+    try { await http.loginStart("anna"); return "none"; } catch (e) { return e.code; }
+  });
+  expect(out).toBe("E_LOCKED");
+});
+
+test("a 429 that carries no CLOSE is E_UNREACHABLE, not E_LOCKED", async ({ shell }) => {
+  await shell.route("**/api/v1/login/start", (route) =>
+    route.fulfill({ status: 429, contentType: "text/html", body: "<html>Too Many Requests</html>" }));
+  const out = await shell.evaluate(async () => {
+    const http = await import("/assets/js/net/http.js");
+    try { await http.loginStart("anna"); return "none"; } catch (e) { return e.code; }
+  });
+  expect(out).toBe("E_UNREACHABLE");
+});
+
 test("an answer that is no JSON counts as E_UNREACHABLE", async ({ shell }) => {
   await shell.route("**/api/v1/login/start", (route) =>
     route.fulfill({ status: 503, contentType: "text/html", body: "<html>Service Unavailable</html>" }));
