@@ -28,24 +28,35 @@ export const CALC = app({ id: "ngc.calc", name: "Rechner", width: 300, height: 4
 
 // linkModule builds the module the page gets in place of shell/fake-link.js.
 // It is written out as source, not as an object: the page imports a module,
-// and the shape is the one of the stand-in it replaces - call() hands back
-// bytes, onNotice() takes a listener.
+// and the shape is the one of the stand-in it replaces - fakeWorld() hands
+// back a link whose call() answers with bytes, and onNotice() takes a
+// listener.
+//
+// THE NAME HAS TO BE THE ONE main.js IMPORTS. It was fakeLink until Task 22
+// renamed the stand-in's export to fakeWorld; this file was not carried
+// along, and from 2cd8d10 to 8669551 the module served here had no fakeWorld
+// in it. A named import that is not there does not fail at the call, it
+// fails at LINKING: main.js never ran, no desktop was ever built, and all
+// twelve cases of desktop-hostile.spec.js failed at "#taskbar is visible" -
+// measured on 8669551, 12 failed out of 12. None of them was measuring the
+// desktop's refusals any more.
 function linkModule(apps) {
   return `const enc = new TextEncoder();
 const APPS = ${JSON.stringify(apps)};
-export function fakeLink() {
+export async function fakeWorld() {
   const notices = new Set();
   window.__ngcSendNotice = (level, text) => {
     const body = enc.encode(JSON.stringify({ level, text, app: "" }));
     for (const fn of notices) fn(body);
   };
-  return {
+  const link = {
     async call(appID, service, name) {
       if (appID !== "ngc.desktop" || name !== "apps") throw new Error("test link: nothing for " + appID + "/" + name);
       return enc.encode(JSON.stringify(APPS));
     },
     onNotice(fn) { if (typeof fn === "function") notices.add(fn); },
   };
+  return { link, trust: { current: () => ({ list: { stores: [] } }) }, session: null, releaseKey: null };
 }
 `;
 }

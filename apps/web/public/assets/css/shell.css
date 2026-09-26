@@ -206,6 +206,54 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .calc .keys button.op{background:var(--field-bg)}
 .calc .keys button.eq{background:var(--accent);color:#fff;border-color:transparent}
 
+/* App-Store */
+.store{display:flex;flex-direction:column;height:100%}
+.tabs{display:flex;gap:4px;padding:8px 8px 0;border-bottom:1px solid var(--win-border);flex-wrap:wrap}
+.tab{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:8px 8px 0 0;
+     background:none;color:var(--win-fg);font:inherit;cursor:pointer;opacity:.7;margin-bottom:-1px}
+.tab:hover{opacity:1;background:rgba(127,160,220,.14)}
+.tab.on{opacity:1;background:var(--field-bg);border-color:var(--win-border)}
+.storepanel{flex:1;overflow:auto;padding:14px 16px}
+.storepanel:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.store .h{margin:0 0 4px;font-size:15px}
+.store p{margin:0 0 10px}
+.rows{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+     padding:10px 12px;border:1px solid var(--win-border);border-radius:9px;background:var(--field-bg)}
+.rowmain{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.rowmain .desc{color:var(--muted);font-size:12.5px}
+.rowmain span{overflow-wrap:anywhere}
+.rowside{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.warnline{width:100%;margin:6px 0 0;color:#d2932a}
+.store .fail,.upfail{padding:10px 12px;border:1px solid #e13e3e;border-radius:9px}
+.kv{display:flex;gap:8px;flex-wrap:wrap;padding:3px 0}
+.kv .k{min-width:9rem;color:var(--muted)}
+.kv .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
+.fieldrow{display:flex;gap:8px;align-items:center;margin:10px 0}
+.fieldrow .k{color:var(--muted)}
+.store select,.store input[type=file]{padding:6px 8px;border-radius:7px;border:1px solid var(--win-border);
+                                      background:var(--field-bg);color:var(--win-fg);font:inherit}
+.filelab{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.upfacts{margin-top:10px;padding:10px 12px;border:1px solid var(--win-border);border-radius:9px;
+         background:var(--field-bg)}
+.upfacts[hidden]{display:none}
+.installbox,.buy{margin-top:8px;padding:12px;border:1px solid var(--accent);border-radius:9px}
+.tick{display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer}
+.store .installbox button,.store .buy button{margin-top:10px}
+
+/* ---------- Bestätigen ---------- */
+/* One question over everything, and nothing behind it can be clicked. */
+.confirmback{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
+             justify-content:center;z-index:100003;padding:16px}
+.confirmbox{width:min(420px,100%);padding:18px;border-radius:12px;border:1px solid var(--win-border);
+            background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.confirmhead{margin:0 0 8px;font-size:16px}
+.confirmbox p{margin:0 0 12px}
+.confirmlabel{display:block;margin-bottom:4px;color:var(--muted);font-size:12.5px}
+.confirmbox input{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--win-border);
+                  background:var(--field-bg);color:var(--win-fg);font:inherit}
+.confirmrow{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+
 /* ---------- Meldungen ---------- */
 /* One strip at the bottom edge, for one message at a time. The live region
    stays in the page whether it holds anything or not, because a region that

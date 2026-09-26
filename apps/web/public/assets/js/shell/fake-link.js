@@ -32,13 +32,23 @@
 //
 // WHAT STAYS TRUE EITHER WAY: it hands back BYTES. Everything that arrives is
 // read by the contracts in contracts/ - core.parseResult, core.parseNotice,
-// uitar.walkUI - inside the desktop and the app frame, never here.
+// uitar.walkUI, catalog.verifyCatalog - inside the desktop, the app frame and
+// the store, never here.
+//
+// SINCE TASK 23 it also answers the store's actions, and for that it carries
+// three more stand-ins: a trust list the contract accepts (so the store can
+// write the next version of it and read its own work back), a session with a
+// real signing key (so a task the store signs is really signed), and the
+// release key of the initial setup. All three go the way this file goes; what
+// the store asks of them - current(), inst, certHash, signKey - is what Task
+// 17, 19 and 20 will hand it.
 //
 // It is not in contracts/ on purpose: nothing in there is a fake.
 import { b64encode } from "../contracts/b64.js";
 import { UIWriter } from "../contracts/uitar.js";
 import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contracts/sign.js";
-import { validStore } from "../contracts/trust.js";
+import { encodeList, parseList, parseSigned, validStore } from "../contracts/trust.js";
+import { packageUI } from "../contracts/pack.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 
 const enc = new TextEncoder();
@@ -122,10 +132,55 @@ function uiTar({ entry = "index.html", module: asModule = false } = {}) {
   return w.close();
 }
 
+// The apps the catalog of the store lists. The terminal has to stand here at
+// the version and with the ui hash the UI proof names, because the app frame
+// looks its hash up in exactly this document (core.catalogUI). The other two
+// are there so the store has something to show: a free app and a paid one,
+// which is the one difference the Apps tab has to make.
+//
+// Sorted by id and versions ascending, because store.VerifyCatalog refuses a
+// catalog that is not - a stand-in that broke its own contract would test the
+// shell against a document no store could ever send.
+function catalogDoc(uiHash, evilName) {
+  const pkg = (version, ui, encrypted) => ({
+    version, url: "pakete/" + version + ".ngc", size: 5000000,
+    sha256: b64encode(new Uint8Array(32).fill(2)), ui: b64encode(ui),
+    encrypted, needs: [], minNgc: "",
+  });
+  return {
+    store: STORE, seq: 1, issued: 1790000000,
+    apps: [
+      {
+        // A name that tries to be markup, on a knob: the catalog is outside,
+        // so its names are text and nothing else.
+        id: "de.example.notizen",
+        name: evilName ? "<img src=x onerror=alert(1)>Böse" : "Notizen",
+        publisher: "Beispiel GmbH",
+        description: "Notizen schreiben und wiederfinden.",
+        versions: [pkg("1.0.0", new Uint8Array(32).fill(3), false)],
+      },
+      {
+        id: TERMINAL, name: "Terminal", publisher: "Sorglos IT",
+        description: "Eine Kommandozeile im Browser.",
+        versions: [pkg(VERSION, uiHash, false)],
+      },
+      {
+        id: "org.sorglos.tresor", name: "Tresor", publisher: "Sorglos IT",
+        description: "Passwörter sicher aufbewahren.",
+        price: {
+          model: "buy", per: "site", amount: 4900, currency: "EUR", period: "",
+          shop: "https://store.ngc.test/tresor",
+        },
+        versions: [pkg("2.0.0", new Uint8Array(32).fill(4), true)],
+      },
+    ],
+  };
+}
+
 // The store's key, its trust list and the signed catalog over the checksum of
 // one ui-tar. Real cryptography, made in this page: see the head of the file
 // for what that does and does not stand for.
-async function world() {
+async function world(knobs) {
   const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const pub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   const kid = await keyIDAsync(pub);
@@ -134,25 +189,33 @@ async function world() {
   // cannot quietly hand the shell something no trust list would hold.
   if (!validStore(store)) throw new Error("fake-link: this store would not stand in a trust list");
 
-  const proofFor = async (uiHash) => {
-    const catalog = enc.encode(JSON.stringify({
-      store: STORE, seq: 1, issued: 1790000000,
-      apps: [{
-        id: TERMINAL, name: "Terminal", publisher: "Sorglos IT",
-        versions: [{
-          version: VERSION, url: TERMINAL + "-" + VERSION + ".ngc", size: 5000000,
-          sha256: b64encode(new Uint8Array(32).fill(2)), ui: b64encode(uiHash),
-        }],
-      }],
-    }));
+  // A SECOND key, and the whole point of it: with the knob on, the catalog
+  // the Apps tab fetches is signed by a key that is in no trust list. The UI
+  // proof keeps the honest key either way, so a case about the catalog cannot
+  // take the app frame down with it.
+  const other = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const otherPub = new Uint8Array(await crypto.subtle.exportKey("raw", other.publicKey));
+  const otherKid = await keyIDAsync(otherPub);
+
+  const envelope = async (doc, key, id) => {
+    const payload = enc.encode(JSON.stringify(doc));
     const sig = new Uint8Array(await crypto.subtle.sign(
-      { name: "Ed25519" }, pair.privateKey, signedMessage(PURPOSE_CATALOG, catalog)));
-    return enc.encode(JSON.stringify({
-      app: TERMINAL, version: VERSION, store: STORE,
-      catalog: { payload: b64encode(catalog), kid, sig: b64encode(sig) },
-    }));
+      { name: "Ed25519" }, key.privateKey, signedMessage(PURPOSE_CATALOG, payload)));
+    return { payload: b64encode(payload), kid: id, sig: b64encode(sig) };
   };
-  return { store, proofFor };
+
+  const proofFor = async (uiHash) => enc.encode(JSON.stringify({
+    app: TERMINAL, version: VERSION, store: STORE,
+    catalog: await envelope(catalogDoc(uiHash, knobs.evilName === true), pair, kid),
+  }));
+
+  const catalogFor = async (uiHash) => enc.encode(JSON.stringify({
+    catalog: knobs.foreignCatalog === true
+      ? await envelope(catalogDoc(uiHash, knobs.evilName === true), other, otherKid)
+      : await envelope(catalogDoc(uiHash, knobs.evilName === true), pair, kid),
+  }));
+
+  return { store, pair, pub, kid, proofFor, catalogFor };
 }
 
 // A TEST HOOK, and it leaves with this file. It steers what the stand-in
@@ -172,43 +235,226 @@ function hooks() {
   return { swap: t.swapUI === true, entry: typeof t.entry === "string" && t.entry !== "" ? t.entry : "index.html", module: t.module === true };
 }
 
-// fakeWorld builds the stand-in: the link the desktop asks, and the trust
-// list the app frame checks a proof against. The shapes are the ones
-// shell/channel.js and shell/trust.js will have - call() and open() hand back
-// bytes, onNotice() takes a listener that is handed bytes, current() answers
-// with the list in force - so neither the desktop nor the frame changes when
-// the real ones land.
+// A TEST HOOK, and it leaves with this file: what the store's cases want
+// this world to look like. It is read once, when the world is built, so a
+// case sets it with addInitScript before the page is loaded.
+function knobsOf() {
+  const k = window.__ngcStore;
+  return k !== null && typeof k === "object" ? k : {};
+}
+
+// The trust list of this installation. IT IS BUILT HERE AND OPENED BY
+// NOBODY - Task 20 opens the real one against the anchor and follows it
+// version by version - but it is a list the contract accepts: it passes
+// trust.validateList and trust.parseList, because the store re-encodes it
+// when a standing approval is given and reads its own work back. A list that
+// only half held up would have the store measured against a document no
+// installation could ever carry.
+function listOf(store, admin, level) {
+  return {
+    seq: 1,
+    prev: new Uint8Array(0),
+    issued: 1790000000,
+    installation: b64encode(new Uint8Array(16).fill(9)),
+    rp: { id: "ngc.example.org", origins: ["https://ngc.example.org"] },
+    users: [admin],
+    roles: [{ name: "admin", level, black: [], white: [], passkeyOnly: false, passwordToo: false }],
+    nodes: [
+      { id: "pi-1", kind: "controller", name: "Dienste 1", noise: new Uint8Array(32).fill(11),
+        sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers: [admin.id], rootRoles: [] },
+      { id: "pi-2", kind: "controller", name: "Dienste 2", noise: new Uint8Array(32).fill(12),
+        sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers: [admin.id], rootRoles: [] },
+    ],
+    stores: [store],
+    auto: [],
+  };
+}
+
+// The rows the store shows where a case names none of its own. Byte fields
+// stand here as base64url text, because that is what they are in the
+// document, and a case that overrides a row writes it the same way.
+const SOURCES = [
+  { id: STORE, name: "NGC Store", url: "https://store.ngc.test", seq: 1, checked: 1790000000, error: "" },
+];
+const INSTALLED = [
+  { id: TERMINAL, version: VERSION, store: STORE, node: "pi-1", active: true,
+    state: "ok", license: "none", keptData: 0 },
+  { id: "de.example.fotos", version: "2.1.0", store: "local", node: "pi-2", active: false,
+    state: "unreachable", license: "none", keptData: 0 },
+];
+const NODES = [
+  { node: "pi-1", online: true, roles: ["services"], version: "1.0.0", arch: "arm64" },
+  { node: "pi-2", online: false, roles: ["services"], version: "1.0.0", arch: "arm64" },
+  { node: "api-1", online: true, roles: ["api"], version: "1.0.0", arch: "amd64" },
+];
+const UPDATES = [
+  { target: "ngc-web", node: "web-1", installed: "1.0.0", available: "1.1.0",
+    sha256: b64encode(new Uint8Array(32).fill(6)), key: "", mode: "semi", window: "", state: "downloaded" },
+  { target: TERMINAL, node: "pi-1", installed: "1.0.0", available: "1.1.0",
+    sha256: b64encode(new Uint8Array(32).fill(7)), key: "", mode: "notify", window: "", state: "needsgrants" },
+  { target: "system", node: "pi-1", installed: "", available: "", sha256: "", key: "",
+    mode: "notify", window: "", state: "" },
+];
+
+// fakeWorld builds the stand-in: the link the desktop asks, the trust list
+// the app frame checks a proof against and the session the store signs its
+// tasks with. The shapes are the ones shell/channel.js and shell/trust.js
+// will have - call() and open() hand back bytes, onNotice() takes a listener
+// that is handed bytes, current() answers with the list in force - so neither
+// the desktop nor the frame nor the store changes when the real ones land.
 //
 // It is a promise because the store key is a real key and making one is
 // asynchronous. Task 20 opens the trust list before the desktop starts for
 // the same reason: nothing may be shown before it is known what may be shown.
 export async function fakeWorld() {
   const notices = new Set();
-  const { store, proofFor } = await world();
+  const knobs = knobsOf();
+  const { store, proofFor, catalogFor } = await world(knobs);
 
   window.__ngcTest = { swapUI: false, entry: "", module: false };
   // A TEST HOOK as well: how many channels the shell has opened. The real
   // session counts its own channels and needs no such number.
   window.__ngcChannelsOpened = 0;
+  // A TEST HOOK as well: what the shell handed this link, in the order it
+  // handed it over. Params, task and confirmation are JSON and stand here as
+  // the text they are; a body is bytes and stands as base64url.
+  window.__ngcSent = [];
+
+  // The admin whose session signs the tasks. Its key is a real Ed25519 key
+  // this page makes; the list calls it a password key because that is the
+  // kind a trust list can hold without asking the engine to import anything,
+  // and no signature of it is ever checked in the browser.
+  const userPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const userPub = new Uint8Array(await crypto.subtle.exportKey("raw", userPair.publicKey));
+  const admin = {
+    id: b64encode(new Uint8Array(16).fill(1)),
+    name: "anna",
+    roles: ["admin"],
+    keys: [{
+      id: await keyIDAsync(userPub), kind: "password", alg: "EdDSA", pub: userPub,
+      credId: new Uint8Array(0),
+      kdf: { alg: "argon2id", salt: new Uint8Array(16).fill(5), m: 19456, t: 1, p: 1 },
+    }],
+  };
+  const level = typeof knobs.level === "string" && knobs.level !== "" ? knobs.level : "off";
+  // Both move on when a new version is accepted below, the way a real
+  // installation's list moves on: the store asks current() again for the
+  // next approval and has to get what it just wrote.
+  let list = listOf(store, admin, level);
+  let signed = {
+    payload: encodeList(list),
+    // The signature over the list is never checked in the browser - Task 20
+    // checks the chain it opened, and this list was opened by nobody. What
+    // has to hold is the SHAPE, because the store hashes this payload for
+    // the prev of the version it writes.
+    proof: { kind: "password", kid: admin.keys[0].id, sig: new Uint8Array(64).fill(8),
+      authData: new Uint8Array(0), clientData: new Uint8Array(0) },
+  };
+
+  // The release key of the initial setup: what a standing approval for an
+  // NGC part is signed with. Task 19 reads it out of the setup offer; here
+  // it is a key of this page, exposed so a case can name it.
+  const releasePair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const releaseKey = new Uint8Array(await crypto.subtle.exportKey("raw", releasePair.publicKey));
+
+  const installKey = { installation: list.installation, key: b64encode(new Uint8Array(32).fill(13)) };
+  window.__ngcStoreKey = b64encode(store.key);
+  window.__ngcReleaseKey = b64encode(releaseKey);
+  window.__ngcLiarKey = b64encode(new Uint8Array(32).fill(0xee));
+  window.__ngcInstallKey = installKey;
+
+  const or = (name, fallback) => (Array.isArray(knobs[name]) ? knobs[name] : fallback);
+  const uiHash = () => {
+    const h = hooks();
+    return sha256(uiTar({ entry: h.entry, module: h.module }));
+  };
 
   const results = {
     __proto__: null,
     "ngc.desktop/apps": async () => enc.encode(JSON.stringify(APPS)),
-    "ngc.desktop/ui-proof": async () => {
-      const h = hooks();
-      return await proofFor(sha256(uiTar({ entry: h.entry, module: h.module })));
-    },
+    "ngc.desktop/ui-proof": async () => await proofFor(uiHash()),
     // The terminal's own service. What it answers means whatever the app and
     // its service agreed; the shell passes the bytes through untouched.
     [TERMINAL + "/shell"]: async () => enc.encode("hallo aus dem Dienst"),
+
+    "ngc.users/nodes": async () => enc.encode(JSON.stringify(or("nodes", NODES))),
+    // A new version of the trust list is READ with the contract and kept: a
+    // stand-in that took it and answered with a number would let the store
+    // write a document nothing ever decoded, and the next approval would be
+    // built on the old list again.
+    "ngc.users/trust": async (body) => {
+      const s = parseSigned(body);
+      list = await parseList(s.payload);
+      signed = s;
+      return enc.encode(JSON.stringify({ seq: list.seq }));
+    },
+    "ngc.store/sources": async () => enc.encode(JSON.stringify(or("sources", SOURCES))),
+    "ngc.store/catalog": async () => await catalogFor(uiHash()),
+    "ngc.store/installed": async () => enc.encode(JSON.stringify(or("installed", INSTALLED))),
+    "ngc.store/updates": async () => enc.encode(JSON.stringify(or("updates", UPDATES))),
+    "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),
+    "ngc.store/license": async () => enc.encode(JSON.stringify({ app: TERMINAL, state: "valid" })),
+    "ngc.store/set-update": async () => enc.encode("{}"),
+    "ngc.store/activate": async () => enc.encode("{}"),
+    "ngc.store/deactivate": async () => enc.encode("{}"),
+    "ngc.store/uninstall": async () => enc.encode("{}"),
+    "ngc.store/delete-data": async () => enc.encode("{}"),
+    "ngc.store/install": async () => enc.encode("{}"),
+    // The upload is the one answer this stand-in WORKS OUT instead of making
+    // up: it reads the package the shell streamed with the same
+    // pack.packageUI the shell used. So an answer that agrees is an answer
+    // that really agrees, and the case about a mismatch has to bend it by
+    // hand (uploadTwist) instead of getting one for free.
+    "ngc.store/upload": async (body) => {
+      const u = await packageUI(new Blob([body]).stream());
+      const r = {
+        id: u.manifest.id, version: u.manifest.version,
+        sha256: b64encode(u.packageSha256), ui: b64encode(u.sha256),
+      };
+      const twist = knobs.uploadTwist;
+      return enc.encode(JSON.stringify(twist !== null && typeof twist === "object" ? { ...r, ...twist } : r));
+    },
+  };
+
+  // collect reads what the shell wants to send. The real link streams it in
+  // pieces against a credit; this one takes the whole of it, because what a
+  // case has to see is WHAT was sent and not in how many frames.
+  const collect = async (stream) => {
+    if (!stream || typeof stream.getReader !== "function") return new Uint8Array(0);
+    const reader = stream.getReader();
+    const parts = [];
+    let n = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      n += value.length;
+    }
+    const out = new Uint8Array(n);
+    let o = 0;
+    for (const p of parts) {
+      out.set(p, o);
+      o += p.length;
+    }
+    return out;
   };
 
   const link = {
-    async call(app, service, name) {
+    async call(app, service, name, params, opts) {
       window.__ngcChannelsOpened++;
+      const o = opts ?? {};
+      const body = await collect(o.stream);
+      o.onProgress?.(body.length);
+      window.__ngcSent.push({
+        app, service, name,
+        params: params ? new TextDecoder().decode(params) : "",
+        task: o.taskBytes ? new TextDecoder().decode(o.taskBytes) : "",
+        confirm: o.confirmBytes ? new TextDecoder().decode(o.confirmBytes) : "",
+        body: b64encode(body),
+      });
       const make = results[`${app}/${name}`];
       if (make === undefined) throw new Error(`fake-link: nothing for ${app}/${service}/${name}`);
-      return await make();
+      return await make(body);
     },
     // A stand-in for a channel that stays open: it hands over the whole
     // answer in one piece and closes. The real one arrives in frames.
@@ -244,13 +490,34 @@ export async function fakeWorld() {
   };
 
   // The stand-in for shell/trust.js (Task 20): the verified trust list the
-  // frame checks a UI proof against.
+  // frame checks a UI proof against and the store writes the next version of.
   //
-  // IT IS NOT A TRUST LIST. It holds the one store whose key signed the
-  // catalog above, because that is all core.verifyUIProof reads for an app of
-  // a store. A real list is opened against the anchor, carries users, roles
-  // and nodes and passes trust.validateList - none of which exists yet.
-  const trust = { current: () => ({ list: { stores: [store] } }) };
+  // IT WAS OPENED BY NOBODY. A real list is opened against the anchor and
+  // followed version by version; this one is built in the page. What it does
+  // do is hold up to the contract - validateList and parseList take it - so
+  // the store's own work on it is measured against a real document.
+  const trust = { current: () => ({ list, signed }) };
 
-  return { link, trust };
+  // The stand-in for the session (Tasks 17 and 19): who is signed in, and
+  // the key their tasks are signed with. The key is a real Ed25519 key of
+  // this page, so what the store signs is a real signature over the real
+  // bytes; whose key it is, is what the login will decide.
+  const sessionKey = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const session = {
+    inst: list.installation,
+    user: admin.id,
+    // The task is bound to the client certificate by its SHA-256, and this
+    // is a hash-shaped stand-in for one: 32 bytes, which is all task.parts
+    // can ask of it here.
+    certHash: new Uint8Array(32).fill(14),
+    // The kid is the SESSION key's own id and not the admin's: a verifier
+    // takes the signing key out of the client certificate, so a kid from
+    // somewhere else would be a name for a key nobody signed with.
+    signKey: {
+      privateKey: sessionKey.privateKey,
+      kid: await keyIDAsync(new Uint8Array(await crypto.subtle.exportKey("raw", sessionKey.publicKey))),
+    },
+  };
+
+  return { link, trust, session, releaseKey };
 }

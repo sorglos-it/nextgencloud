@@ -64,16 +64,16 @@ async function start() {
   }
   // PULLED FORWARD AND UNFINISHED. There is no login yet (Tasks 19 and 20) and
   // no session (Task 17), so the desktop starts straight away and gets the
-  // stand-in instead of a channel and an opened trust list. When the login
-  // lands, it runs between the configuration and this line and hands over the
-  // session and the list it opened.
+  // stand-in instead of a channel, a session and an opened trust list. When
+  // the login lands, it runs between the configuration and this line and
+  // hands over the session, the list it opened and the release key it pinned.
   //
   // config is handed on rather than parked on window: nothing reads it yet,
   // and the moment something does - the login needs rp, the session needs
   // apis - it takes it from here. A global would be one more thing anything
   // else on the page could write between the check above and that read.
-  const { link, trust } = await fakeWorld();
-  startDesktop(document.getElementById("root"), { link, session: null, trust, config });
+  const { link, trust, session, releaseKey } = await fakeWorld();
+  startDesktop(document.getElementById("root"), { link, session, trust, config, releaseKey });
 }
 
 start().catch(() => {

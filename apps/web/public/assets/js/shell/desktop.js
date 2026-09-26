@@ -8,6 +8,7 @@ import { el, button, text, clear } from "./dom.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { calcApp } from "../apps/calc.js";
+import { storeApp } from "../apps/store.js";
 import { UICache, openAppUI } from "./appframe.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
@@ -32,9 +33,17 @@ import {
 // again: the calculator runs in the shell's own origin, with the whole DOM of
 // the shell and localStorage in reach - exactly what the frame takes away
 // from every other app.
+//
+// THE APP STORE IS DIFFERENT, and the difference is the contract's and not a
+// shortcut: it is the app that decides what may run here at all, so it works
+// on the trust list, signs root tasks with the session key and reads the
+// catalogs of the stores. None of that can live behind a fenced frame,
+// because the frame exists to keep an app AWAY from exactly those. It is a
+// surface of the shell, like the taskbar, and it is built like one.
 const BUILTIN = {
   __proto__: null,
   "ngc.calc": calcApp,
+  "ngc.store": storeApp,
 };
 
 // Accent colours in the order of theme.js, with the name the swatch carries
@@ -46,14 +55,18 @@ const ACCENT_NAMES = ["Blau", "Türkis", "Pink", "Orange", "Violett", "Grün"];
 const NOTICE_MS = 8000;
 
 class Desktop {
-  constructor(root, { link, session, trust }) {
+  constructor(root, { link, session, trust, releaseKey }) {
     this.link = link;
-    // Not used yet. Both stand in the interface this task was given, so the
-    // call sites are already written the way they will stay; the session and
-    // the verified trust list arrive with the channel and the login, and the
-    // desktop asks nothing of them today.
+    // The desktop itself asks nothing of these three; it hands them on. The
+    // app frame checks a UI proof against the trust list, and the store signs
+    // its tasks with the session and writes the next version of the list. All
+    // three arrive with the channel and the login (Tasks 17, 19 and 20).
     this.session = session ?? null;
     this.trust = trust ?? null;
+    // The release key of the initial setup: what a standing approval for an
+    // NGC part is signed with. It never comes out of an answer of the API -
+    // see approvalKey in apps/store.js for why.
+    this.releaseKey = releaseKey ?? null;
 
     // The user interfaces that have already been proven, one cache for the
     // whole desktop: an app that is closed and opened again is not fetched
@@ -537,7 +550,7 @@ class Desktop {
     const mount = BUILTIN[appID];
     if (typeof mount === "function") {
       try {
-        win.onClose = mount(win) || null;
+        win.onClose = mount(win, this.appCtx()) || null;
       } catch {
         this.placeholder(win, "Diese App konnte nicht geöffnet werden.",
           "Bitte das Fenster schließen und es noch einmal versuchen.");
@@ -551,6 +564,21 @@ class Desktop {
       openAppUI(win, { app: a, link: this.link, trust: this.trust, cache: this.uiCache });
     }
     return win;
+  }
+
+  // appCtx is what a surface of the shell is given: the link to the API, the
+  // verified trust list, the session that signs, the release key and the one
+  // place a message goes. It is built anew for every window, so an app holds
+  // no reference to the desktop itself and cannot reach the other windows
+  // through it.
+  appCtx() {
+    return {
+      link: this.link,
+      trust: this.trust,
+      session: this.session,
+      releaseKey: this.releaseKey,
+      notice: (level, txt) => this.notice(level, txt),
+    };
   }
 
   // Two lines in a window that has nothing to show: what is the matter, and
@@ -639,8 +667,8 @@ class Desktop {
 // startDesktop builds the desktop into root and starts loading the apps. It
 // hands the Desktop back at once, before the apps are there: the taskbar, the
 // start menu and the look are the shell's own and need nothing from a server.
-export function startDesktop(root, { link, session, trust } = {}) {
-  const d = new Desktop(root, { link, session, trust });
+export function startDesktop(root, { link, session, trust, releaseKey } = {}) {
+  const d = new Desktop(root, { link, session, trust, releaseKey });
   applyWallpaper(localStorageWallpaper());
   if (link && typeof link.onNotice === "function") link.onNotice((b) => d.noticeBytes(b));
   d.load();
