@@ -319,6 +319,32 @@ Wo du behauptest, dass etwas **nicht** mitwächst, miss mindestens drei Punkte,
 die weit genug auseinanderliegen, dass ein Mitwachsen auffallen müsste. Ein
 Punkt beweist eine Höhe. Nur eine Reihe beweist eine Steigung.
 
+### Eine Pipe verschluckt das Urteil
+
+Der Koordinator hat einen zusammengeführten Stand geprüft, das Ergebnis
+gelesen und **„394 bestanden, 0 durchgefallen"** gemeldet. Zwölf Tests waren
+rot. Zwei Prüfer fanden sie unabhängig voneinander, einen Tag später.
+
+Der Befehl war `npx playwright test … 2>&1 | tail -5`. Daran ist **beides**
+falsch:
+
+- **Der Ausstiegscode gehört dem letzten Glied der Pipe**, also `tail`.
+  Nachgemessen, derselbe Lauf: playwright antwortet **1**, die Pipe **0**.
+- `tail -5` schneidet den Block mit den Fehlern ab. Übrig bleiben die zwei
+  Zeilen, die immer gut aussehen: „N übersprungen, M bestanden".
+
+Zusammen ergibt das ein Grün, das dreimal hintereinander gehalten hat.
+
+**Also: lass das Werkzeug selbst antworten.** Kein `| tail` um einen Lauf,
+dessen Ausgang du wissen willst; Ausgabe in eine Datei und danach den
+**Ausstiegscode** lesen, oder den Lauf ohne Pipe fahren und erst danach kürzen.
+
+Und die allgemeine Form, die teurer ist als der Handgriff: **ein Grün, das du
+nicht vom Werkzeug selbst gehört hast, ist kein Grün.** Dieselbe Regel gilt für
+die Zahl der **übersprungenen** Tests. Sie stieg in diesem Lauf von 45 auf 122,
+und niemand fragte warum — ein Test, der sich still überspringt, sieht in der
+Zusammenfassung aus wie einer, der nichts zu meckern hat.
+
 ### Ein Zusammenbruch verdeckt den einen echten Roten
 
 Ein Lauf einer Aufgabe brach in einer Maschine mit **127 roten Fällen** ein. Die
