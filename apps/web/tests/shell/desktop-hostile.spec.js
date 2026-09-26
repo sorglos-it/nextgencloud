@@ -1,0 +1,194 @@
+import { test, expect } from "@playwright/test";
+import { hasSessionKeys } from "../fixtures/page.js";
+import { app, CALC, serveApps } from "../fixtures/apps.js";
+
+// What the desktop does with an app list that is out to break it.
+//
+// The list comes from the API, and a compromised API is exactly the case
+// these checks exist for. The contract (core.parseResult) is what refuses
+// most of it; this file measures the SURFACE: what the person sees, that
+// nothing runs, and that the desktop is still a desktop afterwards.
+//
+// The page fixture is not used here: every case needs its own list, and the
+// list has to be in place before the page is loaded.
+//
+// A DIALOG IS A FAILURE. alert, confirm and prompt are what a name that got
+// executed would reach for, so every case fails on one instead of clicking
+// it away.
+async function desktop(page, apps) {
+  page.on("dialog", (d) => {
+    throw new Error("something in the page opened a " + d.type() + ": " + d.message());
+  });
+  await serveApps(page, apps);
+  await page.goto("/");
+  test.skip(!(await hasSessionKeys(page)),
+    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await expect(page.locator("#taskbar")).toBeVisible();
+}
+
+// stillADesktop is the second half of every case: a refusal that leaves the
+// shell unusable is no better than the attack.
+async function stillADesktop(page) {
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(page.locator("#startmenu")).toHaveClass(/open/);
+  await expect(page.locator("#smsearch")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#startmenu")).not.toHaveClass(/open/);
+  await page.getByRole("button", { name: "Design wechseln" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+}
+
+// The contract caps a name at 64 bytes of printable UTF-8 and refuses a list
+// that has the same id twice. A list with one bad app in it is a bad list,
+// all of it: there is no way to tell which of the others were tampered with
+// too. So the desktop shows none of them and says the one thing the person
+// can act on.
+const REFUSED = "Die Liste der Apps konnte nicht geladen werden.";
+
+test("a name of 10 000 characters is refused, and nothing of it reaches the screen", async ({ page }) => {
+  await desktop(page, [app({ id: "de.example.lang", name: "A".repeat(10000) }), CALC]);
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  // Not one character of the name is anywhere in the page.
+  expect(await page.evaluate(() => document.body.textContent.includes("AAAAAAAAAA"))).toBe(false);
+  await stillADesktop(page);
+});
+
+test("a name of nothing but control characters is refused", async ({ page }) => {
+  await desktop(page, [app({ id: "de.example.steuer", name: "\u0001\u0002\u0007\u001b\u007f" }), CALC]);
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  await stillADesktop(page);
+});
+
+test("one control character inside an otherwise sound name is refused", async ({ page }) => {
+  await desktop(page, [app({ id: "de.example.null", name: "Vor\u0000Nach" }), CALC]);
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  expect(await page.evaluate(() => document.body.textContent.includes("Nach"))).toBe(false);
+  await stillADesktop(page);
+});
+
+test("a name with a bidi override in it is refused", async ({ page }) => {
+  // U+202E turns the reading order round: "Rechnerexe.txt" could be made to
+  // read as something else entirely. It is a format character, not a
+  // printable one, so the contract does not let it in.
+  await desktop(page, [app({ id: "de.example.bidi", name: "Rechner‮gpj.exe" }), CALC]);
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  await stillADesktop(page);
+});
+
+test("two apps with the same id are refused", async ({ page }) => {
+  await desktop(page, [
+    app({ id: "de.example.doppelt", name: "Eins" }),
+    app({ id: "de.example.doppelt", name: "Zwei" }),
+    CALC,
+  ]);
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  await stillADesktop(page);
+});
+
+test("one app over the contract's thousand is refused", async ({ page }) => {
+  await desktop(page, Array.from({ length: 1001 }, (_, i) => app({ id: "de.example.a" + i, name: "App " + i })));
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  await stillADesktop(page);
+});
+
+test("a thousand apps are shown, and the search is the way through them", async ({ page }) => {
+  await desktop(page, Array.from({ length: 1000 }, (_, i) => app({ id: "de.example.a" + i, name: "App " + i })));
+  // .status and not getByRole("status"): the stylesheet hides the strip
+  // while it is empty, and a hidden element is in no accessibility tree.
+  await expect(page.locator(".status")).toHaveText("");
+  await expect(page.locator(".dicon")).toHaveCount(1000);
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(page.locator("#smlist .smitem")).toHaveCount(1000);
+  // The list scrolls inside the menu instead of pushing the menu off screen,
+  // and the two buttons under it stay where they can be clicked.
+  const fits = await page.evaluate(() => {
+    const m = document.getElementById("startmenu").getBoundingClientRect();
+    const l = document.getElementById("smlist").getBoundingClientRect();
+    const f = document.querySelector("#smfoot button").getBoundingClientRect();
+    return {
+      menuInView: m.top >= 0 && m.bottom <= innerHeight + 1 && m.left >= 0 && m.right <= innerWidth + 1,
+      listInMenu: l.bottom <= m.bottom + 1,
+      listScrolls: document.getElementById("smlist").scrollHeight > document.getElementById("smlist").clientHeight,
+      footInMenu: f.bottom <= m.bottom + 1 && f.width > 0,
+    };
+  });
+  expect(fits).toEqual({ menuInView: true, listInMenu: true, listScrolls: true, footInMenu: true });
+  await page.locator("#smsearch").fill("App 999");
+  expect(await page.locator("#smlist .smitem .n").allTextContents()).toEqual(["App 999"]);
+});
+
+test("a name from right to left is shown as the text it is", async ({ page }) => {
+  const arabic = "مرحبا بالعالم";
+  await desktop(page, [app({ id: "de.example.rtl", name: arabic }), CALC]);
+  await expect(page.locator(".dicon")).toHaveCount(2);
+  // Character for character, on the desktop, in the menu, in the title bar
+  // and in the taskbar. A name that arrives from the right must not come out
+  // shortened, reordered or with something stuck to it.
+  expect(await page.locator(".dicon .n").first().textContent()).toBe(arabic);
+  await page.locator("#icons").getByRole("button", { name: arabic, exact: true }).click();
+  await expect(page.locator(".win")).toHaveCount(1);
+  expect(await page.locator(".win .t").textContent()).toBe(arabic);
+  expect(await page.locator("#tasks .task .lbl").textContent()).toBe(arabic);
+  await expect(page.locator("#tasks .task")).toHaveAttribute("aria-label", "Fenster " + arabic);
+  await page.getByRole("button", { name: "Start" }).click();
+  expect(await page.locator("#smlist .smitem .n").first().textContent()).toBe(arabic);
+  await page.keyboard.press("Escape");
+  await stillADesktop(page);
+});
+
+test("names that try to be markup become text, and nothing of them runs", async ({ page }) => {
+  const bad = [
+    "<script>alert(1)</script>",
+    '"><svg onload=alert(2)>',
+    "</div><img src=x onerror=alert(3)>",
+    "<iframe src=javascript:alert(4)>",
+  ];
+  await desktop(page, [...bad.map((name, i) => app({ id: "de.example.b" + i, name })), CALC]);
+  await expect(page.locator(".dicon")).toHaveCount(5);
+  expect(await page.locator(".dicon .n").allTextContents()).toEqual([...bad, "Rechner"]);
+  await page.getByRole("button", { name: "Start" }).click();
+  expect(await page.locator("#smlist .smitem .n").allTextContents()).toEqual([...bad, "Rechner"]);
+  await page.keyboard.press("Escape");
+  // Open one of them: the title bar and the taskbar get the same treatment.
+  await page.locator("#icons").getByRole("button", { name: bad[0], exact: true }).click();
+  expect(await page.locator(".win .t").textContent()).toBe(bad[0]);
+  // Nowhere a name is shown may an element out of that name have appeared.
+  const made = await page.evaluate(() =>
+    document.querySelectorAll("#desktop img, #desktop script, #desktop svg, #desktop iframe, "
+      + "#startmenu img, #startmenu script, #startmenu svg, #startmenu iframe, "
+      + "#taskbar img, #taskbar script, #taskbar svg, #taskbar iframe").length);
+  expect(made).toBe(0);
+  await stillADesktop(page);
+});
+
+test("a notice that tries to be markup is shown as text", async ({ page }) => {
+  await desktop(page, [CALC]);
+  await page.evaluate(() => window.__ngcSendNotice("warn", "<img src=x onerror=alert(9)>"));
+  await expect(page.getByRole("status")).toHaveText("<img src=x onerror=alert(9)>");
+  expect(await page.locator(".noticebar img, .noticebar script, .noticebar svg").count()).toBe(0);
+});
+
+test("a notice the contract does not hold with is dropped without a word", async ({ page }) => {
+  await desktop(page, [CALC]);
+  await page.evaluate(() => window.__ngcSendNotice("warn", "Die eine Meldung."));
+  await expect(page.getByRole("status")).toHaveText("Die eine Meldung.");
+  // Too long for the wire, and an invented level: both are bodies the shell
+  // cannot vouch for, and a message it cannot vouch for is worse than none.
+  await page.evaluate(() => window.__ngcSendNotice("warn", "Z".repeat(5000)));
+  await page.evaluate(() => window.__ngcSendNotice("erfunden", "Eine erfundene Stufe."));
+  await expect(page.getByRole("status")).toHaveText("Die eine Meldung.");
+  await stillADesktop(page);
+});
+
+test("an empty list of apps leaves a desktop that still works", async ({ page }) => {
+  await desktop(page, []);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator(".status")).toHaveText("");
+  await stillADesktop(page);
+});
