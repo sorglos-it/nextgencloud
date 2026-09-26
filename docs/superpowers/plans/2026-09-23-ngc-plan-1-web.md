@@ -547,12 +547,24 @@ async function start() {
       + "oder neuer benutzen.");
     return;
   }
-  const res = await fetch("/config.json", { cache: "no-store" });
-  if (!res.ok) {
+  // NICHT res.json(). /config.json traegt die Adressen der API-Server, den
+  // ANKER der Vertrauensliste (seq und hash, die Wurzel fuer trust.open) und
+  // rp.id, das an navigator.credentials.get geht. Das sind Eingaben von
+  // aussen und laufen durch den Vertrag: Bytes, json.decode mit Budget, dann
+  // jedes Feld gegen seine Grammatik. Was nicht besteht, bekommt denselben
+  // Satz wie eine fehlende Einrichtung - der Mensch soll nicht raten muessen
+  // und nichts ueber die Form erfahren.
+  //
+  // Und nicht auf window: eine globale Veraenderliche ist eine Stelle mehr,
+  // die zwischen der Pruefung und dem Lesen jemand anders beschreiben kann.
+  // Weiterreichen statt ablegen.
+  let config;
+  try {
+    config = await loadConfig();
+  } catch {
     message("NGC ist nicht eingerichtet.");
     return;
   }
-  window.__ngcConfig = await res.json();
   message("NGC wird geladen …");
 }
 
