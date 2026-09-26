@@ -9,6 +9,7 @@ import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { calcApp } from "../apps/calc.js";
 import { storeApp } from "../apps/store.js";
+import { usersApp } from "../apps/users.js";
 import { UICache, openAppUI } from "./appframe.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
@@ -43,7 +44,13 @@ import {
 const BUILTIN = {
   __proto__: null,
   "ngc.calc": calcApp,
+  // These belong here and not in the frame, and the contract says so:
+  // core.AppParams refuses a core app ("ngc.") for ngc.desktop/ui and for
+  // ngc.desktop/ui-proof alike, so an app of NGC's own can never be asked for
+  // a user interface. The calculator stands here for want of that decision;
+  // these two stand here because there is no other place they could stand.
   "ngc.store": storeApp,
+  "ngc.users": usersApp,
 };
 
 // Accent colours in the order of theme.js, with the name the swatch carries
@@ -577,6 +584,10 @@ class Desktop {
       trust: this.trust,
       session: this.session,
       releaseKey: this.releaseKey,
+      // The apps this desktop knows about: "Benutzer und Rechte" needs them to
+      // say who may see what. One place builds what a built-in app is given,
+      // so a second app cannot quietly be handed something different.
+      apps: this.appList,
       notice: (level, txt) => this.notice(level, txt),
     };
   }

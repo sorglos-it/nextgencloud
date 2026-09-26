@@ -287,3 +287,72 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
   #icons{display:none}
   .task .lbl{display:none}
 }
+
+/* ---------- Benutzer und Rechte ---------- */
+/* The most dangerous window of NGC, and it is meant to look like it: the
+   button that gives something away is the only red one in the whole shell,
+   and the question that stands in front of it covers its window. */
+.usersapp{display:flex;flex-direction:column;height:100%;position:relative;
+          color:var(--win-fg);background:var(--win-bg)}
+.usersapp .tabs{display:flex;gap:2px;padding:8px 8px 0;border-bottom:1px solid var(--win-border);
+                flex-wrap:wrap}
+.usersapp .tab{border:1px solid transparent;border-bottom:0;background:none;color:inherit;
+               font:inherit;padding:7px 14px;border-radius:8px 8px 0 0;cursor:pointer;
+               opacity:.75}
+.usersapp .tab:hover{background:rgba(127,127,127,.15);opacity:1}
+.usersapp .tab.on{background:var(--field-bg);border-color:var(--win-border);opacity:1;
+                  font-weight:600;margin-bottom:-1px}
+.usersapp .panels{flex:1;overflow:auto;padding:14px 16px 20px}
+.usersapp h3{margin:0 0 10px;font-size:15px}
+.usersapp h4{margin:0 0 6px;font-size:13px;text-transform:none}
+.usersapp section{margin:0 0 20px;padding:0 0 14px;border-bottom:1px solid var(--win-border)}
+.usersapp section:last-child{border-bottom:0}
+.usersapp .hint{margin:0 0 8px;color:var(--muted);font-size:12px}
+/* "note", not "msg": .msg above is the shell's own boot-message card. An empty
+   note keeps no room but stays in the page, so a screen reader can find it. */
+.usersapp .note{margin:0 0 8px;font-size:13px}
+.usersapp .note:empty{margin:0}
+.usersapp table{width:100%;border-collapse:collapse;font-size:13px}
+.usersapp th{text-align:left;font-weight:600;padding:4px 10px 6px 0;color:var(--muted);
+             border-bottom:1px solid var(--win-border);white-space:nowrap}
+.usersapp td{padding:5px 10px 5px 0;border-bottom:1px solid var(--win-border);
+             vertical-align:top;word-break:break-word}
+.usersapp .mono{font-family:ui-monospace,"Cascadia Mono","Consolas",monospace}
+/* An address stands character by character: each one in its own box, so a
+   host that only looks like the right one cannot hide between the letters. */
+.usersapp .url{display:inline-flex;flex-wrap:wrap}
+.usersapp .url .ch{display:inline-block;min-width:.72em;text-align:center;
+                   border-bottom:1px solid var(--win-border)}
+/* .row above is display:flex for the shell's own little rows of buttons. A
+   table row is not one of those: without this the cells of a <tr class="row">
+   leave their columns and the headings above them mean nothing. */
+.usersapp tr.row{display:table-row}
+.usersapp .pending .row,.usersapp .pendapi .row{display:flex;flex-wrap:wrap;gap:10px;
+             align-items:center;padding:8px 0;border-bottom:1px solid var(--win-border)}
+.usersapp .row .nm{font-weight:600}
+.usersapp .row .since{color:var(--muted);font-size:12px}
+.usersapp .fp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
+              padding:2px 6px}
+.usersapp .code{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
+                padding:8px;word-break:break-all;-webkit-user-select:text;user-select:text}
+.usersapp .role{border:1px solid var(--win-border);border-radius:8px;margin:0 0 12px;padding:8px 12px 12px}
+.usersapp .role legend{padding:0 6px;font-weight:600}
+.usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
+.usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}
+.usersapp button.go{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);
+                    color:inherit;font:inherit;padding:6px 12px;cursor:pointer}
+.usersapp button.go:hover{border-color:var(--accent)}
+.usersapp button.go[disabled]{opacity:.5;cursor:default}
+.usersapp .askback{position:absolute;inset:0;z-index:10;display:flex;align-items:center;
+                   justify-content:center;padding:16px;background:rgba(0,0,0,.45)}
+.usersapp .ask{max-width:30rem;width:100%;max-height:100%;overflow:auto;padding:18px;
+               border:1px solid var(--win-border);border-radius:var(--radius);
+               background:var(--win-bg);box-shadow:var(--shadow)}
+.usersapp .ask h2{margin:0 0 10px;font-size:16px}
+.usersapp .ask p{margin:0 0 8px}
+.usersapp .ask ul{margin:0 0 10px;padding-left:20px}
+.usersapp .ask .who{color:var(--muted)}
+.usersapp .ask .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.usersapp .ask .no{border:1px solid var(--win-border);border-radius:8px;background:var(--win-bg);
+                   color:inherit;font:inherit;padding:7px 14px;cursor:pointer}
+.usersapp .ask .danger{background:#e13e3e;border-color:transparent;color:#fff;font-weight:600}
