@@ -99,8 +99,10 @@ test("one app over the contract's thousand is refused", async ({ page }) => {
 
 test("a thousand apps are shown, and the search is the way through them", async ({ page }) => {
   await desktop(page, Array.from({ length: 1000 }, (_, i) => app({ id: "de.example.a" + i, name: "App " + i })));
-  // .status and not getByRole("status"): the stylesheet hides the strip
-  // while it is empty, and a hidden element is in no accessibility tree.
+  // .status, because what is asserted here is that it holds nothing. The
+  // strip stays in the page whether it has news or not - that was W1 of the
+  // fixing round - so getByRole("status") would find it too; asking the
+  // element directly says "empty" without going through a role to do it.
   await expect(page.locator(".status")).toHaveText("");
   await expect(page.locator(".dicon")).toHaveCount(1000);
   await page.getByRole("button", { name: "Start" }).click();

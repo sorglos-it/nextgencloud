@@ -4,11 +4,11 @@ import { test, expect, hasSessionKeys } from "../fixtures/page.js";
 // reader is told. The people this is built for include the ones who never
 // touch a mouse.
 //
-// What is measured here is what holds today. What does not hold yet - the
-// arrow keys a role="menu" promises, the focus that is not given back when
-// the menu closes, a window that says what it is - is written down in
-// docs/.../task-21-pruefung.md and is not asserted here, because a case that
-// is red on purpose is a case everybody learns to ignore.
+// What is measured here is what holds. The review of round 1 found that
+// role="menu" promised keys the menu did not have and that the focus was
+// dropped on the floor whenever the menu closed (W2); the fixing round made
+// the menu do what it says, and the cases at the foot of this file hold it
+// to that.
 test.beforeEach(async ({ shell }) => {
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
@@ -62,17 +62,55 @@ test("Escape closes the start menu from wherever the focus sits in it", async ({
   }
 });
 
-test("every tile of the start menu can be tabbed to", async ({ shell }) => {
+// REPLACED IN THE FIXING ROUND, AND IT ASKS FOR MORE THAN IT DID.
+//
+// It used to say every tile is a tab stop, which is what the shell did: at
+// 1000 apps that is 1000 presses of Tab to reach the buttons under the list,
+// and W2 named it. A role="menu" is walked with the arrow keys and is ONE
+// stop on the way through - so that is what is asked for here now: the arrows
+// reach every tile in order, Home and End reach the ends, and one more Tab is
+// past the whole list rather than one tile further into it.
+test("the list is one tab stop and the arrow keys walk every tile of it", async ({ shell }) => {
   await shell.getByRole("button", { name: "Start" }).click();
-  const count = await shell.locator("#smlist .smitem").count();
-  expect(count).toBeGreaterThan(3);
-  const seen = [];
-  for (let i = 0; i < count; i++) {
-    await shell.keyboard.press("Tab");
+  const want = await shell.locator("#smlist .smitem").evaluateAll((is) => is.map((i) => i.textContent.trim()));
+  expect(want.length).toBeGreaterThan(3);
+
+  // One Tab out of the search field lands on the list, at its first tile.
+  await shell.keyboard.press("Tab");
+  expect(await active(shell)).toBe(want[0]);
+
+  // The arrows walk the rest of it, and they come round at the end.
+  const seen = [want[0]];
+  for (let i = 1; i < want.length; i++) {
+    await shell.keyboard.press("ArrowDown");
     seen.push(await active(shell));
   }
-  const want = await shell.locator("#smlist .smitem").evaluateAll((is) => is.map((i) => i.textContent.trim()));
   expect(seen).toEqual(want);
+  await shell.keyboard.press("ArrowDown");
+  expect(await active(shell)).toBe(want[0]);
+  await shell.keyboard.press("ArrowUp");
+  expect(await active(shell)).toBe(want[want.length - 1]);
+  await shell.keyboard.press("Home");
+  expect(await active(shell)).toBe(want[0]);
+  await shell.keyboard.press("End");
+  expect(await active(shell)).toBe(want[want.length - 1]);
+
+  // ArrowRight and ArrowLeft do the same: the tiles stand in a grid, and
+  // which way somebody reads it is their own business.
+  await shell.keyboard.press("Home");
+  await shell.keyboard.press("ArrowRight");
+  expect(await active(shell)).toBe(want[1]);
+  await shell.keyboard.press("ArrowLeft");
+  expect(await active(shell)).toBe(want[0]);
+
+  // And the next Tab is past the list, not one tile further into it.
+  await shell.keyboard.press("Tab");
+  expect(want).not.toContain(await active(shell));
+  expect(await active(shell)).toBe("Hell");
+
+  // Exactly one tile is reachable by Tab at any moment; the others are not.
+  expect(await shell.locator("#smlist .smitem").evaluateAll((is) =>
+    is.filter((i) => i.getAttribute("tabindex") === "0").length)).toBe(1);
 });
 
 test("the three buttons of a window and every key of the calculator are tab stops", async ({ shell }) => {
@@ -163,4 +201,93 @@ test("the page says which language it is in", async ({ shell }) => {
   // A screen reader needs it to pick the voice; every text of the shell is
   // German.
   await expect(shell.locator("html")).toHaveAttribute("lang", "de");
+});
+
+// ---------------------------------------------------------------------------
+// The two findings of round 1 about promising what is not there (W1, W2).
+// ---------------------------------------------------------------------------
+
+test("the place a notice appears in can be found before there is a notice", async ({ shell }) => {
+  // W1. desktop.js said the live region "stays, empty or not" and the
+  // stylesheet took it out of the page with display:none, so a screen reader
+  // had nothing to watch and a blind person was never told anything. The
+  // region is in the page from the start now, and it takes up no room until
+  // there is something to say.
+  await expect(shell.getByRole("status")).toHaveCount(1);
+  await expect(shell.getByRole("status")).toHaveText("");
+  expect(await shell.evaluate(() => {
+    const e = document.querySelector(".status");
+    const c = getComputedStyle(e);
+    return { display: c.display, visibility: c.visibility, height: e.getBoundingClientRect().height };
+  })).toEqual({ display: "block", visibility: "visible", height: 0 });
+  // And it is the same element that carries the notice a moment later - not
+  // a second one built when the news arrives.
+  const mark = await shell.evaluate(() => {
+    document.querySelector(".status").dataset.mark = "one";
+    window.__ngcSendNotice("warn", "Eine Meldung.");
+    return document.querySelector(".status").dataset.mark;
+  });
+  expect(mark).toBe("one");
+  await expect(shell.getByRole("status")).toHaveText("Eine Meldung.");
+});
+
+test("Escape gives the focus back to the button the menu was opened with", async ({ shell }) => {
+  // W2. The focus used to land on <body>, where the next Tab starts over at
+  // the top of the page.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.keyboard.press("Escape");
+  await expect(shell.getByRole("button", { name: "Start" })).toBeFocused();
+  // From wherever in the menu it sat, not only from the search field.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.locator("#smlist .smitem").first().focus();
+  await shell.keyboard.press("Escape");
+  await expect(shell.getByRole("button", { name: "Start" })).toBeFocused();
+});
+
+test("starting an app puts the focus in the window it opened", async ({ shell }) => {
+  // W2, the other half: after a start the focus used to be on <body>, so the
+  // keyboard had to walk the whole page to reach the window it had just
+  // asked for.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const win = shell.locator(".win", { hasText: "Rechner" });
+  await expect(win).toBeFocused();
+  // And the way on from there is the window's own buttons.
+  await shell.keyboard.press("Tab");
+  expect(await active(shell)).toBe("Minimieren");
+});
+
+test("an app that opens no window gives the focus back instead of dropping it", async ({ shell }) => {
+  // "Fotos" is unreachable in the stand-in's list: no window opens, so there
+  // is nowhere to send the focus but back where it came from.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Fotos", exact: true }).click();
+  await expect(shell.getByRole("status")).toHaveText("Fotos ist nicht erreichbar.");
+  await expect(shell.getByRole("button", { name: "Start" })).toBeFocused();
+});
+
+test("Tab stays inside the open menu instead of walking off behind it", async ({ shell }) => {
+  // W2. Nothing held the focus in the menu, so Tab walked out into a desktop
+  // the menu was covering - into controls the person cannot see.
+  await shell.getByRole("button", { name: "Start" }).click();
+  const inMenu = () => shell.evaluate(() =>
+    document.getElementById("startmenu").contains(document.activeElement));
+  for (let i = 0; i < 30; i++) {
+    await shell.keyboard.press("Tab");
+    expect(await inMenu(), `Tab number ${i + 1} left the menu`).toBe(true);
+  }
+  await shell.locator("#smsearch").focus();
+  await shell.keyboard.press("Shift+Tab");
+  expect(await inMenu()).toBe(true);
+});
+
+test("the arrow keys reach the app list from the search field", async ({ shell }) => {
+  // Typing and then pressing down is how somebody looks for an app without a
+  // mouse; without this the search is a dead end.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.locator("#smsearch").fill("rech");
+  await shell.keyboard.press("ArrowDown");
+  expect(await active(shell)).toBe("BBenutzer und Rechte");
+  await shell.keyboard.press("Enter");
+  await expect(shell.locator(".win", { hasText: "Benutzer und Rechte" })).toBeVisible();
 });

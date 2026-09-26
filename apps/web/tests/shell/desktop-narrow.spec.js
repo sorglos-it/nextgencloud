@@ -108,3 +108,39 @@ test("the calculator's twenty keys all fit in the window it opens in", async ({ 
     }).length;
   })).toBe(0);
 });
+
+test("Fenster anordnen keeps every window inside the desktop", async ({ shell }) => {
+  // K3. tile() divided the width and .win{min-width} drew something wider:
+  // at 375 px it laid out 187 px tiles, the browser drew 240, and one window
+  // stood 52 px past the edge where nothing can reach it.
+  //
+  // Measured as DRAWN, not as written: getBoundingClientRect is what the
+  // person sees, and that is where the two numbers disagreed.
+  for (const name of ["Rechner", "App-Store", "Benutzer und Rechte"]) {
+    await shell.getByRole("button", { name: "Start" }).click();
+    await shell.getByRole("menuitem", { name, exact: true }).click();
+  }
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Fenster anordnen" }).click();
+  await shell.waitForTimeout(350);
+  const got = await shell.evaluate(() => {
+    const d = document.getElementById("desktop").getBoundingClientRect();
+    const boxes = [...document.querySelectorAll(".win")].map((w) => {
+      const r = w.getBoundingClientRect();
+      return { x: r.left - d.left, y: r.top - d.top, w: r.width, h: r.height };
+    });
+    const outside = boxes.filter((b) =>
+      b.x < -1 || b.y < -1 || b.x + b.w > d.width + 1 || b.y + b.h > d.height + 1);
+    const overlap = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const p = boxes[i], q = boxes[j];
+        if (p.x < q.x + q.w - 1 && q.x < p.x + p.w - 1 && p.y < q.y + q.h - 1 && q.y < p.y + p.h - 1) {
+          overlap.push([i, j]);
+        }
+      }
+    }
+    return { count: boxes.length, outside, overlap };
+  });
+  expect(got).toEqual({ count: 3, outside: [], overlap: [] });
+});

@@ -17,6 +17,11 @@
   --field-bg: #151a23;
   --muted: #97a3b6;
   --page-bg: #0d1017;
+  /* The smallest a window may be. It stands here because this is where a
+     window is drawn; window.js reads these two and lays out by them, so the
+     size that is drawn and the size that is reckoned with are one number. */
+  --win-min-w: 240px;
+  --win-min-h: 150px;
 }
 html[data-theme="light"]{
   --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
@@ -138,9 +143,11 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
 .wpgrid button.on{border-color:var(--accent)}
 
 /* ---------- Fenster ---------- */
-.win{position:absolute;display:flex;flex-direction:column;min-width:240px;min-height:150px;
+.win{position:absolute;display:flex;flex-direction:column;
+     min-width:var(--win-min-w);min-height:var(--win-min-h);
      background:var(--win-bg);color:var(--win-fg);border:1px solid var(--win-border);
      border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.win:focus{outline:none}
 .win.min{display:none}
 .win.max{border-radius:0}
 .win.anim{transition:left .16s,top .16s,width .16s,height .16s}
@@ -203,13 +210,23 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 /* One strip at the bottom edge, for one message at a time. The live region
    stays in the page whether it holds anything or not, because a region that
    appears only when there is news is announced by nobody. */
+/* pointer-events:none on the strip itself: while it is empty it is a box of
+   no size, and a box of no size must not be able to swallow a click either. */
 .noticebar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;
-           align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));z-index:100002}
+           align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));z-index:100002;
+           pointer-events:none}
+.status,.alert,.noticeclose{pointer-events:auto}
 .status,.alert{margin:0;padding:10px 14px;border-radius:10px;border:1px solid var(--win-border);
                background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
-.status:empty{display:none}
 .status.warn{border-color:#d2932a}
 .status.error{border-color:#e13e3e}
+/* NOT display:none, and this rule comes last on purpose.
+   The empty strip used to be taken out of the page, and a live region that is
+   not in the page when the news arrives is a live region no screen reader
+   watches - so a blind person was told nothing, ever. It stays, and takes up
+   no room: no padding, no border, no background, no shadow, and an empty
+   block box is zero high. */
+.status:empty{padding:0;border:0;background:none;box-shadow:none}
 /* A serious failure that stops the shell: not a strip that goes away, a box
    that stays and says what to do. */
 .alert{display:block;max-width:32rem;margin:20vh auto;text-align:center;border-color:#e13e3e}
