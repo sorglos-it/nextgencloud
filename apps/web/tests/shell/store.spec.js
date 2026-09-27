@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { hasSessionKeys, signIn } from "../fixtures/page.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
+import { vectors } from "../fixtures/vectors.js";
 
 // The app store: the first app anybody opens, and the one that decides what
 // runs on this installation afterwards.
@@ -63,16 +64,84 @@ async function sentTask(page, name) {
 
 const names = (page) => page.evaluate(() => window.__ngcSent.map((s) => s.app + "/" + s.name));
 
-// answerConfirm types the password into the question and says yes. The key
-// behind it is a key of the page and no verifier in the browser checks the
-// signature, so the password itself is any password: what the case is about
-// is that the shell ASKS and signs the bytes it was given.
+// answerConfirm types the password into the question and says yes.
+//
+// The password is READ OUT OF THE WORLD and not written here twice: where the
+// world derives the admin's key from it (knob passwordKey), a password that
+// had drifted apart from it would make the signature fail and the case would
+// blame the shell for the fixture.
 async function answerConfirm(page) {
+  const pw = await page.evaluate(async () => (await import("/assets/js/shell/fake-link.js")).PASSWORD);
   const box = page.getByRole("dialog", { name: "Bitte bestätigen" });
   await expect(box).toBeVisible();
-  await box.locator("input[type=password]").fill("geheim");
+  await box.locator("input[type=password]").fill(pw);
   await box.getByRole("button", { name: "Bestätigen", exact: true }).click();
   await expect(box).toHaveCount(0);
+}
+
+// ---- a real chain, for the one case that measures the real TrustStore -----
+//
+// The same four-version chain trustlist.spec.js measures the store against:
+// shared/testdata/trust.json is the common truth of Go and JavaScript, and it
+// is served over a route as the answer of GET /api/v1/trust. The mock API
+// cannot stand in for it - it builds its world with keys it makes at start-up,
+// so no fixed anchor ever matches it.
+const CHAIN = "admin adds a user, user adds an own key, passkey admin re-signs";
+
+function chainCase() {
+  const c = vectors("trust.json").find((x) => x.name === CHAIN);
+  if (c === undefined) throw new Error(`store.spec: trust.json has no case "${CHAIN}"`);
+  return c;
+}
+
+// Does this engine's Web Crypto know Ed25519? Every key in the chain is one,
+// so an engine without it would measure the engine and not the shell. Probed
+// with a real key out of the fixture, never decided by the engine's name.
+async function hasEd25519(page) {
+  return page.evaluate(async (c) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const payload = JSON.parse(new TextDecoder().decode(b64decode(c.chain[0].payload)));
+    let pub = null;
+    for (const u of payload.users) {
+      for (const k of u.keys) if (k.kind === "password") pub = k.pub;
+    }
+    try {
+      await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, chainCase());
+}
+
+// serveChain answers GET /api/v1/trust?from=N out of the fixture chain, the
+// way shared/README.md ("Vor dem WebSocket") says the API does. `visible` is
+// how many versions this API owns up to; __ngcVisible() raises it to all of
+// them, which is what a new version looks like from outside.
+async function serveChain(page, c, { visible = c.chain.length } = {}) {
+  const state = { visible, from: [] };
+  await page.route(/\/api\/v1\/trust\?/, async (route) => {
+    const from = Number(new URL(route.request().url()).searchParams.get("from"));
+    state.from.push(from);
+    const at = from - c.anchor.seq;
+    if (at < 0 || at > state.visible) {
+      await route.fulfill({
+        status: 404, contentType: "application/json; charset=utf-8",
+        body: JSON.stringify({ status: "error", code: "E_NOTFOUND", message: "Nicht gefunden." }),
+      });
+      return;
+    }
+    if (at === state.visible) { await route.fulfill({ status: 204 }); return; }
+    const versions = c.chain.slice(at, state.visible);
+    await route.fulfill({
+      status: 200, contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({ versions, more: false }),
+    });
+  });
+  await page.exposeFunction("__ngcVisible", () => { state.visible = c.chain.length; });
+  await page.exposeFunction("__ngcAsked", () => state.from.slice());
+  await page.exposeFunction("__ngcForget", () => { state.from = []; });
+  return state;
 }
 
 // ---------------------------------------------------------------- 1. catalog
@@ -252,6 +321,10 @@ test("a standing approval takes its key from the trust list, never from the answ
   // one key that may never end up in the list.
   const liar = "7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u4";
   await store(page, {
+    // A version of the trust list is checked by the shell against the list in
+    // force before it is sent (trust.advance in standingYes), so the admin's
+    // key has to be one somebody can really sign with.
+    passwordKey: true,
     updates: [
       {
         target: "ngc-api", node: "api-1", installed: "1.0.0", available: "1.1.0",
@@ -274,8 +347,8 @@ test("a standing approval takes its key from the trust list, never from the answ
   await answerConfirm(page);
   await expect.poll(async () => (await names(page)).filter((n) => n === "ngc.users/trust").length).toBe(2);
 
-  // The new version of the list is read back with the contract, out of the
-  // bytes the shell really sent.
+  // The new versions are read back with the contract, out of the bytes the
+  // shell really sent.
   const auto = await page.evaluate(async () => {
     const b64 = await import("/assets/js/contracts/b64.js");
     const trust = await import("/assets/js/contracts/trust.js");
@@ -284,7 +357,12 @@ test("a standing approval takes its key from the trust list, never from the answ
     for (const r of recs) {
       const signed = trust.parseSigned(b64.b64decode(r.body));
       const l = await trust.parseList(signed.payload);
-      out.push({ seq: l.seq, auto: l.auto.map((a) => ({ target: a.target, key: b64.b64encode(a.key) })) });
+      out.push({
+        seq: l.seq,
+        prev: b64.b64encode(l.prev),
+        hash: b64.b64encode(await trust.hash(signed)),
+        auto: l.auto.map((a) => ({ target: a.target, key: b64.b64encode(a.key) })),
+      });
     }
     return { rows: out, store: window.__ngcStoreKey, release: window.__ngcReleaseKey, liar: window.__ngcLiarKey };
   });
@@ -295,6 +373,132 @@ test("a standing approval takes its key from the trust list, never from the answ
   for (const a of last) expect(a.key).not.toBe(auto.liar);
   // And the setting itself went to the API as well.
   expect(await names(page)).toContain("ngc.store/set-update");
+
+  // THE CHAIN, AND NOT TWICE THE SAME NUMBER. Fixrunde 1 found what the lines
+  // above alone let through: the store threw the answer away, the version in
+  // force never moved, and the second approval was built on the same prev as
+  // the first - two versions at one seq, a fork of the root everything hangs
+  // from. The assertions above did not see it, because the LAST of two forks
+  // still carries its own key correctly.
+  expect(auto.rows.map((r) => r.seq)).toEqual([2, 3]);
+  expect(auto.rows[1].prev).toBe(auto.rows[0].hash);
+  // And the second version keeps the first approval instead of losing it,
+  // which a version built on the older list would.
+  expect(auto.rows[0].auto.map((a) => a.target)).toEqual(["ngc-api"]);
+  expect(last.map((a) => a.target)).toEqual(["ngc-api", "org.sorglos.terminal"]);
+});
+
+test("two standing approvals in a row are a chain the contract itself accepts", async ({ page }) => {
+  // The strongest way to say the same thing, and the one that would hold
+  // without the stand-in: hand BOTH versions to trust.advance, the very
+  // function the API and every controller run on them. It checks the
+  // signature against the keys of the version before, seq = seq + 1 and
+  // prev = the hash of that version. A fork fails it on the second version.
+  //
+  // For that the admin's key has to be a key somebody can really sign with,
+  // so this world derives it from the password with proof.deriveSeed, exactly
+  // as the shell does when it asks for the password again. One Argon2id at
+  // start-up is what the knob costs.
+  await store(page, {
+    passwordKey: true,
+    updates: [
+      { target: "ngc-api", node: "api-1", installed: "1.0.0", available: "1.1.0",
+        sha256: "", key: "", mode: "notify", window: "", state: "available" },
+      { target: "org.sorglos.terminal", node: "pi-1", installed: "1.0.0", available: "1.1.0",
+        sha256: "", key: "", mode: "notify", window: "", state: "available" },
+    ],
+  });
+  await tab(page, "Updates").click();
+  await page.locator(".store select.mode").first().selectOption("auto");
+  await answerConfirm(page);
+  await expect.poll(() => names(page)).toContain("ngc.users/trust");
+  await page.locator(".store select.mode").nth(1).selectOption("auto");
+  await answerConfirm(page);
+  await expect.poll(async () => (await names(page)).filter((n) => n === "ngc.users/trust").length).toBe(2);
+
+  const got = await page.evaluate(async () => {
+    const b64 = await import("/assets/js/contracts/b64.js");
+    const trust = await import("/assets/js/contracts/trust.js");
+    // Version 1 of the world THIS shell started from. Asking fakeWorld()
+    // again would build another world - another store key, another version 1 -
+    // and clear the record of what was sent on the way.
+    const start = window.__ngcListFirst;
+    const chain = window.__ngcSent.filter((s) => s.name === "trust")
+      .map((r) => trust.parseSigned(b64.b64decode(r.body)));
+    try {
+      const end = await trust.advance({ list: start.list, hash: start.hash }, chain);
+      return { ok: true, seq: end.list.seq, auto: end.list.auto.map((a) => a.target) };
+    } catch (e) {
+      return { ok: false, why: String(e.message) };
+    }
+  });
+  expect(got).toEqual({ ok: true, seq: 3, auto: ["ngc-api", "org.sorglos.terminal"] });
+});
+
+test("a version the shell cannot convince itself of is never sent", async ({ page }) => {
+  // No knob, so the admin's key in this world is a key nobody can sign with:
+  // the proof the shell builds over the new version does not verify against
+  // the list in force. trust.advance - the very check the API and every
+  // controller run - refuses it, and the shell refuses it first. A version
+  // that was signed and turned away afterwards has already left the signature
+  // behind.
+  await store(page, {
+    updates: [{
+      target: "ngc-api", node: "api-1", installed: "1.0.0", available: "1.1.0",
+      sha256: "", key: "", mode: "notify", window: "", state: "available",
+    }],
+  });
+  await tab(page, "Updates").click();
+  await page.locator(".store select.mode").first().selectOption("auto");
+  await answerConfirm(page);
+  await expect(page.getByRole("status")).toContainText("keine gültige Vertrauensliste");
+  expect(await names(page)).not.toContain("ngc.users/trust");
+  // And the setting is not switched either: what is on screen is what is in
+  // force.
+  await expect(page.locator(".store select.mode").first()).toHaveValue("notify");
+  expect(await names(page)).not.toContain("ngc.store/set-update");
+});
+
+test("refresh does with the number what the store depends on", async ({ page }) => {
+  // MEASURED AGAINST THE REAL TrustStore, not taken from a suggestion: the
+  // line in standingYes hands the seq of the answer to trust.refresh and then
+  // requires the version in force to have reached it. This is what that call
+  // really does, over the real class, the real fetch and a real chain out of
+  // shared/testdata/trust.json.
+  await page.goto("/");
+  test.skip(!(await hasEd25519(page)),
+    "no Ed25519 in this engine's Web Crypto: no version of any chain here can be verified");
+  const c = chainCase();
+  const state = await serveChain(page, c, { visible: 1 });
+  const got = await page.evaluate(async (raw) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const { TrustStore } = await import("/assets/js/shell/trustlist.js");
+    const s = new TrustStore();
+    const start = await s.bootstrap({ seq: raw.seq, hash: b64decode(raw.hash) });
+    // A hint that is not higher than the version in force: nothing moves and
+    // nobody is asked. That is the case the store hits when the API answers
+    // with a number this browser already has.
+    await window.__ngcForget();
+    const same = await s.refresh(start);
+    const older = await s.refresh(1);
+    const askedAfterSame = (await window.__ngcAsked()).length;
+    // Now the API owns up to the versions the store has just written, and the
+    // hint names the newest of them: the chain is followed and the answer is
+    // the number that is then in force.
+    await window.__ngcVisible();
+    const moved = await s.refresh(4);
+    return { start, same, older, askedAfterSame, moved, inForce: s.current().list.seq };
+  }, { seq: c.anchor.seq, hash: c.anchor.hash });
+  expect(got.start).toBe(1);
+  // Not higher than what is in force: the number in force comes back, and
+  // no request was made for either of the two.
+  expect(got.same).toBe(1);
+  expect(got.older).toBe(1);
+  expect(got.askedAfterSame).toBe(0);
+  // Higher: the list really moved, and the answer is the new number.
+  expect(got.moved).toBe(4);
+  expect(got.inForce).toBe(4);
+  expect(state.from.length).toBeGreaterThan(0);
 });
 
 // ------------------------------------------------------------ 7. paid apps

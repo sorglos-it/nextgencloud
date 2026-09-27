@@ -223,6 +223,22 @@ class Store {
   // The params are written HERE, by the contract's own writer, and the bytes
   // are what travel: a caller that handed an object over and let something
   // else write it would sign one document and send another.
+  //
+  // THE ONE PLACE THAT TOUCHES THE LINK, and the one that changes when the
+  // login lands and a real net/link.js Link arrives in place of the stand-in.
+  // What it becomes is decided by the action's own flow column
+  // (core.ACTIONS), not by a name written here:
+  //
+  //   FLOW_CALL, FLOW_TRANSFER  -> channel.call(link, action,
+  //                                  {params, taskBytes, confirmBytes})
+  //   FLOW_IN                   -> channel.sendIn(link, action,
+  //                                  {params, taskBytes, stream, onProgress})
+  //
+  // Those are net/channel.js as it stands since Task 17, member for member -
+  // the option bag below is its, which is why it is the bag this hands over.
+  // net/testlink.js has a shortcut of the same NAME that takes params as an
+  // object and drops the bag; it is the tests' convenience and not the
+  // interface this will use.
   async ask(action, params, opts) {
     const bytes = params === null || params === undefined ? null : core.encodeParams(action, params);
     const answer = await this.ctx.link.call(action.app, action.service, action.name, bytes, opts ?? null);
@@ -712,9 +728,15 @@ class Store {
       this.say("warn", "Für diese Freigabe fehlt der Schlüssel. Bitte den Store dieser App zuerst eintragen.");
       return false;
     }
+    // The hash the version in force was CHECKED with, not one taken again
+    // from its bytes: current() carries it because trust.open and
+    // trust.advance computed it over the very bytes they read. A second
+    // hashing here would be a second reading of the same thing, and the chain
+    // would be built on the reading nobody verified.
+    const prev = cur.hash instanceof Uint8Array ? cur.hash : await trust.hash(cur.signed);
     let payload;
     try {
-      payload = trust.encodeList(nextList(cur.list, await trust.hash(cur.signed), target, key));
+      payload = trust.encodeList(nextList(cur.list, prev, target, key));
     } catch {
       this.say("error", "Das hat nicht geklappt. Bitte es noch einmal versuchen.");
       return false;
@@ -726,9 +748,53 @@ class Store {
       return false;
     }
     try {
-      await this.ask(A.trust, null, { stream: oneChunk(signedBytes(payload, p)) });
+      // The same check the API and every controller will run on this version:
+      // the chain from the one in force to this one, signature and all. If
+      // the shell cannot convince itself, nobody else is asked to be
+      // convinced either - and a version that was signed and refused
+      // afterwards has already left the signature behind.
+      await trust.advance({ list: cur.list, hash: prev }, [{ payload, proof: p }]);
+    } catch {
+      this.say("error", "Diese Freigabe ergibt keine gültige Vertrauensliste. Bitte neu anmelden.");
+      return false;
+    }
+    let seq;
+    try {
+      seq = (await this.ask(A.trust, null, { stream: oneChunk(signedBytes(payload, p)) })).seq;
     } catch {
       this.say("error", "Die Freigabe wurde nicht angenommen. Bitte es noch einmal versuchen.");
+      return false;
+    }
+    // THE ANSWER IS NOT A RECEIPT TO THROW AWAY, and Fixrunde 1 found what it
+    // costs to treat it as one. ngc.users/api/trust answers with the number
+    // of the version that now stands (core: TrustResult, S({seq: uint})), and
+    // the version in force HERE does not move by itself: the API keeps what
+    // it was sent, the browser follows the chain over GET /api/v1/trust.
+    //
+    // The next standing approval is built on current(). A current() still
+    // standing at the old version would chain the next one to the same prev
+    // and give it the same number - two versions at one seq, which is a FORK
+    // of the trust list. That is the root everything else hangs from.
+    //
+    // What refresh does with this number, measured against the real
+    // TrustStore and not taken on trust (store.spec.js, "refresh does with
+    // the number what the store depends on"): a number that is not higher
+    // than the version in force changes nothing and asks nobody; a higher one
+    // follows the chain and answers with the number then in force.
+    let now = 0;
+    try {
+      now = await this.ctx.trust?.refresh?.(seq);
+    } catch {
+      // A broken chain, a dead connection, a list already out of force: all
+      // of them mean the same here - this shell is not on that version.
+      now = 0;
+    }
+    if (!Number.isSafeInteger(now) || now < seq) {
+      // The approval itself IS stored; only this browser did not get there.
+      // So nothing more is written, and the sentence says the one thing that
+      // fixes it. Writing a second version from here would be the fork.
+      this.say("warn", "Die Freigabe ist eingetragen. Bitte die Seite neu laden, "
+        + "damit NGC hier auf dem neuen Stand ist.");
       return false;
     }
     return true;
@@ -741,6 +807,16 @@ class Store {
   // the very same bytes a second time with their own key; the API refuses the
   // task without that signature, and the shell must not send one it knows
   // will be refused.
+  //
+  // A GAP IN THE CONTRACT, NAMED HERE BECAUSE THIS IS WHERE IT SHOWS.
+  // wire.encodeOpen (and wire.parseOpen behind it) takes `confirm` only
+  // together with `task`: "if (confirm !== null) { if (task === null) return
+  // false }". So an action of service `api` - which carries no task - CANNOT
+  // BE CONFIRMED AT ALL, however the trust list's policy reads. The store
+  // therefore asks only for root tasks, and ngc.store/api/set-update goes out
+  // unconfirmed even for a role at level `hardcore`, whose `changes` rule
+  // would ask for one. That is the contract as it stands, not an omission
+  // here; it is in the coordinator's register.
   async rootTask(action, params, node, done) {
     const s = this.ctx.session;
     if (!s) {
