@@ -18,6 +18,9 @@
 //   - Every answer is read by core.parseResult before a character of it is
 //     shown. One bad field throws the whole answer away, the way the desktop
 //     does it: a list that broke its contract is a list somebody else chose.
+//   - Taking a server into the trust list is signed by the PERSON and not by
+//     the session, and the shell follows the list to what then stands before
+//     it writes anything else. Both are below, at joinNode.
 //
 // WHAT core.critical DOES AND DOES NOT DECIDE HERE, measured and named
 // because it surprised the round that built this: core.critical answers TRUE
@@ -27,28 +30,32 @@
 // role stands at level HARDCORE (level root reads op.critical || op.root, and
 // no action of ngc.users is either) or names the action in its black list. A
 // surface that asked those two and nothing else would hand out admin rights
-// on one click without a word. So the question below is this app's own rule and does not wait for
-// the contract's: it is asked before every change, and the two contract
-// answers only make it heavier. users.spec.js pins the measurement, so the
+// on one click without a word. So the question below is this app's own rule
+// and does not wait for the contract's: it is asked before every change, and
+// the two contract answers only make it heavier. users.spec.js pins the measurement, so the
 // day a row of ngc.users becomes critical, that case goes red and this
 // paragraph is read again.
 //
-// WHAT IS NOT HERE YET, named rather than faked (Task 23 builds shell/
-// confirm.js, Task 17 shell/channel.js, Tasks 19/20 the login and the opened
-// trust list):
-//   - The SECOND, cryptographic confirmation over the bytes of a task
-//     (purpose confirm/v1) belongs in confirm.js and is not written twice.
-//     ngc.users has no root task, so nothing here needs one today.
-//   - The signature over a new version and the API's clock come from the
-//     session (ctx.session.prove, ctx.session.now). Where they are missing,
-//     the surface says the change cannot be made and why - it does not draw a
-//     button that would do nothing.
+// WHO SIGNS A NEW VERSION, and why it is not the session (Fixrunde 2, W1).
+// A version of the trust list is verified against a key that stands in the
+// version BEFORE it (Go: shared/trust/trust.go, prev.KeyOwner(s.Proof.KeyID)).
+// A session key stands in no list, so a signature of it would always be
+// ErrSigner - the round that built this invented a ctx.session.prove and it
+// could never have worked. It is the PERSON's own key, asked for by
+// shell/confirm.js (askSignature, purpose trustlist/v1), which is also the
+// safer side: whoever changes the root of trust is asked for it.
+//
+// WHAT IS NOT HERE, named rather than faked: ngc.users has no root task, so
+// the second confirmation over the bytes of a task (purpose confirm/v1) has
+// nothing here to cover - confirm.js has it for the app store. Where there is
+// no session and no verified list, the surface says the change cannot be made
+// and why; it does not draw a button that would do nothing.
 import { el, button, text, clear } from "../shell/dom.js";
 import * as core from "../contracts/core.js";
 import * as trust from "../contracts/trust.js";
 import * as tunnel from "../contracts/tunnel.js";
+import { askSignature } from "../shell/confirm.js";
 import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
-import { MAX_CALL_RESULT } from "../contracts/wire.js";
 import { b64encode } from "../contracts/b64.js";
 import { validTunnelURL } from "../contracts/url.js";
 import { coreApp, validAppID, validName } from "../contracts/text.js";
@@ -67,6 +74,19 @@ const NO_REACH = "Die Anlage antwortet gerade nicht.";
 // fingerprint is there: a question that shows three dots where the
 // fingerprint belongs is a question nobody can answer.
 const NO_FINGERPRINT = "Der Fingerabdruck wird noch berechnet. Bitte noch einmal versuchen.";
+// The version IS stored; only this browser did not get there. Writing a
+// second version from here would be the fork, so nothing more is written and
+// the sentence says the one thing that fixes it.
+const BEHIND = "Der Server ist eingetragen. Bitte die Seite neu laden, damit NGC hier auf dem "
+  + "neuen Stand ist.";
+
+// Cancelled is what the person answered when the question for their key was
+// closed with Abbrechen. It is an answer and not a failure, and it reads
+// differently on screen.
+class Cancelled extends Error {}
+// Behind is BEHIND as an answer: the write went through, the following did
+// not.
+class Behind extends Error {}
 
 // What a log entry's kind is called in German. A kind the contract knows but
 // this table does not is shown as it stands - it is one of core's own ten
@@ -86,71 +106,36 @@ const TABS = [
   ["log", "Protokoll"],
 ];
 
-// ------------------------------------------------------------- the two doors
+// ---------------------------------------------------------------- the one door
 //
-// EVERY byte in and out of this app goes through one of these two functions,
-// and that is on purpose: the link is a stand-in today (shell/fake-link.js)
-// and becomes shell/channel.js with Task 17. When it does, exactly these two
-// functions change and nothing else in this file moves.
-
-// callAPI runs one action of flow "call": the parameters are written by the
-// contract (core.encodeParams, which is what Go's json.Marshal writes), and
-// the answer is read by the contract (core.parseResult). Neither is done by
-// hand anywhere else in this file.
-async function callAPI(link, action, params) {
-  const body = params === undefined ? undefined : core.encodeParams(action, params);
-  return core.parseResult(action, await link.call(action.app, action.service, action.name, body));
+// EVERY byte in and out of this app goes through this one function, and that
+// is on purpose: the link is a stand-in today (shell/fake-link.js) and becomes
+// net/link.js when the login lands. When it does, exactly this function
+// changes and nothing else in this file moves.
+//
+// FIXRUNDE 2: this used to be TWO functions, and the second one was invented.
+// It opened a channel with link.open(app, service, name) and wrote on it with
+// send()/end() - an interface nobody else has. What Task 17 really built is
+// net/channel.js, where the action's own flow column decides what happens and
+// the caller hands over ONE option bag:
+//
+//   FLOW_CALL      -> channel.call(link, action, {params, taskBytes, confirmBytes})
+//   FLOW_IN        -> channel.sendIn(link, action, {params, taskBytes, stream, onProgress})
+//
+// The shortcut the desktop's link carries takes the same thing as
+// (app, service, name, paramBytes, opts) - which is what apps/store.js hands
+// it, so this hands it the same. ngc.users/api/trust is the one action of
+// this app whose flow is "in", and its body travels as opts.stream.
+async function ask(link, action, params, opts) {
+  const body = params === null || params === undefined ? null : core.encodeParams(action, params);
+  const answer = await link.call(action.app, action.service, action.name, body, opts ?? null);
+  return core.parseResult(action, answer);
 }
 
-// sendIn runs one action of flow "in": a channel that stays open, the bytes,
-// then EOF. The result counts only when the channel closed with "ok" -
-// anything else is thrown away, the way the real session will throw it away.
-function sendIn(link, action, bytes) {
-  return new Promise((resolve, reject) => {
-    Promise.resolve(link.open(action.app, action.service, action.name)).then((s) => {
-      const parts = [];
-      let n = 0, done = false;
-      const fail = (e) => {
-        if (done) return;
-        done = true;
-        reject(e);
-      };
-      s.onData = (b) => {
-        const v = new Uint8Array(b);
-        n += v.length;
-        // The answer is bounded here as well as in the parser: bytes that are
-        // never going to be read must not be held first.
-        if (n > MAX_CALL_RESULT) {
-          fail(new Error("users: answer too large"));
-          s.close();
-          return;
-        }
-        parts.push(v);
-      };
-      s.onClose = (code) => {
-        if (done) return;
-        if (code !== "ok") {
-          fail(new Error("users: the channel did not close with ok"));
-          return;
-        }
-        done = true;
-        const all = new Uint8Array(n);
-        let at = 0;
-        for (const p of parts) {
-          all.set(p, at);
-          at += p.length;
-        }
-        try {
-          resolve(core.parseResult(action, all));
-        } catch (e) {
-          reject(e);
-        }
-      };
-      s.send(bytes);
-      s.end();
-    }, reject);
-  });
-}
+// oneChunk turns bytes into the stream the link sends, the same way
+// apps/store.js does it: a Blob is what a file would be, and its stream is
+// what channel.sendIn reads.
+const oneChunk = (bytes) => new Blob([bytes]).stream();
 
 // ------------------------------------------------------------- a new version
 
@@ -210,7 +195,10 @@ export async function buildNextVersion(version, change, { now, signer }) {
   sortAll(next); // users, roles, nodes, stores and auto by id, name or target
   if (!trust.validateList(next)) throw new Error("Diese Änderung ergibt keine gültige Vertrauensliste.");
   const payload = trust.encodeList(next);
+  // The signature is the person's own, asked for by confirm.js, and a person
+  // may say no: null is an answer and nothing is built out of it.
   const proof = await signer(payload); // purpose trustlist/v1
+  if (proof === null || proof === undefined) throw new Cancelled();
   // The same check the API and every controller will run: the chain from the
   // version in force to this one, signature and all. If the shell cannot
   // convince itself, nobody else is asked to be convinced either.
@@ -267,6 +255,10 @@ class Users {
     this.log = [];
     this.loaded = new Set();
     this.dead = false;
+    // What closes the question for the person's key when the window goes.
+    // confirm.js takes it and answers null on abort, so a dialog can never
+    // outlive the app that asked - the same signal apps/store.js hands it.
+    this.abort = new AbortController();
 
     this.root = el("div", "usersapp");
     this.tabs = el("div", "tabs");
@@ -300,6 +292,7 @@ class Users {
 
   destroy() {
     this.dead = true;
+    this.abort.abort();
     this.closeAsk();
   }
 
@@ -627,11 +620,23 @@ class Users {
       if (this.dead) return;
       const c = tunnel.parsePairCode(r.code);
       let v = this.trust?.current?.() ?? null;
-      if (v && c.anchor.seq > (v.list?.seq ?? 0) && typeof this.trust.refresh === "function") {
-        v = await this.trust.refresh();
+      // FIXRUNDE 2, K1. This used to call refresh() with NO number and then
+      // work with what came back. Both halves were wrong, and each on its own
+      // was enough: without a number the hint counts as 0, which is never
+      // higher than the version in force, so NOBODY WAS ASKED and the branch
+      // that is supposed to catch up caught nothing. And refresh answers with
+      // a NUMBER, not with a version (measured against the real TrustStore in
+      // users.spec.js) - so v then held a number, v.list?.seq was undefined,
+      // !v was false for every number but 0, and tunnel.checkCode was handed
+      // a number where a version belongs. The number to ask for is the one
+      // the code itself names, and the version in force is read again from
+      // current() afterwards.
+      if (v?.list && c.anchor.seq > v.list.seq && typeof this.trust.refresh === "function") {
+        await this.trust.refresh(c.anchor.seq);
         if (this.dead) return;
+        v = this.trust.current();
       }
-      if (!v || !tunnel.checkCode(c, v)) {
+      if (!v?.list || !tunnel.checkCode(c, v)) {
         Users.say(box, "Dieser Code passt nicht zu dieser Anlage.");
         return;
       }
@@ -648,9 +653,13 @@ class Users {
   // now, and "" when one can. Nothing draws a button this sentence answers:
   // a button that cannot do its job is a promise the surface does not keep.
   cannotChange() {
-    if (!this.trust?.current?.()) return "Die Vertrauensliste liegt noch nicht vor. Es kann gerade kein Server aufgenommen werden.";
-    if (typeof this.session?.prove !== "function" || typeof this.session?.now !== "function") {
-      return "Diese Anmeldung kann keine Vertrauensliste unterschreiben. Es kann gerade kein Server aufgenommen werden.";
+    const cur = this.trust?.current?.();
+    if (!cur?.list) return "Die Vertrauensliste liegt noch nicht vor. Es kann gerade kein Server aufgenommen werden.";
+    // A version of the trust list is signed by the PERSON, with a key that
+    // stands in the list itself; without knowing whose session this is, there
+    // is nobody to ask.
+    if (typeof this.session?.user !== "string" || this.session.user === "") {
+      return "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.";
     }
     return "";
   }
@@ -721,14 +730,51 @@ class Users {
     });
   }
 
+  // joinNode writes the next version of the trust list, has the PERSON sign
+  // it, sends it and then follows the list to what now stands.
+  //
+  // FIXRUNDE 2, THE FORK. This used to send the version and throw the answer
+  // away. The version in force here does not move by itself - the API keeps
+  // what it was sent, this browser follows the chain over GET /api/v1/trust -
+  // so the next server taken in would be built on the SAME prev and get the
+  // SAME number: two versions at one seq, a fork of the root everything else
+  // hangs from. ngc.users/api/trust answers with the number of the version
+  // that now stands (core: TrustResult), and that number is what this asks
+  // trust.refresh for. Where the browser did not get there, nothing more is
+  // written and the sentence says the one thing that fixes it.
+  //
+  // FIXRUNDE 2, W1. The signature is NOT the session's. A version of the
+  // trust list is verified against a key that stands in the version BEFORE it
+  // (Go: shared/trust/trust.go, prev.KeyOwner) - a session key stands in no
+  // list, so such a signature would always be ErrSigner. It is the person's
+  // own key, asked for with confirm.js, which is also the safer side: whoever
+  // changes the root of trust is asked.
   async joinNode(change) {
-    const v = this.trust.current();
-    const { payload, proof } = await buildNextVersion(v, change, {
-      now: this.session.now(),
-      signer: (b) => this.session.prove(PURPOSE_TRUST_LIST, b),
+    const cur = this.trust.current();
+    // The hash the version in force was CHECKED with, not one taken again
+    // from its bytes: current() carries it because trust.open and
+    // trust.advance computed it over the very bytes they read.
+    const prev = cur.hash instanceof Uint8Array ? cur.hash : await trust.hash(cur.signed);
+    const { payload, proof } = await buildNextVersion({ list: cur.list, hash: prev }, change, {
+      // The same clock apps/store.js writes into a version it builds. A trust
+      // list holds no field the API's own time could be read out of, and two
+      // surfaces of one shell must not write `issued` from two clocks.
+      now: Math.floor(Date.now() / 1000),
+      signer: (b) => askSignature(PURPOSE_TRUST_LIST, b, "list",
+        { list: cur.list, user: this.session.user, signal: this.abort.signal }),
     });
-    await sendIn(this.link, core.lookup(core.APP_USERS, core.SERVICE_API, core.ACT_TRUST),
-      encodeSigned(payload, proof));
+    const { seq } = await ask(this.link,
+      core.lookup(core.APP_USERS, core.SERVICE_API, core.ACT_TRUST), null,
+      { stream: oneChunk(encodeSigned(payload, proof)) });
+    let now = 0;
+    try {
+      now = await this.trust.refresh?.(seq);
+    } catch {
+      // A broken chain, a dead connection, a list already out of force: all
+      // of them mean the same here - this browser is not on that version.
+      now = 0;
+    }
+    if (!Number.isSafeInteger(now) || now < seq) throw new Behind();
   }
 
   // ---- Protokoll ----------------------------------------------------------
@@ -833,12 +879,24 @@ class Users {
     yes.addEventListener("click", async () => {
       yes.disabled = true;
       no.disabled = true;
+      // THE QUESTION GOES BEFORE THE WORK, and that is not tidiness. Joining
+      // a server asks confirm.js for the person's key next, and that is a
+      // modal of its own. Two dialogs that both say aria-modal="true" are two
+      // promises that nothing else exists, and a screen reader walks straight
+      // from one into the other. One at a time: this one has been answered,
+      // so it goes. What run() has to say afterwards lands in the panel's own
+      // status line, which is still on screen behind it.
+      stop();
       try {
         await run();
       } catch (e) {
-        if (msg) text(msg, reason(e, failed));
+        // Three different things to say: the person said no, the write went
+        // through but this browser is behind it, or it did not go through.
+        if (msg) {
+          text(msg, e instanceof Cancelled ? "Nichts geändert."
+            : e instanceof Behind ? BEHIND : reason(e, failed));
+        }
       }
-      stop();
     });
     back.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -874,8 +932,7 @@ class Users {
 
   // ---- one call -----------------------------------------------------------
   call(name, params) {
-    const action = core.lookup(core.APP_USERS, core.SERVICE_API, name);
-    return callAPI(this.link, action, params);
+    return ask(this.link, core.lookup(core.APP_USERS, core.SERVICE_API, name), params ?? null);
   }
 }
 
