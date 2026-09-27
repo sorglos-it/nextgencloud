@@ -5500,6 +5500,56 @@ git commit -m "Add the session link with Noise and flow-controlled channels" --t
 
 ---
 
+### Task 17b: Der Adapter – die echte Leitung dort, wo die Attrappe steht
+
+**Eingeschoben, nicht umnummeriert.** Diese Aufgabe stand nirgends im Plan und
+ist beim Bauen von Aufgabe 18 aufgefallen: Anmeldung, Sitzung und
+Vertrauensliste sind echt, **der Desktop isst weiter die Attrappe**, und die
+frisch geöffnete Leitung wird in `main.js` gleich wieder geschlossen. Das ist
+die eigentliche Ablösung von `shell/fake-link.js`.
+
+**Files:**
+- Create: `apps/web/public/assets/js/net/world.js`
+- Modify: `apps/web/public/assets/js/shell/main.js`
+- Delete (am Ende, erst wenn nichts mehr daran hängt):
+  `apps/web/public/assets/js/shell/fake-link.js`
+- Test: `apps/web/tests/shell/world.spec.js`
+
+**Interfaces:**
+- Produces: `realWorld({config, anchor, session, link}) -> {link, trust, session,
+  releaseKey}` — dieselbe Form, die `fakeWorld()` heute liefert, damit
+  `startDesktop` keine Zeile ändert.
+- Der `link` darin bietet **genau die Oberfläche der Attrappe**:
+  `call(app, service, name, params, opts)`, `open(app, service, name)`,
+  `onNotice(fn)`.
+- Consumes: `net/link.js`, `net/channel.js`, `shell/trustlist.js`, `core.js`.
+
+**Der Kern in einem Satz:** `net/channel.js` spricht in Aktionen
+(`call(link, action, {…})`, `sendIn`, `receiveOut`, `openE2E`), die Oberflächen
+sprechen in `(app, service, name)`. Der Adapter schlägt die Zeile in
+`core.ACTIONS` nach und wählt den Weg **nach der Spalte `flow`** — nicht nach
+einer eigenen Liste, die neben der Tabelle verrottet.
+
+**Was gemessen sein muss:**
+
+- Jede Aktionszeile, die eine Oberfläche heute benutzt, kommt über den Adapter
+  am selben Ziel an wie über die Attrappe. Nicht behaupten: **den Vergleich
+  fahren**, Zeile für Zeile.
+- `onNotice` liefert die Steuerhinweise der echten Leitung, und
+  `trust.refresh(seq)` wird davon wirklich angestoßen.
+- `main.js` schließt die Leitung **nicht** mehr, und der Desktop steht mit
+  echten Daten. Das ist der Punkt, an dem die Zeile
+  `const trust = await startTrust({ anchor, installation, link });` hineingeht.
+- **Erst wenn nichts mehr daran hängt**, fällt `fake-link.js` weg. Solange ein
+  Fall sie braucht, bleibt sie — ein Baum, der nicht baut, ist schlimmer als
+  eine Attrappe, die benannt ist.
+
+**Warum das teuer werden kann, vorher gesagt:** Die Gegenstelle beantwortet
+heute fünf Kern-Aktionen, die Attrappe zwei Dutzend. Rund hundert Fälle in
+zwölf Dateien hängen an der Attrappe. Diese Aufgabe darf deshalb in Schritten
+gehen — aber jeder Schritt lässt die Mappe grün, und welche Fälle noch an der
+Attrappe hängen, steht am Ende im Bericht.
+
 ### Task 18: Anmeldung – Passwortschlüssel, TOTP und Passkeys
 
 **Files:**
