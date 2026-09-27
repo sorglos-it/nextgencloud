@@ -47,7 +47,8 @@
 import { b64encode } from "../contracts/b64.js";
 import { UIWriter } from "../contracts/uitar.js";
 import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contracts/sign.js";
-import { encodeList, parseList, parseSigned, validStore } from "../contracts/trust.js";
+import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
+import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 
@@ -61,6 +62,11 @@ const enc = new TextEncoder();
 const TERMINAL = "org.sorglos.terminal";
 const STORE = "global";
 const VERSION = "1.0.0";
+
+// The password of the one admin of this world, where a case asks for a key
+// that really derives from one (knob passwordKey). It is written here so the
+// case and the world cannot drift apart over it.
+export const PASSWORD = "geheim";
 
 // The apps the stand-in reports for "ngc.desktop/apps". Every field of
 // core.DesktopApp stands here, because these bytes go through
@@ -320,36 +326,69 @@ export async function fakeWorld() {
   // the text they are; a body is bytes and stands as base64url.
   window.__ngcSent = [];
 
-  // The admin whose session signs the tasks. Its key is a real Ed25519 key
-  // this page makes; the list calls it a password key because that is the
-  // kind a trust list can hold without asking the engine to import anything,
-  // and no signature of it is ever checked in the browser.
-  const userPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-  const userPub = new Uint8Array(await crypto.subtle.exportKey("raw", userPair.publicKey));
+  // The admin of this world, with a password key.
+  //
+  // TWO KINDS OF KEY, AND THE KNOB DECIDES. Without it the public half is a
+  // random Ed25519 key of this page: enough for every case in which nobody
+  // checks a signature of the user, and it costs nothing.
+  //
+  // WITH passwordKey it is the key PASSWORD really derives under the KDF
+  // that stands in the list below - proof.deriveSeed and proof.publicFromSeed,
+  // the same two the shell walks when it asks for the password again. Then a
+  // proof the shell built over a new version of the trust list VERIFIES
+  // against this list, and trust.advance takes the chain. That is what lets
+  // the standing-approval case measure the chain with the contract itself
+  // instead of with a promise of this file. It costs one Argon2id at start-up
+  // (m=19456, t=1, the cheapest the contract allows), which is why it is a
+  // knob and not the default.
+  const kdf = { alg: "argon2id", salt: new Uint8Array(16).fill(5), m: 19456, t: 1, p: 1 };
+  const userPub = knobs.passwordKey === true
+    ? await publicFromSeed(await deriveSeed(PASSWORD, kdf))
+    : new Uint8Array(await crypto.subtle.exportKey("raw",
+      (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])).publicKey));
   const admin = {
     id: b64encode(new Uint8Array(16).fill(1)),
     name: "anna",
     roles: ["admin"],
     keys: [{
       id: await keyIDAsync(userPub), kind: "password", alg: "EdDSA", pub: userPub,
-      credId: new Uint8Array(0),
-      kdf: { alg: "argon2id", salt: new Uint8Array(16).fill(5), m: 19456, t: 1, p: 1 },
+      credId: new Uint8Array(0), kdf,
     }],
   };
   const level = typeof knobs.level === "string" && knobs.level !== "" ? knobs.level : "off";
-  // Both move on when a new version is accepted below, the way a real
-  // installation's list moves on: the store asks current() again for the
-  // next approval and has to get what it just wrote.
-  let list = listOf(store, admin, level);
-  let signed = {
-    payload: encodeList(list),
-    // The signature over the list is never checked in the browser - Task 20
-    // checks the chain it opened, and this list was opened by nobody. What
-    // has to hold is the SHAPE, because the store hashes this payload for
-    // the prev of the version it writes.
-    proof: { kind: "password", kid: admin.keys[0].id, sig: new Uint8Array(64).fill(8),
-      authData: new Uint8Array(0), clientData: new Uint8Array(0) },
+
+  // TWO VERSIONS, NOT ONE, AND THAT IS THE WHOLE POINT OF THIS BLOCK.
+  //
+  // `kept` is what the API stores; `inForce` is what THIS BROWSER has
+  // verified. A real installation has exactly that gap: ngc.users/api/trust
+  // takes a version and answers with its number, and the browser's own list
+  // moves only when TrustStore.refresh follows the chain over
+  // GET /api/v1/trust. Until this round both were one variable here, the
+  // stand-in moved itself, and the store could throw the answer away without
+  // anything going red - which is what Fixrunde 1 found: the second standing
+  // approval would then be built on the version before the first one, and two
+  // versions at one number are a FORK of the trust list.
+  const first = listOf(store, admin, level);
+  let inForce = {
+    list: first,
+    signed: {
+      payload: encodeList(first),
+      // Version 1 is signed by nobody here: a real one is opened against the
+      // anchor, and this list was opened by nobody. What has to hold is the
+      // SHAPE, because the store hashes this payload for the prev of the
+      // version it writes.
+      proof: { kind: "password", kid: admin.keys[0].id, sig: new Uint8Array(64).fill(8),
+        authData: new Uint8Array(0), clientData: new Uint8Array(0) },
+    },
   };
+  inForce.hash = await listHash(inForce.signed);
+  let kept = inForce;
+  // A TEST HOOK, and it leaves with this file: version 1 of this world, as it
+  // stood before anything was written. A case that wants to check a chain the
+  // store built needs the version it started from, and asking fakeWorld()
+  // again would build a DIFFERENT world (a new store key, a new version 1)
+  // and clear the record of what was sent along the way.
+  window.__ngcListFirst = inForce;
 
   // The release key of the initial setup: what a standing approval for an
   // NGC part is signed with. Task 19 reads it out of the setup offer; here
@@ -357,7 +396,7 @@ export async function fakeWorld() {
   const releasePair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const releaseKey = new Uint8Array(await crypto.subtle.exportKey("raw", releasePair.publicKey));
 
-  const installKey = { installation: list.installation, key: b64encode(new Uint8Array(32).fill(13)) };
+  const installKey = { installation: first.installation, key: b64encode(new Uint8Array(32).fill(13)) };
   window.__ngcStoreKey = b64encode(store.key);
   window.__ngcReleaseKey = b64encode(releaseKey);
   window.__ngcLiarKey = b64encode(new Uint8Array(32).fill(0xee));
@@ -378,15 +417,16 @@ export async function fakeWorld() {
     [TERMINAL + "/shell"]: async () => enc.encode("hallo aus dem Dienst"),
 
     "ngc.users/nodes": async () => enc.encode(JSON.stringify(or("nodes", NODES))),
-    // A new version of the trust list is READ with the contract and kept: a
-    // stand-in that took it and answered with a number would let the store
-    // write a document nothing ever decoded, and the next approval would be
-    // built on the old list again.
+    // A new version of the trust list is READ with the contract and KEPT -
+    // and it does not become the version in force here. That is the API's
+    // side of the split: it stores the version and answers with its number,
+    // and nothing else. Whether this browser follows is the browser's own
+    // business, and it is exactly what Fixrunde 1 found missing.
     "ngc.users/trust": async (body) => {
       const s = parseSigned(body);
-      list = await parseList(s.payload);
-      signed = s;
-      return enc.encode(JSON.stringify({ seq: list.seq }));
+      const next = await parseList(s.payload);
+      kept = { list: next, signed: s, hash: await listHash(s) };
+      return enc.encode(JSON.stringify({ seq: next.seq }));
     },
     "ngc.store/sources": async () => enc.encode(JSON.stringify(or("sources", SOURCES))),
     "ngc.store/catalog": async () => await catalogFor(uiHash()),
@@ -489,14 +529,35 @@ export async function fakeWorld() {
     for (const fn of notices) fn(body);
   };
 
-  // The stand-in for shell/trust.js (Task 20): the verified trust list the
-  // frame checks a UI proof against and the store writes the next version of.
+  // The stand-in for shell/trustlist.js (Task 20): the verified trust list
+  // the frame checks a UI proof against and the store writes the next version
+  // of.
   //
   // IT WAS OPENED BY NOBODY. A real list is opened against the anchor and
   // followed version by version; this one is built in the page. What it does
-  // do is hold up to the contract - validateList and parseList take it - so
-  // the store's own work on it is measured against a real document.
-  const trust = { current: () => ({ list, signed }) };
+  // do is hold up to the contract - validateList and parseList take it - and
+  // answer the two calls the real TrustStore answers, with the same rules.
+  const trust = {
+    // current() has the three members the real one has: the list, the exact
+    // bytes it was read from, and the hash of those bytes. The store builds
+    // the next version's prev out of that hash and not out of a hash of its
+    // own - it is the one the chain was checked with.
+    current: () => inForce,
+    // refresh(hintSeq) follows TrustStore.refresh, rule for rule, and the
+    // rules are measured against the real class in store.spec.js ("what
+    // refresh does with the number the answer carries"):
+    //   - a hint that is no whole number, or below 1, counts as 0;
+    //   - a hint that is not HIGHER than the version in force changes
+    //     nothing and answers the number in force, without asking anybody;
+    //   - a higher one takes what the API kept and answers the new number.
+    // What the real one does on top is the network and the chain check, and
+    // neither has a place in a stand-in.
+    refresh: async (hintSeq) => {
+      const want = Number.isSafeInteger(hintSeq) && hintSeq >= 1 ? hintSeq : 0;
+      if (want > inForce.list.seq && kept.list.seq >= want) inForce = kept;
+      return inForce.list.seq;
+    },
+  };
 
   // The stand-in for the session (Tasks 17 and 19): who is signed in, and
   // the key their tasks are signed with. The key is a real Ed25519 key of
@@ -504,7 +565,7 @@ export async function fakeWorld() {
   // bytes; whose key it is, is what the login will decide.
   const sessionKey = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const session = {
-    inst: list.installation,
+    inst: first.installation,
     user: admin.id,
     // The task is bound to the client certificate by its SHA-256, and this
     // is a hash-shaped stand-in for one: 32 bytes, which is all task.parts
