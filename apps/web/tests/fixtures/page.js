@@ -1,4 +1,5 @@
 import { test as base } from "@playwright/test";
+import { USER_NAME, PASSWORD } from "./logins.js";
 
 // The shell page for every test. The content security policy stays on, so a
 // test notices when the page starts breaking it. The contract tests import
@@ -14,6 +15,26 @@ export const test = base.extend({
 });
 
 export { expect } from "@playwright/test";
+
+// signIn puts anna in. Since task 18 the shell shows the login mask before
+// anything else, so every case that wants a desktop starts here - the four
+// lines the briefs of tasks 21 to 25 always had, and the line those files
+// promised to grow back "when the login lands".
+//
+// It is ONE function and not four lines in a dozen files, because the mask is
+// going to change again: task 19 puts the initial setup in front of it, task
+// 20 an alarm behind it. A caption that moves then moves in one place.
+//
+// It presses the button and does NOT wait for the desktop: what a caller
+// waits for is its own business, and the case that has no desktop to wait for
+// (shell/boot.spec.js on an engine without the session keys) never gets here.
+export async function signIn(page) {
+  await page.getByLabel("Benutzername").fill(USER_NAME);
+  await page.getByLabel("Passwort").fill(PASSWORD);
+  // exact, because "Mit Passkey anmelden" also contains the word: playwright
+  // matches an accessible name as a case-insensitive substring.
+  await page.getByRole("button", { name: "Anmelden", exact: true }).click();
+}
 
 // Can this engine make the two keys a session needs? shell/main.js asks the
 // same question with the same two generateKey calls, and a "no" stops the

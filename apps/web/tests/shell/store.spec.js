@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { hasSessionKeys } from "../fixtures/page.js";
+import { hasSessionKeys, signIn } from "../fixtures/page.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
 
 // The app store: the first app anybody opens, and the one that decides what
@@ -28,6 +28,7 @@ async function store(page, world = {}) {
   await page.goto("/");
   test.skip(!(await hasSessionKeys(page)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
   await expect(page.locator(".store")).toBeVisible();

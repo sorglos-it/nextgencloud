@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // /config.json carries the addresses of the API servers, the pinned anchor of
 // the trust list and the relying party for passkeys - where the shell
@@ -222,6 +222,7 @@ test("a good configuration brings the desktop up and leaves nothing on window", 
   test.skip(!(await ready(page)),
     "no session keys in this engine's Web Crypto: there is no desktop to look at");
   await boot(page, body({}));
+  await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   // Nothing reads a global, so nothing puts one there: the configuration is
   // handed on instead.

@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // The desktop on a narrow screen. The stylesheet has one rule at 640 px -
 // the desktop icons step aside and the taskbar entries drop their words -
@@ -10,6 +10,7 @@ test.use({ viewport: { width: 375, height: 700 } });
 test.beforeEach(async ({ shell }) => {
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 

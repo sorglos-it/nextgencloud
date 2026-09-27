@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // Getting through the desktop with the keyboard alone, and what a screen
 // reader is told. The people this is built for include the ones who never
@@ -12,6 +12,7 @@ import { test, expect, hasSessionKeys } from "../fixtures/page.js";
 test.beforeEach(async ({ shell }) => {
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 

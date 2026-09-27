@@ -36,7 +36,7 @@ import { call, openE2E } from "./channel.js";
 
 // The test user of tests/mock/world.js. They are the same two lines there.
 const USER = "anna";
-const PASSWORD = "eichhoernchen-blau-42";
+const PASSWORD = "Heimnetz-2026";
 
 function socketURL() {
   const u = new URL(session.PATH_SOCKET, location.href);

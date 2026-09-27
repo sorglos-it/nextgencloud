@@ -1,12 +1,11 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // The app window: the sandboxed frame an app's user interface runs in.
 //
-// PULLED FORWARD, the same four lines as desktop.spec.js. The brief opens
-// every case by logging anna in (Tasks 19 and 20); there is no login yet, so
-// the desktop starts as soon as the page has its configuration and the app,
-// its proof and its ui-tar come from the stand-in in shell/fake-link.js.
-// When the login lands, this beforeEach grows those four lines again.
+// SINCE TASK 18 the beforeEach really does log anna in, the same one line as
+// desktop.spec.js. The app, its proof and its ui-tar still come from the
+// stand-in in shell/fake-link.js: the login decides who is in, not where the
+// desktop's bytes come from.
 //
 // WHAT IS REAL HERE AND WHAT STANDS IN. Real: the store key is an Ed25519 key
 // the page makes, the catalog carries a real signature over the real UI hash,
@@ -20,6 +19,7 @@ test.beforeEach(async ({ shell }) => {
   // and the proof of a UI is an Ed25519 signature either way.
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
