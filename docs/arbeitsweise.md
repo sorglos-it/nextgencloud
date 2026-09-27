@@ -345,6 +345,33 @@ die Zahl der **übersprungenen** Tests. Sie stieg in diesem Lauf von 45 auf 122,
 und niemand fragte warum — ein Test, der sich still überspringt, sieht in der
 Zusammenfassung aus wie einer, der nichts zu meckern hat.
 
+### Dein Prüfgriff darf nicht an der Sprache des Systems hängen
+
+Zwei Tage lang hat der Koordinator vor jedem Testserver geprüft, ob der Port
+frei ist — mit
+
+    netstat -ano | grep -c ":$p .*LISTENING"
+
+Auf diesem Rechner antwortet `netstat` deutsch: dort steht **`ABHÖREN`**. Die
+Zählung war also **immer 0**, für jeden Port, auch für belegte. Aufgefallen ist
+es erst, als ein Server auf einem „freien" Port startete und der Browser die
+Seite einer **fremden Sitzung** zeigte: Windows ließ beide lauschen, und die
+andere gewann.
+
+Zwei Dinge daran:
+
+- **Ein Prüfgriff, der eine Sprache voraussetzt, prüft die Sprache.** Nimm eine
+  Schnittstelle, die Daten liefert statt Text — hier
+  `Get-NetTCPConnection -State Listen`, deren Zustand ein Aufzählungswert ist
+  und nicht übersetzt wird.
+- **Ein Prüfgriff, der nie „belegt" sagt, ist nicht beruhigend, sondern
+  verdächtig.** Wenn eine Prüfung über zwei Tage ausnahmslos dasselbe antwortet,
+  ist das ein Grund nachzusehen — nicht ein Grund, sich zu freuen.
+
+Und der Nachsatz, der wehtut: derselbe Koordinator hat jeder Sitzung
+eingeschärft, Port 8101 gehöre einer fremden Sitzung — und ist dann selbst
+daraufgelaufen, weil sein eigenes Messgerät ihn freigemeldet hat.
+
 ### Ein Zusammenbruch verdeckt den einen echten Roten
 
 Ein Lauf einer Aufgabe brach in einer Maschine mit **127 roten Fällen** ein. Die
