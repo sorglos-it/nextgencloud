@@ -4,6 +4,8 @@ import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 import { loadConfig } from "../net/config.js";
 import { anchorFor, NOT_SET_UP } from "./trustlist.js";
+import { loginView } from "../auth/login.js";
+import { el } from "./dom.js";
 // A STAND-IN, and the only line of the shell that knows about it. Task 17
 // built net/link.js and Task 20 shell/trustlist.js; what is still missing is
 // the login (Task 18), which is what gives the session cookie that
@@ -12,6 +14,9 @@ import { anchorFor, NOT_SET_UP } from "./trustlist.js";
 import { fakeWorld } from "./fake-link.js";
 
 const NEEDED = ["Ed25519", "X25519"];
+
+// The standing advice for somebody who got in with a password alone.
+const HINT = "Umstellen auf Passkeys empfohlen";
 
 export async function browserFits() {
   // Both are needed for the session keys; a browser without them cannot open
@@ -68,9 +73,13 @@ async function start() {
   // comes from the page's own server, or - while the web controller is not
   // paired and /config.json therefore carries none - out of what the initial
   // setup left in this browser. Without it there is no trust list to check
-  // anything against, and nothing may be shown at all; the sentence names
-  // what is missing instead of leaving the person with a page that does
-  // nothing. Task 19 puts the initial setup in the place of that message.
+  // anything against, and nothing may be shown at all, not even the mask:
+  // a login against an installation we cannot name is a login into the dark.
+  // Task 19 puts the initial setup in the place of that message.
+  //
+  // This gate stands BEFORE the login on purpose. The login checks the trust
+  // list too, and that is belt and braces, not a duplicate: this one refuses
+  // to draw anything, the other one refuses to believe an answer.
   let anchor;
   try {
     anchor = await anchorFor(config);
@@ -81,32 +90,61 @@ async function start() {
     message(NOT_SET_UP);
     return;
   }
-  // PULLED FORWARD AND UNFINISHED. There is no login yet (Task 18), so there
-  // is no session cookie, and GET /api/v1/trust answers 401 without one: the
-  // desktop starts straight away and gets the stand-in instead of an opened
-  // trust list. THE ONE LINE THAT IS STILL MISSING, and where it goes - right
-  // here, after the login has the cookie and before startDesktop:
-  //
-  //   const trust = await startTrust({ anchor, installation, link });
-  //
-  // startTrust (shell/trustlist.js) opens the chain against this anchor,
-  // follows it to the newest version, keeps it up to date from the session's
-  // trust hints and raises the alarm when it breaks. Its answer goes to
-  // startDesktop in place of the stand-in's `trust`.
-  //
-  // config is handed on rather than parked on window: nothing reads it yet,
-  // and the moment something does - the login needs rp, the session needs
-  // apis - it takes it from here. A global would be one more thing anything
-  // else on the page could write between the check above and that read.
-  // The session is null while there is no login (Tasks 19 and 20). It is
-  // taken from the stand-in rather than written as null here, so that the one
-  // line which will hand over the real session is already the line that runs:
-  // "Benutzer und Rechte" asks the session to sign a new trust list and for
-  // the API's clock, and says plainly that it cannot change anything while
-  // there is none.
+  // The login. Nothing of the desktop is built before somebody is in, and
+  // config is handed on rather than parked on window: the mask needs rp to
+  // know whether this installation has passkeys at all. A global would be one
+  // more thing anything else on the page could write between the check above
+  // and that read.
+  const root = document.getElementById("root");
+  loginView(root, { config, onSession: (world) => showDesktop(root, config, world) });
+}
+
+// showDesktop puts the desktop up once the login is through.
+//
+// BOTH HALVES NOW EXIST, AND THE SEAM BETWEEN THEM DOES NOT. The login above
+// is real: a real certificate, a real proof, the cookie of the API, the trust
+// list checked and the Noise session opened. shell/trustlist.js can follow
+// that chain and keep it current. What the DESKTOP eats is still the stand-in,
+// because the mock API answers five core actions where fake-link.js answers
+// two dozen. Handing the desktop the real link today would take roughly a
+// hundred cases in twelve files down with it, and a tree that does not build
+// is worse than a stand-in that is named.
+//
+// WHAT IS MISSING IS ONE PIECE THAT NO TASK OF THE PLAN OWNS: the production
+// adapter that offers link.call(app, service, action, params, opts) and
+// link.open(...) over net/link.js and net/channel.js, the way fake-link.js
+// offers them today. With it, this function loses its first line, the four
+// values below come out of `world`, and
+//
+//   const trust = await startTrust({ anchor, installation, link });
+//
+// goes in place of the stand-in's trust. Until then the real session is closed
+// again right here rather than left open: a socket nothing reads holds a
+// channel budget and a session on the API for nothing, and closing it is the
+// honest ending.
+async function showDesktop(root, config, world) {
+  world.link.close();
   const { link, trust, session, releaseKey } = await fakeWorld();
-  startDesktop(document.getElementById("root"),
-    { link, session: session ?? null, trust, config, releaseKey });
+  startDesktop(root, { link, session: session ?? null, trust, config, releaseKey });
+  // Somebody who got in with a password alone is told that passkeys are the
+  // better way. It belongs on the desktop and not on the mask, because the
+  // mask is gone by the time the API says so.
+  //
+  // A STRIP OF ITS OWN and not the desktop's notice bar, for two reasons that
+  // were both measured. The bar clears itself after eight seconds for
+  // everything but an error, and this hint is meant to STAY - it is advice,
+  // not news. And it is the bar every hostile case reads to prove the desktop
+  // said nothing (desktop-hostile.spec.js: `expect(.status).toHaveText("")`),
+  // so a standing hint in it would turn two of those cases red for a reason
+  // that has nothing to do with what they are about. When task 21 gives the
+  // desktop a place for standing advice, this moves there.
+  //
+  // A PLAIN PARAGRAPH and no live region. dom.note would give it role=status,
+  // and the desktop already has exactly one of those - the notice bar - which
+  // two cases pin by that very count (desktop-keyboard.spec.js:
+  // `getByRole("status")).toHaveCount(1)`, store.spec.js reads the one there
+  // is). A live region is for news anyway; this is advice that stands there.
+  if (world.passwordHint) document.body.append(el("p", "passkeyhint", HINT));
 }
 
 start().catch(() => {

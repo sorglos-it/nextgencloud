@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // The calculator, the first app of the desktop with a face of its own.
 //
@@ -14,6 +14,7 @@ test.beforeEach(async ({ shell }) => {
   // put a calculator in.
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 

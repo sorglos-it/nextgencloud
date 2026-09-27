@@ -380,3 +380,37 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .ask .no{border:1px solid var(--win-border);border-radius:8px;background:var(--win-bg);
                    color:inherit;font:inherit;padding:7px 14px;cursor:pointer}
 .usersapp .ask .danger{background:#e13e3e;border-color:transparent;color:#fff;font-weight:600}
+
+/* ---------- Anmeldung ---------- */
+/* One box in the middle of an empty page, and nothing else on it: the person
+   has one thing to do here, and everything that is not that is in the way. */
+.loginbox{width:min(360px,calc(100vw - 32px));margin:14vh auto;padding:22px;
+          border:1px solid var(--win-border);border-radius:12px;
+          background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.loginhead{margin:0 0 16px;font-size:18px}
+/* The caption sits over its field and not beside it: at 360px a caption
+   beside the box leaves the box too narrow to read a password in. */
+.field{display:block;margin-bottom:12px}
+.fieldname{display:block;margin-bottom:4px;color:var(--muted);font-size:12.5px}
+.field input{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--win-border);
+             background:var(--field-bg);color:var(--win-fg);font:inherit}
+/* Under 380px the two buttons stop fitting side by side and go below each
+   other, rather than each being cut in half. */
+.loginrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.loginrow .b{flex:1 1 auto;justify-content:center;text-align:center}
+.loginrow .b[disabled]{opacity:.5;cursor:default}
+/* The live region of the mask. It stays in the page empty or not, for the
+   reason .status:empty gives: a region that appears only when there is news
+   is a region no screen reader watches. */
+.note{margin:14px 0 0;padding:10px 12px;border-radius:8px;border:1px solid var(--win-border);
+      background:var(--field-bg);color:var(--win-fg)}
+.note.warn{border-color:#d2932a}
+.note.error{border-color:#e13e3e}
+.note:empty{margin:0;padding:0;border:0;background:none}
+/* The standing advice to move to passkeys. Bottom LEFT, because the notice
+   bar of the desktop sits in the middle and this one never goes away: two
+   strips over each other is one strip nobody can read. */
+.passkeyhint{position:fixed;left:16px;bottom:18px;z-index:100001;margin:0;padding:8px 12px;
+             border-radius:10px;border:1px solid #d2932a;background:var(--win-bg);
+             color:var(--win-fg);box-shadow:var(--shadow);font-size:12.5px;
+             max-width:min(280px,calc(100vw - 32px))}

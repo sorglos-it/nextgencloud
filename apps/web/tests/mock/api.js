@@ -28,8 +28,9 @@ import * as session from "../../public/assets/js/contracts/session.js";
 import * as core from "../../public/assets/js/contracts/core.js";
 import * as proof from "../../public/assets/js/contracts/proof.js";
 import * as sign from "../../public/assets/js/contracts/sign.js";
+import * as trust from "../../public/assets/js/contracts/trust.js";
 import { Budget, decode, bytes, str, P, S } from "../../public/assets/js/contracts/json.js";
-import { buildWorld } from "./world.js";
+import { buildWorld, RP_ID, RP_ORIGINS, TOTP_CODE } from "./world.js";
 
 // The GUID of RFC 6455, section 1.3. It is NOT written from memory: the line
 // below is held against the RFC's own example on every start (accept()), and
@@ -60,6 +61,9 @@ const certBudget = new Budget({ size: session.MAX_CERT });
 const loginFinishShape = S({
   cert: bytes, proof: proof.proofShape, password: P({ ...proof.proofShape.m }), totp: str,
 });
+// The body of PathLoginStart (Go: session.LoginStart). One member, and the
+// name decides which challenge is written - so it is read strictly too.
+const loginStartShape = S({ name: str });
 const finishBudget = new Budget({ size: session.MAX_REQUEST });
 const JSON_TYPE = "application/json; charset=utf-8";
 // The Noise tag an inner message costs, taken from the contract and not
@@ -484,6 +488,36 @@ export async function startMockAPI({ world, port, phpPort }) {
   const w = world ?? await buildWorld();
   w.secrets = w.secrets ?? [];
   const sessions = new Map();     // cookie token -> session state
+  // What the last login had to check, so a case can ask instead of believing
+  // a flag the browser set about its own work: "", "password", "passkey" or
+  // "passkey+password".
+  let lastProofs = "";
+  // Seconds the NEXT login attempt is locked for, set through the test door.
+  // A real API counts failed attempts; a mock is told - and it is told once:
+  // the number is taken and cleared in the same step, so a case that locks
+  // the login cannot leave the next case locked too. One server answers the
+  // whole run, and state that outlives the case that set it is how a suite
+  // starts failing three files further on (measured: the E_LOCKED case took
+  // the four cases after it down with it).
+  let lockFor = 0;
+  function takeLock() {
+    const s = lockFor;
+    lockFor = 0;
+    return s;
+  }
+
+  // THE ONE PLACE WHERE THE MOCK'S RELYING PARTY DIFFERS FROM THE CHALLENGE'S.
+  // The challenge carries world.RP_ORIGINS, which is https, because
+  // url.validOrigin takes nothing else and session.parseLoginChallenge holds
+  // every origin to it. What the browser really reports in clientDataJSON is
+  // this test server's own origin, which is http - there is no TLS in front
+  // of a php -S and a node http server. The shell never looks at origins (it
+  // hands rp.id to the authenticator and nothing else), so the difference
+  // reaches no shell code; it lives here, where the assertion is checked.
+  const browserRP = {
+    id: RP_ID,
+    origins: [`http://localhost:${port}`, `http://127.0.0.1:${port}`],
+  };
 
   const server = createServer((req, res) => {
     route(req, res).catch(() => {
@@ -518,14 +552,21 @@ export async function startMockAPI({ world, port, phpPort }) {
     if (path === "/api/v1/mock") {
       const state = sessions.get(cookieToken(req));
       if (req.method === "POST") {
+        // The lock needs no session: it is what the NEXT login runs into, and
+        // there is no session before a login.
+        const lock = url.searchParams.get("lock");
+        if (lock !== null) lockFor = /^[0-9]{1,4}$/.test(lock) ? Number(lock) : 0;
         if (state !== undefined) {
           state.behaviour = { failAfterData: url.searchParams.get("failAfterData") === "1" };
         }
         sendJSON(res, 200, utf8("{}"));
         return;
       }
-      // One character, so the asking side has nothing to parse.
       res.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+      // Which proofs the last login carried. A word, so the asking side has
+      // nothing to parse.
+      if (url.searchParams.get("ask") === "proofs") { res.end(lastProofs); return; }
+      // One character, so the asking side has nothing to parse.
       res.end(state?.sawPlaintext === true ? "1" : "0");
       return;
     }
@@ -533,25 +574,41 @@ export async function startMockAPI({ world, port, phpPort }) {
     if (path === session.PATH_SETUP) { sendError(res, wire.CODES.NOTFOUND); return; }
 
     if (path === session.PATH_LOGIN_START && req.method === "POST") {
-      const state = {
-        nonce: new Uint8Array(randomBytes(session.NONCE_SIZE)),
-        now: Math.floor(Date.now() / 1000),
-      };
-      const body = utf8(JSON.stringify({
-        nonce: b64encode(state.nonce), now: state.now, maxLifetime: session.MAX_LIFETIME,
-        installation: w.installation, user: w.user.id,
-        kdf: { ...w.user.kdf },
-        passkeys: [], totp: false, rp: { id: w.list.rp.id, origins: w.list.rp.origins },
-      }));
+      // A locked login is turned away before any work is done, which is where
+      // the contract puts E_LOCKED for this path too (shared/session:
+      // "PathLoginStart ... 429 E_LOCKED").
+      const locked = takeLock();
+      if (locked > 0) {
+        res.setHeader("Retry-After", String(locked));
+        sendError(res, wire.CODES.LOCKED);
+        return;
+      }
+      const body = await readBody(req, session.MAX_REQUEST);
+      let name;
+      try {
+        name = decode(body, finishBudget, loginStartShape).name;
+      } catch {
+        sendError(res, wire.CODES.PROTOCOL);
+        return;
+      }
+      const nonce = new Uint8Array(randomBytes(session.NONCE_SIZE));
+      const answer = challengeFor(name, nonce);
       // Read back with the shell's own parser: an answer the shell refuses is
       // a bug of this file, and it must show here.
-      session.parseLoginChallenge(body);
-      w.nonce = state.nonce;
-      sendJSON(res, 200, body);
+      session.parseLoginChallenge(answer);
+      w.nonce = nonce;
+      w.expect = name;
+      sendJSON(res, 200, answer);
       return;
     }
 
     if (path === session.PATH_LOGIN_FINISH && req.method === "POST") {
+      const locked = takeLock();
+      if (locked > 0) {
+        res.setHeader("Retry-After", String(locked));
+        sendError(res, wire.CODES.LOCKED);
+        return;
+      }
       const answer = await finishLogin(await readBody(req, session.MAX_REQUEST));
       if (answer === null) { sendError(res, wire.CODES.LOGIN); return; }
       res.writeHead(200, {
@@ -578,9 +635,63 @@ export async function startMockAPI({ world, port, phpPort }) {
     sendError(res, wire.CODES.NOTFOUND);
   }
 
+  // challengeFor writes the LoginChallenge for a typed name. A name nobody
+  // has gets one too, with the same members and a KDF of the same parameters
+  // over a salt derived from the name - that is the contract's own rule
+  // (session.ParseLoginChallenge's note), and the whole reason the shell may
+  // be neither milder nor stricter about it.
+  //
+  // WHERE THIS MOCK IS THINNER THAN THE CONTRACT, said rather than hidden: a
+  // name nobody has answers passkeys [] and totp false, so it can still be
+  // told from clara's answer or bernd's. A real API derives those two from
+  // its own secret as well. Nothing of the SHELL depends on it - it says the
+  // one sentence either way, and the cases below measure that - but a case
+  // that wanted to prove the ANSWERS are alike could not be written here.
+  //
+  // w.nonce and w.expect are one slot each, so two logins at once would tread
+  // on one another. One browser logs in at a time in this suite.
+  function challengeFor(name, nonce) {
+    const known = w.logins.get(name) ?? null;
+    const u = known === null ? null : trust.user(w.list, known.id);
+    const keys = u === null ? [] : u.keys;
+    const password = keys.find((k) => k.kind === proof.KIND_PASSWORD) ?? null;
+    const passkeys = keys.filter((k) => k.kind === proof.KIND_PASSKEY);
+    return utf8(JSON.stringify({
+      nonce: b64encode(nonce),
+      now: Math.floor(Date.now() / 1000),
+      maxLifetime: session.MAX_LIFETIME,
+      installation: w.installation,
+      // A made-up but stable user ID for a name nobody has: the same name
+      // always answers the same one, as the API's derived answer does.
+      user: known === null ? madeUpID(name) : known.id,
+      // A user without a password key still gets a KDF offered, so that the
+      // answer for clara (passkey only) cannot be told from the answer for a
+      // name that does not exist.
+      kdf: password === null
+        ? { ...w.user.kdf, salt: b64encode(madeUpSalt(name)) }
+        : { alg: password.kdf.alg, salt: b64encode(password.kdf.salt),
+          m: password.kdf.m, t: password.kdf.t, p: password.kdf.p },
+      passkeys: passkeys.map((k) => ({ credId: b64encode(k.credId), kid: k.id })),
+      totp: known?.totp === true,
+      passwordToo: known !== null && trust.passwordToo(w.list, known.id),
+      rp: { id: RP_ID, origins: [...RP_ORIGINS] },
+    }));
+  }
+
+  // Two made-up values for a name nobody has. They are a hash of the name, so
+  // the same name always answers the same thing - a value that changed per
+  // request would say "this one is made up" all by itself. The API derives
+  // them from a secret of the installation; a mock has nothing to keep.
+  function madeUpID(name) {
+    return b64encode(new Uint8Array(createHash("sha256").update("id\u0000" + name).digest()).subarray(0, 16));
+  }
+  function madeUpSalt(name) {
+    return new Uint8Array(createHash("sha256").update("salt\u0000" + name).digest()).subarray(0, proof.SALT_SIZE);
+  }
+
   // finishLogin checks the client certificate the way the API does: the
-  // proof is a real signature by anna's password key over the exact bytes of
-  // the certificate, and the API answers with its own signed certificate.
+  // proof is a real signature by a key of that very user over the exact bytes
+  // of the certificate, and the API answers with its own signed certificate.
   async function finishLogin(body) {
     // Strict JSON with a budget, and the members come from the contracts
     // themselves (proof.proofShape): the web side has no ParseLoginFinish,
@@ -593,16 +704,49 @@ export async function startMockAPI({ world, port, phpPort }) {
     } catch {
       return null;
     }
+    lastProofs = "";
     const cert = f.cert;
-    if (!(await proof.verify(f.proof, w.user.key, w.list.rp, sign.PURPOSE_CLIENT_CERT, cert))) return null;
     // The certificate goes through the contract's own shape and check too:
     // it is a document from outside like any other, and
     // session.clientCertShape plus validateClientCert is what the API holds
-    // it to.
+    // it to. It comes FIRST now, because the certificate is what says whose
+    // keys the proofs are held against.
     const c = decode(cert, certBudget, session.clientCertShape);
     if (!session.validateClientCert(c)) return null;
     if (w.nonce === undefined || !equal(c.nonce, w.nonce)) return null;
-    if (c.inst !== w.installation || c.user !== w.user.id) return null;
+    if (c.inst !== w.installation) return null;
+    // The name that was typed and the user the certificate names have to be
+    // the same person; a name nobody has reaches no user at all and ends here
+    // with the one answer every failed login gets.
+    const known = w.logins.get(w.expect ?? "") ?? null;
+    if (known === null || c.user !== known.id) return null;
+    const u = trust.user(w.list, known.id);
+    if (u === null) return null;
+    // A second factor the API asked for has to be there. A mock has no clock
+    // to check a real code against; what it does check is that the shell
+    // ASKED for it and sent it on.
+    if (known.totp && f.totp !== TOTP_CODE) return null;
+    // The proof, by a key of this very user. The key is found by the key ID
+    // the proof names, exactly as session.verifyApproval finds it.
+    const key = u.keys.find((k) => k.id === f.proof.kid) ?? null;
+    if (key === null) return null;
+    if (!(await proof.verify(f.proof, key, browserRP, sign.PURPOSE_CLIENT_CERT, cert))) return null;
+    // A role that asks for the password too: the proof must be by a passkey,
+    // and a second proof by a password key of the same user must cover the
+    // SAME certificate bytes (Go: session.VerifyPassword). Both halves are
+    // checked, so a shell that sent the passkey twice fails here.
+    const both = trust.passwordToo(w.list, known.id);
+    if (both) {
+      if (key.kind !== proof.KIND_PASSKEY || f.password === null) return null;
+      const pwKey = u.keys.find((k) => k.id === f.password.kid) ?? null;
+      if (pwKey === null || pwKey.kind !== proof.KIND_PASSWORD) return null;
+      if (!(await proof.verify(f.password, pwKey, browserRP, sign.PURPOSE_CLIENT_CERT, cert))) return null;
+    } else if (f.password !== null) {
+      // A password proof nobody asked for is a document the API never reads,
+      // so a shell that sends one is wrong about the contract.
+      return null;
+    }
+    lastProofs = key.kind + (both ? "+" + proof.KIND_PASSWORD : "");
     const clientDH = c.dh;
     const pair = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
     const apiDH = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
@@ -614,7 +758,9 @@ export async function startMockAPI({ world, port, phpPort }) {
       sign.message(sign.PURPOSE_API_CERT, payload)));
     const out = utf8(JSON.stringify({
       api: { payload: b64encode(payload), kid: await sign.keyID(w.api.sign.pub), sig: b64encode(sig) },
-      passwordHint: true,
+      // Only somebody who got in with a password alone is told to move to
+      // passkeys; a passwordToo user already has one.
+      passwordHint: lastProofs === proof.KIND_PASSWORD,
     }));
     session.parseLoginResult(out);
     const token = b64encode(new Uint8Array(randomBytes(session.TOKEN_SIZE)));

@@ -1,10 +1,11 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // The look in the start menu - accent colour and background - and the search
 // above it. Task 21 left all three measured by hand only.
 test.beforeEach(async ({ shell }) => {
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
@@ -25,6 +26,7 @@ test("one of the six accent colours is taken and kept over a reload", async ({ s
   await expect(shell.locator("#smlook .swatches button.on")).toHaveCount(1);
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
   await shell.reload();
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
   expect(await accent(shell)).toBe("#e14f8a");
   await shell.getByRole("button", { name: "Start" }).click();
@@ -54,6 +56,7 @@ test("one of the five backgrounds is taken and kept over a reload", async ({ she
   await expect(shell.locator("#smlook .wpgrid button.on")).toHaveCount(1);
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
   await shell.reload();
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
   expect(await wallpaper(shell)).toBe(after);
   await shell.getByRole("button", { name: "Start" }).click();

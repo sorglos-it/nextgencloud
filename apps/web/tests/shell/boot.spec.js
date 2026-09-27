@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // What the boot of the shell has to end in, on every engine there is.
 //
@@ -10,6 +10,7 @@ import { test, expect, hasSessionKeys } from "../fixtures/page.js";
 // neither.
 test("the shell either brings the desktop up or says why it cannot", async ({ shell }) => {
   if (await hasSessionKeys(shell)) {
+    await signIn(shell);
     await expect(shell.locator("#taskbar")).toBeVisible();
     await expect(shell.getByRole("button", { name: "Start" })).toBeVisible();
     return;

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { hasSessionKeys } from "../fixtures/page.js";
+import { hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // "Benutzer und Rechte": the surface where an admin hands out rights and lets
 // a new server into the installation. It is the most dangerous window NGC
@@ -764,6 +764,7 @@ test("an answer the contract refuses leaves the surface standing and says so", a
 test("the app opens from the start menu", async ({ page }) => {
   test.skip(!(await hasSessionKeys(page)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.getByRole("button", { name: "Start" }).click();
   await page.getByRole("menuitem", { name: "Benutzer und Rechte", exact: true }).click();
@@ -775,6 +776,7 @@ test("the app opens from the start menu", async ({ page }) => {
 test("a question belongs to its window and goes with it", async ({ page }) => {
   test.skip(!(await hasSessionKeys(page)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.getByRole("button", { name: "Start" }).click();
   await page.getByRole("menuitem", { name: "Benutzer und Rechte", exact: true }).click();

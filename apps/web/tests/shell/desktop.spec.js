@@ -1,14 +1,13 @@
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
 // The desktop: windows, taskbar, start menu, light and dark.
 //
-// PULLED FORWARD. The brief for this task opens every case by logging anna in
-// (Tasks 19 and 20), and the shell has no login yet - nor a session, nor a
-// channel to the API. Building one to make a beforeEach pass would be a login
-// that looks real and proves nothing, so there is none: the desktop starts as
-// soon as the page has its configuration, and the apps come from the stand-in
-// in shell/fake-link.js. When the login lands, this beforeEach grows the four
-// lines of the brief again and nothing else here changes.
+// SINCE TASK 18 the beforeEach really does log anna in: the mask, the client
+// certificate, the proof by her password key, the cookie of the mock API and
+// the Noise session. That is the "four lines of the brief" this file was
+// waiting for, and nothing else here changed - the apps still come from the
+// stand-in in shell/fake-link.js, because the desktop's own data path is this
+// task's and the next ones', not the login's.
 test.beforeEach(async ({ shell }) => {
   // shell/main.js needs Ed25519 and X25519 before it builds anything, and the
   // WebKit Playwright brings has neither. There is no desktop to test there,
@@ -16,6 +15,7 @@ test.beforeEach(async ({ shell }) => {
   // instead is asserted by shell/boot.spec.js, which runs everywhere.
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 

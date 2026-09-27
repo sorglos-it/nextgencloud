@@ -22,6 +22,9 @@ import * as sign from "../../public/assets/js/contracts/sign.js";
 import * as proof from "../../public/assets/js/contracts/proof.js";
 import * as core from "../../public/assets/js/contracts/core.js";
 import { argon2id } from "../../public/assets/vendor/noble-hashes/argon2.js";
+import {
+  USER_NAME, PASSWORD, TOTP_NAME, PASSKEY_NAME, BOTH_NAME, RP_ID, CRED_ID, PKCS8,
+} from "../fixtures/logins.js";
 
 // The fixtures of the repository, read as the files they are. This is the one
 // JSON.parse in the mock and it stands on our own testdata, not on anything
@@ -30,12 +33,26 @@ import { argon2id } from "../../public/assets/vendor/noble-hashes/argon2.js";
 const testdata = (name) =>
   JSON.parse(readFileSync(fileURLToPath(new URL("../../../../shared/testdata/" + name, import.meta.url)), "utf8"));
 
-// The test user and her password. They are in the repository on purpose:
-// this is a mock, it holds no real account, and a test whose password came
-// out of a file nobody can read is a test nobody can run.
-export const USER_NAME = "anna";
-export const PASSWORD = "eichhoernchen-blau-42";
+// Who may log in stands in fixtures/logins.js, as plain values with no
+// imports behind them: the cases need the same password, the same code and
+// the same private keys, and importing this file from a case pulls the
+// vendored Argon2 in behind it, which playwright's loader does not get
+// through (measured; the reason is written down there). They are re-exported
+// here so mock/api.js keeps reading one file.
+export {
+  USER_NAME, PASSWORD, TOTP_NAME, PASSKEY_NAME, BOTH_NAME, TOTP_CODE, RP_ID, RP_ORIGINS,
+  PASSKEY_USERS,
+} from "../fixtures/logins.js";
+
 export const USER_ID = b64encode(new Uint8Array(16).fill(0x22));
+
+const BERND_ID = b64encode(new Uint8Array(16).fill(0x23));
+const CLARA_ID = b64encode(new Uint8Array(16).fill(0x24));
+const DORA_ID = b64encode(new Uint8Array(16).fill(0x25));
+// The two roles the login cases need. A role cannot be both, which
+// trust.validateList refuses outright, so they are two.
+const ROLE_PASSKEY_ONLY = "nurpasskey";
+const ROLE_PASSWORD_TOO = "beides";
 
 // The KDF of that password key. m and t are the values Thomas decided on
 // (the contract minimum, a quarter of the work of the old defaults): a test
@@ -55,6 +72,48 @@ const SEED_SIZE = 32;
 function seedOf(passwordText, kdf) {
   return argon2id(utf8(passwordText.normalize("NFC")), b64decode(kdf.salt),
     { t: kdf.t, m: kdf.m, p: kdf.p, dkLen: SEED_SIZE });
+}
+
+// es256Public rebuilds the public half of a fixed P-256 private key. The Web
+// Crypto API hands out no public key of a private one, so the private key is
+// imported as extractable, read as a JWK and its x and y put back together
+// as a public key - the same road proof.publicFromSeed walks for Ed25519.
+// This is a mock and the key is in the repository, so nothing is given away.
+async function es256Public(pkcs8Base64) {
+  const der = Uint8Array.from(Buffer.from(pkcs8Base64, "base64"));
+  const alg = { name: "ECDSA", namedCurve: "P-256" };
+  const priv = await crypto.subtle.importKey("pkcs8", der, alg, true, ["sign"]);
+  const jwk = await crypto.subtle.exportKey("jwk", priv);
+  const pub = await crypto.subtle.importKey("jwk", { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+    alg, true, ["verify"]);
+  return new Uint8Array(await crypto.subtle.exportKey("spki", pub));
+}
+
+// passkeyKey is one entry of a user's key list in the trust list's own shape:
+// the public half, the credential ID the challenge offers and the key ID the
+// proof names. proof.verify checks all three against each other.
+async function passkeyKey(which) {
+  const pub = await es256Public(PKCS8[which]);
+  return {
+    id: await sign.keyID(pub), kind: proof.KIND_PASSKEY, alg: proof.ALG_ES256,
+    pub, credId: CRED_ID[which], kdf: null,
+  };
+}
+
+// passwordKey is the password key of a password, with the salt this world
+// gives that user. Two users never share a salt, so two people with the same
+// password have different keys - which is what a salt is for.
+async function passwordKey(passwordText, salt) {
+  const kdf = { ...KDF, salt: b64encode(salt) };
+  const pub = await proof.publicFromSeed(seedOf(passwordText, kdf));
+  return {
+    key: {
+      id: await sign.keyID(pub), kind: proof.KIND_PASSWORD, alg: proof.ALG_EDDSA,
+      pub, credId: new Uint8Array(0),
+      kdf: { alg: kdf.alg, salt: b64decode(kdf.salt), m: kdf.m, t: kdf.t, p: kdf.p },
+    },
+    kdf,
+  };
 }
 
 async function ed25519() {
@@ -95,8 +154,31 @@ export async function buildWorld() {
       kdf: { alg: KDF.alg, salt: b64decode(KDF.salt), m: KDF.m, t: KDF.t, p: KDF.p },
     }],
   };
+  // The three other ways in. They are real entries of the trust list and not
+  // a table beside it, so the mock decides passwordToo the way the API does -
+  // by asking the list (trust.passwordToo) - instead of keeping a second
+  // opinion that could drift from it.
+  const bernd = {
+    id: BERND_ID, name: TOTP_NAME, roles: [trust.ROLE_ADMIN],
+    keys: [(await passwordKey(PASSWORD, new Uint8Array(16).fill(0x06))).key],
+  };
+  const clara = {
+    id: CLARA_ID, name: PASSKEY_NAME, roles: [ROLE_PASSKEY_ONLY],
+    keys: [await passkeyKey("clara")],
+  };
+  const dora = {
+    id: DORA_ID, name: BOTH_NAME, roles: [ROLE_PASSWORD_TOO],
+    keys: [await passkeyKey("dora"), (await passwordKey(PASSWORD, new Uint8Array(16).fill(0x08))).key],
+  };
+  // Sorted by name, as the list demands of roles.
+  list.roles = [...list.roles,
+    { name: ROLE_PASSWORD_TOO, level: trust.LEVEL_OFF, black: [], white: [],
+      passkeyOnly: false, passwordToo: true },
+    { name: ROLE_PASSKEY_ONLY, level: trust.LEVEL_OFF, black: [], white: [],
+      passkeyOnly: true, passwordToo: false },
+  ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   // Sorted by id, as the list demands; anna's id sorts after both admins'.
-  list.users = [...list.users, anna];
+  list.users = [...list.users, anna, bernd, clara, dora];
   for (const n of list.nodes) {
     if (n.id === "api-1") { n.sign = apiSign.pub; n.noise = apiNoise.pub; }
     if (n.id === "ctl-1") { n.noise = ctlNoise.pub; }
@@ -125,6 +207,16 @@ export async function buildWorld() {
     installation: list.installation,
     chainBytes: chain,
     user: { id: USER_ID, name: USER_NAME, key: anna.keys[0], kdf: KDF },
+    // Who may log in, by the name that is typed. Everything else about them -
+    // their keys, whether a role asks for the password as well - the mock
+    // reads out of the trust list, because that is where the API reads it.
+    // Only the second factor lives here: a trust list holds no TOTP secret.
+    logins: new Map([
+      [USER_NAME, { id: USER_ID, totp: false }],
+      [TOTP_NAME, { id: BERND_ID, totp: true }],
+      [PASSKEY_NAME, { id: CLARA_ID, totp: false }],
+      [BOTH_NAME, { id: DORA_ID, totp: false }],
+    ]),
     api: { id: "api-1", sign: apiSign, noise: apiNoise },
     controller: { id: "ctl-1", noise: ctlNoise },
     results: results(),
