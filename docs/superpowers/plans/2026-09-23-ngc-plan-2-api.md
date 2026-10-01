@@ -78,7 +78,8 @@ Diese Vorgaben gelten für jede Aufgabe; sie werden nicht in jeder Aufgabe wiede
 | `session.MaxChain` (32 MiB), `session.MaxChainVersions` (64) | eine Antwort von `GET /api/v1/trust` |
 | `session.MaxSkew` (300 s) | geduldeter Uhrunterschied; auch das Fenster für `OncePurge` |
 | `session.ChallengeLifetime` (120 s) | Lebensdauer einer Anmelde-Nonce |
-| `wire.MaxFrame` (65519) | größter Frame; Lesegrenze des WebSockets |
+| `wire.MaxFrame` (65519) | größter Frame im Klartext |
+| `wire.MaxFrame + noisep.TagSize` (65535) | **Lesegrenze des WebSockets** — gemessen und am 01.10.2026 berichtigt: diese Zeile nannte vorher `MaxFrame` allein, während der Code desselben Plans richtig `wire.MaxFrame + noisep.TagSize` schreibt. Ein gesiegelter Frame trägt sein Siegel mit. |
 | `wire.MaxSessionChannels` (64), `wire.MaxTunnelChannels` (1024) | belegte Kanalnummern |
 | `wire.MaxWindow` (1 MiB), `wire.MinWindow` (4 KiB) | offene Freigabe je Strecke und Richtung |
 | `wire.MaxCallResult` (8 MiB) | Ergebnis nach Art von `call` |
