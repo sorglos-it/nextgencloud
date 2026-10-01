@@ -30,7 +30,7 @@ import * as proof from "../../public/assets/js/contracts/proof.js";
 import * as sign from "../../public/assets/js/contracts/sign.js";
 import * as trust from "../../public/assets/js/contracts/trust.js";
 import { Budget, decode, bytes, str, P, S } from "../../public/assets/js/contracts/json.js";
-import { buildWorld, RP_ID, RP_ORIGINS, TOTP_CODE } from "./world.js";
+import { buildWorld, RP_ID, RP_ORIGINS, TOTP_CODE, SETUP_CODE } from "./world.js";
 
 // The GUID of RFC 6455, section 1.3. It is NOT written from memory: the line
 // below is held against the RFC's own example on every start (accept()), and
@@ -64,6 +64,19 @@ const loginFinishShape = S({
 // The body of PathLoginStart (Go: session.LoginStart). One member, and the
 // name decides which challenge is written - so it is read strictly too.
 const loginStartShape = S({ name: str });
+// The body of POST PathSetup (Go: session.Setup). The shell writes it and
+// never reads one either, so the shape stands here out of the piece that IS
+// frozen - trust.signedShape, the version and its proof.
+const setupShape = S({ mac: bytes, trust: trust.signedShape });
+// Another one-time code than the installation's own, for the case that plays
+// a man in the middle. It is a canonical code (session.validSetupCode) and it
+// is NOT the one the browser types, which is the whole point: whoever does
+// not hold the code cannot make the MAC over the offer.
+const FOREIGN_CODE = "22222-33333-44444-55555";
+// The keys such an offer carries instead of the installation's own: 32 bytes
+// nobody has, so anything of that offer that reached the screen would be
+// plain to see.
+const FOREIGN_KEY = new Uint8Array(32).fill(0xee);
 const finishBudget = new Budget({ size: session.MAX_REQUEST });
 const JSON_TYPE = "application/json; charset=utf-8";
 // The Noise tag an inner message costs, taken from the contract and not
@@ -108,6 +121,40 @@ function readBody(req, limit) {
     req.on("end", () => ok(new Uint8Array(Buffer.concat(parts))));
     req.on("error", no);
   });
+}
+
+// ------------------------------------------------- the documents of the setup
+//
+// Three writers that have to agree with trust.encodeList CHARACTER FOR
+// CHARACTER, and the reason is the contract's: session.VerifySetup compares
+// the nodes and the store of version 1 with the ones it offered AS JSON
+// (Go: sameNodes, sameJSON). trust.js keeps its own encodeNode and
+// encodeStore private, so these are written here - in the field order of the
+// Go structs, with a field left out wherever the struct tag has omitempty
+// and the value is empty. A field more, a field fewer or one in another
+// place, and an honest version 1 would be refused.
+
+function nodeDoc(n) {
+  const o = { id: n.id, kind: n.kind, name: n.name, noise: b64encode(n.noise) };
+  if (n.sign.length > 0) o.sign = b64encode(n.sign);
+  if (n.url !== "") o.url = n.url;
+  if (n.tls.length > 0) o.tls = b64encode(n.tls);
+  if (n.rootUsers.length > 0) o.rootUsers = n.rootUsers;
+  if (n.rootRoles.length > 0) o.rootRoles = n.rootRoles;
+  return o;
+}
+
+// A store has no omitempty on any of its four fields.
+const storeDoc = (s) => ({ id: s.id, name: s.name, url: s.url, key: b64encode(s.key) });
+
+// One signed version as the document it is, the way apps/store.js and
+// shell/trustlist.js write it: authData and clientData only where a passkey
+// put something there.
+function signedDoc(v) {
+  const p = { kind: v.proof.kind, kid: v.proof.kid, sig: b64encode(v.proof.sig) };
+  if (v.proof.authData.length > 0) p.authData = b64encode(v.proof.authData);
+  if (v.proof.clientData.length > 0) p.clientData = b64encode(v.proof.clientData);
+  return { payload: b64encode(v.payload), proof: p };
 }
 
 // ------------------------------------------------------- the WebSocket frames
@@ -506,6 +553,160 @@ export async function startMockAPI({ world, port, phpPort }) {
     return s;
   }
 
+  // ------------------------------------------------- a fresh installation
+  //
+  // While `fresh` is set this API has NO ADMIN: GET PathSetup offers version 1
+  // and POST PathSetup takes it. Otherwise both are 404 E_NOTFOUND, which is
+  // what the contract says "as soon as there is an admin" - and what
+  // buildWorld leaves behind, since its world has four of them.
+  //
+  // A setup that goes through does what a real API does: the version the
+  // admin signed BECOMES this world's trust list, the admin of it becomes
+  // who may log in, and `fresh` falls away because there is an admin now. So
+  // the login right after the setup really runs against the list the shell
+  // just built - which is a far stronger measurement than a 204.
+  //
+  // `saved` is the world buildWorld made. One server answers the whole run,
+  // so a case that set the installation up must not leave it set up for the
+  // file after it: the test door puts the saved world back, and so does the
+  // next case that asks for a fresh one.
+  let fresh = null;
+  let saved = null;
+  // How many times GET PathSetup reached this side since the last fresh
+  // installation. It stands OUTSIDE fresh, because a case asks after the
+  // setup has gone through and fresh is null by then.
+  let setupOffers = 0;
+
+  function restoreWorld() {
+    if (saved === null) return;
+    w.list = saved.list;
+    w.installation = saved.installation;
+    w.chainBytes = saved.chainBytes;
+    w.logins = saved.logins;
+    w.user = saved.user;
+  }
+
+  function startFresh(foreign) {
+    if (saved === null) {
+      saved = { list: w.list, installation: w.installation, chainBytes: w.chainBytes,
+        logins: w.logins, user: w.user };
+    } else {
+      restoreWorld();
+    }
+    // What the offer holds, taken once out of the pristine world: the API
+    // nodes, the global store and the release key of the standing approval
+    // genesis already carries. POST PathSetup compares version 1 against
+    // THESE, as the API compares against its own configuration - so the two
+    // halves of one setup cannot disagree even if the world moved between
+    // them.
+    const nodes = w.list.nodes.filter((n) => n.kind === trust.NODE_API)
+      .map((n) => (foreign ? { ...n, noise: FOREIGN_KEY, sign: FOREIGN_KEY, tls: FOREIGN_KEY } : n))
+      .map(nodeDoc);
+    const store = w.list.stores.find((s) => s.id === trust.STORE_GLOBAL) ?? null;
+    const release = w.list.auto.find((a) => a.target === trust.AUTO_CONTROLLER)?.key ?? FOREIGN_KEY;
+    fresh = {
+      code: foreign ? FOREIGN_CODE : SETUP_CODE,
+      nodes,
+      store: store === null ? null : storeDoc(store),
+      releaseKey: b64encode(foreign ? FOREIGN_KEY : release),
+    };
+    setupOffers = 0;
+  }
+
+  // offerBytes writes the answer of GET PathSetup: SetupInfo as JSON and
+  // OfferMAC over exactly those bytes (Go: session.SetupOffer). `now` is this
+  // server's clock, as the API's own is.
+  async function offerBytes() {
+    const info = utf8(JSON.stringify({
+      installation: w.installation,
+      nodes: fresh.nodes,
+      now: Math.floor(Date.now() / 1000),
+      releaseKey: fresh.releaseKey,
+      ...(fresh.store === null ? {} : { store: fresh.store }),
+    }));
+    const offer = utf8(JSON.stringify({
+      info: b64encode(info), mac: b64encode(await session.offerMAC(fresh.code, info)),
+    }));
+    // Read back with the shell's own parser, with the code this offer was
+    // made for: an offer the shell cannot read is a bug of this file, and it
+    // has to show here rather than three layers away. The foreign offer is
+    // read back with the foreign code for the same reason - it is a valid
+    // offer, just not one for the code the browser holds.
+    await session.parseSetupOffer(offer, fresh.code);
+    return offer;
+  }
+
+  // takeSetup checks version 1 the way the API does (Go: session.VerifySetup)
+  // and, where it holds, installs it. false is E_VERIFY.
+  async function takeSetup(body) {
+    let s;
+    try {
+      s = decode(body, finishBudget, setupShape);
+    } catch {
+      return false;
+    }
+    // The code and the MAC first, before anything of the payload is opened.
+    if (s.mac.length !== 32 || !equal(s.mac, await session.setupMAC(fresh.code, s.trust.payload))) {
+      return false;
+    }
+    let v;
+    try {
+      v = await trust.open({ seq: 1, hash: await trust.hash(s.trust) }, [s.trust]);
+    } catch {
+      return false;
+    }
+    const l = v.list;
+    if (l.installation !== w.installation) return false;
+    if (JSON.stringify(l.nodes.map(nodeDoc)) !== JSON.stringify(fresh.nodes)) return false;
+    // Either no store at all, or exactly the one that was offered.
+    if (l.stores.length > 1) return false;
+    if (l.stores.length === 1
+      && (fresh.store === null || JSON.stringify(storeDoc(l.stores[0])) !== JSON.stringify(fresh.store))) {
+      return false;
+    }
+    // A standing approval names no key but the release key of the offer, and
+    // `system` names none at all.
+    for (const a of l.auto) {
+      if (a.target === trust.AUTO_SYSTEM) {
+        if (a.key.length !== 0) return false;
+      } else if (a.target === trust.AUTO_WEB || a.target === trust.AUTO_API
+        || a.target === trust.AUTO_CONTROLLER) {
+        if (b64encode(a.key) !== fresh.releaseKey) return false;
+      } else {
+        return false;
+      }
+    }
+    installSetup(v, s.trust);
+    return true;
+  }
+
+  // installSetup makes the version the admin signed this world's own, so the
+  // login right after the setup runs against it. The API nodes come out of
+  // the offer unchanged, so api-1 still carries the signing key this mock
+  // holds and the API certificate still verifies.
+  function installSetup(v, signed) {
+    w.list = v.list;
+    w.installation = v.list.installation;
+    w.chainBytes = utf8(JSON.stringify({ versions: [signedDoc(signed)] }));
+    // Read back with the shell's own parser, for the reason every other
+    // answer of this file is.
+    session.parseTrustChain(w.chainBytes);
+    w.logins = new Map(v.list.users.map((u) => [u.name, { id: u.id, totp: false }]));
+    const first = v.list.users[0];
+    const pw = first.keys.find((k) => k.kind === proof.KIND_PASSWORD) ?? null;
+    w.user = {
+      id: first.id, name: first.name, key: pw ?? w.user.key,
+      // challengeFor writes a made-up KDF for a name nobody has out of this
+      // one, so it has to be the new admin's: a salt out of the old world
+      // would answer with parameters no key of this installation has.
+      kdf: pw === null ? w.user.kdf
+        : { alg: pw.kdf.alg, salt: b64encode(pw.kdf.salt), m: pw.kdf.m, t: pw.kdf.t, p: pw.kdf.p },
+    };
+    // There is an admin now, so the setup is over - exactly as it is over for
+    // the API.
+    fresh = null;
+  }
+
   // THE ONE PLACE WHERE THE MOCK'S RELYING PARTY DIFFERS FROM THE CHALLENGE'S.
   // The challenge carries world.RP_ORIGINS, which is https, because
   // url.validOrigin takes nothing else and session.parseLoginChallenge holds
@@ -556,6 +757,11 @@ export async function startMockAPI({ world, port, phpPort }) {
         // there is no session before a login.
         const lock = url.searchParams.get("lock");
         if (lock !== null) lockFor = /^[0-9]{1,4}$/.test(lock) ? Number(lock) : 0;
+        // A fresh installation needs no session either: there is no user yet.
+        // "1" takes the admin away, "0" puts the world buildWorld made back.
+        const setup = url.searchParams.get("setup");
+        if (setup === "1") startFresh(url.searchParams.get("offer") === "foreign");
+        if (setup === "0") { fresh = null; restoreWorld(); }
         if (state !== undefined) {
           state.behaviour = { failAfterData: url.searchParams.get("failAfterData") === "1" };
         }
@@ -566,12 +772,36 @@ export async function startMockAPI({ world, port, phpPort }) {
       // Which proofs the last login carried. A word, so the asking side has
       // nothing to parse.
       if (url.searchParams.get("ask") === "proofs") { res.end(lastProofs); return; }
+      // How many times the shell asked for the setup offer. A number, so the
+      // case does not have to believe a flag the page set about its own work.
+      if (url.searchParams.get("ask") === "setup") { res.end(String(setupOffers)); return; }
       // One character, so the asking side has nothing to parse.
       res.end(state?.sawPlaintext === true ? "1" : "0");
       return;
     }
 
-    if (path === session.PATH_SETUP) { sendError(res, wire.CODES.NOTFOUND); return; }
+    // The setup, and only while there is no admin: 404 E_NOTFOUND otherwise,
+    // which is what the contract gives this path "as soon as there is an
+    // admin" (shared/README.md, "Vor dem WebSocket").
+    if (path === session.PATH_SETUP) {
+      if (fresh === null) { sendError(res, wire.CODES.NOTFOUND); return; }
+      if (req.method === "GET") {
+        setupOffers++;
+        sendJSON(res, 200, await offerBytes());
+        return;
+      }
+      if (req.method === "POST") {
+        if (!(await takeSetup(await readBody(req, session.MAX_REQUEST)))) {
+          sendError(res, wire.CODES.VERIFY);
+          return;
+        }
+        res.writeHead(204, { "Cache-Control": "no-store" });
+        res.end();
+        return;
+      }
+      sendError(res, wire.CODES.PROTOCOL);
+      return;
+    }
 
     if (path === session.PATH_LOGIN_START && req.method === "POST") {
       // A locked login is turned away before any work is done, which is where

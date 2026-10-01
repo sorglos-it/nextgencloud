@@ -44,6 +44,12 @@ export {
   PASSKEY_USERS,
 } from "../fixtures/logins.js";
 
+// The one-time code of a fresh installation. It comes out of the shared test
+// data and is written neither here nor in the case that types it
+// (tests/shell/setup.spec.js reads the same member for itself): a code the
+// two sides spelled separately is a code they can spell differently.
+export const SETUP_CODE = testdata("session.json").setup.code;
+
 export const USER_ID = b64encode(new Uint8Array(16).fill(0x22));
 
 const BERND_ID = b64encode(new Uint8Array(16).fill(0x23));
