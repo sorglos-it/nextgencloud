@@ -377,51 +377,72 @@ gehalten war nur „einer mehr als die Grenze". `>` zu `>=` zu machen blieb
 dass ein Test fällt. Wer Punkt 1 baut, stellt **beide** Zahlen: `500` geht durch,
 `501` nicht, und dem Vertrag werden dieselben zwei gestellt.
 
-## shared/trust — eine Speicher-Obergrenze, die unter -race nie halten kann
+## shared/trust — eine Speicher-Obergrenze, die unter -race FLATTERT
 
-**Gemessen am 01.10.2026.** `shared/trust/trust_test.go:653` hält `trust.Open`
-gegen ein Budget von `64<<10` zugeteilten Bytes. Das ist ein guter Zaun — aber er
-zählt **Zuteilungen**, und der Renn-Sucher teilt mehr zu. Damit kann er unter
-`-race` **nie** grün sein:
+**Berichtigt am 01.10.2026, nachdem ein Strang meine erste Fassung widerlegt hat.**
+Ich hatte geschrieben, der Fall könne unter `-race` **nie** grün sein. Gemessen
+ist es schlimmer: er **kann** grün sein, und zwar ohne jede Reparatur.
 
-| | Ergebnis |
+`shared/trust/trust_test.go:653` hält `trust.Open` gegen ein Budget von `64<<10`
+= 65536 zugeteilten Bytes. Zwei Läufe von `go test -race -count=1 ./...` auf
+**demselben** Baum:
+
+| Lauf | Ergebnis |
 |---|---|
-| `go test -run TestSignatureBeforeDecoding ./shared/trust/` | **ok**, 0,303 s |
-| dasselbe mit `-race` | **FAIL**: `Open: 65928 bytes allocated` (Budget 65536) |
+| 1. | **exit 0**, `shared/trust` **ok** (10,625 s), 0 `DATA RACE` |
+| 2. | **exit 1**, `FAIL`: `Open: 65736 bytes allocated`, 0 `DATA RACE` |
+| Paket allein | FAIL 3 von 3 |
+| nur der Fall | FAIL 5 von 5, mit **65640** *und* **65736** Byte |
 
-Die Folge ist größer als die 400 Bytes: **`go test -race ./...` kann in keinem der
-vier Pläne grün werden**, weil jeder `shared/` mitführt. Ein Lauf, der immer rot
-ist, wird nicht gelesen — und ein `-race`, das niemand liest, findet keine
-Datenrennen.
+Drei verschiedene Zahlen über alle Messungen: **65640, 65736, 65928** — gegen ein
+festes Budget von 65536. Ohne `-race` jedes Mal grün.
 
-**Was zu tun ist — nicht das Budget anheben.** Ein Zaun, der für ein
-Werkzeug-Artefakt gelockert wird, ist dauerhaft lockerer. Stattdessen die beiden
-Zuteilungs-Zusicherungen (`Advance` in Zeile 646 und `Open` in Zeile 653)
-überspringen, **wenn der Renn-Sucher läuft**, mit dem Grund daneben. Go hat dafür
-keine Abfrage in der Standardbibliothek; idiomatisch ist ein Dateipaar im
-Testpaket:
+**Die Ursache liegt im Messverfahren, nicht an `-race` allein.** `allocated`
+(`trust_test.go:580`) nimmt die Differenz von `runtime.MemStats.TotalAlloc` —
+einen **prozessweiten** Zähler. Er zählt alles, was während `f()` irgendwo im
+Prozess zuteilt, nicht nur `f()`. Der Renn-Sucher teilt im Hintergrund zu, also
+landet Fremdes im gemessenen Fenster. **Warum es flattert, ist nicht gemessen
+und wird hier nicht behauptet**; zwei naheliegende Erklärungen sind geprüft und
+verworfen (das Paket hat kein `t.Parallel()` und kein `go func` in seinen Tests).
 
-```go
-//go:build race
-package trust_test
-const raceEnabled = true
-```
+**Was zu tun ist — und das Budget anzuheben bleibt falsch.** Ein Zaun, der für
+ein Werkzeug-Artefakt gelockert wird, ist dauerhaft lockerer, und eine neue
+Schwelle würde nur die drei Zahlen von heute abdecken. Zwei Wege, der erste ist
+der kleinere:
 
-```go
-//go:build !race
-package trust_test
-const raceEnabled = false
-```
+1. Die beiden Zuteilungs-Zusicherungen (`Advance` in Zeile 646, `Open` in Zeile
+   653) **überspringen, wenn der Renn-Sucher läuft**, mit dem Grund daneben. Go
+   hat dafür keine Abfrage in der Standardbibliothek; idiomatisch ist ein
+   Dateipaar im Testpaket:
 
-Dann bleibt der Zaun im normalen Lauf **in voller Stärke** und sagt im
-`-race`-Lauf, warum er schweigt.
+   ```go
+   //go:build race
+   package trust_test
+   const raceEnabled = true
+   ```
 
-**Nebenbei die Lehre, die mehr gekostet hat als dieser Punkt:** drei Pläne haben
-unabhängig gemeldet, `-race` sei auf dieser Maschine nicht fahrbar, weil ein
-C-Übersetzer fehle. Es liegt einer in der ESP-Werkzeugkette
-(`C:/esp/tools/llvm-mingw/bin/gcc.exe`, clang 23.1.1, Ziel
-`x86_64-w64-windows-gnu`), und `-race` läuft damit. **Null Datenrennen** über alle
-drei Server-Pläne, 60 Pakete grün, der einzige rote Fall ist dieser hier.
+   ```go
+   //go:build !race
+   package trust_test
+   const raceEnabled = false
+   ```
+
+2. Oder das Verfahren austauschen: `testing.AllocsPerRun` misst wiederholt und
+   isoliert besser als eine Differenz auf einem prozessweiten Zähler. Das ist die
+   grüßere Änderung und die ehrlichere — der Zaun würde dann auch ohne `-race`
+   verlässlicher.
+
+**Und eine Warnung an den, der die Reparatur prüft:** verlass dich **nicht** auf
+„einmal grün". Einmal grün ist **ohne** Reparatur gemessen worden. Die tragende
+Aussage eines `-race`-Laufs ist `grep -c 'DATA RACE'` = 0, nicht der
+Ausstiegscode — in beiden Läufen oben war sie erfüllt.
+
+**Zur Einordnung, damit die Dringlichkeit stimmt:** über alle drei Server-Pläne
+gemessen **0 DATA RACE**, 60 Pakete grün. Und die Prüfung hat Zähne: mit
+entferntem Schreibschloss meldet sie `WARNING: DATA RACE` in
+`noisep.(*Transport).Seal()` (`noisep.go:117`) über `link.go:225`, zwei
+Goroutinen im selben `Seal`, exit 1. Dieser Punkt ist also eine Störung des
+Messwerkzeugs, kein Loch im Code.
 
 ## Nicht vergessen
 
