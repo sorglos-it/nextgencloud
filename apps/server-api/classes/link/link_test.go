@@ -226,6 +226,69 @@ func TestAcceptGivesUpOnASilentClient(t *testing.T) {
 	}
 }
 
+// TestAcceptRefusesAHandshakeWithoutWaiting holds the same bound on the way in,
+// where it matters more: a refusal there is reachable by anyone who reaches the
+// port, before any login. This client sends a text message where Noise message 1
+// belongs and then does not read, so it never answers the close frame.
+func TestAcceptRefusesAHandshakeWithoutWaiting(t *testing.T) {
+	server, err := noisep.Keypair(fixedReader{1})
+	if err != nil {
+		t.Fatalf("server keys: %v", err)
+	}
+	client, err := noisep.Keypair(fixedReader{2})
+	if err != nil {
+		t.Fatalf("client keys: %v", err)
+	}
+	back := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := Accept(w, r, Options{Subprotocol: "ngc.test.v1", Prologue: noisep.PrologueSession,
+			Static: server, Peer: client.Public})
+		back <- err
+	}))
+	defer srv.Close()
+	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
+		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: testClient})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	start := time.Now()
+	select {
+	case err := <-back:
+		if err == nil {
+			t.Fatal("Accept took a link whose first message was text")
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Fatalf("the refused handshake held the handler %v", d)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Accept never came back from a refused handshake")
+	}
+}
+
+// TestARefusalDoesNotWaitOnTheRulebreaker holds the bound on the close of a
+// refused message: the peer breaks the rules and then does not read, so it never
+// answers the close frame. Without the bound websocket.Close waits five seconds
+// for that answer, and whoever opens many refused links holds a reader that long
+// for each.
+func TestARefusalDoesNotWaitOnTheRulebreaker(t *testing.T) {
+	l, _, conn, done := dialTest(t)
+	defer done()
+	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	start := time.Now()
+	if _, err := l.Read(ctx); err == nil {
+		t.Fatal("a text message was taken")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("the refusal held the reader %v", d)
+	}
+}
+
 // fixedReader gives the same bytes every time, so the tests stay deterministic.
 type fixedReader struct{ b byte }
 

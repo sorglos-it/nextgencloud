@@ -31,8 +31,8 @@ var ErrLink = errors.New("link: malformed message")
 // randReader is the source of the ephemeral Noise keys.
 var randReader = rand.Reader
 
-// The deadline of a link. It is policy, not protocol: no byte on the line
-// depends on it, so a change here is no change to a contract.
+// The two deadlines of a link. Both are policy, not protocol: no byte on the
+// line depends on them, so a change here is no change to a contract.
 const (
 	// HandshakeTimeout bounds the whole Noise handshake, from the connection
 	// being ours to the finished transport. Nothing else bounds it: Hijack
@@ -42,6 +42,14 @@ const (
 	// for good, before any login. The price: a human on a very bad line can
 	// be cut off after ten seconds.
 	HandshakeTimeout = 10 * time.Second
+
+	// CloseWait bounds how long a refused peer may take to answer the close
+	// frame. A peer that just broke the rules of the link has earned less
+	// patience than one that ends a link in order, which Close still gives
+	// the five seconds of websocket.Close: measured, a refusal held the reader
+	// those five seconds, so whoever opens many refused links holds a reader
+	// for each of them that long.
+	CloseWait = 1 * time.Second
 )
 
 // Options describe one link.
@@ -96,7 +104,7 @@ func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 	}
 	// A client that did not ask for our subprotocol speaks something else.
 	if conn.Subprotocol() != o.Subprotocol {
-		conn.Close(websocket.StatusPolicyViolation, "subprotocol")
+		closeBounded(conn, websocket.StatusPolicyViolation, "subprotocol")
 		return nil, ErrLink
 	}
 	// The clock on the handshake starts here, where the connection becomes
@@ -108,29 +116,29 @@ func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 	conn.SetReadLimit(wire.MaxFrame + noisep.TagSize)
 	hs, err := noisep.Handshake(false, []byte(o.Prologue), o.Static, o.Peer, randReader)
 	if err != nil {
-		conn.Close(websocket.StatusInternalError, "handshake")
+		closeBounded(conn, websocket.StatusInternalError, "handshake")
 		return nil, err
 	}
 	// One word for every way the handshake can end, the deadline included: a
 	// close frame never says how far the other side got.
 	kind, msg1, err := conn.Read(hctx)
 	if err != nil || kind != websocket.MessageBinary || len(msg1) != wire.HandshakeSize {
-		conn.Close(websocket.StatusPolicyViolation, "handshake")
+		closeBounded(conn, websocket.StatusPolicyViolation, "handshake")
 		return nil, ErrLink
 	}
 	payload, _, _, err := hs.ReadMessage(nil, msg1)
 	if err != nil || len(payload) != 0 {
 		// Messages 1 and 2 carry no payload in all three uses of noisep.
-		conn.Close(websocket.StatusPolicyViolation, "handshake")
+		closeBounded(conn, websocket.StatusPolicyViolation, "handshake")
 		return nil, ErrLink
 	}
 	msg2, cs1, cs2, err := hs.WriteMessage(nil, nil)
 	if err != nil || cs1 == nil || cs2 == nil {
-		conn.Close(websocket.StatusInternalError, "handshake")
+		closeBounded(conn, websocket.StatusInternalError, "handshake")
 		return nil, ErrLink
 	}
 	if err := conn.Write(hctx, websocket.MessageBinary, msg2); err != nil {
-		conn.Close(websocket.StatusInternalError, "handshake")
+		closeBounded(conn, websocket.StatusInternalError, "handshake")
 		return nil, err
 	}
 	return &Link{conn: conn, tr: noisep.NewTransport(false, cs1, cs2)}, nil
@@ -176,11 +184,37 @@ func (l *Link) Write(ctx context.Context, f wire.Frame) error {
 	return l.conn.Write(ctx, websocket.MessageBinary, sealed)
 }
 
-// Close ends the link.
+// Close ends the link in order and waits for the peer's answer to the close
+// frame, which a refusal does not: CloseWait says why.
 func (l *Link) Close(code websocket.StatusCode, reason string) error {
 	return l.conn.Close(code, reason)
 }
 
 // fail ends the link on a broken message; the reason is fixed text, never
 // anything from the message.
-func (l *Link) fail(reason string) { _ = l.conn.Close(websocket.StatusProtocolError, reason) }
+func (l *Link) fail(reason string) {
+	closeBounded(l.conn, websocket.StatusProtocolError, reason)
+}
+
+// closeBounded sends the close frame and gives the peer at most CloseWait to
+// answer it. The frame is worth sending — a browser learns that it was refused
+// and not that the network died — but the answer is not worth waiting five
+// seconds for from someone who just broke the rules. The wait runs in its own
+// goroutine because websocket.Close takes no context and the library hands out
+// no way to drop the connection at the bound: closing is swapped once, so a
+// CloseNow after it only waits again, and the step that drops the socket is
+// unexported (vendor/github.com/coder/websocket/close.go). The library ends the
+// connection within its own five seconds; the reader is free after CloseWait.
+func closeBounded(conn *websocket.Conn, code websocket.StatusCode, reason string) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = conn.Close(code, reason)
+	}()
+	t := time.NewTimer(CloseWait)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+	}
+}
