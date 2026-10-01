@@ -491,6 +491,24 @@ Wert bequem macht, verschwindet der Wert aus der Prüfung.** Das gilt für
 Zeitgeber, Obergrenzen, Schlüssellängen, Wiederholungszahlen und jeden
 Vorgabewert, den ein Test „nur zum Beschleunigen" mitgibt.
 
+### Der rote Schritt ist der LETZTE Lauf vor dem Commit
+
+Ein Strang hat sein Rot-Protokoll zweimal verloren, auf dieselbe Weise: Lauf
+gefahren, Protokoll gespeichert, **danach noch einen Fall hinzugefügt.** Das
+Protokoll kannte dann 34 Fälle, die Reihe hatte 35; beim zweiten Mal 37 gegen 38.
+Aufgefallen ist es nur durch Gegenzählen mit `-test.list`, beim ersten Mal erst
+einem Prüfer — der es am **Zeitstempel** gesehen hat: das Protokoll war zwei
+Minuten **älter** als die Fälle, die es belegen sollte.
+
+Seine Regel, und sie ist besser als jede Ermahnung zur Sorgfalt: **der rote
+Schritt ist der letzte Lauf vor dem Commit.** Nicht der erste, nicht der mittlere.
+Wer danach noch eine Zeile anfügt, fährt ihn neu.
+
+Und die Gegenprobe dazu kostet nichts: **zähl die gelisteten Namen gegen die
+gelaufenen.** `-test.list` bei Go, `--list` bei Playwright. Stimmt die Zahl nicht,
+ist das Protokoll von einem anderen Baum — und ein Protokoll von einem anderen Baum
+belegt gar nichts.
+
 ### Mutier jeden neuen Zaun einzeln — sonst lieferst du Zäune, die nicht beißen
 
 Ein Strang hat in einer Fixrunde fünf neue Zusicherungen gebaut, jede gegen einen
