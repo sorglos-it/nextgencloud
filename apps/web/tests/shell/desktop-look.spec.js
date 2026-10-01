@@ -1,10 +1,9 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // The look in the start menu - accent colour and background - and the search
 // above it. Task 21 left all three measured by hand only.
 test.beforeEach(async ({ shell }) => {
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(shell);
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });

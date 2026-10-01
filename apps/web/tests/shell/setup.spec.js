@@ -31,7 +31,7 @@
 //     gets a fresh browser context anyway, and storageState says nothing
 //     about IndexedDB, which is the one store this flow writes (the anchor).
 //     What the cases need instead is stated where they need it.
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, skipWithoutSetup, skipWithoutShell } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 import { PASSWORD, USER_NAME } from "../fixtures/logins.js";
 
@@ -54,11 +54,17 @@ const NO_MATCH = "Der Einmal-Code passt nicht zu dieser Anlage. "
 // X25519 before it draws anything, and the WebKit that Playwright brings has
 // neither - so there is no setup mask to type into there either. The boot
 // says so instead, and shell/boot.spec.js is the case that pins THAT and runs
-// everywhere. The day this WebKit gains the two, hasSessionKeys answers true
-// by itself and every case below runs there with no edit here.
+// everywhere. The day this WebKit gains the two, this answers yes by itself and
+// every case below runs there with no edit here.
+//
+// This asks for the MASK and not for a finished setup, because most cases here
+// never finish one: they watch a code being refused. The two that do go through
+// ask for themselves, with skipWithoutSetup - a setup turns a typed password
+// into a key, and that is the step Firefox cannot take. Asking the whole file
+// for it once switched four cases off on Firefox that run there, one of them
+// the man-in-the-middle check (task 30, Fixrunde 1).
 test.beforeEach(async ({ shell }) => {
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the setup");
+  await skipWithoutShell(shell);
 });
 
 // One server answers the whole run, so a case that made the installation
@@ -160,6 +166,7 @@ test("a wrong code says nothing about how wrong it was", async ({ shell }) => {
 });
 
 test("the one-time code never travels", async ({ shell }) => {
+  await skipWithoutSetup(shell);
   const seen = [];
   shell.on("request", (r) => seen.push((r.postData() ?? "") + " " + r.url()));
   const frames = [];
@@ -214,6 +221,7 @@ test("the one-time code never travels", async ({ shell }) => {
 });
 
 test("a setup that went through never leaves the person with nothing", async ({ shell }) => {
+  await skipWithoutSetup(shell);
   await fresh(shell);
   await shell.getByLabel("Einmal-Code").fill(CODE);
   await shell.getByRole("button", { name: "Weiter" }).click();

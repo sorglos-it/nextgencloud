@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { hasSessionKeys, signIn } from "../fixtures/page.js";
+import { signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // "Benutzer und Rechte": the surface where an admin hands out rights and lets
 // a new server into the installation. It is the most dangerous window NGC
@@ -533,8 +533,7 @@ async function sign(page, password = "Heimnetz-2026") {
 
 test("joining a controller builds version N+1, checks it and sends exactly those bytes",
   async ({ page }) => {
-    test.skip(!(await hasSessionKeys(page)),
-      "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+    await skipWithoutLogin(page);
     const out = await page.evaluate(async () => {
       const users = await import("/assets/js/apps/users.js");
       const trust = await import("/assets/js/contracts/trust.js");
@@ -617,8 +616,7 @@ test("a change the trust list would refuse is never signed and never sent", asyn
 });
 
 test("the trust list goes over ngc.users/api/trust as one signed version", async ({ page }) => {
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+  await skipWithoutLogin(page);
   await mount(page, { signable: true });
   await openTab(page, "Server");
   await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
@@ -658,8 +656,7 @@ test("two servers taken in one after the other give n+1 and n+2, not two at one 
     // this browser follows the chain. A surface that threw the answer away
     // would build the second version on the SAME prev, and two versions at
     // one seq are a FORK of the root everything else hangs from.
-    test.skip(!(await hasSessionKeys(page)),
-      "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+    await skipWithoutLogin(page);
     await mount(page, { signable: true });
     const start = await page.evaluate(() => {
       const c = window.__ngcStart = window.__ngcCtx.trust.current();
@@ -707,8 +704,7 @@ test("two servers taken in one after the other give n+1 and n+2, not two at one 
 
 test("a version this browser did not follow to stops the surface instead of forking it",
   async ({ page }) => {
-    test.skip(!(await hasSessionKeys(page)),
-      "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+    await skipWithoutLogin(page);
     // The write goes through, the following does not. Nothing more may be
     // written from here - a second version on the old prev is the fork.
     await mount(page, { signable: true, stuck: true });
@@ -727,8 +723,7 @@ test("a version this browser did not follow to stops the surface instead of fork
   });
 
 test("Abbrechen at the question for the key sends nothing", async ({ page }) => {
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+  await skipWithoutLogin(page);
   await mount(page, { signable: true });
   await openTab(page, "Server");
   await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
@@ -1042,8 +1037,7 @@ test("an answer the contract refuses leaves the surface standing and says so", a
 
 // ------------------------------------------------------------------- desktop
 test("the app opens from the start menu", async ({ page }) => {
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.getByRole("button", { name: "Start" }).click();
@@ -1054,8 +1048,7 @@ test("the app opens from the start menu", async ({ page }) => {
 });
 
 test("a question belongs to its window and goes with it", async ({ page }) => {
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.getByRole("button", { name: "Start" }).click();

@@ -78,45 +78,60 @@ export async function standInOn(page) {
   }
 }
 
-// WHAT A SESSION NEEDS FROM Web Crypto, step by step, every step measured.
+// WHAT A CASE NEEDS FROM Web Crypto, one named step at a time, every step
+// measured on the engine that is about to run the case.
 //
-// This used to CREATE an Ed25519 and an X25519 key and answer yes if that went
-// through. The thought was right - measure the capability, never read it off
-// the engine's name - and the code measured the wrong step. Firefox creates
-// both keys, signs with them and derives with them; what it cannot do is read
-// the public half back OUT of a private key document, and that is the step
-// a login stands on (contracts/proof.js publicFromSeed imports the password
-// seed as PKCS#8 and reads jwk.x out of it). So the guard said yes, the login
-// failed with the one sentence every failed login gets, and 157 cases went red
-// on the one engine nobody had ever measured (task 30).
+// TWO LESSONS ARE BUILT INTO THIS BLOCK, and both were learnt the hard way.
 //
-// Every step below is a call some module really makes, and is named after it.
-// The first step that fails is the gap, and its name is the answer to "what is
-// missing": "Ed25519 generateKey" and "Ed25519 public half out of a PKCS#8
-// document" are two completely different engines, and a guard that cannot tell
-// them apart sends the next reader down the same wrong road.
+// The first: a guard must do the WORK, not prepare for it. The original guard
+// created an Ed25519 and an X25519 key and said yes if that went through.
+// Firefox does that, signs with them and derives with them - and then fails,
+// because the step it cannot take is reading the public half back OUT of a
+// private key document (contracts/proof.js publicFromSeed imports the password
+// seed as PKCS#8 and reads jwk.x). The guard said yes, the login failed, and
+// 157 cases went red on the one engine nobody had ever measured.
 //
-// THREE gaps and not one, because three different questions get asked:
+// The second, and it cost a whole review: a guard that is too STRICT is worse
+// than one that is too loose, because a skipped case looks like a finished one.
+// The first repair asked EVERY case for the seed step, and so switched off ten
+// cases that were green on Firefox - among them "a man in the middle with other
+// keys is refused", a security check, silently. A case that CAN run must run.
 //
-//   ed25519   what a login does: a key, a signature, and the public half of
-//             the password seed (auth/keys.js, contracts/proof.js).
-//   x25519    what a running session does: a key, its public bytes, a peer
-//             key, a shared secret (contracts/noise.js).
-//   x25519FromDocument  one step more, and only a test needs it: a FIXED key
-//             read out of a PKCS#8 document, which is how
-//             HandshakeKK.forTest reproduces noise.json. A real session never
-//             does it, so it is kept out of the two gaps above - an engine
-//             that can run a session but not this would otherwise have its
-//             desktop cases switched off for a reason that is not theirs.
+// Hence: ONE GAP PER ACTION, and a case asks for the actions it really
+// performs. Not one guard per file, and not one per topic.
 //
-// An empty string means the engine can do it. Nothing here is decided by the
-// engine's name: the day Playwright's WebKit grows the curves, or Firefox the
-// export, these answer yes by themselves and the cases run with no edit here.
+//   ed25519             a key, a signature, a check, a key read back in.
+//                       auth/keys.js newSessionKeys, contracts/sign.js verify.
+//   ed25519FromSeed     the public half of a password seed, and it has to be
+//                       the RIGHT half. contracts/proof.js publicFromSeed.
+//                       This is the step a password login stands on.
+//   x25519              a key, its public bytes, a peer key, a shared secret.
+//                       contracts/noise.js newKeypair, importPublic, dh - what
+//                       a running session and a FRESH handshake do.
+//   x25519FromDocument  the public half of a FIXED key out of a PKCS#8
+//                       document. contracts/noise.js publicOf, which only
+//                       HandshakeKK.forTest reaches - no running session does
+//                       it, and no case with fresh keys needs it.
+//
+// Measured answers, so nobody has to guess what a "no" means:
+//
+//   chromium  all four empty.
+//   firefox   ed25519 and x25519 empty; the two steps that read a public half
+//             out of a document answer OperationError. Firefox takes the
+//             document IN and then refuses the JWK export, because a PKCS#8
+//             seed carries no public key and Firefox, unlike Chrome and Safari,
+//             does not work it out.
+//   webkit    all four, at generateKey, with NotSupportedError: the curves
+//             themselves are missing.
+//
+// Nothing here is decided by the engine's name. The day Playwright's WebKit
+// grows the curves, or Firefox the export, these answer yes by themselves and
+// the cases run with no edit here.
 export async function sessionKeyGaps(shell) {
   return shell.evaluate(async () => {
     // PKCS#8 around a bare 32-byte CFRG seed: version 0, the OID of the curve,
-    // then the seed in an OCTET STRING. The same prefixes contracts/noise.js
-    // and contracts/proof.js build their own documents from.
+    // then the seed in an OCTET STRING. Byte for byte the prefixes
+    // contracts/proof.js and contracts/noise.js build their own documents from.
     const PKCS8_ED25519 = new Uint8Array([
       0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]);
     const PKCS8_X25519 = new Uint8Array([
@@ -129,7 +144,16 @@ export async function sessionKeyGaps(shell) {
       out.set(raw, prefix.length);
       return out;
     };
-    // Any 32 bytes are a seed for both curves. This one is no key of anything:
+    // jwk.x is base64url and carries no padding, which atob does not take.
+    const bytesOf = (s) => {
+      const padded = s.length % 4 === 0 ? s : s + "=".repeat(4 - (s.length % 4));
+      const text = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+      const out = new Uint8Array(text.length);
+      for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
+      return out;
+    };
+    const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    // Any 32 bytes are a seed for both curves. This one is the key of nothing:
     // it is made here, used here and dropped here.
     const seed = crypto.getRandomValues(new Uint8Array(32));
     const message = new TextEncoder().encode("ngc: can this engine sign");
@@ -146,13 +170,26 @@ export async function sessionKeyGaps(shell) {
       return "";
     };
 
-    // auth/keys.js newSessionKeys, then proveWithPassword.
-    let signing = null;
-    const ed25519 = await walk([
+    // shell/main.js browserFits(): THESE TWO CALLS AND NOTHING ELSE. It is the
+    // only gate between a page load and the mask, so for the one question "does
+    // the shell come up" these two calls really are the whole action - the only
+    // place in this file where generateKey alone is an honest answer. Every
+    // other question below builds on it and asks for more.
+    let signing = null, own = null, peer = null;
+    const curves = await walk([
       ["Ed25519 generateKey", async () => {
         signing = await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
         return !!(signing && signing.privateKey && signing.publicKey);
       }],
+      ["X25519 generateKey", async () => {
+        own = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+        peer = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+        return !!(own && own.privateKey && peer && peer.publicKey);
+      }],
+    ]);
+
+    // auth/keys.js newSessionKeys, then the signature it makes.
+    const ed25519 = curves !== "" ? curves : await walk([
       ["Ed25519 public key as raw bytes", async () =>
         (new Uint8Array(await crypto.subtle.exportKey("raw", signing.publicKey))).length === 32],
       ["Ed25519 sign and verify", async () => {
@@ -163,26 +200,33 @@ export async function sessionKeyGaps(shell) {
         const raw = new Uint8Array(await crypto.subtle.exportKey("raw", signing.publicKey));
         return !!(await crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]));
       }],
-      // contracts/proof.js publicFromSeed. THE step the old guard never took:
-      // Firefox takes the document in and then refuses the export with
-      // OperationError, because a PKCS#8 seed carries no public key and
-      // Firefox, unlike Chrome and Safari, does not work it out.
-      ["Ed25519 public half out of a PKCS#8 document", async () => {
+    ]);
+
+    // contracts/proof.js publicFromSeed - the step the first guard never took.
+    //
+    // It does not stop at "the export gave me a string". An engine whose jwk.x
+    // is there but WRONG passes that, and publicFromSeed then hands out a
+    // public key that belongs to no private key - measured in the review: a
+    // bent export got the length-only check through while publicFromSeed
+    // returned 3 bytes instead of 32. So the half that comes out is USED: it
+    // has to check the signature that the private half of the same document
+    // just made. A wrong public key cannot.
+    const ed25519FromSeed = await walk([
+      ["Ed25519 public half out of a PKCS#8 seed", async () => {
         const key = await crypto.subtle.importKey(
           "pkcs8", wrap(PKCS8_ED25519, seed), { name: "Ed25519" }, true, ["sign"]);
         const jwk = await crypto.subtle.exportKey("jwk", key);
-        return typeof jwk.x === "string" && jwk.x.length > 0;
+        if (typeof jwk.x !== "string" || jwk.x.length === 0) return false;
+        const raw = bytesOf(jwk.x);
+        if (raw.length !== 32) return false;
+        const pub = await crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]);
+        const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, message);
+        return (await crypto.subtle.verify({ name: "Ed25519" }, pub, sig, message)) === true;
       }],
     ]);
 
-    // contracts/noise.js: newKeypair, importPublic, dh.
-    let own = null, peer = null;
-    const x25519 = await walk([
-      ["X25519 generateKey", async () => {
-        own = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
-        peer = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
-        return !!(own && own.privateKey && peer && peer.publicKey);
-      }],
+    // contracts/noise.js newKeypair, importPublic, dh.
+    const x25519 = curves !== "" ? curves : await walk([
       ["X25519 public key as raw bytes", async () =>
         (new Uint8Array(await crypto.subtle.exportKey("raw", own.publicKey))).length === 32],
       // importPublic takes "raw" and falls back to "spki", so either door is
@@ -204,36 +248,112 @@ export async function sessionKeyGaps(shell) {
           { name: "X25519", public: peer.publicKey }, own.privateKey, 256))).length === 32],
     ]);
 
-    // contracts/noise.js publicOf, which only HandshakeKK.forTest reaches.
-    const x25519FromDocument = await walk([
+    // contracts/noise.js publicOf, reached from HandshakeKK.forTest alone.
+    //
+    // Same discipline as the seed step: the public half that comes out is USED,
+    // by deriving the shared secret both ways round. A handshake lives on both
+    // sides reaching the same bytes, so that is what gets measured - not the
+    // mere presence of a string. It needs the four steps above to have worked,
+    // because it derives with the pair they made.
+    const x25519FromDocument = x25519 !== "" ? x25519 : await walk([
       ["X25519 public half out of a PKCS#8 document", async () => {
-        const key = await crypto.subtle.importKey(
+        const priv = await crypto.subtle.importKey(
           "pkcs8", wrap(PKCS8_X25519, seed), { name: "X25519" }, true, ["deriveBits"]);
-        const jwk = await crypto.subtle.exportKey("jwk", key);
-        return typeof jwk.x === "string" && jwk.x.length > 0;
+        const jwk = await crypto.subtle.exportKey("jwk", priv);
+        if (typeof jwk.x !== "string" || jwk.x.length === 0) return false;
+        const raw = bytesOf(jwk.x);
+        if (raw.length !== 32) return false;
+        const pub = await crypto.subtle.importKey("raw", raw, { name: "X25519" }, false, []);
+        const mine = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: peer.publicKey }, priv, 256));
+        const theirs = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: pub }, peer.privateKey, 256));
+        return same(mine, theirs);
       }],
     ]);
 
-    return { ed25519, x25519, x25519FromDocument };
+    return { curves, ed25519, ed25519FromSeed, x25519, x25519FromDocument };
   });
 }
 
-// Can this engine open a session? A "no" means this engine reaches no desktop,
-// so a test of the desktop has nothing to look at on it. shell/main.js
-// browserFits() asks a shorter question and lets a browser past that cannot
-// finish the login - see the task 30 report; that is production code and is
-// not changed from here.
-export async function hasSessionKeys(shell) {
-  const gaps = await sessionKeyGaps(shell);
-  return gaps.ed25519 === "" && gaps.x25519 === "";
+// ---- one gap per action ---------------------------------------------------
+//
+// Each answers "" when the engine can do what the action needs, and otherwise
+// the name of the first step that failed. That string is what the skip says, so
+// a skipped case always names the thing that is really missing instead of the
+// topic of its file.
+
+// What the shell needs to come up at all and show a mask. Exactly the question
+// shell/main.js browserFits() asks, and no more: asking for a signature here
+// would switch off cases on an engine whose mask appears. That browserFits asks
+// so little is the production bug this task found - but for THIS question it is
+// the right measure, because it is the gate the shell itself stands behind.
+export async function shellGap(shell) {
+  return (await sessionKeyGaps(shell)).curves;
 }
 
-// Can this engine run a Noise_KK handshake from the fixed keys of noise.json?
-// Everything the X25519 side of a session needs, plus the one step more a
-// fixed key costs. Ed25519 is deliberately NOT asked about: no message of a
-// handshake carries a signature, and a missing one must not switch these cases
-// off. That is also why this is not folded into hasSessionKeys.
-export async function hasFixedKeyHandshake(shell) {
-  const gaps = await sessionKeyGaps(shell);
-  return gaps.x25519 === "" && gaps.x25519FromDocument === "";
+// What a PASSWORD LOGIN needs on top of that: the public half of the seed.
+// A "no" here means this engine reaches no desktop, so a case that wants one
+// has nothing to look at. A case that only looks at the mask, the setup or the
+// configuration parser asks shellGap instead - asking this one there is what
+// switched ten green Firefox cases off.
+export async function loginGap(shell) {
+  const g = await sessionKeyGaps(shell);
+  return g.ed25519 || g.x25519 || g.ed25519FromSeed;
+}
+
+// A handshake with FRESH keys - newKeypair() and HandshakeKK.of(), the path NGC
+// takes at runtime. No signature, no key document: X25519 alone.
+export async function handshakeGap(shell) {
+  return (await sessionKeyGaps(shell)).x25519;
+}
+
+// A handshake from the FIXED keys of noise.json, through HandshakeKK.forTest.
+// Everything a fresh handshake needs, plus reading a public half out of a key
+// document. Ed25519 is deliberately not asked about: no message of a handshake
+// carries a signature.
+export async function fixedKeyGap(shell) {
+  const g = await sessionKeyGaps(shell);
+  return g.x25519 || g.x25519FromDocument;
+}
+
+// ---- the skips -----------------------------------------------------------
+//
+// One line at the call site, and the reason is always the measured gap. Hand
+// written reasons are how "no Ed25519 and no X25519 in this engine's Web
+// Crypto" came to stand over a Firefox that has both.
+
+export async function skipWithoutShell(shell) {
+  const gap = await shellGap(shell);
+  test.skip(gap !== "", `this engine cannot run the shell at all - ${gap}`);
+}
+
+export async function skipWithoutLogin(shell) {
+  const gap = await loginGap(shell);
+  test.skip(gap !== "", `this engine cannot finish a password login - ${gap}`);
+}
+
+// The setup makes the first admin out of a typed password, so it stands on the
+// same step a login does - one measurement, two sentences, because a case that
+// was setting an installation up should not be told it could not log in.
+export async function skipWithoutSetup(shell) {
+  const gap = await loginGap(shell);
+  test.skip(gap !== "", `this engine cannot finish the setup - ${gap}`);
+}
+
+export async function skipWithoutHandshake(shell) {
+  const gap = await handshakeGap(shell);
+  test.skip(gap !== "", `this engine cannot run a handshake with fresh keys - ${gap}`);
+}
+
+export async function skipWithoutFixedKeys(shell) {
+  const gap = await fixedKeyGap(shell);
+  test.skip(gap !== "", `this engine cannot run a handshake from fixed keys - ${gap}`);
+}
+
+// A boolean for the one case that does not skip but BRANCHES on it:
+// shell/boot.spec.js, which runs on every engine and pins that the boot ends in
+// one of its two legal endings.
+export async function hasSessionKeys(shell) {
+  return (await loginGap(shell)) === "";
 }

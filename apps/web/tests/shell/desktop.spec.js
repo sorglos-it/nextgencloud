@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // The desktop: windows, taskbar, start menu, light and dark.
 //
@@ -13,8 +13,7 @@ test.beforeEach(async ({ shell }) => {
   // WebKit Playwright brings has neither. There is no desktop to test there,
   // and faking the two keys would test a shell nobody runs. What WebKit does
   // instead is asserted by shell/boot.spec.js, which runs everywhere.
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(shell);
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });

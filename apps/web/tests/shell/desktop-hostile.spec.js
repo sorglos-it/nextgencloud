@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { hasSessionKeys, signIn } from "../fixtures/page.js";
+import { signIn, skipWithoutLogin } from "../fixtures/page.js";
 import { app, CALC, serveApps } from "../fixtures/apps.js";
 
 // What the desktop does with an app list that is out to break it.
@@ -21,8 +21,7 @@ async function desktop(page, apps) {
   });
   await serveApps(page, apps);
   await page.goto("/");
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
 }

@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // The app window: the sandboxed frame an app's user interface runs in.
 //
@@ -22,8 +22,7 @@ test.beforeEach(async ({ shell }) => {
   // shell/main.js needs Ed25519 and X25519 before it builds anything, and the
   // WebKit Playwright brings has neither. There is no desktop to test there,
   // and the proof of a UI is an Ed25519 signature either way.
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(shell);
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });

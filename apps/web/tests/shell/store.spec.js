@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { hasSessionKeys, signIn } from "../fixtures/page.js";
+import { signIn, skipWithoutLogin } from "../fixtures/page.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
 import { vectors } from "../fixtures/vectors.js";
 
@@ -27,8 +27,7 @@ async function store(page, world = {}) {
   });
   await page.addInitScript((w) => { window.__ngcStore = w; }, world);
   await page.goto("/");
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();

@@ -1,4 +1,4 @@
-import { test, expect, hasFixedKeyHandshake } from "../fixtures/page.js";
+import { test, expect, skipWithoutFixedKeys, skipWithoutHandshake } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 // noise.json holds one full Noise_KK handshake (fixed static and ephemeral
@@ -9,14 +9,22 @@ import { vectors } from "../fixtures/vectors.js";
 // nothing.
 const v = vectors("noise.json");
 
-// The guard for everything below that runs a handshake is
-// hasFixedKeyHandshake in fixtures/page.js. It used to be a second guard of
-// its own here, which asked whether importKey("pkcs8", X25519) goes through -
-// and it does go through in Firefox, which then refuses to export the public
-// half of that very key and fails the handshake anyway. Two guards for one
-// question are two places to get it wrong, so the measurement lives once, next
-// to the one for a session, and the comment there says what each step is for.
-// Ed25519 is deliberately not asked about: no message of a handshake needs it.
+// TWO guards below, and which one a case gets depends on the keys IT uses, not
+// on this file being about Noise. fixtures/page.js holds both.
+//
+//   skipWithoutFixedKeys  for the cases that rebuild noise.json through
+//                         HandshakeKK.forTest. forTest reads the public half
+//                         out of a PKCS#8 document (publicOf), and Firefox
+//                         cannot do that.
+//   skipWithoutHandshake  for the one case that makes its own keys with
+//                         newKeypair() and of(). It never touches publicOf, so
+//                         X25519 alone is what it needs - and Firefox has it,
+//                         so it RUNS there.
+//
+// That difference is not cosmetic: this file first had one guard for all six
+// cases, which switched the fresh-key case off on an engine that can run it,
+// under a reason that named fixed keys it does not use. Ed25519 is asked about
+// in neither - no message of a handshake carries a signature.
 
 test("the end-to-end prologue binds channel, params and task", async ({ shell }) => {
   const got = await shell.evaluate(async (d) => {
@@ -36,8 +44,7 @@ test("the end-to-end prologue binds channel, params and task", async ({ shell })
 });
 
 test("the handshake and the transport match the Go vectors", async ({ shell }) => {
-  test.skip(!(await hasFixedKeyHandshake(shell)),
-    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
+  await skipWithoutFixedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode, b64encode } = await import("/assets/js/contracts/b64.js");
@@ -75,8 +82,7 @@ test("the handshake and the transport match the Go vectors", async ({ shell }) =
 // value here and checked by the outer expect() - not inferred from the
 // absence of a crash.
 test("split() refuses a second call on the same handshake", async ({ shell }) => {
-  test.skip(!(await hasFixedKeyHandshake(shell)),
-    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
+  await skipWithoutFixedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -106,8 +112,7 @@ test("split() refuses a second call on the same handshake", async ({ shell }) =>
 // proved that newKeypair(), of() and a real (non-fixed) ephemeral - the path
 // NGC actually takes at runtime - agree with each other, end to end.
 test("newKeypair(), of() and a fresh ephemeral complete a real handshake", async ({ shell }) => {
-  test.skip(!(await hasFixedKeyHandshake(shell)),
-    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
+  await skipWithoutHandshake(shell);
   const got = await shell.evaluate(async () => {
     const n = await import("/assets/js/contracts/noise.js");
     const initStatic = await n.newKeypair();
@@ -135,8 +140,7 @@ test("newKeypair(), of() and a fresh ephemeral complete a real handshake", async
 // public fields on the Transport a real split() returns, not a test seam -
 // straight to the boundary instead.
 test("seal() and open() refuse once the nonce counter is no longer exact", async ({ shell }) => {
-  test.skip(!(await hasFixedKeyHandshake(shell)),
-    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
+  await skipWithoutFixedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -176,8 +180,7 @@ test("seal() and open() refuse once the nonce counter is no longer exact", async
 // pins K7: a properly-typed Uint8Array one byte over MAX_PLAINTEXT must
 // still be refused (shared/noisep/noisep_test.go:80).
 test("seal() and open() reject anything that is not Uint8Array, and refuse a plaintext over MAX_PLAINTEXT", async ({ shell }) => {
-  test.skip(!(await hasFixedKeyHandshake(shell)),
-    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
+  await skipWithoutFixedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -224,8 +227,7 @@ test("seal() and open() reject anything that is not Uint8Array, and refuse a pla
 // real importKey still runs for every other call, so the rest of the
 // handshake is genuine.
 test("importPublic() only falls back for NotSupportedError and DataError, not any failure", async ({ shell }) => {
-  test.skip(!(await hasFixedKeyHandshake(shell)),
-    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
+  await skipWithoutFixedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const realImportKey = crypto.subtle.importKey.bind(crypto.subtle);
     crypto.subtle.importKey = (format, ...rest) => {

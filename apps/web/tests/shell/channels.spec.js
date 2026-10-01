@@ -1,16 +1,15 @@
-import { test, expect } from "../fixtures/page.js";
-import { hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, skipWithoutLogin } from "../fixtures/page.js";
 
 // The mock API runs beside the web server (playwright.config.js) and answers
 // with the same modules the shell uses.
 //
 // Every case here needs a Noise session, and a Noise session needs X25519 and
 // Ed25519. Playwright's WebKit has neither, so the whole file skips there -
-// MEASURED with the same two generateKey calls the shell itself makes
-// (hasSessionKeys), never decided by the engine's name.
+// MEASURED by doing the work a login does, never decided by the engine's name.
+// Every case here needs the desktop behind the login, so it is the login that
+// is asked about (fixtures/page.js, skipWithoutLogin).
 test.beforeEach(async ({ shell }) => {
-  test.skip(!(await hasSessionKeys(shell)),
-    "this engine has no Ed25519/X25519: no session keys, no session link");
+  await skipWithoutLogin(shell);
 });
 
 test("a call channel returns its result", async ({ shell }) => {
