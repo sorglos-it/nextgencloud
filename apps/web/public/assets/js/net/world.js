@@ -28,16 +28,20 @@
 // would be a second reader of the same document, and the one in the surface
 // would then read what this file decided instead of what the API sent.
 //
-// WHAT IS NOT IN HERE, said plainly rather than left to be found: an app's own
-// service. It has to be an END-TO-END channel to the app's controller, and one
-// of the two things that needs is still missing - appService() below is the
-// place, and it says which half.
+// AN APP'S OWN SERVICE IS IN HERE TOO, and since Task 28 it is armed. It is
+// the one thing the surfaces ask for that stands in no row of core.ACTIONS,
+// and it may never be an ordinary channel: an ordinary one would let the API
+// read what only the app's controller may. So it is an END-TO-END channel -
+// channel.openE2E - and appChannel() below is the one place that puts its
+// three remaining pieces together: the node, the session's own DH key pair and
+// the controller's Noise key out of the VERIFIED trust list. Each of the three
+// has its own word for the refusal, so none of them can hide behind another.
 import * as core from "../contracts/core.js";
 import * as wire from "../contracts/wire.js";
 import * as uitar from "../contracts/uitar.js";
 import { bytesOf } from "../contracts/b64.js";
-import { callBytes, openOut, sendInBytes } from "./channel.js";
-import { startTrust } from "../shell/trustlist.js";
+import { callBytes, openE2E, openOut, sendInBytes } from "./channel.js";
+import { NOT_TRUSTED, startTrust } from "../shell/trustlist.js";
 import { validAppID, validName } from "../contracts/text.js";
 
 // The flows of core.ACTIONS, as the texts the table holds. core.js keeps them
@@ -65,9 +69,14 @@ const CLOSE_OK = "ok";
 // text is German, because it can reach a person through a surface that shows
 // what it caught; the surfaces show their own sentence for it today.
 //
-// `missing` names the piece that is not there yet, in one word, for the cases
-// and for whoever comes next: "node" or "session-key" at appService() below,
-// and "" where nothing is missing and the way is simply wrong.
+// `missing` names the piece that is not there, in one word, for the cases and
+// for whoever comes next: "node", "session-key" or "controller-key" at
+// appChannel() below, and "" where nothing is missing and the way is simply
+// wrong. THREE WORDS AND NOT ONE, because the three say three different things
+// to the person in front of the screen - an app that does not name its
+// controller, a session without its own key, and a server that does not stand
+// in this installation's trust list - and a case that hides behind another is
+// the mistake this project has made most often.
 export class WorldError extends Error {
   constructor(text, missing = "") {
     super(text);
@@ -79,10 +88,25 @@ export class WorldError extends Error {
 const NO_ACTION = "Diese Anfrage kennt NGC nicht.";
 const WRONG_WAY = "Diese Anfrage geht so nicht.";
 const NO_NODE = "Diese App sagt nicht, auf welchem Rechner ihr Dienst läuft.";
-const NO_SESSION_KEY = "NGC kann den eigenen Dienst einer App noch nicht erreichen.";
+// No session key pair in this adapter. It is NOT a missing feature any more -
+// since Task 28 the login carries the pair through (auth/login.js, sessionDH)
+// and realWorld hands it here - so what is wrong is THIS session, and the
+// sentence says that and names what helps.
+const NO_SESSION_KEY = "Diese Anmeldung kann den eigenen Dienst einer App nicht erreichen. "
+  + "Bitte die Seite neu laden.";
+// No trust list in this adapter. A DIFFERENT fact from the one below: there is
+// no list to ask, so nothing is known about this server either way, and
+// "this server is not in your trust list" would be a sentence about the server
+// that says nothing true about it.
+const NO_TRUST_LIST = "NGC hat die Vertrauensliste dieser Anlage nicht geöffnet. "
+  + "Bitte die Seite neu laden.";
+// A node the verified list does not carry. The sentence is shell/trustlist.js's
+// own, and not a second wording of it: it is the same fact, and NotTrusted is
+// what answers it.
+const NO_CONTROLLER_KEY = NOT_TRUSTED;
 
 // rowFor finds the action of three texts. null means "this is no action of
-// NGC's own" - the own service of an app, which goes to appService below.
+// NGC's own" - the own service of an app, which goes to appChannel below.
 //
 // A row the shell may not open at all (core.shellOpens) is refused:
 // ngc.users/controller/trust, ngc.store/controller/stage and
@@ -96,45 +120,223 @@ function rowFor(app, service, name) {
   return a;
 }
 
-// appService is the own service of an app - the one thing the surfaces ask for
-// that is no action of NGC's own. IT ALWAYS THROWS, and this is the place that
-// says why, because this is the place where channel.openE2E would be called.
+// appChannel opens the end-to-end channel of an app's own service - the one
+// thing the surfaces ask for that is no action of NGC's own. Until Task 28 it
+// always threw; what it does now is put the eight arguments of
+// channel.openE2E together, and refuse while one of them is not there.
 //
-// WHAT IS IN HAND, since Task 25: the app, the service, the action, the params
-// and THE NODE. shell/appframe.js reads the node out of the app's own row
-// (app.node) and hands it over in the option bag of both doors - it is the one
-// thing the link could not know by itself, and before this round the adapter
-// took four arguments and the fifth fell on the floor. It does not any more:
-// it arrives here, it is held to the contract's own rule for a node id
-// (trust.validNode uses text.validName), and a call without one is refused
-// with a DIFFERENT word than a call with one, so a bridge that stopped sending
-// it cannot hide behind the other refusal.
+// WHERE THE EIGHT COME FROM, because that is the whole of this function:
 //
-// WHAT IS STILL MISSING, the whole of it: THE SESSION'S OWN DH KEY PAIR.
-// channel.openE2E takes {app, service, action, params, taskBytes, node,
-// controllerKey, sessionDH}. Six of those eight are here; controllerKey is one
-// lookup away - trust.controllerKey(node) answers it out of the VERIFIED list
-// and realWorld already holds that store - and sessionDH exists nowhere in
-// this browser after the login: auth/login.js builds the key pair for
-// Link.connect (keys.dh) and hands on inst, user, certHash and signKey, not
-// it. So the next session starts in auth/login.js, by carrying keys.dh into
-// the handover, and then here.
+//   app, service, action  the surface's three texts, held against the
+//                         contract's own rules (text.validAppID, validName)
+//   params                the caller's bytes, copied once at the door
+//   taskBytes             null - see below
+//   node                  the option bag of both doors. shell/appframe.js
+//                         reads it out of the app's own row (app.node); it is
+//                         the one thing the link could not know by itself
+//   sessionDH             the X25519 pair auth/login.js built for this session
+//                         and carried into the handover, by way of realWorld
+//   controllerKey         shell/trustlist.js's controllerKey(node), OUT OF THE
+//                         VERIFIED LIST - never out of an answer of the API,
+//                         which is the whole point of end to end
 //
-// NOT ARMED, and that is a decision and not an omission: until the key pair is
-// there the answer stays a refusal. An ORDINARY channel for a service of an app
-// would let the API read what only the controller may, which is the whole
-// reason end to end exists. shell/appframe.js turns this into E_UNREACHABLE
-// for the app, which is the truth.
-// It takes no params: both doors have them in hand and openE2E would be given
-// them here, but nothing about them is decided in this function, and an
-// argument that is only read by a comment is an argument that reads like a bug.
-function appService(app, service, name, node) {
+// TASKBYTES IS NULL, and that is right for the ordinary step - measured on BOTH
+// sides, not assumed:
+//
+//   - This side: shell/appframe.js puts exactly one thing in the option bag of
+//     both doors, `node` (doCall and doOpen), and nothing in the shell builds a
+//     signed root task for an app's own service.
+//   - The other side: the controller's access.Check hands task.Check the OPEN's
+//     task, and WITHOUT one task.Check answers "no task needed" as long as the
+//     app does not want root and trust.List.NeedsConfirm says no for this user.
+//     Who the user is comes from the end-to-end handshake itself - Noise
+//     message 1 travels in the OPEN - and not from a signed task (measured in
+//     apps/server-controller, classes/access; plan 3, task 11).
+//
+// WHAT IS NOT REACHABLE THIS WAY, and it now has a name: an app that wants root,
+// or a user whose policy in the trust list wants this step confirmed. The
+// controller answers that with E_CONFIRM, and THEN the shell has to ask the
+// person and send a signed task (contracts/task.js and shell/confirm.js are
+// both there; nothing wires them to an app's own service yet). That is its own
+// task, and it needs a surface somebody designed - and the code does not even
+// arrive here yet, which the task report hands on as a find of its own.
+//
+// THE ORDER OF THE FOUR REFUSALS is the order in which each one can be decided
+// at all, and each one keeps its own word AND its own sentence:
+//   node            the caller has to name it; nothing can be asked without it
+//   session-key     this browser's own, and no lookup needed
+//   trust-list      THIS ADAPTER was built without a trust store at all, so
+//                   there is nobody to ask - a shell that handed one over wrong
+//   controller-key  the store's answer ABOUT that node, so it comes last. A
+//                   store with no version in force answers it too (NotTrusted),
+//                   which is right: it knows nothing about this node either way
+// A fifth outcome is no refusal of this adapter at all: past the last check
+// what can go wrong is the channel, and a ChannelError carries no `missing`.
+//
+// AND NOTHING ELSE IS TURNED INTO A SENTENCE. The one `catch` here takes
+// NotTrusted and rethrows everything else - the rule contracts/noise.js keeps
+// in importPublic, "any other failure is real and must reach the caller, not be
+// replaced". A programming fault dressed up as "this server is not in your
+// trust list" would send the one person who could fix it looking in the wrong
+// place, and it is the same mistake as letting one refusal hide behind another.
+async function appChannel(link, world, app, service, name, node, params) {
   if (!validAppID(app) || !validName(service) || !validName(name)) {
     throw new WorldError(NO_ACTION);
   }
-  // The node, carried through to the one place that would need it.
+  // The node is held to the contract's own rule for a node id (trust.validNode
+  // uses text.validName), so a bridge that stopped sending it is refused here
+  // and not by the controller three round trips later.
   if (!validName(node)) throw new WorldError(NO_NODE, "node");
-  throw new WorldError(NO_SESSION_KEY, "session-key");
+  const sessionDH = world.sessionDH ?? null;
+  // The private half is a non-extractable CryptoKey and stays one: it is
+  // handed to noise.HandshakeKK and used, never read. What is checked here is
+  // only that both halves are THERE - a pair with one half missing would fail
+  // somewhere inside the handshake, where nobody can tell a person why.
+  if (sessionDH === null || !sessionDH.privateKey
+    || !(sessionDH.publicRaw instanceof Uint8Array)) {
+    throw new WorldError(NO_SESSION_KEY, "session-key");
+  }
+  // Asked BEFORE the lookup, because "nobody handed this adapter a trust store"
+  // and "the store does not carry this node" are two different things to say to
+  // a person - and the first one is not about the server at all.
+  if (typeof world.trust?.controllerKey !== "function") {
+    throw new WorldError(NO_TRUST_LIST, "trust-list");
+  }
+  let controllerKey;
+  try {
+    controllerKey = world.trust.controllerKey(node);
+  } catch (e) {
+    // shell/trustlist.js throws NotTrusted for a node the verified list does
+    // not carry - no controller, no key, no list in force. That is the one
+    // failure with a sentence; anything else is this shell's own fault and
+    // travels on, where a trace names it.
+    if (e?.name !== "NotTrusted") throw e;
+    throw new WorldError(NO_CONTROLLER_KEY, "controller-key");
+  }
+  return openE2E(link, {
+    app, service, action: name, params, taskBytes: null, node, controllerKey, sessionDH,
+  });
+}
+
+// appStream hands the app frame the channel of an app's own service in the
+// shape it reads: two listeners that are PROPERTIES, write, end and close.
+// It is the shape shell/fake-link.js hands over for the same thing
+// (terminalStream), so the frame changes no line for the real way.
+//
+// DATA GOES STRAIGHT THROUGH, and the first round of this task had a buffer
+// here that held it back for one turn of the event loop. It is gone, and the
+// reason it is gone is worth more than the code was: the window it covered
+// cannot occur.
+//
+//   - NOTHING OF THIS CHANNEL HAS ARRIVED YET when this function runs. Anything
+//     a controller says is the answer to the inner message channel.openE2E sends
+//     as its LAST step - that is the contract's rule, "the controller starts the
+//     service only once it has decrypted" - so the earliest word of it is a
+//     frame of a later task.
+//   - A frame is a task; the caller assigns stream.onData and stream.onClose in
+//     the microtask right after open() returned. No task runs in between.
+//   - MEASURED, both ways through that: a service that SPEAKS FIRST - a shell
+//     printing its prompt, with the app having written nothing - reaches the
+//     app, and one that is OVER the moment it starts reaches it too, through
+//     onClose (world.spec.js, "a service that speaks first", "a service that is
+//     over before it starts").
+//   - READ in net/channel.js and not measured: if an ending did somehow arrive
+//     while openE2E was still in its last write, that write would throw -
+//     Channel.sendData refuses a channel that is CLOSED or whose CLOSE is out -
+//     so open() would throw and hand no stream over at all.
+//
+// A buffer for a window nobody can reach is a buffer no case can make fall, and
+// this file has two of those behind it already.
+//
+// THE END STILL WAITS FOR THE NEXT TURN, as the FlowOut door below does. That
+// one is belt and braces and is named as such: by the paragraph above, done()
+// cannot be settled yet when this function runs, so the wait changes nothing
+// today - measured, the cases stay green without it. It stays because this
+// function is what OWES the caller the one close it gets, and a promise that
+// depends on its caller never putting an await between open() and its listeners
+// is a promise that breaks the day somebody does.
+//
+// THE END COMES FROM done() AND NOT FROM onClose, on purpose. Channel.onClose
+// fires only where the channel ENDED - the controller's own end - and says
+// nothing where it was cut off or broke a rule (Channel.giveUp). done() answers
+// both, so the app is told either way; that is what shell/appframe.js needs to
+// stop waiting on a number that is gone.
+//
+// WHAT THIS CHANNEL KEEPS, named here because this is the door that opens it:
+// NOTHING, as long as somebody is listening - and this function is listening
+// from the moment it runs. Channel.take puts a piece into Channel.chunks only
+// where there is no data handler, because chunks exists for result() and
+// result() is the only thing that ever reads it; on a stream it never comes.
+//
+// IT WAS NOT ALWAYS SO, and the trail belongs in the file that found it. The
+// first round of this task measured the opposite on a real end-to-end channel
+// to the test controller - after five lines the channel held all five - and
+// said that the cure belonged in net/channel.js and not here, because a bound
+// invented in this file would be a second opinion about a number the contract
+// does not give. That is where it was cured (611ad2f, "Stop keeping what a
+// listener has already been handed"), and that session measured it: five pieces
+// held before, none after. NO NUMBER WAS INVENTED for it, here or there: a
+// stream is unbounded by nature, and a bound over its whole life would cut off
+// exactly the session the stream is for.
+//
+// WHAT IS STILL TRUE OF A STREAM, so nobody reads a bound into this: its limit
+// stays Infinity, because only result() ever sets one, and Channel.total still
+// counts every byte that came. In flight the credit window is what bounds it.
+function appStream(ch) {
+  let gone = false, listening = false, over = false;
+  let ending = null;
+  const s = {
+    onData: null,
+    onClose: null,
+    // The channel's own bound decides how much may be in flight; past its
+    // credit write waits for the next GRANT rather than overspending.
+    write(bytes) {
+      return ch.write(bytes);
+    },
+    // end is "nothing more from me": the inner end first, then the channel's
+    // EOF. What the service still has to say comes after it.
+    end() {
+      return ch.end();
+    },
+    // close(code) REALLY ENDS THIS CHANNEL, and with that code - the same
+    // promise open() keeps for a FlowOut channel below. From here on the caller
+    // hears nothing more: it asked to forget this number, and
+    // shell/appframe.js has already told the app itself (doCloseStream).
+    close(code) {
+      gone = true;
+      return ch.close(typeof code === "string" && code !== "" ? code : CLOSE_OK);
+    },
+  };
+  ch.onData((b) => {
+    if (gone || over) return;
+    s.onData?.(b);
+  });
+  const finish = () => {
+    if (gone || over || !listening || ending === null) return;
+    // Once: the frame forgets the number on this call, so a second one would
+    // reach nobody anyway.
+    over = true;
+    s.onClose?.(ending.status, ending.message);
+  };
+  ch.done().then(
+    (st) => {
+      // The status and the message are the channel's own and go on untouched:
+      // what a service's ending means is the app's contract with it.
+      ending = { status: st.status, message: typeof st.message === "string" ? st.message : "" };
+      finish();
+    },
+    (e) => {
+      // A channel that broke. The frame branches on "ok" and on nothing else,
+      // and the text is the one net/channel.js got from wire for that code.
+      ending = { status: "error", message: typeof e?.message === "string" ? e.message : "" };
+      finish();
+    },
+  );
+  setTimeout(() => {
+    listening = true;
+    finish();
+  }, 0);
+  return s;
 }
 
 // own copies bytes a caller handed over, ONCE, at the door. Everything below
@@ -153,13 +355,22 @@ function own(bytes, what) {
 //
 //   call(app, service, name, params, opts) -> Promise<Uint8Array>
 //   open(app, service, name, params, opts) -> {onData, onClose, close}
+//     and for an app's own service, write and end as well - the shape
+//     shell/fake-link.js's terminalStream has, because that is what a channel
+//     somebody writes into needs
 //   onNotice(fn)
 //
 // BOTH DOORS TAKE FIVE ARGUMENTS, and open() did not until Fixrunde 1: Task 25
 // gave shell/appframe.js the node of an app and it hands it over in the option
 // bag of both. A door that took four of five arguments promised more than it
 // did, and JavaScript says nothing about it.
-export function adapterFor(link) {
+//
+// THE SECOND ARGUMENT IS THE WORLD AROUND THE LINK, and only an app's own
+// service needs it: {sessionDH, trust}. An adapter built without it still
+// answers every action of NGC's own - those go to the API over the session that
+// is already open - and refuses an app's own service with the word for the
+// piece it has not got. realWorld below is what hands both over.
+export function adapterFor(link, world = {}) {
   // EVERY listener, not the last one. net/link.js holds exactly ONE notice
   // handler, so an adapter that handed each caller's listener straight on
   // would silently drop the one before it. Today the desktop hangs up one;
@@ -184,7 +395,17 @@ export function adapterFor(link) {
       const a = rowFor(app, service, name);
       const o = opts ?? {};
       const p = own(params, "params");
-      if (a === null) return appService(app, service, name, o.node);
+      if (a === null) {
+        // An app's own service, asked ONE question. The question stands in the
+        // params of the OPEN, so nothing is left to send: the inner end and the
+        // EOF go out at once and the answer is bounded the way every other
+        // answer of a call is (wire.MAX_CALL_RESULT). On an end-to-end channel
+        // that bound is the receiver's alone - the API never sees the
+        // plaintext - which is why it may not be left to the other side.
+        const ch = await appChannel(link, world, app, service, name, o.node, p);
+        await ch.end();
+        return ch.result(wire.MAX_CALL_RESULT);
+      }
       const taskBytes = own(o.taskBytes, "task");
       const confirmBytes = own(o.confirmBytes, "confirmation");
       // o.node is NOT read for an action of NGC's own, and that is right: those
@@ -210,29 +431,40 @@ export function adapterFor(link) {
       }
     },
 
-    // open takes the FlowOut action and answers with the shape the app frame
-    // reads: two listeners that are PROPERTIES - the frame assigns
-    // stream.onData and stream.onClose after this call came back - and a
-    // close(code).
+    // open takes the FlowOut action - or an app's own service - and answers
+    // with the shape the app frame reads: two listeners that are PROPERTIES -
+    // the frame assigns stream.onData and stream.onClose after this call came
+    // back - and a close(code).
     //
-    // NOTHING IS HANDED OVER BEFORE THE CHANNEL STANDS. open() waits for
-    // channel.openOut: the OPEN is out, its first grant is in, the EOF has gone
-    // out. A channel that cannot be opened therefore THROWS from here, where
-    // the frame catches it, instead of being reported later through onClose on
-    // a stream that never was one. (public/assets/ngc.js cannot do that - a
-    // postMessage bridge has nothing to wait for and hands the app its stream
-    // at once, and onClose is what tells it afterwards. Here there is something
-    // to wait for, so we wait.)
+    // NOTHING IS HANDED OVER BEFORE THE CHANNEL STANDS, on both ways through
+    // here. open() waits for channel.openOut: the OPEN is out, its first grant
+    // is in, the EOF has gone out. For an app's own service it waits for
+    // channel.openE2E, which is more: the OPEN with Noise message 1 is out,
+    // message 2 has come back in the first grant and the transport is split. A
+    // channel that cannot be opened therefore THROWS from here, where the frame
+    // catches it, instead of being reported later through onClose on a stream
+    // that never was one. (public/assets/ngc.js cannot do that - a postMessage
+    // bridge has nothing to wait for and hands the app its stream at once, and
+    // onClose is what tells it afterwards. Here there is something to wait for,
+    // so we wait.)
     //
     // THE ANSWER IS HANDED OVER IN ONE PIECE, after the caller has had the
     // chance to hang his listeners up, which is why the delivery waits for the
     // next turn of the event loop. The channel collects it either way
     // (Channel.result holds the pieces), and the bound is the channel's: past
     // MAX_OUT it closes with E_TOOLARGE instead of reading on.
+    //
+    // AN APP'S OWN SERVICE IS THE OTHER WAY THROUGH HERE, and its answer is NOT
+    // one piece: it is a channel the app writes into and reads from for as long
+    // as it is open - a terminal - so appStream above hands each piece on as it
+    // arrives, once the caller has had its turn to hang its listeners up. That
+    // stream carries write and end as well, which this one does not need.
     async open(app, service, name, params, opts) {
       const a = rowFor(app, service, name);
       const p = own(params, "params");
-      if (a === null) return appService(app, service, name, (opts ?? {}).node);
+      if (a === null) {
+        return appStream(await appChannel(link, world, app, service, name, (opts ?? {}).node, p));
+      }
       if (a.flow !== FLOW_OUT) throw new WorldError(WRONG_WAY);
       const ch = await openOut(link, a, { params: p });
       let gone = false;
@@ -290,7 +522,16 @@ export function adapterFor(link) {
 // setup (Task 19) is what will put the release key of this installation in
 // reach. Until then releaseKey is null, exactly as the login answers it, and
 // apps/store.js says so itself instead of trusting an answer.
-export async function realWorld({ config, anchor, session, link } = {}) {
+//
+// sessionDH IS TAKEN AND HANDED STRAIGHT ON, to the adapter and nowhere else.
+// It is the X25519 pair auth/login.js built for this session, whose public half
+// stands in the client certificate the API bound the session to, and every
+// end-to-end channel to a controller is made with it. It does NOT travel into
+// the `session` object that startDesktop gets: the fewer places a key is, the
+// fewer places can hand it on, and no surface of the desktop has anything to do
+// with it. The private half is non-extractable (auth/keys.js), so what is being
+// kept narrow here is the right to USE it.
+export async function realWorld({ config, anchor, session, link, sessionDH } = {}) {
   // THE TRUST LIST BEFORE ANYTHING IS SHOWN. It is opened against the anchor
   // and followed to its newest version, and the session's own trust hints
   // keep it there - startTrust hangs that up on this link. A chain that does
@@ -307,5 +548,8 @@ export async function realWorld({ config, anchor, session, link } = {}) {
     if (typeof link?.close === "function") link.close();
     throw e;
   }
-  return { link: adapterFor(link), trust, session: session ?? null, releaseKey: null };
+  return {
+    link: adapterFor(link, { trust, sessionDH: sessionDH ?? null }),
+    trust, session: session ?? null, releaseKey: null,
+  };
 }

@@ -1,5 +1,6 @@
 import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
+import { PASSWORD, USER_NAME } from "../fixtures/logins.js";
 
 // net/world.js: the seam between the surfaces, which speak in
 // (app, service, name), and net/channel.js, which speaks in actions.
@@ -23,6 +24,25 @@ import { vectors } from "../fixtures/vectors.js";
 //    shell/channels.spec.js measures that for the data frames of the same
 //    link.
 const cases = vectors("trust.json");
+
+// THE FOUR SENTENCES a refusal of net/world.js puts in front of a person, each
+// written out HERE and not imported: net/world.js keeps them to itself, and a
+// case that read the constant it is checking would pass for every wording there
+// could be - including the same wording twice. They are the whole point of the
+// four words, so they are pinned character for character, and `distinct` below
+// pins that they really are four and not two.
+//
+// NO_CONTROLLER_KEY is shell/trustlist.js's NOT_TRUSTED, on purpose: it is the
+// same fact, and one fact gets one wording. shell/trustlist.spec.js pins it
+// there as well, which is what makes a change to it fall in two places.
+const SAID = {
+  node: "Diese App sagt nicht, auf welchem Rechner ihr Dienst läuft.",
+  "session-key": "Diese Anmeldung kann den eigenen Dienst einer App nicht erreichen. "
+    + "Bitte die Seite neu laden.",
+  "trust-list": "NGC hat die Vertrauensliste dieser Anlage nicht geöffnet. "
+    + "Bitte die Seite neu laden.",
+  "controller-key": "Dieser Server steht nicht in der Vertrauensliste.",
+};
 
 function caseOf(name) {
   const c = cases.find((x) => x.name === name);
@@ -84,6 +104,74 @@ async function plant(shell) {
       return link;
     };
   });
+}
+
+// plantService puts ONE helper into the page: a real session, and on top of it
+// the adapter an app's own service goes through. Four cases need it, and a
+// login written out four times is a login that drifts four ways.
+//
+// WHAT IS REAL IN IT and what stands in, so nobody reads more into these cases
+// than is in them:
+//   - REAL: the login (certificate, proof, cookie, API certificate checked),
+//     the Noise session, the X25519 pair auth/login.js built, the controller's
+//     Noise key out of the list this world serves, and the whole end-to-end
+//     handshake against tests/mock/api.js playing that controller.
+//   - A STAND-IN: the one method of shell/trustlist.js's TrustStore the adapter
+//     asks for. The chain this world serves is signed by a key that stands in no
+//     version of it, so it cannot be opened against an anchor at all - the boot
+//     case at the end of this file is about exactly that - and controllerKey's
+//     own rules are measured where they live (shell/trustlist.spec.js).
+async function plantService(shell, [user, password]) {
+  await shell.evaluate(async ([who, pw]) => {
+    window.__ngcAppLink = async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const http = await import("/assets/js/net/http.js");
+      const { adapterFor } = await import("/assets/js/net/world.js");
+      const { login } = await import("/assets/js/auth/login.js");
+      const h = await login({ name: who, password: pw });
+      const chain = await http.trustChain(1);
+      const list = await trust.parseList(chain.versions[0].payload);
+      const ctl = list.nodes.find((n) => n.kind === trust.NODE_CONTROLLER);
+      return {
+        h,
+        node: ctl.id,
+        link: adapterFor(h.link, {
+          trust: { controllerKey: () => ctl.noise },
+          sessionDH: h.sessionDH,
+        }),
+      };
+    };
+    // What the API saw. It is asked and not read: the mock answers one
+    // character, so there is nothing to parse.
+    window.__ngcSawPlaintext = async () => {
+      const res = await fetch("/api/v1/mock", { cache: "no-store", credentials: "same-origin" });
+      return (await res.text()) === "1";
+    };
+    // collect hangs the two listeners up the way shell/appframe.js does: on the
+    // stream open() handed back, in the turn right after it came back, and never
+    // before. Everything the service says lands in `pieces` IN ORDER, and the
+    // one close it gets lands in `closed` - so "did the app hear it, and when"
+    // is a measurement and not a guess.
+    window.__ngcCollect = {
+      collect(s) {
+        const c = {
+          pieces: [],
+          closed: null,
+          // until waits for what the other side still has to send, with a bound:
+          // three seconds is far more than a round trip to a mock in the same
+          // process, and a case that waits forever says nothing at all.
+          async until(ready) {
+            for (let i = 0; i < 300 && !ready(); i++) {
+              await new Promise((ok) => setTimeout(ok, 10));
+            }
+          },
+        };
+        s.onData = (b) => c.pieces.push(new TextDecoder().decode(b));
+        s.onClose = (status, message) => { c.closed = { status, message }; };
+        return c;
+      },
+    };
+  }, [user, password]);
 }
 
 // serve answers GET /api/v1/trust?from=N out of the fixture chain, the way
@@ -300,13 +388,18 @@ test.describe("the adapter", () => {
       expect(got.opened).toBe(5);
     });
 
-  test("the node of an app's own service arrives, and the refusal names the half that is missing",
+  test("the node of an app's own service arrives, and the refusal names the piece that is missing",
     async ({ shell }) => {
       await plant(shell);
       const got = await shell.evaluate(async () => {
         const { adapterFor } = await import("/assets/js/net/world.js");
         const utf8 = (s) => new TextEncoder().encode(s);
         const rec = window.__ngcRecorder();
+        // ONE ARGUMENT, so this adapter has no world: no session key pair and
+        // no trust list. That is not a hypothetical shape - every other case of
+        // this file builds the adapter that way, and the shell builds it with
+        // both (net/world.js, realWorld). What is measured here is therefore
+        // the half of the refusals that needs no list to decide.
         const link = adapterFor(rec);
         const params = utf8('{"cols":80}');
         // What shell/appframe.js hands over for an app's own service, in both
@@ -314,16 +407,19 @@ test.describe("the adapter", () => {
         // the params, and the NODE in the option bag. Task 25 built that fifth
         // argument; before this round it fell on the floor.
         const APP = "org.sorglos.terminal", SERVICE = "terminal", ACTION = "shell";
+        // `said` is the SENTENCE and not "there was one". A refusal nobody can
+        // read is a refusal that helps nobody, and two refusals with one
+        // sentence are one refusal.
         const refusal = async (fn) => {
           try {
             await fn();
             return "took it";
           } catch (e) {
-            return { name: e?.name ?? "", missing: e?.missing ?? "", said: typeof e?.message === "string" && e.message !== "" };
+            return { name: e?.name ?? "", missing: e?.missing ?? "", said: e?.message ?? "" };
           }
         };
         return {
-          // WITH the node: the only thing still missing is the session's own
+          // WITH the node: what this adapter is missing is the session's own
           // DH key pair, and the refusal has to say exactly that.
           callWithNode: await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "pi-1" })),
           openWithNode: await refusal(() => link.open(APP, SERVICE, ACTION, params, { node: "pi-1" })),
@@ -338,12 +434,127 @@ test.describe("the adapter", () => {
           opened: rec.opens.length,
         };
       });
-      expect(got.callWithNode).toEqual({ name: "WorldError", missing: "session-key", said: true });
-      expect(got.openWithNode).toEqual({ name: "WorldError", missing: "session-key", said: true });
-      expect(got.callNoNode).toEqual({ name: "WorldError", missing: "node", said: true });
-      expect(got.openNoNode).toEqual({ name: "WorldError", missing: "node", said: true });
-      expect(got.callBadNode).toEqual({ name: "WorldError", missing: "node", said: true });
+      const key = { name: "WorldError", missing: "session-key", said: SAID["session-key"] };
+      const noNode = { name: "WorldError", missing: "node", said: SAID.node };
+      expect(got.callWithNode).toEqual(key);
+      expect(got.openWithNode).toEqual(key);
+      expect(got.callNoNode).toEqual(noNode);
+      expect(got.openNoNode).toEqual(noNode);
+      expect(got.callBadNode).toEqual(noNode);
       expect(got.opened).toBe(0);
+    });
+
+  test("with both pieces in hand the door opens, and a node the verified list does not know is refused on its own word",
+    async ({ shell }) => {
+      test.skip(!(await hasSessionKeys(shell)),
+        "no X25519 in this engine's Web Crypto: there is no session key pair to hand over");
+      await plant(shell);
+      const got = await shell.evaluate(async () => {
+        const noise = await import("/assets/js/contracts/noise.js");
+        const { NotTrusted } = await import("/assets/js/shell/trustlist.js");
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const APP = "org.sorglos.terminal", SERVICE = "terminal", ACTION = "shell";
+        const params = utf8('{"cols":80}');
+        // The two pieces Task 28 laid: the session's own DH pair, as
+        // auth/keys.js makes it, and the one method of the trust list the
+        // adapter asks for. controllerKey's OWN rules - a controller, out of
+        // the verified list, with a 32-byte Noise key - are measured where they
+        // live (shell/trustlist.spec.js); what stands in for it here throws the
+        // real NotTrusted, so this case measures what the adapter does with
+        // its two answers and nothing else.
+        const sessionDH = await noise.newKeypair();
+        const controller = await noise.newKeypair();
+        const trust = {
+          controllerKey: (id) => {
+            if (id !== "ctl-1") throw new NotTrusted();
+            return controller.publicRaw;
+          },
+        };
+        const rec = window.__ngcRecorder();
+        const link = adapterFor(rec, { trust, sessionDH });
+        // The same adapter MINUS the list. A list that is not there is not the
+        // same fact as a node a list does not carry, so it may not get the same
+        // word and may not get the same sentence.
+        const listless = adapterFor(window.__ngcRecorder(), { sessionDH });
+        // And one whose list answers with something that is NOT NotTrusted: a
+        // fault of this shell, which may not come out as a sentence about the
+        // server. It has to travel on as what it is.
+        const broken = adapterFor(window.__ngcRecorder(), {
+          sessionDH,
+          trust: { controllerKey: () => { throw new RangeError("world.spec: a fault of the shell"); } },
+        });
+        const refusal = async (fn) => {
+          try {
+            await fn();
+            return "took it";
+          } catch (e) {
+            return { name: e?.name ?? "", missing: e?.missing ?? "", said: e?.message ?? "" };
+          }
+        };
+        // A NODE THE LIST DOES NOT CARRY. It is its own case and it gets its own
+        // word: without one it would hide behind the refusal about the key, and
+        // a shell that says "no session key" where the truth is "this server is
+        // not in your trust list" sends somebody looking in the wrong place.
+        const unknown = await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "pi-99" }));
+        const unknownOpen = await refusal(() => link.open(APP, SERVICE, ACTION, params, { node: "pi-99" }));
+        // Still first, and still its own word: a node that is no node is
+        // refused before anybody is asked about it.
+        const noNode = await refusal(() => link.call(APP, SERVICE, ACTION, params, null));
+        const noList = await refusal(() => listless.call(APP, SERVICE, ACTION, params, { node: "ctl-1" }));
+        const noListOpen = await refusal(() => listless.open(APP, SERVICE, ACTION, params, { node: "ctl-1" }));
+        const fault = await refusal(() => broken.call(APP, SERVICE, ACTION, params, { node: "ctl-1" }));
+        const beforeTheDoor = rec.opens.length;
+        // A NODE IT DOES CARRY: the door opens. The recorder's first grant
+        // carries no Noise message 2, so channel.openE2E closes the channel
+        // with E_PROTOCOL right after - which is how far "it got that far" can
+        // be measured without a controller, and the OPEN it had already written
+        // down says WHAT went out.
+        const wentOut = await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "ctl-1" }));
+        const sent = rec.opens[rec.opens.length - 1];
+        return {
+          unknown, unknownOpen, noNode, noList, noListOpen, fault, beforeTheDoor,
+          // No WorldError any more: what comes back is the CHANNEL's error,
+          // which is what shell/appframe.js turns into E_UNREACHABLE for the
+          // app. A refusal of this adapter would carry a `missing`; this does
+          // not, and that is the difference between "NGC cannot" and "the
+          // channel broke".
+          wentOutName: wentOut.name, wentOutMissing: wentOut.missing,
+          sent: {
+            app: sent.app, service: sent.service, action: sent.action,
+            params: sent.params, task: sent.task, confirm: sent.confirm, e2e: sent.e2e,
+          },
+          // One channel for the one call that got past the door, and not one
+          // for any of the three refusals.
+          opens: rec.opens.length,
+        };
+      });
+      const notTrusted = {
+        name: "WorldError", missing: "controller-key", said: SAID["controller-key"],
+      };
+      const noList = { name: "WorldError", missing: "trust-list", said: SAID["trust-list"] };
+      expect(got.unknown).toEqual(notTrusted);
+      expect(got.unknownOpen).toEqual(notTrusted);
+      expect(got.noNode).toEqual({ name: "WorldError", missing: "node", said: SAID.node });
+      expect(got.noList).toEqual(noList);
+      expect(got.noListOpen).toEqual(noList);
+      // A fault of the shell is NOT dressed up as a statement about the server:
+      // it keeps its own name, it carries no `missing`, and its text is its own.
+      expect(got.fault).toEqual({
+        name: "RangeError", missing: "", said: "world.spec: a fault of the shell",
+      });
+      // FOUR WORDS, FOUR SENTENCES. Two refusals sharing one sentence would be
+      // one refusal as far as anybody reading the screen is concerned, and this
+      // is the line that would fall for it.
+      expect(new Set(Object.values(SAID)).size).toBe(Object.keys(SAID).length);
+      expect(got.beforeTheDoor).toBe(0);
+      expect(got.wentOutName).toBe("ChannelError");
+      expect(got.wentOutMissing).toBe("");
+      expect(got.sent).toEqual({
+        app: "org.sorglos.terminal", service: "terminal", action: "shell",
+        params: '{"cols":80}', task: "", confirm: "", e2e: "set",
+      });
+      expect(got.opens).toBe(1);
     });
 
   test("open hands nothing over before the channel stands, and close really closes it with its code",
@@ -428,6 +639,255 @@ test.describe("the real session", () => {
         { key: "ngc.users/list", bytes: true, read: true },
         { key: "ngc.users/nodes", bytes: true, read: true },
       ]);
+    });
+
+  test("an app's own service runs end to end on the key pair the login carried through",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const utf8 = (s) => new TextEncoder().encode(s);
+        // THE REAL LOGIN, and not a key pair this case made: the pair it is
+        // about is the one auth/login.js built for the Noise session, and its
+        // public half stands in the client certificate the API bound this
+        // session to. tests/mock/api.js plays the controller of the end-to-end
+        // handshake with THAT half (onOpen, state.clientDH), so a channel that
+        // stands here is a channel that stood on the login's own key pair and
+        // on no other. A login that stopped carrying it through cannot make
+        // this case green by accident.
+        const { h, link, node } = await window.__ngcAppLink();
+        const APP = "org.sorglos.terminal", SERVICE = "terminal", ACTION = "shell";
+        // open() and not call(), because that is what an app's own service is:
+        // shell/appframe.js gives the terminal a channel that stays open and
+        // writes every line into it. The "shell" service of this world echoes
+        // what it is given (tests/mock/api.js, innerData).
+        const s = await link.open(APP, SERVICE, ACTION, utf8('{"cols":80}'), { node });
+        const line = "cp -r\n";
+        const ended = await new Promise((ok) => {
+          const seen = [];
+          // The listeners are hung up AFTER open() came back, exactly as
+          // shell/appframe.js hangs them up - and the echo may not have been
+          // handed over before that.
+          s.onData = (b) => {
+            seen.push(new TextDecoder().decode(b));
+            Promise.resolve(s.end()).catch(() => {});
+          };
+          s.onClose = (status, message) => ok({ seen, status, message });
+          Promise.resolve(s.write(utf8(line))).catch(() => ok({ seen, status: "write failed", message: "" }));
+        });
+        // The one question the API itself has to answer. The mock watches every
+        // frame for the bytes the service was given: if the cleartext ever
+        // stood in one, end to end bought nothing.
+        const sawPlaintext = await window.__ngcSawPlaintext();
+        h.link.close();
+        return {
+          // What the login carried: an X25519 pair whose private half cannot be
+          // read out again, not even by the shell.
+          keyKind: h.sessionDH?.privateKey?.algorithm?.name ?? "",
+          extractable: h.sessionDH?.privateKey?.extractable ?? true,
+          publicLength: h.sessionDH?.publicRaw?.length ?? 0,
+          node,
+          seen: ended.seen, status: ended.status, message: ended.message,
+          sawPlaintext,
+        };
+      });
+      expect(got).toEqual({
+        keyKind: "X25519", extractable: false, publicLength: 32,
+        node: "ctl-1", seen: ["cp -r\n"], status: "ok", message: "",
+        sawPlaintext: false,
+      });
+    });
+
+  test("a service that speaks first is heard, before the app has written anything",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const { h, link, node } = await window.__ngcAppLink();
+        const { collect } = window.__ngcCollect;
+        // The "greet" service of this world speaks the moment it has started -
+        // which by the contract is the moment it has decrypted the shell's first
+        // inner message, the one channel.openE2E sends by itself. So the app
+        // writes NOTHING and still has to hear something, which is what a
+        // terminal's prompt is. net/world.js's appStream is the only thing
+        // between that frame and the app; a piece it dropped would be gone with
+        // nothing to see anywhere.
+        const s = await link.open("org.sorglos.terminal", "terminal", "greet",
+          utf8('{"cols":80}'), { node });
+        const c = collect(s);
+        await c.until(() => c.pieces.length >= 1);
+        const greeting = c.pieces.slice();
+        // And now a line of the app's own: its echo has to arrive AFTER the
+        // greeting, so the order a service speaks in is the order the app hears.
+        await s.write(utf8("ls\n"));
+        await c.until(() => c.pieces.length >= 2);
+        await s.end();
+        await c.until(() => c.closed !== null);
+        const sawPlaintext = await window.__ngcSawPlaintext();
+        h.link.close();
+        return { greeting, pieces: c.pieces.slice(), closed: c.closed, sawPlaintext };
+      });
+      expect(got.greeting).toEqual(["willkommen$ "]);
+      expect(got.pieces).toEqual(["willkommen$ ", "ls\n"]);
+      expect(got.closed).toEqual({ status: "ok", message: "" });
+      expect(got.sawPlaintext).toBe(false);
+    });
+
+  test("a service that is over before it starts tells the app instead of leaving it waiting",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const { h, link, node } = await window.__ngcAppLink();
+        const { collect } = window.__ngcCollect;
+        // The "over" service ends the channel the moment it has started and says
+        // nothing at all. THE CHANNEL IS STILL HANDED OVER - the ending is the
+        // answer to the shell's own first inner message, so it is a later frame -
+        // and what matters is that the app is TOLD: shell/appframe.js forgets the
+        // number on that close, and an app that never got one would wait on a
+        // number that is gone for as long as its window is open.
+        const s = await link.open("org.sorglos.terminal", "terminal", "over",
+          utf8('{"cols":80}'), { node });
+        const c = collect(s);
+        await c.until(() => c.closed !== null);
+        const count = h.link.channelCount();
+        h.link.close();
+        return { stream: typeof s === "object" && typeof s.write === "function",
+          pieces: c.pieces.slice(), closed: c.closed, count };
+      });
+      // open() handed a stream over, the app heard nothing, and it was told the
+      // channel is over - with the status the service itself ended on.
+      expect(got.stream).toBe(true);
+      expect(got.pieces).toEqual([]);
+      expect(got.closed).toEqual({ status: "ok", message: "" });
+      expect(got.count).toBe(0);
+    });
+
+  test("an app's own service answers one question through call(), and the number is free again",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const { h, link, node } = await window.__ngcAppLink();
+        // THE WAY shell/appframe.js's doCall GOES, and until this round no case
+        // went down it: the question stands in the params of the OPEN, the inner
+        // end and the EOF go out at once, and what comes back are the bytes of
+        // the service. The echo service of this world was given nothing to echo,
+        // so the answer is empty - and empty is an ANSWER: it only exists
+        // because the channel ended with ok, which is what Channel.result
+        // demands before it hands anything over at all.
+        const bytes = await link.call("org.sorglos.terminal", "terminal", "shell",
+          utf8('{"cols":80}'), { node });
+        // The number has to come free again. A call that left the channel open
+        // would spend one of the session's channels per question the app asks.
+        for (let i = 0; i < 300 && h.link.channelCount() > 0; i++) {
+          await new Promise((ok) => setTimeout(ok, 10));
+        }
+        const count = h.link.channelCount();
+        const sawPlaintext = await window.__ngcSawPlaintext();
+        h.link.close();
+        return { bytes: bytes instanceof Uint8Array, length: bytes.length, count, sawPlaintext };
+      });
+      expect(got).toEqual({ bytes: true, length: 0, count: 0, sawPlaintext: false });
+    });
+
+  test("close(code) really ends an app's channel, and nothing reaches the caller after it",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const wire = await import("/assets/js/contracts/wire.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const { h, link, node } = await window.__ngcAppLink();
+        const { collect } = window.__ngcCollect;
+        const open = () => link.open("org.sorglos.terminal", "terminal", "shell",
+          utf8('{"cols":80}'), { node });
+        const free = async () => {
+          for (let i = 0; i < 300 && h.link.channelCount() > 0; i++) {
+            await new Promise((ok) => setTimeout(ok, 10));
+          }
+          return h.link.channelCount();
+        };
+        // WITH A CODE, which is what shell/appframe.js passes (closeQuietly).
+        const s = await open();
+        const c = collect(s);
+        await s.write(utf8("hallo\n"));
+        await c.until(() => c.pieces.length >= 1);
+        await s.close(wire.CODES.PROTOCOL);
+        const afterCode = await free();
+        // The channel is over, so the link has told everyone waiting on it -
+        // and the caller, who asked for this close, hears NOTHING. It has
+        // already been told by the one who called close() (appframe's
+        // doCloseStream answers the app itself).
+        await new Promise((ok) => setTimeout(ok, 200));
+        const quiet = { pieces: c.pieces.length, closed: c.closed };
+        // WITHOUT one: "ok" is the word for "I am done and this is no error",
+        // and a close() that passed nothing on would be refused by wire.
+        const s2 = await open();
+        const c2 = collect(s2);
+        await s2.close();
+        const afterNoCode = await free();
+        h.link.close();
+        return { afterCode, quiet, afterNoCode, closed2: c2.closed };
+      });
+      // Both numbers came free: the CLOSE really went out and was answered. A
+      // close() that only set a flag would leave them taken for the session.
+      expect(got.afterCode).toBe(0);
+      expect(got.afterNoCode).toBe(0);
+      // One piece - the echo - and no close for the caller that closed it.
+      expect(got.quiet).toEqual({ pieces: 1, closed: null });
+      expect(got.closed2).toBe(null);
+    });
+
+  test("a step the controller wants confirmed comes back as a code, and nobody acts on it yet",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const wire = await import("/assets/js/contracts/wire.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const { h, link, node } = await window.__ngcAppLink();
+        // WHAT THE CONTROLLER REALLY ANSWERS for a step that wants confirming:
+        // E_CONFIRM, as the answer to the OPEN, and no service is started
+        // (measured on the controller side, plan 3 task 11: access.Check ->
+        // task.Check refuses without a signed task once the app needs root or
+        // trust.List.NeedsConfirm says yes). This case is here to pin what the
+        // SHELL does with it today, so the task that builds the confirmation has
+        // a measured starting point instead of a guess.
+        const caught = async (fn) => {
+          try {
+            await fn();
+            return "took it";
+          } catch (e) {
+            return { name: e?.name ?? "", code: e?.code ?? "", said: e?.message ?? "" };
+          }
+        };
+        const ACT = "needsconfirm";
+        const onCall = await caught(() => link.call("org.sorglos.terminal", "terminal", ACT,
+          utf8('{"cols":80}'), { node }));
+        const onOpen = await caught(() => link.open("org.sorglos.terminal", "terminal", ACT,
+          utf8('{"cols":80}'), { node }));
+        for (let i = 0; i < 300 && h.link.channelCount() > 0; i++) {
+          await new Promise((ok) => setTimeout(ok, 10));
+        }
+        const count = h.link.channelCount();
+        h.link.close();
+        return { onCall, onOpen, count, confirm: wire.CODES.CONFIRM, said: wire.message(wire.CODES.CONFIRM) };
+      });
+      // WHAT ARRIVES, and it is the finding of this case rather than a happy
+      // assurance: on an end-to-end channel the REFUSAL CODE DOES NOT SURVIVE.
+      // A CLOSE that arrives before the controller's own inner end is a channel
+      // that was cut off (net/channel.js, Channel.truncated), and cut-off data
+      // is E_PROTOCOL - so E_CONFIRM, the one code the shell would have to act
+      // on, reaches the adapter's caller as E_PROTOCOL. net/channel.js belongs
+      // to another session; the task report says so and hands it over.
+      expect(got.onCall).toEqual({
+        name: "ChannelError", code: "E_PROTOCOL", said: "Ungültige Nachricht.",
+      });
+      expect(got.onOpen).toEqual(got.onCall);
+      // Whatever the code, the channel is not left behind.
+      expect(got.count).toBe(0);
+      // And the contract does have the code and a sentence for it, so there is
+      // something to act on once it gets through.
+      expect(got.confirm).toBe("E_CONFIRM");
+      expect(got.said).toBe("Bitte erneut bestätigen.");
     });
 
   test("a notice of the real link reaches every listener as the bytes it is", async ({ shell }) => {

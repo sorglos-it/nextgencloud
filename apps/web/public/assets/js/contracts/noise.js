@@ -111,6 +111,21 @@ function nonce(n) {
 // need this (n is a uint64 there); here n is a plain Number.
 const MAX_NONCE = Number.MAX_SAFE_INTEGER - 1;
 
+// A NONCE IS TAKEN, NOT READ. Both calls below reserve their number in the
+// one synchronous breath that also checks it - "const n = this.n++" with no
+// await between the check and the ++ - and every later line uses that n and
+// never this.n again.
+//
+// It used to build nonce(this.n) for the IV and do this.n++ only after the
+// Web Crypto call had come back. Two seals that overlapped therefore read the
+// SAME number: one key, one IV, two different plaintexts, which hands out
+// P1 XOR P2 and the GHASH subkey with it - the one failure AES-GCM does not
+// survive. Overlapping is not exotic: anything that calls seal() twice
+// without awaiting the first does it, and a task boundary between the two
+// does not help, because the first call is parked inside encrypt() with its
+// number already read. Reserving instead of reading makes the reuse
+// impossible HERE, for every caller there will ever be, rather than leaving
+// each caller to serialise itself and be the next place it is forgotten.
 class CipherState {
   constructor(key) {
     this.keyRaw = key;
@@ -130,22 +145,31 @@ class CipherState {
     const p = viewOrRefuse(plain, "not bytes");
     if (p.length > MAX_PLAINTEXT) throw new Error("noise: message too large");
     if (this.n > MAX_NONCE) throw new Error("noise: nonce counter exhausted");
-    const out = new Uint8Array(await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce(this.n), additionalData: viewOrRefuse(ad, "not bytes"), tagLength: 128 },
+    // Read before the number is spent, so a wrongly-shaped ad refuses
+    // without moving the counter away from the receiver's. It sits between
+    // the check and the ++ and that is safe: viewOrRefuse is synchronous, so
+    // nothing can slip in and take the same number. Everything that can
+    // refuse still refuses in the order it did before.
+    const a = viewOrRefuse(ad, "not bytes");
+    const n = this.n++;
+    return new Uint8Array(await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: nonce(n), additionalData: a, tagLength: 128 },
       await this.aes(), p));
-    this.n++;
-    return out;
   }
 
   async open(cipher, ad = new Uint8Array(0)) {
     const c = viewOrRefuse(cipher, "not bytes");
     if (c.length > MAX_MESSAGE) throw new Error("noise: message too large");
     if (this.n > MAX_NONCE) throw new Error("noise: nonce counter exhausted");
-    const out = new Uint8Array(await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: nonce(this.n), additionalData: viewOrRefuse(ad, "not bytes"), tagLength: 128 },
+    const a = viewOrRefuse(ad, "not bytes");
+    // A message that does not open spends its number too. A Noise transport
+    // has no way back from a failed decryption - the session ends - and
+    // handing the same number to the next call instead would be the one
+    // thing worse than ending.
+    const n = this.n++;
+    return new Uint8Array(await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: nonce(n), additionalData: a, tagLength: 128 },
       await this.aes(), c));
-    this.n++;
-    return out;
   }
 }
 

@@ -253,6 +253,26 @@ const TAG_SIZE = wire.MAX_PAYLOAD - wire.MAX_E2E_PLAINTEXT;
 // purpose, so the shell has to be the one that stops it.
 const HUGE = 9 << 20;
 
+// The app services of this world besides the echo, by the action of the
+// OPEN, and what the one that speaks first says. The text is the service's own
+// and means nothing to NGC - a prompt is whatever the program there prints.
+const ACT_GREET = "greet", ACT_OVER = "over";
+const GREETING = "willkommen$ ";
+// And one that is refused before it starts, with the code the real controller
+// answers when the user's policy wants this step confirmed: access.Check asks
+// task.Check, which refuses without a signed task as soon as the app needs root
+// or trust.List.NeedsConfirm says yes (measured on the controller side, plan 3
+// task 11). A refused OPEN gets a CLOSE instead of a first GRANT, which is the
+// other legal answer to an OPEN - Channel.firstGrant says so itself.
+const ACT_CONFIRM = "needsconfirm";
+// What the two that DO start do once they have started. Each is kicked onto the
+// channel's own chain, so it waits for credit like every other answer.
+// ACT_CONFIRM is not in here: it never starts at all.
+const START = {
+  [ACT_GREET]: (conn, ch) => conn.innerData(ch, utf8(GREETING)),
+  [ACT_OVER]: (conn, ch) => conn.innerEnd(ch),
+};
+
 // ------------------------------------------------------------------ helpers
 
 const enc = new TextEncoder();
@@ -419,6 +439,10 @@ class MockChannel {
     this.recvLeft = wire.DEFAULT_WINDOW;
     this.creditWaiters = [];
     this.transport = null;   // the controller side of an end-to-end channel
+    // Whether the service on this channel has started. The contract says it may
+    // only start once the first inner message has been decrypted, so this is set
+    // there and nowhere else.
+    this.started = false;
     this.gotEOF = false;
     this.closed = false;
     this.sentClose = false;
@@ -595,6 +619,17 @@ class Conn {
     throw new Error("mock: frame");
   }
 
+  // What an app's own service does the moment it has started, by the ACTION of
+  // the OPEN. "shell" is not in here: it only ever answers what it is given, and
+  // that is the behaviour every case before Fixrunde 1 of Task 28 measured, so
+  // it stays exactly as it was.
+  //
+  // The others exist because ways through net/world.js's appStream could
+  // otherwise not be reached at all: a service that SPEAKS FIRST (a shell
+  // printing its prompt, with the app having written nothing), one that is OVER
+  // before it starts (the channel ends and the app has to be told), and one that
+  // is REFUSED because the step wants confirming (ACT_CONFIRM, below). All three
+  // are things a real controller does; none can be built out of an echo.
   async onOpen(frame) {
     if (this.channels.size >= wire.MAX_SESSION_CHANNELS) throw new Error("mock: too many channels");
     const open = wire.parseOpen(frame.payload);
@@ -606,6 +641,10 @@ class Conn {
       await ch.grantRoom(ch.recvWindow, null);
       return;
     }
+    // An app whose step wants confirming is refused HERE, before any handshake:
+    // the controller decides that from the OPEN (its task and its action), and a
+    // service it will not start is a service it does not do a handshake for.
+    if (open.action === ACT_CONFIRM) { await ch.fail(wire.CODES.CONFIRM); return; }
     // An app: this side plays the controller of the end-to-end handshake,
     // with the Noise key ctl-1 carries in the trust list and the dh key of
     // the client certificate as the peer.
@@ -628,6 +667,21 @@ class Conn {
     const plain = await ch.transport.open(payload);
     const inner = wire.parseE2E(plain, false);
     if (inner.kind === wire.E2E_DATA) {
+      // THE SERVICE STARTS HERE AND NOWHERE EARLIER, which is the contract's own
+      // rule: channel.openE2E sends an empty inner message as its last step
+      // because "the controller starts the service only once it has decrypted,
+      // so a replayed OPEN does nothing on its own". A mock that spoke straight
+      // after the handshake would be a controller no real one may be - and it
+      // would measure the shell against a window the contract forbids.
+      if (!ch.started) {
+        ch.started = true;
+        const begin = START[ch.open.action];
+        if (begin !== undefined) {
+          ch.kick(() => begin(this, ch));
+          // A service that is over before it starts says nothing else.
+          if (ch.open.action === ACT_OVER) return;
+        }
+      }
       // Whatever the service was given in the clear is from now on a byte
       // string the API must never be seen carrying.
       if (inner.data.length > 0) {
@@ -646,8 +700,8 @@ class Conn {
     ch.kick(() => this.innerEnd(ch));
   }
 
-  // The one service this world has: it echoes what it is given, which is
-  // what the end-to-end test reads back.
+  // The service of this world echoes what it is given, which is what the
+  // end-to-end test reads back.
   async innerData(ch, data) {
     const answer = wire.e2e(wire.E2E_DATA, data);
     await ch.data(await ch.transport.seal(answer));

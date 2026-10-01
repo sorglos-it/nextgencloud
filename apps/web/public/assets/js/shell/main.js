@@ -178,6 +178,13 @@ const standIn = () => window.__ngcStandIn === true;
 // call(app, service, name, params, opts) and open(...) over net/link.js and
 // net/channel.js, and it opens the trust list against the anchor on the
 // session that was just opened.
+//
+// WHERE THE CHAIN OF TASK 28 RUNS TOGETHER: world.sessionDH is the key pair
+// auth/login.js built for this session, and this line is the only one that
+// carries it. It goes into net/world.js and from there into the adapter, which
+// needs it for the end-to-end channel of an app's own service; it is NOT put
+// into what startDesktop gets, because no surface of the desktop has anything to
+// do with a key.
 async function showDesktop(root, config, anchor, world) {
   let parts;
   if (standIn()) {
@@ -186,7 +193,9 @@ async function showDesktop(root, config, anchor, world) {
     world.link.close();
     parts = await fakeWorld();
   } else {
-    parts = await realWorld({ config, anchor, session: world.session, link: world.link });
+    parts = await realWorld({
+      config, anchor, session: world.session, link: world.link, sessionDH: world.sessionDH,
+    });
   }
   const { link, trust, session, releaseKey } = parts;
   startDesktop(root, { link, session: session ?? null, trust, config, releaseKey });

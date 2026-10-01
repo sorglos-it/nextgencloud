@@ -151,6 +151,25 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
       certHash: await session.certHash(payload),
       signKey: { privateKey: keys.sign.privateKey, kid: keys.sign.kid },
     },
+    // THE SESSION'S OWN DH PAIR, and it is handed on for ONE thing: the
+    // end-to-end channel from an app to its own service on a controller
+    // (net/world.js, appChannel). It is the same pair Link.connect just opened
+    // the Noise session with, and its public half is the `dh` of the client
+    // certificate above - so the controller that answers the handshake is
+    // answering the key the API bound this session to, and no other.
+    //
+    // It is a member of its own and NOT part of `session`, which travels on to
+    // the whole desktop: shell/main.js takes it straight to net/world.js and
+    // nothing else ever sees it.
+    //
+    // WHAT `extractable: false` BUYS, exactly, because it is easy to ask too
+    // much of it: the BYTES of the private half cannot be read out - not by the
+    // shell, not by anything else on this page. It does NOT stop the key being
+    // put somewhere: a non-extractable CryptoKey is structurally cloneable and
+    // can be written to IndexedDB, where it would outlive this session. So what
+    // is being kept narrow here is the right to USE it, and the only thing that
+    // keeps it narrow is that this is the one line that hands it on.
+    sessionDH: keys.dh,
     trust: { current: () => ({ list: opened.list, signed: opened.signed }) },
     // The release key of the initial setup is NOT in a login answer and is
     // not invented here: task 19 pins it while the installation is set up.
