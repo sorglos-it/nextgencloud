@@ -172,8 +172,9 @@ func TestOnceUseTellsTheKindsApart(t *testing.T) {
 // TestAnExpiredAndSpentValueIsNotFound pins what the contract leaves open. It
 // names both answers for OnceUse and does not order them, so a value that is
 // spent and past its time could be either; two stores of one contract that
-// disagree here would make the conformance test of task 7 impossible to
-// write. The order is taken from memstore, the reference beside this store,
+// disagree here would make the conformance test impossible to write, and since
+// task 7 that test stands: TestConformance in classes/sqlite drives dbtest's
+// once group against this store. The order is taken from memstore, the reference beside this store,
 // and taken by running it instead of by reading it.
 //
 // The two do not agree everywhere, and this test says nothing about the rest:

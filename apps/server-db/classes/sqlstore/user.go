@@ -67,9 +67,11 @@ func scanUser(scan func(...any) error) (dbapi.User, error) {
 // where it stands and running it from a defer all leave every test that asks
 // this store a question green, and no group of the contract goes red with any
 // of them. Measured, all of those shapes - the contract half of that by hand,
-// because dbtest.Run is called once in the tree and against memstore, so no
-// group of it runs against this store in go test ./... . The note at
-// TestOneWriteAndOneDelete in user_test.go says it in full.
+// because dbtest.Run then had one call site in the tree and it was against
+// memstore, so no group of it ran against this store in go test ./... . Task 7
+// gave it a second one, so that half is measurable by a standing run now; it
+// has not been retaken. The note at TestOneWriteAndOneDelete in user_test.go
+// says it in full.
 //
 // But a guard over the syntax tree can say where a statement is written and
 // never that it runs and that its answer gates this write - that is a
@@ -266,12 +268,13 @@ func (s *store) UserDelete(ctx context.Context, id string) error {
 // refuses the moment blob goes. The SQLite driver of this
 // project binds an empty blob instead, so there the same row is written and
 // no test of behaviour can see the difference: measured both ways round, with
-// the five calls taken out this whole package stays green and no group of the
-// contract goes red either - that second half by hand, because no group of the
-// contract runs against this store in go test ./..., as the note at
-// TestOneWriteAndOneDelete in user_test.go sets out - and
-// TestEveryByteSliceComesFromBlob goes red on its own. That guard reads the
-// source, and it is the only thing holding these five calls.
+// the ten calls that pass those five values taken out - each value goes to the
+// database twice, in the UPDATE and in the INSERT - this whole package stays
+// green and no group of the contract goes red either, and
+// TestEveryByteSliceComesFromBlob goes red on its own. Retaken on task 7
+// against the standing run of the contract that TestConformance in
+// classes/sqlite now gives: all eleven groups green, that one guard red. That
+// guard reads the source, and it is the only thing holding these ten calls.
 //
 // Where no check stands in front of it at all - the token of SessionGet,
 // SessionTouch and SessionDelete, the key of PendingDelete - blob turns a nil

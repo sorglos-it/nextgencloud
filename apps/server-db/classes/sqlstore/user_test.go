@@ -113,8 +113,9 @@ func TestSessionAndPending(t *testing.T) {
 // UPDATE that sets every column: it repairs whatever the INSERT got wrong
 // before the test reads the row. Measured against the test files as they
 // stood before this test was written, on this package and on every group of
-// the contract this store answers - all of them but log, which is
-// ErrUnsupported until task 7 and red in every run: last_login written as 0,
+// the contract this store answers - all of them but log, which answered
+// errors.ErrUnsupported then and was red in every run until task 7 built it:
+// last_login written as 0,
 // cert and proof the wrong way round and created written as 0 turned none of
 // them red, and roles written empty turned none of them red but dbtest's
 // aliasing group. Here every row is written once and read back column for
@@ -127,16 +128,22 @@ func TestSessionAndPending(t *testing.T) {
 // turned nothing in this package red and no group of the contract either. Here
 // the session is there, and it has to be gone afterwards.
 //
-// Where the contract counts above come from, because no standing run gives
-// them. dbtest.Run has one call site in the whole tree - memstore's own test,
-// against memstore.New() - and nothing under apps/server-db imports dbtest at
-// all: no build tag, no environment switch. So go test ./... runs no group of
-// the contract against this store, and every count above that names a group
-// came from a run made by hand for the measurement and not kept. Read them as
-// what a hand-made run answered once, not as a guard standing today: what
-// holds this store day to day is this package alone. The package comment of
-// dbtest says otherwise; shared/ is the coordinator's, so it is reported and
-// not changed here.
+// Where the contract counts above come from, because no standing run gave
+// them then. dbtest.Run had one call site in the whole tree - memstore's own
+// test, against memstore.New() - and nothing under apps/server-db imported
+// dbtest at all: no build tag, no environment switch. So go test ./... ran no
+// group of the contract against this store, and every count above that names a
+// group came from a run made by hand for the measurement and not kept. Read
+// them as what a hand-made run answered once, not as a guard that stood then.
+//
+// Since task 7 a standing one does. TestConformance in classes/sqlite calls
+// dbtest.Run on sqlite.Open, so go test ./... drives all eleven groups against
+// this store, log among them, and what holds it day to day is this package and
+// that run together. The package comment of dbtest - every implementation in
+// apps/server-db/ has to pass Run, against MariaDB and SQLite - is true of the
+// SQLite half from here on; no MariaDB connection is opened anywhere in this
+// repository yet, so the other half is still a promise. shared/ is the
+// coordinator's, so nothing there was changed for it.
 func TestOneWriteAndOneDelete(t *testing.T) {
 	s := open(t)
 	u := dbapi.User{ID: "u-admin", Name: "admin", Roles: []string{"admin", "user"},
@@ -832,10 +839,10 @@ func renameOntoTaken(t *testing.T, s dbapi.Store, u dbapi.User) error {
 //     UserPut names it for.
 //
 // Both counts in this comment that name a group of the contract - the one on
-// aa718c6 above and the one in the dialect line - came by hand. dbtest.Run is
-// called once in the whole tree, against memstore, so go test ./... drives no
-// group of the contract against this store. The note at TestOneWriteAndOneDelete
-// says it in full.
+// aa718c6 above and the one in the dialect line - came by hand, before task 7
+// gave dbtest.Run a second call site and go test ./... a standing run of the
+// contract against this store. The note at TestOneWriteAndOneDelete says it in
+// full.
 //
 // Neither is left open for want of another round. Twelve ways were found in
 // nine, each in a shape the round before had not thought of - hung on a
