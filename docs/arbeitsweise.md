@@ -374,6 +374,47 @@ kein Streit, der entschieden werden muss, sondern eine Bestätigung: die Ursache
 ist echt. Nimm den späteren Weg und schreib in das Verzeichnis, dass beide sie
 gefunden haben — sonst sucht der dritte sie noch einmal.
 
+### Ein Fähigkeitstest, der das Anlegen prüft, prüft nicht das Benutzen
+
+Die Shell braucht Ed25519 und X25519 im Browser. Wo eine Engine sie nicht hat,
+sollen die Fälle übersprungen werden — **gemessen**, nie am Namen der Engine
+abgelesen. Genau so steht es da, mit einem guten Kommentar daneben. Der
+Wächter legt einen Schlüssel an (`generateKey`), der zweite führt einen
+Schlüssel ein (`importKey`), und wenn das geht, antwortet er **ja**.
+
+Firefox legt den Schlüssel an. Firefox führt ihn ein. Und scheitert dann an
+`deriveBits` und an `sign` mit *"The operation failed for an
+operation-specific reason"*. Der Wächter sagte ja, die Arbeit sagte nein:
+**157 rote Fälle, die alle Überspringen hätten sein müssen** — und weil die
+Anmeldung daran scheitert, fällt danach alles, auch der Taschenrechner und die
+Tastaturbedienung, die von Krypto nichts wollen.
+
+**Die Regel:** Ein Fähigkeitstest muss **die Handlung tun**, auf die es ankommt,
+nicht ihre Vorbereitung. Anlegen ist nicht Unterschreiben, Einführen ist nicht
+Ableiten. Frag dich bei jedem solchen Wächter: *welchen Schritt mache ich hier,
+und welchen Schritt machen die Fälle dahinter?* Sind es zwei verschiedene, hast
+du keinen Wächter, sondern eine Vermutung mit `try`/`catch` drumherum.
+
+### Und das Drittel, das nie gelaufen ist, weil in meiner Notiz stand, es laufe nicht
+
+Ich habe jedem Strang mitgegeben: *"Firefox startet auf dieser Maschine nicht
+(`spawn UNKNOWN`) — das ist die Umgebung, kein Fund."* Das war einmal wahr und
+hatte eine Ursache, die längst behoben war: die Browser lagen unter `AppData`,
+wo Firefox an `mozglue` scheitert, und seit `PLAYWRIGHT_BROWSERS_PATH` woanders
+hinzeigt, **startet Firefox**.
+
+Sechsundzwanzig Aufgaben lang hat niemand ihn laufen lassen, weil in meinem Satz
+stand, es sei zwecklos. Ein Drittel der Prüfmatrix war nie gemessen. Gefunden
+habe ich es nur, weil ich einmal **ohne** Einschränkung auf die Engines gelaufen
+bin — aus Versehen.
+
+**Die Regel:** Jeder Satz der Form *"X geht hier nicht"*, den du weitergibst,
+braucht ein Datum und die **Ursache**. Ohne Ursache kann niemand merken, dass sie
+weg ist; mit Ursache merkt es der Nächste beim Lesen. Und läuft etwas einmal
+ohne deine üblichen Schalter — ein Lauf ohne Filter, ein Build ohne Cache — dann
+**lies das Ergebnis**, auch wenn es nicht das war, was du messen wolltest. Dort
+liegt, was deine Schalter sonst zudecken.
+
 ### Eine Pipe verschluckt das Urteil
 
 Der Koordinator hat einen zusammengeführten Stand geprüft, das Ergebnis
