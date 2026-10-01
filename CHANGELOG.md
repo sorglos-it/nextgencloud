@@ -68,6 +68,13 @@ Webinterface. `apps/web/VERSION` steht auf 0.2.0.
   PHP-Server und eine Mock-API; die Sicherheitskopfzeilen werden nicht nur gelesen, sondern dem
   Browser vorgehalten (`tests/shell/csp.spec.js`), und die acht Angriffe aus Entwurf 4.6 haben
   ihre eigene Mappe (`tests/shell/attacks.spec.js`).
+- **Vorlage für den Webserver:** `apps/web/templates/apache-vhost.conf` – kopieren, einen Namen
+  ersetzen, einschalten. Sie legt fest, dass nur `public/` von außen erreichbar ist, und setzt die
+  Kopfzeilen für die Dateien, die Apache selbst ausliefert; vorher hatte das Repo keine
+  Serverkonfiguration, und jede `.js` und `.css` ging ohne Wand hinaus. Es ist eine **eigene**
+  Richtlinie und nicht die der Seite: `default-src 'none'; script-src 'self'` plus `nosniff`,
+  `Cross-Origin-Resource-Policy` und HSTS. Der Testserver bildet das jetzt ab – die Mock-API liest
+  die Kopfzeilen aus der Vorlage, es gibt also keine zweite Fassung, die abdriften kann.
 
 Zum Zeitpunkt dieses Eintrags liefen noch vier Aufgaben des Plans: der Adapter zwischen Desktop und
 Sitzung, die Oberfläche der Ersteinrichtung, der Rechner im abgeschotteten Rahmen und das
