@@ -601,6 +601,31 @@ Körper, oder davor im Aufbau. Fällt er im Aufbau, sagt er über sein Thema nic
 und sein Wächter konnte ihn nicht retten. Und umgekehrt: dass ein Fall bewacht
 ist, ist **kein** Argument dafür, dass sein Rot echt sein muss.
 
+### Zwei grüne Hälften sind kein grünes Ganzes — zähl nach, was in ihnen lag
+
+Ich habe einen Zweig geschoben, der aus zwei geprüften Hälften bestand, und die
+Summe hatte niemand gemessen. Sie war grün, aber das wusste ich erst drei Läufe
+später — und dazwischen stand ein Stand auf dem Zweig, für den ich keine Messung
+hatte.
+
+Beim Nachmessen fiel ich **in dieselbe Falle hinein**, eine Ebene tiefer. Weil ein
+ganzer Lauf auf dieser Maschine nicht durchhält, habe ich ihn in vier Scherben
+geteilt. Die ersten zwei kamen mit Ausstiegscode 0 zurück, und ich war einen Satz
+davon entfernt, „die Scherben sind grün" zu melden. Aufgefallen ist es an einer
+Zahl, die nicht passte: **null übersprungene Fälle** bei 398 gelaufenen, wo der
+ganze Lauf 216 hatte.
+
+Der Grund: `--shard` teilt **der Reihe nach**, und die erste Engine kommt zuerst.
+Die zwei grünen Scherben enthielten **keinen einzigen** der Fälle, die rot waren —
+die lagen alle in der anderen Engine, in Scherbe 3 und 4.
+
+**Die Regel:** Wer ein Ganzes in Teile schneidet, um es messbar zu machen, muss
+**nachzählen, was in jedem Teil lag** — und am Ende die Summe gegen die erwartete
+Gesamtzahl stellen. Ein grüner Teil sagt nichts über einen Fall, den er nicht
+enthielt. Und die Zahl, die nicht passt, ist fast immer der Hinweis: ich habe den
+Fund nicht durch Nachdenken bekommen, sondern weil eine Null dastand, wo eine
+Zweihundert gehörte.
+
 ### Sechs Messungen gleichzeitig messen die Maschine, nicht den Code
 
 Ich hatte jedem Strang eingeschärft, sich einen **eigenen Port** zu nehmen — gut,
