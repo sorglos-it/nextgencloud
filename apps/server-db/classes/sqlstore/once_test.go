@@ -174,13 +174,20 @@ func TestOnceUseTellsTheKindsApart(t *testing.T) {
 // spent and past its time could be either; two stores of one contract that
 // disagree here would make the conformance test impossible to write, and since
 // task 7 that test stands: TestConformance in classes/sqlite drives dbtest's
-// once group against this store. The order is taken from memstore, the reference beside this store,
-// and taken by running it instead of by reading it.
+// once group against this store. The order is taken from memstore, the
+// reference beside this store, and taken by running it instead of by reading
+// it.
 //
 // The two do not agree everywhere, and this test says nothing about the rest:
-// memstore has no columns and so no bounds, so an input past MaxKey or
-// MaxText is refused here and taken there. That difference belongs to the
-// stores and not to the contract, and it stands on the same list as this case.
+// memstore has no columns and so no bounds, so an input past MaxKey or MaxText
+// is refused here and taken there. That difference belongs to the stores and
+// not to the contract.
+//
+// The list of all of them is in apps/server-db/CLAUDE.md, section "Wo die zwei
+// Speicher verschieden antworten", measured store against store. This sentence
+// named that list before it existed - task 7 added nine entries to it and the
+// list was nowhere to be found - so it is written down now and this is the way
+// to it.
 //
 // This one test came with the code and not before it, unlike the rest of this
 // file: the question only turned up while the switch of OnceUse was read back

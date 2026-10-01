@@ -1722,7 +1722,7 @@ func invalidReturns(p *pkgSource, n ast.Node) []token.Pos {
 var atTheDatabase = map[string]string{
 	"sqlstore": "the guard of this file",
 	"migrate":  "checkStatement, fill and the tests beside them: it runs the statements of the migrations, and they are measured there",
-	"sqlite":   "it opens the encrypted file and sets its PRAGMAs on the driver's own connection; it runs no statement of the store",
+	"sqlite":   "it opens the encrypted file and sets its PRAGMAs on the driver's own connection, and since task 7 Open also applies the migrations and wraps the result as a store; it runs no statement of its own - migrate and sqlstore run theirs, and each of those two has a guard here",
 }
 
 // TestNobodyElseUnderServerDBSpeaksToADatabase draws the line the guard above

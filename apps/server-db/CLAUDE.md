@@ -47,6 +47,52 @@ bekommt, den es braucht. `sql/` enthält die nummerierten Migrationen.
 - `OnceCreate` und `LockTake` sind atomar, auch wenn mehrere APIs gleichzeitig auf verschiedenen
   Galera-Knoten schreiben: von gleichzeitigen Versuchen gelingt genau einer.
 
+## Wo die zwei Speicher verschieden antworten
+
+`dbapi` hat zwei Umsetzungen: `memstore` in `shared/` (die Referenz, gegen die die Tests der
+anderen Teile laufen) und `sqlstore` hier. Beide bestehen `dbtest.Run`, und doch antworten sie an
+den folgenden Stellen verschieden. Diese Liste ist die, auf die der Kommentar an
+`TestAnExpiredAndSpentValueIsNotFound` in `classes/sqlstore/once_test.go` zeigt; sie stand dort als
+Verweis, bevor es sie gab.
+
+Keine dieser Stellen hält `dbtest.Run`: keine Gruppe stellt eine überlange Zeichenkette, keine ein
+`Limit` über 500, und keine fragt, ob eine leere Seite `nil` ist. Wer eine davon schließen will,
+schließt sie im Vertrag (`dbtest`), nicht je Speicher — sonst wandert dieselbe Regel in zwei
+Fassungen.
+
+Gemessen am 01.10.2026 mit einer Wegwerf-Sonde, die beide Speicher in einem Lauf fragt, je Fall
+eine eigene Kennung:
+
+| Frage | `sqlstore` | `memstore` |
+|---|---|---|
+| `LogAdd` mit `User` über `MaxKey` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogAdd` mit `Kind` über `MaxKey` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogAdd` mit `App` über `MaxKey` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogAdd` mit `Action` über `MaxKey` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogAdd` mit `Node` über `MaxKey` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogAdd` mit `Result` über `MaxKey` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogAdd` mit `Detail` über `MaxText` | `ErrInvalid` | `nil` — Zeile geschrieben |
+| `LogQuery` mit `User` über `MaxKey` | `ErrInvalid` | `nil` |
+| `LogQuery` mit `Limit` über 500 | `ErrInvalid` | `nil` |
+| `LogQuery` auf leerer Tabelle | `nil`-Scheibe, Länge 0 | nicht-`nil`, Länge 0 |
+
+Von den sieben `LogAdd`-Zeilen hat `memstore` alle sieben wirklich geschrieben (nachgezählt: sieben
+Zeilen danach, in `sqlstore` keine).
+
+Warum die ersten neun so sind: `memstore` hat keine Spalten und deshalb keine Längen; `sqlstore`
+muss jede Länge in Go prüfen, weil MariaDB kürzt oder abbricht und SQLite alles nimmt. Die Grenze
+bei 500 ist eine Entscheidung des Koordinators aus Fixrunde 1 von Aufgabe 7: abweisen, nicht kappen.
+
+Die zehnte ist der Art nach älter und breiter: `sqlstore` baut seine Listen mit `var out []T`,
+`memstore` mit `make([]T, 0, …)`. Das betrifft auch `UserList`, `AppList` und `PendingList`; über
+`json.Marshal` wird daraus `null` gegen `[]` in der Antwort. `dbtest` prüft überall nur `len(…)`,
+nie `== nil`.
+
+Dazu die eine Stelle, an der der Vertrag selbst offenlässt, was gilt, und `sqlstore` sich nach
+`memstore` richtet: ein Einmalwert, der verbraucht **und** abgelaufen ist, kann `ErrNotFound` oder
+`ErrUsed` geben. Die Reihenfolge ist aus `memstore` übernommen, und zwar durch Fahren, nicht durch
+Lesen — festgehalten in `TestAnExpiredAndSpentValueIsNotFound`.
+
 ## Tests
 
 - `dbtest.Run` gegen MariaDB (Cluster aus drei Knoten) und gegen SQLite. Darin sind Wettläufe:
