@@ -233,7 +233,8 @@ test("every file the web server hands out itself carries walls too", async ({ re
   //   a .js   - the shell's code, and the kind of file a worker is made of
   //   a .css  - a different Content-Type, in case a rule was written per type
   //   LICENSE - NO extension, so the server sends no Content-Type at all. That
-  //             is the file nosniff exists for, and it is measured below.
+  //             is the file nosniff is in that block for, and the loop below
+  //             measures that it really has no type.
   const files = [
     "/assets/js/shell/dom.js",
     "/assets/css/shell.css",
