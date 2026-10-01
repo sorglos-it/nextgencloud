@@ -1554,6 +1554,26 @@ Daraus folgt nicht „gründlicher berichtigen", sondern etwas Einfacheres:
 eine schreibst, frag dich, ob der Satz auch ohne sie trägt. Meistens ja — und
 dann lass sie weg.
 
+### Eine Zahl darf nicht in demselben Aufruf stehen, der sie misst
+
+Ein Strang hat sich viermal in einer Zahl geirrt — und beim vierten Mal nicht die
+Berichtigung aufgeschrieben, sondern die **Ursache**: er schrieb `377/852`, während
+`wc` in **derselben Ausgabe** `378/851` sagte. Alle vier Fälle hatten dieselbe
+Form: die Messung lief, und er setzte die Zahl **parallel aus dem Kopf**, statt zu
+warten.
+
+Sein Satz: **messen, ablesen, dann schreiben — in getrennten Schritten.**
+
+Das klingt nach einer Kleinigkeit und ist die Wurzel von mehr: wer eine Zahl in
+denselben Befehl schreibt, der sie erzeugt, hat sie **vorhergesagt**, nicht
+gemessen. Und eine vorhergesagte Zahl neben ihrer Messung sieht wie eine Messung
+aus. Mir ist genau das passiert, als ich „sieben Direktiven" aus einem `grep -c`
+schrieb, das ich im selben Atemzug laufen ließ — es waren vier.
+
+**Die Regel:** Erst den Befehl laufen lassen. Dann die Ausgabe **lesen**. Dann
+schreiben, mit der Zahl aus der Ausgabe. Nie alle drei in einem Zug — und schon
+gar nicht die Zahl vor der Ausgabe.
+
 ### Eine Zahl in einem Kommentar verrottet, ein Befehl nicht
 
 Ich habe in einem Auftrag geschrieben, eine Vorlage habe **sieben**
