@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +46,16 @@ func dialTest(t *testing.T) (*Link, *noisep.Transport, *websocket.Conn, func()) 
 // set; the subprotocol, the prologue and both keys belong to the helper.
 func dialOptions(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.Conn, func()) {
 	t.Helper()
+	l, tr, conn, _, done := dialRaw(t, o)
+	return l, tr, conn, done
+}
+
+// dialRaw is dialOptions with the peer's own TCP connection handed back. A close
+// frame says nothing about whether the socket is gone — for a message over the
+// read limit the library writes that frame itself (write.go:428) — so only the
+// raw socket can hold the promise that a link really ended.
+func dialRaw(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.Conn, net.Conn, func()) {
+	t.Helper()
 	server, err := noisep.Keypair(fixedReader{1})
 	if err != nil {
 		t.Fatalf("server keys: %v", err)
@@ -62,8 +73,19 @@ func dialOptions(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.
 		}
 		links <- l
 	}))
+	var raw net.Conn
+	hc := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if tc, ok := c.(*net.TCPConn); ok {
+				_ = tc.SetLinger(0)
+			}
+			raw = c
+			return c, err
+		},
+	}}
 	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
-		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: testClient})
+		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: hc})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -87,7 +109,24 @@ func dialOptions(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.
 		t.Fatalf("read message 2: %v", err)
 	}
 	l := <-links
-	return l, noisep.NewTransport(true, cs1, cs2), conn, func() { conn.CloseNow(); srv.Close() }
+	return l, noisep.NewTransport(true, cs1, cs2), conn, raw, func() { conn.CloseNow(); srv.Close() }
+}
+
+// drainToEOF reads the raw socket until it ends. It never touches the WebSocket
+// client again, so what it sees is the state of the server's socket: EOF or a
+// reset means gone, a read deadline that expires means still standing.
+func drainToEOF(t *testing.T, raw net.Conn, wait time.Duration) (time.Duration, error) {
+	t.Helper()
+	start := time.Now()
+	if err := raw.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		t.Fatalf("read deadline: %v", err)
+	}
+	buf := make([]byte, 4096)
+	for {
+		if _, err := raw.Read(buf); err != nil {
+			return time.Since(start), err
+		}
+	}
 }
 
 func TestLinkCarriesFrames(t *testing.T) {
@@ -272,7 +311,10 @@ func TestAcceptRefusesAHandshakeWithoutWaiting(t *testing.T) {
 		}
 		// Two sides on purpose, and the upper one an absolute number: with
 		// CloseWait raised to 1900 ms both cases stayed green when they only
-		// asked for "under two seconds", so a raised constant went unseen.
+		// asked for "under two seconds", so a raised constant went unseen. The
+		// lower side holds that the close frame is sent at all, not that waiting
+		// is a virtue: whoever later decides to send the frame without waiting
+		// changes this line on purpose, and that is the point of having it.
 		if d := time.Since(start); d < CloseWait || d > 1500*time.Millisecond {
 			t.Fatalf("the refused handshake held the handler %v, CloseWait is %v", d, CloseWait)
 		}
@@ -639,6 +681,139 @@ func TestCloseIsFreeAfterARefusal(t *testing.T) {
 	}
 	if d := time.Since(start); d > 500*time.Millisecond {
 		t.Fatalf("Close took %v after a refusal", d)
+	}
+}
+
+// TestADroppedLinkEndsThePeersSocket holds what drop() is for, and nothing else
+// holds it: the socket has to be gone. Everything the suite asked before — Read
+// fails, Write fails, Close is quick and nil — is just as true while the file
+// handle stands open, so a drop() that only set the flag kept all nineteen cases
+// green. The library writes the close frame for a message over the limit itself,
+// so the frame cannot tell the two apart; the raw socket can.
+func TestADroppedLinkEndsThePeersSocket(t *testing.T) {
+	l, _, conn, raw, done := dialRaw(t, Options{})
+	defer done()
+	if err := conn.Write(ctx, websocket.MessageBinary, make([]byte, wire.MaxFrame+noisep.TagSize+1)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got, err := l.Read(ctx); err == nil {
+		t.Fatalf("a message over the read limit was taken: %+v", got)
+	}
+	if err := l.Close(websocket.StatusProtocolError, "done"); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	d, err := drainToEOF(t, raw, 3*time.Second)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("the server's socket still stood %v after the failed read, and Close had said nil", d)
+	}
+}
+
+// TestCloseEndsTheLinkInOrder holds the patient half of Close, which no case held
+// either: a Close that does nothing at all and answers nil was green everywhere,
+// because the two cases that touch Close only ask that it is quick. The peer has
+// to see the close frame, and with the status it was given.
+func TestCloseEndsTheLinkInOrder(t *testing.T) {
+	l, _, conn, _, done := dialRaw(t, Options{})
+	defer done()
+	back := make(chan error, 1)
+	// The peer reads, so the close handshake finishes at once and this is the
+	// orderly end, not a refusal.
+	go func() { _, _, err := conn.Read(ctx); back <- err }()
+	if err := l.Close(websocket.StatusNormalClosure, "bye"); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case err := <-back:
+		if got := websocket.CloseStatus(err); got != websocket.StatusNormalClosure {
+			t.Fatalf("the peer saw %v (status %d), not a normal close", err, got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the peer never saw a close frame")
+	}
+}
+
+// TestTheDeadlinesBeforeLoginStayBounds holds the two deadlines that stand before
+// any login against silent growth. Every case that needs one sets it through
+// Options, so the default values themselves were held by nothing: a hundredfold
+// HandshakeTimeout and a tenfold FirstFrameTimeout left all nineteen cases green.
+// A band and not an equality, because an equality only repeats the number and has
+// to be edited together with it — what matters is that these stay bounds a human
+// can wait out and an attacker cannot live in.
+func TestTheDeadlinesBeforeLoginStayBounds(t *testing.T) {
+	if HandshakeTimeout <= 0 || HandshakeTimeout > 15*time.Second {
+		t.Errorf("HandshakeTimeout is %v, which is no bound before a login", HandshakeTimeout)
+	}
+	if FirstFrameTimeout <= 0 || FirstFrameTimeout > 60*time.Second {
+		t.Errorf("FirstFrameTimeout is %v, which is no bound before a login", FirstFrameTimeout)
+	}
+	// Zero or less means the default, anything else counts as it stands. The
+	// negative value is the half the comment promises and the code almost missed.
+	for _, c := range []struct {
+		set, handshake, firstFrame time.Duration
+	}{
+		{0, HandshakeTimeout, FirstFrameTimeout},
+		{-1, HandshakeTimeout, FirstFrameTimeout},
+		{-time.Hour, HandshakeTimeout, FirstFrameTimeout},
+		{time.Second, time.Second, time.Second},
+	} {
+		if got := (Options{Handshake: c.set}).handshake(); got != c.handshake {
+			t.Errorf("Options{Handshake: %v}.handshake() = %v, want %v", c.set, got, c.handshake)
+		}
+		if got := (Options{FirstFrame: c.set}).firstFrame(); got != c.firstFrame {
+			t.Errorf("Options{FirstFrame: %v}.firstFrame() = %v, want %v", c.set, got, c.firstFrame)
+		}
+	}
+}
+
+// TestASecondEndingIsFree holds the swap in fail and drop. Without it the second
+// ending meets the close of the first in flight, and websocket.CloseNow then
+// waits in waitGoroutines instead of dropping anything — measured, four seconds
+// for a link that was already over. It takes the unexported drop because the
+// contract gives a link one reader, so no sequence of public calls reaches here.
+func TestASecondEndingIsFree(t *testing.T) {
+	l, _, conn, _, done := dialRaw(t, Options{})
+	defer done()
+	// The peer does not read, so the first ending pays CloseWait in full.
+	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := l.Read(ctx); err == nil {
+		t.Fatal("a text message was taken")
+	}
+	start := time.Now()
+	l.drop()
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("the second ending took %v", d)
+	}
+}
+
+// TestWriteRefusesAFrameWireRefuses is the other end of the link, and it had no
+// case at all: Write checks what wire says about a frame before it seals it. A
+// Write that ignored that answer would seal the empty slice Encode returns, and
+// the peer would take that for the next message in the nonce order — so the
+// damage is not one bad message but every message after it. The case therefore
+// asks the peer, not Write: the first thing it may see is the good frame.
+func TestWriteRefusesAFrameWireRefuses(t *testing.T) {
+	l, tr, conn, _, done := dialRaw(t, Options{})
+	defer done()
+	// EOF on the control channel is no frame (package wire), so nothing goes out.
+	if err := l.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: wire.ControlChannel}); err == nil {
+		t.Fatal("Write took a frame wire refuses")
+	}
+	if err := l.Write(ctx, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("hello")}); err != nil {
+		t.Fatalf("write after the refused one: %v", err)
+	}
+	_, msg, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	plain, err := tr.Open(msg)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	got, err := wire.Decode(plain)
+	if err != nil || string(got.Payload) != "hello" {
+		t.Fatalf("the first message the peer saw was %+v: %v", got, err)
 	}
 }
 
