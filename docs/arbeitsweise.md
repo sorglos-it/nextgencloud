@@ -372,6 +372,32 @@ Und der Nachsatz, der wehtut: derselbe Koordinator hat jeder Sitzung
 eingeschärft, Port 8101 gehöre einer fremden Sitzung — und ist dann selbst
 daraufgelaufen, weil sein eigenes Messgerät ihn freigemeldet hat.
 
+### Schneid die Funktion aus der ausgelieferten Datei und lass sie laufen
+
+Ein Installationsskript in einer fremden Sprache, 1166 Zeilen Shell, kein Server
+zum Ausprobieren: der nächstliegende Weg ist Lesen, und Lesen ist kein Prüfen.
+Die Sitzung hat etwas Besseres gebaut.
+
+Sie hat die einzelnen Funktionen **aus der eingecheckten Datei
+herausgeschnitten** — nicht aus einer Kopie, nicht nachgeschrieben — und sie in
+Subshells gegen die Umsetzung der **anderen Sprache** gefahren:
+
+- die Adressprüfung des Skripts gegen alle 32 Host-Vektoren der Testdaten,
+  Antwort für Antwort **genau wie** die Go-Seite;
+- den Fingerabdruck gegen zwei andere Umsetzungen desselben Werts;
+- die erzeugte Konfiguration **byteweise** gegen die Ausgabe von Gos eigenem
+  Schreiber.
+
+Dreiundzwanzig Prüfungen, null Abweichungen. Und weil die Funktionen aus der
+ausgelieferten Datei kommen, prüft das **die Datei**, die wirklich ausgeliefert
+wird — nicht eine Nachbildung, die daneben verrottet.
+
+**Das ist das Muster, wo ein Ding keine Umgebung zum Laufen hat:** nicht die
+Logik nachbauen, sondern das Stück herausschneiden und es gegen die Seite
+antworten lassen, die es nachbilden soll. Was dabei nicht geht, bleibt ehrlich
+ungeprüft — in diesem Fall alles, was Apache, das Netz oder einen Paketmanager
+gebraucht hätte, und das stand so im Bericht.
+
 ### Ein Zusammenbruch verdeckt den einen echten Roten
 
 Ein Lauf einer Aufgabe brach in einer Maschine mit **127 roten Fällen** ein. Die
@@ -1196,6 +1222,33 @@ geteilte Zahl **besitzt**, auch wenn dieses Modul noch gar nicht existiert.
 Und beim Zusammenführen: such ausdrücklich nach Konstanten, die jetzt mehrfach
 dastehen — der Lauf bleibt grün, solange die Kopien gleich sind, und genau
 deshalb findet ihn kein Test.
+
+### Der Vertrag kann vollständiger sein als der Plan, nicht nur strenger
+
+Eine Sitzung meldete einen Fund: die Oberfläche bitte den Menschen, einen
+Fingerabdruck mit dem Serverbildschirm zu vergleichen — aber der Installer zeige
+diesen Fingerabdruck gar nicht, die Bitte sei also nicht erfüllbar. Sauber
+begründet, mit Quellenangabe.
+
+Nachgelesen im **eingefrorenen Vertrag**: dort steht, dass der Installer am Ende
+den Einmal-Code **und den TLS-Fingerabdruck** zeigt. Es gibt etwas zu
+vergleichen. Der Fund war falsch.
+
+Ihre eigene Lehre daraus ist die Regel:
+
+> „Ich habe den **Plan** gegen die Oberfläche gelesen statt den **Vertrag** — und
+> die Fehlerrichtung war die ungewohnte: der Vertrag ist vollständiger als der
+> Plan."
+
+Man geht zum Vertrag, wenn man vermutet, dass er **strenger** ist. Dass er
+**mehr enthält** als der Plan, erwartet niemand — und deshalb sucht niemand
+dort, wenn etwas zu fehlen scheint. Vier Aufgaben dieses Strangs haben Zahlen im
+Plan gegen `shared/` berichtigt, alle in dieselbe Richtung; dieser eine Fall ging
+andersherum, und genau darum fiel er durch.
+
+**Also: bevor du etwas als fehlend meldest, sieh in `shared/` nach — auch dann,
+wenn du dort nichts Strengeres erwartest.** Ein `CLAUDE.md`, das auf eine
+Vertragsdatei zeigt, meint sie auch.
 
 ### Auf der anderen Seite heißt dieselbe Sache anders
 
