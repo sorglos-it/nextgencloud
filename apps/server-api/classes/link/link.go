@@ -11,7 +11,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net/http"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/flynn/noise"
 
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -27,6 +31,11 @@ import (
 // the library: in Noise_KK that message always ends the handshake and hands
 // over both cipher states.
 var ErrLink = errors.New("link: malformed message")
+
+// ErrOrigins reports a list of allowed origins that Accept will not work with.
+// It names the entry by its number, never the value, and it stands before the
+// upgrade: a misconfigured server does not become a WebSocket at all.
+var ErrOrigins = errors.New("link: unusable origin")
 
 // randReader is the source of the ephemeral Noise keys.
 var randReader = rand.Reader
@@ -60,16 +69,46 @@ type Options struct {
 	Peer        []byte      // the other side's static public key
 	// Origins are the allowed Origin values (scheme://host); empty allows
 	// only the request host, and a request without an Origin header is
-	// allowed either way, which is how a controller reaches the tunnel. The
-	// WebSocket library reads each value as a path.Match pattern, so only
-	// values trust.ValidOrigin accepts may be passed: it takes "https://"
-	// and a host with an optional port and nothing else, while a pattern
-	// with a "*" would match every origin host.
+	// allowed either way, which is how a controller reaches the tunnel.
+	// checkOrigins reads the list before the upgrade.
+	//
+	// trust.ValidOrigin is the grammar for these values and is deliberately
+	// NOT used here: it takes only "https://", so it would refuse
+	// http://localhost:8101 and make local development impossible — and a
+	// check that blocks development is taken out again, after which nothing
+	// checks at all. Do not "fix" this by adding it; the grammar belongs where
+	// the list comes from, in the trust list and web.json.
 	Origins []string
 	// Handshake is the time the whole Noise handshake may take, from the
 	// connection being ours to the finished transport; zero means
 	// HandshakeTimeout. A test sets it to milliseconds instead of waiting.
 	Handshake time.Duration
+}
+
+// checkOrigins reads the list of allowed origins. The WebSocket library takes
+// every value as a path.Match pattern, so three kinds of entry are refused, each
+// measured against that matcher: an empty one, which matches nothing and says
+// nothing; one with a wildcard, because a list of allowed origins that a "*" or
+// a "?" fits is no list ("*" matches the origin host evil.example.com); and one
+// that does not match itself, which is every value the matcher cannot read and
+// every bracketed IPv6 host, since brackets are a character class there — such
+// an entry would quietly never let anyone through. The count follows the
+// contract, which gives a trust list at most trust.MaxOrigins of them.
+func checkOrigins(origins []string) error {
+	if len(origins) > trust.MaxOrigins {
+		return fmt.Errorf("%w: %d entries", ErrOrigins, len(origins))
+	}
+	for i, o := range origins {
+		if o == "" || strings.ContainsAny(o, "*?") {
+			return fmt.Errorf("%w: entry %d", ErrOrigins, i)
+		}
+		// The library lowercases both sides before it matches, so the
+		// self-test reads the value exactly as the matcher will.
+		if ok, err := path.Match(strings.ToLower(o), strings.ToLower(o)); err != nil || !ok {
+			return fmt.Errorf("%w: entry %d", ErrOrigins, i)
+		}
+	}
+	return nil
 }
 
 // handshake is the deadline for this link's handshake.
@@ -95,6 +134,11 @@ type Link struct {
 
 // Accept upgrades the request and runs the Noise handshake as responder.
 func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
+	// Before the upgrade, so a list that is not a list never guards anything.
+	// Nothing is written to w on this way out; the caller answers the request.
+	if err := checkOrigins(o.Origins); err != nil {
+		return nil, err
+	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols:   []string{o.Subprotocol},
 		OriginPatterns: o.Origins,

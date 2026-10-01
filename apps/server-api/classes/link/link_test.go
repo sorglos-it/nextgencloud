@@ -2,6 +2,7 @@ package link
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/flynn/noise"
 
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -47,7 +49,7 @@ func dialTest(t *testing.T) (*Link, *noisep.Transport, *websocket.Conn, func()) 
 	links := make(chan *Link, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		l, err := Accept(w, r, Options{Subprotocol: "ngc.test.v1", Prologue: noisep.PrologueSession,
-			Static: server, Peer: client.Public})
+			Static: server, Peer: client.Public, Origins: []string{"https://ngc.example"}})
 		if err != nil {
 			return
 		}
@@ -286,6 +288,78 @@ func TestARefusalDoesNotWaitOnTheRulebreaker(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("the refusal held the reader %v", d)
+	}
+}
+
+// TestOriginsAreChecked holds the rules on the list of allowed origins. The
+// WebSocket library reads every value as a path.Match pattern, measured: "*"
+// matches the origin host evil.example.com, "ngc.exampl?" matches ngc.example,
+// "[" is a syntax error that makes the library refuse every origin, and
+// "https://[::1]:8443" does not even match itself, quietly. A list that holds
+// one of those is not a list of allowed origins.
+func TestOriginsAreChecked(t *testing.T) {
+	many := make([]string, trust.MaxOrigins+1)
+	for i := range many {
+		many[i] = "ngc.example"
+	}
+	good := [][]string{
+		nil,
+		{},
+		{"https://ngc.example"},
+		// http://localhost is why trust.ValidOrigin is not the check here.
+		{"ngc.example", "https://ngc.example:8443", "http://localhost:8101"},
+		many[:trust.MaxOrigins],
+	}
+	bad := [][]string{
+		{""},                         // matches nothing, says nothing
+		{"*"},                        // every origin host
+		{"https://*.example"},        // every host under it
+		{"ngc.exampl?"},              // one character free
+		{"["},                        // unreadable: the library then refuses every origin
+		{"a\\"},                      // unreadable for the same reason
+		{"https://[::1]:8443"},       // a character class, so it never matches itself
+		{"https://ngc.example", "*"}, // the wildcard behind a good value
+		many,                         // more than the contract allows
+	}
+	for _, o := range good {
+		if err := checkOrigins(o); err != nil {
+			t.Errorf("checkOrigins(%q) refused a list that is one: %v", o, err)
+		}
+	}
+	for _, o := range bad {
+		if err := checkOrigins(o); !errors.Is(err, ErrOrigins) {
+			t.Errorf("checkOrigins(%q) answered %v", o, err)
+		}
+	}
+}
+
+// TestAcceptRefusesAWildcardOrigin holds that Accept uses those rules, and that
+// it refuses before the upgrade: nothing is written to the peer, so a
+// misconfigured server does not even look like a WebSocket.
+func TestAcceptRefusesAWildcardOrigin(t *testing.T) {
+	server, err := noisep.Keypair(fixedReader{1})
+	if err != nil {
+		t.Fatalf("server keys: %v", err)
+	}
+	client, err := noisep.Keypair(fixedReader{2})
+	if err != nil {
+		t.Fatalf("client keys: %v", err)
+	}
+	back := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := Accept(w, r, Options{Subprotocol: "ngc.test.v1", Prologue: noisep.PrologueSession,
+			Static: server, Peer: client.Public, Origins: []string{"*"}})
+		back <- err
+	}))
+	defer srv.Close()
+	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
+		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: testClient})
+	if err == nil {
+		conn.CloseNow()
+		t.Fatal("the upgrade went through although a wildcard stood in the origins")
+	}
+	if err := <-back; !errors.Is(err, ErrOrigins) {
+		t.Fatalf("Accept answered %v", err)
 	}
 }
 
