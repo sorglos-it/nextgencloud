@@ -354,6 +354,26 @@ derselben Datei und derselben Funktion — in JavaScript hilft kein Übersetzer.
 Und wenn du einem Umsetzer eine Ursache nennst, nenn sie als **Vermutung** und
 verlang die Messung.
 
+### Ein Strang auf der älteren Basis bringt einen überholten Weg mit
+
+Ein Strang hat einen Fall gemeldet, der bei ihm rot war, und hat die Ursache
+richtig gemessen: die Attrappe liefert seit seiner Aufgabe mehrere Apps aus und
+liest die App aus den Parametern, also lehnt **sie** ab, wenn der Test sich
+Parameter ausdenkt. Sein Weg dahin: die Kennung der App in den Test schreiben.
+
+Beides war wahr. Nur sass er auf der Basis von vorgestern. Ein anderer Strang
+hatte denselben Fall einen Tag später anders geschlossen — die App kommt aus
+der **eigenen Liste der Attrappe**, damit im Test keine Kennung steht, die
+verrotten kann. Hätte ich seinen Weg genommen, wäre eine Kennung
+hereingekommen, die der andere gerade entfernt hatte.
+
+**Die Regel:** Bevor du den Weg eines Strangs uebernimmst, schau, auf welcher
+Basis er gemessen hat. Seine **Ursache** gilt dann noch, sein **Weg** vielleicht
+nicht mehr. Und wenn zwei Stränge denselben Fund unabhaengig finden, ist das
+kein Streit, der entschieden werden muss, sondern eine Bestätigung: die Ursache
+ist echt. Nimm den späteren Weg und schreib in das Verzeichnis, dass beide sie
+gefunden haben — sonst sucht der dritte sie noch einmal.
+
 ### Eine Pipe verschluckt das Urteil
 
 Der Koordinator hat einen zusammengeführten Stand geprüft, das Ergebnis
@@ -1240,6 +1260,23 @@ ist, ist er sofort falsch statt glaubhaft richtig.
 **Verweise auf Namen, nicht auf Zeilen.** Eine Zeilennummer im Fließtext sagt
 nichts darüber, worauf sie zeigt, sie altert mit dem nächsten Commit, und ihre
 Fehler sehen aus wie Treffer.
+
+### Ein Verzeichnis, das die Lücke breiter aufschreibt als sie ist
+
+In mein Verzeichnis der offenen Punkte hatte ich geschrieben: "der
+Sitzungsschlüssel gibt es nach der Anmeldung nirgends im Browser". Gemessen ist
+es enger: die Anmeldung **baut** das Schlüsselpaar und **öffnet** damit sogar
+die Leitung — sie gibt es nur nicht weiter. Ein Satz, drei Wörter zu breit.
+
+Hätte ich damit einen Implementierer losgeschickt, hätte er angefangen zu
+bauen, was schon da ist — und wäre beim Suchen auf die fertige Stelle gestoßen
+und hätte sich gefragt, wem er glauben soll.
+
+**Die Regel:** Dasselbe Gegenlesen, das du dem Kommentar neben dem Code
+schuldest, schuldest du deiner eigenen Notiz. Eine Lücke, die du aufschreibst,
+schreibst du mit der **Stelle** auf, an der sie aufhört: welche Datei, welche
+Zeile, was dort schon steht. Wer das nicht nachlesen kann, muss dir glauben — und
+ein Verzeichnis, dem man glauben muss, ist ein Verzeichnis, das altert.
 
 ### Fünf Stränge bringen fünf Kopien derselben Konstante mit
 
