@@ -154,3 +154,38 @@ test("two overlapping writes arrive unfalsified and in order", async ({ shell })
   expect(out.seen).toBe("AAAABBBB");
   expect(out.status).toBe("ok");
 });
+
+// W2. Channel.take() put every piece into this.chunks for a result() that
+// never comes on a stream, and nothing took them out again: a terminal that
+// prints for an hour kept every byte of it in the tab. There is no number to
+// invent here - a stream is unbounded by nature, and a total bound would cut
+// off exactly the session the stream is for. The fault is the collecting, so
+// the rule is that whoever reads does not have to collect. MAX_CALL_RESULT
+// stays where it is, on result().
+test("a channel with a listener does not keep what it has handed over", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const { connectForTest } = await import("/assets/js/net/testlink.js");
+    const link = await connectForTest();
+    const ch = await link.openE2E("org.sorglos.terminal", "terminal", "shell", { cols: 80, rows: 24 });
+    const seen = [];
+    ch.onData((d) => seen.push(new TextDecoder().decode(d)));
+    const enc = new TextEncoder();
+    // Five lines, the same five the task report measured.
+    for (const line of ["one", "two", "three", "four", "five"]) {
+      await ch.write(enc.encode(line));
+    }
+    for (let i = 0; i < 300 && seen.length < 5; i++) await new Promise((r) => setTimeout(r, 10));
+    const held = ch.chunks.length, total = ch.total, limit = ch.limit;
+    link.close();
+    return { got: seen.join(""), seen: seen.length, held, total, limit: String(limit) };
+  });
+  // All five arrived, so all five were handed over.
+  expect(out.seen).toBe(5);
+  expect(out.got).toBe("onetwothreefourfive");
+  // And none of them is still being held for a caller who never asks.
+  expect(out.held).toBe(0);
+  // The accounting is untouched: total still counts every byte, and a stream
+  // still has no limit of its own - that is result()'s job, not take()'s.
+  expect(out.total).toBe(19);
+  expect(out.limit).toBe("Infinity");
+});

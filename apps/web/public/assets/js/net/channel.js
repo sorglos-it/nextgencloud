@@ -401,11 +401,25 @@ export class Channel {
   // and a piece that broke it reaches nobody: past the bound the channel is
   // over, and handing its data on would be handing on the very bytes the
   // bound refused.
+  //
+  // WHOEVER READS DOES NOT HAVE TO COLLECT. chunks exists for result() and
+  // result() is the only thing that ever reads it, so a piece that has been
+  // handed to a listener is not kept: on a stream result() never comes, and
+  // every piece used to stay behind for a caller that would never ask. A
+  // terminal printing for an hour held every byte of that hour in the tab.
+  // There is no number to invent against it - a stream is unbounded by
+  // nature, and a bound over its whole life would cut off exactly the session
+  // the stream is for. What one frame may be is the contract's to say and is
+  // checked on the way in; MAX_CALL_RESULT stays on result(), where a caller
+  // really is waiting for all of it at once.
   take(p) {
     this.total += p.length;
-    this.chunks.push(p);
-    this.checkLimit();
+    // Read before checkLimit, which can end the channel; the handler is still
+    // only called when the bound held, so a piece that broke it reaches
+    // nobody - and is not stored either.
     const fn = this.handlers.data;
+    if (fn === null) this.chunks.push(p);
+    this.checkLimit();
     if (fn !== null && !this.overLimit) fn(p);
   }
 
