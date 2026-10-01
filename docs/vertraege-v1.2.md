@@ -342,6 +342,41 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     Bis dahin bleibt es offen, und die Kommentare im Code sagen es so.
     (api, Aufgabe 8)
 
+## shared/dbapi — die obere Grenze einer Protokollseite
+
+**Gemessen am 01.10.2026 vom db-Strang (Aufgabe 7), gemeldet als BLOCKED statt
+`shared/` anzufassen.** Der Vertrag zieht die Grenze einer Protokollseite bei
+500 — aber nur an der API-Grenze (`core.LogQuery.Validate`). Darunter hält sie
+niemand, und ein NGC-interner Aufrufer überquert diese Grenze nie.
+
+`apps/server-db` weist jetzt `Limit > 500` mit `dbapi.ErrInvalid` ab (kein
+Kappen: eine Abfrage, die 1000 verlangt und 500 bekäme, sähe für den Aufrufer
+aus wie „es gibt nur 500"). **Damit ist dieser Store strenger als der Vertrag
+ihn beschreibt**, und die zwei Speicher gabeln sich an dieser Grenze. Drei
+Zeilen schließen das:
+
+1. **`shared/dbapi/memstore/memstore.go:368`** — `q.Limit > 500` in die Bedingung
+   von `LogQuery`. **Die Zahl, kein Verweis auf `sqlstore`**: `shared/` darf nicht
+   nach `apps/` zeigen.
+2. **`shared/dbapi/dbapi.go:185–187`** — der Satz zählt die `ErrInvalid`-Fälle von
+   `LogQuery` auf und **nennt die obere Grenze nicht**. Solange das so ist,
+   beschreibt der Vertrag etwas Schwächeres, als die Speicher tun.
+3. **`shared/dbapi/dbtest/dbtest.go`, `testLog`** — die Zeile
+   `"limit above the page bound": {Limit: 501}`. **Das ist die wichtigste der
+   drei**, denn sie löst „zwei Speicher dürfen sich nicht gabeln"
+   **strukturell** statt je Speicher nachgebaut. Heute stellt keine Gruppe von
+   `dbtest.Run` ein `Limit` über 500, also hält der Vertragssatz die Gabelung
+   nicht — er könnte sie nicht einmal sehen.
+
+**Bis 1 und 3 da sind, ist die Gabelung bezahlt und benannt**, nicht geschlossen.
+Das war der ausdrückliche Preis dafür, `shared/` nicht anzufassen.
+
+Nebenbei an derselben Stelle gefunden, und es gehört zur Form dieses Punktes:
+gehalten war nur „einer mehr als die Grenze". `>` zu `>=` zu machen blieb
+**grün** — die **größte vom Vertrag erlaubte** Seite wäre abgewiesen worden, ohne
+dass ein Test fällt. Wer Punkt 1 baut, stellt **beide** Zahlen: `500` geht durch,
+`501` nicht, und dem Vertrag werden dieselben zwei gestellt.
+
 ## Nicht vergessen
 
 - Die Zahlen aus Punkt 1 und 3 sind **gemessen**, nicht geschätzt. Wer sie in den
