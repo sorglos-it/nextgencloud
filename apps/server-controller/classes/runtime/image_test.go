@@ -177,26 +177,42 @@ func TestImageTagRefusesAManifestThatIsTooBig(t *testing.T) {
 // The archive is read to its end on purpose, so its length is the writer's to
 // choose unless something bounds it. An image has a handful of members; one with
 // more than MaxImageMembers is not an image.
+// Three numbers, not two: the limit itself goes through, one above it does not,
+// and two above it does not either. With only the limit and two above it, a bound
+// that is one too wide passes unnoticed - which is what happened here once
+// already, in the code, and the case that found it could not have seen it.
 func TestImageTagRefusesATarWithTooManyMembers(t *testing.T) {
-	es := make([]entry, 0, MaxImageMembers+1)
-	for i := 0; i <= MaxImageMembers; i++ {
-		es = append(es, entry{name: "l/" + strconv.Itoa(i), body: "x"})
+	// archiveOf builds a tar with exactly n members, the manifest among them.
+	archiveOf := func(n int) []entry {
+		es := make([]entry, 0, n)
+		for i := 0; i < n-1; i++ {
+			es = append(es, entry{name: "l/" + strconv.Itoa(i), body: "x"})
+		}
+		return append(es, entry{name: ManifestFile, body: `[{"RepoTags":["ngc/a:1.0.0"]}]`})
 	}
-	es = append(es, entry{name: ManifestFile, body: `[{"RepoTags":["ngc/a:1.0.0"]}]`})
-	path := filepath.Join(t.TempDir(), "amd64.tar")
-	writeTar(t, path, es)
-	ref, err := ImageTag(path)
-	if err == nil {
-		t.Fatalf("took it as %q", ref)
-	}
-	if !errors.Is(err, ErrManifest) {
-		t.Fatalf("err = %v, want ErrManifest", err)
-	}
-	// One member fewer is read to the end and answers.
-	path = filepath.Join(t.TempDir(), "small.tar")
-	writeTar(t, path, es[len(es)-MaxImageMembers:])
-	if ref, err = ImageTag(path); err != nil || ref != "ngc/a:1.0.0" {
-		t.Fatalf("ref = %q, err = %v", ref, err)
+	for _, c := range []struct {
+		members int
+		take    bool
+	}{
+		{MaxImageMembers, true},
+		{MaxImageMembers + 1, false},
+		{MaxImageMembers + 2, false},
+	} {
+		path := filepath.Join(t.TempDir(), "amd64.tar")
+		writeTar(t, path, archiveOf(c.members))
+		ref, err := ImageTag(path)
+		if c.take {
+			if err != nil || ref != "ngc/a:1.0.0" {
+				t.Fatalf("%d members: ref = %q, err = %v", c.members, ref, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Fatalf("%d members: took it as %q", c.members, ref)
+		}
+		if !errors.Is(err, ErrManifest) {
+			t.Fatalf("%d members: err = %v, want ErrManifest", c.members, err)
+		}
 	}
 }
 

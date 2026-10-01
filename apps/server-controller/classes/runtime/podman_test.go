@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	goruntime "runtime"
@@ -55,6 +56,14 @@ func fakePodman(t *testing.T) *fake {
 		"exit 0\n"
 	if err := os.WriteFile(f.bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	// Reachable and writable for whoever the engine switches to: a run as root
+	// really switches, and then the app's user has to be able to run this and
+	// write its records. Everything here lives in a directory of this test.
+	for _, path := range []string{filepath.Dir(dir), dir, f.bin} {
+		if err := os.Chmod(path, 0o777); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// A variable of this process that must not reach podman.
 	t.Setenv("NGC_LEAK", "this must not reach podman")
@@ -115,10 +124,13 @@ func (f *fake) gotOnStdin(t *testing.T) string {
 	return string(b)
 }
 
-// prints makes the next calls write s on their standard output.
+// prints makes the next calls write s on their standard output. Readable by
+// anyone, like the other files that steer the fake: a run as root really switches
+// user, and the fake then reads these as the app's user, not as the one that
+// wrote them.
 func (f *fake) prints(t *testing.T, s string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(f.dir, "out"), []byte(s), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.dir, "out"), []byte(s), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -134,31 +146,71 @@ func (f *fake) diesOfASignal(t *testing.T) { f.touch(t, "signal") }
 
 func (f *fake) touch(t *testing.T, name string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(f.dir, name), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.dir, name), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// me is the user this test runs as. The engine switches user only when it has
-// to, so a container of this user needs no root and the test measures the
-// argument list alone - which is what these cases are about. Neither UID nor
-// GID appears in any argument.
-func me() (uint32, uint32) { return uint32(os.Getuid()), uint32(os.Getgid()) }
+// testApp is a system user of this machine that a case may give an app.
+type testApp struct {
+	name     string
+	uid, gid uint32
+	home     string
+}
 
-// meName is the name of this user, used where a case needs a container name
-// that the engine can look up in the user database.
-func meName(t *testing.T) string {
+// anApp picks that user. It is never root, because the engine refuses uid or gid
+// 0 for an app - so a case cannot simply take whoever runs the test:
+//
+//   - without root this process cannot switch user at all, so it has to be this
+//     process's own user, and then nothing is switched;
+//   - as root it has to be somebody else, and then the switch really happens and
+//     the fake records which user it ran as.
+//
+// Neither uid nor gid appears in any argument, so the cases about argument lists
+// measure the same thing either way.
+func anApp(t *testing.T) testApp {
 	t.Helper()
-	u, err := user.Current()
-	if err != nil {
-		t.Skip("no user database here:", err)
+	if goruntime.GOOS != "linux" {
+		// A system user with a numeric uid is a thing of Linux, and so is every
+		// case that needs one. Said here as well as in fakePodman, because a case
+		// may ask for the user before it asks for the fake.
+		t.Skip("the system users of an app are Linux")
 	}
-	return u.Username
+	var u *user.User
+	var err error
+	if os.Geteuid() == 0 {
+		// An unprivileged user every Debian and Ubuntu has.
+		u, err = user.Lookup("nobody")
+	} else {
+		u, err = user.Current()
+	}
+	if err != nil {
+		t.Skip("no user database here: " + err.Error())
+	}
+	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gid, err := strconv.ParseUint(u.Gid, 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid == 0 || gid == 0 {
+		t.Skip("the only user this run could give an app is root: " + u.Username)
+	}
+	if !validName.MatchString(u.Username) {
+		t.Skip("the name of that user is no container name: " + u.Username)
+	}
+	if err := validPath(u.HomeDir); err != nil {
+		t.Skip("the home of that user is no data directory: " + u.HomeDir)
+	}
+	return testApp{name: u.Username, uid: uint32(uid), gid: uint32(gid), home: u.HomeDir}
 }
 
 func TestCreateBuildsTheArgumentList(t *testing.T) {
 	f := fakePodman(t)
-	uid, gid := me()
+	app := anApp(t)
+	uid, gid := app.uid, app.gid
 	p := NewPodman(f.bin)
 	err := p.Create(context.Background(), Container{
 		Name: "ngc-terminal-1a2b3c4d", Image: "ngc/terminal:1.0.0",
@@ -194,7 +246,8 @@ func TestCreateTakesTheLimitsApartInThousandths(t *testing.T) {
 	}
 	for _, c := range cases {
 		f := fakePodman(t)
-		uid, gid := me()
+		app := anApp(t)
+		uid, gid := app.uid, app.gid
 		p := NewPodman(f.bin)
 		if err := p.Create(context.Background(), Container{
 			Name: "ngc-a-00000000", Image: "ngc/a:1.0.0", UID: uid, GID: gid,
@@ -227,7 +280,8 @@ func TestCreateWithNetworkAndRoot(t *testing.T) {
 	// app's own user, so root in there is not root on this server, and
 	// --read-only and no-new-privileges stay.
 	f := fakePodman(t)
-	uid, gid := me()
+	app := anApp(t)
+	uid, gid := app.uid, app.gid
 	p := NewPodman(f.bin)
 	if err := p.Create(context.Background(), Container{
 		Name: "ngc-terminal-1a2b3c4d", Image: "ngc/terminal:1.0.0",
@@ -266,7 +320,8 @@ func TestCreateWithNetworkAndRoot(t *testing.T) {
 func TestEachGrantChangesOnlyItsOwnOption(t *testing.T) {
 	list := func(bend func(c *Container)) []string {
 		f := fakePodman(t)
-		uid, gid := me()
+		app := anApp(t)
+		uid, gid := app.uid, app.gid
 		c := Container{
 			Name: "ngc-a-00000000", Image: "ngc/a:1.0.0", UID: uid, GID: gid,
 			DataDir: "/var/lib/ngc/apps/a", Hold: "/usr/lib/ngc/ngc-controller",
@@ -305,7 +360,7 @@ func TestCreateRefusesWhatWouldChangeTheArgumentList(t *testing.T) {
 		Name: "ngc-a-00000000", Image: "ngc/a:1.0.0",
 		DataDir: "/var/lib/ngc/apps/a", Hold: "/usr/lib/ngc/ngc-controller",
 	}
-	good.UID, good.GID = me()
+	good.UID, good.GID = anApp(t).uid, anApp(t).gid
 	cases := map[string]func(c *Container){
 		"name with a dash in front":  func(c *Container) { c.Name = "-privileged" },
 		"name with a colon":          func(c *Container) { c.Name = "a:b" },
@@ -348,7 +403,8 @@ func TestCreateRefusesWhatWouldChangeTheArgumentList(t *testing.T) {
 // thing that must never travel this way.
 func TestCreatePassesFourVariablesAndNothingElse(t *testing.T) {
 	f := fakePodman(t)
-	uid, gid := me()
+	app := anApp(t)
+	uid, gid := app.uid, app.gid
 	p := NewPodman(f.bin)
 	if err := p.Create(context.Background(), Container{
 		Name: "ngc-terminal-1a2b3c4d", Image: "ngc/terminal:1.0.0", UID: uid, GID: gid,
@@ -368,18 +424,48 @@ func TestCreatePassesFourVariablesAndNothingElse(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", k, env[k], v)
 		}
 	}
-	// Everything else that may stand there is a name the shell keeps for itself
-	// (measured on dash: PWD alone; the other two are what another /bin/sh
-	// maintains). Anything else came out of cmd.Env and does not belong to an app.
+	// Everything else that may stand there is a name the shell keeps for itself,
+	// and which names those are is measured in this very run rather than guessed:
+	// a guessed list is a wider gate than the measurement asks for, and a
+	// secret could walk through it under one of the guessed names.
+	own := shellOwnNames(t)
 	for k, v := range env {
 		if _, ok := want[k]; ok {
 			continue
 		}
-		if k == "PWD" || k == "SHLVL" || k == "OLDPWD" {
+		if _, ok := own[k]; ok {
 			continue
 		}
 		t.Fatalf("podman also got %s=%q", k, v)
 	}
+}
+
+// shellOwnNames is what this machine's /bin/sh puts into an environment of its
+// own accord, measured by starting one with exactly the four the engine sets.
+// Whatever a call shows beyond these four and these names came out of cmd.Env.
+func shellOwnNames(t *testing.T) map[string]struct{} {
+	t.Helper()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "show")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nenv\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(script)
+	cmd.Env = []string{"HOME=/h", "XDG_RUNTIME_DIR=/r", "PATH=/usr/bin:/bin", "LANG=C.UTF-8"}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := map[string]struct{}{}
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		k, _, _ := strings.Cut(l, "=")
+		switch k {
+		case "HOME", "XDG_RUNTIME_DIR", "PATH", "LANG", "":
+			continue
+		}
+		own[k] = struct{}{}
+	}
+	return own
 }
 
 // Switching user needs root. A controller without root must not start the
@@ -405,7 +491,7 @@ func TestWithoutRootNoContainerStartsForAnotherUser(t *testing.T) {
 
 func TestExecNeverUsesAShell(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	cmd := []string{"/usr/bin/greet", `say "hallo welt"`, "-c"}
 	code, err := NewPodman(f.bin).Exec(context.Background(), Exec{
 		Name: name, Command: cmd, Stdin: strings.NewReader(""),
@@ -443,7 +529,7 @@ func TestExecNeverUsesAShell(t *testing.T) {
 // is over: it is the only copy that was on the machine.
 func TestExecTakesTheEnvironmentFromAFileAndRemovesIt(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	envFile := runDirFile(t, name)
 	if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
 		Name: name, Command: []string{"/usr/bin/greet"}, EnvFile: envFile,
@@ -454,6 +540,13 @@ func TestExecTakesTheEnvironmentFromAFileAndRemovesIt(t *testing.T) {
 	i := slices.Index(args, "--env-file")
 	if i < 0 || args[i+1] != envFile {
 		t.Fatalf("args = %q, want --env-file %s", args, envFile)
+	}
+	// And it has to stand among the options of podman. Behind the -- podman would
+	// not read it at all: the call would run without its environment, and the path
+	// of the file with the parameters would stand in the command line of the
+	// service - the one place this file exists to keep it out of.
+	if end := slices.Index(args, "--"); end < 0 || i > end {
+		t.Fatalf("args = %q, --env-file does not stand among the options of podman", args)
 	}
 	if _, err := os.Stat(envFile); !os.IsNotExist(err) {
 		t.Fatalf("the file with the parameters is still there: %v", err)
@@ -480,7 +573,7 @@ func runDirFile(t *testing.T, name string) string {
 
 func TestExecRefusesAnEnvironmentFileThatIsNoPath(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	// The last two are paths that exist and are perfectly well formed. They are
 	// refused because they are not under config.RunDir, and the engine removes
 	// what it is handed: a path from anywhere would make this call a way to
@@ -503,7 +596,7 @@ func TestExecRefusesAnEnvironmentFileThatIsNoPath(t *testing.T) {
 // be run at all.
 func TestExecReportsTheExitCodeOfTheService(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	f.failsOn(t, "exec")
 	code, err := NewPodman(f.bin).Exec(context.Background(), Exec{
 		Name: name, Command: []string{"/usr/bin/greet"},
@@ -521,7 +614,7 @@ func TestExecReportsTheExitCodeOfTheService(t *testing.T) {
 // command can end with: handing it back as the result would tell the caller
 // "the service decided to end with -1" about a service that was killed.
 func TestExecDoesNotTurnACutShortCallIntoAStatus(t *testing.T) {
-	name := meName(t)
+	name := anApp(t).name
 
 	// The context runs out while podman is still running - the ordinary way a
 	// service hits its time limit.
@@ -545,6 +638,25 @@ func TestExecDoesNotTurnACutShortCallIntoAStatus(t *testing.T) {
 		t.Fatalf("err = %v, want the context's own cause joined to it", err)
 	}
 
+	// The other form of a context that ended: cancelled by hand while podman runs.
+	// It has to answer the same way and name its own cause, which is a different
+	// one.
+	f = fakePodman(t)
+	f.sleeps(t)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel2()
+	}()
+	code, err = NewPodman(f.bin).Exec(ctx2, Exec{Name: name, Command: []string{"/usr/bin/greet"}})
+	cancel2()
+	if code != 0 || !errors.Is(err, ErrKilled) {
+		t.Fatalf("code = %d, err = %v, want 0 and ErrKilled", code, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled joined to it", err)
+	}
+
 	// A signal that has nothing to do with the context: same answer, without a
 	// cause from the context.
 	f = fakePodman(t)
@@ -560,10 +672,68 @@ func TestExecDoesNotTurnACutShortCallIntoAStatus(t *testing.T) {
 	}
 }
 
+// The other side of that line: an engine that could not be run at all says so
+// without ErrKilled. If everything that goes wrong carried ErrKilled, the caller
+// could no longer tell a time limit from a podman that is not installed, and it
+// would answer a broken server with "the service was cut short".
+func TestAnEngineThatCannotRunSaysSoWithoutErrKilled(t *testing.T) {
+	name := anApp(t).name
+	gone := filepath.Join(t.TempDir(), "no-podman-here")
+	code, err := NewPodman(gone).Exec(context.Background(), Exec{
+		Name: name, Command: []string{"/usr/bin/greet"},
+	})
+	if err == nil {
+		t.Fatalf("code = %d and no error for a podman that is not there", code)
+	}
+	if code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	if errors.Is(err, ErrKilled) {
+		t.Fatalf("err = %v, says the command was cut short - it never ran", err)
+	}
+}
+
+// The same promise over a race instead of over one arranged moment. Go's Cmd.Wait
+// prefers the error of the process and reports the one of the context only when
+// the process had none, so a command that ends with 0 in the very moment the
+// context runs out arrives as the plain context error and not as an ExitError -
+// measured at 6 of 400 before this was held. Whatever mix of the three outcomes a
+// run produces, each one has to be either a status or an error that says
+// ErrKilled; a number must never come out of a call the context ended.
+func TestNoCancelledCallComesBackWithoutErrKilled(t *testing.T) {
+	name := anApp(t).name
+	p := NewPodman(fakePodman(t).bin)
+	kinds := map[string]int{}
+	for i := range 200 {
+		// A limit around the time the fake needs, so that all three outcomes
+		// really occur instead of only the easy one.
+		ctx, cancel := context.WithTimeout(context.Background(),
+			time.Duration(1500+i*80)*time.Microsecond)
+		code, err := p.Exec(ctx, Exec{Name: name, Command: []string{"/usr/bin/greet"}})
+		cancel()
+		switch {
+		case err == nil:
+			if code != 0 {
+				t.Fatalf("code = %d without an error", code)
+			}
+			kinds["a status"]++
+		case errors.Is(err, ErrKilled):
+			if code != 0 {
+				t.Fatalf("code = %d with ErrKilled - that is no status of a command", code)
+			}
+			kinds["ErrKilled"]++
+		default:
+			t.Fatalf("round %d: code = %d, err = %v - a call the context ended, "+
+				"and the caller cannot tell: no ErrKilled", i, code, err)
+		}
+	}
+	t.Logf("outcomes: %v", kinds)
+}
+
 func TestExecWithStdinAndWithout(t *testing.T) {
 	for _, in := range []bool{true, false} {
 		f := fakePodman(t)
-		name := meName(t)
+		name := anApp(t).name
 		e := Exec{Name: name, Command: []string{"/usr/bin/greet"}}
 		if in {
 			e.Stdin = strings.NewReader("")
@@ -586,7 +756,7 @@ func TestExecWithStdinAndWithout(t *testing.T) {
 // error went nowhere would fail with nothing to show.
 func TestExecCarriesAllThreeEndsThrough(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	f.prints(t, "hallo")
 	var out, errOut bytes.Buffer
 	if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
@@ -613,7 +783,7 @@ func TestExecWithRootNamesTheUserAndNothingElse(t *testing.T) {
 	list := func(root bool) []string {
 		f := fakePodman(t)
 		if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
-			Name: meName(t), Command: []string{"/usr/bin/greet"}, Root: root,
+			Name: anApp(t).name, Command: []string{"/usr/bin/greet"}, Root: root,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -639,7 +809,7 @@ func TestExecWithRootNamesTheUserAndNothingElse(t *testing.T) {
 }
 
 func TestStartAndRemoveBuildTheirArgumentList(t *testing.T) {
-	name := meName(t)
+	name := anApp(t).name
 	cases := []struct {
 		call func(p *Podman) error
 		want []string
@@ -662,7 +832,7 @@ func TestStartAndRemoveBuildTheirArgumentList(t *testing.T) {
 // the container. A stop that worked must not be followed by a kill: that would
 // take the ten seconds away again.
 func TestStopKillsOnlyWhenStoppingFailed(t *testing.T) {
-	name := meName(t)
+	name := anApp(t).name
 
 	f := fakePodman(t)
 	if err := NewPodman(f.bin).Stop(context.Background(), name); err != nil {
@@ -694,7 +864,7 @@ func TestStopKillsOnlyWhenStoppingFailed(t *testing.T) {
 // parsed. The filter is anchored: a container whose name begins with this one
 // must not answer for it.
 func TestRunningReadsOnlyWhetherAnythingCameBack(t *testing.T) {
-	name := meName(t)
+	name := anApp(t).name
 
 	f := fakePodman(t)
 	f.prints(t, "")
@@ -731,7 +901,7 @@ func TestRunningReadsOnlyWhetherAnythingCameBack(t *testing.T) {
 
 func TestLoadImageAnswersWithTheTagOfTheTar(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	tarPath := filepath.Join(t.TempDir(), "amd64.tar")
 	writeTar(t, tarPath, archive(`[{"Config":"c.json","RepoTags":["ngc/terminal:1.0.0"],"Layers":["l/layer.tar"]}]`))
 	ref, err := NewPodman(f.bin).LoadImage(context.Background(), name, tarPath)
@@ -754,19 +924,16 @@ func TestLoadImageAnswersWithTheTagOfTheTar(t *testing.T) {
 // user, never a directory of this controller.
 func TestLoadImageUsesTheStoreOfTheApp(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
-	u, err := user.Current()
-	if err != nil {
-		t.Skip("no user database here: " + err.Error())
-	}
+	app := anApp(t)
+	name := app.name
 	tarPath := filepath.Join(t.TempDir(), "amd64.tar")
 	writeTar(t, tarPath, archive(`[{"RepoTags":["ngc/terminal:1.0.0"]}]`))
 	if _, err := NewPodman(f.bin).LoadImage(context.Background(), name, tarPath); err != nil {
 		t.Fatal(err)
 	}
 	env := f.env(t)
-	if env["HOME"] != u.HomeDir {
-		t.Fatalf("HOME = %q, want the home of %s, %q", env["HOME"], name, u.HomeDir)
+	if env["HOME"] != app.home {
+		t.Fatalf("HOME = %q, want the home of %s, %q", env["HOME"], name, app.home)
 	}
 	if env["HOME"] == config.DataDir || env["XDG_RUNTIME_DIR"] == config.RunDir {
 		t.Fatalf("the image went into the store of this controller: HOME=%q XDG_RUNTIME_DIR=%q",
@@ -781,7 +948,7 @@ func TestLoadImageUsesTheStoreOfTheApp(t *testing.T) {
 	if err := NewPodman(f.bin).RemoveImage(context.Background(), name, "ngc/terminal:1.0.0"); err != nil {
 		t.Fatal(err)
 	}
-	if env = f.env(t); env["HOME"] != u.HomeDir || env["XDG_RUNTIME_DIR"] != config.RunDir+"/"+name {
+	if env = f.env(t); env["HOME"] != app.home || env["XDG_RUNTIME_DIR"] != config.RunDir+"/"+name {
 		t.Fatalf("rmi ran with HOME=%q XDG_RUNTIME_DIR=%q", env["HOME"], env["XDG_RUNTIME_DIR"])
 	}
 }
@@ -792,7 +959,7 @@ func TestLoadImageRefusesATarWithoutOneTag(t *testing.T) {
 	f := fakePodman(t)
 	tarPath := filepath.Join(t.TempDir(), "amd64.tar")
 	writeTar(t, tarPath, archive(`[{"RepoTags":["a:1","b:2"]}]`))
-	if _, err := NewPodman(f.bin).LoadImage(context.Background(), meName(t), tarPath); err == nil {
+	if _, err := NewPodman(f.bin).LoadImage(context.Background(), anApp(t).name, tarPath); err == nil {
 		t.Fatal("the tar was loaded")
 	}
 	if f.ran() {
@@ -802,7 +969,7 @@ func TestLoadImageRefusesATarWithoutOneTag(t *testing.T) {
 
 func TestRemoveImageBuildsTheArgumentListAndRefusesNonsense(t *testing.T) {
 	f := fakePodman(t)
-	if err := NewPodman(f.bin).RemoveImage(context.Background(), meName(t), "ngc/terminal:1.0.0"); err != nil {
+	if err := NewPodman(f.bin).RemoveImage(context.Background(), anApp(t).name, "ngc/terminal:1.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	if args := f.args(t); !slices.Equal(args, []string{"rmi", "ngc/terminal:1.0.0"}) {
@@ -811,7 +978,7 @@ func TestRemoveImageBuildsTheArgumentListAndRefusesNonsense(t *testing.T) {
 
 	for _, bad := range []string{"-a", "ngc/terminal", "", "ngc/terminal:1.0.0 --all"} {
 		f = fakePodman(t)
-		if err := NewPodman(f.bin).RemoveImage(context.Background(), meName(t), bad); err == nil {
+		if err := NewPodman(f.bin).RemoveImage(context.Background(), anApp(t).name, bad); err == nil {
 			t.Fatalf("ref %q was taken", bad)
 		}
 		if f.ran() {
@@ -831,7 +998,7 @@ func TestACancelledCallStartsNothing(t *testing.T) {
 	f := fakePodman(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := NewPodman(f.bin).Start(ctx, meName(t)); err == nil {
+	if err := NewPodman(f.bin).Start(ctx, anApp(t).name); err == nil {
 		t.Fatal("the call ran anyway")
 	}
 	if f.ran() {
@@ -846,20 +1013,9 @@ func TestACancelledCallStartsNothing(t *testing.T) {
 // the container was made in.
 func TestCreateRefusesAUserWhoseHomeIsNotTheDataDirectory(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
-	if !validName.MatchString(name) {
-		t.Skip("the name of this user is no container name: " + name)
-	}
-	u, err := user.Current()
-	if err != nil {
-		t.Skip("no user database here: " + err.Error())
-	}
-	uid, gid := me()
-	c := Container{Name: name, Image: "ngc/a:1.0.0", UID: uid, GID: gid,
-		DataDir: u.HomeDir, Hold: "/usr/lib/ngc/ngc-controller"}
-	if err := validPath(c.DataDir); err != nil {
-		t.Skip("the home of this user is no data directory: " + c.DataDir)
-	}
+	app := anApp(t)
+	c := Container{Name: app.name, Image: "ngc/a:1.0.0", UID: app.uid, GID: app.gid,
+		DataDir: app.home, Hold: config.BinDir + "/ngc-controller"}
 	if err := NewPodman(f.bin).Create(context.Background(), c); err != nil {
 		t.Fatalf("a user whose home is its data directory was refused: %v", err)
 	}
@@ -879,25 +1035,14 @@ func TestCreateRefusesAUserWhoseHomeIsNotTheDataDirectory(t *testing.T) {
 // create the container as that other user, while every later call looked for it
 // as this one.
 func TestCreateRefusesAUidOrGidThatIsNotTheUsers(t *testing.T) {
-	name := meName(t)
-	if !validName.MatchString(name) {
-		t.Skip("the name of this user is no container name: " + name)
-	}
-	u, err := user.Current()
-	if err != nil {
-		t.Skip("no user database here: " + err.Error())
-	}
-	uid, gid := me()
-	if err := validPath(u.HomeDir); err != nil {
-		t.Skip("the home of this user is no data directory: " + u.HomeDir)
-	}
+	app := anApp(t)
 	for _, bend := range []func(c *Container){
-		func(c *Container) { c.UID = uid + 1 },
-		func(c *Container) { c.GID = gid + 1 },
+		func(c *Container) { c.UID = app.uid + 1 },
+		func(c *Container) { c.GID = app.gid + 1 },
 	} {
 		f := fakePodman(t)
-		c := Container{Name: name, Image: "ngc/a:1.0.0", UID: uid, GID: gid,
-			DataDir: u.HomeDir, Hold: config.BinDir + "/ngc-controller"}
+		c := Container{Name: app.name, Image: "ngc/a:1.0.0", UID: app.uid, GID: app.gid,
+			DataDir: app.home, Hold: config.BinDir + "/ngc-controller"}
 		bend(&c)
 		if err := NewPodman(f.bin).Create(context.Background(), c); !errors.Is(err, ErrIdentity) {
 			t.Fatalf("err = %v, want ErrIdentity", err)
@@ -905,6 +1050,70 @@ func TestCreateRefusesAUidOrGidThatIsNotTheUsers(t *testing.T) {
 		if f.ran() {
 			t.Fatalf("podman was started anyway: %q", f.args(t))
 		}
+	}
+}
+
+// A container of an app is nobody's root. Without this line the one thing this
+// package is for falls away in a single call: podman would run as root, and an
+// app writing into /data would write into root's own directory. Measured in both
+// directions - the name of the root user is refused as well, from either side,
+// because the calls after Create read the user back out of the database.
+func TestNoContainerOfAnAppIsRoot(t *testing.T) {
+	app := anApp(t)
+	good := Container{Name: app.name, Image: "ngc/a:1.0.0", UID: app.uid, GID: app.gid,
+		DataDir: app.home, Hold: config.BinDir + "/ngc-controller"}
+	cases := map[string]func(c *Container){
+		"uid 0":  func(c *Container) { c.UID = 0 },
+		"gid 0":  func(c *Container) { c.GID = 0 },
+		"both 0": func(c *Container) { c.UID, c.GID = 0, 0 },
+		"the root user": func(c *Container) {
+			c.Name, c.UID, c.GID, c.DataDir = "root", 0, 0, "/root"
+		},
+	}
+	for name, bend := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := fakePodman(t)
+			c := good
+			bend(&c)
+			if err := NewPodman(f.bin).Create(context.Background(), c); !errors.Is(err, ErrIdentity) {
+				t.Fatalf("err = %v, want ErrIdentity", err)
+			}
+			if f.ran() {
+				t.Fatalf("podman was started anyway: %q", f.args(t))
+			}
+		})
+	}
+	// And from the other side: a container whose name belongs to root reaches no
+	// podman either, whichever call asks.
+	if _, err := user.Lookup("root"); err != nil {
+		t.Skip("there is no user root here: " + err.Error())
+	}
+	calls := map[string]func(p *Podman) error{
+		"Start":  func(p *Podman) error { return p.Start(context.Background(), "root") },
+		"Stop":   func(p *Podman) error { return p.Stop(context.Background(), "root") },
+		"Remove": func(p *Podman) error { return p.Remove(context.Background(), "root") },
+		"Running": func(p *Podman) error {
+			_, err := p.Running(context.Background(), "root")
+			return err
+		},
+		"Exec": func(p *Podman) error {
+			_, err := p.Exec(context.Background(), Exec{Name: "root", Command: []string{"/usr/bin/greet"}})
+			return err
+		},
+		"RemoveImage": func(p *Podman) error {
+			return p.RemoveImage(context.Background(), "root", "ngc/a:1.0.0")
+		},
+	}
+	for name, call := range calls {
+		t.Run("the root user through "+name, func(t *testing.T) {
+			f := fakePodman(t)
+			if err := call(NewPodman(f.bin)); !errors.Is(err, ErrIdentity) {
+				t.Fatalf("err = %v, want ErrIdentity", err)
+			}
+			if f.ran() {
+				t.Fatalf("podman was started anyway: %q", f.args(t))
+			}
+		})
 	}
 }
 
@@ -968,35 +1177,37 @@ func TestPodmanRunsUnderTheUserOfTheApp(t *testing.T) {
 // would have to run as is exactly what that name answers, so without it there
 // is nothing to run.
 func TestTheCallsAfterCreateNeedTheUserOfTheirName(t *testing.T) {
-	f := fakePodman(t)
-	p := NewPodman(f.bin)
+	// One fake per subtest: with a shared one, a call that did start podman would
+	// colour every later subtest red as well, and which of them held the promise
+	// would not be readable from the result.
 	gone := "ngc-nobody-00000000"
 	if _, err := user.Lookup(gone); err == nil {
 		t.Skip("there is a user called " + gone + " on this machine")
 	}
-	calls := map[string]func() error{
-		"Start":  func() error { return p.Start(context.Background(), gone) },
-		"Stop":   func() error { return p.Stop(context.Background(), gone) },
-		"Remove": func() error { return p.Remove(context.Background(), gone) },
-		"Running": func() error {
+	calls := map[string]func(p *Podman) error{
+		"Start":  func(p *Podman) error { return p.Start(context.Background(), gone) },
+		"Stop":   func(p *Podman) error { return p.Stop(context.Background(), gone) },
+		"Remove": func(p *Podman) error { return p.Remove(context.Background(), gone) },
+		"Running": func(p *Podman) error {
 			_, err := p.Running(context.Background(), gone)
 			return err
 		},
-		"Exec": func() error {
+		"Exec": func(p *Podman) error {
 			_, err := p.Exec(context.Background(), Exec{Name: gone, Command: []string{"/usr/bin/greet"}})
 			return err
 		},
-		"LoadImage": func() error {
+		"LoadImage": func(p *Podman) error {
 			_, err := p.LoadImage(context.Background(), gone, "/var/lib/ngc/staged/amd64.tar")
 			return err
 		},
-		"RemoveImage": func() error {
+		"RemoveImage": func(p *Podman) error {
 			return p.RemoveImage(context.Background(), gone, "ngc/terminal:1.0.0")
 		},
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			if err := call(); !errors.Is(err, ErrUser) {
+			f := fakePodman(t)
+			if err := call(NewPodman(f.bin)); !errors.Is(err, ErrUser) {
 				t.Fatalf("err = %v, want ErrUser", err)
 			}
 			if f.ran() {
@@ -1011,7 +1222,7 @@ func TestTheCallsAfterCreateNeedTheUserOfTheirName(t *testing.T) {
 // with nothing to run is a mistake of this controller, not of the app.
 func TestExecRefusesACallWithoutACommand(t *testing.T) {
 	f := fakePodman(t)
-	name := meName(t)
+	name := anApp(t).name
 	for _, cmd := range [][]string{nil, {}} {
 		if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{Name: name, Command: cmd}); !errors.Is(err, ErrCommand) {
 			t.Fatalf("err = %v, want ErrCommand", err)
