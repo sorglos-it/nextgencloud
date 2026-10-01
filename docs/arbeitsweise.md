@@ -1258,8 +1258,17 @@ Tot ist in jeder Zählung dasselbe Wort, ob der Test sie erschlagen hat oder der
 nichts geprüft. Er hat die Mutation als `_ = os.Remove` neu gebaut: sie
 übersetzt, die Datei bleibt liegen, und sie stirbt am richtigen Fall.
 
-**Die Regel:** Eine Mutation, die nicht übersetzt, ist **kein Ergebnis** — trenn
-die beiden Fälle in der Zählung, oder sorg dafür, dass jede Mutation übersetzt.
+**Und dieselbe Form ein zweites Mal, aus derselben Aufgabe:** eine Mutation
+überlebte, **weil der Fall, der sie töten sollte, sich im gewöhnlichen Lauf
+überspringt** — er braucht root. Sie stand in der Zählung als tot und hatte nichts
+gemessen. Der Strang hat sie in die root-Liste verschoben, mit dem Satz:
+*"sonst hätte sie wieder eine Zahl ohne Beobachtung geliefert."*
+
+**Die Regel:** Eine Mutation, die nicht übersetzt oder deren Fall übersprungen
+wird, ist **kein Ergebnis** — trenn die Fälle in der Zählung, oder sorg dafür,
+dass jede Mutation übersetzt **und** dass der Fall, der sie töten soll, in dem Lauf
+überhaupt läuft. Drei Wege zu derselben falschen Null: der Übersetzer, das
+Überspringen, und ein Lauf, der keinen einzigen Test gefahren hat.
 Und sei besonders wachsam **nach dem Löschen** von Code: wer die letzte
 Verwendung eines Imports entfernt, macht aus jeder Mutation an dieser Zeile einen
 Übersetzungsfehler. Dieselbe Form wie der grüne Lauf ohne einen einzigen
