@@ -203,18 +203,11 @@ button.b,.b{padding:7px 12px;border-radius:7px;border:1px solid var(--win-border
 button.b:hover{border-color:var(--accent)}
 button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 
-/* Rechner */
-.calc{display:flex;flex-direction:column;height:100%;padding:10px;gap:8px}
-.calc .disp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:8px;
-            padding:10px 12px;text-align:right;font-variant-numeric:tabular-nums}
-.calc .disp .e{font-size:12px;color:var(--muted);min-height:16px;overflow:hidden}
-.calc .disp .v{font-size:28px;font-weight:600;overflow:hidden}
-.calc .keys{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.calc .keys button{border-radius:8px;border:1px solid var(--win-border);background:var(--title-bg);
-                   color:var(--win-fg);font:15px/1 inherit;cursor:pointer}
-.calc .keys button:hover{background:rgba(127,160,220,.25)}
-.calc .keys button.op{background:var(--field-bg)}
-.calc .keys button.eq{background:var(--accent);color:#fff;border-color:transparent}
+/* The look of an app that ships with NGC does NOT stand here. Until task 25
+   the calculator's did, and the rules reached it because it was built straight
+   into the window. It runs in the frame now, which is a document with an origin
+   of its own: nothing of this stylesheet gets in there. Every app brings its
+   own look - public/assets/apps/<app>/app.css for the two that ship with NGC. */
 
 /* App-Store */
 .store{display:flex;flex-direction:column;height:100%}

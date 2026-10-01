@@ -149,7 +149,10 @@ async function serveChain(page, c, { visible = c.chain.length } = {}) {
 test("the Apps tab shows an app only out of a catalog its store really signed", async ({ page }) => {
   await store(page);
   await tab(page, "Apps").click();
-  await expect(page.locator(".approw")).toHaveCount(3);
+  // Four since task 25: the Rechner stands in the store's catalog like the
+  // Terminal, because both are apps a person activates and both are checked
+  // against a checksum that catalog signed.
+  await expect(page.locator(".approw")).toHaveCount(4);
   await expect(page.locator(".approw").first()).toContainText("Notizen");
   await expect(page.locator(".storepanel")).not.toContainText("Der Katalog dieses Stores ist nicht echt.");
 });

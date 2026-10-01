@@ -75,8 +75,8 @@ test("the search finds an app by its name and by its id", async ({ shell }) => {
   // Spaces around the word are a slip, not a search.
   await shell.locator("#smsearch").fill("   rech  ");
   expect(await names(shell)).toEqual(["Benutzer und Rechte", "Rechner"]);
-  // The id is searched as well, so "ngc.calc" out of a manual finds the app.
-  await shell.locator("#smsearch").fill("ngc.calc");
+  // The id is searched as well, so an id out of a manual finds the app.
+  await shell.locator("#smsearch").fill("org.sorglos.calculator");
   expect(await names(shell)).toEqual(["Rechner"]);
   // And an empty field is every app again.
   await shell.locator("#smsearch").fill("");

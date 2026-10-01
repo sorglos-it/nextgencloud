@@ -30,7 +30,11 @@ async function area(shell) {
 async function openApp(shell, name) {
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name, exact: true }).click();
-  return shell.locator(".win", { hasText: name });
+  // By the name in the TITLE BAR and not by any text the window holds: the app
+  // store's own surface says "Rechner" as well - about a machine - and since
+  // task 25 it lists the Rechner among the apps of the store, so a window
+  // matched by its text would be two windows as soon as both stand open.
+  return shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: name }) });
 }
 
 // place puts a window somewhere known, so a case measures what it does and

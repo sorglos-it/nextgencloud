@@ -7,7 +7,6 @@
 import { el, button, text, clear } from "./dom.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
-import { calcApp } from "../apps/calc.js";
 import { storeApp } from "../apps/store.js";
 import { usersApp } from "../apps/users.js";
 import { UICache, openAppUI } from "./appframe.js";
@@ -19,36 +18,25 @@ import {
 // that fills the window's body. Every other app runs in the fenced frame of
 // appframe.js, against its signed user interface.
 //
-// STILL HERE AFTER TASK 22, AND WHY. The frame exists now and a real app runs
-// in it, so the frame is no longer tested only by apps nobody wrote. The
-// calculator cannot follow it yet, and the reason is the contract and not the
-// work: core.AppParams refuses a core app ("ngc.") for both ngc.desktop/ui
-// and ngc.desktop/ui-proof, so "ngc.calc" can never be asked for a user
-// interface, let alone a proof of one. Moving it means first deciding what it
-// IS - an app of the store like org.sorglos.calculator, which is what
-// shared/testdata calls it, or a surface NGC ships and vouches for itself -
-// and that decision belongs with Task 25, which builds the surfaces of the
-// apps that ship with NGC.
+// THE CALCULATOR LEFT THIS LIST IN TASK 25, and that is the whole of that task:
+// it is "org.sorglos.calculator" now - the name shared/testdata gives it - and
+// it runs in the frame like an app out of the store, against a proven user
+// interface of its own (public/assets/apps/calculator/). It could never have
+// stayed: core.AppParams refuses a core app ("ngc.") for ngc.desktop/ui and
+// ngc.desktop/ui-proof alike, so "ngc.calc" could not even have been asked for
+// a user interface. What it cost while it stood here is what the move bought -
+// it ran in the shell's own origin, with the whole DOM of the shell and
+// localStorage in reach.
 //
-// What it costs while it stands here, named so that nobody has to find it
-// again: the calculator runs in the shell's own origin, with the whole DOM of
-// the shell and localStorage in reach - exactly what the frame takes away
-// from every other app.
-//
-// THE APP STORE IS DIFFERENT, and the difference is the contract's and not a
-// shortcut: it is the app that decides what may run here at all, so it works
-// on the trust list, signs root tasks with the session key and reads the
-// catalogs of the stores. None of that can live behind a fenced frame,
-// because the frame exists to keep an app AWAY from exactly those. It is a
-// surface of the shell, like the taskbar, and it is built like one.
+// THE APP STORE AND BENUTZER UND RECHTE ARE DIFFERENT, and the difference is
+// the contract's and not a shortcut: they are the apps that decide what may run
+// here at all, so they work on the trust list, sign root tasks with the session
+// key and read the catalogs of the stores. None of that can live behind a
+// fenced frame, because the frame exists to keep an app AWAY from exactly
+// those. They are surfaces of the shell, like the taskbar, and they are built
+// like one - which is also why the contract refuses them a user interface.
 const BUILTIN = {
   __proto__: null,
-  "ngc.calc": calcApp,
-  // These belong here and not in the frame, and the contract says so:
-  // core.AppParams refuses a core app ("ngc.") for ngc.desktop/ui and for
-  // ngc.desktop/ui-proof alike, so an app of NGC's own can never be asked for
-  // a user interface. The calculator stands here for want of that decision;
-  // these two stand here because there is no other place they could stand.
   "ngc.store": storeApp,
   "ngc.users": usersApp,
 };

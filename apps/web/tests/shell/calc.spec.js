@@ -1,67 +1,98 @@
 import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 
-// The calculator, the first app of the desktop with a face of its own.
+// The calculator - org.sorglos.calculator - in the fenced frame every app runs
+// in.
 //
-// PULLED FORWARD, HALF OF TASK 25. That task builds the calculator AND the
-// terminal, and the terminal needs a service of the controller that does not
-// exist yet, so only the calculator is here. Its brief runs the keys inside
-// shell.frameLocator(".appframe"), the sandboxed frame every app gets in Task
-// 22; until that frame exists the calculator sits straight in the window, so
-// the keys are looked up there. The keys, the presses and the 15 are the
-// brief's.
+// IT MOVED IN TASK 25, and the nine cases that stood here before the move stand
+// here after it. What changed is WHERE the keys and the display are looked up:
+// inside shell.frameLocator(".appframe"), which is the brief's own locator,
+// instead of in the shell's own document. What they assert did not change - the
+// keys, the presses, the 15, the 14, the "Fehler", the comma and the point, the
+// window in front, the start menu - because the point of the move is that the
+// calculator still does all of it.
+//
+// ONE OF THE NINE CHANGED WHAT IT COUNTS, and it says so where it stands: the
+// one about the keyboard listener. There is no listener of the calculator's in
+// the shell any more to count, and that is the move itself.
+//
+// TWO ARE NEW, at the foot of the file, and both are about what the shell's own
+// cases cannot see any more: the names of the keys and the walk through them
+// with Tab both live in the app's document now.
 test.beforeEach(async ({ shell }) => {
   // Same gap as in desktop.spec.js: no session keys, no desktop, no window to
-  // put a calculator in.
+  // put a calculator in. The proof of a user interface is an Ed25519 signature
+  // as well, so this engine could not open the frame either.
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
-test("the calculator computes without eval", async ({ shell }) => {
+// winOf finds a window by the name in its title bar. NOT by any text the window
+// holds: the app store's own surface says "Rechner" too - about a machine - and
+// since task 25 it lists the Rechner among the apps of the store, so a window
+// matched by its text is two windows.
+const winOf = (shell, title) =>
+  shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: title }) });
+
+// active is the name of whatever has the focus INSIDE the frame. document in
+// there is the app's own, so this is the app's answer and not the shell's -
+// which answers with the frame itself for every one of these presses.
+const active = (frame) => frame.locator("body").evaluate(() => {
+  const a = document.activeElement;
+  if (!a || a === document.body) return "(body)";
+  return (a.getAttribute("aria-label") || a.textContent || "").trim();
+});
+
+// calc opens the calculator and hands back the window, the frame, the two lines
+// of the display and a way to press a key.
+async function calc(shell) {
   await shell.getByRole("button", { name: "Start" }).click();
-  await shell.getByRole("menuitem", { name: "Rechner" }).click();
-  const win = shell.locator(".win", { hasText: "Rechner" });
-  for (const key of ["1", "2", "+", "3", "="]) await win.getByRole("button", { name: key }).click();
-  await expect(win.locator(".v")).toHaveText("15");
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const win = winOf(shell, "Rechner");
+  await expect(win).toBeVisible();
+  const frame = shell.frameLocator(".appframe");
+  // Nothing is pressed before the app is really in the frame. Its interface is
+  // fetched, hashed and held against a signature first, and a key pressed
+  // before that has nowhere to land.
+  await expect(frame.locator(".calc .v")).toHaveText("0");
+  return {
+    win,
+    frame,
+    value: frame.locator(".calc .v"),
+    expr: frame.locator(".calc .e"),
+    // exact, because a name is matched as a substring by default and the "C"
+    // is a letter of "Vorzeichen" and of "Zurück" as well.
+    key: (k) => frame.getByRole("button", { name: k, exact: true }),
+    // One key at a time, the way a finger does it. The keys go to the shell's
+    // page and the browser hands them to whichever document has the focus -
+    // which is the app's, and that is what makes the next line a measurement.
+    async type(keys) {
+      for (const k of keys) await shell.keyboard.press(k);
+    },
+  };
+}
+
+test("the calculator computes without eval", async ({ shell }) => {
+  const c = await calc(shell);
+  for (const key of ["1", "2", "+", "3", "="]) await c.key(key).click();
+  await expect(c.value).toHaveText("15");
 });
 
 test("point before line, and a division by zero is an error, not Infinity", async ({ shell }) => {
-  await shell.getByRole("button", { name: "Start" }).click();
-  await shell.getByRole("menuitem", { name: "Rechner" }).click();
-  const win = shell.locator(".win", { hasText: "Rechner" });
-  // exact: true, because a name is matched as a substring by default and "C"
-  // is a letter of "Schließen", "Vorzeichen" and "Zurück" as well.
-  const key = (k) => win.getByRole("button", { name: k, exact: true });
-  for (const k of ["2", "+", "3", "×", "4", "="]) await key(k).click();
-  await expect(win.locator(".v")).toHaveText("14");
-  for (const k of ["C", "1", "÷", "0", "="]) await key(k).click();
-  await expect(win.locator(".v")).toHaveText("Fehler");
+  const c = await calc(shell);
+  for (const k of ["2", "+", "3", "×", "4", "="]) await c.key(k).click();
+  await expect(c.value).toHaveText("14");
+  for (const k of ["C", "1", "÷", "0", "="]) await c.key(k).click();
+  await expect(c.value).toHaveText("Fehler");
 });
 
 // ---- the keyboard -------------------------------------------------------
 //
 // Task 21 left the keyboard of the calculator measured by hand only. It is
 // the one app the owner can touch today, so what it does under the fingers
-// is written down here.
-
-// calc opens the calculator and hands back the window, the two lines of the
-// display and a way to press a key.
-async function calc(shell) {
-  await shell.getByRole("button", { name: "Start" }).click();
-  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
-  const win = shell.locator(".win", { hasText: "Rechner" });
-  await expect(win).toBeVisible();
-  return {
-    win,
-    value: win.locator(".calc .v"),
-    expr: win.locator(".calc .e"),
-    // One key at a time, the way a finger does it.
-    async type(keys) {
-      for (const k of keys) await shell.keyboard.press(k);
-    },
-  };
-}
+// is written down here - and after the move it is the one thing that had to
+// go on working key for key.
 
 test("the calculator can be worked with the keyboard alone", async ({ shell }) => {
   const c = await calc(shell);
@@ -127,7 +158,9 @@ test("the keyboard belongs to the window in front", async ({ shell }) => {
   await c.type(["5"]);
   await expect(c.value).toHaveText("5");
   // A second window takes the focus; the calculator behind it must not eat
-  // the digits meant for that one.
+  // the digits meant for that one. BEFORE THE MOVE a check in calc.js asked
+  // the desktop which window was in front; now the app simply has a document
+  // of its own, and a document that does not hold the focus is handed no keys.
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
   await shell.keyboard.press("7");
@@ -141,19 +174,29 @@ test("the keyboard belongs to the window in front", async ({ shell }) => {
 test("typing into the start menu's search does not reach the calculator", async ({ shell }) => {
   const c = await calc(shell);
   await c.type(["5"]);
-  // The window keeps the shell's focus while the menu is open, so without
-  // the guard in calc.js every digit would land in both places.
+  // The window keeps the shell's idea of which window is in front while the
+  // menu is open, so before the move every digit landed in both places and
+  // calc.js needed a guard against it. The open menu takes the keyboard to its
+  // search field, and the app's document is not where it is any more.
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.keyboard.type("777");
   await expect(shell.locator("#smsearch")).toHaveValue("777");
   await expect(c.value).toHaveText("5");
 });
 
-test("a closed calculator takes its keyboard listener with it", async ({ shell }) => {
-  // Counted, not guessed. A listener that stays behind is invisible from the
-  // outside - calc.js checks which window has the focus, so a stale one does
-  // nothing noticeable - and it is still a window's worth of the page that
-  // never gets freed. Opening and closing is what a person does all day.
+test("a closed calculator leaves nothing of itself in the shell", async ({ shell }) => {
+  // WHAT THIS CASE COUNTED BEFORE TASK 25, and why the number is a different
+  // one now. The calculator used to hang a keydown listener on the shell's own
+  // window, and one left behind was invisible from the outside - it only
+  // checked which window had the focus, so a stale one did nothing noticeable
+  // and still cost a window's worth of the page for ever. So the case counted
+  // the listeners and wanted exactly one while the window stood.
+  //
+  // The calculator listens in its own document now. The number to measure in
+  // the shell is therefore ZERO, in every round and at every moment: the move
+  // IS that the shell no longer hears a single key of an app. What takes the
+  // listener away is no longer a line of calc.js at all - the window takes the
+  // whole document with it, which is what the frame count below says.
   await shell.evaluate(() => {
     window.__keydowns = 0;
     const add = window.addEventListener.bind(window);
@@ -163,17 +206,75 @@ test("a closed calculator takes its keyboard listener with it", async ({ shell }
   });
   for (let round = 0; round < 3; round++) {
     const c = await calc(shell);
-    expect(await shell.evaluate(() => window.__keydowns)).toBe(1);
+    await expect(shell.locator(".appframe")).toHaveCount(1);
+    expect(await shell.evaluate(() => window.__keydowns)).toBe(0);
     await c.type(["5"]);
     await expect(c.value).toHaveText("5");
     await c.win.getByRole("button", { name: "Schließen" }).click();
     await expect(c.win).toHaveCount(0);
+    // The document the listener lived in is gone with the window.
+    await expect(shell.locator(".appframe")).toHaveCount(0);
     expect(await shell.evaluate(() => window.__keydowns)).toBe(0);
   }
-  // And nothing is left over: a fresh calculator starts at nought.
+  // And nothing is left over: a fresh calculator starts at nought, and the key
+  // pressed while no window stood reached nobody.
   await shell.keyboard.press("7");
   const again = await calc(shell);
   await expect(again.value).toHaveText("0");
   await again.type(["7"]);
   await expect(again.value).toHaveText("7");
+});
+
+// ---- the app's own page -------------------------------------------------
+//
+// What the shell's own cases cannot see any more: the calculator's page is a
+// document of its own, so desktop-keyboard.spec.js - which walks the shell -
+// stops at the frame. The two rules it holds the shell to are held to the app
+// here, and the look the shell hands in is measured with them.
+
+test("the app is painted in the shell's colours, and follows when they change", async ({ shell }) => {
+  // The shell writes the theme on <html> of the app's document before the first
+  // paint, so a window is never painted dark and repainted light one frame
+  // later; afterwards the app follows through ngc.onTheme. Both halves are here,
+  // because only the first one is visible in a screenshot.
+  const c = await calc(shell);
+  await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(c.frame.locator("html")).toHaveAttribute("data-theme", "dark");
+  await shell.getByRole("button", { name: "Design wechseln" }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(c.frame.locator("html")).toHaveAttribute("data-theme", "light");
+  // And the accent is a colour, which no stylesheet can read out of an
+  // attribute: the app writes it into a property of its own.
+  const accent = await c.frame.locator("html").evaluate((h) =>
+    getComputedStyle(h).getPropertyValue("--accent").trim());
+  expect(accent).toMatch(/^#[0-9a-fA-F]{3,8}$/);
+});
+
+test("every key of the calculator has a name a screen reader can read", async ({ shell }) => {
+  const c = await calc(shell);
+  const nameless = await c.frame.locator("button").evaluateAll((bs) => bs
+    .filter((b) => !(b.getAttribute("aria-label") || b.textContent || "").trim())
+    .map((b) => b.className || b.tagName));
+  expect(nameless).toEqual([]);
+  // Twenty keys, and the three whose character is no word carry the word.
+  await expect(c.frame.locator(".calc .keys button")).toHaveCount(20);
+  for (const [label, name] of [["±", "Vorzeichen"], [",", "Komma"], ["⌫", "Zurück"]]) {
+    await expect(c.key(name)).toHaveCount(1);
+    await expect(c.key(name)).toHaveText(label);
+  }
+});
+
+test("every key of the calculator is a tab stop, in the order it is drawn", async ({ shell }) => {
+  // The walk through the shell (desktop-keyboard.spec.js) ends at the frame,
+  // because Tab there leaves the shell's document. It goes on in here.
+  const c = await calc(shell);
+  const order = ["C", "Vorzeichen", "%", "÷", "7", "8", "9", "×",
+    "4", "5", "6", "−", "1", "2", "3", "+", "0", "Komma", "Zurück", "="];
+  await c.key(order[0]).focus();
+  const stops = [await active(c.frame)];
+  for (let i = 1; i < order.length; i++) {
+    await shell.keyboard.press("Tab");
+    stops.push(await active(c.frame));
+  }
+  expect(stops).toEqual(order);
 });

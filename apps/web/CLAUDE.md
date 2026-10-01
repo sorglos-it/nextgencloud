@@ -12,8 +12,10 @@ apps/web/
 ├── public/          Webroot: nur das ist von außen erreichbar (Apache zeigt auf diesen Ordner)
 │   ├── index.php    einziger Einstiegspunkt, liefert den Desktop aus
 │   └── assets/      Desktop (Fenster, Taskleiste, Startmenü, Anmeldung), die Verträge in
-│                    JavaScript, ngc.js für Apps (MIT) und die Oberflächen der mitgelieferten
-│                    Apps; Fremdcode für den Browser in assets/vendor/
+│                    JavaScript, ngc.js für Apps (MIT); Fremdcode für den Browser in
+│                    assets/vendor/
+│       └── apps/    je mitgelieferte App ein Ordner mit genau dem, was im ui/ ihres
+│                    Pakets liegt: index.html, app.css, app.js (Rechner, Terminal)
 ├── classes/         PHP: web.json und trust-anchor.json lesen, Liste der API-Server
 ├── templates/       Gerüst der Desktop-Seite
 └── tests/           Playwright; npm nur hier
