@@ -182,20 +182,29 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 	if mem == 0 {
 		mem = store.DefaultMemory
 	}
-	// Without the network the container has none at all; with it, podman builds
-	// one in the user namespace of the app's own user, which is what
-	// slirp4netns is: no interface of this server lands in the container.
-	net := "none"
-	if c.Network {
-		net = "slirp4netns"
+	args := []string{"create", "--name", c.Name}
+	// Without the network the container has none at all, and that is said out
+	// loud. With the network, nothing is said at all: how a rootless container
+	// reaches the network is podman's own choice, and naming one here would pin
+	// this server to a program that may not be on it. Podman has changed that
+	// choice before, and the one it carried earlier is a separate package today.
+	//
+	// A way out that is pinned and missing is worse than one nobody named: every
+	// app with network would fail at once, on a fresh server, with a message
+	// nobody can read. What we give up for that: podman may one day choose
+	// differently, and then the network of an app behaves differently - visibly,
+	// and for one app at a time. Whether rootless network works for an app's user
+	// at all is something the installation has to find out, not this line.
+	if !c.Network {
+		args = append(args, "--network", "none")
 	}
-	args := []string{"create", "--name", c.Name, "--network", net,
+	args = append(args,
 		// Thousandths of a core, written as podman reads it.
 		"--cpus", fmt.Sprintf("%d.%03d", cpu/1000, cpu%1000),
-		"--memory", strconv.Itoa(mem) + "m",
+		"--memory", strconv.Itoa(mem)+"m",
 		// The image itself stays unwritable; what the app keeps belongs under
 		// /data, which is the only place it may write.
-		"--read-only"}
+		"--read-only")
 	// The capabilities go, unless the app was granted store.NeedRoot: then they
 	// come back, and that is what root in the container means and all it means.
 	// Everything else above and below stays either way, and the container runs

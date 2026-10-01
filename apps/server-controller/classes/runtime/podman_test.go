@@ -214,7 +214,10 @@ func TestCreateTakesTheLimitsApartInThousandths(t *testing.T) {
 }
 
 func TestCreateWithNetworkAndRoot(t *testing.T) {
-	// Network: "--network slirp4netns" stands where "--network none" stood.
+	// Network: where "--network none" stood, nothing stands. Naming a way out
+	// here would pin this server to a program that may not be on it, and then no
+	// app with network would start at all - so the engine leaves that choice to
+	// podman, which is the one party that knows what it has.
 	//
 	// Root: "--cap-drop ALL" is gone. The capabilities come back because the
 	// admin granted this app store.NeedRoot, and those capabilities are what
@@ -234,11 +237,14 @@ func TestCreateWithNetworkAndRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := f.args(t)
-	if i := slices.Index(args, "--network"); i < 0 || args[i+1] != "slirp4netns" {
-		t.Fatalf("args = %q, want --network slirp4netns", args)
+	if slices.Contains(args, "--network") {
+		t.Fatalf("args = %q, names a way to the network - that choice is podman's", args)
 	}
-	if slices.Contains(args, "none") {
-		t.Fatalf("args = %q, still refuses the network", args)
+	for _, a := range args {
+		if strings.Contains(a, "slirp") || strings.Contains(a, "pasta") ||
+			strings.Contains(a, "netns") || a == "none" || a == "bridge" || a == "host" {
+			t.Fatalf("args = %q, pins the network to %q", args, a)
+		}
 	}
 	if slices.Contains(args, "--cap-drop") {
 		t.Fatalf("args = %q, still drops the capabilities an app with root needs", args)
@@ -253,31 +259,41 @@ func TestCreateWithNetworkAndRoot(t *testing.T) {
 	}
 }
 
-// Without root the capabilities go, with root they come back, and nothing else
-// differs between the two lists. Written as a difference because a list copied
-// by hand is where a silently given-up option hides.
-func TestRootChangesOnlyTheCapabilities(t *testing.T) {
-	list := func(root bool) []string {
+// Each of the two grants changes exactly one thing in the list and nothing else.
+// Written as a difference because a list copied by hand is where a silently
+// given-up option hides: root takes away "--cap-drop ALL", the network takes away
+// "--network none" and puts nothing in its place.
+func TestEachGrantChangesOnlyItsOwnOption(t *testing.T) {
+	list := func(bend func(c *Container)) []string {
 		f := fakePodman(t)
 		uid, gid := me()
-		p := NewPodman(f.bin)
-		if err := p.Create(context.Background(), Container{
+		c := Container{
 			Name: "ngc-a-00000000", Image: "ngc/a:1.0.0", UID: uid, GID: gid,
 			DataDir: "/var/lib/ngc/apps/a", Hold: "/usr/lib/ngc/ngc-controller",
-			Root: root,
-		}); err != nil {
+		}
+		bend(&c)
+		if err := NewPodman(f.bin).Create(context.Background(), c); err != nil {
 			t.Fatal(err)
 		}
 		return f.args(t)
 	}
-	plain, root := list(false), list(true)
-	i := slices.Index(plain, "--cap-drop")
-	if i < 0 {
-		t.Fatalf("args = %q, no --cap-drop without root", plain)
-	}
-	want := slices.Concat(plain[:i], plain[i+2:])
-	if !slices.Equal(root, want) {
-		t.Fatalf("with root =\n%q\nwant\n%q", root, want)
+	plain := list(func(*Container) {})
+	for _, c := range []struct {
+		what  string
+		bend  func(c *Container)
+		drops string
+	}{
+		{"root", func(c *Container) { c.Root = true }, "--cap-drop"},
+		{"the network", func(c *Container) { c.Network = true }, "--network"},
+	} {
+		i := slices.Index(plain, c.drops)
+		if i < 0 {
+			t.Fatalf("args = %q, no %s without the grant", plain, c.drops)
+		}
+		want := slices.Concat(plain[:i], plain[i+2:])
+		if got := list(c.bend); !slices.Equal(got, want) {
+			t.Fatalf("with %s =\n%q\nwant\n%q", c.what, got, want)
+		}
 	}
 }
 

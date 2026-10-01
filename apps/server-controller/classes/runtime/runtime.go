@@ -101,8 +101,10 @@ type Container struct {
 	// config.BinDir: what is mounted into a container decides what the
 	// container can read, so only what NGC installed may be named here.
 	Hold string
-	// Network lets the app reach the network (store.NeedNetwork). Without it
-	// the container has none at all.
+	// Network lets the app reach the network (store.NeedNetwork). Without it the
+	// container has none at all. With it, which way out a rootless container
+	// takes is left to the engine: naming one would pin this server to a program
+	// that may not be installed, and then no app with network would run at all.
 	Network bool
 	// Root gives the app root inside the container (store.NeedRoot): the
 	// capabilities come back. Never root on this server - the container runs
