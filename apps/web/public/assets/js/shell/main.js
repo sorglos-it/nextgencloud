@@ -155,6 +155,17 @@ async function start() {
 // The DEFAULT is the real session, which is the whole point: in operation
 // nothing sets this, the link that was just opened stays open, and the desktop
 // eats what the API really sent.
+//
+// HOW TO SEE THAT THIS MAY GO, so nobody has to judge it: when no case asks for
+// the stand-in any more. That is one command -
+//
+//   grep -rn standInOn apps/web/tests --include=*.js
+//
+// and it is over when the only hits left are the definition of standInOn in
+// apps/web/tests/fixtures/page.js and the comments around it. Then this
+// function, the `standIn` argument of signIn(), standInOn() itself and
+// shell/fake-link.js all go in one commit - a lever that lays the workplace
+// onto made-up data has no business in a shipped shell.
 const standIn = () => window.__ngcStandIn === true;
 
 // showDesktop puts the desktop up once the login is through.

@@ -62,15 +62,22 @@ async function plant(shell) {
             app: o.app, service: o.service, action: o.action,
             params: text(o.params), task: text(o.taskBytes), confirm: text(o.confirmBytes),
             e2e: o.e2e === null || o.e2e === undefined ? "" : "set",
+            // The ORDER of what happened on this channel, so "did it report a
+            // channel before there was one" is a measurement: the open, the
+            // first grant and the EOF all have to have happened before the
+            // caller is handed anything.
+            order: ["open"],
             data: [], ended: false, closed: "", took: 0,
           };
           opens.push(rec);
           return {
-            firstGrant: async () => ({ credit: 1 << 20, handshake: null }),
-            end: async () => { rec.ended = true; },
-            write: async (b) => { rec.data.push(new TextDecoder().decode(b)); },
-            close: async (code) => { rec.closed = code; },
-            result: async (max) => { rec.took = max; return new TextEncoder().encode("{}"); },
+            firstGrant: async () => { rec.order.push("firstGrant"); return { credit: 1 << 20, handshake: null }; },
+            end: async () => { rec.order.push("end"); rec.ended = true; },
+            write: async (b) => { rec.order.push("write"); rec.data.push(new TextDecoder().decode(b)); },
+            // The code is written down, not swallowed: a close() that takes a
+            // code and drops it is the defect this records.
+            close: async (code) => { rec.order.push("close"); rec.closed = code === undefined ? "(none)" : code; },
+            result: async (max) => { rec.order.push("result"); rec.took = max; return new TextEncoder().encode("{}"); },
           };
         },
       };
@@ -133,7 +140,27 @@ test.describe("the adapter", () => {
         const fake = (await fakeWorld()).link;
         const rec = window.__ngcRecorder();
         const mine = adapterFor(rec);
-        const params = utf8('{"x":1}');
+        // THE PARAMS NAME AN APP THAT HAS A USER INTERFACE, and that is not
+        // decoration. Since Task 25 the stand-in ships the archives of SEVERAL
+        // apps and reads `app` out of the params to know which one
+        // ngc.desktop/ui is about - so made-up params make the STAND-IN refuse
+        // the one FlowOut row, and this comparison would then be measuring the
+        // stand-in's own refusal instead of the two ways. The way itself did not
+        // change with 25: ngc.desktop/api/ui is FlowOut and goes through open()
+        // on both sides, as it did before.
+        //
+        // Which app is asked is taken from the stand-in's OWN app list, the way
+        // the frame takes it - an app with an entry page is an app that has a
+        // user interface - so no id is written down here to rot.
+        const appsAction = core.lookupByKey(core.APP_DESKTOP, core.ACT_APPS);
+        const installed = core.parseResult(appsAction,
+          await fake.call(appsAction.app, appsAction.service, appsAction.name, null, null));
+        const withUI = installed.find((x) => x.entry !== "");
+        if (withUI === undefined) throw new Error("world.spec: the stand-in ships no app with a user interface");
+        const params = core.encodeParams(core.lookupByKey(core.APP_DESKTOP, core.ACT_UI), { app: withUI.id });
+        // What the preparation above already wrote into the stand-in's record;
+        // the comparison starts after it.
+        const base = window.__ngcSent.length;
         const body = () => new Blob([utf8("abc")]).stream();
         for (const a of calls) {
           // What either side ANSWERS is not the question here - the stand-in
@@ -145,17 +172,24 @@ test.describe("the adapter", () => {
         // The one FlowOut row goes through open() on both sides. The stand-in
         // keeps no record of an open(), so what is measured there is that it
         // takes this row and refuses every other.
+        // FOUR ARGUMENTS ON BOTH SIDES, because that is what shell/appframe.js
+        // hands over for an archive (uiBytes); the fifth, the node, belongs to
+        // an app's own service and is measured in its own case.
         const fakeOut = [];
         for (const a of outs) {
-          try { await fake.open(a.app, a.service, a.name); fakeOut.push(`${a.app}|${a.service}|${a.name}`); } catch { /* refused */ }
+          try { await fake.open(a.app, a.service, a.name, params); fakeOut.push(`${a.app}|${a.service}|${a.name}`); } catch { /* refused */ }
           await mine.open(a.app, a.service, a.name, params);
         }
         let fakeTookACall = true;
-        try { await fake.open(core.APP_STORE, core.SERVICE_API, core.ACT_INSTALLED); } catch { fakeTookACall = false; }
+        try {
+          await fake.open(core.APP_STORE, core.SERVICE_API, core.ACT_INSTALLED, params);
+        } catch {
+          fakeTookACall = false;
+        }
         return {
           rows: rows.length,
           outs: outs.length,
-          theirs: window.__ngcSent.map((s) => `${s.app}|${s.service}|${s.name}`),
+          theirs: window.__ngcSent.slice(base).map((s) => `${s.app}|${s.service}|${s.name}`),
           ours: rec.opens.map((o) => `${o.app}|${o.service}|${o.action}`),
           wantedCalls: calls.map((a) => `${a.app}|${a.service}|${a.name}`),
           // The calls first and the FlowOut row after them, because that is
@@ -264,6 +298,88 @@ test.describe("the adapter", () => {
       expect(got.neverOpened).toBe(true);
       expect(got.noRow).toBe(true);
       expect(got.opened).toBe(5);
+    });
+
+  test("the node of an app's own service arrives, and the refusal names the half that is missing",
+    async ({ shell }) => {
+      await plant(shell);
+      const got = await shell.evaluate(async () => {
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const rec = window.__ngcRecorder();
+        const link = adapterFor(rec);
+        const params = utf8('{"cols":80}');
+        // What shell/appframe.js hands over for an app's own service, in both
+        // doors: the app id, the service and the action the manifest declared,
+        // the params, and the NODE in the option bag. Task 25 built that fifth
+        // argument; before this round it fell on the floor.
+        const APP = "org.sorglos.terminal", SERVICE = "terminal", ACTION = "shell";
+        const refusal = async (fn) => {
+          try {
+            await fn();
+            return "took it";
+          } catch (e) {
+            return { name: e?.name ?? "", missing: e?.missing ?? "", said: typeof e?.message === "string" && e.message !== "" };
+          }
+        };
+        return {
+          // WITH the node: the only thing still missing is the session's own
+          // DH key pair, and the refusal has to say exactly that.
+          callWithNode: await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "pi-1" })),
+          openWithNode: await refusal(() => link.open(APP, SERVICE, ACTION, params, { node: "pi-1" })),
+          // WITHOUT it: a different refusal, so a bridge that stopped sending
+          // the node cannot hide behind the one about the key.
+          callNoNode: await refusal(() => link.call(APP, SERVICE, ACTION, params, null)),
+          openNoNode: await refusal(() => link.open(APP, SERVICE, ACTION, params)),
+          // A node that is no node is as good as none.
+          callBadNode: await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "" })),
+          // Nothing of this opened a channel: an end-to-end channel is the only
+          // right one here, and an ordinary one would let the API read along.
+          opened: rec.opens.length,
+        };
+      });
+      expect(got.callWithNode).toEqual({ name: "WorldError", missing: "session-key", said: true });
+      expect(got.openWithNode).toEqual({ name: "WorldError", missing: "session-key", said: true });
+      expect(got.callNoNode).toEqual({ name: "WorldError", missing: "node", said: true });
+      expect(got.openNoNode).toEqual({ name: "WorldError", missing: "node", said: true });
+      expect(got.callBadNode).toEqual({ name: "WorldError", missing: "node", said: true });
+      expect(got.opened).toBe(0);
+    });
+
+  test("open hands nothing over before the channel stands, and close really closes it with its code",
+    async ({ shell }) => {
+      await plant(shell);
+      const got = await shell.evaluate(async () => {
+        const core = await import("/assets/js/contracts/core.js");
+        const wire = await import("/assets/js/contracts/wire.js");
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const rec = window.__ngcRecorder();
+        const link = adapterFor(rec);
+        const params = utf8('{"app":"org.sorglos.terminal"}');
+        const out = await link.open(core.APP_DESKTOP, core.SERVICE_API, core.ACT_UI, params);
+        const ch = rec.opens[rec.opens.length - 1];
+        // By the time open() came back the channel was opened, its first grant
+        // was there, the EOF had gone out AND the bound was set - Channel.result
+        // is what sets it, and a bound set one turn later would let the first
+        // chunks past it. ngc.js hands an app its stream before any of that has
+        // happened, because a postMessage bridge has nothing to wait for; here
+        // there is, so we wait.
+        const whenOpenReturned = ch.order.slice();
+        // close(code) is what shell/appframe.js calls (closeQuietly), and the
+        // code is NOT decoration: the real channel builds its CLOSE with
+        // wire.errorClose(code), and without one wire refuses the frame.
+        await out.close(wire.CODES.PROTOCOL);
+        return {
+          whenOpenReturned,
+          closed: ch.closed,
+          order: ch.order.slice(),
+          protocol: wire.CODES.PROTOCOL,
+        };
+      });
+      expect(got.whenOpenReturned).toEqual(["open", "firstGrant", "end", "result"]);
+      expect(got.closed).toBe(got.protocol);
+      expect(got.order).toContain("close");
     });
 });
 

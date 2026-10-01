@@ -534,14 +534,33 @@ export async function sendInBytes(link, action, { params, taskBytes, stream, onP
 // receiveOut opens a FlowOut channel and collects what the API sends; the
 // caller says how many bytes it will take at most (for ui: the largest
 // ui-tar, store.MaxUITotal plus its headers).
+//
+// net/world.js does NOT use this one: it takes the channel from openOut below,
+// because the stream it hands the app frame has to be able to close that
+// channel. This stays for a caller who only wants the bytes.
 export async function receiveOut(link, action, { params, maxBytes }) {
+  return (await openOut(link, action, { params })).result(maxBytes);
+}
+
+// openOut is the first half of receiveOut and answers with the CHANNEL: it is
+// open, its first grant is in and the EOF has gone out, so nothing is left to
+// send on it.
+//
+// WHY A CALLER WOULD WANT THE CHANNEL AND NOT ONLY THE BYTES: net/world.js
+// hands the app frame a stream whose close(code) has to END this channel, with
+// that code - the frame calls it when it gives an archive up, and a close()
+// that quietly did nothing would leave the number taken for the life of the
+// session. Splitting it here keeps ONE implementation of "open, wait for the
+// grant, EOF": a second copy of that would be a second place for the EOF to
+// drift.
+export async function openOut(link, action, { params } = {}) {
   const ch = await link.open({
     app: action.app, service: action.service, action: action.name,
     params, window: wire.DEFAULT_WINDOW, e2e: null,
   });
   await ch.firstGrant();
   await ch.end();
-  return ch.result(maxBytes);
+  return ch;
 }
 
 // openE2E opens a channel to an app: Noise message 1 goes into the OPEN, and

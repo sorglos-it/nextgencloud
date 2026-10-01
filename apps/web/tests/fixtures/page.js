@@ -60,6 +60,15 @@ export async function signIn(page, { standIn = true } = {}) {
 //
 // IT LEAVES WITH shell/fake-link.js: when the mock answers every action of
 // core.ACTIONS with a signed world, this function and that file go together.
+//
+// HOW TO SEE THAT IT MAY GO, countable and not a matter of judgement:
+//
+//   grep -rn standInOn apps/web/tests --include=*.js
+//
+// is over when the only hits left are this definition and the comments around
+// it - no signIn() without `standIn: false`, no beforeEach calling it. Then
+// this function, the `standIn` argument above, standIn() in
+// shell/main.js and shell/fake-link.js go in one commit.
 export async function standInOn(page) {
   await page.addInitScript(() => { window.__ngcStandIn = true; });
   try {
