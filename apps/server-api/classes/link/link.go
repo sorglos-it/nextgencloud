@@ -63,10 +63,11 @@ const (
 
 	// CloseWait bounds how long a refused peer may take to answer the close
 	// frame. A peer that just broke the rules of the link has earned less
-	// patience than one that ends a link in order, which Close still gives
-	// the five seconds of websocket.Close: measured, a refusal held the reader
-	// those five seconds, so whoever opens many refused links holds a reader
-	// for each of them that long.
+	// patience than one that ends a link in order, which Close still gives the
+	// library's own wait: measured, a refusal held the reader five seconds
+	// before this, so whoever opens many refused links held a reader for each
+	// of them that long. Five is what that wait costs in practice, not its
+	// ceiling — closeBounded says what the ceiling is.
 	CloseWait = 1 * time.Second
 
 	// FirstFrameTimeout bounds the window from the finished Noise connection to
@@ -79,6 +80,12 @@ const (
 	// says nothing after the handshake cannot form frames at all. Nothing
 	// bounds the quiet time after that first frame: a session that is logged in
 	// may sit still for as long as the browser keeps the socket open.
+	//
+	// It is wall clock from Accept, so it bounds the caller as well as the peer:
+	// measured with a window of 100 ms, a caller that was busy for 300 ms lost a
+	// frame that was already on the line, and the link with it. Whoever wires a
+	// link up therefore starts reading at once — the window is no grace period
+	// for the handler.
 	FirstFrameTimeout = 30 * time.Second
 )
 
@@ -88,10 +95,13 @@ type Options struct {
 	Prologue    string      // noisep.PrologueSession or noisep.PrologueTunnel
 	Static      noise.DHKey // the API's key pair for this link
 	Peer        []byte      // the other side's static public key
-	// Origins are the allowed Origin values (scheme://host); empty allows
-	// only the request host, and a request without an Origin header is
-	// allowed either way, which is how a controller reaches the tunnel.
-	// CheckOrigins reads the list before the upgrade.
+	// Origins are the allowed Origin values (scheme://host). They are added to,
+	// not instead of, two things the library always lets through: an Origin
+	// equal to the request host (accept.go:239, compared before any pattern)
+	// and a request with no Origin header at all (accept.go:228), which is how
+	// a controller reaches the tunnel. So an empty list allows nothing but
+	// those two, and a non-empty one cannot take them away. CheckOrigins reads
+	// the list before the upgrade.
 	//
 	// trust.ValidOrigin is deliberately NOT used here, and the reason that
 	// carries is the bare host form: the library matches a value without "://"
@@ -286,7 +296,11 @@ func (l *Link) Read(ctx context.Context) (wire.Frame, error) {
 	return f, nil
 }
 
-// Write seals and sends one frame.
+// Write seals and sends one frame. Its second error cannot be reached today and
+// is kept anyway: Encode allows wire.MaxPayload bytes, so the largest frame is
+// wire.MaxFrame (65519) and that is exactly noisep.MaxPlaintext, the most Seal
+// takes. The two limits come from two packages, and only their equality makes
+// the branch dead — nothing in this file would notice if one of them moved.
 func (l *Link) Write(ctx context.Context, f wire.Frame) error {
 	raw, err := f.Encode()
 	if err != nil {
@@ -305,7 +319,7 @@ func (l *Link) Write(ctx context.Context, f wire.Frame) error {
 // frame, which a refusal does not: CloseWait says why. Once a broken rule or a
 // failed read has ended the link, Close has nothing left to do and says so at
 // once: measured before that, the plain `defer l.Close(…)` of a caller paid
-// 3,9995 s on top of the second Read had already paid, because the second close
+// 3,9995 s on top of the second that Read had already paid, because the second close
 // waits in waitGoroutines for the goroutine of the first (close.go:102-108).
 func (l *Link) Close(code websocket.StatusCode, reason string) error {
 	if l.ended.Load() {
