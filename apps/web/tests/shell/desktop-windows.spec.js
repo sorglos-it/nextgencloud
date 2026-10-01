@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // What a window does under the hand: dock it to an edge, pull it bigger,
 // lay the windows out, close them all, and make the desktop smaller under
@@ -11,8 +11,7 @@ test.beforeEach(async ({ shell }) => {
   // Same gap as in desktop.spec.js: the WebKit Playwright brings has neither
   // Ed25519 nor X25519, the shell stops before the desktop, and there is
   // nothing here to look at. Measured, never assumed from the engine's name.
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(shell);
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });

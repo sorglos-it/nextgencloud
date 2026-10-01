@@ -34,7 +34,7 @@
 //     cannot fail for the thing it is named after. It is replaced here by a
 //     case that logs dora in and asks the MOCK how many proofs it had to
 //     check - a number this side cannot produce by itself.
-import { test, expect, hasSessionKeys, standInOn } from "../fixtures/page.js";
+import { test, expect, skipWithoutLogin, skipWithoutShell, standInOn } from "../fixtures/page.js";
 import { PASSWORD, PASSKEY_USERS, TOTP_CODE } from "../fixtures/logins.js";
 
 // The mock's test door. It is on /api/ so it travels the same origin as
@@ -43,11 +43,17 @@ import { PASSWORD, PASSKEY_USERS, TOTP_CODE } from "../fixtures/logins.js";
 // X25519 before it builds anything at all, and the WebKit that Playwright
 // brings has neither - so there is no mask to type into there, and the boot
 // says so instead (shell/boot.spec.js is the case that pins THAT, and it runs
-// everywhere). The day this WebKit gains the two, hasSessionKeys answers true
-// by itself and every case below runs there with no edit here.
+// everywhere). The day this WebKit gains the two, this answers yes by itself
+// and every case below runs there with no edit here.
+//
+// This asks for the MASK, not for a login that goes through. Most cases here
+// measure a login that FAILS on purpose - a wrong password, a lock, an empty
+// field afterwards - and those run on any engine that can draw the mask. The
+// three that wait for a desktop ask for themselves, with skipWithoutLogin.
+// Asking the whole file for a finished login switched three of them off on
+// Firefox that run there (task 30, Fixrunde 1).
 test.beforeEach(async ({ shell }) => {
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the login");
+  await skipWithoutShell(shell);
   // The five cases below look at the DESKTOP behind the mask, and since task
   // 17b the desktop behind it is the real one: net/world.js opens the trust
   // list on the session this login just made, and the chain of the mock API
@@ -120,6 +126,7 @@ async function withAuthenticator(shell, who) {
 }
 
 test("the password never leaves the browser", async ({ shell }) => {
+  await skipWithoutLogin(shell);
   const seen = [];
   shell.on("request", (r) => seen.push((r.postData() ?? "") + " " + r.url()));
   const frames = [];
@@ -176,6 +183,7 @@ test("E_LOCKED waits the given seconds", async ({ shell }) => {
 });
 
 test("TOTP is asked for when the challenge says so", async ({ shell }) => {
+  await skipWithoutLogin(shell);
   await fillLogin(shell, "bernd", PASSWORD);
   await expect(shell.getByLabel("Code aus der Authenticator-App")).toBeVisible();
   await shell.getByLabel("Code aus der Authenticator-App").fill(TOTP_CODE);
@@ -221,6 +229,7 @@ test("a role with passwordToo has the certificate signed twice", async ({ shell,
 });
 
 test("a password login is told to switch to passkeys", async ({ shell }) => {
+  await skipWithoutLogin(shell);
   await fillLogin(shell, "anna", PASSWORD);
   await expect(shell.locator("#taskbar")).toBeVisible();
   await expect(shell.getByText("Umstellen auf Passkeys empfohlen")).toBeVisible();

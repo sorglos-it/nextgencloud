@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // The terminal - org.sorglos.terminal - in the fenced frame every app runs in.
 //
@@ -25,8 +25,7 @@ import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 // its own reason; the window closing on an open channel; the keyboard; the names
 // a screen reader reads.
 test.beforeEach(async ({ shell }) => {
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(shell);
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });

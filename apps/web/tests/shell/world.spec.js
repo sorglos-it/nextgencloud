@@ -1,4 +1,5 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin, skipWithoutSessionKeys, skipWithoutSignatures }
+  from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 import { PASSWORD, USER_NAME } from "../fixtures/logins.js";
 
@@ -211,8 +212,7 @@ async function serve(shell, c, { visible = c.chain.length } = {}) {
 test.describe("the adapter", () => {
   test("every action the shell may open goes to the same place as through the stand-in",
     async ({ shell }) => {
-      test.skip(!(await hasSessionKeys(shell)),
-        "no Ed25519 in this engine's Web Crypto: the stand-in cannot even build its world");
+      await skipWithoutSignatures(shell);
       await plant(shell);
       const got = await shell.evaluate(async () => {
         const core = await import("/assets/js/contracts/core.js");
@@ -446,8 +446,7 @@ test.describe("the adapter", () => {
 
   test("with both pieces in hand the door opens, and a node the verified list does not know is refused on its own word",
     async ({ shell }) => {
-      test.skip(!(await hasSessionKeys(shell)),
-        "no X25519 in this engine's Web Crypto: there is no session key pair to hand over");
+      await skipWithoutSessionKeys(shell);
       await plant(shell);
       const got = await shell.evaluate(async () => {
         const noise = await import("/assets/js/contracts/noise.js");
@@ -596,8 +595,7 @@ test.describe("the adapter", () => {
 
 test.describe("the real session", () => {
   test.beforeEach(async ({ shell }) => {
-    test.skip(!(await hasSessionKeys(shell)),
-      "no session keys in this engine's Web Crypto: there is no session to adapt");
+    await skipWithoutLogin(shell);
   });
 
   test("the actions the test API answers come back as bytes the contract takes",
@@ -928,8 +926,7 @@ test.describe("the real session", () => {
 
 test.describe("the trust list of the world", () => {
   test("a trust hint moves the list, and refresh answers with a number", async ({ shell }) => {
-    test.skip(!(await hasSessionKeys(shell)),
-      "no Ed25519 in this engine's Web Crypto: no version of this chain can be verified");
+    await skipWithoutSignatures(shell);
     const c = caseOf(GOOD);
     const state = await serve(shell, c, { visible: 1 });
     await plant(shell);
@@ -984,8 +981,7 @@ test.describe("the trust list of the world", () => {
   });
 
   test("a chain that does not fit the anchor takes the session with it", async ({ shell }) => {
-    test.skip(!(await hasSessionKeys(shell)),
-      "no Ed25519 in this engine's Web Crypto: no version of this chain can be verified");
+    await skipWithoutSignatures(shell);
     const c = caseOf(GOOD);
     await serve(shell, c);
     await plant(shell);
@@ -1020,8 +1016,7 @@ test.describe("the trust list of the world", () => {
 test.describe("the boot", () => {
   test("without the stand-in the shell opens the trust list on the session it just got",
     async ({ shell }) => {
-      test.skip(!(await hasSessionKeys(shell)),
-        "no session keys in this engine's Web Crypto: the boot stops before the login");
+      await skipWithoutLogin(shell);
       // The stand-in is what every other case of this suite still eats
       // (tests/fixtures/page.js, signIn). Without it the shell takes the real
       // way: the session it just opened stays open and the trust list is

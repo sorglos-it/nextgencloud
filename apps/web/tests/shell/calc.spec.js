@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 // The calculator - org.sorglos.calculator - in the fenced frame every app runs
 // in.
@@ -22,8 +22,7 @@ test.beforeEach(async ({ shell }) => {
   // Same gap as in desktop.spec.js: no session keys, no desktop, no window to
   // put a calculator in. The proof of a user interface is an Ed25519 signature
   // as well, so this engine could not open the frame either.
-  test.skip(!(await hasSessionKeys(shell)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(shell);
   await signIn(shell);
   await expect(shell.locator("#taskbar")).toBeVisible();
 });

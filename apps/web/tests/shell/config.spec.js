@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin, skipWithoutShell } from "../fixtures/page.js";
 
 // /config.json carries the addresses of the API servers, the pinned anchor of
 // the trust list and the relying party for passkeys - where the shell
@@ -169,12 +169,16 @@ test("an answer larger than the bound is refused", async ({ shell }) => {
 });
 
 // The probe has to run on the page and not before it. Measured: on
-// about:blank crypto.subtle is undefined, so hasSessionKeys answers false
-// there and the three cases below skipped themselves on chromium - for the
-// wrong reason, and silently.
-async function ready(page) {
+// about:blank crypto.subtle is undefined, so every gap answers "no" there and
+// the three cases below skipped themselves on chromium - for the wrong reason,
+// and silently.
+//
+// Which gap each case asks about is NOT the same question, and treating it as
+// one switched two of them off on Firefox once (task 30, Fixrunde 1): the two
+// cases that watch a configuration being REFUSED never reach a login, so a
+// shell that comes up is all they need; only the third wants a desktop.
+async function onPage(page) {
   await page.goto("/");
-  return hasSessionKeys(page);
 }
 
 // Serves text as /config.json and loads the page again, recording every
@@ -194,8 +198,8 @@ async function boot(page, text) {
 const OF_THE_CONFIG = /api-\d\.ngc\.test|evil\.example|\/api\/v1\//;
 
 test("a configuration whose address is no address is refused, and nothing was asked of it", async ({ page }) => {
-  test.skip(!(await ready(page)),
-    "no session keys in this engine's Web Crypto: the boot stops before the configuration is fetched");
+  await onPage(page);
+  await skipWithoutShell(page);
   const asked = await boot(page, body({ apis: ["http://api-1.ngc.test:7443"] }));
   // The same sentence a missing setup gets: the person must not have to
   // guess, and must learn nothing about the shape either.
@@ -205,8 +209,8 @@ test("a configuration whose address is no address is refused, and nothing was as
 });
 
 test("a configuration with a member name twice is refused, and nothing was asked of it", async ({ page }) => {
-  test.skip(!(await ready(page)),
-    "no session keys in this engine's Web Crypto: the boot stops before the configuration is fetched");
+  await onPage(page);
+  await skipWithoutShell(page);
   // JSON.parse keeps the LAST of two members of one name, so whoever reads
   // the file down to the first "apis" and the shell would not be looking at
   // the same addresses.
@@ -219,8 +223,8 @@ test("a configuration with a member name twice is refused, and nothing was asked
 });
 
 test("a good configuration brings the desktop up and leaves nothing on window", async ({ page }) => {
-  test.skip(!(await ready(page)),
-    "no session keys in this engine's Web Crypto: there is no desktop to look at");
+  await onPage(page);
+  await skipWithoutLogin(page);
   await boot(page, body({}));
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();

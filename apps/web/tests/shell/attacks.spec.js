@@ -1,4 +1,4 @@
-import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
 
@@ -91,8 +91,7 @@ function valuesOf(offerB64) {
 
 test.describe("a user interface that does not fit its proof", () => {
   test.beforeEach(async ({ shell }) => {
-    test.skip(!(await hasSessionKeys(shell)),
-      "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+    await skipWithoutLogin(shell);
     await signIn(shell);
     await expect(shell.locator("#taskbar")).toBeVisible();
   });
@@ -299,8 +298,7 @@ for (const [what, twist] of TWISTS) {
   test(`an upload answered with another ${what} activates nothing`, async ({ page }) => {
     await page.addInitScript((w) => { window.__ngcStore = w; }, { uploadTwist: twist });
     await page.goto("/");
-    test.skip(!(await hasSessionKeys(page)),
-      "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+    await skipWithoutLogin(page);
     await signIn(page);
     await expect(page.locator("#taskbar")).toBeVisible();
     await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
@@ -328,8 +326,7 @@ for (const [what, twist] of TWISTS) {
 // --------------------------------------- 7. the bound of an end-to-end answer
 
 test("the shell bounds an end-to-end answer, and it is the only side that can", async ({ shell }) => {
-  test.skip(!(await hasSessionKeys(shell)),
-    "this engine has no Ed25519/X25519: no session keys, no session link");
+  await skipWithoutLogin(shell);
 
   // WHAT THIS FOUND, written here because the next author of an app needs it:
   // the bound is in net/channel.js (Channel.result -> checkLimit) and it is
@@ -432,8 +429,7 @@ test("the password of the second confirmation reaches no wire and no link", asyn
     }],
   });
   await page.goto("/");
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the desktop");
+  await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
   await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
