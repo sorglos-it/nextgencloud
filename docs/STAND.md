@@ -1,6 +1,6 @@
 # Stand: NGC (NextGenCloud)
 
-**Zuletzt aktualisiert:** 23.09.2026
+**Zuletzt aktualisiert:** 01.10.2026
 
 ## Ziel der nächsten Sitzung
 
@@ -14,8 +14,9 @@ Datenbank und Recovery.
 |---|---|
 | Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden. Dazu die Pläne der vier Teile (Web 27, API 30, Controller 25, Datenbank 12 Aufgaben) und der Plan für Recovery-Paket 0 |
 | In Arbeit | Vertragsänderung V1.1 (Passkey-Anmeldung, von Thomas freigegeben) und die Überarbeitung des Plans für Recovery-Paket 0 |
+| Plan 1 (Web) | umgesetzt: `apps/web` 0.2.0. Verträge in JavaScript, Anmeldung in beiden Stufen, Ersteinrichtung, Sitzung mit Noise und Ende zu Ende, Desktop, abgeschottete App-Fenster, vier Oberflächen (App-Store, Benutzer & Rechte, Rechner, Terminal), Browser-Tests gegen Chrome, Firefox und Safari. Bei Abschluss von Aufgabe 27 liefen noch vier Aufgaben: Adapter Desktop ↔ Sitzung (17b), Oberfläche der Ersteinrichtung (19), Rechner im Rahmen (25), Installationsskript (26) |
 | Blockiert | nichts |
-| Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
+| Code | `shared/` (die Verträge), `apps/web` (fertig, siehe oben) und die Programm-Grundgerüste der übrigen Teile unter `apps/` |
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
@@ -45,6 +46,21 @@ Datenbank und Recovery.
 - **Für den Sicherheitsdurchgang (Plan 7) vorgemerkt:** eine feste Bindung der Oberfläche einer
   Store-App an ihren Store, die einen Wechsel des Admin-Schlüssels übersteht; `enc.Budget` soll
   Mitglieder in Rohwerten zählen; eine gemeinsame Prüfung der Form von URLs für alle Verträge.
+- **Aus Aufgabe 27 (Web), je mit Messung im Aufgabenbericht:**
+  - **Zurückgedrehte Vertrauensliste:** Liefert die API auf `from=N+1` eine ältere, gültig
+    unterschriebene Fassung, wirft die Shell heute ihre geprüfte Liste weg und schlägt Alarm.
+    Entwurf 4.6 will das Gegenteil: ablehnen, ohne Alarm, bei der neueren bleiben. Sonst kann eine
+    übernommene API jede Sitzung abmelden. Entscheiden, dann `shell/trustlist.js` nachziehen.
+  - **`wire.MaxCallResult` auf Ende-zu-Ende-Kanälen:** `net/channel.js` setzt die Grenze nur, wenn
+    der Aufrufer sie nennt. `channel.call` nennt sie, `channel.openE2E` nicht – richtig für eine
+    Aktion mit `stream`, offen für eine ohne. Festlegen, wer sie dort setzt, bevor die erste
+    solche App kommt.
+  - **Sicherheitskopfzeilen für `assets/`:** Apache liefert den Ordner selbst aus, ohne CSP,
+    `nosniff` und `Cross-Origin-Resource-Policy`. Gehört in `scripts/ngc-web.sh` im ulh-Repo; im
+    Webinterface hält `tests/shell/csp.spec.js` dafür fest, dass im Webroot keine Datei liegt,
+    die ein Browser als Dokument ausführt.
+  - **`HEAD` auf `/`** antwortet 405 statt wie `GET`, und ein 405 trägt keine `Allow`-Kopfzeile.
+    Kein Loch, aber nicht nach HTTP. Lassen oder ändern.
 
 Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 

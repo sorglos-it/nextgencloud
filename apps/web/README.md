@@ -1,12 +1,18 @@
 # ngc-web
 
-The NGC desktop in the browser: login, session, windows, apps.
+[![Version](https://img.shields.io/badge/version-0.2.0-brightgreen.svg)](VERSION)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](../../LICENSE)
+[![No build step](https://img.shields.io/badge/build-none-lightgrey.svg)](#start-in-3-steps)
+[![Browsers](https://img.shields.io/badge/browsers-Chrome%20%7C%20Firefox%20%7C%20Safari-informational.svg)](tests/playwright.config.js)
+
+The NGC desktop in the browser: login, session, windows, apps. HTML, CSS, JavaScript and PHP — no
+framework, no build step, and npm only under `tests/`.
 
 | Folder | What is in it |
 | --- | --- |
 | `public/` | web root; `index.php` is the only entry point, `assets/` holds CSS, JS and vendored code |
-| `classes/` | PHP: reads `/etc/ngc/web.json` and `/etc/ngc/trust-anchor.json` |
-| `templates/` | the page skeleton |
+| `classes/` | PHP: reads `/etc/ngc/web.json` and `/etc/ngc/trust-anchor.json`, sends the headers |
+| `templates/` | the page skeletons: the desktop, and an app window |
 | `tests/` | Playwright; npm lives only here. `tests/php/` checks the PHP side and needs no npm |
 
 ## Start in 3 steps
@@ -15,7 +21,26 @@ The NGC desktop in the browser: login, session, windows, apps.
 2. `npm test`, then `php php/config-test.php` — the contracts check themselves against
    `shared/testdata/`, no API needed. Is php installed but not on the PATH? Then write
    `NGC_PHP=<path to php>` into `tools/local.env` (`tools/local.env.example` shows how);
-   `npm test` and `tools/check.sh` both read it.
-3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository.
+   `npm test` and `tools/check.sh` both read it. Two runs at once: set `NGC_WEB_TEST_PORT`.
+3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository. Apache's
+   DocumentRoot is `public/` and nothing else is reachable from outside.
 
-No build step, no framework. NGC itself never needs npm.
+## What it holds to
+
+- **Nothing from outside becomes HTML.** `textContent` everywhere; the one exception is the
+  bootstrap of an app window (`public/assets/js/shell/frame-boot.js`), which writes only bytes a
+  signature vouches for and only in a document with an origin of its own.
+- **One entry point.** `public/index.php` answers `/`, `/config.json` and `/frame.html`; everything
+  else is a 404, and only GET is answered.
+- **The policy is measured, not promised.** `tests/shell/csp.spec.js` checks every directive of
+  `classes/Page.php` and then makes the browser refuse what it forbids.
+- **The password never leaves the browser**, at the login and at a second confirmation alike
+  (`tests/shell/login.spec.js`, `tests/shell/attacks.spec.js`).
+
+## Author
+
+Sorglos Thomas Weirich
+
+## Donate via PayPal
+
+[Donate via PayPal](https://www.paypal.com/donate/?hosted_button_id=6CDEVZGJWTNQQ)
