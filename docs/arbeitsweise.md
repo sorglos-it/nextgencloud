@@ -467,6 +467,35 @@ Benutzen, ein Vorhandensein gegen ein Greifen — dann prüfst du die Form und
 nennst es die Sache. Die Gegenprobe ist immer dieselbe: **bau den Fall, der die
 Form behaelt und die Wirkung verliert**, und sieh zu, dass er rot wird.
 
+### Mutier jeden neuen Zaun einzeln — sonst lieferst du Zäune, die nicht beißen
+
+Ein Strang hat in einer Fixrunde fünf neue Zusicherungen gebaut, jede gegen einen
+benannten Fund. Dann hat er **jede einzeln mutiert**, statt den Satz laufen zu
+lassen und grün zu melden. Ergebnis: **drei von ihnen bissen nicht.**
+
+- Der Fall gegen ein falsches Unterprotokoll war **grün unter seinem Mutanten** —
+  ohne die Regel antwortet die Annahme **dasselbe** `ErrLink`, nur später. Die
+  Zusicherung prüfte also die Meldung, nicht die Regel.
+- Der Fall für die Frist bis zum ersten Frame **hing zehn Minuten**, statt zu
+  fallen. Ein Zaun, der nicht fällt, sondern hängt, ist in der Zusammenfassung
+  kein roter Fall — er ist eine Zeitüberschreitung, die jemand für Last hält.
+- Der Fall für „kein Deckel danach" las Bytes, die **schon im Puffer lagen**, und
+  bewies damit etwas anderes als sein Name.
+
+Sein Satz dazu: *dieselbe Klasse wie der kritische Fund, diesmal von mir —
+gefunden nur, weil ich jeden Zaun einzeln mutiert habe.*
+
+**Die Regel:** Für jede **neue** Zusicherung baust du den Mutanten, der genau sie
+rot machen muss, und lässt ihn laufen. Nicht einen Mutanten für die Datei, nicht
+einen für das Thema — **einen je Zaun.** Und sieh dir an, **wie** er rot wird:
+fällt er, oder hängt er? Hängen ist kein Fallen.
+
+Dazu die gute Nachricht aus derselben Runde, weil sie den Wert dieser Arbeit
+zeigt: die fünfzehn neuen Fälle waren **auf dem alten Code grün**. Der Code war
+die ganze Zeit richtig — nur der Zaun war es nicht. Ein fehlender Zaun ist kein
+Loch im Code, aber er ist die Erlaubnis, morgen eines zu reissen, ohne dass es
+auffällt.
+
 ### Die gefährlichste Zusicherung, die nicht fallen kann, steht im Plan
 
 Den ganzen Tag haben Stränge Zusicherungen gefunden, die für ihr eigenes Thema
