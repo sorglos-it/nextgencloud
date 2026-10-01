@@ -41,8 +41,23 @@ Datenbank und Recovery.
 
 ## Offene Entscheidungen
 
+- **ES GIBT KEINEN RELEASE-PACKER — gemessen am 01.10.2026, und das ist der eigentliche Grund,
+  warum NGC noch nicht installierbar ist.** Kein `tar -c`, kein Workflow, kein `tools/release*`,
+  weder auf `main` noch auf `web`; `shared/testdata/release/ngc-web-all.tar` sind **18 Byte Text**.
+  `verify_release` in `ngc-web.sh` prüft das Archiv als **undurchsichtigen Block** (Signatur,
+  SHA-256, Größe) und sagt kein Wort über den Inhalt; `unpack_release` verlangt danach **nur**
+  `public/index.php`. Die Vorlage `apps/web/templates/apache-vhost.conf` *beansprucht* in ihrem
+  eigenen Kommentar, im Release zu liegen — das ist Absicht, nicht gebaut.
+  **Folge:** Der Release-Schlüssel unterschreibt ein Archiv, das niemand packt. Wer die Reihenfolge
+  sucht: erst der Packer (mit einer Liste, was hineingehört und einer Prüfung, dass es drin ist),
+  dann der Schlüssel, dann Aufgabe 26.
 - **Release-Stick:** Mit welchem Werkzeug der Hardware-Stick das Release signiert, wird vor dem
   ersten Release entschieden. `ngc-store` signiert nur Test-Releases.
+  Stand 01.10.2026: PIV auf Firmware 5.4.3 kann kein Ed25519, und der Vertrag verlangt reines
+  Ed25519 (`shared/sign/sign.go` prüft `len(sig) != ed25519.SignatureSize`). Unterschrieben wird
+  `"ngc/" + purpose + NUL + payload`, gemessen **193 Byte** im Beispiel. Eine Probe, ob der
+  OpenPGP-Teil des Sticks diese Bytes **direkt** unterschreibt, liegt bereit; der normale
+  `gpg`-Weg unterschreibt einen Hash **plus OpenPGP-Anhang** und verifiziert daher nie.
 - **Für den Sicherheitsdurchgang (Plan 7) vorgemerkt:** eine feste Bindung der Oberfläche einer
   Store-App an ihren Store, die einen Wechsel des Admin-Schlüssels übersteht; `enc.Budget` soll
   Mitglieder in Rohwerten zählen; eine gemeinsame Prüfung der Form von URLs für alle Verträge.
