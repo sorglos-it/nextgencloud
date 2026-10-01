@@ -224,6 +224,19 @@ test("every answer of the one entry point carries the headers", async ({ request
 // Both measured, in the case further down.
 const ASSET_CSP = { "default-src": "'none'", "script-src": "'self'" };
 
+// And the four the virtual host leaves out ON PURPOSE, each with a reason
+// written beside the block there. They are listed here because a list of
+// reasons is not a fence: without this, somebody writing Referrer-Policy back
+// in "to be safe" - the exact reflex that section argues against - would find
+// the whole suite still green, and the thesis of this task is that a pointless
+// header is worse than none.
+const ASSET_NOT = [
+  "referrer-policy",
+  "cross-origin-opener-policy",
+  "permissions-policy",
+  "cache-control",
+];
+
 test("every file the web server hands out itself carries walls too", async ({ request }) => {
   // THE POINT OF THIS CASE. public/index.php says it: Apache "serves
   // everything below assets/ itself", so none of these answers ever reaches
@@ -255,6 +268,12 @@ test("every file the web server hands out itself carries walls too", async ({ re
     expect(h["cross-origin-resource-policy"], `${path} corp`).toBe("same-origin");
     expect(h["strict-transport-security"], `${path} hsts`).toBe(HSTS);
     expect(h["x-powered-by"], `${path} powered-by`).toBeUndefined();
+    // And none of the four the block leaves out. This is the other half of
+    // "the policy as a set": the directives are held as a set above, the
+    // HEADERS are held as one here.
+    for (const name of ASSET_NOT) {
+      expect(h[name], `${path} must not carry ${name}`).toBeUndefined();
+    }
     // And the file with no extension really has no type, otherwise the reason
     // nosniff is in that block is a case that does not exist.
     if (path.endsWith("/LICENSE")) {
@@ -680,4 +699,19 @@ test("the web root holds nothing a browser would run as a document of this origi
   const runnable = files.filter((f) =>
     /\.(php|phtml|php[0-9]|phar|html?|xhtml|xml|svg|shtml)$/i.test(f) || /(^|\/)\.ht/.test(f));
   expect(runnable).toEqual(["index.php"]);
+
+  // AND THE SECOND HALF, which this case did not hold until the walls for the
+  // files existed. The virtual host puts them on public/assets/ and on nothing
+  // else, because the block cannot be widened to public/ without touching the
+  // PAGE's own headers. So a file lying DIRECTLY in public/ - a favicon.ico, a
+  // robots.txt, a probe.js - would go out under Apache with none of the four,
+  // and no answer could show it: the test server hands only ^/assets/… over
+  // raw (index.php, "return false"), so right here it is stricter than
+  // operation and a file in public/ gets a walled 404 instead.
+  //
+  // The cheap bolt, and it holds for every file that will ever be added:
+  // directly in public/ there is the entry point and nothing besides. Whatever
+  // comes next therefore lands under assets/ and gets the walls.
+  const loose = files.filter((f) => !f.includes("/"));
+  expect(loose, "directly in the web root there is only the entry point").toEqual(["index.php"]);
 });

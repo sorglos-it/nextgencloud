@@ -20,11 +20,12 @@ apps/web/
 │                    public/ wäre ein Dokument der Herkunft der Shell und damit genau
 │                    der zweite Weg, den der abgeschottete Rahmen zumacht.
 ├── classes/         PHP: web.json und trust-anchor.json lesen, Liste der API-Server
-├── templates/       Gerüst der Desktop-Seite und des App-Fensters, dazu
-│                    apache-vhost.conf: die Vorlage für den Webserver. Sie legt fest,
-│                    dass nur public/ erreichbar ist, und setzt die Kopfzeilen für die
-│                    Dateien, die Apache selbst ausliefert - eine eigene Richtlinie,
-│                    nicht die der Seite (Begründung steht in der Datei)
+├── templates/       Gerüst der Desktop-Seite und des App-Fensters, dazu zwei Vorlagen
+│                    für Apache: apache-vhost.conf (der virtuelle Host - nur public/ ist
+│                    erreichbar, und die Kopfzeilen für die Dateien, die Apache selbst
+│                    ausliefert; eine eigene Richtlinie, nicht die der Seite, Begründung
+│                    je Zeile in der Datei) und apache-apis.conf.example (die Form, die
+│                    ngc-web für die API-Server schreibt - nie von Hand kopieren)
 └── tests/           Playwright; npm nur hier
 ```
 

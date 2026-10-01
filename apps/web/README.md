@@ -12,7 +12,7 @@ framework, no build step, and npm only under `tests/`.
 | --- | --- |
 | `public/` | web root; `index.php` is the only entry point, `assets/` holds CSS, JS and vendored code |
 | `classes/` | PHP: reads `/etc/ngc/web.json` and `/etc/ngc/trust-anchor.json`, sends the headers |
-| `templates/` | the page skeletons (the desktop, an app window) and `apache-vhost.conf`, the web server |
+| `templates/` | the page skeletons (the desktop, an app window), plus `apache-vhost.conf` — the web server, copy it and fill in one name — and `apache-apis.conf.example`, the form `ngc-web` writes for the API servers |
 | `tests/` | Playwright; npm lives only here. `tests/php/` checks the PHP side and needs no npm |
 
 ## Start in 3 steps
@@ -23,9 +23,8 @@ framework, no build step, and npm only under `tests/`.
    `NGC_PHP=<path to php>` into `tools/local.env` (`tools/local.env.example` shows how);
    `npm test` and `tools/check.sh` both read it. Two runs at once: set `NGC_WEB_TEST_PORT`.
 3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository. By hand instead:
-   copy `templates/apache-vhost.conf`, replace the one placeholder in it, switch it on — the three
-   steps are at the top of that file. Apache's DocumentRoot is `public/` and nothing else is
-   reachable from outside.
+   `templates/apache-vhost.conf` carries six commands at the top, in order, with one name to fill
+   in. Apache's DocumentRoot is `public/` and nothing else is reachable from outside.
 
 ## What it holds to
 
@@ -39,9 +38,32 @@ framework, no build step, and npm only under `tests/`.
 - **The files have walls too, and not the page's.** Apache serves everything below
   `public/assets/`, so `classes/Page.php` never sees those answers; `templates/apache-vhost.conf`
   gives them `nosniff`, `Cross-Origin-Resource-Policy` and a policy written for a file instead of
-  for a document. The test server reads that file, so the same case measures both.
+  for a document. `tests/mock/api.js` — the harness in front of the PHP test server, not PHP itself
+  — reads the values out of that file, so one case measures the template and the browser at once.
 - **The password never leaves the browser**, at the login and at a second confirmation alike
   (`tests/shell/login.spec.js`, `tests/shell/attacks.spec.js`).
+
+## What no test here can measure: the web server itself
+
+There is no Apache in this repository, so `templates/apache-vhost.conf` is the one thing that is
+reasoned out and not measured. Five commands close that gap, and they take about a minute on the
+first machine that has an Apache. `HOST` is the name you filled in; `-k` is for the self-signed
+certificate of step 2.
+
+| Run this | Expected | What it decides |
+| --- | --- | --- |
+| `apachectl configtest` | `Syntax OK` | Apache accepts the file at all — syntax, `Redirect 308`, `FallbackResource`, every `Header` line |
+| `curl -sI http://HOST/irgendwas` | `308`, `Location: https://HOST/irgendwas` | the redirect works and keeps the path |
+| `curl -sI http://HOST/.well-known/acme-challenge/x` | **not** a 308 (a 404 from `/var/www/html`) | the one path Let's Encrypt needs stays free, so renewal keeps working |
+| `curl -skD - -o /dev/null https://HOST/assets/css/shell.css \| grep -ciE '^(content-security-policy\|x-content-type-options\|cross-origin-resource-policy\|strict-transport-security):'` | `4` | the asset block is in effect and each header arrives exactly once |
+| `curl -skD - -o /dev/null https://HOST/assets/js/gibtesnicht.js \| grep -icE '^(content-security-policy\|cross-origin-resource-policy):'` | `2` | this is the open question. **More than 2 means `Header always set` ADDED instead of replacing**, so that answer carries two policies (stricter, no hole) and a doubled `Cross-Origin-Resource-Policy`, which a browser then ignores. If it is more than 2, put a `Header always unset <name>` in front of each `set` in the assets block and measure again |
+
+Two more, if you want the whole picture: `curl -skI https://HOST/assets/js/` must be `403` and carry
+the same four headers, and `curl -skI https://HOST/` must carry `Page::headers`' own policy —
+unchanged, with `script-src 'self'` and `connect-src 'self'` in it.
+
+Whatever comes out, write it into `docs/STAND.md`: it is the last unmeasured corner of this
+interface.
 
 ## Author
 
