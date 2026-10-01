@@ -52,6 +52,13 @@ const (
 	// upgrades and then says nothing would hold a goroutine and a file handle
 	// for good, before any login. The price: a human on a very bad line can
 	// be cut off after ten seconds.
+	//
+	// Measured is the half that reads message 1. For the half that writes
+	// message 2 the deadline is in the code and unmeasured: forty-eight bytes
+	// block no socket, so the only way to make that write run out of time is to
+	// let the clock expire between the read and the write — a case that races a
+	// timer, green on one machine and red on the next. A named gap is worth more
+	// than a case that teaches the next reader to explain away a red run.
 	HandshakeTimeout = 10 * time.Second
 
 	// CloseWait bounds how long a refused peer may take to answer the close
