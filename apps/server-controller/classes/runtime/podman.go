@@ -36,6 +36,11 @@ func NewPodman(bin string) *Podman { return &Podman{bin: bin} }
 // its app: it begins with a letter or a digit, so it cannot become an option of
 // podman, it is at most as long as a user name may be, and it holds nothing a
 // user name may not hold.
+//
+// Whoever builds those names has to stay inside this grammar. A name outside it
+// does not fail where it is built but here, at every single call for that app,
+// and only on a server - so this line and the one that makes the user name are
+// one decision in two places.
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 // appUser is who podman runs as and where it keeps its own two directories.
@@ -49,14 +54,17 @@ type appUser struct {
 
 // ofName is the user a container belongs to, read out of the user database.
 //
-// Two things have to hold for this lookup to be the right one, and both are
-// held elsewhere: the name of a container is the name of the system user of its
-// app - that is how the user is made - and the home directory of that user is
-// the data directory of the app (config.AppDataDir + "/" + app), which is the
-// directory Create hands podman as HOME. If the home were anywhere else, every
-// call after Create would look for the container in another store of podman
-// than the one it was made in; Create refuses that mismatch with ErrHome, where
-// it can see the data directory and the user at the same time.
+// Two things have to hold for this lookup to be the right one: the name of a
+// container is the name of the system user of its app - that is how the user is
+// made - and the home directory of that user is the data directory of the app
+// (config.AppDataDir + "/" + app), which is the directory Create hands podman as
+// HOME. If the home were anywhere else, every call after Create would look for
+// the container in another store of podman than the one it was made in.
+//
+// Create is where that is held, with one limit worth knowing: it compares
+// against the user database, so it catches the mismatch only once the user is in
+// it. Before that it can only insist that the data directory lies under
+// config.AppDataDir.
 //
 // This is also why the lookup stands here at all instead of a remembered table:
 // a container outlives the process that made it, so the name is all there is.
@@ -86,10 +94,13 @@ func ofName(name string) (appUser, error) {
 // the first call, and after every restart of the machine again.
 func runDir(name string) string { return config.RunDir + "/" + name }
 
-// validPath holds every path that goes into an argument of podman: absolute,
-// already clean, and without a colon. The colon is the reason: a volume is
-// given as source:target:mode, so a colon in the source would cut the
-// specification in another place and mount another directory.
+// validPath holds every path that goes into an argument of podman. Five things
+// it must not be: empty, relative (a relative path would also be read against a
+// working directory nobody set here), not already clean, carrying a colon, or
+// carrying a NUL or a line break. The colon is the one with the sharpest edge: a
+// volume is given as source:target:mode, so a colon in the source would cut the
+// specification in another place and mount another directory. A leading dash is
+// covered by the first two: a dash is not a slash.
 func validPath(s string) error {
 	if s == "" || !strings.HasPrefix(s, "/") || path.Clean(s) != s ||
 		strings.ContainsAny(s, ":\x00\n") {
@@ -151,8 +162,15 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 	if err := validPath(c.DataDir); err != nil {
 		return err
 	}
+	// The program that holds the container open is mounted into it, so where it
+	// comes from decides what the container can read. Only what NGC installed
+	// may be mounted: without this, any readable file of this server could be
+	// handed to an app.
 	if err := validPath(c.Hold); err != nil {
 		return err
+	}
+	if !strings.HasPrefix(c.Hold, config.BinDir+"/") {
+		return ErrPath
 	}
 	if c.CPU < 0 || c.Memory < 0 {
 		return ErrLimit
@@ -195,17 +213,31 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 		// rootless, so the user namespace maps it to exactly that user.
 		"--user", "0:0", c.Image, "/ngc/ngc-hold", "hold")
 
-	u := appUser{uid: c.UID, gid: c.GID, home: c.DataDir, run: runDir(c.Name)}
-	// This is the one call that sees both the data directory and the user, so
-	// it is the one that can tell whether the two agree. They have to: every
-	// call after this one takes the home directory out of the user database, so
-	// a user whose home is somewhere else would send those calls to another
-	// podman store than the container was made in. A name that is in no user
-	// database yet is let through - podman itself needs the entry, so where it
-	// matters the entry is there.
-	if db, err := user.Lookup(c.Name); err == nil && db.HomeDir != c.DataDir {
-		return errors.Join(ErrHome, errors.New("the home of "+c.Name+" is "+db.HomeDir))
+	// Create is the only call that does not read the user out of the name: user,
+	// group and home come from the argument. That makes it the last way past the
+	// separation the name is, so everything it was handed is held against the
+	// user database here - every call after this one takes all three from there.
+	//
+	// Where the name is in no user database yet, there is nothing to hold it
+	// against, and then only the place is left: a data directory lies under
+	// config.AppDataDir and nowhere else. Why a missing entry is let through at
+	// all: podman is believed to need the entry of the user it runs as (rootless
+	// podman reads its subuid range by name), so where it matters the entry is
+	// there - believed, not measured here, because no podman runs on this
+	// machine.
+	if db, err := user.Lookup(c.Name); err == nil {
+		if db.HomeDir != c.DataDir {
+			return errors.Join(ErrHome, errors.New("the home of "+c.Name+" is "+db.HomeDir))
+		}
+		if db.Uid != strconv.FormatUint(uint64(c.UID), 10) ||
+			db.Gid != strconv.FormatUint(uint64(c.GID), 10) {
+			return errors.Join(ErrIdentity,
+				errors.New(c.Name+" is "+db.Uid+":"+db.Gid))
+		}
+	} else if !strings.HasPrefix(c.DataDir, config.AppDataDir+"/") {
+		return ErrHome
 	}
+	u := appUser{uid: c.UID, gid: c.GID, home: c.DataDir, run: runDir(c.Name)}
 	_, err := p.run(ctx, u, args, nil, nil, nil)
 	return err
 }
@@ -286,6 +318,13 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 		if err := validPath(e.EnvFile); err != nil {
 			return 0, err
 		}
+		// It has to lie on the tmpfs under config.RunDir, and that is not a
+		// matter of tidiness: the line below removes the file, and this process
+		// is root. A path from anywhere would make this call a way to delete any
+		// file of this server.
+		if !strings.HasPrefix(e.EnvFile, config.RunDir+"/") {
+			return 0, ErrPath
+		}
 		// The file is the only copy of what the call was given, and it goes as
 		// soon as the call is over. Not earlier: podman reads it itself while
 		// it starts, so taking it away right after the start is a race with
@@ -307,7 +346,12 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 
 	code, err := p.run(ctx, u, args, e.Stdin, e.Stdout, e.Stderr)
 	var ended *exec.ExitError
-	if errors.As(err, &ended) {
+	// Only a status the command really ended with becomes the answer. A process
+	// that a signal ended has no status at all - Go reports -1 for it, and -1 is
+	// no number a command can end with - so that stays an error, and a cancelled
+	// call is exactly that case: the context kills podman. What the caller must
+	// not get is a -1 that looks like something the service decided.
+	if errors.As(err, &ended) && ended.Exited() {
 		// The number belongs to the command, not to this engine. Podman uses
 		// 125 to 127 for its own troubles and a service may end with those
 		// same numbers, so the two cannot be told apart without reading what
@@ -344,6 +388,17 @@ func (p *Podman) run(ctx context.Context, u appUser, args []string,
 	err = cmd.Run()
 	var ended *exec.ExitError
 	if errors.As(err, &ended) {
+		if !ended.Exited() {
+			// A signal ended it, so there is no status: Go answers -1 here, and
+			// no command ends with -1. A cancelled context lands here too,
+			// because that is how CommandContext ends a running program - so the
+			// reason is named, and the context's own is named with it where it
+			// was the context.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return 0, errors.Join(ctxErr, ErrKilled, err)
+			}
+			return 0, errors.Join(ErrKilled, err)
+		}
 		return ended.ExitCode(), err
 	}
 	if err != nil {

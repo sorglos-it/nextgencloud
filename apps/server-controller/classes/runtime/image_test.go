@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -170,6 +171,32 @@ func TestImageTagRefusesAManifestThatIsTooBig(t *testing.T) {
 	}
 	if !errors.Is(err, ErrManifest) {
 		t.Fatalf("err = %v, want ErrManifest - the size was read before it was refused", err)
+	}
+}
+
+// The archive is read to its end on purpose, so its length is the writer's to
+// choose unless something bounds it. An image has a handful of members; one with
+// more than MaxImageMembers is not an image.
+func TestImageTagRefusesATarWithTooManyMembers(t *testing.T) {
+	es := make([]entry, 0, MaxImageMembers+1)
+	for i := 0; i <= MaxImageMembers; i++ {
+		es = append(es, entry{name: "l/" + strconv.Itoa(i), body: "x"})
+	}
+	es = append(es, entry{name: ManifestFile, body: `[{"RepoTags":["ngc/a:1.0.0"]}]`})
+	path := filepath.Join(t.TempDir(), "amd64.tar")
+	writeTar(t, path, es)
+	ref, err := ImageTag(path)
+	if err == nil {
+		t.Fatalf("took it as %q", ref)
+	}
+	if !errors.Is(err, ErrManifest) {
+		t.Fatalf("err = %v, want ErrManifest", err)
+	}
+	// One member fewer is read to the end and answers.
+	path = filepath.Join(t.TempDir(), "small.tar")
+	writeTar(t, path, es[len(es)-MaxImageMembers:])
+	if ref, err = ImageTag(path); err != nil || ref != "ngc/a:1.0.0" {
+		t.Fatalf("ref = %q, err = %v", ref, err)
 	}
 }
 

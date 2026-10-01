@@ -9,21 +9,26 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
-// fake stands in for podman. Its program appends every argument on its own
-// line, writes down the four variables the environment is meant to hold plus
-// one that must not have come through, prints what a test asked it to print
-// and fails for the subcommand a test asked it to fail for.
+// fake stands in for podman. Its program writes down everything a case here
+// needs to see and nothing it has to guess: every argument on its own line, its
+// whole environment, the identity it runs as, and whatever came in on its
+// standard input. It always says something on standard error. Then it does what
+// the files beside it ask of it - print something, end with 7, hang, or die of a
+// signal.
 //
-// The path it records into cannot travel in the environment the way a script
-// usually gets such a thing: the engine starts podman with a fixed environment
-// of four variables, so the path is written into the program itself. That the
-// environment really is only those four is what the leak line measures.
+// The environment is written with env, not as a handful of names a case already
+// expects: a fifth variable has to show up here whatever it is called, and that
+// is what "and nothing else" means. For the same reason the paths it writes to
+// cannot travel in the environment the way a script usually gets such a thing -
+// they are written into the program itself.
 type fake struct {
 	bin string
 	dir string
@@ -39,9 +44,13 @@ func fakePodman(t *testing.T) *fake {
 	q := func(name string) string { return "'" + filepath.Join(dir, name) + "'" }
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> " + q("args") + "; done\n" +
-		"printf 'HOME=%s\\nXDG_RUNTIME_DIR=%s\\nPATH=%s\\nLANG=%s\\nLEAK=%s\\n'" +
-		" \"$HOME\" \"$XDG_RUNTIME_DIR\" \"$PATH\" \"$LANG\" \"$NGC_LEAK\" > " + q("env") + "\n" +
+		"env > " + q("env") + "\n" +
+		"printf 'uid=%s gid=%s\\n' \"$(id -u)\" \"$(id -g)\" > " + q("id") + "\n" +
+		"cat > " + q("stdin") + "\n" +
+		"printf 'podman said something\\n' >&2\n" +
 		"if [ -f " + q("out") + " ]; then cat " + q("out") + "; fi\n" +
+		"if [ -f " + q("sleep") + " ]; then sleep 30; fi\n" +
+		"if [ -f " + q("signal") + " ]; then kill -TERM $$; sleep 5; fi\n" +
 		"if [ -f " + q("fail") + "\"$1\" ]; then exit 7; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(f.bin, []byte(script), 0o700); err != nil {
@@ -68,7 +77,7 @@ func (f *fake) ran() bool {
 	return err == nil
 }
 
-// env is what the started program found in its environment.
+// env is the whole environment the started program found.
 func (f *fake) env(t *testing.T) map[string]string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(f.dir, "env"))
@@ -77,10 +86,33 @@ func (f *fake) env(t *testing.T) map[string]string {
 	}
 	m := map[string]string{}
 	for _, l := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+		if l == "" {
+			continue
+		}
 		k, v, _ := strings.Cut(l, "=")
 		m[k] = v
 	}
 	return m
+}
+
+// who is the identity podman ran as.
+func (f *fake) who(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.dir, "id"))
+	if err != nil {
+		t.Fatalf("podman was not started: %v", err)
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// gotOnStdin is what podman read on its standard input.
+func (f *fake) gotOnStdin(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.dir, "stdin"))
+	if err != nil {
+		t.Fatalf("podman was not started: %v", err)
+	}
+	return string(b)
 }
 
 // prints makes the next calls write s on their standard output.
@@ -92,9 +124,17 @@ func (f *fake) prints(t *testing.T, s string) {
 }
 
 // failsOn makes the calls whose first argument is sub exit with 7.
-func (f *fake) failsOn(t *testing.T, sub string) {
+func (f *fake) failsOn(t *testing.T, sub string) { f.touch(t, "fail"+sub) }
+
+// sleeps makes the next call hang until something ends it.
+func (f *fake) sleeps(t *testing.T) { f.touch(t, "sleep") }
+
+// diesOfASignal makes the next call end by a signal instead of by a status.
+func (f *fake) diesOfASignal(t *testing.T) { f.touch(t, "signal") }
+
+func (f *fake) touch(t *testing.T, name string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(f.dir, "fail"+sub), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.dir, name), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -263,6 +303,12 @@ func TestCreateRefusesWhatWouldChangeTheArgumentList(t *testing.T) {
 		"hold not clean":             func(c *Container) { c.Hold = "/usr/lib/ngc/../../ngc-controller" },
 		"negative cpu":               func(c *Container) { c.CPU = -1 },
 		"negative memory":            func(c *Container) { c.Memory = -1 },
+		// What is mounted into a container is what the container can read, and
+		// the data directory is mounted writable: neither may be anywhere.
+		"hold outside the program directory": func(c *Container) { c.Hold = "/etc/shadow" },
+		"hold is the program directory":      func(c *Container) { c.Hold = config.BinDir },
+		"data directory is the root":         func(c *Container) { c.DataDir = "/" },
+		"data directory elsewhere":           func(c *Container) { c.DataDir = "/var/lib/ngc/staged" },
 	}
 	for name, bend := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -280,7 +326,10 @@ func TestCreateRefusesWhatWouldChangeTheArgumentList(t *testing.T) {
 }
 
 // The environment is the whole environment, not an addition to the one this
-// process has: whatever stands here stands in no log and in no child.
+// process has: whatever stands here stands in no log and in no child. The case
+// reads what podman really got, with env, so a fifth variable cannot hide behind
+// a list of names this case already expects - a service's parameters are the
+// thing that must never travel this way.
 func TestCreatePassesFourVariablesAndNothingElse(t *testing.T) {
 	f := fakePodman(t)
 	uid, gid := me()
@@ -297,12 +346,23 @@ func TestCreatePassesFourVariablesAndNothingElse(t *testing.T) {
 		"XDG_RUNTIME_DIR": "/run/ngc/ngc-terminal-1a2b3c4d",
 		"PATH":            "/usr/bin:/bin",
 		"LANG":            "C.UTF-8",
-		"LEAK":            "",
 	}
 	for k, v := range want {
 		if env[k] != v {
 			t.Fatalf("%s = %q, want %q", k, env[k], v)
 		}
+	}
+	// Everything else that may stand there is a name the shell keeps for itself
+	// (measured on dash: PWD alone; the other two are what another /bin/sh
+	// maintains). Anything else came out of cmd.Env and does not belong to an app.
+	for k, v := range env {
+		if _, ok := want[k]; ok {
+			continue
+		}
+		if k == "PWD" || k == "SHLVL" || k == "OLDPWD" {
+			continue
+		}
+		t.Fatalf("podman also got %s=%q", k, v)
 	}
 }
 
@@ -368,10 +428,7 @@ func TestExecNeverUsesAShell(t *testing.T) {
 func TestExecTakesTheEnvironmentFromAFileAndRemovesIt(t *testing.T) {
 	f := fakePodman(t)
 	name := meName(t)
-	envFile := filepath.Join(t.TempDir(), "env")
-	if err := os.WriteFile(envFile, []byte("NGC_PARAMS={}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	envFile := runDirFile(t, name)
 	if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
 		Name: name, Command: []string{"/usr/bin/greet"}, EnvFile: envFile,
 	}); err != nil {
@@ -387,10 +444,33 @@ func TestExecTakesTheEnvironmentFromAFileAndRemovesIt(t *testing.T) {
 	}
 }
 
+// runDirFile makes a file under config.RunDir that an Exec may name. The engine
+// removes such a file as this process, which is root on a server, so it takes
+// nothing outside that directory - and a case about the file therefore needs a
+// directory it may not be able to make.
+func runDirFile(t *testing.T, name string) string {
+	t.Helper()
+	dir := config.RunDir + "/" + name
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Skip("cannot make " + dir + ", so no case about that file can run here: " + err.Error())
+	}
+	path := filepath.Join(dir, "env")
+	if err := os.WriteFile(path, []byte("NGC_PARAMS={}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(path) })
+	return path
+}
+
 func TestExecRefusesAnEnvironmentFileThatIsNoPath(t *testing.T) {
 	f := fakePodman(t)
 	name := meName(t)
-	for _, bad := range []string{"-v", "env", "/run/ngc/../etc/shadow"} {
+	// The last two are paths that exist and are perfectly well formed. They are
+	// refused because they are not under config.RunDir, and the engine removes
+	// what it is handed: a path from anywhere would make this call a way to
+	// delete any file of this server.
+	for _, bad := range []string{"-v", "env", "/run/ngc/../etc/shadow",
+		filepath.Join(t.TempDir(), "env"), "/etc/shadow", config.RunDir} {
 		if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
 			Name: name, Command: []string{"/usr/bin/greet"}, EnvFile: bad,
 		}); err == nil {
@@ -420,6 +500,50 @@ func TestExecReportsTheExitCodeOfTheService(t *testing.T) {
 	}
 }
 
+// A call that was cut short did not end with a status, and must not look as if
+// it had. Go answers -1 for a process a signal ended, and -1 is no number a
+// command can end with: handing it back as the result would tell the caller
+// "the service decided to end with -1" about a service that was killed.
+func TestExecDoesNotTurnACutShortCallIntoAStatus(t *testing.T) {
+	name := meName(t)
+
+	// The context runs out while podman is still running - the ordinary way a
+	// service hits its time limit.
+	f := fakePodman(t)
+	f.sleeps(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	code, err := NewPodman(f.bin).Exec(ctx, Exec{Name: name, Command: []string{"/usr/bin/greet"}})
+	if err == nil {
+		t.Fatalf("code = %d and no error for a call that was cut short", code)
+	}
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 - there is no status to report", code)
+	}
+	if !errors.Is(err, ErrKilled) {
+		t.Fatalf("err = %v, want ErrKilled", err)
+	}
+	// And the cause is named, not only the fact: the caller has to tell a time
+	// limit from a service that someone else killed.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the context's own cause joined to it", err)
+	}
+
+	// A signal that has nothing to do with the context: same answer, without a
+	// cause from the context.
+	f = fakePodman(t)
+	f.diesOfASignal(t)
+	code, err = NewPodman(f.bin).Exec(context.Background(), Exec{
+		Name: name, Command: []string{"/usr/bin/greet"},
+	})
+	if code != 0 || !errors.Is(err, ErrKilled) {
+		t.Fatalf("code = %d, err = %v, want 0 and ErrKilled", code, err)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, blames the context for a signal of someone else", err)
+	}
+}
+
 func TestExecWithStdinAndWithout(t *testing.T) {
 	for _, in := range []bool{true, false} {
 		f := fakePodman(t)
@@ -440,18 +564,61 @@ func TestExecWithStdinAndWithout(t *testing.T) {
 	}
 }
 
-func TestExecCarriesTheOutputThrough(t *testing.T) {
+// All three ends of a call are wired, not only the one that is easy to see: what
+// the shell sends arrives at the service, what the service answers arrives back,
+// and what it says about itself arrives separately. A service whose standard
+// error went nowhere would fail with nothing to show.
+func TestExecCarriesAllThreeEndsThrough(t *testing.T) {
 	f := fakePodman(t)
 	name := meName(t)
 	f.prints(t, "hallo")
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
-		Name: name, Command: []string{"/usr/bin/greet"}, Stdout: &out,
+		Name: name, Command: []string{"/usr/bin/greet"},
+		Stdin: strings.NewReader("was der Dienst lesen soll"), Stdout: &out, Stderr: &errOut,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "hallo" {
 		t.Fatalf("out = %q, want %q", out.String(), "hallo")
+	}
+	if errOut.String() != "podman said something\n" {
+		t.Fatalf("stderr = %q, want what podman said", errOut.String())
+	}
+	if got := f.gotOnStdin(t); got != "was der Dienst lesen soll" {
+		t.Fatalf("podman read %q on its standard input", got)
+	}
+}
+
+// Root names root in the container and changes nothing else. In particular it
+// never hands out --privileged: whether the capabilities are there was decided
+// once, at Create, and a call must not be able to widen that.
+func TestExecWithRootNamesTheUserAndNothingElse(t *testing.T) {
+	list := func(root bool) []string {
+		f := fakePodman(t)
+		if _, err := NewPodman(f.bin).Exec(context.Background(), Exec{
+			Name: meName(t), Command: []string{"/usr/bin/greet"}, Root: root,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return f.args(t)
+	}
+	plain, root := list(false), list(true)
+	for _, a := range root {
+		if strings.Contains(a, "privileged") || strings.Contains(a, "cap-add") ||
+			strings.Contains(a, "security-opt") {
+			t.Fatalf("args = %q, this call widens what the container may do", root)
+		}
+	}
+	i := slices.Index(root, "--")
+	if i < 0 {
+		t.Fatalf("args = %q, nothing ends the options of podman", root)
+	}
+	// The difference between the two lists is exactly those two arguments, and
+	// they stand among the options of podman, not in the command.
+	want := slices.Concat(plain[:1], []string{"--user", "0:0"}, plain[1:])
+	if !slices.Equal(root, want) {
+		t.Fatalf("with root =\n%q\nwant\n%q", root, want)
 	}
 }
 
@@ -637,23 +804,22 @@ func TestRemoveImageBuildsTheArgumentListAndRefusesNonsense(t *testing.T) {
 	}
 }
 
-// The engine is the one interface the rest of the controller talks to, so that
-// LXC can sit beside podman later without a caller changing.
-func TestPodmanIsAnEngine(t *testing.T) {
-	var e Engine = NewPodman("/usr/bin/podman")
-	if e == nil {
-		t.Fatal("no engine")
-	}
-}
+// Podman is the engine the rest of the controller talks to, so that LXC can sit
+// beside it later without a caller changing. This is a question for the compiler,
+// not for a run: a test that asks a pointer to a literal whether it is nil asks
+// nothing.
+var _ Engine = (*Podman)(nil)
 
-// A call that was cancelled starts nothing and ends with the cause of the
-// cancellation, not with a result of podman.
+// A call whose context is already over starts nothing at all.
 func TestACancelledCallStartsNothing(t *testing.T) {
 	f := fakePodman(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := NewPodman(f.bin).Start(ctx, meName(t)); err == nil {
 		t.Fatal("the call ran anyway")
+	}
+	if f.ran() {
+		t.Fatalf("podman was started anyway: %q", f.args(t))
 	}
 }
 
@@ -689,6 +855,96 @@ func TestCreateRefusesAUserWhoseHomeIsNotTheDataDirectory(t *testing.T) {
 	}
 	if f.ran() {
 		t.Fatalf("podman was started anyway: %q", f.args(t))
+	}
+}
+
+// Create is the only call that does not read the user out of the name, so it is
+// the last way past that separation: a uid of another app would make podman
+// create the container as that other user, while every later call looked for it
+// as this one.
+func TestCreateRefusesAUidOrGidThatIsNotTheUsers(t *testing.T) {
+	name := meName(t)
+	if !validName.MatchString(name) {
+		t.Skip("the name of this user is no container name: " + name)
+	}
+	u, err := user.Current()
+	if err != nil {
+		t.Skip("no user database here: " + err.Error())
+	}
+	uid, gid := me()
+	if err := validPath(u.HomeDir); err != nil {
+		t.Skip("the home of this user is no data directory: " + u.HomeDir)
+	}
+	for _, bend := range []func(c *Container){
+		func(c *Container) { c.UID = uid + 1 },
+		func(c *Container) { c.GID = gid + 1 },
+	} {
+		f := fakePodman(t)
+		c := Container{Name: name, Image: "ngc/a:1.0.0", UID: uid, GID: gid,
+			DataDir: u.HomeDir, Hold: config.BinDir + "/ngc-controller"}
+		bend(&c)
+		if err := NewPodman(f.bin).Create(context.Background(), c); !errors.Is(err, ErrIdentity) {
+			t.Fatalf("err = %v, want ErrIdentity", err)
+		}
+		if f.ran() {
+			t.Fatalf("podman was started anyway: %q", f.args(t))
+		}
+	}
+}
+
+// The user switch itself - the thing the whole separation rests on, and the one
+// thing a run without root cannot show: without root the engine refuses before
+// it starts anything, which is itself the measurement for that case. With root
+// the container really is created as the app's user, and the fake says so.
+func TestPodmanRunsUnderTheUserOfTheApp(t *testing.T) {
+	f := fakePodman(t)
+	// An unprivileged user of this machine that is not the one running the test.
+	// Its home is where its data directory would be, which is what Create wants.
+	const app = "nobody"
+	db, err := user.Lookup(app)
+	if err != nil {
+		t.Skip("no user " + app + " here: " + err.Error())
+	}
+	uid, err := strconv.ParseUint(db.Uid, 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gid, err := strconv.ParseUint(db.Gid, 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid == uint64(os.Getuid()) {
+		t.Skip("this test runs as " + app + " itself, so there is no switch to see")
+	}
+	if err := validPath(db.HomeDir); err != nil {
+		t.Skip("the home of " + app + " is no data directory: " + db.HomeDir)
+	}
+	c := Container{Name: app, Image: "ngc/a:1.0.0", UID: uint32(uid), GID: uint32(gid),
+		DataDir: db.HomeDir, Hold: config.BinDir + "/ngc-controller"}
+
+	if os.Geteuid() != 0 {
+		// Everything Create can check agreed - otherwise this would be ErrHome
+		// or ErrIdentity - and it got as far as the switch, which needs root.
+		if err := NewPodman(f.bin).Create(context.Background(), c); !errors.Is(err, ErrNotRoot) {
+			t.Fatalf("err = %v, want ErrNotRoot", err)
+		}
+		if f.ran() {
+			t.Fatalf("podman was started anyway: %q", f.args(t))
+		}
+		return
+	}
+	// As root the switch happens, so the fake has to be reachable and writable
+	// for a user that is not the one who made it.
+	for _, path := range []string{filepath.Dir(f.dir), f.dir, f.bin} {
+		if err := os.Chmod(path, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := NewPodman(f.bin).Create(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.who(t), "uid="+db.Uid+" gid="+db.Gid; got != want {
+		t.Fatalf("podman ran as %q, want %q", got, want)
 	}
 }
 

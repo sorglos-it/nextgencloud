@@ -56,9 +56,15 @@ type Engine interface {
 	Remove(ctx context.Context, name string) error
 	// Running reports whether the container is running.
 	Running(ctx context.Context, name string) (bool, error)
-	// Exec runs a command in a running container and answers with the number
-	// the command ended with. An error means the engine could not be run at
-	// all; what the command did is the number.
+	// Exec runs a command in a running container and answers with the status the
+	// command ended with.
+	//
+	// A status comes back only when the command really ended with one. An error
+	// comes back for everything else, and that is two different things the
+	// caller has to tell apart by the error, never by the number: the engine
+	// could not be run at all, or the command was ended by a signal and so has
+	// no status - ErrKilled, which a cancelled or timed-out context also
+	// produces, with its own cause joined to it.
 	Exec(ctx context.Context, e Exec) (int, error)
 }
 
@@ -76,20 +82,24 @@ type Container struct {
 	Image string
 	// UID and GID are the system user of the app. The engine runs under them,
 	// so whoever breaks out of the container lands on a user without rights of
-	// its own. The caller gives the app's own user here and no other: where
-	// these are the ones this process already has, nothing is switched, so a 0
-	// put here by mistake would run podman as this controller. Nothing in this
-	// package can tell that mistake from a test, so nothing here refuses it.
+	// its own. They must be the ones Name stands for: Create holds them against
+	// the user database and refuses with ErrIdentity if they are someone else,
+	// because every call after Create takes the user out of that database and
+	// would otherwise look for the container as another one.
 	UID, GID uint32
 	// DataDir is the encrypted data directory of the app
 	// (config.AppDataDir + "/" + app). It becomes /data in the container and
-	// is the home directory of the app's user, which is where the engine
-	// keeps the image store of that user.
+	// has to be the home directory of the app's user, which is where the engine
+	// keeps the image store of that user: Create refuses anything else with
+	// ErrHome, and where the user is not in the database yet it refuses a
+	// directory outside config.AppDataDir.
 	DataDir string
 	// Hold is the program that keeps the container alive: ngc-controller
 	// itself, mounted read-only as /ngc/ngc-hold and started with the
 	// subcommand hold. An app image therefore needs to bring nothing of its
-	// own - that would be a change to store.Manifest.
+	// own - that would be a change to store.Manifest. It has to lie under
+	// config.BinDir: what is mounted into a container decides what the
+	// container can read, so only what NGC installed may be named here.
 	Hold string
 	// Network lets the app reach the network (store.NeedNetwork). Without it
 	// the container has none at all.
@@ -116,9 +126,13 @@ type Exec struct {
 	// EnvFile holds the environment of the call, one NAME=value per line.
 	// The engine passes the file instead of the values and removes it when
 	// the call is over, so NGC_PARAMS stands in no command line, in no
-	// /proc/*/cmdline and in no log. The file belongs to the app's user and
-	// lies on the tmpfs under config.RunDir; the caller writes it with mode
-	// 0600, because it is the only copy on the machine.
+	// /proc/*/cmdline and in no log.
+	//
+	// It has to lie under config.RunDir, which the engine refuses otherwise:
+	// removing it happens as this process, and this process is root. Two things
+	// about it the engine cannot see and the caller owns: that the file belongs
+	// to the app's user - podman runs as that user and has to read it - and that
+	// its mode is 0600, because it is the only copy on the machine.
 	EnvFile string
 	// Stdin, Stdout and Stderr are the ends of the call. Without Stdin the
 	// command gets no open standard input in the container.
@@ -130,9 +144,15 @@ type Exec struct {
 	Root bool
 }
 
-// The reasons an engine refuses before it starts anything. Every one of them
-// is a value this controller built itself, so none of their texts carries
-// anything from outside and none of them belongs to a user.
+// The reasons an engine refuses, and the one reason it gives afterwards
+// (ErrKilled). None of them is a message for a user: the caller maps them to a
+// wire.Code with a German text of its own.
+//
+// Some of them come back joined with a second error that names the offending
+// value: a container name, a home directory or a uid read out of /etc/passwd,
+// or what user.Lookup said. Nothing in that comes from outside this server and
+// nothing of it is secret - but it is more than the sentences below, so a caller
+// that logs an error of this package logs those names too.
 var (
 	// ErrName reports a container name that is no name.
 	ErrName = errors.New("runtime: container name is not a name")
@@ -141,11 +161,18 @@ var (
 	// ErrPath reports a path that is not absolute, not clean, or carries a
 	// colon.
 	ErrPath = errors.New("runtime: path is not a clean absolute path without a colon")
-	// ErrHome reports a system user whose home directory is not the data
-	// directory of its app. Create refuses it, because every call after Create
+	// ErrHome reports a data directory that is not the home of the app's user -
+	// or, where that user is not in the database yet, one outside
+	// config.AppDataDir. Create refuses both, because every call after Create
 	// takes the home out of the user database and would then look for the
 	// container in another store of podman than the one it was made in.
-	ErrHome = errors.New("runtime: the home of the app's user is not its data directory")
+	ErrHome = errors.New("runtime: the data directory is not the home of the app's user")
+	// ErrIdentity reports a uid or gid that is not the one of the app's user.
+	ErrIdentity = errors.New("runtime: uid or gid is not the one of the app's user")
+	// ErrKilled reports a command that a signal ended, so that it has no status
+	// of its own. A cancelled or timed-out context is this case too, and joins
+	// its own cause to it.
+	ErrKilled = errors.New("runtime: the command was ended by a signal, not by a status")
 	// ErrLimit reports a negative CPU or memory limit.
 	ErrLimit = errors.New("runtime: cpu or memory limit is negative")
 	// ErrCommand reports a call without a command.

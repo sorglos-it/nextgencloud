@@ -18,6 +18,12 @@ import (
 const (
 	ManifestFile     = "manifest.json"
 	MaxImageManifest = 1 << 20
+	// MaxImageMembers is the most members an image tar may hold. The archive is
+	// read to its end on purpose (see imageTagFrom), so without a bound the time
+	// that takes is the writer's to choose. An image has a handful of members -
+	// a config, one file per layer, the manifest - and no format allows more
+	// than 127 layers, so this is far above anything real.
+	MaxImageMembers = 4096
 )
 
 // validRef is the reference of an image: a repository and a tag. Nothing else
@@ -54,7 +60,12 @@ func imageTagFrom(r io.Reader) (string, error) {
 	tr := tar.NewReader(r)
 	var manifest []byte
 	seen := false
-	for {
+	for members := 0; ; members++ {
+		// Counted before the read, so exactly MaxImageMembers members still pass
+		// and the one after them does not.
+		if members > MaxImageMembers {
+			return "", ErrManifest
+		}
 		h, err := tr.Next()
 		if err == io.EOF {
 			break
