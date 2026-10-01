@@ -467,6 +467,41 @@ Benutzen, ein Vorhandensein gegen ein Greifen — dann prüfst du die Form und
 nennst es die Sache. Die Gegenprobe ist immer dieselbe: **bau den Fall, der die
 Form behaelt und die Wirkung verliert**, und sieh zu, dass er rot wird.
 
+### Die gefährlichste Zusicherung, die nicht fallen kann, steht im Plan
+
+Den ganzen Tag haben Stränge Zusicherungen gefunden, die für ihr eigenes Thema
+nicht fallen konnten. Als ich am Abend nachgesehen habe, **woher** sie kamen, war
+die Antwort unangenehm: die meisten standen **in meinen Plänen**, wörtlich, als
+fertiger Code.
+
+- Ein Fuzz-Fall meines Plans konnte nicht rot werden, weil `Encode` dieselbe
+  Prüfung macht wie `Decode`: *"eine Leitung, die jede Nutzlast wegwirft, lässt
+  ihn grün"*.
+- Neun Längenprüfungen eines anderen Plans ließen sich **alle** löschen, ohne
+  dass ein Test fiel — und eine Funktion wurde von der Vertragsgruppe gar nicht
+  erreicht. In der Prüfung kamen vier weitere dazu.
+- Und der schlimmste: mein Fall gegen ungesiegelte Fremdbytes konnte für **keine**
+  seiner zwei Regeln fallen. Man durfte die Entschlüsselungsfehler durchlassen —
+  **ungesiegelte Bytes als Frames** — und alles blieb grün.
+
+**Warum gerade der Plan:** eine Zusicherung aus dem Plan wird **nicht nachgeprüft**.
+Sie kommt von oben, sie sieht fertig aus, und der Implementierer schreibt sie ab,
+weil der Auftrag es verlangt. Dieselbe Mechanik wie bei einer Ursache im Auftrag,
+nur schlimmer: eine falsche Ursache fällt spätestens beim Messen auf, eine
+Zusicherung, die nicht fallen kann, fällt **nie** auf. Sie ist grün.
+
+**Die Regel für den, der Pläne schreibt:** Zu jeder Zusicherung, die du in einen
+Plan schreibst, gehört der Satz, **welche Mutation sie rot machen muss**. Kannst
+du die Mutation nicht benennen, hast du keine Zusicherung aufgeschrieben, sondern
+eine Hoffnung. Und schreib dazu, dass der Implementierer sie **prüfen** soll —
+nicht übernehmen.
+
+Dazu ein Sonderfall, der mir dreimal begegnet ist: **ein Fuzzer, der nur gültige
+Eingaben baut, erreicht den ungültigen Zweig nie.** Einer siegelte jede Eingabe,
+bevor er sie hineingab — damit war der ganze Entschlüsselungszweig toter Code
+für ihn, und die 40 000 Läufe in seinem Protokoll sagten darüber nichts. Zähl bei
+jedem Fuzzer nach, **welche Zweige seine Eingaben überhaupt erreichen können**.
+
 ### Null Funde sind erst eine Aussage, wenn das Werkzeug einen finden kann
 
 `go test -race` meldete über drei Pläne hinweg **0 DATA RACE**. Das klingt nach
