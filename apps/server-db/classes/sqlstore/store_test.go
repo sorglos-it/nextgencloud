@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,11 +112,13 @@ func TestBlobRoundTrip(t *testing.T) {
 // is the whole reason these checks are made in Go and not left to the
 // database.
 //
-// The two counts above that name a group of the contract came by hand.
-// dbtest.Run is called once in the whole tree, against memstore, and nothing
-// under apps/server-db imports dbtest, so go test ./... drives no group of the
-// contract against this store. The note at TestOneWriteAndOneDelete in
-// user_test.go says it in full.
+// The two counts above that name a group of the contract came by hand. When
+// they were taken, dbtest.Run had one call site in the whole tree, against
+// memstore, and nothing under apps/server-db imported dbtest. Task 7 gave it a
+// second one - TestConformance in classes/sqlite, on the store this package
+// builds - so go test ./... now drives all eleven groups of the contract
+// against it, and a count like those two no longer needs a run made by hand.
+// The note at TestOneWriteAndOneDelete in user_test.go says it in full.
 func TestLimits(t *testing.T) {
 	s := open(t)
 	long := string(bytes.Repeat([]byte("x"), sqlstore.MaxKey+1))
@@ -128,6 +131,27 @@ func TestLimits(t *testing.T) {
 	for i := range manyRoles {
 		manyRoles[i] = "admin"
 	}
+	// One {{text}} column past its bound, and a log ID that is valid, so each
+	// log row below fails on the one field it is about and on nothing else.
+	longText := string(bytes.Repeat([]byte("y"), sqlstore.MaxText+1))
+	entry := core.LogEntry{ID: strings.Repeat("ab", 16), Time: 1790000001, Kind: "login", Result: "ok"}
+	withUser := entry
+	withUser.User = long
+	withKind := entry
+	withKind.Kind = long
+	withApp := entry
+	withApp.App = long
+	withAction := entry
+	withAction.Action = long
+	withNode := entry
+	withNode.Node = long
+	withResult := entry
+	withResult.Result = long
+	withDetail := entry
+	withDetail.Detail = longText
+	// LogQuery answers with a page as well, so its refusal is taken apart
+	// from the page here and put in the table below like any other.
+	_, queryUser := s.LogQuery(ctx, core.LogQuery{Limit: 1, User: long})
 	for name, err := range map[string]error{
 		"empty kind":         s.BlobPut(ctx, dbapi.Blob{ID: "a"}),
 		"empty id":           s.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting}),
@@ -153,10 +177,74 @@ func TestLimits(t *testing.T) {
 		"pending without a name": s.PendingPut(ctx, dbapi.Pending{Key: key}),
 		"pending name too long":  s.PendingPut(ctx, dbapi.Pending{Name: long, Key: key}),
 		"pending key too long":   s.PendingPut(ctx, dbapi.Pending{Name: "web", Key: longKey}),
+
+		"log user too long":       s.LogAdd(ctx, withUser),
+		"log kind too long":       s.LogAdd(ctx, withKind),
+		"log app too long":        s.LogAdd(ctx, withApp),
+		"log action too long":     s.LogAdd(ctx, withAction),
+		"log node too long":       s.LogAdd(ctx, withNode),
+		"log result too long":     s.LogAdd(ctx, withResult),
+		"log detail too long":     s.LogAdd(ctx, withDetail),
+		"log query user too long": queryUser,
 	} {
 		if !errors.Is(err, dbapi.ErrInvalid) {
 			t.Errorf("%s: %v, want ErrInvalid", name, err)
 		}
+	}
+}
+
+// TestEveryLogPageSortsOnTheIDInsideASecond holds the two halves of the order
+// the contract asks for - (Time, ID) descending - on the two statements the
+// contract's own log group leaves alone.
+//
+// Both halves were measured missing. With "ORDER BY ts DESC, id ASC" in
+// logAll the whole tree stayed green, and so did it with logUserTime asking
+// "ts > ?" instead of "ts < ?" or dropping its user from the WHERE
+// altogether. The group drives logAll only while every entry sits in a second
+// of its own, so nothing there ever needs the ID to break a tie, and it never
+// asks for a user together with a time and no cursor, so logUserTime is not
+// reached by it at all. The other four statements are held there: id ASC in
+// logUser, logUserBefore or logBefore and "ts <= ?" in logTime each turn it
+// red.
+//
+// So this test puts entries of two users into two seconds, out of ID order,
+// and asks both statements. logAll has to hand out every row newest first and
+// sort on the ID inside each second; logUserTime has to hand out that user's
+// older second and nothing of the newer one and nothing of the other user.
+func TestEveryLogPageSortsOnTheIDInsideASecond(t *testing.T) {
+	s := open(t)
+	const newer, older = 1790000020, 1790000010
+	id := func(pair string) string { return strings.Repeat(pair, 16) }
+	// Written in an order that is neither the one asked for nor its reverse,
+	// so a store that hands rows back as they were inserted fails as well.
+	for _, e := range []core.LogEntry{
+		{ID: id("22"), Time: older, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("ee"), Time: newer, User: "u-two", Kind: "login", Result: "ok"},
+		{ID: id("dd"), Time: older, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("ff"), Time: older, User: "u-two", Kind: "login", Result: "ok"},
+		{ID: id("11"), Time: newer, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("88"), Time: older, User: "u-one", Kind: "login", Result: "ok"},
+	} {
+		if err := s.LogAdd(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logIDs := func(entries []core.LogEntry) []string {
+		out := make([]string, len(entries))
+		for i, e := range entries {
+			out[i] = e.ID
+		}
+		return out
+	}
+	got, err := s.LogQuery(ctx, core.LogQuery{Limit: 10})
+	want := []string{id("ee"), id("11"), id("ff"), id("dd"), id("88"), id("22")}
+	if err != nil || !slices.Equal(logIDs(got), want) {
+		t.Errorf("every entry: %v, %v; want %v", logIDs(got), err, want)
+	}
+	got, err = s.LogQuery(ctx, core.LogQuery{Limit: 10, User: "u-one", BeforeTime: newer})
+	want = []string{id("dd"), id("88"), id("22")}
+	if err != nil || !slices.Equal(logIDs(got), want) {
+		t.Errorf("one user before a second: %v, %v; want %v", logIDs(got), err, want)
 	}
 }
 
@@ -395,23 +483,5 @@ func TestAGrantNobodyKnowsDoesNotComeBackOut(t *testing.T) {
 	}
 	if list, err := s.AppList(ctx); err == nil {
 		t.Errorf("AppList handed out the same row: %+v", list)
-	}
-}
-
-// TestTheRestIsNotWrittenYet: every method of dbapi.Store that task 7 brings
-// answers errors.ErrUnsupported until then, and nothing in here is allowed to
-// look like it works. Task 5 took Once... and Lock... out of the list, task 6
-// User..., Session... and Pending...; they are measured in once_test.go and
-// user_test.go now.
-func TestTheRestIsNotWrittenYet(t *testing.T) {
-	s := open(t)
-	_, logQuery := s.LogQuery(ctx, core.LogQuery{Limit: 1})
-	for name, err := range map[string]error{
-		"LogAdd":   s.LogAdd(ctx, core.LogEntry{Kind: "app"}),
-		"LogQuery": logQuery,
-	} {
-		if !errors.Is(err, errors.ErrUnsupported) {
-			t.Errorf("%s: %v, want ErrUnsupported", name, err)
-		}
 	}
 }

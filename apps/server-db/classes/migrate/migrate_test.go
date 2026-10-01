@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlite"
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -18,15 +17,32 @@ import (
 
 var ctx = context.Background()
 
+// OpenEncrypted opens the encrypted file these tests run on. It is the real
+// opener of apps/server-db, sqlite.OpenDB, and encrypted_test.go beside this
+// file hands it over: that file is in the external test package, which may
+// import sqlite, while this one may not. sqlite imports this package since
+// task 7 - sqlite.Open applies the migrations - and a package under test that
+// imports something importing it back is an import cycle to go test, measured:
+// "imports ... sqlite from migrate_test.go imports ... migrate from store.go:
+// import cycle not allowed in test".
+//
+// Going through the real opener is the point. Opening the file here with the
+// driver instead would leave these tests measuring a database nobody runs,
+// and the hexkey PRAGMA could change in sqlite without a test here noticing.
+var OpenEncrypted func(config.DB) (*sql.DB, error)
+
 // openFile gives every test its own encrypted, empty file.
 func openFile(t *testing.T) *sql.DB {
 	t.Helper()
+	if OpenEncrypted == nil {
+		t.Fatal("OpenEncrypted is not set; encrypted_test.go is what sets it")
+	}
 	cfg := config.DB{
 		Driver: config.DriverSQLite,
 		Path:   filepath.Join(t.TempDir(), "state.db"),
 		Key:    config.NewSecret(bytes.Repeat([]byte{7}, 64)),
 	}
-	db, err := sqlite.OpenDB(cfg)
+	db, err := OpenEncrypted(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
