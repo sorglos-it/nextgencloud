@@ -467,6 +467,31 @@ Benutzen, ein Vorhandensein gegen ein Greifen — dann prüfst du die Form und
 nennst es die Sache. Die Gegenprobe ist immer dieselbe: **bau den Fall, der die
 Form behaelt und die Wirkung verliert**, und sieh zu, dass er rot wird.
 
+### Null Funde sind erst eine Aussage, wenn das Werkzeug einen finden kann
+
+`go test -race` meldete über drei Pläne hinweg **0 DATA RACE**. Das klingt nach
+einem Ergebnis und war noch keins: ein Renn-Sucher findet nur, was die Tests
+tatsächlich **gleichzeitig** anfassen. Läuft in einem Paket nie etwas parallel,
+meldet er null — so wie ein Metalldetektor an einem leeren Strand.
+
+Zwei Stränge haben daraus unabhängig dieselbe Lehre gezogen und sie **gemessen**:
+
+- Der eine hat sein Schreibschloss entfernt und bekam `WARNING: DATA RACE` in
+  `noisep.(*Transport).Seal()`, zwei Goroutinen im selben `Seal`. Sein Satz dazu
+  ist der Kern: *ohne den Fall, der absichtlich zwei Schreiber ansetzt, hätte
+  `-race` an dieser Stelle **nichts zu sehen**.* Die Ersatzmessung, die er gebaut
+  hatte, als `-race` noch unmöglich schien, ist das, was dem Original die Augen
+  gibt.
+- Der andere hat eine Wegwerf-Datei mit einem echten Rennen gebaut:
+  `DATA RACE count: 2`, Test rot, Ausstiegscode 1. Erst danach hat er sein
+  „0 DATA RACE, 202 von 202" aufgeschrieben.
+
+**Die Regel:** Bevor du eine Null berichtest, zeig, dass dasselbe Werkzeug an
+derselben Stelle eine Eins hätte melden können. Das gilt für jeden Sucher, der
+nach etwas Abwesendem fragt — Renn-Sucher, Fuzzer, Prozentzahlen über
+abgedeckte Zeilen, ein `grep`, das nichts findet. **Und es gilt doppelt, wenn die
+Null das Ergebnis ist, das du dir gewünscht hast.**
+
 ### Sechs Messungen gleichzeitig messen die Maschine, nicht den Code
 
 Ich hatte jedem Strang eingeschärft, sich einen **eigenen Port** zu nehmen — gut,
