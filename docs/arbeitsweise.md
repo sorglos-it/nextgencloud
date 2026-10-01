@@ -1554,6 +1554,30 @@ Daraus folgt nicht „gründlicher berichtigen", sondern etwas Einfacheres:
 eine schreibst, frag dich, ob der Satz auch ohne sie trägt. Meistens ja — und
 dann lass sie weg.
 
+### Eine Zahl in einem Kommentar verrottet, ein Befehl nicht
+
+Ich habe in einem Auftrag geschrieben, eine Vorlage habe **sieben**
+`Header`-Direktiven. Es sind **vier** — die Sieben kam aus `grep -c 'Header'`, und
+drei Treffer waren Kommentare, die das Wort nur nennen. Eine Zeilenzahl als
+Direktivenzahl.
+
+Der Strang hat die Zahl nachgerechnet, und dabei etwas Besseres gefunden als
+meinen Fehler: **dasselbe `grep -c` gibt heute 9.** Die Datei ist gewachsen, die
+Zahl hat sich bewegt, und hätte er sie als Kommentar in die Datei geschrieben,
+wäre sie beim nächsten Lesen falsch gewesen. Sein erster Entwurf dieses
+Kommentars behauptete „gibt 7" und war **beim Nachmessen schon falsch.**
+
+Also hat er keine Zahl hineingeschrieben, sondern **den Befehl**.
+
+**Die Regel:** Wo ein Text eine Zahl über den Code behauptet, schreib stattdessen
+den Befehl hin, der sie erzeugt — oder, wenn die Zahl wirklich dastehen soll,
+beides, mit dem Datum der Messung. Eine Zahl ohne ihren Befehl kann niemand
+nachprüfen und niemand pflegen; sie verrottet still und wird dann geglaubt.
+
+Und zähl das Ding, nicht die Zeilen, die es nennen. `grep -c` zählt Zeilen mit
+einem Treffer — nicht Direktiven, nicht Aufrufe, nicht Vorkommen. Wer eine
+Direktive zählen will, verankert am Zeilenanfang.
+
 ### Eine Zeilennummer ist keine Quellenangabe
 
 Der Koordinator hat eine Berichtigung angeordnet — und in die Anweisung selbst
