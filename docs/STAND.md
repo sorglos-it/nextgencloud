@@ -57,19 +57,27 @@ Datenbank und Recovery.
     solche App kommt.
   - ~~**Sicherheitskopfzeilen für `assets/`**~~ – erledigt mit Aufgabe 29 (Web):
     `apps/web/templates/apache-vhost.conf` ist die Vorlage für den virtuellen Host und setzt für
-    `assets/` `nosniff`, `Cross-Origin-Resource-Policy`, HSTS und eine **eigene** Richtlinie
-    (`default-src 'none'; script-src 'self'` – nicht die der Seite, siehe Begründung in der Datei).
-    `tests/shell/csp.spec.js` prüft es an einer `.js`, einer `.css`, einer Datei ohne Endung und
-    einer, die es nicht gibt; die Mock-API liest die Werte aus der Vorlage, damit es keine zweite
-    Fassung gibt.
-  - **Offener Rest davon:** `scripts/ngc-web.sh` im ulh-Repo (Aufgabe 26) schreibt einen eigenen
-    virtuellen Host und ist eine Aufgabe älter. Zwei Unterschiede, beide zugunsten der Vorlage:
-    Das Skript setzt für `assets/` **keine** Kopfzeile außer HSTS – genau das Loch –, und es
-    nimmt `/assets/` aus seiner Rewrite-Regel heraus, sodass eine **fehlende** Datei dort von
-    Apache selbst beantwortet wird (nackte Fehlerseite) statt von `index.php`. Die Vorlage nimmt
-    `FallbackResource`; so trägt auch dieser 404 alle Wände, und der Test misst genau das.
-    Das Skript nachziehen, dann ist der Punkt ganz zu. Beide Dateien heißen jetzt
-    `ngc-web.conf`, damit nie zwei virtuelle Hosts um denselben Namen streiten.
+    `assets/` vier Kopfzeilen: `nosniff`, `Cross-Origin-Resource-Policy`, HSTS und eine **eigene**
+    Richtlinie, nicht die der Seite. Je Kopfzeile steht die Begründung in der Datei, auch für die
+    bewusst fehlenden. `tests/shell/csp.spec.js` prüft es an einer `.js`, einer `.css`, einer Datei
+    ohne Endung und einer, die es nicht gibt; die Mock-API liest die Werte aus der Vorlage und
+    prüft dabei, dass der Block unter dem DocumentRoot liegt – ein Block woanders bricht den Lauf.
+  - **Offene Reste davon, drei:**
+    1. **`scripts/ngc-web.sh` im ulh-Repo (Aufgabe 26) nachziehen.** Es schreibt einen eigenen
+       virtuellen Host unter demselben Namen und ist eine Aufgabe älter. Vier Unterschiede: *für*
+       die Vorlage, dass das Skript für `assets/` **keine** Kopfzeile außer HSTS setzt (das Loch)
+       und dass es `/assets/` aus seiner Rewrite-Regel nimmt, sodass eine fehlende Datei dort von
+       Apache selbst beantwortet wird statt von `index.php`. **Gegen** die Vorlage, dass das Skript
+       die Zertifikatserneuerung mit mod_md löst – ein bewegliches Teil weniger als certbot in der
+       Vorlage – und dass es `ngc-web.conf` bei jedem `install`/`configure` **überschreibt**: ein
+       von Hand gehärteter Server verliert den Asset-Block ohne Warnung, bis das Skript ihn selbst
+       mitbringt.
+    2. **Kein Apache im Repo.** Fünf `curl`-Befehle in `apps/web/README.md` („What no test here can
+       measure") machen aus „ungemessen" „gemessen"; der wichtigste klärt, ob
+       `Header always set` auf dem Rückfall-404 **ergänzt** statt zu ersetzen. Ergebnis hierher.
+    3. **Nur `public/assets/` ist gedeckt.** Eine Datei direkt in `public/` hätte keine der vier
+       Kopfzeilen. Der Riegel ist ein Fall, nicht die Konfiguration: direkt im Webroot liegt nur
+       `index.php`, alles Neue gehört unter `assets/`.
   - **`HEAD` auf `/`** antwortet 405 statt wie `GET`, und ein 405 trägt keine `Allow`-Kopfzeile.
     Kein Loch, aber nicht nach HTTP. Lassen oder ändern.
 
