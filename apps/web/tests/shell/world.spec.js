@@ -1,5 +1,6 @@
 import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
+import { PASSWORD, USER_NAME } from "../fixtures/logins.js";
 
 // net/world.js: the seam between the surfaces, which speak in
 // (app, service, name), and net/channel.js, which speaks in actions.
@@ -300,13 +301,18 @@ test.describe("the adapter", () => {
       expect(got.opened).toBe(5);
     });
 
-  test("the node of an app's own service arrives, and the refusal names the half that is missing",
+  test("the node of an app's own service arrives, and the refusal names the piece that is missing",
     async ({ shell }) => {
       await plant(shell);
       const got = await shell.evaluate(async () => {
         const { adapterFor } = await import("/assets/js/net/world.js");
         const utf8 = (s) => new TextEncoder().encode(s);
         const rec = window.__ngcRecorder();
+        // ONE ARGUMENT, so this adapter has no world: no session key pair and
+        // no trust list. That is not a hypothetical shape - every other case of
+        // this file builds the adapter that way, and the shell builds it with
+        // both (net/world.js, realWorld). What is measured here is therefore
+        // the half of the refusals that needs no list to decide.
         const link = adapterFor(rec);
         const params = utf8('{"cols":80}');
         // What shell/appframe.js hands over for an app's own service, in both
@@ -323,7 +329,7 @@ test.describe("the adapter", () => {
           }
         };
         return {
-          // WITH the node: the only thing still missing is the session's own
+          // WITH the node: what this adapter is missing is the session's own
           // DH key pair, and the refusal has to say exactly that.
           callWithNode: await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "pi-1" })),
           openWithNode: await refusal(() => link.open(APP, SERVICE, ACTION, params, { node: "pi-1" })),
@@ -344,6 +350,91 @@ test.describe("the adapter", () => {
       expect(got.openNoNode).toEqual({ name: "WorldError", missing: "node", said: true });
       expect(got.callBadNode).toEqual({ name: "WorldError", missing: "node", said: true });
       expect(got.opened).toBe(0);
+    });
+
+  test("with both pieces in hand the door opens, and a node the verified list does not know is refused on its own word",
+    async ({ shell }) => {
+      test.skip(!(await hasSessionKeys(shell)),
+        "no X25519 in this engine's Web Crypto: there is no session key pair to hand over");
+      await plant(shell);
+      const got = await shell.evaluate(async () => {
+        const noise = await import("/assets/js/contracts/noise.js");
+        const { NotTrusted } = await import("/assets/js/shell/trustlist.js");
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const APP = "org.sorglos.terminal", SERVICE = "terminal", ACTION = "shell";
+        const params = utf8('{"cols":80}');
+        // The two pieces Task 28 laid: the session's own DH pair, as
+        // auth/keys.js makes it, and the one method of the trust list the
+        // adapter asks for. controllerKey's OWN rules - a controller, out of
+        // the verified list, with a 32-byte Noise key - are measured where they
+        // live (shell/trustlist.spec.js); what stands in for it here throws the
+        // real NotTrusted, so this case measures what the adapter does with
+        // its two answers and nothing else.
+        const sessionDH = await noise.newKeypair();
+        const controller = await noise.newKeypair();
+        const trust = {
+          controllerKey: (id) => {
+            if (id !== "ctl-1") throw new NotTrusted();
+            return controller.publicRaw;
+          },
+        };
+        const rec = window.__ngcRecorder();
+        const link = adapterFor(rec, { trust, sessionDH });
+        const refusal = async (fn) => {
+          try {
+            await fn();
+            return "took it";
+          } catch (e) {
+            return { name: e?.name ?? "", missing: e?.missing ?? "", said: typeof e?.message === "string" && e.message !== "" };
+          }
+        };
+        // A NODE THE LIST DOES NOT CARRY. It is a third case and it gets a
+        // third word: without one it would hide behind the refusal about the
+        // key, and a shell that says "no session key" where the truth is "this
+        // server is not in your trust list" sends somebody looking in the wrong
+        // place.
+        const unknown = await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "pi-99" }));
+        const unknownOpen = await refusal(() => link.open(APP, SERVICE, ACTION, params, { node: "pi-99" }));
+        // Still first, and still its own word: a node that is no node is
+        // refused before anybody is asked about it.
+        const noNode = await refusal(() => link.call(APP, SERVICE, ACTION, params, null));
+        const beforeTheDoor = rec.opens.length;
+        // A NODE IT DOES CARRY: the door opens. The recorder's first grant
+        // carries no Noise message 2, so channel.openE2E closes the channel
+        // with E_PROTOCOL right after - which is how far "it got that far" can
+        // be measured without a controller, and the OPEN it had already written
+        // down says WHAT went out.
+        const wentOut = await refusal(() => link.call(APP, SERVICE, ACTION, params, { node: "ctl-1" }));
+        const sent = rec.opens[rec.opens.length - 1];
+        return {
+          unknown, unknownOpen, noNode, beforeTheDoor,
+          // No WorldError any more: what comes back is the CHANNEL's error,
+          // which is what shell/appframe.js turns into E_UNREACHABLE for the
+          // app. A refusal of this adapter would carry a `missing`; this does
+          // not, and that is the difference between "NGC cannot" and "the
+          // channel broke".
+          wentOutName: wentOut.name, wentOutMissing: wentOut.missing,
+          sent: {
+            app: sent.app, service: sent.service, action: sent.action,
+            params: sent.params, task: sent.task, confirm: sent.confirm, e2e: sent.e2e,
+          },
+          // One channel for the one call that got past the door, and not one
+          // for any of the three refusals.
+          opens: rec.opens.length,
+        };
+      });
+      expect(got.unknown).toEqual({ name: "WorldError", missing: "controller-key", said: true });
+      expect(got.unknownOpen).toEqual({ name: "WorldError", missing: "controller-key", said: true });
+      expect(got.noNode).toEqual({ name: "WorldError", missing: "node", said: true });
+      expect(got.beforeTheDoor).toBe(0);
+      expect(got.wentOutName).toBe("ChannelError");
+      expect(got.wentOutMissing).toBe("");
+      expect(got.sent).toEqual({
+        app: "org.sorglos.terminal", service: "terminal", action: "shell",
+        params: '{"cols":80}', task: "", confirm: "", e2e: "set",
+      });
+      expect(got.opens).toBe(1);
     });
 
   test("open hands nothing over before the channel stands, and close really closes it with its code",
@@ -428,6 +519,79 @@ test.describe("the real session", () => {
         { key: "ngc.users/list", bytes: true, read: true },
         { key: "ngc.users/nodes", bytes: true, read: true },
       ]);
+    });
+
+  test("an app's own service runs end to end on the key pair the login carried through",
+    async ({ shell }) => {
+      const got = await shell.evaluate(async ([user, password]) => {
+        const trust = await import("/assets/js/contracts/trust.js");
+        const http = await import("/assets/js/net/http.js");
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const { login } = await import("/assets/js/auth/login.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        // THE REAL LOGIN, and not a key pair this case made: the pair it is
+        // about is the one auth/login.js built for the Noise session, and its
+        // public half stands in the client certificate the API bound this
+        // session to. tests/mock/api.js plays the controller of the end-to-end
+        // handshake with THAT half (onOpen, state.clientDH), so a channel that
+        // stands here is a channel that stood on the login's own key pair and
+        // on no other. A login that stopped carrying it through cannot make
+        // this case green by accident.
+        const h = await login({ name: user, password });
+        // The controller and its Noise key out of the list of this world. It is
+        // the lookup shell/trustlist.js's controllerKey does over the VERIFIED
+        // list; the chain the mock serves is signed by a key that is in no
+        // version of it, so it cannot be opened against an anchor (the boot
+        // case below is about exactly that), and this reads the list the login
+        // itself read.
+        const chain = await http.trustChain(1);
+        const list = await trust.parseList(chain.versions[0].payload);
+        const ctl = list.nodes.find((n) => n.kind === trust.NODE_CONTROLLER);
+        const link = adapterFor(h.link, {
+          trust: { controllerKey: () => ctl.noise },
+          sessionDH: h.sessionDH,
+        });
+        const APP = "org.sorglos.terminal", SERVICE = "terminal", ACTION = "shell";
+        // open() and not call(), because that is what an app's own service is:
+        // shell/appframe.js gives the terminal a channel that stays open and
+        // writes every line into it. The one service of this world echoes what
+        // it is given (tests/mock/api.js, innerData).
+        const s = await link.open(APP, SERVICE, ACTION, utf8('{"cols":80}'), { node: ctl.id });
+        const line = "cp -r\n";
+        const ended = await new Promise((ok) => {
+          const seen = [];
+          // The listeners are hung up AFTER open() came back, exactly as
+          // shell/appframe.js hangs them up - and the echo may not have been
+          // handed over before that.
+          s.onData = (b) => {
+            seen.push(new TextDecoder().decode(b));
+            Promise.resolve(s.end()).catch(() => {});
+          };
+          s.onClose = (status, message) => ok({ seen, status, message });
+          Promise.resolve(s.write(utf8(line))).catch(() => ok({ seen, status: "write failed", message: "" }));
+        });
+        // The one question the API itself has to answer. The mock watches every
+        // frame for the bytes the service was given: if the cleartext ever
+        // stood in one, end to end bought nothing.
+        const res = await fetch("/api/v1/mock", { cache: "no-store", credentials: "same-origin" });
+        const sawPlaintext = (await res.text()) === "1";
+        h.link.close();
+        return {
+          // What the login carried: an X25519 pair whose private half cannot be
+          // read out again, not even by the shell.
+          keyKind: h.sessionDH?.privateKey?.algorithm?.name ?? "",
+          extractable: h.sessionDH?.privateKey?.extractable ?? true,
+          publicLength: h.sessionDH?.publicRaw?.length ?? 0,
+          node: ctl.id,
+          seen: ended.seen, status: ended.status, message: ended.message,
+          sawPlaintext,
+        };
+      }, [USER_NAME, PASSWORD]);
+      expect(got).toEqual({
+        keyKind: "X25519", extractable: false, publicLength: 32,
+        node: "ctl-1", seen: ["cp -r\n"], status: "ok", message: "",
+        sawPlaintext: false,
+      });
     });
 
   test("a notice of the real link reaches every listener as the bytes it is", async ({ shell }) => {

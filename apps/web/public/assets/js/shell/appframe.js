@@ -500,7 +500,16 @@ async function doCall(frame, app, link, m) {
     // to end with that controller's key (design 4.3 and 4.5). Which controller
     // that is stands in the app's own row and nowhere else the link could reach,
     // so the shell is the one who has to say it. The stand-in ignores it; the
-    // adapter of Task 17b is where it is needed.
+    // adapter of Task 17b reads it, and since Task 28 it really opens that
+    // channel with it (net/world.js, appChannel).
+    //
+    // THE ONE SENTENCE FOR EVERY WAY THIS CAN FAIL stays right. The adapter
+    // refuses with three different words (no node, no session key, a node the
+    // trust list does not carry) and the channel throws its own code - and all
+    // of them mean the same thing to the app: its service did not answer. Which
+    // of them it was is for the person at the shell, not for the app, and an app
+    // that could tell them apart would learn about this installation's trust
+    // list from its own error message.
     answer({ value: await link.call(app.id, m.service, m.action, params, { node: app.node }) });
   } catch {
     answer({ error: codeMessage(CODES.UNREACHABLE) });
