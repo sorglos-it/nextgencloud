@@ -319,6 +319,41 @@ Wo du behauptest, dass etwas **nicht** mitwächst, miss mindestens drei Punkte,
 die weit genug auseinanderliegen, dass ein Mitwachsen auffallen müsste. Ein
 Punkt beweist eine Höhe. Nur eine Reihe beweist eine Steigung.
 
+### Ein sauber zusammengefuegter Merge kann ein Argument fallen lassen
+
+Eine Aufgabe gab einer Funktion einen vierten Parameter und zog **eine** ihrer
+zwei Aufrufstellen nach. Beide stehen in derselben Funktion, zwanzig Zeilen
+auseinander. Git hatte keinen Konflikt, JavaScript keinen Fehler: das dritte
+Argument rutschte in den vierten Platz, der vierte fehlte.
+
+    setupView(root, { config, onDone: (world) => showDesktop(root, config, world) });
+    //                                                       ^^^^^ landet in `anchor`,
+    //                                                             `world` ist undefined
+
+Die Folge war **eine weiße Seite, eine Zeile nachdem eine Anlage eingerichtet
+und ihr Einmal-Code verbraucht ist** — der Code ist einmalig, der Mensch sitzt
+vor einem installierten, unerreichbaren System. Und weil dieser Zweig keine
+Auffangklausel hatte, kam nicht einmal die Meldung.
+
+Dazu zwei Dinge, die diesen Fall lehrreich machen:
+
+**Der Koordinator hat die Ursache falsch geraten.** Er sah den roten Test
+(„wartet auf die Taskleiste"), kannte eine passende Erklärung aus einem anderen
+Bericht (die Kette der Gegenstelle passt keinem festen Anker) und schrieb sie in
+den Auftrag — samt der Anweisung, den Fall auf die Attrappe zu legen. Das wäre
+ein grüner Test gewesen **mit der weißen Seite dahinter**. Der Umsetzer hat
+gemessen statt die Diagnose zu übernehmen, die Ursache gefunden und die
+Abweichung vom Auftrag offen genannt.
+
+**Eine plausible Erklärung in der Hand ist gefährlicher als keine.** Wer ein
+rotes Ergebnis mit einem Satz erklären kann, hört auf zu suchen — und der Satz
+stammte hier aus einem richtigen Bericht über einen anderen Fall.
+
+**Also:** Wächst eine Signatur, such **jede** Aufrufstelle, auch die in
+derselben Datei und derselben Funktion — in JavaScript hilft kein Übersetzer.
+Und wenn du einem Umsetzer eine Ursache nennst, nenn sie als **Vermutung** und
+verlang die Messung.
+
 ### Eine Pipe verschluckt das Urteil
 
 Der Koordinator hat einen zusammengeführten Stand geprüft, das Ergebnis
