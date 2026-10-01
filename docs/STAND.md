@@ -55,10 +55,21 @@ Datenbank und Recovery.
     der Aufrufer sie nennt. `channel.call` nennt sie, `channel.openE2E` nicht – richtig für eine
     Aktion mit `stream`, offen für eine ohne. Festlegen, wer sie dort setzt, bevor die erste
     solche App kommt.
-  - **Sicherheitskopfzeilen für `assets/`:** Apache liefert den Ordner selbst aus, ohne CSP,
-    `nosniff` und `Cross-Origin-Resource-Policy`. Gehört in `scripts/ngc-web.sh` im ulh-Repo; im
-    Webinterface hält `tests/shell/csp.spec.js` dafür fest, dass im Webroot keine Datei liegt,
-    die ein Browser als Dokument ausführt.
+  - ~~**Sicherheitskopfzeilen für `assets/`**~~ – erledigt mit Aufgabe 29 (Web):
+    `apps/web/templates/apache-vhost.conf` ist die Vorlage für den virtuellen Host und setzt für
+    `assets/` `nosniff`, `Cross-Origin-Resource-Policy`, HSTS und eine **eigene** Richtlinie
+    (`default-src 'none'; script-src 'self'` – nicht die der Seite, siehe Begründung in der Datei).
+    `tests/shell/csp.spec.js` prüft es an einer `.js`, einer `.css`, einer Datei ohne Endung und
+    einer, die es nicht gibt; die Mock-API liest die Werte aus der Vorlage, damit es keine zweite
+    Fassung gibt.
+  - **Offener Rest davon:** `scripts/ngc-web.sh` im ulh-Repo (Aufgabe 26) schreibt einen eigenen
+    virtuellen Host und ist eine Aufgabe älter. Zwei Unterschiede, beide zugunsten der Vorlage:
+    Das Skript setzt für `assets/` **keine** Kopfzeile außer HSTS – genau das Loch –, und es
+    nimmt `/assets/` aus seiner Rewrite-Regel heraus, sodass eine **fehlende** Datei dort von
+    Apache selbst beantwortet wird (nackte Fehlerseite) statt von `index.php`. Die Vorlage nimmt
+    `FallbackResource`; so trägt auch dieser 404 alle Wände, und der Test misst genau das.
+    Das Skript nachziehen, dann ist der Punkt ganz zu. Beide Dateien heißen jetzt
+    `ngc-web.conf`, damit nie zwei virtuelle Hosts um denselben Namen streiten.
   - **`HEAD` auf `/`** antwortet 405 statt wie `GET`, und ein 405 trägt keine `Allow`-Kopfzeile.
     Kein Loch, aber nicht nach HTTP. Lassen oder ändern.
 

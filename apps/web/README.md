@@ -12,7 +12,7 @@ framework, no build step, and npm only under `tests/`.
 | --- | --- |
 | `public/` | web root; `index.php` is the only entry point, `assets/` holds CSS, JS and vendored code |
 | `classes/` | PHP: reads `/etc/ngc/web.json` and `/etc/ngc/trust-anchor.json`, sends the headers |
-| `templates/` | the page skeletons: the desktop, and an app window |
+| `templates/` | the page skeletons (the desktop, an app window) and `apache-vhost.conf`, the web server |
 | `tests/` | Playwright; npm lives only here. `tests/php/` checks the PHP side and needs no npm |
 
 ## Start in 3 steps
@@ -22,8 +22,10 @@ framework, no build step, and npm only under `tests/`.
    `shared/testdata/`, no API needed. Is php installed but not on the PATH? Then write
    `NGC_PHP=<path to php>` into `tools/local.env` (`tools/local.env.example` shows how);
    `npm test` and `tools/check.sh` both read it. Two runs at once: set `NGC_WEB_TEST_PORT`.
-3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository. Apache's
-   DocumentRoot is `public/` and nothing else is reachable from outside.
+3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository. By hand instead:
+   copy `templates/apache-vhost.conf`, replace the one placeholder in it, switch it on — the three
+   steps are at the top of that file. Apache's DocumentRoot is `public/` and nothing else is
+   reachable from outside.
 
 ## What it holds to
 
@@ -34,6 +36,10 @@ framework, no build step, and npm only under `tests/`.
   else is a 404, and only GET is answered.
 - **The policy is measured, not promised.** `tests/shell/csp.spec.js` checks every directive of
   `classes/Page.php` and then makes the browser refuse what it forbids.
+- **The files have walls too, and not the page's.** Apache serves everything below
+  `public/assets/`, so `classes/Page.php` never sees those answers; `templates/apache-vhost.conf`
+  gives them `nosniff`, `Cross-Origin-Resource-Policy` and a policy written for a file instead of
+  for a document. The test server reads that file, so the same case measures both.
 - **The password never leaves the browser**, at the login and at a second confirmation alike
   (`tests/shell/login.spec.js`, `tests/shell/attacks.spec.js`).
 

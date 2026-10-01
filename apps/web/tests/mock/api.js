@@ -12,10 +12,15 @@
 // process's OWN port is a second origin, which the shell's
 // "connect-src 'self'" refuses (measured; see the task report). So it is the
 // other way round: the browser talks to this server, /api/ is answered here,
-// and everything else is passed through to the PHP server unchanged. The
-// shell then sees ONE origin for page, assets, /api/ and the socket, which is
-// what operation looks like - and public/index.php needs no test branch at
-// all.
+// and everything else is passed through to the PHP server. The shell then sees
+// ONE origin for page, assets, /api/ and the socket, which is what operation
+// looks like - and public/index.php needs no test branch at all.
+//
+// Sitting in front is also what lets this process stand in for the OTHER half
+// of operation: Apache, which serves the files below assets/ itself and puts
+// their headers on them. Those headers are added on the way through, out of the
+// virtual host that ships - see withAssetWalls below. Everything else goes by
+// unchanged.
 import { createServer, request as httpRequest } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -84,6 +89,78 @@ function sendShipped(res, name) {
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+// THE WALLS APACHE PUTS ON THE FILES IT HANDS OUT ITSELF, so that a test can
+// measure the real situation and not the test server's.
+//
+// WHY IT IS HERE AND NOT IN public/index.php. In operation PHP never sees a
+// file below assets/: Apache serves it and the headers come out of the virtual
+// host (templates/apache-vhost.conf). The test server has no Apache - PHP's
+// built-in one answers those paths raw, which is what index.php's "return
+// false" is for - so something has to stand where Apache stands. This process
+// already does: it sits IN FRONT of PHP and passes on everything that is not
+// /api/. Putting the headers on the way out is the whole change, and
+// public/index.php keeps its ONE test branch instead of getting a second.
+//
+// THE VALUES ARE NOT WRITTEN HERE. They are read out of the template that
+// ships, so there is no second copy that could drift from it: a header taken
+// out of the virtual host is a header missing from these answers, and
+// tests/shell/csp.spec.js says so.
+const VHOST = fileURLToPath(new URL("../../templates/apache-vhost.conf", import.meta.url));
+
+// assetWalls reads the Header lines of the assets block out of the virtual
+// host. A line it does not understand is an ERROR and never something to skip:
+// this is read by a machine, the block says so, and a wall quietly dropped
+// here would make a green test out of an installation with a hole in it.
+function assetWalls(file) {
+  const lines = readFileSync(file, "utf8").split(/\r?\n/);
+  const open = lines.findIndex((l) => /^\s*<Directory\s+"[^"]*\/public\/assets"\s*>\s*$/.test(l));
+  if (open < 0) throw new Error(`mock: ${file} has no <Directory ".../public/assets"> block`);
+  const walls = [];
+  for (let i = open + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*<\/Directory>\s*$/.test(line)) {
+      if (walls.length === 0) throw new Error(`mock: the assets block of ${file} sets no header`);
+      return walls;
+    }
+    if (/^\s*(#|$)/.test(line)) continue;
+    const m = line.match(/^\s*Header always set ([A-Za-z0-9-]+) "([^"]*)"\s*$/);
+    if (m === null) {
+      throw new Error(`mock: ${file}:${i + 1} is no "Header always set" line: ${line.trim()}`);
+    }
+    walls.push([m[1], m[2]]);
+  }
+  throw new Error(`mock: the assets block of ${file} is never closed`);
+}
+
+const ASSET_WALLS = assetWalls(VHOST);
+
+// withAssetWalls puts those headers on an answer for a path below /assets/ -
+// but only on the answers Apache would have given ITSELF.
+//
+// HOW THE TWO ARE TOLD APART, without a copy of index.php's rule standing
+// here: by what came back. Every answer index.php writes goes through
+// Page::headers and so carries a Content-Security-Policy; a raw file out of
+// the web root carries none (measured: a length, a type where the extension
+// gives one, and nothing of ours). So an answer WITH a policy was written by
+// the application and is left exactly as it is - that is the 404 for a file
+// that is not there, and it already carries every wall of the shell. An answer
+// WITHOUT one is a file, and gets the walls of the virtual host.
+//
+// It sets and does not add, the way mod_headers' "set" does: a name that is
+// already there goes, in whatever case it was spelled, so no answer can end up
+// carrying one header twice.
+function withAssetWalls(url, headers) {
+  if (!url.startsWith("/assets/")) return headers;
+  if ("content-security-policy" in headers) return headers;
+  const out = { ...headers };
+  for (const [name, value] of ASSET_WALLS) {
+    const low = name.toLowerCase();
+    for (const had of Object.keys(out)) if (had.toLowerCase() === low) delete out[had];
+    out[name] = value;
+  }
+  return out;
 }
 
 // The GUID of RFC 6455, section 1.3. It is NOT written from memory: the line
@@ -1059,12 +1136,16 @@ export async function startMockAPI({ world, port, phpPort }) {
   // Everything that is not /api/ belongs to the PHP server behind this one.
   // It is passed through unchanged, headers and status included, so the page
   // the browser gets is the page PHP built - content security policy and all.
+  //
+  // The one thing that is NOT passed through unchanged is a file below
+  // /assets/: there PHP stands in for a web server that has no application
+  // behind it, so the walls of the virtual host go on here. See withAssetWalls.
   function proxy(req, res) {
     const out = httpRequest({
       host: "127.0.0.1", port: phpPort, method: req.method, path: req.url,
       headers: { ...req.headers, host: `127.0.0.1:${phpPort}` },
     }, (answer) => {
-      res.writeHead(answer.statusCode, answer.headers);
+      res.writeHead(answer.statusCode, withAssetWalls(req.url, answer.headers));
       answer.pipe(res);
     });
     out.on("error", () => { res.writeHead(502, { "Content-Type": "text/plain" }); res.end("no php"); });

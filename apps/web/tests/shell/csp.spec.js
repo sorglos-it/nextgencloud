@@ -73,6 +73,11 @@ const FRAME_CSP = {
   "frame-ancestors": "'self'",
 };
 
+// What this host says about itself. ONE constant, used by the page's case and
+// by the files' case below: the two have to say the same thing about the host,
+// and two literals would let them drift apart without a case noticing.
+const HSTS = "max-age=63072000; includeSubDomains";
+
 // policy reads a Content-Security-Policy header into {directive: value}. A
 // header is one string, and a case that only searched it could pass on
 // "script-src 'self'" found inside "script-src-elem 'self' 'unsafe-inline'".
@@ -141,7 +146,7 @@ test("the shell page carries the whole policy, directive for directive", async (
   expect(h["referrer-policy"]).toBe("no-referrer");
   expect(h["x-content-type-options"]).toBe("nosniff");
   expect(h["cache-control"]).toBe("no-store");
-  expect(h["strict-transport-security"]).toContain("max-age=63072000");
+  expect(h["strict-transport-security"]).toBe(HSTS);
   // The server says nothing about itself. Page::headers removes it; a PHP
   // that was configured to add it back would show up here.
   expect(h["x-powered-by"]).toBeUndefined();
@@ -193,6 +198,234 @@ test("every answer of the one entry point carries the headers", async ({ request
     expect(h["cache-control"], `${method} ${path} cache`).toBe("no-store");
     expect(h["x-powered-by"], `${method} ${path} powered-by`).toBeUndefined();
   }
+});
+
+// ---------------------------------------- and the files, which are answers too
+
+// What the virtual host sends for a file below assets/
+// (templates/apache-vhost.conf). Written out here, in full, for the same
+// reason SHELL_CSP is: a change to it has to be made twice, and the second time
+// with a test run behind it.
+//
+// IT IS NOT Page::CSP, and the reason is in the template beside the lines
+// themselves. Page::CSP says style-src, img-src, font-src, connect-src,
+// frame-src and worker-src 'self' because the SHELL DOCUMENT loads those
+// things; a file loads nothing, so on a file they are decoration - and a header
+// that feigns a wall is worse than no header.
+//
+// Two are not decoration, and both are about the one file below assets/ whose
+// own answer's policy is live: assets/js/auth/argon2-worker.js, the worker that
+// holds the typed password.
+//   script-src 'self' - it has a static import, and without this it does not
+//     run at all on WebKit.
+//   no connect-src AT ALL - so default-src 'none' answers for it and there is
+//     no way out of that worker. "connect-src 'self'", which Page::CSP has,
+//     would be a way.
+// Both measured, in the case further down.
+const ASSET_CSP = { "default-src": "'none'", "script-src": "'self'" };
+
+test("every file the web server hands out itself carries walls too", async ({ request }) => {
+  // THE POINT OF THIS CASE. public/index.php says it: Apache "serves
+  // everything below assets/ itself", so none of these answers ever reaches
+  // Page::headers. Every one of them is still an answer of NGC's origin.
+  //
+  // The three shapes a file can have, and each is here for its own reason:
+  //   a .js   - the shell's code, and the kind of file a worker is made of
+  //   a .css  - a different Content-Type, in case a rule was written per type
+  //   LICENSE - NO extension, so the server sends no Content-Type at all. That
+  //             is the file nosniff is in that block for, and the loop below
+  //             measures that it really has no type.
+  const files = [
+    "/assets/js/shell/dom.js",
+    "/assets/css/shell.css",
+    "/assets/vendor/noble-hashes/LICENSE",
+  ];
+  for (const path of files) {
+    const res = await request.fetch(path);
+    expect(res.status(), path).toBe(200);
+    const h = res.headers();
+    const csp = policy(h["content-security-policy"]);
+    for (const [name, value] of Object.entries(ASSET_CSP)) {
+      expect(csp[name], `${path} ${name}`).toBe(value);
+    }
+    // As a SET again: a directive that was ADDED here is a failure too, and
+    // the one that must never turn up is connect-src.
+    expect(Object.keys(csp).sort(), `${path} directives`).toEqual(Object.keys(ASSET_CSP).sort());
+    expect(h["x-content-type-options"], `${path} nosniff`).toBe("nosniff");
+    expect(h["cross-origin-resource-policy"], `${path} corp`).toBe("same-origin");
+    expect(h["strict-transport-security"], `${path} hsts`).toBe(HSTS);
+    expect(h["x-powered-by"], `${path} powered-by`).toBeUndefined();
+    // And the file with no extension really has no type, otherwise the reason
+    // nosniff is in that block is a case that does not exist.
+    if (path.endsWith("/LICENSE")) {
+      expect(h["content-type"], "a file with no extension gets no type").toBeUndefined();
+    }
+  }
+});
+
+test("a file that is not there is an answer with walls as well", async ({ request }) => {
+  // A 404 for a file is an answer like any other, and an answer without walls
+  // is an answer without walls. This one does not come from the web server:
+  // every path that is no file below public/ goes to the one entry point
+  // (FallbackResource in the virtual host, "return false" not taken in
+  // index.php), so Page::headers writes it.
+  const res = await request.fetch("/assets/js/gibtesnicht.js");
+  expect(res.status()).toBe(404);
+  const h = res.headers();
+  // WHAT IS ASSERTED HERE AND WHY IT IS NOT THE WHOLE POLICY. There is no
+  // Apache in this repository to measure, so whether the assets block of the
+  // virtual host ALSO reaches this answer and replaces its policy with the
+  // asset one is not known. What is asserted holds either way - both policies
+  // begin with default-src 'none', and nosniff and the resource policy are in
+  // both blocks - so this case says what is true in operation rather than what
+  // happens to be true of the test server.
+  expect(policy(h["content-security-policy"])["default-src"]).toBe("'none'");
+  expect(h["x-content-type-options"]).toBe("nosniff");
+  expect(h["cross-origin-resource-policy"]).toBe("same-origin");
+  expect(h["x-powered-by"]).toBeUndefined();
+});
+
+test("the policy on a file does the one thing a policy on a file can do", async ({ page, request }) => {
+  // THE CASE THAT DECIDES ASSET_CSP, and the only one in this file about a
+  // header on a FILE rather than on a document.
+  //
+  // A worker is the one file below assets/ whose own answer's policy governs
+  // anything: it is the policy of the worker's global scope.
+  // assets/js/auth/argon2-worker.js is that file, and it is the one that holds
+  // the typed password while it derives the key. So the two directives are
+  // measured there, one half each.
+  //
+  // MEASURED FIRST, on the real file, with no stand-in: it still works. A
+  // worker is asked something and not merely constructed - new Worker()
+  // resolves before the module graph is loaded, so a worker whose import was
+  // refused still looks like a worker until it is spoken to.
+  //
+  // This half is what script-src 'self' is in the policy FOR. Taking it out of
+  // templates/apache-vhost.conf was measured: WebKit then refuses the worker's
+  // static import outright (onerror, no answer at all), so no password login
+  // works in Safari. Chromium is the quiet one - it lets the static import
+  // through and refuses only a dynamic import() - which is why this is the
+  // kind of header that has to be measured on more than one engine.
+  await page.goto("/");
+  const real = await page.evaluate(async () => {
+    const w = new Worker("/assets/js/auth/argon2-worker.js", { type: "module" });
+    const answer = new Promise((done) => {
+      w.onmessage = (e) => done({ seed: Array.from(e.data).length });
+      w.onerror = (e) => done({ error: String(e.message ?? "error") });
+      // A refused import does not always arrive as an error event; on some
+      // engines the worker simply never answers. A wait of its own turns that
+      // into a sentence instead of a run that times out.
+      setTimeout(() => done({ silent: true }), 10000);
+    });
+    // The smallest job the contract's shape allows: this measures that the
+    // worker computes AT ALL. What it computes is held against the vectors in
+    // contracts/proof.spec.js.
+    w.postMessage({
+      password: new Uint8Array([0x61]), salt: new Uint8Array(16),
+      t: 1, m: 256, p: 1, dkLen: 32,
+    });
+    const out = await answer;
+    w.terminate();
+    return out;
+  });
+  expect(real, "the worker answered, so its own policy let the import through")
+    .toEqual({ seed: 32 });
+
+  // AND THE OTHER HALF: that there is no way out of such a worker. connect-src
+  // is absent from the policy, so default-src 'none' answers for it, and that
+  // is the wall that matters here - the file holds the plaintext password.
+  //
+  // The real worker cannot be asked this, because it does not try: it computes
+  // and answers, and that is all it does. So the attempt is made by a worker of
+  // this case's own - carrying THE POLICY THE SERVER REALLY SENT for the real
+  // one, read off that answer just below, so no value is written twice. What is
+  // a stand-in here is who served the file; what is measured is the engine.
+  const sent = (await request.fetch("/assets/js/auth/argon2-worker.js")).headers();
+  const asSent = sent["content-security-policy"];
+  expect(asSent, "the real worker's answer carries the policy this measures").toBeTruthy();
+
+  // A name that is no file of this interface, so nothing but this route can
+  // answer it - and under /assets/, because that is where the policy this case
+  // is about belongs.
+  await page.route("**/assets/js/pruefwerker.js", async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/javascript", "content-security-policy": asSent },
+      body: `
+        import { utf8 } from "/assets/js/contracts/b64.js";
+        self.onmessage = async () => {
+          let net = "answered";
+          try { await fetch("/config.json", { cache: "no-store" }); } catch { net = "refused"; }
+          self.postMessage({ imported: typeof utf8, net });
+        };`,
+    });
+  });
+
+  const probe = await page.evaluate(async () => {
+    const w = new Worker("/assets/js/pruefwerker.js", { type: "module" });
+    const answer = new Promise((done) => {
+      w.onmessage = (e) => done(e.data);
+      w.onerror = (e) => done({ error: String(e.message ?? "error") });
+      setTimeout(() => done({ silent: true }), 10000);
+    });
+    w.postMessage("los");
+    const out = await answer;
+    w.terminate();
+    return out;
+  });
+  // The control is in the same answer: the import went through, so "refused"
+  // below is the policy and not a worker that never ran.
+  expect(probe.imported, "the stand-in worker ran and imported").toBe("function");
+  expect(probe.net, "no connection out of a worker: connect-src falls back to default-src 'none'")
+    .toBe("refused");
+});
+
+test("another origin may not pull the shell's files into itself", async ({ page, baseURL }) => {
+  // Cross-Origin-Resource-Policy, measured as a behaviour and not as a string.
+  //
+  // The foreign page AND its own script are served by routes of this test, so
+  // the only thing between the page and NGC's file is the header: not a name
+  // that does not resolve, and not a network that is not there. The foreign
+  // page carries no policy of its own, so nothing on its side forbids the load
+  // either.
+  //
+  // WHAT IT IS WORTH ON WHICH ENGINE, measured by taking the header out of
+  // templates/apache-vhost.conf: Chromium then loads the file and this case
+  // goes red, so there it measures the header. WebKit refuses the load even
+  // without it, for a reason of its own - so there this case passes either way
+  // and says nothing about the header. It runs on both anyway: on Chromium it
+  // is the measurement, on WebKit it is a second pair of eyes on the same
+  // load. Stated here so nobody reads the WebKit line as proof of anything.
+  await page.route("https://fremd.test/**", async (route) => {
+    if (route.request().url().endsWith("/eigen.js")) {
+      await route.fulfill({ status: 200, contentType: "text/javascript", body: "window.__eigen = 1;" });
+      return;
+    }
+    await route.fulfill({
+      status: 200, contentType: "text/html", body: "<!DOCTYPE html><title>fremd</title>",
+    });
+  });
+  await page.goto("https://fremd.test/");
+  expect(await page.evaluate(() => location.origin), "the page really is somewhere else")
+    .toBe("https://fremd.test");
+
+  const got = await page.evaluate(async (ngc) => {
+    const load = (src) => new Promise((done) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = () => done("load");
+      s.onerror = () => done("error");
+      document.head.append(s);
+    });
+    // The control first, and it is the SAME mechanism one origin over: a
+    // script this page is allowed to have. If it does not load either, the
+    // line below says nothing about the resource policy.
+    const own = await load("https://fremd.test/eigen.js");
+    return { own, ran: window.__eigen ?? null, ngc: await load(`${ngc}/assets/js/shell/dom.js`) };
+  }, baseURL);
+  expect(got.own).toBe("load");
+  expect(got.ran, "a script this page may have really ran").toBe(1);
+  expect(got.ngc, "Cross-Origin-Resource-Policy: same-origin").toBe("error");
 });
 
 // ------------------------------------------------- what the engine refuses
@@ -424,14 +657,17 @@ test("the one place that builds a document builds nothing in NGC's own origin", 
 });
 
 test("the web root holds nothing a browser would run as a document of this origin", () => {
-  // Apache serves everything below public/assets/ itself, with no policy
-  // header of ours on it (measured: an asset answer carries Content-Type and
-  // nothing else). That is fine for a stylesheet and for a script, which are
-  // fetched BY a document whose policy already holds. It is not fine for a
-  // file a person can be sent to directly: an .html or an .svg under this
-  // origin is a document of NGC's own origin, with scripts of its own and no
-  // policy at all - and an .svg is the quiet one, because it looks like a
-  // picture until somebody opens it.
+  // Apache serves everything below public/assets/ itself, so Page::headers
+  // never sees those answers. Since task 29 they are not bare: the virtual
+  // host (templates/apache-vhost.conf) puts nosniff, the resource policy and a
+  // policy of their own on them, and the cases above measure it.
+  //
+  // That policy is written for a FILE, though, and this case is the reason it
+  // may be: a file a person can be sent to directly is something else. An
+  // .html or an .svg under this origin is a document of NGC's own origin, with
+  // scripts of its own - and an .svg is the quiet one, because it looks like a
+  // picture until somebody opens it. Such a file would need the walls of a
+  // document, which is what the one entry point sends and this block does not.
   //
   // So the web root carries exactly one file a web server would do anything
   // but hand over: the single entry point. The way to add a picture is a data:

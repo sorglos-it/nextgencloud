@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 
 // The built-in PHP server stands in for Apache: index.php is the only entry
-// point there too, and assets/ is served straight from the file system.
+// point there too, and assets/ is served straight from the file system. What it
+// does NOT do is put Apache's headers on those files; the mock in front of it
+// does that, out of templates/apache-vhost.conf (mock/api.js, withAssetWalls).
 //
 // NGC_WEB_TEST_PORT moves it. Two runs of this suite at once - two sessions on
 // one machine, or a measurement beside the run it is measured against - both
@@ -16,7 +18,7 @@ const port = Number(process.env.NGC_WEB_TEST_PORT) || 8099;
 
 // The mock API (mock/api.js) is the server the BROWSER talks to, and the PHP
 // server sits behind it on the next port: everything that is not /api/ is
-// passed through unchanged, policy headers included.
+// passed through, policy headers included.
 //
 // The task brief has it the other way round - PHP in front, passing /api/ on
 // to the mock. That cannot carry the session WebSocket. PHP's built-in
