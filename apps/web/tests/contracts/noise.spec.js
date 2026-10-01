@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, hasFixedKeyHandshake } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 // noise.json holds one full Noise_KK handshake (fixed static and ephemeral
@@ -9,29 +9,14 @@ import { vectors } from "../fixtures/vectors.js";
 // nothing.
 const v = vectors("noise.json");
 
-// Does the Web Crypto API of this engine know X25519? Chrome does; the WebKit
-// that Playwright brings answers NotSupportedError to importKey, exactly as
-// it does for Ed25519 (sign.spec.js) - but the two curves are not the same
-// capability, so this is measured on its own instead of assumed from that
-// other gap. Measured directly: pkcs8 import of a static key is the first
-// X25519 call HandshakeKK.forTest makes, so it stands for the whole
-// handshake - an engine that refuses it can run no message of the test below.
-async function hasX25519(shell) {
-  return shell.evaluate(async () => {
-    const pkcs8Prefix = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b,
-      0x65, 0x6e, 0x04, 0x22, 0x04, 0x20]);
-    const raw = new Uint8Array(32).fill(1);
-    const pkcs8 = new Uint8Array(pkcs8Prefix.length + raw.length);
-    pkcs8.set(pkcs8Prefix, 0);
-    pkcs8.set(raw, pkcs8Prefix.length);
-    try {
-      await crypto.subtle.importKey("pkcs8", pkcs8, { name: "X25519" }, false, ["deriveBits"]);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-}
+// The guard for everything below that runs a handshake is
+// hasFixedKeyHandshake in fixtures/page.js. It used to be a second guard of
+// its own here, which asked whether importKey("pkcs8", X25519) goes through -
+// and it does go through in Firefox, which then refuses to export the public
+// half of that very key and fails the handshake anyway. Two guards for one
+// question are two places to get it wrong, so the measurement lives once, next
+// to the one for a session, and the comment there says what each step is for.
+// Ed25519 is deliberately not asked about: no message of a handshake needs it.
 
 test("the end-to-end prologue binds channel, params and task", async ({ shell }) => {
   const got = await shell.evaluate(async (d) => {
@@ -51,8 +36,8 @@ test("the end-to-end prologue binds channel, params and task", async ({ shell })
 });
 
 test("the handshake and the transport match the Go vectors", async ({ shell }) => {
-  test.skip(!(await hasX25519(shell)),
-    "no X25519 in this engine's Web Crypto: it cannot run a Noise_KK handshake at all");
+  test.skip(!(await hasFixedKeyHandshake(shell)),
+    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode, b64encode } = await import("/assets/js/contracts/b64.js");
@@ -90,8 +75,8 @@ test("the handshake and the transport match the Go vectors", async ({ shell }) =
 // value here and checked by the outer expect() - not inferred from the
 // absence of a crash.
 test("split() refuses a second call on the same handshake", async ({ shell }) => {
-  test.skip(!(await hasX25519(shell)),
-    "no X25519 in this engine's Web Crypto: it cannot run a Noise_KK handshake at all");
+  test.skip(!(await hasFixedKeyHandshake(shell)),
+    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -121,8 +106,8 @@ test("split() refuses a second call on the same handshake", async ({ shell }) =>
 // proved that newKeypair(), of() and a real (non-fixed) ephemeral - the path
 // NGC actually takes at runtime - agree with each other, end to end.
 test("newKeypair(), of() and a fresh ephemeral complete a real handshake", async ({ shell }) => {
-  test.skip(!(await hasX25519(shell)),
-    "no X25519 in this engine's Web Crypto: it cannot run a Noise_KK handshake at all");
+  test.skip(!(await hasFixedKeyHandshake(shell)),
+    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
   const got = await shell.evaluate(async () => {
     const n = await import("/assets/js/contracts/noise.js");
     const initStatic = await n.newKeypair();
@@ -150,8 +135,8 @@ test("newKeypair(), of() and a fresh ephemeral complete a real handshake", async
 // public fields on the Transport a real split() returns, not a test seam -
 // straight to the boundary instead.
 test("seal() and open() refuse once the nonce counter is no longer exact", async ({ shell }) => {
-  test.skip(!(await hasX25519(shell)),
-    "no X25519 in this engine's Web Crypto: it cannot run a Noise_KK handshake at all");
+  test.skip(!(await hasFixedKeyHandshake(shell)),
+    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -191,8 +176,8 @@ test("seal() and open() refuse once the nonce counter is no longer exact", async
 // pins K7: a properly-typed Uint8Array one byte over MAX_PLAINTEXT must
 // still be refused (shared/noisep/noisep_test.go:80).
 test("seal() and open() reject anything that is not Uint8Array, and refuse a plaintext over MAX_PLAINTEXT", async ({ shell }) => {
-  test.skip(!(await hasX25519(shell)),
-    "no X25519 in this engine's Web Crypto: it cannot run a Noise_KK handshake at all");
+  test.skip(!(await hasFixedKeyHandshake(shell)),
+    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
   const got = await shell.evaluate(async (d) => {
     const n = await import("/assets/js/contracts/noise.js");
     const { b64decode } = await import("/assets/js/contracts/b64.js");
@@ -239,8 +224,8 @@ test("seal() and open() reject anything that is not Uint8Array, and refuse a pla
 // real importKey still runs for every other call, so the rest of the
 // handshake is genuine.
 test("importPublic() only falls back for NotSupportedError and DataError, not any failure", async ({ shell }) => {
-  test.skip(!(await hasX25519(shell)),
-    "no X25519 in this engine's Web Crypto: it cannot run a Noise_KK handshake at all");
+  test.skip(!(await hasFixedKeyHandshake(shell)),
+    "this engine cannot run a Noise_KK handshake from the fixed keys of noise.json");
   const got = await shell.evaluate(async (d) => {
     const realImportKey = crypto.subtle.importKey.bind(crypto.subtle);
     crypto.subtle.importKey = (format, ...rest) => {
