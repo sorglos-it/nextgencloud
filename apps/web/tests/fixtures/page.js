@@ -28,12 +28,45 @@ export { expect } from "@playwright/test";
 // It presses the button and does NOT wait for the desktop: what a caller
 // waits for is its own business, and the case that has no desktop to wait for
 // (shell/boot.spec.js on an engine without the session keys) never gets here.
-export async function signIn(page) {
+//
+// standIn: false is how a case asks for the real way instead - see standInOn
+// below; tests/shell/world.spec.js is the one case that does.
+export async function signIn(page, { standIn = true } = {}) {
+  if (standIn) await standInOn(page);
   await page.getByLabel("Benutzername").fill(USER_NAME);
   await page.getByLabel("Passwort").fill(PASSWORD);
   // exact, because "Mit Passkey anmelden" also contains the word: playwright
   // matches an accessible name as a case-insensitive substring.
   await page.getByRole("button", { name: "Anmelden", exact: true }).click();
+}
+
+// standInOn hands this page shell/fake-link.js instead of the real session.
+//
+// WHICH CASES STILL EAT THE STAND-IN, in one place and by name. Since task 17b
+// shell/main.js takes the REAL session: net/world.js puts the surfaces'
+// call(app, service, name, …) on net/link.js and opens the trust list on it.
+// The stand-in answers two dozen actions where the mock API answers five, and
+// none of them with the signed user interface the app frame needs - so every
+// case that wants a desktop with apps, a store, a user administration or a
+// running app still needs it and asks for it through here: signIn() for every
+// case that goes through signIn, and shell/login.spec.js for its own cases,
+// which type into the mask themselves.
+//
+// BOTH WAYS OF SETTING IT, and each one is needed. addInitScript covers every
+// navigation that follows - the passkey cases move the page to its DNS name,
+// and a flag set on the old document would be gone there. evaluate covers the
+// document that is already standing, which is where signIn finds it; the hook
+// is read when the login is through, so that is in time.
+//
+// IT LEAVES WITH shell/fake-link.js: when the mock answers every action of
+// core.ACTIONS with a signed world, this function and that file go together.
+export async function standInOn(page) {
+  await page.addInitScript(() => { window.__ngcStandIn = true; });
+  try {
+    await page.evaluate(() => { window.__ngcStandIn = true; });
+  } catch {
+    // No document on this page yet; the init script above is what sets it.
+  }
 }
 
 // Can this engine make the two keys a session needs? shell/main.js asks the
