@@ -441,6 +441,62 @@ weggelassen hast: er hat `connect-src` bewusst nicht gesetzt und auf beiden
 Engines gemessen, dass es keinen Weg aus dem Worker gibt. Ein weggelassener Wert
 ohne Messung daneben ist nicht dasselbe wie ein geprüfter.
 
+### Ein Prüfgriff, der die Form prüft, prüft nicht die Wirkung
+
+Ein Strang hat eine Serverkonfiguration gebaut und einen Fall dazu, der
+festhält, dass die Schutz-Kopfzeilen für die ausgelieferten Dateien dastehen.
+Der Prüfer hat gemessen, was der Fall wirklich prüft:
+
+```apache
+<Directory "/srv/woanders/public/assets">
+```
+
+Ein Pfad **ohne jeden Bezug** zum Webroot — **15 passed, EXIT=0**. Der Griff
+prüfte, dass der Pfad auf `/public/assets` **endet**. Nicht, ob der Block je in
+Kraft ist.
+
+Dasselbe hatte am selben Tag der Fähigkeits-Wächter: er prüfte, dass ein
+Schlüssel sich **anlegen** lässt, nicht dass man mit ihm **arbeiten** kann. Und
+dasselbe hat `browserFits()` in der Shell: es fragt `generateKey` und lässt
+darum einen Browser zur Anmeldemaske, in der die Anmeldung immer scheitert.
+
+**Die Regel:** Schreib bei jedem Prüfgriff zwei Sätze untereinander: *was ich
+hier anfasse* und *was der Code später wirklich tut*. Stehen dort zwei
+verschiedene Dinge — eine Zeichenkette gegen eine Wirkung, ein Anlegen gegen ein
+Benutzen, ein Vorhandensein gegen ein Greifen — dann prüfst du die Form und
+nennst es die Sache. Die Gegenprobe ist immer dieselbe: **bau den Fall, der die
+Form behaelt und die Wirkung verliert**, und sieh zu, dass er rot wird.
+
+### Sechs Messungen gleichzeitig messen die Maschine, nicht den Code
+
+Ich hatte jedem Strang eingeschärft, sich einen **eigenen Port** zu nehmen — gut,
+denn sonst misst der zweite Lauf stillschweigend den Arbeitsbaum des ersten. Nur
+verhindert ein eigener Port nicht, dass der Maschine die Sockets ausgehen.
+
+Als sechs Prüfsätze gleichzeitig liefen, hat ein Prüfer gemessen:
+**24 266 Sockets in TIME_WAIT auf 16 384 mögliche Ports.** Zwei seiner
+vollständigen Läufe waren rot — 9 und 15 Fälle, an **verschiedenen** Stellen —
+und **keine einzige gefallene Zusicherung** darunter: nur
+„Could not connect to server" und „Importing a module script failed".
+
+Das Gemeinste daran hat er gleich mitgemessen: **ein Serverausfall macht aus
+einem Überspringen einen laufenden Fall.** Damit wandert die Zahl der
+übersprungenen Fälle, und zwei Läufe sind nicht mehr vergleichbar — ohne dass
+irgendwo das Wort „Fehler" steht. Wer dann Zahlen nebeneinanderlegt, vergleicht
+die Auslastung der Maschine.
+
+**Die Regel:** Vor einem vollen Lauf fragst du, ob gerade einer läuft, und
+verteilst nicht mehr als zwei gleichzeitig. Und was für Zahlen gilt, gilt erst
+recht für ihre Erklärung: „flatterhaft" ist keine Ursache, solange niemand die
+Maschine gemessen hat.
+
+Dazu der kleinere Bruder, aus demselben Tag: mein eigener Nachmesslauf hat
+**keinen einzigen Test gefahren** — in einem frischen Arbeitsbaum fehlte die
+nicht eingecheckte Zeile mit dem Pfad zu php, und die Konfiguration brach ab.
+Ausstiegscode 1, also formal richtig. **Lies trotzdem immer, wie viele Fälle
+gelaufen sind.** Null bestandene Fälle sind kein Ergebnis, auch nicht ein
+schlechtes.
+
 ### Eine Pipe verschluckt das Urteil
 
 Der Koordinator hat einen zusammengeführten Stand geprüft, das Ergebnis
@@ -1304,6 +1360,22 @@ Zwei Dinge daran sind die Regel:
   Zusicherung, die auf einer Behauptung über deinen eigenen Prüfstand steht.
 
 „Nicht prüfbar" bleibt eine ehrliche Antwort. Sie ist nur die **zweite**.
+
+**Dritter Fall am selben Tag, und der teuerste von den drei:** Ich habe einem
+Strang geschrieben, Firefox könne `deriveBits` und `sign` nicht — als Ursache,
+nicht als Vermutung. Er hat gemessen: Firefox kann `sign`, `verify`,
+`deriveBits`, `generateKey` und `importKey` für beide Kurven. Es kann genau
+**eins** nicht: `exportKey("jwk")` eines Schlüssels, der per `importKey("pkcs8")`
+hereinkam. Mein Satz, wörtlich befolgt — „unterschreiben" und „ableiten" statt
+anlegen und einführen — hätte **beide** Wächter auf Firefox weiter ja sagen
+lassen und **alle 157 Fälle rot gelassen**. Die Aufgabe ist nur gelungen, weil er
+der Messung gefolgt ist und nicht mir.
+
+Daraus die schärfere Fassung derselben Regel: **wer eine Aufgabe ausgibt, gibt
+die Erscheinung aus, nicht die Ursache.** Schreib hin, was zu sehen ist — welche
+Fälle rot sind, mit welcher Meldung — und sag ausdrücklich, dass die Ursache zu
+messen ist. Eine Ursache im Auftrag ist eine Abkürzung, die der Empfänger nicht
+mehr prüft, weil sie von oben kommt.
 
 ### Ein Satz kann im Moment seiner Berichtigung falsch werden
 
