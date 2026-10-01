@@ -336,13 +336,13 @@ func TestOriginsAreChecked(t *testing.T) {
 		many, // more than the contract allows
 	}
 	for _, o := range good {
-		if err := checkOrigins(o); err != nil {
-			t.Errorf("checkOrigins(%q) refused a list that is one: %v", o, err)
+		if err := CheckOrigins(o); err != nil {
+			t.Errorf("CheckOrigins(%q) refused a list that is one: %v", o, err)
 		}
 	}
 	for _, o := range bad {
-		if err := checkOrigins(o); !errors.Is(err, ErrOrigins) {
-			t.Errorf("checkOrigins(%q) answered %v", o, err)
+		if err := CheckOrigins(o); !errors.Is(err, ErrOrigins) {
+			t.Errorf("CheckOrigins(%q) answered %v", o, err)
 		}
 	}
 }
@@ -517,6 +517,128 @@ func TestTheLargestFrameFits(t *testing.T) {
 	got, err := l.Read(ctx)
 	if err != nil || len(got.Payload) != wire.MaxPayload {
 		t.Fatalf("the largest frame did not get through: %v (payload %d)", err, len(got.Payload))
+	}
+}
+
+// TestOneByteOverTheLimitEndsTheLink holds the other side of the limit and the
+// promise at Read that every failure ends the link. The library writes its close
+// frame for a message that is too big but leaves the connection standing, so
+// without the drop the caller held a link that could not write any more and paid
+// five seconds in Close to be rid of the socket.
+func TestOneByteOverTheLimitEndsTheLink(t *testing.T) {
+	l, _, conn, done := dialTest(t)
+	defer done()
+	if err := conn.Write(ctx, websocket.MessageBinary, make([]byte, wire.MaxFrame+noisep.TagSize+1)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got, err := l.Read(ctx); err == nil {
+		t.Fatalf("a message over the read limit was taken: %+v", got)
+	}
+	if err := l.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: 1}); err == nil {
+		t.Fatal("the link still writes after a message over the limit")
+	}
+	start := time.Now()
+	if err := l.Close(websocket.StatusProtocolError, "done"); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("Close took %v after a message over the limit", d)
+	}
+}
+
+// TestNoFirstFrameEndsTheLink holds FirstFrameTimeout: a replayed handshake
+// needs no key, and after it only this window keeps a goroutine and a file
+// handle from being held for good.
+func TestNoFirstFrameEndsTheLink(t *testing.T) {
+	l, _, _, done := dialOptions(t, Options{FirstFrame: 50 * time.Millisecond})
+	defer done()
+	back := make(chan error, 1)
+	start := time.Now()
+	// In its own goroutine: without the window Read never comes back, and a
+	// case that hangs for the ten minutes of go test is no red case.
+	go func() { _, err := l.Read(ctx); back <- err }()
+	select {
+	case err := <-back:
+		if err == nil {
+			t.Fatal("Read took a frame that was never sent")
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Fatalf("Read waited %v for the first frame", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read is still waiting for a first frame that never came")
+	}
+	if err := l.Close(websocket.StatusProtocolError, "done"); err != nil {
+		t.Fatalf("Close after the window: %v", err)
+	}
+}
+
+// TestAfterTheFirstFrameThereIsNoDeadline is the price of that window, held so
+// nobody widens it into an idle cap: a session that is logged in may sit still.
+func TestAfterTheFirstFrameThereIsNoDeadline(t *testing.T) {
+	const window = 50 * time.Millisecond
+	l, tr, conn, done := dialOptions(t, Options{FirstFrame: window})
+	defer done()
+	send := func(payload string) {
+		raw, err := wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte(payload)}.Encode()
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		sealed, err := tr.Seal(raw)
+		if err != nil {
+			t.Fatalf("seal: %v", err)
+		}
+		if err := conn.Write(ctx, websocket.MessageBinary, sealed); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	send("one")
+	if got, err := l.Read(ctx); err != nil || string(got.Payload) != "one" {
+		t.Fatalf("first frame: %+v %v", got, err)
+	}
+	time.Sleep(3 * window)
+	// The second read has to start before the second frame arrives, or it takes
+	// bytes that are already in the buffer and an expired deadline never shows.
+	type answer struct {
+		f   wire.Frame
+		err error
+	}
+	back := make(chan answer, 1)
+	go func() {
+		f, err := l.Read(ctx)
+		back <- answer{f, err}
+	}()
+	time.Sleep(window)
+	send("two")
+	select {
+	case a := <-back:
+		if a.err != nil || string(a.f.Payload) != "two" {
+			t.Fatalf("second frame after %v of quiet: %+v %v", 4*window, a.f, a.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second frame never arrived")
+	}
+}
+
+// TestCloseIsFreeAfterARefusal holds the other half of CloseWait: Read is free
+// after a second, and the Close a caller does next must not pay the four that
+// are left. Measured before: Read 1,0005 s plus Close 3,9995 s = 5,0004 s, so
+// the five seconds were moved, not gone.
+func TestCloseIsFreeAfterARefusal(t *testing.T) {
+	l, _, conn, done := dialTest(t)
+	defer done()
+	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := l.Read(ctx); err == nil {
+		t.Fatal("a text message was taken")
+	}
+	start := time.Now()
+	if err := l.Close(websocket.StatusProtocolError, "done"); err != nil {
+		t.Fatalf("Close after a refusal: %v", err)
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("Close took %v after a refusal", d)
 	}
 }
 

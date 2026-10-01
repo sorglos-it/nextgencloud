@@ -16,6 +16,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -27,9 +28,10 @@ import (
 )
 
 // ErrLink reports a message that breaks the rules of the link. Accept answers
-// it for a Noise message 2 it cannot write as well, which takes a fault inside
-// the library: in Noise_KK that message always ends the handshake and hands
-// over both cipher states.
+// it for a Noise message 2 it cannot have the library produce as well, which
+// takes a fault inside that library: in Noise_KK that message always ends the
+// handshake and hands over both cipher states. A message 2 that cannot be sent
+// is a different thing and gives the real error back.
 var ErrLink = errors.New("link: malformed message")
 
 // ErrOrigins reports a list of allowed origins that Accept will not work with.
@@ -59,6 +61,18 @@ const (
 	// those five seconds, so whoever opens many refused links holds a reader
 	// for each of them that long.
 	CloseWait = 1 * time.Second
+
+	// FirstFrameTimeout bounds the window from the finished Noise connection to
+	// the first frame the link hands up. It closes the hole the handshake
+	// deadline leaves one step later: whoever carries Noise message 1 can
+	// replay it (see shared/noisep), so a connection can be had without a key —
+	// measured, the same recorded bytes got a link twice — and after that only
+	// this window stands between a replay and a goroutine plus a file handle
+	// held for good. An honest client sends its first frame at once; whoever
+	// says nothing after the handshake cannot form frames at all. Nothing
+	// bounds the quiet time after that first frame: a session that is logged in
+	// may sit still for as long as the browser keeps the socket open.
+	FirstFrameTimeout = 30 * time.Second
 )
 
 // Options describe one link.
@@ -70,34 +84,51 @@ type Options struct {
 	// Origins are the allowed Origin values (scheme://host); empty allows
 	// only the request host, and a request without an Origin header is
 	// allowed either way, which is how a controller reaches the tunnel.
-	// checkOrigins reads the list before the upgrade.
+	// CheckOrigins reads the list before the upgrade.
 	//
-	// trust.ValidOrigin is the grammar for these values and is deliberately
-	// NOT used here: it takes only "https://", so it would refuse
-	// http://localhost:8101 and make local development impossible — and a
-	// check that blocks development is taken out again, after which nothing
-	// checks at all. Do not "fix" this by adding it: the grammar belongs where
-	// the list comes from, and it is already there — trust.List.validateUsers
-	// runs it over rp.origins and config.Web.Validate over web.json. What is
-	// left for this package is the one thing those two cannot see, that the
-	// values end up in a matcher: checkOrigins.
+	// trust.ValidOrigin is deliberately NOT used here, and the reason that
+	// carries is the bare host form: the library matches a value without "://"
+	// against the host alone and documents that as its normal case, while
+	// ValidOrigin takes nothing but "https://" and a host — measured, it says
+	// false to "ngc.example" and to "ngc.example:8443". It also refuses
+	// http://localhost:8101, which would take a development machine with it,
+	// although no contract path can carry that value here today: config.API has
+	// no field for origins, the API never reads web.json, and the only source
+	// this package can see is trust.List.RP.Origins, over which
+	// trust.List.validateUsers already runs ValidOrigin
+	// (shared/trust/trust.go:621) — those are the passkey origins, so that
+	// check guards another list, not this one. Adding it here would refuse the
+	// form the library asks for and buy nothing, so do not "fix" it. What is
+	// left for this package is the one thing no grammar can see, that the values
+	// end up in a matcher: CheckOrigins.
 	Origins []string
 	// Handshake is the time the whole Noise handshake may take, from the
-	// connection being ours to the finished transport; zero means
+	// connection being ours to the finished transport; zero or less means
 	// HandshakeTimeout. A test sets it to milliseconds instead of waiting.
 	Handshake time.Duration
+	// FirstFrame is the time from the finished handshake to the first frame;
+	// zero or less means FirstFrameTimeout.
+	FirstFrame time.Duration
 }
 
-// checkOrigins reads the list of allowed origins. The WebSocket library takes
-// every value as a path.Match pattern, so three kinds of entry are refused, each
-// measured against that matcher: an empty one, which matches nothing and says
-// nothing; one with a wildcard, because a list of allowed origins that a "*" or
-// a "?" fits is no list ("*" matches the origin host evil.example.com); and one
-// that does not match itself, which is every value the matcher cannot read and
-// every bracketed IPv6 host, since brackets are a character class there — such
-// an entry would quietly never let anyone through. The count follows the
-// contract, which gives a trust list at most trust.MaxOrigins of them.
-func checkOrigins(origins []string) error {
+// CheckOrigins reads the list of allowed origins. It is exported so that
+// whoever fills Options can run it once at startup, because Accept runs it per
+// request: measured, a list with one dead entry beside a good one answers a
+// request that carries no Origin header — one the library would have allowed —
+// with no upgrade at all, and it does so at the first request rather than at
+// boot. Refusing is the right half to keep (an allow-list that half works is
+// worse than none), so the remedy is to ask at startup.
+//
+// The library takes every value as a path.Match pattern, so three kinds of entry
+// are refused, each measured against that matcher: an empty one, which matches
+// nothing and says nothing; one with a wildcard, because a list of allowed
+// origins that a "*" or a "?" fits is no list ("*" matches the origin host
+// evil.example.com); and one that does not match itself, which is every value
+// the matcher cannot read and every bracketed IPv6 host, since brackets are a
+// character class there — such an entry would quietly never let anyone through.
+// The count follows the contract, which gives a trust list at most
+// trust.MaxOrigins of them.
+func CheckOrigins(origins []string) error {
 	if len(origins) > trust.MaxOrigins {
 		return fmt.Errorf("%w: %d entries", ErrOrigins, len(origins))
 	}
@@ -122,10 +153,27 @@ func (o Options) handshake() time.Duration {
 	return o.Handshake
 }
 
+// firstFrame is the deadline for this link's first frame.
+func (o Options) firstFrame() time.Duration {
+	if o.FirstFrame <= 0 {
+		return FirstFrameTimeout
+	}
+	return o.FirstFrame
+}
+
 // Link is one open link.
 type Link struct {
 	conn *websocket.Conn
 	tr   *noisep.Transport
+
+	// first is when the first frame is due, zero once one has arrived. Only
+	// the reader touches it, and a link has exactly one reader.
+	first time.Time
+
+	// ended says that a broken rule or a failed read has already closed the
+	// link, so Close has nothing left to do. Close may come from another
+	// goroutine than the reader, so this is atomic.
+	ended atomic.Bool
 
 	// One writer at a time: several goroutines relay onto one link, and a
 	// Noise transport message must not be split or interleaved. Sealing is
@@ -139,7 +187,7 @@ type Link struct {
 func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 	// Before the upgrade, so a list that is not a list never guards anything.
 	// Nothing is written to w on this way out; the caller answers the request.
-	if err := checkOrigins(o.Origins); err != nil {
+	if err := CheckOrigins(o.Origins); err != nil {
 		return nil, err
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -188,15 +236,29 @@ func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 		closeBounded(conn, websocket.StatusInternalError, "handshake")
 		return nil, err
 	}
-	return &Link{conn: conn, tr: noisep.NewTransport(false, cs1, cs2)}, nil
+	return &Link{conn: conn, tr: noisep.NewTransport(false, cs1, cs2),
+		first: time.Now().Add(o.firstFrame())}, nil
 }
 
-// Read returns the next frame; every failure ends the link. Exactly one
-// goroutine reads a link: the nonce of the cipher state fixes the order of the
-// messages, so a second reader would decrypt out of turn.
+// Read returns the next frame; every failure ends the link — a broken rule of
+// the link and a read the library could not finish alike. Exactly one goroutine
+// reads a link: the nonce of the cipher state fixes the order of the messages,
+// so a second reader would decrypt out of turn. A ctx that ends a Read ends the
+// link with it, so it is no poll timer.
 func (l *Link) Read(ctx context.Context) (wire.Frame, error) {
+	if !l.first.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, l.first)
+		defer cancel()
+	}
 	kind, msg, err := l.conn.Read(ctx)
 	if err != nil {
+		// For a message over the read limit the library writes its close frame
+		// and leaves the connection standing (write.go:428), and after any
+		// broken read the place in the stream is unknown. Measured without this
+		// line: the caller held a link that could no longer write and paid
+		// 5,0008 s in Close to be rid of the socket.
+		l.drop()
 		return wire.Frame{}, err
 	}
 	if kind != websocket.MessageBinary {
@@ -213,6 +275,7 @@ func (l *Link) Read(ctx context.Context) (wire.Frame, error) {
 		l.fail("frame")
 		return wire.Frame{}, ErrLink
 	}
+	l.first = time.Time{}
 	return f, nil
 }
 
@@ -232,15 +295,38 @@ func (l *Link) Write(ctx context.Context, f wire.Frame) error {
 }
 
 // Close ends the link in order and waits for the peer's answer to the close
-// frame, which a refusal does not: CloseWait says why.
+// frame, which a refusal does not: CloseWait says why. Once a broken rule or a
+// failed read has ended the link, Close has nothing left to do and says so at
+// once: measured before that, the plain `defer l.Close(…)` of a caller paid
+// 3,9995 s on top of the second Read had already paid, because the second close
+// waits in waitGoroutines for the goroutine of the first (close.go:102-108).
 func (l *Link) Close(code websocket.StatusCode, reason string) error {
+	if l.ended.Load() {
+		return nil
+	}
 	return l.conn.Close(code, reason)
 }
 
 // fail ends the link on a broken message; the reason is fixed text, never
 // anything from the message.
 func (l *Link) fail(reason string) {
+	if l.ended.Swap(true) {
+		return
+	}
 	closeBounded(l.conn, websocket.StatusProtocolError, reason)
+}
+
+// drop ends the link without a close frame: after a read the library could not
+// finish there is nothing left to say that it has not said itself, and nobody to
+// wait for. CloseNow is the only way that really drops the socket, and the swap
+// keeps it from meeting a close of ours that is already in flight — it would
+// then wait in waitGoroutines for up to fifteen seconds instead of dropping
+// anything (close.go:132-146, :231).
+func (l *Link) drop() {
+	if l.ended.Swap(true) {
+		return
+	}
+	_ = l.conn.CloseNow()
 }
 
 // closeBounded sends the close frame and gives the peer at most CloseWait to
@@ -250,8 +336,10 @@ func (l *Link) fail(reason string) {
 // goroutine because websocket.Close takes no context and the library hands out
 // no way to drop the connection at the bound: closing is swapped once, so a
 // CloseNow after it only waits again, and the step that drops the socket is
-// unexported (vendor/github.com/coder/websocket/close.go). The library ends the
-// connection within its own five seconds; the reader is free after CloseWait.
+// unexported (vendor/github.com/coder/websocket/close.go). That goroutine ends
+// on its own, but not inside five seconds: the library allows five for writing
+// the close frame (close.go:185) and five more for the answer (:199), with
+// waitGoroutines on top (:231). The reader is free after CloseWait either way.
 func closeBounded(conn *websocket.Conn, code websocket.StatusCode, reason string) {
 	done := make(chan struct{})
 	go func() {
