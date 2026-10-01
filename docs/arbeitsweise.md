@@ -556,6 +556,27 @@ nach etwas Abwesendem fragt — Renn-Sucher, Fuzzer, Prozentzahlen über
 abgedeckte Zeilen, ein `grep`, das nichts findet. **Und es gilt doppelt, wenn die
 Null das Ergebnis ist, das du dir gewünscht hast.**
 
+### Ein bewachter Fall ist nicht vor Flattern geschützt
+
+Ein Prüfer hatte einem Strang eine Zeile als falsch angekreidet: zwei rote Fälle
+in einer Datei, die **vollständig** von einem Fähigkeits-Wächter bewacht ist —
+also, so der Schluss, dort unmöglich. Die Zeile stimmte. Falsch war der Schluss.
+
+Gemessen: die Vorrichtung ruft `page.goto("/")` **vor** jedem `beforeEach`.
+Scheitert das, fällt der Fall, **ohne dass sein Wächter überhaupt gefragt wurde**
+— bei ihm `NS_ERROR_SOCKET_ADDRESS_IN_USE`, in einem anderen Lauf
+`Failed to fetch dynamically imported module`.
+
+Das erklärt eine ganze Familie von Ausfällen, die wie Funde aussehen und keine
+sind: ein Überspringen schirmt den **Körper** des Falls ab, nicht seinen **Aufbau**.
+Wer also sagt „dieser Fall ist bewacht, der Ausfall muss echt sein", schließt an
+der falschen Stelle.
+
+**Die Regel:** Bei einem roten Fall sieh zuerst nach, **wo** er gefallen ist — im
+Körper, oder davor im Aufbau. Fällt er im Aufbau, sagt er über sein Thema nichts,
+und sein Wächter konnte ihn nicht retten. Und umgekehrt: dass ein Fall bewacht
+ist, ist **kein** Argument dafür, dass sein Rot echt sein muss.
+
 ### Sechs Messungen gleichzeitig messen die Maschine, nicht den Code
 
 Ich hatte jedem Strang eingeschärft, sich einen **eigenen Port** zu nehmen — gut,
