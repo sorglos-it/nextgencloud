@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
@@ -178,6 +179,50 @@ func TestLinkWritesOneAtATime(t *testing.T) {
 		if !seen[uint32(i)] {
 			t.Fatalf("channel %d never arrived", i)
 		}
+	}
+}
+
+// TestAcceptGivesUpOnASilentClient holds the deadline on the handshake: Hijack
+// takes the server's own deadlines off the connection and the request context
+// only ends when the handler returns, so a client that upgrades and then sends
+// nothing would otherwise hold a goroutine and a file handle for good — before
+// any login. This client reads, so the close frame is answered at once and the
+// time measured is the handshake's own.
+func TestAcceptGivesUpOnASilentClient(t *testing.T) {
+	server, err := noisep.Keypair(fixedReader{1})
+	if err != nil {
+		t.Fatalf("server keys: %v", err)
+	}
+	client, err := noisep.Keypair(fixedReader{2})
+	if err != nil {
+		t.Fatalf("client keys: %v", err)
+	}
+	const wait = 50 * time.Millisecond
+	back := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := Accept(w, r, Options{Subprotocol: "ngc.test.v1", Prologue: noisep.PrologueSession,
+			Static: server, Peer: client.Public, Handshake: wait})
+		back <- err
+	}))
+	defer srv.Close()
+	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
+		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: testClient})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	go func() { _, _, _ = conn.Read(ctx) }()
+	start := time.Now()
+	select {
+	case err := <-back:
+		if err == nil {
+			t.Fatal("Accept took a link from a client that sent nothing")
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Fatalf("Accept waited %v on a handshake it gave %v", d, wait)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept is still waiting for a client that sent nothing")
 	}
 }
 

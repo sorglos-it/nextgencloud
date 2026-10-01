@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
@@ -30,6 +31,19 @@ var ErrLink = errors.New("link: malformed message")
 // randReader is the source of the ephemeral Noise keys.
 var randReader = rand.Reader
 
+// The deadline of a link. It is policy, not protocol: no byte on the line
+// depends on it, so a change here is no change to a contract.
+const (
+	// HandshakeTimeout bounds the whole Noise handshake, from the connection
+	// being ours to the finished transport. Nothing else bounds it: Hijack
+	// takes the server's own deadlines off the connection (net/http), and the
+	// request context only ends when the handler returns, so a client that
+	// upgrades and then says nothing would hold a goroutine and a file handle
+	// for good, before any login. The price: a human on a very bad line can
+	// be cut off after ten seconds.
+	HandshakeTimeout = 10 * time.Second
+)
+
 // Options describe one link.
 type Options struct {
 	Subprotocol string      // session.Subprotocol or tunnel.Subprotocol
@@ -44,6 +58,18 @@ type Options struct {
 	// and a host with an optional port and nothing else, while a pattern
 	// with a "*" would match every origin host.
 	Origins []string
+	// Handshake is the time the whole Noise handshake may take, from the
+	// connection being ours to the finished transport; zero means
+	// HandshakeTimeout. A test sets it to milliseconds instead of waiting.
+	Handshake time.Duration
+}
+
+// handshake is the deadline for this link's handshake.
+func (o Options) handshake() time.Duration {
+	if o.Handshake <= 0 {
+		return HandshakeTimeout
+	}
+	return o.Handshake
 }
 
 // Link is one open link.
@@ -73,6 +99,10 @@ func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 		conn.Close(websocket.StatusPolicyViolation, "subprotocol")
 		return nil, ErrLink
 	}
+	// The clock on the handshake starts here, where the connection becomes
+	// ours; r.Context() alone would only end with the handler.
+	hctx, cancel := context.WithTimeout(r.Context(), o.handshake())
+	defer cancel()
 	// One frame at most, plus the Noise tag: nothing larger is ever valid, and
 	// the limit keeps a flood from filling memory before it is refused.
 	conn.SetReadLimit(wire.MaxFrame + noisep.TagSize)
@@ -81,7 +111,9 @@ func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 		conn.Close(websocket.StatusInternalError, "handshake")
 		return nil, err
 	}
-	kind, msg1, err := conn.Read(r.Context())
+	// One word for every way the handshake can end, the deadline included: a
+	// close frame never says how far the other side got.
+	kind, msg1, err := conn.Read(hctx)
 	if err != nil || kind != websocket.MessageBinary || len(msg1) != wire.HandshakeSize {
 		conn.Close(websocket.StatusPolicyViolation, "handshake")
 		return nil, ErrLink
@@ -97,7 +129,7 @@ func Accept(w http.ResponseWriter, r *http.Request, o Options) (*Link, error) {
 		conn.Close(websocket.StatusInternalError, "handshake")
 		return nil, ErrLink
 	}
-	if err := conn.Write(r.Context(), websocket.MessageBinary, msg2); err != nil {
+	if err := conn.Write(hctx, websocket.MessageBinary, msg2); err != nil {
 		conn.Close(websocket.StatusInternalError, "handshake")
 		return nil, err
 	}
