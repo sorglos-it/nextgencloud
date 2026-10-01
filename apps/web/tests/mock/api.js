@@ -113,10 +113,37 @@ const VHOST = fileURLToPath(new URL("../../templates/apache-vhost.conf", import.
 // host. A line it does not understand is an ERROR and never something to skip:
 // this is read by a machine, the block says so, and a wall quietly dropped
 // here would make a green test out of an installation with a hole in it.
+//
+// IT ALSO CHECKS THAT THE BLOCK IS IN A PLACE WHERE IT ACTS, and it has to:
+// the first version of this function asked only whether the path ENDED in
+// /public/assets, and a measurement showed what that is worth - a block on
+// "/srv/woanders/public/assets", a path with no relation to the web root at
+// all, let the whole suite pass green. Apache would have applied those headers
+// to nothing. So the web root is read out of the same file, and the block has
+// to be exactly its assets/ - and the web root's own <Directory> has to be
+// there too, because the assets block inherits its Require from it and would
+// otherwise sit behind a closed door.
 function assetWalls(file) {
   const lines = readFileSync(file, "utf8").split(/\r?\n/);
-  const open = lines.findIndex((l) => /^\s*<Directory\s+"[^"]*\/public\/assets"\s*>\s*$/.test(l));
-  if (open < 0) throw new Error(`mock: ${file} has no <Directory ".../public/assets"> block`);
+  const dir = (l) => l.match(/^\s*<Directory\s+"?([^"\s]+)"?\s*>\s*$/)?.[1];
+  // The web root is the DocumentRoot that is a public/ - the virtual host for
+  // plain http has one of its own, for the certificate check, and that one is
+  // not NGC's.
+  const roots = lines
+    .map((l) => l.match(/^\s*DocumentRoot\s+"?([^"\s]+)"?\s*$/)?.[1])
+    .filter((p) => p !== undefined && p.endsWith("/public"));
+  if (roots.length !== 1) {
+    throw new Error(`mock: ${file} must name exactly one DocumentRoot ending in /public, found ${roots.length}`);
+  }
+  const root = roots[0];
+  if (!lines.some((l) => dir(l) === root)) {
+    throw new Error(`mock: ${file} has no <Directory "${root}"> block, so its assets block inherits no Require`);
+  }
+  const want = `${root}/assets`;
+  const open = lines.findIndex((l) => dir(l) === want);
+  if (open < 0) {
+    throw new Error(`mock: ${file} has no <Directory "${want}"> block - headers anywhere else reach no file of the web root`);
+  }
   const walls = [];
   for (let i = open + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -148,9 +175,18 @@ const ASSET_WALLS = assetWalls(VHOST);
 // that is not there, and it already carries every wall of the shell. An answer
 // WITHOUT one is a file, and gets the walls of the virtual host.
 //
-// It sets and does not add, the way mod_headers' "set" does: a name that is
-// already there goes, in whatever case it was spelled, so no answer can end up
-// carrying one header twice.
+// It REPLACES a name that is already there, in whatever case it was spelled, so
+// no answer here can end up carrying one header twice.
+//
+// That is not quite what Apache does, and the difference is written down rather
+// than imitated. "Header always set" picks the table for error answers
+// (err_headers_out), so a header PHP already put in the ordinary table stays
+// and the answer goes out with two. Here that case cannot arise: the only
+// answers that get these headers are the ones with no policy of their own,
+// which means no header of ours is on them yet. The one path where it could
+// arise in operation - the fallback 404 - is the one this harness leaves
+// untouched for exactly that reason. The note in the virtual host carries the
+// consequence and says it is unmeasured.
 function withAssetWalls(url, headers) {
   if (!url.startsWith("/assets/")) return headers;
   if ("content-security-policy" in headers) return headers;
