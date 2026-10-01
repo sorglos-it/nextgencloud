@@ -114,7 +114,15 @@ test("the list is one tab stop and the arrow keys walk every tile of it", async 
     is.filter((i) => i.getAttribute("tabindex") === "0").length)).toBe(1);
 });
 
-test("the three buttons of a window and every key of the calculator are tab stops", async ({ shell }) => {
+test("the three buttons of a window are tab stops, and the app is the next one", async ({ shell }) => {
+  // WHAT THIS CASE WALKED BEFORE TASK 25: three title-bar buttons and then the
+  // calculator's twenty keys, all in the shell's own document. The calculator
+  // runs in a frame now, so Tab leaves this document at the app - and from the
+  // shell every one of those twenty presses answers with the frame. The walk is
+  // therefore cut where the document is: the three buttons here, the twenty keys
+  // in calc.spec.js ("every key of the calculator is a tab stop"), which reads
+  // the focus inside the frame and holds the same twenty names in the same
+  // order. Nothing stopped being measured; it is measured where it now is.
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
   const win = shell.locator(".win");
@@ -123,34 +131,49 @@ test("the three buttons of a window and every key of the calculator are tab stop
     expect(await active(shell)).toBe(name);
   }
   await win.getByRole("button", { name: "Minimieren", exact: true }).focus();
-  // Three title-bar buttons, then the twenty keys, one Tab at a time.
   const stops = [];
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < 2; i++) {
     await shell.keyboard.press("Tab");
     stops.push(await active(shell));
   }
-  expect(stops.slice(0, 2)).toEqual(["Maximieren", "Schließen"]);
-  expect(stops.slice(2)).toEqual(["C", "Vorzeichen", "%", "÷", "7", "8", "9", "×",
-    "4", "5", "6", "−", "1", "2", "3", "+", "0", "Komma", "Zurück", "="]);
+  expect(stops).toEqual(["Maximieren", "Schließen"]);
+  // And the next press leaves the title bar and lands in the app.
+  await shell.keyboard.press("Tab");
+  await expect(win.locator(".appframe")).toBeFocused();
 });
 
 test("everything the keyboard can reach shows a ring while it is there", async ({ shell }) => {
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
   await shell.evaluate(() => document.activeElement.blur());
-  // Walk far enough to pass the taskbar, the window's buttons and some keys.
+  // Walk far enough to pass the taskbar and the window's buttons. The app's
+  // frame is left out of the count on purpose: the keyboard inside an app is in
+  // the app's document, where the ring comes from the app's own stylesheet, and
+  // a ring the shell drew around the whole window on top of it would be noise.
+  // The measurement does not fall away with it - the ring on the app's own
+  // controls is measured in the frame below.
   const bad = [];
   for (let i = 0; i < 12; i++) {
     await shell.keyboard.press("Tab");
     const r = await shell.evaluate(() => {
       const a = document.activeElement;
-      if (!a || a === document.body) return null;
+      if (!a || a === document.body || a.classList.contains("appframe")) return null;
       const s = getComputedStyle(a);
       return { what: (a.getAttribute("aria-label") || a.textContent || "").trim(), style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
     });
     if (r && (r.style === "none" || !(r.width >= 2))) bad.push(r);
   }
   expect(bad).toEqual([]);
+  // And inside the app, on one of its own keys.
+  const frame = shell.frameLocator(".appframe");
+  const key = frame.getByRole("button", { name: "C", exact: true });
+  await key.focus();
+  const ring = await key.evaluate((e) => {
+    const s = getComputedStyle(e);
+    return { style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
+  });
+  expect(ring.style).not.toBe("none");
+  expect(ring.width).toBeGreaterThanOrEqual(2);
 });
 
 test("every control of the desktop has a name a screen reader can read", async ({ shell }) => {
@@ -190,7 +213,9 @@ test("the taskbar entry says which window it belongs to", async ({ shell }) => {
   await expect(shell.getByRole("button", { name: "Fenster Rechner", exact: true })).toHaveCount(1);
   await expect(shell.getByRole("button", { name: "Fenster App-Store", exact: true })).toHaveCount(1);
   // And the keyboard can bring a minimized window back through it.
-  const calc = shell.locator(".win", { hasText: "Rechner" });
+  // By the title bar: the app store's window lists the Rechner among the apps
+  // of the store since task 25, so "the window that says Rechner" is two.
+  const calc = shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: "Rechner" }) });
   await calc.getByRole("button", { name: "Minimieren" }).click();
   await expect(calc).toBeHidden();
   await shell.getByRole("button", { name: "Fenster Rechner", exact: true }).focus();
@@ -247,13 +272,26 @@ test("Escape gives the focus back to the button the menu was opened with", async
 
 test("starting an app puts the focus in the window it opened", async ({ shell }) => {
   // W2, the other half: after a start the focus used to be on <body>, so the
-  // keyboard had to walk the whole page to reach the window it had just
-  // asked for.
+  // keyboard had to walk the whole page to reach the window it had just asked
+  // for.
+  //
+  // SINCE TASK 25 the Rechner runs in a frame, and the keyboard goes one step
+  // further: into the app itself, the way an installed desktop puts the cursor
+  // into the program it just started. It has to - an app's page is a document of
+  // its own, and a key the shell holds on to is a key the app never gets. Both
+  // are "inside the window that was opened", which is what this case is about.
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
   const win = shell.locator(".win", { hasText: "Rechner" });
-  await expect(win).toBeFocused();
-  // And the way on from there is the window's own buttons.
+  await expect(win.locator(".appframe")).toBeFocused();
+  // Typing goes straight into the app, with nothing to click first.
+  await shell.keyboard.press("7");
+  await expect(shell.frameLocator(".appframe").locator(".calc .v")).toHaveText("7");
+  // A window the shell drew itself keeps the focus on the window, and from
+  // there the window's own buttons are the way on.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
+  await expect(shell.locator(".win", { hasText: "App-Store" })).toBeFocused();
   await shell.keyboard.press("Tab");
   expect(await active(shell)).toBe("Minimieren");
 });

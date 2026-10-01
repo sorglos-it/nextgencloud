@@ -97,12 +97,16 @@ test("the notice strip stays on the screen", async ({ shell }) => {
 test("the calculator's twenty keys all fit in the window it opens in", async ({ shell }) => {
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
-  const keys = shell.locator(".win .calc .keys button");
+  // SINCE TASK 25 the keys are in the app's own document, and so is the box they
+  // have to fit into: the frame fills the window's body edge to edge, so "inside
+  // the frame" and "inside the window" are the same room - which the line below
+  // measures, by asking the app's own document for both.
+  const keys = shell.frameLocator(".appframe").locator(".calc .keys button");
   await expect(keys).toHaveCount(20);
   // Every key inside the window, and none of them smaller than a fingertip
   // can hit. 24 px is the smallest a touch target may be by WCAG 2.2.
   expect(await keys.evaluateAll((bs) => {
-    const w = document.querySelector(".win").getBoundingClientRect();
+    const w = document.documentElement.getBoundingClientRect();
     return bs.filter((b) => {
       const r = b.getBoundingClientRect();
       return r.right > w.right + 1 || r.bottom > w.bottom + 1 || r.width < 24 || r.height < 24;

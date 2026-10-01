@@ -7,6 +7,11 @@ import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 // stand-in in shell/fake-link.js: the login decides who is in, not where the
 // desktop's bytes come from.
 //
+// SINCE TASK 25 the app in the frame is the real terminal - its own page,
+// stylesheet and script, out of public/assets/apps/terminal/ - instead of a
+// fixture written into the stand-in. What stands in is its SERVICE, which the
+// controller builds; tests/shell/terminal.spec.js says what that costs.
+//
 // WHAT IS REAL HERE AND WHAT STANDS IN. Real: the store key is an Ed25519 key
 // the page makes, the catalog carries a real signature over the real UI hash,
 // and the shell reads the proof with core.parseUIProof / core.verifyUIProof,
@@ -31,7 +36,11 @@ async function openTerminal(shell) {
 test("an app runs only when its ui-tar fits the signed proof", async ({ shell }) => {
   await openTerminal(shell);
   const frame = shell.frameLocator(".appframe");
-  await expect(frame.getByText("Terminal")).toBeVisible();
+  // The app really drew its page: the field it asks for commands with is
+  // there. Since task 25 the app in the frame is the real terminal, so what
+  // is looked for here is a part of its own surface and not a word of a
+  // fixture nobody ships.
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeVisible();
 });
 
 test("a ui-tar that does not fit the proof is refused", async ({ shell }) => {
@@ -53,7 +62,11 @@ test("an entry page that is not in the ui-tar is refused", async ({ shell }) => 
 test("an app reaches neither the shell nor the network", async ({ shell }) => {
   await openTerminal(shell);
   const frame = shell.frameLocator(".appframe");
-  await expect(frame.getByText("Terminal")).toBeVisible();
+  // The app really drew its page: the field it asks for commands with is
+  // there. Since task 25 the app in the frame is the real terminal, so what
+  // is looked for here is a part of its own surface and not a word of a
+  // fixture nobody ships.
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeVisible();
   // FIVE QUESTIONS, BECAUSE EACH WALL IS A DIFFERENT ONE. Measured, and each
   // number is the reason its line is here:
   //
@@ -114,11 +127,11 @@ test("an app reaches neither the shell nor the network", async ({ shell }) => {
 // wrong with it is where it comes from, which is the rule under test.
 test("a message that does not come from the frame is ignored", async ({ shell }) => {
   await openTerminal(shell);
-  // Waiting for the app's OWN call to have come back, not only for the page
-  // to be there: a channel still on its way would land in the count while
-  // this case is measuring it.
+  // Waiting for the app's OWN channel to be open, not only for the page to be
+  // there: a channel still on its way would land in the count while this case
+  // is measuring it. The field is enabled when the channel stands.
   const frame = shell.frameLocator(".appframe");
-  await expect(frame.locator("#antwort")).toHaveText("hallo aus dem Dienst");
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeEnabled();
   const token = await frame.locator("script[data-token]").getAttribute("data-token");
   expect(token, "the frame's document carries the word the bridge asks for").toBeTruthy();
   const out = await shell.evaluate(async (t) => {
@@ -148,5 +161,13 @@ test("an app whose entry page needs modules is refused", async ({ shell }) => {
 test("an app reaches its own service through ngc.js", async ({ shell }) => {
   await openTerminal(shell);
   const frame = shell.frameLocator(".appframe");
-  await expect(frame.locator("#antwort")).toHaveText("hallo aus dem Dienst");
+  const input = frame.getByRole("textbox", { name: "Eingabe" });
+  await expect(input).toBeEnabled();
+  await input.fill("cp -r");
+  await input.press("Enter");
+  // The whole way there and back: the app wrote to its channel, the shell
+  // carried it to the service, and what the service answered is on the app's
+  // own page. Since task 25 that channel is one that STAYS open, which is
+  // what a terminal is; before it, the fixture app asked one question.
+  await expect(frame.locator(".out")).toContainText("cp: missing destination");
 });

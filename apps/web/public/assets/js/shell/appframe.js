@@ -49,6 +49,19 @@ const MAX_UITAR = uitar.MAX_UI_TOTAL + uitar.MAX_ENTRIES * uitar.BLOCK;
 const CACHE_APPS = 8;
 const CACHE_BYTES = uitar.MAX_UI_TOTAL;
 
+// How many channels one app window may hold open at the same time. The session
+// has a bound of its own for the whole link (wire.MAX_SESSION_CHANNELS, 64),
+// and this is the share a single window may take out of it: one frame that
+// opened them all would leave none for the desktop, the store or the next
+// window. An app that really needs more than a handful at once - a terminal
+// needs one - is not an app this bound is in the way of.
+const MAX_FRAME_STREAMS = 8;
+
+// The status word of a CLOSE that ended well. It is the one the channel sends
+// when the shell gives a channel up on purpose: the person closed the window,
+// or the app asked for it, and neither is a fault of the service.
+const CLOSE_OK = "ok";
+
 // What the person is told. Four sentences, because four things can go wrong
 // that they can tell apart; which rule inside a proof broke is not one of
 // them, and naming it would only describe the inside of the server.
@@ -175,6 +188,11 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
   // window, and the listeners it hangs up come down with it.
   let gone = false;
   const stop = [];
+  // The channels this window holds open, by the number the APP gave them. One
+  // map per window, built here and held by this call alone: a frame can reach
+  // nothing but its own channels, because this is the only place a number of
+  // its is looked up, and only this frame's messages get in (onMessage below).
+  const streams = new Map();
   win.onClose = () => {
     gone = true;
     for (const f of stop) {
@@ -186,6 +204,13 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
       }
     }
   };
+  // A window that is closed gives its channels up. Not left to the garbage
+  // collector: a channel nobody reads any more still counts against the
+  // session's bound, and on the other side a service goes on running.
+  stop.push(() => {
+    for (const s of streams.values()) closeQuietly(s);
+    streams.clear();
+  });
 
   let files, library;
   try {
@@ -225,6 +250,131 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
   frame.title = app.name;
   frame.src = FRAME_PAGE;
 
+  // toFrame answers this frame and only this frame. "*" as the target, because
+  // the frame has an origin of its own and "null" is no origin a postMessage
+  // may name; the window it goes to is this frame's, and that window only ever
+  // held the document the shell put there.
+  const toFrame = (msg) => {
+    if (frame.contentWindow) frame.contentWindow.postMessage({ ngc: 1, ...msg }, "*");
+  };
+
+  // hangUp ends one channel for a reason of the shell's and tells the app, so
+  // nobody is left waiting on a number that is gone. The three other ways out of
+  // this map each say so themselves: the channel's own close, the app asking for
+  // one, and the window closing.
+  const hangUp = (id, code) => {
+    const s = streams.get(id);
+    streams.delete(id);
+    if (s) closeQuietly(s);
+    toFrame({ id, op: "closed", status: "error", message: codeMessage(code) });
+  };
+
+  // doOpen gives the app a channel that stays open.
+  //
+  // THE APP ID IS THE SHELL'S, exactly as in doCall: it comes from the window
+  // this frame was opened for and never out of the message. The service and the
+  // action are the app's to choose, but only from what its own manifest
+  // declared - which is what app.actions holds.
+  const doOpen = async (m) => {
+    let params;
+    try {
+      params = encodeAppParams(m.params);
+    } catch {
+      toFrame({ id: m.id, op: "closed", status: "error", message: codeMessage(CODES.PROTOCOL) });
+      return;
+    }
+    if (!validName(m.service) || !validName(m.action)
+      || !Array.isArray(app.actions) || !app.actions.includes(m.action)) {
+      toFrame({ id: m.id, op: "closed", status: "error", message: codeMessage(CODES.FORBIDDEN) });
+      return;
+    }
+    // THE NUMBER IS TAKEN BEFORE THE AWAIT, and that it was free is decided in
+    // the same breath. Two opens in one turn of the event loop would otherwise
+    // both get past the bound, and an app that sent one number twice would take
+    // the channel of its own earlier open away - with the second answer
+    // arriving on the first one's listeners.
+    if (streams.has(m.id) || streams.size >= MAX_FRAME_STREAMS) {
+      toFrame({ id: m.id, op: "closed", status: "error", message: codeMessage(CODES.LIMIT) });
+      return;
+    }
+    streams.set(m.id, null);
+    let stream;
+    try {
+      stream = await link.open(app.id, m.service, m.action, params, { node: app.node });
+    } catch {
+      streams.delete(m.id);
+      toFrame({ id: m.id, op: "closed", status: "error", message: codeMessage(CODES.UNREACHABLE) });
+      return;
+    }
+    // The window was closed, or the number was given up, while the channel was
+    // still on its way. null is "this open of ours is still the one running";
+    // anything else means the slot is not ours any more.
+    if (gone || streams.get(m.id) !== null) {
+      closeQuietly(stream);
+      streams.delete(m.id);
+      return;
+    }
+    streams.set(m.id, stream);
+    stream.onData = (chunk) => {
+      let b;
+      try {
+        // A copy, taken before anything else looks at it (b64.bytesOf): what
+        // goes to the app is what arrived, and not a view somebody else can
+        // still change. postMessage copies again on the way out, so the app
+        // holds no reference into the shell either.
+        b = bytesOf(chunk, "appframe: not bytes");
+      } catch {
+        // A channel that answers with something that is not bytes is a channel
+        // the shell cannot pass on. It is ended rather than handed through: an
+        // app that was given a number where bytes belong would read it as bytes.
+        hangUp(m.id, CODES.PROTOCOL);
+        return;
+      }
+      toFrame({ id: m.id, op: "data", data: b });
+    };
+    stream.onClose = (status, message) => {
+      streams.delete(m.id);
+      // The status and the message are the channel's own and go on untouched:
+      // what a service's ending means is the app's contract with it.
+      toFrame({ id: m.id, op: "closed", status, message });
+    };
+  };
+
+  const doSend = (m) => {
+    const s = streams.get(m.id);
+    // undefined is "no such channel", null is "still opening". Neither can be
+    // written to, and neither is worth an answer: the app learns what became of
+    // its channel from the close it gets either way.
+    if (!s) return;
+    let b;
+    try {
+      b = bytesOf(m.data, "appframe: not bytes");
+    } catch {
+      hangUp(m.id, CODES.PROTOCOL);
+      return;
+    }
+    // The channel's own bound decides how much may be in flight; what a throw
+    // here means is that this channel is over.
+    Promise.resolve(s.write(b)).catch(() => hangUp(m.id, CODES.UNREACHABLE));
+  };
+
+  const doEnd = (m) => {
+    const s = streams.get(m.id);
+    if (!s) return;
+    Promise.resolve(s.end()).catch(() => hangUp(m.id, CODES.UNREACHABLE));
+  };
+
+  // The app gives a channel up itself. It is answered at once rather than left
+  // to the other side's CLOSE: the app is waiting to be allowed to forget the
+  // number, and a close it asked for is no error.
+  const doCloseStream = (m) => {
+    const s = streams.get(m.id);
+    if (s === undefined) return;
+    streams.delete(m.id);
+    if (s !== null) closeQuietly(s);
+    toFrame({ id: m.id, op: "closed", status: CLOSE_OK, message: "" });
+  };
+
   let handed = false;
   const onMessage = (e) => {
     // FROM THIS FRAME OR FROM NOWHERE. Everything below reads a message as
@@ -244,15 +394,15 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
       return;
     }
     if (m.token !== token || typeof m.id !== "number") return;
+    // The number has to be one the app could have drawn. ngc.js counts from 1
+    // upwards, and a number that is not a whole one would make two different
+    // messages name the same channel in a Map that tells 1 from "1".
+    if (!Number.isSafeInteger(m.id) || m.id < 1) return;
     if (m.op === "call") doCall(frame, app, link, m);
-    // open, send, end and close need a channel that stays open, and
-    // shell/channel.js does not exist yet (Task 17). Until it does the app is
-    // told so rather than left waiting: a promise that never settles is the
-    // one answer an app cannot handle.
-    if (m.op === "open") {
-      frame.contentWindow.postMessage(
-        { ngc: 1, id: m.id, op: "closed", status: "error", message: codeMessage(CODES.INTERNAL) }, "*");
-    }
+    else if (m.op === "open") doOpen(m);
+    else if (m.op === "send") doSend(m);
+    else if (m.op === "end") doEnd(m);
+    else if (m.op === "close") doCloseStream(m);
   };
   window.addEventListener("message", onMessage);
   stop.push(() => window.removeEventListener("message", onMessage));
@@ -265,6 +415,40 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
 
   clear(win.body);
   win.body.append(frame);
+
+  // THE KEYBOARD GOES INTO THE APP. A frame is a document of its own, so a key
+  // press reaches the app only while the browser has given the frame the focus,
+  // and there is nothing the shell could forward instead: forwarding would mean
+  // the shell reading every key somebody types into an app, which is the one
+  // thing the frame is there to stop. So the frame is sent the focus here, the
+  // way an installed desktop puts the cursor into the app it just started, and
+  // window.js sends it there again whenever this window comes to the front.
+  //
+  // Only while nobody else is using the keyboard: a user interface takes as
+  // long to arrive as it takes, and in the meantime the person may have opened
+  // the start menu or another window. Taking the focus out from under them is
+  // worse than a window that has to be clicked once.
+  const active = document.activeElement;
+  if (win.desktop.focused === win
+    && (active === null || active === document.body || win.el.contains(active))) {
+    frame.focus();
+  }
+}
+
+// closeQuietly gives a channel up and swallows whatever that throws. The
+// channel is being let go either way, and a channel that will not close is no
+// reason to leave the next one open. The code says why; "ok" is the right word
+// where nothing went wrong and only this side is done with it.
+function closeQuietly(stream, code = CLOSE_OK) {
+  if (!stream || typeof stream.close !== "function") return;
+  try {
+    const done = stream.close(code);
+    // The real channel's close is asynchronous; a rejection of it is the link
+    // being gone, which is exactly what we were about to accept.
+    if (done && typeof done.catch === "function") done.catch(() => {});
+  } catch {
+    // Already gone.
+  }
 }
 
 // The frames that are open, and ONE listener for all of them. theme.js keeps
@@ -310,7 +494,14 @@ async function doCall(frame, app, link, m) {
     // contract with it. The shell hands the bytes over as they came: reading
     // them would be the shell deciding what an app's data means, and getting
     // that wrong is a hole in the shell rather than in the app.
-    answer({ value: await link.call(app.id, m.service, m.action, params) });
+    //
+    // THE NODE GOES WITH IT, here and in doOpen. A service of an app runs on the
+    // controller the app is installed on, and the channel to it is encrypted end
+    // to end with that controller's key (design 4.3 and 4.5). Which controller
+    // that is stands in the app's own row and nowhere else the link could reach,
+    // so the shell is the one who has to say it. The stand-in ignores it; the
+    // adapter of Task 17b is where it is needed.
+    answer({ value: await link.call(app.id, m.service, m.action, params, { node: app.node }) });
   } catch {
     answer({ error: codeMessage(CODES.UNREACHABLE) });
   }
@@ -393,15 +584,22 @@ async function uiBytes(app, link) {
   return await new Promise((resolve, reject) => {
     const parts = [];
     let n = 0, done = false;
-    const give = (fail) => {
+    // give ends this read, once. code says WHY the shell is breaking the channel
+    // off and is left out where the channel ended by itself - a CLOSE back at a
+    // channel that is already closed says nothing to anybody.
+    //
+    // THE CODE IS NOT OPTIONAL WHERE IT IS GIVEN, and that was measured: the
+    // line used to read stream.close(), and the real channel builds its CLOSE
+    // with wire.errorClose(code). Without a code that is encodeClose of a CLOSE
+    // with an empty message, which wire REFUSES - inside an async method, so it
+    // comes back as a rejected promise that the try below does not catch, and
+    // the channel's number stays taken for the life of the session. With the
+    // stand-in nothing showed, because its close() does nothing at all.
+    const give = (fail, code) => {
       if (done) return;
       done = true;
       if (fail) {
-        try {
-          stream.close();
-        } catch {
-          // Already gone; the answer below is what counts.
-        }
+        if (code !== undefined) closeQuietly(stream, code);
         reject(fail);
         return;
       }
@@ -419,7 +617,7 @@ async function uiBytes(app, link) {
       try {
         b = bytesOf(chunk, "appframe: not bytes");
       } catch {
-        give(new Refused(NOT_LOADED));
+        give(new Refused(NOT_LOADED), CODES.PROTOCOL);
         return;
       }
       n += b.length;
@@ -428,7 +626,7 @@ async function uiBytes(app, link) {
       // rather than drained: the rest of an archive nobody will read costs
       // the person time and the machine memory.
       if (n > MAX_UITAR) {
-        give(new Refused(NOT_LOADED));
+        give(new Refused(NOT_LOADED), CODES.TOOLARGE);
         return;
       }
       parts.push(b);

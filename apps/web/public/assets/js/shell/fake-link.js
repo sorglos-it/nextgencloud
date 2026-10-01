@@ -54,12 +54,27 @@ import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 
 const enc = new TextEncoder();
 
-// The app whose user interface really runs in the frame. Its id is NOT
-// "ngc.terminal": core.AppParams refuses a core app ("ngc.") for both
-// ngc.desktop/ui and ngc.desktop/ui-proof, so an app of NGC's own can never
-// be asked for a user interface at all. shared/testdata calls it
-// org.sorglos.terminal, and so does this.
+// The two apps that ship with NGC and really run in the frame. Their ids are
+// NOT "ngc.terminal" and "ngc.calc": core.AppParams refuses a core app ("ngc.")
+// for both ngc.desktop/ui and ngc.desktop/ui-proof, so an app of NGC's own can
+// never be asked for a user interface at all. shared/testdata calls them
+// org.sorglos.terminal and org.sorglos.calculator, and so does this.
+//
+// WHAT STANDS IN HERE SINCE TASK 25: both are apps a person ACTIVATES (design
+// 4.2 and 4.4 - "Zum Aktivieren: Rechner und Terminal"), so in operation their
+// user interfaces arrive as the ui/ of an app package, over ngc.desktop/ui,
+// against a checksum a store's catalog signed. The source of those files is the
+// web interface's own (public/assets/apps/<app>/, design 22.09.2026: "ihre
+// Oberflächen baut das Webinterface"), and nothing in this repository packs them
+// into a release yet. So this stand-in reads those very files and packs them,
+// and the shell checks the result exactly as it checks an app out of a store.
 const TERMINAL = "org.sorglos.terminal";
+const CALCULATOR = "org.sorglos.calculator";
+// Which folder under public/assets/apps/ holds which app's ui/ files.
+const SHIPPED = new Map([[TERMINAL, "terminal"], [CALCULATOR, "calculator"]]);
+// The three files each of them ships. The entry page first, because that is
+// the one the manifest names.
+const SHIPPED_FILES = ["index.html", "app.css", "app.js"];
 const STORE = "global";
 const VERSION = "1.0.0";
 
@@ -80,8 +95,11 @@ const APPS = [
     id: "ngc.users", name: "Benutzer und Rechte", version: "1.0.0", icon: "", entry: "",
     width: 760, height: 520, actions: [], state: "ok", core: true, node: "",
   },
+  // The calculator has no service and no node: it reckons in the browser, and
+  // the one right there is to use it at all (shared/testdata:
+  // "org.sorglos.calculator/use").
   {
-    id: "ngc.calc", name: "Rechner", version: "1.0.0", icon: "", entry: "",
+    id: CALCULATOR, name: "Rechner", version: VERSION, icon: "", entry: "index.html",
     width: 300, height: 420, actions: [], state: "ok", core: false, node: "",
   },
   {
@@ -110,44 +128,108 @@ const APPS = [
   // use, and leaving it out is how that is done.
 ];
 
-// The user interface of the terminal, the files as they would lie in a
-// package. It is deliberately ordinary: a page, a stylesheet with a picture
-// in it, and a classic script that asks its own service through ngc.js.
-const PAGE = '<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Terminal</title>'
-  + '<link rel="stylesheet" href="app.css"></head><body><h1>Terminal</h1>'
-  + '<p id="antwort">…</p><script src="app.js"></scr' + "ipt></body></html>";
-const STYLE = "body{font-family:system-ui,sans-serif;margin:0;padding:16px;"
-  + "background:url(punkt.gif) repeat}h1{font-size:18px;margin:0 0 8px}";
-const SCRIPT = 'ngc.call("terminal", "shell", { text: "hallo" }).then(function (bytes) {'
-  + 'document.getElementById("antwort").textContent = new TextDecoder().decode(bytes);'
-  + "});";
-// A 1x1 GIF, so the url(...) in the stylesheet points at something real.
-const DOT = Uint8Array.from(
-  atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), (c) => c.charCodeAt(0));
+// readShipped fetches the ui/ files of both shipped apps off the shell's own
+// server, once, before the desktop starts. They are the SAME bytes a release
+// would pack, so a checksum over them is a checksum over what runs.
+//
+// It is the one thing this file fetches, and it is a stand-in for a release
+// step and not for a server: in operation these files arrive inside an app
+// package, and whoever builds that package reads them from the same place.
+async function readShipped() {
+  const out = new Map();
+  for (const [id, dir] of SHIPPED) {
+    const files = new Map();
+    for (const name of SHIPPED_FILES) {
+      const res = await fetch(`/assets/apps/${dir}/${name}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`fake-link: no ${dir}/${name}`);
+      files.set(name, new Uint8Array(await res.arrayBuffer()));
+    }
+    out.set(id, files);
+  }
+  return out;
+}
 
-// A ui-tar as store.UIWriter writes one. The entry page is named by the
-// caller so that the test hook can leave the manifest's "index.html" out of
-// the archive, and the script can be made a module.
-function uiTar({ entry = "index.html", module: asModule = false } = {}) {
+// A ui-tar as store.UIWriter writes one, out of one app's files. The entry page
+// is named by the caller so that the test hook can leave the manifest's
+// "index.html" out of the archive, and the script can be made a module.
+function uiTar(files, { entry = "index.html", module: asModule = false } = {}) {
   const w = new UIWriter();
   w.dir("ui");
-  w.file("ui/" + entry, enc.encode(asModule ? PAGE.replace("<script ", '<script type="module" ') : PAGE));
-  w.file("ui/app.css", enc.encode(STYLE));
-  w.file("ui/app.js", enc.encode(SCRIPT));
-  w.file("ui/punkt.gif", DOT);
+  const page = files.get("index.html");
+  w.file("ui/" + entry, asModule
+    // The hook makes the page's one script a module, which is the one thing the
+    // frame refuses outright. The replacement is done on the text, which is all
+    // right for a hook that leaves with this file - the page it is done to is
+    // ours, and what it has to produce is a page the frame turns down.
+    ? enc.encode(new TextDecoder().decode(page).replace("<script ", '<script type="module" '))
+    : page);
+  for (const name of SHIPPED_FILES) {
+    if (name !== "index.html") w.file("ui/" + name, files.get(name));
+  }
   return w.close();
 }
 
-// The apps the catalog of the store lists. The terminal has to stand here at
-// the version and with the ui hash the UI proof names, because the app frame
-// looks its hash up in exactly this document (core.catalogUI). The other two
-// are there so the store has something to show: a free app and a paid one,
-// which is the one difference the Apps tab has to make.
+// WHAT THE TERMINAL'S SERVICE ANSWERS, AND WHAT IT REALLY IS. The service does
+// not exist here and cannot: the controller builds it (apps/server-controller/,
+// "virtuelles Terminal"), it runs the command inside the app's own container,
+// and its answer is whatever the program there wrote to stdout. So this is the
+// thinnest stand-in that lets the app's side be measured at all - the error a
+// real `cp -r` gives, and the line a shell gives a word it does not know.
+//
+// WHAT IS THEREFORE NOT MEASURED ANYWHERE: that a real service's output arrives
+// at all, how it is split over the wire, and what `cp -r` really says on the
+// machine. All three need the controller's service.
+const SHELL_ANSWERS = new Map([
+  ["cp -r", "cp: missing destination file operand after '-r'\n"],
+]);
+
+function shellAnswer(line) {
+  const cmd = line.replace(/\n+$/, "");
+  if (cmd === "") return "";
+  return SHELL_ANSWERS.get(cmd) ?? `sh: ${cmd}: command not found\n`;
+}
+
+// terminalStream stands in for the channel of that service: it answers every
+// line that is written to it and stays open until the app ends it or the window
+// takes it away. That is the one thing about it that is not a fake - a terminal
+// is a channel that stays open, and the shell has to carry one.
+function terminalStream(h) {
+  const dec = new TextDecoder();
+  const s = {
+    onData: null,
+    onClose: null,
+    write(bytes) {
+      // The hook wins over the table: a case about what the shell and the app do
+      // with the bytes of a service has to be able to choose those bytes.
+      const answer = h.output !== "" ? h.output : shellAnswer(dec.decode(bytes));
+      if (answer !== "") s.onData?.(enc.encode(answer));
+    },
+    end() {
+      s.onClose?.("ok", "");
+    },
+    close() {
+      // A TEST HOOK, and it leaves with this file: how many of these channels
+      // the shell has given up. A real channel is counted by the session.
+      window.__ngcStreamsClosed++;
+    },
+  };
+  // A controller that fell over: the channel ends without an "ok". The text is
+  // the one wire.message gives for E_UNREACHABLE; the real close carries the
+  // code as well, and nothing on the app's side reads either.
+  if (h.cut) setTimeout(() => s.onClose?.("error", "Dienst nicht erreichbar."), 0);
+  return s;
+}
+
+// The apps the catalog of the store lists. The terminal and the calculator have
+// to stand here at the version and with the ui hash the UI proof names, because
+// the app frame looks their hash up in exactly this document (core.catalogUI).
+// The other two are there so the store has something to show: a free app and a
+// paid one, which is the one difference the Apps tab has to make.
 //
 // Sorted by id and versions ascending, because store.VerifyCatalog refuses a
 // catalog that is not - a stand-in that broke its own contract would test the
 // shell against a document no store could ever send.
-function catalogDoc(uiHash, evilName) {
+function catalogDoc(uiHashes, evilName) {
   const pkg = (version, ui, encrypted) => ({
     version, url: "pakete/" + version + ".ngc", size: 5000000,
     sha256: b64encode(new Uint8Array(32).fill(2)), ui: b64encode(ui),
@@ -166,9 +248,14 @@ function catalogDoc(uiHash, evilName) {
         versions: [pkg("1.0.0", new Uint8Array(32).fill(3), false)],
       },
       {
+        id: CALCULATOR, name: "Rechner", publisher: "Sorglos IT",
+        description: "Rechnen mit den vier Grundrechenarten.",
+        versions: [pkg(VERSION, uiHashes.get(CALCULATOR), false)],
+      },
+      {
         id: TERMINAL, name: "Terminal", publisher: "Sorglos IT",
         description: "Eine Kommandozeile im Browser.",
-        versions: [pkg(VERSION, uiHash, false)],
+        versions: [pkg(VERSION, uiHashes.get(TERMINAL), false)],
       },
       {
         id: "org.sorglos.tresor", name: "Tresor", publisher: "Sorglos IT",
@@ -210,15 +297,19 @@ async function world(knobs) {
     return { payload: b64encode(payload), kid: id, sig: b64encode(sig) };
   };
 
-  const proofFor = async (uiHash) => enc.encode(JSON.stringify({
-    app: TERMINAL, version: VERSION, store: STORE,
-    catalog: await envelope(catalogDoc(uiHash, knobs.evilName === true), pair, kid),
+  // The proof names the app that was asked for. ONE catalog for both of them,
+  // because a store has one: two documents at one sequence number would be a
+  // fork of the catalog, and a stand-in that handed the shell one would measure
+  // it against something no store could send.
+  const proofFor = async (app, uiHashes) => enc.encode(JSON.stringify({
+    app, version: VERSION, store: STORE,
+    catalog: await envelope(catalogDoc(uiHashes, knobs.evilName === true), pair, kid),
   }));
 
-  const catalogFor = async (uiHash) => enc.encode(JSON.stringify({
+  const catalogFor = async (uiHashes) => enc.encode(JSON.stringify({
     catalog: knobs.foreignCatalog === true
-      ? await envelope(catalogDoc(uiHash, knobs.evilName === true), other, otherKid)
-      : await envelope(catalogDoc(uiHash, knobs.evilName === true), pair, kid),
+      ? await envelope(catalogDoc(uiHashes, knobs.evilName === true), other, otherKid)
+      : await envelope(catalogDoc(uiHashes, knobs.evilName === true), pair, kid),
   }));
 
   return { store, pair, pub, kid, proofFor, catalogFor };
@@ -232,13 +323,22 @@ async function world(knobs) {
 //   entry  - put the entry page in the archive under this name, so the
 //            manifest's "index.html" is not in it.
 //   module - ship the entry page with a module script.
+//   terminalOutput - what the terminal's service answers, whatever was sent.
+//   terminalCut    - the terminal's channel ends without an "ok", the way a
+//            controller that fell over ends one.
 //
 // The proof is always signed over the archive the hooks produced, except for
 // swapUI: otherwise a case meant for the entry rule would die at the checksum
 // and prove nothing about the rule it is named after.
 function hooks() {
   const t = window.__ngcTest ?? {};
-  return { swap: t.swapUI === true, entry: typeof t.entry === "string" && t.entry !== "" ? t.entry : "index.html", module: t.module === true };
+  return {
+    swap: t.swapUI === true,
+    entry: typeof t.entry === "string" && t.entry !== "" ? t.entry : "index.html",
+    module: t.module === true,
+    output: typeof t.terminalOutput === "string" ? t.terminalOutput : "",
+    cut: t.terminalCut === true,
+  };
 }
 
 // A TEST HOOK, and it leaves with this file: what the store's cases want
@@ -317,10 +417,12 @@ export async function fakeWorld() {
   const knobs = knobsOf();
   const { store, proofFor, catalogFor } = await world(knobs);
 
-  window.__ngcTest = { swapUI: false, entry: "", module: false };
-  // A TEST HOOK as well: how many channels the shell has opened. The real
-  // session counts its own channels and needs no such number.
+  window.__ngcTest = { swapUI: false, entry: "", module: false, terminalOutput: "", terminalCut: false };
+  // A TEST HOOK as well: how many channels the shell has opened, and how many of
+  // the terminal's it has closed again. The real session counts its own channels
+  // and needs no such numbers.
   window.__ngcChannelsOpened = 0;
+  window.__ngcStreamsClosed = 0;
   // A TEST HOOK as well: what the shell handed this link, in the order it
   // handed it over. Params, task and confirmation are JSON and stand here as
   // the text they are; a body is bytes and stands as base64url.
@@ -403,18 +505,39 @@ export async function fakeWorld() {
   window.__ngcInstallKey = installKey;
 
   const or = (name, fallback) => (Array.isArray(knobs[name]) ? knobs[name] : fallback);
-  const uiHash = () => {
+
+  // The files of the shipped apps, read once. They are read here and not inside
+  // the answers below, so the archive the shell is handed and the archive the
+  // proof was signed over are built from ONE set of bytes.
+  const shipped = await readShipped();
+
+  // The checksum of every shipped app's archive, as the hooks of the moment
+  // produce it. It is worked out and not remembered: a case switches a hook on
+  // after the world was built, and a proof over yesterday's archive would be a
+  // refusal the case did not ask for.
+  const uiHashes = () => {
     const h = hooks();
-    return sha256(uiTar({ entry: h.entry, module: h.module }));
+    const out = new Map();
+    for (const [id, files] of shipped) out.set(id, sha256(uiTar(files, { entry: h.entry, module: h.module })));
+    return out;
+  };
+
+  // Which app an answer is about. It stands in the params the shell sent, and
+  // reading them with JSON.parse is the one shortcut this file may take: a real
+  // API reads them with core.ParseParams, and these are params the shell
+  // encoded two function calls ago.
+  const appOf = (params) => {
+    try {
+      return JSON.parse(new TextDecoder().decode(params)).app;
+    } catch {
+      return "";
+    }
   };
 
   const results = {
     __proto__: null,
     "ngc.desktop/apps": async () => enc.encode(JSON.stringify(APPS)),
-    "ngc.desktop/ui-proof": async () => await proofFor(uiHash()),
-    // The terminal's own service. What it answers means whatever the app and
-    // its service agreed; the shell passes the bytes through untouched.
-    [TERMINAL + "/shell"]: async () => enc.encode("hallo aus dem Dienst"),
+    "ngc.desktop/ui-proof": async (_body, params) => await proofFor(appOf(params), uiHashes()),
 
     "ngc.users/nodes": async () => enc.encode(JSON.stringify(or("nodes", NODES))),
     // A new version of the trust list is READ with the contract and KEPT -
@@ -429,7 +552,7 @@ export async function fakeWorld() {
       return enc.encode(JSON.stringify({ seq: next.seq }));
     },
     "ngc.store/sources": async () => enc.encode(JSON.stringify(or("sources", SOURCES))),
-    "ngc.store/catalog": async () => await catalogFor(uiHash()),
+    "ngc.store/catalog": async () => await catalogFor(uiHashes()),
     "ngc.store/installed": async () => enc.encode(JSON.stringify(or("installed", INSTALLED))),
     "ngc.store/updates": async () => enc.encode(JSON.stringify(or("updates", UPDATES))),
     "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),
@@ -494,26 +617,31 @@ export async function fakeWorld() {
       });
       const make = results[`${app}/${name}`];
       if (make === undefined) throw new Error(`fake-link: nothing for ${app}/${service}/${name}`);
-      return await make(body);
+      return await make(body, params);
     },
-    // A stand-in for a channel that stays open: it hands over the whole
-    // answer in one piece and closes. The real one arrives in frames.
-    async open(app, service, name) {
+    // A stand-in for a channel that stays open. For a user interface it hands
+    // the whole archive over in one piece and closes; the real one arrives in
+    // frames. For the terminal it stays open and answers every line, which is
+    // what a stream is for.
+    async open(app, service, name, params) {
       window.__ngcChannelsOpened++;
-      if (`${app}/${name}` !== "ngc.desktop/ui") {
-        throw new Error(`fake-link: no stream for ${app}/${service}/${name}`);
-      }
       const h = hooks();
-      const bytes = h.swap
-        ? uiTar({ entry: "andere.html" })
-        : uiTar({ entry: h.entry, module: h.module });
-      const s = { onData: null, onClose: null, close() {} };
-      // After the caller has hung its two listeners up, never before.
-      setTimeout(() => {
-        s.onData?.(bytes);
-        s.onClose?.("ok", "");
-      }, 0);
-      return s;
+      if (`${app}/${name}` === "ngc.desktop/ui") {
+        const files = shipped.get(appOf(params));
+        if (files === undefined) throw new Error(`fake-link: no ui for ${appOf(params)}`);
+        const bytes = h.swap
+          ? uiTar(files, { entry: "andere.html" })
+          : uiTar(files, { entry: h.entry, module: h.module });
+        const s = { onData: null, onClose: null, close() {} };
+        // After the caller has hung its two listeners up, never before.
+        setTimeout(() => {
+          s.onData?.(bytes);
+          s.onClose?.("ok", "");
+        }, 0);
+        return s;
+      }
+      if (`${app}/${name}` === `${TERMINAL}/shell`) return terminalStream(h);
+      throw new Error(`fake-link: no stream for ${app}/${service}/${name}`);
     },
     onNotice(fn) {
       if (typeof fn === "function") notices.add(fn);

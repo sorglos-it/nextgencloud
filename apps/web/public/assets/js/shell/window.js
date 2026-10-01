@@ -130,6 +130,19 @@ export class Win {
 
   focus() {
     const d = this.desktop;
+    // THE KEYBOARD GOES INTO THE APP, and it is done before the early return
+    // below: a window that already has the focus of the desktop may all the
+    // same have lost the keyboard to the taskbar or the start menu, and
+    // clicking it is how a person asks for it back.
+    //
+    // An app runs in a frame with a document of its own, so a key press
+    // reaches it only while the browser has given that frame the focus - the
+    // shell cannot forward keys to an app, and must not: reading them would be
+    // the shell listening in on everything typed into an app. A window whose
+    // body the shell built itself (the app store, a refusal, a placeholder)
+    // has no frame, and then nothing happens here.
+    const frame = this.body.querySelector("iframe.appframe");
+    if (frame && !this.min) frame.focus();
     if (d.focused === this && !this.min) return;
     if (d.focused && d.focused !== this) {
       d.focused.el.classList.remove("focus");

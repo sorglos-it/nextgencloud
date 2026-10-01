@@ -24,7 +24,13 @@ export function app(o) {
 // CALC is the one honest app the hostile cases keep beside the bad ones: it
 // is how a case tells "the desktop refused the whole list" from "the desktop
 // is broken".
-export const CALC = app({ id: "ngc.calc", name: "Rechner", width: 300, height: 420 });
+//
+// THE ID IS THE REAL ONE SINCE TASK 25 ("ngc.calc" before). It is a row of a
+// list and nothing more here - the link above answers nothing but
+// ngc.desktop/apps, so a window opened on it shows the frame's refusal and not
+// a calculator. That is enough for what these cases measure: names, icons,
+// titles and taskbar entries.
+export const CALC = app({ id: "org.sorglos.calculator", name: "Rechner", width: 300, height: 420 });
 
 // linkModule builds the module the page gets in place of shell/fake-link.js.
 // It is written out as source, not as an object: the page imports a module,
