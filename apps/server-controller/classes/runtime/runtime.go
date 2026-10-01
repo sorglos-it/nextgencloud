@@ -26,21 +26,33 @@ import (
 // container only under the user that made it, and that user is what the name
 // answers.
 type Engine interface {
-	// LoadImage puts the image of tarPath into the image store and answers
-	// with the reference it now has there, read out of the tar itself
-	// (ImageTag), never out of an output of the engine.
-	LoadImage(ctx context.Context, tarPath string) (string, error)
-	// RemoveImage takes the image ref out of the store again.
-	RemoveImage(ctx context.Context, ref string) error
+	// LoadImage puts the image of tarPath into the image store of the app that
+	// name belongs to and answers with the reference it now has there, read out
+	// of the tar itself (ImageTag), never out of an output of the engine.
+	//
+	// The app stands here because every app has its own image store, and that
+	// is a line between the apps: one store that all of them read would let
+	// every app see the image of every other, at once and for good. Letting the
+	// controller load into its own store and handing that store to the apps as
+	// an additional one would be exactly that store. So the image goes where
+	// the container will run, and nowhere else.
+	LoadImage(ctx context.Context, name, tarPath string) (string, error)
+	// RemoveImage takes the image ref out of the store of that same app. The
+	// app stands here for the same reason as above.
+	RemoveImage(ctx context.Context, name, ref string) error
 	// Create makes the container c without starting it.
 	Create(ctx context.Context, c Container) error
 	// Start starts a container that was created.
 	Start(ctx context.Context, name string) error
 	// Stop ends the container, giving the service ten seconds first.
 	Stop(ctx context.Context, name string) error
-	// Remove takes a container that is not running away. A container that is
-	// not there is an error: no output of the engine is read, so the two
-	// cannot be told apart here.
+	// Remove takes a container that is not running away.
+	//
+	// A container that is not there is an error, and that is meant: no output
+	// of the engine is read here, so "it was never there" and "it could not be
+	// removed" arrive as the same thing, and taking both for the harmless one
+	// would hide the other. A caller that may run without a container asks
+	// Running first or bears the error - it must not be made quiet here.
 	Remove(ctx context.Context, name string) error
 	// Running reports whether the container is running.
 	Running(ctx context.Context, name string) (bool, error)

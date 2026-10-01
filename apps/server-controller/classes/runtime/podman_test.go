@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
 // fake stands in for podman. Its program appends every argument on its own
@@ -173,9 +175,14 @@ func TestCreateTakesTheLimitsApartInThousandths(t *testing.T) {
 
 func TestCreateWithNetworkAndRoot(t *testing.T) {
 	// Network: "--network slirp4netns" stands where "--network none" stood.
-	// Root: "--cap-drop ALL" is gone, the capabilities come back - and nothing
-	// else is given up. The container still runs in the user namespace of the
-	// app's own user, so root in there is not root on this server.
+	//
+	// Root: "--cap-drop ALL" is gone. The capabilities come back because the
+	// admin granted this app store.NeedRoot, and those capabilities are what
+	// that grant is - an app that was allowed root in its container and then
+	// kept at no capabilities would have been allowed nothing. Nothing else is
+	// given up for it: the container still runs in the user namespace of the
+	// app's own user, so root in there is not root on this server, and
+	// --read-only and no-new-privileges stay.
 	f := fakePodman(t)
 	uid, gid := me()
 	p := NewPodman(f.bin)
@@ -541,9 +548,10 @@ func TestRunningReadsOnlyWhetherAnythingCameBack(t *testing.T) {
 
 func TestLoadImageAnswersWithTheTagOfTheTar(t *testing.T) {
 	f := fakePodman(t)
+	name := meName(t)
 	tarPath := filepath.Join(t.TempDir(), "amd64.tar")
 	writeTar(t, tarPath, archive(`[{"Config":"c.json","RepoTags":["ngc/terminal:1.0.0"],"Layers":["l/layer.tar"]}]`))
-	ref, err := NewPodman(f.bin).LoadImage(context.Background(), tarPath)
+	ref, err := NewPodman(f.bin).LoadImage(context.Background(), name, tarPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,13 +564,52 @@ func TestLoadImageAnswersWithTheTagOfTheTar(t *testing.T) {
 	}
 }
 
+// Whose image store an image lands in is the whole reason the app stands in this
+// signature: every app has its own, and one store that all of them read would
+// let every app see the image of every other. HOME is that store for rootless
+// podman, so this is where it is measured - it has to be the home of the app's
+// user, never a directory of this controller.
+func TestLoadImageUsesTheStoreOfTheApp(t *testing.T) {
+	f := fakePodman(t)
+	name := meName(t)
+	u, err := user.Current()
+	if err != nil {
+		t.Skip("no user database here: " + err.Error())
+	}
+	tarPath := filepath.Join(t.TempDir(), "amd64.tar")
+	writeTar(t, tarPath, archive(`[{"RepoTags":["ngc/terminal:1.0.0"]}]`))
+	if _, err := NewPodman(f.bin).LoadImage(context.Background(), name, tarPath); err != nil {
+		t.Fatal(err)
+	}
+	env := f.env(t)
+	if env["HOME"] != u.HomeDir {
+		t.Fatalf("HOME = %q, want the home of %s, %q", env["HOME"], name, u.HomeDir)
+	}
+	if env["HOME"] == config.DataDir || env["XDG_RUNTIME_DIR"] == config.RunDir {
+		t.Fatalf("the image went into the store of this controller: HOME=%q XDG_RUNTIME_DIR=%q",
+			env["HOME"], env["XDG_RUNTIME_DIR"])
+	}
+	if env["XDG_RUNTIME_DIR"] != config.RunDir+"/"+name {
+		t.Fatalf("XDG_RUNTIME_DIR = %q, want %q", env["XDG_RUNTIME_DIR"], config.RunDir+"/"+name)
+	}
+
+	// The same for taking it away again.
+	f = fakePodman(t)
+	if err := NewPodman(f.bin).RemoveImage(context.Background(), name, "ngc/terminal:1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if env = f.env(t); env["HOME"] != u.HomeDir || env["XDG_RUNTIME_DIR"] != config.RunDir+"/"+name {
+		t.Fatalf("rmi ran with HOME=%q XDG_RUNTIME_DIR=%q", env["HOME"], env["XDG_RUNTIME_DIR"])
+	}
+}
+
 // A tar whose tag this engine will not name is not loaded either: the name
 // under which podman would keep the image would then be one nobody here knows.
 func TestLoadImageRefusesATarWithoutOneTag(t *testing.T) {
 	f := fakePodman(t)
 	tarPath := filepath.Join(t.TempDir(), "amd64.tar")
 	writeTar(t, tarPath, archive(`[{"RepoTags":["a:1","b:2"]}]`))
-	if _, err := NewPodman(f.bin).LoadImage(context.Background(), tarPath); err == nil {
+	if _, err := NewPodman(f.bin).LoadImage(context.Background(), meName(t), tarPath); err == nil {
 		t.Fatal("the tar was loaded")
 	}
 	if f.ran() {
@@ -572,7 +619,7 @@ func TestLoadImageRefusesATarWithoutOneTag(t *testing.T) {
 
 func TestRemoveImageBuildsTheArgumentListAndRefusesNonsense(t *testing.T) {
 	f := fakePodman(t)
-	if err := NewPodman(f.bin).RemoveImage(context.Background(), "ngc/terminal:1.0.0"); err != nil {
+	if err := NewPodman(f.bin).RemoveImage(context.Background(), meName(t), "ngc/terminal:1.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	if args := f.args(t); !slices.Equal(args, []string{"rmi", "ngc/terminal:1.0.0"}) {
@@ -581,7 +628,7 @@ func TestRemoveImageBuildsTheArgumentListAndRefusesNonsense(t *testing.T) {
 
 	for _, bad := range []string{"-a", "ngc/terminal", "", "ngc/terminal:1.0.0 --all"} {
 		f = fakePodman(t)
-		if err := NewPodman(f.bin).RemoveImage(context.Background(), bad); err == nil {
+		if err := NewPodman(f.bin).RemoveImage(context.Background(), meName(t), bad); err == nil {
 			t.Fatalf("ref %q was taken", bad)
 		}
 		if f.ran() {
@@ -666,6 +713,13 @@ func TestTheCallsAfterCreateNeedTheUserOfTheirName(t *testing.T) {
 		"Exec": func() error {
 			_, err := p.Exec(context.Background(), Exec{Name: gone, Command: []string{"/usr/bin/greet"}})
 			return err
+		},
+		"LoadImage": func() error {
+			_, err := p.LoadImage(context.Background(), gone, "/var/lib/ngc/staged/amd64.tar")
+			return err
+		},
+		"RemoveImage": func() error {
+			return p.RemoveImage(context.Background(), gone, "ngc/terminal:1.0.0")
 		},
 	}
 	for name, call := range calls {

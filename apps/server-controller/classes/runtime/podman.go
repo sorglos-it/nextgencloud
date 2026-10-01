@@ -49,12 +49,17 @@ type appUser struct {
 
 // ofName is the user a container belongs to, read out of the user database.
 //
-// The name of the container is the name of that user, and after Create it is
-// the only thing a call carries. Its home directory has to be the data
-// directory of the app (config.AppDataDir + "/" + app), because that is the
-// one Create hands podman: both have to name the same directory or podman
-// looks for the container in another store than the one it made it in. Create
-// holds that together where it can see both.
+// Two things have to hold for this lookup to be the right one, and both are
+// held elsewhere: the name of a container is the name of the system user of its
+// app - that is how the user is made - and the home directory of that user is
+// the data directory of the app (config.AppDataDir + "/" + app), which is the
+// directory Create hands podman as HOME. If the home were anywhere else, every
+// call after Create would look for the container in another store of podman
+// than the one it was made in; Create refuses that mismatch with ErrHome, where
+// it can see the data directory and the user at the same time.
+//
+// This is also why the lookup stands here at all instead of a remembered table:
+// a container outlives the process that made it, so the name is all there is.
 func ofName(name string) (appUser, error) {
 	if !validName.MatchString(name) {
 		return appUser{}, ErrName
@@ -72,14 +77,6 @@ func ofName(name string) (appUser, error) {
 		return appUser{}, errors.Join(ErrUser, err)
 	}
 	return appUser{uid: uint32(uid), gid: uint32(gid), home: u.HomeDir, run: runDir(name)}, nil
-}
-
-// own is this process itself. Only the two calls about images use it: their
-// signature carries no app, so the image lands in the store of whoever runs
-// this controller.
-func (p *Podman) own() appUser {
-	return appUser{uid: uint32(os.Getuid()), gid: uint32(os.Getgid()),
-		home: config.DataDir, run: config.RunDir}
 }
 
 // runDir is where podman keeps what is running for this container. It lies
@@ -101,30 +98,45 @@ func validPath(s string) error {
 	return nil
 }
 
-// LoadImage puts the image into the store and answers with its reference.
-func (p *Podman) LoadImage(ctx context.Context, tarPath string) (string, error) {
+// LoadImage puts the image into the store of the app and answers with its
+// reference.
+func (p *Podman) LoadImage(ctx context.Context, name, tarPath string) (string, error) {
+	// Whose store comes before what goes into it: an image that cannot be
+	// placed with an app has no business being unpacked anywhere.
+	u, err := ofName(name)
+	if err != nil {
+		return "", err
+	}
 	if err := validPath(tarPath); err != nil {
 		return "", err
 	}
-	// The reference is read first: an image whose tar names no single tag is
-	// not loaded at all, because the name under which podman would then keep it
-	// is one no later call here could name.
+	// The reference is read next: an image whose tar names no single tag is not
+	// loaded at all, because the name under which podman would then keep it is
+	// one no later call here could name.
 	ref, err := ImageTag(tarPath)
 	if err != nil {
 		return "", err
 	}
-	if _, err := p.run(ctx, p.own(), []string{"load", "--input", tarPath}, nil, nil, nil); err != nil {
+	if _, err := p.run(ctx, u, []string{"load", "--input", tarPath}, nil, nil, nil); err != nil {
 		return "", err
 	}
 	return ref, nil
 }
 
-// RemoveImage takes the image out of the store again.
-func (p *Podman) RemoveImage(ctx context.Context, ref string) error {
+// RemoveImage takes the image out of the store of that app again.
+//
+// As with Remove, an image that is not there is an error and is meant to be
+// one: nothing of podman's output is read, so a missing image and a refused
+// removal arrive alike, and the caller either asks beforehand or bears it.
+func (p *Podman) RemoveImage(ctx context.Context, name, ref string) error {
+	u, err := ofName(name)
+	if err != nil {
+		return err
+	}
 	if !validRef.MatchString(ref) {
 		return ErrImage
 	}
-	_, err := p.run(ctx, p.own(), []string{"rmi", ref}, nil, nil, nil)
+	_, err = p.run(ctx, u, []string{"rmi", ref}, nil, nil, nil)
 	return err
 }
 
@@ -224,7 +236,8 @@ func (p *Podman) Stop(ctx context.Context, name string) error {
 	return err
 }
 
-// Remove takes the container away.
+// Remove takes the container away. A container that is not there is an error on
+// purpose; the doc of Engine.Remove says why and what the caller does instead.
 func (p *Podman) Remove(ctx context.Context, name string) error {
 	u, err := ofName(name)
 	if err != nil {
