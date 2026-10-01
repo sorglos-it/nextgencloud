@@ -160,9 +160,15 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
     //
     // It is a member of its own and NOT part of `session`, which travels on to
     // the whole desktop: shell/main.js takes it straight to net/world.js and
-    // nothing else ever sees it. The private half is a non-extractable
-    // CryptoKey (auth/keys.js), so it cannot be read out, written to storage or
-    // put in a URL by anybody - what is kept narrow here is who may USE it.
+    // nothing else ever sees it.
+    //
+    // WHAT `extractable: false` BUYS, exactly, because it is easy to ask too
+    // much of it: the BYTES of the private half cannot be read out - not by the
+    // shell, not by anything else on this page. It does NOT stop the key being
+    // put somewhere: a non-extractable CryptoKey is structurally cloneable and
+    // can be written to IndexedDB, where it would outlive this session. So what
+    // is being kept narrow here is the right to USE it, and the only thing that
+    // keeps it narrow is that this is the one line that hands it on.
     sessionDH: keys.dh,
     trust: { current: () => ({ list: opened.list, signed: opened.signed }) },
     // The release key of the initial setup is NOT in a login answer and is

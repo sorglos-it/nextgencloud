@@ -504,12 +504,16 @@ async function doCall(frame, app, link, m) {
     // channel with it (net/world.js, appChannel).
     //
     // THE ONE SENTENCE FOR EVERY WAY THIS CAN FAIL stays right. The adapter
-    // refuses with three different words (no node, no session key, a node the
-    // trust list does not carry) and the channel throws its own code - and all
-    // of them mean the same thing to the app: its service did not answer. Which
-    // of them it was is for the person at the shell, not for the app, and an app
-    // that could tell them apart would learn about this installation's trust
-    // list from its own error message.
+    // refuses with four different words (no node, no session key, no trust list,
+    // a node the trust list does not carry), each with its own German sentence,
+    // and the channel throws its own code on top - and all of them mean the same
+    // thing to the app: its service did not answer. Which of them it was is for
+    // the person at the shell, not for the app, and an app that could tell them
+    // apart would learn about this installation's trust list from its own error
+    // message. WHO SHOWS THOSE SENTENCES TO THE PERSON IS STILL NOBODY: the
+    // WorldError is caught and dropped here. Task 21's place for standing advice
+    // is where it belongs, and the task report says so rather than this
+    // comment claiming a reader it has not got.
     answer({ value: await link.call(app.id, m.service, m.action, params, { node: app.node }) });
   } catch {
     answer({ error: codeMessage(CODES.UNREACHABLE) });
