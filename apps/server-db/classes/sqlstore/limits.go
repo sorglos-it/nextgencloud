@@ -25,6 +25,11 @@ const (
 	MaxData = 80 << 20
 	MaxList = 256 // entries of User.Roles or App.Grants (trust allows 256 roles)
 	MaxItem = 64  // one entry of such a list (wire.ValidName is at most 32)
+	// MaxPage is the most rows one LogQuery hands back. It is the number the
+	// contract draws at the API border - core.LogQuery.Validate refuses a
+	// Limit above 500 - written again here because this store does not take
+	// its caller's word for it. LogQuery says why both lines stand.
+	MaxPage = 500
 )
 
 func okKey(s string) bool  { return len(s) <= MaxKey }

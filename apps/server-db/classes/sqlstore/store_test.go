@@ -152,6 +152,12 @@ func TestLimits(t *testing.T) {
 	// LogQuery answers with a page as well, so its refusal is taken apart
 	// from the page here and put in the table below like any other.
 	_, queryUser := s.LogQuery(ctx, core.LogQuery{Limit: 1, User: long})
+	// One past sqlstore.MaxPage. The contract draws the same line in
+	// core.LogQuery.Validate, and this store draws it again; the comment at
+	// LogQuery says why both are there. Measured before the check existed:
+	// this store and memstore both answered <nil> here, while
+	// core.LogQuery.Validate already answered "core: invalid parameters".
+	_, queryLimit := s.LogQuery(ctx, core.LogQuery{Limit: sqlstore.MaxPage + 1})
 	for name, err := range map[string]error{
 		"empty kind":         s.BlobPut(ctx, dbapi.Blob{ID: "a"}),
 		"empty id":           s.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting}),
@@ -178,18 +184,50 @@ func TestLimits(t *testing.T) {
 		"pending name too long":  s.PendingPut(ctx, dbapi.Pending{Name: long, Key: key}),
 		"pending key too long":   s.PendingPut(ctx, dbapi.Pending{Name: "web", Key: longKey}),
 
-		"log user too long":       s.LogAdd(ctx, withUser),
-		"log kind too long":       s.LogAdd(ctx, withKind),
-		"log app too long":        s.LogAdd(ctx, withApp),
-		"log action too long":     s.LogAdd(ctx, withAction),
-		"log node too long":       s.LogAdd(ctx, withNode),
-		"log result too long":     s.LogAdd(ctx, withResult),
-		"log detail too long":     s.LogAdd(ctx, withDetail),
-		"log query user too long": queryUser,
+		"log user too long":                   s.LogAdd(ctx, withUser),
+		"log kind too long":                   s.LogAdd(ctx, withKind),
+		"log app too long":                    s.LogAdd(ctx, withApp),
+		"log action too long":                 s.LogAdd(ctx, withAction),
+		"log node too long":                   s.LogAdd(ctx, withNode),
+		"log result too long":                 s.LogAdd(ctx, withResult),
+		"log detail too long":                 s.LogAdd(ctx, withDetail),
+		"log query user too long":             queryUser,
+		"log query limit over the page bound": queryLimit,
 	} {
 		if !errors.Is(err, dbapi.ErrInvalid) {
 			t.Errorf("%s: %v, want ErrInvalid", name, err)
 		}
+	}
+}
+
+// TestTheLargestPageIsStillAPage holds the far side of the bound LogQuery
+// draws, and that the bound sits on the same number as the contract's.
+//
+// Only "one more than MaxPage" was held before this test: with the bound
+// written ">=" instead of ">" nothing in the tree went red, and a caller asking
+// for the largest page the contract allows would have been told its query is
+// invalid. So both sides are asked here - MaxPage goes through, MaxPage+1 does
+// not - and core.LogQuery.Validate is asked the same two, because the point of
+// writing the number twice is that the two lines sit on top of each other. If
+// the contract ever moves its 500, this test is what says so instead of the two
+// quietly drifting apart.
+func TestTheLargestPageIsStillAPage(t *testing.T) {
+	s := open(t)
+	e := core.LogEntry{ID: strings.Repeat("5c", 16), Time: 1790000030, Kind: "login", Result: "ok"}
+	if err := s.LogAdd(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.LogQuery(ctx, core.LogQuery{Limit: sqlstore.MaxPage}); err != nil || len(got) != 1 {
+		t.Errorf("a page of %d: %d entries, %v; want 1 and no error", sqlstore.MaxPage, len(got), err)
+	}
+	if _, err := s.LogQuery(ctx, core.LogQuery{Limit: sqlstore.MaxPage + 1}); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("a page of %d: %v, want ErrInvalid", sqlstore.MaxPage+1, err)
+	}
+	allowed := core.LogQuery{Limit: sqlstore.MaxPage}
+	refused := core.LogQuery{Limit: sqlstore.MaxPage + 1}
+	if allowed.Validate() != nil || refused.Validate() == nil {
+		t.Errorf("the contract draws its line elsewhere: %d gives %v, %d gives %v",
+			sqlstore.MaxPage, allowed.Validate(), sqlstore.MaxPage+1, refused.Validate())
 	}
 }
 

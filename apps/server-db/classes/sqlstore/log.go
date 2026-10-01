@@ -58,6 +58,23 @@ func (s *store) LogAdd(ctx context.Context, e core.LogEntry) error {
 // BeforeID): with an ID the page starts inside that second, without one the
 // whole second is left out, and without a time it starts at the newest entry.
 //
+// A Limit above MaxPage is refused and not quietly cut short. Cutting it would
+// be the worse answer of the two: a caller who asks for 1000 and is handed 500
+// cannot tell that from "there are only 500", and would stop paging with rows
+// still in the table. Refusing says what happened, and the cursor above is the
+// way to the rest.
+//
+// The line is drawn twice on purpose, and neither copy is spare. The contract
+// draws it at the API border - core.LogQuery.Validate refuses a Limit above
+// 500, which is where a number from outside is stopped - and this store draws
+// it again for the callers that never pass that border: everything inside NGC
+// that holds a dbapi.Store and builds a core.LogQuery itself. What the number
+// reaches here is "LIMIT ?" and, on the way back, one slice holding the whole
+// answer; a layer that takes its caller's word for that size is one mistake
+// away from a memory problem. So whoever finds the two some day: the one in
+// core guards the outside, this one guards us, and deleting either leaves a
+// hole the other does not cover.
+//
 // Which of the six statements runs is decided here, and each arm hands its
 // own one to logPage with the values that belong to it. The plan of this task
 // put the chosen statement and its values into two variables first and gave
@@ -69,8 +86,8 @@ func (s *store) LogAdd(ctx context.Context, e core.LogEntry) error {
 // them is the shape put already has, and the guard follows a parameter back
 // to every call site.
 func (s *store) LogQuery(ctx context.Context, q core.LogQuery) ([]core.LogEntry, error) {
-	if q.Limit < 1 || q.BeforeTime < 0 || (q.BeforeID != "" && (!core.ValidLogID(q.BeforeID) || q.BeforeTime == 0)) ||
-		!okKey(q.User) {
+	if q.Limit < 1 || q.Limit > MaxPage || q.BeforeTime < 0 ||
+		(q.BeforeID != "" && (!core.ValidLogID(q.BeforeID) || q.BeforeTime == 0)) || !okKey(q.User) {
 		return nil, dbapi.ErrInvalid
 	}
 	switch {
