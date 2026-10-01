@@ -368,7 +368,21 @@ Zeilen schließen das:
    `dbtest.Run` ein `Limit` über 500, also hält der Vertragssatz die Gabelung
    nicht — er könnte sie nicht einmal sehen.
 
-**Bis 1 und 3 da sind, ist die Gabelung bezahlt und benannt**, nicht geschlossen.
+**Punkt 2 und 3 müssen ZUSAMMEN kommen.** Kommt die `dbtest`-Zeile ohne den Satz
+in `dbapi.go`, erzwingt die Vertragsgruppe eine Regel, die der Vertrag nicht
+schreibt — und der nächste Speicher scheitert an etwas, das nirgends steht.
+(Gemessen und benannt vom Prüfer der Aufgabe 7 am 01.10.2026.)
+
+**Und die Gabelung ist größer als diese eine Grenze.** Gemessen gabeln sich die
+zwei Speicher heute an **neun** Stellen allein aus Aufgabe 7: sieben
+Längengrenzen in `LogAdd`, `okKey(q.User)`, und `Limit > 500`. Dazu eine
+**zehnte**, die niemand nennt und niemand hält: die **leere Seite** ist in
+`sqlstore` `nil`, in `memstore` nicht-`nil` — über `json.Marshal` wird daraus
+`null` gegen `[]` in `ngc.users/log`. Der Art nach vorbestehend (`UserList`,
+`AppList`, `PendingList` genauso), aber sie gehört in diesen Punkt, weil sie
+dieselbe Ursache hat: **`dbtest.Run` hält nur, was es fragt.**
+
+**Bis 1 bis 3 da sind, ist die Gabelung bezahlt und benannt**, nicht geschlossen.
 Das war der ausdrückliche Preis dafür, `shared/` nicht anzufassen.
 
 Nebenbei an derselben Stelle gefunden, und es gehört zur Form dieses Punktes:
