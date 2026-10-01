@@ -18,8 +18,9 @@
 // all.
 import { createServer, request as httpRequest } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { argv } from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { b64encode, equal, utf8 } from "../../public/assets/js/contracts/b64.js";
 import * as wire from "../../public/assets/js/contracts/wire.js";
@@ -31,6 +32,59 @@ import * as sign from "../../public/assets/js/contracts/sign.js";
 import * as trust from "../../public/assets/js/contracts/trust.js";
 import { Budget, decode, bytes, str, P, S } from "../../public/assets/js/contracts/json.js";
 import { buildWorld, RP_ID, RP_ORIGINS, TOTP_CODE, SETUP_CODE } from "./world.js";
+
+// A TEST-ONLY DOOR FOR THE USER INTERFACES OF THE APPS NGC SHIPS, and a
+// security rule is the reason it exists.
+//
+// The calculator and the terminal are apps a person activates: their interface
+// is the ui/ of an app package and arrives as a SIGNED ARCHIVE over
+// ngc.desktop/ui. Their source is the web interface's own
+// (apps/web/assets/apps/<app>/), and it may NOT lie in the web root: an .html
+// under public/ is a document of the shell's OWN origin, reachable by its
+// address, with the shell's storage, cookies and session in reach - which is
+// exactly what the app frame takes away from an app. tests/shell/csp.spec.js
+// holds the web root to that ("the web root holds nothing a browser would run
+// as a document of this origin"), and it found it when it was not so.
+//
+// In operation whoever builds the package reads those files; here this door
+// hands them to the stand-in in shell/fake-link.js, which packs them and signs
+// their checksum. It goes away with that file.
+//
+// TWO RULES, BOTH ABOUT THIS BEING A SERVER:
+//   - The name decides the file, and only out of the table below. A name out
+//     of a URL never becomes a path, so there is nothing for a "..", a
+//     backslash or a percent to climb with.
+//   - Everything goes out as text/plain with nosniff. This door answers on the
+//     SAME origin as the shell, so a file served as text/html here would be
+//     the very document the rule above forbids - only through the test
+//     harness instead of through Apache.
+const SHIPPED_DOOR = "/mock/ui/";
+const SHIPPED_UI = new Map();
+for (const app of ["calculator", "terminal"]) {
+  for (const name of ["index.html", "app.css", "app.js"]) {
+    SHIPPED_UI.set(`${app}/${name}`, fileURLToPath(new URL(`../../assets/apps/${app}/${name}`, import.meta.url)));
+  }
+}
+
+function sendShipped(res, name) {
+  const file = SHIPPED_UI.get(name);
+  if (file === undefined) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+    res.end("no such file");
+    return;
+  }
+  // Read on every request and not once at the start: these are source files of
+  // the repository, and a run that measures them has to measure what is there
+  // now. A missing one is a broken checkout, which is worth an error that says
+  // so rather than an empty answer that packs an empty archive.
+  const body = readFileSync(file);
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
+}
 
 // The GUID of RFC 6455, section 1.3. It is NOT written from memory: the line
 // below is held against the RFC's own example on every start (accept()), and
@@ -740,6 +794,7 @@ export async function startMockAPI({ world, port, phpPort }) {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
     if (path === "/ready") { res.writeHead(200, { "Content-Type": "text/plain" }); res.end("ok"); return; }
+    if (path.startsWith(SHIPPED_DOOR)) { sendShipped(res, path.slice(SHIPPED_DOOR.length)); return; }
     if (!path.startsWith("/api/")) { proxy(req, res); return; }
 
     // A test-only door, so a case can say how the next channel should go

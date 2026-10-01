@@ -8,7 +8,7 @@ import { test, expect, hasSessionKeys, signIn } from "../fixtures/page.js";
 // desktop's bytes come from.
 //
 // SINCE TASK 25 the app in the frame is the real terminal - its own page,
-// stylesheet and script, out of public/assets/apps/terminal/ - instead of a
+// stylesheet and script, out of apps/web/assets/apps/terminal/ - instead of a
 // fixture written into the stand-in. What stands in is its SERVICE, which the
 // controller builds; tests/shell/terminal.spec.js says what that costs.
 //
@@ -158,6 +158,41 @@ test("an app whose entry page needs modules is refused", async ({ shell }) => {
 // The app talks to its own services and to nothing else, and it talks through
 // ngc.js. This is the round trip: the app asks, the shell answers, the app
 // puts the answer on screen.
+// THE SECOND WAY, and it was open for the length of one task. The user
+// interfaces of the apps NGC ships are files of this repository, and the first
+// draft of task 25 put them under public/ - so
+// /assets/apps/terminal/index.html was a page of NGC's OWN origin: reachable by
+// its address, with the shell's storage, cookies and session in reach, and
+// without one of the walls this file builds. csp.spec.js found it by walking
+// the web root; this case asks the SERVER, because a file that is not in the
+// tree can still be handed out by a route somebody wrote.
+test("an app's own files are no document of the shell's origin", async ({ shell }) => {
+  const asked = {};
+  for (const path of [
+    "/assets/apps/terminal/index.html",
+    "/assets/apps/calculator/index.html",
+    "/assets/apps/terminal/app.js",
+    "/assets/apps/calculator/app.css",
+  ]) {
+    asked[path] = await shell.evaluate(async (p) => {
+      const r = await fetch(p);
+      return r.status;
+    }, path);
+  }
+  expect(Object.values(asked), JSON.stringify(asked)).toEqual([404, 404, 404, 404]);
+
+  // The door the test harness hands them over through shares this origin, so
+  // it would be the same hole one step further: it answers text/plain and says
+  // nosniff, and that is what makes it a file instead of a page.
+  const door = await shell.evaluate(async () => {
+    const r = await fetch("/mock/ui/terminal/index.html");
+    return { status: r.status, type: r.headers.get("content-type") ?? "", sniff: r.headers.get("x-content-type-options") ?? "" };
+  });
+  expect(door.status).toBe(200);
+  expect(door.type).toContain("text/plain");
+  expect(door.sniff).toBe("nosniff");
+});
+
 test("an app reaches its own service through ngc.js", async ({ shell }) => {
   await openTerminal(shell);
   const frame = shell.frameLocator(".appframe");

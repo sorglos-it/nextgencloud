@@ -130,10 +130,20 @@ test.describe("a user interface that does not fit its proof", () => {
     // And the honest path still works: the refusal was about those bytes, not
     // about that app. Without this line the two above would also be true of a
     // shell that had simply stopped opening windows.
+    //
+    // WHAT IT LOOKS AT CHANGED WITH TASK 25, the assurance did not. This line
+    // read getByText("Terminal"), the heading of the fixture page the stand-in
+    // carried while nobody had written the terminal yet. The terminal is a real
+    // app now, and its own surface is what says the honest archive ran: the
+    // field it asks for commands with is there only if the page, its stylesheet
+    // and its script all came out of the archive and ngc.js reached the shell.
+    // That is strictly more than a heading, which a page shows even when its
+    // script never ran.
     await shell.getByRole("button", { name: "Schließen" }).click();
     await shell.evaluate(() => { window.__ngcTest.swapUI = false; });
     await openTerminal(shell);
-    await expect(shell.frameLocator(".appframe").getByText("Terminal")).toBeVisible();
+    await expect(shell.frameLocator(".appframe").getByRole("textbox", { name: "Eingabe" }))
+      .toBeVisible();
   });
 });
 

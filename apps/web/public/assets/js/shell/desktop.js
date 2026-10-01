@@ -21,7 +21,8 @@ import {
 // THE CALCULATOR LEFT THIS LIST IN TASK 25, and that is the whole of that task:
 // it is "org.sorglos.calculator" now - the name shared/testdata gives it - and
 // it runs in the frame like an app out of the store, against a proven user
-// interface of its own (public/assets/apps/calculator/). It could never have
+// interface of its own (apps/web/assets/apps/calculator/, which is NOT in the
+// web root: see shell/fake-link.js). It could never have
 // stayed: core.AppParams refuses a core app ("ngc.") for ngc.desktop/ui and
 // ngc.desktop/ui-proof alike, so "ngc.calc" could not even have been asked for
 // a user interface. What it cost while it stood here is what the move bought -

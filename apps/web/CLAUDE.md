@@ -14,8 +14,11 @@ apps/web/
 │   └── assets/      Desktop (Fenster, Taskleiste, Startmenü, Anmeldung), die Verträge in
 │                    JavaScript, ngc.js für Apps (MIT); Fremdcode für den Browser in
 │                    assets/vendor/
-│       └── apps/    je mitgelieferte App ein Ordner mit genau dem, was im ui/ ihres
-│                    Pakets liegt: index.html, app.css, app.js (Rechner, Terminal)
+├── assets/          NICHT im Webroot, und das ist der Zweck: je mitgelieferte App ein
+│                    Ordner (apps/calculator, apps/terminal) mit genau dem, was im ui/
+│                    ihres Pakets liegt - index.html, app.css, app.js. Eine .html unter
+│                    public/ wäre ein Dokument der Herkunft der Shell und damit genau
+│                    der zweite Weg, den der abgeschottete Rahmen zumacht.
 ├── classes/         PHP: web.json und trust-anchor.json lesen, Liste der API-Server
 ├── templates/       Gerüst der Desktop-Seite
 └── tests/           Playwright; npm nur hier
