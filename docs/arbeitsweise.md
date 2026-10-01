@@ -415,6 +415,32 @@ ohne deine üblichen Schalter — ein Lauf ohne Filter, ein Build ohne Cache —
 **lies das Ergebnis**, auch wenn es nicht das war, was du messen wolltest. Dort
 liegt, was deine Schalter sonst zudecken.
 
+### Eine Regel, die zu streng ist, stirbt nur auf einer Engine
+
+Ein Strang sollte die Schutz-Richtlinie für die ausgelieferten Dateien
+festlegen. Seine erste Annahme: die Richtlinie der Seite ist dort
+**überflüssig** — eine `.js`-Datei ist kein Dokument. Er hat sie trotzdem
+gemessen, auf beiden Engines, und das Ergebnis war nicht überflüssig, sondern
+**schädlich**: auf der Worker-Datei lebt die Richtlinie, und ohne
+`script-src 'self'` stirbt der Worker **auf WebKit** — das heißt, keine
+Passwort-Anmeldung in Safari. **Chromium merkt davon nichts.**
+
+Sein Satz dazu: *"Hätte ich nur Chromium gemessen, wäre der falsche Wert
+ausgeliefert worden."*
+
+Das ist die Gegenrichtung zu allem, was man über Engines lernt. Dass eine
+Fähigkeit **fehlt**, merkt man: etwas geht nicht. Dass eine **Einschränkung zu
+eng** ist, merkt man nur dort, wo sie greift — und sie greift nicht überall
+gleich.
+
+**Die Regel:** Jede Einschränkung, die du setzt — eine Richtlinie, eine
+Obergrenze, ein erlaubter Zeichensatz, ein Zeitfenster — wird auf **jeder**
+Engine gemessen, in die du ausliefern willst, und nicht nur auf der, auf der du
+entwickelst. Und lass die **Begründung** daneben stehen, auch für das, was du
+weggelassen hast: er hat `connect-src` bewusst nicht gesetzt und auf beiden
+Engines gemessen, dass es keinen Weg aus dem Worker gibt. Ein weggelassener Wert
+ohne Messung daneben ist nicht dasselbe wie ein geprüfter.
+
 ### Eine Pipe verschluckt das Urteil
 
 Der Koordinator hat einen zusammengeführten Stand geprüft, das Ergebnis
@@ -1032,6 +1058,15 @@ Nächste hört auf zu suchen.
 Der Prüfer hat es so zusammengefasst, und daran erkennt man den Unterschied:
 **die Dateisuche hatte sechs Schreibweisen gelernt, die Leitungsprüfung kannte
 weiter genau eine.**
+
+**Und sie beweist nichts außerhalb ihres Pfades.** Ich habe `find apps/web -name
+'*.conf'` laufen lassen, nichts gefunden und einem Strang geschrieben: *"Es gibt
+in diesem Repo keine Serverkonfiguration."* Der Satz war wahr und die
+Schlussfolgerung falsch — die Konfiguration lag in **einem anderen Repo**, das
+Installationsskript schreibt sie selbst, und sie setzt genau die Kopfzeilen
+nicht, um die es ging. Wo du `-name` und einen Pfad angibst, schreib das Ergebnis
+**mit dem Pfad** hin: nicht "es gibt keine", sondern "unter `apps/web` liegt
+keine". Der Unterschied ist der ganze Fund.
 
 ### Ein Test, dessen Name mehr verspricht, als er zählt
 
