@@ -76,8 +76,11 @@ type Options struct {
 	// NOT used here: it takes only "https://", so it would refuse
 	// http://localhost:8101 and make local development impossible — and a
 	// check that blocks development is taken out again, after which nothing
-	// checks at all. Do not "fix" this by adding it; the grammar belongs where
-	// the list comes from, in the trust list and web.json.
+	// checks at all. Do not "fix" this by adding it: the grammar belongs where
+	// the list comes from, and it is already there — trust.List.validateUsers
+	// runs it over rp.origins and config.Web.Validate over web.json. What is
+	// left for this package is the one thing those two cannot see, that the
+	// values end up in a matcher: checkOrigins.
 	Origins []string
 	// Handshake is the time the whole Noise handshake may take, from the
 	// connection being ours to the finished transport; zero means
