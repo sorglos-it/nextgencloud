@@ -100,6 +100,9 @@ export async function standInOn(page) {
 // Hence: ONE GAP PER ACTION, and a case asks for the actions it really
 // performs. Not one guard per file, and not one per topic.
 //
+//   curves              the two generateKey calls shell/main.js browserFits()
+//                       makes, and nothing else - see shellGap below for why
+//                       generateKey is the whole action for that ONE question.
 //   ed25519             a key, a signature, a check, a key read back in.
 //                       auth/keys.js newSessionKeys, contracts/sign.js verify.
 //   ed25519FromSeed     the public half of a password seed, and it has to be
@@ -115,13 +118,13 @@ export async function standInOn(page) {
 //
 // Measured answers, so nobody has to guess what a "no" means:
 //
-//   chromium  all four empty.
-//   firefox   ed25519 and x25519 empty; the two steps that read a public half
+//   chromium  all five empty.
+//   firefox   curves, ed25519 and x25519 empty; the two steps that read a public half
 //             out of a document answer OperationError. Firefox takes the
 //             document IN and then refuses the JWK export, because a PKCS#8
 //             seed carries no public key and Firefox, unlike Chrome and Safari,
 //             does not work it out.
-//   webkit    all four, at generateKey, with NotSupportedError: the curves
+//   webkit    all five, at generateKey, with NotSupportedError: the curves
 //             themselves are missing.
 //
 // Nothing here is decided by the engine's name. The day Playwright's WebKit
@@ -196,9 +199,15 @@ export async function sessionKeyGaps(shell) {
         const sig = await crypto.subtle.sign({ name: "Ed25519" }, signing.privateKey, message);
         return (await crypto.subtle.verify({ name: "Ed25519" }, signing.publicKey, sig, message)) === true;
       }],
+      // The key that comes back in has to CHECK the signature, not merely exist.
+      // An exportKey("raw") that hands back 32 valid bytes of another key gets a
+      // "does it import" question through - measured - and contracts/sign.js
+      // then verifies every envelope against the wrong key.
       ["Ed25519 a public key back in as raw", async () => {
         const raw = new Uint8Array(await crypto.subtle.exportKey("raw", signing.publicKey));
-        return !!(await crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]));
+        const back = await crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]);
+        const sig = await crypto.subtle.sign({ name: "Ed25519" }, signing.privateKey, message);
+        return (await crypto.subtle.verify({ name: "Ed25519" }, back, sig, message)) === true;
       }],
     ]);
 
@@ -225,27 +234,42 @@ export async function sessionKeyGaps(shell) {
       }],
     ]);
 
+    // contracts/noise.js importPublic, byte for byte its two doors in its order.
+    const importPublicX25519 = async (raw) => {
+      try {
+        return await crypto.subtle.importKey("raw", raw, { name: "X25519" }, false, []);
+      } catch (err) {
+        if (err.name !== "NotSupportedError" && err.name !== "DataError") throw err;
+        return crypto.subtle.importKey("spki", wrap(SPKI_X25519, raw), { name: "X25519" }, false, []);
+      }
+    };
+
     // contracts/noise.js newKeypair, importPublic, dh.
+    let peerBack = null;
     const x25519 = curves !== "" ? curves : await walk([
       ["X25519 public key as raw bytes", async () =>
         (new Uint8Array(await crypto.subtle.exportKey("raw", own.publicKey))).length === 32],
-      // importPublic takes "raw" and falls back to "spki", so either door is
-      // enough here - and it falls back on exactly the two errors noise.js
-      // falls back on. Catching more than that would be a guard that says yes
-      // where importPublic lets the error through and the handshake stops.
       ["X25519 a peer public key back in", async () => {
         const raw = new Uint8Array(await crypto.subtle.exportKey("raw", peer.publicKey));
-        try {
-          return !!(await crypto.subtle.importKey("raw", raw, { name: "X25519" }, false, []));
-        } catch (err) {
-          if (err.name !== "NotSupportedError" && err.name !== "DataError") throw err;
-          return !!(await crypto.subtle.importKey(
-            "spki", wrap(SPKI_X25519, raw), { name: "X25519" }, false, []));
-        }
+        peerBack = await importPublicX25519(raw);
+        return !!peerBack;
       }],
-      ["X25519 deriveBits", async () =>
-        (new Uint8Array(await crypto.subtle.deriveBits(
-          { name: "X25519", public: peer.publicKey }, own.privateKey, 256))).length === 32],
+      // Derived against the key that came BACK from the exported bytes, never
+      // against the CryptoKey those bytes came from. That is what a session
+      // does: newKeypair() hands the raw bytes out, auth/keys.js puts them in
+      // the certificate, and the peer derives from those bytes and no others.
+      // Measured: an exportKey("raw") that lies kept every gap empty while the
+      // fresh handshake in the production module died with OperationError, for
+      // exactly as long as this step derived from own CryptoKeys.
+      ["X25519 deriveBits", async () => {
+        const mine = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: peerBack }, own.privateKey, 256));
+        const ownRaw = new Uint8Array(await crypto.subtle.exportKey("raw", own.publicKey));
+        const ownBack = await importPublicX25519(ownRaw);
+        const theirs = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: ownBack }, peer.privateKey, 256));
+        return mine.length === 32 && same(mine, theirs);
+      }],
     ]);
 
     // contracts/noise.js publicOf, reached from HandshakeKK.forTest alone.
@@ -302,6 +326,11 @@ export async function loginGap(shell) {
   return g.ed25519 || g.x25519 || g.ed25519FromSeed;
 }
 
+// An Ed25519 signature, made or checked - and nothing about a password seed.
+export async function signatureGap(shell) {
+  return (await sessionKeyGaps(shell)).ed25519;
+}
+
 // A handshake with FRESH keys - newKeypair() and HandshakeKK.of(), the path NGC
 // takes at runtime. No signature, no key document: X25519 alone.
 export async function handshakeGap(shell) {
@@ -351,9 +380,31 @@ export async function skipWithoutFixedKeys(shell) {
   test.skip(gap !== "", `this engine cannot run a handshake from fixed keys - ${gap}`);
 }
 
-// A boolean for the one case that does not skip but BRANCHES on it:
+// An Ed25519 signature, made or checked. shell/world.spec.js needs it for the
+// stand-in world it builds and for the trust chains it verifies; no password
+// seed is read anywhere in those, so they must not be asked for one.
+export async function skipWithoutSignatures(shell) {
+  const gap = await signatureGap(shell);
+  test.skip(gap !== "", `this engine cannot make or check an Ed25519 signature - ${gap}`);
+}
+
+// An X25519 key pair to hand to a peer, and a secret derived with it.
+export async function skipWithoutSessionKeys(shell) {
+  const gap = await handshakeGap(shell);
+  test.skip(gap !== "", `this engine cannot make an X25519 session key pair - ${gap}`);
+}
+
+// A boolean, for the one case that does not skip but BRANCHES on it:
 // shell/boot.spec.js, which runs on every engine and pins that the boot ends in
 // one of its two legal endings.
+//
+// IT IS THE ONLY CALLER, and that is now true - it was not when this comment
+// first said so. shell/world.spec.js used the same function to SKIP with, and
+// when this task changed what it means (from "the two curves are there" to "a
+// password login goes through"), three cases there that are green on Firefox
+// went quietly out, one of them a security check. The comment said "the one
+// case"; the grep said two. Whoever adds a second caller gives it a gap of its
+// own instead - the gaps above are the vocabulary for that.
 export async function hasSessionKeys(shell) {
   return (await loginGap(shell)) === "";
 }

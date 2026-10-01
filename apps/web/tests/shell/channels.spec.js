@@ -6,8 +6,11 @@ import { test, expect, skipWithoutLogin } from "../fixtures/page.js";
 // Every case here needs a Noise session, and a Noise session needs X25519 and
 // Ed25519. Playwright's WebKit has neither, so the whole file skips there -
 // MEASURED by doing the work a login does, never decided by the engine's name.
-// Every case here needs the desktop behind the login, so it is the login that
-// is asked about (fixtures/page.js, skipWithoutLogin).
+// No case here opens a desktop - they call net/testlink.js connectForTest() in
+// the page. That builds a session the way a login does, down to
+// proof.publicFromSeed (testlink.js:54), so the capability a login needs is the
+// capability these need, and skipWithoutLogin is the right question. Measured on
+// Firefox: connectForTest() answers OperationError there.
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
 });
