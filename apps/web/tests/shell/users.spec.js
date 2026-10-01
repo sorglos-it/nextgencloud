@@ -110,16 +110,27 @@ export const APPS = [
 // needs no signature: tunnel.checkCode compares numbers and bytes.
 export async function genesis() {
   const { b64decode } = await import("/assets/js/contracts/b64.js");
-  const { decode, Budget } = await import("/assets/js/contracts/json.js");
   const trust = await import("/assets/js/contracts/trust.js");
   const payload = b64decode(GENESIS_PAYLOAD);
+  return { list: await decodeList(payload), hash: await trust.hash({ payload }), payload };
+}
+
+// decodeList reads a payload through the contract's own decoder and its own
+// shape, but WITHOUT the key import trust.parseList does on top. The genesis
+// of shared/testdata carries a PASSKEY, and an engine without Ed25519 can
+// import none - parseList would refuse a perfectly good list there and every
+// case built on it would be measuring the engine. What the shell really does
+// with a chain is the TrustStore's business, and that is measured with the
+// real one.
+export async function decodeList(payload) {
+  const { decode, Budget } = await import("/assets/js/contracts/json.js");
+  const trust = await import("/assets/js/contracts/trust.js");
   const budget = new Budget({ size: 4 << 20, items: {
     "rp/origins": 8, users: 10000, "users/*/roles": 256, "users/*/keys": 16,
     roles: 256, "roles/*/black": 256, "roles/*/white": 256,
     nodes: 256, "nodes/*/rootUsers": 256, "nodes/*/rootRoles": 256, stores: 64, auto: 64,
   } });
-  const list = decode(payload, budget, trust.listShape);
-  return { list, hash: await trust.hash({ payload }), payload };
+  return decode(payload, budget, trust.listShape);
 }
 
 const GENESIS_PAYLOAD = ${JSON.stringify(null)}; // replaced by serveWorld
@@ -136,30 +147,70 @@ export async function pairCode(version, prefix = "ngc-pair:") {
   return prefix + b64encode(enc.encode(JSON.stringify(doc)));
 }
 
-// world builds the link, the verified version and the session the app is
+// world builds the link, the version in force and the session the app is
 // given. cfg replaces single answers; everything it does not name stays as
 // DEFAULTS has it.
+//
+// THE SPLIT THIS TURNS ON, and Fixrunde 2 is about exactly it: the API KEEPS
+// the chain, and this browser has a version IN FORCE. Two different things.
+// The version in force does NOT move because something was sent - it moves
+// when the chain is followed, and that is what refresh does. The stand-in
+// this file had before held one list and moved it itself, which hid the fork
+// K2 is about.
+//
+// refresh here answers with a NUMBER and follows the kept chain, by the rules
+// the real TrustStore keeps. Those rules are not taken on trust: the case
+// "refresh answers with a number, and only a higher hint asks anybody"
+// measures them against the REAL TrustStore, over a real chain out of
+// shared/testdata and a real fetch. What this one does NOT do is check a
+// signature while following - trust.advance does that in the real store, and
+// a case that needed it here would be measuring the store and not this app.
 export async function world(cfg = {}) {
   const answers = { __proto__: null, ...DEFAULTS, ...cfg.answers };
   const notices = new Set();
   const version = cfg.noVersion === true ? null
     : cfg.signable === true ? await signableVersion() : await genesis();
+
+  // The chain the API keeps. Index 0 is seq 1.
+  const kept = version === null ? [] : [signedOf(version.payload)];
+  let inForce = version;
+  if (cfg.apiAhead === true && version !== null) {
+    kept.push(signedOf((await nextVersion(version)).payload));
+  }
   if (answers["ngc.users/pair-code"] === null && version !== null) {
     answers["ngc.users/pair-code"] = {
       code: await pairCode(cfg.codeFor === "next" ? await nextVersion(version) : version),
       expires: 1790086400,
     };
   }
+  // ngc.users/api/trust is flow "in": the body travels as opts.stream, and
+  // the API answers with the number of the version that now stands. It KEEPS
+  // it; nothing here moves what this browser has in force.
+  answers["ngc.users/trust"] = async (body) => {
+    const t = await import("/assets/js/contracts/trust.js");
+    const sg = t.parseSigned(body);
+    const list = await decodeList(sg.payload);
+    kept.push({ payload: sg.payload, proof: sg.proof });
+    return { seq: list.seq };
+  };
+
   // What the remote received. The cases read these instead of guessing from
   // the screen: the bytes are the contract, the screen is only its face.
   window.__ngcCalls = [];
   window.__ngcSent = [];
-  window.__ngcRefreshed = 0;
+  window.__ngcHints = [];
 
   let logPage = 0;
   const link = {
-    async call(app, service, name, params) {
-      window.__ngcCalls.push({ app, service, name, params: params ? new Uint8Array(params) : null });
+    // The shortcut the desktop's link carries, member for member as
+    // apps/store.js hands it over: params as bytes, and one option bag whose
+    // stream is the body of a flow-"in" action.
+    async call(app, service, name, params, opts) {
+      const body = await collect(opts?.stream);
+      window.__ngcCalls.push({
+        app, service, name, params: params ? new Uint8Array(params) : null, body,
+      });
+      if (body.length > 0) window.__ngcSent.push({ app, service, name, bytes: body });
       if (app === "ngc.desktop" && name === "apps") return enc.encode(JSON.stringify(APPS));
       let key = app + "/" + name;
       if (key === "ngc.users/log") {
@@ -169,78 +220,117 @@ export async function world(cfg = {}) {
       const a = answers[key];
       if (a === undefined) throw new Error("world: nothing for " + key);
       if (a instanceof Error) throw a;
-      return enc.encode(typeof a === "string" ? a : JSON.stringify(a));
-    },
-    // The one channel that stays open and that the app writes on:
-    // ngc.users/api/trust, flow "in". It collects what was sent and answers
-    // with the result of the action.
-    async open(app, service, name) {
-      const parts = [];
-      const s = {
-        onData: null, onClose: null,
-        send(bytes) { parts.push(new Uint8Array(bytes)); },
-        end() {
-          let n = 0;
-          for (const p of parts) n += p.length;
-          const all = new Uint8Array(n);
-          let at = 0;
-          for (const p of parts) { all.set(p, at); at += p.length; }
-          window.__ngcSent.push({ app, service, name, bytes: all });
-          const a = answers[app + "/" + name];
-          setTimeout(() => {
-            s.onData?.(enc.encode(JSON.stringify(a === undefined ? {} : a)));
-            s.onClose?.(window.__ngcCloseWith ?? "ok", "");
-          }, 0);
-        },
-        close() {},
-      };
-      return s;
+      const v = typeof a === "function" ? await a(body) : a;
+      return enc.encode(typeof v === "string" ? v : JSON.stringify(v));
     },
     onNotice(fn) { if (typeof fn === "function") notices.add(fn); },
   };
 
-  let current = version;
   const trust = {
-    current: () => current,
-    async refresh() {
-      window.__ngcRefreshed++;
-      if (cfg.refreshTo === "next") current = await nextVersion(version);
-      return current;
+    current: () => inForce,
+    // A NUMBER in, a NUMBER out - and a hint that is not higher than the
+    // version in force asks nobody.
+    async refresh(hintSeq) {
+      window.__ngcHints.push(hintSeq);
+      if (inForce === null) throw new Error("world: no list in force");
+      const want = Number.isSafeInteger(hintSeq) && hintSeq >= 1 ? hintSeq : 0;
+      if (want <= inForce.list.seq) return inForce.list.seq;
+      // stuck is the browser that did not get there: the write went through,
+      // the following did not.
+      if (cfg.stuck === true) return inForce.list.seq;
+      const t = await import("/assets/js/contracts/trust.js");
+      for (let i = inForce.list.seq; i < kept.length; i++) {
+        const list = await decodeList(kept[i].payload);
+        inForce = {
+          list, hash: await t.hash({ payload: kept[i].payload }),
+          signed: kept[i], payload: kept[i].payload,
+        };
+      }
+      return inForce.list.seq;
     },
   };
   if (cfg.noRefresh === true) delete trust.refresh;
 
-  const session = cfg.noSession === true ? null : {
-    now: () => 1790100000,
-    async prove(purpose, payload) {
-      const s = await signer();
-      return s(purpose, payload);
-    },
-  };
+  // The session says WHOSE it is, and nothing else this app needs. It does
+  // NOT sign a trust list: a session key stands in no list, so such a
+  // signature would never verify. The person's own key is asked for by
+  // confirm.js.
+  const session = cfg.noSession === true ? null : { user: ADMIN_ID };
   return { link, trust, session, apps: APPS };
 }
 
-// signableVersion is the same installation with one admin: the key this file
-// made. Only then can the shell's own trust.advance check what it just
-// signed, which is what buildNextVersion does before anything goes out.
+// collect reads a body stream into one array, the way the link does.
+async function collect(stream) {
+  if (!stream) return new Uint8Array(0);
+  const reader = stream.getReader();
+  const parts = [];
+  let n = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const v = new Uint8Array(value);
+    parts.push(v);
+    n += v.length;
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+
+// One version of the kept chain. The proof of version 1 is never looked at -
+// trust.advance checks the versions AFTER the one in force, never that one.
+const signedOf = (payload) => ({
+  payload,
+  proof: {
+    kind: "password", kid: "AAAAAAAAAAAAAAAAAAAAAA", sig: new Uint8Array(64).fill(8),
+    authData: new Uint8Array(0), clientData: new Uint8Array(0),
+  },
+});
+
+export const ADMIN_ID = "ISEhISEhISEhISEhISEhIQ";
+export const PASSWORD = "Heimnetz-2026";
+// The cheapest parameters proof.validateKDF allows: this key is derived again
+// on every signature, and the case is about WHO signs, not about how long
+// Argon2 takes.
+const KDF = { alg: "argon2id", salt: new Uint8Array(16).fill(5), m: 19456, t: 1, p: 1 };
+
+// adminKey is the password key of the admin, derived from PASSWORD with the
+// KDF the list carries - so confirm.js, which derives it again out of what
+// the person types, really produces a signature this list verifies.
+let derived = null;
+export async function adminKey() {
+  if (derived) return derived;
+  const sign = await import("/assets/js/contracts/sign.js");
+  const proof = await import("/assets/js/contracts/proof.js");
+  const seed = await proof.deriveSeed(PASSWORD, KDF);
+  const pub = await proof.publicFromSeed(seed);
+  seed.fill(0);
+  derived = {
+    id: await sign.keyIDAsync(pub), kind: "password", alg: "EdDSA", pub,
+    credId: new Uint8Array(0), kdf: KDF,
+  };
+  return derived;
+}
+
+// signableVersion is the same installation with one admin, whose key is the
+// one PASSWORD derives. Only then can the shell's own trust.advance check
+// what the person just signed, which is what buildNextVersion does before
+// anything goes out.
 async function signableVersion() {
   const trust = await import("/assets/js/contracts/trust.js");
   const g = await genesis();
-  const s = await signer();
   const list = structuredClone(g.list);
-  list.users = [{ id: "ISEhISEhISEhISEhISEhIQ", name: "admin", roles: ["admin"], keys: [{
-    id: s.kid, kind: "password", alg: "EdDSA", pub: s.pub, credId: new Uint8Array(0),
-    kdf: { alg: "argon2id", salt: new Uint8Array(16).fill(1), m: 65536, t: 3, p: 1 },
-  }] }];
-  // No passkey in this list, so it names no party to ask one of.
+  list.users = [{ id: ADMIN_ID, name: "admin", roles: ["admin"], keys: [await adminKey()] }];
+  // No passkey in this list, so it names no party to ask one of - and
+  // confirm.js therefore asks for the password.
   list.rp = { id: "", origins: [] };
   const payload = trust.encodeList(list);
   return { list, hash: await trust.hash({ payload }), payload };
 }
 
-// nextVersion is version 2 of the same installation, built the way the shell
-// builds one: it is only ever used to hand the app a pairing code that names
-// a number the shell does not have yet.
+// nextVersion is version 2 of the same installation: the one a pairing code
+// can name that the shell has not followed to yet.
 async function nextVersion(version) {
   const trust = await import("/assets/js/contracts/trust.js");
   const next = structuredClone(version.list);
@@ -249,29 +339,6 @@ async function nextVersion(version) {
   next.issued = 1790050000;
   const payload = trust.encodeList(next);
   return { list: next, hash: await trust.hash({ payload }), payload };
-}
-
-// signer makes an Ed25519 password key and signs with it. Only the cases
-// that really sign a version reach it, and those skip where Ed25519 is not
-// there.
-let made = null;
-export async function signer() {
-  if (made) return made;
-  const sign = await import("/assets/js/contracts/sign.js");
-  const proof = await import("/assets/js/contracts/proof.js");
-  const seed = crypto.getRandomValues(new Uint8Array(32));
-  const priv = await proof.privateFromSeed(seed);
-  const pub = await proof.publicFromSeed(seed);
-  const kid = await sign.keyIDAsync(pub);
-  made = async (purpose, payload) => ({
-    kind: "password", kid,
-    sig: new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
-      sign.message(purpose, payload))),
-    authData: new Uint8Array(0), clientData: new Uint8Array(0),
-  });
-  made.pub = pub;
-  made.kid = kid;
-  return made;
 }
 
 // fakeWorld is what shell/main.js imports. Same shape as the stand-in it
@@ -287,6 +354,34 @@ export async function fakeWorld() {
 // repository so the version the cases work with is the one Go signs.
 import { vectors } from "../fixtures/vectors.js";
 const GENESIS = vectors("trust.json")[0];
+
+// The four-version chain of shared/testdata: what the real TrustStore is
+// measured over below.
+const GENESIS_CHAIN = vectors("trust.json")
+  .find((c) => c.valid && c.anchor.seq === 1 && c.chain.length === 4);
+
+// Does this engine's Web Crypto know Ed25519? Every key in trust.json is
+// Ed25519, so an engine without it can verify no version of any chain there.
+// Probed with a real key out of the fixture, the way trustlist.spec.js does
+// it, never decided by the engine's name.
+async function hasEd25519(page, c) {
+  return page.evaluate(async (one) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const payload = JSON.parse(new TextDecoder().decode(b64decode(one.chain[0].payload)));
+    let pub = null;
+    for (const u of payload.users) {
+      for (const k of u.keys) {
+        if (k.kind === "password") pub = k.pub;
+      }
+    }
+    try {
+      await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, c);
+}
 
 async function serveWorld(page) {
   const src = WORLD.replace("const GENESIS_PAYLOAD = null;",
@@ -321,6 +416,7 @@ async function mount(page, cfg = {}) {
     Object.assign(host.style, { position: "fixed", inset: "0", zIndex: "99999", overflow: "auto" });
     host.className = "body";
     document.body.append(host);
+    window.__ngcCtx = ctx;
     window.__ngcClose = usersApp({ body: host }, ctx);
   }, cfg);
   await expect(page.getByRole("tab", { name: "Benutzer", exact: true })).toBeVisible();
@@ -423,6 +519,18 @@ test("an address that is no tunnel address is never offered", async ({ page }) =
 });
 
 // ---------------------------------------------------------------- 3 new version
+//
+// sign answers the question confirm.js asks for the person's own key. A
+// version of the trust list is verified against a key that stands in the
+// version BEFORE it, so the session cannot sign one - the person does.
+async function sign(page, password = "Heimnetz-2026") {
+  const q = page.locator(".confirmbox");
+  await expect(q).toBeVisible();
+  await q.locator("#confirmpw").fill(password);
+  await q.getByRole("button", { name: "Bestätigen", exact: true }).click();
+  await expect(q).toHaveCount(0);
+}
+
 test("joining a controller builds version N+1, checks it and sends exactly those bytes",
   async ({ page }) => {
     test.skip(!(await hasSessionKeys(page)),
@@ -430,23 +538,25 @@ test("joining a controller builds version N+1, checks it and sends exactly those
     const out = await page.evaluate(async () => {
       const users = await import("/assets/js/apps/users.js");
       const trust = await import("/assets/js/contracts/trust.js");
-      const { world, signer } = await import("/assets/js/shell/fake-link.js");
+      const { world, adminKey, PASSWORD } = await import("/assets/js/shell/fake-link.js");
       const sign = await import("/assets/js/contracts/sign.js");
+      const proof = await import("/assets/js/contracts/proof.js");
       const { b64decode, b64encode, equal } = await import("/assets/js/contracts/b64.js");
 
-      // A version of this installation whose admin is the key this test
-      // holds, so the shell's own advance() can check what it just signed.
-      const w = await world({});
-      const s = await signer();
-      const base = structuredClone(w.trust.current().list);
-      base.users = [{ id: "ISEhISEhISEhISEhISEhIQ", name: "admin", roles: ["admin"], keys: [{
-        id: s.kid, kind: "password", alg: "EdDSA", pub: s.pub, credId: new Uint8Array(0),
-        kdf: { alg: "argon2id", salt: new Uint8Array(16).fill(1), m: 65536, t: 3, p: 1 },
-      }] }];
-      base.rp = { id: "", origins: [] }; // no passkey in this list, so no party
-      if (!trust.validateList(base)) return { error: "the base version is not a valid list" };
-      const payload = trust.encodeList(base);
-      const version = { list: base, hash: await trust.hash({ payload }) };
+      // The version in force of an installation whose one admin is the key
+      // PASSWORD derives - so the shell's own advance() can check what was
+      // just signed with it.
+      const w = await world({ signable: true });
+      const version = w.trust.current();
+      const key = await adminKey();
+      const seed = await proof.deriveSeed(PASSWORD, key.kdf);
+      const priv = await proof.privateFromSeed(seed);
+      const signer = async (b) => ({
+        kind: "password", kid: key.id,
+        sig: new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, priv,
+          sign.message(sign.PURPOSE_TRUST_LIST, b))),
+        authData: new Uint8Array(0), clientData: new Uint8Array(0),
+      });
 
       const built = await users.buildNextVersion(version, (next) => {
         next.nodes.push({
@@ -455,10 +565,10 @@ test("joining a controller builds version N+1, checks it and sends exactly those
           sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
           rootUsers: [], rootRoles: [],
         });
-      }, { now: 1790100000, signer: (b) => s(sign.PURPOSE_TRUST_LIST, b) });
+      }, { now: 1790100000, signer });
 
       const got = await trust.parseList(built.payload);
-      const before = structuredClone(base);
+      const before = structuredClone(version.list);
       before.seq = 0; before.prev = new Uint8Array(0); before.issued = 0; before.nodes = [];
       const after = structuredClone(got);
       after.seq = 0; after.prev = new Uint8Array(0); after.issued = 0; after.nodes = [];
@@ -484,27 +594,25 @@ test("joining a controller builds version N+1, checks it and sends exactly those
   });
 
 test("a change the trust list would refuse is never signed and never sent", async ({ page }) => {
-  test.skip(!(await hasSessionKeys(page)),
-    "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
   const out = await page.evaluate(async () => {
     const users = await import("/assets/js/apps/users.js");
-    const trust = await import("/assets/js/contracts/trust.js");
-    const { world, signer } = await import("/assets/js/shell/fake-link.js");
+    const { world } = await import("/assets/js/shell/fake-link.js");
     const w = await world({});
-    const s = await signer();
     let signed = 0;
-    const version = { list: w.trust.current().list, hash: w.trust.current().hash };
+    const version = w.trust.current();
     try {
       await users.buildNextVersion(version, (next) => {
         // Two nodes with the same id: trust.List.Validate refuses it.
         next.nodes.push({ ...next.nodes[0] });
-      }, { now: 1790100000, signer: async (b) => { signed++; return s("trustlist/v1", b); } });
+      }, { now: 1790100000, signer: async () => { signed++; return null; } });
       return { threw: "", signed };
     } catch (e) {
       return { threw: e.message, signed };
     }
   });
   expect(out.threw).toBe("Diese Änderung ergibt keine gültige Vertrauensliste.");
+  // The signature is the LAST thing to happen, so a change that does not hold
+  // up never gives one away.
   expect(out.signed).toBe(0);
 });
 
@@ -517,6 +625,7 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
+  await sign(page);
   await expect(app(page).locator(".pending .note")).toHaveText("Der Server »dienste« ist aufgenommen.");
 
   const sent = await page.evaluate(async () => {
@@ -530,6 +639,7 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
       seq: l.seq,
       nodes: l.nodes.map((n) => n.id),
       kind: s.proof.kind,
+      hints: window.__ngcHints,
     };
   });
   expect(sent.count).toBe(1);
@@ -537,9 +647,175 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
   expect(sent.seq).toBe(2);
   expect(sent.nodes).toEqual(["api-1", "ctl-1", "dienste"]);
   expect(sent.kind).toBe("password");
+  // The answer was NOT a receipt to throw away: its number went to refresh.
+  expect(sent.hints).toEqual([2]);
+});
+
+test("two servers taken in one after the other give n+1 and n+2, not two at one number",
+  async ({ page }) => {
+    // K2 OF FIXRUNDE 2, AND THE PROOF IT OWES. The version in force here does
+    // not move because something was sent: the API keeps what it was sent,
+    // this browser follows the chain. A surface that threw the answer away
+    // would build the second version on the SAME prev, and two versions at
+    // one seq are a FORK of the root everything else hangs from.
+    test.skip(!(await hasSessionKeys(page)),
+      "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+    await mount(page, { signable: true });
+    const start = await page.evaluate(() => {
+      const c = window.__ngcStart = window.__ngcCtx.trust.current();
+      return c.list.seq;
+    });
+    expect(start).toBe(1);
+    await openTab(page, "Server");
+
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note"))
+      .toHaveText("Der Server »dienste« ist aufgenommen.");
+
+    await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pendapi .note"))
+      .toHaveText("Der Server »api-2« ist aufgenommen.");
+
+    const out = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const chain = [];
+      for (const one of window.__ngcSent) chain.push(trust.parseSigned(one.bytes));
+      const seqs = [];
+      for (const v of chain) seqs.push((await trust.parseList(v.payload)).seq);
+      let together = "";
+      try {
+        // BOTH TOGETHER, from the version the shell started on. A fork does
+        // not pass this: the second version would not chain to the first.
+        together = String((await trust.advance(window.__ngcStart, chain)).list.seq);
+      } catch (e) {
+        together = "refused: " + e.message;
+      }
+      return { sent: chain.length, seqs, together, hints: window.__ngcHints,
+        inForce: window.__ngcCtx.trust.current().list.seq };
+    });
+    expect(out.sent).toBe(2);
+    expect(out.seqs).toEqual([2, 3]);
+    expect(out.together).toBe("3");
+    // Each answer's number went to refresh, and the version in force followed.
+    expect(out.hints).toEqual([2, 3]);
+    expect(out.inForce).toBe(3);
+  });
+
+test("a version this browser did not follow to stops the surface instead of forking it",
+  async ({ page }) => {
+    test.skip(!(await hasSessionKeys(page)),
+      "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+    // The write goes through, the following does not. Nothing more may be
+    // written from here - a second version on the old prev is the fork.
+    await mount(page, { signable: true, stuck: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note")).toHaveText(
+      "Der Server ist eingetragen. Bitte die Seite neu laden, damit NGC hier auf dem "
+      + "neuen Stand ist.");
+    const out = await page.evaluate(() => ({
+      sent: window.__ngcSent.length, inForce: window.__ngcCtx.trust.current().list.seq,
+    }));
+    expect(out.sent).toBe(1);
+    expect(out.inForce).toBe(1);
+  });
+
+test("Abbrechen at the question for the key sends nothing", async ({ page }) => {
+  test.skip(!(await hasSessionKeys(page)),
+    "no Ed25519 in this engine's Web Crypto: nothing here can sign a version");
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
+  const q = page.locator(".confirmbox");
+  await expect(q).toBeVisible();
+  await q.getByRole("button", { name: "Abbrechen" }).click();
+  await expect(app(page).locator(".pending .note")).toHaveText("Nichts geändert.");
+  expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
 });
 
 // ------------------------------------------------------------------ 4 pair code
+//
+// WHAT refresh REALLY IS, measured here against the REAL TrustStore and not
+// taken from anybody's word for it - the whole of K1 rests on these three
+// numbers. The chain is the four-version one out of shared/testdata, served
+// over the shell's own fetch; how often the API is asked is counted from the
+// requests themselves.
+test("refresh answers with a number, and only a higher hint asks anybody", async ({ page }) => {
+  const c = GENESIS_CHAIN;
+  test.skip(!(await hasEd25519(page, c)),
+    "no Ed25519 in this engine's Web Crypto: it can verify no version of this chain");
+  let visible = 1;
+  const asked = [];
+  await page.route(/\/api\/v1\/trust\?/, async (route) => {
+    const from = Number(new URL(route.request().url()).searchParams.get("from"));
+    asked.push(from);
+    const at = from - c.anchor.seq;
+    if (at < 0 || at > visible) {
+      await route.fulfill({ status: 404, contentType: "application/json; charset=utf-8",
+        body: JSON.stringify({ status: "error", code: "E_NOTFOUND", message: "Nicht gefunden." }) });
+      return;
+    }
+    if (at === visible) { await route.fulfill({ status: 204 }); return; }
+    const versions = c.chain.slice(at, visible);
+    await route.fulfill({ status: 200, contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({ versions, more: false }) });
+  });
+  // The API owns up to more versions. A trust hint is exactly this: something
+  // appeared that this browser has not followed to yet.
+  await page.exposeFunction("__more", () => { visible = c.chain.length; });
+  // Read from inside the page, BETWEEN the calls: an array read afterwards
+  // says only what the whole run came to, and "asked nobody" is a statement
+  // about one call.
+  await page.exposeFunction("__asked", () => asked.slice());
+  await page.goto("/");
+
+  const out = await page.evaluate(async (raw) => {
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const { TrustStore } = await import("/assets/js/shell/trustlist.js");
+    const s = new TrustStore();
+    const at1 = await s.bootstrap({ seq: raw.seq, hash: b64decode(raw.hash) });
+    const r = {};
+    r.at1 = at1;
+    // No number at all: the hint counts as 0, which is never higher than the
+    // version in force. THIS is the call users.js used to make.
+    r.none = await s.refresh();
+    r.typeOfNone = typeof r.none;
+    r.same = await s.refresh(1);
+    r.lower = await s.refresh(0);
+    r.askedSoFar = await window.__asked();
+    await window.__more();
+    r.higher = await s.refresh(4);
+    r.askedAfter = await window.__asked();
+    r.typeOfHigher = typeof r.higher;
+    r.inForce = s.current().list.seq;
+    // What a caller who took the answer for a version would have seen.
+    r.listOfAnswer = typeof r.higher === "object" ? "an object" : String(r.higher.list);
+    return r;
+  }, { seq: c.anchor.seq, hash: c.anchor.hash });
+
+  expect(out.at1).toBe(1);
+  // A NUMBER, not a version - and the three hints that are not higher than
+  // the version in force answer that number and ask nobody.
+  expect(out.typeOfNone).toBe("number");
+  expect(out.typeOfHigher).toBe("number");
+  expect([out.none, out.same, out.lower]).toEqual([1, 1, 1]);
+  // One request, and it was the bootstrap's: the three hints asked nobody.
+  expect(out.askedSoFar).toEqual([1]);
+  // A higher one follows the chain and answers with the number then in force.
+  expect(out.higher).toBe(4);
+  expect(out.inForce).toBe(4);
+  expect(out.askedAfter).toEqual([1, 2]);
+  // And the answer has no .list on it: a caller that read one got undefined.
+  expect(out.listOfAnswer).toBe("undefined");
+});
+
 test("a pairing code is shown only when it fits the version the shell verified",
   async ({ page }) => {
     await mount(page);
@@ -549,16 +825,19 @@ test("a pairing code is shown only when it fits the version the shell verified",
     await expect(code).toContainText("ngc-pair:");
     // No round trip to the trust list was needed: the code names the version
     // the shell already holds.
-    expect(await page.evaluate(() => window.__ngcRefreshed)).toBe(0);
+    expect(await page.evaluate(() => window.__ngcHints)).toEqual([]);
   });
 
 test("a pairing code that names a newer version makes the shell fetch the chain first",
   async ({ page }) => {
-    await mount(page, { codeFor: "next", refreshTo: "next" });
+    await mount(page, { codeFor: "next", apiAhead: true });
     await openTab(page, "Server");
     await app(page).getByRole("button", { name: "Kopplungscode zeigen" }).click();
     await expect(app(page).locator(".paircode .code")).toContainText("ngc-pair:");
-    expect(await page.evaluate(() => window.__ngcRefreshed)).toBe(1);
+    // The number asked for is the one the CODE names, not nothing: a refresh
+    // without it counts as 0 and asks nobody.
+    expect(await page.evaluate(() => window.__ngcHints)).toEqual([2]);
+    expect(await page.evaluate(() => window.__ngcCtx.trust.current().list.seq)).toBe(2);
   });
 
 test("a pairing code that fits no version of this installation is not shown", async ({ page }) => {
@@ -570,6 +849,7 @@ test("a pairing code that fits no version of this installation is not shown", as
   await expect(app(page).locator(".paircode .note")).toHaveText(
     "Dieser Code passt nicht zu dieser Anlage.");
   expect(await app(page).locator(".paircode .code").count()).toBe(0);
+  expect(await page.evaluate(() => window.__ngcHints)).toEqual([2]);
 });
 
 // --------------------------------------------------------------------- 5 rights
