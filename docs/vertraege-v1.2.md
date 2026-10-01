@@ -377,6 +377,52 @@ gehalten war nur „einer mehr als die Grenze". `>` zu `>=` zu machen blieb
 dass ein Test fällt. Wer Punkt 1 baut, stellt **beide** Zahlen: `500` geht durch,
 `501` nicht, und dem Vertrag werden dieselben zwei gestellt.
 
+## shared/trust — eine Speicher-Obergrenze, die unter -race nie halten kann
+
+**Gemessen am 01.10.2026.** `shared/trust/trust_test.go:653` hält `trust.Open`
+gegen ein Budget von `64<<10` zugeteilten Bytes. Das ist ein guter Zaun — aber er
+zählt **Zuteilungen**, und der Renn-Sucher teilt mehr zu. Damit kann er unter
+`-race` **nie** grün sein:
+
+| | Ergebnis |
+|---|---|
+| `go test -run TestSignatureBeforeDecoding ./shared/trust/` | **ok**, 0,303 s |
+| dasselbe mit `-race` | **FAIL**: `Open: 65928 bytes allocated` (Budget 65536) |
+
+Die Folge ist größer als die 400 Bytes: **`go test -race ./...` kann in keinem der
+vier Pläne grün werden**, weil jeder `shared/` mitführt. Ein Lauf, der immer rot
+ist, wird nicht gelesen — und ein `-race`, das niemand liest, findet keine
+Datenrennen.
+
+**Was zu tun ist — nicht das Budget anheben.** Ein Zaun, der für ein
+Werkzeug-Artefakt gelockert wird, ist dauerhaft lockerer. Stattdessen die beiden
+Zuteilungs-Zusicherungen (`Advance` in Zeile 646 und `Open` in Zeile 653)
+überspringen, **wenn der Renn-Sucher läuft**, mit dem Grund daneben. Go hat dafür
+keine Abfrage in der Standardbibliothek; idiomatisch ist ein Dateipaar im
+Testpaket:
+
+```go
+//go:build race
+package trust_test
+const raceEnabled = true
+```
+
+```go
+//go:build !race
+package trust_test
+const raceEnabled = false
+```
+
+Dann bleibt der Zaun im normalen Lauf **in voller Stärke** und sagt im
+`-race`-Lauf, warum er schweigt.
+
+**Nebenbei die Lehre, die mehr gekostet hat als dieser Punkt:** drei Pläne haben
+unabhängig gemeldet, `-race` sei auf dieser Maschine nicht fahrbar, weil ein
+C-Übersetzer fehle. Es liegt einer in der ESP-Werkzeugkette
+(`C:/esp/tools/llvm-mingw/bin/gcc.exe`, clang 23.1.1, Ziel
+`x86_64-w64-windows-gnu`), und `-race` läuft damit. **Null Datenrennen** über alle
+drei Server-Pläne, 60 Pakete grün, der einzige rote Fall ist dieser hier.
+
 ## Nicht vergessen
 
 - Die Zahlen aus Punkt 1 und 3 sind **gemessen**, nicht geschätzt. Wer sie in den
