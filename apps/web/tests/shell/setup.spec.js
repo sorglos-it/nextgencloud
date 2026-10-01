@@ -123,10 +123,10 @@ test("the code is asked for first, and the offer is checked with it", async ({ s
 });
 
 test("a man in the middle with other keys is refused", async ({ shell }) => {
-  // The mock signs its offer with ANOTHER code: whoever does not hold the
-  // code cannot make the MAC, which is the whole point of it. Its nodes
-  // carry other names and other keys, so anything of that offer on the
-  // screen would show up below.
+  // The mock MACs its offer with ANOTHER code: whoever does not hold the code
+  // cannot make that MAC, which is the whole point of it. Its nodes carry
+  // other keys, so the offer is a real one - just not this installation's.
+  // Anything of it that reached the screen would show up below.
   await fresh(shell, "offer=foreign");
   await shell.getByLabel("Einmal-Code").fill(CODE);
   await shell.getByRole("button", { name: "Weiter" }).click();
@@ -200,6 +200,31 @@ test("the one-time code never travels", async ({ shell }) => {
   expect(seen.join("\n"), "the setup really went over this wire").toContain("/api/v1/setup");
   expect(seen.join("\n"), "the login after it did too").toContain("/api/v1/login/finish");
   expect(frames.length, "the session really opened a socket").toBeGreaterThan(0);
+});
+
+test("a setup that went through never leaves the person with nothing", async ({ shell }) => {
+  await fresh(shell);
+  await shell.getByLabel("Einmal-Code").fill(CODE);
+  await shell.getByRole("button", { name: "Weiter" }).click();
+  await shell.getByLabel("Benutzername").fill(USER_NAME);
+  await shell.getByLabel("Passwort", { exact: true }).fill(PASSWORD);
+  await shell.getByLabel("Passwort wiederholen").fill(PASSWORD);
+  // The sign-in that follows the setup runs into a locked login. This is the
+  // worst moment there is: the installation IS set up by then, the one-time
+  // code is spent and there is no second one - so the one thing that must not
+  // happen is a page with nothing on it.
+  await tellMock(shell, "lock=30");
+  await shell.getByRole("button", { name: "Einrichten" }).click();
+  await expect(shell.getByText("NGC ist eingerichtet. Bitte jetzt anmelden.")).toBeVisible();
+  await expect(shell.getByRole("button", { name: "Anmelden", exact: true })).toBeVisible();
+
+  // And it really is set up: a reload finds the anchor this browser kept -
+  // /config.json still carries none - and goes straight to the mask, with no
+  // setup in front of it. That is the one measurement of rememberAnchor
+  // there is from outside.
+  await shell.reload();
+  await expect(shell.getByRole("button", { name: "Anmelden", exact: true })).toBeVisible();
+  await expect(shell.getByLabel("Einmal-Code")).toHaveCount(0);
 });
 
 test("the code is kept nowhere once it has been used", async ({ shell }) => {

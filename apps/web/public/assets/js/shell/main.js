@@ -3,8 +3,9 @@
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 import { loadConfig } from "../net/config.js";
-import { anchorFor, NOT_SET_UP } from "./trustlist.js";
+import { anchorFor } from "./trustlist.js";
 import { loginView } from "../auth/login.js";
+import { setupView } from "../auth/setup.js";
 import { el } from "./dom.js";
 // A STAND-IN, and the only line of the shell that knows about it. Task 17
 // built net/link.js and Task 20 shell/trustlist.js; what is still missing is
@@ -75,7 +76,6 @@ async function start() {
   // setup left in this browser. Without it there is no trust list to check
   // anything against, and nothing may be shown at all, not even the mask:
   // a login against an installation we cannot name is a login into the dark.
-  // Task 19 puts the initial setup in the place of that message.
   //
   // This gate stands BEFORE the login on purpose. The login checks the trust
   // list too, and that is belt and braces, not a duplicate: this one refuses
@@ -86,16 +86,29 @@ async function start() {
   } catch {
     anchor = null;
   }
+  // config is handed on rather than parked on window: both masks need rp -
+  // the login to know whether this installation has passkeys at all, the setup
+  // to write the relying party into version 1. A global would be one more
+  // thing anything else on the page could write between the check above and
+  // that read.
+  const root = document.getElementById("root");
   if (anchor === null) {
-    message(NOT_SET_UP);
+    // NO ANCHOR ANYWHERE, AND THIS USED TO BE WHERE THE SHELL GAVE UP. There
+    // are two ways to get here and only one of them is a fault: an
+    // installation that nobody has set up yet, and one that runs while the
+    // controller of this web server has not been paired. The first one is what
+    // the setup is for, and it is offered right here; the second one says so
+    // itself, because GET /api/v1/setup answers E_NOTFOUND as soon as there is
+    // an admin and auth/setup.js turns that into the sentence this spot used
+    // to show unconditionally.
+    //
+    // onDone gets the same handover loginView's onSession gets - the setup
+    // signs the new admin in itself - so the desktop behind it cannot tell
+    // which of the two ways somebody came in.
+    setupView(root, { config, onDone: (world) => showDesktop(root, config, world) });
     return;
   }
-  // The login. Nothing of the desktop is built before somebody is in, and
-  // config is handed on rather than parked on window: the mask needs rp to
-  // know whether this installation has passkeys at all. A global would be one
-  // more thing anything else on the page could write between the check above
-  // and that read.
-  const root = document.getElementById("root");
+  // The login. Nothing of the desktop is built before somebody is in.
   loginView(root, { config, onSession: (world) => showDesktop(root, config, world) });
 }
 
