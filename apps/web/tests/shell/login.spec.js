@@ -34,7 +34,7 @@
 //     cannot fail for the thing it is named after. It is replaced here by a
 //     case that logs dora in and asks the MOCK how many proofs it had to
 //     check - a number this side cannot produce by itself.
-import { test, expect, hasSessionKeys } from "../fixtures/page.js";
+import { test, expect, hasSessionKeys, standInOn } from "../fixtures/page.js";
 import { PASSWORD, PASSKEY_USERS, TOTP_CODE } from "../fixtures/logins.js";
 
 // The mock's test door. It is on /api/ so it travels the same origin as
@@ -48,6 +48,14 @@ import { PASSWORD, PASSKEY_USERS, TOTP_CODE } from "../fixtures/logins.js";
 test.beforeEach(async ({ shell }) => {
   test.skip(!(await hasSessionKeys(shell)),
     "no Ed25519 and no X25519 in this engine's Web Crypto: the shell stops before the login");
+  // The five cases below look at the DESKTOP behind the mask, and since task
+  // 17b the desktop behind it is the real one: net/world.js opens the trust
+  // list on the session this login just made, and the chain of the mock API
+  // cannot fit the anchor of this test server. The stand-in is what those
+  // cases still eat, and standInOn says so - the cases that go through
+  // signIn() get it from there, these type into the mask themselves. It leaves
+  // with shell/fake-link.js.
+  await standInOn(shell);
 });
 
 async function tellMock(shell, query) {

@@ -7,11 +7,9 @@ import { anchorFor } from "./trustlist.js";
 import { loginView } from "../auth/login.js";
 import { setupView } from "../auth/setup.js";
 import { el } from "./dom.js";
-// A STAND-IN, and the only line of the shell that knows about it. Task 17
-// built net/link.js and Task 20 shell/trustlist.js; what is still missing is
-// the login (Task 18), which is what gives the session cookie that
-// GET /api/v1/trust needs. With it, the two lines that use the stand-in below
-// change, fake-link.js is deleted, and nothing else moves.
+import { realWorld } from "../net/world.js";
+// A STAND-IN, and the only line of the shell that still knows about it. What
+// it is for and when it goes stands at standIn() below.
 import { fakeWorld } from "./fake-link.js";
 
 const NEEDED = ["Ed25519", "X25519"];
@@ -108,36 +106,59 @@ async function start() {
     setupView(root, { config, onDone: (world) => showDesktop(root, config, world) });
     return;
   }
-  // The login. Nothing of the desktop is built before somebody is in.
-  loginView(root, { config, onSession: (world) => showDesktop(root, config, world) });
+  // The login. Nothing of the desktop is built before somebody is in. root and
+  // config come from above - the setup mask needs them too, so they are won
+  // once for both ways through this function.
+  loginView(root, {
+    config,
+    onSession: (world) => showDesktop(root, config, anchor, world).catch(() => {
+      // A trust list that does not open has already put its own alarm on the
+      // screen and ended the session; anything else broke on the way to the
+      // desktop, and a white page is the one answer that helps nobody.
+      message("NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, "
+        + "läuft NGC gerade nicht.");
+    }),
+  });
 }
+
+// standIn reports whether this page is to eat shell/fake-link.js instead of
+// the real session.
+//
+// IT IS A TEST HOOK AND IT LEAVES WITH THAT FILE. The stand-in answers two
+// dozen actions; the mock API of apps/web/tests answers five, and none of them
+// with the signed user interface the app frame needs. So roughly a hundred
+// cases in twelve files still measure the shell against the stand-in, and
+// signIn() in apps/web/tests/fixtures/page.js sets this for them - in ONE
+// place, named, so "which cases still hang on the stand-in" is a line in a
+// file and not a guess. A case that is ready asks for the real way instead
+// (tests/shell/world.spec.js does).
+//
+// The DEFAULT is the real session, which is the whole point: in operation
+// nothing sets this, the link that was just opened stays open, and the desktop
+// eats what the API really sent.
+const standIn = () => window.__ngcStandIn === true;
 
 // showDesktop puts the desktop up once the login is through.
 //
-// BOTH HALVES NOW EXIST, AND THE SEAM BETWEEN THEM DOES NOT. The login above
-// is real: a real certificate, a real proof, the cookie of the API, the trust
-// list checked and the Noise session opened. shell/trustlist.js can follow
-// that chain and keep it current. What the DESKTOP eats is still the stand-in,
-// because the mock API answers five core actions where fake-link.js answers
-// two dozen. Handing the desktop the real link today would take roughly a
-// hundred cases in twelve files down with it, and a tree that does not build
-// is worse than a stand-in that is named.
-//
-// WHAT IS MISSING IS ONE PIECE THAT NO TASK OF THE PLAN OWNS: the production
-// adapter that offers link.call(app, service, action, params, opts) and
-// link.open(...) over net/link.js and net/channel.js, the way fake-link.js
-// offers them today. With it, this function loses its first line, the four
-// values below come out of `world`, and
-//
-//   const trust = await startTrust({ anchor, installation, link });
-//
-// goes in place of the stand-in's trust. Until then the real session is closed
-// again right here rather than left open: a socket nothing reads holds a
-// channel budget and a session on the API for nothing, and closing it is the
-// honest ending.
-async function showDesktop(root, config, world) {
-  world.link.close();
-  const { link, trust, session, releaseKey } = await fakeWorld();
+// THE SEAM IS HERE, and until this round there was none: the login is real - a
+// real certificate, a real proof, the cookie of the API, the trust list
+// checked and the Noise session opened - and what the desktop ate was the
+// stand-in, so the real session was closed again right here. net/world.js is
+// what stands in that gap now: it offers the surfaces' own
+// call(app, service, name, params, opts) and open(...) over net/link.js and
+// net/channel.js, and it opens the trust list against the anchor on the
+// session that was just opened.
+async function showDesktop(root, config, anchor, world) {
+  let parts;
+  if (standIn()) {
+    // The real session is closed again rather than left open: a socket nothing
+    // reads holds a channel budget and a session on the API for nothing.
+    world.link.close();
+    parts = await fakeWorld();
+  } else {
+    parts = await realWorld({ config, anchor, session: world.session, link: world.link });
+  }
+  const { link, trust, session, releaseKey } = parts;
   startDesktop(root, { link, session: session ?? null, trust, config, releaseKey });
   // Somebody who got in with a password alone is told that passkeys are the
   // better way. It belongs on the desktop and not on the mask, because the

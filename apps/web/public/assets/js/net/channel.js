@@ -465,7 +465,23 @@ export class Channel {
 
 // call opens a channel of flow call, in or transfer, sends its params in the
 // OPEN (or in the task), sends EOF at once and gives back the parsed result.
-export async function call(link, action, { params, taskBytes, confirmBytes } = {}) {
+export async function call(link, action, opts = {}) {
+  return core.parseResult(action, await callBytes(link, action, opts));
+}
+
+// callBytes is the same channel without the last step: it answers with the
+// RESULT BYTES and leaves the reading to the caller.
+//
+// WHY THE TWO EXIST, because one of them doing both would be smaller: the
+// surfaces read an answer themselves (apps/store.js, apps/users.js,
+// shell/desktop.js and shell/appframe.js all call core.parseResult over what
+// they were handed), and a result that arrived already parsed would be read a
+// second time or not at all. So net/world.js takes the bytes and the parsing
+// stays where the contract for that answer is used. There is ONE
+// implementation of the channel either way, which is the point: a second copy
+// of "open, wait for the grant, EOF, result" would be a second place for the
+// bound and the EOF to drift.
+export async function callBytes(link, action, { params, taskBytes, confirmBytes } = {}) {
   const ch = await link.open({
     app: action.app, service: action.service, action: action.name,
     params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW,
@@ -475,12 +491,17 @@ export async function call(link, action, { params, taskBytes, confirmBytes } = {
   // On call and on a transfer the shell opened (activate) it sends EOF at
   // once and no DATA; the API writes header and file on the tunnel hop.
   await ch.end();
-  const body = await ch.result(wire.MAX_CALL_RESULT);
-  return core.parseResult(action, body);
+  return ch.result(wire.MAX_CALL_RESULT);
 }
 
 // sendIn opens a FlowIn channel and streams at most action.maxIn bytes.
-export async function sendIn(link, action, { params, taskBytes, stream, onProgress } = {}) {
+export async function sendIn(link, action, opts = {}) {
+  return core.parseResult(action, await sendInBytes(link, action, opts));
+}
+
+// sendInBytes is sendIn without the last step, for the same reason callBytes
+// exists.
+export async function sendInBytes(link, action, { params, taskBytes, stream, onProgress } = {}) {
   const ch = await link.open({
     app: action.app, service: action.service, action: action.name,
     params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW, e2e: null, taskBytes,
@@ -507,7 +528,7 @@ export async function sendIn(link, action, { params, taskBytes, stream, onProgre
     onProgress?.(sent);
   }
   await ch.end();
-  return core.parseResult(action, await ch.result(wire.MAX_CALL_RESULT));
+  return ch.result(wire.MAX_CALL_RESULT);
 }
 
 // receiveOut opens a FlowOut channel and collects what the API sends; the
