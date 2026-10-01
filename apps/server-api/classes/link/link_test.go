@@ -52,7 +52,7 @@ func dialOptions(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.
 
 // dialRaw is dialOptions with the peer's own TCP connection handed back. A close
 // frame says nothing about whether the socket is gone — for a message over the
-// read limit the library writes that frame itself (write.go:428) — so only the
+// read limit the library writes that frame itself in writeError — so only the
 // raw socket can hold the promise that a link really ended.
 func dialRaw(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.Conn, net.Conn, func()) {
 	t.Helper()

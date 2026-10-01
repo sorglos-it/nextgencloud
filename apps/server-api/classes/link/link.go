@@ -54,8 +54,9 @@ const (
 	// be cut off after ten seconds.
 	//
 	// Measured is the half that reads message 1. For the half that writes
-	// message 2 the deadline is in the code and unmeasured: forty-eight bytes
-	// block no socket, so the only way to make that write run out of time is to
+	// message 2 the deadline is in the code and unmeasured: a message of
+	// wire.HandshakeSize bytes blocks no socket, so the only way to make that
+	// write run out of time is to
 	// let the clock expire between the read and the write — a case that races a
 	// timer, green on one machine and red on the next. A named gap is worth more
 	// than a case that teaches the next reader to explain away a red run.
@@ -97,9 +98,10 @@ type Options struct {
 	Peer        []byte      // the other side's static public key
 	// Origins are the allowed Origin values (scheme://host). They are added to,
 	// not instead of, two things the library always lets through: an Origin
-	// equal to the request host (accept.go:239, compared before any pattern)
-	// and a request with no Origin header at all (accept.go:228), which is how
-	// a controller reaches the tunnel. So an empty list allows nothing but
+	// equal to the request host, which authenticateOrigin compares before it
+	// looks at any pattern, and a request with no Origin header at all, which
+	// the same function allows before it looks at anything — that is how a
+	// controller reaches the tunnel. So an empty list allows nothing but
 	// those two, and a non-empty one cannot take them away. CheckOrigins reads
 	// the list before the upgrade.
 	//
@@ -113,7 +115,7 @@ type Options struct {
 	// no field for origins, the API never reads web.json, and the only source
 	// this package can see is trust.List.RP.Origins, over which
 	// trust.List.validateUsers already runs ValidOrigin
-	// (shared/trust/trust.go:621) — those are the passkey origins, so that
+	// — those are the passkey origins, so that
 	// check guards another list, not this one. Adding it here would refuse the
 	// form the library asks for and buy nothing, so do not "fix" it. What is
 	// left for this package is the one thing no grammar can see, that the values
@@ -271,7 +273,7 @@ func (l *Link) Read(ctx context.Context) (wire.Frame, error) {
 	kind, msg, err := l.conn.Read(ctx)
 	if err != nil {
 		// For a message over the read limit the library writes its close frame
-		// and leaves the connection standing (write.go:428), and after any
+		// in writeError and leaves the connection standing, and after any
 		// broken read the place in the stream is unknown. Measured without this
 		// line: the caller held a link that could no longer write and paid
 		// 5,0008 s in Close to be rid of the socket.
@@ -298,8 +300,7 @@ func (l *Link) Read(ctx context.Context) (wire.Frame, error) {
 
 // Write seals and sends one frame. Its second error cannot be reached today and
 // is kept anyway: Encode allows wire.MaxPayload bytes, so the largest frame is
-// wire.MaxFrame (65519) and that is exactly noisep.MaxPlaintext, the most Seal
-// takes. The two limits come from two packages, and only their equality makes
+// wire.MaxFrame, and that is exactly noisep.MaxPlaintext, the most Seal takes. The two limits come from two packages, and only their equality makes
 // the branch dead — nothing in this file would notice if one of them moved.
 func (l *Link) Write(ctx context.Context, f wire.Frame) error {
 	raw, err := f.Encode()
@@ -319,8 +320,9 @@ func (l *Link) Write(ctx context.Context, f wire.Frame) error {
 // frame, which a refusal does not: CloseWait says why. Once a broken rule or a
 // failed read has ended the link, Close has nothing left to do and says so at
 // once: measured before that, the plain `defer l.Close(…)` of a caller paid
-// 3,9995 s on top of the second that Read had already paid, because the second close
-// waits in waitGoroutines for the goroutine of the first (close.go:102-108).
+// 3,9995 s on top of the second that Read had already paid, because the second
+// close finds closing already swapped and waits in waitGoroutines for the
+// goroutine of the first.
 func (l *Link) Close(code websocket.StatusCode, reason string) error {
 	if l.ended.Load() {
 		return nil
@@ -341,8 +343,8 @@ func (l *Link) fail(reason string) {
 // finish there is nothing left to say that it has not said itself, and nobody to
 // wait for. CloseNow is the only way that really drops the socket, and the swap
 // keeps it from meeting a close of ours that is already in flight — it would
-// then wait in waitGoroutines for up to fifteen seconds instead of dropping
-// anything (close.go:132-146, :231).
+// then wait in waitGoroutines instead of dropping anything, for as long as that
+// function's own timer allows.
 func (l *Link) drop() {
 	if l.ended.Swap(true) {
 		return
@@ -358,9 +360,9 @@ func (l *Link) drop() {
 // no way to drop the connection at the bound: closing is swapped once, so a
 // CloseNow after it only waits again, and the step that drops the socket is
 // unexported (vendor/github.com/coder/websocket/close.go). That goroutine ends
-// on its own, but not inside five seconds: the library allows five for writing
-// the close frame (close.go:185) and five more for the answer (:199), with
-// waitGoroutines on top (:231). The reader is free after CloseWait either way.
+// on its own, but not inside five seconds: writeClose and waitCloseHandshake
+// each take five, with waitGoroutines on top. The reader is free after CloseWait
+// either way.
 func closeBounded(conn *websocket.Conn, code websocket.StatusCode, reason string) {
 	done := make(chan struct{})
 	go func() {
