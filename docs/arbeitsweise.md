@@ -1185,6 +1185,27 @@ die Stelle liest".** Wer einen Zaun aus Worten baut, setzt ihn an die Zeile, die
 jemand ändern wird — und fragt sich: wenn ich in einem Jahr nur diese zehn Zeilen
 sehe, weiß ich dann, was ich nicht annehmen darf?
 
+### Ein Mutant, der nicht übersetzt, zählt als tot — und hat nichts gemessen
+
+Ein Strang hat in einer Fixrunde eine Hilfsfunktion ersatzlos entfernt. Danach
+hatte die Datei nur noch **eine** Verwendung des Pakets `os`. Seine Mutation
+„die Env-Datei bleibt liegen" löscht genau diese Zeile — und damit wurde der
+Import unbenutzt, die Mutation **übersetzte nicht mehr**, und der Lauf meldete
+sie als **tot**.
+
+Tot ist in jeder Zählung dasselbe Wort, ob der Test sie erschlagen hat oder der
+Übersetzer. Die Zahl „46 gebaut, 46 tot" hätte gestimmt und **eine** davon hätte
+nichts geprüft. Er hat die Mutation als `_ = os.Remove` neu gebaut: sie
+übersetzt, die Datei bleibt liegen, und sie stirbt am richtigen Fall.
+
+**Die Regel:** Eine Mutation, die nicht übersetzt, ist **kein Ergebnis** — trenn
+die beiden Fälle in der Zählung, oder sorg dafür, dass jede Mutation übersetzt.
+Und sei besonders wachsam **nach dem Löschen** von Code: wer die letzte
+Verwendung eines Imports entfernt, macht aus jeder Mutation an dieser Zeile einen
+Übersetzungsfehler. Dieselbe Form wie der grüne Lauf ohne einen einzigen
+gefahrenen Test — ein Werkzeug, das „kein Problem" sagt, weil es gar nicht
+gearbeitet hat.
+
 ### Der Mutant muss die alten Tests überleben
 
 Die Empfindlichkeitsprüfung hat eine Falle, in die der Koordinator dieses
