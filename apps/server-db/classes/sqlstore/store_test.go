@@ -231,37 +231,56 @@ func TestTheLargestPageIsStillAPage(t *testing.T) {
 	}
 }
 
-// TestEveryLogPageSortsOnTheIDInsideASecond holds the two halves of the order
-// the contract asks for - (Time, ID) descending - on the two statements the
-// contract's own log group leaves alone.
+// TestEverySixLogStatementsSortByTimeThenID holds both halves of the order the
+// contract asks for - (Time, ID) descending - on all six reading statements.
 //
-// Both halves were measured missing. With "ORDER BY ts DESC, id ASC" in
-// logAll the whole tree stayed green, and so did it with logUserTime asking
-// "ts > ?" instead of "ts < ?" or dropping its user from the WHERE
-// altogether. The group drives logAll only while every entry sits in a second
-// of its own, so nothing there ever needs the ID to break a tie, and it never
-// asks for a user together with a time and no cursor, so logUserTime is not
-// reached by it at all. The other four statements are held there: id ASC in
-// logUser, logUserBefore or logBefore and "ts <= ?" in logTime each turn it
-// red.
+// Two of the twelve halves were measured missing when this test was first
+// written, and four more when it was reviewed, because the first version of it
+// claimed more than it held: it said "holds the two halves ... on the two
+// statements", and for logUserTime only the ID half was reachable, because its
+// one query got a single second back. The same overclaim went out in the
+// message of 42ba937, which cannot be corrected where it stands; the report of
+// this task says so.
 //
-// So this test puts entries of two users into two seconds, out of ID order,
-// and asks both statements. logAll has to hand out every row newest first and
-// sort on the ID inside each second; logUserTime has to hand out that user's
-// older second and nothing of the newer one and nothing of the other user.
-func TestEveryLogPageSortsOnTheIDInsideASecond(t *testing.T) {
+// What the contract's own log group leaves open, each measured green with the
+// mutation named:
+//
+//   - logAll, both halves: it drives logAll only while every entry sits in a
+//     second of its own, so "id ASC" changes nothing there.
+//   - logUserTime, both halves: it never asks for a user together with a time
+//     and no cursor, so that statement is not reached by it at all - "ts > ?",
+//     "ts ASC", "id ASC" and dropping the user from the WHERE all stayed green.
+//   - logUser and logUserBefore, the time half: it asks those two only inside
+//     one second (the five u-bob entries) or for a single row (u-alice), so
+//     "ts ASC" stayed green in both.
+//   - logTime, the ID half: it asks that one only with rows that each sit in a
+//     second of their own, so "id ASC" stayed green.
+//
+// Held there, and not repeated here for their own sake: "id ASC" in logUser,
+// logUserBefore and logBefore, "ts ASC" in logBefore, and "ts <= ?" in
+// logTime each turn the group red.
+//
+// So the fixture spans three seconds and gives both users more than one entry
+// in more than one second. Every query below gets rows from at least two
+// seconds and at least two rows inside one second, which is what makes both
+// halves visible at once: get either of them wrong and the sequence changes.
+func TestEverySixLogStatementsSortByTimeThenID(t *testing.T) {
 	s := open(t)
-	const newer, older = 1790000020, 1790000010
+	// Three seconds, newest first. t1 is the oldest.
+	const t3, t2, t1 = 1790000030, 1790000020, 1790000010
 	id := func(pair string) string { return strings.Repeat(pair, 16) }
-	// Written in an order that is neither the one asked for nor its reverse,
-	// so a store that hands rows back as they were inserted fails as well.
+	// Byte order of the IDs, ascending: 11 < 22 < 55 < 88 < cc < dd < ee < ff.
+	// Written in an order that is neither the one asked for nor its reverse, so
+	// a store that hands rows back as they were inserted fails as well.
 	for _, e := range []core.LogEntry{
-		{ID: id("22"), Time: older, User: "u-one", Kind: "login", Result: "ok"},
-		{ID: id("ee"), Time: newer, User: "u-two", Kind: "login", Result: "ok"},
-		{ID: id("dd"), Time: older, User: "u-one", Kind: "login", Result: "ok"},
-		{ID: id("ff"), Time: older, User: "u-two", Kind: "login", Result: "ok"},
-		{ID: id("11"), Time: newer, User: "u-one", Kind: "login", Result: "ok"},
-		{ID: id("88"), Time: older, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("22"), Time: t1, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("ee"), Time: t3, User: "u-two", Kind: "login", Result: "ok"},
+		{ID: id("dd"), Time: t2, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("ff"), Time: t2, User: "u-two", Kind: "login", Result: "ok"},
+		{ID: id("55"), Time: t1, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("11"), Time: t3, User: "u-one", Kind: "login", Result: "ok"},
+		{ID: id("cc"), Time: t1, User: "u-two", Kind: "login", Result: "ok"},
+		{ID: id("88"), Time: t2, User: "u-one", Kind: "login", Result: "ok"},
 	} {
 		if err := s.LogAdd(ctx, e); err != nil {
 			t.Fatal(err)
@@ -274,15 +293,30 @@ func TestEveryLogPageSortsOnTheIDInsideASecond(t *testing.T) {
 		}
 		return out
 	}
-	got, err := s.LogQuery(ctx, core.LogQuery{Limit: 10})
-	want := []string{id("ee"), id("11"), id("ff"), id("dd"), id("88"), id("22")}
-	if err != nil || !slices.Equal(logIDs(got), want) {
-		t.Errorf("every entry: %v, %v; want %v", logIDs(got), err, want)
-	}
-	got, err = s.LogQuery(ctx, core.LogQuery{Limit: 10, User: "u-one", BeforeTime: newer})
-	want = []string{id("dd"), id("88"), id("22")}
-	if err != nil || !slices.Equal(logIDs(got), want) {
-		t.Errorf("one user before a second: %v, %v; want %v", logIDs(got), err, want)
+	// One case per statement, named after the statement it reaches, so a red
+	// line says which constant is wrong.
+	for _, c := range []struct {
+		stmt string
+		q    core.LogQuery
+		want []string
+	}{
+		{"logAll", core.LogQuery{Limit: 10},
+			[]string{id("ee"), id("11"), id("ff"), id("dd"), id("88"), id("cc"), id("55"), id("22")}},
+		{"logTime", core.LogQuery{Limit: 10, BeforeTime: t3},
+			[]string{id("ff"), id("dd"), id("88"), id("cc"), id("55"), id("22")}},
+		{"logBefore", core.LogQuery{Limit: 10, BeforeTime: t2, BeforeID: id("ff")},
+			[]string{id("dd"), id("88"), id("cc"), id("55"), id("22")}},
+		{"logUser", core.LogQuery{Limit: 10, User: "u-one"},
+			[]string{id("11"), id("dd"), id("88"), id("55"), id("22")}},
+		{"logUserTime", core.LogQuery{Limit: 10, User: "u-one", BeforeTime: t3},
+			[]string{id("dd"), id("88"), id("55"), id("22")}},
+		{"logUserBefore", core.LogQuery{Limit: 10, User: "u-one", BeforeTime: t2, BeforeID: id("dd")},
+			[]string{id("88"), id("55"), id("22")}},
+	} {
+		got, err := s.LogQuery(ctx, c.q)
+		if err != nil || !slices.Equal(logIDs(got), c.want) {
+			t.Errorf("%s: %v, %v; want %v", c.stmt, logIDs(got), err, c.want)
+		}
 	}
 }
 

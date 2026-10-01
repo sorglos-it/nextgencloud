@@ -114,12 +114,11 @@ func TestSessionAndPending(t *testing.T) {
 // before the test reads the row. Measured against the test files as they
 // stood before this test was written, on this package and on every group of
 // the contract this store answers - all of them but log, which answered
-// errors.ErrUnsupported then and was red in every run until task 7 built it:
-// last_login written as 0,
-// cert and proof the wrong way round and created written as 0 turned none of
-// them red, and roles written empty turned none of them red but dbtest's
-// aliasing group. Here every row is written once and read back column for
-// column.
+// errors.ErrUnsupported then and was red in every run until task 7 built it.
+// Of the four mutations tried, last_login written as 0, cert and proof the
+// wrong way round, and created written as 0 turned none of those groups red;
+// roles written empty turned none of them red either but dbtest's aliasing
+// group. Here every row is written once and read back column for column.
 //
 // The delete is the same hole from the other side: nothing anywhere removed a
 // session that was there. dbtest.testSessions deletes after its purge already

@@ -39,6 +39,14 @@ const (
 // index besides that key - ngc_log_ts and ngc_log_user are plain ones - so a
 // duplicate here can only be the ID, and unlike UserPut this method has no
 // second index its answer would have to tell apart.
+//
+// It has the shape OnceCreate has, and with it one window, read off the source
+// and not measured: write repeats the whole transaction when the database says
+// it was rolled back, and that includes a Commit that comes back retryable. If
+// such a Commit had in fact landed, the INSERT of the next round meets its own
+// primary key and this method answers ErrUsed for a row it wrote itself. The
+// comment at write describes the window; how reachable it is on either database
+// is unmeasured, and nothing of this task made it wider.
 func (s *store) LogAdd(ctx context.Context, e core.LogEntry) error {
 	if !core.ValidLogID(e.ID) || e.Kind == "" || e.Time <= 0 || !okKey(e.User) || !okKey(e.Kind) ||
 		!okKey(e.App) || !okKey(e.Action) || !okKey(e.Node) || !okKey(e.Result) || !okText(e.Detail) {
