@@ -467,6 +467,30 @@ Benutzen, ein Vorhandensein gegen ein Greifen — dann prüfst du die Form und
 nennst es die Sache. Die Gegenprobe ist immer dieselbe: **bau den Fall, der die
 Form behaelt und die Wirkung verliert**, und sieh zu, dass er rot wird.
 
+### Wenn jeder Test den Wert setzt, prüft keiner die Vorgabe
+
+Ein Strang hat drei Fristen eingebaut, jede eine Sicherheitsgrenze, zwei davon
+**vor der Anmeldung** erreichbar. Jede ist eine benannte Konstante, jede ist über
+einen Optionsbeutel einstellbar — damit ein Test nicht zehn Sekunden warten muss.
+Richtig gebaut.
+
+Und genau deshalb prüft **kein** Fall die Vorgabe. Der Prüfer hat sie auf
+**1000 Sekunden** und **300 Sekunden** gesetzt: **alle neunzehn Fälle bleiben
+grün**, weil jeder einzelne den Wert selbst mitbringt. Die Konstante, die im
+Betrieb die einzige Grenze ist, ist die einzige Zahl, die niemand festhält.
+
+**Die Regel:** Zu jeder Vorgabe, die ein Test überschreiben darf, gehört **ein**
+Fall, der sie **nicht** überschreibt — und der ihre Größenordnung festhält, nicht
+ihren genauen Wert (sonst zerbricht er bei jeder Feinjustierung). Eine absolute
+Obergrenze im Code, die auch ein Optionsbeutel nicht hochsetzen kann, ist der
+zweite Riegel; derselbe Strang hatte sie für eine **dritte** Frist von sich aus
+gebaut und bei den zwei wichtigeren vergessen.
+
+Und die Form dahinter ist allgemeiner als Fristen: **wo eine Vorrichtung einen
+Wert bequem macht, verschwindet der Wert aus der Prüfung.** Das gilt für
+Zeitgeber, Obergrenzen, Schlüssellängen, Wiederholungszahlen und jeden
+Vorgabewert, den ein Test „nur zum Beschleunigen" mitgibt.
+
 ### Mutier jeden neuen Zaun einzeln — sonst lieferst du Zäune, die nicht beißen
 
 Ein Strang hat in einer Fixrunde fünf neue Zusicherungen gebaut, jede gegen einen
