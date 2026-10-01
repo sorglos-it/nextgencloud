@@ -200,6 +200,17 @@ test("the one-time code never travels", async ({ shell }) => {
   expect(seen.join("\n"), "the setup really went over this wire").toContain("/api/v1/setup");
   expect(seen.join("\n"), "the login after it did too").toContain("/api/v1/login/finish");
   expect(frames.length, "the session really opened a socket").toBeGreaterThan(0);
+  // AND THE WHOLE WAY WAS THE REAL ONE. This case is a security proof, so what
+  // it searched has to be the traffic of a real session and not a stand-in's:
+  // signIn() in the fixtures switches twelve other files to shell/fake-link.js
+  // through window.__ngcStandIn, and main.js then CLOSES the socket it just
+  // opened, which would leave nothing after the handshake to search. Nothing
+  // here sets that flag, and this line is what keeps it that way - a later
+  // round that reaches for the stand-in to make this case green again turns it
+  // red instead. Measured on the merged tree: 71 requests and 9 WebSocket
+  // frames searched, all of them of a real session.
+  expect(await shell.evaluate(() => window.__ngcStandIn),
+    "the desktop ran on the real session, not the stand-in").toBeUndefined();
 });
 
 test("a setup that went through never leaves the person with nothing", async ({ shell }) => {

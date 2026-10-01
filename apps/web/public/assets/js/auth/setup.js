@@ -239,6 +239,13 @@ function facts(lines) {
 // setupView builds the mask into root and calls onDone with the handover of a
 // finished sign-in, exactly the shape loginView's onSession gets - so the
 // shell behind it cannot tell which of the two ways somebody came in.
+//
+// AND WITH THE ANCHOR, which loginView has no need to pass because its caller
+// already holds one. This way through has none: the shell only ever draws this
+// mask because anchorFor answered null, and the anchor that exists afterwards
+// is the one runSetup just made. Whoever opens the trust list next needs THAT
+// one - handing it over beats reading it back out of the browser's storage,
+// which would be the same value fetched a second time.
 export function setupView(root, { config, onDone } = {}) {
   // The relying party of this page's own server. config went through its
   // contract in net/config.js, so id and origins are already a DNS name and
@@ -454,14 +461,14 @@ export function setupView(root, { config, onDone } = {}) {
         // closure and nowhere on the page. The same promise login.js keeps.
         pw.input.value = "";
         again.input.value = "";
-        await runSetup({
+        const { anchor } = await runSetup({
           code, info, rp, name: who, password: typed,
           store: storeBox === null ? false : storeBox.checked === true,
         });
         // From here the installation IS set up. Whatever happens now, there
         // is no way back into this mask and no second code - so nothing
         // below may end in a page that does nothing.
-        await signIn(who, typed);
+        await signIn(who, typed, anchor);
       } catch (e) {
         text(said, sentenceForSetup(e));
       } finally {
@@ -491,16 +498,19 @@ export function setupView(root, { config, onDone } = {}) {
   // mask of task 18 goes up with one sentence above it. The installation is
   // finished by then, the anchor is kept, and a reload lands on that mask
   // anyway; what must not happen is a page with nothing on it.
-  async function signIn(who, password) {
+  async function signIn(who, password, anchor) {
     let world;
     try {
       world = await login({ name: who, password });
     } catch {
-      loginView(root, { config, onSession: onDone });
+      // The mask of task 18 takes over, and the anchor travels with it: the
+      // person signs in by hand, and what follows needs the same anchor this
+      // setup just made.
+      loginView(root, { config, onSession: (w) => onDone?.(w, anchor) });
       root.prepend(note(SIGN_IN_YOURSELF, "info"));
       return;
     }
     clear(root);
-    onDone?.(world);
+    onDone?.(world, anchor);
   }
 }

@@ -102,8 +102,27 @@ async function start() {
     //
     // onDone gets the same handover loginView's onSession gets - the setup
     // signs the new admin in itself - so the desktop behind it cannot tell
-    // which of the two ways somebody came in.
-    setupView(root, { config, onDone: (world) => showDesktop(root, config, world) });
+    // which of the two ways somebody came in. It gets ONE thing more: the
+    // anchor. `anchor` above is null here by definition - that is why this
+    // branch was taken - and the one that exists afterwards is the one the
+    // setup just wrote. Task 17b gave showDesktop that parameter and updated
+    // the login's call below; this one still handed it three arguments, so
+    // `anchor` took the handover and `world` was undefined. MEASURED on the
+    // merged tree: "Cannot read properties of undefined (reading 'session')",
+    // an unhandled rejection, and a WHITE PAGE right after an installation
+    // was set up - the exact dead end this whole branch exists to remove.
+    //
+    // The same .catch as the login below, and for the same reason: a trust
+    // list that does not open has put its own alarm up, anything else broke on
+    // the way to the desktop, and a white page is the one answer that helps
+    // nobody.
+    setupView(root, {
+      config,
+      onDone: (world, setupAnchor) => showDesktop(root, config, setupAnchor, world).catch(() => {
+        message("NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, "
+          + "läuft NGC gerade nicht.");
+      }),
+    });
     return;
   }
   // The login. Nothing of the desktop is built before somebody is in. root and
