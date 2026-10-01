@@ -1390,6 +1390,18 @@ Erwartet: FAIL.
   `NGC_PARAMS` **nie** in `/proc/*/cmdline` und nie im Log.
 - `Stop` nutzt `--time 10`, danach `kill`.
 
+> **Berichtigt am 01.10.2026.** Von diesen zwei Sätzen — der Env-Datei, die
+> „nach dem Start gelöscht" wird, und `Stop` mit „danach `kill`" — weicht der
+> Code der Aufgabe 11 ab, **mit Begründung an der Stelle selbst**
+> (`apps/server-controller/classes/runtime/`). Der Strang hat beides gemessen
+> und als Planfrage gemeldet; die Prüfung hat angemerkt, dass es in keiner
+> Abweichungsliste stand.
+>
+> **Wer hier baut, liest die Begründung im Code, nicht diese zwei Sätze.** Ich
+> schreibe den richtigen Wortlaut hier bewusst **nicht** hinein, weil ich ihn
+> nicht gemessen habe — und ein Plansatz, den der Koordinator sich ausdenkt,
+> wird vom Nächsten nicht mehr nachgeprüft.
+
 - [ ] **Step 4: `runtime.ImageTag` schreiben**
 
 Liest das Image-Tar mit `archive/tar`, sucht `manifest.json`, liest es mit
