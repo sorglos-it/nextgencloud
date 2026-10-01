@@ -64,17 +64,30 @@ const enc = new TextEncoder();
 // 4.2 and 4.4 - "Zum Aktivieren: Rechner und Terminal"), so in operation their
 // user interfaces arrive as the ui/ of an app package, over ngc.desktop/ui,
 // against a checksum a store's catalog signed. The source of those files is the
-// web interface's own (public/assets/apps/<app>/, design 22.09.2026: "ihre
+// web interface's own (apps/web/assets/apps/<app>/, design 22.09.2026: "ihre
 // Oberflächen baut das Webinterface"), and nothing in this repository packs them
 // into a release yet. So this stand-in reads those very files and packs them,
 // and the shell checks the result exactly as it checks an app out of a store.
+//
+// THEY ARE NOT IN THE WEB ROOT, and that is a rule and not an accident: a .html
+// under public/ is a document of the shell's OWN origin - anybody who opens its
+// address runs the app's page with the shell's storage, cookies and session in
+// reach, which is the one thing the frame exists to prevent. The first draft of
+// this task put them there and tests/shell/csp.spec.js caught it. They are
+// source now, not a document, and the test harness hands them over through a
+// door of its own (tests/mock/api.js, SHIPPED_DOOR) - which is also why the
+// address below belongs to no contract and exists nowhere but in a test run.
 const TERMINAL = "org.sorglos.terminal";
 const CALCULATOR = "org.sorglos.calculator";
-// Which folder under public/assets/apps/ holds which app's ui/ files.
+// Which folder under apps/web/assets/apps/ holds which app's ui/ files.
 const SHIPPED = new Map([[TERMINAL, "terminal"], [CALCULATOR, "calculator"]]);
 // The three files each of them ships. The entry page first, because that is
 // the one the manifest names.
 const SHIPPED_FILES = ["index.html", "app.css", "app.js"];
+// Where the test harness hands them over (tests/mock/api.js). It is not an
+// address of NGC: nothing but this stand-in ever asks for it, and outside a
+// test run nothing answers it.
+const SHIPPED_DOOR = "/mock/ui/";
 const STORE = "global";
 const VERSION = "1.0.0";
 
@@ -128,19 +141,22 @@ const APPS = [
   // use, and leaving it out is how that is done.
 ];
 
-// readShipped fetches the ui/ files of both shipped apps off the shell's own
-// server, once, before the desktop starts. They are the SAME bytes a release
-// would pack, so a checksum over them is a checksum over what runs.
+// readShipped fetches the ui/ files of both shipped apps, once, before the
+// desktop starts. They are the SAME bytes a release would pack, so a checksum
+// over them is a checksum over what runs.
 //
 // It is the one thing this file fetches, and it is a stand-in for a release
 // step and not for a server: in operation these files arrive inside an app
-// package, and whoever builds that package reads them from the same place.
+// package, and whoever builds that package reads them from the same place. The
+// door it reads them through is the test harness's own and answers text/plain
+// to everybody; see the head of this file for why they may not simply lie in
+// the web root.
 async function readShipped() {
   const out = new Map();
   for (const [id, dir] of SHIPPED) {
     const files = new Map();
     for (const name of SHIPPED_FILES) {
-      const res = await fetch(`/assets/apps/${dir}/${name}`, { cache: "no-store" });
+      const res = await fetch(`${SHIPPED_DOOR}${dir}/${name}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`fake-link: no ${dir}/${name}`);
       files.set(name, new Uint8Array(await res.arrayBuffer()));
     }
