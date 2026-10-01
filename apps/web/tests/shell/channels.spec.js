@@ -92,3 +92,65 @@ test("a result counts only when the channel ends with ok", async ({ shell }) => 
   });
   expect(out).toBe("E_EXIT");
 });
+
+// THE TWO CASES BELOW ARE THE NONCE. An end-to-end channel seals inside
+// itself, and until this was fixed nothing serialised that: shell/appframe.js
+// doSend is a synchronous postMessage handler that calls
+// Promise.resolve(s.write(b)) with no queue behind it, so two "send" messages
+// of one app - or a "send" and an "end" - put two seals into ONE cipher state
+// at once. CipherState.seal read this.n for the IV BEFORE its await and
+// raised it AFTER, so both calls took the same number: one key, one IV, two
+// plaintexts, which is the single failure AES-GCM does not survive. net/link.js
+// says all of this in its own head and solves it for the transport of the
+// LINK; the transport INSIDE a channel was not covered.
+test("two overlapping writes on an end-to-end channel never take one nonce twice", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const { connectForTest } = await import("/assets/js/net/testlink.js");
+    const link = await connectForTest();
+    const ch = await link.openE2E("org.sorglos.terminal", "terminal", "shell", { cols: 80, rows: 24 });
+    // The nonce every seal is ENTERED with, written down at the door. A
+    // number that shows up twice here IS the reuse, not a symptom of it.
+    const inner = ch.transport;
+    const realSeal = inner.seal.bind(inner);
+    const used = [];
+    inner.seal = (plain) => {
+      used.push(inner.sendState.n);
+      return realSeal(plain);
+    };
+    const enc = new TextEncoder();
+    // No awaiting in between: this is the shape appframe's doSend produces.
+    await Promise.all([ch.write(enc.encode("AAAA")), ch.write(enc.encode("BBBB"))]);
+    link.close();
+    return { count: used.length, distinct: new Set(used).size };
+  });
+  expect(out.count).toBe(2);
+  expect(out.distinct).toBe(2);
+});
+
+test("two overlapping writes arrive unfalsified and in order", async ({ shell }) => {
+  const out = await shell.evaluate(async () => {
+    const { connectForTest } = await import("/assets/js/net/testlink.js");
+    const link = await connectForTest();
+    const ch = await link.openE2E("org.sorglos.terminal", "terminal", "shell", { cols: 80, rows: 24 });
+    const seen = [];
+    ch.onData((d) => seen.push(new TextDecoder().decode(d)));
+    const enc = new TextEncoder();
+    let status = "none", failed = null;
+    try {
+      await Promise.all([ch.write(enc.encode("AAAA")), ch.write(enc.encode("BBBB"))]);
+      await ch.end();
+      status = (await ch.done()).status;
+    } catch (e) {
+      // A reused nonce does not decrypt on the other side: the service ends
+      // the channel instead of echoing, and that arrives here as a throw.
+      failed = e && e.code ? e.code : String(e);
+    }
+    link.close();
+    return { seen: seen.join(""), status, failed };
+  });
+  expect(out.failed).toBe(null);
+  // The service is an echo, so both lines come back - and a Noise transport
+  // reads in nonce order, so they come back in the order they were written.
+  expect(out.seen).toBe("AAAABBBB");
+  expect(out.status).toBe("ok");
+});

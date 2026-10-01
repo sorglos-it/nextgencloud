@@ -70,6 +70,9 @@ export class Channel {
     // transport arrives with useTransport once message 2 has been read.
     this.e2e = e2e !== null && e2e !== undefined;
     this.transport = null;
+    // One chain for every inner message of this channel, for the reason
+    // net/link.js keeps one for the link: see writeE2E.
+    this.sendChain = Promise.resolve();
     this.sentEnd = false;     // our own wire.E2E_END went out
     this.gotEnd = false;      // the controller's end arrived
     this.endStatus = null;    // the CLOSE payload of that end
@@ -183,16 +186,46 @@ export class Channel {
     }
   }
 
-  // writeE2E sends one inner message of an end-to-end channel. The credit
-  // counts the ciphertext, which is 16 bytes more than the plaintext
-  // (shared/README.md, "Freigabe": "samt 16 Byte Noise-Prüfwert").
-  async writeE2E(kind, body) {
+  // writeE2E sends one inner message of an end-to-end channel.
+  //
+  // EVERY inner message goes out through ONE chain, the same way net/link.js
+  // sends everything of a link through sendQueue. contracts/noise.js now
+  // reserves its nonce instead of reading it, so two overlapping seals can no
+  // longer share a number - but ORDER is a second rule, and it is this
+  // module's. A Noise transport reads in nonce order, so the frame sealed
+  // with the lower number has to be the frame that leaves first; two seals in
+  // flight at once would reach sendData in whatever order the two encrypts
+  // happen to finish, and the other side cannot open the one that overtakes.
+  // The chain is also what makes sentEnd mean anything: the end must still be
+  // the last message when the caller did not wait for it.
+  //
+  // Two "send" messages of one app arrive exactly like this: shell's
+  // appframe doSend is a synchronous postMessage handler with no queue of its
+  // own, so it starts the second write while the first is still sealing.
+  writeE2E(kind, body) {
+    // The body is read HERE, at the door, and only this reading travels on.
+    // wire.e2e reads it through its own bytesOrNull and decides the kind and
+    // the length on that reading; between the door and the seal there is now
+    // a wait, and a caller who swapped the bytes inside it would otherwise
+    // have us seal other bytes than the ones that were measured.
+    const plain = wire.e2e(kind, body ?? new Uint8Array(0));
+    const run = this.sendChain.then(() => this.sealAndSend(kind, plain));
+    // One message that failed must not leave every later one waiting on a
+    // rejected promise - the same reason Link.send catches here.
+    this.sendChain = run.catch(() => {});
+    return run;
+  }
+
+  // sealAndSend is the body of one inner message, and runs only from the
+  // chain above. The credit counts the ciphertext, which is 16 bytes more
+  // than the plaintext (shared/README.md, "Freigabe": "samt 16 Byte
+  // Noise-Prüfwert").
+  async sealAndSend(kind, plain) {
     if (this.transport === null) throw fail(wire.CODES.PROTOCOL);
     // After our own end nothing more may go out on an end-to-end channel.
+    // Asked HERE rather than at the door: the end may still be ahead of this
+    // message in the chain, and then it is this answer that has to be no.
     if (this.sentEnd) throw fail(wire.CODES.PROTOCOL);
-    // wire.e2e reads the body itself, through its own bytesOrNull, and
-    // decides the kind and the length on that reading.
-    const plain = wire.e2e(kind, body ?? new Uint8Array(0));
     const need = plain.length + TAG_SIZE;
     for (;;) {
       const room = await this.credit();
