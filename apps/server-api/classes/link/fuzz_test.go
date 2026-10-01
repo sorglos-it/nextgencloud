@@ -47,38 +47,53 @@ func seedFrames(f *testing.F) [][]byte {
 	return out
 }
 
-// FuzzLinkMessage feeds a link with sealed messages of any content: Read must
-// answer a frame the contract allows or an error, and never panic. What it
-// answers is held against wire.Decode over the same bytes, because that is the
-// one rule of the link above the WebSocket: it hands up the frames wire reads
-// from the plaintexts, unchanged, and nothing else.
+// FuzzLinkMessage feeds a link with messages of any content, sealed and
+// unsealed: Read must answer a frame the contract allows or an error, and never
+// panic. Sealed, what it answers is held against wire.Decode over the same
+// bytes, because that is the one rule of the link above the WebSocket: it hands
+// up the frames wire reads from the plaintexts, unchanged, and nothing else.
+// Unsealed, Read must always refuse — that branch was dead while the fuzzer
+// sealed every input, and it is the branch that keeps bytes nobody
+// authenticated from becoming frames.
 func FuzzLinkMessage(f *testing.F) {
 	frame, err := wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("x")}.Encode()
 	if err != nil {
 		f.Fatalf("encode: %v", err)
 	}
-	f.Add(frame)
-	f.Add([]byte{})
-	f.Add([]byte{9, 0, 0, 0, 1})
-	for _, seed := range seedFrames(f) {
-		f.Add(seed)
+	seeds := [][]byte{frame, {}, {9, 0, 0, 0, 1}}
+	seeds = append(seeds, seedFrames(f)...)
+	for _, seed := range seeds {
+		f.Add(seed, true)
+		f.Add(seed, false)
 	}
-	f.Fuzz(func(t *testing.T, plain []byte) {
+	f.Fuzz(func(t *testing.T, plain []byte, seal bool) {
 		l, tr, conn, done := dialTest(t)
 		defer done()
-		sealed, err := tr.Seal(plain)
-		if err != nil {
-			t.Skip()
+		msg := plain
+		if seal {
+			sealed, err := tr.Seal(plain)
+			if err != nil {
+				t.Skip()
+			}
+			msg = sealed
 		}
-		if err := conn.Write(ctx, websocket.MessageBinary, sealed); err != nil {
+		if err := conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
 			t.Skip()
 		}
 		// A real peer reads, so it answers the close frame a refused message
-		// brings; without an answer websocket.Close waits five seconds for it.
+		// brings; without an answer websocket.Close waits CloseWait for it.
 		// Nothing else arrives here, so this takes no message from the test.
 		go func() { _, _, _ = conn.Read(ctx) }()
-		want, wantErr := wire.Decode(plain)
 		got, err := l.Read(ctx)
+		if !seal {
+			// An AEAD tag that fits by chance is out of reach, so this holds
+			// for every input the fuzzer can build.
+			if err == nil {
+				t.Fatalf("Read took an unsealed message: %+v", got)
+			}
+			return
+		}
+		want, wantErr := wire.Decode(plain)
 		if (err == nil) != (wantErr == nil) {
 			t.Fatalf("Read answered %v, wire.Decode %v", err, wantErr)
 		}

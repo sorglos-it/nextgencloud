@@ -38,6 +38,13 @@ var testClient = &http.Client{Transport: &http.Transport{
 // the same Noise handshake back.
 func dialTest(t *testing.T) (*Link, *noisep.Transport, *websocket.Conn, func()) {
 	t.Helper()
+	return dialOptions(t, Options{Origins: []string{"https://ngc.example"}})
+}
+
+// dialOptions is dialTest with room for the fields of Options a case wants to
+// set; the subprotocol, the prologue and both keys belong to the helper.
+func dialOptions(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.Conn, func()) {
+	t.Helper()
 	server, err := noisep.Keypair(fixedReader{1})
 	if err != nil {
 		t.Fatalf("server keys: %v", err)
@@ -48,8 +55,8 @@ func dialTest(t *testing.T) (*Link, *noisep.Transport, *websocket.Conn, func()) 
 	}
 	links := make(chan *Link, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		l, err := Accept(w, r, Options{Subprotocol: "ngc.test.v1", Prologue: noisep.PrologueSession,
-			Static: server, Peer: client.Public, Origins: []string{"https://ngc.example"}})
+		o.Subprotocol, o.Prologue, o.Static, o.Peer = "ngc.test.v1", noisep.PrologueSession, server, client.Public
+		l, err := Accept(w, r, o)
 		if err != nil {
 			return
 		}
@@ -263,8 +270,11 @@ func TestAcceptRefusesAHandshakeWithoutWaiting(t *testing.T) {
 		if err == nil {
 			t.Fatal("Accept took a link whose first message was text")
 		}
-		if d := time.Since(start); d > 2*time.Second {
-			t.Fatalf("the refused handshake held the handler %v", d)
+		// Two sides on purpose, and the upper one an absolute number: with
+		// CloseWait raised to 1900 ms both cases stayed green when they only
+		// asked for "under two seconds", so a raised constant went unseen.
+		if d := time.Since(start); d < CloseWait || d > 1500*time.Millisecond {
+			t.Fatalf("the refused handshake held the handler %v, CloseWait is %v", d, CloseWait)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Accept never came back from a refused handshake")
@@ -286,8 +296,9 @@ func TestARefusalDoesNotWaitOnTheRulebreaker(t *testing.T) {
 	if _, err := l.Read(ctx); err == nil {
 		t.Fatal("a text message was taken")
 	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("the refusal held the reader %v", d)
+	// The same two sides as in TestAcceptRefusesAHandshakeWithoutWaiting.
+	if d := time.Since(start); d < CloseWait || d > 1500*time.Millisecond {
+		t.Fatalf("the refusal held the reader %v, CloseWait is %v", d, CloseWait)
 	}
 }
 
@@ -319,7 +330,10 @@ func TestOriginsAreChecked(t *testing.T) {
 		{"a\\"},                      // unreadable for the same reason
 		{"https://[::1]:8443"},       // a character class, so it never matches itself
 		{"https://ngc.example", "*"}, // the wildcard behind a good value
-		many,                         // more than the contract allows
+		// A dead entry beside a good one: refused here, so Accept refuses every
+		// request of that link rather than letting the list half work.
+		{"https://ngc.example", "https://[::1]:8443"},
+		many, // more than the contract allows
 	}
 	for _, o := range good {
 		if err := checkOrigins(o); err != nil {
@@ -361,6 +375,170 @@ func TestAcceptRefusesAWildcardOrigin(t *testing.T) {
 	if err := <-back; !errors.Is(err, ErrOrigins) {
 		t.Fatalf("Accept answered %v", err)
 	}
+}
+
+// TestAnUnsealedFrameIsRefused holds the one rule the suite of the plan could
+// not hold: only Noise can refuse a frame that is a perfectly good frame and was
+// never sealed. The two payloads of TestLinkRefusesTextAndRubbish are each
+// refused by both rules at once ("hi" does not decrypt, "not sealed" is no
+// frame), so neither of them could fall; letting the error of tr.Open through
+// kept the whole suite green, and with it a link that hands up bytes nobody
+// authenticated.
+func TestAnUnsealedFrameIsRefused(t *testing.T) {
+	l, _, conn, done := dialTest(t)
+	defer done()
+	raw, err := wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("hello")}.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, raw); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// A peer that reads answers the close frame, so the refusal costs no second.
+	go func() { _, _, _ = conn.Read(ctx) }()
+	if got, err := l.Read(ctx); err == nil {
+		t.Fatalf("Read took an unsealed frame: %+v", got)
+	}
+}
+
+// TestASealedFrameAsTextIsRefused is the other half: only the "binary only" rule
+// can refuse a message whose bytes are a sealed, perfectly good frame.
+func TestASealedFrameAsTextIsRefused(t *testing.T) {
+	l, tr, conn, done := dialTest(t)
+	defer done()
+	raw, err := wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("hello")}.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	sealed, err := tr.Seal(raw)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, sealed); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	go func() { _, _, _ = conn.Read(ctx) }()
+	if got, err := l.Read(ctx); err == nil {
+		t.Fatalf("Read took a text message: %+v", got)
+	}
+}
+
+// TestAForeignOriginIsRefused holds what the list of allowed origins is for: it
+// has to reach the library and be used there. Only a request that carries an
+// Origin header shows it - websocket.Dial sends none, and the library lets a
+// request without one through, so every other case runs past the matcher.
+func TestAForeignOriginIsRefused(t *testing.T) {
+	back, srv := acceptOnce(t, Options{Origins: []string{"https://ngc.example"},
+		Handshake: 50 * time.Millisecond})
+	defer srv.Close()
+	conn, resp, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
+		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: testClient,
+			HTTPHeader: http.Header{"Origin": []string{"https://evil.example"}}})
+	if err == nil {
+		conn.CloseNow()
+		t.Fatal("the upgrade went through for a foreign origin")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the foreign origin got %v, not 403", resp)
+	}
+	if err := <-back; err == nil {
+		t.Fatal("Accept took a link from a foreign origin")
+	}
+}
+
+// TestAnAllowedOriginGetsThrough is the other direction: an origin the list
+// names must get through, or the list would be a lock with no key.
+func TestAnAllowedOriginGetsThrough(t *testing.T) {
+	_, srv := acceptOnce(t, Options{Origins: []string{"https://ngc.example"},
+		Handshake: 50 * time.Millisecond})
+	defer srv.Close()
+	conn, resp, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
+		&websocket.DialOptions{Subprotocols: []string{"ngc.test.v1"}, HTTPClient: testClient,
+			HTTPHeader: http.Header{"Origin": []string{"https://ngc.example"}}})
+	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("an origin the list names was refused: %v (status %d)", err, status)
+	}
+	conn.CloseNow()
+}
+
+// TestAWrongSubprotocolIsRefused: the library negotiates the empty subprotocol
+// for a client that asks for another one, so without this rule such a client
+// would get a link and speak something else. Noise does not cover it.
+func TestAWrongSubprotocolIsRefused(t *testing.T) {
+	// Two seconds for the handshake, so "refused at once" and "waited for a
+	// message 1 that never came" are two different times: without the rule the
+	// answer is the same ErrLink, only later.
+	back, srv := acceptOnce(t, Options{Handshake: 2 * time.Second})
+	defer srv.Close()
+	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
+		&websocket.DialOptions{Subprotocols: []string{"ngc.other.v1"}, HTTPClient: testClient})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	go func() { _, _, _ = conn.Read(ctx) }()
+	start := time.Now()
+	if err := <-back; !errors.Is(err, ErrLink) {
+		t.Fatalf("Accept answered %v", err)
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("the wrong subprotocol was not refused at once but after %v", d)
+	}
+}
+
+// TestTheLargestFrameFits holds the read limit from the side that must not be
+// refused: the largest frame the contract allows, sealed, is exactly the limit.
+func TestTheLargestFrameFits(t *testing.T) {
+	l, tr, conn, done := dialTest(t)
+	defer done()
+	f := wire.Frame{Type: wire.TypeData, Channel: 1, Payload: make([]byte, wire.MaxPayload)}
+	raw, err := f.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if len(raw) != wire.MaxFrame {
+		t.Fatalf("the largest frame is %d bytes, not wire.MaxFrame", len(raw))
+	}
+	sealed, err := tr.Seal(raw)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if len(sealed) != wire.MaxFrame+noisep.TagSize {
+		t.Fatalf("the sealed largest frame is %d bytes, the read limit is %d",
+			len(sealed), wire.MaxFrame+noisep.TagSize)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, sealed); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := l.Read(ctx)
+	if err != nil || len(got.Payload) != wire.MaxPayload {
+		t.Fatalf("the largest frame did not get through: %v (payload %d)", err, len(got.Payload))
+	}
+}
+
+// acceptOnce serves one request with Accept and hands its answer back; the
+// fields the helper owns are filled as in dialOptions.
+func acceptOnce(t *testing.T, o Options) (<-chan error, *httptest.Server) {
+	t.Helper()
+	server, err := noisep.Keypair(fixedReader{1})
+	if err != nil {
+		t.Fatalf("server keys: %v", err)
+	}
+	client, err := noisep.Keypair(fixedReader{2})
+	if err != nil {
+		t.Fatalf("client keys: %v", err)
+	}
+	back := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		o.Subprotocol, o.Prologue, o.Static, o.Peer = "ngc.test.v1", noisep.PrologueSession, server, client.Public
+		_, err := Accept(w, r, o)
+		back <- err
+	}))
+	return back, srv
 }
 
 // fixedReader gives the same bytes every time, so the tests stay deterministic.
