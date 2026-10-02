@@ -1993,3 +1993,24 @@ Grep-Zahl addiert, bekommt bei Rot zu viel und haelt die Summe fuer falsch.
 
 Gezaehlt wird gegen `bestanden + uebersprungen + rot`, und DIE Summe gegen
 `--list`. Am 02.10.2026 stimmte sie damit auf den Fall: 796.
+
+## „Der rote Schritt ist der letzte Lauf" — berichtigt am 02.10.2026
+
+Diesen Satz habe ich selbst geschrieben, und ein Bauer hat ihn **woertlich
+genommen und war im Recht**: sein letzter Lauf vor dem Commit war die
+Mutation, also rot, und danach lief die eingecheckte Datei **nie gruen**. Er
+hat sie statt dessen per `cmp` gegen die Fassung gestellt, die gruen gelaufen
+war. Das ist sauber, aber es ist ein Beweis ueber eine Kopie.
+
+**So ist der Satz gemeint, und so gilt er:**
+
+1. Zeig fuer jede neue Zusicherung, dass sie fallen KANN — Mutation, einzeln
+   je Schranke.
+2. Nimm die Mutation zurueck und zeig, dass es weg ist (`git diff`, nicht das
+   Gedaechtnis).
+3. **Der letzte Lauf ist ein gruener Lauf der Datei, die committet wird** —
+   nicht einer Kopie davon, und nicht vor dem Zuruecknehmen.
+
+Der rote Schritt ist der vorletzte. Wer die Reihenfolge umdreht, hat am Ende
+einen Commit, den niemand gruen gesehen hat. Dass es hier gut ausging, lag am
+Bauer, nicht an der Regel.
