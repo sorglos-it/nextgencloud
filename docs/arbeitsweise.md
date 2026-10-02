@@ -3536,3 +3536,41 @@ Drei Griffe dagegen:
    Einmal-Kennzeichen, ein Zähler. Sie machen aus der Reihenfolge zweier
    Teilprüfungen einen Unterschied, und dann ist die Reihenfolge Teil der
    Zusicherung.
+
+## Ein Protokoll, das einen Eintrag zurückweist, verliert das Ereignis
+
+Am 03.10.2026 entschieden, nachdem ein Strang den Preis seiner eigenen
+Verschärfung selbst aufgeschrieben hat — und er hatte recht damit, ihn zu
+nennen.
+
+Das Protokoll des API-Servers prüft jedes Feld, bevor es schreibt: kein
+Zeilenumbruch, keine erfundene Art, `detail` nur aus einer festen Wortliste,
+eine Unterschrift muss base64url von genau 64 Byte sein. Alles richtig. Die
+Folge war: **ein Feld außerhalb der Grammatik gab `ErrEntry` statt eines
+Eintrags.**
+
+Bei einem Prüfprotokoll ist das der schlimmere Ausgang. Wer später ein Loch
+sucht, braucht nicht das saubere Feld — er braucht, **dass der Vorgang
+überhaupt dasteht**. Und wer ein Feld verbiegen kann, hätte damit ein Mittel,
+seinen eigenen Fehlversuch **aus dem Protokoll zu halten**. Die Prüfung, die
+vor schlechten Daten schützt, wird so zum Werkzeug gegen den Leser.
+
+**Die Form gilt für das FELD, nicht für den EINTRAG.** Entschieden:
+
+- Die Grammatik bleibt streng.
+- Das schlechte Feld kommt nicht hinein; an seine Stelle tritt ein **fester
+  Platzhalter**, der nicht aus der Eingabe stammt und mit keinem echten Wert
+  zu verwechseln ist.
+- Art, Zeit und Benutzer bleiben echt, und **geschrieben wird immer**.
+- Der Aufrufer darf erfahren, dass sein Feld verworfen wurde — aber das
+  Schreiben hängt nicht davon ab, dass er darauf reagiert.
+
+Dasselbe Muster mit umgekehrtem Vorzeichen: **ein leerer Benutzer ist kein
+gültiger Eintrag.** Eine automatische Änderung nennt einen reservierten Namen,
+der kein echter Benutzername sein kann, statt das Feld leer zu lassen — dann
+steht in jedem Eintrag, wer gehandelt hat, auch wenn es die Maschine war.
+
+Die allgemeine Form, und sie gilt über Protokolle hinaus: **wenn Ablehnen
+teurer ist als Annehmen, darf die Prüfung nicht ablehnen, sondern muss
+entschärfen.** Wo das zutrifft, entscheidet nicht die Prüfung, sondern der
+Zweck der Aufzeichnung.
