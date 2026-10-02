@@ -85,6 +85,7 @@ type world struct {
 	st    *state.Store
 	keep  *chain.Keeper
 	srv   *Server
+	eng   *appEngine
 	notes *notes
 	log   *slog.Logger
 }
@@ -125,9 +126,9 @@ func newWorld(t *testing.T) *world {
 		t.Fatal(err)
 	}
 	ctlKey, _ := trusttest.NodeKeys(ctlFill)
-	w := &world{admin: admin, list: l, v1: v1, st: st, keep: k, notes: &notes{}}
+	w := &world{admin: admin, list: l, v1: v1, st: st, keep: k, eng: &appEngine{}, notes: &notes{}}
 	w.log = slog.New(w.notes)
-	w.srv = New(Deps{Node: node, Noise: ctlKey, Chain: k, State: st,
+	w.srv = New(Deps{Node: node, Noise: ctlKey, Chain: k, State: st, Engine: w.eng,
 		Now: func() int64 { return now }, Log: w.log})
 	return w
 }
@@ -177,6 +178,21 @@ func (w *world) appOpen(t testing.TB, params json.RawMessage) ([]byte, *noise.Ha
 // looks like when it arrives here.
 func (w *world) appOpenFor(t testing.TB, on string, params json.RawMessage) ([]byte, *noise.HandshakeState) {
 	t.Helper()
+	return w.appOpenOn(t, on, params, wire.MaxWindow)
+}
+
+// appOpenWin is appOpen with the credit the other end gives this channel. One
+// inner message of the controller has to fit it, because it travels in one
+// DATA frame (link.Channel.SendWhole).
+func (w *world) appOpenWin(t testing.TB, params json.RawMessage, win uint32) ([]byte, *noise.HandshakeState) {
+	t.Helper()
+	return w.appOpenOn(t, node, params, win)
+}
+
+// appOpenOn builds that OPEN.
+func (w *world) appOpenOn(t testing.TB, on string, params json.RawMessage,
+	win uint32) ([]byte, *noise.HandshakeState) {
+	t.Helper()
 	shell, _ := trusttest.NodeKeys(0x52)
 	ctlKey, _ := trusttest.NodeKeys(ctlFill)
 	hs, err := noisep.Handshake(true, noisep.E2EPrologue(on, testApp, testService, testAction, params, nil),
@@ -195,7 +211,7 @@ func (w *world) appOpenFor(t testing.TB, on string, params json.RawMessage) ([]b
 		Nonce: bytes.Repeat([]byte{0x53}, session.NonceSize), Sig: enc.Bytes(sessSig.Public().(ed25519.PublicKey)),
 		DH: shell.Public, Issued: issued, Expires: issued + 3600})
 	p := w.admin.Prove(sign.PurposeClientCert, client)
-	return mustJSON(t, tunnel.Open{Open: mustJSON(t, inner), Window: wire.MaxWindow, Client: client, Proof: &p}), hs
+	return mustJSON(t, tunnel.Open{Open: mustJSON(t, inner), Window: win, Client: client, Proof: &p}), hs
 }
 
 // apiSide plays the API at the other end of the tunnel: the answering half of
@@ -1068,10 +1084,11 @@ func seal(t testing.TB, tr *noisep.Transport, kind byte, body []byte) []byte {
 }
 
 // The handshake is answered in the first GRANT, and the channel goes on only
-// once an inner message of the shell has decrypted. This build has no service
-// to start after that, so the channel ends as not reachable — and reaching
-// that end is what says the wait was passed.
+// once an inner message of the shell has decrypted. What the wait releases is
+// the service of the app (app.go); this case holds the shape of that first
+// GRANT and that the channel runs to its end behind it.
 func TestAppChannelStartsNothingBeforeTheFirstMessageDecrypts(t *testing.T) {
+	envHere(t)
 	w := newWorld(t)
 	payload, hs := w.appOpen(t, nil)
 	ended := w.tunnel(t, func(a *apiSide) {
@@ -1080,8 +1097,12 @@ func TestAppChannelStartsNothingBeforeTheFirstMessageDecrypts(t *testing.T) {
 			t.Errorf("the first GRANT gave %d bytes of credit and %d of handshake, want a window and Noise message 2",
 				credit, len(msg2))
 		}
-		a.data(1, seal(t, finish(t, hs, msg2), wire.E2EData, nil))
-		wantCode(t, a.closed(1), wire.CodeUnreachable)
+		sh := &shell{t: t, a: a, num: 1, tr: finish(t, hs, msg2), credit: credit}
+		sh.inner(wire.E2EData, nil)
+		sh.inner(wire.E2EEnd, nil)
+		_, end := sh.out()
+		wantOK(t, end, "the end-to-end end")
+		wantOK(t, sh.rest(), "the CLOSE of the channel")
 		a.shut(1)
 		a.bye()
 	})
@@ -1099,13 +1120,19 @@ func TestAppChannelStartsNothingBeforeTheFirstMessageDecrypts(t *testing.T) {
 // of the ephemeral key of the real shell — so the message that decrypted on
 // the first channel is nothing on the second, and nothing is started for it.
 func TestAnOpenRepeatedWithoutTheShellsKeysReachesNothing(t *testing.T) {
+	envHere(t)
 	w := newWorld(t)
 	payload, hs := w.appOpen(t, nil)
 	ended := w.tunnel(t, func(a *apiSide) {
-		_, first := a.open(1, payload)
-		msg := seal(t, finish(t, hs, first), wire.E2EData, nil)
+		credit, first := a.open(1, payload)
+		tr := finish(t, hs, first)
+		msg := seal(t, tr, wire.E2EData, nil)
+		sh := &shell{t: t, a: a, num: 1, tr: tr, credit: credit - int64(len(msg))}
 		a.data(1, msg)
-		wantCode(t, a.closed(1), wire.CodeUnreachable)
+		sh.inner(wire.E2EEnd, nil)
+		_, end := sh.out()
+		wantOK(t, end, "the end-to-end end of the real shell")
+		wantOK(t, sh.rest(), "the CLOSE of the channel of the real shell")
 		a.shut(1)
 		// The same OPEN once more. It is taken, and it is answered with a
 		// message 2 of its own.
@@ -1150,7 +1177,7 @@ func TestAppChannelWaitsNoLongerThanTheFirstTimeout(t *testing.T) {
 // while not one of them ever comes off.
 func TestAServerWithoutItsNoiseKeyRefusesEveryAppChannelTheSameWay(t *testing.T) {
 	w := newWorld(t)
-	w.srv = New(Deps{Node: node, Chain: w.keep, State: w.st,
+	w.srv = New(Deps{Node: node, Chain: w.keep, State: w.st, Engine: w.eng,
 		Now: func() int64 { return now }, Log: w.log})
 	payload, _ := w.appOpen(t, nil)
 	const channels = 3

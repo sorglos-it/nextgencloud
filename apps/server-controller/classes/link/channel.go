@@ -229,6 +229,66 @@ func (ch *Channel) Send(b []byte) error {
 	return nil
 }
 
+// SendWhole puts b on the channel as ONE DATA frame, and waits until the other
+// side has granted all of it at once.
+//
+// That is what an end-to-end payload needs and what Send cannot give: "Every
+// DATA payload is then one Noise transport message" (wire, "End to end"), and
+// Send breaks one b into as many frames as the credit of the moment allows. A
+// Noise message that arrives in two frames decrypts in neither of them, and
+// how the credit falls is the other side timing, so the fault turns up on one
+// machine and not on the next. Measured on 02.10.2026: a result of 8 MiB went
+// out whole on Windows and arrived in pieces in WSL - "cipher: message
+// authentication failed" at the shell, with a frame of 488 bytes in the middle
+// of a run of full ones.
+//
+// b must fit one frame (wire.MaxPayload) and, to come off at all, the window
+// the other side gave: whoever sends more than that window waits here until the
+// channel ends. ErrConfig for a b that is too long for a frame.
+func (ch *Channel) SendWhole(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+	if len(b) > wire.MaxPayload {
+		return ErrConfig
+	}
+	ch.smu.Lock()
+	defer ch.smu.Unlock()
+	if err := ch.reserveAll(len(b)); err != nil {
+		return err
+	}
+	return ch.write(wire.Frame{Type: wire.TypeData, Channel: ch.num, Payload: b})
+}
+
+// reserveAll takes credit for want bytes, all of it or none, and waits until
+// there is that much. Every wake re-reads the whole allowance, so two GRANT
+// that were coalesced into one wake are still counted together.
+func (ch *Channel) reserveAll(want int) error {
+	for {
+		ch.mu.Lock()
+		switch {
+		case ch.closing || ch.peer:
+			ch.mu.Unlock()
+			return ErrClosed
+		case ch.eof:
+			// After its own EOF a side sends no more data.
+			ch.mu.Unlock()
+			return ErrConfig
+		}
+		if ch.out >= uint64(want) {
+			ch.out -= uint64(want)
+			ch.mu.Unlock()
+			return nil
+		}
+		ch.mu.Unlock()
+		select {
+		case <-ch.credit:
+		case <-ch.ctx.Done():
+			return ErrClosed
+		}
+	}
+}
+
 // write puts one frame of this channel on the tunnel, unless the CLOSE of this
 // side is claimed. Taking the write lock and looking at that in one go is what
 // makes the CLOSE the last frame of this side on this number: a frame that got

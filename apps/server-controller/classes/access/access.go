@@ -7,6 +7,7 @@ package access
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -77,6 +78,19 @@ type Decision struct {
 	UserName string          // that user's login name in the trust list
 	App      dbapi.App       // the row of the app on an app channel
 	Manifest *store.Manifest // its manifest, nil on a core action
+}
+
+// Params are the params of this channel: those of the task where a task came,
+// the params of the OPEN otherwise. That is the one of the two that
+// noisep.E2EPrologue bound on an app channel - with a task it hashes the task
+// bytes, which carry its params, and without one the params member of the OPEN
+// - so a caller that picks the other would hand a service something nothing
+// bound this channel to (service.Call.Params).
+func (d Decision) Params() json.RawMessage {
+	if d.Task != nil {
+		return d.Task.Params
+	}
+	return d.Opened.Open.Params
 }
 
 // Check decides whether the channel of this OPEN may run. It answers either a

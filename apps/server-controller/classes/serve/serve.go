@@ -27,10 +27,12 @@
 // API's to choose and how often it is written must not be.
 //
 // What this build carries out is ngc.users/controller/trust (trust.go) and
-// the end-to-end handshake of an app channel. The core actions that install,
-// update and license an app, and the service an app channel is handed to
-// once its handshake stands, come with the tasks that build them; until then
-// a channel for one of them is refused instead of half served.
+// the app channels of this controller from end to end (app.go): the handshake,
+// the wait for the first inner message, and the service of the app. The core
+// actions that install, update and license an app come with the tasks that
+// build them; until then a channel for one of them is refused instead of half
+// served, and so is the licence of an app channel, which no build checks yet
+// (runApp).
 package serve
 
 import (
@@ -44,8 +46,8 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
-	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/e2e"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
@@ -56,12 +58,11 @@ import (
 // and is used from the goroutine of every channel at once, so nothing here
 // may be changed once New has seen it.
 //
-// What is not in it yet: the installer, the updater, the licence and the
-// container engine. Every one of them is reached from a core action or from
-// the service of an app channel, and none of those is carried out here, so a
-// field for them would name a type nothing in this repository has. They are
-// added by the tasks that bring them, and a keyed Deps literal goes on
-// compiling when they are.
+// What is not in it yet: the installer, the updater and the licence. Every one
+// of them is reached from a core action or from the licence check of an app
+// channel, and none of those is carried out here, so a field for them would
+// name a type nothing in this repository has. They are added by the tasks that
+// bring them, and a keyed Deps literal goes on compiling when they are.
 type Deps struct {
 	// Node is this controller's node ID in the trust list. It decides which
 	// tasks are made out for this server (access) and it is hashed into the
@@ -87,6 +88,11 @@ type Deps struct {
 	// counter at 0. The number is of the channels that got past the gate, not
 	// of the app channels this server saw.
 	Noise noise.DHKey
+	// Engine runs the containers of the apps. nil is this program wired wrong
+	// and ends every app channel with E_INTERNAL: which engine a server runs
+	// is its configuration and not a peer's, so a channel that meets a
+	// missing one says nothing else about itself.
+	Engine runtime.Engine
 	// Chain holds the trust list. Every channel reads the newest verified
 	// version once, at its start, and decides on that one to its end.
 	Chain *chain.Keeper
@@ -203,7 +209,7 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 	if d.Core {
 		return s.core(ctx, ch, d)
 	}
-	return s.app(ctx, ch, d)
+	return s.openApp(ctx, ch, d)
 }
 
 // core runs the channel of a core action of this controller: the first GRANT,
@@ -331,77 +337,6 @@ func (s *Server) read(ctx context.Context, ch *link.Channel, a core.Action) ([]b
 // API that closed the channel itself has already said what the shell is told;
 // this answer only frees the number.
 func cutOff() *wire.Close { return refuse(wire.CodeProtocol) }
-
-// app runs the channel of an app: the end-to-end handshake the shell began in
-// its OPEN, and the wait for its first inner message.
-//
-// That wait is what makes message 1 worth nothing on its own. Two Accepts of
-// the same OPEN both come off — the handshake reads message 1 and answers,
-// and nothing in it is bound to a time or to a number that was used before —
-// so whoever repeats an OPEN he listened in on gets a session here.
-// TestAnOpenRepeatedWithoutTheShellsKeysReachesNothing builds that case
-// instead of ruling it out. What he does not get is the transport keys: they
-// come out of the ephemeral key of the real shell, which he does not hold. So
-// he can send no inner message that decrypts, and nothing of the app is
-// reached before one has — at the latest wire.E2EFirstTimeout seconds after
-// the channel opened.
-func (s *Server) app(ctx context.Context, ch *link.Channel, d access.Decision) error {
-	sess, msg2, err := e2e.Accept(d.Opened, s.d.Node, s.d.Noise)
-	if err != nil {
-		// Counted, not written: see Server.handshakes.
-		s.handshakes.Add(1)
-		return s.end(ch, wire.Error(wire.CodeInternal))
-	}
-	// Noise message 2 travels in the first GRANT of the side that accepted
-	// the channel, and that is this one. Its credit is the window of the
-	// contract: the shell's first inner message carries its input, and less
-	// would make a shell wait for credit before anything of this channel is
-	// even known to be real.
-	if err := ch.Grant(wire.DefaultWindow, msg2); err != nil {
-		return s.end(ch, wire.Error(wire.CodeInternal))
-	}
-	wait, cancel := context.WithTimeout(ctx, s.firstWait())
-	defer cancel()
-	if cl := s.await(wait, ch, sess); cl != nil {
-		return s.end(ch, *cl)
-	}
-	// The shell is at the other end and its first message is in. Here the
-	// service of the app is started, and the name of the service it runs on
-	// is taken from the manifest of the decision
-	// (d.Manifest.Action(…).Service), never from the OPEN: the OPEN is what
-	// the API forwarded, and the manifest is what this controller wrote when
-	// the app was activated. Until that is built there is no service to
-	// reach, and the channel says so.
-	return s.end(ch, wire.Error(wire.CodeUnreachable))
-}
-
-// await waits for the first inner message of the shell and answers with the
-// CLOSE the channel ends with, or with nil once one has decrypted.
-func (s *Server) await(ctx context.Context, ch *link.Channel, sess *e2e.Session) *wire.Close {
-	m, err := ch.Recv(ctx)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return refuse(wire.CodeTimeout)
-		}
-		// The channel ended before the first message. At the end of a channel
-		// Recv answers with its own end or with the context that was
-		// cancelled with it, whichever the runtime takes first; both say the
-		// same thing here, so neither is told apart.
-		return refuse(wire.CodeProtocol)
-	}
-	if m.Kind != wire.TypeData {
-		// An EOF only ends the transport: the data is cut off, and that is an
-		// error and not an end (wire, "End to end").
-		return refuse(wire.CodeProtocol)
-	}
-	if _, err := sess.Open(m.Data); err != nil {
-		// Out of Open every failure is the shell's: a DATA that is no Noise
-		// message of this session, or one whose plaintext is no inner
-		// message.
-		return refuse(wire.CodeProtocol)
-	}
-	return nil
-}
 
 // end closes the channel with cl and comes back with nil, so that no error of
 // this package reaches the log of the tunnel (see the doc of this package).
