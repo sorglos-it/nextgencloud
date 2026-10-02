@@ -10,7 +10,6 @@ package mariadb
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -44,9 +43,10 @@ func openCluster(t *testing.T, cfg config.DB) *sql.DB {
 	return db
 }
 
-// ping opens n connections at the same time and keeps them until the returned
-// function is called, so that the pool really has to reach n nodes instead of
-// handing the same connection back n times.
+// holdConns opens n connections at the same time and keeps them open until the
+// returned function is called, so that the pool really has to reach n nodes
+// instead of handing the same connection back n times. Each connect and each
+// ping carries its own deadline, so a case cannot hang here.
 func holdConns(t *testing.T, db *sql.DB, n int) func() {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -73,7 +73,8 @@ func holdConns(t *testing.T, db *sql.DB, n int) func() {
 // measure: a node whose certificate comes from the CA of the installation is
 // reached, and each of the three ways a node can be wrong is refused. The
 // wrong ones are checked on what the node SAW, not only on the error: a node
-// that got a handshake response would have had the password.
+// that got a handshake response would have had the user name and the SHA1
+// scramble of the password.
 func TestNodeOverTLSWorksAndNothingElseDoes(t *testing.T) {
 	ca := newAuthority(t, "ngc-test-ca")
 	other := newAuthority(t, "ngc-foreign-ca")
@@ -93,7 +94,10 @@ func TestNodeOverTLSWorksAndNothingElseDoes(t *testing.T) {
 	})
 
 	// Every one of these three must end without the node ever seeing a
-	// handshake response, because that packet carries user and password.
+	// handshake response. That packet carries the user name and the 20-byte
+	// SHA1 scramble of mysql_native_password - not the password itself, but
+	// enough for a listener to replay against this salt, and a name NGC does
+	// not hand to anyone who did not show the certificate of the installation.
 	for name, node := range map[string]func(*testing.T) *fakeNode{
 		// A server that does not offer CLIENT_SSL. With
 		// AllowFallbackToPlaintext the driver would carry on in plain text.
@@ -121,7 +125,8 @@ func TestNodeOverTLSWorksAndNothingElseDoes(t *testing.T) {
 				t.Errorf("the node was never tried, so nothing was measured")
 			}
 			if authOK != 0 {
-				t.Errorf("the node saw %d handshake responses, and each one carries the password", authOK)
+				t.Errorf("the node saw %d handshake responses, and each one carries the user name "+
+					"and the scramble of the password", authOK)
 			}
 		})
 	}
@@ -129,7 +134,9 @@ func TestNodeOverTLSWorksAndNothingElseDoes(t *testing.T) {
 
 // TestEveryNodeGetsItsShareOfTheConnections measures the load spreading task 9
 // could only read off the picker: thirteen nodes, thirteen connections at the
-// same time, and every node has to be the first choice exactly once.
+// same time, and every node has to get exactly one of them. Which node is
+// first is the round robin's business and is held elsewhere; what is held here
+// is that none is left out and none is used twice.
 //
 // Thirteen, not three, on purpose, because Go's sort switches to insertion
 // sort below maxInsertion = 12 elements (Go 1.27) and insertion sort is stable
@@ -193,6 +200,10 @@ func TestTheClusterSurvivesEveryWayANodeCanFail(t *testing.T) {
 			db := openCluster(t, cluster(ca, bad, good[0], good[1]))
 			release := holdConns(t, db, 3)
 			defer release()
+			// The node that is not primary is the one exception: it answers
+			// the handshake and only refuses the SET behind it, so it HAS
+			// authenticated - which is exactly what a Galera node outside the
+			// primary component does.
 			if _, authOK := bad.counts(); authOK != 0 && tc.mode != nodeNonPrimary {
 				t.Errorf("the broken node authenticated %d connections", authOK)
 			}
@@ -365,55 +376,81 @@ func TestAnIPv6NodeSurvivesTheWholeWayThroughOpenDB(t *testing.T) {
 	}
 }
 
-// TestANodeThatHangsIsNotBoundedByTheDialTimeout is a finding against the
-// brief, measured rather than read: a node that accepts the connection and
-// then says nothing is NOT cut off after c.Timeout (five seconds). Timeout
-// bounds the dial only; after the accept the driver waits for ReadTimeout,
-// which is sixty seconds. What does get a caller out is its own context.
+// TestAMuteNodeIsCutOffByOurOwnDeadline is the finding of task 10 turned into
+// the barrier for the fix. Three statements in one case, because they cost ten
+// seconds of wall clock together and thirty apart:
+//
+//  1. config.DB's dial timeout does NOT bound a node that accepts the
+//     connection and then says nothing - it wraps the dialer only. The case
+//     holds that the call is still running one second past that timeout, and
+//     it reads the timeout off nodeConfig instead of writing 5s out, so a
+//     change there cannot make this case lie.
+//  2. connectDeadline does bound it. Measured before the fix with
+//     context.Background(): the call came back after 1m0.004s - the driver's
+//     read timeout - and the healthy nodes had seen nothing at all.
+//  3. Silence is not an answer, so the healthy nodes behind the mute one have
+//     to be reached and the connection has to work.
 //
 // The measuring part runs in its own goroutine and the case only waits, so a
-// change that makes the call block forever ends as a named failure instead of
-// a hanging package.
-func TestANodeThatHangsIsNotBoundedByTheDialTimeout(t *testing.T) {
+// change that lets the call run on ends as a named failure instead of a
+// hanging package.
+func TestAMuteNodeIsCutOffByOurOwnDeadline(t *testing.T) {
 	ca := newAuthority(t, "ngc-test-ca")
-	n := newFakeNode(t, ca, nodeSilent, "127.0.0.1", loopbackCert, nil)
-	db := openCluster(t, cluster(ca, n))
-
-	// Longer than c.Timeout, shorter than ReadTimeout: if Timeout bounded the
-	// hang, the call would be back before this context expires.
-	const ctxBudget = 8 * time.Second
-	if ctxBudget <= 5*time.Second {
-		t.Fatalf("the budget %v has to be above the dial timeout of 5s", ctxBudget)
+	mute := newFakeNode(t, ca, nodeSilent, "127.0.0.1", loopbackCert, nil)
+	healthy := []*fakeNode{
+		newFakeNode(t, ca, nodeGood, "127.0.0.1", loopbackCert, nil),
+		newFakeNode(t, ca, nodeGood, "127.0.0.1", loopbackCert, nil),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), ctxBudget)
-	defer cancel()
+	cfg := cluster(ca, mute, healthy[0], healthy[1])
+	db := openCluster(t, cfg)
+	mc, err := nodeConfig(cfg, mute.addr)
+	if err != nil {
+		t.Fatalf("nodeConfig: %v", err)
+	}
+	if connectDeadline <= mc.Timeout {
+		t.Fatalf("connectDeadline %v is not above the dial timeout %v, so this case cannot "+
+			"tell the two apart", connectDeadline, mc.Timeout)
+	}
+
+	// No deadline of its own: that is the caller the finding is about.
 	done := make(chan error, 1)
 	start := time.Now()
-	go func() { done <- db.PingContext(ctx) }()
+	go func() { done <- db.PingContext(context.Background()) }()
 
-	// At six and a half seconds the call must still be running: that is the
-	// statement that five seconds did not end it.
 	select {
 	case err := <-done:
-		t.Fatalf("the hang ended after %v (error %v); the dial timeout is 5s, "+
-			"so this case no longer measures what it claims", time.Since(start), err)
-	case <-time.After(6500 * time.Millisecond):
+		t.Fatalf("the call was back after %v (error %v), within the dial timeout of %v: "+
+			"this case no longer measures what it claims", time.Since(start), err, mc.Timeout)
+	case <-time.After(mc.Timeout + time.Second):
+	}
+	// Generous, because the mute node costs connectDeadline and the healthy
+	// one still has to do TLS: what this bound rules out is the driver's read
+	// timeout of mc.ReadTimeout, which is six times as long.
+	wait := connectDeadline + 30*time.Second
+	if wait >= mc.ReadTimeout {
+		t.Fatalf("a wait of %v does not rule out the read timeout of %v", wait, mc.ReadTimeout)
 	}
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Error("a node that never answers delivered a connection")
+		if err != nil {
+			t.Errorf("the mute node took the whole cluster down: %v", err)
 		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			// Not a failure: the driver may wrap it. Named so the report does
-			// not claim more than was seen.
-			t.Logf("the call ended with %v after %v", err, time.Since(start))
-		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("the context did not end the hang either")
+		t.Logf("the call came back after %v", time.Since(start))
+	case <-time.After(wait):
+		t.Fatalf("after %v the mute node still holds the caller: connectDeadline (%v) "+
+			"does not bound it", wait, connectDeadline)
 	}
-	if accepted, authOK := n.counts(); accepted == 0 || authOK != 0 {
-		t.Errorf("accepted %d, authenticated %d: want at least one accept and no authentication",
-			accepted, authOK)
+	if accepted, authOK := mute.counts(); accepted == 0 || authOK != 0 {
+		t.Errorf("the mute node accepted %d and authenticated %d: want at least one accept "+
+			"and no authentication", accepted, authOK)
+	}
+	sum := 0
+	for _, n := range healthy {
+		_, authOK := n.counts()
+		sum += authOK
+	}
+	if sum != 1 {
+		t.Errorf("the healthy nodes authenticated %d connections, want 1: silence behind "+
+			"the first node left them unreachable", sum)
 	}
 }

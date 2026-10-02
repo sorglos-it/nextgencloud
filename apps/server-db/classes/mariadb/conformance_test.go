@@ -73,6 +73,10 @@ func fresh(t *testing.T) dbapi.Store {
 // TestConformance runs the contract's own tests against the cluster: the very
 // same tests SQLite passes.
 func TestConformance(t *testing.T) {
+	// Asked once on the parent, so that without a cluster this case reports
+	// SKIP instead of PASS over eleven skipped subtests. A PASS that holds no
+	// contract at all is indistinguishable from a measurement without -v.
+	clusterConfig(t, true)
 	dbtest.Run(t, func(t *testing.T) dbapi.Store { return fresh(t) })
 }
 

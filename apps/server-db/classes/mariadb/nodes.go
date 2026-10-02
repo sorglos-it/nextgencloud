@@ -15,6 +15,24 @@ import (
 // long enough that a dead node does not slow every connection down.
 const failPause = 30 * time.Second
 
+// connectDeadline bounds ONE node's attempt, because silence is not an answer:
+// Connect only gets to the next node once the first one has answered, and a
+// node that accepts the connection and then says nothing never answers.
+//
+// Measured on 02.10.2026 with a node that accepts and stays mute, two healthy
+// nodes behind it and context.Background(): the call came back after
+// 1m0.004042s, and the healthy nodes had seen NOTHING in that minute.
+// config.DB's dial timeout (5 s) does not cover this - it wraps the dialer
+// only - and after the accept the driver waits out its ReadTimeout of 60 s.
+//
+// Ten seconds is chosen, not measured: the dial itself has five, and the TLS
+// handshake, the authentication and the one SET behind it are a round trip
+// each on a LAN. It has to stay well under the driver's 60 s, or it would
+// change nothing. The price is that a caller without its own deadline waits
+// up to ten seconds per node, so up to thirty with three mute nodes - still
+// half of what one mute node cost before.
+const connectDeadline = 10 * time.Second
+
 // picker decides which node a new connection goes to: round robin, so the
 // load spreads over the Galera nodes, with a node that just failed at the
 // back. It never drops a node, because all of them may be unreachable for a
@@ -89,7 +107,15 @@ func (b *balancer) Driver() driver.Driver { return b.driver }
 func (b *balancer) Connect(ctx context.Context) (driver.Conn, error) {
 	var last error
 	for _, i := range b.pick.order(b.now()) {
-		conn, err := b.nodes[i].Connect(ctx)
+		// The deadline is taken off again as soon as this node has answered.
+		// The driver stops watching the context it was given before Connect
+		// returns (connection.go finish() hands the watcher its finished
+		// channel), so cancelling here cannot reach back into a connection
+		// that worked - and every case in cluster_test.go pings over the
+		// connection it got, so this is measured and not only read.
+		nodeCtx, cancel := context.WithTimeout(ctx, connectDeadline)
+		conn, err := b.nodes[i].Connect(nodeCtx)
+		cancel()
 		if err == nil {
 			b.pick.works(i)
 			return conn, nil

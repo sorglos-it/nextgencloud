@@ -10,11 +10,18 @@ package mariadb
 // fails, which session variables it sends, which capabilities it asks for,
 // and what the connection pool closes.
 //
-// What is NOT measurable here, and is marked as such in every place that
-// touches it: whether a MariaDB server ACCEPTS wsrep_sync_wait, sql_mode,
-// time_zone and max_allowed_packet (that needs a server), and whether
-// ClientFoundRows really makes an UPDATE report matched instead of changed
-// rows (that is the server's semantics, not the client's bit).
+// What is NOT measurable here, listed in full rather than claimed to be
+// "marked everywhere", because such a claim needs a loop and this is prose:
+//
+//   - whether a MariaDB server ACCEPTS wsrep_sync_wait, sql_mode, time_zone
+//     and max_allowed_packet. That needs a server.
+//   - whether ClientFoundRows really makes an UPDATE report matched instead
+//     of changed rows. That is the server's semantics, not the client's bit.
+//   - CheckConnLiveness. The driver checks a resting connection through
+//     connCheck, and conncheck_dummy.go (build tag !linux && !darwin && ...)
+//     returns nil always: on Windows the check is a no-op, so no case here
+//     can see it work or fail. It is measurable on Linux, and this package
+//     has no case for it.
 
 import (
 	"crypto/ecdsa"
@@ -49,27 +56,38 @@ const (
 // the driver keeps its own copies private, and a test that read the driver's
 // constants could not notice the driver changing them.
 const (
-	capMySQL         = 1 << 0
-	capFoundRows     = 1 << 1
-	capLongFlag      = 1 << 2
-	capConnectWithDB = 1 << 3
-	capLocalFiles    = 1 << 7
-	capProtocol41    = 1 << 9
-	capSSL           = 1 << 11
-	capTransactions  = 1 << 13
-	capSecureConn    = 1 << 15
-	capMultiResults  = 1 << 17
-	capPluginAuth    = 1 << 19
-	capConnectAttrs  = 1 << 20
-	capLenEncData    = 1 << 21
-	capDeprecateEOF  = 1 << 24
+	capMySQL           = 1 << 0
+	capFoundRows       = 1 << 1
+	capCompress        = 1 << 5
+	capLongFlag        = 1 << 2
+	capConnectWithDB   = 1 << 3
+	capLocalFiles      = 1 << 7
+	capProtocol41      = 1 << 9
+	capSSL             = 1 << 11
+	capTransactions    = 1 << 13
+	capSecureConn      = 1 << 15
+	capMultiStatements = 1 << 16
+	capMultiResults    = 1 << 17
+	capPluginAuth      = 1 << 19
+	capConnectAttrs    = 1 << 20
+	capLenEncData      = 1 << 21
+	capDeprecateEOF    = 1 << 24
 )
 
 // serverCaps is what a fake node advertises. Without CLIENT_SSL it is the
 // greeting of a server that cannot do TLS.
+//
+// CLIENT_MULTI_STATEMENTS and CLIENT_COMPRESS are in here although no case
+// uses them, and that is the point: packets.go ANDs the client's wishes with
+// the server's offer, so a bit the server never offers can never show up in a
+// handshake response. Without these two the lines in
+// TestTheNodeSeesTheFoundRowsCapability that hold them absent would measure
+// this greeting instead of the client - and a reviewer proved it, by turning
+// MultiStatements on without that case noticing.
 func serverCaps(withTLS bool) uint32 {
 	caps := uint32(capMySQL | capFoundRows | capLongFlag | capConnectWithDB | capLocalFiles |
 		capProtocol41 | capTransactions | capSecureConn | capMultiResults |
+		capMultiStatements | capCompress |
 		capPluginAuth | capConnectAttrs | capLenEncData | capDeprecateEOF)
 	if withTLS {
 		caps |= capSSL
@@ -102,7 +120,12 @@ func newFakeNode(t *testing.T, ca *testAuthority, mode nodeMode, host string, ce
 	t.Helper()
 	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
-		t.Skipf("kein Listener auf %s moeglich: %v", host, err)
+		// Deliberately NOT a skip. A listener on the loopback does not fail
+		// because "there is no cluster here"; it fails because the port range
+		// is used up or the stack is missing, and that is an error. A skip
+		// would silence up to eight cases exactly when one wants to know
+		// whether anything is still being measured.
+		t.Fatalf("no listener on %s, so nothing is measured here: %v", host, err)
 	}
 	_, port, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
@@ -158,7 +181,9 @@ func (n *fakeNode) handle(c net.Conn) {
 	case nodeHandshakeDies:
 		return // no greeting, the socket just goes away
 	case nodeSilent:
-		// Never answer, and never close either: this is the node that hangs.
+		// Never answer: this is the node that hangs. The socket is only
+		// closed when the case is over (the goroutine waits on n.stop), so
+		// that nothing the caller sees looks like an answer.
 		go func() { <-n.stop; _ = c.Close() }()
 		_, _ = io.Copy(io.Discard, c)
 		return
@@ -171,7 +196,10 @@ func (n *fakeNode) handle(c net.Conn) {
 	body, seq, err := readPacket(rw)
 	if err != nil {
 		// The client gave up without answering, which is what nodeNoTLS is
-		// measured on: it must not send its password in plain text.
+		// measured on. What it would have sent in the clear is the user name
+		// and the 20-byte SHA1 scramble of mysql_native_password - not the
+		// password itself, but a name and a value a listener can replay
+		// against this salt. Nothing of it may leave without TLS.
 		return
 	}
 	if withTLS {
