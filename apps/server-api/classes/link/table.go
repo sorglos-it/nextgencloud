@@ -81,13 +81,23 @@ func (c *Channel) Take(n int) bool {
 	return true
 }
 
-// Allow adds to what the other side may send us. The caller calls it whenever
-// it sends a GRANT, so that both sides count the same; the window of an OPEN we
-// send ourselves is counted by Next.
-func (c *Channel) Allow(credit uint32) {
+// Allow adds to what the other side may send us; the caller calls it before it
+// sends a GRANT, so that both sides count the same, and sends the GRANT only
+// when this says yes. The window of an OPEN we send ourselves is counted by
+// Next. False means the GRANT would lift that allowance above wire.MaxWindow,
+// which the contract bounds in both directions, so nothing is added and the
+// GRANT must not go out: it would be our own protocol error, and the other side
+// would answer it with CLOSE E_PROTOCOL. Without this bound Take would hold
+// nothing, because the side that counts what may arrive is the same side that
+// raises the figure.
+func (c *Channel) Allow(credit uint32) bool {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if credit == 0 || c.in+uint64(credit) > wire.MaxWindow {
+		return false
+	}
 	c.in += uint64(credit)
-	c.mu.Unlock()
+	return true
 }
 
 // Closing reports whether we have already sent a CLOSE. Frames that still
@@ -133,7 +143,11 @@ type Table struct {
 
 // NewTable returns a table for at most max numbers that are not free
 // (wire.MaxSessionChannels or wire.MaxTunnelChannels). opener says whether this
-// side picks the numbers; only one of the two sides does.
+// side picks the numbers; only one of the two sides does. A max of zero or less
+// is a table that carries no channel at all: every Open, Next and Reserve
+// answers ErrLimit. That is the safe answer and not an unbounded one, so a
+// caller that forgets the limit refuses channels instead of granting them
+// without end.
 func NewTable(max int, opener bool) *Table {
 	return &Table{max: max, opener: opener, ch: map[uint32]*Channel{}, next: 1}
 }
@@ -169,18 +183,23 @@ func (t *Table) Next(window uint32) (*Channel, error) {
 	if len(t.ch) >= t.max {
 		return nil, ErrLimit
 	}
-	// At most max-1 numbers are taken here, so max+1 candidates always hold a
-	// free one, even when one of them is channel 0 after a wrap.
-	for i := 0; i <= t.max; i++ {
+	// At most max-1 of these max candidates are taken, so one of them is free.
+	// They are max different numbers: the sequence wraps at most once, and max
+	// is far below the range of a uint32.
+	for i := 0; i < t.max; i++ {
 		num := t.next
 		// Numbers run from 1 and wrap, so a long-lived link keeps finding one.
+		// The wrap is the one place that could hand out channel 0, which is not
+		// a channel at all, so it goes back to 1 and not to 0; num is therefore
+		// never 0, and no second check for it is needed.
 		t.next++
-		if t.next == 0 {
+		if t.next == wire.ControlChannel {
 			t.next = 1
 		}
-		if num == wire.ControlChannel {
-			continue
-		}
+		// A number that is still open or closing must survive the wrap: taking
+		// it again would replace a live channel in the map, and free's identity
+		// check would then never remove either, so the number would be lost for
+		// the life of the link.
 		if _, taken := t.ch[num]; taken {
 			continue
 		}
@@ -195,7 +214,13 @@ func (t *Table) Next(window uint32) (*Channel, error) {
 // it counts toward the limit until the other side's CLOSE arrives. It carries
 // no credit in either direction: nothing may be sent or arrive on it. ErrLimit
 // means the stray frame would make one number too many, which ends the link.
+// Channel 0 is ErrProtocol for the same reason Open refuses it: it is always
+// open, carries Control and is never a number of this table, so a protocol error
+// on it ends the link instead of closing a channel.
 func (t *Table) Reserve(num uint32) error {
+	if num == wire.ControlChannel {
+		return ErrProtocol
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.ch[num]; ok {
