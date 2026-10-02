@@ -3222,3 +3222,34 @@ kann ein Suchmuster grundsaetzlich nicht dicht sein. Es holt die Formen ein,
 die **Werkzeuge von selbst ausgeben** — und genau die sind der realistische
 Weg, auf dem ein Geheimnis entkommt. Wer eine fuenfte kennt, traegt sie als
 Nadel nach.
+
+## Ein Kopfblock ist keine Berichtigung des Rumpfs
+
+Am 02.10.2026, Aufgabe 11 des db-Plans. Ich hatte die Planberichtigung an die
+drei bekannten Orte gesetzt — Plan, Hauptcheckout, neu erzeugter Auftrag — und
+dachte, damit sei sie angekommen. War sie nicht: **innerhalb** des
+Aufgabenstuecks stand sie nur im Kopfblock. Gemessen am berichtigten Stand:
+
+```
+Kopf:  classes/migraterun/            (die Entscheidung)
+Rumpf: classes/migrate/run.go         in „Dateien"
+       migrate.Run, migrate.Needed    in „Schnittstellen"
+       dieselben Namen                in Schritt 1, 2, 3 und 7
+```
+
+Fuenfzehn Zeilen im Rumpf, die das Gegenteil des Kopfes sagten. Wer den Rumpf
+gebaut haette, haette die Fassung gebaut, die **nicht uebersetzt**
+(Importzyklus) — genau den Fehler, den der Kopf abwendet.
+
+Der Strang hat es gemeldet statt stillschweigend dem Kopf zu folgen, und das
+ist der Grund, dass es ueberhaupt auffiel. Ein weniger aufmerksamer Leser
+nimmt die Stelle, die **naeher** an seinem Schritt steht, und das ist der
+Rumpf.
+
+**Also: wer in einer Berichtigung einen Namen aendert, greppt das ganze
+Aufgabenstueck nach dem alten Namen und zaehlt die Treffer.** Ein Kopfblock,
+der „entschieden: X" sagt, hat den Rumpf nicht angefasst — er behauptet nur,
+jemand habe es getan.
+
+Verwandt: die Regel, dass eine Planberichtigung drei Orte hat. Die hier ist
+ihre feinere Fassung: der dritte Ort hat selbst zwei Haelften.
