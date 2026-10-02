@@ -2737,7 +2737,10 @@ func newFixture(t *testing.T) (*Handler, fixture) {
 	if err != nil {
 		t.Fatalf("box: %v", err)
 	}
-	noise, signKey := trusttest.NodeKeys(1)
+	// 0xA1, not 1: session.VerifyAPI looks the node up by sign.KeyID, so a
+	// certificate signed with any other key finds no node and comes back
+	// ErrCert - the test would then pass without checking the certificate.
+	noise, signKey := trusttest.NodeKeys(0xA1)
 	cfg := &config.API{
 		Node: "api-1", URL: "wss://api-1.ngc.test:7443/tunnel", Listen: ":7443",
 		Cert: "/x", CertKey: "/y",
@@ -3072,7 +3075,7 @@ Cookie.
   - `func (h *Handler) Finish(w http.ResponseWriter, r *http.Request)`
   - `func (h *Handler) newSession(ctx, v session.Verified, client []byte, p proof.Proof) (session.LoginResult, string, error)`
   - `func (h *Handler) checkTOTP(row dbapi.User, code string, now int64) bool`
-  - `func (h *Handler) BeginTOTP(user, name string) (core.TOTPBegin, []byte, error)` –
+  - `func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error)` –
     Geheimnis für `ngc.desktop/totp-begin` (Aufgabe 15 benutzt es).
 
 - [ ] **Step 1: Write the failing test for TOTP**
@@ -3093,7 +3096,7 @@ import (
 
 func TestTOTP(t *testing.T) {
 	h, fx := newFixture(t)
-	begin, secret, err := h.BeginTOTP(fx.PasswordUser, fx.PasswordName)
+	begin, secret, err := h.BeginTOTP(fx.PasswordName)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -3344,8 +3347,11 @@ func timeOf(now int64) time.Time { return time.Unix(now, 0).UTC() }
 
 // BeginTOTP makes a new TOTP secret for a user: the answer of
 // ngc.desktop/totp-begin and the sealed secret to keep until the user confirms
-// it with a code. The secret is never stored unsealed.
-func (h *Handler) BeginTOTP(user, name string) (core.TOTPBegin, []byte, error) {
+// it with a code. The secret is never stored unsealed. It takes no user:
+// secrets.Box.Seal passes nil as the additional data, so a sealed secret
+// is bound to nobody and works unchanged in another user's row. Whoever
+// keeps it must never let it travel through the client.
+func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer: "NGC", AccountName: name, Period: session.TOTPPeriod,
 		Digits: otp.Digits(session.TOTPDigits), Algorithm: otp.AlgorithmSHA1,
@@ -3482,7 +3488,11 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, ok := v.List.User(cert.User); ok {
-		_ = lock.Clear(ctx, h.S.DB, u.Name)
+		// No lock.Clear here: apps/server-api/CLAUDE.md forbids it and says
+		// why - it empties the whole bucket, so every successful login would
+		// reset the count of an attacker who puts himself into that bucket on
+		// purpose. An expired row already reads as zero. Only setup/code
+		// clears its own bucket, because that is no login name.
 		row.ID, row.Name, row.Roles = u.ID, u.Name, u.Roles
 		row.Failures, row.Locked, row.LastLogin = 0, 0, now
 		if err := h.S.DB.UserPut(ctx, row); err != nil {
