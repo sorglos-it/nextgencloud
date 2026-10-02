@@ -1,0 +1,22 @@
+# KNOWN OPEN QUESTIONS. A file in the archive that no reference reaches and that
+# nobody has explained yet. web_test.go REPORTS these (t.Log) and does not fail
+# on them - because tools/check.sh runs "go test ./...", so a failure here would
+# be a closed commit gate for every task, not a note in a report.
+#
+# It DOES fail when a line here becomes reachable (then the question is answered
+# and the line belongs gone) and when an UNKNOWN orphan turns up (then nobody
+# has looked at it yet). So this file buys time, not silence.
+#
+# EMPTYING THIS FILE IS SOMEBODY'S JOB, and it is not this plan's: each line
+# names who decides.
+
+# Measured on origin/web (fe5a0e4), 02.10.2026: every mention of this file in
+# shipped code is a COMMENT (store.js:239, keys.js:37, login.js:50). The only
+# live imports are in apps/web/tests/, which a release does not carry -
+# attacks.spec.js:361, channels.spec.js:20/31, world.spec.js:606/896, all of
+# them await import("/assets/js/net/testlink.js"). So it looks test-only, and
+# then it has no business in a release at all.
+# NOT DECIDED HERE: the web strand says whether it is test-only. If it is, the
+# packer should EXCLUDE it, which is a change to pack-release.sh and not a line
+# in extra-web.txt.
+public/assets/js/net/testlink.js

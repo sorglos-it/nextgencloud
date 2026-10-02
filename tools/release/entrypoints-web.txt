@@ -1,0 +1,14 @@
+# Where the graph starts. NOT a list of what a release needs - that is decided
+# by tools/release/closure.go, which follows the references of these four.
+#
+# public/index.php          the one entry point Apache routes everything to
+#                           (apache-vhost.conf: FallbackResource /index.php)
+# VERSION                   index.php:19 reads it, and it carries no reference
+# assets/apps/*/index.html  the pages of the shipped apps. They are NOT below
+#                           public/ on purpose (apache-vhost.conf), so nothing
+#                           under public/ points at them and the graph needs
+#                           them as roots of their own.
+public/index.php
+VERSION
+assets/apps/calculator/index.html
+assets/apps/terminal/index.html

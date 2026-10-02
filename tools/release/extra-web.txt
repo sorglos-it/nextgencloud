@@ -1,0 +1,49 @@
+# Files no reference reaches and that travel anyway. ONE REASON PER LINE. Not
+# one of the reasons is "the installation breaks without it" in general - that
+# is what closure.go decides - EXCEPT the first, where it is literally true and
+# measured.
+#
+# Measured against origin/web (fe5a0e4) on 02.10.2026 by running closure.go:
+# 59 of 67 files reached, these seven plus one open question left over.
+# If a line here becomes reachable, remove it: a file that is both reached and
+# listed is a file whose reason nobody rechecks (web_test.go fails on that).
+
+# THE ONE THAT REALLY WOULD BREAK AT THE USER, and the graph cannot see it:
+# public/assets/js/shell/appframe.js:38 has
+#   const NGC_JS = "/assets/ngc.js";
+# and :177 does
+#   const res = await fetch(NGC_JS, { cache: "no-store" });
+#   if (!res.ok) throw new Error("appframe: ngc.js");
+# The shell reads this file and writes it into every app's document. Without it
+# NO app window runs. It is a fetch of a string CONSTANT, and closure.go
+# deliberately follows no such thing - the same file's FRAME_PAGE =
+# "/frame.html" is a ROUTE and not a file (public/index.php:74, case
+# '/frame.html'), so a graph that guessed at string constants would invent that
+# one. Named here by hand instead, with the measurement.
+public/assets/ngc.js
+
+# A human needs it: the six commands at its head are the only documented way to
+# set NGC up without ulh, and step 4 names its own unpacked path
+# (/var/www/ngc/templates/apache-vhost.conf). ngc-web.sh does NOT read it - it
+# writes its own virtual host, lines 978-1028 - and the task that makes it read
+# this one cannot start before the file is on the server.
+templates/apache-vhost.conf
+
+# The form of /etc/ngc/apache-apis.conf, for a human and for comparing. Like the
+# vhost, ngc-web.sh does not read it: render_balancer (lines 927-939) writes
+# that file itself, "byte for byte the template of the NGC repository".
+templates/apache-apis.conf.example
+
+# The licence of the vendored code. It must travel with the code it covers, and
+# a LICENSE is named by nothing.
+public/assets/vendor/noble-hashes/LICENSE
+
+# Where the vendored code comes from and at which version. Part of keeping
+# foreign code honest (THIRD-PARTY.md), named by nothing.
+public/assets/vendor/noble-hashes/SOURCE.md
+
+# README.md and CLAUDE.md: apache-vhost.conf expects them above public/ behind
+# "Require all denied" ("README.md, CLAUDE.md and anything else that turns up:
+# same rule"), and README.md is what the vhost's own head points a human at.
+README.md
+CLAUDE.md
