@@ -2238,3 +2238,53 @@ ist eine Liste, die sich selbst schreibt und dabei luegt.
 MELDET er. Und was er grundsaetzlich nicht erreicht (indirekte Worker, hier),
 sagt er ausdruecklich, damit die betroffenen Dateien mit diesem Grund in die
 Ausnahmeliste kommen. Halb geloest ist hier schlechter als gar nicht geloest.
+
+## `git commit -- <pfade>` nimmt den Modus aus dem ARBEITSBAUM, nicht aus dem Index
+
+Die Regel dieses Hauses lautet: nie `git add -A`, sondern explizite Pfade, und
+`git commit` **mit** `--` und denselben Pfaden — weil der Index geteilt ist.
+Diese Regel hat eine Kante, die ein Strang am 02.10.2026 gefunden hat und die
+ich selbst nachgemessen habe, in einem Wegwerf-Repository:
+
+```
+Modus nach dem ersten Commit:        100644
+Modus im Index nach --chmod=+x:      100755
+Modus im Commit mit "-- s.sh":       100644   <-- das chmod ist weg
+```
+
+`git commit -- <pfade>` baut den Baum aus dem **Arbeitsbaum**, und dort gibt
+es auf Windows kein Ausführungsbit. Ein `git update-index --chmod=+x` wird
+damit stillschweigend übergangen — der Strang brauchte einen zweiten Commit,
+nur um das Bit zu setzen.
+
+**Also, wenn ein Modus gesetzt werden muss:** `git update-index --chmod=+x`
+und dann `git commit` **ohne** Pfadliste — was im geteilten Baum gefährlich
+ist — oder, sicher und einstufig: `git commit` mit Pfaden, und das Bit
+danach in einem eigenen Commit, der nur das tut. Der zweite Weg ist der, den
+ich nehme: er ist sichtbar, er nimmt nichts Fremdes mit, und man sieht in der
+Geschichte, dass das Bit Absicht war.
+
+Auf diesem Rechner trifft das **jeden** Strang.
+
+## Drei Messfallen zwischen Windows und WSL, alle am selben Tag gemessen
+
+1. **Die `.git`-Datei eines Arbeitsbaums zeigt auf `Z:`**, und das kann WSL
+   nicht auflösen. Ein Testläufer griff darum in seinen `cp -r`-Zweig,
+   `git init` lief ins Leere, und der Satz meldete `catalog has scripts (0)`
+   mit 66 roten Fällen — **das sieht wie ein kaputtes Programm aus und ist ein
+   leeres Verzeichnis.** Richtig: tar-Pipe **ohne** `.git`, Ausführungsbit
+   aus `git ls-files -s` nachsetzen, Entpacken und Lauf in EINEM wsl-Aufruf.
+2. **`wsl` aus der git-bash verbiegt `/mnt/...`** zu
+   `C:/Program Files/Git/mnt/...`, Ausstiegscode 127. Riegel:
+   `MSYS_NO_PATHCONV=1` davor.
+3. **Eine erzeugte Datei von Hand ändern.** `docs/scripts.md` kommt aus
+   `tools/gen-scripts-doc.sh`; wer sie editiert, wird vom nächsten Lauf
+   überschrieben. Vor jeder Änderung an einer Doku-Datei prüfen, ob sie
+   erzeugt wird.
+
+Und zwei Funde, die der Strang an SEINEN EIGENEN Fällen gemacht hat, beide die
+bekannte Form: ein Fall konnte nicht fallen, weil `${2:-vorgabe}` die Vorgabe
+auch für die **leere** Angabe einsetzt — und genau die leere Angabe war der
+geprüfte Fall. Und ein Fall war falsch rot, weil die gesuchte Zeichenfolge
+`-p` auch in `--protocol` steckt. Wer auf Zeichenfolgen prüft, prüft auf
+Wortgrenzen.
