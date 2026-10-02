@@ -1,6 +1,7 @@
 package link
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -200,8 +201,8 @@ func TestATableWithoutRoomCarriesNothing(t *testing.T) {
 		if _, err := accept.Open(1, wire.MinWindow); err != ErrLimit {
 			t.Errorf("NewTable(%d, false).Open(1) answered %v, want ErrLimit", max, err)
 		}
-		if err := accept.Reserve(1); err != ErrLimit {
-			t.Errorf("NewTable(%d, false).Reserve(1) answered %v, want ErrLimit", max, err)
+		if err := accept.FailChannel(1, failed); err != ErrLimit {
+			t.Errorf("NewTable(%d, false).FailChannel(1) answered %v, want ErrLimit", max, err)
 		}
 		// Next refuses too, but this arm does not hold the limit check of Next:
 		// at max <= 0 the loop over the candidates runs no round either, so
@@ -223,8 +224,8 @@ func TestATableWithoutRoomCarriesNothing(t *testing.T) {
 		if _, err := open.Open(1, wire.MinWindow); err != ErrProtocol {
 			t.Errorf("NewTable(%d, true).Open answered %v, want ErrProtocol", max, err)
 		}
-		if err := accept.Reserve(wire.ControlChannel); err != ErrProtocol {
-			t.Errorf("NewTable(%d, false).Reserve(0) answered %v, want ErrProtocol", max, err)
+		if err := accept.FailChannel(wire.ControlChannel, failed); err != ErrProtocol {
+			t.Errorf("NewTable(%d, false).FailChannel(0) answered %v, want ErrProtocol", max, err)
 		}
 		if _, err := accept.Next(wire.MinWindow); err != ErrProtocol {
 			t.Errorf("NewTable(%d, false).Next answered %v, want ErrProtocol", max, err)
@@ -396,19 +397,31 @@ func TestNextKeepsTheLimit(t *testing.T) {
 	}
 }
 
-func TestReserveHoldsTheNumberOfAProtocolError(t *testing.T) {
+// errSend is what the send of a case answers when it is not meant to be called.
+var errSend = errors.New("send was called")
+
+// failed is a send that must never run: every call of FailChannel that is refused
+// before the frame is written uses it, so a refusal that wrote anyway falls.
+func failed() error { return errSend }
+
+func TestFailChannelHoldsTheNumberAndNotesTheCloseInOneCall(t *testing.T) {
 	tb := NewTable(2, false)
 	// Channel 0 is no number of this table, so a protocol error on it ends the
-	// link; reserving it would have held a number that cannot exist, while Open
+	// link; holding it would have held a number that cannot exist, while Open
 	// refuses the same number.
-	if err := tb.Reserve(wire.ControlChannel); err != ErrProtocol {
-		t.Fatalf("channel 0 was reserved: %v", err)
+	if err := tb.FailChannel(wire.ControlChannel, failed); err != ErrProtocol {
+		t.Fatalf("channel 0 was held: %v", err)
 	}
 	if tb.Count() != 0 {
 		t.Fatalf("the refused channel 0 still took a number, count %d", tb.Count())
 	}
-	if err := tb.Reserve(7); err != nil {
-		t.Fatalf("reserve: %v", err)
+	var sent int
+	send := func() error { sent++; return nil }
+	if err := tb.FailChannel(7, send); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if sent != 1 {
+		t.Fatalf("the CLOSE was written %d times", sent)
 	}
 	// It counts toward the limit until the other side's CLOSE arrives.
 	if tb.Count() != 1 {
@@ -416,32 +429,62 @@ func TestReserveHoldsTheNumberOfAProtocolError(t *testing.T) {
 	}
 	c, ok := tb.Get(7)
 	if !ok {
-		t.Fatal("the reserved number is not there")
+		t.Fatal("the held number is not there")
 	}
-	// Reserving twice is no error and does not count twice.
-	if err := tb.Reserve(7); err != nil {
-		t.Fatalf("reserve again: %v", err)
+	// The CLOSE is noted in the same call, which is the whole point of FailChannel:
+	// nobody has to remember it, and nobody can forget it.
+	if !c.Closing() {
+		t.Fatal("FailChannel wrote the CLOSE without noting it")
+	}
+	// A second FailChannel for the same number says so and writes nothing: we already
+	// answered E_PROTOCOL there.
+	if err := tb.FailChannel(7, failed); err != ErrClosing {
+		t.Fatalf("the second FailChannel answered %v, want ErrClosing", err)
 	}
 	if tb.Count() != 1 {
-		t.Fatalf("count after reserving twice %d", tb.Count())
+		t.Fatalf("count after the second FailChannel %d", tb.Count())
 	}
 	// Nothing may be sent or arrive on a number we only answered with CLOSE.
 	if c.SendAllowed(1) || c.Take(1) {
-		t.Fatal("a reserved number carries credit")
+		t.Fatal("a held number carries credit")
 	}
-	c.SentClose()
 	c.RecvClose()
 	if tb.Count() != 0 {
 		t.Fatalf("count after both closes %d", tb.Count())
 	}
 	// A stray frame that would make one number too many ends the link.
-	if err := tb.Reserve(1); err != nil {
-		t.Fatalf("reserve 1: %v", err)
+	if err := tb.FailChannel(1, send); err != nil {
+		t.Fatalf("fail 1: %v", err)
 	}
-	if err := tb.Reserve(2); err != nil {
-		t.Fatalf("reserve 2: %v", err)
+	if err := tb.FailChannel(2, send); err != nil {
+		t.Fatalf("fail 2: %v", err)
 	}
-	if err := tb.Reserve(3); err != ErrLimit {
+	if err := tb.FailChannel(3, failed); err != ErrLimit {
 		t.Fatalf("beyond the limit answered %v", err)
+	}
+}
+
+// TestFailChannelNotesNoCloseThatDidNotGoOut holds the one case where the number stays
+// held: a send that failed wrote nothing, so there is nothing to note.
+func TestFailChannelNotesNoCloseThatDidNotGoOut(t *testing.T) {
+	tb := NewTable(2, false)
+	if err := tb.FailChannel(4, failed); err != errSend {
+		t.Fatalf("Fail answered %v, want the error of send", err)
+	}
+	c, ok := tb.Get(4)
+	if !ok {
+		t.Fatal("the number was not held")
+	}
+	if c.Closing() {
+		t.Fatal("a CLOSE that never went out was noted")
+	}
+	// And the number is held, so the next FailChannel for it writes the frame rather
+	// than dropping it as already answered.
+	var sent int
+	if err := tb.FailChannel(4, func() error { sent++; return nil }); err != nil {
+		t.Fatalf("second FailChannel: %v", err)
+	}
+	if sent != 1 || !c.Closing() {
+		t.Fatalf("sent %d, closing %v", sent, c.Closing())
 	}
 }

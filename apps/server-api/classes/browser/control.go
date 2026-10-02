@@ -13,7 +13,7 @@ import (
 // control handles a frame on channel 0; false ends the link. Channel 0 carries
 // control messages as DATA and nothing else, so every other type is a broken
 // rule of the link and not a protocol error of a channel: channel 0 is no number
-// of the table, and link.Table.Reserve refuses it for that reason.
+// of the table, and link.Table.FailChannel refuses it for that reason.
 //
 // The type check is kept although nothing today can get past it, and the reason
 // is measured, not assumed: wire.Frame.check refuses OPEN, EOF, CLOSE and GRANT

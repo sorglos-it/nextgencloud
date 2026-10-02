@@ -17,6 +17,10 @@ var (
 	// number; a frame for a number that is neither open nor closing is the same
 	// error, but the caller sees it as Get reporting false.
 	ErrProtocol = errors.New("link: protocol error on a channel")
+	// ErrClosing reports that a CLOSE E_PROTOCOL for this number has already
+	// gone out. Whatever still arrives for it is dropped without an answer, and
+	// the link stands; FailChannel is the only call that answers it.
+	ErrClosing = errors.New("link: CLOSE already sent for this channel")
 )
 
 // Channel is one open or closing channel number with the credit of both
@@ -153,7 +157,7 @@ type Table struct {
 // every call, and which error it names depends on the call and not on max: the
 // checks that do not look at the table at all answer first, so Open and Next
 // still answer ErrProtocol for channel 0, for a window outside
-// MinWindow..MaxWindow and for the wrong side, and Reserve still answers
+// MinWindow..MaxWindow and for the wrong side, and FailChannel still answers
 // ErrProtocol for channel 0. Everything that gets past those answers ErrLimit.
 // Refusing is the safe answer and not an unbounded one, so a caller that forgets
 // the limit grants no channel rather than every channel.
@@ -219,27 +223,66 @@ func (t *Table) Next(window uint32) (*Channel, error) {
 	return nil, ErrLimit
 }
 
-// Reserve holds a number whose CLOSE E_PROTOCOL we are about to send, so that
-// it counts toward the limit until the other side's CLOSE arrives. It carries
-// no credit in either direction: nothing may be sent or arrive on it. ErrLimit
-// means the stray frame would make one number too many, which ends the link.
-// Channel 0 is ErrProtocol for the same reason Open refuses it: it is always
-// open, carries Control and is never a number of this table, so a protocol error
-// on it ends the link instead of closing a channel.
-func (t *Table) Reserve(num uint32) error {
+// FailChannel holds the number of a CLOSE E_PROTOCOL this side is about to
+// send and notes that CLOSE in the same call: send writes the frame between the two
+// halves, and nothing else of this package hands a bare reservation out.
+//
+// Holding and noting are ONE function on purpose. "Every held number is given
+// back once the other side's CLOSE arrives" has no other holder: a reservation
+// of its own could be made without ever noting a CLOSE, and the number would
+// then count toward the limit for the life of the link. A lint over the callers
+// was the weaker holder and is measured to be so -- it reads names and not
+// values, and the files on disk and not the build. This one is held by the
+// compiler, because reserving alone is not reachable from outside.
+//
+// A held number carries no credit in either direction: nothing may be sent or
+// arrive on it. What the answers mean:
+//
+//   - ErrProtocol: channel 0, which is always open, carries Control and is
+//     never a number of this table, so a protocol error on it ends the link
+//     instead of closing a channel. Open refuses it for the same reason.
+//   - ErrLimit: the stray frame would make one number too many, which ends the
+//     link. Nothing was held and send was not called.
+//   - ErrClosing: we already said E_PROTOCOL for this number. send was not
+//     called, nothing is noted twice, and the link stands.
+//   - the error of send: the frame did not go out, so no CLOSE is noted and the
+//     number stays held. That is not a leak this package can mend and it is not
+//     one in practice: a CLOSE has a fixed short payload, so the only way its
+//     write fails is the socket, and that has ended the link and the table with
+//     it (link.go, Write).
+func (t *Table) FailChannel(num uint32, send func() error) error {
 	if num == wire.ControlChannel {
 		return ErrProtocol
 	}
+	c, err := t.hold(num)
+	if err != nil {
+		return err
+	}
+	if c.Closing() {
+		return ErrClosing
+	}
+	if err := send(); err != nil {
+		return err
+	}
+	c.SentClose()
+	return nil
+}
+
+// hold returns the channel of a number, making a held one when the number is
+// free. It is unexported because a caller that could reach it could hold a
+// number without ever noting its CLOSE -- see FailChannel.
+func (t *Table) hold(num uint32) (*Channel, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.ch[num]; ok {
-		return nil
+	if c, ok := t.ch[num]; ok {
+		return c, nil
 	}
 	if len(t.ch) >= t.max {
-		return ErrLimit
+		return nil, ErrLimit
 	}
-	t.ch[num] = &Channel{Num: num, owner: t}
-	return nil
+	c := &Channel{Num: num, owner: t}
+	t.ch[num] = c
+	return c, nil
 }
 
 // Get returns a channel that is open or closing. False means the number is

@@ -215,62 +215,27 @@ func TestOnlySendGrantBuildsAGrant(t *testing.T) {
 	}
 }
 
-// TestOnlyProtocolErrorReservesANumber is the lint behind the third sentence.
-// Reserve holds a number until the other side's CLOSE arrives, so a Reserve
-// without a SentClose would hold it for the life of the link.
-func TestOnlyProtocolErrorReservesANumber(t *testing.T) {
+// TestOnlyProtocolErrorHoldsANumber is what is left of the lint behind the
+// third sentence, and it is deliberately less than it was: since link.Table
+// holds a number only inside FailChannelChannel, which writes the CLOSE and notes it in one
+// call, the compiler holds the sentence and this walk only says that this
+// package keeps the two calls in one place each -- FailChannel in protocolError, the
+// note of a CLOSE in Close. Both limits of the walk from the file header stand.
+func TestOnlyProtocolErrorHoldsANumber(t *testing.T) {
 	p := loadPkg(t, ".")
-	reserve := p.selectors("Reserve")
-	if len(reserve) == 0 {
-		t.Fatal("no use of Reserve was found at all -- the walk sees nothing")
+	fail := p.selectors("FailChannel")
+	if len(fail) == 0 {
+		t.Fatal("no use of FailChannel was found at all -- the walk sees nothing")
 	}
-	if got := names(reserve); len(got) != 1 || got[0] != "protocolError" {
-		t.Fatalf("a number is reserved in %v, not in protocolError alone", got)
+	if got := names(fail); len(got) != 1 || got[0] != "protocolError" {
+		t.Fatalf("a number is held in %v, not in protocolError alone", got)
 	}
 	sent := p.selectors("SentClose")
 	if got := names(sent); len(got) != 1 || got[0] != "Close" {
 		t.Fatalf("SentClose is noted in %v, not in Close alone", got)
 	}
-	if !p.callsSessionClose("protocolError") {
-		t.Fatal("protocolError reserves a number without calling s.Close, which is what notes the SentClose")
-	}
 }
 
-// callsSessionClose reports whether a function really calls s.Close(...), as a
-// call and not as a string that happens to look like one.
-func (p pkg) callsSessionClose(fn string) bool {
-	for _, f := range p.files {
-		for _, d := range f.Decls {
-			fd, ok := d.(*ast.FuncDecl)
-			if !ok || fd.Name.Name != fn {
-				continue
-			}
-			found := false
-			ast.Inspect(fd, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				se, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || se.Sel.Name != "Close" {
-					return true
-				}
-				if id, ok := se.X.(*ast.Ident); ok && id.Name == "s" {
-					found = true
-				}
-				return true
-			})
-			if found {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// TestTheLintSeesThroughTheSixWaysPastATextSearch is the self-test of the walk,
-// and it covers both sentences, not only the GRANT one: six shapes that a search
-// for text let through, in one package it has to report.
 func TestTheLintSeesThroughTheSixWaysPastATextSearch(t *testing.T) {
 	dir := t.TempDir()
 	// Every line here is one of the six measured ways past a text search.
@@ -349,6 +314,45 @@ func TestTheLintSeesThroughTheSixWaysPastATextSearch(t *testing.T) {
 		t.Fatalf("a name nobody holds was found in %v", n)
 	}
 }
+
+// callsSessionClose reports whether a function really calls s.Close(...), as a
+// call and not as a string that happens to look like one. Since link.Table.Fail
+// notes the CLOSE itself, only the synthetic case below still asks it, and there
+// it shows that neither a host in a URL nor a string that reads like a call
+// counts as one.
+func (p pkg) callsSessionClose(fn string) bool {
+	for _, f := range p.files {
+		for _, d := range f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Name.Name != fn {
+				continue
+			}
+			found := false
+			ast.Inspect(fd, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				se, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || se.Sel.Name != "Close" {
+					return true
+				}
+				if id, ok := se.X.(*ast.Ident); ok && id.Name == "s" {
+					found = true
+				}
+				return true
+			})
+			if found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestTheLintSeesThroughTheSixWaysPastATextSearch is the self-test of the walk,
+// and it covers both sentences, not only the GRANT one: six shapes that a search
+// for text let through, in one package it has to report.
 
 // contains says whether a list holds a string.
 func contains(list []string, s string) bool {

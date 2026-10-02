@@ -5,15 +5,14 @@
 // whose private half lies sealed in the database, so any API can serve any
 // session.
 //
-// This package is the one caller of link.Table on a session link today, and it
-// keeps the table's caller conditions for everything that goes out as a frame.
-//
-// How far that reaches, exactly: Session.Table is exported, so a dispatcher can
-// call Reserve, Allow, Spend and SentClose on the table without writing anything
-// to the link. For those the sentences below are a rule of this package and not
-// something the language holds -- only the frames are held. Unexporting the table
-// and putting Reserve and SentClose into one call of package link would close
-// that, and both belong to the task that touches link, not to this one.
+// This package is the one caller of link.Table on a session link, and it keeps
+// the table's caller conditions. Both of them are held by the compiler, and
+// that took two steps: the link is the unexported field Session.link, and since
+// task 12 the table is the unexported field Session.table and link.Table holds
+// a number only through FailChannel, which writes the CLOSE and notes it in one call.
+// A dispatcher outside this package therefore reaches neither the frames nor the
+// counters, and the sentences below are no longer a rule this package has to
+// remember.
 //
 // Who keeps them, and by what:
 //
@@ -29,13 +28,12 @@
 //     named limits of its own (lint_test.go): it reads the files on disk, so a
 //     build that replaces one of them (go test -overlay) is invisible to it, and
 //     it matches a name and not a value. The holder is the unexported field.
-//   - "Every Reserve is followed by a SentClose for the same number", so a
-//     number held for a CLOSE E_PROTOCOL is given back once the other side's
-//     CLOSE arrives. Nothing in the language can hold this one; the same syntax
-//     walk says that protocolError is the only function that reserves and that
-//     it sends the CLOSE in the same breath, and
-//     TestProtocolErrorGivesTheNumberBackAfterTheBrowsersClose measures the
-//     effect.
+//   - "Every held number is followed by a CLOSE noted for the same number", so
+//     a number held for a CLOSE E_PROTOCOL is given back once the other side's
+//     CLOSE arrives. This one is held by link.Table.FailChannel: holding a number
+//     alone is unexported there, and FailChannel writes the frame and notes the CLOSE
+//     in one call. TestProtocolErrorGivesTheNumberBackAfterTheBrowsersClose
+//     measures the effect on a real link.
 package browser
 
 import (
@@ -78,8 +76,14 @@ type Opener interface {
 
 // Session is one open session link.
 type Session struct {
-	Live  *login.Live
-	Table *link.Table
+	Live *login.Live
+
+	// table is unexported for the same reason as link, and that is the second
+	// condition of link.Table: whoever cannot reach the counters cannot raise
+	// what may arrive, spend what may be sent or note a CLOSE that never went
+	// out. What a dispatcher needs of it, it gets as a channel of its own from
+	// OpenChannel.
+	table *link.Table
 
 	// link is unexported on purpose, and that is what holds the first condition
 	// of link.Table: whoever cannot reach the link cannot send a GRANT without
@@ -127,7 +131,7 @@ func (srv *Server) Socket(w http.ResponseWriter, r *http.Request) {
 		// a misconfigured server, not a bad request.
 		return
 	}
-	s := &Session{Live: live, Table: link.NewTable(wire.MaxSessionChannels, false), link: l}
+	s := &Session{Live: live, table: link.NewTable(wire.MaxSessionChannels, false), link: l}
 	srv.Sessions.Add(s)
 	defer srv.Sessions.Remove(s)
 	srv.run(ctx, s)
@@ -184,7 +188,7 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		if err != nil {
 			return s.protocolError(ctx, f.Channel)
 		}
-		c, err := s.Table.Open(f.Channel, o.Window)
+		c, err := s.table.Open(f.Channel, o.Window)
 		if errors.Is(err, link.ErrLimit) {
 			return false
 		}
@@ -201,7 +205,7 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		go srv.Open.OpenChannel(ctx, s, c, o)
 		return true
 	default:
-		c, ok := s.Table.Get(f.Channel)
+		c, ok := s.table.Get(f.Channel)
 		if !ok {
 			return s.protocolError(ctx, f.Channel)
 		}
@@ -281,40 +285,44 @@ func (s *Session) SendData(ctx context.Context, c *link.Channel, payload []byte)
 
 // protocolError answers CLOSE E_PROTOCOL for a number; it keeps the number
 // until the other side's CLOSE arrives, and ends the link when that would take
-// one number too many.
+// one number too many. The holding, the frame and the note are one call of
+// link.Table.FailChannel, so this function cannot hold a number and forget its CLOSE.
 func (s *Session) protocolError(ctx context.Context, num uint32) bool {
-	if num == wire.ControlChannel {
-		return false
-	}
-	if err := s.Table.Reserve(num); err != nil {
-		return false
-	}
-	c, _ := s.Table.Get(num)
-	if c != nil && c.Closing() {
-		// We already said E_PROTOCOL for this number; what still arrives for it
-		// is dropped without an answer.
+	err := s.table.FailChannel(num, func() error { return s.writeClose(ctx, wire.CodeProtocol, num) })
+	switch {
+	case err == nil:
 		return true
-	}
-	if err := s.Close(ctx, wire.CodeProtocol, num); err != nil {
+	case errors.Is(err, link.ErrClosing):
+		// We already said E_PROTOCOL for this number; what still arrives for it
+		// is dropped without an answer, and the link stands.
+		return true
+	default:
+		// Channel 0, one number too many, and a CLOSE that did not go out: all
+		// three end the link.
 		return false
 	}
-	return true
 }
 
-// Close sends a CLOSE with a code for a channel and notes it, which is the
-// SentClose every Reserve of this package waits for.
+// Close sends a CLOSE with a code for a channel and notes it. It is the way a
+// dispatcher ends a channel in order; a protocol error goes through
+// protocolError, which notes the CLOSE inside link.Table.FailChannel instead.
 func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
+	if err := s.writeClose(ctx, code, num); err != nil {
+		return err
+	}
+	if c, ok := s.table.Get(num); ok {
+		c.SentClose()
+	}
+	return nil
+}
+
+// writeClose puts one CLOSE frame with a code on the link and notes nothing.
+func (s *Session) writeClose(ctx context.Context, code wire.Code, num uint32) error {
 	payload, err := json.Marshal(wire.Error(code))
 	if err != nil {
 		return err
 	}
-	if err := s.link.Write(ctx, wire.Frame{Type: wire.TypeClose, Channel: num, Payload: payload}); err != nil {
-		return err
-	}
-	if c, ok := s.Table.Get(num); ok {
-		c.SentClose()
-	}
-	return nil
+	return s.link.Write(ctx, wire.Frame{Type: wire.TypeClose, Channel: num, Payload: payload})
 }
 
 // End closes the whole link.

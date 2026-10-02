@@ -223,7 +223,7 @@ func TestTheDispatcherRunsBesideTheReader(t *testing.T) {
 	within(t, "waiting for the reader to take both OPENs", func() {
 		for {
 			n := 0
-			h.Srv.Sessions.Each(func(s *Session) { n = s.Table.Count() })
+			h.Srv.Sessions.Each(func(s *Session) { n = s.table.Count() })
 			if n == 2 {
 				open = n
 				return
@@ -294,7 +294,7 @@ func TestCloseCarriesTheCodeItWasGiven(t *testing.T) {
 	}
 	wantClose(t, c, 1, wire.CodeLimit)
 	// And the number is noted as closing, which is what Close owes Reserve.
-	ch, ok := o.s.Table.Get(1)
+	ch, ok := o.s.table.Get(1)
 	if !ok || !ch.Closing() {
 		t.Fatalf("channel 1 after our CLOSE: open %v", ok)
 	}
@@ -333,7 +333,7 @@ func TestEofFromTheBrowserKeepsTheChannel(t *testing.T) {
 	if f := c.read(t); f.Type != wire.TypeGrant || f.Channel != 2 {
 		t.Fatalf("after the EOF: %+v", f)
 	}
-	ch, ok := o.s.Table.Get(1)
+	ch, ok := o.s.table.Get(1)
 	if !ok || ch.Closing() {
 		t.Fatalf("channel 1 after the EOF: open %v", ok)
 	}
@@ -423,7 +423,7 @@ func TestProtocolErrorGivesTheNumberBackAfterTheBrowsersClose(t *testing.T) {
 	// A DATA frame for a number that is neither open nor closing.
 	c.write(t, wire.Frame{Type: wire.TypeData, Channel: 2, Payload: []byte("x")})
 	wantClose(t, c, 2, wire.CodeProtocol)
-	if n := o.s.Table.Count(); n != 2 {
+	if n := o.s.table.Count(); n != 2 {
 		t.Fatalf("the reserved number does not count: %d", n)
 	}
 	// A second stray for the same number is dropped without an answer, so the
@@ -443,10 +443,10 @@ func TestProtocolErrorGivesTheNumberBackAfterTheBrowsersClose(t *testing.T) {
 	c.writeOpen(t, 4, openOf())
 	<-h.Opened // channel 3
 	<-h.Opened // channel 4
-	if _, ok := o.s.Table.Get(2); ok {
+	if _, ok := o.s.table.Get(2); ok {
 		t.Fatal("the number is still held after both CLOSEs")
 	}
-	if n := o.s.Table.Count(); n != 3 {
+	if n := o.s.table.Count(); n != 3 {
 		t.Fatalf("open numbers %d, want 1, 3 and 4", n)
 	}
 }
