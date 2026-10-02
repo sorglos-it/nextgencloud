@@ -10,14 +10,19 @@
 //
 // That is not the same as "it cannot reach the log", and the difference
 // matters to whoever writes a service: contract V3 asks for the stderr of the
-// program, and this package writes it, up to service.MaxStderr bytes of it
-// (see RunService). The program has NGC_PARAMS in its environment, so a
-// program that writes its environment, or its parameters, or the text of an
-// error that quotes them, puts them in the log of this server itself.
-// Measured: shared/testdata/service/echo.sh writes NGC_APP, NGC_SERVICE,
-// NGC_ACTION and NGC_USER to stderr, and a case here reads all four back out
-// of the log. A service keeps its secrets off its own stderr, or it does not
-// keep them.
+// program. What this package writes of it by default is that there was stderr
+// and how many bytes - never the text. The text is a service telling this
+// server about itself, and a service has NGC_PARAMS in its environment: one
+// that writes its environment, or its parameters, or the text of an error
+// which quotes them, would put what the user typed into the log of this
+// server. Measured: shared/testdata/service/echo.sh writes NGC_APP,
+// NGC_SERVICE, NGC_ACTION and NGC_USER to stderr, and a case here reads all
+// four back out of the log - with CallInput.LogStderr on.
+//
+// So the text goes out only where someone switched it on, and off is the
+// default (CallInput.LogStderr, Deps.LogStderr). The price in one sentence:
+// whoever hunts a broken app has to turn the switch before the log tells him
+// what the app said.
 
 package serve
 
@@ -83,6 +88,11 @@ type CallInput struct {
 	// Log is where the one stderr line of this call goes. nil:
 	// slog.Default().
 	Log *slog.Logger
+	// LogStderr lets the text of that line carry the stderr of the program.
+	// False, the default, writes only that there was stderr and how much: the
+	// text is the app's own and may hold what the user typed (see the head of
+	// this file). An operator switches it on to hunt a broken app.
+	LogStderr bool
 }
 
 // RunService runs the program of one service and answers with the CLOSE of
@@ -170,7 +180,7 @@ func RunService(ctx context.Context, in CallInput) wire.Close {
 	// to stderr is the app's to choose and how often this controller writes
 	// must not be.
 	if b := errs.bytes(); len(b) > 0 {
-		logStderr(in.logger(), keysOf(in.Call), string(b))
+		logStderr(in.logger(), keysOf(in.Call), b, in.LogStderr)
 	}
 
 	switch {
@@ -317,19 +327,29 @@ func (r *ring) bytes() []byte { return r.b }
 // call. So no line of this package has to remember not to write Params -
 // there is no argument to write it with.
 //
-// What logStderr does take is text, and that text is the program's own
-// stderr. Whatever the program wrote there goes out with these three, so this
-// barrier holds this package to its own words and says nothing about what the
-// app says about itself (see the head of this file).
+// What logStderr may take besides them is the stderr of the program itself,
+// and that one is behind a switch (see the head of this file). So this barrier
+// holds this package to its own words, and the switch holds what the app says
+// about itself.
 type logKeys struct{ app, service, action string }
 
 // keysOf picks those three out of a call.
 func keysOf(c service.Call) logKeys { return logKeys{c.App, c.Service, c.Action} }
 
-// logStderr writes the one line of this call.
-func logStderr(log *slog.Logger, k logKeys, text string) {
-	log.Info("a service wrote to stderr",
-		"app", k.app, "service", k.service, "action", k.action, "stderr", text)
+// logStderr writes the one line of this call: always that there was stderr and
+// how many bytes of it, and the text itself only where full says so.
+//
+// The length is in both lines and on purpose. It is the app's own doing and
+// says nothing about what the user typed, and without it a log with the switch
+// off would not even say that a service is talking.
+func logStderr(log *slog.Logger, k logKeys, b []byte, full bool) {
+	if full {
+		log.Info("a service wrote to stderr", "app", k.app, "service", k.service,
+			"action", k.action, "bytes", len(b), "stderr", string(b))
+		return
+	}
+	log.Info("a service wrote to stderr", "app", k.app, "service", k.service,
+		"action", k.action, "bytes", len(b))
 }
 
 // logger is where this call writes.

@@ -243,9 +243,17 @@ func (ch *Channel) Send(b []byte) error {
 // of a run of full ones.
 //
 // b must fit one frame (wire.MaxPayload) and, to come off at all, the window
-// the other side gave: whoever sends more than that window waits here until the
-// channel ends. ErrConfig for a b that is too long for a frame.
-func (ch *Channel) SendWhole(b []byte) error {
+// the other side gave. ErrConfig for a b that is too long for a frame.
+//
+// ctx is what bounds the wait for that credit, and it is not optional comfort:
+// the whole of this call holds the send lock of the channel, so a peer that
+// keeps back less than one payload of credit and then stands still would hold
+// every later write of this channel too - including the one that ends it. The
+// caller therefore hands in the clock its own work hangs on, and a wait that
+// runs out comes back with that context error while the channel stays usable
+// for whoever writes next. Without ctx the only ways out are enough credit and
+// the end of the channel, and neither of those is a clock.
+func (ch *Channel) SendWhole(ctx context.Context, b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
@@ -254,16 +262,17 @@ func (ch *Channel) SendWhole(b []byte) error {
 	}
 	ch.smu.Lock()
 	defer ch.smu.Unlock()
-	if err := ch.reserveAll(len(b)); err != nil {
+	if err := ch.reserveAll(ctx, len(b)); err != nil {
 		return err
 	}
 	return ch.write(wire.Frame{Type: wire.TypeData, Channel: ch.num, Payload: b})
 }
 
 // reserveAll takes credit for want bytes, all of it or none, and waits until
-// there is that much. Every wake re-reads the whole allowance, so two GRANT
-// that were coalesced into one wake are still counted together.
-func (ch *Channel) reserveAll(want int) error {
+// there is that much, until ctx ends or until the channel does. Every wake
+// re-reads the whole allowance, so two GRANT that were coalesced into one wake
+// are still counted together.
+func (ch *Channel) reserveAll(ctx context.Context, want int) error {
 	for {
 		ch.mu.Lock()
 		switch {
@@ -285,6 +294,13 @@ func (ch *Channel) reserveAll(want int) error {
 		case <-ch.credit:
 		case <-ch.ctx.Done():
 			return ErrClosed
+		case <-ctx.Done():
+			// Both are ready at once at the end of a channel, and then it is
+			// the channel that happened - the same answer Recv gives there.
+			if ch.ctx.Err() != nil {
+				return ErrClosed
+			}
+			return ctx.Err()
 		}
 	}
 }

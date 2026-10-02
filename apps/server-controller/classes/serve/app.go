@@ -13,6 +13,13 @@
 // The output of an action that does not stream is one result of at most
 // wire.MaxCallResult bytes. Past that nothing more goes out and the channel
 // ends with E_TOOLARGE, whatever the program then did (shellOutput).
+//
+// And one bound that is not of the contract but of this machine: every wait
+// for credit hangs on the clock of the action, the way the input does
+// (runApp). A peer that keeps back less than one whole message would otherwise
+// hold the send lock of the channel for good, and with it the end this side
+// still owes - the clock of the action would be worth nothing. What such a
+// channel gets is its one CLOSE with the reason in it.
 package serve
 
 import (
@@ -196,7 +203,7 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	d access.Decision, first wire.E2EMessage) error {
 	p, cl := s.plan(d)
 	if cl != nil {
-		return s.answer(ch, sess, *cl)
+		return s.answer(ctx, ch, sess, *cl)
 	}
 	// Here the licence of the app belongs, between the handshake that stands
 	// and the container that is started: an app whose licence has run out
@@ -204,7 +211,7 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// licence and this is the one place it goes; until then no app channel is
 	// refused for one, and no E_LICENSE leaves this package.
 	if cl := s.ensure(ctx, p.container); cl != nil {
-		return s.answer(ch, sess, *cl)
+		return s.answer(ctx, ch, sess, *cl)
 	}
 	// The input hangs on a clock of its own, and it is the clock of the
 	// action: a shell that neither ends its input nor sends more would
@@ -215,6 +222,22 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// rule 1 of RunService puts that ahead of the limit. An action that
 	// streams has no limit at all, there as here: its end is for the shell to
 	// decide.
+	//
+	// What that costs is reckoned here so that nobody has to work it out
+	// again. A stream channel whose shell goes quiet holds, per channel: up
+	// to wire.DefaultWindow (256 KiB) of DATA this side took credit for, the
+	// service.MaxStderr ring (64 KiB), one sealed payload (up to 65514 bytes),
+	// a pipe pair with three or four goroutines - and a process in the
+	// container, which is the real price. At wire.MaxTunnelChannels (1024,
+	// which this controller does enforce) that is roughly 0.4 GiB of buffers
+	// and 1024 container processes. wire.MaxSessionChannels (64) would hold it
+	// to about 16 browser sessions, but that bound is the API to enforce, not
+	// this controller. The bound belongs in a task of its own because it
+	// touches the contract: a stream has no time limit by contract, and the
+	// contract is frozen. Not built here on purpose.
+	// The clock of this call. It bounds the wait for input, the wait for
+	// credit on the way out and the program itself - all three through this
+	// one deadline.
 	inCtx := ctx
 	if d := limit(p.timeout, p.stream); d > 0 {
 		var stop context.CancelFunc
@@ -223,27 +246,52 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	}
 	// The window is read before anything of this side went out, so it is the
 	// one the other end gave this channel.
-	out := &shellOutput{ch: ch, sess: sess, chunk: innerChunk(ch.Window())}
+	out := &shellOutput{ctx: inCtx, ch: ch, sess: sess, chunk: innerChunk(ch.Window())}
 	if !p.stream {
 		out.max = wire.MaxCallResult
 	}
-	end := RunService(ctx, CallInput{
+	// One clock for the whole call, and that is the point of handing inCtx on:
+	// RunService puts the same limit on again (limit), so the deadline that
+	// counts is this one, the earlier of two equal ones. With two clocks the
+	// outcome was a race - measured, a call whose output the clock had just
+	// cut ended E_INTERNAL instead of E_TIMEOUT, because RunService own
+	// deadline was microseconds younger and had not fired yet.
+	end := RunService(inCtx, CallInput{
 		Engine: s.d.Engine, Container: p.container, Command: p.command,
 		Call: service.Call{User: d.User, UserName: d.UserName, App: d.App.ID, Service: p.service,
 			Action: p.action, Version: d.App.Version, Params: d.Params(), Start: false},
 		Timeout: p.timeout, Stream: p.stream,
 		In:  &shellInput{ctx: inCtx, ch: ch, sess: sess, buf: first.Data, done: first.Kind == wire.E2EEnd},
-		Out: out, Log: s.log(),
+		Out: out, Log: s.log(), LogStderr: s.d.LogStderr,
 	})
 	// What the output side already knows beats what the program ended with: a
 	// result past the limit is no result, however happily the program stopped
-	// writing it.
+	// writing it. Nothing was sealed past that limit, so this end still
+	// travels inside the session.
 	if out.tooLarge {
-		end = wire.Error(wire.CodeTooLarge)
-	} else if out.err != nil {
-		end = wire.Error(wire.CodeInternal)
+		return s.answer(ctx, ch, sess, wire.Error(wire.CodeTooLarge))
 	}
-	return s.answer(ch, sess, end)
+	if out.err != nil {
+		// One inner message was sealed and did not get out - the credit ran
+		// out under the clock of the action, or the channel ended. The
+		// transport counts its messages, so anything sealed after that one
+		// would decrypt at the wrong number: there is no end left to send,
+		// and the CLOSE of the transport carries the reason instead. A side
+		// that sees the CLOSE before the E2EEnd reports an error of its own
+		// (wire, "End to end"), and the code it reads there is this one.
+		//
+		// The price, said plainly: the shell learns the outcome from the
+		// CLOSE and not from inside the session. Keeping it inside would mean
+		// taking the credit before sealing, which puts the credit arithmetic
+		// of one message outside link - and a message sealed against the
+		// wrong number breaks the channel for good, while a CLOSE always
+		// gets out, because it costs no credit.
+		if end.Status == wire.StatusOK {
+			end = wire.Error(wire.CodeInternal)
+		}
+		return s.end(ch, end)
+	}
+	return s.answer(ctx, ch, sess, end)
 }
 
 // answer puts the outcome of the call into the E2EEnd of this side and ends
@@ -254,12 +302,19 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 // Only where the end itself could not be sent does the CLOSE carry the error.
 // Then the shell got no E2EEnd, and a side that sees the CLOSE of the
 // transport before it reports an error of its own (wire, "End to end").
-func (s *Server) answer(ch *link.Channel, sess *e2e.Session, cl wire.Close) error {
+func (s *Server) answer(ctx context.Context, ch *link.Channel, sess *e2e.Session, cl wire.Close) error {
 	ct, err := sess.End(cl)
 	if err != nil {
 		return s.end(ch, wire.Error(wire.CodeInternal))
 	}
-	if err := ch.SendWhole(ct); err != nil {
+	// The end of this side needs credit like everything else, and a peer that
+	// gives none must not keep this channel open for it: after this wait the
+	// CLOSE goes out instead, which needs no credit, and the shell reads the
+	// missing end as an error of its own (wire, "End to end"). The shell gets
+	// as long to take this end as it had for its own first message.
+	wait, cancel := context.WithTimeout(ctx, s.lastWait())
+	defer cancel()
+	if err := ch.SendWhole(wait, ct); err != nil {
 		return s.end(ch, wire.Error(wire.CodeInternal))
 	}
 	if err := ch.EOF(); err != nil {
@@ -340,6 +395,12 @@ func (r *shellInput) fill() error {
 // alone - the sending half of the session belongs to it until RunService comes
 // back (e2e.Session).
 type shellOutput struct {
+	// ctx is the clock of the action. It bounds the wait for credit, and that
+	// bound is what keeps a peer which holds its credit back from holding the
+	// channel past that clock: this side waits with the send lock of the
+	// channel in hand, so the end of this call could not go out behind it
+	// (link.Channel.SendWhole).
+	ctx      context.Context
 	ch       *link.Channel
 	sess     *e2e.Session
 	chunk    int   // the plaintext of one inner message, at most (innerChunk)
@@ -367,7 +428,7 @@ func (w *shellOutput) Write(p []byte) (int, error) {
 			w.err = err
 			return n, nil
 		}
-		if err := w.ch.SendWhole(ct); err != nil {
+		if err := w.ch.SendWhole(w.ctx, ct); err != nil {
 			w.err = err
 			return n, nil
 		}

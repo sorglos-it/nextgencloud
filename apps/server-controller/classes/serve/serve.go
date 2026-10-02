@@ -93,6 +93,12 @@ type Deps struct {
 	// is its configuration and not a peer's, so a channel that meets a
 	// missing one says nothing else about itself.
 	Engine runtime.Engine
+	// LogStderr lets the log of this server carry the text a service writes to
+	// stderr. Off, the default, writes only that there was stderr and how
+	// much: that text is the app's own and may hold what the user typed
+	// (call.go, head). An operator switches it on to hunt a broken app and off
+	// again afterwards.
+	LogStderr bool
 	// Chain holds the trust list. Every channel reads the newest verified
 	// version once, at its start, and decides on that one to its end.
 	Chain *chain.Keeper
@@ -138,6 +144,10 @@ type Server struct {
 	// sets it, to run the wait out in a fraction of a second; without it the
 	// wire.E2EFirstTimeout of the contract holds.
 	first time.Duration
+	// last bounds the wait for the credit the end of an app channel needs
+	// (Server.answer). Only a test sets it, for the same reason as first;
+	// without it the wire.E2EFirstTimeout of the contract holds here too.
+	last time.Duration
 	// handshakes counts the end-to-end handshakes that did not come off. It
 	// is counted and not written: e2e.ErrHandshake says nothing about whose
 	// fault it was, so every one of them would be answered with E_INTERNAL in
@@ -375,6 +385,16 @@ func firstGrant(a core.Action) uint32 {
 func (s *Server) firstWait() time.Duration {
 	if s.first > 0 {
 		return s.first
+	}
+	return wire.E2EFirstTimeout * time.Second
+}
+
+// lastWait is how long the shell has to take the end of this side: as long as
+// it had for its own first message. A number of its own would be one more
+// thing to keep in step with the contract, and nothing says it should differ.
+func (s *Server) lastWait() time.Duration {
+	if s.last > 0 {
+		return s.last
 	}
 	return wire.E2EFirstTimeout * time.Second
 }

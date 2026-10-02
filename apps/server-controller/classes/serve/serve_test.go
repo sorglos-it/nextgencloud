@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,6 +139,23 @@ func manifest() []byte {
 	return []byte(`{"id":"` + testApp + `","name":"Terminal","version":"1.0.0","publisher":"Sorglos",` +
 		`"services":[{"name":"` + testService + `","command":["/bin/terminal"]}],` +
 		`"actions":[{"name":"` + testAction + `","title":"Ausführen","service":"` + testService + `"}]}`)
+}
+
+// quickAction puts the app back with a manifest whose one action has this time
+// limit in seconds, so a case about the clock of an action does not have to sit
+// out the service.DefaultTimeout of the contract.
+func (w *world) quickAction(t *testing.T, sec int) {
+	t.Helper()
+	m := bytes.Replace(manifest(), []byte(`"service":"`+testService+`"`),
+		[]byte(`"service":"`+testService+`","timeout":`+strconv.Itoa(sec)), 1)
+	if bytes.Equal(m, manifest()) {
+		t.Fatal("the manifest of the fixture changed: no action to put a timeout on")
+	}
+	if err := w.st.PutApp(context.Background(), dbapi.App{ID: testApp, Version: "1.0.0",
+		Store: trust.StoreGlobal, Node: node, Active: true, Manifest: m,
+		SHA256: bytes.Repeat([]byte{0x01}, 32)}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // next is version 2 of the fixture's list, signed by the same admin.
@@ -360,7 +378,13 @@ func (a *apiSide) shut(num uint32) {
 
 // next reads one frame of the controller and gives up after answer.
 func (a *apiSide) next() (wire.Frame, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), answer)
+	return a.nextIn(answer)
+}
+
+// nextIn is next with a wait of its own, for a case that has to find out that
+// nothing comes.
+func (a *apiSide) nextIn(d time.Duration) (wire.Frame, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	typ, msg, err := a.c.Read(ctx)
 	if err != nil {

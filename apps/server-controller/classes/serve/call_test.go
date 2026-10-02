@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -203,6 +204,9 @@ func TestRunServicePassesTheEnvironmentAndEchoes(t *testing.T) {
 		Command: []string{"/bin/sh", echoScript},
 		Call:    echoCall(`{}`),
 		In:      strings.NewReader("hallo welt"), Out: &out, Log: log.logger(),
+		// The environment is read back out of the stderr of the service, so
+		// this case needs the switch that lets that text into the log.
+		LogStderr: true,
 	})
 	if cl.Status != wire.StatusOK || cl.Code != "" {
 		t.Fatalf("close = %+v, want status ok", cl)
@@ -281,6 +285,9 @@ func TestParamsNeverReachTheLog(t *testing.T) {
 		Command: []string{"/bin/sh", echoScript},
 		Call:    echoCall(`{"wort":"` + secret + `"}`),
 		In:      strings.NewReader(""), Log: log.logger(),
+		// With the switch on, which is the hard half of the rule: even the
+		// whole stderr of the service must not carry the params.
+		LogStderr: true,
 	})
 	if cl.Status != wire.StatusOK {
 		t.Fatalf("close = %+v, want status ok", cl)
@@ -486,7 +493,7 @@ func TestTheStderrOfACallIsBoundedAndKeepsItsEnd(t *testing.T) {
 	}}
 	if cl := RunService(context.Background(), CallInput{
 		Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
-		Call: echoCall(`{}`), Log: log.logger(),
+		Call: echoCall(`{}`), Log: log.logger(), LogStderr: true,
 	}); cl.Status != wire.StatusOK {
 		t.Fatalf("close = %+v, want status ok", cl)
 	}
@@ -559,7 +566,7 @@ func TestParamsReachNoLineOfAnyCall(t *testing.T) {
 	}}
 	if cl := RunService(context.Background(), CallInput{
 		Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
-		Call: echoCall(`{"wort":"` + secret + `"}`), Log: log.logger(),
+		Call: echoCall(`{"wort":"` + secret + `"}`), Log: log.logger(), LogStderr: true,
 	}); cl.Status != wire.StatusOK {
 		t.Fatalf("close = %+v, want status ok", cl)
 	}
@@ -868,5 +875,42 @@ func TestTwoCallsGetTwoFilesOfTheirOwn(t *testing.T) {
 		if string(b) != want {
 			t.Fatalf("%s holds %q, want %q", path, b, want)
 		}
+	}
+}
+
+// The stderr of a service is its own text, and a service has NGC_PARAMS in its
+// environment: a program that writes its environment would put what the user
+// typed into the log of this server. So the text goes out only where someone
+// switched it on, and off is the default - what stands in the log then is that
+// there was stderr and how much of it.
+func TestStderrTextStaysOutOfTheLogUnlessItIsSwitchedOn(t *testing.T) {
+	envHere(t)
+	const said = "ich bin der fehler 4711"
+	for _, c := range []struct {
+		name string
+		on   bool
+	}{{"off", false}, {"on", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			log := newCollector()
+			e := &stub{run: func(_ context.Context, ex runtime.Exec) (int, error) {
+				ex.Stderr.Write([]byte(said))
+				return 0, nil
+			}}
+			if cl := RunService(context.Background(), CallInput{
+				Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
+				Call: echoCall(`{}`), Log: log.logger(), LogStderr: c.on,
+			}); cl.Status != wire.StatusOK {
+				t.Fatalf("close = %+v, want status ok", cl)
+			}
+			got := log.text.String()
+			// Both ways: that there was stderr, and how much. Without this the
+			// check below would pass on a log nobody wrote at all.
+			if !strings.Contains(got, "bytes="+strconv.Itoa(len(said))) {
+				t.Fatalf("log = %q, want the length of the stderr", got)
+			}
+			if strings.Contains(got, said) != c.on {
+				t.Fatalf("log = %q, want the text of the stderr only with the switch on", got)
+			}
+		})
 	}
 }
