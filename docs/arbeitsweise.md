@@ -2655,6 +2655,20 @@ und wer eine Zahl nennt, nennt das Register, aus dem sie kommt.
 > Elementzahl muss **die Zwoelf im Kommentar nennen**. Eine Andeutung reicht
 > nicht — wer auf zwoelf kuerzt, bekommt gruen und hat die Messung verloren,
 > ohne es zu merken.
+>
+> **Zum zweiten Mal nachgeschaerft, 03.10.2026 — und diesmal war ich zu
+> schnell.** Die Schwelle ist **notwendig, nicht hinreichend**. Ein Strang hat
+> 13 Knoten gewaehlt, die Zwoelf in den Kommentar geschrieben, und der Mutant
+> lebte trotzdem: bei lauter **gesunden** Knoten ist der Vergleich immer
+> `false`, die Scheibe ist schon sortiert, und `sort.Slice` laesst eine
+> inversionsfreie Scheibe liegen. Rot wurde nur der Fall mit **40 Knoten, von
+> denen jeder dritte in der Ruhepause steht**.
+>
+> **Es braucht also beides: genug Elemente UND Daten, die wirklich umsortiert
+> werden muessen.** Dazu der Zusatz, der beim dritten Mal dazukam: dass
+> `sort.Slice` eine sortierte Scheibe liegen laesst, ist **nicht zugesagt** —
+> auf "bleibt gruen" ist hier so wenig Verlass wie auf "wird rot". Der Fall
+> muss die Inversion selbst herstellen, nicht hoffen.
 
 Ein Fall sollte halten, dass eine Reihenfolge **stabil** sortiert wird. Der
 Mutant („`sort.SliceStable` → `sort.Slice`") lebte — mit der Zahl von Knoten,
@@ -3050,3 +3064,39 @@ dreihundert Zeilen tiefer.
 der es haelt, oder eine Einschraenkung, die sagt, was doch durchgeht.** Die
 Grenze selbst war in Ordnung und ist gemessen (70010 Byte hinein, genau 65536
 heraus, das Ende behalten) — nur der Grund stand nicht an der Stelle.
+
+## Ein Betriebsfund gehoert in den CODE, nicht in einen Bericht
+
+Gemessen am 03.10.2026 mit einer eigenen Sonde des Pruefers: ein Knoten, der
+die Verbindung **annimmt und dann schweigt**, haelt den Aufrufer
+**60,004 Sekunden** — punktgenau `ReadTimeout` —, und der Verteiler weicht in
+der Zeit **nicht aus**. Der Grund ist der Satz, auf den es ankommt:
+
+> **Schweigen ist keine Antwort.** `Connect` ist erst beim naechsten Knoten,
+> wenn der erste geantwortet hat. Ein Fehler loest das Ausweichen aus; ein
+> Nichts loest nichts aus.
+
+Die Frist, die der Plan dafuer nannte, umspannt nur den **Verbindungsaufbau**.
+Danach gilt `ReadTimeout`, und der Aufruf gelingt am Ende sogar — er ist nur
+eine Minute weg. Ein ruhig gestorbener Knoten kostet damit ungefaehr **eine
+Verbindung je 90 Sekunden** (60 s Stillstand plus 30 s Ruhepause).
+
+Das ist kein Testfund und kein Schoenheitsfehler, es ist das Verhalten der
+Anlage unter einem haeufigen Ausfall.
+
+**Also: wer so etwas messt, schreibt es dorthin, wo es wirkt** — hier eine
+eigene Frist um `Connect`, deutlich unter `ReadTimeout`. Ein Bericht erreicht
+den, der ihn liest; der Code erreicht den, der ihn aendert. Und solange die
+Frist nicht da ist, gehoert der gemessene Satz als Kommentar an die Stelle,
+die ihn verursacht.
+
+## Deutsche Anfuehrungszeichen in einem Python-Literal brechen das Skript
+
+Mir selbst heute dreimal passiert: ein Text mit den Zeichen fuer deutsche
+Anfuehrung, in ein `python - <<'PY'` als Zeichenkette gelegt, bricht mit
+`SyntaxError: invalid character`. Die Zeichen gehen durch die Heredoc, aber
+nicht durch den Parser.
+
+**Also: deutscher Prosatext geht per `cat > datei <<'EOF'` auf die Platte, und
+Python liest ihn von dort.** Ein Skript, das Text nur noch EINFUEGT und ihn
+nicht enthaelt, kann an seinem Inhalt nicht mehr scheitern.
