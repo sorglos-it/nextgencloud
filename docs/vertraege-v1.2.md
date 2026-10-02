@@ -522,3 +522,56 @@ unabhängige Messungen:
 **Reihenfolge:** dieser Punkt muss **vor** dem ersten echten Release stehen.
 Der Packer ist gebaut (Branch `release-packer`), er packt reproduzierbar, und
 der Signierer wartet nur auf diesen einen Vertragssatz.
+
+## Punkt 20: Die Lizenz war nie eine Vertragsfrage — sie ist eine nicht aufgerufene Funktion
+
+**Entschieden am 03.10.2026. Zwei Stränge haben am selben Tag dieselbe Lücke
+gemeldet** — der API-Strang in Aufgabe 13 („Lizenz ist nirgends geprüft",
+gemessen: `grep -rn "CodeLicense\|VerifyLicense\|BlobLicense" apps/` ohne Tests
+findet nichts) und der Controller-Strang in Aufgabe 14 (die Stelle steht dort
+nur als Kommentar, mit Verweis auf Aufgabe 17). Beide haben die Frage als
+Vertragsfrage an mich gegeben. **Sie ist keine.**
+
+Gemessen in `shared/` — es ist alles da, und zwar absichtlich zweigeteilt:
+
+| Was | Wo | Für wen |
+|---|---|---|
+| `verifyLicense` **plus Schlüsselprüfung** | `shared/store/catalog.go:381` | nur die **API** — „refuses everything a controller cannot do" |
+| `VerifyLicenseFor(env, st, installation, app)` | `catalog.go:404` | der **Controller**, „as a controller can, without the key" |
+| `LicenseOf(l, now)` → `none/valid/grace/expired` | `shared/core/results.go:342` | beide, für `InstalledApp` und `LicenseResult` |
+| `AppUnlicensed` | `results.go:24` | die Antwort nach außen |
+| `BlobLicense` (die **neueste** Lizenz) | `shared/dbapi/dbapi.go:20` | der Controller hält sie |
+| Aktion `license`, `MaxLicenseIn` = 16 KiB | `shared/core/core.go:59/75/159/170` | `ngc.store/api/license`, `ngc.store/controller/license` |
+
+**Also ändert sich an `shared/` nichts.** Der Vertrag ist vollständig, der
+Einfrierstand bleibt, wie er ist. Was fehlt, sind **Aufrufe** — und wo sie
+hingehören, steht im Entwurf 4.4, Schritte 2 bis 4, und nicht in meinem Kopf:
+
+1. **Die API prüft die Lizenz samt Schlüssel.** Nur sie kann den
+   App-Schlüssel mit dem privaten Schlüssel der Installation entschlüsseln;
+   läuft ein Abo aus, **gibt sie den Schlüssel nicht mehr heraus.** Das ist die
+   Stelle, an der eine abgelaufene Lizenz wirklich greift.
+2. **Der Controller prüft Unterschrift, Installation und App selbst**, mit
+   `VerifyLicenseFor` — den Schlüssel der Installation prüft er **nicht**, er
+   kann es nicht. Nach der Übergangsfrist startet er den Dienst nicht mehr.
+3. **Die Rechteprüfung je Kanal trägt die Lizenz als FÜNFTES Stück** neben
+   Benutzer, Rolle, App und Aktion (Entwurf Zeile 582). Die Grenze „pro
+   Benutzer" (Zeile 332) ist dabei eine **Rechte**-Frage: nur so viele
+   Benutzer bekommen „benutzen", wie die Lizenz erlaubt.
+
+**Was heute wirklich passiert, und das ist der Satz, den beide Stränge
+richtig aufgeschrieben haben: eine lizenzpflichtige App öffnet für jeden mit
+dem Recht.** Das ist kein Loch im Vertrag, sondern eine unfertige Baustelle —
+und sie ist jetzt benannt, statt in zwei Berichten zu liegen.
+
+**Für die Aufträge heißt das:**
+- Die Rechte-Aufgabe des API-Strangs bleibt, wie sie ist. Die Lizenz kommt
+  nicht nachträglich hineingeflickt, sondern mit der Aufgabe, die den Aufrufer
+  baut — dort gehört auch der Fall hin, der eine **abgelaufene** Lizenz gegen
+  ein vorhandenes Recht stellt.
+- Der Controller bekommt seinen Aufruf in Aufgabe 17, wie es dort schon steht.
+  Der Kommentar an der Stelle darf nicht sagen, dass geprüft wird — er muss
+  sagen, dass **noch nicht** geprüft wird, und auf diesen Punkt zeigen.
+- **Niemand baut eine eigene Lizenzprüfung.** Es gibt genau zwei Eingänge, und
+  der Unterschied zwischen ihnen ist die Sicherheitsaussage: wer als
+  Controller den Schlüssel prüfen könnte, hätte ihn.
