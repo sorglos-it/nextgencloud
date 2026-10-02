@@ -2639,3 +2639,46 @@ Weitergereichte Zahlen sind ein Fluechtigkeitsfehler. Eine Zahl, die aus zwei
 Registern zusammenwaechst, ist etwas anderes: sie klingt praeziser als beide
 und ist durch keines gedeckt. **Wer zwei Listen nennt, nennt sie getrennt** —
 und wer eine Zahl nennt, nennt das Register, aus dem sie kommt.
+
+## Unter zwoelf Elementen ist Gos `sort.Slice` nicht unstabil
+
+Ein Fall sollte halten, dass eine Reihenfolge **stabil** sortiert wird. Der
+Mutant („`sort.SliceStable` → `sort.Slice`") lebte — mit der Zahl von Knoten,
+die der Fall benutzte. Gemessen hat der Strang: **erst ueber zwoelf Elementen**
+zeigt `sort.Slice` ueberhaupt eine andere Reihenfolge; er brauchte **40**, dann
+starb der Mutant.
+
+Der Grund liegt in der Standardbibliothek: unterhalb einer Schwelle sortiert
+Go mit Einfuegesortieren, und das ist **zufaellig** stabil. Ein Fall mit drei
+oder fuenf Elementen prueft die Stabilitaet also nicht — er prueft, dass die
+Bibliothek klein genug war.
+
+**Also: eine Zusicherung ueber Stabilitaet, Reihenfolge oder Verteilung
+braucht genug Elemente, damit die Umsetzung sich ueberhaupt falsch verhalten
+KANN** — und die Zahl gehoert mit ihrem Grund an die Stelle, sonst kuerzt sie
+der Naechste weg.
+
+Dieselbe Frage lohnt bei jeder Schwelle einer fremden Bibliothek: ab wann
+greift der Weg, den ich pruefen will?
+
+## Ein bewusst toter Riegel wird benannt, nicht entfernt
+
+Ein Mutant ueberlebte und sollte es: der Fehlerzweig hinter
+`net.SplitHostPort` ist nach der Pruefung durch `trust.ValidHostPort` nicht
+erreichbar. Der Zweig bleibt trotzdem, und zwar mit Messung: `SplitHostPort`
+nimmt einer IPv6-Adresse die **Klammern** ab (`[…]:port` ist erlaubt, die
+TLS-Konfiguration will den Namen ohne Klammern) — von Hand zu spalten waere
+das groessere Risiko.
+
+**Entschieden: der Zweig bleibt und der Kommentar sagt, dass er bewusst
+unerreichbar ist.** Damit ist er nicht ungemessen, sondern ausdruecklich
+unerreichbar — und das ist ein Unterschied, den eine Mutationsliste von sich
+aus nicht macht.
+
+Dazu zwei Zaehlregeln aus derselben Runde, die ich uebernehme:
+- **Ein Mutant, der ZWEI Faelle derselben Sache reisst, ist noch isoliert.**
+  Reisst er einen FREMDEN Fall, ist er es nicht. Der Unterschied gehoert in
+  den Bericht, nicht in eine Fussnote.
+- **Ein Mutant, der per Panik abbricht, laesst Faelle ungelaufen** — hier 9
+  von 17. Tot bleibt tot, aber die Zahl gehoert daneben, sonst sieht der Lauf
+  wie ein Uebersprung aus.
