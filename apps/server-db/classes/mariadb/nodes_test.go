@@ -1,9 +1,11 @@
 package mariadb
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -183,4 +185,114 @@ func TestPickerUnderLoad(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
+}
+
+// TestConnectFollowsThePickerOrder: Connect asks the nodes in the order the
+// picker gives, not in the order of the slice. The picker is put into a turned
+// position first - node 0 is resting after a failure, so it comes last - and
+// the only node that answers is exactly that one. A Connect that walked the
+// slice would find node 0 right away and never touch node 1.
+func TestConnectFollowsThePickerOrder(t *testing.T) {
+	now := time.Unix(1790000000, 0)
+	answers := &fakeConn{}
+	refuses := &fakeConn{err: errors.New("refused")}
+	pick := &picker{count: 2}
+	pick.failed(0, now) // node 0 to the back, node 1 first
+	bal := &balancer{nodes: []driver.Connector{answers, refuses}, pick: pick,
+		now: func() time.Time { return now }}
+	conn, err := bal.Connect(context.Background())
+	if err != nil || conn == nil {
+		t.Fatalf("Connect: %v, %v", conn, err)
+	}
+	if refuses.count() != 1 {
+		t.Errorf("node 1 was asked %d times, want 1: the order of the picker was not followed",
+			refuses.count())
+	}
+	if answers.count() != 1 {
+		t.Errorf("node 0 was asked %d times, want 1", answers.count())
+	}
+}
+
+// TestOrderKeepsTheRoundRobinAmongManyNodes: with more nodes than a short
+// insertion sort covers, the nodes that are fine have to keep their round
+// robin order. An unstable sort would shuffle them, and the load would stop
+// spreading evenly without anything looking broken.
+func TestOrderKeepsTheRoundRobinAmongManyNodes(t *testing.T) {
+	const n = 40
+	now := time.Unix(1790000000, 0)
+	p := &picker{count: n}
+	// Every third node is resting, the rest are fine.
+	for i := 0; i < n; i += 3 {
+		p.failed(i, now)
+	}
+	got := p.order(now)
+	if len(got) != n {
+		t.Fatalf("order returned %d nodes", len(got))
+	}
+	var fine, resting []int
+	for _, i := range got {
+		if i%3 == 0 {
+			resting = append(resting, i)
+		} else {
+			fine = append(fine, i)
+		}
+	}
+	if len(fine)+len(resting) != n || len(resting) != (n+2)/3 {
+		t.Fatalf("%d fine and %d resting of %d", len(fine), len(resting), n)
+	}
+	// The nodes that are fine come first, and among them the round robin
+	// order is kept: starting at the first one, every next index is the next
+	// one that is not resting, counting upwards modulo n.
+	for i, v := range got[:len(fine)] {
+		if v != fine[i] {
+			t.Fatalf("a resting node stands among the healthy ones: %v", got)
+		}
+	}
+	want := make([]int, 0, len(fine))
+	for k := range n {
+		if i := (fine[0] + k) % n; i%3 != 0 {
+			want = append(want, i)
+		}
+	}
+	if !slices.Equal(fine, want) {
+		t.Errorf("the round robin among the healthy nodes was shuffled:\n got %v\nwant %v", fine, want)
+	}
+}
+
+// TestConnectLogsTheDriverTextOncePerNodeAndReturnsAFixedText: the exact text
+// of the driver goes to the debug log, once for every node that refused, with
+// the index of that node. The text the caller gets is the fixed one, so a
+// caller that logs its error logs neither address nor user. That the debug
+// line does carry them is the decision, not an accident: the debug log is
+// turned on deliberately.
+func TestConnectLogsTheDriverTextOncePerNodeAndReturnsAFixedText(t *testing.T) {
+	driverErr := errors.New("dial tcp db-1.ngc.test:3306: user 'ngcreader' rejected")
+	a, b := &fakeConn{err: driverErr}, &fakeConn{err: driverErr}
+	now := time.Unix(1790000000, 0)
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(old)
+
+	bal := &balancer{nodes: []driver.Connector{a, b}, pick: &picker{count: 2},
+		now: func() time.Time { return now }}
+	_, err := bal.Connect(context.Background())
+	if err == nil || err.Error() != "mariadb: no database node can be reached" {
+		t.Fatalf("the returned error is %v", err)
+	}
+	out := buf.String()
+	if n := strings.Count(out, "a node refused the connection"); n != 2 {
+		t.Errorf("%d debug lines, want one for each of the two nodes that refused", n)
+	}
+	for _, want := range []string{"node=0", "node=1", "error="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the debug log misses %q", want)
+		}
+	}
+	if !strings.Contains(out, "ngcreader") {
+		t.Error("the driver's own text did not reach the debug log")
+	}
+	if strings.Contains(err.Error(), "db-1.ngc.test") || strings.Contains(err.Error(), "ngcreader") {
+		t.Errorf("the returned error names the node or the user: %v", err)
+	}
 }

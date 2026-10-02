@@ -21,8 +21,29 @@ import (
 
 // maxPacket has to be above the largest blob: a canonical ui-tar is at most
 // store.MaxUITotal (64 MiB). The server is set to the same value
-// (max_allowed_packet in templates/galera.cnf).
+// (max_allowed_packet in templates/galera.cnf), and nothing but a test keeps
+// the two in step: TestMaxPacketMatchesTheServerTemplate reads that line out
+// of the template and compares it, so the two numbers cannot drift apart
+// quietly.
 const maxPacket = 128 << 20
+
+// The numbers of the connection pool. They are chosen, not measured: no
+// cluster on this machine answers how many connections sixteen is. They stand
+// here as named constants so that a test can hold each of them against the
+// number it is meant to be - of the four, only maxOpenConns can be read back
+// off the open pool (sql.DBStats), the other three are write-only to
+// database/sql.
+const (
+	maxOpenConns = 16
+	maxIdleConns = 4
+	// connLifetime retires a connection after five minutes, so that a new
+	// connection goes through the picker again instead of a long-lived one
+	// staying on the node it first reached. Whether the load really moves
+	// back to a node that came up again is NOT measured here: that needs a
+	// cluster.
+	connLifetime = 5 * time.Minute
+	connIdleTime = time.Minute
+)
 
 // OpenDB opens the cluster. It creates nothing: the schema comes from the
 // migrations, and the ngc account may not create anything anyway.
@@ -47,12 +68,10 @@ func OpenDB(cfg config.DB) (*sql.DB, error) {
 		now:    time.Now,
 		driver: mysql.MySQLDriver{},
 	})
-	db.SetMaxOpenConns(16)
-	db.SetMaxIdleConns(4)
-	// A connection is retired after a while, so the load finds its way back
-	// to a node that has come up again instead of sticking where it was.
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(time.Minute)
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetConnMaxLifetime(connLifetime)
+	db.SetConnMaxIdleTime(connIdleTime)
 	return db, nil
 }
 
@@ -74,6 +93,12 @@ func nodeConfig(cfg config.DB, node string) (*mysql.Config, error) {
 	if !trust.ValidHostPort(node) {
 		return nil, fmt.Errorf("mariadb: %q is no host:port", node)
 	}
+	// SplitHostPort is what takes the brackets off an IPv6 address, which is
+	// the spelling config.DB.TLSConfig asks for. Its error branch is a
+	// deliberately dead bolt: ValidHostPort above split at the last colon
+	// itself and accepted both halves, so nothing that gets here can make
+	// SplitHostPort fail. It stays because dropping it would mean spelling
+	// the split out by hand, and getting IPv6 wrong there is the worse risk.
 	host, _, err := net.SplitHostPort(node)
 	if err != nil {
 		return nil, err
@@ -113,7 +138,11 @@ func nodeConfig(cfg config.DB, node string) (*mysql.Config, error) {
 	c.Logger = &mysql.NopLogger{}
 	c.Params = map[string]string{
 		// A read waits for what the cluster already took: an API that wrote a
-		// session on one node has to find it on another one right away.
+		// session on one node has to find it on another one right away. The
+		// price is paid on every read, not only on the ones that need it:
+		// each one waits for the write set the node still has in flight.
+		// Chosen that way on purpose - a session that cannot be found is
+		// worse than a read that waits.
 		"wsrep_sync_wait": "1",
 		// Nothing is quietly cut or rounded.
 		"sql_mode":  "'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'",

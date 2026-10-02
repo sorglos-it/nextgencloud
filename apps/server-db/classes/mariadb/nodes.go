@@ -95,9 +95,14 @@ func (b *balancer) Connect(ctx context.Context) (driver.Conn, error) {
 			return conn, nil
 		}
 		b.pick.failed(i, b.now())
-		// The exact error goes to the debug log once, with the index of the
-		// node and never with the connection string: the driver's text may
-		// carry the user name and the address.
+		// The driver's own text goes to the debug log, once for every node
+		// that refused, with the index of that node. It is kept out of the
+		// error this function returns, because it may carry the user name and
+		// the address: a caller logs what it gets, and the debug log is the
+		// one place an operator turns on deliberately. What this line passes
+		// is the driver's error and nothing else - no DSN is built or logged
+		// here; what the driver puts into its own text is its business and
+		// NOT measured on this machine.
 		slog.Debug("mariadb: a node refused the connection", "node", i, "error", err)
 		last = err
 		if ctx.Err() != nil {
@@ -107,6 +112,8 @@ func (b *balancer) Connect(ctx context.Context) (driver.Conn, error) {
 	if last == nil {
 		return nil, errors.New("mariadb: no node configured")
 	}
-	// The message names no address and no user: it goes into the log.
-	return nil, errors.New("mariadb: kein Datenbankknoten ist erreichbar")
+	// This is what the caller gets, and it names neither address nor user:
+	// the driver's text stayed in the debug log above. English, like the rest
+	// of the code; a German sentence belongs where a person reads it.
+	return nil, errors.New("mariadb: no database node can be reached")
 }
