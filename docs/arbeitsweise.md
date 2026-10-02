@@ -2964,3 +2964,50 @@ haben **fuenf vorhandene** Dateien ihr Bit verloren (`tools/check.sh`,
 100755, auf der Platte nicht. `core.filemode=false` verdeckt es, und ein
 `git status` meldet nichts. Wer unter Linux auspackt, bekommt Dateien, die
 nicht laufen.
+
+## Berichtigung: ein Ausstiegscode trennt die Ursachen meist NICHT
+
+Ich hatte geschrieben, ein Uebersprung muesse die Ursache trennen, und dafuer
+gesagt: „unterscheide am Ausstiegscode und an der Meldung". Der erste Teil ist
+falsch, und der Strang hat es gemessen: bei `git cat-file -e` geben **alle
+drei** Lagen **128** — ein fehlender Pfad, eine unbekannte Referenz und eine
+Verweigerung wegen fremden Besitzes. Ein Zweig „1 heisst fehlt" waere
+unerreichbar gewesen und haette jede wirklich fehlende Referenz **rot**
+gemacht.
+
+**Der Weg, der traegt, ist eine REIHENFOLGE, in der jeder Schritt nur aus einem
+Grund scheitern kann:**
+
+```bash
+git rev-parse --git-dir        # fasst keine Referenz an -> Fehler = NUR Verweigerung  -> ROT
+git rev-parse --verify -q REF  # gibt 1 ohne Ausgabe bei unbekannter Referenz          -> Uebersprung
+git cat-file -e REF:pfad       # erst jetzt der Pfad                                    -> Uebersprung
+```
+
+Jeder Schritt beantwortet **eine** Frage. Dann braucht man die Codes nicht
+auseinanderzurechnen — man hat sie nie vermischt.
+
+Und die Meldung des roten Falles nennt beides: dass **nichts** gemessen wurde,
+und den Riegel, der fehlt. Ein roter Fall, der nur „Fehler" sagt, ist ein
+halber Fall.
+
+## `go test` beantwortet einen Mutationslauf aus dem Zwischenspeicher
+
+Ein Strang hat gemeldet, dass seine Mutationslaeufe **PASS** meldeten, ohne zu
+laufen — `go test` hat sie aus dem Zwischenspeicher beantwortet. Wer so misst,
+misst den Lauf von vorher und haelt einen lebenden Mutanten fuer tot.
+
+**Also an JEDEN Mutationslauf `-count=1`.** Das schaltet den Zwischenspeicher
+fuer diesen Lauf ab:
+
+```bash
+go test -count=1 ./paket/
+```
+
+Es gilt auch dann, wenn der Mutant ueber `-overlay` kommt — darauf zu bauen,
+dass ein anderer Bau einen anderen Schluessel ergibt, ist eine Annahme, und
+`-count=1` kostet nichts.
+
+Dasselbe gilt fuer den gruenen Lauf **nach** dem Zuruecknehmen: ohne
+`-count=1` sieht man moeglicherweise den Lauf von vor der Mutation, und das
+ist genau der Lauf, den man beweisen wollte.
