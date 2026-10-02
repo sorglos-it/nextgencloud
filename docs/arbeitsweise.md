@@ -2134,3 +2134,33 @@ Die Regel abzuschreiben schuetzt nicht. Was schuetzt: die Ausgabe in eine
 Datei leiten, `echo "CODE=$?" >> datei` direkt danach, und den Code aus der
 Datei lesen. Wer eine Pipe braucht, nimmt `set -o pipefail` — und sagt dazu,
 dass er es getan hat.
+
+## „59 von 59 Mutanten tot" ist eine Aussage ueber die LISTE, nicht ueber den Code
+
+Ein Strang hat 59 Mutanten gesetzt und 59 getoetet — saubere Arbeit, jeder
+einzeln, keiner haengend, keiner am Uebersetzer. Der Pruefer hat die Zahl
+bestaetigt **und zwei eigene Mutanten gesetzt, die ueberleben**:
+
+- `ctx.Err()` in zwei Funktionen ist von **keinem** Fall gedeckt — und das war
+  genau die Zeile, um die es im Commit davor gegangen war.
+- `os.Chown` entfernt ueberlebt jeden hier fahrbaren Lauf, weil der einzige
+  Traeger fuer Eigentuemer und Modus 0700 an einem `t.Skip` haengt.
+
+**Eine Mutationsquote sagt: „die Mutanten, die ich mir ausgedacht habe, sind
+tot."** Sie sagt nichts ueber die Zeilen, an die niemand gedacht hat. Also
+gehoert zu jeder Quote die Frage, welche Zeile KEINEN Mutanten bekommen hat —
+und die beantwortet man am besten, indem ein Zweiter welche setzt.
+
+## Eine Zeile, die nur in einem Bericht steht, verschwindet dort
+
+Zweimal am 02.10.2026: eine Anforderung (`/run/ngc/<name>` muss nach dem
+Neustart existieren und dem App-Benutzer gehoeren) war in Aufgabe 11
+aufgefallen, stand im Bericht der Aufgabe 12 als „offen" — und **in keinem
+Auftrag**. Ebenso der Satz, dass `/etc/subuid` ohne Sperre gelesen-geaendert-
+geschrieben wird.
+
+Ein Bericht ist ein Protokoll, kein Auftrag. Niemand liest ihn, wenn er die
+naechste Aufgabe baut. **Also: was weitergebaut werden muss, wandert in den
+PLAN — in die Aufgabe, die es bauen wird** — und zwar mit der Messung und mit
+dem Grund, warum es hier nicht hingehoerte. Der Bericht behaelt seine Zeile,
+aber er ist nicht der Ort, an dem sie wirkt.
