@@ -3253,3 +3253,41 @@ jemand habe es getan.
 
 Verwandt: die Regel, dass eine Planberichtigung drei Orte hat. Die hier ist
 ihre feinere Fassung: der dritte Ort hat selbst zwei Haelften.
+
+## Ein Sendeweg, der nach dem Guthaben des Augenblicks zerschneidet, sieht wie ein Kryptofehler aus
+
+Am 02.10.2026 in Aufgabe 14 des Controllers gemessen. `link.Channel.Send`
+teilte eine Nutzlast in so viele Rahmen, wie das Guthaben **in diesem
+Moment** zuliess. Fuer einen Datenstrom ist das richtig. Fuer eine
+**Noise-Nachricht** ist es toedlich: sie muss ganz ankommen, sonst
+entschluesselt kein Stueck.
+
+Und so sah es aus:
+
+```
+dieselbe Quelle, 8 MiB Ergebnis
+Windows : ganz angekommen, Fall gruen
+WSL     : in Stuecken, cipher: message authentication failed
+          ein 488-Byte-Rahmen mitten in einer Reihe voller Rahmen
+```
+
+Die Meldung zeigt auf die **Kryptografie**. Der Fehler lag im **Rahmen**.
+Wer der Meldung folgt, sucht im falschen Paket, und auf der Plattform, auf
+der er entwickelt, ist ueberhaupt nichts zu sehen
+(vgl. „Ein Mutant, der nur auf EINER Plattform stirbt").
+
+Drei Dinge daraus:
+
+1. **Ein Name muss das Zerschneiden verraten.** `Send` tut es nicht. Der
+   Weg, der ganz liefert, heisst jetzt `SendWhole` — und wer das Paar sieht,
+   weiss, dass es eine Wahl gibt.
+2. **Ein Stueck rechnet seinen eigenen Kopf mit.** Gemessen: 4080 Byte Rumpf
+   kosten mit Kennbyte und Noise-Tag **4097** gegen ein Fenster von 4096 —
+   der Kanal steht. Die Grenze gilt fuer das, was auf die Leitung geht,
+   nicht fuer das, was der Aufrufer uebergibt.
+3. **Der Fall, der den Fehler faengt, braucht eine andere Eingabe als der
+   Betrieb sie liefert.** Der Mutant zu `SendWhole` lebte unter Windows,
+   weil dort das Guthaben immer ganz kam. Erst ein Fall, der das Guthaben
+   **in Haelften** zurueckgibt, toetet ihn auf beiden Plattformen
+   (vgl. „Ein Fall, der die Stoerung anders herstellt als der Betrieb sie
+   erzeugt").
