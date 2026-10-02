@@ -369,8 +369,12 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 		// database at the top of this function - so no caller has to carry it,
 		// and the mode stays the caller's, because only the caller knows that
 		// the file is the one copy.
+		//
+		// ErrOwner and not ErrIdentity: the uid above came out of the user
+		// database and is the right one. What failed is the handing over, and
+		// its ordinary reason is a controller that does not run as root.
 		if err := os.Chown(e.EnvFile, int(u.uid), int(u.gid)); err != nil {
-			return 0, errors.Join(ErrIdentity, err)
+			return 0, errors.Join(ErrOwner, err)
 		}
 		args = append(args, "--env-file", e.EnvFile)
 	}

@@ -571,6 +571,34 @@ func runDirFile(t *testing.T, name string) string {
 	return path
 }
 
+// A file the engine cannot hand to the app's user is ErrOwner, and that is the
+// point of the case: ErrIdentity would blame the app for something the rights
+// of this process decided, and whoever reads the log at three in the morning
+// would look at the wrong half of the machine.
+func TestExecSaysWhenTheFileCannotBeHandedOver(t *testing.T) {
+	f := fakePodman(t)
+	name := anApp(t).name
+	// A well-formed path in the one directory the engine takes a file from,
+	// which is not there. The handing over then fails for a reason that has
+	// nothing to do with who the app is - the same shape as a controller
+	// without root, and the only one of those shapes a case can make here.
+	missing := config.RunDir + "/" + name + "-env-that-is-not-there"
+	_, err := NewPodman(f.bin).Exec(context.Background(), Exec{
+		Name: name, Command: []string{"/usr/bin/greet"}, EnvFile: missing,
+	})
+	if !errors.Is(err, ErrOwner) {
+		t.Fatalf("err = %v, want ErrOwner", err)
+	}
+	if errors.Is(err, ErrIdentity) {
+		t.Fatalf("err = %v: it blames the uid of the app, and the uid is right", err)
+	}
+	// And podman was never started: a call whose environment the service cannot
+	// read must not run without it.
+	if f.ran() {
+		t.Fatalf("podman was started anyway: %q", f.args(t))
+	}
+}
+
 func TestExecRefusesAnEnvironmentFileThatIsNoPath(t *testing.T) {
 	f := fakePodman(t)
 	name := anApp(t).name

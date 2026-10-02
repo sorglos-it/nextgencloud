@@ -181,6 +181,18 @@ var (
 	ErrHome = errors.New("runtime: the data directory is not the home of the app's user")
 	// ErrIdentity reports a uid or gid that is not the one of the app's user.
 	ErrIdentity = errors.New("runtime: uid or gid is not the one of the app's user")
+	// ErrOwner reports that the environment file of a call could not be given
+	// to the app's user, which podman has to be able to read it as
+	// (Exec.EnvFile).
+	//
+	// It is not ErrIdentity, and the difference is the whole reason it exists:
+	// ErrIdentity says the user database names somebody else than the caller
+	// did - a fact about who the app is. This one says the handing over did
+	// not go through, and the ordinary reason for that is that this process is
+	// not root. "The uid is the wrong one" would send whoever reads the log at
+	// three in the morning looking at the app, when what is wrong is the
+	// rights of the controller.
+	ErrOwner = errors.New("runtime: the environment file could not be given to the app's user")
 	// ErrKilled reports that no status of the command reached this engine: a
 	// signal ended it, or the context did. A cancelled or timed-out context
 	// always joins its own cause to this one, so a caller can tell a time limit
