@@ -28,5 +28,7 @@ apps/web/tests/test-results/
 
 # Der Pfad zu php auf DIESER Maschine, eine Zeile NGC_PHP=<pfad>.
 # tools/check.sh und die Playwright-Konfiguration lesen sie; kein Pfad einer
-# einzelnen Maschine gehoert in eine Datei des Repositoriums.
+# einzelnen Maschine gehoert in eine Datei des Repositoriums. Drei Pruefer
+# haben gemeldet, dass ein "git add -A" einer anderen Sitzung sie sonst
+# mitnimmt - im geteilten Arbeitsbaum ist das kein Restrisiko.
 tools/local.env
