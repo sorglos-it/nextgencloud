@@ -6497,6 +6497,25 @@ git commit -m "Add the rights and task check of a channel" \
 
 ### Task 14: Protokoll
 
+> **Berichtigt am 03.10.2026, zwei Dinge.**
+>
+> **1. Die „Interfaces"-Liste dieser Aufgabe ist unvollständig: `Note` fehlt.**
+> Der Quelltext in Schritt 3 enthält
+> `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error`,
+> die Liste darüber nennt es nicht — die Aufgabe widerspricht also sich
+> selbst. Und `Note` ist nicht nebensächlich: **es ist der einzige Eingang
+> für „Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen"**, die der
+> Entwurf (Zeile 630-632) ausdrücklich verlangt. Die vier anderen Eingänge
+> decken Anmeldungen, Kanäle und Root-Aufgaben. Der Strang hat die Lücke
+> gemeldet und `Note` gebaut, weil es im Auftrag stand — richtig.
+>
+> **2. Ein Fall dieser Aufgabe war falsch, nicht der Code.** Ein selbst
+> geschriebener Fall verlangte, dass `Add` ein leeres `Result` zurückweist;
+> der Auftrag setzt dort ausdrücklich `Result = "ok"`. **Der Auftrag hatte
+> recht**, und der Fall heißt jetzt `TestAddFillsAnEmptyResult`. Festgehalten,
+> weil es die Gegenrichtung zu den vielen Planberichtigungen dieses Tages ist:
+> nicht jeder Widerspruch zwischen Plan und Code ist ein Planfehler.
+
 **Files:**
 - Create: `apps/server-api/classes/audit/audit.go`
 - Test: `apps/server-api/classes/audit/audit_test.go`
@@ -6510,6 +6529,9 @@ git commit -m "Add the rights and task check of a channel" \
   - `func (lg *Log) Login(ctx, user, result, detail string) error`
   - `func (lg *Log) Channel(ctx, user, app, action, node string, code wire.Code) error`
   - `func (lg *Log) Task(ctx, user, app, action, node, signature string) error`
+  - `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error` –
+    der Eingang für Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen
+    (am 03.10.2026 nachgetragen, siehe Berichtigung im Kopf dieser Aufgabe)
   - `func (lg *Log) Query(ctx context.Context, q core.LogQuery) ([]core.LogEntry, error)`
 
 - [ ] **Step 1: Write the failing test**
