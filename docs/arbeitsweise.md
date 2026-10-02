@@ -3570,6 +3570,37 @@ gültiger Eintrag.** Eine automatische Änderung nennt einen reservierten Namen,
 der kein echter Benutzername sein kann, statt das Feld leer zu lassen — dann
 steht in jedem Eintrag, wer gehandelt hat, auch wenn es die Maschine war.
 
+**Nachtrag vom selben Tag, und er berichtigt zwei meiner eigenen Sätze.** Der
+Strang hat beide Stellen gemessen und besser entschieden:
+
+**1. Die ART kann keinen Platzhalter bekommen.** „Immer schreiben" gilt für
+jedes Feld — **außer für das, das das Ereignis benennt.** Eine Zeile mit
+Platzhalter-Art stünde in der Tabelle, aber in keinem Protokoll: kein Leser und
+kein Filter kann sie deuten. Eine Art außerhalb der Liste bleibt also eine
+Zurückweisung. Und das ist **kein Hebel für einen Angreifer**, gemessen: die
+vier Eingänge setzen ihre Art als **Konstante im Code**; gemessen mit `"\x00"`
+in *jedem* Feld liefert keiner von ihnen eine Zurückweisung, und hinterher
+stehen drei Zeilen da. Nur ein handgeschriebener Aufruf mit erfundener Art
+trifft sie — ein Programmierfehler, kein Angriff.
+
+**2. Ein UNGÜLTIGER Benutzer darf nicht zum Maschinennamen werden.** Mein Satz
+„leerer Benutzer → reservierter Name" war zu grob. „Die Maschine hat
+gehandelt" und „hier stand Unsinn" dürfen nicht dasselbe sagen — sonst gibt
+sich ein Angreifer mit einem kaputten Namen **als Maschine** aus. Also: leer →
+reservierter Name, **ungültig → Platzhalter**. Zwei verschiedene Aussagen,
+zwei verschiedene Werte.
+
+**Und wie der Platzhalter kollisionsfrei bleibt, ohne eine Liste:** über die
+**Grammatik** der echten Werte. Jeder echte Benutzer ist 16 Byte base64url,
+jede App-Kennung enthält einen Punkt, jeder Name beginnt mit `[a-z]` — damit
+kann weder `-` noch `system` je ein echter Wert sein. Ein Fall misst genau
+das und **wird rot, wenn jemand die Grammatik aufweicht**: der Platzhalter ist
+damit an die Regeln gebunden, aus denen seine Sicherheit folgt, und nicht an
+einen Kommentar.
+
+Der Mutant, der diese Entscheidung bewacht, ist gefahren: **ein verworfenes
+Feld lässt den Eintrag wieder fallen → 14 Fälle rot.**
+
 Die allgemeine Form, und sie gilt über Protokolle hinaus: **wenn Ablehnen
 teurer ist als Annehmen, darf die Prüfung nicht ablehnen, sondern muss
 entschärfen.** Wo das zutrifft, entscheidet nicht die Prüfung, sondern der
