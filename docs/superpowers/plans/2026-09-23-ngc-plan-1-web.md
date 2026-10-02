@@ -34,7 +34,7 @@ Diese Regeln gelten in jeder Aufgabe, auch wenn sie dort nicht wiederholt werden
 - **Branch:** `web`. Pull Request nach `main`; der Koordinator führt zusammen. Nie mit Gewalt
   schieben, nie fremde Branches ändern.
 - **Fremde Ordner sind tabu.** Geschrieben wird nur in `apps/web/` und – für das ulh-Skript – im
-  ulh-Repo auf Branch `ngc-web`. `shared/` ist eingefroren (Etikett `vertraege-v1`); braucht der
+  ulh-Repo auf Branch `ngc-web`. `shared/` ist eingefroren (Etikett `vertraege-v1.1`); braucht der
   Plan eine Änderung, kommt sie in „Offene Entscheidungen für den Koordinator“.
 - **Kein Framework, kein Build-Schritt.** Der Browser lädt die Dateien so, wie sie im Repo liegen.
   npm nur in `apps/web/tests/`, mit festen Versionen; NGC baut und läuft ohne npm.
@@ -68,6 +68,13 @@ Diese Regeln gelten in jeder Aufgabe, auch wenn sie dort nicht wiederholt werden
   Firefox 130, Safari 17.4. Fehlt eines davon, zeigt die Shell eine Meldung auf Deutsch und lädt
   nichts weiter.
 - **Reihenfolge:** erst der fehlschlagende Test, dann der Code (TDD).
+- **Der Byte-Waechter** `apps/web/tests/contracts/bytes.spec.js` laeuft ueber jeden
+  Export jedes Vertrags. Er liest den Ordner `contracts/` selbst aus, findet eine
+  neue Datei also allein. Von Hand gepflegt sind **drei** Stellen, nicht zwei:
+  `ENTRIES` (die benannten Eingaenge), `CALLABLES` (die Anzahl) und `CLASSES` (die
+  ausgefuehrten Klassen). Wer eine Klasse mit Methoden exportiert, faellt sonst in
+  die `noInstance`-Zusicherung. Die neuen Zahlen **misst** man: der Waechter meldet
+  die tatsaechliche, wenn die eingetragene nicht stimmt.
 - **Dateirechte und Pfade:** Alle Pfade in diesem Plan sind relativ zum Repo-Stamm.
 
 ---
@@ -540,12 +547,24 @@ async function start() {
       + "oder neuer benutzen.");
     return;
   }
-  const res = await fetch("/config.json", { cache: "no-store" });
-  if (!res.ok) {
+  // NICHT res.json(). /config.json traegt die Adressen der API-Server, den
+  // ANKER der Vertrauensliste (seq und hash, die Wurzel fuer trust.open) und
+  // rp.id, das an navigator.credentials.get geht. Das sind Eingaben von
+  // aussen und laufen durch den Vertrag: Bytes, json.decode mit Budget, dann
+  // jedes Feld gegen seine Grammatik. Was nicht besteht, bekommt denselben
+  // Satz wie eine fehlende Einrichtung - der Mensch soll nicht raten muessen
+  // und nichts ueber die Form erfahren.
+  //
+  // Und nicht auf window: eine globale Veraenderliche ist eine Stelle mehr,
+  // die zwischen der Pruefung und dem Lesen jemand anders beschreiben kann.
+  // Weiterreichen statt ablegen.
+  let config;
+  try {
+    config = await loadConfig();
+  } catch {
     message("NGC ist nicht eingerichtet.");
     return;
   }
-  window.__ngcConfig = await res.json();
   message("NGC wird geladen …");
 }
 
@@ -2213,7 +2232,7 @@ git commit -m "Add password keys and passkeys" --trailer "Co-Authored-By: Claude
   `e2ePrologue(controllerID, app, service, action, params, task) -> Promise<Uint8Array>`,
   `newKeypair() -> Promise<{privateKey, publicRaw}>`,
   `class HandshakeKK` mit `writeMessage1()`, `readMessage2(msg)`, `readMessage1(msg)`,
-  `writeMessage2()`, `split() -> {send, recv}`,
+  `writeMessage2()`, `split() -> Transport (nur EINMAL aufrufbar, der zweite Aufruf wirft)`,
   `class Transport` mit `seal(plain)` und `open(cipher)`.
 - Consumes: `b64.js`.
 
@@ -2964,7 +2983,9 @@ git commit -m "Add the trust list with anchor and chain" --trailer "Co-Authored-
   `MAX_SKEW = 300`, `CHALLENGE_LIFETIME = 120`, `MAX_CERT = 4096`, `MAX_REQUEST = 65536`,
   `MAX_SETUP_OFFER = 131072`, `MAX_SETUP_NODES = 16`, `MAX_CHAIN_VERSIONS = 64`,
   `MAX_CHAIN = 33554432`, `TOTP_DIGITS = 6`, `TOTP_PERIOD = 30`,
-  `loginChallengeShape`, `loginResultShape`, `clientCertShape`, `apiCertShape`,
+  `MAX_PASSKEYS = trust.MAX_KEYS_PER_USER`,
+  `loginChallengeShape`, `passkeyRefShape`, `validatePasskeyRef(r)`,
+  `loginResultShape`, `clientCertShape`, `apiCertShape`,
   `encodeClientCert(cert) -> Uint8Array`, `certHash(payload) -> Promise<Uint8Array>`,
   `validateClientCert(c)`, `verifyAPI(env, list, clientPayload, now) -> Promise<apiCert>`,
   `verifyApproval(payload, proof, list) -> Promise<clientCert>`,
@@ -3007,6 +3028,35 @@ test("the API certificate is checked against the trust list", async ({ shell }) 
   expect(got.good).toBe(true);
   const wrong = v.apiRejects.filter((r, i) => got.rejects[i]).map((r) => r.name);
   expect(wrong).toEqual([]);
+});
+
+test("every login challenge is decided as Go decides it", async ({ shell }) => {
+  test.setTimeout(120_000);
+  const got = await shell.evaluate(async (d) => {
+    const s = await import("/assets/js/contracts/session.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const out = [];
+    for (const c of d.cases) {
+      try {
+        s.parseLoginChallenge(b64decode(c.challenge));
+        out.push(true);
+      } catch {
+        out.push(false);
+      }
+    }
+    // Every answer session.Challenge builds must pass, the made-up ones for
+    // unknown names too: an answer the shell refuses would tell it that the
+    // name does not exist.
+    const built = [];
+    for (const b of d.built) {
+      const c = s.parseLoginChallenge(b64decode(b.challenge));
+      built.push(c.passkeys.every((p) => p.credId.length > 0 && p.kid.length === 22));
+    }
+    return { out, built };
+  }, v.login);
+  const wrong = v.login.cases.filter((c, i) => c.valid !== got.out[i]).map((c) => c.name);
+  expect(wrong).toEqual([]);
+  expect(got.built).toEqual(v.login.built.map(() => true));
 });
 
 test("the one-time code is normalized as in Go", async ({ shell }) => {
@@ -3094,10 +3144,15 @@ export const MAX_CERT = 4096, MAX_REQUEST = 64 << 10;
 export const MAX_SETUP_OFFER = 128 << 10, MAX_SETUP_NODES = 16;
 export const MAX_CHAIN_VERSIONS = 64, MAX_CHAIN = 32 << 20;
 export const TOTP_DIGITS = 6, TOTP_PERIOD = 30;
+// A user holds at most this many keys in the trust list, so no honest answer
+// names more passkeys, and the shell allocates no more either.
+export const MAX_PASSKEYS = trust.MAX_KEYS_PER_USER;
 
 const certBudget = new Budget({ size: MAX_CERT });
 const requestBudget = new Budget({ size: MAX_REQUEST });
 const offerBudget = new Budget({ size: MAX_SETUP_OFFER });
+const challengeBudget = new Budget({ size: MAX_REQUEST,
+  items: { passkeys: MAX_PASSKEYS, "rp/origins": trust.MAX_ORIGINS } });
 const infoBudget = new Budget({ size: MAX_REQUEST, items: { nodes: MAX_SETUP_NODES } });
 const hintBudget = new Budget({ size: 64 });
 const chainBudget = new Budget({ size: MAX_CHAIN, items: { versions: MAX_CHAIN_VERSIONS } });
@@ -3143,6 +3198,53 @@ einmal gebilligt hat, und ist deshalb genau das, was `core.verifyUIProof` für e
 braucht. Ein eigenes `verifyClient` braucht die Shell nicht: Sie baut ihr Zertifikat selbst und
 prüft fremde nie.
 
+Die Antwort auf `POST /api/v1/login/start` liest `parseLoginChallenge(bytes)` – Schritt für Schritt
+nach `session.ParseLoginChallenge`, dem einzigen Maßstab; die Vektoren unter `login` in
+`shared/testdata/session.json` sind die Prüfgrundlage: 33 Fälle unter `login.cases`, davon 26
+abgelehnte, und fünf Antworten unter `login.built`, die `session.Challenge` wirklich gebaut hat –
+eine für einen bekannten Namen, vier erfundene für unbekannte:
+
+```js
+export const passkeyRefShape = S({ credId: bytes, kid: str });
+export const loginChallengeShape = S({
+  nonce: bytes, now: int, maxLifetime: int, installation: str, user: str,
+  kdf: proof.kdfShape, passkeys: A(passkeyRefShape), totp: bool, passwordToo: bool,
+  rp: proof.rpShape,
+});
+
+// A passkey the user may log in with: the credential ID for allowCredentials
+// and the key ID that goes into proof.Proof.kid. Without the key ID a browser
+// that has never seen the trust list could not build the proof at all, so it
+// travels with the answer and the shell never derives it itself.
+export function validatePasskeyRef(r) {
+  return !!r && r.credId instanceof Uint8Array && r.credId.length >= 1
+    && r.credId.length <= proof.MAX_CRED_ID && proof.validKeyID(r.kid);
+}
+```
+
+`parseLoginChallenge` liest mit `challengeBudget` strikt und verlangt dann: `nonce` genau
+`NONCE_SIZE` Byte, `now > 0`, `maxLifetime` 1 bis `MAX_LIFETIME`, `installation` und `user` je ein
+`trust.validID`, `kdf` fehlt oder besteht `proof.validateKDF`, höchstens `MAX_PASSKEYS` Passkeys
+und höchstens `trust.MAX_ORIGINS` Herkünfte, `rp.id` – wenn gesetzt – nach `proof.validRPID` (die
+Shell reicht ihn an `navigator.credentials.get` weiter, also ein DNS-Name und nie freier Text),
+jede Herkunft nach `trust.validOrigin`, und sobald `passkeys` nicht leer ist, müssen `rp.id` und
+mindestens eine Herkunft dastehen. Jeder Eintrag besteht `validatePasskeyRef`, und weder eine
+Kennung noch eine Schlüssel-ID kommt zweimal vor – zwei Einträge mit derselben Schlüssel-ID
+ließen die Shell raten, welcher Schlüssel den Beweis gemacht hat. Eine leere Liste ist erlaubt
+(ein Benutzer ohne Passkey). Die erfundene Antwort für einen unbekannten Namen hält all das ein;
+deshalb darf die Shell an keiner Stelle milder oder strenger prüfen, sonst verriete ihre Reaktion,
+ob es den Namen gibt.
+
+`proof.js` bekommt dafür in diesem Schritt drei Namen, die es in Go auch gibt und die die Shell an
+mehreren Stellen braucht: `MAX_RPID = 253` mit `validRPID(s)` (dieselbe Regel wie `proof.ValidRPID`
+– ein DNS-Name in Kleinbuchstaben, ohne Schema, Port und Pfad; `config.Web` und
+`trust.List.Validate` prüfen `rp.id` in Go mit genau dieser Funktion, also prüft auch die
+Vertrauensliste in der Shell damit), `validKeyID(s)` (base64url von 16 Byte – `sign.KeyIDSize`,
+das `proof.ValidKeyID` in Go von dort nimmt –, aus `validateProof` herausgezogen, damit Beweis und
+Passkey-Eintrag dieselbe Regel benutzen) und
+`MAX_CRED_ID = 1023` (`proof.MaxCredID`, das `validateUserKey` in Aufgabe 5 schon als Zahl
+benutzt). Alle drei ändern keine Prüfung, sie geben ihr nur den Namen, den Go auch dafür hat.
+
 Die Ersteinrichtung:
 
 ```js
@@ -3151,12 +3253,26 @@ export const validSetupCode = (s) => typeof s === "string" && CODE.test(s);
 
 // normalizeSetupCode turns what someone typed into the canonical code: spaces,
 // tabs and '-' are dropped, a-z becomes upper case, then exactly 20 characters
-// of the alphabet without I, O, 0 and 1, in groups of five.
+// of the alphabet without I, O, 0 and 1, in groups of five. null where that is
+// not possible, including for anything that is no string at all.
+//
+// It walks UTF-16 units and folds a-z alone, which is Go's byte loop
+// character for character: every unit of a character outside ASCII is 0x80 or
+// above and is refused here, as every one of its UTF-8 bytes is there. The
+// task brief wrote this loop over code points with toUpperCase() instead, and
+// that one differs in exactly one place - measured over every code point
+// outside ASCII, surrogates apart: U+017F, the long s 'ſ', upper-cases to a
+// single "S", so the brief's loop makes "ſBCDE-FGHJK-MNPQR-STUVW" the code
+// "SBCDE-FGHJK-MNPQR-STUVW" while Go's NormalizeSetupCode, run on the same
+// input, answers false. A shell that takes what the API's own normalizer
+// would not is a second rule, so this one stays Go's.
 export function normalizeSetupCode(s) {
+  if (typeof s !== "string") return null;
   const c = [];
-  for (const ch of s) {
-    if (ch === " " || ch === "\t" || ch === "-") continue;
-    const u = ch.toUpperCase();
+  for (let i = 0; i < s.length; i++) {
+    let u = s[i];
+    if (u === " " || u === "\t" || u === "-") continue;
+    if (u >= "a" && u <= "z") u = String.fromCharCode(s.charCodeAt(i) - 32);
     if (c.length === 20 || !/^[A-HJ-NP-Z2-9]$/.test(u)) return null;
     c.push(u);
   }
@@ -3210,14 +3326,16 @@ export function httpStatus(code) {
 cd apps/web/tests && npm test -- contracts/session.spec.js
 ```
 
-Erwartet: alle zehn abgelehnten API-Zertifikate werden abgelehnt, alle fünf getippten Codes werden
-wie in Go normalisiert, alle 15 Angebote werden wie in Go entschieden.
+Erwartet: alle zehn abgelehnten API-Zertifikate werden abgelehnt, alle 33 Anmelde-Antworten werden
+wie in Go entschieden und die fünf gebauten Antworten kommen mit `credId` und `kid` durch, alle
+fünf getippten Codes werden wie in Go normalisiert, alle 15 Angebote werden wie in Go entschieden.
 
 - [ ] **Step 5: Committen**
 
 ```bash
-git add apps/web/public/assets/js/contracts/session.js apps/web/tests/contracts/session.spec.js
-git commit -m "Add session certificates and the setup offer" --trailer "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git add apps/web/public/assets/js/contracts/session.js apps/web/public/assets/js/contracts/proof.js \
+  apps/web/tests/contracts/session.spec.js
+git commit -m "Add the login challenge, session certificates and the setup offer" --trailer "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -3634,14 +3752,22 @@ export function encodeOpen(o) {
 CLOSE, Codes und Meldungen:
 
 ```js
+// `__proto__: null`, damit die Tabelle nichts erbt. Hier wird zwar nur mit
+// festen Namen zugegriffen, aber eine Codetabelle mit Erbschaft ist die Form,
+// die eine Datei weiter zur Lücke wurde (siehe MESSAGES).
 export const CODES = {
+  __proto__: null,
   FORBIDDEN: "E_FORBIDDEN", UNREACHABLE: "E_UNREACHABLE", EXIT: "E_EXIT", TIMEOUT: "E_TIMEOUT",
   LIMIT: "E_LIMIT", PROTOCOL: "E_PROTOCOL", CONFIRM: "E_CONFIRM", LICENSE: "E_LICENSE",
   NOTFOUND: "E_NOTFOUND", VERIFY: "E_VERIFY", INTERNAL: "E_INTERNAL", TOOLARGE: "E_TOOLARGE",
   LOGIN: "E_LOGIN", LOCKED: "E_LOCKED",
 };
 
-const MESSAGES = {
+// Eine Map, kein Objektliteral: bei `{…}` ist `"toString" in MESSAGES` wahr und
+// `MESSAGES["constructor"]` gibt eine Funktion zurück — der Prüfer unten hätte
+// `{"status":"error","code":"toString"}` angenommen und `message("constructor")`
+// mit einer Funktion beantwortet. Go weist beides ab. In Aufgabe 10 gemessen.
+const MESSAGES = new Map(Object.entries({
   E_FORBIDDEN: "Keine Berechtigung.",
   E_UNREACHABLE: "Dienst nicht erreichbar.",
   E_EXIT: "Dienst mit Fehler beendet.",
@@ -3656,9 +3782,9 @@ const MESSAGES = {
   E_TOOLARGE: "Zu viele Daten.",
   E_LOGIN: "Anmeldung fehlgeschlagen.",
   E_LOCKED: "Zu viele Fehlversuche. Bitte später erneut versuchen.",
-};
+}));
 
-export const message = (code) => MESSAGES[code] ?? "";
+export const message = (code) => MESSAGES.get(code) ?? "";
 
 const closeShape = S({ status: str, code: str, message: str, exitCode: P({}) });
 const closeBudget = new Budget({ size: MAX_CLOSE_PAYLOAD });
@@ -3670,7 +3796,7 @@ export function parseClose(p) {
   if (c.status === "ok") {
     if (c.code !== "") throw new BadFrame("close");
   } else if (c.status === "error") {
-    if (!(c.code in MESSAGES)) throw new BadFrame("close");
+    if (!MESSAGES.has(c.code)) throw new BadFrame("close");
   } else {
     throw new BadFrame("close");
   }
@@ -3785,7 +3911,12 @@ git commit -m "Add frames, channels and error codes" --trailer "Co-Authored-By: 
 **Interfaces:**
 - Produces: `MAX_ENTRIES = 10000`, `MAX_DIRS = 1000`, `MAX_UI_FILE = 16777216`,
   `MAX_UI_TOTAL = 67108864`, `BLOCK = 512`, `walkUI(bytes) -> [{path, size, data}]`,
-  `class UIWriter` mit `dir(path)`, `file(path, data)`, `close() -> Uint8Array`,
+  `class UIWriter` mit `dir(path)`, `file(path, data, hash?)`, `close(hash?) -> Uint8Array`,
+  **Der zweite Parameter ist der Hash aus Aufgabe 12** (`sha256Stream`), in den der
+  Schreiber alles mitschreibt, was er ausgibt. Ohne ihn kann Aufgabe 12 ein Paket
+  von 4 GiB nicht in EINEM Durchgang pruefen. Diese Zeile nannte ihn frueher nicht,
+  waehrend Aufgabe 12 ihn im Text verlangte - ein Widerspruch zwischen zwei Aufgaben,
+  genau das, was dieser Block verhindern soll.
   `class BadPackage extends Error`.
 - Consumes: `text.js` (`validPath`).
 
@@ -3845,6 +3976,11 @@ test("the size limits are checked at the header, before any data is read", async
         for (let i = 0; i < u.MAX_ENTRIES; i++) w.file("ui/f" + i, new Uint8Array(0));
         u.walkUI(w.close());
       }),
+      // ACHTUNG, diese zwei Faelle messen nicht, was ihr Name sagt: der
+      // UIWriter haelt dieselben Grenzen und wirft schon beim Schreiben, also
+      // wird walkUI nie gerufen und fails() faengt den Wurf des SCHREIBERS.
+      // Gemessen wird damit die Schreibseite, nicht die Leseseite. Bau die
+      // Bloecke roh und mit eigener Pruefsumme, so wie Gos TestWalkUILimits.
       entriesOver: fails(() => {
         const w = new u.UIWriter();
         for (let i = 0; i <= u.MAX_ENTRIES; i++) w.file("ui/f" + i, new Uint8Array(0));
@@ -4085,6 +4221,17 @@ test("the shell computes the UI hash of a package itself", async ({ shell }) => 
   expect(got.every((g) => g.pkgHash)).toBe(true);
 });
 
+// ACHTUNG: jeder dieser Angriffe steht unten als ERSTER Eintrag des Archivs und
+// wird deshalb von der Regel "Manifest zuerst" abgelehnt, nicht von seiner eigenen.
+// Gemessen: mit dieser Fassung bleibt der Lauf gruen, auch wenn man die
+// Typeflag-Pruefung ganz entfernt - vier der fuenf Faelle messen nichts.
+// Stell jedem Angriff einen annehmbaren Rahmen voran (Manifest zuerst), damit er
+// bis zu seiner Regel kommt.
+//
+// Und der Sparse-Fall hat die falsche Gestalt: `flag 0x53` ('S') ist die alte
+// GNU-Form. Gefaehrlich ist heute ein GEWOEHNLICHER '0'-Eintrag mit einem
+// PAX-Satz `GNU.sparse.*` - so steht es weiter unten auch im Text. Beide Formen
+// gehoeren geprueft.
 test("a package with a link, an absolute path or a sparse entry is refused", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const p = await import("/assets/js/contracts/pack.js");
@@ -4251,7 +4398,11 @@ test("a catalog is only taken from its own store, and never an older one", async
     return {
       good: await ok(d.catalog, 0),
       rollback: await ok(d.catalog, d.catalogLastSeq + 1),
-      rejects: await Promise.all(d.catalogRejects.map((r) => ok(r.catalog, 0))),
+      // Jeder Ablehnungsfall bringt sein eigenes lastSeq mit: "older than the
+      // last one seen" traegt 6 und MUSS bei 0 angenommen werden. Mit der 0 ist
+      // dieser Test gegen einen Pruefer ganz ohne Rueckroll-Pruefung gruen -
+      // also ein Test, der fuer seine eigene Sache nicht scheitern kann.
+      rejects: await Promise.all(d.catalogRejects.map((r) => ok(r.catalog, r.lastSeq))),
       otherStore: await ok(d.catalog, 0) && !(await (async () => {
         try {
           await c.verifyCatalog(env(d.catalog), { ...store, id: "other" }, 0);
@@ -4321,11 +4472,16 @@ spielt niemand zurück.
 
 `parseManifest(bytes)` liest das Manifest mit `manifestBudget` und prüft es wie
 `store.ParseManifest`: `id` ein `validAppID` ohne Kern-Präfix, `name`/`publisher`/`version`,
-`icon` und `ui.entry` je ein `validPath`, `ui.width`/`ui.height` 0 oder 100 bis 4096, Aktionen mit
+`icon` und `ui.entry` je ein `validPath`, `ui.width`/`ui.height` 0 oder 200 bis 4000, Aktionen mit
 `validName`, `title` als `validText`, `service` aus den Diensten, `timeout` 0 bis 3600, Dienste mit
 `validName` und `command` mit 1 bis 32 Teilen, davon der erste absolut, `start` leer oder eine
-Aktion, `runtime` leer oder `podman`, `needs` wie im Katalog, `cpu` 0 bis 64000, `memory` 0 bis
-262144, `minNgc` leer oder `validVersion`.
+Aktion, `runtime` leer oder `podman`, `needs` wie im Katalog, `cpu` 0 oder 100 bis 64000, `memory`
+0 oder 16 bis 65536, `minNgc` leer oder `validVersion`.
+
+Diese drei Grenzen standen hier weiter als in Go und sind gegen
+`shared/store/manifest.go` berichtigt (`size` und die Zeile fuer `cpu`/`memory`).
+Eine Shell, die annimmt, was der Parser der API ablehnt, waere eine zweite Regel;
+der eingefrorene Vertrag gilt.
 
 Dazu die kleinen Regeln:
 
@@ -4925,15 +5081,14 @@ export function socketURL() {
 }
 ```
 
-`session.js` bekommt in diesem Schritt `parseLoginChallenge` und `parseLoginResult`. Für sie gibt
-es keinen Go-Parser, deshalb gelten die Regeln 1, 3 bis 8 und 12 bis 14 des strikten JSON
-(`shared/README.md`) mit einem Budget von `session.MAX_REQUEST`:
+`parseLoginChallenge` steht schon (Aufgabe 8) und folgt `session.ParseLoginChallenge`, geprüft
+gegen die Vektoren unter `login` in `shared/testdata/session.json`. `http.loginStart` gibt deshalb
+nur weiter, was dieser Parser durchgelassen hat – samt `kid` je Passkey, das die Antwort mitbringt.
 
-- `LoginChallenge`: `nonce` 32 Byte, `now > 0`, `maxLifetime` 1 bis `MAX_LIFETIME`,
-  `installation` ein `validID`, `user` ein `validID`, `kdf` fehlt oder besteht
-  `proof.validateKDF`, `passkeys` höchstens `trust.MAX_KEYS_PER_USER` Einträge von je 1 bis 1023
-  Byte, `totp` und `passwordToo` boolesch, `rp.id` gesetzt und `rp.origins` 1 bis 8 Einträge nach
-  `validOrigin`, sobald `passkeys` nicht leer ist.
+`session.js` bekommt in diesem Schritt nur noch `parseLoginResult`. Dafür gibt es keinen Go-Parser,
+deshalb gelten die Regeln 1, 3 bis 8 und 12 bis 14 des strikten JSON (`shared/README.md`) mit einem
+Budget von `session.MAX_REQUEST`:
+
 - `LoginResult`: `api` ein Umschlag nach `sign.validateEnvelope(…, session.MAX_CERT)`,
   `passwordHint` boolesch.
 
@@ -5345,6 +5500,56 @@ git commit -m "Add the session link with Noise and flow-controlled channels" --t
 
 ---
 
+### Task 17b: Der Adapter – die echte Leitung dort, wo die Attrappe steht
+
+**Eingeschoben, nicht umnummeriert.** Diese Aufgabe stand nirgends im Plan und
+ist beim Bauen von Aufgabe 18 aufgefallen: Anmeldung, Sitzung und
+Vertrauensliste sind echt, **der Desktop isst weiter die Attrappe**, und die
+frisch geöffnete Leitung wird in `main.js` gleich wieder geschlossen. Das ist
+die eigentliche Ablösung von `shell/fake-link.js`.
+
+**Files:**
+- Create: `apps/web/public/assets/js/net/world.js`
+- Modify: `apps/web/public/assets/js/shell/main.js`
+- Delete (am Ende, erst wenn nichts mehr daran hängt):
+  `apps/web/public/assets/js/shell/fake-link.js`
+- Test: `apps/web/tests/shell/world.spec.js`
+
+**Interfaces:**
+- Produces: `realWorld({config, anchor, session, link}) -> {link, trust, session,
+  releaseKey}` — dieselbe Form, die `fakeWorld()` heute liefert, damit
+  `startDesktop` keine Zeile ändert.
+- Der `link` darin bietet **genau die Oberfläche der Attrappe**:
+  `call(app, service, name, params, opts)`, `open(app, service, name)`,
+  `onNotice(fn)`.
+- Consumes: `net/link.js`, `net/channel.js`, `shell/trustlist.js`, `core.js`.
+
+**Der Kern in einem Satz:** `net/channel.js` spricht in Aktionen
+(`call(link, action, {…})`, `sendIn`, `receiveOut`, `openE2E`), die Oberflächen
+sprechen in `(app, service, name)`. Der Adapter schlägt die Zeile in
+`core.ACTIONS` nach und wählt den Weg **nach der Spalte `flow`** — nicht nach
+einer eigenen Liste, die neben der Tabelle verrottet.
+
+**Was gemessen sein muss:**
+
+- Jede Aktionszeile, die eine Oberfläche heute benutzt, kommt über den Adapter
+  am selben Ziel an wie über die Attrappe. Nicht behaupten: **den Vergleich
+  fahren**, Zeile für Zeile.
+- `onNotice` liefert die Steuerhinweise der echten Leitung, und
+  `trust.refresh(seq)` wird davon wirklich angestoßen.
+- `main.js` schließt die Leitung **nicht** mehr, und der Desktop steht mit
+  echten Daten. Das ist der Punkt, an dem die Zeile
+  `const trust = await startTrust({ anchor, installation, link });` hineingeht.
+- **Erst wenn nichts mehr daran hängt**, fällt `fake-link.js` weg. Solange ein
+  Fall sie braucht, bleibt sie — ein Baum, der nicht baut, ist schlimmer als
+  eine Attrappe, die benannt ist.
+
+**Warum das teuer werden kann, vorher gesagt:** Die Gegenstelle beantwortet
+heute fünf Kern-Aktionen, die Attrappe zwei Dutzend. Rund hundert Fälle in
+zwölf Dateien hängen an der Attrappe. Diese Aufgabe darf deshalb in Schritten
+gehen — aber jeder Schritt lässt die Mappe grün, und welche Fälle noch an der
+Attrappe hängen, steht am Ende im Bericht.
+
 ### Task 18: Anmeldung – Passwortschlüssel, TOTP und Passkeys
 
 **Files:**
@@ -5357,8 +5562,8 @@ git commit -m "Add the session link with Noise and flow-controlled channels" --t
   - `keys.js`: `newSessionKeys() -> Promise<{sign: {privateKey, publicRaw, kid}, dh: {privateKey, publicRaw}}>`,
     `buildClientCert({installation, user, nonce, keys, now, maxLifetime}) -> {cert, payload}`,
     `proveWithPassword(payload, passwordText, kdf, purpose) -> Promise<proof>`,
-    `proveWithPasskey(payload, {rp, credentialIDs, kidOf}, purpose) -> Promise<proof>`,
-    `rememberCredential(installation, credID, kid)`, `kidForCredential(installation, credID)`.
+    `proveWithPasskey(payload, {rp, passkeys}, purpose) -> Promise<proof>` – `passkeys` ist
+    `challenge.passkeys`, also je Eintrag `credId` **und** `kid`.
   - `login.js`: `loginView(root, {config, onSession}) -> void`,
     `login({name, password, totp, wantPasskey}) -> Promise<Session>`.
   - `dom.js`: `el(tag, className, text)`, `field(label, type)`, `button(text, onClick)`,
@@ -5433,6 +5638,10 @@ test("a passkey signs the certificate, and a role with passwordToo signs it twic
     options: { protocol: "ctap2", transport: "usb", hasUserVerification: true,
       hasResidentKey: true, isUserVerified: true, automaticPresenceSimulation: true },
   });
+  // A browser that has never seen this installation: nothing remembered, no
+  // trust list yet. The key ID comes from the challenge alone, so this has to
+  // work on the first try.
+  await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
   await shell.evaluate(() => window.__ngcTest = { user: "clara" }); // clara has a passkey
   await shell.getByRole("button", { name: "Mit Passkey anmelden" }).click();
   await expect(shell.locator("#taskbar")).toBeVisible();
@@ -5463,7 +5672,7 @@ Erwartet: keine Anmeldemaske vorhanden.
 // parts never leave the browser: both key pairs are created as
 // non-extractable Web Crypto keys, and the password is thrown away right
 // after it has been turned into a key.
-import { b64encode, b64decode, utf8 } from "../contracts/b64.js";
+import { b64encode, b64decode, utf8, equal as equalBytes } from "../contracts/b64.js";
 import * as session from "../contracts/session.js";
 import * as proof from "../contracts/proof.js";
 import * as sign from "../contracts/sign.js";
@@ -5511,7 +5720,13 @@ export async function proveWithPassword(payload, passwordText, kdf, purpose) {
 // proveWithPasskey asks the authenticator for an assertion over the challenge
 // of this purpose and payload. NGC always asks for user verification: a PIN or
 // biometrics, never a tap alone.
-export async function proveWithPasskey(payload, { rp, credentialIDs, kidOf }, purpose) {
+//
+// passkeys is challenge.passkeys, checked by session.parseLoginChallenge: each
+// entry holds the credential ID for allowCredentials and the key ID the proof
+// needs. The shell takes the key ID from the answer and derives none of its
+// own, so a browser that has never seen the trust list can log in with a
+// passkey on the first try.
+export async function proveWithPasskey(payload, { rp, passkeys }, purpose) {
   const challenge = await proof.challenge(purpose, payload);
   const cred = await navigator.credentials.get({
     publicKey: {
@@ -5519,20 +5734,17 @@ export async function proveWithPasskey(payload, { rp, credentialIDs, kidOf }, pu
       rpId: rp.id,
       userVerification: "required",
       timeout: 60000,
-      allowCredentials: credentialIDs.map((id) => ({ type: "public-key", id })),
+      allowCredentials: passkeys.map((p) => ({ type: "public-key", id: p.credId })),
     },
   });
   if (!cred) throw new Error("keys: no passkey");
   const id = new Uint8Array(cred.rawId);
-  const kid = kidOf(id);
-  if (!kid) {
-    const e = new Error("Dieser Browser kennt den Passkey noch nicht. Bitte einmal mit Passwort "
-      + "anmelden oder den Passkey auf diesem Gerät neu hinterlegen.");
-    e.code = "E_NOKEYID";
-    throw e;
-  }
+  // The authenticator answers with one of the credential IDs that were
+  // offered, so its entry is the one that names the key ID.
+  const ref = passkeys.find((p) => equalBytes(p.credId, id));
+  if (!ref) throw new Error("keys: the authenticator answered with another credential");
   return {
-    kind: proof.KIND_PASSKEY, kid,
+    kind: proof.KIND_PASSKEY, kid: ref.kid,
     sig: new Uint8Array(cred.response.signature),
     authData: new Uint8Array(cred.response.authenticatorData),
     clientData: new Uint8Array(cred.response.clientDataJSON),
@@ -5540,19 +5752,23 @@ export async function proveWithPasskey(payload, { rp, credentialIDs, kidOf }, pu
 }
 ```
 
-`rememberCredential` und `kidForCredential` legen die Zuordnung `credential id -> kid` je
-Installation in `localStorage` ab. Sie ist kein Geheimnis: beides steht ohnehin in der
-Vertrauensliste. Die Shell füllt sie, sobald sie eine geprüfte Fassung hat (Aufgabe 20). Ohne
-Eintrag kann eine Anmeldung mit Passkey auf einem frischen Browser nicht gelingen – das ist der
-erste Punkt in „Offene Entscheidungen für den Koordinator“.
+`equalBytes` ist der Vergleich aus `b64.js` (`equal`), in konstanter Zeit; hier geht es nur um die
+Zuordnung, aber die Shell hat nur diesen einen Vergleich.
 
 - [ ] **Step 4: `login.js` und die Ansicht schreiben**
 
 Ablauf, genau nach `shared/README.md`, Abschnitt „Vor dem WebSocket“:
 
-1. `http.loginStart(name)` – die API antwortet auch für unbekannte Namen mit einer Aufgabe.
+1. `http.loginStart(name)` – die API antwortet auch für unbekannte Namen mit einer Aufgabe, die von
+   einer echten nicht zu unterscheiden ist. `parseLoginChallenge` prüft sie (Aufgabe 8); was dort
+   durchfällt, behandelt die Shell wie jeden anderen Fehlschlag und sagt nur „Anmeldung
+   fehlgeschlagen.“
 2. Aus `challenge.kdf` und dem eingegebenen Passwort den Passwortschlüssel bilden, oder mit
-   `challenge.passkeys` den Passkey fragen.
+   `challenge.passkeys` den Passkey fragen. Jeder Eintrag bringt `credId` für
+   `allowCredentials` und `kid` für den Beweis mit; die Shell leitet das `kid` nirgends selbst her
+   und braucht dafür weder die Vertrauensliste noch einen gemerkten Eintrag im Browser. Ein frischer
+   Browser, ein privates Fenster oder ein neues Gerät kommt damit genauso hinein wie ein bekanntes –
+   auch ein Benutzer in einer Rolle mit `passkeyOnly`.
 3. Sitzungsschlüssel erzeugen, Client-Zertifikat bauen, unterschreiben lassen. Verlangt die Rolle
    das Passwort zusätzlich (`challenge.passwordToo`), kommt `proof` vom Passkey und `password`
    vom Passwortschlüssel – beide über **dieselben** Zertifikat-Bytes, Zweck `clientcert/v1`.
@@ -5719,8 +5935,8 @@ git commit -m "Add the first-run setup with the one-time code" --trailer "Co-Aut
   `load(installation) -> Promise<{list, hash}|null>` (aus IndexedDB),
   `bootstrap(anchor) -> Promise<version>` (Kette ab dem Anker holen und prüfen),
   `refresh(hintSeq) -> Promise<version>`, `current()`, `onChange(fn)`, `onAlarm(fn)`,
-  `controllerKey(nodeID)`, `storeOf(id)`, `rememberCredentials()`.
-- Consumes: `http.js`, `trust.js`, `session.js`, `keys.js`.
+  `controllerKey(nodeID)`, `storeOf(id)`.
+- Consumes: `http.js`, `trust.js`, `session.js`.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
 
@@ -5799,9 +6015,9 @@ Regeln, die das Modul durchsetzt:
   auf eine ältere Nummer), zeigt die Shell einen Alarm, verwirft die Sitzung, meldet ab
   (`POST /api/v1/logout`) und zeigt die Anmeldung. Der Text lautet: „Die Vertrauensliste dieser
   Anlage stimmt nicht. NGC hat Sie sicherheitshalber abgemeldet.“
-- Nach jeder neuen Fassung: den Zwischenspeicher der UI-Beweise und der Kataloge leeren, die
-  Zuordnung `credential id -> kid` neu schreiben (`keys.rememberCredential` für jeden Passkey
-  jedes Benutzers) und die Shell die Apps neu laden lassen.
+- Nach jeder neuen Fassung: den Zwischenspeicher der UI-Beweise und der Kataloge leeren und die
+  Shell die Apps neu laden lassen. Für Passkeys merkt sich die Shell **nichts**: `kid` und `credId`
+  stehen in der Anmelde-Antwort (`session.PasskeyRef`), die Liste wird dafür nicht gebraucht.
 - `controllerKey(nodeID)` gibt den Noise-Schlüssel eines Controllers **nur** aus der geprüften
   Liste; kennt sie den Knoten nicht, gibt es keinen Ende-zu-Ende-Kanal, sondern die Meldung
   „Dieser Server steht nicht in der Vertrauensliste.“
@@ -5874,9 +6090,14 @@ test("a window opens, moves, maximizes and closes", async ({ shell }) => {
   const win = shell.locator(".win", { hasText: "Rechner" });
   await expect(win).toBeVisible();
   const before = await win.boundingBox();
-  await shell.locator(".win .titlebar", { hasText: "Rechner" }).hover();
+  // hover() setzt die Maus in die MITTE der Titelleiste, nicht an before.x.
+  // Ein absolutes move(before.x + 120, ...) zieht das Fenster deshalb nach
+  // LINKS, und die Zusicherung unten kann nie wahr werden. Gemessen. Es muss
+  // vom Griff aus gerechnet werden, nicht vom linken Fensterrand.
+  const grip = await shell.locator(".win .titlebar", { hasText: "Rechner" }).boundingBox();
+  await shell.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
   await shell.mouse.down();
-  await shell.mouse.move(before.x + 120, before.y + 80);
+  await shell.mouse.move(grip.x + grip.width / 2 + 120, grip.y + grip.height / 2 + 80);
   await shell.mouse.up();
   const after = await win.boundingBox();
   expect(Math.round(after.x - before.x)).toBeGreaterThan(80);
@@ -6815,38 +7036,24 @@ Nach dem Schreiben mit frischem Blick gegen `apps/web/CLAUDE.md` und `shared/REA
 
 Drei Dinge sind beim Gegenlesen aufgefallen und in den Plan eingearbeitet:
 
-1. `session.LoginChallenge` nennt nur die Kennungen der Passkeys, nicht deren Schlüssel-IDs. Die
-   Shell merkt sich deshalb die Zuordnung (Aufgabe 18) – das löst den Alltag, aber nicht den ersten
-   Besuch auf einem frischen Browser. Siehe „Offene Entscheidungen“, Punkt 1.
+1. `session.LoginChallenge.passkeys` nennt seit `vertraege-v1.1` je Eintrag `credId` **und** `kid`
+   (`session.PasskeyRef`). Die Shell nimmt das `kid` aus der Antwort und leitet es nirgends selbst
+   her; die Antwort prüft `parseLoginChallenge` nach `session.ParseLoginChallenge` gegen die
+   Vektoren unter `login` in `shared/testdata/session.json` (Aufgaben 8, 16, 18). Damit gelingt die
+   Anmeldung mit Passkey auch auf einem frischen Browser, und die frühere Zuordnung im
+   Browserspeicher ist ersatzlos weg.
 2. Die Oberfläche einer App erbt die CSP der Shell, weil sie aus `srcdoc` kommt. Deshalb steht in
    der Richtlinie der Shell `script-src 'self' data:` – sonst liefe keine App. Siehe „Offene
-   Entscheidungen“, Punkt 2.
+   Entscheidungen“, Punkt 1.
 3. `shared/ulh.md` verlangt, dass dieser Plan die Form der Balancer-Datei festlegt und dort einträgt.
    Der Plan legt sie fest (Aufgabe 26); eintragen muss sie der Koordinator, denn `shared/` ist
-   eingefroren. Siehe „Offene Entscheidungen“, Punkt 3.
+   eingefroren. Siehe „Offene Entscheidungen“, Punkt 2.
 
 ---
 
 ## Offene Entscheidungen für den Koordinator
 
-1. **Passkey-Anmeldung auf einem Browser, der die Vertrauensliste noch nie hatte.**
-   `session.LoginChallenge` gibt nur `passkeys` (die Kennungen für `allowCredentials`), aber
-   `proof.Proof.kid` verlangt `sign.KeyID` des öffentlichen Schlüssels, und den kennt nur die
-   Vertrauensliste. Die holt die Shell mit `GET /api/v1/trust`, und das geht erst **mit** Sitzung.
-   Für einen Benutzer in einer Rolle mit `passkeyOnly` gibt es damit auf einem frischen Gerät keinen
-   Weg hinein. Der Plan merkt sich die Zuordnung `credential id -> kid` nach jeder geprüften
-   Fassung (Aufgabe 18) – das deckt den Alltag, nicht aber ein neues Gerät, einen gelöschten
-   Browserspeicher oder einen privaten Tab. **Vorschläge, einer genügt:**
-   a) `LoginChallenge.passkeys` trägt je Eintrag `credId` **und** `kid` (Vertragsänderung, neue
-   Pfadnummer `/api/v2/`);
-   b) `GET /api/v1/trust` ist auch ohne Sitzung erreichbar – die Fassungen sind signiert, sie
-   verraten aber Anmeldenamen und Schlüssel;
-   c) der Webserver liefert neben dem Anker auch die neueste Fassung aus (der Controller mit Rolle
-   `web` schreibt sie, wie er `trust-anchor.json` schreibt).
-   **Ohne Entscheidung** bleibt es bei der Zuordnung im Browser und dem Hinweis „Bitte einmal mit
-   Passwort anmelden“ – für `passkeyOnly` ist das keine Lösung.
-
-2. **Eigener Ursprung für App-Fenster.** Auf einem einzigen Ursprung gibt es nur zwei Wege: ein
+1. **Eigener Ursprung für App-Fenster.** Auf einem einzigen Ursprung gibt es nur zwei Wege: ein
    `iframe` mit `sandbox="allow-scripts"` (echte Abschottung, aber die Seite erbt die CSP der Shell
    und kann keine eigenen Dateien nachladen) oder ein Rahmen, der die Shell erreichen könnte. Der
    Plan nimmt den ersten Weg und setzt alles als `data:`-Adressen in die Seite; dafür muss die CSP
@@ -6858,33 +7065,33 @@ Drei Dinge sind beim Gegenlesen aufgefallen und in den Plan eingearbeitet:
    Koordinator:** zweiter Name ja oder nein? Bei nein bleibt die Grenze für Apps im Plan stehen und
    gehört in die Doku für App-Entwickler.
 
-3. **Die Vorlage der Balancer-Datei nach `shared/ulh.md`.** `shared/ulh.md` sagt: „Die genaue Form
+2. **Die Vorlage der Balancer-Datei nach `shared/ulh.md`.** `shared/ulh.md` sagt: „Die genaue Form
    legt der Plan des Webinterface fest und trägt sie hier als Vorlage ein.“ Die Form steht in
    Aufgabe 26 (`apps/web/templates/apache-apis.conf.example`). Weil `shared/` eingefroren ist,
    trägt sie der Koordinator ein; erst dann kann der Controller mit Rolle `web` sie Byte für Byte
    nachschreiben.
 
-4. **Fremdcode für den Browser.** Der Plan kopiert fünf Dateien aus `@noble/hashes` 1.8.0 (MIT)
+3. **Fremdcode für den Browser.** Der Plan kopiert fünf Dateien aus `@noble/hashes` 1.8.0 (MIT)
    nach `apps/web/public/assets/vendor/noble-hashes/`: Argon2id für den Passwortschlüssel (Kapitel 7
    des Entwurfs nennt es als Kandidaten, „zu prüfen“) und ein SHA-256 mit `update`/`digest`, das die
    Web Crypto API nicht hat und das für Pakete bis 4 GiB gebraucht wird. Bitte freigeben; die Zeile
    für `THIRD-PARTY.md` steht in Aufgabe 5.
 
-5. **`AdminVerify` aus dem Recovery-Modus.** `docs/STAND.md` sagt, `AdminVerify` komme nach Go, weil
+4. **`AdminVerify` aus dem Recovery-Modus.** `docs/STAND.md` sagt, `AdminVerify` komme nach Go, weil
    NGC kein PHP-Teilprogramm habe – `apps/web` hat aber einen PHP-Teil und die Anmeldemaske. Bitte
    bestätigen, dass das Webinterface dafür nichts tun muss, sondern die API die Admin-Datensätze
    prüft.
 
-6. **Browser-Mindestversionen.** Der Plan setzt Chrome/Edge 137, Firefox 130 und Safari 17.4
+5. **Browser-Mindestversionen.** Der Plan setzt Chrome/Edge 137, Firefox 130 und Safari 17.4
    (Ed25519 und X25519 in der Web Crypto API). Plan 0 nannte Safari 17; X25519 kam dort erst in
    17.4. Bitte als verbindliche Zahl bestätigen, damit `ngc-web.sh` und die Doku dasselbe sagen.
 
-7. **Speicher für große Oberflächen.** Ein ui-tar darf nach `store.MaxUITotal` 64 MiB groß sein; die
+6. **Speicher für große Oberflächen.** Ein ui-tar darf nach `store.MaxUITotal` 64 MiB groß sein; die
    Shell baut daraus ein Dokument mit `data:`-Adressen, was etwa das 1,4-Fache an Speicher kostet.
    Eine kleinere Grenze allein in der Shell wäre möglich, würde aber gültige Apps aussperren. Der
    Plan setzt keine eigene Grenze. Falls gewünscht, bitte eine nennen.
 
-8. **Test-Zweig in `index.php`.** Für die Browser-Tests reicht der eingebaute PHP-Server `/api/` an
+7. **Test-Zweig in `index.php`.** Für die Browser-Tests reicht der eingebaute PHP-Server `/api/` an
    die Gegenstelle weiter (Aufgabe 17); der Zweig greift nur unter `PHP_SAPI === 'cli-server'` **und**
    gesetzter Umgebungsvariable `NGC_TEST_API`, im Betrieb also nie. Falls auch das unerwünscht ist,
    kommt stattdessen ein eigener kleiner Node-Server vor den PHP-Server – dann sieht der Test aber

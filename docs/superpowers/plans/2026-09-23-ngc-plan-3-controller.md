@@ -136,7 +136,7 @@ als etwa 20 Dateien verlangt. Tests liegen neben dem Code.
 **Interfaces:**
 - Produces: `node.Main(version string, args []string, stdout, stderr io.Writer) int` – der ganze
   Einstieg; `node.Options{Config string, Pair string, Arch string}`. Kommandos: ohne Argument
-  laufen (später Aufgabe 18), `-version`, `pair -code <Kopplungscode>`, `terminal`, `hold`,
+  laufen (später Aufgabe 18), `-version`, `pair` (fragt den Kopplungscode ab, nie als Argument), `terminal`, `hold`,
   `image -arch <arch> -out <datei>`.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -602,7 +602,7 @@ git commit -m "Keep and advance the trust list from the pinned anchor"
 - Produces: `pairing.Do(ctx context.Context, in pairing.Input) (pairing.Result, error)`;
   `pairing.Input{Code string, Name string, Roles []string, Noise noise.DHKey, Client *http.Client}`;
   `pairing.Result{APIs []config.APIRef, Anchor trust.Anchor}`;
-  `pairing.Show(code tunnel.PairCode, noisePub []byte) string` – die zwei Zeilen, die ulh und die
+  `pairing.Show(anchor trust.Anchor, noisePub []byte) string` – die zwei Zeilen, die ulh und die
   Shell vergleichen.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -1202,16 +1202,19 @@ Erwartet: FAIL.
 Ausführen: `go test ./apps/server-controller/classes/e2e/`
 Erwartet: PASS.
 
-- [ ] **Step 5: Fuzz-Test für die inneren Nachrichten**
+- [ ] **Step 5: Fuzz-Ziel für die inneren Nachrichten**
 
-```go
-func FuzzInner(f *testing.F) {
-	f.Add([]byte{1})
-	f.Fuzz(func(t *testing.T, b []byte) { _, _ = wire.ParseE2E(b, false) })
-}
-```
+Ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
 
-Zusätzlich ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
+**Nicht** zusätzlich ein Ziel, das nur `wire.ParseE2E(b, false)` ruft und nichts prüft. Genau das
+stand hier bis zum 24.09.2026, und die Prüfung von Aufgabe 9 hat es gemessen: es kann für dieses
+Paket **nie rot werden** — in keiner von 21 Mutationen schlug es an. `shared/wire` hat mit
+`FuzzParseE2E` längst ein Ziel mit echtem Orakel; ein zweites ohne Zusicherung kostet Rechenzeit
+und täuscht Abdeckung vor.
+
+Die Regel dahinter, sie gilt für jedes Fuzz-Ziel in diesem Plan: **ein Ziel, das nichts zusichert,
+bewacht nichts.** Entweder prüft der Rumpf eine Eigenschaft, oder das Ziel gehört dorthin, wo die
+Eigenschaft geprüft werden kann.
 
 - [ ] **Step 6: Prüfen und committen**
 
@@ -1390,6 +1393,18 @@ Erwartet: FAIL.
   `NGC_PARAMS` **nie** in `/proc/*/cmdline` und nie im Log.
 - `Stop` nutzt `--time 10`, danach `kill`.
 
+> **Berichtigt am 01.10.2026.** Von diesen zwei Sätzen — der Env-Datei, die
+> „nach dem Start gelöscht" wird, und `Stop` mit „danach `kill`" — weicht der
+> Code der Aufgabe 11 ab, **mit Begründung an der Stelle selbst**
+> (`apps/server-controller/classes/runtime/`). Der Strang hat beides gemessen
+> und als Planfrage gemeldet; die Prüfung hat angemerkt, dass es in keiner
+> Abweichungsliste stand.
+>
+> **Wer hier baut, liest die Begründung im Code, nicht diese zwei Sätze.** Ich
+> schreibe den richtigen Wortlaut hier bewusst **nicht** hinein, weil ich ihn
+> nicht gemessen habe — und ein Plansatz, den der Koordinator sich ausdenkt,
+> wird vom Nächsten nicht mehr nachgeprüft.
+
 - [ ] **Step 4: `runtime.ImageTag` schreiben**
 
 Liest das Image-Tar mit `archive/tar`, sucht `manifest.json`, liest es mit
@@ -1473,7 +1488,16 @@ func TestUserNameIsStableAndShort(t *testing.T) {
 }
 
 func TestEnsureUserBuildsTheArgumentList(t *testing.T) {
-	// useradd --system --no-create-home --shell /usr/sbin/nologin <name>,
+	// BERICHTIGT am 02.10.2026: die Zeile MUSS --home-dir <datenordner>
+	// tragen. Ohne sie setzt useradd --system das Heim auf /home/<name>,
+	// und dann bricht EnsureUser mit ErrHome ab - es startete KEINE App.
+	// Gemessen vom Pruefer: ofUserDB (user.go:192) und Create
+	// (podman.go:255) vergleichen HomeDir gegen den Datenordner, ofName
+	// (podman.go:95) nimmt u.HomeDir; der Mutant ohne --home-dir toetet
+	// zwei Faelle, darunter den, der das echte useradd als root fuehrt.
+	//
+	// useradd --system --no-create-home --home-dir <datenordner>
+	//         --shell /usr/sbin/nologin <name>,
 	// danach die subuid/subgid-Bereiche; nirgends eine Shell.
 }
 
@@ -1775,6 +1799,27 @@ git commit -m "Accept and verify an app package before anything is unpacked"
 ---
 
 ### Task 16: App aktivieren
+
+> **Ergaenzt am 02.10.2026, aus der Pruefung der Aufgabe 12 — und ich
+> schreibe es HIERHIN, weil eine Zeile, die nur in einem Bericht steht,
+> dort verschwindet.**
+>
+> 1. **`/run/ngc/<name>` muss nach jedem Neustart existieren und dem
+>    App-Benutzer gehoeren.** Die Anforderung stammt aus Aufgabe 11
+>    (`runDir` sagt es selbst), aber `runDir` TUT nichts und `EnsureData`
+>    macht nur den Datenordner. Aufgabe 12 war damit nicht unvollstaendig
+>    — ihr Auftrag nannte es nicht. Hier wird es gebaut.
+> 2. **`/etc/subuid` wird heute ohne Sperre gelesen-geaendert-geschrieben.**
+>    Zwei gleichzeitige `EnsureUser` geben denselben Bereich zweimal aus
+>    oder verlieren eine Zeile. `-race` sieht das NICHT, „0 DATA RACE“
+>    deckt es nicht ab. Heute harmlos, weil das Paket ausserhalb seiner
+>    Tests keinen einzigen Aufrufer hat — mit dem ersten Aufrufer ist es
+>    es nicht mehr harmlos. Wer hier baut, nimmt eine Sperre und einen Fall
+>    dafuer mit.
+> 3. **Geerbt aus Aufgabe 11, nur hier sichtbar:** der Datenordner ist
+>    `/data:rw` UND podman-Image-Store. Damit hoehlt eine App ihr
+>    `--read-only` ueber einen Neustart aus. Es bleibt bei ihrem eigenen
+>    Benutzer, aber es gehoert gesehen und entschieden, nicht vererbt.
 
 **Files:**
 - Create: `apps/server-controller/classes/install/activate.go`,
