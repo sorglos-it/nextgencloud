@@ -2038,3 +2038,351 @@ Strangzweige mischen** — und danach den Baum-Hash von `shared/` gegen den Tag
 stellen, damit das Mischen den Vertrag nicht angefasst hat.
 
 Wer den Plan berichtigt, hat damit erst die HAELFTE getan.
+
+## Eine Stelle ist nicht widerlegt, wenn man nur ihren Anfang gelesen hat
+
+Am 02.10.2026 haben mir zwei Agenten gesagt, mein Plan sei falsch. Ich habe
+nachgesehen, den genannten Namen (`Take`) an der genannten Zeile **nicht**
+gefunden, und mich gebremst: „ich berichtige den Plan nicht auf eine Ursache,
+die ich nicht selbst gemessen habe." Das Bremsen war richtig. Der Schluss war
+falsch.
+
+Ich hatte **zwanzig Zeilen zu früh aufgehört**. Die Zeile `:4480` liegt mitten
+in der Funktion, der strittige Satz stand am Funktionsende bei `:4503`. `Take`
+war der Name **des Plans selbst**, es gab gar keine Umbenennung — und der Plan
+widersprach dabei sich selbst, denn sein eigenes `Table.Open` setzte nur eine
+der zwei Richtungen.
+
+**Also: eine Funktion wird bis zu ihrer schliessenden Klammer gelesen, bevor
+man sagt, etwas stehe nicht darin.** `grep` auf einen Namen findet die
+Definition und nicht die Verwendung zwanzig Zeilen weiter; `sed -n 'A,Bp'`
+zeigt genau das Fenster, das man gewaehlt hat, und schweigt ueber den Rest.
+
+Und die Gegenprobe, die hier entschieden hat, ist eine MESSUNG und kein
+Argument: der Mutant „`Open` setzt beide Richtungen" macht den berichtigten
+Fall rot — mit dem alten Plansatz waere genau dieser Mutant der **gruene
+Normalfall** gewesen. Ein Plansatz, der einen Mutanten zum Normalfall macht,
+schreibt den Fehler fest.
+
+## Sieben ueberlebende Mutanten, vier Ursachen — und alle vier sehen aus wie Tests
+
+Ein Strang hatte in seiner ersten Mutationsrunde acht Ueberlebende. Sieben
+davon gehen auf vier Formen zurueck, die man als Fehler nicht sieht, weil der
+Fall gruen ist und ordentlich aussieht:
+
+1. **Der Fall prueft gegen die Konstante, die er halten soll.** Steht die
+   Erwartung als `SubIDBase` statt als Zahl, wandert sie mit dem Mutanten mit.
+   Eine Zusicherung ueber einen Wert gehoert als **Zahl** hingeschrieben, auch
+   wenn das haesslich ist.
+2. **Eindeutigkeit, geprueft an Eingaben, die sich schon im lesbaren Teil
+   unterscheiden** (`org.example.a` gegen `.b`). Dann prueft der Fall das
+   Lesbare, nicht die Ableitung. Richtig ist `org.a.notes` gegen
+   `org.b.notes`.
+3. **Der Fall nimmt zwei Fehler gleichzeitig an** (`ErrHome` ODER
+   `ErrIdentity`). Dann greift immer derselbe Teil, und der andere ist nie
+   geprueft.
+4. **Zwei Zaeune hintereinander, von denen einer unerreichbar ist** — und der
+   erreichbare hat keinen eigenen Fall. Das ist schlechter als ein Zaun, der
+   gemessen ist.
+
+## Mutiere nicht im geteilten Arbeitsbaum — `go test -overlay`
+
+Eine Mutationsrunde, die die Quelldatei im Arbeitsbaum veraendert, legt fuer
+eine Minute eine kaputte Datei dorthin, wo eine andere Sitzung gerade baut.
+Gemessen hat das in dieser Sitzung niemanden getroffen, aber es ist Glueck,
+kein Verfahren.
+
+Richtig: die mutierte Datei **daneben** legen und dem Bau ueber
+`go test -overlay <datei.json>` geben. Der Arbeitsbaum bleibt die ganze Zeit
+baubar — und „der geteilte Baum ist immer baubar" ist keine Hoeflichkeit,
+sondern die Bedingung dafuer, dass mehrere Straenge gleichzeitig messen
+koennen.
+
+## Das vorgefuehrte Rot muss aus dem genannten Grund fallen
+
+Dreimal in einer einzigen Nacharbeit war das vorgefuehrte Rot fast das
+falsche, immer am selben Punkt: der Fall fiel, aber nicht aus dem Grund, den
+seine Meldung nannte.
+
+- Ein Fall sollte zeigen, dass **das Ausfuehrungsbit** fehlt. Vorgefuehrt
+  wurde er, indem der Arbeitsordner gepackt wurde — er fiel mit
+  „ngc-probe is not in the archive". Richtiges Thema verfehlt.
+- Der Ersatz dafuer war `git archive --mode=0644`. Gemessen:
+  `error: unknown option 'mode=0644'`, Ausstiegscode **129** — die Option
+  gibt es nicht. Ein Fall, der an einem Tippfehler im Werkzeug faellt, ist
+  gruen fuer sein Thema.
+- Der zweite Ersatz packte mit `tar -cf … -C dir .` und schrieb damit
+  `./ngc-probe`. Ein Namensvergleich auf `" ngc-probe"` haette wieder
+  „not in the archive" gemeldet.
+
+**Also: nach jedem vorgefuehrten Rot die MELDUNG lesen, nicht nur den
+Ausstiegscode.** Steht dort nicht der Satz, den der Fall halten soll, hat man
+etwas anderes gemessen — und zwar etwas, das beim naechsten Mal gruen ist,
+waehrend der Fehler bleibt.
+
+## „Nie durch eine Pipe" — gemessen an dem, der die Regel gerade abschrieb
+
+```bash
+git … | head -3 ; echo "rc=$?"     # liefert 0, obwohl git gescheitert ist
+```
+
+Das ist der Ausstiegscode von `head`. Es ist einem Strang am 02.10.2026 in
+**derselben Sitzung** passiert, in der er die Regel „Ausstiegscode immer aus
+der Datei, nie durch eine Pipe" in seine eigenen Unterlagen uebernommen hatte.
+
+Die Regel abzuschreiben schuetzt nicht. Was schuetzt: die Ausgabe in eine
+Datei leiten, `echo "CODE=$?" >> datei` direkt danach, und den Code aus der
+Datei lesen. Wer eine Pipe braucht, nimmt `set -o pipefail` — und sagt dazu,
+dass er es getan hat.
+
+## „59 von 59 Mutanten tot" ist eine Aussage ueber die LISTE, nicht ueber den Code
+
+Ein Strang hat 59 Mutanten gesetzt und 59 getoetet — saubere Arbeit, jeder
+einzeln, keiner haengend, keiner am Uebersetzer. Der Pruefer hat die Zahl
+bestaetigt **und zwei eigene Mutanten gesetzt, die ueberleben**:
+
+- `ctx.Err()` in zwei Funktionen ist von **keinem** Fall gedeckt — und das war
+  genau die Zeile, um die es im Commit davor gegangen war.
+- `os.Chown` entfernt ueberlebt jeden hier fahrbaren Lauf, weil der einzige
+  Traeger fuer Eigentuemer und Modus 0700 an einem `t.Skip` haengt.
+
+**Eine Mutationsquote sagt: „die Mutanten, die ich mir ausgedacht habe, sind
+tot."** Sie sagt nichts ueber die Zeilen, an die niemand gedacht hat. Also
+gehoert zu jeder Quote die Frage, welche Zeile KEINEN Mutanten bekommen hat —
+und die beantwortet man am besten, indem ein Zweiter welche setzt.
+
+## Eine Zeile, die nur in einem Bericht steht, verschwindet dort
+
+Zweimal am 02.10.2026: eine Anforderung (`/run/ngc/<name>` muss nach dem
+Neustart existieren und dem App-Benutzer gehoeren) war in Aufgabe 11
+aufgefallen, stand im Bericht der Aufgabe 12 als „offen" — und **in keinem
+Auftrag**. Ebenso der Satz, dass `/etc/subuid` ohne Sperre gelesen-geaendert-
+geschrieben wird.
+
+Ein Bericht ist ein Protokoll, kein Auftrag. Niemand liest ihn, wenn er die
+naechste Aufgabe baut. **Also: was weitergebaut werden muss, wandert in den
+PLAN — in die Aufgabe, die es bauen wird** — und zwar mit der Messung und mit
+dem Grund, warum es hier nicht hingehoerte. Der Bericht behaelt seine Zeile,
+aber er ist nicht der Ort, an dem sie wirkt.
+
+## Mutiere die plausible Variante, nicht die symmetrische
+
+Ein Strang hat sein Schloss geprueft, indem er **beide** Zeilen entfernte,
+`Lock()` und `defer Unlock()`. Das ist sauber, symmetrisch — und es verklemmt
+nicht. Der Pruefer hat die Variante genommen, die ein Mensch wirklich baut:
+**nur das `defer Unlock()` verloren, `Lock()` bleibt stehen.** Ergebnis
+`panic: test timed out after 45s`.
+
+Dasselbe Muster an anderer Stelle: ein Rueckgabewert, der von `true` auf
+`false` gedreht wird, ist symmetrisch; vergessen, ihn ueberhaupt zu pruefen,
+ist plausibel. Eine Grenze von `>=` auf `>` zu schieben ist plausibel; sie zu
+loeschen ist symmetrisch.
+
+**Also zu jeder Schranke die Frage: wie wuerde das jemand KAPUTT machen, der
+es nicht absichtlich tut?** Die Antwort ist der Mutant, den man braucht.
+
+## Ein haengender Fall kostet mehr als ein roter
+
+Der Hänger oben wiegt nicht wegen der Wartezeit. Ein `panic: test timed out`
+**beendet den ganzen Paketlauf** — die anderen 32 Faelle melden nichts mehr,
+und bei `-timeout 180s` kostet jedes Vorkommen drei Minuten. Ein roter Fall
+sagt, was kaputt ist; ein haengender loescht auch die Aussage der gesunden.
+
+Darum gilt „haengen ist nicht fallen" in beide Richtungen: ein Fall, der
+haengen KANN, braucht seine eigene Zeitwache — `time.After` neben dem
+`<-done` im `select` — damit er faellt, statt das Protokoll mitzunehmen. Die
+Wache ist kein Ersatz fuer die Zusicherung, sie ist der Grund, dass man die
+Zusicherung noch lesen kann.
+
+## Plancode wird GEFAHREN, nicht gelesen
+
+Die gefaehrlichste Zusicherung, die nicht fallen kann, ist die im Plan — das
+stand hier schon. Am 02.10.2026 ist der naechste Schritt dazugekommen, und er
+ist haerter: **ein Pruefer hat den Code aus dem Plan geschnitten, gebaut und
+gefahren.** Erst dann kam heraus, was kein Lesen gefunden hatte:
+
+- Der Verweisgraph des Plans erreichte **49 von 67** Dateien, behauptet waren
+  55 — und er erzeugte zwei erfundene Fehlmeldungen.
+- Ein `require_once __DIR__ . '/Url.php'` beginnt mit `/`, also schickte die
+  Auflösung es an `public/` und erreichte den Nachbarn nie. **Genau diese zwei
+  Zeilen zitierte der Plan selbst als sein Beispiel.**
+- `new Worker(KONSTANTE)` mit `const K = new URL("…", import.meta.url)`
+  erreichte **null** von vier Dateien, behauptet waren vier — und das war die
+  tragende Begruendung dafuer, eine Liste durch den Graphen zu ersetzen.
+- Folge: `tools/check.sh` faehrt `go test ./...`, also war das Commit-Tor
+  **jeder** Aufgabe zu, schon in der ersten.
+
+Gelesen sah der Plan in allen vier Punkten richtig aus. Platzhalterfrei war er
+auch. Es half nichts.
+
+**Also: wer einen Plan mit Code abgibt, schneidet ihn in einen Wegwerfordner,
+baut ihn, faehrt ihn gegen die echten Daten und schreibt die gemessene Zahl
+hinein.** Danach wird der Ordner geloescht und gesagt, dass es getan wurde.
+„Kein Code ausserhalb des Plandokuments" verbietet nicht, ihn einmal laufen zu
+lassen — es verbietet, ihn einzuchecken.
+
+Und beim Pruefen eines Plans gilt dasselbe in die andere Richtung: ein
+Planpruefer, der nur liest, hat den Plan nicht geprueft.
+
+## Ein Graph, der zu erreichen behauptet, ist schlimmer als eine Liste
+
+Die Liste war falsch und sah falsch aus — 19 Eintraege fuer ~60 noetige
+Dateien, jede Zeile von Hand, jede verrottbar. Der Graph war falsch und sah
+richtig aus.
+
+Eine Liste, die zu kurz ist, kann man zaehlen. Ein Graph, der still
+weglaesst — ein relativer Verweis ohne `./`, der ohne Meldung verschwindet —
+ist eine Liste, die sich selbst schreibt und dabei luegt.
+
+**Also: ein Graph darf nichts still verwerfen.** Was er nicht aufloesen kann,
+MELDET er. Und was er grundsaetzlich nicht erreicht (indirekte Worker, hier),
+sagt er ausdruecklich, damit die betroffenen Dateien mit diesem Grund in die
+Ausnahmeliste kommen. Halb geloest ist hier schlechter als gar nicht geloest.
+
+## `git commit -- <pfade>` nimmt den Modus aus dem ARBEITSBAUM, nicht aus dem Index
+
+Die Regel dieses Hauses lautet: nie `git add -A`, sondern explizite Pfade, und
+`git commit` **mit** `--` und denselben Pfaden — weil der Index geteilt ist.
+Diese Regel hat eine Kante, die ein Strang am 02.10.2026 gefunden hat und die
+ich selbst nachgemessen habe, in einem Wegwerf-Repository:
+
+```
+Modus nach dem ersten Commit:        100644
+Modus im Index nach --chmod=+x:      100755
+Modus im Commit mit "-- s.sh":       100644   <-- das chmod ist weg
+```
+
+`git commit -- <pfade>` baut den Baum aus dem **Arbeitsbaum**, und dort gibt
+es auf Windows kein Ausführungsbit. Ein `git update-index --chmod=+x` wird
+damit stillschweigend übergangen — der Strang brauchte einen zweiten Commit,
+nur um das Bit zu setzen.
+
+**Also, wenn ein Modus gesetzt werden muss:** `git update-index --chmod=+x`
+und dann `git commit` **ohne** Pfadliste — was im geteilten Baum gefährlich
+ist — oder, sicher und einstufig: `git commit` mit Pfaden, und das Bit
+danach in einem eigenen Commit, der nur das tut. Der zweite Weg ist der, den
+ich nehme: er ist sichtbar, er nimmt nichts Fremdes mit, und man sieht in der
+Geschichte, dass das Bit Absicht war.
+
+Auf diesem Rechner trifft das **jeden** Strang.
+
+## Drei Messfallen zwischen Windows und WSL, alle am selben Tag gemessen
+
+1. **Die `.git`-Datei eines Arbeitsbaums zeigt auf `Z:`**, und das kann WSL
+   nicht auflösen. Ein Testläufer griff darum in seinen `cp -r`-Zweig,
+   `git init` lief ins Leere, und der Satz meldete `catalog has scripts (0)`
+   mit 66 roten Fällen — **das sieht wie ein kaputtes Programm aus und ist ein
+   leeres Verzeichnis.** Richtig: tar-Pipe **ohne** `.git`, Ausführungsbit
+   aus `git ls-files -s` nachsetzen, Entpacken und Lauf in EINEM wsl-Aufruf.
+2. **`wsl` aus der git-bash verbiegt `/mnt/...`** zu
+   `C:/Program Files/Git/mnt/...`, Ausstiegscode 127. Riegel:
+   `MSYS_NO_PATHCONV=1` davor.
+3. **Eine erzeugte Datei von Hand ändern.** `docs/scripts.md` kommt aus
+   `tools/gen-scripts-doc.sh`; wer sie editiert, wird vom nächsten Lauf
+   überschrieben. Vor jeder Änderung an einer Doku-Datei prüfen, ob sie
+   erzeugt wird.
+
+Und zwei Funde, die der Strang an SEINEN EIGENEN Fällen gemacht hat, beide die
+bekannte Form: ein Fall konnte nicht fallen, weil `${2:-vorgabe}` die Vorgabe
+auch für die **leere** Angabe einsetzt — und genau die leere Angabe war der
+geprüfte Fall. Und ein Fall war falsch rot, weil die gesuchte Zeichenfolge
+`-p` auch in `--protocol` steckt. Wer auf Zeichenfolgen prüft, prüft auf
+Wortgrenzen.
+
+## Zwei gleich aussehende Zeichenketten, eine ist eine Datei und eine nicht
+
+In derselben Datei stehen
+
+```js
+const NGC_JS     = "/assets/ngc.js";    // eine Datei, wird geholt
+const FRAME_PAGE = "/frame.html";       // eine ROUTE, public/index.php:74
+```
+
+Ein Verweisgraph, der beide gleich behandelt, meldet `/frame.html` als
+**fehlend** — und verhindert damit jedes Release. Ein Graph, der beide
+ignoriert, lässt `ngc.js` aus dem Archiv, und dann öffnet beim Nutzer **kein
+einziges App-Fenster**.
+
+Es gibt hier keine Regel, die das von selbst löst: eine Zeichenkette mit `/`
+davor kann eine Datei sein oder eine Route, und welche von beiden, weiss nur
+der Router. **Also sagt der Graph diese Grenze ausdrücklich und listet solche
+Fälle von Hand** — mit dem Grund, nicht mit einer Behauptung. Ein Graph, der
+rät, ist schlimmer als einer, der seine Grenze nennt.
+
+Und die Lehre für das Zählen: der Prüfer hatte gemessen, dass auf `ngc.js`
+„kein realer Verweis" zeigt, und lag falsch — drei Zeilen in `appframe.js`
+holen sie per `fetch` und schreiben sie in jedes App-Fenster. Bei der
+Nachbardatei hatte er recht, und dort war die richtige Antwort nicht „in die
+Ausnahmeliste", sondern **„gehört gar nicht ins Archiv"**, weil die lebenden
+Importe ausschliesslich in `tests/` stehen und `tests/` nicht mitreist.
+Dieselbe Messung, zwei Dateien, zwei verschiedene richtige Antworten.
+
+## Das Einfrieren verbietet ÄNDERN, nicht LESEN
+
+Ein Strang konnte vier Dateien seines Plans nicht fahren, weil sie `shared/`
+brauchen und `shared/` eingefroren ist. Das war eine zu strenge Lesart meiner
+eigenen Regel, und sie hat eine Messung gekostet.
+
+`shared/` ist eingefroren heisst: **kein Commit ändert etwas darunter** (mit
+der einen Ausnahme `shared/ulh.md`), geprüft über den Baum-Hash gegen den Tag.
+Ein Test, der aus `shared/` **liest**, ändert nichts. Ein Wegwerf-Arbeitsbaum
+desselben Commits enthält `shared/` vollständig, und ein Lauf darin ist eine
+Messung wie jede andere.
+
+**Also: wer Plancode nicht in ein Wegwerfmodul schneiden kann, legt einen
+Wegwerf-Arbeitsbaum an** (`git worktree add`), fährt dort, prüft danach den
+Baum-Hash und entfernt ihn wieder. Ungemessen zu bleiben ist kein erlaubter
+Ausweg — zweimal ist in dieser Sitzung ein Plan an einer ungefahrenen Zahl
+gescheitert.
+
+## Berichtigung: eine Frist hinter der blockierenden Zeile ist unerreichbar
+
+Weiter oben steht meine Regel, ein Fall, der haengen kann, brauche seine
+eigene Zeitwache — `time.After` neben dem `<-done` im `select`. **Gemessen am
+02.10.2026: genau das aendert nichts.** Sechs plausible Schlossfehler, alle
+sechs hingen weiter.
+
+Die Ursache ist einfach und sie entwertet den Vorschlag: die Schleife rief
+`Spend(1)` **vor** dem `select` und blockierte **in** `Spend`. Eine Frist, die
+man erst durch die blockierende Zeile hindurch erreichen muss, wird nie
+erreicht.
+
+**Richtig ist: der Messteil laeuft in einer eigenen Goroutine, und der Fall
+selbst wartet nur** — `select { case <-finished: … case <-time.After(30*time.Second): … }`,
+Fehler ueber einen gepufferten Kanal. Danach fielen sechs von sechs als
+benannter FAIL, haengend keiner.
+
+Die Regel bleibt also richtig („ein Fall, der haengen kann, braucht eine
+Frist"), **mein Rezept dafuer war falsch**. Eine Wache gehoert um das Warten,
+nicht neben die Arbeit.
+
+Und die Grenze, die dabei herauskam, gehoert dazu: gegen das **ganze Paket**
+haengt es weiter, weil ein anderer Fall dieselben Funktionen in seiner eigenen
+Goroutine ohne Frist ruft — ein gehaltenes Schloss blockiert jeden Aufrufer.
+Sieben Faelle demselben Geruest zu unterwerfen waere Lesbarkeit an sieben
+Stellen fuer einen Schaden, der nur beim Mutieren auftritt. **Entschieden: die
+Messung traegt es** — je Mutant ein eigener Lauf, wie es ohnehin gilt. Und
+meine Zahl „drei Minuten je Vorkommen" war eine **gewaehlte** Zahl: mit
+`-timeout 90s` und `-run` kostet es Sekunden. Ein Strang hat mir das
+vorgerechnet, und er hatte recht.
+
+## Nach jedem Massengriff die Faelle ZAEHLEN
+
+Ein Strang hat bei einem Massengriff auf seine Testdatei **hinter der
+umgebauten Funktion abgeschnitten** — drei Faelle waren weg. Der Uebersetzer
+schwieg, `gofmt` meldete nur eine Nebenwirkung, und ein Lauf der restlichen
+Faelle war **gruen**.
+
+Gefunden hat er es daran, dass `grep -c '^func Test'` von **9 auf 6** fiel.
+
+**Ein geloeschter Fall ist genau das, was ein gruener Lauf nicht meldet.** Also
+nach jedem Griff, der mehr als eine Stelle trifft:
+
+```bash
+grep -c '^func Test' <datei>        # vorher und nachher
+go test -list '.*' ./<paket>/ | wc -l
+```
+
+Und beim Berichten die Fallzahl nennen, nicht nur „gruen". Dass dieser Strang
+seinen eigenen Fehler gemeldet hat, statt ihn zu verschweigen, ist der Grund,
+dass er in keinen Commit gelangt ist.
