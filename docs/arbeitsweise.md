@@ -2887,3 +2887,26 @@ Und ein Nebenfund, der dieselbe Krankheit ist wie ein falscher Kommentar: die
 **Meldung** der Wache nannte eine Ursache („a lock was not given back"), die
 auf den neuen Fall nicht passte. Eine Fehlermeldung ist ein Kommentar, den der
 Leser im Protokoll findet — sie wird genauso gegen den Code gelesen.
+
+## In WSL ist kein Go — der Linux-Lauf entsteht per Querbau
+
+Gemessen am 03.10.2026, nachdem mehrere Straenge Linux-Faelle gefahren haben:
+`go` ist in diesem WSL **nicht installiert** — nichts unter `/usr/local/go`,
+`/usr/lib/go*`, `/snap`, `/opt`, und `go: not found`.
+
+Die Linux-Faelle dieses Projekts entstehen also **auf Windows**
+(`GOOS=linux go test -c`) und kommen per tar-Pipe hinein. Daraus folgen zwei
+Dinge, die man sonst fuer Nachlaessigkeit haelt:
+
+1. **`-race` ist fuer die Linux-Faelle nicht fahrbar** — es braeuchte cgo fuer
+   Linux. Wer „0 DATA RACE" fuer einen Linux-Lauf meldet, meldet etwas, das
+   hier nicht gemessen werden kann.
+2. Der Querbau sieht keine Build-Tags, die erst zur Laufzeit greifen, und das
+   gebaute Programm kennt seinen Quellbaum nicht mehr — ein Fall, der eine
+   Datei neben sich erwartet, findet sie nicht.
+
+Dazu die bekannten Fallen desselben Weges, alle gemessen: das
+Ausfuehrungsbit geht verloren, `/tmp` ist nach einem WSL-Neustart leer
+(Entpacken und Lauf in EINEM Aufruf), die `.git`-Datei zeigt auf `Z:` und ist
+dort nicht aufloesbar, `MSYS_NO_PATHCONV=1` vor `wsl`, und **`$?` ueberlebt
+die Uebergabe an `sh -c` nicht**.
