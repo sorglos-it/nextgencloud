@@ -3333,6 +3333,32 @@ und zwar vom Uebersetzer: `cannot use … as lifetime value` und
 Verwechslung mehr, sondern eine ausdrueckliche Umwandlung. Mehr gibt Go nicht
 her, und genau so steht es im Kommentar.
 
+**Zweiter Nachtrag, dieselbe Stunde, und er berichtigt den ersten.** Die
+Nachprüfung hat den dritten Weg gefunden, nach dem ich ausdrücklich gefragt
+hatte — und der eigene Typ hilft dagegen nicht:
+
+```go
+openDB(cfg, connLifetime, 0)   // baut, läuft grün, Ausstiegscode 0
+openDB(cfg, 0, connIdleTime)   // dito
+```
+
+Eine **untypisierte Null** passt in jeden dieser Typen. Dazu gemessen: der
+Fall, der die Fristen prüfte, prüfte die **Konstanten gegen sich selbst**,
+nicht das, was die Funktion weitergibt — und ein zweiter Aufrufweg ging an
+ihr vorbei.
+
+Die Formel ist damit dreiteilig, und nur der erste Teil gehört dem
+Übersetzer:
+
+| Was | Wer hält es |
+|---|---|
+| **Vertauschen** zweier Größen | der Übersetzer, mit einem Typ je Größe |
+| **Weglassen** eines Arguments | der Übersetzer (`not enough arguments`) |
+| **Eine Null statt eines Werts** | **niemand** — nur ein Fall, der prüft, was ankommt |
+
+Wer „der Übersetzer hält das jetzt" sagt, muss also sagen, **was** er hält.
+Mein eigener Satz darüber war zwei Stunden alt und schon zu weit.
+
 Die Lehre ueber die Technik hinaus: **meine eigene Genehmigung war die
 unmessbare Stelle.** Der Satz klang richtig, niemand hatte ihn gefahren, und
 er stand als erledigt im Plan. Ein genehmigter Weg ist eine Behauptung wie
