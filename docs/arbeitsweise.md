@@ -3438,3 +3438,46 @@ Und die Nebenbemerkung, die hier teuer ist: **dieselbe Doppelung ist bei CSP
 harmlos** — zwei Richtlinien werden als Schnittmenge gelesen, also strenger.
 Wer von einer Kopfzeile auf die andere schliesst, zieht aus dem harmlosen
 Fall den falschen Schluss.
+
+## `-overlay` belügt nur den Übersetzer, nicht den Dateizugriff
+
+Am 03.10.2026 gemessen, und es ist ein Urteil über **das Messwerkzeug**, nicht
+über den Fall. Ein neuer Riegel liest den **Rumpf einer Funktion** mit
+`go/parser` und verlangt dort drei Bezeichner in einer Reihenfolge. Drei
+Mutanten dagegen, alle per `go test -overlay`, erster Lauf:
+
+```
+alle drei ALIVE, Ausstiegscode 0
+```
+
+Das sah nach einem hohlen Riegel aus. Es war das Gegenteil: **`-overlay`
+ersetzt die Datei nur für den Übersetzer.** Der Fall selbst öffnet sie mit
+gewöhnlichem Dateizugriff und sieht weiter die **unveränderte Platte**. Der
+Mutant stand also im Kompilat, und der Riegel las daneben vorbei.
+
+Gemessen wird so ein Riegel nur, wenn dieselbe Überlagerung **auch die
+Testdatei tauscht**, deren Konstante auf die Quelle zeigt — dann liest der
+Fall die mutierte Kopie. Danach: alle drei **tot, Ausstiegscode 1**, mit je
+einer Meldung, die den falschen Bezeichner nennt.
+
+**Diese Sitzung hat vier Dateien, die Quelltext lesen**, und jede Messung an
+ihren Riegeln, die nur `-overlay` benutzt hat, ist damit **unbewiesen** — nicht
+falsch, sondern ungemessen:
+
+```
+apps/server-api/classes/browser/lint_test.go
+apps/server-db/classes/mariadb/mariadb_test.go
+apps/server-db/classes/migrate/lint_test.go
+apps/server-db/classes/sqlstore/sqlcheck_test.go
+```
+
+Zwei Lehren, und die zweite ist die größere:
+
+1. **Ein Riegel, der die Quelle liest, braucht ein anderes Messverfahren als
+   einer, der Verhalten prüft.** Wer beides mit demselben Werkzeug misst, hält
+   das Werkzeug für die Wahrheit.
+2. **Ein lebender Mutant ist zuerst eine Frage an die Messung**, erst danach
+   eine an den Fall (vgl. „`go test` beantwortet einen Mutationslauf aus dem
+   Zwischenspeicher" — dasselbe Muster, anderes Werkzeug). Der Strang hat genau
+   so gehandelt und den Fund am Werkzeug gemeldet, statt den Riegel
+   umzuschreiben, der nie das Problem war.
