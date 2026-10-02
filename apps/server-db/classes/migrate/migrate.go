@@ -427,7 +427,15 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 			if err != nil {
 				return false, at(i, f, err)
 			}
-			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			// A statement that is already there is stepped over, the same
+			// as in the MariaDB branch below. An update replays every
+			// migration on a database that is being used, and the rule of
+			// task 3 is that a migration only ever adds: whatever is already
+			// there is what this run would have made. d.Exists is narrow on
+			// purpose - for SQLite it is the generic error code AND the words
+			// SQLite writes for this one case - so a migration that is really
+			// broken still stops the run here.
+			if _, err := tx.ExecContext(ctx, stmt); err != nil && !d.Exists(err) {
 				return false, at(i, f, err)
 			}
 		}

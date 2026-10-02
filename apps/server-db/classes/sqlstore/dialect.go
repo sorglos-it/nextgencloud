@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
@@ -132,9 +133,21 @@ func (sqliteDialect) Duplicate(err error) bool {
 	return errors.Is(err, sqlite3.CONSTRAINT_PRIMARYKEY) || errors.Is(err, sqlite3.CONSTRAINT_UNIQUE)
 }
 
-// Exists: SQLite runs its DDL inside the transaction, so a migration never
-// sees half of itself again.
-func (sqliteDialect) Exists(error) bool { return false }
+// Exists reads the message, and it is the only place in NGC that does: SQLite
+// has no error code of its own for "it is already there". A CREATE of a table,
+// an index or a view that exists reports the generic SQLITE_ERROR, the same
+// code a syntax error carries, so the code alone would step over every broken
+// statement in a migration. Both have to hold: the code SQLITE_ERROR and the
+// words "already exists" that SQLite writes into exactly this message.
+//
+// What asks for it: an update replays every migration on a database the
+// previous API version is still working on. Under MariaDB each CREATE commits
+// on its own and the numbers 1050, 1060 and 1061 say so; SQLite keeps the
+// whole file in one transaction, and without this the second run would fail on
+// the first table instead of stepping over it.
+func (sqliteDialect) Exists(err error) bool {
+	return errors.Is(err, sqlite3.ERROR) && strings.Contains(err.Error(), "already exists")
+}
 
 func (sqliteDialect) Gone(err error) bool { return errors.Is(err, sqlite3.IOERR) }
 

@@ -912,8 +912,16 @@ func TestTheMessageSaysWhichStatement(t *testing.T) {
 		// A statement that never went through the rules: fill refuses it.
 		{"one the rules never wrote", []string{table, index,
 			"CREATE TABLE ngc_blob (kind {{key}} NOT NULL){{opts}}"}, "statement 3 of 3"},
-		// One the database itself refuses: the table is already there.
-		{"one the database refuses", []string{table, table}, "statement 2 of 2"},
+		// One the database itself refuses: an index before its table.
+		//
+		// It used to be the same CREATE TABLE twice, and that no longer
+		// refuses anything: since the migrations have to survive being played
+		// again on a database in use, applyOne steps over a statement that is
+		// already there in the SQLite branch as well. An index whose table
+		// does not exist yet is refused for a reason that is not "already
+		// there", which is what this case needs - and the lint catches almost
+		// everything else before the database ever sees it.
+		{"one the database refuses", []string{index, table}, "statement 1 of 2"},
 	} {
 		db := openFile(t)
 		if err := bootstrap(ctx, db, sqlstore.SQLite); err != nil {
