@@ -4809,6 +4809,31 @@ git commit -m "Add the channel table and the credit of a link" \
 
 ### Task 11: Sitzungsleitung zum Browser
 
+> **EINTRITTSBEDINGUNG, eingetragen am 02.10.2026 aus der Pruefung der
+> Aufgabe 10 — und sie steht HIER, weil eine Zeile, die nur in einem Bericht
+> steht, dort verschwindet.**
+>
+> Aufgabe 10 hat die Kanaltabelle gebaut, und `link.go` ruft `NewTable`
+> **nicht**. Die Tabelle ist damit von nichts benutzt, und drei Zusicherungen
+> sind heute ein Vertrag mit einem Aufrufer, den es nicht gibt. Wer die
+> Tabelle verdrahtet, belegt zuerst diese drei Saetze mit je einem Fall:
+>
+> 1. **`Allow` laeuft vor JEDER GRANT**, die hinausgeht.
+> 2. **Die GRANT geht nur bei `true` hinaus.** `Allow` kann seit der Fixrunde
+>    `false` sagen (`credit == 0` oder `in+credit > MaxWindow`); ein Aufrufer,
+>    der das uebergeht, verschickt eine GRANT, die die Gegenseite mit
+>    `CLOSE E_PROTOCOL` beantwortet — unser eigener Protokollfehler
+>    (`shared/README.md:418-419`).
+> 3. **Auf jedes `Reserve` folgt ein `SentClose`.** Sonst haelt die Nummer
+>    fuer immer; das ist gewollt, aber es ist eine Aufrufer-Bedingung ohne
+>    Zeugen.
+>
+> Dazu die gemessene Grenze der Nebenlaeufigkeit: `-race` sieht an der Tabelle
+> nur, was ein Fall mit **zwei** Goroutinen fuehrt. Nach der Fixrunde sind das
+> `out` (Grant gegen Spend) und `in` (Allow gegen Take) — mit entferntem
+> Schloss meldet `-race` dort wirklich Rennen, vorher hatte es nichts zu
+> sehen. Wer einen Zaehler dazunimmt, nimmt den Fall dazu.
+
 **Files:**
 - Create: `apps/server-api/classes/browser/browser.go`, `apps/server-api/classes/browser/control.go`
 - Test: `apps/server-api/classes/browser/browser_test.go`
