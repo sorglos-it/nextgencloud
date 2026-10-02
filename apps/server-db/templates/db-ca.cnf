@@ -6,6 +6,12 @@
 # node_dn hold the request options and point at the section with the name.
 # Measured with OpenSSL 3.5.7: a section that holds the name alone makes
 # "req -section" stop with "No objects specified in config file".
+#
+# This file has a SECOND copy: ngc-db.sh of the ulh repository carries it as a
+# here-document, because ngc-db installs no NGC program files and so has no
+# release to read this file from. A change here belongs there as well, and
+# apps/cli/tests/ngc-db.test.sh of ulh builds a real CA and a real node
+# certificate from that copy.
 
 [ca_dn]
 prompt = no

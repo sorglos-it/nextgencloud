@@ -9,8 +9,8 @@ gepflegt, sondern mit `bash tools/gen-scripts-doc.sh` erzeugt, und `CHANGELOG.md
 Zeile. Der Eintrag im Katalog braucht alle fünf Sprachen (de, en, fr, it, es) — eine fehlende
 Übersetzung macht ulhs eigenen Test rot; was die Skripte selbst ausgeben, ist englisch.
 (Bis 22.09.2026 lagen die Skripte in `scripts/`, der Katalog hieß `config.yaml`, und es gab
-`SCRIPTS.md`, `TREE.md` und `scripts/_template.sh`. Alles fünf ist seit dem Umbau von ulh auf den
-Projektstruktur-Standard weg; gemessen am 02.10.2026 auf ulhs `main`.) Jedes Teil schreibt das Skript für seinen Server auf einem eigenen Branch im ulh-Repo
+`SCRIPTS.md`, `TREE.md` und `scripts/_template.sh`. Alles fünf ist seit dem Umbau von ulh
+auf den Projektstruktur-Standard weg; gemessen am 02.10.2026 auf ulhs `main`.) Jedes Teil schreibt das Skript für seinen Server auf einem eigenen Branch im ulh-Repo
 (`ngc-web`, `ngc-api`, `ngc-controller`, `ngc-db`) und liefert per Pull Request; der Koordinator
 hält diese Konventionen fest und führt zusammen. Jede ulh-Installation holt beim Start `main`,
 deshalb kommt nur Geprüftes dorthin.

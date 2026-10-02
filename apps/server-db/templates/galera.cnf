@@ -1,12 +1,24 @@
-# MariaDB with Galera for NGC, one node. ngc-db.sh copies this to
-# /etc/mysql/mariadb.conf.d/60-ngc.cnf and replaces the four @...@ marks.
-# Nothing here is optional: every line is checked by TestGaleraTemplate.
+# MariaDB with Galera for NGC, one node. ngc-db.sh writes this to
+# /etc/mysql/mariadb.conf.d/60-ngc.cnf and replaces the four marks
+# @NODE_NAME@, @NODE_ADDRESS@, @CLUSTER_ADDRESS@ and @SST_PASSWORD@.
+#
+# Nothing here is optional: TestGaleraTemplate pins every line of this file -
+# the plain ones as whole lines, the quoted options of wsrep_provider_options
+# as parts of theirs - and refuses a line that would switch TLS or the
+# encryption off.
+#
+# This file has a SECOND copy: ngc-db.sh of the ulh repository carries it as a
+# here-document, because ngc-db installs no NGC program files and so has no
+# release to read this file from. A change here belongs there as well, and
+# apps/cli/tests/ngc-db.test.sh of ulh pins the same lines on that side.
+# The cluster name is not a mark: it is ngc for every installation, and no
+# answer of ulh fills it.
 
 [mysqld]
 # Galera replicates InnoDB with row based logging; anything else is refused.
 wsrep_on=ON
 wsrep_provider=/usr/lib/galera/libgalera_smm.so
-wsrep_cluster_name=@CLUSTER_NAME@
+wsrep_cluster_name=ngc
 wsrep_cluster_address=gcomm://@CLUSTER_ADDRESS@
 wsrep_node_name=@NODE_NAME@
 wsrep_node_address=@NODE_ADDRESS@
