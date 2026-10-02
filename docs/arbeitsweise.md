@@ -2495,3 +2495,54 @@ Mutant „Warnung nach dem Loeschen" **benannte `log_warn` nur um** und konnte
 die Pruefung darum nicht faellen; und seine Reihenfolgepruefung war falsch
 rot, weil `grep -n 'rm -rf'` den **Kommentar** zwei Zeilen darueber zuerst
 traf. Ein Mutant, der nichts verschiebt, verschiebt nichts.
+
+## `$?` ueberlebt den Weg nach WSL nicht — und das entwertet jeden so gelesenen Code
+
+Ein Strang hat es gemeldet, und ich habe es in **einem** Befehl nachgefahren:
+
+```
+$ wsl.exe -- sh -c 'false; echo "A=$?"'
+A=0
+```
+
+`false` ist gelaufen, der Code ist **0**. Schlimmer: ein Lauf, dessen Programm
+gar nicht vorhanden war (echter Code 127), meldete ebenfalls `CODE=0` — und
+das sieht aus wie ein bestandener Lauf.
+
+Damit ist **jeder Ausstiegscode unbrauchbar**, der auf diesem Weg gelesen
+wurde. Die Regel „Ausstiegscode aus der Datei, nie durch eine Pipe" reicht
+hier nicht: die Pipe ist nicht das Problem, die **Uebergabe an `sh -c`** ist
+es.
+
+**Der Riegel:** das Messskript als **Datei** ablegen und sie rufen.
+
+```bash
+printf '#!/bin/sh\n<befehle>\necho "CODE=$?" >> /mnt/c/.../ergebnis.txt\n' > lauf.sh
+MSYS_NO_PATHCONV=1 wsl.exe -- sh /mnt/c/.../lauf.sh
+```
+
+Zwei Nachbarfallen desselben Weges, beide gemessen:
+
+- **Auch `|` ueberlebt nicht.** Ein `-test.run 'A|B'` wurde unterwegs zerlegt,
+  und nur `A` lief — mit gruener Meldung ueber die Haelfte der Faelle.
+- **Python schreibt auf Windows `\r\n`.** Ein per Python erzeugter Mutant
+  unterschied sich darum in **jeder** Zeile, und die Einzeiler-Mutation war
+  nicht mehr vorweisbar. Riegel: `open(…, 'w', newline='')`.
+
+**Was das fuer schon gemeldete Zahlen heisst:** die **Fallzahlen** stehen
+weiter, wenn der Prüfsatz sie selbst druckt (`passed: 99 failed: 0`) — die
+kommen aus dem Programm, nicht aus `$?`. Der **Ausstiegscode** daneben ist
+wertlos und muss nachgemessen werden. Beides auseinanderzuhalten ist der
+Unterschied zwischen einer berichtigten Messung und einer verworfenen.
+
+## Der Ablageort ist geteilt, auch im Wegwerfordner
+
+Ein Strang hat in `scratchpad/mut/` kurz `o1.json`–`o4.json` angelegt und
+selbst gemeldet, dass dort Dateien anderer Sitzungen liegen — hatte eine
+andere Sitzung dieselben Namen benutzt, sind sie ueberschrieben. Er hat seine
+danach eindeutig benannt.
+
+Gemeldet statt verschwiegen, und das ist der Punkt: ein Wegwerfordner ist
+kein Privatbesitz. **Jede Hilfsdatei traegt den Namen ihrer Aufgabe**
+(`nacharb-o1.json`, nicht `o1.json`), und wer einen Namen ohne Kennung
+vorfindet, loescht ihn nicht, sondern weicht aus.
