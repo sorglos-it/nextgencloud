@@ -14,11 +14,22 @@ import (
 
 // Request is what the API knows about a channel that wants to open. Only the
 // fields the API resolved itself decide: Action from core.Lookup, App and
-// Manifest from the database, Node from the app's row or the action. Of Open,
-// Check reads Action — and only for an app channel, to find the action in the
-// manifest — plus Task and Confirm, which are evidence task.Check verifies
-// against the trust list and which can therefore only refuse, never grant. Its
-// params, window and handshake reach no decision at all.
+// Manifest from the database, Node from the app's row or the action.
+//
+// What the promise of this package excludes, and what it allows:
+//
+// No UNSIGNED part of the OPEN moves the decision. Params, Window and E2E are
+// read nowhere at all; Action is read for an app channel only, to find the
+// action in the manifest, and is replaced at once by the manifest's own name,
+// so it can hit a right that is there but never invent one.
+//
+// A SIGNED part moves the decision, and that is the point: Task and Confirm
+// are evidence, and task.Check verifies both against the trust list before
+// anything counts. A task for another channel can only refuse — it names a
+// channel this one is not. A matching task with the user's re-confirmation
+// opens a channel that E_CONFIRM had just turned away, which is exactly what
+// E_CONFIRM asks for. The signature is what makes the difference, so a
+// re-confirmation is no parameter: it is the user's answer.
 type Request struct {
 	Action   core.Action       // the core action, empty for an app channel
 	App      *dbapi.App        // the installed app, for an app channel
@@ -38,6 +49,13 @@ func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now 
 			return nil, wire.CodeForbidden
 		}
 		return nil, ""
+	}
+	// wire.Open.Validate already says an OPEN with a task carries no params of
+	// its own, since the task's params are the params and the rule judged
+	// those. Checked again here, so the decision does not rest on how careful
+	// the caller was.
+	if req.Open.Task != nil && len(req.Open.Params) != 0 {
+		return nil, wire.CodeVerify
 	}
 	user := req.Session.Cert().User
 	granted, admin, err := Of(ctx, db, l, user)
@@ -60,16 +78,25 @@ func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now 
 		}
 		rule = core.RuleFor(req.Action)
 	default:
-		if req.App == nil || req.Manifest == nil {
-			return nil, wire.CodeNotFound
-		}
-		if !req.App.Active {
-			return nil, wire.CodeNotFound
-		}
-		if !usable(granted, req.App.ID) {
-			// Without the right "use" the app does not exist for this user, so
-			// the answer says nothing more than "not allowed".
+		// An app that is not installed, carries no manifest or is switched
+		// off answers exactly like a missing right, so the answer tells a
+		// user without the right nothing about the installation. The price:
+		// such a user cannot tell a typo in the app's name from a right they
+		// do not have, which makes their own search harder.
+		if req.App == nil || req.Manifest == nil || !req.App.Active ||
+			!usable(granted, req.App.ID) {
 			return nil, wire.CodeForbidden
+		}
+		// core.RightUse is "use", and no contract keeps a manifest from
+		// naming an action "use": the right <app>/use would then be the
+		// action's right as well, and mere visibility would open the channel.
+		// Refused here because the clean fix — core.ValidRight or store
+		// separating the two namespaces — lies in frozen shared/. The price:
+		// the same check then stands twice, and THIS one has to go once the
+		// contract carries it. A licence check must not hang off <app>/use
+		// either, for the same reason.
+		if req.Open.Action == core.RightUse {
+			return nil, wire.CodeNotFound
 		}
 		a, ok := req.Manifest.Action(req.Open.Action)
 		if !ok {

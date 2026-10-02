@@ -1,13 +1,14 @@
 // Package rights decides for every channel anew whether it may open, out of
-// user, role, app and action — never out of what the OPEN carries. The rights
-// of a role live in the database (dbapi.BlobRights), the roles of a user in
-// the trust list, which only an admin can change. The role admin may use every
-// core action; every other right is granted per role and app.
+// user, role, app and action. No unsigned part of the OPEN moves that decision;
+// a signed one does, and Request says which and why. The rights of a role live
+// in the database (dbapi.BlobRights), the roles of a user in the trust list,
+// which only an admin can change. The role admin may use every core action;
+// every other right is granted per role and app.
 //
 // The licence of an app is the one source of the decision this package does
-// not yet read: no contract names where a channel reads it, and nothing in the
-// API checks one, so a licensed app is open to whoever holds the right. The
-// place for it is Check, next to the app's row (dbapi.BlobLicense).
+// not read yet: it arrives with the task that builds Check's caller (point 20
+// of docs/vertraege-v1.2.md, store.LicenseOf and dbapi.BlobLicense). Until
+// then a licensed app is open to whoever holds the right.
 package rights
 
 import (
@@ -78,6 +79,11 @@ func Set(ctx context.Context, db dbapi.Store, r core.RoleRights) error {
 // All returns the rights of every role of the trust list, for
 // ngc.users/rights. A role without a row comes with an empty list, so the
 // shell shows every role.
+//
+// A row of a role the trust list no longer holds is left out here, and nothing
+// in this package deletes one: a role that is created again under the same
+// name silently gets its old rights back. This package has no way to delete,
+// so the task that manages roles has to clear the row with the role.
 func All(ctx context.Context, db dbapi.Store, l *trust.List) ([]core.RoleRights, error) {
 	out := make([]core.RoleRights, 0, len(l.Roles))
 	for _, role := range l.Roles {

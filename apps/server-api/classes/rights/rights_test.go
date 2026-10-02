@@ -8,6 +8,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -233,21 +234,137 @@ func TestCheckNeedsBothRights(t *testing.T) {
 	}
 }
 
-// TestCheckRefusesAnAppThatIsNotThere: an app without a row, without a
-// manifest or no longer active is not found — for an admin too, who is never
-// asked for a right on it.
-func TestCheckRefusesAnAppThatIsNotThere(t *testing.T) {
+// TestCheckHidesWhetherAnAppIsThere: an app without a row, without a manifest
+// or no longer active answers exactly like a missing right, so the answer
+// tells a user nothing about the installation. An admin sees the same, since
+// nothing grants an admin a right on an app.
+func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 	fx := newFixture(t)
 	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}
+	// The yardstick: installed and active, but without the right.
+	_, want := fx.checkAppOpen(t, fx.OfficeUser, open)
+	if want != wire.CodeForbidden {
+		t.Fatalf("no right: %q", want)
+	}
 	for name, req := range map[string]Request{
 		"no app":      {Manifest: fx.Manifest, Node: ctlNode, Open: open},
 		"no manifest": {App: fx.App, Node: ctlNode, Open: open},
 		"inactive":    {App: &dbapi.App{ID: termApp, Node: ctlNode}, Manifest: fx.Manifest, Node: ctlNode, Open: open},
 	} {
-		req.Session = fx.session(t, fx.AdminUser)
-		if _, code := Check(ctx, fx.DB, fx.List, req, now); code != wire.CodeNotFound {
-			t.Fatalf("%s: %q", name, code)
+		for _, user := range []string{fx.OfficeUser, fx.AdminUser} {
+			req.Session = fx.session(t, user)
+			if _, code := Check(ctx, fx.DB, fx.List, req, now); code != want {
+				t.Fatalf("%s as %s: %q instead of %q", name, user, code, want)
+			}
 		}
+	}
+	// And with every right of the app: the plain OPEN opens, the three answer
+	// as before, so each of them refuses on its own and not because a right
+	// was missing.
+	if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice,
+		Rights: []string{termApp + "/" + core.RightUse, termApp + "/" + termAct}}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
+		t.Fatalf("with the rights: %q", code)
+	}
+	for name, req := range map[string]Request{
+		"no app":      {Manifest: fx.Manifest, Node: ctlNode, Open: open},
+		"no manifest": {App: fx.App, Node: ctlNode, Open: open},
+		"inactive":    {App: &dbapi.App{ID: termApp, Node: ctlNode}, Manifest: fx.Manifest, Node: ctlNode, Open: open},
+	} {
+		req.Session = fx.session(t, fx.OfficeUser)
+		if _, code := Check(ctx, fx.DB, fx.List, req, now); code != want {
+			t.Fatalf("%s with the rights: %q instead of %q", name, code, want)
+		}
+	}
+}
+
+// TestCheckRefusesAnActionNamedUse holds the namespace collision: a manifest
+// may name an action "use", and core.RightUse is "use" as well, so the right
+// <app>/use would be the action's right too. Such a channel never opens, not
+// even for a user who holds every right of the app.
+func TestCheckRefusesAnActionNamedUse(t *testing.T) {
+	fx := newFixture(t)
+	const collide = `{"id":"` + termApp + `","name":"Terminal","version":"1.0.0","publisher":"Sorglos",` +
+		`"actions":[{"name":"use","title":"Benutzen","service":"` + termSvc + `"}],` +
+		`"services":[{"name":"` + termSvc + `","command":["/usr/bin/terminal"]}]}`
+	m, err := store.ParseManifest([]byte(collide))
+	if err != nil {
+		t.Fatalf("the contract changed: a manifest may no longer name an action use: %v", err)
+	}
+	if _, ok := m.Action(core.RightUse); !ok {
+		t.Fatal("the manifest lost its action")
+	}
+	for _, rights := range [][]string{
+		{termApp + "/" + core.RightUse},
+		{termApp + "/" + core.RightUse, termApp + "/" + core.RightUse + "x"},
+	} {
+		if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice, Rights: rights}); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+		_, code := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: m, Node: ctlNode,
+			Session: fx.session(t, fx.OfficeUser),
+			Open:    wire.Open{App: termApp, Service: termSvc, Action: core.RightUse, Window: wire.MinWindow}}, now)
+		if code != wire.CodeNotFound {
+			t.Fatalf("rights %v: %q", rights, code)
+		}
+	}
+}
+
+// TestCheckRefusesAnOpenWithTaskAndParams: wire.Open.Validate already says an
+// OPEN with a task carries no params of its own. Check does not rely on the
+// caller having seen to that.
+func TestCheckRefusesAnOpenWithTaskAndParams(t *testing.T) {
+	fx := newFixture(t)
+	if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice,
+		Rights: []string{termApp + "/" + core.RightUse, termApp + "/" + termAct}}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow,
+		Task: fx.appTask(t, fx.OfficeUser, termAct), Params: json.RawMessage(`{}`)}
+	// The params come first: a task counts once, so the other order would read
+	// the replay guard and not this one.
+	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
+		t.Fatalf("task and params: %q", code)
+	}
+	// The same task without params opens, so the params are what was refused —
+	// and the task was not spent on the refusal.
+	open.Params = nil
+	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
+		t.Fatalf("task alone: %q", code)
+	}
+}
+
+// TestCheckOpensOnASignedReconfirmation is the other half of the promise: an
+// unsigned part of the OPEN moves nothing, a signed one does. The role asks
+// for every change to be re-confirmed, so the plain OPEN is turned away with
+// E_CONFIRM, the signed task alone is still E_CONFIRM, and only the user's own
+// re-confirmation of that very task opens the channel.
+func TestCheckOpensOnASignedReconfirmation(t *testing.T) {
+	fx := newFixture(t)
+	fx.setLevel(t, roleOffice, trust.LevelHardcore)
+	if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice,
+		Rights: []string{termApp + "/" + core.RightUse, termApp + "/" + termAct}}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}
+	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+		t.Fatalf("plain: %q", code)
+	}
+	open.Task = fx.appTask(t, fx.OfficeUser, termAct)
+	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+		t.Fatalf("task alone: %q", code)
+	}
+	// Another user's key is no answer, even for the same task.
+	open.Confirm = fx.confirm(t, fx.AdminUser, open.Task)
+	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+		t.Fatalf("someone else confirmed: %q", code)
+	}
+	open.Confirm = fx.confirm(t, fx.OfficeUser, open.Task)
+	tk, code := fx.checkAppOpen(t, fx.OfficeUser, open)
+	if code != "" || tk == nil {
+		t.Fatalf("task and confirmation: %q %v", code, tk)
 	}
 }
 

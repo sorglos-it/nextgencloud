@@ -56,10 +56,11 @@ type fixture struct {
 	App      *dbapi.App
 	Manifest *store.Manifest
 
-	// sess holds one verified session per user, and sessKey the session key
-	// that signs its tasks.
+	// sess holds one verified session per user, sessKey the session key that
+	// signs its tasks and userKey the user's own key, which re-confirms one.
 	sess    map[string]session.Verified
 	sessKey map[string]ed25519.PrivateKey
+	userKey map[string]trusttest.Signer
 }
 
 // newFixture builds a trust list with the roles admin and office, a
@@ -92,6 +93,7 @@ func newFixture(t *testing.T) *fixture {
 			Active: true, Manifest: []byte(manifestJSON)},
 		Manifest: m,
 		sess:     map[string]session.Verified{}, sessKey: map[string]ed25519.PrivateKey{},
+		userKey: map[string]trusttest.Signer{},
 	}
 	fx.login(t, l.Users[1].ID, admin, 0x51)
 	fx.login(t, officeID, office, 0x52)
@@ -113,7 +115,37 @@ func (fx *fixture) login(t *testing.T, user string, signer trusttest.Signer, see
 	if err != nil {
 		t.Fatalf("login %s: %v", user, err)
 	}
-	fx.sess[user], fx.sessKey[user] = v, priv
+	fx.sess[user], fx.sessKey[user], fx.userKey[user] = v, priv, signer
+}
+
+// setLevel puts role on a re-confirmation level, so a test can ask for a
+// channel that needs a signed task and the user's re-confirmation.
+func (fx *fixture) setLevel(t *testing.T, role string, level trust.Level) {
+	t.Helper()
+	for i := range fx.List.Roles {
+		if fx.List.Roles[i].Name == role {
+			fx.List.Roles[i].Level = level
+			return
+		}
+	}
+	t.Fatalf("no role %q", role)
+}
+
+// confirm is the user's re-confirmation of the task in env, by the user's own
+// key, as task.VerifyConfirm checks it.
+func (fx *fixture) confirm(t *testing.T, user string, env *sign.Envelope) *proof.Proof {
+	t.Helper()
+	p := fx.userKey[user].Prove(sign.PurposeConfirm, env.Payload)
+	return &p
+}
+
+// appTask returns the signed task of the app channel termApp/termSvc/action on
+// services-1, by user. An app channel's task carries no params: store.RuleFor
+// reads the manifest, not the task.
+func (fx *fixture) appTask(t *testing.T, user, action string) *sign.Envelope {
+	t.Helper()
+	return fx.signTask(t, user, task.Task{ID: bytes.Repeat([]byte{0x63}, task.IDSize),
+		Node: ctlNode, App: termApp, Service: termSvc, Action: action})
 }
 
 // session returns the verified session of user.
