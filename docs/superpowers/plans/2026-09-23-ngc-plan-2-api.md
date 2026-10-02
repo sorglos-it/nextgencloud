@@ -5338,7 +5338,16 @@ git commit -m "Add the session link to the shell" \
   `tunnel.Fingerprint`, `tunnel.Contract`, `tunnel.Components`, `store.ParseUpdateReport`,
   `core.ParseNotice`, `dbapi.OncePair`, `dbapi.Pending`, `link`, `state`.
 - Produces:
-  - `type Tunnel struct { Node string; Hello tunnel.Hello; Status tunnel.Status; Link *link.Link; Table *link.Table }`
+  - **BERICHTIGT am 03.10.2026:** `Link` und `Table` sind **unexportiert**. Nach
+    aussen gehen nur `SendControl`, `End`, `Hello()`, `Status()` — und `Hello`
+    und `Status` sind **Verfahren hinter einem Schloss**, nicht Felder.
+    Grund, gemessen: eine exportierte Tabelle in diesem Paket haette die
+    Auflage aus Aufgabe 11 im selben Atemzug wieder ausgehoben — dann koennte
+    ein Zubringer `Reserve`/`Allow`/`Spend`/`SentClose` rufen, ohne ein Frame zu
+    schreiben, und Satz 3 der Eintrittsbedingung haette wieder nur ein Lint
+    gehalten statt des Uebersetzers.
+  - `type Tunnel struct { Node string; … }` mit unexportierter Leitung und
+    Tabelle
   - `type Registry struct{ … }` mit `Get(node string) (*Tunnel, bool)`, `Each(fn)`, `Nodes() []string`
   - `type Server struct { S *state.State; Tunnels *Registry; OnHello func(ctx, *Tunnel);
     OnReport func(ctx, *Tunnel, store.UpdateReport); OnNotice func(ctx, *Tunnel, core.Notice) }`

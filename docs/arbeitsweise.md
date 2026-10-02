@@ -3171,3 +3171,123 @@ die **Zahl** und nicht gegen die Konstante, die sie halten soll — aber wer ein
 Zahl. Die Hänger-Wache dieses Strangs vergleicht jetzt gegen `mc.Timeout` und
 `mc.ReadTimeout` aus der Konfiguration, nicht gegen `5*time.Second` — denn die
 Aussage lautet „zwischen Waehlfrist und Lesefrist", nicht „zehn Sekunden".
+
+## „Die vierte Lage ist eine Lage, nicht die letzte"
+
+Der Satz ist vom Bauer des Packers, und er ist das Ehrlichste, was an diesem
+Tag gesagt wurde. Jede Runde fand eine Stufe tiefer einen **stillen
+Uebersprung**:
+
+1. erst der fremde Besitz (`dubious ownership`, Code 128),
+2. dann das fehlende Objekt (Referenz da, Objekt weg) — und **mein Vorschlag,
+   das `-q` fallen zu lassen, trennt es NICHT**: gemessen gibt
+   `rev-parse --verify` fuer ein beschaedigtes Depot und fuer einen unbekannten
+   Namen **denselben Code und denselben Satz**.
+
+Was trennt, ist eine Frage nach dem **Namen**, die kein Objekt anfasst
+(`rev-parse --symbolic-full-name`): 0 mit `refs/heads/…` auch im beschaedigten
+Depot, 128 bei unbekanntem Namen, 0 mit leerer Ausgabe bei einer rohen
+Objektkennung. Daraus wurden **vier** Fragen, von denen jede nur aus einem
+Grund scheitern kann — dieselbe Form wie die Reihenfolge weiter oben, eine
+Stufe feiner.
+
+Ungeprueft bleiben: eine unlesbare Referenzdatei, ein abgeschnittenes Objekt,
+ein `.git`, das mitten im Lauf verschwindet.
+
+**Die Lehre ist nicht „pruefe alles", sondern: ein Fall ueber die Umgebung
+nennt, welche Lagen er trennt — und dass es tiefere gibt.** Wer „alle Lagen
+sind abgedeckt" schreibt, hat die naechste noch nicht gefunden. Das Muster
+selbst ist der Fund, und es gehoert in die Meldung des Falles, nicht in einen
+Bericht.
+
+## Eine Dichtheitspruefung holt die Formen ein, die Werkzeuge VON SELBST ausgeben
+
+Die Pruefung, dass kein Schluessel in eine Ausgabe gelangt, sucht jetzt
+**57 Stuecke** in **sechs Heuhaufen**: PEM-Fenster, glattes Hex,
+**Doppelpunkt-Hex**, base64 und base64url — und jeder Heuhaufen wird
+zusaetzlich **zusammengeschoben** (alle Weisszeichen heraus), damit ein ueber
+Zeilen verteiltes Geheimnis wieder eine Zeichenfolge ist. Gross- und
+Kleinschreibung nur fuer die Hex-Formen; base64 kleinzuschreiben haette
+Treffer **erfunden**.
+
+Das Doppelpunkt-Hex war die wichtigste Nadel, und zwar aus einem Grund, der
+sich verallgemeinern laesst: **es ist openssls eigene Ausgabeform.** Wer beim
+Fehlersuchen einmal `openssl pkey -text` tippt, hat den Schluessel im
+Protokoll — und vorher hat die Pruefung dazu geschwiegen (der Mutant
+ueberlebte).
+
+**Die Grenze, die bleibt und benannt ist:** gegen eine Form, die die Bytes
+*umrechnet* (base32, Dezimal, `xxd -i`, ein gepacktes Archiv, Verschluesselung),
+kann ein Suchmuster grundsaetzlich nicht dicht sein. Es holt die Formen ein,
+die **Werkzeuge von selbst ausgeben** — und genau die sind der realistische
+Weg, auf dem ein Geheimnis entkommt. Wer eine fuenfte kennt, traegt sie als
+Nadel nach.
+
+## Ein Kopfblock ist keine Berichtigung des Rumpfs
+
+Am 02.10.2026, Aufgabe 11 des db-Plans. Ich hatte die Planberichtigung an die
+drei bekannten Orte gesetzt — Plan, Hauptcheckout, neu erzeugter Auftrag — und
+dachte, damit sei sie angekommen. War sie nicht: **innerhalb** des
+Aufgabenstuecks stand sie nur im Kopfblock. Gemessen am berichtigten Stand:
+
+```
+Kopf:  classes/migraterun/            (die Entscheidung)
+Rumpf: classes/migrate/run.go         in „Dateien"
+       migrate.Run, migrate.Needed    in „Schnittstellen"
+       dieselben Namen                in Schritt 1, 2, 3 und 7
+```
+
+Fuenfzehn Zeilen im Rumpf, die das Gegenteil des Kopfes sagten. Wer den Rumpf
+gebaut haette, haette die Fassung gebaut, die **nicht uebersetzt**
+(Importzyklus) — genau den Fehler, den der Kopf abwendet.
+
+Der Strang hat es gemeldet statt stillschweigend dem Kopf zu folgen, und das
+ist der Grund, dass es ueberhaupt auffiel. Ein weniger aufmerksamer Leser
+nimmt die Stelle, die **naeher** an seinem Schritt steht, und das ist der
+Rumpf.
+
+**Also: wer in einer Berichtigung einen Namen aendert, greppt das ganze
+Aufgabenstueck nach dem alten Namen und zaehlt die Treffer.** Ein Kopfblock,
+der „entschieden: X" sagt, hat den Rumpf nicht angefasst — er behauptet nur,
+jemand habe es getan.
+
+Verwandt: die Regel, dass eine Planberichtigung drei Orte hat. Die hier ist
+ihre feinere Fassung: der dritte Ort hat selbst zwei Haelften.
+
+## Ein Sendeweg, der nach dem Guthaben des Augenblicks zerschneidet, sieht wie ein Kryptofehler aus
+
+Am 02.10.2026 in Aufgabe 14 des Controllers gemessen. `link.Channel.Send`
+teilte eine Nutzlast in so viele Rahmen, wie das Guthaben **in diesem
+Moment** zuliess. Fuer einen Datenstrom ist das richtig. Fuer eine
+**Noise-Nachricht** ist es toedlich: sie muss ganz ankommen, sonst
+entschluesselt kein Stueck.
+
+Und so sah es aus:
+
+```
+dieselbe Quelle, 8 MiB Ergebnis
+Windows : ganz angekommen, Fall gruen
+WSL     : in Stuecken, cipher: message authentication failed
+          ein 488-Byte-Rahmen mitten in einer Reihe voller Rahmen
+```
+
+Die Meldung zeigt auf die **Kryptografie**. Der Fehler lag im **Rahmen**.
+Wer der Meldung folgt, sucht im falschen Paket, und auf der Plattform, auf
+der er entwickelt, ist ueberhaupt nichts zu sehen
+(vgl. „Ein Mutant, der nur auf EINER Plattform stirbt").
+
+Drei Dinge daraus:
+
+1. **Ein Name muss das Zerschneiden verraten.** `Send` tut es nicht. Der
+   Weg, der ganz liefert, heisst jetzt `SendWhole` — und wer das Paar sieht,
+   weiss, dass es eine Wahl gibt.
+2. **Ein Stueck rechnet seinen eigenen Kopf mit.** Gemessen: 4080 Byte Rumpf
+   kosten mit Kennbyte und Noise-Tag **4097** gegen ein Fenster von 4096 —
+   der Kanal steht. Die Grenze gilt fuer das, was auf die Leitung geht,
+   nicht fuer das, was der Aufrufer uebergibt.
+3. **Der Fall, der den Fehler faengt, braucht eine andere Eingabe als der
+   Betrieb sie liefert.** Der Mutant zu `SendWhole` lebte unter Windows,
+   weil dort das Guthaben immer ganz kam. Erst ein Fall, der das Guthaben
+   **in Haelften** zurueckgibt, toetet ihn auf beiden Plattformen
+   (vgl. „Ein Fall, der die Stoerung anders herstellt als der Betrieb sie
+   erzeugt").
