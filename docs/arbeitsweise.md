@@ -2288,3 +2288,49 @@ auch für die **leere** Angabe einsetzt — und genau die leere Angabe war der
 geprüfte Fall. Und ein Fall war falsch rot, weil die gesuchte Zeichenfolge
 `-p` auch in `--protocol` steckt. Wer auf Zeichenfolgen prüft, prüft auf
 Wortgrenzen.
+
+## Zwei gleich aussehende Zeichenketten, eine ist eine Datei und eine nicht
+
+In derselben Datei stehen
+
+```js
+const NGC_JS     = "/assets/ngc.js";    // eine Datei, wird geholt
+const FRAME_PAGE = "/frame.html";       // eine ROUTE, public/index.php:74
+```
+
+Ein Verweisgraph, der beide gleich behandelt, meldet `/frame.html` als
+**fehlend** — und verhindert damit jedes Release. Ein Graph, der beide
+ignoriert, lässt `ngc.js` aus dem Archiv, und dann öffnet beim Nutzer **kein
+einziges App-Fenster**.
+
+Es gibt hier keine Regel, die das von selbst löst: eine Zeichenkette mit `/`
+davor kann eine Datei sein oder eine Route, und welche von beiden, weiss nur
+der Router. **Also sagt der Graph diese Grenze ausdrücklich und listet solche
+Fälle von Hand** — mit dem Grund, nicht mit einer Behauptung. Ein Graph, der
+rät, ist schlimmer als einer, der seine Grenze nennt.
+
+Und die Lehre für das Zählen: der Prüfer hatte gemessen, dass auf `ngc.js`
+„kein realer Verweis" zeigt, und lag falsch — drei Zeilen in `appframe.js`
+holen sie per `fetch` und schreiben sie in jedes App-Fenster. Bei der
+Nachbardatei hatte er recht, und dort war die richtige Antwort nicht „in die
+Ausnahmeliste", sondern **„gehört gar nicht ins Archiv"**, weil die lebenden
+Importe ausschliesslich in `tests/` stehen und `tests/` nicht mitreist.
+Dieselbe Messung, zwei Dateien, zwei verschiedene richtige Antworten.
+
+## Das Einfrieren verbietet ÄNDERN, nicht LESEN
+
+Ein Strang konnte vier Dateien seines Plans nicht fahren, weil sie `shared/`
+brauchen und `shared/` eingefroren ist. Das war eine zu strenge Lesart meiner
+eigenen Regel, und sie hat eine Messung gekostet.
+
+`shared/` ist eingefroren heisst: **kein Commit ändert etwas darunter** (mit
+der einen Ausnahme `shared/ulh.md`), geprüft über den Baum-Hash gegen den Tag.
+Ein Test, der aus `shared/` **liest**, ändert nichts. Ein Wegwerf-Arbeitsbaum
+desselben Commits enthält `shared/` vollständig, und ein Lauf darin ist eine
+Messung wie jede andere.
+
+**Also: wer Plancode nicht in ein Wegwerfmodul schneiden kann, legt einen
+Wegwerf-Arbeitsbaum an** (`git worktree add`), fährt dort, prüft danach den
+Baum-Hash und entfernt ihn wieder. Ungemessen zu bleiben ist kein erlaubter
+Ausweg — zweimal ist in dieser Sitzung ein Plan an einer ungefahrenen Zahl
+gescheitert.
