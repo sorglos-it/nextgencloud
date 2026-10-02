@@ -6,9 +6,11 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -441,23 +443,47 @@ func openWindow(window uint32) wire.Open {
 }
 
 // within runs fn in a goroutine of its own and fails the case when it does not
-// come back in time. Every call into the Registry goes through it, because they
-// all take the one lock: a lock that is not given back would otherwise block the
-// case itself, and a deadline one has to reach THROUGH the blocking call is never
-// reached. Measured: without this the package run ended in
+// come back in time OR when it panics. Every call into the Registry goes through
+// it, because they all take the one lock: a lock that is not given back would
+// otherwise block the case itself, and a deadline one has to reach THROUGH the
+// blocking call is never reached. Measured: without this the package run ended in
 // "panic: test timed out", which deletes the result of every other case; with it
 // the case falls by name and the run goes on.
+//
+// The panic is caught for that same one reason and no other: a panic in a
+// goroutine that is not the case's own ends the whole test binary, and measured,
+// Each over a nil entry took the run down in 0,37 s with NOT ONE named case. What
+// it costs is said here so nobody is surprised by it: recover unwinds before this
+// returns, so the panic is reported with the stack that debug.Stack caught inside
+// the goroutine and not with the live one, and a debugger cannot stop at the
+// place it happened. The case falls either way; what is bought is that the other
+// cases still say something.
 func within(t *testing.T, what string, fn func()) {
 	t.Helper()
 	done := make(chan struct{})
+	// Buffered, so the goroutine never waits to report and cannot be the reason
+	// the deadline is reached.
+	failed := make(chan string, 1)
 	go func() {
 		defer close(done)
+		defer func() {
+			if v := recover(); v != nil {
+				failed <- fmt.Sprintf("%v\n%s", v, debug.Stack())
+			}
+		}()
 		fn()
 	}()
 	select {
 	case <-done:
+		select {
+		case why := <-failed:
+			t.Fatalf("%s panicked: %s", what, why)
+		default:
+		}
 	case <-time.After(readWait):
-		t.Fatalf("%s did not come back in %v -- a lock was not given back", what, readWait)
+		// No cause is named here: a lock that was not given back and a reader
+		// that never got to the point both look like this.
+		t.Fatalf("%s did not come back in %v -- it is still blocked", what, readWait)
 	}
 }
 

@@ -2,11 +2,13 @@ package browser
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
@@ -191,6 +193,88 @@ func TestTheBrowsersGrantRaisesWhatWeMaySend(t *testing.T) {
 	}
 	if err := o.s.SendData(ctx, o.c, []byte{0}); !errors.Is(err, ErrCredit) {
 		t.Fatalf("the GRANT raised more than it said: %v", err)
+	}
+}
+
+// TestTheDispatcherRunsBesideTheReader holds the "go" in front of
+// srv.Open.OpenChannel. A link has exactly one reader, so a dispatcher called in
+// line would hold it: no further frame of any channel would be read while it
+// runs. Measured without this case: taking the "go" away left every case of this
+// package green.
+//
+// The dispatcher here waits at a gate, so while it is in there the reader must
+// still have read the SECOND OPEN -- the table holds two numbers although no
+// dispatcher has finished. Called in line, the reader would sit in the first
+// dispatcher and the table would hold one.
+//
+// The waiting runs inside within, so a reader that never gets there falls by name
+// instead of hanging.
+func TestTheDispatcherRunsBesideTheReader(t *testing.T) {
+	h := newServer(t)
+	gate := make(chan struct{})
+	h.Grant = func(ctx context.Context, s *Session, c *link.Channel, o wire.Open) {
+		<-gate
+		_ = s.SendGrant(ctx, c, o.Window)
+	}
+	c := dialSession(t, h)
+	c.writeOpen(t, 1, openOf())
+	c.writeOpen(t, 2, openOf())
+	open := 0
+	within(t, "waiting for the reader to take both OPENs", func() {
+		for {
+			n := 0
+			h.Srv.Sessions.Each(func(s *Session) { n = s.Table.Count() })
+			if n == 2 {
+				open = n
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+	if open != 2 {
+		t.Fatalf("the reader took %d of the two OPENs while a dispatcher was running", open)
+	}
+	// Now let both dispatchers go; both GRANTs arrive.
+	close(gate)
+	seen := map[uint32]bool{}
+	for len(seen) < 2 {
+		f := c.read(t)
+		if f.Type != wire.TypeGrant {
+			t.Fatalf("frame %+v", f)
+		}
+		seen[f.Channel] = true
+	}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("GRANTs for %v", seen)
+	}
+	firstOpened(t, h)
+	firstOpened(t, h)
+}
+
+// TestWithinNamesAPanicInsteadOfEndingTheRun is the self-test of within's second
+// half. A panic in a goroutine that is not the case's own ends the whole test
+// binary, and then no case says anything at all -- measured, Each over a nil entry
+// did that in 0,37 s. within catches it, so the case can fall by name; this one
+// shows the catching works, using a panic of its own rather than a broken
+// registry.
+func TestWithinNamesAPanicInsteadOfEndingTheRun(t *testing.T) {
+	var got string
+	inner := &testing.T{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// within calls t.Fatalf, which ends ITS goroutine, so the check runs in
+		// one of its own and reads the outcome afterwards.
+		defer func() { _ = recover() }()
+		within(inner, "a helper", func() { panic("boom") })
+		got = "within came back as if nothing had happened"
+	}()
+	<-done
+	if got != "" {
+		t.Fatal(got)
+	}
+	if !inner.Failed() {
+		t.Fatal("within let a panic through without failing the case")
 	}
 }
 

@@ -5,8 +5,15 @@
 // whose private half lies sealed in the database, so any API can serve any
 // session.
 //
-// This package is the one caller of link.Table on a session link, and the
-// table's three caller conditions are kept here and nowhere else.
+// This package is the one caller of link.Table on a session link today, and it
+// keeps the table's caller conditions for everything that goes out as a frame.
+//
+// How far that reaches, exactly: Session.Table is exported, so a dispatcher can
+// call Reserve, Allow, Spend and SentClose on the table without writing anything
+// to the link. For those the sentences below are a rule of this package and not
+// something the language holds -- only the frames are held. Unexporting the table
+// and putting Reserve and SentClose into one call of package link would close
+// that, and both belong to the task that touches link, not to this one.
 //
 // Who keeps them, and by what:
 //
@@ -18,9 +25,10 @@
 //     coreapp therefore cannot go around Allow -- it has nothing to write with.
 //     Inside this package the compiler cannot help, and lint_test.go walks the
 //     package's syntax tree to say that no second function builds a GRANT frame.
-//     That walk is a lint and not the holder of the sentence: it reads the files
-//     on disk, so a build that replaces one of them (go test -overlay) is
-//     invisible to it. The holder is the unexported field.
+//     That walk is a lint and not the holder of the sentence, and it has two
+//     named limits of its own (lint_test.go): it reads the files on disk, so a
+//     build that replaces one of them (go test -overlay) is invisible to it, and
+//     it matches a name and not a value. The holder is the unexported field.
 //   - "Every Reserve is followed by a SentClose for the same number", so a
 //     number held for a CLOSE E_PROTOCOL is given back once the other side's
 //     CLOSE arrives. Nothing in the language can hold this one; the same syntax
@@ -183,7 +191,13 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		if err != nil {
 			return s.protocolError(ctx, f.Channel)
 		}
-		// The dispatcher answers with a GRANT or a CLOSE and runs the channel.
+		// Its own goroutine, and that is not decoration: a link has exactly one
+		// reader (link.Read), so a dispatcher called in line here would hold that
+		// one reader for as long as it runs -- no further frame of any channel
+		// would be read, the window would stop moving, and a channel that waits
+		// for the browser would wait for itself. It is the same reason feed hands
+		// nothing on into a queue nobody reads yet.
+		// TestTheDispatcherRunsBesideTheReader holds this line.
 		go srv.Open.OpenChannel(ctx, s, c, o)
 		return true
 	default:

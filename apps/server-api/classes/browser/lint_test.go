@@ -31,13 +31,25 @@ import (
 // everything else -- a composite literal of any shape, a field set later, a
 // method value, a closure at package level.
 //
-// What this walk is NOT: it is a lint, not the holder of the first sentence. It
-// reads the files on disk, so a build that puts another file in their place
-// (go test -overlay) is invisible to it -- a mutant of the built program stays
-// green here. The first sentence is held by the compiler, because Session.link is
-// unexported and the only ways out of this package are SendGrant, SendData,
-// SendControl and Close. This walk adds the one thing the compiler cannot say:
-// that no second function inside this package builds a GRANT.
+// What this walk is NOT, and both limits are named because a lint that is taken
+// for a proof is worse than none.
+//
+// It is a lint, not the holder of the first sentence. It reads the files on disk,
+// so a build that puts another file in their place (go test -overlay) is
+// invisible to it -- a mutant of the built program stays green here.
+//
+// And it matches a NAME, not a VALUE. wire.TypeGrant is the number 5, so
+// "Type: 5", a constant of this package set to it, "wire.Type(5)" and a dot
+// import of package wire all go past this walk. None of those is exotic. Closing
+// it would take go/types, that is, type checking the package rather than parsing
+// it -- and it is not done, because the compiler already holds the sentence and
+// this walk is only here for what the compiler cannot say.
+//
+// So: the claim of this file is exactly "a tree sees the six shapes a text search
+// let through, and a case label is not one of them", and nothing more than that.
+// The first sentence is held by the compiler, because Session.link is unexported
+// and the only ways out of this package are SendGrant, SendData, SendControl and
+// Close.
 
 // site is one place in the package's own source.
 type site struct {
