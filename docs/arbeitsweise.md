@@ -2038,3 +2038,62 @@ Strangzweige mischen** — und danach den Baum-Hash von `shared/` gegen den Tag
 stellen, damit das Mischen den Vertrag nicht angefasst hat.
 
 Wer den Plan berichtigt, hat damit erst die HAELFTE getan.
+
+## Eine Stelle ist nicht widerlegt, wenn man nur ihren Anfang gelesen hat
+
+Am 02.10.2026 haben mir zwei Agenten gesagt, mein Plan sei falsch. Ich habe
+nachgesehen, den genannten Namen (`Take`) an der genannten Zeile **nicht**
+gefunden, und mich gebremst: „ich berichtige den Plan nicht auf eine Ursache,
+die ich nicht selbst gemessen habe." Das Bremsen war richtig. Der Schluss war
+falsch.
+
+Ich hatte **zwanzig Zeilen zu früh aufgehört**. Die Zeile `:4480` liegt mitten
+in der Funktion, der strittige Satz stand am Funktionsende bei `:4503`. `Take`
+war der Name **des Plans selbst**, es gab gar keine Umbenennung — und der Plan
+widersprach dabei sich selbst, denn sein eigenes `Table.Open` setzte nur eine
+der zwei Richtungen.
+
+**Also: eine Funktion wird bis zu ihrer schliessenden Klammer gelesen, bevor
+man sagt, etwas stehe nicht darin.** `grep` auf einen Namen findet die
+Definition und nicht die Verwendung zwanzig Zeilen weiter; `sed -n 'A,Bp'`
+zeigt genau das Fenster, das man gewaehlt hat, und schweigt ueber den Rest.
+
+Und die Gegenprobe, die hier entschieden hat, ist eine MESSUNG und kein
+Argument: der Mutant „`Open` setzt beide Richtungen" macht den berichtigten
+Fall rot — mit dem alten Plansatz waere genau dieser Mutant der **gruene
+Normalfall** gewesen. Ein Plansatz, der einen Mutanten zum Normalfall macht,
+schreibt den Fehler fest.
+
+## Sieben ueberlebende Mutanten, vier Ursachen — und alle vier sehen aus wie Tests
+
+Ein Strang hatte in seiner ersten Mutationsrunde acht Ueberlebende. Sieben
+davon gehen auf vier Formen zurueck, die man als Fehler nicht sieht, weil der
+Fall gruen ist und ordentlich aussieht:
+
+1. **Der Fall prueft gegen die Konstante, die er halten soll.** Steht die
+   Erwartung als `SubIDBase` statt als Zahl, wandert sie mit dem Mutanten mit.
+   Eine Zusicherung ueber einen Wert gehoert als **Zahl** hingeschrieben, auch
+   wenn das haesslich ist.
+2. **Eindeutigkeit, geprueft an Eingaben, die sich schon im lesbaren Teil
+   unterscheiden** (`org.example.a` gegen `.b`). Dann prueft der Fall das
+   Lesbare, nicht die Ableitung. Richtig ist `org.a.notes` gegen
+   `org.b.notes`.
+3. **Der Fall nimmt zwei Fehler gleichzeitig an** (`ErrHome` ODER
+   `ErrIdentity`). Dann greift immer derselbe Teil, und der andere ist nie
+   geprueft.
+4. **Zwei Zaeune hintereinander, von denen einer unerreichbar ist** — und der
+   erreichbare hat keinen eigenen Fall. Das ist schlechter als ein Zaun, der
+   gemessen ist.
+
+## Mutiere nicht im geteilten Arbeitsbaum — `go test -overlay`
+
+Eine Mutationsrunde, die die Quelldatei im Arbeitsbaum veraendert, legt fuer
+eine Minute eine kaputte Datei dorthin, wo eine andere Sitzung gerade baut.
+Gemessen hat das in dieser Sitzung niemanden getroffen, aber es ist Glueck,
+kein Verfahren.
+
+Richtig: die mutierte Datei **daneben** legen und dem Bau ueber
+`go test -overlay <datei.json>` geben. Der Arbeitsbaum bleibt die ganze Zeit
+baubar — und „der geteilte Baum ist immer baubar" ist keine Hoeflichkeit,
+sondern die Bedingung dafuer, dass mehrere Straenge gleichzeitig messen
+koennen.

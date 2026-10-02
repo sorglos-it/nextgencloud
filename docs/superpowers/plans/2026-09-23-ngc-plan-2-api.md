@@ -4510,6 +4510,20 @@ func TestCredit(t *testing.T) {
 	if c.Grant(1) {
 		t.Fatal("a grant beyond MaxWindow was taken")
 	}
+	// BERICHTIGT am 02.10.2026. Hier stand der Take(MinWindow) ohne ein
+	// vorheriges Allow - der Plan rechnete das Fenster des OPEN in BEIDE
+	// Richtungen. Der Vertrag zaehlt je Strecke UND Richtung
+	// (shared/README.md:415-416, shared/wire/wire.go:53-55): wer ein OPEN
+	// EMPFAENGT - und nur der ruft Table.Open - darf damit SENDEN, nicht
+	// empfangen. Der Plan widersprach dabei sich selbst, denn sein eigenes
+	// Table.Open setzt nur out:. Gemessen: der Mutant "Open setzt in auch"
+	// waere mit dem alten Satz der gruene Normalfall gewesen.
+	if c.Take(1) {
+		t.Fatal("something arrived before we granted anything")
+	}
+	if !c.Allow(wire.MinWindow) {
+		t.Fatal("our own grant was refused")
+	}
 	// The other direction: what we granted bounds what may arrive.
 	if !c.Take(wire.MinWindow) {
 		t.Fatal("our own window did not count")
@@ -4622,8 +4636,26 @@ func (c *Channel) Take(n int) bool {
 }
 
 // Allow adds to what the other side may send us; we call it whenever we send a
-// GRANT, so the two sides count the same.
-func (c *Channel) Allow(credit uint32) { c.mu.Lock(); c.in += uint64(credit); c.mu.Unlock() }
+// GRANT, so the two sides count the same. It reports whether the grant is
+// allowed at all and adds nothing when it is not.
+//
+// BERICHTIGT am 02.10.2026: Allow gibt bool zurueck und haelt die Grenze.
+// Vorher band es nichts - Grant hielt MaxWindow fuer out, Allow fuer in
+// nicht, und konnte es auch nicht melden. Gemessen: 300x Allow(MaxWindow),
+// danach Take(MaxWindow+1) = true. Still abschneiden waere schlimmer (die
+// Seiten zaehlen dann verschieden), und eine GRANT ueber MaxWindow ist
+// unser EIGENER Protokollfehler - die Gegenseite antwortet mit
+// CLOSE E_PROTOCOL (shared/README.md:418-419), sie darf also nie hinaus.
+// Preis: ein if beim Aufrufer.
+func (c *Channel) Allow(credit uint32) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if credit == 0 || c.in+uint64(credit) > uint64(wire.MaxWindow) {
+		return false
+	}
+	c.in += uint64(credit)
+	return true
+}
 
 // Closing reports whether we have already sent a CLOSE.
 func (c *Channel) Closing() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.sentClose }
