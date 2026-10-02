@@ -127,19 +127,26 @@ func EnsureData(ctx context.Context, app string, u User, serverKey []byte) (stri
 		}
 	}()
 
-	id, err := addKey(paths.appData, key)
+	id, err := paths.addKey(paths.appData, key)
 	if err != nil {
 		return "", err
 	}
-	if err := setPolicy(dir, id); err != nil {
+	if err := paths.setPolicy(dir, id); err != nil {
 		return "", err
 	}
 	if err := os.Chown(dir, int(u.UID), int(u.GID)); err != nil {
 		return "", err
 	}
-	// Said again after the chown: chown clears the set-user-id and set-group-id
-	// bits on some systems and a mode is cheap to say twice, while a data
-	// directory readable by another app is not.
+	// Said again after the chown, and this is what it really does: this call is
+	// repeatable, so dir may be one an earlier, half-finished run left behind
+	// with another mode, and os.Mkdir above does not touch the mode of a
+	// directory that is already there. Such a directory is tightened here.
+	//
+	// For a directory this call just made the line changes nothing - os.Mkdir
+	// made it 0700 - and it is not here for the set-user-id and set-group-id
+	// bits either: a directory made 0700 carries neither, so there is nothing
+	// for the chown above to clear. Kept because the repeat case is real and
+	// measured (TestEnsureDataTightensTheModeOfADirectoryAlreadyThere).
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -165,7 +172,7 @@ func UnlockData(ctx context.Context, app string, serverKey []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err = addKey(paths.appData, key)
+	_, err = paths.addKey(paths.appData, key)
 	return err
 }
 

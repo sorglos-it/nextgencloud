@@ -320,3 +320,149 @@ func TestTheSentenceForAUserIsGerman(t *testing.T) {
 		}
 	}
 }
+
+// fakeFscrypt puts two calls of this test in place of the two the kernel does.
+// They answer the way a kernel that can encrypt answers - an identifier that is
+// not zero, and a policy that is set - and they touch nothing. Everything after
+// them in EnsureData is the real thing.
+//
+// This is not a stand-in for fscrypt itself: what the two really do has its own
+// cases (TestEnsureDataSetsAPolicy against a real filesystem, and the ioctl
+// numbers against the kernel's header). What this makes measurable is the part
+// after them, which no kernel here can be made to reach.
+func fakeFscrypt(t *testing.T) {
+	t.Helper()
+	was := paths
+	t.Cleanup(func() { paths = was })
+	paths.addKey = func(mount string, key []byte) ([keyIdentifierSize]byte, error) {
+		// The one thing the real one refuses, refused here as well, so a case
+		// cannot pass through this on a key the kernel would have thrown out.
+		if len(key) != keyBytes {
+			return [keyIdentifierSize]byte{}, ErrKey
+		}
+		var id [keyIdentifierSize]byte
+		id[0] = 1
+		return id, nil
+	}
+	paths.setPolicy = func(dir string, id [keyIdentifierSize]byte) error { return nil }
+}
+
+// A context that is already cancelled stops both calls, and it stops them before
+// anything exists. That one line is what the commit before this one moved out of
+// a branch of the engine up to here; without it EnsureData walks on and answers
+// with whatever the filesystem says - which on this machine is ErrNoFscrypt, so
+// a cancelled call would read as a disk that cannot encrypt.
+func TestTheDataCallsStopForACancelledContext(t *testing.T) {
+	root := dataIn(t)
+	app := "org.example.a"
+	u := User{Name: UserName(app), UID: 65534, GID: 65534}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := EnsureData(ctx, app, u, aKey); !errors.Is(err, context.Canceled) {
+		t.Errorf("EnsureData = %v, want context.Canceled", err)
+	}
+	// And nothing is left behind that a later call would find and take for a
+	// ready data directory.
+	if _, err := os.Stat(filepath.Join(root, app)); !os.IsNotExist(err) {
+		t.Errorf("a cancelled EnsureData left a directory behind: %v", err)
+	}
+	if err := UnlockData(ctx, app, aKey); !errors.Is(err, context.Canceled) {
+		t.Errorf("UnlockData = %v, want context.Canceled", err)
+	}
+	if err := DropData(ctx, app); !errors.Is(err, context.Canceled) {
+		t.Errorf("DropData = %v, want context.Canceled", err)
+	}
+	// A key that is no key is refused before the context is asked, because a
+	// cancelled call with a broken key is still a broken key. Said here so the
+	// order of the two is a measured one and not a reading of the source.
+	if _, err := EnsureData(ctx, app, u, []byte("short")); !errors.Is(err, ErrKey) {
+		t.Errorf("EnsureData with a short key = %v, want ErrKey", err)
+	}
+}
+
+// The data directory belongs to the app's user and not to root. That is the
+// core promise of this file, and until this case it had no run on this machine:
+// the only other case that reaches the chown needs a kernel with
+// CONFIG_FS_ENCRYPTION and skips itself everywhere here.
+//
+// What this case cannot do without root: move the uid. Giving a file to another
+// user is root's alone. So as a person it moves the GROUP to a supplementary
+// group of this user, which a user may do for a file of their own - a real
+// change, and one that is gone the moment the chown is. As root it does the
+// whole thing, to nobody.
+func TestEnsureDataGivesTheDirectoryToTheAppsUser(t *testing.T) {
+	linuxOnly(t)
+	dataIn(t)
+	fakeFscrypt(t)
+	app := "org.example.a"
+	u := User{Name: UserName(app), UID: 65534, GID: 65534}
+	if os.Geteuid() != 0 {
+		groups, err := os.Getgroups()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mine := uint32(os.Getegid())
+		other := mine
+		for _, g := range groups {
+			if uint32(g) != mine && g != 0 {
+				other = uint32(g)
+				break
+			}
+		}
+		if other == mine {
+			t.Skip("this user is in no second group, so no change of owner is allowed here; the uid half needs a root harness")
+		}
+		u.UID, u.GID = uint32(os.Geteuid()), other
+	}
+	if u.UID == 0 || u.GID == 0 {
+		t.Fatalf("the case built a user of root: %+v", u)
+	}
+	dir, err := EnsureData(context.Background(), app, u, aKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, group := ownerOf(t, dir); owner != u.UID || group != u.GID {
+		t.Fatalf("owner = %d:%d, want %d:%d", owner, group, u.UID, u.GID)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v, want 0700", fi.Mode().Perm())
+	}
+}
+
+// What the chmod after the chown really does: a data directory an earlier,
+// half-finished call left behind with another mode is tightened to 0700.
+// os.Mkdir does not touch the mode of a directory that is already there, so
+// without that line the app would keep the wider one.
+func TestEnsureDataTightensTheModeOfADirectoryAlreadyThere(t *testing.T) {
+	linuxOnly(t)
+	root := dataIn(t)
+	fakeFscrypt(t)
+	app := "org.example.a"
+	dir := filepath.Join(root, app)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// By hand and not through MkdirAll: the umask takes bits off a mode given
+	// to mkdir, and a chmod is what sets one.
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	u := User{Name: UserName(app), UID: uint32(os.Geteuid()), GID: uint32(os.Getegid())}
+	if u.UID == 0 || u.GID == 0 {
+		u = User{Name: UserName(app), UID: 65534, GID: 65534}
+	}
+	if _, err := EnsureData(context.Background(), app, u, aKey); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v, want 0700 (the directory was 0777 before the call)", fi.Mode().Perm())
+	}
+}

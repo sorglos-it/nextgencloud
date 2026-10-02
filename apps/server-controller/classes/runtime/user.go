@@ -23,22 +23,34 @@ import (
 // engine finds a container again by the name alone (ofName, Container.DataDir).
 // Nothing here starts a container; that is the engine's.
 
-// paths is where this package finds the programs it runs and the files it
-// writes. It is a variable and not a set of constants for one reason: a case
-// has to put a program of its own in place of useradd and a file of its own in
-// place of /etc/subuid, because the real ones change this machine and a test
-// may not. Nothing outside this package can reach it, and nothing inside it
-// changes it at run time.
+// paths is where this package finds the programs it runs, the files it writes
+// and the two kernel calls that encrypt a directory. It is a variable and not a
+// set of constants for one reason: a case has to put a program of its own in
+// place of useradd and a file of its own in place of /etc/subuid, because the
+// real ones change this machine and a test may not. Nothing outside this
+// package can reach it, and nothing inside it changes it at run time.
 var paths = struct {
 	useradd, userdel string
 	subuid, subgid   string
 	appData          string
+	// addKey and setPolicy are the two kernel calls of EnsureData, held here
+	// for the same reason as useradd: without a stand-in, everything that
+	// comes after them cannot be measured at all. They need a kernel built
+	// with CONFIG_FS_ENCRYPTION, and the WSL kernel of the machine this is
+	// written on is not one (/proc/config.gz, measured) - so the owner and the
+	// mode of the data directory, which the lines after these two set, had no
+	// case that could run anywhere here. With a stand-in they have one, and the
+	// real two keep their own cases on a filesystem that can do it.
+	addKey    func(mount string, key []byte) ([keyIdentifierSize]byte, error)
+	setPolicy func(dir string, id [keyIdentifierSize]byte) error
 }{
-	useradd: "/usr/sbin/useradd",
-	userdel: "/usr/sbin/userdel",
-	subuid:  "/etc/subuid",
-	subgid:  "/etc/subgid",
-	appData: config.AppDataDir,
+	useradd:   "/usr/sbin/useradd",
+	userdel:   "/usr/sbin/userdel",
+	subuid:    "/etc/subuid",
+	subgid:    "/etc/subgid",
+	appData:   config.AppDataDir,
+	addKey:    addKey,
+	setPolicy: setPolicy,
 }
 
 // The sub id ranges of the apps: 65536 ids each, which is what a user namespace
@@ -72,7 +84,14 @@ var (
 	// ErrApp reports an app id that is no app id (wire.ValidAppID).
 	ErrApp = errors.New("runtime: app id is not an app id")
 	// ErrSubID reports that no range of sub ids is free any more, or that
-	// /etc/subuid or /etc/subgid says something this package cannot read.
+	// /etc/subuid or /etc/subgid could not be read or could not be written.
+	//
+	// A single line of those files that this package cannot read is explicitly
+	// NOT one of these cases: readSubIDs keeps such a line and counts it as no
+	// range, without an error and on purpose, so that neither does this package
+	// take a range away from whoever wrote it nor hand that range to an app. A
+	// file that is not there is no case either - a machine that handed out
+	// nothing yet has no file.
 	ErrSubID = errors.New("runtime: no free range of sub ids for this app")
 )
 
