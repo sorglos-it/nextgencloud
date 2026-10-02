@@ -3323,7 +3323,48 @@ Feld. Null ist ein gueltiger Wert. Wer die Luecke schliessen will, braucht
 dafuer einen Fall oder einen Riegel — und wer sie nicht schliesst, **nennt
 sie**, statt sie fuer geschlossen zu erklaeren.
 
+**Nachtrag vom selben Tag, gemessen:** der Strang hat genau diesen Weg gebaut —
+`type lifetime time.Duration`, `type idleTime time.Duration`, **und die
+Konstanten tragen den Typ**; der Struct ist ganz weg, damit auch das
+positionale Literal. Beide Mutanten sind danach **tot mit Ausstiegscode 1**,
+und zwar vom Uebersetzer: `cannot use … as lifetime value` und
+`not enough arguments`. Was uebrig bleibt und benannt ist:
+`lifetime(connIdleTime)` **von Hand** geht weiter — das ist dann keine
+Verwechslung mehr, sondern eine ausdrueckliche Umwandlung. Mehr gibt Go nicht
+her, und genau so steht es im Kommentar.
+
 Die Lehre ueber die Technik hinaus: **meine eigene Genehmigung war die
 unmessbare Stelle.** Der Satz klang richtig, niemand hatte ihn gefahren, und
 er stand als erledigt im Plan. Ein genehmigter Weg ist eine Behauptung wie
 jede andere.
+
+## Eine Fehlermeldung sagt nichts ueber den INHALT des Objekts
+
+Am 03.10.2026 gemessen, und es war vorher nur eine Vermutung des Pruefers —
+der Strang hat sie nachgefahren, statt sie stehen zu lassen. Die
+Uebersprungbehandlung einer Migration liest die Meldung `already exists`:
+
+```sql
+CREATE INDEX ngc_blob_seq ON ngc_blob (id)
+```
+
+Traegt die Datenbank einen Index **desselben Namens ueber andere Spalten**,
+antwortet SQLite `index ngc_blob_seq already exists`. Die Behandlung
+ueberspringt also, und die Version gilt danach als **erledigt** — mit dem
+falschen Index darunter.
+
+An der Stelle ist das **nicht reparierbar**: die Meldung sagt nur, dass der
+Name belegt ist, nicht was darunter liegt. Gehalten wird die Luecke eine Stufe
+weiter, vom Linter, der jede Migration gegen die Regel prueft.
+
+Zwei Dinge daraus, und das zweite ist das wichtigere:
+
+1. **Wer auf einen Namen prueft, hat den Inhalt nicht geprueft.** Das gilt
+   fuer jede Zusicherung, die an einer Meldung haengt
+   (vgl. „Ein Riegel, der eine Fehlermeldung liest").
+2. **Ein Fall, der ein Loch festschreibt, wurde bewusst NICHT gebaut.** Die
+   Begruendung des Strangs, und sie ist richtig: wer das Loch spaeter
+   schliesst, muesste dann erst einen **gruenen** Test rot machen — und das
+   sieht wie ein Rueckschritt aus, obwohl es einer nach vorn ist. Die Luecke
+   steht als Kommentar mit ihrer Messung an der Stelle. Ein Kommentar
+   verteidigt den Fehler nicht, ein Testfall tut es.
