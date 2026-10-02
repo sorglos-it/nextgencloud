@@ -3171,3 +3171,54 @@ die **Zahl** und nicht gegen die Konstante, die sie halten soll — aber wer ein
 Zahl. Die Hänger-Wache dieses Strangs vergleicht jetzt gegen `mc.Timeout` und
 `mc.ReadTimeout` aus der Konfiguration, nicht gegen `5*time.Second` — denn die
 Aussage lautet „zwischen Waehlfrist und Lesefrist", nicht „zehn Sekunden".
+
+## „Die vierte Lage ist eine Lage, nicht die letzte"
+
+Der Satz ist vom Bauer des Packers, und er ist das Ehrlichste, was an diesem
+Tag gesagt wurde. Jede Runde fand eine Stufe tiefer einen **stillen
+Uebersprung**:
+
+1. erst der fremde Besitz (`dubious ownership`, Code 128),
+2. dann das fehlende Objekt (Referenz da, Objekt weg) — und **mein Vorschlag,
+   das `-q` fallen zu lassen, trennt es NICHT**: gemessen gibt
+   `rev-parse --verify` fuer ein beschaedigtes Depot und fuer einen unbekannten
+   Namen **denselben Code und denselben Satz**.
+
+Was trennt, ist eine Frage nach dem **Namen**, die kein Objekt anfasst
+(`rev-parse --symbolic-full-name`): 0 mit `refs/heads/…` auch im beschaedigten
+Depot, 128 bei unbekanntem Namen, 0 mit leerer Ausgabe bei einer rohen
+Objektkennung. Daraus wurden **vier** Fragen, von denen jede nur aus einem
+Grund scheitern kann — dieselbe Form wie die Reihenfolge weiter oben, eine
+Stufe feiner.
+
+Ungeprueft bleiben: eine unlesbare Referenzdatei, ein abgeschnittenes Objekt,
+ein `.git`, das mitten im Lauf verschwindet.
+
+**Die Lehre ist nicht „pruefe alles", sondern: ein Fall ueber die Umgebung
+nennt, welche Lagen er trennt — und dass es tiefere gibt.** Wer „alle Lagen
+sind abgedeckt" schreibt, hat die naechste noch nicht gefunden. Das Muster
+selbst ist der Fund, und es gehoert in die Meldung des Falles, nicht in einen
+Bericht.
+
+## Eine Dichtheitspruefung holt die Formen ein, die Werkzeuge VON SELBST ausgeben
+
+Die Pruefung, dass kein Schluessel in eine Ausgabe gelangt, sucht jetzt
+**57 Stuecke** in **sechs Heuhaufen**: PEM-Fenster, glattes Hex,
+**Doppelpunkt-Hex**, base64 und base64url — und jeder Heuhaufen wird
+zusaetzlich **zusammengeschoben** (alle Weisszeichen heraus), damit ein ueber
+Zeilen verteiltes Geheimnis wieder eine Zeichenfolge ist. Gross- und
+Kleinschreibung nur fuer die Hex-Formen; base64 kleinzuschreiben haette
+Treffer **erfunden**.
+
+Das Doppelpunkt-Hex war die wichtigste Nadel, und zwar aus einem Grund, der
+sich verallgemeinern laesst: **es ist openssls eigene Ausgabeform.** Wer beim
+Fehlersuchen einmal `openssl pkey -text` tippt, hat den Schluessel im
+Protokoll — und vorher hat die Pruefung dazu geschwiegen (der Mutant
+ueberlebte).
+
+**Die Grenze, die bleibt und benannt ist:** gegen eine Form, die die Bytes
+*umrechnet* (base32, Dezimal, `xxd -i`, ein gepacktes Archiv, Verschluesselung),
+kann ein Suchmuster grundsaetzlich nicht dicht sein. Es holt die Formen ein,
+die **Werkzeuge von selbst ausgeben** — und genau die sind der realistische
+Weg, auf dem ein Geheimnis entkommt. Wer eine fuenfte kennt, traegt sie als
+Nadel nach.
