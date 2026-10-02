@@ -167,7 +167,9 @@ test.describe("the chain", () => {
     expect(got.alarms).toEqual([ALARM]);
     // Nothing is in force any more: an app that asks for the list gets none.
     expect(got.after).toBeNull();
-    expect(state.logouts).toBe(1);
+    // The alarm sends the logout without waiting for it, so the request may
+    // still be on its way when the call has returned: wait for it to arrive.
+    await expect.poll(() => state.logouts).toBe(1);
   });
 
   test("a hint that names a version the shell already has asks nothing", async ({ shell }) => {
@@ -258,7 +260,9 @@ test.describe("the chain", () => {
       expect(got.seq).toBe(-1);
       expect(got.alarms).toEqual([ALARM]);
       expect(got.list).toBeNull();
-      expect(state.logouts).toBe(1);
+      // The alarm sends the logout without waiting for it, so the request may
+      // still be on its way when the call has returned: wait for it to arrive.
+      await expect.poll(() => state.logouts).toBe(1);
     });
   }
 
