@@ -2592,3 +2592,50 @@ Repo-Inhalt, aber Belege verloren. **Jede Hilfsdatei in einen Unterordner
 mit dem Namen der Aufgabe** (`scratchpad/mut-task11/`), nie direkt in einen
 Sammelordner. Zweimal gemessen heisst: es ist kein Versehen, es ist die
 Vorgabe, die fehlte.
+
+## Dreizehn eigene Mutanten des Pruefers, dreizehn ueberlebt — und ein Kontrollmutant daneben
+
+Weiter oben steht, eine Mutationsquote sei eine Aussage ueber die **Liste**.
+Am 02.10.2026 ist daraus eine Zahl geworden: der Bauer setzte 13 Mutanten und
+toetete 13 — der Pruefer setzte **13 andere, und alle 13 ueberlebten**.
+
+Beide Zahlen sind richtig. Sie treffen verschiedene Zeilen.
+
+Und der Pruefer hat etwas getan, das ich ab jetzt von jedem Pruefer erwarte:
+**er setzte einen Kontrollmutanten, der sterben MUSS.** K1 starb. Damit ist
+„13 ueberlebt" keine kaputte Werkbank, sondern eine Luecke — ohne diesen
+einen Mutanten waere beides nicht zu unterscheiden gewesen.
+
+Was dabei herauskam, ist kein Schoenheitsfehler: **das Passwort war von keinem
+Fall gehalten.** Eine Anlage, die sich nicht anmelden kann, ist der erste
+Start, der steht — und es braucht keinen Server, um das zu pruefen, es ist
+Konfiguration.
+
+**Also gilt fuer jede Pruefung:**
+1. Die Mutanten des Bauers nachfahren — aber als Stichprobe, nicht als
+   Ergebnis.
+2. **Eigene Mutanten setzen, an Zeilen, die in seiner Liste nicht vorkommen.**
+3. **Einen Kontrollmutanten setzen, der sterben muss**, damit „ueberlebt"
+   etwas bedeutet.
+
+Und zwei weitere Formen, die derselbe Lauf gezeigt hat: ein Mutant toetete nur,
+wenn man die **Zuweisung** halbierte — die **Konstante** halbiert ueberlebte,
+weil die Zusicherung gegen genau die Konstante prueft, die sie halten soll
+(zum fuenften Mal heute diese Form). Und: **alle zwoelf Faelle benutzten
+dieselben Eingaben**, darum ueberlebten festverdrahtete Konstanten fuer
+Servernamen und Datenbanknamen. Zwei verschiedene Eingaben in einem Fall
+kosten drei Zeilen und schliessen vier Befunde.
+
+## Die fuenfte falsche Zahl, und die erste, die ich erfunden habe
+
+Vier Zahlen habe ich heute falsch **weitergereicht** — eine fuenfte habe ich
+**gebaut**: ich schrieb von einer „elften Stelle der Gabelung". Es gibt sie
+nicht. Ich hatte zwei Register vermischt: `atTheDatabase` (vier Eintraege) und
+die Liste der Unterschiede `sqlstore`/`memstore` (zehn plus eine offene
+Vertragsstelle). Das neue Paket setzt die Schnittstelle nicht selbst um,
+sondern benutzt `sqlstore` — es entsteht gar kein elfter Unterschied.
+
+Weitergereichte Zahlen sind ein Fluechtigkeitsfehler. Eine Zahl, die aus zwei
+Registern zusammenwaechst, ist etwas anderes: sie klingt praeziser als beide
+und ist durch keines gedeckt. **Wer zwei Listen nennt, nennt sie getrennt** —
+und wer eine Zahl nennt, nennt das Register, aus dem sie kommt.
