@@ -2213,7 +2213,7 @@ git commit -m "Add password keys and passkeys" --trailer "Co-Authored-By: Claude
   `e2ePrologue(controllerID, app, service, action, params, task) -> Promise<Uint8Array>`,
   `newKeypair() -> Promise<{privateKey, publicRaw}>`,
   `class HandshakeKK` mit `writeMessage1()`, `readMessage2(msg)`, `readMessage1(msg)`,
-  `writeMessage2()`, `split() -> {send, recv}`,
+  `writeMessage2()`, `split() -> Transport (nur EINMAL aufrufbar, der zweite Aufruf wirft)`,
   `class Transport` mit `seal(plain)` und `open(cipher)`.
 - Consumes: `b64.js`.
 
