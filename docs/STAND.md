@@ -40,6 +40,11 @@ Datenbank und Recovery.
 
 ## Offene Entscheidungen
 
+- **Vertragsfassung 1.2:** Was der nächste Schnitt an `shared/` tragen muss,
+  steht gesammelt in [`vertraege-v1.2.md`](vertraege-v1.2.md) — 18 Punkte aus
+  allen vier Strängen, jeder mit Herkunft und Messung. Mehrere Module verweisen
+  im Code darauf; die Datei ist die Liste, die dort gemeint ist.
+
 - **Release-Stick:** Mit welchem Werkzeug der Hardware-Stick das Release signiert, wird vor dem
   ersten Release entschieden. `ngc-store` signiert nur Test-Releases.
 - **Für den Sicherheitsdurchgang (Plan 7) vorgemerkt:** eine feste Bindung der Oberfläche einer

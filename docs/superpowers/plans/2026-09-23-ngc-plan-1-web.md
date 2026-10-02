@@ -68,6 +68,13 @@ Diese Regeln gelten in jeder Aufgabe, auch wenn sie dort nicht wiederholt werden
   Firefox 130, Safari 17.4. Fehlt eines davon, zeigt die Shell eine Meldung auf Deutsch und lädt
   nichts weiter.
 - **Reihenfolge:** erst der fehlschlagende Test, dann der Code (TDD).
+- **Der Byte-Waechter** `apps/web/tests/contracts/bytes.spec.js` laeuft ueber jeden
+  Export jedes Vertrags. Er liest den Ordner `contracts/` selbst aus, findet eine
+  neue Datei also allein. Von Hand gepflegt sind **drei** Stellen, nicht zwei:
+  `ENTRIES` (die benannten Eingaenge), `CALLABLES` (die Anzahl) und `CLASSES` (die
+  ausgefuehrten Klassen). Wer eine Klasse mit Methoden exportiert, faellt sonst in
+  die `noInstance`-Zusicherung. Die neuen Zahlen **misst** man: der Waechter meldet
+  die tatsaechliche, wenn die eingetragene nicht stimmt.
 - **Dateirechte und Pfade:** Alle Pfade in diesem Plan sind relativ zum Repo-Stamm.
 
 ---
@@ -540,12 +547,24 @@ async function start() {
       + "oder neuer benutzen.");
     return;
   }
-  const res = await fetch("/config.json", { cache: "no-store" });
-  if (!res.ok) {
+  // NICHT res.json(). /config.json traegt die Adressen der API-Server, den
+  // ANKER der Vertrauensliste (seq und hash, die Wurzel fuer trust.open) und
+  // rp.id, das an navigator.credentials.get geht. Das sind Eingaben von
+  // aussen und laufen durch den Vertrag: Bytes, json.decode mit Budget, dann
+  // jedes Feld gegen seine Grammatik. Was nicht besteht, bekommt denselben
+  // Satz wie eine fehlende Einrichtung - der Mensch soll nicht raten muessen
+  // und nichts ueber die Form erfahren.
+  //
+  // Und nicht auf window: eine globale Veraenderliche ist eine Stelle mehr,
+  // die zwischen der Pruefung und dem Lesen jemand anders beschreiben kann.
+  // Weiterreichen statt ablegen.
+  let config;
+  try {
+    config = await loadConfig();
+  } catch {
     message("NGC ist nicht eingerichtet.");
     return;
   }
-  window.__ngcConfig = await res.json();
   message("NGC wird geladen …");
 }
 
@@ -2213,7 +2232,7 @@ git commit -m "Add password keys and passkeys" --trailer "Co-Authored-By: Claude
   `e2ePrologue(controllerID, app, service, action, params, task) -> Promise<Uint8Array>`,
   `newKeypair() -> Promise<{privateKey, publicRaw}>`,
   `class HandshakeKK` mit `writeMessage1()`, `readMessage2(msg)`, `readMessage1(msg)`,
-  `writeMessage2()`, `split() -> {send, recv}`,
+  `writeMessage2()`, `split() -> Transport (nur EINMAL aufrufbar, der zweite Aufruf wirft)`,
   `class Transport` mit `seal(plain)` und `open(cipher)`.
 - Consumes: `b64.js`.
 
@@ -3234,12 +3253,26 @@ export const validSetupCode = (s) => typeof s === "string" && CODE.test(s);
 
 // normalizeSetupCode turns what someone typed into the canonical code: spaces,
 // tabs and '-' are dropped, a-z becomes upper case, then exactly 20 characters
-// of the alphabet without I, O, 0 and 1, in groups of five.
+// of the alphabet without I, O, 0 and 1, in groups of five. null where that is
+// not possible, including for anything that is no string at all.
+//
+// It walks UTF-16 units and folds a-z alone, which is Go's byte loop
+// character for character: every unit of a character outside ASCII is 0x80 or
+// above and is refused here, as every one of its UTF-8 bytes is there. The
+// task brief wrote this loop over code points with toUpperCase() instead, and
+// that one differs in exactly one place - measured over every code point
+// outside ASCII, surrogates apart: U+017F, the long s 'ſ', upper-cases to a
+// single "S", so the brief's loop makes "ſBCDE-FGHJK-MNPQR-STUVW" the code
+// "SBCDE-FGHJK-MNPQR-STUVW" while Go's NormalizeSetupCode, run on the same
+// input, answers false. A shell that takes what the API's own normalizer
+// would not is a second rule, so this one stays Go's.
 export function normalizeSetupCode(s) {
+  if (typeof s !== "string") return null;
   const c = [];
-  for (const ch of s) {
-    if (ch === " " || ch === "\t" || ch === "-") continue;
-    const u = ch.toUpperCase();
+  for (let i = 0; i < s.length; i++) {
+    let u = s[i];
+    if (u === " " || u === "\t" || u === "-") continue;
+    if (u >= "a" && u <= "z") u = String.fromCharCode(s.charCodeAt(i) - 32);
     if (c.length === 20 || !/^[A-HJ-NP-Z2-9]$/.test(u)) return null;
     c.push(u);
   }
@@ -3719,14 +3752,22 @@ export function encodeOpen(o) {
 CLOSE, Codes und Meldungen:
 
 ```js
+// `__proto__: null`, damit die Tabelle nichts erbt. Hier wird zwar nur mit
+// festen Namen zugegriffen, aber eine Codetabelle mit Erbschaft ist die Form,
+// die eine Datei weiter zur Lücke wurde (siehe MESSAGES).
 export const CODES = {
+  __proto__: null,
   FORBIDDEN: "E_FORBIDDEN", UNREACHABLE: "E_UNREACHABLE", EXIT: "E_EXIT", TIMEOUT: "E_TIMEOUT",
   LIMIT: "E_LIMIT", PROTOCOL: "E_PROTOCOL", CONFIRM: "E_CONFIRM", LICENSE: "E_LICENSE",
   NOTFOUND: "E_NOTFOUND", VERIFY: "E_VERIFY", INTERNAL: "E_INTERNAL", TOOLARGE: "E_TOOLARGE",
   LOGIN: "E_LOGIN", LOCKED: "E_LOCKED",
 };
 
-const MESSAGES = {
+// Eine Map, kein Objektliteral: bei `{…}` ist `"toString" in MESSAGES` wahr und
+// `MESSAGES["constructor"]` gibt eine Funktion zurück — der Prüfer unten hätte
+// `{"status":"error","code":"toString"}` angenommen und `message("constructor")`
+// mit einer Funktion beantwortet. Go weist beides ab. In Aufgabe 10 gemessen.
+const MESSAGES = new Map(Object.entries({
   E_FORBIDDEN: "Keine Berechtigung.",
   E_UNREACHABLE: "Dienst nicht erreichbar.",
   E_EXIT: "Dienst mit Fehler beendet.",
@@ -3741,9 +3782,9 @@ const MESSAGES = {
   E_TOOLARGE: "Zu viele Daten.",
   E_LOGIN: "Anmeldung fehlgeschlagen.",
   E_LOCKED: "Zu viele Fehlversuche. Bitte später erneut versuchen.",
-};
+}));
 
-export const message = (code) => MESSAGES[code] ?? "";
+export const message = (code) => MESSAGES.get(code) ?? "";
 
 const closeShape = S({ status: str, code: str, message: str, exitCode: P({}) });
 const closeBudget = new Budget({ size: MAX_CLOSE_PAYLOAD });
@@ -3755,7 +3796,7 @@ export function parseClose(p) {
   if (c.status === "ok") {
     if (c.code !== "") throw new BadFrame("close");
   } else if (c.status === "error") {
-    if (!(c.code in MESSAGES)) throw new BadFrame("close");
+    if (!MESSAGES.has(c.code)) throw new BadFrame("close");
   } else {
     throw new BadFrame("close");
   }
@@ -3870,7 +3911,12 @@ git commit -m "Add frames, channels and error codes" --trailer "Co-Authored-By: 
 **Interfaces:**
 - Produces: `MAX_ENTRIES = 10000`, `MAX_DIRS = 1000`, `MAX_UI_FILE = 16777216`,
   `MAX_UI_TOTAL = 67108864`, `BLOCK = 512`, `walkUI(bytes) -> [{path, size, data}]`,
-  `class UIWriter` mit `dir(path)`, `file(path, data)`, `close() -> Uint8Array`,
+  `class UIWriter` mit `dir(path)`, `file(path, data, hash?)`, `close(hash?) -> Uint8Array`,
+  **Der zweite Parameter ist der Hash aus Aufgabe 12** (`sha256Stream`), in den der
+  Schreiber alles mitschreibt, was er ausgibt. Ohne ihn kann Aufgabe 12 ein Paket
+  von 4 GiB nicht in EINEM Durchgang pruefen. Diese Zeile nannte ihn frueher nicht,
+  waehrend Aufgabe 12 ihn im Text verlangte - ein Widerspruch zwischen zwei Aufgaben,
+  genau das, was dieser Block verhindern soll.
   `class BadPackage extends Error`.
 - Consumes: `text.js` (`validPath`).
 
@@ -3930,6 +3976,11 @@ test("the size limits are checked at the header, before any data is read", async
         for (let i = 0; i < u.MAX_ENTRIES; i++) w.file("ui/f" + i, new Uint8Array(0));
         u.walkUI(w.close());
       }),
+      // ACHTUNG, diese zwei Faelle messen nicht, was ihr Name sagt: der
+      // UIWriter haelt dieselben Grenzen und wirft schon beim Schreiben, also
+      // wird walkUI nie gerufen und fails() faengt den Wurf des SCHREIBERS.
+      // Gemessen wird damit die Schreibseite, nicht die Leseseite. Bau die
+      // Bloecke roh und mit eigener Pruefsumme, so wie Gos TestWalkUILimits.
       entriesOver: fails(() => {
         const w = new u.UIWriter();
         for (let i = 0; i <= u.MAX_ENTRIES; i++) w.file("ui/f" + i, new Uint8Array(0));
@@ -4170,6 +4221,17 @@ test("the shell computes the UI hash of a package itself", async ({ shell }) => 
   expect(got.every((g) => g.pkgHash)).toBe(true);
 });
 
+// ACHTUNG: jeder dieser Angriffe steht unten als ERSTER Eintrag des Archivs und
+// wird deshalb von der Regel "Manifest zuerst" abgelehnt, nicht von seiner eigenen.
+// Gemessen: mit dieser Fassung bleibt der Lauf gruen, auch wenn man die
+// Typeflag-Pruefung ganz entfernt - vier der fuenf Faelle messen nichts.
+// Stell jedem Angriff einen annehmbaren Rahmen voran (Manifest zuerst), damit er
+// bis zu seiner Regel kommt.
+//
+// Und der Sparse-Fall hat die falsche Gestalt: `flag 0x53` ('S') ist die alte
+// GNU-Form. Gefaehrlich ist heute ein GEWOEHNLICHER '0'-Eintrag mit einem
+// PAX-Satz `GNU.sparse.*` - so steht es weiter unten auch im Text. Beide Formen
+// gehoeren geprueft.
 test("a package with a link, an absolute path or a sparse entry is refused", async ({ shell }) => {
   const out = await shell.evaluate(async () => {
     const p = await import("/assets/js/contracts/pack.js");
@@ -4336,7 +4398,11 @@ test("a catalog is only taken from its own store, and never an older one", async
     return {
       good: await ok(d.catalog, 0),
       rollback: await ok(d.catalog, d.catalogLastSeq + 1),
-      rejects: await Promise.all(d.catalogRejects.map((r) => ok(r.catalog, 0))),
+      // Jeder Ablehnungsfall bringt sein eigenes lastSeq mit: "older than the
+      // last one seen" traegt 6 und MUSS bei 0 angenommen werden. Mit der 0 ist
+      // dieser Test gegen einen Pruefer ganz ohne Rueckroll-Pruefung gruen -
+      // also ein Test, der fuer seine eigene Sache nicht scheitern kann.
+      rejects: await Promise.all(d.catalogRejects.map((r) => ok(r.catalog, r.lastSeq))),
       otherStore: await ok(d.catalog, 0) && !(await (async () => {
         try {
           await c.verifyCatalog(env(d.catalog), { ...store, id: "other" }, 0);
@@ -4406,11 +4472,16 @@ spielt niemand zurück.
 
 `parseManifest(bytes)` liest das Manifest mit `manifestBudget` und prüft es wie
 `store.ParseManifest`: `id` ein `validAppID` ohne Kern-Präfix, `name`/`publisher`/`version`,
-`icon` und `ui.entry` je ein `validPath`, `ui.width`/`ui.height` 0 oder 100 bis 4096, Aktionen mit
+`icon` und `ui.entry` je ein `validPath`, `ui.width`/`ui.height` 0 oder 200 bis 4000, Aktionen mit
 `validName`, `title` als `validText`, `service` aus den Diensten, `timeout` 0 bis 3600, Dienste mit
 `validName` und `command` mit 1 bis 32 Teilen, davon der erste absolut, `start` leer oder eine
-Aktion, `runtime` leer oder `podman`, `needs` wie im Katalog, `cpu` 0 bis 64000, `memory` 0 bis
-262144, `minNgc` leer oder `validVersion`.
+Aktion, `runtime` leer oder `podman`, `needs` wie im Katalog, `cpu` 0 oder 100 bis 64000, `memory`
+0 oder 16 bis 65536, `minNgc` leer oder `validVersion`.
+
+Diese drei Grenzen standen hier weiter als in Go und sind gegen
+`shared/store/manifest.go` berichtigt (`size` und die Zeile fuer `cpu`/`memory`).
+Eine Shell, die annimmt, was der Parser der API ablehnt, waere eine zweite Regel;
+der eingefrorene Vertrag gilt.
 
 Dazu die kleinen Regeln:
 
@@ -5429,6 +5500,56 @@ git commit -m "Add the session link with Noise and flow-controlled channels" --t
 
 ---
 
+### Task 17b: Der Adapter – die echte Leitung dort, wo die Attrappe steht
+
+**Eingeschoben, nicht umnummeriert.** Diese Aufgabe stand nirgends im Plan und
+ist beim Bauen von Aufgabe 18 aufgefallen: Anmeldung, Sitzung und
+Vertrauensliste sind echt, **der Desktop isst weiter die Attrappe**, und die
+frisch geöffnete Leitung wird in `main.js` gleich wieder geschlossen. Das ist
+die eigentliche Ablösung von `shell/fake-link.js`.
+
+**Files:**
+- Create: `apps/web/public/assets/js/net/world.js`
+- Modify: `apps/web/public/assets/js/shell/main.js`
+- Delete (am Ende, erst wenn nichts mehr daran hängt):
+  `apps/web/public/assets/js/shell/fake-link.js`
+- Test: `apps/web/tests/shell/world.spec.js`
+
+**Interfaces:**
+- Produces: `realWorld({config, anchor, session, link}) -> {link, trust, session,
+  releaseKey}` — dieselbe Form, die `fakeWorld()` heute liefert, damit
+  `startDesktop` keine Zeile ändert.
+- Der `link` darin bietet **genau die Oberfläche der Attrappe**:
+  `call(app, service, name, params, opts)`, `open(app, service, name)`,
+  `onNotice(fn)`.
+- Consumes: `net/link.js`, `net/channel.js`, `shell/trustlist.js`, `core.js`.
+
+**Der Kern in einem Satz:** `net/channel.js` spricht in Aktionen
+(`call(link, action, {…})`, `sendIn`, `receiveOut`, `openE2E`), die Oberflächen
+sprechen in `(app, service, name)`. Der Adapter schlägt die Zeile in
+`core.ACTIONS` nach und wählt den Weg **nach der Spalte `flow`** — nicht nach
+einer eigenen Liste, die neben der Tabelle verrottet.
+
+**Was gemessen sein muss:**
+
+- Jede Aktionszeile, die eine Oberfläche heute benutzt, kommt über den Adapter
+  am selben Ziel an wie über die Attrappe. Nicht behaupten: **den Vergleich
+  fahren**, Zeile für Zeile.
+- `onNotice` liefert die Steuerhinweise der echten Leitung, und
+  `trust.refresh(seq)` wird davon wirklich angestoßen.
+- `main.js` schließt die Leitung **nicht** mehr, und der Desktop steht mit
+  echten Daten. Das ist der Punkt, an dem die Zeile
+  `const trust = await startTrust({ anchor, installation, link });` hineingeht.
+- **Erst wenn nichts mehr daran hängt**, fällt `fake-link.js` weg. Solange ein
+  Fall sie braucht, bleibt sie — ein Baum, der nicht baut, ist schlimmer als
+  eine Attrappe, die benannt ist.
+
+**Warum das teuer werden kann, vorher gesagt:** Die Gegenstelle beantwortet
+heute fünf Kern-Aktionen, die Attrappe zwei Dutzend. Rund hundert Fälle in
+zwölf Dateien hängen an der Attrappe. Diese Aufgabe darf deshalb in Schritten
+gehen — aber jeder Schritt lässt die Mappe grün, und welche Fälle noch an der
+Attrappe hängen, steht am Ende im Bericht.
+
 ### Task 18: Anmeldung – Passwortschlüssel, TOTP und Passkeys
 
 **Files:**
@@ -5969,9 +6090,14 @@ test("a window opens, moves, maximizes and closes", async ({ shell }) => {
   const win = shell.locator(".win", { hasText: "Rechner" });
   await expect(win).toBeVisible();
   const before = await win.boundingBox();
-  await shell.locator(".win .titlebar", { hasText: "Rechner" }).hover();
+  // hover() setzt die Maus in die MITTE der Titelleiste, nicht an before.x.
+  // Ein absolutes move(before.x + 120, ...) zieht das Fenster deshalb nach
+  // LINKS, und die Zusicherung unten kann nie wahr werden. Gemessen. Es muss
+  // vom Griff aus gerechnet werden, nicht vom linken Fensterrand.
+  const grip = await shell.locator(".win .titlebar", { hasText: "Rechner" }).boundingBox();
+  await shell.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
   await shell.mouse.down();
-  await shell.mouse.move(before.x + 120, before.y + 80);
+  await shell.mouse.move(grip.x + grip.width / 2 + 120, grip.y + grip.height / 2 + 80);
   await shell.mouse.up();
   const after = await win.boundingBox();
   expect(Math.round(after.x - before.x)).toBeGreaterThan(80);
