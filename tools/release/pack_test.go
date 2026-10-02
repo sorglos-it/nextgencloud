@@ -17,6 +17,38 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/store"
 )
 
+// stubbedSignerGlob matches every copy stubbedSigner can leave behind. It is in
+// .gitignore under the same spelling.
+const stubbedSignerGlob = "zz-sign-release-selfcheck-off-*.sh"
+
+// TestMain sweeps those copies away before and after the package runs, because
+// t.Cleanup does not run when a case is killed - measured with a blocked signer
+// and -test.timeout: the copy stayed, and before this round it was not even
+// ignored. A copy of the signer with its self-check switched off, harmlessly
+// named, in the tools folder, is exactly the thing that gets committed by
+// accident.
+func TestMain(m *testing.M) {
+	sweepStubbedSigners()
+	code := m.Run()
+	sweepStubbedSigners()
+	os.Exit(code)
+}
+
+func sweepStubbedSigners() {
+	wd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	// This file sits in tools/release/, so tools/ is one up.
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(wd), stubbedSignerGlob))
+	if err != nil {
+		return
+	}
+	for _, p := range paths {
+		os.Remove(p)
+	}
+}
+
 // repoRoot is the root of this checkout: this file sits in tools/release/.
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -615,13 +647,31 @@ func TestSignScriptLeaksNoKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the key is no base64: %v", err)
 	}
-	// The last 32 bytes of a PKCS#8 Ed25519 key are the seed.
-	if len(der) >= 32 {
-		seed := der[len(der)-32:]
-		needles[strings.ToLower(hexOf(seed))] = true
-		needles[base64.StdEncoding.EncodeToString(seed)] = true
-		needles[base64.RawURLEncoding.EncodeToString(seed)] = true
+	// The last 32 bytes of a PKCS#8 Ed25519 key are the seed. It is looked for
+	// in four spellings, because a leak does not have to arrive as PEM - and the
+	// fourth is the one a surviving mutant found:
+	//
+	//	openssl pkey -in <key> -text
+	//
+	// prints the seed as COLON-SEPARATED hex, fifteen bytes to a line. That is
+	// openssl's own output form, so it is what somebody debugging actually
+	// types, and no window of the PEM body and no plain hex matches it. Measured
+	// on a throwaway key:
+	//
+	//	priv:
+	//	    4f:1c:...:e3:
+	//	    ...
+	//
+	// The needle is therefore the colon form with every space and line break
+	// taken out, and every haystack is searched in that squeezed shape as well.
+	if len(der) < 32 {
+		t.Fatalf("the test key is %d bytes of DER, too short to hold a seed", len(der))
 	}
+	seed := der[len(der)-32:]
+	needles[hexOf(seed)] = true
+	needles[colonHexOf(seed)] = true
+	needles[base64.StdEncoding.EncodeToString(seed)] = true
+	needles[base64.RawURLEncoding.EncodeToString(seed)] = true
 
 	// Said out loud, because a scan that found nothing is worth nothing unless
 	// it is known how much it looked for.
@@ -643,32 +693,39 @@ func TestSignScriptLeaksNoKey(t *testing.T) {
 		t.Fatalf("the signer with its self-check switched off: %v\n%s", err, stubbed)
 	}
 
-	// What both runs printed, and everything they left behind.
+	// What both runs printed, and everything they left behind - EVERY file, at
+	// any depth. os.ReadDir was the second hole a surviving mutant found: it
+	// lists one level and skips folders, so a key written to out/zz/leak.pem went
+	// unseen. WalkDir closes that and the "-text" form above in one go.
 	haystacks := map[string]string{
 		"the output of the real run":    string(printed),
 		"the output of the stubbed run": string(stubbed),
 	}
-	entries, err := os.ReadDir(out)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(out, e.Name()))
+	if err := filepath.WalkDir(out, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
+			return err
 		}
-		haystacks[e.Name()] = string(b)
+		if d.IsDir() {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(out, p)
+		if err != nil {
+			rel = p
+		}
+		haystacks["file "+filepath.ToSlash(rel)] = string(b)
+		return nil
+	}); err != nil {
+		t.Fatalf("walking the release directory: %v", err)
 	}
+	t.Logf("searched %d haystacks", len(haystacks))
 	for where, hay := range haystacks {
 		for n := range needles {
-			if strings.Contains(hay, n) {
+			if holds(hay, n) {
 				t.Fatalf("%s holds a piece of the private key", where)
-			}
-			if strings.Contains(strings.ToLower(hay), n) && len(n) == 64 {
-				t.Fatalf("%s holds the private key as hex", where)
 			}
 		}
 	}
@@ -704,6 +761,13 @@ func stubbedSigner(t *testing.T) string {
 		`echo "release ok (self-check switched off for a test)" >"$work/verify.out"; true || {`, 1)
 	dst := filepath.Join(repoRoot(t), "tools",
 		fmt.Sprintf("zz-sign-release-selfcheck-off-%d.sh", os.Getpid()))
+	// The name must stay inside stubbedSignerGlob, which is what TestMain sweeps
+	// and what .gitignore holds. If it ever drifts out, the copy survives a
+	// killed run and is not ignored.
+	if ok, _ := filepath.Match(stubbedSignerGlob, filepath.Base(dst)); !ok {
+		t.Fatalf("%s does not match %s; TestMain and .gitignore would both miss it",
+			filepath.Base(dst), stubbedSignerGlob)
+	}
 	if err := os.WriteFile(dst, []byte(s), 0o644); err != nil {
 		t.Fatalf("write the stubbed signer: %v", err)
 	}
@@ -721,6 +785,64 @@ func newTestKey(t *testing.T) string {
 		t.Fatalf("genpkey: %v\n%s", err, b)
 	}
 	return key
+}
+
+// colonHexOf is the spelling "openssl pkey -text" prints, with the line breaks
+// and the indent taken out: 4f:1c:...:e3. Measured on a throwaway key, fifteen
+// bytes to a line.
+func colonHexOf(b []byte) string {
+	var out strings.Builder
+	for i, c := range b {
+		if i > 0 {
+			out.WriteByte(':')
+		}
+		out.WriteString(hexOf([]byte{c}))
+	}
+	return out.String()
+}
+
+// squeeze removes every space, tab and line break. A secret printed over several
+// lines - which is what openssl's own -text form does - is one string again
+// afterwards, and that is the shape the needles are built in.
+func squeeze(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\r', '\n', '\v', '\f':
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// holds reports whether hay carries needle - as it stands, squeezed, and in
+// either case of hex. Case is only an issue for the hex spellings; base64 is
+// case-significant, and lowering it would invent matches.
+func holds(hay, needle string) bool {
+	if strings.Contains(hay, needle) || strings.Contains(squeeze(hay), needle) {
+		return true
+	}
+	if isHexish(needle) {
+		low, up := strings.ToLower(hay), strings.ToUpper(hay)
+		n := strings.ToUpper(needle)
+		if strings.Contains(low, needle) || strings.Contains(up, n) ||
+			strings.Contains(squeeze(low), needle) || strings.Contains(squeeze(up), n) {
+			return true
+		}
+	}
+	return false
+}
+
+// isHexish answers whether a needle is one of the hex spellings, so that only
+// those are compared without regard to case.
+func isHexish(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r == ':':
+		default:
+			return false
+		}
+	}
+	return s != ""
 }
 
 func hexOf(b []byte) string {

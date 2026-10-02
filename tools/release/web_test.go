@@ -1,6 +1,7 @@
 package release
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,15 +35,39 @@ const webRef = "origin/web"
 //	git cat-file -e <any> with no safe.directory -> 128 "detected dubious ownership"
 //
 // All three are 128. So the split is made by ASKING IN AN ORDER where each step
-// can only fail for one reason, instead of reading one code three ways:
+// can only fail for one reason, instead of reading one code several ways.
 //
-//  1. "git rev-parse --git-dir" - the same guard pack-release.sh checks first.
-//     It touches no ref, so the only way it fails here is git refusing. RED.
-//  2. "git rev-parse --verify -q <ref>^{commit}" - quiet, and it leaves with 1
-//     and says nothing when the ref is unknown. That is an answer: SKIP.
-//  3. "git cat-file -e <ref>:apps/web/VERSION" - the repository is readable and
-//     the ref exists, so a failure here means this ref carries no apps/web
-//     (it is nearly empty on main). SKIP.
+// A FOURTH STATE, and it is the reason this function has four questions and not
+// three: a BROKEN repository - the ref file is there, the commit object it names
+// is not. Built on purpose in a throwaway repository (commit, then delete
+// .git/objects/<xx>/<rest>) and measured:
+//
+//	rev-parse --git-dir                -> 0    ".git"            repository opens
+//	rev-parse --verify -q main^{commit} -> 1   (no output)        LIKE AN UNKNOWN REF
+//	rev-parse --verify    main^{commit} -> 128 "Needed a single revision"
+//	rev-parse --verify    no-such^{commit} -> 128 "Needed a single revision"
+//
+// So dropping the -q does NOT separate them: an unknown ref and a broken
+// repository give the same code AND the same sentence. What does separate them is
+// asking about the NAME instead of the object, which touches no object at all:
+//
+//	rev-parse --symbolic-full-name main       -> 0   "refs/heads/main"  (even broken)
+//	rev-parse --symbolic-full-name no-such    -> 128 "unknown revision"
+//	rev-parse --symbolic-full-name <raw sha>  -> 0   (empty output, existing or not)
+//
+// Hence:
+//
+//  1. "rev-parse --git-dir" - the guard pack-release.sh checks first. It touches
+//     no ref, so a failure here is git REFUSING. RED.
+//  2. "rev-parse --symbolic-full-name <ref>" - 128 means this name is not known
+//     here. That is an answer: SKIP. A non-empty answer is a ref that exists; an
+//     empty one means git read the argument as a raw object id.
+//  3. "rev-parse --verify <ref>^{commit}" - after 2 this can only fail because
+//     the object is missing. For a REF THAT EXISTS that is a broken repository:
+//     RED. For a raw object id nothing ever claimed it is here, so: SKIP.
+//  4. "cat-file -e <ref>:apps/web/VERSION" - readable repository, resolvable
+//     commit, so a failure means this commit carries no apps/web (it is nearly
+//     empty on main). SKIP.
 func refPresent(t *testing.T, root string) bool {
 	t.Helper()
 	run := func(args ...string) ([]byte, error) {
@@ -59,12 +84,26 @@ func refPresent(t *testing.T, root string) bool {
 			"  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=\"$PWD\"\n"+
 			"Never set safe.directory globally. git said: %v\n%s", root, err, out)
 	}
-	// 2. Is the ref known? Quiet, and 1 with no output when it is not.
-	if _, err := run("rev-parse", "--verify", "-q", webRef+"^{commit}"); err != nil {
+	// 2. Is the NAME known here? This asks the ref store, not the objects.
+	name, err := run("rev-parse", "--symbolic-full-name", webRef)
+	if err != nil {
 		return false
 	}
-	// 3. Does that ref carry the web interface?
-	_, err := run("cat-file", "-e", webRef+":apps/web/VERSION")
+	isRef := len(bytes.TrimSpace(name)) > 0
+	// 3. Can the commit be resolved? After 2 the only reason it cannot is a
+	// missing object.
+	if out, err := run("rev-parse", "--verify", webRef+"^{commit}"); err != nil {
+		if !isRef {
+			// webRef was a raw object id, and nothing ever promised this clone
+			// holds it. Not measured here.
+			return false
+		}
+		t.Fatalf("%s is a ref that exists (%s) but its commit cannot be resolved, so this\n"+
+			"repository is BROKEN - and that is an error, not a skip. Nothing here is\n"+
+			"measured. git said: %v\n%s", webRef, bytes.TrimSpace(name), err, out)
+	}
+	// 4. Does that commit carry the web interface?
+	_, err = run("cat-file", "-e", webRef+":apps/web/VERSION")
 	return err == nil
 }
 
@@ -98,14 +137,25 @@ func TestRealArchiveIsClosed(t *testing.T) {
 		t.Errorf("%s imports %q, which no import map resolves", b.From, b.To)
 	}
 
+	// BOTH free-note lists are held against the archive, not just extra-web.txt.
+	// A line naming a file that is not in the archive any more is a line nobody
+	// rechecks, and the lists are exactly the place where that rots unnoticed:
+	// they are the part of this check that is NOT derived from anything. Whoever
+	// writes "every" builds the loop - so the loop runs over both.
 	extra := lines(t, "extra-web.txt")
 	open := lines(t, "open-web.txt")
-	for _, rel := range extra {
-		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
-			t.Errorf("extra-web.txt names %s, which %s does not carry", rel, webRef)
-		}
-		if slices.Contains(got.Reached, rel) {
-			t.Errorf("extra-web.txt names %s, but a reference reaches it; take the line out", rel)
+	for name, list := range map[string][]string{
+		"extra-web.txt": extra,
+		"open-web.txt":  open,
+	} {
+		for _, rel := range list {
+			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+				t.Errorf("%s names %s, which %s does not carry any more; the line is stale",
+					name, rel, webRef)
+			}
+			if slices.Contains(got.Reached, rel) {
+				t.Errorf("%s names %s, but a reference reaches it; take the line out", name, rel)
+			}
 		}
 	}
 
@@ -133,11 +183,6 @@ func TestRealArchiveIsClosed(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("WalkDir: %v", err)
-	}
-	for _, rel := range open {
-		if slices.Contains(got.Reached, rel) {
-			t.Errorf("open-web.txt still asks about %s, but a reference reaches it now; answer the question and take the line out", rel)
-		}
 	}
 	if len(known) != 0 {
 		t.Logf("still open, see tools/release/open-web.txt:\n  %s", strings.Join(known, "\n  "))
