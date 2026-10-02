@@ -2334,3 +2334,55 @@ Wegwerf-Arbeitsbaum an** (`git worktree add`), fährt dort, prüft danach den
 Baum-Hash und entfernt ihn wieder. Ungemessen zu bleiben ist kein erlaubter
 Ausweg — zweimal ist in dieser Sitzung ein Plan an einer ungefahrenen Zahl
 gescheitert.
+
+## Berichtigung: eine Frist hinter der blockierenden Zeile ist unerreichbar
+
+Weiter oben steht meine Regel, ein Fall, der haengen kann, brauche seine
+eigene Zeitwache — `time.After` neben dem `<-done` im `select`. **Gemessen am
+02.10.2026: genau das aendert nichts.** Sechs plausible Schlossfehler, alle
+sechs hingen weiter.
+
+Die Ursache ist einfach und sie entwertet den Vorschlag: die Schleife rief
+`Spend(1)` **vor** dem `select` und blockierte **in** `Spend`. Eine Frist, die
+man erst durch die blockierende Zeile hindurch erreichen muss, wird nie
+erreicht.
+
+**Richtig ist: der Messteil laeuft in einer eigenen Goroutine, und der Fall
+selbst wartet nur** — `select { case <-finished: … case <-time.After(30*time.Second): … }`,
+Fehler ueber einen gepufferten Kanal. Danach fielen sechs von sechs als
+benannter FAIL, haengend keiner.
+
+Die Regel bleibt also richtig („ein Fall, der haengen kann, braucht eine
+Frist"), **mein Rezept dafuer war falsch**. Eine Wache gehoert um das Warten,
+nicht neben die Arbeit.
+
+Und die Grenze, die dabei herauskam, gehoert dazu: gegen das **ganze Paket**
+haengt es weiter, weil ein anderer Fall dieselben Funktionen in seiner eigenen
+Goroutine ohne Frist ruft — ein gehaltenes Schloss blockiert jeden Aufrufer.
+Sieben Faelle demselben Geruest zu unterwerfen waere Lesbarkeit an sieben
+Stellen fuer einen Schaden, der nur beim Mutieren auftritt. **Entschieden: die
+Messung traegt es** — je Mutant ein eigener Lauf, wie es ohnehin gilt. Und
+meine Zahl „drei Minuten je Vorkommen" war eine **gewaehlte** Zahl: mit
+`-timeout 90s` und `-run` kostet es Sekunden. Ein Strang hat mir das
+vorgerechnet, und er hatte recht.
+
+## Nach jedem Massengriff die Faelle ZAEHLEN
+
+Ein Strang hat bei einem Massengriff auf seine Testdatei **hinter der
+umgebauten Funktion abgeschnitten** — drei Faelle waren weg. Der Uebersetzer
+schwieg, `gofmt` meldete nur eine Nebenwirkung, und ein Lauf der restlichen
+Faelle war **gruen**.
+
+Gefunden hat er es daran, dass `grep -c '^func Test'` von **9 auf 6** fiel.
+
+**Ein geloeschter Fall ist genau das, was ein gruener Lauf nicht meldet.** Also
+nach jedem Griff, der mehr als eine Stelle trifft:
+
+```bash
+grep -c '^func Test' <datei>        # vorher und nachher
+go test -list '.*' ./<paket>/ | wc -l
+```
+
+Und beim Berichten die Fallzahl nennen, nicht nur „gruen". Dass dieser Strang
+seinen eigenen Fehler gemeldet hat, statt ihn zu verschweigen, ist der Grund,
+dass er in keinen Commit gelangt ist.
