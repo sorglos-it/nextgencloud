@@ -38,6 +38,39 @@ Datenbank und Recovery.
 - Auf dem ersten Linux-Server mit echtem `jq`: `TestReleaseScript` (31 Fälle, auch der mit einem
   Null-Byte) muss laufen und grün sein; bisher lief es nur mit einem Ersatz für `jq`.
 
+## Auslieferungskette ulh ↔ Release (zwingende Reihenfolge, Stand 03.10.2026)
+
+Vier Stücke hängen aneinander, und **in der falschen Reihenfolge macht jedes
+einzelne die Installation kaputt**. Gemessen, nicht geschätzt:
+
+1. **`apps/web/templates/apache-vhost.conf`** (Zweig `web`, `c5c3591`) — die
+   Vorlage, die der Server ausliefert. Sie trägt jetzt die host-weite HSTS, die
+   verengte Cipher-Liste, eigene Protokolle und `FallbackResource disabled` im
+   assets-Block.
+2. **Der Release-Packer** (Zweig `release-packer`, `61e21f0`) — er nimmt diese
+   Vorlage namentlich auf (`tools/release/extra-web.txt:30`), sie landet beim
+   Nutzer unter `/var/www/ngc/templates/apache-vhost.conf`.
+3. **Ein gebautes und unterschriebenes Release**, das dieses Stück enthält.
+4. **Der ulh-Zweig `ngc-web-kopfzeilen`** (`75c63f4`) — `ngc-web.sh` **liest**
+   die Vorlage aus dem Release, statt sich einen zweiten virtuellen Host zu
+   schreiben.
+
+**Warum die Reihenfolge Pflicht ist:** ohne 1-3 findet Schritt 4 die Datei
+nicht. Das Skript bricht dann ausdrücklich ab („Update NGC to a release that
+carries the file"), ändert nichts — **und damit kann niemand mehr einrichten.**
+Dieser ulh-Zweig allein ist also **schlechter** als der Stand davor
+(`ad5ad0f`), obwohl er ein Sicherheitsloch schließt.
+
+**Also: 1 und 2 nach `main`, dann ein Release, erst dann darf 4 zusammengeführt
+werden.** Das ulh-Repo ist öffentlich und jeder Push nach `main` erreicht per
+Auto-Update sofort alle Nutzer — Schritt 4 macht **Thomas**, nicht der Agent.
+
+**Was auf der ersten Maschine mit einem echten Apache noch zu messen ist**,
+steht als Befehlsliste in `apps/web/README.md` (neun Zeilen) und als A-D im
+Kopf der Vorlage selbst. **Befehl D zählt am meisten:** er prüft, dass eine
+fehlende Datei unter `/assets/` von Apache und nicht von PHP beantwortet wird —
+sonst stehen dort zwei `Cross-Origin-Resource-Policy`, und die Wand wirkt nicht.
+
 ## Offene Entscheidungen
 
 - **Vertragsfassung 1.2:** Was der nächste Schnitt an `shared/` tragen muss,
