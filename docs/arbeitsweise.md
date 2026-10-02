@@ -3394,3 +3394,47 @@ Zwei Dinge daraus, und das zweite ist das wichtigere:
    sieht wie ein Rueckschritt aus, obwohl es einer nach vorn ist. Die Luecke
    steht als Kommentar mit ihrer Messung an der Stelle. Ein Kommentar
    verteidigt den Fehler nicht, ein Testfall tut es.
+
+## Zwei Stellen, die dieselbe Wand setzen, koennen sie gemeinsam abschalten
+
+Am 03.10.2026 gemessen, an der Apache-Vorlage des Webinterface. Zwei Wege
+setzen `Cross-Origin-Resource-Policy: same-origin` — PHP fuer seine eigenen
+Antworten (`Page.php:65`) und der Server fuer alles unter `/assets/`. Jede
+Stelle fuer sich ist richtig. **Treffen beide auf derselben Antwort
+zusammen, sieht der Browser die Kopfzeile zweimal, und damit ist sie weder
+`same-origin` noch `same-site`: sie wirkt nicht mehr.**
+
+Dass sie zusammentreffen, entscheidet eine Direktive, die gar nicht in dem
+Block steht, um den es geht:
+
+```apache
+<Directory "/var/www/ngc/public">
+    FallbackResource /index.php     # <- hier
+</Directory>
+<Directory "/var/www/ngc/public/assets">   # erbt sie
+    Header always set Cross-Origin-Resource-Policy "same-origin"
+</Directory>
+```
+
+`/assets` liegt **unter** `public`, erbt also den Rueckfall. Eine **fehlende**
+Datei unter `/assets/` wird darum von PHP beantwortet — und PHP antwortet
+innerhalb des assets-Blocks. Genau die 404, fuer die der Block gebaut wurde,
+traegt eine Wand **weniger** als eine 404 daneben.
+
+Drei Dinge daraus:
+
+1. **Zaehle, wer eine Kopfzeile setzt, nicht ob sie gesetzt ist.** Ein Grep,
+   der „CORP ist da" bestaetigt, bestaetigt den Fehler mit.
+2. **Lies die geerbten Direktiven mit.** Ein Block sagt nicht, was in ihm
+   gilt; er sagt nur, was er hinzufuegt. Wer nur den Block liest, sieht den
+   Rueckfall nicht, der ihn umschreibt.
+3. **Der Weg aus zwei Sendern ist einer, nicht ein Ausgleich hinterher.**
+   Entschieden wurde, PHP aus diesem Fall herauszuhalten — nicht, die zweite
+   Kopfzeile vorher per `unset` wegzuraeumen. Ein `unset`+`set` haengt am
+   Zusammenspiel zweier mod_headers-Tabellen, und was von einer unmessbaren
+   Feinheit abhaengt, ist keine Wand.
+
+Und die Nebenbemerkung, die hier teuer ist: **dieselbe Doppelung ist bei CSP
+harmlos** — zwei Richtlinien werden als Schnittmenge gelesen, also strenger.
+Wer von einer Kopfzeile auf die andere schliesst, zieht aus dem harmlosen
+Fall den falschen Schluss.
