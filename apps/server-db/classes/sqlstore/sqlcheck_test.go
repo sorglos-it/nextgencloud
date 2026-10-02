@@ -32,8 +32,8 @@ import (
 // hole comes out as a failure and not as a pass.
 //
 // It reads exactly one package. TestNobodyElseUnderServerDBSpeaksToADatabase
-// draws the line around that: no other package under apps/server-db touches a
-// database without a guard of its own.
+// draws the line around that: no other directory under apps/server-db touches
+// a database without a guard of its own.
 //
 // TestTheGuardCatchesWhatSlippedPast below runs it against every package
 // under testdata/: some are written the way this store writes and have to
@@ -1715,23 +1715,33 @@ func invalidReturns(p *pkgSource, n ast.Node) []token.Pos {
 	return at
 }
 
-// atTheDatabase are the packages under apps/server-db that may touch a
+// atTheDatabase are the directories under apps/server-db that may touch a
 // database, with what holds them. The guard above reads one package; without
 // this list its promise would stop at its own directory, because a call in
 // another package of this module is not read here at all.
+//
+// The key is the directory relative to apps/server-db, with forward slashes,
+// and not the package name: a package name is not unique, so a new directory
+// carrying a name that already stands here would have walked past a list kept
+// by name. That hole was measured on 03.10.2026 - a new directory holding
+// package migrate and importing database/sql stayed green - and keying by
+// directory is what closes it. Today name and directory still say the same
+// thing; the directory is the one of the two that cannot be reused.
 var atTheDatabase = map[string]string{
-	"sqlstore":   "the guard of this file",
-	"migrate":    "checkStatement, fill and the tests beside them: it runs the statements of the migrations, and they are measured there",
-	"mariadb":    "it opens the Galera cluster over TLS and hands the connection to sqlstore; it runs no statement of its own, so the guard of this file covers every statement that reaches those nodes",
-	"migraterun": "the runner of ngc-api migrate: it picks the driver, opens the database and hands the connection to migrate, which has a guard here; the only call it makes itself is PingContext, and that carries no SQL",
-	"sqlite":     "it opens the encrypted file and sets its PRAGMAs on the driver's own connection, and since task 7 Open also applies the migrations and wraps the result as a store; it runs no statement of its own - migrate and sqlstore run theirs, and each of those two has a guard here",
+	"classes/sqlstore":   "the guard of this file",
+	"classes/migrate":    "checkStatement, fill and the tests beside them: it runs the statements of the migrations, and they are measured there",
+	"classes/mariadb":    "it opens the Galera cluster over TLS and hands the connection to sqlstore; it runs no statement of its own, so the guard of this file covers every statement that reaches those nodes",
+	"classes/migraterun": "the runner of ngc-api migrate: it picks the driver, opens the database and hands the connection to migrate, which has a guard here; the only call it makes itself is PingContext, and that carries no SQL",
+	"classes/sqlite":     "it opens the encrypted file and sets its PRAGMAs on the driver's own connection, and since task 7 Open also applies the migrations and wraps the result as a store; it runs no statement of its own - migrate and sqlstore run theirs, and each of those two has a guard here",
 }
 
 // TestNobodyElseUnderServerDBSpeaksToADatabase draws the line the guard above
-// needs. Every package under apps/server-db that imports database/sql or
-// names one of the driver's methods has to stand in atTheDatabase with the
-// reason why it is allowed to. A new package that speaks to the database
-// without a guard is a failure here, not a quiet hole.
+// needs. Every directory under apps/server-db holding a file that imports
+// database/sql or names one of the driver's methods has to stand in
+// atTheDatabase with the reason why it is allowed to. A new directory that
+// speaks to the database without a guard is a failure here, not a quiet hole,
+// and that holds whether its package name is new or one that already stands
+// in the list.
 //
 // It carries the same ban as noReflect, over every package instead of one:
 // no program file under apps/server-db outside testdata/ and vendor/ may
@@ -1763,6 +1773,11 @@ func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(root, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		dir := filepath.ToSlash(rel)
 		pkg := file.Name.Name
 		for _, imp := range file.Imports {
 			if imp.Path.Value == `"reflect"` {
@@ -1773,10 +1788,10 @@ func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
 		if !atDatabase(file) {
 			return nil
 		}
-		seen[pkg] = true
-		if _, ok := atTheDatabase[pkg]; !ok {
-			t.Errorf("%s: package %s touches a database, and nothing says what guards it; "+
-				"give it one and write it into atTheDatabase", path, pkg)
+		seen[dir] = true
+		if _, ok := atTheDatabase[dir]; !ok {
+			t.Errorf("%s: directory %s touches a database, and nothing says what guards it; "+
+				"give it one and write it into atTheDatabase under that path", path, dir)
 		}
 		return nil
 	})
@@ -1786,9 +1801,9 @@ func TestNobodyElseUnderServerDBSpeaksToADatabase(t *testing.T) {
 	if looked < 3 {
 		t.Errorf("only %d source files were read under %s", looked, root)
 	}
-	for pkg := range atTheDatabase {
-		if !seen[pkg] {
-			t.Errorf("atTheDatabase names %s, and no package of that name touches a database any more", pkg)
+	for dir := range atTheDatabase {
+		if !seen[dir] {
+			t.Errorf("atTheDatabase names %s, and no file in that directory touches a database any more", dir)
 		}
 	}
 }
