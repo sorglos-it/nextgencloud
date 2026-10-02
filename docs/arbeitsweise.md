@@ -3124,3 +3124,50 @@ neue Fehlerwert ist **auf Windows durch keinen Fall gedeckt**, weil jeder
 selbst ueberspringt. Wer die Zeile auf Windows aendert, merkt es nicht; wer sie
 auf Linux aendert, merkt es sofort. Gemessen, nicht geschlossen — beide
 Mutantenlaeufe auf Windows mit Code 0 und null roten Faellen.
+
+## Ein Kontrollmutant, der LEBEN muss — das Gegenstueck zu dem, der sterben muss
+
+Weiter oben steht: ein Pruefer setzt einen Kontrollmutanten, der sterben muss,
+damit „ueberlebt" etwas bedeutet. Am 03.10.2026 hat ein Bauer die andere
+Haelfte gebaut, und sie fehlte:
+
+**`C00` benennt nur eine lokale Variable um — und LEBT.**
+
+Damit ist bewiesen, dass die Vorrichtung nicht einfach auf alles „tot"
+antwortet. Ohne ihn waere „25 von 28 tot" auch dann dieselbe Zahl, wenn die
+Werkbank jeden Lauf rot faerbt.
+
+**Also gehoeren in jede Mutationsrunde ZWEI Kontrollen:**
+
+- eine, die **sterben** muss (ein echter Fehler) — sonst ist „ueberlebt"
+  bedeutungslos,
+- eine, die **leben** muss (eine Aenderung ohne Wirkung) — sonst ist „tot"
+  bedeutungslos.
+
+Erst mit beiden ist eine Quote eine Messung. Und derselbe Bauer hat den Satz
+dazu geliefert: **„25 von 28 liest sich weniger vollstaendig als 16 von 16"** —
+genau darum ist die zweite Zahl die ehrlichere.
+
+## Erreichbar ist genau, was die Bibliothek zurueckgibt
+
+Vier Setzer eines Verbindungstopfes, dasselbe Muster, ueber Mutanten gemessen:
+
+- `SetMaxOpenConns` — **messbar**, `sql.DBStats` gibt `MaxOpenConnections`
+  zurueck, Mutant stirbt.
+- `SetMaxIdleConns` — **messbar ueber die WIRKUNG**, `MaxIdleClosed` zaehlt sie,
+  Mutant stirbt.
+- `SetConnMaxLifetime`, `SetConnMaxIdleTime` — **nicht messbar**: die Setzer
+  gibt niemand zurueck, und die Wirkung braucht eine Verbindung, die eine bzw.
+  fuenf Minuten alt wird.
+
+**Der Satz, der daraus bleibt: erreichbar ist genau, was die Bibliothek
+zurueckgibt — alles andere braucht eine Naht, die man bauen muss.** „Geht
+nicht" heisst hier „geht nicht ohne eine Naht fuer die Uhr", und das ist ein
+anderer Satz, denn der zweite nennt den Preis.
+
+Und die Form daneben, die zweimal vorkam: wer eine Zahl prueft, prueft gegen
+die **Zahl** und nicht gegen die Konstante, die sie halten soll — aber wer eine
+**Grenze** prueft, prueft gegen den Nachbarwert, nicht gegen eine eigene
+Zahl. Die Hänger-Wache dieses Strangs vergleicht jetzt gegen `mc.Timeout` und
+`mc.ReadTimeout` aus der Konfiguration, nicht gegen `5*time.Second` — denn die
+Aussage lautet „zwischen Waehlfrist und Lesefrist", nicht „zehn Sekunden".
