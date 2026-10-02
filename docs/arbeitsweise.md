@@ -2682,3 +2682,60 @@ Dazu zwei Zaehlregeln aus derselben Runde, die ich uebernehme:
 - **Ein Mutant, der per Panik abbricht, laesst Faelle ungelaufen** — hier 9
   von 17. Tot bleibt tot, aber die Zahl gehoert daneben, sonst sieht der Lauf
   wie ein Uebersprung aus.
+
+## Berichtigung: eine Textsuche ueber Quelltext ist ein LINTER, kein Test
+
+Weiter oben habe ich die Quelltext-Schleife als den richtigen Weg fuer ein
+„jede" gelobt. Sie ist es nicht, und der Pruefer hat es gemessen: eine ueber
+`-overlay` eingesetzte **zweite** GRANT-schreibende Funktion laesst den Fall
+**gruen**. Die Schleife prueft nicht das gebaute Programm, sie prueft die
+Dateien auf der Platte.
+
+Sechs gemessene blinde Flecken, und der erste ist bitter:
+
+1. **Ein mehrzeiliges Composite-Literal ist unsichtbar.** `gofmt` richtet die
+   Schluessel aus und schreibt `Type:    wire.TypeGrant`; die Nadel hat ein
+   einzelnes Leerzeichen. **Und `tools/check.sh` erzwingt genau diese Form** —
+   unser eigenes Pruefeter baut das Loch.
+2. Eine Feldzuweisung (`f.Type = wire.TypeGrant`) entgeht ihr.
+3. Eine Closure nach der erlaubten Funktion wird dieser zugerechnet, die Zahl
+   bleibt 1, also gruen.
+4. Der Kommentar-Streicher schneidet am ersten `//` **auch im String**, also
+   verschwindet ein Treffer hinter `"wss://x"`.
+5. Ein Methodenwert (`.Reserve` ohne Klammern) entgeht ihr.
+6. Eine Rumpf-Pruefung ist schon durch `_ = "s.Close(ctx,"` erfuellt, ohne
+   dass irgendetwas passiert.
+Dazu nimmt `Glob("*.go")` auch Dateien, die ein Build-Tag ausschliesst.
+
+**Also, in dieser Reihenfolge:**
+
+1. **Baue den Satz STRUKTURELL.** Ist der Griff nicht oeffentlich, kann
+   ausserhalb niemand schreiben, und im Paket gibt es genau einen Weg — dann
+   haelt der **Uebersetzer** den Satz, und kein `gofmt` hebt ihn aus. Das ist
+   kein Test, das ist eine Bauart, und sie ist mehr wert als jede Schleife.
+2. Geht das nicht vollstaendig, nimm **`go/ast`** statt Textsuche. Ein Baum
+   sieht das mehrzeilige Literal, die Feldzuweisung und den Methodenwert, und
+   er sieht keine Zeichenkette in einem String.
+3. **Und in jedem Fall einen Wirkungs-Fall daneben.** Ein Linter sagt, wie der
+   Code aussieht; ob er das Richtige TUT, sagt nur eine Messung.
+
+Eine Schleife ueber Quelltext darf also im Satz stehen — aber nie als der
+einzige, der ihn haelt.
+
+## Ein Fall, der benannt faellt, kann den Paketlauf trotzdem mitnehmen
+
+Meine Berichtigung von heute mittag (Wache um das Warten, nicht neben die
+Arbeit) ist richtig und reichte nicht. Gemessen am selben Paket: der
+reparierte Fall **faellt benannt in 10,00 s** — und der Paketlauf stirbt
+danach doch, mit `panic: test timed out after 2m0s`, weil ein **anderer** Fall
+dieselbe Funktion mit dem gehaltenen Schloss ruft und 1m50s haengt.
+
+Schlimmer: die **Nachbarzeile** (`Count` ohne ihr `defer Unlock`) gibt gar
+keinen benannten Fall, nur den Haenger — weil in jenem Fall der Aufruf **vor**
+der Frist steht.
+
+**Die Wache gehoert also in JEDEN Fall, der eine Funktion mit Schloss ruft,
+nicht nur in den, der das Schloss prueft.** Ein einziger ungewachter Aufruf
+reicht, um das Protokoll aller anderen zu loeschen. Und wer „der Haenger ist
+behoben" berichtet, hat es an EINEM Fall gemessen — zu berichten ist der
+**Paketlauf**.
