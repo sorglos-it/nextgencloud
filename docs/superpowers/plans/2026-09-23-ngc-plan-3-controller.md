@@ -136,7 +136,7 @@ als etwa 20 Dateien verlangt. Tests liegen neben dem Code.
 **Interfaces:**
 - Produces: `node.Main(version string, args []string, stdout, stderr io.Writer) int` – der ganze
   Einstieg; `node.Options{Config string, Pair string, Arch string}`. Kommandos: ohne Argument
-  laufen (später Aufgabe 18), `-version`, `pair -code <Kopplungscode>`, `terminal`, `hold`,
+  laufen (später Aufgabe 18), `-version`, `pair` (fragt den Kopplungscode ab, nie als Argument), `terminal`, `hold`,
   `image -arch <arch> -out <datei>`.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -602,7 +602,7 @@ git commit -m "Keep and advance the trust list from the pinned anchor"
 - Produces: `pairing.Do(ctx context.Context, in pairing.Input) (pairing.Result, error)`;
   `pairing.Input{Code string, Name string, Roles []string, Noise noise.DHKey, Client *http.Client}`;
   `pairing.Result{APIs []config.APIRef, Anchor trust.Anchor}`;
-  `pairing.Show(code tunnel.PairCode, noisePub []byte) string` – die zwei Zeilen, die ulh und die
+  `pairing.Show(anchor trust.Anchor, noisePub []byte) string` – die zwei Zeilen, die ulh und die
   Shell vergleichen.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -1202,16 +1202,19 @@ Erwartet: FAIL.
 Ausführen: `go test ./apps/server-controller/classes/e2e/`
 Erwartet: PASS.
 
-- [ ] **Step 5: Fuzz-Test für die inneren Nachrichten**
+- [ ] **Step 5: Fuzz-Ziel für die inneren Nachrichten**
 
-```go
-func FuzzInner(f *testing.F) {
-	f.Add([]byte{1})
-	f.Fuzz(func(t *testing.T, b []byte) { _, _ = wire.ParseE2E(b, false) })
-}
-```
+Ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
 
-Zusätzlich ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
+**Nicht** zusätzlich ein Ziel, das nur `wire.ParseE2E(b, false)` ruft und nichts prüft. Genau das
+stand hier bis zum 24.09.2026, und die Prüfung von Aufgabe 9 hat es gemessen: es kann für dieses
+Paket **nie rot werden** — in keiner von 21 Mutationen schlug es an. `shared/wire` hat mit
+`FuzzParseE2E` längst ein Ziel mit echtem Orakel; ein zweites ohne Zusicherung kostet Rechenzeit
+und täuscht Abdeckung vor.
+
+Die Regel dahinter, sie gilt für jedes Fuzz-Ziel in diesem Plan: **ein Ziel, das nichts zusichert,
+bewacht nichts.** Entweder prüft der Rumpf eine Eigenschaft, oder das Ziel gehört dorthin, wo die
+Eigenschaft geprüft werden kann.
 
 - [ ] **Step 6: Prüfen und committen**
 
@@ -1389,6 +1392,18 @@ Erwartet: FAIL.
   `config.RunDir + "/env"` (tmpfs), Modus 0600, wird nach dem Start gelöscht. So steht
   `NGC_PARAMS` **nie** in `/proc/*/cmdline` und nie im Log.
 - `Stop` nutzt `--time 10`, danach `kill`.
+
+> **Berichtigt am 01.10.2026.** Von diesen zwei Sätzen — der Env-Datei, die
+> „nach dem Start gelöscht" wird, und `Stop` mit „danach `kill`" — weicht der
+> Code der Aufgabe 11 ab, **mit Begründung an der Stelle selbst**
+> (`apps/server-controller/classes/runtime/`). Der Strang hat beides gemessen
+> und als Planfrage gemeldet; die Prüfung hat angemerkt, dass es in keiner
+> Abweichungsliste stand.
+>
+> **Wer hier baut, liest die Begründung im Code, nicht diese zwei Sätze.** Ich
+> schreibe den richtigen Wortlaut hier bewusst **nicht** hinein, weil ich ihn
+> nicht gemessen habe — und ein Plansatz, den der Koordinator sich ausdenkt,
+> wird vom Nächsten nicht mehr nachgeprüft.
 
 - [ ] **Step 4: `runtime.ImageTag` schreiben**
 
