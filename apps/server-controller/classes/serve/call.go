@@ -2,11 +2,22 @@
 // the container of its app and answers with the one CLOSE that run ended
 // with.
 //
-// Nothing of what a call was given reaches the log of this controller.
+// Nothing of what a call was given is written by this controller itself.
 // NGC_PARAMS carries whatever the user typed, so the environment travels in a
 // file under config.RunDir and never in an argument (runtime.Exec.EnvFile),
 // and the only thing of a call this file hands a logger is logKeys - three
 // strings, built in one place, with no way to carry Params along.
+//
+// That is not the same as "it cannot reach the log", and the difference
+// matters to whoever writes a service: contract V3 asks for the stderr of the
+// program, and this package writes it, up to service.MaxStderr bytes of it
+// (see RunService). The program has NGC_PARAMS in its environment, so a
+// program that writes its environment, or its parameters, or the text of an
+// error that quotes them, puts them in the log of this server itself.
+// Measured: shared/testdata/service/echo.sh writes NGC_APP, NGC_SERVICE,
+// NGC_ACTION and NGC_USER to stderr, and a case here reads all four back out
+// of the log. A service keeps its secrets off its own stderr, or it does not
+// keep them.
 
 package serve
 
@@ -32,9 +43,11 @@ import (
 // EnvFile from (runtime.Exec.EnvFile) and a tmpfs, so no copy of NGC_PARAMS
 // outlives a restart.
 //
-// Only a test moves it, to a directory it may write in; it is one variable
-// for the whole package, so no case that moves it may run in parallel with
-// another.
+// Only a test moves it, to a directory it may write in. It is one variable for
+// the whole package, so two cases that move it at the same time would measure
+// against each other; nothing in this file can stop that, so the test side
+// stops it instead - envHere refuses to move a directory that is already
+// moved, which is what a second case in parallel would be doing.
 var envDir = config.RunDir
 
 // CallInput is one run of a service program.
@@ -202,10 +215,10 @@ func limit(d time.Duration, stream bool) time.Duration {
 // the call was given, NGC_PARAMS and all, and it lies in a directory the apps
 // of this server have theirs in too.
 //
-// What this function cannot do is give the file to the app's user, and the
-// engine runs podman as that user and has to read it (runtime.Exec.EnvFile).
-// CallInput names no uid, so nothing here can chown it - see the report of
-// task 13.
+// The owner is not this function's to set and does not have to be: the engine
+// gives the file to the app's user itself, out of the user database it reads
+// by container name (runtime.Podman.Exec). Only the mode is the caller's,
+// because only the caller knows that this is the one copy.
 func writeEnv(env []string) (string, error) {
 	var b bytes.Buffer
 	for _, e := range env {
@@ -216,10 +229,7 @@ func writeEnv(env []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// O_EXCL, so this call never writes into a file that was already there:
-	// the name is random, and a name that is taken is a reason to stop and
-	// not to overwrite.
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := createEnv(name)
 	if err != nil {
 		return "", err
 	}
@@ -233,6 +243,15 @@ func writeEnv(env []string) (string, error) {
 		return "", err
 	}
 	return name, nil
+}
+
+// createEnv makes the one file of a call and nothing else. O_EXCL, so this
+// never writes into a file that was already there: the name is random, and a
+// name that is taken means something else is using it - another call of the
+// same app, or someone who guessed. Overwriting it would put the parameters of
+// one call where another call reads its own.
+func createEnv(name string) (*os.File, error) {
+	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 }
 
 // envName is the path of one environment file. The random half is what keeps
@@ -292,11 +311,16 @@ func (r *ring) Write(p []byte) (int, error) {
 // bytes is what the ring held when the call ended.
 func (r *ring) bytes() []byte { return r.b }
 
-// logKeys is everything of a call that may be written. Params is not in it
-// and cannot get in: the struct holds three strings, keysOf is the only thing
-// that builds one, and logStderr takes nothing else. So "NGC_PARAMS never
-// reaches the log" is not a rule a reader has to keep here - there is no
-// argument to break it with.
+// logKeys is everything of a call that this package writes by itself. Params
+// is not in it and cannot get in: the struct holds three strings, keysOf is
+// the only thing that builds one, and logStderr takes no second part of a
+// call. So no line of this package has to remember not to write Params -
+// there is no argument to write it with.
+//
+// What logStderr does take is text, and that text is the program's own
+// stderr. Whatever the program wrote there goes out with these three, so this
+// barrier holds this package to its own words and says nothing about what the
+// app says about itself (see the head of this file).
 type logKeys struct{ app, service, action string }
 
 // keysOf picks those three out of a call.

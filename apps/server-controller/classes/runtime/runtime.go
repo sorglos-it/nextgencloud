@@ -132,10 +132,15 @@ type Exec struct {
 	// /proc/*/cmdline and in no log.
 	//
 	// It has to lie under config.RunDir, which the engine refuses otherwise:
-	// removing it happens as this process, and this process is root. Two things
-	// about it the engine cannot see and the caller owns: that the file belongs
-	// to the app's user - podman runs as that user and has to read it - and that
-	// its mode is 0600, because it is the only copy on the machine.
+	// removing it happens as this process, and this process is root.
+	//
+	// One thing about it the engine cannot see and the caller owns: its mode,
+	// which is 0600, because the file is the only copy on the machine. The
+	// owner is not that thing - the engine gives the file to the app's user
+	// itself, because podman runs as that user and has to read it, and the
+	// engine looks that user up by the container name anyway (Podman.Exec). An
+	// earlier wording here said the engine could not see the owner, and that
+	// sentence sent a caller looking for a uid it has no way to get.
 	EnvFile string
 	// Stdin, Stdout and Stderr are the ends of the call. Without Stdin the
 	// command gets no open standard input in the container.

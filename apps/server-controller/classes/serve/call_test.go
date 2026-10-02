@@ -14,6 +14,7 @@ import (
 	goruntime "runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,15 +33,27 @@ const echoScript = "../../../../shared/testdata/service/echo.sh"
 // without padding.
 var callUser = enc.B64.EncodeToString(bytes.Repeat([]byte{7}, 16))
 
+// envMoved says that a case holds envDir right now. It is what keeps the one
+// package variable from being a trap for whoever adds the next case: a second
+// case that moves it while the first still holds it is exactly what
+// t.Parallel() would bring about, and it stops the run instead of quietly
+// measuring against the wrong directory.
+var envMoved atomic.Bool
+
 // envHere moves the directory of the environment file into one this process
-// may write in and gives it back. No case that calls it may run in parallel
-// with another: envDir is one variable for the whole package.
+// may write in and gives it back.
 func envHere(t *testing.T) string {
 	t.Helper()
+	if !envMoved.CompareAndSwap(false, true) {
+		t.Fatal("another case holds envDir: no case in this package may run in parallel")
+	}
 	old := envDir
 	dir := t.TempDir()
 	envDir = dir
-	t.Cleanup(func() { envDir = old })
+	t.Cleanup(func() {
+		envDir = old
+		envMoved.Store(false)
+	})
 	return dir
 }
 
@@ -645,5 +658,215 @@ func TestAServiceCallWiredWrongReachesNoEngine(t *testing.T) {
 				t.Fatalf("the engine was called %d times", e.calls)
 			}
 		})
+	}
+}
+
+func TestInputCutOffEndsTheService(t *testing.T) {
+	needShell(t)
+	envHere(t)
+	// What the service would do if it ran on to its own end. The call is cut
+	// off a moment after it started, so this file must never appear: a channel
+	// somebody dropped may not leave a program of an app running for the hour
+	// a time limit allows.
+	after := filepath.Join(t.TempDir(), "ran-on")
+	done := make(chan wire.Close, 1)
+	go func() {
+		done <- RunService(context.Background(), CallInput{
+			Engine: local{}, Container: "ngc-app-test",
+			// It reads its input first, because a program that never reads
+			// cannot notice an input at all - and then nothing would be
+			// measured here.
+			Command: []string{"/bin/sh", "-c", "head -c 4 >/dev/null; sleep 2; : > " + after},
+			Call:    echoCall(`{}`),
+			// An hour is the ceiling of the contract: if the cut-off input did
+			// not end this call, the case below would be waiting for it.
+			Timeout: time.Hour,
+			In:      &halfReader{s: "half"}, Log: newCollector().logger(),
+		})
+	}()
+	var cl wire.Close
+	select {
+	case cl = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("RunService did not come back, so the cut-off input ended nothing")
+	}
+	if cl.Status != wire.StatusError || cl.Code != wire.CodeProtocol {
+		t.Fatalf("close = %+v, want an error with %s", cl, wire.CodeProtocol)
+	}
+	// Longer than the sleep of the service, so a service that was not stopped
+	// has had its full time and really would have written the file.
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(after); !os.IsNotExist(err) {
+		t.Fatalf("the service ran on after its input was cut off: %v", err)
+	}
+}
+
+func TestInputCutOffCancelsTheCallAtOnce(t *testing.T) {
+	envHere(t)
+	// The same rule as TestInputCutOffEndsTheService, measured where no POSIX
+	// shell is: that case watches a real program stop, this one watches the
+	// one thing that stops it. Without it the rule would hang on a case that
+	// is skipped on Windows, and that is how a rule goes unmeasured.
+	seen := make(chan error, 1)
+	e := &stub{run: func(ctx context.Context, ex runtime.Exec) (int, error) {
+		// A program that reads its input and then takes its time, like a
+		// service with an hour of limit left.
+		io.Copy(io.Discard, ex.Stdin)
+		select {
+		case <-ctx.Done():
+			seen <- ctx.Err()
+		case <-time.After(20 * time.Second):
+			seen <- nil
+		}
+		return 0, runtime.ErrKilled
+	}}
+	cl := RunService(context.Background(), CallInput{
+		Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
+		Call: echoCall(`{}`), Timeout: time.Hour,
+		In:  &halfReader{s: "half"},
+		Log: newCollector().logger(),
+	})
+	if cl.Status != wire.StatusError || cl.Code != wire.CodeProtocol {
+		t.Fatalf("close = %+v, want an error with %s", cl, wire.CodeProtocol)
+	}
+	if err := <-seen; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the context of the call ended with %v, want it cancelled: a cut-off input has to stop the program, not wait out its hour", err)
+	}
+}
+
+func TestTheOutputOfTheProgramReachesTheCaller(t *testing.T) {
+	envHere(t)
+	// The same rule as TestRunServicePassesTheEnvironmentAndEchoes, with a
+	// stand-in instead of the example service: that case needs a POSIX shell
+	// and is skipped on Windows, and "the output of a service reaches the
+	// shell" may not be unmeasured on the machine this is built on.
+	var out bytes.Buffer
+	e := &stub{run: func(_ context.Context, ex runtime.Exec) (int, error) {
+		if ex.Stdout == nil {
+			return 0, errors.New("the call got no output end")
+		}
+		ex.Stdout.Write([]byte("zweiundvierzig"))
+		return 0, nil
+	}}
+	if cl := RunService(context.Background(), CallInput{
+		Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
+		Call: echoCall(`{}`), Out: &out, Log: newCollector().logger(),
+	}); cl.Status != wire.StatusOK {
+		t.Fatalf("close = %+v, want status ok", cl)
+	}
+	if out.String() != "zweiundvierzig" {
+		t.Fatalf("output = %q, want %q", out.String(), "zweiundvierzig")
+	}
+}
+
+func TestATimeLimitThatRanOutIsNoExitCode(t *testing.T) {
+	envHere(t)
+	// The same rule as TestRunServiceTimesOut, with a stand-in: that case needs
+	// a shell. Here the engine answers the way it does for a call no status
+	// came back from, after the limit has run out.
+	e := &stub{run: func(ctx context.Context, _ runtime.Exec) (int, error) {
+		<-ctx.Done()
+		return 0, runtime.ErrKilled
+	}}
+	done := make(chan wire.Close, 1)
+	go func() {
+		done <- RunService(context.Background(), CallInput{
+			Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
+			Call: echoCall(`{}`), Timeout: 50 * time.Millisecond,
+			Log: newCollector().logger(),
+		})
+	}()
+	select {
+	case cl := <-done:
+		if cl.Status != wire.StatusError || cl.Code != wire.CodeTimeout {
+			t.Fatalf("close = %+v, want an error with %s", cl, wire.CodeTimeout)
+		}
+		// E_EXIT would tell the shell the service decided something. It did
+		// not: this server stopped it.
+		if cl.ExitCode != nil {
+			t.Fatalf("exitCode = %d, want none after a time limit", *cl.ExitCode)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("RunService did not come back after its time limit")
+	}
+}
+
+func TestTheExitCodeOfTheProgramIsTheOneReported(t *testing.T) {
+	envHere(t)
+	// The same rule as TestRunServiceReportsTheExitCode, with a stand-in, and
+	// with a different number on purpose: a case that shared the 2 of that one
+	// would go on passing on a RunService that answers with a hard-wired 2.
+	e := &stub{run: func(context.Context, runtime.Exec) (int, error) { return 7, nil }}
+	cl := RunService(context.Background(), CallInput{
+		Engine: e, Container: "ngc-app-test", Command: []string{"/x"},
+		Call: echoCall(`{}`), Log: newCollector().logger(),
+	})
+	if cl.Status != wire.StatusError || cl.Code != wire.CodeExit {
+		t.Fatalf("close = %+v, want an error with %s", cl, wire.CodeExit)
+	}
+	if cl.ExitCode == nil || *cl.ExitCode != 7 {
+		t.Fatalf("exitCode = %v, want 7", cl.ExitCode)
+	}
+	if cl.Message != "Dienst mit Code 7 beendet." {
+		t.Fatalf("message = %q, want %q", cl.Message, "Dienst mit Code 7 beendet.")
+	}
+}
+
+func TestANameThatIsTakenIsNoPlaceForTheParams(t *testing.T) {
+	dir := envHere(t)
+	name := filepath.Join(dir, "env-taken")
+	const first = "NGC_PARAMS={\"erster\":1}" + "\n"
+	f, err := createEnv(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte(first)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	// Whoever holds this name holds a file another call reads its own
+	// parameters out of. Writing into it would hand that call the parameters of
+	// this one.
+	if second, err := createEnv(name); err == nil {
+		second.Close()
+		t.Fatal("a name that is taken was opened a second time")
+	}
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != first {
+		t.Fatalf("the file of the first call now holds %q", b)
+	}
+}
+
+func TestTwoCallsGetTwoFilesOfTheirOwn(t *testing.T) {
+	envHere(t)
+	first, err := writeEnv([]string{"NGC_PARAMS={\"a\":1}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(first)
+	second, err := writeEnv([]string{"NGC_PARAMS={\"b\":2}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(second)
+	if first == second {
+		t.Fatalf("both calls got the same file %q", first)
+	}
+	// And each one still holds its own: a name that is not new would have the
+	// second call reading what the first was given, or the other way round.
+	for path, want := range map[string]string{
+		first:  "NGC_PARAMS={\"a\":1}" + "\n",
+		second: "NGC_PARAMS={\"b\":2}" + "\n",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != want {
+			t.Fatalf("%s holds %q, want %q", path, b, want)
+		}
 	}
 }

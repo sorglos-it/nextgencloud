@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -27,6 +28,12 @@ import (
 type Podman struct {
 	bin string
 }
+
+// waitDelay is how long a cancelled call waits for the ends of the command
+// after the podman client was killed, before they are cut (see Podman.run). It
+// is short on purpose: at this point nothing is expected from the call any
+// more, and the caller is already waiting past the limit it set.
+const waitDelay = 500 * time.Millisecond
 
 // NewPodman takes the absolute path of the podman program
 // (config.Controller.Podman, default config.DefaultPodman).
@@ -355,6 +362,16 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 		// it starts, so taking it away right after the start is a race with
 		// that read.
 		defer os.Remove(e.EnvFile)
+		// Podman runs below as the app's user and reads the file itself, so the
+		// file has to belong to that user: the caller writes it as this
+		// process, which is root, and a 0600 file of root is nothing the app's
+		// user may open. The uid is right here - ofName read it out of the user
+		// database at the top of this function - so no caller has to carry it,
+		// and the mode stays the caller's, because only the caller knows that
+		// the file is the one copy.
+		if err := os.Chown(e.EnvFile, int(u.uid), int(u.gid)); err != nil {
+			return 0, errors.Join(ErrIdentity, err)
+		}
 		args = append(args, "--env-file", e.EnvFile)
 	}
 	if e.Root {
@@ -410,6 +427,17 @@ func (p *Podman) run(ctx context.Context, u appUser, args []string,
 		"LANG=C.UTF-8",
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errOut
+	// Without this, a cancelled call does not come back while the service
+	// lives. The context kills podman - the host client - and nothing else:
+	// the process inside the container is no child of it, the container goes
+	// on running and is meant to, and it keeps the ends of the call open. Go's
+	// Wait then waits for those ends, which is for as long as the service
+	// wants. Measured on the stand-in of this engine: 3.15 s for a service of
+	// 2 s, 12.51 s for one of 10 s - unbounded, not slow. So the ends are cut
+	// a moment after the kill, and a caller gets its answer at the limit it
+	// set. What stays running in the container is the container's business;
+	// whoever has to end that stops the container (Stop).
+	cmd.WaitDelay = waitDelay
 	err = cmd.Run()
 	if err == nil {
 		return 0, nil
