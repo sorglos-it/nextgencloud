@@ -74,7 +74,7 @@ const wired = new WeakMap();
 async function serve(shell, c, { size = 64, visible = c.chain.length } = {}) {
   const state = {
     chain: c.chain, first: c.anchor.seq, size, visible, all: c.chain.length,
-    dead: false, from: [], logouts: 0,
+    dead: false, from: [], logouts: 0, log: [],
   };
   const box = wired.get(shell);
   if (box !== undefined) {
@@ -87,6 +87,7 @@ async function serve(shell, c, { size = 64, visible = c.chain.length } = {}) {
     const s = held.state;
     const from = Number(new URL(route.request().url()).searchParams.get("from"));
     s.from.push(from);
+    s.log.push("trust " + from);
     if (s.dead) { await route.abort(); return; }
     const at = from - s.first;
     if (at < 0 || at > s.visible) {
@@ -112,10 +113,15 @@ async function serve(shell, c, { size = 64, visible = c.chain.length } = {}) {
   // The alarm ends the session itself, so a case can see it happen.
   await shell.route(/\/api\/v1\/logout$/, async (route) => {
     held.state.logouts++;
+    held.state.log.push("logout");
     await route.fulfill({ status: 204 });
   });
   await shell.exposeFunction("__ngcVisible", () => { held.state.visible = held.state.all; });
   await shell.exposeFunction("__ngcDead", () => { held.state.dead = true; });
+  // The counterpart of __ngcDead: the connection comes back. A case that has
+  // to prove that something did NOT happen needs a working line again, so it
+  // can send a request whose ARRIVAL is the proof that the shell is through.
+  await shell.exposeFunction("__ngcAlive", () => { held.state.dead = false; });
   await shell.exposeFunction("__ngcAsked", () => held.state.from.slice());
   await shell.exposeFunction("__ngcForget", () => { held.state.from = []; });
   return state;
@@ -125,10 +131,33 @@ async function serve(shell, c, { size = 64, visible = c.chain.length } = {}) {
 // shell is handed bytes, the way net/config.js hands it bytes.
 const anchorOf = (c) => ({ seq: c.anchor.seq, hash: c.anchor.hash });
 
+// WHY THIS IS MEASURED IN beforeAll AND NOT IN beforeEach. The `shell` fixture
+// runs page.goto("/") to build the page a case is handed, and a fixture runs
+// BEFORE any beforeEach that uses it. A guard sitting in beforeEach therefore
+// speaks too late: on webkit, which has no Ed25519 at all, the shell was
+// loaded for fifteen cases that were then skipped. Measured on --project=webkit:
+// 18 loads of shell/main.js before, 4 after - three running cases and this one
+// probe - and 13.6 s down to 5.4 s. Fifteen loads nothing was ever going to
+// look at, and fifteen chances to flutter that no assertion could have caught.
+//
+// beforeAll takes the worker-scoped `browser` instead and opens a page of its
+// own, so the probe needs no `shell` and the skip marks the whole group before
+// a single case's fixture starts. It is also measured ONCE per project instead
+// of once per case.
+const NO_ED25519 =
+  "no Ed25519 in this engine's Web Crypto: it can verify no version of any chain here";
+
 test.describe("the chain", () => {
-  test.beforeEach(async ({ shell }) => {
-    test.skip(!(await hasEd25519(shell)),
-      "no Ed25519 in this engine's Web Crypto: it can verify no version of any chain here");
+  test.beforeAll(async ({ browser }) => {
+    const probe = await browser.newPage();
+    let has = false;
+    try {
+      await probe.goto("/");
+      has = await hasEd25519(probe);
+    } finally {
+      await probe.close();
+    }
+    test.skip(!has, NO_ED25519);
   });
 
   test("the chain is followed from the anchor, page by page, to the newest version", async ({ shell }) => {
@@ -266,9 +295,39 @@ test.describe("the chain", () => {
     });
   }
 
+  // WHY THIS CASE IS BUILT THE WAY IT IS, and it is the reason this task
+  // exists. Its whole statement is a NEGATIVE - "no logout happened" - and a
+  // negative about something ASYNCHRONOUS cannot be read off a counter the
+  // moment the call returns. It was measured, not guessed: a wrong logout
+  // injected into trustlist.js refresh() and delayed by 300 ms left the case as
+  // it stood at "2 passed, EXIT=0" on chromium and firefox. The wrong thing
+  // happened, only slowly, and the case did not notice. With the barrier below
+  // the same injection fails both engines with logouts 2 instead of 0.
+  // expect.poll(...).toBe(0) is no help either - it is satisfied by the first
+  // look, which is the same look that was already wrong.
+  //
+  // So the case does not look, it BARRIERS, in two halves, and both are needed:
+  //
+  //   1. The shell's own path is through. The connection comes back, the API
+  //      owns up to versions 2 to 4, and the SAME store walks the chain to the
+  //      end. Versions 2, 3 and 4 arriving in state.from is the proof: the
+  //      store's serialised queue has drained, every await inside refresh has
+  //      landed, and nothing of the failed turn is still in flight.
+  //   2. The page has stopped talking. waitForLoadState("networkidle") returns
+  //      only after half a second in which the page opened no request at all.
+  //      A logout on a timer shorter than that window has to fire inside it,
+  //      and it then shows up in state.log - which is what makes the injection
+  //      above go red instead of green.
+  //
+  // What this case still cannot see, said plainly rather than left for the next
+  // reader to find out: a logout delayed LONGER than full quiescence. There is
+  // no barrier for that, only a longer wait, and a longer wait is a sleep.
   test("a connection that breaks is no alarm and changes nothing", async ({ shell }) => {
     const c = caseOf(GOOD);
-    const state = await serve(shell, c, { visible: 1 });
+    // One version per page, so the walk of the barrier below is THREE round
+    // trips and not one: the more of them have to arrive, the less room is
+    // left for something of the failed turn to still be in flight.
+    const state = await serve(shell, c, { size: 1, visible: 1 });
     const got = await shell.evaluate(async (raw) => {
       const { b64decode } = await import("/assets/js/contracts/b64.js");
       const { TrustStore } = await import("/assets/js/shell/trustlist.js");
@@ -278,7 +337,11 @@ test.describe("the chain", () => {
       await s.bootstrap({ seq: raw.seq, hash: b64decode(raw.hash) });
       await window.__ngcDead();
       const failed = await s.refresh(4).then(() => false, () => true);
-      return { failed, alarms, seq: s.current()?.list?.seq ?? 0 };
+      // The store is kept for the barrier below, which has to use THIS one:
+      // a fresh store would prove nothing about the turn that just failed.
+      window.__ngcStore = s;
+      window.__ngcAlarms = alarms;
+      return { failed, alarms: alarms.slice(), seq: s.current()?.list?.seq ?? 0 };
     }, anchorOf(c));
     // A trust list nobody could fetch is a trust list that did not change.
     // Logging a person out over a dropped connection would make every hiccup
@@ -286,7 +349,31 @@ test.describe("the chain", () => {
     expect(got.failed).toBe(true);
     expect(got.alarms).toEqual([]);
     expect(got.seq).toBe(1);
+
+    // --- the barrier, first half: the shell's own path is through ----------
+    const after = await shell.evaluate(async () => {
+      await window.__ngcAlive();
+      await window.__ngcVisible();
+      const seq = await window.__ngcStore.refresh(4);
+      return { seq, alarms: window.__ngcAlarms.slice() };
+    });
+    expect(after.seq).toBe(4);
+    expect(after.alarms).toEqual([]);
+    // 1 for the boot; then the 2 of the failed turn, which DID reach the route
+    // and was aborted there - the handler counts it before it kills it, so the
+    // list says where the drop was; then 2, 3 and 4 of the walk that proves
+    // the store answers again. A hint names a version, a request names the one
+    // AFTER the one in force: that is why the failed turn asks for 2 and not
+    // for the 4 that was hinted.
+    expect(state.from).toEqual([1, 2, 2, 3, 4]);
+
+    // --- the barrier, second half: the page has stopped talking ------------
+    await shell.waitForLoadState("networkidle");
+
+    // Only now is a zero worth reading. The ordered log says it twice over:
+    // no logout, and nothing between the requests this case asked for.
     expect(state.logouts).toBe(0);
+    expect(state.log).toEqual(["trust 1", "trust 2", "trust 2", "trust 3", "trust 4"]);
   });
 
   test("the verified version survives a reload and only what is missing is fetched", async ({ shell }) => {
