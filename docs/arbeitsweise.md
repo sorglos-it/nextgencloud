@@ -2097,3 +2097,40 @@ Richtig: die mutierte Datei **daneben** legen und dem Bau ueber
 baubar — und „der geteilte Baum ist immer baubar" ist keine Hoeflichkeit,
 sondern die Bedingung dafuer, dass mehrere Straenge gleichzeitig messen
 koennen.
+
+## Das vorgefuehrte Rot muss aus dem genannten Grund fallen
+
+Dreimal in einer einzigen Nacharbeit war das vorgefuehrte Rot fast das
+falsche, immer am selben Punkt: der Fall fiel, aber nicht aus dem Grund, den
+seine Meldung nannte.
+
+- Ein Fall sollte zeigen, dass **das Ausfuehrungsbit** fehlt. Vorgefuehrt
+  wurde er, indem der Arbeitsordner gepackt wurde — er fiel mit
+  „ngc-probe is not in the archive". Richtiges Thema verfehlt.
+- Der Ersatz dafuer war `git archive --mode=0644`. Gemessen:
+  `error: unknown option 'mode=0644'`, Ausstiegscode **129** — die Option
+  gibt es nicht. Ein Fall, der an einem Tippfehler im Werkzeug faellt, ist
+  gruen fuer sein Thema.
+- Der zweite Ersatz packte mit `tar -cf … -C dir .` und schrieb damit
+  `./ngc-probe`. Ein Namensvergleich auf `" ngc-probe"` haette wieder
+  „not in the archive" gemeldet.
+
+**Also: nach jedem vorgefuehrten Rot die MELDUNG lesen, nicht nur den
+Ausstiegscode.** Steht dort nicht der Satz, den der Fall halten soll, hat man
+etwas anderes gemessen — und zwar etwas, das beim naechsten Mal gruen ist,
+waehrend der Fehler bleibt.
+
+## „Nie durch eine Pipe" — gemessen an dem, der die Regel gerade abschrieb
+
+```bash
+git … | head -3 ; echo "rc=$?"     # liefert 0, obwohl git gescheitert ist
+```
+
+Das ist der Ausstiegscode von `head`. Es ist einem Strang am 02.10.2026 in
+**derselben Sitzung** passiert, in der er die Regel „Ausstiegscode immer aus
+der Datei, nie durch eine Pipe" in seine eigenen Unterlagen uebernommen hatte.
+
+Die Regel abzuschreiben schuetzt nicht. Was schuetzt: die Ausgabe in eine
+Datei leiten, `echo "CODE=$?" >> datei` direkt danach, und den Code aus der
+Datei lesen. Wer eine Pipe braucht, nimmt `set -o pipefail` — und sagt dazu,
+dass er es getan hat.
