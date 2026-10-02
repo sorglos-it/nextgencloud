@@ -3291,3 +3291,39 @@ Drei Dinge daraus:
    **in Haelften** zurueckgibt, toetet ihn auf beiden Plattformen
    (vgl. „Ein Fall, der die Stoerung anders herstellt als der Betrieb sie
    erzeugt").
+
+## Ein benannter Typ verhindert das Vertauschen NICHT
+
+Am 03.10.2026 gemessen, und es widerlegt eine Begruendung, die ich selbst
+genehmigt hatte. Zwei Fristen gingen als zwei Argumente derselben Art in eine
+Funktion; vertauschen konnte niemand sehen. Der Weg dagegen war ein
+**benannter Typ** mit zwei Feldern, und die Begruendung lautete: „vertauschen
+braucht jetzt den falschen Feldnamen, nicht die falsche Reihenfolge".
+
+Der Pruefer hat es als Mutanten gefahren. Beide **leben**, Paket gruen,
+Ausstiegscode 0:
+
+```
+deadlines{connIdleTime, connLifetime}   // positionales Literal: vertauscht
+deadlines{lifetime: …}                  // idle weggelassen: Nullwert
+```
+
+Ein Verbundliteral im **eigenen Paket** darf positional sein, und ein
+weggelassenes Feld ist nicht verboten, sondern null. Der Typ hat die Reihenfolge
+also gar nicht aus der Hand genommen — er hat nur eine Klammer darum gelegt.
+
+**Was wirklich traegt, ist der Uebersetzer** (vgl. „Der Uebersetzer ist der
+beste Halter, den eine Regel bekommen kann"): **ein eigener Typ je Groesse**.
+`type lifetime time.Duration` und `type idleTime time.Duration` machen das
+Vertauschen zu einem Uebersetzungsfehler, weil die beiden Typen nicht
+ineinander passen.
+
+Und was der Uebersetzer dann **immer noch nicht** haelt: das weggelassene
+Feld. Null ist ein gueltiger Wert. Wer die Luecke schliessen will, braucht
+dafuer einen Fall oder einen Riegel — und wer sie nicht schliesst, **nennt
+sie**, statt sie fuer geschlossen zu erklaeren.
+
+Die Lehre ueber die Technik hinaus: **meine eigene Genehmigung war die
+unmessbare Stelle.** Der Satz klang richtig, niemand hatte ihn gefahren, und
+er stand als erledigt im Plan. Ein genehmigter Weg ist eine Behauptung wie
+jede andere.
