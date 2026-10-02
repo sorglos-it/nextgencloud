@@ -2193,3 +2193,48 @@ haengen KANN, braucht seine eigene Zeitwache — `time.After` neben dem
 `<-done` im `select` — damit er faellt, statt das Protokoll mitzunehmen. Die
 Wache ist kein Ersatz fuer die Zusicherung, sie ist der Grund, dass man die
 Zusicherung noch lesen kann.
+
+## Plancode wird GEFAHREN, nicht gelesen
+
+Die gefaehrlichste Zusicherung, die nicht fallen kann, ist die im Plan — das
+stand hier schon. Am 02.10.2026 ist der naechste Schritt dazugekommen, und er
+ist haerter: **ein Pruefer hat den Code aus dem Plan geschnitten, gebaut und
+gefahren.** Erst dann kam heraus, was kein Lesen gefunden hatte:
+
+- Der Verweisgraph des Plans erreichte **49 von 67** Dateien, behauptet waren
+  55 — und er erzeugte zwei erfundene Fehlmeldungen.
+- Ein `require_once __DIR__ . '/Url.php'` beginnt mit `/`, also schickte die
+  Auflösung es an `public/` und erreichte den Nachbarn nie. **Genau diese zwei
+  Zeilen zitierte der Plan selbst als sein Beispiel.**
+- `new Worker(KONSTANTE)` mit `const K = new URL("…", import.meta.url)`
+  erreichte **null** von vier Dateien, behauptet waren vier — und das war die
+  tragende Begruendung dafuer, eine Liste durch den Graphen zu ersetzen.
+- Folge: `tools/check.sh` faehrt `go test ./...`, also war das Commit-Tor
+  **jeder** Aufgabe zu, schon in der ersten.
+
+Gelesen sah der Plan in allen vier Punkten richtig aus. Platzhalterfrei war er
+auch. Es half nichts.
+
+**Also: wer einen Plan mit Code abgibt, schneidet ihn in einen Wegwerfordner,
+baut ihn, faehrt ihn gegen die echten Daten und schreibt die gemessene Zahl
+hinein.** Danach wird der Ordner geloescht und gesagt, dass es getan wurde.
+„Kein Code ausserhalb des Plandokuments" verbietet nicht, ihn einmal laufen zu
+lassen — es verbietet, ihn einzuchecken.
+
+Und beim Pruefen eines Plans gilt dasselbe in die andere Richtung: ein
+Planpruefer, der nur liest, hat den Plan nicht geprueft.
+
+## Ein Graph, der zu erreichen behauptet, ist schlimmer als eine Liste
+
+Die Liste war falsch und sah falsch aus — 19 Eintraege fuer ~60 noetige
+Dateien, jede Zeile von Hand, jede verrottbar. Der Graph war falsch und sah
+richtig aus.
+
+Eine Liste, die zu kurz ist, kann man zaehlen. Ein Graph, der still
+weglaesst — ein relativer Verweis ohne `./`, der ohne Meldung verschwindet —
+ist eine Liste, die sich selbst schreibt und dabei luegt.
+
+**Also: ein Graph darf nichts still verwerfen.** Was er nicht aufloesen kann,
+MELDET er. Und was er grundsaetzlich nicht erreicht (indirekte Worker, hier),
+sagt er ausdruecklich, damit die betroffenen Dateien mit diesem Grund in die
+Ausnahmeliste kommen. Halb geloest ist hier schlechter als gar nicht geloest.
