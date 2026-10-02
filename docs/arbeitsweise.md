@@ -2789,3 +2789,59 @@ eines eigenen Connectors waere eine der drei messbar.
 
 „Geht nicht" heisst oft „geht nicht ohne eine Naht, die wir nicht gebaut
 haben" — und das ist ein anderer Satz, denn der zweite nennt den Preis.
+
+## Der Uebersetzer ist der beste Halter, den eine Regel bekommen kann
+
+Die Regel „`Allow` laeuft vor jeder GRANT" hat heute drei Halter durchlaufen:
+
+1. **Ein gewoehnlicher Fall** — prueft einen Weg, nicht alle. Reicht nicht.
+2. **Eine Textsuche ueber den Quelltext** — sechs gemessene blinde Flecken,
+   einer davon von `tools/check.sh` erzwungen, und overlay-blind. Ein Linter.
+3. **Ein privates Feld.** Das Feld heisst jetzt `session.link` statt
+   `Session.Link`, und damit kann **kein Paket ausserhalb** noch irgendein
+   Frame schreiben. Hinaus geht es nur ueber vier benannte Funktionen, und
+   genau eine baut ein GRANT. Ein Zubringer **kann** `Allow` nicht umgehen —
+   er hat nichts zum Schreiben.
+
+Der dritte Halter ist kein Test. Er ist eine **Bauart**, und er kostet nichts
+pro Lauf, kann nicht veralten und von keinem Formatierer ausgehebelt werden.
+
+**Also die Reihenfolge bei jedem „jede"- oder „nur"-Satz:** erst fragen, ob
+die Sprache ihn halten kann (privates Feld, eigener Typ, eine Funktion statt
+zweier). Dann ein Wirkungsfall. Und ein Linter **daneben**, ausdruecklich als
+Linter benannt, fuer das, was die Sprache nicht sagen kann — hier: dass
+INNERHALB des Pakets keine zweite Funktion ein GRANT baut.
+
+Was so nicht zu halten war, gehoert benannt: „auf jedes `Reserve` folgt ein
+`SentClose`" kann die Sprache nicht halten. Der echte Halter waere, die zwei
+Funktionen zu einer zusammenzulegen — eine Aenderung am Nachbarpaket, und
+damit eine eigene Aufgabe.
+
+## Lesen ist nicht Bauen — ein `case`-Label ist kein Erzeuger
+
+Die auf `go/ast` umgestellte Schleife meldete zuerst eine zweite Funktion als
+GRANT-Bauer. Falsch gezaehlt: jene Funktion **liest** GRANTs des Browsers und
+muss `wire.TypeGrant` darum in einem `case`-Label nennen.
+
+`case`-Labels bleiben jetzt aus der Zaehlung. Und die Pointe: **die alte
+Textsuche traf diesen Unterschied nur zufaellig**, weil ihre Nadel
+`Type: ` mit Doppelpunkt enthielt. Eine Nadel, die aus Glueck richtig liegt,
+ist genauso falsch wie eine, die daneben liegt — sie faellt nur spaeter auf.
+
+## Einen Trailer nachtraeglich anzuheften: einmal, unverschoben, gemeldet
+
+Ein Strang hat einen Commit ohne `Co-Authored-By` gebaut und ihn per
+`git commit --amend` berichtigt — und das gemeldet, statt es zu verschweigen.
+Die Regeln verbieten Historie umzuschreiben, und die fehlende Zeile bricht
+eine andere Regel; er hat die Klemme benannt und mich entscheiden lassen.
+Richtig so.
+
+**Nachgemessen und angenommen:** der alte Commit liegt nur noch im Reflog,
+`git branch --contains` nennt **keinen** Zweig, geschoben war nichts, und
+zwischen den zwei Commits lagen Sekunden. Niemand konnte darauf gebaut haben.
+
+**Die Grenze, damit daraus keine Gewohnheit wird:** ein `--amend` ist nur
+erlaubt, solange der Commit **nicht geschoben** ist, **kein Zweig** ihn
+enthaelt und es **sofort** passiert — und er wird gemeldet. Ist eine der drei
+Bedingungen weg, kommt der Trailer in einen **eigenen** Commit. Im geteilten
+Baum gilt sonst weiter: keine Historie umschreiben.
