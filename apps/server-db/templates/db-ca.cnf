@@ -1,0 +1,40 @@
+# The CA of one NGC installation and the certificates of its database nodes.
+# ngc-db.sh uses it with openssl; the placeholder @HOST@ becomes the host of
+# the node, as a DNS name or, for an IPv4 address, as an IP.
+#
+# openssl req reads its options from the section -section names, so ca_dn and
+# node_dn hold the request options and point at the section with the name.
+# Measured with OpenSSL 3.5.7: a section that holds the name alone makes
+# "req -section" stop with "No objects specified in config file".
+
+[ca_dn]
+prompt = no
+distinguished_name = ca_name
+
+[ca_name]
+CN = NGC DB CA
+
+[ca_ext]
+basicConstraints = critical,CA:TRUE,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+
+[node_dn]
+prompt = no
+distinguished_name = node_name
+
+[node_name]
+CN = @HOST@
+
+[node_ext]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+# One @ names a section; "@node_alt@" would look for a section called
+# "node_alt@" and is not the mark the script replaces.
+subjectAltName = @node_alt
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+
+[node_alt]
+DNS.1 = @HOST@
