@@ -4809,6 +4809,41 @@ git commit -m "Add the channel table and the credit of a link" \
 
 ### Task 11: Sitzungsleitung zum Browser
 
+> **Berichtigt am 02.10.2026, vier Abweichungen des Strangs der Aufgabe 11 —
+> jede gemessen, jede begruendet, und alle vier gehen auf meinen Plantext
+> zurueck, nicht auf seinen Code.**
+>
+> 1. **`login.Live` hat DREI Rueckgabewerte, nicht zwei.** Gebaut wie
+>    `login/trust.go:33`, mit `httpapi.Fail(w, code)`.
+> 2. **`srv.S.Trust(ctx)` ist hier nicht noetig und waere falsch:**
+>    `live.Trust` IST die Liste, gegen die die Sitzung gerade geprueft wurde;
+>    `state.Trust` waere der aeltere Zwischenspeicher.
+> 3. **`deliver` wird in dieser Aufgabe NICHT gebaut.** Niemand liest den
+>    Puffer — der Versand kommt mit Aufgabe 15. Ein wartendes `deliver` haelt
+>    den einzigen Leser der Leitung beim neunten Frame **fuer immer** an: das
+>    ist ein Haenger, keine Zwischenstufe.
+> 4. **`Session.Close` traegt ein `ctx`**, wie der Plancode es zeigt, nicht
+>    wie die Schnittstellenliste es sagt.
+>
+> **Dazugekommen, weil Satz 1 der Eintrittsbedingung ohne das nicht zu halten
+> ist:** `Session.SendGrant` — der EINZIGE Ort, der ein GRANT-Frame schreibt —
+> und `ErrGrant`.
+>
+> **Wie die Eintrittsbedingung gehalten wird, und das ist fuer die Folgeaufgaben
+> wichtig:** zwei der drei Saetze haelt eine **Schleife ueber den eigenen
+> Quelltext** (genau eine Funktion baut ein GRANT-Frame, genau eine ruft
+> `Allow`, dieselbe, und `Allow` steht davor; ebenso `Reserve` ⇒ `SentClose`).
+> Die Schleifen sind SELBST geprueft: `TestTheSourceLoopCanGoRed` laesst sie an
+> einem Wegwerf-Paket rot werden.
+> **Ihre Grenze, gemessen:** sie lesen die **Platte**, nicht den
+> `-overlay`-Baum, koennen also keinen Mutanten der ueberlagerten Fassung
+> toeten. **Fuer Aufgabe 15 heisst das:** ein GRANT, das `coreapp` selbst ueber
+> `s.Link.Write` schreibt, sieht die Schleife NICHT. Entweder dieselbe
+> Schleife dort, oder `Session.Link` ist nicht mehr oeffentlich.
+>
+> **Noch nicht verdrahtet und hier auch nicht verlangt:** `session.PathSocket`
+> steht nicht in `httpapi.Routes` — der Zubringer fehlt noch.
+
 > **EINTRITTSBEDINGUNG, eingetragen am 02.10.2026 aus der Pruefung der
 > Aufgabe 10 — und sie steht HIER, weil eine Zeile, die nur in einem Bericht
 > steht, dort verschwindet.**
