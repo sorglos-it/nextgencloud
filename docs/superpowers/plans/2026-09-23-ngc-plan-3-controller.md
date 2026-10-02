@@ -1553,6 +1553,45 @@ git commit -m "Give every app its own system user and encrypted data directory"
 
 ### Task 13: Dienst starten (Vertrag V3)
 
+> **ENTSCHIEDEN am 03.10.2026, auf einen Befund des Strangs der Aufgabe 13 —
+> und der Befund blockiert jeden echten Dienststart.**
+>
+> `serve.CallInput` nennt neun Felder und **keine uid/gid**. Dagegen steht
+> `runtime.go`, `Exec.EnvFile`: die Datei muss dem **App-Benutzer** gehoeren,
+> weil podman als dieser Benutzer laeuft und sie lesen muss, und ihr Modus ist
+> `0600`. Eine Datei `0600` mit Eigentuemer root ist fuer podman damit
+> **unlesbar** — der Aufruf scheitert beim Start. (Hier nicht messbar: in WSL
+> laeuft kein root, gemessen ist nur der Modus.)
+>
+> **Von den drei Wegen gilt der mittlere:** die Engine bekommt eine Methode,
+> die den **App-Benutzer eines Containers nennt** (`ofName` ist da, nur
+> unexportiert), und `serve` setzt den Eigentuemer der Umgebungsdatei danach.
+> Begruendung: `CallInput` um uid/gid zu erweitern wuerde jeden Aufrufer
+> zwingen, Benutzerkennungen zu kennen, die ihn nichts angehen; die Engine die
+> Datei selbst schreiben zu lassen wuerde `Exec.EnvFile` gegen ein
+> `Exec.Env []string` tauschen und damit den Vertrag an einer Stelle aendern,
+> die ein anderer Strang haelt. Der mittlere Weg braucht **einen Export** und
+> keine Vertragsaenderung.
+> **Und was dabei NICHT behauptet werden darf:** dass der Eigentuemer richtig
+> ankommt, ist auf dieser Maschine nicht messbar (kein root in WSL). Wer es
+> baut, schreibt es als nicht messbar hin.
+>
+> **Zwei weitere Zeilen aus derselben Messung, die hier gebaut werden:**
+> 1. **`runtime.Podman.Exec` setzt kein `cmd.WaitDelay`.** Gemessen an einer
+>    gleichgebauten Attrappe: nach dem Toeten des Kindes wartet `cmd.Wait` auf
+>    die Enkel, die die Pipes halten — ein Fall zum Zeitlimit stand so
+>    **20 Sekunden**. Dass bei podman mit dem Container alles darin endet, ist
+>    eine **Vermutung**, nicht gemessen. `WaitDelay` setzen und den Fall dazu.
+> 2. **Die eine stderr-Zeile traegt bis zu 65536 Byte, die die APP gefuellt
+>    hat.** Eine App, die Geheimnisse auf stderr schreibt, verliert sie ins
+>    Protokoll des Controllers. Der Vertrag verlangt die Zeile, also bleibt
+>    sie — aber der Grund gehoert an die Stelle, damit der Naechste weiss,
+>    dass hier Fremdtext ins eigene Protokoll laeuft.
+>
+> **Noch nicht verdrahtet und hier nicht verlangt:** `serve.Server.app` endet
+> weiter mit `E_UNREACHABLE`; `RunService` ist gebaut, das Verdrahten braucht
+> `d.Manifest.Action(…)` und den E2E-Rahmen einer anderen Aufgabe.
+
 **Files:**
 - Create: `apps/server-controller/classes/serve/call.go`,
   `apps/server-controller/classes/serve/call_test.go`
