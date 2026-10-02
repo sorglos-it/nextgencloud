@@ -84,10 +84,14 @@ func (c *Channel) Take(n int) bool {
 // Allow adds to what the other side may send us; the caller calls it before it
 // sends a GRANT, so that both sides count the same, and sends the GRANT only
 // when this says yes. The window of an OPEN we send ourselves is counted by
-// Next. False means the GRANT would lift that allowance above wire.MaxWindow,
-// which the contract bounds in both directions, so nothing is added and the
-// GRANT must not go out: it would be our own protocol error, and the other side
-// would answer it with CLOSE E_PROTOCOL. Without this bound Take would hold
+// Next.
+//
+// False has two causes, and in both of them nothing is added and the GRANT must
+// not go out. Either it would lift that allowance above wire.MaxWindow, which
+// the contract bounds in both directions, or the credit is zero, which is no
+// GRANT at all (wire.ParseGrant refuses one, so the other side would not take
+// it either). Both would be our own protocol error, and the other side would
+// answer with CLOSE E_PROTOCOL. Without the first bound Take would hold
 // nothing, because the side that counts what may arrive is the same side that
 // raises the figure.
 func (c *Channel) Allow(credit uint32) bool {
@@ -143,11 +147,16 @@ type Table struct {
 
 // NewTable returns a table for at most max numbers that are not free
 // (wire.MaxSessionChannels or wire.MaxTunnelChannels). opener says whether this
-// side picks the numbers; only one of the two sides does. A max of zero or less
-// is a table that carries no channel at all: every Open, Next and Reserve
-// answers ErrLimit. That is the safe answer and not an unbounded one, so a
-// caller that forgets the limit refuses channels instead of granting them
-// without end.
+// side picks the numbers; only one of the two sides does.
+//
+// A max of zero or less is a table that carries no channel at all. It refuses
+// every call, and which error it names depends on the call and not on max: the
+// checks that do not look at the table at all answer first, so Open and Next
+// still answer ErrProtocol for channel 0, for a window outside
+// MinWindow..MaxWindow and for the wrong side, and Reserve still answers
+// ErrProtocol for channel 0. Everything that gets past those answers ErrLimit.
+// Refusing is the safe answer and not an unbounded one, so a caller that forgets
+// the limit grants no channel rather than every channel.
 func NewTable(max int, opener bool) *Table {
 	return &Table{max: max, opener: opener, ch: map[uint32]*Channel{}, next: 1}
 }

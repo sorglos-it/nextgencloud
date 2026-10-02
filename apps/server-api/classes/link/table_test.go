@@ -1,8 +1,9 @@
 package link
 
 import (
-	"sync"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -189,66 +190,160 @@ func TestNextWrapsPastTheLastNumber(t *testing.T) {
 }
 
 func TestATableWithoutRoomCarriesNothing(t *testing.T) {
-	// A forgotten limit must refuse channels, never grant them without end.
+	// A forgotten limit must refuse channels, never grant them without end -- and
+	// which refusal comes back depends on the call, not on max, because the
+	// checks that do not look at the table answer first. The case therefore asks
+	// every call, not only the two whose answer is ErrLimit.
 	for _, max := range []int{0, -1} {
-		tb := NewTable(max, false)
-		if _, err := tb.Open(1, wire.MinWindow); err != ErrLimit {
-			t.Errorf("NewTable(%d).Open answered %v", max, err)
+		accept, open := NewTable(max, false), NewTable(max, true)
+		// Past the checks that answer without the table: here max decides.
+		if _, err := accept.Open(1, wire.MinWindow); err != ErrLimit {
+			t.Errorf("NewTable(%d, false).Open(1) answered %v, want ErrLimit", max, err)
 		}
-		if err := tb.Reserve(1); err != ErrLimit {
-			t.Errorf("NewTable(%d).Reserve answered %v", max, err)
+		if err := accept.Reserve(1); err != ErrLimit {
+			t.Errorf("NewTable(%d, false).Reserve(1) answered %v, want ErrLimit", max, err)
 		}
-		if _, err := NewTable(max, true).Next(wire.MinWindow); err != ErrLimit {
-			t.Errorf("NewTable(%d, true).Next answered %v", max, err)
+		// Next refuses too, but this arm does not hold the limit check of Next:
+		// at max <= 0 the loop over the candidates runs no round either, so
+		// ErrLimit comes back even without that check -- measured, a mutant on
+		// that one line leaves this case green. What holds it is
+		// TestNextKeepsTheLimit, where the table is full and the loop would run.
+		// This arm holds the answer a caller sees, and that is all it claims.
+		if _, err := open.Next(wire.MinWindow); err != ErrLimit {
+			t.Errorf("NewTable(%d, true).Next answered %v, want ErrLimit", max, err)
+		}
+		// And the refusals that are not about room stay what they are, so that
+		// an empty table cannot turn a protocol error into a limit.
+		if _, err := accept.Open(wire.ControlChannel, wire.MinWindow); err != ErrProtocol {
+			t.Errorf("NewTable(%d, false).Open(0) answered %v, want ErrProtocol", max, err)
+		}
+		if _, err := accept.Open(1, wire.MinWindow-1); err != ErrProtocol {
+			t.Errorf("NewTable(%d, false).Open with a small window answered %v, want ErrProtocol", max, err)
+		}
+		if _, err := open.Open(1, wire.MinWindow); err != ErrProtocol {
+			t.Errorf("NewTable(%d, true).Open answered %v, want ErrProtocol", max, err)
+		}
+		if err := accept.Reserve(wire.ControlChannel); err != ErrProtocol {
+			t.Errorf("NewTable(%d, false).Reserve(0) answered %v, want ErrProtocol", max, err)
+		}
+		if _, err := accept.Next(wire.MinWindow); err != ErrProtocol {
+			t.Errorf("NewTable(%d, false).Next answered %v, want ErrProtocol", max, err)
+		}
+		if accept.Count() != 0 || open.Count() != 0 {
+			t.Errorf("a refused call took a number: %d / %d", accept.Count(), open.Count())
 		}
 	}
 }
 
 func TestTheCountersHoldUnderTwoGoroutines(t *testing.T) {
-	// A link has one reader and one writer on the same channel, so every
-	// counter is touched from two goroutines. Without this case -race has
-	// nothing to look at here, and the locks are a claim, not a measurement.
+	// A link has one reader and one writer on the same channel, so every counter
+	// is touched from two goroutines. Without this case -race has nothing to
+	// look at here, and the locks are a claim, not a measurement. Named one by
+	// one, because "every" is only true if the case really drives them all:
+	// out through Grant against Spend, in through Allow against Take, and the
+	// two close flags through SentClose against RecvClose. Measured with the
+	// lock of Grant removed: four DATA RACE between Grant and Spend.
+	//
+	// All of it runs in a goroutine of its own, and the case itself only waits
+	// for the answer with a deadline. That shape is the point: the plausible
+	// mistake is not losing both lock lines, it is keeping Lock and losing
+	// Unlock, and then every call on this channel blocks -- including the ones
+	// the waiting code would make. A deadline that has to be reached through
+	// Spend can never be reached. And a case that blocks instead of failing is
+	// worse than a wrong one: the timeout panic of go test ends the whole
+	// package run and takes the answer of the other cases with it.
 	tb := NewTable(2, false)
 	c, err := tb.Open(1, wire.MinWindow)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	const rounds = 1000
-	done := make(chan struct{})
-	// The reading side grants; the writing side spends what it got.
+	const total = rounds + wire.MinWindow
+
+	fault := make(chan string, 1)
+	finished := make(chan struct{})
 	go func() {
-		defer close(done)
-		for i := 0; i < rounds; i++ {
-			c.Grant(1)
+		defer close(finished)
+		fail := func(format string, a ...any) {
+			select {
+			case fault <- fmt.Sprintf(format, a...):
+			default:
+			}
 		}
-	}()
-	spent := 0
-	for spent < rounds+wire.MinWindow {
-		if c.Spend(1) {
-			spent++
-			continue
-		}
-		select {
-		case <-done:
+		// out: the reading side grants, the writing side spends what it got.
+		grants := make(chan struct{})
+		go func() {
+			defer close(grants)
+			for i := 0; i < rounds; i++ {
+				c.Grant(1)
+			}
+		}()
+		spent := 0
+		for spent < total {
+			if c.Spend(1) {
+				spent++
+				continue
+			}
+			<-grants
 			if !c.Spend(1) {
-				t.Fatalf("spent %d of %d after the grants were in", spent, rounds+wire.MinWindow)
+				fail("spent %d of %d after the grants were in", spent, total)
+				return
 			}
 			spent++
+		}
+		<-grants
+		if c.SendAllowed(1) {
+			fail("allowance left over after everything granted was spent")
+			return
+		}
+		// in: the other direction, which had no second goroutine either.
+		allows := make(chan struct{})
+		go func() {
+			defer close(allows)
+			for i := 0; i < rounds; i++ {
+				c.Allow(1)
+			}
+		}()
+		took := 0
+		for took < rounds {
+			if c.Take(1) {
+				took++
+				continue
+			}
+			<-allows
+			if !c.Take(1) {
+				fail("took %d of %d after our own grants were in", took, rounds)
+				return
+			}
+			took++
+		}
+		<-allows
+		if c.Take(1) {
+			fail("more may arrive than everything we granted")
+			return
+		}
+		// Both endings at once must still free the number exactly once.
+		ends := make(chan struct{}, 2)
+		go func() { c.SentClose(); ends <- struct{}{} }()
+		go func() { c.RecvClose(); ends <- struct{}{} }()
+		<-ends
+		<-ends
+		if n := tb.Count(); n != 0 {
+			fail("count after both endings %d", n)
+		}
+	}()
+
+	select {
+	case <-finished:
+		select {
+		case msg := <-fault:
+			t.Fatal(msg)
 		default:
 		}
-	}
-	<-done
-	if c.SendAllowed(1) {
-		t.Fatal("allowance left over after everything granted was spent")
-	}
-	// Both endings at once must still free the number exactly once.
-	var ends sync.WaitGroup
-	ends.Add(2)
-	go func() { defer ends.Done(); c.SentClose() }()
-	go func() { defer ends.Done(); c.RecvClose() }()
-	ends.Wait()
-	if tb.Count() != 0 {
-		t.Fatalf("count after both endings %d", tb.Count())
+	case <-time.After(30 * time.Second):
+		// A counter whose lock is broken does not answer wrongly, it does not
+		// answer at all, so this is the only way this case can see it.
+		t.Fatal("the counters never came back; a lock is held and never given up")
 	}
 }
 
