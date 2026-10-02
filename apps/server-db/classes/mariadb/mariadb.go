@@ -27,6 +27,22 @@ import (
 // quietly.
 const maxPacket = 128 << 20
 
+// lifetime and idleTime are the two deadlines of the pool, and they are two
+// TYPES because the compiler is the only thing that can really hold them
+// apart. Both are durations, so anything that merely NAMES them leaves a slip
+// possible, and a named struct was measured doing exactly that: a positional
+// literal takes the values the wrong way round without a word, and a field
+// left out is quietly the zero value - both survived the whole package green.
+// With a type each, and with the two constants below carrying the type,
+// openDB(cfg, connIdleTime, connLifetime) does not build at all.
+//
+// What stays possible: writing lifetime(connIdleTime) by hand. That is no
+// longer a slip, it is a deliberate conversion, and a reader sees it.
+type (
+	lifetime time.Duration
+	idleTime time.Duration
+)
+
 // The numbers of the connection pool. They are chosen, not measured: no
 // cluster on this machine answers how many connections sixteen is. They stand
 // here as named constants so that a test can hold each of them against the
@@ -42,23 +58,14 @@ const (
 	// staying on the node it first reached. Whether the load really moves
 	// back to a node that came up again is NOT measured here: that needs a
 	// cluster.
-	connLifetime = 5 * time.Minute
-	connIdleTime = time.Minute
+	connLifetime = lifetime(5 * time.Minute)
+	connIdleTime = idleTime(time.Minute)
 )
 
 // OpenDB opens the cluster. It creates nothing: the schema comes from the
 // migrations, and the ngc account may not create anything anyway.
 func OpenDB(cfg config.DB) (*sql.DB, error) {
-	return openDB(cfg, deadlines{lifetime: connLifetime, idle: connIdleTime})
-}
-
-// deadlines are the two deadlines of the pool. They are a named pair and not
-// two arguments on purpose: both are durations, so the compiler would take
-// them the wrong way round without a word, and five minutes of idle time
-// against a minute of lifetime is a mistake no test here can see.
-type deadlines struct {
-	lifetime time.Duration
-	idle     time.Duration
+	return openDB(cfg, connLifetime, connIdleTime)
 }
 
 // openDB is OpenDB with the two deadlines of the pool as arguments, and that
@@ -71,7 +78,7 @@ type deadlines struct {
 //
 // It stays unexported, so no caller of OpenDB can set a deadline of its own:
 // the numbers of an installation are the two constants above and nothing else.
-func openDB(cfg config.DB, d deadlines) (*sql.DB, error) {
+func openDB(cfg config.DB, life lifetime, idle idleTime) (*sql.DB, error) {
 	if cfg.Driver != config.DriverMariaDB {
 		return nil, fmt.Errorf("mariadb: driver %q, want %q", cfg.Driver, config.DriverMariaDB)
 	}
@@ -94,8 +101,8 @@ func openDB(cfg config.DB, d deadlines) (*sql.DB, error) {
 	})
 	db.SetMaxOpenConns(maxOpenConns)
 	db.SetMaxIdleConns(maxIdleConns)
-	db.SetConnMaxLifetime(d.lifetime)
-	db.SetConnMaxIdleTime(d.idle)
+	db.SetConnMaxLifetime(time.Duration(life))
+	db.SetConnMaxIdleTime(time.Duration(idle))
 	return db, nil
 }
 

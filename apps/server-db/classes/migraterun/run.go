@@ -51,17 +51,28 @@ func Run(ctx context.Context, cfg config.DB, owner string, now int64) (int, erro
 	return migrate.Apply(ctx, db, d, owner, now)
 }
 
-// Needed reports whether anything is missing, without changing a thing. The
-// API asks before it starts: a database that is behind means the update did
-// not finish.
+// Needed reports whether anything is missing. It writes no row - and for
+// SQLite it does create the file the configuration names if it is not there
+// yet, measured: 4096 bytes, because the driver opens rwc and PingContext
+// really connects. That stays so on purpose. A fresh installation asks this
+// question before any file exists, and the answer it has to get is "yes,
+// migrate", not an error about a missing file; mode=ro would turn the one
+// case the question exists for into a failure.
 //
-// The one branch worth reading twice is the error of migrate.Level. A
-// database that never saw a migration has no ngc_schema, so Level fails
-// there - and a database that cannot be read at all fails there too, with a
-// wrong key or a file that is no database. Answering "yes, migrate" to both
-// would hand a broken database to the migrations and let the real reason
-// disappear, so the connection is asked first: if the database answers at
-// all, the missing table is the only reason left and it means none ever ran.
+// The branch worth reading twice is the error of migrate.Level, and what it
+// covers is LESS than it looks. A database that never saw a migration has no
+// ngc_schema, so Level fails there - but so does one whose ngc_schema is
+// broken, and (as a guess, not measured here) a MariaDB account without
+// SELECT on it, or a context that ran out between the ping and the query.
+// Every one of those comes back as "yes, migrate".
+//
+// So the ping buys exactly one thing, and the comment says only that: a
+// database that cannot be read at all - a wrong key, a file that is no
+// database, a node that does not answer - is reported as the error it is
+// instead of as "none ever ran". The rest is caught one step later and
+// loudly: measured, Run on a database with a broken ngc_schema comes back
+// with "migrate: 0001-core.sql: … no such column: step" and plays nothing in.
+// TestNeededTakesABrokenSchemaForAMissingOne holds both halves of that.
 func Needed(ctx context.Context, cfg config.DB) (bool, error) {
 	files, err := migrate.List()
 	if err != nil {

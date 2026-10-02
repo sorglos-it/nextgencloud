@@ -12,6 +12,7 @@ package migraterun_test
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,5 +134,65 @@ func TestAnUnknownDriverIsNamed(t *testing.T) {
 	if _, err := migraterun.Needed(ctx, cfg); err == nil ||
 		!strings.Contains(err.Error(), `"postgres"`) {
 		t.Errorf("Needed: %v", err)
+	}
+}
+
+// TestNeededTakesABrokenSchemaForAMissingOne writes down what Needed really
+// covers, because its comment used to claim more: a database that ANSWERS but
+// whose ngc_schema is broken comes back as "yes, migrate" and not as an
+// error. The ping cannot see it - the database answers.
+//
+// The second half is why that is survivable, and it is the half worth having
+// a case for: the migrations themselves refuse such a database, loudly and
+// with the file named, instead of writing into it. If anyone ever makes
+// Needed cover this, the first assertion is the one to change - and then this
+// comment with it.
+func TestNeededTakesABrokenSchemaForAMissingOne(t *testing.T) {
+	cfg := fileConfig(t)
+	if _, err := migraterun.Run(ctx, cfg, "ctl-1", 1790000000); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqlite.OpenDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{"DROP TABLE ngc_schema", "CREATE TABLE ngc_schema (junk INTEGER)"} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	need, err := migraterun.Needed(ctx, cfg)
+	if err != nil || !need {
+		t.Errorf("a broken ngc_schema is taken for a missing one: need = %v, err = %v", need, err)
+	}
+	n, err := migraterun.Run(ctx, cfg, "ctl-1", 1790000300)
+	if err == nil {
+		t.Fatalf("the migrations ran on a broken ngc_schema and played %d in", n)
+	}
+	if n != 0 {
+		t.Errorf("the run played %d migrations in before it gave up", n)
+	}
+	if !strings.Contains(err.Error(), "0001-core.sql") {
+		t.Errorf("the error does not name the migration that could not run: %v", err)
+	}
+}
+
+// TestNeededOnAFileThatIsNotThereYet is the first question of an
+// installation, and the answer has to be "yes": nothing has run. It also
+// pins the side effect, because the comment at Needed used to deny it - the
+// file is created, empty and encrypted, at the path the configuration names.
+func TestNeededOnAFileThatIsNotThereYet(t *testing.T) {
+	cfg := fileConfig(t)
+	if _, err := os.Stat(cfg.Path); !os.IsNotExist(err) {
+		t.Fatalf("the file is already there, so this case measures nothing: %v", err)
+	}
+	need, err := migraterun.Needed(ctx, cfg)
+	if err != nil || !need {
+		t.Fatalf("a database that does not exist yet needs migrating: %v, %v", need, err)
+	}
+	if _, err := os.Stat(cfg.Path); err != nil {
+		t.Errorf("Needed left no file behind, so the comment at Needed is wrong the other way: %v", err)
 	}
 }

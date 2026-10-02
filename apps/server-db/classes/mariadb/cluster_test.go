@@ -458,9 +458,9 @@ func TestAMuteNodeIsCutOffByOurOwnDeadline(t *testing.T) {
 // what the installation waits a minute and five minutes for happens inside a
 // case. Nothing else changes: the same OpenDB body, the same connectors, the
 // same nodes.
-func openShortCluster(t *testing.T, cfg config.DB, lifetime, idle time.Duration) *sql.DB {
+func openShortCluster(t *testing.T, cfg config.DB, life lifetime, idle idleTime) *sql.DB {
 	t.Helper()
-	db, err := openDB(cfg, deadlines{lifetime: lifetime, idle: idle})
+	db, err := openDB(cfg, life, idle)
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestThePoolRetiresAConnectionAtItsLifetime(t *testing.T) {
 	n := newFakeNode(t, ca, nodeGood, "127.0.0.1", loopbackCert, nil)
 	// The idle deadline is off, so nothing but the lifetime can close this
 	// connection and the counter below names one cause only.
-	db := openShortCluster(t, cluster(ca, n), time.Millisecond, 0)
+	db := openShortCluster(t, cluster(ca, n), lifetime(time.Millisecond), 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
@@ -520,7 +520,7 @@ func TestThePoolDropsAConnectionThatSatIdle(t *testing.T) {
 	// The lifetime is off: MaxIdleTimeClosed is only ever raised by the idle
 	// deadline, and with the lifetime running too this case could not say
 	// which of the two lines it held.
-	db := openShortCluster(t, cluster(ca, n), 0, time.Millisecond)
+	db := openShortCluster(t, cluster(ca, n), 0, idleTime(time.Millisecond))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {

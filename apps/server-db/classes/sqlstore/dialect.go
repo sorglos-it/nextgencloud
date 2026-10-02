@@ -145,6 +145,15 @@ func (sqliteDialect) Duplicate(err error) bool {
 // on its own and the numbers 1050, 1060 and 1061 say so; SQLite keeps the
 // whole file in one transaction, and without this the second run would fail on
 // the first table instead of stepping over it.
+//
+// The one real error this swallows is a NAME COLLISION, and it is measured,
+// not feared: "CREATE INDEX ngc_blob_seq ON ngc_blob (id)" on a database that
+// already carries that index over other columns answers "index ngc_blob_seq
+// already exists", so it is stepped over and the migration is recorded as
+// done. SQLite says nothing about the content in that message, so no reading
+// of it could tell the two apart. What keeps it out is the rule that a
+// migration only ever adds and the lint of task 3, which refuses a name that
+// is not in its fixed lists - not this function.
 func (sqliteDialect) Exists(err error) bool {
 	return errors.Is(err, sqlite3.ERROR) && strings.Contains(err.Error(), "already exists")
 }

@@ -245,9 +245,9 @@ func TestMaxPacketMatchesTheServerTemplate(t *testing.T) {
 // measurable from here.
 func TestPoolLimits(t *testing.T) {
 	if maxOpenConns != 16 || maxIdleConns != 4 ||
-		connLifetime != 5*time.Minute || connIdleTime != time.Minute {
+		connLifetime != lifetime(5*time.Minute) || connIdleTime != idleTime(time.Minute) {
 		t.Errorf("pool: %d open, %d idle, %v lifetime, %v idle time",
-			maxOpenConns, maxIdleConns, connLifetime, connIdleTime)
+			maxOpenConns, maxIdleConns, time.Duration(connLifetime), time.Duration(connIdleTime))
 	}
 	cfg := config.DB{Driver: config.DriverMariaDB, Nodes: []string{"db-1.ngc.test:3306"},
 		Name: "ngc", User: "ngc", Password: config.NewSecretText("x"), CA: testCA(t)}

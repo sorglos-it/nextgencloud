@@ -435,6 +435,13 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 			// purpose - for SQLite it is the generic error code AND the words
 			// SQLite writes for this one case - so a migration that is really
 			// broken still stops the run here.
+			//
+			// This branch reads every statement and not f.Statements[step:]
+			// as the one below does, and that is not an oversight: nothing in
+			// this branch ever writes updateStep, so step is 0 or the whole
+			// length here, and done above already catches the second. A
+			// slice expression that is provably always [0:] would promise a
+			// resume that one transaction does not need and does not have.
 			if _, err := tx.ExecContext(ctx, stmt); err != nil && !d.Exists(err) {
 				return false, at(i, f, err)
 			}
