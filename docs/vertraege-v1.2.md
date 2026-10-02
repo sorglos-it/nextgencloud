@@ -464,3 +464,61 @@ Messwerkzeugs, kein Loch im Code.
   Vertrag schreibt, schreibt die Messung dazu.
 - Punkt 7 ist der einzige mit einer harten Reihenfolge: vor dem zweiten
   API-Server.
+
+## Punkt 19: Die Release-Signatur muss einen DIGEST decken, nicht die Nachricht
+
+**Herkunft:** die Schlüssel-Zeremonie am 02./03.10.2026, Thomas' YubiKey
+(5.4.3, OpenPGP 3.4), Seriennummer 18241912. Alles unten ist **gemessen**.
+
+Heute signiert `shared/sign` die **rohe Nachricht**:
+
+```go
+// shared/sign/sign.go:120
+Sig: ed25519.Sign(priv, Message(purpose, payload))
+// und :132
+!ed25519.Verify(pub, Message(purpose, env.Payload), env.Sig)
+```
+
+`Message` ist `"ngc/" + purpose + 0x00 + payload` und damit **beliebig lang**
+(für ein Release gemessen 193 Byte).
+
+**Der Schlüssel liegt auf der Karte und kann das nicht signieren.** Zwei
+unabhängige Messungen:
+
+1. **Über gpg:** die Hülle einer OpenPGP-Signatur trägt zwar einen rohen
+   öffentlichen Schlüssel (32 Byte) und eine rohe Signatur (64 Byte) — die
+   richtigen Formen für unseren Vertrag. Aber sie deckt den **OpenPGP-Digest**,
+   nicht die Nachricht. Gemessen mit `crypto/ed25519`:
+   `Verify(pub, nachricht, sig)` = **false**, `Verify(pub, digest, sig)` =
+   **true**.
+2. **Unter gpg hindurch, direkt an die Karte** (`SCD SETDATA` + `SCD PKSIGN`):
+   die Karte signiert **32 Byte** und **64 Byte** roh und anstandslos — aber
+   30 Byte lehnt scdaemon mit `ERR Invalid value` ab. Es gehen also nur Längen,
+   die einem bekannten Hash entsprechen. Unsere 193 Byte gehen nie.
+
+**Also, für V1.2:** `sign.Sign`/`sign.Verify` signieren
+`sha512(Message(purpose, payload))` statt `Message(purpose, payload)`.
+
+- Der Wert in der Hülle bleibt gleich lang (64 Byte Ed25519), `len(e.Sig) !=
+  ed25519.SignatureSize` in Zeile 87 bleibt unverändert richtig.
+- Sicherheitlich ist es derselbe Satz: Ed25519 hasht intern ohnehin; eine
+  Vorhashung mit SHA-512 ist der übliche Weg für Karten (vgl. Ed25519ph) und
+  verliert nichts, solange der Hash kollisionsresistent ist. **Der Preis ist
+  nicht Sicherheit, sondern ein Satz mehr Vertrag:** was signiert wird, ist ab
+  dann der Digest, und das muss dastehen, damit niemand später die Nachricht
+  einsetzt und sich wundert.
+- **Betroffen sind alle signierten Dokumente**, nicht nur das Release — der
+  Zweck (`purpose`) unterscheidet sie, der Weg ist derselbe.
+
+**Die zwei Alternativen und warum sie verworfen sind:**
+
+- **Direkt per PC/SC-APDU an die Karte**, unter scdaemon hindurch: machbar,
+  aber es braucht ein eigenes Werkzeug, und es muss sich mit scdaemon um die
+  Karte streiten. Mehr Code für dieselbe Wirkung.
+- **Den Schlüssel als Datei halten:** dann signiert alles sofort, aber der
+  Schlüssel verlässt die Hardware. Das ist genau die Eigenschaft, für die der
+  YubiKey da ist.
+
+**Reihenfolge:** dieser Punkt muss **vor** dem ersten echten Release stehen.
+Der Packer ist gebaut (Branch `release-packer`), er packt reproduzierbar, und
+der Signierer wartet nur auf diesen einen Vertragssatz.
