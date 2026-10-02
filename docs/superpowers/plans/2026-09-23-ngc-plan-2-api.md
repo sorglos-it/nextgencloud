@@ -6100,19 +6100,25 @@ Parametern des OPEN.
 > **Berichtigt am 03.10.2026, und zwar gegen den eigenen Text dieser Aufgabe.**
 >
 > **1. `E_FORBIDDEN` und `E_NOTFOUND` müssen für einen Benutzer OHNE Recht
-> dasselbe sagen.** Diese Aufgabe schreibt es anders vor — ihr eigener Fall
-> `fx.CheckApp(t, fx.OfficeUser, "nothing")` erwartet `wire.CodeNotFound`,
-> während eine vorhandene App ohne Recht `wire.CodeForbidden` gibt. Gemessen
-> von der Prüfung: damit verrät der Unterschied einem Benutzer ohne Recht,
-> dass die App **installiert und aktiv** ist. Der Kommentar im Code behauptete
-> das Gegenteil.
+> dasselbe sagen.** Gemessen von der Prüfung: der Unterschied verriet einem
+> Benutzer ohne Recht, dass die App **installiert und aktiv** ist, und der
+> Kommentar im Code behauptete das Gegenteil.
 >
 > **Entscheidung des Koordinators: gleichziehen**, weil das die sicherere
-> Variante ist. Der Preis, vollständig: wer kein Recht hat, kann einen
-> Tippfehler im App-Namen nicht mehr von einem fehlenden Recht unterscheiden —
-> seine Fehlersuche wird schwerer. Ein Fall hält fest, dass **beide** Wege
-> denselben Code geben. **Der Fall dieses Plans mit `CodeNotFound` ist damit
-> überholt; wer ihn wörtlich baut, baut den Verräter.**
+> Variante ist. Betroffen ist die **App**-Stufe — fehlende App, nicht aktive
+> App und fehlendes `<app>/use`-Recht geben jetzt alle `E_FORBIDDEN`. Der
+> Preis, vollständig: wer kein Recht hat, kann einen Tippfehler im App-Namen
+> nicht mehr von einem fehlenden Recht unterscheiden — seine Fehlersuche wird
+> schwerer. Ein Fall hält fest, dass **beide** Wege denselben Code geben.
+>
+> **Was davon NICHT betroffen ist, und ich hatte es zuerst falsch
+> aufgeschrieben:** der Fall `fx.CheckApp(t, fx.OfficeUser, "nothing")` in
+> Schritt 1 erwartet weiter `wire.CodeNotFound` und bleibt **richtig**. Er
+> fragt nach einer **Aktion, die das Manifest nicht hat**, und zwar für einen
+> Benutzer, der das Sichtbarkeitsrecht **hat** — wer die App sehen darf, darf
+> auch erfahren, dass eine Aktion nicht existiert. Das ist ein anderes Paar
+> als das oben. **Mein erster Nachtrag erklärte diesen Fall für überholt; das
+> war falsch, nachgemessen an `check.go:87-110`.**
 >
 > **2. „Nie aus Parametern des OPEN" hat immer UNSIGNIERTE Teile gemeint.**
 > Gemessen: `Task`+`Confirm` aus dem OPEN verschieben die Entscheidung
