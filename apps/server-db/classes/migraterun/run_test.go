@@ -192,7 +192,15 @@ func TestNeededOnAFileThatIsNotThereYet(t *testing.T) {
 	if err != nil || !need {
 		t.Fatalf("a database that does not exist yet needs migrating: %v, %v", need, err)
 	}
-	if _, err := os.Stat(cfg.Path); err != nil {
-		t.Errorf("Needed left no file behind, so the comment at Needed is wrong the other way: %v", err)
+	// The size and not only the existence, because the comment at Needed
+	// names the number: one SQLite page, nothing written into it. A driver
+	// that starts leaving something else behind at this point is a change
+	// worth a red case, not a guess.
+	st, err := os.Stat(cfg.Path)
+	if err != nil {
+		t.Fatalf("Needed left no file behind, so the comment at Needed is wrong the other way: %v", err)
+	}
+	if st.Size() != 4096 {
+		t.Errorf("the file Needed left behind is %d bytes; the comment at Needed says 4096", st.Size())
 	}
 }

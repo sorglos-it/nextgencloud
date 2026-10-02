@@ -456,8 +456,14 @@ func TestAMuteNodeIsCutOffByOurOwnDeadline(t *testing.T) {
 
 // openShortCluster opens the pool with the two deadlines shortened, so that
 // what the installation waits a minute and five minutes for happens inside a
-// case. Nothing else changes: the same OpenDB body, the same connectors, the
+// case. Nothing else changes: the same openDB body, the same connectors, the
 // same nodes.
+//
+// It goes past OpenDB on purpose and therefore says nothing about the two
+// constants - a 0 here MEANS "no deadline", and both cases below rely on it
+// to leave one counter with a single cause. What OpenDB itself passes on is
+// a different question, and TestOpenDBHandsTheConstantsOnUnchanged is the
+// one that asks it.
 func openShortCluster(t *testing.T, cfg config.DB, life lifetime, idle idleTime) *sql.DB {
 	t.Helper()
 	db, err := openDB(cfg, life, idle)

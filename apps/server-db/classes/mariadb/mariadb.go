@@ -36,8 +36,12 @@ const maxPacket = 128 << 20
 // With a type each, and with the two constants below carrying the type,
 // openDB(cfg, connIdleTime, connLifetime) does not build at all.
 //
-// What stays possible: writing lifetime(connIdleTime) by hand. That is no
-// longer a slip, it is a deliberate conversion, and a reader sees it.
+// What a type CANNOT hold, measured: an untyped 0 fits either of them, so
+// openDB(cfg, connLifetime, 0) builds and runs green - a lost deadline that
+// looks like nothing. Neither does it hold a hand-written
+// lifetime(connIdleTime). Both are held one level up instead, by
+// TestOpenDBHandsTheConstantsOnUnchanged, which reads what OpenDB really
+// passes: the two identifiers and nothing else.
 type (
 	lifetime time.Duration
 	idleTime time.Duration

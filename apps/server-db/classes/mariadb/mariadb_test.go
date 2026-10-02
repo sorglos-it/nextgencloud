@@ -8,6 +8,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -284,4 +288,70 @@ func testCA(t *testing.T) string {
 		t.Fatalf("certificate: %v", err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestOpenDBHandsTheConstantsOnUnchanged holds what OpenDB really passes to
+// openDB, and it reads the source to do it. That is unusual here and it is
+// the only thing that works: the two deadlines take effect a minute and five
+// minutes from now, database/sql keeps no clock to borrow, and sql.DBStats
+// gives neither of them back - so no running pool can be asked what it was
+// told. TestPoolLimits holds the two CONSTANTS against their numbers, which
+// is a different statement: it stays green while OpenDB passes something
+// else entirely.
+//
+// Measured before this case existed: openDB(cfg, connLifetime, 0) and
+// openDB(cfg, 0, connIdleTime) both built and ran the whole package green,
+// exit code 0. An untyped 0 fits every named duration type, so the two types
+// of mariadb.go cannot catch it; what they do catch is swapping the two
+// (a build error) and leaving one out (another one).
+//
+// The case therefore asks for the exact three identifiers in order. Anything
+// else - a literal, a zero, a swap, a call that is not there at all - is
+// named here instead of being lost.
+func TestOpenDBHandsTheConstantsOnUnchanged(t *testing.T) {
+	const file = "mariadb.go"
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var call *ast.CallExpr
+	var found bool
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != "OpenDB" || fn.Body == nil {
+			return true
+		}
+		found = true
+		ast.Inspect(fn.Body, func(m ast.Node) bool {
+			c, ok := m.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "openDB" {
+				call = c
+			}
+			return true
+		})
+		return false
+	})
+	// Both halves are named: a case that finds no OpenDB at all would
+	// otherwise pass by measuring nothing.
+	if !found {
+		t.Fatalf("%s carries no function OpenDB, so this case measured nothing", file)
+	}
+	if call == nil {
+		t.Fatalf("OpenDB does not call openDB, so nothing says which deadlines the pool gets")
+	}
+	want := []string{"cfg", "connLifetime", "connIdleTime"}
+	if len(call.Args) != len(want) {
+		t.Fatalf("OpenDB calls openDB with %d arguments, want %d (%s)",
+			len(call.Args), len(want), strings.Join(want, ", "))
+	}
+	for i, name := range want {
+		id, ok := call.Args[i].(*ast.Ident)
+		if !ok || id.Name != name {
+			t.Errorf("argument %d of openDB is %s, want the identifier %s",
+				i+1, types.ExprString(call.Args[i]), name)
+		}
+	}
 }
