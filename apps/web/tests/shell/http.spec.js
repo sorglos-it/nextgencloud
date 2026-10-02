@@ -9,26 +9,62 @@ async function mock(page, path, status, body, headers = {}) {
     route.fulfill({ status, contentType: "application/json", headers, body }));
 }
 
-// Counts what actually left the browser for path, and answers it so no test
-// hangs on a request the shell should never have made. The count is the whole
-// point of the three cases that say "never sent": without it they would pass
-// for a shell that sends the body and only then throws.
+// Records, in order, every request that actually left the browser for the API,
+// and answers it so no test hangs on a request the shell should never have
+// made. The record is the whole point of the cases that say "never sent":
+// without it they would pass for a shell that sends the body and only then
+// throws.
 //
 // The answer is E_INTERNAL and not a 204, so that the code those cases expect
 // cannot also come out of a request that WAS sent. Measured: with a 204 here,
 // "a name that is no login name is not sent" stayed green while the name
 // grammar was taken out, because the 204 became E_PROTOCOL by another road.
-async function counter(page, path) {
-  const seen = { n: 0 };
-  await page.route("**" + path, (route) => {
-    seen.n++;
+// The one exception is the barrier's own path, trust, which answers 204.
+async function recorder(page) {
+  const log = [];
+  await page.route("**/api/**", (route) => {
+    const u = new URL(route.request().url());
+    log.push(`${route.request().method()} ${u.pathname}${u.search}`);
+    if (u.pathname === "/api/v1/trust") return route.fulfill({ status: 204 });
     return route.fulfill({
       status: 500,
       contentType: "application/json",
       body: JSON.stringify({ status: "error", code: "E_INTERNAL", message: "Interner Fehler." }),
     });
   });
-  return seen;
+  return log;
+}
+
+// WHY THE CASES THAT SAY "NEVER SENT" END HERE AND NOT ON A COUNTER. Their
+// whole statement is a NEGATIVE about something ASYNCHRONOUS: a counter read
+// the moment the call returns cannot see a request that goes out a little
+// later. It was measured on the sister file (shell/trustlist.spec.js), where a
+// wrong logout delayed by 300 ms left the old case at "2 passed, EXIT=0" and
+// turned the barriered one red; expect.poll(...).toBe(0) is no help, since the
+// first look satisfies it and that look is the one that was already wrong.
+//
+// So the case BARRIERS before it reads the log, in two halves:
+//
+//   1. Three round trips on the same connection, awaited one after the other.
+//      Their arrival in the log, in order, proves the queue in front of them
+//      is empty: whatever the page asked for earlier has been through the
+//      route by then.
+//   2. waitForLoadState("networkidle") returns after half a second in which
+//      the page opened no request at all, so a request on a timer shorter
+//      than that has fired and shows up in the log. This is safe here, and
+//      only because no case of this file logs in or opens the session socket:
+//      a page with an open socket never goes idle and the line would hang.
+//
+// WHAT THIS STILL CANNOT SEE: a request made AFTER full quiescence. There is
+// no barrier for that, only a longer wait, and a longer wait is a sleep.
+const BARRIER = ["GET /api/v1/trust?from=1", "GET /api/v1/trust?from=2", "GET /api/v1/trust?from=3"];
+
+async function barrier(page) {
+  await page.evaluate(async () => {
+    const http = await import("/assets/js/net/http.js");
+    for (const from of [1, 2, 3]) await http.trustChain(from);
+  });
+  await page.waitForLoadState("networkidle");
 }
 
 test("an error is recognised by the code in the CLOSE JSON, not by the status", async ({ shell }) => {
@@ -99,7 +135,7 @@ test("GET /api/v1/trust answers 204 when nothing newer is there", async ({ shell
 });
 
 test("a body over MaxRequest is never sent", async ({ shell }) => {
-  const seen = await counter(shell, "/api/v1/setup");
+  const log = await recorder(shell);
   const out = await shell.evaluate(async () => {
     const http = await import("/assets/js/net/http.js");
     try {
@@ -110,7 +146,9 @@ test("a body over MaxRequest is never sent", async ({ shell }) => {
     }
   });
   expect(out).toBe("E_TOOLARGE");
-  expect(seen.n).toBe(0);
+  // Only now is the log worth reading: nothing but the barrier went out.
+  await barrier(shell);
+  expect(log).toEqual(BARRIER);
 });
 
 // The mistake this strand paid ten rounds for, on the one place here that
@@ -119,7 +157,7 @@ test("a body over MaxRequest is never sent", async ({ shell }) => {
 // past the bound and puts the real bytes on the wire. b64.bytesOf settles the
 // bytes first, and the number checked is then the number sent.
 test("the size is decided on the bytes that go out, not on what the object says", async ({ shell }) => {
-  const seen = await counter(shell, "/api/v1/setup");
+  const log = await recorder(shell);
   const out = await shell.evaluate(async () => {
     const http = await import("/assets/js/net/http.js");
     class Liar extends Uint8Array {
@@ -134,7 +172,9 @@ test("the size is decided on the bytes that go out, not on what the object says"
     }
   });
   expect(out).toBe("E_TOOLARGE");
-  expect(seen.n).toBe(0);
+  // Only now is the log worth reading: nothing but the barrier went out.
+  await barrier(shell);
+  expect(log).toEqual(BARRIER);
 });
 
 // Retry-After is a header from outside and is read like every other number of
@@ -170,13 +210,15 @@ test("an answer past its bound is dropped, not buffered", async ({ shell }) => {
 // about who exists, so refusing here tells no one anything the API would not
 // have told them with the same E_PROTOCOL.
 test("a name that is no login name is not sent", async ({ shell }) => {
-  const seen = await counter(shell, "/api/v1/login/start");
+  const log = await recorder(shell);
   const out = await shell.evaluate(async () => {
     const http = await import("/assets/js/net/http.js");
     try { await http.loginStart("Anna"); return "sent"; } catch (e) { return e.code; }
   });
   expect(out).toBe("E_PROTOCOL");
-  expect(seen.n).toBe(0);
+  // Only now is the log worth reading: nothing but the barrier went out.
+  await barrier(shell);
+  expect(log).toEqual(BARRIER);
 });
 
 // shared/README.md, "Vor dem WebSocket", gives PathSetup POST and PathLogout
