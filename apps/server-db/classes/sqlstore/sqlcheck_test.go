@@ -1722,6 +1722,7 @@ func invalidReturns(p *pkgSource, n ast.Node) []token.Pos {
 var atTheDatabase = map[string]string{
 	"sqlstore": "the guard of this file",
 	"migrate":  "checkStatement, fill and the tests beside them: it runs the statements of the migrations, and they are measured there",
+	"mariadb":  "it opens the Galera cluster over TLS and hands the connection to sqlstore; it runs no statement of its own, so the guard of this file covers every statement that reaches those nodes",
 	"sqlite":   "it opens the encrypted file and sets its PRAGMAs on the driver's own connection, and since task 7 Open also applies the migrations and wraps the result as a store; it runs no statement of its own - migrate and sqlstore run theirs, and each of those two has a guard here",
 }
 
