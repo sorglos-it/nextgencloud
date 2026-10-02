@@ -26,7 +26,7 @@ jede API jede ersetzen kann.
 **Entwurf:** [`docs/superpowers/specs/2026-09-19-ngc-kern-design.md`](../specs/2026-09-19-ngc-kern-design.md)
 · **Anweisungen:** [`apps/server-api/CLAUDE.md`](../../../apps/server-api/CLAUDE.md),
 [`apps/cli/CLAUDE.md`](../../../apps/cli/CLAUDE.md) · **Verträge:**
-[`shared/README.md`](../../../shared/README.md) (Etikett `vertraege-v1`),
+[`shared/README.md`](../../../shared/README.md) (Etikett `vertraege-v1.1`),
 [`shared/ulh.md`](../../../shared/ulh.md)
 
 ---
@@ -78,7 +78,8 @@ Diese Vorgaben gelten für jede Aufgabe; sie werden nicht in jeder Aufgabe wiede
 | `session.MaxChain` (32 MiB), `session.MaxChainVersions` (64) | eine Antwort von `GET /api/v1/trust` |
 | `session.MaxSkew` (300 s) | geduldeter Uhrunterschied; auch das Fenster für `OncePurge` |
 | `session.ChallengeLifetime` (120 s) | Lebensdauer einer Anmelde-Nonce |
-| `wire.MaxFrame` (65519) | größter Frame; Lesegrenze des WebSockets |
+| `wire.MaxFrame` (65519) | größter Frame im Klartext |
+| `wire.MaxFrame + noisep.TagSize` (65535) | **Lesegrenze des WebSockets** — gemessen und am 01.10.2026 berichtigt: diese Zeile nannte vorher `MaxFrame` allein, während der Code desselben Plans richtig `wire.MaxFrame + noisep.TagSize` schreibt. Ein gesiegelter Frame trägt sein Siegel mit. |
 | `wire.MaxSessionChannels` (64), `wire.MaxTunnelChannels` (1024) | belegte Kanalnummern |
 | `wire.MaxWindow` (1 MiB), `wire.MinWindow` (4 KiB) | offene Freigabe je Strecke und Richtung |
 | `wire.MaxCallResult` (8 MiB) | Ergebnis nach Art von `call` |
@@ -1973,8 +1974,11 @@ func newHandler(t *testing.T) *Handler {
 		Cert: "/x", CertKey: "/y",
 		NoiseKey: config.NewSecret(noiseKey.Private), SignKey: config.NewSecret(signKey.Seed()),
 		SecretKey: config.NewSecret(make([]byte, 32)),
-		ReleaseKey: enc.Bytes(make([]byte, 32)), StoreKey: enc.Bytes(make([]byte, 32)),
-		StoreURL: "https://store.ngc.test", SessionLifetime: 43200, IdleTimeout: 1800,
+		// Its own key next to SecretKey; config.API.Validate asks for both
+		// with 32 bytes, so a configuration without it is none.
+		ChallengeKey: config.NewSecret(make([]byte, 32)),
+		ReleaseKey:   enc.Bytes(make([]byte, 32)), StoreKey: enc.Bytes(make([]byte, 32)),
+		StoreURL:     "https://store.ngc.test", SessionLifetime: 43200, IdleTimeout: 1800,
 	}
 	s := state.New(cfg, memstore.New(), box, make([]byte, 32))
 	s.Now = func() int64 { return 1790000000 }
@@ -2428,21 +2432,26 @@ git commit -m "Add the login lock and the first setup of the API" \
 
 ### Task 6: Anmeldung, erster Teil – `POST /api/v1/login/start`
 
-Für unbekannte Namen antwortet die API mit erfundenen, aber gleichbleibenden Werten, damit keine
-Antwort verrät, ob ein Benutzer existiert.
+Die Antwort baut **ausschließlich** `session.Challenge`, nie die API von Hand. Für unbekannte Namen
+erfindet diese Funktion eine Antwort, die von einer echten nicht zu unterscheiden ist – deshalb
+geht die API auch für unbekannte Namen denselben Weg und verhält sich an keiner Stelle anders:
+nicht früher antworten, nicht anders protokollieren, nicht anders sperren.
 
 **Files:**
-- Create: `apps/server-api/classes/login/login.go`, `apps/server-api/classes/login/start.go`
-- Test: `apps/server-api/classes/login/start_test.go`
+- Create: `apps/server-api/classes/login/login.go`, `apps/server-api/classes/login/start.go`,
+  `apps/server-api/classes/login/share.go`
+- Test: `apps/server-api/classes/login/start_test.go`, `apps/server-api/classes/login/share_test.go`
 
 **Interfaces:**
-- Consumes: `session.ParseLoginStart`, `session.LoginChallenge`, `session.NonceSize`,
-  `session.ChallengeLifetime`, `dbapi.OnceNonce`, `trust.List.PasswordToo`, `proof.KDF`,
+- Consumes: `session.ParseLoginStart`, `session.Challenge`, `session.ChallengeInput`,
+  `session.LoginChallenge`, `session.NonceSize`, `session.ChallengeLifetime`,
+  `config.API.ChallengeKey`, `trust.List.UserByName`, `dbapi.Store.UserList`, `dbapi.OnceNonce`,
   `lock.Check`, `lock.Fail`.
 - Produces:
   - `type Handler struct { S *state.State }`, `func New(s *state.State) *Handler`
   - `func (h *Handler) Start(w http.ResponseWriter, r *http.Request)`
   - `func (h *Handler) userOf(l *trust.List, id string) (trust.User, bool)`
+  - `type shareCache struct { … }`, `func (h *Handler) totpShare(ctx context.Context) int`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2453,13 +2462,19 @@ package login
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 )
 
 func TestStartAnswersForAKnownUser(t *testing.T) {
@@ -2486,24 +2501,104 @@ func TestStartAnswersForAKnownUser(t *testing.T) {
 	}
 }
 
+func TestStartNamesTheKeyIDOfEveryPasskey(t *testing.T) {
+	h, fx := newFixture(t)
+	c := start(t, h, fx.PasskeyName)
+	u, _ := fx.List.UserByName(fx.PasskeyName)
+	var want int
+	for _, k := range u.Keys {
+		if k.Kind == proof.KindPasskey {
+			want++
+		}
+	}
+	if len(c.Passkeys) != want {
+		t.Fatalf("%d passkeys, want %d", len(c.Passkeys), want)
+	}
+	// The browser takes the key ID from here and derives none of its own, so
+	// every entry has to carry both halves (session.PasskeyRef).
+	for _, p := range c.Passkeys {
+		if p.Validate() != nil {
+			t.Fatalf("passkey ref %+v", p)
+		}
+	}
+	// The whole answer has to pass the parser the browser reads it with;
+	// anything it refuses would tell the browser something.
+	b, _ := json.Marshal(c)
+	if _, err := session.ParseLoginChallenge(b); err != nil {
+		t.Fatalf("the browser would refuse this answer: %v", err)
+	}
+}
+
 func TestStartLooksTheSameForAnUnknownName(t *testing.T) {
 	h, _ := newFixture(t)
 	c := start(t, h, "nobody")
-	if len(c.Nonce) != session.NonceSize || c.KDF == nil || c.KDF.Validate() != nil {
+	if len(c.Nonce) != session.NonceSize {
 		t.Fatalf("challenge %+v", c)
 	}
 	if !trust.ValidID(c.User) {
 		t.Fatalf("user %q", c.User)
 	}
+	// The made-up answer passes the browser's parser like a real one.
+	b, _ := json.Marshal(c)
+	if _, err := session.ParseLoginChallenge(b); err != nil {
+		t.Fatalf("the browser would refuse the made-up answer: %v", err)
+	}
 	// Made up, but stable: a second try must not tell the shell anything new.
 	again := start(t, h, "nobody")
-	if again.User != c.User || string(again.KDF.Salt) != string(c.KDF.Salt) {
+	if again.User != c.User || len(again.Passkeys) != len(c.Passkeys) || again.TOTP != c.TOTP {
 		t.Fatal("the made-up values changed between two calls")
+	}
+	if (again.KDF == nil) != (c.KDF == nil) ||
+		(c.KDF != nil && string(again.KDF.Salt) != string(c.KDF.Salt)) {
+		t.Fatal("the made-up KDF changed between two calls")
 	}
 	// And they differ from those of another unknown name.
 	third := start(t, h, "nothing")
 	if third.User == c.User {
 		t.Fatal("two unknown names got the same user")
+	}
+}
+
+func TestStartTakesTheSamePathForAnUnknownName(t *testing.T) {
+	h, fx := newFixture(t)
+	// 1. Nothing outside tells the two apart: same status, same headers, and a
+	//    shape the installation really gives out. session.Challenge draws the
+	//    made-up shape from the list, so it is one of the shapes the list's own
+	//    users produce — not necessarily this one user's.
+	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
+	if known.Code != unknown.Code {
+		t.Fatalf("status %d vs %d", known.Code, unknown.Code)
+	}
+	if !maps.EqualFunc(known.Header(), unknown.Header(), slices.Equal[[]string]) {
+		t.Fatalf("headers %v vs %v", known.Header(), unknown.Header())
+	}
+	real := map[string]bool{}
+	for _, u := range fx.List.Users {
+		real[fields(t, raw(t, h, u.Name))] = true
+	}
+	if !real[fields(t, unknown)] {
+		t.Fatalf("made-up shape %q, real shapes %v", fields(t, unknown), real)
+	}
+	// 2. Nothing inside either: login/start writes no log entry for either
+	//    name, and it locks neither. Only login/finish counts failures, so
+	//    asking for a name must never hold it against anybody.
+	entries, err := h.S.DB.LogQuery(ctx, core.LogQuery{Limit: 10})
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("login/start logged %d entries (%v)", len(entries), err)
+	}
+	for _, name := range []string{fx.PasswordName, "nobody"} {
+		if wait, _ := lock.Check(ctx, h.S.DB, name, h.S.Now()); wait != 0 {
+			t.Fatalf("%q was locked by asking", name)
+		}
+	}
+	// 3. Time does not tell them apart either: session.Challenge walks the
+	//    whole list and builds the made-up answer both ways, so the medians of
+	//    many runs stay within a factor of two. The factor is generous on
+	//    purpose — this test may not become flaky on a loaded machine; it only
+	//    catches an early return that was put back in.
+	a, b := median(t, h, fx.PasswordName), median(t, h, "nobody")
+	if a > 2*b || b > 2*a {
+		t.Fatalf("known %v, unknown %v", a, b)
 	}
 }
 
@@ -2547,6 +2642,39 @@ func start(t *testing.T, h *Handler, name string) session.LoginChallenge {
 	return c
 }
 
+// raw runs login/start and hands back the whole answer, headers and all.
+func raw(t *testing.T, h *Handler, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.Start(w, jsonPost(session.PathLoginStart, `{"name":"`+name+`"}`))
+	return w
+}
+
+// fields lists the field names of an answer in order, so two answers can be
+// compared without comparing the values, which differ by design.
+func fields(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	return strings.Join(slices.Sorted(maps.Keys(m)), ",")
+}
+
+// median times 25 runs and returns the middle one. The median ignores the one
+// slow run a busy machine throws in, which an average would not.
+func median(t *testing.T, h *Handler, name string) time.Duration {
+	t.Helper()
+	d := make([]time.Duration, 25)
+	for i := range d {
+		start := time.Now()
+		raw(t, h, name)
+		d[i] = time.Since(start)
+	}
+	slices.Sort(d)
+	return d[len(d)/2]
+}
+
 // jsonPost builds a POST with the right content type.
 func jsonPost(path, body string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
@@ -2554,6 +2682,11 @@ func jsonPost(path, body string) *http.Request {
 	return r
 }
 ```
+
+`TestStartTakesTheSamePathForAnUnknownName` hält die Regel aus `session.Challenge` fest: beide
+Namen nehmen denselben Weg, und nach außen unterscheidet sie nichts – weder die Antwort noch die
+Zeit noch Protokoll oder Sperre. Er bekommt von `newFixture` eine eigene, leere Datenbank, deshalb
+sagt „das Protokoll ist leer“ hier wirklich „`login/start` hat nichts geschrieben“.
 
 - [ ] **Step 2: Write the fixture every login test uses**
 
@@ -2563,6 +2696,7 @@ func jsonPost(path, body string) *http.Request {
 package login
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -2603,14 +2737,21 @@ func newFixture(t *testing.T) (*Handler, fixture) {
 	if err != nil {
 		t.Fatalf("box: %v", err)
 	}
-	noise, signKey := trusttest.NodeKeys(1)
+	// 0xA1, not 1: session.VerifyAPI looks the node up by sign.KeyID, so a
+	// certificate signed with any other key finds no node and comes back
+	// ErrCert - the test would then pass without checking the certificate.
+	noise, signKey := trusttest.NodeKeys(0xA1)
 	cfg := &config.API{
 		Node: "api-1", URL: "wss://api-1.ngc.test:7443/tunnel", Listen: ":7443",
 		Cert: "/x", CertKey: "/y",
 		NoiseKey: config.NewSecret(noise.Private), SignKey: config.NewSecret(signKey.Seed()),
-		SecretKey:  config.NewSecret(make([]byte, 32)),
-		ReleaseKey: enc.Bytes(make([]byte, 32)), StoreKey: enc.Bytes(make([]byte, 32)),
-		StoreURL:   "https://store.ngc.test", SessionLifetime: 43200, IdleTimeout: 1800,
+		SecretKey: config.NewSecret(make([]byte, 32)),
+		// Its own key, not SecretKey: session.Challenge draws the made-up
+		// answer from it, and the same key in every API node makes all of them
+		// answer one name alike.
+		ChallengeKey: config.NewSecret(bytes.Repeat([]byte{7}, 32)),
+		ReleaseKey:   enc.Bytes(make([]byte, 32)), StoreKey: enc.Bytes(make([]byte, 32)),
+		StoreURL:     "https://store.ngc.test", SessionLifetime: 43200, IdleTimeout: 1800,
 	}
 	s := state.New(cfg, memstore.New(), box, make([]byte, 32))
 	s.Now = func() int64 { return testNow }
@@ -2669,79 +2810,108 @@ Expected: FAIL, `undefined: Handler`.
 package login
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-
-	"github.com/sorglos-it/nextgencloud/shared/enc"
-	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 )
 
 // Handler serves the paths of the login.
-type Handler struct{ S *state.State }
+type Handler struct {
+	S     *state.State
+	share shareCache
+}
 
 // New returns a Handler.
 func New(s *state.State) *Handler { return &Handler{S: s} }
 
 // userOf finds a user of the trust list by ID.
 func (h *Handler) userOf(l *trust.List, id string) (trust.User, bool) { return l.User(id) }
+```
 
-// byName finds the user with this login name in the trust list.
-func byName(l *trust.List, name string) (trust.User, bool) {
-	for _, u := range l.Users {
-		if u.Name == name {
-			return u, true
+Mehr braucht es hier nicht: Wer der Name ist, was für Schlüssel er hat, welche KDF die Shell
+bekommt, ob die Rolle das Passwort zusätzlich verlangt und wie eine erfundene Antwort aussieht –
+das alles entscheidet **`session.Challenge`**. Die API baut nichts davon selbst, denn jede eigene
+Zeile wäre eine Zeile, die für bekannte und unbekannte Namen anders laufen könnte.
+
+- [ ] **Step 5: Den TOTP-Anteil zählen und zwischenspeichern**
+
+`session.ChallengeInput.TOTPShare` ist die einzige Zahl, die `session.Challenge` weder aus der
+Vertrauensliste noch aus der Anfrage nehmen kann: wie viele Benutzer der Anlage ein TOTP-Geheimnis
+haben, in Prozent. Die Vertrauensliste weiß das nicht – `dbapi.User.TOTP` steht nur in der
+Datenbank. Eine erfundene Antwort zieht ihr `totp` daraus; mit festen Chancen wäre in einer Anlage
+mit TOTP-Pflicht jede zweite erfundene Antwort auf einen Blick als erfunden zu erkennen.
+
+`apps/server-api/classes/login/share.go`:
+
+```go
+package login
+
+import (
+	"context"
+	"sync"
+)
+
+// shareTTL is how long a counted TOTP share is used again. The share moves
+// only when users are added or change their TOTP, so a minute-old number is
+// as good as a fresh one — and counting on every login/start would put a full
+// table scan in front of every login.
+const shareTTL = 300
+
+// shareCache keeps the last counted share with the time it was counted.
+type shareCache struct {
+	mu      sync.Mutex
+	percent int
+	counted int64
+	ok      bool
+}
+
+// totpShare returns how many of the installation's users hold a TOTP secret,
+// in percent (0..100), counted in the database and kept for shareTTL seconds.
+// A database that cannot be reached gives the last counted value, and 0 if
+// there is none: a made-up answer must still be built, and it must be built
+// the same way for every name, so this never fails the request.
+func (h *Handler) totpShare(ctx context.Context) int {
+	now := h.S.Now()
+	h.share.mu.Lock()
+	defer h.share.mu.Unlock()
+	if h.share.ok && now-h.share.counted < shareTTL {
+		return h.share.percent
+	}
+	users, err := h.S.DB.UserList(ctx)
+	if err != nil {
+		return h.share.percent
+	}
+	with := 0
+	for _, u := range users {
+		if len(u.TOTP) > 0 {
+			with++
 		}
 	}
-	return trust.User{}, false
-}
-
-// made returns made-up but stable values for a name that does not exist:
-// derived with the installation's secret key, so they are the same at every
-// API and after every restart, and nobody outside can tell them from real
-// ones or compute them.
-func (h *Handler) made(name, part string) []byte {
-	m := hmac.New(sha256.New, h.S.Cfg.SecretKey.Bytes())
-	m.Write([]byte("ngc/api/made-up/v1"))
-	m.Write([]byte{0})
-	m.Write([]byte(part))
-	m.Write([]byte{0})
-	m.Write([]byte(name))
-	return m.Sum(nil)
-}
-
-// madeKDF is the KDF a name that does not exist gets: the standard parameters
-// with a made-up salt, so the browser spends the same work as for a real user.
-func (h *Handler) madeKDF(name string) *proof.KDF {
-	return &proof.KDF{Alg: proof.KDFArgon2id, Salt: enc.Bytes(h.made(name, "salt")[:proof.SaltSize]),
-		MemKiB: proof.DefaultMemKiB, Time: proof.DefaultTime, Par: proof.DefaultPar}
-}
-
-// passwordKDF returns the KDF of a user's password key, or nil if the user has
-// none (then the shell offers only passkeys).
-func passwordKDF(u trust.User) *proof.KDF {
-	for _, k := range u.Keys {
-		if k.Kind == proof.KindPassword && k.KDF != nil {
-			return k.KDF
-		}
+	if len(users) > 0 {
+		h.share.percent = with * 100 / len(users)
+	} else {
+		h.share.percent = 0
 	}
-	return nil
-}
-
-// credIDs returns the credential IDs of a user's passkeys for allowCredentials.
-func credIDs(u trust.User) []enc.Bytes {
-	var out []enc.Bytes
-	for _, k := range u.Keys {
-		if k.Kind == proof.KindPasskey {
-			out = append(out, k.CredID)
-		}
-	}
-	return out
+	h.share.counted, h.share.ok = now, true
+	return h.share.percent
 }
 ```
 
-- [ ] **Step 5: Write login/start**
+`apps/server-api/classes/login/share_test.go`:
+
+```go
+func TestTOTPShareCountsTheUsers(t *testing.T)
+// Vier Benutzer, einer mit TOTP: 25. Keiner mit TOTP: 0. Keine Benutzer: 0.
+
+func TestTOTPShareIsKeptForAWhile(t *testing.T)
+// Nach dem ersten Zählen ändert ein neuer Benutzer die Zahl erst, wenn die Uhr um shareTTL
+// weitergestellt wurde (h.S.Now ersetzen).
+
+func TestTOTPShareSurvivesADatabaseFailure(t *testing.T)
+// Eine Datenbank, die Fehler gibt, liefert die zuletzt gezählte Zahl, und 0, wenn es keine gibt;
+// login/start antwortet trotzdem.
+```
+
+- [ ] **Step 6: Write login/start**
 
 `apps/server-api/classes/login/start.go`:
 
@@ -2752,7 +2922,6 @@ import (
 	"net/http"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
-	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
@@ -2793,54 +2962,65 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		httpapi.Fail(w, wire.CodeInternal)
 		return
 	}
-	c := session.LoginChallenge{
-		Nonce:        enc.Bytes(nonce),
-		Now:          now,
-		MaxLifetime:  h.S.Cfg.SessionLifetime,
-		Installation: v.List.Installation,
-		RP:           v.List.RP,
-	}
-	u, known := byName(v.List, req.Name)
-	if !known {
-		// Made-up values: the same shape as a real challenge, and the nonce is
-		// not stored, so login/finish fails with E_LOGIN like any other wrong
-		// attempt.
-		c.User = enc.B64.EncodeToString(h.made(req.Name, "user")[:16])
-		c.KDF = h.madeKDF(req.Name)
-		httpapi.Answer(w, http.StatusOK, mustJSON(w, c))
-		return
-	}
+	// trust.List.UserByName is the lookup the contract hands the API for a
+	// typed name. It is needed for two things and two only: the row that holds
+	// the TOTP secret, and the nonce that is kept for a real user. The answer
+	// itself comes from session.Challenge, which walks the list on its own.
+	//
+	// The row is read for every name, known or not, and a missing row is no
+	// failure — a name nobody has simply has none, and asking for it must cost
+	// what asking for a real one costs.
+	u, known := v.List.UserByName(req.Name)
 	row, err := h.S.DB.UserGet(ctx, u.ID)
 	if err != nil && !isNotFound(err) {
 		httpapi.Fail(w, wire.CodeUnreachable)
 		return
 	}
-	c.User = u.ID
-	c.KDF = passwordKDF(u)
-	c.Passkeys = credIDs(u)
-	c.TOTP = len(row.TOTP) > 0
-	c.PasswordToo = v.List.PasswordToo(u.ID)
-	if c.KDF == nil && !c.PasswordToo {
-		// A user without a password key logs in with a passkey alone; the
-		// shell then asks for no password. A made-up KDF would only make it
-		// spend Argon2id for nothing.
-		c.KDF = nil
-	}
-	if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+	// session.Challenge builds the whole answer, for a name nobody has too:
+	// it walks the list and builds the made-up answer either way, so neither
+	// the shape of the answer nor the time it takes says whether the user
+	// exists. The API adds nothing of its own here and takes no shortcut.
+	c, err := session.Challenge(v.List, session.ChallengeInput{
+		Name:        req.Name,
+		TOTP:        len(row.TOTP) > 0,
+		TOTPShare:   h.totpShare(ctx),
+		Key:         h.S.Cfg.ChallengeKey.Bytes(),
+		Nonce:       nonce,
+		Now:         now,
+		MaxLifetime: h.S.Cfg.SessionLifetime,
+	})
+	if err != nil {
+		httpapi.Fail(w, wire.CodeInternal)
 		return
+	}
+	if known {
+		// Only a real nonce is kept. The made-up answer carries one that was
+		// never stored, so login/finish fails with E_LOGIN like any other
+		// wrong attempt — the same answer a wrong password gets.
+		if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil {
+			httpapi.Fail(w, wire.CodeUnreachable)
+			return
+		}
 	}
 	httpapi.Answer(w, http.StatusOK, mustJSON(w, c))
 }
 ```
 
+Der einzige Unterschied zwischen bekannt und unbekannt ist die eine Zeile in der Datenbank, die
+niemand von außen sieht. Alles andere – Reihenfolge der Schritte, Statuscode, Kopfzeilen, Protokoll
+(keines) und Sperre (keine) – ist gleich, und die Form der Antwort zieht `session.Challenge` aus der
+Liste, sodass eine erfundene Antwort aussieht wie die eines Benutzers dieser Anlage. Wer diese
+Aufgabe umbaut, muss es gleich lassen: `TestStartTakesTheSamePathForAnUnknownName` misst es.
+
 Dazu in `login.go` die zwei Helfer:
 
 ```go
-// mustJSON encodes an answer of the API that has no parser in Go
-// (session.LoginChallenge, session.LoginResult): fixed structs of strings,
-// numbers and bytes, so encoding cannot fail; a failure all the same answers
-// E_INTERNAL and writes nothing.
+// mustJSON encodes an answer of the API (session.LoginChallenge,
+// session.LoginResult): fixed structs of strings, numbers and bytes, so
+// encoding cannot fail; a failure all the same answers E_INTERNAL and writes
+// nothing. session.Challenge has already held its answer against
+// session.ParseLoginChallenge, so what is written here is what the browser
+// accepts.
 func mustJSON(w http.ResponseWriter, v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -2859,12 +3039,14 @@ mit `"encoding/json"`, `"errors"`, `"net/http"` und den beiden API-Paketen im Im
 `mustJSON` schreibt bei einem Fehler selbst; der Aufrufer gibt `nil` an `httpapi.Answer`, was dann
 nichts mehr ausrichtet, weil der Status schon steht.
 
-- [ ] **Step 6: Run the tests and see them pass**
+- [ ] **Step 7: Run the tests and see them pass**
 
-Run: `go test ./apps/server-api/classes/login/ -run TestStart`
-Expected: PASS. Danach `tools/check.sh`.
+Run: `go test ./apps/server-api/classes/login/ -run 'TestStart|TestTOTPShare'`
+Expected: PASS, auch `TestStartTakesTheSamePathForAnUnknownName`. Der Zeitvergleich darin läuft
+25-mal je Name; schlägt er auf einer belasteten Maschine an, ist das ein Hinweis auf einen
+Kurzschluss im Ablauf, kein Grund, den Test zu lockern. Danach `tools/check.sh`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add apps/server-api/classes/login
@@ -2893,7 +3075,7 @@ Cookie.
   - `func (h *Handler) Finish(w http.ResponseWriter, r *http.Request)`
   - `func (h *Handler) newSession(ctx, v session.Verified, client []byte, p proof.Proof) (session.LoginResult, string, error)`
   - `func (h *Handler) checkTOTP(row dbapi.User, code string, now int64) bool`
-  - `func (h *Handler) BeginTOTP(user, name string) (core.TOTPBegin, []byte, error)` –
+  - `func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error)` –
     Geheimnis für `ngc.desktop/totp-begin` (Aufgabe 15 benutzt es).
 
 - [ ] **Step 1: Write the failing test for TOTP**
@@ -2914,7 +3096,7 @@ import (
 
 func TestTOTP(t *testing.T) {
 	h, fx := newFixture(t)
-	begin, secret, err := h.BeginTOTP(fx.PasswordUser, fx.PasswordName)
+	begin, secret, err := h.BeginTOTP(fx.PasswordName)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -3165,8 +3347,11 @@ func timeOf(now int64) time.Time { return time.Unix(now, 0).UTC() }
 
 // BeginTOTP makes a new TOTP secret for a user: the answer of
 // ngc.desktop/totp-begin and the sealed secret to keep until the user confirms
-// it with a code. The secret is never stored unsealed.
-func (h *Handler) BeginTOTP(user, name string) (core.TOTPBegin, []byte, error) {
+// it with a code. The secret is never stored unsealed. It takes no user:
+// secrets.Box.Seal passes nil as the additional data, so a sealed secret
+// is bound to nobody and works unchanged in another user's row. Whoever
+// keeps it must never let it travel through the client.
+func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer: "NGC", AccountName: name, Period: session.TOTPPeriod,
 		Digits: otp.Digits(session.TOTPDigits), Algorithm: otp.AlgorithmSHA1,
@@ -3303,7 +3488,11 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, ok := v.List.User(cert.User); ok {
-		_ = lock.Clear(ctx, h.S.DB, u.Name)
+		// No lock.Clear here: apps/server-api/CLAUDE.md forbids it and says
+		// why - it empties the whole bucket, so every successful login would
+		// reset the count of an attacker who puts himself into that bucket on
+		// purpose. An expired row already reads as zero. Only setup/code
+		// clears its own bucket, because that is no login name.
 		row.ID, row.Name, row.Roles = u.ID, u.Name, u.Roles
 		row.Failures, row.Locked, row.LastLogin = 0, 0, now
 		if err := h.S.DB.UserPut(ctx, row); err != nil {
@@ -4321,6 +4510,20 @@ func TestCredit(t *testing.T) {
 	if c.Grant(1) {
 		t.Fatal("a grant beyond MaxWindow was taken")
 	}
+	// BERICHTIGT am 02.10.2026. Hier stand der Take(MinWindow) ohne ein
+	// vorheriges Allow - der Plan rechnete das Fenster des OPEN in BEIDE
+	// Richtungen. Der Vertrag zaehlt je Strecke UND Richtung
+	// (shared/README.md:415-416, shared/wire/wire.go:53-55): wer ein OPEN
+	// EMPFAENGT - und nur der ruft Table.Open - darf damit SENDEN, nicht
+	// empfangen. Der Plan widersprach dabei sich selbst, denn sein eigenes
+	// Table.Open setzt nur out:. Gemessen: der Mutant "Open setzt in auch"
+	// waere mit dem alten Satz der gruene Normalfall gewesen.
+	if c.Take(1) {
+		t.Fatal("something arrived before we granted anything")
+	}
+	if !c.Allow(wire.MinWindow) {
+		t.Fatal("our own grant was refused")
+	}
 	// The other direction: what we granted bounds what may arrive.
 	if !c.Take(wire.MinWindow) {
 		t.Fatal("our own window did not count")
@@ -4433,8 +4636,26 @@ func (c *Channel) Take(n int) bool {
 }
 
 // Allow adds to what the other side may send us; we call it whenever we send a
-// GRANT, so the two sides count the same.
-func (c *Channel) Allow(credit uint32) { c.mu.Lock(); c.in += uint64(credit); c.mu.Unlock() }
+// GRANT, so the two sides count the same. It reports whether the grant is
+// allowed at all and adds nothing when it is not.
+//
+// BERICHTIGT am 02.10.2026: Allow gibt bool zurueck und haelt die Grenze.
+// Vorher band es nichts - Grant hielt MaxWindow fuer out, Allow fuer in
+// nicht, und konnte es auch nicht melden. Gemessen: 300x Allow(MaxWindow),
+// danach Take(MaxWindow+1) = true. Still abschneiden waere schlimmer (die
+// Seiten zaehlen dann verschieden), und eine GRANT ueber MaxWindow ist
+// unser EIGENER Protokollfehler - die Gegenseite antwortet mit
+// CLOSE E_PROTOCOL (shared/README.md:418-419), sie darf also nie hinaus.
+// Preis: ein if beim Aufrufer.
+func (c *Channel) Allow(credit uint32) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if credit == 0 || c.in+uint64(credit) > uint64(wire.MaxWindow) {
+		return false
+	}
+	c.in += uint64(credit)
+	return true
+}
 
 // Closing reports whether we have already sent a CLOSE.
 func (c *Channel) Closing() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.sentClose }
@@ -4587,6 +4808,31 @@ git commit -m "Add the channel table and the credit of a link" \
 ---
 
 ### Task 11: Sitzungsleitung zum Browser
+
+> **EINTRITTSBEDINGUNG, eingetragen am 02.10.2026 aus der Pruefung der
+> Aufgabe 10 — und sie steht HIER, weil eine Zeile, die nur in einem Bericht
+> steht, dort verschwindet.**
+>
+> Aufgabe 10 hat die Kanaltabelle gebaut, und `link.go` ruft `NewTable`
+> **nicht**. Die Tabelle ist damit von nichts benutzt, und drei Zusicherungen
+> sind heute ein Vertrag mit einem Aufrufer, den es nicht gibt. Wer die
+> Tabelle verdrahtet, belegt zuerst diese drei Saetze mit je einem Fall:
+>
+> 1. **`Allow` laeuft vor JEDER GRANT**, die hinausgeht.
+> 2. **Die GRANT geht nur bei `true` hinaus.** `Allow` kann seit der Fixrunde
+>    `false` sagen (`credit == 0` oder `in+credit > MaxWindow`); ein Aufrufer,
+>    der das uebergeht, verschickt eine GRANT, die die Gegenseite mit
+>    `CLOSE E_PROTOCOL` beantwortet — unser eigener Protokollfehler
+>    (`shared/README.md:418-419`).
+> 3. **Auf jedes `Reserve` folgt ein `SentClose`.** Sonst haelt die Nummer
+>    fuer immer; das ist gewollt, aber es ist eine Aufrufer-Bedingung ohne
+>    Zeugen.
+>
+> Dazu die gemessene Grenze der Nebenlaeufigkeit: `-race` sieht an der Tabelle
+> nur, was ein Fall mit **zwei** Goroutinen fuehrt. Nach der Fixrunde sind das
+> `out` (Grant gegen Spend) und `in` (Allow gegen Take) — mit entferntem
+> Schloss meldet `-race` dort wirklich Rennen, vorher hatte es nichts zu
+> sehen. Wer einen Zaehler dazunimmt, nimmt den Fall dazu.
 
 **Files:**
 - Create: `apps/server-api/classes/browser/browser.go`, `apps/server-api/classes/browser/control.go`
@@ -7546,11 +7792,16 @@ const PathKeys = "/tunnel/keys"
 // end-to-end ones (package noisep).
 const PrologueKeys = "ngc/apikeys/v1"
 
-// sharedKeys is what travels: the key the APIs seal database secrets with.
-// The installation's private key lies in the database already, sealed with
-// exactly this key, so nothing else has to travel.
+// sharedKeys is what travels: the two keys every API of the installation has
+// to have the same. SecretKey seals the database secrets — the installation's
+// private key lies in the database already, sealed with exactly this key, so
+// nothing else has to travel. ChallengeKey draws the made-up login answer
+// (session.Challenge); a server with its own would answer an unknown name
+// differently from its neighbours, and asking two servers in turn would sort
+// the names that exist from those that do not.
 type sharedKeys struct {
-	SecretKey enc.Bytes `json:"secretKey"`
+	SecretKey    enc.Bytes `json:"secretKey"`
+	ChallengeKey enc.Bytes `json:"challengeKey"`
 }
 
 // Keys serves GET PathKeys: the new server dials with its own Noise key, and
@@ -7585,7 +7836,10 @@ func (j *Join) Keys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer l.Close(websocket.StatusNormalClosure, "")
-	body, err := json.Marshal(sharedKeys{SecretKey: enc.Bytes(j.S.Cfg.SecretKey.Bytes())})
+	body, err := json.Marshal(sharedKeys{
+		SecretKey:    enc.Bytes(j.S.Cfg.SecretKey.Bytes()),
+		ChallengeKey: enc.Bytes(j.S.Cfg.ChallengeKey.Bytes()),
+	})
 	if err != nil {
 		return
 	}
@@ -7603,9 +7857,10 @@ Schlüssel erzeugen und in Dateien legen, `tunnel.JoinRequest` bauen und mit
 `tunnel.JoinMAC` unterschreiben, per `POST` an `https://<Host und Port aus url>` + `tunnel.PathJoin`
 mit `tunnel.PinnedTLS(code.TLS)` schicken, `tunnel.JoinFingerprint` und den Anker
 (`code.Anchor.Seq` und `tunnel.Fingerprint(code.Anchor.Hash)`) auf der Standardausgabe zeigen, dann
-alle 5 Sekunden `PathKeys` versuchen, bis es klappt, und den Schlüssel nach
-`/run/ngc/join-secret` (0600) schreiben. Zeitgrenze: eine Stunde, danach bricht es mit einer
-deutschen Meldung ab.
+alle 5 Sekunden `PathKeys` versuchen, bis es klappt, und die Antwort als JSON mit beiden Schlüsseln
+(`secretKey` und `challengeKey`, je 32 Byte) nach `/run/ngc/join-secret` (0600) schreiben; das
+ulh-Skript trägt beide in `api.json` ein (Aufgabe 25). Zeitgrenze: eine Stunde, danach bricht es
+mit einer deutschen Meldung ab.
 
 - [ ] **Step 5: Run the tests and see them pass**
 
@@ -8748,6 +9003,12 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	if err != nil {
 		return nil, errors.New("der geheime Schlüssel in api.json ist unbrauchbar")
 	}
+	// config.LoadAPI has checked the length already; this says so where it
+	// matters, because without this key session.Challenge cannot answer a name
+	// that does not exist, and the API would have to give itself away.
+	if len(cfg.ChallengeKey.Bytes()) != 32 {
+		return nil, errors.New("der Schlüssel challengeKey in api.json ist unbrauchbar")
+	}
 	host, err := apitls.Host(cfg.URL)
 	if err != nil {
 		return nil, errors.New("die Adresse url in api.json ist keine Tunnel-Adresse")
@@ -9005,12 +9266,20 @@ und `uninstall`. `install` tut der Reihe nach:
    zur Reparatur erneut kommen.
 4. `api.json` schreiben (0600, root): `node`, `url` = `wss://<hostname>:7443/tunnel`,
    `listen` = `:7443`, `cert`/`certKey` = `/etc/ngc/tls/api.crt` und `api.key`, `db` aus den
-   Antworten, `noiseKey`, `signKey` und `secretKey` als je 32 zufällige Bytes (base64url),
-   `releaseKey` fest im Skript, `storeUrl`/`storeKey` aus `store_url`/`store_key` oder die
-   Vorgabe des offiziellen NGC-Stores.
+   Antworten, `noiseKey`, `signKey`, `secretKey` und `challengeKey` als je 32 zufällige Bytes
+   (base64url), `releaseKey` fest im Skript, `storeUrl`/`storeKey` aus `store_url`/`store_key` oder
+   die Vorgabe des offiziellen NGC-Stores. `challengeKey` ist ein eigener Schlüssel neben
+   `secretKey` (`config.API.Validate` verlangt beide mit 32 Byte): aus ihm erfindet
+   `session.Challenge` die Antwort für einen Namen, den es nicht gibt. Beim Wechsel des
+   Datenbankschlüssels müssten sonst alle erfundenen Antworten neu gezogen werden, während die
+   echten stehen blieben – wer vorher und nachher fragt, hätte jeden Namen sortiert.
 5. Beim Beitritt (`join_code` gesetzt): `ngc-api -join <code>` laufen lassen, die Ausgabe
    (`tunnel.JoinFingerprint` und der Anker) anzeigen, warten, bis `/run/ngc/join-secret` da ist,
-   dessen Inhalt als `secretKey` in `api.json` schreiben und die Datei löschen.
+   dessen `secretKey` und `challengeKey` in `api.json` schreiben (die beiden zufälligen aus
+   Schritt 4 dabei überschreiben) und die Datei löschen. Beide müssen in jedem API-Server der
+   Anlage gleich sein: `secretKey`, weil alle dieselben Datenbankgeheimnisse öffnen, und
+   `challengeKey`, weil sonst jeder Server denselben unbekannten Namen anders beantwortete – und
+   wer zwei Server nacheinander fragt, hätte bekannte von unbekannten getrennt.
 6. `ngc-api.service` anlegen und starten; das Zertifikat erzeugt `ngc-api` selbst beim ersten Start.
 7. Den Fingerabdruck mit `pin.sh /etc/ngc/tls/api.crt` zeigen (Exit-Status prüfen) und, beim ersten
    API-Server, den Einmal-Code aus `/var/lib/ngc/setup-code`.
@@ -9948,7 +10217,8 @@ fassen die Datei aus 11 an), und `coreapp.Deps` wächst.
    der Ersteinrichtung. `shared/ulh.md` braucht dafür eine Zeile bei `ngc-api`: „liest den
    Einmal-Code aus `/var/lib/ngc/setup-code` und zeigt ihn an“.
 3. **Gemeinsame Schlüssel beim Beitritt.** Der Plan führt den Pfad `/tunnel/keys` und den Prolog
-   `ngc/apikeys/v1` ein und legt den Schlüssel nach `/run/ngc/join-secret` (0600), weil `config`
+   `ngc/apikeys/v1` ein und legt `secretKey` und `challengeKey` nach `/run/ngc/join-secret` (0600),
+   weil `config`
    kein `SaveAPI` hat und Go `api.json` nicht schreiben darf. Der Prolog gehört sachlich in
    `shared/noisep` (V2), der Pfad und die Datei in `shared/ulh.md`. **Das ist die einzige Stelle,
    an der Entwurf und Verträge nicht zusammenpassen** (siehe unten).
