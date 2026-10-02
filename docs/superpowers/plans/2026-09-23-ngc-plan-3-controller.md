@@ -1488,7 +1488,16 @@ func TestUserNameIsStableAndShort(t *testing.T) {
 }
 
 func TestEnsureUserBuildsTheArgumentList(t *testing.T) {
-	// useradd --system --no-create-home --shell /usr/sbin/nologin <name>,
+	// BERICHTIGT am 02.10.2026: die Zeile MUSS --home-dir <datenordner>
+	// tragen. Ohne sie setzt useradd --system das Heim auf /home/<name>,
+	// und dann bricht EnsureUser mit ErrHome ab - es startete KEINE App.
+	// Gemessen vom Pruefer: ofUserDB (user.go:192) und Create
+	// (podman.go:255) vergleichen HomeDir gegen den Datenordner, ofName
+	// (podman.go:95) nimmt u.HomeDir; der Mutant ohne --home-dir toetet
+	// zwei Faelle, darunter den, der das echte useradd als root fuehrt.
+	//
+	// useradd --system --no-create-home --home-dir <datenordner>
+	//         --shell /usr/sbin/nologin <name>,
 	// danach die subuid/subgid-Bereiche; nirgends eine Shell.
 }
 
@@ -1790,6 +1799,27 @@ git commit -m "Accept and verify an app package before anything is unpacked"
 ---
 
 ### Task 16: App aktivieren
+
+> **Ergaenzt am 02.10.2026, aus der Pruefung der Aufgabe 12 — und ich
+> schreibe es HIERHIN, weil eine Zeile, die nur in einem Bericht steht,
+> dort verschwindet.**
+>
+> 1. **`/run/ngc/<name>` muss nach jedem Neustart existieren und dem
+>    App-Benutzer gehoeren.** Die Anforderung stammt aus Aufgabe 11
+>    (`runDir` sagt es selbst), aber `runDir` TUT nichts und `EnsureData`
+>    macht nur den Datenordner. Aufgabe 12 war damit nicht unvollstaendig
+>    — ihr Auftrag nannte es nicht. Hier wird es gebaut.
+> 2. **`/etc/subuid` wird heute ohne Sperre gelesen-geaendert-geschrieben.**
+>    Zwei gleichzeitige `EnsureUser` geben denselben Bereich zweimal aus
+>    oder verlieren eine Zeile. `-race` sieht das NICHT, „0 DATA RACE“
+>    deckt es nicht ab. Heute harmlos, weil das Paket ausserhalb seiner
+>    Tests keinen einzigen Aufrufer hat — mit dem ersten Aufrufer ist es
+>    es nicht mehr harmlos. Wer hier baut, nimmt eine Sperre und einen Fall
+>    dafuer mit.
+> 3. **Geerbt aus Aufgabe 11, nur hier sichtbar:** der Datenordner ist
+>    `/data:rw` UND podman-Image-Store. Damit hoehlt eine App ihr
+>    `--read-only` ueber einen Neustart aus. Es bleibt bei ihrem eigenen
+>    Benutzer, aber es gehoert gesehen und entschieden, nicht vererbt.
 
 **Files:**
 - Create: `apps/server-controller/classes/install/activate.go`,
