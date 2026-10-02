@@ -157,7 +157,10 @@ will, prüft zuerst dort.
 | SoftHSM2 | kennt nur `CKM_ECDSA` (roh), **kein** ECDSA-SHA384. Also außerhalb hashen (`openssl dgst -sha384 -binary`) und den Hash mit `--mechanism ECDSA --signature-format openssl` signieren lassen — genau wie ein echter HSM-Stick. `tpm2_policysigned … -f ecdsa` nimmt das Ergebnis an |
 | Öffentlicher Stick-Schlüssel | `pkcs11-tool … --read-object --type pubkey --label stick1 --output-file stick1.der`, dann `openssl ec -pubin -inform DER -in stick1.der -pubout -out stick1.pem`, laden mit `tpm2_loadexternal -C o -G ecc -g sha384 -u stick1.pem -c stick1.ctx` |
 | PCR-Bank | `swtpm_setup --tpm2 --tpm-state <dir> --createek --pcr-banks sha256,sha384 --overwrite` legt sha384 an; `--create-ek-cert`/`--create-platform-cert` braucht root und bleibt weg |
-| Simulator starten | `swtpm socket --tpm2 --tpmstate dir=$D --server type=unixio,path=$D/sock --ctrl type=unixio,path=$D/sock.ctrl --flags not-need-init,startup-clear --daemon --pid file=$D/pid`, dann `TPM2TOOLS_TCTI="swtpm:path=$D/sock"`. Für QEMU ist `$D/sock.ctrl` der richtige Socket |
+| Simulator starten | `swtpm socket --tpm2 --tpmstate dir=$D --server type=unixio,path=$D/sock --ctrl type=unixio,path=$D/sock.ctrl --flags not-need-init,startup-clear --daemon --pid file=$D/pid`, dann `TPM2TOOLS_TCTI="swtpm:path=$D/sock"` |
+| Simulator **für QEMU** starten | Dieselbe Zeile **ohne `--server`** und ohne `--flags`: nur `--ctrl type=unixio,path=$D/sock.ctrl`. QEMUs `-tpmdev emulator` reicht seinen eigenen Datenkanal per `CMD_SET_DATAFD` über den Steuerkanal, und swtpm weist das ab, wenn schon einer gebunden ist. Gemessen in Aufgabe 5: mit `--server` scheitert der QEMU-Start mit `tpm-emulator: Failed to send CMD_SET_DATAFD`, ohne kommt die Maschine hoch und QMP meldet `"model": "tpm-tis"` |
+| Woran PCR 0 hängt | An der Firmware **und an der Maschinenkonfiguration**. Gemessen in Aufgabe 5: drei OVMF-Dateien geben drei verschiedene Werte; eine gealterte OVMF-Variablendatei ändert nichts; **dieselbe Firmware mit `-m 2048` statt `-m 1024` gibt einen anderen Wert** (deterministisch, zwei Läufe). Für Paket 8 (Versiegeln) heißt das: jede Änderung an der QEMU-Zeile bricht ein Siegel, das an PCR 0 hängt — gehört ins Abnahmeprotokoll. Deshalb prüft Paket 0 zu Recht „nicht Null" statt eines festen Werts |
+| PCR dieser Instanz lesen | Geht **nicht** über eine TCTI, solange QEMU läuft: der Datensocket darf nicht existieren, und QEMU hält den einzigen `unixio`-Steuerkanal. Auch **nach** dem Ende der VM nur auf einem Weg — QEMU schickt bei QMP `quit` **und** bei SIGTERM ein `CMD_SHUTDOWN` und nimmt den Simulator mit; **nur SIGKILL lässt ihn stehen**. Danach `swtpm_ioctl -v --unix $D/sock.ctrl` (schreibt `tpm2-00.volatilestate`), swtpm beenden, auf demselben `--tpmstate`-Verzeichnis mit `--server` neu starten und über `tcti swtpm` lesen. Aufgabe 5 nennt das Verb `resume` |
 
 Ungeprüft ist genau **ein** Punkt: ob tpm2-tools die Plattform-PIN aus einer Datei nimmt
 (`-p "session:sess.ctx+file:…"`). Aufgabe 1 prüft ihn mit einem kleinen Durchlauf; scheitert er,
@@ -342,9 +345,25 @@ if [ ! -S "$state/sock" ]; then
 	exit 1
 fi
 export TPM2TOOLS_TCTI="swtpm:path=$state/sock"
-if ! tpm2_getcap pcrs | grep -q sha384; then
-	stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384."
+# tpm2_getcap pcrs always lists all four bank names, allocated or not:
+# an empty bank prints as "sha384: [ ]", a populated one as
+# "sha384: [ 0, 1, ... ]". Measured on tpm2-tools 5.7: a simulator set up
+# with --pcr-banks sha256 only still answers with a literal "sha384", so
+# "grep -q sha384" is true either way. Only a digit right after the
+# opening bracket proves the bank is really there.
+if ! caps="$(tpm2_getcap pcrs)"; then
+	stop_and_ask "Das TPM antwortet nicht (tpm2_getcap pcrs ist fehlgeschlagen)."
 fi
+# Isolate the sha384 line first: case's * crosses newlines, so without this
+# a later bank's "23" can satisfy the pattern (measured).
+bank_line=""
+while IFS= read -r pcr_line; do
+	case "$pcr_line" in *'sha384: ['*) bank_line="$pcr_line" ;; esac
+done <<< "$caps"
+case "$bank_line" in
+*'sha384: [ '[0-9]*' 23 ]'*) ;;
+*) stop_and_ask "Der Simulator hat keine SHA-384-PCR-Bank trotz --pcr-banks sha256,sha384 (oder eine andere tpm2-tools-Fassung schreibt das Format anders)." ;;
+esac
 
 # --- 4. the one unmeasured point: does the PIN come out of a file? --------
 flush
@@ -463,17 +482,17 @@ Inhalt von `tools/recovery-env.sh`:
 
 ```bash
 #!/usr/bin/env bash
-# Checks that the recovery test environment has everything it needs. Every
-# other script starts with this, so a missing package fails early and says so.
+# Checks that the recovery test environment has everything it needs.
 set -euo pipefail
+shopt -s inherit_errexit
 cd "$(dirname "$0")/.."
 work="$(pwd)/dist/recovery"
 
-# Every tool the package actually calls, including the ones that only appear
-# deep inside recovery-policy.sh - a missing tpm2_policynv must not surface as
-# a failing policy branch three tasks later.
+# Every tool the package calls, including ones only used deep inside
+# recovery-policy.sh. No "go": recovery-setup.sh never installs it, and
+# this script runs only on the VM (measured: report has the details).
 need="qemu-system-x86_64 swtpm swtpm_setup softhsm2-util pkcs11-tool openssl xxd socat shred
-	pgrep go tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
+	pgrep tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal
 	tpm2_unseal tpm2_pcrread tpm2_pcrextend tpm2_policypcr tpm2_policysigned
 	tpm2_policyauthvalue tpm2_policynv tpm2_policyor tpm2_nvdefine tpm2_nvincrement
@@ -487,7 +506,7 @@ done
 # secure-boot build is the one work package 8 will sign against.
 for file in /usr/share/OVMF/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_VARS_4M.ms.fd \
 	/usr/lib/softhsm/libsofthsm2.so; do
-	if [ ! -f "$file" ]; then missing="$missing $(basename "$file")"; fi
+	if [ ! -s "$file" ]; then missing="$missing $(basename "$file")"; fi
 done
 
 if [ -n "$missing" ]; then
@@ -496,10 +515,11 @@ if [ -n "$missing" ]; then
 	exit 1
 fi
 
-# KVM is deliberately not required: this VM gets no virtualisation from its
-# host, so QEMU runs emulated. Everything works, only slower.
-if [ ! -f "$work/werkzeuge.txt" ]; then
-	printf 'Die Werkzeuge sind noch nicht geprüft: %s fehlt.\n' "$work/werkzeuge.txt" >&2
+# More than bare existence: nothing can trap SIGKILL or a lost VM, so a
+# half-written file could still be sitting here. The trailing KVM line is
+# the last thing a finished run writes.
+if [ ! -s "$work/werkzeuge.txt" ] || ! grep -q '^KVM: ' "$work/werkzeuge.txt"; then
+	printf 'Die Werkzeuge sind noch nicht geprüft: %s fehlt oder ist unvollständig.\n' "$work/werkzeuge.txt" >&2
 	printf 'Prüfen mit: tools/recovery-tools.sh\n' >&2
 	exit 1
 fi
@@ -510,17 +530,36 @@ pcr_bank() {
 		printf 'Setzen mit: export TPM2TOOLS_TCTI="$(tools/recovery-swtpm.sh tcti main)"\n' >&2
 		exit 1
 	fi
-	# The whole policy is SHA-384. swtpm allocates no SHA-384 bank unless it is
-	# asked for, and a missing bank would turn into a failing branch instead of
-	# a clear message.
-	if ! tpm2_getcap pcrs | grep -q sha384; then
-		printf 'Dieses TPM hat keine SHA-384-PCR-Bank.\n' >&2
-		printf 'Neu einrichten mit: tools/recovery-swtpm.sh reset main\n' >&2
+	# tpm2_getcap lists sha384 by name whether or not it is allocated - only a
+	# populated list proves the bank exists. Captured first (not piped into
+	# grep) so an unreachable TPM gets its own message instead of "no bank".
+	local caps
+	if ! caps="$(tpm2_getcap pcrs)"; then
+		printf 'Das TPM ist über TPM2TOOLS_TCTI=%s nicht erreichbar.\n' "$TPM2TOOLS_TCTI" >&2
+		printf 'Prüfen: läuft der Simulator? tools/recovery-swtpm.sh reset main\n' >&2
 		exit 1
 	fi
-	printf 'PCR-Bank sha384: vorhanden\n' >&2
+	# Isolated first because case's * crosses newlines (measured: without
+	# this, a later bank's "23" can satisfy the pattern). Against the shapes
+	# swtpm actually produces - all 24 PCRs or none - requiring 23 here is enough.
+	local bank_line=""
+	while IFS= read -r pcr_line; do
+		case "$pcr_line" in *'sha384: ['*) bank_line="$pcr_line" ;; esac
+	done <<< "$caps"
+	case "$bank_line" in
+	*'sha384: [ '[0-9]*' 23 ]'*) printf 'PCR-Bank sha384: vorhanden\n' >&2 ;;
+	*)
+		printf 'Dieses TPM hat keine SHA-384-PCR-Bank (oder eine andere tpm2-tools-Fassung schreibt das Format anders).\n' >&2
+		printf 'Neu einrichten mit: tools/recovery-swtpm.sh reset main. Hilft das nicht: tpm2_getcap pcrs von Hand ansehen.\n' >&2
+		exit 1
+		;;
+	esac
 }
 
+if [ "$#" -gt 1 ]; then
+	printf 'Aufruf: tools/recovery-env.sh [pcr-bank]\n' >&2
+	exit 1
+fi
 case "${1:-}" in
 "") printf 'Umgebung: vollständig\n' >&2 ;;
 pcr-bank) pcr_bank ;;
@@ -605,11 +644,17 @@ prepare() {
 	done
 
 	# Five sticks, five different keys: if two matched, every "any pair opens"
-	# test would pass for the wrong reason.
-	distinct=$(for n in 1 2 3 4 5; do
-		openssl ec -pubin -in "$work/keys/stick$n.pem" -noout -text | tail -n +2
-	done | sort -u | wc -l)
-	if [ "$distinct" -lt 5 ]; then
+	# test would pass for the wrong reason. One line per stick, not the text
+	# of the key: a single P-384 key is already ten lines, so counting those
+	# never falls below five (measured: five identical keys gave ten). Read
+	# from standard input, or sha256sum writes the file name into the line and
+	# all five differ whatever the keys are.
+	fingerprints=""
+	for n in 1 2 3 4 5; do
+		fingerprints="$fingerprints$(sha256sum < "$work/keys/stick$n.pem")\n"
+	done
+	distinct="$(printf '%b' "$fingerprints" | sort -u | wc -l)"
+	if [ "$distinct" -ne 5 ]; then
 		printf 'Zwei Test-Sticks haben denselben Schlüssel. Das darf nicht sein.\n' >&2
 		printf 'Token wegwerfen und neu anlegen: rm -rf %s/softhsm/tokens/* %s/keys/stick*\n' \
 			"$work" "$work" >&2
@@ -629,8 +674,9 @@ prepare) prepare ;;
 esac
 ```
 
-**Zur PIN:** `pkcs11-tool` hat keine Option, die PIN aus einer Datei zu lesen. Die PIN kommt
-deshalb aus `dist/recovery/pin/stick.txt` (Rechte 0600) und steht für die Dauer des Aufrufs in der
+**Zur PIN:** Weder `pkcs11-tool` noch `softhsm2-util --init-token` kann die PIN aus einer Datei
+lesen — `--pin` und `--so-pin` nehmen sie nur auf der Befehlszeile. Die PIN kommt deshalb aus
+`dist/recovery/pin/stick.txt` (Rechte 0600) und steht für die Dauer jedes dieser Aufrufe in der
 Prozessliste. Das ist hier tragbar, weil es eine TEST-PIN eines SoftHSM2-Token ist (Vorgabe,
 Abschnitt 13); das echte Stick-Modul in Paket 2 benutzt `cryptoki` und hat das Problem nicht. Der
 Punkt steht am Ende dieses Plans unter „Offene Entscheidungen für den Koordinator".
@@ -645,7 +691,7 @@ Erwartet: `Fünf Test-Sticks bereit (1-4 Quorum, 5 Reserve)`.
 Ausführen:
 ```bash
 for n in 1 2 3 4 5; do
-	openssl ec -pubin -in dist/recovery/keys/stick$n.pem -noout -text | tail -n +2
+	sha256sum < dist/recovery/keys/stick$n.pem
 done | sort -u | wc -l
 ```
 Erwartet: `5`. Steht dort weniger, ist die Einrichtung fehlerhaft — nicht weitermachen.
@@ -757,7 +803,16 @@ start() {
 	if [ "$name" = qemu ]; then
 		# QEMU initialises the TPM itself over the control channel, so this
 		# instance must not be started up in advance.
-		swtpm socket --tpm2 --tpmstate "dir=$dir" --server "type=unixio,path=$sock" \
+		#
+		# And it gets NO data channel of its own: -tpmdev emulator hands its
+		# own one over the control channel with CMD_SET_DATAFD, and swtpm
+		# refuses that when a --server channel is already bound. Measured in
+		# task 5: with --server the QEMU start fails with
+		# "tpm-emulator: Failed to send CMD_SET_DATAFD"; with --ctrl alone the
+		# machine comes up and QMP reports "model": "tpm-tis". Reading this
+		# instance's PCRs therefore does not work through a tcti - see the
+		# resume verb below.
+		swtpm socket --tpm2 --tpmstate "dir=$dir" \
 			--ctrl "type=unixio,path=$sock.ctrl" --daemon --pid "file=$pidfile"
 	else
 		swtpm socket --tpm2 --tpmstate "dir=$dir" --server "type=unixio,path=$sock" \
