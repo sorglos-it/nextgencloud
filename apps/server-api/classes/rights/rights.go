@@ -1,8 +1,13 @@
-// Package rights decides for every channel anew whether it may open: user,
-// role, app, action and licence. The rights of a role live in the database
-// (dbapi.BlobRights), the roles of a user in the trust list, which only an
-// admin can change. The role admin may use every core action; every other
-// right is granted per role and app.
+// Package rights decides for every channel anew whether it may open, out of
+// user, role, app and action — never out of what the OPEN carries. The rights
+// of a role live in the database (dbapi.BlobRights), the roles of a user in
+// the trust list, which only an admin can change. The role admin may use every
+// core action; every other right is granted per role and app.
+//
+// The licence of an app is the one source of the decision this package does
+// not yet read: no contract names where a channel reads it, and nothing in the
+// API checks one, so a licensed app is open to whoever holds the right. The
+// place for it is Check, next to the app's row (dbapi.BlobLicense).
 package rights
 
 import (

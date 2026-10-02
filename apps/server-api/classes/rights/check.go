@@ -14,10 +14,11 @@ import (
 
 // Request is what the API knows about a channel that wants to open. Only the
 // fields the API resolved itself decide: Action from core.Lookup, App and
-// Manifest from the database, Node from the app's row or the action. Of Open
-// nothing but Action names the channel, and Task and Confirm are evidence that
-// task.Check verifies against the trust list — its params, window and
-// handshake never reach a decision.
+// Manifest from the database, Node from the app's row or the action. Of Open,
+// Check reads Action — and only for an app channel, to find the action in the
+// manifest — plus Task and Confirm, which are evidence task.Check verifies
+// against the trust list and which can therefore only refuse, never grant. Its
+// params, window and handshake reach no decision at all.
 type Request struct {
 	Action   core.Action       // the core action, empty for an app channel
 	App      *dbapi.App        // the installed app, for an app channel
