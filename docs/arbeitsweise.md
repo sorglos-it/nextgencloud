@@ -2546,3 +2546,49 @@ Gemeldet statt verschwiegen, und das ist der Punkt: ein Wegwerfordner ist
 kein Privatbesitz. **Jede Hilfsdatei traegt den Namen ihrer Aufgabe**
 (`nacharb-o1.json`, nicht `o1.json`), und wer einen Namen ohne Kennung
 vorfindet, loescht ihn nicht, sondern weicht aus.
+
+## Ein Test ueber den QUELLTEXT braucht seinen eigenen Beweis — und kennt eine Grenze
+
+Eine Eintrittsbedingung lautete „`Allow` laeuft vor JEDER GRANT". Das haelt
+kein gewoehnlicher Fall: er prueft einen Weg, nicht alle. Der Strang hat
+statt dessen eine **Schleife ueber den eigenen Quelltext** gebaut — genau
+eine Funktion baut ein GRANT-Frame, genau eine ruft `Allow`, dieselbe, und
+`Allow` steht davor. Dasselbe fuer `Reserve` ⇒ `SentClose`.
+
+Das ist der richtige Weg fuer ein „jede", und es ist derselbe Gedanke wie
+„wer `every` schreibt, baut die Schleife". Aber eine Schleife ueber Text hat
+zwei Eigenheiten, die ein gewoehnlicher Fall nicht hat:
+
+1. **Sie kann still immer gruen sein** — ein Suchmuster, das nichts findet,
+   findet auch keinen Verstoss. Also braucht sie einen eigenen Beweis, dass
+   sie rot werden KANN. Gebaut als `TestTheSourceLoopCanGoRed`, der sie an
+   einem **Wegwerf-Paket** mit einem Verstoss scheitern laesst.
+2. **Sie liest die Platte, nicht den Bau.** Gemessen: eine solche Schleife
+   kann **keinen Mutanten einer `-overlay`-Fassung toeten** — sie sieht die
+   Datei, nicht das, was der Uebersetzer bekam. Wer sie fuer eine
+   Mutationsprobe zaehlt, zaehlt falsch.
+
+Und die Folge, die in den Plan gehoert, nicht in einen Bericht: eine solche
+Schleife deckt nur das Paket, in dem sie steht. Schreibt ein anderes Paket
+dasselbe Frame ueber einen oeffentlichen Griff, sieht sie es nicht —
+entweder dieselbe Schleife dort, oder der Griff wird nicht oeffentlich.
+
+## „Die Leitung endet" ist nicht `err != nil`
+
+Drei Faelle prueften, dass eine Leitung endet, und taten das mit
+`err != nil`. Sie konnten **nicht fallen**: die eigene Frist des Falles
+liefert auch einen Fehler. Drei Mutanten lebten bei je 10,4 Sekunden — und
+die 10,4 Sekunden waren der Hinweis, nicht die Zusicherung.
+
+Richtig ist, den **eigenen** Fehler vom fremden zu unterscheiden
+(`errTimeout` gegen `wantEnded`). Ein Fall, der jeden Fehler annimmt, nimmt
+auch seinen eigenen an — dieselbe Krankheit wie der Fall, der zwei
+Fehlerwerte gleichzeitig gelten laesst.
+
+**Und zum zweiten Mal heute: der geteilte Kratzordner.** Ein Strang hat
+`mutate.py`, `summary.txt`, `m1.txt`…`m14.txt` und sechzehn
+`overlay*.json` einer fremden Sitzung ueberschrieben und es gemeldet. Kein
+Repo-Inhalt, aber Belege verloren. **Jede Hilfsdatei in einen Unterordner
+mit dem Namen der Aufgabe** (`scratchpad/mut-task11/`), nie direkt in einen
+Sammelordner. Zweimal gemessen heisst: es ist kein Versehen, es ist die
+Vorgabe, die fehlte.
