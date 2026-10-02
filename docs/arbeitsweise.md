@@ -2014,3 +2014,27 @@ war. Das ist sauber, aber es ist ein Beweis ueber eine Kopie.
 Der rote Schritt ist der vorletzte. Wer die Reihenfolge umdreht, hat am Ende
 einen Commit, den niemand gruen gesehen hat. Dass es hier gut ausging, lag am
 Bauer, nicht an der Regel.
+
+## Eine Berichtigung auf `main` erreicht den Strang nicht von selbst
+
+Am 01.10.2026 habe ich einen Plansatz auf `main` berichtigt: ein Grep, der
+auch einen Kommentar ueber die Vergangenheit traf, bekam
+`--include="*.go" | grep -v "_test\.go"` dazu. Am 02.10.2026 hat ein Strang
+denselben Schritt gemeldet — **er stand auf einer aelteren Basis, die
+Berichtigung war fuer ihn nie passiert**. Er hat die Abweichung richtig
+behandelt (gemeldet, nicht den Kommentar verbogen), aber er hat Arbeit
+gekostet, die schon getan war.
+
+Gemessen pruefen statt annehmen:
+
+```bash
+grep -c '<die berichtigte Stelle>' <strang-baum>/docs/superpowers/plans/<plan>.md
+git -c safe.directory=<repo> show "origin/main:docs/superpowers/plans/<plan>.md" | grep -c '<dieselbe Stelle>'
+```
+
+Stehen da zwei verschiedene Zahlen, arbeitet der Strang gegen einen Plan, den
+es nicht mehr gibt. **Also: nach jeder Planberichtigung `origin/main` in die
+Strangzweige mischen** — und danach den Baum-Hash von `shared/` gegen den Tag
+stellen, damit das Mischen den Vertrag nicht angefasst hat.
+
+Wer den Plan berichtigt, hat damit erst die HAELFTE getan.
