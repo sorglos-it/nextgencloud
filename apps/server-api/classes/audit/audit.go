@@ -5,17 +5,21 @@
 // (core.LogQuery).
 //
 // Why this package checks every field, even those it gets from inside: an
-// administrator reads these entries in the app "Benutzer & Rechte", and an
-// entry a caller can fill freely is a tool against that reader - a line break
-// in a detail forges a second entry, an escape sequence rewrites the line
-// above. Worse, a log is the easiest place in the whole system to lose a
-// secret: a password that slipped into a detail, a one-time code in a result,
-// a key where a signature was meant. So no field here takes free text. Detail
-// is the only field with room for a word, and each entry point says what may
-// stand in it: a login takes a method name out of a fixed list, a task takes
-// exactly the base64url of an ed25519 signature, and Note takes printable text
-// of at most maxDetail bytes without control characters. Nothing from a user
-// reaches it: whoever has only free text has to leave it out.
+// administrator reads these entries in the app "Benutzer & Rechte", and a field
+// a caller can fill freely is a tool against that reader - a line break in a
+// detail forges a second entry, an escape sequence rewrites the line above.
+// Worse, a log is the easiest place in the whole system to lose a secret: a
+// password that slipped into a detail, a one-time code in a result, a key where
+// a signature was meant. So no field here takes free text.
+//
+// And why a bad field never costs the entry: whoever looks for a hole does not
+// need the field to be clean, only the event to be there at all. A caller that
+// could bend one field into a refusal would hold a way to keep its own failed
+// attempt out of the log, and that is worse than an ugly field. So a value
+// outside the grammar is replaced by Dropped and the entry is written; the
+// caller is told with ErrDropped, but the writing does not depend on it acting
+// on that. The one exception is the kind, which is what happened and cannot be
+// stood in for - see ErrEntry.
 package audit
 
 import (
@@ -31,14 +35,40 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
-// ErrEntry reports an entry this package refuses to keep. It names the field
-// nowhere and carries nothing of the value, so a refusal cannot leak what a
-// caller tried to write down.
-var ErrEntry = errors.New("audit: entry does not belong in the log")
+var (
+	// ErrDropped says that the entry was written and that at least one field
+	// of it reads Dropped. It is a report, not a refusal: a caller may note it,
+	// and nothing is lost if it does not.
+	ErrDropped = errors.New("audit: a field of the entry was dropped")
+
+	// ErrEntry says that nothing was written. Only an unknown kind gets here:
+	// the kind is the event itself, so a placeholder in its place would write
+	// down something no reader and no filter can make sense of. The four entry
+	// points below set their kind as a constant, so only a hand-made Add or
+	// Note can reach this.
+	ErrEntry = errors.New("audit: entry of an unknown kind")
+)
+
+// Neither error carries anything of the value it is about: an error text of a
+// log is read and kept in places an entry is not, so a value in it would lose
+// exactly the secret the entry was not allowed to get.
+
+const (
+	// Dropped stands where a value did not belong. It is no valid user ID, app
+	// id, service name or result, and a reader can therefore never mistake it
+	// for something a caller really sent (TestThePlaceholderCannotBeARealValue).
+	Dropped = "-"
+
+	// UserSystem is the user of an entry nobody ordered - an automatic update,
+	// a licence that ran out. The design asks for time and user in every entry,
+	// so the machine gets a name instead of leaving the field empty. It is no
+	// valid ID either, so no person can ever be called this.
+	UserSystem = "system"
+)
 
 // maxDetail is how long a detail may be. It is roomy enough for the base64url
 // of a signature (86 characters) and short enough that no secret of any length
-// fits unnoticed.
+// fits unnoticed. TestDetailOf100BytesIsKept pins the number itself.
 const maxDetail = 100
 
 // signatureSize is the length of an ed25519 signature in bytes. A key is 32
@@ -78,52 +108,81 @@ type Log struct {
 
 // Add keeps one entry; it sets the ID and the time itself, so neither can come
 // from a caller: an entry under a chosen ID or a chosen time would sort itself
-// between two real ones, and that is how a forged line hides.
-func (lg *Log) Add(ctx context.Context, e core.LogEntry) error {
-	if e.Result == "" {
-		e.Result = "ok"
+// between two real ones, and that is how a forged line hides. A field outside
+// the grammar is replaced by Dropped and the entry is written anyway; the
+// answer is then ErrDropped. Only an unknown kind gives ErrEntry and writes
+// nothing.
+func (lg *Log) Add(ctx context.Context, e core.LogEntry) error { return lg.add(ctx, e, false) }
+
+// add is Add with what the entry point already knows: lost says that it threw a
+// value away itself, so that its loss is reported too. Without that flag a
+// dropped method or signature would look clean here, because the placeholder
+// passes every check.
+func (lg *Log) add(ctx context.Context, e core.LogEntry, lost bool) error {
+	if !slices.Contains(kinds, e.Kind) {
+		return ErrEntry
 	}
-	if err := check(e); err != nil {
-		return err
-	}
+	e, dirty := clean(e)
+	lost = lost || dirty
 	id, err := secrets.LogID()
 	if err != nil {
 		return err
 	}
 	e.ID, e.Time = id, lg.Now()
-	return lg.DB.LogAdd(ctx, e)
-}
-
-// check reads every field of an entry against the grammar of the contract. The
-// detail is checked by the entry point that knows what may stand in it, so
-// here only its shape: printable, no control characters, at most maxDetail
-// bytes. ID and Time are not checked, because Add overwrites them after this.
-func check(e core.LogEntry) error {
-	ok := slices.Contains(kinds, e.Kind) &&
-		slices.Contains(results, e.Result) &&
-		(e.User == "" || trust.ValidID(e.User)) &&
-		(e.App == "" || wire.ValidAppID(e.App)) &&
-		(e.Action == "" || wire.ValidName(e.Action)) &&
-		(e.Node == "" || wire.ValidName(e.Node)) &&
-		(e.Detail == "" || wire.ValidText(e.Detail, maxDetail))
-	if !ok {
-		return ErrEntry
+	if err := lg.DB.LogAdd(ctx, e); err != nil {
+		return err
+	}
+	if lost {
+		return ErrDropped
 	}
 	return nil
 }
 
+// clean replaces every field outside the grammar of the contract by its
+// placeholder and reports whether it had to. The detail is checked only for its
+// shape here - printable, no control characters, at most maxDetail bytes -
+// because what may stand in it is known to the entry point, not here. ID and
+// Time are untouched, because Add overwrites them after this.
+func clean(e core.LogEntry) (core.LogEntry, bool) {
+	lost := false
+	keep := func(field *string, ok bool, placeholder string) {
+		if !ok {
+			*field, lost = placeholder, true
+		}
+	}
+	// An entry without a user is the machine, which is a real answer and no
+	// loss; a user that is no ID is a mistake and reads as dropped.
+	if e.User == "" {
+		e.User = UserSystem
+	}
+	keep(&e.User, e.User == UserSystem || trust.ValidID(e.User), Dropped)
+	// An empty result means success; the contract has no third value.
+	if e.Result == "" {
+		e.Result = "ok"
+	}
+	keep(&e.Result, slices.Contains(results, e.Result), Dropped)
+	keep(&e.App, e.App == "" || wire.ValidAppID(e.App), Dropped)
+	keep(&e.Action, e.Action == "" || wire.ValidName(e.Action), Dropped)
+	keep(&e.Node, e.Node == "" || wire.ValidName(e.Node), Dropped)
+	keep(&e.Detail, e.Detail == "" || wire.ValidText(e.Detail, maxDetail), Dropped)
+	return e, lost
+}
+
 // Login notes a login or a failed one. result is "ok" or a wire.Code; detail
 // is the method the user proved themselves with and must be one of methods -
-// never a password, a code or a key, and never anything the user typed.
+// never a password, a code or a key, and never anything the user typed. A
+// method outside the list is dropped; the attempt is written down either way,
+// because an attempt nobody can see is the one an attacker wants.
 func (lg *Log) Login(ctx context.Context, user, result, detail string) error {
-	if !slices.Contains(methods, detail) {
-		return ErrEntry
+	lost := !slices.Contains(methods, detail)
+	if lost {
+		detail = Dropped
 	}
 	kind := core.LogLogin
 	if result != "ok" {
 		kind = core.LogLoginFailed
 	}
-	return lg.Add(ctx, core.LogEntry{User: user, Kind: kind, Result: result, Detail: detail})
+	return lg.add(ctx, core.LogEntry{User: user, Kind: kind, Result: result, Detail: detail}, lost)
 }
 
 // Channel notes that a channel opened or was refused.
@@ -139,13 +198,16 @@ func (lg *Log) Channel(ctx context.Context, user, app, action, node string, code
 // Task notes a signed task with its signature, so it can be shown later who
 // ordered it. signature is the base64url of the signature of the task and
 // nothing else: it must decode to exactly signatureSize bytes, which is why a
-// key or a password cannot take its place.
+// key or a password cannot take its place. One that does not is dropped - the
+// task stays in the log without its signature.
 func (lg *Log) Task(ctx context.Context, user, app, action, node, signature string) error {
-	if b, err := enc.B64.DecodeString(signature); err != nil || len(b) != signatureSize {
-		return ErrEntry
+	b, err := enc.B64.DecodeString(signature)
+	lost := err != nil || len(b) != signatureSize
+	if lost {
+		signature = Dropped
 	}
-	return lg.Add(ctx, core.LogEntry{User: user, Kind: core.LogTask, App: app, Action: action,
-		Node: node, Detail: signature})
+	return lg.add(ctx, core.LogEntry{User: user, Kind: core.LogTask, App: app, Action: action,
+		Node: node, Detail: signature}, lost)
 }
 
 // Note keeps an entry of any other kind (core.LogTrust, LogRights, LogApp,
