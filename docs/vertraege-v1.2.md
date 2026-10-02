@@ -609,3 +609,32 @@ doppelte Prüfung.
 **Und ein zweiter Satz hängt daran:** die Lizenzprüfung (Punkt 20) darf
 **nicht an `<app>/use` hängen**. Es ist dieselbe Zeile, und wer sie dort
 aufhängt, macht aus einer Namenskollision eine Lizenzumgehung.
+
+## Punkt 22: Ein Diagnoseschalter ohne Weg in die Konfiguration ist keiner
+
+**Gemessen am 03.10.2026** in der Controller-Aufgabe 14, als Folge einer
+Entscheidung, die ich selbst getroffen habe.
+
+Der stderr einer App ging bei **jedem** echten Aufruf ungekürzt ins Protokoll,
+und `NGC_PARAMS` ist Benutzereingabe — das verstößt gegen „Geheimnisse nie ins
+Log". Entschieden wurde die sichere Fassung: ins Protokoll geht nur, **dass**
+es stderr gab und **wie viele Bytes**; den Text bekommt nur, wer ihn
+ausdrücklich einschaltet, und **aus ist der Standard**.
+
+Umgesetzt ist das über `CallInput.LogStderr` / `Deps.LogStderr`. Und hier
+endet es, denn **`shared/config` ist eingefroren**: es gibt kein Feld, über das
+ein Mensch den Schalter umlegen könnte. „Einschalten" heißt damit heute **neu
+bauen** — für einen Operator, der um drei Uhr nachts wissen will, warum eine
+App nicht startet, ist das keine Antwort.
+
+**Der Schalter bleibt trotzdem so, wie er ist**, und der Grund ist die
+Reihenfolge: die unsichere Fassung durfte nicht stehen bleiben, nur weil die
+schöne Fassung einen Vertrag braucht. Ein Schalter ohne Weg nach draußen ist
+ein halbes Werkzeug; ein Protokoll, das Benutzereingaben mitschreibt, ist ein
+Fehler.
+
+**Für die nächste Vertragsfassung:** ein Feld in `shared/config`, das diesen
+Schalter trägt — und zwar so, dass sein Standard **aus** ist und ein
+eingeschaltetes Protokoll als solches erkennbar bleibt. Wer es baut, prüft
+zugleich, ob es weitere Schalter dieser Art gibt, die heute nur im Quelltext
+stehen; **gemessen ist bisher nur dieser eine.**
