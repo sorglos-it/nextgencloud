@@ -3,6 +3,7 @@ package release
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -461,4 +462,189 @@ func TestPayloadPassesVerifyRelease(t *testing.T) {
 	if err := json.Unmarshal(payload, &again); err != nil {
 		t.Fatalf("payload is no store.Release: %v", err)
 	}
+}
+
+// TestSignScriptMakesAReleaseVerifyShAccepts. It signs with a key made here,
+// never with the real release key: that key is not on this machine, and a test
+// that needed it would be a test nobody can run.
+func TestSignScriptMakesAReleaseVerifyShAccepts(t *testing.T) {
+	needTools(t)
+	needVerifyTools(t)
+	repo := webFixture(t, nil)
+	out, log, err := pack(t, repo, "main", "3")
+	if err != nil {
+		t.Fatalf("pack-release.sh: %v\n%s", err, log)
+	}
+	key := newTestKey(t)
+
+	cmd := exec.Command("sh", filepath.Join(repoRoot(t), "tools", "sign-release.sh"), out, key)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sign-release.sh: %v\n%s", err, b)
+	}
+
+	// Both sides must accept it, and the shell side is the one the user runs.
+	env := readEnvelope(t, filepath.Join(out, "release.json"))
+	pub := readPub(t, filepath.Join(out, "release-key.pem"))
+	if _, err := store.VerifyRelease(env, pub, 3); err != nil {
+		t.Fatalf("VerifyRelease: %v", err)
+	}
+	vs := filepath.Join(repoRoot(t), "shared", "testdata", "release", "verify.sh")
+	b, err := exec.Command("sh", vs, out, "ngc-web", "all").CombinedOutput()
+	if err != nil {
+		t.Fatalf("verify.sh: %v\n%s", err, b)
+	}
+	if !strings.Contains(string(b), "release ok") {
+		t.Errorf("verify.sh did not say release ok:\n%s", b)
+	}
+}
+
+// TestSignScriptLeaksNoKey holds the one rule that cannot be repaired after the
+// fact. "Not even shortened" means every PIECE of the key, so this slides a
+// window across the whole body instead of only testing prefixes - the first
+// draft tested prefixes, and the second half of a line would have walked
+// straight past it. The raw key bytes are looked for in three spellings as
+// well, because a leak does not have to arrive as PEM.
+func TestSignScriptLeaksNoKey(t *testing.T) {
+	needTools(t)
+	needVerifyTools(t)
+	repo := webFixture(t, nil)
+	out, log, err := pack(t, repo, "main", "3")
+	if err != nil {
+		t.Fatalf("pack-release.sh: %v\n%s", err, log)
+	}
+	key := newTestKey(t)
+	pem, err := os.ReadFile(key)
+	if err != nil {
+		t.Fatalf("read key: %v", err)
+	}
+
+	// needles: every 12-character window of the PEM body, plus the raw private
+	// bytes as hex, base64 and base64url. 12 and not 8: a shorter window meets
+	// a base64 coincidence now and then, and a case that cries wolf gets
+	// switched off by the next person.
+	var body strings.Builder
+	for _, line := range strings.Split(string(pem), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "-----") {
+			body.WriteString(line)
+		}
+	}
+	needles := map[string]bool{}
+	s := body.String()
+	if len(s) < 12 {
+		t.Fatal("the test key has no body to look for")
+	}
+	for i := 0; i+12 <= len(s); i++ {
+		needles[s[i:i+12]] = true
+	}
+	der, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatalf("the key is no base64: %v", err)
+	}
+	// The last 32 bytes of a PKCS#8 Ed25519 key are the seed.
+	if len(der) >= 32 {
+		seed := der[len(der)-32:]
+		needles[strings.ToLower(hexOf(seed))] = true
+		needles[base64.StdEncoding.EncodeToString(seed)] = true
+		needles[base64.RawURLEncoding.EncodeToString(seed)] = true
+	}
+
+	cmd := exec.Command("sh", filepath.Join(repoRoot(t), "tools", "sign-release.sh"), out, key)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	printed, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sign-release.sh: %v\n%s", err, printed)
+	}
+
+	// What it printed, and everything it left behind.
+	haystacks := map[string]string{"the output": string(printed)}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(out, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		haystacks[e.Name()] = string(b)
+	}
+	for where, hay := range haystacks {
+		for n := range needles {
+			if strings.Contains(hay, n) {
+				t.Fatalf("%s holds a piece of the private key", where)
+			}
+			if strings.Contains(strings.ToLower(hay), n) && len(n) == 64 {
+				t.Fatalf("%s holds the private key as hex", where)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, filepath.Base(key))); err == nil {
+		t.Error("the script copied the key into the release directory")
+	}
+}
+
+// newTestKey makes an Ed25519 key in PEM with openssl itself, so the script
+// meets the same shape it will meet on the key machine.
+func newTestKey(t *testing.T) string {
+	t.Helper()
+	key := filepath.Join(t.TempDir(), "test-release.pem")
+	if b, err := exec.Command("openssl", "genpkey", "-algorithm", "ed25519",
+		"-out", key).CombinedOutput(); err != nil {
+		t.Fatalf("genpkey: %v\n%s", err, b)
+	}
+	return key
+}
+
+func hexOf(b []byte) string {
+	const d = "0123456789abcdef"
+	out := make([]byte, 0, len(b)*2)
+	for _, c := range b {
+		out = append(out, d[c>>4], d[c&0x0f])
+	}
+	return string(out)
+}
+
+// readEnvelope reads a sign.Envelope the way a consumer does.
+func readEnvelope(t *testing.T, path string) sign.Envelope {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	env, err := sign.ParseEnvelope(b, sign.MaxPayload)
+	if err != nil {
+		t.Fatalf("ParseEnvelope: %v", err)
+	}
+	return env
+}
+
+// readPub turns the PEM "PUBLIC KEY" beside the release into the 32 bytes of an
+// Ed25519 key: the last 32 bytes of the 44-byte DER, the 12 in front being
+// Ed25519's fixed algorithm header.
+func readPub(t *testing.T, path string) ed25519.PublicKey {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var body strings.Builder
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "-----") {
+			body.WriteString(line)
+		}
+	}
+	der, err := base64.StdEncoding.DecodeString(body.String())
+	if err != nil {
+		t.Fatalf("the public key is no base64: %v", err)
+	}
+	if len(der) != 44 {
+		t.Fatalf("the public key is %d bytes of DER, not 44", len(der))
+	}
+	return ed25519.PublicKey(der[12:])
 }
