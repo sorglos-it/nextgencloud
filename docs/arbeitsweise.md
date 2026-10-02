@@ -2437,3 +2437,61 @@ Gilt das Versprechen fuer zehn Faelle, die sehr wohl messen koennten, ist es
 eine Luege mit gruener Farbe. **Also: die Werkzeugpruefung so eng wie die
 Faelle, die das Werkzeug wirklich brauchen** — und die Zahl der Uebersprungenen
 im Bericht nennen, nicht nur die der Bestandenen.
+
+## Der Auftrag ist eine KOPIE des Plans — und Kopien veralten
+
+Dieselbe Sache, eine Ebene weiter, und ein Strang hat sie gefunden, nachdem
+ich die vorige schon aufgeschrieben hatte: ein Auftrag unter
+`.superpowers/sdd/<plan>/task-N-brief.md` ist ein **Ausschnitt** des Plans.
+Berichtige ich den Plan, bleibt der Ausschnitt stehen. **Wer den Auftrag
+liest, liest den unberichtigten Text** — und der Strang liest den Auftrag,
+nicht den Plan, denn so lautet das Verfahren.
+
+Gemessen am 02.10.2026 ueber alle Auftraege (die Zahl ist „Zeilen des
+Auftrags, die im Plan nicht mehr vorkommen"):
+
+```bash
+for d in .superpowers/sdd/2026-09-23-ngc-plan-*; do
+  p="docs/superpowers/plans/$(basename $d).md"
+  for b in "$d"/task-*-brief.md; do
+    echo "$b: $(grep -vxFf "$p" "$b" | grep -vc '^$')"
+  done
+done
+```
+
+Ergebnis: die meisten 0, aber **sieben Auftraege zwischen 1 und 5 Zeilen
+auseinander** — und jede dieser Zeilen ist eine Berichtigung, die ihren
+Empfaenger nicht erreicht hat. (Hohe Zahlen bedeuten nichts: von Hand
+geschriebene Auftraege sind keine Ausschnitte.)
+
+**Also gehoert zu jeder Planberichtigung ein dritter Schritt:** den Auftrag
+der betroffenen Aufgabe **neu herausschneiden**, nicht nur den Plan aendern
+und in die Strangzweige mischen. Drei Orte, nicht einer: Plan, Strangbaum,
+Auftrag.
+
+## Eine falsche Zahl heilt man nicht, indem man die Liste verlaengert
+
+Ein Pruefer meldete, vier Zeilen einer Konfigurationsvorlage seien von keinem
+Test gehalten, obwohl der Kommentar „every line is checked" sagte. Der Bauer
+hat nachgemessen: **es waren sechzehn.** Drei der vier stimmten, die vierte
+war gedeckt, und dreizehn weitere hatte niemand genannt — darunter **beide
+Sektionskoepfe** und **alle sechs** einfachen `ssl_*`-Zeilen.
+
+„Vier" haette geheissen: vier nachtragen und fertig. Die Liste waere wieder
+unvollstaendig gewesen, nur schwerer zu widerlegen.
+
+Gebaut hat er statt dessen **eine Schleife, die die Behauptung selbst
+prueft**: jede Nutzzeile der Vorlage wird einzeln geloescht, und eine Zeile,
+die keine Liste nennt, macht den Test **rot**. Dazu Ganzzeilen statt
+Teilketten und die mehrfach vorkommenden Zeilen **je Sektion**.
+Ergebnis: 37 Mutanten, 37 tot.
+
+**Wer „every" oder „always" schreibt, baut die Schleife, die es prueft — oder
+er schreibt es nicht.** Eine Liste ist eine Behauptung ueber eine Menge; nur
+eine Schleife ueber dieselbe Menge haelt sie.
+
+Und zwei Fehlschlaege am eigenen Werkzeug, beide vom Bauer gemeldet: sein
+Mutant „Warnung nach dem Loeschen" **benannte `log_warn` nur um** und konnte
+die Pruefung darum nicht faellen; und seine Reihenfolgepruefung war falsch
+rot, weil `grep -n 'rm -rf'` den **Kommentar** zwei Zeilen darueber zuerst
+traf. Ein Mutant, der nichts verschiebt, verschiebt nichts.
