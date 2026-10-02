@@ -2386,3 +2386,54 @@ go test -list '.*' ./<paket>/ | wc -l
 Und beim Berichten die Fallzahl nennen, nicht nur „gruen". Dass dieser Strang
 seinen eigenen Fehler gemeldet hat, statt ihn zu verschweigen, ist der Grund,
 dass er in keinen Commit gelangt ist.
+
+## Dieselbe Regel hat mich am selben Tag erwischt — der Hauptbaum zaehlt mit
+
+Heute morgen habe ich die Regel geschrieben, eine Berichtigung auf `main`
+erreiche den Strang nicht von selbst, und `origin/main` in zwei Strangzweige
+gemischt. Danach habe ich **zehn** PRs gemergt und **keinen davon weitergegeben**.
+Am Abend hat ein Pruefer gemeldet, Aufgabe 8 des Plans sei nicht berichtigt —
+und er hat in `Z:` gemessen. Nachgezaehlt:
+
+```
+Z: HEAD                      562f2b1     (zwoelf Commits zurueck)
+origin/main                  1606819
+"prompt = no" in Z:          0
+"prompt = no" auf origin/main 3
+im Strangbaum                0
+```
+
+Die Berichtigung war da. Sie war nur **nirgends, wo jemand liest.** Der
+Pruefer hatte im Ergebnis recht und in der Ursache nicht — er hielt es fuer
+nicht getan, es war nicht angekommen.
+
+**Der Hauptbaum ist kein Archiv, er ist die Datei, die alle oeffnen.** Also
+gehoert nach JEDEM gemergten PR, nicht nach jeder Planberichtigung:
+
+```bash
+git -c safe.directory=<repo> -C <repo> fetch origin -q
+git -c safe.directory=<repo> -C <repo> merge --ff-only origin/main
+# und je Strangzweig:
+git -c safe.directory=<baum> -C <baum> merge origin/main
+# danach JE BAUM: shared/ gegen den Tag stellen
+```
+
+Und die Gegenprobe, die zehn Sekunden kostet: **dieselbe Zeichenfolge in
+beiden Baeumen zaehlen.** Zwei verschiedene Zahlen heissen, dass jemand gegen
+einen Plan arbeitet, den es nicht mehr gibt.
+
+Eine Regel aufzuschreiben ist nicht dasselbe wie sie anzuwenden. Ich habe
+beides am selben Tag vorgefuehrt.
+
+## Ein zu breiter Uebersprung versteckt mehr, als er meldet
+
+Ein Strang brauchte `jq` fuer zwei Faelle und trug es in die allgemeine
+Werkzeugpruefung ein. Ergebnis: **PASS=11, SKIP=12** — zwoelf Faelle
+uebersprungen, damit zwei ehrlich sein konnten. Behoben mit einer eigenen
+Pruefung nur fuer die zwei.
+
+Ein Uebersprung ist ein Versprechen: „dieser Fall kann hier nicht messen."
+Gilt das Versprechen fuer zehn Faelle, die sehr wohl messen koennten, ist es
+eine Luege mit gruener Farbe. **Also: die Werkzeugpruefung so eng wie die
+Faelle, die das Werkzeug wirklich brauchen** — und die Zahl der Uebersprungenen
+im Bericht nennen, nicht nur die der Bestandenen.
