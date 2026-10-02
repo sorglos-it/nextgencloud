@@ -4809,6 +4809,41 @@ git commit -m "Add the channel table and the credit of a link" \
 
 ### Task 11: Sitzungsleitung zum Browser
 
+> **Berichtigt am 02.10.2026, vier Abweichungen des Strangs der Aufgabe 11 —
+> jede gemessen, jede begruendet, und alle vier gehen auf meinen Plantext
+> zurueck, nicht auf seinen Code.**
+>
+> 1. **`login.Live` hat DREI Rueckgabewerte, nicht zwei.** Gebaut wie
+>    `login/trust.go:33`, mit `httpapi.Fail(w, code)`.
+> 2. **`srv.S.Trust(ctx)` ist hier nicht noetig und waere falsch:**
+>    `live.Trust` IST die Liste, gegen die die Sitzung gerade geprueft wurde;
+>    `state.Trust` waere der aeltere Zwischenspeicher.
+> 3. **`deliver` wird in dieser Aufgabe NICHT gebaut.** Niemand liest den
+>    Puffer — der Versand kommt mit Aufgabe 15. Ein wartendes `deliver` haelt
+>    den einzigen Leser der Leitung beim neunten Frame **fuer immer** an: das
+>    ist ein Haenger, keine Zwischenstufe.
+> 4. **`Session.Close` traegt ein `ctx`**, wie der Plancode es zeigt, nicht
+>    wie die Schnittstellenliste es sagt.
+>
+> **Dazugekommen, weil Satz 1 der Eintrittsbedingung ohne das nicht zu halten
+> ist:** `Session.SendGrant` — der EINZIGE Ort, der ein GRANT-Frame schreibt —
+> und `ErrGrant`.
+>
+> **Wie die Eintrittsbedingung gehalten wird, und das ist fuer die Folgeaufgaben
+> wichtig:** zwei der drei Saetze haelt eine **Schleife ueber den eigenen
+> Quelltext** (genau eine Funktion baut ein GRANT-Frame, genau eine ruft
+> `Allow`, dieselbe, und `Allow` steht davor; ebenso `Reserve` ⇒ `SentClose`).
+> Die Schleifen sind SELBST geprueft: `TestTheSourceLoopCanGoRed` laesst sie an
+> einem Wegwerf-Paket rot werden.
+> **Ihre Grenze, gemessen:** sie lesen die **Platte**, nicht den
+> `-overlay`-Baum, koennen also keinen Mutanten der ueberlagerten Fassung
+> toeten. **Fuer Aufgabe 15 heisst das:** ein GRANT, das `coreapp` selbst ueber
+> `s.Link.Write` schreibt, sieht die Schleife NICHT. Entweder dieselbe
+> Schleife dort, oder `Session.Link` ist nicht mehr oeffentlich.
+>
+> **Noch nicht verdrahtet und hier auch nicht verlangt:** `session.PathSocket`
+> steht nicht in `httpapi.Routes` — der Zubringer fehlt noch.
+
 > **EINTRITTSBEDINGUNG, eingetragen am 02.10.2026 aus der Pruefung der
 > Aufgabe 10 — und sie steht HIER, weil eine Zeile, die nur in einem Bericht
 > steht, dort verschwindet.**
@@ -5252,6 +5287,43 @@ git commit -m "Add the session link to the shell" \
 
 ---
 ### Task 12: Tunnel zu den Controllern und Kopplung
+
+> **ZWEI AUFLAGEN, eingetragen am 02.10.2026 aus der Nachpruefung der Aufgabe
+> 11 — und sie stehen HIER, weil eine Zeile, die nur in einem Bericht steht,
+> dort verschwindet.**
+>
+> **1. `Session.Table` ist noch exportiert, und damit haelt Satz 3 nicht.**
+> Satz 1 haelt seit Aufgabe 11 der **Uebersetzer**: `session.link` ist
+> unexportiert, kein Paket aussen schreibt ein Frame, und nur `SendGrant`
+> baut ein GRANT. Satz 3 („auf jedes `Reserve` folgt ein `SentClose`") haelt
+> dagegen nur ein Lint und ein Wirkungsfall — denn `coreapp` kann
+> `s.Table.Reserve(n)`, `c.Allow(x)`, `c.Spend(x)` und `c.SentClose()` rufen,
+> **ohne ein Frame zu schreiben**. Gemessen, und der Paketkopf reicht damit
+> weiter als der Code: er sagt „the table's three caller conditions are kept
+> here and nowhere else".
+> **Also: wer `Reserve` und `SentClose` in `link` zu EINER Funktion
+> zusammenlegt, unexportiert `Session.Table` gleich mit** — dann haelt den
+> dritten Satz ebenfalls der Uebersetzer, und der Paketkopf wird wahr.
+>
+> **2. Eine offene Leitung wird nie wieder gegen die Vertrauensliste
+> geprueft.** Zweimal unabhaengig gemessen: kein Pfad prueft eine laufende
+> Sitzung erneut, `grep -rn 'Sessions'` findet ausserhalb des Pakets
+> **keinen** Treffer, und `HintAll`/`Broadcast` haben ausserhalb der Tests
+> **gar keinen** Aufrufer — der Hinweisweg existiert also noch nicht. Dazu
+> gibt es nach `FirstFrameTimeout` **keine Frist** auf der Leitung.
+> **Folge: ein zurueckgezogener Schluessel erreicht eine offene Leitung
+> nicht.** Zu bauen: bei jeder neuen Vertrauensversion die Sitzungen gegen die
+> neue Liste pruefen und die betroffenen ueber `End` schliessen, plus eine
+> Frist auf der Leitung. Das ist eine Sicherheitsluecke, keine Bequemlichkeit.
+>
+> **Und eine gemessene Grenze des Lints, die niemand fuer einen Halter nehmen
+> darf:** der `go/ast`-Lauf sucht einen **NAMEN**, keinen **WERT**.
+> `wire.TypeGrant` ist `Type = 5`; `Type: 5`, `Type: grantType` (eigene
+> Konstante) und `Type: wire.Type(5)` sind fuer ihn **unsichtbar**, ebenso ein
+> `import . "…/wire"`. Nichts davon ist exotisch, und `gofmt`/`go vet` haben
+> nichts dagegen. Das zu schliessen braeuchte `go/types`. Der Lint bleibt
+> trotzdem richtig — er sagt, was der Uebersetzer nicht sagen kann, und sein
+> Kopf behauptet nicht mehr als das.
 
 **Files:**
 - Create: `apps/server-api/classes/controllers/tunnel.go`,

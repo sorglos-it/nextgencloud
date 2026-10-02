@@ -2495,3 +2495,679 @@ Mutant „Warnung nach dem Loeschen" **benannte `log_warn` nur um** und konnte
 die Pruefung darum nicht faellen; und seine Reihenfolgepruefung war falsch
 rot, weil `grep -n 'rm -rf'` den **Kommentar** zwei Zeilen darueber zuerst
 traf. Ein Mutant, der nichts verschiebt, verschiebt nichts.
+
+## `$?` ueberlebt den Weg nach WSL nicht — und das entwertet jeden so gelesenen Code
+
+Ein Strang hat es gemeldet, und ich habe es in **einem** Befehl nachgefahren:
+
+```
+$ wsl.exe -- sh -c 'false; echo "A=$?"'
+A=0
+```
+
+`false` ist gelaufen, der Code ist **0**. Schlimmer: ein Lauf, dessen Programm
+gar nicht vorhanden war (echter Code 127), meldete ebenfalls `CODE=0` — und
+das sieht aus wie ein bestandener Lauf.
+
+Damit ist **jeder Ausstiegscode unbrauchbar**, der auf diesem Weg gelesen
+wurde. Die Regel „Ausstiegscode aus der Datei, nie durch eine Pipe" reicht
+hier nicht: die Pipe ist nicht das Problem, die **Uebergabe an `sh -c`** ist
+es.
+
+**Der Riegel:** das Messskript als **Datei** ablegen und sie rufen.
+
+```bash
+printf '#!/bin/sh\n<befehle>\necho "CODE=$?" >> /mnt/c/.../ergebnis.txt\n' > lauf.sh
+MSYS_NO_PATHCONV=1 wsl.exe -- sh /mnt/c/.../lauf.sh
+```
+
+Zwei Nachbarfallen desselben Weges, beide gemessen:
+
+- **Auch `|` ueberlebt nicht.** Ein `-test.run 'A|B'` wurde unterwegs zerlegt,
+  und nur `A` lief — mit gruener Meldung ueber die Haelfte der Faelle.
+- **Python schreibt auf Windows `\r\n`.** Ein per Python erzeugter Mutant
+  unterschied sich darum in **jeder** Zeile, und die Einzeiler-Mutation war
+  nicht mehr vorweisbar. Riegel: `open(…, 'w', newline='')`.
+
+**Was das fuer schon gemeldete Zahlen heisst:** die **Fallzahlen** stehen
+weiter, wenn der Prüfsatz sie selbst druckt (`passed: 99 failed: 0`) — die
+kommen aus dem Programm, nicht aus `$?`. Der **Ausstiegscode** daneben ist
+wertlos und muss nachgemessen werden. Beides auseinanderzuhalten ist der
+Unterschied zwischen einer berichtigten Messung und einer verworfenen.
+
+## Der Ablageort ist geteilt, auch im Wegwerfordner
+
+Ein Strang hat in `scratchpad/mut/` kurz `o1.json`–`o4.json` angelegt und
+selbst gemeldet, dass dort Dateien anderer Sitzungen liegen — hatte eine
+andere Sitzung dieselben Namen benutzt, sind sie ueberschrieben. Er hat seine
+danach eindeutig benannt.
+
+Gemeldet statt verschwiegen, und das ist der Punkt: ein Wegwerfordner ist
+kein Privatbesitz. **Jede Hilfsdatei traegt den Namen ihrer Aufgabe**
+(`nacharb-o1.json`, nicht `o1.json`), und wer einen Namen ohne Kennung
+vorfindet, loescht ihn nicht, sondern weicht aus.
+
+## Ein Test ueber den QUELLTEXT braucht seinen eigenen Beweis — und kennt eine Grenze
+
+Eine Eintrittsbedingung lautete „`Allow` laeuft vor JEDER GRANT". Das haelt
+kein gewoehnlicher Fall: er prueft einen Weg, nicht alle. Der Strang hat
+statt dessen eine **Schleife ueber den eigenen Quelltext** gebaut — genau
+eine Funktion baut ein GRANT-Frame, genau eine ruft `Allow`, dieselbe, und
+`Allow` steht davor. Dasselbe fuer `Reserve` ⇒ `SentClose`.
+
+Das ist der richtige Weg fuer ein „jede", und es ist derselbe Gedanke wie
+„wer `every` schreibt, baut die Schleife". Aber eine Schleife ueber Text hat
+zwei Eigenheiten, die ein gewoehnlicher Fall nicht hat:
+
+1. **Sie kann still immer gruen sein** — ein Suchmuster, das nichts findet,
+   findet auch keinen Verstoss. Also braucht sie einen eigenen Beweis, dass
+   sie rot werden KANN. Gebaut als `TestTheSourceLoopCanGoRed`, der sie an
+   einem **Wegwerf-Paket** mit einem Verstoss scheitern laesst.
+2. **Sie liest die Platte, nicht den Bau.** Gemessen: eine solche Schleife
+   kann **keinen Mutanten einer `-overlay`-Fassung toeten** — sie sieht die
+   Datei, nicht das, was der Uebersetzer bekam. Wer sie fuer eine
+   Mutationsprobe zaehlt, zaehlt falsch.
+
+Und die Folge, die in den Plan gehoert, nicht in einen Bericht: eine solche
+Schleife deckt nur das Paket, in dem sie steht. Schreibt ein anderes Paket
+dasselbe Frame ueber einen oeffentlichen Griff, sieht sie es nicht —
+entweder dieselbe Schleife dort, oder der Griff wird nicht oeffentlich.
+
+## „Die Leitung endet" ist nicht `err != nil`
+
+Drei Faelle prueften, dass eine Leitung endet, und taten das mit
+`err != nil`. Sie konnten **nicht fallen**: die eigene Frist des Falles
+liefert auch einen Fehler. Drei Mutanten lebten bei je 10,4 Sekunden — und
+die 10,4 Sekunden waren der Hinweis, nicht die Zusicherung.
+
+Richtig ist, den **eigenen** Fehler vom fremden zu unterscheiden
+(`errTimeout` gegen `wantEnded`). Ein Fall, der jeden Fehler annimmt, nimmt
+auch seinen eigenen an — dieselbe Krankheit wie der Fall, der zwei
+Fehlerwerte gleichzeitig gelten laesst.
+
+**Und zum zweiten Mal heute: der geteilte Kratzordner.** Ein Strang hat
+`mutate.py`, `summary.txt`, `m1.txt`…`m14.txt` und sechzehn
+`overlay*.json` einer fremden Sitzung ueberschrieben und es gemeldet. Kein
+Repo-Inhalt, aber Belege verloren. **Jede Hilfsdatei in einen Unterordner
+mit dem Namen der Aufgabe** (`scratchpad/mut-task11/`), nie direkt in einen
+Sammelordner. Zweimal gemessen heisst: es ist kein Versehen, es ist die
+Vorgabe, die fehlte.
+
+## Dreizehn eigene Mutanten des Pruefers, dreizehn ueberlebt — und ein Kontrollmutant daneben
+
+Weiter oben steht, eine Mutationsquote sei eine Aussage ueber die **Liste**.
+Am 02.10.2026 ist daraus eine Zahl geworden: der Bauer setzte 13 Mutanten und
+toetete 13 — der Pruefer setzte **13 andere, und alle 13 ueberlebten**.
+
+Beide Zahlen sind richtig. Sie treffen verschiedene Zeilen.
+
+Und der Pruefer hat etwas getan, das ich ab jetzt von jedem Pruefer erwarte:
+**er setzte einen Kontrollmutanten, der sterben MUSS.** K1 starb. Damit ist
+„13 ueberlebt" keine kaputte Werkbank, sondern eine Luecke — ohne diesen
+einen Mutanten waere beides nicht zu unterscheiden gewesen.
+
+Was dabei herauskam, ist kein Schoenheitsfehler: **das Passwort war von keinem
+Fall gehalten.** Eine Anlage, die sich nicht anmelden kann, ist der erste
+Start, der steht — und es braucht keinen Server, um das zu pruefen, es ist
+Konfiguration.
+
+**Also gilt fuer jede Pruefung:**
+1. Die Mutanten des Bauers nachfahren — aber als Stichprobe, nicht als
+   Ergebnis.
+2. **Eigene Mutanten setzen, an Zeilen, die in seiner Liste nicht vorkommen.**
+3. **Einen Kontrollmutanten setzen, der sterben muss**, damit „ueberlebt"
+   etwas bedeutet.
+
+Und zwei weitere Formen, die derselbe Lauf gezeigt hat: ein Mutant toetete nur,
+wenn man die **Zuweisung** halbierte — die **Konstante** halbiert ueberlebte,
+weil die Zusicherung gegen genau die Konstante prueft, die sie halten soll
+(zum fuenften Mal heute diese Form). Und: **alle zwoelf Faelle benutzten
+dieselben Eingaben**, darum ueberlebten festverdrahtete Konstanten fuer
+Servernamen und Datenbanknamen. Zwei verschiedene Eingaben in einem Fall
+kosten drei Zeilen und schliessen vier Befunde.
+
+## Die fuenfte falsche Zahl, und die erste, die ich erfunden habe
+
+Vier Zahlen habe ich heute falsch **weitergereicht** — eine fuenfte habe ich
+**gebaut**: ich schrieb von einer „elften Stelle der Gabelung". Es gibt sie
+nicht. Ich hatte zwei Register vermischt: `atTheDatabase` (vier Eintraege) und
+die Liste der Unterschiede `sqlstore`/`memstore` (zehn plus eine offene
+Vertragsstelle). Das neue Paket setzt die Schnittstelle nicht selbst um,
+sondern benutzt `sqlstore` — es entsteht gar kein elfter Unterschied.
+
+Weitergereichte Zahlen sind ein Fluechtigkeitsfehler. Eine Zahl, die aus zwei
+Registern zusammenwaechst, ist etwas anderes: sie klingt praeziser als beide
+und ist durch keines gedeckt. **Wer zwei Listen nennt, nennt sie getrennt** —
+und wer eine Zahl nennt, nennt das Register, aus dem sie kommt.
+
+## Unter zwoelf Elementen ist Gos `sort.Slice` nicht unstabil
+
+> **Nachgeschaerft am 02.10.2026, vom Pruefer belegt und eingeschraenkt.**
+> Die Schwelle ist `const maxInsertion = 12` in
+> `$GOROOT/src/sort/zsortfunc.go:62` — pdqsort sortiert bis zwoelf Elemente
+> per Einfuegen, und das ist stabil. Selbst gefahren als Doppelmutation
+> (`sort.Slice` plus die Elementzahl): n=12 ueberlebt, n=13/15/20 toetet.
+>
+> **Zwei Einschraenkungen, die dazugehoeren:** es ist eine Eigenheit der
+> Umsetzung, kein Versprechen — die Dokumentation von `sort.Slice` sagt
+> ausdruecklich, die Reihenfolge gleicher Elemente sei nicht garantiert. Die
+> Zahl gilt also **Stand Go 1.27** und kann sich aendern. Und: die gewaehlte
+> Elementzahl muss **die Zwoelf im Kommentar nennen**. Eine Andeutung reicht
+> nicht — wer auf zwoelf kuerzt, bekommt gruen und hat die Messung verloren,
+> ohne es zu merken.
+>
+> **Zum zweiten Mal nachgeschaerft, 03.10.2026 — und diesmal war ich zu
+> schnell.** Die Schwelle ist **notwendig, nicht hinreichend**. Ein Strang hat
+> 13 Knoten gewaehlt, die Zwoelf in den Kommentar geschrieben, und der Mutant
+> lebte trotzdem: bei lauter **gesunden** Knoten ist der Vergleich immer
+> `false`, die Scheibe ist schon sortiert, und `sort.Slice` laesst eine
+> inversionsfreie Scheibe liegen. Rot wurde nur der Fall mit **40 Knoten, von
+> denen jeder dritte in der Ruhepause steht**.
+>
+> **Es braucht also beides: genug Elemente UND Daten, die wirklich umsortiert
+> werden muessen.** Dazu der Zusatz, der beim dritten Mal dazukam: dass
+> `sort.Slice` eine sortierte Scheibe liegen laesst, ist **nicht zugesagt** —
+> auf "bleibt gruen" ist hier so wenig Verlass wie auf "wird rot". Der Fall
+> muss die Inversion selbst herstellen, nicht hoffen.
+
+Ein Fall sollte halten, dass eine Reihenfolge **stabil** sortiert wird. Der
+Mutant („`sort.SliceStable` → `sort.Slice`") lebte — mit der Zahl von Knoten,
+die der Fall benutzte. Gemessen hat der Strang: **erst ueber zwoelf Elementen**
+zeigt `sort.Slice` ueberhaupt eine andere Reihenfolge; er brauchte **40**, dann
+starb der Mutant.
+
+Der Grund liegt in der Standardbibliothek: unterhalb einer Schwelle sortiert
+Go mit Einfuegesortieren, und das ist **zufaellig** stabil. Ein Fall mit drei
+oder fuenf Elementen prueft die Stabilitaet also nicht — er prueft, dass die
+Bibliothek klein genug war.
+
+**Also: eine Zusicherung ueber Stabilitaet, Reihenfolge oder Verteilung
+braucht genug Elemente, damit die Umsetzung sich ueberhaupt falsch verhalten
+KANN** — und die Zahl gehoert mit ihrem Grund an die Stelle, sonst kuerzt sie
+der Naechste weg.
+
+Dieselbe Frage lohnt bei jeder Schwelle einer fremden Bibliothek: ab wann
+greift der Weg, den ich pruefen will?
+
+## Ein bewusst toter Riegel wird benannt, nicht entfernt
+
+Ein Mutant ueberlebte und sollte es: der Fehlerzweig hinter
+`net.SplitHostPort` ist nach der Pruefung durch `trust.ValidHostPort` nicht
+erreichbar. Der Zweig bleibt trotzdem, und zwar mit Messung: `SplitHostPort`
+nimmt einer IPv6-Adresse die **Klammern** ab (`[…]:port` ist erlaubt, die
+TLS-Konfiguration will den Namen ohne Klammern) — von Hand zu spalten waere
+das groessere Risiko.
+
+**Entschieden: der Zweig bleibt und der Kommentar sagt, dass er bewusst
+unerreichbar ist.** Damit ist er nicht ungemessen, sondern ausdruecklich
+unerreichbar — und das ist ein Unterschied, den eine Mutationsliste von sich
+aus nicht macht.
+
+Dazu zwei Zaehlregeln aus derselben Runde, die ich uebernehme:
+- **Ein Mutant, der ZWEI Faelle derselben Sache reisst, ist noch isoliert.**
+  Reisst er einen FREMDEN Fall, ist er es nicht. Der Unterschied gehoert in
+  den Bericht, nicht in eine Fussnote.
+- **Ein Mutant, der per Panik abbricht, laesst Faelle ungelaufen** — hier 9
+  von 17. Tot bleibt tot, aber die Zahl gehoert daneben, sonst sieht der Lauf
+  wie ein Uebersprung aus.
+
+## Berichtigung: eine Textsuche ueber Quelltext ist ein LINTER, kein Test
+
+Weiter oben habe ich die Quelltext-Schleife als den richtigen Weg fuer ein
+„jede" gelobt. Sie ist es nicht, und der Pruefer hat es gemessen: eine ueber
+`-overlay` eingesetzte **zweite** GRANT-schreibende Funktion laesst den Fall
+**gruen**. Die Schleife prueft nicht das gebaute Programm, sie prueft die
+Dateien auf der Platte.
+
+Sechs gemessene blinde Flecken, und der erste ist bitter:
+
+1. **Ein mehrzeiliges Composite-Literal ist unsichtbar.** `gofmt` richtet die
+   Schluessel aus und schreibt `Type:    wire.TypeGrant`; die Nadel hat ein
+   einzelnes Leerzeichen. **Und `tools/check.sh` erzwingt genau diese Form** —
+   unser eigenes Pruefeter baut das Loch.
+2. Eine Feldzuweisung (`f.Type = wire.TypeGrant`) entgeht ihr.
+3. Eine Closure nach der erlaubten Funktion wird dieser zugerechnet, die Zahl
+   bleibt 1, also gruen.
+4. Der Kommentar-Streicher schneidet am ersten `//` **auch im String**, also
+   verschwindet ein Treffer hinter `"wss://x"`.
+5. Ein Methodenwert (`.Reserve` ohne Klammern) entgeht ihr.
+6. Eine Rumpf-Pruefung ist schon durch `_ = "s.Close(ctx,"` erfuellt, ohne
+   dass irgendetwas passiert.
+Dazu nimmt `Glob("*.go")` auch Dateien, die ein Build-Tag ausschliesst.
+
+**Also, in dieser Reihenfolge:**
+
+1. **Baue den Satz STRUKTURELL.** Ist der Griff nicht oeffentlich, kann
+   ausserhalb niemand schreiben, und im Paket gibt es genau einen Weg — dann
+   haelt der **Uebersetzer** den Satz, und kein `gofmt` hebt ihn aus. Das ist
+   kein Test, das ist eine Bauart, und sie ist mehr wert als jede Schleife.
+2. Geht das nicht vollstaendig, nimm **`go/ast`** statt Textsuche. Ein Baum
+   sieht das mehrzeilige Literal, die Feldzuweisung und den Methodenwert, und
+   er sieht keine Zeichenkette in einem String.
+3. **Und in jedem Fall einen Wirkungs-Fall daneben.** Ein Linter sagt, wie der
+   Code aussieht; ob er das Richtige TUT, sagt nur eine Messung.
+
+Eine Schleife ueber Quelltext darf also im Satz stehen — aber nie als der
+einzige, der ihn haelt.
+
+## Ein Fall, der benannt faellt, kann den Paketlauf trotzdem mitnehmen
+
+Meine Berichtigung von heute mittag (Wache um das Warten, nicht neben die
+Arbeit) ist richtig und reichte nicht. Gemessen am selben Paket: der
+reparierte Fall **faellt benannt in 10,00 s** — und der Paketlauf stirbt
+danach doch, mit `panic: test timed out after 2m0s`, weil ein **anderer** Fall
+dieselbe Funktion mit dem gehaltenen Schloss ruft und 1m50s haengt.
+
+Schlimmer: die **Nachbarzeile** (`Count` ohne ihr `defer Unlock`) gibt gar
+keinen benannten Fall, nur den Haenger — weil in jenem Fall der Aufruf **vor**
+der Frist steht.
+
+**Die Wache gehoert also in JEDEN Fall, der eine Funktion mit Schloss ruft,
+nicht nur in den, der das Schloss prueft.** Ein einziger ungewachter Aufruf
+reicht, um das Protokoll aller anderen zu loeschen. Und wer „der Haenger ist
+behoben" berichtet, hat es an EINEM Fall gemessen — zu berichten ist der
+**Paketlauf**.
+
+## Ein panischer Mutant sagt nichts ueber die Faelle hinter der Panik
+
+Ich hatte uebernommen: „ein Mutant, der per Panik abbricht, laesst Faelle
+ungelaufen — hier 9 von 17; tot bleibt tot, aber die Zahl gehoert daneben."
+Der Pruefer hat nachgefahren, und die Haelfte davon war zu wenig: **derselbe
+Mutant riss einen ZWEITEN Fall mit**, und den sah man erst, als der erste
+panische Fall ausgeschlossen wurde. Ohne den ersten liefen 10 und genau der
+zweite fiel; ohne beide liefen **15, und alle 15 bestanden**.
+
+**Also: bei einem panischen Mutanten reicht ein Lauf nicht.** Wer wissen will,
+was er wirklich reisst, schliesst die gefallenen Faelle einzeln aus und faehrt
+nach — sonst steht im Register „tot, 9 von 17 gelaufen", und die Wahrheit war
+„tot, zwei Faelle gefallen, 15 gruen".
+
+Dieselbe Runde hat zwei meiner weitergereichten Zahlen berichtigt: ein Mutant
+riss **drei** Faelle, nicht zwei (alle drei lebten von derselben Ruhepause,
+also keine fremde Sache). Zum sechsten Mal an einem Tag eine Zahl von mir, die
+gezaehlt werden musste.
+
+## Ein Pruefer, der seine eigene vorige Pruefung berichtigt, ist der beste Beleg
+
+Derselbe Pruefer hatte in seiner ersten Runde geschrieben, eine Pruefung nehme
+eine IPv6-Adresse in Klammern nicht an. In der Nachpruefung hat er nachgelesen
+und sich selbst berichtigt: sie nimmt sie an (`shared/trust/url.go:29-38`), er
+hatte nur Namen und IPv4 gelesen. Der Schluss blieb derselbe, das Argument
+wurde ein anderes — und **genau das** macht aus einem Urteil eine Messung.
+
+Dazu, als Mass fuer das Wort „geht nicht" in einem Bericht: ein Satz lautete
+„`database/sql` gibt diese Zahlen nicht zurueck". Richtig ist: die **Setzer**
+gibt es nicht zurueck, aber `MaxIdleClosed`, `MaxIdleTimeClosed` und
+`MaxLifetimeClosed` zaehlen ihre **Wirkung**. Mit einer Naht zum Einsetzen
+eines eigenen Connectors waere eine der drei messbar.
+
+„Geht nicht" heisst oft „geht nicht ohne eine Naht, die wir nicht gebaut
+haben" — und das ist ein anderer Satz, denn der zweite nennt den Preis.
+
+## Der Uebersetzer ist der beste Halter, den eine Regel bekommen kann
+
+Die Regel „`Allow` laeuft vor jeder GRANT" hat heute drei Halter durchlaufen:
+
+1. **Ein gewoehnlicher Fall** — prueft einen Weg, nicht alle. Reicht nicht.
+2. **Eine Textsuche ueber den Quelltext** — sechs gemessene blinde Flecken,
+   einer davon von `tools/check.sh` erzwungen, und overlay-blind. Ein Linter.
+3. **Ein privates Feld.** Das Feld heisst jetzt `session.link` statt
+   `Session.Link`, und damit kann **kein Paket ausserhalb** noch irgendein
+   Frame schreiben. Hinaus geht es nur ueber vier benannte Funktionen, und
+   genau eine baut ein GRANT. Ein Zubringer **kann** `Allow` nicht umgehen —
+   er hat nichts zum Schreiben.
+
+Der dritte Halter ist kein Test. Er ist eine **Bauart**, und er kostet nichts
+pro Lauf, kann nicht veralten und von keinem Formatierer ausgehebelt werden.
+
+**Also die Reihenfolge bei jedem „jede"- oder „nur"-Satz:** erst fragen, ob
+die Sprache ihn halten kann (privates Feld, eigener Typ, eine Funktion statt
+zweier). Dann ein Wirkungsfall. Und ein Linter **daneben**, ausdruecklich als
+Linter benannt, fuer das, was die Sprache nicht sagen kann — hier: dass
+INNERHALB des Pakets keine zweite Funktion ein GRANT baut.
+
+Was so nicht zu halten war, gehoert benannt: „auf jedes `Reserve` folgt ein
+`SentClose`" kann die Sprache nicht halten. Der echte Halter waere, die zwei
+Funktionen zu einer zusammenzulegen — eine Aenderung am Nachbarpaket, und
+damit eine eigene Aufgabe.
+
+## Lesen ist nicht Bauen — ein `case`-Label ist kein Erzeuger
+
+Die auf `go/ast` umgestellte Schleife meldete zuerst eine zweite Funktion als
+GRANT-Bauer. Falsch gezaehlt: jene Funktion **liest** GRANTs des Browsers und
+muss `wire.TypeGrant` darum in einem `case`-Label nennen.
+
+`case`-Labels bleiben jetzt aus der Zaehlung. Und die Pointe: **die alte
+Textsuche traf diesen Unterschied nur zufaellig**, weil ihre Nadel
+`Type: ` mit Doppelpunkt enthielt. Eine Nadel, die aus Glueck richtig liegt,
+ist genauso falsch wie eine, die daneben liegt — sie faellt nur spaeter auf.
+
+## Einen Trailer nachtraeglich anzuheften: einmal, unverschoben, gemeldet
+
+Ein Strang hat einen Commit ohne `Co-Authored-By` gebaut und ihn per
+`git commit --amend` berichtigt — und das gemeldet, statt es zu verschweigen.
+Die Regeln verbieten Historie umzuschreiben, und die fehlende Zeile bricht
+eine andere Regel; er hat die Klemme benannt und mich entscheiden lassen.
+Richtig so.
+
+**Nachgemessen und angenommen:** der alte Commit liegt nur noch im Reflog,
+`git branch --contains` nennt **keinen** Zweig, geschoben war nichts, und
+zwischen den zwei Commits lagen Sekunden. Niemand konnte darauf gebaut haben.
+
+**Die Grenze, damit daraus keine Gewohnheit wird:** ein `--amend` ist nur
+erlaubt, solange der Commit **nicht geschoben** ist, **kein Zweig** ihn
+enthaelt und es **sofort** passiert — und er wird gemeldet. Ist eine der drei
+Bedingungen weg, kommt der Trailer in einen **eigenen** Commit. Im geteilten
+Baum gilt sonst weiter: keine Historie umschreiben.
+
+## Ein Fall kann seine Aussage verlieren, ohne rot zu werden
+
+Der Fall, der das `go` vor einem Zubringer haelt, haengt an einem Tor: der
+Zubringer wartet dort, und solange er steht, muss der Leser das **zweite**
+OPEN schon genommen haben. Ohne das `go` sitzt der Leser im ersten Zubringer,
+und der Fall faellt benannt in 10 s.
+
+Der Bauer hat dazu etwas gemeldet, das ich fuer die unangenehmste Form von
+Verrottung halte: **wer spaeter den echten Zubringer einsetzt und das Tor
+nicht austauschbar haelt, verliert die Aussage des Falles — und der Fall wird
+dabei nicht rot.** Er laeuft weiter, er ist gruen, und er prueft nichts mehr.
+
+Ein veralteter Kommentar faellt irgendwann jemandem auf. Ein Fall, der leise
+aufhoert zu messen, faellt niemandem auf — er sieht wie Deckung aus.
+
+**Also: wo ein Fall an einer Vorrichtung haengt, die eine spaetere Aufgabe
+ersetzen wird, gehoert diese Bedingung in den PLAN jener Aufgabe** („haltet
+das Tor austauschbar, sonst verliert Fall X seine Aussage"), nicht in einen
+Kommentar beim Fall. Der Kommentar erreicht den, der die Datei oeffnet; der
+Plan erreicht den, der sie ersetzt.
+
+## Eine Wache, die gegen Blockieren schuetzt und gegen Panik nicht, haelt die halbe Zusage
+
+`within` sollte dafuer sorgen, dass ein Fehler **einen** Fall faellt statt das
+Protokoll aller anderen zu loeschen. Gemessen hat der Pruefer: gegen ein
+haengendes Schloss hielt es, gegen eine Panik in derselben Goroutine nicht —
+der Lauf starb nach 0,37 s mit **null** benannten Faellen.
+
+Entschieden und gebaut: `recover` in der Goroutine, Meldung ueber denselben
+gepufferten Kanal, Stapel von innen mit. **Und der Preis steht im Kommentar
+daneben**, nicht nur im Bericht: gemeldet wird mit dem **eingefangenen**
+Stapel, nicht mit dem lebenden, und ein Debugger kann an der Stelle nicht
+anhalten. Dazu ein Selbsttest, der genau das haelt.
+
+Die Grenze, die bleibt und benannt ist: `within` faengt nur Paniken in der
+Funktion, die es ruft — nicht in einer Goroutine, die jene selbst startet.
+
+Und ein Nebenfund, der dieselbe Krankheit ist wie ein falscher Kommentar: die
+**Meldung** der Wache nannte eine Ursache („a lock was not given back"), die
+auf den neuen Fall nicht passte. Eine Fehlermeldung ist ein Kommentar, den der
+Leser im Protokoll findet — sie wird genauso gegen den Code gelesen.
+
+## In WSL ist kein Go — der Linux-Lauf entsteht per Querbau
+
+Gemessen am 03.10.2026, nachdem mehrere Straenge Linux-Faelle gefahren haben:
+`go` ist in diesem WSL **nicht installiert** — nichts unter `/usr/local/go`,
+`/usr/lib/go*`, `/snap`, `/opt`, und `go: not found`.
+
+Die Linux-Faelle dieses Projekts entstehen also **auf Windows**
+(`GOOS=linux go test -c`) und kommen per tar-Pipe hinein. Daraus folgen zwei
+Dinge, die man sonst fuer Nachlaessigkeit haelt:
+
+1. **`-race` ist fuer die Linux-Faelle nicht fahrbar** — es braeuchte cgo fuer
+   Linux. Wer „0 DATA RACE" fuer einen Linux-Lauf meldet, meldet etwas, das
+   hier nicht gemessen werden kann.
+2. Der Querbau sieht keine Build-Tags, die erst zur Laufzeit greifen, und das
+   gebaute Programm kennt seinen Quellbaum nicht mehr — ein Fall, der eine
+   Datei neben sich erwartet, findet sie nicht.
+
+Dazu die bekannten Fallen desselben Weges, alle gemessen: das
+Ausfuehrungsbit geht verloren, `/tmp` ist nach einem WSL-Neustart leer
+(Entpacken und Lauf in EINEM Aufruf), die `.git`-Datei zeigt auf `Z:` und ist
+dort nicht aufloesbar, `MSYS_NO_PATHCONV=1` vor `wsl`, und **`$?` ueberlebt
+die Uebergabe an `sh -c` nicht**.
+
+## Die schlimmste Messung ist die, die sich bei einem Umgebungsfehler selbst abschaltet
+
+Ein Plan hatte genau **eine** Messung am echten Baum. Angekuendigt war, dass
+sie ohne den git-Riegel **rot** wird. Gemessen wurde: sie wird **still**.
+
+`git cat-file -e` stirbt bei fremdem Besitz mit Code 128 („dubious
+ownership"), und der Fall unterschied das nicht von „die Referenz fehlt
+eben" — also uebersprang er sich mit „carries no apps/web; nothing measured
+here". Gruen, ohne eine Zeile Protokoll.
+
+Das ist schlimmer als das angekuendigte Rot: **ein roter Fall ruft, ein
+uebersprungener schweigt.** Und er schweigt genau dann, wenn die Umgebung
+kaputt ist — also in dem Moment, in dem man am dringendsten wissen will, ob
+noch gemessen wird.
+
+**Also: ein Uebersprung muss den Grund TRENNEN.** „Die Sache ist hier nicht
+vorhanden" ist ein Uebersprung. „Das Werkzeug hat sich geweigert" ist ein
+**Fehler** und gehoert rot. Wer `t.Skip` schreibt, prueft vorher, welche der
+zwei Ursachen vorliegt — und wenn er sie nicht trennen kann, faellt er.
+
+Dieselbe Runde hatte den Zwilling dazu: **die einzige Zusicherung, die
+nachtraeglich nicht heilbar ist, laeuft auf dieser Maschine nie.** Der Fall,
+der prueft, dass kein Schluessel in eine Ausgabe gelangt, haengt an `jq` — und
+`jq` gibt es hier nicht, weder in Windows noch in WSL. Ein durchgesickerter
+Schluessel ist durchgesickert; man kann ihn nicht nachtraeglich pruefen. Eine
+solche Zusicherung darf an **keinem** fremden Werkzeug haengen, das nicht
+unbedingt noetig ist — die Dichtheitspruefung braucht `jq` gar nicht.
+
+## `core.filemode=false` verdeckt das Ausfuehrungsbit vollstaendig
+
+Ich hatte aufgeschrieben: ein Bit braucht einen eigenen Commit, weil
+`git commit -- <pfade>` den Modus aus dem Arbeitsbaum nimmt. Gemessen am
+03.10.2026 ist es schlimmer: in diesem Checkout steht `core.filemode=false`,
+und dann hilft **auch** `-c core.filemode=true` nicht — beide Wege sagten
+„nothing to commit", waehrend der Index die 100755 hielt.
+
+Der Weg, der traegt:
+
+```bash
+git update-index --chmod=+x <datei>
+git status --porcelain            # pruefen, dass GENAU diese Pfade drin sind
+git commit -m "Make <datei> executable, as every other script is"
+```
+
+Der Commit laeuft ohne Pfadliste — darum der Blick in den Index davor.
+
+**Und der Nebenfund, der niemandem aufgefallen war:** in diesem Arbeitsbaum
+haben **fuenf vorhandene** Dateien ihr Bit verloren (`tools/check.sh`,
+`shared/testdata/release/verify.sh`, `shared/testdata/service/echo.sh`,
+`shared/testdata/tls/pin.sh`, `shared/testdata/ulh/host.sh`) — im Baum
+100755, auf der Platte nicht. `core.filemode=false` verdeckt es, und ein
+`git status` meldet nichts. Wer unter Linux auspackt, bekommt Dateien, die
+nicht laufen.
+
+## Berichtigung: ein Ausstiegscode trennt die Ursachen meist NICHT
+
+Ich hatte geschrieben, ein Uebersprung muesse die Ursache trennen, und dafuer
+gesagt: „unterscheide am Ausstiegscode und an der Meldung". Der erste Teil ist
+falsch, und der Strang hat es gemessen: bei `git cat-file -e` geben **alle
+drei** Lagen **128** — ein fehlender Pfad, eine unbekannte Referenz und eine
+Verweigerung wegen fremden Besitzes. Ein Zweig „1 heisst fehlt" waere
+unerreichbar gewesen und haette jede wirklich fehlende Referenz **rot**
+gemacht.
+
+**Der Weg, der traegt, ist eine REIHENFOLGE, in der jeder Schritt nur aus einem
+Grund scheitern kann:**
+
+```bash
+git rev-parse --git-dir        # fasst keine Referenz an -> Fehler = NUR Verweigerung  -> ROT
+git rev-parse --verify -q REF  # gibt 1 ohne Ausgabe bei unbekannter Referenz          -> Uebersprung
+git cat-file -e REF:pfad       # erst jetzt der Pfad                                    -> Uebersprung
+```
+
+Jeder Schritt beantwortet **eine** Frage. Dann braucht man die Codes nicht
+auseinanderzurechnen — man hat sie nie vermischt.
+
+Und die Meldung des roten Falles nennt beides: dass **nichts** gemessen wurde,
+und den Riegel, der fehlt. Ein roter Fall, der nur „Fehler" sagt, ist ein
+halber Fall.
+
+## `go test` beantwortet einen Mutationslauf aus dem Zwischenspeicher
+
+Ein Strang hat gemeldet, dass seine Mutationslaeufe **PASS** meldeten, ohne zu
+laufen — `go test` hat sie aus dem Zwischenspeicher beantwortet. Wer so misst,
+misst den Lauf von vorher und haelt einen lebenden Mutanten fuer tot.
+
+**Also an JEDEN Mutationslauf `-count=1`.** Das schaltet den Zwischenspeicher
+fuer diesen Lauf ab:
+
+```bash
+go test -count=1 ./paket/
+```
+
+Es gilt auch dann, wenn der Mutant ueber `-overlay` kommt — darauf zu bauen,
+dass ein anderer Bau einen anderen Schluessel ergibt, ist eine Annahme, und
+`-count=1` kostet nichts.
+
+Dasselbe gilt fuer den gruenen Lauf **nach** dem Zuruecknehmen: ohne
+`-count=1` sieht man moeglicherweise den Lauf von vor der Mutation, und das
+ist genau der Lauf, den man beweisen wollte.
+
+## Ein Mutant, der nur auf EINER Plattform stirbt, ist auf der anderen lebendig
+
+Ein Bauer hatte gemeldet: ein Mutant ueberlebte **auf Windows**, weil der Fall
+dazu einen POSIX-Schirm braucht und dort uebersprungen wird. Er hat es
+behoben. Der Pruefer hat dann **drei weitere** derselben Form gefunden — alle
+drei ueberleben auf Windows und sterben nur in WSL:
+
+- die Ausgabe wird weggeworfen (`Stdout: nil`),
+- der Zweig fuer das Zeitlimit faellt weg (aus `E_TIMEOUT` wird `E_EXIT`),
+- der Ausstiegscode ist immer 0.
+
+**Damit haengen drei Kernregeln des Vertrags allein an uebersprungenen
+Faellen.** Auf der Plattform, auf der man taeglich entwickelt, sind sie
+ungemessen — und ein gruener Lauf dort sagt nichts darueber.
+
+**Also: eine Mutationsquote gilt je Plattform, nicht je Paket.** Wer auf zwei
+Plattformen laeuft, mutiert auf beiden — oder er sagt, welche Faelle auf
+welcher nicht messen. Und wo eine Vertragsregel nur in einem uebersprungenen
+Fall steht, gehoert ein Fall mit einer Attrappe daneben, der sie **ueberall**
+haelt. Das ist billig; die Luecke ist es nicht.
+
+## Ein Kommentar, der „nichts davon erreicht das Protokoll" sagt, ist eine Zusage ueber Geheimnisse
+
+Gemessen am 03.10.2026: ein Dateikopf sagte „Nothing of what a call was given
+reaches the log". Als **Wirkung** ist das falsch — der ganze stderr der App
+(bis 65536 Byte) geht ins Protokoll, die App hat die Parameter in ihrer
+Umgebung, das Pruefprogramm schreibt sie selbst auf stderr, und **ein Fall
+liest sie aus dem Protokoll zurueck.**
+
+Das ist nicht derselbe Fehler wie ein falscher Kommentar an einem Zaun. Ein
+Satz wie dieser ist eine **Sicherheitszusage**: wer ihn liest, hoert auf,
+seine Geheimnisse zu schuetzen. Und die Zeile, die ihn widerlegt, stand
+dreihundert Zeilen tiefer.
+
+**Also: jeder Satz der Form „X erreicht Y nicht" braucht entweder einen Fall,
+der es haelt, oder eine Einschraenkung, die sagt, was doch durchgeht.** Die
+Grenze selbst war in Ordnung und ist gemessen (70010 Byte hinein, genau 65536
+heraus, das Ende behalten) — nur der Grund stand nicht an der Stelle.
+
+## Ein Betriebsfund gehoert in den CODE, nicht in einen Bericht
+
+Gemessen am 03.10.2026 mit einer eigenen Sonde des Pruefers: ein Knoten, der
+die Verbindung **annimmt und dann schweigt**, haelt den Aufrufer
+**60,004 Sekunden** — punktgenau `ReadTimeout` —, und der Verteiler weicht in
+der Zeit **nicht aus**. Der Grund ist der Satz, auf den es ankommt:
+
+> **Schweigen ist keine Antwort.** `Connect` ist erst beim naechsten Knoten,
+> wenn der erste geantwortet hat. Ein Fehler loest das Ausweichen aus; ein
+> Nichts loest nichts aus.
+
+Die Frist, die der Plan dafuer nannte, umspannt nur den **Verbindungsaufbau**.
+Danach gilt `ReadTimeout`, und der Aufruf gelingt am Ende sogar — er ist nur
+eine Minute weg. Ein ruhig gestorbener Knoten kostet damit ungefaehr **eine
+Verbindung je 90 Sekunden** (60 s Stillstand plus 30 s Ruhepause).
+
+Das ist kein Testfund und kein Schoenheitsfehler, es ist das Verhalten der
+Anlage unter einem haeufigen Ausfall.
+
+**Also: wer so etwas messt, schreibt es dorthin, wo es wirkt** — hier eine
+eigene Frist um `Connect`, deutlich unter `ReadTimeout`. Ein Bericht erreicht
+den, der ihn liest; der Code erreicht den, der ihn aendert. Und solange die
+Frist nicht da ist, gehoert der gemessene Satz als Kommentar an die Stelle,
+die ihn verursacht.
+
+## Deutsche Anfuehrungszeichen in einem Python-Literal brechen das Skript
+
+Mir selbst heute dreimal passiert: ein Text mit den Zeichen fuer deutsche
+Anfuehrung, in ein `python - <<'PY'` als Zeichenkette gelegt, bricht mit
+`SyntaxError: invalid character`. Die Zeichen gehen durch die Heredoc, aber
+nicht durch den Parser.
+
+**Also: deutscher Prosatext geht per `cat > datei <<'EOF'` auf die Platte, und
+Python liest ihn von dort.** Ein Skript, das Text nur noch EINFUEGT und ihn
+nicht enthaelt, kann an seinem Inhalt nicht mehr scheitern.
+
+## Ein Fall, der die Stoerung anders herstellt als der Betrieb sie erzeugt, deckt die ZEILE und nicht den WEG
+
+Ein neuer Fehlerwert sollte den Unterschied halten zwischen „die Kennung ist
+die falsche" und „ich durfte nicht". Der Fall dazu stellt die Stoerung ueber
+eine **fehlende Datei** her — denn ohne root kann der Pruefprozess keiner
+fremden Kennung eine Datei geben, und auf sich selbst gelingt es immer.
+
+Beide Wege fuehren an dieselbe Zeile, und der Mutant stirbt. **Aber der Weg,
+der im Betrieb wirklich vorkommt — ein Dienst ohne die noetigen Rechte —
+bleibt ungemessen.** Der Bauer hat das selbst benannt, und das ist der
+Unterschied zwischen einer Luecke und einer Falle.
+
+**Also gehoeren zu so einem Fall zwei Saetze:** welche Zeile er deckt, und
+ueber welchen Weg er sie erreicht. Wer nur „die Zeile ist gedeckt" berichtet,
+sagt die halbe Wahrheit — und der Naechste haelt den Betriebsfall fuer
+gemessen.
+
+Dazu, aus derselben Runde, die Form noch einmal von der anderen Seite: der
+neue Fehlerwert ist **auf Windows durch keinen Fall gedeckt**, weil jeder
+`Exec`-Fall einen Systembenutzer mit numerischer Kennung braucht und sich dort
+selbst ueberspringt. Wer die Zeile auf Windows aendert, merkt es nicht; wer sie
+auf Linux aendert, merkt es sofort. Gemessen, nicht geschlossen — beide
+Mutantenlaeufe auf Windows mit Code 0 und null roten Faellen.
+
+## Ein Kontrollmutant, der LEBEN muss — das Gegenstueck zu dem, der sterben muss
+
+Weiter oben steht: ein Pruefer setzt einen Kontrollmutanten, der sterben muss,
+damit „ueberlebt" etwas bedeutet. Am 03.10.2026 hat ein Bauer die andere
+Haelfte gebaut, und sie fehlte:
+
+**`C00` benennt nur eine lokale Variable um — und LEBT.**
+
+Damit ist bewiesen, dass die Vorrichtung nicht einfach auf alles „tot"
+antwortet. Ohne ihn waere „25 von 28 tot" auch dann dieselbe Zahl, wenn die
+Werkbank jeden Lauf rot faerbt.
+
+**Also gehoeren in jede Mutationsrunde ZWEI Kontrollen:**
+
+- eine, die **sterben** muss (ein echter Fehler) — sonst ist „ueberlebt"
+  bedeutungslos,
+- eine, die **leben** muss (eine Aenderung ohne Wirkung) — sonst ist „tot"
+  bedeutungslos.
+
+Erst mit beiden ist eine Quote eine Messung. Und derselbe Bauer hat den Satz
+dazu geliefert: **„25 von 28 liest sich weniger vollstaendig als 16 von 16"** —
+genau darum ist die zweite Zahl die ehrlichere.
+
+## Erreichbar ist genau, was die Bibliothek zurueckgibt
+
+Vier Setzer eines Verbindungstopfes, dasselbe Muster, ueber Mutanten gemessen:
+
+- `SetMaxOpenConns` — **messbar**, `sql.DBStats` gibt `MaxOpenConnections`
+  zurueck, Mutant stirbt.
+- `SetMaxIdleConns` — **messbar ueber die WIRKUNG**, `MaxIdleClosed` zaehlt sie,
+  Mutant stirbt.
+- `SetConnMaxLifetime`, `SetConnMaxIdleTime` — **nicht messbar**: die Setzer
+  gibt niemand zurueck, und die Wirkung braucht eine Verbindung, die eine bzw.
+  fuenf Minuten alt wird.
+
+**Der Satz, der daraus bleibt: erreichbar ist genau, was die Bibliothek
+zurueckgibt — alles andere braucht eine Naht, die man bauen muss.** „Geht
+nicht" heisst hier „geht nicht ohne eine Naht fuer die Uhr", und das ist ein
+anderer Satz, denn der zweite nennt den Preis.
+
+Und die Form daneben, die zweimal vorkam: wer eine Zahl prueft, prueft gegen
+die **Zahl** und nicht gegen die Konstante, die sie halten soll — aber wer eine
+**Grenze** prueft, prueft gegen den Nachbarwert, nicht gegen eine eigene
+Zahl. Die Hänger-Wache dieses Strangs vergleicht jetzt gegen `mc.Timeout` und
+`mc.ReadTimeout` aus der Konfiguration, nicht gegen `5*time.Second` — denn die
+Aussage lautet „zwischen Waehlfrist und Lesefrist", nicht „zehn Sekunden".
