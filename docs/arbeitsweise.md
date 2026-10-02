@@ -2164,3 +2164,32 @@ naechste Aufgabe baut. **Also: was weitergebaut werden muss, wandert in den
 PLAN — in die Aufgabe, die es bauen wird** — und zwar mit der Messung und mit
 dem Grund, warum es hier nicht hingehoerte. Der Bericht behaelt seine Zeile,
 aber er ist nicht der Ort, an dem sie wirkt.
+
+## Mutiere die plausible Variante, nicht die symmetrische
+
+Ein Strang hat sein Schloss geprueft, indem er **beide** Zeilen entfernte,
+`Lock()` und `defer Unlock()`. Das ist sauber, symmetrisch — und es verklemmt
+nicht. Der Pruefer hat die Variante genommen, die ein Mensch wirklich baut:
+**nur das `defer Unlock()` verloren, `Lock()` bleibt stehen.** Ergebnis
+`panic: test timed out after 45s`.
+
+Dasselbe Muster an anderer Stelle: ein Rueckgabewert, der von `true` auf
+`false` gedreht wird, ist symmetrisch; vergessen, ihn ueberhaupt zu pruefen,
+ist plausibel. Eine Grenze von `>=` auf `>` zu schieben ist plausibel; sie zu
+loeschen ist symmetrisch.
+
+**Also zu jeder Schranke die Frage: wie wuerde das jemand KAPUTT machen, der
+es nicht absichtlich tut?** Die Antwort ist der Mutant, den man braucht.
+
+## Ein haengender Fall kostet mehr als ein roter
+
+Der Hänger oben wiegt nicht wegen der Wartezeit. Ein `panic: test timed out`
+**beendet den ganzen Paketlauf** — die anderen 32 Faelle melden nichts mehr,
+und bei `-timeout 180s` kostet jedes Vorkommen drei Minuten. Ein roter Fall
+sagt, was kaputt ist; ein haengender loescht auch die Aussage der gesunden.
+
+Darum gilt „haengen ist nicht fallen" in beide Richtungen: ein Fall, der
+haengen KANN, braucht seine eigene Zeitwache — `time.After` neben dem
+`<-done` im `select` — damit er faellt, statt das Protokoll mitzunehmen. Die
+Wache ist kein Ersatz fuer die Zusicherung, sie ist der Grund, dass man die
+Zusicherung noch lesen kann.
