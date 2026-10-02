@@ -6097,6 +6097,40 @@ git commit -m "Add the tunnels to the controllers and the pairing" \
 Entschieden wird bei jedem Kanal neu, aus Benutzer, Rolle, App, Aktion und Lizenz — nie aus
 Parametern des OPEN.
 
+> **Berichtigt am 03.10.2026, und zwar gegen den eigenen Text dieser Aufgabe.**
+>
+> **1. `E_FORBIDDEN` und `E_NOTFOUND` müssen für einen Benutzer OHNE Recht
+> dasselbe sagen.** Diese Aufgabe schreibt es anders vor — ihr eigener Fall
+> `fx.CheckApp(t, fx.OfficeUser, "nothing")` erwartet `wire.CodeNotFound`,
+> während eine vorhandene App ohne Recht `wire.CodeForbidden` gibt. Gemessen
+> von der Prüfung: damit verrät der Unterschied einem Benutzer ohne Recht,
+> dass die App **installiert und aktiv** ist. Der Kommentar im Code behauptete
+> das Gegenteil.
+>
+> **Entscheidung des Koordinators: gleichziehen**, weil das die sicherere
+> Variante ist. Der Preis, vollständig: wer kein Recht hat, kann einen
+> Tippfehler im App-Namen nicht mehr von einem fehlenden Recht unterscheiden —
+> seine Fehlersuche wird schwerer. Ein Fall hält fest, dass **beide** Wege
+> denselben Code geben. **Der Fall dieses Plans mit `CodeNotFound` ist damit
+> überholt; wer ihn wörtlich baut, baut den Verräter.**
+>
+> **2. „Nie aus Parametern des OPEN" hat immer UNSIGNIERTE Teile gemeint.**
+> Gemessen: `Task`+`Confirm` aus dem OPEN verschieben die Entscheidung
+> **öffnend** (`plain="E_CONFIRM" | task="E_CONFIRM" | task+confirm=""`). Das
+> ist richtig und bleibt — genau dafür ist `E_CONFIRM` da: der Kanal sagt „hol
+> eine Unterschrift", und die unterschriebene Aufgabe ist die Antwort darauf.
+> Ein unterschriebenes Stück ist kein Parameter, sondern ein **Beleg**, denn
+> die Unterschrift wird selbst geprüft. **Meine Formel im Auftrag war zu
+> lose**, nicht der Code.
+>
+> **3. Eine Namensraum-Kollision ist offen und nur örtlich geschlossen.** Ein
+> Manifest darf eine Aktion `use` heißen; dann ist das Aktionsrecht dasselbe
+> wie `<app>/use`, und gemessen mit **nur** dem Sichtbarkeitsrecht öffnet der
+> Kanal. Die saubere Fassung gehört in `shared/store` bzw. `core.ValidRight`
+> und ist eingefroren — siehe `docs/vertraege-v1.2.md`, Punkt 21. Bis dahin
+> fängt eine Zeile in `check.go` es ab, mit Verweis daneben. **Die
+> Lizenzprüfung darf später nicht an `<app>/use` hängen** — dieselbe Zeile.
+
 **Files:**
 - Create: `apps/server-api/classes/rights/rights.go`, `apps/server-api/classes/rights/check.go`
 - Test: `apps/server-api/classes/rights/rights_test.go`

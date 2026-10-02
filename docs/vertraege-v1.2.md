@@ -575,3 +575,37 @@ und sie ist jetzt benannt, statt in zwei Berichten zu liegen.
 - **Niemand baut eine eigene Lizenzprüfung.** Es gibt genau zwei Eingänge, und
   der Unterschied zwischen ihnen ist die Sicherheitsaussage: wer als
   Controller den Schlüssel prüfen könnte, hätte ihn.
+
+## Punkt 21: Eine Aktion darf `use` heißen — und dann ist das Recht dasselbe
+
+**Gemessen am 03.10.2026** von der Prüfung der API-Aufgabe 13, und es ist der
+erste Fund dieser Sitzung, der eine Änderung in `shared/` **wirklich**
+braucht.
+
+Ein Recht hat die Form `<app>/<aktion>`, und `<app>/use` ist das Recht, die
+App überhaupt zu sehen. `core.ValidRight` (`shared/core/core.go:319`) erlaubt
+als Aktion aber **jeden** gültigen Namen:
+
+```go
+ok && wire.ValidAppID(app) && !wire.CoreApp(app) && (action == RightUse || wire.ValidName(action))
+```
+
+Nennt ein **Manifest** seine Aktion `use`, fällt das Aktionsrecht mit dem
+Sichtbarkeitsrecht zusammen. Gemessen: mit **nur** dem Sichtbarkeitsrecht
+antwortet die Prüfung `code=""` — **der Kanal öffnet.**
+
+**Warum das in `shared/` gehört:** `use` ist dort ein **reservierter** Name,
+und wer reserviert, muss es auch durchsetzen. Heute reserviert `core`
+den Namen und `store` lässt ihn als Manifest-Aktion zu — zwei Hälften
+desselben Vertrags, die sich widersprechen. Jede Umsetzung, die das örtlich
+abfängt, baut die Prüfung ein zweites Mal.
+
+**Bis zur nächsten Vertragsfassung:** eine Zeile in `rights/check.go` fängt es
+ab, mit einem Kommentar, der auf `core.ValidRight` zeigt und sagt, dass sie
+weg muss, sobald der Vertrag es hält. Entschieden für den örtlichen Riegel,
+weil der Einfrierstand hält und die Lücke heute offen ist; der Preis ist die
+doppelte Prüfung.
+
+**Und ein zweiter Satz hängt daran:** die Lizenzprüfung (Punkt 20) darf
+**nicht an `<app>/use` hängen**. Es ist dieselbe Zeile, und wer sie dort
+aufhängt, macht aus einer Namenskollision eine Lizenzumgehung.
