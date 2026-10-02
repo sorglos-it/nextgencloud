@@ -6097,7 +6097,10 @@ git commit -m "Add the tunnels to the controllers and the pairing" \
 Entschieden wird bei jedem Kanal neu, aus Benutzer, Rolle, App, Aktion und Lizenz — nie aus
 Parametern des OPEN.
 
-> **Berichtigt am 03.10.2026, und zwar gegen den eigenen Text dieser Aufgabe.**
+> **Berichtigt am 03.10.2026 — drei Entscheidungen des Koordinators. Punkt 1
+> aendert den CODE, nicht diesen Plan; Punkt 2 berichtigt meine eigene
+> Formel im Aufgabenkopf; Punkt 3 ist eine gemessene Luecke mit oertlichem
+> Riegel.**
 >
 > **1. `E_FORBIDDEN` und `E_NOTFOUND` müssen für einen Benutzer OHNE Recht
 > dasselbe sagen.** Gemessen von der Prüfung: der Unterschied verriet einem
