@@ -91,7 +91,48 @@ async function askMock(shell, query) {
 async function fillLogin(shell, name, password) {
   await shell.getByLabel("Benutzername").fill(name);
   await shell.getByLabel("Passwort").fill(password);
-  await shell.getByRole("button", { name: "Anmelden", exact: true }).click();
+  await press(shell, shell.getByRole("button", { name: "Anmelden", exact: true }));
+}
+
+// press clicks a login button and returns once the attempt it started is over.
+//
+// WHY A STATE AND NOT A TIMEOUT. An attempt takes as long as its slowest step,
+// and the slowest is Argon2id (about a second alone, tens of seconds on a
+// machine that is running three other suites): a case that waited for the
+// RESULT of an attempt with expect's own 5 s failed once in 796 under load
+// (task 33) and never alone. A longer number only moves that line. What the
+// shell itself says is better: loginView (auth/login.js attempt) switches the
+// buttons off the moment an attempt starts, clears the alert in the same step,
+// and either puts the mask away (success) or switches the buttons on again,
+// with a sentence, a lock or the TOTP field (failure). So "the attempt is
+// over" is a thing the page SAYS, and this waits for exactly that. The only
+// bound left is the case's own timeout, which is a budget for the whole case
+// and not a guess about one step.
+//
+// "mask idle" covers success-less endings too (wrong password, lock, TOTP
+// asked for): the case's own expectations judge what the ending was.
+async function loginState(shell) {
+  return shell.evaluate(() => {
+    const box = document.querySelector("form.loginbox");
+    if (box !== null) {
+      const off = [...box.querySelectorAll("button")].every((b) => b.disabled);
+      const said = box.querySelector('[role="alert"]');
+      return off && (said === null || said.textContent === "") ? "working" : "mask idle";
+    }
+    if (document.querySelector("#taskbar") !== null) return "desktop up";
+    if (document.querySelector("#root .msg") !== null) return "shell message";
+    return "working"; // the mask is gone and the desktop is still being built
+  });
+}
+
+async function attemptOver(shell) {
+  await expect.poll(async () => (await loginState(shell)) !== "working",
+    { message: "the login attempt is over", timeout: 0 }).toBe(true);
+}
+
+async function press(shell, button) {
+  await button.click();
+  await attemptOver(shell);
 }
 
 // atLocalhost moves the page to the same server under its DNS name, which is
@@ -187,7 +228,7 @@ test("TOTP is asked for when the challenge says so", async ({ shell }) => {
   await fillLogin(shell, "bernd", PASSWORD);
   await expect(shell.getByLabel("Code aus der Authenticator-App")).toBeVisible();
   await shell.getByLabel("Code aus der Authenticator-App").fill(TOTP_CODE);
-  await shell.getByRole("button", { name: "Anmelden", exact: true }).click();
+  await press(shell, shell.getByRole("button", { name: "Anmelden", exact: true }));
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
@@ -202,7 +243,7 @@ test("a passkey signs the certificate, on a browser that has never been here",
   const { cdp, authenticatorId } = await withAuthenticator(shell, "clara");
 
   await shell.getByLabel("Benutzername").fill("clara");
-  await shell.getByRole("button", { name: "Mit Passkey anmelden" }).click();
+  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
   await expect(shell.locator("#taskbar")).toBeVisible();
   expect(await askMock(shell, "ask=proofs"), "one proof, by the passkey").toBe("passkey");
 
@@ -218,7 +259,7 @@ test("a role with passwordToo has the certificate signed twice", async ({ shell,
   // the password proof from the password key, both over the same certificate.
   await shell.getByLabel("Benutzername").fill("dora");
   await shell.getByLabel("Passwort").fill(PASSWORD);
-  await shell.getByRole("button", { name: "Mit Passkey anmelden" }).click();
+  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
   await expect(shell.locator("#taskbar")).toBeVisible();
   // The mock is the one that had to check both, so it is the one asked. A
   // flag this side sets about its own work would say nothing.
