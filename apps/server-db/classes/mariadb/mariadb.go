@@ -30,9 +30,10 @@ const maxPacket = 128 << 20
 // The numbers of the connection pool. They are chosen, not measured: no
 // cluster on this machine answers how many connections sixteen is. They stand
 // here as named constants so that a test can hold each of them against the
-// number it is meant to be - of the four, only maxOpenConns can be read back
-// off the open pool (sql.DBStats), the other three are write-only to
-// database/sql.
+// number it is meant to be. maxOpenConns can be read back off the open pool
+// (sql.DBStats); maxIdleConns and the two deadlines show only in what the
+// pool DOES, and the deadlines do it a minute and five minutes from now -
+// which is why openDB below takes them as arguments.
 const (
 	maxOpenConns = 16
 	maxIdleConns = 4
@@ -48,6 +49,29 @@ const (
 // OpenDB opens the cluster. It creates nothing: the schema comes from the
 // migrations, and the ngc account may not create anything anyway.
 func OpenDB(cfg config.DB) (*sql.DB, error) {
+	return openDB(cfg, deadlines{lifetime: connLifetime, idle: connIdleTime})
+}
+
+// deadlines are the two deadlines of the pool. They are a named pair and not
+// two arguments on purpose: both are durations, so the compiler would take
+// them the wrong way round without a word, and five minutes of idle time
+// against a minute of lifetime is a mistake no test here can see.
+type deadlines struct {
+	lifetime time.Duration
+	idle     time.Duration
+}
+
+// openDB is OpenDB with the two deadlines of the pool as arguments, and that
+// is the whole of the seam. A test gives them milliseconds instead of minutes
+// and then watches the pool retire a connection for real, which is the only
+// way these two lines can be held at all: database/sql reads time.Now()
+// itself (sql.go, connectionCleanerRunLocked and db.conn) and takes no clock
+// from outside, so there is nothing to hand it a fake one. Shortening the
+// deadline is the fake clock.
+//
+// It stays unexported, so no caller of OpenDB can set a deadline of its own:
+// the numbers of an installation are the two constants above and nothing else.
+func openDB(cfg config.DB, d deadlines) (*sql.DB, error) {
 	if cfg.Driver != config.DriverMariaDB {
 		return nil, fmt.Errorf("mariadb: driver %q, want %q", cfg.Driver, config.DriverMariaDB)
 	}
@@ -70,8 +94,8 @@ func OpenDB(cfg config.DB) (*sql.DB, error) {
 	})
 	db.SetMaxOpenConns(maxOpenConns)
 	db.SetMaxIdleConns(maxIdleConns)
-	db.SetConnMaxLifetime(connLifetime)
-	db.SetConnMaxIdleTime(connIdleTime)
+	db.SetConnMaxLifetime(d.lifetime)
+	db.SetConnMaxIdleTime(d.idle)
 	return db, nil
 }
 

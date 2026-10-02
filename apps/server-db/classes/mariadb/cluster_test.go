@@ -328,10 +328,9 @@ func TestTheNodeSeesTheFoundRowsCapability(t *testing.T) {
 // everything above maxIdleConns is closed. Task 9 had to leave this number
 // write-only because it has no connection to count.
 //
-// connLifetime and connIdleTime stay unmeasured: their effect is counted the
-// same way (MaxLifetimeClosed, MaxIdleTimeClosed), but the shortest of the two
-// is a minute and OpenDB takes no clock. The price of measuring them would be
-// a seam for the clock in OpenDB, and that is not built.
+// connLifetime and connIdleTime are held by the two cases below, which go
+// through openDB with milliseconds in place of the minutes. Both numbers
+// themselves are held as numbers by TestPoolLimits.
 func TestThePoolClosesTheConnectionsAboveMaxIdle(t *testing.T) {
 	// Written out, not computed from the constants: eight connections handed
 	// back with an idle limit of four leave four to close. Deriving the
@@ -452,5 +451,94 @@ func TestAMuteNodeIsCutOffByOurOwnDeadline(t *testing.T) {
 	if sum != 1 {
 		t.Errorf("the healthy nodes authenticated %d connections, want 1: silence behind "+
 			"the first node left them unreachable", sum)
+	}
+}
+
+// openShortCluster opens the pool with the two deadlines shortened, so that
+// what the installation waits a minute and five minutes for happens inside a
+// case. Nothing else changes: the same OpenDB body, the same connectors, the
+// same nodes.
+func openShortCluster(t *testing.T, cfg config.DB, lifetime, idle time.Duration) *sql.DB {
+	t.Helper()
+	db, err := openDB(cfg, deadlines{lifetime: lifetime, idle: idle})
+	if err != nil {
+		t.Fatalf("openDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// TestThePoolRetiresAConnectionAtItsLifetime measures that
+// db.SetConnMaxLifetime reached the pool at all. It is the line connLifetime
+// exists for: a connection is retired so that the next one goes through the
+// picker again instead of one connection staying on the node it first
+// reached. Whether the load then really moves back to a node that came up
+// again is still NOT measured - that needs a cluster.
+//
+// The deadline is a millisecond instead of five minutes, and the wait is a
+// real one: database/sql reads time.Now() itself. MaxLifetimeClosed is the
+// counter database/sql keeps for exactly this reason, and the node's own
+// count of accepted connections says the same thing from the other side.
+func TestThePoolRetiresAConnectionAtItsLifetime(t *testing.T) {
+	ca := newAuthority(t, "ngc-test-ca")
+	n := newFakeNode(t, ca, nodeGood, "127.0.0.1", loopbackCert, nil)
+	// The idle deadline is off, so nothing but the lifetime can close this
+	// connection and the counter below names one cause only.
+	db := openShortCluster(t, cluster(ca, n), time.Millisecond, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("first ping: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond) // past a deadline of one millisecond
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("second ping: %v", err)
+	}
+	if got := db.Stats().MaxLifetimeClosed; got != 1 {
+		t.Errorf("the pool retired %d connections at their lifetime, want 1", got)
+	}
+	if accepted, _ := n.counts(); accepted != 2 {
+		t.Errorf("the node accepted %d connections, want 2: the retired one and its replacement", accepted)
+	}
+}
+
+// TestThePoolDropsAConnectionThatSatIdle measures that
+// db.SetConnMaxIdleTime reached the pool. Its own counter is
+// MaxIdleTimeClosed, and it is a different one from MaxIdleClosed above: that
+// one counts what the idle COUNT closes, this one what the idle TIME closes,
+// and a case that read the wrong one would pass with this line deleted.
+//
+// The wait is seconds, not milliseconds, and that is database/sql, not
+// slack: the cleaner that drops an idle connection runs at most once per
+// second (sql.go, connectionCleaner: minInterval = time.Second), however
+// short the deadline is. So the case polls up to waitFor instead of sleeping
+// a fixed time, and it names the counter when it gives up.
+func TestThePoolDropsAConnectionThatSatIdle(t *testing.T) {
+	const waitFor = 15 * time.Second
+	ca := newAuthority(t, "ngc-test-ca")
+	n := newFakeNode(t, ca, nodeGood, "127.0.0.1", loopbackCert, nil)
+	// The lifetime is off: MaxIdleTimeClosed is only ever raised by the idle
+	// deadline, and with the lifetime running too this case could not say
+	// which of the two lines it held.
+	db := openShortCluster(t, cluster(ca, n), 0, time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	deadline := time.Now().Add(waitFor)
+	for db.Stats().MaxIdleTimeClosed == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the pool dropped no idle connection within %v", waitFor)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := db.Stats().MaxIdleTimeClosed; got != 1 {
+		t.Errorf("the pool dropped %d connections for sitting idle, want 1", got)
+	}
+	// Nothing asked for a connection after the drop, so the node saw exactly
+	// the one: this case measures a connection going away, not coming back.
+	if accepted, _ := n.counts(); accepted != 1 {
+		t.Errorf("the node accepted %d connections, want 1", accepted)
 	}
 }
