@@ -2910,3 +2910,57 @@ Ausfuehrungsbit geht verloren, `/tmp` ist nach einem WSL-Neustart leer
 (Entpacken und Lauf in EINEM Aufruf), die `.git`-Datei zeigt auf `Z:` und ist
 dort nicht aufloesbar, `MSYS_NO_PATHCONV=1` vor `wsl`, und **`$?` ueberlebt
 die Uebergabe an `sh -c` nicht**.
+
+## Die schlimmste Messung ist die, die sich bei einem Umgebungsfehler selbst abschaltet
+
+Ein Plan hatte genau **eine** Messung am echten Baum. Angekuendigt war, dass
+sie ohne den git-Riegel **rot** wird. Gemessen wurde: sie wird **still**.
+
+`git cat-file -e` stirbt bei fremdem Besitz mit Code 128 („dubious
+ownership"), und der Fall unterschied das nicht von „die Referenz fehlt
+eben" — also uebersprang er sich mit „carries no apps/web; nothing measured
+here". Gruen, ohne eine Zeile Protokoll.
+
+Das ist schlimmer als das angekuendigte Rot: **ein roter Fall ruft, ein
+uebersprungener schweigt.** Und er schweigt genau dann, wenn die Umgebung
+kaputt ist — also in dem Moment, in dem man am dringendsten wissen will, ob
+noch gemessen wird.
+
+**Also: ein Uebersprung muss den Grund TRENNEN.** „Die Sache ist hier nicht
+vorhanden" ist ein Uebersprung. „Das Werkzeug hat sich geweigert" ist ein
+**Fehler** und gehoert rot. Wer `t.Skip` schreibt, prueft vorher, welche der
+zwei Ursachen vorliegt — und wenn er sie nicht trennen kann, faellt er.
+
+Dieselbe Runde hatte den Zwilling dazu: **die einzige Zusicherung, die
+nachtraeglich nicht heilbar ist, laeuft auf dieser Maschine nie.** Der Fall,
+der prueft, dass kein Schluessel in eine Ausgabe gelangt, haengt an `jq` — und
+`jq` gibt es hier nicht, weder in Windows noch in WSL. Ein durchgesickerter
+Schluessel ist durchgesickert; man kann ihn nicht nachtraeglich pruefen. Eine
+solche Zusicherung darf an **keinem** fremden Werkzeug haengen, das nicht
+unbedingt noetig ist — die Dichtheitspruefung braucht `jq` gar nicht.
+
+## `core.filemode=false` verdeckt das Ausfuehrungsbit vollstaendig
+
+Ich hatte aufgeschrieben: ein Bit braucht einen eigenen Commit, weil
+`git commit -- <pfade>` den Modus aus dem Arbeitsbaum nimmt. Gemessen am
+03.10.2026 ist es schlimmer: in diesem Checkout steht `core.filemode=false`,
+und dann hilft **auch** `-c core.filemode=true` nicht — beide Wege sagten
+„nothing to commit", waehrend der Index die 100755 hielt.
+
+Der Weg, der traegt:
+
+```bash
+git update-index --chmod=+x <datei>
+git status --porcelain            # pruefen, dass GENAU diese Pfade drin sind
+git commit -m "Make <datei> executable, as every other script is"
+```
+
+Der Commit laeuft ohne Pfadliste — darum der Blick in den Index davor.
+
+**Und der Nebenfund, der niemandem aufgefallen war:** in diesem Arbeitsbaum
+haben **fuenf vorhandene** Dateien ihr Bit verloren (`tools/check.sh`,
+`shared/testdata/release/verify.sh`, `shared/testdata/service/echo.sh`,
+`shared/testdata/tls/pin.sh`, `shared/testdata/ulh/host.sh`) — im Baum
+100755, auf der Platte nicht. `core.filemode=false` verdeckt es, und ein
+`git status` meldet nichts. Wer unter Linux auspackt, bekommt Dateien, die
+nicht laufen.
