@@ -3100,3 +3100,27 @@ nicht durch den Parser.
 **Also: deutscher Prosatext geht per `cat > datei <<'EOF'` auf die Platte, und
 Python liest ihn von dort.** Ein Skript, das Text nur noch EINFUEGT und ihn
 nicht enthaelt, kann an seinem Inhalt nicht mehr scheitern.
+
+## Ein Fall, der die Stoerung anders herstellt als der Betrieb sie erzeugt, deckt die ZEILE und nicht den WEG
+
+Ein neuer Fehlerwert sollte den Unterschied halten zwischen „die Kennung ist
+die falsche" und „ich durfte nicht". Der Fall dazu stellt die Stoerung ueber
+eine **fehlende Datei** her — denn ohne root kann der Pruefprozess keiner
+fremden Kennung eine Datei geben, und auf sich selbst gelingt es immer.
+
+Beide Wege fuehren an dieselbe Zeile, und der Mutant stirbt. **Aber der Weg,
+der im Betrieb wirklich vorkommt — ein Dienst ohne die noetigen Rechte —
+bleibt ungemessen.** Der Bauer hat das selbst benannt, und das ist der
+Unterschied zwischen einer Luecke und einer Falle.
+
+**Also gehoeren zu so einem Fall zwei Saetze:** welche Zeile er deckt, und
+ueber welchen Weg er sie erreicht. Wer nur „die Zeile ist gedeckt" berichtet,
+sagt die halbe Wahrheit — und der Naechste haelt den Betriebsfall fuer
+gemessen.
+
+Dazu, aus derselben Runde, die Form noch einmal von der anderen Seite: der
+neue Fehlerwert ist **auf Windows durch keinen Fall gedeckt**, weil jeder
+`Exec`-Fall einen Systembenutzer mit numerischer Kennung braucht und sich dort
+selbst ueberspringt. Wer die Zeile auf Windows aendert, merkt es nicht; wer sie
+auf Linux aendert, merkt es sofort. Gemessen, nicht geschlossen — beide
+Mutantenlaeufe auf Windows mit Code 0 und null roten Faellen.
