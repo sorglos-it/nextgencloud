@@ -7,6 +7,11 @@ Aufbau: kein eigenes Programm. `classes/` enthält die Umsetzungen von `dbapi`, 
 als Unterordner (`classes/mariadb/`, `classes/sqlite/`), damit jedes Programm nur den Treiber
 bekommt, den es braucht. `sql/` enthält die nummerierten Migrationen.
 
+`classes/migrate/` kennt SQL und keinen Treiber; `classes/migraterun/` ist der Läufer darüber,
+den `ngc-api migrate` ruft (`Run`, `Needed`). Der Läufer ist ein eigenes Paket, weil
+`classes/sqlite/` seinerseits `migrate` importiert — ein Import von `sqlite` innerhalb von
+`migrate` ist ein Ring, gemessen: „import cycle not allowed".
+
 ## Aufgabe
 
 - `dbapi.Store` für MariaDB und für SQLite umsetzen; die SQLite-Umsetzung dient zugleich dem
