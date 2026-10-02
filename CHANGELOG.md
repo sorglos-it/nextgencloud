@@ -29,6 +29,16 @@ cgo mit AES-256-XTS, MariaDB-Treiber, WebSocket, Passkeys und TOTP. Mit allem, w
 sind es 21 Module und rund 20 MB; jede Lizenz ist mit der AGPL-3.0 vereinbar, `govulncheck` meldet
 keine erreichbare Lücke.
 
+Datenbank: `dbapi` läuft auf MariaDB mit Galera und auf einer mit AES-256-XTS verschlüsselten
+SQLite-Datei, beide mit denselben Konformitätstests. Das Schema kommt aus nummerierten
+Migrationen, die nur hinzufügen dürfen, damit die vorige API-Version während eines Updates
+weiterläuft. MariaDB nimmt nur TLS-Verbindungen gegen die CA der Installation, verteilt die Last
+über die Knoten und verkraftet den Ausfall eines Knotens.
+
+Sichern der SQLite-Datei: `sqlite.Backup` legt eine Kopie neben die Datenbank, während niemand sie
+ändern darf, und die Kopie bleibt genauso verschlüsselt wie das Original. Ohne `api.json`
+beziehungsweise `controller.json` kann sie niemand öffnen – auch der Besitzer nicht.
+
 ## vertraege-v1 (22.09.2026)
 
 Die Verträge V1 bis V7 zwischen Webinterface, API, Controller und Datenbank stehen: Go-Pakete in
