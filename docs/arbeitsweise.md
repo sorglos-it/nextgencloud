@@ -3460,6 +3460,23 @@ Testdatei tauscht**, deren Konstante auf die Quelle zeigt — dann liest der
 Fall die mutierte Kopie. Danach: alle drei **tot, Ausstiegscode 1**, mit je
 einer Meldung, die den falschen Bezeichner nennt.
 
+**Nachgemessen am 03.10.2026, alle vier Riegel, und das Paar ist jedes Mal
+dasselbe: ALIVE mit `-overlay` allein, DEAD mit echtem Plattentausch**
+(Ausstiegscodes 0 und 1; Pflichtkontrollen alle vier ALIVE, die Läufe sind
+also gültig). Alle vier **halten**. Ergänzt werden muss nur das *Wie*:
+
+| Was der Fall liest | Was hilft |
+|---|---|
+| eine **Datei**, über eine Konstante | dieselbe Überlagerung tauscht die Testdatei mit |
+| ein **Verzeichnis** (`WalkDir`, `ParseDir`, `Glob`) | **Overlay hilft gar nicht** — nur ein echter Tausch auf der Platte |
+
+Beim Verzeichnis-Fall ist Overlay **strukturell** blind: die gelesenen Dateien
+kommen im Übersetzungsgraph des geprüften Pakets nicht einmal vor.
+
+Und eine Fußnote, die das Ganze einordnet: **eine dieser vier Dateien hatte
+die Falle in ihrem eigenen Kopfkommentar stehen.** Sie war nie unbekannt — sie
+war nur nicht dort, wo gemessen wurde.
+
 **Diese Sitzung hat vier Dateien, die Quelltext lesen**, und jede Messung an
 ihren Riegeln, die nur `-overlay` benutzt hat, ist damit **unbewiesen** — nicht
 falsch, sondern ungemessen:
