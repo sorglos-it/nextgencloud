@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,6 +298,63 @@ func TestArchiveCarriesNoTests(t *testing.T) {
 	}
 }
 
+// TestArchiveCarriesNoTestOnlyLink. public/assets/js/net/testlink.js is a
+// shortcut the browser tests import, and a release has no business carrying it.
+// Decided on 02.10.2026 by the web strand on this measurement of the real tree:
+// every mention of the file in SHIPPED code is a comment (apps/js/store.js:239,
+// auth/keys.js:37, auth/login.js:50) - the graph reaches it from nowhere - while
+// the live "await import(\"/assets/js/net/testlink.js\")" sit only under
+// apps/web/tests/ (attacks.spec.js:361, world.spec.js:606/896 and channels.spec.js
+// at :20 :31 :48 :65 :83 :110 :134 and on), and tests/ does not travel.
+//
+// So it is a second ':(exclude)' in pack-release.sh and NOT a line in
+// extra-web.txt: an entry there would need a reason, and the only reason
+// available would be made up.
+func TestArchiveCarriesNoTestOnlyLink(t *testing.T) {
+	needTools(t)
+	const link = "public/assets/js/net/testlink.js"
+	repo := webFixture(t, func(f map[string]string) {
+		f[link] = "export function connectForTest() {}\n"
+	})
+	out, log, err := pack(t, repo, "main", "3")
+	if err != nil {
+		t.Fatalf("pack-release.sh: %v\n%s", err, log)
+	}
+	b, err := tarCmd("-tf", filepath.Join(out, "ngc-web-all.tar")).Output()
+	if err != nil {
+		t.Fatalf("tar -tf: %v", err)
+	}
+	for _, e := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		if strings.TrimPrefix(strings.TrimSpace(e), "./") == link {
+			t.Errorf("the archive carries %s, which only the browser tests import", link)
+		}
+	}
+	// And the exclusion must not take the folder's other files with it: the
+	// pathspec names one file, not net/.
+	keep := "public/assets/js/net/http.js"
+	repo = webFixture(t, func(f map[string]string) {
+		f[link] = "export function connectForTest() {}\n"
+		f[keep] = "export const h = 1;\n"
+	})
+	out, log, err = pack(t, repo, "main", "3")
+	if err != nil {
+		t.Fatalf("pack-release.sh: %v\n%s", err, log)
+	}
+	b, err = tarCmd("-tf", filepath.Join(out, "ngc-web-all.tar")).Output()
+	if err != nil {
+		t.Fatalf("tar -tf: %v", err)
+	}
+	var found bool
+	for _, e := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		if strings.TrimPrefix(strings.TrimSpace(e), "./") == keep {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the exclusion took %s with it; it must name one file, not the folder", keep)
+	}
+}
+
 func TestPackIsReproducible(t *testing.T) {
 	needTools(t)
 	repo := webFixture(t, nil)
@@ -505,9 +563,24 @@ func TestSignScriptMakesAReleaseVerifyShAccepts(t *testing.T) {
 // draft tested prefixes, and the second half of a line would have walked
 // straight past it. The raw key bytes are looked for in three spellings as
 // well, because a leak does not have to arrive as PEM.
+//
+// IT DOES NOT ASK FOR jq, AND THAT IS THE POINT. The first draft gated this on
+// needVerifyTools, which meant the one assertion that cannot be repaired after
+// the fact - a leaked key is leaked - never ran on a machine without jq, and
+// this one has none, in Windows or in WSL. The check itself needs no jq: it
+// looks for strings in outputs and files. What needed jq was the script's own
+// closing self-check with verify.sh, so this case simply does not demand that
+// the script SUCCEED. It measures both ways out instead:
+//
+//   - the way that really happens without jq: the script aborts at the
+//     self-check, prints verify.sh's complaint plus its own, and removes
+//     release.json again;
+//   - the successful way, through a copy of the script whose self-check is
+//     switched off, so the lines after the signature are measured as well.
+//
+// Both are scanned, and so is every file left in the directory.
 func TestSignScriptLeaksNoKey(t *testing.T) {
 	needTools(t)
-	needVerifyTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")
 	if err != nil {
@@ -550,15 +623,31 @@ func TestSignScriptLeaksNoKey(t *testing.T) {
 		needles[base64.RawURLEncoding.EncodeToString(seed)] = true
 	}
 
+	// Said out loud, because a scan that found nothing is worth nothing unless
+	// it is known how much it looked for.
+	t.Logf("looking for %d distinct pieces of the throwaway key", len(needles))
+
+	// The way out that happens here: without jq the self-check cannot run, the
+	// script says so and takes release.json back. Its exit code is deliberately
+	// NOT demanded - a run that fails prints MORE, not less, so it is the more
+	// interesting haystack of the two.
 	cmd := exec.Command("sh", filepath.Join(repoRoot(t), "tools", "sign-release.sh"), out, key)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	printed, err := cmd.CombinedOutput()
+	printed, _ := cmd.CombinedOutput()
+
+	// And the successful way, so the lines after the signature are measured too.
+	cmd = exec.Command("sh", stubbedSigner(t), out, key)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	stubbed, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("sign-release.sh: %v\n%s", err, printed)
+		t.Fatalf("the signer with its self-check switched off: %v\n%s", err, stubbed)
 	}
 
-	// What it printed, and everything it left behind.
-	haystacks := map[string]string{"the output": string(printed)}
+	// What both runs printed, and everything they left behind.
+	haystacks := map[string]string{
+		"the output of the real run":    string(printed),
+		"the output of the stubbed run": string(stubbed),
+	}
 	entries, err := os.ReadDir(out)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
@@ -586,6 +675,40 @@ func TestSignScriptLeaksNoKey(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, filepath.Base(key))); err == nil {
 		t.Error("the script copied the key into the release directory")
 	}
+}
+
+// stubbedSigner writes a copy of tools/sign-release.sh whose closing self-check
+// is switched off and returns its path, so the SUCCESSFUL way out of the script
+// can be measured where verify.sh cannot run for want of jq.
+//
+// It HAS to live in tools/ beside the original: the script finds verify.sh as
+// $self/../shared/testdata/release/verify.sh, so a copy in a temp folder dies
+// with "verify.sh is missing" and measures nothing. The name carries the process
+// id so two runs in one checkout do not fight over it, and it is removed again
+// when the case ends.
+//
+// Only the self-check line is replaced. Everything the key ever touches - the
+// public key, the key id, the message, the signature - is the original's.
+func stubbedSigner(t *testing.T) string {
+	t.Helper()
+	src := filepath.Join(repoRoot(t), "tools", "sign-release.sh")
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read sign-release.sh: %v", err)
+	}
+	const call = `sh "$verify" "$dir" ngc-web all >"$work/verify.out" 2>&1 || {`
+	if !strings.Contains(string(b), call) {
+		t.Fatal("the self-check line of sign-release.sh was not found; this helper is stale")
+	}
+	s := strings.Replace(string(b), call,
+		`echo "release ok (self-check switched off for a test)" >"$work/verify.out"; true || {`, 1)
+	dst := filepath.Join(repoRoot(t), "tools",
+		fmt.Sprintf("zz-sign-release-selfcheck-off-%d.sh", os.Getpid()))
+	if err := os.WriteFile(dst, []byte(s), 0o644); err != nil {
+		t.Fatalf("write the stubbed signer: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(dst) })
+	return dst
 }
 
 // newTestKey makes an Ed25519 key in PEM with openssl itself, so the script

@@ -75,6 +75,17 @@ dd if="$work/pub.sha" of="$work/kid.bin" bs=1 count=16 status=none ||
 kid=$(base64 -w0 <"$work/kid.bin" | tr '+/' '-_' | tr -d '=')
 [ ${#kid} -eq 22 ] || die "the key ID is not 22 characters"
 
+# THIS IS THE LINE THAT CHANGES WITH CONTRACT V1.2, POINT 19. Today the
+# signature covers sign.Message(...) itself, all 193 bytes of it. The release key
+# that now exists is an Ed25519 key on hardware, and it was measured to sign only
+# lengths that match a known hash - 32 and 64 bytes go through, 30 does not - so
+# it CANNOT sign these 193 bytes. V1.2 point 19 therefore has the contract sign
+# sha512(Message(...)) instead, which is 64 bytes.
+#
+# NOTHING IS CHANGED HERE YET, on purpose: shared/ is frozen and the contract cut
+# comes separately. When it lands, a sha512 goes between this message and the
+# pkeyutl call below - and openssl must still be given the DIGEST as raw input
+# (-rawin), never "openssl dgst -sign", which would hash a second time.
 { printf 'ngc/release/v1\0'; cat "$dir/release.payload.json"; } >"$work/message.bin"
 openssl pkeyutl -sign -inkey "$key" -rawin -in "$work/message.bin" \
 	-out "$work/sig.bin" 2>/dev/null || die "signing failed"

@@ -49,6 +49,24 @@
 #                         "-c core.eol=lf" is NOT set, because it was measured
 #                         to do nothing here; a configuration line that has no
 #                         effect reads like a proof to the next person.
+#
+# WHAT IS LEFT OUT, and both exclusions have a measurement behind them:
+#   tests/
+#     templates/apache-vhost.conf says it itself: "tests/ the browser tests,
+#     with node_modules/ in them. A release does not carry them."
+#   public/assets/js/net/testlink.js
+#     A shortcut only the browser tests use. Measured on the real tree: every
+#     mention of it in SHIPPED code is a COMMENT (public/assets/js/apps/store.js:239,
+#     auth/keys.js:37, auth/login.js:50), so the reference graph reaches it from
+#     nowhere; the live imports all sit under apps/web/tests/ - attacks.spec.js:361,
+#     world.spec.js:606 and :896, channels.spec.js:20 :31 :48 :65 :83 :110 :134
+#     and on - every one of them
+#     await import("/assets/js/net/testlink.js"), and tests/ does not travel.
+#     Decided on 02.10.2026 by the web strand: a file only the tests import has
+#     no business in a release. It is left out HERE and NOT listed in
+#     tools/release/extra-web.txt, because a line there owes a reason and the
+#     only reason available would have been invented. The pathspec names the one
+#     FILE: public/assets/js/net/ holds shipped code as well.
 set -eu
 LC_ALL=C
 TZ=UTC
@@ -137,7 +155,8 @@ case $stamp in
 esac
 
 git -c core.autocrlf=false archive --format=tar --mtime="@$stamp" \
-	"$commit:apps/web" ':(exclude)tests' >"$work/ngc-web-all.tar" ||
+	"$commit:apps/web" ':(exclude)tests' \
+	':(exclude)public/assets/js/net/testlink.js' >"$work/ngc-web-all.tar" ||
 	die "git archive failed"
 
 tar -tf "$work/ngc-web-all.tar" >"$work/entries" || die "the archive cannot be read"
