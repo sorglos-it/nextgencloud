@@ -3481,3 +3481,41 @@ Zwei Lehren, und die zweite ist die größere:
    Zwischenspeicher" — dasselbe Muster, anderes Werkzeug). Der Strang hat genau
    so gehandelt und den Fund am Werkzeug gemeldet, statt den Riegel
    umzuschreiben, der nie das Problem war.
+
+## Ein Fall, der vor der gemeinten Stelle abgewiesen wird, misst die frühere Wand
+
+Am 03.10.2026 zweimal in **einer** Aufgabe gemessen, und beide Male war der
+Fall grün, während der Mutant dazu **lebte**. Grün und wirkungslos — die
+teuerste Sorte Test, weil sie Arbeit beweist, die nicht getan ist.
+
+**Erster Fall.** Geprüft werden sollte, dass ein OPEN mit Aufgabe **und**
+eigenen Parametern abgelehnt wird. Der Fall lief grün. Gemessene Ursache: die
+Aufgabe **zählt einmal** — der Lauf war durch den Wiedereinspiel-Riegel schon
+abgewiesen, bevor die gemeinte Prüfung dran war. Gemessen wurde also der
+Riegel gegen Wiedereinspielen, nicht die Parameterprüfung. Behoben durch die
+**Reihenfolge**: erst der Lauf mit Parametern, danach dieselbe Aufgabe ohne —
+und damit prüft der Fall zusätzlich, dass die Ablehnung die Aufgabe **nicht
+verbraucht**.
+
+**Zweiter Fall.** Geprüft werden sollte, dass eine **abgeschaltete** App
+denselben Code gibt wie eine fehlende. Der Fall lief grün, der Mutant „keine
+Prüfung auf aktiv" lebte. Ursache: alle Wege liefen **ohne** Recht, und die
+Rechteprüfung lehnte vorher mit demselben Code ab. Behoben, indem die Wege
+zusätzlich **mit** beiden Rechten laufen, mit einer Zwischenprüfung, dass das
+schlichte OPEN dann wirklich öffnet.
+
+**Das Muster, und es ist in jeder Kette von Prüfungen zu haben:** wer die
+letzte Wand prüfen will, muss an **allen** früheren vorbeikommen. Ein Fall,
+der vorher hängt, bekommt dieselbe Antwort und sieht gesund aus.
+
+Drei Griffe dagegen:
+
+1. **Eine Zwischenprüfung einbauen**, die beweist, dass der Weg bis zur
+   gemeinten Stelle offen ist („mit beiden Rechten öffnet das schlichte OPEN").
+   Ohne die steht nur da, dass irgendetwas abgelehnt hat.
+2. **Den Mutanten für genau diese Zeile fahren.** Dass der Fall grün ist, sagt
+   nichts; dass er bei umgedrehter Zeile rot wird, sagt alles.
+3. **Auf verbrauchbare Dinge achten** — eine einmal zählende Aufgabe, ein
+   Einmal-Kennzeichen, ein Zähler. Sie machen aus der Reihenfolge zweier
+   Teilprüfungen einen Unterschied, und dann ist die Reihenfolge Teil der
+   Zusicherung.
