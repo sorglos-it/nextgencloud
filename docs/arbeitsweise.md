@@ -2845,3 +2845,45 @@ erlaubt, solange der Commit **nicht geschoben** ist, **kein Zweig** ihn
 enthaelt und es **sofort** passiert — und er wird gemeldet. Ist eine der drei
 Bedingungen weg, kommt der Trailer in einen **eigenen** Commit. Im geteilten
 Baum gilt sonst weiter: keine Historie umschreiben.
+
+## Ein Fall kann seine Aussage verlieren, ohne rot zu werden
+
+Der Fall, der das `go` vor einem Zubringer haelt, haengt an einem Tor: der
+Zubringer wartet dort, und solange er steht, muss der Leser das **zweite**
+OPEN schon genommen haben. Ohne das `go` sitzt der Leser im ersten Zubringer,
+und der Fall faellt benannt in 10 s.
+
+Der Bauer hat dazu etwas gemeldet, das ich fuer die unangenehmste Form von
+Verrottung halte: **wer spaeter den echten Zubringer einsetzt und das Tor
+nicht austauschbar haelt, verliert die Aussage des Falles — und der Fall wird
+dabei nicht rot.** Er laeuft weiter, er ist gruen, und er prueft nichts mehr.
+
+Ein veralteter Kommentar faellt irgendwann jemandem auf. Ein Fall, der leise
+aufhoert zu messen, faellt niemandem auf — er sieht wie Deckung aus.
+
+**Also: wo ein Fall an einer Vorrichtung haengt, die eine spaetere Aufgabe
+ersetzen wird, gehoert diese Bedingung in den PLAN jener Aufgabe** („haltet
+das Tor austauschbar, sonst verliert Fall X seine Aussage"), nicht in einen
+Kommentar beim Fall. Der Kommentar erreicht den, der die Datei oeffnet; der
+Plan erreicht den, der sie ersetzt.
+
+## Eine Wache, die gegen Blockieren schuetzt und gegen Panik nicht, haelt die halbe Zusage
+
+`within` sollte dafuer sorgen, dass ein Fehler **einen** Fall faellt statt das
+Protokoll aller anderen zu loeschen. Gemessen hat der Pruefer: gegen ein
+haengendes Schloss hielt es, gegen eine Panik in derselben Goroutine nicht —
+der Lauf starb nach 0,37 s mit **null** benannten Faellen.
+
+Entschieden und gebaut: `recover` in der Goroutine, Meldung ueber denselben
+gepufferten Kanal, Stapel von innen mit. **Und der Preis steht im Kommentar
+daneben**, nicht nur im Bericht: gemeldet wird mit dem **eingefangenen**
+Stapel, nicht mit dem lebenden, und ein Debugger kann an der Stelle nicht
+anhalten. Dazu ein Selbsttest, der genau das haelt.
+
+Die Grenze, die bleibt und benannt ist: `within` faengt nur Paniken in der
+Funktion, die es ruft — nicht in einer Goroutine, die jene selbst startet.
+
+Und ein Nebenfund, der dieselbe Krankheit ist wie ein falscher Kommentar: die
+**Meldung** der Wache nannte eine Ursache („a lock was not given back"), die
+auf den neuen Fall nicht passte. Eine Fehlermeldung ist ein Kommentar, den der
+Leser im Protokoll findet — sie wird genauso gegen den Code gelesen.
