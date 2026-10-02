@@ -23,7 +23,7 @@
 // unchanged.
 import { createServer, request as httpRequest } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { argv } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -145,23 +145,68 @@ function assetWalls(file) {
     throw new Error(`mock: ${file} has no <Directory "${want}"> block - headers anywhere else reach no file of the web root`);
   }
   const walls = [];
+  // The SECOND kind of line the block may carry, and it has to carry it:
+  // "FallbackResource disabled". The virtual host routes every path that is no
+  // file to index.php, and that directive is inherited by assets/ - so without
+  // this line a MISSING file below /assets/ is answered by PHP, which sends
+  // its own Cross-Origin-Resource-Policy while the block above sets a second
+  // one. Two of that header are neither same-origin nor same-site, so a
+  // browser applies NEITHER, and the 404 this block exists for would carry one
+  // wall LESS than a 404 outside /assets/. It is READ and not assumed, and its
+  // absence is an error rather than a default: a default here would make a
+  // green test out of exactly that hole.
+  let fallbackDisabled = false;
   for (let i = open + 1; i < lines.length; i++) {
     const line = lines[i];
     if (/^\s*<\/Directory>\s*$/.test(line)) {
       if (walls.length === 0) throw new Error(`mock: the assets block of ${file} sets no header`);
-      return walls;
+      if (!fallbackDisabled) {
+        throw new Error(`mock: the assets block of ${file} has no "FallbackResource disabled", so a missing file there is answered by PHP and its headers stand beside this block's`);
+      }
+      return { walls, fallbackDisabled };
     }
     if (/^\s*(#|$)/.test(line)) continue;
+    if (/^\s*FallbackResource\s+disabled\s*$/.test(line)) {
+      if (fallbackDisabled) throw new Error(`mock: ${file}:${i + 1} disables the fallback twice`);
+      fallbackDisabled = true;
+      continue;
+    }
     const m = line.match(/^\s*Header always set ([A-Za-z0-9-]+) "([^"]*)"\s*$/);
     if (m === null) {
-      throw new Error(`mock: ${file}:${i + 1} is no "Header always set" line: ${line.trim()}`);
+      throw new Error(`mock: ${file}:${i + 1} is neither a "Header always set" nor a "FallbackResource disabled" line: ${line.trim()}`);
     }
     walls.push([m[1], m[2]]);
   }
   throw new Error(`mock: the assets block of ${file} is never closed`);
 }
 
-const ASSET_WALLS = assetWalls(VHOST);
+const ASSET_BLOCK = assetWalls(VHOST);
+const ASSET_WALLS = ASSET_BLOCK.walls;
+
+// Where the files below /assets/ really are, so this process can tell a
+// missing one from one that is there - which is the whole of what
+// "FallbackResource disabled" decides.
+const WEBROOT = fileURLToPath(new URL("../../public", import.meta.url));
+
+// missingAsset answers true for a path below /assets/ that is no file on disk.
+// It is deliberately strict about what it will even look at: a path with ".."
+// or a NUL in it is not resolved against the web root at all, because this
+// process must not be the one place in the suite where a traversal works.
+function missingAsset(url) {
+  const path = String(url).split("?")[0];
+  if (!path.startsWith("/assets/")) return false;
+  if (path.includes("..") || path.includes("\0")) return true;
+  try {
+    const st = statSync(`${WEBROOT}${decodeURIComponent(path)}`);
+    // A DIRECTORY is not a missing path: FallbackResource never caught it in
+    // the first place, Apache answers it itself with 403 because of -Indexes,
+    // and this process leaves it where it was - with the PHP server behind it.
+    if (st.isDirectory()) return false;
+    return !st.isFile();
+  } catch {
+    return true;
+  }
+}
 
 // withAssetWalls puts those headers on an answer for a path below /assets/ -
 // but only on the answers Apache would have given ITSELF.
@@ -183,10 +228,12 @@ const ASSET_WALLS = assetWalls(VHOST);
 // (err_headers_out), so a header PHP already put in the ordinary table stays
 // and the answer goes out with two. Here that case cannot arise: the only
 // answers that get these headers are the ones with no policy of their own,
-// which means no header of ours is on them yet. The one path where it could
-// arise in operation - the fallback 404 - is the one this harness leaves
-// untouched for exactly that reason. The note in the virtual host carries the
-// consequence and says it is unmeasured.
+// which means no header of ours is on them yet. The one path where it DID
+// arise in operation - the fallback 404 under /assets/ - does not any more:
+// the virtual host disables the fallback for that directory, and proxy() below
+// answers such a path the way Apache then does, without asking PHP at all. So
+// the harness and the virtual host now agree, instead of the harness leaving
+// the awkward path alone.
 function withAssetWalls(url, headers) {
   if (!url.startsWith("/assets/")) return headers;
   if ("content-security-policy" in headers) return headers;
@@ -1231,6 +1278,20 @@ export async function startMockAPI({ world, port, phpPort }) {
   // /assets/: there PHP stands in for a web server that has no application
   // behind it, so the walls of the virtual host go on here. See withAssetWalls.
   function proxy(req, res) {
+    // A MISSING FILE BELOW /assets/ NEVER REACHES PHP, because the virtual
+    // host's assets block ends with "FallbackResource disabled" and that line
+    // is read, not assumed (assetWalls). Apache answers such a path with its
+    // own error page and the four headers of that block - no Page::headers, so
+    // nothing of PHP's can stand beside them. The body is plain text and not
+    // Apache's German-free HTML, because no case reads it and a copy of a
+    // stranger's error page would be a second thing to keep in step.
+    if (ASSET_BLOCK.fallbackDisabled && missingAsset(req.url)) {
+      const head = { "Content-Type": "text/plain; charset=utf-8" };
+      for (const [name, value] of ASSET_WALLS) head[name] = value;
+      res.writeHead(404, head);
+      res.end("Not Found\n");
+      return;
+    }
     const out = httpRequest({
       host: "127.0.0.1", port: phpPort, method: req.method, path: req.url,
       headers: { ...req.headers, host: `127.0.0.1:${phpPort}` },

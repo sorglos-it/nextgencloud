@@ -46,9 +46,10 @@ framework, no build step, and npm only under `tests/`.
 ## What no test here can measure: the web server itself
 
 There is no Apache in this repository, so `templates/apache-vhost.conf` is the one thing that is
-reasoned out and not measured. Five commands close that gap, and they take about a minute on the
+reasoned out and not measured. Nine commands close that gap, and they take about two minutes on the
 first machine that has an Apache. `HOST` is the name you filled in; `-k` is for the self-signed
-certificate of step 2.
+certificate of step 2. The template carries the same list, so whichever you read says the same
+thing.
 
 | Run this | Expected | What it decides |
 | --- | --- | --- |
@@ -56,7 +57,11 @@ certificate of step 2.
 | `curl -sI http://HOST/irgendwas` | `308`, `Location: https://HOST/irgendwas` | the redirect works and keeps the path |
 | `curl -sI http://HOST/.well-known/acme-challenge/x` | **not** a 308 (a 404 from `/var/www/html`) | the one path Let's Encrypt needs stays free, so renewal keeps working |
 | `curl -skD - -o /dev/null https://HOST/assets/css/shell.css \| grep -ciE '^(content-security-policy\|x-content-type-options\|cross-origin-resource-policy\|strict-transport-security):'` | `4` | the asset block is in effect and each header arrives exactly once |
-| `curl -skD - -o /dev/null https://HOST/assets/js/gibtesnicht.js \| grep -icE '^(content-security-policy\|cross-origin-resource-policy):'` | `2` | this is the open question. **More than 2 means `Header always set` ADDED instead of replacing**, so that answer carries two policies (stricter, no hole) and a doubled `Cross-Origin-Resource-Policy`, which a browser then ignores. If it is more than 2, put a `Header always unset <name>` in front of each `set` in the assets block and measure again |
+| `curl -skD - -o /dev/null https://HOST/assets/js/gibtesnicht.js \| grep -icE '^(content-security-policy\|cross-origin-resource-policy):'` | `2` | **the one that matters most.** One of each, both out of the assets block. More than 2 means PHP wrote that answer too, so `Header always set` put a second header beside `Page::headers`' — and two `Cross-Origin-Resource-Policy` are neither `same-origin` nor `same-site`, so a browser applies **neither**. That is the hole `FallbackResource disabled` closes |
+| `curl -skD - -o /dev/null https://HOST/assets/js/gibtesnicht.js \| grep -icE '^(cross-origin-opener-policy\|referrer-policy\|permissions-policy\|x-powered-by):'` | `0` | the other half of the same question: these are headers only `Page::headers` sends, so one of them here means `FallbackResource disabled` did not take and PHP answered after all. A **find**, not a line to adjust |
+| `curl -skD - -o /dev/null https://HOST/irgendwas-das-es-nicht-gibt \| grep -ci '^strict-transport-security:'` | `1` | HSTS reaches an answer **outside** `/assets/` as well — that is what the host-wide line in the virtual host is for. `0` means an Apache error page still goes out without it; more than `1` means `always set` added beside `Page::headers`' own (same value, so no hole) |
+| `openssl s_client -connect HOST:443 -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256 </dev/null` | a handshake **failure** | the `SSLCipherSuite TLSv1.3 …` line really narrows. If it succeeds, Apache read it as the TLS-1.2 list and it narrows nothing. `openssl s_client -connect HOST:443 </dev/null \| grep -i Cipher` must name `TLS_AES_256_GCM_SHA384` |
+| `curl -sk "https://HOST/?ngc-probe=GEHEIMNIS" -o /dev/null` then `grep -c GEHEIMNIS /var/log/apache2/ngc-web-access.log` | `0` | the access log writes down no user input. Anything else means the format fell back to one that logs the request line, and then the log is a place secrets land |
 
 Two more, if you want the whole picture: `curl -skI https://HOST/assets/js/` must be `403` and carry
 the same four headers, and `curl -skI https://HOST/` must carry `Page::headers`' own policy —

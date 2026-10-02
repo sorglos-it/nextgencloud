@@ -282,26 +282,46 @@ test("every file the web server hands out itself carries walls too", async ({ re
   }
 });
 
-test("a file that is not there is an answer with walls as well", async ({ request }) => {
-  // A 404 for a file is an answer like any other, and an answer without walls
-  // is an answer without walls. This one does not come from the web server:
-  // every path that is no file below public/ goes to the one entry point
-  // (FallbackResource in the virtual host, "return false" not taken in
-  // index.php), so Page::headers writes it.
+test("a file that is not there below /assets/ is the web server's own answer, with all four walls", async ({ request }) => {
+  // THE CASE THIS WHOLE BLOCK EXISTS FOR, and until 03.10.2026 it was the one
+  // answer that carried a wall LESS than the others.
+  //
+  // What it used to be: the virtual host routes every path that is no file to
+  // index.php, and that directive is INHERITED by assets/ - so a missing .js
+  // there was written by PHP. Page::headers then sent its own
+  // Cross-Origin-Resource-Policy while the assets block set a second one, and
+  // two of that header are neither same-origin nor same-site, so a browser
+  // applies NEITHER. The fix is in the virtual host and not in a patch
+  // afterwards: "FallbackResource disabled" in the assets block, so Apache
+  // answers that path itself and no header of PHP's is there to collide.
+  //
+  // So this case is now about WHO ANSWERED, and it is held to the strict
+  // version: the asset policy exactly, as a set, and NONE of the headers only
+  // Page::headers sends. If the line is ever taken out of the virtual host,
+  // apps/web/tests/mock/api.js refuses to start at all - and if the harness
+  // were made to answer with PHP's headers instead, the loop at the end of
+  // this case falls.
   const res = await request.fetch("/assets/js/gibtesnicht.js");
   expect(res.status()).toBe(404);
   const h = res.headers();
-  // WHAT IS ASSERTED HERE AND WHY IT IS NOT THE WHOLE POLICY. There is no
-  // Apache in this repository to measure, so whether the assets block of the
-  // virtual host ALSO reaches this answer and replaces its policy with the
-  // asset one is not known. What is asserted holds either way - both policies
-  // begin with default-src 'none', and nosniff and the resource policy are in
-  // both blocks - so this case says what is true in operation rather than what
-  // happens to be true of the test server.
-  expect(policy(h["content-security-policy"])["default-src"]).toBe("'none'");
+  const csp = policy(h["content-security-policy"]);
+  for (const [name, value] of Object.entries(ASSET_CSP)) {
+    expect(csp[name], name).toBe(value);
+  }
+  expect(Object.keys(csp).sort(), "directives").toEqual(Object.keys(ASSET_CSP).sort());
   expect(h["x-content-type-options"]).toBe("nosniff");
   expect(h["cross-origin-resource-policy"]).toBe("same-origin");
+  expect(h["strict-transport-security"]).toBe(HSTS);
   expect(h["x-powered-by"]).toBeUndefined();
+  // The half that says PHP did NOT write this answer. Page::headers sends
+  // Cross-Origin-Opener-Policy, Referrer-Policy and Permissions-Policy on
+  // every page it writes; the assets block sends none of them, on purpose and
+  // with a reason beside each. So one of these turning up here means the
+  // fallback reached index.php after all, and then this answer carries two
+  // resource policies and so none.
+  for (const name of ASSET_NOT) {
+    expect(h[name], `a missing asset must not carry ${name}, that would be PHP's answer`).toBeUndefined();
+  }
 });
 
 test("the policy on a file does the one thing a policy on a file can do", async ({ page, request }) => {
