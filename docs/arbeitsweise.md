@@ -3011,3 +3011,42 @@ dass ein anderer Bau einen anderen Schluessel ergibt, ist eine Annahme, und
 Dasselbe gilt fuer den gruenen Lauf **nach** dem Zuruecknehmen: ohne
 `-count=1` sieht man moeglicherweise den Lauf von vor der Mutation, und das
 ist genau der Lauf, den man beweisen wollte.
+
+## Ein Mutant, der nur auf EINER Plattform stirbt, ist auf der anderen lebendig
+
+Ein Bauer hatte gemeldet: ein Mutant ueberlebte **auf Windows**, weil der Fall
+dazu einen POSIX-Schirm braucht und dort uebersprungen wird. Er hat es
+behoben. Der Pruefer hat dann **drei weitere** derselben Form gefunden — alle
+drei ueberleben auf Windows und sterben nur in WSL:
+
+- die Ausgabe wird weggeworfen (`Stdout: nil`),
+- der Zweig fuer das Zeitlimit faellt weg (aus `E_TIMEOUT` wird `E_EXIT`),
+- der Ausstiegscode ist immer 0.
+
+**Damit haengen drei Kernregeln des Vertrags allein an uebersprungenen
+Faellen.** Auf der Plattform, auf der man taeglich entwickelt, sind sie
+ungemessen — und ein gruener Lauf dort sagt nichts darueber.
+
+**Also: eine Mutationsquote gilt je Plattform, nicht je Paket.** Wer auf zwei
+Plattformen laeuft, mutiert auf beiden — oder er sagt, welche Faelle auf
+welcher nicht messen. Und wo eine Vertragsregel nur in einem uebersprungenen
+Fall steht, gehoert ein Fall mit einer Attrappe daneben, der sie **ueberall**
+haelt. Das ist billig; die Luecke ist es nicht.
+
+## Ein Kommentar, der „nichts davon erreicht das Protokoll" sagt, ist eine Zusage ueber Geheimnisse
+
+Gemessen am 03.10.2026: ein Dateikopf sagte „Nothing of what a call was given
+reaches the log". Als **Wirkung** ist das falsch — der ganze stderr der App
+(bis 65536 Byte) geht ins Protokoll, die App hat die Parameter in ihrer
+Umgebung, das Pruefprogramm schreibt sie selbst auf stderr, und **ein Fall
+liest sie aus dem Protokoll zurueck.**
+
+Das ist nicht derselbe Fehler wie ein falscher Kommentar an einem Zaun. Ein
+Satz wie dieser ist eine **Sicherheitszusage**: wer ihn liest, hoert auf,
+seine Geheimnisse zu schuetzen. Und die Zeile, die ihn widerlegt, stand
+dreihundert Zeilen tiefer.
+
+**Also: jeder Satz der Form „X erreicht Y nicht" braucht entweder einen Fall,
+der es haelt, oder eine Einschraenkung, die sagt, was doch durchgeht.** Die
+Grenze selbst war in Ordnung und ist gemessen (70010 Byte hinein, genau 65536
+heraus, das Ende behalten) — nur der Grund stand nicht an der Stelle.

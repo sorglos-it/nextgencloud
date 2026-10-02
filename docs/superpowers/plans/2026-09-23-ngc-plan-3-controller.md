@@ -1563,7 +1563,26 @@ git commit -m "Give every app its own system user and encrypted data directory"
 > **unlesbar** — der Aufruf scheitert beim Start. (Hier nicht messbar: in WSL
 > laeuft kein root, gemessen ist nur der Modus.)
 >
-> **Von den drei Wegen gilt der mittlere:** die Engine bekommt eine Methode,
+> **BERICHTIGT am 03.10.2026, und zwar gegen MICH: es gibt einen vierten,
+> kleineren Weg, und der gilt.** `Podman.Exec` kennt den App-Benutzer
+> **schon** — `u, err := ofName(e.Name)` steht acht Zeilen vor dem
+> `EnvFile`-Block. Dort fehlt genau **eine** Zeile:
+>
+>     os.Chown(e.EnvFile, u.uid, u.gid)
+>
+> Kein neues Verfahren an der Schnittstelle (jede Attrappe muesste es sonst
+> nachbauen; `noEngine` hat allein sieben Verfahren), `CallInput` bleibt bei
+> neun Feldern, `serve` bleibt unberuehrt, und es braucht kein neues Recht —
+> root ist fuer `credential` ohnehin noetig.
+>
+> **Die Ursache meines Umwegs ist ein falscher Satz im Code**, und der
+> gehoert mitberichtigt: `runtime.go:135-138` sagt, die Engine koenne den
+> Eigentuemer nicht sehen. **Sie sieht ihn.** Nur der MODUS gehoert wirklich
+> dem Aufrufer. Ein Satz, der eine Zustaendigkeit behauptet, die es nicht
+> gibt, hat hier einen ganzen Umbau veranlasst.
+>
+> *(Verworfen, mit Begruendung, damit niemand sie neu aufwirft:)* **Von den
+> drei Wegen galt der mittlere:** die Engine bekommt eine Methode,
 > die den **App-Benutzer eines Containers nennt** (`ofName` ist da, nur
 > unexportiert), und `serve` setzt den Eigentuemer der Umgebungsdatei danach.
 > Begruendung: `CallInput` um uid/gid zu erweitern wuerde jeden Aufrufer
