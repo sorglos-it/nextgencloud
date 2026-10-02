@@ -26,5 +26,9 @@ apps/web/tests/test-results/
 # Fremdcode gehört ins Repo (vendor/ im Stamm per go mod vendor, JavaScript von Hand kopiert in
 # apps/web/public/assets/vendor/), deshalb fehlt hier die Zeile apps/*/vendor/ aus der Vorlage.
 
-# Pfade dieses Rechners - tools/local.env.example zeigt, was hineingehoert
+# Der Pfad zu php auf DIESER Maschine, eine Zeile NGC_PHP=<pfad>.
+# tools/check.sh und die Playwright-Konfiguration lesen sie; kein Pfad einer
+# einzelnen Maschine gehoert in eine Datei des Repositoriums. Drei Pruefer
+# haben gemeldet, dass ein "git add -A" einer anderen Sitzung sie sonst
+# mitnimmt - im geteilten Arbeitsbaum ist das kein Restrisiko.
 tools/local.env
