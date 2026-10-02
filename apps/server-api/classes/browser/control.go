@@ -47,7 +47,7 @@ func (s *Session) SendControl(ctx context.Context, t string, body any) error {
 	if err != nil {
 		return err
 	}
-	return s.Link.Write(ctx, wire.Frame{Type: wire.TypeData, Channel: wire.ControlChannel, Payload: payload})
+	return s.link.Write(ctx, wire.Frame{Type: wire.TypeData, Channel: wire.ControlChannel, Payload: payload})
 }
 
 // Hint tells the shell that a newer version of the trust list exists.
@@ -76,7 +76,10 @@ func (r *Registry) Add(s *Session) { r.mu.Lock(); r.open[s] = true; r.mu.Unlock(
 // Remove forgets a session.
 func (r *Registry) Remove(s *Session) { r.mu.Lock(); delete(r.open, s); r.mu.Unlock() }
 
-// Count returns how many sessions are open.
+// Count returns how many sessions are open. It takes the same lock as Add,
+// Remove and Each, so a caller that holds nothing of its own still waits here for
+// whoever holds it -- which is why the cases of this package call it from a
+// goroutine of their own.
 func (r *Registry) Count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,9 +87,11 @@ func (r *Registry) Count() int {
 }
 
 // Each calls fn for every open session. The lock is held only while the list is
-// copied: fn writes to a link, which can block for as long as a slow browser
-// takes, and a registry locked over that would stop every other session from
-// being added or removed.
+// copied, and this sentence is about Each alone: fn writes to a link, which can
+// block for as long as a slow browser takes, and a registry locked over that
+// would stop every other session from being added, removed or counted. Add,
+// Remove and Count hold the lock for the whole of their own work, which is three
+// map operations and nothing that waits.
 func (r *Registry) Each(fn func(*Session)) {
 	r.mu.Lock()
 	list := make([]*Session, 0, len(r.open))

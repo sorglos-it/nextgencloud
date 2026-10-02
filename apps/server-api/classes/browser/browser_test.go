@@ -4,10 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 	"time"
 
@@ -88,47 +84,214 @@ func openPayload(t *testing.T, o wire.Open) []byte {
 // --- the three conditions link.Table puts on its caller ---
 
 // TestGrantRaisesWhatMayArriveBeforeItGoesOut holds the first sentence by its
-// effect: the browser sees the GRANT and may at once send exactly that many
-// bytes, and one byte more closes the channel. Had the GRANT gone out without
-// Allow, nothing would have been allowed and the first DATA frame would have
-// been the protocol error.
+// effect, and it says WHICH frame was the protocol error. That is the whole
+// point: a case that only waits for a CLOSE after two DATA frames cannot tell a
+// bound that is one too small from one that is right -- measured, the mutant
+// Take(len(f.Payload)+1) survived exactly such a case.
+//
+// So the allowance is spent in two steps with a round trip between them. After
+// the full credit there must be NO close and the link must still answer, which
+// channel 2's GRANT says; only the byte after that closes channel 1. A GRANT
+// that had gone out without Allow would have allowed nothing and the first frame
+// would already have been the error.
+//
+// The window is not wire.MinWindow here. It is the one case that uses another
+// one, so that a bound written as a constant instead of as the OPEN's own window
+// has somewhere to fall.
 func TestGrantRaisesWhatMayArriveBeforeItGoesOut(t *testing.T) {
 	h := newServer(t)
 	c := dialSession(t, h)
-	c.writeOpen(t, 1, openOf())
+	const window = 2 * wire.MinWindow
+	c.writeOpen(t, 1, openWindow(window))
 	f := c.read(t)
 	credit, handshake, err := wire.ParseGrant(f.Payload)
-	if f.Type != wire.TypeGrant || err != nil || len(handshake) != 0 {
+	if f.Type != wire.TypeGrant || f.Channel != 1 || err != nil || len(handshake) != 0 {
 		t.Fatalf("frame %+v credit %d handshake %d err %v", f, credit, len(handshake), err)
 	}
-	if credit != wire.MinWindow {
-		t.Fatalf("credit %d", credit)
+	if credit != window {
+		t.Fatalf("credit %d, want the window of the OPEN, %d", credit, window)
 	}
+	// The whole allowance at once, and nothing may follow it.
 	c.write(t, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: make([]byte, credit)})
-	// One byte beyond the allowance is a protocol error for that channel.
+	c.writeOpen(t, 2, openOf())
+	g := c.read(t)
+	if g.Type != wire.TypeGrant || g.Channel != 2 {
+		t.Fatalf("the full allowance was answered with %+v, want the GRANT of channel 2", g)
+	}
+	// One byte beyond the allowance, and that one is the protocol error.
 	c.write(t, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte{0}})
 	wantClose(t, c, 1, wire.CodeProtocol)
 }
 
-// TestEveryGrantGoesThroughSendGrant is the loop behind the word "every". The
-// first sentence of the entry condition is a claim about every GRANT this
-// package writes, and no single case can see them all, so this one reads the
-// package's own source: a GRANT frame is built in exactly one function, and that
-// function is the one that calls Allow first.
-func TestEveryGrantGoesThroughSendGrant(t *testing.T) {
-	writers := funcsContaining(t, ".", "Type: wire.TypeGrant")
-	if len(writers) != 1 || writers[0] != "SendGrant" {
-		t.Fatalf("GRANT frames are written in %v, not in SendGrant alone", writers)
+// TestTheTrustListDecidesTheOrigin holds the Origin check of the socket, which no
+// other case touches: the shell is served from the origins of the trust list, and
+// a page of another site gets no link even with a good cookie. Measured on the
+// version before it: Origins set to nil survived every case of this package.
+//
+// The library lets two things through whatever the list says -- an Origin equal
+// to the request host, and a request with no Origin header at all (link.Options)
+// -- so both halves here carry an Origin of a site that is not the test server's
+// host.
+func TestTheTrustListDecidesTheOrigin(t *testing.T) {
+	h := newServer(t)
+	want := h.Fx.List.RP.Origins
+	if len(want) != 1 {
+		t.Fatalf("the fixture's trust list carries %d origins", len(want))
 	}
-	allow := funcsContaining(t, ".", ".Allow(")
-	if len(allow) != 1 || allow[0] != "SendGrant" {
-		t.Fatalf("Allow is called in %v, not in SendGrant alone", allow)
+	// The origin of the trust list is allowed, and the link really runs.
+	c, err := dialOrigin(t, h, want[0])
+	if err != nil {
+		t.Fatalf("the origin of the trust list was refused: %v", err)
 	}
-	body := funcBody(t, ".", "SendGrant")
-	iAllow := strings.Index(body, ".Allow(")
-	iWrite := strings.Index(body, "Type: wire.TypeGrant")
-	if iAllow < 0 || iWrite < 0 || iAllow > iWrite {
-		t.Fatalf("SendGrant builds the frame before it asks Allow (%d, %d)", iAllow, iWrite)
+	c.writeOpen(t, 1, openOf())
+	if f := c.read(t); f.Type != wire.TypeGrant {
+		t.Fatalf("frame %+v", f)
+	}
+	// Any other origin gets no upgrade at all.
+	if _, err := dialOrigin(t, h, "https://evil.example.com"); err == nil {
+		t.Fatal("a page of another site got a link")
+	}
+}
+
+// TestTheBrowsersGrantRaisesWhatWeMaySend is the other direction of the window,
+// and it is the only case that measures what a GRANT of the browser does. The
+// OPEN grants what we may send; its GRANT raises that, and nothing else does.
+// Measured without it: Grant swapped for Allow in feed survived, because no case
+// ever sent anything.
+// The window here is three times the smallest one, and that is the point of the
+// number: what we may send has to come from the OPEN and not from a constant.
+// Measured with wire.MinWindow in both places, the mutant that opens every
+// channel with Table.Open(num, wire.MinWindow) survived.
+func TestTheBrowsersGrantRaisesWhatWeMaySend(t *testing.T) {
+	h := newServer(t)
+	c := dialSession(t, h)
+	const window = 3 * wire.MinWindow
+	c.writeOpen(t, 1, openWindow(window))
+	o := firstOpened(t, h)
+	if f := c.read(t); f.Type != wire.TypeGrant {
+		t.Fatalf("frame %+v", f)
+	}
+	// The window of the OPEN is what we may send, and not a byte more.
+	if err := o.s.SendData(ctx, o.c, make([]byte, window)); err != nil {
+		t.Fatalf("the window of the OPEN (%d bytes): %v", window, err)
+	}
+	if err := o.s.SendData(ctx, o.c, []byte{0}); !errors.Is(err, ErrCredit) {
+		t.Fatalf("one byte beyond the window answered %v", err)
+	}
+	if f := c.read(t); f.Type != wire.TypeData || f.Channel != 1 || len(f.Payload) != window {
+		t.Fatalf("frame %+v with %d bytes", f, len(f.Payload))
+	}
+	// Now the browser grants more, and exactly that much may go out again.
+	c.write(t, wire.Frame{Type: wire.TypeGrant, Channel: 1, Payload: wire.Grant(wire.MinWindow, nil)})
+	// The reader is past the GRANT once it has answered the OPEN of channel 2.
+	c.writeOpen(t, 2, openOf())
+	firstOpened(t, h)
+	if err := o.s.SendData(ctx, o.c, make([]byte, wire.MinWindow)); err != nil {
+		t.Fatalf("after the browser's GRANT: %v", err)
+	}
+	if err := o.s.SendData(ctx, o.c, []byte{0}); !errors.Is(err, ErrCredit) {
+		t.Fatalf("the GRANT raised more than it said: %v", err)
+	}
+}
+
+// TestCloseCarriesTheCodeItWasGiven is the one case that closes a channel with a
+// code other than E_PROTOCOL. Without it, Close could write a fixed E_PROTOCOL
+// and no case would notice -- measured, that mutant survived.
+func TestCloseCarriesTheCodeItWasGiven(t *testing.T) {
+	h := newServer(t)
+	c := dialSession(t, h)
+	c.writeOpen(t, 1, openOf())
+	o := firstOpened(t, h)
+	if f := c.read(t); f.Type != wire.TypeGrant {
+		t.Fatalf("frame %+v", f)
+	}
+	if err := o.s.Close(ctx, wire.CodeLimit, 1); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	wantClose(t, c, 1, wire.CodeLimit)
+	// And the number is noted as closing, which is what Close owes Reserve.
+	ch, ok := o.s.Table.Get(1)
+	if !ok || !ch.Closing() {
+		t.Fatalf("channel 1 after our CLOSE: open %v", ok)
+	}
+}
+
+// TestReserveBeyondTheLimitEndsTheLink is the other way the limit is reached: not
+// one OPEN too many, but a stray frame whose CLOSE E_PROTOCOL would take the one
+// number that is left. The contract says the link ends (shared/README.md).
+func TestReserveBeyondTheLimitEndsTheLink(t *testing.T) {
+	h := newServer(t)
+	c := dialSession(t, h)
+	for i := 1; i <= wire.MaxSessionChannels; i++ {
+		c.writeOpen(t, uint32(i), openOf())
+	}
+	for i := 1; i <= wire.MaxSessionChannels; i++ {
+		firstOpened(t, h)
+	}
+	// Every number is taken, so this one cannot be reserved.
+	c.write(t, wire.Frame{Type: wire.TypeData, Channel: wire.MaxSessionChannels + 1, Payload: []byte("x")})
+	wantEnded(t, c)
+}
+
+// TestEofFromTheBrowserKeepsTheChannel: EOF says the browser will send no more
+// data on that channel. It is no protocol error and it closes nothing.
+func TestEofFromTheBrowserKeepsTheChannel(t *testing.T) {
+	h := newServer(t)
+	c := dialSession(t, h)
+	c.writeOpen(t, 1, openOf())
+	o := firstOpened(t, h)
+	if f := c.read(t); f.Type != wire.TypeGrant {
+		t.Fatalf("frame %+v", f)
+	}
+	c.write(t, wire.Frame{Type: wire.TypeEOF, Channel: 1})
+	// The link answers the next OPEN, so it is past the EOF and still running.
+	c.writeOpen(t, 2, openOf())
+	if f := c.read(t); f.Type != wire.TypeGrant || f.Channel != 2 {
+		t.Fatalf("after the EOF: %+v", f)
+	}
+	ch, ok := o.s.Table.Get(1)
+	if !ok || ch.Closing() {
+		t.Fatalf("channel 1 after the EOF: open %v", ok)
+	}
+}
+
+// TestTrustAndNotifyFromTheBrowserEndTheLink: those two go from the API to the
+// shell only (wire.ControlAllowed), so from the browser they are a broken rule.
+func TestTrustAndNotifyFromTheBrowserEndTheLink(t *testing.T) {
+	for _, kind := range []string{wire.CtlTrust, wire.CtlNotify} {
+		t.Run(kind, func(t *testing.T) {
+			h := newServer(t)
+			c := dialSession(t, h)
+			c.writeControl(t, kind, []byte(`{}`))
+			wantEnded(t, c)
+		})
+	}
+}
+
+// TestHintAllReachesEveryShell: a new version of the trust list is told to every
+// open shell at once.
+func TestHintAllReachesEveryShell(t *testing.T) {
+	h := newServer(t)
+	a := dialSession(t, h)
+	b := dialSession(t, h)
+	// Both links are running once each has answered an OPEN.
+	a.writeOpen(t, 1, openOf())
+	b.writeOpen(t, 1, openOf())
+	firstOpened(t, h)
+	firstOpened(t, h)
+	if n := registryCount(t, h.Srv.Sessions); n != 2 {
+		t.Fatalf("open sessions %d", n)
+	}
+	within(t, "HintAll", func() { h.Srv.Sessions.HintAll(ctx, 7) })
+	for i, c := range []*peer{a, b} {
+		got := wantControl(t, c, wire.CtlTrust)
+		var hint session.TrustHint
+		if err := json.Unmarshal(got.B, &hint); err != nil {
+			t.Fatalf("shell %d: hint %q: %v", i, got.B, err)
+		}
+		if hint.Seq != 7 {
+			t.Fatalf("shell %d: seq %d", i, hint.Seq)
+		}
 	}
 }
 
@@ -157,25 +320,6 @@ func TestNoGrantGoesOutWhenAllowSaysNo(t *testing.T) {
 	f := c.read(t)
 	if f.Type != wire.TypeGrant || f.Channel != 1 || !bytes.Equal(f.Payload, wire.Grant(wire.MinWindow, nil)) {
 		t.Fatalf("frame %+v payload %v", f, f.Payload)
-	}
-}
-
-// TestEveryReserveIsFollowedBySentClose is the loop behind the third sentence.
-// Reserve holds a number until the other side's CLOSE arrives, and a Reserve
-// without a SentClose would hold it for the life of the link; no single case can
-// see every Reserve, so this one reads the source: one function reserves, it
-// sends the CLOSE in the same breath, and SentClose is noted in that one place.
-func TestEveryReserveIsFollowedBySentClose(t *testing.T) {
-	reserve := funcsContaining(t, ".", ".Reserve(")
-	if len(reserve) != 1 || reserve[0] != "protocolError" {
-		t.Fatalf("Reserve is called in %v, not in protocolError alone", reserve)
-	}
-	if body := funcBody(t, ".", "protocolError"); !strings.Contains(body, "s.Close(ctx,") {
-		t.Fatal("protocolError reserves a number without sending the CLOSE that frees it again")
-	}
-	sent := funcsContaining(t, ".", ".SentClose()")
-	if len(sent) != 1 || sent[0] != "Close" {
-		t.Fatalf("SentClose is called in %v, not in Close alone", sent)
 	}
 }
 
@@ -323,65 +467,75 @@ func TestRegistryHoldsASessionWhileItRuns(t *testing.T) {
 	c := dialSession(t, h)
 	c.writeOpen(t, 1, openOf())
 	firstOpened(t, h)
-	if n := h.Srv.Sessions.Count(); n != 1 {
+	if n := registryCount(t, h.Srv.Sessions); n != 1 {
 		t.Fatalf("open sessions %d", n)
 	}
 	// A notice reaches the open shell through the registry.
-	h.Srv.Sessions.Broadcast(ctx, wire.CtlNotify, core.Notice{Level: "info", Text: "Hallo"})
-	var got wire.Control
-	for {
-		f := c.read(t)
-		if f.Channel != wire.ControlChannel {
-			continue
-		}
-		if err := json.Unmarshal(f.Payload, &got); err != nil {
-			t.Fatalf("control %q: %v", f.Payload, err)
-		}
-		break
-	}
-	if got.T != wire.CtlNotify {
-		t.Fatalf("control %q", got.T)
-	}
+	within(t, "Broadcast", func() {
+		h.Srv.Sessions.Broadcast(ctx, wire.CtlNotify, core.Notice{Level: "info", Text: "Hallo"})
+	})
+	wantControl(t, c, wire.CtlNotify)
 	c.close()
-	// The link ends and the session is forgotten. The waiting part runs in a
-	// goroutine of its own and the case only waits: Count takes the registry's
-	// lock, so a lock that is never given back would block the case itself, and
-	// a deadline behind the blocking call is never reached (measured on the
-	// mutant that forgets the Unlock: the whole package ran into its timeout).
-	gone := make(chan struct{})
-	go func() {
-		defer close(gone)
+	// The link ends and the session is forgotten. Every call into the registry
+	// runs in a goroutine of its own and the case only waits (within): the
+	// registry's lock is taken by Count as well as by Each, so a lock that is not
+	// given back would block the case itself, and a deadline behind the blocking
+	// call is never reached. Measured on the mutant that forgets Each's Unlock
+	// before this: the case fell in 10 s and took the whole package run with it
+	// all the same, because the NEXT case called Count without a guard and hung
+	// until the package timeout.
+	within(t, "waiting for the session to be forgotten", func() {
 		for h.Srv.Sessions.Count() != 0 {
 			time.Sleep(time.Millisecond)
 		}
-	}()
-	select {
-	case <-gone:
-	case <-time.After(readWait):
-		t.Fatal("the session is still in the registry, or the registry no longer gives its lock back")
-	}
+	})
 }
 
+// TestRegistryAddsAndRemoves goes through within for the same reason the case
+// above does: Add, Remove, Count and Each all take the one lock, so any of them
+// can hang, and a hanging case deletes the result of every other case in the
+// package.
 func TestRegistryAddsAndRemoves(t *testing.T) {
 	r := NewRegistry()
 	a, b := &Session{}, &Session{}
-	r.Add(a)
-	r.Add(b)
-	if n := r.Count(); n != 2 {
+	within(t, "Add", func() { r.Add(a); r.Add(b) })
+	if n := registryCount(t, r); n != 2 {
 		t.Fatalf("count %d", n)
 	}
 	seen := 0
-	r.Each(func(*Session) { seen++ })
+	within(t, "Each", func() { r.Each(func(*Session) { seen++ }) })
 	if seen != 2 {
 		t.Fatalf("Each saw %d", seen)
 	}
-	r.Remove(a)
-	if n := r.Count(); n != 1 {
+	within(t, "Remove", func() { r.Remove(a) })
+	if n := registryCount(t, r); n != 1 {
 		t.Fatalf("count after remove %d", n)
 	}
 }
 
 // --- helpers of the cases ---
+
+// wantControl reads until a control message of a kind arrives and returns it.
+func wantControl(t *testing.T, p *peer, kind string) wire.Control {
+	t.Helper()
+	for {
+		f, err := p.readErr()
+		if err != nil {
+			t.Fatalf("no control message %q: %v", kind, err)
+		}
+		if f.Channel != wire.ControlChannel {
+			continue
+		}
+		var c wire.Control
+		if err := json.Unmarshal(f.Payload, &c); err != nil {
+			t.Fatalf("control %q: %v", f.Payload, err)
+		}
+		if c.T != kind {
+			t.Fatalf("control %q, want %q", c.T, kind)
+		}
+		return c
+	}
+}
 
 // wantClose reads until a CLOSE for a channel arrives and checks its code.
 // Frames of other channels in between are the GRANTs of channels this case
@@ -407,121 +561,6 @@ func wantClose(t *testing.T, p *peer, num uint32, code wire.Code) {
 			t.Fatalf("code %q, want %q", c.Code, code)
 		}
 		return
-	}
-}
-
-// sources returns the package's own source, test files left out.
-func sources(t *testing.T, dir string) map[string]string {
-	t.Helper()
-	names, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	out := map[string]string{}
-	for _, n := range names {
-		if strings.HasSuffix(n, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(n)
-		if err != nil {
-			t.Fatalf("read %s: %v", n, err)
-		}
-		out[n] = string(b)
-	}
-	if len(out) == 0 {
-		t.Fatal("no source of this package was read")
-	}
-	return out
-}
-
-var funcLine = regexp.MustCompile(`^func (?:\([^)]*\) )?([A-Za-z_][A-Za-z0-9_]*)`)
-
-// funcsContaining names every top-level function of this package whose body
-// holds needle, comments left out. It is how a case can hold a sentence about
-// "every" place in the package instead of about one place it happened to look
-// at.
-func funcsContaining(t *testing.T, dir, needle string) []string {
-	t.Helper()
-	var found []string
-	for _, src := range sources(t, dir) {
-		cur := ""
-		for _, line := range strings.Split(src, "\n") {
-			if m := funcLine.FindStringSubmatch(line); m != nil {
-				cur = m[1]
-			}
-			code := line
-			if i := strings.Index(code, "//"); i >= 0 {
-				code = code[:i]
-			}
-			if cur != "" && strings.Contains(code, needle) &&
-				!contains(found, cur) {
-				found = append(found, cur)
-			}
-		}
-	}
-	return found
-}
-
-// funcBody returns the code of one top-level function, comments left out.
-func funcBody(t *testing.T, dir, name string) string {
-	t.Helper()
-	for _, src := range sources(t, dir) {
-		cur, keep := "", false
-		var b strings.Builder
-		for _, line := range strings.Split(src, "\n") {
-			if m := funcLine.FindStringSubmatch(line); m != nil {
-				cur = m[1]
-				keep = cur == name
-			}
-			if !keep {
-				continue
-			}
-			code := line
-			if i := strings.Index(code, "//"); i >= 0 {
-				code = code[:i]
-			}
-			b.WriteString(code)
-			b.WriteString("\n")
-		}
-		if b.Len() > 0 {
-			return b.String()
-		}
-	}
-	t.Fatalf("no function %s in this package", name)
-	return ""
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// TestTheSourceLoopCanGoRed is the self-test of the two cases above. They read
-// source and count, so a loop that silently finds nothing would pass whatever
-// the package did. This one hands it a package that breaks both sentences and
-// checks that it says so.
-func TestTheSourceLoopCanGoRed(t *testing.T) {
-	dir := t.TempDir()
-	bad := "package x\n\n" +
-		"func SendGrant() {\n\t_ = wire.Frame{Type: wire.TypeGrant}\n\tc.Allow(1)\n}\n\n" +
-		"func elsewhere() {\n\t_ = wire.Frame{Type: wire.TypeGrant}\n}\n"
-	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(bad), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	writers := funcsContaining(t, dir, "Type: wire.TypeGrant")
-	if len(writers) != 2 {
-		t.Fatalf("a second writer went unseen: %v", writers)
-	}
-	body := funcBody(t, dir, "SendGrant")
-	if strings.Index(body, ".Allow(") < strings.Index(body, "Type: wire.TypeGrant") {
-		t.Fatal("the order check cannot see a frame built before Allow")
-	}
-	if n := funcsContaining(t, dir, "nothing here says this"); len(n) != 0 {
-		t.Fatalf("a needle nobody holds was found in %v", n)
 	}
 }
 

@@ -246,8 +246,25 @@ type peer struct {
 }
 
 // dialSession logs in, opens the socket and runs the Noise handshake as
-// initiator with the session's own keys.
+// initiator with the session's own keys. It carries the Origin of the trust
+// list, which is what a shell carries, so every case of this package goes
+// through the allow-list of the socket and not past it.
 func dialSession(t *testing.T, h *harness) *peer {
+	t.Helper()
+	origins := h.Fx.List.RP.Origins
+	if len(origins) == 0 {
+		t.Fatal("the fixture's trust list carries no origin")
+	}
+	p, err := dialOrigin(t, h, origins[0])
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return p
+}
+
+// dialOrigin is dialSession with the Origin header picked by the case and the
+// error handed back, so a case can hold that an origin is refused.
+func dialOrigin(t *testing.T, h *harness, origin string) (*peer, error) {
 	t.Helper()
 	cookie, apiDH := loginOnce(t, h)
 	client, err := noisep.Keypair(zeroReader{})
@@ -256,6 +273,9 @@ func dialSession(t *testing.T, h *harness) *peer {
 	}
 	hdr := http.Header{}
 	hdr.Set("Cookie", session.CookieName+"="+cookie)
+	if origin != "" {
+		hdr.Set("Origin", origin)
+	}
 	ws, _, err := websocket.Dial(ctx, "ws"+h.HTTP.URL[len("http"):]+session.PathSocket,
 		&websocket.DialOptions{
 			Subprotocols: []string{session.Subprotocol},
@@ -263,7 +283,7 @@ func dialSession(t *testing.T, h *harness) *peer {
 			HTTPHeader:   hdr,
 		})
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		return nil, err
 	}
 	ws.SetReadLimit(wire.MaxFrame + noisep.TagSize)
 	hs, err := noisep.Handshake(true, []byte(noisep.PrologueSession), client, apiDH, zeroReader{})
@@ -289,7 +309,7 @@ func dialSession(t *testing.T, h *harness) *peer {
 	}
 	p := &peer{ws: ws, tr: noisep.NewTransport(true, cs1, cs2)}
 	t.Cleanup(p.close)
-	return p
+	return p, nil
 }
 
 func (p *peer) close() { _ = p.ws.CloseNow() }
@@ -409,9 +429,44 @@ type errText string
 
 func (e errText) Error() string { return string(e) }
 
-// openOf is the OPEN every case uses: a core app, the smallest window.
-func openOf() wire.Open {
-	return wire.Open{App: "ngc.desktop", Service: "api", Action: "me", Window: wire.MinWindow}
+// openOf is the OPEN most cases use: a core app, the smallest window.
+func openOf() wire.Open { return openWindow(wire.MinWindow) }
+
+// openWindow is openOf with a window of the case's own choosing, so that the
+// window of an OPEN is not the same number in every case of this package: a
+// bound written as wire.MinWindow instead of as the OPEN's own window would
+// otherwise have nowhere to fall.
+func openWindow(window uint32) wire.Open {
+	return wire.Open{App: "ngc.desktop", Service: "api", Action: "me", Window: window}
+}
+
+// within runs fn in a goroutine of its own and fails the case when it does not
+// come back in time. Every call into the Registry goes through it, because they
+// all take the one lock: a lock that is not given back would otherwise block the
+// case itself, and a deadline one has to reach THROUGH the blocking call is never
+// reached. Measured: without this the package run ended in
+// "panic: test timed out", which deletes the result of every other case; with it
+// the case falls by name and the run goes on.
+func within(t *testing.T, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(readWait):
+		t.Fatalf("%s did not come back in %v -- a lock was not given back", what, readWait)
+	}
+}
+
+// registryCount is Registry.Count behind within.
+func registryCount(t *testing.T, r *Registry) int {
+	t.Helper()
+	var n int
+	within(t, "Registry.Count", func() { n = r.Count() })
+	return n
 }
 
 // firstOpened waits for the dispatcher to be handed a channel.

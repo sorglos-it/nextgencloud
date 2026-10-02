@@ -6,17 +6,28 @@
 // session.
 //
 // This package is the one caller of link.Table on a session link, and the
-// table's three caller conditions are kept here and nowhere else:
+// table's three caller conditions are kept here and nowhere else.
 //
-//   - Allow runs before every GRANT that goes out, and the GRANT goes out only
-//     when Allow said true. SendGrant is the only place in this package that
-//     writes a GRANT frame, which is what makes "every" a fact and not a wish:
-//     TestEveryGrantGoesThroughSendGrant reads this package's own source and
-//     counts.
-//   - Every Reserve is followed by a SentClose for the same number, so a number
-//     held for a CLOSE E_PROTOCOL is given back once the other side's CLOSE
-//     arrives. protocolError is the only place that reserves, and
-//     TestEveryReserveIsFollowedBySentClose counts that one too.
+// Who keeps them, and by what:
+//
+//   - "Allow runs before every GRANT that goes out, and the GRANT goes out only
+//     when Allow said true" is held by the compiler: the link itself is the
+//     unexported field Session.link, so no package outside this one can write a
+//     frame at all. The ways out are SendGrant, SendData, SendControl and Close,
+//     and SendGrant is the only one that builds a GRANT. A dispatcher such as
+//     coreapp therefore cannot go around Allow -- it has nothing to write with.
+//     Inside this package the compiler cannot help, and lint_test.go walks the
+//     package's syntax tree to say that no second function builds a GRANT frame.
+//     That walk is a lint and not the holder of the sentence: it reads the files
+//     on disk, so a build that replaces one of them (go test -overlay) is
+//     invisible to it. The holder is the unexported field.
+//   - "Every Reserve is followed by a SentClose for the same number", so a
+//     number held for a CLOSE E_PROTOCOL is given back once the other side's
+//     CLOSE arrives. Nothing in the language can hold this one; the same syntax
+//     walk says that protocolError is the only function that reserves and that
+//     it sends the CLOSE in the same breath, and
+//     TestProtocolErrorGivesTheNumberBackAfterTheBrowsersClose measures the
+//     effect.
 package browser
 
 import (
@@ -46,6 +57,12 @@ import (
 // instead.
 var ErrGrant = errors.New("browser: credit outside the window")
 
+// ErrCredit reports DATA this side may not send yet: more bytes than the browser
+// has granted on that channel. Sending it anyway would be our own protocol
+// error, which the browser answers with CLOSE E_PROTOCOL, so nothing goes out
+// and the caller hears about it.
+var ErrCredit = errors.New("browser: not enough credit for this much data")
+
 // Opener takes a channel the browser opened; package coreapp implements it.
 type Opener interface {
 	OpenChannel(ctx context.Context, s *Session, c *link.Channel, o wire.Open)
@@ -54,8 +71,14 @@ type Opener interface {
 // Session is one open session link.
 type Session struct {
 	Live  *login.Live
-	Link  *link.Link
 	Table *link.Table
+
+	// link is unexported on purpose, and that is what holds the first condition
+	// of link.Table: whoever cannot reach the link cannot send a GRANT without
+	// Allow. Everything that writes to it lives in this package -- SendGrant,
+	// SendData, SendControl, Close, End -- and a dispatcher gets those and
+	// nothing else.
+	link *link.Link
 }
 
 // Server serves session.PathSocket.
@@ -96,7 +119,7 @@ func (srv *Server) Socket(w http.ResponseWriter, r *http.Request) {
 		// a misconfigured server, not a bad request.
 		return
 	}
-	s := &Session{Live: live, Link: l, Table: link.NewTable(wire.MaxSessionChannels, false)}
+	s := &Session{Live: live, Table: link.NewTable(wire.MaxSessionChannels, false), link: l}
 	srv.Sessions.Add(s)
 	defer srv.Sessions.Remove(s)
 	srv.run(ctx, s)
@@ -127,7 +150,7 @@ func origins(l *trust.List) []string { return l.RP.Origins }
 // run reads the link until it ends.
 func (srv *Server) run(ctx context.Context, s *Session) {
 	for {
-		f, err := s.Link.Read(ctx)
+		f, err := s.link.Read(ctx)
 		if err != nil {
 			return
 		}
@@ -206,16 +229,40 @@ func (s *Session) feed(ctx context.Context, c *link.Channel, f wire.Frame) bool 
 // Allow refuses is ErrGrant and nothing goes out, because a GRANT the other
 // side would answer with CLOSE E_PROTOCOL is our own protocol error.
 //
-// A failed write leaves the allowance raised without a GRANT on the line. That
-// is no leak: a write that fails has ended the link (package link), and the
-// table dies with it.
+// A failed write leaves the allowance raised without a GRANT on the line, and
+// what that costs has to be read off link.Write and not guessed: of its three
+// ways to fail, only the write to the socket ends the link; Encode and Seal
+// answer an error and leave it standing (link.go, Write). For a GRANT neither
+// can be reached -- its payload is 4 bytes, where Encode bounds at
+// wire.MaxPayload and Seal at noisep.MaxPlaintext -- so here a failed write is
+// always an ended link and the table dies with it. SendData says what the same
+// sentence costs where the payload is not fixed.
 func (s *Session) SendGrant(ctx context.Context, c *link.Channel, credit uint32) error {
 	if !c.Allow(credit) {
 		return ErrGrant
 	}
 	// No Noise message 2 here: core apps have no end-to-end handshake, and the
 	// GRANT that carries one for a forwarded channel comes with the tunnel.
-	return s.Link.Write(ctx, wire.Frame{Type: wire.TypeGrant, Channel: c.Num, Payload: wire.Grant(credit, nil)})
+	return s.link.Write(ctx, wire.Frame{Type: wire.TypeGrant, Channel: c.Num, Payload: wire.Grant(credit, nil)})
+}
+
+// SendData sends DATA on a channel and takes the bytes off what the browser
+// granted us. It is the named way to the link for the dispatcher, which has no
+// other: Spend first, the frame only on true, for the same reason SendGrant asks
+// Allow first.
+//
+// Unlike SendGrant this one can fail with the link still standing: Encode
+// refuses a payload over wire.MaxPayload, and then the credit is already spent
+// while nothing went out. The channel loses that much allowance for good, which
+// is the safe half of the mistake -- too little may be sent, never too much --
+// and the caller must not retry the frame as if nothing had happened. Whoever
+// cuts the payload in task 15 keeps it under wire.MaxPayload and does not lean
+// on a failed write having ended anything.
+func (s *Session) SendData(ctx context.Context, c *link.Channel, payload []byte) error {
+	if !c.Spend(len(payload)) {
+		return ErrCredit
+	}
+	return s.link.Write(ctx, wire.Frame{Type: wire.TypeData, Channel: c.Num, Payload: payload})
 }
 
 // protocolError answers CLOSE E_PROTOCOL for a number; it keeps the number
@@ -247,7 +294,7 @@ func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Link.Write(ctx, wire.Frame{Type: wire.TypeClose, Channel: num, Payload: payload}); err != nil {
+	if err := s.link.Write(ctx, wire.Frame{Type: wire.TypeClose, Channel: num, Payload: payload}); err != nil {
 		return err
 	}
 	if c, ok := s.Table.Get(num); ok {
@@ -257,4 +304,4 @@ func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
 }
 
 // End closes the whole link.
-func (s *Session) End(reason string) { _ = s.Link.Close(websocket.StatusNormalClosure, reason) }
+func (s *Session) End(reason string) { _ = s.link.Close(websocket.StatusNormalClosure, reason) }
