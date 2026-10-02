@@ -1951,3 +1951,45 @@ nächste Zaun dieselbe Lücke unter anderem Namen hätte.
 6. Zahlen messen, Herkunft dazuschreiben.
 7. Im Zweifel die sichere Seite, Preis nennen.
 8. Was nicht messbar war, offen melden.
+
+## Ein Baum hat kein Datum, also nimmt git die Uhr
+
+`git archive` auf eine Baum-Referenz liefert **zweimal verschiedene Bytes** —
+gemessen am 02.10.2026 `f6db9f02…` gegen `3461daa3…` fuer dieselbe Quelle.
+Ein Baum traegt keinen Zeitstempel, also setzt git die aktuelle Uhr in die
+tar-Koepfe. Mit `--mtime='@<feste zahl>'` sind beide Laeufe gleich.
+
+Und der zweite Riegel, der leichter vergessen wird: ohne
+`-c core.autocrlf=false -c core.eol=lf` kommt `VERSION` als `0.2.0\r\n` aus
+dem Archiv und eine Datei hat im Tar eine andere Summe als ihr git-Blob. Ein
+Archiv von diesem Rechner ist dann **nicht** das von Linux — und niemand
+merkt es, weil beide Archive in sich stimmig sind.
+
+Wer „reproduzierbar" sagt, nennt also DREI Dinge: feste mtime, feste
+Zeilenenden, feste Reihenfolge. Zwei davon reichen nicht.
+
+## Das Pruefgeruest liegt nicht, wo das Teilprogramm liegt
+
+Ein Playwright-Lauf aus dem falschen Verzeichnis sagt nicht „keine
+Konfiguration gefunden", sondern:
+
+    Error: Project(s) "chromium", "webkit" not found. Available projects: ""
+
+Das sieht aus wie eine kaputte Konfiguration und ist ein falscher
+Arbeitsordner. Bei NGC liegen `playwright.config.js` und `package.json` in
+`apps/web/tests/`, nicht in `apps/web/`. Das hat mich am 02.10.2026 einen
+Ausstiegscode 4 und einen ganzen Lauf gekostet, den ich fuer ein Messergebnis
+gehalten habe.
+
+**Also: vor dem Lauf die Konfiguration mit `--list` ansprechen.** Null
+gefundene Projekte sind kein Ergebnis, genau wie null gelaufene Faelle.
+
+## Die Grep-Zahl ist nicht die Fallzahl
+
+Beim Zusammenzaehlen der Scherben kam `grep -oE '\[(chromium|webkit)\]' | wc`
+auf 197, die Scherbe hatte aber 195 Faelle: **ein gefallener Fall wird
+zweimal genannt** — in der Laufliste und noch einmal im Fehlerblock. Wer die
+Grep-Zahl addiert, bekommt bei Rot zu viel und haelt die Summe fuer falsch.
+
+Gezaehlt wird gegen `bestanden + uebersprungen + rot`, und DIE Summe gegen
+`--list`. Am 02.10.2026 stimmte sie damit auf den Fall: 796.
