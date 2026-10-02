@@ -2642,6 +2642,20 @@ und wer eine Zahl nennt, nennt das Register, aus dem sie kommt.
 
 ## Unter zwoelf Elementen ist Gos `sort.Slice` nicht unstabil
 
+> **Nachgeschaerft am 02.10.2026, vom Pruefer belegt und eingeschraenkt.**
+> Die Schwelle ist `const maxInsertion = 12` in
+> `$GOROOT/src/sort/zsortfunc.go:62` — pdqsort sortiert bis zwoelf Elemente
+> per Einfuegen, und das ist stabil. Selbst gefahren als Doppelmutation
+> (`sort.Slice` plus die Elementzahl): n=12 ueberlebt, n=13/15/20 toetet.
+>
+> **Zwei Einschraenkungen, die dazugehoeren:** es ist eine Eigenheit der
+> Umsetzung, kein Versprechen — die Dokumentation von `sort.Slice` sagt
+> ausdruecklich, die Reihenfolge gleicher Elemente sei nicht garantiert. Die
+> Zahl gilt also **Stand Go 1.27** und kann sich aendern. Und: die gewaehlte
+> Elementzahl muss **die Zwoelf im Kommentar nennen**. Eine Andeutung reicht
+> nicht — wer auf zwoelf kuerzt, bekommt gruen und hat die Messung verloren,
+> ohne es zu merken.
+
 Ein Fall sollte halten, dass eine Reihenfolge **stabil** sortiert wird. Der
 Mutant („`sort.SliceStable` → `sort.Slice`") lebte — mit der Zahl von Knoten,
 die der Fall benutzte. Gemessen hat der Strang: **erst ueber zwoelf Elementen**
@@ -2739,3 +2753,39 @@ nicht nur in den, der das Schloss prueft.** Ein einziger ungewachter Aufruf
 reicht, um das Protokoll aller anderen zu loeschen. Und wer „der Haenger ist
 behoben" berichtet, hat es an EINEM Fall gemessen — zu berichten ist der
 **Paketlauf**.
+
+## Ein panischer Mutant sagt nichts ueber die Faelle hinter der Panik
+
+Ich hatte uebernommen: „ein Mutant, der per Panik abbricht, laesst Faelle
+ungelaufen — hier 9 von 17; tot bleibt tot, aber die Zahl gehoert daneben."
+Der Pruefer hat nachgefahren, und die Haelfte davon war zu wenig: **derselbe
+Mutant riss einen ZWEITEN Fall mit**, und den sah man erst, als der erste
+panische Fall ausgeschlossen wurde. Ohne den ersten liefen 10 und genau der
+zweite fiel; ohne beide liefen **15, und alle 15 bestanden**.
+
+**Also: bei einem panischen Mutanten reicht ein Lauf nicht.** Wer wissen will,
+was er wirklich reisst, schliesst die gefallenen Faelle einzeln aus und faehrt
+nach — sonst steht im Register „tot, 9 von 17 gelaufen", und die Wahrheit war
+„tot, zwei Faelle gefallen, 15 gruen".
+
+Dieselbe Runde hat zwei meiner weitergereichten Zahlen berichtigt: ein Mutant
+riss **drei** Faelle, nicht zwei (alle drei lebten von derselben Ruhepause,
+also keine fremde Sache). Zum sechsten Mal an einem Tag eine Zahl von mir, die
+gezaehlt werden musste.
+
+## Ein Pruefer, der seine eigene vorige Pruefung berichtigt, ist der beste Beleg
+
+Derselbe Pruefer hatte in seiner ersten Runde geschrieben, eine Pruefung nehme
+eine IPv6-Adresse in Klammern nicht an. In der Nachpruefung hat er nachgelesen
+und sich selbst berichtigt: sie nimmt sie an (`shared/trust/url.go:29-38`), er
+hatte nur Namen und IPv4 gelesen. Der Schluss blieb derselbe, das Argument
+wurde ein anderes — und **genau das** macht aus einem Urteil eine Messung.
+
+Dazu, als Mass fuer das Wort „geht nicht" in einem Bericht: ein Satz lautete
+„`database/sql` gibt diese Zahlen nicht zurueck". Richtig ist: die **Setzer**
+gibt es nicht zurueck, aber `MaxIdleClosed`, `MaxIdleTimeClosed` und
+`MaxLifetimeClosed` zaehlen ihre **Wirkung**. Mit einer Naht zum Einsetzen
+eines eigenen Connectors waere eine der drei messbar.
+
+„Geht nicht" heisst oft „geht nicht ohne eine Naht, die wir nicht gebaut
+haben" — und das ist ein anderer Satz, denn der zweite nennt den Preis.
