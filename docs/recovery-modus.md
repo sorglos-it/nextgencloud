@@ -58,7 +58,7 @@ Innenaufbau der neuen Teilprogramme nach Projektstruktur-Standard: nur `classes/
 | --- | --- | --- | --- |
 | Quorum Sticks | 2 von 4 | 2 von 3 | 1 von 2 |
 | PolicyOR-Zweige | 1 + 6 | 1 + 3 | 1 + 2 |
-| Stick-Backend (PKCS#11) | hsm (Nitrokey HSM 2, YubiHSM 2) | piv (YubiKey 5 ≥ 5.7, Nitrokey 3) | softhsm (SoftHSM2) |
+| Stick-Backend (PKCS#11) | hsm (Nitrokey HSM 2, YubiHSM 2) | piv (YubiKey 5, jede 5.x; Nitrokey 3) | softhsm (SoftHSM2) |
 | Stick und PIN getrennt | in Zeremonie erzwungen | empfohlen | nein |
 | Touch am Stick | ja | ja | nein |
 | PIN-Quelle | Tastatur | Tastatur | Datei |

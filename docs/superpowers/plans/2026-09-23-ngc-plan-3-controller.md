@@ -136,7 +136,7 @@ als etwa 20 Dateien verlangt. Tests liegen neben dem Code.
 **Interfaces:**
 - Produces: `node.Main(version string, args []string, stdout, stderr io.Writer) int` – der ganze
   Einstieg; `node.Options{Config string, Pair string, Arch string}`. Kommandos: ohne Argument
-  laufen (später Aufgabe 18), `-version`, `pair -code <Kopplungscode>`, `terminal`, `hold`,
+  laufen (später Aufgabe 18), `-version`, `pair` (fragt den Kopplungscode ab, nie als Argument), `terminal`, `hold`,
   `image -arch <arch> -out <datei>`.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -602,7 +602,7 @@ git commit -m "Keep and advance the trust list from the pinned anchor"
 - Produces: `pairing.Do(ctx context.Context, in pairing.Input) (pairing.Result, error)`;
   `pairing.Input{Code string, Name string, Roles []string, Noise noise.DHKey, Client *http.Client}`;
   `pairing.Result{APIs []config.APIRef, Anchor trust.Anchor}`;
-  `pairing.Show(code tunnel.PairCode, noisePub []byte) string` – die zwei Zeilen, die ulh und die
+  `pairing.Show(anchor trust.Anchor, noisePub []byte) string` – die zwei Zeilen, die ulh und die
   Shell vergleichen.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
