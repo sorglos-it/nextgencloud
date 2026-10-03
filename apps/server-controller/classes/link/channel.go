@@ -86,10 +86,10 @@ var (
 )
 
 // Channel is one channel of a tunnel. Everything of it may be used from any
-// goroutine at the same time: the frames of one Send do not interleave with
-// those of another, and a Send that is waiting for credit holds nothing that a
+// goroutine at the same time: the frames of one write do not interleave with
+// those of another, and a write that is waiting for credit holds nothing that a
 // Grant of the other direction needs - a handler that reads and writes at once
-// can always grant, which is what gets its own Send going again.
+// can always grant, which is what gets its own write going again.
 type Channel struct {
 	c      *channels
 	num    uint32
@@ -97,8 +97,8 @@ type Channel struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// smu holds one Send at a time, so that the pieces of two Sends do not
-	// come apart on the wire. It is held while a Send waits for credit; wmu is
+	// smu holds one write at a time, so that the pieces of two do not come
+	// apart on the wire. It is held while a write waits for credit; wmu is
 	// not, so waiting for credit holds up no GRANT of the other direction.
 	smu sync.Mutex
 	// wmu is the write lock of this channel: one frame at a time, and the gate
@@ -137,7 +137,7 @@ type Channel struct {
 	// only he. So the first claim decides the payload and a second caller can
 	// neither write a second CLOSE nor change what the first one says.
 	answer []byte
-	// data wakes Recv, credit wakes Send. One waiting place each, so a wake
+	// data wakes Recv, credit wakes the writers. One waiting place each, so a wake
 	// meant for the one is never taken by the other; both hold one token and
 	// are refilled by whoever finds more left.
 	data   chan struct{}
@@ -156,7 +156,7 @@ func (ch *Channel) OpenPayload() []byte { return ch.open }
 
 // Window is how many bytes of DATA this side may still send before the API
 // grants more: what the OPEN granted plus every GRANT since, less what went
-// out. Send waits for it by itself; this is for whoever wants to know.
+// out. The writers wait for it by themselves; this is for whoever wants to know.
 func (ch *Channel) Window() uint32 {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
@@ -205,12 +205,39 @@ func (ch *Channel) Recv(ctx context.Context) (Inbound, error) {
 	}
 }
 
-// Send puts b on the channel as DATA, in frames of at most wire.MaxPayload
-// bytes. It sends no more than the API granted and waits for the rest, so a
-// handler with more to say than the other end wants stands here and not in the
-// memory of this controller. It comes back when everything is out, or with
-// ErrClosed when the channel ended first.
-func (ch *Channel) Send(b []byte) error {
+// Whole is one payload that has to arrive as exactly one DATA frame, and it is
+// an interface so that the compiler can tell it from a stream of bytes:
+// whatever satisfies it cannot be handed to SendStream, because that one takes
+// []byte and nothing else. e2e.Sealed is the one thing in this build that
+// satisfies it, and that is the whole point - a sealed inner message in two
+// frames decrypts in neither of them.
+//
+// What is left open and is meant to be: WholePayload is exported, so whoever
+// really wants the bytes can take them out and stream them. That is then a
+// plain act and reads like one, the way a conversion between two named types
+// does. Go has nothing stronger to offer here: a type whose bytes nobody can
+// reach could not be checked by the tests of the package that makes it.
+type Whole interface {
+	// WholePayload is the one payload, in one piece.
+	WholePayload() []byte
+}
+
+// SendStream puts b on the channel as DATA, in frames of at most
+// wire.MaxPayload bytes. It sends no more than the API granted and waits for
+// the rest, so a handler with more to say than the other end wants stands here
+// and not in the memory of this controller. It comes back when everything is
+// out, or with ErrClosed when the channel ended first.
+//
+// It is called SendStream because it FRAGMENTS: how many frames one b becomes
+// is the credit of the moment, which is the timing of the other side. For a
+// stream of bytes that is right and is what the contract asks for on a
+// core-app channel ("a result is all DATA up to the other side's EOF", wire).
+// For a payload that has to arrive whole it is fatal and it does not look
+// fatal: the other side reports a broken cipher, it happens on one machine and
+// not on the next, and a test case written for it kept the fault in only 70 %
+// of its runs (measured 02. and 03.10.2026). Such a payload goes to SendWhole,
+// and Whole is how the compiler keeps the two apart.
+func (ch *Channel) SendStream(b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
@@ -232,9 +259,10 @@ func (ch *Channel) Send(b []byte) error {
 // SendWhole puts b on the channel as ONE DATA frame, and waits until the other
 // side has granted all of it at once.
 //
-// That is what an end-to-end payload needs and what Send cannot give: "Every
+// That is what an end-to-end payload needs and what SendStream cannot give: "Every
 // DATA payload is then one Noise transport message" (wire, "End to end"), and
-// Send breaks one b into as many frames as the credit of the moment allows. A
+// SendStream breaks one b into as many frames as the credit of the moment
+// allows. A
 // Noise message that arrives in two frames decrypts in neither of them, and
 // how the credit falls is the other side timing, so the fault turns up on one
 // machine and not on the next. Measured on 02.10.2026: a result of 8 MiB went
@@ -242,8 +270,8 @@ func (ch *Channel) Send(b []byte) error {
 // authentication failed" at the shell, with a frame of 488 bytes in the middle
 // of a run of full ones.
 //
-// b must fit one frame (wire.MaxPayload) and, to come off at all, the window
-// the other side gave. ErrConfig for a b that is too long for a frame.
+// w must fit one frame (wire.MaxPayload) and, to come off at all, the window
+// the other side gave. ErrConfig for a w that is too long for a frame.
 //
 // ctx is what bounds the wait for that credit, and it is not optional comfort:
 // the whole of this call holds the send lock of the channel, so a peer that
@@ -253,7 +281,8 @@ func (ch *Channel) Send(b []byte) error {
 // runs out comes back with that context error while the channel stays usable
 // for whoever writes next. Without ctx the only ways out are enough credit and
 // the end of the channel, and neither of those is a clock.
-func (ch *Channel) SendWhole(ctx context.Context, b []byte) error {
+func (ch *Channel) SendWhole(ctx context.Context, w Whole) error {
+	b := w.WholePayload()
 	if len(b) == 0 {
 		return nil
 	}
@@ -506,7 +535,7 @@ const (
 // the lock of that channel and in the same breath as the decision to answer,
 // so the end of a handler that this frame woke cannot put its own status in
 // its place. That costs at most two waits of WriteTimeout: one for the write
-// lock of that channel, if a Send of it is standing in the socket, and one for
+// lock of that channel, if a write of it is standing in the socket, and one for
 // the write itself. The ping of the tunnel is skipped while a write of this
 // side runs, so the link lives through it (see Tunnel.Send), but for that
 // while nothing here would notice a peer that went quiet.

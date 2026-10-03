@@ -583,9 +583,12 @@ const settle = time.Second
 // case does not leave the timing a say.
 //
 // The credit is handed out in two halves with a look in between: while only
-// half a message is paid for, NOTHING may come. With Send in place of
-// SendWhole a short frame comes in that window, or at the latest the frame
-// after it is short - two ways to die, neither of them a race.
+// half a message is paid for, NOTHING may come. With a fragmenting write in
+// place of SendWhole a short frame comes in that window, or at the latest the
+// frame after it is short - two ways to die, neither of them a race. The
+// compiler refuses the plain swap of the two methods (link.Whole), so what is
+// left for this case to hold is somebody who takes the bytes out of the sealed
+// message on purpose (e2e.Sealed.WholePayload) and streams them.
 //
 // That is the lesson of this round, and it was paid for: the first version of
 // this case sent both halves right after one another and let the controller

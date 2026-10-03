@@ -171,35 +171,51 @@ func (s *Session) Open(ciphertext []byte) (wire.E2EMessage, error) {
 	return m, nil
 }
 
+// Sealed is one inner message, encrypted and ready for the wire. It is a type
+// of its own and not a []byte, and that is what the compiler holds: one DATA
+// payload is one Noise transport message (wire, "End to end"), so a sealed
+// message must travel in one frame, and a function that takes bytes and
+// fragments them cannot be handed one of these (link.Whole,
+// link.Channel.SendStream).
+//
+// The bytes are reachable through WholePayload, because the side that sends
+// needs them and the tests of this package have to look at them. Whoever calls
+// that method and then streams the bytes has done it on purpose, and it reads
+// that way.
+type Sealed struct{ ct []byte }
+
+// WholePayload is the one payload, in one piece. It fulfils link.Whole.
+func (s Sealed) WholePayload() []byte { return s.ct }
+
 // Data seals one piece of the service's output. It bounds one inner message
 // and no more: how much output an action may give is wire.MaxCallResult, and
 // the caller holds that against Sent, because only the caller knows whether
 // the action is a stream (store.Action.Stream).
-func (s *Session) Data(b []byte) ([]byte, error) {
+func (s *Session) Data(b []byte) (Sealed, error) {
 	ct, err := s.seal(wire.E2EData, b)
 	if err != nil {
-		return nil, err
+		return Sealed{}, err
 	}
 	s.sent += int64(len(b))
-	return ct, nil
+	return Sealed{ct}, nil
 }
 
 // End seals the outcome and closes this side: Data and End are over after it.
 // The output of the service still follows the shell's end, but nothing
 // follows this one.
-func (s *Session) End(cl wire.Close) ([]byte, error) {
+func (s *Session) End(cl wire.Close) (Sealed, error) {
 	body, err := json.Marshal(cl)
 	// Dead branch 3 of 4, measured: wire.Close holds two string types, a
 	// string and a *int, and json.Marshal has nothing to fail on in those.
 	if err != nil {
-		return nil, ErrMessage
+		return Sealed{}, ErrMessage
 	}
 	ct, err := s.seal(wire.E2EEnd, body)
 	if err != nil {
-		return nil, err
+		return Sealed{}, err
 	}
 	s.ended = true
-	return ct, nil
+	return Sealed{ct}, nil
 }
 
 // Sent is how many bytes of output went out so far: what Data took, not what

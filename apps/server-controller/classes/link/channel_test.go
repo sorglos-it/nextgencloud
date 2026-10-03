@@ -338,7 +338,7 @@ func TestFramesAfterOwnCloseAreDropped(t *testing.T) {
 func TestSendWaitsForTheCreditOfTheAPI(t *testing.T) {
 	sent := make(chan error, 1)
 	h := opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
-		sent <- ch.Send(make([]byte, 2*wire.MinWindow))
+		sent <- ch.SendStream(make([]byte, 2*wire.MinWindow))
 		return nil
 	})
 	_, ended := serving(t, h, func(a *apiSide) {
@@ -356,10 +356,10 @@ func TestSendWaitsForTheCreditOfTheAPI(t *testing.T) {
 		select {
 		case err := <-sent:
 			if err != nil {
-				a.t.Errorf("Send = %v, want everything out", err)
+				a.t.Errorf("SendStream = %v, want everything out", err)
 			}
 		case <-time.After(answer):
-			a.t.Error("Send never came back")
+			a.t.Error("SendStream never came back")
 			return
 		}
 		a.want(wire.TypeClose, 1)
@@ -485,8 +485,8 @@ func TestAChannelRefusesWhatTheContractForbids(t *testing.T) {
 		if err := ch.EOF(); !errors.Is(err, ErrConfig) {
 			t.Errorf("a second EOF = %v, want it refused", err)
 		}
-		if err := ch.Send([]byte("x")); !errors.Is(err, ErrConfig) {
-			t.Errorf("Send after the own EOF = %v, want it refused", err)
+		if err := ch.SendStream([]byte("x")); !errors.Is(err, ErrConfig) {
+			t.Errorf("SendStream after the own EOF = %v, want it refused", err)
 		}
 		// A CLOSE payload that is none of the contract is not sent, and the
 		// channel stays open for the end of this handler.
@@ -531,7 +531,7 @@ func TestTheCloseOfThisSideIsTheLastFrame(t *testing.T) {
 		if err := ch.Grant(wire.MinWindow, nil); err != nil {
 			return err
 		}
-		return ch.Send([]byte("standing in the socket"))
+		return ch.SendStream([]byte("standing in the socket"))
 	}))
 	m.gate = make(chan struct{})
 	defer m.stop()
@@ -1008,11 +1008,11 @@ func TestTheStrayFrameVariantOfTheChannelLimit(t *testing.T) {
 	}
 }
 
-// Send cuts what it is given into frames of the contract: the largest frame is
+// SendStream cuts what it is given into frames of the contract: the largest frame is
 // full, the byte above it is the next one.
 func TestSendSplitsAtTheLargestFrame(t *testing.T) {
 	m := newMachine(opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
-		return ch.Send(make([]byte, wire.MaxPayload+1))
+		return ch.SendStream(make([]byte, wire.MaxPayload+1))
 	}))
 	defer m.stop()
 	if err := m.c.take(openFrame(t, 1, wire.MaxPayload+1)); err != nil {
@@ -1028,7 +1028,7 @@ func TestSendSplitsAtTheLargestFrame(t *testing.T) {
 		}
 	}
 	if want := []int{wire.MaxPayload, 1}; !slices.Equal(got, want) {
-		t.Errorf("Send wrote frames of %v bytes, want %v", got, want)
+		t.Errorf("SendStream wrote frames of %v bytes, want %v", got, want)
 	}
 }
 

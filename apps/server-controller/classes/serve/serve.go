@@ -276,7 +276,12 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) 
 		// code, so whoever tells them apart fails there.
 		return s.end(ch, wire.Error(wire.CodeTooLarge))
 	}
-	if err := ch.Send(b); err != nil {
+	// SendStream and not SendWhole, deliberately: this is the result of a core
+	// channel, and there the contract reads it as all DATA up to the EOF of
+	// this side ("Core apps", wire). It may be broken into as many frames as
+	// the credit of the moment allows, and nothing on the other side has to
+	// put a single frame back together.
+	if err := ch.SendStream(b); err != nil {
 		return s.end(ch, wire.Error(wire.CodeInternal))
 	}
 	if err := ch.EOF(); err != nil {

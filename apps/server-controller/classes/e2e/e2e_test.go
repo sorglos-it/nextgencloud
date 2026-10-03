@@ -284,7 +284,7 @@ func TestEndCarriesTheOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("End: %v", err)
 	}
-	plain, err := shell.Open(ct)
+	plain, err := shell.Open(ct.WholePayload())
 	if err != nil {
 		t.Fatalf("the shell cannot open the end: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestDataStopsAboveTheLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Data at the limit: %v", err)
 	}
-	plain, err := shell.Open(ct)
+	plain, err := shell.Open(ct.WholePayload())
 	if err != nil {
 		t.Fatalf("the shell cannot open it: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestEndRefusesAnOutcomeThatIsNoClose(t *testing.T) {
 		s, _ := channel(t, terminalParams, nil)
 		ct, err := s.End(cl)
 		if err == nil {
-			t.Errorf("End(%+v) sealed %d bytes, want a refusal", cl, len(ct))
+			t.Errorf("End(%+v) sealed %d bytes, want a refusal", cl, len(ct.WholePayload()))
 		}
 	}
 }
