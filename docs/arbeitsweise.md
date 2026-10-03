@@ -3359,6 +3359,27 @@ Die Formel ist damit dreiteilig, und nur der erste Teil gehört dem
 Wer „der Übersetzer hält das jetzt" sagt, muss also sagen, **was** er hält.
 Mein eigener Satz darüber war zwei Stunden alt und schon zu weit.
 
+**Dritter Nachtrag, 03.10.2026, aus dem Controller — welche FORM der Übersetzer
+überhaupt halten kann.** Drei Formen gemessen, nicht geraten:
+
+| Form | Hält der Übersetzer? |
+|---|---|
+| **benannte Scheibe** (`type Whole []byte`) | **nein** — eine benannte Scheibe ist an `[]byte` zuweisbar, der falsche Aufruf übersetzt |
+| **Verbundtyp** (`struct`) | ja — `cannot use ct (variable of struct type e2e.Sealed) as []byte value` |
+| **Schnittstelle** mit einer Methode | ja, und ohne neue Abhängigkeit: `link` erfüllt sie strukturell, ohne `e2e` zu importieren |
+
+Gewählt wurde Verbund **und** Schnittstelle zusammen, und der Lohn ist der
+beste, den eine Zusicherung haben kann: **zwei Mutanten sind tot, ohne dass es
+einen Testfall dafür gibt** — der Übersetzer weigert sich, auf beiden Zielen
+(windows/amd64 und per Querbau linux/amd64, je Ausstiegscode 1).
+
+Die Kosten für die Aufrufer waren **null**, weil der Rückgabetyp an der Quelle
+geändert wurde, nicht die Aufrufe. Und die offene Tür ist benannt: die Methode,
+die die Bytes herausgibt, muss exportiert bleiben — wer sie absichtlich
+aufruft und dann zerschneidet, übersetzt weiter. Das ist dieselbe
+ausdrückliche Handlung wie die Umwandlung von Hand weiter oben: **eine
+Verwechslung ist es nicht mehr.**
+
 Die Lehre ueber die Technik hinaus: **meine eigene Genehmigung war die
 unmessbare Stelle.** Der Satz klang richtig, niemand hatte ihn gefahren, und
 er stand als erledigt im Plan. Ein genehmigter Weg ist eine Behauptung wie
