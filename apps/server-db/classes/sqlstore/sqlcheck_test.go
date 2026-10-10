@@ -1732,7 +1732,7 @@ var atTheDatabase = map[string]string{
 	"classes/migrate":    "checkStatement, fill and the tests beside them: it runs the statements of the migrations, and they are measured there",
 	"classes/mariadb":    "it opens the Galera cluster over TLS and hands the connection to sqlstore; it runs no statement of its own, so the guard of this file covers every statement that reaches those nodes",
 	"classes/migraterun": "the runner of ngc-api migrate: it picks the driver, opens the database and hands the connection to migrate, which has a guard here; the only call it makes itself is PingContext, and that carries no SQL",
-	"classes/sqlite":     "it opens the encrypted file and sets its PRAGMAs on the driver's own connection, and since task 7 Open also applies the migrations and wraps the result as a store; of its own it runs only the two statements of Backup in backup.go, both constant PRAGMAs with no value of anyone's in them (BEGIN IMMEDIATE through _txlock, and wal_checkpoint) - every statement carrying data comes from migrate and sqlstore, and each of those two has a guard here",
+	"classes/sqlite":     "it opens the encrypted file and sets its PRAGMAs on the driver's own connection, and since task 7 Open also applies the migrations and wraps the result as a store; of its own it runs only the two statements of Backup in backup.go, and neither carries a value of anyone's: one transaction taken for its lock alone (BEGIN IMMEDIATE, through _txlock in the DSN - not a PRAGMA) and one constant PRAGMA (wal_checkpoint) - every statement carrying data comes from migrate and sqlstore, and each of those two has a guard here",
 }
 
 // TestNobodyElseUnderServerDBSpeaksToADatabase draws the line the guard above

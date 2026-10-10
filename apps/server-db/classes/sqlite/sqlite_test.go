@@ -3,11 +3,14 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -332,5 +335,96 @@ func TestWritersWait(t *testing.T) {
 	}
 	if rows != writers {
 		t.Errorf("%d rows, want %d", rows, writers)
+	}
+}
+
+// memProbe is the size of the file TestCopyFileHoldsOnlyAPieceOfTheFile
+// copies. It has to be far larger than copyBuf and far larger than the bound
+// the case allows, or the two readings - a piece at a time against the whole
+// file - would not be told apart. The journal of a database under load was
+// measured at 169 MB on 03.10.2026; 64 MiB is enough to show the difference
+// without making every test run pay for it.
+const memProbe = 64 << 20
+
+// digest reads a file in pieces and returns its hash. It is here so that the
+// case can say "the copy is the file" without holding either of them in
+// memory - a test that allocated the file to check the copy would measure its
+// own doing.
+func digest(t *testing.T, path string) ([]byte, int64) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.CopyBuffer(h, f, make([]byte, copyBuf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.Sum(nil), n
+}
+
+// TestCopyFileHoldsOnlyAPieceOfTheFile is the bound a controller with 512 MB
+// of RAM lives on. Backup used to read the file and the journal whole
+// (os.ReadFile) and write them whole (os.WriteFile), which goes around the
+// 512 MiB this package allows one connection and grows with the installation:
+// 9,5 MB + 39,8 MB were measured on 03.10.2026, and the journal alone grew to
+// 169 MB in twelve seconds under eight writers.
+//
+// What is measured is the allocation of one copy, not the time: TotalAlloc
+// counts every byte handed out, so reading a file whole shows up in it
+// however quickly the garbage collector takes it back again. The bound is
+// 4 MiB against a 64 MiB file, so the two readings are sixteen times apart
+// and no page cache or allocator rounding can bridge that.
+func TestCopyFileHoldsOnlyAPieceOfTheFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "big.bin")
+	dst := filepath.Join(dir, "big.copy")
+	f, err := os.Create(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Written in pieces for the same reason the copy is: a test that built
+	// the whole file in memory would be the first thing to die on a Pi.
+	piece := make([]byte, 1<<20)
+	for i := range piece {
+		piece[i] = byte(i * 7)
+	}
+	for written := 0; written < memProbe; written += len(piece) {
+		if _, err := f.Write(piece); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The measurement checks its own setup: a file that did not reach its
+	// size would make any bound below look kept.
+	if _, n := digest(t, src); n != memProbe {
+		t.Fatalf("the probe file is %d bytes, want %d", n, memProbe)
+	}
+
+	buf := make([]byte, copyBuf)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	had, err := copyFile(src, dst, buf)
+	runtime.ReadMemStats(&after)
+	if err != nil || !had {
+		t.Fatalf("copyFile: %v, %v", had, err)
+	}
+	grew := after.TotalAlloc - before.TotalAlloc
+	t.Logf("copying %d bytes handed out %d bytes", memProbe, grew)
+	const bound = 4 << 20
+	if grew > bound {
+		t.Errorf("copying %d bytes handed out %d bytes, more than the %d allowed: the file is being held whole",
+			memProbe, grew, bound)
+	}
+	// And it is a copy, not a short read that happens to allocate little.
+	wantSum, wantSize := digest(t, src)
+	gotSum, gotSize := digest(t, dst)
+	if gotSize != wantSize || !bytes.Equal(gotSum, wantSum) {
+		t.Errorf("the copy is %d bytes against %d, hashes equal: %v", gotSize, wantSize, bytes.Equal(gotSum, wantSum))
 	}
 }

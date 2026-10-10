@@ -68,9 +68,13 @@ func payload(w int, seq uint64) []byte {
 // passes integrity_check, it holds a row of every writer, and every row in it
 // is exactly one version of that row and not a mixture of two.
 //
-// Without the write lock the test is not vacuous: a copy taken while a
-// checkpoint moves pages is torn, which was measured by taking the lock out
-// (see the report).
+// What makes the test not vacuous is the JOURNAL, not the lock, and the
+// earlier version of this sentence had it the wrong way round. Measured
+// 10.10.2026: with the write lock taken out this test stays green (mutant m1,
+// code 0); with the journal left out of the copy it tears and the test fails
+// (mutant m4). A checkpoint really does move pages into the file while it is
+// read - the file changed in 7 of 8 windows with the lock held - and what
+// repairs that is replaying the journal over the copy.
 func TestBackupHoldsUnderWriteLoad(t *testing.T) {
 	dir := t.TempDir()
 	cfg := backupConfig(dir, "state.db")
@@ -382,5 +386,179 @@ func TestBackupKeepsTheKeyOutOfTheError(t *testing.T) {
 	// the text.
 	if !strings.Contains(fmt.Errorf("sqlite: %s", hexkey).Error(), "abab") {
 		t.Error("the check itself does not catch a key in plain sight")
+	}
+}
+
+// seeded makes a database with one row in it and closes it again, so a case
+// below can compare the bytes before and after a refused call.
+func seeded(t *testing.T, cfg config.DB) []byte {
+	t.Helper()
+	s, err := sqlite.Open(cfg, "test", 1790000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BlobPut(backupCtx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: "marker", Data: []byte("secret-marker")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cfg.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// TestBackupRefusesEveryNameOfTheDatabase is the guard that comparing two
+// strings is not. Measured on 10.10.2026 before it was built: cfg.Path goes
+// through validPath, the target went through nothing, so another spelling of
+// the same path ("/dir/./state.db", "/dir/sub/../state.db") was not equal to
+// it and ran all the way to os.Rename ON THE DATABASE. What refused it there
+// was Windows. On linux/amd64 and linux/arm64, the only targets NGC builds
+// for, os.Rename would have replaced the running database.
+//
+// Every case therefore asks for the refusal of this package, named by its own
+// words - not merely for "an error", which is what the operating system
+// happened to give. And after every case the bytes of the database have to be
+// the ones from before it.
+//
+// Each case gets a directory and a database of its own: a case that destroyed
+// the file would otherwise decide the next one.
+func TestBackupRefusesEveryNameOfTheDatabase(t *testing.T) {
+	// name -> how the target is built from the database, and the words the
+	// refusal has to carry.
+	for _, c := range []struct {
+		label string
+		db    string
+		make  func(dir, path string) string
+		want  string
+	}{
+		{"a dot segment in the middle", "state.db", func(dir, path string) string {
+			return filepath.Join(dir, ".") + string(filepath.Separator) + "." + string(filepath.Separator) + "state.db"
+		}, "absoluter, einfacher Dateiname"},
+		{"a parent segment walking back", "state.db", func(dir, path string) string {
+			return filepath.Join(dir, "sub") + string(filepath.Separator) + ".." + string(filepath.Separator) + "state.db"
+		}, "absoluter, einfacher Dateiname"},
+		{"the journal of the database", "state.db", func(dir, path string) string {
+			return path + "-wal"
+		}, "eigenen Dateinamen"},
+		{"the shared-memory file", "state.db", func(dir, path string) string {
+			return path + "-shm"
+		}, "eigenen Dateinamen"},
+		// The copy is written under target + ".part" before the rename, so a
+		// database whose own name ends in ".part" is hit by a target that
+		// looks harmless.
+		{"the name the copy carries while it is written", "state.db.part", func(dir, path string) string {
+			return filepath.Join(dir, "state.db")
+		}, "eigenen Dateinamen"},
+		{"a name that is not absolute", "state.db", func(dir, path string) string {
+			return "backup.db"
+		}, "absoluter, einfacher Dateiname"},
+	} {
+		t.Run(c.label, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := backupConfig(dir, c.db)
+			before := seeded(t, cfg)
+			target := c.make(dir, cfg.Path)
+			err := sqlite.Backup(cfg, target)
+			if err == nil {
+				t.Fatalf("target %q was accepted", target)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("target %q is refused by something else: %v", target, err)
+			}
+			after, readErr := os.ReadFile(cfg.Path)
+			if readErr != nil {
+				t.Fatalf("the database is gone after the refused call: %v", readErr)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("the refused call changed the database: %d bytes against %d", len(after), len(before))
+			}
+			// The way to the check is open: a clean name beside it goes
+			// through on the very same database.
+			if err := sqlite.Backup(cfg, filepath.Join(dir, "backup.db")); err != nil {
+				t.Fatalf("the way to the check is blocked: %v", err)
+			}
+		})
+	}
+}
+
+// TestBackupRefusesALinkAsItsTarget is the form that is not a spelling of the
+// path at all: a target that is a symbolic link to the database. Following it
+// would have to answer where it points at the moment of the write, which is
+// not the moment it was looked at, so the link is refused outright.
+//
+// It says out loud when it cannot measure. Creating a symbolic link needs a
+// privilege on Windows that a normal account does not have; where that is the
+// case this case reports it instead of passing quietly, because a guard
+// nobody ever ran is not a guard.
+func TestBackupRefusesALinkAsItsTarget(t *testing.T) {
+	dir := t.TempDir()
+	cfg := backupConfig(dir, "state.db")
+	before := seeded(t, cfg)
+	link := filepath.Join(dir, "backup.db")
+	if err := os.Symlink(cfg.Path, link); err != nil {
+		t.Skipf("NOT MEASURED HERE: this machine does not let a test make a symbolic link (%v). "+
+			"On the targets linux/amd64 and linux/arm64 it runs; whoever has one runs this case there.", err)
+	}
+	err := sqlite.Backup(cfg, link)
+	if err == nil {
+		t.Fatal("a link to the database was accepted as a target")
+	}
+	if !strings.Contains(err.Error(), "Verweis") {
+		t.Errorf("the link is refused by something else: %v", err)
+	}
+	after, readErr := os.ReadFile(cfg.Path)
+	if readErr != nil {
+		t.Fatalf("the database is gone after the refused call: %v", readErr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("the refused call changed the database through the link")
+	}
+	// The way to the check is open: the same name without the link goes
+	// through.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlite.Backup(cfg, link); err != nil {
+		t.Fatalf("the way to the check is blocked: %v", err)
+	}
+}
+
+// TestBackupRefusesAnotherNameOfTheSameFile is the form that carries no mark
+// at all: a hard link. It is a plain file to Lstat, it is spelled nothing like
+// the database, and writing through it writes the database. os.SameFile is
+// what sees it, and a hard link is the one alias this machine can really make,
+// so this is where that question is measured.
+func TestBackupRefusesAnotherNameOfTheSameFile(t *testing.T) {
+	dir := t.TempDir()
+	cfg := backupConfig(dir, "state.db")
+	before := seeded(t, cfg)
+	alias := filepath.Join(dir, "backup.db")
+	if err := os.Link(cfg.Path, alias); err != nil {
+		t.Skipf("NOT MEASURED HERE: this machine does not let a test make a hard link (%v)", err)
+	}
+	err := sqlite.Backup(cfg, alias)
+	if err == nil {
+		t.Fatal("another name of the database was accepted as a target")
+	}
+	if !strings.Contains(err.Error(), "dieselbe Datei") {
+		t.Errorf("the alias is refused by something else: %v", err)
+	}
+	after, readErr := os.ReadFile(cfg.Path)
+	if readErr != nil {
+		t.Fatalf("the database is gone after the refused call: %v", readErr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("the refused call changed the database through its other name")
+	}
+	// The way to the check is open: the same name, no longer a second name of
+	// the database, goes through.
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlite.Backup(cfg, alias); err != nil {
+		t.Fatalf("the way to the check is blocked: %v", err)
 	}
 }
