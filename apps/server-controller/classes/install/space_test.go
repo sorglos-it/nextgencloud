@@ -10,10 +10,11 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/store"
 )
 
-// disk puts a disk of this case behind diskFree. The real answer is a call of
+// fakeDisk puts a disk of this case behind diskFree. Renamed on merge:
+// install.disk is the production mapping to ErrDisk (package.go). The real answer is a call of
 // Linux, so without this the arithmetic that decides what may be written would
 // have no case at all where this is written.
-func disk(t *testing.T, free int64, err error) {
+func fakeDisk(t *testing.T, free int64, err error) {
 	t.Helper()
 	was := diskFree
 	t.Cleanup(func() { diskFree = was })
@@ -58,7 +59,7 @@ func TestBoundFollowsTheDisk(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			disk(t, c.free, nil)
+			fakeDisk(t, c.free, nil)
 			got, err := bound(t.TempDir(), c.max)
 			if !errors.Is(err, c.err) {
 				t.Fatalf("bound answered %v, want %v", err, c.err)
@@ -73,13 +74,13 @@ func TestBoundFollowsTheDisk(t *testing.T) {
 // A disk that cannot be asked at all is a refusal and not a shrug: going on
 // with the caller's bound is the one answer that can fill the disk.
 func TestBoundRefusesADiskItCannotAsk(t *testing.T) {
-	disk(t, 0, errors.New("the disk says nothing"))
+	fakeDisk(t, 0, errors.New("the disk says nothing"))
 	if _, err := bound(t.TempDir(), store.MaxPackage); !errors.Is(err, ErrSpace) {
 		t.Fatalf("bound answered %v, want ErrSpace", err)
 	}
 	// And a system that has no such question keeps the caller's bound: that is
 	// the machine this is written on, not a server.
-	disk(t, 0, errNoSpaceCheck)
+	fakeDisk(t, 0, errNoSpaceCheck)
 	got, err := bound(t.TempDir(), 4711)
 	if err != nil || got != 4711 {
 		t.Fatalf("bound answered %d, %v, want 4711, nil", got, err)
@@ -91,7 +92,7 @@ func TestBoundRefusesADiskItCannotAsk(t *testing.T) {
 func TestActivateRefusesAPackageTheDiskCannotCarry(t *testing.T) {
 	s := newStand(t)
 	// A disk with the reserve and nothing else.
-	disk(t, StageReserve, nil)
+	fakeDisk(t, StageReserve, nil)
 	if _, err := s.activate(); !errors.Is(err, ErrSpace) {
 		t.Fatalf("a full disk answered %v, want ErrSpace", err)
 	}
@@ -116,7 +117,7 @@ func TestActivateRefusesAPackageTheDiskCannotCarry(t *testing.T) {
 	if size <= 1<<20 {
 		t.Fatalf("the package of this case is %d bytes, and it has to be above MinBound", size)
 	}
-	disk(t, 512<<20+2*size-2, nil)
+	fakeDisk(t, 512<<20+2*size-2, nil)
 	if _, err := s.activate(); !errors.Is(err, ErrVerify) {
 		t.Fatalf("a package one byte over the bound answered %v, want ErrVerify", err)
 	}
@@ -125,7 +126,7 @@ func TestActivateRefusesAPackageTheDiskCannotCarry(t *testing.T) {
 	s2 := newStand(t)
 	s2.pad = 1 << 20
 	s2.setPackage()
-	disk(t, 512<<20+2*size, nil)
+	fakeDisk(t, 512<<20+2*size, nil)
 	if _, err := s2.activate(); err != nil {
 		t.Fatalf("a package exactly within the bound: %v", err)
 	}
