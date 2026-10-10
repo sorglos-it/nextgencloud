@@ -638,3 +638,34 @@ Schalter trägt — und zwar so, dass sein Standard **aus** ist und ein
 eingeschaltetes Protokoll als solches erkennbar bleibt. Wer es baut, prüft
 zugleich, ob es weitere Schalter dieser Art gibt, die heute nur im Quelltext
 stehen; **gemessen ist bisher nur dieser eine.**
+
+## Punkt 23: `store.ValidPath` ist POSIX-sicher, nicht Windows-sicher — und das ist jetzt gemessen
+
+**Gemeldet und belegt am 10.10.2026** aus Aufgabe 15 des Controllers, zweimal
+unabhängig (Prüfer und Umsetzer).
+
+`store.ValidPath` weist zurück, was auf einem POSIX-Dateisystem gefährlich ist:
+absolute Pfade, `..`, Links, Sparse-Dateien. Was es **nicht** kennt, ist ein
+Dateisystem, das **Groß- und Kleinschreibung faltet**. Zwei Namen, die sich nur
+darin unterscheiden, sind für `Walk` **zwei** Einträge und für Windows **einer**.
+
+**Nach `CLAUDE.md` ist das kein Produktmangel** — „Windows wird nicht
+umgesetzt". Neu und messbar ist die Folge für die **Entwicklung**:
+
+| Dateisystem | Was mit zwei Namen passiert, die sich nur in der Schreibweise unterscheiden |
+|---|---|
+| faltend (Windows, hier) | die zweite Datei scheitert an `O_EXCL` → **`install.ErrDisk`** |
+| case-sensitiv (Linux, Ziel) | beide werden **angenommen**, beide liegen da |
+
+Damit verhält sich dieselbe Eingabe auf Entwicklungs- und Zielplattform
+**verschieden**, und der Unterschied ist kein Zufall, sondern eine Lücke in der
+Zusage. Der Fall, der das prüft, **rät die Plattform nicht**: er **misst das
+Dateisystem** und verlangt auf jeder Seite das Richtige. So läuft er auf beiden
+Zielen und sagt auf beiden etwas.
+
+**Was offen bleibt und in die nächste Vertragsfassung gehört:** entweder
+`store.ValidPath` lehnt zwei Namen ab, die sich nur in der Schreibweise
+unterscheiden (dann ist ein Paket auf jedem Dateisystem gleich), oder der
+Vertrag sagt ausdrücklich, dass er das **nicht** zusagt. Beides ist besser als
+heute, wo es niemand sagt. **`shared/` ist eingefroren, also ist das hier
+notiert und nicht gebaut.**
