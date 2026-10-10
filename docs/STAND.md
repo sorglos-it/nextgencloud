@@ -1,33 +1,98 @@
 # Stand: NGC (NextGenCloud)
 
-**Zuletzt aktualisiert:** 23.09.2026
+**Zuletzt aktualisiert:** 10.10.2026
 
 ## Ziel der nächsten Sitzung
 
-Die Vertragsänderung V1.1 abschließen und mit `vertraege-v1.1` etikettieren, den überarbeiteten
-Plan für Recovery-Paket 0 abnehmen und dann die fünf Sitzungen starten: Web, API, Controller,
-Datenbank und Recovery.
+Die fünf großen Zweige sind weit gebaut, aber **nichts davon ist je gelaufen**: kein `main.go`
+bindet die Pakete ein. Das nächste große Ziel ist deshalb **api-Aufgabe 24** („`main.go`
+verdrahten, Dienst und Module") — erst dort zeigt sich, ob die Teile zusammenpassen. Davor die
+offenen Aufgaben der vier Teile weiterbauen und die fünf Pull Requests zusammenführen.
 
-## Stand
+## Stand je Zweig (gemessen am 10.10.2026)
 
-| | |
-|---|---|
-| Erledigt | Plan 0 (Verträge V1–V7, Testdaten, Anweisungen, Grundgerüst), drei Abschlussprüfungen mit je einer Fix-Welle (T1–T4, A–F, dann A–C), Umbau nach dem Projektstruktur-Standard. Endabnahme grün: `tools/check.sh`, Linux mit `-race` (WSL), 39 Fuzz-Ziele je 3 Minuten ohne Fund, `govulncheck` ohne erreichbare Lücke, alle 277 Go-Namen der Dokumente vorhanden. Dazu die Pläne der vier Teile (Web 27, API 30, Controller 25, Datenbank 12 Aufgaben) und der Plan für Recovery-Paket 0 |
-| In Arbeit | Vertragsänderung V1.1 (Passkey-Anmeldung, von Thomas freigegeben) und die Überarbeitung des Plans für Recovery-Paket 0 |
-| Blockiert | nichts |
-| Code | nur `shared/` (die Verträge) und die Programm-Grundgerüste unter `apps/`; die vier Teile bauen erst nach der Freigabe |
+| Zweig | Kopf | Gebaut und geprüft |
+|---|---|---|
+| `main` | `424a198` | Verträge V1.1 (Etikett `vertraege-v1.1`), Arbeitsweise, `messen.md`, V1.2-Punkte 19–24 |
+| `web` | `e5f1fcc` | Aufgaben 1–35 plus Apache-Vorlage gehärtet (36) und auf die gemessene Maschine gebracht (37) |
+| `api` | `33688a3` | Aufgaben 1–15, dazu das Protokoll (14), die Rechte je Kanal (13) und die Übergabefläche für die Weiterleitung |
+| `api-t17` | `6000616` | Aufgabe 17 (Weiterleitung an die Controller) — **fertig, eigener Zweig, noch nicht in `api`** |
+| `controller` | `dce4bb8` | Aufgaben 1–15 (Paket annehmen und prüfen, mit `ErrDisk`) |
+| `controller-t16` | `863c89b` | Aufgabe 16 (App aktivieren) — **fertig, eigener Zweig, noch nicht in `controller`** |
+| `db` | `a48d8a0` | Plan vollständig (1–12), dazu `ADD COLUMN`, Register nach Verzeichnis, Sicherung in Stücken |
+| `recovery` | `3b5b1e8` | Aufgaben 1–9. **Abnahmekriterium von Paket 0 erreicht:** PolicyOR aus sieben Zweigen auf swtpm, 30 Fälle grün, dreimal |
+| `release-packer` | `61e21f0` | Packer gebaut und geprüft, **noch nicht zusammengeführt** |
+
+Im ulh-Repo (öffentlich, **Thomas schiebt dort, nie ein Agent**): `ngc-web-kopfzeilen` (`75c63f4`,
+der vhost kommt aus dem Release) und `ngc-db` (`33dce46`, `backup`/`restore` ohne den Augenblick,
+in dem die Daten weg sind). Beide warten.
+
+Offene Pull Requests nach `main`: **#26 web, #27 api, #28 controller, #29 db, #30 recovery**.
+
+## Was beim Abbruch noch lief
+
+Sechs Stränge waren am 10.10.2026 unterwegs, als Thomas „auslaufen lassen" sagte. Ihre Ergebnisse
+stehen in den Ledgern, **falls sie fertig geworden sind** — wer hier weitermacht, liest dort zuerst
+nach, ob die Aufgabe noch offen ist:
+
+| Strang | Aufgabe | Zweig |
+|---|---|---|
+| api | 16 — `ngc.users` | `api` |
+| api | 19 — Stores und Kataloge | `api-t19` |
+| controller | 17 — Deaktivieren, Deinstallieren, Daten löschen | `controller` |
+| recovery | 10 — die Negativfälle (ein Stick allein, Replay) | `recovery` |
+| packer | Messung: trägt das Archiv die neue Vorlage bitgleich? | `release-packer` |
+| db | Abschlussprüfung des ganzen Zweigs | `db` |
 
 ## Nächste Schritte (in dieser Reihenfolge)
 
-1. Vertragsänderung V1.1 zu Ende bringen (`session.LoginChallenge` nennt je Passkey `credId` und
-   `kid`), Testdaten und die Pläne 1 und 2 nachziehen, Etikett `vertraege-v1.1` setzen.
-2. Den überarbeiteten Plan für Recovery-Paket 0 abnehmen; die VM `ngc-recovery` steht bereit.
-3. Die fünf Sitzungen starten: Web, API, Controller, Datenbank, Recovery.
-4. Recovery-Modus nach `docs/recovery-modus.md`: `AdminVerify` kommt nach Go, weil die Anmeldung
-   in der API liegt (`apps/web` ist nur Einstieg und Oberfläche); `server-recovery` wäre ein
-   neues Teilprogramm in Rust; `lib/` als zentrale Bibliothek gibt es hier noch nicht; und die
-   signierten Admin-Datensätze müssen zur Vertrauensliste passen (Rollen nur mit Passkey,
-   Wechsel des Admin-Schlüssels bei hochgeladenen Apps).
+1. **Die Ledger lesen, nicht den Kopf.** Je Plan `.superpowers/sdd/<plan>/progress.md`. **Jeder
+   Ledger hat sein eigenes Wort für „fertig"** — der Recovery-Ledger schreibt `ABGESCHLOSSEN`, die
+   anderen `COMPLETE`. Nach dem Wort des Ledgers suchen, nicht nach dem eigenen.
+2. Die fertigen Nebenzweige zusammenführen: `api-t17` → `api`, `controller-t16` → `controller`.
+3. Die fünf Pull Requests nach `main` zusammenführen, wenn kein Strang mehr in den Zweigen
+   arbeitet. Alle fünf führten am 10.10. sauber zusammen.
+4. **api-Aufgabe 24** (`main.go` und `classes/server/`): bis dahin gilt für alles „gebaut ist nicht
+   gelaufen".
+5. Die Auslieferungskette unten abarbeiten — Vorlage, Packer, unterschriebenes Release, dann das
+   ulh-Skript.
+
+## Fallen dieser Umgebung (am 10.10.2026 gemessen, alle bezahlt)
+
+Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Projekt) und
+`docs/arbeitsweise.md` (NGC-eigene Lehren). Die vier, die am meisten gekostet haben:
+
+- **Arbeitsbäume werden während der Arbeit hohl.** Mehrmals gemessen: ein Baum stand nach einer
+  Wiederherstellung bei 0 fehlenden Dateien und kurz darauf wieder bei **629**; parallel 145, 123,
+  159 und einmal **alle 1097**. Ursache **nicht gemessen**. Darum: `git diff --name-only
+  --diff-filter=D HEAD | wc -l` muss **0** sein, und zwar **vor jeder gemeldeten Zahl im selben
+  Aufruf**. Fehlt Fremdcode, scheitert der Bau sichtbar — **fehlt eine Testdatei, läuft der Satz
+  mit weniger Fällen und sieht grün aus.** Wiederherstellen nur die **gelöschten** Pfade
+  (`git restore --source=HEAD -- <pfade>`), nie `git restore .`.
+- **`tools/check.sh` war im Arbeitsbaum kaputt** und ist repariert: `git ls-files` starb an
+  „dubious ownership" (Code **128**), und der go-Werkzeugkasten an derselben Frage beim
+  VCS-Stempel. **Der Ausstiegscode einer Pipe gehört dem letzten Glied** — mit `| tail` kam **0**,
+  während das Skript tot war. **Der Beleg ist die gedruckte Zeile `check: ok`, nicht die Null.**
+- **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
+  im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
+  WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
+- **Der Scratchpad ist zwischen den Strängen geteilt**, nicht nur `/tmp`: eine Messdatei wurde
+  mitten im Lauf von einem anderen Strang überschrieben. Je Strang ein eigener Unterordner, und
+  eine Zahl aus einer überschriebenen Datei wird **neu gemessen**, nicht geborgen.
+
+## Wie hier gearbeitet wird (Head-Officer)
+
+- **Jeder Auftrag beginnt mit „sieh nach, ob es diese Aufgabe noch gibt."** Am 10.10. sind zwei
+  Stränge auf fertige Arbeit geschickt worden, weil der Koordinator einen Ledger falsch gelesen
+  hat; nur weil der Strang nachsah, blieb ein 540-Zeilen-Bericht unversehrt.
+- **Greift der Koordinator in einen laufenden Arbeitsbaum, sagt er es dem Strang im selben
+  Moment** — mit Datei, Zeit und Grund. Zwei Stränge haben sonst eine Geistersuche gemacht.
+- **Eine Planberichtigung hat drei Orte:** Plan, Hauptcheckout, neu erzeugter Auftrag — und
+  **innerhalb** des Aufgabenstücks noch Kopf, Rumpf und **Codeblöcke**. Dieselbe Berichtigung
+  brauchte am 03.10. drei Anläufe.
+- **Dokumente wandern mit dem Zweig.** Ein Strangzweig kann Dutzende Commits hinter `main` liegen;
+  ein Verweis auf „Punkt 20" ist dort etwas anderes. **Die Überschrift zitieren, nicht die Nummer**,
+  und vor einer Prüfung, die Dokumente heranzieht, `origin/main` in den Zweig ziehen.
 
 ## Vor dem Bauen zu prüfen
 
