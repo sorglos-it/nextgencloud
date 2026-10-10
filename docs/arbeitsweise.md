@@ -3727,3 +3727,33 @@ der das kann, ist der, der sie gemacht hat.
 Und die Umkehrung gilt weiter: **ein Strang, der eine Änderung von außen
 sieht, meldet sie** (vgl. „Auftrag: Erscheinung, nicht Ursache"). Beide Seiten
 zusammen machen daraus eine Sekunde Arbeit statt einer Geistersuche.
+
+## Ein Strang liest die Dokumente SEINES Zweigs, nicht die von main
+
+Am 10.10.2026 gemessen. Ein Prüfer meldete, ein Kommentar im Code verweise auf
+„`docs/vertraege-v1.2.md`, Punkt 20", und Punkt 20 handle von etwas anderem —
+der Zeiger sei falsch. Nachgemessen:
+
+```
+origin/main       : ## Punkt 20: Die Lizenz war nie eine Vertragsfrage …
+origin/controller : die Datei endet bei ## Punkt 19
+origin/controller..origin/main : 36 Commits
+```
+
+**Der Kommentar war richtig, der Prüfer auch** — jeder gegen seinen eigenen
+Stand. Die Entscheidungen des Koordinators landen auf `main`; ein Strangzweig
+ist Stunden und Dutzende Commits älter, und **die Dokumente wandern mit dem
+Zweig**, nicht mit der Zeit.
+
+Drei Folgen, und die dritte ist die unangenehme:
+
+1. **Wer eine nummerierte Stelle zitiert, zitiert einen beweglichen Zeiger.**
+   Besser ist die **Überschrift** dazu („Punkt 20, *Die Lizenz war nie eine
+   Vertragsfrage*") — eine Nummer verschiebt sich, ein Satz nicht.
+2. **Vor einer Prüfung, die Dokumente heranzieht: `origin/main` in den Zweig
+   ziehen** oder die Datei ausdrücklich von `main` lesen. Sonst prüft man gegen
+   eine Fassung, die der Umsetzer nie gesehen hat — oder umgekehrt.
+3. **Ein Fund über ein Dokument ist erst ein Fund, wenn man weiß, welche
+   Fassung man gelesen hat.** Derselbe Satz gilt für Zeilennummern in
+   Berichten: sie treiben, sobald ein anderer Strang weiterschreibt, und beide
+   Seiten können im Recht sein.
