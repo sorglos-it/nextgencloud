@@ -66,3 +66,12 @@ func (h *Handler) checkTOTP(row dbapi.User, code string, now int64) bool {
 	ok, err := totp.ValidateCustom(code, string(secret), timeOf(now), totpOpts)
 	return err == nil && ok
 }
+
+// CheckTOTP is checkTOTP for the dispatcher of the core actions
+// (ngc.desktop/totp-confirm and totp-off). It is a wrapper and no second
+// implementation on purpose: two places that judge a code would be two places
+// that could judge it differently, and one of them would be the one that lets
+// somebody in.
+func (h *Handler) CheckTOTP(row dbapi.User, code string, now int64) bool {
+	return h.checkTOTP(row, code, now)
+}

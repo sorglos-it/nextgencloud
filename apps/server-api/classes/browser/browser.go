@@ -37,10 +37,13 @@
 package browser
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
@@ -84,6 +87,13 @@ type Session struct {
 	// out. What a dispatcher needs of it, it gets as a channel of its own from
 	// OpenChannel.
 	table *link.Table
+
+	// chans holds what the dispatcher of each open channel needs besides the
+	// counters (chanState). It is unexported for the same reason as link and
+	// table: a dispatcher that could reach it could hand itself input the
+	// browser never sent.
+	cmu   sync.Mutex
+	chans map[uint32]*chanState
 
 	// link is unexported on purpose, and that is what holds the first condition
 	// of link.Table: whoever cannot reach the link cannot send a GRANT without
@@ -195,6 +205,9 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		if err != nil {
 			return s.protocolError(ctx, f.Channel)
 		}
+		// The dispatcher's side of the number stands before the GRANT the
+		// dispatcher sends, so no frame of the browser can race it.
+		s.begin(c.Num)
 		// Its own goroutine, and that is not decoration: a link has exactly one
 		// reader (link.Read), so a dispatcher called in line here would hold that
 		// one reader for as long as it runs -- no further frame of any channel
@@ -219,10 +232,23 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 // cannot wait for it, because it is what holds the window: DATA is counted
 // against what we granted, and a GRANT of the browser against what it may lift.
 func (s *Session) feed(ctx context.Context, c *link.Channel, f wire.Frame) bool {
+	st := s.chanOf(c.Num)
 	switch f.Type {
 	case wire.TypeData:
 		if !c.Take(len(f.Payload)) {
 			return s.protocolError(ctx, f.Channel)
+		}
+		if st != nil {
+			// Granted again right here, so an upload larger than one window
+			// does not stall. Only what was really buffered is granted back:
+			// past the bound of ExpectInput the channel is refused, and
+			// handing out credit for bytes nobody will keep would be a way to
+			// make us read for ever on a channel that is already lost.
+			if n := st.add(f.Payload); n > 0 {
+				if err := s.SendGrant(ctx, c, uint32(n)); err != nil {
+					return s.protocolError(ctx, f.Channel)
+				}
+			}
 		}
 	case wire.TypeGrant:
 		credit, handshake, err := wire.ParseGrant(f.Payload)
@@ -235,8 +261,25 @@ func (s *Session) feed(ctx context.Context, c *link.Channel, f wire.Frame) bool 
 	default:
 		return s.protocolError(ctx, f.Channel)
 	}
+	if st != nil {
+		switch f.Type {
+		case wire.TypeEOF:
+			st.finish("")
+		case wire.TypeClose:
+			// A CLOSE instead of an EOF is the browser giving the channel up
+			// in the middle of its input; the dispatcher hears E_PROTOCOL and
+			// stops rather than acting on half an upload.
+			st.finish(wire.CodeProtocol)
+		case wire.TypeGrant:
+			select {
+			case st.grant <- struct{}{}:
+			default:
+			}
+		}
+	}
 	if f.Type == wire.TypeClose {
 		c.RecvClose()
+		s.end(c.Num)
 	}
 	return true
 }
@@ -303,9 +346,14 @@ func (s *Session) protocolError(ctx context.Context, num uint32) bool {
 	}
 }
 
-// Close sends a CLOSE with a code for a channel and notes it. It is the way a
-// dispatcher ends a channel in order; a protocol error goes through
-// protocolError, which notes the CLOSE inside link.Table.FailChannel instead.
+// Close sends a CLOSE for a channel and notes it. It is the way a dispatcher
+// ends a channel in order; a protocol error goes through protocolError, which
+// notes the CLOSE inside link.Table.FailChannel instead.
+//
+// An empty code is the ok close of a channel that ran to its end, which is
+// what SendResult sends through here. Both ends live in this one function
+// because it is the only place of this package that notes a CLOSE of ours,
+// and that is a sentence lint_test.go measures.
 func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
 	if err := s.writeClose(ctx, code, num); err != nil {
 		return err
@@ -313,12 +361,17 @@ func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
 	if c, ok := s.table.Get(num); ok {
 		c.SentClose()
 	}
+	s.end(num)
 	return nil
 }
 
 // writeClose puts one CLOSE frame with a code on the link and notes nothing.
 func (s *Session) writeClose(ctx context.Context, code wire.Code, num uint32) error {
-	payload, err := json.Marshal(wire.Error(code))
+	cl := wire.Error(code)
+	if code == "" {
+		cl = wire.Close{Status: wire.StatusOK}
+	}
+	payload, err := json.Marshal(cl)
 	if err != nil {
 		return err
 	}
@@ -327,3 +380,177 @@ func (s *Session) writeClose(ctx context.Context, code wire.Code, num uint32) er
 
 // End closes the whole link.
 func (s *Session) End(reason string) { _ = s.link.Close(websocket.StatusNormalClosure, reason) }
+
+// What the dispatcher of a numbered channel needs besides the counters: the
+// DATA the browser sends on it, and a signal for every GRANT that arrived.
+//
+// Both are registered when the OPEN arrives and before any GRANT of ours can
+// go out, and that order is the point: the browser may send DATA only up to
+// what we granted, so a sink that stands before the first GRANT cannot be
+// raced by a frame. ExpectInput says the same thing about the bound it carries.
+type chanState struct {
+	// grant is buffered with one place: a GRANT arrived, there may be credit
+	// now. More than one in flight says nothing more than one, so a full
+	// buffer is dropped rather than making the link's one reader wait.
+	grant chan struct{}
+
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	max  int64 // ExpectInput sets it; 0 means no input is expected
+	code wire.Code
+	done bool
+	eof  chan struct{} // closed once the input is complete or refused
+}
+
+// begin registers the dispatcher's side of a channel number.
+func (s *Session) begin(num uint32) {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	if s.chans == nil {
+		s.chans = map[uint32]*chanState{}
+	}
+	s.chans[num] = &chanState{grant: make(chan struct{}, 1), eof: make(chan struct{})}
+}
+
+// end forgets it again, once a CLOSE for the number went out or came in.
+func (s *Session) end(num uint32) {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	delete(s.chans, num)
+}
+
+// chanOf returns the state of a number, nil when there is none.
+func (s *Session) chanOf(num uint32) *chanState {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	return s.chans[num]
+}
+
+// finish ends the input of a channel with a code; the first one counts, so a
+// CLOSE after an E_TOOLARGE does not rewrite why the input failed.
+func (st *chanState) finish(code wire.Code) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.done {
+		return
+	}
+	st.code, st.done = code, true
+	close(st.eof)
+}
+
+// add buffers DATA of a FlowIn channel and reports how many bytes may be
+// granted again. Beyond max the input is refused with E_TOOLARGE, and the
+// buffer stops growing there, so the bound holds the memory of the channel
+// and not only its answer.
+func (st *chanState) add(p []byte) int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.done {
+		return 0
+	}
+	if int64(st.buf.Len())+int64(len(p)) > st.max {
+		st.code, st.done = wire.CodeTooLarge, true
+		close(st.eof)
+		return 0
+	}
+	st.buf.Write(p)
+	return len(p)
+}
+
+// ExpectInput says that the channel carries at most max bytes of DATA before
+// the browser's EOF. It must be called before the first GRANT of the channel:
+// until it is, max is zero and any DATA is E_TOOLARGE, because a bound that
+// arrives after the credit would be a bound on nothing.
+//
+// This is where the brief's single ReadInput is two calls instead. The reason
+// is measured in the order of the frames and not in taste: ReadInput waits for
+// the browser's EOF, so it cannot be what grants the credit the browser needs
+// to send anything, and a bound set after that credit went out would leave the
+// bytes in between unbounded.
+func (s *Session) ExpectInput(c *link.Channel, max int64) {
+	st := s.chanOf(c.Num)
+	if st == nil {
+		return
+	}
+	st.mu.Lock()
+	st.max = max
+	st.mu.Unlock()
+}
+
+// ReadInput waits for the DATA of a FlowIn channel up to the browser's EOF and
+// returns it. An empty code means the input is complete; E_TOOLARGE means more
+// than ExpectInput allowed, E_PROTOCOL a CLOSE instead of an EOF, and
+// E_TIMEOUT a context that ended first.
+func (s *Session) ReadInput(ctx context.Context, c *link.Channel) ([]byte, wire.Code) {
+	st := s.chanOf(c.Num)
+	if st == nil {
+		// The number was closed in one direction already, so nothing can
+		// arrive on it any more; that is no input and no protocol error of the
+		// browser's either.
+		return nil, wire.CodeInternal
+	}
+	select {
+	case <-st.eof:
+	case <-ctx.Done():
+		return nil, wire.CodeTimeout
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.code != "" {
+		return nil, st.code
+	}
+	return st.buf.Bytes(), ""
+}
+
+// SendResult sends the result of a call-style channel and closes it with ok.
+// It cuts the body into frames of at most wire.MaxPayload bytes, because
+// SendData says what a payload over that costs: the credit is spent while
+// nothing went out.
+//
+// The browser grants at least wire.MinWindow and more on request, so a result
+// larger than that waits for its GRANT here. A browser that grants nothing
+// more makes the channel end with E_TIMEOUT after wire.E2EFirstTimeout
+// seconds rather than hold a goroutine for the life of the link.
+func (s *Session) SendResult(ctx context.Context, c *link.Channel, body []byte) error {
+	for len(body) > 0 {
+		n := min(len(body), wire.MaxPayload)
+		if !c.SendAllowed(n) {
+			if err := s.waitCredit(ctx, c, n); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.SendData(ctx, c, body[:n]); err != nil {
+			return err
+		}
+		body = body[n:]
+	}
+	if err := s.link.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: c.Num}); err != nil {
+		return err
+	}
+	// Through Close and not with a CLOSE of its own: Close is the one place
+	// of this package that notes a CLOSE it sent, and lint_test.go holds that
+	// (TestOnlyProtocolErrorHoldsANumber). An empty code is the ok close.
+	return s.Close(ctx, "", c.Num)
+}
+
+// waitCredit waits for a GRANT that leaves room for n bytes.
+func (s *Session) waitCredit(ctx context.Context, c *link.Channel, n int) error {
+	st := s.chanOf(c.Num)
+	if st == nil {
+		return ErrCredit
+	}
+	deadline := time.After(wire.E2EFirstTimeout * time.Second)
+	for {
+		select {
+		case <-st.grant:
+			if c.SendAllowed(n) {
+				return nil
+			}
+		case <-deadline:
+			return ErrCredit
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
