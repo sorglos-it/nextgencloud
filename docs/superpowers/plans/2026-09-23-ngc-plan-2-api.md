@@ -78,7 +78,8 @@ Diese Vorgaben gelten für jede Aufgabe; sie werden nicht in jeder Aufgabe wiede
 | `session.MaxChain` (32 MiB), `session.MaxChainVersions` (64) | eine Antwort von `GET /api/v1/trust` |
 | `session.MaxSkew` (300 s) | geduldeter Uhrunterschied; auch das Fenster für `OncePurge` |
 | `session.ChallengeLifetime` (120 s) | Lebensdauer einer Anmelde-Nonce |
-| `wire.MaxFrame` (65519) | größter Frame; Lesegrenze des WebSockets |
+| `wire.MaxFrame` (65519) | größter Frame im Klartext |
+| `wire.MaxFrame + noisep.TagSize` (65535) | **Lesegrenze des WebSockets** — gemessen und am 01.10.2026 berichtigt: diese Zeile nannte vorher `MaxFrame` allein, während der Code desselben Plans richtig `wire.MaxFrame + noisep.TagSize` schreibt. Ein gesiegelter Frame trägt sein Siegel mit. |
 | `wire.MaxSessionChannels` (64), `wire.MaxTunnelChannels` (1024) | belegte Kanalnummern |
 | `wire.MaxWindow` (1 MiB), `wire.MinWindow` (4 KiB) | offene Freigabe je Strecke und Richtung |
 | `wire.MaxCallResult` (8 MiB) | Ergebnis nach Art von `call` |
@@ -2736,7 +2737,10 @@ func newFixture(t *testing.T) (*Handler, fixture) {
 	if err != nil {
 		t.Fatalf("box: %v", err)
 	}
-	noise, signKey := trusttest.NodeKeys(1)
+	// 0xA1, not 1: session.VerifyAPI looks the node up by sign.KeyID, so a
+	// certificate signed with any other key finds no node and comes back
+	// ErrCert - the test would then pass without checking the certificate.
+	noise, signKey := trusttest.NodeKeys(0xA1)
 	cfg := &config.API{
 		Node: "api-1", URL: "wss://api-1.ngc.test:7443/tunnel", Listen: ":7443",
 		Cert: "/x", CertKey: "/y",
@@ -3071,7 +3075,7 @@ Cookie.
   - `func (h *Handler) Finish(w http.ResponseWriter, r *http.Request)`
   - `func (h *Handler) newSession(ctx, v session.Verified, client []byte, p proof.Proof) (session.LoginResult, string, error)`
   - `func (h *Handler) checkTOTP(row dbapi.User, code string, now int64) bool`
-  - `func (h *Handler) BeginTOTP(user, name string) (core.TOTPBegin, []byte, error)` –
+  - `func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error)` –
     Geheimnis für `ngc.desktop/totp-begin` (Aufgabe 15 benutzt es).
 
 - [ ] **Step 1: Write the failing test for TOTP**
@@ -3092,7 +3096,7 @@ import (
 
 func TestTOTP(t *testing.T) {
 	h, fx := newFixture(t)
-	begin, secret, err := h.BeginTOTP(fx.PasswordUser, fx.PasswordName)
+	begin, secret, err := h.BeginTOTP(fx.PasswordName)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -3343,8 +3347,11 @@ func timeOf(now int64) time.Time { return time.Unix(now, 0).UTC() }
 
 // BeginTOTP makes a new TOTP secret for a user: the answer of
 // ngc.desktop/totp-begin and the sealed secret to keep until the user confirms
-// it with a code. The secret is never stored unsealed.
-func (h *Handler) BeginTOTP(user, name string) (core.TOTPBegin, []byte, error) {
+// it with a code. The secret is never stored unsealed. It takes no user:
+// secrets.Box.Seal passes nil as the additional data, so a sealed secret
+// is bound to nobody and works unchanged in another user's row. Whoever
+// keeps it must never let it travel through the client.
+func (h *Handler) BeginTOTP(name string) (core.TOTPBegin, []byte, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer: "NGC", AccountName: name, Period: session.TOTPPeriod,
 		Digits: otp.Digits(session.TOTPDigits), Algorithm: otp.AlgorithmSHA1,
@@ -3481,7 +3488,11 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, ok := v.List.User(cert.User); ok {
-		_ = lock.Clear(ctx, h.S.DB, u.Name)
+		// No lock.Clear here: apps/server-api/CLAUDE.md forbids it and says
+		// why - it empties the whole bucket, so every successful login would
+		// reset the count of an attacker who puts himself into that bucket on
+		// purpose. An expired row already reads as zero. Only setup/code
+		// clears its own bucket, because that is no login name.
 		row.ID, row.Name, row.Roles = u.ID, u.Name, u.Roles
 		row.Failures, row.Locked, row.LastLogin = 0, 0, now
 		if err := h.S.DB.UserPut(ctx, row); err != nil {
@@ -4499,6 +4510,20 @@ func TestCredit(t *testing.T) {
 	if c.Grant(1) {
 		t.Fatal("a grant beyond MaxWindow was taken")
 	}
+	// BERICHTIGT am 02.10.2026. Hier stand der Take(MinWindow) ohne ein
+	// vorheriges Allow - der Plan rechnete das Fenster des OPEN in BEIDE
+	// Richtungen. Der Vertrag zaehlt je Strecke UND Richtung
+	// (shared/README.md:415-416, shared/wire/wire.go:53-55): wer ein OPEN
+	// EMPFAENGT - und nur der ruft Table.Open - darf damit SENDEN, nicht
+	// empfangen. Der Plan widersprach dabei sich selbst, denn sein eigenes
+	// Table.Open setzt nur out:. Gemessen: der Mutant "Open setzt in auch"
+	// waere mit dem alten Satz der gruene Normalfall gewesen.
+	if c.Take(1) {
+		t.Fatal("something arrived before we granted anything")
+	}
+	if !c.Allow(wire.MinWindow) {
+		t.Fatal("our own grant was refused")
+	}
 	// The other direction: what we granted bounds what may arrive.
 	if !c.Take(wire.MinWindow) {
 		t.Fatal("our own window did not count")
@@ -4611,8 +4636,26 @@ func (c *Channel) Take(n int) bool {
 }
 
 // Allow adds to what the other side may send us; we call it whenever we send a
-// GRANT, so the two sides count the same.
-func (c *Channel) Allow(credit uint32) { c.mu.Lock(); c.in += uint64(credit); c.mu.Unlock() }
+// GRANT, so the two sides count the same. It reports whether the grant is
+// allowed at all and adds nothing when it is not.
+//
+// BERICHTIGT am 02.10.2026: Allow gibt bool zurueck und haelt die Grenze.
+// Vorher band es nichts - Grant hielt MaxWindow fuer out, Allow fuer in
+// nicht, und konnte es auch nicht melden. Gemessen: 300x Allow(MaxWindow),
+// danach Take(MaxWindow+1) = true. Still abschneiden waere schlimmer (die
+// Seiten zaehlen dann verschieden), und eine GRANT ueber MaxWindow ist
+// unser EIGENER Protokollfehler - die Gegenseite antwortet mit
+// CLOSE E_PROTOCOL (shared/README.md:418-419), sie darf also nie hinaus.
+// Preis: ein if beim Aufrufer.
+func (c *Channel) Allow(credit uint32) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if credit == 0 || c.in+uint64(credit) > uint64(wire.MaxWindow) {
+		return false
+	}
+	c.in += uint64(credit)
+	return true
+}
 
 // Closing reports whether we have already sent a CLOSE.
 func (c *Channel) Closing() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.sentClose }
@@ -4765,6 +4808,66 @@ git commit -m "Add the channel table and the credit of a link" \
 ---
 
 ### Task 11: Sitzungsleitung zum Browser
+
+> **Berichtigt am 02.10.2026, vier Abweichungen des Strangs der Aufgabe 11 —
+> jede gemessen, jede begruendet, und alle vier gehen auf meinen Plantext
+> zurueck, nicht auf seinen Code.**
+>
+> 1. **`login.Live` hat DREI Rueckgabewerte, nicht zwei.** Gebaut wie
+>    `login/trust.go:33`, mit `httpapi.Fail(w, code)`.
+> 2. **`srv.S.Trust(ctx)` ist hier nicht noetig und waere falsch:**
+>    `live.Trust` IST die Liste, gegen die die Sitzung gerade geprueft wurde;
+>    `state.Trust` waere der aeltere Zwischenspeicher.
+> 3. **`deliver` wird in dieser Aufgabe NICHT gebaut.** Niemand liest den
+>    Puffer — der Versand kommt mit Aufgabe 15. Ein wartendes `deliver` haelt
+>    den einzigen Leser der Leitung beim neunten Frame **fuer immer** an: das
+>    ist ein Haenger, keine Zwischenstufe.
+> 4. **`Session.Close` traegt ein `ctx`**, wie der Plancode es zeigt, nicht
+>    wie die Schnittstellenliste es sagt.
+>
+> **Dazugekommen, weil Satz 1 der Eintrittsbedingung ohne das nicht zu halten
+> ist:** `Session.SendGrant` — der EINZIGE Ort, der ein GRANT-Frame schreibt —
+> und `ErrGrant`.
+>
+> **Wie die Eintrittsbedingung gehalten wird, und das ist fuer die Folgeaufgaben
+> wichtig:** zwei der drei Saetze haelt eine **Schleife ueber den eigenen
+> Quelltext** (genau eine Funktion baut ein GRANT-Frame, genau eine ruft
+> `Allow`, dieselbe, und `Allow` steht davor; ebenso `Reserve` ⇒ `SentClose`).
+> Die Schleifen sind SELBST geprueft: `TestTheSourceLoopCanGoRed` laesst sie an
+> einem Wegwerf-Paket rot werden.
+> **Ihre Grenze, gemessen:** sie lesen die **Platte**, nicht den
+> `-overlay`-Baum, koennen also keinen Mutanten der ueberlagerten Fassung
+> toeten. **Fuer Aufgabe 15 heisst das:** ein GRANT, das `coreapp` selbst ueber
+> `s.Link.Write` schreibt, sieht die Schleife NICHT. Entweder dieselbe
+> Schleife dort, oder `Session.Link` ist nicht mehr oeffentlich.
+>
+> **Noch nicht verdrahtet und hier auch nicht verlangt:** `session.PathSocket`
+> steht nicht in `httpapi.Routes` — der Zubringer fehlt noch.
+
+> **EINTRITTSBEDINGUNG, eingetragen am 02.10.2026 aus der Pruefung der
+> Aufgabe 10 — und sie steht HIER, weil eine Zeile, die nur in einem Bericht
+> steht, dort verschwindet.**
+>
+> Aufgabe 10 hat die Kanaltabelle gebaut, und `link.go` ruft `NewTable`
+> **nicht**. Die Tabelle ist damit von nichts benutzt, und drei Zusicherungen
+> sind heute ein Vertrag mit einem Aufrufer, den es nicht gibt. Wer die
+> Tabelle verdrahtet, belegt zuerst diese drei Saetze mit je einem Fall:
+>
+> 1. **`Allow` laeuft vor JEDER GRANT**, die hinausgeht.
+> 2. **Die GRANT geht nur bei `true` hinaus.** `Allow` kann seit der Fixrunde
+>    `false` sagen (`credit == 0` oder `in+credit > MaxWindow`); ein Aufrufer,
+>    der das uebergeht, verschickt eine GRANT, die die Gegenseite mit
+>    `CLOSE E_PROTOCOL` beantwortet — unser eigener Protokollfehler
+>    (`shared/README.md:418-419`).
+> 3. **Auf jedes `Reserve` folgt ein `SentClose`.** Sonst haelt die Nummer
+>    fuer immer; das ist gewollt, aber es ist eine Aufrufer-Bedingung ohne
+>    Zeugen.
+>
+> Dazu die gemessene Grenze der Nebenlaeufigkeit: `-race` sieht an der Tabelle
+> nur, was ein Fall mit **zwei** Goroutinen fuehrt. Nach der Fixrunde sind das
+> `out` (Grant gegen Spend) und `in` (Allow gegen Take) — mit entferntem
+> Schloss meldet `-race` dort wirklich Rennen, vorher hatte es nichts zu
+> sehen. Wer einen Zaehler dazunimmt, nimmt den Fall dazu.
 
 **Files:**
 - Create: `apps/server-api/classes/browser/browser.go`, `apps/server-api/classes/browser/control.go`
@@ -5185,6 +5288,43 @@ git commit -m "Add the session link to the shell" \
 ---
 ### Task 12: Tunnel zu den Controllern und Kopplung
 
+> **ZWEI AUFLAGEN, eingetragen am 02.10.2026 aus der Nachpruefung der Aufgabe
+> 11 — und sie stehen HIER, weil eine Zeile, die nur in einem Bericht steht,
+> dort verschwindet.**
+>
+> **1. `Session.Table` ist noch exportiert, und damit haelt Satz 3 nicht.**
+> Satz 1 haelt seit Aufgabe 11 der **Uebersetzer**: `session.link` ist
+> unexportiert, kein Paket aussen schreibt ein Frame, und nur `SendGrant`
+> baut ein GRANT. Satz 3 („auf jedes `Reserve` folgt ein `SentClose`") haelt
+> dagegen nur ein Lint und ein Wirkungsfall — denn `coreapp` kann
+> `s.Table.Reserve(n)`, `c.Allow(x)`, `c.Spend(x)` und `c.SentClose()` rufen,
+> **ohne ein Frame zu schreiben**. Gemessen, und der Paketkopf reicht damit
+> weiter als der Code: er sagt „the table's three caller conditions are kept
+> here and nowhere else".
+> **Also: wer `Reserve` und `SentClose` in `link` zu EINER Funktion
+> zusammenlegt, unexportiert `Session.Table` gleich mit** — dann haelt den
+> dritten Satz ebenfalls der Uebersetzer, und der Paketkopf wird wahr.
+>
+> **2. Eine offene Leitung wird nie wieder gegen die Vertrauensliste
+> geprueft.** Zweimal unabhaengig gemessen: kein Pfad prueft eine laufende
+> Sitzung erneut, `grep -rn 'Sessions'` findet ausserhalb des Pakets
+> **keinen** Treffer, und `HintAll`/`Broadcast` haben ausserhalb der Tests
+> **gar keinen** Aufrufer — der Hinweisweg existiert also noch nicht. Dazu
+> gibt es nach `FirstFrameTimeout` **keine Frist** auf der Leitung.
+> **Folge: ein zurueckgezogener Schluessel erreicht eine offene Leitung
+> nicht.** Zu bauen: bei jeder neuen Vertrauensversion die Sitzungen gegen die
+> neue Liste pruefen und die betroffenen ueber `End` schliessen, plus eine
+> Frist auf der Leitung. Das ist eine Sicherheitsluecke, keine Bequemlichkeit.
+>
+> **Und eine gemessene Grenze des Lints, die niemand fuer einen Halter nehmen
+> darf:** der `go/ast`-Lauf sucht einen **NAMEN**, keinen **WERT**.
+> `wire.TypeGrant` ist `Type = 5`; `Type: 5`, `Type: grantType` (eigene
+> Konstante) und `Type: wire.Type(5)` sind fuer ihn **unsichtbar**, ebenso ein
+> `import . "…/wire"`. Nichts davon ist exotisch, und `gofmt`/`go vet` haben
+> nichts dagegen. Das zu schliessen braeuchte `go/types`. Der Lint bleibt
+> trotzdem richtig — er sagt, was der Uebersetzer nicht sagen kann, und sein
+> Kopf behauptet nicht mehr als das.
+
 **Files:**
 - Create: `apps/server-api/classes/controllers/tunnel.go`,
   `apps/server-api/classes/controllers/pair.go`, `apps/server-api/classes/controllers/registry.go`
@@ -5198,7 +5338,16 @@ git commit -m "Add the session link to the shell" \
   `tunnel.Fingerprint`, `tunnel.Contract`, `tunnel.Components`, `store.ParseUpdateReport`,
   `core.ParseNotice`, `dbapi.OncePair`, `dbapi.Pending`, `link`, `state`.
 - Produces:
-  - `type Tunnel struct { Node string; Hello tunnel.Hello; Status tunnel.Status; Link *link.Link; Table *link.Table }`
+  - **BERICHTIGT am 03.10.2026:** `Link` und `Table` sind **unexportiert**. Nach
+    aussen gehen nur `SendControl`, `End`, `Hello()`, `Status()` — und `Hello`
+    und `Status` sind **Verfahren hinter einem Schloss**, nicht Felder.
+    Grund, gemessen: eine exportierte Tabelle in diesem Paket haette die
+    Auflage aus Aufgabe 11 im selben Atemzug wieder ausgehoben — dann koennte
+    ein Zubringer `Reserve`/`Allow`/`Spend`/`SentClose` rufen, ohne ein Frame zu
+    schreiben, und Satz 3 der Eintrittsbedingung haette wieder nur ein Lint
+    gehalten statt des Uebersetzers.
+  - `type Tunnel struct { Node string; … }` mit unexportierter Leitung und
+    Tabelle
   - `type Registry struct{ … }` mit `Get(node string) (*Tunnel, bool)`, `Each(fn)`, `Nodes() []string`
   - `type Server struct { S *state.State; Tunnels *Registry; OnHello func(ctx, *Tunnel);
     OnReport func(ctx, *Tunnel, store.UpdateReport); OnNotice func(ctx, *Tunnel, core.Notice) }`
@@ -5948,6 +6097,49 @@ git commit -m "Add the tunnels to the controllers and the pairing" \
 Entschieden wird bei jedem Kanal neu, aus Benutzer, Rolle, App, Aktion und Lizenz — nie aus
 Parametern des OPEN.
 
+> **Berichtigt am 03.10.2026 — drei Entscheidungen des Koordinators. Punkt 1
+> aendert den CODE, nicht diesen Plan; Punkt 2 berichtigt meine eigene
+> Formel im Aufgabenkopf; Punkt 3 ist eine gemessene Luecke mit oertlichem
+> Riegel.**
+>
+> **1. `E_FORBIDDEN` und `E_NOTFOUND` müssen für einen Benutzer OHNE Recht
+> dasselbe sagen.** Gemessen von der Prüfung: der Unterschied verriet einem
+> Benutzer ohne Recht, dass die App **installiert und aktiv** ist, und der
+> Kommentar im Code behauptete das Gegenteil.
+>
+> **Entscheidung des Koordinators: gleichziehen**, weil das die sicherere
+> Variante ist. Betroffen ist die **App**-Stufe — fehlende App, nicht aktive
+> App und fehlendes `<app>/use`-Recht geben jetzt alle `E_FORBIDDEN`. Der
+> Preis, vollständig: wer kein Recht hat, kann einen Tippfehler im App-Namen
+> nicht mehr von einem fehlenden Recht unterscheiden — seine Fehlersuche wird
+> schwerer. Ein Fall hält fest, dass **beide** Wege denselben Code geben.
+>
+> **Was davon NICHT betroffen ist, und ich hatte es zuerst falsch
+> aufgeschrieben:** der Fall `fx.CheckApp(t, fx.OfficeUser, "nothing")` in
+> Schritt 1 erwartet weiter `wire.CodeNotFound` und bleibt **richtig**. Er
+> fragt nach einer **Aktion, die das Manifest nicht hat**, und zwar für einen
+> Benutzer, der das Sichtbarkeitsrecht **hat** — wer die App sehen darf, darf
+> auch erfahren, dass eine Aktion nicht existiert. Das ist ein anderes Paar
+> als das oben. **Mein erster Nachtrag erklärte diesen Fall für überholt; das
+> war falsch, nachgemessen an `check.go:87-110`.**
+>
+> **2. „Nie aus Parametern des OPEN" hat immer UNSIGNIERTE Teile gemeint.**
+> Gemessen: `Task`+`Confirm` aus dem OPEN verschieben die Entscheidung
+> **öffnend** (`plain="E_CONFIRM" | task="E_CONFIRM" | task+confirm=""`). Das
+> ist richtig und bleibt — genau dafür ist `E_CONFIRM` da: der Kanal sagt „hol
+> eine Unterschrift", und die unterschriebene Aufgabe ist die Antwort darauf.
+> Ein unterschriebenes Stück ist kein Parameter, sondern ein **Beleg**, denn
+> die Unterschrift wird selbst geprüft. **Meine Formel im Auftrag war zu
+> lose**, nicht der Code.
+>
+> **3. Eine Namensraum-Kollision ist offen und nur örtlich geschlossen.** Ein
+> Manifest darf eine Aktion `use` heißen; dann ist das Aktionsrecht dasselbe
+> wie `<app>/use`, und gemessen mit **nur** dem Sichtbarkeitsrecht öffnet der
+> Kanal. Die saubere Fassung gehört in `shared/store` bzw. `core.ValidRight`
+> und ist eingefroren — siehe `docs/vertraege-v1.2.md`, Punkt 21. Bis dahin
+> fängt eine Zeile in `check.go` es ab, mit Verweis daneben. **Die
+> Lizenzprüfung darf später nicht an `<app>/use` hängen** — dieselbe Zeile.
+
 **Files:**
 - Create: `apps/server-api/classes/rights/rights.go`, `apps/server-api/classes/rights/check.go`
 - Test: `apps/server-api/classes/rights/rights_test.go`
@@ -6305,6 +6497,25 @@ git commit -m "Add the rights and task check of a channel" \
 
 ### Task 14: Protokoll
 
+> **Berichtigt am 03.10.2026, zwei Dinge.**
+>
+> **1. Die „Interfaces"-Liste dieser Aufgabe ist unvollständig: `Note` fehlt.**
+> Der Quelltext in Schritt 3 enthält
+> `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error`,
+> die Liste darüber nennt es nicht — die Aufgabe widerspricht also sich
+> selbst. Und `Note` ist nicht nebensächlich: **es ist der einzige Eingang
+> für „Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen"**, die der
+> Entwurf (Zeile 630-632) ausdrücklich verlangt. Die vier anderen Eingänge
+> decken Anmeldungen, Kanäle und Root-Aufgaben. Der Strang hat die Lücke
+> gemeldet und `Note` gebaut, weil es im Auftrag stand — richtig.
+>
+> **2. Ein Fall dieser Aufgabe war falsch, nicht der Code.** Ein selbst
+> geschriebener Fall verlangte, dass `Add` ein leeres `Result` zurückweist;
+> der Auftrag setzt dort ausdrücklich `Result = "ok"`. **Der Auftrag hatte
+> recht**, und der Fall heißt jetzt `TestAddFillsAnEmptyResult`. Festgehalten,
+> weil es die Gegenrichtung zu den vielen Planberichtigungen dieses Tages ist:
+> nicht jeder Widerspruch zwischen Plan und Code ist ein Planfehler.
+
 **Files:**
 - Create: `apps/server-api/classes/audit/audit.go`
 - Test: `apps/server-api/classes/audit/audit_test.go`
@@ -6318,6 +6529,9 @@ git commit -m "Add the rights and task check of a channel" \
   - `func (lg *Log) Login(ctx, user, result, detail string) error`
   - `func (lg *Log) Channel(ctx, user, app, action, node string, code wire.Code) error`
   - `func (lg *Log) Task(ctx, user, app, action, node, signature string) error`
+  - `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error` –
+    der Eingang für Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen
+    (am 03.10.2026 nachgetragen, siehe Berichtigung im Kopf dieser Aufgabe)
   - `func (lg *Log) Query(ctx context.Context, q core.LogQuery) ([]core.LogEntry, error)`
 
 - [ ] **Step 1: Write the failing test**
@@ -6498,6 +6712,24 @@ git commit -m "Add the log of the API" \
 
 ---
 ### Task 15: Versand der Kern-Aktionen und `ngc.desktop`
+
+> **Berichtigt am 10.10.2026 — zwei Zeilen dieser Aufgabe, beide gemessen.**
+>
+> **1. `string(o.Task.Sig)` ist falsch und hätte die Unterschrift still
+> verloren.** `audit.Task` dekodiert sein letztes Feld als base64url und
+> verlangt genau 64 Byte (`audit.go:203-205`); rohe Bytes als `string`
+> scheitern am Dekodieren. Das Protokoll **verliert deshalb kein Ereignis** —
+> es hätte den Eintrag geschrieben und die Unterschrift durch den Platzhalter
+> `-` ersetzt. Also kein Fehler, den jemand bemerkt: ein Prüfprotokoll voller
+> Root-Aufgaben **ohne** die Unterschrift, die sie beweist. Richtig ist
+> `enc.B64.EncodeToString(o.Task.Sig)`.
+>
+> **2. Die Aufgabe, nicht das OPEN, nennt App und Aktion.** Der Plan
+> protokolliert `o.App, o.Action` — die **Behauptung** des OPEN. Gebaut ist
+> `t.App, t.Action` aus der geprüften, signierten Aufgabe. Das ist dieselbe
+> Regel wie bei `rights.Check` und sie gilt im Protokoll genauso: **was
+> festgehalten wird, ist das Aufgelöste, nie das Behauptete** — sonst steht im
+> Protokoll, was der Angreifer hineingeschrieben hat.
 
 **Files:**
 - Create: `apps/server-api/classes/coreapp/dispatch.go`, `apps/server-api/classes/coreapp/desktop.go`
@@ -6718,7 +6950,9 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 		return code
 	}
 	if t != nil {
-		_ = d.Log.Task(ctx, verified.Cert().User, o.App, o.Action, t.Node, string(o.Task.Sig))
+		// BERICHTIGT 10.10.2026: base64url, und die Werte aus der geprueften Aufgabe.
+		// string(o.Task.Sig) scheitert am Dekodieren -> Platzhalter statt Unterschrift.
+		_ = d.Log.Task(ctx, verified.Cert().User, t.App, t.Action, t.Node, enc.B64.EncodeToString(o.Task.Sig))
 	}
 	if action.Service == core.ServiceController {
 		// A root task of service controller runs on a controller; the API only

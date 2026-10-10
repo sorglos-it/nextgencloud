@@ -136,7 +136,7 @@ als etwa 20 Dateien verlangt. Tests liegen neben dem Code.
 **Interfaces:**
 - Produces: `node.Main(version string, args []string, stdout, stderr io.Writer) int` – der ganze
   Einstieg; `node.Options{Config string, Pair string, Arch string}`. Kommandos: ohne Argument
-  laufen (später Aufgabe 18), `-version`, `pair -code <Kopplungscode>`, `terminal`, `hold`,
+  laufen (später Aufgabe 18), `-version`, `pair` (fragt den Kopplungscode ab, nie als Argument), `terminal`, `hold`,
   `image -arch <arch> -out <datei>`.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -602,7 +602,7 @@ git commit -m "Keep and advance the trust list from the pinned anchor"
 - Produces: `pairing.Do(ctx context.Context, in pairing.Input) (pairing.Result, error)`;
   `pairing.Input{Code string, Name string, Roles []string, Noise noise.DHKey, Client *http.Client}`;
   `pairing.Result{APIs []config.APIRef, Anchor trust.Anchor}`;
-  `pairing.Show(code tunnel.PairCode, noisePub []byte) string` – die zwei Zeilen, die ulh und die
+  `pairing.Show(anchor trust.Anchor, noisePub []byte) string` – die zwei Zeilen, die ulh und die
   Shell vergleichen.
 
 - [ ] **Step 1: Den fehlschlagenden Test schreiben**
@@ -1202,16 +1202,19 @@ Erwartet: FAIL.
 Ausführen: `go test ./apps/server-controller/classes/e2e/`
 Erwartet: PASS.
 
-- [ ] **Step 5: Fuzz-Test für die inneren Nachrichten**
+- [ ] **Step 5: Fuzz-Ziel für die inneren Nachrichten**
 
-```go
-func FuzzInner(f *testing.F) {
-	f.Add([]byte{1})
-	f.Fuzz(func(t *testing.T, b []byte) { _, _ = wire.ParseE2E(b, false) })
-}
-```
+Ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
 
-Zusätzlich ein Fuzz-Ziel `FuzzOpenCiphertext`, das beliebige Bytes in `(*Session).Open` gibt.
+**Nicht** zusätzlich ein Ziel, das nur `wire.ParseE2E(b, false)` ruft und nichts prüft. Genau das
+stand hier bis zum 24.09.2026, und die Prüfung von Aufgabe 9 hat es gemessen: es kann für dieses
+Paket **nie rot werden** — in keiner von 21 Mutationen schlug es an. `shared/wire` hat mit
+`FuzzParseE2E` längst ein Ziel mit echtem Orakel; ein zweites ohne Zusicherung kostet Rechenzeit
+und täuscht Abdeckung vor.
+
+Die Regel dahinter, sie gilt für jedes Fuzz-Ziel in diesem Plan: **ein Ziel, das nichts zusichert,
+bewacht nichts.** Entweder prüft der Rumpf eine Eigenschaft, oder das Ziel gehört dorthin, wo die
+Eigenschaft geprüft werden kann.
 
 - [ ] **Step 6: Prüfen und committen**
 
@@ -1390,6 +1393,18 @@ Erwartet: FAIL.
   `NGC_PARAMS` **nie** in `/proc/*/cmdline` und nie im Log.
 - `Stop` nutzt `--time 10`, danach `kill`.
 
+> **Berichtigt am 01.10.2026.** Von diesen zwei Sätzen — der Env-Datei, die
+> „nach dem Start gelöscht" wird, und `Stop` mit „danach `kill`" — weicht der
+> Code der Aufgabe 11 ab, **mit Begründung an der Stelle selbst**
+> (`apps/server-controller/classes/runtime/`). Der Strang hat beides gemessen
+> und als Planfrage gemeldet; die Prüfung hat angemerkt, dass es in keiner
+> Abweichungsliste stand.
+>
+> **Wer hier baut, liest die Begründung im Code, nicht diese zwei Sätze.** Ich
+> schreibe den richtigen Wortlaut hier bewusst **nicht** hinein, weil ich ihn
+> nicht gemessen habe — und ein Plansatz, den der Koordinator sich ausdenkt,
+> wird vom Nächsten nicht mehr nachgeprüft.
+
 - [ ] **Step 4: `runtime.ImageTag` schreiben**
 
 Liest das Image-Tar mit `archive/tar`, sucht `manifest.json`, liest es mit
@@ -1473,7 +1488,16 @@ func TestUserNameIsStableAndShort(t *testing.T) {
 }
 
 func TestEnsureUserBuildsTheArgumentList(t *testing.T) {
-	// useradd --system --no-create-home --shell /usr/sbin/nologin <name>,
+	// BERICHTIGT am 02.10.2026: die Zeile MUSS --home-dir <datenordner>
+	// tragen. Ohne sie setzt useradd --system das Heim auf /home/<name>,
+	// und dann bricht EnsureUser mit ErrHome ab - es startete KEINE App.
+	// Gemessen vom Pruefer: ofUserDB (user.go:192) und Create
+	// (podman.go:255) vergleichen HomeDir gegen den Datenordner, ofName
+	// (podman.go:95) nimmt u.HomeDir; der Mutant ohne --home-dir toetet
+	// zwei Faelle, darunter den, der das echte useradd als root fuehrt.
+	//
+	// useradd --system --no-create-home --home-dir <datenordner>
+	//         --shell /usr/sbin/nologin <name>,
 	// danach die subuid/subgid-Bereiche; nirgends eine Shell.
 }
 
@@ -1528,6 +1552,64 @@ git commit -m "Give every app its own system user and encrypted data directory"
 ---
 
 ### Task 13: Dienst starten (Vertrag V3)
+
+> **ENTSCHIEDEN am 03.10.2026, auf einen Befund des Strangs der Aufgabe 13 —
+> und der Befund blockiert jeden echten Dienststart.**
+>
+> `serve.CallInput` nennt neun Felder und **keine uid/gid**. Dagegen steht
+> `runtime.go`, `Exec.EnvFile`: die Datei muss dem **App-Benutzer** gehoeren,
+> weil podman als dieser Benutzer laeuft und sie lesen muss, und ihr Modus ist
+> `0600`. Eine Datei `0600` mit Eigentuemer root ist fuer podman damit
+> **unlesbar** — der Aufruf scheitert beim Start. (Hier nicht messbar: in WSL
+> laeuft kein root, gemessen ist nur der Modus.)
+>
+> **BERICHTIGT am 03.10.2026, und zwar gegen MICH: es gibt einen vierten,
+> kleineren Weg, und der gilt.** `Podman.Exec` kennt den App-Benutzer
+> **schon** — `u, err := ofName(e.Name)` steht acht Zeilen vor dem
+> `EnvFile`-Block. Dort fehlt genau **eine** Zeile:
+>
+>     os.Chown(e.EnvFile, u.uid, u.gid)
+>
+> Kein neues Verfahren an der Schnittstelle (jede Attrappe muesste es sonst
+> nachbauen; `noEngine` hat allein sieben Verfahren), `CallInput` bleibt bei
+> neun Feldern, `serve` bleibt unberuehrt, und es braucht kein neues Recht —
+> root ist fuer `credential` ohnehin noetig.
+>
+> **Die Ursache meines Umwegs ist ein falscher Satz im Code**, und der
+> gehoert mitberichtigt: `runtime.go:135-138` sagt, die Engine koenne den
+> Eigentuemer nicht sehen. **Sie sieht ihn.** Nur der MODUS gehoert wirklich
+> dem Aufrufer. Ein Satz, der eine Zustaendigkeit behauptet, die es nicht
+> gibt, hat hier einen ganzen Umbau veranlasst.
+>
+> *(Verworfen, mit Begruendung, damit niemand sie neu aufwirft:)* **Von den
+> drei Wegen galt der mittlere:** die Engine bekommt eine Methode,
+> die den **App-Benutzer eines Containers nennt** (`ofName` ist da, nur
+> unexportiert), und `serve` setzt den Eigentuemer der Umgebungsdatei danach.
+> Begruendung: `CallInput` um uid/gid zu erweitern wuerde jeden Aufrufer
+> zwingen, Benutzerkennungen zu kennen, die ihn nichts angehen; die Engine die
+> Datei selbst schreiben zu lassen wuerde `Exec.EnvFile` gegen ein
+> `Exec.Env []string` tauschen und damit den Vertrag an einer Stelle aendern,
+> die ein anderer Strang haelt. Der mittlere Weg braucht **einen Export** und
+> keine Vertragsaenderung.
+> **Und was dabei NICHT behauptet werden darf:** dass der Eigentuemer richtig
+> ankommt, ist auf dieser Maschine nicht messbar (kein root in WSL). Wer es
+> baut, schreibt es als nicht messbar hin.
+>
+> **Zwei weitere Zeilen aus derselben Messung, die hier gebaut werden:**
+> 1. **`runtime.Podman.Exec` setzt kein `cmd.WaitDelay`.** Gemessen an einer
+>    gleichgebauten Attrappe: nach dem Toeten des Kindes wartet `cmd.Wait` auf
+>    die Enkel, die die Pipes halten — ein Fall zum Zeitlimit stand so
+>    **20 Sekunden**. Dass bei podman mit dem Container alles darin endet, ist
+>    eine **Vermutung**, nicht gemessen. `WaitDelay` setzen und den Fall dazu.
+> 2. **Die eine stderr-Zeile traegt bis zu 65536 Byte, die die APP gefuellt
+>    hat.** Eine App, die Geheimnisse auf stderr schreibt, verliert sie ins
+>    Protokoll des Controllers. Der Vertrag verlangt die Zeile, also bleibt
+>    sie — aber der Grund gehoert an die Stelle, damit der Naechste weiss,
+>    dass hier Fremdtext ins eigene Protokoll laeuft.
+>
+> **Noch nicht verdrahtet und hier nicht verlangt:** `serve.Server.app` endet
+> weiter mit `E_UNREACHABLE`; `RunService` ist gebaut, das Verdrahten braucht
+> `d.Manifest.Action(…)` und den E2E-Rahmen einer anderen Aufgabe.
 
 **Files:**
 - Create: `apps/server-controller/classes/serve/call.go`,
@@ -1775,6 +1857,51 @@ git commit -m "Accept and verify an app package before anything is unpacked"
 ---
 
 ### Task 16: App aktivieren
+
+> **Berichtigt am 10.10.2026 — zwei Sätze aus „Consumes" und einer von mir.**
+>
+> **1. `store.Granted` gehört NICHT in diese Aufgabe, und zwar aus einem
+> gemessenen Grund.** Der Auftrag verlangt Mengen-**Gleichheit** der Grants;
+> `store.Granted` prüft nur „**Teilmenge**" und würde **einen Grant zu viel**
+> durchlassen. Der Strang hat es gemessen (der Mutant, der auf `Granted`
+> umstellt, ist **tot**) und die Funktion darum nicht benutzt. Die Zeile in
+> „Consumes" ist falsch; sie stand schon in Aufgabe 15 dort und war auch dort
+> unbenutzt.
+>
+> **2. `audit` gibt es im Controller-Zweig GAR NICHT** — gemessen: zwei Dateien
+> unter `apps/server-api/classes/audit/` auf `api`, **null** auf `controller`.
+> Mein Satz „`audit.Log` ist fertig" war für diesen Strang irreführend, und er
+> hat richtig gehandelt: **keinen Kommentar geschrieben, der etwas anderes
+> behauptet.**
+>
+> **Und das ist kein Loch im Entwurf, sondern seine Aufteilung:** Zeile 201 des
+> Kern-Designs gibt das **Protokoll der API**. Der Controller **protokolliert
+> nicht selbst** — er gibt einen Fehler zurück, den der Aufrufer unterscheiden
+> kann, und die API schreibt ihn. Genau dafür trennt `install.ErrDisk` seit der
+> Fixrunde der Aufgabe 15 „dieser Knoten konnte nicht" von „Paket kaputt". Wer
+> hier später doch im Controller protokollieren will, ändert den Entwurf und
+> nicht nur den Code.
+
+> **Ergaenzt am 02.10.2026, aus der Pruefung der Aufgabe 12 — und ich
+> schreibe es HIERHIN, weil eine Zeile, die nur in einem Bericht steht,
+> dort verschwindet.**
+>
+> 1. **`/run/ngc/<name>` muss nach jedem Neustart existieren und dem
+>    App-Benutzer gehoeren.** Die Anforderung stammt aus Aufgabe 11
+>    (`runDir` sagt es selbst), aber `runDir` TUT nichts und `EnsureData`
+>    macht nur den Datenordner. Aufgabe 12 war damit nicht unvollstaendig
+>    — ihr Auftrag nannte es nicht. Hier wird es gebaut.
+> 2. **`/etc/subuid` wird heute ohne Sperre gelesen-geaendert-geschrieben.**
+>    Zwei gleichzeitige `EnsureUser` geben denselben Bereich zweimal aus
+>    oder verlieren eine Zeile. `-race` sieht das NICHT, „0 DATA RACE“
+>    deckt es nicht ab. Heute harmlos, weil das Paket ausserhalb seiner
+>    Tests keinen einzigen Aufrufer hat — mit dem ersten Aufrufer ist es
+>    es nicht mehr harmlos. Wer hier baut, nimmt eine Sperre und einen Fall
+>    dafuer mit.
+> 3. **Geerbt aus Aufgabe 11, nur hier sichtbar:** der Datenordner ist
+>    `/data:rw` UND podman-Image-Store. Damit hoehlt eine App ihr
+>    `--read-only` ueber einen Neustart aus. Es bleibt bei ihrem eigenen
+>    Benutzer, aber es gehoert gesehen und entschieden, nicht vererbt.
 
 **Files:**
 - Create: `apps/server-controller/classes/install/activate.go`,

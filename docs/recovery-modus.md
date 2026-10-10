@@ -58,7 +58,7 @@ Innenaufbau der neuen Teilprogramme nach Projektstruktur-Standard: nur `classes/
 | --- | --- | --- | --- |
 | Quorum Sticks | 2 von 4 | 2 von 3 | 1 von 2 |
 | PolicyOR-Zweige | 1 + 6 | 1 + 3 | 1 + 2 |
-| Stick-Backend (PKCS#11) | hsm (Nitrokey HSM 2, YubiHSM 2) | piv (YubiKey 5 ≥ 5.7, Nitrokey 3) | softhsm (SoftHSM2) |
+| Stick-Backend (PKCS#11) | hsm (Nitrokey HSM 2, YubiHSM 2) | piv (YubiKey 5, jede 5.x; Nitrokey 3) | softhsm (SoftHSM2) |
 | Stick und PIN getrennt | in Zeremonie erzwungen | empfohlen | nein |
 | Touch am Stick | ja | ja | nein |
 | PIN-Quelle | Tastatur | Tastatur | Datei |
@@ -116,11 +116,51 @@ Policy(DEK) = PolicyOR(
 )
 ```
 
+
+**Entscheidung vom 10.10.2026: Slot A wird ZWEI Objekte, und Abschnitt 6 sagt es hier.**
+
+Gemessen in Aufgabe 8 auf `ngc-recovery`: der authValue hängt am **Objekt**, nicht
+am Zweig. Ein Objekt mit authValue, eine gesalzene und parameterverschlüsselte
+Sitzung, und die PIN **nicht** übergeben — das ist der einzige Fall, der kippt,
+und er kippt **still**: `open pcr` endete mit **Ausstiegscode 0 und Müll**
+(`ba1eaca0fc726c49` statt `544553542d44454b`). Eine Variable je Zeile gemessen;
+die vier anderen Kombinationen geben den richtigen Wert. **In Paket 6 wäre
+dieser Müll der echte DEK.**
+
+Damit ist die Fassung „ein Objekt, PolicyOR über sieben Zweige, ein geteilter
+authValue, und der Normalstart öffnet ohne Menschen" nicht baubar. Es gab drei
+Wege, und zwei brechen eine Vorgabe:
+
+| Weg | Was er bricht |
+| --- | --- |
+| Der Bootcode kennt die PIN | ein Geheimnis im Klartext auf dem Zielsystem — gegen Punkt 1 |
+| Normalstart ohne Parameterverschlüsselung | gegen diesen Abschnitt und gegen sieben Fixrunden der Aufgabe 6 |
+| **Slot A als eigenes Objekt ohne authValue** | **keine Vorgabe — nur diesen Abschnitt** |
+
+Also: **Slot A wird zweimal versiegelt.**
+
+- **Slot A-auto**: kein authValue, Policy nur `PolicyPCR(0-7, 11 = Produktiv-UKI)`.
+  Das ist der Normalstart, und er öffnet ohne Menschen.
+- **Slot A-recovery**: authValue = Plattform-PIN, `PolicyOR` über die
+  Stick-Paar-Zweige, dazu `PolicyAuthValue` und `PolicyNV(Zähler == c)`.
+
+**Warum das die Sicherheit nicht senkt, und das ist der tragende Satz:** der
+automatische Zweig hatte in der alten Fassung **auch schon** nur die PCR-Bindung.
+Wer PCR 0-7 und 11 erfüllt, bekam den DEK dort ebenso. Die Aufteilung nimmt
+nichts weg — sie macht sichtbar, was ohnehin gilt, und sie beendet den stillen
+Falschwert.
+
+**Der Preis, vollständig:** zwei versiegelte Blobs statt einem. Beide müssen bei
+einer PCR-Änderung neu versiegelt werden, der Recovery-Blob zusätzlich bei jedem
+Zählerstand. Wer einen vergisst, merkt es erst beim Start oder erst in der
+Recovery — darum gehört in Paket 2 ein Fall, der **beide** nach jedem
+Neuversiegeln öffnet.
+
 - PolicySigned: Stick signiert eine Nonce, die das TPM selbst erzeugt hat. Replay unmöglich.
 - Nach jeder Recovery: Zähler +1, DEK mit c+1 neu versiegeln.
 - Stick-Ersatz oder Listen-Wechsel: Slot B und Recovery-Policy je Server neu erzeugen, neues Wiederherstellungsblatt.
 - Slot B ist TPM-unabhängig: Weg bei totem Server.
-- TPM-Sessions immer mit Salt und Parameterverschlüsselung. DA-Lockout: 3 Versuche, 24 h. EK-Zertifikat gegen Hersteller-CA prüfen.
+- TPM-Sessions immer mit Salt und Parameterverschlüsselung — gemeint sind die Sessions, die wirklich etwas tragen (Policy, HMAC). **Trial-Sessions sind ausgenommen:** sie rechnen nur einen Digest aus, der ohnehin öffentlich ist, und tpm2-tools lässt Salt für sie gar nicht zu (gemessen an 5.7: „Trial sessions cannot be additionally used as encrypt/decrypt session“). DA-Lockout: 3 Versuche, 24 h. EK-Zertifikat gegen Hersteller-CA prüfen.
 
 ---
 
@@ -237,7 +277,7 @@ Paket 4 vor 5 (Slot B braucht Stick-Keys). Paket 8 vor 9 (nur fertige Images hä
 7. Live-System oder fremdes OS auf dem Server: Volume bleibt zu
 8. Admin-Datensatz direkt in der DB eingetragen: Login verweigert, Alarm
 9. 3 falsche Stick-PINs: Stick gesperrt; 3 falsche Plattform-PINs: TPM 24 h gesperrt, Produktivbetrieb läuft
-10. Logic-Analyzer am TPM-Bus zeigt nur verschlüsselte Sessions
+10. Logic-Analyzer am TPM-Bus zeigt nur verschlüsselte Sessions — außer Trial-Sessions, die nichts Geheimes übertragen
 11. Portscan und Konsole in der Recovery-Umgebung: kein Netz, keine Shell, kein Login
 12. Audit-Eintrag beim Zeugen signiert vorhanden, Alarm an alle Kontakte innerhalb 60 s
 13. Recovery-Account erzwingt Passwortwechsel + Token-Registrierung, verfällt nach 24 h
