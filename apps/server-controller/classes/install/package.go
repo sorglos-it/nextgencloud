@@ -34,7 +34,49 @@ var (
 	// size, a UI hash, an app name or a version that does not match, or an
 	// NGC too old for it. A caller maps it to core.ErrVerify (E_VERIFY).
 	ErrVerify = errors.New("install: package does not match what was approved")
+	// ErrDisk says this node could not put the package down: no space, no
+	// permission, or a name in the package that the target filesystem cannot
+	// keep apart from one already written. Nothing is wrong with the package
+	// or with the store, so a caller must not answer E_VERIFY to it.
+	//
+	// Its text names no path on purpose. This error travels to an API and can
+	// end up in a message an admin reads, and the staging path would tell
+	// whoever sent the package where to aim a race or a planted link. The
+	// operating system own error, path and all, stays reachable with
+	// errors.As for this node own log - an explicit step, not a leak.
+	ErrDisk = errors.New("install: this node could not store the package")
 )
+
+// diskError is ErrDisk with the cause behind it: Error() is the fixed text
+// alone, while errors.Is(err, ErrDisk) and errors.As(err, &pathErr) both hold.
+type diskError struct{ cause error }
+
+func (e diskError) Error() string   { return ErrDisk.Error() }
+func (e diskError) Unwrap() []error { return []error{ErrDisk, e.cause} }
+
+// disk marks err as a failure of this node rather than of the package.
+func disk(err error) error {
+	if err == nil {
+		return nil
+	}
+	return diskError{err}
+}
+
+// markWriter tells a failed write to the disk apart from a failed read of the
+// package: io.Copy returns one error for both, and the two must not get the
+// same answer.
+type markWriter struct {
+	w      io.Writer
+	failed bool
+}
+
+func (m *markWriter) Write(p []byte) (int, error) {
+	n, err := m.w.Write(p)
+	if err != nil {
+		m.failed = true
+	}
+	return n, err
+}
 
 // AcceptInput is one package offered to a controller. Reader carries the
 // transfer header (core.ReadTransfer) and then the file; Max bounds the file.
@@ -95,12 +137,19 @@ type source struct {
 }
 
 // Accept reads the transfer header, checks that the file was approved, and
-// only then writes it: signature, catalogue membership, rollback, checksum
-// identity and the NGC version all stand before the first byte reaches the
-// disk. Then the file is written and its SHA-256 and size compared with the
-// header and the checked entry, a paid app is decrypted, the ui-tar is
-// hashed (store.PackageUI) against the task and the catalogue entry, and
-// store.Walk writes the files. Every failure removes the whole staged folder.
+// only then writes it. What stands before the first byte reaches the disk is
+// the signature, the catalogue or release membership, the rollback rule, the
+// NGC version, and the IDENTITY of the three checksums - that the signed
+// task, the header and the checked entry all name the same one. The checksum
+// of the bytes themselves cannot be had before them, so it comes after.
+//
+// Then the file is written and its SHA-256 and size compared, a paid app is
+// decrypted, and the ui-tar is hashed (store.PackageUI) against the task and
+// the catalogue entry. That last one is a LATE wall by its nature: the UI
+// hash is only known after the last byte, so a package with a wrong UI hash
+// is read and staged in full before it is refused. Finally store.Walk writes
+// the files. Every failure removes the whole staged folder, so nothing of a
+// refused package stays behind.
 func Accept(ctx context.Context, in AcceptInput) (Package, error) {
 	if err := validInput(in); err != nil {
 		return Package{}, err
@@ -130,11 +179,11 @@ func Accept(ctx context.Context, in AcceptInput) (Package, error) {
 	}
 
 	if err := os.MkdirAll(in.Dir, 0o700); err != nil {
-		return Package{}, err
+		return Package{}, disk(err)
 	}
 	dir, err := os.MkdirTemp(in.Dir, "accept-")
 	if err != nil {
-		return Package{}, err
+		return Package{}, disk(err)
 	}
 	p, err := stage(ctx, dir, in, tr, src)
 	if err != nil {
@@ -297,32 +346,44 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 	files := filepath.Join(dir, FilesDir)
 	// store.Walk checks every entry before handing it over: only ui/<ValidPath>
 	// and services/{amd64,arm64}.tar, no absolute path, no "..", no link, no
-	// sparse entry, at most store.MaxDirs directories and fixed sizes. So the
-	// name is safe to join, and a second path check here would be a copy that
-	// can drift from Walk's.
+	// sparse entry, at most store.MaxDirs directories, and every size within
+	// its limit (MaxUIFile, MaxUITotal, MaxPackage) - it BOUNDS sizes, it does
+	// not fix them. So the name is safe to join, and a second path check here
+	// would be a copy that can drift from the one in Walk.
 	if _, err := store.Walk(broken, func(_ *store.Manifest, f store.PackFile, body io.Reader) error {
 		path := filepath.Join(files, filepath.FromSlash(f.Path))
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			return err
+			return disk(err)
 		}
 		// O_EXCL: a name that already exists, or a link someone slipped in, is
-		// never followed. Unmeasured on purpose — the folder is fresh, so no
-		// case can plant either without bending this code; it guards a later
-		// reuse of the folder.
+		// never followed. The package can reach this line on its own - two ui
+		// names that differ only in case are two entries to store.Walk and one
+		// name to a filesystem that folds case (TestAcceptMapsAStorageFailure).
 		w, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
-			return err
+			return disk(err)
 		}
-		n, err := io.Copy(w, io.LimitReader(body, f.Size+1))
-		if cerr := w.Close(); err == nil {
-			err = cerr
+		m := &markWriter{w: w}
+		n, err := io.Copy(m, io.LimitReader(body, f.Size+1))
+		cerr := w.Close()
+		switch {
+		case m.failed || cerr != nil:
+			// The write failed, not the package: a full disk must never be
+			// answered as a bad package. Measured: dropping m.failed keeps the
+			// suite green, because no case here can fill a disk or revoke a
+			// permission mid-write. Named, not removed - it is the half of
+			// this branch that covers the failure nobody can stage.
+			if err == nil {
+				err = cerr
+			}
+			return disk(err)
+		case err != nil:
+			return store.ErrPackage // the archive could not be read
 		}
-		if err != nil {
-			return err
-		}
-		// store.Walk refuses sparse entries, so a body never carries more
-		// than its header promises; this is the belt beside that brace, and
-		// no case can kill it while Walk holds. Named, not removed.
+		// More than promised is impossible while store.Walk refuses sparse
+		// entries, and less only on a clean EOF - which the package checksum
+		// already caught before any of this ran. Kept and named: this is the
+		// line that holds if either of those two ever changes.
 		if n != f.Size {
 			return store.ErrPackage
 		}
@@ -339,7 +400,7 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 func open(dir string, key []byte) (io.ReadCloser, error) {
 	f, err := os.Open(filepath.Join(dir, PackageFile))
 	if err != nil {
-		return nil, err
+		return nil, disk(err)
 	}
 	if len(key) == 0 {
 		return f, nil
@@ -390,15 +451,20 @@ func (r readCloser) Close() error { return r.c.Close() }
 func writeFile(path string, r io.Reader, size int64) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, disk(err)
 	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(r, size))
-	if cerr := f.Close(); err == nil {
-		err = cerr
+	m := &markWriter{w: f}
+	n, err := io.Copy(io.MultiWriter(m, h), io.LimitReader(r, size))
+	cerr := f.Close()
+	if m.failed || cerr != nil {
+		if err == nil {
+			err = cerr
+		}
+		return nil, disk(err)
 	}
 	if err != nil {
-		return nil, err
+		return nil, ErrVerify // the transfer broke, so this is not the approved file
 	}
 	// Measured redundant and kept on purpose: a short file also fails the
 	// checksum, so no case can kill this line alone (mutant "n != size" ->

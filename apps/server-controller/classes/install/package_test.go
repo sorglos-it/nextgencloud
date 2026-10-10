@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -550,6 +552,101 @@ func TestAcceptStagesInAFreshFolder(t *testing.T) {
 			t.Errorf("staged in %q, want a folder under %q", p.Dir, base)
 		}
 	}
+}
+
+// foldsCase reports whether dir lies on a filesystem that folds case, measured
+// rather than guessed from GOOS: the same code runs on Windows, on macOS and
+// on the Linux servers, and only the filesystem decides.
+func foldsCase(t testing.TB, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe")
+	if err := os.WriteFile(probe, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
+	return err == nil
+}
+
+// TestAcceptMapsAStorageFailure covers the failures that are this node's and
+// not the package's. They must not look like a bad package to the caller, and
+// their text must name no path: it travels to an API and can reach an admin,
+// and the staging path would tell whoever sent the package where to aim.
+func TestAcceptMapsAStorageFailure(t *testing.T) {
+	// A staging folder that cannot be made, because its parent is a file.
+	// This one fires on every platform.
+	f := catalogFixture(t)
+	blocker := filepath.Join(f.base, "blocker")
+	if err := os.WriteFile(blocker, []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.in.Dir = filepath.Join(blocker, "staged")
+	p, err := f.run()
+	if !errors.Is(err, ErrDisk) {
+		t.Fatalf("staging under a file: %#v, %v; want %v", p, err, ErrDisk)
+	}
+	if errors.Is(err, ErrVerify) || errors.Is(err, store.ErrPackage) {
+		t.Errorf("a failure of this node is reported as a bad package: %v", err)
+	}
+	// The cause stays reachable for this node's own log, but only on purpose.
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Errorf("the operating system's error is not reachable with errors.As: %v", err)
+	}
+	for _, secret := range []string{f.base, blocker, f.in.Dir, "staged", "blocker"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("the error text names %q: %q", secret, err.Error())
+		}
+	}
+	// Nothing of ours was created next to the blocker.
+	names, err2 := os.ReadDir(f.base)
+	if err2 != nil || len(names) != 1 || names[0].Name() != "blocker" {
+		t.Errorf("%q holds %v, want only the blocker", f.base, names)
+	}
+
+	// A collision the package brings itself: two ui names that differ only in
+	// case are two entries to store.Walk and one name to a filesystem that
+	// folds case, so the second one meets O_EXCL. On a case-sensitive
+	// filesystem they are two files and the package is good - the case asserts
+	// what each filesystem must do, so it measures on both.
+	pkg := buildTar(t, append(slices.Clone(goodEntries(t, appManifest(testApp, testVer, ""))),
+		entry{"ui/Icon.svg", []byte("<svg id=\"two\"/>"), tar.TypeReg}))
+	// setFile carries checksum and size, but not the UI hash: both the task
+	// and the catalogue entry have to name the new one, or the case hangs on
+	// the UI wall and never reaches the unpacking. Measured: it did, first try.
+	withUI := func(f *fixture, b []byte) *fixture {
+		f.setFile(b)
+		f.in.UI = uiHashOf(t, b)
+		f.withCatalog(func(c *store.Catalog) { c.Apps[0].Versions[0].UI = enc.Bytes(uiHashOf(t, b)) })
+		return f
+	}
+	// Intermediate check: the very same shape with a name that collides with
+	// nothing goes through, so what the case below measures is the collision
+	// and not an earlier wall.
+	plain := buildTar(t, append(slices.Clone(goodEntries(t, appManifest(testApp, testVer, ""))),
+		entry{"ui/second.svg", []byte("<svg id=\"two\"/>"), tar.TypeReg}))
+	if _, err := withUI(catalogFixture(t), plain).run(); err != nil {
+		t.Fatalf("the same package with a non-colliding name: %v, want accepted", err)
+	}
+	g := withUI(catalogFixture(t), pkg)
+	gp, err := g.run()
+	if foldsCase(t, g.base) {
+		if !errors.Is(err, ErrDisk) {
+			t.Errorf("two ui names differing only in case on a folding filesystem: %#v, %v; want %v",
+				gp, err, ErrDisk)
+		}
+		if strings.Contains(err.Error(), g.base) {
+			t.Errorf("the error text names the staging path: %q", err.Error())
+		}
+		empty(t, g.base)
+	} else {
+		if err != nil {
+			t.Errorf("two ui names differing only in case on a case-keeping filesystem: %v, want accepted", err)
+		} else if _, err := os.Stat(filepath.Join(gp.Dir, FilesDir, "ui", "Icon.svg")); err != nil {
+			t.Errorf("ui/Icon.svg: %v", err)
+		}
+	}
+	t.Logf("filesystem of %q folds case: %v", g.base, foldsCase(t, g.base))
 }
 
 func FuzzAcceptHeader(f *testing.F) {
