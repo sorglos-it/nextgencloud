@@ -686,10 +686,29 @@ Der naheliegende Ausweg wäre, die Liste aus der Ausgabe von podman zu lesen und
 wäre die falsche Richtung: eine Liste, die der Container-Dienst ausgibt, ist
 keine Buchführung, sondern eine Momentaufnahme.
 
-**Was es heute kostet, vollständig:** das Abbild liegt im Bildspeicher **seines
-eigenen Benutzers**, ist nur für diese App erreichbar, und ein Deinstallieren
-nimmt es mit dem Benutzer mit. Es ist also verlorener Platz, kein offener
-Zugang.
+**Was es heute kostet, vollständig – und hier stand zuerst etwas Falsches:**
+der Satz „ein Deinstallieren nimmt es mit dem Benutzer mit" ist **gemessen
+falsch**. Gemessen am 10.10.2026:
+
+| gemessen | Stelle |
+|---|---|
+| der Benutzer bekommt das **Datenverzeichnis der App** als Zuhause (`--home-dir DataDirOf(app)`) | `user.go:188` |
+| podman läuft mit `HOME=u.home`, der Bildspeicher liegt also **in den Daten der App** | `podman.go:438` |
+| `userdel` läuft **ohne `-r`** – das Zuhause bleibt stehen | `user.go:258` |
+| `DataSize` läuft über `DataDirOf(app)` und **zählt die Abbild-Schichten als Benutzerdaten mit** | `data.go:227` |
+
+Daraus folgt zweierlei, und beides ist schlimmer als „verlorener Platz":
+
+- Das Abbild liegt **im Datenverzeichnis**, nicht irgendwo beim Benutzer. Mit
+  `KeepData` beim Deinstallieren bleibt es **für immer** liegen, und keine
+  Buchführung weiß mehr davon.
+- Die Zahl, die ein Verwalter **vor** dem Löschen liest, ist um
+  Größenordnungen daneben: ein Abbild von einem Gigabyte erscheint ihm als ein
+  Gigabyte **eigene Daten**. Er entscheidet über das Löschen anhand einer Zahl,
+  die etwas anderes zählt, als ihr Name sagt.
+
+Richtig bleibt nur, dass der Zugang nicht offen steht: der Bildspeicher gehört
+dem Benutzer der App und ist nur für sie erreichbar.
 
 **Die richtige Lösung ist ein Referenzfeld in `dbapi.App`** — und das ist eine
 Änderung im eingefrorenen `shared/`. Darum steht sie hier und ist nicht gebaut.
