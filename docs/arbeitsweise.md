@@ -3658,3 +3658,42 @@ Drei Griffe, und der dritte ist der eigentliche:
    baue nichts, überschreibe keinen Bericht, melde es.* Das ist die einzige
    Sicherung, die auch dann greift, wenn der Koordinator den Stand falsch
    liest — und er liest ihn irgendwann falsch.
+
+## Ein hohler Arbeitsbaum ist eine geladene Waffe
+
+Am 10.10.2026 gemeldet und von mir nachgemessen. Der Arbeitsbaum des
+web-Strangs hatte **435 Dateien nicht auf der Platte** — `CLAUDE.md`,
+`LICENSE`, `README.md`, `vendor/`, `shared/testdata/`. Nicht sparse
+(`fatal: this worktree is not sparse`), also hält git sie für **gelöscht**:
+
+```
+git diff --stat HEAD --diff-filter=D   →   435 files changed, 259985 deletions(-)
+git status --porcelain | wc -l         →   435
+```
+
+Der Strang hat dort gearbeitet und richtig committet, weil er **pfadgenau**
+vorgemerkt hat. Hätte er ein einziges Mal `git add -A` getippt, wäre die
+Löschung von 260 000 Zeilen im Commit gelandet — und bei einem Push wäre das
+halbe Repo weg gewesen.
+
+**Damit hat die Regel „nie `git add -A`" einen zweiten Grund**, und der ist
+schlimmer als der erste: der geteilte Index nimmt fremde Dateien **mit**, ein
+hohler Baum nimmt die eigenen **weg**.
+
+Nachgemessen über alle Bäume dieser Sitzung: der web-Baum war der einzige
+schwer hohle; drei weitere hatten **genau eine** Datei vermisst, und zwar
+`shared/testdata/.gitkeep` — eine Datei im **eingefrorenen** `shared/`. Auch
+das hätte ein `git add -A` als Vertragsänderung eingetragen.
+
+Behoben mit `git restore .` je Baum (danach 0 fehlend, 0 im Status). **Die
+Ursache ist nicht gemessen** — Vermutung: ein abgebrochener Checkout oder ein
+`git clean` von außen. Darum gilt bis zum Beweis:
+
+**Vor der ersten Zeile Arbeit in einem Arbeitsbaum:**
+```
+git diff --name-only --diff-filter=D HEAD | wc -l     →   muss 0 sein
+```
+Steht dort eine Zahl, ist nicht die Aufgabe das Problem. Erst `git restore .`,
+dann arbeiten. Und die alten, fertigen Bäume derselben Sitzung sind zu über
+tausend Dateien hohl — wer dort noch einmal hineingeht, liest zuerst diese
+Zahl.
