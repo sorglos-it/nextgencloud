@@ -1554,6 +1554,30 @@ git commit -m "Open a branch with two real stick signatures" \
 
 ### Aufgabe 8: Plattform-PIN, Zähler und Wörterbuchschutz
 
+> **BERICHTIGT am 10.10.2026 — Schritt 4 dieser Aufgabe erzeugte einen STILLEN
+> FALSCHWERT, und das ist die schlimmste Sorte Fehler in diesem Projekt.**
+>
+> Der Schritt verlangt die PIN auf **jedem** Objekt und dazu „der Normalstart
+> öffnet trotzdem". Über die **Policy** ist das richtig, über die **Sitzung**
+> falsch: der authValue hängt am **Objekt**, und der Sitzungsschlüssel einer
+> gesalzenen, verschlüsselnden Sitzung hängt am authValue. Gemessen, eine
+> Variable je Zeile: authValue ja **plus** verschlüsselte Sitzung **plus** PIN
+> nicht übergeben ist der **einzige** Fall, der kippt — und er kippt mit
+> **Ausstiegscode 0 und Müll** (`ba1eaca0fc726c49` statt
+> `544553542d44454b` = `TEST-DEK`). Die vier anderen Kombinationen geben den
+> richtigen Wert. **In Paket 6 wäre dieser Müll der echte DEK.**
+>
+> **Gebaut ist: der `pcr`-Zweig bekommt GAR KEINEN authValue.** Das hält die
+> Zusage des Plans buchstäblich und rührt die Parameterverschlüsselung aus
+> Aufgabe 6 nicht an.
+>
+> **Und daraus folgt eine Entwurfsänderung, die der Koordinator am 10.10.2026
+> entschieden hat:** Slot A wird **zwei Objekte** — `A-auto` ohne authValue mit
+> nur `PolicyPCR`, und `A-recovery` mit authValue und `PolicyOR` über die
+> Stick-Paare. Sie steht mit Begründung und Preis in
+> `docs/recovery-modus.md`, Abschnitt 6. **Wer Aufgabe 9 baut, baut gegen diese
+> Fassung, nicht gegen die alte.**
+
 **Dateien:**
 - Ändern: `tools/recovery-policy.sh`, `tools/recovery-test.sh`
 
