@@ -137,8 +137,17 @@ func (sqliteDialect) Duplicate(err error) bool {
 // has no error code of its own for "it is already there". A CREATE of a table,
 // an index or a view that exists reports the generic SQLITE_ERROR, the same
 // code a syntax error carries, so the code alone would step over every broken
-// statement in a migration. Both have to hold: the code SQLITE_ERROR and the
-// words "already exists" that SQLite writes into exactly this message.
+// statement in a migration. Both have to hold: the code SQLITE_ERROR and one
+// of the two wordings SQLite writes into exactly these messages.
+//
+// Two wordings, because the form of the statement decides which one comes
+// back. A CREATE that ran twice says "already exists"; an
+// ALTER TABLE ... ADD COLUMN that ran twice says "duplicate column name: x"
+// and nothing about existing. Measured on the encrypted file this part really
+// opens, in migrate's TestSQLiteSaysDuplicateColumnNameAndTheDialectReadsIt:
+// without the second wording the first migration that adds a column fails on
+// its second run. 0001 carries no ALTER TABLE yet, so nothing noticed - the
+// lint of task 3 accepts the form already.
 //
 // What asks for it: an update replays every migration on a database the
 // previous API version is still working on. Under MariaDB each CREATE commits
@@ -146,16 +155,30 @@ func (sqliteDialect) Duplicate(err error) bool {
 // whole file in one transaction, and without this the second run would fail on
 // the first table instead of stepping over it.
 //
-// The one real error this swallows is a NAME COLLISION, and it is measured,
-// not feared: "CREATE INDEX ngc_blob_seq ON ngc_blob (id)" on a database that
-// already carries that index over other columns answers "index ngc_blob_seq
-// already exists", so it is stepped over and the migration is recorded as
-// done. SQLite says nothing about the content in that message, so no reading
-// of it could tell the two apart. What keeps it out is the rule that a
-// migration only ever adds and the lint of task 3, which refuses a name that
-// is not in its fixed lists - not this function.
+// The real error this swallows is a NAME COLLISION, one for each wording, and
+// both are measured, not feared. "CREATE INDEX ngc_blob_seq ON ngc_blob (id)"
+// on a database that already carries that index over other columns answers
+// "index ngc_blob_seq already exists", so it is stepped over and the migration
+// is recorded as done. SQLite says nothing about the content in that message,
+// so no reading of it could tell the two apart. What keeps it out is the rule
+// that a migration only ever adds and the lint of task 3, which refuses a name
+// that is not in its fixed lists - not this function.
 func (sqliteDialect) Exists(err error) bool {
-	return errors.Is(err, sqlite3.ERROR) && strings.Contains(err.Error(), "already exists")
+	if !errors.Is(err, sqlite3.ERROR) {
+		return false
+	}
+	// A CREATE that ran twice. Swallows a name collision over other columns,
+	// above.
+	if strings.Contains(err.Error(), "already exists") {
+		return true
+	}
+	// An ALTER TABLE ... ADD COLUMN that ran twice. It carries the same
+	// weakness as the wording above, and that is measured rather than assumed:
+	// a column of the same name and ANOTHER TYPE answers "duplicate column
+	// name: x" word for word the same, so no reading of this message could
+	// tell the two apart either. Same guard as above - a migration only ever
+	// adds, and the lint holds the names - not this function.
+	return strings.Contains(err.Error(), "duplicate column name")
 }
 
 func (sqliteDialect) Gone(err error) bool { return errors.Is(err, sqlite3.IOERR) }

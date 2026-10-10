@@ -438,10 +438,17 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 			//
 			// This branch reads every statement and not f.Statements[step:]
 			// as the one below does, and that is not an oversight: nothing in
-			// this branch ever writes updateStep, so step is 0 or the whole
-			// length here, and done above already catches the second. A
-			// slice expression that is provably always [0:] would promise a
-			// resume that one transaction does not need and does not have.
+			// this branch ever writes updateStep, and the whole file is one
+			// transaction, so a run that died here rolled back and left step
+			// where it was. A row that says some statements ran can therefore
+			// only come from somewhere else - a hand, or the other branch -
+			// and the honest answer to it is to play the file from the start,
+			// because stepping into the middle of it would skip statements
+			// this database may never have seen. What makes that safe is the
+			// step-over above, for ADD COLUMN as much as for CREATE;
+			// migrate's TestAColumnMigrationSurvivesASecondRun measures both
+			// shapes of the record. A slice expression here would promise a
+			// resume that one transaction does not have.
 			if _, err := tx.ExecContext(ctx, stmt); err != nil && !d.Exists(err) {
 				return false, at(i, f, err)
 			}
