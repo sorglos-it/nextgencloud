@@ -214,7 +214,7 @@ func TestTheDispatcherRunsBesideTheReader(t *testing.T) {
 	gate := make(chan struct{})
 	h.Grant = func(ctx context.Context, s *Session, c *link.Channel, o wire.Open) {
 		<-gate
-		_ = s.SendGrant(ctx, c, o.Window)
+		_ = s.SendGrant(ctx, c, o.Window, nil)
 	}
 	c := dialSession(t, h)
 	c.writeOpen(t, 1, openOf())
@@ -390,15 +390,15 @@ func TestNoGrantGoesOutWhenAllowSaysNo(t *testing.T) {
 	c := dialSession(t, h)
 	c.writeOpen(t, 1, openOf())
 	o := firstOpened(t, h)
-	if err := o.s.SendGrant(ctx, o.c, 0); !errors.Is(err, ErrGrant) {
+	if err := o.s.SendGrant(ctx, o.c, 0, nil); !errors.Is(err, ErrGrant) {
 		t.Fatalf("a credit of zero answered %v", err)
 	}
-	if err := o.s.SendGrant(ctx, o.c, wire.MaxWindow+1); !errors.Is(err, ErrGrant) {
+	if err := o.s.SendGrant(ctx, o.c, wire.MaxWindow+1, nil); !errors.Is(err, ErrGrant) {
 		t.Fatalf("a credit above the window answered %v", err)
 	}
 	// The next frame the browser sees must be the first GRANT that was allowed,
 	// not one of the two that were refused.
-	if err := o.s.SendGrant(ctx, o.c, wire.MinWindow); err != nil {
+	if err := o.s.SendGrant(ctx, o.c, wire.MinWindow, nil); err != nil {
 		t.Fatalf("a credit inside the window: %v", err)
 	}
 	f := c.read(t)

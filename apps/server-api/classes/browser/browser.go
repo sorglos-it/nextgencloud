@@ -37,10 +37,12 @@
 package browser
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
@@ -70,8 +72,20 @@ var ErrGrant = errors.New("browser: credit outside the window")
 var ErrCredit = errors.New("browser: not enough credit for this much data")
 
 // Opener takes a channel the browser opened; package coreapp implements it.
+//
+// raw is the payload of the OPEN frame, byte for byte as it arrived, and it is
+// handed over next to the parsed o because the two are not the same thing: an
+// OPEN that was decoded and encoded again is a DIFFERENT byte string (member
+// order, spacing), and the end-to-end prologue of a forwarded channel hashes
+// exactly these bytes (noisep.E2EPrologue). A dispatcher that only had o could
+// not forward a channel at all -- the controller would answer the rebuilt OPEN
+// with a decryption error, which names the wrong layer. Whoever tidies raw
+// away breaks every app channel.
+//
+// raw is a copy of its own, so it survives the next read of the link
+// (wire.Frame.Payload points into the link read buffer).
 type Opener interface {
-	OpenChannel(ctx context.Context, s *Session, c *link.Channel, o wire.Open)
+	OpenChannel(ctx context.Context, s *Session, c *link.Channel, o wire.Open, raw []byte)
 }
 
 // Session is one open session link.
@@ -161,6 +175,9 @@ func origins(l *trust.List) []string { return l.RP.Origins }
 
 // run reads the link until it ends.
 func (srv *Server) run(ctx context.Context, s *Session) {
+	// Whoever serves a channel waits in link.Channel.Next; once the link is
+	// gone they hear that at once instead of waiting out their own clock.
+	defer s.table.Hangup()
 	for {
 		f, err := s.link.Read(ctx)
 		if err != nil {
@@ -195,6 +212,9 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		if err != nil {
 			return s.protocolError(ctx, f.Channel)
 		}
+		// A copy of the payload, because it points into the buffer the link
+		// reads into and the dispatcher below runs beside the next read.
+		raw := bytes.Clone(f.Payload)
 		// Its own goroutine, and that is not decoration: a link has exactly one
 		// reader (link.Read), so a dispatcher called in line here would hold that
 		// one reader for as long as it runs -- no further frame of any channel
@@ -202,7 +222,7 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		// for the browser would wait for itself. It is the same reason feed hands
 		// nothing on into a queue nobody reads yet.
 		// TestTheDispatcherRunsBesideTheReader holds this line.
-		go srv.Open.OpenChannel(ctx, s, c, o)
+		go srv.Open.OpenChannel(ctx, s, c, o, raw)
 		return true
 	default:
 		c, ok := s.table.Get(f.Channel)
@@ -221,6 +241,12 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 func (s *Session) feed(ctx context.Context, c *link.Channel, f wire.Frame) bool {
 	switch f.Type {
 	case wire.TypeData:
+		// Counted HERE and not by whoever serves the channel, and that is the
+		// half of the shared count the compiler holds: the reader is the only
+		// code that ever sees an arriving frame, so a dispatcher cannot forget
+		// to count what it was handed. The other half -- nothing goes out
+		// that was not spent -- is held by SendData and SendGrant being the
+		// only ways to the link.
 		if !c.Take(len(f.Payload)) {
 			return s.protocolError(ctx, f.Channel)
 		}
@@ -231,8 +257,18 @@ func (s *Session) feed(ctx context.Context, c *link.Channel, f wire.Frame) bool 
 			// accepted the channel, never from the opener.
 			return s.protocolError(ctx, f.Channel)
 		}
+		// Counted and then dropped. A GRANT says nothing whoever serves the
+		// channel has to see, and queueing it would hand a peer a way to fill
+		// the queue of a channel with frames that cost no credit at all.
+		return true
 	case wire.TypeEOF, wire.TypeClose:
 	default:
+		return s.protocolError(ctx, f.Channel)
+	}
+	// DATA, EOF and CLOSE wait in the queue of the channel, where whoever
+	// serves it takes them with link.Channel.Next. A full queue is the same
+	// answer as more DATA than granted: E_PROTOCOL.
+	if !s.table.Deliver(f.Channel, f) {
 		return s.protocolError(ctx, f.Channel)
 	}
 	if f.Type == wire.TypeClose {
@@ -255,13 +291,16 @@ func (s *Session) feed(ctx context.Context, c *link.Channel, f wire.Frame) bool 
 // wire.MaxPayload and Seal at noisep.MaxPlaintext -- so here a failed write is
 // always an ended link and the table dies with it. SendData says what the same
 // sentence costs where the payload is not fixed.
-func (s *Session) SendGrant(ctx context.Context, c *link.Channel, credit uint32) error {
+func (s *Session) SendGrant(ctx context.Context, c *link.Channel, credit uint32, handshake []byte) error {
 	if !c.Allow(credit) {
 		return ErrGrant
 	}
-	// No Noise message 2 here: core apps have no end-to-end handshake, and the
-	// GRANT that carries one for a forwarded channel comes with the tunnel.
-	return s.link.Write(ctx, wire.Frame{Type: wire.TypeGrant, Channel: c.Num, Payload: wire.Grant(credit, nil)})
+	// handshake is Noise message 2 of a forwarded channel. It travels in the
+	// FIRST GRANT of the side that accepted the channel and nowhere else; a
+	// core app has no end-to-end handshake and passes nil. Which GRANT is the
+	// first one is the relay to know -- this function only carries what it is
+	// given, because credit and handshake have to leave in ONE frame.
+	return s.link.Write(ctx, wire.Frame{Type: wire.TypeGrant, Channel: c.Num, Payload: wire.Grant(credit, handshake)})
 }
 
 // SendData sends DATA on a channel and takes the bytes off what the browser
@@ -288,7 +327,7 @@ func (s *Session) SendData(ctx context.Context, c *link.Channel, payload []byte)
 // one number too many. The holding, the frame and the note are one call of
 // link.Table.FailChannel, so this function cannot hold a number and forget its CLOSE.
 func (s *Session) protocolError(ctx context.Context, num uint32) bool {
-	err := s.table.FailChannel(num, func() error { return s.writeClose(ctx, wire.CodeProtocol, num) })
+	err := s.table.FailChannel(num, func() error { return s.writeClose(ctx, wire.Error(wire.CodeProtocol), num) })
 	switch {
 	case err == nil:
 		return true
@@ -303,11 +342,36 @@ func (s *Session) protocolError(ctx context.Context, num uint32) bool {
 	}
 }
 
-// Close sends a CLOSE with a code for a channel and notes it. It is the way a
-// dispatcher ends a channel in order; a protocol error goes through
-// protocolError, which notes the CLOSE inside link.Table.FailChannel instead.
+// Close sends a CLOSE for a channel and notes it. It is the way a dispatcher
+// ends a channel in order; a protocol error goes through protocolError, which
+// notes the CLOSE inside link.Table.FailChannel instead.
+//
+// An empty code is the ok close of a channel that ran to its end, which is
+// what SendResult sends through here. Both ends live in this one function
+// because it is the only place of this package that notes a CLOSE of ours,
+// and that is a sentence lint_test.go measures.
 func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
-	if err := s.writeClose(ctx, code, num); err != nil {
+	cl := wire.Error(code)
+	if code == "" {
+		cl = wire.Close{Status: wire.StatusOK}
+	}
+	return s.closeChannel(ctx, num, cl)
+}
+
+// CloseWith sends a CLOSE that came from a controller, exactly as it stands.
+// It is not the same as Close and may not be built out of it: a CLOSE of the
+// far side can be status ok with no code at all, or carry a message and an
+// exit code, and a relay that rebuilt it from the code alone would have to
+// invent one where there is none (measured in task 17).
+func (s *Session) CloseWith(ctx context.Context, c *link.Channel, cl wire.Close) error {
+	return s.closeChannel(ctx, c.Num, cl)
+}
+
+// closeChannel writes one CLOSE and notes it. It is the ONE place of this
+// package that notes a CLOSE of ours -- the sentence lint_test.go measures --
+// and Close and CloseWith are the two ways in.
+func (s *Session) closeChannel(ctx context.Context, num uint32, cl wire.Close) error {
+	if err := s.writeClose(ctx, cl, num); err != nil {
 		return err
 	}
 	if c, ok := s.table.Get(num); ok {
@@ -317,8 +381,8 @@ func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
 }
 
 // writeClose puts one CLOSE frame with a code on the link and notes nothing.
-func (s *Session) writeClose(ctx context.Context, code wire.Code, num uint32) error {
-	payload, err := json.Marshal(wire.Error(code))
+func (s *Session) writeClose(ctx context.Context, cl wire.Close, num uint32) error {
+	payload, err := json.Marshal(cl)
 	if err != nil {
 		return err
 	}
@@ -327,3 +391,130 @@ func (s *Session) writeClose(ctx context.Context, code wire.Code, num uint32) er
 
 // End closes the whole link.
 func (s *Session) End(reason string) { _ = s.link.Close(websocket.StatusNormalClosure, reason) }
+
+// Next hands the next frame of a channel to whoever serves it, out of the
+// queue that this package's one reader fills (link.Table.Deliver). False means
+// nothing more will come: the session is gone, or ctx ended.
+//
+// Who may read from the queue and who from the socket, in one sentence: ONLY
+// Server.run reads the socket, and everyone else reads the queue. The sentence
+// is held by the compiler and not by a comment -- Session.link is unexported,
+// so no package outside this one has anything to read a socket with, and
+// link.Table.Deliver is a method of the table, which is unexported too. A
+// dispatcher is handed a *link.Channel, and that carries Next and no Deliver.
+// TestOnlyTheReaderFillsTheQueue measures the effect of it.
+//
+// Why it matters that nobody else reads the socket: a read of coder/websocket
+// with a deadline ends the whole link instead of the read (link.go, Read). A
+// second reader with a clock of its own would therefore kill the session of
+// every other channel, and the relay needs clocks.
+func (s *Session) Next(ctx context.Context, c *link.Channel) (wire.Frame, bool) {
+	return c.Next(ctx)
+}
+
+// SendEOF ends what this side sends on a channel.
+func (s *Session) SendEOF(ctx context.Context, c *link.Channel) error {
+	return s.link.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: c.Num})
+}
+
+// ReadInput reads the DATA of a FlowIn channel up to the browser's EOF, at
+// most max bytes, and grants credit again as it consumes. An empty code means
+// the input is complete; E_TOOLARGE means more than max came, E_PROTOCOL a
+// CLOSE instead of an EOF, and E_TIMEOUT a context that ended first.
+//
+// The bound holds the memory of the channel and not only the answer: past max
+// nothing more is buffered and no further credit is granted, so a sender that
+// keeps going runs out of credit instead of filling this process.
+func (s *Session) ReadInput(ctx context.Context, c *link.Channel, max int64) ([]byte, wire.Code) {
+	var buf bytes.Buffer
+	for {
+		f, ok := c.Next(ctx)
+		if !ok {
+			return nil, wire.CodeTimeout
+		}
+		switch f.Type {
+		case wire.TypeData:
+			if int64(buf.Len())+int64(len(f.Payload)) > max {
+				return nil, wire.CodeTooLarge
+			}
+			buf.Write(f.Payload)
+			// Granted again right here, so an upload larger than one window
+			// does not stall. An empty payload grants nothing: a credit of
+			// zero is no GRANT (wire.ParseGrant), and ErrGrant would end a
+			// channel over a frame that cost nothing.
+			if len(f.Payload) > 0 {
+				if err := s.SendGrant(ctx, c, uint32(len(f.Payload)), nil); err != nil {
+					return nil, wire.CodeInternal
+				}
+			}
+		case wire.TypeEOF:
+			return buf.Bytes(), ""
+		case wire.TypeClose:
+			// A CLOSE instead of an EOF is the browser giving the channel up
+			// in the middle of its input; whoever asked for the input stops
+			// rather than acting on half an upload.
+			return nil, wire.CodeProtocol
+		default:
+			return nil, wire.CodeProtocol
+		}
+	}
+}
+
+// SendResult sends the result of a call-style channel and closes it with ok.
+// It cuts the body into frames of at most wire.MaxPayload bytes, because
+// SendData says what a payload over that costs: the credit is spent while
+// nothing went out.
+//
+// The browser grants at least wire.MinWindow and more on request, so a result
+// larger than that waits for its GRANT here. A browser that grants nothing
+// more makes the channel end rather than hold a goroutine for the life of the
+// link: every wait of this project has a bound.
+func (s *Session) SendResult(ctx context.Context, c *link.Channel, body []byte) error {
+	for len(body) > 0 {
+		n := min(len(body), wire.MaxPayload)
+		if !c.SendAllowed(n) {
+			if err := s.waitCredit(ctx, c, n); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.SendData(ctx, c, body[:n]); err != nil {
+			return err
+		}
+		body = body[n:]
+	}
+	if err := s.SendEOF(ctx, c); err != nil {
+		return err
+	}
+	// Through Close and not with a CLOSE of its own: closeChannel is the one
+	// place of this package that notes a CLOSE it sent, and lint_test.go holds
+	// that. An empty code is the ok close.
+	return s.Close(ctx, "", c.Num)
+}
+
+// CreditWait bounds one wait for credit on a session channel. It is policy and
+// no byte on the line depends on it; it is here so that a browser which grants
+// nothing more ends the channel instead of holding a goroutine for the life of
+// the link.
+const CreditWait = 20 * time.Second
+
+// waitCredit waits until the channel may send n bytes, at most CreditWait.
+// link.Channel has no signal of its own, so this looks again on a short
+// interval; the price is one wake-up per interval per waiting channel.
+func (s *Session) waitCredit(ctx context.Context, c *link.Channel, n int) error {
+	deadline := time.After(CreditWait)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			if c.SendAllowed(n) {
+				return nil
+			}
+		case <-deadline:
+			return ErrCredit
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}

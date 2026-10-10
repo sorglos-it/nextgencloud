@@ -36,6 +36,20 @@ type Channel struct {
 	in        uint64 // bytes the other side may still send
 	sentClose bool
 	recvClose bool
+
+	// queue holds the frames of this channel that arrived and were not read
+	// yet, and woke wakes whoever waits in Next. Both belong to the buffer
+	// (buffer.go), which is the one place a frame waits between the link's
+	// single reader and whoever serves the channel.
+	queue []wire.Frame
+	woke  chan struct{}
+	gone  bool
+}
+
+// newChannel makes a channel with the credit of both directions and the
+// one-place wake-up of its queue (buffer.go).
+func newChannel(num uint32, t *Table, out, in uint64) *Channel {
+	return &Channel{Num: num, owner: t, out: out, in: in, woke: make(chan struct{}, 1)}
 }
 
 // SendAllowed reports whether n more bytes of DATA payload fit into what the
@@ -147,6 +161,7 @@ type Table struct {
 	mu   sync.Mutex
 	ch   map[uint32]*Channel
 	next uint32
+	gone bool // the link is gone (Hangup)
 }
 
 // NewTable returns a table for at most max numbers that are not free
@@ -180,7 +195,7 @@ func (t *Table) Open(num, window uint32) (*Channel, error) {
 	if len(t.ch) >= t.max {
 		return nil, ErrLimit
 	}
-	c := &Channel{Num: num, owner: t, out: uint64(window)}
+	c := newChannel(num, t, uint64(window), 0)
 	t.ch[num] = c
 	return c, nil
 }
@@ -216,7 +231,7 @@ func (t *Table) Next(window uint32) (*Channel, error) {
 		if _, taken := t.ch[num]; taken {
 			continue
 		}
-		c := &Channel{Num: num, owner: t, in: uint64(window)}
+		c := newChannel(num, t, 0, uint64(window))
 		t.ch[num] = c
 		return c, nil
 	}
@@ -280,7 +295,7 @@ func (t *Table) hold(num uint32) (*Channel, error) {
 	if len(t.ch) >= t.max {
 		return nil, ErrLimit
 	}
-	c := &Channel{Num: num, owner: t}
+	c := newChannel(num, t, 0, 0)
 	t.ch[num] = c
 	return c, nil
 }

@@ -49,8 +49,6 @@ type Server struct {
 	// OnReport takes an update report, OnNotice a notice (tasks 23 and 15).
 	OnReport func(ctx context.Context, t *Tunnel, r store.UpdateReport)
 	OnNotice func(ctx context.Context, t *Tunnel, n core.Notice)
-	// OnFrame takes a frame of a numbered channel: package relay runs them.
-	OnFrame func(ctx context.Context, t *Tunnel, f wire.Frame) bool
 }
 
 // idle is the quiet time of this server's tunnels.
@@ -143,6 +141,9 @@ func (srv *Server) staticKey() (noise.DHKey, error) {
 // run exchanges hello and then reads the tunnel until it ends.
 func (srv *Server) run(ctx context.Context, t *Tunnel) {
 	defer srv.Tunnels.remove(t)
+	// Whoever serves a channel waits in link.Channel.Next; once the tunnel is
+	// gone they hear that at once instead of waiting out their own clock.
+	defer t.table.Hangup()
 	if err := srv.sendHello(ctx, t); err != nil {
 		_ = t.link.Close(websocket.StatusInternalError, "hello")
 		return
@@ -170,15 +171,54 @@ func (srv *Server) run(ctx context.Context, t *Tunnel) {
 		// The API is the opener on a tunnel, so every number on it is one the
 		// API picked: a frame for a number that is not in the table belongs to
 		// a channel that was never opened, and that ends the tunnel.
-		if _, ok := t.table.Get(f.Channel); !ok {
+		c, ok := t.table.Get(f.Channel)
+		if !ok {
 			_ = t.link.Close(websocket.StatusProtocolError, "channel")
 			return
 		}
-		if srv.OnFrame == nil || !srv.OnFrame(ctx, t, f) {
+		if !t.frame(c, f) {
 			_ = t.link.Close(websocket.StatusProtocolError, "channel")
 			return
 		}
 	}
+}
+
+// frame counts one frame of a numbered channel and puts it into that
+// channel's queue, where whoever serves the channel takes it with
+// Tunnel.Next. False ends the tunnel.
+//
+// The counting happens HERE, in the tunnel's one reader, and not in whoever
+// serves the channel: this is the only code that sees a frame arrive, so a
+// relay cannot forget to count what it was handed. What may be sent is counted
+// on the other side, in Tunnel.SendData and Tunnel.Grant (hop.go).
+//
+// A GRANT is counted and still queued, unlike on a session link: its payload
+// may carry Noise message 2 of the end-to-end handshake, and whoever serves
+// the channel has to see that. A peer that sent nothing but GRANTs to fill the
+// queue runs into link.MaxQueuedFrames, which answers false here, and into
+// wire.MaxWindow, which answers false in Grant.
+func (t *Tunnel) frame(c *link.Channel, f wire.Frame) bool {
+	switch f.Type {
+	case wire.TypeData:
+		if !c.Take(len(f.Payload)) {
+			return false
+		}
+	case wire.TypeGrant:
+		credit, _, err := wire.ParseGrant(f.Payload)
+		if err != nil || !c.Grant(credit) {
+			return false
+		}
+	case wire.TypeEOF, wire.TypeClose:
+	default:
+		return false
+	}
+	if !t.table.Deliver(f.Channel, f) {
+		return false
+	}
+	if f.Type == wire.TypeClose {
+		c.RecvClose()
+	}
+	return true
 }
 
 // sendHello sends this API's hello, the first message on channel 0.

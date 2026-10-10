@@ -230,9 +230,12 @@ func TestOnlyProtocolErrorHoldsANumber(t *testing.T) {
 	if got := names(fail); len(got) != 1 || got[0] != "protocolError" {
 		t.Fatalf("a number is held in %v, not in protocolError alone", got)
 	}
+	// closeChannel and not Close: Close and CloseWith are the two ways in and
+	// both go through it, so the ONE place that notes a CLOSE of ours is that
+	// function. The sentence is "one place", not "a place called Close".
 	sent := p.selectors("SentClose")
-	if got := names(sent); len(got) != 1 || got[0] != "Close" {
-		t.Fatalf("SentClose is noted in %v, not in Close alone", got)
+	if got := names(sent); len(got) != 1 || got[0] != "closeChannel" {
+		t.Fatalf("SentClose is noted in %v, not in closeChannel alone", got)
 	}
 }
 

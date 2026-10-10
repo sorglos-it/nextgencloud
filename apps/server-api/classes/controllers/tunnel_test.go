@@ -220,16 +220,14 @@ func TestTunnelEndsOnBye(t *testing.T) {
 
 // TestTunnelEndsOnAFrameForAChannelNobodyOpened holds the use of the table: the
 // API picks the numbers on a tunnel, so a number it never picked is no channel.
-// OnFrame is set to a hook that would take anything, because without one the
-// tunnel ends on the nil hook instead and the case would hold nothing --
-// measured on a mutant that dropped the table check and stayed alive.
+//
+// The open way stands in the case below it, and that is what keeps this one
+// honest: a DATA frame on a number the API DID open does not end the tunnel
+// and lands in that channel's queue. Without that pair, a tunnel that ended on
+// every DATA frame would pass here -- measured on a mutant that dropped the
+// table check and stayed alive while the hook was the only reason it died.
 func TestTunnelEndsOnAFrameForAChannelNobodyOpened(t *testing.T) {
-	srv, fx := newServer(t)
-	handed := make(chan uint32, 1)
-	srv.OnFrame = func(_ context.Context, _ *Tunnel, f wire.Frame) bool {
-		handed <- f.Channel
-		return true
-	}
+	_, fx := newServer(t)
 	c := dialTunnel(t, fx, fx.ControllerKeys)
 	c.writeControl(t, wire.CtlHello, controllerHello(fx))
 	c.readHello(t)
@@ -237,10 +235,33 @@ func TestTunnelEndsOnAFrameForAChannelNobodyOpened(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	wantEnded(t, c)
-	select {
-	case num := <-handed:
-		t.Fatalf("channel %d was handed on although nobody opened it", num)
-	default:
+}
+
+// TestAFrameOfAnOpenedChannelWaitsInItsQueue is the open way of the case
+// above, and at the same time the seam package relay reads through: the
+// tunnel's one reader counts the frame and puts it in the channel's queue,
+// where Tunnel.Next hands it out. Nobody but that reader touches the socket.
+func TestAFrameOfAnOpenedChannelWaitsInItsQueue(t *testing.T) {
+	srv, fx := newServer(t)
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	c.writeControl(t, wire.CtlHello, controllerHello(fx))
+	c.readHello(t)
+	tn := waitForTunnel(t, srv, fx.ControllerNode)
+	ch, err := tn.Open(wire.DefaultWindow)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := tn.Grant(ctx, ch, wire.MinWindow); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := c.writeFrame(wire.Frame{Type: wire.TypeData, Channel: ch.Num, Payload: []byte("x")}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	rctx, cancel := context.WithTimeout(ctx, readWait)
+	defer cancel()
+	f, got := tn.Next(rctx, ch)
+	if !got || f.Type != wire.TypeData || string(f.Payload) != "x" {
+		t.Fatalf("%+v %v", f, got)
 	}
 }
 
