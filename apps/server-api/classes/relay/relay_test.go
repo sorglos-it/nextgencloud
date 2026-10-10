@@ -162,13 +162,13 @@ func TestDataOfTheShellGoesOneToOne(t *testing.T) {
 	// destroys an end-to-end message, and the shell then sees a failed
 	// decryption and not a credit problem.
 	big := bytes.Repeat([]byte("x"), wire.MinWindow+1)
-	sh.send(wire.Frame{Type: wire.TypeData, Channel: 7, Payload: big})
+	sh.send(t, c, wire.Frame{Type: wire.TypeData, Channel: 7, Payload: big})
 	hop.send(grant(wire.MinWindow, nil))
 	e := hop.await(t, "data")
 	if !bytes.Equal(e.payload, big) {
 		t.Fatalf("payload to the controller: %d bytes, want %d whole", len(e.payload), len(big))
 	}
-	sh.send(wire.Frame{Type: wire.TypeEOF, Channel: 7})
+	sh.send(t, c, wire.Frame{Type: wire.TypeEOF, Channel: 7})
 	hop.await(t, "eof")
 }
 
@@ -220,12 +220,7 @@ func TestResultOfAControllerIsBounded(t *testing.T) {
 	hop.send(grant(wire.MinWindow, nil))
 	sh.await(t, "grant")
 
-	chunk := bytes.Repeat([]byte("r"), wire.MaxPayload)
-	go func() {
-		for sent := 0; sent <= wire.MaxCallResult; sent += len(chunk) {
-			hop.send(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: chunk})
-		}
-	}()
+	go feed(hop, wire.MaxCallResult+1)
 	e := sh.await(t, "closecode")
 	if e.code != wire.CodeTooLarge {
 		t.Fatalf("code %q, want %q", e.code, wire.CodeTooLarge)
@@ -261,7 +256,7 @@ func TestShellSendsNoDataOnTransfer(t *testing.T) {
 	// The API writes the header and the file itself; its EOF ends that input.
 	hop.await(t, "eof")
 
-	sh.send(wire.Frame{Type: wire.TypeData, Channel: 7, Payload: []byte("x")})
+	sh.send(t, c, wire.Frame{Type: wire.TypeData, Channel: 7, Payload: []byte("x")})
 	e := sh.await(t, "closecode")
 	if e.code != wire.CodeProtocol {
 		t.Fatalf("code %q, want %q", e.code, wire.CodeProtocol)
@@ -312,20 +307,62 @@ func TestControllerCannotOpenAChannel(t *testing.T) {
 	}
 }
 
-func TestGrantBeyondMaxWindowEndsTheChannel(t *testing.T) {
+func TestCreditOfTheHopIsCountedOnce(t *testing.T) {
+	// The measurement behind "the relay does not count what arrives": a GRANT
+	// of MinWindow must leave exactly MinWindow on the hop, not twice that.
+	// The tunnel's own reader adds it before the frame is queued, so a relay
+	// that adds it again would believe it may send more than the controller
+	// allowed -- and the controller would answer that with E_PROTOCOL.
+	//
+	// Both sides of the figure are nailed down: MinWindow fits, one byte more
+	// does not.
 	rl := newRelay()
 	sh, hop := newShell(), newHop(wire.MaxTunnelChannels)
 	fw := forwarded(t, rawOpen(t, "vendor.app", "main", "run", true), "c1")
 	c := sh.channel(t)
 	go rl.ForwardRaw(context.Background(), sh, c, hop, fw)
 	hop.await(t, "open")
-	// On the limit MaxWindow is allowed; one credit on top of it is not.
+	hop.send(grant(wire.MinWindow, handshake()))
+	sh.await(t, "grant")
+
+	tc, ok := hop.Get(1)
+	if !ok {
+		t.Fatal("the hop channel is gone")
+	}
+	if !tc.SendAllowed(wire.MinWindow) {
+		t.Fatalf("the hop may not send %d bytes, and the controller granted that much", wire.MinWindow)
+	}
+	if tc.SendAllowed(wire.MinWindow + 1) {
+		t.Fatalf("the hop may send more than %d bytes: the credit was counted twice", wire.MinWindow)
+	}
+}
+
+func TestGrantBeyondTheWindowIsNotOursToAnswer(t *testing.T) {
+	// Where that check went: a GRANT that would lift the allowance above
+	// wire.MaxWindow is refused by the tunnel's reader, which ends the whole
+	// tunnel (controllers.Tunnel.frame). It never reaches a channel, so this
+	// package has no answer to give -- and what is measured here is that it
+	// invents none: the credit does not grow, and no second GRANT goes to the
+	// shell.
+	rl := newRelay()
+	sh, hop := newShell(), newHop(wire.MaxTunnelChannels)
+	fw := forwarded(t, rawOpen(t, "vendor.app", "main", "run", true), "c1")
+	c := sh.channel(t)
+	go rl.ForwardRaw(context.Background(), sh, c, hop, fw)
+	hop.await(t, "open")
 	hop.send(grant(wire.MaxWindow, handshake()))
 	sh.await(t, "grant")
 	hop.send(grant(1, nil))
-	e := sh.await(t, "closecode")
-	if e.code != wire.CodeProtocol {
-		t.Fatalf("code %q, want %q", e.code, wire.CodeProtocol)
+
+	tc, ok := hop.Get(1)
+	if !ok {
+		t.Fatal("the hop channel is gone")
+	}
+	if tc.SendAllowed(wire.MaxWindow + 1) {
+		t.Fatal("the credit grew past wire.MaxWindow")
+	}
+	if n := len(sh.events()); n != 1 {
+		t.Fatalf("the shell heard %d things, want the one first GRANT: %v", n, sh.kinds())
 	}
 }
 
@@ -353,18 +390,21 @@ func TestChannelNumberIsFreeOnlyAfterBothCloses(t *testing.T) {
 	done := make(chan wire.Code, 1)
 	go func() { done <- rl.ForwardRaw(context.Background(), sh, c, hop, fw) }()
 	hop.await(t, "open")
-	if n := hop.Table().Count(); n != 1 {
+	if n := hop.tbl.Count(); n != 1 {
 		t.Fatalf("tunnel channels %d, want 1", n)
 	}
-	// A GRANT beyond the window makes the API send its own CLOSE.
-	hop.send(grant(wire.MaxWindow, handshake()))
+	// A handshake in a later GRANT makes the API send its own CLOSE; that is
+	// a rule of this package, unlike the window, which the tunnel's reader
+	// answers by ending the tunnel.
+	hop.send(grant(wire.MinWindow, handshake()))
 	sh.await(t, "grant")
-	hop.send(grant(1, nil))
+	hop.send(grant(wire.MinWindow, handshake()))
 	sh.await(t, "closecode")
 
 	before := len(sh.events())
 	// A frame after our own CLOSE is dropped; the controller's CLOSE among
-	// them still counts and frees the number.
+	// them still counts (the tunnel's reader notes it) and frees the number,
+	// because our own CLOSE was noted when it went out.
 	hop.send(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("late")})
 	payload, err := json.Marshal(wire.Error(wire.CodeProtocol))
 	if err != nil {
@@ -372,7 +412,7 @@ func TestChannelNumberIsFreeOnlyAfterBothCloses(t *testing.T) {
 	}
 	hop.send(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: payload})
 	<-done
-	if n := hop.Table().Count(); n != 0 {
+	if n := hop.tbl.Count(); n != 0 {
 		t.Fatalf("tunnel channels %d after both closes, want 0", n)
 	}
 	for _, e := range sh.events()[before:] {
@@ -434,10 +474,7 @@ func TestCallResultBeyondTheLimitIsTooLarge(t *testing.T) {
 	go func() {
 		hop.await(t, "open")
 		hop.send(grant(wire.MaxWindow, nil))
-		chunk := bytes.Repeat([]byte("r"), wire.MaxPayload)
-		for sent := 0; sent <= wire.MaxCallResult; sent += len(chunk) {
-			hop.send(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: chunk})
-		}
+		feed(hop, wire.MaxCallResult+1)
 	}()
 	_, code := rl.CallController(context.Background(), hop, core.AppStore,
 		core.ServiceController, core.ActDeactivate, nil, nil)
@@ -504,9 +541,9 @@ func TestBothDirectionsAtOnce(t *testing.T) {
 	}()
 	go func() {
 		for i := range want {
-			sh.send(wire.Frame{Type: wire.TypeData, Channel: 7, Payload: want[i]})
+			sh.send(t, c, wire.Frame{Type: wire.TypeData, Channel: 7, Payload: want[i]})
 		}
-		sh.send(wire.Frame{Type: wire.TypeEOF, Channel: 7})
+		sh.send(t, c, wire.Frame{Type: wire.TypeEOF, Channel: 7})
 	}()
 	sh.await(t, "eof")
 	hop.await(t, "eof")
@@ -549,7 +586,7 @@ func TestAPayloadIsNeverCutToFitTheCredit(t *testing.T) {
 	hop.send(grant(wire.MinWindow, handshake()))
 	sh.await(t, "grant")
 
-	sh.send(wire.Frame{Type: wire.TypeData, Channel: 7, Payload: bytes.Repeat([]byte("x"), wire.MinWindow+1)})
+	sh.send(t, c, wire.Frame{Type: wire.TypeData, Channel: 7, Payload: bytes.Repeat([]byte("x"), wire.MinWindow+1)})
 	e := sh.await(t, "closecode")
 	if e.code != wire.CodeTimeout {
 		t.Fatalf("code %q, want %q", e.code, wire.CodeTimeout)
@@ -589,11 +626,8 @@ func TestEndToEndResultIsNotBoundedHere(t *testing.T) {
 	hop.send(grant(wire.MaxWindow, handshake()))
 	sh.await(t, "grant")
 
-	chunk := bytes.Repeat([]byte("r"), wire.MaxPayload)
 	go func() {
-		for sent := 0; sent <= wire.MaxCallResult; sent += len(chunk) {
-			hop.send(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: chunk})
-		}
+		feed(hop, wire.MaxCallResult+1)
 		hop.send(wire.Frame{Type: wire.TypeEOF, Channel: 1})
 	}()
 	// The EOF only arrives if nothing closed the channel on the way.
@@ -639,7 +673,7 @@ func TestNormalCloseGivesTheNumberBackAtOnce(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("the channel was still waiting after 2 s, and CloseDrain is %v", CloseDrain)
 	}
-	if n := hop.Table().Count(); n != 0 {
+	if n := hop.tbl.Count(); n != 0 {
 		t.Fatalf("tunnel channels %d, want 0", n)
 	}
 }
@@ -697,7 +731,7 @@ func TestTheShellsCloseTravelsUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
 		}
-		sh.send(wire.Frame{Type: wire.TypeClose, Channel: 7, Payload: payload})
+		sh.send(t, c, wire.Frame{Type: wire.TypeClose, Channel: 7, Payload: payload})
 		e := hop.await(t, "close")
 		got, err := wire.ParseClose(e.payload)
 		if err != nil {
@@ -748,5 +782,168 @@ func TestTransferTheAPIMakesForItself(t *testing.T) {
 	}
 	if rest, _ := io.ReadAll(&stream); string(rest) != "file" {
 		t.Errorf("file %q, want %q", rest, "file")
+	}
+}
+
+// feed sends DATA of wire.MaxPayload bytes until total bytes have gone, and it
+// does so one window at a time. That is not decoration: since the seam of task
+// 15 the tunnel's reader takes the bytes off what the controller may send
+// BEFORE the frame is queued, so a case that fires 128 frames into the queue
+// at once runs out of window after four of them and measures the window
+// instead of what it meant to measure. The relay hands the credit back with a
+// GRANT once the bytes are through, so waiting for that GRANT is waiting for
+// room.
+//
+// It stops when the relay has closed the channel, which is what the cases
+// about a limit are waiting for, and it answers how much really went.
+func feed(hop *fakeHop, total int) int {
+	chunk := bytes.Repeat([]byte("r"), wire.MaxPayload)
+	sent, grants := 0, 0
+	for sent < total {
+		hop.send(wire.Frame{Type: wire.TypeData, Channel: 1, Payload: chunk})
+		sent += len(chunk)
+		grants++
+		deadline := time.After(5 * time.Second)
+		for {
+			got, closed := 0, false
+			for _, e := range hop.events() {
+				switch e.kind {
+				case "grant":
+					got++
+				case "close":
+					closed = true
+				}
+			}
+			if closed {
+				return sent
+			}
+			if got >= grants {
+				break
+			}
+			select {
+			case <-hop.seen:
+			case <-deadline:
+				return sent
+			}
+		}
+	}
+	return sent
+}
+
+func TestArrivingDataIsCountedOnce(t *testing.T) {
+	// The other half of "the relay does not count what arrives", and the one
+	// that only shows over several frames: the tunnel's reader takes the bytes
+	// off what the controller may send, and the relay hands the same amount
+	// back with a GRANT once the shell has them. Net zero per frame, so a
+	// controller may keep sending for ever.
+	//
+	// A relay that took the bytes a second time would spend twice and hand
+	// back once -- net minus one frame per frame -- and the window of
+	// wire.DefaultWindow would be gone after four frames of wire.MaxPayload.
+	// Eight is comfortably past that.
+	const frames = 8
+	rl := newRelay()
+	sh, hop := newShell(), newHop(wire.MaxTunnelChannels)
+	sh.noCredit = true
+	fw := forwarded(t, rawOpen(t, "vendor.app", "main", "run", true), "c1")
+	c := sh.channel(t)
+	go rl.ForwardRaw(context.Background(), sh, c, hop, fw)
+	hop.await(t, "open")
+	hop.send(grant(wire.MaxWindow, handshake()))
+	sh.await(t, "grant")
+
+	if n := feed(hop, frames*wire.MaxPayload); n != frames*wire.MaxPayload {
+		t.Fatalf("only %d of %d bytes got through: the window ran out", n, frames*wire.MaxPayload)
+	}
+	got := 0
+	for _, e := range sh.events() {
+		if e.kind == "data" {
+			got += len(e.payload)
+		}
+	}
+	if got != frames*wire.MaxPayload {
+		t.Fatalf("%d bytes reached the shell, want %d", got, frames*wire.MaxPayload)
+	}
+}
+
+func TestFramesAfterOurCloseAreTakenOutOfTheQueue(t *testing.T) {
+	// Dropping a frame is not the same as leaving it lying. Between our CLOSE
+	// and the controller's, whatever still arrives has to come out of the
+	// queue: a queue nobody empties reaches link.MaxQueuedFrames, and the
+	// tunnel's reader answers that by ending the TUNNEL -- every other
+	// channel of every other user on it with it.
+	//
+	// EOF frames on purpose: they cost no credit, so the window cannot be what
+	// stops them, and the count is the only thing left to measure.
+	const stray = 64
+	rl := &Relay{Drain: 2 * time.Second}
+	sh, hop := newShell(), newHop(wire.MaxTunnelChannels)
+	fw := forwarded(t, rawOpen(t, "vendor.app", "main", "run", true), "c1")
+	c := sh.channel(t)
+	go rl.ForwardRaw(context.Background(), sh, c, hop, fw)
+	hop.await(t, "open")
+	hop.send(grant(wire.MinWindow, handshake()))
+	sh.await(t, "grant")
+	hop.send(grant(wire.MinWindow, handshake())) // a later handshake: our CLOSE
+	sh.await(t, "closecode")
+
+	tc, ok := hop.Get(1)
+	if !ok {
+		t.Fatal("the hop channel is gone")
+	}
+	for range stray {
+		hop.send(wire.Frame{Type: wire.TypeEOF, Channel: 1})
+	}
+	deadline := time.After(5 * time.Second)
+	for tc.Queued() > 0 {
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-deadline:
+			t.Fatalf("%d of %d frames are still in the queue", tc.Queued(), stray)
+		}
+	}
+}
+
+func TestCreditWakesTheSender(t *testing.T) {
+	// The wait for credit is woken by the GRANT that raises it, and this is
+	// what that buys: a payload that has to wait travels as soon as the credit
+	// is there, not when the clock runs out.
+	//
+	// The condition is established, not hoped for. The payload is handed over
+	// first and the case waits until the relay has really taken it out of the
+	// queue, then waits 200 ms more -- so the relay is inside its wait -- and
+	// only then sends the credit. The margin is 25 to 1: a relay that is not
+	// woken answers after Wait, which is five seconds here.
+	rl := newRelay()
+	rl.Wait = 5 * time.Second
+	sh, hop := newShell(), newHop(wire.MaxTunnelChannels)
+	fw := forwarded(t, rawOpen(t, "vendor.app", "main", "run", true), "c1")
+	c := sh.channel(t)
+	go rl.ForwardRaw(context.Background(), sh, c, hop, fw)
+	hop.await(t, "open")
+	hop.send(grant(wire.MinWindow, handshake()))
+	sh.await(t, "grant")
+
+	big := bytes.Repeat([]byte("x"), wire.MinWindow+1)
+	sh.send(t, c, wire.Frame{Type: wire.TypeData, Channel: 7, Payload: big})
+	deadline := time.After(5 * time.Second)
+	for c.Queued() > 0 {
+		select {
+		case <-time.After(5 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("the relay never took the payload out of the queue")
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	start := time.Now()
+	hop.send(grant(wire.MinWindow, nil))
+	e := hop.await(t, "data")
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("the payload went %v after the credit, and the wait is %v: nothing woke it",
+			took, rl.wait())
+	}
+	if !bytes.Equal(e.payload, big) {
+		t.Fatalf("payload %d bytes, want %d", len(e.payload), len(big))
 	}
 }

@@ -99,14 +99,14 @@ func (rl *Relay) call(ctx context.Context, hop Hop, payload []byte, in io.Reader
 	// end it, so this clock is the only thing that does.
 	cctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
-	tc, err := hop.Table().Next(wire.DefaultWindow)
+	tc, err := hop.Open(wire.DefaultWindow)
 	if err != nil {
 		if errors.Is(err, link.ErrLimit) {
 			return nil, wire.CodeLimit
 		}
 		return nil, wire.CodeInternal
 	}
-	if err := hop.Write(cctx, wire.Frame{Type: wire.TypeOpen, Channel: tc.Num, Payload: payload}); err != nil {
+	if err := hop.SendOpen(cctx, tc, payload); err != nil {
 		return nil, wire.CodeUnreachable
 	}
 	body, code := rl.collect(cctx, hop, tc, in)
@@ -126,7 +126,7 @@ func (rl *Relay) call(ctx context.Context, hop Hop, payload []byte, in io.Reader
 func (rl *Relay) collect(ctx context.Context, hop Hop, tc *link.Channel, in io.Reader) ([]byte, wire.Code) {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	st := &chanState{cancel: cancel}
+	st := newChanState(cancel)
 	var buf bytes.Buffer
 	eof := false
 	first := true
@@ -140,26 +140,26 @@ func (rl *Relay) collect(ctx context.Context, hop Hop, tc *link.Channel, in io.R
 		}
 		switch f.Type {
 		case wire.TypeGrant:
-			credit, handshake, err := wire.ParseGrant(f.Payload)
-			// A channel the API opened for itself is never end to end, so no
-			// GRANT on it carries a handshake.
-			if err != nil || len(handshake) != 0 || !tc.Grant(credit) {
+			// The credit is already counted by the tunnel's own reader; what is
+			// read here is whether a handshake came with it, and a channel the
+			// API opened for itself is never end to end, so none may.
+			_, handshake, err := wire.ParseGrant(f.Payload)
+			if err != nil || len(handshake) != 0 {
 				return nil, wire.CodeProtocol
 			}
+			st.wakeCredit()
 			if first {
 				first = false
 				// Beside the reading, because a large input needs the GRANTs
 				// that arrive while it is being sent.
 				go func() {
-					if code := rl.sendStream(sctx, hop, tc, in); code != "" {
+					if code := rl.sendStream(sctx, hop, tc, st, in); code != "" {
 						st.fail(code)
 					}
 				}()
 			}
 		case wire.TypeData:
-			if !tc.Take(len(f.Payload)) {
-				return nil, wire.CodeProtocol
-			}
+			// Counted by the tunnel's reader before it was queued, never here.
 			if !st.count(len(f.Payload)) {
 				return nil, wire.CodeTooLarge
 			}
@@ -194,12 +194,13 @@ func (rl *Relay) collect(ctx context.Context, hop Hop, tc *link.Channel, in io.R
 // sendStream writes a byte stream of the API's own and ends it with EOF. This
 // hop may be cut at any point (see the package comment), so it is cut at
 // wire.MaxPayload.
-func (rl *Relay) sendStream(ctx context.Context, hop Hop, tc *link.Channel, in io.Reader) wire.Code {
+func (rl *Relay) sendStream(ctx context.Context, hop Hop, tc *link.Channel, st *chanState,
+	in io.Reader) wire.Code {
 	buf := make([]byte, wire.MaxPayload)
 	for {
 		n, err := in.Read(buf)
 		if n > 0 {
-			if code := rl.sendWhole(ctx, hop, tc, buf[:n]); code != "" {
+			if code := rl.sendWhole(ctx, hop, tc, st, buf[:n]); code != "" {
 				return code
 			}
 		}
@@ -210,22 +211,22 @@ func (rl *Relay) sendStream(ctx context.Context, hop Hop, tc *link.Channel, in i
 			return wire.CodeInternal
 		}
 	}
-	if err := hop.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: tc.Num}); err != nil {
+	if err := hop.SendEOF(ctx, tc); err != nil {
 		return wire.CodeUnreachable
 	}
 	return ""
 }
 
 // writeTransfer writes the header and the file of a forwarded transfer channel.
-func (rl *Relay) writeTransfer(ctx context.Context, hop Hop, tc *link.Channel, head core.Transfer,
-	file io.Reader) wire.Code {
+func (rl *Relay) writeTransfer(ctx context.Context, hop Hop, tc *link.Channel, st *chanState,
+	head core.Transfer, file io.Reader) wire.Code {
 	var hb bytes.Buffer
 	if err := core.WriteTransfer(&hb, head); err != nil {
 		return wire.CodeInternal
 	}
 	// sendStream ends with EOF, which is what a transfer channel needs after
 	// the file, so the caller sends none of its own.
-	return rl.sendStream(ctx, hop, tc, io.MultiReader(&hb, file))
+	return rl.sendStream(ctx, hop, tc, st, io.MultiReader(&hb, file))
 }
 
 // wait is how long this relay waits for credit on a hop; zero or less means

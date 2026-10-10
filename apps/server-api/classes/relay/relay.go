@@ -79,11 +79,6 @@ const (
 	// (CallController, Transfer). Such a call has no user waiting at a socket
 	// that would end it, so it is the only thing that ends it.
 	CallTimeout = 50 * time.Second
-
-	// pollInterval is how often a wait for credit looks again. link.Channel has
-	// no signal of its own and this package must not hold its lock, so the wait
-	// polls; the price is one wake-up per interval per waiting channel.
-	pollInterval = 5 * time.Millisecond
 )
 
 // Shell is the browser side of a forwarded channel: the few things package
@@ -91,24 +86,41 @@ const (
 // this channel out of the buffer the session's own reader fills, and answers
 // false once the session is gone -- it never reads the socket itself.
 type Shell interface {
-	GrantRaw(ctx context.Context, c *link.Channel, credit uint32, handshake []byte) error
-	Data(ctx context.Context, c *link.Channel, payload []byte) error
-	EOF(ctx context.Context, c *link.Channel) error
+	SendGrant(ctx context.Context, c *link.Channel, credit uint32, handshake []byte) error
+	SendData(ctx context.Context, c *link.Channel, payload []byte) error
+	SendEOF(ctx context.Context, c *link.Channel) error
 	CloseWith(ctx context.Context, c *link.Channel, cl wire.Close) error
 	Close(ctx context.Context, code wire.Code, num uint32) error
 	Next(ctx context.Context, c *link.Channel) (wire.Frame, bool)
 }
 
-// Hop is the controller side: the channel table of the tunnel, a way to write
-// one frame, the next frame of a channel out of the tunnel's buffer, and a
-// GRANT. The credit of a hop channel is counted by this package through
-// link.Channel, because Hop has no counters of its own; Grant is the one
-// exception, because a GRANT must raise what may arrive before it goes out.
+// Hop is the controller side: a number on the tunnel, one typed way out per
+// frame type, and the next frame of a channel out of the tunnel's buffer.
+//
+// Two things are deliberately absent, and their absence is what the compiler
+// holds (controllers/hop.go):
+//
+//   - No channel table. *link.Table carries Deliver, which is what PUTS a
+//     frame into a channel's queue, so a relay that held the table could hand
+//     itself frames the controller never sent -- and every sentence of this
+//     package rests on the frames being the controller's. Open and Get are
+//     what is left of it.
+//   - No writer for a frame of this package's own choosing. A GRANT exists
+//     only through Grant, which raises what may arrive first, and DATA only
+//     through SendData, which spends the credit first. This package therefore
+//     cannot send what it did not count, and SendClose notes the CLOSE itself.
+//
+// What ARRIVES is counted by the tunnel's own reader, the only code that sees
+// a frame arrive, so this package must not count it a second time.
 type Hop interface {
-	Table() *link.Table
-	Write(ctx context.Context, f wire.Frame) error
-	Next(ctx context.Context, c *link.Channel) (wire.Frame, bool)
+	Open(window uint32) (*link.Channel, error)
+	Get(num uint32) (*link.Channel, bool)
+	SendOpen(ctx context.Context, c *link.Channel, payload []byte) error
+	SendData(ctx context.Context, c *link.Channel, payload []byte) error
+	SendEOF(ctx context.Context, c *link.Channel) error
+	SendClose(ctx context.Context, c *link.Channel, cl wire.Close) error
 	Grant(ctx context.Context, c *link.Channel, credit uint32) error
+	Next(ctx context.Context, c *link.Channel) (wire.Frame, bool)
 }
 
 // Relay forwards channels.
@@ -148,46 +160,62 @@ type Forwarded struct {
 	File io.Reader
 }
 
-// coreRelay is the interface package coreapp hands its channels to (task 15).
-// It is written out here, instead of imported, for two reasons: this package
-// must not depend on the dispatcher it serves, and the compiler then holds the
-// sentence "Relay fits coreapp" from this side -- a lint over names would not.
-// It is a copy, so it holds only while this copy and the original say the same;
-// task 15 owns the original, and a change there has to come here too.
+// coreRelay is the interface package coreapp hands its channels to. It is
+// written out here, instead of imported, for two reasons: this package must not
+// depend on the dispatcher it serves, and the compiler then holds the sentence
+// "Relay fits coreapp" from this side -- a lint over names would not. It is a
+// copy, so it holds only while this copy and the original say the same; coreapp
+// owns the original, and a change there has to come here too. Its mirror image
+// is coreapp/seam_test.go, which says the same about Shell and Hop from the
+// other side.
 type coreRelay interface {
-	Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open, t *task.Task, node string)
+	Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open, raw []byte,
+		t *task.Task, node string)
 }
 
 var _ coreRelay = (*Relay)(nil)
 
-// Forward runs one channel of the shell against a controller.
+// Forward runs one channel of the shell against the controller on node. raw is
+// the payload of the browser's OPEN frame and travels untouched -- see
+// Forwarded.Raw, and do not "tidy" it into a re-encoded OPEN.
 //
-// BLOCKED, and it says so by closing the channel instead of forwarding it:
-// two things this package cannot build itself are missing, and both live in
-// files another strand owns.
-//
-//  1. browser.Session and controllers.Tunnel keep their link and their channel
-//     table unexported, on purpose and with reasons written down in both
-//     packages. Neither therefore fits Shell or Hop today: the relay cannot
-//     write a frame onto a tunnel, open a number on it, or read a frame of
-//     either side. The seams it needs are the methods of Shell and Hop above.
-//  2. This signature cannot carry the browser's OPEN bytes, and
-//     Forwarded.Raw says why they cannot be rebuilt from o. The brief of this
-//     task gives Forward an extra raw []byte for exactly that reason, which is
-//     a change to the interface in package coreapp.
-//
-// Until both are there, forwarding would mean handing a controller an OPEN that
-// is not the shell's, which breaks the end-to-end handshake and reads as a
-// failed decryption on the far side. E_INTERNAL is the safer half of that
-// choice: the channel ends, the session stands, and the log keeps the attempt.
-// ForwardRaw is the whole relay and is measured; only this adapter is blocked.
+// One named gap is left, and it is not this package's to close: a forwarded
+// channel of a core action with flow transfer needs the header and the file,
+// which task 22 puts together. Forward has neither, so such a channel ends
+// with E_INTERNAL rather than sending the shell's bytes as if they were the
+// file. Everything else runs.
 func (rl *Relay) Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
-	t *task.Task, node string) {
-	_ = s.Close(ctx, wire.CodeInternal, c.Num)
-	if rl.Log == nil || s.Live == nil {
+	raw []byte, t *task.Task, node string) {
+	code := rl.forward(ctx, s, c, o, raw, t, node)
+	if rl.Log == nil {
 		return
 	}
-	_ = rl.Log.Channel(ctx, s.Live.Verified.Cert().User, o.App, o.Action, node, wire.CodeInternal)
+	_ = rl.Log.Channel(ctx, s.Live.Verified.Cert().User, o.App, o.Action, node, code)
+}
+
+// forward finds the tunnel and runs the channel; it answers the code the
+// channel ended with, "" for one that ended in order.
+func (rl *Relay) forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
+	raw []byte, t *task.Task, node string) wire.Code {
+	tun, ok := rl.Tunnels.Get(node)
+	if !ok {
+		// No tunnel to that controller right now; the session stays.
+		_ = s.Close(ctx, wire.CodeUnreachable, c.Num)
+		return wire.CodeUnreachable
+	}
+	// The certificate and the proof of this session, exactly as the proof
+	// covers them. The row was written by this API and the proof was checked at
+	// login; it goes through its own Validate again because nothing travels to
+	// a controller from here unchecked, and because a row that cannot answer it
+	// would otherwise become an OPEN the controller refuses by ending the whole
+	// tunnel -- every other channel on it with it.
+	var pr proof.Proof
+	if json.Unmarshal(s.Live.Row.Proof, &pr) != nil || pr.Validate() != nil {
+		_ = s.Close(ctx, wire.CodeInternal, c.Num)
+		return wire.CodeInternal
+	}
+	return rl.ForwardRaw(ctx, s, c, tun, Forwarded{Raw: raw, Open: o, Task: t, Node: node,
+		Client: s.Live.Row.Cert, Proof: &pr})
 }
 
 // chanState carries what the two directions of one channel have to tell each
@@ -206,6 +234,25 @@ type chanState struct {
 	// sent counts what has gone to the shell on a core-app channel, for
 	// wire.MaxCallResult.
 	sent int
+
+	// credit wakes the sending direction once a GRANT of the controller has
+	// raised the credit of the hop. One place buffered and never waited on:
+	// the reader must not be held up by a sender that is busy, and a wake-up
+	// already pending says the same as a second one.
+	credit chan struct{}
+}
+
+// newChanState returns the shared half of one channel.
+func newChanState(cancel context.CancelFunc) *chanState {
+	return &chanState{cancel: cancel, credit: make(chan struct{}, 1)}
+}
+
+// wakeCredit says that the credit of the hop has grown.
+func (st *chanState) wakeCredit() {
+	select {
+	case st.credit <- struct{}{}:
+	default:
+	}
 }
 
 // fail notes the code the channel ends with and wakes both directions. Only the
@@ -266,10 +313,10 @@ func (rl *Relay) ForwardRaw(ctx context.Context, sh Shell, c *link.Channel, hop 
 	fw Forwarded) wire.Code {
 	// The window we grant the controller is what we can hold until the browser
 	// takes it, never more.
-	tc, err := hop.Table().Next(wire.DefaultWindow)
+	tc, err := hop.Open(wire.DefaultWindow)
 	if err != nil {
 		// Only this tunnel is full; the session stays. Every other error of
-		// Next is our own mistake about the window, which is a constant here.
+		// Open is our own mistake about the window, which is a constant here.
 		code := wire.CodeLimit
 		if !errors.Is(err, link.ErrLimit) {
 			code = wire.CodeInternal
@@ -308,12 +355,12 @@ func (rl *Relay) openAndPump(ctx context.Context, sh Shell, c *link.Channel, hop
 	if _, _, err := tunnel.ParseOpen(payload); err != nil {
 		return wire.CodeInternal, wire.Error(wire.CodeInternal)
 	}
-	if err := hop.Write(ctx, wire.Frame{Type: wire.TypeOpen, Channel: tc.Num, Payload: payload}); err != nil {
+	if err := hop.SendOpen(ctx, tc, payload); err != nil {
 		return wire.CodeUnreachable, wire.Error(wire.CodeUnreachable)
 	}
 	pctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	st := &chanState{cancel: cancel}
+	st := newChanState(cancel)
 	code, theirClose := rl.pump(pctx, sh, c, hop, tc, fw, st)
 	switch {
 	case theirClose:
@@ -352,10 +399,22 @@ func (rl *Relay) pump(ctx context.Context, sh Shell, c *link.Channel, hop Hop, t
 		}
 		switch f.Type {
 		case wire.TypeGrant:
+			// Read for the handshake only. The credit was already added by the
+			// tunnel's own reader, the one place that sees a frame arrive
+			// (controllers.Tunnel.frame); adding it here as well would count it
+			// twice, and the hop would believe it may send more than the
+			// controller allowed. A payload ParseGrant refuses never reaches
+			// this queue either, because that reader ends the tunnel over it --
+			// the branch stays because this function is what reads the
+			// handshake out, and it must not rest on another package's checks
+			// staying what they are.
 			credit, handshake, err := wire.ParseGrant(f.Payload)
-			if err != nil || !tc.Grant(credit) {
+			if err != nil {
 				return wire.CodeProtocol, false
 			}
+			// More credit on the hop is what the other direction may be
+			// waiting for.
+			st.wakeCredit()
 			if first {
 				// An end-to-end channel carries Noise message 2 in exactly
 				// this GRANT and in no other; a core-app channel carries none
@@ -365,7 +424,7 @@ func (rl *Relay) pump(ctx context.Context, sh Shell, c *link.Channel, hop Hop, t
 				}
 				// Our first GRANT to the browser: the window we can hold, and
 				// the controller's handshake with it.
-				if err := sh.GrantRaw(ctx, c, wire.DefaultWindow, handshake); err != nil {
+				if err := sh.SendGrant(ctx, c, wire.DefaultWindow, handshake); err != nil {
 					return wire.CodeInternal, false
 				}
 				first = false
@@ -376,20 +435,20 @@ func (rl *Relay) pump(ctx context.Context, sh Shell, c *link.Channel, hop Hop, t
 				// A handshake in any GRANT but the first is a protocol error.
 				return wire.CodeProtocol, false
 			}
-			if err := sh.GrantRaw(ctx, c, credit, nil); err != nil {
+			if err := sh.SendGrant(ctx, c, credit, nil); err != nil {
 				return wire.CodeInternal, false
 			}
 		case wire.TypeData:
-			if !tc.Take(len(f.Payload)) {
-				return wire.CodeProtocol, false
-			}
-			// Before anything is passed on, so not one byte over the limit
-			// reaches the shell.
+			// Not counted here either: the tunnel's reader took these bytes off
+			// what the controller may send before it queued the frame.
+			//
+			// The limit is read before anything is passed on, so not one byte
+			// over it reaches the shell.
 			if bounded && !st.count(len(f.Payload)) {
 				return wire.CodeTooLarge, false
 			}
 			// One payload, one frame: see the package comment.
-			if err := sh.Data(ctx, c, f.Payload); err != nil {
+			if err := sh.SendData(ctx, c, f.Payload); err != nil {
 				return wire.CodeInternal, false
 			}
 			// Give the controller its credit back now the browser has it.
@@ -397,7 +456,7 @@ func (rl *Relay) pump(ctx context.Context, sh Shell, c *link.Channel, hop Hop, t
 				return wire.CodeInternal, false
 			}
 		case wire.TypeEOF:
-			if err := sh.EOF(ctx, c); err != nil {
+			if err := sh.SendEOF(ctx, c); err != nil {
 				return wire.CodeInternal, false
 			}
 		case wire.TypeClose:
@@ -405,7 +464,9 @@ func (rl *Relay) pump(ctx context.Context, sh Shell, c *link.Channel, hop Hop, t
 			if err != nil {
 				return wire.CodeProtocol, false
 			}
-			tc.RecvClose()
+			// Not noted here: the tunnel's reader noted the controller's CLOSE
+			// before it queued the frame, exactly as it counted the credit.
+			//
 			// The CLOSE travels unchanged, so the shell sees what the
 			// controller said -- code, message and exit code.
 			_ = sh.CloseWith(ctx, c, cl)
@@ -432,7 +493,7 @@ func (rl *Relay) toController(ctx context.Context, sh Shell, c *link.Channel, ho
 		}
 		// writeTransfer ends with the EOF that closes the API's input, so
 		// nothing more goes out on this side.
-		if code := rl.writeTransfer(ctx, hop, tc, *fw.Head, fw.File); code != "" {
+		if code := rl.writeTransfer(ctx, hop, tc, st, *fw.Head, fw.File); code != "" {
 			st.fail(code)
 			return
 		}
@@ -452,13 +513,13 @@ func (rl *Relay) toController(ctx context.Context, sh Shell, c *link.Channel, ho
 				st.fail(wire.CodeProtocol)
 				return
 			}
-			if code := rl.sendWhole(ctx, hop, tc, f.Payload); code != "" {
+			if code := rl.sendWhole(ctx, hop, tc, st, f.Payload); code != "" {
 				st.fail(code)
 				return
 			}
 			// The shell gets its credit back once the controller has the bytes,
 			// not before: what we grant is what we can hold.
-			if err := sh.GrantRaw(ctx, c, uint32(len(f.Payload)), nil); err != nil {
+			if err := sh.SendGrant(ctx, c, uint32(len(f.Payload)), nil); err != nil {
 				st.fail(wire.CodeInternal)
 				return
 			}
@@ -468,14 +529,10 @@ func (rl *Relay) toController(ctx context.Context, sh Shell, c *link.Channel, ho
 				// channel is meant to run; ours went out above.
 				continue
 			}
-			if err := hop.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: tc.Num}); err != nil {
+			if err := hop.SendEOF(ctx, tc); err != nil {
 				st.fail(wire.CodeUnreachable)
 				return
 			}
-		case wire.TypeGrant:
-			// The session's own reader counts a GRANT of the browser against
-			// what we may send it (browser.feed); the credit of the tunnel hop
-			// is another count and is not touched by it.
 		case wire.TypeClose:
 			cl, err := wire.ParseClose(f.Payload)
 			if err != nil {
@@ -502,38 +559,47 @@ func isTransfer(o wire.Open) bool {
 
 // sendWhole sends one payload as exactly one DATA frame, waiting for credit for
 // all of it. See the package comment for why it is never cut.
-func (rl *Relay) sendWhole(ctx context.Context, hop Hop, tc *link.Channel, payload []byte) wire.Code {
+func (rl *Relay) sendWhole(ctx context.Context, hop Hop, tc *link.Channel, st *chanState,
+	payload []byte) wire.Code {
 	if len(payload) > wire.MaxPayload {
 		// Not reachable through link.Read, which decodes nothing larger; kept
 		// because this function is the one that promises a whole frame.
 		return wire.CodeProtocol
 	}
-	if !rl.waitSpend(ctx, tc, len(payload)) {
+	if !rl.waitCredit(ctx, tc, st, len(payload)) {
 		return wire.CodeTimeout
 	}
-	if err := hop.Write(ctx, wire.Frame{Type: wire.TypeData, Channel: tc.Num, Payload: payload}); err != nil {
+	// Asked first and spent inside SendData, in two steps, and that is safe
+	// here for one reason only: a hop channel has exactly one sender -- the
+	// goroutine of toController, or the one collect starts -- so nothing takes
+	// the credit in between. What changes it otherwise is a GRANT, and more
+	// credit never makes this fail.
+	if err := hop.SendData(ctx, tc, payload); err != nil {
 		return wire.CodeUnreachable
 	}
 	return ""
 }
 
-// waitSpend takes n bytes off the credit of a hop channel, waiting at most
-// GrantWait for them. It holds no lock while it waits: link.Channel's lock is
-// taken and given back inside Spend, once per look.
-func (rl *Relay) waitSpend(ctx context.Context, tc *link.Channel, n int) bool {
-	if tc.Spend(n) {
+// waitCredit waits until n bytes fit the credit of a hop channel, at most
+// GrantWait. It does not poll: a GRANT of the controller wakes it through
+// chanState, and the reader that counts that GRANT is the only thing that can
+// raise the credit at all. One source and no second way beside it -- a ticker
+// next to this would be that second way.
+//
+// No lock is held while it waits: link.Channel's own lock is taken and given
+// back inside SendAllowed, once per wake-up.
+func (rl *Relay) waitCredit(ctx context.Context, tc *link.Channel, st *chanState, n int) bool {
+	if tc.SendAllowed(n) {
 		return true
 	}
 	wctx, cancel := context.WithTimeout(ctx, rl.wait())
 	defer cancel()
-	t := time.NewTicker(pollInterval)
-	defer t.Stop()
 	for {
 		select {
 		case <-wctx.Done():
 			return false
-		case <-t.C:
-			if tc.Spend(n) {
+		case <-st.credit:
+			if tc.SendAllowed(n) {
 				return true
 			}
 		}
@@ -549,21 +615,18 @@ func (rl *Relay) endHop(ctx context.Context, hop Hop, tc *link.Channel, cl wire.
 		// else, so this is only the guard that keeps the sentence true.
 		return
 	}
-	payload, err := json.Marshal(cl)
-	if err != nil {
-		return
-	}
-	if err := hop.Write(ctx, wire.Frame{Type: wire.TypeClose, Channel: tc.Num, Payload: payload}); err != nil {
+	// SendClose notes the CLOSE itself, so there is no way to send one here and
+	// forget to note it.
+	if err := hop.SendClose(ctx, tc, cl); err != nil {
 		// The tunnel is gone, and its table with it.
 		return
 	}
-	tc.SentClose()
 	// When the controller closed first, its CLOSE is already counted and the
 	// number is free the moment ours is noted: link.Table drops it and Get no
 	// longer answers with this channel. Waiting then would hold this goroutine
 	// for the whole drain on every channel that ends in order -- measured by
 	// TestNormalCloseGivesTheNumberBackAtOnce, which runs with the real clock.
-	if cur, ok := hop.Table().Get(tc.Num); !ok || cur != tc {
+	if cur, ok := hop.Get(tc.Num); !ok || cur != tc {
 		return
 	}
 	dctx, cancel := context.WithTimeout(ctx, rl.drain())
@@ -573,10 +636,12 @@ func (rl *Relay) endHop(ctx context.Context, hop Hop, tc *link.Channel, cl wire.
 		if !ok {
 			return
 		}
-		// Frames after our own CLOSE are dropped without an answer; the
-		// controller's CLOSE among them still counts and frees the number.
+		// Frames after our own CLOSE are dropped without an answer, and they
+		// have to be taken out of the queue all the same: a queue nobody
+		// empties reaches link.MaxQueuedFrames, and then the tunnel's reader
+		// ends the TUNNEL -- every other channel on it with it. The
+		// controller's CLOSE is noted by that same reader, not here.
 		if f.Type == wire.TypeClose {
-			tc.RecvClose()
 			return
 		}
 	}
