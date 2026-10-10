@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -33,6 +34,25 @@ var paths = struct {
 	useradd, userdel string
 	subuid, subgid   string
 	appData          string
+	// runDir is config.RunDir, the tmpfs under which every app gets the
+	// runtime directory of its container (EnsureRun). A case puts a directory
+	// of its own here, because the real one is root's and a test may not write
+	// in it.
+	runDir string
+	// chown hands a directory to the app's user. It is held here for the same
+	// reason as addKey: the real call is a call of Linux, and what comes after
+	// it - the mode of the directory, and that EnsureRun answers at all - had
+	// no case that could run where this is written. The real one keeps its own
+	// case on Linux (TestEnsureRunHandsTheDirectoryToTheApp).
+	chown func(path string, uid, gid int) error
+	// subIDWindow is called between reading /etc/subuid and writing it back,
+	// and it is nil in everything but a case about the lock around that
+	// read-modify-write. Without it the window between the two is the
+	// scheduler's to choose, and a case about two EnsureUser at once would
+	// measure the scheduler and not the lock: it would pass as often as not.
+	// With it the window is held open on purpose, so the lock is what decides
+	// the outcome (TestSubIDsHandOutEveryRangeOnlyOnceUnderALock).
+	subIDWindow func()
 	// addKey and setPolicy are the two kernel calls of EnsureData, held here
 	// for the same reason as useradd: without a stand-in, everything that
 	// comes after them cannot be measured at all. They need a kernel built
@@ -49,6 +69,8 @@ var paths = struct {
 	subuid:    "/etc/subuid",
 	subgid:    "/etc/subgid",
 	appData:   config.AppDataDir,
+	runDir:    runDirDefault,
+	chown:     os.Chown,
 	addKey:    addKey,
 	setPolicy: setPolicy,
 }
@@ -249,9 +271,34 @@ type subIDRange struct {
 	count uint64
 }
 
+// subIDMu holds the read-modify-write of /etc/subuid and /etc/subgid.
+//
+// Without it two activations at once hand out the same range or lose a line,
+// and neither is a data race Go can see: every one of them reads the file,
+// picks the lowest free range out of what it read, and writes the whole file
+// back (writeWhole). Two readers see the same file, pick the same range, and
+// the second write replaces the first - so one app gets a range another app
+// already has, or a line that was just written is gone. `go test -race` says
+// nothing about it, because nothing of it is one piece of memory touched from
+// two goroutines; the file is the shared state, and this lock is what makes
+// read, pick and write one step.
+//
+// It covers both files together, not one each: a user has to get the same
+// range in both, and a second caller that slipped in between them would find
+// /etc/subuid already written and /etc/subgid not, and pick a different range
+// for the second half.
+//
+// What it does not cover, said out loud: another process. One machine runs one
+// controller (config.ServiceController), so the lock of this process is the
+// whole of it today; two controllers on one machine would need a lock in the
+// filesystem, and nothing here would notice that it is missing.
+var subIDMu sync.Mutex
+
 // ensureSubIDs gives this user one range in /etc/subuid and one in /etc/subgid,
 // or leaves the ones it already has alone.
 func ensureSubIDs(name string) error {
+	subIDMu.Lock()
+	defer subIDMu.Unlock()
 	for _, file := range []string{paths.subuid, paths.subgid} {
 		if err := ensureSubIDFile(file, name); err != nil {
 			return err
@@ -274,12 +321,22 @@ func ensureSubIDFile(file, name string) error {
 	if err != nil {
 		return err
 	}
+	// The window a second caller would use. It is nil outside the case about
+	// the lock (paths.subIDWindow).
+	if paths.subIDWindow != nil {
+		paths.subIDWindow()
+	}
 	lines = append(lines, name+":"+strconv.FormatUint(start, 10)+":"+strconv.Itoa(SubIDCount))
 	return writeWhole(file, strings.Join(lines, "\n")+"\n")
 }
 
 // dropSubIDs takes every line of this user out of both files.
 func dropSubIDs(name string) error {
+	// The same lock as ensureSubIDs, and for the same reason: this reads both
+	// files and writes them back, so a hand-out that slipped in between would
+	// be dropped again with the lines of the user that is going.
+	subIDMu.Lock()
+	defer subIDMu.Unlock()
 	for _, file := range []string{paths.subuid, paths.subgid} {
 		lines, _, err := readSubIDs(file)
 		if err != nil {
