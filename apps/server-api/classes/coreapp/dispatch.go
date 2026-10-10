@@ -74,8 +74,22 @@ type Tunnels interface {
 }
 
 // Relay forwards a channel to a controller; package relay implements it.
+//
+// raw is the payload of the browser's OPEN frame, byte for byte. It travels
+// next to the parsed o and NOTHING can take its place: the end-to-end prologue
+// of the forwarded channel hashes exactly these bytes
+// (noisep.E2EPrologue), and an OPEN that was decoded and encoded again is a
+// different byte string -- member order and spacing differ, and task 17
+// measured it with a space the JSON encoder does not write. A relay handed
+// only o would send the controller an OPEN that is not the shell's, and the
+// far side would answer with a decryption error, which names the wrong layer.
+//
+// So: what is passed on here is the MEASURED thing and not the asserted one.
+// Whoever "tidies" raw away because o looks like it carries the same
+// information breaks every app channel, and the failure will not point here.
 type Relay interface {
-	Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open, t *task.Task, node string)
+	Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open, raw []byte,
+		t *task.Task, node string)
 }
 
 // Deps are what the dispatcher needs.
@@ -145,8 +159,9 @@ func codeOf(err error) wire.Code {
 }
 
 // OpenChannel serves one channel the browser opened.
-func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open) {
-	code, node := d.open(ctx, s, c, o)
+func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *link.Channel,
+	o wire.Open, raw []byte) {
+	code, node := d.open(ctx, s, c, o, raw)
 	user := s.Live.Verified.Cert().User
 	// The answer is dropped on purpose: audit.ErrDropped means the entry was
 	// written with one field replaced, and a channel that ran must not be
@@ -161,7 +176,7 @@ func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *lin
 // open does the work and returns the code to close with -- "" when the channel
 // ran and closed itself -- and the node the channel went to, for the log.
 func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Channel,
-	o wire.Open) (wire.Code, string) {
+	o wire.Open, raw []byte) (wire.Code, string) {
 	v, err := d.S.Trust(ctx)
 	if err != nil {
 		return wire.CodeUnreachable, ""
@@ -169,7 +184,7 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 	now := d.S.Now()
 	verified := s.Live.Verified
 	if !wire.CoreApp(o.App) {
-		return d.forward(ctx, s, c, o, v.List, &verified, now)
+		return d.forward(ctx, s, c, o, raw, v.List, &verified, now)
 	}
 	action, ok := core.Lookup(o.App, o.Service, o.Action)
 	if !ok {
@@ -189,7 +204,7 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 		if t == nil {
 			return wire.CodeConfirm, node
 		}
-		d.Relay.Forward(ctx, s, c, o, t, t.Node)
+		d.Relay.Forward(ctx, s, c, o, raw, t, t.Node)
 		return "", t.Node
 	}
 	granted, admin, err := rights.Of(ctx, d.S.DB, v.List, verified.Cert().User)
@@ -206,7 +221,7 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 // forward resolves an app channel and hands it to the relay. App, manifest and
 // node all come from the row; the OPEN only picked which row to read.
 func (d *Dispatcher) forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
-	l *trustList, verified *verifiedSession, now int64) (wire.Code, string) {
+	raw []byte, l *trustList, verified *verifiedSession, now int64) (wire.Code, string) {
 	row, err := d.S.DB.AppGet(ctx, o.App)
 	switch {
 	case errors.Is(err, dbapi.ErrNotFound):
@@ -229,7 +244,7 @@ func (d *Dispatcher) forward(ctx context.Context, s *browser.Session, c *link.Ch
 		return code, row.Node
 	}
 	d.logTask(ctx, verified.Cert().User, o, t)
-	d.Relay.Forward(ctx, s, c, o, t, row.Node)
+	d.Relay.Forward(ctx, s, c, o, raw, t, row.Node)
 	return "", row.Node
 }
 
@@ -262,17 +277,15 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	if err != nil {
 		return wire.CodeProtocol
 	}
-	// The bound of the input stands before the credit that lets the shell send
-	// anything (browser.Session.ExpectInput).
-	if action.Flow == core.FlowIn {
-		s.ExpectInput(c, action.MaxIn)
-	}
-	if err := s.SendGrant(ctx, c, wire.DefaultWindow); err != nil {
+	// A core channel carries no end-to-end handshake of its own, so this GRANT
+	// carries no Noise message 2: the session to the API is already encrypted
+	// end to end (package wire, "Core apps").
+	if err := s.SendGrant(ctx, c, wire.DefaultWindow, nil); err != nil {
 		return wire.CodeInternal
 	}
 	var in io.Reader = bytes.NewReader(nil)
 	if action.Flow == core.FlowIn {
-		body, code := s.ReadInput(ctx, c)
+		body, code := s.ReadInput(ctx, c, action.MaxIn)
 		if code != "" {
 			return code
 		}

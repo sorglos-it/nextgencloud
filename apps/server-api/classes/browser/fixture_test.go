@@ -89,7 +89,7 @@ type harness struct {
 
 // OpenChannel is the dispatcher of the harness: package coreapp's part, cut
 // down to a grant and a note.
-func (h *harness) OpenChannel(ctx context.Context, s *Session, c *link.Channel, o wire.Open) {
+func (h *harness) OpenChannel(ctx context.Context, s *Session, c *link.Channel, o wire.Open, raw []byte) {
 	if h.Grant != nil {
 		h.Grant(ctx, s, c, o)
 	}
@@ -153,7 +153,7 @@ func newServer(t *testing.T) *harness {
 		Opened: make(chan opened, 4*wire.MaxSessionChannels),
 	}
 	h.Grant = func(ctx context.Context, s *Session, c *link.Channel, o wire.Open) {
-		_ = s.SendGrant(ctx, c, o.Window)
+		_ = s.SendGrant(ctx, c, o.Window, nil)
 	}
 	h.Srv = &Server{S: s, Login: h.Login, Open: h, Sessions: NewRegistry()}
 	h.HTTP = httptest.NewServer(http.HandlerFunc(h.Srv.Socket))

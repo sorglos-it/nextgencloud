@@ -116,13 +116,17 @@ type fakeRelay struct {
 // relayed is one forwarded channel.
 type relayed struct {
 	Open wire.Open
+	Raw  []byte
 	Task *task.Task
 	Node string
 }
 
 func (r *fakeRelay) Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
-	t *task.Task, node string) {
-	r.ch <- relayed{Open: o, Task: t, Node: node}
+	raw []byte, t *task.Task, node string) {
+	// A copy, because the real relay has to make one too: the bytes came out
+	// of the link's read buffer, and a case that kept the slice would measure
+	// whatever the next frame wrote over it.
+	r.ch <- relayed{Open: o, Raw: bytes.Clone(raw), Task: t, Node: node}
 	// The channel is ended here so a case sees it close; the real relay ends
 	// it when the controller does.
 	_ = s.Close(ctx, wire.CodeUnreachable, c.Num)
@@ -263,6 +267,17 @@ func (h *harness) Open(t *testing.T, o wire.Open) *chann {
 	h.num++
 	c := &chann{h: h, num: h.num, credit: uint64(o.Window)}
 	h.peer.writeOpen(t, c.num, o)
+	return c
+}
+
+// OpenRaw sends an OPEN whose payload is exactly the bytes handed in, without
+// going through json.Marshal. It is what lets a case put a byte string into
+// the frame that the encoder would never produce.
+func (h *harness) OpenRaw(t *testing.T, payload []byte, window uint32) *chann {
+	t.Helper()
+	h.num++
+	c := &chann{h: h, num: h.num, credit: uint64(window)}
+	h.peer.write(t, wire.Frame{Type: wire.TypeOpen, Channel: c.num, Payload: payload})
 	return c
 }
 
