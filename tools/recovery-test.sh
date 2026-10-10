@@ -88,6 +88,39 @@ fehler_gemeldet=""
 mitschnitt_laeuft=""
 fail() { fehler_gemeldet=ja; printf 'FEHLGESCHLAGEN: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok: %s\n' "$1" >&2; }
+
+# A negative case has to end for the right reason, so the exit code is checked
+# EXACTLY and not as "anything but 0". The three codes the cases of task 10
+# hand out: 1 the TPM refused - the only pass; 2 the honest run ahead of the
+# case did not open, so the case proves nothing; 0 the TPM accepted, which is
+# the bad one. Why it matters, said against the code: with "anything but 0"
+# accepted, a replay case whose honest run is already broken returns 2 and
+# passes, and then nothing at all has been shown.
+# A second question beside the code, and it is not decoration: the exit code
+# alone cannot tell "the TPM refused" from "this script does not know the
+# subcommand at all". Measured, and that is why this parameter exists - the
+# step-2 red of task 10 was run against the OLD recovery-policy.sh with the
+# NEW cases, and the usage message of its case statement ends at exit code 1,
+# which the plan's expect_rc accepts as a pass. So the case has to show that
+# it REACHED the meant place: a sentence the function prints on its way there.
+expect_rc() {            # $1 = Code, $2 = Satz aus der Ausgabe, Rest = Befehl
+	local want="$1" marke="$2" rc=0 ausgabe=""
+	shift 2
+	if ausgabe="$("$@" 2>&1)"; then rc=0; else rc=$?; fi
+	case "$ausgabe" in
+	*"$marke"*) ;;
+	*) fail "$* : der Fall hat »$marke« nie erreicht - gemessen wäre eine frühere Wand (Rückgabe $rc)" ;;
+	esac
+	if [ "$rc" -ne "$want" ]; then
+		fail "$* : Rückgabe $rc, erwartet $want"
+	fi
+	# The reason goes into the log of the run, so a finished run says WHERE the
+	# case ended and not only that it ended. Nothing secret travels here: these
+	# are the sentences the function printed, and the unsealed value is never in
+	# this capture - the honest run inside replay and half catches its own
+	# standard output, and the unseal of the half branch writes to /dev/null.
+	printf '%s\n' "$ausgabe" | tail -2 >&2
+}
 use_main() {
 	TPM2TOOLS_TCTI="$(tools/recovery-swtpm.sh tcti main)"
 	export TPM2TOOLS_TCTI
@@ -1189,6 +1222,146 @@ ok "die Stick-Zweige bleiben im Produktiv-Zustand zu"
 anzahl="$(ls dist/recovery/work/branch-*.digest 2>/dev/null | wc -l)"
 [ "$anzahl" -eq 7 ] || fail "Es liegen $anzahl Zweig-Digests statt sieben - policy_digest hat einen Zweig übersprungen."
 ok "SIEBEN ZWEIGE IN EINER POLICY — Abnahmekriterium von Paket 0 (1 + 6 über zwei Objekte)"
+
+# ---------------------------------------------------------------------------
+# Task 10: the negative cases. Every one of them has a real key making a real
+# signature, or the real PIN, and the TPM refuses anyway. A case that fails
+# because something was simply missing proves nothing, so each one says with
+# its exit code WHY it ended - expect_rc asks for 1 exactly.
+# ---------------------------------------------------------------------------
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state recovery
+tools/recovery-policy.sh seal
+
+# Replay. Until now only the CRITERION behind it was measured, in task 7: the
+# bytes are 52 long, not all zero, and a second session hands out others. That
+# a recording really is refused was one single measurement by hand (0x5DB,
+# "the signature is not valid"). It is a case now. Exit code 1 means the TPM
+# refused; 2 would mean the honest run ahead of it did not open, and then the
+# replay says nothing at all.
+expect_rc 1 "Spiele eine mitgeschnittene Signatur in eine neue Sitzung ein" \
+	tools/recovery-policy.sh replay 1 2
+ok "Replay: eine mitgeschnittene Signatur wird in einer neuen Sitzung abgelehnt"
+
+# Half a branch: stick 1 signs the bytes of THIS session, correctly, and the
+# pair is never complete. This is criterion 1 of section 12 - with only one
+# stick no release - and task 9 had only the other direction, that a branch
+# lets TWO sticks sign.
+expect_rc 1 "Baue den halben Zweig" \
+	tools/recovery-policy.sh half 1 2
+ok "ein Stick allein öffnet nicht, obwohl seine Signatur gültig ist"
+
+# The foreign stick: number 5 is the spare of the ceremony, a real token with a
+# real key, and it stands in none of the six branches. First the proof that it
+# can sign AT ALL - without it the case below would be green because a broken
+# token signs nothing, which is a different sentence entirely.
+tools/recovery-policy.sh checkstick 5 \
+	|| fail "Stick 5 signiert nicht - dann wäre der Fall darunter aus dem falschen Grund grün."
+ok "der fremde Stick signiert gültig"
+if tools/recovery-policy.sh open pair 1 5 >/dev/null 2>&1; then fail "fremder Stick öffnet"; fi
+# And the wall has to be the LAST one, not an earlier one: the branch really
+# got as far as letting stick 5 sign. Without this check the case would also be
+# green if the stick had never been asked.
+[ -s "dist/recovery/work/tosign-5.bin" ] \
+	|| fail "Stick 5 hat in diesem Zweig nichts zu signieren bekommen - der Fall ist vor der gemeinten Stelle abgewiesen worden."
+[ -s "dist/recovery/work/stick5.sig" ] \
+	|| fail "Von Stick 5 liegt keine Signatur vor - der Fall ist vor der gemeinten Stelle abgewiesen worden."
+ok "ein fremder Stick öffnet trotzdem nicht, obwohl sein PolicySigned durchgeht: er steht in keinem der sechs Zweige"
+
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach den Negativfällen öffnet nichts mehr"
+ok "nach allen Negativfällen öffnet das richtige Paar weiter"
+
+# That the replay case is not a self-starter. Two honest runs in a row have to
+# let the stick sign DIFFERENT bytes; if they did not, the case above would
+# pass without proving anything. Task 7 asks this of one session pair already -
+# it is asked again here, directly beside the case that rests on it, because
+# that case is new and the two are 200 lines apart.
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "erster Vergleichslauf öffnet nicht"
+cp dist/recovery/work/stick1.sig dist/recovery/work/vergleich.sig
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "zweiter Vergleichslauf öffnet nicht"
+if cmp -s dist/recovery/work/vergleich.sig dist/recovery/work/stick1.sig; then
+	fail "zwei Sitzungen lassen dieselben Bytes signieren - dann hängt die Signatur nicht an der Sitzung und der Replay-Fall beweist nichts."
+fi
+rm -f dist/recovery/work/vergleich.sig
+ok "jede Sitzung lässt andere Bytes signieren - der Replay-Fall ist kein Selbstläufer"
+
+# The two objects of section 6 must not drift apart. Task 9 prevented that by
+# construction - there is no way to seal only one - and said in the same breath
+# that nobody checks it. This is the guard: seal takes BOTH objects away before
+# it makes either, and all four files have to be newer than a stamp written
+# just before. A reseal that renewed only one would leave the other behind with
+# an older counter or older PCR values, and section 6 names the price: whoever
+# forgets one notices at the next boot or not until a recovery.
+stempel_siegel="dist/recovery/work/siegel-stempel"
+: > "$stempel_siegel"
+tools/recovery-policy.sh seal
+for datei in auto.pub auto.priv recovery.pub recovery.priv; do
+	[ -s "dist/recovery/work/$datei" ] \
+		|| fail "Nach dem Versiegeln fehlt $datei - eines der beiden Objekte ist nicht entstanden."
+	[ "dist/recovery/work/$datei" -nt "$stempel_siegel" ] \
+		|| fail "$datei ist älter als dieses Versiegeln - die beiden Objekte sind auseinandergelaufen."
+done
+rm -f "$stempel_siegel"
+ok "jedes Versiegeln erneuert BEIDE Objekte, keines bleibt aus einem früheren stehen"
+
+# The second half of criterion 9 - "3 wrong stick PINs: stick locked" - and the
+# honest answer first: IT IS NOT PROVABLE IN THIS ENVIRONMENT, measured, not
+# assumed. SoftHSM2 2.6 does not lock a user PIN at all. Nine wrong PINs in a
+# row on TEST-STICK-4, each one refused with exit code 1, left the token at
+# "user PIN count low" every single time - never "final try", never
+# CKF_USER_PIN_LOCKED - and the right PIN then logged in at exit code 0 and
+# cleared the flag again. The lock is a property of the real token of work
+# package 2, not of the software stand-in, and a case that claimed it here
+# would be green against nothing.
+#
+# So this case asserts what DOES hold, and it is the second half of criterion 1
+# - "with sticks but without PINs no release": a wrong stick PIN signs nothing,
+# the pair the stick stands in stays shut, and the token registers the failed
+# attempt. The PIN goes in as a FILE through STICK_PIN_FILE, never as a value on
+# a command line.
+stick_falsch="dist/recovery/pin/stick-falsch.txt"
+printf '9998' > "$stick_falsch"
+chmod 600 "$stick_falsch"
+softhsm_conf="$(pwd)/dist/recovery/softhsm/softhsm2.conf"
+# The flags of THIS token, not of any of the five: a hit anywhere in the list
+# would be satisfied by a different stick. Read before anything else, because a
+# successful login clears the counter and the case needs it clear to start.
+stick4_flaggen() {
+	SOFTHSM2_CONF="$softhsm_conf" pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -T 2>/dev/null \
+		| awk '/TEST-STICK-4/{f=1} f&&/token flags/{print; exit}'
+}
+tools/recovery-policy.sh checkstick 4 \
+	|| fail "Stick 4 signiert schon vor dem Fall nicht - dann sagt der Fall nichts über die falsche PIN."
+for versuch in 1 2 3; do
+	if STICK_PIN_FILE="$(pwd)/$stick_falsch" tools/recovery-policy.sh checkstick 4 >/dev/null 2>&1; then
+		fail "eine falsche Stick-PIN hat signiert (Versuch $versuch)"
+	fi
+done
+# That the attempts were REGISTERED and not simply dropped. This is the flag
+# SoftHSM2 does set, and it is all it sets - the sentence above says why.
+flaggen="$(stick4_flaggen)"
+[ -n "$flaggen" ] || fail "Die Flaggen von TEST-STICK-4 ließen sich nicht lesen - dann ist nicht zu sagen, ob die Fehlversuche gezählt wurden."
+case "$flaggen" in
+*"user PIN count low"*) ;;
+*) fail "TEST-STICK-4 hat die drei falschen PINs nicht vermerkt - gelesen: $flaggen" ;;
+esac
+# And the branch: whoever holds the stick but not its PIN gets nothing.
+if STICK_PIN_FILE="$(pwd)/$stick_falsch" tools/recovery-policy.sh open pair 3 4 >/dev/null 2>&1; then
+	fail "ein Zweig öffnet mit einer falschen Stick-PIN - der Stick allein genügt dann."
+fi
+ok "eine falsche Stick-PIN signiert nicht, der Zweig bleibt zu, und das Token vermerkt den Fehlversuch (gesperrt wird es erst auf echter Hardware)"
+
+# Back to the known state: a successful login clears the counter, and the next
+# case and the next run find the sticks as they were. Checked, not assumed.
+tools/recovery-policy.sh checkstick 4 || fail "Stick 4 signiert nach den Fehlversuchen nicht mehr - dann hat dieser Fall den Stick beschädigt."
+[ "$(tools/recovery-policy.sh open pair 3 4)" = "TEST-DEK" ] || fail "Paar 3+4 öffnet nach den Fehlversuchen nicht."
+flaggen="$(stick4_flaggen)"
+case "$flaggen" in
+*"user PIN count low"*) fail "Der Fehlversuchszähler von TEST-STICK-4 steht nach einer richtigen PIN immer noch - der Stick bleibt verändert zurück." ;;
+esac
+shred -u "$stick_falsch"
+ok "mit der richtigen Stick-PIN signiert der Stick wieder, sein Paar öffnet, und der Fehlversuchszähler ist zurückgesetzt"
 
 # Until now "the PIN is not in the process list" was a statement the code made
 # about itself - the same weak class as the session attributes in task 6. This

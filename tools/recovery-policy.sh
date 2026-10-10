@@ -24,7 +24,11 @@ mkdir -p "$w"
 # that line does not exist yet - the platform PIN arrives with task 8 - so they
 # sit here, ahead of their first use.
 keys="$work/keys"
-pin_stick="$work/pin/stick.txt"
+# STICK_PIN_FILE is why this is a variable at all: the second half of
+# criterion 9 - three wrong STICK PINs lock the stick - needs a way to hand
+# in a wrong one, and like PIN_FILE it goes in as a FILE, never as a value on
+# a command line. Default unchanged.
+pin_stick="${STICK_PIN_FILE:-$work/pin/stick.txt}"
 # The platform PIN of task 8. The plan lists PIN_FILE among the interfaces of
 # this script but never wires it anywhere - it writes $pin_platform, a variable
 # this file does not have. Both are here: without the PIN_FILE arm the "wrong
@@ -507,6 +511,14 @@ policy_digest() {
 }
 
 seal() {
+	# Both objects go before either is made, and both have to be there
+	# afterwards. That is the one guard section 6 of docs/recovery-modus.md asks
+	# for and task 9 did not have: a reseal that renewed only ONE of them would
+	# leave the other standing from an earlier seal, with an older counter or
+	# older PCR values, and nobody would notice until the next boot or not
+	# until a recovery. Today there is no code path that seals only one - this
+	# makes sure there cannot be a quiet one later either.
+	rm -f "$w/auto.pub" "$w/auto.priv" "$w/recovery.pub" "$w/recovery.priv"
 	primary
 	counter
 	lockout_setup
@@ -581,6 +593,13 @@ seal() {
 		-i "$w/secret.bin" -L "$w/policy-recovery.digest" -p "file:$pin_platform" \
 		-a "fixedtpm|fixedparent|adminwithpolicy" >/dev/null
 	shred -u "$w/secret.bin"
+	# The other half of the guard above. Counted, not trusted: four files, and
+	# every one of them from THIS seal, because the first thing this function
+	# did was take the old ones away.
+	local f
+	for f in auto.pub auto.priv recovery.pub recovery.priv; do
+		[ -s "$w/$f" ] || { say "Nach dem Versiegeln fehlt $f - die beiden Objekte sind auseinandergelaufen"; exit 1; }
+	done
 	say "Versiegelt gegen sieben Zweige in zwei Objekten"
 }
 
@@ -649,6 +668,130 @@ bump() {
 	say "Zähler erhöht, beide Objekte neu versiegelt"
 }
 
+# Proves a stick can sign at all and that its signature verifies against its own
+# public key. It runs before the foreign-stick case, which would otherwise pass
+# for the wrong reason: a token whose key is simply broken never signs, the
+# PolicySigned fails, nothing opens, and the case would report "the foreign
+# stick does not open" about a stick that cannot sign anything.
+checkstick() {           # $1 = stick number
+	printf 'TEST-STICK-PRUEFUNG' > "$w/probe.bin"
+	sign_stick "$1" "$w/probe.bin" "$w/probe.sig"
+	# Verified outside the TPM, against the .pem the sticks were read out into,
+	# because this says something about the STICK and must not depend on a
+	# policy, a session or a sealed object.
+	openssl dgst -sha384 -verify "$keys/stick$1.pem" -signature "$w/probe.sig" \
+		"$w/probe.bin" >/dev/null
+	say "Stick $1 signiert gültig"
+}
+
+# Records one honest run and plays that signature back into a FRESH session. The
+# new session hands out a new nonce, so the recorded signature signs the wrong
+# bytes - that is the whole replay argument of the branch, and until now only
+# the criterion behind it was measured (52 byte, not all zero, a new session
+# gives other bytes), never the case itself.
+#
+# Exit codes, and the test asks for 1 exactly, never "anything but 0":
+#   1  the TPM refused - the case passed
+#   2  the honest run already did not open - the case proves nothing
+#   0  the TPM accepted the replay
+replay() {               # $1 = branch
+	local i="${1%?}" got=""
+	if ! got="$(open_branch "$1")"; then
+		say "Der ehrliche Vorlauf ist abgebrochen — der Replay-Fall beweist so nichts."
+		return 2
+	fi
+	if [ "$got" != TEST-DEK ]; then
+		say "Der ehrliche Vorlauf öffnet nicht — der Replay-Fall beweist so nichts."
+		return 2
+	fi
+	# open_branch hands its session on (uebergabe) and the honest run above ran
+	# in a command substitution, so that variable never reached this shell. The
+	# session is taken away here by hand: the next new_session writes the same
+	# context FILE, and the TPM would keep the old session in a slot nothing
+	# can reach any more.
+	tpm2_flushcontext -s >/dev/null 2>&1 || :
+	[ -s "$w/stick$i.sig" ] \
+		|| { say "Vom Stick $i liegt keine mitgeschnittene Signatur vor — nichts zum Einspielen."; return 2; }
+	cp "$w/stick$i.sig" "$w/replay.sig"
+	primary
+	counter
+	new_session "$w/sess.ctx" policy
+	# The PCR assertions first, in the same two steps and the same order as
+	# policy_branch - a case that is refused before the meant line measures the
+	# earlier wall. Here they MUST go through, so what the PolicySigned below
+	# answers is the recorded signature and nothing else.
+	pcr_files recovery
+	tpm2_policypcr -S "$w/sess.ctx" -l "$pcrs_boot" -f "$w/pcr-boot.bin" >/dev/null
+	tpm2_policypcr -S "$w/sess.ctx" -l "$pcrs_uki" -f "$w/pcr-uki.bin" >/dev/null
+	load_stick "$i"
+	say "Spiele eine mitgeschnittene Signatur in eine neue Sitzung ein"
+	if policysigned_real "$w/sess.ctx" "$w/stick$i.ctx" "$w/replay.sig"; then
+		say "Das TPM hat die mitgeschnittene Signatur angenommen."
+		tpm2_flushcontext "$w/sess.ctx" >/dev/null
+		return 0
+	fi
+	tpm2_flushcontext "$w/sess.ctx" >/dev/null
+	return 1
+}
+
+# Only the FIRST stick of the pair signs - correctly, with its real key, in this
+# very session. The branch stays half built, so the closing PolicyOR finds no
+# match among the six sealed digests. Same exit codes as replay.
+half() {                 # $1 = branch
+	local i="${1%?}" got=""
+	if ! got="$(open_branch "$1")"; then
+		say "Der ehrliche Vorlauf ist abgebrochen — der halbe Zweig beweist so nichts."
+		return 2
+	fi
+	if [ "$got" != TEST-DEK ]; then
+		say "Der ehrliche Vorlauf öffnet nicht — der halbe Zweig beweist so nichts."
+		return 2
+	fi
+	tpm2_flushcontext -s >/dev/null 2>&1 || :
+	# Printed before anything is decided, and the test looks for this very
+	# sentence: a case whose exit code is 1 because the script does not even
+	# KNOW the subcommand would otherwise pass. Measured - see the report.
+	say "Baue den halben Zweig: nur Stick $i signiert"
+	primary
+	counter
+	flush
+	# A-recovery, the object the pair branches belong to - never seal.pub, which
+	# is no file this script writes.
+	tpm2_load -C "$handle" -u "$w/recovery.pub" -r "$w/recovery.priv" -c "$w/seal.ctx" >/dev/null
+	new_session "$w/sess.ctx" policy
+	pcr_files recovery
+	tpm2_policypcr -S "$w/sess.ctx" -l "$pcrs_boot" -f "$w/pcr-boot.bin" >/dev/null
+	tpm2_policypcr -S "$w/sess.ctx" -l "$pcrs_uki" -f "$w/pcr-uki.bin" >/dev/null
+	load_stick "$i"
+	# A real signature over the bytes of THIS session: the stick does everything
+	# right, there is just one of them.
+	policysigned_raw "$w/sess.ctx" "$w/stick$i.ctx" "$w/tosign-$i.bin"
+	sign_stick "$i" "$w/tosign-$i.bin" "$w/stick$i.sig"
+	policysigned_real "$w/sess.ctx" "$w/stick$i.ctx" "$w/stick$i.sig"
+	tpm2_policyauthvalue -S "$w/sess.ctx" >/dev/null
+	policy_nv "$w/sess.ctx"
+	flush
+	# The OR is asked in an if, not left to errexit: the TPM refuses a PolicyOR
+	# whose current digest is in none of the branches, and that refusal IS the
+	# wall this case means. Left bare it would end the script with a message
+	# from tpm2_policyor that names no case, and the unseal below - the worse
+	# outcome, the one that must never open - would never be tried at all.
+	if ! tpm2_policyor -S "$w/sess.ctx" -l "sha384:$(pair_list)" >/dev/null; then
+		say "Der abschließende PolicyOR passt auf den halben Zweig nicht — genau das soll er."
+		tpm2_flushcontext "$w/sess.ctx" >/dev/null
+		return 1
+	fi
+	say "Der PolicyOR hat den halben Zweig angenommen — jetzt entscheidet das Entsiegeln."
+	flush
+	if tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx+file:$pin_platform" >/dev/null; then
+		say "Der halbe Zweig hat geöffnet."
+		tpm2_flushcontext "$w/sess.ctx" >/dev/null
+		return 0
+	fi
+	tpm2_flushcontext "$w/sess.ctx" >/dev/null
+	return 1
+}
+
 # Sets $branch. Deliberately not a command substitution: an exit inside $( )
 # would only end the subshell and the script would carry on with nothing.
 branch_of_pair() {       # $1, $2 = stick numbers
@@ -664,11 +807,18 @@ state) set_pcr_state "${2:-}" ;;
 seal) seal ;;
 bump) bump ;;
 lockout-clear) lockout_clear ;;
+replay) branch_of_pair "${2:-}" "${3:-}"; replay "$branch" ;;
+half) branch_of_pair "${2:-}" "${3:-}"; half "$branch" ;;
+checkstick)
+	case "${2:-}" in
+	1|2|3|4|5) checkstick "$2" ;;
+	*) say "Stick-Nummer 1 bis 5 erwartet, nicht: ${2:-}"; exit 1 ;;
+	esac ;;
 open)
 	case "${2:-}" in
 	pcr) open_branch pcr ;;
 	pair) branch_of_pair "${3:-}" "${4:-}"; open_branch "$branch" ;;
 	*) say "Aufruf: tools/recovery-policy.sh open pcr|pair <i> <j>"; exit 1 ;;
 	esac ;;
-*) say "Aufruf: tools/recovery-policy.sh state|seal|open|bump|lockout-clear"; exit 1 ;;
+*) say "Aufruf: tools/recovery-policy.sh state|seal|open|bump|replay|half|checkstick|lockout-clear"; exit 1 ;;
 esac
