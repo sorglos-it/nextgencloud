@@ -10,14 +10,31 @@ work="$(pwd)/dist/recovery"
 # this script runs only on the VM (measured: report has the details).
 # ps is called by four of the scripts and is still not on the list: it comes out
 # of the same package as pgrep - measured, dpkg -S names procps for both - so
-# the pgrep entry already answers for it. grep and sed get no such stand-in and
-# so are named below: dpkg -S puts each of them in a package of its own, called
-# grep and sed, and the paragraph on coreutils does not cover them. Both are
-# really called - grep further down in this script and in recovery-qemu.sh,
-# recovery-setup.sh and recovery-tools.sh, sed in the latter two. Counted, not
-# guessed: recovery-policy.sh used to call grep as well and no longer does.
+# the pgrep entry already answers for it. grep, sed and find get no such
+# stand-in and so are named below: dpkg -S puts each of them in a package of its
+# own - grep, sed and findutils - and the paragraph on coreutils does not cover
+# them. All three are really called - grep further down in this script and in
+# recovery-qemu.sh, recovery-setup.sh and recovery-tools.sh, sed in the latter
+# two, find twice in recovery-test.sh, where it builds both file lists the
+# plaintext search walks. Counted, not guessed: recovery-policy.sh used to call
+# grep as well and no longer does.
 # Tried: with one of them missing from the PATH the loop below names it and ends
 # at EXIT=1, grep included - the loop runs before this script greps anything.
+# find was the one that got away, and it was measured before it was added:
+# behind a PATH screen of 1188 symlinked programs with find and only find left
+# out - the screen itself checked first, find unreachable, openssl and
+# tpm2_unseal reachable - this script said "Umgebung: vollständig" at EXIT=0 and
+# its message did not contain the word find even once. The run then died much
+# later, inside the plaintext search. Same class as the cmp that was kept out of
+# recovery-test.sh in task 7.
+# Counted by machine over all seven scripts, in command position, function names
+# and bash builtins removed and only real programs kept: find was the ONLY one
+# missing. The twenty-eight raw hits were otherwise coreutils (covered by the
+# stand-in below), ps out of procps (covered by pgrep), sudo, which only
+# recovery-setup.sh install uses and which deliberately runs without this check,
+# and six words that are no call at all - cc, dir, id, login, kvm, w - with zero
+# call sites between them, each one checked at its site rather than taken for a
+# false hit.
 # Coreutils goes the other way round:
 # shred and the timeout that bounds swtpm_ioctl in recovery-swtpm.sh are named
 # below, and dpkg -S puts them in the same package as the twenty more this
@@ -30,7 +47,7 @@ work="$(pwd)/dist/recovery"
 # harmless only because this check comes before the first use of $work; move it
 # and the wrong working directory is suddenly real.
 need="qemu-system-x86_64 swtpm swtpm_setup swtpm_ioctl softhsm2-util pkcs11-tool openssl xxd socat shred
-	timeout pgrep grep sed tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
+	timeout pgrep grep sed find tpm2 tpm2_startauthsession tpm2_sessionconfig tpm2_flushcontext tpm2_createprimary
 	tpm2_evictcontrol tpm2_getpolicydigest tpm2_create tpm2_load tpm2_loadexternal tpm2_readpublic
 	tpm2_unseal tpm2_pcrread tpm2_pcrextend tpm2_policypcr tpm2_policysigned
 	tpm2_policyauthvalue tpm2_policynv tpm2_policyor tpm2_nvdefine tpm2_nvincrement
