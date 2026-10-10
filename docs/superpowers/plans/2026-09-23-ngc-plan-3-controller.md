@@ -1858,6 +1858,30 @@ git commit -m "Accept and verify an app package before anything is unpacked"
 
 ### Task 16: App aktivieren
 
+> **Berichtigt am 10.10.2026 — zwei Sätze aus „Consumes" und einer von mir.**
+>
+> **1. `store.Granted` gehört NICHT in diese Aufgabe, und zwar aus einem
+> gemessenen Grund.** Der Auftrag verlangt Mengen-**Gleichheit** der Grants;
+> `store.Granted` prüft nur „**Teilmenge**" und würde **einen Grant zu viel**
+> durchlassen. Der Strang hat es gemessen (der Mutant, der auf `Granted`
+> umstellt, ist **tot**) und die Funktion darum nicht benutzt. Die Zeile in
+> „Consumes" ist falsch; sie stand schon in Aufgabe 15 dort und war auch dort
+> unbenutzt.
+>
+> **2. `audit` gibt es im Controller-Zweig GAR NICHT** — gemessen: zwei Dateien
+> unter `apps/server-api/classes/audit/` auf `api`, **null** auf `controller`.
+> Mein Satz „`audit.Log` ist fertig" war für diesen Strang irreführend, und er
+> hat richtig gehandelt: **keinen Kommentar geschrieben, der etwas anderes
+> behauptet.**
+>
+> **Und das ist kein Loch im Entwurf, sondern seine Aufteilung:** Zeile 201 des
+> Kern-Designs gibt das **Protokoll der API**. Der Controller **protokolliert
+> nicht selbst** — er gibt einen Fehler zurück, den der Aufrufer unterscheiden
+> kann, und die API schreibt ihn. Genau dafür trennt `install.ErrDisk` seit der
+> Fixrunde der Aufgabe 15 „dieser Knoten konnte nicht" von „Paket kaputt". Wer
+> hier später doch im Controller protokollieren will, ändert den Entwurf und
+> nicht nur den Code.
+
 > **Ergaenzt am 02.10.2026, aus der Pruefung der Aufgabe 12 — und ich
 > schreibe es HIERHIN, weil eine Zeile, die nur in einem Bericht steht,
 > dort verschwindet.**
