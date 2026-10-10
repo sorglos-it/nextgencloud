@@ -906,6 +906,95 @@ tools/recovery-policy.sh seal pcr
 if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet im Recovery-Zustand"; fi
 ok "im Recovery-Zustand bleibt der Normalzweig zu"
 
+tools/recovery-policy.sh seal 12
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "Stick-Paar 1+2 öffnet nicht"
+# That it opened says nothing about HOW MANY sticks signed, and the word "two"
+# in the line below would otherwise be a claim nothing measures. Measured: with
+# the loop in policy_branch cut down to "for n in ${branch%?}" - one stick
+# instead of two - the branch OPENS and this very case said ok. Trial and real
+# walk the same function, so a weakened branch is sealed and opened alike and
+# the digests still match; nothing above can see it. The run then died further
+# down on a missing tosign-2.bin, with the catch-all message that names no
+# cause. So the two signatures are asked for here, by name, before the line
+# that claims them: one file of bytes to sign and one signature per stick.
+for t7_stick in 1 2; do
+	[ -s "dist/recovery/work/tosign-$t7_stick.bin" ] \
+		|| fail "Stick $t7_stick hat in diesem Zweig nichts zu signieren bekommen - der Zweig hängt nicht an zwei Sticks."
+	[ -s "dist/recovery/work/stick$t7_stick.sig" ] \
+		|| fail "Von Stick $t7_stick liegt keine Signatur vor - der Zweig hängt nicht an zwei Sticks."
+done
+ok "Zweig eines Stick-Paars (1+2) öffnet mit zwei echten Signaturen"
+
+# What the sticks sign: 48 byte nonce plus 4 byte expiration, and the nonce has
+# to belong to the SESSION - that is the whole replay argument of the branch.
+#
+# The plan asserts this by demanding that the two sticks of one session get
+# DIFFERENT bytes, "if they did not, the signature would not hang on the session
+# at all". That assertion is wrong, and it was measured in both directions
+# before it was replaced here. tpm2_policysigned hands the session in as the
+# object being operated on, not in the session area of the command, so nonceTPM
+# does not roll between the two sticks:
+#
+#   stick 1 vs stick 2, same session:   GLEICH      (48 real bytes, not zero)
+#   stick 1, session A vs session B:    VERSCHIEDEN
+#   stick 1's recorded signature of session A, replayed into a fresh session:
+#     TPM2_PolicySigned refused, 0x5DB "the signature is not valid", EXIT=1
+#
+# So the signature DOES hang on the session, and the plan's test would have
+# called that a failure. The check below asks the property instead of the
+# accident: a second run gets a different nonce. The full replay case - feeding
+# a recorded signature back in - belongs to task 10, as the plan says; what is
+# shown here is the criterion the nonce has to meet, not replay resistance
+# itself.
+#
+# xxd and not the plan's cmp: measured, cmp comes out of diffutils, a package of
+# its own that recovery-env.sh's list does not name and cannot see missing -
+# exactly the silent gap that check exists to prevent. xxd is on the list and
+# used all over this file. These bytes are a public nonce, never a secret, and
+# they are never printed.
+for t7_datei in dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-2.bin; do
+	t7_n="$(wc -c < "$t7_datei")"
+	[ "$t7_n" -eq 52 ] || fail "$t7_datei ist $t7_n statt 52 Byte lang - dann sind es nicht Nonce und Ablaufzeit dieser Sitzung."
+done
+t7_sitzung_a="$(xxd -p -c 96 < dist/recovery/work/tosign-1.bin | tr -d '\n')"
+# All zero would be no nonce at all, and the length check above would not notice.
+case "$t7_sitzung_a" in
+*[1-9a-f]*) ;;
+*) fail "die 52 Byte sind lauter Nullen - dann steckt keine Nonce des TPM darin." ;;
+esac
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "Stick-Paar 1+2 öffnet beim zweiten Mal nicht"
+t7_sitzung_b="$(xxd -p -c 96 < dist/recovery/work/tosign-1.bin | tr -d '\n')"
+[ "$t7_sitzung_a" != "$t7_sitzung_b" ] \
+	|| fail "zwei Sitzungen geben demselben Stick dieselben 52 Byte zu signieren - dann hängt die Signatur nicht an der Sitzung und ein Mitschnitt wäre wiederverwendbar."
+ok "die Sticks signieren je 52 Byte, und eine neue Sitzung gibt eine andere Nonce"
+
+# The pair branch asserts PCR as well, and until this case nothing asked whether
+# it really does. Measured, and it is the same class task 6 found for the normal
+# branch: with BOTH tpm2_policypcr calls deleted out of the pair branch the run
+# stayed green from end to end, sixteen times ok and EXIT=0. Trial and real walk
+# the same function, so a deleted line changes both digests alike and no case
+# above notices - only an extend BETWEEN sealing and opening can see it.
+#
+# One register per assertion, 11 for pcr-uki.bin and 7 for pcr-boot.bin, not the
+# eight of the normal branch's loop. The reason is named rather than assumed:
+# both branches read the SAME pcrs_boot and pcrs_uki, and which registers that
+# selection holds is already shown register by register above. What was open
+# here is whether the pair branch asserts them AT ALL, and one case per
+# assertion answers exactly that. What it does NOT answer: whether this branch
+# is bound to boot PCR 0 to 6 individually - that rests on the shared variable.
+for n in 11 7; do
+	tools/recovery-swtpm.sh reset main
+	use_main
+	tools/recovery-policy.sh state recovery
+	tools/recovery-policy.sh seal 12
+	tpm2_pcrextend "$n:sha384=$anders" >/dev/null \
+		|| fail "PCR $n lässt sich nicht erweitern - der Fall hat gar nicht stattgefunden"
+	if tools/recovery-policy.sh open pair 1 2 >/dev/null; then
+		fail "Der Stick-Paar-Zweig öffnet trotz geänderter PCR $n - an dieses Register ist er nicht gebunden"
+	fi
+done
+ok "geänderte PCR 11 und PCR 7 sperren den Stick-Paar-Zweig je für sich"
+
 # And the same search once more, right at the end. The head of this file says
 # what a FINISHED run leaves standing, and this is the only place that looks at
 # THAT state - until now nothing asked the question at the end at all. The

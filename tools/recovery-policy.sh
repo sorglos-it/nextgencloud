@@ -20,6 +20,17 @@ work="$(pwd)/dist/recovery"
 w="$work/work"
 mkdir -p "$w"
 
+# The sticks of task 3. The plan puts these under a "pin_platform=" line, and
+# that line does not exist yet - the platform PIN arrives with task 8 - so they
+# sit here, ahead of their first use.
+keys="$work/keys"
+pin_stick="$work/pin/stick.txt"
+module=/usr/lib/softhsm/libsofthsm2.so
+# Exported, not handed to each call: softhsm2 reads it from the environment and
+# has no option for it. recovery-env.sh has already seen that the module file
+# is there, so a missing SoftHSM2 never gets this far.
+export SOFTHSM2_CONF="$work/softhsm/softhsm2.conf"
+
 # This script speaks to the simulator of instance main and to nothing else, and
 # that is settled BEFORE anything here can clean up. Measured on the test
 # machine, which carries a real TPM of its own: with TPM2TOOLS_TCTI empty the
@@ -252,6 +263,66 @@ new_session() {          # $1 = context file, $2 = trial|policy
 	esac
 }
 
+load_stick() {           # $1 = stick number
+	if [ ! -f "$w/stick$1.ctx" ]; then
+		flush
+		# The name algorithm matters: the key's Name goes into the PolicySigned
+		# digest, so a SHA-256 name would silently build a different branch.
+		tpm2_loadexternal -C o -G ecc -g sha384 -u "$keys/stick$1.pem" \
+			-c "$w/stick$1.ctx" >/dev/null
+	fi
+}
+
+sign_stick() {           # $1 = stick number, $2 = data file, $3 = signature file
+	# SoftHSM2 only offers CKM_ECDSA, the raw operation, so the digest is made
+	# outside - exactly how a real HSM stick works as well.
+	#
+	# The PIN stands in the command line, and that breaks the project rule that
+	# no secret goes where the process list shows it. It stays because measured,
+	# not assumed: pkcs11-tool offers --pin and nothing else. Its own help says
+	# "Supply User PIN on the command line (if used in scripts: careful!)", and
+	# fed on stdin instead it dies with "error: util_getpass error", EXIT=1 - it
+	# reads the terminal, not stdin. This is a TEST stick with a test PIN that
+	# docs/recovery-modus.md section 13 allows to lie in the repo, so nothing
+	# secret is exposed here. What must not happen is that work package 2 copies
+	# the pattern to a real stick: there the PIN comes from the keyboard and the
+	# access runs through cryptoki, not through this tool.
+	openssl dgst -sha384 -binary -out "$2.hash" "$2"
+	pkcs11-tool --module "$module" --token-label "TEST-STICK-$1" --login \
+		--pin "$(cat "$pin_stick")" --sign --mechanism ECDSA \
+		--signature-format openssl --input-file "$2.hash" --output-file "$3" >/dev/null
+}
+
+# A trial session does not check the signature, the file only has to parse. One
+# throwaway signature from a key nobody keeps serves every branch.
+dummy_sig() {
+	if [ ! -f "$w/dummy.sig" ]; then
+		openssl ecparam -name secp384r1 -genkey -noout -out "$w/dummy.key"
+		printf 'TEST-DUMMY' | openssl dgst -sha384 -sign "$w/dummy.key" -out "$w/dummy.sig"
+		shred -u "$w/dummy.key"
+	fi
+}
+
+# Hands out the bytes the stick has to sign: 48 byte nonce of this session plus
+# 4 byte expiration. A recording of an earlier run does not fit a new session.
+policysigned_raw() {     # $1 = session, $2 = key context, $3 = output file
+	flush
+	tpm2_policysigned -S "$1" -c "$2" -g sha384 -t 0 -x --raw-data="$3" >/dev/null
+}
+
+policysigned_real() {    # $1 = session, $2 = key context, $3 = signature file
+	flush
+	tpm2_policysigned -S "$1" -c "$2" -g sha384 -t 0 -x -s "$3" -f ecdsa >/dev/null
+}
+
+policysigned_trial() {   # $1 = session, $2 = key context
+	dummy_sig
+	flush
+	# No -x here: the nonce belongs to the real session only, and the digest
+	# does not depend on it.
+	tpm2_policysigned -S "$1" -c "$2" -g sha384 -t 0 -s "$w/dummy.sig" -f ecdsa >/dev/null
+}
+
 # One branch, one command sequence, for both jobs: mode "trial" builds the
 # digest, mode "real" opens. In this branch the mode makes no difference at all
 # yet - what separates the two jobs is the session, not the commands - and it
@@ -264,15 +335,47 @@ new_session() {          # $1 = context file, $2 = trial|policy
 # returns nothing and the test says "Normalstart-Zweig öffnet nicht". A policy
 # digest carries the order of its assertions.
 policy_branch() {        # $1 = trial|real, $2 = branch, $3 = session context
-	local branch="$2" session="$3"
+	local branch="$2" session="$3" n
 	if [ "$branch" = pcr ]; then
 		pcr_files normal
 		tpm2_policypcr -S "$session" -l "$pcrs_boot" -f "$w/pcr-boot.bin" >/dev/null
 		tpm2_policypcr -S "$session" -l "$pcrs_uki" -f "$w/pcr-uki.bin" >/dev/null
 		return 0
 	fi
-	say "Unbekannter Zweig: $branch"
-	exit 1
+	# The plan stops at [1-5][1-5]. That alone lets "11" and "51" through, and
+	# both build a branch nothing will ever open - 11 asserts the same stick
+	# twice, 51 the pair in the wrong order and so a different digest than the
+	# "15" the open path can ask for. Since seal does NOT run through
+	# branch_of_pair, this is the only gate on that way in, so it asks the same
+	# two questions: two different sticks, smaller one first.
+	case "$branch" in
+	[1-5][1-5]) ;;
+	*) say "Unbekannter Zweig: $branch"; exit 1 ;;
+	esac
+	if [ "${branch%?}" -ge "${branch#?}" ]; then
+		say "Zweig $branch: erst der kleinere Stick, und zwei verschiedene. Erlaubt: 12 13 14 15 23 24 25 34 35 45"
+		exit 1
+	fi
+	# The plan writes one tpm2_policypcr over a single "pcr_file recovery". That
+	# shape is gone: task 6 measured that a value file carries at most eight
+	# digests, so the nine PCRs of the specification go in as TWO assertions,
+	# and the function that fills them is pcr_files. Same two calls as the pcr
+	# branch above, in the same order - only against the RECOVERY image, because
+	# this branch is the recovery one. Then the sticks, so the order of
+	# assertions in the digest is PCR, PCR, stick, stick on both ways through.
+	pcr_files recovery
+	tpm2_policypcr -S "$session" -l "$pcrs_boot" -f "$w/pcr-boot.bin" >/dev/null
+	tpm2_policypcr -S "$session" -l "$pcrs_uki" -f "$w/pcr-uki.bin" >/dev/null
+	for n in "${branch%?}" "${branch#?}"; do
+		load_stick "$n"
+		if [ "$1" = trial ]; then
+			policysigned_trial "$session" "$w/stick$n.ctx"
+		else
+			policysigned_raw "$session" "$w/stick$n.ctx" "$w/tosign-$n.bin"
+			sign_stick "$n" "$w/tosign-$n.bin" "$w/stick$n.sig"
+			policysigned_real "$session" "$w/stick$n.ctx" "$w/stick$n.sig"
+		fi
+	done
 }
 
 branch_digest() {        # $1 = branch
@@ -347,13 +450,24 @@ open_branch() {          # $1 = branch
 	uebergabe=ja
 }
 
+# Sets $branch. Deliberately not a command substitution: an exit inside $( )
+# would only end the subshell and the script would carry on with nothing.
+branch_of_pair() {       # $1, $2 = stick numbers
+	local i="${1:-}" j="${2:-}"
+	case "$i" in 1|2|3|4|5) ;; *) say "Stick-Nummer 1 bis 5 erwartet, nicht: $i"; exit 1 ;; esac
+	case "$j" in 1|2|3|4|5) ;; *) say "Stick-Nummer 1 bis 5 erwartet, nicht: $j"; exit 1 ;; esac
+	if [ "$i" -ge "$j" ]; then say "Erst der kleinere Stick, also: open pair $j $i"; exit 1; fi
+	branch="$i$j"
+}
+
 case "${1:-}" in
 state) set_pcr_state "${2:-}" ;;
 seal) seal "${2:-}" ;;
 open)
 	case "${2:-}" in
 	pcr) open_branch pcr ;;
-	*) say "Aufruf: tools/recovery-policy.sh open pcr"; exit 1 ;;
+	pair) branch_of_pair "${3:-}" "${4:-}"; open_branch "$branch" ;;
+	*) say "Aufruf: tools/recovery-policy.sh open pcr|pair <i> <j>"; exit 1 ;;
 	esac ;;
 *) say "Aufruf: tools/recovery-policy.sh state|seal|open"; exit 1 ;;
 esac
