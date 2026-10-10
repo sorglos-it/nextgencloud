@@ -125,6 +125,24 @@ fi' EXIT
 # tpm2_pcrread.
 pcrs_boot="sha384:0,1,2,3,4,5,6,7"
 pcrs_uki="sha384:11"
+# The branch list, in fixed order, written down exactly once. The order goes
+# into the OR digest, so the sealing path and the opening path both read it from
+# here - a second, differing list would break every branch.
+#
+# Seven branches, and since the decision of 10.10.2026 in section 6 of
+# docs/recovery-modus.md they sit in TWO sealed objects: the pcr branch is the
+# WHOLE policy of A-auto, which carries no authValue, and the six pairs are the
+# branches of the PolicyOR in A-recovery, which does. One object with an
+# authValue would hand the normal boot rubbish at exit code 0 - measured in task
+# 8, the table stands at seal below. So pair_branches, not branches, is what the
+# OR is built from; branches is the list of digests that have to exist.
+branches="pcr 12 13 14 23 24 34"
+pair_branches="12 13 14 23 24 34"
+pair_list() {
+	local list="" b
+	for b in $pair_branches; do list="$list,$w/branch-$b.digest"; done
+	printf '%s' "${list#,}"
+}
 handle=0x81000001
 nv=0x1500016
 # COUNTER_FILE lets the test hand in an old counter state without putting it on
@@ -302,15 +320,15 @@ lockout_clear() {
 # in both directions. Honest run: 2 hits, both in what the tools SENT during the
 # Create of the sealing, and that is the ONE named place - tpm2_create -i runs
 # without any session at all. Every hit has to sit there and there may be no
-# others; on top of that the set of command codes has to be the twenty of an
+# others; on top of that the set of command codes has to be the twenty-five of an
 # honest run. Both are searches, and a search that finds nothing has NOT shown
 # that the secret stayed in. Measured ways past it, green at 14 x ok against
 # the state before ledger 2 existed: the plaintext split over two requests, or
 # sent base64-encoded. They are listed at that case. So what the wire case
 # gives this script is not the property but a much narrower sentence -
 # whatever it does with its sessions, the recording of a run must carry no
-# further hit of those eight bytes and exactly the twenty known commands - a
-# twenty-first added or one of the twenty missing both end it the same way -
+# further hit of those eight bytes and exactly the twenty-five known commands - a
+# twenty-sixth added or one of the twenty-five missing both end it the same way -
 # and that is still more than anything here can say about itself.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
@@ -467,12 +485,32 @@ branch_digest() {        # $1 = branch
 	tpm2_flushcontext "$w/trial.ctx" >/dev/null
 }
 
-seal() {                 # $1 = branch
-	local pargs
+# Builds the two policies of section 6. All seven branch digests are written,
+# because the acceptance counts them; A-auto then IS the pcr digest, and
+# A-recovery is the OR over the six pair digests.
+policy_digest() {
+	local b
+	for b in $branches; do branch_digest "$b"; done
+	# A-auto needs no PolicyOR: one branch, and its digest is the policy. An OR
+	# over a single branch would be a different digest for no gain.
+	cp "$w/branch-pcr.digest" "$w/policy-auto.digest"
+	new_session "$w/trial.ctx" trial
+	tpm2_policyor -S "$w/trial.ctx" -l "sha384:$(pair_list)" >/dev/null
+	tpm2_getpolicydigest -S "$w/trial.ctx" -o "$w/policy-recovery.digest" >/dev/null
+	tpm2_flushcontext "$w/trial.ctx" >/dev/null
+	# Counted here as well, not only in the test: a branch that silently went
+	# missing would make the policy smaller than the specification asks for, and
+	# every case that opens a branch it still has would stay green.
+	local n
+	n="$(ls "$w"/branch-*.digest | wc -l)"
+	[ "$n" -eq 7 ] || { say "Es liegen $n Zweig-Digests statt sieben vor dem Versiegeln"; exit 1; }
+}
+
+seal() {
 	primary
 	counter
 	lockout_setup
-	branch_digest "$1"
+	policy_digest
 	printf 'TEST-DEK' > "$w/secret.bin"
 	flush
 	# noda is deliberately absent. It would switch off the dictionary attack
@@ -528,28 +566,46 @@ seal() {                 # $1 = branch
 	# The pcr branch simply gets no authValue, which is what the plan's own
 	# interface list promises.
 	#
-	# This comes back in task 9: there ONE object carries the OR over all seven
-	# branches, so the normal boot and the stick branches share one authValue and
-	# the choice above is no longer available. Reported, not decided here.
-	pargs=()
-	if [ "$1" != pcr ]; then pargs=(-p "file:$pin_platform"); fi
-	tpm2_create -C "$handle" -g sha384 -u "$w/seal.pub" -r "$w/seal.priv" \
-		-i "$w/secret.bin" -L "$w/branch-$1.digest" "${pargs[@]}" \
+	# That is why Slot A is sealed TWICE, as section 6 of the specification now
+	# prescribes: A-auto without an authValue, so the normal boot opens without a
+	# person, and A-recovery with one. The same secret goes into both - it is the
+	# same DEK in work package 6 - and the price is written down in that section:
+	# both have to be resealed on a PCR change, A-recovery on every counter step
+	# as well, and whoever forgets one notices at the next boot or not until a
+	# recovery. bump below reseals both, and the test opens both afterwards.
+	tpm2_create -C "$handle" -g sha384 -u "$w/auto.pub" -r "$w/auto.priv" \
+		-i "$w/secret.bin" -L "$w/policy-auto.digest" \
+		-a "fixedtpm|fixedparent|adminwithpolicy" >/dev/null
+	flush
+	tpm2_create -C "$handle" -g sha384 -u "$w/recovery.pub" -r "$w/recovery.priv" \
+		-i "$w/secret.bin" -L "$w/policy-recovery.digest" -p "file:$pin_platform" \
 		-a "fixedtpm|fixedparent|adminwithpolicy" >/dev/null
 	shred -u "$w/secret.bin"
-	say "Versiegelt gegen Zweig $1"
-	# bump has to know which branch was sealed last. Task 9 drops this: from
-	# then on there is only one policy, the OR over all seven branches.
-	printf '%s' "$1" > "$w/sealed-branch"
+	say "Versiegelt gegen sieben Zweige in zwei Objekten"
 }
 
 open_branch() {          # $1 = branch
 	primary
 	counter
 	flush
-	tpm2_load -C "$handle" -u "$w/seal.pub" -r "$w/seal.priv" -c "$w/seal.ctx" >/dev/null
+	# Which of the two objects a branch belongs to is decided here and nowhere
+	# else: the pcr branch is A-auto, every pair branch is A-recovery.
+	local objekt
+	if [ "$1" = pcr ]; then objekt=auto; else objekt=recovery; fi
+	if [ ! -s "$w/$objekt.pub" ]; then
+		say "Das Objekt A-$objekt ist nicht versiegelt - zuerst tools/recovery-policy.sh seal"
+		exit 1
+	fi
+	tpm2_load -C "$handle" -u "$w/$objekt.pub" -r "$w/$objekt.priv" -c "$w/seal.ctx" >/dev/null
 	new_session "$w/sess.ctx" policy
 	policy_branch real "$1" "$w/sess.ctx"
+	# The same OR as at sealing time, from the same list - and only for
+	# A-recovery. A-auto has one branch and no OR, so adding one here would
+	# build a digest its object was never sealed against.
+	if [ "$objekt" = recovery ]; then
+		flush
+		tpm2_policyor -S "$w/sess.ctx" -l "sha384:$(pair_list)" >/dev/null
+	fi
 	flush
 	# The secret goes to stdout because the test compares it. The real version
 	# in work package 6 uses tpm2_unseal -o and never lets it near a terminal.
@@ -583,15 +639,14 @@ bump() {
 	counter
 	tpm2_nvincrement -C o "$nv" >/dev/null
 	tpm2_nvread -C o "$nv" -s 8 -o "$w/counter.bin" >/dev/null
-	rm -f "$w/seal.pub" "$w/seal.priv" "$w/seal.ctx" "$w"/branch-*.digest
-	# Reseal against the same branch as before. A missing note means nobody has
-	# sealed yet, and resealing "" would build the pcr branch by accident.
-	if [ ! -s "$w/sealed-branch" ]; then
-		say "Es ist noch nichts versiegelt - zuerst tools/recovery-policy.sh seal <Zweig>"
-		exit 1
-	fi
-	seal "$(cat "$w/sealed-branch")"
-	say "Zähler erhöht, neu versiegelt"
+	# Both objects go, and both come back: there is only one policy now, so
+	# there is nothing left to remember about "which branch". A-recovery must be
+	# resealed because its branches carry PolicyNV; A-auto is resealed with it so
+	# the two can never drift apart, which is the price section 6 names.
+	rm -f "$w/auto.pub" "$w/auto.priv" "$w/recovery.pub" "$w/recovery.priv" \
+		"$w/seal.ctx" "$w"/branch-*.digest "$w"/policy-*.digest
+	seal
+	say "Zähler erhöht, beide Objekte neu versiegelt"
 }
 
 # Sets $branch. Deliberately not a command substitution: an exit inside $( )
@@ -606,7 +661,7 @@ branch_of_pair() {       # $1, $2 = stick numbers
 
 case "${1:-}" in
 state) set_pcr_state "${2:-}" ;;
-seal) seal "${2:-}" ;;
+seal) seal ;;
 bump) bump ;;
 lockout-clear) lockout_clear ;;
 open)

@@ -534,7 +534,7 @@ nachher="$(xxd -p -c 96 < dist/recovery/work/pcr11-nachher.bin | tr -d '\n')" \
 ok "ein fremdes TPM2TOOLS_TCTI hält recovery-policy.sh an"
 
 tools/recovery-policy.sh state normal
-tools/recovery-policy.sh seal pcr
+tools/recovery-policy.sh seal
 
 # What the sealing has to leave behind, and above all what it must not. The
 # secret is handed to the TPM through a file, and shred -u is what takes that
@@ -593,7 +593,7 @@ case "$handles" in
 *) fail "Der Primärschlüssel steht nicht unter $seal_handle" ;;
 esac
 tpm2_flushcontext -t >/dev/null 2>&1 || :
-tpm2_load -C "$seal_handle" -u dist/recovery/work/seal.pub -r dist/recovery/work/seal.priv \
+tpm2_load -C "$seal_handle" -u dist/recovery/work/recovery.pub -r dist/recovery/work/recovery.priv \
 	-c dist/recovery/work/pruefung.ctx >/dev/null \
 	|| fail "Das versiegelte Objekt lässt sich nicht laden"
 pub="$(tpm2_readpublic -c dist/recovery/work/pruefung.ctx)" \
@@ -692,7 +692,7 @@ for n in 0 1 2 3 4 5 6 7; do
 	tools/recovery-swtpm.sh reset main
 	use_main
 	tools/recovery-policy.sh state normal
-	tools/recovery-policy.sh seal pcr
+	tools/recovery-policy.sh seal
 	tpm2_pcrextend "$n:sha384=$anders" >/dev/null \
 		|| fail "PCR $n lässt sich nicht erweitern - der Fall hat gar nicht stattgefunden"
 	if tools/recovery-policy.sh open pcr >/dev/null; then
@@ -741,13 +741,13 @@ ok "jede der acht Boot-PCR 0 bis 7 sperrt den Normalzweig für sich allein"
 # That ledger 2 closes nothing is measured too, and this is the case to read if
 # anybody is tempted to believe it does: the same eight bytes carried out in TWO
 # TPM2_CC_PCR_Extend, four in each digest, walk past BOTH ledgers - EXIT=0 and
-# fourteen ok. 00000182 is one of the twenty, and neither request holds all
+# fourteen ok. 00000182 is one of the twenty-five, and neither request holds all
 # eight bytes. A leak that keeps to the known commands is invisible to
 # everything this case does.
 #
 # A seventh way, and it needs no second command: the same two digests as
 # above, WHOLE and in order, in ONE unencrypted TPM2_CC_PCR_Extend request (81
-# bytes, cc 00000182, one of the twenty) - 54455354 00 2D44454B 00..., all
+# bytes, cc 00000182, one of the twenty-five) - 54455354 00 2D44454B 00..., all
 # eight bytes of the secret back to back, broken only by ONE stray NUL.
 # EXIT=0, fourteen ok, needle hits still two: the NUL sits between the
 # needle's two halves in the hex dump, so "544553542D44454B" never occurs
@@ -806,10 +806,29 @@ cc_create=00000153      # TPM2_CC_Create - the sealing, and the one known leak
 cc_unseal=0000015E      # TPM2_CC_Unseal - the opening, proof the recording has it
 # Ledger 1: exactly these hits of the needle, and no others anywhere in the
 # recording.
+# Three since task 9, and the third is NOT a third place - it is the same named
+# place visited three times. Slot A is sealed TWICE now (section 6: A-auto
+# without an authValue, A-recovery with one), so there are two tpm2_create calls
+# with -i, and one of them is sent twice. Read off the recording, message by
+# message, and bit-identical over three runs in a row - same message numbers,
+# same lengths, same count:
+#
+#   1037  00000153  350 Hexzeichen  <- traegt die acht Byte   (A-auto)
+#   1038  00000922   20             <- TPM_RC_RETRY
+#   1039  00000153  350             <- dieselbe Anfrage erneut
+#   1055  00000153  358             <- traegt die acht Byte   (A-recovery)
+#
+# 358 and not 350 because that request carries the authValue as well. Exactly
+# one 00000922 in the whole recording, which is the retry task 6 already counted
+# and named as a maintenance point: a run with none or with two would make this
+# number 2 or 4 and the case would go red and say so. That is the safe
+# direction, and it is a number that was MEASURED, not derived from the two
+# calls - deriving it would have given 2 or 4 and both are wrong.
 befund_erwartet="anfrage $cc_create
+anfrage $cc_create
 anfrage $cc_create"
 # Ledger 2, and what it is worth stands at the head of this case: the SET of
-# command codes the requests of an honest run carry - twenty, sorted, measured.
+# command codes the requests of an honest run carry - twenty-five, sorted, measured.
 # Fifteen until task 8; the counter and the dictionary protection added five,
 # and each of the five was attributed by watching the wire, not taken from a
 # header this machine does not have (no tss2 development files here). One call
@@ -828,6 +847,20 @@ anfrage $cc_create"
 # them would make the "zu wenig" arm fire on every honest run. tpm2_nvreadpublic
 # adds nothing: measured, it asks GetCapability, 0000017A, which was already in
 # the set.
+#
+# Five more in task 9, because seal now builds ALL seven branch digests inside
+# the recorded window - until task 8 the recorded seal was the pcr branch alone,
+# which asserts nothing but PCR. Attributed the same way, one call at a time
+# into a recording simulator, every step at EXIT=0:
+#
+#   00000149  tpm2_policynv
+#   00000160  tpm2_policysigned
+#   00000167  tpm2_loadexternal (load_stick)
+#   0000016B  tpm2_policyauthvalue
+#   00000171  tpm2_policyor
+#
+# 00000139 (--clear-lockout) still stays out: it belongs to cases that run after
+# this one. Twenty-five now.
 # It is not a search for the secret at all; it is a fence around the commands.
 # Both ways that walk past ledger 1 need tpm2_hash, and tpm2_hash needs
 # 00000186 / 0000015C / 0000013E - none of which is in this set. That is the
@@ -840,14 +873,19 @@ cc_erwartet="00000120
 00000131
 00000134
 0000013A
+00000149
 0000014E
 00000153
 00000157
 0000015E
+00000160
 00000161
 00000162
 00000165
+00000167
 00000169
+0000016B
+00000171
 00000173
 00000176
 0000017A
@@ -871,7 +909,7 @@ mitschnitt_laeuft=ja
 use_main
 [ -f "$mit" ] || fail "Der angeforderte Mitschnitt ist nicht entstanden: $mit"
 tools/recovery-policy.sh state normal
-tools/recovery-policy.sh seal pcr
+tools/recovery-policy.sh seal
 rm -f dist/recovery/work/sess.ctx
 [ "$(tools/recovery-policy.sh open pcr)" = "$geheim" ] || fail "Normalstart-Zweig öffnet im Leitungsfall nicht"
 # The whole recording at once, and no value taken anywhere in the middle of the
@@ -905,7 +943,7 @@ cc_befund="$(sed -n 's/^anfrage \([0-9A-F-]*\) .*/\1/p' <<< "$zeilen" | sort -u)
 if [ "$cc_befund" != "$cc_erwartet" ]; then
 	cc_zuviel="$(grep -vxF "$cc_erwartet" <<< "$cc_befund" | tr '\n' ' ' || :)"
 	cc_fehlt="$(grep -vxF "$cc_befund" <<< "$cc_erwartet" | tr '\n' ' ' || :)"
-	fail "Der Lauf schickt andere Befehle über die Leitung als die zwanzig bekannten. Zu viel: ${cc_zuviel:--}, zu wenig: ${cc_fehlt:--}. Ein zusätzlicher Befehl kann ein Weg sein, den Klartext an der Buchführung darüber vorbeizutragen; ein fehlender heißt, dass andere Werkzeuge im Spiel sind und die Liste nachzuziehen ist."
+	fail "Der Lauf schickt andere Befehle über die Leitung als die fünfundzwanzig bekannten. Zu viel: ${cc_zuviel:--}, zu wenig: ${cc_fehlt:--}. Ein zusätzlicher Befehl kann ein Weg sein, den Klartext an der Buchführung darüber vorbeizutragen; ein fehlender heißt, dass andere Werkzeuge im Spiel sind und die Liste nachzuziehen ist."
 fi
 # Away with it, and looked at afterwards to see that it is away. The same
 # handling as secret.bin gets: the recording carries the plaintext, and in work
@@ -919,16 +957,16 @@ tools/recovery-swtpm.sh stop main || fail "Der mitschneidende Simulator lässt s
 mitschnitt_laeuft=""
 shred -u "$mit" || fail "Der Mitschnitt lässt sich nicht sicher löschen: $mit"
 [ ! -e "$mit" ] || fail "Der Mitschnitt liegt nach shred -u immer noch da: $mit"
-ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und die Anfragen tragen nur die 20 bekannten Befehle"
+ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und die Anfragen tragen nur die 25 bekannten Befehle"
 
 tools/recovery-swtpm.sh reset main
 use_main
 tools/recovery-policy.sh state recovery
-tools/recovery-policy.sh seal pcr
+tools/recovery-policy.sh seal
 if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet im Recovery-Zustand"; fi
 ok "im Recovery-Zustand bleibt der Normalzweig zu"
 
-tools/recovery-policy.sh seal 12
+tools/recovery-policy.sh seal
 [ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "Stick-Paar 1+2 öffnet nicht"
 # That it opened says nothing about HOW MANY sticks signed, and the word "two"
 # in the line below would otherwise be a claim nothing measures. Measured: with
@@ -1008,7 +1046,7 @@ for n in 11 7; do
 	tools/recovery-swtpm.sh reset main
 	use_main
 	tools/recovery-policy.sh state recovery
-	tools/recovery-policy.sh seal 12
+	tools/recovery-policy.sh seal
 	tpm2_pcrextend "$n:sha384=$anders" >/dev/null \
 		|| fail "PCR $n lässt sich nicht erweitern - der Fall hat gar nicht stattgefunden"
 	if tools/recovery-policy.sh open pair 1 2 >/dev/null; then
@@ -1022,7 +1060,7 @@ ok "geänderte PCR 11 und PCR 7 sperren den Stick-Paar-Zweig je für sich"
 tools/recovery-swtpm.sh reset main
 use_main
 tools/recovery-policy.sh state recovery
-tools/recovery-policy.sh seal 12
+tools/recovery-policy.sh seal
 tools/recovery-policy.sh bump
 [ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach Zähler +1 öffnet nichts"
 ok "Zähler +1, neu versiegelt, öffnet wieder"
@@ -1048,6 +1086,22 @@ erwarte_sperrzaehler() {  # $1 = erwartet, $2 = für welchen Fall
 # An old counter state: the branch is built against a value the TPM has left
 # behind, so PolicyNV refuses. This is the wall it measures - PolicyNV, not
 # unseal - and it costs no failed attempt, which the check below confirms.
+# The parameters themselves, read back off the TPM. Until now max-tries=3 and
+# recovery-time=86400 were numbers lockout_setup wrote and nobody checked, and
+# the 24 hours cannot be waited out in a test run - but what the TPM HOLDS can
+# be asked, and that is more than nothing. 0x15180 is 86400.
+dict_param() {           # $1 = Name der Eigenschaft
+	local z
+	z="$(tpm2_getcap properties-variable 2>/dev/null | grep -i "$1")" 		|| fail "Die Wörterbuch-Parameter lassen sich nicht lesen - dann ist 3 Versuche / 24 h nur behauptet."
+	printf '%s' "${z##*: }"
+}
+for paar in "TPM2_PT_MAX_AUTH_FAIL 0x3" "TPM2_PT_LOCKOUT_INTERVAL 0x15180" "TPM2_PT_LOCKOUT_RECOVERY 0x15180"; do
+	set -- $paar
+	ist="$(dict_param "$1")"
+	[ "$ist" = "$2" ] || fail "$1 steht auf $ist statt $2 - der Wörterbuchschutz ist nicht auf 3 Versuche und 24 Stunden eingestellt."
+done
+ok "das TPM hält wirklich 3 Versuche und 24 Stunden (0x15180 Sekunden)"
+
 erwarte_sperrzaehler 0x0 "alter Zählerstand"
 cp dist/recovery/work/counter.bin dist/recovery/work/counter.alt
 tools/recovery-policy.sh bump
@@ -1086,6 +1140,13 @@ for n in 1 2 3; do
 	fi
 done
 erwarte_sperrzaehler 0x3 "die Sperre"
+# And asked of the TPM directly, not inferred from a failing unseal: inLockout
+# is the flag the TPM itself sets.
+sperrflagge="$(tpm2_getcap properties-variable 2>/dev/null | grep -i inLockout)" 	|| fail "Die Sperrflagge lässt sich nicht lesen."
+case "$sperrflagge" in
+*1) ;;
+*) fail "Das TPM meldet inLockout nicht gesetzt, obwohl drei Fehlversuche gezählt sind - gelesen: $sperrflagge" ;;
+esac
 if tools/recovery-policy.sh open pair 1 2 >/dev/null 2>&1; then
 	fail "nach drei falschen PINs öffnet die richtige PIN immer noch - der Wörterbuchschutz schützt nicht."
 fi
@@ -1094,6 +1155,119 @@ ok "drei falsche Plattform-PINs sperren, danach wird auch die richtige abgewiese
 tools/recovery-policy.sh lockout-clear
 [ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach dem Aufheben der Sperre öffnet nichts"
 ok "lockout-clear hebt die Sperre wirklich auf"
+# The acceptance criterion of work package 0. Seven branches, and since the
+# decision of 10.10.2026 in section 6 of docs/recovery-modus.md they live in TWO
+# sealed objects, not one: A-auto carries the single PCR branch and no authValue,
+# A-recovery carries the PolicyOR over the six stick pairs plus PolicyAuthValue
+# and PolicyNV. The reason is measured and stands in that section - one object
+# with an authValue would hand the normal boot rubbish at exit code 0.
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state recovery
+tools/recovery-policy.sh seal
+for paar in "1 2" "1 3" "1 4" "2 3" "2 4" "3 4"; do
+	# shellcheck disable=SC2086  # the pair is two arguments on purpose
+	[ "$(tools/recovery-policy.sh open pair $paar)" = "TEST-DEK" ] || fail "Paar $paar öffnet nicht"
+done
+ok "alle sechs Stick-Paare öffnen"
+if tools/recovery-policy.sh open pcr >/dev/null; then fail "Normalzweig öffnet im Recovery-Zustand"; fi
+ok "der Normalzweig bleibt im Recovery-Zustand zu"
+
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state normal
+tools/recovery-policy.sh seal
+[ "$(tools/recovery-policy.sh open pcr)" = "TEST-DEK" ] || fail "Normalstart öffnet nicht"
+ok "der Normalzweig öffnet im Produktiv-Zustand"
+if tools/recovery-policy.sh open pair 1 2 >/dev/null; then fail "Stick-Zweig öffnet im Produktiv-Zustand"; fi
+ok "die Stick-Zweige bleiben im Produktiv-Zustand zu"
+
+# Seven digests, counted rather than trusted: six of them are the branches of
+# the OR in A-recovery, the seventh is the whole policy of A-auto. One missing
+# and the policy is smaller than the acceptance asks for, while every case above
+# would still pass - the branch nobody asks for is the branch nobody misses.
+anzahl="$(ls dist/recovery/work/branch-*.digest 2>/dev/null | wc -l)"
+[ "$anzahl" -eq 7 ] || fail "Es liegen $anzahl Zweig-Digests statt sieben - policy_digest hat einen Zweig übersprungen."
+ok "SIEBEN ZWEIGE IN EINER POLICY — Abnahmekriterium von Paket 0 (1 + 6 über zwei Objekte)"
+
+# Until now "the PIN is not in the process list" was a statement the code made
+# about itself - the same weak class as the session attributes in task 6. This
+# case turns it into a measurement, and it does NOT sample.
+#
+# A sampling watcher was tried first and thrown away: one "ps -ww" per sweep
+# while the call ran, which found the stick PIN in one run and missed it in the
+# next. The control below caught that both times, but a case that is right only
+# sometimes is worth nothing. What a sampler races against is simply how long
+# pkcs11-tool happens to live.
+#
+# So the command lines are not sampled, they are RECORDED. Every tool the
+# package declares in recovery-env.sh gets a wrapper early on the PATH that
+# writes its own argv down and then execs the real program by absolute path -
+# captured before the PATH changes, so a wrapper can never call itself. argv as
+# the wrapper sees it is exactly what /proc/<pid>/cmdline shows to any local
+# user, and nothing can slip between two samples any more.
+#
+# Two things make the result worth anything. First, the platform PIN used here
+# comes in through PIN_FILE and is long and distinctive, so a hit cannot be
+# coincidence - the real test PIN is four characters and "1234" turns up in a
+# PID or a path often enough. Second, and this is what gives the case teeth: the
+# SAME recording has to CONTAIN the stick PIN, which pkcs11-tool really does put
+# on its command line and which docs/recovery-modus.md section 13 allows at
+# stage test. A search that finds nothing because it cannot see anything proves
+# nothing. No PIN value is ever printed, not even shortened.
+pin_lang="$(pwd)/dist/recovery/pin/lang.txt"
+printf 'TEST-PLATTFORM-PIN-NUR-FUER-DIESEN-FALL' > "$pin_lang"
+chmod 600 "$pin_lang"
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state recovery
+PIN_FILE="$pin_lang" tools/recovery-policy.sh seal
+# Built AFTER the reset on purpose: the wrappers live under work/, and
+# "reset main" empties that directory - measured, the first version put them
+# there first and the run died on a missing argv.log at exit code 2.
+spiegel="$(pwd)/dist/recovery/work/argv"
+argv_log="$(pwd)/dist/recovery/work/argv.log"
+rm -rf "$spiegel"; mkdir -p "$spiegel"
+: > "$argv_log"
+chmod 600 "$argv_log"
+werkzeuge="$(sed -n '/^need="/,/"$/p' tools/recovery-env.sh | sed -e 's/^need="//' -e 's/"$//')"
+[ -n "$werkzeuge" ] || fail "Die Werkzeugliste aus recovery-env.sh ließ sich nicht lesen - die Aufzeichnung hätte nichts umfasst."
+for werkzeug in $werkzeuge; do
+	echt="$(command -v "$werkzeug")" || fail "$werkzeug ist nicht da, obwohl recovery-env.sh es verlangt."
+	printf '#!/bin/sh\nprintf "%%s\n" "$0 $*" >> %s\nexec %s "$@"\n' "$argv_log" "$echt" > "$spiegel/$werkzeug"
+	chmod +x "$spiegel/$werkzeug"
+done
+anzahl_spiegel="$(ls "$spiegel" | wc -l)"
+[ "$anzahl_spiegel" -ge 40 ] || fail "Nur $anzahl_spiegel Spiegel angelegt - die Aufzeichnung wäre lückenhaft."
+
+PATH="$spiegel:$PATH" PIN_FILE="$pin_lang" tools/recovery-policy.sh open pair 1 2 \
+	>dist/recovery/work/proc-dek.txt 2>/dev/null
+[ "$(cat dist/recovery/work/proc-dek.txt)" = "TEST-DEK" ] \
+	|| fail "Der aufgezeichnete Aufruf hat nicht geöffnet - dann sagt die Aufzeichnung nichts über ihn."
+rm -f dist/recovery/work/proc-dek.txt
+zeilen_argv="$(grep -c . "$argv_log")"
+[ "$zeilen_argv" -ge 20 ] || fail "Die Aufzeichnung hat nur $zeilen_argv Kommandozeilen - so wenige kann dieser Aufruf nicht gebraucht haben."
+
+# The control first: if this one fails, the recording is blind and the line
+# below it would be worthless.
+grep -qF "$(cat dist/recovery/pin/stick.txt)" "$argv_log" \
+	|| fail "Die Aufzeichnung enthält nicht einmal die Stick-PIN, obwohl pkcs11-tool sie auf seine Kommandozeile schreibt - sie ist blind, und die Aussage über die Plattform-PIN wäre wertlos."
+if grep -qF "$(cat "$pin_lang")" "$argv_log"; then
+	fail "Die Plattform-PIN stand auf einer Kommandozeile - jeder lokale Benutzer hätte sie in /proc/<pid>/cmdline lesen können."
+fi
+ok "die Plattform-PIN steht auf keiner Kommandozeile des Öffnens ($zeilen_argv aufgezeichnet), und dieselbe Aufzeichnung enthält die Stick-PIN"
+
+# The recording carries the stick PIN, so it goes the way secret.bin goes.
+shred -u "$argv_log" || fail "Die Aufzeichnung der Kommandozeilen lässt sich nicht sicher löschen: $argv_log"
+[ ! -e "$argv_log" ] || fail "Die Aufzeichnung liegt nach shred -u immer noch da: $argv_log"
+rm -rf "$spiegel"
+shred -u "$pin_lang"
+# Back to the normal PIN, so the state the closing search looks at is the usual one.
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state recovery
+tools/recovery-policy.sh seal
+
 # And the same search once more, right at the end. The head of this file says
 # what a FINISHED run leaves standing, and this is the only place that looks at
 # THAT state - until now nothing asked the question at the end at all. The
