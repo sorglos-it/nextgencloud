@@ -170,3 +170,9 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   Rollen, `migrate` auf die SQLite-Datei). Bis dahin kennt nur der Browser der Ersteinrichtung den
   Anker.
 - Nach der Installation spielt der Controller die Updates ein (4.8); ulh bleibt der Notweg.
+- **Kopplung eines Controllers an die API** (eingetragen 03.10.2026, aus
+  Aufgabe 12 des API-Plans): der Controller fragt
+  `POST <tunnel.PathPair>?secret=<base64url des SHA-256 ueber den
+  Kopplungscode>`. Der Code selbst geht **nie** ueber die Leitung, nur sein
+  Streuwert — und er ist einmal brauchbar. `ngc-controller` braucht dafuer die
+  Antwort `pair_code`, die oben schon steht.
