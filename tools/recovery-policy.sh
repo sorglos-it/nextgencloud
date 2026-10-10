@@ -25,6 +25,20 @@ mkdir -p "$w"
 # sit here, ahead of their first use.
 keys="$work/keys"
 pin_stick="$work/pin/stick.txt"
+# The platform PIN of task 8. The plan lists PIN_FILE among the interfaces of
+# this script but never wires it anywhere - it writes $pin_platform, a variable
+# this file does not have. Both are here: without the PIN_FILE arm the "wrong
+# platform PIN" case would hand in the RIGHT PIN, the branch would open, and the
+# case would report a failure for a branch that is in order.
+pin_platform="${PIN_FILE:-$work/pin/platform.txt}"
+# No length requirement here, and that is a decision, not an oversight. Stage
+# test takes the PIN from a file (section 4 of the specification) and the test
+# PIN is four characters. What keeps a short PIN from being guessed at this
+# stage is the dictionary protection below - three attempts, 24 hours - which is
+# why it sits in the same task. When work package 6 takes this PIN from a HUMAN,
+# the requirement has to be stated in CHARACTERS and with a passphrase
+# suggested: a minimum in DIGITS drives people into their date of birth, and
+# eight digits is exactly ddmmyyyy.
 module=/usr/lib/softhsm/libsofthsm2.so
 # Exported, not handed to each call: softhsm2 reads it from the environment and
 # has no option for it. recovery-env.sh has already seen that the module file
@@ -112,6 +126,10 @@ fi' EXIT
 pcrs_boot="sha384:0,1,2,3,4,5,6,7"
 pcrs_uki="sha384:11"
 handle=0x81000001
+nv=0x1500016
+# COUNTER_FILE lets the test hand in an old counter state without putting it on
+# a command line.
+counter_file="${COUNTER_FILE:-$w/counter.bin}"
 # This simulator holds three transient objects - measured, not guessed:
 # tpm2_getcap says TPM2_PT_HR_TRANSIENT_AVAIL 0x3 and TPM2_PT_HR_TRANSIENT_MIN
 # 0x3, and an earlier comment here claimed two. Every tpm2 call loads its
@@ -199,6 +217,65 @@ primary() {
 	flush
 }
 
+# The counter lives in the TPM and disappears with a reset, so every entry
+# point makes sure it is there before it uses it.
+#
+# Owner auth is empty here, which is a TEST simplification. The plan's text
+# says it is "noted as an open point in CHANGELOG.md" - checked, and it is not:
+# CHANGELOG.md has no "Offen" section and names neither the owner auth nor this
+# NV index. Section 13 of docs/recovery-modus.md does require such an entry, so
+# it is reported to the coordinator rather than claimed here. A comment that
+# points at a note nobody wrote is worse than no comment.
+#
+# Captured, not piped into grep, for the reason the primary function above
+# spells out: a TPM that does not answer hands back an empty list, and "not in
+# the list" would then quietly define the index a second time.
+counter() {
+	local indices
+	if ! indices="$(tpm2_nvreadpublic)"; then
+		say "Das TPM antwortet nicht auf die Frage nach seinen NV-Indizes"
+		exit 1
+	fi
+	case "$indices" in
+	*"$nv"*) ;;
+	*)
+		tpm2_nvdefine -C o "$nv" -a "nt=counter|ownerwrite|ownerread|authread" >/dev/null
+		# A fresh counter has to be written once before it can be read.
+		tpm2_nvincrement -C o "$nv" >/dev/null
+		;;
+	esac
+	if [ -z "${COUNTER_FILE:-}" ]; then
+		tpm2_nvread -C o "$nv" -s 8 -o "$counter_file" >/dev/null
+	elif [ ! -s "$counter_file" ]; then
+		# Without this a mistyped COUNTER_FILE would make tpm2_policynv build a
+		# policy against an empty file instead of saying anything.
+		say "COUNTER_FILE zeigt auf keine lesbare Zählerdatei: $counter_file"
+		exit 1
+	fi
+}
+
+policy_nv() {            # $1 = session
+	tpm2_policynv -S "$1" -C o -i "$counter_file" "$nv" eq >/dev/null
+}
+
+# Section 6 of the specification: 3 attempts, then 24 hours locked. This
+# replaces the noda attribute, which would have switched the protection off.
+#
+# Measured, because it decides whether one case can be falsely green through
+# another: --setup-parameters does NOT reset the failed-attempt counter.
+# TPM2_PT_LOCKOUT_COUNTER stood at 0x3 before and after such a call and only
+# --clear-lockout put it back to 0x0. So resealing never quietly clears a
+# lockout a case has just provoked.
+lockout_setup() {
+	tpm2_dictionarylockout --setup-parameters --max-tries=3 \
+		--recovery-time=86400 --lockout-recovery-time=86400 >/dev/null
+}
+
+lockout_clear() {
+	tpm2_dictionarylockout --clear-lockout >/dev/null
+	say "Sperre aufgehoben"
+}
+
 # The policy session - the one that carries the unsealed secret home - is
 # salted against the primary key and uses parameter encryption, as section 6 of
 # the specification demands, so the pattern moves to work package 3 unchanged.
@@ -225,15 +302,15 @@ primary() {
 # in both directions. Honest run: 2 hits, both in what the tools SENT during the
 # Create of the sealing, and that is the ONE named place - tpm2_create -i runs
 # without any session at all. Every hit has to sit there and there may be no
-# others; on top of that the set of command codes has to be the fifteen of an
+# others; on top of that the set of command codes has to be the twenty of an
 # honest run. Both are searches, and a search that finds nothing has NOT shown
 # that the secret stayed in. Measured ways past it, green at 14 x ok against
 # the state before ledger 2 existed: the plaintext split over two requests, or
 # sent base64-encoded. They are listed at that case. So what the wire case
 # gives this script is not the property but a much narrower sentence -
 # whatever it does with its sessions, the recording of a run must carry no
-# further hit of those eight bytes and exactly the fifteen known commands - a
-# sixteenth added or one of the fifteen missing both end it the same way -
+# further hit of those eight bytes and exactly the twenty known commands - a
+# twenty-first added or one of the twenty missing both end it the same way -
 # and that is still more than anything here can say about itself.
 #
 # The trial session gets NEITHER, and that is not a choice. Measured with
@@ -376,6 +453,11 @@ policy_branch() {        # $1 = trial|real, $2 = branch, $3 = session context
 			policysigned_real "$session" "$w/stick$n.ctx" "$w/stick$n.sig"
 		fi
 	done
+	# Platform PIN and counter, in this order, on both ways through - a policy
+	# digest carries the order of its assertions. The pcr branch returns above
+	# and gets neither: it has to run at boot without a person.
+	tpm2_policyauthvalue -S "$session" >/dev/null
+	policy_nv "$session"
 }
 
 branch_digest() {        # $1 = branch
@@ -386,7 +468,10 @@ branch_digest() {        # $1 = branch
 }
 
 seal() {                 # $1 = branch
+	local pargs
 	primary
+	counter
+	lockout_setup
 	branch_digest "$1"
 	printf 'TEST-DEK' > "$w/secret.bin"
 	flush
@@ -416,15 +501,51 @@ seal() {                 # $1 = branch
 	# green - with the whole branch then resting on SHA-1. tpm2_readpublic
 	# prints it immediately above the attributes, in the very output the test
 	# already reads.
+	# -p file: and not -p <value>: the PIN must never stand in a command line,
+	# where /proc/<pid>/cmdline shows it to every user on the machine. Measured
+	# that the form carries: create with -p "file:..." ends at EXIT=0 and the
+	# object then opens with the same file and refuses a wrong one with 0x98E.
+	#
+	# And the PIN goes on the object ONLY for a stick branch. The plan puts it on
+	# every seal and says the normal boot still opens "because the normal boot
+	# branch carries no PIN". That is true of the POLICY and wrong about the
+	# SESSION, and the way it fails is the worst kind: EXIT=0 with the wrong
+	# bytes. Measured, one variable at a time, same object and same policy:
+	#
+	#   authValue  Sitzung verschl.  PIN übergeben  Ergebnis
+	#   nein       ja                nein           TEST-DEK
+	#   ja         ja                nein           EXIT=0, 89f8c4cad807344d
+	#   ja         nein              nein           TEST-DEK
+	#   ja         ja                ja             TEST-DEK
+	#   ja         nein              ja             TEST-DEK
+	#
+	# The session key of a salted, parameter-encrypting session is derived from
+	# the authValue of the entity being authorised. Hand tpm2_unseal only
+	# "session:" and it computes that key with an EMPTY authValue, decrypts the
+	# answer with the wrong key and prints rubbish without any error. So an
+	# authValue the pcr branch never checks would still have to be handed in -
+	# or the encryption task 6 paid seven rounds for would have to go. Neither.
+	# The pcr branch simply gets no authValue, which is what the plan's own
+	# interface list promises.
+	#
+	# This comes back in task 9: there ONE object carries the OR over all seven
+	# branches, so the normal boot and the stick branches share one authValue and
+	# the choice above is no longer available. Reported, not decided here.
+	pargs=()
+	if [ "$1" != pcr ]; then pargs=(-p "file:$pin_platform"); fi
 	tpm2_create -C "$handle" -g sha384 -u "$w/seal.pub" -r "$w/seal.priv" \
-		-i "$w/secret.bin" -L "$w/branch-$1.digest" \
+		-i "$w/secret.bin" -L "$w/branch-$1.digest" "${pargs[@]}" \
 		-a "fixedtpm|fixedparent|adminwithpolicy" >/dev/null
 	shred -u "$w/secret.bin"
 	say "Versiegelt gegen Zweig $1"
+	# bump has to know which branch was sealed last. Task 9 drops this: from
+	# then on there is only one policy, the OR over all seven branches.
+	printf '%s' "$1" > "$w/sealed-branch"
 }
 
 open_branch() {          # $1 = branch
 	primary
+	counter
 	flush
 	tpm2_load -C "$handle" -u "$w/seal.pub" -r "$w/seal.priv" -c "$w/seal.ctx" >/dev/null
 	new_session "$w/sess.ctx" policy
@@ -432,7 +553,14 @@ open_branch() {          # $1 = branch
 	flush
 	# The secret goes to stdout because the test compares it. The real version
 	# in work package 6 uses tpm2_unseal -o and never lets it near a terminal.
-	tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx"
+	# The normal boot branch carries no PIN: it has to run at boot without a
+	# person. Every stick branch does, through the file - never on a command
+	# line, where /proc/<pid>/cmdline would show it to the whole machine.
+	if [ "$1" = pcr ]; then
+		tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx"
+	else
+		tpm2_unseal -c "$w/seal.ctx" -p "session:$w/sess.ctx+file:$pin_platform"
+	fi
 	# And the session stays, together with its context file. What that is worth
 	# is written out at new_session above, and it is less than this comment used
 	# to claim: recovery-test.sh reads the CONTEXT FILE with tpm2_sessionconfig,
@@ -450,6 +578,22 @@ open_branch() {          # $1 = branch
 	uebergabe=ja
 }
 
+bump() {
+	primary
+	counter
+	tpm2_nvincrement -C o "$nv" >/dev/null
+	tpm2_nvread -C o "$nv" -s 8 -o "$w/counter.bin" >/dev/null
+	rm -f "$w/seal.pub" "$w/seal.priv" "$w/seal.ctx" "$w"/branch-*.digest
+	# Reseal against the same branch as before. A missing note means nobody has
+	# sealed yet, and resealing "" would build the pcr branch by accident.
+	if [ ! -s "$w/sealed-branch" ]; then
+		say "Es ist noch nichts versiegelt - zuerst tools/recovery-policy.sh seal <Zweig>"
+		exit 1
+	fi
+	seal "$(cat "$w/sealed-branch")"
+	say "Zähler erhöht, neu versiegelt"
+}
+
 # Sets $branch. Deliberately not a command substitution: an exit inside $( )
 # would only end the subshell and the script would carry on with nothing.
 branch_of_pair() {       # $1, $2 = stick numbers
@@ -463,11 +607,13 @@ branch_of_pair() {       # $1, $2 = stick numbers
 case "${1:-}" in
 state) set_pcr_state "${2:-}" ;;
 seal) seal "${2:-}" ;;
+bump) bump ;;
+lockout-clear) lockout_clear ;;
 open)
 	case "${2:-}" in
 	pcr) open_branch pcr ;;
 	pair) branch_of_pair "${3:-}" "${4:-}"; open_branch "$branch" ;;
 	*) say "Aufruf: tools/recovery-policy.sh open pcr|pair <i> <j>"; exit 1 ;;
 	esac ;;
-*) say "Aufruf: tools/recovery-policy.sh state|seal|open"; exit 1 ;;
+*) say "Aufruf: tools/recovery-policy.sh state|seal|open|bump|lockout-clear"; exit 1 ;;
 esac

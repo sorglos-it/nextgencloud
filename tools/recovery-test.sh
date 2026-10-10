@@ -741,13 +741,13 @@ ok "jede der acht Boot-PCR 0 bis 7 sperrt den Normalzweig für sich allein"
 # That ledger 2 closes nothing is measured too, and this is the case to read if
 # anybody is tempted to believe it does: the same eight bytes carried out in TWO
 # TPM2_CC_PCR_Extend, four in each digest, walk past BOTH ledgers - EXIT=0 and
-# fourteen ok. 00000182 is one of the fifteen, and neither request holds all
+# fourteen ok. 00000182 is one of the twenty, and neither request holds all
 # eight bytes. A leak that keeps to the known commands is invisible to
 # everything this case does.
 #
 # A seventh way, and it needs no second command: the same two digests as
 # above, WHOLE and in order, in ONE unencrypted TPM2_CC_PCR_Extend request (81
-# bytes, cc 00000182, one of the fifteen) - 54455354 00 2D44454B 00..., all
+# bytes, cc 00000182, one of the twenty) - 54455354 00 2D44454B 00..., all
 # eight bytes of the secret back to back, broken only by ONE stray NUL.
 # EXIT=0, fourteen ok, needle hits still two: the NUL sits between the
 # needle's two halves in the hex dump, so "544553542D44454B" never occurs
@@ -809,8 +809,25 @@ cc_unseal=0000015E      # TPM2_CC_Unseal - the opening, proof the recording has 
 befund_erwartet="anfrage $cc_create
 anfrage $cc_create"
 # Ledger 2, and what it is worth stands at the head of this case: the SET of
-# command codes the requests of an honest run carry - fifteen, sorted, measured
-# on three runs in a row with the same fifteen and the same counts each time.
+# command codes the requests of an honest run carry - twenty, sorted, measured.
+# Fifteen until task 8; the counter and the dictionary protection added five,
+# and each of the five was attributed by watching the wire, not taken from a
+# header this machine does not have (no tss2 development files here). One call
+# at a time into a recording simulator, the exit code of each step printed so a
+# failed step could not pass for "no new code":
+#
+#   0000012A  tpm2_nvdefine
+#   00000134  tpm2_nvincrement
+#   0000013A  tpm2_dictionarylockout --setup-parameters
+#   0000014E  tpm2_nvread
+#   00000169  the index lookup that nvincrement and nvread do first
+#
+# Two codes deliberately NOT in the set, and the reason is the window, not the
+# tools: tpm2_policyauthvalue and tpm2_policynv belong to the stick branches,
+# which run after this case, and 00000139 (--clear-lockout) likewise. Adding
+# them would make the "zu wenig" arm fire on every honest run. tpm2_nvreadpublic
+# adds nothing: measured, it asks GetCapability, 0000017A, which was already in
+# the set.
 # It is not a search for the secret at all; it is a fence around the commands.
 # Both ways that walk past ledger 1 need tpm2_hash, and tpm2_hash needs
 # 00000186 / 0000015C / 0000013E - none of which is in this set. That is the
@@ -819,13 +836,18 @@ anfrage $cc_create"
 # ESAPI, another swtpm can move this set, and then the case goes red and names
 # what it found. That is the safe direction, and the message says what to do.
 cc_erwartet="00000120
+0000012A
 00000131
+00000134
+0000013A
+0000014E
 00000153
 00000157
 0000015E
 00000161
 00000162
 00000165
+00000169
 00000173
 00000176
 0000017A
@@ -883,7 +905,7 @@ cc_befund="$(sed -n 's/^anfrage \([0-9A-F-]*\) .*/\1/p' <<< "$zeilen" | sort -u)
 if [ "$cc_befund" != "$cc_erwartet" ]; then
 	cc_zuviel="$(grep -vxF "$cc_erwartet" <<< "$cc_befund" | tr '\n' ' ' || :)"
 	cc_fehlt="$(grep -vxF "$cc_befund" <<< "$cc_erwartet" | tr '\n' ' ' || :)"
-	fail "Der Lauf schickt andere Befehle über die Leitung als die fünfzehn bekannten. Zu viel: ${cc_zuviel:--}, zu wenig: ${cc_fehlt:--}. Ein zusätzlicher Befehl kann ein Weg sein, den Klartext an der Buchführung darüber vorbeizutragen; ein fehlender heißt, dass andere Werkzeuge im Spiel sind und die Liste nachzuziehen ist."
+	fail "Der Lauf schickt andere Befehle über die Leitung als die zwanzig bekannten. Zu viel: ${cc_zuviel:--}, zu wenig: ${cc_fehlt:--}. Ein zusätzlicher Befehl kann ein Weg sein, den Klartext an der Buchführung darüber vorbeizutragen; ein fehlender heißt, dass andere Werkzeuge im Spiel sind und die Liste nachzuziehen ist."
 fi
 # Away with it, and looked at afterwards to see that it is away. The same
 # handling as secret.bin gets: the recording carries the plaintext, and in work
@@ -897,7 +919,7 @@ tools/recovery-swtpm.sh stop main || fail "Der mitschneidende Simulator lässt s
 mitschnitt_laeuft=""
 shred -u "$mit" || fail "Der Mitschnitt lässt sich nicht sicher löschen: $mit"
 [ ! -e "$mit" ] || fail "Der Mitschnitt liegt nach shred -u immer noch da: $mit"
-ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und die Anfragen tragen nur die 15 bekannten Befehle"
+ok "die Suche im Mitschnitt findet die acht Byte nur an der einen bekannten Stelle, und die Anfragen tragen nur die 20 bekannten Befehle"
 
 tools/recovery-swtpm.sh reset main
 use_main
@@ -995,6 +1017,83 @@ for n in 11 7; do
 done
 ok "geänderte PCR 11 und PCR 7 sperren den Stick-Paar-Zweig je für sich"
 
+# Task 8 starts from a clean simulator: the loop above leaves PCR 7 extended and
+# a seal nothing opens, and a counter case must not inherit that state.
+tools/recovery-swtpm.sh reset main
+use_main
+tools/recovery-policy.sh state recovery
+tools/recovery-policy.sh seal 12
+tools/recovery-policy.sh bump
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach Zähler +1 öffnet nichts"
+ok "Zähler +1, neu versiegelt, öffnet wieder"
+
+
+# A counter is a trap for measurements: a case that raises it changes the state
+# the next one starts from. So every case below SAYS which failed-attempt count
+# it needs and stops if it is not standing there - a case that is green only
+# because an earlier one already cleared the lock proves nothing. Measured for
+# this: --setup-parameters does NOT reset that count (it stood at 0x3 before and
+# after), only --clear-lockout does, so a reseal cannot quietly clear it.
+sperrzaehler() {
+	local z
+	z="$(tpm2_getcap properties-variable 2>/dev/null | grep -i lockout_counter)" \
+		|| fail "Der Sperrzähler lässt sich nicht lesen - die Fälle darunter wüssten dann nicht, wovon sie ausgehen."
+	printf '%s' "${z##*: }"
+}
+erwarte_sperrzaehler() {  # $1 = erwartet, $2 = für welchen Fall
+	local ist; ist="$(sperrzaehler)"
+	[ "$ist" = "$1" ] || fail "Vor '$2' steht der Sperrzähler auf $ist statt $1 - ein früherer Fall hat den Zustand verändert, der Fall würde nichts beweisen."
+}
+
+# An old counter state: the branch is built against a value the TPM has left
+# behind, so PolicyNV refuses. This is the wall it measures - PolicyNV, not
+# unseal - and it costs no failed attempt, which the check below confirms.
+erwarte_sperrzaehler 0x0 "alter Zählerstand"
+cp dist/recovery/work/counter.bin dist/recovery/work/counter.alt
+tools/recovery-policy.sh bump
+if COUNTER_FILE="$(pwd)/dist/recovery/work/counter.alt" tools/recovery-policy.sh open pair 1 2 >/dev/null; then
+	fail "alter Zählerstand öffnet"
+fi
+erwarte_sperrzaehler 0x0 "nach dem alten Zählerstand"
+ok "alter Zählerstand öffnet nicht, und er kostet keinen Fehlversuch"
+
+# A wrong platform PIN. The file keeps the PIN off the command line here too.
+printf '9999' > dist/recovery/pin/falsch.txt
+chmod 600 dist/recovery/pin/falsch.txt
+if PIN_FILE="$(pwd)/dist/recovery/pin/falsch.txt" tools/recovery-policy.sh open pair 1 2 >/dev/null; then
+	fail "falsche Plattform-PIN öffnet"
+fi
+# The failed attempt has to be VISIBLE, otherwise the dictionary protection is
+# not counting and the case below would lock nothing.
+erwarte_sperrzaehler 0x1 "der gezählte Fehlversuch"
+ok "falsche Plattform-PIN öffnet nicht, und der Fehlversuch wird gezählt"
+
+tools/recovery-policy.sh lockout-clear
+erwarte_sperrzaehler 0x0 "nach lockout-clear"
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach lockout-clear öffnet nichts"
+ok "richtige PIN öffnet weiterhin"
+
+# Criterion 9 in miniature, and the plan has no case for it: three wrong PINs
+# and the protection must bite - the RIGHT PIN is then refused as well. Without
+# this the max-tries=3 of lockout_setup is a number nothing reads back. Starts
+# from a cleared count on purpose, so it locks on its own three attempts and not
+# on something an earlier case left behind.
+tools/recovery-policy.sh lockout-clear
+erwarte_sperrzaehler 0x0 "die Sperre nach drei Fehlversuchen"
+for n in 1 2 3; do
+	if PIN_FILE="$(pwd)/dist/recovery/pin/falsch.txt" tools/recovery-policy.sh open pair 1 2 >/dev/null; then
+		fail "falsche Plattform-PIN öffnet im Versuch $n"
+	fi
+done
+erwarte_sperrzaehler 0x3 "die Sperre"
+if tools/recovery-policy.sh open pair 1 2 >/dev/null 2>&1; then
+	fail "nach drei falschen PINs öffnet die richtige PIN immer noch - der Wörterbuchschutz schützt nicht."
+fi
+ok "drei falsche Plattform-PINs sperren, danach wird auch die richtige abgewiesen"
+
+tools/recovery-policy.sh lockout-clear
+[ "$(tools/recovery-policy.sh open pair 1 2)" = "TEST-DEK" ] || fail "nach dem Aufheben der Sperre öffnet nichts"
+ok "lockout-clear hebt die Sperre wirklich auf"
 # And the same search once more, right at the end. The head of this file says
 # what a FINISHED run leaves standing, and this is the only place that looks at
 # THAT state - until now nothing asked the question at the end at all. The
