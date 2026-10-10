@@ -104,9 +104,19 @@ func ofName(name string) (appUser, error) {
 
 // runDir is where podman keeps what is running for this container. It lies
 // under config.RunDir, which is a tmpfs, so nothing of it survives a restart -
-// which is what rootless podman expects of a runtime directory. Nothing here
-// makes the directory: it has to be there and belong to the app's user before
-// the first call, and after every restart of the machine again.
+// which is what rootless podman expects of a runtime directory.
+//
+// Nothing here makes the directory: it has to be there and belong to the app's
+// user before the first call, and after every restart of the machine again.
+// EnsureRun is what makes it (run.go), and a caller that starts a container
+// after a restart has to call it first - nothing in this file would notice
+// that it did not.
+//
+// config.RunDir and not paths.runDir, and that difference is real: the two are
+// the same in operation (paths.runDir is config.RunDir), and they differ only
+// where a case moves paths.runDir to a directory it may write in. Such a case
+// does not reach this line, because every call of podman needs Linux and root
+// and skips itself otherwise.
 func runDir(name string) string { return config.RunDir + "/" + name }
 
 // validPath holds every path that goes into an argument of podman. Five things
