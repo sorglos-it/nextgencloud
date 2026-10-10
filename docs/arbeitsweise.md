@@ -3697,3 +3697,33 @@ Steht dort eine Zahl, ist nicht die Aufgabe das Problem. Erst `git restore .`,
 dann arbeiten. Und die alten, fertigen Bäume derselben Sitzung sind zu über
 tausend Dateien hohl — wer dort noch einmal hineingeht, liest zuerst diese
 Zahl.
+
+## Greift der Koordinator in einen fremden Arbeitsbaum, sagt er es SOFORT
+
+Am 10.10.2026. In drei Arbeitsbäumen fehlte `shared/testdata/.gitkeep` — eine
+Datei im **eingefrorenen** `shared/`. Ich habe sie per `git restore`
+zurückgeholt, während die Stränge dort arbeiteten, und **nichts gesagt**.
+
+Was daraus wurde, in ihren eigenen Worten:
+
+> „fehlte im Arbeitsbaum (dritter Baum mit diesem Bild) — **und kam während
+> meiner Arbeit von selbst zurück** (Zeitstempel 10:53). Nicht angefasst,
+> nicht nachgestellt. Kein Go- oder Shell-Code im Repo nennt `.gitkeep`.
+> **Ursache weiter unbekannt**, aber jetzt ist belegt, dass etwas außerhalb
+> des Strangs in `shared/` dieses Arbeitsbaums greift."
+
+Ein zweiter Strang meldete dasselbe unabhängig. Beide haben richtig gehandelt
+— gemeldet, nicht geraten, nichts angefasst. **Die Arbeit war trotzdem
+verschwendet**, und schlimmer: in zwei Berichten steht jetzt ein Satz über
+eine fremde Hand in einem eingefrorenen Ordner, der eine echte Untersuchung
+wert gewesen wäre, wenn er gestimmt hätte.
+
+**Also: jede Änderung des Koordinators an einem Arbeitsbaum, in dem ein Strang
+arbeitet, wird dem Strang im selben Moment gesagt** — mit Datei, Zeit und
+Grund. Nicht später, nicht im Ledger allein. Ein Strang, der eine fremde
+Änderung sieht, kann sie nicht von einem Fehler unterscheiden; der einzige,
+der das kann, ist der, der sie gemacht hat.
+
+Und die Umkehrung gilt weiter: **ein Strang, der eine Änderung von außen
+sieht, meldet sie** (vgl. „Auftrag: Erscheinung, nicht Ursache"). Beide Seiten
+zusammen machen daraus eine Sekunde Arbeit statt einer Geistersuche.
