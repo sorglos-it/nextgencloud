@@ -68,7 +68,8 @@ type AcceptInput struct {
 
 // Package is an accepted package. Dir holds PackageFile, the checked file,
 // and FilesDir, what store.Walk let through; for a release only PackageFile.
-// Manifest and UI are nil for a release, which carries neither. Signer is the
+// Manifest and UI are nil for a release, which carries neither, and that is
+// the whole answer for a release, not a half-finished one. Signer is the
 // key the source was signed with (the store's key, or the release key) and
 // Seq the number of that catalogue or release, so a caller can remember what
 // it has seen.
@@ -241,6 +242,13 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 	}
 	p := Package{Dir: dir, Transfer: tr, Signer: src.signer, Seq: src.seq}
 	if !src.app {
+		// A release ends here, and Manifest and UI stay nil: a release file is
+		// an NGC component, not an app package, so it has no manifest.json and
+		// no ui/ for store.Walk and store.PackageUI to find. nil is the
+		// finished answer for this branch, not a failure a caller must handle
+		// — the signature, the release number, the part, the version, the size
+		// and the checksum are all already checked above. Unpacking it belongs
+		// to whoever installs an update.
 		return p, nil
 	}
 	// No check here that the catalogue's "encrypted" and a content key agree:
