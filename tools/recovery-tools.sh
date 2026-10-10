@@ -98,7 +98,16 @@ flush() { tpm2_flushcontext -t >/dev/null; }
 
 rm -rf "$probe" "$state"
 mkdir -p "$probe" "$state" "$work/softhsm/tokens" "$work/keys" "$work/pin"
-chmod 700 "$work/pin"
+# The softhsm directories go with pin, and what that is worth was measured
+# rather than feared. The report of a sister strand suspected the private test
+# stick keys lay open; they do not. SoftHSM2 creates every token directory 0700
+# and every object file 0600 itself - read back on this machine, the only
+# other-readable thing under softhsm/ is softhsm2.conf, which holds a path and
+# no secret. What mkdir -p really leaves behind under umask 0002 is softhsm/ and
+# softhsm/tokens/ at 0775: every local user may LIST the token UUIDs, and the
+# group may add or remove entries there. That is what these two close, and it
+# costs nothing. The keys were never the exposure.
+chmod 700 "$work/pin" "$work/softhsm" "$work/softhsm/tokens"
 cat > "$work/softhsm/softhsm2.conf" <<CONF
 directories.tokendir = $work/softhsm/tokens
 objectstore.backend = file
