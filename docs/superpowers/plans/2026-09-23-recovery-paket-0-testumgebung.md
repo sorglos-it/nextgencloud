@@ -1497,23 +1497,49 @@ Erwartet: `ok: Zweig eines Stick-Paars (1+2) öffnet mit zwei echten Signaturen`
 
 - [ ] **Schritt 7: Zusichern, dass wirklich Sitzungsdaten signiert werden**
 
+> **BERICHTIGT am 10.10.2026 — die alte Fassung dieses Schrittes nannte
+> richtiges Verhalten FALSCH.** Sie verlangte, dass die zwei Sticks
+> **verschiedene** Bytes zu signieren bekommen (`cmp -s` → `fail`). Gemessen
+> auf `ngc-recovery`: `tpm2_policysigned` gibt die Sitzung als **bearbeitetes
+> Objekt** hinein, nicht im Sitzungsbereich — `nonceTPM` **rollt zwischen den
+> zwei Sticks nicht**. Also:
+>
+> | Lage | Bytes |
+> |---|---|
+> | dieselbe Sitzung, Stick 1 gegen Stick 2 | **gleich** |
+> | zwei verschiedene Sitzungen | **verschieden** |
+> | Mitschnitt in eine frische Sitzung gespielt | **abgewiesen, 0x5DB** |
+>
+> Die Signatur hängt also sehr wohl an der Sitzung — nur nicht an der Stelle,
+> an der der alte Fall sie suchte. Wer die alte Zeile baut, bekommt ein Rot und
+> hält es für einen Fehler im TPM.
+
 Das gehört in den Testlauf, nicht in einen Blick von Hand. Ans Ende von `tools/recovery-test.sh`:
 
 ```bash
-# 52 bytes: 48 byte nonce of this session plus 4 byte expiration. Two sticks
-# in one session get different bytes; if they did not, the signature would not
-# hang on the session at all.
+# 52 bytes: 48 byte nonce of this session plus 4 byte expiration.
 [ "$(wc -c < dist/recovery/work/tosign-1.bin)" -eq 52 ] \
 	|| fail "die zu signierenden Daten sind nicht 52 Byte lang"
-if cmp -s dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-2.bin; then
-	fail "beide Sticks bekommen dieselben Daten zum Signieren"
+# The bytes must not be all zero: that would mean no nonce went in at all.
+if [ -z "$(xxd -p dist/recovery/work/tosign-1.bin | tr -d '0\n')" ]; then
+	fail "die zu signierenden Daten sind lauter Nullen"
 fi
-ok "die Sticks signieren je 52 Byte aus ihrer eigenen Sitzung"
+# A NEW session must hand out DIFFERENT bytes. Inside one session both sticks
+# get the same bytes - tpm2_policysigned passes the session as the handled
+# object, so nonceTPM does not roll between the two. Measured 10.10.2026;
+# a replayed signature is refused by the TPM itself with 0x5DB.
+if cmp -s dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-fresh.bin; then
+	fail "eine neue Sitzung gibt dieselben Daten aus - die Nonce steht still"
+fi
+ok "die Sticks signieren 52 Byte, und eine neue Sitzung gibt andere aus"
 ```
 
 Ausführen: `tools/recovery-test.sh`
-Erwartet: `ok: die Sticks signieren je 52 Byte aus ihrer eigenen Sitzung`. Schlägt einer der beiden
-Fälle fehl, hängt die Signatur nicht an der Sitzung — dann **stoppen und den Koordinator fragen**.
+Erwartet: `ok: die Sticks signieren 52 Byte, und eine neue Sitzung gibt andere aus`. Schlägt einer
+der Fälle fehl, hängt die Signatur nicht an der Sitzung — dann **stoppen und den Koordinator
+fragen**. **Nicht** `cmp` aus diffutils voraussetzen, wo `recovery-env.sh` es nicht als fehlend
+melden kann: `xxd` ist geprüft, `cmp` steht hier nur, weil es in der Umgebungsliste geführt wird —
+fehlt es dort, nimm `xxd`-Vergleich.
 
 - [ ] **Schritt 8: Commit**
 
@@ -1527,6 +1553,30 @@ git commit -m "Open a branch with two real stick signatures" \
 ---
 
 ### Aufgabe 8: Plattform-PIN, Zähler und Wörterbuchschutz
+
+> **BERICHTIGT am 10.10.2026 — Schritt 4 dieser Aufgabe erzeugte einen STILLEN
+> FALSCHWERT, und das ist die schlimmste Sorte Fehler in diesem Projekt.**
+>
+> Der Schritt verlangt die PIN auf **jedem** Objekt und dazu „der Normalstart
+> öffnet trotzdem". Über die **Policy** ist das richtig, über die **Sitzung**
+> falsch: der authValue hängt am **Objekt**, und der Sitzungsschlüssel einer
+> gesalzenen, verschlüsselnden Sitzung hängt am authValue. Gemessen, eine
+> Variable je Zeile: authValue ja **plus** verschlüsselte Sitzung **plus** PIN
+> nicht übergeben ist der **einzige** Fall, der kippt — und er kippt mit
+> **Ausstiegscode 0 und Müll** (`ba1eaca0fc726c49` statt
+> `544553542d44454b` = `TEST-DEK`). Die vier anderen Kombinationen geben den
+> richtigen Wert. **In Paket 6 wäre dieser Müll der echte DEK.**
+>
+> **Gebaut ist: der `pcr`-Zweig bekommt GAR KEINEN authValue.** Das hält die
+> Zusage des Plans buchstäblich und rührt die Parameterverschlüsselung aus
+> Aufgabe 6 nicht an.
+>
+> **Und daraus folgt eine Entwurfsänderung, die der Koordinator am 10.10.2026
+> entschieden hat:** Slot A wird **zwei Objekte** — `A-auto` ohne authValue mit
+> nur `PolicyPCR`, und `A-recovery` mit authValue und `PolicyOR` über die
+> Stick-Paare. Sie steht mit Begründung und Preis in
+> `docs/recovery-modus.md`, Abschnitt 6. **Wer Aufgabe 9 baut, baut gegen diese
+> Fassung, nicht gegen die alte.**
 
 **Dateien:**
 - Ändern: `tools/recovery-policy.sh`, `tools/recovery-test.sh`
