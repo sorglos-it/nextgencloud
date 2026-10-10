@@ -6713,6 +6713,24 @@ git commit -m "Add the log of the API" \
 ---
 ### Task 15: Versand der Kern-Aktionen und `ngc.desktop`
 
+> **Berichtigt am 10.10.2026 — zwei Zeilen dieser Aufgabe, beide gemessen.**
+>
+> **1. `string(o.Task.Sig)` ist falsch und hätte die Unterschrift still
+> verloren.** `audit.Task` dekodiert sein letztes Feld als base64url und
+> verlangt genau 64 Byte (`audit.go:203-205`); rohe Bytes als `string`
+> scheitern am Dekodieren. Das Protokoll **verliert deshalb kein Ereignis** —
+> es hätte den Eintrag geschrieben und die Unterschrift durch den Platzhalter
+> `-` ersetzt. Also kein Fehler, den jemand bemerkt: ein Prüfprotokoll voller
+> Root-Aufgaben **ohne** die Unterschrift, die sie beweist. Richtig ist
+> `enc.B64.EncodeToString(o.Task.Sig)`.
+>
+> **2. Die Aufgabe, nicht das OPEN, nennt App und Aktion.** Der Plan
+> protokolliert `o.App, o.Action` — die **Behauptung** des OPEN. Gebaut ist
+> `t.App, t.Action` aus der geprüften, signierten Aufgabe. Das ist dieselbe
+> Regel wie bei `rights.Check` und sie gilt im Protokoll genauso: **was
+> festgehalten wird, ist das Aufgelöste, nie das Behauptete** — sonst steht im
+> Protokoll, was der Angreifer hineingeschrieben hat.
+
 **Files:**
 - Create: `apps/server-api/classes/coreapp/dispatch.go`, `apps/server-api/classes/coreapp/desktop.go`
 - Test: `apps/server-api/classes/coreapp/dispatch_test.go`,
@@ -6932,7 +6950,9 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 		return code
 	}
 	if t != nil {
-		_ = d.Log.Task(ctx, verified.Cert().User, o.App, o.Action, t.Node, string(o.Task.Sig))
+		// BERICHTIGT 10.10.2026: base64url, und die Werte aus der geprueften Aufgabe.
+		// string(o.Task.Sig) scheitert am Dekodieren -> Platzhalter statt Unterschrift.
+		_ = d.Log.Task(ctx, verified.Cert().User, t.App, t.Action, t.Node, enc.B64.EncodeToString(o.Task.Sig))
 	}
 	if action.Service == core.ServiceController {
 		// A root task of service controller runs on a controller; the API only
