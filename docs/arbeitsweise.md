@@ -3222,3 +3222,538 @@ kann ein Suchmuster grundsaetzlich nicht dicht sein. Es holt die Formen ein,
 die **Werkzeuge von selbst ausgeben** — und genau die sind der realistische
 Weg, auf dem ein Geheimnis entkommt. Wer eine fuenfte kennt, traegt sie als
 Nadel nach.
+
+## Ein Kopfblock ist keine Berichtigung des Rumpfs
+
+Am 02.10.2026, Aufgabe 11 des db-Plans. Ich hatte die Planberichtigung an die
+drei bekannten Orte gesetzt — Plan, Hauptcheckout, neu erzeugter Auftrag — und
+dachte, damit sei sie angekommen. War sie nicht: **innerhalb** des
+Aufgabenstuecks stand sie nur im Kopfblock. Gemessen am berichtigten Stand:
+
+```
+Kopf:  classes/migraterun/            (die Entscheidung)
+Rumpf: classes/migrate/run.go         in „Dateien"
+       migrate.Run, migrate.Needed    in „Schnittstellen"
+       dieselben Namen                in Schritt 1, 2, 3 und 7
+```
+
+Fuenfzehn Zeilen im Rumpf, die das Gegenteil des Kopfes sagten. Wer den Rumpf
+gebaut haette, haette die Fassung gebaut, die **nicht uebersetzt**
+(Importzyklus) — genau den Fehler, den der Kopf abwendet.
+
+Der Strang hat es gemeldet statt stillschweigend dem Kopf zu folgen, und das
+ist der Grund, dass es ueberhaupt auffiel. Ein weniger aufmerksamer Leser
+nimmt die Stelle, die **naeher** an seinem Schritt steht, und das ist der
+Rumpf.
+
+**Also: wer in einer Berichtigung einen Namen aendert, greppt das ganze
+Aufgabenstueck nach dem alten Namen und zaehlt die Treffer.** Ein Kopfblock,
+der „entschieden: X" sagt, hat den Rumpf nicht angefasst — er behauptet nur,
+jemand habe es getan.
+
+Verwandt: die Regel, dass eine Planberichtigung drei Orte hat. Die hier ist
+ihre feinere Fassung: der dritte Ort hat selbst zwei Haelften.
+
+## Ein Sendeweg, der nach dem Guthaben des Augenblicks zerschneidet, sieht wie ein Kryptofehler aus
+
+Am 02.10.2026 in Aufgabe 14 des Controllers gemessen. `link.Channel.Send`
+teilte eine Nutzlast in so viele Rahmen, wie das Guthaben **in diesem
+Moment** zuliess. Fuer einen Datenstrom ist das richtig. Fuer eine
+**Noise-Nachricht** ist es toedlich: sie muss ganz ankommen, sonst
+entschluesselt kein Stueck.
+
+Und so sah es aus:
+
+```
+dieselbe Quelle, 8 MiB Ergebnis
+Windows : ganz angekommen, Fall gruen
+WSL     : in Stuecken, cipher: message authentication failed
+          ein 488-Byte-Rahmen mitten in einer Reihe voller Rahmen
+```
+
+Die Meldung zeigt auf die **Kryptografie**. Der Fehler lag im **Rahmen**.
+Wer der Meldung folgt, sucht im falschen Paket, und auf der Plattform, auf
+der er entwickelt, ist ueberhaupt nichts zu sehen
+(vgl. „Ein Mutant, der nur auf EINER Plattform stirbt").
+
+Drei Dinge daraus:
+
+1. **Ein Name muss das Zerschneiden verraten.** `Send` tut es nicht. Der
+   Weg, der ganz liefert, heisst jetzt `SendWhole` — und wer das Paar sieht,
+   weiss, dass es eine Wahl gibt.
+2. **Ein Stueck rechnet seinen eigenen Kopf mit.** Gemessen: 4080 Byte Rumpf
+   kosten mit Kennbyte und Noise-Tag **4097** gegen ein Fenster von 4096 —
+   der Kanal steht. Die Grenze gilt fuer das, was auf die Leitung geht,
+   nicht fuer das, was der Aufrufer uebergibt.
+3. **Der Fall, der den Fehler faengt, braucht eine andere Eingabe als der
+   Betrieb sie liefert.** Der Mutant zu `SendWhole` lebte unter Windows,
+   weil dort das Guthaben immer ganz kam. Erst ein Fall, der das Guthaben
+   **in Haelften** zurueckgibt, toetet ihn auf beiden Plattformen
+   (vgl. „Ein Fall, der die Stoerung anders herstellt als der Betrieb sie
+   erzeugt").
+
+## Ein benannter Typ verhindert das Vertauschen NICHT
+
+Am 03.10.2026 gemessen, und es widerlegt eine Begruendung, die ich selbst
+genehmigt hatte. Zwei Fristen gingen als zwei Argumente derselben Art in eine
+Funktion; vertauschen konnte niemand sehen. Der Weg dagegen war ein
+**benannter Typ** mit zwei Feldern, und die Begruendung lautete: „vertauschen
+braucht jetzt den falschen Feldnamen, nicht die falsche Reihenfolge".
+
+Der Pruefer hat es als Mutanten gefahren. Beide **leben**, Paket gruen,
+Ausstiegscode 0:
+
+```
+deadlines{connIdleTime, connLifetime}   // positionales Literal: vertauscht
+deadlines{lifetime: …}                  // idle weggelassen: Nullwert
+```
+
+Ein Verbundliteral im **eigenen Paket** darf positional sein, und ein
+weggelassenes Feld ist nicht verboten, sondern null. Der Typ hat die Reihenfolge
+also gar nicht aus der Hand genommen — er hat nur eine Klammer darum gelegt.
+
+**Was wirklich traegt, ist der Uebersetzer** (vgl. „Der Uebersetzer ist der
+beste Halter, den eine Regel bekommen kann"): **ein eigener Typ je Groesse**.
+`type lifetime time.Duration` und `type idleTime time.Duration` machen das
+Vertauschen zu einem Uebersetzungsfehler, weil die beiden Typen nicht
+ineinander passen.
+
+Und was der Uebersetzer dann **immer noch nicht** haelt: das weggelassene
+Feld. Null ist ein gueltiger Wert. Wer die Luecke schliessen will, braucht
+dafuer einen Fall oder einen Riegel — und wer sie nicht schliesst, **nennt
+sie**, statt sie fuer geschlossen zu erklaeren.
+
+**Nachtrag vom selben Tag, gemessen:** der Strang hat genau diesen Weg gebaut —
+`type lifetime time.Duration`, `type idleTime time.Duration`, **und die
+Konstanten tragen den Typ**; der Struct ist ganz weg, damit auch das
+positionale Literal. Beide Mutanten sind danach **tot mit Ausstiegscode 1**,
+und zwar vom Uebersetzer: `cannot use … as lifetime value` und
+`not enough arguments`. Was uebrig bleibt und benannt ist:
+`lifetime(connIdleTime)` **von Hand** geht weiter — das ist dann keine
+Verwechslung mehr, sondern eine ausdrueckliche Umwandlung. Mehr gibt Go nicht
+her, und genau so steht es im Kommentar.
+
+**Zweiter Nachtrag, dieselbe Stunde, und er berichtigt den ersten.** Die
+Nachprüfung hat den dritten Weg gefunden, nach dem ich ausdrücklich gefragt
+hatte — und der eigene Typ hilft dagegen nicht:
+
+```go
+openDB(cfg, connLifetime, 0)   // baut, läuft grün, Ausstiegscode 0
+openDB(cfg, 0, connIdleTime)   // dito
+```
+
+Eine **untypisierte Null** passt in jeden dieser Typen. Dazu gemessen: der
+Fall, der die Fristen prüfte, prüfte die **Konstanten gegen sich selbst**,
+nicht das, was die Funktion weitergibt — und ein zweiter Aufrufweg ging an
+ihr vorbei.
+
+Die Formel ist damit dreiteilig, und nur der erste Teil gehört dem
+Übersetzer:
+
+| Was | Wer hält es |
+|---|---|
+| **Vertauschen** zweier Größen | der Übersetzer, mit einem Typ je Größe |
+| **Weglassen** eines Arguments | der Übersetzer (`not enough arguments`) |
+| **Eine Null statt eines Werts** | **niemand** — nur ein Fall, der prüft, was ankommt |
+
+Wer „der Übersetzer hält das jetzt" sagt, muss also sagen, **was** er hält.
+Mein eigener Satz darüber war zwei Stunden alt und schon zu weit.
+
+**Dritter Nachtrag, 03.10.2026, aus dem Controller — welche FORM der Übersetzer
+überhaupt halten kann.** Drei Formen gemessen, nicht geraten:
+
+| Form | Hält der Übersetzer? |
+|---|---|
+| **benannte Scheibe** (`type Whole []byte`) | **nein** — eine benannte Scheibe ist an `[]byte` zuweisbar, der falsche Aufruf übersetzt |
+| **Verbundtyp** (`struct`) | ja — `cannot use ct (variable of struct type e2e.Sealed) as []byte value` |
+| **Schnittstelle** mit einer Methode | ja, und ohne neue Abhängigkeit: `link` erfüllt sie strukturell, ohne `e2e` zu importieren |
+
+Gewählt wurde Verbund **und** Schnittstelle zusammen, und der Lohn ist der
+beste, den eine Zusicherung haben kann: **zwei Mutanten sind tot, ohne dass es
+einen Testfall dafür gibt** — der Übersetzer weigert sich, auf beiden Zielen
+(windows/amd64 und per Querbau linux/amd64, je Ausstiegscode 1).
+
+Die Kosten für die Aufrufer waren **null**, weil der Rückgabetyp an der Quelle
+geändert wurde, nicht die Aufrufe. Und die offene Tür ist benannt: die Methode,
+die die Bytes herausgibt, muss exportiert bleiben — wer sie absichtlich
+aufruft und dann zerschneidet, übersetzt weiter. Das ist dieselbe
+ausdrückliche Handlung wie die Umwandlung von Hand weiter oben: **eine
+Verwechslung ist es nicht mehr.**
+
+Die Lehre ueber die Technik hinaus: **meine eigene Genehmigung war die
+unmessbare Stelle.** Der Satz klang richtig, niemand hatte ihn gefahren, und
+er stand als erledigt im Plan. Ein genehmigter Weg ist eine Behauptung wie
+jede andere.
+
+## Eine Fehlermeldung sagt nichts ueber den INHALT des Objekts
+
+Am 03.10.2026 gemessen, und es war vorher nur eine Vermutung des Pruefers —
+der Strang hat sie nachgefahren, statt sie stehen zu lassen. Die
+Uebersprungbehandlung einer Migration liest die Meldung `already exists`:
+
+```sql
+CREATE INDEX ngc_blob_seq ON ngc_blob (id)
+```
+
+Traegt die Datenbank einen Index **desselben Namens ueber andere Spalten**,
+antwortet SQLite `index ngc_blob_seq already exists`. Die Behandlung
+ueberspringt also, und die Version gilt danach als **erledigt** — mit dem
+falschen Index darunter.
+
+An der Stelle ist das **nicht reparierbar**: die Meldung sagt nur, dass der
+Name belegt ist, nicht was darunter liegt. Gehalten wird die Luecke eine Stufe
+weiter, vom Linter, der jede Migration gegen die Regel prueft.
+
+Zwei Dinge daraus, und das zweite ist das wichtigere:
+
+1. **Wer auf einen Namen prueft, hat den Inhalt nicht geprueft.** Das gilt
+   fuer jede Zusicherung, die an einer Meldung haengt
+   (vgl. „Ein Riegel, der eine Fehlermeldung liest").
+2. **Ein Fall, der ein Loch festschreibt, wurde bewusst NICHT gebaut.** Die
+   Begruendung des Strangs, und sie ist richtig: wer das Loch spaeter
+   schliesst, muesste dann erst einen **gruenen** Test rot machen — und das
+   sieht wie ein Rueckschritt aus, obwohl es einer nach vorn ist. Die Luecke
+   steht als Kommentar mit ihrer Messung an der Stelle. Ein Kommentar
+   verteidigt den Fehler nicht, ein Testfall tut es.
+
+## Zwei Stellen, die dieselbe Wand setzen, koennen sie gemeinsam abschalten
+
+Am 03.10.2026 gemessen, an der Apache-Vorlage des Webinterface. Zwei Wege
+setzen `Cross-Origin-Resource-Policy: same-origin` — PHP fuer seine eigenen
+Antworten (`Page.php:65`) und der Server fuer alles unter `/assets/`. Jede
+Stelle fuer sich ist richtig. **Treffen beide auf derselben Antwort
+zusammen, sieht der Browser die Kopfzeile zweimal, und damit ist sie weder
+`same-origin` noch `same-site`: sie wirkt nicht mehr.**
+
+Dass sie zusammentreffen, entscheidet eine Direktive, die gar nicht in dem
+Block steht, um den es geht:
+
+```apache
+<Directory "/var/www/ngc/public">
+    FallbackResource /index.php     # <- hier
+</Directory>
+<Directory "/var/www/ngc/public/assets">   # erbt sie
+    Header always set Cross-Origin-Resource-Policy "same-origin"
+</Directory>
+```
+
+`/assets` liegt **unter** `public`, erbt also den Rueckfall. Eine **fehlende**
+Datei unter `/assets/` wird darum von PHP beantwortet — und PHP antwortet
+innerhalb des assets-Blocks. Genau die 404, fuer die der Block gebaut wurde,
+traegt eine Wand **weniger** als eine 404 daneben.
+
+Drei Dinge daraus:
+
+1. **Zaehle, wer eine Kopfzeile setzt, nicht ob sie gesetzt ist.** Ein Grep,
+   der „CORP ist da" bestaetigt, bestaetigt den Fehler mit.
+2. **Lies die geerbten Direktiven mit.** Ein Block sagt nicht, was in ihm
+   gilt; er sagt nur, was er hinzufuegt. Wer nur den Block liest, sieht den
+   Rueckfall nicht, der ihn umschreibt.
+3. **Der Weg aus zwei Sendern ist einer, nicht ein Ausgleich hinterher.**
+   Entschieden wurde, PHP aus diesem Fall herauszuhalten — nicht, die zweite
+   Kopfzeile vorher per `unset` wegzuraeumen. Ein `unset`+`set` haengt am
+   Zusammenspiel zweier mod_headers-Tabellen, und was von einer unmessbaren
+   Feinheit abhaengt, ist keine Wand.
+
+Und die Nebenbemerkung, die hier teuer ist: **dieselbe Doppelung ist bei CSP
+harmlos** — zwei Richtlinien werden als Schnittmenge gelesen, also strenger.
+Wer von einer Kopfzeile auf die andere schliesst, zieht aus dem harmlosen
+Fall den falschen Schluss.
+
+## `-overlay` belügt nur den Übersetzer, nicht den Dateizugriff
+
+Am 03.10.2026 gemessen, und es ist ein Urteil über **das Messwerkzeug**, nicht
+über den Fall. Ein neuer Riegel liest den **Rumpf einer Funktion** mit
+`go/parser` und verlangt dort drei Bezeichner in einer Reihenfolge. Drei
+Mutanten dagegen, alle per `go test -overlay`, erster Lauf:
+
+```
+alle drei ALIVE, Ausstiegscode 0
+```
+
+Das sah nach einem hohlen Riegel aus. Es war das Gegenteil: **`-overlay`
+ersetzt die Datei nur für den Übersetzer.** Der Fall selbst öffnet sie mit
+gewöhnlichem Dateizugriff und sieht weiter die **unveränderte Platte**. Der
+Mutant stand also im Kompilat, und der Riegel las daneben vorbei.
+
+Gemessen wird so ein Riegel nur, wenn dieselbe Überlagerung **auch die
+Testdatei tauscht**, deren Konstante auf die Quelle zeigt — dann liest der
+Fall die mutierte Kopie. Danach: alle drei **tot, Ausstiegscode 1**, mit je
+einer Meldung, die den falschen Bezeichner nennt.
+
+**Nachgemessen am 03.10.2026, alle vier Riegel, und das Paar ist jedes Mal
+dasselbe: ALIVE mit `-overlay` allein, DEAD mit echtem Plattentausch**
+(Ausstiegscodes 0 und 1; Pflichtkontrollen alle vier ALIVE, die Läufe sind
+also gültig). Alle vier **halten**. Ergänzt werden muss nur das *Wie*:
+
+| Was der Fall liest | Was hilft |
+|---|---|
+| eine **Datei**, über eine Konstante | dieselbe Überlagerung tauscht die Testdatei mit |
+| ein **Verzeichnis** (`WalkDir`, `ParseDir`, `Glob`) | **Overlay hilft gar nicht** — nur ein echter Tausch auf der Platte |
+
+Beim Verzeichnis-Fall ist Overlay **strukturell** blind: die gelesenen Dateien
+kommen im Übersetzungsgraph des geprüften Pakets nicht einmal vor.
+
+Und eine Fußnote, die das Ganze einordnet: **eine dieser vier Dateien hatte
+die Falle in ihrem eigenen Kopfkommentar stehen.** Sie war nie unbekannt — sie
+war nur nicht dort, wo gemessen wurde.
+
+**Diese Sitzung hat vier Dateien, die Quelltext lesen**, und jede Messung an
+ihren Riegeln, die nur `-overlay` benutzt hat, ist damit **unbewiesen** — nicht
+falsch, sondern ungemessen:
+
+```
+apps/server-api/classes/browser/lint_test.go
+apps/server-db/classes/mariadb/mariadb_test.go
+apps/server-db/classes/migrate/lint_test.go
+apps/server-db/classes/sqlstore/sqlcheck_test.go
+```
+
+Zwei Lehren, und die zweite ist die größere:
+
+1. **Ein Riegel, der die Quelle liest, braucht ein anderes Messverfahren als
+   einer, der Verhalten prüft.** Wer beides mit demselben Werkzeug misst, hält
+   das Werkzeug für die Wahrheit.
+2. **Ein lebender Mutant ist zuerst eine Frage an die Messung**, erst danach
+   eine an den Fall (vgl. „`go test` beantwortet einen Mutationslauf aus dem
+   Zwischenspeicher" — dasselbe Muster, anderes Werkzeug). Der Strang hat genau
+   so gehandelt und den Fund am Werkzeug gemeldet, statt den Riegel
+   umzuschreiben, der nie das Problem war.
+
+## Ein Fall, der vor der gemeinten Stelle abgewiesen wird, misst die frühere Wand
+
+Am 03.10.2026 zweimal in **einer** Aufgabe gemessen, und beide Male war der
+Fall grün, während der Mutant dazu **lebte**. Grün und wirkungslos — die
+teuerste Sorte Test, weil sie Arbeit beweist, die nicht getan ist.
+
+**Erster Fall.** Geprüft werden sollte, dass ein OPEN mit Aufgabe **und**
+eigenen Parametern abgelehnt wird. Der Fall lief grün. Gemessene Ursache: die
+Aufgabe **zählt einmal** — der Lauf war durch den Wiedereinspiel-Riegel schon
+abgewiesen, bevor die gemeinte Prüfung dran war. Gemessen wurde also der
+Riegel gegen Wiedereinspielen, nicht die Parameterprüfung. Behoben durch die
+**Reihenfolge**: erst der Lauf mit Parametern, danach dieselbe Aufgabe ohne —
+und damit prüft der Fall zusätzlich, dass die Ablehnung die Aufgabe **nicht
+verbraucht**.
+
+**Zweiter Fall.** Geprüft werden sollte, dass eine **abgeschaltete** App
+denselben Code gibt wie eine fehlende. Der Fall lief grün, der Mutant „keine
+Prüfung auf aktiv" lebte. Ursache: alle Wege liefen **ohne** Recht, und die
+Rechteprüfung lehnte vorher mit demselben Code ab. Behoben, indem die Wege
+zusätzlich **mit** beiden Rechten laufen, mit einer Zwischenprüfung, dass das
+schlichte OPEN dann wirklich öffnet.
+
+**Das Muster, und es ist in jeder Kette von Prüfungen zu haben:** wer die
+letzte Wand prüfen will, muss an **allen** früheren vorbeikommen. Ein Fall,
+der vorher hängt, bekommt dieselbe Antwort und sieht gesund aus.
+
+Drei Griffe dagegen:
+
+1. **Eine Zwischenprüfung einbauen**, die beweist, dass der Weg bis zur
+   gemeinten Stelle offen ist („mit beiden Rechten öffnet das schlichte OPEN").
+   Ohne die steht nur da, dass irgendetwas abgelehnt hat.
+2. **Den Mutanten für genau diese Zeile fahren.** Dass der Fall grün ist, sagt
+   nichts; dass er bei umgedrehter Zeile rot wird, sagt alles.
+3. **Auf verbrauchbare Dinge achten** — eine einmal zählende Aufgabe, ein
+   Einmal-Kennzeichen, ein Zähler. Sie machen aus der Reihenfolge zweier
+   Teilprüfungen einen Unterschied, und dann ist die Reihenfolge Teil der
+   Zusicherung.
+
+## Ein Protokoll, das einen Eintrag zurückweist, verliert das Ereignis
+
+Am 03.10.2026 entschieden, nachdem ein Strang den Preis seiner eigenen
+Verschärfung selbst aufgeschrieben hat — und er hatte recht damit, ihn zu
+nennen.
+
+Das Protokoll des API-Servers prüft jedes Feld, bevor es schreibt: kein
+Zeilenumbruch, keine erfundene Art, `detail` nur aus einer festen Wortliste,
+eine Unterschrift muss base64url von genau 64 Byte sein. Alles richtig. Die
+Folge war: **ein Feld außerhalb der Grammatik gab `ErrEntry` statt eines
+Eintrags.**
+
+Bei einem Prüfprotokoll ist das der schlimmere Ausgang. Wer später ein Loch
+sucht, braucht nicht das saubere Feld — er braucht, **dass der Vorgang
+überhaupt dasteht**. Und wer ein Feld verbiegen kann, hätte damit ein Mittel,
+seinen eigenen Fehlversuch **aus dem Protokoll zu halten**. Die Prüfung, die
+vor schlechten Daten schützt, wird so zum Werkzeug gegen den Leser.
+
+**Die Form gilt für das FELD, nicht für den EINTRAG.** Entschieden:
+
+- Die Grammatik bleibt streng.
+- Das schlechte Feld kommt nicht hinein; an seine Stelle tritt ein **fester
+  Platzhalter**, der nicht aus der Eingabe stammt und mit keinem echten Wert
+  zu verwechseln ist.
+- Art, Zeit und Benutzer bleiben echt, und **geschrieben wird immer**.
+- Der Aufrufer darf erfahren, dass sein Feld verworfen wurde — aber das
+  Schreiben hängt nicht davon ab, dass er darauf reagiert.
+
+Dasselbe Muster mit umgekehrtem Vorzeichen: **ein leerer Benutzer ist kein
+gültiger Eintrag.** Eine automatische Änderung nennt einen reservierten Namen,
+der kein echter Benutzername sein kann, statt das Feld leer zu lassen — dann
+steht in jedem Eintrag, wer gehandelt hat, auch wenn es die Maschine war.
+
+**Nachtrag vom selben Tag, und er berichtigt zwei meiner eigenen Sätze.** Der
+Strang hat beide Stellen gemessen und besser entschieden:
+
+**1. Die ART kann keinen Platzhalter bekommen.** „Immer schreiben" gilt für
+jedes Feld — **außer für das, das das Ereignis benennt.** Eine Zeile mit
+Platzhalter-Art stünde in der Tabelle, aber in keinem Protokoll: kein Leser und
+kein Filter kann sie deuten. Eine Art außerhalb der Liste bleibt also eine
+Zurückweisung. Und das ist **kein Hebel für einen Angreifer**, gemessen: die
+vier Eingänge setzen ihre Art als **Konstante im Code**; gemessen mit `"\x00"`
+in *jedem* Feld liefert keiner von ihnen eine Zurückweisung, und hinterher
+stehen drei Zeilen da. Nur ein handgeschriebener Aufruf mit erfundener Art
+trifft sie — ein Programmierfehler, kein Angriff.
+
+**2. Ein UNGÜLTIGER Benutzer darf nicht zum Maschinennamen werden.** Mein Satz
+„leerer Benutzer → reservierter Name" war zu grob. „Die Maschine hat
+gehandelt" und „hier stand Unsinn" dürfen nicht dasselbe sagen — sonst gibt
+sich ein Angreifer mit einem kaputten Namen **als Maschine** aus. Also: leer →
+reservierter Name, **ungültig → Platzhalter**. Zwei verschiedene Aussagen,
+zwei verschiedene Werte.
+
+**Und wie der Platzhalter kollisionsfrei bleibt, ohne eine Liste:** über die
+**Grammatik** der echten Werte. Jeder echte Benutzer ist 16 Byte base64url,
+jede App-Kennung enthält einen Punkt, jeder Name beginnt mit `[a-z]` — damit
+kann weder `-` noch `system` je ein echter Wert sein. Ein Fall misst genau
+das und **wird rot, wenn jemand die Grammatik aufweicht**: der Platzhalter ist
+damit an die Regeln gebunden, aus denen seine Sicherheit folgt, und nicht an
+einen Kommentar.
+
+Der Mutant, der diese Entscheidung bewacht, ist gefahren: **ein verworfenes
+Feld lässt den Eintrag wieder fallen → 14 Fälle rot.**
+
+Die allgemeine Form, und sie gilt über Protokolle hinaus: **wenn Ablehnen
+teurer ist als Annehmen, darf die Prüfung nicht ablehnen, sondern muss
+entschärfen.** Wo das zutrifft, entscheidet nicht die Prüfung, sondern der
+Zweck der Aufzeichnung.
+
+## Ein Ledger hat je Plan sein eigenes Wort für „fertig"
+
+Am 10.10.2026, und es hat zwei Stränge auf fertige Arbeit geschickt. Ich wollte
+wissen, welche Aufgaben des Recovery-Plans offen sind, und habe gegriffen:
+
+```
+grep 'Task N: complete'   →   genau EIN Treffer (Aufgabe 1)
+```
+
+Daraus habe ich geschlossen: 2 und 3 sind offen. **Falsch.** Dieser Ledger
+schreibt **`ABGESCHLOSSEN`**, nicht `complete` — Aufgabe 1 bis 6 waren fertig,
+Aufgabe 6 nach **sieben** Fixrunden. Mein Suchwort stammte aus einem anderen
+Plan derselben Sitzung.
+
+Der Schaden war klein, weil der Strang **nachgesehen statt gebaut** hat: er hat
+`git log` auf die Datei gefahren, gesehen, dass alle Commits Vorfahren von HEAD
+sind, den Diff als leer gemessen — und den fertigen Bericht **nicht
+überschrieben**. Ein weniger gründlicher hätte 540 Zeilen Bericht mit einem
+neuen „Status: fertig" ersetzt.
+
+Drei Griffe, und der dritte ist der eigentliche:
+
+1. **Nach dem Wort des Ledgers suchen, nicht nach meinem.** Ein Blick in die
+   Datei zeigt es in einer Zeile.
+2. **Je Aufgabe einzeln zählen**, nicht einmal pauschal greppen — eine Zahl
+   ohne Treffer ist kein „offen", sondern „nicht gefunden".
+3. **Der Auftrag beginnt mit „sieh nach, ob es diese Aufgabe noch gibt".**
+   Jeder Strang bekommt ab jetzt den Satz: *steht die Arbeit schon im Repo,
+   baue nichts, überschreibe keinen Bericht, melde es.* Das ist die einzige
+   Sicherung, die auch dann greift, wenn der Koordinator den Stand falsch
+   liest — und er liest ihn irgendwann falsch.
+
+## Ein hohler Arbeitsbaum ist eine geladene Waffe
+
+Am 10.10.2026 gemeldet und von mir nachgemessen. Der Arbeitsbaum des
+web-Strangs hatte **435 Dateien nicht auf der Platte** — `CLAUDE.md`,
+`LICENSE`, `README.md`, `vendor/`, `shared/testdata/`. Nicht sparse
+(`fatal: this worktree is not sparse`), also hält git sie für **gelöscht**:
+
+```
+git diff --stat HEAD --diff-filter=D   →   435 files changed, 259985 deletions(-)
+git status --porcelain | wc -l         →   435
+```
+
+Der Strang hat dort gearbeitet und richtig committet, weil er **pfadgenau**
+vorgemerkt hat. Hätte er ein einziges Mal `git add -A` getippt, wäre die
+Löschung von 260 000 Zeilen im Commit gelandet — und bei einem Push wäre das
+halbe Repo weg gewesen.
+
+**Damit hat die Regel „nie `git add -A`" einen zweiten Grund**, und der ist
+schlimmer als der erste: der geteilte Index nimmt fremde Dateien **mit**, ein
+hohler Baum nimmt die eigenen **weg**.
+
+Nachgemessen über alle Bäume dieser Sitzung: der web-Baum war der einzige
+schwer hohle; drei weitere hatten **genau eine** Datei vermisst, und zwar
+`shared/testdata/.gitkeep` — eine Datei im **eingefrorenen** `shared/`. Auch
+das hätte ein `git add -A` als Vertragsänderung eingetragen.
+
+Behoben mit `git restore .` je Baum (danach 0 fehlend, 0 im Status). **Die
+Ursache ist nicht gemessen** — Vermutung: ein abgebrochener Checkout oder ein
+`git clean` von außen. Darum gilt bis zum Beweis:
+
+**Vor der ersten Zeile Arbeit in einem Arbeitsbaum:**
+```
+git diff --name-only --diff-filter=D HEAD | wc -l     →   muss 0 sein
+```
+Steht dort eine Zahl, ist nicht die Aufgabe das Problem. Erst `git restore .`,
+dann arbeiten. Und die alten, fertigen Bäume derselben Sitzung sind zu über
+tausend Dateien hohl — wer dort noch einmal hineingeht, liest zuerst diese
+Zahl.
+
+## Greift der Koordinator in einen fremden Arbeitsbaum, sagt er es SOFORT
+
+Am 10.10.2026. In drei Arbeitsbäumen fehlte `shared/testdata/.gitkeep` — eine
+Datei im **eingefrorenen** `shared/`. Ich habe sie per `git restore`
+zurückgeholt, während die Stränge dort arbeiteten, und **nichts gesagt**.
+
+Was daraus wurde, in ihren eigenen Worten:
+
+> „fehlte im Arbeitsbaum (dritter Baum mit diesem Bild) — **und kam während
+> meiner Arbeit von selbst zurück** (Zeitstempel 10:53). Nicht angefasst,
+> nicht nachgestellt. Kein Go- oder Shell-Code im Repo nennt `.gitkeep`.
+> **Ursache weiter unbekannt**, aber jetzt ist belegt, dass etwas außerhalb
+> des Strangs in `shared/` dieses Arbeitsbaums greift."
+
+Ein zweiter Strang meldete dasselbe unabhängig. Beide haben richtig gehandelt
+— gemeldet, nicht geraten, nichts angefasst. **Die Arbeit war trotzdem
+verschwendet**, und schlimmer: in zwei Berichten steht jetzt ein Satz über
+eine fremde Hand in einem eingefrorenen Ordner, der eine echte Untersuchung
+wert gewesen wäre, wenn er gestimmt hätte.
+
+**Also: jede Änderung des Koordinators an einem Arbeitsbaum, in dem ein Strang
+arbeitet, wird dem Strang im selben Moment gesagt** — mit Datei, Zeit und
+Grund. Nicht später, nicht im Ledger allein. Ein Strang, der eine fremde
+Änderung sieht, kann sie nicht von einem Fehler unterscheiden; der einzige,
+der das kann, ist der, der sie gemacht hat.
+
+Und die Umkehrung gilt weiter: **ein Strang, der eine Änderung von außen
+sieht, meldet sie** (vgl. „Auftrag: Erscheinung, nicht Ursache"). Beide Seiten
+zusammen machen daraus eine Sekunde Arbeit statt einer Geistersuche.
+
+## Ein Strang liest die Dokumente SEINES Zweigs, nicht die von main
+
+Am 10.10.2026 gemessen. Ein Prüfer meldete, ein Kommentar im Code verweise auf
+„`docs/vertraege-v1.2.md`, Punkt 20", und Punkt 20 handle von etwas anderem —
+der Zeiger sei falsch. Nachgemessen:
+
+```
+origin/main       : ## Punkt 20: Die Lizenz war nie eine Vertragsfrage …
+origin/controller : die Datei endet bei ## Punkt 19
+origin/controller..origin/main : 36 Commits
+```
+
+**Der Kommentar war richtig, der Prüfer auch** — jeder gegen seinen eigenen
+Stand. Die Entscheidungen des Koordinators landen auf `main`; ein Strangzweig
+ist Stunden und Dutzende Commits älter, und **die Dokumente wandern mit dem
+Zweig**, nicht mit der Zeit.
+
+Drei Folgen, und die dritte ist die unangenehme:
+
+1. **Wer eine nummerierte Stelle zitiert, zitiert einen beweglichen Zeiger.**
+   Besser ist die **Überschrift** dazu („Punkt 20, *Die Lizenz war nie eine
+   Vertragsfrage*") — eine Nummer verschiebt sich, ein Satz nicht.
+2. **Vor einer Prüfung, die Dokumente heranzieht: `origin/main` in den Zweig
+   ziehen** oder die Datei ausdrücklich von `main` lesen. Sonst prüft man gegen
+   eine Fassung, die der Umsetzer nie gesehen hat — oder umgekehrt.
+3. **Ein Fund über ein Dokument ist erst ein Fund, wenn man weiß, welche
+   Fassung man gelesen hat.** Derselbe Satz gilt für Zeilennummern in
+   Berichten: sie treiben, sobald ein anderer Strang weiterschreibt, und beide
+   Seiten können im Recht sein.

@@ -522,3 +522,176 @@ unabhängige Messungen:
 **Reihenfolge:** dieser Punkt muss **vor** dem ersten echten Release stehen.
 Der Packer ist gebaut (Branch `release-packer`), er packt reproduzierbar, und
 der Signierer wartet nur auf diesen einen Vertragssatz.
+
+## Punkt 20: Die Lizenz war nie eine Vertragsfrage — sie ist eine nicht aufgerufene Funktion
+
+**Entschieden am 03.10.2026. Zwei Stränge haben am selben Tag dieselbe Lücke
+gemeldet** — der API-Strang in Aufgabe 13 („Lizenz ist nirgends geprüft",
+gemessen: `grep -rn "CodeLicense\|VerifyLicense\|BlobLicense" apps/` ohne Tests
+findet nichts) und der Controller-Strang in Aufgabe 14 (die Stelle steht dort
+nur als Kommentar, mit Verweis auf Aufgabe 17). Beide haben die Frage als
+Vertragsfrage an mich gegeben. **Sie ist keine.**
+
+Gemessen in `shared/` — es ist alles da, und zwar absichtlich zweigeteilt:
+
+| Was | Wo | Für wen |
+|---|---|---|
+| `verifyLicense` **plus Schlüsselprüfung** | `shared/store/catalog.go:381` | nur die **API** — „refuses everything a controller cannot do" |
+| `VerifyLicenseFor(env, st, installation, app)` | `catalog.go:404` | der **Controller**, „as a controller can, without the key" |
+| `LicenseOf(l, now)` → `none/valid/grace/expired` | `shared/core/results.go:342` | beide, für `InstalledApp` und `LicenseResult` |
+| `AppUnlicensed` | `results.go:24` | die Antwort nach außen |
+| `BlobLicense` (die **neueste** Lizenz) | `shared/dbapi/dbapi.go:20` | der Controller hält sie |
+| Aktion `license`, `MaxLicenseIn` = 16 KiB | `shared/core/core.go:59/75/159/170` | `ngc.store/api/license`, `ngc.store/controller/license` |
+
+**Also ändert sich an `shared/` nichts.** Der Vertrag ist vollständig, der
+Einfrierstand bleibt, wie er ist. Was fehlt, sind **Aufrufe** — und wo sie
+hingehören, steht im Entwurf 4.4, Schritte 2 bis 4, und nicht in meinem Kopf:
+
+1. **Die API prüft die Lizenz samt Schlüssel.** Nur sie kann den
+   App-Schlüssel mit dem privaten Schlüssel der Installation entschlüsseln;
+   läuft ein Abo aus, **gibt sie den Schlüssel nicht mehr heraus.** Das ist die
+   Stelle, an der eine abgelaufene Lizenz wirklich greift.
+2. **Der Controller prüft Unterschrift, Installation und App selbst**, mit
+   `VerifyLicenseFor` — den Schlüssel der Installation prüft er **nicht**, er
+   kann es nicht. Nach der Übergangsfrist startet er den Dienst nicht mehr.
+3. **Die Rechteprüfung je Kanal trägt die Lizenz als FÜNFTES Stück** neben
+   Benutzer, Rolle, App und Aktion (Entwurf Zeile 582). Die Grenze „pro
+   Benutzer" (Zeile 332) ist dabei eine **Rechte**-Frage: nur so viele
+   Benutzer bekommen „benutzen", wie die Lizenz erlaubt.
+
+**Was heute wirklich passiert, und das ist der Satz, den beide Stränge
+richtig aufgeschrieben haben: eine lizenzpflichtige App öffnet für jeden mit
+dem Recht.** Das ist kein Loch im Vertrag, sondern eine unfertige Baustelle —
+und sie ist jetzt benannt, statt in zwei Berichten zu liegen.
+
+**Für die Aufträge heißt das:**
+- Die Rechte-Aufgabe des API-Strangs bleibt, wie sie ist. Die Lizenz kommt
+  nicht nachträglich hineingeflickt, sondern mit der Aufgabe, die den Aufrufer
+  baut — dort gehört auch der Fall hin, der eine **abgelaufene** Lizenz gegen
+  ein vorhandenes Recht stellt.
+- Der Controller bekommt seinen Aufruf in Aufgabe 17, wie es dort schon steht.
+  Der Kommentar an der Stelle darf nicht sagen, dass geprüft wird — er muss
+  sagen, dass **noch nicht** geprüft wird, und auf diesen Punkt zeigen.
+- **Niemand baut eine eigene Lizenzprüfung.** Es gibt genau zwei Eingänge, und
+  der Unterschied zwischen ihnen ist die Sicherheitsaussage: wer als
+  Controller den Schlüssel prüfen könnte, hätte ihn.
+
+## Punkt 21: Eine Aktion darf `use` heißen — und dann ist das Recht dasselbe
+
+**Gemessen am 03.10.2026** von der Prüfung der API-Aufgabe 13, und es ist der
+erste Fund dieser Sitzung, der eine Änderung in `shared/` **wirklich**
+braucht.
+
+Ein Recht hat die Form `<app>/<aktion>`, und `<app>/use` ist das Recht, die
+App überhaupt zu sehen. `core.ValidRight` (`shared/core/core.go:319`) erlaubt
+als Aktion aber **jeden** gültigen Namen:
+
+```go
+ok && wire.ValidAppID(app) && !wire.CoreApp(app) && (action == RightUse || wire.ValidName(action))
+```
+
+Nennt ein **Manifest** seine Aktion `use`, fällt das Aktionsrecht mit dem
+Sichtbarkeitsrecht zusammen. Gemessen: mit **nur** dem Sichtbarkeitsrecht
+antwortet die Prüfung `code=""` — **der Kanal öffnet.**
+
+**Warum das in `shared/` gehört:** `use` ist dort ein **reservierter** Name,
+und wer reserviert, muss es auch durchsetzen. Heute reserviert `core`
+den Namen und `store` lässt ihn als Manifest-Aktion zu — zwei Hälften
+desselben Vertrags, die sich widersprechen. Jede Umsetzung, die das örtlich
+abfängt, baut die Prüfung ein zweites Mal.
+
+**Bis zur nächsten Vertragsfassung:** eine Zeile in `rights/check.go` fängt es
+ab, mit einem Kommentar, der auf `core.ValidRight` zeigt und sagt, dass sie
+weg muss, sobald der Vertrag es hält. Entschieden für den örtlichen Riegel,
+weil der Einfrierstand hält und die Lücke heute offen ist; der Preis ist die
+doppelte Prüfung.
+
+**Und ein zweiter Satz hängt daran:** die Lizenzprüfung (Punkt 20) darf
+**nicht an `<app>/use` hängen**. Es ist dieselbe Zeile, und wer sie dort
+aufhängt, macht aus einer Namenskollision eine Lizenzumgehung.
+
+## Punkt 22: Ein Diagnoseschalter ohne Weg in die Konfiguration ist keiner
+
+**Gemessen am 03.10.2026** in der Controller-Aufgabe 14, als Folge einer
+Entscheidung, die ich selbst getroffen habe.
+
+Der stderr einer App ging bei **jedem** echten Aufruf ungekürzt ins Protokoll,
+und `NGC_PARAMS` ist Benutzereingabe — das verstößt gegen „Geheimnisse nie ins
+Log". Entschieden wurde die sichere Fassung: ins Protokoll geht nur, **dass**
+es stderr gab und **wie viele Bytes**; den Text bekommt nur, wer ihn
+ausdrücklich einschaltet, und **aus ist der Standard**.
+
+Umgesetzt ist das über `CallInput.LogStderr` / `Deps.LogStderr`. Und hier
+endet es, denn **`shared/config` ist eingefroren**: es gibt kein Feld, über das
+ein Mensch den Schalter umlegen könnte. „Einschalten" heißt damit heute **neu
+bauen** — für einen Operator, der um drei Uhr nachts wissen will, warum eine
+App nicht startet, ist das keine Antwort.
+
+**Der Schalter bleibt trotzdem so, wie er ist**, und der Grund ist die
+Reihenfolge: die unsichere Fassung durfte nicht stehen bleiben, nur weil die
+schöne Fassung einen Vertrag braucht. Ein Schalter ohne Weg nach draußen ist
+ein halbes Werkzeug; ein Protokoll, das Benutzereingaben mitschreibt, ist ein
+Fehler.
+
+**Für die nächste Vertragsfassung:** ein Feld in `shared/config`, das diesen
+Schalter trägt — und zwar so, dass sein Standard **aus** ist und ein
+eingeschaltetes Protokoll als solches erkennbar bleibt. Wer es baut, prüft
+zugleich, ob es weitere Schalter dieser Art gibt, die heute nur im Quelltext
+stehen; **gemessen ist bisher nur dieser eine.**
+
+## Punkt 23: `store.ValidPath` ist POSIX-sicher, nicht Windows-sicher — und das ist jetzt gemessen
+
+**Gemeldet und belegt am 10.10.2026** aus Aufgabe 15 des Controllers, zweimal
+unabhängig (Prüfer und Umsetzer).
+
+`store.ValidPath` weist zurück, was auf einem POSIX-Dateisystem gefährlich ist:
+absolute Pfade, `..`, Links, Sparse-Dateien. Was es **nicht** kennt, ist ein
+Dateisystem, das **Groß- und Kleinschreibung faltet**. Zwei Namen, die sich nur
+darin unterscheiden, sind für `Walk` **zwei** Einträge und für Windows **einer**.
+
+**Nach `CLAUDE.md` ist das kein Produktmangel** — „Windows wird nicht
+umgesetzt". Neu und messbar ist die Folge für die **Entwicklung**:
+
+| Dateisystem | Was mit zwei Namen passiert, die sich nur in der Schreibweise unterscheiden |
+|---|---|
+| faltend (Windows, hier) | die zweite Datei scheitert an `O_EXCL` → **`install.ErrDisk`** |
+| case-sensitiv (Linux, Ziel) | beide werden **angenommen**, beide liegen da |
+
+Damit verhält sich dieselbe Eingabe auf Entwicklungs- und Zielplattform
+**verschieden**, und der Unterschied ist kein Zufall, sondern eine Lücke in der
+Zusage. Der Fall, der das prüft, **rät die Plattform nicht**: er **misst das
+Dateisystem** und verlangt auf jeder Seite das Richtige. So läuft er auf beiden
+Zielen und sagt auf beiden etwas.
+
+**Was offen bleibt und in die nächste Vertragsfassung gehört:** entweder
+`store.ValidPath` lehnt zwei Namen ab, die sich nur in der Schreibweise
+unterscheiden (dann ist ein Paket auf jedem Dateisystem gleich), oder der
+Vertrag sagt ausdrücklich, dass er das **nicht** zusagt. Beides ist besser als
+heute, wo es niemand sagt. **`shared/` ist eingefroren, also ist das hier
+notiert und nicht gebaut.**
+
+## Punkt 24: Ein Abbild ohne Referenz kann niemand entfernen
+
+**Gemessen am 10.10.2026** in Aufgabe 16 des Controllers, und der Strang hat die
+Lücke benannt statt sie mit einer Notlösung zu überdecken.
+
+Verliert eine App bei einem Update ihre Dienste, wird ihr Container entfernt —
+**ihr Abbild bleibt liegen.** `Engine.RemoveImage` braucht eine **Referenz**,
+und die kommt aus dem tar des Pakets, mit dem das Abbild kam. Ein Update ohne
+Dienste bringt kein solches tar, und **niemand schreibt die Referenz auf**:
+`dbapi.App` hat kein Feld dafür.
+
+Der naheliegende Ausweg wäre, die Liste aus der Ausgabe von podman zu lesen und
+„alles zu entfernen, was drin ist". **Das tut dieses Paket nirgends**, und es
+wäre die falsche Richtung: eine Liste, die der Container-Dienst ausgibt, ist
+keine Buchführung, sondern eine Momentaufnahme.
+
+**Was es heute kostet, vollständig:** das Abbild liegt im Bildspeicher **seines
+eigenen Benutzers**, ist nur für diese App erreichbar, und ein Deinstallieren
+nimmt es mit dem Benutzer mit. Es ist also verlorener Platz, kein offener
+Zugang.
+
+**Die richtige Lösung ist ein Referenzfeld in `dbapi.App`** — und das ist eine
+Änderung im eingefrorenen `shared/`. Darum steht sie hier und ist nicht gebaut.
+Wer sie baut, prüft gleich mit, ob dasselbe Feld auch dem Deinstallieren hilft,
+statt sich dort auf den Benutzer zu verlassen.

@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+### Offen
+
+- **Recovery, leerer Owner-auth:** die Testumgebung legt den NV-Zähler mit leerem
+  Owner-auth an. Das ist für die Stufe `test` entschieden und **nicht** geprüft; ein
+  echter Server braucht einen Owner-auth, sonst kann jeder lokale Prozess den Zähler
+  anfassen. Vorgabe `docs/recovery-modus.md`, Abschnitt 13 verlangt diesen Eintrag.
+- **Recovery, NV-Index:** der Index des Zählers ist festgelegt und nirgends gegen eine
+  Kollision mit fremder Firmware geprüft.
+
 Vertragsänderung V1: Die Anmelde-Antwort (`session.LoginChallenge`) nennt je Passkey nicht mehr nur
 die Credential-ID, sondern auch die Schlüsselkennung (`kid`), die in den Beweis gehört. Der Browser
 hat bei der Anmeldung noch keine Vertrauensliste; ohne die Kennung kam niemand mit Passkey herein.
