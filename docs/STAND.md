@@ -136,6 +136,36 @@ Kopf der Vorlage selbst. **Befehl D zählt am meisten:** er prüft, dass eine
 fehlende Datei unter `/assets/` von Apache und nicht von PHP beantwortet wird —
 sonst stehen dort zwei `Cross-Origin-Resource-Policy`, und die Wand wirkt nicht.
 
+### Nachtrag 10.10.2026: ein Kommentar des Packers ist überholt — vor dem Release berichtigen
+
+Der Packer nimmt `templates/apache-vhost.conf` mit, und der Kommentar daneben
+(`tools/release/extra-web.txt`) sagt: *„ngc-web.sh does NOT read it — it writes its own virtual
+host, lines 978-1028 — and the task that makes it read this one cannot start before the file is on
+the server."*
+
+**Das war am 02.10. richtig und ist es nicht mehr.** Gemessen am 10.10.2026:
+
+| Zweig | Treffer auf `ensure_vhost_template` / `templates/apache-vhost.conf` |
+|---|---|
+| `ngc-web` (`ad5ad0f`, der alte Stand) | **0** |
+| `ngc-web-kopfzeilen` (`75c63f4`, der neue) | **12** |
+
+Das Skript **liest** die Vorlage jetzt, bricht sogar ab, wenn sie fehlt. Der Satz „die Aufgabe, die
+es lesen lässt, kann nicht beginnen" beschreibt eine Aufgabe, **die inzwischen erledigt ist**.
+
+**Also, in dieser Reihenfolge:** wenn `ngc-web-kopfzeilen` zusammengeführt wird, im selben Zug den
+Kommentar in `extra-web.txt` berichtigen. Er ist kein Beiwerk: er ist der Grund, warum die Datei
+überhaupt auf der Liste steht, und der Nächste liest ihn als Begründung.
+
+**Was dagegen gemessen stimmt** (Packer-Nachmessung, 10.10.2026): die **gepackte** Vorlage ist
+**bitgleich** zur neuen (`git hash-object` des aus dem Archiv gezogenen Files gleich
+`origin/web:apps/web/templates/apache-vhost.conf`, 40 374 Bytes), zwei Packläufe geben dieselbe
+Prüfsumme, **66 Dateien, 0 unter `tests/`**, und alles, was die Vorlage nennt und beim Nutzer
+liegen muss, liegt im Archiv. Offen bleiben zwei Kleinigkeiten: die mitgelieferte `README.md` und
+die Vorlage verweisen auf `docs/STAND.md`, **das nicht im Archiv liegt** (für einen Nutzer ohne
+Repo ein Verweis ins Leere), und eine Zusicherung der Dichtheitsprüfung **überspringt weiter laut**,
+weil `jq` auf diesem Rechner fehlt.
+
 ## Offene Entscheidungen
 
 - **Vertragsfassung 1.2:** Was der nächste Schnitt an `shared/` tragen muss,
