@@ -22,9 +22,12 @@ framework, no build step, and npm only under `tests/`.
    `shared/testdata/`, no API needed. Is php installed but not on the PATH? Then write
    `NGC_PHP=<path to php>` into `tools/local.env` (`tools/local.env.example` shows how);
    `npm test` and `tools/check.sh` both read it. Two runs at once: set `NGC_WEB_TEST_PORT`.
-3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository. By hand instead:
-   `templates/apache-vhost.conf` carries six commands at the top, in order, with one name to fill
-   in. Apache's DocumentRoot is `public/` and nothing else is reachable from outside.
+3. On a server, ulh does the rest: `scripts/ngc-web.sh` in the ulh repository — it reads
+   `templates/apache-vhost.conf` out of the release and fills in the name, and it installs
+   `php-fpm`. By hand instead: that same file carries six commands at the top, in order, with one
+   name to fill in, and the section **HOW ngc-web.sh BUILDS THE MACHINE** in its head says — with
+   the script's line numbers — where the two ways differ. Apache's DocumentRoot is `public/` and
+   nothing else is reachable from outside.
 
 ## What it holds to
 
@@ -46,8 +49,8 @@ framework, no build step, and npm only under `tests/`.
 ## What no test here can measure: the web server itself
 
 There is no Apache in this repository, so `templates/apache-vhost.conf` is the one thing that is
-reasoned out and not measured. Nine commands close that gap, and they take about two minutes on the
-first machine that has an Apache. `HOST` is the name you filled in; `-k` is for the self-signed
+reasoned out and not measured. Eleven commands close that gap, and they take about two minutes on
+the first machine that has an Apache. `HOST` is the name you filled in; `-k` is for the self-signed
 certificate of step 2. The template carries the same list, so whichever you read says the same
 thing.
 
@@ -62,6 +65,8 @@ thing.
 | `curl -skD - -o /dev/null https://HOST/irgendwas-das-es-nicht-gibt \| grep -ci '^strict-transport-security:'` | `1` | HSTS reaches an answer **outside** `/assets/` as well — that is what the host-wide line in the virtual host is for. `0` means an Apache error page still goes out without it; more than `1` means `always set` added beside `Page::headers`' own (same value, so no hole) |
 | `openssl s_client -connect HOST:443 -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256 </dev/null` | a handshake **failure** | the `SSLCipherSuite TLSv1.3 …` line really narrows. If it succeeds, Apache read it as the TLS-1.2 list and it narrows nothing. `openssl s_client -connect HOST:443 </dev/null \| grep -i Cipher` must name `TLS_AES_256_GCM_SHA384` |
 | `curl -sk "https://HOST/?ngc-probe=GEHEIMNIS" -o /dev/null` then `grep -c GEHEIMNIS /var/log/apache2/ngc-web-access.log` | `0` | the access log writes down no user input. Anything else means the format fell back to one that logs the request line, and then the log is a place secrets land |
+| `apachectl -M \| grep -c proxy_fcgi` then `apachectl -M \| grep -cE 'php[0-9]+_module'` | `1`, then `0` | PHP arrives as **php-fpm**, which is the package both ways install — `scripts/ngc-web.sh` in the ulh repository has it in `NGC_PACKAGES` (line 80 there), and step 1 of the template installs it too. Without `proxy_fcgi` the `SetHandler` reaches no pool and a `.php` goes out as text or a 500; a `php8_module` beside it means `libapache2-mod-php` got installed as well, and then two things claim `.php` — a **find** |
+| `grep -h '^expose_php' /etc/php/*/fpm/php.ini` | `expose_php = Off` | read off the disk and not over HTTP on purpose: `classes/Page.php` removes `X-Powered-By` from every answer `index.php` writes, so `curl` cannot tell — only an answer Apache writes alone would show it. `ngc-web.sh` sets neither this nor `ServerTokens` (measured 10.10.2026: neither word is in the script), so on a machine ulh set up this line is the only way to find out. `fpm` and not `apache2` in that path: with php-fpm `/etc/php/*/apache2/php.ini` does not exist |
 
 Two more, if you want the whole picture: `curl -skI https://HOST/assets/js/` must be `403` and carry
 the same four headers, and `curl -skI https://HOST/` must carry `Page::headers`' own policy —
