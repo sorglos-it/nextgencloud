@@ -60,7 +60,7 @@ nach, ob die Aufgabe noch offen ist:
 ## Fallen dieser Umgebung (am 10.10.2026 gemessen, alle bezahlt)
 
 Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Projekt) und
-`docs/arbeitsweise.md` (NGC-eigene Lehren). Die vier, die am meisten gekostet haben:
+`docs/arbeitsweise.md` (NGC-eigene Lehren). Die fünf, die am meisten gekostet haben:
 
 - **Arbeitsbäume werden während der Arbeit hohl.** Mehrmals gemessen: ein Baum stand nach einer
   Wiederherstellung bei 0 fehlenden Dateien und kurz darauf wieder bei **629**; parallel 145, 123,
@@ -76,6 +76,15 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
 - **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
   im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
   WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
+- **`git` stirbt in der Bash mit „Out of memory", während 98 GB frei sind.** Gemessen am
+  10.10.2026 bei vielen gleichzeitigen Strängen: `git commit` brach mit „malloc failed (tried to
+  allocate 1048576 bytes)" ab, `git push` mit „calloc failed", und derselbe Befehl lief
+  **unverändert** über PowerShell (`git -C Z:\GitHub\nextgencloud push`) sauber durch. Es ist nicht
+  der Arbeitsspeicher, sondern die Fork-Schicht von Git-für-Windows (dieselbe Messung zeigte
+  `post-commit: fork: Resource temporarily unavailable`). **Also: bricht git in der Bash mit
+  „Out of memory" ab, erst den Arbeitsspeicher nachsehen, dann denselben Befehl über PowerShell
+  wiederholen — und vorher prüfen, ob der Commit schon liegt (`git log --oneline -1`), sonst
+  entsteht er zweimal.**
 - **Der Scratchpad ist zwischen den Strängen geteilt**, nicht nur `/tmp`: eine Messdatei wurde
   mitten im Lauf von einem anderen Strang überschrieben. Je Strang ein eigener Unterordner, und
   eine Zahl aus einer überschriebenen Datei wird **neu gemessen**, nicht geborgen.
