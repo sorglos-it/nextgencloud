@@ -3626,3 +3626,35 @@ Die allgemeine Form, und sie gilt über Protokolle hinaus: **wenn Ablehnen
 teurer ist als Annehmen, darf die Prüfung nicht ablehnen, sondern muss
 entschärfen.** Wo das zutrifft, entscheidet nicht die Prüfung, sondern der
 Zweck der Aufzeichnung.
+
+## Ein Ledger hat je Plan sein eigenes Wort für „fertig"
+
+Am 10.10.2026, und es hat zwei Stränge auf fertige Arbeit geschickt. Ich wollte
+wissen, welche Aufgaben des Recovery-Plans offen sind, und habe gegriffen:
+
+```
+grep 'Task N: complete'   →   genau EIN Treffer (Aufgabe 1)
+```
+
+Daraus habe ich geschlossen: 2 und 3 sind offen. **Falsch.** Dieser Ledger
+schreibt **`ABGESCHLOSSEN`**, nicht `complete` — Aufgabe 1 bis 6 waren fertig,
+Aufgabe 6 nach **sieben** Fixrunden. Mein Suchwort stammte aus einem anderen
+Plan derselben Sitzung.
+
+Der Schaden war klein, weil der Strang **nachgesehen statt gebaut** hat: er hat
+`git log` auf die Datei gefahren, gesehen, dass alle Commits Vorfahren von HEAD
+sind, den Diff als leer gemessen — und den fertigen Bericht **nicht
+überschrieben**. Ein weniger gründlicher hätte 540 Zeilen Bericht mit einem
+neuen „Status: fertig" ersetzt.
+
+Drei Griffe, und der dritte ist der eigentliche:
+
+1. **Nach dem Wort des Ledgers suchen, nicht nach meinem.** Ein Blick in die
+   Datei zeigt es in einer Zeile.
+2. **Je Aufgabe einzeln zählen**, nicht einmal pauschal greppen — eine Zahl
+   ohne Treffer ist kein „offen", sondern „nicht gefunden".
+3. **Der Auftrag beginnt mit „sieh nach, ob es diese Aufgabe noch gibt".**
+   Jeder Strang bekommt ab jetzt den Satz: *steht die Arbeit schon im Repo,
+   baue nichts, überschreibe keinen Bericht, melde es.* Das ist die einzige
+   Sicherung, die auch dann greift, wenn der Koordinator den Stand falsch
+   liest — und er liest ihn irgendwann falsch.
