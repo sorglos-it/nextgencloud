@@ -669,3 +669,29 @@ unterscheiden (dann ist ein Paket auf jedem Dateisystem gleich), oder der
 Vertrag sagt ausdrücklich, dass er das **nicht** zusagt. Beides ist besser als
 heute, wo es niemand sagt. **`shared/` ist eingefroren, also ist das hier
 notiert und nicht gebaut.**
+
+## Punkt 24: Ein Abbild ohne Referenz kann niemand entfernen
+
+**Gemessen am 10.10.2026** in Aufgabe 16 des Controllers, und der Strang hat die
+Lücke benannt statt sie mit einer Notlösung zu überdecken.
+
+Verliert eine App bei einem Update ihre Dienste, wird ihr Container entfernt —
+**ihr Abbild bleibt liegen.** `Engine.RemoveImage` braucht eine **Referenz**,
+und die kommt aus dem tar des Pakets, mit dem das Abbild kam. Ein Update ohne
+Dienste bringt kein solches tar, und **niemand schreibt die Referenz auf**:
+`dbapi.App` hat kein Feld dafür.
+
+Der naheliegende Ausweg wäre, die Liste aus der Ausgabe von podman zu lesen und
+„alles zu entfernen, was drin ist". **Das tut dieses Paket nirgends**, und es
+wäre die falsche Richtung: eine Liste, die der Container-Dienst ausgibt, ist
+keine Buchführung, sondern eine Momentaufnahme.
+
+**Was es heute kostet, vollständig:** das Abbild liegt im Bildspeicher **seines
+eigenen Benutzers**, ist nur für diese App erreichbar, und ein Deinstallieren
+nimmt es mit dem Benutzer mit. Es ist also verlorener Platz, kein offener
+Zugang.
+
+**Die richtige Lösung ist ein Referenzfeld in `dbapi.App`** — und das ist eine
+Änderung im eingefrorenen `shared/`. Darum steht sie hier und ist nicht gebaut.
+Wer sie baut, prüft gleich mit, ob dasselbe Feld auch dem Deinstallieren hilft,
+statt sich dort auf den Benutzer zu verlassen.
