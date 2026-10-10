@@ -20,7 +20,7 @@ import (
 
 // Names inside the staged folder of an accepted package.
 const (
-	PackageFile = "package" // the file as it arrived, after the checksum matched
+	PackageFile = "package" // the file as it arrived; it stays only if its checksum matched
 	FilesDir    = "files"   // what store.Walk let through: ui/… and services/<arch>.tar
 )
 
@@ -297,8 +297,10 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
-		// O_EXCL: the folder is fresh, and a name that already exists, or a
-		// link someone slipped in, is never followed.
+		// O_EXCL: a name that already exists, or a link someone slipped in, is
+		// never followed. Unmeasured on purpose — the folder is fresh, so no
+		// case can plant either without bending this code; it guards a later
+		// reuse of the folder.
 		w, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return err
