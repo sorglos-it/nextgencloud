@@ -6097,6 +6097,49 @@ git commit -m "Add the tunnels to the controllers and the pairing" \
 Entschieden wird bei jedem Kanal neu, aus Benutzer, Rolle, App, Aktion und Lizenz — nie aus
 Parametern des OPEN.
 
+> **Berichtigt am 03.10.2026 — drei Entscheidungen des Koordinators. Punkt 1
+> aendert den CODE, nicht diesen Plan; Punkt 2 berichtigt meine eigene
+> Formel im Aufgabenkopf; Punkt 3 ist eine gemessene Luecke mit oertlichem
+> Riegel.**
+>
+> **1. `E_FORBIDDEN` und `E_NOTFOUND` müssen für einen Benutzer OHNE Recht
+> dasselbe sagen.** Gemessen von der Prüfung: der Unterschied verriet einem
+> Benutzer ohne Recht, dass die App **installiert und aktiv** ist, und der
+> Kommentar im Code behauptete das Gegenteil.
+>
+> **Entscheidung des Koordinators: gleichziehen**, weil das die sicherere
+> Variante ist. Betroffen ist die **App**-Stufe — fehlende App, nicht aktive
+> App und fehlendes `<app>/use`-Recht geben jetzt alle `E_FORBIDDEN`. Der
+> Preis, vollständig: wer kein Recht hat, kann einen Tippfehler im App-Namen
+> nicht mehr von einem fehlenden Recht unterscheiden — seine Fehlersuche wird
+> schwerer. Ein Fall hält fest, dass **beide** Wege denselben Code geben.
+>
+> **Was davon NICHT betroffen ist, und ich hatte es zuerst falsch
+> aufgeschrieben:** der Fall `fx.CheckApp(t, fx.OfficeUser, "nothing")` in
+> Schritt 1 erwartet weiter `wire.CodeNotFound` und bleibt **richtig**. Er
+> fragt nach einer **Aktion, die das Manifest nicht hat**, und zwar für einen
+> Benutzer, der das Sichtbarkeitsrecht **hat** — wer die App sehen darf, darf
+> auch erfahren, dass eine Aktion nicht existiert. Das ist ein anderes Paar
+> als das oben. **Mein erster Nachtrag erklärte diesen Fall für überholt; das
+> war falsch, nachgemessen an `check.go:87-110`.**
+>
+> **2. „Nie aus Parametern des OPEN" hat immer UNSIGNIERTE Teile gemeint.**
+> Gemessen: `Task`+`Confirm` aus dem OPEN verschieben die Entscheidung
+> **öffnend** (`plain="E_CONFIRM" | task="E_CONFIRM" | task+confirm=""`). Das
+> ist richtig und bleibt — genau dafür ist `E_CONFIRM` da: der Kanal sagt „hol
+> eine Unterschrift", und die unterschriebene Aufgabe ist die Antwort darauf.
+> Ein unterschriebenes Stück ist kein Parameter, sondern ein **Beleg**, denn
+> die Unterschrift wird selbst geprüft. **Meine Formel im Auftrag war zu
+> lose**, nicht der Code.
+>
+> **3. Eine Namensraum-Kollision ist offen und nur örtlich geschlossen.** Ein
+> Manifest darf eine Aktion `use` heißen; dann ist das Aktionsrecht dasselbe
+> wie `<app>/use`, und gemessen mit **nur** dem Sichtbarkeitsrecht öffnet der
+> Kanal. Die saubere Fassung gehört in `shared/store` bzw. `core.ValidRight`
+> und ist eingefroren — siehe `docs/vertraege-v1.2.md`, Punkt 21. Bis dahin
+> fängt eine Zeile in `check.go` es ab, mit Verweis daneben. **Die
+> Lizenzprüfung darf später nicht an `<app>/use` hängen** — dieselbe Zeile.
+
 **Files:**
 - Create: `apps/server-api/classes/rights/rights.go`, `apps/server-api/classes/rights/check.go`
 - Test: `apps/server-api/classes/rights/rights_test.go`
@@ -6454,6 +6497,25 @@ git commit -m "Add the rights and task check of a channel" \
 
 ### Task 14: Protokoll
 
+> **Berichtigt am 03.10.2026, zwei Dinge.**
+>
+> **1. Die „Interfaces"-Liste dieser Aufgabe ist unvollständig: `Note` fehlt.**
+> Der Quelltext in Schritt 3 enthält
+> `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error`,
+> die Liste darüber nennt es nicht — die Aufgabe widerspricht also sich
+> selbst. Und `Note` ist nicht nebensächlich: **es ist der einzige Eingang
+> für „Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen"**, die der
+> Entwurf (Zeile 630-632) ausdrücklich verlangt. Die vier anderen Eingänge
+> decken Anmeldungen, Kanäle und Root-Aufgaben. Der Strang hat die Lücke
+> gemeldet und `Note` gebaut, weil es im Auftrag stand — richtig.
+>
+> **2. Ein Fall dieser Aufgabe war falsch, nicht der Code.** Ein selbst
+> geschriebener Fall verlangte, dass `Add` ein leeres `Result` zurückweist;
+> der Auftrag setzt dort ausdrücklich `Result = "ok"`. **Der Auftrag hatte
+> recht**, und der Fall heißt jetzt `TestAddFillsAnEmptyResult`. Festgehalten,
+> weil es die Gegenrichtung zu den vielen Planberichtigungen dieses Tages ist:
+> nicht jeder Widerspruch zwischen Plan und Code ist ein Planfehler.
+
 **Files:**
 - Create: `apps/server-api/classes/audit/audit.go`
 - Test: `apps/server-api/classes/audit/audit_test.go`
@@ -6467,6 +6529,9 @@ git commit -m "Add the rights and task check of a channel" \
   - `func (lg *Log) Login(ctx, user, result, detail string) error`
   - `func (lg *Log) Channel(ctx, user, app, action, node string, code wire.Code) error`
   - `func (lg *Log) Task(ctx, user, app, action, node, signature string) error`
+  - `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error` –
+    der Eingang für Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen
+    (am 03.10.2026 nachgetragen, siehe Berichtigung im Kopf dieser Aufgabe)
   - `func (lg *Log) Query(ctx context.Context, q core.LogQuery) ([]core.LogEntry, error)`
 
 - [ ] **Step 1: Write the failing test**
@@ -6647,6 +6712,24 @@ git commit -m "Add the log of the API" \
 
 ---
 ### Task 15: Versand der Kern-Aktionen und `ngc.desktop`
+
+> **Berichtigt am 10.10.2026 — zwei Zeilen dieser Aufgabe, beide gemessen.**
+>
+> **1. `string(o.Task.Sig)` ist falsch und hätte die Unterschrift still
+> verloren.** `audit.Task` dekodiert sein letztes Feld als base64url und
+> verlangt genau 64 Byte (`audit.go:203-205`); rohe Bytes als `string`
+> scheitern am Dekodieren. Das Protokoll **verliert deshalb kein Ereignis** —
+> es hätte den Eintrag geschrieben und die Unterschrift durch den Platzhalter
+> `-` ersetzt. Also kein Fehler, den jemand bemerkt: ein Prüfprotokoll voller
+> Root-Aufgaben **ohne** die Unterschrift, die sie beweist. Richtig ist
+> `enc.B64.EncodeToString(o.Task.Sig)`.
+>
+> **2. Die Aufgabe, nicht das OPEN, nennt App und Aktion.** Der Plan
+> protokolliert `o.App, o.Action` — die **Behauptung** des OPEN. Gebaut ist
+> `t.App, t.Action` aus der geprüften, signierten Aufgabe. Das ist dieselbe
+> Regel wie bei `rights.Check` und sie gilt im Protokoll genauso: **was
+> festgehalten wird, ist das Aufgelöste, nie das Behauptete** — sonst steht im
+> Protokoll, was der Angreifer hineingeschrieben hat.
 
 **Files:**
 - Create: `apps/server-api/classes/coreapp/dispatch.go`, `apps/server-api/classes/coreapp/desktop.go`
@@ -6867,7 +6950,9 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 		return code
 	}
 	if t != nil {
-		_ = d.Log.Task(ctx, verified.Cert().User, o.App, o.Action, t.Node, string(o.Task.Sig))
+		// BERICHTIGT 10.10.2026: base64url, und die Werte aus der geprueften Aufgabe.
+		// string(o.Task.Sig) scheitert am Dekodieren -> Platzhalter statt Unterschrift.
+		_ = d.Log.Task(ctx, verified.Cert().User, t.App, t.Action, t.Node, enc.B64.EncodeToString(o.Task.Sig))
 	}
 	if action.Service == core.ServiceController {
 		// A root task of service controller runs on a controller; the API only
