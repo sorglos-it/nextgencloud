@@ -165,12 +165,12 @@ var emptyResult = []byte("{}")
 //	   files of the package (package.go)
 //	 4 grants == needs as a set
 //	 5 services only with the role services
-//	 6 the licence of a paid app, before anything is set up
+//	 6 the licence of a paid app is CHECKED, before anything is set up
 //	-- only now is this machine changed, and every step can be undone -----
 //	 7 system user -> data directory -> runtime directory
 //	 8 image into the store of that user
 //	 9 the old container away, the new one created and started
-//	10 the row of the app, with its grants
+//	10 the row of the app, with its grants, and the checked licence kept
 //	11 the start action of the manifest - task 18, not carried out here
 func (m *Manager) Activate(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error) {
 	if m == nil || m.d.State == nil || m.d.Engine == nil || m.d.Sys == nil || m.d.List == nil ||
@@ -257,13 +257,16 @@ func (m *Manager) Activate(ctx context.Context, d access.Decision, r io.Reader) 
 		return nil, ErrForbidden
 	}
 
-	// The licence before the setup, not before the start: a paid app whose
-	// licence has run out sets nothing up at all.
-	if err := m.licence(ctx, d, p, pkg); err != nil {
+	// The licence is CHECKED before the setup, not before the start: a paid
+	// app whose licence has run out sets nothing up at all. It is KEPT at the
+	// end of the setup (keepLicence), because a write here would stand in
+	// front of the line below and no rollback would take it back.
+	lic, err := m.licence(d, p, pkg)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := m.setUp(ctx, p, mf, old, installed, pkg); err != nil {
+	if err := m.setUp(ctx, p, mf, old, installed, pkg, pkg.Transfer.License, lic); err != nil {
 		return nil, err
 	}
 	// The start action of the manifest (store.Manifest.Start) runs after every
@@ -282,7 +285,7 @@ type undo struct {
 // setUp changes this machine, and takes every step back that it took if a
 // later one fails.
 func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.Manifest,
-	old dbapi.App, installed bool, pkg Package) error {
+	old dbapi.App, installed bool, pkg Package, env *sign.Envelope, lic *store.License) error {
 	var undos []undo
 	ok := false
 	defer func() {
@@ -334,7 +337,23 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 		}
 		_ = m.d.Engine.Remove(ctx, u.Name)
 		_ = m.d.Sys.DropRun(u.Name)
+		// The image of the version before stays where it is, and that is
+		// named rather than fixed: the reference an image has in the store of
+		// the app is read out of the tar of the package it came with
+		// (runtime.ImageTag), and this activation has no such tar - the new
+		// package carries none. Nothing of this installation writes that
+		// reference down either (dbapi.App has no field for it), so there is
+		// no name to hand Engine.RemoveImage. Removing "whatever is in there"
+		// is not on offer: the engine takes a reference, and reading a list
+		// out of its output is exactly what this package does not do
+		// (runtime.Engine.LoadImage). So the image of such an app is left
+		// behind, it costs the disk of its own user, and whoever uninstalls
+		// the app takes it with the user. A reference in the row would fix it
+		// and is a change to shared/dbapi - reported, not built.
 		if err := m.putRow(ctx, p, mf, old); err != nil {
+			return err
+		}
+		if err := m.keepLicence(ctx, p.App, env, lic); err != nil {
 			return err
 		}
 		ok = true
@@ -408,6 +427,9 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 	if err := m.putRow(ctx, p, mf, old); err != nil {
 		return err
 	}
+	if err := m.keepLicence(ctx, p.App, env, lic); err != nil {
+		return err
+	}
 	ok = true
 	return nil
 }
@@ -440,23 +462,26 @@ func (m *Manager) hold() string {
 	return config.BinDir + "/ngc-controller"
 }
 
-// licence checks and keeps the licence a paid app brought.
+// licence checks the licence a paid app brought. It writes nothing: keeping it
+// is keepLicence's, and the two are split for one reason - this runs before
+// anything of this machine is changed, and a write there would be the one
+// change of an activation that no rollback takes back.
 //
-// A package without one passes: whether an app is paid is the catalogue's to
-// say, and a sealed package without a key never gets through Accept at all
-// (store.Walk answers store.ErrPackage for it). So this is about the licence
-// that is there, not about the one that is missing.
-func (m *Manager) licence(ctx context.Context, d access.Decision, p *core.ActivateParams, pkg Package) error {
+// A package without a licence passes: whether an app is paid is the
+// catalogue's to say, and a sealed package without a key never gets through
+// Accept at all (store.Walk answers store.ErrPackage for it). So this is about
+// the licence that is there, not about the one that is missing.
+func (m *Manager) licence(d access.Decision, p *core.ActivateParams, pkg Package) (*store.License, error) {
 	env := pkg.Transfer.License
 	if env == nil {
-		return nil
+		return nil, nil
 	}
 	// A licence belongs to a store, and only to one of this installation's own
 	// trust list: the header says which of the listed stores it is, never what
 	// its key is.
 	i := slices.IndexFunc(m.d.List.Stores, func(s trust.Store) bool { return s.ID == p.Store })
 	if i < 0 {
-		return ErrLicense
+		return nil, ErrLicense
 	}
 	// The installation the task was signed for, not one out of the package:
 	// a licence of another installation would otherwise let one licence serve
@@ -468,23 +493,40 @@ func (m *Manager) licence(ctx context.Context, d access.Decision, p *core.Activa
 	// content key is wrapped for this installation's key - a controller
 	// cannot, because it does not hold that key, and whoever could would hold
 	// it. The other entrance, with the key, is the API's
-	// (docs/vertraege-v1.2.md, point 20). Nobody builds a licence check of
+	// (docs/vertraege-v1.2.md, "Die Lizenz war nie eine Vertragsfrage - sie ist
+	// eine nicht aufgerufene Funktion"). Nobody builds a licence check of
 	// their own, and nothing of this hangs on the right "<app>/use".
+	//
+	// The heading and not the number of that point: a number moves when a
+	// document grows, and a pointer that moved is worse than none.
 	l, err := store.VerifyLicenseFor(*env, m.d.List.Stores[i], d.Task.Installation, p.App)
 	if err != nil {
-		return errors.Join(ErrLicense, err)
+		return nil, errors.Join(ErrLicense, err)
 	}
 	if l.State(m.d.Now()) == store.LicenseExpired {
-		return ErrLicense
+		return nil, ErrLicense
 	}
-	// Only the newest licence is kept (CLAUDE.md), and which one that is, the
-	// caller decides - which is here.
-	if _, issued, err := m.d.State.License(ctx, p.App); err == nil && issued >= l.Issued {
+	return l, nil
+}
+
+// keepLicence writes the checked licence, as the last step of an activation
+// that worked. Last, because it is the one write of this call that no rollback
+// undoes: there is no way to take a licence back out of the local store
+// (state.Store has no delete for one), so it happens where nothing can fail
+// after it.
+//
+// Only the newest licence is kept (CLAUDE.md), and which one that is, the
+// caller decides - which is here.
+func (m *Manager) keepLicence(ctx context.Context, app string, env *sign.Envelope, l *store.License) error {
+	if l == nil {
+		return nil
+	}
+	if _, issued, err := m.d.State.License(ctx, app); err == nil && issued >= l.Issued {
 		return nil
 	} else if err != nil && !errors.Is(err, dbapi.ErrNotFound) {
 		return err
 	}
-	return m.d.State.PutLicense(ctx, p.App, *env, l.Issued)
+	return m.d.State.PutLicense(ctx, app, *env, l.Issued)
 }
 
 // sameSet reports whether a and b hold the same values, each at most once.

@@ -38,8 +38,8 @@ func RunDirOf(name string) string { return paths.runDir + "/" + name }
 // the machine the directory is gone with the tmpfs, and after a half-finished
 // activation it may be there with the wrong owner or the wrong mode. So a
 // directory that is already there is tightened rather than believed - the mode
-// back to 0700 and the owner back to the app's user - and only a directory that
-// cannot be made or cannot be handed over is an error.
+// back to 0700 BEFORE it is handed over, then the owner to the app's user - and
+// only a directory that cannot be made or cannot be handed over is an error.
 //
 // The owner is the whole point: a directory of root under /run/ngc would make
 // every podman call of that app fail, and a directory of another app's user
@@ -68,18 +68,33 @@ func EnsureRun(ctx context.Context, u User) (string, error) {
 	if err := os.MkdirAll(paths.runDir, 0o711); err != nil {
 		return "", errors.Join(ErrRun, err)
 	}
-	// 0700 from the start, not after the chown: between the two calls the
-	// directory exists, and for that moment nobody else may look into it.
+	// And it is tightened as well, not only made: os.MkdirAll leaves the mode
+	// of a directory that is already there alone, and one that another program
+	// or a remnant on the tmpfs left at 0777 would make every app's runtime
+	// directory listable by anyone on this machine.
+	if err := os.Chmod(paths.runDir, 0o711); err != nil {
+		return "", errors.Join(ErrRun, err)
+	}
 	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
 		return "", errors.Join(ErrRun, err)
 	}
-	if err := paths.chown(dir, int(u.UID), int(u.GID)); err != nil {
+	// The mode BEFORE the handover, and that order is the whole of it: while
+	// the directory is still this process's, a mode that is too wide harms
+	// nobody, because nobody else may enter it. From the chown on it belongs
+	// to the app's user, and a 0777 directory of that user is a door standing
+	// open - for every moment between the two calls, and no tightening after
+	// the chown closes it for that time.
+	//
+	// It is not a line for the fresh directory, which os.Mkdir already made
+	// 0700. It is for the one an earlier, half-finished run left behind, whose
+	// mode os.Mkdir does not touch - and /run is a tmpfs, so that case comes
+	// up after every restart that leaves a remnant. Measured: with the chmod
+	// after the chown such a directory was 0777 in the moment it was handed
+	// over (TestEnsureRunTightensTheModeBeforeItHandsTheDirectoryOver).
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return "", errors.Join(ErrRun, err)
 	}
-	// Said after the chown because this call is repeatable: os.Mkdir does not
-	// touch the mode of a directory that is already there, so one an earlier,
-	// half-finished run left behind with another mode is tightened here.
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := paths.chown(dir, int(u.UID), int(u.GID)); err != nil {
 		return "", errors.Join(ErrRun, err)
 	}
 	return dir, nil

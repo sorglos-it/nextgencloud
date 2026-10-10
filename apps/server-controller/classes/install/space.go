@@ -45,6 +45,19 @@ const (
 	// free. That depends on its journal, its swap and its apps, and this
 	// machine is not that server.
 	StageReserve = 512 << 20
+	// MinBound is the smallest bound this will hand to Accept. Below it the
+	// disk is refused as full instead, and the reason is what the admin reads:
+	// with a bound of a handful of bytes every real package is "too large"
+	// (ErrVerify, E_VERIFY - "Unterschrift ungueltig"), which sends whoever
+	// reads it after the package and after the store, when what is wrong is
+	// the disk. Measured as the case that made this necessary: 512 MiB and 2
+	// bytes free gave a bound of exactly 1 byte.
+	//
+	// 1 MiB is a decision like the reserve, and the same kind: no app package
+	// of NGC is that small - it carries a manifest, a UI and a container image
+	// - so a disk that cannot carry one twice over cannot install anything,
+	// and saying so is the honest answer.
+	MinBound = 1 << 20
 )
 
 // ErrSpace says this server has no room to check a package of this size. A
@@ -90,7 +103,9 @@ func bound(dir string, max int64) (int64, error) {
 		return 0, errors.Join(ErrSpace, err)
 	}
 	room := (free - StageReserve) / StageFactor
-	if room <= 0 {
+	// MinBound and not 0: a bound of a few bytes is a disk that is full, and
+	// it has to read as one.
+	if room < MinBound {
 		return 0, ErrSpace
 	}
 	if room < max {

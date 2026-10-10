@@ -46,8 +46,9 @@ func imageTar(t testing.TB, ref string) []byte {
 
 // appEntries is a package of the manifest m with a real image tar for every
 // architecture NGC is built for, so the case runs on the machine it is written
-// on and on an arm64 server alike.
-func appEntries(t testing.TB, m *store.Manifest) []entry {
+// on and on an arm64 server alike. pad bytes of a UI file are added where a
+// case needs a package of a given size (space_test.go).
+func appEntries(t testing.TB, m *store.Manifest, pad int) []entry {
 	t.Helper()
 	img := imageTar(t, testImage)
 	es := []entry{
@@ -57,6 +58,12 @@ func appEntries(t testing.TB, m *store.Manifest) []entry {
 		{"ui/icon.svg", []byte("<svg/>"), tar.TypeReg},
 		{"services/amd64.tar", img, tar.TypeReg},
 		{"services/arm64.tar", img, tar.TypeReg},
+	}
+	if pad > 0 {
+		// Incompressible on purpose is not needed here - nothing compresses a
+		// package - but a file of a known size is: the case computes the disk
+		// it hands out from the size of this package.
+		es = append(es, entry{"ui/pad.bin", bytes.Repeat([]byte{0x7e}, pad), tar.TypeReg})
 	}
 	return es
 }
@@ -234,6 +241,8 @@ type stand struct {
 	apps   *apps
 	deps   Deps
 	grants []string
+	// pad makes the package larger, for a case about the bound of the disk.
+	pad int
 }
 
 // newStand is an activation that has to come off: a store app of the trust
@@ -260,7 +269,7 @@ func newStand(t *testing.T) *stand {
 // that bends the manifest measures the manifest and not a stale checksum.
 func (s *stand) setPackage() {
 	s.t.Helper()
-	pkg := buildTar(s.t, appEntries(s.t, s.mf))
+	pkg := buildTar(s.t, appEntries(s.t, s.mf, s.pad))
 	s.f.setFile(pkg)
 	ui := uiHashOf(s.t, pkg)
 	s.f.in.UI = ui
@@ -826,12 +835,53 @@ func TestActivateKeepsOnlyTheNewestLicence(t *testing.T) {
 	}
 }
 
+// The licence is checked before this machine is changed and kept only when the
+// activation worked. The difference matters because there is no way to take a
+// licence back out of the local store: a write before the setup would be the
+// one change of an activation that no rollback undoes.
+func TestActivateKeepsTheLicenceOnlyAfterTheSetupWorked(t *testing.T) {
+	for _, fail := range []string{"Start", "Create", "LoadImage"} {
+		t.Run("the engine fails at "+fail, func(t *testing.T) {
+			s := newStand(t)
+			s.seal(testInstall, testApp, 0, 1)
+			s.eng.fail = fail
+			if _, err := s.activate(); err == nil {
+				t.Fatal("Activate came off although a step failed")
+			}
+			if len(s.apps.licences) != 0 {
+				t.Fatal("a failed activation kept the licence")
+			}
+		})
+	}
+	t.Run("the row fails", func(t *testing.T) {
+		s := newStand(t)
+		s.seal(testInstall, testApp, 0, 1)
+		s.apps.putErr = errors.New("the database says no")
+		if _, err := s.activate(); err == nil {
+			t.Fatal("Activate came off although the row failed")
+		}
+		if len(s.apps.licences) != 0 {
+			t.Fatal("a licence was kept for a row that was never written")
+		}
+	})
+	// And when it works, it is kept - otherwise the cases above would pass for
+	// an activation that never keeps a licence at all.
+	s := newStand(t)
+	s.seal(testInstall, testApp, 0, 1)
+	if _, err := s.activate(); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if _, kept := s.apps.licences[testApp]; !kept {
+		t.Fatal("the licence of an activation that worked was not kept")
+	}
+}
+
 // seal makes the package a paid one: it is encrypted with a content key, and
 // the header carries that key and a licence of the store.
 func (s *stand) seal(installation, app string, expires int64, signerFill byte) {
 	s.t.Helper()
 	key := bytes.Repeat([]byte{0x7c}, store.KeySize)
-	plain := buildTar(s.t, appEntries(s.t, s.mf))
+	plain := buildTar(s.t, appEntries(s.t, s.mf, s.pad))
 	sealed := encrypt(s.t, plain, key)
 	// The UI hash is the one of the plain package; the checksum is the one of
 	// the sealed file the store delivers.

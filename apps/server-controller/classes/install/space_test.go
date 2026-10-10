@@ -41,14 +41,20 @@ func TestBoundFollowsTheDisk(t *testing.T) {
 		"600 MiB free":               {600 << 20, store.MaxPackage, 44 << 20, nil},
 		// Exactly the reserve, and one byte above it: the sharp edge of the
 		// refusal, from both sides.
-		"exactly the reserve":     {512 << 20, store.MaxPackage, 0, ErrSpace},
-		"two bytes above it":      {512<<20 + 2, store.MaxPackage, 1, nil},
-		"one byte below it":       {512<<20 - 1, store.MaxPackage, 0, ErrSpace},
-		"nothing free at all":     {0, store.MaxPackage, 0, ErrSpace},
-		"a caller's small bound":  {100 * gib, 1 << 20, 1 << 20, nil},
-		"a bound below the disk":  {gib, 1 << 20, 1 << 20, nil},
-		"a bound that is none":    {100 * gib, 0, 0, ErrInternal},
-		"a bound above the limit": {100 * gib, store.MaxPackage + 1, 0, ErrInternal},
+		"exactly the reserve": {512 << 20, store.MaxPackage, 0, ErrSpace},
+		// Two bytes above the reserve would be a bound of one byte, and then
+		// every real package is "too large" instead of "the disk is full".
+		// That is the full disk, and it has to read as one.
+		"two bytes above it":           {512<<20 + 2, store.MaxPackage, 0, ErrSpace},
+		"one byte below it":            {512<<20 - 1, store.MaxPackage, 0, ErrSpace},
+		"room for a megabyte, twice":   {512<<20 + 2<<20, store.MaxPackage, 1 << 20, nil},
+		"one byte less than that":      {512<<20 + 2<<20 - 2, store.MaxPackage, 0, ErrSpace},
+		"a caller that asks for a bit": {512<<20 + 2<<20, 4711, 4711, nil},
+		"nothing free at all":          {0, store.MaxPackage, 0, ErrSpace},
+		"a caller's small bound":       {100 * gib, 1 << 20, 1 << 20, nil},
+		"a bound below the disk":       {gib, 1 << 20, 1 << 20, nil},
+		"a bound that is none":         {100 * gib, 0, 0, ErrInternal},
+		"a bound above the limit":      {100 * gib, store.MaxPackage + 1, 0, ErrInternal},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -99,17 +105,28 @@ func TestActivateRefusesAPackageTheDiskCannotCarry(t *testing.T) {
 	// And a disk with room for the file but not for twice it. The numbers are
 	// written out rather than computed from the two constants: 512 MiB of
 	// reserve, and twice the size of the package on top of it.
+	// The bound has to stay above MinBound here, or the disk would be refused
+	// as full and the case would measure that wall instead of the bound: so
+	// the room is 2 MiB (the smallest bound this hands out) minus two bytes,
+	// and the package is grown to just over that bound.
 	s = newStand(t)
+	s.pad = 1 << 20
+	s.setPackage()
 	size := int64(len(s.f.file))
+	if size <= 1<<20 {
+		t.Fatalf("the package of this case is %d bytes, and it has to be above MinBound", size)
+	}
 	disk(t, 512<<20+2*size-2, nil)
 	if _, err := s.activate(); !errors.Is(err, ErrVerify) {
 		t.Fatalf("a package one byte over the bound answered %v, want ErrVerify", err)
 	}
 	// The same package, two bytes of room more: it comes off. Without this the
 	// case above would pass for any reason at all.
-	s = newStand(t)
+	s2 := newStand(t)
+	s2.pad = 1 << 20
+	s2.setPackage()
 	disk(t, 512<<20+2*size, nil)
-	if _, err := s.activate(); err != nil {
+	if _, err := s2.activate(); err != nil {
 		t.Fatalf("a package exactly within the bound: %v", err)
 	}
 }
@@ -125,6 +142,9 @@ func TestTheSpaceDecisionIsWhatItSays(t *testing.T) {
 	}
 	if StageFactor != 2 {
 		t.Fatalf("a package costs %dx its size, and this case was written for 2", StageFactor)
+	}
+	if MinBound != 1<<20 {
+		t.Fatalf("the smallest bound is %d bytes, and this case was written for 1 MiB", MinBound)
 	}
 }
 

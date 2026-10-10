@@ -25,21 +25,36 @@ func anAppUser() User { return User{Name: "ngc-notes-0123abcd", UID: 4711, GID: 
 // TestEnsureRunHandsTheDirectoryToTheApp reads, on Linux and as root.
 func runIn(t *testing.T) (dir string, owner func() (int, int, int)) {
 	t.Helper()
+	_, o := runWatched(t)
+	return paths.runDir, func() (int, int, int) { u, g, c, _ := o(); return u, g, c }
+}
+
+// runWatched is runIn and reads the mode of the directory in the moment it is
+// handed over - inside the chown, not after it. That moment is the whole
+// question: a directory that is still the builder's may have any mode, but one
+// that already belongs to the app's user and is 0777 is an open door, and
+// nothing after the handover can close it again for the time in between.
+func runWatched(t *testing.T) (dir string, state func() (int, int, int, os.FileMode)) {
+	t.Helper()
 	was := paths
 	t.Cleanup(func() { paths = was })
 	paths.runDir = filepath.Join(t.TempDir(), "run", "ngc")
 	var mu sync.Mutex
 	uid, gid, calls := -1, -1, 0
-	paths.chown = func(_ string, u, g int) error {
+	var atHandover os.FileMode = 0o7777
+	paths.chown = func(path string, u, g int) error {
 		mu.Lock()
 		defer mu.Unlock()
 		uid, gid, calls = u, g, calls+1
+		if fi, err := os.Stat(path); err == nil {
+			atHandover = fi.Mode().Perm()
+		}
 		return nil
 	}
-	return paths.runDir, func() (int, int, int) {
+	return paths.runDir, func() (int, int, int, os.FileMode) {
 		mu.Lock()
 		defer mu.Unlock()
-		return uid, gid, calls
+		return uid, gid, calls, atHandover
 	}
 }
 
@@ -226,6 +241,71 @@ func TestEnsureRunHandsTheDirectoryToTheApp(t *testing.T) {
 	uid, gid := ownerOf(t, dir)
 	if uid != u.UID || gid != u.GID {
 		t.Fatalf("the directory belongs to %d:%d, want %d:%d", uid, gid, u.UID, u.GID)
+	}
+}
+
+// The mode in the moment of the handover, for a fresh directory and for one an
+// earlier run left behind. This is the case the order of the two calls is
+// about: chmod belongs BEFORE chown. While the directory is still root's, a
+// mode that is too wide harms nobody; from the chown on it belongs to the
+// app's user, and then it is a door standing open - and /run is a tmpfs, so
+// exactly that case comes up after every restart that leaves a remnant.
+func TestEnsureRunTightensTheModeBeforeItHandsTheDirectoryOver(t *testing.T) {
+	if goruntime.GOOS != "linux" {
+		t.Skip("the mode of a directory says nothing on this system; NGC runs on Debian and Ubuntu")
+	}
+	u := anAppUser()
+	t.Run("a fresh directory", func(t *testing.T) {
+		_, state := runWatched(t)
+		if _, err := EnsureRun(t.Context(), u); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, calls, mode := state(); calls != 1 || mode != 0o700 {
+			t.Fatalf("the directory was 0%o when it was handed over in call %d, want 0700", mode, calls)
+		}
+	})
+	t.Run("a directory an earlier run left behind", func(t *testing.T) {
+		base, state := runWatched(t)
+		dir := base + "/" + u.Name
+		if err := os.MkdirAll(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := EnsureRun(t.Context(), u); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, calls, mode := state(); calls != 1 || mode != 0o700 {
+			t.Fatalf("a directory already there was 0%o when it was handed over in call %d, want 0700", mode, calls)
+		}
+	})
+}
+
+// config.RunDir itself is tightened as well, and not only the directory below
+// it: a run that found it 0777 - from another program, or from a remnant on
+// the tmpfs - would otherwise leave every app's runtime directory listable by
+// anyone on this machine.
+func TestEnsureRunTightensTheDirectoryAboveItToo(t *testing.T) {
+	if goruntime.GOOS != "linux" {
+		t.Skip("the mode of a directory says nothing on this system; NGC runs on Debian and Ubuntu")
+	}
+	base, _ := runWatched(t)
+	if err := os.MkdirAll(base, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(base, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureRun(t.Context(), anAppUser()); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o711 {
+		t.Fatalf("%s is 0%o, want 0711", base, fi.Mode().Perm())
 	}
 }
 
