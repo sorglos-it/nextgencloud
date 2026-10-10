@@ -99,9 +99,13 @@ func TestInputBeyondMaxInCloses(t *testing.T) {
 // TestAnActionWithoutAHandlerIsNotFound holds the second E_NOTFOUND of open:
 // the action is in the contract, but this dispatcher serves no handler for it.
 // Without this case a dispatcher that answered E_INTERNAL there would pass.
+//
+// The action it names has to be one New registers nothing for: it was
+// ngc.users/list until task 16 gave that one a handler, and it is now
+// ngc.store/sources, whose handler comes with the app store.
 func TestAnActionWithoutAHandlerIsNotFound(t *testing.T) {
 	fx := newFixture(t)
-	c := fx.OpenAdmin(t, wire.Open{App: core.AppUsers, Service: core.ServiceAPI, Action: core.ActList,
+	c := fx.OpenAdmin(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI, Action: core.ActSources,
 		Window: wire.MinWindow})
 	if cl := c.closed(t); cl.Code != wire.CodeNotFound {
 		t.Fatalf("close %+v", cl)

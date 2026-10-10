@@ -108,9 +108,11 @@ func (s *lyingStore) AppGet(ctx context.Context, id string) (dbapi.App, error) {
 }
 
 // fakeRelay records the channels the dispatcher forwarded instead of serving
-// them. Package relay is task 17 and is not touched here.
+// them, and the channels it opened to a controller itself. Package relay is
+// task 17 and is not touched here.
 type fakeRelay struct {
-	ch chan relayed
+	ch    chan relayed
+	calls chan pushed
 }
 
 // relayed is one forwarded channel.
@@ -119,6 +121,50 @@ type relayed struct {
 	Raw  []byte
 	Task *task.Task
 	Node string
+}
+
+// pushed is one channel the API opened to a controller itself.
+type pushed struct {
+	Node                 string
+	App, Service, Action string
+	Params               []byte
+	In                   []byte
+}
+
+// CallController records the call and answers as a controller that took the
+// chain. The node comes off the tunnel, which is all a case can tell the two
+// apart by.
+func (r *fakeRelay) CallController(ctx context.Context, tun *controllers.Tunnel,
+	app, service, action string, params json.RawMessage, in []byte) ([]byte, wire.Code) {
+	r.calls <- pushed{Node: tun.Node, App: app, Service: service, Action: action,
+		Params: bytes.Clone(params), In: bytes.Clone(in)}
+	return []byte(`{"seq":0}`), ""
+}
+
+// called waits for one call to a controller.
+func (r *fakeRelay) called(t *testing.T) pushed {
+	t.Helper()
+	select {
+	case v := <-r.calls:
+		return v
+	case <-time.After(readWait):
+		t.Fatal("no controller was called")
+		return pushed{}
+	}
+}
+
+// maybeCalled reports whether a call to a controller is waiting. It is the
+// counter-control of called and must not wait: a case that holds "nothing was
+// pushed" would otherwise be slow by exactly readWait. The push runs in a
+// goroutine of the handler's, so this is read only after the result of the
+// channel that started it has arrived -- which is what the cases do.
+func (r *fakeRelay) maybeCalled() (pushed, bool) {
+	select {
+	case v := <-r.calls:
+		return v, true
+	default:
+		return pushed{}, false
+	}
 }
 
 func (r *fakeRelay) Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
@@ -152,6 +198,9 @@ type harness struct {
 	Lying *lyingStore
 	Relay *fakeRelay
 	Log   *audit.Log
+	// Sessions is the registry the socket server and the dispatcher share, so
+	// a case can see the hint of a trust push on its own session.
+	Sessions *browser.Registry
 
 	HTTP  *httptest.Server
 	Login *login.Handler
@@ -208,18 +257,38 @@ func newFixture(t *testing.T) *harness {
 		}
 	}
 	lg := &audit.Log{DB: s.DB, Now: s.Now}
-	relay := &fakeRelay{ch: make(chan relayed, 4)}
+	relay := &fakeRelay{ch: make(chan relayed, 4), calls: make(chan pushed, 4)}
+	// One registry for the dispatcher and for the socket server: a hint of the
+	// dispatcher only reaches a session of a case if both know the same one.
+	sessions := browser.NewRegistry()
 	h := &harness{
-		S: s, Lying: lying, Relay: relay, Log: lg, Login: login.New(s),
+		S: s, Lying: lying, Relay: relay, Log: lg, Login: login.New(s), Sessions: sessions,
 		Installation: l.Installation, Admin: admin, AdminName: l.Users[1].Name,
 		AdminID: l.Users[1].ID, List: l,
 	}
-	h.D = New(Deps{S: s, Log: lg, Login: h.Login, Tunnels: controllers.NewRegistry(), Relay: relay})
-	srv := &browser.Server{S: s, Login: h.Login, Open: h.D, Sessions: browser.NewRegistry()}
+	h.D = New(Deps{S: s, Log: lg, Login: h.Login, Tunnels: controllers.NewRegistry(), Relay: relay,
+		Sessions: sessions})
+	srv := &browser.Server{S: s, Login: h.Login, Open: h.D, Sessions: sessions}
 	h.HTTP = httptest.NewServer(http.HandlerFunc(srv.Socket))
 	t.Cleanup(h.HTTP.Close)
 	h.peer = dialSession(t, h)
 	return h
+}
+
+// As opens a second session on the same API for another user of the trust
+// list -- a user who is no admin, which is what the admin wall is measured
+// with. The new harness keeps its own channel counter and its own client
+// certificate, because both belong to a link and not to the API; everything
+// else is the API this fixture built. The fields keep their names: the one
+// signer of a harness is the user of its session, and for the fixture's own
+// session that user is the admin.
+func (h *harness) As(t *testing.T, signer trusttest.Signer, id, name string) *harness {
+	t.Helper()
+	other := *h
+	other.Admin, other.AdminID, other.AdminName = signer, id, name
+	other.num = 0
+	other.peer = dialSession(t, &other)
+	return &other
 }
 
 // Grant gives the admin's role a set of rights, so a case can open an app

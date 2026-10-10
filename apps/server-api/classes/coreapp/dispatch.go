@@ -53,6 +53,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -90,15 +91,38 @@ type Tunnels interface {
 type Relay interface {
 	Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open, raw []byte,
 		t *task.Task, node string)
+	// CallController opens a channel to a controller without a user
+	// (core.WithoutUser) and returns the result, or the code the channel
+	// closed with. The API uses it to push a new trust list (users.go,
+	// pushTrust).
+	CallController(ctx context.Context, tun *controllers.Tunnel, app, service, action string,
+		params json.RawMessage, in []byte) ([]byte, wire.Code)
+}
+
+// JoinCodes hands out the one-time code a new API server joins with; *join.Join
+// implements it. Like Tunnels it is an interface and not that type because the
+// package it lives in is a later task, and ngc.users/join-code has to be
+// measurable before it exists.
+//
+// Nothing of a code ever reaches a log or a message from here: users.go takes
+// the code, puts it into the result and forgets it.
+type JoinCodes interface {
+	NewJoinCode(ctx context.Context) (tunnel.JoinCode, int64, error)
 }
 
 // Deps are what the dispatcher needs.
 type Deps struct {
-	S       *state.State
-	Log     *audit.Log
-	Login   *login.Handler
-	Tunnels Tunnels
-	Relay   Relay
+	S     *state.State
+	Log   *audit.Log
+	Login *login.Handler
+	// Tunnels are the controller tunnels open right now, Controllers the
+	// server that pairs new ones, Sessions the open shells and Join the join
+	// codes of a new API server; the actions of ngc.users use all four.
+	Tunnels     Tunnels
+	Controllers *controllers.Server
+	Sessions    *browser.Registry
+	Join        JoinCodes
+	Relay       Relay
 }
 
 // Call is one core action the API carries out itself.
@@ -126,11 +150,12 @@ type Dispatcher struct {
 	totp totpStore
 }
 
-// New returns a dispatcher with the handlers of this task; tasks 16 and 19 to
-// 23 register theirs beside them.
+// New returns a dispatcher with the handlers of ngc.desktop and ngc.users;
+// tasks 19 to 23 register theirs beside them.
 func New(d Deps) *Dispatcher {
 	dp := &Dispatcher{Deps: d, handlers: map[string]Handler{}}
 	dp.registerDesktop()
+	dp.registerUsers()
 	return dp
 }
 
