@@ -855,31 +855,36 @@ func TestAModeTheInstallationDidNotAllowIsForbidden(t *testing.T) {
 
 // --- The memory of ngc.store/api/upload ------------------------------------
 
-// uploadHeapBound is how far the heap may rise while a package goes through
-// the channel. It is not derived from the sizes below on purpose: a bound that
-// grows with the input would be green for a run that holds everything. Room
-// for the window, the frames in flight and the garbage of the sender, and
-// nothing like a package.
-const uploadHeapBound = 8 << 20
-
-// peakHeap runs fn and answers how far HeapAlloc rose above where it stood
+// peakHeap runs fn and answers how far the LIVE heap rose above where it stood
 // when fn started. The peak and not the increase: a run that holds a package
 // and lets it go again shows an increase of nothing.
 //
-// The sampler reads the heap every millisecond, and the last read happens
-// after fn returned, because the frames that arrive between two samples would
-// otherwise be the ones nobody saw.
+// It collects before every reading, and that is the whole point of this
+// function rather than a tidiness: HeapAlloc counts garbage that has not been
+// swept yet, so without the collection the number answers the collector's
+// clock and not the question. MEASURED, and it is why the first version of
+// this case was worthless: on unchanged code the figure swung between 3 and 22
+// MiB and swung WITHOUT the input -- 16 MiB of input showed 17 MiB, 64 MiB
+// showed 13. Garbage is what the collector may take away; a package that is
+// really HELD it may not. So a reading taken right after a collection answers
+// "held", and only that.
+//
+// The price is the collection, so the sampler runs every 20 ms and not every
+// millisecond. That is resolution enough by a wide margin: a package that is
+// collected is held for the whole upload, which is seconds, and never for one
+// window of 20 ms.
 func peakHeap(fn func()) int64 {
-	runtime.GC()
-	var start runtime.MemStats
-	runtime.ReadMemStats(&start)
-	base := int64(start.HeapAlloc)
+	read := func() int64 {
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return int64(m.HeapAlloc)
+	}
+	base := read()
 	var peak atomic.Int64
 	peak.Store(base)
 	note := func() {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		if h := int64(m.HeapAlloc); h > peak.Load() {
+		if h := read(); h > peak.Load() {
 			peak.Store(h)
 		}
 	}
@@ -893,14 +898,52 @@ func peakHeap(fn func()) int64 {
 			default:
 			}
 			note()
-			time.Sleep(time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 		}
 	}()
 	fn()
+	// Once more after fn returned: the last frames may have come between two
+	// samples.
 	note()
 	close(stop)
 	<-done
 	return peak.Load() - base
+}
+
+// uploadPeak sends size bytes through a real channel to ngc.store/api/upload
+// and answers the peak of the heap while they go. With hold the seam collects
+// the package instead of streaming it (fakeStore.hold), which is the null
+// control of the case below.
+func uploadPeak(t *testing.T, size int, hold bool) int64 {
+	t.Helper()
+	fx := newStoreFixture(t)
+	fx.Store.hold = hold
+	tk := fx.Task(t, task.Task{ID: taskID(0xB2), App: core.AppStore,
+		Service: core.ServiceAPI, Action: core.ActUpload})
+	c := fx.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
+		Action: core.ActUpload, Window: wire.MinWindow, Task: tk,
+		Confirm: confirmOf(fx.harness, tk)})
+	// The way to the handler has to be open before a number means anything: a
+	// channel refused at the task or the confirmation sends nothing and holds
+	// nothing, and the measurement would be flat for the wrong reason.
+	if !c.awaitGrant(t) {
+		t.Fatal("no GRANT came: the channel was refused before the handler ran")
+	}
+	var code wire.Code
+	peak := peakHeap(func() {
+		c.sendBytes(t, size)
+		code = endOf(t, c)
+	})
+	if code != "" {
+		t.Fatalf("the channel closed with %q", code)
+	}
+	// Second intermediate check: every byte really went through. A run that
+	// was cut short would also be flat.
+	if fx.Store.uploaded != int64(size) {
+		t.Fatalf("the seam saw %d bytes, the shell sent %d", fx.Store.uploaded, size)
+	}
+	fx.Store.held = nil
+	return peak
 }
 
 // TestUploadHoldsNoPackageOnTheChannel is the memory of ngc.store/api/upload,
@@ -914,66 +957,62 @@ func peakHeap(fn func()) int64 {
 // which is store.MaxPackage = 4 GiB for this action. A comment in store.go
 // said the stream was handed over, and no case held it.
 //
-// Three runs, and the third is why the first two mean anything: the null
-// control holds the bytes on purpose (fakeStore.hold), so a gauge that sees
-// nothing cannot pass as three flat numbers.
+// WHAT IS ASSERTED, and the first version of this case got it wrong: not an
+// absolute number of bytes. That version said "under 8 MiB" and was red in 7
+// of 10 runs on unchanged code, because the floor of this gauge is garbage not
+// yet collected and swings between 3 and 22 MiB with the collector's clock --
+// INDEPENDENT of the input. An absolute bound therefore measures the
+// collector, and loosening it until it holds would have measured nothing at
+// all.
+//
+// What a collected package does instead is grow WITH the input, and that is
+// what is asserted here:
+//
+//   - the slope. From smallSend to largeSend the input grows by 240 MiB; what
+//     is held may grow by at most a quarter of that. A run that streams grows
+//     by nothing; a run that collects grows by the whole 240 MiB and more. The
+//     slope and not a number of bytes, so that whatever floor this machine has
+//     cancels out: it is in both readings.
+//   - the null control, at the SAME size, through the SAME apparatus, only
+//     the seam collects (fakeStore.hold): it has to hold at least eight times
+//     as much, and at least half the package. Both halves are needed -- the
+//     factor says the gauge can still tell the two apart, the half says it
+//     really sees a package and not a difference between two floors.
+//
+// Measured, 12.10.2026, on the LOCAL disk (C:), go1.27.2 windows/amd64. Not
+// measured on the network drive the main checkout lives on (Z:), and this
+// case touches no file, so there is nothing it would be expected to depend on
+// there -- but that is read, not run.
 func TestUploadHoldsNoPackageOnTheChannel(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		size int
-		hold bool
-	}{
-		{"16 MiB streamed", 16 << 20, false},
-		{"64 MiB streamed", 64 << 20, false},
-		{"null control: 64 MiB collected at the seam", 64 << 20, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fx := newStoreFixture(t)
-			fx.Store.hold = tc.hold
-			tk := fx.Task(t, task.Task{ID: taskID(0xB2), App: core.AppStore,
-				Service: core.ServiceAPI, Action: core.ActUpload})
-			c := fx.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
-				Action: core.ActUpload, Window: wire.MinWindow, Task: tk,
-				Confirm: confirmOf(fx.harness, tk)})
-			// The way to the handler has to be open before a number means
-			// anything: a channel refused at the task or the confirmation
-			// sends nothing and holds nothing, and the measurement would be
-			// flat for the wrong reason.
-			if !c.awaitGrant(t) {
-				t.Fatal("no GRANT came: the channel was refused before the handler ran")
-			}
-			var code wire.Code
-			grew := peakHeap(func() {
-				c.sendBytes(t, tc.size)
-				code = endOf(t, c)
-			})
-			if code != "" {
-				t.Fatalf("the channel closed with %q", code)
-			}
-			// Second intermediate check: every byte really went through. A
-			// run that was cut short would also be flat.
-			if fx.Store.uploaded != int64(tc.size) {
-				t.Fatalf("the seam saw %d bytes, the shell sent %d",
-					fx.Store.uploaded, tc.size)
-			}
-			t.Logf("sent %d bytes, heap rose by %d bytes (%d MiB)",
-				tc.size, grew, grew>>20)
-			if tc.hold {
-				// The null control, and its assertion is the other way round:
-				// a run that really holds the package MUST be seen, or the
-				// gauge above measures nothing.
-				if grew < int64(tc.size)/2 {
-					t.Fatalf("the null control held %d bytes and the heap rose by only %d "+
-						"-- the gauge sees nothing, so the flat runs prove nothing",
-						tc.size, grew)
-				}
-				return
-			}
-			if grew > uploadHeapBound {
-				t.Fatalf("the heap rose by %d bytes for %d bytes of input, bound %d "+
-					"-- the package is being collected somewhere on the way",
-					grew, tc.size, uploadHeapBound)
-			}
-		})
+	const (
+		smallSend = 16 << 20
+		largeSend = 256 << 20
+	)
+	small := uploadPeak(t, smallSend, false)
+	large := uploadPeak(t, largeSend, false)
+	null := uploadPeak(t, largeSend, true)
+	t.Logf("held: %d B at %d B in, %d B at %d B in, null control %d B at %d B in",
+		small, smallSend, large, largeSend, null, largeSend)
+
+	// The slope: sixteen times the input, and what is held may not follow it.
+	grewBy := large - small
+	slopeBound := int64(largeSend-smallSend) / 4
+	if grewBy > slopeBound {
+		t.Fatalf("the input grew by %d bytes and what is held grew by %d, bound %d "+
+			"-- the package is being collected somewhere on the way",
+			largeSend-smallSend, grewBy, slopeBound)
+	}
+
+	// The null control, and its assertions are the other way round: a run that
+	// really holds the package MUST be seen, or the slope above is only a
+	// gauge that sees nothing.
+	if null < 8*large {
+		t.Fatalf("the null control held %d bytes against %d of the streaming run at the "+
+			"same size -- less than eightfold, so the gauge cannot tell collecting "+
+			"from streaming and the slope proves nothing", null, large)
+	}
+	if null < largeSend/2 {
+		t.Fatalf("the null control collected %d bytes and the heap rose by only %d "+
+			"-- the gauge does not see a held package at all", largeSend, null)
 	}
 }
