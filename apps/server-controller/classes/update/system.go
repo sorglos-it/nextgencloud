@@ -158,10 +158,15 @@ func (m *Manager) systemParams(d access.Decision) (*core.InstallParams, error) {
 		return nil, ErrInternal
 	}
 	// Another target on THIS method is this program wired wrong and not a
-	// peer's doing: whoever dispatches the install action sends every other
-	// target to Install, which refuses trust.AutoSystem in turn. A peer that
-	// asks for an app gets an answer about an app, from there - never apt
-	// from here.
+	// peer's doing: this method answers for trust.AutoSystem alone, and
+	// every other target belongs to Install, which refuses trust.AutoSystem
+	// in turn (install.go, task 20). So neither of the two can be reached
+	// through the other.
+	//
+	// STILL TO BE MEASURED: the piece that chooses between the two by the
+	// target is not built in either task - it belongs to the wiring in
+	// classes/serve - so the two halves of that seam have never run against
+	// each other. Each half is measured on its own.
 	if p.Target != trust.AutoSystem {
 		return nil, ErrInternal
 	}
