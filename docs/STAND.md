@@ -76,23 +76,37 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
 - **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
   im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
   WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
-- **Zwei Zeitfälle flattern unter der Last des vollen Satzes**, und der Satz ist seit dem
-  12.10.2026 groß (über 1000 Fälle in einem Lauf). Gemessen, je mit der Rate:
-  - `TestThePoolRetiresAConnectionAtItsLifetime` (`apps/server-db/classes/mariadb`): **1 rot von
-    4** Gesamtläufen — allein **0 von 10**, das db-Paket allein **0 von 5**.
-  - `TestCloseEndsTheLinkInOrder` (`apps/server-api/classes/link`): **1 rot von 3**
-    Gesamtläufen mit einem TCP-Reset — allein **0 von 30**.
+- **Zeitfälle flattern unter Last, und bisher war jedes Mal die Vorrichtung schuld, nicht der
+  Code.** Am 12.10.2026 zwei Fälle gemessen, nachgestellt (je einzeln in **16 gleichzeitigen
+  Prozessen** — die billigere Nachstellung des vollen Satzes; reine Rechenlast warf keinen um) und
+  behoben:
+  - `TestThePoolRetiresAConnectionAtItsLifetime`: **25 rot von 1600 → 0 von 1600**. Ursache
+    gemessen: `database/sql` zieht eine überfällige Verbindung an **zwei** Stellen ein — beim
+    Herausnehmen **und** beim Zurückgeben. Bei einer Frist von 1 ms greift die zweite unter Last
+    immer. Die erwartete Zahl war **abgeleitet** und hing daran, dass ein
+    Unter-Millisekunden-Fenster genau einmal getroffen wird. Behoben, indem die **Uhr aus der
+    Zusicherung** genommen wurde (die Ersatzverbindung wird gehalten, also kann sie niemand
+    zurückgeben) — die Zusicherung bleibt exakt `== 1`.
+  - `TestCloseEndsTheLinkInOrder`: **5 rot von 3200 → 0 von 3200**. Ursache gemessen: die Attrappe
+    setzte `SO_LINGER 0`, ihr Close schickte also **RST** statt FIN, und **auf Windows verwirft ein
+    eintreffendes RST den noch ungelesenen Empfangspuffer** — damit verschluckte es das Echo des
+    Close-Rahmens, das schon abgeschickt war. Behoben, indem die **Ursache** wegfiel (Gegenseite
+    ohne `SO_LINGER 0`); die Fälle, die einen Reset brauchen, behalten ihn.
 
-  Beide sind **echte `--- FAIL`**, fallen also **nicht** unter die Laufzeit-Trennlinie oben und
-  dürfen nicht als Rauschen verworfen werden. Beide messen eine **Frist** (Lebenszeit einer
-  Verbindung, Reihenfolge beim Schließen), und beide haben zu wenig Luft, wenn dreißig Pakete
-  gleichzeitig um die Maschine streiten. **Ursache nicht gemessen.**
+  **Beide Male war die erste Frage die richtige: ist es ein echter Fehler?** Beim Reset wurde das
+  ausdrücklich geprüft, bevor dem Fall Luft gegeben wurde — der Rahmen ging raus, mit dem richtigen
+  Status, und die Gegenseite sah ihn. **Einem Fall Luft zu geben, der einen echten Fehler verdeckt,
+  ist schlimmer als das Flattern.**
 
-  **Darum für jede Meldung:** einen roten Zeitfall **allein nachfahren** und die Rate nennen
-  („1 von 4 im Gesamtsatz, 0 von 10 allein"), nicht den Lauf wiederholen, bis er grün ist. Und
-  wer einen Zeitfall schreibt, gibt ihm Luft oder nimmt ihm die Uhr — in diesem Projekt sind
-  Fristen schon mehrfach die einzige flatternde Stelle gewesen (die Drei in der
-  Recovery-Buchführung hing an genau einem `TPM_RC_RETRY`).
+  **Darum für jede Meldung:** einen roten Zeitfall **allein nachfahren** und die Rate nennen, und
+  eine Behebung mit **Rate gegen Rate** belegen (gleiche Zahl Läufe vorher und nachher), nicht mit
+  „jetzt ging es". Und je Fall einen Mutanten: die übliche falsche Behebung ist, die Zusicherung so
+  weit zu lockern, dass sie immer stimmt.
+
+  **Offen, unter dreifach überzeichneter Last gefunden:** `TestAWrongSubprotocolIsRefused` fiel in
+  1 von 10 Paketläufen um („not at once but after 2.4 s") — dieselbe Sorte, ein „sofort" an der Uhr
+  gemessen. **Ursache nicht gemessen**, und ob die Last der Lage im vollen Satz entspricht, ist
+  offen.
 - **`ok` ohne `-v` sagt nichts über die Zahl der gelaufenen Fälle.** Am 12.10.2026
   gemessen: `go test` druckte `ok`, unter `-v` waren **10 von 11** Fällen `SKIP` — die
   Attrappe baute nicht (ein Heredoc hatte die Escapes gefressen), und **`t.Skipf` schreibt

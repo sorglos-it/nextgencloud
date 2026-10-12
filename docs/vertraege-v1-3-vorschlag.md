@@ -259,6 +259,69 @@ Einrichten stören kann.
 Unterbrechung, kurz genug, dass ein liegen gebliebener Code am nächsten Morgen nichts mehr ist.
 **Gemessen ist das nicht** — es ist eine Abwägung, und die Entscheidung gehört dir.
 
+## P7 — `ngc-api migrate` kann einen reinen Datenbankknoten nicht bedienen
+
+**Nachgetragen am 12.10.2026**, mit der genauen Zeile, nachdem Punkt 34 gelöst war und
+`ngc-api` zum ersten Mal wirklich gelaufen ist.
+
+**Die Blockade, gemessen am Weg:** `main.go migrate()` → `load()` → `config.LoadAPI` →
+`parseAPI` → `(*API).Validate`. Und dort steht, in **`shared/config/config.go:533`**:
+
+```go
+if !wire.ValidName(a.Node) || !trust.ValidTunnelURL(a.URL) || a.Listen == "" || …
+```
+
+dazu die Schlüsselprüfungen in den Zeilen darunter. `ngc-api migrate` verlangt damit eine
+**vollständige** `api.json`: Knoten-ID, Tunnel-Adresse, Listen-Adresse, zwei Zertifikatspfade,
+vier Schlüssel zu je 32 Byte, Release- und Store-Schlüssel, Store-Adresse, zwei Laufzeiten.
+
+**Ein reiner Datenbankknoten hat das nicht.** Er hat `controller.json` mit einem Feld
+`Migrate *DB` — und genau dieses Feld **hat bis heute keinen Leser** (nur `Validate` und
+`LogValue` fassen es an).
+
+**Das ist die Blockade von Punkt 28 in einer Zeile.** Die Entscheidung dort — der Controller
+startet `ngc-api migrate` als Programm und bekommt keinen eigenen Läufer — bleibt richtig, weil
+zwei Läufer über einem Schema die Form von W-1 sind. Nur **ausführbar** ist sie so nicht.
+
+**Zwei Wege, und beide berühren `shared/config`:**
+- **Ein Weg, `migrate` nur eine `config.DB` zu geben** (ein eigener Ladepfad für den
+  Unterbefehl, der `api.json` nicht verlangt). Klein, und es macht `Controller.Migrate` endlich
+  zu einem gelesenen Feld.
+- **Oder der db-Knoten bekommt eine `api.json`**, die nur fürs Migrieren reicht. Dann ist die
+  Frage, was „reicht" heißt — und jede Antwort darauf lockert `Validate` für **alle**.
+
+**Ausdrücklich nicht gebaut:** eine zweite Konfigurationsform. Das wäre eine zweite Wahrheit über
+die Zugangsdaten der Datenbank, und `shared/` ist eingefroren. Der Strang hat die Zeile gemeldet
+statt sie zu umgehen — richtig.
+
+**Was dadurch heute offen bleibt:** der Weg, auf dem die Migrationen einer neuen Fassung wirklich
+eingespielt werden. `ngc-api migrate` **läuft** (gemessen: „1 Migration eingespielt.", wiederholbar
+„0 Migrationen eingespielt."), aber nur mit einer vollständigen `api.json` — also auf einem
+API-Server, nicht auf dem db-Knoten, dem der Controller die Datei bereitlegt.
+
+## P8 — Die Leerlaufgrenze des Terminals ist von einem Absturz nicht zu unterscheiden
+
+**Gemessen am 12.10.2026** vom Webpaket, beim Bauen der Gegenseite des Terminal-Protokolls.
+
+Der Controller beendet ein Terminal nach 30 Minuten Stille (Punkt 29, die Zahl ist aus
+`terminal.IdleLimit` abgeleitet). Auf der Weboberfläche kommt davon **ein Schluss ohne „ok"** an,
+genau wie bei einem Absturz — der Dienst endet mit Code 1. Die App sagt darum „Die Verbindung
+wurde abgeschnitten."
+
+**Das ist für einen Benutzer die falsche Auskunft.** „Du warst zu lange weg" und „etwas ist
+kaputt" sind zwei verschiedene Lagen, und die zweite lässt ihn nach einem Fehler suchen, den es
+nicht gibt.
+
+**Der kleinstmögliche Eingriff:** ein eigener Schlusscode in `shared/wire` für „Leerlaufgrenze
+erreicht". Das ist eine Ergänzung, kein Bruch — ein alter Leser, der den Code nicht kennt, sieht
+weiter einen Schluss.
+
+**Was danach nachzuziehen ist:** der Controller schickt ihn (eine Zeile), die Weboberfläche sagt
+den eigenen Satz (eine Zeile). Beide Seiten sind gebaut und warten nur auf den Code.
+
+**Rang: Bequemlichkeit** — niemand verliert Daten, und es ist keine Sicherheitsfrage. Aber es ist
+der billigste Punkt dieser Liste, und er betrifft jeden Benutzer, der einmal Kaffee holt.
+
 ## Die gemeinsame Wurzel — P1, P2, P3, P4 und P5 sind derselbe Punkt
 
 Thomas hat richtig gerochen. Alle fünf haben dieselbe Form, und zwar belegbar:

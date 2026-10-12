@@ -1205,3 +1205,103 @@ offene Sitzung mit heraus. **Gemessen ist das nicht**, es ist eine Abwägung.
 Dazu gehört, was dieselbe Aufgabe über den Weg dorthin gemessen hat: die Regel „ein `nil`-Feld
 heißt: keinen Handler anmelden" steht im Code, und sie wurde **an einer Stelle nicht befolgt**.
 Ein Riegel, der im Kommentar steht und nicht im Code, ist kein Riegel.
+
+## Punkt 39: Das Abbild der Terminal-App hängt an einem Tag, nicht an einem Digest
+
+**Gefunden am 12.10.2026**, als das Kommando gebaut wurde, das dieses Abbild überhaupt erzeugt
+(vorher antwortete `ngc-controller image` immer „noch nicht gebaut" — ein Dienst ohne Erzeuger
+für sein Abbild läuft nie).
+
+Der `Containerfile` der Terminal-App sagt `FROM docker.io/library/debian:13-slim`. **Das ist ein
+Tag, kein Digest.** Daraus folgt zweierlei, und das Zweite ist das Ernste:
+
+1. **Zwei Bauten desselben Commits sind zwei verschiedene Abbilder.** Reproduzierbar ist dieser
+   Teil nicht, während alles andere in diesem Projekt ausdrücklich darauf gebaut ist (die Pakete
+   sind bitgleich, weil die Zeit im tar 0 ist — eigens gemessen).
+2. **Wer den Tag beherrscht, beherrscht, was im Container der Terminal-App läuft** — und dieser
+   Container hat laut seinem Manifest `needs: ["root"]`. Das ist die Lieferkette der schärfsten
+   App im System.
+
+**Nicht erfunden, und das war richtig:** ein Digest lässt sich ohne podman und ohne Netz nicht
+messen, und ein abgeschriebener Digest wäre eine Zahl ohne Messung. Statt dessen steht jetzt ein
+Fall da, der **rot wird, sobald jemand doch festnagelt**, mit der Aufforderung, ihn dann
+wegzunehmen — eine benannte Lücke mit Wächter statt einer stillen.
+
+`--pull=always` im Bau-Aufruf nagelt **nichts** fest; es verschiebt nur von „Zwischenspeicher
+dieses Rechners" auf „was die Registry heute sagt". Der Kommentar sagt das so.
+
+**Zu entscheiden:** Digest festnageln — ja oder nein. Und wenn ja: **wer hebt ihn an**, wenn
+Debian einen Sicherheitsfix veröffentlicht? Ein festgenagelter Digest, den niemand pflegt, ist
+nach einem halben Jahr schlechter als ein Tag. Diese Frage gehört zum Release-Weg, nicht zum
+Controller.
+
+**Dazu eine Entscheidung, die dabei getroffen und begründet wurde:** das Abbild baut der **Admin
+von Hand auf einem Baurechner**, nicht der Controller beim ersten Terminal. Drei Gründe, alle am
+Code: `install.Activate` **lädt** Abbilder aus dem unterschriebenen Paket und baut nie — ein Bau
+auf dem Server wäre ein zweiter Weg in den App-Speicher; ein Bau beim ersten Start wäre Wartezeit
+und eine Registry-Abhängigkeit genau dann, wenn jemand auf eine Shell wartet; und ein auf dem
+Server gebautes Abbild hat **niemand unterschrieben**.
+
+## Punkt 40: Das Terminal echot — und die Oberfläche hätte Passwörter hingeschrieben
+
+**Gemessen am 12.10.2026** vom Webpaket, beim Bauen der Gegenseite des Terminal-Protokolls
+(Punkt 29). Es ist der Fund des Tages mit der direktesten Folge für einen Benutzer.
+
+**Der Dienst echot.** `pty_linux.go` startet `/bin/sh -i` auf einem PTY, und ein PTY hat eine
+Zeilendisziplin — das Getippte kommt zurück. In `apps/web/assets/apps/terminal/app.js:213` stand
+aber der Satz, der Dienst echoe **nicht**, „it is no terminal line discipline", und die Oberfläche
+hat sich darauf verlassen: sie schrieb die getippte Zeile **selbst** hin.
+
+**Zwei Folgen, und die zweite ist die ernste:**
+1. Jede Zeile hätte **doppelt** dagestanden.
+2. **Ein Programm, das nach einem Passwort fragt, schaltet das Echo ab** — der Dienst hätte also
+   nichts zurückgeschickt, und die Oberfläche hätte das Passwort **trotzdem hingeschrieben.**
+
+Das lokale Echo ist entfernt, der Zaun ist ein Zähler (ein getippter Befehl muss **genau einmal**
+dastehen), und der Satz ist mit `e86a1a6` weg.
+
+**Und die Lücke ist eine andere, als sie zuerst aussah.** Ich hatte hier geschrieben, der Plan habe
+es falsch gesagt, und wollte den Plan berichtigen. Nachgezählt (`git grep -n -E "does not echo|line
+discipline" e5f1fcc`) gibt es **genau eine** Stelle im ganzen Baum, und das ist die obige Zeile in
+`app.js` — **im Plan kommt keines der beiden Wörter vor.** Der Plan hat zum Echo also **überhaupt
+nichts** gesagt, auch nichts Richtiges, und der Umsetzer der Aufgabe 25 musste es **raten**.
+
+Das ist der schärfere Befund: ein Plan, der eine Eigenschaft nicht nennt, erzeugt eine Vermutung,
+und eine Vermutung im Kommentar liest der Nächste als Tatsache. **Darum steht hier, was gilt** —
+der Dienst echot, weil er ein PTY benutzt — und nicht, wo ein falscher Satz stand.
+
+## Punkt 41: Das Terminal kann kein Passwort und kein `vi` — Entscheidung offen
+
+Dieselbe Runde, und es ist die Frage dahinter: die Oberfläche aus Plan 1 ist ein **Zeilenfeld**
+(`input type=text`). Sie schickt ganze Zeilen und zeigt alles Getippte.
+
+Damit geht **nicht**: ein Passwort eingeben, ohne es im Feld zu sehen · `Strg+C` · Pfeiltasten ·
+Tab-Ergänzung · und **jedes** Programm, das einzelne Tasten liest (`vi`, `top`, `less`).
+
+**Das Format kann all das** — ein Tastenrahmen trägt beliebige Bytes (Punkt 29). Es fehlt allein
+die **Oberflächenentscheidung**:
+
+- **Rohtasten.** Ein echtes Terminal: jede Taste geht sofort hin, die Anzeige kommt nur vom
+  Dienst. Dann ist eine Passwortabfrage **von selbst still**, weil der Dienst das Echo abschaltet
+  und die Oberfläche nichts von sich aus zeigt. Preis: die Oberfläche muss eine Terminalanzeige
+  sein, kein Textfeld — mehr Arbeit, und Tasten müssen zuverlässig ankommen.
+- **Zeilenfeld behalten** und in der Doku sagen, dass Passwortabfragen **sichtbar** sind. Preis:
+  ein Admin tippt irgendwann ein `sudo`-Passwort in ein Feld, das es anzeigt, und niemand liest
+  vorher die Doku.
+
+**Mein Vorschlag: Rohtasten.** Nicht wegen `vi`, sondern wegen des Passworts: die Variante, die
+das Geheimnis **durch ihre Bauart** nicht zeigt, ist der Variante überlegen, die sich auf einen
+Satz in der Doku verlässt. Und das Format kann es schon, es ist keine Vertragsänderung.
+**Gemessen ist das nicht** — es ist eine Abwägung über Arbeit gegen Sicherheit, und die
+Entscheidung gehört Thomas.
+
+## Punkt 42: `ngc.open("terminal","shell",{cols,rows})` ist wirkungslos
+
+Ebenfalls am 12.10.2026 gemessen: `terminal.go` **liest keine Parameter**, und `shellEnv` baut die
+Umgebung aus nichts. Die Fenstergröße wirkt **nur** über den Rahmen des Protokolls.
+
+Im Plan steht der Aufruf aber mit Parametern, und zwar in
+`docs/superpowers/plans/2026-09-23-ngc-plan-1-web.md:6750`: „Der Kanal ist ein Datenstrom
+(`ngc.open("terminal", "shell", {cols, rows})`)" — **so, wie es dasteht, liest der nächste
+Umsetzer sie als den Weg.** Entweder die Parameter werden gelesen, oder es gehört dazugeschrieben, dass sie
+Beiwerk sind. Beides ist in `apps/` zu machen, keine Vertragsänderung.
