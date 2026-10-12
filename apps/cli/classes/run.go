@@ -123,6 +123,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
 			return 1
 		}
+		// The public half of the signing key goes beside the catalog, the
+		// way runRelease writes ReleaseKeyFile beside a release and for the
+		// same reason: without it nobody can check the store, not even this
+		// tool's own "check -store", and a store nobody can check is the one
+		// thing this tool must not produce. Measured while the first real
+		// store was built: every subcommand ran green and "check -store"
+		// then refused the finished store, because no subcommand wrote
+		// StoreKeyFile.
+		if err := writePublicKey(args[1], StoreKeyFile, args[2]); err != nil {
+			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
+			return 1
+		}
 		out := filepath.Join(args[1], CatalogFile)
 		if err := writeCatalog(out, env); err != nil {
 			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
