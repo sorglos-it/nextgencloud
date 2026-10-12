@@ -83,7 +83,24 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
   und ebenso 3/5 auf dem Stand **davor** (`01f8a6e`), also nicht von einer Änderung
   verursacht. Daneben gemessen: `go test -race ./apps/server-api/...` scheitert
   reproduzierbar mit `open …httpapi.test.exe: Zugriff verweigert`, was auf den
-  Virenschutz (Bitdefender) deutet; die Ursache des Absturzes ist **nicht gemessen**.
+  Virenschutz (Bitdefender) deutet — das ist aber eine **andere** Erscheinung (sie bricht den
+  **Bau** ab, der Absturz passiert **im Lauf**), und in sechs roten Ausgaben kommt sie nicht vor.
+  **Die Ursache ist gefunden und liegt nicht bei uns: golang/go #81731**, ein Speicherfehler der
+  Go-Laufzeit 1.27.0/1.27.1 auf windows/amd64 — `LockOSThread` um einen Systemaufruf herum
+  überschreibt Nachbarspeicher auf dem Goroutine-Stack. Der abstürzende Stack führt über
+  `os/user.Lookup` → `syscall.LookupAccountName`, und `os/user/lookup_windows.go:309` ruft genau
+  dieses `LockOSThread`; nur drei Controller-Pakete hängen an `os/user`, und `install` ist das,
+  dessen Fälle den Weg wirklich gehen. Eigener Code ist ausgeschlossen (kein `go:linkname`, kein
+  Assembler, kein cgo, kein `unsafe`, kein `LockOSThread` in `apps/`, `shared/`, `vendor/`).
+  **Behoben in go1.27.2** (Backport #81829), darum steht in `go.mod` jetzt diese Fassung.
+  **Die Rate schwankt mit dem Maschinenzustand, nicht mit dem Stand** — morgens 3/5 rot, mittags
+  0 von 102 Satzläufen, auch mit 16 gleichzeitigen Läufen und kaltem Cache. **Warum: offen.**
+  **Die Trennlinie für jede Meldung:** ein roter Lauf mit `unknown caller pc`,
+  `unexpected return pc`, `found pointer to free object`, `sweep increased allocation count`,
+  `fatal error: fault` oder `Exception 0x` ist **kein Befund** — verwerfen und wiederholen.
+  Ein roter Lauf mit `--- FAIL` **ist** einer. Und: **der Hauptcheckout kann den Controller-Satz
+  gar nicht messen** — `apps/server-controller/classes` gibt es auf `main` nicht, `go list` meldet
+  dort 1 Paket „no test files" und Ausstiegscode 0, was wie grün aussieht.
   **Daraus folgt für jede Meldung: ein einzelnes grünes `go test ./...` ist hier keine
   Aussage.** Das eigene Paket einzeln messen, und wenn der Gesamtsatz genannt wird, ihn
   mehrfach fahren und die Zahl der roten Läufe mitnennen.
@@ -208,8 +225,16 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 - Fremdcode: alle Module aus Entwurf, Kapitel 7 liegen seit dem 22.09.2026 in `vendor/`, aufgezählt
   in `THIRD-PARTY.md`. Was noch kein Teil einbindet, hält `tools/modules.go` fest; wer ein Modul
   zuerst benutzt, nimmt seine Zeile dort heraus.
-- Linux-Tests mit `-race` gehen auf Thomas' Rechner nur in WSL (Debian, mit `gcc`); eine
-  Go-Toolchain für Linux muss dort vorhanden sein.
+- **`-race` ist auf dieser Maschine derzeit gar nicht messbar** (12.10.2026 gemessen, nachdem
+  fünf Stränge unabhängig danach gesucht hatten). Auf Windows ist **kein** C-Übersetzer:
+  `command -v` leer für gcc/cc/clang/cl/zig, rekursiv in 14 üblichen Orten nichts, kein Visual
+  Studio; das Werkzeug selbst sagt es (`go test -race` → Code 2 „requires cgo", mit
+  `CGO_ENABLED=1` → Code 1 „C compiler \"gcc\" not found"). In **WSL** liegt `gcc 14.2.0`,
+  aber **kein Go mehr** — Debian steht auf 13.7, beim Hochziehen von 12 ist es verschwunden,
+  und apt bietet nur 1.24 (Backports 1.26), zu alt für `go 1.27`. Die frühere Zeile hier
+  („`-race` geht in WSL") stimmte am 22.09.2026 und stimmt heute nicht.
+  **Darum: `-race` nicht melden, auch nicht als „0 DATA RACE"** — eine Null ohne Übersetzer
+  ist keine Messung. Nachzuholen auf einem Linux-Server.
 - Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung (`TestValidText` hält es an).
 - Der claude-mem-Dienst (`bun … worker-service.cjs`) leckt Speicher. Brechen Builds oder
   Fuzz-Läufe ab, zuerst den freien Speicher prüfen.
