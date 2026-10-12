@@ -950,11 +950,16 @@ Programmcode. Wer sie schreibt, nimmt den Abstand **größer als die Sperrzeit n
 Neustart alle paar Sekunden ist richtig, denn die Sperre fällt, sobald der andere Lauf fertig
 ist, und nicht erst nach 900 Sekunden.
 
-**Ungemessen bleibt, und das ist die wichtigere Hälfte:** die Sperre gilt **nur für den
-Augenblick der Migration**, nicht für die Lebenszeit des Stores. Zwei Controller, die beide
-hochkamen, schreiben danach **gleichzeitig** in dieselbe Datei. Was das tut, ist hier nicht
-gemessen; die Antwort des Datenbankpakets darauf ist `busyTimeout` von 10 Sekunden plus
-Wiederholung. **Wer zwei Controller auf eine Datei lässt, muss das zuerst messen.**
+**Diese Hälfte war die wichtigere, und sie ist seit dem 13.10.2026 gemessen (Punkt 44):** die
+Sperre gilt **nur für den Augenblick der Migration**, nicht für die Lebenszeit des Stores — und
+**sie hält zwei Programme nicht auseinander.** Gemessen am laufenden Programm: ein zweiter
+`ngc-api` auf derselben Datei kommt **durch** `dbopen.Open` und stirbt erst am Port
+(`bind: address already in use`); zwei auf verschiedenen Ports würden die Datei beide öffnen. Und
+`ngc-api migrate` läuft, **während** eine API dieselbe Datei offen hält (`0 Migrationen
+eingespielt.`, Code 0). Die Entscheidung oben bleibt davon unberührt — sie betrifft den **Start**
+—, aber wer zwei Programme auf eine Datei lässt, kann sich auf die Sperre **nicht** verlassen; die
+Antwort des Datenbankpakets darauf ist `busyTimeout` von 10 Sekunden plus Wiederholung, und **die
+ist weiter ungemessen.**
 
 ## Punkt 29, Nachtrag: die Zahl der App-Kanäle
 
@@ -1426,3 +1431,76 @@ Datenbank.
 **Mein Vorschlag: der dritte Weg**, weil er der einzige ist, der den dokumentierten Weg zurück
 offen hält, ohne den Anker dem Angreifer zu geben, gegen den er gebaut ist. **Gebaut ist er
 nicht** — er gehört zu Punkt 10 des Vertrags.
+
+## Punkt 44: API und Controller haben zum ersten Mal miteinander gesprochen
+
+**Gemessen am 13.10.2026**, unter Linux in WSL, mit beiden Programmen für linux/amd64 gebaut. Das
+war auf **beiden** Abschlussprüfungslisten der größte Posten — „kein echter Controller, kein
+echter Tunnel" (API: Punkt 5 von 23, Controller: Punkt 13 von 22). Alles war gegen Attrappen
+gemessen.
+
+**Der Beleg ist derselbe Prüfwert auf beiden Seiten:**
+
+```
+Negativ-Kontrolle (API aus):   versions=0
+nach 10 s mit laufender API:   versions=1 seq=1 hash=IEoZ6APgO_ay-0kPa7P2A985bgExpVQi1PmpIibxfuM
+API-Seite derselben Version:   seq=1 hash=IEoZ6APgO_ay-0kPa7P2A985bgExpVQi1PmpIibxfuM
+```
+
+Die Zeile steht im **verschlüsselten SQLite des Controllers**, und nur `chain.Keeper.Apply`
+schreibt sie. **Durch den Kanal ging die Vertrauensliste.** Der Weg, ganz echter Code: TLS 1.3 →
+WebSocket → Noise_KK → beide Hallos → numerierter Kanal → `serve.trust`. Eine zweite Fassung lief
+ebenso durch. **Abgekürzt ist nur die Shell** (Fassung 1 kommt nicht durch `setup.Handler`, der
+Kopplungscode nicht aus `ngc.users/pair-code`) — das ist offen benannt.
+
+**Der Statusweg ist mit einem Mutanten direkt belegt:** ohne ihn endet der Tunnel nach 75
+Sekunden, mit `case wire.CtlStatus: return false` stirbt er **genau auf der Sekunde des
+Status-Ticks** und wird neu aufgebaut. Also ging ein echter `CtlStatus` raus und wurde angenommen.
+
+**Nichts ist weggestorben** — kein `panic`, kein Stapel, in sieben Läufen, auch nicht unter dem
+Mutanten, der einen stehenden Tunnel abbrach. Beide Prozesse jedes Mal **0** auf SIGTERM. Das ist
+die erste Messung, die Punkt 38 (kein `recover` im Produktionscode) **nicht** zum Tragen bringt —
+sie entlastet ihn nicht, sie hat nur nichts gefunden.
+
+### Was dabei gefallen ist
+
+**Punkt 32 ist nicht widerlegt — seine offene Hälfte ist jetzt gemessen.** Der Strang hat es als
+„Annahme gefallen" gemeldet, und das ist zu scharf: Punkt 32 sagt selbst, die Sperre gelte **nur
+für den Augenblick der Migration**, nicht für die Lebenszeit, und nennt genau das als
+**ungemessen**. Jetzt ist es gemessen: ein zweiter `ngc-api` auf derselben Datei kommt **durch**
+`dbopen.Open` und stirbt erst am Port (`bind: address already in use`). **Zwei APIs auf
+verschiedenen Ports würden die Datei beide öffnen.** Und: **`ngc-api migrate` läuft, während eine
+API dieselbe Datei offen hält** (`0 Migrationen eingespielt.`, Code 0).
+
+Damit steht die Entscheidung von Punkt 32 unverändert — wer die Sperre beim **Start** nicht
+bekommt, startet nicht —, aber der Satz „wer zwei Controller auf eine Datei lässt, muss das zuerst
+messen" ist jetzt beantwortet: **die Sperre hält sie nicht auseinander.**
+
+**Weiter gefallen, je am laufenden Programm:**
+- **`Hello.TrustSeq` ist 0, nicht 1**, solange nur der Anker steht — darum öffnet die API schon
+  beim **ersten** Hallo einen Kanal. Stand im Kommentar, war nie gelaufen.
+- **Die provisorische `controller.json` des ulh-Skripts hält am Programm**: `pair` kommt bis zur
+  Code-Frage, ein falscher Code gibt Code 2 — also hinter `LoadController`, und `/etc/ngc` bleibt
+  unberührt.
+- **Die `/tunnel`-Pfade:** `POST /tunnel/pair` → 400 `E_PROTOCOL`, `GET` darauf ebenso, `GET
+  /tunnel` ohne Schlüssel → 404.
+- **W-3 ist am Draht bestätigt:** ausgehandelt wird **TLS_AES_128_GCM_SHA256**. Der Chiffren-Riegel
+  wirkt auf dieser Strecke **nicht** — genau wie der Kommentar es seit der Entscheidung sagt. TLS
+  1.2 wird abgewiesen.
+
+### Zwei Dinge, die von außen nicht zu sehen sind
+
+1. **Vom Schreibtisch gibt es keinen Weg zu einem gelisteten Controller.**
+   `shared/session/session.go:909` vergleicht die Knoten, und `setup.Handler` kennt nur den
+   API-Knoten — ein Controller kann also **nie** in Fassung 1 stehen, sondern nur über Fassung 2,
+   und die geht allein über eine Shell. Die Vorrichtung dieser Messung geht darum an
+   `state.AddVersion` vorbei, und sie sagt das. `shared/` ist eingefroren; das gehört in die Reihe
+   für v1.3.
+2. **Es gibt keinen zweiten Zeugen für die Kopplung.** `controllers.Pair` schreibt keine Zeile, und
+   `node.pair` gibt **jeden** Fehlschlag als dieselbe Zeile mit Code 1 aus. „API aus" und „Code
+   abgelehnt" sind von außen **nicht zu trennen** — für einen Admin, der ein Gerät einrichtet, ist
+   das der Unterschied zwischen „noch mal versuchen" und „Netz prüfen".
+
+**Nebenbefund, Ursache ungemessen:** nach einem abgebrochenen Tunnel scheiterte der **erste**
+Neuversuch des Controllers mit „the API cannot be reached", obwohl die API lief; der zweite kam 14
+Sekunden später durch.
