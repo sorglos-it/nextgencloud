@@ -29,8 +29,21 @@ Aufrufe:
                                                   Katalog schreiben und unterschreiben
   ngc-store license <App> <Installation> <Schlüsseldatei> <Inhaltsschlüssel> <Installationsschlüssel> <Store>
                                                   Lizenz für einen Test-Store
-  ngc-store release <Verzeichnis> <Schlüsseldatei>  Release zum Testen unterschreiben
+  ngc-store release -version <Fassung> -seq <Folge> <Verzeichnis> <Schlüsseldatei>
+                                                  Release zum Testen unterschreiben
   ngc-store check <Verzeichnis> <Teil> <Architektur>  Release prüfen wie verify.sh
+  ngc-store check -store <Store> <Verzeichnis>    ganzen Store prüfen
+
+Zusätze von "release", vor den Angaben:
+  -version <Fassung>  die NGC-Fassung dieses Release; nötig
+  -seq <Folge>        Folgenummer, höher als die letzte; nötig
+  -notes <Text>       was sich geändert hat
+  -base <Adresse>     wo die Dateien liegen; leer schreibt nur die Namen
+  -issued <Zeit>      Unix-Sekunden der Ausstellung; Vorgabe ist jetzt
+
+Zusätze von "check":
+  -store <Store>      Kennung des Stores; prüft catalog.json statt release.json
+  -seq <Folge>        die neueste schon gesehene Folgenummer
 
 Zusätze von "license", vor den Angaben:
   -per site|user   Lizenz je Anlage (Vorgabe) oder je Nutzer
@@ -110,11 +123,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runEncrypt(args[1], args[2], stdout, stderr)
 	case "license":
 		return runLicense(args[1:], stdout, stderr)
-	case "release", "check":
-		// Task 29 of the API plan fills these in; until then the name is known
-		// but does nothing.
-		fmt.Fprintf(stderr, "ngc-store %s ist noch nicht gebaut\n", args[0])
-		return 1
+	case "release":
+		return runRelease(args[1:], stdout, stderr)
+	case "check":
+		return runCheck(args[1:], stdout, stderr)
 	}
 	fmt.Fprint(stderr, Usage)
 	return 2
@@ -129,15 +141,7 @@ func writeCatalog(path string, env sign.Envelope) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".new"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return writeFileAtomic(path, b)
 }
 
 // runEncrypt seals a package. The output is the package's own name with
@@ -224,4 +228,153 @@ func writeEnvelope(env sign.Envelope, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "%s\n", b)
 	return 0
+}
+
+// runRelease signs a release for testing and writes it beside the files, as
+// the catalog subcommand writes the catalog: the same neighbouring file and
+// rename, for the same reason (writeCatalog). It also writes the public half
+// of the key as ReleaseKeyFile, because a release directory without it
+// cannot be checked — neither by Check nor by verify.sh on a Linux server —
+// and a release nobody can check is the one thing this tool must not
+// produce.
+//
+// Only the public half is written. The secret seed stays in the key file the
+// caller named, and a missing one is created here (0600, never overwritten),
+// because whoever signs their first test release has no key yet. What is
+// printed is the path and the public key, never the seed.
+//
+// The real release key of NGC lies on a hardware stick and never on a
+// server (Entwurf 4.8). This subcommand signs releases for testing, and the
+// usage says so.
+func runRelease(args []string, stdout, stderr io.Writer) int {
+	var opts ReleaseOpts
+	fs := flag.NewFlagSet("release", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { fmt.Fprint(stderr, Usage) }
+	fs.StringVar(&opts.Version, "version", "", "the NGC version of this release")
+	fs.Uint64Var(&opts.Seq, "seq", 0, "sequence number, higher than the last one")
+	fs.StringVar(&opts.Notes, "notes", "", "what changed, shown to admins")
+	fs.StringVar(&opts.BaseURL, "base", "", "where the files lie; empty writes names")
+	fs.Int64Var(&opts.Issued, "issued", 0, "Unix seconds of issue; now by default")
+	if fs.Parse(args) != nil {
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) != 2 || opts.Version == "" || opts.Seq == 0 {
+		fmt.Fprint(stderr, Usage)
+		return 2
+	}
+	dir, keyFile := rest[0], rest[1]
+	// The time of signing, not of building: a release carries issued and
+	// seq, so it is a document of a moment. The checksums in it do not
+	// depend on a clock.
+	if opts.Issued == 0 {
+		opts.Issued = time.Now().Unix()
+	}
+	if _, err := os.Stat(keyFile); errors.Is(err, os.ErrNotExist) {
+		priv, err := NewStoreKey(keyFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "Schlüsseldatei nicht angelegt: %v\n", err)
+			return 1
+		}
+		pub := priv.Public().(ed25519.PublicKey)
+		fmt.Fprintf(stdout, "Schlüsseldatei angelegt: %s\nÖffentlicher Schlüssel: %s\nKennung: %s\n",
+			keyFile, enc.B64.EncodeToString(pub), sign.KeyID(pub))
+	}
+	env, err := Release(dir, keyFile, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "Release nicht unterschrieben: %v\n", err)
+		return 1
+	}
+	if err := writePublicKey(dir, ReleaseKeyFile, keyFile); err != nil {
+		fmt.Fprintf(stderr, "Release nicht geschrieben: %v\n", err)
+		return 1
+	}
+	out := filepath.Join(dir, ReleaseFile)
+	if err := writeCatalog(out, env); err != nil {
+		fmt.Fprintf(stderr, "Release nicht geschrieben: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s %d %s\n", opts.Version, opts.Seq, out)
+	return 0
+}
+
+// writePublicKey puts the public half of the signing key in keyFile into the
+// directory under name. It reads the key file and throws the seed away right
+// after taking the public half (readStoreKey clears what it read, clear
+// takes the rest): nothing of the secret reaches the directory a release is
+// served from.
+func writePublicKey(dir, name, keyFile string) error {
+	priv, err := readStoreKey(keyFile)
+	if err != nil {
+		return err
+	}
+	defer clear(priv)
+	b, err := PublicKeyPEM(priv.Public().(ed25519.PublicKey))
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(dir, name), b)
+}
+
+// runCheck is the one subcommand that is meant to go red: it is what whoever
+// runs a store or a release server uses to find out that it is broken
+// before an installation does.
+//
+// Two calls, told apart by a flag and not by counting arguments: a store ID
+// may look like the name of a part, and a check that guessed which of the
+// two it was asked for could check the wrong thing and print "ok".
+//
+//	check <Verzeichnis> <Teil> <Architektur>   one file of a release
+//	check -store <Store> [-seq <Folge>] <Verzeichnis>   a whole store
+func runCheck(args []string, stdout, stderr io.Writer) int {
+	var storeID string
+	var seq uint64
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { fmt.Fprint(stderr, Usage) }
+	fs.StringVar(&storeID, "store", "", "check a store of this ID instead of a release")
+	fs.Uint64Var(&seq, "seq", 0, "the newest sequence number already seen")
+	if fs.Parse(args) != nil {
+		return 2
+	}
+	rest := fs.Args()
+	if storeID != "" {
+		if len(rest) != 1 {
+			fmt.Fprint(stderr, Usage)
+			return 2
+		}
+		if err := CheckStore(rest[0], storeID, seq); err != nil {
+			fmt.Fprintf(stderr, "store wrong: %v\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, "store ok\n")
+		return 0
+	}
+	if len(rest) != 3 {
+		fmt.Fprint(stderr, Usage)
+		return 2
+	}
+	if err := Check(rest[0], rest[1], rest[2]); err != nil {
+		fmt.Fprintf(stderr, "release wrong: %v\n", err)
+		return 1
+	}
+	fmt.Fprint(stdout, "release ok\n")
+	return 0
+}
+
+// writeFileAtomic writes b to path through a neighbouring file and a
+// rename. A run that dies half way must never leave half a document: the
+// next run of catalog or release reads what lies there to find the last
+// sequence number, and Check reads it to judge the directory.
+func writeFileAtomic(path string, b []byte) error {
+	tmp := path + ".new"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
