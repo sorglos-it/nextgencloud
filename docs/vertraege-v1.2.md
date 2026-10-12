@@ -1504,3 +1504,68 @@ messen" ist jetzt beantwortet: **die Sperre hält sie nicht auseinander.**
 **Nebenbefund, Ursache ungemessen:** nach einem abgebrochenen Tunnel scheiterte der **erste**
 Neuversuch des Controllers mit „the API cannot be reached", obwohl die API lief; der zweite kam 14
 Sekunden später durch.
+
+## Punkt 45: Ein echter Store — und alle früheren Store-Messungen hatten die Kettenprüfung aus
+
+**Gemessen am 13.10.2026.** „Kein echter Store" war Punkt 18 von 23 auf der Abschlussprüfungsliste
+der API. Gebaut wurde einer **nur mit dem Werkzeug** (`pack`, `encrypt`, `catalog`, `release`),
+und `check -store` sagt **`store ok`**.
+
+**Die API hat zwei Pakete wirklich geholt**, über eigene CA und `store.ngc.test`, mit dem Client,
+den `appstore.New` selbst baut: `hits=1 took=169ms seq=1`, angekommen 3072 Byte mit dem Kopf
+`manifest.json\0…` und 3112 Byte mit `NGCENC1\n`. Dazu eine Release-Datei gegen den
+**Release**-Schlüssel.
+
+**Punkt 39 hält, und zwar als Objektkennung:** zweimal gepackt, zwei Sekunden auseinander,
+`git hash-object` dreimal derselbe Wert — nicht nur dieselbe Länge.
+
+**Punkt 30 ist auf dem Store-Weg gemessen und geht:** 3072 Byte an den Controller, unterschriebener
+Katalog im Kopf, App-Zeile danach `active=true`, Zwischenlager **leer**. Derselbe Aufruf mit
+`store: local` → **`E_UNREACHABLE`**. Also: **Store-Paket trägt, Hochlade-Weg nicht.**
+
+**Und der 60-Sekunden-Riegel ist zum ersten Mal gefahren**, nicht nur gesetzt: ein tröpfelnder
+Server wird nach `1m0s` abgebrochen.
+
+### Der Fund, der rückwirkend zählt
+
+**Jede bisherige Store-Messung lief mit abgeschalteter Kettenprüfung.**
+`apps/server-api/classes/appstore/fixture_test.go:212` setzt
+`fx.St.Client.Transport = fx.HTTP.Client().Transport` — damit trägt der Prüfstand den Transport des
+Testservers, und die TLS-Kette wird nie beurteilt. **Alles, was über „die API holt von einem Store"
+gemessen wurde, galt also für einen Weg ohne diesen Riegel.**
+
+Gegengemessen, ohne Überlagerung: **die API verlangt die Kette wirklich** — eine fremde Wurzel
+ergibt `hits=0`, der Handschlag fällt vorher, und der Grund lautet „Der Store hat nicht oder nicht
+brauchbar geantwortet."
+
+Der Riegel ist also da. Was fehlte, war eine Messung, die ihn **nicht** umgeht.
+
+### Punkt 25 am echten Katalog: gilt unverändert, und schärfer
+
+Relative Pfade fängt `store.ValidPath` im Vertrag — `../..`, Query, `#`, Leerzeichen kommen nicht
+durch. Eine **absolute** https-Adresse wird aber nur über Schema, Länge, `#` und **Rechnernamen**
+geprüft:
+
+- `https://store.ngc.test:8443/…?token=x` ging durch — **und die Anfrage ging raus.**
+- `https://127.0.0.1:1/x.ngc` kam ebenfalls durch `PackageURL` — **ein anderer Rechner als der
+  Store.**
+
+**Pfad und Query prüft niemand.** Dass ein Paket auf einem anderen Rechner liegen darf, ist
+vertretbar (ein Store kann eine Auslieferung benutzen) — dass **niemand** den Pfad ansieht, ist der
+Punkt. Die Lösung bleibt ein ausgeführtes `store.ValidDownloadURL`;
+`shared/store/catalog.go:208` ist eingefroren, also **BLOCKED** und in der v1.3-Reihe.
+
+### Zwei Befunde darüber hinaus
+
+1. **Wer den Store-Schlüssel hat, sperrt den echten Store dauerhaft aus.** Nach einem
+   untergeschobenen Katalog mit Folge 57 ist der heile Store mit Folge 1 **für immer** ein
+   Rückdreh. **Wie ein Admin das zurücksetzt, ist nicht gemessen** — und solange es keinen Weg
+   gibt, ist der Rückdreh-Riegel auch eine Falle.
+2. **`ngc-store` schrieb `store-key.pem` nicht, die sein eigenes `check -store` verlangt.** Alle
+   Unterbefehle grün, der fertige Store **unprüfbar**. Behoben, mit einem Fall, der nur über `Run`
+   geht und zusätzlich prüft, dass kein Saatwert ins Store-Verzeichnis gerät; Mutant tot, Kontrolle
+   lebt.
+
+**Dazu ein Widerspruch zur Hausnummerierung:** `release -version 0.0.1.0` fällt durch, weil
+`store.ValidVersion` **dreistellig** ist — die Hausnummerierung dieses Nutzers ist vierstellig.
+Das gehört vor dem ersten Release entschieden, nicht danach.
