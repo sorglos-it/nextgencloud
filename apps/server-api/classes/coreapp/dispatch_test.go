@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
@@ -64,9 +65,17 @@ func TestInputOfTheLimitIsRead(t *testing.T) {
 	var got int
 	fx.D.Register(core.AppUsers, core.ServiceAPI, core.ActTrust,
 		func(_ context.Context, rq *Call) ([]byte, error) {
-			b := make([]byte, action.MaxIn+1)
-			n, _ := rq.In.Read(b)
-			got = n
+			// io.ReadAll and not one Read: rq.In is the channel's DATA as it
+			// arrives (browser.Input), so one Read answers one frame. A case
+			// that asked for the whole input in a single Read measured the
+			// reader that collected everything first -- which is exactly what
+			// had to go, and the case said "the handler read 65514 of
+			// 6291456" when it did.
+			b, err := io.ReadAll(rq.In)
+			got = len(b)
+			if err != nil {
+				return nil, err
+			}
 			return []byte(`{}`), nil
 		})
 	c := fx.OpenAdmin(t, wire.Open{App: core.AppUsers, Service: core.ServiceAPI, Action: core.ActTrust,

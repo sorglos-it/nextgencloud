@@ -102,10 +102,18 @@ func (d *Dispatcher) storeInstalled(ctx context.Context, rq *Call) ([]byte, erro
 // storeUpload answers ngc.store/upload: the admin sends a package, the API
 // walks it safely and answers what it read.
 //
-// The stream is handed over and not read into memory: store.MaxPackage is
-// 4 GiB, and appstore.Upload reads it in one pass for exactly that reason. The
-// dispatcher has bounded the channel at core.Action.MaxIn already, and
+// The stream is handed over and not read into memory: rq.In is the channel's
+// DATA as it arrives (browser.Input, built in Dispatcher.run), store.MaxPackage
+// is 4 GiB, and appstore.Upload reads it in one pass for exactly that reason.
+// The dispatcher has bounded the channel at core.Action.MaxIn already, and
 // appstore bounds it a second time with its own counter.
+//
+// This sentence was false until 12.10.2026 and is the reason the measurement
+// below exists rather than the comment alone: the dispatcher collected the
+// whole package into a []byte before it called anyone, so 64 MiB of input made
+// the heap rise by 191 MiB and four gigabytes were allowed. What holds the
+// sentence now is TestUploadHoldsNoPackageOnTheChannel, with a run that
+// collects on purpose beside the flat ones.
 func (d *Dispatcher) storeUpload(ctx context.Context, rq *Call) ([]byte, error) {
 	res, err := d.Store.Upload(ctx, rq.In)
 	if err != nil {

@@ -7,8 +7,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -41,6 +44,13 @@ type fakeStore struct {
 	// the app name it read out of the licence envelope.
 	uploaded int64
 	licensed string
+	// hold makes Upload collect the whole package instead of streaming it.
+	// It is the null control of TestUploadHoldsNoPackageOnTheChannel: without
+	// a run that really does hold the bytes, three flat numbers would only say
+	// that the gauge sees nothing. held keeps them alive past the call, so the
+	// collector cannot take them away before the peak is read.
+	hold bool
+	held []byte
 	// catalogOf is the store ID the catalog handler asked for.
 	catalogOf string
 }
@@ -71,6 +81,16 @@ func (f *fakeStore) Installed(context.Context) ([]core.InstalledApp, error) {
 
 func (f *fakeStore) Upload(_ context.Context, r io.Reader) (core.UploadResult, error) {
 	f.note(core.ActUpload)
+	if f.hold {
+		b, err := io.ReadAll(r)
+		if err != nil {
+			return core.UploadResult{}, err
+		}
+		f.held = b
+		f.uploaded = int64(len(b))
+		return core.UploadResult{ID: appX, Version: "1.0.0", SHA256: make([]byte, 32),
+			UI: make([]byte, 32)}, nil
+	}
 	n, err := io.Copy(io.Discard, r)
 	if err != nil {
 		return core.UploadResult{}, err
@@ -828,6 +848,131 @@ func TestAModeTheInstallationDidNotAllowIsForbidden(t *testing.T) {
 			}
 			if code != c.want {
 				t.Fatalf("close code %q, wanted %q", code, c.want)
+			}
+		})
+	}
+}
+
+// --- The memory of ngc.store/api/upload ------------------------------------
+
+// uploadHeapBound is how far the heap may rise while a package goes through
+// the channel. It is not derived from the sizes below on purpose: a bound that
+// grows with the input would be green for a run that holds everything. Room
+// for the window, the frames in flight and the garbage of the sender, and
+// nothing like a package.
+const uploadHeapBound = 8 << 20
+
+// peakHeap runs fn and answers how far HeapAlloc rose above where it stood
+// when fn started. The peak and not the increase: a run that holds a package
+// and lets it go again shows an increase of nothing.
+//
+// The sampler reads the heap every millisecond, and the last read happens
+// after fn returned, because the frames that arrive between two samples would
+// otherwise be the ones nobody saw.
+func peakHeap(fn func()) int64 {
+	runtime.GC()
+	var start runtime.MemStats
+	runtime.ReadMemStats(&start)
+	base := int64(start.HeapAlloc)
+	var peak atomic.Int64
+	peak.Store(base)
+	note := func() {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		if h := int64(m.HeapAlloc); h > peak.Load() {
+			peak.Store(h)
+		}
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			note()
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	fn()
+	note()
+	close(stop)
+	<-done
+	return peak.Load() - base
+}
+
+// TestUploadHoldsNoPackageOnTheChannel is the memory of ngc.store/api/upload,
+// measured over a REAL channel and not against the handler: the package goes
+// in as DATA frames through the session, the dispatcher and on to the seam.
+//
+// Why it has to be the channel and not appstore: appstore.Upload streams, and
+// a case one layer below (TestUploadHoldsNoPackage there) measures that it
+// does. What used to collect the whole package was the dispatcher, which read
+// its input into a []byte before it called anyone -- at core.Action.MaxIn,
+// which is store.MaxPackage = 4 GiB for this action. A comment in store.go
+// said the stream was handed over, and no case held it.
+//
+// Three runs, and the third is why the first two mean anything: the null
+// control holds the bytes on purpose (fakeStore.hold), so a gauge that sees
+// nothing cannot pass as three flat numbers.
+func TestUploadHoldsNoPackageOnTheChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int
+		hold bool
+	}{
+		{"16 MiB streamed", 16 << 20, false},
+		{"64 MiB streamed", 64 << 20, false},
+		{"null control: 64 MiB collected at the seam", 64 << 20, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newStoreFixture(t)
+			fx.Store.hold = tc.hold
+			tk := fx.Task(t, task.Task{ID: taskID(0xB2), App: core.AppStore,
+				Service: core.ServiceAPI, Action: core.ActUpload})
+			c := fx.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
+				Action: core.ActUpload, Window: wire.MinWindow, Task: tk,
+				Confirm: confirmOf(fx.harness, tk)})
+			// The way to the handler has to be open before a number means
+			// anything: a channel refused at the task or the confirmation
+			// sends nothing and holds nothing, and the measurement would be
+			// flat for the wrong reason.
+			if !c.awaitGrant(t) {
+				t.Fatal("no GRANT came: the channel was refused before the handler ran")
+			}
+			var code wire.Code
+			grew := peakHeap(func() {
+				c.sendBytes(t, tc.size)
+				code = endOf(t, c)
+			})
+			if code != "" {
+				t.Fatalf("the channel closed with %q", code)
+			}
+			// Second intermediate check: every byte really went through. A
+			// run that was cut short would also be flat.
+			if fx.Store.uploaded != int64(tc.size) {
+				t.Fatalf("the seam saw %d bytes, the shell sent %d",
+					fx.Store.uploaded, tc.size)
+			}
+			t.Logf("sent %d bytes, heap rose by %d bytes (%d MiB)",
+				tc.size, grew, grew>>20)
+			if tc.hold {
+				// The null control, and its assertion is the other way round:
+				// a run that really holds the package MUST be seen, or the
+				// gauge above measures nothing.
+				if grew < int64(tc.size)/2 {
+					t.Fatalf("the null control held %d bytes and the heap rose by only %d "+
+						"-- the gauge sees nothing, so the flat runs prove nothing",
+						tc.size, grew)
+				}
+				return
+			}
+			if grew > uploadHeapBound {
+				t.Fatalf("the heap rose by %d bytes for %d bytes of input, bound %d "+
+					"-- the package is being collected somewhere on the way",
+					grew, tc.size, uploadHeapBound)
 			}
 		})
 	}

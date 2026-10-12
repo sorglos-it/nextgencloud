@@ -2,6 +2,9 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -80,11 +83,11 @@ func TestTheShellsFramesComeOutOfTheQueue(t *testing.T) {
 	}
 }
 
-// TestReadInputStopsAtTheBound is the bound of a FlowIn channel, measured with
+// TestInputStopsAtTheBound is the bound of a FlowIn channel, measured with
 // its open way next to it: at the bound the input is complete, one byte past
 // it the answer is E_TOOLARGE. Without the first half the second would also be
 // green for a bound that refuses everything.
-func TestReadInputStopsAtTheBound(t *testing.T) {
+func TestInputStopsAtTheBound(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		size int
@@ -105,20 +108,28 @@ func TestReadInputStopsAtTheBound(t *testing.T) {
 			p.write(t, wire.Frame{Type: wire.TypeEOF, Channel: 1})
 			rctx, cancel := context.WithTimeout(ctx, readWait)
 			defer cancel()
-			body, code := o.s.ReadInput(rctx, o.c, 16)
-			if code != tc.code {
+			in := o.s.Input(rctx, o.c, 16)
+			body, err := io.ReadAll(in)
+			if code := in.Code(); code != tc.code {
 				t.Fatalf("code %q, wanted %q", code, tc.code)
 			}
-			if tc.code == "" && len(body) != tc.size {
-				t.Fatalf("%d bytes of input, wanted %d", len(body), tc.size)
+			if tc.code == "" {
+				if err != nil {
+					t.Fatalf("read: %v", err)
+				}
+				if len(body) != tc.size {
+					t.Fatalf("%d bytes of input, wanted %d", len(body), tc.size)
+				}
+			} else if !errors.Is(err, ErrInput) {
+				t.Fatalf("read answered %v, wanted ErrInput", err)
 			}
 		})
 	}
 }
 
-// TestReadInputGivesTheCreditBack holds that an upload larger than one window
-// does not stall: every payload that was kept is granted again.
-func TestReadInputGivesTheCreditBack(t *testing.T) {
+// TestInputGivesTheCreditBack holds that an upload larger than one window
+// does not stall: every payload that was handed out is granted again.
+func TestInputGivesTheCreditBack(t *testing.T) {
 	h := newServer(t)
 	p := dialSession(t, h)
 	p.writeOpen(t, 1, openOf())
@@ -129,7 +140,7 @@ func TestReadInputGivesTheCreditBack(t *testing.T) {
 	go func() {
 		rctx, cancel := context.WithTimeout(ctx, readWait)
 		defer cancel()
-		_, _ = o.s.ReadInput(rctx, o.c, 1<<20)
+		_, _ = io.ReadAll(o.s.Input(rctx, o.c, 1<<20))
 	}()
 	p.write(t, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("acht byt")})
 	f := p.read(t)
@@ -141,4 +152,78 @@ func TestReadInputGivesTheCreditBack(t *testing.T) {
 		t.Fatalf("credit %d (%v), wanted the 8 bytes that were kept", credit, err)
 	}
 	p.write(t, wire.Frame{Type: wire.TypeEOF, Channel: 1})
+}
+
+// TestInputHandsOutBytesBeforeTheEOF is the mechanism the memory of an upload
+// rests on, measured where it lives: Read answers the bytes of a frame that
+// came, while the browser has sent no EOF at all and could go on for four
+// gigabytes. A reader that collected would wait here, and this case would run
+// out of its clock instead of reading.
+func TestInputHandsOutBytesBeforeTheEOF(t *testing.T) {
+	h := newServer(t)
+	p := dialSession(t, h)
+	p.writeOpen(t, 1, openOf())
+	o := firstOpened(t, h)
+	if f := p.read(t); f.Type != wire.TypeGrant {
+		t.Fatalf("first frame %+v", f)
+	}
+	rctx, cancel := context.WithTimeout(ctx, readWait)
+	defer cancel()
+	in := o.s.Input(rctx, o.c, 4<<30)
+	p.write(t, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("vorne")})
+	buf := make([]byte, 5)
+	n, err := io.ReadFull(in, buf)
+	if err != nil || string(buf[:n]) != "vorne" {
+		t.Fatalf("read %q (%d, %v), wanted the frame that came", buf[:n], n, err)
+	}
+	// And nothing of the stream has ended yet: no code, and the next frame is
+	// still read after it.
+	if code := in.Code(); code != "" {
+		t.Fatalf("code %q although nothing broke", code)
+	}
+	p.write(t, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("hinten")})
+	p.write(t, wire.Frame{Type: wire.TypeEOF, Channel: 1})
+	rest, err := io.ReadAll(in)
+	if err != nil || string(rest) != "hinten" {
+		t.Fatalf("rest %q (%v)", rest, err)
+	}
+	if code := in.Code(); code != "" {
+		t.Fatalf("code %q after a whole input", code)
+	}
+}
+
+// TestInputRefusesWhatComesAfterTheEOF holds the other side of the same
+// stream: a CLOSE in the middle of an input is E_PROTOCOL and not an end, and
+// a Read after a failure says so again rather than looking like an EOF.
+func TestInputRefusesACloseInTheMiddle(t *testing.T) {
+	h := newServer(t)
+	p := dialSession(t, h)
+	p.writeOpen(t, 1, openOf())
+	o := firstOpened(t, h)
+	if f := p.read(t); f.Type != wire.TypeGrant {
+		t.Fatalf("first frame %+v", f)
+	}
+	rctx, cancel := context.WithTimeout(ctx, readWait)
+	defer cancel()
+	in := o.s.Input(rctx, o.c, 1<<20)
+	p.write(t, wire.Frame{Type: wire.TypeData, Channel: 1, Payload: []byte("halb")})
+	body, err := json.Marshal(wire.Error(wire.CodeProtocol))
+	if err != nil {
+		t.Fatalf("close body: %v", err)
+	}
+	p.write(t, wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: body})
+	got, err := io.ReadAll(in)
+	if !errors.Is(err, ErrInput) {
+		t.Fatalf("read answered %v after %q, wanted ErrInput", err, got)
+	}
+	if code := in.Code(); code != wire.CodeProtocol {
+		t.Fatalf("code %q, wanted %q", code, wire.CodeProtocol)
+	}
+	// Once more: a failed stream stays failed and never turns into an EOF.
+	if _, err := in.Read(make([]byte, 1)); !errors.Is(err, ErrInput) {
+		t.Fatalf("the second read answered %v, wanted ErrInput", err)
+	}
+	if code := in.Drain(); code != wire.CodeProtocol {
+		t.Fatalf("Drain answered %q", code)
+	}
 }

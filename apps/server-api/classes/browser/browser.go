@@ -417,49 +417,6 @@ func (s *Session) SendEOF(ctx context.Context, c *link.Channel) error {
 	return s.link.Write(ctx, wire.Frame{Type: wire.TypeEOF, Channel: c.Num})
 }
 
-// ReadInput reads the DATA of a FlowIn channel up to the browser's EOF, at
-// most max bytes, and grants credit again as it consumes. An empty code means
-// the input is complete; E_TOOLARGE means more than max came, E_PROTOCOL a
-// CLOSE instead of an EOF, and E_TIMEOUT a context that ended first.
-//
-// The bound holds the memory of the channel and not only the answer: past max
-// nothing more is buffered and no further credit is granted, so a sender that
-// keeps going runs out of credit instead of filling this process.
-func (s *Session) ReadInput(ctx context.Context, c *link.Channel, max int64) ([]byte, wire.Code) {
-	var buf bytes.Buffer
-	for {
-		f, ok := c.Next(ctx)
-		if !ok {
-			return nil, wire.CodeTimeout
-		}
-		switch f.Type {
-		case wire.TypeData:
-			if int64(buf.Len())+int64(len(f.Payload)) > max {
-				return nil, wire.CodeTooLarge
-			}
-			buf.Write(f.Payload)
-			// Granted again right here, so an upload larger than one window
-			// does not stall. An empty payload grants nothing: a credit of
-			// zero is no GRANT (wire.ParseGrant), and ErrGrant would end a
-			// channel over a frame that cost nothing.
-			if len(f.Payload) > 0 {
-				if err := s.SendGrant(ctx, c, uint32(len(f.Payload)), nil); err != nil {
-					return nil, wire.CodeInternal
-				}
-			}
-		case wire.TypeEOF:
-			return buf.Bytes(), ""
-		case wire.TypeClose:
-			// A CLOSE instead of an EOF is the browser giving the channel up
-			// in the middle of its input; whoever asked for the input stops
-			// rather than acting on half an upload.
-			return nil, wire.CodeProtocol
-		default:
-			return nil, wire.CodeProtocol
-		}
-	}
-}
-
 // SendResult sends the result of a call-style channel and closes it with ok.
 // It cuts the body into frames of at most wire.MaxPayload bytes, because
 // SendData says what a payload over that costs: the credit is spent while

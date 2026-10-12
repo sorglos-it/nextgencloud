@@ -406,20 +406,46 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	if err := s.SendGrant(ctx, c, wire.DefaultWindow, nil); err != nil {
 		return wire.CodeInternal
 	}
+	// The DATA of a FlowIn channel is STREAMED to the handler and not read
+	// into a []byte first. It matters for one action and it decides whether
+	// the process survives it: core.Action.MaxIn for ngc.store/api/upload is
+	// store.MaxPackage, four gigabytes, and a []byte of that is what an admin
+	// with a large package used to kill this process with. Measured over the
+	// channel at 16 and 64 MiB, before and after, with a run that collects on
+	// purpose beside it: TestUploadHoldsNoPackageOnTheChannel.
+	//
+	// The bound is unchanged -- browser.Input counts what it hands out and
+	// grants no credit past it -- and so is the code a broken input closes
+	// with; only the moment it is known moved behind the handler
+	// (browser.Input.Code).
 	var in io.Reader = bytes.NewReader(nil)
+	var stream *browser.Input
 	if action.Flow == core.FlowIn {
-		body, code := s.ReadInput(ctx, c, action.MaxIn)
-		if code != "" {
-			return code
-		}
-		in = bytes.NewReader(body)
+		stream = s.Input(ctx, c, action.MaxIn)
+		in = stream
 	}
 	out := &bytes.Buffer{}
 	rq := &Call{S: d.S, Live: s.Live, Action: action, Params: params, Task: t, TaskEnv: o.Task,
 		In: in, Out: out, Admin: admin, Rights: granted}
 	body, err := h(ctx, rq)
+	// The input is asked before the handler's own error: a handler answers
+	// what IT made of a broken stream, and the code of the channel belongs to
+	// the break itself. A handler that swallowed the error of its reader
+	// cannot answer a result for half an upload either.
+	if stream != nil && stream.Code() != "" {
+		return stream.Code()
+	}
 	if err != nil {
 		return codeOf(err)
+	}
+	// What a handler did not read is read away here, so a channel never ends
+	// quietly on half an input. Every FlowIn handler of this API reads to the
+	// EOF itself, so this costs one comparison -- but it is what keeps the
+	// sentence true for the next one.
+	if stream != nil {
+		if code := stream.Drain(); code != "" {
+			return code
+		}
 	}
 	if action.Flow == core.FlowOut {
 		// A data stream and not a result, so wire.MaxCallResult is not its
