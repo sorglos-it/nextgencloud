@@ -8,8 +8,13 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
-// FuzzOpen feeds Open with everything: it must answer ErrSealed and never
-// panic, whatever comes out of the database.
+// FuzzOpen feeds Open with everything: it must never panic, and every FAILURE
+// must be ErrSealed and nothing else.
+//
+// Not "it must answer ErrSealed", which is what this line used to say and what
+// the body does not hold: success is allowed, and has to be -- the first seed
+// is a sealed value this box really opens. What the body refuses is a failure
+// of any other shape.
 func FuzzOpen(f *testing.F) {
 	b, err := NewBox(config.NewSecret(bytes.Repeat([]byte{7}, 32)))
 	if err != nil {

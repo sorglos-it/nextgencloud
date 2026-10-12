@@ -41,10 +41,16 @@ import (
 var rolloutOrder = []string{trust.AutoAPI, trust.AutoController, trust.AutoWeb}
 
 const (
-	// lockLease is how long one round may hold dbapi.LockUpdate without
-	// renewing it. It is longer than one node takes (InstallWait) so that a
-	// round is not overtaken while it waits, and short enough that an API
-	// which died mid-round does not keep the next one out for a day.
+	// lockLease is how long dbapi.LockUpdate is taken for at a time. It is
+	// longer than ONE step of ONE node takes (InstallWait) and short enough
+	// that an API which died mid-round does not keep the next one out for a
+	// day. It is NOT long enough for a whole round, and no constant could be:
+	// a round walks every part of every node one after the other, and each of
+	// those steps may cost InstallWait. Measured: one single machine with the
+	// roles api and web costs THREE waits, because tunnel.Components gives it
+	// ngc-controller, ngc-api and ngc-web -- 45 minutes against this lease of
+	// 40 (TestOneNodeCostsThreeWaits). That is why the round renews the lease
+	// before every step (renewLease) instead of trusting this number.
 	lockLease = int64(2400)
 	// InstallWait is how long one node has to report store.UpdateInstalled
 	// before the round goes on without it. A controller that installs itself
@@ -68,6 +74,15 @@ var ErrNotDriving = errors.New("updates: another API is driving the rollout")
 // of anything -- and the nodes behind it were not touched. Nothing anywhere
 // says the round finished, because nothing of a round is written down at all.
 var ErrAborted = errors.New("updates: the round stopped at a node")
+
+// ErrLostLease reports that the lease on dbapi.LockUpdate ran out in the
+// middle of a round and another API took it. It is a failure and is meant to
+// be logged as one: unlike ErrNotDriving it does not say "another API drives
+// and this one did nothing", it says this one drove, lost the wheel and left
+// an installation half walked through. What was installed stays installed, as
+// with ErrAborted; what is lost is the promise that exactly one API walks the
+// nodes.
+var ErrLostLease = errors.New("updates: the lease on the rollout lock ran out mid-round")
 
 // Rollout drives one round. Exactly one API drives it; the others answer
 // ErrNotDriving and do nothing.
@@ -116,6 +131,9 @@ func (u *Updates) Rollout(ctx context.Context) error {
 	// own step below lays the same file ready before it installs it, and
 	// sending it twice would only cost the bytes.
 	if node, found := u.MigrationNode(); found && !slices.Contains(u.nodesFor(trust.AutoAPI), node) {
+		if err := u.renewLease(ctx); err != nil {
+			return err
+		}
 		if err := u.stage(ctx, node, trust.AutoAPI, release, env); err != nil {
 			return err
 		}
@@ -125,11 +143,38 @@ func (u *Updates) Rollout(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			if err := u.renewLease(ctx); err != nil {
+				return err
+			}
 			if err := u.stageAndInstall(ctx, n, part, release, env, v.List); err != nil {
 				return err
 			}
 			// One node at a time, so one of each kind keeps running.
 		}
+	}
+	return nil
+}
+
+// renewLease puts the end of the lease on dbapi.LockUpdate one lockLease into
+// the future, so that the step which follows has the whole lease to itself.
+// It runs before EVERY step, not once per round: a round is as long as the
+// nodes make it (measured: three waits for one machine that carries api and
+// web), while the lease is one constant.
+//
+// dbapi.LockTake is the renewal too, because it answers true for the owner
+// that already holds the lock -- the contract says so (shared/dbapi) and
+// shared/dbapi/dbtest measures it. A false means the lease had run out and
+// somebody else took the lock while this round was waiting on a node. Then
+// this round stops at once: driving on would be the second round over the
+// same controllers that ErrNotDriving exists to prevent.
+func (u *Updates) renewLease(ctx context.Context) error {
+	now := u.S.Now()
+	ok, err := u.S.DB.LockTake(ctx, dbapi.LockUpdate, u.S.Cfg.Node, now, now+lockLease)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrLostLease
 	}
 	return nil
 }

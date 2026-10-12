@@ -912,8 +912,11 @@ func TestCreditWakesTheSender(t *testing.T) {
 	// The condition is established, not hoped for. The payload is handed over
 	// first and the case waits until the relay has really taken it out of the
 	// queue, then waits 200 ms more -- so the relay is inside its wait -- and
-	// only then sends the credit. The margin is 25 to 1: a relay that is not
-	// woken answers after Wait, which is five seconds here.
+	// only then sends the credit. The margin of the assertion is 5 to 1, not
+	// 25 to 1 as this line used to say: a relay that is not woken answers
+	// after Wait, five seconds here, and the assertion below allows one
+	// second. (The 25 to 1 is the other ratio in the case -- the 200 ms of
+	// waiting against those five seconds -- and that one decides nothing.)
 	rl := newRelay()
 	rl.Wait = 5 * time.Second
 	sh, hop := newShell(), newHop(wire.MaxTunnelChannels)

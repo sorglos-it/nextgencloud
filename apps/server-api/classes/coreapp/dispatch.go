@@ -137,6 +137,11 @@ type Store interface {
 	Activate(ctx context.Context, rq appstore.ActivateRequest) (wire.Code, error)
 	Deactivate(ctx context.Context, rq appstore.DeactivateRequest) (wire.Code, error)
 	Uninstall(ctx context.Context, rq appstore.UninstallRequest) (wire.Code, error)
+	// UsersAllowed is the seat count of a licence: how many users hold
+	// "<app>/use" and whether the licence allows that many. It is not an
+	// action of a channel -- ngc.users/set-rights asks it before it lets a
+	// right stand (setRights).
+	UsersAllowed(ctx context.Context, app string) (int, bool, error)
 }
 
 // Updates is what ngc.store/updates and ngc.store/set-update need of package

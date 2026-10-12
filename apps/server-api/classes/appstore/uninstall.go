@@ -93,7 +93,7 @@ func (st *Stores) Uninstall(ctx context.Context, rq UninstallRequest) (wire.Code
 		return code, nil
 	}
 	if row.Version != "" {
-		key := uiKey(row.ID, row.Version)
+		key := UIKey(row.ID, row.Version)
 		if err := st.S.DB.BlobDelete(ctx, dbapi.BlobUI, key); err != nil {
 			return wire.CodeInternal, err
 		}

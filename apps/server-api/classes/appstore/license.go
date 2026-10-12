@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
@@ -40,6 +41,17 @@ import (
 // whoever asks for a content key learns nothing about the licences of apps
 // they did not buy.
 var ErrLicense = errors.New("appstore: licence refused")
+
+// ErrNoLicense reports that no licence is on record for the app at all, which
+// is the normal state of a free app. It wraps ErrLicense, so every caller that
+// only asks errors.Is(err, ErrLicense) reads it exactly as before.
+//
+// It exists because one caller has to tell the two apart and must not guess:
+// coreapp.setRights lets a right through when there is no licence to limit
+// (a free app) and refuses when the licence cannot be judged. Without two
+// errors that decision would have to read "unreadable" as "free", which is
+// the open side of the only wall there is.
+var ErrNoLicense = fmt.Errorf("appstore: no licence on record: %w", ErrLicense)
 
 // The details this file writes into the log. They are fixed texts and carry
 // nothing of the licence beyond the app, which the entry names in its own
@@ -252,7 +264,7 @@ func (st *Stores) ContentKey(ctx context.Context, app string) ([]byte, error) {
 // the licence of app allows that many: a per-user licence allows License.Users
 // of them, a per-site licence any number. Two cases allow nobody: a licence
 // past its grace period, which answers false without an error, and an app with
-// no licence on record at all, which answers false and ErrLicense. A caller
+// no licence on record at all, which answers false and ErrNoLicense. A caller
 // that reads neither the error nor the flag therefore still errs on the closed
 // side -- the count alone never reads as permission.
 func (st *Stores) UsersAllowed(ctx context.Context, app string) (int, bool, error) {
@@ -261,7 +273,7 @@ func (st *Stores) UsersAllowed(ctx context.Context, app string) (int, bool, erro
 		return 0, false, err
 	}
 	if !ok {
-		return 0, false, ErrLicense
+		return 0, false, ErrNoLicense
 	}
 	v, err := st.S.Trust(ctx)
 	if err != nil {
@@ -316,11 +328,16 @@ func (st *Stores) InstallKey(ctx context.Context) (core.InstallKey, error) {
 // PushLicenses hands send the newest licence of every paid app, for the
 // controller the app runs on (ngc.store/controller/license).
 //
-// Who calls it is NOT built yet: the plan has it run after every new licence
-// and after every tunnel came up (controllers.Server.OnHello), so that a
+// Who calls it: server.Server.hello, on every tunnel that comes up -- so a
 // controller which was away learns of a licence that ran out and stops the
-// app's services. Until that caller exists, nothing in this repository calls
-// PushLicenses outside its own test.
+// app's services. A failure there is logged and does not fail the hello.
+//
+// This sentence used to say the caller was not built yet and that nothing
+// outside the tests called this at all. Measured false (grep -rn PushLicenses
+// over apps and shared without vendor): server/server.go:495 calls it. What is
+// still open is the OTHER half of the plan, and only that: nothing calls it
+// after a NEW licence is taken, so a licence uploaded while a tunnel stands
+// reaches that controller at its next hello and not before.
 //
 // Only the envelope travels, never the content key: a controller gets that one
 // with the app itself (core.Transfer), and a licence envelope carries no

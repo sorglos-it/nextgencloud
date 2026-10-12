@@ -313,10 +313,18 @@ func fail(ctx context.Context, db dbapi.Local, space, name string, now int64) er
 		Updated: kept})
 }
 
-// Clear removes the row after a successful login. It goes through the same
-// step as the counting: between reading a row and writing it back, a delete
-// would be undone by the write that follows it. The row is the bucket of the
-// name, so a name that shares it is cleared along with it -- see buckets.
+// Clear removes the bucket row of one name. It goes through the same step as
+// the counting: between reading a row and writing it back, a delete would be
+// undone by the write that follows it. The row is the bucket of the name, so a
+// name that shares it is cleared along with it -- see buckets.
+//
+// NOT after a successful login, which is what this sentence used to say.
+// Measured (grep -rn '\.Clear(' over apps and shared without tests): one
+// production caller, setup.finish -- the setup is over for good at that point,
+// so its bucket has nothing left to count. login/finish.go says the opposite
+// in so many words ("a login that worked clears no bucket") and gives the
+// reason: a bucket holds every name that falls into it, so a login clearing
+// its own bucket would let anybody wipe a stranger's count by logging in.
 func Clear(ctx context.Context, db dbapi.Local, name string) error {
 	counting.Lock()
 	defer counting.Unlock()

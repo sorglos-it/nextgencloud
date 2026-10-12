@@ -7,8 +7,9 @@ import (
 
 // shareTTL is how long a TOTP share is used again before it is counted afresh,
 // and how long a count that failed is left alone. The share moves only when
-// users are added or change their TOTP, so a minute-old number is as good as a
-// fresh one -- and counting on every login/start would put a full table scan in
+// users are added or change their TOTP, so a number up to FIVE minutes old is
+// as good as a fresh one -- the constant below is 300 seconds, and this line
+// used to say "a minute-old number" -- and counting on every login/start would put a full table scan in
 // front of every login.
 const shareTTL = 300
 
