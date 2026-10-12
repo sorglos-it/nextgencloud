@@ -222,7 +222,11 @@ func (a *api) Open(t *testing.T, o wire.Open) *chann {
 		o.Window = wire.MinWindow
 	}
 	a.num++
-	c := &chann{a: a, num: a.num, credit: uint64(o.Window)}
+	// Credit ZERO, not o.Window: o.Window is what this side grants the API,
+	// and what this side may send is nothing until the API's first GRANT
+	// (shared/wire, "Kanäle"). Starting at o.Window let a case send a window
+	// nobody had granted it.
+	c := &chann{a: a, num: a.num}
 	a.peer.writeOpen(t, c.num, o)
 	return c
 }
@@ -235,24 +239,38 @@ type chann struct {
 	queue  []wire.Frame
 }
 
-// pull returns the next frame of the link, counting every GRANT into the
+// pull returns the next frame OF THIS CHANNEL, counting every GRANT into the
 // credit this side may spend.
+//
+// The filter on the channel number is not tidiness, it is the measurement:
+// several channels of a case run over one link, and a channel the API refused
+// in the middle of an upload can leave a frame behind. Without the filter the
+// next channel read it and answered the previous channel's code -- measured
+// while this file was written, three upload cases drifted by one, and the
+// numbers looked like findings about the package. A frame of another channel
+// is dropped here, because every channel of this package is read to its end
+// before the next one opens.
 func (c *chann) pull(t *testing.T) wire.Frame {
 	t.Helper()
-	if len(c.queue) > 0 {
-		f := c.queue[0]
-		c.queue = c.queue[1:]
+	for {
+		if len(c.queue) > 0 {
+			f := c.queue[0]
+			c.queue = c.queue[1:]
+			return f
+		}
+		f := c.a.peer.read(t)
+		if f.Channel != c.num {
+			continue
+		}
+		if f.Type == wire.TypeGrant {
+			credit, _, err := wire.ParseGrant(f.Payload)
+			if err != nil {
+				t.Fatalf("grant: %v", err)
+			}
+			c.credit += uint64(credit)
+		}
 		return f
 	}
-	f := c.a.peer.read(t)
-	if f.Type == wire.TypeGrant {
-		credit, _, err := wire.ParseGrant(f.Payload)
-		if err != nil {
-			t.Fatalf("grant: %v", err)
-		}
-		c.credit += uint64(credit)
-	}
-	return f
 }
 
 // collect reads the DATA of the channel up to its EOF or its CLOSE.
@@ -563,4 +581,25 @@ func wantLinkEnded(t *testing.T, p *peer) {
 		}
 		return
 	}
+}
+
+// send writes body as DATA frames and then EOF, waiting for a GRANT whenever
+// the credit runs out. A CLOSE that arrives in between ends the sending: the
+// API has refused the channel, and writing on would be a protocol error of
+// ours.
+func (c *chann) send(t *testing.T, body []byte) {
+	t.Helper()
+	for len(body) > 0 {
+		n := min(len(body), wire.MaxPayload)
+		for c.credit < uint64(n) {
+			if f := c.pull(t); f.Type == wire.TypeClose {
+				c.queue = append(c.queue, f)
+				return
+			}
+		}
+		c.credit -= uint64(n)
+		c.a.peer.write(t, wire.Frame{Type: wire.TypeData, Channel: c.num, Payload: body[:n]})
+		body = body[n:]
+	}
+	c.a.peer.write(t, wire.Frame{Type: wire.TypeEOF, Channel: c.num})
 }

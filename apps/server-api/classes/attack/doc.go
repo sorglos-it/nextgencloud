@@ -18,8 +18,17 @@
 //     so a channel that reaches package relay ends there -- which is exactly
 //     the proof that signature, task and rights let it through.
 //
-// What is NOT measurable here is said in the cases themselves: the actions of
-// ngc.store/api have no handler registered in coreapp.New, so every one of
-// them answers E_NOTFOUND whatever is sent. An attack against such an action
-// would measure the missing handler and nothing else.
+// What is NOT measurable here is said in the cases themselves, and the list
+// has shrunk once already: the actions of ngc.store/api had no handler
+// registered in coreapp.New, so every one of them answered E_NOTFOUND
+// whatever was sent, and an attack through them measured the missing handler
+// and nothing else. They are wired now, and store_test.go attacks them for
+// real. What is still out of reach:
+//
+//   - Nothing in this package pairs a CONTROLLER, so nothing behind a tunnel
+//     is measured -- which is the same fact that makes E_UNREACHABLE the wall
+//     above.
+//   - With it, the second half of the truncation attack: an end-to-end stream
+//     that stops without the controller's end. TestTruncatedDataIsAnError
+//     says so where it would stand.
 package attack

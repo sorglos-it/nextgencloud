@@ -22,31 +22,48 @@ import (
 )
 
 // termApp is the app a root task of these cases names. Nothing has to be
-// installed for it: ngc.store/controller/deactivate is a core action of
-// service controller, so the API forwards it without reading an app row.
+// installed for it: ngc.store/controller/delete-data is a core action of
+// service controller with no handler, so the API forwards it without reading
+// an app row.
 const termApp = "org.sorglos.terminal"
 
-// deactivateOpen is the channel every task attack is measured on, and it was
-// picked for one reason: it is a ROOT action of service controller, so the way
-// to it runs through task.Check and ends in package relay. No tunnel is open
-// in a test, so a channel that got all the way through ends with
-// E_UNREACHABLE -- a code no wall before the relay answers. That makes "the
-// way was open" measurable instead of asserted.
-func deactivateOpen(env *sign.Envelope) wire.Open {
+// rootOpen is the channel every task attack is measured on, and the action was
+// picked, measured, and then picked again:
+//
+// It has to be a ROOT action of service controller, so that the way to it runs
+// through task.Check. And it has to be one coreapp.registerStore does NOT
+// register a handler for, so that the channel ends in package relay: no tunnel
+// is open in a test, so a channel that got all the way through ends with
+// E_UNREACHABLE -- a code no wall before the relay answers, which is what
+// makes "the way was open" measurable instead of asserted.
+//
+// ngc.store/controller/delete-data is such an action. The deactivate action
+// was, until the strand that wired the ngc.store handlers landed; with a
+// handler the same sound task answers E_NOTFOUND, because the app of the task
+// is not installed. Measured, and the reason the reachability check earns its
+// lines: the wall moved while this file was being written, and the check said
+// so instead of the attacks quietly measuring the new wall.
+//
+// The confirmation is not decoration either: delete-data is core.Critical, so
+// without it task.Check answers ErrConfirm and the channel ends with
+// E_CONFIRM before anything of the task is judged -- also measured.
+func (a *api) rootOpen(t *testing.T, env *sign.Envelope) wire.Open {
+	t.Helper()
+	pr := a.Admin.Prove(sign.PurposeConfirm, env.Payload)
 	return wire.Open{App: core.AppStore, Service: core.ServiceController,
-		Action: core.ActDeactivate, Task: env}
+		Action: core.ActDeleteData, Task: env, Confirm: &pr}
 }
 
-// deactivateTask is the task of that channel. fill makes the one-time ID,
-// because two attacks on one session must not spend each other's.
-func deactivateTask(t *testing.T, app string, fill byte) task.Task {
+// rootTask is the task of that channel. fill makes the one-time ID, because
+// two attacks on one session must not spend each other's.
+func rootTask(t *testing.T, app string, fill byte) task.Task {
 	t.Helper()
 	params, err := json.Marshal(core.AppParams{App: app})
 	if err != nil {
 		t.Fatalf("params: %v", err)
 	}
 	return task.Task{ID: enc.Bytes(bytes.Repeat([]byte{fill}, 16)), Node: ctlNode,
-		App: core.AppStore, Service: core.ServiceController, Action: core.ActDeactivate,
+		App: core.AppStore, Service: core.ServiceController, Action: core.ActDeleteData,
 		Params: params}
 }
 
@@ -170,16 +187,16 @@ func TestForgedSignaturesAreRefused(t *testing.T) {
 	})
 
 	t.Run("task of a channel", func(t *testing.T) {
-		forged := a.taskSignedBy(t, deactivateTask(t, termApp, 0x41), stranger)
-		if got := a.callCode(t, deactivateOpen(forged)); got != wire.CodeVerify {
+		forged := a.taskSignedBy(t, rootTask(t, termApp, 0x41), stranger)
+		if got := a.callCode(t, a.rootOpen(t, forged)); got != wire.CodeVerify {
 			t.Fatalf("the forged task answered %q, want %q", got, wire.CodeVerify)
 		}
 		// Reachability: the same channel with the admin's own signature goes
 		// all the way to package relay, which ends it with E_UNREACHABLE
 		// because no controller is paired. No wall before the relay answers
 		// that code.
-		good := a.Task(t, deactivateTask(t, termApp, 0x42))
-		if got := a.callCode(t, deactivateOpen(good)); got != wire.CodeUnreachable {
+		good := a.Task(t, rootTask(t, termApp, 0x42))
+		if got := a.callCode(t, a.rootOpen(t, good)); got != wire.CodeUnreachable {
 			t.Fatalf("the signed task answered %q, want %q", got, wire.CodeUnreachable)
 		}
 	})
@@ -260,14 +277,14 @@ func TestReplayedMessagesDoNothing(t *testing.T) {
 	})
 
 	t.Run("task ID", func(t *testing.T) {
-		tk := deactivateTask(t, termApp, 0x51)
+		tk := rootTask(t, termApp, 0x51)
 		// Reachability: the first use of the ID reaches the relay.
-		if got := a.callCode(t, deactivateOpen(a.Task(t, tk))); got != wire.CodeUnreachable {
+		if got := a.callCode(t, a.rootOpen(t, a.Task(t, tk))); got != wire.CodeUnreachable {
 			t.Fatalf("the first use answered %q, want %q", got, wire.CodeUnreachable)
 		}
 		// The replay. The task is signed again over the same ID, so the
 		// signature is sound and only the one-time value can refuse it.
-		if got := a.callCode(t, deactivateOpen(a.Task(t, tk))); got != wire.CodeVerify {
+		if got := a.callCode(t, a.rootOpen(t, a.Task(t, tk))); got != wire.CodeVerify {
 			t.Fatalf("the replayed task ID answered %q, want %q", got, wire.CodeVerify)
 		}
 	})
@@ -322,11 +339,11 @@ func TestReplayedMessagesDoNothing(t *testing.T) {
 // content key. Without that half the case would also be green against a
 // verifier that refuses every licence.
 //
-// NOT MEASURED HERE, and said instead of left out: the channel
-// ngc.store/api/license, which is how a licence really arrives, has no handler
-// registered in coreapp.New and answers E_NOTFOUND whatever is sent -- see
-// TestTheStoreChannelsHaveNoHandlerYet. An attack through it would measure the
-// missing handler. What is measured is the verifier that handler will call.
+// This case stays at the level of the verifier, with the vectors of the
+// contract file. The SAME attack over the channel a licence really arrives on
+// is measured in TestAForeignLicenceOnTheChannelKeepsNothing -- which only
+// became possible when the ngc.store handlers were wired; until then that
+// channel answered E_NOTFOUND whatever was sent.
 func TestForeignLicenseDoesNotOpenAnApp(t *testing.T) {
 	v := loadVectors(t)
 	st := v.vectorStore()
@@ -379,12 +396,12 @@ func TestChangedParametersBreakTheChannel(t *testing.T) {
 
 	// Reachability first: the untouched task of this channel, with no
 	// parameters beside it, reaches the relay.
-	if got := a.callCode(t, deactivateOpen(a.Task(t, deactivateTask(t, termApp, 0x63)))); got != wire.CodeUnreachable {
+	if got := a.callCode(t, a.rootOpen(t, a.Task(t, rootTask(t, termApp, 0x63)))); got != wire.CodeUnreachable {
 		t.Fatalf("the untouched task answered %q, want %q", got, wire.CodeUnreachable)
 	}
 
 	t.Run("the payload of the task", func(t *testing.T) {
-		env := a.Task(t, deactivateTask(t, termApp, 0x61))
+		env := a.Task(t, rootTask(t, termApp, 0x61))
 		// The app swapped for another name of the same length, so the JSON
 		// stays valid and only the signature can tell.
 		bentPayload := []byte(strings.Replace(string(env.Payload), termApp,
@@ -394,18 +411,18 @@ func TestChangedParametersBreakTheChannel(t *testing.T) {
 		}
 		bent := *env
 		bent.Payload = bentPayload
-		if got := a.callCode(t, deactivateOpen(&bent)); got != wire.CodeVerify {
+		if got := a.callCode(t, a.rootOpen(t, &bent)); got != wire.CodeVerify {
 			t.Fatalf("the bent payload answered %q, want %q", got, wire.CodeVerify)
 		}
 	})
 
 	t.Run("parameters beside the task", func(t *testing.T) {
-		env := a.Task(t, deactivateTask(t, termApp, 0x62))
+		env := a.Task(t, rootTask(t, termApp, 0x62))
 		params, err := json.Marshal(core.AppParams{App: "org.sorglos.other"})
 		if err != nil {
 			t.Fatalf("params: %v", err)
 		}
-		o := deactivateOpen(env)
+		o := a.rootOpen(t, env)
 		o.Params = params
 		// MEASURED, and not what was expected when this case was written:
 		// the answer is E_PROTOCOL and not E_VERIFY. wire.Open.Validate
@@ -617,36 +634,6 @@ func TestManInTheMiddleAtSetup(t *testing.T) {
 	v, err := a.Srv.State.Trust(ctx)
 	if err != nil || v.List.Seq != 1 {
 		t.Fatalf("trust after the sound setup: %v", err)
-	}
-}
-
-// TestTheStoreChannelsHaveNoHandlerYet is the measurement behind every "not
-// reachable" of this file, and it is a case rather than a sentence so that it
-// stops being true the moment somebody registers the handlers.
-//
-// coreapp.New registers the actions of ngc.desktop and ngc.users; the actions
-// of ngc.store/api are registered by nobody yet, so the handler lookup of the
-// dispatcher misses and the channel closes with E_NOTFOUND. The user of this
-// fixture is an admin, so no earlier wall can be the reason -- which the
-// reachability half shows: ngc.desktop/me, on the same session, answers.
-//
-// When this case goes red because a store action no longer answers E_NOTFOUND,
-// the attacks marked "not reachable" can be measured for real.
-func TestTheStoreChannelsHaveNoHandlerYet(t *testing.T) {
-	a := newAPI(t)
-	if body := a.call(t, wire.Open{App: core.AppDesktop, Service: core.ServiceAPI,
-		Action: core.ActMe}); len(body) == 0 {
-		t.Fatal("ngc.desktop/me answered nothing on this session")
-	}
-	for _, act := range []string{core.ActSources, core.ActInstalled, core.ActInstallKey,
-		core.ActUpdates} {
-		got := a.callCode(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
-			Action: act})
-		if got != wire.CodeNotFound {
-			t.Fatalf("ngc.store/api/%s answered %q, want %q -- the handlers are wired now, "+
-				"and the attacks marked \"not reachable\" in this file can be measured",
-				act, got, wire.CodeNotFound)
-		}
 	}
 }
 
