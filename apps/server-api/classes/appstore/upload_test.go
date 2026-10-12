@@ -385,8 +385,8 @@ func TestUploadRefusesBeyondMaxPackage(t *testing.T) {
 	}
 	st, s = newStores(t)
 	st.MaxUpload = int64(len(pkg)) - 1
-	if _, err := st.Upload(ctx, bytes.NewReader(pkg)); !errors.Is(err, ErrStore) {
-		t.Fatalf("one byte over the bound: got %v, want ErrStore", err)
+	if _, err := st.Upload(ctx, bytes.NewReader(pkg)); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("one byte over the bound: got %v, want ErrTooLarge", err)
 	}
 	blobs, err := s.DB.BlobFrom(ctx, dbapi.BlobUI, 0)
 	if err != nil || len(blobs) != 0 {
@@ -550,9 +550,12 @@ func TestUploadHoldsNoPackage(t *testing.T) {
 // GiB and that a file past it is refused there too -- a package of just under
 // 4 GiB with 2 MiB behind it, through the default limit.
 //
-// The refusal is ErrStore and not store.ErrPackage, so it is this bound that
-// refused and not store.Walk's own reading limit: the way to the line under
-// measurement was open. It costs about four seconds, which is what reading 4
+// The refusal is ErrTooLarge and not store.ErrPackage, so it is this bound
+// that refused and not store.Walk's own reading limit: the way to the line
+// under measurement was open. ErrTooLarge and not ErrStore either, because
+// task 22 maps a bound that was passed to E_TOOLARGE and an unusable store to
+// E_UNREACHABLE (CodeFor), and one error for both would send an uploader
+// looking for another store. It costs about four seconds, which is what reading 4
 // GiB of nothing through SHA-256 costs.
 func TestUploadRefusesTheRealBound(t *testing.T) {
 	st, s := newStores(t)
@@ -560,8 +563,8 @@ func TestUploadRefusesTheRealBound(t *testing.T) {
 		t.Fatalf("MaxUpload is %d, not the contract's bound", st.MaxUpload)
 	}
 	pkg := io.MultiReader(streamPackage(t, store.MaxPackage-(1<<20)), io.LimitReader(zeroes{}, 2<<20))
-	if _, err := st.Upload(ctx, pkg); !errors.Is(err, ErrStore) {
-		t.Fatalf("got %v, want ErrStore", err)
+	if _, err := st.Upload(ctx, pkg); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("got %v, want ErrTooLarge", err)
 	}
 	blobs, err := s.DB.BlobFrom(ctx, dbapi.BlobUI, 0)
 	if err != nil || len(blobs) != 0 {

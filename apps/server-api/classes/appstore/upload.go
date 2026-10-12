@@ -43,7 +43,11 @@ func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, e
 		return core.UploadResult{}, ErrStore
 	}
 	if count.n > max {
-		return core.UploadResult{}, ErrStore
+		// ErrTooLarge and not ErrStore: a bound that was passed must come out
+		// as E_TOOLARGE, and ErrStore is what a store answering unusably
+		// gives, which is E_UNREACHABLE (CodeFor). One error for both would
+		// tell an uploader to try another store.
+		return core.UploadResult{}, ErrTooLarge
 	}
 	// m.ID and m.Version come from store.ParseManifest (wire.ValidAppID,
 	// store.ValidVersion), so neither can carry the "@" that separates them
@@ -55,7 +59,8 @@ func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, e
 		UI: enc.Bytes(uiHash)}, nil
 }
 
-// uploadLimit is the length one upload may have. store.MaxPackage is the last
+// uploadLimit is the length one upload may have, and the length of the
+// uploaded file of one activation (spoolPackage). store.MaxPackage is the last
 // word: MaxUpload exists so a test need not send 4 GiB, and a value above the
 // contract's bound -- or none at all -- is not taken from it
 // (TestTheUploadBoundIsTheContractsOwn).

@@ -94,10 +94,21 @@ type Stores struct {
 	// nothing a store sends can forge a line in it. audit.ErrDropped is a
 	// report and never costs the entry, so it is not acted on here.
 	Log *audit.Log
-	// MaxUpload bounds the package of one upload (Upload). New sets it to
-	// store.MaxPackage, and uploadLimit does not let a higher value stand: it
-	// is here so a test need not send 4 GiB, not so a caller can take more.
+	// MaxUpload bounds the package of one upload (Upload) and of the uploaded
+	// file of one activation. New sets it to store.MaxPackage, and
+	// uploadLimit does not let a higher value stand: it is here so a test need
+	// not send 4 GiB, not so a caller can take more.
 	MaxUpload int64
+	// Send is how this package reaches a controller (Sender). It is nil until
+	// the server wires it, and every step that would need it answers
+	// E_INTERNAL while it is.
+	Send Sender
+	// Spool is the directory the package of an activation is written to while
+	// it is read (fetchPackage). Empty means the directory the operating
+	// system names, which is what a test uses; a server sets it to its data
+	// directory, because a package may be gigabytes and must not land in a
+	// RAM-backed /tmp.
+	Spool string
 }
 
 // New returns Stores with a client that follows no redirect and waits at most

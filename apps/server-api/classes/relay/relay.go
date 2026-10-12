@@ -154,7 +154,11 @@ type Forwarded struct {
 	Client []byte       // client certificate payload, as the user's proof covers it
 	Proof  *proof.Proof // the user's proof over Client
 	// Head and File are the transfer the API writes itself on a FlowTransfer
-	// channel the shell opened (task 22 puts the header together). On such a
+	// channel the shell opened. Nothing fills them yet: task 22 builds the
+	// header in appstore.buildTransfer and opens a channel of its own
+	// (appstore.Activate, through Transfer), so a dispatcher routes an
+	// activation there instead of here. These two fields are the other way of
+	// doing it and are still open. On such a
 	// channel the shell sends no DATA at all.
 	Head *core.Transfer
 	File io.Reader
@@ -180,10 +184,12 @@ var _ coreRelay = (*Relay)(nil)
 // Forwarded.Raw, and do not "tidy" it into a re-encoded OPEN.
 //
 // One named gap is left, and it is not this package's to close: a forwarded
-// channel of a core action with flow transfer needs the header and the file,
-// which task 22 puts together. Forward has neither, so such a channel ends
-// with E_INTERNAL rather than sending the shell's bytes as if they were the
-// file. Everything else runs.
+// channel of a core action with flow transfer needs the header and the file.
+// Forward has neither, so such a channel ends with E_INTERNAL rather than
+// sending the shell's bytes as if they were the file. Everything else runs.
+// Task 22 did not close it this way either: appstore.Activate puts the header
+// together and opens its own channel through Transfer, so an activation is to
+// be routed there and not through Forward.
 func (rl *Relay) Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
 	raw []byte, t *task.Task, node string) {
 	code := rl.forward(ctx, s, c, o, raw, t, node)
