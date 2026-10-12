@@ -20,6 +20,7 @@ import (
 	// a reader is the admin's terminal. Two unrelated things, one word - the
 	// same collision that broke the build when tasks 15 and 16 both wrote a
 	// disk. The import carries the name, so nothing of the older code moves.
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	termsvc "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/terminal"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
@@ -34,9 +35,10 @@ type Options struct {
 	Arch   string            // target of "image", one out of arches
 }
 
-// arches are the targets NGC is built for. A fixed list, because the value
-// becomes an argument of the image build later on.
-var arches = []string{"amd64", "arm64"}
+// arches are the targets NGC is built for. The list itself stands in the
+// runtime package, where the value becomes an argument of podman: two lists
+// that have to agree are two places to change and one to forget.
+var arches = ctrlrt.Arches
 
 const (
 	// maxCommand bounds what Main repeats back to the admin.
@@ -175,7 +177,9 @@ Kommandos:
   pair                                     diesen Server mit einer API koppeln
   terminal                                 Dienst des Terminals, läuft im Container
   hold                                     im Container warten, bis er beendet wird
-  image -arch <amd64|arm64> -out <Datei>   Image der Terminal-App schreiben
+  image -arch <amd64|arm64> -out <Datei>   Abbild der Terminal-App schreiben;
+                                           braucht podman, läuft auf einem
+                                           Baurechner, nie auf dem Zielserver
 
 Flags:
   -config <Datei>   Konfiguration, Vorgabe %s
@@ -357,17 +361,6 @@ func stopOnSignal() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-// buildImage writes the image of the terminal app for one architecture. Task 23
-// makes that image with podman on a build machine instead, so no later task
-// fills this command: which of the two ways stays is the coordinator's call.
-func buildImage(version string, args []string, stdout, stderr io.Writer) int {
-	if _, _, err := parseImage(args); err != nil {
-		fmt.Fprintln(stderr, usageImage)
-		return 2
-	}
-	return notReady(stderr, "image")
-}
-
 // parseImage reads the flags of "image" and returns the options and the file
 // to write. Both values later become arguments of another program, so only
 // known values get through.
@@ -396,9 +389,7 @@ func validOut(p string) bool {
 // Linux, but the tests also run on Windows.
 func isSeparator(r rune) bool { return r == '/' || r == '\\' }
 
-// notReady answers a command that a later task still has to build. German,
-// because an admin reads it on the server.
-func notReady(stderr io.Writer, name string) int {
-	fmt.Fprintf(stderr, "%s: Dieser Teil ist noch nicht gebaut.\n", name)
-	return 1
-}
+// Nothing answers "Dieser Teil ist noch nicht gebaut." any more: "image" was
+// the last command that did, and it is built (image.go). The helper is gone on
+// purpose - a command that is not built is easier to find as a missing case of
+// the switch than as a line that answers politely.

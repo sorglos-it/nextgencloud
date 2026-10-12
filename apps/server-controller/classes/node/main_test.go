@@ -107,25 +107,23 @@ func TestMainRepeatsOnlyCommandNames(t *testing.T) {
 	}
 }
 
-// Commands that are still to come answer with exit 1 and say so in German, so
-// an admin sees the difference between a wrong call and a part not built yet.
-//
-// The call without a command is no longer among them: task 24 built it, and
-// what it answers now is the line of the configuration it could not read
-// (TestMainWithoutACommandRunsTheController).
-func TestMainCommandsNotBuiltYet(t *testing.T) {
+// Nothing answers "Dieser Teil ist noch nicht gebaut." any more. "image" was
+// the last command that did (measured 12.10.2026); it is built in image.go,
+// and no helper for the line is left, so a command that is not built shows up
+// as a missing case of the switch instead of a polite answer.
+func TestNoCommandAnswersNotBuiltYet(t *testing.T) {
 	for _, args := range [][]string{
+		// Only the commands that end by themselves: "terminal" and "hold" run
+		// in a container until something stops them, and a case that called
+		// them would wait for that.
 		{"image", "-arch", "arm64", "-out", "terminal-arm64.tar"},
+		{"pair"},
 	} {
 		var out, errOut bytes.Buffer
-		if code := Main("1.2.3", args, noInput(), &out, &errOut); code != 1 {
-			t.Errorf("Main(%q) = %d, want 1", args, code)
-		}
-		if !strings.Contains(errOut.String(), "Dieser Teil ist noch nicht gebaut.") {
-			t.Errorf("Main(%q) stderr = %q", args, errOut.String())
-		}
-		if out.Len() != 0 {
-			t.Errorf("Main(%q) stdout = %q, want empty", args, out.String())
+		Main("1.2.3", args, noInput(), &out, &errOut)
+		if strings.Contains(out.String()+errOut.String(), "noch nicht gebaut") {
+			t.Errorf("Main(%q) answered with the line of an unbuilt command: %q",
+				args, out.String()+errOut.String())
 		}
 	}
 }
