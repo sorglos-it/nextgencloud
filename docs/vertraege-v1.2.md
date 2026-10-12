@@ -744,3 +744,38 @@ Funktion, groß geschrieben, mit eigenen Fällen. Das ist eine Änderung im
 eingefrorenen `shared/`, darum steht sie hier und ist nicht gebaut. Wer sie baut,
 lässt `validHTTPSURL` nicht daneben stehen, sondern macht die große Fassung zur
 einzigen.
+
+## Punkt 26: Der Einmal-Code wird vor der MAC-Prüfung verbraucht
+
+**Gemessen am 12.10.2026** in Aufgabe 18 der API und dort als Bedenken gemeldet.
+`join.Accept` verbraucht den Einmal-Wert (`OnceUse`), **bevor** es die MAC prüft —
+übernommen aus `controllers.Pair`, mit Begründung im Kommentar.
+
+**Was das bedeutet:** wer die Adresse kennt und eine Anfrage mit **falscher** MAC
+schickt, verbrennt den wartenden Beitrittscode. Der Angreifer kommt nicht herein,
+aber der Admin muss einen neuen Code ausgeben — und beim nächsten Versuch wieder.
+Das ist kein Einbruch, sondern ein billiges Zumachen von außen.
+
+Die andere Reihenfolge hat den umgekehrten Preis: wer erst die MAC prüft, lässt
+jemanden beliebig oft gegen denselben Code rechnen. Welche Seite schwerer wiegt,
+hängt daran, wie lang ein Code gilt und wie oft er neu ausgegeben wird — und das
+ist **nicht gemessen**.
+
+Festgehalten, nicht geändert: die Reihenfolge steht an **zwei** Stellen
+(`join.Accept` und `controllers.Pair`), und wer sie anfasst, muss beide anfassen,
+sonst verhalten sich Beitritt und Paarung verschieden. Wer das entscheidet,
+entscheidet es für beide, mit einer Messung, wie oft ein Code neu ausgegeben wird.
+
+## Punkt 27: Zwei Server mit demselben Namen verdrängen einander
+
+**Gemessen am 12.10.2026** in Aufgabe 18 der API. Eine zweite Beitrittsanfrage für
+denselben Knotennamen **überschreibt** die erste (`BlobPut` nach `req.Node`). Der
+Admin sieht dann nur die letzte und weiß nicht, dass es eine erste gab.
+
+Im Entwurf ist das nicht geregelt. Zwei Lesarten, beide vertretbar: die zweite
+Anfrage ist derselbe Server, der es noch einmal versucht (dann ist Überschreiben
+richtig), oder zwei verschiedene Server wollen denselben Namen (dann gehört die
+zweite abgewiesen und gemeldet). Unterscheiden lassen sie sich am öffentlichen
+Schlüssel — der liegt in der Anfrage.
+
+Festgehalten, nicht gebaut. Wer es baut, entscheidet am Schlüssel, nicht am Namen.

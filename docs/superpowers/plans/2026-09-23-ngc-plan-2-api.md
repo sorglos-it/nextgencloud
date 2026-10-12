@@ -8357,8 +8357,12 @@ import (
 // and answers what it read. The shell computes the same values from the file
 // it sent and refuses a mismatch, so nothing here has to be trusted.
 func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, error) {
-	// The package is read twice: once for its checksum and once through
-	// store.Walk, so the bytes go to disk only in the caller's buffer.
+	// BERICHTIGT 12.10.2026: Der Kommentar unten sagte das Gegenteil des Codes —
+	// io.ReadAll haelt das ganze Paket (bis store.MaxPackage = 4 GiB) im
+	// Speicher. Gemessen in Aufgabe 20: diese Fassung haelt bei 128 MiB
+	// Eingabe 268 MiB, die gebaute Fassung (io.TeeReader neben
+	// store.PackageUI, Rest verworfen, Laenge erst danach) haelt bei
+	// 32/128/512 MiB je 0 MiB. Gebaut ist der Durchlauf, nicht dieser Block.
 	raw, err := io.ReadAll(io.LimitReader(r, store.MaxPackage+1))
 	if err != nil || int64(len(raw)) > store.MaxPackage {
 		return core.UploadResult{}, ErrStore
@@ -9400,7 +9404,16 @@ git commit -m "Wire the API together and take the websocket and totp modules" \
 
 ---
 
-### Task 25: ulh-Skript `scripts/ngc-api.sh`
+### Task 25: ulh-Skript `ngc-api.sh`
+
+> **BERICHTIGT 12.10.2026:** Die Pfade dieser Aufgabe gibt es im ulh-Repo nicht mehr.
+> Gebaut wurde nach den Geschwistern `ngc-db` und `ngc-web`:
+> `apps/cli/assets/scripts/ngc-api.sh` (Modus 100755) und
+> `apps/cli/tests/ngc-api.test.sh`, dazu `catalog.yaml` (statt `config.yaml`),
+> `menu.test.sh`, `docs/scripts.md` (erzeugt mit `tools/gen-scripts-doc.sh`),
+> `docs/guide.md`, `README.md`, `CHANGELOG.md`. `SCRIPTS.md` und `TREE.md`
+> gibt es dort nicht. Wer eine weitere Aufgabe fuer ulh schreibt, nimmt diese
+> Pfade, nicht die alten.
 
 Dieses Skript liegt **nicht** in diesem Repo, sondern im öffentlichen ulh-Repo
 (`sorglos-it/ulh`), auf dem Branch `ngc-api`, und kommt per Pull Request nach dessen `main`.

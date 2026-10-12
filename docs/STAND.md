@@ -60,7 +60,7 @@ nach, ob die Aufgabe noch offen ist:
 ## Fallen dieser Umgebung (am 10.10.2026 gemessen, alle bezahlt)
 
 Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Projekt) und
-`docs/arbeitsweise.md` (NGC-eigene Lehren). Die fünf, die am meisten gekostet haben:
+`docs/arbeitsweise.md` (NGC-eigene Lehren). Die sechs, die am meisten gekostet haben:
 
 - **Arbeitsbäume werden während der Arbeit hohl.** Mehrmals gemessen: ein Baum stand nach einer
   Wiederherstellung bei 0 fehlenden Dateien und kurz darauf wieder bei **629**; parallel 145, 123,
@@ -76,6 +76,17 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
 - **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
   im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
   WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
+- **`go test` über alle Controller-Pakete stirbt in 3 von 5 Läufen**, und zwar nicht an
+  einem Testfall: `fatal error: unknown caller pc`, immer in `scanstack`/`markroot` des
+  Müllsammlers der Go-Laufzeit (`go1.27.1`), immer im Paket `classes/install`. **Allein
+  ist dasselbe Paket grün**, auch unter künstlicher Last. Am 12.10.2026 gemessen, 3/5 —
+  und ebenso 3/5 auf dem Stand **davor** (`01f8a6e`), also nicht von einer Änderung
+  verursacht. Daneben gemessen: `go test -race ./apps/server-api/...` scheitert
+  reproduzierbar mit `open …httpapi.test.exe: Zugriff verweigert`, was auf den
+  Virenschutz (Bitdefender) deutet; die Ursache des Absturzes ist **nicht gemessen**.
+  **Daraus folgt für jede Meldung: ein einzelnes grünes `go test ./...` ist hier keine
+  Aussage.** Das eigene Paket einzeln messen, und wenn der Gesamtsatz genannt wird, ihn
+  mehrfach fahren und die Zahl der roten Läufe mitnennen.
 - **`git` stirbt in der Bash mit „Out of memory", während 98 GB frei sind.** Gemessen am
   10.10.2026 bei vielen gleichzeitigen Strängen: `git commit` brach mit „malloc failed (tried to
   allocate 1048576 bytes)" ab, `git push` mit „calloc failed", und derselbe Befehl lief
