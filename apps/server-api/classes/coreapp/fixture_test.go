@@ -216,8 +216,16 @@ type harness struct {
 	num  uint32
 }
 
-// newFixture builds the API, logs one admin in and opens the session link.
-func newFixture(t *testing.T) *harness {
+// newFixture builds the API, logs one admin in and opens the session link. It
+// leaves Deps.Store and Deps.Updates nil, which is the state
+// TestAnActionWithoutAHandlerIsNotFound measures; newStoreFixture is the one
+// with both seams set.
+func newFixture(t *testing.T) *harness { return newFixtureWith(t, nil) }
+
+// newFixtureWith is newFixture with one hand on the dependencies, so a case
+// can put its own seam in before New registers the handlers -- which is when
+// New decides what exists at all (registerStore).
+func newFixtureWith(t *testing.T, with func(*harness, *Deps)) *harness {
 	t.Helper()
 	box, err := secrets.NewBox(config.NewSecret(make([]byte, 32)))
 	if err != nil {
@@ -266,8 +274,12 @@ func newFixture(t *testing.T) *harness {
 		Installation: l.Installation, Admin: admin, AdminName: l.Users[1].Name,
 		AdminID: l.Users[1].ID, List: l,
 	}
-	h.D = New(Deps{S: s, Log: lg, Login: h.Login, Tunnels: controllers.NewRegistry(), Relay: relay,
-		Sessions: sessions})
+	deps := Deps{S: s, Log: lg, Login: h.Login, Tunnels: controllers.NewRegistry(), Relay: relay,
+		Sessions: sessions}
+	if with != nil {
+		with(h, &deps)
+	}
+	h.D = New(deps)
 	srv := &browser.Server{S: s, Login: h.Login, Open: h.D, Sessions: sessions}
 	h.HTTP = httptest.NewServer(http.HandlerFunc(srv.Socket))
 	t.Cleanup(h.HTTP.Close)

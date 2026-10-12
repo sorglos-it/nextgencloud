@@ -100,15 +100,46 @@ func TestInputBeyondMaxInCloses(t *testing.T) {
 // the action is in the contract, but this dispatcher serves no handler for it.
 // Without this case a dispatcher that answered E_INTERNAL there would pass.
 //
-// The action it names has to be one New registers nothing for: it was
-// ngc.users/list until task 16 gave that one a handler, and it is now
-// ngc.store/sources, whose handler comes with the app store.
+// The action it names has to be one THIS dispatcher registers nothing for, and
+// that is where it had to move. It was ngc.users/list until task 16 gave that
+// one a handler, then ngc.store/sources, which stopped meaning anything the
+// moment the app store's handlers were registered -- every action of the
+// contract has a handler or a relay now. So what it points at is
+// ngc.store/sources on a dispatcher built WITHOUT the app store
+// (Deps.Store nil), which is a state of its own and not a hole: a seam nobody
+// wired says E_NOTFOUND, not E_INTERNAL, and nothing of it blames the
+// installation.
+//
+// The control is the point of the second half: the SAME action on a dispatcher
+// with the seam set answers a result. Without it this case would stay green
+// for a dispatcher that answered E_NOTFOUND to everything.
 func TestAnActionWithoutAHandlerIsNotFound(t *testing.T) {
 	fx := newFixture(t)
 	c := fx.OpenAdmin(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI, Action: core.ActSources,
 		Window: wire.MinWindow})
 	if cl := c.closed(t); cl.Code != wire.CodeNotFound {
 		t.Fatalf("close %+v", cl)
+	}
+	// The same for the other seam, because the two are registered apart: a
+	// dispatcher with the app store and without the updates serves sources and
+	// not ngc.store/updates.
+	c2 := fx.OpenAdmin(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
+		Action: core.ActUpdates, Window: wire.MinWindow})
+	if cl := c2.closed(t); cl.Code != wire.CodeNotFound {
+		t.Fatalf("close %+v", cl)
+	}
+	with := newStoreFixture(t)
+	c3 := with.OpenAdmin(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
+		Action: core.ActSources, Window: wire.MinWindow})
+	c3.result(t)
+	if !with.Store.saw(core.ActSources) {
+		t.Fatal("the seam was wired and the app store was not asked")
+	}
+	c4 := with.OpenAdmin(t, wire.Open{App: core.AppStore, Service: core.ServiceAPI,
+		Action: core.ActUpdates, Window: wire.MinWindow})
+	c4.result(t)
+	if !with.Up.saw(core.ActUpdates) {
+		t.Fatal("the seam was wired and the updates were not asked")
 	}
 }
 

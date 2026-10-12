@@ -39,6 +39,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/browser"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
@@ -50,6 +51,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/session"
+	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -110,6 +112,42 @@ type JoinCodes interface {
 	NewJoinCode(ctx context.Context) (tunnel.JoinCode, int64, error)
 }
 
+// Store is what the actions of ngc.store need of package appstore. It is an
+// interface for the reason Tunnels is one: *appstore.Stores reaches a
+// controller and the network, so a case that had to build one could measure
+// nothing of the dispatcher's own share -- the parameters it resolves, the
+// code it maps, the result it encodes.
+//
+// The three actions of service controller are in here and are NOT left to the
+// relay, and that is the point of the list: activate is a FlowTransfer action,
+// so somebody has to write the Transfer header and the package on the tunnel
+// hop, and relay.Forward writes neither. Deactivate and uninstall would pass
+// through the relay, and then nothing on this side would happen at all:
+// Deactivate is what sets the row's Active to false and writes the log line,
+// and Uninstall is what removes the ui-tar and the approval of a version that
+// is on no node any more, keeps the bought licence on purpose and empties or
+// deletes the row. All three therefore belong to this API and not to a pipe.
+type Store interface {
+	Sources(ctx context.Context) ([]core.SourceInfo, error)
+	Catalog(ctx context.Context, id string) (*store.Catalog, sign.Envelope, error)
+	Installed(ctx context.Context) ([]core.InstalledApp, error)
+	Upload(ctx context.Context, r io.Reader) (core.UploadResult, error)
+	TakeLicense(ctx context.Context, app string, body []byte) (core.LicenseResult, error)
+	InstallKey(ctx context.Context) (core.InstallKey, error)
+	Activate(ctx context.Context, rq appstore.ActivateRequest) (wire.Code, error)
+	Deactivate(ctx context.Context, rq appstore.DeactivateRequest) (wire.Code, error)
+	Uninstall(ctx context.Context, rq appstore.UninstallRequest) (wire.Code, error)
+}
+
+// Updates is what ngc.store/updates and ngc.store/set-update need of package
+// updates; *updates.Updates implements it. Rollout is NOT in here: a round is
+// driven by the server's own beat and never by a channel of the shell, so the
+// dispatcher has no way at all to start one.
+type Updates interface {
+	Rows(ctx context.Context) ([]core.UpdateInfo, error)
+	SetSetting(ctx context.Context, s core.UpdateSetting) error
+}
+
 // Deps are what the dispatcher needs.
 type Deps struct {
 	S     *state.State
@@ -123,6 +161,16 @@ type Deps struct {
 	Sessions    *browser.Registry
 	Join        JoinCodes
 	Relay       Relay
+	// Store serves the actions of ngc.store, Updates its two update actions.
+	// Both may be nil, and then New registers NO handler for the actions that
+	// need them: an action of service api without a handler answers
+	// E_NOTFOUND (open), which says what is true -- this API does not serve
+	// it. A handler that answered E_INTERNAL instead would blame the
+	// installation for a seam nobody wired. server.Build always sets both, and
+	// server.TestEveryStoreActionIsServedAfterBuild measures that through the real
+	// wiring rather than through this comment.
+	Store   Store
+	Updates Updates
 }
 
 // Call is one core action the API carries out itself.
@@ -132,10 +180,18 @@ type Call struct {
 	Action core.Action
 	Params core.Params
 	Task   *task.Task
-	In     io.Reader // FlowIn: at most Action.MaxIn bytes
-	Out    io.Writer // FlowOut: the API writes the data itself
-	Admin  bool
-	Rights map[string]bool
+	// TaskEnv is the signed task EXACTLY as the shell sent it, beside the
+	// verified Task. Both travel for the reason package relay keeps the raw
+	// OPEN: the controller checks the signature itself, and an envelope that
+	// was decoded and encoded again is a different byte string. Only a handler
+	// that passes the task on to a controller reads it; nothing here decides
+	// anything out of it, because what decides is Task, which task.Check
+	// verified.
+	TaskEnv *sign.Envelope
+	In      io.Reader // FlowIn: at most Action.MaxIn bytes
+	Out     io.Writer // FlowOut: the API writes the data itself
+	Admin   bool
+	Rights  map[string]bool
 }
 
 // Handler serves one core action; the bytes it returns are the result.
@@ -156,6 +212,7 @@ func New(d Deps) *Dispatcher {
 	dp := &Dispatcher{Deps: d, handlers: map[string]Handler{}}
 	dp.registerDesktop()
 	dp.registerUsers()
+	dp.registerStore()
 	return dp
 }
 
@@ -163,6 +220,17 @@ func New(d Deps) *Dispatcher {
 // first, which is what lets a test put its own answer in place of ours.
 func (d *Dispatcher) Register(app, service, name string, h Handler) {
 	d.handlers[app+"/"+service+"/"+name] = h
+}
+
+// Serves reports whether this dispatcher has a handler for an action. It is
+// the wiring's way to hold that a seam is set: a handler that is missing shows
+// itself otherwise only as an E_NOTFOUND to a shell, which is a hole nobody
+// sees until somebody clicks. It answers about the handler and about nothing
+// else -- an action of service controller without one is forwarded to the
+// controller and is reachable all the same (open).
+func (d *Dispatcher) Serves(app, service, name string) bool {
+	_, ok := d.handlers[app+"/"+service+"/"+name]
+	return ok
 }
 
 // errClose carries the code a channel closes with.
@@ -223,24 +291,54 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 	}
 	d.logTask(ctx, verified.Cert().User, o, t)
 	if action.Service == core.ServiceController {
-		// A root task of service controller runs on a controller; the API only
-		// forwards it. The node is the verified task's own, not the guess
-		// nodeOfTask read out of the unverified payload.
+		// A root task of service controller runs on a controller, so the node
+		// is the VERIFIED task's own and not the guess nodeOfTask read out of
+		// the unverified payload. Without a task there is nothing to run and
+		// nothing to forward; rights.Check has answered E_CONFIRM for that
+		// case already, and this says it a second time instead of
+		// dereferencing nil.
 		if t == nil {
 			return wire.CodeConfirm, node
 		}
-		d.Relay.Forward(ctx, s, c, o, raw, t, t.Node)
-		return "", t.Node
+		node = t.Node
+	} else {
+		node = ""
+	}
+	// The handler is looked for FIRST and the relay comes second. Task 24
+	// found it the other way round, and that order made three actions of the
+	// contract unreachable: every action of service controller went to the
+	// relay before a handler was ever looked for, and relay.Forward has for a
+	// FlowTransfer action neither the Transfer header nor the file, so
+	// ngc.store/controller/activate ended in E_INTERNAL -- while deactivate
+	// and uninstall did reach the controller and left this API's own books
+	// untouched (the app's row, its log line, the rows of the version that was
+	// removed).
+	//
+	// Turning it round moves ONLY what this API serves itself. What has no
+	// handler is forwarded exactly as before -- ngc.store/controller/
+	// delete-data and .../install are root tasks the controller carries out
+	// alone, and TestAControllerActionWithoutAHandlerStillGoesToTheRelay holds
+	// that half.
+	//
+	// What it does not move is who may open any of this. rights.Check ran
+	// above, before this line, for the handler path and the relay path alike:
+	// every ngc.store action is core.Action.Admin, so a user who is no admin
+	// is already turned away with E_FORBIDDEN, and a root task without its
+	// signed task with E_CONFIRM. A handler registered here therefore cannot
+	// widen who gets in; it only decides what happens once somebody is in.
+	h, ok := d.handlers[action.App+"/"+action.Service+"/"+action.Name]
+	if !ok {
+		if action.Service == core.ServiceController {
+			d.Relay.Forward(ctx, s, c, o, raw, t, node)
+			return "", node
+		}
+		return wire.CodeNotFound, node
 	}
 	granted, admin, err := rights.Of(ctx, d.S.DB, v.List, verified.Cert().User)
 	if err != nil {
-		return wire.CodeUnreachable, ""
+		return wire.CodeUnreachable, node
 	}
-	h, ok := d.handlers[action.App+"/"+action.Service+"/"+action.Name]
-	if !ok {
-		return wire.CodeNotFound, ""
-	}
-	return d.run(ctx, s, c, o, action, t, h, granted, admin), ""
+	return d.run(ctx, s, c, o, action, t, h, granted, admin), node
 }
 
 // forward resolves an app channel and hands it to the relay. App, manifest and
@@ -317,8 +415,8 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 		in = bytes.NewReader(body)
 	}
 	out := &bytes.Buffer{}
-	rq := &Call{S: d.S, Live: s.Live, Action: action, Params: params, Task: t, In: in, Out: out,
-		Admin: admin, Rights: granted}
+	rq := &Call{S: d.S, Live: s.Live, Action: action, Params: params, Task: t, TaskEnv: o.Task,
+		In: in, Out: out, Admin: admin, Rights: granted}
 	body, err := h(ctx, rq)
 	if err != nil {
 		return codeOf(err)
