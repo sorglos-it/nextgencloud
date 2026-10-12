@@ -76,6 +76,23 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
 - **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
   im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
   WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
+- **Zwei Zeitfälle flattern unter der Last des vollen Satzes**, und der Satz ist seit dem
+  12.10.2026 groß (über 1000 Fälle in einem Lauf). Gemessen, je mit der Rate:
+  - `TestThePoolRetiresAConnectionAtItsLifetime` (`apps/server-db/classes/mariadb`): **1 rot von
+    4** Gesamtläufen — allein **0 von 10**, das db-Paket allein **0 von 5**.
+  - `TestCloseEndsTheLinkInOrder` (`apps/server-api/classes/link`): **1 rot von 3**
+    Gesamtläufen mit einem TCP-Reset — allein **0 von 30**.
+
+  Beide sind **echte `--- FAIL`**, fallen also **nicht** unter die Laufzeit-Trennlinie oben und
+  dürfen nicht als Rauschen verworfen werden. Beide messen eine **Frist** (Lebenszeit einer
+  Verbindung, Reihenfolge beim Schließen), und beide haben zu wenig Luft, wenn dreißig Pakete
+  gleichzeitig um die Maschine streiten. **Ursache nicht gemessen.**
+
+  **Darum für jede Meldung:** einen roten Zeitfall **allein nachfahren** und die Rate nennen
+  („1 von 4 im Gesamtsatz, 0 von 10 allein"), nicht den Lauf wiederholen, bis er grün ist. Und
+  wer einen Zeitfall schreibt, gibt ihm Luft oder nimmt ihm die Uhr — in diesem Projekt sind
+  Fristen schon mehrfach die einzige flatternde Stelle gewesen (die Drei in der
+  Recovery-Buchführung hing an genau einem `TPM_RC_RETRY`).
 - **`ok` ohne `-v` sagt nichts über die Zahl der gelaufenen Fälle.** Am 12.10.2026
   gemessen: `go test` druckte `ok`, unter `-v` waren **10 von 11** Fällen `SKIP` — die
   Attrappe baute nicht (ein Heredoc hatte die Escapes gefressen), und **`t.Skipf` schreibt
