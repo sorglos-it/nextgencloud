@@ -174,7 +174,33 @@ func (d *Dispatcher) trust(ctx context.Context, rq *Call) ([]byte, error) {
 // pairCode answers ngc.users/pair-code: a one-time code for the ulh script of
 // a new controller. The code is a secret of one use; it travels in the result
 // and nowhere else (the file comment).
+//
+// The nil check is not belt and braces, it closes a measured hole. Deps.Store
+// and Deps.Updates may be nil and registerStore answers that by registering
+// nothing; Deps.Controllers and Deps.Join may be nil too, and until task 30
+// nothing answered that at all -- a shell channel to ngc.users/join-code
+// dereferenced the nil and PANICKED. A panic there is not one channel's:
+// browser.(*Server).channel calls OpenChannel in a goroutine of its own with
+// nothing above it to recover, so the whole ngc-api process dies and every
+// session on it with it. Found by the fuzz seed
+// testdata/fuzz/FuzzOpenParams/4b950b6123cdb67b, which stays in the repo as
+// the regression.
+//
+// E_NOTFOUND and not E_INTERNAL, for the reason Deps gives: an action this API
+// does not serve is not a broken installation. The check sits in the HANDLER
+// and not in registerUsers on purpose -- guarding the registration changes
+// WHICH actions exist, and that made three cases of this package fall
+// (measured: TestPairCodeFitsTheTrustList, TestAOneTimeCodeReachesNoLog and
+// TestOnlyAdminsGetThese, which read E_FORBIDDEN before E_NOTFOUND). Closing
+// the hole and changing the surface are two changes, and this is only the
+// first.
+//
+// server.Build sets both fields, so the running program never reached the
+// panic. It was one nil field away.
 func (d *Dispatcher) pairCode(ctx context.Context, rq *Call) ([]byte, error) {
+	if d.Controllers == nil {
+		return nil, fail(wire.CodeNotFound)
+	}
 	code, expires, err := d.Controllers.NewPairCode(ctx)
 	if err != nil {
 		return nil, fail(wire.CodeUnreachable)
@@ -184,6 +210,9 @@ func (d *Dispatcher) pairCode(ctx context.Context, rq *Call) ([]byte, error) {
 
 // joinCode answers ngc.users/join-code: the same for a new API server.
 func (d *Dispatcher) joinCode(ctx context.Context, rq *Call) ([]byte, error) {
+	if d.Join == nil {
+		return nil, fail(wire.CodeNotFound)
+	}
 	code, expires, err := d.Join.NewJoinCode(ctx)
 	if err != nil {
 		return nil, fail(wire.CodeUnreachable)
