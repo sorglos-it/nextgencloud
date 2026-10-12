@@ -52,6 +52,12 @@ func Answer(w http.ResponseWriter, status int, body []byte) {
 }
 
 // NoContent answers 204.
+//
+// no-store and nothing else: a 204 carries no body, so there is no content
+// type for a browser to sniff and X-Content-Type-Options would name a rule
+// about nothing. The package doc above therefore promises no-store for every
+// answer and nosniff only where Answer sets it -- measured, grep for both in
+// this file: no-store twice, nosniff once.
 func NoContent(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)

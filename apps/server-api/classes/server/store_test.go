@@ -164,9 +164,10 @@ func rowOf(rows []core.UpdateInfo, target, node string) (core.UpdateInfo, bool) 
 //
 //   - the beat turns at all (more than one round ran);
 //   - a tick that arrives during a round is DROPPED and not queued, and no
-//     round ever runs beside another: the probe holds the first round open
-//     while the ticker fires about twenty-five times, and exactly one round is
-//     inside at any time. This is what a lock used to claim to hold and could
+//     round ever runs beside another: the probe holds the first round open for
+//     about twenty-five tick lengths, and exactly one round is inside at any
+//     time. How often the ticker really fired in that span is not measured
+//     here -- what is measured is that at most one round followed the span. This is what a lock used to claim to hold and could
 //     not (the loop is the only caller and calls synchronously); the mutant it
 //     really stands against is one goroutine per tick;
 //   - updates.ErrNotDriving is no failure: the probe answers it and the rounds
@@ -227,9 +228,12 @@ func TestTheBeatOfTheRolloutTurns(t *testing.T) {
 	if maxInside != 1 {
 		t.Fatalf("%d rounds were inside at once; a tick must be dropped, not queued", maxInside)
 	}
-	// And the ticker really did fire while the first round was held: without
-	// this the 50 ms above could have been too short and the two assertions
-	// would both pass for a beat nothing ever interrupted.
+	// And the ticks that arrived during the held round were DROPPED: an
+	// upper bound, which is what this check is. It does NOT say the ticker
+	// fired while the round was held -- a beat nothing ever interrupted would
+	// pass it too. That part rests on 50 ms against a tick of 2 ms and is
+	// arithmetic, not a measurement; the comment above used to claim it as
+	// one.
 	if rounds > 10 {
 		t.Fatalf("%d rounds ran -- about 25 ticks were missed and at most one "+
 			"catch-up round may follow them", rounds)

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
@@ -26,6 +27,10 @@ func newState(tb testing.TB) (*State, dbapi.Store) {
 	cfg := &config.API{Node: "api-1", SessionLifetime: 43200, IdleTimeout: 1800}
 	s := New(cfg, db, box, make([]byte, 32))
 	s.Now = func() int64 { return 1790000000 }
+	// A path of this run that nothing wrote: so no case below depends on
+	// whether the machine it runs on happens to carry config.AnchorFile, and
+	// a case that WANTS an anchor writes this one.
+	s.AnchorFile = filepath.Join(tb.TempDir(), "trust-anchor.json")
 	return s, db
 }
 

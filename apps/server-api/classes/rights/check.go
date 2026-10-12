@@ -18,10 +18,18 @@ import (
 //
 // What the promise of this package excludes, and what it allows:
 //
-// No UNSIGNED part of the OPEN moves the decision. Params, Window and E2E are
-// read nowhere at all; Action is read for an app channel only, to find the
-// action in the manifest, and is replaced at once by the manifest's own name,
-// so it can hit a right that is there but never invent one.
+// No VALUE out of an unsigned part of the OPEN moves the decision, and that is
+// a narrower sentence than "it is not read". Measured, every read of req.Open
+// in this package (grep -n 'Open\.[A-Za-z]*' check.go rights.go, five hits):
+//
+//   - Window and E2E: no read at all.
+//   - Params: the LENGTH is read and it does refuse -- an OPEN that carries a
+//     task and params of its own is E_VERIFY below, because the task's params
+//     are the params. Nothing of the content is looked at.
+//   - Action: read for an app channel only, to find the action in the
+//     manifest, and replaced at once by the manifest's own name, so it can hit
+//     a right that is there but never invent one.
+//   - Task and Confirm are signed and are the next paragraph.
 //
 // A SIGNED part moves the decision, and that is the point: Task and Confirm
 // are evidence, and task.Check verifies both against the trust list before

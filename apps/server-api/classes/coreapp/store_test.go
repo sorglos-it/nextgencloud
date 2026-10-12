@@ -53,10 +53,32 @@ type fakeStore struct {
 	held []byte
 	// catalogOf is the store ID the catalog handler asked for.
 	catalogOf string
+	// seats answers UsersAllowed per app: the number, whether the licence
+	// allows it and the error. An app no case named has no licence, which is
+	// what a free app looks like.
+	seats map[string]seatAnswer
+	// seatsAsked are the apps whose seat was asked, in order.
+	seatsAsked []string
+}
+
+// seatAnswer is one answer of fakeStore.UsersAllowed.
+type seatAnswer struct {
+	n       int
+	allowed bool
+	err     error
 }
 
 // fakeStore fulfils the seam the dispatcher asks for.
 var _ Store = (*fakeStore)(nil)
+
+func (f *fakeStore) UsersAllowed(_ context.Context, app string) (int, bool, error) {
+	f.note("users-allowed")
+	f.seatsAsked = append(f.seatsAsked, app)
+	if a, ok := f.seats[app]; ok {
+		return a.n, a.allowed, a.err
+	}
+	return 0, false, appstore.ErrNoLicense
+}
 
 func (f *fakeStore) note(name string) { f.calls = append(f.calls, name) }
 

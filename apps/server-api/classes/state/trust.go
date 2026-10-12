@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -79,9 +80,16 @@ func (s *State) Refresh(ctx context.Context) (trust.Version, error) {
 // refresh without giving the cache up in the middle of its own step.
 func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 	cur := s.cur
+	// The anchor is read once per refresh, before the first row: it decides
+	// where the chain is read FROM, so reading it after the rows would let
+	// the rows decide where to look for the thing that is meant to judge them.
+	anchor, pinned := s.anchorFor()
 	from := uint64(1)
-	if cur.List != nil {
+	switch {
+	case cur.List != nil:
 		from = cur.List.Seq + 1
+	case pinned:
+		from = anchor.Seq
 	}
 	// retried marks the one retry checkGap may ask for. More than one means
 	// a row keeps coming and going while this read runs, and then nothing
@@ -94,9 +102,16 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 		}
 		if len(chain) > 0 {
 			if cur.List == nil {
-				// Version 1 is the anchor of this installation: it signs
-				// itself, and trust.Open checks that an admin of it did.
-				cur, err = trust.Open(trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}, chain)
+				// Without the file: version 1 is the anchor of this
+				// installation: it signs itself, and trust.Open checks that
+				// an admin of it did. With the file: the version it names is
+				// the root, and trust.Open refuses a root whose hash or whose
+				// number is not the pinned one.
+				a := anchor
+				if !pinned {
+					a = trust.Anchor{Seq: 1, Hash: trust.Hash(chain[0])}
+				}
+				cur, err = trust.Open(a, chain)
 				err = ownRows(err)
 				if err == nil {
 					// Here both sides come out of this installation's own
@@ -141,6 +156,39 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 	}
 	s.cur = cur
 	return cur, nil
+}
+
+// anchorFor is the trust anchor outside the database, and whether there is
+// one. It is the one value in a refresh that does NOT come out of the rows it
+// judges, and that is its whole point: every other check here reads the very
+// rows an attacker who can write the database has written, so none of them
+// holds against him (checkGap says so of itself, and checkInstallation says it
+// again). The file does.
+//
+// A missing file is not an error and not a finding: nothing writes
+// trust-anchor.json yet -- the design gives that to the controller, and
+// apps/server-controller carries no classes on this branch. So an
+// installation without the file behaves exactly as before, and one WITH it
+// refuses a root that is not the pinned one. config.SaveAnchor therefore
+// still has no caller here; the writer is another part's work, not this
+// reader's.
+//
+// Any other fault of the file reads as "no anchor" and not as a refusal, on
+// purpose: an unreadable or half-written anchor would otherwise shut the
+// installation out of its own trust list, and the API cannot tell a damaged
+// file from a missing one without guessing. What that costs is named: whoever
+// can DELETE the file takes the pin away. Whoever can do that owns the
+// machine the API runs on, which is a bigger loss than this check.
+func (s *State) anchorFor() (trust.Anchor, bool) {
+	path := s.AnchorFile
+	if path == "" {
+		path = config.AnchorFile
+	}
+	a, err := config.LoadAnchor(path)
+	if err != nil {
+		return trust.Anchor{}, false
+	}
+	return a, true
 }
 
 // ownRows is what a fault of trust.Open or trust.Advance means inside a

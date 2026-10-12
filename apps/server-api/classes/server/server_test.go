@@ -301,6 +301,43 @@ func TestTheSpoolIsEmptiedAtEveryStart(t *testing.T) {
 	}
 }
 
+// TestBuildRefusesASpoolItCannotUse is the sixth refusal of Build, and the one
+// that had no case: a mutant that threw the error of sweepSpool away killed
+// nothing (m-sweep-ignored of the closing review, measured LIVING). The other
+// five refusals each have a case, this one did not -- and a start that goes on
+// without a spool has nowhere to put an upload later.
+//
+// The spool is put under a path that is a FILE, so MkdirAll cannot make it.
+// That is the same fault a read-only or full disk makes, and the only one a
+// case can make on any system.
+func TestBuildRefusesASpoolItCannotUse(t *testing.T) {
+	db := memstore.New()
+	withStore(t, db)
+	_, spool := withDirs(t)
+	// Control first: with a usable spool the same Build goes through, so the
+	// refusal below is the spool and not a wall in front of it.
+	if _, err := Build(ctx, newConfig(t), "9.9.9"); err != nil {
+		t.Fatalf("control: %v", err)
+	}
+	blocker := spool + "-blocked"
+	if err := os.WriteFile(blocker, []byte("a file where a directory belongs"), 0o600); err != nil {
+		t.Fatalf("blocker: %v", err)
+	}
+	SpoolDir = filepath.Join(blocker, "spool")
+	// The case checks its own setup: if the path were usable after all, the
+	// refusal below would never come and the case would have measured nothing.
+	if err := os.MkdirAll(SpoolDir, 0o700); err == nil {
+		t.Fatalf("the blocked path %q can be made after all", SpoolDir)
+	}
+	srv, err := Build(ctx, newConfig(t), "9.9.9")
+	if err == nil {
+		t.Fatalf("Build took a spool it cannot use: %v", srv)
+	}
+	if srv != nil {
+		t.Fatalf("Build answered an error AND a server: %v", srv)
+	}
+}
+
 // TestOnlyOneRoundAtATime nails the decision in Server.round: a round that
 // outlives its tick does not get a second one on top of itself.
 func TestOnlyOneRoundAtATime(t *testing.T) {
