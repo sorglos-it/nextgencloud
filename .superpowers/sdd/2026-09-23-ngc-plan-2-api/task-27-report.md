@@ -6,14 +6,17 @@ daneben hätte die 0 gemeldet). Alle Git-Zahlen hier sind so gemessen.
 
 ## Was gebaut wurde
 
+Commit `c9d28d6`. Die Prüfsummen sind `git rev-parse HEAD:<Pfad>`, also der Stand **im
+Commit**, nicht der auf der Platte:
+
 | Datei | git hash-object |
 |---|---|
-| `apps/cli/classes/crypt.go` (neu) | siehe Commit |
-| `apps/cli/classes/license.go` (neu) | siehe Commit |
-| `apps/cli/classes/crypt_test.go` (neu) | siehe Commit |
-| `apps/cli/classes/license_test.go` (neu) | siehe Commit |
-| `apps/cli/classes/run.go` (geändert, Versand) | siehe Commit |
-| `apps/cli/classes/run_test.go` (geändert) | siehe Commit |
+| `apps/cli/classes/crypt.go` (neu) | `64b534400659d2ce8e5548db3a5f24d2aa837586` |
+| `apps/cli/classes/license.go` (neu) | `39703b1511250c5046a2a4a0cbf27121246cb68c` |
+| `apps/cli/classes/crypt_test.go` (neu) | `11915772f9cc9cf2ae714d1fd6c45be9a0fc0c24` |
+| `apps/cli/classes/license_test.go` (neu) | `4698509568949cedc4445efcda8b303e0616f7fb` |
+| `apps/cli/classes/run.go` (geändert, Versand) | `e0ea4fd3983ed6f823973a29a41c3ff8cb1b9022` |
+| `apps/cli/classes/run_test.go` (geändert) | `b048dd261bb461f4c2b6904eab4c5ec2073b4375` |
 
 - `NewContentKey(path)` – 32 Zufallsbytes, base64url, `O_EXCL|0600` in **einem** Schritt;
   ein vorhandener Schlüssel wird **nie** überschrieben (`ErrKeyExists`), sonst wäre jede
