@@ -185,16 +185,17 @@ function uiTar(files, { entry = "index.html", module: asModule = false } = {}) {
   return w.close();
 }
 
-// WHAT THE TERMINAL'S SERVICE ANSWERS, AND WHAT IT REALLY IS. The service does
-// not exist here and cannot: the controller builds it (apps/server-controller/,
-// "virtuelles Terminal"), it runs the command inside the app's own container,
-// and its answer is whatever the program there wrote to stdout. So this is the
-// thinnest stand-in that lets the app's side be measured at all - the error a
-// real `cp -r` gives, and the line a shell gives a word it does not know.
+// WHAT THE TERMINAL'S SERVICE ANSWERS, AND WHAT IT REALLY IS. The service is
+// built (apps/server-controller/classes/terminal/, "virtuelles Terminal") and
+// cannot run here: it needs Linux and a pseudo terminal. So this is the
+// thinnest stand-in that lets the app's side be measured at all - it reads the
+// app's frames the way the service does, echoes what it is given the way a pty
+// does, and answers with the error a real `cp -r` gives and the line a shell
+// gives a word it does not know.
 //
-// WHAT IS THEREFORE NOT MEASURED ANYWHERE: that a real service's output arrives
-// at all, how it is split over the wire, and what `cp -r` really says on the
-// machine. All three need the controller's service.
+// WHAT IS THEREFORE NOT MEASURED HERE: that the real service answers at all,
+// how its output is split over the wire, and what `cp -r` really says on the
+// machine. All three need a Linux machine with the controller on it.
 const SHELL_ANSWERS = new Map([
   ["cp -r", "cp: missing destination file operand after '-r'\n"],
 ]);
@@ -205,22 +206,117 @@ function shellAnswer(line) {
   return SHELL_ANSWERS.get(cmd) ?? `sh: ${cmd}: command not found\n`;
 }
 
-// terminalStream stands in for the channel of that service: it answers every
-// line that is written to it and stays open until the app ends it or the window
-// takes it away. That is the one thing about it that is not a fake - a terminal
-// is a channel that stays open, and the shell has to carry one.
+// THE FRAMES OF THAT CHANNEL. Written here from the controller's own file
+// (apps/server-controller/classes/terminal/terminal.go, branch main): one byte
+// kind, two bytes length of the payload big endian, then the payload. Keys are
+// 1..MAX_KEYS bytes, a size is exactly four - cols and rows, each uint16 big
+// endian, each 1..MAX_DIM.
+//
+// THE NUMBERS STAND HERE A SECOND TIME ON PURPOSE. This is the stand-in for the
+// other side, and a stand-in that imported the app's own encoder would agree
+// with it about a mistake. These five lines are read off the Go file; what
+// measures the app is that the two independent readings of the same contract
+// meet.
+const TERM_KEYS = 1;
+const TERM_RESIZE = 2;
+const TERM_HEADER = 3;
+const TERM_MAX_KEYS = 16 << 10;
+const TERM_MAX_DIM = 2000;
+const TERM_RESIZE_SIZE = 4;
+
+// terminalStream stands in for the channel of that service: it reads the frames
+// the app sends, answers every completed line and stays open until the app ends
+// it or the window takes it away. That is the one thing about it that is not a
+// fake - a terminal is a channel that stays open, and the shell has to carry
+// one.
+//
+// IT IS AS STRICT AS THE CONTROLLER IS, and that is what makes the app's side
+// measurable: pumpIn ends the run on the first frame that is none - it does not
+// skip past garbage, "because a parser that resynchronises is one whoever sends
+// the bytes can steer". So does this, and the channel then ends without an
+// "ok", which is what the app sees of a service that stopped.
+//
+// IT ECHOES, because the real one does: the service runs /bin/sh -i on a
+// pseudo terminal (pty_linux.go), and a pty echoes what is typed into it unless
+// the program switches that off - which is exactly what a password prompt does.
+// The app therefore must NOT write the typed line itself; see app.js.
 function terminalStream(h) {
   const dec = new TextDecoder();
+  // The bytes that have arrived and do not yet make a whole frame. The app may
+  // cut anywhere: a channel carries a byte stream, and serve.shellInput hands
+  // the inner messages on as one.
+  let rest = new Uint8Array(0);
+  // What the shell has been given since the last line break, as text. A line
+  // is a line of the shell, not of the wire.
+  let line = "";
+  let dead = false;
+  const die = () => {
+    if (dead) return;
+    dead = true;
+    window.__ngcTermFrames.push({ kind: "bad" });
+    s.onClose?.("error", "Dienst nicht erreichbar.");
+  };
+  const answer = (text) => {
+    if (text !== "") s.onData?.(enc.encode(text));
+  };
+  // keys applies one keys frame: the pty echo first, then the answer to every
+  // line the frame completed. A frame may carry none, one or several.
+  const keys = (payload) => {
+    const text = dec.decode(payload, { stream: true });
+    answer(text);
+    line += text;
+    let br = line.indexOf("\n");
+    while (br >= 0) {
+      const done = line.slice(0, br);
+      line = line.slice(br + 1);
+      // The hook wins over the table: a case about what the shell and the app
+      // do with the bytes of a service has to be able to choose those bytes.
+      answer(h.output !== "" ? h.output : shellAnswer(done));
+      br = line.indexOf("\n");
+    }
+  };
   const s = {
     onData: null,
     onClose: null,
     write(bytes) {
-      // The hook wins over the table: a case about what the shell and the app do
-      // with the bytes of a service has to be able to choose those bytes.
-      const answer = h.output !== "" ? h.output : shellAnswer(dec.decode(bytes));
-      if (answer !== "") s.onData?.(enc.encode(answer));
+      if (dead) return;
+      // A TEST HOOK, and it leaves with this file: the bytes of this one write,
+      // before anything has read them. A case about the format needs the bytes
+      // as they went out, not what a parser made of them.
+      window.__ngcTermRaw.push([...bytes]);
+      const all = new Uint8Array(rest.length + bytes.length);
+      all.set(rest, 0);
+      all.set(bytes, rest.length);
+      let at = 0;
+      for (;;) {
+        if (all.length - at < TERM_HEADER) break;
+        const n = (all[at + 1] << 8) | all[at + 2];
+        if (n > TERM_MAX_KEYS) { die(); return; }
+        if (all.length - at < TERM_HEADER + n) break;
+        const body = all.subarray(at + TERM_HEADER, at + TERM_HEADER + n);
+        if (all[at] === TERM_KEYS) {
+          if (n === 0) { die(); return; }
+          window.__ngcTermFrames.push({ kind: "keys", len: n, text: dec.decode(body.slice()) });
+          keys(body.slice());
+        } else if (all[at] === TERM_RESIZE) {
+          if (n !== TERM_RESIZE_SIZE) { die(); return; }
+          const cols = (body[0] << 8) | body[1];
+          const rows = (body[2] << 8) | body[3];
+          if (cols === 0 || rows === 0 || cols > TERM_MAX_DIM || rows > TERM_MAX_DIM) { die(); return; }
+          window.__ngcTermFrames.push({ kind: "resize", len: n, cols, rows });
+        } else {
+          die();
+          return;
+        }
+        at += TERM_HEADER + n;
+      }
+      rest = all.slice(at);
     },
     end() {
+      // The input ended between two frames is the input complete; half a frame
+      // is errCut on the other side, and the controller answers both the same
+      // way it answers everything that went wrong - it stops.
+      if (rest.length > 0) { die(); return; }
       s.onClose?.("ok", "");
     },
     close() {
@@ -439,6 +535,12 @@ export async function fakeWorld() {
   // and needs no such numbers.
   window.__ngcChannelsOpened = 0;
   window.__ngcStreamsClosed = 0;
+  // A TEST HOOK as well, and the measuring point of the terminal's format: the
+  // frames this stand-in has read, and the raw bytes of every write before any
+  // parser touched them. A real service reads its own frames and counts
+  // nothing.
+  window.__ngcTermFrames = [];
+  window.__ngcTermRaw = [];
   // A TEST HOOK as well: what the shell handed this link, in the order it
   // handed it over. Params, task and confirmation are JSON and stand here as
   // the text they are; a body is bytes and stands as base64url.
