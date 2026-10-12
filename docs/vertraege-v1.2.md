@@ -813,3 +813,29 @@ nichts halten.
 verdrahten"), keine neue Aufgabe. `shared/` ändert sich dadurch **nicht**.
 Bis der Unterbefehl steht, hat der Controller kein `migrate.go` — ein Gerüst wäre
 schlimmer als nichts, es sieht aus wie eine Zusage.
+
+## Punkt 29: Jeder Rahmen des Terminals trägt seine Länge
+
+**Gebaut und gemessen am 12.10.2026** in Aufgabe 23 des Controllers, als **Abweichung**
+vom Plan, und **mit der Sitzung Webinterface abzustimmen**, weil das Gegenstück dort sitzt.
+
+Das Protokoll des virtuellen Terminals ist: **1 Byte Art, 2 Byte Länge, Nutzlast.**
+
+Der Grund ist gemessen, nicht gewählt: `serve.shellInput` reicht die inneren Nachrichten
+als **einen Bytestrom** weiter. Damit ist die Nachrichtengrenze weg — und ein Tastenrahmen
+ohne Länge hat kein Ende. Ein Parser, der das Ende raten muss, lässt sich aus dem Takt
+bringen: wer die Tasten schickt, bestimmt, wo der nächste Rahmen anfängt. `FuzzParseFrame`
+hat 13 365 806 Läufe ohne Fund, und der Fuzzer prüft das **Ergebnis**, nicht nur, dass
+nichts abstürzt.
+
+Zwei Zahlen daneben sind **Entscheidungen**, im Code so benannt: Tasten höchstens 16 KiB,
+Fenster 1 bis 2000 Spalten/Zeilen.
+
+Dazu eine dritte Entscheidung, wo der Plan keine Zahl nannte: **Leerlaufgrenze 30 Minuten.**
+Stream-Aktionen haben laut Vertrag keine Zeitgrenze — und diese Shell läuft als root.
+Beide Seiten der Grenze sind mit einer Handuhr festgenagelt.
+
+**Was noch keine Zahl hat:** wie viele Terminals gleichzeitig. Gezählt, nicht gemessen:
+je Kanal 65 497 + 16 387 Byte Puffer, ein PTY-Paar, vier Goroutinen, ein Containerprozess
+— bei 1024 Kanälen etwa 80 MiB. Eine Obergrenze setzt dieses Paket nicht; sie gehört in
+`serve` und in den Vertrag.
