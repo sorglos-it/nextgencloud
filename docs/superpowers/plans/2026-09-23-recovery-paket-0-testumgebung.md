@@ -2350,8 +2350,16 @@ Reservestick sowie QEMU mit Secure-Boot-OVMF einrichten und prüfen. Nachgewiese
 Abnahmekriterium von Paket 0: Versiegeln und Öffnen eines Testgeheimnisses mit einer PolicyOR aus
 sieben Zweigen (Normalstart über PCR, sechs Stick-Paare mit PolicySigned, Plattform-PIN und
 NV-Zähler) gegen swtpm, dazu die Negativfälle Replay, halber Zweig, fremder Stick, alter
-Zählerstand, falsche PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
+Zählerstand, falsche **Plattform**-PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
 `tools/recovery-ci.sh`. Kein Rust in diesem Paket.
+
+**Berichtigt am 12.10.2026 (Aufgabe 12), gemessen:** hier stand „falsche PIN mit Sperre“. Das
+liest sich wie die **Stick**-PIN, und die sperrt in dieser Umgebung nicht — SoftHSM2 2.6 sperrt eine
+Benutzer-PIN nie (neun falsche PINs, jedes Mal nur `user PIN count low`, danach loggte die richtige
+PIN mit Rückgabe 0 ein). Belegt ist allein die **Plattform**-PIN-Sperre. Die Liste unten war
+außerdem zu kurz: sechs gemessene offene Punkte fehlten (K9 zur Hälfte, die 24 h als Wirkung, der
+Flatter-Punkt, ein DEK, PIN beim Versiegeln, der nicht sinkende Zähler). Wie es gebaut wurde, steht
+in `CHANGELOG.md` und `docs/recovery-abnahme.md`.
 
 ### Offen
 

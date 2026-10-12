@@ -2,8 +2,66 @@
 
 ## Unveröffentlicht
 
+Testumgebung für den Recovery-Modus (Paket 0): Skripte in `tools/`, die auf der VM `ngc-recovery`
+den TPM-Simulator swtpm, fünf SoftHSM2-Token als Ersatz für vier Root-Sticks und einen
+Reservestick sowie QEMU mit Secure-Boot-OVMF einrichten und prüfen. Nachgewiesen ist das
+Abnahmekriterium von Paket 0: Versiegeln und Öffnen eines Testgeheimnisses mit einer PolicyOR aus
+sieben Zweigen (Normalstart über PCR, sechs Stick-Paare mit PolicySigned, Plattform-PIN und
+NV-Zähler) gegen swtpm, dazu die Negativfälle Replay, halber Zweig, fremder Stick, alter
+Zählerstand, falsche Plattform-PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
+`tools/recovery-ci.sh`. Gemessen am 12.10.2026 nach vollständigem Wegräumen von TPM-Zustand und
+Arbeitsverzeichnis: Ausstiegscode **0**, **39 Fälle**, 62 161 ms. Kein Rust in diesem Paket.
+Abnahmeblatt: `docs/recovery-abnahme.md` — die Zeile für Paket 0 füllt ein Mensch aus.
+
 ### Offen
 
+- **Recovery Paket 0, Kriterium 9 nur zur Hälfte belegt und hier nicht nachrüstbar:** die Sperre
+  nach drei falschen **Plattform**-PINs ist gemessen (`inLockout` direkt beim TPM, danach wird auch
+  die richtige PIN abgewiesen). Dass **drei falsche Stick-PINs den Stick sperren**, ist **nicht**
+  belegbar: SoftHSM2 2.6 sperrt eine Benutzer-PIN nie — neun falsche PINs hintereinander ließen das
+  Token jedes Mal nur auf `user PIN count low` stehen, danach loggte die richtige PIN mit Rückgabe 0
+  ein. Gebaut ist der Teil, der hier gilt; der Nachweis gehört zu Paket 2 mit echten Sticks.
+- **Recovery Paket 0, die 24 Stunden sind als Wirkung unbelegt:** `MAX_AUTH_FAIL 0x3`,
+  `LOCKOUT_INTERVAL` und `LOCKOUT_RECOVERY` je `0x15180` = 86 400 werden **zurückgelesen**. Kein
+  Prüflauf kann 86 400 s aussitzen.
+- **Recovery Paket 0, Flatter-Punkt:** eine Zahl der Klartext-Buchführung hängt an **genau einem**
+  `TPM_RC_RETRY`; ein Lauf mit null oder zwei Wiederholungen macht den Fall rot (sichere Richtung),
+  und die Rate ist ungemessen. Der CI-Job wiederholt bewusst **nicht**, sondern ordnet ein Rot
+  dieser Art ein und bittet um einen Lauf von Hand. Rückgabe bleibt 1.
+- **Recovery Paket 0, ein DEK:** dass `A-auto` und `A-recovery` **dasselbe** Geheimnis tragen,
+  prüft dieses Paket nicht. Beide öffnen zu `TEST-DEK`; dass es in Paket 6 ein DEK ist, ist dort zu
+  messen.
+- **Recovery Paket 0, PIN beim Versiegeln:** aufgezeichnet ist nur das **Öffnen** (42
+  Kommandozeilen, Plattform-PIN in keiner). Dass die PIN auch beim **Versiegeln** nicht in der
+  Prozessliste steht, ist nicht aufgezeichnet — laut Bericht billig nachrüstbar.
+- **Recovery Paket 0, Fehlversuchszähler:** dass er nicht **sinken** kann, ruht auf `nt=counter`
+  und ist nicht eigens gemessen.
+- **Kein KVM auf `ngc-recovery`:** Der Proxmox-Host reicht keine Virtualisierung durch, QEMU läuft
+  emuliert. Für Paket 0 reicht das; für die Zeitmessungen in Paket 10 nicht.
+- **Auslöser des CI-Jobs:** `tools/recovery-ci.sh` läuft von Hand. Bei jedem Commit auszulösen,
+  braucht einen eigenen Runner auf der VM; das lädt fremden Code und muss Thomas freigeben.
+- **Prüf-Notebook ohne Netz** aus Abschnitt 11 der Vorgabe fehlt — Gerätefrage, nicht im Repo lösbar.
+- **Echtes Secure Boot** mit eigener PK/KEK/db und signierten UKI kommt mit Paket 8; hier startet
+  nur die Secure-Boot-Firmware.
+- **EK-Zertifikat** wird nicht gegen die Hersteller-CA geprüft (`swtpm_setup --create-ek-cert`
+  braucht root); gehört zu Paket 3.
+- **NV-Zähler am leeren Owner-Auth:** In der Testumgebung hat die Owner-Hierarchie kein Passwort,
+  der Zähler ließe sich also von jedem Prozess auf der VM erhöhen. Für den Nachweis der Policy ist
+  das ohne Belang, für Paket 3 nicht.
+- **Stick-PIN in der Prozessliste:** `pkcs11-tool` kann keine PIN aus einer Datei lesen. Die
+  TEST-PIN steht deshalb für die Dauer des Aufrufs in `/proc/<pid>/cmdline`. Das echte Stick-Modul
+  in Paket 2 benutzt `cryptoki` und darf dieses Muster **nicht** übernehmen.
+- **Klartextsuche bleibt eine Nadelsuche:** sie kann nie zeigen, dass das Geheimnis nicht
+  entwichen ist. Belegt ist ein **Kriterium**; sieben Wege, es zu umgehen, sind gemessen und stehen
+  im Code.
+- **`sensitiveDataOrigin` bleibt CLEAR.** Abschnitt 5 der Vorgabe führt das Attribut für
+  TPM-Objekte auf; ein von außen zugeführtes Geheimnis (`tpm2_create -i`) kann es aber nicht
+  tragen, weil das Attribut gerade besagt, dass das TPM die Daten selbst erzeugt hat. Für Paket 3
+  ist zu entscheiden, ob der DEK im TPM entsteht (dann gilt das Attribut) oder weiter zugeführt
+  wird (dann bleibt es CLEAR und die Vorgabe wird an dieser Stelle nachgezogen).
+- **Echter HSM-Stick** (Nitrokey HSM 2 für `hsm`) wird vorerst nicht beschafft (Entscheidung
+  Thomas, 23.09.2026); Paket 2 entsteht für `piv` (YubiKey 5, Nitrokey 3) und `softhsm`, die
+  `hsm`-Anbindung bleibt offen.
 - **Recovery, leerer Owner-auth:** die Testumgebung legt den NV-Zähler mit leerem
   Owner-auth an. Das ist für die Stufe `test` entschieden und **nicht** geprüft; ein
   echter Server braucht einen Owner-auth, sonst kann jeder lokale Prozess den Zähler

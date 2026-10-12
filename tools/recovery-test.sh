@@ -1450,3 +1450,9 @@ tools/recovery-policy.sh seal
 # not be among them.
 klartext_suche "nach dem vollen Lauf"
 ok "auch nach dem vollen Lauf findet die Suche die acht Byte in keiner ihrer bekannten Schreibweisen in den beiden Dateilisten"
+
+# The closing line of a complete run. It says nothing about acceptance criteria
+# - it only says that this file reached its end without a fail(). The count is
+# printed by tools/recovery-ci.sh, which greps the "ok: " lines; this line is
+# the text counterpart of the exit code, so a truncated log is recognisable.
+printf 'Paket 0: alle Fälle bestanden\n' >&2
