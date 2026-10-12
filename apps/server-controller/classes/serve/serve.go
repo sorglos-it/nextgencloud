@@ -58,11 +58,10 @@ import (
 // and is used from the goroutine of every channel at once, so nothing here
 // may be changed once New has seen it.
 //
-// What is not in it yet: the installer, the updater and the licence. Every one
-// of them is reached from a core action or from the licence check of an app
-// channel, and none of those is carried out here, so a field for them would
-// name a type nothing in this repository has. They are added by the tasks that
-// bring them, and a keyed Deps literal goes on compiling when they are.
+// What is not in it yet: the installer of app packages and the licence. Both
+// are reached from a core action or from the licence check of an app channel,
+// and neither is carried out here. They are added by the tasks that bring
+// them, and a keyed Deps literal goes on compiling when they are.
 type Deps struct {
 	// Node is this controller's node ID in the trust list. It decides which
 	// tasks are made out for this server (access) and it is hashed into the
@@ -93,6 +92,22 @@ type Deps struct {
 	// is its configuration and not a peer's, so a channel that meets a
 	// missing one says nothing else about itself.
 	Engine runtime.Engine
+	// Updater carries out ngc.store/controller/install: the parts of NGC, the
+	// apps and the system packages of this server (update.go). nil is a
+	// controller that was not built with an updater, and every install
+	// channel ends E_INTERNAL.
+	Updater Updater
+	// MaxApps bounds how many app channels this controller runs at once,
+	// over every tunnel it holds. 0 is DefaultMaxApps; a negative number is
+	// no bound at all, which only a case sets.
+	//
+	// This is the bound the terminal task asked for and did not set
+	// (docs/vertraege-v1.2.md, point 29: "Eine Obergrenze setzt dieses Paket
+	// nicht; sie gehört in serve"). It sits on app channels and not on
+	// terminals alone, because this package cannot tell the two apart before
+	// the handshake, and refusing after the handshake would mean paying for
+	// the channel first.
+	MaxApps int
 	// LogStderr lets the log of this server carry the text a service writes to
 	// stderr. Off, the default, writes only that there was stderr and how
 	// much: that text is the app's own and may hold what the user typed
@@ -134,11 +149,11 @@ var trustKey = name{core.AppUsers, core.ServiceController, core.ActTrust}
 // are written.
 type Server struct {
 	d Deps
-	// acts is what this build carries out. Only trust is in it; the other
-	// core actions of service controller — activate, deactivate, uninstall,
-	// delete-data, stage, install and license — are carried out by the tasks
-	// that bring the installer, the updater and the licence. Only a test puts
-	// something else in, to see a result this server would refuse.
+	// acts is what this build carries out: trust (trust.go) and install
+	// (update.go). The other core actions of service controller — activate,
+	// deactivate, uninstall, delete-data, stage and license — are carried out
+	// by the tasks that bring the app installer and the licence. Only a test
+	// puts something else in, to see a result this server would refuse.
 	acts map[name]action
 	// first bounds the wait for the shell's first inner message. Only a test
 	// sets it, to run the wait out in a fraction of a second; without it the
@@ -162,12 +177,44 @@ type Server struct {
 	// TestATrustListThatCannotBeKeptWritesOneLineForManyChannels and
 	// TestTheFirstChannelThatCannotKeepTheTrustListWritesTheLine hold it.
 	storeFails atomic.Uint64
+	// apps counts the app channels running right now, over every tunnel of
+	// this server. It rises before the end-to-end handshake and falls when
+	// the channel is over, so what it bounds is the cost of a channel and not
+	// the number of channels that were opened.
+	apps atomic.Int64
+	// appRefused counts the app channels this server turned away because
+	// MaxApps was reached. Counted and not written: how many channels arrive
+	// is the API's to choose, so a line per refusal would let a peer fill the
+	// log of a server running as root.
+	appRefused atomic.Uint64
 }
+
+// DefaultMaxApps is how many app channels one controller runs at once when
+// Deps.MaxApps says nothing. It is a DECISION of this package, not a number of
+// the contract, and this is the whole of its reckoning:
+//
+// One app channel holds, measured and counted in app.go and in point 29 of
+// docs/vertraege-v1.2.md: up to wire.DefaultWindow (256 KiB) of DATA this side
+// took credit for, the service.MaxStderr ring (64 KiB), one sealed payload (up
+// to 65514 bytes), a pipe pair with three or four goroutines — and a process
+// in the container, which is the real price. A terminal channel holds a PTY
+// pair on top of that. 128 of them are therefore about 50 MiB of buffers and
+// 128 container processes on a server that runs as root.
+//
+// Why not the two numbers that already exist: wire.MaxTunnelChannels (1024) is
+// per tunnel and link enforces it, so seven tunnels of one installation are
+// seven times that; and wire.MaxSessionChannels (64) is the API's to enforce
+// per browser session, so a controller that took it for its own bound would
+// let one session fill the whole server. This number is of the server.
+//
+// What it is NOT: a promise about memory. It bounds the channels, and what one
+// channel costs is bounded elsewhere (app.go). The two together are the bound.
+const DefaultMaxApps = 128
 
 // New returns the server of these dependencies.
 func New(d Deps) *Server {
 	s := &Server{d: d}
-	s.acts = map[name]action{trustKey: s.trust}
+	s.acts = map[name]action{trustKey: s.trust, installKey: s.install}
 	return s
 }
 
@@ -181,6 +228,48 @@ func (s *Server) HandshakeFailures() uint64 { return s.handshakes.Load() }
 // Server.storeFails), so this number is what says how long it has been going
 // on.
 func (s *Server) StoreFailures() uint64 { return s.storeFails.Load() }
+
+// AppChannels is how many app channels this controller runs right now.
+func (s *Server) AppChannels() int64 { return s.apps.Load() }
+
+// AppRefusals is how many app channels this server turned away because its
+// bound was reached. Nothing of them reaches the log (see Server.appRefused),
+// so this number is what says that the bound is being met at all.
+func (s *Server) AppRefusals() uint64 { return s.appRefused.Load() }
+
+// maxApps is the bound of this server.
+func (s *Server) maxApps() int {
+	if s.d.MaxApps == 0 {
+		return DefaultMaxApps
+	}
+	return s.d.MaxApps
+}
+
+// takeApp books one app channel against the bound and says whether it may
+// run. A channel that got through gives its place back with dropApp.
+//
+// The counter rises first and is put back when it was one too many, rather
+// than being read and then raised: between a read and a raise two channels
+// both see room for one. What a refused channel costs is that the number
+// stands one too high for the instant in between, and nothing reads it in
+// that instant but another channel of the same kind, which is then refused
+// one channel too early. TestTheBoundOfAppChannelsHoldsUnderManyAtOnce holds
+// the bound itself over 64 channels arriving at once.
+func (s *Server) takeApp() bool {
+	max := s.maxApps()
+	if max < 0 {
+		return true
+	}
+	if s.apps.Add(1) > int64(max) {
+		s.apps.Add(-1)
+		s.appRefused.Add(1)
+		return false
+	}
+	return true
+}
+
+// dropApp gives the place of one app channel back.
+func (s *Server) dropApp() { s.apps.Add(-1) }
 
 // Open answers one channel of a tunnel and fulfils link.Handler. It comes
 // back once the channel has its CLOSE, and always with nil: what went wrong

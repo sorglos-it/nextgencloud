@@ -277,6 +277,32 @@ func (r *Reporter) appState(ctx context.Context, a dbapi.App) (tunnel.AppState, 
 	return tunnel.StateStopped, true
 }
 
+// SendStatus puts the status of this server on the tunnels of this controller.
+// It is what the 60-second tick of Run calls, and it gives nothing back for
+// the same reason Notify and Update do not: a status nobody asked for
+// (wire.ControlAllowed - an API may send none) is nothing a caller can act on,
+// and both ways it can fail belong in the log of this server.
+//
+// Those two ways are kept apart in that log on purpose: a status that could
+// not be BUILT means this controller cannot read its own apps, which is a
+// fault of this server, while one that could not be SENT means there was no
+// tunnel or the sender refused it. The first is worth an operator's attention
+// and the second is the normal state of a server whose API is away.
+func (r *Reporter) SendStatus(ctx context.Context) {
+	if r.cfg.State == nil {
+		r.log().Warn("no status was built, this controller has no local state")
+		return
+	}
+	s, err := r.Status(ctx)
+	if err != nil {
+		r.log().Warn("no status was built, this controller could not read its own apps", "err", err)
+		return
+	}
+	if err := r.send(wire.CtlStatus, s); err != nil {
+		r.log().Info("status stayed on this server", "apps", len(s.Apps), "err", err)
+	}
+}
+
 // Notify tells the API something an admin should read: level is one of
 // core.NoticeInfo, NoticeWarn and NoticeError, text is German, and app names the
 // app it is about or stays empty.

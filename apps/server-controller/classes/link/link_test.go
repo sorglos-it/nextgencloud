@@ -1815,3 +1815,91 @@ func TestTheTestValuesAreTheOnesOfTheContract(t *testing.T) {
 			tunnel.ReconnectMin, tunnel.ReconnectMax)
 	}
 }
+
+// Keep announces every tunnel it got off, before it runs it, and takes the
+// same tunnel back once it is over. That is the only way anything outside this
+// package reaches a tunnel Keep holds: Keep gives nothing back, so without
+// these two the controller could send no status of its own and could not check
+// the certificate of an API after the tunnel to it was built (node.Run).
+func TestKeepAnnouncesEveryTunnelOnceAndItsEnd(t *testing.T) {
+	served := make(chan struct{})
+	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		a := accept(t, w, r)
+		if a == nil {
+			return
+		}
+		defer a.c.CloseNow()
+		a.greet()
+		close(served)
+		a.quiet()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var (
+		mu   sync.Mutex
+		ups  []*Tunnel
+		down []*Tunnel
+		// ran says whether the tunnel was already being run when it was
+		// announced. It must not be: a caller's registry has to hold the
+		// tunnel for the whole time it stands, including its first instant.
+		late bool
+	)
+	// Waited for by the thing itself and not by the server side: measured,
+	// the handler can have greeted while this side's Dial is still cancelled
+	// by the end of the case, and then no tunnel ever came off (one red run
+	// in five before this was waited for properly).
+	var once sync.Once
+	announced := make(chan struct{})
+	cfg.TunnelUp = func(tn *Tunnel) {
+		mu.Lock()
+		if tn == nil {
+			t.Error("Keep announced no tunnel at all")
+			mu.Unlock()
+			return
+		}
+		if len(down) != 0 {
+			late = true
+		}
+		ups = append(ups, tn)
+		mu.Unlock()
+		once.Do(func() { close(announced) })
+	}
+	cfg.TunnelDown = func(tn *Tunnel) {
+		mu.Lock()
+		defer mu.Unlock()
+		down = append(down, tn)
+	}
+	cfg.Sleep = func(time.Duration) {}
+	done := make(chan struct{})
+	go func() { defer close(done); Keep(ctx, cfg) }()
+	select {
+	case <-announced:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Keep never announced a tunnel")
+	}
+	<-served
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Keep did not end with its context")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ups) == 0 {
+		t.Fatal("Keep announced no tunnel")
+	}
+	// Every tunnel that was announced was taken back: a registry built on
+	// these two holds nothing of a tunnel that is over.
+	if len(down) != len(ups) {
+		t.Fatalf("%d tunnels were announced and %d taken back", len(ups), len(down))
+	}
+	for i := range ups {
+		if ups[i] != down[i] {
+			t.Fatalf("tunnel %d was taken back as another one", i)
+		}
+	}
+	if late {
+		t.Fatal("a tunnel was announced after an earlier one was already over")
+	}
+}

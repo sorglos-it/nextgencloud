@@ -59,6 +59,15 @@ var errCut = errors.New("serve: the input of the shell was cut off")
 // decrypts, and nothing of the app is reached before one has - at the latest
 // wire.E2EFirstTimeout seconds after the channel opened.
 func (s *Server) openApp(ctx context.Context, ch *link.Channel, d access.Decision) error {
+	// The bound of this server, before the handshake: a channel that has no
+	// place costs this side no Noise operation, no PTY and no container
+	// process. E_LIMIT is the code of the contract for it ("Zu viele offene
+	// Verbindungen." is its German line), and it goes out as the CLOSE of the
+	// transport, not inside a session: there is no session yet.
+	if !s.takeApp() {
+		return s.end(ch, wire.Error(wire.CodeLimit))
+	}
+	defer s.dropApp()
 	sess, msg2, err := e2e.Accept(d.Opened, s.d.Node, s.d.Noise)
 	if err != nil {
 		// Counted, not written: see Server.handshakes.
@@ -232,9 +241,13 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// which this controller does enforce) that is roughly 0.4 GiB of buffers
 	// and 1024 container processes. wire.MaxSessionChannels (64) would hold it
 	// to about 16 browser sessions, but that bound is the API to enforce, not
-	// this controller. The bound belongs in a task of its own because it
-	// touches the contract: a stream has no time limit by contract, and the
-	// contract is frozen. Not built here on purpose.
+	// this controller.
+	//
+	// What bounds it here is DefaultMaxApps: openApp books every app channel
+	// of this server against it before the handshake, so the reckoning above
+	// is paid for at most that many times over and not 1024 times per tunnel.
+	// The contract is untouched by it - E_LIMIT is a code it already has, and
+	// nothing of a stream's missing time limit changes.
 	// The clock of this call. It bounds the wait for input, the wait for
 	// credit on the way out and the program itself - all three through this
 	// one deadline.

@@ -183,13 +183,6 @@ Flags:
 `, config.ControllerFile)
 }
 
-// run is the controller itself: tunnels to the APIs, services, updates. It is
-// what starts without a command. Task 24 wires it out of the parts the tasks
-// before it bring.
-func run(version, cfgPath string, stdout, stderr io.Writer) int {
-	return notReady(stderr, "run")
-}
-
 // pair joins this server to an API with the code ulh shows: it makes the key
 // of this controller, pairs with the API of the code and writes what came
 // back into controller.json and the anchor file. Everything else of this

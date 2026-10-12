@@ -163,10 +163,11 @@ func (m *Manager) systemParams(d access.Decision) (*core.InstallParams, error) {
 	// in turn (install.go, task 20). So neither of the two can be reached
 	// through the other.
 	//
-	// STILL TO BE MEASURED: the piece that chooses between the two by the
-	// target is not built in either task - it belongs to the wiring in
-	// classes/serve - so the two halves of that seam have never run against
-	// each other. Each half is measured on its own.
+	// The piece that chooses between the two by the target is built, in
+	// classes/serve (serve/update.go, task 24), and the two halves of that
+	// seam are measured against each other there:
+	// TestInstallAndSystemEachRefuseTheOthersTarget drives a channel at each
+	// of them with the other's target and sees both refusals.
 	if p.Target != trust.AutoSystem {
 		return nil, ErrInternal
 	}
