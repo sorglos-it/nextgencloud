@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
@@ -25,6 +26,20 @@ import (
 // asked to copy: opening a missing path would make an empty database, and a
 // backup of that, played back, is an erased installation.
 func Backup(cfg config.DB, target string) error {
+	return backup(cfg, target, nil)
+}
+
+// backup is Backup with a seam between the copy and the fold, and that is the
+// whole of the seam: betweenCopyAndFold is called once, with the name the copy
+// carries at that moment, and only a test ever hands one in.
+//
+// It exists because of the one answer in fold that nothing else can bring
+// about: the checkpoint says "busy" when another connection holds a read lock
+// on the copy, and while Backup runs alone there is no such connection. A
+// test that opens the copy at this point makes that answer come back for real
+// instead of the check being read as "cannot fire" and resting on nobody -
+// see the chain named at fold.
+func backup(cfg config.DB, target string, betweenCopyAndFold func(tmp string)) error {
 	if err := checkTarget(cfg.Path, target); err != nil {
 		return err
 	}
@@ -55,6 +70,9 @@ func Backup(cfg config.DB, target string) error {
 	if err != nil {
 		removeCopy(tmp)
 		return err
+	}
+	if betweenCopyAndFold != nil {
+		betweenCopyAndFold(tmp)
 	}
 	if journal {
 		if err := fold(ctx, cfg, tmp); err != nil {
@@ -117,6 +135,22 @@ func Backup(cfg config.DB, target string) error {
 // from 20 to 169 MB, so it never started over. The lock stays because it
 // costs one short transaction, not because a test demands it.
 func freeze(ctx context.Context, conn *sql.Conn, path, tmp string) (bool, error) {
+	// The journal is looked for under the one name SQLite gives it in WAL
+	// mode, and nothing here looks for a rollback journal ("-journal"). What
+	// holds that is not this function but the connection: the connector runs
+	// PRAGMA journal_mode=wal on every connection it hands out - which is
+	// itself a WRITE to a database this function promises not to write, and
+	// that is the honest reading of it. So the dependency is ASKED here
+	// instead of assumed; a file in any other mode would be copied without
+	// its journal, and the copy would be torn. PRAGMA journal_mode without a
+	// value only reads. (Kl-1 of the review of 10.10.2026.)
+	var mode string
+	if err := conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return false, fmt.Errorf("sqlite: die Datenbank steht im Journalmodus %q, gesichert wird nur wal", mode)
+	}
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -167,11 +201,35 @@ func fold(ctx context.Context, cfg config.DB, tmp string) error {
 	// holds frames is not a database on its own, and renaming it into place
 	// would hand out a backup missing its newest transactions - or half of one.
 	//
-	// No test here makes this answer come back: the copy is a file nothing else
-	// has a connection to, so there is nobody to be busy against and nothing
-	// to hold a frame back. Taking the check out therefore leaves every case
-	// green (measured 03.10.2026). It is the answer of the one step that is
-	// allowed to fail silently, and it is two comparisons.
+	// THE CHAIN THIS CHECK CLOSES, written here in one place because the
+	// review of 10.10.2026 (W-3) found it spread over three comments and
+	// resting on nobody:
+	//
+	//  1. freeze does NOT promise a file that stood still - measured, the
+	//     file changed in 7 of 8 copying windows with the write lock held.
+	//  2. What the promise "a copy that is consistent in itself" rests on is
+	//     that file and journal are copied TOGETHER and the journal is
+	//     replayed over the copy here.
+	//  3. That the replay really FINISHED is said by nothing but the two
+	//     comparisons below.
+	//
+	// Until 12.10.2026 the third link was unheld: the copy is a file nothing
+	// else has a connection to, so there was nobody to be busy against, and
+	// taking the check out left every case green (measured 03.10.2026, and
+	// again on 12.10.2026 against the K-1 fix - that fix changed nothing
+	// here). Through the seam betweenCopyAndFold in backup, a test now opens
+	// the copy at exactly that moment and holds a read transaction on it, so
+	// the checkpoint answers busy for real:
+	// TestBackupStopsWhenTheJournalOfTheCopyCannotBeFolded. With the two
+	// comparisons taken out, that case is red (mutant m-fold, measured
+	// 12.10.2026).
+	//
+	// What is STILL unheld, and it is the link above: the write lock of
+	// freeze itself. No case here falls without it (mutant m-lock, alive,
+	// code 0, measured 12.10.2026), and the case it rules out - a writer
+	// restarting the journal from its first frame between the two copies -
+	// is out of reach on this machine; freeze says so at its own line. The
+	// chain has one measured link and one named one, and that is the state.
 	if busy != 0 || frames != 0 {
 		return fmt.Errorf("sqlite: die Sicherung ließ sich nicht abschließen: %d Einträge blieben im Journal (busy %d)", frames, busy)
 	}
@@ -358,6 +416,15 @@ const copyBuf = 256 << 10
 // and one of zero length both mean the file is the whole database already. A
 // source that is there but empty is still copied, so the database itself
 // always arrives under the copy's name, however small it is.
+//
+// That answer is taken from in.Stat() BEFORE the copy, not from what was
+// written: it is the length at the moment the source was opened and nothing
+// else (Kl-2 of the review of 10.10.2026, which found the line not saying
+// so). freeze is the only caller, and of its two calls only the one for the
+// journal reads the answer at all - under the write lock, which is what
+// freezes the journal. It is NOT a count of the bytes copied, and nothing may
+// read it as one: a journal that grew between the Stat and the copy would be
+// IN the copy, only this answer would be the older of the two.
 func copyFile(src, dst string, buf []byte) (bool, error) {
 	in, err := os.Open(src)
 	if err != nil {

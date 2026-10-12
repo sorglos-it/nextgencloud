@@ -52,8 +52,20 @@ type knowsItsSchema interface {
 // database that cannot answer SchemaText - MariaDB today - keeps the old
 // step-over, with the old sentence and nothing holding it. Nothing here can
 // reach a MariaDB server, so a check for it would be written out of
-// documentation alone. Whoever has a cluster closes that half and measures
-// it; until then the hole is this one, named here.
+// documentation alone - and MariaDB has nothing of this shape to answer
+// either: SHOW CREATE TABLE hands back a text the server writes itself and
+// takes one table at a time, information_schema keeps no statement text at
+// all. So this half STAYS OPEN, and it was looked at again on 12.10.2026 and
+// left open on purpose.
+//
+// What it has instead of a closure is a watchman, in already_test.go:
+// TestTheStepOverStaysTheOldOneForADialectThatCannotSay measures that the
+// hole has exactly this shape - such a dialect is let through, and let
+// through without a question being put to the database -, and
+// TestExactlyOneDialectCanSayWhatItHolds pins WHICH of the two dialects sits
+// in it, so that the hole can neither grow nor be closed quietly out of
+// documentation. Whoever has a cluster closes that half, measures it against
+// the server, and goes past that second case to do it.
 // It answers nil when the statement may be stepped over and the reason to
 // stop otherwise, so a caller that only wants to go on cannot read the
 // answer the wrong way round.

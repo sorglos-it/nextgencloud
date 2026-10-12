@@ -36,6 +36,18 @@ const keySize = 64
 // largest blob each of them ever carried would stay paid for until the
 // program ends - on a Pi the most expensive thing in here. An idle connection
 // above the first is therefore dropped after a minute.
+//
+// That sum is per POOL, and while Backup runs there are three of them on the
+// same machine: the caller's, the one Backup opens on the database, and the
+// one fold opens on the copy (Kl-4 of the review of 10.10.2026, which found
+// the sentence above reckoning with one). Decided and named rather than
+// changed: maxMemory below is a ceiling and not a reservation, the two extra
+// pools live for the length of one backup, and each of them holds one
+// connection that reads pages and binds no blob - so what they really cost is
+// nothing like three times the worst case of one. NOT MEASURED: how much the
+// three hold together at the peak of a backup. Whoever has a controller
+// measures it; until then this is the honest shape of the sentence, not a
+// number.
 const (
 	maxOpenConns = 4
 	maxIdleConns = 1
