@@ -2,12 +2,19 @@ package classes
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 )
 
 func sha256Of(b []byte) []byte {
@@ -46,9 +53,11 @@ func TestRunReportsAPackThatFailed(t *testing.T) {
 }
 
 func TestRunKnowsItsSubcommands(t *testing.T) {
-	// The four that are not built yet: the name is known, so the call says
+	// The two that are not built yet: the name is known, so the call says
 	// what is missing instead of looking like a typo (exit 1, not 2).
-	for _, name := range []string{"encrypt", "license", "release", "check"} {
+	// encrypt and license (Task 27) and catalog (Task 28) are built, so they
+	// are not in this list any more.
+	for _, name := range []string{"release", "check"} {
 		var stdout, stderr bytes.Buffer
 		if code := Run([]string{name}, &stdout, &stderr); code != 1 {
 			t.Errorf("%s: exit %d", name, code)
@@ -71,24 +80,146 @@ func TestRunPrintsTheUsageForAWrongCall(t *testing.T) {
 		}
 	}
 	// Every subcommand the usage text names is one Run answers, so the text
-	// cannot promise a call that does not exist.
-	// Each one gets a call of its own arity: a call with too few arguments is
-	// a wrong call (exit 2) even for a subcommand that exists, so one shape
-	// for all of them would measure the arity, not the dispatch.
-	for name, args := range map[string][]string{
-		"pack":    {"pack", "x", "y"},
-		"encrypt": {"encrypt", "x", "y"},
-		"catalog": {"catalog", "x", "y", "teststore", "1"},
-		"license": {"license", "x", "y", "z"},
-		"release": {"release", "x", "y"},
-		"check":   {"check", "x", "y", "z"},
+	// cannot promise a call that does not exist. Each one is called with as
+	// many arguments as it takes: a call of the wrong shape is a 2 for every
+	// subcommand, so one shape for all of them would prove nothing.
+	// The paths are all inside a temporary directory: license creates a
+	// signing key file when none is there, and a test must not leave one in
+	// the work tree (it did, once — a file named "c" with a seed in it).
+	tmp := t.TempDir()
+	in := func(name string) string { return filepath.Join(tmp, name) }
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"pack", []string{"pack", in("x"), in("y")}},
+		{"encrypt", []string{"encrypt", in("x"), in("y")}},
+		{"catalog", []string{"catalog", in("x"), in("y"), "teststore", "1"}},
+		{"license", []string{"license", "a", "b", in("c"), in("d"), "e", "f"}},
+		{"release", []string{"release", in("x"), in("y")}},
+		{"check", []string{"check", in("x"), in("y")}},
 	} {
-		if !strings.Contains(Usage, "ngc-store "+name+" ") {
-			t.Errorf("the usage text does not name %s", name)
+		if !strings.Contains(Usage, "ngc-store "+c.name+" ") {
+			t.Errorf("the usage text does not name %s", c.name)
 		}
 		var stdout, stderr bytes.Buffer
-		if code := Run(args, &stdout, &stderr); code == 2 {
-			t.Errorf("%s is named in the usage text but not understood", name)
+		if code := Run(c.args, &stdout, &stderr); code == 2 {
+			t.Errorf("%s is named in the usage text but not understood", c.name)
 		}
+	}
+	// And the two built ones give a 2 for a call of the wrong shape.
+	for _, args := range [][]string{{"encrypt"}, {"encrypt", "one"}, {"encrypt", "a", "b", "c"},
+		{"license"}, {"license", "a", "b", "c", "d", "e"}, {"license", "a", "b", "c", "d", "e", "f", "g"}} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(args, &stdout, &stderr); code != 2 {
+			t.Errorf("%q: exit %d", args, code)
+		}
+	}
+}
+
+func TestRunEncryptsAndCreatesItsKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "app.ngc")
+	write(t, plain, []byte("package"))
+	keyFile := filepath.Join(dir, "content.key")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"encrypt", plain, keyFile}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, %s", code, stderr.String())
+	}
+	// The name is the package's own with ".enc" behind it, written out here
+	// on purpose: Catalog of Task 28 looks for exactly this file beside the
+	// plain package (its EncSuffix), and a name taken from a variable would
+	// not say which one that is.
+	sealed := filepath.Join(dir, "app.ngc.enc")
+	if sealed != plain+".enc" {
+		t.Fatalf("the test disagrees with itself: %q", sealed)
+	}
+	if _, err := os.Stat(sealed); err != nil {
+		t.Fatalf("no encrypted package: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "angelegt") || !strings.Contains(stdout.String(), sealed) {
+		t.Errorf("stdout %q", stdout.String())
+	}
+	// The second call uses the key that is there; it does not make a new one
+	// and the first package stays readable with it.
+	before := read(t, keyFile)
+	stdout.Reset()
+	if code := Run([]string{"encrypt", plain, keyFile}, &stdout, &stderr); code != 0 {
+		t.Fatalf("second call: exit %d, %s", code, stderr.String())
+	}
+	if !bytes.Equal(read(t, keyFile), before) {
+		t.Error("the second call changed the key file")
+	}
+	if strings.Contains(stdout.String(), "angelegt") {
+		t.Errorf("the second call made a key: %q", stdout.String())
+	}
+}
+
+func TestRunRefusesAPackageThatIsNoNGC(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "app.tar")
+	write(t, plain, []byte("package"))
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"encrypt", plain, filepath.Join(dir, "c.key")}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(stderr.String(), ".ngc") {
+		t.Errorf("stderr %q", stderr.String())
+	}
+	// Nothing was created on the way, not even the key file.
+	if _, err := os.Stat(filepath.Join(dir, "c.key")); err == nil {
+		t.Error("a refused call left a key file behind")
+	}
+}
+
+func TestRunSignsALicence(t *testing.T) {
+	f := newLicenseFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"license", "-issued", "1790000000", "-per", "user", "-users", "3",
+		f.app, f.installation, f.keyFile, f.contentKeyFile, f.installKey, f.st.ID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d, %s", code, stderr.String())
+	}
+	var env sign.Envelope
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &env); err != nil {
+		t.Fatalf("the output is no envelope: %v, %q", err, stdout.String())
+	}
+	l := f.verifyOK(t, env)
+	if l.Per != store.PerUser || l.Users != 3 || l.Issued != 1790000000 {
+		t.Fatalf("licence %+v", l)
+	}
+}
+
+func TestRunCreatesASigningKeyAndNamesOnlyItsPublicHalf(t *testing.T) {
+	dir := t.TempDir()
+	contentKeyFile := filepath.Join(dir, "content.key")
+	if _, err := NewContentKey(contentKeyFile); err != nil {
+		t.Fatal(err)
+	}
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(dir, "store.key")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"license", "-issued", "1790000000", "org.sorglos.terminal", testID(t),
+		keyFile, contentKeyFile, enc.B64.EncodeToString(priv.PublicKey().Bytes()), "test"},
+		&stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d, %s", code, stderr.String())
+	}
+	seed := strings.TrimSpace(string(read(t, keyFile)))
+	if !strings.Contains(stdout.String(), "Öffentlicher Schlüssel") {
+		t.Errorf("stdout %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), seed) {
+		t.Error("the private seed was printed")
+	}
+	raw, err := enc.B64.DecodeString(seed)
+	if err != nil {
+		t.Fatalf("the key file is no seed: %v", err)
+	}
+	if leaks(stdout.String(), raw) || leaks(stderr.String(), raw) {
+		t.Error("the seed shows in the output")
 	}
 }
