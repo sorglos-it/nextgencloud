@@ -21,11 +21,22 @@ import (
 // Unmeasured here and nowhere else in this repo, said out loud: that podman
 // takes these arguments, that an image comes out, and that it runs.
 
-// atRepoRoot puts the case in the directory the three documented build lines
-// are run from. It is three levels up from this package; a case that cannot
-// get there fails instead of skipping, because a set that switches itself off
-// looks green.
-func atRepoRoot(t *testing.T) {
+// repoRoot ANSWERS with the root of the repo; it does not move the working
+// directory of the process, and that is the whole point of it.
+//
+// The first shape of these cases used t.Chdir, and it was wrong twice. Wrong
+// in fact: on the checkout on Z:, a network drive, it failed 4 times out of 4
+// with "panic: testing.Chdir: chdir .: path not found" - os.File.Chdir, the
+// only thing testing.Chdir restores the directory with, does not work there,
+// while it works on a local disk (probed on both drives, 12.10.2026). And
+// wrong in kind: the working directory is shared by every case of this package
+// and by every process one of them starts (ask_test.go starts one), so a case
+// that moves it moves it for all of them. A fixture everybody shares is the
+// wrong place for something one case needs.
+//
+// A root that cannot be found fails instead of skipping, because a set that
+// switches itself off looks green.
+func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
 	if err != nil {
@@ -34,7 +45,9 @@ func atRepoRoot(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("%s is not the root of the repo (no go.mod): %v", root, err)
 	}
-	t.Chdir(root)
+	// Slashes, because every value built out of this becomes an argument of
+	// podman, which runs on Linux.
+	return filepath.ToSlash(root)
 }
 
 // 1. The spec the command builds, whole, from the real files of the repo. The
@@ -42,8 +55,8 @@ func atRepoRoot(t *testing.T) {
 // constant of this test and not the version of the controller - so this case
 // also says what the manifest says today.
 func TestImageSpecIsBuiltFromTheFilesOfTheApp(t *testing.T) {
-	atRepoRoot(t)
-	b, err := os.ReadFile("apps/server-controller/templates/terminal/manifest.json")
+	root := repoRoot(t)
+	b, err := os.ReadFile(root + "/apps/server-controller/templates/terminal/manifest.json")
 	if err != nil {
 		t.Fatalf("the manifest of the terminal app: %v", err)
 	}
@@ -52,24 +65,37 @@ func TestImageSpecIsBuiltFromTheFilesOfTheApp(t *testing.T) {
 		t.Fatalf("store.ParseManifest on the manifest of the terminal app: %v", err)
 	}
 
-	spec, err := imageSpec(Options{Arch: "arm64"}, "services/arm64.tar")
+	spec, err := imageSpec(root, Options{Arch: "arm64"}, "services/arm64.tar")
 	if err != nil {
 		t.Fatalf("imageSpec: %v", err)
 	}
 	want := ctrlrt.BuildSpec{
 		Arch:    "arm64",
 		Ref:     "ngc/terminal:" + m.Version,
-		File:    "apps/server-controller/templates/terminal/Containerfile",
-		Context: "build",
+		File:    root + "/apps/server-controller/templates/terminal/Containerfile",
+		Context: root + "/build",
 		Out:     "services/arm64.tar",
 	}
 	if spec != want {
 		t.Fatalf("imageSpec =\n%+v\nwant\n%+v", spec, want)
 	}
+	// And what the root of the real call joins to: the command passes "." (see
+	// buildImage), and that has to come out as the plain relative paths the
+	// three documented build lines name. Read through imagePath and not
+	// through imageSpec, because imageSpec needs a manifest on the disk beside
+	// it - and needing that again is how this case ended up moving the working
+	// directory of the process in its first shape.
+	if got := imagePath(".", terminalDir, "Containerfile"); got != "apps/server-controller/templates/terminal/Containerfile" {
+		t.Fatalf("imagePath of the real call = %q, want the plain relative path of CLAUDE.md", got)
+	}
+	if got := imagePath(".", buildDir); got != "build" {
+		t.Fatalf("imagePath of the build context = %q, want \"build\"", got)
+	}
+
 	// And the two files it names are really there: a spec that points at
 	// nothing would build nothing, and the error would come from podman.
 	for _, p := range []string{spec.File,
-		"apps/server-controller/templates/terminal/manifest.json"} {
+		root + "/apps/server-controller/templates/terminal/manifest.json"} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("the spec names %s, which is not there: %v", p, err)
 		}
@@ -85,7 +111,7 @@ func TestImageSpecTakesItsTagFromTheManifest(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, terminalDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	src, err := os.ReadFile(filepath.Join("..", "..", "templates", "terminal", "manifest.json"))
+	src, err := os.ReadFile(repoRoot(t) + "/" + terminalDir + "/manifest.json")
 	if err != nil {
 		t.Fatalf("the manifest of the terminal app: %v", err)
 	}
@@ -96,9 +122,8 @@ func TestImageSpecTakesItsTagFromTheManifest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, terminalDir, "manifest.json"), bent, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(dir)
 
-	spec, err := imageSpec(Options{Arch: "amd64"}, "services/amd64.tar")
+	spec, err := imageSpec(filepath.ToSlash(dir), Options{Arch: "amd64"}, "services/amd64.tar")
 	if err != nil {
 		t.Fatalf("imageSpec: %v", err)
 	}
@@ -112,9 +137,9 @@ func TestImageSpecTakesItsTagFromTheManifest(t *testing.T) {
 // the name are assembled in THIS package, and a spec that runtime refuses is a
 // command that fails on a build machine and nowhere else.
 func TestImageSpecPassesWhatRuntimeDemands(t *testing.T) {
-	atRepoRoot(t)
+	root := repoRoot(t)
 	for _, arch := range ctrlrt.Arches {
-		spec, err := imageSpec(Options{Arch: arch}, "services/"+arch+".tar")
+		spec, err := imageSpec(root, Options{Arch: arch}, "services/"+arch+".tar")
 		if err != nil {
 			t.Fatalf("imageSpec for %s: %v", arch, err)
 		}
@@ -133,18 +158,18 @@ func TestImageSpecPassesWhatRuntimeDemands(t *testing.T) {
 // start on a manifest nothing could pack.
 func TestImageSpecRefusesAManifestItCannotPack(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
-	if _, err := imageSpec(Options{Arch: "amd64"}, "out.tar"); err == nil {
+	root := filepath.ToSlash(dir)
+	if _, err := imageSpec(root, Options{Arch: "amd64"}, "out.tar"); err == nil {
 		t.Fatal("imageSpec in an empty directory gave no error")
 	}
-	if err := os.MkdirAll(terminalDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, terminalDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{"{}", "not json", `{"id":"org.sorglos.terminal"}`} {
-		if err := os.WriteFile(filepath.Join(terminalDir, "manifest.json"), []byte(bad), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, terminalDir, "manifest.json"), []byte(bad), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := imageSpec(Options{Arch: "amd64"}, "out.tar"); err == nil {
+		if _, err := imageSpec(root, Options{Arch: "amd64"}, "out.tar"); err == nil {
 			t.Fatalf("imageSpec took %q for a manifest", bad)
 		}
 	}
