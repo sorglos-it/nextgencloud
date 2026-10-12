@@ -31,6 +31,7 @@ import (
 	"os"
 	goruntime "runtime"
 	"slices"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
@@ -92,10 +93,19 @@ type Updates interface {
 	PutStaged(ctx context.Context, st state.Staged) error
 }
 
+// Parts is what this controller remembers about the NGC parts installed on it
+// (state.Store). Install reads it to answer "is this really newer" and writes
+// it when a part has come up in its new version.
+type Parts interface {
+	Components(ctx context.Context) (map[string]string, error)
+	PutComponents(ctx context.Context, m map[string]string) error
+}
+
 // Local is the part of this controller's own store this package needs.
 type Local interface {
 	Apps
 	Updates
+	Parts
 }
 
 // Reports tells the API how an update is getting on
@@ -132,6 +142,36 @@ type Deps struct {
 	Report Reports
 	// Now is the clock, in seconds; it stamps what lies ready.
 	Now func() int64
+
+	// --- what Install and Rollback need beside the above (install.go) -----
+
+	// BinDir is where the NGC programs run from (config.BinDir). An install
+	// of a part copies into it and swaps inside it, so it is one directory
+	// and not derived from StageDir: the two need not be one filesystem.
+	BinDir string
+	// WebRoot is where the web interface is unpacked (config.WebRoot). Only
+	// an install of trust.AutoWeb needs it.
+	WebRoot string
+	// Services restarts and watches the systemd units (Systemd in operation).
+	Services Services
+	// Health asks a program that was put in place for its version. VersionOf
+	// is the one of operation: it runs "<file> -version" and gives the first
+	// line. It is a function in Deps and not a call in install.go because
+	// running a freshly installed ngc program is the one step of an install
+	// that cannot be measured where this is written - the cases drive it
+	// directly, and VersionOf itself is measured against a program built for
+	// the purpose (TestVersionOfAsksTheProgramItself).
+	Health func(ctx context.Context, file string) (string, error)
+	// Alive is how long a restarted service has to stay up before the install
+	// counts as done; 0 is aliveDefault (30 seconds).
+	Alive time.Duration
+	// Sleep is that wait; nil is time.Sleep. A case sets it to run without
+	// waiting, and one case leaves Alive and Sleep alone so that the default
+	// is not the one value nothing holds.
+	Sleep func(time.Duration)
+	// Apps sets a staged app package up (AppInstaller). Only an app update
+	// needs it.
+	Apps AppInstaller
 }
 
 // Manager lays updates ready.
@@ -495,6 +535,15 @@ func (m *Manager) put(ctx context.Context, p *core.StageParams, src source, r io
 // against (TestStageMessagesFitTheContract).
 func message(err error) string {
 	switch {
+	// Before ErrForbidden and ErrVerify, both of which these three travel
+	// joined with: a message says which wall stopped the update, and the
+	// nearest wall is the one that did.
+	case errors.Is(err, ErrNeedsGrants):
+		return "Nicht eingespielt: Die neue Fassung braucht Rechte, die diese App nicht hat."
+	case errors.Is(err, ErrHealth):
+		return "Nicht eingespielt: Die neue Fassung startete nicht."
+	case errors.Is(err, ErrNothing):
+		return "Nicht eingespielt: Für dieses Ziel liegt hier kein geprüftes Update."
 	case errors.Is(err, store.ErrRollback):
 		return "Abgelehnt: Das Update ist älter als das zuletzt geprüfte."
 	case errors.Is(err, ErrForbidden):
