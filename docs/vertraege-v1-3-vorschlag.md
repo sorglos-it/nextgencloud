@@ -74,6 +74,24 @@ Prüfung an.
 
 ---
 
+### Nachgemessen vom Koordinator am 12.10.2026: erreichbar ist P1 heute nicht
+
+Die schwächere zweite Grammatik gibt es wirklich — nachgesehen auf dem Zweig `api`:
+`appstore.downloadURL` prüft Länge, `#`, Schema und Rechnernamen und schneidet den Rest
+der Adresse weg (`authority, _, _ := strings.Cut(rest, "/")`). Pfad und Query werden
+**nicht angesehen**. So weit stimmt der Befund.
+
+**Aber heute kommt dort keine ungeprüfte Adresse an.** `Download` hat genau **einen**
+Aufrufer im Betrieb (`activate.go:444`). Der nimmt den Eintrag aus `st.Catalog(...)`, und
+das ist ein über `store.VerifyCatalog` geprüfter Katalog — die Adresse ist also schon durch
+`validURL` gegangen. Die Basis kommt aus der Vertrauensliste über `trust.ValidStoreURL`.
+
+**Das ändert den Rang, nicht die Sache:** P1 ist heute **kein offenes Loch, sondern eine
+Naht ohne Riegel**. Gefährlich wird sie beim **nächsten** Aufrufer — wer `Download` später
+mit einer Adresse aus einer anderen Quelle ruft, bekommt keine Warnung, und die Prüfung,
+die er für vollständig hält, sieht den Pfad nicht an. Genau darum ist ein ausgeführtes
+`store.ValidDownloadURL` die richtige Antwort, und genau darum eilt es nicht.
+
 ## P2 — Ein ERSTER Einbau ohne Aufsicht geht nicht (Punkt aus Controller 20)
 
 **Gemessen (von mir, 12.10.2026, mit einem Fall gegen `shared/store`):**
