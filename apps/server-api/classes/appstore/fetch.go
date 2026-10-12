@@ -418,3 +418,24 @@ type sourceState struct {
 	Checked int64  `json:"checked,omitzero"`
 	Error   string `json:"error,omitempty"`
 }
+
+// FetchReleaseFile downloads one file of a verified release to w. The address
+// comes out of the release the caller verified; it is resolved the way every
+// other download of this package is (PackageURL against the address of the
+// global store), and Download holds the bytes against the size and the
+// checksum of that same entry. So nothing here composes an address of its own,
+// and no second grammar for a signed download link comes into being.
+//
+// The caller throws away what w received on an error, for the reason Download
+// names: nothing here can take written bytes back.
+func (st *Stores) FetchReleaseFile(ctx context.Context, f store.File, w io.Writer) error {
+	base, err := st.globalURL(ctx)
+	if err != nil {
+		return err
+	}
+	url, ok := PackageURL(base, f.URL)
+	if !ok {
+		return ErrStore
+	}
+	return st.Download(ctx, url, f.Size, f.SHA256, w)
+}
