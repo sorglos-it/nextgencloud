@@ -65,17 +65,17 @@ func EnsureRun(ctx context.Context, u User) (string, error) {
 	// directory below it, and nobody has to list the others to find his own.
 	// 0711 and not 0755 because the list of installed apps is nothing a user
 	// of this machine needs to read off a directory.
-	if err := os.MkdirAll(paths.runDir, 0o711); err != nil {
+	if err := paths.mkdirAll(paths.runDir, 0o711); err != nil {
 		return "", errors.Join(ErrRun, err)
 	}
 	// And it is tightened as well, not only made: os.MkdirAll leaves the mode
 	// of a directory that is already there alone, and one that another program
 	// or a remnant on the tmpfs left at 0777 would make every app's runtime
 	// directory listable by anyone on this machine.
-	if err := os.Chmod(paths.runDir, 0o711); err != nil {
+	if err := paths.chmod(paths.runDir, 0o711); err != nil {
 		return "", errors.Join(ErrRun, err)
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+	if err := paths.mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
 		return "", errors.Join(ErrRun, err)
 	}
 	// The mode BEFORE the handover, and that order is the whole of it: while
@@ -91,7 +91,7 @@ func EnsureRun(ctx context.Context, u User) (string, error) {
 	// up after every restart that leaves a remnant. Measured: with the chmod
 	// after the chown such a directory was 0777 in the moment it was handed
 	// over (TestEnsureRunTightensTheModeBeforeItHandsTheDirectoryOver).
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := paths.chmod(dir, 0o700); err != nil {
 		return "", errors.Join(ErrRun, err)
 	}
 	if err := paths.chown(dir, int(u.UID), int(u.GID)); err != nil {

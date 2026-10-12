@@ -105,11 +105,11 @@ func EnsureData(ctx context.Context, app string, u User, serverKey []byte) (stri
 	dir := DataDirOf(app)
 	// 0700 from the start, not after the chown: between the two the directory
 	// exists, and for that moment it must not be readable by anyone else.
-	if err := os.MkdirAll(paths.appData, 0o700); err != nil {
+	if err := paths.mkdirAll(paths.appData, 0o700); err != nil {
 		return "", err
 	}
 	made := false
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	if err := paths.mkdir(dir, 0o700); err != nil {
 		if !os.IsExist(err) {
 			return "", err
 		}
@@ -147,7 +147,7 @@ func EnsureData(ctx context.Context, app string, u User, serverKey []byte) (stri
 	// bits either: a directory made 0700 carries neither, so there is nothing
 	// for the chown above to clear. Kept because the repeat case is real and
 	// measured (TestEnsureDataTightensTheModeOfADirectoryAlreadyThere).
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := paths.chmod(dir, 0o700); err != nil {
 		return "", err
 	}
 	ok = true

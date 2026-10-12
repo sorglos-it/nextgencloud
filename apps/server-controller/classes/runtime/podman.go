@@ -176,29 +176,39 @@ func (p *Podman) RemoveImage(ctx context.Context, name, ref string) error {
 	return err
 }
 
-// Create makes the container without starting it.
-func (p *Podman) Create(ctx context.Context, c Container) error {
+// createArgs is the argument list of Create and every refusal that comes
+// before it. It stands apart from Create for one reason, and it is a measuring
+// reason: the hardening of an app container - no capabilities, no rights to
+// gain, nothing writable but /data, no network without a grant - lives entirely
+// in this list, and as long as the list only existed inside a call of podman,
+// no case on a machine without podman could hold any of it. Measured on
+// 12.10.2026: with the list built inside Create, --cap-drop ALL,
+// no-new-privileges, --read-only and --network none could all be taken out and
+// the whole controller set stayed green. Nothing of the order or of the
+// refusals changed with this move; it is the same list, reachable without
+// starting anything (hardening_test.go).
+func createArgs(c Container) ([]string, error) {
 	if !validName.MatchString(c.Name) {
-		return ErrName
+		return nil, ErrName
 	}
 	if !validRef.MatchString(c.Image) {
-		return ErrImage
+		return nil, ErrImage
 	}
 	if err := validPath(c.DataDir); err != nil {
-		return err
+		return nil, err
 	}
 	// The program that holds the container open is mounted into it, so where it
 	// comes from decides what the container can read. Only what NGC installed
 	// may be mounted: without this, any readable file of this server could be
 	// handed to an app.
 	if err := validPath(c.Hold); err != nil {
-		return err
+		return nil, err
 	}
 	if !strings.HasPrefix(c.Hold, config.BinDir+"/") {
-		return ErrPath
+		return nil, ErrPath
 	}
 	if c.CPU < 0 || c.Memory < 0 {
-		return ErrLimit
+		return nil, ErrLimit
 	}
 	// A container of an app is nobody's root. Without this, the one thing this
 	// whole package is for falls away in a single call: podman would run as root,
@@ -206,7 +216,7 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 	// /data would write there. Create is the only call that is told a user, so
 	// it is the only place this can be said.
 	if c.UID == 0 || c.GID == 0 {
-		return errors.Join(ErrIdentity, errors.New("uid or gid 0 for "+c.Name))
+		return nil, errors.Join(ErrIdentity, errors.New("uid or gid 0 for "+c.Name))
 	}
 	cpu, mem := c.CPU, c.Memory
 	if cpu == 0 {
@@ -254,6 +264,15 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 		// 0 in the container is the app's own user outside it: podman runs
 		// rootless, so the user namespace maps it to exactly that user.
 		"--user", "0:0", c.Image, "/ngc/ngc-hold", "hold")
+	return args, nil
+}
+
+// Create makes the container without starting it.
+func (p *Podman) Create(ctx context.Context, c Container) error {
+	args, err := createArgs(c)
+	if err != nil {
+		return err
+	}
 
 	// Create is the only call that does not read the user out of the name: user,
 	// group and home come from the argument. That makes it the last way past the
@@ -280,7 +299,7 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 		return ErrHome
 	}
 	u := appUser{uid: c.UID, gid: c.GID, home: c.DataDir, run: runDir(c.Name)}
-	_, err := p.run(ctx, u, args, nil, nil, nil)
+	_, err = p.run(ctx, u, args, nil, nil, nil)
 	return err
 }
 
@@ -340,15 +359,18 @@ func (p *Podman) Running(ctx context.Context, name string) (bool, error) {
 	return len(bytes.TrimSpace(out.Bytes())) > 0, nil
 }
 
-// Exec runs a command in a running container and answers with the number the
-// command ended with.
-func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
-	u, err := ofName(e.Name)
-	if err != nil {
-		return 0, err
-	}
+// execArgs is the argument list of Exec and the refusals that belong to it. It
+// stands apart from Exec for the reason given at createArgs: what this list
+// does and does not carry - no --privileged, no --cap-add, nothing that would
+// hand out more than Create decided - is only measurable without podman if the
+// list can be built without podman (hardening_test.go).
+//
+// The handing over of the environment file is not here: that one changes the
+// machine (chown, and the removal afterwards), and Exec keeps it, in the order
+// it had.
+func execArgs(e Exec) ([]string, error) {
 	if len(e.Command) == 0 {
-		return 0, ErrCommand
+		return nil, ErrCommand
 	}
 	args := []string{"exec"}
 	if e.Stdin != nil {
@@ -358,15 +380,43 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 	}
 	if e.EnvFile != "" {
 		if err := validPath(e.EnvFile); err != nil {
-			return 0, err
+			return nil, err
 		}
 		// It has to lie on the tmpfs under config.RunDir, and that is not a
 		// matter of tidiness: the line below removes the file, and this process
 		// is root. A path from anywhere would make this call a way to delete any
 		// file of this server.
 		if !strings.HasPrefix(e.EnvFile, config.RunDir+"/") {
-			return 0, ErrPath
+			return nil, ErrPath
 		}
+		args = append(args, "--env-file", e.EnvFile)
+	}
+	if e.Root {
+		// The container already runs as 0:0, so this says out loud what it
+		// would do anyway. Whether the capabilities are there was decided once,
+		// at Create, and nothing here hands out more than that.
+		args = append(args, "--user", "0:0")
+	}
+	// Everything behind -- is the container and its command. A command of a
+	// manifest may well begin with a dash, and this is what keeps podman from
+	// reading it as one of its own options.
+	args = append(args, "--", e.Name)
+	args = append(args, e.Command...)
+	return args, nil
+}
+
+// Exec runs a command in a running container and answers with the number the
+// command ended with.
+func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
+	u, err := ofName(e.Name)
+	if err != nil {
+		return 0, err
+	}
+	args, err := execArgs(e)
+	if err != nil {
+		return 0, err
+	}
+	if e.EnvFile != "" {
 		// The file is the only copy of what the call was given, and it goes as
 		// soon as the call is over. Not earlier: podman reads it itself while
 		// it starts, so taking it away right after the start is a race with
@@ -386,19 +436,7 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 		if err := os.Chown(e.EnvFile, int(u.uid), int(u.gid)); err != nil {
 			return 0, errors.Join(ErrOwner, err)
 		}
-		args = append(args, "--env-file", e.EnvFile)
 	}
-	if e.Root {
-		// The container already runs as 0:0, so this says out loud what it
-		// would do anyway. Whether the capabilities are there was decided once,
-		// at Create, and nothing here hands out more than that.
-		args = append(args, "--user", "0:0")
-	}
-	// Everything behind -- is the container and its command. A command of a
-	// manifest may well begin with a dash, and this is what keeps podman from
-	// reading it as one of its own options.
-	args = append(args, "--", e.Name)
-	args = append(args, e.Command...)
 
 	code, err := p.run(ctx, u, args, e.Stdin, e.Stdout, e.Stderr)
 	var ended *exec.ExitError
