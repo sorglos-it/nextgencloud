@@ -13,3 +13,12 @@ import _ "embed"
 //
 //go:embed apache-apis.conf.tmpl
 var ApacheAPIs string
+
+// TerminalManifest is manifest.json of the terminal app. It is embedded and
+// not read off the disk on purpose: embedded, it is part of the build graph of
+// whoever parses it, so a case that checks it against the contract checks the
+// file that is shipped - and a mutation of that file is seen. A case that
+// opened the path instead would read past any overlay.
+//
+//go:embed terminal/manifest.json
+var TerminalManifest []byte

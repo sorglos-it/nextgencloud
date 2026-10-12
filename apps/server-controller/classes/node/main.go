@@ -9,10 +9,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/pairing"
+	// Named, because this package already has a terminal: ask.go asks whether
+	// a reader is the admin's terminal. Two unrelated things, one word - the
+	// same collision that broke the build when tasks 15 and 16 both wrote a
+	// disk. The import carries the name, so nothing of the older code moves.
+	termsvc "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/terminal"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
@@ -42,6 +50,11 @@ const (
 const (
 	usagePair  = "Aufruf: ngc-controller pair (den Kopplungscode fragt das Programm danach ab)"
 	usageImage = "Aufruf: ngc-controller image -arch <amd64|arm64> -out <Datei>"
+	// Both commands run inside a container and take nothing: the channel is
+	// their input. A word behind them would be one nobody put there on
+	// purpose, so it is answered instead of ignored.
+	usageTerminal = "Aufruf: ngc-controller terminal (ohne weitere Angaben, läuft im Container)"
+	usageHold     = "Aufruf: ngc-controller hold (ohne weitere Angaben, läuft im Container)"
 )
 
 // What "pair" answers. Each is one fixed German line: the cause would name the
@@ -118,9 +131,9 @@ func Main(version string, args []string, stdin io.Reader, stdout, stderr io.Writ
 	case "pair":
 		return pair(*cfgPath, config.AnchorFile, fs.Args()[1:], stdin, stdout, stderr)
 	case "terminal":
-		return runTerminal(fs.Args()[1:], stdout, stderr)
+		return runTerminal(fs.Args()[1:], stdin, stdout, stderr)
 	case "hold":
-		return hold(stderr)
+		return hold(fs.Args()[1:], stderr)
 	case "image":
 		return buildImage(version, fs.Args()[1:], stdout, stderr)
 	default:
@@ -313,15 +326,40 @@ func codeFlag(args []string) bool {
 }
 
 // runTerminal is the service of the terminal app. It runs inside the container
-// of that app, not on the server. Task 23 builds it.
-func runTerminal(args []string, stdout, stderr io.Writer) int {
-	return notReady(stderr, "terminal")
+// of that app, not on the server: stdin carries the frames of the channel and
+// stdout the raw output of the shell (package terminal). Its own lines go to
+// os.Stderr, which is the pts of that terminal in the container, so nothing of
+// the channel can reach the log of this server.
+func runTerminal(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) != 0 {
+		fmt.Fprintln(stderr, usageTerminal)
+		return 2
+	}
+	ctx, stop := stopOnSignal()
+	defer stop()
+	return termsvc.Run(ctx, stdin, stdout)
 }
 
 // hold waits until its container stops, so an app image needs no program of
-// its own. Task 23 builds it.
-func hold(stderr io.Writer) int {
-	return notReady(stderr, "hold")
+// its own. stderr is where a wrong call is answered; the wait itself says
+// nothing, because a line every time a container starts would be a line
+// nobody reads.
+func hold(args []string, stderr io.Writer) int {
+	if len(args) != 0 {
+		fmt.Fprintln(stderr, usageHold)
+		return 2
+	}
+	ctx, stop := stopOnSignal()
+	defer stop()
+	return termsvc.Hold(ctx)
+}
+
+// stopOnSignal is the context both container commands run under. The engine
+// stops a container with SIGTERM, and an admin who runs the command by hand
+// stops it with SIGINT; neither is an error, so both end the command with the
+// code of what it was doing.
+func stopOnSignal() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 // buildImage writes the image of the terminal app for one architecture. Task 23
