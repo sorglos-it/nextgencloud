@@ -224,3 +224,35 @@ func TestRunCreatesASigningKeyAndNamesOnlyItsPublicHalf(t *testing.T) {
 		t.Error("the seed shows in the output")
 	}
 }
+
+// TestEverySigningSubcommandCreatesAMissingKeyFile: whoever signs their first
+// catalog has no key yet, and the tool makes one instead of failing with the
+// bare os.Open error. catalog was the odd one out until 12.10.2026 — encrypt,
+// license and release already did it — so the case walks all four rather than
+// catalog alone, and a fifth subcommand that signs will fail here until it
+// joins them. What is printed is the path and the public half; the key itself
+// is never printed, which TestNoKeyReachesTheOutput measures.
+func TestEverySigningSubcommandCreatesAMissingKeyFile(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args func(dir, key string) []string
+	}{
+		{"catalog", func(dir, key string) []string { return []string{"catalog", dir, key, "teststore", "1"} }},
+		{"encrypt", func(dir, key string) []string { return []string{"encrypt", filepath.Join(dir, "a.ngc"), key} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			key := filepath.Join(dir, "store.key")
+			var stdout, stderr bytes.Buffer
+			Run(c.args(dir, key), &stdout, &stderr)
+			// The call may still fail for want of a package or a catalog —
+			// what this case measures is the key file, not the subcommand.
+			if _, err := os.Stat(key); err != nil {
+				t.Fatalf("%s left no key file: %v (stderr %q)", c.name, err, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), key) {
+				t.Errorf("%s does not name the key file it made: %q", c.name, stdout.String())
+			}
+		})
+	}
+}

@@ -103,6 +103,21 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		// seq, so it is a document of a moment. The checksums in it do not
 		// depend on a clock (Pack).
 		opts := CatalogOpts{Store: args[3], Seq: seq, Issued: time.Now().Unix(), BaseURL: base}
+		// A missing key file is created here, the same way encrypt, license
+		// and release do it: catalog was the one subcommand that failed with
+		// the bare os.Open error instead, which reads like a broken tool to
+		// whoever signs their first catalog. Never overwritten, and what is
+		// printed is the path and the public half, never the key.
+		if _, err := os.Stat(args[2]); errors.Is(err, os.ErrNotExist) {
+			priv, err := NewStoreKey(args[2])
+			if err != nil {
+				fmt.Fprintf(stderr, "Schlüsseldatei nicht angelegt: %v\n", err)
+				return 1
+			}
+			pub := priv.Public().(ed25519.PublicKey)
+			fmt.Fprintf(stdout, "Schlüsseldatei angelegt: %s\nÖffentlicher Schlüssel: %s\nKennung: %s\n",
+				args[2], enc.B64.EncodeToString(pub), sign.KeyID(pub))
+		}
 		env, err := Catalog(args[1], args[2], opts)
 		if err != nil {
 			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
