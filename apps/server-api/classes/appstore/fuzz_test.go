@@ -1,6 +1,8 @@
 package appstore
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -56,6 +58,45 @@ func FuzzReleaseAnswer(f *testing.F) {
 		}
 		if err != nil && r != nil {
 			t.Fatalf("refused with %v, yet a release came back", err)
+		}
+	})
+}
+
+// FuzzUpload feeds Upload with anything that might be a package: it must
+// answer an error, never panic and never leave a ui-tar behind. The seeds are
+// the three packages of packui.json, so the corpus starts at something that
+// walks all the way through and the mutations have a shape to break.
+func FuzzUpload(f *testing.F) {
+	for _, c := range loadUploadVectors(&testing.T{}) {
+		f.Add([]byte(c.Package))
+	}
+	f.Add([]byte{})
+	f.Add(make([]byte, 1024)) // an empty archive: the end marker alone
+	f.Fuzz(func(t *testing.T, pkg []byte) {
+		st, s := newStores(t)
+		res, err := st.Upload(ctx, bytes.NewReader(pkg))
+		blobs, ferr := s.DB.BlobFrom(ctx, dbapi.BlobUI, 0)
+		if ferr != nil {
+			t.Fatalf("BlobFrom: %v", ferr)
+		}
+		if err != nil {
+			if len(blobs) != 0 {
+				t.Fatalf("a refused package left %d ui-tars behind", len(blobs))
+			}
+			return
+		}
+		if len(res.SHA256) != sha256.Size || len(res.UI) != sha256.Size {
+			t.Fatalf("result %+v", res)
+		}
+		// What came back has to be what was kept, under the ID of the
+		// manifest: a result naming one version while another one's bytes
+		// lie in the database is what the shell cannot see.
+		if len(blobs) != 1 || blobs[0].ID != res.ID+"@"+res.Version {
+			t.Fatalf("%d ui-tars, first %q, result %q", len(blobs), blobs[0].ID, res.ID+"@"+res.Version)
+		}
+		sum := sha256.Sum256(blobs[0].Data)
+		if !bytes.Equal(sum[:], res.UI) {
+			t.Fatalf("the kept ui-tar is not the one the result names")
 		}
 	})
 }

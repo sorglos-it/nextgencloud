@@ -94,6 +94,10 @@ type Stores struct {
 	// nothing a store sends can forge a line in it. audit.ErrDropped is a
 	// report and never costs the entry, so it is not acted on here.
 	Log *audit.Log
+	// MaxUpload bounds the package of one upload (Upload). New sets it to
+	// store.MaxPackage, and uploadLimit does not let a higher value stand: it
+	// is here so a test need not send 4 GiB, not so a caller can take more.
+	MaxUpload int64
 }
 
 // New returns Stores with a client that follows no redirect and waits at most
@@ -107,7 +111,7 @@ func New(s *state.State) *Stores {
 			return http.ErrUseLastResponse
 		},
 		Transport: &http.Transport{Proxy: nil, ForceAttemptHTTP2: true},
-	}}
+	}, MaxUpload: store.MaxPackage}
 	if s != nil {
 		st.Log = &audit.Log{DB: s.DB, Now: s.Now}
 	}
