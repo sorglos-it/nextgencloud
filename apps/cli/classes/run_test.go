@@ -53,17 +53,18 @@ func TestRunReportsAPackThatFailed(t *testing.T) {
 }
 
 func TestRunKnowsItsSubcommands(t *testing.T) {
-	// The two that are not built yet: the name is known, so the call says
-	// what is missing instead of looking like a typo (exit 1, not 2).
-	// encrypt and license (Task 27) and catalog (Task 28) are built, so they
-	// are not in this list any more.
-	for _, name := range []string{"release", "check"} {
+	// Nothing is "not built yet" any more: Task 29 filled in the last two,
+	// release and check. The list this case used to walk is empty, so what
+	// it now holds is that no subcommand answers with that sentence and that
+	// a bare name is a call of the wrong shape (exit 2), not a missing
+	// feature (exit 1).
+	for _, name := range []string{"pack", "encrypt", "catalog", "license", "release", "check"} {
 		var stdout, stderr bytes.Buffer
-		if code := Run([]string{name}, &stdout, &stderr); code != 1 {
-			t.Errorf("%s: exit %d", name, code)
+		if code := Run([]string{name}, &stdout, &stderr); code != 2 {
+			t.Errorf("%s: exit %d, want 2 for a call without arguments", name, code)
 		}
-		if !strings.Contains(stderr.String(), name) || !strings.Contains(stderr.String(), "noch nicht gebaut") {
-			t.Errorf("%s: stderr %q", name, stderr.String())
+		if strings.Contains(stderr.String(), "noch nicht gebaut") {
+			t.Errorf("%s says it is not built: %q", name, stderr.String())
 		}
 	}
 }
@@ -96,8 +97,8 @@ func TestRunPrintsTheUsageForAWrongCall(t *testing.T) {
 		{"encrypt", []string{"encrypt", in("x"), in("y")}},
 		{"catalog", []string{"catalog", in("x"), in("y"), "teststore", "1"}},
 		{"license", []string{"license", "a", "b", in("c"), in("d"), "e", "f"}},
-		{"release", []string{"release", in("x"), in("y")}},
-		{"check", []string{"check", in("x"), in("y")}},
+		{"release", []string{"release", "-version", "1.1.0", "-seq", "1", in("x"), in("y")}},
+		{"check", []string{"check", in("x"), "ngc-web", "all"}},
 	} {
 		if !strings.Contains(Usage, "ngc-store "+c.name+" ") {
 			t.Errorf("the usage text does not name %s", c.name)
