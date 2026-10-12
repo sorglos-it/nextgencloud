@@ -714,3 +714,33 @@ dem Benutzer der App und ist nur für sie erreichbar.
 Änderung im eingefrorenen `shared/`. Darum steht sie hier und ist nicht gebaut.
 Wer sie baut, prüft gleich mit, ob dasselbe Feld auch dem Deinstallieren hilft,
 statt sich dort auf den Benutzer zu verlassen.
+
+## Punkt 25: Die Adressprüfung des Herunterladens ist von außen nicht aufrufbar
+
+**Gemessen am 10.10.2026** in Aufgabe 19 der API; der Strang hat BLOCKED gemeldet
+statt sich eine zweite Zeichengrammatik zu bauen. Das war richtig.
+
+Die Grammatik einer unterschriebenen Download-Adresse ist **da und richtig**:
+`store.validHTTPSURL` (`shared/store/catalog.go:208`) erlaubt eine Query — Stores
+unterschreiben Download-Links — und verbietet das Fragment, Steuerzeichen,
+Leerzeichen und `" ' < > \ #`; den Rechnernamen beurteilt sie über
+`trust.ValidHost`/`ValidHostPort`, also überall gleich. Sie ist aber
+**klein geschrieben** und läuft nur innerhalb von `VerifyCatalog`.
+
+Daraus folgt für jeden Abholer außerhalb von `shared/`: er kann die Adresse, die
+er gleich anfragt, **nicht selbst gegen dieselbe Grammatik prüfen**. Es bleiben
+zwei Wege, und beide sind schlechter:
+
+- **Darauf bauen, dass `VerifyCatalog` schon geprüft hat.** So macht es
+  `appstore.Download` heute (Schema, Länge 512, Rechnername). Das ist keine
+  falsche Prüfung, aber eine **Naht ohne Riegel**: wer die Adresse später
+  irgendwo anders herbekommt, merkt nichts.
+- **Eine eigene Grammatik schreiben.** Dann gibt es zwei, sie laufen
+  auseinander, und keiner weiß, welche gilt. `trust.ValidStoreURL` taugt dafür
+  nicht: sie verbietet die Query, die ein Store gerade braucht.
+
+**Die richtige Lösung ist ein ausgeführtes `store.ValidDownloadURL`** — dieselbe
+Funktion, groß geschrieben, mit eigenen Fällen. Das ist eine Änderung im
+eingefrorenen `shared/`, darum steht sie hier und ist nicht gebaut. Wer sie baut,
+lässt `validHTTPSURL` nicht daneben stehen, sondern macht die große Fassung zur
+einzigen.
