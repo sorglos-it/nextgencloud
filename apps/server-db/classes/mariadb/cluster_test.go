@@ -485,6 +485,20 @@ func openShortCluster(t *testing.T, cfg config.DB, life lifetime, idle idleTime)
 // real one: database/sql reads time.Now() itself. MaxLifetimeClosed is the
 // counter database/sql keeps for exactly this reason, and the node's own
 // count of accepted connections says the same thing from the other side.
+//
+// The replacement is taken with db.Conn and held until both numbers are read,
+// and that is not convenience but the whole reason this case stopped
+// flickering (measured 12.10.2026: 25 red in 1600 runs under load, always
+// "retired 2 ... want 1", never a wrong accept count). database/sql retires an
+// expired connection in TWO places: when one is taken out of the pool, and
+// again in putConn when one is handed back. With a deadline of a millisecond
+// the second place fires whenever a ping takes longer than that millisecond -
+// under load it always does - and the counter reads 2 while the node still saw
+// only two connections. A count that depends on whether a sub-millisecond
+// window was met twice is a derived number, not a measured one. A connection
+// that is still checked out is never handed back, so putConn cannot raise the
+// counter and the 1 is exact: whichever of the two connections the deadline
+// catches, it catches exactly one, and the node has to accept the replacement.
 func TestThePoolRetiresAConnectionAtItsLifetime(t *testing.T) {
 	ca := newAuthority(t, "ngc-test-ca")
 	n := newFakeNode(t, ca, nodeGood, "127.0.0.1", loopbackCert, nil)
@@ -497,7 +511,12 @@ func TestThePoolRetiresAConnectionAtItsLifetime(t *testing.T) {
 		t.Fatalf("first ping: %v", err)
 	}
 	time.Sleep(20 * time.Millisecond) // past a deadline of one millisecond
-	if err := db.PingContext(ctx); err != nil {
+	held, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("second connection: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	if err := held.PingContext(ctx); err != nil {
 		t.Fatalf("second ping: %v", err)
 	}
 	if got := db.Stats().MaxLifetimeClosed; got != 1 {

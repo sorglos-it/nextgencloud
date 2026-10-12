@@ -56,6 +56,24 @@ func dialOptions(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.
 // raw socket can hold the promise that a link really ended.
 func dialRaw(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.Conn, net.Conn, func()) {
 	t.Helper()
+	return dialRawLinger(t, o, true)
+}
+
+// dialRawLinger is dialRaw with the peer's SO_LINGER 0 as a choice. It is one
+// for exactly one reason, measured on 12.10.2026: with linger 0 the peer's
+// close sends a RST, and on Windows an arriving RST throws away whatever is
+// still unread in the receive queue. The close handshake has the peer echo the
+// close frame and drop its socket in the same breath (vendor read.go,
+// handleControl: writeClose then close), so the echo and the RST race each
+// other to our side. When the RST wins, our own Close reads
+// "wsarecv: connection reset" instead of the echo it had already been sent.
+// That is the peer's socket option, not our order of closing: 5 red in 3200
+// runs under load, every one of them that read. A case that waits for the
+// orderly end therefore dials a peer that ends orderly; the fuzz target and
+// the cases that need a reset keep linger 0, which is there because
+// FuzzLinkMessage ran the machine out of ephemeral ports without it.
+func dialRawLinger(t *testing.T, o Options, linger bool) (*Link, *noisep.Transport, *websocket.Conn, net.Conn, func()) {
+	t.Helper()
 	server, err := noisep.Keypair(fixedReader{1})
 	if err != nil {
 		t.Fatalf("server keys: %v", err)
@@ -77,7 +95,7 @@ func dialRaw(t *testing.T, o Options) (*Link, *noisep.Transport, *websocket.Conn
 	hc := &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-			if tc, ok := c.(*net.TCPConn); ok {
+			if tc, ok := c.(*net.TCPConn); ok && linger {
 				_ = tc.SetLinger(0)
 			}
 			raw = c
@@ -713,7 +731,9 @@ func TestADroppedLinkEndsThePeersSocket(t *testing.T) {
 // because the two cases that touch Close only ask that it is quick. The peer has
 // to see the close frame, and with the status it was given.
 func TestCloseEndsTheLinkInOrder(t *testing.T) {
-	l, _, conn, _, done := dialRaw(t, Options{})
+	// A peer without SO_LINGER 0: its close is a FIN, so the close frame it
+	// echoes cannot be thrown away by its own RST. See dialRawLinger.
+	l, _, conn, _, done := dialRawLinger(t, Options{}, false)
 	defer done()
 	back := make(chan error, 1)
 	// The peer reads, so the close handshake finishes at once and this is the
