@@ -58,8 +58,10 @@ const (
 	buildDir = "build"
 	// terminalDir holds the two files of the app: the Containerfile and the
 	// manifest. Both paths are relative to the root of the repo, which is where
-	// the three documented lines are run from
-	// (apps/server-controller/CLAUDE.md, "Terminal-App bauen").
+	// the two documented lines are run from (apps/server-controller/CLAUDE.md,
+	// "Terminal-App bauen"): one go build per architecture and this command.
+	// It said THREE lines until 12.10.2026, which was the count before this
+	// command existed and took the two podman calls over.
 	terminalDir = "apps/server-controller/templates/terminal"
 	// imageRepo is the repository half of the name every terminal image gets.
 	// The tag half is the version out of the manifest, never a version of its

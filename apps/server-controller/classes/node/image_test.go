@@ -192,8 +192,10 @@ func TestImageMessageNamesTheNextStep(t *testing.T) {
 			t.Fatalf("imageMessage(%v) = %q, want %q", c.err, got, c.want)
 		}
 	}
-	// And the three lines are three lines: one of them repeated would send two
-	// different mistakes to the same place.
+	// And the five lines of this command are five different lines: one of them
+	// repeated would send two different mistakes to the same place. (It said
+	// "three" until 12.10.2026, while the loop below has always held five -
+	// the two of buildImage itself, msgNoBuilder and msgNoApp, count too.)
 	seen := map[string]bool{}
 	for _, m := range []string{msgNoProgram, msgWrongArch, msgNoImage, msgNoBuilder, msgNoApp} {
 		if m == "" || seen[m] {

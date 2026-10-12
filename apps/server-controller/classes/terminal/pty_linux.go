@@ -85,23 +85,6 @@ func ioctl(fd, req, arg uintptr) error {
 	return nil
 }
 
-// shellEnv is the whole environment of the shell. It is built from nothing, so
-// NGC_PARAMS - which carries whatever the user typed into the app - cannot
-// travel on: a shell that had it would put it in front of the next person who
-// reads the process list.
-func shellEnv() []string {
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = service.DataDir
-	}
-	return []string{
-		"TERM=xterm-256color",
-		"HOME=" + home,
-		"PATH=" + service.Path,
-		"LANG=C.UTF-8",
-	}
-}
-
 // runShell starts the shell on a pseudo terminal and runs the two pumps and
 // the idle watchdog until one of them, or the shell itself, ends.
 //

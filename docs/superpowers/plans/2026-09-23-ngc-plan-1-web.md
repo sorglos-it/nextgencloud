@@ -6748,7 +6748,20 @@ function write(out, bytes) {
 ```
 
 Der Kanal ist ein Datenstrom (`ngc.open("terminal", "shell", {cols, rows})`), also ein
-Ende-zu-Ende-Kanal zum Controller aus `app.node`. Eingaben gehen als `write`, `Strg+D` als `end`.
+Ende-zu-Ende-Kanal zum Controller aus `app.node`.
+
+> **BERICHTIGT am 12.10.2026 (Vertragspunkt 42): die beiden Zahlen im Aufruf sind Beiwerk, nicht
+> der Weg.** Der Dienst liest **keine** Parameter: `terminal.go` nimmt keine, und `shellEnv`
+> baut die Umgebung der Shell aus vier festen Zeilen, so dass `NGC_PARAMS` die Shell nie
+> erreicht (gehalten von `TestShellEnvCarriesNothing`). Die Fenstergröße geht **allein** als
+> Rahmen über das Protokoll aus Vertragspunkt 29 (1 Byte Art, 2 Byte Länge, Nutzlast) — als
+> **erstes**, was die App nach dem Öffnen sendet, und danach bei jeder Änderung
+> (`apps/web/assets/apps/terminal/app.js`, `tellSize`; der Fall „the first thing the terminal
+> sends is the window size, byte for byte" hält die Bytes). **Entschieden und nicht nachgezogen:**
+> die Parameter werden nicht zusätzlich gelesen, weil derselbe Wert dann zwei Wege herein hätte
+> und die Klemmung 1..2000 an zwei Stellen liegen müsste. Wer den Aufruf abschreibt, darf die
+> Zahlen weglassen; wer sie lässt, darf sich nicht auf sie verlassen.
+ Eingaben gehen als `write`, `Strg+D` als `end`.
 Fehlt das Ende des Controllers, zeigt die App „Die Verbindung wurde abgeschnitten.“ Das Ergebnis
 gilt nur, wenn das Ende mit `ok` kommt.
 

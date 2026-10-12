@@ -548,6 +548,75 @@ func TestHoldEndsWithItsSignal(t *testing.T) {
 	}
 }
 
+// TestShellEnvCarriesNothing is the bolt under the decision that the
+// parameters of ngc.open are decoration (see the head of terminal.go): the
+// environment of the shell is four fixed lines plus HOME, so neither a cols
+// nor a rows nor anything else of NGC_PARAMS has a way into this program.
+//
+// It poisons EVERY variable a service gets - the whole list of
+// shared/service - with a value that would be visible if it travelled, and
+// then holds two things: the four lines are exactly the four lines, and no
+// poisoned value is anywhere in the result. A mutation that hands the process
+// environment on (append(..., os.Environ()...)), or that lets NGC_PARAMS
+// through, or that takes TERM out of the environment instead of fixing it,
+// dies on this.
+//
+// HOME is the one value read out of the environment, and that is not a hole:
+// it is where the shell starts and it is set by the engine, not by the user.
+// The second part of the case holds the fallback for an empty one.
+func TestShellEnvCarriesNothing(t *testing.T) {
+	const poison = "poison-9e3f"
+	for _, k := range []string{
+		service.EnvUser, service.EnvUserName, service.EnvApp, service.EnvService,
+		service.EnvAction, service.EnvParams, service.EnvVersion, service.EnvData,
+		service.EnvStart, "TERM", "PATH", "LANG", "SHELL", "COLUMNS", "LINES",
+	} {
+		t.Setenv(k, poison)
+	}
+	// Set last, so it is not one of the poisoned ones above.
+	t.Setenv("HOME", "/data/app")
+	want := []string{
+		"TERM=xterm-256color",
+		"HOME=/data/app",
+		"PATH=" + service.Path,
+		"LANG=C.UTF-8",
+	}
+	got := shellEnv()
+	if len(got) != len(want) {
+		// The NAMES, never the whole slice: a mutation that hands the process
+		// environment on would print every secret of the machine that runs
+		// this into the log of the run, which is a second leak on top of the
+		// one the case is about. Measured on 12.10.2026 with mutant m1 of
+		// this bolt - a token stood in the output.
+		names := make([]string, 0, len(got))
+		for _, e := range got {
+			names = append(names, strings.SplitN(e, "=", 2)[0])
+		}
+		t.Fatalf("shellEnv() names %d variables (%q), want the %d fixed lines",
+			len(got), names, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("shellEnv()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Said twice on purpose: the comparison above would also hold if a fifth
+	// line had been dropped by a mutation of len. This holds the VALUE, which
+	// is what a user would see in the process list.
+	for _, e := range got {
+		if strings.Contains(e, poison) {
+			t.Fatalf("shellEnv() carries %q in %q", poison, e)
+		}
+	}
+	// And the one value that does come out of the environment falls back to
+	// the data directory rather than to nothing: a shell with HOME= starts in
+	// a directory that is not there.
+	t.Setenv("HOME", "")
+	if got := shellEnv(); got[1] != "HOME="+service.DataDir {
+		t.Fatalf("shellEnv() with an empty HOME = %q, want HOME=%s", got[1], service.DataDir)
+	}
+}
+
 func FuzzParseFrame(f *testing.F) {
 	f.Add(keys([]byte("a")))
 	f.Add(resize(80, 24))
