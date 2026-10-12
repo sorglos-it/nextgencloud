@@ -9,10 +9,6 @@ package tools
 
 import (
 	_ "github.com/coder/websocket"               // sessions and tunnel
-	_ "github.com/go-sql-driver/mysql"           // MariaDB
 	_ "github.com/go-webauthn/webauthn/webauthn" // passkeys
-	_ "github.com/ncruces/go-sqlite3/driver"     // SQLite without cgo
-	_ "github.com/ncruces/go-sqlite3/embed"      // the SQLite build the driver runs
-	_ "github.com/ncruces/go-sqlite3/vfs/xts"    // AES-256-XTS on the database file
 	_ "github.com/pquerna/otp/totp"              // TOTP
 )
