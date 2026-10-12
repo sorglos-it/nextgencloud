@@ -839,3 +839,23 @@ Beide Seiten der Grenze sind mit einer Handuhr festgenagelt.
 je Kanal 65 497 + 16 387 Byte Puffer, ein PTY-Paar, vier Goroutinen, ein Containerprozess
 — bei 1024 Kanälen etwa 80 MiB. Eine Obergrenze setzt dieses Paket nicht; sie gehört in
 `serve` und in den Vertrag.
+
+## Punkt 30: Niemand hält die hochgeladene Datei zwischen Hochladen und Aktivieren
+
+**Gefunden am 12.10.2026** von Aufgabe 22 der API, beim Bauen, nicht beim Lesen.
+
+`ngc.store/upload` behält das Paket **nicht** — es behält nur die ui-tar. `shared/` hat
+keinen Platz für ein Paket. `Activate` bekommt darum `ActivateRequest.File`/`Size`: die
+Datei gehört dem **Aufrufer**.
+
+**Wo sie zwischen `upload` und `activate` liegt, ist nicht entschieden und nicht gebaut.**
+Das gehört zur Verdrahtung (Aufgabe 24 des API-Plans) und ist keine Änderung in `shared/`.
+
+Zwei Dinge, die bei dieser Entscheidung gemessen gehören und es nicht sind:
+- **Mehrere API-Server teilen die Datenbank, nicht die Platte.** Ein Zwischenlager auf der
+  Platte des einen Servers ist für den anderen nicht da.
+- **Was nach einem Absturz im Zwischenlager liegen bleibt.** Aufgabe 22 legt das Paket für
+  das Senden in ein Zwischenlager (`Stores.Spool`) statt es zu strömen — ein Strom liest
+  sich einmal, dann wäre vor dem Senden **keine** Prüfung mehr möglich, und in den
+  Arbeitsspeicher darf ein 4-GiB-Paket nicht. Jeder Fall dort prüft, dass nichts liegen
+  bleibt; für das Zwischenlager **zwischen zwei Aufrufen** gibt es diese Prüfung noch nicht.
