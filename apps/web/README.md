@@ -72,8 +72,10 @@ Two more, if you want the whole picture: `curl -skI https://HOST/assets/js/` mus
 the same four headers, and `curl -skI https://HOST/` must carry `Page::headers`' own policy —
 unchanged, with `script-src 'self'` and `connect-src 'self'` in it.
 
-Whatever comes out, write it into `docs/STAND.md`: it is the last unmeasured corner of this
-interface.
+Whatever comes out, write it down together with the command that produced it — it is the last
+unmeasured corner of this interface. The project keeps such measurements in `docs/STAND.md` of the
+NGC repository, and that file is **not in a release**: on a server unpacked from one there is
+nothing of that name to open, so the note goes back to the project instead.
 
 ## Author
 
