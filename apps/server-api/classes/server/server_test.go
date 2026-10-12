@@ -418,6 +418,14 @@ func TestMigrateSaysSoWithoutAMigrator(t *testing.T) {
 // (tunnel.PinnedTLS) -- what is measured here is the version and the suite,
 // not who the peer is.
 func tlsAnswer(t *testing.T, cfg *tls.Config, max uint16) (tls.ConnectionState, error) {
+	return tlsAnswerOn(t, cfg, max, nil)
+}
+
+// tlsAnswerOn is tlsAnswer with the key share groups of the client in the
+// case's hand. CurvePreferences IS read under TLS 1.3, on both sides, which is
+// what makes the group list of TLSConfig measurable where its suite list is
+// not.
+func tlsAnswerOn(t *testing.T, cfg *tls.Config, max uint16, curves []tls.CurveID) (tls.ConnectionState, error) {
 	t.Helper()
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	if err != nil {
@@ -438,7 +446,7 @@ func tlsAnswer(t *testing.T, cfg *tls.Config, max uint16) (tls.ConnectionState, 
 	}()
 	c, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{
 		ServerName: "api-1", InsecureSkipVerify: true,
-		MinVersion: tls.VersionTLS12, MaxVersion: max,
+		MinVersion: tls.VersionTLS12, MaxVersion: max, CurvePreferences: curves,
 	})
 	if err != nil {
 		return tls.ConnectionState{}, err
@@ -462,6 +470,19 @@ func TestTLSConfigTakesTLS13Only(t *testing.T) {
 	}
 	if _, err := tlsAnswer(t, srv.TLSConfig(), tls.VersionTLS12); err == nil {
 		t.Fatal("a client whose highest version is TLS 1.2 got a connection")
+	}
+	// The group list is the other half of TLSConfig that really bounds: P-384
+	// is not on it, and a client that offers nothing else gets no connection.
+	// The intermediate check is the P-256 round -- the list names two groups,
+	// and a case that only measured the refusal would stay green against a
+	// listener that refuses every group.
+	if _, err := tlsAnswerOn(t, srv.TLSConfig(), tls.VersionTLS13,
+		[]tls.CurveID{tls.CurveP256}); err != nil {
+		t.Fatalf("a client offering only P-256 got no connection: %v", err)
+	}
+	if _, err := tlsAnswerOn(t, srv.TLSConfig(), tls.VersionTLS13,
+		[]tls.CurveID{tls.CurveP384}); err == nil {
+		t.Fatal("a client offering only P-384 got a connection")
 	}
 }
 

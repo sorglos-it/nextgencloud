@@ -285,12 +285,16 @@ func (s *Server) Run(ctx context.Context) error {
 // TLSConfig is the one hop between Apache and this API.
 //
 // What this listener holds, measured on 12.10.2026 against a listener with
-// exactly these fields (openssl s_client 3.5.7 and a Go client):
+// these fields AND the CipherSuites line that used to stand below -- the point
+// of the measurement is that the line changed nothing (openssl s_client 3.5.7
+// and a Go client):
 //
 //   - TLS 1.3 and nothing else. A client that offers TLS 1.2 gets
 //     "tlsv1 alert protocol version" and no connection.
 //   - X25519 and P-256 as the key share groups. A client that offers only
-//     secp384r1 gets "handshake failure".
+//     secp384r1 gets "handshake failure". Both halves are a case of their own
+//     now (TestTLSConfigTakesTLS13Only), measured in Go, because
+//     CurvePreferences IS read under TLS 1.3 while CipherSuites is not.
 //
 // What it does NOT hold, and what the line that used to stand here claimed:
 // the design asks for AES-256-GCM alone on this hop (Entwurf 4.5), and a
