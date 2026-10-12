@@ -50,6 +50,10 @@ type fakeStore struct {
 	putErr  error
 	readErr error
 	puts    int
+	// what only Install uses (install_test.go)
+	parts       map[string]string
+	partsErr    error
+	putPartsErr error
 }
 
 func newStore() *fakeStore {
