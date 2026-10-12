@@ -951,3 +951,87 @@ Es ist ausdrücklich **nicht** 1024 (`MaxTunnelChannels` gilt je Tunnel) und **n
 
 **Keine Grenze hat die Zahl der Tunnel** — sie ist die Zahl der APIs in `controller.json`
 und wird von `config` begrenzt.
+
+### Berichtigung vom 12.10.2026: die Entscheidung steht, zwei meiner Begründungen waren falsch
+
+Ein Messauftrag hat Punkt 28 nachgeprüft. **Die Entscheidung bleibt** — `ngc-api migrate` als
+Programm, kein eigener Läufer im Controller. **Zwei Sätze meiner Begründung sind gemessen
+falsch**, und sie standen hier so, als wären sie Tatsachen:
+
+**Falsch war: „ein zweiter Läufer im Controller braucht einen eigenen SQL-Treiber".**
+`apps/server-controller/classes/state/open.go` importiert `apps/server-db/classes/sqlite`,
+`sqlite/store.go` ruft `migrate.Apply`, und `migrate` importiert `apps/server-db/sql`. Der
+Controller **trägt** den SQLite-Treiber, den XTS-VFS, das Paket `migrate` und jede eingebettete
+`.sql` schon heute. Technisch fehlte für einen eigenen Läufer nur noch **eine** der fünf Zeilen
+in `tools/modules.go` und etwa zwanzig Zeilen Code.
+
+**Falsch war auch: „`shared/` ändert sich dadurch nicht".** `ngc-api migrate` geht über
+`config.LoadAPI` → `(*API).Validate` und verlangt eine **vollständige** `api.json`: Knoten-ID,
+Tunnel-Adresse, Listen-Adresse, zwei Zertifikatspfade, vier Schlüssel zu je 32 Byte, Release- und
+Store-Schlüssel, Store-Adresse, zwei Laufzeiten. Ein reiner Datenbankknoten hat das nicht — er hat
+`controller.json` mit einem Feld `Migrate`. **Es gibt keinen Weg, `ngc-api migrate` nur eine
+`config.DB` zu geben.**
+
+**Das ist die echte Blockade von Aufgabe 21** — nicht das Entpacken, wie ich geschrieben hatte.
+
+**Warum die Entscheidung trotzdem bleibt:** der Grund ist nicht der Treiber, sondern dass
+`migrate.List()` in zwei Programmen **zwei Übersetzungen desselben `go:embed`** wäre. Zwei
+Programme, die eine Datenbank migrieren, sind die Form von W-1. Das gilt unverändert.
+
+**Drei gemessene Lücken auf dem beschlossenen Weg**, die vor dem Bauen zu schließen sind:
+1. Die bereitgelegte Datei ist **`0600`** (`update/stage.go`, ausdrücklich so gewollt) — nicht
+   ausführbar.
+2. Die Konfiguration oben: ohne einen Weg, nur eine `config.DB` zu übergeben, geht es nicht.
+3. **`config.Controller.Migrate` wird von keinem Programm gelesen** — nur von `Validate` und
+   `LogValue`. Ein totes Vertragsfeld.
+
+Und ein Risiko, das benannt gehört: die Prüfsumme gegen das unterschriebene Release sitzt in
+`install.go` (`sameFile`), **nicht** im Bereitlegen. Wer die bereitgelegte Datei startet, führt
+sie **vor** dieser Prüfung aus.
+
+**Zwei Dinge, die der Weg (b) umdrehen würde** und die darum gegen ihn sprechen, beide gemessen:
+`migrate.Apply` **wartet nicht** — der zweite Läufer bekommt sofort einen Fehler, also startet der
+zweite API-Server nicht (dieselbe Form, die Punkt 32 mit 10 von 30 Runden gemessen hat). Und
+`shared/config` gibt die `ngc_migrate`-Zugangsdaten **nur** der Rolle `db`; bei (b) bräuchte sie
+jeder API-Server.
+
+**Ein Riegel, der dabei gefunden wurde und den ungemessenen Punkt der db-Abschlussprüfung
+schließt:** dass die **alte** API während einer Wanderung weiterlaufen darf, ist kein Versprechen,
+sondern gebaut — `migrate/lint.go` verbietet dreizehn Wörter (darunter DROP, RENAME, TRUNCATE),
+erlaubt vier Formen, und später hinzugefügte Spalten **müssen** nullable sein. `migrate.List()`
+prüft das **zur Laufzeit** bei jedem `Apply`. Auf der SQL-Ebene ist der Punkt damit zu; was der
+Linter nicht deckt, ist die **Bedeutung** einer neuen Spalte.
+
+## Punkt 33: Die Rollenprüfung für NGC-Teile sitzt auf der falschen Seite der Leitung
+
+**Gemessen am 12.10.2026** und von mir selbst nachgeprüft: in
+`apps/server-controller/classes/update/install.go` kommt das Wort `Roles` **kein einziges Mal**
+vor, und `update.Deps` hat kein solches Feld.
+
+Daraus folgt: **ein `install ngc-api` auf einem Datenbankknoten würde dort nach `/usr/lib/ngc`
+kopieren und `systemctl restart ngc-api` fahren** — auf einer Maschine, die kein API-Server ist.
+
+Dass das nicht passiert, hängt **allein** an `rollout.go` auf der API-Seite, die nur dem richtigen
+Knoten etwas schickt. Das ist eine Wand auf der falschen Seite der Leitung: wer dem Controller
+etwas anderes schickt, wird nicht abgewiesen, sondern bedient.
+
+Der Controller soll nicht darauf bauen, dass die Gegenseite richtig fragt. **Die Prüfung gehört an
+den Einbau**, in `apps/`, ohne Änderung in `shared/` — und sie braucht einen Fall, der zeigt, dass
+ein Teil für eine fremde Rolle abgewiesen wird, mit einer Zwischenprüfung, dass derselbe Weg für
+die eigene Rolle durchgeht.
+
+## Punkt 34: `ngc-api` kann heute überhaupt keine Datenbank öffnen
+
+**Gemessen am 12.10.2026**, von mir nachgeprüft: `classes/server/server.go` ruft `dbopen.Open`,
+aber **kein Produktionscode ruft `dbopen.Register` oder `RegisterMigrator`** — nur Tests tun das
+(`git grep "dbopen.Register" api -- apps/` ohne Testdateien: **kein Treffer**).
+
+Das heißt: `ngc-api` ist verdrahtet, gebaut, gemessen — und könnte auf einem Server **nicht
+starten**, weil niemand eine Umsetzung anmeldet. Das ist der schärfste Fall von „gebaut ist nicht
+gelaufen", den dieses Projekt bisher hat, und er ist kein Fehler eines Strangs: jede Aufgabe hat
+ihren Teil richtig gebaut, und die Anmeldung war niemandes Auftrag.
+
+Daraus folgt auch, dass `apps/server-db` **ohnehin** in `ngc-api` hinein muss, damit es die API
+sein kann — und damit kostet `RegisterMigrator` danach keine zusätzliche Abhängigkeit mehr. Eine
+Formanpassung braucht es: `migraterun.Run(ctx, cfg, owner, now) (int, error)` gegen
+`dbopen.Migrator func(ctx, cfg, io.Writer) error`.
