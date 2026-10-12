@@ -892,3 +892,62 @@ gegeneinanderhalten soll. Das wäre eine Änderung in eingefrorenem `shared/` un
 Reihe des Vorschlags für v1.3 — mit dem Hinweis, dass es **heute keine Lücke ist**, solange
 niemand die Katalogkopie als Grundlage einer Rechteentscheidung nimmt. Wer das tut, muss es
 zuerst hier lesen.
+
+## Punkt 32: Ein Controller, der die Migrationssperre nicht bekommt, startet nicht — und soll es nicht
+
+**Gemessen am 12.10.2026** in Aufgabe 24 des Controllers, mit einem **echten zweiten Prozess**
+(`os.Args[0]` neu ausgeführt), nicht mit einer Attrappe:
+
+- Nacheinander (Neustart): der Controller kommt hoch, die Zeilen sind da.
+- Sperre von einem anderen Eigentümer gehalten: **abgewiesen, er kommt nicht hoch.**
+- Acht Öffnungen gleichzeitig, **30 Runden**: 20× alle acht, 4× sieben, 2× sechs, 2× fünf,
+  2× vier. Jede, die hochkam, war **sofort lesbar**. In **10 von 30** Runden traf es also
+  mindestens einen von acht.
+
+Die Sperre läuft nach **900 Sekunden** von selbst ab, und ihre Meldung sagt das auch.
+
+**Die offene Frage war:** soll `state.Open` auf die Sperre warten, oder soll der Dienst
+neu gestartet werden?
+
+**Entschieden (Koordinator): `state.Open` wartet nicht.** Es wird abgewiesen, der Controller
+startet nicht, und der Neustart ist Sache des Dienstes (`Restart=on-failure` mit Abstand).
+Drei Gründe, in dieser Reihenfolge:
+
+1. **Ein Controller, der beim Start hängt, ist schlimmer als einer, der nicht startet.** Wer
+   wartet, sieht einen Dienst, der „läuft" und nichts tut, und die Wartezeit wäre bis zu
+   900 Sekunden. Ein Fehlstart mit einer Zeile, die den Grund nennt, ist für den Admin die
+   ehrlichere Lage — und die Meldung nennt die 900 Sekunden.
+2. **Der häufige Fall ist ein überlappender Neustart**, nicht zwei Server. Dafür ist ein
+   Neustart mit Abstand genau das richtige Werkzeug, und es ist eines, das der Admin schon
+   kennt und abschalten kann.
+3. **Warten im Programm wäre eine zweite Wiederholungslogik** neben der des Dienstes. Zwei
+   Stellen, die dasselbe tun, ist die Klasse, die hier schon einmal Geld gekostet hat.
+
+**Was daraus zu bauen ist, und von wem:** die Dienstdatei braucht den Neustart mit Abstand.
+Das gehört zu **Aufgabe 25 des Controller-Plans** (ulh-Skript und Abnahme), nicht in den
+Programmcode. Wer sie schreibt, nimmt den Abstand **größer als die Sperrzeit nicht** — ein
+Neustart alle paar Sekunden ist richtig, denn die Sperre fällt, sobald der andere Lauf fertig
+ist, und nicht erst nach 900 Sekunden.
+
+**Ungemessen bleibt, und das ist die wichtigere Hälfte:** die Sperre gilt **nur für den
+Augenblick der Migration**, nicht für die Lebenszeit des Stores. Zwei Controller, die beide
+hochkamen, schreiben danach **gleichzeitig** in dieselbe Datei. Was das tut, ist hier nicht
+gemessen; die Antwort des Datenbankpakets darauf ist `busyTimeout` von 10 Sekunden plus
+Wiederholung. **Wer zwei Controller auf eine Datei lässt, muss das zuerst messen.**
+
+## Punkt 29, Nachtrag: die Zahl der App-Kanäle
+
+Aufgabe 24 des Controllers hat die Grenze gesetzt, die Punkt 29 verlangt hat:
+**`serve.DefaultMaxApps = 128`** App-Kanäle je Server, gebucht **vor** dem E2E-Handschlag,
+Abweisung mit `E_LIMIT`, mit Zählern `AppChannels()` und `AppRefusals()`.
+
+Die Rechnung dahinter, als Entscheidung benannt: je Kanal höchstens 256 KiB DATA, 64 KiB
+stderr, bis 65 514 Byte Nutzlast, ein Rohrpaar und ein Containerprozess (beim Terminal
+zusätzlich ein PTY-Paar) — also etwa **50 MiB und 128 Prozesse** im Höchstfall.
+
+Es ist ausdrücklich **nicht** 1024 (`MaxTunnelChannels` gilt je Tunnel) und **nicht** 64
+(`MaxSessionChannels` ist Sache der API). Ebenfalls benannt und nicht gemessen: 60 s, 1 h,
+24 h und 10 s Gnadenfrist.
+
+**Keine Grenze hat die Zahl der Tunnel** — sie ist die Zahl der APIs in `controller.json`
+und wird von `config` begrenzt.
