@@ -66,7 +66,8 @@ func FuzzOpenParams(f *testing.F) {
 func (h *harness) openRaw(t *testing.T, a core.Action, params string) *chann {
 	t.Helper()
 	h.num++
-	c := &chann{h: h, num: h.num, credit: wire.MinWindow}
+	// Credit zero until the first GRANT, for the reason harness.Open gives.
+	c := &chann{h: h, num: h.num}
 	body := `{"app":` + quote(a.App) + `,"service":` + quote(a.Service) +
 		`,"action":` + quote(a.Name) + `,"window":4096`
 	if params != "" {
