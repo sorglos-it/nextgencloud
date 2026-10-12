@@ -228,6 +228,37 @@ Das kann der Web-Strang heute machen.
 
 ---
 
+## P6 — Ein Kopplungscode gilt 24 Stunden, nicht 30 Sekunden (Sicherheitsfrage)
+
+**Nachgetragen am 12.10.2026**, gefunden von der Abschlussprüfung des Controller-Pakets und mit
+dem Befehl dahinter nachgemessen.
+
+`tunnel.PairLifetime = 86400` — ein Kopplungscode ist **24 Stunden** gültig. Zwei Kommentare
+begründeten das Lesen des Codes von der Tastatur aber mit „**dreißig Sekunden**"
+(`node/ask.go`, `node/main.go`). Die 30 Sekunden sind `pairing.Timeout` und begrenzen nur die
+**HTTP-Anfrage**, nicht die Gültigkeit des Codes.
+
+**Das Fenster ist also 2880-mal so groß, wie die Begründung im Code sagt.** Die Kommentare sind
+berichtigt; die **Zahl** liegt in eingefrorenem `shared/tunnel/tunnel.go` und ist nicht geändert
+worden.
+
+**Was zu entscheiden ist:** ob 24 Stunden für einen Kopplungscode richtig sind.
+
+**Was dafür spricht:** Thomas richtet einen Server vielleicht nicht in einem Zug ein — ein Code,
+der während des Kaffeeholens verfällt, kostet jeden Versuch neu. Und der Code allein genügt nicht:
+er wird einmal verbraucht, und wer ihn hat, braucht zusätzlich den Weg zum Tunnel.
+
+**Was dagegen spricht:** 24 Stunden sind lang genug, dass ein Code in einem Terminalprotokoll,
+einem Chatfenster oder einer Notiz liegen bleibt, und er ist bis dahin brauchbar. Dazu kommt
+**Punkt 26**: der Einmal-Wert wird **vor** der MAC-Prüfung verbraucht — wer die Adresse kennt,
+kann einen wartenden Code also auch ohne ihn verbrennen. Beides zusammen heißt: ein langes Fenster
+ist nicht nur eine lange Chance zum Mitlesen, sondern auch eine lange Zeit, in der jemand das
+Einrichten stören kann.
+
+**Mein Vorschlag, wenn du eine Zahl willst:** eine Stunde. Lang genug für ein Einrichten mit
+Unterbrechung, kurz genug, dass ein liegen gebliebener Code am nächsten Morgen nichts mehr ist.
+**Gemessen ist das nicht** — es ist eine Abwägung, und die Entscheidung gehört dir.
+
 ## Die gemeinsame Wurzel — P1, P2, P3, P4 und P5 sind derselbe Punkt
 
 Thomas hat richtig gerochen. Alle fünf haben dieselbe Form, und zwar belegbar:
