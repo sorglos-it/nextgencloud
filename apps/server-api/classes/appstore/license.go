@@ -120,13 +120,23 @@ func (st *Stores) verify(ctx context.Context, app string, env sign.Envelope) (*s
 		}
 		return nil, err
 	}
+	return st.verifyFrom(ctx, app, row.Store, env)
+}
+
+// verifyFrom is verify with the store named from outside instead of read off
+// the app's row. The first activation of a paid app has no row yet -- the row
+// is what that activation writes -- so the store it came from can only be the
+// one its signed task names (core.ActivateParams.Store). That is the same
+// sentence verify holds, from the one source that exists at that moment, and
+// it is the only reader of a licence besides verify.
+func (st *Stores) verifyFrom(ctx context.Context, app, src string, env sign.Envelope) (*store.License, error) {
 	v, err := st.S.Trust(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var source *trust.Store
 	for i := range v.List.Stores {
-		if v.List.Stores[i].ID == row.Store {
+		if v.List.Stores[i].ID == src {
 			source = &v.List.Stores[i]
 			break
 		}
@@ -152,11 +162,61 @@ func (st *Stores) verify(ctx context.Context, app string, env sign.Envelope) (*s
 	return l, nil
 }
 
+// licenseFrom is License for an app that has no row yet: the store it came
+// from is the one its signed activate task names. It is the same read and the
+// same judge, with only the source of the store's name differing, so a
+// licence is judged in one place whichever way in it took.
+func (st *Stores) licenseFrom(ctx context.Context, app, src string) (*store.License, sign.Envelope, bool, error) {
+	if !wire.ValidName(src) {
+		return nil, sign.Envelope{}, false, ErrLicense
+	}
+	return st.licenseRow(ctx, app, func(env sign.Envelope) (*store.License, error) {
+		return st.verifyFrom(ctx, app, src, env)
+	})
+}
+
+// unwrap gives out the content key of a licence that was read: nothing is
+// handed out without a licence, and nothing past its grace period, so the
+// controllers cannot start the services again after that.
+func (st *Stores) unwrap(ctx context.Context, app string, l *store.License, ok bool, err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	if !ok || l.State(st.S.Now()) == store.LicenseExpired {
+		return nil, ErrLicense
+	}
+	key, err := st.S.InstallKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// store.UnwrapKey gives ErrEncrypted for a key that was wrapped for
+	// another installation; it names no bytes, so it is handed on as it is.
+	return store.UnwrapKey(l.Key, key, app)
+}
+
+// contentKeyFrom is ContentKey for an activation, whose store comes from the
+// signed task (see licenseFrom).
+func (st *Stores) contentKeyFrom(ctx context.Context, app, src string) ([]byte, error) {
+	l, _, ok, err := st.licenseFrom(ctx, app, src)
+	return st.unwrap(ctx, app, l, ok, err)
+}
+
 // License reads the licence of app back and checks it again -- against the key
 // the trust list names today, so a store key an admin has since withdrawn
 // licenses nothing further. ok is false where no licence is on record; that is
 // not an error, because a free app has none.
 func (st *Stores) License(ctx context.Context, app string) (*store.License, sign.Envelope, bool, error) {
+	return st.licenseRow(ctx, app, func(env sign.Envelope) (*store.License, error) {
+		return st.verify(ctx, app, env)
+	})
+}
+
+// licenseRow reads the licence row of app and hands the envelope to judge.
+// The app ID is checked before the query, so an ID out of a request never
+// reaches the database (TestTheAppIDIsNotPutToTheDatabase), and the order of
+// the two readers above is therefore the same one.
+func (st *Stores) licenseRow(ctx context.Context, app string,
+	judge func(sign.Envelope) (*store.License, error)) (*store.License, sign.Envelope, bool, error) {
 	if !wire.ValidAppID(app) {
 		return nil, sign.Envelope{}, false, ErrLicense
 	}
@@ -173,7 +233,7 @@ func (st *Stores) License(ctx context.Context, app string) (*store.License, sign
 		// a licence may run on a row this API cannot judge.
 		return nil, sign.Envelope{}, false, ErrLicense
 	}
-	l, err := st.verify(ctx, app, env)
+	l, err := judge(env)
 	if err != nil {
 		return nil, sign.Envelope{}, false, err
 	}
@@ -185,24 +245,7 @@ func (st *Stores) License(ctx context.Context, app string) (*store.License, sign
 // alone, over the tunnel.
 func (st *Stores) ContentKey(ctx context.Context, app string) ([]byte, error) {
 	l, _, ok, err := st.License(ctx, app)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, ErrLicense
-	}
-	if l.State(st.S.Now()) == store.LicenseExpired {
-		// Past the grace period the key is not handed out any more, so the
-		// controllers cannot start the services again.
-		return nil, ErrLicense
-	}
-	key, err := st.S.InstallKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// store.UnwrapKey gives ErrEncrypted for a key that was wrapped for
-	// another installation; it names no bytes, so it is handed on as it is.
-	return store.UnwrapKey(l.Key, key, app)
+	return st.unwrap(ctx, app, l, ok, err)
 }
 
 // UsersAllowed answers how many users hold the right "<app>/use" and whether
