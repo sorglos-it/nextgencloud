@@ -249,9 +249,14 @@ func TestUIOfAnAppWithoutTheRightIsNotFound(t *testing.T) {
 	}
 }
 
-// TestUIProofVerifiesAgainstTheTrustList is the point of ui-proof: what the
-// API hands out is evidence the shell can check itself.
-func TestUIProofVerifiesAgainstTheTrustList(t *testing.T) {
+// TestUIProofHandsOutEvidenceThatHoldsAgainstTheTrustList measures the way
+// out: the API answers ui-proof, and what it answers verifies against the
+// trust list. The verifying call below runs IN THIS CASE and not in the API --
+// the case that holds the API's own check is
+// TestUIProofThatNoLongerHoldsIsNotHandedOut, which bends a byte the API has
+// to refuse. This one is the other half: evidence the shell can check itself,
+// and the intermediate check that the way to the row is open at all.
+func TestUIProofHandsOutEvidenceThatHoldsAgainstTheTrustList(t *testing.T) {
 	fx := newFixture(t)
 	fx.PutApp(t, appY, true)
 	fx.Grant(t, appY+"/"+core.RightUse)
@@ -285,6 +290,36 @@ func TestUIProofOfABrokenRowIsInternal(t *testing.T) {
 		Window: wire.MinWindow, Params: json.RawMessage(`{"app":"` + appY + `"}`)})
 	if cl := c.closed(t); cl.Code != wire.CodeInternal {
 		t.Fatalf("close %+v", cl)
+	}
+}
+
+// TestUIProofThatNoLongerHoldsIsNotHandedOut is the API's own check on the way
+// out (appstore.Stores.Proof). Before the seam was wired, ui-proof only PARSED
+// the row, and this case is what measures the difference: one byte of the
+// activate task's signature turned over, everything else the same row.
+//
+// The unbent round first, as the intermediate check -- without it a green run
+// could mean that the right, the row or the parser refused and the signature
+// was never looked at.
+func TestUIProofThatNoLongerHoldsIsNotHandedOut(t *testing.T) {
+	fx := newFixture(t)
+	fx.PutApp(t, appY, true)
+	fx.Grant(t, appY+"/"+core.RightUse)
+	ui := bytes.Repeat([]byte{0x9a}, 32)
+	fx.putApproval(t, appY, "1.0.0", ui)
+	var p core.UIProof
+	if err := json.Unmarshal(fx.call(t, core.ActUIProof, `{"app":"`+appY+`"}`), &p); err != nil {
+		t.Fatalf("the unbent proof did not come back: %v", err)
+	}
+	if p.App != appY || p.Version != "1.0.0" {
+		t.Fatalf("proof %+v", p)
+	}
+	fx.putApprovalAs(t, appY, "1.0.0", ui, func(p *core.UIProof) { p.Task.Sig[0] ^= 1 })
+	c := fx.Open(t, wire.Open{App: core.AppDesktop, Service: core.ServiceAPI,
+		Action: core.ActUIProof, Window: wire.MinWindow,
+		Params: json.RawMessage(`{"app":"` + appY + `"}`)})
+	if cl := c.closed(t); cl.Code != wire.CodeInternal {
+		t.Fatalf("the API handed out a proof that does not hold: close %+v", cl)
 	}
 }
 
@@ -390,6 +425,17 @@ func totpCode(t *testing.T, secret string) string {
 // core.VerifyUIProof checks them.
 func (h *harness) putApproval(t *testing.T, app, version string, ui []byte) {
 	t.Helper()
+	h.putApprovalAs(t, app, version, ui, nil)
+}
+
+// putApprovalAs is putApproval with one hand on the proof before it is
+// written: bend may turn a byte over, so a case can measure what the API does
+// with a row that no longer holds. A row written past KeepProof on purpose --
+// KeepProof verifies before it writes, and the point here is the check on the
+// way OUT.
+func (h *harness) putApprovalAs(t *testing.T, app, version string, ui []byte,
+	bend func(*core.UIProof)) {
+	t.Helper()
 	params, err := json.Marshal(core.ActivateParams{App: app, Version: version,
 		SHA256: bytes.Repeat([]byte{0x11}, 32), UI: ui, Store: core.LocalStore})
 	if err != nil {
@@ -397,9 +443,13 @@ func (h *harness) putApproval(t *testing.T, app, version string, ui []byte) {
 	}
 	env := h.Task(t, task.Task{ID: taskID(0x71), Node: ctlNode, App: core.AppStore,
 		Service: core.ServiceController, Action: core.ActActivate, Params: params})
-	p := h.Admin.Prove(sign.PurposeClientCert, h.cert)
-	data, err := json.Marshal(core.UIProof{App: app, Version: version, Store: core.LocalStore,
-		Task: env, Client: enc.Bytes(h.cert), Proof: &p})
+	pr := h.Admin.Prove(sign.PurposeClientCert, h.cert)
+	p := core.UIProof{App: app, Version: version, Store: core.LocalStore,
+		Task: env, Client: enc.Bytes(h.cert), Proof: &pr}
+	if bend != nil {
+		bend(&p)
+	}
+	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -554,10 +554,16 @@ func TestRegistryHoldsASessionWhileItRuns(t *testing.T) {
 	if n := registryCount(t, h.Srv.Sessions); n != 1 {
 		t.Fatalf("open sessions %d", n)
 	}
-	// A notice reaches the open shell through the registry.
-	within(t, "Broadcast", func() {
-		h.Srv.Sessions.Broadcast(ctx, wire.CtlNotify, core.Notice{Level: "info", Text: "Hallo"})
+	// A notice reaches the open shell through the registry, and the registry
+	// says so: NotifyAll counts what went out, and server.Server.notice writes
+	// its line off that number.
+	sent := 0
+	within(t, "NotifyAll", func() {
+		sent = h.Srv.Sessions.NotifyAll(ctx, core.Notice{Level: "info", Text: "Hallo"})
 	})
+	if sent != 1 {
+		t.Fatalf("NotifyAll reached %d of 1 open shells", sent)
+	}
 	wantControl(t, c, wire.CtlNotify)
 	c.close()
 	// The link ends and the session is forgotten. Every call into the registry

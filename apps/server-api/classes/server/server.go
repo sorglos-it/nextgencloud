@@ -96,6 +96,10 @@ type Server struct {
 	relay   *relay.Relay
 	ctl     *controllers.Server
 	tunnels *controllers.Registry
+	// sessions are the open shells. The notice of a controller goes to all of
+	// them (Server.notice), so this server needs the same registry the socket
+	// server and the dispatcher have.
+	sessions *browser.Registry
 
 	// spool is the directory of this run, SpoolDir unless a test moves it.
 	spool string
@@ -169,7 +173,7 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	}
 	controllers.Version = version
 	srv := &Server{Cfg: cfg, State: s, Cert: cert, login: lh, setup: sh, st: st, up: up,
-		core: d, relay: rl, ctl: ctl, tunnels: tunnels, spool: SpoolDir}
+		core: d, relay: rl, ctl: ctl, tunnels: tunnels, sessions: sessions, spool: SpoolDir}
 	// A controller that connects gets the newest trust list and the newest
 	// licence of every paid app it runs, right away.
 	ctl.OnHello = srv.hello
@@ -191,6 +195,11 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	ctl.OnReport = func(ctx context.Context, t *controllers.Tunnel, r store.UpdateReport) {
 		up.Report(ctx, t.Node, r)
 	}
+	// What a controller says about one of its services. Without this line the
+	// API read every wire.CtlNotify and dropped it at the nil test in
+	// controllers.Server.control -- "my service has died" reached no shell and
+	// left nothing behind either.
+	ctl.OnNotice = srv.notice
 	srv.handler = srv.routes(httpapi.Routes{
 		Setup: sh.Serve, Login: lh.Start, Finish: lh.Finish, Logout: lh.Logout,
 		Trust: lh.Trust, Socket: bs.Socket,
@@ -273,14 +282,45 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.serve(ctx, ln)
 }
 
-// TLSConfig is the one hop between Apache and this API. Apache offers nothing
-// else, and the design asks for AES-256-GCM alone on it (Entwurf 4.5).
+// TLSConfig is the one hop between Apache and this API.
+//
+// What this listener holds, measured on 12.10.2026 against a listener with
+// exactly these fields (openssl s_client 3.5.7 and a Go client):
+//
+//   - TLS 1.3 and nothing else. A client that offers TLS 1.2 gets
+//     "tlsv1 alert protocol version" and no connection.
+//   - X25519 and P-256 as the key share groups. A client that offers only
+//     secp384r1 gets "handshake failure".
+//
+// What it does NOT hold, and what the line that used to stand here claimed:
+// the design asks for AES-256-GCM alone on this hop (Entwurf 4.5), and a
+// CipherSuites field cannot ask for it. Go ignores CipherSuites under TLS 1.3
+// ("TLS 1.3 cipher suites are not configurable", crypto/tls), and this
+// listener therefore takes all three of them: measured, a client offering only
+// TLS_CHACHA20_POLY1305_SHA256 connects, one offering only
+// TLS_AES_128_GCM_SHA256 connects, and a Go client with the default list ends
+// up on TLS_AES_128_GCM_SHA256 although the field named AES-256 alone. So the
+// field is gone rather than left standing: a setting that reads like a bound
+// and holds nothing is worse than no setting, because the next reader stops
+// looking.
+//
+// Where the bound really is: on the CLIENT, which is Apache and only Apache in
+// front of this listener -- "Apache bietet der API nur diese Verschlüsselung
+// an" (Entwurf 4.5), set up by ngc-web as SSLProxyProtocol TLSv1.3 and
+// SSLProxyCipherSuite TLSv1.3 TLS_AES_256_GCM_SHA384 (shared/ulh.md). A
+// TLS 1.3 server cannot pick a suite its client did not offer, so the hop runs
+// on AES-256-GCM as long as that configuration is the one in front. What is
+// open, and what no code here can close, is anything ELSE that reaches this
+// port: it is not held to AES-256-GCM (decision protocol, 12.10.2026). All
+// three suites are strong, so this is a promise that was not kept, not a hole.
+//
+// TestTLSConfigNamesNoCipherSuite and TestTLSConfigTakesTLS13Only keep both
+// halves of this paragraph from drifting back.
 func (s *Server) TLSConfig() *tls.Config {
 	return &tls.Config{
 		Certificates:     []tls.Certificate{s.Cert},
 		MinVersion:       tls.VersionTLS13,
 		MaxVersion:       tls.VersionTLS13,
-		CipherSuites:     []uint16{tls.TLS_AES_256_GCM_SHA384},
 		CurvePreferences: []tls.CurveID{tls.X25519, tls.CurveP256},
 	}
 }
@@ -450,6 +490,41 @@ func (s *Server) hello(ctx context.Context, t *controllers.Tunnel) {
 	s.pushTrust(ctx, t)
 	if err := s.st.PushLicenses(ctx, s.pushLicense); err != nil {
 		slog.Warn("licences could not be pushed", "error", err)
+	}
+}
+
+// notice carries a controller's notice to every open shell, and writes a line
+// where none could take it.
+//
+// The line is the half this seam was missing: a notice that reaches no shell
+// is exactly the case an administrator has to hear about ("my service has
+// died" while nobody is logged in), and until now nothing anywhere said that
+// one had come. It goes to the operator log and not to audit.Log on purpose:
+// a controller decides how often it sends, and a row per notice would let it
+// write the log of an installation full -- the same reason OnReport keeps no
+// row (above).
+//
+// The text of the notice is NOT in the line. It is text from another machine,
+// and what this line has to say is that one came and found nobody; the text
+// itself is the shell's business, and a controller that put a secret in it must
+// not get it written down here.
+//
+// NOT decided here, and named rather than left to be found: the notice goes to
+// EVERY open shell, including the shells of users who have no right to the app
+// it names. The shell is what sorts notices today (web: appframe.js), and a
+// filter by right would need the rights of every session inside the tunnel's
+// reader. Whether a notice of one app may be seen by a user who may not use it
+// is a question of the design, not of this seam -- it belongs on the list of
+// open points.
+//
+// It runs IN LINE in the tunnel's single reader (controllers.Server.control),
+// like OnReport, so it has to be short: one pass over the open sessions, each
+// a write on a link that is already there, and nothing that waits for a
+// network of its own.
+func (s *Server) notice(ctx context.Context, t *controllers.Tunnel, n core.Notice) {
+	if s.sessions.NotifyAll(ctx, n) == 0 {
+		slog.Warn("notice of a controller reached no shell",
+			"node", t.Node, "level", n.Level, "app", n.App)
 	}
 }
 
