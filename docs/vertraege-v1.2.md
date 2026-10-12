@@ -1163,3 +1163,45 @@ mit einem falschen Kommentar erzeugt den Fehler so oft, wie jemand sie liest.
 eigenen Kommentar lesen**, bevor man ihn übernimmt. Das hat heute zweimal einen Befund gefunden,
 den sonst erst ein echter Server gefunden hätte — beim zweiten Mal einen, der den Prozess
 umbringt.
+
+## Punkt 38: Ein Fehler in einem Kanal tötet den ganzen Server — Entscheidung offen
+
+**Gemessen am 12.10.2026** in Aufgabe 30 der API, gefunden von einem **Fuzz-Samen**, nicht von
+einem Mutanten: `coreapp/testdata/fuzz/FuzzOpenParams/4b950b6123cdb67b`. **Der Samen muss im Repo
+bleiben.**
+
+Der Einzelfall: `ngc.users/pair-code` und `join-code` lasen `Deps.Controllers`/`Deps.Join` ohne
+Prüfung. Ein Shell-Kanal auf `join-code` stürzt mit `nil pointer dereference` ab. **Behoben** im
+Handler, Antwort `E_NOTFOUND` — und im laufenden Programm war er nicht erreichbar, weil
+`server.Build` beide Felder setzt. `Deps` sagt die Regel sogar selbst („may be nil → register NO
+handler"); `registerUsers` hielt sie nicht.
+
+**Der eigentliche Befund steckt dahinter, und den habe ich selbst nachgemessen:**
+`browser.(*Server).channel` startet die Kanalarbeit **in einer eigenen Goroutine ohne `recover`**.
+Und `recover()` kommt im **gesamten Produktionscode** von `apps/server-api`,
+`apps/server-controller` und `shared` **nicht ein einziges Mal** vor — nur in zwei Testdateien
+(`git grep -c "recover()"`).
+
+**Daraus folgt: jeder Programmfehler in irgendeinem Handler tötet den ganzen `ngc-api`** — mit
+**jeder** Sitzung jedes Benutzers, nicht nur der eigenen. Ein einzelner Kanal nimmt den Server mit.
+
+**Das ist eine Entscheidung, keine Behebung, und sie gehört Thomas.** Beide Seiten sind
+vertretbar und beide haben einen Preis:
+
+- **Nichts fangen (wie heute).** Das ist die übliche Haltung in Go: ein Programmfehler ist ein
+  Programmfehler, und ein Dienst, der weiterläuft und falsch antwortet, ist schlimmer als einer,
+  der neu startet. Der Preis: ein Fehler in einer Nebensächlichkeit wirft alle Benutzer heraus,
+  und auf einem Server ohne Neustarthilfe bleibt er unten.
+- **Je Kanal fangen.** Der Kanal endet mit `E_INTERNAL`, die anderen Sitzungen merken nichts.
+  Der Preis: ein gefangener Fehler, der **nur** gefangen und nicht sichtbar protokolliert wird,
+  ist ein Fehler, den niemand mehr findet. Wer das baut, muss ihn so protokollieren, dass er
+  auffällt — sonst tauscht man einen Absturz gegen einen stillen Defekt.
+
+**Mein Vorschlag:** je Kanal fangen, mit einer Protokollzeile in der Schärfe eines Absturzes
+(Stapel mit), und der Kanal endet `E_INTERNAL`. Begründung: dieser Server trägt **alle** Benutzer
+einer Installation, und `Restart=on-failure` ist hier nicht die Antwort — ein Neustart wirft jede
+offene Sitzung mit heraus. **Gemessen ist das nicht**, es ist eine Abwägung.
+
+Dazu gehört, was dieselbe Aufgabe über den Weg dorthin gemessen hat: die Regel „ein `nil`-Feld
+heißt: keinen Handler anmelden" steht im Code, und sie wurde **an einer Stelle nicht befolgt**.
+Ein Riegel, der im Kommentar steht und nicht im Code, ist kein Riegel.
