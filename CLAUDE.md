@@ -90,8 +90,14 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
   `TestHostScript` in `shared/trust`, der `sh` und `grep` braucht, die
   Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
-  Vektoren in `shared/testdata/`. Fuzz-Ziele in `shared/store` nur mit
-  `-fuzzminimizetime=1s`, sonst bleibt das Verkleinern der Eingaben hängen.
+  Vektoren in `shared/testdata/`. **Jedes** Fuzz-Ziel mit Saaten von mehr als
+  etwa einem Kilobyte braucht `-fuzzminimizetime` (0 fuer Durchsatz, 1s fuers Suchen), sonst
+  verbringt der Lauf seine Zeit im Verkleinern der Eingaben. Berichtigt am 12.10.2026: hier
+  stand vorher "Fuzz-Ziele in `shared/store`" — die Regel war am Paket festgemacht statt an der
+  Saatgroesse, und `FuzzUpload` in `appstore` lief durch `store.PackageUI` und war darum nicht
+  gedeckt. Gemessen: 15 bis 637 474 Laeufe je 30 s am selben Code, und `execs` zaehlt die
+  Minimierungslaeufe nicht mit. Wie eine Fuzz-Zahl zu melden ist, steht in
+  `Z:\GitHub\claude-md\messen.md`.
 - In `shared/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
   Passkey-Admin, `Users[1]` der Passwort-Admin aus `NewSigner(1)`.
 - `shared/trust/trusttest` nur in Tests importieren; `tools/check.sh` bricht sonst ab.
