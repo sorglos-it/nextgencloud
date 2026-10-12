@@ -17,9 +17,17 @@ import (
 // The pairing code is read here instead of taken from the command line: an
 // argument of a running program stands in /proc/<pid>/cmdline, and without
 // hidepid every local user of the server may read that file. Whoever caught
-// the code inside the thirty seconds of a pairing would pair a controller of
-// their own with the API, because the request binds the key of whoever sends
-// it (tunnel.PairMAC) and nothing else.
+// the code while it is still good would pair a controller of their own with
+// the API, because the request binds the key of whoever sends it
+// (tunnel.PairMAC) and nothing else.
+//
+// How long "still good" is, measured 12.10.2026: tunnel.PairLifetime = 86400,
+// so 24 HOURS, not the thirty seconds this comment claimed until today. The
+// thirty seconds are pairing.Timeout and bound the HTTP request, nothing else.
+// The window is 2880 times what the old text said, which does not change the
+// decision here - it only makes it matter more. Whether 24 hours is the right
+// life for a pairing code is a security question for the coordinator; it is
+// written down in docs/controller-abnahme.md.
 //
 // The code is a secret: it goes from here into a config.SecretText and into
 // nothing else. It is in no message, no error and no log, and only

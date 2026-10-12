@@ -107,7 +107,9 @@ func installTarget(d access.Decision) (string, *wire.Close) {
 }
 
 // code is the CLOSE of a failed install. Every error of package update is one
-// of the seven below or wraps one of them, and the three walls are told apart:
+// of the eight below or wraps one of them (ErrVerify, ErrForbidden,
+// ErrNeedsGrants, ErrNothing, ErrInternal, ErrDisk, ErrHealth, ErrSystem -
+// counted 12.10.2026; this said seven), and the three walls are told apart:
 // what this installation did not sign is E_VERIFY, what it signed and still
 // may not have is E_FORBIDDEN, and what went wrong on this machine is
 // E_INTERNAL.

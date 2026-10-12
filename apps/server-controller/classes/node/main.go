@@ -203,9 +203,11 @@ func pair(cfgPath, anchorPath string, args []string, stdin io.Reader, stdout, st
 		return 2
 	}
 	// The configuration is read before the admin is asked. A code is good for
-	// one pairing and for thirty seconds: whoever pastes it into the question
-	// on a server without controller.json has spent it and needs a new one,
-	// and nothing of the pairing could have been written anyway.
+	// one pairing and for tunnel.PairLifetime (86400 seconds, so 24 hours -
+	// measured 12.10.2026; this said "thirty seconds" before, which is
+	// pairing.Timeout, the bound of the HTTP request): whoever pastes it into
+	// the question on a server without controller.json has spent it and needs
+	// a new one, and nothing of the pairing could have been written anyway.
 	cfg, err := config.LoadController(cfgPath)
 	if err != nil {
 		fmt.Fprintln(stderr, msgNoConfig)

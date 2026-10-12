@@ -165,12 +165,22 @@ Diese Liste ist der Teil dieses Blattes, nach dem der Nächste entscheidet, wo e
 mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
 
 1. **`serve.Deps.Updater` bleibt auf dem echten Server `nil`.** Die Verteilung
-   (`update.Manager`) ist gebaut und gemessen, **ihr Aufrufer fehlt**: `node.run` setzt das Feld
-   nicht. Jeder Install-Kanal endet damit `E_INTERNAL`. (Aufgaben 19/20 und 24.)
+   (`update.Manager`) ist gebaut und gemessen, **ihr Aufrufer fehlt**: `node/run.go:531` setzt
+   ausdrücklich `Updater: nil`. Jeder Install-Kanal endet damit `E_INTERNAL`. (Aufgaben 19/20
+   und 24.) **Gemessen am 12.10.2026, und es ist schärfer als „ein Feld ist nicht gesetzt":**
+   `grep -rn 'update\.New\|install\.New\|install\.Deps' apps/ --include=*.go | grep -v _test.go`
+   → **0**. Kein Programm baut je einen `update.Manager` oder `install.Manager` — es gibt also
+   nichts, womit man das Feld setzen könnte. Begründet ist die Naht in `node/run.go:521-531`:
+   `update.Deps` nimmt die Vertrauensliste als **Wert**, während `chain.Keeper` sie unter dem
+   Programm austauscht.
 2. **`ngc-api migrate` fehlt als Aufruf** (Punkt 28 der Verträge). Der Controller startet die
    Migrationen als Programm — nur gibt es den Unterbefehl noch nicht. `openState` migriert
    allein das **eigene** Schema. Ein `migrate.go` im Controller gibt es bewusst nicht: ein
-   Gerüst sähe aus wie eine Zusage.
+   Gerüst sähe aus wie eine Zusage. **Dazu gemessen am 12.10.2026:**
+   `config.Controller.Migrate` liest **kein Programm** —
+   `grep -rn 'Controller\.Migrate\|Migrate ' shared/config/config.go` trifft nur
+   `config.go:293,296` (Erklärung und Feld) und `:676,679-680,748-749`, also `Validate` und
+   `LogValue`. Ein **totes Vertragsfeld**, das auf einem db-Knoten etwas tun soll.
 3. **Die Migrationssperre gilt nur für den Augenblick der Migration.** Zwei Controller, die
    beide hochkamen, schreiben danach **gleichzeitig** in dieselbe Datei. **Nicht gemessen.** Die
    Antwort des Datenbankpakets darauf ist `busyTimeout` 10 s plus Wiederholung. Wer zwei
@@ -183,13 +193,30 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
    hängt im Startweg (`node.run` → `Licensed`, `node.Restore`) — aber **nicht** in
    `serve/app.go`. Die Stelle ist im Code benannt („here the licence of the app belongs"), und
    **kein `E_LICENSE` verlässt dieses Paket**: ein App-Kanal läuft heute auch für eine App,
-   deren Lizenz abgelaufen ist. `serve.Deps` um Liste und Installation zu erweitern ist der
+   deren Lizenz abgelaufen ist. **Nachgemessen am 12.10.2026:**
+   `grep -rn 'license.Allowed' apps/ --include=*.go | grep -v _test.go` → **ein** Aufruf im
+   Produktionscode, `node/run.go:506`; die Stelle in `serve/app.go:217-221` ist ein
+   **Kommentar**. Und `grep -rn 'CodeLicense\|E_LICENSE' apps/server-controller/` → **7**
+   Treffer, **alle** in Kommentaren oder in `CLAUDE.md`, **keiner** im Code. `serve.Deps` um Liste und Installation zu erweitern ist der
    Eingriff, der dafür fehlt. (Aufgabe 18, Abweichung 5.)
-6. **Das Einrichten einer App-Aktualisierung ist nicht gebaut** (Aufgabe 20, „nicht gebaut,
-   benannt"): der Riegel davor ist voll gemessen, die Betriebsfassung von `AppInstaller`
-   (`Needs` + `Update`) fehlt, weil `install.Accept` auf eine **bereitgelegte** Datei nicht
-   anwendbar ist (`state.Staged` trägt weder `UI` noch `Needs` noch den Katalog-Umschlag) und
-   `install.stage` unexportiert ist. Ein zweiter Entpacker wäre gegen `CLAUDE.md`.
+6. **Das Einrichten einer App-Aktualisierung IST gebaut und verdrahtet — und von keinem
+   Programm erreichbar.** Hier stand bis zum 12.10.2026 „ist nicht gebaut … die Betriebsfassung
+   von `AppInstaller` (`Needs` + `Update`) fehlt". Das ist **überholt**; nachgemessen am
+   12.10.2026 im Zweig `controller` (`8bf977b`):
+
+   | gemessen | Befehl | Stelle |
+   |---|---|---|
+   | `Needs` existiert | `grep -n 'func (m \*Manager) \(Needs\|Update\)' apps/server-controller/classes/install/update.go` | `install/update.go:78` |
+   | `Update` existiert | derselbe Befehl | `install/update.go:140` |
+   | beide werden **gerufen** | `grep -n '\.Needs(\|\.Update(' apps/server-controller/classes/update/install.go` | `update/install.go:459` und `:471` |
+
+   Der Riegel davor ist derselbe, den Vertragspunkt 31 beschreibt: `install.Update` glaubt der
+   Lesung des Aufrufers **nicht**, sondern vergleicht sie gegen das Manifest (`sameFile`,
+   `sameSet`), sonst `ErrVerify`. **Eine Quelle, das Manifest.**
+
+   **Was offen bleibt, ist etwas anderes:** diese Arbeit ist von keinem Programm erreichbar,
+   weil niemand einen `update.Manager` oder `install.Manager` baut (Punkt 1). Stufe:
+   **von Fällen ausgeführt**, nie **in Betrieb**.
 7. **`core.Unattended` kann den ERSTEN Einbau eines Teils nie erlauben** (Aufgabe 20,
    BLOCKED 1): `store.Newer("1.2.0", "")` ist **false**, der Kommentar von `core.Unattended`
    sagt das Gegenteil. Die Zeile liegt in eingefrorenem `shared/`.
@@ -197,9 +224,15 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
    `shared/testdata/release/ngc-web-all.tar` ist kein tar, sondern 18 Byte Text.
 9. **65 bis 78 Fälle überspringen sich laut**, weil sie Linux brauchen — hier **67** gezählt
    (podman, Systembenutzer, POSIX-Shell, `/dev/ptmx`, Rechte, Plattenplatz). Sie sind kein Grün.
-10. **Die Apache-Vorlage** steht seit 12.10.2026 in `shared/ulh.md` und wird von
-   `TestBalancerTemplateMatchesTheContract` byteweise gehalten — **gemessen gegen die Vorlage,
-   nicht gegen ein laufendes Apache.** `apachectl configtest` ist nie gelaufen.
+10. **Der Balancer-Block** (`/etc/ngc/apache-apis.conf`) steht seit 12.10.2026 in
+   `shared/ulh.md` und wird von `TestBalancerTemplateMatchesTheContract` byteweise gehalten —
+   **gemessen gegen die Vorlage, nicht gegen ein laufendes Apache.** `apachectl configtest` ist
+   nie gelaufen. **Hier stand bis zum 12.10.2026 „die Apache-Vorlage"**, und das kann jemanden
+   glauben lassen, der virtuelle Host sei hier geprüft. Gemessen:
+   `grep -c 'VirtualHost\|apache-vhost' shared/ulh.md` → **0**,
+   `grep -c 'apache-apis' shared/ulh.md` → **2**. Die Vorlage des Auslieferungsweges
+   (`apps/web/templates/apache-vhost.conf`, Zweig `web`) ist etwas **anderes** und von diesem
+   Paket nicht berührt.
 11. **Das Terminal-Protokoll** (Punkt 29: 1 Byte Art, 2 Byte Länge, Nutzlast) ist eine
    **Abweichung vom Plan** und mit der Sitzung Webinterface **noch abzustimmen**. Wie viele
    Terminals gleichzeitig laufen dürfen, begrenzt seit Aufgabe 24 `serve.DefaultMaxApps = 128`;
@@ -209,6 +242,50 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
 13. **Punkt 31:** Nichts hält `store.Package.Needs` des Katalogeintrags gegen
     `store.Manifest.Needs`. Heute keine Lücke, weil niemand die Katalogkopie als Grundlage einer
     Rechteentscheidung nimmt. Wer das tun will, muss es zuerst dort lesen.
+14. **Punkt 33 — die Rollenwand im Einbau — ist behoben; bis zum 12.10.2026 fehlte dieser Punkt
+    in dieser Liste ganz.** Was gefehlt hat: `update/install.go` kannte das Wort `Roles` nicht,
+    `knownParts` führte `AutoWeb`, `AutoAPI`, `AutoController` ohne Unterschied, und die
+    Wandliste im Kopf von `Install` zählte **acht** Schritte, keiner davon eine Rollenwand. Ein
+    `install ngc-api` auf einem db-Knoten wäre dort nach `/usr/lib/ngc` kopiert und
+    `systemctl restart ngc-api` gefahren worden; die einzige Wand lag in `rollout.go` auf der
+    **API**-Seite, also auf der falschen Seite der Leitung.
+
+    **Gemessen am 12.10.2026 im Zweig `controller` (`8bf977b`, „Refuse an NGC part that does not
+    belong on this server"):** `grep -rn 'Roles' apps/server-controller/classes/update/ | grep -v _test.go`
+    → **5** Treffer (die Abschlussprüfung hatte auf `52c2346` **0** gemessen), und die Wandliste
+    im Kopf von `Install` trägt jetzt Schritt **6b**: „an NGC part … the roles of THIS server
+    have to run that part (runs), so that nobody can tell an API server to become a web server".
+    Entschieden wird mit `tunnel.Components`, derselben Funktion, mit der die API ihre Knoten
+    wählt — die zwei Seiten können nicht auseinanderlaufen.
+
+    **Noch nicht abgenommen:** auf einem echten Server ist die Wand nie gelaufen, denn dieses
+    Teilsystem ist nie in Betrieb (Punkt 1).
+15. **`ngc-controller image` steht in der Hilfe und antwortet immer „noch nicht gebaut".**
+    Gemessen am 12.10.2026: `writeUsage` (`node/main.go:178`) führt
+    „`image -arch <amd64|arm64> -out <Datei>`" als Kommando auf; `buildImage` (`:361-368`) prüft
+    die Flags und antwortet dann `notReady` → „Dieser Teil ist noch nicht gebaut." mit
+    **Code 1**. Der Kommentar daneben sagt, warum („no later task fills this command: which of
+    the two ways stays is the coordinator's call") — **die Hilfe sagt es nicht.**
+
+    **Die Folge ist größer als der Befehl:** `grep -rn '"image"' apps/ --include=*.go | grep -v _test.go`
+    findet außer `install/activate.go:412` (Rücknahme eines geladenen Abbilds) nur Stellen in
+    `node/main.go`. **Damit hat das Abbild der Terminal-App keinen Erzeuger**, und das Terminal
+    aus Aufgabe 23 ist auf einem echten Server nicht in Betrieb zu nehmen, solange niemand
+    entscheidet, wer das Abbild baut. (Die Folge ist **geschlossen** aus der Messung, nicht
+    gefahren.)
+16. **Zu entscheiden (Sicherheitsfrage, nicht Befund): ist ein Kopplungscode 24 Stunden lang
+    gültig richtig?** Gemessen am 12.10.2026: `tunnel.PairLifetime = 86400`
+    (`shared/tunnel/tunnel.go:35`; die Feldkommentare `:86`/`:107` sagen „one use, valid for
+    PairLifetime") — **24 Stunden**. Die einzigen 30 Sekunden in der Nähe sind
+    `pairing.Timeout = 30 * time.Second` (`pairing/pairing.go:33`), und die begrenzen die
+    **HTTP-Anfrage**, nicht die Lebenszeit des Codes.
+
+    Bis zum 12.10.2026 begründeten `node/ask.go:17-22` und `node/main.go:206-207` das Lesen des
+    Codes von **stdin** statt aus `argv` mit „den **dreißig Sekunden** einer Kopplung" — das
+    Fenster ist **2880-mal** so groß, wie die Begründung sagte. Die Entscheidung (stdin statt
+    `argv`) bleibt dadurch richtig und wird nur **wichtiger**; die zwei Kommentare sind
+    berichtigt. **Die Zahl selbst liegt in eingefrorenem `shared/tunnel` und ist nicht
+    geändert.** Wer über `hidepid` oder über die Dauer des Codes entscheidet, entscheidet hier.
 
 ## Was ungemessen bleibt
 

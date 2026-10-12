@@ -95,9 +95,13 @@ func (h Host) EnsureRun(ctx context.Context, u runtime.User) (string, error) {
 }
 func (h Host) DropRun(name string) error { return runtime.DropRun(name) }
 
-// Deps are what a Manager needs. Everything that is nil or empty in it is this
-// program wired wrong and ends every activation with ErrInternal: none of it
-// can be brought about by a peer, so it is answered once and the same way.
+// Deps are what a Manager needs. What is nil or empty of it AND read by the
+// guard of Activate is this program wired wrong and ends every activation
+// with ErrInternal: none of it can be brought about by a peer, so it is
+// answered once and the same way. The guard reads eight of these fields
+// (State, Engine, Sys, List, StageDir, Max, LastSeq, Now - counted
+// 12.10.2026); Roles, Node, NGC and ReleaseKey empty go through it, and an
+// empty Hold is filled on purpose (Manager.hold).
 type Deps struct {
 	// State is this controller's local store: the row of the app and the
 	// licence it keeps.

@@ -28,11 +28,13 @@
 //
 // What this build carries out is ngc.users/controller/trust (trust.go) and
 // the app channels of this controller from end to end (app.go): the handshake,
-// the wait for the first inner message, and the service of the app. The core
-// actions that install, update and license an app come with the tasks that
-// build them; until then a channel for one of them is refused instead of half
-// served, and so is the licence of an app channel, which no build checks yet
-// (runApp).
+// the wait for the first inner message, and the service of the app. Since task
+// 19 it carries out install as well (update.go), so the actions of this build
+// are trust and install - Server.acts is the list. The core actions that
+// remain (activate, deactivate, uninstall, delete-data, stage, license) come
+// with the tasks that build them; until then a channel for one of them is
+// refused instead of half served, and so is the licence of an app channel,
+// which no build checks yet (runApp).
 package serve
 
 import (
@@ -323,10 +325,12 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) 
 		// over before it costs this server a byte.
 		//
 		// The same state has two codes, and that is worth knowing while it
-		// lasts: with a trust list a stage, install or license channel gets
-		// here and ends E_INTERNAL, without one it never gets past
-		// access.firstChain and ends E_UNREACHABLE. Both mean "this build does
-		// not carry that action out". Once the tasks that bring them are in,
+		// lasts: with a trust list a stage or license channel gets here and
+		// ends E_INTERNAL, without one it never gets past access.firstChain
+		// and ends E_UNREACHABLE. An install channel does NOT reach this
+		// line any more: it stands in Server.acts since task 19. Both mean
+		// "this build does not carry that action out".
+		// Once the tasks that bring them are in,
 		// the line above is gone and with it the difference; until then the
 		// second code is the honest one of the two, because without a list
 		// this server really cannot be reached for anything but its first

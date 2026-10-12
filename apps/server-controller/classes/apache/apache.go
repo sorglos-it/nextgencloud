@@ -210,7 +210,10 @@ func (w *Writer) Compare(ctx context.Context, node trust.Node) (bool, error) {
 }
 
 // apply puts the new files in place and tells Apache, or leaves everything as
-// it was. The trust file goes first: Apache has not been told yet, so a
+// it was - as long as the fault is a write or ConfigTest. A failed Reload is
+// the one exception, and it takes nothing back: the new files stay where they
+// are while Apache goes on serving the old ones. Writer.Sync says it
+// precisely. The trust file goes first: Apache has not been told yet, so a
 // certificate too many there changes nothing, while a balancer naming a
 // server whose certificate is still missing would.
 func (w *Writer) apply(ctx context.Context, trustPEM, conf []byte, apis []config.WebAPI) (bool, error) {

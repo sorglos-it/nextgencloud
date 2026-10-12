@@ -57,10 +57,12 @@ import (
 var (
 	// ErrNothing says no update lies ready for this target, or none that
 	// could be taken back. It is not a refusal of the peer and not a broken
-	// file: there is nothing to do. No caller exists yet (api task 24 wires
-	// main.go), and the answer meant for one is wire.CodeVerify, as for
-	// ErrVerify: an API asking to install something this server never laid
-	// ready is asking about a state it does not share.
+	// file: there is nothing to do. The caller is serve/update.go, wired by
+	// serve.New, and the answer it gives is wire.CodeNotFound - held by a
+	// case (serve/update_test.go, "nothing lies ready"). This said
+	// wire.CodeVerify until 12.10.2026; the reason the code is the right one
+	// stands at serve/update.go func code: nothing was refused, there is
+	// simply no file lying ready for that target.
 	ErrNothing = errors.New("update: nothing lies ready for this target")
 	// ErrNeedsGrants says the new version needs rights the app was not
 	// granted. It travels joined with ErrForbidden - the install does not

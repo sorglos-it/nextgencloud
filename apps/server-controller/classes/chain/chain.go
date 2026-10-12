@@ -80,9 +80,9 @@ func New(st *state.Store, a trust.Anchor) *Keeper { return &Keeper{st: st, ancho
 // nothing as ErrNoAnchor — unread state or not, and one of them is E_VERIFY
 // while the other is E_INTERNAL. Only a chain that got past all three meets
 // this gate. Whoever builds the server around a keeper therefore calls this
-// first and lets a failure of it end the start. No program does yet — only
-// tests build a keeper at all, so "never loaded" is what a first wiring gets
-// if it forgets this.
+// first and lets a failure of it end the start. node/run.go does exactly
+// that: it builds the keeper and ends the start when Load fails. This said
+// "no program does yet - only tests build a keeper at all" until 12.10.2026.
 func (k *Keeper) Load(ctx context.Context) error {
 	if !k.validAnchor() {
 		return ErrNoAnchor
