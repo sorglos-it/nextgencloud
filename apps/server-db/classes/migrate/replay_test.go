@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
@@ -271,5 +272,121 @@ func TestSQLiteSaysDuplicateColumnNameAndTheDialectReadsIt(t *testing.T) {
 	}
 	if typeErr.Error() != err.Error() {
 		t.Errorf("SQLite tells the two apart after all: %q against %q", typeErr, err)
+	}
+}
+
+// indexMigration is the shape of W-1 of the final review of 10.10.2026: a
+// migration whose second statement makes an index. The statements go through
+// the rules first, so what runs here is what a real migration would run.
+func indexMigration(t *testing.T) File {
+	t.Helper()
+	var stmts []string
+	for _, s := range []string{
+		"CREATE TABLE ngc_blob ( kind {{key}} NOT NULL , seq {{int}} NOT NULL , id {{key}} NOT NULL , PRIMARY KEY ( kind ) ) {{opts}}",
+		"CREATE INDEX ngc_blob_seq ON ngc_blob ( kind , seq , id )",
+	} {
+		form, err := checkStatement(s, fromMigration)
+		if err != nil {
+			t.Fatalf("the rules refuse %q: %v", s, err)
+		}
+		stmts = append(stmts, form)
+	}
+	return File{Version: 98, Name: "0098-an-index.sql", Statements: stmts}
+}
+
+// TestAMigrationStopsAtAnObjectItWouldNotHaveMade is W-1 of the final review.
+// The step-over of d.Exists carried the reason "a migration only ever adds:
+// whatever is already there is what this run would have made", and the ledger
+// carried "the linter holds it" - but the linter reads the text of the FILE,
+// and the collision stands between the file and a state of the DATABASE the
+// file never made. Neither sentence holds the case, and it was measured on
+// 10.10.2026: an index of the same name over other columns, with an empty
+// ngc_schema, made Run answer n=1, err=nil, write done=1, and Needed say "no"
+// from then on, forever, over a schema that is not the migration's.
+//
+// So what the step-over needs is not a reason, it is the question itself:
+// whether what is already there is what this statement would have made.
+// SQLite keeps the text of every statement that made an object, so there the
+// question can be asked, and it is asked here. Both sides are nailed down:
+// the object that is the same goes through (the case above and the control at
+// the end of this one), the object of the same name that is NOT the same
+// stops the run.
+//
+// ON MARIADB THIS IS STILL OPEN. It has no such text to hand back, nothing
+// here can reach a server, and a check written against documentation alone
+// would be the same kind of promise this case exists to remove.
+func TestAMigrationStopsAtAnObjectItWouldNotHaveMade(t *testing.T) {
+	db := encryptedAt(t, filepath.Join(t.TempDir(), "state.db"))
+	if err := bootstrap(ctx, db, sqlstore.SQLite); err != nil {
+		t.Fatal(err)
+	}
+	const owner = "test/0"
+	if taken, err := take(ctx, db, sqlstore.SQLite, owner, 1790000000); err != nil || !taken {
+		t.Fatalf("take: %v, %v", taken, err)
+	}
+	f := indexMigration(t)
+	// The table as the migration would make it, and an index of the
+	// migration's name over another column. This is the state no file made:
+	// the record of the migrations is empty, so the run meets it as a first
+	// run.
+	// Through fill, like applyOne: what reaches a database is never the text
+	// of the file but the form the dialect's types are written into.
+	run := func(i int) string {
+		t.Helper()
+		stmt, err := fill(sqlstore.SQLite, f.Statements[i], fromMigration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stmt
+	}
+	if _, err := db.ExecContext(ctx, run(0)); err != nil {
+		t.Fatal(err)
+	}
+	const foreign = "CREATE INDEX ngc_blob_seq ON ngc_blob ( seq )"
+	if _, err := db.ExecContext(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	ran, err := applyOne(ctx, db, sqlstore.SQLite, f, owner, 1790000000)
+	if err == nil {
+		t.Fatalf("the migration ran over an index it would not have made (ran=%v)", ran)
+	}
+	if !strings.Contains(err.Error(), "another object of that name") {
+		t.Errorf("the collision is reported by something else: %v", err)
+	}
+	// Nothing was recorded, so the next run meets the same question instead
+	// of reading "nothing to do".
+	step, done, err := state(ctx, db, f.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Error("the migration recorded itself as done over a schema it did not make")
+	}
+	if step != 0 {
+		t.Errorf("the record counts %d statements in a branch that writes none", step)
+	}
+	// And the foreign index is untouched: the run stopped, it did not repair.
+	var stored string
+	if err := db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE name = ?", "ngc_blob_seq").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != foreign {
+		t.Errorf("the index changed: %q", stored)
+	}
+
+	// The way to the question is open: with the migration's own index there
+	// instead of the foreign one, the very same run goes through. Without
+	// this the case would also pass if the run stopped for any other reason.
+	if _, err := db.ExecContext(ctx, "DROP INDEX ngc_blob_seq"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, run(1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyOne(ctx, db, sqlstore.SQLite, f, owner, 1790000000); err != nil {
+		t.Fatalf("the way to the question is blocked: %v", err)
+	}
+	if _, done, err = state(ctx, db, f.Version); err != nil || !done {
+		t.Errorf("the migration did not finish over its own schema: done=%v, %v", done, err)
 	}
 }

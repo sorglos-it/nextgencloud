@@ -203,3 +203,16 @@ func isNetwork(err error) bool {
 	return errors.As(err, &ne) || errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE)
 }
+
+// schemaText gives back the text of every statement the schema was made
+// with. SQLite keeps that text as it was given (and rewrites it when an
+// ALTER TABLE adds a column), which is what lets a migration ask whether an
+// object that is already there is the one it would have made instead of
+// assuming it. One constant, and no value of anyone's in it.
+const schemaText = "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL"
+
+// SchemaText is not part of Dialect: MariaDB has no such answer to give, and
+// a method every dialect had to carry would be answered there out of
+// documentation. migrate asks for it by interface and says at its own line
+// what a dialect without it keeps.
+func (sqliteDialect) SchemaText() string { return schemaText }

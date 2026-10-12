@@ -393,7 +393,9 @@ func take(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, now
 // the whole file goes in at once. MariaDB commits every CREATE on its own,
 // so each statement is recorded as it succeeds and a crash picks up there; a
 // statement that ran but was not recorded fails with "already there", which
-// the dialect knows and the runner steps over.
+// the dialect knows and the runner steps over - but only over an object that
+// is the one the statement makes, which is asked where the database can say
+// so (stepOver, already.go) and assumed where it cannot.
 func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner string, now int64) (bool, error) {
 	step, done, err := state(ctx, db, f.Version)
 	if err != nil {
@@ -428,13 +430,17 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 				return false, at(i, f, err)
 			}
 			// A statement that is already there is stepped over, the same
-			// as in the MariaDB branch below. An update replays every
-			// migration on a database that is being used, and the rule of
-			// task 3 is that a migration only ever adds: whatever is already
-			// there is what this run would have made. d.Exists is narrow on
-			// purpose - for SQLite it is the generic error code AND the words
-			// SQLite writes for this one case - so a migration that is really
-			// broken still stops the run here.
+			// as in the MariaDB branch below - but only once the database has
+			// said that what is already there is what this statement makes.
+			// "A migration only ever adds, so whatever is there is what this
+			// run would have made" was a sentence about the FILE, and W-1 of
+			// the review of 10.10.2026 measured what a state of the DATABASE
+			// does to it: an index of the same name over another column let
+			// the run write done=1 over a schema no migration made. stepOver
+			// asks instead of assuming; what it can and cannot hold stands at
+			// its own line. d.Exists stays as narrow as it was - for SQLite
+			// the generic error code AND the words SQLite writes for this one
+			// case - so a migration that is really broken still stops here.
 			//
 			// This branch reads every statement and not f.Statements[step:]
 			// as the one below does, and that is not an oversight: nothing in
@@ -449,8 +455,15 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 			// migrate's TestAColumnMigrationSurvivesASecondRun measures both
 			// shapes of the record. A slice expression here would promise a
 			// resume that one transaction does not have.
-			if _, err := tx.ExecContext(ctx, stmt); err != nil && !d.Exists(err) {
-				return false, at(i, f, err)
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				if !d.Exists(err) {
+					return false, at(i, f, err)
+				}
+				// Asked through the transaction: the objects this run has
+				// already made are visible on this connection alone.
+				if err := stepOver(ctx, tx, d, stmt); err != nil {
+					return false, at(i, f, err)
+				}
 			}
 		}
 		// Inside the transaction, so the record of "done" and the check that
@@ -474,8 +487,13 @@ func applyOne(ctx context.Context, db *sql.DB, d sqlstore.Dialect, f File, owner
 		if err != nil {
 			return false, at(int(step)+i, f, err)
 		}
-		if _, err := db.ExecContext(ctx, stmt); err != nil && !d.Exists(err) {
-			return false, at(int(step)+i, f, err)
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			if !d.Exists(err) {
+				return false, at(int(step)+i, f, err)
+			}
+			if err := stepOver(ctx, db, d, stmt); err != nil {
+				return false, at(int(step)+i, f, err)
+			}
 		}
 		if _, err := db.ExecContext(ctx, updateStep, step+int64(i)+1, f.Version); err != nil {
 			return false, err

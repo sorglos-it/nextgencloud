@@ -205,6 +205,25 @@ func removeBeside(tmp string) {
 	os.Remove(tmp + "-shm")
 }
 
+// written names everything Backup writes while it works, built from the
+// target it was given: the finished backup, the copy under its ".part" name,
+// and the journal and shared-memory file SQLite keeps next to each of the
+// two. Six names, and the copy is written under the ".part" one FIRST, with
+// O_TRUNC - so every question that guards the target has to be asked at all
+// six and not only at the one the caller named.
+//
+// Measured on 12.10.2026, with this list taken out again so the old guard
+// answered: a hard link named "backup.db.part" pointing at the running
+// database made Backup answer nil while the database went from 102400 bytes
+// to 0 - and a hard link named "backup.db.part-wal" did exactly the same,
+// which the report of 10.10.2026 did not name. freeze only writes that
+// second name when the database has a journal of its own, but fold opens the
+// copy, and SQLite then writes ITS journal under that name. Six names, one
+// question each.
+func written(target string) []string {
+	return append(beside(target), beside(target+".part")...)
+}
+
 // beside names a database and everything that belongs to it: the file itself,
 // the journal and the shared-memory file SQLite keeps next to it. Writing any
 // of the three while the database is open is writing the database.
@@ -229,7 +248,12 @@ func beside(path string) []string {
 // name the copy carries while it is written, before the rename.
 //
 // A name is not the only way to reach the same file, so two more questions
-// follow the comparison.
+// follow the comparison - and all three are asked at every one of those
+// names, not at the target alone. That the ".part" name belonged in the
+// string comparison but in neither of the two questions was the critical
+// finding of 12.10.2026 (K-1): a hard link under "backup.db.part" let Backup
+// answer nil and left the running database at 0 bytes, because that is the
+// name freeze opens with O_TRUNC.
 //
 // A target that is a symbolic link is refused outright, and that is the safer
 // of the two readings: following it would have to answer where it points at
@@ -238,7 +262,8 @@ func beside(path string) []string {
 // one that points somewhere harmless. NOT MEASURED HERE - this machine does
 // not let a test make a symbolic link ("Dem Client fehlt ein erforderliches
 // Recht"), and no Linux Go toolchain is on it either, which was looked for.
-// TestBackupRefusesALinkAsItsTarget says so and skips loudly instead of
+// TestBackupRefusesALinkAsItsTarget and
+// TestBackupRefusesALinkAtEveryNameItWrites say so and skip loudly instead of
 // passing.
 //
 // And a target that IS the database without being a link to it: a hard link
@@ -246,7 +271,16 @@ func beside(path string) []string {
 // through it writes the database. os.SameFile answers that from what the
 // operating system knows about the two files instead of from their names, and
 // it is measured, on a hard link, in
-// TestBackupRefusesAnotherNameOfTheSameFile.
+// TestBackupRefusesAnotherNameOfTheSameFile and, for each of the six names,
+// in TestBackupRefusesAnotherNameOfTheSameFileAtEveryNameItWrites.
+//
+// The length is measured on those six names too and not on the target: the
+// longest thing written beside it is ".part-wal". Measured on 12.10.2026
+// before that: a target of 248 bytes was ACCEPTED, so the copy and its
+// journal were written under names of 253 and 257 bytes, past
+// config.MaxField and measured by nothing. The report of 10.10.2026 had this
+// as Kl-3 and read it as failing later, in fold; it does not fail at all
+// (TestBackupRefusesATargetTooLongForTheNameItWrites).
 func checkTarget(path, target string) error {
 	if target == "" {
 		return errors.New("sqlite: die Sicherung braucht einen eigenen Dateinamen, nicht den der Datenbank")
@@ -258,12 +292,15 @@ func checkTarget(path, target string) error {
 		return errors.New("sqlite: der Name der Sicherung muss ein absoluter, einfacher Dateiname sein")
 	}
 	// Every name the copy ever carries against every name the database owns.
-	var mine []string
-	for _, p := range beside(target) {
-		mine = append(mine, p)
-	}
-	for _, p := range beside(target + ".part") {
-		mine = append(mine, p)
+	mine := written(target)
+	// The length is measured on the names that are written, not on the one
+	// that was handed in: ".part-wal" is nine bytes more, and a target that
+	// is just short enough would otherwise be written under a name nothing
+	// ever measured.
+	for _, a := range mine {
+		if len(a) > config.MaxField {
+			return errors.New("sqlite: der Name der Sicherung ist mit allem, was daneben geschrieben wird, zu lang")
+		}
 	}
 	for _, a := range mine {
 		for _, b := range beside(path) {
@@ -273,23 +310,32 @@ func checkTarget(path, target string) error {
 		}
 	}
 	// Lstat, not Stat: Stat follows the link and would answer about the
-	// database at the other end of it.
-	if st, err := os.Lstat(target); err == nil && st.Mode()&os.ModeSymlink != 0 {
-		return errors.New("sqlite: der Name der Sicherung zeigt auf einen Verweis, nicht auf eine Datei")
+	// database at the other end of it. Asked at every name that is written,
+	// because a link waiting under the ".part" name is written through just
+	// as surely as one under the target's own.
+	for _, a := range mine {
+		if st, err := os.Lstat(a); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return errors.New("sqlite: der Name der Sicherung zeigt auf einen Verweis, nicht auf eine Datei")
+		}
 	}
 	// Here Stat is the right one: the question is no longer how the target is
-	// written but which file it ends up being. A target that is not there yet
+	// written but which file it ends up being. A name that is not there yet
 	// is the normal case and answers an error, which is not a finding.
-	to, err := os.Stat(target)
-	if err != nil {
-		return nil
-	}
-	from, err := os.Stat(path)
-	if err != nil {
-		return nil // the missing database is reported by Backup itself, with its own sentence
-	}
-	if os.SameFile(to, from) {
-		return errors.New("sqlite: der Name der Sicherung meint dieselbe Datei wie die Datenbank")
+	for _, a := range mine {
+		to, err := os.Stat(a)
+		if err != nil {
+			continue
+		}
+		for _, b := range beside(path) {
+			from, err := os.Stat(b)
+			if err != nil {
+				// the missing database is reported by Backup itself, with its own sentence
+				continue
+			}
+			if os.SameFile(to, from) {
+				return errors.New("sqlite: der Name der Sicherung meint dieselbe Datei wie die Datenbank")
+			}
+		}
 	}
 	return nil
 }

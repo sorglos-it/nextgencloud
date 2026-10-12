@@ -562,3 +562,172 @@ func TestBackupRefusesAnotherNameOfTheSameFile(t *testing.T) {
 		t.Fatalf("the way to the check is blocked: %v", err)
 	}
 }
+
+// writtenNames are the names Backup ever writes while it works, built from
+// the target it was given. The copy is written under target + ".part" and
+// renamed at the end, SQLite makes the journal and the shared-memory file
+// next to whatever it opens, and both the copy and the finished backup are
+// opened once. So six names are written, not one - and every question that
+// guards the target has to be asked at all six.
+//
+// Measured on 12.10.2026 before the guard was widened: a hard link named
+// backup.db.part pointing at the database made Backup answer <nil> while the
+// running database went from 102400 bytes to 0, because freeze opens the
+// ".part" name with O_TRUNC. The name that is written is the name that has
+// to be checked.
+func writtenNames(target string) []struct {
+	label string
+	name  string
+} {
+	return []struct {
+		label string
+		name  string
+	}{
+		{"the target itself", target},
+		{"the journal beside the target", target + "-wal"},
+		{"the shared-memory file beside the target", target + "-shm"},
+		{"the name the copy carries while it is written", target + ".part"},
+		{"the journal beside the copy", target + ".part-wal"},
+		{"the shared-memory file beside the copy", target + ".part-shm"},
+	}
+}
+
+// TestBackupRefusesAnotherNameOfTheSameFileAtEveryNameItWrites is the K-1
+// case of the final review of 10.10.2026: the hard-link question was asked at
+// the target and at none of the other five names Backup writes. The ".part"
+// name is the destructive one here, because that is where freeze copies to,
+// with O_TRUNC; the others are refused for the same reason and are measured
+// in the same table so that no name of the six is left without the question.
+//
+// Each case gets a directory and a database of its own: a case that destroyed
+// the file would otherwise decide the next one. And each one asks for the
+// refusal of this package by its own words, not merely for "an error", which
+// is what the operating system might have given.
+func TestBackupRefusesAnotherNameOfTheSameFileAtEveryNameItWrites(t *testing.T) {
+	for _, c := range writtenNames("backup.db") {
+		t.Run(c.label, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := backupConfig(dir, "state.db")
+			before := seeded(t, cfg)
+			target := filepath.Join(dir, "backup.db")
+			alias := filepath.Join(dir, filepath.Base(c.name))
+			if err := os.Link(cfg.Path, alias); err != nil {
+				t.Skipf("NOT MEASURED HERE: this machine does not let a test make a hard link (%v)", err)
+			}
+			err := sqlite.Backup(cfg, target)
+			// Errorf and not Fatalf: what a call that was accepted DID to the
+			// database is the measurement, and stopping here would hide it.
+			if err == nil {
+				t.Errorf("%s is another name of the database and the backup was accepted", alias)
+			} else if !strings.Contains(err.Error(), "dieselbe Datei") {
+				t.Errorf("the alias %s is refused by something else: %v", alias, err)
+			}
+			after, readErr := os.ReadFile(cfg.Path)
+			if readErr != nil {
+				t.Fatalf("the database is gone after the refused call: %v", readErr)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("the call changed the database through %s: %d bytes afterwards against %d before",
+					alias, len(after), len(before))
+			}
+			// The way to the check is open: the same target, with that second
+			// name of the database gone, goes through.
+			if err := os.Remove(alias); err != nil {
+				t.Fatal(err)
+			}
+			if err := sqlite.Backup(cfg, target); err != nil {
+				t.Fatalf("the way to the check is blocked: %v", err)
+			}
+		})
+	}
+}
+
+// TestBackupRefusesALinkAtEveryNameItWrites is the same widening for the
+// symbolic link. It says out loud when it cannot measure: making one needs a
+// privilege a normal Windows account does not have, and there the case
+// reports that instead of passing quietly.
+func TestBackupRefusesALinkAtEveryNameItWrites(t *testing.T) {
+	for _, c := range writtenNames("backup.db") {
+		t.Run(c.label, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := backupConfig(dir, "state.db")
+			before := seeded(t, cfg)
+			target := filepath.Join(dir, "backup.db")
+			link := filepath.Join(dir, filepath.Base(c.name))
+			if err := os.Symlink(cfg.Path, link); err != nil {
+				t.Skipf("NOT MEASURED HERE: this machine does not let a test make a symbolic link (%v). "+
+					"On the targets linux/amd64 and linux/arm64 it runs; whoever has one runs this case there.", err)
+			}
+			err := sqlite.Backup(cfg, target)
+			if err == nil {
+				t.Fatalf("%s is a link and the backup was accepted", link)
+			}
+			if !strings.Contains(err.Error(), "Verweis") {
+				t.Errorf("the link %s is refused by something else: %v", link, err)
+			}
+			after, readErr := os.ReadFile(cfg.Path)
+			if readErr != nil {
+				t.Fatalf("the database is gone after the refused call: %v", readErr)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("the refused call changed the database through %s", link)
+			}
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+			if err := sqlite.Backup(cfg, target); err != nil {
+				t.Fatalf("the way to the check is blocked: %v", err)
+			}
+		})
+	}
+}
+
+// TestBackupRefusesATargetTooLongForTheNameItWrites is Kl-3 of the same
+// review: the length was measured against the target, while what is written
+// is target + ".part" and the journal beside it, nine bytes more. A target
+// that is just short enough therefore passed the door and failed later,
+// inside fold, after freeze had already copied the database - no damage,
+// because removeCopy cleans up, but the refusal came from the wrong line and
+// said the wrong thing.
+//
+// The case nails both sides of the bound, which is what makes it a bound: the
+// longest name that fits with everything Backup writes goes through, one byte
+// more is refused by this package's own sentence.
+func TestBackupRefusesATargetTooLongForTheNameItWrites(t *testing.T) {
+	dir := t.TempDir()
+	cfg := backupConfig(dir, "state.db")
+	before := seeded(t, cfg)
+	// ".part-wal" is the longest thing Backup appends, so the longest target
+	// that fits is MaxField minus those nine bytes.
+	const appended = len(".part-wal")
+	head := filepath.Join(dir, "b")
+	fill := config.MaxField - appended - len(head)
+	if fill < 1 {
+		t.Skipf("the temporary directory %q leaves no room for this case", dir)
+	}
+	fits := head + strings.Repeat("x", fill)
+	if err := sqlite.Backup(cfg, fits); err != nil {
+		t.Fatalf("the longest target that fits was refused: %v", err)
+	}
+	err := sqlite.Backup(cfg, fits+"x")
+	if err == nil {
+		t.Fatal("a target too long for the names it writes was accepted")
+	}
+	if !strings.Contains(err.Error(), "mit allem, was daneben geschrieben wird") {
+		t.Errorf("the overlong target is refused by something else: %v", err)
+	}
+	// Nothing of the refused call stayed behind, and the database is the one
+	// from before it.
+	for _, n := range []string{fits + "x", fits + "x.part", fits + "x.part-wal"} {
+		if _, err := os.Stat(n); err == nil {
+			t.Errorf("the refused call left %q behind", filepath.Base(n))
+		}
+	}
+	after, readErr := os.ReadFile(cfg.Path)
+	if readErr != nil {
+		t.Fatalf("the database is gone after the refused call: %v", readErr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("the refused call changed the database")
+	}
+}
