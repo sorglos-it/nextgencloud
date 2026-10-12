@@ -2222,15 +2222,22 @@ Erwartet: `GRUEN: alle Fälle von Paket 0 bestanden.` und ein Protokoll unter `d
 
 - [ ] **Schritt 3: Prüfen, dass Rot auch wirklich rot ist**
 
-Ausführen:
+**Dieses Rezept beißt nicht — am 12.10.2026 gemessen, der Lauf wurde GRUEN:**
+`recovery-test.sh` ruft `prepare` selbst auf und legt den weggelegten Stick neu an.
+Ein weggelegter Schlüssel ist darum **keine** Nulllinie.
+
+Ausführen stattdessen (gemessen, beide rot):
 ```bash
-mv dist/recovery/keys/stick2.pem dist/recovery/keys/stick2.weg
+# 1. hohles Gruen: recovery-test.sh durch eine Attrappe ersetzen, die 0 zurueckgibt
+# 2. einen Riegel aus der ausgelieferten recovery-policy.sh herausschneiden
 tools/recovery-ci.sh; echo "Rueckgabe: $?"
-mv dist/recovery/keys/stick2.weg dist/recovery/keys/stick2.pem
+# danach die echte Datei zurueck und bitgleich nachweisen:
+git hash-object tools/recovery-test.sh tools/recovery-policy.sh
 tools/recovery-ci.sh; echo "Rueckgabe: $?"
 ```
-Erwartet: erst `ROT`, die letzten 20 Zeilen und `Rueckgabe: 1`; danach wieder `GRUEN` und
-`Rueckgabe: 0`. Ein CI-Job, der nie rot wird, prüft nichts.
+Erwartet: erst `ROT`, die letzten 20 Zeilen und `Rueckgabe: 1` — und zwar **auch** gegen die
+Attrappe, die 0 zurückgibt (der Job muss merken, dass kein einziger Fall gelaufen ist);
+danach wieder `GRUEN` und `Rueckgabe: 0`. Ein CI-Job, der nie rot wird, prüft nichts.
 
 - [ ] **Schritt 4: Commit**
 
@@ -2350,8 +2357,16 @@ Reservestick sowie QEMU mit Secure-Boot-OVMF einrichten und prüfen. Nachgewiese
 Abnahmekriterium von Paket 0: Versiegeln und Öffnen eines Testgeheimnisses mit einer PolicyOR aus
 sieben Zweigen (Normalstart über PCR, sechs Stick-Paare mit PolicySigned, Plattform-PIN und
 NV-Zähler) gegen swtpm, dazu die Negativfälle Replay, halber Zweig, fremder Stick, alter
-Zählerstand, falsche PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
+Zählerstand, falsche **Plattform**-PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
 `tools/recovery-ci.sh`. Kein Rust in diesem Paket.
+
+**Berichtigt am 12.10.2026 (Aufgabe 12), gemessen:** hier stand „falsche PIN mit Sperre“. Das
+liest sich wie die **Stick**-PIN, und die sperrt in dieser Umgebung nicht — SoftHSM2 2.6 sperrt eine
+Benutzer-PIN nie (neun falsche PINs, jedes Mal nur `user PIN count low`, danach loggte die richtige
+PIN mit Rückgabe 0 ein). Belegt ist allein die **Plattform**-PIN-Sperre. Die Liste unten war
+außerdem zu kurz: sechs gemessene offene Punkte fehlten (K9 zur Hälfte, die 24 h als Wirkung, der
+Flatter-Punkt, ein DEK, PIN beim Versiegeln, der nicht sinkende Zähler). Wie es gebaut wurde, steht
+in `CHANGELOG.md` und `docs/recovery-abnahme.md`.
 
 ### Offen
 

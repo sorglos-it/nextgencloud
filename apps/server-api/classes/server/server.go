@@ -37,9 +37,11 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/setup"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/updates"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -57,11 +59,20 @@ var SetupCodeFile = filepath.Join(config.DataDir, "setup-code")
 //     disk, so a spool is only ever good for the one run that made it. That is
 //     all it is used for: appstore.Activate writes the package, reads it twice
 //     and removes it again within the one call (task 22, mutant spool-kept).
-//   - Nothing waits here BETWEEN two calls. The package an admin uploaded does
-//     not lie here until he activates it: ngc.store/controller/activate is a
-//     core action of flow transfer, so the shell sends the file again on that
-//     channel. Nothing on any disk has to survive in between, which is why
-//     neither the second API server nor a crash is a question for it.
+//   - Nothing waits here BETWEEN two calls, and that is a GAP and not a
+//     solution. Task 24 wrote here that the shell sends the uploaded package
+//     again on the activate channel; read against shared/core that is wrong.
+//     ngc.store/controller/activate is a FlowTransfer action, and
+//     core.Action.MaxIn says MaxIn bounds there "what the API sends the
+//     controller -- the shell sends none, even when it opened the channel",
+//     while core.ShellOpens says the shell sends EOF at once. So nobody holds
+//     the package of an uploaded app between ngc.store/upload (which keeps
+//     only the ui-tar) and its activation, and an activation out of
+//     core.LocalStore answers E_UNREACHABLE. That is Punkt 30 of
+//     docs/vertraege-v1.2.md, still open, and coreapp.storeActivate says it
+//     again where a reader of the handler will see it.
+//     An app out of a store of the trust list is not affected: its package is
+//     downloaded here against the checksum of the verified catalog entry.
 //
 // It is not the directory of the operating system: a package may be gigabytes
 // and /tmp is a RAM disk on many systems. Build sweeps it, see sweepSpool.
@@ -80,8 +91,10 @@ type Server struct {
 	login   *login.Handler
 	setup   *setup.Handler
 	st      *appstore.Stores
+	up      *updates.Updates
 	core    *coreapp.Dispatcher
 	relay   *relay.Relay
+	ctl     *controllers.Server
 	tunnels *controllers.Registry
 
 	// spool is the directory of this run, SpoolDir unless a test moves it.
@@ -132,19 +145,52 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	// Stores.Send nil and every step of it answered E_INTERNAL until here.
 	st.Send = &sender{Tunnels: tunnels, Relay: rl}
 	st.Spool = SpoolDir
+	// ONE adapter for both packages, which is what task 23 asked for: Send is
+	// the very same value appstore got, not a second one of its own. It can
+	// be, because updates.Updates.Send is of type appstore.Sender -- stage and
+	// install are core actions on a controller exactly as activate and
+	// uninstall are. Updates uses only the half without a user (task, client
+	// and proof nil, core.WithoutUser); appstore uses both halves.
+	//
+	// Spool is the same directory as well, and that is right rather than
+	// convenient: both write a file of up to four gigabytes while they read
+	// it, both remove it in the same call, and sweepSpool clears whatever a
+	// killed run left behind for either of them. config.DataDir and never the
+	// operating system's directory, which is a RAM disk on many systems.
+	up := &updates.Updates{S: s, Stores: st, Tunnels: updates.FromRegistry(tunnels),
+		Send: st.Send, Log: lg, Spool: SpoolDir}
 	d := coreapp.New(coreapp.Deps{S: s, Log: lg, Login: lh, Tunnels: tunnels,
-		Controllers: ctl, Sessions: sessions, Join: jn, Relay: coreRelay{rl}})
+		Controllers: ctl, Sessions: sessions, Join: jn, Relay: coreRelay{rl},
+		Store: st, Updates: up})
 	bs := &browser.Server{S: s, Login: lh, Open: d, Sessions: sessions}
 	sh := &setup.Handler{S: s, CodeFile: SetupCodeFile}
 	if _, err := sh.EnsureCode(); err != nil {
 		return nil, errors.New("der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen")
 	}
 	controllers.Version = version
-	srv := &Server{Cfg: cfg, State: s, Cert: cert, login: lh, setup: sh, st: st,
-		core: d, relay: rl, tunnels: tunnels, spool: SpoolDir}
+	srv := &Server{Cfg: cfg, State: s, Cert: cert, login: lh, setup: sh, st: st, up: up,
+		core: d, relay: rl, ctl: ctl, tunnels: tunnels, spool: SpoolDir}
 	// A controller that connects gets the newest trust list and the newest
 	// licence of every paid app it runs, right away.
 	ctl.OnHello = srv.hello
+	// What a controller reports about an update it was told to install.
+	//
+	// It needs a wrapper after all. Task 23 noted this seam as "fits without
+	// one", and measured it does not: the hook is
+	// func(ctx, *controllers.Tunnel, store.UpdateReport) while Report takes
+	// the node as a string, and Go converts neither. The node comes off the
+	// tunnel, which is the one place it can come from -- the report itself
+	// carries no node, and one it carried would be the controller's word
+	// about which controller it is.
+	//
+	// Report is called IN LINE in the tunnel's single reader
+	// (controllers.Server.control), so it has to be short: it writes one map
+	// entry and wakes whoever waits, and writes no log line on purpose (task
+	// 23 -- a controller reports several times per update, and a line per step
+	// would bury the one entry that counts, the round that was broken off).
+	ctl.OnReport = func(ctx context.Context, t *controllers.Tunnel, r store.UpdateReport) {
+		up.Report(ctx, t.Node, r)
+	}
 	srv.handler = srv.routes(httpapi.Routes{
 		Setup: sh.Serve, Login: lh.Start, Finish: lh.Finish, Logout: lh.Logout,
 		Trust: lh.Trust, Socket: bs.Socket,
@@ -255,8 +301,12 @@ func (s *Server) serve(ctx context.Context, ln net.Listener) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	var rounds sync.WaitGroup
-	rounds.Add(1)
+	rounds.Add(2)
 	go func() { defer rounds.Done(); s.rounds(ctx) }()
+	// In the same WaitGroup, so a stop waits for a round that is running
+	// instead of leaving it behind: Rollout checks the context between nodes
+	// and awaitInstalled selects on it, so it comes back of its own accord.
+	go func() { defer rounds.Done(); s.rollouts(ctx, s.up.Rollout) }()
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -326,6 +376,69 @@ func (s *Server) minute(ctx context.Context) {
 func (s *Server) hour(ctx context.Context) {
 	if err := s.st.Refresh(ctx); err != nil {
 		slog.Warn("catalogs could not be fetched", "error", err)
+	}
+}
+
+// rollouts is the beat of the update rounds, on a goroutine of its own beside
+// the two housekeeping rounds.
+//
+// DECISION on "who calls Rollout how often" (the question task 23 left open):
+// once an hour, from here and from nowhere else, and never from a channel of
+// the shell. Hourly because a round can only act on what the catalog round
+// fetched, and because the controllers decide themselves whether they install
+// -- a faster beat would ask the same nodes the same question sooner without
+// any answer changing. The first beat is an hour after the start and not at
+// the start: an installation that comes up must not begin replacing its own
+// parts before anybody has looked at it.
+//
+// DECISION on its OWN goroutine, and not inside Server.rounds: a round waits
+// updates.InstallWait (15 minutes) per node for that node to report itself up,
+// so a rollout over four nodes may be busy for an hour. Inside rounds that
+// hour would drop every minute tick with it -- expired sessions would stay
+// logged in and the trust list would not be read afresh, which are the two
+// things housekeeping is for. The reason task 24 gave for one round at a time
+// was that two of them write the same catalog rows; a rollout writes none, so
+// it only has to be alone with itself.
+//
+// And it is alone with itself WITHOUT a lock, which is the one thing worth
+// saying here. This loop is the only caller, and it calls synchronously, so a
+// tick cannot arrive in a round: time.Ticker keeps one place and drops what
+// does not fit, so a round that outlives ten ticks is followed by ONE and not
+// by ten. A TryLock stood here and is gone again -- a mutant that replaced it
+// with a plain Lock killed no case, and it could not: nothing could ever find
+// the lock taken. A bolt that holds nothing is worse than none.
+// TestTheBeatOfTheRolloutTurns measures the property instead, against the
+// mutant that does start a goroutine per tick.
+//
+// drive is handed in rather than read off the server, so a case can measure
+// the beat and the handling of ErrNotDriving without a release, a store and a
+// controller behind them. serve passes s.up.Rollout and nothing else ever
+// does.
+func (s *Server) rollouts(ctx context.Context, drive func(context.Context) error) {
+	tick := time.NewTicker(Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			s.rollout(ctx, drive)
+		}
+	}
+}
+
+// rollout drives one update round.
+//
+// updates.ErrNotDriving is NOT a failure and is not logged as one: it says
+// another API holds the rollout lock, which is the normal case of an
+// installation with two API servers, and its own comment asks for exactly
+// this. A context that ended is not one either -- that is a server stopping.
+func (s *Server) rollout(ctx context.Context, drive func(context.Context) error) {
+	err := drive(ctx)
+	switch {
+	case err == nil, errors.Is(err, updates.ErrNotDriving), errors.Is(err, ctx.Err()):
+	default:
+		slog.Warn("the update round stopped", "error", err)
 	}
 }
 

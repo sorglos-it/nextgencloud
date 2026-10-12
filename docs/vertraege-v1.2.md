@@ -686,12 +686,413 @@ Der naheliegende Ausweg wäre, die Liste aus der Ausgabe von podman zu lesen und
 wäre die falsche Richtung: eine Liste, die der Container-Dienst ausgibt, ist
 keine Buchführung, sondern eine Momentaufnahme.
 
-**Was es heute kostet, vollständig:** das Abbild liegt im Bildspeicher **seines
-eigenen Benutzers**, ist nur für diese App erreichbar, und ein Deinstallieren
-nimmt es mit dem Benutzer mit. Es ist also verlorener Platz, kein offener
-Zugang.
+**Was es heute kostet, vollständig – und hier stand zuerst etwas Falsches:**
+der Satz „ein Deinstallieren nimmt es mit dem Benutzer mit" ist **gemessen
+falsch**. Gemessen am 10.10.2026:
+
+| gemessen | Stelle |
+|---|---|
+| der Benutzer bekommt das **Datenverzeichnis der App** als Zuhause (`--home-dir DataDirOf(app)`) | `user.go:188` |
+| podman läuft mit `HOME=u.home`, der Bildspeicher liegt also **in den Daten der App** | `podman.go:438` |
+| `userdel` läuft **ohne `-r`** – das Zuhause bleibt stehen | `user.go:258` |
+| `DataSize` läuft über `DataDirOf(app)` und **zählt die Abbild-Schichten als Benutzerdaten mit** | `data.go:227` |
+
+Daraus folgt zweierlei, und beides ist schlimmer als „verlorener Platz":
+
+- Das Abbild liegt **im Datenverzeichnis**, nicht irgendwo beim Benutzer. Mit
+  `KeepData` beim Deinstallieren bleibt es **für immer** liegen, und keine
+  Buchführung weiß mehr davon.
+- Die Zahl, die ein Verwalter **vor** dem Löschen liest, ist um
+  Größenordnungen daneben: ein Abbild von einem Gigabyte erscheint ihm als ein
+  Gigabyte **eigene Daten**. Er entscheidet über das Löschen anhand einer Zahl,
+  die etwas anderes zählt, als ihr Name sagt.
+
+Richtig bleibt nur, dass der Zugang nicht offen steht: der Bildspeicher gehört
+dem Benutzer der App und ist nur für sie erreichbar.
 
 **Die richtige Lösung ist ein Referenzfeld in `dbapi.App`** — und das ist eine
 Änderung im eingefrorenen `shared/`. Darum steht sie hier und ist nicht gebaut.
 Wer sie baut, prüft gleich mit, ob dasselbe Feld auch dem Deinstallieren hilft,
 statt sich dort auf den Benutzer zu verlassen.
+
+## Punkt 25: Die Adressprüfung des Herunterladens ist von außen nicht aufrufbar
+
+**Gemessen am 10.10.2026** in Aufgabe 19 der API; der Strang hat BLOCKED gemeldet
+statt sich eine zweite Zeichengrammatik zu bauen. Das war richtig.
+
+Die Grammatik einer unterschriebenen Download-Adresse ist **da und richtig**:
+`store.validHTTPSURL` (`shared/store/catalog.go:208`) erlaubt eine Query — Stores
+unterschreiben Download-Links — und verbietet das Fragment, Steuerzeichen,
+Leerzeichen und `" ' < > \ #`; den Rechnernamen beurteilt sie über
+`trust.ValidHost`/`ValidHostPort`, also überall gleich. Sie ist aber
+**klein geschrieben** und läuft nur innerhalb von `VerifyCatalog`.
+
+Daraus folgt für jeden Abholer außerhalb von `shared/`: er kann die Adresse, die
+er gleich anfragt, **nicht selbst gegen dieselbe Grammatik prüfen**. Es bleiben
+zwei Wege, und beide sind schlechter:
+
+- **Darauf bauen, dass `VerifyCatalog` schon geprüft hat.** So macht es
+  `appstore.Download` heute (Schema, Länge 512, Rechnername). Das ist keine
+  falsche Prüfung, aber eine **Naht ohne Riegel**: wer die Adresse später
+  irgendwo anders herbekommt, merkt nichts.
+- **Eine eigene Grammatik schreiben.** Dann gibt es zwei, sie laufen
+  auseinander, und keiner weiß, welche gilt. `trust.ValidStoreURL` taugt dafür
+  nicht: sie verbietet die Query, die ein Store gerade braucht.
+
+**Die richtige Lösung ist ein ausgeführtes `store.ValidDownloadURL`** — dieselbe
+Funktion, groß geschrieben, mit eigenen Fällen. Das ist eine Änderung im
+eingefrorenen `shared/`, darum steht sie hier und ist nicht gebaut. Wer sie baut,
+lässt `validHTTPSURL` nicht daneben stehen, sondern macht die große Fassung zur
+einzigen.
+
+## Punkt 26: Der Einmal-Code wird vor der MAC-Prüfung verbraucht
+
+**Gemessen am 12.10.2026** in Aufgabe 18 der API und dort als Bedenken gemeldet.
+`join.Accept` verbraucht den Einmal-Wert (`OnceUse`), **bevor** es die MAC prüft —
+übernommen aus `controllers.Pair`, mit Begründung im Kommentar.
+
+**Was das bedeutet:** wer die Adresse kennt und eine Anfrage mit **falscher** MAC
+schickt, verbrennt den wartenden Beitrittscode. Der Angreifer kommt nicht herein,
+aber der Admin muss einen neuen Code ausgeben — und beim nächsten Versuch wieder.
+Das ist kein Einbruch, sondern ein billiges Zumachen von außen.
+
+Die andere Reihenfolge hat den umgekehrten Preis: wer erst die MAC prüft, lässt
+jemanden beliebig oft gegen denselben Code rechnen. Welche Seite schwerer wiegt,
+hängt daran, wie lang ein Code gilt und wie oft er neu ausgegeben wird — und das
+ist **nicht gemessen**.
+
+Festgehalten, nicht geändert: die Reihenfolge steht an **zwei** Stellen
+(`join.Accept` und `controllers.Pair`), und wer sie anfasst, muss beide anfassen,
+sonst verhalten sich Beitritt und Paarung verschieden. Wer das entscheidet,
+entscheidet es für beide, mit einer Messung, wie oft ein Code neu ausgegeben wird.
+
+## Punkt 27: Zwei Server mit demselben Namen verdrängen einander
+
+**Gemessen am 12.10.2026** in Aufgabe 18 der API. Eine zweite Beitrittsanfrage für
+denselben Knotennamen **überschreibt** die erste (`BlobPut` nach `req.Node`). Der
+Admin sieht dann nur die letzte und weiß nicht, dass es eine erste gab.
+
+Im Entwurf ist das nicht geregelt. Zwei Lesarten, beide vertretbar: die zweite
+Anfrage ist derselbe Server, der es noch einmal versucht (dann ist Überschreiben
+richtig), oder zwei verschiedene Server wollen denselben Namen (dann gehört die
+zweite abgewiesen und gemeldet). Unterscheiden lassen sie sich am öffentlichen
+Schlüssel — der liegt in der Anfrage.
+
+Festgehalten, nicht gebaut. Wer es baut, entscheidet am Schlüssel, nicht am Namen.
+
+## Punkt 28: Der Controller startet Migrationen als Programm, nicht selbst
+
+**Entschieden am 12.10.2026 vom Koordinator**, nachdem Aufgabe 21 des Controllers
+deswegen BLOCKED gemeldet hat. Der Entwurf führte die Frage selbst als offen
+(Entscheidungsprotokoll, Zeile 1049, 23.09.2026: „wie startet der Controller die
+Migrationen eines Updates? … wird mit der nächsten Vertragsänderung entschieden").
+
+**Gemessen, worauf die Entscheidung ruht:**
+- Die Migrationen sind **keine Dateien zum Entpacken**. Sie liegen als `go:embed`
+  **im Programm** (`apps/server-db/sql/embed.go`). Der Controller kann nicht
+  auspacken, was in einem Binary steckt — Schritt 4 des Plans beschreibt einen Weg,
+  den es nicht gibt.
+- Sperre, Ledger und Linter sitzen schon in `apps/server-db/classes/migraterun`,
+  und dessen Paketkopf sagt es selbst: „That is the whole of what `ngc-api migrate`
+  does — one controller with role db starts it".
+- `ngc-api migrate` **gibt es noch nicht**: `apps/server-api/main.go` kennt nur
+  `-version` und `-config` und ruft `migraterun` nirgends auf.
+
+**Die Entscheidung: `ngc-api migrate` als Programm.** Der Controller startet es wie
+jedes andere Programm; er bekommt **keinen** eigenen Läufer.
+
+Der Grund ist nicht Bequemlichkeit, sondern dass die Gegenrichtung **zwei Wahrheiten
+über dasselbe Schema** bedeutet: ein zweiter Läufer im Controller braucht einen
+eigenen SQL-Treiber, eine eigene Zeile in `tools/modules.go` — und dann migrieren
+zwei Programme eine Datenbank. Das ist genau die Klasse, die im db-Paket als Befund
+**W-1** gemessen wurde: zwei Zeilen, die sich gegenseitig stützen und zusammen
+nichts halten.
+
+**Daraus folgt, was zu bauen ist:** der Unterbefehl `migrate` in
+`apps/server-api/main.go`. Das ist **Aufgabe 24 des API-Plans** („`main.go`
+verdrahten"), keine neue Aufgabe. `shared/` ändert sich dadurch **nicht**.
+Bis der Unterbefehl steht, hat der Controller kein `migrate.go` — ein Gerüst wäre
+schlimmer als nichts, es sieht aus wie eine Zusage.
+
+## Punkt 29: Jeder Rahmen des Terminals trägt seine Länge
+
+**Gebaut und gemessen am 12.10.2026** in Aufgabe 23 des Controllers, als **Abweichung**
+vom Plan, und **mit der Sitzung Webinterface abzustimmen**, weil das Gegenstück dort sitzt.
+
+Das Protokoll des virtuellen Terminals ist: **1 Byte Art, 2 Byte Länge, Nutzlast.**
+
+Der Grund ist gemessen, nicht gewählt: `serve.shellInput` reicht die inneren Nachrichten
+als **einen Bytestrom** weiter. Damit ist die Nachrichtengrenze weg — und ein Tastenrahmen
+ohne Länge hat kein Ende. Ein Parser, der das Ende raten muss, lässt sich aus dem Takt
+bringen: wer die Tasten schickt, bestimmt, wo der nächste Rahmen anfängt. `FuzzParseFrame`
+hat 13 365 806 Läufe ohne Fund, und der Fuzzer prüft das **Ergebnis**, nicht nur, dass
+nichts abstürzt.
+
+Zwei Zahlen daneben sind **Entscheidungen**, im Code so benannt: Tasten höchstens 16 KiB,
+Fenster 1 bis 2000 Spalten/Zeilen.
+
+Dazu eine dritte Entscheidung, wo der Plan keine Zahl nannte: **Leerlaufgrenze 30 Minuten.**
+Stream-Aktionen haben laut Vertrag keine Zeitgrenze — und diese Shell läuft als root.
+Beide Seiten der Grenze sind mit einer Handuhr festgenagelt.
+
+**Was noch keine Zahl hat:** wie viele Terminals gleichzeitig. Gezählt, nicht gemessen:
+je Kanal 65 497 + 16 387 Byte Puffer, ein PTY-Paar, vier Goroutinen, ein Containerprozess
+— bei 1024 Kanälen etwa 80 MiB. Eine Obergrenze setzt dieses Paket nicht; sie gehört in
+`serve` und in den Vertrag.
+
+## Punkt 30: Niemand hält die hochgeladene Datei zwischen Hochladen und Aktivieren
+
+**Gefunden am 12.10.2026** von Aufgabe 22 der API, beim Bauen, nicht beim Lesen.
+
+`ngc.store/upload` behält das Paket **nicht** — es behält nur die ui-tar. `shared/` hat
+keinen Platz für ein Paket. `Activate` bekommt darum `ActivateRequest.File`/`Size`: die
+Datei gehört dem **Aufrufer**.
+
+**Wo sie zwischen `upload` und `activate` liegt, ist nicht entschieden und nicht gebaut.**
+Das gehört zur Verdrahtung (Aufgabe 24 des API-Plans) und ist keine Änderung in `shared/`.
+
+Zwei Dinge, die bei dieser Entscheidung gemessen gehören und es nicht sind:
+- **Mehrere API-Server teilen die Datenbank, nicht die Platte.** Ein Zwischenlager auf der
+  Platte des einen Servers ist für den anderen nicht da.
+- **Was nach einem Absturz im Zwischenlager liegen bleibt.** Aufgabe 22 legt das Paket für
+  das Senden in ein Zwischenlager (`Stores.Spool`) statt es zu strömen — ein Strom liest
+  sich einmal, dann wäre vor dem Senden **keine** Prüfung mehr möglich, und in den
+  Arbeitsspeicher darf ein 4-GiB-Paket nicht. Jeder Fall dort prüft, dass nichts liegen
+  bleibt; für das Zwischenlager **zwischen zwei Aufrufen** gibt es diese Prüfung noch nicht.
+
+### Bestätigt am 12.10.2026, und eine Behauptung dazu war falsch
+
+Aufgabe 24 der API hatte gemeldet, dieser Punkt sei erledigt: die Shell schicke die Datei auf dem
+Aktivierungskanal mit, womit sich beide Messpunkte auflösten. **Das ist gemessen falsch**, und der
+Satz stand so in `server.go`, bis ein weiterer Strang ihn gegen den Code gelesen hat:
+`core.Action.MaxIn` und `core.ShellOpens` sagen das Gegenteil, und `appstore.Upload` behält nur
+die ui-tar.
+
+**Also gilt dieser Punkt unverändert — und die Folge ist jetzt gemessen statt vermutet:** eine
+Aktivierung aus `core.LocalStore` endet mit **`E_UNREACHABLE`**. Eine **hochgeladene App lässt
+sich heute nicht aktivieren**, und zwar nicht aus Versehen, sondern weil niemand das Paket
+zwischen den zwei Aufrufen hält.
+
+Festgenagelt ist es mit einem Fall, der einen **anderen** Fehlercode als Kontrolle erwartet —
+damit die Zeile rot wird, sobald jemand das Halten baut, statt still weiter zu behaupten, es gehe
+nicht.
+
+**Nicht still gefüllt, und das war richtig:** wo die Datei liegt, ist keine Entscheidung eines
+Handlers. Die drei Fragen dahinter (Platte, Absturz, zweiter Server) sind oben benannt und bleiben
+offen.
+
+## Punkt 31: Nichts hält die Rechte des Katalogeintrags gegen das Manifest
+
+**Gemessen am 12.10.2026** vom Strang, der das App-Einrichten beim Update gebaut hat — und
+zwar nicht als Nebenbefund, sondern als **Grund, einen vorgeschlagenen Weg zu verwerfen**.
+
+`store.Package.Needs` (die Rechte im **Katalogeintrag**) wird an genau einer Stelle angefasst:
+`shared/store/catalog.go:260`, und dort nur durch `validNeeds` — also auf **Form** geprüft.
+**Nichts** hält diesen Eintrag gegen `store.Manifest.Needs`, die Rechte im **Paket**: weder
+`VerifyCatalog`, noch `store.Walk`, noch `install.Accept`.
+
+Gebaut wird der Container aber aus dem **Manifest**.
+
+Daraus folgt der Satz, der zählt: **eine Rechteprüfung gegen die Katalogkopie wäre eine Wand
+vor einer offenen Tür.** Verlangt das Manifest `root` und sagt der Eintrag nichts, wird `root`
+durchgewinkt — und die Prüfung, die davor steht, meldet nichts, weil sie die falsche Kopie
+liest.
+
+**Darum wurde der Weg verworfen**, bei dem `state.Staged` die Rechte aus dem Katalogeintrag
+mitträgt. Gebaut ist statt dessen: der Aufrufer liest die Rechte, und `install.Update` glaubt
+seiner Lesung **nicht** — es vergleicht sie gegen das Manifest (`sameSet`, sonst `ErrVerify`)
+und baut die Zeile aus den **Manifest**-Rechten, nie aus den übergebenen. Ein Wert, eine
+Quelle.
+
+Das ist dieselbe Klasse wie der Befund **W-1** des Datenbankpakets: zwei Zeilen, die sich
+gegenseitig stützen und zusammen nichts halten. Hier ist sie vor dem Bauen erkannt worden,
+nicht danach.
+
+**Was offen bleibt:** ob `VerifyCatalog` die beiden Rechtelisten künftig selbst
+gegeneinanderhalten soll. Das wäre eine Änderung in eingefrorenem `shared/` und gehört in die
+Reihe des Vorschlags für v1.3 — mit dem Hinweis, dass es **heute keine Lücke ist**, solange
+niemand die Katalogkopie als Grundlage einer Rechteentscheidung nimmt. Wer das tut, muss es
+zuerst hier lesen.
+
+## Punkt 32: Ein Controller, der die Migrationssperre nicht bekommt, startet nicht — und soll es nicht
+
+**Gemessen am 12.10.2026** in Aufgabe 24 des Controllers, mit einem **echten zweiten Prozess**
+(`os.Args[0]` neu ausgeführt), nicht mit einer Attrappe:
+
+- Nacheinander (Neustart): der Controller kommt hoch, die Zeilen sind da.
+- Sperre von einem anderen Eigentümer gehalten: **abgewiesen, er kommt nicht hoch.**
+- Acht Öffnungen gleichzeitig, **30 Runden**: 20× alle acht, 4× sieben, 2× sechs, 2× fünf,
+  2× vier. Jede, die hochkam, war **sofort lesbar**. In **10 von 30** Runden traf es also
+  mindestens einen von acht.
+
+Die Sperre läuft nach **900 Sekunden** von selbst ab, und ihre Meldung sagt das auch.
+
+**Die offene Frage war:** soll `state.Open` auf die Sperre warten, oder soll der Dienst
+neu gestartet werden?
+
+**Entschieden (Koordinator): `state.Open` wartet nicht.** Es wird abgewiesen, der Controller
+startet nicht, und der Neustart ist Sache des Dienstes (`Restart=on-failure` mit Abstand).
+Drei Gründe, in dieser Reihenfolge:
+
+1. **Ein Controller, der beim Start hängt, ist schlimmer als einer, der nicht startet.** Wer
+   wartet, sieht einen Dienst, der „läuft" und nichts tut, und die Wartezeit wäre bis zu
+   900 Sekunden. Ein Fehlstart mit einer Zeile, die den Grund nennt, ist für den Admin die
+   ehrlichere Lage — und die Meldung nennt die 900 Sekunden.
+2. **Der häufige Fall ist ein überlappender Neustart**, nicht zwei Server. Dafür ist ein
+   Neustart mit Abstand genau das richtige Werkzeug, und es ist eines, das der Admin schon
+   kennt und abschalten kann.
+3. **Warten im Programm wäre eine zweite Wiederholungslogik** neben der des Dienstes. Zwei
+   Stellen, die dasselbe tun, ist die Klasse, die hier schon einmal Geld gekostet hat.
+
+**Was daraus zu bauen ist, und von wem:** die Dienstdatei braucht den Neustart mit Abstand.
+Das gehört zu **Aufgabe 25 des Controller-Plans** (ulh-Skript und Abnahme), nicht in den
+Programmcode. Wer sie schreibt, nimmt den Abstand **größer als die Sperrzeit nicht** — ein
+Neustart alle paar Sekunden ist richtig, denn die Sperre fällt, sobald der andere Lauf fertig
+ist, und nicht erst nach 900 Sekunden.
+
+**Ungemessen bleibt, und das ist die wichtigere Hälfte:** die Sperre gilt **nur für den
+Augenblick der Migration**, nicht für die Lebenszeit des Stores. Zwei Controller, die beide
+hochkamen, schreiben danach **gleichzeitig** in dieselbe Datei. Was das tut, ist hier nicht
+gemessen; die Antwort des Datenbankpakets darauf ist `busyTimeout` von 10 Sekunden plus
+Wiederholung. **Wer zwei Controller auf eine Datei lässt, muss das zuerst messen.**
+
+## Punkt 29, Nachtrag: die Zahl der App-Kanäle
+
+Aufgabe 24 des Controllers hat die Grenze gesetzt, die Punkt 29 verlangt hat:
+**`serve.DefaultMaxApps = 128`** App-Kanäle je Server, gebucht **vor** dem E2E-Handschlag,
+Abweisung mit `E_LIMIT`, mit Zählern `AppChannels()` und `AppRefusals()`.
+
+Die Rechnung dahinter, als Entscheidung benannt: je Kanal höchstens 256 KiB DATA, 64 KiB
+stderr, bis 65 514 Byte Nutzlast, ein Rohrpaar und ein Containerprozess (beim Terminal
+zusätzlich ein PTY-Paar) — also etwa **50 MiB und 128 Prozesse** im Höchstfall.
+
+Es ist ausdrücklich **nicht** 1024 (`MaxTunnelChannels` gilt je Tunnel) und **nicht** 64
+(`MaxSessionChannels` ist Sache der API). Ebenfalls benannt und nicht gemessen: 60 s, 1 h,
+24 h und 10 s Gnadenfrist.
+
+**Keine Grenze hat die Zahl der Tunnel** — sie ist die Zahl der APIs in `controller.json`
+und wird von `config` begrenzt.
+
+### Berichtigung vom 12.10.2026: die Entscheidung steht, zwei meiner Begründungen waren falsch
+
+Ein Messauftrag hat Punkt 28 nachgeprüft. **Die Entscheidung bleibt** — `ngc-api migrate` als
+Programm, kein eigener Läufer im Controller. **Zwei Sätze meiner Begründung sind gemessen
+falsch**, und sie standen hier so, als wären sie Tatsachen:
+
+**Falsch war: „ein zweiter Läufer im Controller braucht einen eigenen SQL-Treiber".**
+`apps/server-controller/classes/state/open.go` importiert `apps/server-db/classes/sqlite`,
+`sqlite/store.go` ruft `migrate.Apply`, und `migrate` importiert `apps/server-db/sql`. Der
+Controller **trägt** den SQLite-Treiber, den XTS-VFS, das Paket `migrate` und jede eingebettete
+`.sql` schon heute. Technisch fehlte für einen eigenen Läufer nur noch **eine** der fünf Zeilen
+in `tools/modules.go` und etwa zwanzig Zeilen Code.
+
+**Falsch war auch: „`shared/` ändert sich dadurch nicht".** `ngc-api migrate` geht über
+`config.LoadAPI` → `(*API).Validate` und verlangt eine **vollständige** `api.json`: Knoten-ID,
+Tunnel-Adresse, Listen-Adresse, zwei Zertifikatspfade, vier Schlüssel zu je 32 Byte, Release- und
+Store-Schlüssel, Store-Adresse, zwei Laufzeiten. Ein reiner Datenbankknoten hat das nicht — er hat
+`controller.json` mit einem Feld `Migrate`. **Es gibt keinen Weg, `ngc-api migrate` nur eine
+`config.DB` zu geben.**
+
+**Das ist die echte Blockade von Aufgabe 21** — nicht das Entpacken, wie ich geschrieben hatte.
+
+**Warum die Entscheidung trotzdem bleibt:** der Grund ist nicht der Treiber, sondern dass
+`migrate.List()` in zwei Programmen **zwei Übersetzungen desselben `go:embed`** wäre. Zwei
+Programme, die eine Datenbank migrieren, sind die Form von W-1. Das gilt unverändert.
+
+**Drei gemessene Lücken auf dem beschlossenen Weg**, die vor dem Bauen zu schließen sind:
+1. Die bereitgelegte Datei ist **`0600`** (`update/stage.go`, ausdrücklich so gewollt) — nicht
+   ausführbar.
+2. Die Konfiguration oben: ohne einen Weg, nur eine `config.DB` zu übergeben, geht es nicht.
+3. **`config.Controller.Migrate` wird von keinem Programm gelesen** — nur von `Validate` und
+   `LogValue`. Ein totes Vertragsfeld.
+
+Und ein Risiko, das benannt gehört: die Prüfsumme gegen das unterschriebene Release sitzt in
+`install.go` (`sameFile`), **nicht** im Bereitlegen. Wer die bereitgelegte Datei startet, führt
+sie **vor** dieser Prüfung aus.
+
+**Zwei Dinge, die der Weg (b) umdrehen würde** und die darum gegen ihn sprechen, beide gemessen:
+`migrate.Apply` **wartet nicht** — der zweite Läufer bekommt sofort einen Fehler, also startet der
+zweite API-Server nicht (dieselbe Form, die Punkt 32 mit 10 von 30 Runden gemessen hat). Und
+`shared/config` gibt die `ngc_migrate`-Zugangsdaten **nur** der Rolle `db`; bei (b) bräuchte sie
+jeder API-Server.
+
+**Ein Riegel, der dabei gefunden wurde und den ungemessenen Punkt der db-Abschlussprüfung
+schließt:** dass die **alte** API während einer Wanderung weiterlaufen darf, ist kein Versprechen,
+sondern gebaut — `migrate/lint.go` verbietet dreizehn Wörter (darunter DROP, RENAME, TRUNCATE),
+erlaubt vier Formen, und später hinzugefügte Spalten **müssen** nullable sein. `migrate.List()`
+prüft das **zur Laufzeit** bei jedem `Apply`. Auf der SQL-Ebene ist der Punkt damit zu; was der
+Linter nicht deckt, ist die **Bedeutung** einer neuen Spalte.
+
+## Punkt 33: Die Rollenprüfung für NGC-Teile sitzt auf der falschen Seite der Leitung
+
+**Gemessen am 12.10.2026** und von mir selbst nachgeprüft: in
+`apps/server-controller/classes/update/install.go` kommt das Wort `Roles` **kein einziges Mal**
+vor, und `update.Deps` hat kein solches Feld.
+
+Daraus folgt: **ein `install ngc-api` auf einem Datenbankknoten würde dort nach `/usr/lib/ngc`
+kopieren und `systemctl restart ngc-api` fahren** — auf einer Maschine, die kein API-Server ist.
+
+Dass das nicht passiert, hängt **allein** an `rollout.go` auf der API-Seite, die nur dem richtigen
+Knoten etwas schickt. Das ist eine Wand auf der falschen Seite der Leitung: wer dem Controller
+etwas anderes schickt, wird nicht abgewiesen, sondern bedient.
+
+Der Controller soll nicht darauf bauen, dass die Gegenseite richtig fragt. **Die Prüfung gehört an
+den Einbau**, in `apps/`, ohne Änderung in `shared/` — und sie braucht einen Fall, der zeigt, dass
+ein Teil für eine fremde Rolle abgewiesen wird, mit einer Zwischenprüfung, dass derselbe Weg für
+die eigene Rolle durchgeht.
+
+## Punkt 34: `ngc-api` kann heute überhaupt keine Datenbank öffnen
+
+**Gemessen am 12.10.2026**, von mir nachgeprüft: `classes/server/server.go` ruft `dbopen.Open`,
+aber **kein Produktionscode ruft `dbopen.Register` oder `RegisterMigrator`** — nur Tests tun das
+(`git grep "dbopen.Register" api -- apps/` ohne Testdateien: **kein Treffer**).
+
+Das heißt: `ngc-api` ist verdrahtet, gebaut, gemessen — und könnte auf einem Server **nicht
+starten**, weil niemand eine Umsetzung anmeldet. Das ist der schärfste Fall von „gebaut ist nicht
+gelaufen", den dieses Projekt bisher hat, und er ist kein Fehler eines Strangs: jede Aufgabe hat
+ihren Teil richtig gebaut, und die Anmeldung war niemandes Auftrag.
+
+Daraus folgt auch, dass `apps/server-db` **ohnehin** in `ngc-api` hinein muss, damit es die API
+sein kann — und damit kostet `RegisterMigrator` danach keine zusätzliche Abhängigkeit mehr. Eine
+Formanpassung braucht es: `migraterun.Run(ctx, cfg, owner, now) (int, error)` gegen
+`dbopen.Migrator func(ctx, cfg, io.Writer) error`.
+
+## Punkt 35: Ein weitergeleiteter Kanal hat keine Stillzeitgrenze
+
+**Gemessen am 12.10.2026**, nachdem die Zusage aus Aufgabe 17 („je Kanal eine Goroutine, Zahl
+gleichzeitiger nicht gemessen") nachgezählt wurde.
+
+**Was in Ordnung ist, und zwar gezählt statt behauptet:** bei 128 gleichzeitig mit Fehler
+beendeten Kanälen steht die Goroutinenzahl **vorher 2, Spitze 130, nachher 2** — über 30 Läufe
+identisch. Also genau **eine** Goroutine je drainendem Kanal, **und sie fällt wieder: kein Leck.**
+Die Frist wird genau eingehalten (höchste Überschreitung über 60 Messungen: 0,67 ms), und bei
+**abgebrochenem Kontext endet das Warten sofort**, nicht erst nach Ablauf. Der Mutant, der
+`defer cancel()` entfernt, stirbt genau am Leck: „peak 258, after 130 … 128 did not come back".
+
+**Was nicht in Ordnung ist:** ein weitergeleiteter Kanal hat **keine Grenze für seine Stillzeit.**
+Keine Frist in `hop.Next`/`sh.Next`, der einzige Kontext ist der des Aufrufers, und `link.Link`
+sagt selbst, nach dem ersten Bild begrenze nichts die Stille. `controllers.IdleTimeout` hängt am
+**Tunnel**, nicht am Kanal; im `browser`-Paket prüft nichts `Expires` oder `SessionLifetime`.
+
+**Wer wie lange hält:** ein **angemeldeter** Benutzer, 64 Kanäle je Sitzung, 1024 je Tunnel,
+**so lange der Browser den Socket offen hält** — ohne Zeitgrenze, und die Zahl der Sitzungen je
+Benutzer ist nicht begrenzt. Gerechnet: je Kanal 2 Goroutinen à 8 KiB plus `DefaultWindow`
+256 KiB, also je Tunnel **etwa 256 MiB und 2048 Goroutinen**, zeitlich unbegrenzt gehalten.
+Zum Vergleich: Punkt 29 begrenzt die App-Kanäle des Controllers auf 128 mit etwa 50 MiB.
+
+**Vorschlag, nicht gebaut: 30 Minuten Stillzeit je weitergeleitetem Kanal, dann `CLOSE
+E_TIMEOUT`.** Die Zahl ist nicht gewählt, sondern abgeleitet — der Controller beendet sein
+Terminal nach `terminal.IdleLimit = 30 Minuten`; kürzer schlösse Kanäle, die er noch für lebend
+hält. Sie unterscheidet sich darum bewusst von den 10, 25 und 50 Sekunden an anderen Stellen.
+
+**Warum es BLOCKED ist:** der Abschnitt „Relay" in `shared/wire/wire.go` nennt keine Stillzeit,
+und die Shell müsste **dieselbe** Zahl kennen — sonst schließt der eine, was der andere für offen
+hält. Das ist eine Vertragsänderung und gehört in die Reihe des Vorschlags für v1.3.
+
+**Eine Grenze für die Anzahl wurde ausdrücklich NICHT gebaut**, und das ist die zweite Hälfte der
+Messung: sie ist schon da und greift (`hop.Open` → `ErrLimit` → `E_LIMIT`, mit vorhandenem Fall).
+Eine zweite, kleinere Zahl in `relay` wären zwei Stellen für dieselbe Sache — genau der Grund,
+aus dem Punkt 32 das Warten im Programm abgelehnt hat.
+
+**Ungemessen bleibt die Nebenläufigkeit selbst:** gezählt wurden Goroutinen, nicht
+Zugriffsfolgen. `-race` ist auf dieser Maschine nicht messbar. Das ist eine Lücke, keine Null.

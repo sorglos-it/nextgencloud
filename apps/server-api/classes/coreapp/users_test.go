@@ -269,7 +269,7 @@ func emptyResult(t *testing.T, name string) []byte {
 // the user bob in it, so the list carries somebody who is no admin. Called
 // again on a list that already holds them it only raises the number, so a
 // case can go on building versions.
-func nextVersion(t *testing.T, fx *usersFx) *trust.List {
+func nextVersion(t *testing.T, fx *harness) *trust.List {
 	t.Helper()
 	v, err := fx.S.Trust(ctx)
 	if err != nil {
@@ -300,7 +300,7 @@ func nextVersion(t *testing.T, fx *usersFx) *trust.List {
 // session of bob's own.
 func nonAdmin(t *testing.T, fx *usersFx) *usersFx {
 	t.Helper()
-	l := nextVersion(t, fx)
+	l := nextVersion(t, fx.harness)
 	if _, err := fx.S.AddVersion(ctx, fx.Admin.Sign(t, l)); err != nil {
 		t.Fatalf("version 2: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestSetRightsRefusesARoleTheListDoesNotHold(t *testing.T) {
 // number -- the one trust.Advance verified -- and not what the payload claims.
 func TestTrustTakesTheNextVersionOnly(t *testing.T) {
 	fx := usersFixture(t)
-	l := nextVersion(t, fx)
+	l := nextVersion(t, fx.harness)
 	sg := fx.Admin.Sign(t, l)
 	body, _, code := fx.sendTrust(t, sg)
 	if code != "" {
@@ -499,7 +499,7 @@ func TestTrustTakesTheNextVersionOnly(t *testing.T) {
 // measured is the signature and not the version's shape.
 func TestTrustRefusesAForeignSignature(t *testing.T) {
 	fx := usersFixture(t)
-	l := nextVersion(t, fx)
+	l := nextVersion(t, fx.harness)
 	stranger := trusttest.NewSigner(0x5A)
 	if _, _, code := fx.sendTrust(t, stranger.Sign(t, l)); code != wire.CodeVerify {
 		t.Fatalf("a foreign signature closed with %q", code)
@@ -518,7 +518,7 @@ func TestTrustRefusesAForeignSignature(t *testing.T) {
 func TestTrustPushesTheChainAndHintsTheShells(t *testing.T) {
 	fx := usersFixture(t)
 	fx.Tunnels.by[ctlNode] = &controllers.Tunnel{Node: ctlNode}
-	l := nextVersion(t, fx)
+	l := nextVersion(t, fx.harness)
 	_, hints, code := fx.sendTrust(t, fx.Admin.Sign(t, l))
 	if code != "" {
 		t.Fatalf("the next version was refused with %q", code)
@@ -550,7 +550,7 @@ func TestTrustPushesTheChainAndHintsTheShells(t *testing.T) {
 // all the same.
 func TestNoPushWithoutATunnel(t *testing.T) {
 	fx := usersFixture(t)
-	l := nextVersion(t, fx)
+	l := nextVersion(t, fx.harness)
 	_, hints, code := fx.sendTrust(t, fx.Admin.Sign(t, l))
 	if code != "" {
 		t.Fatalf("the next version was refused with %q", code)
@@ -864,7 +864,7 @@ func TestOnlyAdminsGetThese(t *testing.T) {
 	// trust is the tenth action; it carries its version as data instead of
 	// parameters, and the admin's open way for it is measured in
 	// TestTrustTakesTheNextVersionOnly.
-	l := nextVersion(t, fx)
+	l := nextVersion(t, fx.harness)
 	if _, _, code := bob.sendTrust(t, fx.Admin.Sign(t, l)); code != wire.CodeForbidden {
 		t.Fatalf("trust closed with %q for a user who is no admin", code)
 	}
