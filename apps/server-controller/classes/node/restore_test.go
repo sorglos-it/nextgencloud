@@ -88,7 +88,7 @@ func (e *restoreEngine) Create(context.Context, runtime.Container) error {
 	e.note("create")
 	return nil
 }
-func (e *restoreEngine) Stop(context.Context, string) error  { e.note("stop"); return nil }
+func (e *restoreEngine) Stop(context.Context, string) error   { e.note("stop"); return nil }
 func (e *restoreEngine) Remove(context.Context, string) error { e.note("remove"); return nil }
 
 // restoreStand is one machine coming back up: a local state, an engine, and
@@ -383,10 +383,10 @@ func TestRestoreDoesNotStartWhatRuns(t *testing.T) {
 // same way for every missing half.
 func TestRestoreSaysWhenItIsNotWiredUp(t *testing.T) {
 	cases := map[string]func(*RestoreConfig){
-		"no state":    func(c *RestoreConfig) { c.State = nil },
-		"no engine":   func(c *RestoreConfig) { c.Engine = nil },
-		"no unlock":   func(c *RestoreConfig) { c.Unlock = nil },
-		"no licence":  func(c *RestoreConfig) { c.Licensed = nil },
+		"no state":   func(c *RestoreConfig) { c.State = nil },
+		"no engine":  func(c *RestoreConfig) { c.Engine = nil },
+		"no unlock":  func(c *RestoreConfig) { c.Unlock = nil },
+		"no licence": func(c *RestoreConfig) { c.Licensed = nil },
 	}
 	for name, bend := range cases {
 		t.Run(name, func(t *testing.T) {
