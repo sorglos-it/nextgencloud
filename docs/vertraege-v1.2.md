@@ -779,3 +779,37 @@ zweite abgewiesen und gemeldet). Unterscheiden lassen sie sich am öffentlichen
 Schlüssel — der liegt in der Anfrage.
 
 Festgehalten, nicht gebaut. Wer es baut, entscheidet am Schlüssel, nicht am Namen.
+
+## Punkt 28: Der Controller startet Migrationen als Programm, nicht selbst
+
+**Entschieden am 12.10.2026 vom Koordinator**, nachdem Aufgabe 21 des Controllers
+deswegen BLOCKED gemeldet hat. Der Entwurf führte die Frage selbst als offen
+(Entscheidungsprotokoll, Zeile 1049, 23.09.2026: „wie startet der Controller die
+Migrationen eines Updates? … wird mit der nächsten Vertragsänderung entschieden").
+
+**Gemessen, worauf die Entscheidung ruht:**
+- Die Migrationen sind **keine Dateien zum Entpacken**. Sie liegen als `go:embed`
+  **im Programm** (`apps/server-db/sql/embed.go`). Der Controller kann nicht
+  auspacken, was in einem Binary steckt — Schritt 4 des Plans beschreibt einen Weg,
+  den es nicht gibt.
+- Sperre, Ledger und Linter sitzen schon in `apps/server-db/classes/migraterun`,
+  und dessen Paketkopf sagt es selbst: „That is the whole of what `ngc-api migrate`
+  does — one controller with role db starts it".
+- `ngc-api migrate` **gibt es noch nicht**: `apps/server-api/main.go` kennt nur
+  `-version` und `-config` und ruft `migraterun` nirgends auf.
+
+**Die Entscheidung: `ngc-api migrate` als Programm.** Der Controller startet es wie
+jedes andere Programm; er bekommt **keinen** eigenen Läufer.
+
+Der Grund ist nicht Bequemlichkeit, sondern dass die Gegenrichtung **zwei Wahrheiten
+über dasselbe Schema** bedeutet: ein zweiter Läufer im Controller braucht einen
+eigenen SQL-Treiber, eine eigene Zeile in `tools/modules.go` — und dann migrieren
+zwei Programme eine Datenbank. Das ist genau die Klasse, die im db-Paket als Befund
+**W-1** gemessen wurde: zwei Zeilen, die sich gegenseitig stützen und zusammen
+nichts halten.
+
+**Daraus folgt, was zu bauen ist:** der Unterbefehl `migrate` in
+`apps/server-api/main.go`. Das ist **Aufgabe 24 des API-Plans** („`main.go`
+verdrahten"), keine neue Aufgabe. `shared/` ändert sich dadurch **nicht**.
+Bis der Unterbefehl steht, hat der Controller kein `migrate.go` — ein Gerüst wäre
+schlimmer als nichts, es sieht aus wie eine Zusage.

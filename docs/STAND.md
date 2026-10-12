@@ -60,7 +60,7 @@ nach, ob die Aufgabe noch offen ist:
 ## Fallen dieser Umgebung (am 10.10.2026 gemessen, alle bezahlt)
 
 Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Projekt) und
-`docs/arbeitsweise.md` (NGC-eigene Lehren). Die sechs, die am meisten gekostet haben:
+`docs/arbeitsweise.md` (NGC-eigene Lehren). Die sieben, die am meisten gekostet haben:
 
 - **Arbeitsbäume werden während der Arbeit hohl.** Mehrmals gemessen: ein Baum stand nach einer
   Wiederherstellung bei 0 fehlenden Dateien und kurz darauf wieder bei **629**; parallel 145, 123,
@@ -76,6 +76,15 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
 - **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
   im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
   WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
+- **`ok` ohne `-v` sagt nichts über die Zahl der gelaufenen Fälle.** Am 12.10.2026
+  gemessen: `go test` druckte `ok`, unter `-v` waren **10 von 11** Fällen `SKIP` — die
+  Attrappe baute nicht (ein Heredoc hatte die Escapes gefressen), und **`t.Skipf` schreibt
+  seine Zeile nur unter `-v`**. Ein Satz, der sich stumm selbst abschaltet, sieht grün aus.
+  Darum: **die Fallzahl nennen, nicht „ok"** — `-v` fahren und zählen, und ein Nachbau, der
+  nicht baut, ruft `t.Fatalf`, nicht `t.Skipf`. Ebenso: `go list` stirbt im Arbeitsbaum an
+  derselben „dubious ownership" wie `check.sh` (`error obtaining VCS status: exit status
+  128`) und meldet dabei **`packages=0`** — eine Null, die nach einer Zahl aussieht;
+  Abhilfe `-buildvcs=false`.
 - **`go test` über alle Controller-Pakete stirbt in 3 von 5 Läufen**, und zwar nicht an
   einem Testfall: `fatal error: unknown caller pc`, immer in `scanstack`/`markroot` des
   Müllsammlers der Go-Laufzeit (`go1.27.1`), immer im Paket `classes/install`. **Allein
