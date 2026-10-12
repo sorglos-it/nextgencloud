@@ -1095,7 +1095,7 @@ Eine zweite, kleinere Zahl in `relay` wären zwei Stellen für dieselbe Sache �
 aus dem Punkt 32 das Warten im Programm abgelehnt hat.
 
 **Nachtrag 12.10.2026:** der Satz „`-race` ist auf dieser Maschine nicht messbar" stand hier und
-war **falsch** — der Übersetzer liegt unter `C:\esp	ools\llvm-mingwin\gcc.exe`, und
+war **falsch** — der Übersetzer liegt unter `C:\esp\tools\llvm-mingw\bin\gcc.exe`, und
 `-race` läuft (`relay` und `link`: 0 DATA RACE). Die Nebenläufigkeit dieses Pakets ist damit
 **nachmessbar und nachzumessen**; gezählt wurden bisher nur Goroutinen, nicht Zugriffsfolgen.
 
@@ -1306,6 +1306,22 @@ Im Plan steht der Aufruf aber mit Parametern, und zwar in
 Umsetzer sie als den Weg.** Entweder die Parameter werden gelesen, oder es gehört dazugeschrieben, dass sie
 Beiwerk sind. Beides ist in `apps/` zu machen, keine Vertragsänderung.
 
+**ENTSCHIEDEN am 12.10.2026 (Zweig `controller-p42`): die Parameter bleiben Beiwerk, sie werden
+NICHT gelesen.** Die Messung, die das trägt, steht auf der Gegenseite: die Webseite sendet die
+Größe als **ersten** Rahmen nach dem Öffnen und danach bei jeder Änderung
+(`apps/web/assets/apps/terminal/app.js`, `tellSize`, aufgerufen in der `then` des `open` und im
+`resize`-Horcher; ihr Fall „the first thing the terminal sends is the window size, byte for
+byte" hält die drei Kopfbytes und die zwei Zahlen). Der Rahmen ist also keine späte Korrektur
+einer Größe, die schon in den Parametern stand — er ist das erste Wort des Kanals. Die
+Parameter zusätzlich zu lesen hätte **einen Wert auf zwei Wegen** herein gebracht (die Form des
+Befundes W-1) und die Klemmung 1..`MaxDim` an zwei Stellen gelegt.
+
+Was dafür geschrieben wurde: der Block „THE PARAMETERS OF ngc.open ARE DECORATION" im Kopf von
+`apps/server-controller/classes/terminal/terminal.go` (mit dem **benannten Preis**: bis der erste
+Rahmen da ist, hat das Pseudoterminal die Größe, die der Kern ihm gab), ein Riegel
+`TestShellEnvCarriesNothing`, der `shellEnv` gegen eine mit allen Dienstvariablen vergiftete
+Umgebung hält — so hat auch `NGC_PARAMS` keine Hintertür —, und die Berichtigung im Plan an
+Zeile 6750.
 ## Punkt 43: Der Vertrauensanker verriegelt den dokumentierten Weg nach einem Totalverlust
 
 **Gelesen am 12.10.2026** beim Einhängen des Ankers, **aus dem Code**, nicht gemessen — und der

@@ -260,20 +260,65 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
 
     **Noch nicht abgenommen:** auf einem echten Server ist die Wand nie gelaufen, denn dieses
     Teilsystem ist nie in Betrieb (Punkt 1).
-15. **`ngc-controller image` steht in der Hilfe und antwortet immer „noch nicht gebaut".**
-    Gemessen am 12.10.2026: `writeUsage` (`node/main.go:178`) führt
-    „`image -arch <amd64|arm64> -out <Datei>`" als Kommando auf; `buildImage` (`:361-368`) prüft
-    die Flags und antwortet dann `notReady` → „Dieser Teil ist noch nicht gebaut." mit
-    **Code 1**. Der Kommentar daneben sagt, warum („no later task fills this command: which of
-    the two ways stays is the coordinator's call") — **die Hilfe sagt es nicht.**
+15. **`ngc-controller image` IST gebaut — das Abbild hat seit dem 12.10.2026 einen Erzeuger,
+    aber er ist nie zu Ende gelaufen.** Hier stand bis zum 12.10.2026, der Befehl antworte immer
+    „Dieser Teil ist noch nicht gebaut" und das Abbild der Terminal-App habe **keinen Erzeuger**.
+    Beides ist überholt. Nachgemessen am 12.10.2026 im Arbeitsbaum auf `C:`:
 
-    **Die Folge ist größer als der Befehl:** `grep -rn '"image"' apps/ --include=*.go | grep -v _test.go`
-    findet außer `install/activate.go:412` (Rücknahme eines geladenen Abbilds) nur Stellen in
-    `node/main.go`. **Damit hat das Abbild der Terminal-App keinen Erzeuger**, und das Terminal
-    aus Aufgabe 23 ist auf einem echten Server nicht in Betrieb zu nehmen, solange niemand
-    entscheidet, wer das Abbild baut. (Die Folge ist **geschlossen** aus der Messung, nicht
-    gefahren.)
-16. **Zu entscheiden (Sicherheitsfrage, nicht Befund): ist ein Kopplungscode 24 Stunden lang
+    | gemessen | Befehl | Ergebnis |
+    |---|---|---|
+    | die alte Antwort ist weg | `grep -rn "notReady" apps/server-controller/ \| wc -l` | **0** |
+    | der Befehl ist ein Paket | `ls apps/server-controller/classes/node/image.go apps/server-controller/classes/runtime/build.go` | beide da |
+    | die Hilfe stimmt mit ihm | `grep -n "image -arch" apps/server-controller/classes/node/main.go` | `:180`, dieselben Flags wie `parseImage` (`:364-378`) |
+    | er läuft | `go run ./apps/server-controller image -arch amd64 -out services/amd64.tar` | „podman ist auf diesem Rechner nicht zu finden …", **Code 1** |
+
+    **Welche Stufe erreicht ist** (geschrieben · übersetzt · ausgeliefert · **ausgeführt**):
+    **ausgeführt — aber nur bis zu der Zeile, die podman startet.** Der Befehl ist gelaufen, hat
+    das Manifest gelesen, den Namen des Abbilds daraus gebaut und die Pfade zusammengesetzt; dass
+    das gelungen ist, sagt die Reihenfolge seiner Antworten: `msgNoApp` („Vorlagen nicht lesbar")
+    kommt **vor** `exec.LookPath`, und was kam, war die Meldung **danach**. Was **nicht**
+    ausgeführt ist: der Bau selbst, `podman save`, das Laden und der Start. **Es gibt auf dieser
+    Maschine kein podman und kein docker** — gesucht in `PATH`, in
+    `C:\Program Files\RedHat\Podman`, `C:\Program Files\Docker`,
+    `C:\ProgramData\chocolatey\bin`, `C:\Program Files\Rancher Desktop`,
+    `%LOCALAPPDATA%\Programs\podman` und im `PATH` der WSL. (Die Orte stehen hier, nicht die
+    Zahl der Sucher: eine Abwesenheit wird mit Orten belegt.)
+
+    Gemessen ist dazu, dass die Vorarbeit beider Architekturen läuft:
+    `CGO_ENABLED=0 GOOS=linux GOARCH=amd64|arm64 go build -o build/ngc-controller` übersetzt, und
+    `file` sagt „ELF 64-bit … x86-64" bzw. „ARM aarch64" — also ist das, was `checkProgram` am
+    ELF-Kopf prüft, auch wirklich da.
+
+    **Die Anleitung ist nachgezogen:** `apps/server-controller/CLAUDE.md`, Abschnitt
+    „Terminal-App bauen", nennt jetzt **zwei** Zeilen je Architektur (ein `go build` plus das
+    Kommando) statt drei; die zwei `podman`-Aufrufe ruft `runtime.Build` selbst.
+
+    **Was offen bleibt, ist nicht mehr der Erzeuger, sondern wer ihn fährt:** das Abbild entsteht
+    laut Entscheidung beim **Admin auf einem Baurechner** (begründet im Kopf von
+    `classes/node/image.go` und `classes/runtime/build.go`), und dieser Schritt ist im
+    Auslieferungsweg noch von niemandem übernommen.
+
+16. **Zu entscheiden (Lieferkette, Vertragspunkt 39): der `Containerfile` der Terminal-App nagelt
+    seine Basis NICHT fest — und dieser Container läuft als `root`.** Keine Entscheidung dieses
+    Blattes; sie gehört Thomas und zum Release-Weg. Hier steht sie, damit eine Abnahme sie nicht
+    übergeht. Gemessen am 12.10.2026:
+
+    | gemessen | Befehl | Ergebnis |
+    |---|---|---|
+    | die Basis ist ein Tag, kein Digest | `grep -n "^FROM" apps/server-controller/templates/terminal/Containerfile` | `FROM docker.io/library/debian:13-slim` — kein `@sha256:` |
+    | nichts nagelt es anderswo fest | `grep -rn "sha256:" apps/server-controller/templates/ apps/server-controller/classes/runtime/build.go` | **0** |
+    | der Bau zieht nur neu, statt festzunageln | `grep -n "pull=always" apps/server-controller/classes/runtime/build.go` | `:163` — verschiebt von „Zwischenspeicher dieses Rechners" auf „was die Registry heute sagt" |
+    | die App braucht `root` | `grep -n "needs" apps/server-controller/templates/terminal/manifest.json` | `"needs": ["root"]` |
+
+    **Die Folge in zwei Sätzen:** zwei Bauten desselben Commits sind zwei verschiedene Abbilder,
+    während alles andere in diesem Projekt bitgleich ist; und wer den Tag `debian:13-slim`
+    beherrscht, beherrscht, was in dem Container läuft, der `root` hat. **Zu entscheiden:**
+    festnageln ja oder nein — und wenn ja, **wer den Digest anhebt**, wenn Debian einen
+    Sicherheitsfix veröffentlicht. Ein Digest, den niemand pflegt, ist nach einem halben Jahr
+    schlechter als ein Tag. **Erfunden wird hier kein Digest:** ohne podman und ohne Netz ist
+    keiner messbar, und ein abgeschriebener wäre eine Zahl ohne Messung.
+
+17. **Zu entscheiden (Sicherheitsfrage, nicht Befund): ist ein Kopplungscode 24 Stunden lang
     gültig richtig?** Gemessen am 12.10.2026: `tunnel.PairLifetime = 86400`
     (`shared/tunnel/tunnel.go:35`; die Feldkommentare `:86`/`:107` sagen „one use, valid for
     PairLifetime") — **24 Stunden**. Die einzigen 30 Sekunden in der Nähe sind

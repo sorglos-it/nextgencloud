@@ -11,6 +11,31 @@
 // with a SHORT marker on purpose: a logger that throws long details away would
 // let a mutation "write the whole line" pass with a long one.
 //
+// THE PARAMETERS OF ngc.open ARE DECORATION, AND THAT IS A DECISION. The plan
+// of the web side writes the call as
+// ngc.open("terminal", "shell", {cols, rows}), and a reader takes that for the
+// way the size travels. It is not. This program reads NO parameters: the size
+// comes in a resize frame and nowhere else (ParseFrame, pumpIn), and shellEnv
+// below builds the environment of the shell out of four fixed lines, so
+// NGC_PARAMS reaches neither the shell nor the pseudo terminal.
+//
+// It stays that way on purpose, and the reason is measured on the other side:
+// the web app sends the size as the FIRST thing it sends after the channel is
+// open and again on every change (apps/web/assets/apps/terminal/app.js,
+// tellSize; its case "the first thing the terminal sends is the window size,
+// byte for byte" holds the three header bytes and the two numbers). The frame
+// is therefore not a late correction of a size the parameters already carried
+// - it is the first word of the channel.
+//
+// Reading the parameters as well would put ONE value on TWO ways in, and this
+// project has paid for that shape before: the clamp of 1..MaxDim would then
+// live in two places, and a size that got past one of them would be a size
+// nobody bounded. There is a price, and it is named instead of hidden: between
+// the start of the shell and the arrival of that first frame the pseudo
+// terminal has whatever size the kernel gave it, so a prompt written in that
+// window is laid out for the wrong width. Nothing is laid out before input
+// arrives, and the first input is the frame.
+//
 // What this package does NOT decide is who gets here. The gate is on the
 // server, in package access, and it is measured against the manifest of this
 // app in manifest_test.go. The three checks in run are a second fence inside
@@ -161,6 +186,30 @@ func EncodeOutput(b []byte) []byte {
 		return nil
 	}
 	return b
+}
+
+// shellEnv is the whole environment of the shell. It is built from nothing but
+// these four lines and HOME, so NGC_PARAMS - which carries whatever the user
+// typed into the app - cannot travel on: a shell that had it would put it in
+// front of the next person who reads the process list. This is also the second
+// half of "the parameters are decoration" (see the head of this file): there is
+// no door here for a cols or rows out of NGC_PARAMS, and a case holds that for
+// an environment poisoned with all of them (TestShellEnvCarriesNothing).
+//
+// It stands in this file and not beside the pseudo terminal, although only
+// Linux starts a shell: what the shell is given is a decision, and a decision
+// that can only be measured on a machine nobody here has is one nothing holds.
+func shellEnv() []string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = service.DataDir
+	}
+	return []string{
+		"TERM=xterm-256color",
+		"HOME=" + home,
+		"PATH=" + service.Path,
+		"LANG=C.UTF-8",
+	}
 }
 
 // activity is the clock of the idle limit. Both pumps touch it, the watchdog
