@@ -110,7 +110,18 @@ func (r *Registry) HintAll(ctx context.Context, seq uint64) {
 	r.Each(func(s *Session) { _ = s.Hint(ctx, seq) })
 }
 
-// Broadcast sends one control message to every open shell.
-func (r *Registry) Broadcast(ctx context.Context, t string, body any) {
-	r.Each(func(s *Session) { _ = s.SendControl(ctx, t, body) })
+// NotifyAll sends one notice to every open shell and returns how many took
+// it. The number is the point of the signature and not a convenience: a
+// notice nobody could take has to leave a line behind, and the only honest way
+// to know that is to count what went out. A shell whose link fails is counted
+// as not reached, and the notice is not kept for it -- a notice is about now,
+// and a shell that comes back asks for the state it needs itself.
+func (r *Registry) NotifyAll(ctx context.Context, n core.Notice) int {
+	sent := 0
+	r.Each(func(s *Session) {
+		if s.Notify(ctx, n) == nil {
+			sent++
+		}
+	})
+	return sent
 }

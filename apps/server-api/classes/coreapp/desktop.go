@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -244,18 +245,37 @@ func (d *Dispatcher) ui(ctx context.Context, rq *Call) ([]byte, error) {
 
 // uiProof answers ngc.desktop/ui-proof with the evidence the API kept when the
 // version was installed (dbapi.BlobApproval).
+//
+// The row is not just read back: appstore.Stores.Proof parses it, verifies it
+// against the trust list AS IT READS TODAY, and -- where the ui-tar of that
+// version is here too -- holds the hash the proof vouches for against the
+// bytes ngc.desktop/ui would send. Both checks are the point of this seam: a
+// key or a store an admin has withdrawn since the install would otherwise go
+// on vouching for a UI out of a database, and evidence that does not fit the
+// ui-tar next door is a mismatch the shell can only refuse. The shell checks
+// the proof a third time against its own copy of the list, so this layer is
+// the middle one of three and not the last.
+//
+// The Stores value is made here from the state rather than taken from
+// Deps.Store, and the reason is read off Proof: it touches nothing but st.S
+// (the two blob rows and state.Trust), so none of the fields server.Build
+// fills in -- the HTTP client, the sender to a controller, the spool
+// directory, the log -- can change its answer. Deps.Store may be nil (see
+// Deps), while ui-proof is registered either way, so a dependency on it would
+// turn this action off wherever the store actions are off.
 func (d *Dispatcher) uiProof(ctx context.Context, rq *Call) ([]byte, error) {
 	a, code := d.appOf(ctx, rq)
 	if code != "" {
 		return nil, fail(code)
 	}
-	b, err := rq.S.DB.BlobGet(ctx, dbapi.BlobApproval, a.ID+"@"+a.Version)
-	if err != nil {
+	p, err := (&appstore.Stores{S: rq.S}).Proof(ctx, a.ID, a.Version)
+	// A version with no evidence kept answers like one that is not installed;
+	// everything else is this installation's own problem, including a proof
+	// that no longer holds. E_NOTFOUND for the latter would tell a shell that
+	// the version is gone when it is the trust in it that is gone.
+	if errors.Is(err, dbapi.ErrNotFound) {
 		return nil, fail(wire.CodeNotFound)
 	}
-	// The stored proof goes through its own parser before it travels, so a
-	// broken row never reaches the shell as something it must trust.
-	p, err := core.ParseUIProof(b.Data)
 	if err != nil {
 		return nil, fail(wire.CodeInternal)
 	}

@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/apitls"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbopen"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/join"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -400,5 +403,162 @@ func TestMigrateSaysSoWithoutAMigrator(t *testing.T) {
 	}
 	if !ran {
 		t.Fatalf("the registered migrator did not run")
+	}
+}
+
+// --- the one hop between Apache and this API -------------------------------
+
+// tlsAnswer hands cfg to a listener of its own, dials it with a client whose
+// highest version is max, and returns the state of the connection or the error
+// of the handshake. Nothing is shared between cases: the listener closes when
+// the case ends.
+//
+// InsecureSkipVerify because the certificate this API makes is signed by
+// itself and trust on this hop hangs on its fingerprint and not on a chain
+// (tunnel.PinnedTLS) -- what is measured here is the version and the suite,
+// not who the peer is.
+func tlsAnswer(t *testing.T, cfg *tls.Config, max uint16) (tls.ConnectionState, error) {
+	return tlsAnswerOn(t, cfg, max, nil)
+}
+
+// tlsAnswerOn is tlsAnswer with the key share groups of the client in the
+// case's hand. CurvePreferences IS read under TLS 1.3, on both sides, which is
+// what makes the group list of TLSConfig measurable where its suite list is
+// not.
+func tlsAnswerOn(t *testing.T, cfg *tls.Config, max uint16, curves []tls.CurveID) (tls.ConnectionState, error) {
+	t.Helper()
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_ = c.(*tls.Conn).HandshakeContext(ctx)
+				_ = c.Close()
+			}()
+		}
+	}()
+	c, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{
+		ServerName: "api-1", InsecureSkipVerify: true,
+		MinVersion: tls.VersionTLS12, MaxVersion: max, CurvePreferences: curves,
+	})
+	if err != nil {
+		return tls.ConnectionState{}, err
+	}
+	defer c.Close()
+	return c.ConnectionState(), nil
+}
+
+// TestTLSConfigTakesTLS13Only holds the half of TLSConfig that really is a
+// bound: nothing below TLS 1.3 gets a connection. The 1.3 client first, as the
+// intermediate check -- a case that only measured the refusal would stay green
+// against a listener that refuses everybody.
+func TestTLSConfigTakesTLS13Only(t *testing.T) {
+	srv, _, _ := newServer(t)
+	st, err := tlsAnswer(t, srv.TLSConfig(), tls.VersionTLS13)
+	if err != nil {
+		t.Fatalf("a TLS 1.3 client got no connection: %v", err)
+	}
+	if st.Version != tls.VersionTLS13 {
+		t.Fatalf("version %x", st.Version)
+	}
+	if _, err := tlsAnswer(t, srv.TLSConfig(), tls.VersionTLS12); err == nil {
+		t.Fatal("a client whose highest version is TLS 1.2 got a connection")
+	}
+	// The group list is the other half of TLSConfig that really bounds: P-384
+	// is not on it, and a client that offers nothing else gets no connection.
+	// The intermediate check is the P-256 round -- the list names two groups,
+	// and a case that only measured the refusal would stay green against a
+	// listener that refuses every group.
+	if _, err := tlsAnswerOn(t, srv.TLSConfig(), tls.VersionTLS13,
+		[]tls.CurveID{tls.CurveP256}); err != nil {
+		t.Fatalf("a client offering only P-256 got no connection: %v", err)
+	}
+	if _, err := tlsAnswerOn(t, srv.TLSConfig(), tls.VersionTLS13,
+		[]tls.CurveID{tls.CurveP384}); err == nil {
+		t.Fatal("a client offering only P-384 got a connection")
+	}
+}
+
+// TestTLSConfigNamesNoCipherSuite holds what the comment of TLSConfig says
+// about the suite, and it is on purpose a case about the FIELD and not about
+// the wire: the design asks for AES-256-GCM alone on this hop (Entwurf 4.5),
+// and the promise this case keeps is that no field here pretends to be that
+// bound. Go ignores CipherSuites under TLS 1.3, so a listener that named the
+// one suite would hand out the other two all the same -- measured on
+// 12.10.2026 with openssl s_client 3.5.7, one suite per run: AES-256-GCM,
+// CHACHA20-POLY1305 and AES-128-GCM all connected. The bound lives on the
+// client, which is Apache (SSLProxyCipherSuite, shared/ulh.md).
+//
+// The second half is the wire after all, and it is what makes this more than a
+// string comparison: the same configuration with a list that holds NO TLS 1.3
+// suite at all still gets a connection. If Go read the field, that handshake
+// could not come about.
+func TestTLSConfigNamesNoCipherSuite(t *testing.T) {
+	srv, _, _ := newServer(t)
+	if cs := srv.TLSConfig().CipherSuites; cs != nil {
+		t.Fatalf("TLSConfig names cipher suites again (%v); Go ignores them under TLS 1.3, "+
+			"so the field reads like a bound and is none", cs)
+	}
+	bent := srv.TLSConfig()
+	bent.CipherSuites = []uint16{tls.TLS_RSA_WITH_AES_128_CBC_SHA}
+	st, err := tlsAnswer(t, bent, tls.VersionTLS13)
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	if st.CipherSuite != tls.TLS_AES_128_GCM_SHA256 && st.CipherSuite != tls.TLS_AES_256_GCM_SHA384 &&
+		st.CipherSuite != tls.TLS_CHACHA20_POLY1305_SHA256 {
+		t.Fatalf("suite %s is none of the three of TLS 1.3", tls.CipherSuiteName(st.CipherSuite))
+	}
+	t.Logf("TLS 1.3 on %s, although CipherSuites named none of its suites",
+		tls.CipherSuiteName(st.CipherSuite))
+}
+
+// --- the notices of a controller -------------------------------------------
+
+// TestANoticeOfAControllerLeavesALineWhereNoShellTakesIt goes in the way a
+// controller's notice comes in -- through the hook Build set -- and measures
+// what comes out of it, not that the hook is there.
+//
+// Where it cannot reach: the delivery to an OPEN shell is measured in package
+// browser (TestRegistryHoldsASessionWhileItRuns: NotifyAll counts 1 and the
+// frame arrives on the link), because a session is made by the socket server
+// out of a login and this package has no shell to log in. What joins the two
+// halves is the registry, and that is held here by IDENTITY: a notice sent to
+// a registry no shell is ever added to would reach nobody, and "both are not
+// nil" would pass that.
+func TestANoticeOfAControllerLeavesALineWhereNoShellTakesIt(t *testing.T) {
+	srv, _, _ := newServer(t)
+	if srv.ctl == nil || srv.ctl.OnNotice == nil {
+		t.Fatal("nothing takes the notices of a controller: ctl.OnNotice is nil, " +
+			"so every wire.CtlNotify falls on the floor")
+	}
+	if srv.sessions == nil || srv.sessions != srv.core.Sessions {
+		t.Fatalf("the notices go to registry %p and the shells are in %p -- it has to be ONE",
+			srv.sessions, srv.core.Sessions)
+	}
+	// Nobody is logged in, so this notice can reach no shell. That is the case
+	// that used to disappear without a trace.
+	var said bytes.Buffer
+	before := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&said, nil)))
+	t.Cleanup(func() { slog.SetDefault(before) })
+	srv.ctl.OnNotice(ctx, &controllers.Tunnel{Node: "ctl-1"},
+		core.Notice{Level: core.NoticeError, Text: "Mein Dienst ist gestorben", App: "ngc.test"})
+	line := said.String()
+	if !strings.Contains(line, "reached no shell") || !strings.Contains(line, "ctl-1") ||
+		!strings.Contains(line, core.NoticeError) {
+		t.Fatalf("a notice nobody could take left no line behind: %q", line)
+	}
+	// And what must NOT be in it: the text comes from another machine, and the
+	// line is about the notice having come, not about what it said.
+	if strings.Contains(line, "gestorben") {
+		t.Fatalf("the text of the notice is in the operator log: %q", line)
 	}
 }
