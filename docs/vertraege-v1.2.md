@@ -860,6 +860,27 @@ Zwei Dinge, die bei dieser Entscheidung gemessen gehören und es nicht sind:
   Arbeitsspeicher darf ein 4-GiB-Paket nicht. Jeder Fall dort prüft, dass nichts liegen
   bleibt; für das Zwischenlager **zwischen zwei Aufrufen** gibt es diese Prüfung noch nicht.
 
+### Bestätigt am 12.10.2026, und eine Behauptung dazu war falsch
+
+Aufgabe 24 der API hatte gemeldet, dieser Punkt sei erledigt: die Shell schicke die Datei auf dem
+Aktivierungskanal mit, womit sich beide Messpunkte auflösten. **Das ist gemessen falsch**, und der
+Satz stand so in `server.go`, bis ein weiterer Strang ihn gegen den Code gelesen hat:
+`core.Action.MaxIn` und `core.ShellOpens` sagen das Gegenteil, und `appstore.Upload` behält nur
+die ui-tar.
+
+**Also gilt dieser Punkt unverändert — und die Folge ist jetzt gemessen statt vermutet:** eine
+Aktivierung aus `core.LocalStore` endet mit **`E_UNREACHABLE`**. Eine **hochgeladene App lässt
+sich heute nicht aktivieren**, und zwar nicht aus Versehen, sondern weil niemand das Paket
+zwischen den zwei Aufrufen hält.
+
+Festgenagelt ist es mit einem Fall, der einen **anderen** Fehlercode als Kontrolle erwartet —
+damit die Zeile rot wird, sobald jemand das Halten baut, statt still weiter zu behaupten, es gehe
+nicht.
+
+**Nicht still gefüllt, und das war richtig:** wo die Datei liegt, ist keine Entscheidung eines
+Handlers. Die drei Fragen dahinter (Platte, Absturz, zweiter Server) sind oben benannt und bleiben
+offen.
+
 ## Punkt 31: Nichts hält die Rechte des Katalogeintrags gegen das Manifest
 
 **Gemessen am 12.10.2026** vom Strang, der das App-Einrichten beim Update gebaut hat — und
@@ -1035,3 +1056,43 @@ Daraus folgt auch, dass `apps/server-db` **ohnehin** in `ngc-api` hinein muss, d
 sein kann — und damit kostet `RegisterMigrator` danach keine zusätzliche Abhängigkeit mehr. Eine
 Formanpassung braucht es: `migraterun.Run(ctx, cfg, owner, now) (int, error)` gegen
 `dbopen.Migrator func(ctx, cfg, io.Writer) error`.
+
+## Punkt 35: Ein weitergeleiteter Kanal hat keine Stillzeitgrenze
+
+**Gemessen am 12.10.2026**, nachdem die Zusage aus Aufgabe 17 („je Kanal eine Goroutine, Zahl
+gleichzeitiger nicht gemessen") nachgezählt wurde.
+
+**Was in Ordnung ist, und zwar gezählt statt behauptet:** bei 128 gleichzeitig mit Fehler
+beendeten Kanälen steht die Goroutinenzahl **vorher 2, Spitze 130, nachher 2** — über 30 Läufe
+identisch. Also genau **eine** Goroutine je drainendem Kanal, **und sie fällt wieder: kein Leck.**
+Die Frist wird genau eingehalten (höchste Überschreitung über 60 Messungen: 0,67 ms), und bei
+**abgebrochenem Kontext endet das Warten sofort**, nicht erst nach Ablauf. Der Mutant, der
+`defer cancel()` entfernt, stirbt genau am Leck: „peak 258, after 130 … 128 did not come back".
+
+**Was nicht in Ordnung ist:** ein weitergeleiteter Kanal hat **keine Grenze für seine Stillzeit.**
+Keine Frist in `hop.Next`/`sh.Next`, der einzige Kontext ist der des Aufrufers, und `link.Link`
+sagt selbst, nach dem ersten Bild begrenze nichts die Stille. `controllers.IdleTimeout` hängt am
+**Tunnel**, nicht am Kanal; im `browser`-Paket prüft nichts `Expires` oder `SessionLifetime`.
+
+**Wer wie lange hält:** ein **angemeldeter** Benutzer, 64 Kanäle je Sitzung, 1024 je Tunnel,
+**so lange der Browser den Socket offen hält** — ohne Zeitgrenze, und die Zahl der Sitzungen je
+Benutzer ist nicht begrenzt. Gerechnet: je Kanal 2 Goroutinen à 8 KiB plus `DefaultWindow`
+256 KiB, also je Tunnel **etwa 256 MiB und 2048 Goroutinen**, zeitlich unbegrenzt gehalten.
+Zum Vergleich: Punkt 29 begrenzt die App-Kanäle des Controllers auf 128 mit etwa 50 MiB.
+
+**Vorschlag, nicht gebaut: 30 Minuten Stillzeit je weitergeleitetem Kanal, dann `CLOSE
+E_TIMEOUT`.** Die Zahl ist nicht gewählt, sondern abgeleitet — der Controller beendet sein
+Terminal nach `terminal.IdleLimit = 30 Minuten`; kürzer schlösse Kanäle, die er noch für lebend
+hält. Sie unterscheidet sich darum bewusst von den 10, 25 und 50 Sekunden an anderen Stellen.
+
+**Warum es BLOCKED ist:** der Abschnitt „Relay" in `shared/wire/wire.go` nennt keine Stillzeit,
+und die Shell müsste **dieselbe** Zahl kennen — sonst schließt der eine, was der andere für offen
+hält. Das ist eine Vertragsänderung und gehört in die Reihe des Vorschlags für v1.3.
+
+**Eine Grenze für die Anzahl wurde ausdrücklich NICHT gebaut**, und das ist die zweite Hälfte der
+Messung: sie ist schon da und greift (`hop.Open` → `ErrLimit` → `E_LIMIT`, mit vorhandenem Fall).
+Eine zweite, kleinere Zahl in `relay` wären zwei Stellen für dieselbe Sache — genau der Grund,
+aus dem Punkt 32 das Warten im Programm abgelehnt hat.
+
+**Ungemessen bleibt die Nebenläufigkeit selbst:** gezählt wurden Goroutinen, nicht
+Zugriffsfolgen. `-race` ist auf dieser Maschine nicht messbar. Das ist eine Lücke, keine Null.
