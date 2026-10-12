@@ -1131,3 +1131,35 @@ podman nicht zu zeigen ist:
 nichts. Gemessen ist, dass wir sie **schicken** — und das ist die Hälfte, die wir messen können.
 Die andere Hälfte braucht einen Linux-Server mit podman und einen echten Ausbruchsversuch; der
 entsprechende Fall überspringt sich laut.
+
+## Punkt 37: Der Plan hat denselben Fehler zweimal vorgegeben
+
+**Festgehalten am 12.10.2026**, nachdem der kritische Befund K-1 der API behoben war.
+
+Zweimal hat ein Strang einen **Entwurfs-Codeblock des Plans** gelesen, ihn gegen seinen eigenen
+Kommentar gehalten und festgestellt, dass der Block das Gegenteil dessen tut, was darüber steht —
+und zwar beide Male **dieselbe** Sache: er sammelt die ganze Eingabe im Arbeitsspeicher.
+
+- **Aufgabe 20** fand es in `Upload`: der Block las mit `io.ReadAll` bis zu 4 GiB, während sein
+  Kommentar sagte, die Bytes gingen „nur im Puffer des Aufrufers" zur Platte. Gemessen: 128 MiB
+  Eingabe hielten 268 MB. Der Strang hat den Block **nicht übernommen** und einen Durchlauf
+  gebaut — 0 MiB gehalten bei 32, 128 und 512 MiB.
+- **Die Abschlussprüfung** fand dasselbe eine Schicht höher, im Dispatcher: `ReadInput` sammelte
+  in einem `bytes.Buffer` bis `MaxIn`. Gemessen über den echten Kanal: 64 MiB Eingabe hielten
+  **191 MiB**, linear mit der Eingabe. Behoben, jetzt **3 MiB** — und `ReadInput` ist entfernt,
+  nicht als zweite Fassung stehen gelassen.
+
+**Die Lehre ist nicht „der Plan hat einen Fehler", sondern wie er sich fortpflanzt.** Aufgabe 20
+hat ihren Teil richtig gelöst und gemessen; der Durchlauf endete nur **vor** dem Dispatcher, wo
+jemand anders schon alles eingesammelt hatte. Zwei richtige Lösungen hintereinander ergeben keine
+richtige Kette, solange niemand die Kette als ganze misst.
+
+**Darum stehen beide Plan-Stellen jetzt berichtigt da** (Zeile 6988 und der `ReadInput`-Block
+darunter), mit der Zahl und mit dem Satz, dass wer den Block abschreibt, den Befund wieder
+einbaut. Ein Plan ist in diesem Projekt kein Vorschlag, sondern eine Vorlage — und eine Vorlage
+mit einem falschen Kommentar erzeugt den Fehler so oft, wie jemand sie liest.
+
+**Was daraus für jede weitere Aufgabe folgt:** einen Entwurfs-Codeblock des Plans **gegen seinen
+eigenen Kommentar lesen**, bevor man ihn übernimmt. Das hat heute zweimal einen Befund gefunden,
+den sonst erst ein echter Server gefunden hätte — beim zweiten Mal einen, der den Prozess
+umbringt.

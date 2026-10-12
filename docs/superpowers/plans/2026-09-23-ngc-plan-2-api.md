@@ -6983,6 +6983,14 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 		return wire.CodeProtocol
 	}
 	params = p
+	// BERICHTIGT 12.10.2026: Dieser Block sammelt die ganze Eingabe in einem
+	// []byte — bei ngc.store/api/upload bis store.MaxPackage = 4 GiB. Gemessen
+	// als kritischer Befund K-1 der Abschlusspruefung: 64 MiB Eingabe hielten
+	// 191 MiB, und der Verbrauch wuchs linear mit der Eingabe. Gebaut ist statt
+	// dessen ein Strom (browser.Input, ein Rahmen zur Zeit, Guthaben beim
+	// Verbrauchen zurueck): 64 MiB Eingabe halten 3 MiB. ReadInput ist entfernt,
+	// nicht als zweite Fassung stehen gelassen. Wer diesen Block abschreibt,
+	// baut den Befund wieder ein.
 	var in io.Reader = bytes.NewReader(nil)
 	if action.Flow == core.FlowIn {
 		body, code := s.ReadInput(ctx, c, action.MaxIn)
@@ -7063,6 +7071,11 @@ func (s *Session) Grant(ctx context.Context, c *link.Channel, credit uint32) err
 	return nil
 }
 
+// BERICHTIGT 12.10.2026: ReadInput gibt es nicht mehr — es sammelte bis 4 GiB
+// im Arbeitsspeicher (Befund K-1). An seiner Stelle steht browser.Input, ein
+// io.Reader auf die DATA-Rahmen. Der Block unten ist der Stand, der behoben
+// wurde; er steht hier, weil der Plan ihn vorgegeben hat.
+//
 // ReadInput reads the DATA of a FlowIn channel up to the shell's EOF, at most
 // max bytes; more is E_TOOLARGE.
 func (s *Session) ReadInput(ctx context.Context, c *link.Channel, max int64) ([]byte, wire.Code) {
