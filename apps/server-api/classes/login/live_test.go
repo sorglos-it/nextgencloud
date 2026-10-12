@@ -483,11 +483,11 @@ func threeVersions(t *testing.T) (*Handler, string) {
 // with config.LoadAnchor and trust-anchor.json is the second. Neither was
 // missing.
 //
-// What is not wired up is the file, and only the file: config.LoadAnchor,
-// config.SaveAnchor and config.AnchorFile have no caller in this project
-// outside shared/config, and nothing writes trust-anchor.json today --
-// apps/server-controller/main.go, the one program meant to write it, logs
-// that it is not built yet and stops. The type is wired up everywhere --
+// The file is wired up as of 12.10.2026, and this said the opposite until
+// then: node.pair writes trust-anchor.json when a controller pairs
+// (apps/server-controller/classes/node/main.go), state.refreshLocked reads it,
+// and state.advanceAnchor moves it up to every version this API verified and
+// stored. The type is wired up everywhere --
 // state.refreshLocked and state.AddVersion build a trust.Anchor every time
 // they open a chain, out of the rows themselves, and session and tunnel
 // carry one too. That is why an anchor that comes from outside is a small
