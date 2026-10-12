@@ -14,6 +14,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -107,6 +108,10 @@ func TestInstallAndSystemEachRefuseTheOthersTarget(t *testing.T) {
 		State: state.New(memstore.New()), List: &trust.List{}, Report: noReports{},
 		Now: func() int64 { return 1 }, BinDir: t.TempDir(), StageDir: t.TempDir(), Max: 1 << 20,
 		ReleaseKey: make([]byte, 32), Services: noServices{},
+		// A server that carries every role, so that the walls this case
+		// measures are the two it names and not the role wall of
+		// update.runs (point 33).
+		Roles:  []string{tunnel.RoleWeb, tunnel.RoleAPI, tunnel.RoleDB, tunnel.RoleServices},
 		Health: func(context.Context, string) (string, error) { return "", nil },
 	})
 	// Install, asked for the system packages.

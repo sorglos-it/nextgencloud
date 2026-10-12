@@ -162,6 +162,11 @@ func apiFixture(t testing.TB) *installFixture {
 		ReleaseKey: releaseKey(t), StageDir: f.stage, Max: store.MaxPackage,
 		Report: f.rep, Now: func() int64 { return 1790000600 },
 		BinDir: f.bin, WebRoot: f.web, Services: f.svc, Apps: f.apps,
+		// A server that carries the two roles the parts of these cases
+		// belong to; trust.AutoController belongs to every server
+		// (tunnel.Components). A case that wants another server sets its own
+		// (TestInstallRefusesAPartThisServerDoesNotRun).
+		Roles: []string{tunnel.RoleAPI, tunnel.RoleWeb},
 		Alive: time.Second, Sleep: func(d time.Duration) { f.slept = append(f.slept, d) },
 	}
 	f.deps.Health = func(_ context.Context, file string) (string, error) {
@@ -1303,3 +1308,182 @@ var (
 	_ AppInstaller = (*fakeApps)(nil)
 	_ Local        = (*fakeStore)(nil)
 )
+
+// --- point 33: the part has to belong on this server ----------------------
+
+// installFixtureFor is an install of one NGC part that has to go through, for each
+// of the three parts there are. It is one function so that the cases below
+// walk the SAME path for every part instead of one path three times.
+func installFixtureFor(t testing.TB, target string) *installFixture {
+	t.Helper()
+	switch target {
+	case trust.AutoAPI:
+		return apiFixture(t)
+	case trust.AutoWeb:
+		return webFixture(t)
+	case trust.AutoController:
+		f := apiFixture(t)
+		f.target = trust.AutoController
+		mustWrite(t, f.bin+"/"+trust.AutoController, oldProgram)
+		mustWrite(t, f.stage+"/"+trust.AutoController, newProgram)
+		f.health[f.bin+"/"+trust.AutoController] = newVersion
+		f.st.parts = map[string]string{trust.AutoController: oldVersion}
+		f.st.staged[trust.AutoController] = state.Staged{Target: trust.AutoController,
+			Version: newVersion, SHA256: f.sha, Size: int64(len(newProgram)),
+			Signer: enc.Bytes(releaseKey(t)), Seq: 3,
+			File:  f.stage + "/" + trust.AutoController,
+			State: store.UpdateDownloaded, Time: 1}
+		f.deps.List = &trust.List{Auto: []trust.Auto{
+			{Target: trust.AutoController, Key: enc.Bytes(releaseKey(t))}}}
+		return f
+	default:
+		t.Fatalf("no fixture for %q", target)
+		return nil
+	}
+}
+
+// stand is what lies in place for the target of this fixture - "old", "new",
+// "nothing" or "half". For a part that is a program it is whichProgram; the
+// web interface is a directory and is read where it is unpacked, so that a
+// case over all three parts can ask one question.
+func (f *installFixture) stand() string {
+	f.t.Helper()
+	if f.target != trust.AutoWeb {
+		return f.whichProgram()
+	}
+	b, err := os.ReadFile(f.web + "/index.html")
+	switch {
+	case err != nil:
+		return "nothing"
+	case string(b) == "<p>alt</p>":
+		return "old"
+	case string(b) == "<p>neu</p>":
+		return "new"
+	default:
+		return "half"
+	}
+}
+
+// TestInstallRefusesAPartThisServerDoesNotRun nails the wall of point 33 down:
+// which NGC part belongs on this machine is decided at the INSTALL and not
+// only on the API that sends. A database server asked to install ngc-api
+// refuses; it does not copy a program into its bin directory and restart a
+// service it does not own.
+//
+// Everything else about the request is in order - the staged row, the version,
+// the checksum, the standing approval - so the role is the only thing left
+// that can refuse. The intermediate run is what proves that: the SAME request
+// on a server that does carry the role goes all the way through and the new
+// stand lies in place. Without it this case might be measuring an earlier
+// wall.
+func TestInstallRefusesAPartThisServerDoesNotRun(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		target string
+		roles  []string
+	}{
+		// A pure database node IS sent the ngc-api file, so that it can play
+		// the migrations in (the API's rollout, MigrationNode) - but that is
+		// Stage. Installing it is another thing and is refused.
+		{"ngc-api on a database server", trust.AutoAPI, []string{tunnel.RoleDB}},
+		{"ngc-api on a services server", trust.AutoAPI, []string{tunnel.RoleServices}},
+		// An API server is not a web server, and nothing but its own roles
+		// says so.
+		{"ngc-web on an API server", trust.AutoWeb, []string{tunnel.RoleAPI}},
+		{"ngc-web on a database server", trust.AutoWeb, []string{tunnel.RoleDB}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := installFixtureFor(t, c.target)
+			f.deps.Roles = c.roles
+			_, err := f.run()
+			if !errors.Is(err, ErrForbidden) {
+				t.Fatalf("%v, want ErrForbidden", err)
+			}
+			// The refusal is NOT a disagreement about the file: a role is
+			// this server's own property, nothing of the staged state is in
+			// question, and ErrVerify would tell an admin to look at the
+			// update instead of at the node.
+			if errors.Is(err, ErrVerify) {
+				t.Errorf("the answer carries ErrVerify as well: %v", err)
+			}
+			// Refused means nothing happened at all.
+			if f.stand() != "old" {
+				t.Errorf("what lies in place is %s, want untouched", f.stand())
+			}
+			if len(f.svc.restarts) != 0 {
+				t.Errorf("restarts %v, want none", f.svc.restarts)
+			}
+			// What the admin sees: a refused update (store.UpdateRejected),
+			// not a failure of this machine - that is what stateOf makes of
+			// ErrForbidden, and it is the whole point of choosing it.
+			if got := f.reportStates(); len(got) != 1 || got[0] != store.UpdateRejected {
+				t.Errorf("reported %v, want one %s", got, store.UpdateRejected)
+			}
+
+			// INTERMEDIATE: the same target on a server that DOES run it
+			// goes through to the end. So the refusal above is the role wall
+			// and not one before it.
+			g := installFixtureFor(t, c.target)
+			g.deps.Roles = runsIt(c.target)
+			if _, err := g.run(); err != nil {
+				t.Fatalf("on a server with the role: %v", err)
+			}
+			if g.stand() != "new" {
+				t.Errorf("on a server with the role what lies in place is %s, want new", g.stand())
+			}
+		})
+	}
+}
+
+// TestInstallTakesTheControllerOnEveryServer is the other half of the same
+// wall, and it keeps it from being too tight: ngc-controller runs on every NGC
+// server whatever its roles are (tunnel.Components always names it), so no
+// combination of roles may refuse it. A wall that refused this one would lock
+// every server out of its own updates.
+func TestInstallTakesTheControllerOnEveryServer(t *testing.T) {
+	for _, roles := range [][]string{
+		{tunnel.RoleDB},
+		{tunnel.RoleServices},
+		{tunnel.RoleAPI},
+		{tunnel.RoleWeb},
+	} {
+		f := installFixtureFor(t, trust.AutoController)
+		f.deps.Roles = roles
+		if _, err := f.run(); err != nil {
+			t.Fatalf("roles %v: %v", roles, err)
+		}
+		if f.stand() != "new" {
+			t.Errorf("roles %v: what lies in place is %s, want new", roles, f.stand())
+		}
+	}
+}
+
+// TestInstallWithoutRolesIsThisProgramsOwnFault: a Manager that was handed no
+// roles cannot say which parts belong here, and guessing would be the
+// dangerous direction. Every configuration has one to four roles
+// (config.Controller.Validate), so an empty list is this program wired wrong
+// and never something a peer can bring about - ErrInternal, not a refusal of
+// the peer.
+func TestInstallWithoutRolesIsThisProgramsOwnFault(t *testing.T) {
+	f := apiFixture(t)
+	f.deps.Roles = nil
+	if _, err := f.run(); !errors.Is(err, ErrInternal) {
+		t.Fatalf("%v, want ErrInternal", err)
+	}
+	if f.stand() != "old" {
+		t.Errorf("what lies in place is %s, want untouched", f.stand())
+	}
+}
+
+// runsIt are the roles of a server that runs part, read out of the one mapping
+// there is (tunnel.Components) instead of being written down a second time
+// here: a case with its own table would still pass if the mapping changed
+// under it.
+func runsIt(part string) []string {
+	for _, r := range []string{tunnel.RoleAPI, tunnel.RoleWeb, tunnel.RoleDB, tunnel.RoleServices} {
+		if slices.Contains(tunnel.Components([]string{r}), part) {
+			return []string{r}
+		}
+	}
+	return nil
+}

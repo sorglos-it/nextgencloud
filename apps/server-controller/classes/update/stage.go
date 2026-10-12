@@ -145,6 +145,17 @@ type Deps struct {
 
 	// --- what Install and Rollback need beside the above (install.go) -----
 
+	// Roles are the roles of THIS server (config.Controller.Roles), the same
+	// list the hello reports to the API (node/report.go). An install of an
+	// NGC part is refused unless these roles run that part (install.go,
+	// runs); it is the whole reason the field is here, and an empty list
+	// makes the Manager answer ErrInternal (wired), because every
+	// configuration has one to four roles (config.Controller.Validate).
+	//
+	// The value is CARRIED, not copied into a second shape: what a role
+	// means for the NGC software is tunnel.Components, and that function is
+	// the only place it is written down.
+	Roles []string
 	// BinDir is where the NGC programs run from (config.BinDir). An install
 	// of a part copies into it and swaps inside it, so it is one directory
 	// and not derived from StageDir: the two need not be one filesystem.

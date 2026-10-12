@@ -51,6 +51,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
 var (
@@ -211,6 +212,9 @@ func unitOf(target string) (string, bool) {
 //	6 an app: the key of its OWN store against the one that signed the staged
 //	  file, and the needs of the new version among the grants of the
 //	  activation
+//	6b an NGC part, in place of 6 - the two are the two branches of one
+//	  fork: the roles of THIS server have to run that part (runs), so that
+//	  nobody can tell an API server to become a web server
 //	-- only now is anything on this machine changed -------------------------
 //	7 the part is put in place and its service restarted, or the app is set
 //	  up; a part that does not come up healthy is taken back (Rollback)
@@ -237,7 +241,7 @@ func (m *Manager) Install(ctx context.Context, d access.Decision) ([]byte, error
 // for every call, because none of it can be brought about by a peer.
 func (m *Manager) wired() error {
 	if m == nil || m.d.State == nil || m.d.List == nil || m.d.Report == nil || m.d.Now == nil ||
-		m.d.BinDir == "" || m.d.Services == nil || m.d.Health == nil {
+		m.d.BinDir == "" || m.d.Services == nil || m.d.Health == nil || len(m.d.Roles) == 0 {
 		return ErrInternal
 	}
 	return nil
@@ -349,9 +353,37 @@ func (m *Manager) install(ctx context.Context, d access.Decision, p *core.Instal
 	}
 
 	if slices.Contains(knownParts, p.Target) {
+		if !m.runs(p.Target) {
+			return nil, ErrForbidden
+		}
 		return emptyResult, m.installPart(ctx, p.Target, st)
 	}
 	return emptyResult, m.installApp(ctx, st)
+}
+
+// runs reports whether an NGC part belongs on THIS server, out of the roles
+// this server carries (Deps.Roles, config.Controller.Roles).
+//
+// tunnel.Components is the mapping, and it is the one the API's rollout picks
+// its nodes with as well (apps/server-api/classes/updates/rollout.go,
+// nodesFor). So this is not a second table that could drift from the sending
+// side: there is one function, and both sides ask it. What the roles of this
+// server are is likewise held in one place - the configuration - and carried,
+// not re-derived.
+//
+// It is asked only for the three parts of knownParts, because only those are
+// installed here as programs. An app is not asked, and does not go unchecked
+// either: an app that wants containers is refused against the same roles
+// where its container is built (install/activate.go and install/update.go,
+// tunnel.RoleServices) - and install/update.go is in the path this file takes
+// (installApp -> Apps.Update).
+//
+// NOT covered, and named rather than claimed: the role of a server with
+// RoleDB. The API lays the ngc-api FILE ready on such a node so that it can
+// play the migrations in, and laying ready is Stage - this wall sits at the
+// install and does not touch that.
+func (m *Manager) runs(part string) bool {
+	return slices.Contains(tunnel.Components(m.d.Roles), part)
 }
 
 // installedVersion is the version of the target running on this server: out of
