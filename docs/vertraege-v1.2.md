@@ -859,3 +859,36 @@ Zwei Dinge, die bei dieser Entscheidung gemessen gehören und es nicht sind:
   sich einmal, dann wäre vor dem Senden **keine** Prüfung mehr möglich, und in den
   Arbeitsspeicher darf ein 4-GiB-Paket nicht. Jeder Fall dort prüft, dass nichts liegen
   bleibt; für das Zwischenlager **zwischen zwei Aufrufen** gibt es diese Prüfung noch nicht.
+
+## Punkt 31: Nichts hält die Rechte des Katalogeintrags gegen das Manifest
+
+**Gemessen am 12.10.2026** vom Strang, der das App-Einrichten beim Update gebaut hat — und
+zwar nicht als Nebenbefund, sondern als **Grund, einen vorgeschlagenen Weg zu verwerfen**.
+
+`store.Package.Needs` (die Rechte im **Katalogeintrag**) wird an genau einer Stelle angefasst:
+`shared/store/catalog.go:260`, und dort nur durch `validNeeds` — also auf **Form** geprüft.
+**Nichts** hält diesen Eintrag gegen `store.Manifest.Needs`, die Rechte im **Paket**: weder
+`VerifyCatalog`, noch `store.Walk`, noch `install.Accept`.
+
+Gebaut wird der Container aber aus dem **Manifest**.
+
+Daraus folgt der Satz, der zählt: **eine Rechteprüfung gegen die Katalogkopie wäre eine Wand
+vor einer offenen Tür.** Verlangt das Manifest `root` und sagt der Eintrag nichts, wird `root`
+durchgewinkt — und die Prüfung, die davor steht, meldet nichts, weil sie die falsche Kopie
+liest.
+
+**Darum wurde der Weg verworfen**, bei dem `state.Staged` die Rechte aus dem Katalogeintrag
+mitträgt. Gebaut ist statt dessen: der Aufrufer liest die Rechte, und `install.Update` glaubt
+seiner Lesung **nicht** — es vergleicht sie gegen das Manifest (`sameSet`, sonst `ErrVerify`)
+und baut die Zeile aus den **Manifest**-Rechten, nie aus den übergebenen. Ein Wert, eine
+Quelle.
+
+Das ist dieselbe Klasse wie der Befund **W-1** des Datenbankpakets: zwei Zeilen, die sich
+gegenseitig stützen und zusammen nichts halten. Hier ist sie vor dem Bauen erkannt worden,
+nicht danach.
+
+**Was offen bleibt:** ob `VerifyCatalog` die beiden Rechtelisten künftig selbst
+gegeneinanderhalten soll. Das wäre eine Änderung in eingefrorenem `shared/` und gehört in die
+Reihe des Vorschlags für v1.3 — mit dem Hinweis, dass es **heute keine Lücke ist**, solange
+niemand die Katalogkopie als Grundlage einer Rechteentscheidung nimmt. Wer das tut, muss es
+zuerst hier lesen.
