@@ -245,6 +245,14 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
   go test -count=1 -buildvcs=false -race ./apps/server-api/...
   ```
 
+  **Ein Paket scheitert dabei, und zwar aus einem gemessenen Grund:** `shared/trust` wird unter
+  `-race` rot, ohne ein einziges Datenrennen (`DATA RACE` 0 über alle 30 Pakete).
+  `TestSignatureBeforeDecoding` misst **Speicher-Obergrenzen**, und die Instrumentierung des
+  Race-Detektors belegt selbst mehr: `Open: 65736 bytes allocated` gegen eine Grenze um 65 544.
+  Also: **`-race` über alles fahren und `shared/trust` getrennt nennen** — der Fall kann unter
+  `-race` nicht halten, solange er die Instrumentierung nicht mitrechnet, und die Zeile liegt in
+  eingefrorenem `shared/`. Über den Rest des Baums: **30 Pakete, 0 DATA RACE** (12.10.2026).
+
   **Wie der falsche Satz entstand, weil das die eigentliche Lehre ist:** sechs Stränge haben
   unabhängig nach einem Übersetzer gesucht und keinen gefunden, einer davon rekursiv in vierzehn
   Orten. Daraus habe ich „es gibt keinen" gemacht und es als Regel aufgeschrieben — und danach
