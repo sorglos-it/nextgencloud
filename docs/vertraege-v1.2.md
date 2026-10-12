@@ -1365,3 +1365,64 @@ können.
 festgenagelt: der Stift steht nach Fassung 3 auf 3, ein kalter API öffnet darunter die ganze Kette
 ohne Fehler — und mit abgeschnittener Zeile 3 kommt `ErrNoTrust`. Die Kontrolle zeigt, was ohne
 Anker passiert wäre: Fassung 2 wird **stillschweigend wieder in Kraft gesetzt**.
+
+### Gemessen am 12.10.2026 — und die Lage ist schärfer, als sie gelesen war
+
+Zwei Fälle über den **echten** Handler und das echte `state`, mit Zwischenprüfung (derselbe Weg
+**ohne** Anker geht durch: Einrichtung 200, Fassung 1 = 204, kalter Knoten öffnet sie, Tür danach
+404 — der Fall misst also den Anker und keine frühere Wand). Mutant A (`from = anchor.Seq` →
+`from = 1`) **stirbt**, Kontrolle **lebt**, `-race` 0 mit Mutant A als Gegenprobe.
+
+**Die Wand kommt — und zwei Dinge daran waren nicht gelesen:**
+1. **Der aufnehmende Knoten sieht sie nicht.** `AddVersion` setzt `s.cur`, also läuft die
+   Einrichtung scheinbar durch. Die Wand kommt beim **Neustart** oder auf dem **zweiten Knoten**.
+2. **Sie schließt sich hinter dem Admin.** Die Einrichtung öffnet danach wieder, aber eine zweite
+   Fassung 1 wird abgewiesen, weil Zeile 1 schon liegt — der Weg zurück ist **verbaut**.
+
+**Was der Recovery-Modus heute mit der Datei tut: nichts.** `git grep -i "trust-anchor"` über die
+Skripte des Recovery-Pakets: **kein Treffer**; `docs/recovery-modus.md` nennt die Datei
+**nirgends**. Im Produktionscode gibt es **zwei Schreiber** (`node.pair`, `state.advanceAnchor`)
+und **keinen Löscher**.
+
+**Der Sachverhalt, der in meiner Abwägung fehlte — es gibt zwei Treiber:**
+- **MariaDB:** die Datenbank liegt auf einem **anderen** Rechner. Dort ist der Anker das Einzige,
+  was hält.
+- **SQLite:** die Datenbank ist eine **Datei derselben Platte**. Wer sie schreibt, löscht den
+  Anker.
+
+**Der Anker schützt damit messbar nur die MariaDB-Installation.** Das ändert die ganze Abwägung:
+bei SQLite ist der Schutz, über den hier gestritten wird, schon heute nicht vorhanden.
+
+**Antwort B (die Einrichtung räumt die Datei weg) hebt den Schutz GANZ auf**, nicht teilweise —
+Mutant C gemessen: alle Zeilen weg ergibt heute `ErrNoTrust`, unter B eine **Übernahme** (Fassung 1
+mit fremdem Admin in Kraft); nur Zeilen 2 und 3 weg ergibt heute die Wand, unter B einen
+**gelungenen Rollback**. Der Grund ist einfach: **jeder** Rollback erzeugt genau das `ErrNoTrust`,
+das B zum Auslöser macht. **B ist damit keine Antwort.**
+
+**Antwort A (der Recovery-Modus räumt sie weg) kostet nichts Neues:** gemessen gegen `main`, ohne
+jede Codeänderung, genügt ein `os.Remove` — `anchorFor` deutet jeden Dateifehler als „kein Anker".
+A vergrößert die Angriffsfläche also nicht. Ob ein Angreifer eine Wiederherstellung **vortäuschen**
+kann, hängt allein daran, ob das Wegräumen das **Stick-Quorum** verlangt (dann reicht
+Schreibzugriff nicht) oder als Datei auf dem Produktivsystem gebaut wird (dann reicht er).
+**Diese Hälfte ist nicht messbar, weil es noch keinen Recovery-Code gibt.**
+
+### Ein dritter Weg, gemessen (Mutant D) — und er hält beides
+
+**Der Stift wird nur von einer *abgeschlossenen* Einrichtung geräumt**: in `take`, **nach** der MAC
+des lokalen Einmal-Codes, der Unterschrift und `AddVersion` — nicht beim Anblick einer leeren
+Datenbank.
+
+- **Weg zurück: offen.** Ein kalter Knoten läuft danach auf Fassung 1.
+- **Rollback-Angriff: weiter verriegelt.** Liegt Zeile 1, kommt `ErrOldVersion`; liegt sie nicht,
+  fehlt dem Angreifer der **lokale** Einmal-Code.
+- **Preis:** gegen einen, der die Datenbank schreibt **und** die lokale Platte liest, hält er
+  nichts — **aber genau der hat den Anker schon heute**, mit einer Dateilöschung. Es kostet also
+  nichts, was nicht ohnehin verloren ist, und legt den Anker **nicht** in die Hand des reinen
+  Datenbank-Schreibers.
+- **Vor einem Bau zu klären:** `EnsureCode` legt nach einem Rollback einen **frischen** Einmal-Code
+  aus; und der Stift wird ohne Admin-Schlüssel der alten Liste geräumt — unvermeidlich nach einem
+  Totalverlust, und genau dort könnte Antwort A mit den Root-Sticks mehr leisten.
+
+**Mein Vorschlag: der dritte Weg**, weil er der einzige ist, der den dokumentierten Weg zurück
+offen hält, ohne den Anker dem Angreifer zu geben, gegen den er gebaut ist. **Gebaut ist er
+nicht** — er gehört zu Punkt 10 des Vertrags.
