@@ -32,7 +32,6 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
 .term .out div{min-height:1.35em}
 /* The line the person typed, so the answer under it can be told from the
    question above it without reading both. */
-.term .out .cmd{color:var(--muted)}
 
 .term .ask{display:flex;align-items:center;gap:8px}
 .term .ask .sign{color:var(--muted);

@@ -2,10 +2,22 @@
 //
 // WHAT IS HERE AND WHAT IS NOT. This is the face of the app. Behind it stands
 // the service "virtuelles Terminal" of the controller
-// (apps/server-controller/), which runs the commands in the app's own
-// container; it does not exist yet, and nothing in this file would notice if it
-// did - the app asks for a channel to its own action and the shell takes it
-// from there.
+// (apps/server-controller/classes/terminal/), which runs a shell on a pseudo
+// terminal inside the app's own container. SINCE 12.10.2026 IT EXISTS, and
+// this file is written against its format - the sentence that stood here, "it
+// does not exist yet and nothing in this file would notice if it did", was
+// true until then and is not any more.
+//
+// WHAT IS STILL NOT MEASURED ANYWHERE: that the real service answers at all,
+// that its pseudo terminal really echoes, and how its output is split on the
+// way here. All three need a Linux machine with the controller running; what
+// the cases in tests/shell/terminal.spec.js hold is that the bytes this file
+// sends are the bytes terminal.go reads.
+//
+// THE SIZE IN THE OPEN IS NOT WHAT THE SERVICE READS. ngc.open carries
+// {cols, rows} because the plan of this task says so, and the service reads no
+// parameters at all (terminal.go takes none, and the shell's environment is
+// built from nothing). The size that counts travels as a frame; see tellSize.
 //
 // THE CHANNEL IS A STREAM, NOT A QUESTION. ngc.open stays open: what is typed
 // goes out with write, Strg+D says "no more input" with end, and what the
@@ -13,6 +25,18 @@
 // make. It counts as finished only when the close says "ok"; anything else is a
 // connection that was cut, and the person is told so rather than left with half
 // an answer that looks whole.
+//
+// EVERY FRAME TOWARDS THE SERVICE CARRIES ITS OWN LENGTH: one byte kind, two
+// bytes length big endian, then the payload. The reason is measured and belongs
+// to the other side - serve.shellInput hands the inner messages on as one byte
+// STREAM, so the boundary of a message is gone by the time the service reads
+// it, and a keys frame without a length has no end. A parser that had to guess
+// one could be pushed out of step by whoever sends the bytes, and from then on
+// every window size would be read out of the middle of a paste. The numbers
+// below are the contract's (see FRAMES).
+//
+// THE WAY BACK CARRIES NO FRAMES. The output of the shell travels raw, because
+// this side has nothing to tell apart (terminal.EncodeOutput says so itself).
 //
 // EVERY BYTE FROM THE SERVICE IS TEXT. The prototype puts the output into the
 // page with innerHTML - exactly the mistake the design names (4.6). Here it
@@ -45,6 +69,17 @@
   // better than none.
   const COLS = 80;
   const ROWS = 24;
+
+  // FRAMES. Read off the service's own file,
+  // apps/server-controller/classes/terminal/terminal.go: kind, length of the
+  // payload as uint16 big endian, payload. A keys frame holds 1..MAX_KEYS
+  // bytes - zero is no frame and the service ends the run over one - and a
+  // size frame holds exactly four bytes, cols and rows as uint16, each
+  // 1..MAX_DIM.
+  const KIND_KEYS = 1;
+  const KIND_RESIZE = 2;
+  const MAX_KEYS = 16 << 10;
+  const MAX_DIM = 2000;
 
   function el(tag, cls, txt) {
     const e = document.createElement(tag);
@@ -85,8 +120,11 @@
   // wire ends says nothing about where a line ends.
   let line = null;
 
-  function newline(cls) {
-    line = el("div", cls, "");
+  // One line of the output. It carries no class any more: the only thing that
+  // ever had one was the line this app wrote itself, and it does not write one
+  // (see send).
+  function newline() {
+    line = el("div", null, "");
     out.append(line);
     return line;
   }
@@ -94,7 +132,7 @@
   // write puts text on the screen, as text. It is the only way anything gets
   // there, and it is the reason this file holds no innerHTML: a service that
   // answers with markup has written characters, not elements.
-  function write(s, cls) {
+  function write(s) {
     const parts = String(s).split("\n");
     for (let i = 0; i < parts.length; i++) {
       // Every break ends the line before it. The last piece has none after it,
@@ -102,7 +140,7 @@
       // a break there is nothing left to start, so no empty line is made.
       if (i > 0) line = null;
       if (i === parts.length - 1 && parts[i] === "") break;
-      if (line === null) newline(cls);
+      if (line === null) newline();
       // += and not textContent =, so a line that arrives in three pieces is
       // one line in the end.
       line.textContent += parts[i];
@@ -145,14 +183,68 @@
     const area = out.getBoundingClientRect();
     const cols = w > 0 ? Math.floor(area.width / w) : 0;
     const rows = lineHeight > 0 ? Math.floor(area.height / lineHeight) : 0;
-    return { cols: cols > 0 ? cols : COLS, rows: rows > 0 ? rows : ROWS };
+    return { cols: dim(cols, COLS), rows: dim(rows, ROWS) };
+  }
+
+  // dim brings one measured number into the range a size frame can carry. A
+  // box with no size yet gives nothing to work with, and then the size of a
+  // terminal nobody resized is better than none; above MAX_DIM the service
+  // ENDS THE RUN over the frame, so a window somebody made that wide is told
+  // as wide as may be said instead of killing the terminal.
+  function dim(n, fallback) {
+    if (!(n > 0)) return fallback;
+    return n > MAX_DIM ? MAX_DIM : n;
+  }
+
+  // frame wraps one payload: kind, length as uint16 big endian, payload. The
+  // length is what makes the stream readable at all (see the head of this
+  // file).
+  function frame(kind, payload) {
+    const f = new Uint8Array(3 + payload.length);
+    f[0] = kind;
+    f[1] = (payload.length >> 8) & 0xff;
+    f[2] = payload.length & 0xff;
+    f.set(payload, 3);
+    return f;
+  }
+
+  // sizeFrame is the four bytes of a size: cols, then rows, each uint16 big
+  // endian. Both have been through dim, so neither is zero and neither is over
+  // MAX_DIM - the two things the service refuses a size frame for.
+  function sizeFrame(s) {
+    return frame(KIND_RESIZE, new Uint8Array([s.cols >> 8, s.cols & 0xff, s.rows >> 8, s.rows & 0xff]));
   }
 
   // One channel for the whole window: a terminal is a conversation, and a
   // second one would be a second conversation in the same box. It is closed by
   // the shell when the window closes, so there is nothing to tidy up here.
   let stream = null;
-  let sending = false;
+  // The writes of this channel, one after another. A frame that overtook
+  // another would put a size into the middle of a paste - the very thing the
+  // length in the header is there to prevent - so everything goes out through
+  // this one chain, in the order it was made.
+  let tail = Promise.resolve();
+  // The size the service was last told. A resize that changes no character
+  // count sends nothing: the same two numbers twice are of no use to it.
+  let told = null;
+
+  function push(bytes) {
+    if (stream === null) return;
+    tail = tail.then(() => (stream === null ? undefined : stream.write(bytes))).catch(() => {
+      // What became of the channel arrives in onClose; a throw here would be
+      // the same news a second time.
+    });
+  }
+
+  // tellSize measures the box and sends a size frame if it has changed. It is
+  // the ONLY way the service learns how wide the window is: terminal.go reads
+  // no parameters, and its pseudo terminal starts at whatever the kernel gives.
+  function tellSize() {
+    const now = size();
+    if (told !== null && told.cols === now.cols && told.rows === now.rows) return;
+    told = now;
+    push(sizeFrame(now));
+  }
 
   // ONE decoder for the whole channel, and it stands before the listener that
   // uses it: it is what carries the half character of one frame over into the
@@ -176,7 +268,7 @@
         // what they see is that nothing arrived.
         return;
       }
-      if (text !== "") write(text, null);
+      if (text !== "") write(text);
     };
     s.onClose = (status) => {
       stream = null;
@@ -189,6 +281,10 @@
         fail(CUT);
       }
     };
+    // The size before anything else: a shell that laid its first line out for
+    // eighty columns into a window of two hundred has already written the
+    // wrong thing.
+    tellSize();
     input.disabled = false;
     say(READY);
     input.focus();
@@ -204,27 +300,25 @@
   // ---- what the person does ------------------------------------------------
 
   function send() {
-    if (stream === null || sending) return;
+    if (stream === null) return;
     const cmd = input.value;
     // The empty line is sent too: a service that is waiting for one gets it,
     // and a person pressing the Enter key expects something to happen.
     input.value = "";
-    // The line the person typed, on the screen in front of the answer. The
-    // service does not echo - it is no terminal line discipline - so without
-    // this the answers would stand there without their questions. A line of
-    // its own before and after, so the mark that tells question from answer
-    // belongs to this one line only.
-    line = null;
-    write("$ " + cmd, "cmd");
-    line = null;
-    // sending is set before the write and cleared after it, so a second Enter
-    // while the first piece is still on its way cannot send out of order.
-    sending = true;
-    Promise.resolve(stream.write(enc.encode(cmd + "\n"))).then(() => {
-      sending = false;
-    }, () => {
-      sending = false;
-    });
+    // NOTHING IS WRITTEN ON THE SCREEN HERE, and that is a change with a
+    // reason. The service runs /bin/sh -i on a pseudo terminal, and a pty
+    // echoes what is written into it - so the line comes back by itself, and an
+    // echo here would put every line on the screen twice. The half that
+    // matters more: a program that asks for a password switches that echo OFF,
+    // and an app that wrote the line itself would put the password on the
+    // screen regardless.
+    const bytes = enc.encode(cmd + "\n");
+    // Cut into frames the service accepts. The line break is always there, so
+    // there is always at least one byte and never an empty frame - and an
+    // empty keys frame is no frame: ParseFrame refuses it and the run ends.
+    for (let at = 0; at < bytes.length; at += MAX_KEYS) {
+      push(frame(KIND_KEYS, bytes.subarray(at, Math.min(at + MAX_KEYS, bytes.length))));
+    }
   }
 
   input.addEventListener("keydown", (e) => {
@@ -245,6 +339,15 @@
         // would only be the same news twice.
       });
     }
+  });
+
+  // A window that changed size tells the service, once the changing has
+  // stopped: a drag sends a resize event per animation frame, and the service
+  // has no use for forty sizes on the way to one.
+  let settle = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(settle);
+    settle = setTimeout(tellSize, 80);
   });
 
   const paint = (theme, accent) => {
