@@ -8,7 +8,5 @@
 package tools
 
 import (
-	_ "github.com/coder/websocket"               // sessions and tunnel
 	_ "github.com/go-webauthn/webauthn/webauthn" // passkeys
-	_ "github.com/pquerna/otp/totp"              // TOTP
 )
