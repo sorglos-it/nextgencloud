@@ -686,12 +686,176 @@ Der naheliegende Ausweg wäre, die Liste aus der Ausgabe von podman zu lesen und
 wäre die falsche Richtung: eine Liste, die der Container-Dienst ausgibt, ist
 keine Buchführung, sondern eine Momentaufnahme.
 
-**Was es heute kostet, vollständig:** das Abbild liegt im Bildspeicher **seines
-eigenen Benutzers**, ist nur für diese App erreichbar, und ein Deinstallieren
-nimmt es mit dem Benutzer mit. Es ist also verlorener Platz, kein offener
-Zugang.
+**Was es heute kostet, vollständig – und hier stand zuerst etwas Falsches:**
+der Satz „ein Deinstallieren nimmt es mit dem Benutzer mit" ist **gemessen
+falsch**. Gemessen am 10.10.2026:
+
+| gemessen | Stelle |
+|---|---|
+| der Benutzer bekommt das **Datenverzeichnis der App** als Zuhause (`--home-dir DataDirOf(app)`) | `user.go:188` |
+| podman läuft mit `HOME=u.home`, der Bildspeicher liegt also **in den Daten der App** | `podman.go:438` |
+| `userdel` läuft **ohne `-r`** – das Zuhause bleibt stehen | `user.go:258` |
+| `DataSize` läuft über `DataDirOf(app)` und **zählt die Abbild-Schichten als Benutzerdaten mit** | `data.go:227` |
+
+Daraus folgt zweierlei, und beides ist schlimmer als „verlorener Platz":
+
+- Das Abbild liegt **im Datenverzeichnis**, nicht irgendwo beim Benutzer. Mit
+  `KeepData` beim Deinstallieren bleibt es **für immer** liegen, und keine
+  Buchführung weiß mehr davon.
+- Die Zahl, die ein Verwalter **vor** dem Löschen liest, ist um
+  Größenordnungen daneben: ein Abbild von einem Gigabyte erscheint ihm als ein
+  Gigabyte **eigene Daten**. Er entscheidet über das Löschen anhand einer Zahl,
+  die etwas anderes zählt, als ihr Name sagt.
+
+Richtig bleibt nur, dass der Zugang nicht offen steht: der Bildspeicher gehört
+dem Benutzer der App und ist nur für sie erreichbar.
 
 **Die richtige Lösung ist ein Referenzfeld in `dbapi.App`** — und das ist eine
 Änderung im eingefrorenen `shared/`. Darum steht sie hier und ist nicht gebaut.
 Wer sie baut, prüft gleich mit, ob dasselbe Feld auch dem Deinstallieren hilft,
 statt sich dort auf den Benutzer zu verlassen.
+
+## Punkt 25: Die Adressprüfung des Herunterladens ist von außen nicht aufrufbar
+
+**Gemessen am 10.10.2026** in Aufgabe 19 der API; der Strang hat BLOCKED gemeldet
+statt sich eine zweite Zeichengrammatik zu bauen. Das war richtig.
+
+Die Grammatik einer unterschriebenen Download-Adresse ist **da und richtig**:
+`store.validHTTPSURL` (`shared/store/catalog.go:208`) erlaubt eine Query — Stores
+unterschreiben Download-Links — und verbietet das Fragment, Steuerzeichen,
+Leerzeichen und `" ' < > \ #`; den Rechnernamen beurteilt sie über
+`trust.ValidHost`/`ValidHostPort`, also überall gleich. Sie ist aber
+**klein geschrieben** und läuft nur innerhalb von `VerifyCatalog`.
+
+Daraus folgt für jeden Abholer außerhalb von `shared/`: er kann die Adresse, die
+er gleich anfragt, **nicht selbst gegen dieselbe Grammatik prüfen**. Es bleiben
+zwei Wege, und beide sind schlechter:
+
+- **Darauf bauen, dass `VerifyCatalog` schon geprüft hat.** So macht es
+  `appstore.Download` heute (Schema, Länge 512, Rechnername). Das ist keine
+  falsche Prüfung, aber eine **Naht ohne Riegel**: wer die Adresse später
+  irgendwo anders herbekommt, merkt nichts.
+- **Eine eigene Grammatik schreiben.** Dann gibt es zwei, sie laufen
+  auseinander, und keiner weiß, welche gilt. `trust.ValidStoreURL` taugt dafür
+  nicht: sie verbietet die Query, die ein Store gerade braucht.
+
+**Die richtige Lösung ist ein ausgeführtes `store.ValidDownloadURL`** — dieselbe
+Funktion, groß geschrieben, mit eigenen Fällen. Das ist eine Änderung im
+eingefrorenen `shared/`, darum steht sie hier und ist nicht gebaut. Wer sie baut,
+lässt `validHTTPSURL` nicht daneben stehen, sondern macht die große Fassung zur
+einzigen.
+
+## Punkt 26: Der Einmal-Code wird vor der MAC-Prüfung verbraucht
+
+**Gemessen am 12.10.2026** in Aufgabe 18 der API und dort als Bedenken gemeldet.
+`join.Accept` verbraucht den Einmal-Wert (`OnceUse`), **bevor** es die MAC prüft —
+übernommen aus `controllers.Pair`, mit Begründung im Kommentar.
+
+**Was das bedeutet:** wer die Adresse kennt und eine Anfrage mit **falscher** MAC
+schickt, verbrennt den wartenden Beitrittscode. Der Angreifer kommt nicht herein,
+aber der Admin muss einen neuen Code ausgeben — und beim nächsten Versuch wieder.
+Das ist kein Einbruch, sondern ein billiges Zumachen von außen.
+
+Die andere Reihenfolge hat den umgekehrten Preis: wer erst die MAC prüft, lässt
+jemanden beliebig oft gegen denselben Code rechnen. Welche Seite schwerer wiegt,
+hängt daran, wie lang ein Code gilt und wie oft er neu ausgegeben wird — und das
+ist **nicht gemessen**.
+
+Festgehalten, nicht geändert: die Reihenfolge steht an **zwei** Stellen
+(`join.Accept` und `controllers.Pair`), und wer sie anfasst, muss beide anfassen,
+sonst verhalten sich Beitritt und Paarung verschieden. Wer das entscheidet,
+entscheidet es für beide, mit einer Messung, wie oft ein Code neu ausgegeben wird.
+
+## Punkt 27: Zwei Server mit demselben Namen verdrängen einander
+
+**Gemessen am 12.10.2026** in Aufgabe 18 der API. Eine zweite Beitrittsanfrage für
+denselben Knotennamen **überschreibt** die erste (`BlobPut` nach `req.Node`). Der
+Admin sieht dann nur die letzte und weiß nicht, dass es eine erste gab.
+
+Im Entwurf ist das nicht geregelt. Zwei Lesarten, beide vertretbar: die zweite
+Anfrage ist derselbe Server, der es noch einmal versucht (dann ist Überschreiben
+richtig), oder zwei verschiedene Server wollen denselben Namen (dann gehört die
+zweite abgewiesen und gemeldet). Unterscheiden lassen sie sich am öffentlichen
+Schlüssel — der liegt in der Anfrage.
+
+Festgehalten, nicht gebaut. Wer es baut, entscheidet am Schlüssel, nicht am Namen.
+
+## Punkt 28: Der Controller startet Migrationen als Programm, nicht selbst
+
+**Entschieden am 12.10.2026 vom Koordinator**, nachdem Aufgabe 21 des Controllers
+deswegen BLOCKED gemeldet hat. Der Entwurf führte die Frage selbst als offen
+(Entscheidungsprotokoll, Zeile 1049, 23.09.2026: „wie startet der Controller die
+Migrationen eines Updates? … wird mit der nächsten Vertragsänderung entschieden").
+
+**Gemessen, worauf die Entscheidung ruht:**
+- Die Migrationen sind **keine Dateien zum Entpacken**. Sie liegen als `go:embed`
+  **im Programm** (`apps/server-db/sql/embed.go`). Der Controller kann nicht
+  auspacken, was in einem Binary steckt — Schritt 4 des Plans beschreibt einen Weg,
+  den es nicht gibt.
+- Sperre, Ledger und Linter sitzen schon in `apps/server-db/classes/migraterun`,
+  und dessen Paketkopf sagt es selbst: „That is the whole of what `ngc-api migrate`
+  does — one controller with role db starts it".
+- `ngc-api migrate` **gibt es noch nicht**: `apps/server-api/main.go` kennt nur
+  `-version` und `-config` und ruft `migraterun` nirgends auf.
+
+**Die Entscheidung: `ngc-api migrate` als Programm.** Der Controller startet es wie
+jedes andere Programm; er bekommt **keinen** eigenen Läufer.
+
+Der Grund ist nicht Bequemlichkeit, sondern dass die Gegenrichtung **zwei Wahrheiten
+über dasselbe Schema** bedeutet: ein zweiter Läufer im Controller braucht einen
+eigenen SQL-Treiber, eine eigene Zeile in `tools/modules.go` — und dann migrieren
+zwei Programme eine Datenbank. Das ist genau die Klasse, die im db-Paket als Befund
+**W-1** gemessen wurde: zwei Zeilen, die sich gegenseitig stützen und zusammen
+nichts halten.
+
+**Daraus folgt, was zu bauen ist:** der Unterbefehl `migrate` in
+`apps/server-api/main.go`. Das ist **Aufgabe 24 des API-Plans** („`main.go`
+verdrahten"), keine neue Aufgabe. `shared/` ändert sich dadurch **nicht**.
+Bis der Unterbefehl steht, hat der Controller kein `migrate.go` — ein Gerüst wäre
+schlimmer als nichts, es sieht aus wie eine Zusage.
+
+## Punkt 29: Jeder Rahmen des Terminals trägt seine Länge
+
+**Gebaut und gemessen am 12.10.2026** in Aufgabe 23 des Controllers, als **Abweichung**
+vom Plan, und **mit der Sitzung Webinterface abzustimmen**, weil das Gegenstück dort sitzt.
+
+Das Protokoll des virtuellen Terminals ist: **1 Byte Art, 2 Byte Länge, Nutzlast.**
+
+Der Grund ist gemessen, nicht gewählt: `serve.shellInput` reicht die inneren Nachrichten
+als **einen Bytestrom** weiter. Damit ist die Nachrichtengrenze weg — und ein Tastenrahmen
+ohne Länge hat kein Ende. Ein Parser, der das Ende raten muss, lässt sich aus dem Takt
+bringen: wer die Tasten schickt, bestimmt, wo der nächste Rahmen anfängt. `FuzzParseFrame`
+hat 13 365 806 Läufe ohne Fund, und der Fuzzer prüft das **Ergebnis**, nicht nur, dass
+nichts abstürzt.
+
+Zwei Zahlen daneben sind **Entscheidungen**, im Code so benannt: Tasten höchstens 16 KiB,
+Fenster 1 bis 2000 Spalten/Zeilen.
+
+Dazu eine dritte Entscheidung, wo der Plan keine Zahl nannte: **Leerlaufgrenze 30 Minuten.**
+Stream-Aktionen haben laut Vertrag keine Zeitgrenze — und diese Shell läuft als root.
+Beide Seiten der Grenze sind mit einer Handuhr festgenagelt.
+
+**Was noch keine Zahl hat:** wie viele Terminals gleichzeitig. Gezählt, nicht gemessen:
+je Kanal 65 497 + 16 387 Byte Puffer, ein PTY-Paar, vier Goroutinen, ein Containerprozess
+— bei 1024 Kanälen etwa 80 MiB. Eine Obergrenze setzt dieses Paket nicht; sie gehört in
+`serve` und in den Vertrag.
+
+## Punkt 30: Niemand hält die hochgeladene Datei zwischen Hochladen und Aktivieren
+
+**Gefunden am 12.10.2026** von Aufgabe 22 der API, beim Bauen, nicht beim Lesen.
+
+`ngc.store/upload` behält das Paket **nicht** — es behält nur die ui-tar. `shared/` hat
+keinen Platz für ein Paket. `Activate` bekommt darum `ActivateRequest.File`/`Size`: die
+Datei gehört dem **Aufrufer**.
+
+**Wo sie zwischen `upload` und `activate` liegt, ist nicht entschieden und nicht gebaut.**
+Das gehört zur Verdrahtung (Aufgabe 24 des API-Plans) und ist keine Änderung in `shared/`.
+
+Zwei Dinge, die bei dieser Entscheidung gemessen gehören und es nicht sind:
+- **Mehrere API-Server teilen die Datenbank, nicht die Platte.** Ein Zwischenlager auf der
+  Platte des einen Servers ist für den anderen nicht da.
+- **Was nach einem Absturz im Zwischenlager liegen bleibt.** Aufgabe 22 legt das Paket für
+  das Senden in ein Zwischenlager (`Stores.Spool`) statt es zu strömen — ein Strom liest
+  sich einmal, dann wäre vor dem Senden **keine** Prüfung mehr möglich, und in den
+  Arbeitsspeicher darf ein 4-GiB-Paket nicht. Jeder Fall dort prüft, dass nichts liegen
+  bleibt; für das Zwischenlager **zwischen zwei Aufrufen** gibt es diese Prüfung noch nicht.
