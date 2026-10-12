@@ -41,7 +41,7 @@ func newConfig(t *testing.T) *config.API {
 // own standing would decide what the next one opens.
 func withStore(t *testing.T, db dbapi.Store) {
 	t.Helper()
-	dbopen.Register(func(context.Context, config.DB) (dbapi.Store, error) { return db, nil })
+	dbopen.Register(func(context.Context, config.DB, string) (dbapi.Store, error) { return db, nil })
 	t.Cleanup(func() { dbopen.Register(nil) })
 }
 

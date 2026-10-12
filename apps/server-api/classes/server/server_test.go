@@ -392,13 +392,13 @@ func TestBuildClosesTheSetupWithATrustList(t *testing.T) {
 // says that plainly instead of doing nothing quietly.
 func TestMigrateSaysSoWithoutAMigrator(t *testing.T) {
 	dbopen.RegisterMigrator(nil)
-	if err := dbopen.Migrate(ctx, config.DB{}, nil); err != dbopen.ErrNoMigrator {
+	if err := dbopen.Migrate(ctx, config.DB{}, "ngc-api/n1", nil); err != dbopen.ErrNoMigrator {
 		t.Fatalf("Migrate: got %v, want ErrNoMigrator", err)
 	}
 	ran := false
-	dbopen.RegisterMigrator(func(context.Context, config.DB, io.Writer) error { ran = true; return nil })
+	dbopen.RegisterMigrator(func(context.Context, config.DB, string, io.Writer) error { ran = true; return nil })
 	t.Cleanup(func() { dbopen.RegisterMigrator(nil) })
-	if err := dbopen.Migrate(ctx, config.DB{}, nil); err != nil {
+	if err := dbopen.Migrate(ctx, config.DB{}, "ngc-api/n1", nil); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	if !ran {
