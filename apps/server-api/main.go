@@ -28,6 +28,14 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/join"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/server"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+
+	// The database part of this installation. Blank, because nothing of this
+	// program calls it: it registers the opener and the migrator with
+	// classes/dbopen in its init, and that import is the whole decision that
+	// THIS program carries the drivers and the migrations. Without the line
+	// server.Build comes back with dbopen.ErrNoOpener and ngc-api does not
+	// start -- which is exactly what it did until this line existed.
+	_ "github.com/sorglos-it/nextgencloud/apps/server-db/classes/register"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
@@ -144,7 +152,7 @@ func migrate(ctx context.Context, path string) int {
 	if !ok {
 		return 1
 	}
-	if err := dbopen.Migrate(ctx, cfg.DB, os.Stdout); err != nil {
+	if err := dbopen.Migrate(ctx, cfg.DB, dbopen.OwnerOf(cfg.Node), os.Stdout); err != nil {
 		if errors.Is(err, dbopen.ErrNoMigrator) {
 			slog.Error("dieses Programm wurde ohne die Datenbank-Migrationen gebaut")
 			return 1

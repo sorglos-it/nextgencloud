@@ -133,7 +133,7 @@ func newConfig(t *testing.T) *config.API {
 func build(t *testing.T) *api {
 	t.Helper()
 	db := memstore.New()
-	dbopen.Register(func(context.Context, config.DB) (dbapi.Store, error) { return db, nil })
+	dbopen.Register(func(context.Context, config.DB, string) (dbapi.Store, error) { return db, nil })
 	t.Cleanup(func() { dbopen.Register(nil) })
 	dir := t.TempDir()
 	oldCode, oldSpool := server.SetupCodeFile, server.SpoolDir
