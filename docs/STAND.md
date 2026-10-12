@@ -234,16 +234,23 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 - Fremdcode: alle Module aus Entwurf, Kapitel 7 liegen seit dem 22.09.2026 in `vendor/`, aufgezählt
   in `THIRD-PARTY.md`. Was noch kein Teil einbindet, hält `tools/modules.go` fest; wer ein Modul
   zuerst benutzt, nimmt seine Zeile dort heraus.
-- **`-race` ist auf dieser Maschine derzeit gar nicht messbar** (12.10.2026 gemessen, nachdem
-  fünf Stränge unabhängig danach gesucht hatten). Auf Windows ist **kein** C-Übersetzer:
-  `command -v` leer für gcc/cc/clang/cl/zig, rekursiv in 14 üblichen Orten nichts, kein Visual
-  Studio; das Werkzeug selbst sagt es (`go test -race` → Code 2 „requires cgo", mit
-  `CGO_ENABLED=1` → Code 1 „C compiler \"gcc\" not found"). In **WSL** liegt `gcc 14.2.0`,
-  aber **kein Go mehr** — Debian steht auf 13.7, beim Hochziehen von 12 ist es verschwunden,
-  und apt bietet nur 1.24 (Backports 1.26), zu alt für `go 1.27`. Die frühere Zeile hier
-  („`-race` geht in WSL") stimmte am 22.09.2026 und stimmt heute nicht.
-  **Darum: `-race` nicht melden, auch nicht als „0 DATA RACE"** — eine Null ohne Übersetzer
-  ist keine Messung. Nachzuholen auf einem Linux-Server.
+- **`-race` IST auf dieser Maschine messbar** — berichtigt am 12.10.2026, und zwar gegen einen Satz,
+  der vorher hier stand und falsch war. Der C-Übersetzer liegt unter
+  **`C:\esp\tools\llvm-mingw\bin\gcc.exe`** (clang 23.1.1, `x86_64-w64-windows-gnu`), also in der
+  Werkzeugkette der ESP-Arbeit — darum hat ihn keine Suche an den „üblichen Orten" gefunden.
+  So läuft es, selbst gemessen (`relay` und `link`: 0 DATA RACE, Code 0):
+
+  ```powershell
+  $env:CGO_ENABLED="1"; $env:CC="C:\esp\tools\llvm-mingw\bin\gcc.exe"
+  go test -count=1 -buildvcs=false -race ./apps/server-api/...
+  ```
+
+  **Wie der falsche Satz entstand, weil das die eigentliche Lehre ist:** sechs Stränge haben
+  unabhängig nach einem Übersetzer gesucht und keinen gefunden, einer davon rekursiv in vierzehn
+  Orten. Daraus habe ich „es gibt keinen" gemacht und es als Regel aufgeschrieben — und danach
+  sechs weiteren Strängen mitgegeben, **nicht** zu suchen. **Dass niemand etwas gefunden hat, ist
+  keine Messung, dass es nichts gibt.** Eine Abwesenheit belegt man mit der Liste der Orte, an
+  denen man gesucht hat, nicht mit der Zahl der Sucher.
 - Ein Go-Update mit neuen Unicode-Tabellen ist eine Vertragsänderung (`TestValidText` hält es an).
 - Der claude-mem-Dienst (`bun … worker-service.cjs`) leckt Speicher. Brechen Builds oder
   Fuzz-Läufe ab, zuerst den freien Speicher prüfen.

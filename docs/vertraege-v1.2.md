@@ -1094,5 +1094,7 @@ Messung: sie ist schon da und greift (`hop.Open` → `ErrLimit` → `E_LIMIT`, m
 Eine zweite, kleinere Zahl in `relay` wären zwei Stellen für dieselbe Sache — genau der Grund,
 aus dem Punkt 32 das Warten im Programm abgelehnt hat.
 
-**Ungemessen bleibt die Nebenläufigkeit selbst:** gezählt wurden Goroutinen, nicht
-Zugriffsfolgen. `-race` ist auf dieser Maschine nicht messbar. Das ist eine Lücke, keine Null.
+**Nachtrag 12.10.2026:** der Satz „`-race` ist auf dieser Maschine nicht messbar" stand hier und
+war **falsch** — der Übersetzer liegt unter `C:\esp	ools\llvm-mingwin\gcc.exe`, und
+`-race` läuft (`relay` und `link`: 0 DATA RACE). Die Nebenläufigkeit dieses Pakets ist damit
+**nachmessbar und nachzumessen**; gezählt wurden bisher nur Goroutinen, nicht Zugriffsfolgen.
