@@ -1098,3 +1098,36 @@ aus dem Punkt 32 das Warten im Programm abgelehnt hat.
 war **falsch** — der Übersetzer liegt unter `C:\esp	ools\llvm-mingwin\gcc.exe`, und
 `-race` läuft (`relay` und `link`: 0 DATA RACE). Die Nebenläufigkeit dieses Pakets ist damit
 **nachmessbar und nachzumessen**; gezählt wurden bisher nur Goroutinen, nicht Zugriffsfolgen.
+
+## Punkt 36: Zwei Härtungsschalter fehlen — Entscheidung offen
+
+**Gefunden am 12.10.2026**, als die Härtung des App-Containers endlich messbar gemacht wurde.
+Die Vorgeschichte gehört dazu, weil sie erklärt, wie die Lücke so lange bleiben konnte:
+
+**Die Härtung war von keinem einzigen Fall gehalten.** Die Abschlussprüfung hat drei Mutanten
+gefahren und alle drei **lebten** bei grünem Satz: `--cap-drop ALL` und
+`--security-opt no-new-privileges` entfernt, `--network none` und `--read-only` entfernt, und jedes
+`0o700` auf `0o777` gesetzt. Das ist die **einzige Wand zwischen einer App und dem Server**.
+
+Die Ursache war eine stille Abschaltung: die Attrappe für podman ist ein `/bin/sh`-Skript und
+überspringt sich außerhalb von Linux — damit fielen genau die Fälle weg, die podmans
+Argumentliste lesen. Behoben, ohne Linux: die Argumentliste wird gebaut und verglichen, ohne
+podman zu starten. **Jetzt tötet jeder der neun Schalter einen Mutanten**, darunter zwei, die
+vorher niemand als ungemessen bemerkt hatte (`--user 0:0` und das Hold-Volume als `:ro`).
+
+**Dabei sind zwei Schalter aufgefallen, die ganz fehlen** — gelesen, nicht gemessen, weil es ohne
+podman nicht zu zeigen ist:
+
+1. **Keine Grenze für die Prozesszahl (`--pids-limit`).** Eine Fork-Bombe in einer App ist nur
+   durch podmans Vorgabe von 2048 begrenzt — also durch eine Entscheidung, die **nicht im Repo
+   steht** und sich mit einer podman-Fassung ändern kann.
+2. **Keine Einhängeoptionen auf `/data` (`nosuid`, `nodev`).** `no-new-privileges` fängt den
+   suid-Weg ab, aber eine zweite Lage fehlt, und sie kostet nichts.
+
+**Nicht eingebaut, und das war richtig:** beides sind Sicherheitsentscheidungen, und eine Zahl für
+`--pids-limit` zu setzen heißt, eine Obergrenze für jede App festzulegen. Das gehört Thomas.
+
+**Was dabei offen bleibt und offen bleiben muss:** ob podman die Schalter **einhält**, prüft hier
+nichts. Gemessen ist, dass wir sie **schicken** — und das ist die Hälfte, die wir messen können.
+Die andere Hälfte braucht einen Linux-Server mit podman und einen echten Ausbruchsversuch; der
+entsprechende Fall überspringt sich laut.
