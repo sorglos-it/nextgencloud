@@ -1305,3 +1305,47 @@ Im Plan steht der Aufruf aber mit Parametern, und zwar in
 (`ngc.open("terminal", "shell", {cols, rows})`)" — **so, wie es dasteht, liest der nächste
 Umsetzer sie als den Weg.** Entweder die Parameter werden gelesen, oder es gehört dazugeschrieben, dass sie
 Beiwerk sind. Beides ist in `apps/` zu machen, keine Vertragsänderung.
+
+## Punkt 43: Der Vertrauensanker verriegelt den dokumentierten Weg nach einem Totalverlust
+
+**Gelesen am 12.10.2026** beim Einhängen des Ankers, **aus dem Code**, nicht gemessen — und der
+Zustand liegt **schon auf `main`**, vor jeder Änderung dieser Runde.
+
+**Was der Vertrag sagt** (V1.2, Punkt 10): eine zurückgespielte Datenbank ohne Vertrauensliste
+**öffnet die Einrichtung wieder**. Das ist der dokumentierte Weg zurück nach einem Totalverlust.
+
+**Was wirklich passiert, sobald eine `trust-anchor.json` mit Nummer > 1 liegt** — und die liegt
+dort nach **jeder** Kopplung:
+
+1. Die Einrichtung öffnet noch, wie versprochen.
+2. Fassung **1** wird unterschrieben und gespeichert.
+3. Der nächste `Refresh` liest **ab der angehefteten Nummer**, findet dort nichts, und bleibt bei
+   **`ErrNoTrust`**.
+
+**Der Weg zurück ist also offen und endet in einer Wand.** Für den Admin heißt das: die
+Einrichtung nimmt ihn an, und danach läuft nichts.
+
+**Das ist nicht von der Änderung dieser Runde erzeugt** — das „nur vorwärts" des Vorrückens
+erzeugt es nicht und behebt es nicht. Es ist eine **Entscheidung über den Recovery-Weg**, und sie
+hat genau zwei Antworten:
+
+- **Der Recovery-Modus räumt die Datei weg.** Dann ist der Anker weg, sobald jemand bewusst
+  wiederherstellt — und der Schutz, den er gibt (niemand dreht die Liste zurück), ist genau in
+  dem Augenblick weg, in dem ein Angreifer eine Wiederherstellung vortäuschen könnte.
+- **Die Einrichtung räumt sie weg**, wenn sie eine Datenbank ohne Vertrauensliste findet. Dann
+  entscheidet der Zustand der Datenbank über den Anker — und wer die Datenbank leeren kann, hebt
+  damit den Anker.
+
+**Beide Antworten geben etwas her.** Darum gehört die Entscheidung zu Punkt 10 des Vertrags und
+nicht in ein Paket, und darum ist sie hier benannt statt gebaut.
+
+**Was der Anker leistet, in einem Satz, damit die Abwägung klar ist:** er schützt gegen einen, der
+die **Datenbank** schreiben kann, aber **keinen Admin-Schlüssel** hat — er soll die Vertrauensliste
+nicht auf einen älteren Stand zurückdrehen und entzogene Schlüssel nicht wieder gelten lassen
+können.
+
+**Und was er nicht kann, gemessen:** die Kette **oben abschneiden**. Das ist die eine Form, die
+`checkGap` selbst als nicht fangbar benennt, und sie ist jetzt mit zwei Zwischenprüfungen
+festgenagelt: der Stift steht nach Fassung 3 auf 3, ein kalter API öffnet darunter die ganze Kette
+ohne Fehler — und mit abgeschnittener Zeile 3 kommt `ErrNoTrust`. Die Kontrolle zeigt, was ohne
+Anker passiert wäre: Fassung 2 wird **stillschweigend wieder in Kraft gesetzt**.
