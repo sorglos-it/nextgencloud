@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -95,7 +96,7 @@ func (s *fakeServices) Running(_ context.Context, _ string) (bool, error) {
 type fakeApps struct {
 	needs    []string
 	needsErr error
-	updates  []AppUpdate
+	updates  []install.AppUpdate
 	updErr   error
 }
 
@@ -103,7 +104,7 @@ func (a *fakeApps) Needs(_ context.Context, _ string) ([]string, error) {
 	return a.needs, a.needsErr
 }
 
-func (a *fakeApps) Update(_ context.Context, in AppUpdate) error {
+func (a *fakeApps) Update(_ context.Context, in install.AppUpdate) error {
 	a.updates = append(a.updates, in)
 	return a.updErr
 }
@@ -437,7 +438,7 @@ func TestInstallAppOnlyFromItsOwnStoreAndWithinItsGrants(t *testing.T) {
 	}
 	// The grants the app gets are the needs of the new version.
 	if u := ok.apps.updates[0]; u.App != testApp || u.Version != testAppV ||
-		u.Store != testStore || !slices.Equal(u.Needs, []string{store.NeedNetwork}) {
+		!slices.Equal(u.Needs, []string{store.NeedNetwork}) {
 		t.Errorf("app install %+v", u)
 	}
 	if got := ok.reportStates(); !slices.Equal(got, []string{store.UpdateInstalling, store.UpdateInstalled}) {

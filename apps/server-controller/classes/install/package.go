@@ -304,17 +304,59 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 	// store.NewDecrypter refuses a plain file (no NGCENC1 magic) with
 	// store.ErrEncrypted, and store.Walk refuses a sealed file read without a
 	// key with store.ErrPackage. A check of its own was measured to be
-	// unkillable — both directions already fall one layer down
+	// unkillable - both directions already fall one layer down
 	// (TestAcceptDecryptsAPaidApp).
-	if err := ctx.Err(); err != nil {
-		return Package{}, err
-	}
-
-	// PackageUI walks the whole package, so the UI hash is known only after a
-	// pass of its own; that is why the file is on disk and read twice.
-	plain, err := open(dir, tr.Key)
+	//
+	// Everything below this line works on the FILE and on nothing of the
+	// transfer any more. It is unpackApp, so that installing an update can
+	// walk the same code over a file that was staged earlier (update.go):
+	// a second unpacker would be a second answer to "what does this package
+	// contain", and the two could drift.
+	m, uiHash, err := unpackApp(ctx, unpack{
+		Pkg: filepath.Join(dir, PackageFile), Files: filepath.Join(dir, FilesDir),
+		Key: tr.Key, App: in.App, Version: in.Version, NGC: in.NGC,
+		UI: [][]byte{in.UI, src.ui},
+	})
 	if err != nil {
 		return Package{}, err
+	}
+	p.Manifest, p.UI = m, uiHash
+	return p, nil
+}
+
+// unpack is one package file on this disk, to be checked and unpacked. Pkg is
+// the file, Files the directory its files are written into, Key the content
+// key of a paid app (nil for a plain one). App, Version and NGC are what the
+// package has to say it is; every non-nil entry of UI is a SHA-256 the
+// package's ui-tar has to have, and an empty UI names none.
+type unpack struct {
+	Pkg     string
+	Files   string
+	Key     []byte
+	App     string
+	Version string
+	NGC     string
+	UI      [][]byte
+}
+
+// unpackApp reads the package file, holds its manifest against what it is
+// supposed to be, and writes its files. It touches nothing of a transfer: an
+// acceptance has the header in front of it, an update has only the file that
+// was staged earlier, and both arrive here with the same question.
+//
+// What it does NOT do is check where the file came from. That stands before
+// it, once per caller and nowhere twice: Accept holds the bytes against the
+// signed catalogue or release, and an update holds them against the row a
+// verified signature wrote (update.go).
+func unpackApp(ctx context.Context, u unpack) (*store.Manifest, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	// PackageUI walks the whole package, so the UI hash is known only after a
+	// pass of its own; that is why the file is on disk and read twice.
+	plain, err := openPackage(u.Pkg, u.Key)
+	if err != nil {
+		return nil, nil, err
 	}
 	broken := &sticky{r: plain}
 	m, uiHash, err := store.PackageUI(broken, io.Discard)
@@ -322,28 +364,29 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 	if err != nil {
 		// store.Walk answers every unreadable archive with ErrPackage, so a
 		// wrong content key would otherwise look like a damaged package.
-		return Package{}, broken.first(err)
+		return nil, nil, broken.first(err)
 	}
-	if !bytes.Equal(uiHash, in.UI) || (src.ui != nil && !bytes.Equal(uiHash, src.ui)) {
-		return Package{}, ErrVerify
+	for _, want := range u.UI {
+		if want != nil && !bytes.Equal(uiHash, want) {
+			return nil, nil, ErrVerify
+		}
 	}
 	// For an uploaded app the manifest is the only place the app's name, its
 	// version and its minNgc stand; for a store app the catalogue said the
 	// same already, and the two must not disagree.
-	if m.ID != in.App || m.Version != in.Version || !store.SupportsMinNGC(in.NGC, m.MinNGC) {
-		return Package{}, ErrVerify
+	if m.ID != u.App || m.Version != u.Version || !store.SupportsMinNGC(u.NGC, m.MinNGC) {
+		return nil, nil, ErrVerify
 	}
 	if err := ctx.Err(); err != nil {
-		return Package{}, err
+		return nil, nil, err
 	}
 
-	plain, err = open(dir, tr.Key)
+	plain, err = openPackage(u.Pkg, u.Key)
 	if err != nil {
-		return Package{}, err
+		return nil, nil, err
 	}
 	defer plain.Close()
 	broken = &sticky{r: plain}
-	files := filepath.Join(dir, FilesDir)
 	// store.Walk checks every entry before handing it over: only ui/<ValidPath>
 	// and services/{amd64,arm64}.tar, no absolute path, no "..", no link, no
 	// sparse entry, at most store.MaxDirs directories, and every size within
@@ -351,7 +394,7 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 	// not fix them. So the name is safe to join, and a second path check here
 	// would be a copy that can drift from the one in Walk.
 	if _, err := store.Walk(broken, func(_ *store.Manifest, f store.PackFile, body io.Reader) error {
-		path := filepath.Join(files, filepath.FromSlash(f.Path))
+		path := filepath.Join(u.Files, filepath.FromSlash(f.Path))
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return disk(err)
 		}
@@ -363,13 +406,13 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 		if err != nil {
 			return disk(err)
 		}
-		m := &markWriter{w: w}
-		n, err := io.Copy(m, io.LimitReader(body, f.Size+1))
+		mw := &markWriter{w: w}
+		n, err := io.Copy(mw, io.LimitReader(body, f.Size+1))
 		cerr := w.Close()
 		switch {
-		case m.failed || cerr != nil:
+		case mw.failed || cerr != nil:
 			// The write failed, not the package: a full disk must never be
-			// answered as a bad package. Measured: dropping m.failed keeps the
+			// answered as a bad package. Measured: dropping mw.failed keeps the
 			// suite green, because no case here can fill a disk or revoke a
 			// permission mid-write. Named, not removed - it is the half of
 			// this branch that covers the failure nobody can stage.
@@ -389,16 +432,15 @@ func stage(ctx context.Context, dir string, in AcceptInput, tr core.Transfer, sr
 		}
 		return nil
 	}); err != nil {
-		return Package{}, broken.first(err)
+		return nil, nil, broken.first(err)
 	}
-	p.Manifest, p.UI = m, uiHash
-	return p, nil
+	return m, uiHash, nil
 }
 
-// open returns the plain package staged in dir, decrypted with key if a paid
+// openPackage returns the plain package at path, decrypted with key if a paid
 // app brought one. The content key never reaches an error text or a log.
-func open(dir string, key []byte) (io.ReadCloser, error) {
-	f, err := os.Open(filepath.Join(dir, PackageFile))
+func openPackage(path string, key []byte) (io.ReadCloser, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, disk(err)
 	}

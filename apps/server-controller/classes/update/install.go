@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -157,29 +158,21 @@ const maxVersionLine = 64
 // to answer BEFORE anything is changed, because an update whose needs the app
 // was not granted is refused and not installed (store.UpdateNeedsGrants).
 //
-// Its operation half is NOT built in this task, and the report of task 20 says
-// so: install.Accept cannot be used on a staged file - it reads a transfer
-// header and the signed catalogue envelope, and staging keeps neither - so the
-// unpacking half of install.stage has to be reached, which is a change to the
-// file of task 15 and belongs in its own task.
+// Its operation half is *install.Manager (install/update.go): install.Accept
+// cannot be used on a staged file - it reads a transfer header and the signed
+// catalogue envelope, and staging keeps neither - so the unpacking half of an
+// acceptance was named (install.unpackApp) and is walked by both. There is no
+// second unpacker and no second copy of a checked value; why the other way,
+// carrying the catalogue's ui hash and needs in state.Staged, was dropped is
+// written where the decision is carried out (install/update.go).
 type AppInstaller interface {
 	// Needs reads the needs of the manifest in the staged package file. It
 	// changes nothing on this machine.
 	Needs(ctx context.Context, file string) ([]string, error)
-	// Update sets the package up and writes the row of the app.
-	Update(ctx context.Context, in AppUpdate) error
-}
-
-// AppUpdate is one app update to set up. Everything in it was checked against
-// the signed catalogue when the file was staged, except Needs, which comes out
-// of the package's own manifest and is the grants the app gets.
-type AppUpdate struct {
-	App     string
-	Version string
-	Store   string
-	SHA256  []byte
-	File    string
-	Needs   []string
+	// Update sets the package up and writes the row of the app. It reads the
+	// manifest again and refuses unless Needs names what it finds there, so
+	// the grants held below answer for the container that is really built.
+	Update(ctx context.Context, in install.AppUpdate) error
 }
 
 // knownParts is every NGC part this file has a branch for. A part added to the
@@ -443,8 +436,8 @@ func (m *Manager) installApp(ctx context.Context, st state.Staged) error {
 		return errors.Join(ErrForbidden, ErrNeedsGrants)
 	}
 	m.report(st.Target, st.Version, store.UpdateInstalling, "")
-	if err := m.d.Apps.Update(ctx, AppUpdate{App: st.Target, Version: st.Version,
-		Store: a.Store, SHA256: st.SHA256, File: st.File, Needs: needs}); err != nil {
+	if err := m.d.Apps.Update(ctx, install.AppUpdate{App: st.Target, Version: st.Version,
+		SHA256: st.SHA256, File: st.File, Needs: needs}); err != nil {
 		return err
 	}
 	if err := m.mark(ctx, st, store.UpdateInstalled); err != nil {
