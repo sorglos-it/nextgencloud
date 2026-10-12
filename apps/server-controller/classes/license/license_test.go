@@ -5,10 +5,8 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"testing"
 
-	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/node"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -17,7 +15,6 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
-	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
 // What every case starts from. testInstall is 16 bytes in base64url, which is
@@ -281,9 +278,18 @@ func TestAllowedWithoutAListRefusesOnlyThePaidApp(t *testing.T) {
 	}
 }
 
-// What Allowed answers reaches the API as a word of the contract: an app whose
-// licence ran out is unlicensed in the status, not stopped.
-func TestAnExpiredLicenseMakesTheAppUnlicensed(t *testing.T) {
+// ExpiredStand is the fixture of status_test.go: an installation whose one app
+// carries a licence that ran out past its grace period, and the answer Allowed
+// gives for it. It is exported only here, in a _test.go file, so the external
+// test package of this directory can reach it; nothing of the built package
+// carries it.
+//
+// It lives on this side of the line because the licence it builds needs the
+// store key of a stand, and that stand is unexported on purpose: it is the
+// fixture of this package's own cases and no part of what package license
+// offers anyone.
+func ExpiredStand(t *testing.T) (*state.Store, dbapi.App, func(ctx context.Context, a dbapi.App) (bool, error)) {
+	t.Helper()
 	ctx := context.Background()
 	s := newStand(t)
 	if _, err := Keep(ctx, s.st, s.list, testInstall, testApp, testStore,
@@ -293,15 +299,7 @@ func TestAnExpiredLicenseMakesTheAppUnlicensed(t *testing.T) {
 	if err := s.st.PutApp(ctx, appRow()); err != nil {
 		t.Fatal(err)
 	}
-	r := node.NewReporter(node.ReportConfig{State: s.st, Log: slog.New(slog.DiscardHandler),
-		Licensed: func(ctx context.Context, a dbapi.App) (bool, error) {
-			return Allowed(ctx, s.st, s.list, testInstall, a, testNow)
-		}})
-	st, err := r.Status(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(st.Apps) != 1 || st.Apps[0].State != tunnel.StateUnlicensed {
-		t.Fatalf("the status says %+v, want one app %q", st.Apps, tunnel.StateUnlicensed)
+	return s.st, appRow(), func(ctx context.Context, a dbapi.App) (bool, error) {
+		return Allowed(ctx, s.st, s.list, testInstall, a, testNow)
 	}
 }

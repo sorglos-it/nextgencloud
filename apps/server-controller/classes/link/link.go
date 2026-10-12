@@ -143,6 +143,25 @@ type Config struct {
 	// Sleep waits between two attempts of Keep. Only a test sets it, to count
 	// the pauses instead of waiting them out.
 	Sleep func(time.Duration)
+	// TunnelUp is called with every tunnel Keep got off, in the goroutine of
+	// Keep and before that tunnel is run; TunnelDown with the same tunnel
+	// once it is over and closed. Both are nil by default, and Dial calls
+	// neither: a caller that dials for itself holds the tunnel already.
+	//
+	// They are what lets the controller reach a tunnel that Keep holds. Keep
+	// gives nothing back and comes back only with the context, so without
+	// them nothing outside this package can send a control message on a
+	// standing tunnel - the status of this server every 60 seconds, and the
+	// certificate check Apache needs after every tunnel was built
+	// (node.Run). Each is called once per tunnel, and TunnelDown is called
+	// for every tunnel TunnelUp was called for, so a caller may keep a
+	// registry by them (TestKeepAnnouncesEveryTunnelOnceAndItsEnd).
+	//
+	// Both are called from the goroutine of Keep: whatever is done in them
+	// holds the next dial, not the reading of a tunnel. Nothing of this
+	// package is held by them.
+	TunnelUp   func(t *Tunnel)
+	TunnelDown func(t *Tunnel)
 	// Ping is how long the tunnel waits before it asks the API again whether
 	// it is still there, and how long it then waits for the answer. Only a
 	// test sets it, to sit out a ping in a fraction of a second; without it
@@ -793,8 +812,17 @@ func Keep(ctx context.Context, cfg Config) {
 		}
 		t, err := Dial(ctx, cfg)
 		if err == nil {
+			// Announced before it is run, so a caller's registry holds it
+			// for the whole time it stands, and taken back after Close, so
+			// nothing of a tunnel that is over is ever sent on.
+			if cfg.TunnelUp != nil {
+				cfg.TunnelUp(t)
+			}
 			err = t.Run(ctx)
 			t.Close()
+			if cfg.TunnelDown != nil {
+				cfg.TunnelDown(t)
+			}
 			stood := cfg.now() - t.since
 			log.Info("tunnel ended", "api", cfg.API.URL, "seconds", stood)
 			// Only a tunnel that really stood begins again at the shortest

@@ -89,6 +89,7 @@ type world struct {
 	eng   *appEngine
 	notes *notes
 	log   *slog.Logger
+	deps  Deps
 }
 
 // notes is a log handler that counts what was written to it: what a peer may
@@ -129,9 +130,21 @@ func newWorld(t *testing.T) *world {
 	ctlKey, _ := trusttest.NodeKeys(ctlFill)
 	w := &world{admin: admin, list: l, v1: v1, st: st, keep: k, eng: &appEngine{}, notes: &notes{}}
 	w.log = slog.New(w.notes)
-	w.srv = New(Deps{Node: node, Noise: ctlKey, Chain: k, State: st, Engine: w.eng,
-		Now: func() int64 { return now }, Log: w.log})
+	// Kept, so a case may build a second server of the same world with one
+	// field changed (world.rebuild) instead of writing the literal again.
+	w.deps = Deps{Node: node, Noise: ctlKey, Chain: k, State: st, Engine: w.eng,
+		Now: func() int64 { return now }, Log: w.log}
+	w.srv = New(w.deps)
 	return w
+}
+
+// rebuild puts a server of this world with changed dependencies in place of
+// the one newWorld made. It is called before the tunnel of a case stands, so
+// no goroutine of a channel reads w.srv while it is written.
+func (w *world) rebuild(change func(d *Deps)) {
+	d := w.deps
+	change(&d)
+	w.srv = New(d)
 }
 
 // manifest is the manifest of the installed app: one service with one action.

@@ -109,9 +109,12 @@ func TestMainRepeatsOnlyCommandNames(t *testing.T) {
 
 // Commands that are still to come answer with exit 1 and say so in German, so
 // an admin sees the difference between a wrong call and a part not built yet.
+//
+// The call without a command is no longer among them: task 24 built it, and
+// what it answers now is the line of the configuration it could not read
+// (TestMainWithoutACommandRunsTheController).
 func TestMainCommandsNotBuiltYet(t *testing.T) {
 	for _, args := range [][]string{
-		nil,
 		{"image", "-arch", "arm64", "-out", "terminal-arm64.tar"},
 	} {
 		var out, errOut bytes.Buffer

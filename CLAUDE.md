@@ -64,7 +64,7 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 
 ## Technik
 
-- Go 1.27 (`go.mod`: `go 1.27`, `toolchain go1.27.1`), Bau für linux/amd64 und linux/arm64 mit
+- Go 1.27 (`go.mod`: `go 1.27`, `toolchain go1.27.2`), Bau für linux/amd64 und linux/arm64 mit
   `CGO_ENABLED=0`. Ziel sind Debian und Ubuntu. Windows wird nicht umgesetzt.
 - Texte für Menschen prüft `wire.ValidText` mit den Unicode-Tabellen von Go (Unicode 17.0 mit
   Go 1.27). Ein Go-Update, das neue Unicode-Tabellen bringt, ist deshalb eine Vertragsänderung:
