@@ -266,7 +266,9 @@ func (m *Manager) Activate(ctx context.Context, d access.Decision, r io.Reader) 
 		return nil, err
 	}
 
-	if err := m.setUp(ctx, p, mf, old, installed, pkg, pkg.Transfer.License, lic); err != nil {
+	set := appSetup{app: p.App, version: p.Version, store: p.Store, sha256: p.SHA256,
+		grants: p.Grants, files: filepath.Join(pkg.Dir, FilesDir)}
+	if err := m.setUp(ctx, set, mf, old, installed, pkg.Transfer.License, lic); err != nil {
 		return nil, err
 	}
 	// The start action of the manifest (store.Manifest.Start) runs after every
@@ -274,6 +276,22 @@ func (m *Manager) Activate(ctx context.Context, d access.Decision, r io.Reader) 
 	// all; nothing here calls a service, and an app whose Start is named by a
 	// manifest this build installed therefore does not get it yet.
 	return emptyResult, nil
+}
+
+// appSetup is what the row of the app will say and where the files of this
+// version lie. Activate fills it out of the SIGNED task; installing an update
+// fills it out of the row of the app and the manifest of the new version
+// (update.go). One setup with two callers, so nothing about what is set up can
+// differ between an activation and an update - and the one thing that does
+// differ, where the grants come from, is a field and not a second function.
+type appSetup struct {
+	app     string
+	version string
+	store   string
+	sha256  []byte
+	grants  []string
+	// files is the directory unpackApp wrote the package's files into.
+	files string
 }
 
 // undo is one step of the setup taken back.
@@ -284,8 +302,8 @@ type undo struct {
 
 // setUp changes this machine, and takes every step back that it took if a
 // later one fails.
-func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.Manifest,
-	old dbapi.App, installed bool, pkg Package, env *sign.Envelope, lic *store.License) error {
+func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
+	old dbapi.App, installed bool, env *sign.Envelope, lic *store.License) error {
 	var undos []undo
 	ok := false
 	defer func() {
@@ -299,7 +317,7 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 		}
 	}()
 
-	u, err := m.d.Sys.EnsureUser(ctx, p.App)
+	u, err := m.d.Sys.EnsureUser(ctx, p.app)
 	if err != nil {
 		return err
 	}
@@ -308,16 +326,16 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 		// the user of the app away on a failure: the data directory belongs to
 		// it, and a directory whose owner is gone belongs to a number that the
 		// next user to get it would inherit (runtime.DropUser).
-		undos = append(undos, undo{"user", func() { _ = m.d.Sys.DropUser(ctx, p.App) }})
+		undos = append(undos, undo{"user", func() { _ = m.d.Sys.DropUser(ctx, p.app) }})
 	}
-	dataDir, err := m.d.Sys.EnsureData(ctx, p.App, u)
+	dataDir, err := m.d.Sys.EnsureData(ctx, p.app, u)
 	if err != nil {
 		return err
 	}
 	if !installed {
 		// And for the same reason the data of an app that was installed is
 		// never dropped here: an update keeps the data (core.ActivateParams).
-		undos = append(undos, undo{"data", func() { _ = m.d.Sys.DropData(ctx, p.App) }})
+		undos = append(undos, undo{"data", func() { _ = m.d.Sys.DropData(ctx, p.app) }})
 	}
 	// An app without services has no container, and it cannot have one: a
 	// package carries an image exactly when its manifest names a service
@@ -353,7 +371,7 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 		if err := m.putRow(ctx, p, mf, old); err != nil {
 			return err
 		}
-		if err := m.keepLicence(ctx, p.App, env, lic); err != nil {
+		if err := m.keepLicence(ctx, p.app, env, lic); err != nil {
 			return err
 		}
 		ok = true
@@ -371,7 +389,7 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 	// The image of this architecture, out of the files store.Walk let through.
 	// The name is built here and not taken from an output of the engine, and
 	// it is read out of the tar itself (runtime.ImageTag).
-	tarPath := filepath.Join(pkg.Dir, FilesDir, "services", goruntime.GOARCH+".tar")
+	tarPath := filepath.Join(p.files, "services", goruntime.GOARCH+".tar")
 	ref, err := runtime.ImageTag(tarPath)
 	if err != nil {
 		return err
@@ -427,7 +445,7 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 	if err := m.putRow(ctx, p, mf, old); err != nil {
 		return err
 	}
-	if err := m.keepLicence(ctx, p.App, env, lic); err != nil {
+	if err := m.keepLicence(ctx, p.app, env, lic); err != nil {
 		return err
 	}
 	ok = true
@@ -440,14 +458,14 @@ func (m *Manager) setUp(ctx context.Context, p *core.ActivateParams, mf *store.M
 // store signed are not here any more. This is a re-encoding of exactly what
 // was checked, which store.ParseManifest reads back; the checksum of the
 // package file (p.SHA256) is what binds the row to the delivered bytes.
-func (m *Manager) putRow(ctx context.Context, p *core.ActivateParams, mf *store.Manifest, old dbapi.App) error {
+func (m *Manager) putRow(ctx context.Context, p appSetup, mf *store.Manifest, old dbapi.App) error {
 	raw, err := json.Marshal(mf)
 	if err != nil {
 		return err
 	}
 	return m.d.State.PutApp(ctx, dbapi.App{
-		ID: p.App, Version: p.Version, Store: p.Store, Node: m.d.Node, Active: true,
-		Manifest: raw, SHA256: p.SHA256, Grants: slices.Clone(p.Grants),
+		ID: p.app, Version: p.version, Store: p.store, Node: m.d.Node, Active: true,
+		Manifest: raw, SHA256: p.sha256, Grants: slices.Clone(p.grants),
 		// What the app kept from before stays its own number; this activation
 		// did not change it.
 		KeptData: old.KeptData, Updated: m.d.Now(),
