@@ -132,7 +132,9 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	if err != nil {
 		return nil, errors.New("das TLS-Zertifikat der API lässt sich nicht anlegen oder lesen")
 	}
-	db, err := dbopen.Open(ctx, cfg.DB)
+	// The owner of the migration lock. On SQLite this very call migrates, so
+	// the name has to be in place before the open and not after it.
+	db, err := dbopen.Open(ctx, cfg.DB, dbopen.OwnerOf(cfg.Node))
 	if err != nil {
 		return nil, errors.New("die Datenbank ist nicht erreichbar")
 	}
