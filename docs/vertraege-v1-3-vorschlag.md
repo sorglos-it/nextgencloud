@@ -392,3 +392,64 @@ schließt sie dort — ohne Vertragsfassung.
   Vertrag — also in V1.3, wenn sie gemessen ist.
 - **Punkt 28 und Punkt 30** ändern `shared/` **nicht**. Beide hängen an api-Aufgabe 24
   („`main.go` verdrahten"). Sie gehören nicht in diese Entscheidung.
+
+---
+
+## Nachtrag 12.10.2026: P3 ist größer, und P3a ist neu
+
+Nachgetragen von der Sitzung, die den Release-Weg entworfen hat. Der Weg selbst samt aller
+Messungen steht in [`release-weg.md`](release-weg.md), Abschnitt 8 (D2 und D3). Hier nur, was
+`shared/` betrifft.
+
+### P3 ist mit einem Satz nicht zu schließen
+
+Oben steht als kleinster Eingriff „ein Satz in `shared/`, der sagt: ein tar nach
+`store.WalkUI`, Namen unter `ui/`". **Das genügt nicht, und das ist jetzt ausgeführt gemessen**
+(`go test -v ./tools/release/`, `webtar_test.go`, 5 Fälle, je Ursache ein Fall und ein
+Grundfall davor).
+
+`store.WalkUI` kennt genau einen tar-Dialekt, und ein echtes `git archive` — das ist, was
+`tools/pack-release.sh` benutzt — bricht ihn an **drei** Stellen, nicht an einer:
+
+| Feld | `git archive` schreibt | `WalkUI` verlangt |
+|---|---|---|
+| Modus | `0000664` | `0000644` |
+| Zeit | das genagelte Commit-Datum; **`--mtime=@0` hilft nicht** (Feld las `015263246526`) | `00000000000` |
+| Name | `public/index.php` | `ui/public/index.php` |
+
+**Folge für die Entscheidung:** es stehen nicht „Satz schreiben" gegen „zweiter Auspacker",
+sondern (a) `shared/store` bekommt einen sicheren Auspacker für ein **schlichtes** tar —
+ergänzt nur, der Packer und seine gemessene Reproduzierbarkeit bleiben — gegen (b) der Packer
+gibt `git archive` auf und schreibt ein `store.UIWriter`-Archiv, **und dann muss seine
+Reproduzierbarkeit neu begründet werden**, denn sie ruht heute auf `git archive`.
+
+### P3a — dieselbe Lücke für `ngc-api` und `ngc-controller`, und sie tötet den Dienst
+
+**Steht in diesem Vorschlag bisher nicht:** P3 nennt nur `ngc-web`. Die beiden anderen Teile
+haben dieselbe unentschiedene Form, und dort ist der Preis höher.
+
+**Gemessen am Code auf `main` (`0bc2659`):** `installPart`
+(`apps/server-controller/classes/update/install.go`) entpackt **nichts** — `copyInto` ist eine
+reine Bytekopie, dann `chmod 0755`, dann `os.Rename` auf `BinDir/ngc-api`. Die Release-Datei
+wird **als das Programm** installiert. Der Vertragsweg nennt sie `ngc-api-amd64.tar`
+(`apps/cli/classes/release.go`, `releaseExt = ".tar"`).
+
+**AUSGEFÜHRT auf Linux** (Debian 13.7 in WSL, Dichtheitsprüfung `(exit 7)` davor lieferte `7`
+und `1`; Messskript als Datei, Ausstiegscode **in** WSL geschrieben): genau diese Handlung auf
+ein echtes tar ergibt **Code 126, „Exec format error"**; das entpackte Programm daneben
+**Code 0, `ngc-api 0.2.0 (contract 1)`**.
+
+**Zu entscheiden:** ist eine `ngc-api`-Release-Datei **das Programm** oder **ein tar mit dem
+Programm darin**?
+
+**Was für „ein tar" spricht, und es ist ein Satz des Vertrags selbst:**
+`shared/store/catalog.go`, `ReleaseAPI` — das API-Release *„includes ngc-store and the database
+migrations"*. Drei Dinge passen nicht in eine Programmdatei. Dann braucht `shared/` denselben
+Auspacker wie in P3, und es gibt **eine** Form statt zweier.
+
+**Was für „das Programm" spricht:** `shared/testdata/release/ngc-web-all.tar` ist **18 Byte
+ASCII-Text**, kein tar — die Testdaten behandeln diese Dateien heute als undurchsichtige
+Klumpen. Dann ist `releaseExt = ".tar"` nur ein irreführender Name.
+
+**Beides zusammen entschieden, nicht einzeln:** P3 und P3a verlangen denselben Auspacker.
+Wer sie getrennt entscheidet, bekommt zwei.
