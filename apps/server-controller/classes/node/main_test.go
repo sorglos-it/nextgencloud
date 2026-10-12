@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/service"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
@@ -111,8 +112,6 @@ func TestMainRepeatsOnlyCommandNames(t *testing.T) {
 func TestMainCommandsNotBuiltYet(t *testing.T) {
 	for _, args := range [][]string{
 		nil,
-		{"terminal"},
-		{"hold"},
 		{"image", "-arch", "arm64", "-out", "terminal-arm64.tar"},
 	} {
 		var out, errOut bytes.Buffer
@@ -125,6 +124,49 @@ func TestMainCommandsNotBuiltYet(t *testing.T) {
 		if out.Len() != 0 {
 			t.Errorf("Main(%q) stdout = %q, want empty", args, out.String())
 		}
+	}
+}
+
+// The two commands of the container answer a call with a word behind them
+// instead of taking it for an input: neither takes anything, because the
+// channel is their input.
+func TestMainContainerCommandsTakeNothing(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"terminal", "x"}, usageTerminal},
+		{[]string{"hold", "x"}, usageHold},
+	}
+	for _, c := range cases {
+		var out, errOut bytes.Buffer
+		if code := Main("1.2.3", c.args, noInput(), &out, &errOut); code != 2 {
+			t.Errorf("Main(%q) = %d, want 2", c.args, code)
+		}
+		if !strings.Contains(errOut.String(), c.want) {
+			t.Errorf("Main(%q) stderr = %q, want %q", c.args, errOut.String(), c.want)
+		}
+	}
+}
+
+// "terminal" is the service of the terminal app and runs in the container of
+// that app. Called anywhere else it says so and ends: the environment of a
+// service is not there, so there is nothing it could be the terminal of. This
+// is also the one case that reaches package terminal through Main at all - the
+// gate in front of it and everything the service does are measured there.
+func TestMainTerminalOnlyRunsInItsContainer(t *testing.T) {
+	var out, errOut bytes.Buffer
+	t.Setenv(service.EnvData, "")
+	if code := Main("1.2.3", []string{"terminal"}, noInput(), &out, &errOut); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	// The line itself goes to os.Stderr and not to this buffer, and that is
+	// on purpose: inside the container os.Stderr is the pseudo terminal the
+	// user is looking at, so what the service says reaches him and not the
+	// log of the server. The wording of those lines is measured where they
+	// stand, in package terminal.
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
 	}
 }
 
