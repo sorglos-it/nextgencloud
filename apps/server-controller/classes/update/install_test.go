@@ -1178,7 +1178,17 @@ func main() {
 	// A folder of its own, so the module of this repo is not in the way.
 	build.Env = append(os.Environ(), "GO111MODULE=off", "GOFLAGS=")
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Skipf("LOUD SKIP: the program for this case does not build: %v\n%s", err, out)
+		// A stand-in that does not build is a fault of THIS file and not a
+		// missing tool, so it fails instead of skipping - the lesson of
+		// system_test.go, measured there: with a skip here the cases below skip
+		// and go test prints a bare "ok", because a skip line only shows
+		// under -v.
+		t.Fatalf("the program for this case does not build: %v\n%s", err, out)
+	}
+	// The measurement checks its own preparation: without the program every
+	// line below would be green for the wrong reason.
+	if _, err := os.Stat(prog); err != nil {
+		t.Fatalf("the program for this case was not built: %v", err)
 	}
 	got, err := VersionOf(context.Background(), prog)
 	if err != nil {

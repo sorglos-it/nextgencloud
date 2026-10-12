@@ -63,6 +63,22 @@ var paths = struct {
 	// real two keep their own cases on a filesystem that can do it.
 	addKey    func(mount string, key []byte) ([keyIdentifierSize]byte, error)
 	setPolicy func(dir string, id [keyIdentifierSize]byte) error
+	// mkdirAll, mkdir and chmod are how EnsureRun and EnsureData make the two
+	// directories of an app and tighten them. They are held here for a reason
+	// that is neither tidiness nor Linux: the mode is the whole of what these
+	// lines do - 0700 for a directory of the app, 0711 for the one above it -
+	// and Windows has no such mode on disk, so on the machine this is written
+	// on nothing could read back what was asked for. Measured on 12.10.2026:
+	// with the calls going straight to os, every 0o700 in run.go and data.go
+	// could be turned into 0o777 and the whole controller set stayed green.
+	// With a stand-in, a case records the mode each call was made with and
+	// holds it against the number the comment names - which leaves the mode on
+	// the disk unmeasured here and measured on Linux by the cases that run
+	// there (TestEnsureRunTightensTheModeBeforeItHandsTheDirectoryOver,
+	// TestEnsureDataTightensTheModeOfADirectoryAlreadyThere).
+	mkdirAll func(path string, perm os.FileMode) error
+	mkdir    func(path string, perm os.FileMode) error
+	chmod    func(path string, mode os.FileMode) error
 }{
 	useradd:   "/usr/sbin/useradd",
 	userdel:   "/usr/sbin/userdel",
@@ -73,6 +89,9 @@ var paths = struct {
 	chown:     os.Chown,
 	addKey:    addKey,
 	setPolicy: setPolicy,
+	mkdirAll:  os.MkdirAll,
+	mkdir:     os.Mkdir,
+	chmod:     os.Chmod,
 }
 
 // The sub id ranges of the apps: 65536 ids each, which is what a user namespace
