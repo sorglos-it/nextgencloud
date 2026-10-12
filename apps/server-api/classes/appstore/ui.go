@@ -11,18 +11,28 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 )
 
-// uiKey is the ID of the rows of one version: the ui-tar (dbapi.BlobUI) and
+// UIKey is the ID of the rows of one version: the ui-tar (dbapi.BlobUI) and
 // the evidence it was installed with (dbapi.BlobApproval). Both are named the
 // same way, because the shell asks for them together and must get the pair of
 // one version.
-func uiKey(app, version string) string { return app + "@" + version }
+//
+// It is exported because it is read outside this package too -- coreapp.ui
+// reads dbapi.BlobUI straight out of the database -- and a key that is written
+// in one place and built by hand in another is a value with two sources. That
+// shape has cost this project a finding already (W-1 of the db package), and
+// here it is free to close.
+//
+// Why "@" separates them safely: app comes through wire.ValidAppID and version
+// through store.ValidVersion, and neither alphabet holds the "@". So no pair
+// of app and version can spell the key of another pair.
+func UIKey(app, version string) string { return app + "@" + version }
 
 // KeepUI keeps the canonical ui-tar of one version; ngc.desktop/ui sends
 // exactly these bytes, and the shell compares their SHA-256 against the proof
 // of ngc.desktop/ui-proof. Nothing is formatted, trimmed or re-packed here:
 // one byte changed and that comparison fails, which is the point.
 func (st *Stores) KeepUI(ctx context.Context, app, version string, ui []byte) error {
-	return st.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobUI, ID: uiKey(app, version),
+	return st.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobUI, ID: UIKey(app, version),
 		Data: ui, Updated: st.S.Now()})
 }
 
@@ -60,7 +70,7 @@ func (st *Stores) KeepProof(ctx context.Context, p core.UIProof) error {
 		return err
 	}
 	return st.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobApproval,
-		ID: uiKey(parsed.App, parsed.Version), Data: data, Updated: st.S.Now()})
+		ID: UIKey(parsed.App, parsed.Version), Data: data, Updated: st.S.Now()})
 }
 
 // Proof answers ngc.desktop/ui-proof: the evidence kept for one version, as
@@ -79,7 +89,7 @@ func (st *Stores) KeepProof(ctx context.Context, p core.UIProof) error {
 // before it is written, or where it is served from elsewhere -- keeps its
 // proof.
 func (st *Stores) Proof(ctx context.Context, app, version string) (core.UIProof, error) {
-	b, err := st.S.DB.BlobGet(ctx, dbapi.BlobApproval, uiKey(app, version))
+	b, err := st.S.DB.BlobGet(ctx, dbapi.BlobApproval, UIKey(app, version))
 	if err != nil {
 		return core.UIProof{}, err
 	}
@@ -95,7 +105,7 @@ func (st *Stores) Proof(ctx context.Context, app, version string) (core.UIProof,
 	if err != nil {
 		return core.UIProof{}, err
 	}
-	kept, err := st.S.DB.BlobGet(ctx, dbapi.BlobUI, uiKey(app, version))
+	kept, err := st.S.DB.BlobGet(ctx, dbapi.BlobUI, UIKey(app, version))
 	if errors.Is(err, dbapi.ErrNotFound) {
 		return p, nil
 	}

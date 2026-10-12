@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
@@ -831,6 +832,38 @@ func TestActivateNeedsATunnel(t *testing.T) {
 	ok := af.uploadRequest(t, ctlNode, pkg, ui, "org.sorglos.calculator", "1.0.0", nil, 0x6f)
 	if code, err := af.St.Activate(ctx, ok); code != "" || err != nil {
 		t.Fatalf("the way is not open: code %q, err %v", code, err)
+	}
+}
+
+// TestActivateChecksTheNodeItWasHandedItself: Activate is a seam, and the
+// node name is the one value of the request that reaches os paths and a tunnel
+// lookup. task.Check holds it for every request that comes through a channel,
+// and this is the same check again at the package door -- so the decision does
+// not rest on how careful the caller was.
+//
+// It had no case: a mutant that took the check away killed nothing
+// (m-validnode of the closing review, measured LIVING), and the line read like
+// the wall while nothing held it.
+func TestActivateChecksTheNodeItWasHandedItself(t *testing.T) {
+	af := newActFixture(t)
+	pkg, ui := vectorPackage(t, "long file name")
+	// The open way first: the same request with the real node goes through.
+	ok := af.uploadRequest(t, ctlNode, pkg, ui, "org.sorglos.calculator", "1.0.0", nil, 0x7a)
+	if code, err := af.St.Activate(ctx, ok); code != "" || err != nil {
+		t.Fatalf("the way is not open: code %q, err %v", code, err)
+	}
+	for _, node := range []string{"", "../ctl-1", "ctl 1", "ctl/1", "Ctl-1!",
+		strings.Repeat("c", 200)} {
+		// The case checks its own setup: a name wire.ValidName accepts would
+		// measure the tunnel lookup below instead of this check.
+		if wire.ValidName(node) {
+			t.Fatalf("%q is a valid name, so the case measures nothing", node)
+		}
+		rq := af.uploadRequest(t, node, pkg, ui, "org.sorglos.calculator", "1.0.0", nil, 0x7b)
+		code, err := af.St.Activate(ctx, rq)
+		if code != wire.CodeVerify || err != nil {
+			t.Fatalf("node %q: code %q, err %v -- want %q", node, code, err, wire.CodeVerify)
+		}
 	}
 }
 

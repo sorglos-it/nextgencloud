@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -453,6 +454,86 @@ func TestSetRightsRefusesARoleTheListDoesNotHold(t *testing.T) {
 	if _, err := fx.S.DB.BlobGet(ctx, dbapi.BlobRights, userRole); err == nil {
 		t.Fatal("a row was written for a role the trust list does not hold")
 	}
+}
+
+// TestSetRightsRefusesAUseRightTheLicenceHasNoSeatFor: the seat of a per-user
+// licence. Before this the count of appstore.UsersAllowed limited nobody --
+// the function had no caller at all -- and License.Users was a number in a
+// database and nothing else.
+//
+// Three answers in one case, because the open side matters as much as the
+// closed one: a free app (no licence on record) goes through, a licence
+// without a free seat is refused AND the row is put back, and a licence this
+// API cannot judge is refused as well.
+func TestSetRightsRefusesAUseRightTheLicenceHasNoSeatFor(t *testing.T) {
+	fx := usersFixture(t)
+	st := &fakeStore{seats: map[string]seatAnswer{}}
+	fx.D.Store = st
+	use := appY + "/" + core.RightUse
+	free := []string{appY + "/" + appAct}
+
+	// The way is open: a right that is not a "use" right asks no licence at
+	// all, so everything below is about the seat and not about a wall in
+	// front of it.
+	fx.userCall(t, core.ActSetRights, core.RoleRights{Role: trust.RoleAdmin, Rights: free})
+	if len(st.seatsAsked) != 0 {
+		t.Fatalf("a right that is not %q asked for a seat: %v", core.RightUse, st.seatsAsked)
+	}
+
+	// A free app: no licence on record, so nothing limits it.
+	fx.userCall(t, core.ActSetRights, core.RoleRights{Role: trust.RoleAdmin, Rights: []string{use}})
+	if len(st.seatsAsked) != 1 || st.seatsAsked[0] != appY {
+		t.Fatalf("the seat of %q was not asked: %v", appY, st.seatsAsked)
+	}
+	if !rightsHold(t, fx, use) {
+		t.Fatal("the free app lost its use right")
+	}
+
+	// Back to the state before, so the refusal below has something to put back.
+	fx.userCall(t, core.ActSetRights, core.RoleRights{Role: trust.RoleAdmin, Rights: free})
+
+	// A per-user licence with no free seat.
+	st.seats[appY] = seatAnswer{n: 4, allowed: false}
+	if code := fx.refuse(t, core.ActSetRights,
+		core.RoleRights{Role: trust.RoleAdmin, Rights: []string{use}}); code != wire.CodeLicense {
+		t.Fatalf("close code %q, want %q", code, wire.CodeLicense)
+	}
+	if rightsHold(t, fx, use) {
+		t.Fatal("the refused right stands in the database")
+	}
+	// And what stood before is back, not an empty row.
+	if !rightsHold(t, fx, free[0]) {
+		t.Fatalf("%q was lost when the refused change was put back", free[0])
+	}
+
+	// A licence this API cannot judge is not a free seat either.
+	st.seats[appY] = seatAnswer{err: appstore.ErrLicense}
+	if code := fx.refuse(t, core.ActSetRights,
+		core.RoleRights{Role: trust.RoleAdmin, Rights: []string{use}}); code != wire.CodeUnreachable {
+		t.Fatalf("close code %q, want %q", code, wire.CodeUnreachable)
+	}
+
+	// And with a free seat the same call goes through, so the two refusals
+	// above are the answers of the licence and not the shape of the call.
+	st.seats[appY] = seatAnswer{n: 1, allowed: true}
+	fx.userCall(t, core.ActSetRights, core.RoleRights{Role: trust.RoleAdmin, Rights: []string{use}})
+	if !rightsHold(t, fx, use) {
+		t.Fatal("the allowed right did not stand")
+	}
+}
+
+// rightsHold reports whether the admin of the fixture holds right.
+func rightsHold(t *testing.T, fx *usersFx, right string) bool {
+	t.Helper()
+	v, err := fx.S.Trust(ctx)
+	if err != nil {
+		t.Fatalf("trust: %v", err)
+	}
+	got, _, err := rights.Of(ctx, fx.S.DB, v.List, fx.AdminID)
+	if err != nil {
+		t.Fatalf("rights: %v", err)
+	}
+	return got[right]
 }
 
 // --- the trust list -------------------------------------------------------

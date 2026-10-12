@@ -37,7 +37,9 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -121,8 +123,30 @@ func (d *Dispatcher) setRights(ctx context.Context, rq *Call) ([]byte, error) {
 	if _, ok := v.List.Role(p.Role); !ok {
 		return nil, fail(wire.CodeNotFound)
 	}
+	// The rights of the role as they stand, so a change the licence does not
+	// allow can be put back. rights.All is the only reader of a row this
+	// package has, and it reads the roles of the list.
+	before, err := roleRightsOf(ctx, rq, v.List, p.Role)
+	if err != nil {
+		return nil, fail(wire.CodeUnreachable)
+	}
 	if err := rights.Set(ctx, rq.S.DB, *p); err != nil {
 		return nil, fail(wire.CodeUnreachable)
+	}
+	// The seat of a licence: the count is asked AFTER the change, because the
+	// question is whether the installation that comes out of this call is
+	// allowed, and nothing in package rights can answer that about a row it
+	// has not got. A change the licence does not allow is put back, and only
+	// then refused -- so what the admin sees and what stands in the database
+	// say the same thing.
+	if code := d.seatsAllow(ctx, *p); code != "" {
+		if err := rights.Set(ctx, rq.S.DB, before); err != nil {
+			// The change stands and could not be undone. That is the one
+			// place here where the answer and the database differ, and it
+			// says so rather than claiming the refusal held.
+			return nil, fail(wire.CodeUnreachable)
+		}
+		return nil, fail(code)
 	}
 	// The detail is the role, a word of the program. The rights themselves do
 	// not go in: a role may hold up to a thousand of them, far past
@@ -130,6 +154,62 @@ func (d *Dispatcher) setRights(ctx context.Context, rq *Call) ([]byte, error) {
 	// the entry would then say less than the role name does.
 	_ = d.Log.Note(ctx, core.LogRights, rq.Live.Verified.Cert().User, "", "", p.Role)
 	return result(struct{}{})
+}
+
+// roleRightsOf is the stored rights of one role of the list, empty for a role
+// without a row.
+func roleRightsOf(ctx context.Context, rq *Call, l *trust.List, role string) (core.RoleRights, error) {
+	all, err := rights.All(ctx, rq.S.DB, l)
+	if err != nil {
+		return core.RoleRights{}, err
+	}
+	for _, r := range all {
+		if r.Role == role {
+			return r, nil
+		}
+	}
+	return core.RoleRights{Role: role}, nil
+}
+
+// seatsAllow asks the licence of every app whose right "<app>/use" the role
+// now holds whether it allows the number of users that hold it. The empty code
+// means every one of them does.
+//
+// Three answers, and the two that are not "allowed" go different ways on
+// purpose:
+//
+//   - no licence on record (appstore.ErrNoLicense): a free app, and a free app
+//     has no seat to count. The right stands.
+//   - a licence this API cannot judge, or a database that did not answer:
+//     E_UNREACHABLE. Not "allowed" -- a seat nobody can count is not a seat
+//     that is free.
+//   - the count is above what the licence allows: E_LICENSE.
+//
+// Without Deps.Store there is no licence to ask, and then this says nothing:
+// an installation whose store seam is not wired has no paid app either, and
+// refusing every right would make a missing seam look like a licence.
+func (d *Dispatcher) seatsAllow(ctx context.Context, r core.RoleRights) wire.Code {
+	if d.Store == nil {
+		return ""
+	}
+	seen := map[string]bool{}
+	for _, right := range r.Rights {
+		app, action, ok := strings.Cut(right, "/")
+		if !ok || action != core.RightUse || seen[app] {
+			continue
+		}
+		seen[app] = true
+		_, allowed, err := d.Store.UsersAllowed(ctx, app)
+		switch {
+		case errors.Is(err, appstore.ErrNoLicense):
+			continue
+		case err != nil:
+			return wire.CodeUnreachable
+		case !allowed:
+			return wire.CodeLicense
+		}
+	}
+	return ""
 }
 
 // trust answers ngc.users/api/trust: the shell sends one new version of the

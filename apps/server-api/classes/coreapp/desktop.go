@@ -231,7 +231,7 @@ func (d *Dispatcher) ui(ctx context.Context, rq *Call) ([]byte, error) {
 	if code != "" {
 		return nil, fail(code)
 	}
-	b, err := rq.S.DB.BlobGet(ctx, dbapi.BlobUI, a.ID+"@"+a.Version)
+	b, err := rq.S.DB.BlobGet(ctx, dbapi.BlobUI, appstore.UIKey(a.ID, a.Version))
 	if err != nil {
 		return nil, fail(wire.CodeNotFound)
 	}

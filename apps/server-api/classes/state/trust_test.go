@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -602,5 +603,124 @@ func TestRefreshReadsOnAfterARace(t *testing.T) {
 	v, err := fresh.Refresh(ctx)
 	if err != nil || v.List.Seq != 3 {
 		t.Fatalf("refresh after the race is at %v: %v", v.List, err)
+	}
+}
+
+// writeAnchor puts the trust anchor of this state on disk.
+func writeAnchor(tb testing.TB, s *State, a trust.Anchor) {
+	tb.Helper()
+	if err := config.SaveAnchor(s.AnchorFile, a); err != nil {
+		tb.Fatalf("SaveAnchor: %v", err)
+	}
+}
+
+// TestTheAnchorOutsideTheDatabaseDecidesTheRoot: with trust-anchor.json on
+// disk the root of the chain is the version the file names, and a version 1
+// that is not that one is refused -- the case checkInstallation and
+// setup.offer both name as the one no check inside the database can hold.
+func TestTheAnchorOutsideTheDatabaseDecidesTheRoot(t *testing.T) {
+	// A stranger's version 1 in the database, under its own installation ID:
+	// without an anchor this is the list the API runs on (measured below as
+	// the control).
+	strange := trusttest.NewPasskey(21)
+	sl := trusttest.Genesis(strange)
+	strangeSigned := strange.Sign(t, sl)
+
+	// Control first: no anchor, and the stranger's list is taken. If this
+	// control ever failed, the case below would pass for the wrong reason.
+	{
+		s, db := newState(t)
+		if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting,
+			ID: dbapi.SettingInstallation, Data: []byte(sl.Installation),
+			Updated: s.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		putTrustRow(t, db, 1, strangeSigned)
+		v, err := s.Refresh(ctx)
+		if err != nil {
+			t.Fatalf("control, no anchor: %v", err)
+		}
+		if v.List.Installation != sl.Installation {
+			t.Fatalf("control: the API opened %q", v.List.Installation)
+		}
+	}
+
+	// Now the same database, and an anchor that names the version this
+	// installation really had.
+	s, db := newTrusted(t)
+	admin, mine := genesis(t)
+	if _, err := s.AddVersion(ctx, mine); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	writeAnchor(t, s, trust.Anchor{Seq: 1, Hash: trust.Hash(mine)})
+	// Intermediate check: with the right anchor the way is open, so the
+	// refusal below is the anchor and not a wall in front of it.
+	s.cur = trust.Version{} // a cold API: it reads the rows again
+	if v, err := s.Refresh(ctx); err != nil || v.List.Seq != 1 {
+		t.Fatalf("the own list does not open under its own anchor: %v", err)
+	}
+	// A second version still goes on top: the anchor pins the root, not the end.
+	if _, err := s.AddVersion(ctx, admin.Sign(t, trusttest.Next(t, mine))); err != nil {
+		t.Fatalf("version 2 under the anchor: %v", err)
+	}
+	// And now the rows are replaced by the stranger's -- row and installation
+	// setting both, which is everything inside the database.
+	if err := db.BlobDelete(ctx, dbapi.BlobTrust, "2"); err != nil {
+		t.Fatal(err)
+	}
+	putTrustRow(t, db, 1, strangeSigned)
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting, ID: dbapi.SettingInstallation,
+		Data: []byte(sl.Installation), Updated: s.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	s.cur = trust.Version{} // a cold API: it reads the rows again
+	if v, err := s.Refresh(ctx); err == nil {
+		t.Fatalf("the stranger's version 1 was taken under the anchor: %q",
+			v.List.Installation)
+	}
+}
+
+// TestTheAnchorNamesWhereTheChainBegins: an anchor above version 1 makes that
+// version the root, and a database whose rows were rolled back below it
+// answers "no trust list" instead of putting the older list back in force.
+func TestTheAnchorNamesWhereTheChainBegins(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	second := admin.Sign(t, trusttest.Next(t, first))
+	if _, err := s.AddVersion(ctx, second); err != nil {
+		t.Fatalf("version 2: %v", err)
+	}
+	writeAnchor(t, s, trust.Anchor{Seq: 2, Hash: trust.Hash(second)})
+	s.cur = trust.Version{} // a cold API: it reads the rows again
+	// Intermediate check: the pinned version really opens, and it is the root
+	// now -- version 1 is below the anchor and is not read at all.
+	v, err := s.Refresh(ctx)
+	if err != nil || v.List.Seq != 2 {
+		t.Fatalf("the pinned version does not open: %v", err)
+	}
+	// Row 2 away, row 1 still there: the rollback the anchor exists against.
+	if err := db.BlobDelete(ctx, dbapi.BlobTrust, "2"); err != nil {
+		t.Fatal(err)
+	}
+	s.cur = trust.Version{} // a cold API: it reads the rows again
+	if _, err := s.Refresh(ctx); !errors.Is(err, ErrNoTrust) {
+		t.Fatalf("Refresh after the rollback: %v, want ErrNoTrust", err)
+	}
+}
+
+// putTrustRow writes one trust row by hand, the way a writer of the database
+// would -- not through AddVersion, which would refuse it.
+func putTrustRow(tb testing.TB, db dbapi.Store, seq uint64, sg trust.Signed) {
+	tb.Helper()
+	data, err := json.Marshal(sg)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobTrust,
+		ID: strconv.FormatUint(seq, 10), Seq: seq, Data: data, Updated: 1790000000}); err != nil {
+		tb.Fatal(err)
 	}
 }

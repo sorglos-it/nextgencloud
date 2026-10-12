@@ -828,3 +828,129 @@ func TestAFileThatLiesReadyIsStillInstalled(t *testing.T) {
 		t.Fatalf("what lies ready was not installed: %v", steps(fx, t))
 	}
 }
+
+// TestOneNodeCostsThreeWaits is the measurement behind the comment at
+// lockLease: ONE machine that carries the roles api and web costs a round
+// THREE waits, not one, because tunnel.Components gives such a server
+// ngc-controller, ngc-api and ngc-web. With InstallWait of 15 minutes that is
+// 45 minutes against a lease of 40 -- which is why the round renews the lease
+// instead of trusting the constant.
+//
+// Nothing reports here, so every step really costs the full wait; the case
+// turns the wait down to a fraction of a second and measures the multiple.
+func TestOneNodeCostsThreeWaits(t *testing.T) {
+	fx := newFixture(t)
+	fx.Fleet.put(ctlNode, "amd64", "1.0.0", []string{tunnel.RoleAPI, tunnel.RoleWeb},
+		map[string]string{trust.AutoAPI: "1.0.0", trust.AutoController: "1.0.0",
+			trust.AutoWeb: "1.0.0"})
+	fx.serveRelease(t, relPriv, 3, "1.1.0", theBodies())
+	fx.approve(t, trust.AutoAPI, trust.AutoController, trust.AutoWeb)
+	fx.U.Zone = time.UTC
+	const wait = 200 * time.Millisecond
+	fx.U.Wait = wait
+	// Intermediate check: the one node really carries three parts. Without
+	// this the case could measure a fleet of one part and still pass.
+	if comp := tunnel.Components([]string{tunnel.RoleAPI, tunnel.RoleWeb}); len(comp) != 3 {
+		t.Fatalf("Components(api, web) = %v, want three parts", comp)
+	}
+	start := time.Now()
+	if err := fx.U.Rollout(ctx); err != nil {
+		t.Fatalf("Rollout: %v", err)
+	}
+	took := time.Since(start)
+	if n := len(fx.Send.only(core.ActInstall)); n != 3 {
+		t.Fatalf("%d installs for one api+web node, want 3: %v", n, steps(fx, t))
+	}
+	// Three waits, with room for the work around them and against a slow
+	// machine, but clearly more than one.
+	if took < 3*wait {
+		t.Fatalf("the round took %v, less than three waits (%v) -- then the parts do "+
+			"not wait one after the other and the sum below is wrong", took, 3*wait)
+	}
+	t.Logf("one api+web node cost %v = %.2f x wait of %v", took, float64(took)/float64(wait), wait)
+}
+
+// TestRolloutStopsWhenItLosesTheLease: the lease on dbapi.LockUpdate runs out
+// in the middle of a round and another API takes the lock. The round must stop
+// right there with ErrLostLease -- driving on would be the second round over
+// the same controllers that ErrNotDriving exists to prevent.
+func TestRolloutStopsWhenItLosesTheLease(t *testing.T) {
+	fx := readyToRoll(t)
+	reports := fx.Send.onSend
+	var stolen bool
+	fx.Send.onSend = func(s sent) {
+		reports(s)
+		if stolen {
+			return
+		}
+		stolen = true
+		// A second API takes the lock, which it may only do once this one's
+		// lease has run out: that is what the late clock stands for.
+		ok, err := fx.S.DB.LockTake(ctx, dbapi.LockUpdate, "api-2",
+			testNow+lockLease, testNow+lockLease+600)
+		if err != nil || !ok {
+			t.Errorf("the second API could not take the lock: %v %v", ok, err)
+		}
+	}
+	err := fx.U.Rollout(ctx)
+	if !errors.Is(err, ErrLostLease) {
+		t.Fatalf("Rollout: %v, want ErrLostLease", err)
+	}
+	// Intermediate check: the round really got going before it stopped, so
+	// the error above is the lost lease and not a wall in front of it.
+	if len(fx.Send.list()) == 0 {
+		t.Fatalf("nothing travelled at all -- then the round stopped before the lease")
+	}
+	// And it did not stop at the first step either: the round walked on until
+	// the renewal in front of a step found the lock gone.
+	if !stolen {
+		t.Fatalf("the lock was never taken away")
+	}
+	// The lock belongs to the second API now, and the round that lost it did
+	// not free it on its way out.
+	if ok, err := fx.S.DB.LockTake(ctx, dbapi.LockUpdate, "api-3", testNow, testNow+600); ok || err != nil {
+		t.Fatalf("api-3 took the lock of api-2: %v %v", ok, err)
+	}
+}
+
+// TestRolloutRenewsTheLeasePerStep runs a round whose clock is pushed almost
+// a whole lease forward after every step. Without a renewal the lease would be
+// long gone by the second node; with one, a second API is turned away at every
+// moment of the round.
+func TestRolloutRenewsTheLeasePerStep(t *testing.T) {
+	fx := readyToRoll(t)
+	// A clock the case moves by hand, so the number of readings inside the
+	// round decides nothing.
+	clock := int64(testNow)
+	fx.S.Now = func() int64 { return clock }
+	reports := fx.Send.onSend
+	steps := 0
+	fx.Send.onSend = func(s sent) {
+		reports(s)
+		// One step of one node is one stage plus one install; the clock
+		// moves once per step, on the stage that opens it.
+		if s.action != core.ActStage {
+			return
+		}
+		steps++
+		// Almost a whole lease passes while this step runs: every single
+		// step of the round outlives the lease it started with.
+		clock += lockLease - 10
+		// And right here, in the middle of the round, a second API must
+		// still be kept out.
+		if ok, err := fx.S.DB.LockTake(ctx, dbapi.LockUpdate, "api-2", clock, clock+600); ok || err != nil {
+			t.Errorf("after step %d (second %d) api-2 took the lock: %v %v", steps,
+				clock-testNow, ok, err)
+		}
+	}
+	if err := fx.U.Rollout(ctx); err != nil {
+		t.Fatalf("Rollout: %v", err)
+	}
+	// Intermediate check: the round really had more steps than one lease
+	// covers, otherwise the checks above never had anything to catch.
+	if steps < 2 || clock-testNow <= lockLease {
+		t.Fatalf("%d steps over %d seconds -- that does not outlive one lease of %d",
+			steps, clock-testNow, lockLease)
+	}
+	t.Logf("%d steps over %d seconds, lease %d", steps, clock-testNow, lockLease)
+}

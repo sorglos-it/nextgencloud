@@ -374,6 +374,13 @@ func TestCheckOpensOnASignedReconfirmation(t *testing.T) {
 // members below answer exactly like the plain OPEN, before and after the right
 // is granted — app and service too, which Check takes from the app's row and
 // its manifest and not from the OPEN.
+//
+// One member of the OPEN does move the answer, and leaving it unsaid here
+// would send the next reader to the wrong place: an OPEN that carries a TASK
+// and params of its own is refused with E_VERIFY, by the LENGTH of the params
+// and never by their content. None of the OPENs below carries a task, so none
+// of them meets that wall; TestCheckRefusesAnOpenWithTaskAndParams is where it
+// is measured.
 func TestCheckIgnoresTheMembersOfTheOpen(t *testing.T) {
 	fx := newFixture(t)
 	plain := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}

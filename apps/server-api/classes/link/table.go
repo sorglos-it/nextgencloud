@@ -171,9 +171,10 @@ type Table struct {
 // A max of zero or less is a table that carries no channel at all. It refuses
 // every call, and which error it names depends on the call and not on max: the
 // checks that do not look at the table at all answer first, so Open and Next
-// still answer ErrProtocol for channel 0, for a window outside
-// MinWindow..MaxWindow and for the wrong side, and FailChannel still answers
-// ErrProtocol for channel 0. Everything that gets past those answers ErrLimit.
+// still answer ErrProtocol for a window outside MinWindow..MaxWindow and for
+// the wrong side, Open also for channel 0, and FailChannel for channel 0. Next
+// is NOT handed a channel number -- it picks one -- and this line used to say
+// it answered for channel 0 as well. Everything that gets past those answers ErrLimit.
 // Refusing is the safe answer and not an unbounded one, so a caller that forgets
 // the limit grants no channel rather than every channel.
 func NewTable(max int, opener bool) *Table {
