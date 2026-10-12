@@ -10158,7 +10158,12 @@ func TestTestStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("content key: %v", err)
 	}
-	if err := Encrypt(paid, strings.TrimSuffix(paid, ".ngc")+".enc",
+	// BERICHTIGT 12.10.2026: Hier stand strings.TrimSuffix(paid, ".ngc")+".enc"
+	// — also "app.enc". Gebaut und gemessen ist aber "app.ngc.enc": Aufgabe 27
+	// schreibt path+EncSuffix, und Aufgabe 28 sucht den Katalog-Eintrag unter
+	// genau diesem Namen (Konstante EncSuffix in apps/cli/classes/catalog.go).
+	// Mit dem alten Namen findet der Katalog die verschluesselte Fassung nicht.
+	if err := Encrypt(paid, paid+EncSuffix,
 		filepath.Join(dir, "content.key")); err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
