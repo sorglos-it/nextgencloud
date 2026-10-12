@@ -429,3 +429,74 @@ func TestSyncRefusesANodeOutsideTheGrammar(t *testing.T) {
 		}
 	}
 }
+
+// ulhContract is the contract that carries the balancer template,
+// shared/ulh.md. It is read off the disk on purpose: the point of the case
+// below is that the document and this program cannot drift apart, so the
+// document that ships is the one it has to be measured against.
+const ulhContract = "../../../../shared/ulh.md"
+
+// balancerFromContract cuts the single ```apache block out of shared/ulh.md
+// and undoes the four spaces the list item indents it by. It fails loudly
+// rather than returning an empty string: a block that moved, got a second
+// twin or lost its fence would otherwise turn this case green for the wrong
+// reason.
+func balancerFromContract(t *testing.T) []byte {
+	t.Helper()
+	md, err := os.ReadFile(ulhContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const (
+		open  = "    ```apache\n"
+		close = "    ```\n"
+	)
+	if n := strings.Count(string(md), "```apache"); n != 1 {
+		t.Fatalf("%s holds %d apache blocks, so there is no single form to compare against", ulhContract, n)
+	}
+	_, after, ok := strings.Cut(string(md), open)
+	if !ok {
+		t.Fatalf("%s has no apache block indented into its list item", ulhContract)
+	}
+	body, _, ok := strings.Cut(after, close)
+	if !ok {
+		t.Fatalf("the apache block in %s is never closed", ulhContract)
+	}
+	var out bytes.Buffer
+	for _, line := range strings.SplitAfter(body, "\n") {
+		if line == "" {
+			continue
+		}
+		if line != "\n" && !strings.HasPrefix(line, "    ") {
+			t.Fatalf("line %q of the template is not indented into the list item", line)
+		}
+		out.WriteString(strings.TrimPrefix(line, "    "))
+	}
+	if out.Len() == 0 {
+		t.Fatalf("the apache block in %s is empty", ulhContract)
+	}
+	return out.Bytes()
+}
+
+// TestBalancerTemplateMatchesTheContract is the bolt the rule asked for:
+// shared/ulh.md says the controller writes exactly the form printed there, so
+// that form is compared byte for byte with what Render produces for the two
+// APIs the template names. Whichever side moves alone, this case goes red -
+// a reader is not the only thing standing between the two spellings any more.
+//
+// What this does not measure: nothing here starts Apache. There is none on
+// the machine this was written on, so that the directives are also accepted
+// by Apache is unmeasured, here and in every other case of this package.
+func TestBalancerTemplateMatchesTheContract(t *testing.T) {
+	want := balancerFromContract(t)
+	got := Render([]config.WebAPI{
+		{URL: "https://api-1.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE1}, 32)},
+		{URL: "https://api-2.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE2}, 32)},
+	})
+	if got == nil {
+		t.Fatal("Render wrote nothing for two plain addresses, so this case measures an earlier wall")
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("the controller and %s write two different files.\ncontroller:\n%s\ncontract:\n%s", ulhContract, got, want)
+	}
+}

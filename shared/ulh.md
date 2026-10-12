@@ -159,8 +159,38 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   - Der virtuelle Host von `ngc-web` bindet die Datei ein.
   - Inhalt: je API ein `BalancerMember` mit der Adresse aus `web.json`, die TLS-Einstellungen der
     Regel „TLS intern“ und die Weiterleitung von `/api/` samt WebSocket an den Balancer.
-  - Die genaue Form legt der Plan des Webinterface fest und trägt sie hier als Vorlage ein; der
-    Controller schreibt genau diese Form.
+  - Die genaue Form ist diese Vorlage; `ngc-web` und der Controller schreiben genau sie,
+    Zeile für Zeile. Das Beispiel zeigt zwei APIs; je weiterer API kommt genau eine weitere
+    `BalancerMember`-Zeile dazu, mit derselben Einrückung und denselben Werten hinter der
+    Adresse. Es gibt keine andere erlaubte Abweichung.
+
+    ```apache
+    # /etc/ngc/apache-apis.conf
+    # Written by ngc-web (install, configure) and after that by ngc-controller with
+    # role web, both from /etc/ngc/web.json. Never edit by hand; every write is
+    # atomic, mode 0644, and Apache is reloaded only after apachectl configtest.
+    SSLProxyEngine on
+    SSLProxyVerify require
+    SSLProxyCACertificateFile /etc/ngc/tls/api-trust.pem
+    SSLProxyCheckPeerName on
+    SSLProxyCheckPeerExpire on
+    SSLProxyProtocol TLSv1.3
+    SSLProxyCipherSuite TLSv1.3 TLS_AES_256_GCM_SHA384
+
+    <Proxy "balancer://ngc-api">
+        BalancerMember "https://api-1.ngc.test:7443" retry=5 timeout=65 keepalive=On
+        BalancerMember "https://api-2.ngc.test:7443" retry=5 timeout=65 keepalive=On
+        ProxySet lbmethod=byrequests failontimeout=On
+    </Proxy>
+
+    ProxyPreserveHost Off
+    ProxyPass        "/api/" "balancer://ngc-api/api/" upgrade=websocket
+    ProxyPassReverse "/api/" "balancer://ngc-api/api/"
+    ```
+
+    Wer diese Vorlage ändert, ändert einen Vertrag: `TestBalancerTemplateMatchesTheContract`
+    in `apps/server-controller/classes/apache` vergleicht sie byteweise mit dem, was
+    `apache.Render` erzeugt, und wird rot, sobald eine der beiden Seiten allein wandert.
 - **Reihenfolge nach der Ersteinrichtung:** zuerst den Controller des Webservers koppeln. Erst er
   schreibt `trust-anchor.json`; bis dahin kann sich nur der Browser anmelden, der die
   Ersteinrichtung gemacht hat.
