@@ -3,32 +3,12 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"log/slog"
 	"os"
 
-	"github.com/sorglos-it/nextgencloud/shared/config"
-	"github.com/sorglos-it/nextgencloud/shared/tunnel"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/node"
 )
 
 // Version is set when building.
 var Version = "0.0.0-dev"
 
-func main() {
-	version := flag.Bool("version", false, "print the version and exit")
-	path := flag.String("config", config.ControllerFile, "configuration file")
-	flag.Parse()
-	if *version {
-		fmt.Printf("ngc-controller %s (contract %d)\n", Version, tunnel.Contract)
-		return
-	}
-	cfg, err := config.LoadController(*path)
-	if err != nil {
-		slog.Error("cannot read the configuration", "file", *path, "error", err)
-		os.Exit(1)
-	}
-	slog.Info("ngc-controller starting", "version", Version, "name", cfg.Name, "roles", cfg.Roles)
-	slog.Error("the controller is not built yet, see apps/server-controller/CLAUDE.md")
-	os.Exit(1)
-}
+func main() { os.Exit(node.Main(Version, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }

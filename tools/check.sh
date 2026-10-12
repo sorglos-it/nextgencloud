@@ -27,6 +27,11 @@ for arch in amd64 arm64; do
 		echo "$bad"
 		exit 1
 	fi
+	# go build compiles no test file, so the tests that only exist on the
+	# target (//go:build linux) would never be seen on a machine that builds
+	# elsewhere: a typo in them would still say "check: ok". go vet compiles
+	# them as the target and is the only thing here that does.
+	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go vet ./...
 	# -tags modules builds tools/modules.go too, so the vendored modules that no
 	# part imports yet are proven to build for both targets.
 	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -tags modules ./...

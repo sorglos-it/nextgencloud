@@ -1,0 +1,18 @@
+# Image of the terminal app. It is built on a build machine, never on the
+# target server: the server has no builder and must not need one.
+#
+# The context of the build is the directory the controller was built into
+# (build/), so this file copies one statically linked program and nothing
+# else. The commands are in apps/server-controller/CLAUDE.md, section
+# "Terminal-App bauen".
+FROM docker.io/library/debian:13-slim
+
+# /bin/sh comes from the base image; nothing is installed on top of it. The
+# fewer programs in here, the less a shell in this container can reach.
+RUN mkdir -p /usr/lib/ngc /data
+COPY ngc-controller /usr/lib/ngc/ngc-controller
+
+# The manifest names the program with its argument list (service "terminal"),
+# so the image needs no entry point of its own. hold is what keeps the
+# container up between channels.
+CMD ["/usr/lib/ngc/ngc-controller", "hold"]

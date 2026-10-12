@@ -129,6 +129,31 @@ so klein wie möglich.
   geschrieben.
 - Der Dienst „virtuelles Terminal" als Beispiel-Dienst.
 
+## Terminal-App bauen
+
+Das Abbild der Terminal-App entsteht auf einem **Baurechner**, nie auf dem Zielserver: der
+Zielserver hat keinen Bauer und soll keinen brauchen. Drei Zeilen je Architektur, aus dem Stamm
+des Repos:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(cat apps/server-controller/VERSION)" -o build/ngc-controller ./apps/server-controller
+podman build --arch amd64 -f apps/server-controller/templates/terminal/Containerfile -t ngc/terminal:1.0.0 build/
+podman save --format docker-archive -o services/amd64.tar ngc/terminal:1.0.0
+```
+
+Dasselbe mit `arm64` an allen drei Stellen und `services/arm64.tar` als Ziel. Das Paket baut
+danach die Sitzung API mit `ngc-store pack` aus `templates/terminal/manifest.json`, der `ui/` der
+Sitzung Webinterface und den beiden Tars.
+
+**Nicht gelaufen:** keine der drei Zeilen ist hier ausgeführt worden – auf dieser Maschine gibt es
+kein `podman`. Gemessen ist der erste Teil davon: `CGO_ENABLED=0 GOOS=linux go build` für `amd64`
+und `arm64` übersetzt (12.10.2026), und `store.ParseManifest` nimmt das Manifest an
+(`TestManifestMatchesTheContract`). Die Stufen „im Abbild enthalten" und „ausgeführt" fehlen.
+
+Der Dienst selbst ist `ngc-controller terminal`; er läuft **im Container**, liest die Rahmen des
+Kanals von stdin und schreibt die rohe Ausgabe der Shell nach stdout. `ngc-controller hold` hält
+den Container zwischen zwei Kanälen am Leben, damit das Abbild kein eigenes Programm braucht.
+
 ## Tests
 
 - Gegen die Vektoren in `shared/testdata/`, den Beispiel-Dienst
