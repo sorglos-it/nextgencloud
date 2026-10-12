@@ -46,9 +46,9 @@ func TestRunReportsAPackThatFailed(t *testing.T) {
 }
 
 func TestRunKnowsItsSubcommands(t *testing.T) {
-	// The five that are not built yet: the name is known, so the call says
+	// The four that are not built yet: the name is known, so the call says
 	// what is missing instead of looking like a typo (exit 1, not 2).
-	for _, name := range []string{"encrypt", "catalog", "license", "release", "check"} {
+	for _, name := range []string{"encrypt", "license", "release", "check"} {
 		var stdout, stderr bytes.Buffer
 		if code := Run([]string{name}, &stdout, &stderr); code != 1 {
 			t.Errorf("%s: exit %d", name, code)
@@ -72,12 +72,22 @@ func TestRunPrintsTheUsageForAWrongCall(t *testing.T) {
 	}
 	// Every subcommand the usage text names is one Run answers, so the text
 	// cannot promise a call that does not exist.
-	for _, name := range []string{"pack", "encrypt", "catalog", "license", "release", "check"} {
+	// Each one gets a call of its own arity: a call with too few arguments is
+	// a wrong call (exit 2) even for a subcommand that exists, so one shape
+	// for all of them would measure the arity, not the dispatch.
+	for name, args := range map[string][]string{
+		"pack":    {"pack", "x", "y"},
+		"encrypt": {"encrypt", "x", "y"},
+		"catalog": {"catalog", "x", "y", "teststore", "1"},
+		"license": {"license", "x", "y", "z"},
+		"release": {"release", "x", "y"},
+		"check":   {"check", "x", "y", "z"},
+	} {
 		if !strings.Contains(Usage, "ngc-store "+name+" ") {
 			t.Errorf("the usage text does not name %s", name)
 		}
 		var stdout, stderr bytes.Buffer
-		if code := Run([]string{name, "x", "y"}, &stdout, &stderr); code == 2 {
+		if code := Run(args, &stdout, &stderr); code == 2 {
 			t.Errorf("%s is named in the usage text but not understood", name)
 		}
 	}
