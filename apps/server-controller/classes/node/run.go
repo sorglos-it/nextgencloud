@@ -19,19 +19,18 @@
 //
 // What this file does NOT do, named rather than hidden:
 //
-//   - It does not open the local store. config.Controller names an encrypted
-//     SQLite (DB, DBKey), and the one call that opens it needs
-//     apps/server-db/classes/sqlite, which does not exist on this branch
-//     (plan task 24, step 1). openState is that one call and the only place an
-//     implementation would be named; it answers ErrNoLocalDB, so a server says
-//     one German line instead of coming up over a store that is not there. Run
-//     itself takes the store as a dependency and is measured over one.
-//   - It does not run migrations. A controller with the role db starts them as
-//     a program ("ngc-api migrate", docs/vertraege-v1.2.md point 28), and that
-//     subcommand is task 24 of the API plan and does not exist yet
-//     (apps/server-api/main.go knows -version and -config). There is no
-//     migrate.go here, and that is the decision: a scaffold would look like a
-//     promise.
+//   - It does not run the migrations of an UPDATE. A controller with the role
+//     db starts those as a program ("ngc-api migrate",
+//     docs/vertraege-v1.2.md point 28), and that subcommand is task 24 of the
+//     API plan and does not exist yet (apps/server-api/main.go knows -version
+//     and -config). There is no migrate.go here, and that is the decision: a
+//     scaffold would look like a promise.
+//
+//     What openState DOES do is bring the schema of this controller's own
+//     SQLite up to date, because sqlite.Open does that at every open. The two
+//     are not the same thing and the difference is the whole of point 28: one
+//     file opening its own schema has no ledger to write and no second server
+//     to wait for, while the migrations of an update do.
 package node
 
 import (
@@ -89,11 +88,27 @@ const (
 	Grace = 10 * time.Second
 )
 
-// ErrNoLocalDB says this build cannot open the controller's own encrypted
-// SQLite, because the package that implements it is not in this repository
-// yet. It is the one thing that keeps a real server from coming up here, and
-// it says so in one place instead of in a half-built store.
-var ErrNoLocalDB = errors.New("node: the encrypted local database of this controller is not built")
+// Owner is what this controller writes into the migration lock of its own
+// SQLite, and it is a DECISION of this file.
+//
+// It has to name THIS controller to whoever reads the lock, and it has to be
+// there: migrate.Apply refuses an empty owner. config.Controller.Node is
+// empty until an admin has put this server in a trust list, so the node alone
+// would be no name at all on a freshly paired server - the name is therefore
+// the one of the configuration, which config.LoadController never lets
+// through empty (wire.ValidName), and the node is added when there is one.
+//
+// It is not "ngc": a lock that says "ngc" says nothing, and the one thing an
+// admin wants from that row is WHICH program is migrating.
+const Owner = "ngc-controller"
+
+// owner is that name for this configuration.
+func owner(cfg *config.Controller) string {
+	if cfg.Node != "" {
+		return Owner + "/" + cfg.Name + "/" + cfg.Node
+	}
+	return Owner + "/" + cfg.Name
+}
 
 // msgNoState is what an admin reads for it. German, like every other line of
 // this program he reads on the server, and it names the next step.
@@ -383,33 +398,28 @@ func (c RunConfig) logger() *slog.Logger {
 }
 
 // opener opens this controller's own store. It is a type and an argument so
-// that the one thing this build cannot do - name an implementation of it - is
-// one value and not a hole in the middle of the wiring.
+// that a case can drive everything below the store without one on disk; on a
+// server it is openState and nothing else.
 type opener func(cfg *config.Controller) (*state.Store, error)
 
-// openState is that one call on a real server, and the only place an
-// implementation of the store would be named.
+// openState opens the encrypted SQLite of this controller. It is the one call
+// of the whole program that reaches an implementation of the store, and
+// state.Open is the one place that names one.
 //
-// It is not built. config.Controller carries the file and the 64-byte
-// AES-256-XTS key for it, and what is missing is the store itself:
-// apps/server-db/classes/sqlite, whose Open the plan names
-// ("sqlite.Open(path string, key []byte) (dbapi.Store, error)"), is not in
-// this repository - apps/server-db holds a CLAUDE.md and a VERSION and nothing
-// else. Step 1 of this task says what then happens: the piece is reported to
-// the session that owns it and this half is put back.
+// config.Controller keeps the file and its key as two plain fields; the store
+// takes a config.DB, so this is where the two are put together. The driver is
+// named here and not read from anywhere: a controller's own database is this
+// file format and no other, and a field for it would be a field that could
+// say "mariadb" on a server that has none.
 //
-// What is deliberately NOT here: a store of this package's own. A second
-// implementation would be a second truth about the same schema, which is the
-// finding W-1 of the db package, and an unencrypted one would be a controller
-// keeping its trust list and its task IDs in the clear.
+// now is the clock of the migration lock. It is read here, at the start, and
+// not handed in: the lock belongs to this one start of this one program.
 func openState(cfg *config.Controller) (*state.Store, error) {
-	if len(cfg.DBKey.Bytes()) != 64 { // AES-256-XTS
-		return nil, fmt.Errorf("%w: the database key needs 64 bytes", ErrNoLocalDB)
-	}
-	if cfg.DB == "" {
-		return nil, fmt.Errorf("%w: controller.json names no database file", ErrNoLocalDB)
-	}
-	return nil, ErrNoLocalDB
+	return state.Open(config.DB{
+		Driver: config.DriverSQLite,
+		Path:   cfg.DB,
+		Key:    cfg.DBKey,
+	}, owner(cfg), time.Now().Unix())
 }
 
 // run is the controller itself, the command without a command: it reads the

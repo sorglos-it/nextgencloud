@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -349,25 +350,68 @@ func TestTheRegistryHoldsOnlyTheTunnelsThatStand(t *testing.T) {
 	}
 }
 
-// The local store of this controller is NOT built, and this is where that is
-// measured rather than claimed: openState answers ErrNoLocalDB for a
-// configuration that is in every way right. The two checks before it are what
-// a real opener would check first, and they are measured too, so whoever
-// builds the store finds them already standing.
-func TestTheLocalStoreIsNotBuiltAndSaysSo(t *testing.T) {
-	whole := &config.Controller{DB: "/var/lib/ngc/state.db", DBKey: config.NewSecret(make([]byte, 64))}
-	for name, cfg := range map[string]*config.Controller{
-		"a whole configuration": whole,
-		"a short key":           {DB: whole.DB, DBKey: config.NewSecret(make([]byte, 32))},
-		"no file":               {DBKey: whole.DBKey},
-	} {
-		st, err := openState(cfg)
-		if st != nil {
-			t.Errorf("%s: openState gave a store back", name)
+// The local store of this controller is really opened now, and openState is
+// the one call that does it. What is measured is what that call puts together:
+// the file and the key of controller.json become a config.DB of the SQLite
+// driver, and the store that comes back is usable at once.
+func TestOpenStateOpensTheFileOfTheConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	cfg := &config.Controller{Name: "srv-1", Node: "ctl-1",
+		DB: path, DBKey: config.NewSecret(bytes.Repeat([]byte{9}, 64))}
+	st, err := openState(cfg)
+	if err != nil {
+		t.Fatalf("openState: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("openState opened no file at the path of the configuration: %v", err)
+	}
+	if _, err := st.Apps(context.Background()); err != nil {
+		t.Fatalf("the store openState gave back is not usable: %v", err)
+	}
+}
+
+// A key that is no key is answered by openState and leaves no file behind:
+// the length is checked in state.Open before anything is opened.
+func TestOpenStateRefusesAKeyThatIsNoKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	cfg := &config.Controller{Name: "srv-1",
+		DB: path, DBKey: config.NewSecret(bytes.Repeat([]byte{9}, 32))}
+	if st, err := openState(cfg); err == nil {
+		st.Close()
+		t.Fatal("openState took a 32-byte key")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("openState left a file behind for a key that is no key")
+	}
+}
+
+// What this controller writes into the migration lock. It has to name this
+// program and this server, it must never be empty - migrate.Apply refuses an
+// empty owner - and the node is only in it once there is one: a freshly
+// paired server has no node ID at all.
+func TestTheOwnerOfTheMigrationLockNamesThisController(t *testing.T) {
+	withNode := owner(&config.Controller{Name: "srv-1", Node: "ctl-1"})
+	without := owner(&config.Controller{Name: "srv-1"})
+	for name, got := range map[string]string{"with a node": withNode, "without a node": without} {
+		if got == "" {
+			t.Errorf("%s: the owner is empty, which migrate.Apply refuses", name)
 		}
-		if !errors.Is(err, ErrNoLocalDB) {
-			t.Errorf("%s: openState = %v, want %v", name, err, ErrNoLocalDB)
+		if !strings.Contains(got, "ngc-controller") {
+			t.Errorf("%s: the owner %q does not name this program", name, got)
 		}
+		if !strings.Contains(got, "srv-1") {
+			t.Errorf("%s: the owner %q does not name this server", name, got)
+		}
+		if got == "ngc" {
+			t.Errorf("%s: the owner says nothing", name)
+		}
+	}
+	if !strings.Contains(withNode, "ctl-1") {
+		t.Errorf("the owner %q leaves the node ID out", withNode)
+	}
+	if strings.Contains(without, "//") {
+		t.Errorf("the owner %q carries an empty part", without)
 	}
 }
 
@@ -387,13 +431,21 @@ func TestMainWithoutACommandRunsTheController(t *testing.T) {
 	}
 }
 
-// runWith stops at the store and says one German line, and the line names no
-// file: the path of the database has no business on the screen of whoever
-// typed the command. The configuration it reads is the one ulh leaves behind,
-// so what stops the start is the store and nothing before it.
+// runWith stops at a store that does not open and says one German line, and
+// the line names no file: the path of the database has no business on the
+// screen of whoever typed the command. The configuration it reads is the one
+// ulh leaves behind, so what stops the start is the store and nothing before
+// it.
 func TestRunWithStopsAtAStoreThatDoesNotOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "controller.json")
 	cfg := writeController(t, path)
+	// The real opener, and what it stumbles over is named rather than
+	// guessed: controller.json holds the Linux path /var/lib/ngc/controller.db,
+	// and on this machine the store refuses it by its own grammar ("the path
+	// must be an absolute, clean file name"). On a Linux server the same call
+	// would get as far as the directory. Either way this case measures the
+	// one thing it is about: a store that did not open stops the start, with
+	// that one German line and without the path in it.
 	var out, errOut strings.Builder
 	if code := runWith("1.2.3", path, openState, &out, &errOut); code != 1 {
 		t.Fatalf("runWith = %d, want 1", code)
