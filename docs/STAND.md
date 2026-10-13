@@ -352,4 +352,11 @@ Mit `-u` dagegen verschwindet ein eigener Messordner im Arbeitsbaum mitten im La
 
 `apps/server-api/classes/login`, 1 von 2 `check.sh`-Läufen rot (174,57 s), allein 0 von 3. Der
 Null-Kontrollzweig des Falls feuert selbst („this machine cannot measure a factor of two today").
-Gleiche Familie wie die drei darüber. Rate allein und mit `GOMAXPROCS=1` **nicht gemessen**.
+Gleiche Familie wie die drei darüber. **Freigemessen** mit zehn verschachtelten Paaren
+(Grundstand und Änderung abwechselnd, gleicher Maschinenzustand je Paar): **0/10 gegen 0/10**.
+
+**Und eine Lehre dazu:** `GOMAXPROCS=1` ist bei einem Fall, der **Uhrzeiten** vergleicht, der
+falsche Hebel — `messen.md` nennt es für ein Flattern an einer Reihenfolge zwischen Goroutinen.
+Das Verengen des Planers macht die Uhr nur verrauschter; der Lauf war nach über 30 Minuten nicht
+durch. Bei einem Zeitvergleich trennt der **gepaarte Lauf gegen den Grundstand**, nicht der
+verengte Planer.

@@ -1947,9 +1947,11 @@ Zustand der **Installation** ist: der Lesevorgang scheitert **vor** jeder Zeile.
 Holds` war in einem von zwei `check.sh`-Läufen rot (174,57 s), **0 Treffer** auf die
 Laufzeit-Trennlinie — nach den Regeln also ein echter Befund. In der Ausgabe steht aber der
 **Null-Kontrollzweig des Falls selbst**: `286,087µs` gegen `584,965µs`, „this machine cannot measure
-a factor of two today". Allein 0 rot in 3 Läufen. **Ungemessen:** die Rate allein und mit
-`GOMAXPROCS=1`, und ob derselbe Fall am Grundstand `bb52ccf` unter `check.sh` genauso rot wird.
-Der Eingriff fasst den gemessenen Zweig dieses Falls nicht an — **belegt ist das nicht.**
+a factor of two today". Allein 0 rot in 3 Läufen. **Nachgemessen und freigemessen:** 1 rot von 10 an der Änderung
+allein, 0 von 10 am Grundstand `bb52ccf` — das trennt nach `messen.md` nichts. Getrennt hat erst
+der **gepaarte** Lauf: zehn verschachtelte Paare, gleicher Maschinenzustand je Paar, **0/10 gegen
+0/10**. Die Änderung ist damit frei. **Ungemessen bleibt** nur, ob derselbe Fall unter der vollen
+Baumlast von `check.sh` am Grundstand genauso rot wird — dort wurde er nur allein gemessen.
 
 **Offen mit Zeile:** `join/join.go:120` und `controllers/pair.go:93` antworten weiter mit nacktem
 `httpapi.Fail` (laufen nicht über `httpapi.Routes.Mux`, haben auch keine Frist);
