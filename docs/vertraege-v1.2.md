@@ -1804,3 +1804,53 @@ dort beruft sich darauf, dass **eine** API auf einer Datei liege. **Zwei liegen 
 darauf.** Gehört zu P9. Ungemessen bleiben: echtes Rendern im Browser, ein echter Pi, und ob vier
 blockierte Schreiber einen **angemeldeten** Weg (WebSocket, Kanäle) lahmlegen — die Messung reicht
 nur bis `login/start`.
+
+## Punkt 51: Die Prozessdecke und `nosuid`/`nodev` — und drei Fälle, die blind geblieben wären
+
+**Gemessen und gebaut am 13.10.2026**, die zwei offenen Posten aus Punkt 36.
+
+**Die Kommandozeile ist jetzt vollständig belegt**, Zeile für Zeile aus
+`apps/server-controller/classes/runtime/podman.go`: `--network none` (242), `--cpus` (246),
+`--memory` (247), `--read-only` (250), `--cap-drop ALL` (257), `no-new-privileges` (259), zwei
+`--volume` (260, 263), `--user 0:0` (266, und 398 beim `exec`). Eine Behauptung über neun Schalter
+ist damit eine Liste mit Fundstellen.
+
+**Einhängungen: genau zwei.** `<DataDir>:/data:rw` — die einzige, deren Inhalt die App selbst
+schreibt, und damit die, bei der eine Datei mit gesetztem suid-Bit (Upload, Rücksicherung) im
+Container geachtet würde. Und `<Hold>:/ngc/ngc-hold:ro`, der Controller selbst. **Beide tragen
+jetzt `nosuid,nodev`** — auch die `:ro`, weil eine Einhängeoption kein Urteil über den Schreiber
+der Datei ist und nichts kostet. Nicht benannt werden podmans eigene `/proc`, `/sys`, `/dev`;
+`nodev` auf `/dev` machte den Container unbrauchbar.
+
+**`--pids-limit 512`, und die Zahl ist gemessen, nicht geraten:** ein Go-Programm in der Form des
+hold-Prozesses (1000 Goroutinen, `GOMAXPROCS` 64) hält **24 OS-Threads** — der cgroup-Zähler zählt
+Threads, nicht Prozesse. 512 ist Faktor 21 darüber und ein Viertel von podmans eigener Vorgabe
+(2048), steht aber **im Repo**. Eine Fork-Bombe ist unbegrenzt: jede endliche Zahl stoppt sie, die
+Frage ist nur, ob eine normale App hineinpasst. Der Fall prüft nicht nur die Zahl, sondern auch
+`> 0` (0 und −1 heißen bei podman „unbegrenzt") und `>= 128` gegen den gemessenen Bedarf.
+
+**Der Nebenbefund, der der eigentliche Fund ist:** drei bestehende Fälle lasen eine Volume-Angabe
+als **einen String** und suchten mit `HasSuffix(":rw")`. Nach dem Anhängen von `,nosuid,nodev`
+hätten sie **gar kein beschreibbares Volume mehr gefunden und wären grün geblieben**. Jetzt wird
+die Angabe zerlegt (`volumesOf`/`optsOf`). Eine Zusicherung, die am Ende eines Strings hängt, ist
+genau so lange wahr, bis jemand etwas anhängt.
+
+**Zahlen:** `runtime` 143 → **145 Fälle**, 0 rot; ganzer Controller-Satz **989 Fälle, 67
+übersprungen, 0 rot, dreimal von drei**; `tools/check.sh` ohne Pipe Code 0 mit `check: ok`;
+`-race` 0 DATA RACE, belegt mit einer Wegwerf-Mutation, die im selben Lauf 2 Fälle rot macht.
+Sechs Mutanten tot (Schalter weg, `0`, `64`, `nosuid` weg, `nodev` weg, hold ohne Optionen), eine
+Kontrolle lebt.
+
+**Nicht gemessen, und es ist dieselbe Grenze wie immer:** gemessen ist, dass wir die Schalter
+**schicken** — nicht, dass podman sie einhält. Das gilt für alle elf. Offen bleiben: ob
+`--pids-limit 512` eine echte Fork-Bombe stoppt und ob der `pids`-Controller rootless überhaupt
+delegiert ist (ohne Delegation **warnt** podman statt zu scheitern); ob diese podman-Fassung
+`nosuid`/`nodev` in der Optionsliste annimmt (ein Tippfehler würde erst auf einem Linux-Server
+abgewiesen); und ob eine suid-Datei unter `/data` danach wirklich wirkungslos ist. Die 23
+podman-Fälle (`fakePodman` ist ein `/bin/sh`-Skript) **überspringen sich auf Windows laut** —
+`TestCreateBuildsTheArgumentList` muss auf Linux nachgemessen werden.
+
+**Zu entscheiden (Nutzer):** `noexec` auf `/data`. Punkt 36 nennt es nicht, und es ist eine
+Verhaltensänderung für jede App, die unter `/data` Skripte hält. Dazu vorgemerkt, kein Blocker
+heute: eine App-eigene Prozessgrenze wäre ein Manifestfeld,
+`shared/store/manifest.go:50–51` — eingefroren.
