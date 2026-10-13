@@ -1646,3 +1646,48 @@ geprüft ist er erst auf echtem Debian (Feldplan).
 
 **Zu entscheiden (Nutzer):** die fünf Skripte nach `ulh`-`main` zusammenführen. Ein Push dorthin
 erreicht per Auto-Update **sofort alle Nutzer** — deshalb liegt das nicht bei mir.
+
+## Punkt 48: Zwei Programme auf einer SQLite-Datei — sicher, aber mit einer Zahl: vier
+
+**Gemessen am 13.10.2026**, die letzte offene Hälfte von Punkt 32. Alles mit **zwei echten
+Prozessen** über `sqlite.OpenDB` → Pool → `sqlstore` → `LogAdd`, keine Attrappe, auf **C:** und
+auf **Z:** (NAS).
+
+**Gleichzeitig schreiben trägt.** Je Prozess 1/4/16/64/128/192 Fäden: 0 Fehler in jeder Lage,
+`integrity_check=ok`, Zeilenzahl je Prozess exakt. Die Dateisperre hält über Prozessgrenzen,
+auch auf dem NAS. Mehr Last ist nur Warteschlange: der Durchsatz bleibt ~180/s je Prozess,
+ob 4 oder 192 Fäden. Bei 384 gleichzeitigen Schreibern reißt die 10-s-Frist (11,44 s) und es
+gibt **trotzdem 0 Fehler** — die Wiederholung fängt es.
+
+**Die Frist ist 10 s × 8 = 80 s.** `busy_timeout=10000` (`sqlite.go:27`) mal `maxTries=8`
+(`sqlstore/store.go:17`): gegen eine 95-s-Sperre wartet der Verlierer **80,6 s** (C: und Z:
+gleich), dann Fehler — und zwar `sqlite3: database is locked`, durch `httpapi.Fault` als
+**`E_UNREACHABLE`** (503). **Von „Datenbank weg" nicht zu unterscheiden.** `fault.go` sagt diesen
+Tag selbst voraus.
+
+**Die Grenze ist vier, nicht „soundso viele Benutzer".** Der Pool hält 4 Verbindungen
+(`sqlite.go:52`), und ein wartender Schreiber hält seine: blockierte Schreiber gegen die Kosten
+des ersten **Lesens** — 2 → 0,008 s, 3 → 0,007 s, **4 → 9,513 s**. Vier wartende Schreibvorgänge
+legen jede Abfrage des Prozesses lahm, auch jedes Lesen.
+
+**Die Migration hat keine Wiederholung.** Mit echter Wanderung (`ALTER TABLE`) gegen 4 Schreiber
+bei 328/s: `migrate-ok 1 in 0,029 s`. Gegen eine 95-s-Sperre: `migrate-error after 10,014s` —
+**eine** Frist, **keine** Wiederholung, weil `bootstrap`/`take` über `db.ExecContext` direkt gehen.
+
+**Behoben, weil die Meldung offensichtlich falsch war:** `busyOr` in `migrate.go` nennt jetzt den
+Schritt und bei einem Wiederholungsfehler die Ursache („ein anderes Programm schreibt"),
+ausdrücklich nicht den Satz der gehaltenen Migrationssperre. Rot vorher an der Zusicherung selbst,
+grün nachher; 50 Fälle unter `-v`, zwei Mutanten tot, eine Kontrolle lebt, `-race` null mit
+Wegwerf-Mutation belegt.
+
+**Was folgt — und was nicht:** Zwei Schreiber auf einer Datei sind **sicher, nur langsam**. Eine
+Regel „ein Schreiber je Datei" (so macht es `ngc-all.sh`, Punkt 47) ist damit eine Entscheidung
+über **Einfachheit**, nicht über Sicherheit. Hingelegt, nicht gebaut: ein Schreibkanal je Prozess
+statt vier Verbindungen; die Frist an den Zweck binden (kurz auf Benutzerwegen, lang beim Start —
+heute hat **kein** Store-Aufruf ein `context`-Zeitlimit); „busy" von `E_UNREACHABLE` trennen, mit
+`Retry-After`; und ob `migrate.Apply` eine Wiederholung bekommt (mit `maxTries=8` wären das 80 s
+Hängen beim Start — genau die Abwägung von Punkt 32).
+
+**Ungemessen:** zwei echte `ngc-api` über die ganze HTTP-Strecke; was der Benutzer im Browser bei
+`E_UNREACHABLE` liest; dasselbe auf einem echten Pi; drei Pools gleichzeitig (Sicherung) unter
+dieser Last.
