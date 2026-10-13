@@ -135,6 +135,114 @@ antwortet über seinen Pfad, nicht über die Maschine.**
 
 ---
 
+---
+
+# Nachtrag 13.10.2026: der kleine Fall auf einem echten Debian
+
+**Erstmals nicht in WSL.** Gemessen auf der VM `ngc-recovery` (Debian 13.7,
+Kernel 6.12.107, systemd als PID 1, root über `sudo`), Treiber **SQLite**, alles
+auf **einer** Maschine. Grundlage `main` **309dc2a**. Vollständig mit Befehlen
+und Zahlen: `.superpowers/sdd/klein-echter-server-report.md`.
+
+Je Abschnitt ein Messskript als **Datei** über `ssh … sudo sh -s`, Sonde
+`(exit 7)` als erste Zeile (in allen fünf Läufen **7**), jeder Ausstiegscode in
+der Fernshell in eine Datei geschrieben, keine Pipe vor einer Messung.
+`ngc-api` ist hier und dort bitgleich
+(`sha256 63cfa507419568a6f6a67a43e1e1d893ef1af3bc26c037ff11e8f24c60fbca3b`).
+
+## Abgearbeitet
+
+| Punkt | Stufe | Zahl |
+|---|---|---|
+| **S1** | **ausgeführt** | *Dieser Punkt ist auf `main` bereits zu*, nicht erst durch diese Messung: `apps/server-api/main.go` bindet `apps/server-db/classes/register` blank ein. Gelaufen: Migration **1**, zweiter Lauf **0**, Datei **102400** Byte |
+| **E1** | **ausgeführt** | `ngc-api` startet auf echtem Debian, `GET /api/v1/setup` = **200** mit `SetupOffer`, unbekannter Pfad **404 E_NOTFOUND**, SIGTERM Code **0** |
+| **E2** | **ausgeführt** | `1 Migration eingespielt.` / `0 Migrationen eingespielt.` — wiederholbar |
+| **E4** | **halb ausgeführt** | 8 Pfade mit `stat -c '%a %U:%G'`: `api.json`, `controller.json`, `api.key` **0600** ✓; **die drei SQLite-Dateien 0644** ✗ (Befund unten). Die 0700 von `/var/lib/ngc` hat mein Skript gesetzt, nicht das Programm |
+| **E5** | **ausgeführt** | **Beide** Dienstdateien geladen: `verify`-Text leer, `is-active`=`active`, HTTP 200; `kill -9` → wieder da nach **5069 ms** (api) und **5034 ms** (ctl), `NRestarts`=1. **`RestartSec=5` wird wirklich abgewartet** (Vertragspunkt 32) |
+| **E19** | **ausgeführt** | API und Controller über einen echten Tunnel, **eine** Maschine: Controller-`state.db` von `versions=0` auf `versions=1`, `seq=1`, **derselbe Prüfwert wie bei der API** (`5HqEAYbu…ue0TH8`); 8 s am Stück, **0** `tunnel failed` |
+| **E32** | **ausgeführt** | Zwei Controller derselben Kennung auf **einer** `state.db`: **beide bleiben 12 s am Leben**, `versions=1` und Prüfwert unverändert — aber **6 `tunnel failed`-Zeilen** gegen **0** bei einem Controller (Befund unten) |
+
+**Dazu, als Nebenbefund und eine gute Nachricht:** `/api/v1/setup` antwortet
+**200** solange keine Vertrauensliste in der Datenbank steht und **404**, sobald
+Version 1 da ist. Der Weg der Ersteinrichtung schließt sich von selbst. Zweimal
+gemessen.
+
+## Zwei Befunde
+
+**1. Die verschlüsselte Datenbank wird mit 0644 angelegt.** Eigens nachgemessen,
+damit es nicht am `umask` hängt: frisches Verzeichnis 0700, `umask` **0022**,
+`ngc-api migrate` → `644 root:root …/m.db`. Der Controller legt seine `state.db`
+genauso an. Solange `/var/lib/ngc` 0700 ist, passiert nichts — **nur setzt diese
+0700 heute niemand**, weil `ngc-all.sh` fehlt. Entscheidbar im Bericht.
+
+**2. Ein zweiter Controller meldet „die API ist nicht erreichbar", und die API
+schweigt.** Die Datei trennt die beiden nicht (dieselbe Erscheinung wie bei zwei
+`ngc-api`, nur stirbt hier keiner an einem Port). Was der Admin sechsmal liest,
+ist `err="link: the API cannot be reached"` — **die API ist erreichbar**, sie
+antwortet gleichzeitig mit 200. Ihr Protokoll hat in beiden Läufen genau zwei
+Zeilen und sagt über einen zweiten Controller **nichts**.
+**Welche Seite den Kanal schließt, ist nicht gemessen** — die Vermutung „die API
+nimmt je Knoten einen Kanal" passt zur Schichtung, bleibt aber eine Vermutung,
+bis eine Sonde an jeder schließenden Stelle sitzt.
+
+## Wo es klemmt
+
+**1. `ngc-all.sh` gibt es nicht.** Der Zweig `ngc-all` im ulh-Repo liegt da
+(`3a228ed`), ist aber **nur der Zusammenschluss von `ngc-api` und
+`ngc-controller` in eine Kategorie** — im Baum dieses Zweigs **0** Dateien mit
+`ngc-all` im Namen. Und `render_api_json` in `ngc-api.sh` schreibt
+`"driver": "mariadb"` als **feste Zeile**, nicht aus `NGC_DB_DRIVER`. Damit kann
+**kein** ulh-Skript den kleinen Fall einrichten, und **E6–E9 sind nicht
+messbar**. Alles oben ist von Hand aufgesetzt.
+
+**2. Der Prüfsatz läuft auf diesem Server nicht (E33).** Gemessen mit einem
+Wegwerf-Modul, das nur `go 1.27` verlangt:
+`go: go.mod requires go >= 1.27 (running go 1.24.4; GOTOOLCHAIN=local)`.
+**Der Maßstab des ganzen Feldzugs — ob die 69 Skip-Stellen einbrechen — bleibt
+damit ungemessen**, und zwar auf jeder Maschine mit Debians eigenem Go. Drei
+Wege stehen im Bericht; keiner davon ist gegangen, weil (a) eine Installation
+wäre.
+
+**Nicht erreicht und warum:** E3 (nicht der kleine Fall) · E10–E12 (hängen am
+Einrichtungsskript) · E13 (`/dev/sda2` dieser VM kann kein `encrypt`) · E14–E18
+(kein podman, nichts installiert) · E20–E28 (brauchen Shell und echte Kopplung)
+· E29 (VM hat **3612 MB** RAM, der Plan verlangt über 8 GB) · M1–M4 (mehr als
+eine Maschine).
+
+## Noch ein Flattrer im Gesamtsatz, und er hängt an Speicher statt an einer Uhr
+
+`bash tools/check.sh` ohne Pipe, Arbeitsbaum auf der **lokalen Platte C:**:
+**1 rot von 1** im Gesamtsatz, **0 rot von 5** allein.
+
+```
+--- FAIL: TestUploadHoldsNoPackageOnTheChannel (11.62s)   apps/server-api/classes/coreapp
+```
+
+Ein echtes `--- FAIL`, also kein Laufzeitfehler von go1.27.1. **Der Fall ist
+nicht falsch** — er prüft seine eigene Vorrichtung und weigert sich zu urteilen,
+sobald seine Nullkontrolle unter das Achtfache fällt:
+
+| | Strom hält bei 256 MiB | Nullkontrolle | Verhältnis | Urteil |
+|---|---|---|---|---|
+| allein | **6 578 624 B** | 337 491 504 B | **51×** | PASS |
+| im Gesamtsatz | **64 257 224 B** | 336 604 784 B | **5,2×** | unter 8× → verweigert |
+
+Unter der Last von über 1500 gleichzeitigen Fällen steigt die **gehaltene** Menge
+des Stromlaufs selbst von 6,6 MB auf 64 MB. **Dritter Flattrer des Gesamtsatzes**
+neben den zwei Zeitfällen in `STAND.md` — und der erste, der an Speicher hängt,
+nicht an einer Frist. **Ursache des Last-Einflusses nicht gemessen.**
+
+## Eine Lücke in der geerbten Vorrichtung
+
+`tools/tunnelprobe` ist die Vorrichtung der Messung vom 13.10. Nach
+abgeschalteten Riegeln durchsucht (`InsecureSkipVerify`, `Transport`,
+`RoundTripper`, `Dialer`, `VerifyPeer`, `SkipVerify`): **kein Treffer**. Aber
+**ihre Aufrufreihenfolge steht nirgends im Repo** — wer die Messung wiederholen
+will, muss sie aus dem Code herleiten. Sie ist: `config` → `ngc-api migrate` →
+`trust` → API starten → Controller starten → `ctlstate`.
+
+---
+
 # Stufe 0 — Schreibtisch, kein Gerät
 
 **Diese sieben kommen vor jeder Reise.** Ohne S1 startet nichts, ohne S2 und S3
