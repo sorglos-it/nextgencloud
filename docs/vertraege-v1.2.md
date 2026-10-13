@@ -1616,3 +1616,33 @@ belegt, die im **selben** Lauf rot wird.
 **TLS-Kette abschaltet** (Punkt 45) — der Strang hat das in den Kopf der Testdatei geschrieben,
 statt es zu übergehen. Und die Zeile mit Zeit und Grund bleibt beim Entfernen stehen; das ist
 bewusst so, aber ungemessen.
+
+## Punkt 47: Der kleine Fall — eine Datenbankdatei je Programm, und eine gemessene Lücke
+
+**Gemessen am 13.10.2026.** Für ein kleines System (eine Maschine) ist der Treiber
+`config.DriverSQLite`: **eine Datei**, verschlüsselt mit AES-256-XTS über eine eigene VFS,
+Schlüssel 64 Byte in `config.DB.Key`. MariaDB/Galera (`config.DriverMariaDB`, Konten `ngc` und
+`ngc_migrate`, TLS mit CA) ist erst der Fall „mehrere Maschinen".
+
+**Die Falle dabei:** bei SQLite wandert **jeder** `Open`-Aufrufer selbst die Migration durch;
+`ngc_lock` deckt nur den Augenblick der Migration. Zwei Programme auf **einer** Datei sind damit
+zwei Leser desselben `go:embed` — Befund W-1.
+
+**Gebaut, in `ulh` (Zweig `ngc-all`, `4faabb7`):** `ngc-all.sh` (1580 Zeilen, 82 neue Prüffälle,
+fünf Sprachen) richtet ein kleines System ein mit **je einer Datei und je einem Schlüssel pro
+Programm** — `/var/lib/ngc/api/ngc.db`, `/var/lib/ngc/controller/state.db`. `check_two_files`
+bricht **vor** dem ersten Schreiben ab, falls die Pfade je gleich wären. Die eine Stelle, die der
+Vertrag doch teilt (Rolle `db`: `controller.json`s `migrate` trägt Datei und Schlüssel der API,
+siehe `shared/ulh.md`), ist mit `After=network-online.target ngc-api.service` und
+`Restart=on-failure`/`RestartSec=5` auf beiden Einheiten abgefedert — nicht aufgehoben.
+
+**Die gemessene Lücke, und sie ist die wichtigste:** Apache, PHP, Zertifikat und `web.json` sind
+`ngc-web`s Arbeit. Je Zweig gezählt (committeter Stand, nicht Arbeitsbaum): `origin/main` hat
+**null** `ngc-*`-Skripte. `ngc-api.sh`/`ngc-controller.sh` liegen auf `ngc-skripte` und `ngc-all`,
+`ngc-db.sh` auf `ngc-db`, `ngc-web.sh` auf `ngc-web` und `ngc-web-kopfzeilen`. **Kein einziges ist
+veröffentlicht.** Folge: ohne `ngc-web` kann sich niemand anmelden, also auch keinen
+Kopplungscode holen — **der kleine Fall ist erst mit `ngc-web` durchgängig**, und durchgängig
+geprüft ist er erst auf echtem Debian (Feldplan).
+
+**Zu entscheiden (Nutzer):** die fünf Skripte nach `ulh`-`main` zusammenführen. Ein Push dorthin
+erreicht per Auto-Update **sofort alle Nutzer** — deshalb liegt das nicht bei mir.
