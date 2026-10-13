@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
@@ -80,6 +81,25 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		httpapi.Fail(w, wire.CodeInternal)
 		return
 	}
+	// decoy is the ID the nonce of a MADE-UP challenge is kept under, and it
+	// is drawn here, before anything is known about the name, so that the
+	// draw itself is not one of the things that differ between two names.
+	//
+	// A fresh secrets.ID and not a fixed word: it is the shape a real user ID
+	// has, 16 random bytes as base64url, so the row of a made-up challenge is
+	// not the odd one out in the table either -- a fixed sentinel would be a
+	// name oracle for whoever reads the database, which is a smaller circle
+	// than the internet but not an empty one. It is the ID of nobody by the
+	// same argument that makes a nonce unguessable, and even a collision would
+	// let nothing through: login/finish holds the ID beside the nonce against
+	// the user of a certificate it has ALREADY verified against the trust list
+	// (finish.go, at OnceUse), so the user of that certificate is always one
+	// the list has and never a number drawn here.
+	decoy, err := secrets.ID()
+	if err != nil {
+		httpapi.Fail(w, wire.CodeInternal)
+		return
+	}
 	// The name is looked up for two things and two only: the row that holds the
 	// TOTP secret, and the nonce that is kept for a real user. The answer
 	// itself comes from session.Challenge, which walks the list on its own.
@@ -131,38 +151,80 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		httpapi.Fail(w, wire.CodeInternal)
 		return
 	}
-	if known {
-		// Only a real nonce is kept. The made-up answer carries one that was
-		// never stored, so login/finish fails with E_LOGIN like any other
-		// wrong attempt -- the same answer a wrong password gets.
+	// The nonce is kept for EVERY name, and that is the one thing this path
+	// does differently since point 50. It used to be the single call a known
+	// name made that an unknown one did not, and that made the failure of
+	// that call unanswerable: a database that reads but cannot write would
+	// have answered every name that exists E_UNREACHABLE and every other one
+	// a challenge -- a perfect oracle, one request per name, no measuring.
+	// So the failure was swallowed, and the price was paid at the other end:
+	// the login that follows finds no nonce and fails with E_LOGIN, the
+	// browser reads "Anmeldung fehlgeschlagen.", and that is the sentence a
+	// WRONG PASSWORD gets. The person is told something untrue about his own
+	// password while the installation is the thing that is broken.
+	//
+	// Making the write for both names is what buys the way out. For a name
+	// nobody has the row is kept under decoy, so it is a nonce for nobody and
+	// denies at login/finish exactly as a nonce that was never kept at all.
+	// What it costs is named: a request for any name now writes a row, where
+	// before only a name that exists did. The rows expire with the challenge
+	// (session.ChallengeLifetime) and OncePurge frees them, the path in front
+	// is counted (package lock, read above), and the write is the same write
+	// the known name always made -- so this is more of a load that was
+	// already there, not a new kind of one.
+	id := u.ID
+	if !known {
+		id = decoy
+	}
+	if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, id, now+session.ChallengeLifetime); err != nil {
+		// BUSY is the one failure of this write that may become an answer,
+		// and the reason is not that it is the likeliest: it is a state of
+		// the INSTALLATION -- another program holds the file, measured at up
+		// to 80,6 s in point 48 of docs/vertraege-v1.2.md -- and never a
+		// state of the row that was handed in. A locked file is locked for
+		// both names alike, so it cannot fall one way for a name that exists
+		// and the other way for one that does not, and an answer built on it
+		// tells nobody which name was asked for.
 		//
-		// A row that cannot be written changes nothing about the answer, and
-		// that is the whole point: this is the one call a known name makes
-		// that an unknown one does not, so it is the one call whose failure
-		// must not show. A database that reads but cannot write -- a full
-		// disk, a read replica, a locked table, a quota that ran out -- would
-		// otherwise answer every name that exists E_UNREACHABLE and every
-		// other one with a challenge: one request per name, no measuring, no
-		// noise, and the whole made-up answer undone. The login that follows
-		// finds no nonce and fails with E_LOGIN, which is what a wrong
-		// password gets, so nothing is let through either.
+		// Every other failure stays swallowed, and that is deliberate rather
+		// than left over. A full disk, a read replica, a quota, a store that
+		// dislikes THIS row: all of those can depend on what was written, and
+		// what is written differs between the two names by exactly one value
+		// -- the ID. A store that takes a real ID and refuses decoy, or the
+		// other way round, would hand the oracle straight back, inverted.
+		// Busy is the only name in that error we may read, because it is the
+		// only one that cannot be about the row.
 		//
+		// E_UNREACHABLE and no word of its own: there is none to use. A code
+		// E_BUSY lies in frozen shared/wire/wire.go:450-462 -- BLOCKED, and
+		// P9 of docs/vertraege-v1-3-vorschlag.md is the decision. So what the
+		// caller gets is the 503 of "the database cannot be reached" with the
+		// Retry-After beside it that point 49 built, which is enough for a
+		// client that reads headers and for an admin reading the log, and not
+		// yet enough for one that reads only the code. It is still better
+		// than the answer before it, which was a lie about a password.
+		if dbwait.Busy(err) {
+			// httpapi.FailFault and not an answer of this file's own: it is
+			// the one place that puts Retry-After and the reason db-busy
+			// together, and the log line it writes carries the reason and the
+			// number only, nothing of the request (point 49).
+			httpapi.FailFault(w, err, httpapi.FromRows)
+			return
+		}
 		// Swallowed, but not silent. Every login of the installation then
-		// fails with E_LOGIN and nothing outside says why, where the 503 used
-		// to; whoever runs it would be left with "nothing works and I do not
-		// know why". So it is said out loud -- once per nonceWarnTTL and
-		// without a word of the request, so that it costs no answer and cannot
-		// be made to fill a disk by asking often.
+		// fails with E_LOGIN and nothing outside says why, so it is said out
+		// loud -- once per nonceWarnTTL and without a word of the request, so
+		// that it costs no answer and cannot be made to fill a disk by asking
+		// often.
 		//
 		// The line is the fixed text and nothing else, the error of the
 		// database included. A driver may quote the values of the statement
 		// back in its error, and the values of this one are the nonce and the
 		// user ID: a nonce belongs in no log, not even shortened (CLAUDE.md,
-		// "Regeln für sicheres Programmieren"). What the line has to say -- the
-		// database cannot be written -- it says without them, and whoever needs
-		// the cause gets it from the database itself.
-		if err := h.S.DB.OnceCreate(ctx, dbapi.OnceNonce, nonce, u.ID, now+session.ChallengeLifetime); err != nil &&
-			h.warnNonce.take(now, nonceWarnTTL) {
+		// "Regeln fuer sicheres Programmieren"). What the line has to say --
+		// the database cannot be written -- it says without them, and whoever
+		// needs the cause gets it from the database itself.
+		if h.warnNonce.take(now, nonceWarnTTL) {
 			slog.Error("a login challenge could not be kept; logins fail until the database can be written again")
 		}
 	}
