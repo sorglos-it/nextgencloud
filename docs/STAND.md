@@ -332,3 +332,24 @@ Mikrosekundenbereich, auf einer Maschine mit anderen Lasten. **Ursache nicht gem
 auf keinem Weg, der an diesem Tag geändert wurde (der Fall ruft den Handler direkt, nicht über den
 Router). Wer ihn rot sieht: erst allein wiederholen, und mit `GOMAXPROCS=1` prüfen, bevor er zum
 Befund wird.
+
+### `tools/check.sh` scheitert im Arbeitsbaum mit Code 128 — UNC-Pfad, nicht Eigentum
+
+Nicht „dubious ownership": `git worktree add` schreibt in die `.git`-Datei einen **UNC-Pfad**
+(`//nas.mein.lan/freigaben/…`), den Git-Bash über seine Pfadumschreibung zerlegt —
+`fatal: not a git repository: /mnt/c/<baum>/Z:/GitHub/…`. **Abhilfe gemessen:**
+`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`, dann läuft derselbe Befehl. `Z:/…` in die
+`.git`-Datei zu schreiben hilft **nicht** (`fatal: not a git repository: (NULL)`).
+
+### `git stash push` ohne `-u` lässt neue Testdateien stehen
+
+Der „Grundstand"-Lauf misst dann **alte Quelle gegen neue Fälle**. Einmal war das nützlich (es
+wurde die Rot-vorher-Messung des ganzen Satzes), aber es wäre leicht als Grundstand durchgegangen.
+Mit `-u` dagegen verschwindet ein eigener Messordner im Arbeitsbaum mitten im Lauf —
+**Messdateien gehören in den Scratchpad, nicht in den Baum.**
+
+### Ein vierter Zeitflattrer: `TestFinishTakesTheSameTimeForAKeyNobodyHolds`
+
+`apps/server-api/classes/login`, 1 von 2 `check.sh`-Läufen rot (174,57 s), allein 0 von 3. Der
+Null-Kontrollzweig des Falls feuert selbst („this machine cannot measure a factor of two today").
+Gleiche Familie wie die drei darüber. Rate allein und mit `GOMAXPROCS=1` **nicht gemessen**.

@@ -1909,3 +1909,50 @@ kann „besetzt" weiter nicht von „weg" trennen. Dazu `shared/dbapi/dbapi.go:1
 Benutzer im Browser bei 503 + `Retry-After` liest; die zusätzliche Schreiblast durch Nonce-Zeilen
 für unbekannte Namen (Ablauf über `session.ChallengeLifetime` + `OncePurge`) — benannt, nicht
 gemessen. `login/finish` und `logout` antworten weiter ohne `Retry-After`.
+
+## Punkt 53: Der Fehler überlebt `Live` — und er ging an drei Stellen verloren, nicht an einer
+
+**Gemessen und gebaut am 13.10.2026**, der offene Posten aus Punkt 52.
+
+**Die Fundstelle war größer als gedacht:** `login/live.go:212` gab `(*Live, wire.Code, bool)`
+zurück, und der Fehler fiel an **drei** Stellen heraus — `sessionRow`/`SessionGet`, `Refresh`
+(die in Punkt 52 genannte Zeile 313) und `SessionTouch`. Die Aufrufer `login/trust.go:33` und
+`browser/browser.go:121` antworteten darum `503` mit `Retry-After: ""` und einem Protokoll **ohne
+Grund**. Rot vorher an genau diesen Zusicherungen, sechsmal, über Trust, Logout, Finish, Start und
+Socket.
+
+**Gebaut:** `httpapi.FailCoded(w, code, err)` — **der Code entscheidet die Antwort, der Fehler nur
+Header und Protokollzeile**. Ausdrücklich **nicht** `FailFault` direkt: `Fault` bildet
+`dbapi.ErrNotFound` auf `E_INTERNAL` ab, `sessionFault` auf `E_LOGIN` — ein Neuberechnen hätte das
+**still gekippt**. Genau dafür gibt es einen Mutanten (M5, 5 Fälle tot). `Live` und `sessionRow`
+geben den Fehler neben dem Code zurück; mitgenommen wurden `logout` (2 Stellen), `finish` (alle
+fünf `E_UNREACHABLE`) und in `start` die **zwei Lesevorgänge** vor der Namenssuche — Punkt 52 hatte
+dort nur den Schreibvorgang.
+
+**Zahlen:** `=== RUN` **206 in beiden Läufen** (identische Fallzahl, also vergleichbar) — vorher
+**5 rot**, nachher **0**; 8 neue Fälle. 22 Pakete ok. `-race` 206 Fälle, 0 DATA RACE, belegt mit
+einer Wegwerf-Mutation, die im selben Lauf 2 zeigt. Sechs Mutanten tot, Kontrolle lebt (121 Fälle).
+
+**Kein neues Orakel, mit Zahlen belegt:** vier Fälle vergleichen Status, **jede Kopfzeile mit
+jedem Wert** und Körper — echtes gegen erfundenes Cookie (Trust und Logout), zwei Token am Socket,
+ein Schlüssel aus der Vertrauensliste gegen einen fremden (die einzige der fünf finish-Stellen, die
+ihre Zeile danach wählt), bekannter gegen unbekannten Namen. **Diese vier sind vorher und nachher
+grün** — sie sind der Riegel, nicht der Beleg der Änderung. Sie können halten, weil besetzt ein
+Zustand der **Installation** ist: der Lesevorgang scheitert **vor** jeder Zeile.
+
+**BLOCKED:** unverändert `shared/wire/wire.go:450–462` (`E_BUSY`, P9), dazu
+`shared/dbapi/dbapi.go:109–111` und in der Folge `apps/server-api/classes/state/state.go:29–32`.
+
+**Ein vierter Zeitflattrer, und er erklärt sich selbst:** `TestFinishTakesTheSameTimeForAKeyNobody
+Holds` war in einem von zwei `check.sh`-Läufen rot (174,57 s), **0 Treffer** auf die
+Laufzeit-Trennlinie — nach den Regeln also ein echter Befund. In der Ausgabe steht aber der
+**Null-Kontrollzweig des Falls selbst**: `286,087µs` gegen `584,965µs`, „this machine cannot measure
+a factor of two today". Allein 0 rot in 3 Läufen. **Ungemessen:** die Rate allein und mit
+`GOMAXPROCS=1`, und ob derselbe Fall am Grundstand `bb52ccf` unter `check.sh` genauso rot wird.
+Der Eingriff fasst den gemessenen Zweig dieses Falls nicht an — **belegt ist das nicht.**
+
+**Offen mit Zeile:** `join/join.go:120` und `controllers/pair.go:93` antworten weiter mit nacktem
+`httpapi.Fail` (laufen nicht über `httpapi.Routes.Mux`, haben auch keine Frist);
+`setup/setup.go:95–98` macht aus jedem `E_UNREACHABLE` bewusst `E_INTERNAL`; die Hintergrundrunden
+haben weder Frist noch Grund. Und was der Benutzer bei `503 + Retry-After` **liest**, ist weiter
+ungemessen — die Oberfläche nimmt den `message` der Antwort nie (`contracts/wire.js:505`).
