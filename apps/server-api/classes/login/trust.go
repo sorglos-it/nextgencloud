@@ -30,9 +30,15 @@ import (
 // top of that is written at the branch itself.
 func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	live, code, ok := h.Live(ctx, r)
+	live, code, err, ok := h.Live(ctx, r)
 	if !ok {
-		httpapi.Fail(w, code)
+		// FailCoded and not Fail, for the same reason the Chain error below
+		// goes through FailFault: a database that was only BUSY gets the
+		// Retry-After and the log reason that tell it from one that is away
+		// (httpapi/busy.go). Live hands the error up beside the code so this
+		// line can do it at all; the code is Live's and is not recomputed, so
+		// a session that is simply not there stays E_LOGIN.
+		httpapi.FailCoded(w, code, err)
 		return
 	}
 	from, err := session.ParseFrom(r.URL.Query().Get("from"))

@@ -60,7 +60,14 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 	// login/finish does -- so asking for a name never locks it.
 	wait, err := lock.Check(ctx, h.S.DB, req.Name, now)
 	if err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		// FailCoded and not Fail: a read that only did not come free in time
+		// gets the Retry-After and the log reason of httpapi/busy.go. The code
+		// stays the one written here -- there is no word of its own for busy
+		// (P9) -- and the error only picks the header. It cannot tell the two
+		// names apart for the reason just given: the look costs the same for a
+		// name that exists and one that does not, so the failure of it does
+		// too (TestStartAnswersTheSameWhenTheCountingIsBusy).
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	if wait > 0 {
@@ -73,7 +80,9 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 	// an answer this path gives in no other case.
 	v, err := h.S.Trust(ctx)
 	if err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		// The list is read before the name is looked up in it, so this one is
+		// alike for every name as well.
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	nonce, err := secrets.Bytes(session.NonceSize)

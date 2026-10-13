@@ -86,7 +86,7 @@ func TestTrustLooksAtTheListOnce(t *testing.T) {
 	cookie := loginOnce(t, h, fx)
 	c := &trustReads{Store: h.S.DB}
 	h.S.DB = c
-	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+	if _, _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 		t.Fatal("the session was refused")
 	}
 	once := c.take()
