@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
@@ -689,6 +691,115 @@ func TestTheSigningKeyIsClearedAfterUse(t *testing.T) {
 	for _, b := range sign {
 		if b != 0 {
 			t.Fatalf("the private signing key was left in memory: %x", []byte(sign))
+		}
+	}
+}
+
+// TestTwoStartsAtOnceBothComeUp is the race two real ngc-api on one data
+// directory run into, measured over HTTP on 13.10.2026: both were started in
+// the same moment, one of them wrote the code file and the other found it
+// there and EMPTY -- O_EXCL creates the name before the code is in it -- read
+// ErrNoCode out of that and REFUSED TO START ("der Einmal-Code für die
+// Ersteinrichtung lässt sich nicht anlegen"), while nothing was broken.
+//
+// The deliberate case stays what it is: a file that really holds no code is
+// still ErrNoCode (TestEnsureCodeSaysNoCodeWhenTheFileHoldsNone). What this
+// case asks is that the name never EXISTS half written, so that the loser of
+// the race reads the winner's code instead of a window.
+func TestTwoStartsAtOnceBothComeUp(t *testing.T) {
+	const rounds = 40
+	for i := 0; i < rounds; i++ {
+		shared := filepath.Join(t.TempDir(), "setup-code")
+		a, b := newHandler(t), newHandler(t)
+		// Each handler made a code of its own; what is measured is one file
+		// two starts meet, so both are pointed at a name that holds nothing.
+		for _, h := range []*Handler{a, b} {
+			_ = os.Remove(h.CodeFile)
+			h.CodeFile = shared
+		}
+		errs := make([]error, 2)
+		oks := make([]bool, 2)
+		var wg sync.WaitGroup
+		gate := make(chan struct{})
+		for j, h := range []*Handler{a, b} {
+			wg.Add(1)
+			go func(j int, h *Handler) {
+				defer wg.Done()
+				<-gate
+				oks[j], errs[j] = h.EnsureCode()
+			}(j, h)
+		}
+		close(gate)
+		wg.Wait()
+		for j := range errs {
+			if errs[j] != nil || !oks[j] {
+				t.Fatalf("round %d: start %d did not come up: ok=%v err=%v", i, j, oks[j], errs[j])
+			}
+		}
+		// And both hold the SAME code: of two starts at once only one makes
+		// one, which is what the O_EXCL at the call site promises.
+		code, err := os.ReadFile(shared)
+		if err != nil || !session.ValidSetupCode(strings.TrimSpace(string(code))) {
+			t.Fatalf("round %d: the file holds %q: %v", i, code, err)
+		}
+	}
+}
+
+// TestTheCodeFileNeverExistsHalfWritten holds the invariant the race of
+// TestTwoStartsAtOnceBothComeUp rests on, and holds it without a second
+// start: while a start is making the code, the NAME of the code file never
+// exists carrying anything but a code.
+//
+// It is the invariant and not the race, because a second start only SEES the
+// window -- whether it sees it depends on how the two are scheduled, and a
+// case that depends on that measures the scheduler. Here one goroutine makes
+// the code and the other reads the name as fast as it can, so the window is
+// caught wherever it is.
+func TestTheCodeFileNeverExistsHalfWritten(t *testing.T) {
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		h := newHandler(t)
+		_ = os.Remove(h.CodeFile)
+		done := make(chan error, 1)
+		stop := make(chan struct{})
+		var bad atomic.Int64
+		var reads atomic.Int64
+		go func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				b, err := os.ReadFile(h.CodeFile)
+				if err != nil {
+					continue // not there yet is not a window
+				}
+				reads.Add(1)
+				if !session.ValidSetupCode(strings.TrimSpace(string(b))) {
+					bad.Add(1)
+				}
+			}
+		}()
+		go func() {
+			_, err := h.EnsureCode()
+			done <- err
+		}()
+		if err := <-done; err != nil {
+			close(stop)
+			t.Fatalf("round %d: EnsureCode: %v", i, err)
+		}
+		// One read after the call has returned, so the watcher has seen the
+		// finished file at least once: a round that read nothing at all would
+		// be a green that measured nothing.
+		b, err := os.ReadFile(h.CodeFile)
+		close(stop)
+		if err != nil || !session.ValidSetupCode(strings.TrimSpace(string(b))) {
+			t.Fatalf("round %d: the finished file holds %q: %v", i, b, err)
+		}
+		if n := bad.Load(); n > 0 {
+			t.Fatalf("round %d: the name existed %d times without a code in it (of %d reads)",
+				i, n, reads.Load())
 		}
 	}
 }

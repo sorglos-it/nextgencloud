@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -166,53 +167,85 @@ func (h *Handler) EnsureCode() (made bool, err error) {
 	if _, err := h.S.EnsureInstallation(ctx); err != nil {
 		return false, err
 	}
-	// O_EXCL, and no look at the name before it: a name that is taken is
-	// never written through, so a link somebody laid out cannot catch the
-	// code, and of two starts at once only one makes one. What is there
-	// stays, and what it holds decides whether a code exists.
-	var f *os.File
-	f, err = os.OpenFile(h.CodeFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		// What the file holds decides, and how it failed to say goes on to
-		// the start unchanged: ErrNoCode is the one case that is mended by
-		// removing the file.
+	// What is there decides, and it is read before anything is made: a code
+	// that stands is the code the admin was given, and ErrNoCode or a
+	// reading that fails goes on to the start unchanged.
+	//
+	// It READS a name somebody may have laid out, and that is the one thing
+	// this look adds over the O_EXCL it replaces. It never writes through it,
+	// at most maxCodeFile+1 bytes are taken, and neither ErrNoCode nor the
+	// error of the reading carries a byte of what stood there -- so a symlink
+	// to somebody else's file buys a refused start and no word about its
+	// contents. It is kept rather than dropped because the alternative is to
+	// draw a code into a temporary file at EVERY start and remove it again,
+	// which puts a secret on the disk that nobody was ever given.
+	switch _, err := h.readCode(); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		// Nothing there yet; one is made below.
+	default:
+		return false, err
+	}
+	// The code is written under a name of our own and the real name comes
+	// into being by a HARD LINK, so that name never exists half written.
+	//
+	// It was O_EXCL on the real name, and that is the race two ngc-api on one
+	// data directory ran into -- measured over HTTP on 13.10.2026: O_EXCL
+	// creates the name before the code is in it, the other start found it
+	// there and EMPTY, read ErrNoCode out of that window and REFUSED TO
+	// START, while nothing was broken. The admin was then sent to remove a
+	// file that held the code of the start that won.
+	//
+	// What the O_EXCL bought is bought here too, and that is why it is a link
+	// and not a rename. A name that is taken is still never written through
+	// -- link fails with EEXIST, so a file or a symlink somebody laid out
+	// cannot catch the code -- and of two starts at once still only one makes
+	// one: the loser removes its own and reads the winner's.
+	dir, name := filepath.Split(h.CodeFile)
+	if dir == "" {
+		dir = "."
+	}
+	// CreateTemp makes the file with mode 0600, so the code is never readable
+	// for others, not even for a moment.
+	f, err := os.CreateTemp(dir, "."+name+"-*")
+	if err != nil {
+		return false, err
+	}
+	tmp := f.Name()
+	// The temporary name goes in every case: it carries a code nobody was
+	// given, and one left lying is one more copy of a secret on the disk.
+	defer os.Remove(tmp)
+	defer f.Close()
+	// The code is drawn once the file that takes it is open and only ours:
+	// one that is never written is one that nobody could have been given.
+	code, err := secrets.SetupCode()
+	if err != nil {
+		return false, err
+	}
+	if _, err := f.WriteString(code + "\n"); err != nil {
+		return false, err
+	}
+	// Synced and closed BEFORE the link, so the name that appears carries the
+	// code on the disk and not only in a buffer.
+	if err := f.Sync(); err != nil {
+		return false, err
+	}
+	if err := f.Close(); err != nil {
+		return false, err
+	}
+	switch err := os.Link(tmp, h.CodeFile); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrExist):
+		// Somebody was quicker, and what HE wrote is the code that counts.
 		if _, err := h.readCode(); err != nil {
 			return false, err
 		}
 		return true, nil
-	}
-	if err != nil {
+	default:
 		return false, err
 	}
-	// A file that was not written to the end holds no code anybody can use,
-	// and O_EXCL would keep the next start from writing one: it goes at once.
-	defer func() {
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			made = false
-			_ = h.removeCode()
-		}
-	}()
-	// The mode is set before the first byte, so the code is never readable
-	// for others, not even for a moment.
-	if err = f.Chmod(0o600); err != nil {
-		return false, err
-	}
-	// The code is drawn once the file that takes it is open and only ours:
-	// one that is never written is one that nobody could have been given.
-	var code string
-	if code, err = secrets.SetupCode(); err != nil {
-		return false, err
-	}
-	if _, err = f.WriteString(code + "\n"); err != nil {
-		return false, err
-	}
-	if err = f.Sync(); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // code reads the one-time code; a file that holds none and one that cannot be
