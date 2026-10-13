@@ -53,7 +53,11 @@ func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 		// only part of it the caller brought. That is what makes
 		// state.ErrOldVersion the 404 of the contract's table here, where the
 		// same error on the setup path is the caller's bad signature.
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+		// FailFault and not Fail(Fault(...)): a database that was only BUSY
+		// gets the Retry-After and the log line that tell it apart from one
+		// that is away (httpapi/busy.go), and this route is the one of the
+		// five that reads the most rows.
+		httpapi.FailFault(w, err, httpapi.FromRows)
 		return
 	}
 	if len(chain.Versions) == 0 {

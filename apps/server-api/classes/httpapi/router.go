@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"path"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
+
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -32,8 +34,25 @@ type Routes struct {
 // both away from it, so every answer that leaves here is one of this package.
 func (rt Routes) Mux() http.Handler {
 	mux := http.NewServeMux()
-	add := func(pattern string, methods []string, h http.HandlerFunc) {
+	// short says the route is one a person waits at: its handlers get the
+	// deadline of a user path on the context of the request, so no store call
+	// behind them can wait the measured 80,6 s of a full retry chain. It is
+	// done here and not at each store call because this is the one place that
+	// knows WHICH kind of path a request is on -- and because a deadline that
+	// has to be remembered at every call site is one that is forgotten at the
+	// next one.
+	//
+	// The one route that does not get it is the socket: it is held open for
+	// as long as the session lives, and a deadline on it would end the
+	// session (session.PathSocket, below). That is the whole of the
+	// difference between the two calls, and it is why there are two.
+	add := func(pattern string, methods []string, short bool, h http.HandlerFunc) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if short {
+				ctx, cancel := dbwait.User(r.Context())
+				defer cancel()
+				r = r.WithContext(ctx)
+			}
 			if h == nil {
 				// A route nobody wired is a mistake of this program, not of
 				// the caller. Answering it keeps the connection whole where a
@@ -50,12 +69,12 @@ func (rt Routes) Mux() http.Handler {
 			Fail(w, wire.CodeProtocol)
 		})
 	}
-	add(session.PathSetup, []string{http.MethodGet, http.MethodPost}, rt.Setup)
-	add(session.PathLoginStart, []string{http.MethodPost}, rt.Login)
-	add(session.PathLoginFinish, []string{http.MethodPost}, rt.Finish)
-	add(session.PathLogout, []string{http.MethodPost}, rt.Logout)
-	add(session.PathTrust, []string{http.MethodGet}, rt.Trust)
-	add(session.PathSocket, []string{http.MethodGet}, rt.Socket)
+	add(session.PathSetup, []string{http.MethodGet, http.MethodPost}, true, rt.Setup)
+	add(session.PathLoginStart, []string{http.MethodPost}, true, rt.Login)
+	add(session.PathLoginFinish, []string{http.MethodPost}, true, rt.Finish)
+	add(session.PathLogout, []string{http.MethodPost}, true, rt.Logout)
+	add(session.PathTrust, []string{http.MethodGet}, true, rt.Trust)
+	add(session.PathSocket, []string{http.MethodGet}, false, rt.Socket)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { Fail(w, wire.CodeNotFound) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only a path that is already what path.Clean makes of it reaches the
