@@ -118,9 +118,15 @@ type Server struct {
 // Socket upgrades a request with a session to a link and runs it.
 func (srv *Server) Socket(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	live, code, ok := srv.Login.Live(ctx, r)
+	live, code, err, ok := srv.Login.Live(ctx, r)
 	if !ok {
-		httpapi.Fail(w, code)
+		// FailCoded and not Fail: the upgrade is refused before a link
+		// exists, so what goes out here is an ordinary HTTP answer, and a
+		// database another program holds gets the Retry-After and the log
+		// reason that tell it from one that is away (httpapi/busy.go). The
+		// code is Live's own and is not recomputed from the error, so a
+		// request without a session stays E_LOGIN.
+		httpapi.FailCoded(w, code, err)
 		return
 	}
 	pub := apiPublic(live)

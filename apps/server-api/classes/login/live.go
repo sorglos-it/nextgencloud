@@ -86,21 +86,25 @@ func sessionFault(err error) wire.Code {
 // dbapi.ErrNotFound is the store's word for a row that is not there, and
 // sessionFault keeps it the only one of the store's answers that leads to
 // E_LOGIN at all.
-func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([]byte, dbapi.Session, wire.Code, bool) {
+func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([]byte, dbapi.Session, wire.Code, error, bool) {
 	value, ok := httpapi.Cookie(r)
 	if !ok {
-		return nil, dbapi.Session{}, wire.CodeLogin, false
+		return nil, dbapi.Session{}, wire.CodeLogin, nil, false
 	}
 	raw, err := enc.B64.DecodeString(value)
 	if err != nil || len(raw) != session.TokenSize {
-		return nil, dbapi.Session{}, wire.CodeLogin, false
+		return nil, dbapi.Session{}, wire.CodeLogin, nil, false
 	}
 	// Only the hash of the token is stored, so a dump of the database holds
 	// nothing anybody could send back as a cookie.
 	token := session.TokenHash(raw)
 	row, err := h.S.DB.SessionGet(ctx, token)
 	if err != nil {
-		return nil, dbapi.Session{}, sessionFault(err), false
+		// The error goes up beside the code and is not dropped here: busy and
+		// away are one code (E_UNREACHABLE, no word of its own -- P9), and
+		// only the error tells them apart. This is the read of the
+		// installation that every session path makes.
+		return nil, dbapi.Session{}, sessionFault(err), err, false
 	}
 	// The three ends of a session: the time the certificate itself names, the
 	// idle time and the whole lifetime. The last is not the second reading of
@@ -109,15 +113,29 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 	// since ends the sessions it handed out under the longer one here.
 	if now >= row.Expires || now-row.Seen > h.S.Cfg.IdleTimeout || now-row.Created > h.S.Cfg.SessionLifetime {
 		_ = h.S.DB.SessionDelete(ctx, token)
-		return nil, dbapi.Session{}, wire.CodeLogin, false
+		return nil, dbapi.Session{}, wire.CodeLogin, nil, false
 	}
-	return token, row, "", true
+	return token, row, "", nil, true
 }
 
 // Live returns the session of the request's cookie, and with it the code the
-// caller answers when there is none. It ends a session that is too old, has
-// been idle too long or whose user the trust list no longer holds, and it
-// hands nothing back for any other failure either.
+// caller answers when there is none -- and, beside the code, the error of the
+// store where one of the store's own failures stood behind it.
+//
+// The error is there because the code alone cannot be told apart: a database
+// another program holds and one that is gone are both E_UNREACHABLE, since a
+// word of its own for "busy" lies in frozen shared/wire (P9 of
+// docs/vertraege-v1-3-vorschlag.md). Until this it was dropped here, so both
+// callers answered httpapi.Fail and neither could set a Retry-After -- the
+// open post of point 52. It is nil wherever no store failure stood behind the
+// code, and it is never the thing that picks the code: the callers hand both
+// to httpapi.FailCoded, which answers the code and reads the error for the
+// header and the log line only. Nothing of it goes to the caller of the route;
+// an error on this path can carry a path or a configuration.
+//
+// It ends a session that is too old, has been idle too long or whose user the
+// trust list no longer holds, and it hands nothing back for any other failure
+// either.
 //
 // Which failures end the session and which leave the row where it is, is one
 // rule: a no ends it, a question that could not be asked does not. The clock
@@ -209,11 +227,11 @@ func (h *Handler) sessionRow(ctx context.Context, r *http.Request, now int64) ([
 // follows whose session it is, and most of all which kind of key opened it.
 // Whoever could time that holds the cookie already and no name stands behind
 // it -- but the difference is real, and nothing here evens it out.
-func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, bool) {
+func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, error, bool) {
 	now := h.S.Now()
-	token, row, code, ok := h.sessionRow(ctx, r, now)
+	token, row, code, err, ok := h.sessionRow(ctx, r, now)
 	if !ok {
-		return nil, code, false
+		return nil, code, err, false
 	}
 	// The proof is this API's own row, written with this same encoder from a
 	// proof session.ParseLoginFinish had already bounded, so nothing unbounded
@@ -225,7 +243,7 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// both, so a row that never gets that far costs no look at the trust rows.
 	var p proof.Proof
 	if err := json.Unmarshal(row.Proof, &p); err != nil || p.Validate() != nil {
-		return nil, wire.CodeInternal, false
+		return nil, wire.CodeInternal, nil, false
 	}
 	// The list is read out of the database and not out of the cache
 	// (state.Trust), because the cache of an API is only as new as the last
@@ -310,16 +328,16 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 		//
 		// None of what it can answer here is E_LOGIN, which is the whole point
 		// of reading it out of the error at all.
-		return nil, httpapi.Fault(err, httpapi.FromRows), false
+		return nil, httpapi.Fault(err, httpapi.FromRows), err, false
 	}
 	verified, err := session.VerifyClient(row.Cert, p, v.List, now)
 	if err != nil {
 		_ = h.S.DB.SessionDelete(ctx, token)
-		return nil, wire.CodeLogin, false
+		return nil, wire.CodeLogin, nil, false
 	}
 	key, err := h.S.Box.Open(row.APIKey)
 	if err != nil {
-		return nil, wire.CodeInternal, false
+		return nil, wire.CodeInternal, nil, false
 	}
 	// Seen moves only once everything above has held, so a request that is
 	// refused never keeps a session alive. TestARefusedRequestDoesNotMoveSeen
@@ -331,10 +349,10 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 	// above and here -- and then the session is over rather than the store
 	// away, which is what sessionFault answers for the store's own word.
 	if err := h.S.DB.SessionTouch(ctx, token, now); err != nil {
-		return nil, sessionFault(err), false
+		return nil, sessionFault(err), err, false
 	}
 	row.Seen = now
-	return &Live{Token: token, Row: row, Trust: v, Verified: verified, APIKey: key}, "", true
+	return &Live{Token: token, Row: row, Trust: v, Verified: verified, APIKey: key}, "", nil, true
 }
 
 // Logout answers POST session.PathLogout: the session row is removed and the
@@ -375,9 +393,13 @@ func (h *Handler) Live(ctx context.Context, r *http.Request) (*Live, wire.Code, 
 // TestLogoutEndsASessionTheRestOfLiveCannotRead holds both steps.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	token, _, code, ok := h.sessionRow(ctx, r, h.S.Now())
+	token, _, code, err, ok := h.sessionRow(ctx, r, h.S.Now())
 	if !ok {
-		httpapi.Fail(w, code)
+		// FailCoded and not Fail: a read that only did not come free in time
+		// gets the Retry-After and the log reason that tell it from a database
+		// that is away (httpapi/busy.go). The code is sessionFault's and not
+		// recomputed, so a session that is simply not there stays E_LOGIN.
+		httpapi.FailCoded(w, code, err)
 		return
 	}
 	if err := h.S.DB.SessionDelete(ctx, token); err != nil {
@@ -385,7 +407,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		// still there, clearing it would leave a session open that nobody can
 		// reach to end; beside a row already gone, it names nothing left to
 		// end, and sessionRow refuses it again on the next request regardless.
-		httpapi.Fail(w, sessionFault(err))
+		httpapi.FailCoded(w, sessionFault(err), err)
 		return
 	}
 	httpapi.ClearCookie(w)

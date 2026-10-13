@@ -41,7 +41,25 @@ const RetryBusy = 5
 // into reports and chats; the two messages differ in wording, which is what
 // makes them tellable apart, and neither says what was asked for.
 func FailFault(w http.ResponseWriter, err error, from Origin) wire.Code {
-	code := Fault(err, from)
+	return FailCoded(w, Fault(err, from), err)
+}
+
+// FailCoded is FailFault for a caller that already holds the code and carries
+// the error beside it. It exists because a code alone cannot be told apart
+// here: busy and away are the same E_UNREACHABLE, and only the error says
+// which (dbwait.Busy).
+//
+// Two kinds of caller need it rather than FailFault. One picks the code by a
+// reading of its own that Fault does not have -- login's sessionFault answers
+// dbapi.ErrNotFound E_LOGIN, where Fault answers E_INTERNAL, because only the
+// handler knows a missing row was the answer and not a damaged one. The other
+// hands a code it wrote down itself (login/finish). Recomputing the code from
+// the error would quietly undo the first and is why the code comes in.
+//
+// So the code decides what is answered and the error only decides the header
+// and the log line. An error of a code that is not E_UNREACHABLE is never
+// read, and a nil error is answered as a database that is away.
+func FailCoded(w http.ResponseWriter, code wire.Code, err error) wire.Code {
 	if code != wire.CodeUnreachable {
 		// Every other code is answered exactly as before and said nothing
 		// about in the log: this function adds one case and changes none.
