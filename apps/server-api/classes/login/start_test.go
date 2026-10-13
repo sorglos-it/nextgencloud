@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -142,10 +144,16 @@ func TestStartTakesTheSamePathForAnUnknownName(t *testing.T) {
 }
 
 // TestStartMakesTheSameDatabaseCallsForEveryName is the clock-free half of
-// "the same path": the calls a request makes, in order. Two names may differ
-// in exactly one thing, the nonce row that is kept for a real user, and in
-// nothing else -- not in which call is made, not in how often, and not in
-// whether a row is asked for by an ID no name has.
+// "the same path": the calls a request makes, in order. Two names may now
+// differ in NOTHING -- not in which call is made, not in how often, and not
+// in whether a row is asked for by an ID no name has.
+//
+// It used to allow one difference, the nonce row kept only for a real user,
+// and that one call was why the failure of it had to be swallowed (point 50).
+// Since the made-up challenge keeps a nonce too, under an ID of nobody's, the
+// lists are equal and the failure can be answered. This test is the floor
+// that answer stands on: let the one call come back and
+// TestStartSaysComeBackWhenTheDatabaseIsBusy turns into the oracle it shuts.
 func TestStartMakesTheSameDatabaseCallsForEveryName(t *testing.T) {
 	h, fx := newFixture(t)
 	rec := &callLog{Store: h.S.DB}
@@ -160,11 +168,13 @@ func TestStartMakesTheSameDatabaseCallsForEveryName(t *testing.T) {
 	raw(t, h, "nobody")
 	unknown := rec.list()
 
-	if len(known) != len(unknown)+1 || !slices.Equal(known[:len(unknown)], unknown) {
+	if !slices.Equal(known, unknown) {
 		t.Fatalf("known %v, unknown %v", known, unknown)
 	}
+	// And the nonce write is in there for both, so the equality above is two
+	// paths that both keep a nonce and not two that both skip it.
 	if last := known[len(known)-1]; last != "OnceCreate "+dbapi.OnceNonce {
-		t.Fatalf("the one call a known name makes more is %q", last)
+		t.Fatalf("the last call of either name is %q, want the nonce write", last)
 	}
 	for _, call := range slices.Concat(known, unknown) {
 		if call == "UserGet(empty id)" {
@@ -446,4 +456,116 @@ func jsonPost(path, body string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	return r
+}
+
+// TestStartSaysComeBackWhenTheDatabaseIsBusy is the assurance of this change,
+// and it is the half the swallow of K-2 got wrong.
+//
+// Swallowing every failure of the one write keeps the two names alike, which
+// is right, but it pays for it with a lie to the person at the screen: the
+// login that follows fails with E_LOGIN, the browser reads "Anmeldung
+// fehlgeschlagen.", and that is the sentence a WRONG PASSWORD gets. The user
+// is told something about his own password that is not true, and he will go
+// and change it.
+//
+// "Busy" is the one write failure that may be said out loud, and the reason is
+// not that it is the most common: it is a state of the INSTALLATION -- another
+// program holds the file (point 48) -- and never of the row that was handed
+// in. So it cannot fall differently for the two names, and an answer built on
+// it is no oracle. Every other failure of that write stays swallowed, because
+// a store that refuses THIS row and takes the other one would tell the names
+// apart again (TestStartAnswersTheSameWhenTheNonceCannotBeStored holds that
+// half, with an error that is not busy).
+//
+// It only works because the write is made for EVERY name now: a known name
+// and an unknown one both keep a nonce, so both meet the busy database and
+// both hear the same thing. That is what TestStartMakesTheSameDatabaseCalls-
+// ForEveryName holds above, and without it this test would BE the oracle it
+// is meant to shut.
+//
+// E_UNREACHABLE and not a word of its own: there is none. A code E_BUSY lies
+// in frozen shared/wire/wire.go:450-462 -- BLOCKED, P9 of
+// docs/vertraege-v1-3-vorschlag.md. What is left without it is the header and
+// the reason in the log, both of which point 49 built.
+func TestStartSaysComeBackWhenTheDatabaseIsBusy(t *testing.T) {
+	h, fx := newFixture(t)
+	h.S.DB = busyOnce{Store: h.S.DB}
+	log := capturedLog(t)
+	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
+	for _, c := range []struct {
+		name string
+		w    *httptest.ResponseRecorder
+	}{{"known", known}, {"unknown", unknown}} {
+		if c.w.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s: %d, want 503: %s", c.name, c.w.Code, c.w.Body)
+		}
+		if got := c.w.Header().Get("Retry-After"); got != strconv.Itoa(httpapi.RetryBusy) {
+			t.Errorf("%s: Retry-After %q, want %d", c.name, got, httpapi.RetryBusy)
+		}
+	}
+	// The two answers are the same answer, down to the headers and the body:
+	// whatever this path says about a busy database, it says it without
+	// saying which of the two names was asked for.
+	if !maps.EqualFunc(known.Header(), unknown.Header(), slices.Equal[[]string]) {
+		t.Errorf("headers %v vs %v", known.Header(), unknown.Header())
+	}
+	if known.Body.String() != unknown.Body.String() {
+		t.Errorf("bodies %q vs %q", known.Body, unknown.Body)
+	}
+	// The log says busy and not away, which is the whole of the difference a
+	// client that reads only the code cannot see -- and it names nothing of
+	// the request.
+	if s := log.String(); !strings.Contains(s, "reason=db-busy") {
+		t.Errorf("the log does not name the reason: %s", s)
+	}
+	if s := log.String(); strings.Contains(s, fx.PasswordName) || strings.Contains(s, "nobody") {
+		t.Errorf("the log names the request: %s", s)
+	}
+}
+
+// TestStartKeepsTheMadeUpNonceUnderAnIDNobodyHas is the price of the write
+// above, and it has to be paid in the open: a name nobody has now keeps a
+// nonce too, and that row must not be a nonce for somebody.
+//
+// It is kept under a fresh secrets.ID -- the same shape a real user ID has, so
+// the rows of the two names do not tell them apart inside the database either,
+// and no ID a user has. login/finish holds the nonce's ID against the user of
+// the certificate it has already verified against the trust list
+// (finish.go, OnceUse), so a nonce under an ID of nobody's denies like a nonce
+// that was never kept at all.
+func TestStartKeepsTheMadeUpNonceUnderAnIDNobodyHas(t *testing.T) {
+	h, fx := newFixture(t)
+	see := &seeOnce{Store: h.S.DB}
+	h.S.DB = see
+	if w := raw(t, h, "nobody"); w.Code != 200 {
+		t.Fatalf("unknown name: %d %s", w.Code, w.Body)
+	}
+	got := see.written()
+	if len(got) != 1 {
+		t.Fatalf("%d nonce rows for one unknown name, want 1: %v", len(got), got)
+	}
+	// Not empty: an empty ID is what the first version of this path asked
+	// rows by, and it is the shape that tells the names apart on a store
+	// that refuses it (K-2).
+	if got[0] == "" {
+		t.Fatal("the made-up nonce was kept under an empty ID")
+	}
+	v, err := h.S.Trust(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range v.List.Users {
+		if u.ID == got[0] {
+			t.Fatalf("the made-up nonce was kept under the ID of user %q", u.Name)
+		}
+	}
+	// And it looks like one: same length as the ID of a user that exists, so
+	// a row of a made-up challenge is not the odd one out in the table.
+	real, known := userByName(v.List, fx.PasswordName)
+	if !known {
+		t.Fatal("the fixture has no password user")
+	}
+	if len(got[0]) != len(real.ID) {
+		t.Fatalf("the made-up ID is %d characters, a real one %d", len(got[0]), len(real.ID))
+	}
 }
