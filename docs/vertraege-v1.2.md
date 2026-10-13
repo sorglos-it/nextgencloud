@@ -1739,3 +1739,68 @@ Hintergrundrunden (`minute`/`hour`) haben keine Frist. **Der echte 80-s-Fall mit
 nach der Änderung nicht nachgefahren** — belegt ist die Kette im Prüfstand, nicht am laufenden Paar.
 Und ein Klient, dessen Rumpf länger als 5 s tröpfelt, hört künftig „beschäftigt" statt `E_PROTOCOL`
 bei 15 s; im Code benannt, nicht gemessen.
+
+## Punkt 50: Zwei echte APIs über HTTP — der Benutzer hört, sein Passwort sei falsch
+
+**Gemessen am 13.10.2026**, zwei echte `ngc-api` für linux/amd64 auf **einer** SQLite-Datei,
+Erst-Einrichtung echt über HTTP (GET+POST `/api/v1/setup`, Einmal-Code, `VerifySetup` grün).
+
+**Zuerst der Ort, weil er die Zahlen bindet:** auf **Windows ist diese Messung unmöglich**.
+`config.DB.Validate` verlangt das Pfad-Präfix `/` (`shared/config/config.go:572`),
+`sqlite.validPath` verlangt `filepath.IsAbs` (`apps/server-db/classes/sqlite/sqlite.go:201`) — kein
+Windows-Pfad erfüllt beides. Alle Zahlen gelten für **WSL/ext4**, nicht für C: und nicht für Z:.
+
+**Der zweite Start ist stumm.** Beide „listening" in < 0,25 s, beide antworten `GET /setup` mit
+**derselben** Installations-ID (`9FEQ…`) — Beleg für die geteilte Datei. 8 gleichzeitige Anfragen
+auf frischer Datei: **8 × 200**, 19–45 ms, eine ID. Das `ErrBusy` von `EnsureInstallation` kam
+**nicht** zum Tragen. Es gibt also keine Warnung, dass zwei APIs auf einer Datei liegen.
+
+### Der Befund, und er ist der schlimmste bisher
+
+Vier wartende Schreiber (`POST /login/start` mit **bekanntem** Namen) gegen eine Fremdsperre:
+**200 OK nach 80,64 / 90,20 / 80,66 / 90,42 s** — mit gültigem Challenge-Körper. Der Schreibfehler
+wird **verschluckt** (so entworfen, `login/start.go`), und im Protokoll steht nur
+„a login challenge could not be kept".
+
+**Der Benutzer sieht also keinen Fehler.** Er sieht eine Anmeldung, die 81–90 s braucht und danach
+**„Anmeldung fehlgeschlagen."** sagt — **von einem falschen Passwort nicht zu unterscheiden**. Der
+Zustand „die Datenbank ist gerade besetzt" erreicht ihn als **Falschauskunft über sein Passwort**.
+
+**Punkt 49 verkürzt das, behebt es nicht:** die neue User-Frist von 5 s trifft `login/start`, also
+wartet er künftig 5 s statt 81 — und hört dann dasselbe Falsche. Das Verschlucken in
+`login/start.go` ist der eigentliche Posten.
+
+**Lesen wird nicht lahmgelegt**, anders als im Prüfstand von Punkt 48: fünfte Anfrage nur lesend
+**7,00 s / 200**, `GET /setup` **18 ms** — die Vertrauensliste kommt aus dem Zwischenspeicher.
+
+**`E_UNREACHABLE` am Draht gibt es wirklich:** Datei unter der laufenden API weggenommen →
+**503 in 50 ms**, Körper exakt `{"status":"error","code":"E_UNREACHABLE","message":"Dienst nicht
+erreichbar."}`. Von 8 gleichen Anfragen 2 × 503, 6 × 200 — offene Verbindungen trugen weiter.
+
+### Der Wortlaut, den der Benutzer liest
+
+„**Dienst nicht erreichbar. Bitte später erneut versuchen.**" — Anmeldemaske
+(`apps/web/public/assets/js/auth/login.js:336`) und Einrichtungsmaske (`auth/setup.js:64`), Grundtext
+aus der eigenen Tabelle der Oberfläche (`contracts/wire.js:505`), gleichlautend mit
+`shared/wire/wire.go:474`. **Die Oberfläche nimmt nie den `message` der Antwort** — ein genauerer
+Satz vom Server käme beim Benutzer nicht an. Dieser Code liegt nur auf Zweig `web`; auf `main` hat
+`apps/web/` zwei Dateien. **Gelesen, nicht gerendert.**
+
+### Drei Pools
+
+Unter echter HTTP-Last (16 Schleifen, 25 s, beide APIs): **13 728 Anfragen, 13 728 × 200**,
+langsamste 245 ms, Sicherung als dritter Pool `backup-ok in 0,058 s` — **kein Engpass**. Erst mit
+Fremdsperre: `backup-error after 10,005 s` — **eine** Frist, **keine** Wiederholung, wie
+`migrate.Apply`.
+
+**Behoben:** jeder andere Fehlschlag in `sqlite/backup.go` nennt seinen Schritt auf Deutsch; der
+**einzige, den eine Sicherung unter Last wirklich trifft**, kam als nacktes englisches
+`sqlite3: database is locked`. Jetzt nennt `busyOrStep` Schritt und Ursache. Rot vorher an der
+Zusicherung selbst (`backup_test.go:781/784/787`), grün nachher; zwei Mutanten tot, eine Kontrolle
+lebt; Paket 55 Fälle, 48 bestanden, 7 übersprungen (Symlink, Windows, laut), 0 rot.
+
+**Offen:** `fault.go:94` bildet `state.ErrBusy` auf **`E_INTERNAL` (500)** ab, und der Kommentar
+dort beruft sich darauf, dass **eine** API auf einer Datei liege. **Zwei liegen jetzt nachweislich
+darauf.** Gehört zu P9. Ungemessen bleiben: echtes Rendern im Browser, ein echter Pi, und ob vier
+blockierte Schreiber einen **angemeldeten** Weg (WebSocket, Kanäle) lahmlegen — die Messung reicht
+nur bis `login/start`.
