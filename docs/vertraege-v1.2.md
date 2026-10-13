@@ -1691,3 +1691,51 @@ Hängen beim Start — genau die Abwägung von Punkt 32).
 **Ungemessen:** zwei echte `ngc-api` über die ganze HTTP-Strecke; was der Benutzer im Browser bei
 `E_UNREACHABLE` liest; dasselbe auf einem echten Pi; drei Pools gleichzeitig (Sicherung) unter
 dieser Last.
+
+## Punkt 49: Die Frist gehört zum Zweck — und „beschäftigt" ist nicht „weg"
+
+**Gemessen und gebaut am 13.10.2026**, zwei Posten von Punkt 48s Liste „hingelegt, nicht gebaut".
+
+**Vorher belegt, nicht behauptet:** `context.WithTimeout`/`WithDeadline` kommt in `apps/server-api`
+(ohne Tests) **neunmal** vor — Tunnel, Join, Link, Relay, Server — und **kein einziges Mal** um
+einen Store-Aufruf. 16 Stellen geben `r.Context()` ungebremst in den Store. Die 80,6 s aus
+Punkt 48 galten also auf jedem Benutzerweg gleich.
+
+**Gebaut, alles in `apps/`:**
+- `apps/server-api/classes/dbwait` (neu): **User = 5 s**, **Start = 90 s**, jede Frist mit ihrem
+  **Grund** (`context.WithTimeoutCause`) — so überlebt der Grund die Frist. 90 s, weil eine volle
+  Wiederholungskette 80,6 s braucht und ein **hängender** Start schlimmer ist als keiner (Punkt 32).
+- `sqlstore` gibt an 11 Rückgabestellen die **benannte Ursache** zurück statt des nackten
+  `context.DeadlineExceeded` — nötig, weil `database/sql` den Kontextfehler selbst liefert und
+  dabei keine Zeile von uns passiert.
+- `httpapi.FailFault`: „beschäftigt" bekommt **`Retry-After: 5`** und eine Protokollzeile
+  `reason=db-busy`, „weg" bekommt `reason=db-unreachable` und keinen Header. Nur Grund und Zahl im
+  Protokoll, nichts aus der Anfrage.
+- Die **fünf** Wege vor dem WebSocket (`setup`, `login/start`, `login/finish`, `logout`, `trust`)
+  bekommen die User-Frist; **`socket` nicht** — er lebt so lange wie die Sitzung.
+
+**BLOCKED, und es ist der Kern:** ein eigener Code `E_BUSY` liegt in
+**`shared/wire/wire.go:450–462`** — eingefroren. Genau das sagt `fault.go` selbst voraus. Also
+bleibt der Code `E_UNREACHABLE` und nur Header plus Protokollgrund unterscheiden. In der v1.3-Reihe
+als **P9**. Ebenso `shared/dbapi/dbapi.go:109–111` (ein vierter Wächter wäre die saubere Naht
+gewesen; über die Kontext-Ursache umgangen) und `apps/server-api/classes/state/state.go:29–32`
+(liegt in `apps/`, aber seine richtige Antwort ist derselbe fehlende Code — unverändert gelassen).
+
+**Zahlen:** `httpapi`+`sqlstore` unter `-v` von **68 auf 73 bestanden**, 0 rot; `dbwait` 3 bestanden.
+Rot-vorher an der Zusicherung selbst zweimal belegt (`cause_test.go:57` „der Grund des Aufrufers ist
+weg"; `busy_test.go:68` `Retry-After = ""`). Vier Mutanten tot, Kontrollmutation lebt
+(`sqlstore` exit 0, 151 bestanden). `-race` 0 über drei Pakete, belegt mit einer Wegwerf-Mutation,
+die im selben Lauf **2 DATA RACE** zeigt.
+
+**Nebenbefund aus der eigenen Messung:** der erste `FailFault` gab für jeden anderen Code nur den
+Code zurück, **ohne zu antworten** — drei Fälle in `login` haben es gefangen (`from=3: 200` statt
+404). Behoben, Fall dazu. Ein Fall, der nicht nur die neue Zeile prüft, findet den Rest.
+
+**Ungemessen, und es gehört dazu:** `login/start`, `login/finish`, `logout` antworten weiter ohne
+`Retry-After` (`login/live.go:313` gibt nur einen Code nach oben, `setup/setup.go:94` macht aus
+jedem `E_UNREACHABLE` bewusst `E_INTERNAL`). Ohne User-Frist bleiben `join/join.go:87`,
+`join/keys.go:46`, `controllers/pair.go:59` (laufen nicht über `httpapi.Routes.Mux`). Die
+Hintergrundrunden (`minute`/`hour`) haben keine Frist. **Der echte 80-s-Fall mit zwei Prozessen ist
+nach der Änderung nicht nachgefahren** — belegt ist die Kette im Prüfstand, nicht am laufenden Paar.
+Und ein Klient, dessen Rumpf länger als 5 s tröpfelt, hört künftig „beschäftigt" statt `E_PROTOCOL`
+bei 15 s; im Code benannt, nicht gemessen.

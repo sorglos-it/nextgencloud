@@ -392,3 +392,19 @@ schließt sie dort — ohne Vertragsfassung.
   Vertrag — also in V1.3, wenn sie gemessen ist.
 - **Punkt 28 und Punkt 30** ändern `shared/` **nicht**. Beide hängen an api-Aufgabe 24
   („`main.go` verdrahten"). Sie gehören nicht in diese Entscheidung.
+
+## P9: „beschäftigt" braucht einen eigenen Code
+
+**Zeile:** `shared/wire/wire.go:450–462` (die Code-Liste).
+
+**Gemessen (Punkt 48/49):** schreibt ein zweites Programm auf dieselbe SQLite-Datei, wartet der
+Verlierer bis 80,6 s und bekommt dann `E_UNREACHABLE` — **dasselbe Wort wie „Datenbank weg"**.
+`fault.go` sagt diesen Fall selbst voraus und nennt auch, was es nicht ist: `E_LOCKED` passt nicht.
+
+**Ohne `shared/` gebaut:** `Retry-After: 5` und ein Protokollgrund `db-busy` gegen
+`db-unreachable`. Das reicht einem Klienten, der den Header liest — nicht einem, der den Code liest.
+
+**Zu entscheiden:** ein neuer Code `E_BUSY`. Folge: wer ihn bekommt, darf es noch einmal versuchen;
+wer `E_UNREACHABLE` bekommt, nicht. Dazu gehört `shared/dbapi/dbapi.go:109–111` (ein vierter
+Wächter neben `ErrNotFound`/`ErrUsed`/`ErrInvalid`) und danach
+`apps/server-api/classes/state/state.go:29–32`, dessen `ErrBusy` heute `E_INTERNAL` antwortet.

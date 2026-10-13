@@ -319,3 +319,16 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 - Repo: <https://github.com/sorglos-it/nextgencloud> (privat)
 - Facebook-Post: zurückgestellt, solange das Repo privat ist; Vermerk in
   `Z:\GitHub\facebook\README.md`, Abschnitt „Bestand“
+
+### Ein dritter Zeitflattrer: `TestStartTakesTheSameTimeForAnUnknownName`
+
+`apps/server-api/classes/login`. Er verlangt, dass ein unbekannter Name nicht schneller abgelehnt
+wird als ein bekannter, und misst dafür einen Faktor zwei. Am 13.10.2026 einmal rot im vollen
+`tools/check.sh`-Lauf (`263,877µs` gegen `118,197µs`, „this machine cannot measure a factor of two
+today"), **allein 0 von 10 rot**, und der zweite vollständige Lauf ebenfalls grün mit `check: ok`.
+
+Gleiche Familie wie die zwei oben: eine abgeleitete Erwartung gegen ein Fenster im
+Mikrosekundenbereich, auf einer Maschine mit anderen Lasten. **Ursache nicht gemessen** — er liegt
+auf keinem Weg, der an diesem Tag geändert wurde (der Fall ruft den Handler direkt, nicht über den
+Router). Wer ihn rot sieht: erst allein wiederholen, und mit `GOMAXPROCS=1` prüfen, bevor er zum
+Befund wird.
