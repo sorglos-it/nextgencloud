@@ -30,6 +30,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/coreapp"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbopen"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/join"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
@@ -134,7 +135,14 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	}
 	// The owner of the migration lock. On SQLite this very call migrates, so
 	// the name has to be in place before the open and not after it.
-	db, err := dbopen.Open(ctx, cfg.DB, dbopen.OwnerOf(cfg.Node))
+	// The deadline of the start, not none: on SQLite this call migrates, and
+	// a second program on the same file holds it for the measured 80,6 s of a
+	// full retry chain with no word to the admin meanwhile. Point 32 decided
+	// the shape -- a service that hangs at the start is worse than one that
+	// does not start, and the restart belongs in the service file.
+	octx, ocancel := dbwait.Start(ctx)
+	db, err := dbopen.Open(octx, cfg.DB, dbopen.OwnerOf(cfg.Node))
+	ocancel()
 	if err != nil {
 		return nil, errors.New("die Datenbank ist nicht erreichbar")
 	}
