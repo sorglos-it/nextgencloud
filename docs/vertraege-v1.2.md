@@ -1691,3 +1691,76 @@ Hängen beim Start — genau die Abwägung von Punkt 32).
 **Ungemessen:** zwei echte `ngc-api` über die ganze HTTP-Strecke; was der Benutzer im Browser bei
 `E_UNREACHABLE` liest; dasselbe auf einem echten Pi; drei Pools gleichzeitig (Sicherung) unter
 dieser Last.
+
+## Punkt 49: Ein Schreibkanal je Prozess — die Grenze von vier ist weg, und die Ursache war nicht die Zahl
+
+**Gebaut und gemessen am 13.10.2026**, aus dem „hingelegt, nicht gebaut" von Punkt 48. Alles mit
+**zwei echten Prozessen** (der Blockierer ist `os.Args[0]` neu ausgeführt und belegt seine Sperre
+mit einem echten `INSERT`), über `sqlite.Open` → Pool → `sqlstore` → `LogAdd`/`UserGet`, auf **C:**
+und auf **Z:** (NAS).
+
+**Vorher nachgebaut, bevor etwas geändert wurde** — die Reihe von Punkt 48 reproduziert exakt.
+Kosten des ersten Lesens bei n blockierten Schreibern desselben Prozesses:
+
+| blockierte Schreiber | C: vorher | Z: vorher | C: nachher (100 Lesevorgänge) | Z: nachher (100 Lesevorgänge) |
+|---|---|---|---|---|
+| 2 | 0,007 s | 0,013 s | 0,0061 s | 0,0071 s |
+| 3 | 0,007 s | 0,016 s | 0,0060 s | 0,0073 s |
+| **4** | **9,690 s** | **9,690 s** | **0,0066 s** | **0,0053 s** |
+| 5 | 9,699 s | 9,717 s | 0,0061 s | 0,0071 s |
+| 8 | — | — | 0,0063 s | 0,0067 s |
+| 64 | — | — | 0,0058 s | 0,0071 s |
+| 192 | — | — | 0,0067 s | 0,0065 s |
+
+**Die Grenze fällt nicht erst später, sie fällt weg.** Bis 192 blockierte Schreiber ist kein
+Anstieg messbar; ein Lesevorgang kostet etwa 60 µs, egal wie viele Schreiber warten.
+
+**Eine Messfalle dabei, und sie hätte eine Null als Ergebnis geliefert:** ein **einzelner**
+Lesevorgang druckte nachher `0 ns` — das ist die Auflösung der Uhr auf Windows, nicht die
+Datenbank. Darum misst die Sonde **100** Lesevorgänge. Eine Null aus einer Uhr, die nicht so fein
+geht, sieht wie ein Ergebnis aus.
+
+**Die Ursache war NICHT die Zahl vier, und das ist gegengemessen.** Punkt 48 legt „ein Schreibkanal
+je Prozess statt vier Verbindungen" hin, als wäre die Eins der Hebel. Sie ist es nicht: eine
+Wegwerf-Mutation, die `writeConns` wieder auf **4** setzt und die **Trennung** der Handles stehen
+lässt, lässt das Lesen **schnell** (0,006 s bei 3, 4 und 192 Schreibern). Eine zweite Mutation, die
+die Trennung wegnimmt und die vier Verbindungen zurückbringt, holt die alte Lage **punktgenau**
+zurück (4 → 9,692 s). **Der Hebel ist das getrennte Lese-Handle, nicht die Eins.** Die Eins bleibt
+trotzdem richtig, aber aus einem anderen Grund: in einer SQLite-Datei schreibt genau einer, eine
+zweite Schreibverbindung kann nur warten, und Warten vor dem Handle ist in Go billiger als Warten
+in `busy_timeout`.
+
+**Der Durchsatz wird besser, nicht schlechter** — das war die offene Befürchtung. Schreibvorgänge
+je Sekunde, ein Prozess, n Fäden:
+
+| Fäden | C: vorher | C: nachher | Z: vorher | Z: nachher |
+|---|---|---|---|---|
+| 1 | 743/s | 740/s | 760/s | 769/s |
+| 4 | 616/s | 673/s | 483/s | 614/s |
+| 16 | 404/s | 625/s | 241/s | 530/s |
+| 64 | 362/s | 473/s | 223/s | 492/s |
+
+Bei 16 Fäden auf dem NAS ist es **Faktor 2,2**. Der Grund ist derselbe: vorher stritten die eigenen
+vier Verbindungen über `busy_timeout` miteinander, nachher stehen die Schreiber in einer Reihe.
+(Die 180/s von Punkt 48 sind eine andere Lage — dort gegen einen **zweiten Prozess**, hier ein
+Prozess allein.)
+
+**Was gebaut ist:** `sqlite.OpenRW` öffnet die Datei zweimal — ein Schreib-Handle mit **einer**
+Verbindung, ein Lese-Handle mit vier; `sqlstore.NewSplit` nimmt beide, schreibt über das eine und
+liest über das andere; `sqlite.Open` verdrahtet es, und die Migrationen gehen über das
+Schreib-Handle. In WAL braucht ein Leser keine Sperre, die der Schreiber hält, darum wartet das
+Lesen gar nicht.
+
+**MariaDB ist nicht angefasst, und ein Fall sagt es.** `sqlstore.New` (das ist, was `mariadb.New`
+ruft) lässt Lesen und Schreiben auf **einem** Handle; `mariadb` hat seine eigenen Konstanten in
+seinem eigenen Paket und bleibt bei **16** Verbindungen.
+`TestMariaDBKeepsItsOnePoolOfSixteen` und `TestNewReadsAndWritesThroughOneHandle` halten beides
+fest, damit die SQLite-Zahl nicht herüberwandert. Dort ist der Pool sinnvoll: keine
+Ein-Schreiber-Datei, ein wartender Schreiber wartet auf dem Server, und der Pool ist einer über die
+Knoten eines Verbunds.
+
+**Ungemessen bleibt:** was die **zwei** Pools am Spitzenwert einer Sicherung zusammen an Speicher
+halten (mit der Sicherung sind es jetzt **vier** statt drei — die offene Frage von `sqlite.go`
+mit einem Pool mehr); zwei echte `ngc-api` über die HTTP-Strecke; dasselbe auf einem echten Pi.
+Nicht angefasst und weiter offen: die Frist an den Zweck binden, „busy" von `E_UNREACHABLE`
+trennen, und ob `migrate.Apply` eine Wiederholung bekommt.

@@ -19,15 +19,50 @@ const (
 )
 
 type store struct {
-	db *sql.DB
-	d  Dialect
+	db  *sql.DB // writes, and the transactions of write
+	rdb *sql.DB // reads; the same handle unless NewSplit gave a second one
+	d   Dialect
 }
 
 // New returns dbapi.Store on an open database. It creates nothing: the schema
-// comes from the migrations.
-func New(db *sql.DB, d Dialect) dbapi.Store { return &store{db: db, d: d} }
+// comes from the migrations. Reads and writes go to the same handle, which is
+// what MariaDB wants: there the pool is a pool over several nodes, and a
+// writer that waits waits on the server, not on a connection of ours.
+func New(db *sql.DB, d Dialect) dbapi.Store { return &store{db: db, rdb: db, d: d} }
 
-func (s *store) Close() error { return s.db.Close() }
+// NewSplit returns dbapi.Store that writes through write and reads through
+// read. It exists for SQLite, where there is exactly one writer in the file
+// and a writer that waits HOLDS its connection: with one pool, four waiting
+// writers take every connection and the next read of the process waits for
+// them (measured 13.10.2026, point 48: 4 blocked writers -> 9.5 s for the
+// first read, 3 -> 0.007 s). With a write handle of one connection the
+// waiting happens in Go, in front of the handle, and the read handle keeps
+// its connections. In WAL mode a reader needs no lock the writer holds, so
+// the read never waits for the write at all.
+//
+// The two handles are two pools on one file, so they are two SQLite builds
+// and cost memory twice (sqlite.maxMemory is a ceiling, not a reservation,
+// and the read handle binds no blob of its own). NOT MEASURED: what the two
+// hold together at the peak of a backup, which is the open question of
+// sqlite.go's own comment with one pool more.
+func NewSplit(write, read *sql.DB, d Dialect) dbapi.Store {
+	return &store{db: write, rdb: read, d: d}
+}
+
+// Close closes both handles. The read handle goes first, so that a read that
+// is still running cannot be waiting for the writer while the writer is gone.
+// Both errors are kept: the first one that is not nil is returned, and the
+// other handle is closed either way.
+func (s *store) Close() error {
+	var first error
+	if s.rdb != s.db {
+		first = s.rdb.Close()
+	}
+	if err := s.db.Close(); first == nil {
+		first = err
+	}
+	return first
+}
 
 // write runs fn in one transaction and repeats the whole of it while the
 // database says the transaction was rolled back: a Galera certification
