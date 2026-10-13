@@ -1569,3 +1569,50 @@ Punkt. Die Lösung bleibt ein ausgeführtes `store.ValidDownloadURL`;
 **Dazu ein Widerspruch zur Hausnummerierung:** `release -version 0.0.1.0` fällt durch, weil
 `store.ValidVersion` **dreistellig** ist — die Hausnummerierung dieses Nutzers ist vierstellig.
 Das gehört vor dem ersten Release entschieden, nicht danach.
+
+## Punkt 46: Der Rückdreh-Riegel war eine Falle ohne Ausgang — jetzt gibt es einen
+
+**Gemessen am 13.10.2026.** Punkt 45 hatte es als Nebenbefund genannt: wer eine hohe Folgenummer
+unterschiebt, sperrt den echten Store dauerhaft aus. Nachgemessen ist es schlimmer, und zwar in
+drei Richtungen.
+
+**Erstens: die Falle schnappt wirklich zu.** Stand 1 (Zwischenprüfung: geht durch) → Folge 57 →
+der heile Store mit Folge 1 gibt `store.ErrRollback`, und die gespeicherte Folge bleibt **57**,
+auch nach weiteren Versuchen. Die getrennte Gegenmessung zeigt, dass Folge 1 gegen Stand 1 **kein**
+Rückdreh ist — der Fall fällt also an der 57 und an nichts anderem.
+
+**Zweitens: es braucht gar keinen Angreifer.** Mit dem **eigenen** Schlüssel des Stores gemessen:
+Stand 7, **einmal** Folge 57 (ein Testlauf, ein zurückgespielter Stand), und danach sind 8, 9, 10
+und 56 alle `ErrRollback`. Erst 57 geht wieder durch. **Ein einziger Refresh im falschen Moment**,
+und der echte Store muss 49 Kataloge überzählen, um sich selbst wieder ausliefern zu dürfen. Der
+Code sieht eine Zahl, nicht einen Angreifer.
+
+**Drittens: es gab keinen Weg zurück.** Mit `grep` belegt: die Folgenummer steht in der
+Blob-Tabelle unter der Store-Kennung, und `BlobDelete` wird **nie** darauf gerufen — vier Stellen
+lesen und schreiben, keine löscht. In `core.All()` gibt es **keine** Aktion, die etwas zurücksetzt.
+**Und „Store entfernen und neu anlegen trug nicht"** — das war meine Vermutung, und sie ist
+gemessen falsch: die Zeile blieb bei 57, auch mit **neuem Store-Schlüssel**. Übrig blieben eine
+**neue Store-Kennung** (dann nennen die installierten Apps weiter die alte) oder **Handarbeit an
+der Datenbank**.
+
+**Gebaut, in `apps/`:** ein Store, der nicht mehr in der Vertrauensliste steht, **verliert seinen
+Katalog**. Der Weg zurück ist damit: entfernen, einmal auffrischen, wieder eintragen — mit genau
+dem Recht, das einen Store **hinzufügt**. Es kostet nichts Erreichbares, denn so eine Zeile ist ab
+der Entfernung ohnehin unlesbar; sie hielt nur noch den Riegel.
+
+**Der Preis, benannt:** wer die Vertrauensliste schreiben darf, hebt den Riegel für eine Kennung
+auf. Das ist vertretbar — derselbe darf dem Store auch einen anderen Schlüssel und eine andere
+Adresse geben. Einen alten Katalog an einem **gelisteten** Store vorbeizuschmuggeln kann er nicht.
+
+**Verworfen:** „der Admin senkt die Zahl beliebig". Das hebt den Riegel ganz auf und bräuchte eine
+**neue Aktion** in `shared/core/core.go:126–168` — eingefroren.
+
+**Belegt ist es als rot-vorher/grün-nachher an der Zusicherung selbst:** der alte Fall
+(„die Zeile bleibt stehen") war auf `309dc2a` **grün** und ist nach dem Bau **rot**, unverändert.
+Dazu zwei Mutanten tot, eine Kontrolle lebt, und die `-race`-Null ist mit einer Wegwerf-Mutation
+belegt, die im **selben** Lauf rot wird.
+
+**Ungemessen, und es gehört dazu:** diese Fälle erben die Zeile aus dem Prüfstand, die die
+**TLS-Kette abschaltet** (Punkt 45) — der Strang hat das in den Kopf der Testdatei geschrieben,
+statt es zu übergehen. Und die Zeile mit Zeit und Grund bleibt beim Entfernen stehen; das ist
+bewusst so, aber ungemessen.
