@@ -1854,3 +1854,58 @@ podman-Fälle (`fakePodman` ist ein `/bin/sh`-Skript) **überspringen sich auf W
 Verhaltensänderung für jede App, die unter `/data` Skripte hält. Dazu vorgemerkt, kein Blocker
 heute: eine App-eigene Prozessgrenze wäre ein Manifestfeld,
 `shared/store/manifest.go:50–51` — eingefroren.
+
+## Punkt 52: Die Lüge über das Passwort ist weg — über die Unsymmetrie, nicht über die Meldung
+
+**Gemessen und gebaut am 13.10.2026**, der Posten aus Punkt 50.
+
+**Rot vorher an der Zusicherung selbst:** `known: 200, want 503` **mit gültigem
+Challenge-Körper**, `Retry-After ""`, im Protokoll nur „a login challenge could not be kept".
+Beide Namen 200. Die verschluckende Stelle war der `OnceCreate`-Aufruf **nur `if known`**.
+
+**Der Weg dorthin ist der eigentliche Gedanke:** die Verschluckung existierte **nur** wegen der
+Unsymmetrie — der Schreibvorgang war der eine Aufruf, den ein bekannter Name macht und ein
+unbekannter nicht. Also zuerst die Unsymmetrie weg, dann wird die Antwort möglich: **jeder Name
+hält jetzt einen Nonce.** Der Scheinname unter einer frischen `secrets.ID()` — gleiche Form wie
+eine echte Benutzer-ID, ID von niemandem. `finish.go` prüft `nonceUser != cert.User` **nach**
+`session.VerifyClient` gegen die Vertrauensliste, der Scheinnonce kann also niemanden anmelden.
+Eine **feste** Scheinkennung wurde verworfen: sie wäre ein Namensorakel für jeden mit
+Datenbank-Lesezugriff.
+
+**Nur „besetzt" wird beantwortet** (503, `Retry-After: 5`, `reason=db-busy`), und die Begründung
+ist die Grenze selbst: besetzt ist ein Zustand der **Installation** — ein anderes Programm hält die
+Datei, 80,6 s aus Punkt 48 — und kann darum nicht für bekannt/unbekannt verschieden ausfallen.
+**Alles andere bleibt verschluckt** (volle Platte, Lesereplik, Kontingent): das hängt am **Inhalt**
+der Zeile, und die unterscheidet sich zwischen den Namen um genau einen Wert. Ein Speicher, der die
+echte ID nimmt und die Schein-ID ablehnt, gäbe das Orakel **umgekehrt** zurück. Die sicherere
+Variante ist hier die sparsamere Antwort.
+
+**Das Orakel ist mit Zahlen ausgeschlossen, nicht mit einem Argument:**
+`TestStartMakesTheSameDatabaseCallsForEveryName` ist von `len(known) == len(unknown)+1` auf
+**`slices.Equal`** verschärft — die Aufruflisten sind **identisch**. Bei besetzter Datenbank für
+beide Namen: 503, **gleiche Kopfzeilen** (`maps.EqualFunc`) und **gleicher Körper**, Protokoll ohne
+Name. Die Zeitgleichheit — der eigentliche Riegel — allein nachgefahren: **0 rot von 10**, und
+**0 rot von 10 mit `GOMAXPROCS=1`**.
+
+**Zahlen:** `login` unter `-v` **114 → 116 bestanden**, 0 rot; `./apps/server-api/...` 22 Pakete ok;
+`tools/check.sh` ohne Rohr `check: ok`, Code 0. Drei Mutanten tot (Besetzt-Riegel aus; Schreiben nur
+für bekannte Namen; kein Scheinname), eine Kontrolle lebt. `-race` 0 über drei Pakete, belegt mit
+einer Wegwerf-Mutation (Schloss aus `warnThrottle.take`, 8 gleichzeitige `Start`) → **2 DATA RACE**.
+
+**Ein Zwischenfall, der fast als Messung durchgegangen wäre:** der erste Race-Mutant lief mit
+`-run TestShare` — das traf **keinen** Fall und meldete „0 DATA RACE". Seitdem prüft das Messskript
+die `=== RUN`-Zahl und bricht bei 0 ab. Als Regel in `messen.md`.
+
+**`login/live.go:313` ist für diese Änderung nicht im Weg** (`Start` ruft `Live` nicht auf, 0
+Treffer) — **steht aber anderswo im Weg**, und das ist belegt: `Live` gibt `(*Live, wire.Code,
+bool)` zurück, der Fehler ist an Zeile 313 weg; seine beiden Aufrufer `login/trust.go:33` und
+`browser/browser.go:121` machen nur `httpapi.Fail(w, code)` und können darum **kein**
+`Retry-After` setzen. Die Signatur zu drehen fasst `browser/` an — offen.
+
+**BLOCKED:** `shared/wire/wire.go:450–462` (`E_BUSY`, P9) — ein Klient, der nur den **Code** liest,
+kann „besetzt" weiter nicht von „weg" trennen. Dazu `shared/dbapi/dbapi.go:109–111`.
+
+**Ungemessen:** der echte 80-s-Fall mit zwei Prozessen über HTTP **nach** der Änderung; was der
+Benutzer im Browser bei 503 + `Retry-After` liest; die zusätzliche Schreiblast durch Nonce-Zeilen
+für unbekannte Namen (Ablauf über `session.ChallengeLifetime` + `OncePurge`) — benannt, nicht
+gemessen. `login/finish` und `logout` antworten weiter ohne `Retry-After`.
