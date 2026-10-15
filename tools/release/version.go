@@ -28,27 +28,49 @@ import (
 // stopped validating, it would be silently never installed instead. Silence
 // is the worse of the two.
 //
-// shared/ is frozen, so this package does not touch the contract. It carries
-// the OTHER half: the translation of a house number into a number the
-// contract accepts, and the refusal of one it cannot carry. Which of the two
-// ways the project takes is Thomas' decision (docs/release-weg.md, D4).
+// THE DECISION IS TAKEN. Thomas chose on 15.10.2026: the CONTRACT learns four
+// places, and this file is the bridge until it does. So the translation below
+// is a stopgap with an end, not the answer - and the two cases that go red
+// when the contract changes are what announces that the end has come
+// (TestTheContractRefusesAFourPlaceNumber,
+// TestTheWayBackRefusesWhatNoHouseNumberMade).
 //
-// WHAT THE OTHER WAY WOULD COST, measured and not guessed. The contract was
-// probed with an overlay (nothing on disk was changed) that lets
-// versionPattern take three OR four places and widens parseVersion to
-// [4]int - two edits, shared/store/manifest.go:224 and :260. Then:
+// BLOCKED - the item for V1.3, three lines in two files of frozen shared/.
+// This session measured the cost and changed nothing there; only the
+// coordinator writes shared/.
 //
-//	go test ./shared/...  ->  ONE case red: TestVersions, at the literal
-//	                          "1.0.0.0" in its refusal list
-//	                          (shared/store/manifest_test.go:204)
+//	shared/store/manifest.go:224  versionPattern takes a fourth place:
+//	                              ^(0|[1-9][0-9]{0,5})(\.(0|[1-9][0-9]{0,5})){2}
+//	                              becomes the same with an optional
+//	                              (\.(0|[1-9][0-9]{0,5}))? at the end, so
+//	                              three places stay valid and four become so
+//	shared/store/manifest.go:260  parseVersion returns [4]int instead of
+//	                              [3]int; the loop over strings.Split needs
+//	                              no other change, and a three-place number
+//	                              pads with 0, so "1.0.0.1" sorts above
+//	                              "1.0.0"
+//	shared/store/manifest_test.go:204  the literal "1.0.0.0" leaves the
+//	                              refusal list of TestVersions - it is the
+//	                              one guard that asserts the old rule
+//
+// MEASURED, with an overlay, so nothing on disk was changed (15.10.2026,
+// worktree on the local disk D:, main 48cb3aa):
+//
+//	go test ./shared/...  ->  ONE case red: TestVersions, at that literal,
+//	                          every other shared package green
 //	go test ./apps/...    ->  nothing red
 //	go test ./tools/...   ->  two cases red, both in this package and both
 //	                          written to go red exactly then
 //
-// So the four-place contract is three lines in two files, not the 550
-// three-place literals the test tree spells - those stay valid, and so does
-// the signed vector shared/testdata/release/release.json (version 1.1.0).
-// That is the price of the one way; the price of the other is this file.
+// So the four-place contract is three lines, not the 550 three-place literals
+// the test tree spells - those stay valid, and so does the signed vector
+// shared/testdata/release/release.json (version 1.1.0).
+//
+// WHAT THE ITEM STILL OWES, and it is not measured here: the order between a
+// three-place and a four-place number. The probe pads with 0, which makes
+// "1.0.0.1" newer than "1.0.0"; whoever writes the three lines writes a case
+// for that pair, because store.Newer is what decides whether an update is
+// installed at all.
 
 // ErrHouseVersion says a house number cannot become a store version: it is
 // not four places of digits, or a place is outside the range that survives

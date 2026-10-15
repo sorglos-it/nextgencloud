@@ -14,9 +14,17 @@ import (
 // a four-place house number is refused by store.ValidVersion AND never
 // compares higher with store.Newer. The second half is the dangerous one,
 // because it is silent.
+//
+// This case is also the WATCHER of the V1.3 item (see the head of version.go):
+// Thomas decided on 15.10.2026 that the contract learns four places, so this
+// case is MEANT to go red the day those three lines land in shared/. A red
+// here is then not a defect, it is the announcement - and what to do with it
+// stands in the failure message, not only in a document.
 func TestTheContractRefusesAFourPlaceNumber(t *testing.T) {
 	if store.ValidVersion("0.0.1.0") {
-		t.Error("store.ValidVersion took a four-place number; the contradiction is gone and this file is stale")
+		t.Error("store.ValidVersion takes a four-place number now: the V1.3 item has landed. " +
+			"Then StoreVersion/HouseVersion are no longer needed as a bridge - delete them with " +
+			"their cases and hand the house number to the contract directly (version.go, head)")
 	}
 	if !store.ValidVersion("1.0.0") {
 		t.Fatal("store.ValidVersion refused a three-place number: the probe itself is broken")
@@ -131,6 +139,9 @@ func TestAnImpossibleHouseNumberIsRefused(t *testing.T) {
 func TestTheWayBackRefusesWhatNoHouseNumberMade(t *testing.T) {
 	for _, v := range []string{"0.0.1.0", "0.0.0-dev", "1.0", ""} {
 		if _, err := HouseVersion(v); !errors.Is(err, ErrHouseVersion) {
+			// "0.0.1.0" is the second watcher of the V1.3 item: once the
+			// contract takes four places, store.ValidVersion lets it through
+			// here too. See TestTheContractRefusesAFourPlaceNumber.
 			t.Errorf("HouseVersion(%q) did not refuse", v)
 		}
 	}
