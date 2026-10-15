@@ -65,6 +65,38 @@ unset TPM2TOOLS_TCTI
 stempel="dist/.lauf-stempel"
 mkdir -p dist
 : > "$stempel"
+# The canary of the project arm, and the wait for the clock, in one.
+#
+# TWO things were measured wrong here, and both made the arm lie.
+#
+# First: -newer is strictly greater, and two files written in the same timer
+# tick get the SAME mtime down to the nanosecond. On this machine, tmpfs:
+# ": > a; : > b" gives both 17:23:02.533576997, and "find -name b -newer a"
+# counts 0, three runs out of three. So everything written in the tick of the
+# stamp is invisible to this arm - a file of the eight bytes parked in the
+# project root at that moment left the whole run green, 39 ok, EXIT=0, and it
+# still lay there when the run was through. That is a THIRD edge beside the two
+# named at klartext_suche.
+# It is NOT closed by dating the stamp back a second: that was tried and is
+# worse. The scripts of this run carry the secret themselves and are meant to
+# fall out of the list by age (see klartext_suche) - with the stamp a second
+# back, a script written within that second lands IN the list and the run dies
+# on its own source, measured: "Das Geheimnis steht nach dem Siegeln in:
+# ./tools/recovery-test.sh". So the stamp keeps its real time, and the run
+# waits instead until the clock has moved past it. Then everything a case
+# writes afterwards is strictly newer, and nothing older is dragged in.
+#
+# Second: in a clean run this arm lists NOTHING, because all the run writes
+# lies under dist/ and dist/ is pruned out of it - so an arm that has gone
+# blind and an arm that found nothing look exactly alike, and the arm printed
+# its ok three times over a list of ZERO files. The canary is the file that
+# tells them apart: project root, newer than the stamp, no secret in it, so
+# every search must LIST it. The same thought as the "can it sign at all"
+# check at the foreign stick - a case needs the proof that it got as far as the
+# thing it means to measure.
+# Only the name here; it is written below, as soon as fail exists to report a
+# clock that never moves.
+kanarie=".lauf-kanarie"
 
 # Set by fail alone and read by cleanup: whoever looks at a run that ended badly
 # looks for the word FEHLGESCHLAGEN, and a case that dies on a bare command
@@ -88,6 +120,16 @@ fehler_gemeldet=""
 mitschnitt_laeuft=""
 fail() { fehler_gemeldet=ja; printf 'FEHLGESCHLAGEN: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok: %s\n' "$1" >&2; }
+
+# Now the canary of the project arm, written in a loop until the clock of the
+# file times has moved past the stamp - the reasons stand at kanarie= above.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	printf 'kanarie\n' > "$kanarie"
+	[ "$kanarie" -nt "$stempel" ] && break
+	sleep 0.1
+done
+[ "$kanarie" -nt "$stempel" ] \
+	|| fail "Die Kanarie $kanarie wird nach 2 s nicht neuer als $stempel - die Uhr der Dateizeiten steht, und der Projektarm der Klartextsuche hätte nichts abzusuchen."
 
 # A negative case has to end for the right reason, so the exit code is checked
 # EXACTLY and not as "anything but 0". The three codes the cases of task 10
@@ -184,8 +226,8 @@ cleanup() {
 		printf 'Achtung: der Simulator der Instanz qemu läuft noch. Beenden mit: tools/recovery-swtpm.sh stop qemu\n' >&2
 	fi
 	# The stamp has done its work; a finished run leaves exactly what the head
-	# of this file lists and nothing else.
-	rm -f "$stempel"
+	# of this file lists and nothing else. The canary goes with it.
+	rm -f "$stempel" "$kanarie"
 }
 trap cleanup EXIT
 
@@ -417,8 +459,11 @@ leitungszeilen() {       # $1 = Mitschnitt
 # the listing and the look is skipped - the simulator tidies its own state up
 # underneath - but one that is there and unreadable stops the run, because an
 # unreadable file is exactly where an escaped secret would be comfortable.
-# What it costs, measured and not guessed: 67 to 68 files lie under dist/ when a
-# run is through - the count wobbles with the contexts the last case leaves -
+# What it costs, measured and not guessed: 83 files lie under dist/ when a run
+# is through, measured 15.10.2026 on the merged state - the count wobbles with
+# the contexts the last case leaves, and the 67 to 68 that stood here were
+# measured when the run had 30 cases instead of 39, so the number is a number
+# of its day and not a property -
 # the 528 KiB OVMF variable file among them, and the search runs three times.
 # What that costs in the whole run is NOT measurable: three runs each of the
 # state before this search grew and of the state after it came out at 17,7 /
@@ -435,6 +480,12 @@ klartext_suche() {       # $1 = Zeitpunkt, für die Meldung
 	if ! neu="$(find . -path ./dist -prune -o -newer "$stempel" -type f -print)"; then
 		fail "Die Liste der in diesem Lauf angefassten Dateien lässt sich nicht erstellen - die Klartextsuche hat dann nichts abgesucht."
 	fi
+	# The canary has to stand in that list. Its absence does not mean the tree
+	# is clean, it means this arm is not looking - and then its ok says nothing.
+	case "$neu" in
+	*"$kanarie"*) : ;;
+	*) fail "Die Kanarie $kanarie steht nicht in der Fundliste - der Projektarm der Klartextsuche $1 hat nichts abgesucht, und sein Ergebnis sagt nichts." ;;
+	esac
 	while IFS= read -r datei; do
 		[ -n "$datei" ] || continue
 		[ -e "$datei" ] || continue
