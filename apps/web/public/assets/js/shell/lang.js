@@ -13,10 +13,17 @@
 //
 // WHAT IS HERE AND WHAT IS NOT. The keys are the sentences of the login mask
 // and of the first run - every sentence a person reads when something went
-// wrong. The REST OF THE SHELL IS STILL GERMAN IN ITS SOURCE: 294 strings,
-// counted, and moving them is its own task. So this is a mechanism with the
-// error sentences in it, not a translated shell, and nothing here pretends
-// otherwise.
+// wrong. The REST OF THE SHELL IS STILL GERMAN IN ITS SOURCE, and moving it
+// is its own task. How much there is of it, with the command, because a
+// number without one is no number:
+//
+//   grep -rhoE '"[A-ZAOU][^"]{4,}"' auth/ shell/ apps/ | sort -u | wc -l
+//
+// answers 283 here (294 before the keys below left those files). It is an
+// UPPER BOUND and not a count of sentences: it catches "Enter" and "Orange"
+// too, which are a key name and a colour and no text for anybody. So: this
+// is a mechanism with the error sentences in it, not a translated shell, and
+// nothing here pretends otherwise.
 //
 // Fallback is per KEY and not per file, which is what the house rule asks
 // for: a key the chosen language does not have is answered out of English,
@@ -36,16 +43,18 @@ export const LANGS = Object.freeze(["de", "en", "fr", "it", "es"]);
 // missing key is answered out of.
 export const FALLBACK = "en";
 
-// A language file of the five is under 2 KiB; the German one measured 1 538
-// bytes. The bound is here so an answer that is NOT a language file is
-// dropped while it arrives rather than after it is all in memory - the same
-// reason net/config.js bounds /config.json.
+// MEASURED with `wc -c public/assets/lang/*.json`: the five files are 1 278
+// to 1 482 bytes, the largest of them French. The bound is here so an answer
+// that is NOT a language file is dropped while it arrives rather than after
+// it is all in memory - the same reason net/config.js bounds /config.json.
 export const MAX_LANG = 8 << 10;
 
 // A map of strings, read through the house decoder with a budget: a language
 // file is a file on a server, and a file on a server is exactly what somebody
 // who got that far would edit. json.MAX_MEMBERS caps it at 64 keys, which is
-// the growth this table is allowed before somebody has to think about it.
+// the growth this table is allowed before somebody has to think about it -
+// MEASURED through this very shape rather than read off the constant: 64 keys
+// decode, 65 leave as BadJSON "too many members".
 const langShape = M(str);
 
 let chosen = FALLBACK;

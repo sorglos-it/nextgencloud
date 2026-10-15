@@ -37,9 +37,16 @@ async function tellMock(shell, query) {
   expect(ok, "the mock took the instruction").toBe(true);
 }
 
-// The same wait every login case in this suite uses: what the shell SAYS,
-// rather than a guess at how long Argon2id takes on a loaded machine
-// (shell/login.spec.js, loginState, says why at length).
+// The wait is the same DECISION shell/login.spec.js makes and a shorter form
+// of it: the attempt is over when the shell SAYS so - the buttons back on, or
+// a sentence in the alert - and not after a guess at how long Argon2id takes
+// on a loaded machine (loginState there says why at length).
+//
+// It is shorter in one way that is named rather than copied: login.spec.js
+// also knows the state "the mask is gone and the desktop is still being
+// built", and every case here ends AT THE MASK, with a sentence in it. A case
+// of this file that ever did get a desktop would wait here until its own
+// timeout - which is a red case and never a green one.
 async function attemptOver(shell) {
   await expect.poll(async () => shell.evaluate(() => {
     const box = document.querySelector("form.loginbox");
