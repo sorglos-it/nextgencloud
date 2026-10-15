@@ -104,13 +104,33 @@ type Server struct {
 
 	// spool is the directory of this run, SpoolDir unless a test moves it.
 	spool string
-	// round is held while a background round runs. DECISION on "how many at
-	// once": exactly one. A round that outlives its tick must not start a
-	// second one on top of itself -- the hourly round fetches catalogs over
-	// the network and writes their rows, and two of them would write the same
-	// rows against each other. A tick that finds the round busy is dropped and
-	// not queued: the next tick does the same work anyway.
-	round sync.Mutex
+	// round and hourly are held while the matching background round runs.
+	// DECISION on "how many at once": one OF EACH, and no longer one over
+	// both.
+	//
+	// What stays: a round that outlives its tick must not start a second one
+	// on top of itself. The hourly round fetches catalogs over the network
+	// and writes their rows, and two of them would write the same rows
+	// against each other. A tick that finds its round busy is dropped and not
+	// queued: the next tick does the same work anyway.
+	//
+	// What changed, and the reason is measured rather than argued: one lock
+	// over both rounds made a slow CATALOG round drop the HOUSEKEEPING ticks,
+	// and the catalog round is the one with an unbounded part in it. Measured
+	// on 15.10.2026 (appstore.Refresh): a store that accepts and never
+	// answers holds the fetch for 60,001 s -- Stores.Client's own Timeout,
+	// PER REQUEST -- so a trust list with four such stores holds the hourly
+	// round for four minutes, and every minute tick in them was dropped.
+	// Housekeeping is what logs expired sessions out, so that was expired
+	// sessions left standing for a reason that had nothing to do with them.
+	//
+	// Separating the locks is safe for exactly the reason the shared one was
+	// taken for: the rounds do not write the same rows. The minute round
+	// purges sessions and reads the trust list afresh; the hourly one writes
+	// catalog rows and the store notes. Each still has to be alone with
+	// ITSELF, which is what two locks say and one lock said too broadly.
+	round  sync.Mutex
+	hourly sync.Mutex
 }
 
 // Build makes everything the API needs and fails if anything is missing.
@@ -399,20 +419,23 @@ func (s *Server) rounds(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-minute.C:
-			s.once(func() { s.minute(ctx) })
+			s.once(&s.round, func() { s.minute(ctx) })
 		case <-hour.C:
-			s.once(func() { s.hour(ctx) })
+			s.once(&s.hourly, func() { s.hour(ctx) })
 		}
 	}
 }
 
-// once runs fn unless a round is already running; see Server.round.
-func (s *Server) once(fn func()) {
-	if !s.round.TryLock() {
+// once runs fn unless the round that holds mu is already running; see
+// Server.round. The lock is handed in rather than read off the server,
+// because each round has one of its own now: the two rounds write different
+// rows and only ever have to be alone with themselves.
+func (s *Server) once(mu *sync.Mutex, fn func()) {
+	if !mu.TryLock() {
 		slog.Warn("a background round is still running, this tick is dropped")
 		return
 	}
-	defer s.round.Unlock()
+	defer mu.Unlock()
 	fn()
 }
 
@@ -421,10 +444,11 @@ func (s *Server) once(fn func()) {
 // It carries a deadline of its own (dbwait.Round, 30 s) where it carried none
 // at all, and both halves of that matter. Measured before: a store call of
 // this round waits busy_timeout times maxTries against a second program on
-// the file -- 80,6 s, point 48 -- and because minute and hour share s.round
-// (Server.once), that hang drops the ticks of BOTH rounds. Housekeeping is
-// what logs expired sessions out, so an hour of it dropped is an hour of
-// sessions that should have ended standing.
+// the file -- 80,6 s, point 48 -- and because minute and hour shared s.round
+// then (Server.once), that hang dropped the ticks of BOTH rounds.
+// Housekeeping is what logs expired sessions out, so an hour of it dropped is
+// an hour of sessions that should have ended standing. The rounds hold a lock
+// each now (Server.hourly), so a hang of this round is this round's alone.
 //
 // A round is the one purpose that may simply come back later: the next tick
 // is a minute away, so giving up costs one round and nothing else. That is
@@ -453,12 +477,28 @@ func (s *Server) minute(ctx context.Context) {
 
 // hour is the catalog round.
 //
-// It gets the REASON and no deadline, and the difference is not an oversight.
-// Its work is a fetch over the network from the store server, and what that
-// normally takes is not measured here -- a deadline of thirty seconds over it
-// would be a guess that could cut a fetch which is doing nothing wrong. Named
-// as open rather than built: the round still shares s.round with the minute
-// round, so a catalog fetch that hangs still drops housekeeping ticks.
+// It still gets no deadline of its OWN, and that is now a measurement and no
+// longer a gap. Measured on 15.10.2026 against the TLS store server of
+// appstore's fixture: the whole round takes a median of 0,525 ms and at most
+// 3,709 ms over twenty runs when the store answers; the fetch takes exactly
+// what the store takes (204,1 ms for a store delaying 200 ms); and the only
+// bound on a store that never answers is Stores.Client's own Timeout, 60,001 s
+// measured. So thirty seconds over the round would cut a fetch at half the
+// bound the client already holds, while the DATABASE calls underneath it had
+// no bound at all -- that measurement ran into its own cap of 20,003 s and
+// Refresh then answered nil, so this line logged reason=none for a database
+// nobody could reach.
+//
+// Both halves live where they belong now: appstore.Refresh bounds each of its
+// database calls with dbwait.Round and hands a database failure back, the
+// fetch keeps the client's own measured figure, and this round reads the
+// reason off the error it is finally given.
+//
+// What is NOT closed, and cannot be closed here: the client's bound is per
+// REQUEST, so N stores in the trust list are N times 60 s. That is why this
+// round no longer shares its lock with the minute one (Server.hourly) -- a
+// catalog round that is slow for four minutes now costs its own ticks and
+// none of the housekeeping's.
 func (s *Server) hour(ctx context.Context) {
 	if err := s.st.Refresh(ctx); err != nil {
 		slog.Warn("catalogs could not be fetched", "reason", roundReason(ctx, err), "error", err)

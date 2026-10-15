@@ -344,10 +344,10 @@ func TestOnlyOneRoundAtATime(t *testing.T) {
 	srv := &Server{}
 	inside := make(chan struct{})
 	release := make(chan struct{})
-	go srv.once(func() { close(inside); <-release })
+	go srv.once(&srv.round, func() { close(inside); <-release })
 	<-inside
 	ran := false
-	srv.once(func() { ran = true })
+	srv.once(&srv.round, func() { ran = true })
 	if ran {
 		t.Fatalf("a second round started while the first was still running")
 	}
@@ -357,7 +357,7 @@ func TestOnlyOneRoundAtATime(t *testing.T) {
 	// srv.round is free again only after the goroutine has left once, so the
 	// case waits for that instead of racing it.
 	for i := 0; !ran && i < 500; i++ {
-		srv.once(func() { ran = true })
+		srv.once(&srv.round, func() { ran = true })
 		if !ran {
 			time.Sleep(5 * time.Millisecond)
 		}

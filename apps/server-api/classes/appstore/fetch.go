@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -164,8 +165,40 @@ func (st *Stores) get(ctx context.Context, url string, max int64) ([]byte, error
 // verifies. A store that fails leaves the last good catalog in place and does
 // not stop the others: one store nobody can reach must not cost an
 // installation the catalogs of the rest.
+//
+// A DEADLINE PER PART, and the figures are measured rather than chosen
+// (15.10.2026, against the TLS store server of this package's fixture and a
+// store that blocks):
+//
+//   - the whole round against a store that answers at once takes a median of
+//     0,525 ms and at most 3,709 ms over twenty runs, so nothing on this path
+//     is normally slow;
+//   - the fetch takes exactly what the store takes -- 204,1 ms for a store
+//     delaying 200 ms, 2,004 s for one delaying 2 s -- and a store that
+//     accepts and never answers ends at 60,001 s, which is Stores.Client's
+//     own Timeout (60 s, New) and the one bound this path already had;
+//   - a blocked DATABASE call had no bound at all: the measurement ran into
+//     its own cap of 20,003 s, and Refresh then answered nil, so the round
+//     logged reason=none. Eighty seconds of waiting (point 48) and not a word.
+//
+// So one deadline over the whole round would be the wrong shape in both
+// directions: thirty seconds over it would cut a fetch that is doing nothing
+// wrong at half the bound the client already holds, and sixty would leave the
+// database unbounded for a minute. The database calls get dbwait.Round (30 s)
+// EACH, the fetch keeps the client's own measured figure, and what is left
+// open is named rather than papered over: the client's bound is PER REQUEST,
+// so a trust list with N stores can still hold this round N times 60 s. That
+// is why the catalog round no longer shares its lock with the housekeeping
+// one (server.Server.hour).
+//
+// The database error is handed BACK now instead of being dropped. A store
+// that fails is still none of the round's business -- that is the paragraph
+// above -- but a database that does not answer is, because the round's log
+// line is the whole of what it can say (server.roundReason).
 func (st *Stores) Refresh(ctx context.Context) error {
-	v, err := st.S.Trust(ctx)
+	tctx, cancel := dbwait.Round(ctx)
+	v, err := st.S.Trust(tctx)
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -173,11 +206,18 @@ func (st *Stores) Refresh(ctx context.Context) error {
 		err := st.refreshOne(ctx, s)
 		// The reason is shown to admins in ngc.store/sources, in German, and
 		// writing it down must not swallow the next store either.
-		_ = st.note(ctx, s.ID, err)
+		nctx, cancel := dbwait.Round(ctx)
+		_ = st.note(nctx, s.ID, err)
+		cancel()
 	}
-	// Forgetting comes last, and it must not cost the catalogs above either.
-	_ = st.forget(ctx, v.List.Stores)
-	return nil
+	// Forgetting comes last, and it must not cost the catalogs above either:
+	// its error is returned, so the round can name a busy database, and it is
+	// returned AFTER the loop, so it cannot cost them. One deadline over the
+	// whole sweep and not one per row, because dropping the stale catalogs is
+	// one piece of work and a row is not worth a context of its own.
+	fctx, cancel := dbwait.Round(ctx)
+	defer cancel()
+	return st.forget(fctx, v.List.Stores)
 }
 
 // forget drops the catalog of every store that is no longer in the trust
@@ -248,7 +288,11 @@ func (st *Stores) refreshOne(ctx context.Context, s trust.Store) error {
 	}
 	// The sequence already on record goes in, or store.VerifyCatalog cannot
 	// see a rollback: without it every older catalog of this store verifies.
-	last, err := st.lastSeq(ctx, dbapi.BlobCatalog, s.ID)
+	// The deadline is on the database call and not on the fetch above it; see
+	// Refresh for the measurement that decides which part gets which.
+	lctx, lcancel := dbwait.Round(ctx)
+	last, err := st.lastSeq(lctx, dbapi.BlobCatalog, s.ID)
+	lcancel()
 	if err != nil {
 		return err
 	}
@@ -263,7 +307,9 @@ func (st *Stores) refreshOne(ctx context.Context, s trust.Store) error {
 	if err != nil {
 		return err
 	}
-	return st.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobCatalog, ID: s.ID, Seq: c.Seq,
+	pctx, pcancel := dbwait.Round(ctx)
+	defer pcancel()
+	return st.S.DB.BlobPut(pctx, dbapi.Blob{Kind: dbapi.BlobCatalog, ID: s.ID, Seq: c.Seq,
 		Data: data, Updated: st.S.Now()})
 }
 

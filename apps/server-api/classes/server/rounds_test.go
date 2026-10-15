@@ -70,9 +70,10 @@ func (s *stuckStore) SessionPurge(ctx context.Context, now int64) error {
 // TestTheHousekeepingRoundBoundsTheDatabase is the assurance of the deadline.
 // Measured before: the round handed s.minute the server's own context, which
 // has no deadline at all, so one busy database held the round for the 80,6 s
-// of point 48 -- and because minute and hour share s.round, that hang drops
-// the ticks of BOTH of them (TestOnlyOneRoundAtATime is the bolt that drops
-// them).
+// of point 48 -- and because minute and hour shared s.round then, that hang
+// dropped the ticks of BOTH of them. They hold a lock each now
+// (TestTheRoundsDoNotShareALock and TestTheBeatGivesEachRoundItsOwnLock),
+// so this round's hang is this round's alone.
 //
 // What a round may do that a user path may not is come back later: the next
 // tick is a minute away, so giving up and letting the beat try again is the
@@ -210,4 +211,149 @@ func TestTheRoundDeadlineFitsBetweenTheBeatAndTheRetryChain(t *testing.T) {
 	if dbwait.RoundWait <= dbwait.UserWait {
 		t.Fatalf("RoundWait %v is not above UserWait %v", dbwait.RoundWait, dbwait.UserWait)
 	}
+}
+
+// blobStuck is the database of the CATALOG round's measurement: the first
+// thing appstore.Refresh does is read the trust list, and that read is a
+// BlobGet (state.readBlock). A store that holds it holds the round.
+type blobStuck struct {
+	dbapi.Store
+	calls atomic.Int64
+}
+
+func (s *blobStuck) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	s.calls.Add(1)
+	select {
+	case <-ctx.Done():
+		return dbapi.Blob{}, context.Cause(ctx)
+	case <-time.After(roundCap):
+		return dbapi.Blob{}, errTestNoDeadline
+	}
+}
+
+// TestTheCatalogRoundBoundsTheDatabase is the assurance Server.hour did not
+// have. Measured on 15.10.2026 before the change, against a blocked database:
+// appstore.Refresh ran into the measurement's own cap of 20,003 s, because no
+// deadline of ours bounded a single database call on that path -- in operation
+// that is the 80,6 s of point 48.
+//
+// The deadline is NOT on the round: its fetch is bounded by the store client's
+// own measured 60 s and thirty seconds over the round would cut a fetch doing
+// nothing wrong. It is on each database call inside Refresh, which is why this
+// case measures the round and the one below measures which part got which.
+func TestTheCatalogRoundBoundsTheDatabase(t *testing.T) {
+	srv, db, _ := newServer(t)
+	stuck := &blobStuck{Store: db}
+	srv.State.DB = stuck
+
+	start := time.Now()
+	srv.hour(ctx)
+	took := time.Since(start)
+
+	// The intermediate check: the round really reached the blocked call, so a
+	// short time below is the deadline and not a round that did nothing.
+	if stuck.calls.Load() == 0 {
+		t.Fatal("the catalog round made no store call, so this case measures an earlier wall")
+	}
+	if took >= roundCap {
+		t.Fatalf("the catalog round waited %v, so no database call on its path carries a "+
+			"deadline; without one a busy database holds it for the measured 80,6 s", took)
+	}
+	if took > 2*dbwait.RoundWait {
+		t.Fatalf("the catalog round took %v against a deadline of %v", took, dbwait.RoundWait)
+	}
+}
+
+// TestAStuckCatalogRoundSaysWhyInTheLog is the other half, and it was the
+// worse one: measured before the change, Refresh dropped the error of its
+// last database call (`_ = st.forget(...)`) and answered nil, so this round
+// logged nothing at all -- not a wrong reason, no line. A background round
+// has nobody to answer, so that was eighty seconds of waiting and silence.
+func TestAStuckCatalogRoundSaysWhyInTheLog(t *testing.T) {
+	srv, db, _ := newServer(t)
+	buf := logging(t)
+	srv.State.DB = &blobStuck{Store: db}
+
+	srv.hour(ctx)
+
+	got := buf.String()
+	if !strings.Contains(got, "catalogs could not be fetched") {
+		t.Fatalf("the catalog round wrote no line at all for a database nobody can reach: %q", got)
+	}
+	if !strings.Contains(got, "reason=db-busy") {
+		t.Fatalf("the catalog round's log names no reason: %q", got)
+	}
+	if strings.Contains(got, "context deadline exceeded") {
+		t.Fatalf("the bare context error is in the line: %q", got)
+	}
+}
+
+// TestTheRoundsDoNotShareALock is the decoupling, and the number behind it is
+// the one that makes it necessary: the catalog round's fetch is bounded by
+// appstore's http.Client alone, measured 60,001 s PER REQUEST on 15.10.2026,
+// so a trust list with four unreachable stores holds that round for four
+// minutes. Under one shared lock every minute tick in them was dropped, and
+// the minute round is what logs expired sessions out.
+//
+// This is the case TestOnlyOneRoundAtATime cannot be: that one holds "a round
+// does not run twice", this one holds "the other round is not the same round".
+func TestTheRoundsDoNotShareALock(t *testing.T) {
+	srv := &Server{}
+	inside := make(chan struct{})
+	release := make(chan struct{})
+	go srv.once(&srv.hourly, func() { close(inside); <-release })
+	<-inside
+	defer close(release)
+
+	ran := false
+	srv.once(&srv.round, func() { ran = true })
+	if !ran {
+		t.Fatal("the housekeeping tick was dropped although only the catalog round was busy")
+	}
+	// The intermediate check, so this cannot pass against a once that locks
+	// nothing: the busy round's OWN tick is still dropped.
+	second := false
+	srv.once(&srv.hourly, func() { second = true })
+	if second {
+		t.Fatal("a second catalog round started on top of the first")
+	}
+}
+
+// TestTheBeatGivesEachRoundItsOwnLock is the half TestTheRoundsDoNotShareALock
+// cannot hold: that one calls once with the lock it means, so it says nothing
+// about which lock Server.rounds HANDS IN. Measured: a mutant that dispatches
+// the hourly tick on s.round again passed that case and was only caught here.
+//
+// It holds the HOUSEKEEPING lock and waits for the catalog round, not the
+// other way round, because that is the direction the mutant breaks: with one
+// shared lock a held s.round drops every hourly tick.
+func TestTheBeatGivesEachRoundItsOwnLock(t *testing.T) {
+	srv, _, _ := newServer(t)
+	buf := logging(t)
+	oldM, oldH := Minute, Hour
+	// The housekeeping beat stays out of the way: this case is about the
+	// hourly tick, and a minute round in it would write lines of its own.
+	Minute, Hour = time.Hour, 5*time.Millisecond
+	t.Cleanup(func() { Minute, Hour = oldM, oldH })
+
+	srv.round.Lock()
+	defer srv.round.Unlock()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); srv.rounds(ctx) }()
+
+	// The catalog round over an empty database fails with state.ErrNoTrust and
+	// says so; that line is how this case sees it ran at all.
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(buf.String(), "catalogs could not be fetched") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no catalog round ran in 10 s while the housekeeping lock was held, "+
+				"so the hourly tick is dispatched on that same lock: %q", buf.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
 }
