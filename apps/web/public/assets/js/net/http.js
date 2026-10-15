@@ -55,9 +55,19 @@ function parse(parser, raw) {
   }
 }
 
-// retrySeconds reads the Retry-After header of an error answer - only
-// E_LOCKED carries one - in RFC 9110's delta-seconds form and in no other,
-// because seconds are what the API sends.
+// retrySeconds reads the Retry-After header of an error answer in RFC 9110's
+// delta-seconds form and in no other, because seconds are what the API sends.
+//
+// IT SAID "only E_LOCKED carries one" HERE AND THAT WAS WRONG since point 49:
+// apps/server-api/classes/httpapi/busy.go (FailCoded) puts a Retry-After of
+// httpapi.RetryBusy = 5 beside an E_UNREACHABLE whose cause was a database
+// another process HOLDS, as against one that is away - and because a word of
+// its own for busy would be a new wire.Code in frozen
+// shared/wire/wire.go:450-462 (BLOCKED, P9), that header is the ONLY thing
+// that tells the two apart. The code below never asked about the code and so
+// was right all along; the comment was the part that was out of date, and
+// auth/login.js is the caller that now reads this number for E_UNREACHABLE
+// too.
 // The digits decide, as they do everywhere in the contracts (json.safeNumber),
 // and only then is there a number: Number("0x2a") is 42 and Number("4e2") is
 // 400, and this header comes from outside. Anything else - a missing header,

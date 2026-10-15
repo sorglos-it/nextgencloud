@@ -821,6 +821,46 @@ export async function startMockAPI({ world, port, phpPort }) {
     return s;
   }
 
+  // How the NEXT request to an API path answers instead of doing its work:
+  // "" for normally, "busy" for a database another process holds, "away" for
+  // one that cannot be reached at all. Taken and cleared in the same step, as
+  // the lock above is and for the same reason.
+  //
+  // IT MIRRORS apps/server-api/classes/httpapi/busy.go (FailCoded) AND NOT A
+  // GUESS, because what the shell is measured against here is one header:
+  //   busy -> 503 E_UNREACHABLE WITH Retry-After: 5 (httpapi.RetryBusy), and
+  //           a log line reason=db-busy
+  //   away -> 503 E_UNREACHABLE WITHOUT any Retry-After
+  // The CODE IS THE SAME in both, which is the whole point of point 49: a
+  // word of its own (E_BUSY) is in frozen shared/wire/wire.go:450-462 and
+  // BLOCKED, so the header is the only thing that tells them apart.
+  //
+  // The setup path is the one exception and it is the server's, not this
+  // file's: apps/server-api/classes/setup/setup.go:94-99 (fault) turns EVERY
+  // E_UNREACHABLE into E_INTERNAL, and its own comment says so - "nothing on
+  // this path can say 503 any more". It answers with httpapi.Fail at all
+  // fifteen places, which sets no Retry-After. So a busy database during the
+  // first run reaches the browser as 500 E_INTERNAL with no header, and that
+  // is what setupFault below hands back.
+  const RETRY_BUSY = 5;
+  let faultNext = "";
+  function takeFault() {
+    const f = faultNext;
+    faultNext = "";
+    return f;
+  }
+
+  // sendFault answers one of the two the way busy.go does. onSetupPath takes
+  // the server's own conversion with it.
+  function sendFault(res, kind, onSetupPath) {
+    if (onSetupPath) {
+      sendError(res, wire.CODES.INTERNAL);
+      return;
+    }
+    if (kind === "busy") res.setHeader("Retry-After", String(RETRY_BUSY));
+    sendError(res, wire.CODES.UNREACHABLE);
+  }
+
   // ------------------------------------------------- a fresh installation
   //
   // While `fresh` is set this API has NO ADMIN: GET PathSetup offers version 1
@@ -1026,6 +1066,13 @@ export async function startMockAPI({ world, port, phpPort }) {
         // there is no session before a login.
         const lock = url.searchParams.get("lock");
         if (lock !== null) lockFor = /^[0-9]{1,4}$/.test(lock) ? Number(lock) : 0;
+        // How the next API request fails instead of working: "busy" or
+        // "away", and anything else clears it. It needs no session either -
+        // a database nobody can write to is a state of the installation and
+        // not of a caller, which is exactly why point 52 could answer it for
+        // every name alike.
+        const fault = url.searchParams.get("fault");
+        if (fault !== null) faultNext = fault === "busy" || fault === "away" ? fault : "";
         // A fresh installation needs no session either: there is no user yet.
         // "1" takes the admin away, "0" puts the world buildWorld made back.
         const setup = url.searchParams.get("setup");
@@ -1048,6 +1095,16 @@ export async function startMockAPI({ world, port, phpPort }) {
       res.end(state?.sawPlaintext === true ? "1" : "0");
       return;
     }
+
+    // A database that is busy or away answers BEFORE the path does any work
+    // of its own, which is where the real API answers it too: the five ways
+    // in front of the WebSocket reach their store through dbwait, and what
+    // comes back is a fault and never a row (point 49). It stands here, after
+    // the test door and before every path, so one line covers setup, login,
+    // logout and trust alike - and so the door itself can still be reached
+    // while the next request is set to fail.
+    const fault = takeFault();
+    if (fault !== "") { sendFault(res, fault, path === session.PATH_SETUP); return; }
 
     // The setup, and only while there is no admin: 404 E_NOTFOUND otherwise,
     // which is what the contract gives this path "as soon as there is an

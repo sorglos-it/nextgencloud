@@ -71,7 +71,19 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],
-  use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
+  // THE BROWSER'S LANGUAGE IS PART OF THE FIXTURE, not of the machine.
+  // Since the five languages arrived (public/assets/lang/, shell/lang.js) the
+  // sentences a mask says depend on what the browser offers, and Playwright
+  // offers the machine's own locale: measured, these browsers came up en-US
+  // here and three cases that pin a GERMAN sentence went red on a tree whose
+  // code was right. A suite whose answers change with the machine it runs on
+  // is a suite that measures the machine.
+  //
+  // de-DE, because German is what the cases of this suite pin and what the
+  // shell is still written in outside the language files. A case that wants
+  // another language says so itself (test.use({ locale }), or lang.load() with
+  // the tag it wants - shell/busy.spec.js does both).
+  use: { baseURL: `http://127.0.0.1:${port}`, locale: "de-DE", trace: "retain-on-failure" },
   webServer: [
     {
       command: `"${php}" -d variables_order=EGPCS -S 127.0.0.1:${phpPort} -t ../public ../public/index.php`,
