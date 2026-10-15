@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"net/http"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -56,11 +57,23 @@ func (srv *Server) NewPairCode(ctx context.Context) (tunnel.PairCode, int64, err
 // safe half of that trade -- an admin makes a new code -- while the other order
 // would let anyone who ever saw a code guess at the MAC for a day.
 func (srv *Server) Pair(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	body, ok := httpapi.Body(w, r)
 	if !ok {
 		return
 	}
+	// The deadline of a path somebody is waiting on, set HERE rather than on
+	// the route because this path is one of the four that do not go over
+	// httpapi.Routes.Mux (server.routes) -- so the deadline point 49 gave the
+	// five session routes never reached it. Without one a store call below
+	// waits busy_timeout times maxTries, 80,6 s measured (point 48), and then
+	// answers the word for a database that is AWAY.
+	//
+	// After Body and not before it: Body may take httpapi.readLimit (15 s)
+	// for a body that trickles in, and a deadline started before it would
+	// spend itself on the reading and then call a slow controller's database
+	// busy.
+	ctx, cancel := dbwait.User(r.Context())
+	defer cancel()
 	req, err := tunnel.ParsePairRequest(body)
 	if err != nil {
 		httpapi.Fail(w, wire.CodeProtocol)
@@ -80,6 +93,20 @@ func (srv *Server) Pair(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Unknown, expired and already used are one answer: telling them apart
 		// would say whether a hash was ever a secret of this installation.
+		//
+		// A database that did not come free is NOT one of those three, and
+		// answering E_VERIFY for it told a controller that is pairing
+		// correctly that its code was wrong -- measured, 403 while a second
+		// program held the file, and an admin would have made a new code for
+		// nothing. It opens no oracle: sqlstore.OnceUse does its whole lookup
+		// inside ONE write transaction, so the lock is met before any row is
+		// read, and the answer cannot depend on the hash.
+		// TestPairSaysNothingAboutWhetherACodeExists holds that with the list
+		// of store calls, the headers and the body, not with this sentence.
+		if dbwait.Busy(err) {
+			httpapi.FailCoded(w, wire.CodeUnreachable, err)
+			return
+		}
 		httpapi.Fail(w, wire.CodeVerify)
 		return
 	}
@@ -90,7 +117,11 @@ func (srv *Server) Pair(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := srv.S.DB.PendingPut(ctx, dbapi.Pending{Name: req.Name, Key: req.Noise,
 		Since: srv.S.Now()}); err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		// The code is the same E_UNREACHABLE as before -- a word of its own
+		// for a busy database is a new wire.Code and that list is in frozen
+		// shared/wire/wire.go:450-462, BLOCKED, P9 of the v1.3 row. What the
+		// error adds is the Retry-After and the reason in the log.
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	httpapi.NoContent(w)

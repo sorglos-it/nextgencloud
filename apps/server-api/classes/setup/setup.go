@@ -91,9 +91,36 @@ const lockName = "setup/code"
 // path can say 503 any more -- whoever one day wants a legitimate "come back
 // later" here has to take the word back off this rule first, and with the two
 // cases gone there is no finer place left to hang it on.
+//
+// THE ONE CASE TAKEN BACK OFF THAT RULE, and the sentence above names the
+// price of doing it: a finer place to hang the word on. Since point 49 there
+// is one, and it is not a path or a step but the ERROR -- dbwait.Busy. A
+// database that did not come free in time is the single thing this path can
+// meet that passes BY ITSELF in a moment, and E_INTERNAL for it tells an
+// admin his installation is broken while his own second program writes. That
+// is the shape of wrong answer point 50 measured at the login, one step
+// further along: not a lie about a password but one about the installation.
+//
+// The two cases the rule was written for are untouched, which is why this is
+// safe to carve out: errKey and a damaged row of the counting are not busy,
+// so they stay E_INTERNAL -- and so does a database that is genuinely AWAY.
+// For that one 503 would be right too, and giving it the word back is a
+// separate decision this does not make.
+//
+// The DEADLINE of this path is not moved with it. This handler is one an
+// admin waits on in a browser, so dbwait.UserWait is its own; the ninety
+// seconds of dbwait.StartWait belong to the path that brings the program up,
+// and nothing of the start comes through here -- Build calls EnsureCode
+// (server.go:181), which reads a file and touches no store, and every store
+// call of this package sits inside Serve behind an HTTP request.
+// TestTheSetupPathKeepsTheUserDeadline holds that half, so a later reading of
+// "the setup IS the start" cannot move it quietly.
 func fault(err error, from httpapi.Origin) wire.Code {
 	if code := httpapi.Fault(err, from); code != wire.CodeUnreachable {
 		return code
+	}
+	if dbwait.Busy(err) {
+		return wire.CodeUnreachable
 	}
 	return wire.CodeInternal
 }
@@ -264,7 +291,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 	} else if !errors.Is(err, state.ErrNoTrust) {
 		// The list was read out of our own rows, so nothing about it is the
 		// caller's doing -- least of all a signature of his.
-		httpapi.Fail(w, fault(err, httpapi.FromRows))
+		httpapi.FailCoded(w, fault(err, httpapi.FromRows), err)
 		return
 	}
 	code, ok := h.code()
@@ -290,7 +317,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) offer(w http.ResponseWriter, r *http.Request, code string) {
 	info, err := h.info(r.Context())
 	if err != nil {
-		httpapi.Fail(w, fault(err, httpapi.FromRows))
+		httpapi.FailCoded(w, fault(err, httpapi.FromRows), err)
 		return
 	}
 	raw, err := json.Marshal(info)
@@ -317,7 +344,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	// handler: one error of the database, one status.
 	wait, err := lock.Check(ctx, h.S.DB, lockName, now)
 	if err != nil {
-		httpapi.Fail(w, fault(err, httpapi.FromRows))
+		httpapi.FailCoded(w, fault(err, httpapi.FromRows), err)
 		return
 	}
 	if wait > 0 {
@@ -334,7 +361,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	// hands out free tries.
 	fail := func(answer wire.Code) {
 		if err := lock.Fail(ctx, h.S.DB, lockName, now); err != nil {
-			httpapi.Fail(w, fault(err, httpapi.FromRows))
+			httpapi.FailCoded(w, fault(err, httpapi.FromRows), err)
 			return
 		}
 		httpapi.Fail(w, answer)
@@ -348,7 +375,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	if err != nil {
 		// Our own rows and our own configuration: the caller brought none of
 		// it, and counting his attempt for it would be wrong too.
-		httpapi.Fail(w, fault(err, httpapi.FromRows))
+		httpapi.FailCoded(w, fault(err, httpapi.FromRows), err)
 		return
 	}
 	if _, err := session.VerifySetup(s, info, code); err != nil {
@@ -366,7 +393,7 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 		// installation's chain is his. state.ErrDamaged is not: rows of our
 		// own that contradict each other fall to E_INTERNAL, because no
 		// version he can sign would mend them.
-		httpapi.Fail(w, fault(err, httpapi.FromRequest))
+		httpapi.FailCoded(w, fault(err, httpapi.FromRequest), err)
 		return
 	}
 	// The code has done its work and goes. What keeps the setup shut from here

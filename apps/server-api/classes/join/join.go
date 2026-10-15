@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
@@ -84,11 +85,25 @@ func (j *Join) NewJoinCode(ctx context.Context) (tunnel.JoinCode, int64, error) 
 // Nothing here puts the new server anywhere near the trust list: the request
 // is kept for the admin to compare and sign.
 func (j *Join) Accept(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	body, ok := httpapi.Body(w, r)
 	if !ok {
 		return
 	}
+	// The deadline of a path somebody is waiting on, and it is set HERE
+	// rather than on the route because this path is one of the four that do
+	// not go over httpapi.Routes.Mux (server.routes) -- so the deadline point
+	// 49 gave the five session routes never reached it. Without one a store
+	// call below waits busy_timeout times maxTries, 80,6 s measured (point
+	// 48), and then answers the word for a database that is AWAY.
+	//
+	// After Body and not before it, which is the one thing this does better
+	// than the route does: Body may take httpapi.readLimit (15 s) for a body
+	// that trickles in, and a deadline started before it would spend itself on
+	// the reading and then call a slow client's database busy. Point 49 named
+	// that as the price of setting it on the route; here it costs nothing to
+	// avoid.
+	ctx, cancel := dbwait.User(r.Context())
+	defer cancel()
 	req, err := tunnel.ParseJoinRequest(body)
 	if err != nil {
 		httpapi.Fail(w, wire.CodeProtocol)
@@ -108,6 +123,21 @@ func (j *Join) Accept(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Unknown, expired and already used are one answer: telling them apart
 		// would say whether a hash was ever a secret of this installation.
+		//
+		// A database that did not come free is NOT one of those three, and
+		// answering E_VERIFY for it told a server that is joining correctly
+		// that its code was wrong -- measured, 403 while a second program
+		// held the file, and an admin would have made a new code for nothing.
+		// It opens no oracle: sqlstore.OnceUse does its whole lookup inside
+		// ONE write transaction, so the lock is met before any row is read,
+		// and the answer therefore cannot depend on the hash.
+		// TestAcceptSaysNothingAboutWhetherACodeExists holds that with the
+		// list of store calls, the headers and the body rather than with this
+		// sentence.
+		if dbwait.Busy(err) {
+			httpapi.FailCoded(w, wire.CodeUnreachable, err)
+			return
+		}
 		httpapi.Fail(w, wire.CodeVerify)
 		return
 	}
@@ -117,7 +147,13 @@ func (j *Join) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := j.keep(ctx, req); err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		// The code is the same E_UNREACHABLE as before -- a word of its own
+		// for a busy database is a new wire.Code and that list is in frozen
+		// shared/wire/wire.go:450-462, BLOCKED, P9 of the v1.3 row. What the
+		// error adds is the Retry-After and the reason in the log, which is
+		// the whole of what tells busy from away for a client that reads
+		// headers and for a human who reads the log.
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	httpapi.NoContent(w)

@@ -417,20 +417,85 @@ func (s *Server) once(fn func()) {
 }
 
 // minute is the housekeeping round: expired sessions out, trust list afresh.
+//
+// It carries a deadline of its own (dbwait.Round, 30 s) where it carried none
+// at all, and both halves of that matter. Measured before: a store call of
+// this round waits busy_timeout times maxTries against a second program on
+// the file -- 80,6 s, point 48 -- and because minute and hour share s.round
+// (Server.once), that hang drops the ticks of BOTH rounds. Housekeeping is
+// what logs expired sessions out, so an hour of it dropped is an hour of
+// sessions that should have ended standing.
+//
+// A round is the one purpose that may simply come back later: the next tick
+// is a minute away, so giving up costs one round and nothing else. That is
+// why the figure is RoundWait and not UserWait -- nobody is waiting at a
+// screen -- and why it is under the beat rather than over the retry chain.
+//
+// The two calls get a deadline EACH and not one over the pair, so a slow
+// purge cannot eat the refresh's time and leave the trust list unread for a
+// reason that is not its own.
 func (s *Server) minute(ctx context.Context) {
-	if err := s.login.Purge(ctx); err != nil {
-		slog.Warn("housekeeping failed", "error", err)
+	purge, cancel := dbwait.Round(ctx)
+	err := s.login.Purge(purge)
+	reason := roundReason(purge, err)
+	cancel()
+	if err != nil {
+		slog.Warn("housekeeping failed", "reason", reason, "error", err)
 	}
-	if _, err := s.State.Refresh(ctx); err != nil {
-		slog.Warn("trust list could not be read", "error", err)
+	fresh, cancel := dbwait.Round(ctx)
+	_, err = s.State.Refresh(fresh)
+	reason = roundReason(fresh, err)
+	cancel()
+	if err != nil {
+		slog.Warn("trust list could not be read", "reason", reason, "error", err)
 	}
 }
 
 // hour is the catalog round.
+//
+// It gets the REASON and no deadline, and the difference is not an oversight.
+// Its work is a fetch over the network from the store server, and what that
+// normally takes is not measured here -- a deadline of thirty seconds over it
+// would be a guess that could cut a fetch which is doing nothing wrong. Named
+// as open rather than built: the round still shares s.round with the minute
+// round, so a catalog fetch that hangs still drops housekeeping ticks.
 func (s *Server) hour(ctx context.Context) {
 	if err := s.st.Refresh(ctx); err != nil {
-		slog.Warn("catalogs could not be fetched", "error", err)
+		slog.Warn("catalogs could not be fetched", "reason", roundReason(ctx, err), "error", err)
 	}
+}
+
+// roundReason is what a round puts in its log line instead of the error
+// itself, and it is the whole of what a round can say: it answers nobody, so
+// there is no status and no Retry-After to carry the difference the way
+// httpapi.FailCoded carries it on a request path.
+//
+// It is asked of the CONTEXT as well as the error, and that is the one thing
+// a round can do better than a handler. Point 49 had to teach apps/server-db
+// to hand its deadlines back by cause, because database/sql gives the bare
+// context.DeadlineExceeded and no line of ours is passed on the way out --
+// so a handler can only ask the error it was given. A round holds the context
+// it set itself, so it can ask the cause at the source and is right even for
+// a store that does not translate.
+//
+// The last arm is "other" and not "db-unreachable", which looks like a
+// detail and is the whole honesty of the line: the most common error of this
+// round is state.ErrNoTrust, "no trust list yet", which is the normal state
+// of an installation whose setup is still open and says nothing about any
+// database. Calling that one unreachable would put a fault in the log where
+// there is none -- the same kind of wrong word this change is here to remove,
+// written by the fix instead of by the bug.
+func roundReason(ctx context.Context, err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case dbwait.Busy(err), dbwait.Busy(context.Cause(ctx)):
+		return "db-busy"
+	case errors.Is(err, context.Canceled):
+		// The server is stopping; nothing is wrong with the database.
+		return "stopping"
+	}
+	return "other"
 }
 
 // rollouts is the beat of the update rounds, on a goroutine of its own beside

@@ -7,6 +7,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -44,8 +45,26 @@ type sharedKeys struct {
 // stranger who names a listed fingerprint gets no handshake.
 func (j *Join) Keys(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	v, err := j.S.Trust(ctx)
+	// The deadline covers the store lookup ALONE and not the handler, and
+	// that is the point of writing it out here. What follows it is a Noise
+	// handshake and a websocket write over a link a new server holds open; a
+	// deadline of five seconds laid over those would cut a link that is doing
+	// nothing wrong. Only the read in front of them can sit on a busy
+	// database -- measured without one: 20,0 s and counting, against the
+	// 80,6 s a full retry chain really takes (point 48).
+	//
+	// It reaches the store only while nothing is cached, which is the state
+	// right after a start: State.Trust answers out of its own cache once a
+	// version stands (state/trust.go:63). That is one request in the life of
+	// a server and the one that pays the whole chain.
+	lookup, cancel := dbwait.User(ctx)
+	v, err := j.S.Trust(lookup)
+	cancel()
 	if err != nil {
+		// The answer does not change and says nothing about why, by the
+		// decision below: before an admin signs the new server in there is
+		// nothing to fetch, and a busy database is no reason to start saying
+		// more on a path that deliberately says nothing.
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

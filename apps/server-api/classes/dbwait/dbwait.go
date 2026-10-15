@@ -67,12 +67,40 @@ const (
 	// that loses one race still comes up, and one that is locked out for good
 	// ends with a word instead of hanging.
 	StartWait = 90 * time.Second
+	// RoundWait is the deadline of a background round -- the housekeeping of
+	// server.rounds, where nobody waits at a screen and nobody is answered at
+	// all. It is the one purpose of the three that may simply come back later,
+	// and the figure says so from three sides:
+	//
+	//   - UNDER the beat of the round (one minute, server.Minute), so a round
+	//     that cannot get the database frees it before the next tick is due.
+	//     That matters more here than anywhere else, because the minute round
+	//     and the hourly one share one lock (server.once): a round that hangs
+	//     drops the ticks of both, and the housekeeping is what logs expired
+	//     sessions out.
+	//   - OVER one busy_timeout (10 s, apps/server-db/classes/sqlite), so a
+	//     round that loses one race still does its work instead of giving the
+	//     turn away for a wait that was about to end.
+	//   - UNDER the full retry chain (80,6 s measured, point 48), because
+	//     waiting that chain out is exactly what a repeating round does not
+	//     have to do -- and the measurement says the waiting buys nothing:
+	//     four blocked writers already cost the first read 9,513 s.
+	//
+	// It is longer than UserWait for the one reason that holds here and
+	// nowhere else in this API: there is nobody to keep waiting.
+	RoundWait = 30 * time.Second
 )
 
 // User returns ctx with the deadline of a user path and ErrBusy as its cause.
 // The caller cancels it, as with every context of the standard library.
 func User(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeoutCause(ctx, UserWait, ErrBusy)
+}
+
+// Round returns ctx with the deadline of a background round and ErrBusy as
+// its cause.
+func Round(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, RoundWait, ErrBusy)
 }
 
 // Start returns ctx with the deadline of the start and ErrBusy as its cause.
