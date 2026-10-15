@@ -1,0 +1,200 @@
+// Package mariadb opens the MariaDB Galera cluster of an NGC installation:
+// every connection over TLS against the CA of the installation, spread over
+// the nodes, with the next node taking over when one is down.
+package mariadb
+
+import (
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"net"
+	"time"
+
+	"github.com/go-sql-driver/mysql"
+
+	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
+	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
+)
+
+// maxPacket has to be above the largest blob: a canonical ui-tar is at most
+// store.MaxUITotal (64 MiB). The server is set to the same value
+// (max_allowed_packet in templates/galera.cnf), and nothing but a test keeps
+// the two in step: TestMaxPacketMatchesTheServerTemplate reads that line out
+// of the template and compares it, so the two numbers cannot drift apart
+// quietly.
+const maxPacket = 128 << 20
+
+// lifetime and idleTime are the two deadlines of the pool, and they are two
+// TYPES because the compiler is the only thing that can really hold them
+// apart. Both are durations, so anything that merely NAMES them leaves a slip
+// possible, and a named struct was measured doing exactly that: a positional
+// literal takes the values the wrong way round without a word, and a field
+// left out is quietly the zero value - both survived the whole package green.
+// With a type each, and with the two constants below carrying the type,
+// openDB(cfg, connIdleTime, connLifetime) does not build at all.
+//
+// What a type CANNOT hold, measured: an untyped 0 fits either of them, so
+// openDB(cfg, connLifetime, 0) builds and runs green - a lost deadline that
+// looks like nothing. Neither does it hold a hand-written
+// lifetime(connIdleTime). Both are held one level up instead, by
+// TestOpenDBHandsTheConstantsOnUnchanged, which reads what OpenDB really
+// passes: the two identifiers and nothing else.
+type (
+	lifetime time.Duration
+	idleTime time.Duration
+)
+
+// The numbers of the connection pool. They are chosen, not measured: no
+// cluster on this machine answers how many connections sixteen is. They stand
+// here as named constants so that a test can hold each of them against the
+// number it is meant to be. maxOpenConns can be read back off the open pool
+// (sql.DBStats); maxIdleConns and the two deadlines show only in what the
+// pool DOES, and the deadlines do it a minute and five minutes from now -
+// which is why openDB below takes them as arguments.
+const (
+	maxOpenConns = 16
+	maxIdleConns = 4
+	// connLifetime retires a connection after five minutes, so that a new
+	// connection goes through the picker again instead of a long-lived one
+	// staying on the node it first reached. Whether the load really moves
+	// back to a node that came up again is NOT measured here: that needs a
+	// cluster.
+	connLifetime = lifetime(5 * time.Minute)
+	connIdleTime = idleTime(time.Minute)
+)
+
+// OpenDB opens the cluster. It creates nothing: the schema comes from the
+// migrations, and the ngc account may not create anything anyway.
+func OpenDB(cfg config.DB) (*sql.DB, error) {
+	return openDB(cfg, connLifetime, connIdleTime)
+}
+
+// openDB is OpenDB with the two deadlines of the pool as arguments, and that
+// is the whole of the seam. A test gives them milliseconds instead of minutes
+// and then watches the pool retire a connection for real, which is the only
+// way these two lines can be held at all: database/sql reads time.Now()
+// itself (sql.go, connectionCleanerRunLocked and db.conn) and takes no clock
+// from outside, so there is nothing to hand it a fake one. Shortening the
+// deadline is the fake clock.
+//
+// It stays unexported, so no caller of OpenDB can set a deadline of its own:
+// the numbers of an installation are the two constants above and nothing else.
+func openDB(cfg config.DB, life lifetime, idle idleTime) (*sql.DB, error) {
+	if cfg.Driver != config.DriverMariaDB {
+		return nil, fmt.Errorf("mariadb: driver %q, want %q", cfg.Driver, config.DriverMariaDB)
+	}
+	if len(cfg.Nodes) == 0 {
+		return nil, errors.New("mariadb: no node in the configuration")
+	}
+	nodes := make([]driver.Connector, 0, len(cfg.Nodes))
+	for _, node := range cfg.Nodes {
+		c, err := connector(cfg, node)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, c)
+	}
+	db := sql.OpenDB(&balancer{
+		nodes:  nodes,
+		pick:   &picker{count: len(nodes)},
+		now:    time.Now,
+		driver: mysql.MySQLDriver{},
+	})
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(life))
+	db.SetConnMaxIdleTime(time.Duration(idle))
+	return db, nil
+}
+
+// connector builds the connector of one node from nodeConfig.
+func connector(cfg config.DB, node string) (driver.Connector, error) {
+	c, err := nodeConfig(cfg, node)
+	if err != nil {
+		return nil, err
+	}
+	return mysql.NewConnector(c)
+}
+
+// nodeConfig builds the driver configuration of one node. The TLS
+// configuration comes from config.DB.TLSConfig with that node's host as the
+// server name, so every node is checked against the CA of the installation and
+// its own name. It is its own function because the driver's connector keeps
+// its configuration to itself: this is the shape the tests can read.
+func nodeConfig(cfg config.DB, node string) (*mysql.Config, error) {
+	if !trust.ValidHostPort(node) {
+		return nil, fmt.Errorf("mariadb: %q is no host:port", node)
+	}
+	// SplitHostPort is what takes the brackets off an IPv6 address, which is
+	// the spelling config.DB.TLSConfig asks for. Its error branch is a
+	// deliberately dead bolt: ValidHostPort above split at the last colon
+	// itself and accepted both halves, so nothing that gets here can make
+	// SplitHostPort fail. It stays because dropping it would mean spelling
+	// the split out by hand, and getting IPv6 wrong there is the worse risk.
+	host, _, err := net.SplitHostPort(node)
+	if err != nil {
+		return nil, err
+	}
+	tlsCfg, err := cfg.TLSConfig(host)
+	if err != nil {
+		return nil, err
+	}
+	c := mysql.NewConfig()
+	c.User = cfg.User
+	c.Passwd = cfg.Password.Text()
+	c.Net = "tcp"
+	c.Addr = node
+	c.DBName = cfg.Name
+	c.TLS = tlsCfg // never a connection without a checked certificate
+	c.AllowFallbackToPlaintext = false
+	c.AllowAllFiles = false
+	c.AllowCleartextPasswords = false
+	c.AllowOldPasswords = false
+	c.MultiStatements = false
+	// The values never become part of the statement: the server prepares it
+	// and gets the values on their own.
+	c.InterpolateParams = false
+	// An UPDATE has to report the rows it matched, not the ones it changed,
+	// or writing the same values again would look like "no such row" - see
+	// sqlstore.put and LockTake.
+	c.ClientFoundRows = true
+	c.CheckConnLiveness = true
+	c.ParseTime = false // timestamps are numbers
+	c.Loc = time.UTC
+	c.MaxAllowedPacket = maxPacket
+	c.Timeout = 5 * time.Second
+	c.ReadTimeout = 60 * time.Second
+	c.WriteTimeout = 60 * time.Second
+	// The driver writes to stderr by default; NGC logs on its own and never
+	// wants a driver message near a password.
+	c.Logger = &mysql.NopLogger{}
+	c.Params = map[string]string{
+		// A read waits for what the cluster already took: an API that wrote a
+		// session on one node has to find it on another one right away. The
+		// price is paid on every read, not only on the ones that need it:
+		// each one waits for the write set the node still has in flight.
+		// Chosen that way on purpose - a session that cannot be found is
+		// worse than a read that waits.
+		"wsrep_sync_wait": "1",
+		// Nothing is quietly cut or rounded.
+		"sql_mode":  "'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'",
+		"time_zone": "'+00:00'",
+	}
+	return c, nil
+}
+
+// New wraps an open cluster as a store.
+func New(db *sql.DB) dbapi.Store { return sqlstore.New(db, sqlstore.MariaDB) }
+
+// Open opens the cluster and returns the store. It runs no migration: that is
+// the job of the ngc_migrate account, which the API does not have.
+func Open(cfg config.DB) (dbapi.Store, error) {
+	db, err := OpenDB(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return New(db), nil
+}

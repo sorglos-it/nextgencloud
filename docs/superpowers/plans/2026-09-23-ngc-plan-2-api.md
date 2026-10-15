@@ -6983,6 +6983,14 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 		return wire.CodeProtocol
 	}
 	params = p
+	// BERICHTIGT 12.10.2026: Dieser Block sammelt die ganze Eingabe in einem
+	// []byte — bei ngc.store/api/upload bis store.MaxPackage = 4 GiB. Gemessen
+	// als kritischer Befund K-1 der Abschlusspruefung: 64 MiB Eingabe hielten
+	// 191 MiB, und der Verbrauch wuchs linear mit der Eingabe. Gebaut ist statt
+	// dessen ein Strom (browser.Input, ein Rahmen zur Zeit, Guthaben beim
+	// Verbrauchen zurueck): 64 MiB Eingabe halten 3 MiB. ReadInput ist entfernt,
+	// nicht als zweite Fassung stehen gelassen. Wer diesen Block abschreibt,
+	// baut den Befund wieder ein.
 	var in io.Reader = bytes.NewReader(nil)
 	if action.Flow == core.FlowIn {
 		body, code := s.ReadInput(ctx, c, action.MaxIn)
@@ -7063,6 +7071,11 @@ func (s *Session) Grant(ctx context.Context, c *link.Channel, credit uint32) err
 	return nil
 }
 
+// BERICHTIGT 12.10.2026: ReadInput gibt es nicht mehr — es sammelte bis 4 GiB
+// im Arbeitsspeicher (Befund K-1). An seiner Stelle steht browser.Input, ein
+// io.Reader auf die DATA-Rahmen. Der Block unten ist der Stand, der behoben
+// wurde; er steht hier, weil der Plan ihn vorgegeben hat.
+//
 // ReadInput reads the DATA of a FlowIn channel up to the shell's EOF, at most
 // max bytes; more is E_TOOLARGE.
 func (s *Session) ReadInput(ctx context.Context, c *link.Channel, max int64) ([]byte, wire.Code) {
@@ -8357,8 +8370,12 @@ import (
 // and answers what it read. The shell computes the same values from the file
 // it sent and refuses a mismatch, so nothing here has to be trusted.
 func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, error) {
-	// The package is read twice: once for its checksum and once through
-	// store.Walk, so the bytes go to disk only in the caller's buffer.
+	// BERICHTIGT 12.10.2026: Der Kommentar unten sagte das Gegenteil des Codes —
+	// io.ReadAll haelt das ganze Paket (bis store.MaxPackage = 4 GiB) im
+	// Speicher. Gemessen in Aufgabe 20: diese Fassung haelt bei 128 MiB
+	// Eingabe 268 MiB, die gebaute Fassung (io.TeeReader neben
+	// store.PackageUI, Rest verworfen, Laenge erst danach) haelt bei
+	// 32/128/512 MiB je 0 MiB. Gebaut ist der Durchlauf, nicht dieser Block.
 	raw, err := io.ReadAll(io.LimitReader(r, store.MaxPackage+1))
 	if err != nil || int64(len(raw)) > store.MaxPackage {
 		return core.UploadResult{}, ErrStore
@@ -9400,7 +9417,16 @@ git commit -m "Wire the API together and take the websocket and totp modules" \
 
 ---
 
-### Task 25: ulh-Skript `scripts/ngc-api.sh`
+### Task 25: ulh-Skript `ngc-api.sh`
+
+> **BERICHTIGT 12.10.2026:** Die Pfade dieser Aufgabe gibt es im ulh-Repo nicht mehr.
+> Gebaut wurde nach den Geschwistern `ngc-db` und `ngc-web`:
+> `apps/cli/assets/scripts/ngc-api.sh` (Modus 100755) und
+> `apps/cli/tests/ngc-api.test.sh`, dazu `catalog.yaml` (statt `config.yaml`),
+> `menu.test.sh`, `docs/scripts.md` (erzeugt mit `tools/gen-scripts-doc.sh`),
+> `docs/guide.md`, `README.md`, `CHANGELOG.md`. `SCRIPTS.md` und `TREE.md`
+> gibt es dort nicht. Wer eine weitere Aufgabe fuer ulh schreibt, nimmt diese
+> Pfade, nicht die alten.
 
 Dieses Skript liegt **nicht** in diesem Repo, sondern im öffentlichen ulh-Repo
 (`sorglos-it/ulh`), auf dem Branch `ngc-api`, und kommt per Pull Request nach dessen `main`.
@@ -10145,7 +10171,12 @@ func TestTestStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("content key: %v", err)
 	}
-	if err := Encrypt(paid, strings.TrimSuffix(paid, ".ngc")+".enc",
+	// BERICHTIGT 12.10.2026: Hier stand strings.TrimSuffix(paid, ".ngc")+".enc"
+	// — also "app.enc". Gebaut und gemessen ist aber "app.ngc.enc": Aufgabe 27
+	// schreibt path+EncSuffix, und Aufgabe 28 sucht den Katalog-Eintrag unter
+	// genau diesem Namen (Konstante EncSuffix in apps/cli/classes/catalog.go).
+	// Mit dem alten Namen findet der Katalog die verschluesselte Fassung nicht.
+	if err := Encrypt(paid, paid+EncSuffix,
 		filepath.Join(dir, "content.key")); err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}

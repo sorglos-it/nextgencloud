@@ -2222,15 +2222,22 @@ Erwartet: `GRUEN: alle Fälle von Paket 0 bestanden.` und ein Protokoll unter `d
 
 - [ ] **Schritt 3: Prüfen, dass Rot auch wirklich rot ist**
 
-Ausführen:
+**Dieses Rezept beißt nicht — am 12.10.2026 gemessen, der Lauf wurde GRUEN:**
+`recovery-test.sh` ruft `prepare` selbst auf und legt den weggelegten Stick neu an.
+Ein weggelegter Schlüssel ist darum **keine** Nulllinie.
+
+Ausführen stattdessen (gemessen, beide rot):
 ```bash
-mv dist/recovery/keys/stick2.pem dist/recovery/keys/stick2.weg
+# 1. hohles Gruen: recovery-test.sh durch eine Attrappe ersetzen, die 0 zurueckgibt
+# 2. einen Riegel aus der ausgelieferten recovery-policy.sh herausschneiden
 tools/recovery-ci.sh; echo "Rueckgabe: $?"
-mv dist/recovery/keys/stick2.weg dist/recovery/keys/stick2.pem
+# danach die echte Datei zurueck und bitgleich nachweisen:
+git hash-object tools/recovery-test.sh tools/recovery-policy.sh
 tools/recovery-ci.sh; echo "Rueckgabe: $?"
 ```
-Erwartet: erst `ROT`, die letzten 20 Zeilen und `Rueckgabe: 1`; danach wieder `GRUEN` und
-`Rueckgabe: 0`. Ein CI-Job, der nie rot wird, prüft nichts.
+Erwartet: erst `ROT`, die letzten 20 Zeilen und `Rueckgabe: 1` — und zwar **auch** gegen die
+Attrappe, die 0 zurückgibt (der Job muss merken, dass kein einziger Fall gelaufen ist);
+danach wieder `GRUEN` und `Rueckgabe: 0`. Ein CI-Job, der nie rot wird, prüft nichts.
 
 - [ ] **Schritt 4: Commit**
 

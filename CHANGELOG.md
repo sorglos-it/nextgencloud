@@ -96,6 +96,33 @@ cgo mit AES-256-XTS, MariaDB-Treiber, WebSocket, Passkeys und TOTP. Mit allem, w
 sind es 21 Module und rund 20 MB; jede Lizenz ist mit der AGPL-3.0 vereinbar, `govulncheck` meldet
 keine erreichbare Lücke.
 
+Datenbank: `dbapi` läuft auf MariaDB mit Galera und auf einer mit AES-256-XTS verschlüsselten
+SQLite-Datei, beide mit denselben Konformitätstests. Das Schema kommt aus nummerierten
+Migrationen, die nur hinzufügen dürfen, damit die vorige API-Version während eines Updates
+weiterläuft. MariaDB nimmt nur TLS-Verbindungen gegen die CA der Installation, verteilt die Last
+über die Knoten und verkraftet den Ausfall eines Knotens.
+
+Sichern der SQLite-Datei: `sqlite.Backup` legt eine Kopie neben die Datenbank, während niemand sie
+ändern darf, und die Kopie bleibt genauso verschlüsselt wie das Original. Ohne `api.json`
+beziehungsweise `controller.json` kann sie niemand öffnen – auch der Besitzer nicht.
+
+## 0.2.0
+
+- API: Anmeldung, Sitzungen, Rechte, Weiterleitung, Tunnel, Apps, Stores, Lizenzen, Protokoll und
+  Updates.
+- ngc-store: Pakete, Verschluesselung, Kataloge, Test-Lizenzen und Test-Releases.
+
+Dazu die Angriffe als eigenes Paket (`apps/server-api/classes/attack`): SQL in jedem Namen,
+gefaelschte Unterschriften, Wiedereinspielen, fremde Lizenz, nachtraeglich geaenderte Parameter,
+abgeschnittene Pakete, die Kanalgrenze und ein Mann in der Mitte bei der Ersteinrichtung. Je
+Angriff eine Zwischenpruefung, dass derselbe Weg ohne den Angriff durchgeht.
+
+**Was dabei noch nicht messbar war:** die Aktionen `ngc.store/api/*` sind in `coreapp.New` bei
+niemandem angemeldet und antworten `E_NOTFOUND`, was auch immer man ihnen schickt. Angriffe gegen
+`sources`, `catalog`, `installed`, `upload`, `license` und `install-key` sind darum **nicht
+gemessen**; `TestTheStoreChannelsHaveNoHandlerYet` haelt diesen Zustand fest und wird rot, sobald
+die Handler haengen. `govulncheck` ist gelaufen: 0 erreichbare Luecken.
+
 ## vertraege-v1 (22.09.2026)
 
 Die Verträge V1 bis V7 zwischen Webinterface, API, Controller und Datenbank stehen: Go-Pakete in
