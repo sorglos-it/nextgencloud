@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,17 +14,42 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 )
 
+// safeBuf is a bytes.Buffer a case may read while something else logs into
+// it, and it is a measurement and not caution: a case that runs Server.rounds
+// on a goroutine and waits for a line reads the buffer while that goroutine
+// writes it, and -race reported exactly that (3 DATA RACE in
+// TestTheBeatGivesEachRoundItsOwnLock, 15.10.2026, slog's handler growing the
+// buffer against the case's String). The cases that call a round in line never
+// touched it, which is why a plain buffer stood here for as long as they were
+// the only ones.
+type safeBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // logging catches what a round writes. A background round has nobody to
 // answer, so the log line is the WHOLE of what it can say -- which is why a
 // round without a reason in it is the same fault the handlers had before
 // point 49, only with no header to make up for it.
-func logging(t *testing.T) *bytes.Buffer {
+func logging(t *testing.T) *safeBuf {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &safeBuf{}
 	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(old) })
-	return &buf
+	return buf
 }
 
 // stuckStore is the database of the measurement: a second program holds the
