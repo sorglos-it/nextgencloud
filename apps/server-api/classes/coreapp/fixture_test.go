@@ -113,6 +113,10 @@ func (s *lyingStore) AppGet(ctx context.Context, id string) (dbapi.App, error) {
 type fakeRelay struct {
 	ch    chan relayed
 	calls chan pushed
+	// panics makes Forward panic instead of forwarding, which is how
+	// TestAPanicInAnAppChannelLeavesTheCoreChannelsAlone puts a programming
+	// error on the app-channel way through open.
+	panics bool
 }
 
 // relayed is one forwarded channel.
@@ -169,6 +173,9 @@ func (r *fakeRelay) maybeCalled() (pushed, bool) {
 
 func (r *fakeRelay) Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
 	raw []byte, t *task.Task, node string) {
+	if r.panics {
+		panic("a programming error on the way to the relay")
+	}
 	// A copy, because the real relay has to make one too: the bytes came out
 	// of the link's read buffer, and a case that kept the slice would measure
 	// whatever the next frame wrote over it.

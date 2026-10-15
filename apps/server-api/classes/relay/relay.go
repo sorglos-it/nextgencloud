@@ -45,6 +45,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/browser"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -489,6 +490,16 @@ func (rl *Relay) pump(ctx context.Context, sh Shell, c *link.Channel, hop Hop, t
 // pump, which is why everything the two share sits in chanState.
 func (rl *Relay) toController(ctx context.Context, sh Shell, c *link.Channel, hop Hop,
 	tc *link.Channel, fw Forwarded, st *chanState) {
+	// Its own goroutine (the GRANT above starts it), so a panic here would be
+	// final for the whole process: V1.2 point 38. What it does on a bug is
+	// what it does on any other internal failure in this function -- the
+	// channel fails with E_INTERNAL, and nothing of the forwarded channel
+	// reaches another one.
+	defer func() {
+		if guard.Hit(recover(), "relay.toController", c.Num) {
+			st.fail(wire.CodeInternal)
+		}
+	}()
 	transfer := isTransfer(fw.Open)
 	if transfer {
 		if fw.Head == nil || fw.File == nil {

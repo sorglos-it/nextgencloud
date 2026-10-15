@@ -43,6 +43,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/browser"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
@@ -257,9 +258,20 @@ func codeOf(err error) wire.Code {
 }
 
 // OpenChannel serves one channel the browser opened.
+//
+// It runs in a goroutine of its own (browser.(*Server).channel), and a
+// goroutine is where a panic is final: nothing above it can catch one, so
+// before the catch below a programming error in any handler of any channel
+// took the whole ngc-api with it -- every session of every user, and the
+// controller tunnels (V1.2 point 38). The catch is in TWO places on purpose:
+// serve holds the work, so the channel still gets its code and its log line,
+// and this line holds the little that happens after it, so a defect in the
+// writing down cannot do what the work can no longer do. See package guard
+// for what the line carries and what it may never carry.
 func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *link.Channel,
 	o wire.Open, raw []byte) {
-	code, node := d.open(ctx, s, c, o, raw)
+	defer func() { _ = guard.Hit(recover(), "coreapp.OpenChannel", c.Num) }()
+	code, node := d.serve(ctx, s, c, o, raw)
 	user := s.Live.Verified.Cert().User
 	// The answer is dropped on purpose: audit.ErrDropped means the entry was
 	// written with one field replaced, and a channel that ran must not be
@@ -269,6 +281,25 @@ func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *lin
 	if code != "" {
 		_ = s.Close(ctx, code, c.Num)
 	}
+}
+
+// serve is open with the catch of one channel around it. A panic here is a
+// bug of ours and never a refusal, so the channel ends E_INTERNAL -- the code
+// open itself uses for everything it did not foresee (codeOf) -- and the node
+// goes empty, because a panic says nothing about where the channel would have
+// gone and a guessed node in the audit log would be worse than none.
+//
+// Why the channel is not simply left to die quietly: a channel that vanishes
+// without a word is a false answer of its own, and the browser would wait for
+// a result that is never coming (V1.2 point 50).
+func (d *Dispatcher) serve(ctx context.Context, s *browser.Session, c *link.Channel,
+	o wire.Open, raw []byte) (code wire.Code, node string) {
+	defer func() {
+		if guard.Hit(recover(), "coreapp.open", c.Num) {
+			code, node = wire.CodeInternal, ""
+		}
+	}()
+	return d.open(ctx, s, c, o, raw)
 }
 
 // open does the work and returns the code to close with -- "" when the channel
