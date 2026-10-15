@@ -35,6 +35,25 @@ type Podman struct {
 // more, and the caller is already waiting past the limit it set.
 const waitDelay = 500 * time.Millisecond
 
+// PIDsLimit is the number of tasks a container of an app may have at once, and
+// it is the whole answer to a fork bomb in an app: without it the only bound is
+// podman's own default of 2048 (containers.conf, pids_limit), a decision that
+// does not stand in this repo and changes with a podman version.
+//
+// Why 512 and not a guess, measured on this machine (13.10.2026, go1.27.2,
+// NumCPU 64): a Go program of the shape of the hold process - 1000 goroutines,
+// GOMAXPROCS 64 - holds 24 OS threads, and the cgroup pids controller counts
+// threads, not processes. 512 is a factor of 21 above that and a quarter of
+// podman's default, so the number is tighter than the unstated one and still
+// far above anything a single app plausibly needs (a worker pool of 50
+// processes lands near 50, not near 500).
+//
+// What it cannot be: a per-app number. That would be a field of the manifest,
+// and the manifest lies in frozen shared/ - so every app gets the same ceiling
+// until the contract says otherwise. An app that really needs more fails
+// visibly, at its own fork, and not quietly.
+const PIDsLimit = 512
+
 // NewPodman takes the absolute path of the podman program
 // (config.Controller.Podman, default config.DefaultPodman).
 func NewPodman(bin string) *Podman { return &Podman{bin: bin} }
@@ -245,6 +264,9 @@ func createArgs(c Container) ([]string, error) {
 		// Thousandths of a core, written as podman reads it.
 		"--cpus", fmt.Sprintf("%d.%03d", cpu/1000, cpu%1000),
 		"--memory", strconv.Itoa(mem)+"m",
+		// The third limit, and the one that is not about being a good
+		// neighbour: see PIDsLimit.
+		"--pids-limit", strconv.Itoa(PIDsLimit),
 		// The image itself stays unwritable; what the app keeps belongs under
 		// /data, which is the only place it may write.
 		"--read-only")
@@ -257,10 +279,21 @@ func createArgs(c Container) ([]string, error) {
 		args = append(args, "--cap-drop", "ALL")
 	}
 	args = append(args, "--security-opt", "no-new-privileges",
-		"--volume", c.DataDir+":/data:rw",
+		// nosuid and nodev are the second layer behind no-new-privileges, and
+		// /data is the one mount whose content the app itself writes: without
+		// them an app that gets a file with the set-user-id bit onto its own
+		// disk - by upload, by its own writing, by a restored backup - has the
+		// bit honoured inside the container. nodev takes the other half: a
+		// device node written there would be a door to the disks of the host.
+		// Both cost nothing, because no app of a store needs either.
+		"--volume", c.DataDir+":/data:rw,nosuid,nodev",
 		// ngc-controller itself keeps the container alive, started with the
 		// subcommand hold. An app image brings nothing of its own for this.
-		"--volume", c.Hold+":/ngc/ngc-hold:ro",
+		// The same two here, although this one is ours and read-only: a mount
+		// option is not a judgement about who wrote the file, and if a program
+		// of this server ever carried the set-user-id bit, this is where the
+		// container would be the one to find out.
+		"--volume", c.Hold+":/ngc/ngc-hold:ro,nosuid,nodev",
 		// 0 in the container is the app's own user outside it: podman runs
 		// rootless, so the user namespace maps it to exactly that user.
 		"--user", "0:0", c.Image, "/ngc/ngc-hold", "hold")

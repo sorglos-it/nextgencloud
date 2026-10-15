@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ncruces/go-sqlite3"
+
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
@@ -153,7 +155,7 @@ func freeze(ctx context.Context, conn *sql.Conn, path, tmp string) (bool, error)
 	}
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, busyOrStep(err)
 	}
 	// Nothing to commit: the transaction is only here for its lock.
 	defer tx.Rollback()
@@ -452,4 +454,29 @@ func copyFile(src, dst string, buf []byte) (bool, error) {
 		return false, fmt.Errorf("sqlite: die Sicherung ließ sich nicht schreiben: %w", err)
 	}
 	return st.Size() > 0, nil
+}
+
+// busyOrStep names the step of the one failure a backup under load really
+// meets, and for the one cause a reader cannot guess it names the cause too.
+//
+// Every other failure of this file says in German which step gave up -- the
+// target, the missing database, the journal mode, the placing of the copy.
+// The write lock of freeze handed its error on bare, and that is the step that
+// gives way first: measured on 13.10.2026 with two ngc-api on one file and the
+// backup as a third pool, it gave up after 10,005 s with the driver's
+// "sqlite3: database is locked" and nothing else -- no step, no word that
+// busy_timeout had already waited its ten seconds, nothing that says this
+// passes by itself. An admin reads that as a damaged database and goes looking
+// in the wrong place.
+//
+// It is deliberately not the sentence of migrate's busyOr, although the cause
+// is the same one: this is a backup that did not happen, so what to do next is
+// to back up again later, not to start a program again.
+func busyOrStep(err error) error {
+	if errors.Is(err, sqlite3.BUSY) || errors.Is(err, sqlite3.LOCKED) {
+		return fmt.Errorf("sqlite: ein anderes Programm schreibt gerade in die Datenbank, darum "+
+			"konnte die Sicherung die Schreibsperre nicht nehmen - das geht von selbst vorbei, "+
+			"bitte später erneut sichern: %w", err)
+	}
+	return fmt.Errorf("sqlite: die Sicherung konnte die Schreibsperre nicht nehmen: %w", err)
 }

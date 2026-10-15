@@ -393,6 +393,86 @@ schließt sie dort — ohne Vertragsfassung.
 - **Punkt 28 und Punkt 30** ändern `shared/` **nicht**. Beide hängen an api-Aufgabe 24
   („`main.go` verdrahten"). Sie gehören nicht in diese Entscheidung.
 
+## P9: „beschäftigt" braucht einen eigenen Code
+
+**Zeile:** `shared/wire/wire.go:450–462` (die Code-Liste).
+
+**Gemessen (Punkt 48/49):** schreibt ein zweites Programm auf dieselbe SQLite-Datei, wartet der
+Verlierer bis 80,6 s und bekommt dann `E_UNREACHABLE` — **dasselbe Wort wie „Datenbank weg"**.
+`fault.go` sagt diesen Fall selbst voraus und nennt auch, was es nicht ist: `E_LOCKED` passt nicht.
+
+**Ohne `shared/` gebaut:** `Retry-After: 5` und ein Protokollgrund `db-busy` gegen
+`db-unreachable`. Das reicht einem Klienten, der den Header liest — nicht einem, der den Code liest.
+
+**Zu entscheiden:** ein neuer Code `E_BUSY`. Folge: wer ihn bekommt, darf es noch einmal versuchen;
+wer `E_UNREACHABLE` bekommt, nicht. Dazu gehört `shared/dbapi/dbapi.go:109–111` (ein vierter
+Wächter neben `ErrNotFound`/`ErrUsed`/`ErrInvalid`) und danach
+`apps/server-api/classes/state/state.go:29–32`, dessen `ErrBusy` heute `E_INTERNAL` antwortet.
+
+---
+
+## P10 — Die Versionsnummer wird vierstellig (Punkt 45, ENTSCHIEDEN am 15.10.2026)
+
+**Entschieden von Thomas am 15.10.2026:** der Vertrag lernt vier Stellen. Die Hausnummerierung
+(`Z:\GitHub\claude-md\version.md`, `v.x.y.z`) gilt; der Store bildet sie nicht ab.
+
+**Gemessen (15.10.2026, Arbeitsbaum auf der lokalen Platte D:, `main` = `48cb3aa`):**
+
+- `store.ValidVersion("0.0.1.0")` = `false`. Am Programm ausgeführt:
+  `ngc-store release -version 0.0.1.0 -seq 1 <verzeichnis> <schlüssel>` → **Code 1**,
+  „store: invalid release". Das ist der Widerspruch aus Punkt 45, nachgefahren.
+- **Und die stille Hälfte, die schwerer wiegt:** `store.Newer` antwortet auf eine vierstellige
+  Nummer **in beide Richtungen `false`** — `Newer("0.0.1.0","0.0.0.9")`,
+  `Newer("0.0.1.0","1.0.0")` und `Newer("1.0.0","0.0.1.0")` sind alle `false`, ebenso
+  `SupportsMinNGC("0.0.1.0","1.0.0")`. `Newer` meldet keinen Fehler, sondern „nicht neuer", und
+  eingebaut wird ein Update nur, wenn `Newer` ja sagt
+  (`apps/server-controller/classes/update/install.go:353`,
+  `apps/server-api/classes/updates/rollout.go:253`). Fiele die Prüfung am Tor je weg, würde eine
+  vierstellige Nummer **nie** eingebaut — und nichts würde rot.
+
+**BLOCKED. Der kleinste Eingriff sind drei Zeilen in zwei Dateien:**
+
+| Zeile | was sich ändert |
+|---|---|
+| `shared/store/manifest.go:224` | `versionPattern` bekommt hinten eine optionale vierte Stelle, `(\.(0\|[1-9][0-9]{0,5}))?`. Dreistellige Nummern bleiben gültig, vierstellige werden es |
+| `shared/store/manifest.go:260` | `parseVersion` gibt `[4]int` statt `[3]int`; die Schleife über `strings.Split` bleibt unverändert. Eine dreistellige Nummer füllt mit 0 auf, damit steht `1.0.0.1` über `1.0.0` |
+| `shared/store/manifest_test.go:204` | das Literal `"1.0.0.0"` verlässt die Ablehnungsliste von `TestVersions` — es ist der eine Wächter, der die alte Regel festhält |
+
+**Der Preis, gemessen per Überlagerung — nichts auf der Platte geändert:**
+
+```
+go test ./shared/...  ->  GENAU EIN Fall rot: TestVersions, an diesem Literal
+                          (manifest_test.go:204); alle anderen shared-Pakete grün
+go test ./apps/...    ->  nichts rot
+go test ./tools/...   ->  zwei Fälle rot, beide in tools/release und beide
+                          ausdrücklich dafür geschrieben (die Wächter unten)
+```
+
+Also **drei Zeilen**, nicht die 550 dreistelligen Literale, die der Testbaum buchstabiert — die
+bleiben gültig. Auch die **unterschriebene** Vektordatei `shared/testdata/release/release.json`
+(Fassung `1.1.0`) bleibt gültig und muss **nicht** neu unterschrieben werden.
+
+**Dieselbe Überlagerung zeigt, dass die stille Hälfte damit wirklich heilt:** mit den beiden
+Zeilen antwortete `store.Newer` auf die vierstellige Nummer **`true`** — der Wächter
+`TestTheContractRefusesAFourPlaceNumber` wurde genau daran rot. Die drei Zeilen reparieren also
+nicht nur das Tor, sondern auch den Vergleich.
+
+**Was der Posten noch schuldet, und es ist nicht gemessen:** die Ordnung zwischen einer drei- und
+einer vierstelligen Nummer. Die Probe füllt mit 0 auf, damit ist `1.0.0.1` neuer als `1.0.0`. Wer
+die drei Zeilen schreibt, schreibt den Fall für genau dieses Paar dazu.
+
+**Danach nachzuziehen:**
+
+- `tools/release/version.go` (`StoreVersion`/`HouseVersion`) ist nur die **Brücke**, bis die drei
+  Zeilen liegen, und darf dann samt seinen Fällen weg. Zwei Fälle dort sind die **Wächter** und
+  werden an dem Tag rot; ihre Fehlermeldung sagt selbst, was dann zu tun ist
+  (`TestTheContractRefusesAFourPlaceNumber`, `TestTheWayBackRefusesWhatNoHouseNumberMade`).
+- Die fünf `apps/*/VERSION` (`cli` 0.2.0, `server-api` 0.2.0, `server-controller` 1.0.0,
+  `server-db` 0.1.0, `web` 0.1.0) werden vierstellig.
+- **Offen bleibt die zweite Hälfte von D4** (`release-weg.md`): welche dieser Nummern die Fassung
+  **des Releases** ist. `store.Release` hat ein Feld `Version`, fünf Teilprogramme haben fünf
+  Nummern. Dieser Posten entscheidet das **nicht**.
+
 ---
 
 ## Nachtrag 12.10.2026: P3 ist größer, und P3a ist neu
@@ -453,3 +533,30 @@ Klumpen. Dann ist `releaseExt = ".tar"` nur ein irreführender Name.
 
 **Beides zusammen entschieden, nicht einzeln:** P3 und P3a verlangen denselben Auspacker.
 Wer sie getrennt entscheidet, bekommt zwei.
+
+### Nachgemessen am 15.10.2026, auf `main` = `48cb3aa`
+
+Die Zeilen oben stammen vom Stand `0bc2659`; auf dem heutigen `main` stehen sie hier:
+`installPart` **`apps/server-controller/classes/update/install.go:527`**, der BLOCKED-Absatz von
+`unpack` **`:873`**, `unpack` selbst **`:881`**.
+
+**Was die Programme von einer Release-Datei WIRKLICH erwarten, am Code gelesen und nicht an der
+Attrappe — und es sind zwei verschiedene Dinge unter derselben Endung `.tar`:**
+
+- `ngc-web`: ein tar, das `store.WalkUI` annimmt — Namen unter `ui/`, Modus `0000644`
+  (Verzeichnis `0000755`), mtime `00000000000` (`install.go:881`, das eine Präfix wird gestrippt).
+- `ngc-api` und `ngc-controller`: **das nackte Programm.** `installPart` (`install.go:527`)
+  kopiert Bytes, `chmod 0755`, `os.Rename` — es entpackt nichts.
+
+**Die echte Testdatei ist gebaut**, und zwar mit dem Schreiber des Vertrags selbst
+(`store.NewUIWriter`), damit kein zweiter Nachbau des Dialekts entsteht: `tools/release/webfile.go`
+und `tools/release/testdata/ngc-web-all.tar` (**3072 Byte, echtes tar**). Sie geht durch genau die
+Leseroutine des Controllers; ein Fall hält das fest.
+
+**Warum sie nicht in `shared/testdata` liegt — BLOCKED, und es ist keine Ein-Datei-Änderung:**
+`shared/testdata/release/release.json` nennt für `ngc-web-all.tar` **`size 18`** und
+**`sha256 b15225b7…f3e0`** — genau die 18 Byte ASCII-Text —, und `release.json` ist
+**Ed25519-unterschrieben**. Das Ersetzen sind also drei Dinge unter eingefrorenem `shared/`: die
+Datei, `release.json` und die Unterschrift darüber. Ein Fall hält die Attrappe von der anderen
+Seite: dieselbe Leseroutine **lehnt sie ab**, und ihre Prüfsumme wird mitgeprüft, damit dieser
+Absatz nicht still veralten kann.

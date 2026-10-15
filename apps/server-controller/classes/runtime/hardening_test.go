@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,28 @@ func pairAt(args []string, opt, value string) bool {
 	return false
 }
 
+// volumesOf is every spec that follows a --volume, and optsOf is the option
+// list of one spec - everything after the mount point. Both exist because a
+// spec is "source:target:opt,opt" and a case that reads it as a whole string
+// cannot say whether an option is missing or merely somewhere else.
+func volumesOf(args []string) []string {
+	var out []string
+	for i, a := range args {
+		if a == "--volume" && i+1 < len(args) {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}
+
+func optsOf(spec string) []string {
+	parts := strings.Split(spec, ":")
+	if len(parts) < 3 {
+		return nil
+	}
+	return strings.Split(parts[len(parts)-1], ",")
+}
+
 // 1. The whole list at once. This one dies at every mutant of the hardening and
 // is meant to: it is the one place that also catches a switch nobody thought to
 // ask about. The cases after it say which switch is which, so a red run here is
@@ -102,11 +125,12 @@ func TestHardeningIsTheWholeArgumentList(t *testing.T) {
 		"--network", "none",
 		"--cpus", "1.000",
 		"--memory", "256m",
+		"--pids-limit", "512",
 		"--read-only",
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
-		"--volume", "/var/lib/ngc/apps/org.sorglos.terminal:/data:rw",
-		"--volume", "/usr/lib/ngc/ngc-controller:/ngc/ngc-hold:ro",
+		"--volume", "/var/lib/ngc/apps/org.sorglos.terminal:/data:rw,nosuid,nodev",
+		"--volume", "/usr/lib/ngc/ngc-controller:/ngc/ngc-hold:ro,nosuid,nodev",
 		"--user", "0:0",
 		"ngc/terminal:1.0.0", "/ngc/ngc-hold", "hold",
 	}
@@ -190,7 +214,16 @@ func TestHardeningGivesNoNetworkWithoutTheGrant(t *testing.T) {
 func TestHardeningMountsTheHoldProgramReadOnly(t *testing.T) {
 	for _, g := range grants() {
 		args := argsOf(t, g.container)
-		if !pairAt(args, "--volume", g.container.Hold+":/ngc/ngc-hold:ro") {
+		// Read apart and not as one string: the options grew when nosuid and
+		// nodev came, and what this case is about is "ro" being among them.
+		found := false
+		for _, v := range volumesOf(args) {
+			if strings.HasPrefix(v, g.container.Hold+":/ngc/ngc-hold:") &&
+				slices.Contains(optsOf(v), "ro") {
+				found = true
+			}
+		}
+		if !found {
 			t.Fatalf("%s: args = %q do not mount the hold program read-only", g.what, args)
 		}
 	}
@@ -203,15 +236,16 @@ func TestHardeningLeavesOnlyTheDataDirectoryWritable(t *testing.T) {
 	for _, g := range grants() {
 		args := argsOf(t, g.container)
 		var writable []string
-		for i, a := range args {
-			if a != "--volume" || i+1 >= len(args) {
-				continue
-			}
-			if strings.HasSuffix(args[i+1], ":rw") {
-				writable = append(writable, args[i+1])
+		for _, v := range volumesOf(args) {
+			// The options come after the third colon, so a spec is read apart
+			// and not matched at its end: ":rw" stopped being the last thing in
+			// a spec when nosuid and nodev were added, and a HasSuffix here
+			// would then have found no writable volume at all and passed.
+			if slices.Contains(optsOf(v), "rw") {
+				writable = append(writable, v)
 			}
 		}
-		want := []string{g.container.DataDir + ":/data:rw"}
+		want := []string{g.container.DataDir + ":/data:rw,nosuid,nodev"}
 		if !slices.Equal(writable, want) {
 			t.Fatalf("%s: writable volumes = %q, want %q (args %q)",
 				g.what, writable, want, args)
@@ -410,6 +444,84 @@ func TestHardeningEnsureDataAsksForTheTightMode(t *testing.T) {
 		last := "chmod " + filepath.ToSlash(dir) + " -rwx------"
 		if m.calls[len(m.calls)-1] != last {
 			t.Fatalf("EnsureData ended with %q, want %q", m.calls[len(m.calls)-1], last)
+		}
+	}
+}
+
+// 13. --pids-limit, in all four. It is the only bound on the number of tasks a
+// container may have, and without it the bound is podman's own default - a
+// number that does not stand in this repo. A fork bomb in an app is otherwise
+// one app taking every process slot of the kernel, and the controller itself
+// cannot fork any more either.
+//
+// The number is read against PIDsLimit and against what it has to be, not
+// against a literal: a case that only compared with the constant would measure
+// the constant by itself (see messen.md, "eine Grenze, die nur durch sich
+// selbst geprueft wird"). So the value has to be a number, it has to be the
+// constant, it has to be above what the hold process measurably needs, and it
+// must not be one of the two values podman reads as "no limit".
+func TestHardeningLimitsTheNumberOfProcessesInEveryContainer(t *testing.T) {
+	for _, g := range grants() {
+		args := argsOf(t, g.container)
+		i := slices.Index(args, "--pids-limit")
+		if i < 0 || i+1 >= len(args) {
+			t.Fatalf("%s: args = %q without --pids-limit", g.what, args)
+		}
+		got, err := strconv.Atoi(args[i+1])
+		if err != nil {
+			t.Fatalf("%s: --pids-limit %q is no number: %v", g.what, args[i+1], err)
+		}
+		if got != PIDsLimit {
+			t.Fatalf("%s: --pids-limit %d, want PIDsLimit = %d", g.what, got, PIDsLimit)
+		}
+		// 0 and -1 are both "unlimited" to podman, and either would be a
+		// switch that is sent and does nothing.
+		if got <= 0 {
+			t.Fatalf("%s: --pids-limit %d is no limit at all", g.what, got)
+		}
+		// 24 OS threads were measured for a Go program of the shape of the
+		// hold process on this machine (64 cores, 1000 goroutines), and the
+		// pids controller counts threads. A ceiling anywhere near that would
+		// kill ordinary apps instead of fork bombs.
+		if got < 128 {
+			t.Fatalf("%s: --pids-limit %d is below what an app plausibly needs", g.what, got)
+		}
+		// And nothing may hand the limit back further along the list.
+		if slices.Index(args[i+1:], "--pids-limit") > 0 {
+			t.Fatalf("%s: args = %q name --pids-limit twice", g.what, args)
+		}
+	}
+}
+
+// 14. nosuid and nodev on every mount, in all four. no-new-privileges holds
+// what a set-user-id program would gain through an exec of the container's own
+// init; these two say the kernel must not honour the bit, and must not honour a
+// device node, for anything that comes in through a mount at all. /data is the
+// one the app writes itself, which is why it is the one that matters - and the
+// case reads every mount, because a second mount added later without the
+// options is the same hole in a new place.
+func TestHardeningMountsForbidSetUserIDAndDeviceNodes(t *testing.T) {
+	for _, g := range grants() {
+		args := argsOf(t, g.container)
+		vols := volumesOf(args)
+		if len(vols) != 2 {
+			t.Fatalf("%s: %d mounts in %q, want the two of the contract",
+				g.what, len(vols), args)
+		}
+		for _, v := range vols {
+			opts := optsOf(v)
+			for _, want := range []string{"nosuid", "nodev"} {
+				if !slices.Contains(opts, want) {
+					t.Fatalf("%s: mount %q carries %q, without %s", g.what, v, opts, want)
+				}
+			}
+			// The positive forms are what an option list looks like when
+			// somebody turned one of them off again.
+			for _, bad := range []string{"suid", "dev"} {
+				if slices.Contains(opts, bad) {
+					t.Fatalf("%s: mount %q carries %q", g.what, v, bad)
+				}
+			}
 		}
 	}
 }

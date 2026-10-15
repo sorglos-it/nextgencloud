@@ -203,7 +203,7 @@ func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, no
 		return 0, err
 	}
 	if err := bootstrap(ctx, db, d); err != nil {
-		return 0, err
+		return 0, busyOr(d, err, "the tables of the runner")
 	}
 	run, err := runOwner(owner)
 	if err != nil {
@@ -211,7 +211,7 @@ func Apply(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, no
 	}
 	taken, err := take(ctx, db, d, run, now)
 	if err != nil {
-		return 0, err
+		return 0, busyOr(d, err, "the lock of the migrations")
 	}
 	if !taken {
 		// Both reasons are named, because the runner cannot tell them apart,
@@ -348,6 +348,29 @@ func bootstrap(ctx context.Context, db *sql.DB, d sqlstore.Dialect) error {
 		}
 	}
 	return nil
+}
+
+// busyOr names the step that failed, and for the one cause a reader cannot
+// guess it names the cause too.
+//
+// Apply wraps every failure of a migration with "migrate: <file>: ...", but
+// the two steps before the first file - the runner's own tables and the lock -
+// handed their error on bare. Measured at two running programs on one file on
+// 13.10.2026: what came out of a busy file was the driver's "sqlite3: database
+// is locked" and nothing else. That is the sentence an admin gets at a failed
+// start of ngc-api on a Pi where the controller is writing, and it says
+// neither which part gave up, nor that busy_timeout had already waited its ten
+// seconds, nor that the cure is to try again rather than to look for damage.
+//
+// It is deliberately NOT the sentence of the held migration lock. That one
+// means a run of ours is migrating and names how long the wait is; this one
+// means a neighbour is writing an ordinary row, and it passes by itself.
+func busyOr(d sqlstore.Dialect, err error, step string) error {
+	if d.Retry(err) {
+		return fmt.Errorf("migrate: another program is writing to the database, so %s could not be "+
+			"written - this passes by itself, try again: %w", step, err)
+	}
+	return fmt.Errorf("migrate: %s: %w", step, err)
 }
 
 // take takes the migration lock: the row of dbapi.LockTake and its deadline,
