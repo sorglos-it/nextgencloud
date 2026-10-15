@@ -185,6 +185,17 @@ func (sqliteDialect) Gone(err error) bool { return errors.Is(err, sqlite3.IOERR)
 
 func (sqliteDialect) DDLInTx() bool { return true }
 
+// SerialWrites says that this database writes one at a time, which is what
+// turns the write channel of the store on. SQLite takes one write lock on the
+// file, so a second writer of the same program never writes in parallel - it
+// only waits, and before the channel it waited holding a connection of the
+// pool. It is not part of Dialect, for the reason SchemaText names below.
+//
+// MariaDB does not answer this at all: there the four connections are four
+// real writers on a server that handles them, and nothing of this change
+// reaches that path - TestMariaDBKeepsItsParallelPool holds it.
+func (sqliteDialect) SerialWrites() bool { return true }
+
 // isNetwork reports whether err comes from the network below the driver.
 //
 // What the caller itself gave up on comes first and is refused, however much

@@ -21,11 +21,83 @@ const (
 type store struct {
 	db *sql.DB
 	d  Dialect
+	// write1 is the one write channel of this program, or nil for a database
+	// whose pool may write in parallel. See serialWriter below.
+	write1 chan struct{}
+}
+
+// serialWriter is a dialect that holds its file alone: whatever the pool
+// allows, only one writer of this program can ever BE writing, because the
+// others wait on a lock of the file and not on anything the pool can help
+// with. It is NOT part of Dialect, the same way SchemaText is not: MariaDB
+// has no such answer to give, and a method every dialect had to carry would
+// be answered there out of documentation. A dialect that says nothing keeps
+// the pool it has, and MariaDB says nothing.
+type serialWriter interface {
+	// SerialWrites reports whether the writes of one program have to go one
+	// at a time.
+	SerialWrites() bool
 }
 
 // New returns dbapi.Store on an open database. It creates nothing: the schema
 // comes from the migrations.
-func New(db *sql.DB, d Dialect) dbapi.Store { return &store{db: db, d: d} }
+//
+// For a database that writes one at a time it also makes the write channel.
+// What that buys is measured, not reasoned: the pool keeps four connections
+// (sqlite.go), and a writer waiting for the file lock holds the connection it
+// waits on. Four writers that could not get through therefore held all four,
+// and the next QUERY of the same program - every read as well - waited for a
+// connection instead of for the file. Measured on D: on 15.10.2026, blocked
+// writers against the cost of the first read: 3 -> 0.003 s, 4 -> 9.300 s,
+// 12 -> 23.300 s.
+//
+// With the channel a waiting writer waits WITHOUT a connection: at most one
+// write is ever checked out, so three of the four connections are always
+// there for reads. The read then costs 0.003 s at every number of blocked
+// writers that was measured, up to 192.
+//
+// It costs no throughput, and that is measured and not reasoned - it BUYS
+// throughput, which was not expected. Writes per second of one program, D:,
+// 15.10.2026, the same bench before and after:
+//
+//	threads     1       4      16      64     192
+//	before   1468   694.5   687.6   654.9   636.7
+//	after    1435  1340.3  1267.5  1317.6  1406.5
+//
+// So the four connections were not carrying the writes, they were taking the
+// file lock away from each other: from four threads on, the same work goes
+// through about twice as fast with one write at a time. On Z: (NAS) the shape
+// is the same, lower throughout (4 threads: 532.6 before, 957.8 after).
+// Single-threaded is unchanged within the noise of the bench, which is what
+// says the channel itself costs nothing.
+func New(db *sql.DB, d Dialect) dbapi.Store {
+	s := &store{db: db, d: d}
+	if sw, ok := d.(serialWriter); ok && sw.SerialWrites() {
+		s.write1 = make(chan struct{}, 1)
+	}
+	return s
+}
+
+// takeWrite keeps the caller out of the pool until it is his turn to write,
+// and gives back the function that ends his turn. The turn is held across
+// the whole operation INCLUDING its repeats: a writer that gave up his turn
+// between two tries would take a connection again at the next one, and the
+// reads of this program would be back where they were.
+//
+// A caller whose context ends while he waits never touched the pool at all,
+// and he hears the reason HE named for his deadline (cause), not the bare one
+// of the standard library.
+func (s *store) takeWrite(ctx context.Context) (func(), error) {
+	if s.write1 == nil {
+		return func() {}, nil
+	}
+	select {
+	case s.write1 <- struct{}{}:
+		return func() { <-s.write1 }, nil
+	case <-ctx.Done():
+		return nil, cause(ctx, ctx.Err())
+	}
+}
 
 func (s *store) Close() error { return s.db.Close() }
 
@@ -35,7 +107,11 @@ func (s *store) Close() error { return s.db.Close() }
 // long, SQLite's "busy". An error that may have been committed is never
 // repeated, because repeating it could turn a success into ErrUsed.
 func (s *store) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	var err error
+	done, err := s.takeWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
 			return cause(ctx, ctx.Err())
@@ -97,7 +173,11 @@ func cause(ctx context.Context, err error) error {
 // how many rows it matched. It repeats the statement on the same conflicts as
 // write.
 func (s *store) exec(ctx context.Context, stmt string, args ...any) (int64, error) {
-	var err error
+	done, err := s.takeWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer done()
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
 			return 0, cause(ctx, ctx.Err())
