@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -597,5 +599,44 @@ func TestANoticeOfAControllerLeavesALineWhereNoShellTakesIt(t *testing.T) {
 	// line is about the notice having come, not about what it said.
 	if strings.Contains(line, "gestorben") {
 		t.Fatalf("the text of the notice is in the operator log: %q", line)
+	}
+}
+
+// TestBuildKeepsTheReasonTheCodeCouldNotBeMade is a measurement of the start
+// of two real ngc-api on one data directory, 13.10.2026 in WSL: of 30 pairs
+// started in the same moment, 6 had one program refuse to start, and the log
+// said "der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen" --
+// a sentence that fits a file somebody laid out, a read-only disk AND a
+// database that was only busy, because the reason was thrown away here.
+//
+// The admin is the one who pays for that: one of those reasons is mended by
+// removing a file and another is mended by waiting, and the line he gets does
+// not say which. So the reason is kept, and a case holds it.
+func TestBuildKeepsTheReasonTheCodeCouldNotBeMade(t *testing.T) {
+	db := memstore.New()
+	withStore(t, db)
+	_, _ = withDirs(t)
+	// Control first, so the refusal below is the code file and not a wall in
+	// front of it.
+	if _, err := Build(ctx, newConfig(t), "9.9.9"); err != nil {
+		t.Fatalf("control: %v", err)
+	}
+	SetupCodeFile = filepath.Join(t.TempDir(), "kein-verzeichnis", "setup-code")
+	// The case checks its own setup: a path that works after all would make
+	// the refusal below never come and the case measure nothing.
+	if _, err := os.Stat(filepath.Dir(SetupCodeFile)); !os.IsNotExist(err) {
+		t.Fatalf("the directory exists after all: %v", err)
+	}
+	srv, err := Build(ctx, newConfig(t), "9.9.9")
+	if err == nil || srv != nil {
+		t.Fatalf("Build came up without a code file: %v %v", srv, err)
+	}
+	// The sentence stays -- it is what the admin reads first.
+	if !strings.Contains(err.Error(), "Einmal-Code") {
+		t.Fatalf("the sentence of the start is gone: %v", err)
+	}
+	// And the reason is still in it, by its error and not by its wording.
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the reason was thrown away: %v", err)
 	}
 }
