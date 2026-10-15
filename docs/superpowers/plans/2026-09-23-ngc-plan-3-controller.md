@@ -1858,6 +1858,30 @@ git commit -m "Accept and verify an app package before anything is unpacked"
 
 ### Task 16: App aktivieren
 
+> **Berichtigt am 10.10.2026 — zwei Sätze aus „Consumes" und einer von mir.**
+>
+> **1. `store.Granted` gehört NICHT in diese Aufgabe, und zwar aus einem
+> gemessenen Grund.** Der Auftrag verlangt Mengen-**Gleichheit** der Grants;
+> `store.Granted` prüft nur „**Teilmenge**" und würde **einen Grant zu viel**
+> durchlassen. Der Strang hat es gemessen (der Mutant, der auf `Granted`
+> umstellt, ist **tot**) und die Funktion darum nicht benutzt. Die Zeile in
+> „Consumes" ist falsch; sie stand schon in Aufgabe 15 dort und war auch dort
+> unbenutzt.
+>
+> **2. `audit` gibt es im Controller-Zweig GAR NICHT** — gemessen: zwei Dateien
+> unter `apps/server-api/classes/audit/` auf `api`, **null** auf `controller`.
+> Mein Satz „`audit.Log` ist fertig" war für diesen Strang irreführend, und er
+> hat richtig gehandelt: **keinen Kommentar geschrieben, der etwas anderes
+> behauptet.**
+>
+> **Und das ist kein Loch im Entwurf, sondern seine Aufteilung:** Zeile 201 des
+> Kern-Designs gibt das **Protokoll der API**. Der Controller **protokolliert
+> nicht selbst** — er gibt einen Fehler zurück, den der Aufrufer unterscheiden
+> kann, und die API schreibt ihn. Genau dafür trennt `install.ErrDisk` seit der
+> Fixrunde der Aufgabe 15 „dieser Knoten konnte nicht" von „Paket kaputt". Wer
+> hier später doch im Controller protokollieren will, ändert den Entwurf und
+> nicht nur den Code.
+
 > **Ergaenzt am 02.10.2026, aus der Pruefung der Aufgabe 12 — und ich
 > schreibe es HIERHIN, weil eine Zeile, die nur in einem Bericht steht,
 > dort verschwindet.**
@@ -2574,6 +2598,14 @@ einem Baurechner, nicht auf dem Zielserver.
 - [ ] **Step 5: Den Bau in `CLAUDE.md` festhalten**
 
 Abschnitt „Terminal-App bauen“ in `apps/server-controller/CLAUDE.md`, drei Zeilen:
+
+> **BERICHTIGT am 12.10.2026: es sind zwei Zeilen je Architektur.** Seit Aufgabe „Erzeuger des
+> Abbilds" gibt es `ngc-controller image -arch <amd64|arm64> -out <Datei>`; das Kommando ruft
+> `podman build` und `podman save` selbst (`classes/runtime/build.go`) und liest den Tag des
+> Abbilds aus `manifest.json`, so dass er nie von der Fassung im Manifest abweichen kann. Es
+> bleiben also das `go build` unten und danach das Kommando. Die gültige Fassung steht in
+> `apps/server-controller/CLAUDE.md`; die drei Zeilen hier sind der Plan von damals.
+
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(cat apps/server-controller/VERSION)" -o build/ngc-controller ./apps/server-controller

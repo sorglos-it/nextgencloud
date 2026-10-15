@@ -6,29 +6,20 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/sorglos-it/nextgencloud/apps/cli/classes"
 )
 
 // Version is set when building.
 var Version = "0.0.0-dev"
 
-const usage = `ngc-store packs apps and signs stores.
-
-Usage:
-  ngc-store pack <directory> <package.ngc>       build an app package
-  ngc-store encrypt <package.ngc> <key file>     encrypt a paid app
-  ngc-store catalog <directory> <key file>       write and sign a catalog
-  ngc-store license <app> <installation> <key>   issue a license for a test store
-`
-
 func main() {
 	version := flag.Bool("version", false, "print the version and exit")
-	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	flag.Usage = func() { fmt.Fprint(os.Stderr, classes.Usage) }
 	flag.Parse()
 	if *version {
 		fmt.Printf("ngc-store %s\n", Version)
 		return
 	}
-	fmt.Fprint(os.Stderr, usage)
-	fmt.Fprintln(os.Stderr, "\nngc-store is not built yet, see apps/cli/CLAUDE.md")
-	os.Exit(1)
+	os.Exit(classes.Run(flag.Args(), os.Stdout, os.Stderr))
 }

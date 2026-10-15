@@ -2,7 +2,14 @@
 # Runs the checks every commit must pass.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-files=$(git ls-files '*.go' ':!:vendor/*')
+# The go tool stamps the build with VCS data and runs git for it, which fails the
+# same way in a worktree outside the repo ("error obtaining VCS status"). The check
+# produces no artefact, so the stamp is not needed here. Measured 10.10.2026.
+export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
+# safe.directory for THIS call only: in a worktree outside the repo git refuses
+# with "dubious ownership" and exit 128, and a caller that pipes the script reads
+# the pipe's 0 instead. Measured 10.10.2026. Never set this globally.
+files=$(git -c safe.directory="$PWD" ls-files '*.go' ':!:vendor/*')
 if [ -n "$files" ] && [ -n "$(gofmt -l $files)" ]; then
 	gofmt -l $files
 	echo "gofmt needed"
@@ -48,6 +55,11 @@ for arch in amd64 arm64; do
 		echo "$bad"
 		exit 1
 	fi
+	# go build compiles no test file, so the tests that only exist on the
+	# target (//go:build linux) would never be seen on a machine that builds
+	# elsewhere: a typo in them would still say "check: ok". go vet compiles
+	# them as the target and is the only thing here that does.
+	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go vet ./...
 	# -tags modules builds tools/modules.go too, so the vendored modules that no
 	# part imports yet are proven to build for both targets.
 	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -tags modules ./...
