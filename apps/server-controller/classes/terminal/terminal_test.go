@@ -569,6 +569,7 @@ func TestShellEnvCarriesNothing(t *testing.T) {
 	for _, k := range []string{
 		service.EnvUser, service.EnvUserName, service.EnvApp, service.EnvService,
 		service.EnvAction, service.EnvParams, service.EnvVersion, service.EnvData,
+		"HISTFILE", "HISTFILESIZE", "HISTSIZE",
 		service.EnvStart, "TERM", "PATH", "LANG", "SHELL", "COLUMNS", "LINES",
 	} {
 		t.Setenv(k, poison)
@@ -580,6 +581,7 @@ func TestShellEnvCarriesNothing(t *testing.T) {
 		"HOME=/data/app",
 		"PATH=" + service.Path,
 		"LANG=C.UTF-8",
+		"HISTFILE=",
 	}
 	got := shellEnv()
 	if len(got) != len(want) {
@@ -600,7 +602,7 @@ func TestShellEnvCarriesNothing(t *testing.T) {
 			t.Fatalf("shellEnv()[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	// Said twice on purpose: the comparison above would also hold if a fifth
+	// Said twice on purpose: the comparison above would also hold if a sixth
 	// line had been dropped by a mutation of len. This holds the VALUE, which
 	// is what a user would see in the process list.
 	for _, e := range got {
@@ -644,4 +646,37 @@ func FuzzParseFrame(f *testing.F) {
 			t.Fatalf("kind %d got through", fr.Kind)
 		}
 	})
+}
+
+// TestShellEnvWritesNoHistory is the bolt of the history file. It is the one
+// place a typed secret can reach a DISK: the root filesystem of the app
+// container is read only (runtime/podman.go, "--read-only"), /data is the only
+// writable mount, and shellEnv points HOME there. A shell of the bash family
+// creates HOME/.bash_history and writes every typed line into it, so a
+// "mysql -p<secret>" would lie in the encrypted app data and outlive the tab.
+//
+// The remedy is that the file is never created, not that it is cleaned up
+// afterwards: an empty HISTFILE makes bash write none at all. Measured on
+// 15.10.2026 in WSL with a marker, bash 5.x: without the line the marker is in
+// HOME/.bash_history, with it HOME is empty. The image's own shell is
+// /bin/sh (dash in debian:13-slim), which keeps no history either way - the
+// line is what holds once that symlink is something else.
+//
+// The case holds the NAME and the empty VALUE, because "HISTFILE=/data/x"
+// would read as set and be the leak itself.
+func TestShellEnvWritesNoHistory(t *testing.T) {
+	t.Setenv("HOME", "/data")
+	t.Setenv("HISTFILE", "/data/.bash_history")
+	var seen bool
+	for _, e := range shellEnv() {
+		if strings.HasPrefix(e, "HISTFILE=") {
+			seen = true
+			if e != "HISTFILE=" {
+				t.Fatalf("shellEnv() names %q, want an empty HISTFILE", e)
+			}
+		}
+	}
+	if !seen {
+		t.Fatalf("shellEnv() names no HISTFILE, so a bash would write HOME/.bash_history into the app data")
+	}
 }
