@@ -8,34 +8,60 @@
 # the bytes it names - sha256 over the manifest body has to equal the digest
 # the registry put in its header. Only then is the file touched.
 #
-# WHO RUNS IT AND WHEN - the question a pinned base creates and does not answer
-# by itself:
+# WHEN IT RUNS - DECIDED by Thomas on 15.10.2026, not a proposal:
 #
-#   A pinned base receives no security fix. Debian publishes one, the tag moves,
-#   and this digest does not. So somebody has to run this, and the proposal is:
-#   whoever cuts a release runs it BEFORE the release and commits the change as
-#   its own commit, so that the base of every shipped image is a decision of
-#   that release and is visible in its diff. Nothing automatic: a digest that a
-#   job raises on its own is a tag again, only slower.
+#   It is MANDATORY BEFORE EVERY RELEASE, and the change is its own commit.
+#   So the base of every shipped image is a decision of that release and is
+#   visible in its diff. The reason it has to be mandatory and not "when
+#   somebody remembers": a pinned base receives no security fix by itself.
+#   Debian publishes one, the tag moves, and this digest does not.
 #
-#   Who may change it: whoever may sign a release. The digest decides what runs
+#   Nothing automatic. A digest that a job raises on its own is a tag again,
+#   only slower - the whole point is that a person decided which bytes ship.
+#
+#   Who may change it: whoever may SIGN a release. The digest decides what runs
 #   in the container of the terminal app, and that app's manifest says
-#   needs: ["root"] - so it is the same power as signing, and it belongs to the
-#   same person.
+#   needs: ["root"] - the same power as signing, so the same person.
+#
+# THE THREE MODES:
+#
+#   (no argument)  measure and report; write nothing. Exit 0 either way.
+#   --verify       the GATE for a release path: exit 0 if the pinned digest is
+#                  the current one, exit 2 if the tag has MOVED (raise it, or
+#                  decide not to and say so), exit 1 on any failure to measure.
+#                  A separate 2 so a caller can tell "stale" from "broken" - a
+#                  release must not be cut on a measurement that failed.
+#   --write        rewrite the FROM line, after the same verification.
+#
+# WHERE THE GATE IS NOT WIRED YET, said out loud instead of left as a gap:
+# nothing on this branch cuts a release. apps/cli/classes/release.go signs the
+# files of a release directory and never touches this Containerfile or the
+# image; the release packer lives on the branch release-packer. So --verify
+# exists and is callable, and the obligation above is written in
+# apps/server-controller/CLAUDE.md where the admin who builds the image reads
+# it - but no program enforces it yet. Wiring it belongs to the release packer
+# when it reaches main.
 #
 # NOT MEASURED, and it is the usual limit of this machine: that podman actually
 # fetches this digest and refuses a mismatch. There is no podman and no docker
 # here. What IS measured is the digest itself (fetched and re-hashed, below)
-# and that the build refuses a Containerfile without one
+# and that a build refuses a Containerfile without one
 # (runtime.CheckBase, apps/server-controller/classes/runtime/build_test.go).
 set -eu
 
 repo=${NGC_BASE_REPO:-library/debian}
 tag=${NGC_BASE_TAG:-13-slim}
 file=$(dirname "$0")/../apps/server-controller/templates/terminal/Containerfile
-write=no
-[ "${1:-}" = "--write" ] && write=yes
+mode=report
+case "${1:-}" in
+	--write) mode=write ;;
+	--verify) mode=verify ;;
+	"") ;;
+	*) echo "pin-base: unknown argument $1 (use --verify or --write)" >&2; exit 1 ;;
+esac
 
+# A failure to measure is exit 1 in every mode, --verify included: the gate may
+# only ever say "stale" about a digest it really fetched.
 for t in curl sha256sum; do
 	command -v "$t" >/dev/null 2>&1 || { echo "pin-base: $t is missing" >&2; exit 1; }
 done
@@ -84,8 +110,22 @@ have=$(sed -n 's/^FROM .*/&/p' "$file" | head -n 1)
 echo "pin-base: measured $own over $(wc -c < "$tmp" | tr -d ' ') bytes, amd64 and arm64 present"
 echo "pin-base: in the file: $have"
 echo "pin-base: would be   : $want"
-[ "$have" = "$want" ] && { echo "pin-base: unchanged"; exit 0; }
-[ "$write" = yes ] || { echo "pin-base: nothing written (pass --write)"; exit 0; }
+
+if [ "$have" = "$want" ]; then
+	echo "pin-base: unchanged"
+	exit 0
+fi
+
+if [ "$mode" = verify ]; then
+	echo "pin-base: THE TAG HAS MOVED. Run tools/pin-base.sh --write, commit it on" >&2
+	echo "pin-base: its own, and say which release it is for - or decide not to and" >&2
+	echo "pin-base: write down why. A release may not be cut past this." >&2
+	exit 2
+fi
+if [ "$mode" != write ]; then
+	echo "pin-base: nothing written (pass --write)"
+	exit 0
+fi
 
 # Written through a new file and a rename: a run broken off in the middle must
 # not leave a Containerfile with half a FROM line in it.

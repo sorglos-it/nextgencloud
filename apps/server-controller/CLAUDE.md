@@ -132,8 +132,44 @@ so klein wie möglich.
 ## Terminal-App bauen
 
 Das Abbild der Terminal-App entsteht auf einem **Baurechner**, nie auf dem Zielserver: der
-Zielserver hat keinen Bauer und soll keinen brauchen. **Zwei Zeilen je Architektur**, aus dem
-Stamm des Repos:
+Zielserver hat keinen Bauer und soll keinen brauchen.
+
+### Schritt 0, Pflicht vor jedem Release: die Basis prüfen
+
+**Entschieden von Thomas am 15.10.2026.** Vor jedem Release läuft
+
+```bash
+tools/pin-base.sh --verify
+```
+
+Ausstiegscode **0** heißt: die festgenagelte Prüfsumme ist die aktuelle, weiterbauen.
+Ausstiegscode **2** heißt: die Marke hat sich bewegt — dann `tools/pin-base.sh --write`,
+und die Änderung wird als **eigener Commit** gefahren, damit die Basis jedes
+ausgelieferten Abbilds im Diff des Releases sichtbar ist. Wer sie bewusst **nicht** anhebt,
+schreibt den Grund dazu. Ausstiegscode **1** heißt: die Messung ist gescheitert — dann wird
+**kein** Release geschnitten, denn über eine Basis ist damit nichts gesagt.
+
+**Warum das Pflicht ist und nicht „wenn jemand dran denkt":** die Basis hängt seit dem
+15.10.2026 an einer **Prüfsumme**, nicht an der Marke `debian:13-slim`. Das schließt die
+Lieferkette (wer die Marke beherrscht, beherrschte sonst den `needs: ["root"]`-Container),
+kostet aber genau das: **eine festgenagelte Basis bekommt von sich aus keinen
+Sicherheitsfix.** Debian veröffentlicht einen, die Marke wandert, die Prüfsumme nicht.
+
+**Ändern darf die Zahl, wer ein Release unterschreiben darf** — die Prüfsumme entscheidet,
+was im Container der schärfsten App läuft, das ist dieselbe Macht wie das Unterschreiben.
+Und: **nie von Hand**, immer über das Werkzeug. Eine von Hand getippte Prüfsumme ist eine
+Zahl, die niemand gemessen hat; das Werkzeug holt sie und prüft sie gegen die Bytes, die sie
+benennt.
+
+**Noch nicht verdrahtet, und das steht hier statt als Lücke:** auf diesem Zweig schneidet
+kein Programm ein Release (`apps/cli/classes/release.go` unterschreibt die Dateien eines
+Release-Verzeichnisses und sieht den Containerfile nie). Der Riegel `--verify` ist also da
+und aufrufbar, aber **erzwungen ist er bisher nur durch diesen Abschnitt.** Ihn in den
+Release-Weg zu hängen gehört zum Release-Packer, sobald der auf `main` ist.
+
+### Dann: zwei Zeilen je Architektur
+
+Aus dem Stamm des Repos:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(cat apps/server-controller/VERSION)" -o build/ngc-controller ./apps/server-controller
