@@ -1,52 +1,31 @@
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, skipWithoutSignatures, skipWithoutSeed } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 const v = vectors("session.json");
 
-// Does the Web Crypto API of this engine know Ed25519? Chromium here does,
-// and proof.spec.js says the same of Chrome, Safari 17 and Firefox 130; the
-// WebKit that Playwright brings answers NotSupportedError to importKey -
-// measured for this list's own keys, for "raw" and for "spki" alike. The
-// first test needs both: trust.parseList imports every passkey of this list
-// as spki (proof.importPublic), and sign.verify imports the node's signing
-// key as raw. Without them parseList refuses the list before the first
-// certificate is looked at, and no right signature can come out true - which
-// is the right answer for an engine that cannot check, and no test of this
-// contract (measured there: "trust: invalid list" from the first line, and
-// "session: bad signature" from a hand-built list that gets past it). The
-// four tests below it need no Ed25519 and run on every engine.
+// WHICH STEP of Web Crypto each case here needs is measured in
+// fixtures/page.js (sessionKeyGaps), one named step per action. Two of them
+// are asked for, and the difference is what this task repaired:
 //
-// Probed with a real key out of this vector's own list, as trust.spec.js and
-// proof.spec.js probe: an engine that has Ed25519 but rejects a made-up
-// 32-byte value would otherwise be skipped for the wrong reason.
-async function hasEd25519(shell, signed) {
-  return shell.evaluate(async (s) => {
-    const { b64decode } = await import("/assets/js/contracts/b64.js");
-    const list = JSON.parse(new TextDecoder().decode(b64decode(s.payload)));
-    let pub = null;
-    for (const u of list.users) {
-      for (const k of u.keys) {
-        if (k.kind === "password") pub = k.pub;
-      }
-    }
-    // Outside the try on purpose: without a password key in this list,
-    // b64decode(null) would land in the catch below and skip both tests as
-    // "no Ed25519 here", on an engine that has it. A vector file that loses
-    // its password key must fail loudly instead (Fixrunde 1).
-    if (typeof pub !== "string") throw new Error("session.json's trust list holds no password key to probe with");
-    try {
-      await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
-      return true;
-    } catch {
-      return false;
-    }
-  }, signed);
-}
+//   skipWithoutSignatures  trust.parseList imports every passkey of this list
+//     (proof.importPublic), sign.verify imports the node's signing key as raw.
+//   skipWithoutSeed        on top of that, the five cases below that build a
+//     node key out of a SEED (proof.privateFromSeed / publicFromSeed) need the
+//     public half out of a PKCS#8 document.
+//
+// MEASURED: the guard that stood here imported one raw public key for "verify"
+// and said yes to that alone. The Firefox that Playwright brings (build
+// firefox-1490) does that and signs with it, and then answers OperationError to
+// importKey("pkcs8") + exportKey("jwk") - the step publicFromSeed stands on. So
+// the guard said yes and the five seed cases went red, while the three that
+// only read this list's own certificates were right to run and do run. The
+// WebKit that Playwright brings has neither step (NotSupportedError at
+// generateKey). A guard that switched all eight off would be the worse repair:
+// a skipped case looks like a finished one.
 
 test("the API certificate is checked against the trust list", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no signature");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const t = await import("/assets/js/contracts/trust.js");
@@ -174,8 +153,7 @@ test("the version 1 the shell builds is the one the API accepts", async ({ shell
 // really checks out and the node is the only thing left that can refuse it.
 test("an API node without an ID is no node, as in Go", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -219,8 +197,7 @@ test("an API node without an ID is no node, as in Go", async ({ shell }) => {
 // which of the two the shell believed.
 test("verifyAPI uses the payload it checked, not a second read of it", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -547,8 +524,7 @@ test("encodeClientCert writes the bytes it checked", async ({ shell }) => {
 // such second line.)
 test("verifyAPI binds the certificate to the node it found", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -603,8 +579,7 @@ test("verifyAPI binds the certificate to the node it found", async ({ shell }) =
 // beyond verifyClient's.
 test("verifyApproval decides the certificates of session.json as Go does", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no proof");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const t = await import("/assets/js/contracts/trust.js");
@@ -646,8 +621,7 @@ test("verifyApproval decides the certificates of session.json as Go does", async
 // user and of the key, so no second read of anything exists there.
 test("verifyApproval decides on the key and the owner it read, not on a second read", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no proof");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const t = await import("/assets/js/contracts/trust.js");
@@ -718,8 +692,7 @@ test("verifyApproval decides on the key and the owner it read, not on a second r
 // string compares like a number and would pass unnoticed.
 test("verifyAPI takes no now that is not a whole number", async ({ shell }) => {
   test.setTimeout(120_000);
-  test.skip(!(await hasEd25519(shell, v.trust)),
-    "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -797,8 +770,7 @@ test("verifyAPI takes no now that is not a whole number", async ({ shell }) => {
 test("verifyAPI decodes the certificate it checked, not what the buffer holds after",
   async ({ shell }) => {
     test.setTimeout(120_000);
-    test.skip(!(await hasEd25519(shell, v.trust)),
-      "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+    await skipWithoutSeed(shell);
     const out = await shell.evaluate(async (d) => {
       const s = await import("/assets/js/contracts/session.js");
       const sign = await import("/assets/js/contracts/sign.js");

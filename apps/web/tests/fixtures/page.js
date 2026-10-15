@@ -331,6 +331,17 @@ export async function signatureGap(shell) {
   return (await sessionKeyGaps(shell)).ed25519;
 }
 
+// The public half of a PASSWORD SEED, and the signature steps it stands on -
+// and nothing about X25519. This is what contracts/proof.js publicFromSeed
+// needs, and it is the step the contract cases of proof.spec.js and
+// session.spec.js that BUILD a key out of a seed really take. loginGap would
+// be wrong here: it asks for a handshake too, and a contract case that reads a
+// certificate opens no session.
+export async function seedGap(shell) {
+  const g = await sessionKeyGaps(shell);
+  return g.ed25519 || g.ed25519FromSeed;
+}
+
 // A handshake with FRESH keys - newKeypair() and HandshakeKK.of(), the path NGC
 // takes at runtime. No signature, no key document: X25519 alone.
 export async function handshakeGap(shell) {
@@ -388,23 +399,28 @@ export async function skipWithoutSignatures(shell) {
   test.skip(gap !== "", `this engine cannot make or check an Ed25519 signature - ${gap}`);
 }
 
+// The public half of a password seed. A "no" here means this engine can make
+// no key out of a seed, so a case that builds one has nothing to measure; a
+// case that only CHECKS a signature of a vector file asks
+// skipWithoutSignatures instead.
+export async function skipWithoutSeed(shell) {
+  const gap = await seedGap(shell);
+  test.skip(gap !== "", `this engine cannot read the public half out of a password seed - ${gap}`);
+}
+
 // An X25519 key pair to hand to a peer, and a secret derived with it.
 export async function skipWithoutSessionKeys(shell) {
   const gap = await handshakeGap(shell);
   test.skip(gap !== "", `this engine cannot make an X25519 session key pair - ${gap}`);
 }
 
-// A boolean, for the one case that does not skip but BRANCHES on it:
-// shell/boot.spec.js, which runs on every engine and pins that the boot ends in
-// one of its two legal endings.
-//
-// IT IS THE ONLY CALLER, and that is now true - it was not when this comment
-// first said so. shell/world.spec.js used the same function to SKIP with, and
-// when this task changed what it means (from "the two curves are there" to "a
-// password login goes through"), three cases there that are green on Firefox
-// went quietly out, one of them a security check. The comment said "the one
-// case"; the grep said two. Whoever adds a second caller gives it a gap of its
-// own instead - the gaps above are the vocabulary for that.
-export async function hasSessionKeys(shell) {
-  return (await loginGap(shell)) === "";
-}
+// NO hasSessionKeys HERE ANY MORE, and that is on purpose. It was a single
+// boolean built out of loginGap, for shell/boot.spec.js to BRANCH on, and it
+// made the engine look like it had two answers when it has three: boot died on
+// the Firefox that Playwright brings because "no session keys" was read as "the
+// shell says it is too old", while that shell comes up and shows its mask.
+// boot.spec.js now asks shellGap and loginGap one after the other and names all
+// three endings. Whoever wants a boolean again gives it a gap of its own - the
+// gaps above are the vocabulary for that - and counts the callers first: this
+// one's comment said "the one case" while the grep said two, and three green
+// Firefox cases went quietly out when its meaning changed.

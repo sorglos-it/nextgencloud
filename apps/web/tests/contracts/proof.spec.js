@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, signatureGap, skipWithoutSignatures, skipWithoutSeed } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 // proof.json holds 21 proofs with their keys, valid and invalid, and the
@@ -14,30 +14,33 @@ const kdfCases = vectors("proof_kdf.json");
 // out, written down here so a reader sees at once what the file holds.
 const brokenProofs = ["passkey ES256, authData of 36 bytes", "password key, proof claims kind passkey"];
 
-// Does the Web Crypto API of this engine know Ed25519? Chrome, Safari 17 and
-// Firefox 130 do; the WebKit that Playwright brings answers NotSupportedError
-// to importKey. An engine without it can check no EdDSA signature and import
-// no EdDSA key, so it refuses both - which is right, and which means no case
-// that needs a right EdDSA signature to come out true can run there. Those
-// cases are left out and said out loud, instead of quietly passing.
-async function hasEd25519(shell, pub) {
-  return shell.evaluate(async (pubB64) => {
-    const { b64decode } = await import("/assets/js/contracts/b64.js");
-    try {
-      await crypto.subtle.importKey("raw", b64decode(pubB64), { name: "Ed25519" }, false, ["verify"]);
-      return true;
-    } catch {
-      return false;
-    }
-  }, pub);
-}
-
-// The password key of proof.json is a raw Ed25519 key, so it is the one this
-// engine is asked about.
-const passwordPub = v.proofs.find((c) => c.key.kind === "password").key.pub;
+// WHICH STEP of Web Crypto a case here needs is measured in fixtures/page.js
+// (sessionKeyGaps), one named step per action, on the engine that is about to
+// run the case. This file asks for two of them and never for a whole topic:
+//
+//   skipWithoutSignatures / signatureGap  a key, a signature, a check, and a
+//     public key read back in as raw. What proof.verify does.
+//   skipWithoutSeed / seedGap             on top of that, the public half out
+//     of a PKCS#8 seed - contracts/proof.js publicFromSeed.
+//
+// MEASURED, and it is why these are two and not one. The guard that stood here
+// imported one raw public key for "verify" and said yes to that alone. The
+// Firefox that Playwright brings (build firefox-1490) does that, generates an
+// Ed25519 key, signs with it and exports it as PKCS#8 - and then answers
+// OperationError to importKey("pkcs8") followed by exportKey("jwk"), because a
+// PKCS#8 seed carries no public key and Firefox, unlike Chrome and Safari, does
+// not work it out. The guard said yes, three cases here ran into exactly that
+// step and went red. The comment that stood here claimed "Firefox 130 do[es]";
+// this build does not.
+//
+// The other half of the lesson: a guard that is too strict is worse than one
+// that is too loose, because a skipped case looks like a finished one. So the
+// cases that only CHECK a signature keep running on this Firefox - they do.
+// The WebKit that Playwright brings has neither step: it answers
+// NotSupportedError already at generateKey.
 
 test("every proof of proof.json is decided as Go decides it", async ({ shell }) => {
-  const ed = await hasEd25519(shell, passwordPub);
+  const ed = (await signatureGap(shell)) === "";
   // Without Ed25519 nothing can come out right that rests on an EdDSA
   // signature or on an EdDSA key. The cases that have to come out false stay
   // in: an engine that cannot check has to refuse them too.
@@ -101,8 +104,7 @@ test("every proof of proof.json is decided as Go decides it", async ({ shell }) 
 // data and client data hung on it. Put validateProof back at the head of
 // verify and this case goes red at once, while every vector stays green.
 test("a password proof that carries what only a passkey may carry still verifies", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: no right signature can come out true here");
+  await skipWithoutSignatures(shell);
   const c = v.proofs.find((x) => x.name === "password key");
   expect(c.valid).toBe(true);
   const got = await shell.evaluate(async (d) => {
@@ -165,8 +167,7 @@ test("the challenge is the one Go wrote into the client data", async ({ shell })
 // (ed25519.NewKeyFromSeed). This case starts at the seeds of the vectors; the
 // case below starts at the typed password and derives them.
 test("the public key of a seed is the one Go derives", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: it can import no seed and export no public key");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (cases) => {
     const p = await import("/assets/js/contracts/proof.js");
     const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
@@ -206,8 +207,7 @@ test("the public key of a seed is the one Go derives", async ({ shell }) => {
 // It says out loud that d was there beforehand, so it cannot go green on an
 // engine that leaves d out to begin with.
 test("the export that gives the public key does not keep the seed", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: it can import no seed and export no JWK");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (c) => {
     const p = await import("/assets/js/contracts/proof.js");
     const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
@@ -261,8 +261,7 @@ test("the export that gives the public key does not keep the seed", async ({ she
 // were handed in. It says out loud that the seed was in them beforehand, so
 // it cannot go green on a call that never happened.
 test("the PKCS#8 copy of the seed does not stay behind", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: it imports no seed at all");
+  await skipWithoutSeed(shell);
   const got = await shell.evaluate(async (c) => {
     const p = await import("/assets/js/contracts/proof.js");
     const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
@@ -1009,8 +1008,7 @@ test("a proof, a key and the relying party are read once", async ({ shell }) => 
 // walk proof.verify, so nothing else held these.
 
 test("proof.verify reads the password key once, so the id and the signature are one key's", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async () => {
     const p = await import("/assets/js/contracts/proof.js");
     const s = await import("/assets/js/contracts/sign.js");
@@ -1050,8 +1048,7 @@ test("proof.verify reads the password key once, so the id and the signature are 
 });
 
 test("proof.verify reads the passkey once, so the id and the assertion are one key's", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async () => {
     const p = await import("/assets/js/contracts/proof.js");
     const s = await import("/assets/js/contracts/sign.js");
@@ -1095,8 +1092,7 @@ test("proof.verify reads the passkey once, so the id and the assertion are one k
 });
 
 test("validateUserKey reads the key once, so the id and the import are one key's", async ({ shell }) => {
-  test.skip(!(await hasEd25519(shell, passwordPub)),
-    "no Ed25519 in this engine's Web Crypto: it answers false for everything, hostile or not");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async () => {
     const p = await import("/assets/js/contracts/proof.js");
     const s = await import("/assets/js/contracts/sign.js");

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, skipWithoutSignatures } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 const core = vectors("core.json");
@@ -130,40 +130,22 @@ const GO_PARAM_TYPES = [...CORE_GO.matchAll(/^func \(p \*(\w+)\) Validate\(\) er
 
 const GO_ACTIONS = goActions();
 
-// Does the Web Crypto API of this engine know Ed25519? The UI proofs need it
-// twice over: trust.parseList imports every passkey of this list as spki, and
-// verifying a catalog, a certificate and a task is three Ed25519 signatures.
-// The WebKit that Playwright brings answers NotSupportedError to importKey, so
-// parseList refuses the list before the first proof is looked at ("trust:
-// invalid list", measured) - which is the right answer for an engine that
-// cannot check, and no measurement of this contract. Same probe as
-// session.spec.js and sign.spec.js, with a real key out of this vector's own
-// list, so an engine that has Ed25519 but turns down a made-up 32-byte value
-// is not skipped for the wrong reason.
+// What the UI proofs need from Web Crypto: trust.parseList imports every
+// passkey of this list, and verifying a catalog, a certificate and a task is
+// three Ed25519 signatures. No seed is read anywhere in here, so the step this
+// case asks for is the signature step and no more - measured per action in
+// fixtures/page.js (sessionKeyGaps).
+//
+// MEASURED: the guard that stood here imported one raw public key for "verify".
+// The Firefox that Playwright brings (build firefox-1490) can do that AND
+// everything this case really needs, so it runs there and must keep running;
+// the WebKit that Playwright brings answers NotSupportedError at generateKey
+// and reads no key at all, so parseList refuses the list before the first proof
+// is looked at ("trust: invalid list", measured) - the right answer for an
+// engine that cannot check, and no measurement of this contract.
 //
 // The other two tests read documents and check no signature; they run
 // everywhere.
-async function hasEd25519(shell, signed) {
-  return shell.evaluate(async (s) => {
-    const { b64decode } = await import("/assets/js/contracts/b64.js");
-    const list = JSON.parse(new TextDecoder().decode(b64decode(s.payload)));
-    let pub = null;
-    for (const u of list.users) {
-      for (const k of u.keys) {
-        if (k.kind === "password") pub = k.pub;
-      }
-    }
-    // Outside the try: a vector file that lost its password key must fail
-    // loudly, not skip the test as "no Ed25519 here" on an engine that has it.
-    if (typeof pub !== "string") throw new Error("uiproof.json's trust list holds no password key to probe with");
-    try {
-      await crypto.subtle.importKey("raw", b64decode(pub), { name: "Ed25519" }, false, ["verify"]);
-      return true;
-    } catch {
-      return false;
-    }
-  }, signed);
-}
 
 test("every example result of core.json is read", async ({ shell }) => {
   const got = await shell.evaluate(async (d) => {
@@ -196,8 +178,7 @@ test("every example result of core.json is read", async ({ shell }) => {
 
 test("every UI proof of uiproof.json is decided as Go decides it", async ({ shell }) => {
   test.setTimeout(180_000);
-  test.skip(!(await hasEd25519(shell, ui.trust)),
-    "no Ed25519 in this engine's Web Crypto: it reads none of this list's passkeys and checks no signature");
+  await skipWithoutSignatures(shell);
   const got = await shell.evaluate(async (d) => {
     const c = await import("/assets/js/contracts/core.js");
     const t = await import("/assets/js/contracts/trust.js");
