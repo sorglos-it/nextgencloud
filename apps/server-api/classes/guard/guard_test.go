@@ -145,3 +145,61 @@ func TestTheShortPathKeepsTwoParts(t *testing.T) {
 		}
 	}
 }
+
+// TestReportSaysTheTotalOnlyWhenItGrew is the case for the second way a catch
+// shows itself. Both halves matter and the silent one matters more: a line
+// every minute saying "none" is noise, and noise is how a log stops being
+// read.
+//
+// The cases of this package share one process and therefore one counter, so
+// this one never asserts an absolute number -- it asserts the DIFFERENCE it
+// made itself. The first call also swallows whatever earlier cases counted,
+// which is why it is made before the panic and its line thrown away.
+func TestReportSaysTheTotalOnlyWhenItGrew(t *testing.T) {
+	buf := catchLog(t)
+	Report() // clears whatever the cases before this one left standing
+	buf.Reset()
+
+	// Nothing has happened since: the round says nothing at all.
+	Report()
+	if buf.Len() != 0 {
+		t.Fatalf("a round with no new panic wrote a line: %q", buf.String())
+	}
+
+	before := Panics()
+	func() {
+		defer func() { _ = Hit(recover(), "test.report", 3) }()
+		panic(fmt.Errorf("the bearer token is %s", secret))
+	}()
+	total := Panics()
+	if total != before+1 {
+		t.Fatalf("the counter went %d -> %d, want one more", before, total)
+	}
+	buf.Reset() // the ERROR line of the catch is not what is measured here
+
+	Report()
+	line := buf.String()
+	for _, want := range []string{
+		"level=WARN", fmt.Sprintf("panics=%d", total), "new=1",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("%s is missing from the round's line: %q", want, line)
+		}
+	}
+	// The same rule as for the line of a catch: a total is two numbers, and
+	// nothing of the value that was panicked with comes along.
+	if strings.Contains(line, secret) || strings.Contains(line, "bearer token") {
+		t.Fatalf("the value of the panic reached the round's line: %q", line)
+	}
+	// And a total belongs to no site, so neither name goes in.
+	if strings.Contains(line, "test.report") || strings.Contains(line, "channel=") {
+		t.Fatalf("the round's line names a place or a channel: %q", line)
+	}
+
+	// Reported once is reported: the next round is silent again.
+	buf.Reset()
+	Report()
+	if buf.Len() != 0 {
+		t.Fatalf("the same panic was reported twice: %q", buf.String())
+	}
+}

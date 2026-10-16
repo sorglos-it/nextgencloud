@@ -446,7 +446,15 @@ func (s *Server) once(fn func()) {
 	fn()
 }
 
-// minute is the housekeeping round: expired sessions out, trust list afresh.
+// minute is the housekeeping round: expired sessions out, trust list afresh,
+// and the count of caught programming errors said out loud if it has grown.
+//
+// guard.Report is LAST on purpose. A panic in either step above is caught by
+// Server.once around this round, so the count it would report is one this
+// round can no longer reach -- it reaches the log at the next tick instead,
+// one minute later, which is the price of the catch sitting around the round
+// and not around each step. Put first, the call would report the state of the
+// minute before and read just as late.
 func (s *Server) minute(ctx context.Context) {
 	if err := s.login.Purge(ctx); err != nil {
 		slog.Warn("housekeeping failed", "error", err)
@@ -454,6 +462,7 @@ func (s *Server) minute(ctx context.Context) {
 	if _, err := s.State.Refresh(ctx); err != nil {
 		slog.Warn("trust list could not be read", "error", err)
 	}
+	guard.Report()
 }
 
 // hour is the catalog round.

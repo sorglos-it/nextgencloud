@@ -1,9 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -349,5 +353,50 @@ func TestABrokenRolloutDoesNotStopTheBeat(t *testing.T) {
 	}
 	if got := guard.Panics(); got != before+1 {
 		t.Fatalf("the counter went %d -> %d; the broken round must count once", before, got)
+	}
+}
+
+// TestTheHousekeepingRoundSaysTheCountOfCaughtErrors holds the WIRING, which is
+// the half a case in package guard cannot reach: guard.Report writes the line,
+// but a Report nobody calls is the number nobody reads -- which is what
+// Panics() was until this round called it.
+//
+// The round is run by hand here. The beat around it is held by
+// TestTheBeatOfTheRolloutTurns and TestABrokenRoundDoesNotStopTheBeat; what is
+// measured here is that the minute round reaches guard at all.
+func TestTheHousekeepingRoundSaysTheCountOfCaughtErrors(t *testing.T) {
+	srv, _, _ := newServer(t)
+	var said bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&said, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	// A round of its own first, so whatever the cases before this one counted
+	// is already said and this case measures only its own panic.
+	srv.minute(ctx)
+	said.Reset()
+
+	srv.once(func() { panic("a programming error in a background round") })
+	total := guard.Panics()
+	said.Reset() // the ERROR line of the catch is not what is measured here
+
+	srv.minute(ctx)
+	line := said.String()
+	if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "panics=") {
+		t.Fatalf("the housekeeping round said nothing about the caught error: %q", line)
+	}
+	if !strings.Contains(line, "new=1") {
+		t.Fatalf("the round did not say how many are new: %q", line)
+	}
+	// The number is the one guard holds, not one this round counted again.
+	if !strings.Contains(line, "panics="+strconv.FormatUint(total, 10)) {
+		t.Fatalf("the round says another total than guard.Panics() = %d: %q", total, line)
+	}
+	// And the round that follows is silent, so a defect does not turn into a
+	// line a minute for the life of the process.
+	said.Reset()
+	srv.minute(ctx)
+	if strings.Contains(said.String(), "panics=") {
+		t.Fatalf("the same caught error was said twice: %q", said.String())
 	}
 }
