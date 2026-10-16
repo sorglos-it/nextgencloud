@@ -737,7 +737,7 @@ func TestTwoStartsAtOnceBothComeUp(t *testing.T) {
 			}
 		}
 		// And both hold the SAME code: of two starts at once only one makes
-		// one, which is what the O_EXCL at the call site promises.
+		// one, which is what the hard link at the call site promises.
 		code, err := os.ReadFile(shared)
 		if err != nil || !session.ValidSetupCode(strings.TrimSpace(string(code))) {
 			t.Fatalf("round %d: the file holds %q: %v", i, code, err)
@@ -757,6 +757,13 @@ func TestTwoStartsAtOnceBothComeUp(t *testing.T) {
 // caught wherever it is.
 func TestTheCodeFileNeverExistsHalfWritten(t *testing.T) {
 	const rounds = 20
+	// What the watcher managed to read, over all rounds. It is summed and not
+	// asked per round on purpose: measured on 16.10.2026, a per-round check
+	// went red in 1 of 30 runs because in round 0 the watcher had not been
+	// scheduled once before the round was over -- an assertion about the
+	// scheduler, not about the code. Summed over the rounds there is no such
+	// race: 0 red in 30 runs.
+	var seen int64
 	for i := 0; i < rounds; i++ {
 		h := newHandler(t)
 		_ = os.Remove(h.CodeFile)
@@ -801,5 +808,15 @@ func TestTheCodeFileNeverExistsHalfWritten(t *testing.T) {
 			t.Fatalf("round %d: the name existed %d times without a code in it (of %d reads)",
 				i, n, reads.Load())
 		}
+		seen += reads.Load()
+	}
+	// And the watcher really looked at least once. Without this the case is
+	// green when the watcher reads NOTHING AT ALL: the read after each call
+	// above is the TEST's own and says nothing about the watcher, so bad
+	// stays 0 and the window is never looked for. Measured on 16.10.2026
+	// with a watcher mutated to read nothing: exit 0, 0 FAIL -- the check
+	// rode on a counter nobody asked about.
+	if seen == 0 {
+		t.Fatalf("the watcher read the file in none of %d rounds, so no window was measured", rounds)
 	}
 }

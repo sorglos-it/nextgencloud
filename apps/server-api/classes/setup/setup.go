@@ -115,7 +115,8 @@ var errKey = errors.New("setup: key of the wrong size")
 
 // ErrNoCode reports a code file that is there and holds no code: a start cut
 // short between making the file and writing it, or a file somebody else put
-// under that name. The file is never written through (O_EXCL), so the setup
+// under that name. The file is never written through -- the real name comes
+// into being by a hard link onto a free one (EnsureCode) -- so the setup
 // stays shut until it is removed by hand -- and whoever starts the API has to
 // be told, or the admin sees nothing but 404 for good and never learns why.
 //
