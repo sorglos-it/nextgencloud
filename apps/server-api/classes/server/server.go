@@ -179,15 +179,24 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	bs := &browser.Server{S: s, Login: lh, Open: d, Sessions: sessions}
 	sh := &setup.Handler{S: s, CodeFile: SetupCodeFile}
 	if _, err := sh.EnsureCode(); err != nil {
-		// The reason is kept, and that is not cosmetics. Measured on
-		// 13.10.2026 with two real ngc-api on one data directory: of 30 pairs
-		// started in the same moment, 6 had one program refuse to start with
-		// this very sentence -- and the sentence fits a file somebody laid
-		// out, a read-only disk and a database that was merely BUSY alike.
-		// One of those is mended by removing a file, another by waiting, and
-		// the admin could not tell which. Nothing of the one-time code itself
-		// can travel in it: setup.EnsureCode names the file and never what
-		// stands in it.
+		// The reason is kept, and that is not cosmetics: this one sentence
+		// fits a file somebody laid out, a read-only disk and a database that
+		// was merely BUSY alike. One of those is mended by removing a file,
+		// another by waiting, and the admin cannot tell which.
+		//
+		// What that cost is measured, and it was paid by this review itself.
+		// The change that wrapped the reason here was justified with 6 of 30
+		// pairs on 13.10.2026 refusing "with this very sentence", and that
+		// was read as the O_EXCL window in setup.EnsureCode. The sentence
+		// cannot carry that reading -- it is exactly the sentence that threw
+		// the reason away. Re-measured on 16.10.2026 (WSL/ext4, two real
+		// ngc-api on one SQLite file over HTTP, 100 pairs after and 100
+		// before): that window fired 0 times either way, while a start that
+		// got here failed in EnsureInstallation with "state: another API is
+		// at this step". Only the wrapping made that readable at all.
+		//
+		// Nothing of the one-time code itself can travel in it: setup.
+		// EnsureCode names the file and never what stands in it.
 		return nil, fmt.Errorf("der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen: %w", err)
 	}
 	controllers.Version = version

@@ -602,16 +602,20 @@ func TestANoticeOfAControllerLeavesALineWhereNoShellTakesIt(t *testing.T) {
 	}
 }
 
-// TestBuildKeepsTheReasonTheCodeCouldNotBeMade is a measurement of the start
-// of two real ngc-api on one data directory, 13.10.2026 in WSL: of 30 pairs
-// started in the same moment, 6 had one program refuse to start, and the log
-// said "der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen" --
-// a sentence that fits a file somebody laid out, a read-only disk AND a
-// database that was only busy, because the reason was thrown away here.
+// TestBuildKeepsTheReasonTheCodeCouldNotBeMade holds that the start keeps the
+// reason the code could not be made. Without it the log said nothing but "der
+// Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen" -- a sentence
+// that fits a file somebody laid out, a read-only disk AND a database that was
+// only busy. One of those is mended by removing a file and another by waiting,
+// and the admin could not tell which.
 //
-// The admin is the one who pays for that: one of those reasons is mended by
-// removing a file and another is mended by waiting, and the line he gets does
-// not say which. So the reason is kept, and a case holds it.
+// That the sentence names nothing is not only the admin's loss: it was used as
+// evidence. 6 of 30 pairs on 13.10.2026 refusing "with this very sentence" was
+// taken to be the O_EXCL window of setup.EnsureCode, which the sentence cannot
+// show. A re-measurement on 16.10.2026 with two real ngc-api on one SQLite
+// file over HTTP found that window 0 times in 100 pairs and 0 times in 100
+// against the stand before -- the refusals that did happen were the database,
+// and the wrapping this case holds is what made them readable.
 func TestBuildKeepsTheReasonTheCodeCouldNotBeMade(t *testing.T) {
 	db := memstore.New()
 	withStore(t, db)

@@ -191,12 +191,30 @@ func (h *Handler) EnsureCode() (made bool, err error) {
 	// The code is written under a name of our own and the real name comes
 	// into being by a HARD LINK, so that name never exists half written.
 	//
-	// It was O_EXCL on the real name, and that is the race two ngc-api on one
-	// data directory ran into -- measured over HTTP on 13.10.2026: O_EXCL
-	// creates the name before the code is in it, the other start found it
-	// there and EMPTY, read ErrNoCode out of that window and REFUSED TO
-	// START, while nothing was broken. The admin was then sent to remove a
-	// file that held the code of the start that won.
+	// It was O_EXCL on the real name, and that leaves a window: O_EXCL creates
+	// the name BEFORE the code is in it, so another start can find the name
+	// there and EMPTY, read ErrNoCode out of it and refuse to start while
+	// nothing is broken -- and the admin is then sent to remove a file that
+	// holds the code of the start that won. That much is the code itself and
+	// needs no run to see; the link below closes it.
+	//
+	// What is NOT established is that this window is what the two ngc-api of
+	// 13.10.2026 ran into. The commit that made this change said so, and the
+	// only evidence was the refusal "der Einmal-Code für die Ersteinrichtung
+	// lässt sich nicht anlegen" -- the very sentence that commit wrapped a
+	// reason into, BECAUSE on its own it covers every failure of EnsureCode
+	// alike and names none of them. It cannot say which one it was.
+	//
+	// Re-measured on 16.10.2026 on the same ground (WSL/ext4, two real ngc-api
+	// on one SQLite file over HTTP, 100 pairs started in the same moment, and
+	// 100 more against the stand before this change): 0 refusals of this
+	// window in either set, before or after. What did fire was 7 of 100 after
+	// and 5 of 100 before, all of them "die Datenbank ist nicht erreichbar",
+	// plus one seen in a separate run of 30 that failed in EnsureInstallation
+	// ("state: another API is at this step") -- a step BEFORE the code file,
+	// which is why this window is hard to reach at all.
+	// So the loser of two simultaneous starts still does NOT always come up,
+	// and the reason is contention over the database, not this name.
 	//
 	// What the O_EXCL bought is bought here too, and that is why it is a link
 	// and not a rename. A name that is taken is still never written through

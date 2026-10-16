@@ -695,12 +695,17 @@ func TestTheSigningKeyIsClearedAfterUse(t *testing.T) {
 	}
 }
 
-// TestTwoStartsAtOnceBothComeUp is the race two real ngc-api on one data
-// directory run into, measured over HTTP on 13.10.2026: both were started in
-// the same moment, one of them wrote the code file and the other found it
-// there and EMPTY -- O_EXCL creates the name before the code is in it -- read
-// ErrNoCode out of that and REFUSED TO START ("der Einmal-Code für die
-// Ersteinrichtung lässt sich nicht anlegen"), while nothing was broken.
+// TestTwoStartsAtOnceBothComeUp holds the window O_EXCL left on the real
+// name: it creates the name BEFORE the code is in it, so a second start can
+// find the name there and EMPTY, read ErrNoCode out of it and refuse to start
+// while nothing is broken. That is the code and not a run.
+//
+// It is NOT a case over the refusal of 13.10.2026. That refusal was read off
+// the sentence "der Einmal-Code für die Ersteinrichtung lässt sich nicht
+// anlegen", which covers every failure of EnsureCode and names none; a
+// re-measurement on 16.10.2026 with two real ngc-api on one SQLite file over
+// HTTP found this window 0 times in 100 pairs, and 0 times in 100 pairs
+// against the stand before the change (see the comment in EnsureCode).
 //
 // The deliberate case stays what it is: a file that really holds no code is
 // still ErrNoCode (TestEnsureCodeSaysNoCodeWhenTheFileHoldsNone). What this
