@@ -98,11 +98,23 @@ func (srv *Server) Pair(w http.ResponseWriter, r *http.Request) {
 		// answering E_VERIFY for it told a controller that is pairing
 		// correctly that its code was wrong -- measured, 403 while a second
 		// program held the file, and an admin would have made a new code for
-		// nothing. It opens no oracle: sqlstore.OnceUse does its whole lookup
-		// inside ONE write transaction, so the lock is met before any row is
-		// read, and the answer cannot depend on the hash.
-		// TestPairSaysNothingAboutWhetherACodeExists holds that with the list
-		// of store calls, the headers and the body, not with this sentence.
+		// nothing.
+		//
+		// It opens no oracle, and that rests on TWO assurances in two
+		// packages, because neither alone is enough. Here:
+		// TestPairSaysNothingAboutWhetherACodeExists holds that this handler
+		// makes the same store calls in the same order and writes the same
+		// status, headers and body for a hash that exists and one that never
+		// did -- with slices.Equal and maps.EqualFunc, not with a sentence.
+		// But its store is a stub that blocks every call, so it cannot say
+		// anything about the store itself.
+		// The other half is the store's: sqlstore.OnceUse does its whole
+		// lookup inside ONE write transaction, so the lock is met before any
+		// row is read. That is held where it belongs, by
+		// TestOnceUseMeetsTheLockBeforeItReadsARow in
+		// apps/server-db/classes/sqlstore -- against a real file under a real
+		// foreign lock, and a mutant that reads the row before the write dies
+		// on it with "not found" for the unknown value.
 		if dbwait.Busy(err) {
 			httpapi.FailCoded(w, wire.CodeUnreachable, err)
 			return

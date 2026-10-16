@@ -383,3 +383,84 @@ func TestTheBeatGivesEachRoundItsOwnLock(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// stuckTrust blocks the TRUST rows of this round and nothing else, and the
+// filter on the kind is the whole of what makes it a measurement of the
+// second call: the purge of the first reads blob rows as well (lock.Purge
+// through dbapi.BlobFrom), so a store that blocked every blob would be caught
+// by the deadline of the purge and the trust read would never be timed.
+// Measured while this case was written: without the filter the purge held
+// 40,0 s of the case's own patience by itself.
+type stuckTrust struct {
+	dbapi.Store
+	calls atomic.Int64
+}
+
+func (s *stuckTrust) hold(ctx context.Context) error {
+	s.calls.Add(1)
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-time.After(roundCap):
+		return errTestNoDeadline
+	}
+}
+
+func (s *stuckTrust) BlobFrom(ctx context.Context, kind string, from uint64) ([]dbapi.Blob, error) {
+	if kind != dbapi.BlobTrust {
+		return s.Store.BlobFrom(ctx, kind, from)
+	}
+	return nil, s.hold(ctx)
+}
+
+func (s *stuckTrust) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if kind != dbapi.BlobTrust {
+		return s.Store.BlobGet(ctx, kind, id)
+	}
+	return dbapi.Blob{}, s.hold(ctx)
+}
+
+// TestTheHousekeepingRoundBoundsItsSecondCallToo holds the half of
+// Server.minute that said in a comment what nothing measured: the two calls
+// get a deadline EACH and not one over the pair.
+//
+// It was a living mutant, 16.10.2026: handing the server's own context to
+// State.Refresh instead of a round deadline broke no case, because stuckStore
+// blocks the purge only and the trust read of that fixture reaches the real
+// database and answers at once. So the deadline of the FIRST call was
+// measured twice and the one of the second not at all.
+//
+// The purge of this fixture comes back immediately, so what is timed below is
+// the trust read alone.
+func TestTheHousekeepingRoundBoundsItsSecondCallToo(t *testing.T) {
+	srv, db, _ := newServer(t)
+	stuck := &stuckTrust{Store: db}
+	srv.State.DB = stuck
+	buf := logging(t)
+
+	start := time.Now()
+	srv.minute(ctx)
+	took := time.Since(start)
+
+	// The intermediate check: the blocked call was really reached, so a short
+	// time below is a deadline and not a round that skipped the read.
+	if stuck.calls.Load() == 0 {
+		t.Fatal("the trust read was never made, so this case measures an earlier wall")
+	}
+	if took >= roundCap {
+		t.Fatalf("the trust read waited %v, so it carries no deadline of its own; "+
+			"without one a busy database holds it for the measured 80,6 s", took)
+	}
+	if took > 2*dbwait.RoundWait {
+		t.Fatalf("the round took %v against a deadline of %v", took, dbwait.RoundWait)
+	}
+	// And the reason has to survive the second call as well, or the line says
+	// a database is away where one was merely busy.
+	got := buf.String()
+	if !strings.Contains(got, "trust list could not be read") {
+		t.Fatalf("the line of the trust read is missing: %q", got)
+	}
+	if !strings.Contains(got, "db-busy") {
+		t.Fatalf("the trust read names no reason: %q", got)
+	}
+}
