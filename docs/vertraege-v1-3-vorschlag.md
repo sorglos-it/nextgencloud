@@ -1,410 +1,970 @@
-# Vertragsfassung V1.3 — Entscheidungsvorschlag
+# Vertragsfassung V1.3 — Entscheidungsvorlage
 
-**Stand 12.10.2026.** Zusammengetragen aus `docs/vertraege-v1.2.md` (Punkte 24–30), den
-Berichten unter `.superpowers/sdd/` und dem Code der Zweige `api`, `controller`, `db`,
-`recovery`, `web`.
+**Stand 15.10.2026.** Jeder Punkt ist gegen den eingefrorenen Code nachgemessen und so
+umgeschrieben, dass er mit JA oder NEIN zu beantworten ist.
 
-**Dieses Dokument entscheidet nichts.** Es legt Thomas die Entscheidung in einem Zug hin.
-Nichts in `shared/` ist angefasst worden.
-
----
-
-## Das Wichtigste zuerst
-
-**Von den acht bekannten Punkten brauchen nur fünf eine Vertragsänderung.**
-Drei gehören nicht in V1.3:
-
-- **Punkt 6 (MariaDB-Hälfte von W-1)** ist **kein** `shared/`-Punkt. Die Schnittstelle
-  `knowsItsSchema` sitzt in `apps/server-db/classes/migrate/already.go` und ist dort
-  **absichtlich nicht** Teil von `sqlstore.Dialect` — der Kommentar sagt den Grund.
-  `sqlstore` liegt unter `apps/`, nicht unter `shared/`.
-- **Punkt 7 (Einmal-Code vor der MAC)** liegt in `apps/server-api/classes/join/join.go:107`
-  und `.../controllers/pair.go:79`. Beide Male ist es eine **Reihenfolge im eigenen Code**.
-  Kein Vertrag muss sich dafür ändern.
-- **Punkt 8 (zwei Server, ein Name)** liegt in `join.keep` (`join.go:135`). Die
-  Unterscheidung am öffentlichen Schlüssel ist dort baubar; `dbapi.Blob` reicht dafür aus.
-
-**Und die fünf übrigen sind in Wahrheit EIN Punkt** — siehe „Die gemeinsame Wurzel" unten.
+**Dieses Dokument ändert nichts.** In `shared/` ist nichts angefasst. Jeder Änderungssatz
+steht als Textblock da und muss nach dem JA nur noch abgeschrieben werden.
 
 ---
 
-## Rangfolge
+## Wie gemessen wurde
 
-| Rang | Punkt | Art |
+- Arbeitsbaum `D:\claude\nextgencloud-v13`, Zweig `vertraege-v13-vorschlag`, von
+  `origin/main` (`48cb3aa`). Lokale Platte, nicht Z:.
+- Baum vollständig: `git diff --name-only --diff-filter=D HEAD` = **0** Zeilen.
+- Alle acht eingefrorenen Dateien sind **byteweise der Stand von HEAD**
+  (`git hash-object` gegen `git rev-parse HEAD:<datei>`, 8 von 8 gleich). Jede Zeilennummer
+  unten ist aus diesem Stand.
+- Zwei Sonden liefen gegen diesen Stand (Go 1.27.2, eigenes Modul mit `replace`, nichts im
+  Baum geändert). Ihre Ausgaben stehen bei P2 und P10 wörtlich.
+
+**Die Nummern sind neu vergeben.** Die alte Reihe hatte `P6`, `P7` und `P8` **doppelt**
+(einmal als Posten, einmal als „gehört nicht hierher"). Die Nicht-Posten heißen jetzt
+**N1–N3**. Vier Punkte sind dazugekommen: **P10–P13**.
+
+---
+
+## Die Lage in sechs Zeilen
+
+| Punkt | Stand | Art |
 |---|---|---|
-| 1 | P1 — `store.validHTTPSURL` nicht ausgeführt | **Sicherheit**, gemessen |
-| 2 | P2 — `core.Unattended` verbietet den ersten Einbau | **geht gar nicht** |
-| 3 | P3 — das Format einer `ngc-web`-Release-Datei steht nirgends | **geht gar nicht** |
-| 4 | P5 — Referenzfeld in `dbapi.App` fehlt | **geht gar nicht**, dazu eine falsche Zahl |
-| 5 | P4 — `shared/ulh.md` hat keine Balancer-Vorlage | **Bequemlichkeit**, und **sofort machbar** |
-| — | P7, P8 | Entscheidungen, **kein** Vertrag |
-| — | P6 | gehört nicht hierher |
+| **P10** — kein Vertrag darf etwas dazubekommen | **neu, gemessen** | **Tor für P8 + P9** |
+| P1 — `validHTTPSURL` nicht ausgeführt | gilt | Sicherheit, Naht |
+| P2 — `Unattended` verbietet den ersten Einbau | gilt, **schlimmer** | geht gar nicht |
+| P3 — Format einer `ngc-web`-Release-Datei | gilt | geht gar nicht |
+| **P4** — Balancer-Vorlage in `shared/ulh.md` | **ERLEDIGT** | gestrichen |
+| P5 — Referenzfeld in `dbapi.App` | gilt | geht gar nicht |
+| P6 — Kopplungscode 24 Stunden | gilt | Sicherheit, Zahl |
+| P7 — `ngc-api migrate` braucht ganze `api.json` | gilt | geht gar nicht |
+| P8 — Leerlauf nicht von Absturz zu trennen | gilt, **teurer als gedacht** | hängt an P10 |
+| P9 — „besetzt" braucht `E_BUSY` | gilt, **teurer als gedacht** | hängt an P10 |
+| **P11** — `ValidPath` sagt nichts zur Schreibweise | **neu** | Satz, kostenlos |
+| **P12** — Rechte im Katalog nie gegen das Manifest | **neu** | Sicherheit |
+| **P13** — kein Prozessdeckel je App im Manifest | **neu** | Feld |
 
 ---
 
-## P1 — Die Adressprüfung ist nicht ausgeführt (Punkt 25)
+## P10 — Kein Vertrag von `shared/` darf etwas dazubekommen
 
-**Gemessen (von mir, 12.10.2026, am Code):**
-`shared/store/catalog.go:208` heißt `validHTTPSURL`, klein geschrieben. Sie prüft den
-Pfad-und-Query-Teil Zeichen für Zeichen: alles außerhalb 0x21–0x7e fällt durch, dazu
-`" ' < > \ #`.
+**Neu, und es ist die Wurzel von P8 und P9.** Die alte Reihe nennt beide „Ergänzung, kein
+Bruch". **Das ist gemessen falsch.**
 
-**Und hier ist es schlimmer als in Punkt 25 beschrieben.** Die zweite Grammatik gibt es
-schon: `apps/server-api/classes/appstore/fetch.go:335`, `downloadURL`. Sie prüft
-**Länge, `#`, Schema und Rechnername — und den Pfad gar nicht.** Steuerzeichen,
-Leerzeichen, `"`, `'`, `<`, `>` und `\` im Pfad gehen dort durch, in `shared/` nicht.
-
-Die Begründung steht im Code daneben (`fetch.go:76`): „the value is repeated here and
-nothing else of that grammar is". Das ist ehrlich aufgeschrieben — und genau der Zustand,
-den Punkt 25 verhindern wollte.
-
-**Was „nur behauptet" ist:** dass ein Store je so eine Adresse unterschreibt. Nicht
-gemessen. Der Riegel in `VerifyCatalog` greift heute vorher.
-
-**Wenn man es nicht ändert:** die beiden Grammatiken laufen auseinander, und zwar ab
-heute, nicht irgendwann. Wer eine Adresse auf einem anderen Weg hereinbekommt als über
-`VerifyCatalog` — und Punkt 30 baut gerade so einen Weg —, fragt sie mit der schwächeren
-Prüfung an.
-
-**Kleinster Eingriff:** `validHTTPSURL` → `ValidDownloadURL` umbenennen, groß.
-**Ergänzt nur, bricht nicht.** Kein bestehender Aufrufer ändert sich.
-
-**Danach nachzuziehen:** der api-Strang ersetzt `appstore.downloadURL` und
-`maxDownloadURL` durch den Aufruf; die Fälle von `downloadURL` wandern mit.
-
----
-
-### Nachgemessen vom Koordinator am 12.10.2026: erreichbar ist P1 heute nicht
-
-Die schwächere zweite Grammatik gibt es wirklich — nachgesehen auf dem Zweig `api`:
-`appstore.downloadURL` prüft Länge, `#`, Schema und Rechnernamen und schneidet den Rest
-der Adresse weg (`authority, _, _ := strings.Cut(rest, "/")`). Pfad und Query werden
-**nicht angesehen**. So weit stimmt der Befund.
-
-**Aber heute kommt dort keine ungeprüfte Adresse an.** `Download` hat genau **einen**
-Aufrufer im Betrieb (`activate.go:444`). Der nimmt den Eintrag aus `st.Catalog(...)`, und
-das ist ein über `store.VerifyCatalog` geprüfter Katalog — die Adresse ist also schon durch
-`validURL` gegangen. Die Basis kommt aus der Vertrauensliste über `trust.ValidStoreURL`.
-
-**Das ändert den Rang, nicht die Sache:** P1 ist heute **kein offenes Loch, sondern eine
-Naht ohne Riegel**. Gefährlich wird sie beim **nächsten** Aufrufer — wer `Download` später
-mit einer Adresse aus einer anderen Quelle ruft, bekommt keine Warnung, und die Prüfung,
-die er für vollständig hält, sieht den Pfad nicht an. Genau darum ist ein ausgeführtes
-`store.ValidDownloadURL` die richtige Antwort, und genau darum eilt es nicht.
-
-## P2 — Ein ERSTER Einbau ohne Aufsicht geht nicht (Punkt aus Controller 20)
-
-**Gemessen (von mir, 12.10.2026, mit einem Fall gegen `shared/store`):**
+**Gemessen am 15.10.2026**, Sonde gegen den HEAD-Stand von `shared/wire`:
 
 ```
-Newer("1.2.0","") = false
-ValidVersion("")  = false
+ParseClose(code=E_BUSY        ) -> code=""              err=wire: malformed CLOSE payload
+ParseClose(code=E_IDLE        ) -> code=""              err=wire: malformed CLOSE payload
+ParseClose(code=E_UNREACHABLE ) -> code="E_UNREACHABLE" err=<nil>
+ParseClose(status=ok)          -> status="ok"           err=<nil>
 ```
 
-`store.Newer` (`shared/store/manifest.go:236`) gibt für jede ungültige Fassung `false`,
-und `""` ist keine. `core.Unattended` (`shared/core/core.go:229`) endet mit
-`store.Newer(p.Version, installed)` — also **false**, wenn nichts installiert ist.
+**Die Zeile dahinter:** `shared/wire/wire.go:528`, in `Close.Validate`:
 
-**Der Kommentar sagt das Gegenteil.** `core.go:214`: „p.Version is newer than installed
-(…; `""` never is older)". Gemessen falsch. **Genau der Fehler, vor dem die Regel
-„Kommentar gegen Code lesen" warnt.**
+```go
+case StatusError:
+    if _, ok := messages[c.Code]; !ok {
+        return ErrClose
+    }
+```
 
-**Wie weit es reicht:** `trust.AutoSystem` ist ausgenommen (`core.go:229` prüft es vorher,
-`update/system.go:182` ruft deshalb mit `installed=""` auf). Betroffen sind also die
-NGC-Teile `ngc-api`, `ngc-web`, `ngc-controller`.
+Ein Leser, der den neuen Code nicht kennt, **wirft den ganzen Rahmen weg**. Er sieht
+**nicht** „einen Schluss ohne Grund", wie P8 behauptet — er sieht einen **kaputten
+Rahmen**.
 
-**Der Controller hat die Lücke bereits benannt und sich lokal einen Riegel gebaut**
-(`update/install.go:354`: `if installed != "" && !store.Newer(...)`), dazu zwei Wächter in
-`install_test.go:918` und `:924`, die **rot werden, sobald `shared/` repariert ist**.
+**Und es ist nicht nur diese Zeile.** `shared/README.md:199–200` macht es zur Regel für
+alles:
 
-**Wenn man es nicht ändert:** kein unbeaufsichtigter erster Einbau von `ngc-api` oder
-`ngc-web`. Jede Erstinstallation braucht einen angemeldeten Benutzer am Kanal. Die stehende
-Genehmigung in der Vertrauensliste nützt genau beim ersten Mal nichts — also dann, wenn
-niemand da ist.
+> „Feldnamen genau wie im Vertrag, auch in Groß- und Kleinschreibung; **unbekannte Felder
+> werden abgelehnt**."
 
-**Kleinster Eingriff:** eine Zeile in `core.Unattended`:
-`p.Target == trust.AutoSystem || installed == "" || store.Newer(p.Version, installed)`.
-**Das bricht den Vertrag** — eine Funktion sagt danach bei gleicher Eingabe etwas anderes.
-Neue Fassung nötig. Der Kommentar wird dabei **wahr**, nicht umgeschrieben.
+**Es gibt keine Protokollfassung.** Gesucht in `shared/wire/wire.go` und
+`shared/tunnel/tunnel.go`: das einzige `Version`-Feld (`tunnel.go:151`) ist die Fassung
+einer **App**, nicht des Protokolls. Zwei Seiten können sich also nicht darauf
+verständigen, was sie beide verstehen.
 
-**Alternative, die nicht bricht:** `store.Newer` unangetastet lassen und eine neue
-Funktion danebenstellen (`store.NewerOrFirst`). Dann ändert sich `Unattended` trotzdem im
-Verhalten — es führt also kein Weg an einer neuen Fassung vorbei.
+**Was das heute kostet:** API, Controller und Weboberfläche werden **einzeln** aktualisiert
+(`trust.AutoAPI`, `AutoController`, `AutoWeb` sind drei Komponenten,
+`shared/tunnel/tunnel.go:164`). Eine neue API mit `E_BUSY` an einen alten Controller
+heißt: abgewiesener Rahmen, nicht „unbekannter Grund".
 
-**Danach nachzuziehen:** der Controller nimmt seinen lokalen Riegel **nicht** weg (er ist
-laut Kommentar die einzige Wand für den Kanal **mit** Aufgabe), aber die zwei Wächter in
-`install_test.go` müssen umgeschrieben werden — sie sind so gebaut, dass sie bei der
-Reparatur fallen.
+### Der Änderungssatz (zwei Zeilen)
+
+`shared/wire/wire.go`, in `Close.Validate`, `case StatusError` — aus
+
+```go
+        if _, ok := messages[c.Code]; !ok {
+            return ErrClose
+        }
+```
+
+wird
+
+```go
+        // An unknown code comes from a newer peer: a code this build does not
+        // know is read as CodeInternal, so a frame with a reason this side
+        // cannot name is still a close with a reason and not a broken frame.
+        // Without this every code added later breaks every older reader.
+        if _, ok := messages[c.Code]; !ok {
+            c.Code = CodeInternal
+        }
+```
+
+(`Validate` braucht dafür einen Zeiger-Empfänger, oder `ParseClose` setzt es nach dem
+Prüfen — je ein Wort Unterschied, derselbe Satz.)
+
+Dazu **ein Satz in `shared/README.md`**, nach Regel 3:
+
+> Eine Aufzählung eines Vertrags (`wire.Code`, `tunnel.AppState`, `store`-Arten) darf
+> wachsen. Ein Leser, der einen Wert nicht kennt, nimmt den dafür benannten Rückfall
+> (`wire.Code` → `CodeInternal`) und lehnt die Nachricht **nicht** ab. Felder bleiben
+> streng: ein unbekanntes Feld wird weiter abgelehnt.
+
+### Der Preis
+
+- **Das bricht den Vertrag.** `ParseClose` antwortet bei derselben Eingabe anders: heute
+  Fehler, danach ein Schluss mit `E_INTERNAL`. **Neue Fassung nötig.**
+- Mitziehen muss: niemand. Kein Aufrufer ändert sich, kein Feld wandert.
+- **Nachzuziehen:** die Fälle in `shared/wire/wire_test.go`, die heute prüfen, dass ein
+  unbekannter Code abgewiesen wird — die werden rot und müssen umgedreht werden.
+- Die Weboberfläche hat ihre eigene Tabelle (`contracts/wire.js`, nur Zweig `web`); sie
+  braucht denselben Rückfall. Auf `main` liegen in `apps/web/` **zwei** Dateien, dort ist
+  heute nichts zu ändern.
+- Für einen Nutzer, der schon installiert hat: **nichts.** Ein alter Leser bleibt ein alter
+  Leser; die Regel wirkt erst für den, der sie mitbringt.
+
+### Ohne die Änderung
+
+- Jeder neue Code ist **für immer** ein Bruch. P8 und P9 sind dann nicht „eine Zeile",
+  sondern „alle drei Teile müssen gleichzeitig aktualisiert werden" — und genau das kann
+  NGC heute nicht zusagen.
+- Was für immer fehlt: die Möglichkeit, einen Grund **überhaupt** nachzutragen. Nicht
+  „besetzt" fehlt dann, sondern jeder künftige Grund.
+
+**Empfehlung: JA, und zuerst** — weil ohne diese zwei Zeilen jede weitere Zeile dieser
+Liste doppelt so teuer ist.
 
 ---
 
-## P3 — Was eine `ngc-web`-Release-Datei ist, steht nirgends (Punkt aus Controller 20)
+## P1 — Die Adressprüfung ist nicht ausgeführt
 
-**Gemessen (von mir, 12.10.2026):**
+**Gilt.** Nachgemessen am 15.10.2026:
 
-- `config.WebRoot = "/var/www/ngc"` steht in `shared/config/config.go:35` und kommt in
-  **keiner weiteren `.go`-Datei** von `shared/` vor.
-- `shared/testdata/release/ngc-web-all.tar` ist **18 Byte ASCII-Text**, kein tar.
-- Der Controller hat sich deshalb entschieden, eine `ngc-web`-Release-Datei sei ein tar
-  nach `store.WalkUI` mit Präfix `ui/`, und hat das als BLOCKED hingeschrieben
-  (`update/install.go:846`).
+- `shared/store/catalog.go:208`: `func validHTTPSURL(u string) bool` — **klein**.
+- Aufrufer in `shared/`: genau einer, `catalog.go:192`, innerhalb von `validURL`.
+- Die schwächere zweite Grammatik: `apps/server-api/classes/appstore/fetch.go`,
+  `downloadURL` — prüft Länge, `#`, Schema, Rechnername; **den Pfad nicht**.
 
-**Wenn man es nicht ändert:** der Controller entpackt nach einer **Annahme**. Trifft das
-Release-Werkzeug (`release-packer`) eine andere Annahme, ist das Webinterface nach dem
-ersten Update leer oder halb — und `WebRoot` existiert zwischen zwei Umbenennungen
-ohnehin kurz nicht (`install.go:762`). Es gibt heute **keine Stelle**, an der die beiden
-Annahmen aufeinandertreffen und auffallen.
+**Was nicht gilt:** der alte Rang. Heute kommt dort keine ungeprüfte Adresse an —
+`Download` hat einen Aufrufer im Betrieb, und der nimmt den Eintrag aus einem über
+`store.VerifyCatalog` geprüften Katalog. **Es ist eine Naht ohne Riegel, kein offenes
+Loch.**
 
-**Kleinster Eingriff:** ein Satz in `shared/` (README oder `store`), der sagt: eine
-`ngc-web`-Release-Datei ist ein tar nach `store.WalkUI`, Namen unter `ui/`. Dazu eine
-**echte** Testdatei statt der 18 Byte.
-**Ergänzt nur** — wenn die Entscheidung so ausfällt, wie der Controller gebaut hat.
-**Bricht**, wenn es ein schlichtes tar werden soll: dann braucht `shared/` eine zweite,
-sichere Auspack-Funktion.
+### Der Änderungssatz
 
-**Danach nachzuziehen:** `release-packer` baut genau dieses Format; der Controller streicht
-seinen BLOCKED-Absatz; `shared/testdata/release/` bekommt die richtige Datei.
+`shared/store/catalog.go` — Funktion umbenennen und den Kommentarkopf anpassen:
+
+```go
+// ValidDownloadURL reports whether u is an address NGC fetches a package or a
+// UI tar from: nothing, or "/" and a path and query of printable ASCII (0x21
+// to 0x7e) without " ' < > \ and #; at most maxURL bytes.
+//
+// It is the one grammar of a signed download address. A fetcher outside this
+// package checks the address it is about to request against this function
+// rather than trusting that VerifyCatalog has already seen it.
+func ValidDownloadURL(u string) bool {
+```
+
+und im Rumpf von `validURL` (`catalog.go:192`):
+
+```go
+        return ValidDownloadURL(u)
+```
+
+### Der Preis
+
+- **Ergänzt nur, bricht nicht.** Kein bestehender Aufrufer ändert sich, kein Verhalten
+  ändert sich.
+- Mitziehen muss der **api-Strang**: `appstore.downloadURL` und `maxDownloadURL` fallen
+  weg, ihre Fälle wandern mit. Die Begründung im Code daneben
+  („the value is repeated here and nothing else of that grammar is") wird gestrichen.
+- Für einen Nutzer, der schon installiert hat: **nichts.**
+
+### Ohne die Änderung
+
+- Es geht alles. Heute fehlt **nichts**.
+- Für immer fehlt: die Zusage, dass jeder Abholer dieselbe Grammatik benutzt. Der
+  **nächste** Aufrufer von `Download` bekommt keine Warnung und hält seine Prüfung für
+  vollständig, obwohl sie den Pfad nicht ansieht.
+
+**Empfehlung: JA** — Sicherheit gegen Bequemlichkeit, und sie kostet hier nichts
+(Umbenennung, kein Verhalten).
 
 ---
 
-## P5 — Das Referenzfeld in `dbapi.App` fehlt (Punkt 24)
+## P2 — Ein ERSTER Einbau ohne Aufsicht geht nicht
 
-**Gemessen (von mir, 12.10.2026):** `dbapi.App` (`shared/dbapi/dbapi.go:83`) hat die
-Felder ID, Version, Store, Node, Active, Manifest, SHA256, Grants, KeptData, Updated.
+**Gilt, und es ist schlimmer als in der alten Reihe.**
+
+**Gemessen am 15.10.2026**, Sonde gegen den HEAD-Stand:
+
+```
+Newer("1.2.0","")      = false
+ValidVersion("")        = false
+Newer("1.2.0","1.1.0") = true
+```
+
+Die Zeilen:
+
+- `shared/store/manifest.go:236` — `Newer` gibt für jede ungültige Fassung `false`, und
+  `""` ist keine.
+- `shared/core/core.go:225` — `func Unattended(...)`, und `:229`:
+  `return p.Target == trust.AutoSystem || store.Newer(p.Version, installed)`.
+- Der Kommentar darüber (`core.go:214`) sagt: **„`""` never is older"**. **Gemessen
+  falsch.** Genau der Fehler, vor dem „Kommentar gegen Code lesen" warnt.
+
+**Neu gegenüber der alten Reihe: der Ersatz steht jetzt an ZWEI Stellen**, nicht an einer.
+
+| Stelle | Zeile |
+|---|---|
+| Controller | `apps/server-controller/classes/update/install.go:353` |
+| **API** | `apps/server-api/classes/updates/rollout.go:253` |
+
+Beide schreiben dasselbe von Hand: `installed != "" && !store.Newer(...)`. Die
+gemeinsame Wurzel hat also schon zweimal gekeimt.
+
+Dazu zwei Wächter, die **rot werden, sobald `shared/` repariert ist** — so gebaut,
+absichtlich: `install_test.go:929` und `:934`, in
+`TestInstallOfAFirstPartWithoutAUserIsRefusedByTheContract`.
+
+### Der Änderungssatz
+
+`shared/core/core.go:229` — aus
+
+```go
+	return p.Target == trust.AutoSystem || store.Newer(p.Version, installed)
+```
+
+wird
+
+```go
+	return p.Target == trust.AutoSystem || installed == "" ||
+		store.Newer(p.Version, installed)
+```
+
+Im Kommentarkopf (`core.go:213–214`) wird der Satz **wahr**, nicht umgeschrieben:
+
+```go
+// file's release or catalog; nil for trust.AutoSystem), and p.Version is
+// newer than installed, where nothing installed ("") is older than every
+// version: the FIRST install of a part is an unattended one too. store.Newer
+// answers false for "" because "" is no version, so that case stands here.
+```
+
+### Der Preis
+
+- **Das bricht den Vertrag.** `Unattended` antwortet bei derselben Eingabe anders.
+  **Neue Fassung nötig.** Eine Nebenfunktion (`store.NewerOrFirst`) hilft nicht: das
+  Verhalten von `Unattended` ändert sich so oder so.
+- Mitziehen müssen: **Controller und API**. Beide behalten ihren lokalen Riegel (er ist
+  laut Kommentar die einzige Wand für den Kanal **mit** Aufgabe), aber die zwei Wächter in
+  `install_test.go` müssen umgedreht werden — sie sind darauf gebaut zu fallen.
+- Für einen Nutzer, der schon installiert hat: **nichts** — er hat ja installiert. Der
+  Preis fällt bei dem an, der noch nichts hat.
+
+### Ohne die Änderung
+
+- Alles Bestehende läuft. Updates funktionieren.
+- Für immer fehlt: **jede Erstinstallation von `ngc-api`, `ngc-web` oder
+  `ngc-controller` ohne angemeldeten Benutzer.** Die stehende Genehmigung in der
+  Vertrauensliste nützt genau beim ersten Mal nichts — also dann, wenn niemand da ist.
+  `trust.AutoSystem` ist ausgenommen und bleibt es.
+
+**Empfehlung: JA** — eine Zusage, die im eigenen Kommentar steht und gemessen nicht gilt,
+ist keine Abwägung, sondern ein Fehler.
+
+---
+
+## P3 — Was eine `ngc-web`-Release-Datei ist, steht nirgends
+
+**Gilt.** Nachgemessen am 15.10.2026:
+
+- `shared/config/config.go:35`: `WebRoot = "/var/www/ngc"` — und in **keiner weiteren
+  `.go`-Datei** von `shared/`.
+- `shared/testdata/release/ngc-web-all.tar` ist **18 Byte**, Inhalt:
+  `NGC web test file` — kein tar.
+- Der Controller hat sich entschieden und es als BLOCKED hingeschrieben:
+  `apps/server-controller/classes/update/install.go:873` (die alte Reihe nannte `:846`;
+  die Funktion ist gewandert).
+
+**Neu gemessen, und es macht die Entscheidung billiger:** `release-packer` **gibt es
+nicht**. In `tools/` liegen `check.sh`, `modules.go`, `tunnelprobe` — kein Packer, und
+keine Datei in `tools/` nennt `ngc-web`. Der zweite Schreiber ist also noch nicht gebaut:
+**heute entscheiden kostet nichts, später entscheiden kostet einen Umbau.**
+
+### Der Änderungssatz
+
+`shared/README.md`, im Abschnitt zu den Release-Dateien, ein Absatz:
+
+> **Release-Datei eines NGC-Teils.** Eine Release-Datei von `ngc-web` ist ein tar in
+> genau der Form, die `store.WalkUI` liest: alle Namen unter `ui/`, keine absoluten
+> Pfade, kein `..`, keine Links, keine Sparse-Dateien, begrenzte Größen. Der Controller
+> entpackt sie mit `store.WalkUI` und ersetzt das Präfix `ui/` durch `config.WebRoot`.
+> Das Release-Werkzeug baut genau diese Form. Es gibt keine zweite Auspack-Funktion.
+
+Dazu `shared/testdata/release/ngc-web-all.tar` **durch ein echtes tar dieser Form
+ersetzen** (ein `index.html` unter `ui/` reicht), und einen Fall, der es mit
+`store.WalkUI` liest.
+
+### Der Preis
+
+- **Ergänzt nur** — wenn die Entscheidung so ausfällt, wie der Controller gebaut hat.
+- **Bricht**, wenn es ein schlichtes tar ohne `ui/` werden soll: dann braucht `shared/`
+  eine **zweite sichere Auspack-Funktion**, und der Controller baut seinen Teil um. Das
+  ist der teure Weg, und nichts spricht heute dafür.
+- Mitziehen muss: das Release-Werkzeug (gibt es noch nicht — es wird so gebaut); der
+  Controller streicht seinen BLOCKED-Absatz.
+- Für einen Nutzer, der schon installiert hat: **nichts** — bis zu seinem ersten
+  `ngc-web`-Update, und das ist der Punkt.
+
+### Ohne die Änderung
+
+- Es geht alles, solange niemand ein `ngc-web`-Release baut.
+- Für immer fehlt: die Stelle, an der die beiden Annahmen aufeinandertreffen. Trifft das
+  Release-Werkzeug eine andere, ist das Webinterface nach dem ersten Update **leer oder
+  halb** — und `WebRoot` existiert zwischen zwei Umbenennungen ohnehin kurz nicht
+  (`install.go:843`). Es fällt niemandem auf, bis es einem Nutzer auffällt.
+
+**Empfehlung: JA, in der Form, die der Controller gebaut hat** — sie benutzt die eine
+sichere Auspack-Funktion, die es schon gibt, statt eine zweite zu verlangen.
+
+---
+
+## P4 — ERLEDIGT, gestrichen
+
+**Die Vorlage ist eingetragen.** `shared/ulh.md:175–201` enthält sie vollständig
+(`SSLProxy*`-Zeilen, `<Proxy "balancer://ngc-api">`, zwei `BalancerMember`,
+`ProxySet`, `ProxyPass`/`ProxyPassReverse`), dazu den Satz:
+
+> „Die genaue Form ist diese Vorlage; `ngc-web` und der Controller schreiben genau sie,
+> Zeile für Zeile. … Es gibt keine andere erlaubte Abweichung."
+
+**Belegt:** `git log -- shared/ulh.md` → `7c9c405` „Write the balancer template into the
+ulh contract". Der Riegel dazu läuft:
+`TestBalancerTemplateMatchesTheContract`,
+`apps/server-controller/classes/apache/apache_test.go:490` — er vergleicht die Vorlage
+**byteweise** mit dem, was der Controller schreibt.
+
+**Begründung der Streichung:** der Posten war „die Vorlage fehlt". Sie fehlt nicht mehr,
+und `shared/ulh.md` war ohnehin die einzige gewährte Ausnahme vom Einfrieren. **Kein
+v1.3-Posten.** Schritt 6 der Controller-Aufgabe kann laufen.
+
+---
+
+## P5 — Das Referenzfeld in `dbapi.App` fehlt
+
+**Gilt.** Nachgemessen am 15.10.2026: `shared/dbapi/dbapi.go:83`, `type App struct` — die
+Felder sind ID, Version, Store, Node, Active, Manifest, SHA256, Grants, KeptData, Updated.
 **Kein Feld für die Abbild-Referenz.**
 
-**Übernommen aus Punkt 24 (Controller 16, 10.10.2026), nicht von mir nachgemessen:** die
-vier Zeilen zu `user.go:188`, `podman.go:438`, `user.go:258`, `data.go:227`.
+Die vier Zeilen zur Folge sind aus Punkt 24 übernommen (Controller 16, 10.10.2026) und
+**von mir nicht nachgemessen**: `user.go:188`, `podman.go:438`, `user.go:258`,
+`data.go:227`.
 
-**Von mir am Bericht nachgesehen:** Aufgabe 22 der API bestätigt es unabhängig
-(`task-22-report.md:366`): das Löschen der UI-Zeilen beim Deinstallieren ist „genau
-dagegen gebaut, dass eine Zeile ohne Referenz liegen bleibt" — die Reihenfolge
-Controller → UI-Zeilen → App-Zeile ist **von Hand** richtig herum gebaut und mit einem
-Mutanten (`row-before-ui-rows`) gehalten.
+### Der Änderungssatz
 
-**Wenn man es nicht ändert:** zweierlei.
-Erstens bleibt bei `KeepData` ein Abbild **für immer** im Datenverzeichnis liegen, und
-keine Buchführung weiß davon. Zweitens — und das wiegt schwerer — zeigt `DataSize` dem
-Verwalter die Abbild-Schichten **als eigene Daten**. Er entscheidet über das Löschen
-anhand einer Zahl, die etwas anderes zählt als ihr Name sagt.
+`shared/dbapi/dbapi.go`, in `type App struct`, hinter `SHA256`:
 
-**Kleinster Eingriff:** ein Feld `Image string` in `dbapi.App`.
-**Das bricht den Vertrag:** jede Umsetzung von `dbapi` (`memstore`, `sqlstore`) muss das
-Feld tragen, und `dbtest` muss es prüfen — sonst steht es morgen nur in einem der beiden.
+```go
+	// Image is the reference of the container image this app was built from,
+	// as the package's tar named it. The controller writes it at install and
+	// reads it to remove the image: Engine.RemoveImage needs a reference, and
+	// an update without services brings no tar to take one from. Empty for an
+	// app with no image (only kept data remains).
+	Image string
+```
 
-**Danach nachzuziehen:** `memstore` und `sqlstore` (db-Strang), eine Zeile in `dbtest`,
-eine Migration in `apps/server-db/sql/`, und der Controller schreibt das Feld beim
-Einbauen und liest es beim Entfernen. Er prüft dabei mit, ob dasselbe Feld auch dem
-Deinstallieren hilft, statt sich auf den Benutzer zu verlassen.
+### Der Preis
 
----
+- **Das bricht den Vertrag.** Jede Umsetzung von `dbapi` muss das Feld tragen, sonst steht
+  es morgen nur in einer. **Neue Fassung nötig.**
+- Mitziehen müssen: **`memstore` und `sqlstore`** (db-Strang), **eine Zeile in `dbtest`**
+  (sonst prüft niemand, dass beide es tragen), **eine nummerierte Migration** in
+  `apps/server-db/sql/`, und der **Controller** schreibt beim Einbauen und liest beim
+  Entfernen.
+- **Für einen Nutzer, der schon installiert hat: das ist der einzige Punkt mit echtem
+  Preis.** Eine Migration läuft über seine Datenbank, und für Apps, die vorher eingebaut
+  wurden, bleibt das Feld **leer** — deren Abbilder bleiben also weiter liegen. Die
+  Migration repariert die Vergangenheit nicht, sie macht nur die Zukunft buchführbar.
+  Das gehört in die Release-Notiz.
+- `dbapi.App` ist eine **interne** Go-Struktur ohne JSON-Namen. P10 gilt dafür **nicht**
+  — ein neues Feld hier geht keinem Leser am Draht vor die Füße.
 
-## P4 — `shared/ulh.md` hat keine Balancer-Vorlage (Controller 22)
+### Ohne die Änderung
 
-**Gemessen (von mir, 12.10.2026):** `shared/ulh.md:148–157`. Die Regel steht in Prosa:
-Datei `/etc/ngc/apache-apis.conf`, wer schreiben darf, atomar, Modus 0644, `apachectl
-configtest`, je API ein `BalancerMember`. Und dann, Zeile 156:
+- Einbauen, Updaten und Deinstallieren gehen. Niemand verliert Daten.
+- Für immer fehlt **zweierlei**:
+  1. Mit `KeepData` beim Deinstallieren bleibt ein Abbild **für immer** im
+     Datenverzeichnis liegen, und keine Buchführung weiß davon.
+  2. **Das wiegt schwerer:** `DataSize` zeigt dem Verwalter die Abbild-Schichten **als
+     eigene Daten der App**. Er entscheidet über das Löschen anhand einer Zahl, die
+     etwas anderes zählt, als ihr Name sagt — bei einem Gigabyte Abbild um
+     Größenordnungen daneben.
 
-> „Die genaue Form legt der Plan des Webinterface fest und **trägt sie hier als Vorlage
-> ein**; der Controller schreibt genau diese Form."
-
-**Die Vorlage ist nicht eingetragen.** Die Regel verlangt sie und nennt sich selbst als
-Ort. Darum ist Schritt 6 jener Aufgabe offen.
-
-**Wenn man es nicht ändert:** der Controller kann „genau diese Form" nicht schreiben, weil
-es keine gibt. Zwei Seiten schreiben in dieselbe Datei (`ngc-web` und der Controller mit
-Rolle `web`) — und jede nach ihrer eigenen Vorstellung. Nach dem nächsten
-`configure` sieht die Datei anders aus als nach dem letzten.
-
-**Kleinster Eingriff:** die Vorlage aus dem Web-Plan nach `shared/ulh.md` kopieren.
-**Ergänzt nur.**
-
-**Und das Beste: dafür braucht es V1.3 gar nicht.** `shared/ulh.md` ist die **einzige
-gewährte Ausnahme** vom Einfrieren — so steht es im db-Bericht
-(`task-7-report.md:226`: „die einzige gewährte Ausnahme ist `shared/ulh.md`").
-Das kann der Web-Strang heute machen.
-
-**Danach nachzuziehen:** der Controller-Strang nimmt Schritt 6 wieder auf.
+**Empfehlung: JA, aber als letzter der fünf** — er ist der einzige, der die Datenbank und
+einen bestehenden Nutzer anfasst, und er eilt am wenigsten (es geht um Platz und eine
+Zahl, nicht um einen Weg, der versperrt ist).
 
 ---
 
-## P6 — Ein Kopplungscode gilt 24 Stunden, nicht 30 Sekunden (Sicherheitsfrage)
+## P6 — Ein Kopplungscode gilt 24 Stunden
 
-**Nachgetragen am 12.10.2026**, gefunden von der Abschlussprüfung des Controller-Pakets und mit
-dem Befehl dahinter nachgemessen.
+**Gilt.** Nachgemessen am 15.10.2026: `shared/tunnel/tunnel.go:35`:
 
-`tunnel.PairLifetime = 86400` — ein Kopplungscode ist **24 Stunden** gültig. Zwei Kommentare
-begründeten das Lesen des Codes von der Tastatur aber mit „**dreißig Sekunden**"
-(`node/ask.go`, `node/main.go`). Die 30 Sekunden sind `pairing.Timeout` und begrenzen nur die
-**HTTP-Anfrage**, nicht die Gültigkeit des Codes.
+```go
+	PairLifetime   = 86400
+```
 
-**Das Fenster ist also 2880-mal so groß, wie die Begründung im Code sagt.** Die Kommentare sind
-berichtigt; die **Zahl** liegt in eingefrorenem `shared/tunnel/tunnel.go` und ist nicht geändert
-worden.
+Dazu zwei Felder, die sich darauf berufen (`tunnel.go:86` und `:107`:
+„one use, valid for PairLifetime").
 
-**Was zu entscheiden ist:** ob 24 Stunden für einen Kopplungscode richtig sind.
+Die Kommentare, die das Lesen von der Tastatur mit „dreißig Sekunden" begründeten
+(`node/ask.go`, `node/main.go`), sind berichtigt. Die 30 Sekunden sind `pairing.Timeout`
+und begrenzen nur die **HTTP-Anfrage**. **Das Fenster ist 2880-mal so groß, wie die
+Begründung sagte.**
 
-**Was dafür spricht:** Thomas richtet einen Server vielleicht nicht in einem Zug ein — ein Code,
-der während des Kaffeeholens verfällt, kostet jeden Versuch neu. Und der Code allein genügt nicht:
-er wird einmal verbraucht, und wer ihn hat, braucht zusätzlich den Weg zum Tunnel.
+### Der Änderungssatz
 
-**Was dagegen spricht:** 24 Stunden sind lang genug, dass ein Code in einem Terminalprotokoll,
-einem Chatfenster oder einer Notiz liegen bleibt, und er ist bis dahin brauchbar. Dazu kommt
-**Punkt 26**: der Einmal-Wert wird **vor** der MAC-Prüfung verbraucht — wer die Adresse kennt,
-kann einen wartenden Code also auch ohne ihn verbrennen. Beides zusammen heißt: ein langes Fenster
-ist nicht nur eine lange Chance zum Mitlesen, sondern auch eine lange Zeit, in der jemand das
-Einrichten stören kann.
+`shared/tunnel/tunnel.go:35` — aus
 
-**Mein Vorschlag, wenn du eine Zahl willst:** eine Stunde. Lang genug für ein Einrichten mit
-Unterbrechung, kurz genug, dass ein liegen gebliebener Code am nächsten Morgen nichts mehr ist.
-**Gemessen ist das nicht** — es ist eine Abwägung, und die Entscheidung gehört dir.
+```go
+	PairLifetime   = 86400
+```
+
+wird
+
+```go
+	// PairLifetime is how long a pair or join code stays usable, in seconds.
+	// One hour: long enough to set a server up with an interruption, short
+	// enough that a code left in a terminal log or a chat window is worth
+	// nothing the next morning. The HTTP request itself has its own, much
+	// shorter limit (pairing.Timeout); this is the life of the code.
+	PairLifetime   = 3600
+```
+
+### Der Preis
+
+- **Das bricht den Vertrag** — eine Zusage über eine Gültigkeit wird kürzer.
+  **Neue Fassung nötig.**
+- Mitziehen muss: niemand im Code. Die Zahl steht an einer Stelle.
+- **Was es einen Nutzer kostet:** wer einen Code holt und das Einrichten länger als eine
+  Stunde liegen lässt, holt einen neuen. Das ist der ganze Preis — und es ist spürbar,
+  deshalb steht es hier.
+- **Nachzuziehen:** jeder Text, der dem Nutzer eine Gültigkeit nennt, und die `ulh`-Skripte,
+  falls sie eine Zahl nennen.
+
+### Ohne die Änderung
+
+- Das Koppeln geht. Niemand ist ausgesperrt.
+- Für immer bleibt: 24 Stunden sind lang genug, dass ein Code in einem Terminalprotokoll,
+  einem Chatfenster oder einer Notiz **liegen bleibt** und bis dahin brauchbar ist. Dazu
+  N1 (der Einmal-Wert wird **vor** der MAC-Prüfung verbraucht): wer die Adresse kennt,
+  kann einen wartenden Code also auch ohne ihn verbrennen — ein langes Fenster ist darum
+  nicht nur eine lange Chance zum Mitlesen, sondern auch eine lange Zeit, in der jemand
+  das Einrichten stören kann.
+- **Gemessen ist keine der beiden Zahlen.** Es ist eine Abwägung.
+
+**Empfehlung: JA, eine Stunde** — bei Sicherheit gegen Bequemlichkeit die sicherere
+Variante, und eine Stunde deckt ein Einrichten mit Unterbrechung noch ab.
+
+---
 
 ## P7 — `ngc-api migrate` kann einen reinen Datenbankknoten nicht bedienen
 
-**Nachgetragen am 12.10.2026**, mit der genauen Zeile, nachdem Punkt 34 gelöst war und
-`ngc-api` zum ersten Mal wirklich gelaufen ist.
+**Gilt.** Nachgemessen am 15.10.2026, der ganze Weg:
 
-**Die Blockade, gemessen am Weg:** `main.go migrate()` → `load()` → `config.LoadAPI` →
-`parseAPI` → `(*API).Validate`. Und dort steht, in **`shared/config/config.go:533`**:
+`apps/server-api/main.go:150` `migrate()` → `:121` `load()` → `config.LoadAPI` →
+`parseAPI` → `(*API).Validate`. Und dort, **`shared/config/config.go:533`**:
 
 ```go
-if !wire.ValidName(a.Node) || !trust.ValidTunnelURL(a.URL) || a.Listen == "" || …
+	if !wire.ValidName(a.Node) ||
+		!trust.ValidTunnelURL(a.URL) ||
+		a.Listen == "" || len(a.Listen) > MaxField ||
+		a.Cert == "" || len(a.Cert) > MaxField ||
+		a.CertKey == "" || len(a.CertKey) > MaxField ||
+		len(a.NoiseKey.Bytes()) != 32 || … len(a.ChallengeKey.Bytes()) != 32 ||
+		len(a.ReleaseKey) != 32 || len(a.StoreKey) != 32 ||
 ```
 
-dazu die Schlüsselprüfungen in den Zeilen darunter. `ngc-api migrate` verlangt damit eine
-**vollständige** `api.json`: Knoten-ID, Tunnel-Adresse, Listen-Adresse, zwei Zertifikatspfade,
-vier Schlüssel zu je 32 Byte, Release- und Store-Schlüssel, Store-Adresse, zwei Laufzeiten.
+`ngc-api migrate` verlangt damit eine **vollständige** `api.json`. Ein reiner
+Datenbankknoten hat die nicht — er hat `controller.json` mit einem Feld `Migrate *DB`,
+und **dieses Feld hat bis heute keinen Leser**: nachgesehen, es kommt nur in
+`config.go:676`, `:679`, `:680` (Validate) und `:748`, `:749` (LogValue) vor.
 
-**Ein reiner Datenbankknoten hat das nicht.** Er hat `controller.json` mit einem Feld
-`Migrate *DB` — und genau dieses Feld **hat bis heute keinen Leser** (nur `Validate` und
-`LogValue` fassen es an).
+### Der Änderungssatz
 
-**Das ist die Blockade von Punkt 28 in einer Zeile.** Die Entscheidung dort — der Controller
-startet `ngc-api migrate` als Programm und bekommt keinen eigenen Läufer — bleibt richtig, weil
-zwei Läufer über einem Schema die Form von W-1 sind. Nur **ausführbar** ist sie so nicht.
+`shared/config/config.go`, neben `LoadAPI`, eine zweite Lesefunktion:
 
-**Zwei Wege, und beide berühren `shared/config`:**
-- **Ein Weg, `migrate` nur eine `config.DB` zu geben** (ein eigener Ladepfad für den
-  Unterbefehl, der `api.json` nicht verlangt). Klein, und es macht `Controller.Migrate` endlich
-  zu einem gelesenen Feld.
-- **Oder der db-Knoten bekommt eine `api.json`**, die nur fürs Migrieren reicht. Dann ist die
-  Frage, was „reicht" heißt — und jede Antwort darauf lockert `Validate` für **alle**.
+```go
+// LoadMigrate reads the database part of an API configuration for the migrate
+// subcommand alone: a db node has no api.json of its own, it has the Migrate
+// field of its controller.json, and nothing of the tunnel, the listen address
+// or the keys exists there. It checks DB and Node and nothing else, so that
+// (*API).Validate stays as strict as it is for everyone who serves.
+func LoadMigrate(path string) (*DB, string, error) {
+	// read the file like LoadAPI does, then:
+	//   if !wire.ValidName(node) { return nil, "", ErrConfig }
+	//   if err := db.Validate(); err != nil { return nil, "", err }
+}
+```
 
-**Ausdrücklich nicht gebaut:** eine zweite Konfigurationsform. Das wäre eine zweite Wahrheit über
-die Zugangsdaten der Datenbank, und `shared/` ist eingefroren. Der Strang hat die Zeile gemeldet
-statt sie zu umgehen — richtig.
+und in `apps/server-api/main.go` ruft `migrate()` **diese** statt `load()`.
 
-**Was dadurch heute offen bleibt:** der Weg, auf dem die Migrationen einer neuen Fassung wirklich
-eingespielt werden. `ngc-api migrate` **läuft** (gemessen: „1 Migration eingespielt.", wiederholbar
-„0 Migrationen eingespielt."), aber nur mit einer vollständigen `api.json` — also auf einem
-API-Server, nicht auf dem db-Knoten, dem der Controller die Datei bereitlegt.
+### Der Preis
+
+- **Ergänzt nur, bricht nicht.** `(*API).Validate` bleibt unverändert streng. Das ist der
+  Grund, diesen Weg zu nehmen und **nicht** `Validate` zu lockern: jede Antwort auf „was
+  reicht fürs Migrieren" lockert sie sonst **für alle**, auch für den, der bedient.
+- Mitziehen müssen: `apps/server-api/main.go` (eine Zeile im `migrate`-Zweig), der
+  **Controller** (er legt dem db-Knoten die Datei bereit und startet das Programm), und
+  die `ulh`-Skripte für die Rolle `db`.
+- **`Controller.Migrate` wird damit endlich ein gelesenes Feld.**
+- Für einen Nutzer, der schon installiert hat: **nichts.** Heute läuft dieser Weg nicht,
+  es kann also keiner darauf gebaut haben.
+
+**Ausdrücklich nicht:** eine zweite Konfigurationsform. Das wäre eine zweite Wahrheit über
+die Zugangsdaten der Datenbank.
+
+### Ohne die Änderung
+
+- `ngc-api migrate` **läuft** — gemessen durch den Strang: „1 Migration eingespielt.",
+  wiederholbar „0 Migrationen eingespielt." Nur auf einem **API-Server** mit voller
+  `api.json`.
+- Für immer fehlt: der Weg, auf dem die Migrationen einer neuen Fassung **auf dem
+  db-Knoten** eingespielt werden — also genau dort, wo der Controller die Datei
+  bereitlegt und wo Punkt 28 sie haben wollte. Die Entscheidung von Punkt 28 (ein Läufer,
+  als Programm gestartet) bleibt richtig; **ausführbar ist sie so nicht.**
+
+**Empfehlung: JA, über `LoadMigrate`** — die sicherere Variante, weil sie die strenge
+Prüfung für jeden, der bedient, unangetastet lässt.
+
+---
 
 ## P8 — Die Leerlaufgrenze des Terminals ist von einem Absturz nicht zu unterscheiden
 
-**Gemessen am 12.10.2026** vom Webpaket, beim Bauen der Gegenseite des Terminal-Protokolls.
+**Gilt — und der Preis ist höher als in der alten Reihe.**
 
-Der Controller beendet ein Terminal nach 30 Minuten Stille (Punkt 29, die Zahl ist aus
-`terminal.IdleLimit` abgeleitet). Auf der Weboberfläche kommt davon **ein Schluss ohne „ok"** an,
-genau wie bei einem Absturz — der Dienst endet mit Code 1. Die App sagt darum „Die Verbindung
-wurde abgeschnitten."
+Nachgemessen am 15.10.2026:
 
-**Das ist für einen Benutzer die falsche Auskunft.** „Du warst zu lange weg" und „etwas ist
-kaputt" sind zwei verschiedene Lagen, und die zweite lässt ihn nach einem Fehler suchen, den es
-nicht gibt.
+- `terminal.IdleLimit = 30 * time.Minute`,
+  `apps/server-controller/classes/terminal/terminal.go:102`.
+- In `shared/wire/wire.go:450–469` steht die Code-Liste. **Kein Code für Leerlauf.**
+- `Close` (`wire.go:493`) hat `Status`, `Code`, `Message`, `ExitCode` — der Dienst endet
+  mit Code 1, und mehr kommt oben nicht an.
 
-**Der kleinstmögliche Eingriff:** ein eigener Schlusscode in `shared/wire` für „Leerlaufgrenze
-erreicht". Das ist eine Ergänzung, kein Bruch — ein alter Leser, der den Code nicht kennt, sieht
-weiter einen Schluss.
+**Die alte Reihe sagt „Ergänzung, kein Bruch". Das ist gemessen falsch** — siehe P10:
+ein alter Leser **wirft den Rahmen weg** (`wire: malformed CLOSE payload`), er sieht
+nicht „weiter einen Schluss".
 
-**Was danach nachzuziehen ist:** der Controller schickt ihn (eine Zeile), die Weboberfläche sagt
-den eigenen Satz (eine Zeile). Beide Seiten sind gebaut und warten nur auf den Code.
+### Der Änderungssatz
 
-**Rang: Bequemlichkeit** — niemand verliert Daten, und es ist keine Sicherheitsfrage. Aber es ist
-der billigste Punkt dieser Liste, und er betrifft jeden Benutzer, der einmal Kaffee holt.
+`shared/wire/wire.go`, in der Code-Liste (nach `CodeLocked`, `:469`):
 
-## Die gemeinsame Wurzel — P1, P2, P3, P4 und P5 sind derselbe Punkt
+```go
+	// CodeIdle ends a stream that neither took input nor gave output for its
+	// idle limit (terminal.IdleLimit). It is not an error of the service: the
+	// far side says "you were away", not "something broke".
+	CodeIdle Code = "E_IDLE"
+```
 
-Thomas hat richtig gerochen. Alle fünf haben dieselbe Form, und zwar belegbar:
+und in `messages` (`:471` ff.):
 
-> **In `shared/` ist der Wert da oder geprüft — aber nicht dort, wo ihn der Nächste
-> braucht. Also baut sich der Nachbar einen Ersatz, und der ist schwächer.**
+```go
+	CodeIdle:        "Wegen Leerlaufs beendet.",
+```
 
-| Punkt | Der Wert ist da als … | Der Nachbar baut … | Beleg |
-|---|---|---|---|
-| P1 | `validHTTPSURL`, klein | `appstore.downloadURL`, **ohne Pfad-Prüfung** | `fetch.go:335` |
-| P2 | `Unattended`, das `""` nicht kennt | `installed != "" && …` im Controller | `install.go:354` |
-| P3 | `config.WebRoot` ohne Format | Annahme „tar nach `WalkUI`" | `install.go:846` |
-| P4 | Regel ohne Vorlage | zwei Schreiber, zwei Formen | `ulh.md:156` |
-| P5 | `dbapi.App` ohne Referenz | Löschreihenfolge von Hand | `task-22-report.md:366` |
+### Der Preis
 
-**Das heißt für die Entscheidung:** es sind nicht fünf Einzelfragen, sondern eine
-Entscheidung mit fünf Stellen. Wer sie als eine behandelt, kann einen Satz in V1.3
-schreiben, der die sechste Stelle verhindert:
+- **Das bricht den Vertrag — es sei denn, P10 ist vorher drin.** Mit P10 ist es eine
+  Ergänzung: ein alter Leser liest `E_INTERNAL` und sagt wenigstens etwas. Ohne P10
+  müssen Controller, API und Weboberfläche **gleichzeitig** aktualisiert werden, und das
+  kann NGC nicht zusagen (drei einzeln aktualisierte Komponenten,
+  `tunnel.go:164`).
+- Mitziehen müssen: der **Controller** schickt ihn (eine Zeile), die **Weboberfläche** sagt
+  den eigenen Satz (eine Zeile) und braucht den Code in ihrer eigenen Tabelle
+  (`contracts/wire.js`, Zweig `web`). **Beide Seiten sind gebaut und warten nur auf den
+  Code.**
+- Für einen Nutzer, der schon installiert hat: **nichts** bei vorhandenem P10; **ein
+  abgewiesener Rahmen statt eines Schlusses** ohne P10.
 
-> **Jede Prüfung, die `shared/` kennt, ist ausgeführt. Jeder Wert, den ein Nachbar
-> aufschreiben muss, hat ein Feld. Jede Form, die zwei Seiten schreiben, steht als
-> Vorlage im Vertrag. Wo das nicht geht, steht im Vertrag, warum.**
+### Ohne die Änderung
 
-Vier der fünf Eingriffe sind **klein**: eine Umbenennung, eine Zeile, ein Satz plus eine
-Testdatei, eine Vorlage. Nur P5 zieht die Datenbank nach.
+- Das Terminal geht. Die Grenze greift. Niemand verliert Daten.
+- Für immer fehlt: „Du warst zu lange weg" und „etwas ist kaputt" bleiben **dieselbe
+  Auskunft**. Der Benutzer liest „Die Verbindung wurde abgeschnitten." und sucht nach
+  einem Fehler, den es nicht gibt. Das trifft jeden, der einmal Kaffee holt.
 
----
-
-## Was NICHT in V1.3 gehört, und warum
-
-**P7 — Einmal-Code vor der MAC** (`join.go:107`, `pair.go:79`).
-Kein Vertrag. Es ist eine **Entscheidung**, und beide Seiten haben einen Preis:
-heute verbrennt eine falsche MAC den wartenden Code (billiges Zumachen von außen);
-andersherum darf jemand beliebig oft gegen denselben Code rechnen. `pair.go:55` begründet
-die heutige Wahl bereits im Kommentar („the safe half of that trade").
-**Vorher zu messen, und es ist nicht gemessen:** wie lange ein Code gilt und wie oft er neu
-ausgegeben wird. Wer entscheidet, entscheidet für **beide** Stellen.
-
-**P8 — zwei Server, ein Name** (`join.go:135`).
-Kein Vertrag. Der öffentliche Schlüssel liegt in der Anfrage; `join.keep` kann vor dem
-`BlobPut` lesen, was schon da steht, und am Schlüssel entscheiden — gleicher Schlüssel
-überschreibt, anderer wird abgewiesen und gemeldet. Das ist eine Aufgabe im api-Strang.
-
-**P6 — MariaDB-Hälfte von W-1** (`already.go:50–68`).
-Gehört gar nicht hierher. Der Kommentar sagt es selbst: `knowsItsSchema` ist
-**absichtlich nicht** Teil von `sqlstore.Dialect`, weil MariaDB nichts dieser Form
-antworten kann und ein Pflichtmethode dort aus Dokumentation beantwortet werden müsste.
-Der Wächter (`TestTheStepOverStaysTheOldOneForADialectThatCannotSay` und
-`TestExactlyOneDialectCanSayWhatItHolds`) hält die Lücke in Form. Wer einen Cluster hat,
-schließt sie dort — ohne Vertragsfassung.
+**Empfehlung: JA, aber nur zusammen mit P10** — allein ist es ein Bruch für eine
+Bequemlichkeit, mit P10 ist es die billigste Verbesserung der ganzen Liste.
 
 ---
 
-## Zwei Punkte, die beim Nachsehen weggefallen sind
+## P9 — „beschäftigt" braucht einen eigenen Code
 
-- **api 17 („`shared/wire.Open` müsste die Nutzlast aufbewahren")** — erledigt.
-  `Forward` nimmt auf dem Zweig `api` ein zusätzliches `raw []byte`
-  (`relay/relay.go:193`), und `wire.Open` hält die Aufgaben-Bytes ohnehin schon
-  (`wire.go:321`, `TaskBytes()`). Kein `shared/`-Eingriff mehr nötig.
-- **Controller 10 („`shared/tunnel` oder `shared/config` für die erste Fassung der
-  Vertrauensliste")** — der Strang hat Weg (a) gemessen, gewählt und gebaut; die Änderung
-  in `shared/` war die verworfene Alternative.
+**Gilt. Die Umgehung in `apps/` ist gebaut, der Code fehlt.**
 
-## Offene Nebenpunkte ohne eigene Nummer
+Nachgemessen am 15.10.2026:
 
-- **Punkt 29** nennt eine Zahl, die noch fehlt: wie viele Terminals gleichzeitig. Gezählt,
-  nicht gemessen: rund 80 MiB bei 1024 Kanälen. Die Obergrenze gehört laut Punkt 29 in den
-  Vertrag — also in V1.3, wenn sie gemessen ist.
-- **Punkt 28 und Punkt 30** ändern `shared/` **nicht**. Beide hängen an api-Aufgabe 24
-  („`main.go` verdrahten"). Sie gehören nicht in diese Entscheidung.
+- `shared/wire/wire.go:450–469`, Code-Liste: **kein `E_BUSY`**. Sonde:
+  `Code("E_BUSY").Message() = ""`, `CodeUnreachable.Message() = "Dienst nicht
+  erreichbar."`
+- `shared/dbapi/dbapi.go:108–112`, die Wächter: `ErrNotFound`, `ErrUsed`, `ErrInvalid`
+  — **kein vierter.**
+- `apps/server-api/classes/state/state.go:32`: `ErrBusy = errors.New("state: another API
+  is at this step, try again")`, und `apps/server-api/classes/httpapi/fault.go:84` bildet
+  ihn weiter auf **`wire.CodeInternal`** (500) ab. Der Kommentar dort
+  (`fault.go:89–94`) beruft sich darauf, dass **eine** API auf einer Datei liege — und
+  Punkt 50 hat gemessen, dass **zwei** darauf liegen.
 
-## P9: „beschäftigt" braucht einen eigenen Code
+**Was in `apps/` schon da ist** (also nicht mehr zu bauen):
+`apps/server-api/classes/httpapi/busy.go:73` setzt `Retry-After` und protokolliert
+`reason=db-busy`, `:77` `reason=db-unreachable`.
 
-**Zeile:** `shared/wire/wire.go:450–462` (die Code-Liste).
+**Die Lücke ist genau benannt, und sie ist gemessen:** das reicht einem Klienten, der den
+**Header** liest. Ein Klient, der den **Code** liest, kann „besetzt" nicht von „weg"
+trennen — beide heißen `E_UNREACHABLE` (503). Der Verlierer wartet bis **80,6 s**
+(Punkt 48, zwei echte Prozesse) und hört dann dasselbe Wort wie bei einer verschwundenen
+Datenbank.
 
-**Gemessen (Punkt 48/49):** schreibt ein zweites Programm auf dieselbe SQLite-Datei, wartet der
-Verlierer bis 80,6 s und bekommt dann `E_UNREACHABLE` — **dasselbe Wort wie „Datenbank weg"**.
-`fault.go` sagt diesen Fall selbst voraus und nennt auch, was es nicht ist: `E_LOCKED` passt nicht.
+### Der Änderungssatz, drei Teile
 
-**Ohne `shared/` gebaut:** `Retry-After: 5` und ein Protokollgrund `db-busy` gegen
-`db-unreachable`. Das reicht einem Klienten, der den Header liest — nicht einem, der den Code liest.
+**1. `shared/wire/wire.go`**, in der Code-Liste:
 
-**Zu entscheiden:** ein neuer Code `E_BUSY`. Folge: wer ihn bekommt, darf es noch einmal versuchen;
-wer `E_UNREACHABLE` bekommt, nicht. Dazu gehört `shared/dbapi/dbapi.go:109–111` (ein vierter
-Wächter neben `ErrNotFound`/`ErrUsed`/`ErrInvalid`) und danach
-`apps/server-api/classes/state/state.go:29–32`, dessen `ErrBusy` heute `E_INTERNAL` antwortet.
+```go
+	// CodeBusy answers a request the installation could not carry out right
+	// now because another program holds the database: waiting a moment and
+	// asking again helps, and nothing is broken. The HTTP answer says in
+	// Retry-After when to try again. E_UNREACHABLE keeps its own meaning:
+	// the database is away, and asking again brings the same answer.
+	CodeBusy Code = "E_BUSY"
+```
+
+und in `messages`:
+
+```go
+	CodeBusy:        "Gerade belegt. Bitte in einem Moment erneut versuchen.",
+```
+
+**2. `shared/dbapi/dbapi.go`**, im `var`-Block bei `:108`:
+
+```go
+	// ErrBusy reports that another program holds the database for this step.
+	// It is its own error, never ErrInvalid: the call was right, and asking
+	// again in a moment helps. A store that cannot tell busy from away
+	// returns ErrNotFound or its own error, never this one.
+	ErrBusy = errors.New("dbapi: database busy")
+```
+
+**3. `apps/server-api/classes/httpapi/fault.go:84`** — `state.ErrBusy` wird aus dem
+`CodeInternal`-Zweig herausgenommen und bekommt seinen eigenen:
+
+```go
+	case errors.Is(err, state.ErrBusy), errors.Is(err, dbapi.ErrBusy):
+		return wire.CodeBusy
+```
+
+### Der Preis
+
+- **Das bricht den Vertrag — es sei denn, P10 ist vorher drin.** Dieselbe Rechnung wie bei
+  P8, mit einem Unterschied: der **HTTP**-Weg ist weniger empfindlich (der Körper ist
+  nicht `ParseClose`), der **Kanal**-Weg ist es genauso. Die Weboberfläche hat ihre eigene
+  Tabelle und nimmt den `message` der Antwort **nie** (`contracts/wire.js:505`) — ohne
+  einen Eintrag dort liest der Benutzer weiter „Dienst nicht erreichbar."
+- Mitziehen müssen: **`memstore` und `sqlstore`** (wer gibt `ErrBusy` zurück?), **`dbtest`**
+  (sonst gibt ihn morgen nur einer), die **Weboberfläche** (Tabelle + Satz),
+  und `state.go` bleibt wie es ist — nur seine Abbildung ändert sich.
+- Für einen Nutzer, der schon installiert hat: **nichts** bei vorhandenem P10.
+
+### Ohne die Änderung
+
+- Es geht alles. `Retry-After: 5` und der Protokollgrund sind gebaut und wirken heute.
+- Für immer fehlt, und das ist gemessen: **ein Klient, der nur den Code liest, kann
+  „besetzt" nicht von „weg" trennen.** Er darf nach `E_UNREACHABLE` nicht wiederholen —
+  also wiederholt er nicht, obwohl eine Wiederholung in einem Moment durchgegangen wäre.
+  Dazu bleibt `state.ErrBusy` bei **500**, wo der Kommentar selbst sagt, dass die
+  Begründung (eine API je Datei) nicht mehr stimmt.
+
+**Empfehlung: JA, aber nur zusammen mit P10, und nach P8** (P8 ist derselbe Eingriff an
+derselben Liste, aber ohne Nachzug in Datenbank und Oberfläche — wer beide will, macht P8
+als Probe und P9 hinterher).
+
+---
+
+## P11 — `store.ValidPath` sagt nichts über die Schreibweise (neu, aus Punkt 23)
+
+**Warum neu:** Punkt 23 (10.10.2026) sagt ausdrücklich, das gehöre „in die nächste
+Vertragsfassung". In der alten Reihe stand es nicht.
+
+**Gemessen am 15.10.2026:** `shared/store/manifest.go:233`:
+
+```go
+// ValidPath reports whether p is a safe relative path: no leading slash, no
+// "..", no hidden files, only letters, digits and . _ - (at most 200 bytes).
+func ValidPath(p string) bool { return len(p) <= 200 && pathPattern.MatchString(p) }
+```
+
+Und in `shared/README.md` und `shared/store/*.go` kommt **kein Satz** über Groß- und
+Kleinschreibung von **Pfaden** vor (gesucht; der einzige Treffer, `README.md:199`, gilt
+für **Feldnamen**).
+
+**Die Folge, aus Punkt 23 übernommen:** zwei Namen im Paket, die sich nur in der
+Schreibweise unterscheiden, sind für `Walk` **zwei** Einträge. Auf einem faltenden
+Dateisystem scheitert die zweite Datei an `O_EXCL` → `install.ErrDisk`; auf einem
+case-sensitiven werden **beide angenommen**. Dieselbe Eingabe, zwei Ergebnisse.
+
+### Der Änderungssatz
+
+Ein Satz im Kommentarkopf von `ValidPath` und in `shared/README.md`:
+
+```go
+// ValidPath does NOT reject two names that differ only in case: that is a
+// property of the file system, not of the path. A package whose names collide
+// when case is folded is accepted here and installs on a case-sensitive file
+// system; on a folding one the second file fails as a disk error. NGC targets
+// Debian and Ubuntu, so this is said rather than enforced.
+```
+
+### Der Preis
+
+- **Ergänzt nur** — es wird nichts geprüft, es wird etwas **gesagt**. Kein Verhalten
+  ändert sich, kein Aufrufer, keine Umsetzung.
+- Mitziehen muss: niemand.
+- Für einen Nutzer: **nichts.**
+- **Die Alternative wäre teuer:** `ValidPath` wirklich kollisionsfrei machen heißt, die
+  Funktion kennt die anderen Namen des Pakets — sie bekommt heute **einen** Pfad. Das ist
+  ein anderer Eingriff, und nichts verlangt ihn.
+
+### Ohne die Änderung
+
+- Es geht alles. Auf dem Ziel (Linux) ist nichts kaputt.
+- Für immer fehlt: **niemand sagt es.** Wer ein Paket baut, weiß nicht, ob zwei Namen in
+  verschiedener Schreibweise erlaubt sind — und es fällt erst dem auf, der auf einer
+  Entwicklungsmaschine `ErrDisk` sieht und nach einem Plattenfehler sucht.
+
+**Empfehlung: JA** — ein Satz, der nichts kostet und eine Zusage von einer
+Nicht-Zusage trennt. Das ist genau die Lücke, die der Satz der „gemeinsamen Wurzel"
+schließen soll.
+
+---
+
+## P12 — Nichts hält die Rechte des Katalogeintrags gegen das Manifest (neu, aus Punkt 31)
+
+**Warum neu:** Punkt 31 (12.10.2026) ist in der alten Reihe **gar nicht aufgeführt** —
+auch nicht unter „gehört nicht hierher". Es ist eine Sicherheitsfrage.
+
+**Gemessen am 15.10.2026:** `store.Package.Needs` wird in `shared/` an genau einer Stelle
+angefasst: `shared/store/catalog.go:260`, und dort nur durch `validNeeds` — also auf
+**Form**. **Nichts** hält diesen Eintrag gegen `store.Manifest.Needs`
+(`shared/store/manifest.go:49`), die Rechte im **Paket**.
+
+**Gebaut wird der Container aus dem Manifest.** Daraus folgt der Satz, der zählt — und er
+ist der Grund, aus dem ein Strang einen vorgeschlagenen Weg **verworfen** hat:
+
+> Eine Rechteprüfung gegen die Katalogkopie wäre eine **Wand vor einer offenen Tür**.
+> Verlangt das Manifest `root` und sagt der Eintrag nichts, wird `root` durchgewinkt —
+> und die Prüfung davor meldet nichts, weil sie die falsche Kopie liest.
+
+### Der Änderungssatz, zwei Möglichkeiten
+
+**(a) Prüfen** — in `shared/store`, dort wo das Manifest zum Eintrag kommt:
+
+```go
+// NeedsMatch reports whether the manifest of a package and its catalog entry
+// name the same needs. The container is built from the manifest, so a check
+// against the entry alone is a wall in front of an open door: this is the one
+// place that holds the two copies against each other, and install refuses a
+// package whose manifest asks for more than its entry says.
+func NeedsMatch(m *Manifest, p *Package) bool
+```
+
+**(b) Sagen** — ein Satz in `shared/README.md`:
+
+> `Package.Needs` im Katalogeintrag ist eine **Anzeige für den Verwalter**, keine
+> Zusicherung. Verbindlich sind die Rechte im **Manifest**: daraus wird der Container
+> gebaut, und `store.Granted` prüft **sie** gegen die Genehmigung. Wer gegen den
+> Katalogeintrag prüft, prüft die falsche Kopie.
+
+### Der Preis
+
+- **(a) bricht** — ein Paket, das heute durchgeht, geht danach nicht mehr durch (jedes,
+  dessen Eintrag und Manifest auseinandergehen). **Neue Fassung nötig**, und
+  mitziehen müssen `install.Accept` und das Werkzeug, das Kataloge baut.
+- **(b) ergänzt nur** und kostet niemanden etwas.
+- Für einen Nutzer, der schon installiert hat: bei (a) kann ein **Update** abgewiesen
+  werden, das vorher gelaufen wäre — das ist ein echter Preis und gehört in die
+  Release-Notiz. Bei (b): nichts.
+
+### Ohne die Änderung
+
+- Es geht alles, und **die Prüfung, die zählt, greift**: `store.Granted` prüft die Rechte
+  des **Manifests** gegen die Genehmigung des Verwalters. Es ist **kein offenes Loch.**
+- Für immer fehlt: der Satz, der den nächsten davon abhält, die **Katalogkopie** zu
+  prüfen und sich sicher zu fühlen. Genau das wurde einmal vorgeschlagen und nur deshalb
+  verworfen, weil ein Strang es gemessen hat.
+
+**Empfehlung: JA zu (b), NEIN zu (a)** — die Zusage fehlt, nicht die Prüfung. (a) würde
+einen Riegel an eine Kopie hängen, die nicht die Wahrheit ist; das ist die unsicherere
+Variante, obwohl sie strenger aussieht.
+
+---
+
+## P13 — Kein Prozessdeckel je App (neu, aus Punkt 51)
+
+**Warum neu:** Punkt 51 (13.10.2026) merkt es ausdrücklich vor
+(„eine App-eigene Prozessgrenze wäre ein Manifestfeld,
+`shared/store/manifest.go:50–51` — eingefroren") und nennt es **keinen Blocker**. In der
+alten Reihe steht es nicht.
+
+**Gemessen am 15.10.2026:** `shared/store/manifest.go:50–51`:
+
+```go
+	CPU         int       `json:"cpu,omitempty"`     // thousandths of a core, default DefaultCPU
+	Memory      int       `json:"memory,omitempty"`  // MiB, default DefaultMemory
+```
+
+Zwei Deckel je App — **für Prozesse keiner.** Der Controller setzt stattdessen einen
+festen: `--pids-limit 512` für jede App
+(`apps/server-controller/classes/runtime/podman.go`, gemessene Zahl: ein Go-Programm in
+der Form des hold-Prozesses hält 24 OS-Threads, Faktor 21).
+
+### Der Änderungssatz
+
+`shared/store/manifest.go`, hinter `Memory`:
+
+```go
+	Pids        int       `json:"pids,omitempty"`    // processes (threads, as the cgroup counts), default DefaultPids
+```
+
+dazu `DefaultPids = 512` neben `DefaultCPU`/`DefaultMemory`, und das Feld wird in
+`Manifest.Validate` wie die anderen zwei auf einen Bereich geprüft.
+
+**P10 gilt hier:** `Manifest` ist **Vertrags-JSON**, und `shared/README.md:199–200` lehnt
+unbekannte Felder ab. Ein Paket mit `"pids"` wird von jedem älteren NGC **abgewiesen** —
+dafür gibt es die Regel in `manifest.go:52–57`: ein Feld, das Fassung X einführt, darf
+nur in Paketen stehen, deren `minNgc` mindestens X ist. **Diese Regel gibt es, sie
+funktioniert, und sie ist der Grund, dass P13 anders als P8/P9 kein Problem hat.**
+
+### Der Preis
+
+- **Ergänzt nur** — ein Paket ohne `pids` verhält sich wie heute (`DefaultPids = 512`).
+- Mitziehen müssen: der **Controller** (statt der festen Zahl das Feld lesen), das
+  Werkzeug, das Manifeste baut, und die Oberfläche, wenn sie die Grenze anzeigt.
+- Für einen Nutzer, der schon installiert hat: **nichts.** Jede bestehende App bekommt
+  weiter 512.
+- **Der eigentliche Preis ist eine Frage:** eine App, die mehr als 512 verlangt, verlangt
+  etwas, das der Verwalter heute nicht sieht und nicht genehmigt. Dann gehört das Feld in
+  die Genehmigungsmaske, oder es gehört begrenzt (etwa 4096).
+
+### Ohne die Änderung
+
+- Es geht alles. **512 ist gemessen und steht im Repo**, und eine Fork-Bombe stoppt jede
+  endliche Zahl.
+- Für immer fehlt: eine App, die legitim mehr Prozesse braucht (ein Build-Dienst, eine
+  Datenbank mit vielen Fäden), **kann es nicht sagen** und scheitert ohne erkennbaren
+  Grund an einer Zahl, die nicht in ihrem Manifest steht.
+- **Ungemessen und es gehört dazu:** ob überhaupt eine App an 512 anstößt. Das ist nicht
+  gemessen; es ist eine Vermutung.
+
+**Empfehlung: NEIN für V1.3, später JA** — es ist der einzige Punkt der Liste, dessen
+Bedarf **nicht gemessen** ist. Ein Feld auf Vorrat ist genau das, was `code.md` mit
+YAGNI verbietet. Wer es will, misst zuerst eine App, die anstößt.
+
+---
+
+## Was ich geprüft und NICHT aufgenommen habe
+
+**Die Zwei-Programm-Falle unter Windows** (`shared/config/config.go:572` +
+`apps/server-db/classes/sqlite/sqlite.go:201`). Beide Zeilen stehen da, nachgemessen:
+
+```go
+// config.go:572
+if !strings.HasPrefix(d.Path, "/") || … {
+
+// sqlite.go:201
+if !filepath.IsAbs(path) || len(path) > config.MaxField || path != filepath.Clean(path) {
+```
+
+Zusammen erfüllt **kein Windows-Pfad beides** — jede Zwei-Programm-Messung muss nach
+WSL/ext4 (so steht es in Punkt 50).
+
+**Entscheidung: Umgebungsfalle, kein v1.3-Posten.** Begründung:
+
+- Beide Zeilen sind **einzeln richtig** und machen zusammen genau das, was der Vertrag
+  will: der Pfad einer Datenbankdatei ist ein absoluter POSIX-Pfad. NGC läuft auf Debian
+  und Ubuntu; `CLAUDE.md` sagt „Windows wird nicht umgesetzt".
+- Eine Änderung würde nicht einen Mangel beheben, sondern eine **Zusage lockern**, damit
+  eine Messung bequemer wird. Das ist Bequemlichkeit gegen Sicherheit, und die Regel sagt,
+  welche Seite gewinnt.
+- **Der Preis ist bekannt und tragbar:** zwei Zeilen in `messen.md` („wer eine Messung
+  auf eine andere Plattform verlegt, nennt die Zeilen, die das erzwingen"). Das ist
+  gebucht, nicht offen.
+- **Was damit für immer fehlt**, und es ist echt: zwei echte `ngc-api` lassen sich auf
+  C: und auf Z: nie messen. Jede Zahl dieser Klasse gilt für WSL/ext4. **Das ist eine
+  Lücke in der Messbarkeit, kein Loch im Produkt** — und darum gehört es in `messen.md`,
+  nicht in V1.3.
+
+**Die Obergrenze gleichzeitiger Terminals** (Punkt 29 nennt sie als offen). **Kein
+Posten:** die Zahl **steht** im Vertrag — `shared/wire/wire.go:149`,
+`MaxTunnelChannels = 1024`, und die 80 MiB aus Punkt 29 sind genau für diese 1024
+gezählt. Was fehlt, ist eine **Terminal**-Grenze unterhalb davon, und die gehört nach
+`serve` (`apps/`), unter die bestehende Decke. Kein `shared/`-Eingriff.
+
+---
+
+## N1–N3: keine Verträge (nur umbenannt, Inhalt unverändert)
+
+Diese drei standen in der alten Reihe als „P6/P7/P8" **ein zweites Mal** und haben die
+Nummern doppelt belegt. Sie sind **keine Vertragsfragen** und brauchen kein JA oder NEIN
+zu V1.3.
+
+- **N1 — Einmal-Code vor der MAC** (`join.go:107`, `pair.go:79`). Eine Reihenfolge im
+  eigenen Code, an **zwei** Stellen. Wer sie anfasst, fasst beide an. **Vorher zu messen
+  und nicht gemessen:** wie oft ein Code neu ausgegeben wird. Hängt an **P6**.
+- **N2 — zwei Server, ein Name** (`join.go:135`). Der öffentliche Schlüssel liegt in der
+  Anfrage; `join.keep` kann vor dem `BlobPut` lesen und am Schlüssel entscheiden.
+  `dbapi.Blob` reicht dafür. Aufgabe im api-Strang.
+- **N3 — MariaDB-Hälfte von W-1** (`already.go:50–68`). `knowsItsSchema` sitzt in
+  `apps/`, und der Kommentar sagt, dass es **absichtlich nicht** Teil von
+  `sqlstore.Dialect` ist. Zwei Wächter halten die Lücke in Form.
+
+---
+
+## Die Reihenfolge
+
+### Was zusammen entschieden werden muss
+
+| Bündel | Punkte | Warum |
+|---|---|---|
+| **A** | **P10 → P8 → P9** | P10 ist das Tor. Ohne es ist jeder neue Code ein Bruch. P9 zieht `shared/dbapi`, `memstore`, `sqlstore`, `dbtest` und die Oberfläche mit; P8 nicht. |
+| **B** | **P2** allein | Eine Zeile, zwei Nachzieher in `apps/`, zwei Wächter umdrehen. Hängt an nichts. |
+| **C** | **P1 + P12(b) + P11** | Alle drei sind „die Zusage fehlt, nicht die Prüfung". Drei Sätze und eine Umbenennung, kein Bruch. In einem Zug billiger als einzeln. |
+| **D** | **P7** allein | Eigene Lesefunktion, berührt nur `migrate`. Hängt an nichts. |
+| **E** | **P6** allein | Eine Zahl. Hängt an nichts im Code — aber an **N1**: wer sie entscheidet, soll N1 danebenlegen. |
+| **F** | **P5** allein | Der einzige mit Migration und bestehendem Nutzer. Zuletzt. |
+
+**Einzeln entscheidbar:** P1, P2, P5, P6, P7, P11, P12.
+**Nicht einzeln:** P8 und P9 — beide nur nach P10.
+**Gestrichen:** P4 (erledigt), P13 (Bedarf nicht gemessen).
+
+### Die drei dringendsten
+
+1. **P10** — weil es das Tor ist: solange `ParseClose` einen unbekannten Code als
+   kaputten Rahmen behandelt (gemessen: `wire: malformed CLOSE payload`), ist **jede**
+   künftige Ergänzung ein Bruch, und P8 wie P9 kosten das Dreifache.
+2. **P2** — weil es der einzige Punkt ist, der einen **Weg versperrt**, den es geben
+   soll: eine Erstinstallation ohne Aufsicht geht gar nicht, und der eigene Kommentar
+   behauptet das Gegenteil. Der Ersatz dafür ist schon **zweimal** von Hand gebaut
+   (`install.go:353`, `rollout.go:253`) — die sechste Stelle kommt sonst von selbst.
+3. **P3** — weil es **jetzt noch gratis** ist: `release-packer` existiert nicht, der
+   zweite Schreiber ist nicht gebaut. Nach ihm ist dieselbe Entscheidung ein Umbau, und
+   bis dahin entpackt der Controller nach einer Annahme, die nirgends steht.
