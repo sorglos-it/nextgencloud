@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -153,6 +154,15 @@ func (rl *Relay) collect(ctx context.Context, hop Hop, tc *link.Channel, in io.R
 				// Beside the reading, because a large input needs the GRANTs
 				// that arrive while it is being sent.
 				go func() {
+					// A goroutine of its own, so a panic in the sending
+					// would take the whole process (V1.2 point 38). It ends
+					// like any other failure of the sending: the channel
+					// fails, the server lives.
+					defer func() {
+						if guard.Hit(recover(), "relay.sendStream", tc.Num) {
+							st.fail(wire.CodeInternal)
+						}
+					}()
 					if code := rl.sendStream(sctx, hop, tc, st, in); code != "" {
 						st.fail(code)
 					}
