@@ -54,6 +54,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/service"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -116,6 +117,7 @@ const (
 	msgNoRun  = "Die Shell ließ sich nicht starten."
 	msgIdle   = "Das Terminal wurde nach langer Untätigkeit beendet."
 	msgCut    = "Die Verbindung zum Terminal ist abgebrochen."
+	msgBug    = "Das Terminal wurde durch einen internen Fehler beendet."
 )
 
 // exitFail is every refusal and every failure of this program itself; a shell
@@ -134,6 +136,68 @@ var (
 	errIdle = errors.New("terminal: idle for too long")
 	errCut  = errors.New("terminal: input cut off")
 )
+
+// sentence is the one line the person at the terminal reads for an error that
+// ended the run. It is a function of its own so that a case can hold the
+// mapping on any machine: the run it belongs to needs a pseudo terminal, and
+// a mapping measured only where a pty exists is a mapping not measured here.
+func sentence(err error) string {
+	switch {
+	case errors.Is(err, errNoPTY):
+		return msgNoPTY
+	case errors.Is(err, errIdle):
+		return msgIdle
+	case errors.Is(err, errCut), errors.Is(err, ErrFrame):
+		return msgCut
+	case errors.Is(err, errBug):
+		// Its own sentence, because msgNoRun would be a FALSE one: the shell
+		// did start, and something of ours broke afterwards. A person who is
+		// told the wrong cause looks in the wrong place, and a swallowed error
+		// that comes out as another error is the false answer of V1.2 point 50.
+		return msgBug
+	default:
+		return msgNoRun
+	}
+}
+
+// errBug is what ended answers when it caught a programming error. It says
+// nothing about what happened -- the kind and the panicking line are in the
+// line guard wrote -- and run turns it into one sentence for the person at
+// the terminal.
+var errBug = errors.New("terminal: a programming error ended this terminal")
+
+// ended runs fn and sends what fn answered into out; a panic in fn goes into
+// out as errBug instead. It is how the four goroutines of runShell survive a
+// programming error without the process doing so: each of them already says
+// how it ended through a channel, and the first answer there ends the shell
+// and comes back to the caller.
+//
+// Without it a panic in one of them was final -- a goroutine is where nothing
+// above can catch one -- and it took the whole ngc-controller with it, every
+// terminal and every channel of every user (V1.2 point 38). The send matters
+// as much as the catch: a caught panic nobody is told about would leave
+// runShell waiting on a goroutine that is already gone, which is the silent
+// defect of V1.2 point 50 in its worst shape -- a terminal that simply stops.
+//
+// out must have room for every goroutine that writes to it, and runShell
+// buffers for all of them, so the send after a catch cannot block. It is
+// written as a select with a default all the same: a send that blocked here
+// would hang the goroutine inside its own recover, and a second panic in a
+// deferred function that is already handling one cannot be recovered at all.
+//
+// It lives in this file and not in pty_linux.go so that it is built and
+// measured on every platform; the four callers are linux-only.
+func ended(out chan<- error, site string, fn func() error) {
+	defer func() {
+		if guard.HitTo(nil, recover(), site, 0) {
+			select {
+			case out <- errBug:
+			default:
+			}
+		}
+	}()
+	out <- fn()
+}
 
 // Frame is one message of the shell. Data belongs to the frame and to nothing
 // else: ParseFrame copies it out of the read buffer, which the next frame
@@ -366,16 +430,7 @@ func run(ctx context.Context, in io.Reader, out, errOut io.Writer, idle time.Dur
 	if err == nil {
 		return code
 	}
-	switch {
-	case errors.Is(err, errNoPTY):
-		fmt.Fprintln(errOut, msgNoPTY)
-	case errors.Is(err, errIdle):
-		fmt.Fprintln(errOut, msgIdle)
-	case errors.Is(err, errCut), errors.Is(err, ErrFrame):
-		fmt.Fprintln(errOut, msgCut)
-	default:
-		fmt.Fprintln(errOut, msgNoRun)
-	}
+	fmt.Fprintln(errOut, sentence(err))
 	return exitFail
 }
 

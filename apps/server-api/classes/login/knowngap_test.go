@@ -123,7 +123,7 @@ func TestKnownGap_TruncatingTheChainRollsItBack(t *testing.T) {
 		t.Fatalf("the gap is shut -- Refresh now answers version %v, %v. "+
 			"Correct the comment at state.checkGap and retire this test", v.List, err)
 	}
-	live, code, ok := coldNode(t, h).Live(ctx, getCookie(session.PathTrust, cookie))
+	live, code, _, ok := coldNode(t, h).Live(ctx, getCookie(session.PathTrust, cookie))
 	if !ok {
 		t.Fatalf("the gap is shut -- the cold node refused the withdrawn user with %q. "+
 			"Correct the comment at state.checkGap and retire this test", code)
@@ -197,7 +197,7 @@ func TestKnownGap_LoweringTheTopRowsSeqRollsItBack(t *testing.T) {
 		t.Fatalf("the gap is shut -- Refresh now answers version %v, %v. "+
 			"Correct the comment at state.checkGap and retire this test", v.List, err)
 	}
-	live, code, ok := coldNode(t, h).Live(ctx, getCookie(session.PathTrust, cookie))
+	live, code, _, ok := coldNode(t, h).Live(ctx, getCookie(session.PathTrust, cookie))
 	if !ok {
 		t.Fatalf("the gap is shut -- the cold node refused the withdrawn user with %q. "+
 			"Correct the comment at state.checkGap and retire this test", code)
@@ -257,7 +257,7 @@ func TestKnownGap_AWarmNodeDecidesOnAListTheStoreLost(t *testing.T) {
 	// The gap itself, and not the reassurance above: a caller of Live that
 	// does not go on to Chain sees none of that. It decides the session live,
 	// on a list the store has already lost.
-	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+	if _, _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 		t.Fatal("the gap is shut -- the warm node refused a session on the list the store lost. " +
 			"Correct the note at the Refresh call in login/live.go, the one beside " +
 			"state.ErrSetting there, the one at the 204 in login/trust.go, and retire " +

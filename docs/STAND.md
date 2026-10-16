@@ -319,3 +319,44 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 - Repo: <https://github.com/sorglos-it/nextgencloud> (privat)
 - Facebook-Post: zurückgestellt, solange das Repo privat ist; Vermerk in
   `Z:\GitHub\facebook\README.md`, Abschnitt „Bestand“
+
+### Ein dritter Zeitflattrer: `TestStartTakesTheSameTimeForAnUnknownName`
+
+`apps/server-api/classes/login`. Er verlangt, dass ein unbekannter Name nicht schneller abgelehnt
+wird als ein bekannter, und misst dafür einen Faktor zwei. Am 13.10.2026 einmal rot im vollen
+`tools/check.sh`-Lauf (`263,877µs` gegen `118,197µs`, „this machine cannot measure a factor of two
+today"), **allein 0 von 10 rot**, und der zweite vollständige Lauf ebenfalls grün mit `check: ok`.
+
+Gleiche Familie wie die zwei oben: eine abgeleitete Erwartung gegen ein Fenster im
+Mikrosekundenbereich, auf einer Maschine mit anderen Lasten. **Ursache nicht gemessen** — er liegt
+auf keinem Weg, der an diesem Tag geändert wurde (der Fall ruft den Handler direkt, nicht über den
+Router). Wer ihn rot sieht: erst allein wiederholen, und mit `GOMAXPROCS=1` prüfen, bevor er zum
+Befund wird.
+
+### `tools/check.sh` scheitert im Arbeitsbaum mit Code 128 — UNC-Pfad, nicht Eigentum
+
+Nicht „dubious ownership": `git worktree add` schreibt in die `.git`-Datei einen **UNC-Pfad**
+(`//nas.mein.lan/freigaben/…`), den Git-Bash über seine Pfadumschreibung zerlegt —
+`fatal: not a git repository: /mnt/c/<baum>/Z:/GitHub/…`. **Abhilfe gemessen:**
+`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`, dann läuft derselbe Befehl. `Z:/…` in die
+`.git`-Datei zu schreiben hilft **nicht** (`fatal: not a git repository: (NULL)`).
+
+### `git stash push` ohne `-u` lässt neue Testdateien stehen
+
+Der „Grundstand"-Lauf misst dann **alte Quelle gegen neue Fälle**. Einmal war das nützlich (es
+wurde die Rot-vorher-Messung des ganzen Satzes), aber es wäre leicht als Grundstand durchgegangen.
+Mit `-u` dagegen verschwindet ein eigener Messordner im Arbeitsbaum mitten im Lauf —
+**Messdateien gehören in den Scratchpad, nicht in den Baum.**
+
+### Ein vierter Zeitflattrer: `TestFinishTakesTheSameTimeForAKeyNobodyHolds`
+
+`apps/server-api/classes/login`, 1 von 2 `check.sh`-Läufen rot (174,57 s), allein 0 von 3. Der
+Null-Kontrollzweig des Falls feuert selbst („this machine cannot measure a factor of two today").
+Gleiche Familie wie die drei darüber. **Freigemessen** mit zehn verschachtelten Paaren
+(Grundstand und Änderung abwechselnd, gleicher Maschinenzustand je Paar): **0/10 gegen 0/10**.
+
+**Und eine Lehre dazu:** `GOMAXPROCS=1` ist bei einem Fall, der **Uhrzeiten** vergleicht, der
+falsche Hebel — `messen.md` nennt es für ein Flattern an einer Reihenfolge zwischen Goroutinen.
+Das Verengen des Planers macht die Uhr nur verrauschter; der Lauf war nach über 30 Minuten nicht
+durch. Bei einem Zeitvergleich trennt der **gepaarte Lauf gegen den Grundstand**, nicht der
+verengte Planer.

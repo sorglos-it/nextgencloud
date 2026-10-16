@@ -73,28 +73,57 @@ func (s *store) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	var err error
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
-			return ctx.Err()
+			return cause(ctx, ctx.Err())
 		}
 		var tx *sql.Tx
 		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
 			if s.d.Retry(err) || s.d.Gone(err) {
 				continue
 			}
-			return err
+			return cause(ctx, err)
 		}
 		if err = fn(tx); err != nil {
 			tx.Rollback()
 			if s.d.Retry(err) {
 				continue
 			}
-			return err
+			return cause(ctx, err)
 		}
 		if err = tx.Commit(); err == nil {
 			return nil
 		}
 		if !s.d.Retry(err) {
-			return err
+			return cause(ctx, err)
 		}
+	}
+	return cause(ctx, err)
+}
+
+// cause hands the caller back the reason HE named for his deadline instead of
+// the bare context.DeadlineExceeded of the standard library, and nothing else:
+// an error that is not the context ending passes through untouched.
+//
+// It is needed because the context error reaches a caller from two different
+// places and only one of them is this file. The loops above return ctx.Err()
+// themselves when the pause between two tries is cut short -- but
+// database/sql returns the very same error out of BeginTx, ExecContext and
+// Query the moment the context is done, and that one never passes a line of
+// ours. Without this, which of the two happened would decide whether the
+// caller's reason survives, and the caller cannot see the difference.
+//
+// It asks ctx.Err() and not the error alone, so an error that merely LOOKS
+// like a cancellation -- a driver that wraps context.Canceled into something
+// of its own, a row that holds the words -- is not turned into the caller's
+// reason while his context is still open.
+func cause(ctx context.Context, err error) error {
+	if err == nil || ctx.Err() == nil {
+		return err
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	if c := context.Cause(ctx); c != nil {
+		return c
 	}
 	return err
 }
@@ -106,18 +135,18 @@ func (s *store) exec(ctx context.Context, stmt string, args ...any) (int64, erro
 	var err error
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
-			return 0, ctx.Err()
+			return 0, cause(ctx, ctx.Err())
 		}
 		var res sql.Result
 		if res, err = s.db.ExecContext(ctx, stmt, args...); err != nil {
 			if s.d.Retry(err) {
 				continue
 			}
-			return 0, err
+			return 0, cause(ctx, err)
 		}
 		return res.RowsAffected()
 	}
-	return 0, err
+	return 0, cause(ctx, err)
 }
 
 // query runs a read. A read may also be repeated when the connection failed,
@@ -127,13 +156,13 @@ func (s *store) query(ctx context.Context, fn func() error) error {
 	var err error
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
-			return ctx.Err()
+			return cause(ctx, ctx.Err())
 		}
 		if err = fn(); err == nil || (!s.d.Retry(err) && !s.d.Gone(err)) {
-			return err
+			return cause(ctx, err)
 		}
 	}
-	return err
+	return cause(ctx, err)
 }
 
 // put writes a row that may or may not be there. Neither MERGE nor ON
