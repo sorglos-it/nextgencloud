@@ -1992,3 +1992,42 @@ beantworten.
 **Die Lehre, und sie gilt über dieses Projekt hinaus:** ob eine Änderung ein Bruch ist, entscheidet
 nicht die Form („wir fügen nur etwas hinzu"), sondern der **Leser der alten Fassung**. Das muss man
 messen, nicht argumentieren. Steht in `messen.md`.
+
+## Punkt 55: Punkt 38 ist gebaut — dreizehn Fangstellen, und keine ist wie die andere
+
+**Gebaut am 16.10.2026**, API und Controller, und auf `main` nachgeprüft: `go build` 0,
+`go test ./apps/...` **43 Pakete ok, 0 rot, Code 0**.
+
+**Die Abwesenheit war belegt, nicht behauptet:** `recover()` kam in `apps/server-api`,
+`apps/server-controller`, `apps/server-db`, `apps/web`, `shared`, `tools` und `cmd` **nirgends**
+vor — die Liste der Orte, nicht eine Zahl. Folge: eine einzige Fehlstelle in einem Handler nahm
+`ngc-api` ganz mit, samt aller 128 App-Kanäle jeder Verbindung und der Controller-Tunnel.
+
+**Gefangen wird ein FEHLER, nie eine Absage.** Ein Kanal, der einen Code antwortet, antwortet ihn
+weiter auf dem gewöhnlichen Weg. Neu ist `apps/server-api/classes/guard`.
+
+**Dreizehn Fangstellen, nach dem unterschieden, was danach noch möglich ist** — das ist der
+Gedanke, der den Punkt löst:
+- **Im Kanal** (`browser.channel`, `coreapp.open`, `relay.toController`, `relay.sendStream`): der
+  Kanal endet mit `E_INTERNAL`, der Browser hört also, dass etwas kaputt ist, statt auf eine
+  Antwort zu warten, die nie kommt.
+- Drei davon schreiben `E_INTERNAL` zusätzlich in den **Prüfeintrag** — der Mangel steht dann in
+  der Datenbank, nicht nur in einer Datei, die jemand wegdreht. `browser.channel` kann das nicht:
+  der Aufruf, der den Eintrag geschrieben hätte, ist genau der, der vorher gestorben ist.
+- **In einer Runde oder einem Haken ohne Kanal** (`server.round`, `server.rollout`, drei
+  Rückhalte in `Server.serve`, `controllers.hello`, `coreapp.pushTrust`, `link.closeBounded`):
+  dort folgt **nichts** außer Zeile und Zähler. Kanal 0 in der Zeile sagt genau das.
+
+**Gegen das Verschlucken (Punkt 50) gesichert:** `Panics()` ist die Zahl, `Report()` bringt sie
+einmal je Minute aus der Hausrunde dorthin, wo jemand liest — und schweigt, solange die Zahl nicht
+wächst. Ein Mangel, der einmal pro Stunde feuert, ist damit eine **Zahl und kein Gefühl**, und er
+übersteht ein weggedrehtes Protokoll.
+
+**Was NICHT in der Zeile steht, und es ist gemessen, nicht gemeint**
+(`TestTheLineCarriesNoValueOfThePanic`): der **Wert** der Panik — nur ihr Go-**Typ**. Ein
+Panikwert wird von dem geschrieben, der gestorben ist, und trägt, was der gerade in der Hand
+hatte: eine Kennung, ein Passwort, einen Namen, eine Datenbankzeile. Für den Stapelabzug gilt
+dasselbe, denn Go druckt dort die Argumentwörter jedes Rahmens. Stattdessen steht die **eine
+Stelle, die zählt**: die Zeile, die gestorben ist, als die letzten zwei Teile ihres Pfades.
+Aus Anfrage, Sitzung, Benutzer oder Parametern wird hier **gar nichts** gelesen — der Aufruf
+übergibt eine Kanalnummer und einen festen Ortsnamen, einen dritten Weg hinein gibt es nicht.
