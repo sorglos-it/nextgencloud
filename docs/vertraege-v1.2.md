@@ -2031,3 +2031,91 @@ dasselbe, denn Go druckt dort die Argumentwörter jedes Rahmens. Stattdessen ste
 Stelle, die zählt**: die Zeile, die gestorben ist, als die letzten zwei Teile ihres Pfades.
 Aus Anfrage, Sitzung, Benutzer oder Parametern wird hier **gar nichts** gelesen — der Aufruf
 übergibt eine Kanalnummer und einen festen Ortsnamen, einen dritten Weg hinein gibt es nicht.
+
+## Punkt 56: Das kleine System läuft — auf echtem Debian, mit drei Befunden auf dem Weg
+
+**Gemessen am 16.10.2026** auf **Debian 13 (trixie), Apache 2.4.69, PHP 8.4, podman 5.4.2**,
+systemd läuft (WSL2-Instanz, also ein echtes Debian-Userland; was nur dort gilt, steht unten).
+
+**Das Ergebnis zuerst:** `curl -sk https://ngc.test/` gibt **`http=200`, 451 Byte**, und es ist
+NGCs eigene Seite (`<title>NGC</title>`). `GET /api/v1/setup` **durch Apache** liefert die
+unterschriebene Installationsauskunft — dieselbe wie direkt an Port 7443. Die Strecke Browser →
+Apache → Balancer → API **trägt**.
+
+**Dafür musste es zuerst ein Release geben, und es gibt jetzt eins:** `ngc-store release` über
+drei Teile, je mit `ngc-store check` geprüft — **`release ok`** für `ngc-web all`,
+`ngc-api amd64` und `ngc-controller amd64`. Damit ist auch **P3 beantwortet**, gemessen am Code
+der Skripte: `ngc-web-all.tar` trägt im Wurzelverzeichnis `public/index.php` und
+`templates/apache-vhost.conf` (83 Einträge, keine Verknüpfungen); `ngc-api-amd64.tar` trägt
+**genau zwei** gewöhnliche Dateien, `ngc-api` und `ngc-store`, ohne Ordner;
+`ngc-controller-amd64.tar` genau eine. Jede andere Form weist das Skript ab.
+
+### Befund 1: der Store-Platzhalter landet in `api.json`, und die API lehnt ihn ab
+
+`ngc-all.sh` hat einen Riegel für den **Release**-Schlüssel (`*REPLACE-THIS-LINE*` → Abbruch mit
+klarem Satz), aber **keinen für den Store-Schlüssel**. Folge, wörtlich aus dem Protokoll:
+
+```
+ERROR die Konfiguration lässt sich nicht lesen file=/etc/ngc/api.json error="config: invalid configuration"
+```
+
+In der Datei stand `"storeKey": "REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY"`. Dazu zwei Posten,
+die zusammengehören: **das Skript meldete `RC=0` und „The API is running"**, während der Dienst in
+einer Neustartschleife lag (`restart counter is at 8`) — „gebaut ist nicht gelaufen", hier als
+„eingerichtet ist nicht gestartet". Und die Fehlermeldung der API nennt **kein Feld**; welches
+es war, kostete einen Blick in die Datei. Mit einem gültigen Schlüssel in der Antwort: Dienst
+`active`, Port 7443 belegt, Zertifikat da, Fingerabdruck und Einrichtungscode gedruckt.
+
+### Befund 2: die Balancer-Zeile des Vertrags weist Apache ab
+
+```
+AH00526: Syntax error on line 19 of /etc/ngc/apache-apis.conf:
+ProxyPass unknown Balancer parameter
+```
+
+`upgrade=websocket` stand am **`ProxyPass`** eines `balancer://`-Ziels — dort liest Apache jedes
+`schlüssel=wert` als **Balancer**-Parameter. Es ist aber ein **Worker**-Parameter und gehört an
+den `BalancerMember`. Verschoben sagt derselbe `apachectl configtest` **`Syntax OK`**.
+Die Planzeile daneben („`upgrade=websocket` braucht Apache 2.4.47; Debian 13 bringt es mit") ist
+**richtig in der Fassung und falsch im Ort** — genau die Sorte Satz, die niemand nachprüft.
+
+Behoben an allen Stellen: `shared/ulh.md` (die eine gewährte Ausnahme der Einfrierung),
+`apps/server-controller/templates/apache-apis.conf.tmpl`, dessen Prüfdaten, und `ngc-web.sh` in
+ulh. **Belegt als rot-vorher/grün-nachher am laufenden Apache** — und mit einem neuen Fall
+`TestWorkerParametersStayOnTheBalancerMember`, der genau das fängt, was die byteweise Vorlage
+**nicht** fangen kann: mit der Mutation (Parameter zurück an `ProxyPass`, in Vorlage **und**
+Prüfdatei) **besteht** `TestRenderMatchesTheTemplate` weiter — es vergleicht sich mit sich selbst —
+und der neue Fall **fällt**. Kontrollmutation (nur eine lokale Variable umbenannt) **lebt**.
+
+### Befund 3: eine Schutzeinstellung weniger, als NGC mitbringt
+
+`⚠ NGC brings 5 protective settings for the files of the interface, and this version of ngc-web
+knows 4 of them.` Das Skript sagt es laut und macht weiter — richtig so, aber die fünfte ist
+**nicht gemessen**. Welche es ist, gehört geklärt, bevor jemand sie für vorhanden hält.
+
+### Zwei Umgebungsfallen, die als Programmfehler aussahen
+
+- **`/tmp` in WSL ist ein 32-GB-tmpfs und war zu 100 % voll** (zwei ulh-Prüfläufe, 13 und 19 GB).
+  apt zerlegt seine Signaturen dort und meldete dann
+  `Splitting up ... into data and signature failed` und `Write error (28: No space left on device)` —
+  also **OpenPGP-Fehler als Erscheinung einer vollen Platte**. `TMPDIR` auf die ext4-Platte gelegt:
+  alles läuft.
+- **`TMPDIR` auf `/mnt/d` geht nicht:** dpkg verlangt Verknüpfungen,
+  `Symlinking ... failed - DPkg::Go (1: Operation not permitted)`. Es muss ein Linux-Dateisystem sein.
+
+### Was offen ist — und einer davon ist deine Entscheidung
+
+1. **Der echte Release-Schlüssel von NGC fehlt**, und das ist der Riegel, an dem jede Installation
+   heute hält: „This script has no real release key of NGC yet." Gemessen wurde mit einem
+   **Testschlüssel**, der nirgends eingecheckt ist. Der echte Schlüssel gehört laut Entwurf 4.8 auf
+   einen Hardware-Stick; sein **öffentlicher** Teil muss in `ngc-all.sh`, `ngc-api.sh`,
+   `ngc-controller.sh`, `ngc-web.sh` und `ngc-db.sh` an die Stelle von
+   `REPLACE-THIS-LINE-WITH-THE-NGC-RELEASE-KEY`. **Ohne diesen Schritt kann niemand NGC
+   installieren** — das ist kein Programmfehler, sondern ein fehlendes Schlüsselpaar.
+2. Dasselbe für den **Store-Schlüssel** (`REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY`), plus der
+   Riegel aus Befund 1.
+3. **Die Anmeldung im Browser ist nicht gemessen.** Die Seite kommt, der Einrichtungscode ist
+   gedruckt, aber den ersten Verwalter anzulegen braucht einen Passschlüssel — und `ngc.test` mit
+   selbst unterschriebenem Zertifikat ist dafür der nächste Messpunkt, nicht dieser.
+4. Der **Controller ist nicht gekoppelt** („no app can run"), weil das über die angemeldete
+   Oberfläche läuft. Die Kette endet hier also nicht an der Technik, sondern an Punkt 3.
