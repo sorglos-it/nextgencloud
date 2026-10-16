@@ -838,10 +838,15 @@ export async function startMockAPI({ world, port, phpPort }) {
   // The setup path is the one exception and it is the server's, not this
   // file's: apps/server-api/classes/setup/setup.go:94-99 (fault) turns EVERY
   // E_UNREACHABLE into E_INTERNAL, and its own comment says so - "nothing on
-  // this path can say 503 any more". It answers with httpapi.Fail at all
-  // fifteen places, which sets no Retry-After. So a busy database during the
-  // first run reaches the browser as 500 E_INTERNAL with no header, and that
-  // is what setupFault below hands back.
+  // this path can say 503 any more". COUNTED, because the first version of
+  // this comment said "fifteen places" and both halves of that were wrong:
+  // `grep -c 'httpapi\.Fail[A-Za-z]*(' setup.go` answers 14, and ONE of them
+  // is httpapi.FailRetry at setup.go:324, which DOES set a Retry-After - for
+  // E_LOCKED, the failed-code bucket, and never for a busy database. The 13
+  // plain httpapi.Fail calls set none. So a busy database during the first
+  // run reaches the browser as 500 E_INTERNAL with no header, and that is
+  // what sendFault below hands back; E_LOCKED is the setup mask's own branch
+  // (auth/setup.js, sentenceForOffer) and not this one.
   const RETRY_BUSY = 5;
   let faultNext = "";
   function takeFault() {

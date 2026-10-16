@@ -206,6 +206,51 @@ test("the five files hold the same keys, and a key nobody has is empty", async (
   expect(got.notAString, "a key that is no string is empty too").toBe("");
 });
 
+// THE FLOOR UNDER THE FILES. Every sentence of these two masks used to be a
+// constant in auth/login.js and auth/setup.js, so a mask always had one; with
+// the language files they are a fetch away, and a fetch can fail. MEASURED on
+// the branch before this case existed, rendered in chromium: with every
+// /assets/lang/*.json refused and a wrong password typed, the alert of the
+// login mask held "" and was not laid out at all (offsetHeight 0) - a mask
+// that says nothing where it used to say "Anmeldung fehlgeschlagen."
+//
+// It is not an invented state: a release that ships assets/js/ and forgets
+// assets/lang/ is exactly this, and the packer names what goes out file by
+// file (tools/release/extra-web.txt, release-packer branch, unmerged).
+//
+// English and not German, because English is what FALLBACK already is: a
+// second rule for the floor would be a second thing to get wrong.
+test("a mask with no language file at all still says something", async ({ shell }) => {
+  await skipWithoutLogin(shell);
+  await shell.route("**/assets/lang/*.json", (route) => route.abort());
+  await shell.reload();
+  await expect(shell.getByLabel("Benutzername")).toBeVisible();
+
+  await shell.getByLabel("Benutzername").fill(USER_NAME);
+  await shell.getByLabel("Passwort").fill("nicht-das-passwort");
+  await shell.getByRole("button", { name: "Anmelden", exact: true }).click();
+  await attemptOver(shell);
+
+  const said = shell.getByRole("alert");
+  await expect(said).toHaveText("Login failed.");
+  // Laid out, not merely present: an element with no text has no height, and
+  // that is what the measurement above found.
+  expect(await said.evaluate((n) => n.offsetHeight), "the alert is on the page").toBeGreaterThan(0);
+});
+
+// The one thing that can make the floor a lie: a sentence changed in the
+// English file and not in the built-in copy, or the other way round. Held key
+// for key AND value for value, so neither half can drift alone.
+test("the built-in sentences are the English file, word for word", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const { BUILT_IN, FALLBACK } = await import("/assets/js/shell/lang.js");
+    const res = await fetch("/assets/lang/" + FALLBACK + ".json", { cache: "no-store" });
+    return { file: await res.json(), builtIn: { ...BUILT_IN } };
+  });
+  expect(Object.keys(got.file).length, "there are sentences at all").toBeGreaterThan(10);
+  expect(got.builtIn).toEqual(got.file);
+});
+
 // A language tag from outside never becomes a path. pick() answers with one
 // of the five and nothing else, which is what keeps a tag like
 // "../../etc/ngc/web.json" out of the address fetchLang builds.

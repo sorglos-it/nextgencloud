@@ -27,9 +27,26 @@
 //
 // Fallback is per KEY and not per file, which is what the house rule asks
 // for: a key the chosen language does not have is answered out of English,
-// and a key English does not have either comes back as "" - never the naked
-// key and never an empty box, because every caller here hands the sentence
-// to textContent and an empty alert is a mask that says nothing at all.
+// and a key English does not have either is answered out of BUILT_IN below.
+// Only a key that is in no table at all comes back as "" - never the naked
+// key, which is no sentence for anybody.
+//
+// WHY BUILT_IN EXISTS, and it is MEASURED, not foreseen. The sentences used
+// to be constants in auth/login.js and auth/setup.js, so a mask always had
+// them; with the files they are one fetch away, and a browser that cannot
+// get the files has no sentence at all. Measured in chromium, rendered: with
+// every /assets/lang/*.json refused and a wrong password typed, the alert of
+// the login mask held "" and was not even laid out (offsetHeight 0). Before
+// the files it read "Anmeldung fehlgeschlagen." A release that ships
+// assets/js/ and forgets assets/lang/ is exactly that state - the release
+// packer names what goes out file by file (tools/release/extra-web.txt, on
+// the unmerged release-packer branch) - and so is a disk that fills up while
+// the page is already open.
+//
+// It is NOT a second table that may drift: the English file and BUILT_IN are
+// held key for key and value for value by a case of shell/busy.spec.js, so a
+// sentence changed in one of them and not the other is a red case and not a
+// surprise at somebody's screen.
 import { decode, Budget, M, str } from "../contracts/json.js";
 import { readBounded } from "../net/http.js";
 
@@ -48,6 +65,32 @@ export const FALLBACK = "en";
 // that is NOT a language file is dropped while it arrives rather than after
 // it is all in memory - the same reason net/config.js bounds /config.json.
 export const MAX_LANG = 8 << 10;
+
+// The English sentences, compiled in, so that a mask is never silent. It is a
+// COPY of public/assets/lang/en.json and says so: the file is what somebody
+// translates and what the browser reads, this is the floor under it for the
+// one case where no file could be read at all. The case that holds the two
+// equal is "the built-in sentences are the English file, word for word" in
+// shell/busy.spec.js.
+export const BUILT_IN = Object.freeze({
+  __proto__: null,
+  "err.unreachable": "Service unavailable. Please try again later.",
+  "err.busy": "The service is busy right now. Please try again in {seconds} seconds.",
+  "login.failed": "Login failed.",
+  "login.locked": "Too many failed attempts. Please try again later.",
+  "login.locked.left": "Too many failed attempts. {seconds} seconds left.",
+  "login.totp.ask": "Please enter the code from your authenticator app.",
+  "setup.code.incomplete": "The one-time code is not complete.",
+  "setup.code.nomatch": "The one-time code does not fit this installation. Please check the code and try again.",
+  "setup.silent": "The installation is not answering right now. The one-time code stays valid. Please try again in a moment.",
+  "setup.refused": "The installation refused the setup. Please install NGC again and use the new code.",
+  "setup.already": "This installation is already set up.",
+  "setup.broken": "The setup did not work. Please reload the page and try again.",
+  "setup.name.bad": "A login name may hold only lower-case letters, digits and . _ - and must begin with a letter or a digit.",
+  "setup.password.missing": "Please choose a password.",
+  "setup.password.different": "The two passwords are not the same.",
+  "setup.signin": "NGC is set up. Please sign in now.",
+});
 
 // A map of strings, read through the house decoder with a budget: a language
 // file is a file on a server, and a file on a server is exactly what somebody
@@ -133,7 +176,9 @@ export function language() {
 // is nothing here to escape; a placeholder nobody passed a value for stays
 // as it is written, which shows up in a test rather than disappearing.
 export function t(key, vars = null) {
-  const found = typeof key === "string" ? (table[key] ?? fallbackTable[key] ?? "") : "";
+  const found = typeof key === "string"
+    ? (table[key] ?? fallbackTable[key] ?? BUILT_IN[key] ?? "")
+    : "";
   if (vars === null || found === "") return found;
   let out = found;
   for (const [name, value] of Object.entries(vars)) {
