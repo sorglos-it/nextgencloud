@@ -2119,3 +2119,37 @@ knows 4 of them.` Das Skript sagt es laut und macht weiter — richtig so, aber 
    selbst unterschriebenem Zertifikat ist dafür der nächste Messpunkt, nicht dieser.
 4. Der **Controller ist nicht gekoppelt** („no app can run"), weil das über die angemeldete
    Oberfläche läuft. Die Kette endet hier also nicht an der Technik, sondern an Punkt 3.
+
+## Punkt 57: Der Riegel ist auf — NGC hat einen Release-Schlüssel, und nichts wird mehr ersetzt
+
+**Gemessen am 17.10.2026** auf demselben Debian 13 wie Punkt 56, diesmal **ohne jede Ersetzung**:
+der öffentliche Schlüssel steht in den Skripten, der geheime unterschreibt.
+
+**Das Schlüsselpaar.** Erzeugt in einem Linux-Dateisystem, damit die Rechte echt sind:
+der geheime Teil liegt als `/root/ngc-keys/release.key` mit **`-rw-------`**, nur für root, und ist
+**in keinem Repo**. Der öffentliche Teil steht in `ngc-all.sh`, `ngc-api.sh`,
+`ngc-controller.sh` und `ngc-web.sh` an der Stelle des Platzhalters — `ngc-db.sh` brauchte keinen,
+es holt keine Programmdateien. **Kennung `pN6Z6a9NR0aG6aEJIJ5EHg`**, und die Zahl, die zählt:
+`grep -l REPLACE-THIS-LINE-WITH-THE-NGC-RELEASE-KEY *.sh` = **0**.
+
+**Der Durchlauf, nichts ersetzt:** Release neu unterschrieben (Folge 3), dreimal **`release ok`**;
+`ngc-api` **`active`** mit **`NRestarts=0`**, Port 7443 belegt; Apache **`active`**; die Seite
+**`http=200`**; `GET /api/v1/setup` **durch Apache** `http=200`; und
+`grep -c REPLACE-THIS-LINE /etc/ngc/api.json` = **0**. Die vier Syntaxprüfungen der geänderten
+Skripte: alle `ok`.
+
+**Der fehlende Riegel aus Punkt 56 ist gebaut** — und er ist als **rot-vorher** belegt, nämlich am
+Fall, der ihn auslöst: leere Store-Antworten brechen jetzt ab mit „NGC has no official app store
+yet …", **Ausstiegscode 1**, bevor etwas geschrieben wird. Vorher lief derselbe Aufruf mit
+Code 0 durch, schrieb den Platzhalter nach `/etc/ngc/api.json` und meldete „The API is running",
+während der Dienst in einer Neustartschleife lag.
+
+**Was das für dich heißt:** ein kleines System lässt sich jetzt **aufsetzen und aufrufen**. Zwei
+Dinge bleiben, und keines davon ist Programmierarbeit:
+1. **Der geheime Schlüssel gehört auf einen Hardware-Stick** (Entwurf 4.8) und von dieser Maschine
+   weg. Solange er in `/root/ngc-keys` liegt, unterschreibt ihn jeder, der dort root ist.
+2. **Der Store-Schlüssel ist weiter ein Platzhalter.** Jede Installation muss darum heute ihren
+   **eigenen** Store nennen — der Riegel sagt das jetzt sauber, statt es durchzulassen.
+
+**Weiter ungemessen, unverändert aus Punkt 56:** die Anmeldung im Browser (erster Verwalter per
+Passschlüssel), und damit die Kopplung des Controllers, die über die angemeldete Oberfläche läuft.
