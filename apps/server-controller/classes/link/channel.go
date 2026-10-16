@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -713,17 +714,49 @@ func (c *channels) drop(ch *Channel) {
 
 // run is the goroutine of one channel: the handler, and after it the one CLOSE
 // of this side.
+//
+// take starts it with go, so this is a goroutine of its own and a panic in it
+// is final -- nothing above a goroutine can catch one. Until the catch in
+// handle below, ONE programming error in ONE handler of ONE channel ended the
+// whole ngc-controller: every other channel of this tunnel, every other
+// tunnel, and with them the shells, the terminals and the service calls of
+// every user of this installation. That is V1.2 point 38 on this side of the
+// link; the API side was built first (package guard), and this controller is
+// where the app channels, the pseudo terminals and the container processes
+// really are.
+//
+// The catch is in TWO places for the reason the API gives: handle holds the
+// work, so the channel still gets its CLOSE and its line, and this one holds
+// the little that comes after it, so a defect in the closing cannot do what
+// the work can no longer do.
 func (c *channels) run(ch *Channel, o tunnel.Opened) {
-	err := c.h.Open(ch.ctx, ch, o)
-	p := closeOK
-	if err != nil {
+	defer func() { _ = guard.HitTo(c.log, recover(), "link.close", ch.num) }()
+	c.close(ch, c.handle(ch, o))
+}
+
+// handle is the handler of one channel with the catch of that channel around
+// it. It answers the payload the one CLOSE of this side carries.
+//
+// A panic is a bug of ours and never a refusal, so it ends the channel the way
+// a handler that answered an error ends it: closeInternal, which is E_INTERNAL
+// over the link. It is deliberately NOT a quiet death -- a channel that
+// vanishes without a word leaves the API, and behind it the browser, waiting
+// for an answer that is never coming, and that is a false answer of its own
+// (V1.2 point 50).
+func (c *channels) handle(ch *Channel, o tunnel.Opened) (p []byte) {
+	defer func() {
+		if guard.HitTo(c.log, recover(), "link.run", ch.num) {
+			p = closeInternal
+		}
+	}()
+	if err := c.h.Open(ch.ctx, ch, o); err != nil {
 		// The error of a handler ends its channel and not the link. It goes
 		// into the log of this controller as it is: whoever writes a handler
 		// decides what stands in it.
 		c.log.Warn("channel failed", "channel", ch.num, "err", err)
-		p = closeInternal
+		return closeInternal
 	}
-	c.close(ch, p)
+	return closeOK
 }
 
 // claimLocked takes the one CLOSE this side owes for the channel and fixes
