@@ -1958,3 +1958,37 @@ Baumlast von `check.sh` am Grundstand genauso rot wird — dort wurde er nur all
 `setup/setup.go:95–98` macht aus jedem `E_UNREACHABLE` bewusst `E_INTERNAL`; die Hintergrundrunden
 haben weder Frist noch Grund. Und was der Benutzer bei `503 + Retry-After` **liest**, ist weiter
 ungemessen — die Oberfläche nimmt den `message` der Antwort nie (`contracts/wire.js:505`).
+
+## Punkt 54: „Ergänzung, kein Bruch" war falsch — ein neuer Code wirft den ganzen Rahmen weg
+
+**Gemessen am 15.10.2026**, und es berichtigt, was die Punkte 49, 52 und 53 über P9 gesagt haben.
+
+Die v1.3-Reihe nannte einen neuen Schließgrund (P8) und einen neuen Fehlercode (P9) jeweils eine
+**Ergänzung**. Eine Sonde gegen den HEAD-Stand von `shared/wire` zeigt das Gegenteil:
+
+```
+ParseClose(code=E_BUSY)        -> code=""              err=wire: malformed CLOSE payload
+ParseClose(code=E_UNREACHABLE) -> code="E_UNREACHABLE" err=<nil>
+```
+
+Die Zeile dahinter ist `shared/wire/wire.go:528` in `Close.Validate`: ein unbekannter Code fällt
+in `ErrClose`. Ein Leser, der `E_BUSY` nicht kennt, sieht also **nicht** „einen Schluss ohne
+Grund" — er sieht einen **kaputten Rahmen** und wirft ihn weg. `shared/README.md:199–200` macht
+daraus die Regel für alles: „unbekannte Felder werden abgelehnt."
+
+**Und es gibt keine Protokollfassung.** Das einzige `Version`-Feld (`shared/tunnel/tunnel.go:151`)
+ist die Fassung einer **App**. Zwei Seiten können sich nicht darauf verständigen, was sie beide
+verstehen — während API, Controller und Oberfläche **einzeln** aktualisiert werden (`trust.AutoAPI`,
+`AutoController`, `AutoWeb`, `shared/tunnel/tunnel.go:164`). Eine neue API mit `E_BUSY` an einem
+alten Controller heißt: abgewiesener Rahmen.
+
+**Folge für die Reihe:** daraus wurde **P10**, und P8 wie P9 hängen jetzt daran — erst die
+Verträglichkeit, dann der neue Code. Die Reihe ist dabei neu geordnet (die alte hatte `P6`, `P7`,
+`P8` **doppelt**), P4 ist **erledigt und gestrichen**, und vier Posten sind dazugekommen
+(P10–P13). Die Vorlage steht in `docs/vertraege-v1-3-vorschlag.md`: je Punkt der fertige
+Änderungssatz, der Preis, was ohne ihn für immer fehlt, und eine Empfehlung — mit JA oder NEIN zu
+beantworten.
+
+**Die Lehre, und sie gilt über dieses Projekt hinaus:** ob eine Änderung ein Bruch ist, entscheidet
+nicht die Form („wir fügen nur etwas hinzu"), sondern der **Leser der alten Fassung**. Das muss man
+messen, nicht argumentieren. Steht in `messen.md`.
