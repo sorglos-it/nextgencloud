@@ -407,6 +407,25 @@ test.beforeEach(async ({ page }) => {
 // built, and hands it the world. It answers once the tab strip stands - what
 // each panel then fetches is what the case after it waits for.
 async function mount(page, cfg = {}) {
+  // THE SHELL'S OWN BOOT HAS TO BE OVER FIRST, and that is MEASURED, not
+  // tidiness. There is no session in this fixture, so the boot always ends at
+  // the login mask - and that mask focuses its name field. Mounting while the
+  // boot is still running leaves a window in which the mask appears AFTER the
+  // app and takes the focus out of it.
+  //
+  // A probe caught it in the act under four workers: `activeElement` was
+  // "BUTTON/tab/ngc-users-tab-users" right after focus() and "INPUT" one
+  // ArrowRight later, with form.loginbox going from 0 to 1 in between - and
+  // in one run of eight the input already held the focus before the first
+  // key. The rate, chromium, --repeat-each=30 --workers=4: 10 of 30 red
+  // without this line, 0 of 30 with it.
+  //
+  // It had been a window all along and the language files only widened it: a
+  // browser offering de-DE fetches de.json AND en.json before shell/main.js
+  // draws anything (shell/lang.js, load), where en-US fetches one. Measured
+  // on the branch before them: 0 of 30. So this is the window closed, not the
+  // fetches hidden - every case here mounts through this function.
+  await expect(page.locator("form.loginbox")).toBeVisible();
   await page.evaluate(async (cfg) => {
     const { usersApp } = await import("/assets/js/apps/users.js");
     const { world } = await import("/assets/js/shell/fake-link.js");
