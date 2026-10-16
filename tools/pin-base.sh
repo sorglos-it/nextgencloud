@@ -78,9 +78,18 @@ token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope
 [ -n "$token" ] || { echo "pin-base: no pull token for $repo" >&2; exit 1; }
 
 accept='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+# The exit code of curl is CAUGHT and turned into 1, and that is not tidiness:
+# under "set -e" an unhandled curl ends the script with CURL's number, and the
+# gate above promises 1 for a failed measurement. Measured 16.10.2026: a
+# repository the registry answers 401 for, and a tag it answers 404 for, both
+# ended this script with 22 - so a caller reading the documented codes saw
+# neither "stale" (2) nor "broken" (1). An unreachable network gave 1 only by
+# accident, because the token line above is a pipe and the emptiness check
+# behind it fires.
 curl -fsS -D "$tmp.head" -o "$tmp" \
 	-H "Authorization: Bearer $token" -H "Accept: $accept" \
-	"https://registry-1.docker.io/v2/$repo/manifests/$tag"
+	"https://registry-1.docker.io/v2/$repo/manifests/$tag" ||
+	{ echo "pin-base: the registry did not answer for $repo:$tag" >&2; exit 1; }
 
 said=$(tr -d '\r' < "$tmp.head" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | tail -n 1)
 own=sha256:$(sha256sum "$tmp" | cut -d' ' -f1)
