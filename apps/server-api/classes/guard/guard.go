@@ -114,15 +114,29 @@ func Report() {
 // site is a fixed name of the place in the code, never anything of a request.
 // channel is the number of the browser's channel, or 0 where the work belongs
 // to no channel of its own.
+//
+// It writes to the default logger. A caller that carries a logger of its own
+// -- ngc-controller gives every tunnel one -- uses HitTo instead, so the line
+// lands where the rest of that part's lines land.
 func Hit(v any, site string, channel uint32) bool {
+	return HitTo(slog.Default(), v, site, channel)
+}
+
+// HitTo is Hit into a logger the caller names. A nil logger is the default
+// one, because a catch that dropped its line for want of a logger would be
+// the silent defect this package exists against.
+func HitTo(l *slog.Logger, v any, site string, channel uint32) bool {
 	if v == nil {
 		return false
+	}
+	if l == nil {
+		l = slog.Default()
 	}
 	n := caught.Add(1)
 	// The KIND and not the value: see the package comment. %T of a nil
 	// dereference is runtime.Error's concrete type and says what happened
 	// without saying what with.
-	slog.Error("a programming error ended one channel, the server keeps running",
+	l.Error("a programming error ended one piece of work, the server keeps running",
 		"site", site, "channel", channel, "kind", fmt.Sprintf("%T", v),
 		"where", where(), "panics", n)
 	return true

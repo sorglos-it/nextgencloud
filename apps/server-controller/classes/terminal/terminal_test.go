@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/service"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
@@ -644,4 +645,76 @@ func FuzzParseFrame(f *testing.F) {
 			t.Fatalf("kind %d got through", fr.Kind)
 		}
 	})
+}
+
+// TestEndedTurnsAPanicIntoTheEndOfOneTerminal is V1.2 point 38 for the four
+// goroutines of runShell. Those four are Linux only (pty_linux.go), but what
+// carries the catch is not: ended lives in terminal.go on purpose, so the half
+// that can be measured on any machine is measured on this one.
+//
+// Two things, and the second is the one a bare recover would miss: the panic
+// does not come out of this goroutine, AND whoever waits on the channel is
+// told. A catch that only swallowed would leave runShell waiting on a
+// goroutine that is already gone - a terminal that simply stops, which is the
+// silent defect of V1.2 point 50.
+func TestEndedTurnsAPanicIntoTheEndOfOneTerminal(t *testing.T) {
+	before := guard.Panics()
+	out := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// The panic is caught inside ended; if it were not, this goroutine
+		// and with it the whole test binary would be gone.
+		ended(out, "terminal.test", func() error { panic(marker + " in a pump") })
+	}()
+	<-done
+	select {
+	case err := <-out:
+		if !errors.Is(err, errBug) {
+			t.Fatalf("the pump answered %v, want errBug", err)
+		}
+		// And the error itself carries nothing of what went through the
+		// terminal: it is one constant, which is the rule of this whole
+		// package.
+		if strings.Contains(err.Error(), marker) {
+			t.Fatalf("the answer of the pump carries the panic value: %q", err)
+		}
+	default:
+		t.Fatal("nothing was sent, so runShell would wait for a goroutine that is gone")
+	}
+	if got := guard.Panics(); got != before+1 {
+		t.Fatalf("the counter went %d -> %d; one panic counts once", before, got)
+	}
+}
+
+// TestAnEndedTerminalSaysSoAndNotSomethingElse holds the sentence. Before the
+// case for errBug in run, a programming error fell into the default and the
+// person at the terminal read "Die Shell ließ sich nicht starten." - which is
+// false: the shell had started. A wrong cause sends whoever reads it to the
+// wrong place, and that is the false answer of V1.2 point 50, not a nicety.
+func TestAnEndedTerminalSaysSoAndNotSomethingElse(t *testing.T) {
+	if got := sentence(errBug); got != msgBug {
+		t.Fatalf("an internal failure reads %q, want %q", got, msgBug)
+	}
+	// The sentence of a programming error is not the one of a shell that could
+	// not start: that was the false answer before this case.
+	if sentence(errBug) == msgNoRun {
+		t.Fatal("an internal failure still reads as a shell that would not start")
+	}
+	// The other mappings stand where they stood, including the fallback.
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{errNoPTY, msgNoPTY}, {errIdle, msgIdle}, {errCut, msgCut},
+		{ErrFrame, msgCut}, {errors.New("something else"), msgNoRun},
+	} {
+		if got := sentence(c.err); got != c.want {
+			t.Fatalf("%v reads %q, want %q", c.err, got, c.want)
+		}
+	}
+	// And the new sentence carries no value either, like every other one.
+	if strings.ContainsAny(msgBug, "%") {
+		t.Fatalf("the sentence has a verb in it: %q", msgBug)
+	}
 }
