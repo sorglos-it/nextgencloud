@@ -32,6 +32,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -173,6 +174,56 @@ func (st *Stores) Refresh(ctx context.Context) error {
 		// The reason is shown to admins in ngc.store/sources, in German, and
 		// writing it down must not swallow the next store either.
 		_ = st.note(ctx, s.ID, err)
+	}
+	// Forgetting comes last, and it must not cost the catalogs above either.
+	_ = st.forget(ctx, v.List.Stores)
+	return nil
+}
+
+// forget drops the catalog of every store that is no longer in the trust
+// list. Two things hang on it.
+//
+// Nothing can read such a row: Sources walks the trust list, and Catalog
+// refuses an ID the list does not name, so the row is unreachable from the
+// moment the store leaves the list. What it still does is hold the rollback
+// bar: lastSeq is keyed by the store ID alone, so a store that comes back
+// under the same ID is measured against a number from before it left.
+//
+// And that number is the trap this is for. A sequence once put on record --
+// by somebody with the store key, or by the store's own mistake -- refuses
+// every lower one for good (store.ErrRollback), the store's own healthy
+// catalog included. Without this an administrator has no way back at all: no
+// action resets the row, and a new store ID leaves the apps already
+// installed naming the old one (dbapi.App.Store).
+//
+// The right it costs is named on purpose: taking a store out of the trust
+// list and putting it back is a change of the trust list
+// (ngc.users/api/trust, admin, critical). Whoever may do that may also give
+// the store another key or another address, so the bar is not lowered for
+// anybody who could not already decide what this store is.
+func (st *Stores) forget(ctx context.Context, stores []trust.Store) error {
+	// Seq 0 is below every catalog's own number, so this reads the rows of
+	// all stores, and no query is built from anything a store sent.
+	rows, err := st.S.DB.BlobFrom(ctx, dbapi.BlobCatalog, 0)
+	if err != nil {
+		return err
+	}
+	for _, b := range rows {
+		if slices.ContainsFunc(stores, func(s trust.Store) bool { return s.ID == b.ID }) {
+			continue
+		}
+		if err := st.S.DB.BlobDelete(ctx, dbapi.BlobCatalog, b.ID); err != nil {
+			return err
+		}
+		if st.Log == nil {
+			continue
+		}
+		// audit.ErrDropped is a report and never costs the entry.
+		if err := st.Log.Note(ctx, core.LogStore, audit.UserSystem, "", "",
+			b.ID+" ist nicht mehr in der Vertrauensliste, der Katalog wurde verworfen"); err != nil &&
+			!errors.Is(err, audit.ErrDropped) {
+			return err
+		}
 	}
 	return nil
 }

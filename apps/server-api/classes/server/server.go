@@ -30,6 +30,8 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/coreapp"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbopen"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/join"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
@@ -134,7 +136,14 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	}
 	// The owner of the migration lock. On SQLite this very call migrates, so
 	// the name has to be in place before the open and not after it.
-	db, err := dbopen.Open(ctx, cfg.DB, dbopen.OwnerOf(cfg.Node))
+	// The deadline of the start, not none: on SQLite this call migrates, and
+	// a second program on the same file holds it for the measured 80,6 s of a
+	// full retry chain with no word to the admin meanwhile. Point 32 decided
+	// the shape -- a service that hangs at the start is worse than one that
+	// does not start, and the restart belongs in the service file.
+	octx, ocancel := dbwait.Start(ctx)
+	db, err := dbopen.Open(octx, cfg.DB, dbopen.OwnerOf(cfg.Node))
+	ocancel()
 	if err != nil {
 		return nil, errors.New("die Datenbank ist nicht erreichbar")
 	}
@@ -348,14 +357,34 @@ func (s *Server) serve(ctx context.Context, ln net.Listener) error {
 	}
 	var rounds sync.WaitGroup
 	rounds.Add(2)
-	go func() { defer rounds.Done(); s.rounds(ctx) }()
+	// The catch around the LOOP, next to the one around a single round in
+	// Server.once: once keeps the beat turning over a panic in the work of a
+	// round, this one keeps a panic in the beat itself -- the tickers, the
+	// select -- from taking the server down with every session of every user.
+	// After it the housekeeping is over for the life of this process, which is
+	// exactly why guard's line is ERROR and counted: an installation whose
+	// sessions stop expiring must be findable (V1.2 point 50).
+	go func() {
+		defer rounds.Done()
+		defer func() { _ = guard.Hit(recover(), "server.rounds", 0) }()
+		s.rounds(ctx)
+	}()
 	// In the same WaitGroup, so a stop waits for a round that is running
 	// instead of leaving it behind: Rollout checks the context between nodes
 	// and awaitInstalled selects on it, so it comes back of its own accord.
-	go func() { defer rounds.Done(); s.rollouts(ctx, s.up.Rollout) }()
+	go func() {
+		defer rounds.Done()
+		defer func() { _ = guard.Hit(recover(), "server.rollouts", 0) }()
+		s.rollouts(ctx, s.up.Rollout)
+	}()
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
+		// A panic in the shutdown is the one that would be hardest to see: the
+		// process is going down anyway, so a crash here looks like the stop it
+		// was asked for. close(stopped) above still runs, so serve comes back
+		// and the exit code stays the one the caller decides.
+		defer func() { _ = guard.Hit(recover(), "server.shutdown", 0) }()
 		<-ctx.Done()
 		// WithoutCancel: ctx is already done, and a shutdown that inherited it
 		// would cut every open connection at once instead of letting it end.
@@ -405,10 +434,27 @@ func (s *Server) once(fn func()) {
 		return
 	}
 	defer s.round.Unlock()
+	// The catch sits around ONE round, and that is the decision this line
+	// carries: a background round may not quietly stop. Caught around the
+	// loop alone, one panic in one minute round would end the housekeeping
+	// for the life of the process -- expired sessions would stay logged in
+	// and the trust list would stay as it was, and the API would keep
+	// answering as if both had been done, which is the false answer of V1.2
+	// point 50. Here the broken round ends loudly and the NEXT tick runs the
+	// round again. Channel 0: this is nobody's channel.
+	defer func() { _ = guard.Hit(recover(), "server.round", 0) }()
 	fn()
 }
 
-// minute is the housekeeping round: expired sessions out, trust list afresh.
+// minute is the housekeeping round: expired sessions out, trust list afresh,
+// and the count of caught programming errors said out loud if it has grown.
+//
+// guard.Report is LAST on purpose. A panic in either step above is caught by
+// Server.once around this round, so the count it would report is one this
+// round can no longer reach -- it reaches the log at the next tick instead,
+// one minute later, which is the price of the catch sitting around the round
+// and not around each step. Put first, the call would report the state of the
+// minute before and read just as late.
 func (s *Server) minute(ctx context.Context) {
 	if err := s.login.Purge(ctx); err != nil {
 		slog.Warn("housekeeping failed", "error", err)
@@ -416,6 +462,7 @@ func (s *Server) minute(ctx context.Context) {
 	if _, err := s.State.Refresh(ctx); err != nil {
 		slog.Warn("trust list could not be read", "error", err)
 	}
+	guard.Report()
 }
 
 // hour is the catalog round.
@@ -480,6 +527,11 @@ func (s *Server) rollouts(ctx context.Context, drive func(context.Context) error
 // installation with two API servers, and its own comment asks for exactly
 // this. A context that ended is not one either -- that is a server stopping.
 func (s *Server) rollout(ctx context.Context, drive func(context.Context) error) {
+	// Per ROUND and not around the loop, for the reason Server.once gives: a
+	// rollout that broke off must not take the beat with it, or an
+	// installation would stop updating itself and say nothing. The next hour
+	// asks the same nodes again, which is what a rollout is built to survive.
+	defer func() { _ = guard.Hit(recover(), "server.rollout", 0) }()
 	err := drive(ctx)
 	switch {
 	case err == nil, errors.Is(err, updates.ErrNotDriving), errors.Is(err, ctx.Err()):

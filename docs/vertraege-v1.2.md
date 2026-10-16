@@ -1569,3 +1569,465 @@ Punkt. Die Lösung bleibt ein ausgeführtes `store.ValidDownloadURL`;
 **Dazu ein Widerspruch zur Hausnummerierung:** `release -version 0.0.1.0` fällt durch, weil
 `store.ValidVersion` **dreistellig** ist — die Hausnummerierung dieses Nutzers ist vierstellig.
 Das gehört vor dem ersten Release entschieden, nicht danach.
+
+## Punkt 46: Der Rückdreh-Riegel war eine Falle ohne Ausgang — jetzt gibt es einen
+
+**Gemessen am 13.10.2026.** Punkt 45 hatte es als Nebenbefund genannt: wer eine hohe Folgenummer
+unterschiebt, sperrt den echten Store dauerhaft aus. Nachgemessen ist es schlimmer, und zwar in
+drei Richtungen.
+
+**Erstens: die Falle schnappt wirklich zu.** Stand 1 (Zwischenprüfung: geht durch) → Folge 57 →
+der heile Store mit Folge 1 gibt `store.ErrRollback`, und die gespeicherte Folge bleibt **57**,
+auch nach weiteren Versuchen. Die getrennte Gegenmessung zeigt, dass Folge 1 gegen Stand 1 **kein**
+Rückdreh ist — der Fall fällt also an der 57 und an nichts anderem.
+
+**Zweitens: es braucht gar keinen Angreifer.** Mit dem **eigenen** Schlüssel des Stores gemessen:
+Stand 7, **einmal** Folge 57 (ein Testlauf, ein zurückgespielter Stand), und danach sind 8, 9, 10
+und 56 alle `ErrRollback`. Erst 57 geht wieder durch. **Ein einziger Refresh im falschen Moment**,
+und der echte Store muss 49 Kataloge überzählen, um sich selbst wieder ausliefern zu dürfen. Der
+Code sieht eine Zahl, nicht einen Angreifer.
+
+**Drittens: es gab keinen Weg zurück.** Mit `grep` belegt: die Folgenummer steht in der
+Blob-Tabelle unter der Store-Kennung, und `BlobDelete` wird **nie** darauf gerufen — vier Stellen
+lesen und schreiben, keine löscht. In `core.All()` gibt es **keine** Aktion, die etwas zurücksetzt.
+**Und „Store entfernen und neu anlegen trug nicht"** — das war meine Vermutung, und sie ist
+gemessen falsch: die Zeile blieb bei 57, auch mit **neuem Store-Schlüssel**. Übrig blieben eine
+**neue Store-Kennung** (dann nennen die installierten Apps weiter die alte) oder **Handarbeit an
+der Datenbank**.
+
+**Gebaut, in `apps/`:** ein Store, der nicht mehr in der Vertrauensliste steht, **verliert seinen
+Katalog**. Der Weg zurück ist damit: entfernen, einmal auffrischen, wieder eintragen — mit genau
+dem Recht, das einen Store **hinzufügt**. Es kostet nichts Erreichbares, denn so eine Zeile ist ab
+der Entfernung ohnehin unlesbar; sie hielt nur noch den Riegel.
+
+**Der Preis, benannt:** wer die Vertrauensliste schreiben darf, hebt den Riegel für eine Kennung
+auf. Das ist vertretbar — derselbe darf dem Store auch einen anderen Schlüssel und eine andere
+Adresse geben. Einen alten Katalog an einem **gelisteten** Store vorbeizuschmuggeln kann er nicht.
+
+**Verworfen:** „der Admin senkt die Zahl beliebig". Das hebt den Riegel ganz auf und bräuchte eine
+**neue Aktion** in `shared/core/core.go:126–168` — eingefroren.
+
+**Belegt ist es als rot-vorher/grün-nachher an der Zusicherung selbst:** der alte Fall
+(„die Zeile bleibt stehen") war auf `309dc2a` **grün** und ist nach dem Bau **rot**, unverändert.
+Dazu zwei Mutanten tot, eine Kontrolle lebt, und die `-race`-Null ist mit einer Wegwerf-Mutation
+belegt, die im **selben** Lauf rot wird.
+
+**Ungemessen, und es gehört dazu:** diese Fälle erben die Zeile aus dem Prüfstand, die die
+**TLS-Kette abschaltet** (Punkt 45) — der Strang hat das in den Kopf der Testdatei geschrieben,
+statt es zu übergehen. Und die Zeile mit Zeit und Grund bleibt beim Entfernen stehen; das ist
+bewusst so, aber ungemessen.
+
+## Punkt 47: Der kleine Fall — eine Datenbankdatei je Programm, und eine gemessene Lücke
+
+**Gemessen am 13.10.2026.** Für ein kleines System (eine Maschine) ist der Treiber
+`config.DriverSQLite`: **eine Datei**, verschlüsselt mit AES-256-XTS über eine eigene VFS,
+Schlüssel 64 Byte in `config.DB.Key`. MariaDB/Galera (`config.DriverMariaDB`, Konten `ngc` und
+`ngc_migrate`, TLS mit CA) ist erst der Fall „mehrere Maschinen".
+
+**Die Falle dabei:** bei SQLite wandert **jeder** `Open`-Aufrufer selbst die Migration durch;
+`ngc_lock` deckt nur den Augenblick der Migration. Zwei Programme auf **einer** Datei sind damit
+zwei Leser desselben `go:embed` — Befund W-1.
+
+**Gebaut, in `ulh` (Zweig `ngc-all`, `4faabb7`):** `ngc-all.sh` (1580 Zeilen, 82 neue Prüffälle,
+fünf Sprachen) richtet ein kleines System ein mit **je einer Datei und je einem Schlüssel pro
+Programm** — `/var/lib/ngc/api/ngc.db`, `/var/lib/ngc/controller/state.db`. `check_two_files`
+bricht **vor** dem ersten Schreiben ab, falls die Pfade je gleich wären. Die eine Stelle, die der
+Vertrag doch teilt (Rolle `db`: `controller.json`s `migrate` trägt Datei und Schlüssel der API,
+siehe `shared/ulh.md`), ist mit `After=network-online.target ngc-api.service` und
+`Restart=on-failure`/`RestartSec=5` auf beiden Einheiten abgefedert — nicht aufgehoben.
+
+**Die gemessene Lücke, und sie ist die wichtigste:** Apache, PHP, Zertifikat und `web.json` sind
+`ngc-web`s Arbeit. Je Zweig gezählt (committeter Stand, nicht Arbeitsbaum): `origin/main` hat
+**null** `ngc-*`-Skripte. `ngc-api.sh`/`ngc-controller.sh` liegen auf `ngc-skripte` und `ngc-all`,
+`ngc-db.sh` auf `ngc-db`, `ngc-web.sh` auf `ngc-web` und `ngc-web-kopfzeilen`. **Kein einziges ist
+veröffentlicht.** Folge: ohne `ngc-web` kann sich niemand anmelden, also auch keinen
+Kopplungscode holen — **der kleine Fall ist erst mit `ngc-web` durchgängig**, und durchgängig
+geprüft ist er erst auf echtem Debian (Feldplan).
+
+**Zu entscheiden (Nutzer):** die fünf Skripte nach `ulh`-`main` zusammenführen. Ein Push dorthin
+erreicht per Auto-Update **sofort alle Nutzer** — deshalb liegt das nicht bei mir.
+
+## Punkt 48: Zwei Programme auf einer SQLite-Datei — sicher, aber mit einer Zahl: vier
+
+**Gemessen am 13.10.2026**, die letzte offene Hälfte von Punkt 32. Alles mit **zwei echten
+Prozessen** über `sqlite.OpenDB` → Pool → `sqlstore` → `LogAdd`, keine Attrappe, auf **C:** und
+auf **Z:** (NAS).
+
+**Gleichzeitig schreiben trägt.** Je Prozess 1/4/16/64/128/192 Fäden: 0 Fehler in jeder Lage,
+`integrity_check=ok`, Zeilenzahl je Prozess exakt. Die Dateisperre hält über Prozessgrenzen,
+auch auf dem NAS. Mehr Last ist nur Warteschlange: der Durchsatz bleibt ~180/s je Prozess,
+ob 4 oder 192 Fäden. Bei 384 gleichzeitigen Schreibern reißt die 10-s-Frist (11,44 s) und es
+gibt **trotzdem 0 Fehler** — die Wiederholung fängt es.
+
+**Die Frist ist 10 s × 8 = 80 s.** `busy_timeout=10000` (`sqlite.go:27`) mal `maxTries=8`
+(`sqlstore/store.go:17`): gegen eine 95-s-Sperre wartet der Verlierer **80,6 s** (C: und Z:
+gleich), dann Fehler — und zwar `sqlite3: database is locked`, durch `httpapi.Fault` als
+**`E_UNREACHABLE`** (503). **Von „Datenbank weg" nicht zu unterscheiden.** `fault.go` sagt diesen
+Tag selbst voraus.
+
+**Die Grenze ist vier, nicht „soundso viele Benutzer".** Der Pool hält 4 Verbindungen
+(`sqlite.go:52`), und ein wartender Schreiber hält seine: blockierte Schreiber gegen die Kosten
+des ersten **Lesens** — 2 → 0,008 s, 3 → 0,007 s, **4 → 9,513 s**. Vier wartende Schreibvorgänge
+legen jede Abfrage des Prozesses lahm, auch jedes Lesen.
+
+**Die Migration hat keine Wiederholung.** Mit echter Wanderung (`ALTER TABLE`) gegen 4 Schreiber
+bei 328/s: `migrate-ok 1 in 0,029 s`. Gegen eine 95-s-Sperre: `migrate-error after 10,014s` —
+**eine** Frist, **keine** Wiederholung, weil `bootstrap`/`take` über `db.ExecContext` direkt gehen.
+
+**Behoben, weil die Meldung offensichtlich falsch war:** `busyOr` in `migrate.go` nennt jetzt den
+Schritt und bei einem Wiederholungsfehler die Ursache („ein anderes Programm schreibt"),
+ausdrücklich nicht den Satz der gehaltenen Migrationssperre. Rot vorher an der Zusicherung selbst,
+grün nachher; 50 Fälle unter `-v`, zwei Mutanten tot, eine Kontrolle lebt, `-race` null mit
+Wegwerf-Mutation belegt.
+
+**Was folgt — und was nicht:** Zwei Schreiber auf einer Datei sind **sicher, nur langsam**. Eine
+Regel „ein Schreiber je Datei" (so macht es `ngc-all.sh`, Punkt 47) ist damit eine Entscheidung
+über **Einfachheit**, nicht über Sicherheit. Hingelegt, nicht gebaut: ein Schreibkanal je Prozess
+statt vier Verbindungen; die Frist an den Zweck binden (kurz auf Benutzerwegen, lang beim Start —
+heute hat **kein** Store-Aufruf ein `context`-Zeitlimit); „busy" von `E_UNREACHABLE` trennen, mit
+`Retry-After`; und ob `migrate.Apply` eine Wiederholung bekommt (mit `maxTries=8` wären das 80 s
+Hängen beim Start — genau die Abwägung von Punkt 32).
+
+**Ungemessen:** zwei echte `ngc-api` über die ganze HTTP-Strecke; was der Benutzer im Browser bei
+`E_UNREACHABLE` liest; dasselbe auf einem echten Pi; drei Pools gleichzeitig (Sicherung) unter
+dieser Last.
+
+## Punkt 49: Die Frist gehört zum Zweck — und „beschäftigt" ist nicht „weg"
+
+**Gemessen und gebaut am 13.10.2026**, zwei Posten von Punkt 48s Liste „hingelegt, nicht gebaut".
+
+**Vorher belegt, nicht behauptet:** `context.WithTimeout`/`WithDeadline` kommt in `apps/server-api`
+(ohne Tests) **neunmal** vor — Tunnel, Join, Link, Relay, Server — und **kein einziges Mal** um
+einen Store-Aufruf. 16 Stellen geben `r.Context()` ungebremst in den Store. Die 80,6 s aus
+Punkt 48 galten also auf jedem Benutzerweg gleich.
+
+**Gebaut, alles in `apps/`:**
+- `apps/server-api/classes/dbwait` (neu): **User = 5 s**, **Start = 90 s**, jede Frist mit ihrem
+  **Grund** (`context.WithTimeoutCause`) — so überlebt der Grund die Frist. 90 s, weil eine volle
+  Wiederholungskette 80,6 s braucht und ein **hängender** Start schlimmer ist als keiner (Punkt 32).
+- `sqlstore` gibt an 11 Rückgabestellen die **benannte Ursache** zurück statt des nackten
+  `context.DeadlineExceeded` — nötig, weil `database/sql` den Kontextfehler selbst liefert und
+  dabei keine Zeile von uns passiert.
+- `httpapi.FailFault`: „beschäftigt" bekommt **`Retry-After: 5`** und eine Protokollzeile
+  `reason=db-busy`, „weg" bekommt `reason=db-unreachable` und keinen Header. Nur Grund und Zahl im
+  Protokoll, nichts aus der Anfrage.
+- Die **fünf** Wege vor dem WebSocket (`setup`, `login/start`, `login/finish`, `logout`, `trust`)
+  bekommen die User-Frist; **`socket` nicht** — er lebt so lange wie die Sitzung.
+
+**BLOCKED, und es ist der Kern:** ein eigener Code `E_BUSY` liegt in
+**`shared/wire/wire.go:450–462`** — eingefroren. Genau das sagt `fault.go` selbst voraus. Also
+bleibt der Code `E_UNREACHABLE` und nur Header plus Protokollgrund unterscheiden. In der v1.3-Reihe
+als **P9**. Ebenso `shared/dbapi/dbapi.go:109–111` (ein vierter Wächter wäre die saubere Naht
+gewesen; über die Kontext-Ursache umgangen) und `apps/server-api/classes/state/state.go:29–32`
+(liegt in `apps/`, aber seine richtige Antwort ist derselbe fehlende Code — unverändert gelassen).
+
+**Zahlen:** `httpapi`+`sqlstore` unter `-v` von **68 auf 73 bestanden**, 0 rot; `dbwait` 3 bestanden.
+Rot-vorher an der Zusicherung selbst zweimal belegt (`cause_test.go:57` „der Grund des Aufrufers ist
+weg"; `busy_test.go:68` `Retry-After = ""`). Vier Mutanten tot, Kontrollmutation lebt
+(`sqlstore` exit 0, 151 bestanden). `-race` 0 über drei Pakete, belegt mit einer Wegwerf-Mutation,
+die im selben Lauf **2 DATA RACE** zeigt.
+
+**Nebenbefund aus der eigenen Messung:** der erste `FailFault` gab für jeden anderen Code nur den
+Code zurück, **ohne zu antworten** — drei Fälle in `login` haben es gefangen (`from=3: 200` statt
+404). Behoben, Fall dazu. Ein Fall, der nicht nur die neue Zeile prüft, findet den Rest.
+
+**Ungemessen, und es gehört dazu:** `login/start`, `login/finish`, `logout` antworten weiter ohne
+`Retry-After` (`login/live.go:313` gibt nur einen Code nach oben, `setup/setup.go:94` macht aus
+jedem `E_UNREACHABLE` bewusst `E_INTERNAL`). Ohne User-Frist bleiben `join/join.go:87`,
+`join/keys.go:46`, `controllers/pair.go:59` (laufen nicht über `httpapi.Routes.Mux`). Die
+Hintergrundrunden (`minute`/`hour`) haben keine Frist. **Der echte 80-s-Fall mit zwei Prozessen ist
+nach der Änderung nicht nachgefahren** — belegt ist die Kette im Prüfstand, nicht am laufenden Paar.
+Und ein Klient, dessen Rumpf länger als 5 s tröpfelt, hört künftig „beschäftigt" statt `E_PROTOCOL`
+bei 15 s; im Code benannt, nicht gemessen.
+
+## Punkt 50: Zwei echte APIs über HTTP — der Benutzer hört, sein Passwort sei falsch
+
+**Gemessen am 13.10.2026**, zwei echte `ngc-api` für linux/amd64 auf **einer** SQLite-Datei,
+Erst-Einrichtung echt über HTTP (GET+POST `/api/v1/setup`, Einmal-Code, `VerifySetup` grün).
+
+**Zuerst der Ort, weil er die Zahlen bindet:** auf **Windows ist diese Messung unmöglich**.
+`config.DB.Validate` verlangt das Pfad-Präfix `/` (`shared/config/config.go:572`),
+`sqlite.validPath` verlangt `filepath.IsAbs` (`apps/server-db/classes/sqlite/sqlite.go:201`) — kein
+Windows-Pfad erfüllt beides. Alle Zahlen gelten für **WSL/ext4**, nicht für C: und nicht für Z:.
+
+**Der zweite Start ist stumm.** Beide „listening" in < 0,25 s, beide antworten `GET /setup` mit
+**derselben** Installations-ID (`9FEQ…`) — Beleg für die geteilte Datei. 8 gleichzeitige Anfragen
+auf frischer Datei: **8 × 200**, 19–45 ms, eine ID. Das `ErrBusy` von `EnsureInstallation` kam
+**nicht** zum Tragen. Es gibt also keine Warnung, dass zwei APIs auf einer Datei liegen.
+
+### Der Befund, und er ist der schlimmste bisher
+
+Vier wartende Schreiber (`POST /login/start` mit **bekanntem** Namen) gegen eine Fremdsperre:
+**200 OK nach 80,64 / 90,20 / 80,66 / 90,42 s** — mit gültigem Challenge-Körper. Der Schreibfehler
+wird **verschluckt** (so entworfen, `login/start.go`), und im Protokoll steht nur
+„a login challenge could not be kept".
+
+**Der Benutzer sieht also keinen Fehler.** Er sieht eine Anmeldung, die 81–90 s braucht und danach
+**„Anmeldung fehlgeschlagen."** sagt — **von einem falschen Passwort nicht zu unterscheiden**. Der
+Zustand „die Datenbank ist gerade besetzt" erreicht ihn als **Falschauskunft über sein Passwort**.
+
+**Punkt 49 verkürzt das, behebt es nicht:** die neue User-Frist von 5 s trifft `login/start`, also
+wartet er künftig 5 s statt 81 — und hört dann dasselbe Falsche. Das Verschlucken in
+`login/start.go` ist der eigentliche Posten.
+
+**Lesen wird nicht lahmgelegt**, anders als im Prüfstand von Punkt 48: fünfte Anfrage nur lesend
+**7,00 s / 200**, `GET /setup` **18 ms** — die Vertrauensliste kommt aus dem Zwischenspeicher.
+
+**`E_UNREACHABLE` am Draht gibt es wirklich:** Datei unter der laufenden API weggenommen →
+**503 in 50 ms**, Körper exakt `{"status":"error","code":"E_UNREACHABLE","message":"Dienst nicht
+erreichbar."}`. Von 8 gleichen Anfragen 2 × 503, 6 × 200 — offene Verbindungen trugen weiter.
+
+### Der Wortlaut, den der Benutzer liest
+
+„**Dienst nicht erreichbar. Bitte später erneut versuchen.**" — Anmeldemaske
+(`apps/web/public/assets/js/auth/login.js:336`) und Einrichtungsmaske (`auth/setup.js:64`), Grundtext
+aus der eigenen Tabelle der Oberfläche (`contracts/wire.js:505`), gleichlautend mit
+`shared/wire/wire.go:474`. **Die Oberfläche nimmt nie den `message` der Antwort** — ein genauerer
+Satz vom Server käme beim Benutzer nicht an. Dieser Code liegt nur auf Zweig `web`; auf `main` hat
+`apps/web/` zwei Dateien. **Gelesen, nicht gerendert.**
+
+### Drei Pools
+
+Unter echter HTTP-Last (16 Schleifen, 25 s, beide APIs): **13 728 Anfragen, 13 728 × 200**,
+langsamste 245 ms, Sicherung als dritter Pool `backup-ok in 0,058 s` — **kein Engpass**. Erst mit
+Fremdsperre: `backup-error after 10,005 s` — **eine** Frist, **keine** Wiederholung, wie
+`migrate.Apply`.
+
+**Behoben:** jeder andere Fehlschlag in `sqlite/backup.go` nennt seinen Schritt auf Deutsch; der
+**einzige, den eine Sicherung unter Last wirklich trifft**, kam als nacktes englisches
+`sqlite3: database is locked`. Jetzt nennt `busyOrStep` Schritt und Ursache. Rot vorher an der
+Zusicherung selbst (`backup_test.go:781/784/787`), grün nachher; zwei Mutanten tot, eine Kontrolle
+lebt; Paket 55 Fälle, 48 bestanden, 7 übersprungen (Symlink, Windows, laut), 0 rot.
+
+**Offen:** `fault.go:94` bildet `state.ErrBusy` auf **`E_INTERNAL` (500)** ab, und der Kommentar
+dort beruft sich darauf, dass **eine** API auf einer Datei liege. **Zwei liegen jetzt nachweislich
+darauf.** Gehört zu P9. Ungemessen bleiben: echtes Rendern im Browser, ein echter Pi, und ob vier
+blockierte Schreiber einen **angemeldeten** Weg (WebSocket, Kanäle) lahmlegen — die Messung reicht
+nur bis `login/start`.
+
+## Punkt 51: Die Prozessdecke und `nosuid`/`nodev` — und drei Fälle, die blind geblieben wären
+
+**Gemessen und gebaut am 13.10.2026**, die zwei offenen Posten aus Punkt 36.
+
+**Die Kommandozeile ist jetzt vollständig belegt**, Zeile für Zeile aus
+`apps/server-controller/classes/runtime/podman.go`: `--network none` (242), `--cpus` (246),
+`--memory` (247), `--read-only` (250), `--cap-drop ALL` (257), `no-new-privileges` (259), zwei
+`--volume` (260, 263), `--user 0:0` (266, und 398 beim `exec`). Eine Behauptung über neun Schalter
+ist damit eine Liste mit Fundstellen.
+
+**Einhängungen: genau zwei.** `<DataDir>:/data:rw` — die einzige, deren Inhalt die App selbst
+schreibt, und damit die, bei der eine Datei mit gesetztem suid-Bit (Upload, Rücksicherung) im
+Container geachtet würde. Und `<Hold>:/ngc/ngc-hold:ro`, der Controller selbst. **Beide tragen
+jetzt `nosuid,nodev`** — auch die `:ro`, weil eine Einhängeoption kein Urteil über den Schreiber
+der Datei ist und nichts kostet. Nicht benannt werden podmans eigene `/proc`, `/sys`, `/dev`;
+`nodev` auf `/dev` machte den Container unbrauchbar.
+
+**`--pids-limit 512`, und die Zahl ist gemessen, nicht geraten:** ein Go-Programm in der Form des
+hold-Prozesses (1000 Goroutinen, `GOMAXPROCS` 64) hält **24 OS-Threads** — der cgroup-Zähler zählt
+Threads, nicht Prozesse. 512 ist Faktor 21 darüber und ein Viertel von podmans eigener Vorgabe
+(2048), steht aber **im Repo**. Eine Fork-Bombe ist unbegrenzt: jede endliche Zahl stoppt sie, die
+Frage ist nur, ob eine normale App hineinpasst. Der Fall prüft nicht nur die Zahl, sondern auch
+`> 0` (0 und −1 heißen bei podman „unbegrenzt") und `>= 128` gegen den gemessenen Bedarf.
+
+**Der Nebenbefund, der der eigentliche Fund ist:** drei bestehende Fälle lasen eine Volume-Angabe
+als **einen String** und suchten mit `HasSuffix(":rw")`. Nach dem Anhängen von `,nosuid,nodev`
+hätten sie **gar kein beschreibbares Volume mehr gefunden und wären grün geblieben**. Jetzt wird
+die Angabe zerlegt (`volumesOf`/`optsOf`). Eine Zusicherung, die am Ende eines Strings hängt, ist
+genau so lange wahr, bis jemand etwas anhängt.
+
+**Zahlen:** `runtime` 143 → **145 Fälle**, 0 rot; ganzer Controller-Satz **989 Fälle, 67
+übersprungen, 0 rot, dreimal von drei**; `tools/check.sh` ohne Pipe Code 0 mit `check: ok`;
+`-race` 0 DATA RACE, belegt mit einer Wegwerf-Mutation, die im selben Lauf 2 Fälle rot macht.
+Sechs Mutanten tot (Schalter weg, `0`, `64`, `nosuid` weg, `nodev` weg, hold ohne Optionen), eine
+Kontrolle lebt.
+
+**Nicht gemessen, und es ist dieselbe Grenze wie immer:** gemessen ist, dass wir die Schalter
+**schicken** — nicht, dass podman sie einhält. Das gilt für alle elf. Offen bleiben: ob
+`--pids-limit 512` eine echte Fork-Bombe stoppt und ob der `pids`-Controller rootless überhaupt
+delegiert ist (ohne Delegation **warnt** podman statt zu scheitern); ob diese podman-Fassung
+`nosuid`/`nodev` in der Optionsliste annimmt (ein Tippfehler würde erst auf einem Linux-Server
+abgewiesen); und ob eine suid-Datei unter `/data` danach wirklich wirkungslos ist. Die 23
+podman-Fälle (`fakePodman` ist ein `/bin/sh`-Skript) **überspringen sich auf Windows laut** —
+`TestCreateBuildsTheArgumentList` muss auf Linux nachgemessen werden.
+
+**Zu entscheiden (Nutzer):** `noexec` auf `/data`. Punkt 36 nennt es nicht, und es ist eine
+Verhaltensänderung für jede App, die unter `/data` Skripte hält. Dazu vorgemerkt, kein Blocker
+heute: eine App-eigene Prozessgrenze wäre ein Manifestfeld,
+`shared/store/manifest.go:50–51` — eingefroren.
+
+## Punkt 52: Die Lüge über das Passwort ist weg — über die Unsymmetrie, nicht über die Meldung
+
+**Gemessen und gebaut am 13.10.2026**, der Posten aus Punkt 50.
+
+**Rot vorher an der Zusicherung selbst:** `known: 200, want 503` **mit gültigem
+Challenge-Körper**, `Retry-After ""`, im Protokoll nur „a login challenge could not be kept".
+Beide Namen 200. Die verschluckende Stelle war der `OnceCreate`-Aufruf **nur `if known`**.
+
+**Der Weg dorthin ist der eigentliche Gedanke:** die Verschluckung existierte **nur** wegen der
+Unsymmetrie — der Schreibvorgang war der eine Aufruf, den ein bekannter Name macht und ein
+unbekannter nicht. Also zuerst die Unsymmetrie weg, dann wird die Antwort möglich: **jeder Name
+hält jetzt einen Nonce.** Der Scheinname unter einer frischen `secrets.ID()` — gleiche Form wie
+eine echte Benutzer-ID, ID von niemandem. `finish.go` prüft `nonceUser != cert.User` **nach**
+`session.VerifyClient` gegen die Vertrauensliste, der Scheinnonce kann also niemanden anmelden.
+Eine **feste** Scheinkennung wurde verworfen: sie wäre ein Namensorakel für jeden mit
+Datenbank-Lesezugriff.
+
+**Nur „besetzt" wird beantwortet** (503, `Retry-After: 5`, `reason=db-busy`), und die Begründung
+ist die Grenze selbst: besetzt ist ein Zustand der **Installation** — ein anderes Programm hält die
+Datei, 80,6 s aus Punkt 48 — und kann darum nicht für bekannt/unbekannt verschieden ausfallen.
+**Alles andere bleibt verschluckt** (volle Platte, Lesereplik, Kontingent): das hängt am **Inhalt**
+der Zeile, und die unterscheidet sich zwischen den Namen um genau einen Wert. Ein Speicher, der die
+echte ID nimmt und die Schein-ID ablehnt, gäbe das Orakel **umgekehrt** zurück. Die sicherere
+Variante ist hier die sparsamere Antwort.
+
+**Das Orakel ist mit Zahlen ausgeschlossen, nicht mit einem Argument:**
+`TestStartMakesTheSameDatabaseCallsForEveryName` ist von `len(known) == len(unknown)+1` auf
+**`slices.Equal`** verschärft — die Aufruflisten sind **identisch**. Bei besetzter Datenbank für
+beide Namen: 503, **gleiche Kopfzeilen** (`maps.EqualFunc`) und **gleicher Körper**, Protokoll ohne
+Name. Die Zeitgleichheit — der eigentliche Riegel — allein nachgefahren: **0 rot von 10**, und
+**0 rot von 10 mit `GOMAXPROCS=1`**.
+
+**Zahlen:** `login` unter `-v` **114 → 116 bestanden**, 0 rot; `./apps/server-api/...` 22 Pakete ok;
+`tools/check.sh` ohne Rohr `check: ok`, Code 0. Drei Mutanten tot (Besetzt-Riegel aus; Schreiben nur
+für bekannte Namen; kein Scheinname), eine Kontrolle lebt. `-race` 0 über drei Pakete, belegt mit
+einer Wegwerf-Mutation (Schloss aus `warnThrottle.take`, 8 gleichzeitige `Start`) → **2 DATA RACE**.
+
+**Ein Zwischenfall, der fast als Messung durchgegangen wäre:** der erste Race-Mutant lief mit
+`-run TestShare` — das traf **keinen** Fall und meldete „0 DATA RACE". Seitdem prüft das Messskript
+die `=== RUN`-Zahl und bricht bei 0 ab. Als Regel in `messen.md`.
+
+**`login/live.go:313` ist für diese Änderung nicht im Weg** (`Start` ruft `Live` nicht auf, 0
+Treffer) — **steht aber anderswo im Weg**, und das ist belegt: `Live` gibt `(*Live, wire.Code,
+bool)` zurück, der Fehler ist an Zeile 313 weg; seine beiden Aufrufer `login/trust.go:33` und
+`browser/browser.go:121` machen nur `httpapi.Fail(w, code)` und können darum **kein**
+`Retry-After` setzen. Die Signatur zu drehen fasst `browser/` an — offen.
+
+**BLOCKED:** `shared/wire/wire.go:450–462` (`E_BUSY`, P9) — ein Klient, der nur den **Code** liest,
+kann „besetzt" weiter nicht von „weg" trennen. Dazu `shared/dbapi/dbapi.go:109–111`.
+
+**Ungemessen:** der echte 80-s-Fall mit zwei Prozessen über HTTP **nach** der Änderung; was der
+Benutzer im Browser bei 503 + `Retry-After` liest; die zusätzliche Schreiblast durch Nonce-Zeilen
+für unbekannte Namen (Ablauf über `session.ChallengeLifetime` + `OncePurge`) — benannt, nicht
+gemessen. `login/finish` und `logout` antworten weiter ohne `Retry-After`.
+
+## Punkt 53: Der Fehler überlebt `Live` — und er ging an drei Stellen verloren, nicht an einer
+
+**Gemessen und gebaut am 13.10.2026**, der offene Posten aus Punkt 52.
+
+**Die Fundstelle war größer als gedacht:** `login/live.go:212` gab `(*Live, wire.Code, bool)`
+zurück, und der Fehler fiel an **drei** Stellen heraus — `sessionRow`/`SessionGet`, `Refresh`
+(die in Punkt 52 genannte Zeile 313) und `SessionTouch`. Die Aufrufer `login/trust.go:33` und
+`browser/browser.go:121` antworteten darum `503` mit `Retry-After: ""` und einem Protokoll **ohne
+Grund**. Rot vorher an genau diesen Zusicherungen, sechsmal, über Trust, Logout, Finish, Start und
+Socket.
+
+**Gebaut:** `httpapi.FailCoded(w, code, err)` — **der Code entscheidet die Antwort, der Fehler nur
+Header und Protokollzeile**. Ausdrücklich **nicht** `FailFault` direkt: `Fault` bildet
+`dbapi.ErrNotFound` auf `E_INTERNAL` ab, `sessionFault` auf `E_LOGIN` — ein Neuberechnen hätte das
+**still gekippt**. Genau dafür gibt es einen Mutanten (M5, 5 Fälle tot). `Live` und `sessionRow`
+geben den Fehler neben dem Code zurück; mitgenommen wurden `logout` (2 Stellen), `finish` (alle
+fünf `E_UNREACHABLE`) und in `start` die **zwei Lesevorgänge** vor der Namenssuche — Punkt 52 hatte
+dort nur den Schreibvorgang.
+
+**Zahlen:** `=== RUN` **206 in beiden Läufen** (identische Fallzahl, also vergleichbar) — vorher
+**5 rot**, nachher **0**; 8 neue Fälle. 22 Pakete ok. `-race` 206 Fälle, 0 DATA RACE, belegt mit
+einer Wegwerf-Mutation, die im selben Lauf 2 zeigt. Sechs Mutanten tot, Kontrolle lebt (121 Fälle).
+
+**Kein neues Orakel, mit Zahlen belegt:** vier Fälle vergleichen Status, **jede Kopfzeile mit
+jedem Wert** und Körper — echtes gegen erfundenes Cookie (Trust und Logout), zwei Token am Socket,
+ein Schlüssel aus der Vertrauensliste gegen einen fremden (die einzige der fünf finish-Stellen, die
+ihre Zeile danach wählt), bekannter gegen unbekannten Namen. **Diese vier sind vorher und nachher
+grün** — sie sind der Riegel, nicht der Beleg der Änderung. Sie können halten, weil besetzt ein
+Zustand der **Installation** ist: der Lesevorgang scheitert **vor** jeder Zeile.
+
+**BLOCKED:** unverändert `shared/wire/wire.go:450–462` (`E_BUSY`, P9), dazu
+`shared/dbapi/dbapi.go:109–111` und in der Folge `apps/server-api/classes/state/state.go:29–32`.
+
+**Ein vierter Zeitflattrer, und er erklärt sich selbst:** `TestFinishTakesTheSameTimeForAKeyNobody
+Holds` war in einem von zwei `check.sh`-Läufen rot (174,57 s), **0 Treffer** auf die
+Laufzeit-Trennlinie — nach den Regeln also ein echter Befund. In der Ausgabe steht aber der
+**Null-Kontrollzweig des Falls selbst**: `286,087µs` gegen `584,965µs`, „this machine cannot measure
+a factor of two today". Allein 0 rot in 3 Läufen. **Nachgemessen und freigemessen:** 1 rot von 10 an der Änderung
+allein, 0 von 10 am Grundstand `bb52ccf` — das trennt nach `messen.md` nichts. Getrennt hat erst
+der **gepaarte** Lauf: zehn verschachtelte Paare, gleicher Maschinenzustand je Paar, **0/10 gegen
+0/10**. Die Änderung ist damit frei. **Ungemessen bleibt** nur, ob derselbe Fall unter der vollen
+Baumlast von `check.sh` am Grundstand genauso rot wird — dort wurde er nur allein gemessen.
+
+**Offen mit Zeile:** `join/join.go:120` und `controllers/pair.go:93` antworten weiter mit nacktem
+`httpapi.Fail` (laufen nicht über `httpapi.Routes.Mux`, haben auch keine Frist);
+`setup/setup.go:95–98` macht aus jedem `E_UNREACHABLE` bewusst `E_INTERNAL`; die Hintergrundrunden
+haben weder Frist noch Grund. Und was der Benutzer bei `503 + Retry-After` **liest**, ist weiter
+ungemessen — die Oberfläche nimmt den `message` der Antwort nie (`contracts/wire.js:505`).
+
+## Punkt 54: „Ergänzung, kein Bruch" war falsch — ein neuer Code wirft den ganzen Rahmen weg
+
+**Gemessen am 15.10.2026**, und es berichtigt, was die Punkte 49, 52 und 53 über P9 gesagt haben.
+
+Die v1.3-Reihe nannte einen neuen Schließgrund (P8) und einen neuen Fehlercode (P9) jeweils eine
+**Ergänzung**. Eine Sonde gegen den HEAD-Stand von `shared/wire` zeigt das Gegenteil:
+
+```
+ParseClose(code=E_BUSY)        -> code=""              err=wire: malformed CLOSE payload
+ParseClose(code=E_UNREACHABLE) -> code="E_UNREACHABLE" err=<nil>
+```
+
+Die Zeile dahinter ist `shared/wire/wire.go:528` in `Close.Validate`: ein unbekannter Code fällt
+in `ErrClose`. Ein Leser, der `E_BUSY` nicht kennt, sieht also **nicht** „einen Schluss ohne
+Grund" — er sieht einen **kaputten Rahmen** und wirft ihn weg. `shared/README.md:199–200` macht
+daraus die Regel für alles: „unbekannte Felder werden abgelehnt."
+
+**Und es gibt keine Protokollfassung.** Das einzige `Version`-Feld (`shared/tunnel/tunnel.go:151`)
+ist die Fassung einer **App**. Zwei Seiten können sich nicht darauf verständigen, was sie beide
+verstehen — während API, Controller und Oberfläche **einzeln** aktualisiert werden (`trust.AutoAPI`,
+`AutoController`, `AutoWeb`, `shared/tunnel/tunnel.go:164`). Eine neue API mit `E_BUSY` an einem
+alten Controller heißt: abgewiesener Rahmen.
+
+**Folge für die Reihe:** daraus wurde **P10**, und P8 wie P9 hängen jetzt daran — erst die
+Verträglichkeit, dann der neue Code. Die Reihe ist dabei neu geordnet (die alte hatte `P6`, `P7`,
+`P8` **doppelt**), P4 ist **erledigt und gestrichen**, und vier Posten sind dazugekommen
+(P10–P13). Die Vorlage steht in `docs/vertraege-v1-3-vorschlag.md`: je Punkt der fertige
+Änderungssatz, der Preis, was ohne ihn für immer fehlt, und eine Empfehlung — mit JA oder NEIN zu
+beantworten.
+
+**Die Lehre, und sie gilt über dieses Projekt hinaus:** ob eine Änderung ein Bruch ist, entscheidet
+nicht die Form („wir fügen nur etwas hinzu"), sondern der **Leser der alten Fassung**. Das muss man
+messen, nicht argumentieren. Steht in `messen.md`.
+
+## Punkt 55: Punkt 38 ist gebaut — dreizehn Fangstellen, und keine ist wie die andere
+
+**Gebaut am 16.10.2026**, API und Controller, und auf `main` nachgeprüft: `go build` 0,
+`go test ./apps/...` **43 Pakete ok, 0 rot, Code 0**.
+
+**Die Abwesenheit war belegt, nicht behauptet:** `recover()` kam in `apps/server-api`,
+`apps/server-controller`, `apps/server-db`, `apps/web`, `shared`, `tools` und `cmd` **nirgends**
+vor — die Liste der Orte, nicht eine Zahl. Folge: eine einzige Fehlstelle in einem Handler nahm
+`ngc-api` ganz mit, samt aller 128 App-Kanäle jeder Verbindung und der Controller-Tunnel.
+
+**Gefangen wird ein FEHLER, nie eine Absage.** Ein Kanal, der einen Code antwortet, antwortet ihn
+weiter auf dem gewöhnlichen Weg. Neu ist `apps/server-api/classes/guard`.
+
+**Dreizehn Fangstellen, nach dem unterschieden, was danach noch möglich ist** — das ist der
+Gedanke, der den Punkt löst:
+- **Im Kanal** (`browser.channel`, `coreapp.open`, `relay.toController`, `relay.sendStream`): der
+  Kanal endet mit `E_INTERNAL`, der Browser hört also, dass etwas kaputt ist, statt auf eine
+  Antwort zu warten, die nie kommt.
+- Drei davon schreiben `E_INTERNAL` zusätzlich in den **Prüfeintrag** — der Mangel steht dann in
+  der Datenbank, nicht nur in einer Datei, die jemand wegdreht. `browser.channel` kann das nicht:
+  der Aufruf, der den Eintrag geschrieben hätte, ist genau der, der vorher gestorben ist.
+- **In einer Runde oder einem Haken ohne Kanal** (`server.round`, `server.rollout`, drei
+  Rückhalte in `Server.serve`, `controllers.hello`, `coreapp.pushTrust`, `link.closeBounded`):
+  dort folgt **nichts** außer Zeile und Zähler. Kanal 0 in der Zeile sagt genau das.
+
+**Gegen das Verschlucken (Punkt 50) gesichert:** `Panics()` ist die Zahl, `Report()` bringt sie
+einmal je Minute aus der Hausrunde dorthin, wo jemand liest — und schweigt, solange die Zahl nicht
+wächst. Ein Mangel, der einmal pro Stunde feuert, ist damit eine **Zahl und kein Gefühl**, und er
+übersteht ein weggedrehtes Protokoll.
+
+**Was NICHT in der Zeile steht, und es ist gemessen, nicht gemeint**
+(`TestTheLineCarriesNoValueOfThePanic`): der **Wert** der Panik — nur ihr Go-**Typ**. Ein
+Panikwert wird von dem geschrieben, der gestorben ist, und trägt, was der gerade in der Hand
+hatte: eine Kennung, ein Passwort, einen Namen, eine Datenbankzeile. Für den Stapelabzug gilt
+dasselbe, denn Go druckt dort die Argumentwörter jedes Rahmens. Stattdessen steht die **eine
+Stelle, die zählt**: die Zeile, die gestorben ist, als die letzten zwei Teile ihres Pfades.
+Aus Anfrage, Sitzung, Benutzer oder Parametern wird hier **gar nichts** gelesen — der Aufruf
+übergibt eine Kanalnummer und einen festen Ortsnamen, einen dritten Weg hinein gibt es nicht.

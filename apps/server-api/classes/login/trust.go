@@ -30,9 +30,15 @@ import (
 // top of that is written at the branch itself.
 func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	live, code, ok := h.Live(ctx, r)
+	live, code, err, ok := h.Live(ctx, r)
 	if !ok {
-		httpapi.Fail(w, code)
+		// FailCoded and not Fail, for the same reason the Chain error below
+		// goes through FailFault: a database that was only BUSY gets the
+		// Retry-After and the log reason that tell it from one that is away
+		// (httpapi/busy.go). Live hands the error up beside the code so this
+		// line can do it at all; the code is Live's and is not recomputed, so
+		// a session that is simply not there stays E_LOGIN.
+		httpapi.FailCoded(w, code, err)
 		return
 	}
 	from, err := session.ParseFrom(r.URL.Query().Get("from"))
@@ -53,7 +59,11 @@ func (h *Handler) Trust(w http.ResponseWriter, r *http.Request) {
 		// only part of it the caller brought. That is what makes
 		// state.ErrOldVersion the 404 of the contract's table here, where the
 		// same error on the setup path is the caller's bad signature.
-		httpapi.Fail(w, httpapi.Fault(err, httpapi.FromRows))
+		// FailFault and not Fail(Fault(...)): a database that was only BUSY
+		// gets the Retry-After and the log line that tell it apart from one
+		// that is away (httpapi/busy.go), and this route is the one of the
+		// five that reads the most rows.
+		httpapi.FailFault(w, err, httpapi.FromRows)
 		return
 	}
 	if len(chain.Versions) == 0 {

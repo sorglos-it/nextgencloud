@@ -731,3 +731,89 @@ func TestBackupRefusesATargetTooLongForTheNameItWrites(t *testing.T) {
 		t.Error("the refused call changed the database")
 	}
 }
+
+// TestBackupSaysWhoHoldsTheFile measures the sentence an admin reads when a
+// backup cannot start because ANOTHER PROGRAM is writing to the file.
+//
+// Measured on 13.10.2026 with two real ngc-api on one file and a third pool
+// for the backup: the copy gave up after 10,005 s and what came out was the
+// driver's bare "sqlite3: database is locked" -- in English, with no step, no
+// word that busy_timeout had already waited its ten seconds and nothing that
+// says the cure is to try again rather than to look for damage. Every other
+// failure of this file names its step in German ("die Sicherung ließ sich
+// nicht ablegen", "die Datenbank ist nicht da"); the one failure a backup
+// under load really meets did not.
+//
+// The case takes about ten seconds on purpose: busy_timeout is what is being
+// waited out, and OpenDB sets it to 10 000 ms with no way in from outside.
+// Shortening it here would measure a different file than the one NGC opens.
+func TestBackupSaysWhoHoldsTheFile(t *testing.T) {
+	dir := t.TempDir()
+	cfg := backupConfig(dir, "state.db")
+	// The neighbour: a pool of its own on the same file, as a second program
+	// has. It takes the write lock and keeps it -- _txlock=immediate means
+	// BeginTx takes it right here and not at a first write.
+	writer, err := sqlite.OpenDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.ExecContext(backupCtx, "CREATE TABLE probe (a BLOB NOT NULL, PRIMARY KEY (a))"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := writer.BeginTx(backupCtx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(backupCtx, "INSERT INTO probe (a) VALUES (?)", []byte("held")); err != nil {
+		t.Fatal(err)
+	}
+	// The way to the measured line has to be open: the target is fine, the
+	// database is there, the journal mode is wal. Only the lock is in the way.
+	target := filepath.Join(dir, "backup.db")
+	err = sqlite.Backup(cfg, target)
+	if err == nil {
+		t.Fatalf("the backup ran while another program held the file")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "sqlite: ") {
+		t.Errorf("the error does not say which part failed: %q", msg)
+	}
+	if !strings.Contains(msg, "ein anderes Programm schreibt") {
+		t.Errorf("the error does not say that a neighbour holds the file: %q", msg)
+	}
+	if !strings.Contains(msg, "Sicherung") {
+		t.Errorf("the error does not name the step: %q", msg)
+	}
+}
+
+// TestBackupNamesTheStepOfAnOrdinaryFailure is the other arm: a failure that
+// is NOT "busy" still has to say which step gave up, and it must not carry
+// the sentence about a neighbour -- whoever reads "it passes by itself" for a
+// closed pool waits for nothing. Without this arm one sentence for both
+// causes would pass the case above.
+func TestBackupNamesTheStepOfAnOrdinaryFailure(t *testing.T) {
+	dir := t.TempDir()
+	cfg := backupConfig(dir, "state.db")
+	db, err := sqlite.OpenDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(backupCtx, "CREATE TABLE probe (a BLOB NOT NULL, PRIMARY KEY (a))"); err != nil {
+		t.Fatal(err)
+	}
+	// A directory the copy cannot be written into is the cheapest failure
+	// that is not "busy" and happens after the database was opened.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = sqlite.Backup(cfg, filepath.Join(dir, "nowhere", "backup.db"))
+	if err == nil {
+		t.Fatal("no error for a target that cannot be written")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "ein anderes Programm schreibt") {
+		t.Errorf("an ordinary failure reads like a busy file: %q", msg)
+	}
+}

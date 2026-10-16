@@ -40,6 +40,7 @@ import (
 	"strings"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -407,6 +408,11 @@ func (d *Dispatcher) log(ctx context.Context, rq *Call) ([]byte, error) {
 // next hello (controllers.Server.OnHello). The answer is not read at all --
 // what a controller has is what its next hello says it has.
 func (d *Dispatcher) pushTrust(ctx context.Context, seq uint64) {
+	// Started with go by setTrust, so it is a goroutine of its own and a panic
+	// in it would end the process (V1.2 point 38). It belongs to no channel of
+	// the browser -- the channel that ordered it has long answered -- so the
+	// number in the line is 0 and there is nothing left to close.
+	defer func() { _ = guard.Hit(recover(), "coreapp.pushTrust", 0) }()
 	v, err := d.S.Trust(ctx)
 	if err == nil {
 		for _, n := range v.List.Nodes {
