@@ -18,6 +18,40 @@ const (
 	pause    = 2 * time.Millisecond
 )
 
+// queueWait bounds how long a writer waits for the turn of the write channel,
+// and it exists because the channel otherwise MULTIPLIES the wait it was built
+// to shorten. The turn is held across the whole chain of its holder - which it
+// has to be, see takeWrite - so without a bound the second writer waits two
+// chains and the third three.
+//
+// Measured on D: on 16.10.2026, three writers of one program without a
+// deadline of their own against a lock a second program never releases:
+//
+//	before the channel   80.642 s   81.551 s   82.209 s
+//	with the channel     80.491 s  161.023 s  241.667 s
+//
+// What that breaks is not in this package. dbwait.StartWait
+// (apps/server-api/classes/dbwait) is ninety seconds BECAUSE one chain is the
+// measured 80.6 s, so a program coming up behind one other writer of its own
+// would be refused where it used to come up. With this bound a writer waits at
+// most as long as he waited before the channel existed, and the reads of his
+// program stay free the whole time, which is the whole point of the channel.
+//
+// The figure is one chain: maxTries times the busy_timeout of the SQLite
+// build. That pragma is set in apps/server-db/classes/sqlite and is not
+// readable from here, so it is written down here and
+// TestQueueWaitIsOneChainOfTheDatabase asks the OPEN DATABASE for the pragma
+// instead of trusting this line. It is a var and not a const so that the case
+// below can shorten it; nothing else writes it.
+var queueWait = maxTries * 10 * time.Second
+
+// errQueue is what a writer gets when no turn came free in queueWait. It is
+// deliberately NOT a context error and NOT dbwait's ErrBusy: before the write
+// channel the same situation ended in the driver's "database is locked", which
+// no layer above reads by name either, so a caller sees the word it saw before
+// and nothing of the answer changes with this bound.
+var errQueue = errors.New("sqlstore: no turn to write came free")
+
 type store struct {
 	db *sql.DB
 	d  Dialect
@@ -86,16 +120,25 @@ func New(db *sql.DB, d Dialect) dbapi.Store {
 //
 // A caller whose context ends while he waits never touched the pool at all,
 // and he hears the reason HE named for his deadline (cause), not the bare one
-// of the standard library.
+// of the standard library. A caller who named no deadline waits queueWait and
+// no longer, which is what keeps the queue from turning N writers into N
+// chains.
 func (s *store) takeWrite(ctx context.Context) (func(), error) {
 	if s.write1 == nil {
 		return func() {}, nil
 	}
+	queue := time.NewTimer(queueWait)
+	defer queue.Stop()
 	select {
 	case s.write1 <- struct{}{}:
 		return func() { <-s.write1 }, nil
 	case <-ctx.Done():
 		return nil, cause(ctx, ctx.Err())
+	case <-queue.C:
+		// The reason of the caller is NOT taken here: his context is still
+		// open, so nothing he named has run out - what ran out is the queue
+		// of this program. See queueWait and errQueue.
+		return nil, errQueue
 	}
 }
 
