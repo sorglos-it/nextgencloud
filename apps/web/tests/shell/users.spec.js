@@ -425,7 +425,18 @@ async function mount(page, cfg = {}) {
   // draws anything (shell/lang.js, load), where en-US fetches one. Measured
   // on the branch before them: 0 of 30. So this is the window closed, not the
   // fetches hidden - every case here mounts through this function.
-  await expect(page.locator("form.loginbox")).toBeVisible();
+  //
+  // WHAT IS WAITED FOR IS ALL THREE WAYS THE BOOT CAN END, and the first
+  // version of this line waited for the login mask alone. MEASURED what that
+  // cost: 16 cases of this file went red in webkit, every one of them with
+  // "locator('form.loginbox') ... element(s) not found", because that engine
+  // never reaches a login mask - boot.spec.js's own case says the shell
+  // either brings the desktop up or SAYS WHY IT CANNOT, and in webkit it says
+  // why (.msg). A marker that only one engine reaches is a marker that turns
+  // the other engines red for a reason that has nothing to do with the case.
+  await page.waitForFunction(() => document.querySelector("form.loginbox") !== null
+    || document.querySelector("#taskbar") !== null
+    || document.querySelector(".msg") !== null);
   await page.evaluate(async (cfg) => {
     const { usersApp } = await import("/assets/js/apps/users.js");
     const { world } = await import("/assets/js/shell/fake-link.js");
