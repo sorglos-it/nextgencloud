@@ -3,6 +3,7 @@
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 import { loadConfig } from "../net/config.js";
+import { load as loadLang } from "./lang.js";
 import { anchorFor } from "./trustlist.js";
 import { loginView } from "../auth/login.js";
 import { setupView } from "../auth/setup.js";
@@ -44,6 +45,13 @@ async function start() {
   // The theme first, before anything is drawn: the page would otherwise be
   // painted dark and repainted light one frame later.
   initTheme();
+  // The sentences next, and before any mask is drawn, for the same reason:
+  // a mask that appeared in German and swapped its texts a frame later would
+  // be read in the wrong language by whoever was quick. It never throws - a
+  // language file that cannot be fetched leaves the sentences empty, and the
+  // five lines below say their own words anyway (they are the shell's own
+  // messages, not a mask's, and still German in the source: see lang.js).
+  await loadLang();
   // Without a secure connection there is no crypto.subtle at all. Checking
   // the browser first would blame the browser for it, and the person would
   // install another one for nothing.
