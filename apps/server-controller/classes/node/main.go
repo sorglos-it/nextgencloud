@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/pairing"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	// Named, because this package already has a terminal: ask.go asks whether
 	// a reader is the admin's terminal. Two unrelated things, one word - the
 	// same collision that broke the build when tasks 15 and 16 both wrote a
@@ -132,6 +133,8 @@ func Main(version string, args []string, stdin io.Reader, stdout, stderr io.Writ
 		return run(version, *cfgPath, stdout, stderr)
 	case "pair":
 		return pair(*cfgPath, config.AnchorFile, fs.Args()[1:], stdin, stdout, stderr)
+	case "backup":
+		return backup(*cfgPath, fs.Args()[1:], stdout, stderr)
 	case "terminal":
 		return runTerminal(fs.Args()[1:], stdin, stdout, stderr)
 	case "hold":
@@ -175,6 +178,9 @@ func writeUsage(w io.Writer) {
 Kommandos:
   (ohne Kommando)                          den Controller laufen lassen
   pair                                     diesen Server mit einer API koppeln
+  backup <Datei>                           die eigene Datenbank dieses Servers
+                                           sichern; der Controller darf dabei
+                                           weiterlaufen
   terminal                                 Dienst des Terminals, läuft im Container
   hold                                     im Container warten, bis er beendet wird
   image -arch <amd64|arm64> -out <Datei>   Abbild der Terminal-App schreiben;
@@ -393,3 +399,55 @@ func isSeparator(r rune) bool { return r == '/' || r == '\\' }
 // the last command that did, and it is built (image.go). The helper is gone on
 // purpose - a command that is not built is easier to find as a missing case of
 // the switch than as a line that answers politely.
+
+// usageBackup is the one answer a wrong call to backup gets. It names the
+// whole call, because an admin who typed "ngc-controller backup" has a backup
+// plan in mind and the worst answer is a file under a default name they never
+// find again.
+const usageBackup = "Aufruf: ngc-controller backup <Datei>" + "\n" +
+	"Die Datei ist der Name der Sicherung, die geschrieben wird - ein eigener Name, nicht der der Datenbank."
+
+// backup is ngc-controller backup <Datei>: it copies this server's own
+// database and then says the one sentence the copy cannot say about itself.
+//
+// Why the sentence is here and not only in the documentation: the file is
+// encrypted with dbKey of controller.json and carries nothing of that key. A
+// backup kept without that file opens on no machine, by anybody, ever - and a
+// plan that keeps only the database is exactly what an admin builds who was
+// never told. It is printed AFTER the copy, so it is read as what happened
+// and not as advice that might apply.
+//
+// The key is not printed and its own path is not printed either: a backup run
+// goes into a journal, a report and a screen somebody photographs. What is
+// named is the file to keep beside the copy, and that path the admin just
+// typed themselves.
+func backup(cfgPath string, args []string, stdout, stderr io.Writer) int {
+	// The call is answered before the configuration is read: a second file
+	// name, or none, is a question nobody can answer by guessing.
+	if len(args) != 1 || args[0] == "" || strings.HasPrefix(args[0], "-") {
+		fmt.Fprintln(stderr, usageBackup)
+		return 2
+	}
+	cfg, err := config.LoadController(cfgPath)
+	if err != nil {
+		fmt.Fprintln(stderr, msgNoConfig)
+		return 1
+	}
+	// The same configuration the controller itself opens its store from, and
+	// built in the same place: openState names driver, path and key, and a
+	// second description of them here could drift from it.
+	if err := state.Backup(config.DB{
+		Driver: config.DriverSQLite,
+		Path:   cfg.DB,
+		Key:    cfg.DBKey,
+	}, args[0]); err != nil {
+		fmt.Fprintf(stderr, "Die Sicherung ist fehlgeschlagen: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Die Sicherung liegt in %s.\n", args[0])
+	fmt.Fprintf(stdout, "WICHTIG: Diese Datei ist verschlüsselt, und der Schlüssel steht NICHT darin.\n"+
+		"Er steht in %s. Ohne diese Konfiguration lässt sich die Sicherung auf keinem\n"+
+		"Rechner mehr öffnen - von niemandem, auch nicht von NextGenCloud. Bewahren Sie\n"+
+		"beide Dateien auf, und den Schlüssel an einem anderen Ort als die Sicherung.\n", cfgPath)
+	return 0
+}
