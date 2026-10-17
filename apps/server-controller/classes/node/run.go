@@ -46,6 +46,11 @@ import (
 	"github.com/flynn/noise"
 	"golang.org/x/crypto/curve25519"
 
+	// Named catch here and guard everywhere else: this package already has a
+	// function guard (ask.go), which gives the terminal its echo back when a
+	// signal ends the pairing question. Renaming that one for an import would
+	// be the tail wagging the dog.
+	catch "github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/apache"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/license"
@@ -292,12 +297,28 @@ func Run(ctx context.Context, c RunConfig) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// One goroutine per API, and a panic in one of them took the
+			// whole controller with every tunnel and every channel of every
+			// user (V1.2 point 38). Caught, this one API has no tunnel for
+			// the life of the process -- the catch is around the keeper and
+			// not around a round, because Keep IS the loop and there is no
+			// outer beat to come back to. That price is named rather than
+			// hidden: the line is ERROR and counted, so an installation whose
+			// controller no longer reaches one of its APIs can be found.
+			// wg.Done above still runs, so a stop does not wait out the
+			// grace period for it.
+			defer func() { _ = catch.HitTo(log, recover(), "node.keep", 0) }()
 			keep(ctx, cfg)
 		}()
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// The same, and the price is the certificates of the APIs no longer
+		// being compared while this process lives. The daily beat is inside
+		// watchWeb, so a catch here ends it; what it must not do is end the
+		// process.
+		defer func() { _ = catch.HitTo(log, recover(), "node.watchWeb", 0) }()
 		c.watchWeb(ctx, built)
 	}()
 	c.clock(ctx)
@@ -306,7 +327,15 @@ func Run(ctx context.Context, c RunConfig) error {
 	// channel somebody holds open is one systemd kills, and that is worse
 	// than a goroutine left behind in a process that is ending.
 	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
+	go func() {
+		// close is deferred, not the last statement, so a panic in the wait
+		// -- a WaitGroup counter that went negative is one -- neither ends
+		// the process nor makes this stop sit out the whole grace period for
+		// a goroutine that will never report.
+		defer close(done)
+		defer func() { _ = catch.HitTo(log, recover(), "node.grace", 0) }()
+		wg.Wait()
+	}()
 	timer := time.NewTimer(c.grace())
 	defer timer.Stop()
 	select {
@@ -336,6 +365,14 @@ func (c RunConfig) clock(ctx context.Context) {
 			return
 		case <-status.C:
 			c.Report.SendStatus(ctx)
+			// The count of caught programming errors, said out loud when it
+			// has grown and silent when it has not: without this call
+			// guard.Panics() would be a number no running controller ever
+			// reads, which is a diagnostic with no way out (V1.2 point 22).
+			// On the status tick because that is this program's own beat --
+			// the only round of the controller that keeps turning whatever
+			// the tunnels do.
+			catch.Report()
 		case <-purge.C:
 			if err := c.State.Purge(ctx, c.now()); err != nil && !errors.Is(err, dbapi.ErrNotFound) {
 				c.logger().Warn("the expired one-time task IDs could not be dropped", "err", err)
@@ -505,8 +542,20 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 	licensed := func(ctx context.Context, a dbapi.App) (bool, error) {
 		return license.Allowed(ctx, st, keeper.List(), installationOf(keeper), a, time.Now().Unix())
 	}
+	// The node ID of THIS server, asked afresh for every hello: it comes out
+	// of the verified list by this server's own Noise key, and it falls back
+	// to what the configuration holds while no verified version lists the key.
+	// Which way round the two stand is a decision: the LIST decides, the file
+	// only remembers. A file that outranked the list would keep naming a node
+	// an admin has since renamed or removed.
+	nodeID := func() string {
+		if id := keeper.NodeID(key.Public); id != "" {
+			return id
+		}
+		return cfg.Node
+	}
 	rep := NewReporter(ReportConfig{
-		Version: version, Node: cfg.Node, Roles: cfg.Roles, OS: osName, State: st,
+		Version: version, Node: nodeID, Roles: cfg.Roles, OS: osName, State: st,
 		TrustSeq: keeper.TrustSeq,
 		// The engine takes the name of a container, and the container of an
 		// app is named after its system user: this is the mapping report.go
@@ -518,7 +567,14 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		Send:     reg.Control,
 	})
 	srv := serve.New(serve.Deps{
-		Node: cfg.Node, Noise: key, Engine: engine, Chain: keeper, State: st,
+		// serve.Deps may not change once New has seen it, so this one is the
+		// ID AS IT STANDS AT THE START, and that is a named price: a server an
+		// admin lists while it runs says its node in the hello at once (nodeID
+		// above) and takes the chain, but its app channels and its tasks go on
+		// with what it knew at the start until it is restarted once. What makes
+		// the price small is that the chain now arrives at all -- without it
+		// the ID was never learned and no restart ever helped.
+		Node: nodeID(), Noise: key, Engine: engine, Chain: keeper, State: st,
 		// No updater yet, and this is a seam named rather than papered over:
 		// update.Deps takes the trust list as a VALUE (update.Deps.List),
 		// while this controller's list is replaced version by version under

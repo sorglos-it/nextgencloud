@@ -500,3 +500,57 @@ func TestBalancerTemplateMatchesTheContract(t *testing.T) {
 		t.Fatalf("the controller and %s write two different files.\ncontroller:\n%s\ncontract:\n%s", ulhContract, got, want)
 	}
 }
+
+// TestWorkerParametersStayOnTheBalancerMember is the case the byte-wise
+// comparison above cannot be: testdata/apache-apis.conf is whatever we wrote
+// into it, so a line Apache refuses matches itself just fine. Measured on a
+// real Debian 13 with Apache 2.4.69 on 16.10.2026: "upgrade=websocket" on the
+// ProxyPass of a balancer:// target is
+//
+//	AH00526: Syntax error ... ProxyPass unknown Balancer parameter
+//
+// and the setup of ngc-web stops there. The parameter is a WORKER parameter,
+// so it belongs on the BalancerMember; with it moved, the same apachectl
+// configtest says "Syntax OK". The version note of the plan was right and the
+// place was wrong -- upgrade= needs Apache 2.4.47, but never on a ProxyPass
+// that points at a balancer.
+//
+// Checked here, and not left to a configtest, because this machine has no
+// Apache: what the case holds is the RULE, so the next renderer cannot put a
+// worker parameter back on that line.
+func TestWorkerParametersStayOnTheBalancerMember(t *testing.T) {
+	got := string(Render([]config.WebAPI{
+		{URL: "https://api-1.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE1}, 32)},
+		{URL: "https://api-2.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE2}, 32)},
+	}))
+	members := 0
+	for _, line := range strings.Split(got, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "BalancerMember "):
+			members++
+			if !strings.Contains(trimmed, "upgrade=websocket") {
+				t.Errorf("a BalancerMember carries no upgrade=websocket, so the websocket of the browser cannot pass: %q", trimmed)
+			}
+		case strings.HasPrefix(trimmed, "ProxyPass ") && strings.Contains(trimmed, "balancer://"):
+			// Every key=value on this line is read as a BALANCER parameter.
+			for _, word := range strings.Fields(trimmed)[1:] {
+				if !strings.Contains(word, "=") || strings.HasPrefix(word, "\"") {
+					continue
+				}
+				name := word[:strings.Index(word, "=")]
+				switch name {
+				case "stickysession", "nofailover", "timeout", "maxattempts",
+					"lbmethod", "failonstatus", "failontimeout", "growth",
+					"forcerecovery", "scolonpathdelim", "hcheck":
+					// A balancer parameter; Apache takes these here.
+				default:
+					t.Errorf("ProxyPass to a balancer carries %q, which Apache reads as a balancer parameter and refuses (AH00526, measured on Apache 2.4.69); a worker parameter belongs on the BalancerMember: %q", name, trimmed)
+				}
+			}
+		}
+	}
+	if members != 2 {
+		t.Fatalf("two APIs went in, %d BalancerMember lines came out", members)
+	}
+}

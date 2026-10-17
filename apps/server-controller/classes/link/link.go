@@ -43,6 +43,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -457,14 +458,29 @@ func (t *Tunnel) Run(ctx context.Context) error {
 	defer t.Close()
 	// The context of the caller ends the tunnel; from then on the reading
 	// below comes back at once.
+	//
+	// Both goroutines below are caught, and neither has anything to answer
+	// with: they belong to no channel, so there is no CLOSE to write and
+	// channel 0 in the line says so (V1.2 point 38, and package guard on
+	// which site does what). What a catch buys here is only that the process
+	// lives -- and the named price is that the tunnel loses the one thing
+	// that goroutine did. Without the ping a peer that went quiet is not
+	// found any more and this tunnel hangs until the API dials again; without
+	// the watcher the context of the caller no longer ends it, and Close of
+	// the caller still does. Both are worse than a working tunnel and far
+	// better than a controller that is gone with every other tunnel on it.
 	go func() {
+		defer func() { _ = guard.HitTo(t.cfg.logger(), recover(), "link.watch", 0) }()
 		select {
 		case <-ctx.Done():
 			t.Close()
 		case <-t.life.Done():
 		}
 	}()
-	go t.ping()
+	go func() {
+		defer func() { _ = guard.HitTo(t.cfg.logger(), recover(), "link.ping", 0) }()
+		t.ping()
+	}()
 	for {
 		plain, err := t.message(t.life)
 		if err != nil {

@@ -72,10 +72,26 @@ var errNoTunnel = errors.New("node: this controller has no tunnel to an API")
 // ReportConfig is what a Reporter needs.
 type ReportConfig struct {
 	Version string   // NGC version of this build (tunnel.Hello.Version)
-	Node    string   // its node ID, empty until an admin put this server in a trust list
 	Roles   []string // config.Controller.Roles
 	OS      string   // what OSRelease read, e.g. debian-13; empty if it read nothing
 	State   *state.Store
+	// Node is this controller's node ID in the trust list, and
+	// chain.Keeper.NodeID is what answers it: the ID its own Noise key carries
+	// in the newest verified version, or "" while none lists it.
+	//
+	// IT IS ASKED AFRESH FOR EVERY HELLO, and that is the whole point. A
+	// controller learns its ID only from a version that lists it, and that
+	// version comes in on the tunnel -- so it is never known at the start. A
+	// value taken once at the start stays empty for ever on a server an admin
+	// listed later, and the API ends the tunnel of a controller that names
+	// another node than its key carries (controllers.control). Measured on a
+	// running installation on 17.10.2026: with the value taken at the start,
+	// every dial after the listing ended at once.
+	//
+	// nil, or a function that answers "": no node, which the contract takes
+	// (tunnel.Hello.Node is omitempty) and which an API reads as "paired, not
+	// listed yet".
+	Node func() string
 	// TrustSeq is the number after which this controller needs versions of the
 	// trust list, and chain.Keeper.TrustSeq is what answers it: the number of
 	// the newest version it verified, or the one below its anchor while it has
@@ -126,19 +142,23 @@ func (r *Reporter) log() *slog.Logger {
 // operating system under it and the trust list version after which it needs the
 // chain (ReportConfig.TrustSeq). It fits link.Config.Hello.
 //
-// Node stays empty until an admin has put this server in a trust list. That is
-// no fault of this controller's and no reason not to dial: what the API makes
-// of a hello that names another node is the API's business, and what this side
-// owes is its own node and nothing else.
+// Node stays empty until a verified version of the trust list lists this
+// server. That is no fault of this controller's and no reason not to dial:
+// what the API makes of a hello that names another node is the API's
+// business, and what this side owes is its own node and nothing else.
 func (r *Reporter) Hello() tunnel.Hello {
 	var seq uint64
 	if r.cfg.TrustSeq != nil {
 		seq = r.cfg.TrustSeq()
 	}
+	var node string
+	if r.cfg.Node != nil {
+		node = r.cfg.Node()
+	}
 	return tunnel.Hello{
 		Version:  r.cfg.Version,
 		Contract: tunnel.Contract,
-		Node:     r.cfg.Node,
+		Node:     node,
 		TrustSeq: seq,
 		Arch:     arch(),
 		OS:       r.cfg.OS,

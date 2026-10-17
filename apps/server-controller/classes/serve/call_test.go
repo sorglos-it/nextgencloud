@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/service"
@@ -912,5 +914,65 @@ func TestStderrTextStaysOutOfTheLogUnlessItIsSwitchedOn(t *testing.T) {
 				t.Fatalf("log = %q, want the text of the stderr only with the switch on", got)
 			}
 		})
+	}
+}
+
+// panicReader is the input of a call whose reader has a programming error in
+// it. It gives one piece of input back first, so the feeding really starts and
+// the case does not measure a panic before the goroutine did anything.
+type panicReader struct{ first bool }
+
+func (p *panicReader) Read(b []byte) (int, error) {
+	if !p.first {
+		p.first = true
+		b[0] = 'x'
+		return 1, nil
+	}
+	panic(fmt.Errorf("the bearer token is %s", callSecret))
+}
+
+// callSecret is what the panic value carries by accident.
+const callSecret = "NGC-TEST-SECRET-0123456789"
+
+// TestAPanicInTheFeederEndsTheCallAndNotTheServer is V1.2 point 38 for the one
+// goroutine of a service call: the input of a call is fed to the program from a
+// goroutine of its own, and a panic in it -- in the reader this call was handed
+// -- was the end of the whole ngc-controller, with every channel of every
+// tunnel.
+//
+// Three things are measured, and the second is the one that was not there
+// before the catch: the call ANSWERS, and it answers E_INTERNAL and not the
+// cut-off input that stands right beside it in the same switch. A programming
+// error of ours is not a peer that stopped sending, and a person who is told
+// the wrong one of the two looks in the wrong place (V1.2 point 50).
+func TestAPanicInTheFeederEndsTheCallAndNotTheServer(t *testing.T) {
+	envHere(t)
+	before := guard.Panics()
+	log := newCollector()
+	e := &stub{run: func(ctx context.Context, ex runtime.Exec) (int, error) {
+		// Read until the input ends, which is what the catch has to bring
+		// about: without the pipe being closed this read would wait for an
+		// end that is never coming, and the case would hang instead of fail.
+		_, _ = io.Copy(io.Discard, ex.Stdin)
+		return 0, nil
+	}}
+	cl := RunService(context.Background(), CallInput{
+		Engine: e, Container: "ngc-app-test", Command: []string{"/bin/sh", echoScript},
+		Call: echoCall(`{}`), In: &panicReader{}, Log: log.logger(),
+	})
+	if cl.Status != wire.StatusError || cl.Code != wire.CodeInternal {
+		t.Fatalf("close = %+v, want an error with %s", cl, wire.CodeInternal)
+	}
+	if got := guard.Panics(); got != before+1 {
+		t.Fatalf("the counter went %d -> %d; one panic counts once", before, got)
+	}
+	line := log.text.String()
+	if !strings.Contains(line, "site=serve.feed") {
+		t.Fatalf("no crash line of the feeder: %q", line)
+	}
+	// The same rule as everywhere: the line names the kind and the place, and
+	// never the value -- a service call carries what the user typed.
+	if strings.Contains(line, callSecret) || strings.Contains(line, "bearer token") {
+		t.Fatalf("the value of the panic reached the log: %q", line)
 	}
 }

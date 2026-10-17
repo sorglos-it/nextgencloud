@@ -1958,3 +1958,486 @@ Baumlast von `check.sh` am Grundstand genauso rot wird — dort wurde er nur all
 `setup/setup.go:95–98` macht aus jedem `E_UNREACHABLE` bewusst `E_INTERNAL`; die Hintergrundrunden
 haben weder Frist noch Grund. Und was der Benutzer bei `503 + Retry-After` **liest**, ist weiter
 ungemessen — die Oberfläche nimmt den `message` der Antwort nie (`contracts/wire.js:505`).
+
+## Punkt 54: „Ergänzung, kein Bruch" war falsch — ein neuer Code wirft den ganzen Rahmen weg
+
+**Gemessen am 15.10.2026**, und es berichtigt, was die Punkte 49, 52 und 53 über P9 gesagt haben.
+
+Die v1.3-Reihe nannte einen neuen Schließgrund (P8) und einen neuen Fehlercode (P9) jeweils eine
+**Ergänzung**. Eine Sonde gegen den HEAD-Stand von `shared/wire` zeigt das Gegenteil:
+
+```
+ParseClose(code=E_BUSY)        -> code=""              err=wire: malformed CLOSE payload
+ParseClose(code=E_UNREACHABLE) -> code="E_UNREACHABLE" err=<nil>
+```
+
+Die Zeile dahinter ist `shared/wire/wire.go:528` in `Close.Validate`: ein unbekannter Code fällt
+in `ErrClose`. Ein Leser, der `E_BUSY` nicht kennt, sieht also **nicht** „einen Schluss ohne
+Grund" — er sieht einen **kaputten Rahmen** und wirft ihn weg. `shared/README.md:199–200` macht
+daraus die Regel für alles: „unbekannte Felder werden abgelehnt."
+
+**Und es gibt keine Protokollfassung.** Das einzige `Version`-Feld (`shared/tunnel/tunnel.go:151`)
+ist die Fassung einer **App**. Zwei Seiten können sich nicht darauf verständigen, was sie beide
+verstehen — während API, Controller und Oberfläche **einzeln** aktualisiert werden (`trust.AutoAPI`,
+`AutoController`, `AutoWeb`, `shared/tunnel/tunnel.go:164`). Eine neue API mit `E_BUSY` an einem
+alten Controller heißt: abgewiesener Rahmen.
+
+**Folge für die Reihe:** daraus wurde **P10**, und P8 wie P9 hängen jetzt daran — erst die
+Verträglichkeit, dann der neue Code. Die Reihe ist dabei neu geordnet (die alte hatte `P6`, `P7`,
+`P8` **doppelt**), P4 ist **erledigt und gestrichen**, und vier Posten sind dazugekommen
+(P10–P13). Die Vorlage steht in `docs/vertraege-v1-3-vorschlag.md`: je Punkt der fertige
+Änderungssatz, der Preis, was ohne ihn für immer fehlt, und eine Empfehlung — mit JA oder NEIN zu
+beantworten.
+
+**Die Lehre, und sie gilt über dieses Projekt hinaus:** ob eine Änderung ein Bruch ist, entscheidet
+nicht die Form („wir fügen nur etwas hinzu"), sondern der **Leser der alten Fassung**. Das muss man
+messen, nicht argumentieren. Steht in `messen.md`.
+
+## Punkt 55: Punkt 38 ist gebaut — dreizehn Fangstellen, und keine ist wie die andere
+
+**Gebaut am 16.10.2026**, API und Controller, und auf `main` nachgeprüft: `go build` 0,
+`go test ./apps/...` **43 Pakete ok, 0 rot, Code 0**.
+
+**Die Abwesenheit war belegt, nicht behauptet:** `recover()` kam in `apps/server-api`,
+`apps/server-controller`, `apps/server-db`, `apps/web`, `shared`, `tools` und `cmd` **nirgends**
+vor — die Liste der Orte, nicht eine Zahl. Folge: eine einzige Fehlstelle in einem Handler nahm
+`ngc-api` ganz mit, samt aller 128 App-Kanäle jeder Verbindung und der Controller-Tunnel.
+
+**Gefangen wird ein FEHLER, nie eine Absage.** Ein Kanal, der einen Code antwortet, antwortet ihn
+weiter auf dem gewöhnlichen Weg. Neu ist `apps/server-api/classes/guard`.
+
+**Dreizehn Fangstellen, nach dem unterschieden, was danach noch möglich ist** — das ist der
+Gedanke, der den Punkt löst:
+- **Im Kanal** (`browser.channel`, `coreapp.open`, `relay.toController`, `relay.sendStream`): der
+  Kanal endet mit `E_INTERNAL`, der Browser hört also, dass etwas kaputt ist, statt auf eine
+  Antwort zu warten, die nie kommt.
+- Drei davon schreiben `E_INTERNAL` zusätzlich in den **Prüfeintrag** — der Mangel steht dann in
+  der Datenbank, nicht nur in einer Datei, die jemand wegdreht. `browser.channel` kann das nicht:
+  der Aufruf, der den Eintrag geschrieben hätte, ist genau der, der vorher gestorben ist.
+- **In einer Runde oder einem Haken ohne Kanal** (`server.round`, `server.rollout`, drei
+  Rückhalte in `Server.serve`, `controllers.hello`, `coreapp.pushTrust`, `link.closeBounded`):
+  dort folgt **nichts** außer Zeile und Zähler. Kanal 0 in der Zeile sagt genau das.
+
+**Gegen das Verschlucken (Punkt 50) gesichert:** `Panics()` ist die Zahl, `Report()` bringt sie
+einmal je Minute aus der Hausrunde dorthin, wo jemand liest — und schweigt, solange die Zahl nicht
+wächst. Ein Mangel, der einmal pro Stunde feuert, ist damit eine **Zahl und kein Gefühl**, und er
+übersteht ein weggedrehtes Protokoll.
+
+**Was NICHT in der Zeile steht, und es ist gemessen, nicht gemeint**
+(`TestTheLineCarriesNoValueOfThePanic`): der **Wert** der Panik — nur ihr Go-**Typ**. Ein
+Panikwert wird von dem geschrieben, der gestorben ist, und trägt, was der gerade in der Hand
+hatte: eine Kennung, ein Passwort, einen Namen, eine Datenbankzeile. Für den Stapelabzug gilt
+dasselbe, denn Go druckt dort die Argumentwörter jedes Rahmens. Stattdessen steht die **eine
+Stelle, die zählt**: die Zeile, die gestorben ist, als die letzten zwei Teile ihres Pfades.
+Aus Anfrage, Sitzung, Benutzer oder Parametern wird hier **gar nichts** gelesen — der Aufruf
+übergibt eine Kanalnummer und einen festen Ortsnamen, einen dritten Weg hinein gibt es nicht.
+
+## Punkt 56: Das kleine System läuft — auf echtem Debian, mit drei Befunden auf dem Weg
+
+**Gemessen am 16.10.2026** auf **Debian 13 (trixie), Apache 2.4.69, PHP 8.4, podman 5.4.2**,
+systemd läuft (WSL2-Instanz, also ein echtes Debian-Userland; was nur dort gilt, steht unten).
+
+**Das Ergebnis zuerst:** `curl -sk https://ngc.test/` gibt **`http=200`, 451 Byte**, und es ist
+NGCs eigene Seite (`<title>NGC</title>`). `GET /api/v1/setup` **durch Apache** liefert die
+unterschriebene Installationsauskunft — dieselbe wie direkt an Port 7443. Die Strecke Browser →
+Apache → Balancer → API **trägt**.
+
+**Dafür musste es zuerst ein Release geben, und es gibt jetzt eins:** `ngc-store release` über
+drei Teile, je mit `ngc-store check` geprüft — **`release ok`** für `ngc-web all`,
+`ngc-api amd64` und `ngc-controller amd64`. Damit ist auch **P3 beantwortet**, gemessen am Code
+der Skripte: `ngc-web-all.tar` trägt im Wurzelverzeichnis `public/index.php` und
+`templates/apache-vhost.conf` (83 Einträge, keine Verknüpfungen); `ngc-api-amd64.tar` trägt
+**genau zwei** gewöhnliche Dateien, `ngc-api` und `ngc-store`, ohne Ordner;
+`ngc-controller-amd64.tar` genau eine. Jede andere Form weist das Skript ab.
+
+### Befund 1: der Store-Platzhalter landet in `api.json`, und die API lehnt ihn ab
+
+`ngc-all.sh` hat einen Riegel für den **Release**-Schlüssel (`*REPLACE-THIS-LINE*` → Abbruch mit
+klarem Satz), aber **keinen für den Store-Schlüssel**. Folge, wörtlich aus dem Protokoll:
+
+```
+ERROR die Konfiguration lässt sich nicht lesen file=/etc/ngc/api.json error="config: invalid configuration"
+```
+
+In der Datei stand `"storeKey": "REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY"`. Dazu zwei Posten,
+die zusammengehören: **das Skript meldete `RC=0` und „The API is running"**, während der Dienst in
+einer Neustartschleife lag (`restart counter is at 8`) — „gebaut ist nicht gelaufen", hier als
+„eingerichtet ist nicht gestartet". Und die Fehlermeldung der API nennt **kein Feld**; welches
+es war, kostete einen Blick in die Datei. Mit einem gültigen Schlüssel in der Antwort: Dienst
+`active`, Port 7443 belegt, Zertifikat da, Fingerabdruck und Einrichtungscode gedruckt.
+
+### Befund 2: die Balancer-Zeile des Vertrags weist Apache ab
+
+```
+AH00526: Syntax error on line 19 of /etc/ngc/apache-apis.conf:
+ProxyPass unknown Balancer parameter
+```
+
+`upgrade=websocket` stand am **`ProxyPass`** eines `balancer://`-Ziels — dort liest Apache jedes
+`schlüssel=wert` als **Balancer**-Parameter. Es ist aber ein **Worker**-Parameter und gehört an
+den `BalancerMember`. Verschoben sagt derselbe `apachectl configtest` **`Syntax OK`**.
+Die Planzeile daneben („`upgrade=websocket` braucht Apache 2.4.47; Debian 13 bringt es mit") ist
+**richtig in der Fassung und falsch im Ort** — genau die Sorte Satz, die niemand nachprüft.
+
+Behoben an allen Stellen: `shared/ulh.md` (die eine gewährte Ausnahme der Einfrierung),
+`apps/server-controller/templates/apache-apis.conf.tmpl`, dessen Prüfdaten, und `ngc-web.sh` in
+ulh. **Belegt als rot-vorher/grün-nachher am laufenden Apache** — und mit einem neuen Fall
+`TestWorkerParametersStayOnTheBalancerMember`, der genau das fängt, was die byteweise Vorlage
+**nicht** fangen kann: mit der Mutation (Parameter zurück an `ProxyPass`, in Vorlage **und**
+Prüfdatei) **besteht** `TestRenderMatchesTheTemplate` weiter — es vergleicht sich mit sich selbst —
+und der neue Fall **fällt**. Kontrollmutation (nur eine lokale Variable umbenannt) **lebt**.
+
+### Befund 3: eine Schutzeinstellung weniger, als NGC mitbringt
+
+`⚠ NGC brings 5 protective settings for the files of the interface, and this version of ngc-web
+knows 4 of them.` Das Skript sagt es laut und macht weiter — richtig so, aber die fünfte ist
+**nicht gemessen**. Welche es ist, gehört geklärt, bevor jemand sie für vorhanden hält.
+
+### Zwei Umgebungsfallen, die als Programmfehler aussahen
+
+- **`/tmp` in WSL ist ein 32-GB-tmpfs und war zu 100 % voll** (zwei ulh-Prüfläufe, 13 und 19 GB).
+  apt zerlegt seine Signaturen dort und meldete dann
+  `Splitting up ... into data and signature failed` und `Write error (28: No space left on device)` —
+  also **OpenPGP-Fehler als Erscheinung einer vollen Platte**. `TMPDIR` auf die ext4-Platte gelegt:
+  alles läuft.
+- **`TMPDIR` auf `/mnt/d` geht nicht:** dpkg verlangt Verknüpfungen,
+  `Symlinking ... failed - DPkg::Go (1: Operation not permitted)`. Es muss ein Linux-Dateisystem sein.
+
+### Was offen ist — und einer davon ist deine Entscheidung
+
+1. **Der echte Release-Schlüssel von NGC fehlt**, und das ist der Riegel, an dem jede Installation
+   heute hält: „This script has no real release key of NGC yet." Gemessen wurde mit einem
+   **Testschlüssel**, der nirgends eingecheckt ist. Der echte Schlüssel gehört laut Entwurf 4.8 auf
+   einen Hardware-Stick; sein **öffentlicher** Teil muss in `ngc-all.sh`, `ngc-api.sh`,
+   `ngc-controller.sh`, `ngc-web.sh` und `ngc-db.sh` an die Stelle von
+   `REPLACE-THIS-LINE-WITH-THE-NGC-RELEASE-KEY`. **Ohne diesen Schritt kann niemand NGC
+   installieren** — das ist kein Programmfehler, sondern ein fehlendes Schlüsselpaar.
+2. Dasselbe für den **Store-Schlüssel** (`REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY`), plus der
+   Riegel aus Befund 1.
+3. **Die Anmeldung im Browser ist nicht gemessen.** Die Seite kommt, der Einrichtungscode ist
+   gedruckt, aber den ersten Verwalter anzulegen braucht einen Passschlüssel — und `ngc.test` mit
+   selbst unterschriebenem Zertifikat ist dafür der nächste Messpunkt, nicht dieser.
+4. Der **Controller ist nicht gekoppelt** („no app can run"), weil das über die angemeldete
+   Oberfläche läuft. Die Kette endet hier also nicht an der Technik, sondern an Punkt 3.
+
+## Punkt 57: Der Riegel ist auf — NGC hat einen Release-Schlüssel, und nichts wird mehr ersetzt
+
+**Gemessen am 17.10.2026** auf demselben Debian 13 wie Punkt 56, diesmal **ohne jede Ersetzung**:
+der öffentliche Schlüssel steht in den Skripten, der geheime unterschreibt.
+
+**Das Schlüsselpaar.** Erzeugt in einem Linux-Dateisystem, damit die Rechte echt sind:
+der geheime Teil liegt als `/root/ngc-keys/release.key` mit **`-rw-------`**, nur für root, und ist
+**in keinem Repo**. Der öffentliche Teil steht in `ngc-all.sh`, `ngc-api.sh`,
+`ngc-controller.sh` und `ngc-web.sh` an der Stelle des Platzhalters — `ngc-db.sh` brauchte keinen,
+es holt keine Programmdateien. **Kennung `pN6Z6a9NR0aG6aEJIJ5EHg`**, und die Zahl, die zählt:
+`grep -l REPLACE-THIS-LINE-WITH-THE-NGC-RELEASE-KEY *.sh` = **0**.
+
+**Der Durchlauf, nichts ersetzt:** Release neu unterschrieben (Folge 3), dreimal **`release ok`**;
+`ngc-api` **`active`** mit **`NRestarts=0`**, Port 7443 belegt; Apache **`active`**; die Seite
+**`http=200`**; `GET /api/v1/setup` **durch Apache** `http=200`; und
+`grep -c REPLACE-THIS-LINE /etc/ngc/api.json` = **0**. Die vier Syntaxprüfungen der geänderten
+Skripte: alle `ok`.
+
+**Der fehlende Riegel aus Punkt 56 ist gebaut** — und er ist als **rot-vorher** belegt, nämlich am
+Fall, der ihn auslöst: leere Store-Antworten brechen jetzt ab mit „NGC has no official app store
+yet …", **Ausstiegscode 1**, bevor etwas geschrieben wird. Vorher lief derselbe Aufruf mit
+Code 0 durch, schrieb den Platzhalter nach `/etc/ngc/api.json` und meldete „The API is running",
+während der Dienst in einer Neustartschleife lag.
+
+**Was das für dich heißt:** ein kleines System lässt sich jetzt **aufsetzen und aufrufen**. Zwei
+Dinge bleiben, und keines davon ist Programmierarbeit:
+1. **Der geheime Schlüssel gehört auf einen Hardware-Stick** (Entwurf 4.8) und von dieser Maschine
+   weg. Solange er in `/root/ngc-keys` liegt, unterschreibt ihn jeder, der dort root ist.
+2. **Der Store-Schlüssel ist weiter ein Platzhalter.** Jede Installation muss darum heute ihren
+   **eigenen** Store nennen — der Riegel sagt das jetzt sauber, statt es durchzulassen.
+
+**Weiter ungemessen, unverändert aus Punkt 56:** die Anmeldung im Browser (erster Verwalter per
+Passschlüssel), und damit die Kopplung des Controllers, die über die angemeldete Oberfläche läuft.
+
+## Punkt 58: Die Einrichtungsseite im echten Browser — und der Satz aus Punkt 50, diesmal gesehen
+
+**Gemessen am 17.10.2026** in einem echten Browser gegen die Installation aus Punkt 57.
+
+**Die Seite kommt, und sie ist richtig:** „**NGC einrichten** — Diese Anlage ist neu. Auf dem
+Bildschirm des Servers steht ein Einmal-Code. Bitte tippen Sie ihn hier ein." Dazu ein Feld und
+`Weiter`. Die Oberfläche liest ihre Lage aus `/config.json`: API `https://ngc.test:7443`,
+`rp.id` `ngc.test`.
+
+**Zwei Riegel der Oberfläche sind dabei gefahren, nicht nur gelesen:**
+- Über **`http://` an einer anderen Adresse** antwortet sie **„NGC braucht eine sichere Verbindung.
+  Bitte die Seite über https:// aufrufen."** und zeigt nichts weiter. Das ist die sicherere
+  Variante, und sie greift.
+- Den **Testserver der Oberfläche** (`PHP_SAPI === 'cli-server'`) lässt sie an `localhost` zu —
+  dort ist `window.isSecureContext` **true**, also ein sicherer Ursprung nach Browserregel.
+
+**Und der Satz aus Punkt 50 ist jetzt gesehen, nicht abgelesen.** Einmal-Code eingetippt, `Weiter`
+geklickt, nach vier Sekunden steht auf dem Schirm:
+
+> **Dienst nicht erreichbar. Bitte später erneut versuchen.**
+
+Dieselben Worte, die Punkt 50 aus `login.js:336` und `setup.js:64` **vorhergesagt** hatte. Der
+Grund hier ist die Umgebung, nicht NGC: `fetch('https://ngc.test:7443/api/v1/setup')` aus dem
+Browser gibt `TypeError: Failed to fetch`, weil `ngc.test` auf dem Windows-Rechner nicht auflöst.
+
+**Damit ist P9 am Benutzer belegt:** dieser Satz ist derselbe, den eine **besetzte Datenbank**
+erzeugt (Punkte 49/52/53 geben dort 503 mit `Retry-After: 5`, aber denselben Code
+`E_UNREACHABLE`). Der Benutzer kann „Dienst weg", „Name löst nicht auf" und „Datenbank gerade
+besetzt" **nicht unterscheiden** — und `Retry-After` liest die Oberfläche nicht. Das ist kein
+Lesefund mehr, sondern eine gesehene Erscheinung.
+
+**Wo es hier aufhört, und warum es kein Mangel von NGC ist:** den ersten Verwalter anzulegen
+braucht einen Browser, der die API **erreicht und ihr Zertifikat annimmt**. Auf dieser Maschine
+fehlt beides, und beide Abhilfen sind Eingriffe am System, die ich nicht von mir aus mache:
+`ngc.test` in die Windows-`hosts` eintragen und das selbst unterschriebene Zertifikat einmal
+annehmen. Der Browser der App bietet kein Weiterklicken an (`chrome-error://`), Playwright
+verlangt hier ein Chrome, das nicht installiert ist.
+
+**Der erste Verwalter braucht übrigens kein Passschlüssel-Gerät:** `apps/web/.../auth/setup.js`
+leitet den Schlüssel aus einem **Passwort** ab (`proveWithPassword`, `KIND_PASSWORD`,
+`ALG_EDDSA`, frischer Salt). Ein Passschlüssel ist die Kür, nicht die Pflicht — der Weg ist also
+auch ohne Hardware offen.
+
+**Zu entscheiden (du):** entweder `ngc.test` auf dem Windows-Rechner eintragen und das Zertifikat
+einmal annehmen, dann gehe ich die Anmeldung zu Ende — oder gleich auf einer Maschine mit echtem
+Namen und `letsencrypt`-Zertifikat messen, was ohnehin der Fall ist, den ein Nutzer erlebt.
+
+## Punkt 59: Angemeldet. Der Schreibtisch steht im Browser
+
+**Gemessen am 17.10.2026**, echte HTTPS-Strecke gegen die Installation aus Punkt 57, in einem
+echten Browser (Chromium über Playwright). **Kein Eingriff am Windows-System:** der Browser löst
+`ngc.test` selbst auf (`--host-resolver-rules`) und nimmt das selbst unterschriebene Zertifikat
+**für diesen Lauf** an (`ignoreHTTPSErrors`). Die `hosts`-Datei des Rechners blieb unberührt.
+
+**Der ganze Weg, Schritt für Schritt gesehen:**
+1. `https://ngc.test/` → „**NGC einrichten** … Auf dem Bildschirm des Servers steht ein
+   Einmal-Code." `fetch('/api/v1/setup')` aus der Seite: **http 200**.
+2. Code eingetippt, `Weiter` → **Schritt 2**: „Bitte vergleichen: Steht hier dasselbe wie auf dem
+   Bildschirm des Servers?" mit **Kennung der Anlage**, **Name und Adresse des API-Servers**
+   (`wss://ngc.test:7443/tunnel`) und dem **Fingerabdruck** — genau den Werten, die `ngc-all.sh`
+   auf dem Server gedruckt hat. Felder: ein Name, zweimal Passwort, ein Haken für den App-Store.
+3. Name und Passwort eingetragen, `Einrichten` geklickt → **der Schreibtisch**: Startleiste mit
+   `Start`, Uhr `03:02 17.10.2026`, die Kacheln **App-Store** und **Benutzer & Rechte**, und der
+   Hinweis **„Umstellen auf Passkeys empfohlen"**.
+4. Die Sitzung steht in **einem** Keks: `ngc_session`, **`httpOnly`** und **`secure`** — gesehen,
+   nicht aus dem Quelltext gelesen.
+
+**Damit ist der kleine Fall durchgängig:** ein Rechner, ein Release, `ngc-all` und `ngc-web`, und
+ein Benutzer kommt im Browser bis zum Schreibtisch. Punkt 47 hatte als Lücke genannt, dass sich
+ohne `ngc-web` niemand anmelden kann — **diese Lücke ist zu.**
+
+**Und ein Befund auf dem Weg, der keiner von NGC ist, aber einer bleibt:** mitten in der Messung
+gab `/api/` plötzlich **500 Proxy Error**, und `curl` kam auf `http=000`. Ursache: **WSL hatte
+`/etc/hosts` neu geschrieben** und `ngc.test` daraus entfernt, während Apache und `web.json`
+weiter auf diesen Namen zeigten. Das ist die Falle aus `STAND.md`, hier zum ersten Mal mit ihrer
+**Erscheinung** belegt: ein Proxy-Fehler der Oberfläche, der wie ein Fehler von NGC aussieht. Nach
+dem Wiedereintragen: Seite 200, `/api/v1/setup` 200, `NRestarts=0`.
+
+**Was jetzt noch offen ist:**
+- **Der Controller ist nicht gekoppelt** („no app can run"). Der Weg dahin steht jetzt offen, denn
+  der Kopplungscode entsteht in der angemeldeten Oberfläche — das ist der nächste Messpunkt.
+- **Passkeys** sind nicht gemessen; die Oberfläche empfiehlt sie selbst. Der erste Verwalter läuft
+  mit Passwort, und das ist vertragsgemäß.
+- Die Messung lief mit **selbst unterschriebenem** Zertifikat und einem Browser, der es für diesen
+  Lauf annimmt. Was ein Nutzer mit `letsencrypt` erlebt, ist damit **nicht** gemessen.
+
+## Punkt 60: Der Controller lässt sich nicht koppeln — der Knopf dafür gibt es nicht
+
+**Gemessen am 17.10.2026** an der laufenden Installation aus Punkt 59. Der Auftrag war, den
+Controller zu koppeln. Er lässt sich nicht koppeln, und zwar nicht aus einem Fehler, sondern
+weil ein Stück fehlt.
+
+**Die Anweisung der Skripte** (`ngc-all.sh`, `ngc-web.sh`, wörtlich): „Sign in to the web
+interface, **make a pairing code for this machine there**, and call 'Pair the controller' with it."
+
+**Die Oberfläche kann das nicht.** Gezählt im Quelltext: `apps/web` enthält **keinen einzigen**
+Treffer auf `pair`, `Kopplung` oder `koppeln`. Im laufenden Startmenü stehen genau zwei Apps —
+**App-Store** und **Benutzer & Rechte** — dazu Aussehen und Fensterbefehle. Kein Eintrag, der
+einen Kopplungscode erzeugt.
+
+**Die API kann es sehr wohl:** `shared/core/core.go:48` führt `ActPairCode = "pair-code"`,
+`apps/server-api/classes/coreapp/users.go:255` beantwortet `ngc.users/pair-code`, und selbst der
+Klient kennt die Aktion schon — `apps/web/public/assets/js/contracts/core.js:58`
+(`ACT_PAIR_CODE`) und `:573` prüft die Antwort auf das Präfix `ngc-pair:`. **Es fehlt nur die
+Stelle, die sie aufruft und den Code zeigt.** `apps/web/CLAUDE.md:101` schreibt sogar vor, wie er
+gezeigt werden soll.
+
+### Und daraus wird ein geschlossener Kreis
+
+1. Ohne gekoppelten Controller gibt es **kein `/etc/ngc/trust-anchor.json`** — gemessen: die Datei
+   fehlt, und die API meldet im Minutentakt `trust list could not be read … no trust list yet`.
+2. Ohne diese Datei zeigt die Oberfläche **jedem** Browser die Einrichtungsseite. Gemessen mit
+   einem zweiten Browser: **null API-Aufrufe**, leerer `localStorage`, die Entscheidung fällt
+   serverseitig in `index.php`/`Config.php` aus der fehlenden Datei. Mit gespeicherter, gültiger
+   Sitzung ist es **dasselbe** — der Keks hilft nicht.
+3. Die Einrichtung ist aber schon gelaufen: `/api/v1/setup` gibt **404**, der Einmal-Code ist
+   verbraucht. Wer einen Code eintippt, bekommt — richtig und hilfreich —
+   **„Diese Anlage ist noch nicht fertig eingerichtet. Bitte den Controller des Webservers
+   koppeln."**
+4. Koppeln kann man nur mit einem Code aus der angemeldeten Oberfläche. **Die erreicht man nur in
+   dem einen Seitenaufbau direkt nach der Einrichtung** — danach nie wieder.
+
+**Folge, nüchtern:** wer nach dem Einrichten den Browser schließt oder neu lädt, **kommt nicht
+mehr hinein**, und keine App kann je laufen. Ich bin selbst hineingelaufen: die Installation aus
+Punkt 59 war danach nur noch über ein Zurücksetzen der Testdatenbank zu erreichen.
+
+**Was fehlt, ist klein und benannt:** ein Weg in der Oberfläche, der `ngc.users/pair-code` ruft
+und den Code zeigt. Alles darunter ist da — Vertrag, API, Prüfung der Antwort im Klienten.
+Ein zweiter Weg wäre ein Unterbefehl, der einen Kopplungscode ohne Oberfläche ausgibt; der
+Controller hat heute nur `pair`, das einen **fertigen** Code erwartet (`ngc-controller --help`).
+
+**Ungemessen, weil davon abhängig:** alles hinter der Kopplung — Apps installieren, Terminal,
+Container, der Weg über den Tunnel aus Punkt 44 im echten Betrieb.
+
+## Punkt 61: Gekoppelt — und Punkt 60 war in seiner Kernaussage falsch
+
+**Gemessen am 17.10.2026** auf Debian 13. **Zuerst die Berichtigung, weil sie mir gehört:**
+
+> Punkt 60 sagt „der Knopf dafür gibt es nicht". **Das ist falsch.** Der Knopf heißt
+> **„Kopplungscode zeigen"** und steht in *Benutzer & Rechte* unter dem Reiter **Server**
+> (`apps/web/public/assets/js/apps/users.js:600`, `showPairCode` ab 613). Er ruft
+> `core.ACT_PAIR_CODE`, prüft den Code mit `tunnel.checkCode` gegen die **vom Klienten geprüfte**
+> Fassung und zeigt ihn erst dann — genau wie `apps/web/CLAUDE.md:101` es vorschreibt.
+>
+> Mein „null Treffer in `apps/web`" kam aus einem Arbeitsbaum auf `main`, wo `apps/web` nur zwei
+> Dateien hat. Der Oberflächencode liegt auf dem Zweig `web`. **Ein Zähler über den falschen Baum
+> ist kein Befund, sondern eine Behauptung** — die Regel dazu steht seit heute in `messen.md`.
+
+### Der echte Grund, warum keine Kopplung zustande kam
+
+`apps/server-controller/classes/pairing/pairing.go` schickte die Anfrage an `tunnel.PathPair`
+**ohne jede Abfrage**. Die API verbraucht aber den Einmalwert, den die **Abfrage benennt**:
+`?secret=<base64url des SHA-256 des Kopplungsgeheimnisses>` (`controllers/pair.go:49`), und ohne
+sie antwortet sie `E_PROTOCOL`. **Also konnte eine Kopplung nie gelingen** — und `ngc-controller`
+sagte dazu seine eine feste Zeile („Ist der Kopplungscode noch gültig und die API erreichbar?"),
+die beide Möglichkeiten nennt und keine ausschließt.
+
+**Der Beweis lag im eigenen Haus:** der Beitrittsweg der API baut dieselbe Abfrage aus demselben
+Hash (`join/run.go:177`, `secretHash`). Eine Hälfte war gebaut, die andere nicht.
+
+**Und der Prüfstand sah nie hin:** `pairing_test.go` las Pfad, Verfahren und Rumpf — die **Adresse
+nie**. Eine Anfrage ohne Abfrage galt ihm als gut. Jetzt vergleicht er die Abfrage mit dem Hash des
+Geheimnisses: der Mutant, der sie entfernt, **stirbt** (`secret of the query = ""`), eine
+Kontrollmutation **lebt**, 14 Controller-Pakete grün.
+
+**Gemessen am laufenden System:** Kopplung `RC=0`, `/etc/ngc/trust-anchor.json` **entsteht**,
+`ngc-controller.service` läuft, und der Tunnel steht (`tunnel ended … seconds=122` beim Neustart).
+
+### Zweiter Befund: der Anker war zu streng geschützt und nahm die Oberfläche mit
+
+`ngc-all.sh` und `ngc-controller.sh` schrieben den Anker **`0600 root:root`**. `index.php` liest
+ihn aber und gibt Nummer und Hash **jedem Browser** in `config.json` mit — und Apache läuft als
+`www-data`. Folge: **nach einer gelungenen Kopplung antwortete die Oberfläche auf jeden Aufruf
+500.** Gemessen: `0600` → 500 und `Permission denied` für `www-data`, **`0644` → 200** und die
+Seite. Was den Anker schützt, ist die **Unterschrift der Vertrauensliste**, nicht der Dateimodus.
+Behoben in beiden Skripten.
+
+### Was damit zu ist
+
+Ein zweiter Browser sieht jetzt **„Bei NGC anmelden"** statt der Einrichtungsseite. Die Aussperrung
+aus Punkt 60 ist damit erklärt und behoben: sie war keine Eigenart der Oberfläche, sondern die
+Folge der nie gelungenen Kopplung — ohne Kopplung kein Anker, ohne Anker hält die Oberfläche jede
+Anlage für neu.
+
+**Noch offen:** ob mit gekoppeltem Controller nun wirklich **Apps laufen** (Container, Terminal) —
+das ist der nächste Messpunkt und bisher nur insoweit belegt, als der Tunnel steht.
+
+## Punkt 62: Die Probe aufs Exempel — die Anlage entsteht allein aus den Skripten, mit vier Befunden
+
+**Gemessen am 17.10.2026** in einer **frisch angelegten** Debian-13-Umgebung, nicht in der
+gewachsenen Testanlage: WSL-Instanz `ngcfrisch` (`wsl --install Debian --name ngcfrisch`,
+Debian 13 trixie, systemd läuft), und darin ein **eigener Container** aus `debian:trixie` mit
+systemd und eigenem Netz (10.88.0.3). Vorher gemessen, dass dort **nichts** von NGC liegt:
+`/etc/ngc`, `/var/lib/ngc`, `/usr/lib/ngc` fehlen alle drei, kein Port belegt, von den Werkzeugen
+nur `openssl` da.
+
+**Warum ein Container und nicht die neue WSL-Instanz allein, und es ist ein Befund über die
+Umgebung:** **alle WSL-Instanzen dieses Rechners teilen einen Netzwerk-Namensraum.** Gemessen:
+`hostname -I` gibt in der alten und in der neuen Instanz dieselbe Adresse (172.19.199.47), und
+`ngc-api` der neuen Instanz starb 15-mal mit
+`listen tcp :7443: bind: address already in use`, obwohl in ihr **kein** `ngc-api`-Prozess lief
+(`ps` leer, `MainPID=0`). Es war die alte Anlage. Dieselbe Ursache hat auch den Fingerabdruck
+verdorben: `ngc-web` brach richtig ab mit „The fingerprint of https://ngc.test:7443 does not
+match" — es hatte die **fremde** API gemessen. **Zwei NGC-Anlagen können auf einem WSL-Rechner
+nicht nebeneinander laufen**, weil der Port der Vertrag ist (`config.APIPort`, in `ngc-all.sh:139`
+als Konstante). Der Container hat sein eigenes Netz und darum keine dieser Erscheinungen.
+
+### Das Ergebnis: die Anlage entsteht aus den Skripten
+
+Alles aus `ulh`-Zweig `ngc-kette` (`223baac`), die Programme aus `nextgencloud`-`origin/main`
+(`8624a62`, `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`), das Release mit einem **Testschlüssel**
+unterschrieben (Kennung `QPGNzMY0a-wyp9ij7d-yGQ` — ein Testschlüssel, kein Schlüssel von NGC),
+dreimal `release ok`.
+
+| Schritt | Ergebnis |
+|---|---|
+| `ngc-all.sh install` | **RC=0**, `ngc-api.service` **active**, **NRestarts=0**, Port 7443 belegt |
+| `ngc-web.sh install` | **RC=0**, Apache **active**, Seite **200** |
+| Einrichtung im Browser | Einmal-Code → Schritt 2 mit Kennung, Adresse, Fingerabdruck → **Schreibtisch**; `ngc_session` **httpOnly** und **secure** |
+| Kopplungscode holen | *Benutzer & Rechte* → Reiter **Server** → **„Kopplungscode zeigen"** → `ngc-pair:…` |
+| `ngc-all.sh configure` mit dem Code | **RC=0**, `controller.json` und `trust-anchor.json` geschrieben, `ngc-controller.service` **active**, **NRestarts=0** |
+
+**Die vier Zahlen, in einem Lauf gemessen (19:15:16 UTC):** Seite `http=200`,
+`/api/v1/setup` durch Apache `http=404` (richtig: der Einmal-Code ist nach der Einrichtung
+verbraucht — **vor** der Einrichtung war dieselbe Adresse `200`), `ngc-controller.service`
+**active**, `/etc/ngc/trust-anchor.json` Modus **644**.
+
+### Befund 1: `apps/web` liegt nicht auf `main` — aus `origin/main` allein gibt es kein Release
+
+Gezählt je Zweig, nicht im Arbeitsbaum: `git ls-tree -r --name-only origin/main -- apps/web`
+ergibt **2** Dateien (`CLAUDE.md`, `VERSION`), `origin/web` **128**. Und
+`git merge-base --is-ancestor origin/web origin/main` sagt **nein**. Die Oberfläche, die
+`ngc-web-all.tar` trägt, ist also auf dem Hauptzweig **nicht vorhanden**; ich habe sie aus
+`origin/web` (`e86a1a6`) genommen und sage das bei jeder Zahl dazu. **Wer nur `main` klont, kann
+das Release nicht bauen** — und ein Nutzer, der `ngc-web` ausführt, bekommt kein Archiv.
+
+### Befund 2 (blockierend): für einen Testschlüssel gibt es keinen Weg außer der Dateiänderung
+
+Der öffentliche Release-Schlüssel steht **fest im Skript**: `ngc-all.sh:168–170`, ebenso
+`ngc-web.sh:105–107`, `ngc-api.sh` und `ngc-controller.sh`. Es ist eine nackte Zuweisung ohne
+Rückfall auf die Umgebung — anders als die Adresse daneben
+(`NGC_RELEASE_BASE="${NGC_RELEASE_BASE:-…}"`, `ngc-all.sh:161`). **Eine Installation mit einem
+eigenen Schlüssel ist darum nur mit einem `sed` in vier Skripten zu machen**, und genau das war
+der einzige Handgriff dieses Durchlaufs. Er ist nach der Messung **zurückgenommen**, und der
+Testschlüssel ist in **kein** Repo gekommen.
+
+**Was fehlt:** ein Weg, den Schlüssel von außen zu setzen, der im Betrieb nicht aufgeht. Zwei
+Formen sind denkbar und beide klein: ein `NGC_RELEASE_KEY_FILE`, das nur gelesen wird, wenn es
+gesetzt **und** die Datei root gehört; oder ein ausdrückliches `ngc-all.sh test-key <Datei>`, das
+sagt, dass es eine Probe ist. Ohne das eine oder andere kann **niemand** die Kette prüfen, ohne
+die Skripte zu verbiegen — und wer sie verbiegt, prüft nicht mehr die Skripte.
+
+### Befund 3: `/var/lib/ngc/staged` muss der Betreiber selbst anlegen
+
+`fetch_release` nimmt den Ordner, sobald `release.json` darin liegt, und die Fehlermeldung nennt
+ihn auch („put release.json and the files … into `${NGC_STAGE}` by hand"). **Nur legt kein Skript
+ihn an**, solange `install_release` noch nicht gelaufen ist: `mkdir -p /var/lib/ngc/staged` war
+mein zweiter Griff, und ohne Internet ist dieser Weg laut Skript „the only way that works".
+`ngc-all.sh:132` nennt den Pfad. **Was fehlt:** die Meldung sollte den `mkdir` mitnennen, oder
+`install_release` legt den Ordner vor dem ersten Versuch an.
+
+### Befund 4: `ReadWritePaths` nennt `/etc/ngc` nicht — bestätigt an einer frischen Anlage
+
+`ngc-all.sh:1322` und `ngc-api.sh:1065` schreiben
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`, **nicht**
+`/etc/ngc`. In der Einheit der frischen Anlage steht es wörtlich so. Die API muss aber
+`/etc/ngc/trust-anchor.json` hochziehen, wenn die Vertrauensliste wächst; eine Schwestersitzung
+hat am 17.10.2026 an der alten Anlage genau dort
+`the trust anchor outside the database could not be moved up` gemessen und es mit einem
+systemd-Zusatz (`ReadWritePaths=/etc/ngc`) behoben. **Hier ist belegt, dass der Mangel in der
+frischen Anlage ebenso entsteht** — die Erscheinung selbst ist in diesem Durchlauf nicht
+abgewartet (der Anker stand bei `seq: 1`, die Minutenwarnung
+`trust list could not be read … no trust list yet` hörte nach dem Aufnehmen des Servers auf).
+
+### Was ungemessen bleibt
+
+- **Ob Apps laufen** (Container, Terminal) — unverändert offen aus Punkt 61.
+- **Das Aufnehmen des Servers in der Oberfläche:** der Knopf **„Aufnehmen"** ist geklickt und die
+  Minutenwarnung der API hörte danach auf, aber die Liste „Wartende Server" zeigte den Eintrag
+  weiter, und der Anker blieb bei `seq: 1`. **Ob das ein Ausbleiben der Auffrischung oder ein
+  halber Vorgang ist, ist nicht gemessen.**
+- **Ein Nutzer mit `letsencrypt`**: gemessen wurde mit selbst unterschriebenem Zertifikat und
+  einem Browser, der es für diesen Lauf annimmt (`ignoreHTTPSErrors`,
+  `--host-resolver-rules`) — die Hosts-Datei des Rechners blieb unberührt.
+- **Der echte Release-Schlüssel von NGC**: alle Zahlen hier gelten für einen **Testschlüssel**.
+- **Die Zahlen gelten für diesen Ort:** Debian 13 in einem podman-Container in einer
+  WSL2-Instanz, ext4, `TMPDIR` auf `/var/tmp`. Nicht für C:, nicht für Z:, nicht für Blech.

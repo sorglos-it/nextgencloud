@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -394,5 +395,79 @@ func waitForTunnel(t *testing.T, srv *Server, node string) *Tunnel {
 			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestAPanicInTheHelloHookKeepsTheTunnel is the catch of the hello hook. It is
+// neither channel work nor a background round: the hook runs once per hello of
+// ONE controller, in a goroutine of its own (so it does not hold the tunnel's
+// single reader), and a goroutine is where a panic is final -- unqueued, it
+// takes the whole ngc-api, with every session of every user and every other
+// controller's tunnel (V1.2 point 38).
+//
+// What follows a catch here is therefore nothing but the line: the tunnel is
+// left standing, and the controller gets its trust versions and its licences
+// at its next hello, which is what the hook promises anyway (Server.hello,
+// "Nothing in here may fail the hello"). That the tunnel really is left
+// standing is the half measured below -- the next frame still reaches its hook.
+func TestAPanicInTheHelloHookKeepsTheTunnel(t *testing.T) {
+	srv, fx := newServer(t)
+	before := guard.Panics()
+	called := make(chan struct{}, 1)
+	srv.OnHello = func(_ context.Context, _ *Tunnel) {
+		called <- struct{}{}
+		panic("a programming error in the hello hook")
+	}
+	seen := make(chan core.Notice, 1)
+	srv.OnNotice = func(_ context.Context, _ *Tunnel, n core.Notice) { seen <- n }
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	c.writeControl(t, wire.CtlHello, controllerHello(fx))
+	c.readHello(t)
+	select {
+	case <-called:
+	case <-time.After(readWait):
+		t.Fatal("OnHello never ran")
+	}
+	// The tunnel lives: the next frame goes through as before. Without the
+	// catch this case does not fail here -- the test binary dies.
+	c.writeControl(t, wire.CtlNotify, core.Notice{Level: core.NoticeInfo, Text: "Weiter geht es."})
+	select {
+	case <-seen:
+	case <-time.After(readWait):
+		t.Fatal("the tunnel died with the hook")
+	}
+	if got := guard.Panics(); got != before+1 {
+		t.Fatalf("the counter went %d -> %d; one panic must count once", before, got)
+	}
+}
+
+// TestTunnelTakesAHelloThatNamesNoNode holds the other half of the rule
+// TestTunnelEndsOnAForeignNode keeps: naming ANOTHER node ends the tunnel,
+// naming NO node does not. The contract says so of the field itself
+// (tunnel.Hello.Node, "empty until the controller is in the trust list"), and
+// a controller only ever learns its ID from a version of the list that lists
+// it -- which it cannot be handed before its hello is taken. Refusing the
+// empty one closed that circle: a controller an admin had just listed could
+// never say hello again.
+//
+// The ID still comes from the KEY and never from the message: the tunnel has
+// to reach the registry under the node of the fixture's controller, not under
+// nothing.
+func TestTunnelTakesAHelloThatNamesNoNode(t *testing.T) {
+	srv, fx := newServer(t)
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	h := controllerHello(fx)
+	h.Node = ""
+	c.writeControl(t, wire.CtlHello, h)
+	hello := c.readHello(t)
+	if hello.Contract != tunnel.Contract {
+		t.Fatalf("hello %+v", hello)
+	}
+	tun := waitForTunnel(t, srv, fx.ControllerNode)
+	if tun.Node != fx.ControllerNode {
+		t.Fatalf("the tunnel reached the registry as %q, want %q", tun.Node, fx.ControllerNode)
+	}
+	if tun.Hello().Node != "" {
+		t.Fatalf("the hello was changed on the way: %+v", tun.Hello())
 	}
 }

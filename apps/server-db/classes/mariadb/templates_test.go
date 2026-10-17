@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+// wsrepOptions is the key whose value is a list of its own, and the one line
+// of galera.cnf that no whole-line comparison can pin.
+const wsrepOptions = "wsrep_provider_options="
+
 // TestGaleraTemplate holds the lines nobody may quietly drop: without them
 // the cluster would replicate without TLS, take a connection in the clear or
 // keep the data unencrypted on disk. The test is here and not only in the
@@ -70,15 +74,14 @@ func TestGaleraTemplate(t *testing.T) {
 		// strict from the server side too
 		"sql_mode=STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION",
 	}
-	// parts are pinned inside a line, because they are options of the one
-	// quoted value of wsrep_provider_options: the replication between the
-	// nodes is checked against the same CA.
-	parts := []string{
-		"wsrep_provider_options=",
+	// wantOptions is the whole quoted value of wsrep_provider_options, in
+	// order and with nothing else in it: the replication between the nodes is
+	// checked against the same CA.
+	wantOptions := []string{
 		"socket.ssl_ca=/etc/ngc/db-tls/ca.crt",
 		"socket.ssl_cert=/etc/ngc/db-tls/node.crt",
 		"socket.ssl_key=/etc/ngc/db-tls/node.key",
-		"socket.ssl_cipher=TLS_AES_256_GCM_SHA384",
+		"socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384",
 	}
 
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
@@ -118,10 +121,37 @@ func TestGaleraTemplate(t *testing.T) {
 	if backup != 3 {
 		t.Errorf("[mariabackup] carries %d of the three ssl_* lines", backup)
 	}
-	for _, part := range parts {
-		if !strings.Contains(text, part) {
-			t.Errorf("the option %q is missing", part)
+	// The options of wsrep_provider_options are read out of THAT line and
+	// compared as a set, not searched for in the whole text.
+	//
+	// Why: searching the text said nothing about where an option stands, and
+	// nothing at all about what else stands beside it. The same shape cost
+	// three cases of the container hardening their eyes (point 51): they read
+	// a mount spec as one string and asked HasSuffix(":rw"), and once
+	// ",nosuid,nodev" was appended they found no writable mount any more and
+	// stayed green. Here it would be worse than blind: the options are joined
+	// with ";" and MariaDB takes the LAST of a repeated one, so appending
+	// ";socket.ssl_ca=/tmp/anything.crt" swaps the CA of the replication while
+	// every Contains above still finds the right line somewhere in the file.
+	optLine := ""
+	for _, l := range lines {
+		if strings.HasPrefix(l, wsrepOptions) {
+			if optLine != "" {
+				t.Fatalf("galera.cnf carries %s twice; the last one would win", wsrepOptions)
+			}
+			optLine = l
 		}
+	}
+	if optLine == "" {
+		t.Fatalf("galera.cnf carries no %s line, so this case measures an earlier wall", wsrepOptions)
+	}
+	quoted := strings.TrimPrefix(optLine, wsrepOptions)
+	if len(quoted) < 2 || quoted[0] != '"' || quoted[len(quoted)-1] != '"' {
+		t.Fatalf("the value of %s is not one quoted string: %q", wsrepOptions, quoted)
+	}
+	got := strings.Split(quoted[1:len(quoted)-1], ";")
+	if !slices.Equal(got, wantOptions) {
+		t.Errorf("%s carries %v, want exactly %v", wsrepOptions, got, wantOptions)
 	}
 	for _, forbidden := range []string{
 		"skip-ssl", "ssl=0", "require_secure_transport=OFF", "wsrep_on=OFF",
@@ -150,9 +180,61 @@ func TestGaleraTemplate(t *testing.T) {
 		if slices.Contains(wholeLines, l) {
 			continue
 		}
-		if strings.HasPrefix(l, "wsrep_provider_options=") {
+		// Pinned above as a set of options, not as a whole line.
+		if strings.HasPrefix(l, wsrepOptions) {
 			continue
 		}
 		t.Errorf("line %d of galera.cnf is not pinned by this test: %q", i+1, l)
+	}
+}
+
+// TestTheClusterCipherIsATLS12ListAndNotASuite is the case the byte-wise
+// comparison above cannot be: that one holds the template against its own
+// expectation, so moving a wrong value in both places keeps it green - the
+// same gap Punkt 56 found in the Apache template. This one knows something the
+// template does not say about itself.
+//
+// socket.ssl_cipher of Galera reaches SSL_CTX_set_cipher_list. That function
+// knows TLS 1.2 cipher names only; the TLS 1.3 suites have their own list and
+// their own setter, which Galera 26.4.23 does not offer. A TLS 1.3 name here
+// therefore restricts nothing and aborts the server at startup - measured on
+// Debian 13 on 17.10.2026 as "Error setting SSL cipher list to
+// 'TLS_AES_256_GCM_SHA384': 'no cipher match'", upon which the wsrep provider
+// and mariadbd fall.
+//
+// Two things are asserted, because dropping the option would pass the first
+// alone: the value is a TLS 1.2 name, and it still names AES-256-GCM, which is
+// the one suite Entwurf 4.5 allows. Measured against a running cluster, that
+// list refuses a TLS 1.2 peer offering AES-128-GCM or a CBC suite, and without
+// it both get through.
+func TestTheClusterCipherIsATLS12ListAndNotASuite(t *testing.T) {
+	body, err := os.ReadFile("../../templates/galera.cnf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	const key = "socket.ssl_cipher="
+	i := strings.Index(text, key)
+	if i < 0 {
+		t.Fatalf("the template names no %s at all", key)
+	}
+	rest := text[i+len(key):]
+	value := rest
+	if k := strings.IndexAny(rest, "\";\n\r"); k >= 0 {
+		value = rest[:k]
+	}
+	if value == "" {
+		t.Fatalf("%s has no value", key)
+	}
+	// TLS_* is the naming of the TLS 1.3 suites, and that is the whole bug.
+	if strings.HasPrefix(value, "TLS_") {
+		t.Errorf("socket.ssl_cipher is %q, a TLS 1.3 suite: Galera passes this "+
+			"to SSL_CTX_set_cipher_list, which knows TLS 1.2 names only, and the "+
+			"server aborts with \"no cipher match\"", value)
+	}
+	// And the pin has to stay a pin.
+	if !strings.Contains(value, "AES256-GCM") {
+		t.Errorf("socket.ssl_cipher is %q and does not name AES-256-GCM, the one "+
+			"suite Entwurf 4.5 allows", value)
 	}
 }

@@ -6,6 +6,7 @@
 package chain
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -208,6 +209,47 @@ func (k *Keeper) List() *trust.List {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 	return k.cur.List
+}
+
+// NodeID is the ID of THIS controller's own node in the newest verified list,
+// found by the static Noise key it was handed, or "" while no verified version
+// carries that key.
+//
+// WHY THE KEY AND NOT THE NAME. A controller is paired under a NAME it chose
+// itself (config.Controller.Name), and the admin who lists it may get another
+// ID than that name: a second server called "ngc" on an installation whose API
+// node is already "ngc" is listed as "ngc-2" (the shell's nodeID). The name
+// therefore says nothing about the ID, while the key says everything: it is
+// what the admin compared by fingerprint before listing, and it is what the
+// API reads the node off on the tunnel (controllers.peerKey). Reading the ID
+// off the key is the same answer the other side gives.
+//
+// It is also why this may not be read off a name match: two nodes may carry
+// the same display name, and a controller that then picked the wrong one
+// would name a node it is not -- exactly what the API ends a tunnel over.
+//
+// Only a node of kind NodeController counts. An API server's Noise key is in
+// the same list, and a controller that answered with an API's node would name
+// a node whose tasks it must never take.
+//
+// Nothing is cached: the list underneath is replaced version by version
+// (Current), and an ID that was read once could be a node an admin has
+// removed since.
+func (k *Keeper) NodeID(noisePub []byte) string {
+	if len(noisePub) == 0 {
+		return ""
+	}
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	if k.cur.List == nil {
+		return ""
+	}
+	for _, n := range k.cur.List.Nodes {
+		if n.Kind == trust.NodeController && bytes.Equal(n.Noise, noisePub) {
+			return n.ID
+		}
+	}
+	return ""
 }
 
 // TrustSeq is the number this controller puts into tunnel.Hello.TrustSeq, and

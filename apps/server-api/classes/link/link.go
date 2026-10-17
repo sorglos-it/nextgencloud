@@ -22,6 +22,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -367,6 +368,13 @@ func closeBounded(conn *websocket.Conn, code websocket.StatusCode, reason string
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// No channel of a browser is behind this (hence 0) and no round comes
+		// after it either: this goroutine exists to put ONE close frame on a
+		// socket that is being given up anyway. So a panic in the library's
+		// close path has nothing left to repair -- what it must not do is end
+		// the process, and the deferred close(done) above still runs, so the
+		// caller comes back at once instead of waiting out CloseWait.
+		defer func() { _ = guard.Hit(recover(), "link.closeBounded", 0) }()
 		_ = conn.Close(code, reason)
 	}()
 	t := time.NewTimer(CloseWait)

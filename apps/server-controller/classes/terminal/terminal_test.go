@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/service"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 )
@@ -569,6 +570,7 @@ func TestShellEnvCarriesNothing(t *testing.T) {
 	for _, k := range []string{
 		service.EnvUser, service.EnvUserName, service.EnvApp, service.EnvService,
 		service.EnvAction, service.EnvParams, service.EnvVersion, service.EnvData,
+		"HISTFILE", "HISTFILESIZE", "HISTSIZE",
 		service.EnvStart, "TERM", "PATH", "LANG", "SHELL", "COLUMNS", "LINES",
 	} {
 		t.Setenv(k, poison)
@@ -580,6 +582,7 @@ func TestShellEnvCarriesNothing(t *testing.T) {
 		"HOME=/data/app",
 		"PATH=" + service.Path,
 		"LANG=C.UTF-8",
+		"HISTFILE=",
 	}
 	got := shellEnv()
 	if len(got) != len(want) {
@@ -600,7 +603,7 @@ func TestShellEnvCarriesNothing(t *testing.T) {
 			t.Fatalf("shellEnv()[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	// Said twice on purpose: the comparison above would also hold if a fifth
+	// Said twice on purpose: the comparison above would also hold if a sixth
 	// line had been dropped by a mutation of len. This holds the VALUE, which
 	// is what a user would see in the process list.
 	for _, e := range got {
@@ -644,4 +647,115 @@ func FuzzParseFrame(f *testing.F) {
 			t.Fatalf("kind %d got through", fr.Kind)
 		}
 	})
+}
+
+// TestEndedTurnsAPanicIntoTheEndOfOneTerminal is V1.2 point 38 for the four
+// goroutines of runShell. Those four are Linux only (pty_linux.go), but what
+// carries the catch is not: ended lives in terminal.go on purpose, so the half
+// that can be measured on any machine is measured on this one.
+//
+// Two things, and the second is the one a bare recover would miss: the panic
+// does not come out of this goroutine, AND whoever waits on the channel is
+// told. A catch that only swallowed would leave runShell waiting on a
+// goroutine that is already gone - a terminal that simply stops, which is the
+// silent defect of V1.2 point 50.
+func TestEndedTurnsAPanicIntoTheEndOfOneTerminal(t *testing.T) {
+	before := guard.Panics()
+	out := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// The panic is caught inside ended; if it were not, this goroutine
+		// and with it the whole test binary would be gone.
+		ended(out, "terminal.test", func() error { panic(marker + " in a pump") })
+	}()
+	<-done
+	select {
+	case err := <-out:
+		if !errors.Is(err, errBug) {
+			t.Fatalf("the pump answered %v, want errBug", err)
+		}
+		// And the error itself carries nothing of what went through the
+		// terminal: it is one constant, which is the rule of this whole
+		// package.
+		if strings.Contains(err.Error(), marker) {
+			t.Fatalf("the answer of the pump carries the panic value: %q", err)
+		}
+	default:
+		t.Fatal("nothing was sent, so runShell would wait for a goroutine that is gone")
+	}
+	if got := guard.Panics(); got != before+1 {
+		t.Fatalf("the counter went %d -> %d; one panic counts once", before, got)
+	}
+}
+
+// TestAnEndedTerminalSaysSoAndNotSomethingElse holds the sentence. Before the
+// case for errBug in run, a programming error fell into the default and the
+// person at the terminal read "Die Shell ließ sich nicht starten." - which is
+// false: the shell had started. A wrong cause sends whoever reads it to the
+// wrong place, and that is the false answer of V1.2 point 50, not a nicety.
+func TestAnEndedTerminalSaysSoAndNotSomethingElse(t *testing.T) {
+	if got := sentence(errBug); got != msgBug {
+		t.Fatalf("an internal failure reads %q, want %q", got, msgBug)
+	}
+	// The sentence of a programming error is not the one of a shell that could
+	// not start: that was the false answer before this case.
+	if sentence(errBug) == msgNoRun {
+		t.Fatal("an internal failure still reads as a shell that would not start")
+	}
+	// The other mappings stand where they stood, including the fallback.
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{errNoPTY, msgNoPTY}, {errIdle, msgIdle}, {errCut, msgCut},
+		{ErrFrame, msgCut}, {errors.New("something else"), msgNoRun},
+	} {
+		if got := sentence(c.err); got != c.want {
+			t.Fatalf("%v reads %q, want %q", c.err, got, c.want)
+		}
+	}
+	// And the new sentence carries no value either, like every other one.
+	if strings.ContainsAny(msgBug, "%") {
+		t.Fatalf("the sentence has a verb in it: %q", msgBug)
+	}
+}
+
+// TestShellEnvWritesNoHistory is the bolt of the history file. It is the one
+// place a typed secret can reach a DISK: the root filesystem of the app
+// container is read only (runtime/podman.go, "--read-only"), /data is the only
+// writable mount, and shellEnv points HOME there. A shell of the bash family
+// creates HOME/.bash_history and writes every typed line into it, so a
+// "mysql -p<secret>" would lie in the encrypted app data and outlive the tab.
+//
+// The remedy is that the file is never created, not that it is cleaned up
+// afterwards: an empty HISTFILE makes bash write none at all. Measured on
+// 15.10.2026 in WSL with a marker, bash 5.x: without the line the marker is in
+// HOME/.bash_history, with it HOME is empty. The image's own shell is
+// /bin/sh (dash in debian:13-slim), which keeps no history either way - the
+// line is what holds once that symlink is something else.
+//
+// The case holds the NAME and the empty VALUE, because "HISTFILE=/data/x"
+// would read as set and be the leak itself.
+func TestShellEnvWritesNoHistory(t *testing.T) {
+	t.Setenv("HOME", "/data")
+	t.Setenv("HISTFILE", "/data/.bash_history")
+	var seen bool
+	for _, e := range shellEnv() {
+		if strings.HasPrefix(e, "HISTFILE=") {
+			seen = true
+			if e != "HISTFILE=" {
+				// The LENGTH, never the value: a mutation that hands the
+				// ambient HISTFILE on would print it here, and the one this
+				// bolt exists for is a path inside the encrypted app data.
+				// The absence of the empty value is the whole assertion;
+				// the number is only there to tell "set" from "missing".
+				t.Fatalf("shellEnv() names a HISTFILE of %d bytes, want an empty one",
+					len(e)-len("HISTFILE="))
+			}
+		}
+	}
+	if !seen {
+		t.Fatalf("shellEnv() names no HISTFILE, so a bash would write HOME/.bash_history into the app data")
+	}
 }
