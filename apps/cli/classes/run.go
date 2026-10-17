@@ -47,14 +47,15 @@ Von null zu einem geprüften Release:
      Sagt, was in einem Archiv fehlt oder zu viel ist — hier, nicht erst auf
      dem Server.
   3. ngc-store release -version 1.1.0 -seq 1 <Verzeichnis> <Schlüsseldatei>
-     Die Fassung ist MAJOR.MINOR.PATCH, drei Zahlen, nicht vierstellig.
+     Die Fassung ist MAJOR.MINOR.PATCH oder MAJOR.MINOR.PATCH.BUILD, also
+     drei oder vier Zahlen, jede ohne führende Null (1.1.0, 1.1.0.3).
      Schreibt release.json und release-key.pem in das Verzeichnis.
   4. ngc-store check <Verzeichnis> ngc-web all
      Je Teil einmal. Die Teile heißen ngc-web, ngc-api und ngc-controller —
      mit dem Vorsatz "ngc-", wie die Dateien.
 
 Zusätze von "release", vor den Angaben:
-  -version <Fassung>  die NGC-Fassung dieses Release, MAJOR.MINOR.PATCH; nötig
+  -version <Fassung>  die NGC-Fassung dieses Release, drei oder vier Zahlen; nötig
   -seq <Folge>        Folgenummer, höher als die letzte; nötig
   -notes <Text>       was sich geändert hat
   -base <Adresse>     wo die Dateien liegen; leer schreibt nur die Namen

@@ -104,11 +104,16 @@ commit=$(git rev-parse --verify "$ref^{commit}")
 git cat-file -e "$ref:apps/web/VERSION" 2>/dev/null || die "$ref carries no apps/web/VERSION"
 
 # THE VERSION GATE IS store.ValidVersion AND NOTHING LAXER
-# (shared/store/manifest.go:224: ^(0|[1-9][0-9]{0,5})\.(…)\.(…)$). verify.sh does
-# NOT check the version, so a version that only looks like one is packed,
-# signed, published and refused at the USER as store.ErrRelease. Written out as
-# three fields so a plain sh can do it: each one is 0, or 1 to 6 digits not
-# starting with 0.
+# (shared/store/manifest.go:224: three places and an OPTIONAL fourth, each 0 or
+# 1 to 6 digits without a leading zero). verify.sh does NOT check the version,
+# so a version that only looks like one is packed, signed, published and
+# refused at the USER as store.ErrRelease. Written out field by field so a
+# plain sh can do it.
+#
+# The fourth place is the build counter of the house numbering (v.x.y.z,
+# Z:\GitHub\claude-md\version.md). The contract learned it on 17.10.2026; a
+# gate that still asked for three would refuse exactly the numbers this
+# repository hands out. A FIFTH place stays refused.
 version=$(git cat-file blob "$ref:apps/web/VERSION" | tr -d ' \t\r\n')
 check_part() {
 	case $1 in
@@ -120,7 +125,7 @@ check_part() {
 	return 1
 }
 badversion() {
-	die "VERSION is \"$version\", which store.ValidVersion rejects (three numbers, each 0 or up to six digits without a leading zero). verify.sh would not catch it and the user would."
+	die "VERSION is \"$version\", which store.ValidVersion rejects (three numbers, or four, each 0 or up to six digits without a leading zero). verify.sh would not catch it and the user would."
 }
 case $version in
 *[!0-9.]* | *..* | .* | *.) badversion ;;
@@ -133,10 +138,25 @@ case $rest in
 esac
 minor=${rest%%.*}
 patch=${rest#*.}
+# The fourth place, if there is one. build is cut off FIRST, because the line
+# after it overwrites patch.
+#
+# A FIFTH place needs no rule of its own: "0.12.0.3.4" leaves "3.4" in build,
+# and check_part takes digits only, so it is refused there. Measured, because
+# it was written with a second rule first and that rule turned out to be dead:
+# with the rule removed the script still said no, at check_part, with the same
+# sentence. One gate, not two.
+build=
 case $patch in
-*.*) badversion ;;
+*.*)
+	build=${patch#*.}
+	patch=${patch%%.*}
+	;;
 esac
 check_part "$major" && check_part "$minor" && check_part "$patch" || badversion
+if [ -n "$build" ]; then
+	check_part "$build" || badversion
+fi
 
 out=${3:-dist/release/$version}
 mkdir -p -- "$out" || die "cannot create $out"

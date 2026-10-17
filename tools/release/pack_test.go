@@ -426,13 +426,19 @@ func TestPackWritesLFWhateverTheCheckoutDoes(t *testing.T) {
 	}
 }
 
-// TestPackRefusesAVersionStoreWouldReject. store.ValidVersion is
-// ^(0|[1-9][0-9]{0,5})\.(…)\.(…)$ (shared/store/manifest.go:224) and verify.sh
-// does not check the version at all, so a version that only looks like one is
-// packed, signed, published and rejected at the user as ErrRelease.
+// TestPackRefusesAVersionStoreWouldReject. store.ValidVersion is three places
+// and an optional fourth (shared/store/manifest.go:224) and verify.sh does not
+// check the version at all, so a version that only looks like one is packed,
+// signed, published and rejected at the user as ErrRelease.
+//
+// Every refused spelling is first held against store.ValidVersion itself, so
+// the day the contract changes again this case says that it is measuring
+// nothing instead of quietly measuring the gate against a rule that is gone.
+// That is how it was caught on 17.10.2026, when the contract learned the
+// fourth place: "1.2.3.4" moved from the refused list to the accepted one.
 func TestPackRefusesAVersionStoreWouldReject(t *testing.T) {
 	needTools(t)
-	for _, bad := range []string{"1.2.3.4", "01.2.3", "1234567.0.0", "1.2", "v1.2.3", "1.2.3-rc1"} {
+	for _, bad := range []string{"01.2.3", "1234567.0.0", "1.2", "v1.2.3", "1.2.3-rc1", "1.2.3.4.5", "1.2.3.04"} {
 		if store.ValidVersion(bad) {
 			t.Fatalf("%q is a valid version after all; the case is measuring nothing", bad)
 		}
@@ -442,10 +448,16 @@ func TestPackRefusesAVersionStoreWouldReject(t *testing.T) {
 			t.Errorf("pack-release.sh accepted the version %q\n%s", bad, log)
 		}
 	}
-	// And a good one still passes, so the gate is not simply closed.
-	repo := webFixture(t, func(f map[string]string) { f["VERSION"] = "0.12.0\n" })
-	if _, log, err := pack(t, repo, "main", "3"); err != nil {
-		t.Errorf("pack-release.sh refused the valid version 0.12.0: %v\n%s", err, log)
+	// And a good one of each spelling still passes, so the gate is not simply
+	// closed - the four-place one is what this house hands out (version.md).
+	for _, good := range []string{"0.12.0", "0.12.0.3"} {
+		if !store.ValidVersion(good) {
+			t.Fatalf("%q is no valid version; the case is measuring nothing", good)
+		}
+		repo := webFixture(t, func(f map[string]string) { f["VERSION"] = good + "\n" })
+		if _, log, err := pack(t, repo, "main", "3"); err != nil {
+			t.Errorf("pack-release.sh refused the valid version %s: %v\n%s", good, err, log)
+		}
 	}
 }
 

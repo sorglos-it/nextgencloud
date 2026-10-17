@@ -221,11 +221,19 @@ func Granted(needs, grants []string) bool {
 func ValidText(s string, max int) bool { return wire.ValidText(s, max) }
 
 var (
-	versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$`)
+	// The fourth place is optional, so every three-place version that was
+	// ever written, signed or installed stays valid - the signed vector
+	// shared/testdata/release/release.json (version 1.1.0) among them, and
+	// it is not re-signed. Decided by Thomas on 15.10.2026 (Punkt 45): the
+	// house numbering has four places (v.x.y.z, Z:\GitHub\claude-md\
+	// version.md), and the contract learns them instead of the release tool
+	// folding two places into one.
+	versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})(\.(0|[1-9][0-9]{0,5}))?$`)
 	pathPattern    = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$`)
 )
 
-// ValidVersion reports whether s is MAJOR.MINOR.PATCH without leading zeros.
+// ValidVersion reports whether s is MAJOR.MINOR.PATCH, or
+// MAJOR.MINOR.PATCH.BUILD, each place without leading zeros.
 func ValidVersion(s string) bool { return versionPattern.MatchString(s) }
 
 // ValidPath reports whether p is a safe relative path: no leading slash, no
@@ -257,8 +265,12 @@ func SupportsMinNGC(ngc, minNGC string) bool {
 	return ValidVersion(ngc) && ValidVersion(minNGC) && !Newer(minNGC, ngc)
 }
 
-func parseVersion(s string) ([3]int, bool) {
-	var v [3]int
+// parseVersion reads the places of s. A three-place version keeps its fourth
+// place at 0, which is what makes "1.0.0" and "1.0.0.0" one version and puts
+// "1.0.0.1" above both: the zero value of the array IS the missing place, so
+// no second rule is needed for the two spellings.
+func parseVersion(s string) ([4]int, bool) {
+	var v [4]int
 	if !ValidVersion(s) {
 		return v, false
 	}

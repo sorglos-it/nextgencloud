@@ -201,7 +201,59 @@ func TestVersions(t *testing.T) {
 			t.Errorf("Newer(%s, %s) = %v", c.a, c.b, got)
 		}
 	}
-	for _, v := range []string{"1", "1.0", "v1.0.0", "1.0.0-beta", "01.0.0", "1.0.0.0", "1234567.0.0"} {
+	for _, v := range []string{"1", "1.0", "v1.0.0", "1.0.0-beta", "01.0.0", "1234567.0.0"} {
+		if ValidVersion(v) {
+			t.Errorf("%s accepted", v)
+		}
+	}
+}
+
+// TestAFourPlaceNumberSortsAgainstAThreePlaceOne is the case the V1.3 item
+// owed. The house numbering of this repository has four places (v.x.y.z,
+// Z:\GitHub\claude-md\version.md) and the contract took three. A number the
+// contract refuses is never Newer in EITHER direction, so a four-place
+// release was not refused loudly: it was "not newer" and would have been
+// silently never installed, because an update is installed only when Newer
+// says yes (update/install.go:353, updates/rollout.go:253).
+//
+// What this case asserts is the ORDER BETWEEN THE TWO SPELLINGS, because
+// that is what Newer decides on and what no other case covers: a missing
+// fourth place counts as 0, so "1.0.0" and "1.0.0.0" are one version and
+// neither is newer. Both directions are asserted for every pair, so a
+// mapping that made everything newer, or everything older, cannot pass.
+func TestAFourPlaceNumberSortsAgainstAThreePlaceOne(t *testing.T) {
+	for _, v := range []string{"1.0.0", "1.0.0.0", "0.0.1.0", "999999.999999.999999.999999"} {
+		if !ValidVersion(v) {
+			t.Errorf("%s refused", v)
+		}
+	}
+	cases := []struct {
+		a, b  string
+		newer bool
+	}{
+		// The missing place is 0, so these two are one version.
+		{"1.0.0", "1.0.0.0", false},
+		{"1.0.0.0", "1.0.0", false},
+		// A fourth place above zero lifts the version above the three-place
+		// spelling of the same first three.
+		{"1.0.0.1", "1.0.0", true},
+		{"1.0.0", "1.0.0.1", false},
+		// A higher place on the left always beats the fourth place.
+		{"1.0.1", "1.0.0.9", true},
+		{"1.0.0.9", "1.0.1", false},
+		// And the fourth place is compared as a number, not as text.
+		{"1.0.0.10", "1.0.0.9", true},
+		{"1.0.0.9", "1.0.0.10", false},
+	}
+	for _, c := range cases {
+		if got := Newer(c.a, c.b); got != c.newer {
+			t.Errorf("Newer(%s, %s) = %v, want %v", c.a, c.b, got, c.newer)
+		}
+	}
+	// A fifth place, a leading zero in the fourth, a trailing dot, a letter
+	// and a place of seven digits stay refused: the fourth place is one more
+	// place, not free spelling.
+	for _, v := range []string{"1.0.0.0.0", "1.0.0.01", "1.0.0.", "1.0.0.x", "1.0.0.1234567"} {
 		if ValidVersion(v) {
 			t.Errorf("%s accepted", v)
 		}
