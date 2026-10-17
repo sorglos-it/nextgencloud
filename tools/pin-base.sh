@@ -114,6 +114,22 @@ for arch in amd64 arm64; do
 		{ echo "pin-base: the manifest names no $arch - NOTHING WRITTEN" >&2; exit 1; }
 done
 
+# EXACTLY ONE FROM LINE, and asked in EVERY mode before anything is compared.
+# Until 17.10.2026 only --write asked it (the awk at the very bottom), while
+# --verify - the gate - compared the FIRST FROM line and nothing else. Measured
+# that day on copies of this file, twice:
+#
+#   no FROM line at all          --verify said "THE TAG HAS MOVED", exit 2
+#   a second, UNPINNED FROM line --verify said "unchanged", exit 0
+#
+# The first turns a broken measurement into "stale", which the three modes
+# above promise to keep apart. The second is the serious one: the gate passed a
+# Containerfile whose second stage pulls a TAG, and a tag is exactly what Punkt
+# 39 exists to forbid. A release may not be cut on either answer.
+froms=$(grep -c '^FROM ' "$file" || true)
+[ "$froms" = 1 ] ||
+	{ echo "pin-base: $file has $froms FROM lines, want exactly 1 - NOTHING WRITTEN" >&2; exit 1; }
+
 want="FROM docker.io/$repo:$tag@$own"
 have=$(sed -n 's/^FROM .*/&/p' "$file" | head -n 1)
 echo "pin-base: measured $own over $(wc -c < "$tmp" | tr -d ' ') bytes, amd64 and arm64 present"
