@@ -2287,3 +2287,56 @@ Controller hat heute nur `pair`, das einen **fertigen** Code erwartet (`ngc-cont
 
 **Ungemessen, weil davon abhängig:** alles hinter der Kopplung — Apps installieren, Terminal,
 Container, der Weg über den Tunnel aus Punkt 44 im echten Betrieb.
+
+## Punkt 61: Gekoppelt — und Punkt 60 war in seiner Kernaussage falsch
+
+**Gemessen am 17.10.2026** auf Debian 13. **Zuerst die Berichtigung, weil sie mir gehört:**
+
+> Punkt 60 sagt „der Knopf dafür gibt es nicht". **Das ist falsch.** Der Knopf heißt
+> **„Kopplungscode zeigen"** und steht in *Benutzer & Rechte* unter dem Reiter **Server**
+> (`apps/web/public/assets/js/apps/users.js:600`, `showPairCode` ab 613). Er ruft
+> `core.ACT_PAIR_CODE`, prüft den Code mit `tunnel.checkCode` gegen die **vom Klienten geprüfte**
+> Fassung und zeigt ihn erst dann — genau wie `apps/web/CLAUDE.md:101` es vorschreibt.
+>
+> Mein „null Treffer in `apps/web`" kam aus einem Arbeitsbaum auf `main`, wo `apps/web` nur zwei
+> Dateien hat. Der Oberflächencode liegt auf dem Zweig `web`. **Ein Zähler über den falschen Baum
+> ist kein Befund, sondern eine Behauptung** — die Regel dazu steht seit heute in `messen.md`.
+
+### Der echte Grund, warum keine Kopplung zustande kam
+
+`apps/server-controller/classes/pairing/pairing.go` schickte die Anfrage an `tunnel.PathPair`
+**ohne jede Abfrage**. Die API verbraucht aber den Einmalwert, den die **Abfrage benennt**:
+`?secret=<base64url des SHA-256 des Kopplungsgeheimnisses>` (`controllers/pair.go:49`), und ohne
+sie antwortet sie `E_PROTOCOL`. **Also konnte eine Kopplung nie gelingen** — und `ngc-controller`
+sagte dazu seine eine feste Zeile („Ist der Kopplungscode noch gültig und die API erreichbar?"),
+die beide Möglichkeiten nennt und keine ausschließt.
+
+**Der Beweis lag im eigenen Haus:** der Beitrittsweg der API baut dieselbe Abfrage aus demselben
+Hash (`join/run.go:177`, `secretHash`). Eine Hälfte war gebaut, die andere nicht.
+
+**Und der Prüfstand sah nie hin:** `pairing_test.go` las Pfad, Verfahren und Rumpf — die **Adresse
+nie**. Eine Anfrage ohne Abfrage galt ihm als gut. Jetzt vergleicht er die Abfrage mit dem Hash des
+Geheimnisses: der Mutant, der sie entfernt, **stirbt** (`secret of the query = ""`), eine
+Kontrollmutation **lebt**, 14 Controller-Pakete grün.
+
+**Gemessen am laufenden System:** Kopplung `RC=0`, `/etc/ngc/trust-anchor.json` **entsteht**,
+`ngc-controller.service` läuft, und der Tunnel steht (`tunnel ended … seconds=122` beim Neustart).
+
+### Zweiter Befund: der Anker war zu streng geschützt und nahm die Oberfläche mit
+
+`ngc-all.sh` und `ngc-controller.sh` schrieben den Anker **`0600 root:root`**. `index.php` liest
+ihn aber und gibt Nummer und Hash **jedem Browser** in `config.json` mit — und Apache läuft als
+`www-data`. Folge: **nach einer gelungenen Kopplung antwortete die Oberfläche auf jeden Aufruf
+500.** Gemessen: `0600` → 500 und `Permission denied` für `www-data`, **`0644` → 200** und die
+Seite. Was den Anker schützt, ist die **Unterschrift der Vertrauensliste**, nicht der Dateimodus.
+Behoben in beiden Skripten.
+
+### Was damit zu ist
+
+Ein zweiter Browser sieht jetzt **„Bei NGC anmelden"** statt der Einrichtungsseite. Die Aussperrung
+aus Punkt 60 ist damit erklärt und behoben: sie war keine Eigenart der Oberfläche, sondern die
+Folge der nie gelungenen Kopplung — ohne Kopplung kein Anker, ohne Anker hält die Oberfläche jede
+Anlage für neu.
+
+**Noch offen:** ob mit gekoppeltem Controller nun wirklich **Apps laufen** (Container, Terminal) —
+das ist der nächste Messpunkt und bisher nur insoweit belegt, als der Tunnel steht.
