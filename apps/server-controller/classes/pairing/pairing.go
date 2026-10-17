@@ -10,17 +10,21 @@ package pairing
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/flynn/noise"
+
+	"github.com/sorglos-it/nextgencloud/shared/enc"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -115,8 +119,17 @@ func Do(ctx context.Context, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, ErrInput
 	}
+	// The query names WHICH one-time value to spend; the MAC above proves we
+	// hold the secret itself, and the secret never travels. Without the query
+	// the API has nothing to look up and answers E_PROTOCOL, so a pairing
+	// without it can never come off -- measured on a real Debian on
+	// 17.10.2026. The join way of the API builds the same query from the same
+	// hash (join/run.go, secretHash), and this is the second half of it.
+	sum := sha256.Sum256(code.Secret)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://"+net.JoinHostPort(host, port)+tunnel.PathPair, bytes.NewReader(body))
+		"https://"+net.JoinHostPort(host, port)+tunnel.PathPair+
+			"?secret="+url.QueryEscape(enc.B64.EncodeToString(sum[:])),
+		bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err
 	}

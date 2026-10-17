@@ -84,6 +84,17 @@ func TestDoPairs(t *testing.T) {
 		if r.URL.Path != tunnel.PathPair || r.Method != http.MethodPost {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
+		// The query is half the request, and this stand used to ignore it: the
+		// API spends the one-time value the query NAMES (controllers/pair.go,
+		// "?secret=<base64url of the SHA-256 of the pairing secret>") and
+		// without it answers E_PROTOCOL. A pairing with no query therefore
+		// cannot come off against a real API, while a stand that reads only
+		// path and body calls it good -- which is what happened until
+		// 17.10.2026, measured on a real Debian.
+		sum := sha256.Sum256(secret)
+		if want := enc.B64.EncodeToString(sum[:]); r.URL.Query().Get("secret") != want {
+			t.Errorf("secret of the query = %q, want the hash of the pairing secret", r.URL.Query().Get("secret"))
+		}
 		b, _ := io.ReadAll(io.LimitReader(r.Body, tunnel.MaxPairRequest+1))
 		var err error
 		if got, err = tunnel.ParsePairRequest(b); err != nil {
