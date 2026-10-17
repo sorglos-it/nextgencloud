@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -137,10 +139,16 @@ func TestBuildAndSaveNameOneImage(t *testing.T) {
 	}
 }
 
-// 6. --pull=always. The base image of the Containerfile is named by a tag, so
-// what it is depends on the registry; without this it depends on the cache of
-// the machine that builds, which may be months old. This is not a pin - see
-// TestTheContainerfileDoesNotPinItsBase.
+// 6. --pull=always. The base is pinned by digest
+// (TestTheContainerfilePinsItsBaseByDigest), so this no longer decides WHICH
+// image is used - the digest does. It is still held because a digest that is
+// not in the cache of the build machine has to be fetchable at all, and
+// because the default would let a build reach for whatever a local tag of that
+// name points at.
+//
+// So the NAME of this case is now wider than what it proves: it holds the
+// flag, not a pin. The pin is the case above, and it is the one that would go
+// red if somebody went back to a tag.
 func TestBuildFetchesTheBaseInsteadOfTrustingTheCache(t *testing.T) {
 	if args := buildOf(t, goodSpec()); !slices.Contains(args, "--pull=always") {
 		t.Fatalf("args = %q without --pull=always", args)
@@ -362,42 +370,177 @@ func TestTheContainerfileCopiesTheProgramUnderTheNameTheBuildExpects(t *testing.
 	}
 }
 
-// 16. The base of the image is not pinned, and that is a finding and not a
-// wish: the Containerfile names docker.io/library/debian:13-slim by TAG, so
-// two builds of the same commit are two different images, and whoever controls
-// that tag controls what runs inside the container of every app.
+// 16. The base of the image is pinned to a DIGEST, and this case reads the
+// one Containerfile that stands in this repo off the disk to say so.
 //
-// The case is written the way the finding stands today: it holds that the base
-// is named by a tag. Whoever pins it to a digest makes this case red, reads
-// this comment, and deletes it - which is the point. It is not a case that
-// demands the hole stay open; it is one that keeps the hole from being
-// forgotten.
-func TestTheContainerfileDoesNotPinItsBase(t *testing.T) {
+// Why a digest and not the tag it replaced: a tag is a NAME. Whatever lies
+// under docker.io/library/debian:13-slim is whatever the registry says the day
+// somebody builds, so two builds of the same commit were two different images,
+// and whoever gained control of that name gained control of what runs in the
+// container of the terminal app - the app whose manifest says needs: ["root"].
+// A digest is the bytes themselves.
+//
+// The digest in the file is MEASURED: registry-1.docker.io answers it for that
+// tag, and sha256 over the 8973 bytes of the returned manifest index equals it
+// (measured 15.10.2026; tools/pin-base.sh repeats exactly that). It is not a
+// number copied out of a document.
+//
+// THIS CASE CANNOT BE MUTATED BY AN OVERLAY, and that is measured, not
+// assumed: -overlay replacing this Containerfile with a pinned one left the
+// unpinned line in front of the case that stood here before (1 case ran, PASS
+// with the unpinned FROM logged). go test -overlay lies to the COMPILER, and
+// this reads the disk. A mutant against this line is therefore a real swap in
+// a copy of the tree - which is how it was killed.
+func TestTheContainerfilePinsItsBaseByDigest(t *testing.T) {
 	b := readContainerfile(t)
-	i := strings.Index(b, "FROM ")
-	if i < 0 {
+	from := ""
+	for _, line := range strings.Split(b, "\n") {
+		if l := strings.TrimLeft(line, " \t"); strings.HasPrefix(l, "FROM") {
+			from = strings.TrimRight(l, " \t\r")
+			break
+		}
+	}
+	if from == "" {
 		t.Fatalf("the Containerfile has no FROM line; it reads\n%s", b)
 	}
-	from := strings.TrimSpace(b[i:])
-	if j := strings.IndexByte(from, '\n'); j >= 0 {
-		from = strings.TrimSpace(from[:j])
+	if !basePinned.MatchString(from) {
+		t.Fatalf("the base is NOT pinned to a digest: %q. A tag is a name, and a "+
+			"name does not say which bytes run in the container. Pin it with "+
+			"tools/pin-base.sh, never by hand", from)
 	}
-	if strings.Contains(from, "@sha256:") {
-		t.Fatalf("the base is pinned now (%q) - the finding in the comment above is closed, "+
-			"take this case out and say so in the report", from)
+	// EVERY FROM line, not the first one: a second stage added later without a
+	// digest would be the base that got in, and the loop above stops at the
+	// first.
+	//
+	// The wall itself (CheckBase) is not called with this path on purpose, and
+	// the reason is a measurement of it: CheckBase runs the path through
+	// validBuildArg, which refuses "..", and the path of this file from inside
+	// its own package is "../../templates/...". That refusal is right for a
+	// build argument - a build stands in the root of the repo - so the case
+	// holds the same grammar here instead of bending the wall for a test.
+	for _, line := range strings.Split(b, "\n") {
+		l := strings.TrimRight(strings.TrimLeft(line, " \t"), " \t\r")
+		if strings.HasPrefix(l, "FROM") && !basePinned.MatchString(l) {
+			t.Fatalf("a FROM line of the Containerfile is not pinned to a digest: %q", l)
+		}
 	}
-	t.Logf("UNPINNED BASE, this is the finding: %q names a tag, not a digest. "+
-		"Two builds of this commit are two images.", from)
 }
 
+// 17. CheckBase is the wall itself, and these are its refusals. The input is a
+// PATH, so every case writes its own file in a temporary directory - that is
+// what makes the wall measurable on a machine with no podman, and it is also
+// why these are not the case above: that one is about the file this repo
+// ships, these are about what the wall accepts from anybody.
+func TestCheckBaseRefusesABaseThatIsNotPinned(t *testing.T) {
+	const hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, c := range []struct {
+		name string
+		body string
+		want error
+	}{
+		{"a bare tag is refused", "FROM docker.io/library/debian:13-slim\nRUN true\n", ErrBase},
+		{"a bare name is refused", "FROM debian\n", ErrBase},
+		{"no FROM at all is refused", "RUN true\nCMD [\"/bin/sh\"]\n", ErrBase},
+		{"another digest algorithm is refused", "FROM debian@sha512:" + hex64 + "\n", ErrBase},
+		{"a short digest is refused", "FROM debian@sha256:" + hex64[:63] + "\n", ErrBase},
+		{"a long digest is refused", "FROM debian@sha256:" + hex64 + "a\n", ErrBase},
+		{"upper case hex is refused", "FROM debian@sha256:" + strings.ToUpper(hex64) + "\n", ErrBase},
+		{"a word behind the digest is refused", "FROM debian@sha256:" + hex64 + " AS base\n", ErrBase},
+		// The one that matters for a file somebody extends later: the first
+		// base is nailed down and the second is not, and a check that stopped
+		// at the first FROM would call this file fine.
+		{"a second unpinned stage is refused", "FROM debian@sha256:" + hex64 +
+			"\nFROM alpine:3\n", ErrBase},
+		{"a pinned base passes", "FROM debian@sha256:" + hex64 + "\nRUN true\n", nil},
+		{"an indented pinned base passes", "\tFROM debian@sha256:" + hex64 + "\n", nil},
+		{"CRLF line ends pass", "FROM debian@sha256:" + hex64 + "\r\nRUN true\r\n", nil},
+		{"two pinned stages pass", "FROM debian@sha256:" + hex64 +
+			"\nFROM debian@sha256:" + strings.Repeat("b", 64) + "\n", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := filepath.ToSlash(filepath.Join(t.TempDir(), "Containerfile"))
+			if err := os.WriteFile(f, []byte(c.body), 0o600); err != nil {
+				t.Fatalf("the case could not write its own Containerfile: %v", err)
+			}
+			// The preparation is held before the result is read: a case that
+			// measured an empty or unwritten file would report a refusal that
+			// came from nothing being there.
+			if got, err := os.ReadFile(f); err != nil || string(got) != c.body {
+				t.Fatalf("the case did not get its own file onto the disk: %v", err)
+			}
+			err := CheckBase(f)
+			if c.want == nil && err != nil {
+				t.Fatalf("CheckBase = %v, want nil", err)
+			}
+			if c.want != nil && !errors.Is(err, c.want) {
+				t.Fatalf("CheckBase = %v, want %v", err, c.want)
+			}
+		})
+	}
+}
+
+// 18. A file that cannot be read is a refusal and not a pass. It is its own
+// case because it is the shape that makes a wall hollow: "nothing to read"
+// read as "nothing wrong" would let a build run with no base checked at all.
+func TestCheckBaseRefusesAFileItCannotRead(t *testing.T) {
+	missing := filepath.ToSlash(filepath.Join(t.TempDir(), "Containerfile"))
+	if err := CheckBase(missing); !errors.Is(err, ErrBase) {
+		t.Fatalf("CheckBase on a missing file = %v, want ErrBase", err)
+	}
+	// And a path the builder would never be given either: the same grammar
+	// every other path of a build goes through, so this wall cannot be used to
+	// read something outside the tree.
+	if err := CheckBase("../../../etc/passwd"); !errors.Is(err, ErrPath) {
+		t.Fatalf("CheckBase on a path with .. = %v, want ErrPath", err)
+	}
+}
+
+// 19. Build refuses before it ever starts podman when the base is not pinned.
+// Without this the wall would only be the two cases above, and nothing would
+// say that the BUILD uses it - a mutant that takes the call out of Build again
+// would leave every case green.
+//
+// bin is a name no machine has, so a Build that got past the checks would fail
+// with an exec error instead of ErrBase - which is exactly how the two are
+// told apart here.
+func TestBuildRefusesAnUnpinnedBaseBeforeItStartsTheBuilder(t *testing.T) {
+	dir := t.TempDir()
+	s := goodSpec()
+	s.Context = filepath.ToSlash(dir)
+	s.Out = filepath.ToSlash(filepath.Join(dir, "out.tar"))
+	s.File = filepath.ToSlash(filepath.Join(dir, "Containerfile"))
+	if err := os.WriteFile(s.File, []byte("FROM debian:13-slim\n"), 0o600); err != nil {
+		t.Fatalf("the case could not write its own Containerfile: %v", err)
+	}
+	err := Build(context.Background(), "ngc-no-such-builder", s, io.Discard, io.Discard)
+	if !errors.Is(err, ErrBase) {
+		t.Fatalf("Build = %v, want ErrBase", err)
+	}
+	// The intermediate check that keeps this from measuring an earlier wall:
+	// with the base pinned the same call gets PAST CheckBase and dies at the
+	// next one (no program in the context), so the refusal above came from the
+	// base and from nothing in front of it.
+	pinned := "FROM debian@sha256:" + strings.Repeat("a", 64) + "\n"
+	if err := os.WriteFile(s.File, []byte(pinned), 0o600); err != nil {
+		t.Fatalf("the case could not rewrite its own Containerfile: %v", err)
+	}
+	if err := Build(context.Background(), "ngc-no-such-builder", s, io.Discard, io.Discard); !errors.Is(err, ErrProgram) {
+		t.Fatalf("with the base pinned Build = %v, want ErrProgram (the wall behind this one)", err)
+	}
+}
+
+// containerfilePath is the Containerfile of the terminal app, relative to this
+// package - which is where a test runs. One constant because two cases read
+// the same file and a second spelling of the path is a second thing to keep
+// right.
+const containerfilePath = "../../templates/terminal/Containerfile"
+
 // readContainerfile reads the Containerfile of the terminal app off the disk.
-// Its path is relative to this package, which is where a test runs.
 func readContainerfile(t *testing.T) string {
 	t.Helper()
-	const p = "../../templates/terminal/Containerfile"
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(containerfilePath)
 	if err != nil {
-		t.Fatalf("the Containerfile of the terminal app is not readable at %s: %v", p, err)
+		t.Fatalf("the Containerfile of the terminal app is not readable at %s: %v", containerfilePath, err)
 	}
 	return string(b)
 }

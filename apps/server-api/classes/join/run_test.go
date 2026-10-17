@@ -5,12 +5,16 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -312,4 +316,173 @@ func TestRunRefusesUnusableInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// quietValues lists what an error of Run may not carry, each with the name it
+// is called by in a failure: the message itself is never printed, because
+// printing it is the very thing under test.
+//
+// Measured on 17.10.2026 against the code before this change, both of them
+// really were in there:
+//
+//	Post "https://127.0.0.1:14780/tunnel/join?secret=d5En6nQB...": dial tcp ...
+//	mkdir C:\...\blocked: Das System kann den angegebenen Pfad nicht finden.
+//
+// -- the address of the issuing API with the hash of the one-time secret the
+// API spends, and the path of a file a private key goes into. ngc-api -join
+// wrote the first one into the journal word for word.
+func quietValues(cfg JoinConfig, code tunnel.JoinCode, host string) []struct{ what, text string } {
+	return []struct{ what, text string }{
+		{"join code", code.String()},
+		{"one-time secret", enc.B64.EncodeToString(code.Secret)},
+		{"hash of the one-time secret", secretHash(code.Secret)},
+		{"address of the issuing API", host},
+		{"path of the join request", tunnel.PathJoin},
+		{"path of the Noise key", cfg.NoiseFile},
+		// The error of a failed write names what it stumbled over, and that
+		// is often the DIRECTORY, not the file: measured, "mkdir <dir>\blocked:
+		// ..." carries the parent and not the full path. An assertion on the
+		// full path alone would have let this leak through -- it did, in the
+		// first red run of 17.10.2026.
+		{"directory of the Noise key", filepath.Dir(cfg.NoiseFile)},
+		{"path of the signing key", cfg.SignFile},
+		{"directory of the signing key", filepath.Dir(cfg.SignFile)},
+		{"file of the fetched keys", cfg.SecretFile},
+	}
+}
+
+// Every way out of Run that is not a join answers with one of the categories,
+// and the category is the whole answer: a server that cannot join has to say
+// whether anything was sent at all, whether the right server answered, and
+// whether the code is spent -- without naming one value.
+func TestRunAnswersWithACategory(t *testing.T) {
+	for name, build := range map[string]func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error){
+		// Nothing goes out: this server cannot join with what it holds.
+		"unusable values": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
+			j, _ := newJoin(t)
+			srv, client := serveAPI(t, j)
+			code := codeFor(t, j, srv)
+			cfg := runConfig(t, t.TempDir(), code, client, &syncBuffer{})
+			cfg.Node = "api 2" // a node ID with a space
+			return cfg, code, srv.Listener.Addr().String(), ErrJoinInput
+		},
+		// Nobody is listening any more.
+		"no answer": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
+			j, _ := newJoin(t)
+			srv, client := serveAPI(t, j)
+			code := codeFor(t, j, srv)
+			cfg := runConfig(t, t.TempDir(), code, client, &syncBuffer{})
+			addr := srv.Listener.Addr().String()
+			srv.Close()
+			return cfg, code, addr, ErrJoinNoAnswer
+		},
+		// Something takes the connection and never answers: a deadline of
+		// the transport itself, which is a net.Error that times out and is
+		// not context.DeadlineExceeded.
+		"no answer in time": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
+			j, _ := newJoin(t)
+			srv, _ := serveAPI(t, j)
+			code := codeFor(t, j, srv)
+			addr := silentListener(t)
+			code.URL = "wss://" + addr + "/tunnel"
+			cfg := runConfig(t, t.TempDir(), code, &http.Client{Transport: &http.Transport{
+				TLSClientConfig: tunnel.PinnedTLS(j.S.Pin), TLSHandshakeTimeout: 50 * time.Millisecond},
+			}, &syncBuffer{})
+			cfg.Code = code.String()
+			return cfg, code, addr, ErrJoinTooSlow
+		},
+		// Somebody answers, but it is not the server the code names. The
+		// client is nil here on purpose: only then does Run build the one
+		// that checks the pin, and that check is what this walks.
+		"another server": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
+			j, _ := newJoin(t)
+			srv, _ := serveAPI(t, j)
+			// This case turns the handshake away on purpose; its line
+			// belongs in no test output.
+			srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+			code := codeFor(t, j, srv)
+			_, foreign := trusttest.APITLS(0xE9, "api-9.test")
+			code.TLS = foreign
+			cfg := runConfig(t, t.TempDir(), code, nil, &syncBuffer{})
+			cfg.Code = code.String()
+			return cfg, code, srv.Listener.Addr().String(), ErrJoinWrongAPI
+		},
+		// The API answers, and it says no: the code was already spent.
+		"the code refused": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
+			j, _ := newJoin(t)
+			srv, client := serveAPI(t, j)
+			code := codeFor(t, j, srv)
+			hash, err := enc.B64.DecodeString(secretHash(code.Secret))
+			if err != nil {
+				t.Fatalf("hash: %v", err)
+			}
+			if _, err := j.S.DB.OnceUse(ctx, dbapi.OnceJoin, hash, testNow); err != nil {
+				t.Fatalf("spend: %v", err)
+			}
+			cfg := runConfig(t, t.TempDir(), code, client, &syncBuffer{})
+			return cfg, code, srv.Listener.Addr().String(), ErrJoinRefused
+		},
+		// A private key of this server cannot be written. Its error names
+		// the path of that key file, which is why it never leaves Run.
+		"a key will not be written": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
+			j, _ := newJoin(t)
+			srv, client := serveAPI(t, j)
+			code := codeFor(t, j, srv)
+			dir := t.TempDir()
+			cfg := runConfig(t, dir, code, client, &syncBuffer{})
+			// A file where a directory would have to be: MkdirAll fails and
+			// names the path it stumbled over.
+			blocked := filepath.Join(dir, "blocked")
+			if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg.NoiseFile = filepath.Join(blocked, "noise")
+			return cfg, code, srv.Listener.Addr().String(), ErrJoinSecret
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, code, host, want := build(t)
+			cfg.Timeout = 2 * time.Second
+			err := Run(ctx, cfg)
+			if !errors.Is(err, want) {
+				t.Fatalf("Run = %v, want %v", err, want)
+			}
+			// The category comes back BARE. errors.Is alone would let a
+			// wrapping through, and a wrapping is where a value gets back
+			// in: a mutant that put "(HTTP %d)" -- the answer of that
+			// server -- back onto the refusal LIVED until this line.
+			if err.Error() != want.Error() {
+				t.Errorf("Run wrapped the category with a word of its own")
+			}
+			for _, q := range quietValues(cfg, code, host) {
+				if len(q.text) >= 4 && strings.Contains(err.Error(), q.text) {
+					t.Errorf("Run error names the %s", q.what)
+				}
+			}
+		})
+	}
+}
+
+// silentListener accepts connections and holds them without a word, and gives
+// back its address. It is not an API: it is what a deadline needs, a peer
+// that neither answers nor refuses.
+func silentListener(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	t.Cleanup(func() { ln.Close(); <-done })
+	return ln.Addr().String()
 }

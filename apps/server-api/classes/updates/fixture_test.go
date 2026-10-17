@@ -206,12 +206,39 @@ type served struct {
 	mu    sync.Mutex
 	files map[string][]byte
 	hits  int
+	// last is the whole request line of the last request, not only the name
+	// the answer is picked by. Without it this fixture answered by the base
+	// name of the path alone, so a release fetched out of a directory of
+	// someone else's choosing, or with a token appended to the address, was
+	// served and every case stayed green -- the blindness that let the pairing
+	// request travel without its ?secret= (point 61).
+	last seenRequest
+}
+
+// seenRequest is a request line of the store in the three parts a store
+// address is made of.
+type seenRequest struct {
+	Method   string
+	Path     string
+	RawQuery string
 }
 
 func (sv *served) put(name string, b []byte) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.files[name] = b
+}
+
+func (sv *served) seen() seenRequest {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	return sv.last
+}
+
+func (sv *served) hitCount() int {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	return sv.hits
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +271,21 @@ func newFixture(t *testing.T) fixture {
 			}
 		}
 		b, ok := sv.files[name]
+		sv.last = seenRequest{Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
 		sv.mu.Unlock()
+		// The rule, kept here so that every case of this package runs through
+		// it: a store is read with GET, the file lies directly under the
+		// address of the store, and nothing is appended to that address
+		// (trust.ValidStoreURL has no query and no trailing slash).
+		if r.Method != http.MethodGet {
+			t.Errorf("the store was asked with %s; it is read with GET only", r.Method)
+		}
+		if r.URL.Path != "/"+name {
+			t.Errorf("the store was asked for %q, not for /%s: the address of a store carries no directory of its own", r.URL.Path, name)
+		}
+		if r.URL.RawQuery != "" {
+			t.Errorf("the store was asked with the query %q; a store address has none, so nothing may append one", r.URL.RawQuery)
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -561,3 +602,25 @@ func (fx fixture) settings(t *testing.T) []string {
 
 // relPub is the public half of the release key these cases sign with.
 func relPub() ed25519.PublicKey { return relPriv.Public().(ed25519.PublicKey) }
+
+// TestTheStoreIsAskedForOneFileWithGetAndNoQuery says out loud what the
+// fixture now holds for every case of this package: the whole request line is
+// looked at, not only the file name the answer is picked by. The pairing
+// request of the controller travelled without its ?secret= for as long as it
+// did because its own test stand read path, method and body and never the
+// address (point 61); this fixture had the same blindness from the other side.
+func TestTheStoreIsAskedForOneFileWithGetAndNoQuery(t *testing.T) {
+	fx := newFixture(t)
+	fx.theFleet()
+	fx.serveRelease(t, relPriv, 3, "1.1.0", map[string][]byte{partFile: []byte("api")})
+	if _, err := fx.U.Rows(ctx); err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if fx.Serve.hitCount() == 0 {
+		t.Fatal("the store saw no request, so this case measures an earlier wall")
+	}
+	want := seenRequest{Method: http.MethodGet, Path: "/" + appstore.ReleaseFile}
+	if got := fx.Serve.seen(); got != want {
+		t.Fatalf("the store saw %+v, want %+v", got, want)
+	}
+}

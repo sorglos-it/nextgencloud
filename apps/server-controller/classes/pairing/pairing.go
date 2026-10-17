@@ -10,17 +10,22 @@ package pairing
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/flynn/noise"
+
+	"github.com/sorglos-it/nextgencloud/shared/enc"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -36,9 +41,36 @@ const Timeout = 30 * time.Second
 // RoleDB, RoleServices), as config.Controller holds them.
 const maxRoles = 4
 
-// ErrInput reports a pairing this server could not use even if it worked. It
-// names no value: the input holds the code.
-var ErrInput = errors.New("pairing: this server cannot pair with these values")
+// What Do answers with. Every one of them is a CATEGORY and carries no value:
+// measured on 17.10.2026, the error net/http hands back names the whole
+// address and the query with it -- and that query is the base64url of the
+// SHA-256 of the pairing secret ("Post \"https://127.0.0.1:59819/tunnel/pair
+// ?secret=12HUBq8q...\": dial tcp ... verweigerte."). Passing that error on
+// would put the address of the API and a value derived from the one-time
+// secret into the terminal, the journal and every report built from it. So it
+// stops here: Do turns what came back into one of these and drops the rest.
+//
+// They are categories and not one error, because the admin's next step
+// differs: a request that never went out leaves the code good for another
+// try, an answer from the wrong server must not be repeated at all, and a
+// refusal means the code is spent.
+var (
+	// ErrInput reports a pairing this server could not use even if it worked.
+	// Nothing was sent, so the code is still good.
+	ErrInput = errors.New("pairing: this server cannot pair with these values")
+	// ErrNoAnswer reports that no answer came back at all: nothing listened,
+	// the name did not resolve, the connection broke. Nothing was paired, so
+	// the code is still good.
+	ErrNoAnswer = errors.New("pairing: the API did not answer")
+	// ErrTooSlow reports that the answer did not come inside Timeout. Whether
+	// the API spent the code cannot be known from here.
+	ErrTooSlow = errors.New("pairing: the API did not answer in time")
+	// ErrWrongAPI reports that the server which answered holds a TLS key the
+	// pin of the code does not name. tunnel.PinnedTLS judges it -- this is
+	// only its refusal under a name apps/ can read, because its own sentinel
+	// is unexported in the frozen shared/tunnel (tunnel.go:387).
+	ErrWrongAPI = errors.New("pairing: the answer did not come from the API of the code")
+)
 
 // Input is what Do needs. Code is the pairing code as the admin typed it.
 type Input struct {
@@ -92,6 +124,16 @@ func Do(ctx context.Context, in Input) (Result, error) {
 		// what SNI carries to a server with several certificates.
 		tlsCfg := tunnel.PinnedTLS(code.TLS)
 		tlsCfg.ServerName = host
+		// The pin stays tunnel's business: its own check decides, and this
+		// only renames its refusal. Anything else would be a second judge,
+		// and a second judge is one that can be milder than the first.
+		pinned := tlsCfg.VerifyConnection
+		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			if err := pinned(cs); err != nil {
+				return ErrWrongAPI
+			}
+			return nil
+		}
 		own := &http.Client{
 			Transport: &http.Transport{TLSClientConfig: tlsCfg},
 			Timeout:   Timeout,
@@ -115,15 +157,26 @@ func Do(ctx context.Context, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, ErrInput
 	}
+	// The query names WHICH one-time value to spend; the MAC above proves we
+	// hold the secret itself, and the secret never travels. Without the query
+	// the API has nothing to look up and answers E_PROTOCOL, so a pairing
+	// without it can never come off -- measured on a real Debian on
+	// 17.10.2026. The join way of the API builds the same query from the same
+	// hash (join/run.go, secretHash), and this is the second half of it.
+	sum := sha256.Sum256(code.Secret)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://"+net.JoinHostPort(host, port)+tunnel.PathPair, bytes.NewReader(body))
+		"https://"+net.JoinHostPort(host, port)+tunnel.PathPair+
+			"?secret="+url.QueryEscape(enc.B64.EncodeToString(sum[:])),
+		bytes.NewReader(body))
 	if err != nil {
-		return Result{}, err
+		// Only an address no URL can be gets here, and the request was never
+		// built. Its error would quote that address with the query in it.
+		return Result{}, ErrInput
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return Result{}, err
+		return Result{}, category(err)
 	}
 	defer resp.Body.Close()
 	// The answer of a pairing carries nothing this side reads. It is taken to
@@ -138,6 +191,25 @@ func Do(ctx context.Context, in Input) (Result, error) {
 		APIs:   []config.APIRef{{URL: code.URL, Key: code.Key, TLS: code.TLS}},
 		Anchor: code.Anchor,
 	}, nil
+}
+
+// category turns what net/http came back with into one of the categories
+// above and lets the error itself fall. It reads the SORT of the failure, not
+// its text: the text carries the address and the query.
+func category(err error) error {
+	switch {
+	case errors.Is(err, ErrWrongAPI):
+		return ErrWrongAPI
+	case errors.Is(err, context.DeadlineExceeded):
+		return ErrTooSlow
+	}
+	// http.Client.Timeout and a deadline on the socket both answer here, and
+	// neither is context.DeadlineExceeded.
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return ErrTooSlow
+	}
+	return ErrNoAnswer
 }
 
 // Show returns the two lines the admin compares with the display of the shell

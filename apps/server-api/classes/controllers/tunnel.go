@@ -10,6 +10,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -271,7 +272,17 @@ func (srv *Server) control(ctx context.Context, t *Tunnel, f wire.Frame) bool {
 			// Its own goroutine for the reason browser.channel names: a tunnel
 			// has exactly one reader, and a hook called in line here would hold
 			// that one reader for as long as it runs.
-			go srv.OnHello(ctx, t)
+			go func() {
+				// Not channel work and not a round: this is the hook of ONE
+				// tunnel, run once per hello. A panic in it may not take the
+				// server, and there is nothing to answer -- so the tunnel is
+				// left standing and the controller gets its trust versions
+				// and licences at its next hello, which is what the hook's own
+				// comment in server.hello already promises. Channel 0: a
+				// tunnel carries no channel of a browser here.
+				defer func() { _ = guard.Hit(recover(), "controllers.hello", 0) }()
+				srv.OnHello(ctx, t)
+			}()
 		}
 		return true
 	case wire.CtlStatus:
