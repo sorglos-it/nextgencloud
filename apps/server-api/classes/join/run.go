@@ -5,10 +5,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -48,8 +50,46 @@ var ErrJoinTimeout = errors.New("Beitritt abgebrochen: der Server wurde innerhal
 var ErrJoinInput = errors.New("join: node, URL or TLS pin of this server is not usable")
 
 // ErrJoinRefused reports that the running API did not take the request: the
-// code is spent, expired, or belongs to another installation.
+// code is spent, expired, or belongs to another installation. It carries no
+// status any more: a status is an answer of that server, and this side says
+// only that an answer came and that it was no.
 var ErrJoinRefused = errors.New("join: the running API refused the join request")
+
+// What is left of a failed join, and all of it carries NO value. Measured on
+// 17.10.2026 against the code before this: what came back read
+//
+//	Post "https://127.0.0.1:14780/tunnel/join?secret=d5En6nQB...": dial tcp ...
+//
+// and ngc-api -join put that line into the journal word for word
+// (main.go, joinRun). That is the address of the issuing API plus the
+// base64url of the SHA-256 of the one-time secret -- the value the API
+// spends. The second leak was quieter: a key that could not be written
+// answered with the PATH of the private key file.
+//
+// They are categories and not one line, because the admin's next step
+// differs: a request that never went out leaves the code good, an answer from
+// the wrong server must not be repeated, and a refusal means the code is
+// spent. Same division as the pairing of the controller
+// (server-controller/classes/pairing).
+var (
+	// ErrJoinNoAnswer reports that no answer came at all: nothing listened,
+	// the name did not resolve, the connection broke. Nothing joined, so the
+	// code is still good.
+	ErrJoinNoAnswer = errors.New("join: the issuing API did not answer")
+	// ErrJoinTooSlow reports that the answer did not come in time. Whether
+	// the API spent the code cannot be known from here.
+	ErrJoinTooSlow = errors.New("join: the issuing API did not answer in time")
+	// ErrJoinWrongAPI reports that the server which answered holds a TLS key
+	// the pin of the code does not name. tunnel.PinnedTLS judges it -- this
+	// is only its refusal under a name this package can read, because its
+	// own sentinel is unexported in the frozen shared/tunnel (tunnel.go:387).
+	ErrJoinWrongAPI = errors.New("join: the answer did not come from the API of the code")
+	// ErrJoinSecret reports that one of the keys of this server could not be
+	// written. It names no path: the path is where a private key of this
+	// installation lies, and whoever reads this line is on the machine and
+	// can be told which files they are in the documentation, not in a log.
+	ErrJoinSecret = errors.New("join: a key of this server could not be written")
+)
 
 // JoinConfig is what Run needs. The ulh script of the new server fills it
 // (Aufgabe 25): the code an admin pasted, the node ID and tunnel address the
@@ -108,8 +148,20 @@ func Run(ctx context.Context, cfg JoinConfig) error {
 	}
 	client := cfg.Client
 	if client == nil {
+		tlsCfg := tunnel.PinnedTLS(code.TLS)
+		// The pin stays tunnel's business: its own check decides, and this
+		// only renames its refusal, whose sentinel is unexported there.
+		// Anything else would be a second judge, and a second judge is one
+		// that can be milder than the first.
+		pinned := tlsCfg.VerifyConnection
+		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			if err := pinned(cs); err != nil {
+				return ErrJoinWrongAPI
+			}
+			return nil
+		}
 		client = &http.Client{Timeout: 60 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tunnel.PinnedTLS(code.TLS)}}
+			Transport: &http.Transport{TLSClientConfig: tlsCfg}}
 	}
 	keys, signKey, err := makeKeys()
 	if err != nil {
@@ -118,10 +170,10 @@ func Run(ctx context.Context, cfg JoinConfig) error {
 	// The private keys go to disk before anything travels: a request the API
 	// kept whose keys this server then lost would have to be signed off again.
 	if err := writeSecret(cfg.NoiseFile, []byte(enc.B64.EncodeToString(keys.Private))); err != nil {
-		return err
+		return ErrJoinSecret
 	}
 	if err := writeSecret(cfg.SignFile, []byte(enc.B64.EncodeToString(signKey.Seed()))); err != nil {
-		return err
+		return ErrJoinSecret
 	}
 	req := tunnel.JoinRequest{Node: cfg.Node, Noise: enc.Bytes(keys.Public),
 		Sign: enc.Bytes(signKey.Public().(ed25519.PublicKey)), TLS: enc.Bytes(cfg.TLS), URL: cfg.URL}
@@ -149,7 +201,10 @@ func Run(ctx context.Context, cfg JoinConfig) error {
 	if path == "" {
 		path = SecretFile
 	}
-	return writeSecret(path, body)
+	if err := writeSecret(path, body); err != nil {
+		return ErrJoinSecret
+	}
+	return nil
 }
 
 // makeKeys makes this server's Noise and signing key pairs.
@@ -176,12 +231,14 @@ func postRequest(ctx context.Context, client *http.Client, base string, secret [
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		base+tunnel.PathJoin+"?secret="+url.QueryEscape(hash), strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		// Only an address no URL can be gets here, and the request was never
+		// built. Its error would quote that address with the query in it.
+		return ErrJoinInput
 	}
 	r.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(r)
 	if err != nil {
-		return err
+		return category(err)
 	}
 	defer resp.Body.Close()
 	// The answer carries nothing this side needs; it is read away so the
@@ -189,7 +246,7 @@ func postRequest(ctx context.Context, client *http.Client, base string, secret [
 	// memory.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("%w (HTTP %d)", ErrJoinRefused, resp.StatusCode)
+		return ErrJoinRefused
 	}
 	return nil
 }
@@ -235,7 +292,11 @@ func fetchKeys(ctx context.Context, client *http.Client, base string, keys noise
 		"?key="+url.QueryEscape(tunnel.Fingerprint(keys.Public)),
 		&websocket.DialOptions{Subprotocols: []string{tunnel.Subprotocol}, HTTPClient: client})
 	if err != nil {
-		return sharedKeys{}, err
+		// waitForKeys swallows this and tries again, so it reaches nobody
+		// today. It is turned into a category all the same: the error of the
+		// dial carries the address and the query, and the next hand that
+		// returns it instead of retrying must not have to notice that.
+		return sharedKeys{}, category(err)
 	}
 	defer func() { _ = ws.CloseNow() }()
 	ws.SetReadLimit(wire.MaxFrame + noisep.TagSize)
@@ -276,6 +337,25 @@ func fetchKeys(ctx context.Context, client *http.Client, base string, keys noise
 		return sharedKeys{}, errHandshake
 	}
 	return shared, nil
+}
+
+// category turns what the transport came back with into one of the
+// categories above and lets the error itself fall. It reads the SORT of the
+// failure, not its text: the text carries the address and the query.
+func category(err error) error {
+	switch {
+	case errors.Is(err, ErrJoinWrongAPI):
+		return ErrJoinWrongAPI
+	case errors.Is(err, context.DeadlineExceeded):
+		return ErrJoinTooSlow
+	}
+	// http.Client.Timeout and a deadline on the socket both answer here, and
+	// neither is context.DeadlineExceeded.
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return ErrJoinTooSlow
+	}
+	return ErrJoinNoAnswer
 }
 
 // errHandshake is the one word for every way the key exchange can end badly:
