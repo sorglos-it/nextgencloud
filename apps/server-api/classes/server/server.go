@@ -449,6 +449,11 @@ func (s *Server) once(fn func()) {
 // minute is the housekeeping round: expired sessions out, trust list afresh,
 // and the count of caught programming errors said out loud if it has grown.
 //
+// httpapi.Report stands beside guard.Report and for the same reason: it says
+// how many callers were turned away because the database was busy or away,
+// and without it those two counts would be numbers no running program ever
+// reads. It is after guard.Report because a panic weighs more than a queue.
+//
 // guard.Report is LAST on purpose. A panic in either step above is caught by
 // Server.once around this round, so the count it would report is one this
 // round can no longer reach -- it reaches the log at the next tick instead,
@@ -463,6 +468,7 @@ func (s *Server) minute(ctx context.Context) {
 		slog.Warn("trust list could not be read", "error", err)
 	}
 	guard.Report()
+	httpapi.Report()
 }
 
 // hour is the catalog round.
