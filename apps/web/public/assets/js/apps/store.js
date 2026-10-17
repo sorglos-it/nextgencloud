@@ -487,11 +487,24 @@ class Store {
       pair("Prüfsumme", b64encode(mine.packageSha256)),
       pair("UI-Prüfsumme", b64encode(mine.sha256)),
     );
+    // SIGNED AND CONFIRMED BEFORE A SINGLE BYTE GOES OUT. The upload is
+    // critical whatever its params, so the trust list asks the person again
+    // on every ordinary installation; a shell that streamed the package
+    // first and asked afterwards would hand the installation a package
+    // nobody confirmed, and one that asked for nothing is refused with
+    // E_CONFIRM. The node is "" because this action runs on the API and on
+    // no controller.
+    const signed = await this.signedTask(A.upload, null, "");
+    if (signed === null) {
+      clear(zone);
+      return;
+    }
     const sending = el("p", "muted", "Wird übertragen …");
     zone.append(sending);
     let theirs;
     try {
       theirs = await this.ask(A.upload, null, {
+        ...signed,
         stream: file.stream(),
         onProgress: (n) => text(sending, "Wird übertragen … " + Math.round(n / 1024) + " KB"),
       });
@@ -808,20 +821,61 @@ class Store {
   // task without that signature, and the shell must not send one it knows
   // will be refused.
   //
-  // A GAP IN THE CONTRACT, NAMED HERE BECAUSE THIS IS WHERE IT SHOWS.
-  // wire.encodeOpen (and wire.parseOpen behind it) takes `confirm` only
-  // together with `task`: "if (confirm !== null) { if (task === null) return
-  // false }". So an action of service `api` - which carries no task - CANNOT
-  // BE CONFIRMED AT ALL, however the trust list's policy reads. The store
-  // therefore asks only for root tasks, and ngc.store/api/set-update goes out
-  // unconfirmed even for a role at level `hardcore`, whose `changes` rule
-  // would ask for one. That is the contract as it stands, not an omission
-  // here; it is in the coordinator's register.
+  // WHAT THE CONTRACT REALLY SAYS ABOUT A CONFIRMATION. wire.encodeOpen (and
+  // wire.parseOpen behind it) takes `confirm` only together with `task`: "if
+  // (confirm !== null) { if (task === null) return false }". A confirmation
+  // alone is refused -- but a TASK is allowed on any action, of service api
+  // as well, so anything can be confirmed as long as it is signed first. The
+  // note that stood here until 17.10.2026 read that rule as "an action of
+  // service api CANNOT BE CONFIRMED AT ALL" and cost the upload; see
+  // signedTask.
+  //
+  // What is still sent unconfirmed is ngc.store/api/set-update: it is not
+  // critical, so only a role at level `hardcore` would ask for one. That one
+  // is open and goes in the coordinator's register; the upload was not a gap
+  // in the contract but a caller that never asked.
   async rootTask(action, params, node, done) {
+    const signed = await this.signedTask(action, params, node);
+    if (signed === null) return false;
+    try {
+      // With a task the OPEN carries no params of its own: only the signed
+      // ones count.
+      await this.ask(action, null, signed);
+    } catch {
+      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
+      return false;
+    }
+    this.say("info", done);
+    return true;
+  }
+
+  // signedTask signs the action and, where the trust list asks for it, gets
+  // the user's confirmation over the very same bytes. It answers
+  // {taskBytes, confirmBytes} for the option bag of net/channel.js, or null
+  // when it already told the person why nothing is going out.
+  //
+  // IT IS APART FROM rootTask BECAUSE IT IS NOT ONLY ROOT TASKS, and that was
+  // the whole of a blocker. ngc.store/api/upload is critical for every params
+  // (core.critical) and the setup writes the admin role at level critical
+  // (auth/setup.js), so trust.needsConfirm asks for a confirmation on every
+  // installation -- and the API refuses an OPEN without it with E_CONFIRM
+  // (task.Check -> ErrNoTask). The upload sent neither, so no package could
+  // ever be uploaded; measured on a running installation on 17.10.2026, where
+  // the person read "Das Paket kam nicht an." and nothing reached the API.
+  //
+  // A NOTE THAT STOOD HERE AND WAS WRONG. It said an action of service api
+  // "CANNOT BE CONFIRMED AT ALL", because wire.encodeOpen takes confirm only
+  // together with task. The premise is right and the conclusion is not: what
+  // the contract forbids is a confirmation WITHOUT a task, not a task on an
+  // action of service api. The API verifies such a task like any other
+  // (task.Check compares app, service and action and never asks whether the
+  // action is root), and its own case for the upload sends exactly that pair.
+  // So the way was open the whole time; what was missing was a caller.
+  async signedTask(action, params, node) {
     const s = this.ctx.session;
     if (!s) {
       this.say("error", "Dafür ist eine Anmeldung nötig. Bitte neu anmelden.");
-      return false;
+      return null;
     }
     let built, taskBytes;
     try {
@@ -834,7 +888,7 @@ class Store {
       taskBytes = envelopeBytes(await task.signTask(s.signKey, built.bytes));
     } catch {
       this.say("error", "Das ließ sich nicht unterschreiben. Bitte neu anmelden.");
-      return false;
+      return null;
     }
     let confirmBytes = null;
     const { list } = this.ctx.trust?.current?.() ?? {};
@@ -844,7 +898,7 @@ class Store {
     // the API would refuse it a moment later anyway.
     if (!list) {
       this.say("error", "Die Vertrauensliste fehlt. Bitte neu anmelden.");
-      return false;
+      return null;
     }
     if (needConfirm(list, s.user, {
       app: action.app, action: action.name, node,
@@ -856,25 +910,16 @@ class Store {
       const p = await askConfirm(built.bytes, { list, user: s.user, signal: this.abort.signal });
       if (p === null) {
         this.say("info", "Nichts geändert.");
-        return false;
+        return null;
       }
       try {
         confirmBytes = proofBytes(p);
       } catch {
         this.say("error", "Die Bestätigung hat nicht gereicht. Bitte es noch einmal versuchen.");
-        return false;
+        return null;
       }
     }
-    try {
-      // With a task the OPEN carries no params of its own: only the signed
-      // ones count.
-      await this.ask(action, null, { taskBytes, confirmBytes });
-    } catch {
-      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
-      return false;
-    }
-    this.say("info", done);
-    return true;
+    return { taskBytes, confirmBytes };
   }
 }
 

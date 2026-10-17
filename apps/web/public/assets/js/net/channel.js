@@ -548,10 +548,22 @@ export async function sendIn(link, action, opts = {}) {
 
 // sendInBytes is sendIn without the last step, for the same reason callBytes
 // exists.
-export async function sendInBytes(link, action, { params, taskBytes, stream, onProgress } = {}) {
+export async function sendInBytes(link, action,
+  { params, taskBytes, confirmBytes, stream, onProgress } = {}) {
+  // confirmBytes TRAVELS, and that it did not was a blocker. callBytes a few
+  // lines up puts it in the OPEN; this one took the task and dropped the
+  // confirmation, so every FlowIn action the trust list asks a confirmation
+  // for was unreachable: the API saw a task without one and refused with
+  // E_CONFIRM (task.Check -> VerifyConfirm on a nil Confirm). Measured on a
+  // running installation on 17.10.2026 at ngc.store/api/upload, where the
+  // person had just typed their password and still read "Das Paket kam nicht
+  // an.". It is five actions, not one: upload, ngc.store/api/license,
+  // ngc.users/api/trust, ngc.users/controller/trust and
+  // ngc.store/controller/license.
   const ch = await link.open({
     app: action.app, service: action.service, action: action.name,
-    params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW, e2e: null, taskBytes,
+    params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW, e2e: null,
+    taskBytes, confirmBytes,
   });
   await ch.firstGrant();
   let sent = 0;
