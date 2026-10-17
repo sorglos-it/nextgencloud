@@ -223,7 +223,13 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
 // loginView builds the mask into root and calls onSession once somebody is
 // in. Every text is German and goes in as textContent; nothing of an answer
 // ever becomes markup.
-export function loginView(root, { config, onSession, openTrust } = {}) {
+// passwordKeys says whether this engine can make a password key at all
+// (shell/main.js passwordLoginFits, measured there and not guessed here).
+// false means the passkey button is the only way in: the password route is
+// switched off and the mask SAYS SO, instead of taking a password, running
+// Argon2id over it and answering "Anmeldung fehlgeschlagen." - the sentence
+// for a wrong password, which is what Firefox 141 got until this round.
+export function loginView(root, { config, onSession, openTrust, passwordKeys = true } = {}) {
   clear(root);
 
   const box = el("form", "loginbox");
@@ -249,9 +255,20 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
   totp.input.inputMode = "numeric";
   totp.input.maxLength = session.TOTP_DIGITS;
 
+  // The standing sentence of an engine without password keys. It is its own
+  // element and not `said` below: `said` is emptied at the start of every
+  // attempt, and a reason that disappeared when somebody pressed the passkey
+  // button would be a reason nobody reads twice.
+  if (!passwordKeys) {
+    pw.input.disabled = true;
+    pw.input.autocomplete = "off";
+    box.append(note(t("login.nopasswordkeys"), "warn"));
+  }
+
   const row = el("div", "loginrow");
   const go = button("b on", "Anmelden", null);
   go.type = "submit";
+  go.disabled = !passwordKeys;
   row.append(go);
   // The passkey button only where this installation has a relying party at
   // all; without one navigator.credentials.get has nothing to ask for. This
@@ -293,7 +310,10 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
   }
 
   function enable(on) {
-    go.disabled = !on;
+    // Never back on where there is no password key: enable(true) runs in the
+    // finally of every attempt, and a button that came back after the first
+    // passkey attempt would offer a way that cannot work.
+    go.disabled = !on || !passwordKeys;
     if (withPasskey !== null) withPasskey.disabled = !on;
   }
 
@@ -410,6 +430,9 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
 
   box.addEventListener("submit", (e) => {
     e.preventDefault();
+    // Enter in the name field submits the form even with the button off, so
+    // the password route is closed here too and not only on the button.
+    if (!passwordKeys) return;
     void attempt(false);
   });
   withPasskey?.addEventListener("click", () => void attempt(true));

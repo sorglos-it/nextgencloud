@@ -77,6 +77,7 @@ export const BUILT_IN = Object.freeze({
   "err.unreachable": "Service unavailable. Please try again later.",
   "err.busy": "The service is busy right now. Please try again in {seconds} seconds.",
   "login.failed": "Login failed.",
+  "login.nopasswordkeys": "This browser cannot do a password login. Please log in with a passkey.",
   "login.locked": "Too many failed attempts. Please try again later.",
   "login.locked.left": "Too many failed attempts. {seconds} seconds left.",
   "login.totp.ask": "Please enter the code from your authenticator app.",

@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, skipWithoutSeedKeys } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 // proof.json holds 21 proofs with their keys, valid and invalid, and the
@@ -167,6 +167,10 @@ test("the challenge is the one Go wrote into the client data", async ({ shell })
 test("the public key of a seed is the one Go derives", async ({ shell }) => {
   test.skip(!(await hasEd25519(shell, passwordPub)),
     "no Ed25519 in this engine's Web Crypto: it can import no seed and export no public key");
+  // And the step those three really take: Firefox 141 has Ed25519 and refuses
+  // exactly this export (measured, OperationError). The guard above asks only
+  // whether a key imports, which is not the same question.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (cases) => {
     const p = await import("/assets/js/contracts/proof.js");
     const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
@@ -208,6 +212,10 @@ test("the public key of a seed is the one Go derives", async ({ shell }) => {
 test("the export that gives the public key does not keep the seed", async ({ shell }) => {
   test.skip(!(await hasEd25519(shell, passwordPub)),
     "no Ed25519 in this engine's Web Crypto: it can import no seed and export no JWK");
+  // And the step those three really take: Firefox 141 has Ed25519 and refuses
+  // exactly this export (measured, OperationError). The guard above asks only
+  // whether a key imports, which is not the same question.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (c) => {
     const p = await import("/assets/js/contracts/proof.js");
     const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");
@@ -263,6 +271,10 @@ test("the export that gives the public key does not keep the seed", async ({ she
 test("the PKCS#8 copy of the seed does not stay behind", async ({ shell }) => {
   test.skip(!(await hasEd25519(shell, passwordPub)),
     "no Ed25519 in this engine's Web Crypto: it imports no seed at all");
+  // And the step those three really take: Firefox 141 has Ed25519 and refuses
+  // exactly this export (measured, OperationError). The guard above asks only
+  // whether a key imports, which is not the same question.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (c) => {
     const p = await import("/assets/js/contracts/proof.js");
     const { b64encode, b64decode } = await import("/assets/js/contracts/b64.js");

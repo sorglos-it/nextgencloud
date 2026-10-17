@@ -2,6 +2,7 @@
   "err.unreachable": "Service indisponible. Veuillez réessayer plus tard.",
   "err.busy": "Le service est occupé pour le moment. Veuillez réessayer dans {seconds} secondes.",
   "login.failed": "La connexion a échoué.",
+  "login.nopasswordkeys": "Ce navigateur ne peut pas effectuer de connexion par mot de passe. Veuillez vous connecter avec une clé d'accès.",
   "login.locked": "Trop de tentatives échouées. Veuillez réessayer plus tard.",
   "login.locked.left": "Trop de tentatives échouées. Encore {seconds} secondes.",
   "login.totp.ask": "Veuillez saisir le code de votre application d'authentification.",

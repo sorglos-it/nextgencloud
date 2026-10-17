@@ -57,14 +57,38 @@ const NO_MATCH = "Der Einmal-Code passt nicht zu dieser Anlage. "
 // everywhere. The day this WebKit gains the two, this answers yes by itself and
 // every case below runs there with no edit here.
 //
-// This asks for the MASK and not for a finished setup, because most cases here
-// never finish one: they watch a code being refused. The two that do go through
-// ask for themselves, with skipWithoutSetup - a setup turns a typed password
-// into a key, and that is the step Firefox cannot take. Asking the whole file
-// for it once switched four cases off on Firefox that run there, one of them
-// the man-in-the-middle check (task 30, Fixrunde 1).
+// IT ASKED FOR THE MASK ALONE UNTIL 17.10.2026, and that was right then: most
+// cases here never finish a setup - they watch a code being refused - so
+// asking the whole file for the password step switched four cases off on
+// Firefox that ran there, one of them the man-in-the-middle check (task 30,
+// Fixrunde 1).
+//
+// WHAT TURNED IT ROUND IS THE SHELL, not a change of taste. A setup turns a
+// typed password into the first admin's key, and Firefox 141 cannot take that
+// step (measured: exportKey("jwk") of a PKCS#8 Ed25519 seed answers
+// OperationError). The mask it used to draw there ended in "Anmeldung
+// fehlgeschlagen." after a second and a half of Argon2id, as if the typed
+// password had been wrong. shell/main.js now refuses a FRESH installation on
+// such an engine with a sentence that names the reason (passwordLoginFits), so
+// there is no code field on the page at all and the four cases have no mask to
+// reach, however little of a setup they wanted.
+//
+// THE COST, named rather than talked away: the man-in-the-middle check below
+// now runs on chromium alone - WebKit has no curves and Firefox has no setup
+// screen any more. That is a narrower measurement than before, and the trade
+// is deliberate: a person in front of a code mask that cannot work is worse
+// off than a suite with one engine fewer.
 test.beforeEach(async ({ shell }) => {
   await skipWithoutShell(shell);
+  // THE WHOLE FILE, since 17.10.2026, and not the two cases that wait for a
+  // finished setup. The setup makes the first admin out of a typed password
+  // and has no other way to his public key, so an engine that cannot read the
+  // public half out of a seed cannot finish it - and shell/main.js now says so
+  // instead of drawing a code mask that leads nowhere (passwordLoginFits
+  // there). Measured on Firefox 141: the boot of a fresh installation ends in
+  // that sentence, so there is no "Einmal-Code" field to type into and four
+  // cases here went red for a mask they could not reach.
+  await skipWithoutSetup(shell);
 });
 
 // One server answers the whole run, so a case that made the installation

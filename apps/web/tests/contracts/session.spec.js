@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, skipWithoutSeedKeys } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 
 const v = vectors("session.json");
@@ -176,6 +176,11 @@ test("an API node without an ID is no node, as in Go", async ({ shell }) => {
   test.setTimeout(120_000);
   test.skip(!(await hasEd25519(shell, v.trust)),
     "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  // These five build their certificate out of a SEED, so they need the step
+  // the guard above does not ask about: the public half of a PKCS#8 seed
+  // (contracts/proof.js publicFromSeed). Firefox 141 has Ed25519, imports the
+  // seed, signs with it - and refuses that one export with OperationError.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -221,6 +226,11 @@ test("verifyAPI uses the payload it checked, not a second read of it", async ({ 
   test.setTimeout(120_000);
   test.skip(!(await hasEd25519(shell, v.trust)),
     "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  // These five build their certificate out of a SEED, so they need the step
+  // the guard above does not ask about: the public half of a PKCS#8 seed
+  // (contracts/proof.js publicFromSeed). Firefox 141 has Ed25519, imports the
+  // seed, signs with it - and refuses that one export with OperationError.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -549,6 +559,11 @@ test("verifyAPI binds the certificate to the node it found", async ({ shell }) =
   test.setTimeout(120_000);
   test.skip(!(await hasEd25519(shell, v.trust)),
     "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  // These five build their certificate out of a SEED, so they need the step
+  // the guard above does not ask about: the public half of a PKCS#8 seed
+  // (contracts/proof.js publicFromSeed). Firefox 141 has Ed25519, imports the
+  // seed, signs with it - and refuses that one export with OperationError.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -720,6 +735,11 @@ test("verifyAPI takes no now that is not a whole number", async ({ shell }) => {
   test.setTimeout(120_000);
   test.skip(!(await hasEd25519(shell, v.trust)),
     "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+  // These five build their certificate out of a SEED, so they need the step
+  // the guard above does not ask about: the public half of a PKCS#8 seed
+  // (contracts/proof.js publicFromSeed). Firefox 141 has Ed25519, imports the
+  // seed, signs with it - and refuses that one export with OperationError.
+  await skipWithoutSeedKeys(shell);
   const got = await shell.evaluate(async (d) => {
     const s = await import("/assets/js/contracts/session.js");
     const sign = await import("/assets/js/contracts/sign.js");
@@ -799,6 +819,11 @@ test("verifyAPI decodes the certificate it checked, not what the buffer holds af
     test.setTimeout(120_000);
     test.skip(!(await hasEd25519(shell, v.trust)),
       "no Ed25519 in this engine's Web Crypto: it signs nothing and checks nothing");
+    // These five build their certificate out of a SEED, so they need the step
+    // the guard above does not ask about: the public half of a PKCS#8 seed
+    // (contracts/proof.js publicFromSeed). Firefox 141 has Ed25519, imports the
+    // seed, signs with it - and refuses that one export with OperationError.
+    await skipWithoutSeedKeys(shell);
     const out = await shell.evaluate(async (d) => {
       const s = await import("/assets/js/contracts/session.js");
       const sign = await import("/assets/js/contracts/sign.js");

@@ -2,6 +2,7 @@
   "err.unreachable": "Servizio non raggiungibile. Riprovare più tardi.",
   "err.busy": "Il servizio è occupato in questo momento. Riprovare tra {seconds} secondi.",
   "login.failed": "Accesso non riuscito.",
+  "login.nopasswordkeys": "Questo browser non può eseguire l'accesso con password. Accedi con una passkey.",
   "login.locked": "Troppi tentativi non riusciti. Riprovare più tardi.",
   "login.locked.left": "Troppi tentativi non riusciti. Ancora {seconds} secondi.",
   "login.totp.ask": "Inserire il codice dell'app di autenticazione.",

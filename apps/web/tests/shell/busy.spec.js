@@ -16,7 +16,7 @@
 // what it says. It cannot measure the server: the mock stands in for it, and
 // what the mock does is held against busy.go line by line in mock/api.js
 // (sendFault). A number here is a number about the SHELL.
-import { test, expect, skipWithoutLogin, skipWithoutShell, standInOn } from "../fixtures/page.js";
+import { test, expect, skipWithoutLogin, skipWithoutSetup, skipWithoutShell, standInOn } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 import { PASSWORD, USER_NAME } from "../fixtures/logins.js";
 
@@ -118,6 +118,10 @@ test("a database that is away says later, and names no number", async ({ shell }
 // ONE-TIME CODE, and that code is good ONCE. Whoever believed it installed
 // NGC again for nothing.
 test("a busy database during the first run never blames the one-time code", async ({ shell }) => {
+  // A FIRST RUN, so the same gate as shell/setup.spec.js: where no password
+  // key can be made out of a seed, shell/main.js refuses the setup outright
+  // and there is no code mask on the page (measured, Firefox 141).
+  await skipWithoutSetup(shell);
   await tellMock(shell, "setup=1");
   await shell.route("**/config.json", async (route) => {
     const answer = await route.fetch();
