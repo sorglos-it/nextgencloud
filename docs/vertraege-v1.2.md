@@ -2239,3 +2239,51 @@ dem Wiedereintragen: Seite 200, `/api/v1/setup` 200, `NRestarts=0`.
   mit Passwort, und das ist vertragsgemäß.
 - Die Messung lief mit **selbst unterschriebenem** Zertifikat und einem Browser, der es für diesen
   Lauf annimmt. Was ein Nutzer mit `letsencrypt` erlebt, ist damit **nicht** gemessen.
+
+## Punkt 60: Der Controller lässt sich nicht koppeln — der Knopf dafür gibt es nicht
+
+**Gemessen am 17.10.2026** an der laufenden Installation aus Punkt 59. Der Auftrag war, den
+Controller zu koppeln. Er lässt sich nicht koppeln, und zwar nicht aus einem Fehler, sondern
+weil ein Stück fehlt.
+
+**Die Anweisung der Skripte** (`ngc-all.sh`, `ngc-web.sh`, wörtlich): „Sign in to the web
+interface, **make a pairing code for this machine there**, and call 'Pair the controller' with it."
+
+**Die Oberfläche kann das nicht.** Gezählt im Quelltext: `apps/web` enthält **keinen einzigen**
+Treffer auf `pair`, `Kopplung` oder `koppeln`. Im laufenden Startmenü stehen genau zwei Apps —
+**App-Store** und **Benutzer & Rechte** — dazu Aussehen und Fensterbefehle. Kein Eintrag, der
+einen Kopplungscode erzeugt.
+
+**Die API kann es sehr wohl:** `shared/core/core.go:48` führt `ActPairCode = "pair-code"`,
+`apps/server-api/classes/coreapp/users.go:255` beantwortet `ngc.users/pair-code`, und selbst der
+Klient kennt die Aktion schon — `apps/web/public/assets/js/contracts/core.js:58`
+(`ACT_PAIR_CODE`) und `:573` prüft die Antwort auf das Präfix `ngc-pair:`. **Es fehlt nur die
+Stelle, die sie aufruft und den Code zeigt.** `apps/web/CLAUDE.md:101` schreibt sogar vor, wie er
+gezeigt werden soll.
+
+### Und daraus wird ein geschlossener Kreis
+
+1. Ohne gekoppelten Controller gibt es **kein `/etc/ngc/trust-anchor.json`** — gemessen: die Datei
+   fehlt, und die API meldet im Minutentakt `trust list could not be read … no trust list yet`.
+2. Ohne diese Datei zeigt die Oberfläche **jedem** Browser die Einrichtungsseite. Gemessen mit
+   einem zweiten Browser: **null API-Aufrufe**, leerer `localStorage`, die Entscheidung fällt
+   serverseitig in `index.php`/`Config.php` aus der fehlenden Datei. Mit gespeicherter, gültiger
+   Sitzung ist es **dasselbe** — der Keks hilft nicht.
+3. Die Einrichtung ist aber schon gelaufen: `/api/v1/setup` gibt **404**, der Einmal-Code ist
+   verbraucht. Wer einen Code eintippt, bekommt — richtig und hilfreich —
+   **„Diese Anlage ist noch nicht fertig eingerichtet. Bitte den Controller des Webservers
+   koppeln."**
+4. Koppeln kann man nur mit einem Code aus der angemeldeten Oberfläche. **Die erreicht man nur in
+   dem einen Seitenaufbau direkt nach der Einrichtung** — danach nie wieder.
+
+**Folge, nüchtern:** wer nach dem Einrichten den Browser schließt oder neu lädt, **kommt nicht
+mehr hinein**, und keine App kann je laufen. Ich bin selbst hineingelaufen: die Installation aus
+Punkt 59 war danach nur noch über ein Zurücksetzen der Testdatenbank zu erreichen.
+
+**Was fehlt, ist klein und benannt:** ein Weg in der Oberfläche, der `ngc.users/pair-code` ruft
+und den Code zeigt. Alles darunter ist da — Vertrag, API, Prüfung der Antwort im Klienten.
+Ein zweiter Weg wäre ein Unterbefehl, der einen Kopplungscode ohne Oberfläche ausgibt; der
+Controller hat heute nur `pair`, das einen **fertigen** Code erwartet (`ngc-controller --help`).
+
+**Ungemessen, weil davon abhängig:** alles hinter der Kopplung — Apps installieren, Terminal,
+Container, der Weg über den Tunnel aus Punkt 44 im echten Betrieb.
