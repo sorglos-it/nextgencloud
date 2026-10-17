@@ -21,14 +21,20 @@ import { validLoginName } from "../contracts/text.js";
 import { validHost, validHostPort } from "../contracts/url.js";
 import * as session from "../contracts/session.js";
 import * as wire from "../contracts/wire.js";
+import { codeText, t } from "../lang.js";
 
-// ApiError is the one failure this module has. Its text is the German one of
-// wire.message and never the "message" the answer brought along: the table is
-// ours, the answer's text is not, and two places that say the same thing in
-// different words are two places that drift apart.
+// ApiError is the one failure this module has. Its text comes out of lang/ by
+// the code (lang.js codeText) and never from the "message" the answer brought
+// along: the table is ours, the answer's text is not, and two places that say
+// the same thing in different words are two places that drift apart.
+//
+// It is NOT the German table of contracts/wire.js, and the difference is the
+// point: that table is the contract - its fourteen words travel in the CLOSE
+// frame and shared/wire/wire.go holds the same ones - while this is what a
+// person reads, in the language their browser asked for.
 export class ApiError extends Error {
   constructor(code, retryAfter = 0) {
-    super(wire.message(code) || "Unbekannter Fehler.");
+    super(codeText(code) || t("wire.unknown"));
     this.name = "ApiError";
     this.code = code;
     this.retryAfter = retryAfter;

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Ngc;
 
+require_once __DIR__ . '/Lang.php';
+
 // Page sends the headers of the web interface and fills the template.
 //
 // The policy stays as tight as the page allows, because this is the document
@@ -91,7 +93,7 @@ final class Page
         // No bootstrap, no window. An empty frame would look like an app that
         // hangs, and there is nothing the person could do about it either way.
         if (!is_string($js) || $js === '') {
-            self::fail(500, 'NGC ist nicht eingerichtet.');
+            self::fail(500, Lang::t('page.notsetup'));
             return;
         }
         self::render(__DIR__ . '/../templates/frame.php', [
@@ -112,7 +114,8 @@ final class Page
     {
         http_response_code($status);
         self::headers('text/html; charset=utf-8');
-        echo "<!DOCTYPE html>\n<html lang=\"de\"><head><meta charset=\"utf-8\"><title>NGC</title></head>"
+        $lang = htmlspecialchars(Lang::tag(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        echo "<!DOCTYPE html>\n<html lang=\"$lang\"><head><meta charset=\"utf-8\"><title>NGC</title></head>"
             . '<body><p>' . htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p></body></html>';
     }
 }

@@ -11,11 +11,12 @@ import { realWorld } from "../net/world.js";
 // A STAND-IN, and the only line of the shell that still knows about it. What
 // it is for and when it goes stands at standIn() below.
 import { fakeWorld } from "./fake-link.js";
+import { t } from "../lang.js";
 
 const NEEDED = ["Ed25519", "X25519"];
 
 // The standing advice for somebody who got in with a password alone.
-const HINT = "Umstellen auf Passkeys empfohlen";
+const HINT = t("shell.passkeyhint");
 
 export async function browserFits() {
   // Both are needed for the session keys; a browser without them cannot open
@@ -48,12 +49,11 @@ async function start() {
   // the browser first would blame the browser for it, and the person would
   // install another one for nothing.
   if (!window.isSecureContext) {
-    message("NGC braucht eine sichere Verbindung. Bitte die Seite über https:// aufrufen.");
+    message(t("shell.insecure"));
     return;
   }
   if (!(await browserFits())) {
-    message("Dieser Browser ist zu alt für NGC. Bitte Chrome 137, Firefox 130 oder Safari 17.4 "
-      + "oder neuer benutzen.");
+    message(t("shell.oldbrowser"));
     return;
   }
   // The configuration says where the shell connects, which trust list it
@@ -65,7 +65,7 @@ async function start() {
   try {
     config = await loadConfig();
   } catch {
-    message("NGC ist nicht eingerichtet.");
+    message(t("page.notsetup"));
     return;
   }
   // THE ROOT OF ALL OF IT: which keys this workplace believes. The anchor
@@ -119,8 +119,7 @@ async function start() {
     setupView(root, {
       config,
       onDone: (world, setupAnchor) => showDesktop(root, config, setupAnchor, world).catch(() => {
-        message("NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, "
-          + "läuft NGC gerade nicht.");
+        message(t("shell.loadfailed"));
       }),
     });
     return;
@@ -134,8 +133,7 @@ async function start() {
       // A trust list that does not open has already put its own alarm on the
       // screen and ended the session; anything else broke on the way to the
       // desktop, and a white page is the one answer that helps nobody.
-      message("NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, "
-        + "läuft NGC gerade nicht.");
+      message(t("shell.loadfailed"));
     }),
   });
 }
@@ -223,6 +221,5 @@ async function showDesktop(root, config, anchor, world) {
 start().catch(() => {
   // A broken connection or a damaged answer must never leave a white page:
   // that is exactly the moment when the person needs to be told what to do.
-  message("NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, "
-    + "läuft NGC gerade nicht.");
+  message(t("shell.loadfailed"));
 });

@@ -30,12 +30,13 @@ import { validTOTP } from "../contracts/text.js";
 import * as http from "../net/http.js";
 import { Link } from "../net/link.js";
 import { newSessionKeys, buildClientCert, proveWithPassword, proveWithPasskey } from "./keys.js";
+import { t } from "../lang.js";
 
 // The one sentence every failed login gets. It is wire's own text for
 // E_LOGIN and not a second copy: the table is the contract's, and a shell
 // with words of its own is a shell that says something different from the
 // API about the same thing.
-const FAILED = wire.message(wire.CODES.LOGIN);
+const FAILED = t("wire.E_LOGIN");
 
 // NeedTOTP is no failure. The challenge said this user has a second factor
 // and no code was typed yet, so the mask asks for one and nothing was spent:
@@ -191,26 +192,26 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
   // form that never submits itself, because a shell that navigates away from
   // itself is gone.
   box.setAttribute("novalidate", "novalidate");
-  const head = el("h1", "loginhead", "Bei NGC anmelden");
+  const head = el("h1", "loginhead", t("login.head"));
   head.id = "loginhead";
   box.setAttribute("aria-labelledby", head.id);
   box.append(head);
 
-  const name = field("Benutzername", "text");
+  const name = field(t("login.username"), "text");
   name.input.autocomplete = "username";
-  const pw = field("Passwort", "password");
+  const pw = field(t("login.password"), "password");
   pw.input.autocomplete = "current-password";
   box.append(name.box, pw.box);
 
   // The second factor is not on the page until the API asks for it: a field
   // nobody has to fill in is a field somebody tries to fill in.
-  const totp = field("Code aus der Authenticator-App", "text");
+  const totp = field(t("login.totp"), "text");
   totp.input.autocomplete = "one-time-code";
   totp.input.inputMode = "numeric";
   totp.input.maxLength = session.TOTP_DIGITS;
 
   const row = el("div", "loginrow");
-  const go = button("b on", "Anmelden", null);
+  const go = button("b on", t("login.go"), null);
   go.type = "submit";
   row.append(go);
   // The passkey button only where this installation has a relying party at
@@ -220,7 +221,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
   // out of the challenge (keys.proveWithPasskey), which is the one the API
   // and the trust list agree on.
   const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
-  const withPasskey = hasParty ? button("b", "Mit Passkey anmelden", null) : null;
+  const withPasskey = hasParty ? button("b", t("login.withpasskey"), null) : null;
   if (withPasskey !== null) row.append(withPasskey);
   box.append(row);
 
@@ -263,7 +264,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
     clearInterval(lockTimer);
     let left = Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
     if (left === 0) {
-      say(wire.message(wire.CODES.LOCKED));
+      say(t("wire.E_LOCKED"));
       return;
     }
     // Belt and braces: attempt() has already switched the buttons off before
@@ -281,7 +282,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
         say("");
         return;
       }
-      say(`${wire.message(wire.CODES.LOCKED)} Noch ${left} Sekunden.`);
+      say(t("login.locked.wait", { seconds: left }));
       left -= 1;
     };
     tick();
@@ -316,7 +317,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
         // The one answer that is not a failure. The password stays in hand
         // for the second round, so nobody types it twice.
         if (!totp.box.isConnected) box.insertBefore(totp.box, row);
-        say("Bitte den Code aus der Authenticator-App eingeben.");
+        say(t("login.needtotp"));
         totp.input.focus();
         return;
       }
@@ -333,7 +334,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
       // The one exception is a server nobody can reach, which says nothing
       // about any account and everything about what to do next.
       say(e?.code === wire.CODES.UNREACHABLE
-        ? `${wire.message(wire.CODES.UNREACHABLE)} Bitte später erneut versuchen.`
+        ? t("login.unreachable")
         : FAILED);
     } finally {
       busy = false;

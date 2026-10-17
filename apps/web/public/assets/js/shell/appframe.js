@@ -24,9 +24,10 @@ import * as core from "../contracts/core.js";
 import * as uitar from "../contracts/uitar.js";
 import { equal, fromUtf8, bytesOf } from "../contracts/b64.js";
 import { validName, validPath } from "../contracts/text.js";
-import { CODES, MAX_PARAMS, validParams, message as codeMessage } from "../contracts/wire.js";
+import { CODES, MAX_PARAMS, validParams } from "../contracts/wire.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 import { currentTheme, onThemeChange } from "./theme.js";
+import { codeText as codeMessage, t } from "../lang.js";
 
 // Where an app window comes from. It is a document of this server and not a
 // srcdoc frame, because only a document fetched over http gets a policy of
@@ -65,18 +66,18 @@ const CLOSE_OK = "ok";
 // What the person is told. Four sentences, because four things can go wrong
 // that they can tell apart; which rule inside a proof broke is not one of
 // them, and naming it would only describe the inside of the server.
-const NOT_GENUINE = "Die Oberfläche dieser App ist nicht echt. NGC führt sie nicht aus.";
-const NO_ENTRY = "Die Startseite dieser App fehlt. NGC führt sie nicht aus.";
-const NEEDS_CLASSIC = "Diese App braucht klassische Skripte.";
-const NOT_LOADED = "Die Oberfläche dieser App konnte nicht geladen werden.";
+const NOT_GENUINE = t("appframe.notgenuine");
+const NO_ENTRY = t("appframe.noentry");
+const NEEDS_CLASSIC = t("appframe.needsclassic");
+const NOT_LOADED = t("appframe.notloaded");
 
 // What to do about it. One line each, because a message with no way out is
 // a dead end for somebody who did not choose any of this.
 const HINTS = new Map([
-  [NOT_GENUINE, "Bitte den Administrator fragen."],
-  [NO_ENTRY, "Bitte den Administrator fragen."],
-  [NEEDS_CLASSIC, "Bitte den Administrator fragen."],
-  [NOT_LOADED, "Bitte das Fenster schließen und es noch einmal versuchen."],
+  [NOT_GENUINE, t("appframe.askadmin")],
+  [NO_ENTRY, t("appframe.askadmin")],
+  [NEEDS_CLASSIC, t("appframe.askadmin")],
+  [NOT_LOADED, t("appframe.tryagain")],
 ]);
 
 // Refused carries the sentence the person gets. Everything else that is

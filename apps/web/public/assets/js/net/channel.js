@@ -20,6 +20,7 @@
 import * as wire from "../contracts/wire.js";
 import * as core from "../contracts/core.js";
 import { bytesOf, concat, viewOf } from "../contracts/b64.js";
+import { codeText, t } from "../lang.js";
 
 // The states a channel walks through. "opening" is between the OPEN and the
 // first GRANT, when nothing may be sent yet; "closed" is final.
@@ -38,10 +39,13 @@ const TAG_SIZE = wire.MAX_PAYLOAD - wire.MAX_E2E_PLAINTEXT;
 
 // ChannelError carries the code a caller acts on. The text is wire's German
 // one, so the shell has a sentence to show and never a second wording of its
-// own; the code is what the tests and the callers branch on.
+// own; the code is what the tests and the callers branch on. The sentence
+// comes out of lang/ by that code (lang.js codeText), not out of the German
+// table of contracts/wire.js, which is the contract's own text - see
+// net/http.js for why the two are kept apart.
 export class ChannelError extends Error {
   constructor(code) {
-    super(wire.message(code) || "Ungültige Nachricht.");
+    super(codeText(code) || t("wire.E_PROTOCOL"));
     this.name = "ChannelError";
     this.code = code;
   }

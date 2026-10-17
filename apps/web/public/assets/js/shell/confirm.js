@@ -17,6 +17,7 @@ import { el, button, clear } from "./dom.js";
 import * as proof from "../contracts/proof.js";
 import { message, PURPOSE_CONFIRM } from "../contracts/sign.js";
 import { needsConfirm, user as userOf } from "../contracts/trust.js";
+import { t } from "../lang.js";
 
 // The two sentences the question can carry. Which of them is shown says what
 // the signature is FOR, and that is the only thing the person can judge: a
@@ -24,8 +25,8 @@ import { needsConfirm, user as userOf } from "../contracts/trust.js";
 // clicks away.
 const WHY = {
   __proto__: null,
-  task: "Das ist ein wichtiger Schritt auf diesem Rechner.",
-  list: "Diese Dauerfreigabe wird in die Vertrauensliste eingetragen.",
+  task: "confirm.why.task",
+  list: "confirm.why.list",
 };
 
 const EMPTY = new Uint8Array(0);
@@ -92,19 +93,18 @@ function ask(usePasskey, why, signal) {
     const box = el("div", "confirmbox");
     box.setAttribute("role", "dialog");
     box.setAttribute("aria-modal", "true");
-    const head = el("h2", "confirmhead", "Bitte bestätigen");
+    const head = el("h2", "confirmhead", t("confirm.head"));
     // A dialog is named by its heading, and the heading has to be findable
     // for that: the id is unique because only one question stands at a time.
     head.id = "confirmhead";
     box.setAttribute("aria-labelledby", head.id);
-    const line = el("p", null, why + (usePasskey
-      ? " Bitte mit dem Passkey bestätigen."
-      : " Bitte noch einmal das Passwort eingeben."));
+    const line = el("p", null, t(why) + " "
+      + (usePasskey ? t("confirm.withpasskey") : t("confirm.withpassword")));
     box.append(head, line);
 
     let field = null;
     if (!usePasskey) {
-      const lab = el("label", "confirmlabel", "Passwort");
+      const lab = el("label", "confirmlabel", t("confirm.password"));
       field = el("input", null);
       field.type = "password";
       field.autocomplete = "current-password";
@@ -114,8 +114,8 @@ function ask(usePasskey, why, signal) {
     }
 
     const row = el("div", "confirmrow");
-    const no = button("b", "Abbrechen", null);
-    const yes = button("b on", usePasskey ? "Mit Passkey bestätigen" : "Bestätigen", null);
+    const no = button("b", t("confirm.cancel"), null);
+    const yes = button("b on", usePasskey ? t("confirm.yes.passkey") : t("confirm.yes"), null);
     row.append(no, yes);
     box.append(row);
     back.append(box);

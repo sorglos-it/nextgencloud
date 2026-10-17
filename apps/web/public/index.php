@@ -8,6 +8,7 @@ require_once __DIR__ . '/../classes/Config.php';
 require_once __DIR__ . '/../classes/Page.php';
 
 use Ngc\Config;
+use Ngc\Lang;
 use Ngc\ConfigError;
 use Ngc\Page;
 
@@ -32,7 +33,7 @@ if (PHP_SAPI === 'cli-server') {
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 if (!is_string($path)) {
-    Page::fail(400, 'Ungültige Anfrage.');
+    Page::fail(400, Lang::t('page.badrequest'));
     return true;
 }
 // The built-in PHP server calls this file for existing files below public/
@@ -46,7 +47,7 @@ if (PHP_SAPI === 'cli-server'
     return false;
 }
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
-    Page::fail(405, 'Nur GET.');
+    Page::fail(405, Lang::t('page.onlyget'));
     return true;
 }
 
@@ -59,7 +60,7 @@ try {
     return true;
 } catch (Throwable) {
     // Never show any other reason: it would name paths of the server.
-    Page::fail(500, 'NGC ist nicht eingerichtet.');
+    Page::fail(500, Lang::t('page.notsetup'));
     return true;
 }
 
@@ -94,12 +95,52 @@ switch ($path) {
             $payload['apis'] = $config->apis;
             $body = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         } catch (Throwable) {
-            Page::fail(500, 'NGC ist nicht eingerichtet.');
+            Page::fail(500, Lang::t('page.notsetup'));
+            return true;
+        }
+        Page::send('application/json; charset=utf-8', $body);
+        break;
+    // THE LANGUAGES, AND THE FOLDER IS THE LIST. The shell asks for
+    // /lang/index.json to learn which languages there are and then for the
+    // one it wants. Neither this file nor the shell holds a list of them: a
+    // new language is one more file in apps/web/lang/ and nothing else.
+    //
+    // The files are NOT below public/. Only a tag that Lang::read accepts
+    // ever becomes a file name - two lower-case letters and an optional
+    // region, so no '.', no '/' and no backslash can travel in - and the
+    // answer is built out of the decoded table rather than passed through,
+    // which is what keeps a file in that folder from becoming a way to send
+    // arbitrary bytes under this origin.
+    case '/lang/index.json':
+        try {
+            $body = json_encode(['languages' => Lang::available()],
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        } catch (Throwable) {
+            Page::fail(500, Lang::t('page.notsetup'));
             return true;
         }
         Page::send('application/json; charset=utf-8', $body);
         break;
     default:
-        Page::fail(404, 'Seite nicht gefunden.');
+        // One language file, under a name that was checked before it was
+        // used. A tag nobody has is a 404 and not an error: the shell asks
+        // for what the list named, and anybody else asking has simply asked
+        // for a page that is not there.
+        if (preg_match('#^/lang/([a-z]{2}(?:-[a-z]{2})?)\.json\z#', $path, $m) === 1) {
+            $table = Lang::read($m[1]);
+            if ($table === null) {
+                Page::fail(404, Lang::t('page.notfound'));
+                return true;
+            }
+            try {
+                $body = json_encode($table, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            } catch (Throwable) {
+                Page::fail(500, Lang::t('page.notsetup'));
+                return true;
+            }
+            Page::send('application/json; charset=utf-8', $body);
+            break;
+        }
+        Page::fail(404, Lang::t('page.notfound'));
 }
 return true;

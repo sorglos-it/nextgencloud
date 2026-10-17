@@ -71,7 +71,17 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],
-  use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
+  // THE LANGUAGE OF THE RUN, and it is not a nicety. Since apps/web has a
+  // lookup (public/assets/js/lang.js, apps/web/lang/*.json) the shell shows
+  // the language the BROWSER asks for, and Playwright's own default is
+  // en-US. Every case that matches a caption - and there are over two hundred
+  // of them - names the German one, so without this line the suite would
+  // measure the English file against German expectations and go red for a
+  // reason that has nothing to do with what it is about. German is the
+  // language those cases were written in, so German is what the run asks for;
+  // tests/lang/lookup.spec.js overrides it per case to measure the other
+  // languages and the fall-back.
+  use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure", locale: "de-DE" },
   webServer: [
     {
       command: `"${php}" -d variables_order=EGPCS -S 127.0.0.1:${phpPort} -t ../public ../public/index.php`,
