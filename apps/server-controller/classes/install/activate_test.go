@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	goruntime "runtime"
 	"slices"
 	"strings"
@@ -241,6 +242,12 @@ type stand struct {
 	apps   *apps
 	deps   Deps
 	grants []string
+	// storeID is what the SIGNED TASK says the package came from: the store of
+	// the trust list, or core.LocalStore for an app an admin uploaded. It is a
+	// field of its own because it decides which branch of install.approved the
+	// activation takes, and a case that wants the uploaded branch must be able
+	// to say so without writing a second stand.
+	storeID string
 	// pad makes the package larger, for a case about the bound of the disk.
 	pad int
 }
@@ -251,7 +258,7 @@ type stand struct {
 func newStand(t *testing.T) *stand {
 	t.Helper()
 	mf := appManifest(testApp, testVer, "")
-	s := &stand{t: t, mf: mf, eng: &engine{}, apps: newApps(),
+	s := &stand{t: t, mf: mf, eng: &engine{}, apps: newApps(), storeID: testStore,
 		sys: &sys{user: runtime.User{Name: "ngc-notes-0123abcd", UID: 4711, GID: 4712},
 			data: "/var/lib/ngc/apps/" + testApp}}
 	s.f = catalogFixture(t)
@@ -292,7 +299,7 @@ func (s *stand) withManifest(fn func(m *store.Manifest)) *stand {
 // checksum and its UI hash, and the grants an admin allowed.
 func (s *stand) params() core.ActivateParams {
 	return core.ActivateParams{App: s.mf.ID, Version: s.mf.Version, SHA256: enc.Bytes(s.f.in.SHA256),
-		UI: enc.Bytes(s.f.in.UI), Store: testStore, Grants: s.grants}
+		UI: enc.Bytes(s.f.in.UI), Store: s.storeID, Grants: s.grants}
 }
 
 // decision is the checked channel: the task carries the parameters, and the
@@ -322,6 +329,21 @@ func (s *stand) decision(p core.ActivateParams) access.Decision {
 func (s *stand) activate() ([]byte, error) {
 	s.t.Helper()
 	return New(s.deps).Activate(s.t.Context(), s.decision(s.params()), bytes.NewReader(s.f.stream()))
+}
+
+// upload turns this stand into an app an ADMIN UPLOADED: the header carries no
+// catalog and no store, and the signed task names core.LocalStore. That is the
+// branch of install.approved where no catalog binds the file to a name and the
+// checksum of the signed task is the whole proof -- the one an upload takes.
+//
+// The package, the checksum and the UI hash are left exactly as they are: what
+// an upload changes is where the file is allowed to come from, nothing about
+// the file.
+func (s *stand) upload() *stand {
+	s.t.Helper()
+	s.f.tr.Catalog, s.f.tr.Store = nil, ""
+	s.storeID = core.LocalStore
+	return s
 }
 
 // row is the row the activation wrote, or the zero value.
@@ -1078,5 +1100,89 @@ func TestHostIsTheSystemOfOperation(t *testing.T) {
 	}
 	if err := s.DropRun("../etc"); err == nil {
 		t.Fatal("Host dropped a runtime directory for a name that is none")
+	}
+}
+
+// AN UPLOADED APP IS HARDENED LIKE A BOUGHT ONE, and that is Punkt 51's
+// question asked for Punkt 30's app: once an uploaded package can be activated
+// at all, does it run behind the same eleven switches as one out of a store?
+//
+// The answer is measured and not read, and it is measured as an IDENTITY: the
+// same manifest activated twice, once as a store app of the trust list and
+// once as an upload, hands the engine containers that are equal in every
+// field. Whatever the eleven switches are made of, they are made of these
+// fields alone (runtime.Container) -- so two equal containers cannot differ in
+// one switch, and a field somebody adds later is covered without this case
+// being touched.
+//
+// WHERE THE OTHER HALF OF THE PROOF IS, named rather than assumed: that a
+// container becomes those eleven switches is pinned in
+// runtime/hardening_test.go, which reads the argument list createArgs builds.
+// createArgs is not exported, so this case cannot read the list itself; what
+// it closes is the half runtime cannot see, that an activation out of an
+// upload reaches that function with the same container. Neither half carries
+// the other.
+//
+// NOT MEASURED, the same limit Punkt 51 names for all eleven: that podman
+// obeys a switch it was sent.
+func TestAnUploadedAppIsHardenedLikeABoughtOne(t *testing.T) {
+	// The four grant combinations, because two of the eleven switches are the
+	// grants themselves (--network none, --cap-drop ALL) and a run with no
+	// needs would never show them.
+	for _, needs := range [][]string{
+		nil,
+		{store.NeedNetwork},
+		{store.NeedRoot},
+		{store.NeedNetwork, store.NeedRoot},
+	} {
+		t.Run(strings.Join(append([]string{"needs"}, needs...), "-"), func(t *testing.T) {
+			// CPU and Memory are set away from the contract's defaults on
+			// purpose: zero is what both carry when nothing was read, and two
+			// zeroes compare equal. Two of the eleven switches are these
+			// numbers.
+			set := func(s *stand) *stand {
+				s.withManifest(func(m *store.Manifest) {
+					m.Needs = slices.Clone(needs)
+					m.CPU, m.Memory = 1500, 512
+				})
+				s.grants = slices.Clone(needs)
+				return s
+			}
+			bought := set(newStand(t))
+			if _, err := bought.activate(); err != nil {
+				t.Fatalf("the store app was not activated: %v", err)
+			}
+			uploaded := set(newStand(t).upload())
+			if _, err := uploaded.activate(); err != nil {
+				t.Fatalf("the uploaded app was not activated: %v", err)
+			}
+
+			// THE INTERMEDIATE CHECK, without which this case would compare
+			// one path with itself: the two runs really went down the two
+			// different branches of install.approved. The row says which
+			// source the activation wrote down, and core.LocalStore is the one
+			// an upload has.
+			if got := bought.row().Store; got != testStore {
+				t.Fatalf("the store app wrote store %q, want %q", got, testStore)
+			}
+			if got := uploaded.row().Store; got != core.LocalStore {
+				t.Fatalf("the uploaded app wrote store %q, want %q", got, core.LocalStore)
+			}
+
+			got, want := uploaded.eng.created, bought.eng.created
+			// And without this one the case would pass on two zero values: an
+			// activation that never reached Create leaves the field as it was.
+			if want.Name == "" || want.Image == "" || want.DataDir == "" || want.Hold == "" ||
+				want.UID == 0 || want.GID == 0 || want.CPU == 0 || want.Memory == 0 {
+				t.Fatalf("the store app handed the engine an empty container: %+v", want)
+			}
+			if want.Network != slices.Contains(needs, store.NeedNetwork) ||
+				want.Root != slices.Contains(needs, store.NeedRoot) {
+				t.Fatalf("the store app's container does not carry its grants: %+v", want)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("the uploaded app runs in\n%+v\nand the bought one in\n%+v", got, want)
+			}
+		})
 	}
 }
