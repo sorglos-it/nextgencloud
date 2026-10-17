@@ -440,3 +440,34 @@ func TestAPanicInTheHelloHookKeepsTheTunnel(t *testing.T) {
 		t.Fatalf("the counter went %d -> %d; one panic must count once", before, got)
 	}
 }
+
+// TestTunnelTakesAHelloThatNamesNoNode holds the other half of the rule
+// TestTunnelEndsOnAForeignNode keeps: naming ANOTHER node ends the tunnel,
+// naming NO node does not. The contract says so of the field itself
+// (tunnel.Hello.Node, "empty until the controller is in the trust list"), and
+// a controller only ever learns its ID from a version of the list that lists
+// it -- which it cannot be handed before its hello is taken. Refusing the
+// empty one closed that circle: a controller an admin had just listed could
+// never say hello again.
+//
+// The ID still comes from the KEY and never from the message: the tunnel has
+// to reach the registry under the node of the fixture's controller, not under
+// nothing.
+func TestTunnelTakesAHelloThatNamesNoNode(t *testing.T) {
+	srv, fx := newServer(t)
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	h := controllerHello(fx)
+	h.Node = ""
+	c.writeControl(t, wire.CtlHello, h)
+	hello := c.readHello(t)
+	if hello.Contract != tunnel.Contract {
+		t.Fatalf("hello %+v", hello)
+	}
+	tun := waitForTunnel(t, srv, fx.ControllerNode)
+	if tun.Node != fx.ControllerNode {
+		t.Fatalf("the tunnel reached the registry as %q, want %q", tun.Node, fx.ControllerNode)
+	}
+	if tun.Hello().Node != "" {
+		t.Fatalf("the hello was changed on the way: %+v", tun.Hello())
+	}
+}

@@ -542,8 +542,20 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 	licensed := func(ctx context.Context, a dbapi.App) (bool, error) {
 		return license.Allowed(ctx, st, keeper.List(), installationOf(keeper), a, time.Now().Unix())
 	}
+	// The node ID of THIS server, asked afresh for every hello: it comes out
+	// of the verified list by this server's own Noise key, and it falls back
+	// to what the configuration holds while no verified version lists the key.
+	// Which way round the two stand is a decision: the LIST decides, the file
+	// only remembers. A file that outranked the list would keep naming a node
+	// an admin has since renamed or removed.
+	nodeID := func() string {
+		if id := keeper.NodeID(key.Public); id != "" {
+			return id
+		}
+		return cfg.Node
+	}
 	rep := NewReporter(ReportConfig{
-		Version: version, Node: cfg.Node, Roles: cfg.Roles, OS: osName, State: st,
+		Version: version, Node: nodeID, Roles: cfg.Roles, OS: osName, State: st,
 		TrustSeq: keeper.TrustSeq,
 		// The engine takes the name of a container, and the container of an
 		// app is named after its system user: this is the mapping report.go
@@ -555,7 +567,14 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		Send:     reg.Control,
 	})
 	srv := serve.New(serve.Deps{
-		Node: cfg.Node, Noise: key, Engine: engine, Chain: keeper, State: st,
+		// serve.Deps may not change once New has seen it, so this one is the
+		// ID AS IT STANDS AT THE START, and that is a named price: a server an
+		// admin lists while it runs says its node in the hello at once (nodeID
+		// above) and takes the chain, but its app channels and its tasks go on
+		// with what it knew at the start until it is restarted once. What makes
+		// the price small is that the chain now arrives at all -- without it
+		// the ID was never learned and no restart ever helped.
+		Node: nodeID(), Noise: key, Engine: engine, Chain: keeper, State: st,
 		// No updater yet, and this is a seam named rather than papered over:
 		// update.Deps takes the trust list as a VALUE (update.Deps.List),
 		// while this controller's list is replaced version by version under

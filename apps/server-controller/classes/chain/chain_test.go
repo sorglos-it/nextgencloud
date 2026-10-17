@@ -570,3 +570,44 @@ func TestApplyRefusesUntilTheStateWasRead(t *testing.T) {
 		t.Fatalf("Apply after Load = %d, %v, want 1, nil", seq, err)
 	}
 }
+
+// TestNodeIDFindsThisServerByItsKey holds what a controller needs to say its
+// own node in a hello (tunnel.Hello.Node): the ID is read out of the verified
+// list BY THE STATIC NOISE KEY, never out of a name or out of the
+// configuration. Until 17.10.2026 nothing read it at all, so
+// config.Controller.Node stayed empty for ever on a listed server.
+//
+// Three cases, and the second is the one that matters: a key the list does not
+// carry gets no ID, so a wrong key never borrows another server's node.
+func TestNodeIDFindsThisServerByItsKey(t *testing.T) {
+	ctx := context.Background()
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	ctlDH, _ := trusttest.NodeKeys(0xC1)
+	foreignDH, _ := trusttest.NodeKeys(0xC2)
+	st := state.New(memstore.New())
+
+	// Before anything is verified there is no list, so there is no ID either.
+	k := New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if got := k.NodeID(ctlDH.Public); got != "" {
+		t.Fatalf("without a verified version NodeID = %q, want %q", got, "")
+	}
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := k.NodeID(ctlDH.Public); got != "ctl-1" {
+		t.Fatalf("NodeID = %q, want %q", got, "ctl-1")
+	}
+	if got := k.NodeID(foreignDH.Public); got != "" {
+		t.Fatalf("a foreign key got the ID %q, want %q", got, "")
+	}
+	// The API node of the same list carries a Noise key too, and it is not
+	// this server's node: a controller may never answer with it.
+	apiDH, _ := trusttest.NodeKeys(0xA1)
+	if got := k.NodeID(apiDH.Public); got != "" {
+		t.Fatalf("the key of the API node got the ID %q, want %q", got, "")
+	}
+}
