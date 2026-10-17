@@ -192,8 +192,60 @@ func joinRun(ctx context.Context, path, code string) int {
 		NoiseFile: joinNoiseFile, SignFile: joinSignFile,
 	})
 	if err != nil {
-		slog.Error("der Beitritt ist fehlgeschlagen", "error", err)
+		slog.Error(joinFailure(err))
 		return 1
 	}
 	return 0
+}
+
+// What a failed join says, one line per CATEGORY of join.Run, and each of
+// them says what to do next. None names a value: not the address of the
+// issuing API, not the path of a key file, not the code and no answer of a
+// server. The line before them was
+//
+//	slog.Error("der Beitritt ist fehlgeschlagen", "error", err)
+//
+// and measured on 17.10.2026 the error behind it read "Post
+// \"https://.../tunnel/join?secret=d5En6nQB...\": dial tcp ..." -- the
+// address AND the base64url of the SHA-256 of the one-time secret, into the
+// journal of this machine. A second one answered a key that could not be
+// written with the path of that key file. join.Run keeps both to itself now;
+// these lines are what is left to say.
+const (
+	msgJoinFailed   = "Der Beitritt ist gescheitert. Bitte einen neuen Beitrittscode in NextGenCloud erzeugen und es noch einmal versuchen."
+	msgJoinNothing  = "Der Beitritt wurde nicht abgeschickt: dieser Server passt mit seinen eigenen Angaben nicht zu einem Beitritt. Bitte die Einrichtung dieses Servers mit ulh wiederholen. Der Beitrittscode ist noch gültig."
+	msgJoinBadCode  = "Kein gültiger Beitrittscode. Bitte den Code aus NextGenCloud vollständig einfügen und es noch einmal versuchen."
+	msgJoinNoAnswer = "Die API hat nicht geantwortet. Bitte prüfen, ob der erste Server von NextGenCloud läuft und von hier aus erreichbar ist, dann noch einmal versuchen. Der Beitrittscode ist noch gültig."
+	msgJoinTooSlow  = "Die API hat nicht rechtzeitig geantwortet. Bitte in ein paar Minuten noch einmal versuchen. Ob der Beitrittscode dabei verbraucht wurde, lässt sich von hier aus nicht sagen; falls es wieder scheitert, einen neuen erzeugen."
+	msgJoinWrongAPI = "Es hat ein anderer Server geantwortet als der, den der Beitrittscode nennt. Bitte nicht wiederholen: in NextGenCloud einen neuen Beitrittscode erzeugen und, wenn es wieder geschieht, das Netz dieses Servers prüfen."
+	msgJoinRefused  = "Die API hat den Beitrittscode abgelehnt. Er ist wahrscheinlich schon benutzt oder abgelaufen. Bitte in NextGenCloud einen neuen erzeugen und diesen einfügen."
+	msgJoinSecret   = "Ein Schlüssel dieses Servers ließ sich nicht speichern. Bitte Platz und Rechte auf diesem Server prüfen und den Beitritt mit einem neuen Beitrittscode wiederholen."
+	// Nobody signed the server in. Nothing is lost and nothing is spent: the
+	// request stands in the API and waits for an administrator.
+	msgJoinNotListed = "Innerhalb einer Stunde hat niemand diesen Server in die Vertrauensliste eingetragen. Bitte als Administrator bei NextGenCloud anmelden, diesen Server dort eintragen und den Beitritt danach noch einmal aufrufen."
+)
+
+// joinFailure picks the line for what join.Run came back with. It asks the
+// categories and never the text, and a failure that is none of them gets the
+// cautious line -- an unknown failure may well have spent the code.
+func joinFailure(err error) string {
+	switch {
+	case errors.Is(err, join.ErrJoinInput):
+		return msgJoinNothing
+	case errors.Is(err, tunnel.ErrJoinCode):
+		return msgJoinBadCode
+	case errors.Is(err, join.ErrJoinNoAnswer):
+		return msgJoinNoAnswer
+	case errors.Is(err, join.ErrJoinTooSlow):
+		return msgJoinTooSlow
+	case errors.Is(err, join.ErrJoinWrongAPI):
+		return msgJoinWrongAPI
+	case errors.Is(err, join.ErrJoinRefused):
+		return msgJoinRefused
+	case errors.Is(err, join.ErrJoinSecret):
+		return msgJoinSecret
+	case errors.Is(err, join.ErrJoinTimeout):
+		return msgJoinNotListed
+	}
+	return msgJoinFailed
 }

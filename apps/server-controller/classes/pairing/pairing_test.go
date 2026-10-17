@@ -332,6 +332,12 @@ func TestDoAnswersWithACategory(t *testing.T) {
 			if !errors.Is(err, c.want) {
 				t.Fatalf("Do = %v, want %v", err, c.want)
 			}
+			// The category comes back BARE. errors.Is alone would let a
+			// wrapping through, and a wrapping is where a value gets back
+			// in -- a status, an address, a count.
+			if err.Error() != c.want.Error() {
+				t.Errorf("Do wrapped the category with a word of its own")
+			}
 			// The category is the whole answer, and it has to stay sayable
 			// without saying anything: these are the values the error before
 			// this change carried.
