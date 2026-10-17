@@ -2153,3 +2153,50 @@ Dinge bleiben, und keines davon ist Programmierarbeit:
 
 **Weiter ungemessen, unverändert aus Punkt 56:** die Anmeldung im Browser (erster Verwalter per
 Passschlüssel), und damit die Kopplung des Controllers, die über die angemeldete Oberfläche läuft.
+
+## Punkt 58: Die Einrichtungsseite im echten Browser — und der Satz aus Punkt 50, diesmal gesehen
+
+**Gemessen am 17.10.2026** in einem echten Browser gegen die Installation aus Punkt 57.
+
+**Die Seite kommt, und sie ist richtig:** „**NGC einrichten** — Diese Anlage ist neu. Auf dem
+Bildschirm des Servers steht ein Einmal-Code. Bitte tippen Sie ihn hier ein." Dazu ein Feld und
+`Weiter`. Die Oberfläche liest ihre Lage aus `/config.json`: API `https://ngc.test:7443`,
+`rp.id` `ngc.test`.
+
+**Zwei Riegel der Oberfläche sind dabei gefahren, nicht nur gelesen:**
+- Über **`http://` an einer anderen Adresse** antwortet sie **„NGC braucht eine sichere Verbindung.
+  Bitte die Seite über https:// aufrufen."** und zeigt nichts weiter. Das ist die sicherere
+  Variante, und sie greift.
+- Den **Testserver der Oberfläche** (`PHP_SAPI === 'cli-server'`) lässt sie an `localhost` zu —
+  dort ist `window.isSecureContext` **true**, also ein sicherer Ursprung nach Browserregel.
+
+**Und der Satz aus Punkt 50 ist jetzt gesehen, nicht abgelesen.** Einmal-Code eingetippt, `Weiter`
+geklickt, nach vier Sekunden steht auf dem Schirm:
+
+> **Dienst nicht erreichbar. Bitte später erneut versuchen.**
+
+Dieselben Worte, die Punkt 50 aus `login.js:336` und `setup.js:64` **vorhergesagt** hatte. Der
+Grund hier ist die Umgebung, nicht NGC: `fetch('https://ngc.test:7443/api/v1/setup')` aus dem
+Browser gibt `TypeError: Failed to fetch`, weil `ngc.test` auf dem Windows-Rechner nicht auflöst.
+
+**Damit ist P9 am Benutzer belegt:** dieser Satz ist derselbe, den eine **besetzte Datenbank**
+erzeugt (Punkte 49/52/53 geben dort 503 mit `Retry-After: 5`, aber denselben Code
+`E_UNREACHABLE`). Der Benutzer kann „Dienst weg", „Name löst nicht auf" und „Datenbank gerade
+besetzt" **nicht unterscheiden** — und `Retry-After` liest die Oberfläche nicht. Das ist kein
+Lesefund mehr, sondern eine gesehene Erscheinung.
+
+**Wo es hier aufhört, und warum es kein Mangel von NGC ist:** den ersten Verwalter anzulegen
+braucht einen Browser, der die API **erreicht und ihr Zertifikat annimmt**. Auf dieser Maschine
+fehlt beides, und beide Abhilfen sind Eingriffe am System, die ich nicht von mir aus mache:
+`ngc.test` in die Windows-`hosts` eintragen und das selbst unterschriebene Zertifikat einmal
+annehmen. Der Browser der App bietet kein Weiterklicken an (`chrome-error://`), Playwright
+verlangt hier ein Chrome, das nicht installiert ist.
+
+**Der erste Verwalter braucht übrigens kein Passschlüssel-Gerät:** `apps/web/.../auth/setup.js`
+leitet den Schlüssel aus einem **Passwort** ab (`proveWithPassword`, `KIND_PASSWORD`,
+`ALG_EDDSA`, frischer Salt). Ein Passschlüssel ist die Kür, nicht die Pflicht — der Weg ist also
+auch ohne Hardware offen.
+
+**Zu entscheiden (du):** entweder `ngc.test` auf dem Windows-Rechner eintragen und das Zertifikat
+einmal annehmen, dann gehe ich die Anmeldung zu Ende — oder gleich auf einer Maschine mit echtem
+Namen und `letsencrypt`-Zertifikat messen, was ohnehin der Fall ist, den ein Nutzer erlebt.
