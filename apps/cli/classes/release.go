@@ -38,11 +38,17 @@ var ErrNoReleaseFile = errors.New("ngc-store: the directory holds no release fil
 	strings.Join(ReleaseFileNames(), ", "))
 
 // ErrVersion reports a version that is not the contract's
-// (store.ValidVersion): MAJOR.MINOR.PATCH, three numbers without leading
-// zeros. A four-digit number of this house's own numbering ("0.0.1.0") is
-// the one that keeps arriving here.
-var ErrVersion = errors.New("ngc-store: the version must be MAJOR.MINOR.PATCH, three numbers " +
-	"without leading zeros (for example 1.1.0)")
+// (store.ValidVersion): MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH.BUILD, each
+// place without leading zeros.
+//
+// The fourth place is the build counter of this house's numbering
+// (Z:\GitHub\claude-md\version.md). Until 17.10.2026 the contract refused it
+// and this sentence said so; Thomas decided on 15.10.2026 that the contract
+// learns the place instead, and it did (shared/store/manifest.go:224). What
+// keeps arriving here now is a FIFTH place or a leading zero.
+var ErrVersion = errors.New("ngc-store: the version must be MAJOR.MINOR.PATCH or " +
+	"MAJOR.MINOR.PATCH.BUILD, three or four numbers without leading zeros " +
+	"(for example 1.1.0 or 1.1.0.3)")
 
 // releaseExt is the extension of a release file. verify.sh checks a file by
 // the name the signed release gives it, so the extension matters only here,

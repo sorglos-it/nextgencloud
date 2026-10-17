@@ -32,3 +32,11 @@ apps/web/tests/test-results/
 # haben gemeldet, dass ein "git add -A" einer anderen Sitzung sie sonst
 # mitnimmt - im geteilten Arbeitsbaum ist das kein Restrisiko.
 tools/local.env
+
+# Die Kopie von tools/sign-release.sh mit abgeschalteter Selbstpruefung, die
+# TestSignScriptLeaksNoKey anlegt. Sie wird am Fallende entfernt - aber ein
+# harter Abbruch (Zeitgrenze, Strg-C) laesst sie liegen, und gemessen war sie
+# dann NICHT ignoriert. Eine Kopie des Signierers ohne Selbstpruefung, harmlos
+# benannt, im Werkzeugordner: genau so etwas wird eingecheckt, ohne dass es
+# jemandem auffaellt.
+tools/zz-sign-release-selfcheck-off-*.sh
