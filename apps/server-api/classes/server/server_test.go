@@ -22,6 +22,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/join"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
@@ -597,5 +598,82 @@ func TestANoticeOfAControllerLeavesALineWhereNoShellTakesIt(t *testing.T) {
 	// line is about the notice having come, not about what it said.
 	if strings.Contains(line, "gestorben") {
 		t.Fatalf("the text of the notice is in the operator log: %q", line)
+	}
+}
+
+// TestAStartThatCannotReadTheTrustListSaysSo holds the one line a running
+// installation prints when it will not start, and it holds it against the
+// wrong cause.
+//
+// Measured on 18.10.2026 at the installation on Debian 13: a pin in
+// config.AnchorFile that names a version the rows do not carry killed
+// ngc-api in a restart loop, and the one line it printed was "der Einmal-Code
+// für die Ersteinrichtung lässt sich nicht anlegen". The code file had
+// nothing to do with it and was never touched -- EnsureCode reads the trust
+// list FIRST, so everything that goes wrong there came out under the name of
+// the code file. An admin who reads that line goes to /var/lib/ngc and finds
+// nothing wrong.
+//
+// What it does here instead of a pin is rows that contradict each other --
+// the trust row of one installation beside the installation setting of
+// another. That is the same branch (state.Trust returns something that is
+// not ErrNoTrust) and it needs no file outside the test, because Build gives
+// no way to point State.AnchorFile anywhere else. What is NOT measured here
+// is therefore the pin itself; the case that was measured at the machine is
+// named above and stands in the report.
+func TestAStartThatCannotReadTheTrustListSaysSo(t *testing.T) {
+	db := memstore.New()
+	withStore(t, db)
+	withDirs(t)
+	signedIn(t, db)
+	// The intermediate check: with the rows as signedIn leaves them the start
+	// goes through. Without it a refusal below could be anything.
+	if _, err := Build(ctx, newConfig(t), "9.9.9"); err != nil {
+		t.Fatalf("the start fails before anything is broken, so nothing below measures the trust list: %v", err)
+	}
+	// And now the rows contradict each other: the installation setting names
+	// another installation than the trust row does.
+	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobSetting,
+		ID: dbapi.SettingInstallation, Data: []byte("AAAAAAAAAAAAAAAAAAAAAA"), Updated: 2}); err != nil {
+		t.Fatalf("installation: %v", err)
+	}
+	_, err := Build(ctx, newConfig(t), "9.9.9")
+	if err == nil {
+		t.Fatal("the start went through although the trust list cannot be read, so the line below is never printed")
+	}
+	if strings.Contains(err.Error(), "Einmal-Code") {
+		t.Errorf("the start blames the setup code for a trust list it cannot read: %q", err)
+	}
+	if !strings.Contains(err.Error(), "Vertrauensliste") {
+		t.Errorf("the start does not name the trust list: %q", err)
+	}
+	if !strings.Contains(err.Error(), config.AnchorFile) {
+		t.Errorf("the start does not name the file to look at first (%s): %q", config.AnchorFile, err)
+	}
+}
+
+// TestAStartThatCannotWriteTheCodeFileStillBlamesTheCodeFile is the other
+// half of the line above, and it is here because without it the telling
+// apart is only measured in one direction: a start that cannot write the
+// one-time code while the setup is open must keep saying so, and must not be
+// sent off to the trust anchor instead. Measured as a mutant: a branch that
+// takes every error of state.Trust, ErrNoTrust included, passes the case
+// above and falls here.
+func TestAStartThatCannotWriteTheCodeFileStillBlamesTheCodeFile(t *testing.T) {
+	db := memstore.New()
+	withStore(t, db)
+	withDirs(t)
+	// No trust list at all: the setup is open, so the code file is the only
+	// thing left that can go wrong.
+	SetupCodeFile = filepath.Join(t.TempDir(), "gibt-es-nicht", "setup-code")
+	_, err := Build(ctx, newConfig(t), "9.9.9")
+	if err == nil {
+		t.Fatal("the start went through although the code file cannot be written, so the line below is never printed")
+	}
+	if !strings.Contains(err.Error(), "Einmal-Code") {
+		t.Errorf("the start does not name the one-time code: %q", err)
+	}
+	if strings.Contains(err.Error(), "Vertrauensliste") {
+		t.Errorf("the start sends the admin to the trust anchor for a code file it cannot write: %q", err)
 	}
 }

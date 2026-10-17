@@ -201,6 +201,23 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	bs := &browser.Server{S: s, Login: lh, Open: d, Sessions: sessions}
 	sh := &setup.Handler{S: s, CodeFile: SetupCodeFile}
 	if _, err := sh.EnsureCode(); err != nil {
+		// Two faults end up here and they send the admin to two different
+		// files. EnsureCode reads the trust list BEFORE it ever looks at the
+		// code file, so a list it cannot read -- rows that contradict each
+		// other, or a pin in config.AnchorFile naming a version the rows do
+		// not carry -- used to come out under the name of the code file.
+		// Measured on 18.10.2026 at the installation on Debian 13: such a pin
+		// killed the API in a restart loop, and the one line it printed
+		// blamed a file that was never touched.
+		//
+		// Which of the two it was is asked and not guessed: the question is
+		// exactly "can the trust list be read", so it is put to state.Trust
+		// instead of to a list of sentinels that the next error would not be
+		// on. ErrNoTrust is the open setup and belongs to the code file.
+		if _, terr := s.Trust(ctx); terr != nil && !errors.Is(terr, state.ErrNoTrust) {
+			return nil, errors.New("die Vertrauensliste dieser Anlage lässt sich nicht lesen; " +
+				"zuerst " + config.AnchorFile + " prüfen, dann die Datenbank")
+		}
 		return nil, errors.New("der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen")
 	}
 	controllers.Version = version
