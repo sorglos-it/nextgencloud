@@ -2200,3 +2200,42 @@ auch ohne Hardware offen.
 **Zu entscheiden (du):** entweder `ngc.test` auf dem Windows-Rechner eintragen und das Zertifikat
 einmal annehmen, dann gehe ich die Anmeldung zu Ende — oder gleich auf einer Maschine mit echtem
 Namen und `letsencrypt`-Zertifikat messen, was ohnehin der Fall ist, den ein Nutzer erlebt.
+
+## Punkt 59: Angemeldet. Der Schreibtisch steht im Browser
+
+**Gemessen am 17.10.2026**, echte HTTPS-Strecke gegen die Installation aus Punkt 57, in einem
+echten Browser (Chromium über Playwright). **Kein Eingriff am Windows-System:** der Browser löst
+`ngc.test` selbst auf (`--host-resolver-rules`) und nimmt das selbst unterschriebene Zertifikat
+**für diesen Lauf** an (`ignoreHTTPSErrors`). Die `hosts`-Datei des Rechners blieb unberührt.
+
+**Der ganze Weg, Schritt für Schritt gesehen:**
+1. `https://ngc.test/` → „**NGC einrichten** … Auf dem Bildschirm des Servers steht ein
+   Einmal-Code." `fetch('/api/v1/setup')` aus der Seite: **http 200**.
+2. Code eingetippt, `Weiter` → **Schritt 2**: „Bitte vergleichen: Steht hier dasselbe wie auf dem
+   Bildschirm des Servers?" mit **Kennung der Anlage**, **Name und Adresse des API-Servers**
+   (`wss://ngc.test:7443/tunnel`) und dem **Fingerabdruck** — genau den Werten, die `ngc-all.sh`
+   auf dem Server gedruckt hat. Felder: ein Name, zweimal Passwort, ein Haken für den App-Store.
+3. Name und Passwort eingetragen, `Einrichten` geklickt → **der Schreibtisch**: Startleiste mit
+   `Start`, Uhr `03:02 17.10.2026`, die Kacheln **App-Store** und **Benutzer & Rechte**, und der
+   Hinweis **„Umstellen auf Passkeys empfohlen"**.
+4. Die Sitzung steht in **einem** Keks: `ngc_session`, **`httpOnly`** und **`secure`** — gesehen,
+   nicht aus dem Quelltext gelesen.
+
+**Damit ist der kleine Fall durchgängig:** ein Rechner, ein Release, `ngc-all` und `ngc-web`, und
+ein Benutzer kommt im Browser bis zum Schreibtisch. Punkt 47 hatte als Lücke genannt, dass sich
+ohne `ngc-web` niemand anmelden kann — **diese Lücke ist zu.**
+
+**Und ein Befund auf dem Weg, der keiner von NGC ist, aber einer bleibt:** mitten in der Messung
+gab `/api/` plötzlich **500 Proxy Error**, und `curl` kam auf `http=000`. Ursache: **WSL hatte
+`/etc/hosts` neu geschrieben** und `ngc.test` daraus entfernt, während Apache und `web.json`
+weiter auf diesen Namen zeigten. Das ist die Falle aus `STAND.md`, hier zum ersten Mal mit ihrer
+**Erscheinung** belegt: ein Proxy-Fehler der Oberfläche, der wie ein Fehler von NGC aussieht. Nach
+dem Wiedereintragen: Seite 200, `/api/v1/setup` 200, `NRestarts=0`.
+
+**Was jetzt noch offen ist:**
+- **Der Controller ist nicht gekoppelt** („no app can run"). Der Weg dahin steht jetzt offen, denn
+  der Kopplungscode entsteht in der angemeldeten Oberfläche — das ist der nächste Messpunkt.
+- **Passkeys** sind nicht gemessen; die Oberfläche empfiehlt sie selbst. Der erste Verwalter läuft
+  mit Passwort, und das ist vertragsgemäß.
+- Die Messung lief mit **selbst unterschriebenem** Zertifikat und einem Browser, der es für diesen
+  Lauf annimmt. Was ein Nutzer mit `letsencrypt` erlebt, ist damit **nicht** gemessen.
