@@ -419,7 +419,8 @@ export function adapterFor(link, world = {}) {
           return callBytes(link, a, { params: p, taskBytes, confirmBytes });
         case FLOW_IN:
           return sendInBytes(link, a, {
-            params: p, taskBytes, stream: o.stream, onProgress: o.onProgress,
+            params: p, taskBytes, confirmBytes, stream: o.stream,
+            onProgress: o.onProgress,
           });
         // FlowOut is a channel that stays open and belongs in open(); taking
         // it here would mean bounding an answer in the one place that cannot
