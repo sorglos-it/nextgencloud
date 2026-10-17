@@ -388,6 +388,22 @@ func newAPI(t *testing.T) testAPI {
 	var seen atomic.Int64
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen.Add(1)
+		// The whole request, not just its body. This stand read the body
+		// alone until 17.10.2026, and that is the blindness point 61 cost:
+		// a pairing with no query cannot come off against a real API
+		// (controllers/pair.go spends the one-time value the query NAMES
+		// and answers E_PROTOCOL without it), while a stand that looks only
+		// at the body calls it good. The same assertion lives in
+		// pairing/pairing_test.go; it is here as well because this is the
+		// way through node, and a rule held up by one place is held up by
+		// none the day that place is edited.
+		if r.Method != http.MethodPost || r.URL.Path != tunnel.PathPair {
+			t.Errorf("the API was asked %s %s, want POST %s", r.Method, r.URL.Path, tunnel.PathPair)
+		}
+		sum := sha256.Sum256(secret)
+		if want := enc.B64.EncodeToString(sum[:]); r.URL.Query().Get("secret") != want {
+			t.Error("the query of the request does not name the hash of the pairing secret")
+		}
 		b, _ := io.ReadAll(io.LimitReader(r.Body, tunnel.MaxPairRequest+1))
 		req, err := tunnel.ParsePairRequest(b)
 		if err != nil {
