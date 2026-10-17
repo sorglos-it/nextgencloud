@@ -493,11 +493,14 @@ class Users {
     const known = section("known", "Server dieser Anlage", "");
     const code = section("paircode", "Kopplungscode",
       "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
-    p.append(pending, pendapi, known, code);
+    const join = section("joincode", "Beitrittscode",
+      "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
+    p.append(pending, pendapi, known, code, join);
     this.fillPending(pending);
     this.fillPendingAPI(pendapi);
     this.fillNodes(known);
     this.fillPairCode(code);
+    this.fillJoinCode(join);
   }
 
   async fillPending(box) {
@@ -563,7 +566,25 @@ class Users {
         if (!this.dead) text(fp, f);
       }, () => text(fp, "—"));
       r.append(el("span", "nm", n.node), fp, chars(n.url), el("span", "since", when(n.since)));
-      if (joinable(n) && why === "") {
+      // A name that already stands in the trust list cannot be taken in: a
+      // version with two nodes of one id is not a valid list (Go:
+      // trust.List.Validate wants the ids strictly ascending), so
+      // buildNextVersion refuses this change before anything is signed.
+      //
+      // MEASURED on 17.10.2026 against a running installation, and this is
+      // what it is for: a second machine that asks for the name of a server
+      // already listed is ACCEPTED by the API, and its request OVERWRITES the
+      // waiting one of that name (join.keep stores by node id). The admin then
+      // saw this row with the other machine's fingerprint, pressed Aufnehmen,
+      // and read "Die Anlage antwortet gerade nicht." - the error really
+      // thrown was "Diese Änderung ergibt keine gültige Vertrauensliste.", and
+      // reason() has no prefix for it, so it fell to the sentence about
+      // reachability. Nothing was unreachable; the name was taken.
+      const taken = this.nameTaken(n.node);
+      if (taken) {
+        r.append(el("span", "note", "Dieser Name ist in dieser Anlage schon vergeben. "
+          + "Der Server muss unter einem anderen Namen beitreten."));
+      } else if (joinable(n) && why === "") {
         const b = button("go", "Aufnehmen", "Server " + n.node + " aufnehmen");
         b.addEventListener("click", () => this.askJoinAPI(n, seen, b, box));
         r.append(b);
@@ -571,6 +592,16 @@ class Users {
       box.append(r);
     }
     if (why !== "") Users.say(box, why);
+  }
+
+  // nameTaken says whether a node of this id already stands in the version
+  // the shell verified. Without a version it answers false: cannotChange
+  // already says that nothing can be taken in then, and a row would otherwise
+  // carry two sentences that say different things.
+  nameTaken(id) {
+    const list = this.trust?.current?.()?.list;
+    if (!list || !Array.isArray(list.nodes)) return false;
+    return list.nodes.some((n) => n !== null && typeof n === "object" && n.id === id);
   }
 
   async fillNodes(box) {
@@ -599,26 +630,45 @@ class Users {
 
   fillPairCode(box) {
     const b = button("go", "Kopplungscode zeigen", null);
-    b.addEventListener("click", () => this.showPairCode(box, b));
+    b.addEventListener("click", () => this.showCode(box, b, core.ACT_PAIR_CODE, tunnel.parsePairCode));
     box.append(b);
   }
 
-  // A pairing code is pasted into the script of a new controller, and it
-  // names the API to dial and the version to believe. So it is shown only
-  // once tunnel.checkCode has agreed with the version THE SHELL verified -
-  // never because the API sent it. If the code names a higher number than
-  // the shell has, the chain is fetched first and the question asked again;
-  // a code that still does not fit is not put on screen at all, because a
-  // code on screen is a code somebody will paste.
-  async showPairCode(box, b) {
+  // A join code is pasted into the script of a FURTHER API server
+  // (ngc-api.sh, answer join_code), and it names the same three things a
+  // pairing code does. So it is shown under the same one rule, and the
+  // apps/web contract names the two together: "Kopplungs- und Beitrittscodes
+  // (Kern-Aktionen pair-code und join-code) zeigst du erst, wenn ... stimmt"
+  // (apps/web/CLAUDE.md). Without this way nothing could answer that
+  // question of the script at all.
+  fillJoinCode(box) {
+    const b = button("go", "Beitrittscode zeigen", null);
+    b.addEventListener("click", () => this.showCode(box, b, core.ACT_JOIN_CODE, tunnel.parseJoinCode));
+    box.append(b);
+  }
+
+  // A pairing code is pasted into the script of a new controller, a join code
+  // into that of a new API server, and both name the API to dial and the
+  // version to believe. So either is shown only once tunnel.checkCode has
+  // agreed with the version THE SHELL verified - never because the API sent
+  // it. If the code names a higher number than the shell has, the chain is
+  // fetched first and the question asked again; a code that still does not
+  // fit is not put on screen at all, because a code on screen is a code
+  // somebody will paste.
+  //
+  // parse is the reader of the one prefix this action answers with, so a
+  // join code shown under the pairing button, or the other way round, is
+  // refused before anything reaches the screen: the prefix is part of what
+  // the reader checks (contracts/tunnel.js, parseCode).
+  async showCode(box, b, action, parse) {
     const old = box.querySelector(".code");
     if (old) old.remove();
     Users.say(box, "");
     b.disabled = true;
     try {
-      const r = await this.call(core.ACT_PAIR_CODE);
+      const r = await this.call(action);
       if (this.dead) return;
-      const c = tunnel.parsePairCode(r.code);
+      const c = parse(r.code);
       let v = this.trust?.current?.() ?? null;
       // FIXRUNDE 2, K1. This used to call refresh() with NO number and then
       // work with what came back. Both halves were wrong, and each on its own
