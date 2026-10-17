@@ -50,6 +50,31 @@ func TestRefreshVerifiesAndKeeps(t *testing.T) {
 	}
 }
 
+// TestTheStoreIsAskedForOneFileWithGetAndNoQuery says out loud what the
+// fixture now holds for every case of this package: the whole request line is
+// looked at, not only the file name the answer is picked by.
+//
+// Why it is here at all: the pairing request of the controller travelled
+// without its ?secret= for as long as it did because pairing_test.go read
+// path, method and body and never the address (point 61). This fixture had the
+// same blindness from the other side -- it answered by filepath.Base of the
+// path, so a catalog fetched out of a directory of someone else's choosing, or
+// with a token appended to the address, was served and every case stayed
+// green.
+func TestTheStoreIsAskedForOneFileWithGetAndNoQuery(t *testing.T) {
+	fx, _ := newFixture(t)
+	if err := fx.St.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if fx.hits() == 0 {
+		t.Fatal("the store saw no request, so this case measures an earlier wall")
+	}
+	want := seenRequest{Method: http.MethodGet, Path: "/" + CatalogFile}
+	if got := fx.Serve.last(); got != want {
+		t.Fatalf("the store saw %+v, want %+v", got, want)
+	}
+}
+
 // TestRefuseAForeignSignature: the answer is well-formed and signed, only not
 // with the key the trust list names for this store.
 func TestRefuseAForeignSignature(t *testing.T) {

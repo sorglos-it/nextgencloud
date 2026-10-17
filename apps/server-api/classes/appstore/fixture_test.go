@@ -106,6 +106,22 @@ type served struct {
 	// Hits counts the requests the store saw, so a case can tell a refusal
 	// before the request from one after it.
 	Hits int
+	// Last is the whole request line of the last request, not just the name
+	// the answer was picked by. A fixture that reads only the base name of the
+	// path cannot tell a request that went to the store from one that went
+	// into a directory of its own, carried a query or used another method --
+	// the same blindness that let the pairing request travel without its
+	// ?secret= (point 61).
+	Last seenRequest
+}
+
+// seenRequest is a request line of the store in the three parts a store
+// address is made of. Headers are not kept: get and Download send none of
+// their own, so a list of them would only print what the client library adds.
+type seenRequest struct {
+	Method   string
+	Path     string
+	RawQuery string
 }
 
 func (sv *served) put(name string, b []byte) {
@@ -124,6 +140,12 @@ func (sv *served) hits() int {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	return sv.Hits
+}
+
+func (sv *served) last() seenRequest {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	return sv.Last
 }
 
 // fixture is one API with one store in its trust list, and that store served
@@ -151,11 +173,29 @@ func newFixture(t *testing.T) (fixture, vectors) {
 	sv.Files[ReleaseFile] = v.Release.bytes()
 	fx := fixture{Serve: sv}
 	fx.HTTP = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := filepath.Base(r.URL.Path)
 		sv.mu.Lock()
 		sv.Hits++
-		b, ok := sv.Files[filepath.Base(r.URL.Path)]
+		sv.Last = seenRequest{Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+		b, ok := sv.Files[name]
 		code := sv.Status
 		sv.mu.Unlock()
+		// The rule, and it is kept here so that every case of this package
+		// runs through it instead of one case holding it alone: a store is
+		// asked with GET, for a file that lies directly under the address of
+		// the store, and with nothing appended to the address.
+		// trust.ValidStoreURL has no query and no trailing slash, so the whole
+		// path is "/" plus the file name. Picking the answer by the base name
+		// alone, as this fixture did, serves a request that went anywhere.
+		if r.Method != http.MethodGet {
+			t.Errorf("the store was asked with %s; it is read with GET only", r.Method)
+		}
+		if r.URL.Path != "/"+name {
+			t.Errorf("the store was asked for %q, not for /%s: the address of a store carries no directory of its own", r.URL.Path, name)
+		}
+		if r.URL.RawQuery != "" {
+			t.Errorf("the store was asked with the query %q; a store address has none, so nothing may append one", r.URL.RawQuery)
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return

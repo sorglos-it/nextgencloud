@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+// wsrepOptions is the key whose value is a list of its own, and the one line
+// of galera.cnf that no whole-line comparison can pin.
+const wsrepOptions = "wsrep_provider_options="
+
 // TestGaleraTemplate holds the lines nobody may quietly drop: without them
 // the cluster would replicate without TLS, take a connection in the clear or
 // keep the data unencrypted on disk. The test is here and not only in the
@@ -70,11 +74,10 @@ func TestGaleraTemplate(t *testing.T) {
 		// strict from the server side too
 		"sql_mode=STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION",
 	}
-	// parts are pinned inside a line, because they are options of the one
-	// quoted value of wsrep_provider_options: the replication between the
-	// nodes is checked against the same CA.
-	parts := []string{
-		"wsrep_provider_options=",
+	// wantOptions is the whole quoted value of wsrep_provider_options, in
+	// order and with nothing else in it: the replication between the nodes is
+	// checked against the same CA.
+	wantOptions := []string{
 		"socket.ssl_ca=/etc/ngc/db-tls/ca.crt",
 		"socket.ssl_cert=/etc/ngc/db-tls/node.crt",
 		"socket.ssl_key=/etc/ngc/db-tls/node.key",
@@ -118,10 +121,37 @@ func TestGaleraTemplate(t *testing.T) {
 	if backup != 3 {
 		t.Errorf("[mariabackup] carries %d of the three ssl_* lines", backup)
 	}
-	for _, part := range parts {
-		if !strings.Contains(text, part) {
-			t.Errorf("the option %q is missing", part)
+	// The options of wsrep_provider_options are read out of THAT line and
+	// compared as a set, not searched for in the whole text.
+	//
+	// Why: searching the text said nothing about where an option stands, and
+	// nothing at all about what else stands beside it. The same shape cost
+	// three cases of the container hardening their eyes (point 51): they read
+	// a mount spec as one string and asked HasSuffix(":rw"), and once
+	// ",nosuid,nodev" was appended they found no writable mount any more and
+	// stayed green. Here it would be worse than blind: the options are joined
+	// with ";" and MariaDB takes the LAST of a repeated one, so appending
+	// ";socket.ssl_ca=/tmp/anything.crt" swaps the CA of the replication while
+	// every Contains above still finds the right line somewhere in the file.
+	optLine := ""
+	for _, l := range lines {
+		if strings.HasPrefix(l, wsrepOptions) {
+			if optLine != "" {
+				t.Fatalf("galera.cnf carries %s twice; the last one would win", wsrepOptions)
+			}
+			optLine = l
 		}
+	}
+	if optLine == "" {
+		t.Fatalf("galera.cnf carries no %s line, so this case measures an earlier wall", wsrepOptions)
+	}
+	quoted := strings.TrimPrefix(optLine, wsrepOptions)
+	if len(quoted) < 2 || quoted[0] != '"' || quoted[len(quoted)-1] != '"' {
+		t.Fatalf("the value of %s is not one quoted string: %q", wsrepOptions, quoted)
+	}
+	got := strings.Split(quoted[1:len(quoted)-1], ";")
+	if !slices.Equal(got, wantOptions) {
+		t.Errorf("%s carries %v, want exactly %v", wsrepOptions, got, wantOptions)
 	}
 	for _, forbidden := range []string{
 		"skip-ssl", "ssl=0", "require_secure_transport=OFF", "wsrep_on=OFF",
@@ -150,7 +180,8 @@ func TestGaleraTemplate(t *testing.T) {
 		if slices.Contains(wholeLines, l) {
 			continue
 		}
-		if strings.HasPrefix(l, "wsrep_provider_options=") {
+		// Pinned above as a set of options, not as a whole line.
+		if strings.HasPrefix(l, wsrepOptions) {
 			continue
 		}
 		t.Errorf("line %d of galera.cnf is not pinned by this test: %q", i+1, l)
