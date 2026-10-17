@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -946,4 +947,102 @@ func timedFinish(t *testing.T, h *Handler, what string, body []byte) time.Durati
 		t.Fatalf("%d requests for %s took %v: the clock did not see them", timedRuns, what, d)
 	}
 	return d / timedRuns
+}
+
+// TestFinishLetsNoMoreThroughAtOnceThanOneAfterTheOther: the counting of
+// classes/lock gives the first freeCount failures free and then lays a wait, so
+// a run of wrong proofs is answered 401 a fixed number of times and 429 after
+// that. That number must not depend on how many of them are in flight at the
+// same moment.
+//
+// It did. Measured on the running installation on 17.10.2026 against a real
+// ngc-api on Debian 13: one after the other 3 attempts were answered 401 and
+// the rest 429, while 20 at once were answered 401 between 7 and 14 times in
+// eight runs of 20 - so the free attempts an installation hands out grew with
+// the attacker's concurrency instead of standing at freeCount.
+//
+// The number this is held against is MEASURED in the same test, not written
+// down here: the serial run on its own fixture says how many may get through,
+// and the burst must not beat it. A number in this file would be a second copy
+// of freeCount and would stop saying anything the day that constant moves.
+func TestFinishLetsNoMoreThroughAtOnceThanOneAfterTheOther(t *testing.T) {
+	const tries = 20
+	// through runs tries wrong proofs against a fresh installation and returns
+	// how many of them were answered 401, that is: how many were really
+	// weighed. atOnce decides whether they are in flight together.
+	through := func(t *testing.T, atOnce bool) int {
+		t.Helper()
+		h, fx := newFixture(t)
+		c := start(t, h, fx.PasswordName)
+		c.Nonce = madeUpNonce
+		body := string(finishBody(t, fx, fx.Password, c, ""))
+		codes := make([]int, tries)
+		if atOnce {
+			// A start barrier, because the window is the stretch between the
+			// read of the wait and the write of the count, and that is tens of
+			// microseconds wide: goroutines started one by one are through it
+			// before the next one begins, and the burst would measure nothing.
+			// They are all parked on one channel and let go at once.
+			var wg, ready sync.WaitGroup
+			start := make(chan struct{})
+			wg.Add(tries)
+			ready.Add(tries)
+			for i := range tries {
+				go func() {
+					defer wg.Done()
+					ready.Done()
+					<-start
+					w := httptest.NewRecorder()
+					h.Finish(w, jsonPost(session.PathLoginFinish, body))
+					codes[i] = w.Code
+				}()
+			}
+			ready.Wait()
+			close(start)
+			wg.Wait()
+		} else {
+			for i := range tries {
+				w := httptest.NewRecorder()
+				h.Finish(w, jsonPost(session.PathLoginFinish, body))
+				codes[i] = w.Code
+			}
+		}
+		n := 0
+		for i, code := range codes {
+			switch code {
+			case 401:
+				n++
+			case 429:
+			default:
+				// Anything else is an earlier wall, and then this test is
+				// measuring that one instead of the counting.
+				t.Fatalf("atOnce=%v: attempt %d answered %d, which is neither a weighed login nor a wait",
+					atOnce, i, code)
+			}
+		}
+		return n
+	}
+	serial := through(t, false)
+	// Without this the test would pass on an installation that answers 429 to
+	// everything, where both numbers are 0 and nothing was ever weighed.
+	if serial < 1 || serial >= tries {
+		t.Fatalf("one after the other %d of %d were weighed; that is no counting to hold a burst against", serial, tries)
+	}
+	// A race shows itself in the worst of several runs, not in one. The rate
+	// belongs in the message, so whoever reads a failure knows how often it
+	// was seen and does not take one run for the whole truth.
+	burst, hits := 0, 0
+	const rounds = 10
+	for range rounds {
+		if n := through(t, true); n > burst {
+			burst = n
+		}
+		if burst > serial {
+			hits++
+		}
+	}
+	if burst > serial {
+		t.Errorf("%d of %d wrong proofs were weighed when they came at once, but only %d when they came one after the other (%d of %d rounds over the serial number): the free attempts grow with concurrency",
+			burst, tries, serial, hits, rounds)
+	}
 }
