@@ -16,7 +16,7 @@
 // ngc.open("terminal", "shell", {cols, rows}), and a reader takes that for the
 // way the size travels. It is not. This program reads NO parameters: the size
 // comes in a resize frame and nowhere else (ParseFrame, pumpIn), and shellEnv
-// below builds the environment of the shell out of four fixed lines, so
+// below builds the environment of the shell out of five fixed lines, so
 // NGC_PARAMS reaches neither the shell nor the pseudo terminal.
 //
 // It stays that way on purpose, and the reason is measured on the other side:
@@ -253,7 +253,7 @@ func EncodeOutput(b []byte) []byte {
 }
 
 // shellEnv is the whole environment of the shell. It is built from nothing but
-// these four lines and HOME, so NGC_PARAMS - which carries whatever the user
+// these five lines and HOME, so NGC_PARAMS - which carries whatever the user
 // typed into the app - cannot travel on: a shell that had it would put it in
 // front of the next person who reads the process list. This is also the second
 // half of "the parameters are decoration" (see the head of this file): there is
@@ -273,6 +273,23 @@ func shellEnv() []string {
 		"HOME=" + home,
 		"PATH=" + service.Path,
 		"LANG=C.UTF-8",
+		// The empty HISTFILE is the bolt of the one disk a typed secret can
+		// reach: the root filesystem of the container is read only and /data
+		// is the only writable mount, so HOME above is the encrypted app
+		// data. A shell of the bash family would create HOME/.bash_history
+		// there and write every typed line into it - a "mysql -p<secret>"
+		// would outlive the tab. Empty, bash writes NO file; it is not
+		// cleaned up afterwards, it never comes into being
+		// (TestShellEnvWritesNoHistory). The image's shell is /bin/sh, which
+		// is dash and keeps no history either way, so this line holds for the
+		// day that symlink is something else.
+		//
+		// What it does NOT reach is named instead of hidden: a program the
+		// user starts in the shell keeps its own history in HOME the same way
+		// (.mysql_history, .psql_history, .lesshst, .viminfo). Keeping those
+		// out needs a HOME that is not the persistent mount, which is a tmpfs
+		// for the container and lives in package runtime, not here.
+		"HISTFILE=",
 	}
 }
 

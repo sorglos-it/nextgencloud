@@ -2340,3 +2340,104 @@ Anlage für neu.
 
 **Noch offen:** ob mit gekoppeltem Controller nun wirklich **Apps laufen** (Container, Terminal) —
 das ist der nächste Messpunkt und bisher nur insoweit belegt, als der Tunnel steht.
+
+## Punkt 62: Die Probe aufs Exempel — die Anlage entsteht allein aus den Skripten, mit vier Befunden
+
+**Gemessen am 17.10.2026** in einer **frisch angelegten** Debian-13-Umgebung, nicht in der
+gewachsenen Testanlage: WSL-Instanz `ngcfrisch` (`wsl --install Debian --name ngcfrisch`,
+Debian 13 trixie, systemd läuft), und darin ein **eigener Container** aus `debian:trixie` mit
+systemd und eigenem Netz (10.88.0.3). Vorher gemessen, dass dort **nichts** von NGC liegt:
+`/etc/ngc`, `/var/lib/ngc`, `/usr/lib/ngc` fehlen alle drei, kein Port belegt, von den Werkzeugen
+nur `openssl` da.
+
+**Warum ein Container und nicht die neue WSL-Instanz allein, und es ist ein Befund über die
+Umgebung:** **alle WSL-Instanzen dieses Rechners teilen einen Netzwerk-Namensraum.** Gemessen:
+`hostname -I` gibt in der alten und in der neuen Instanz dieselbe Adresse (172.19.199.47), und
+`ngc-api` der neuen Instanz starb 15-mal mit
+`listen tcp :7443: bind: address already in use`, obwohl in ihr **kein** `ngc-api`-Prozess lief
+(`ps` leer, `MainPID=0`). Es war die alte Anlage. Dieselbe Ursache hat auch den Fingerabdruck
+verdorben: `ngc-web` brach richtig ab mit „The fingerprint of https://ngc.test:7443 does not
+match" — es hatte die **fremde** API gemessen. **Zwei NGC-Anlagen können auf einem WSL-Rechner
+nicht nebeneinander laufen**, weil der Port der Vertrag ist (`config.APIPort`, in `ngc-all.sh:139`
+als Konstante). Der Container hat sein eigenes Netz und darum keine dieser Erscheinungen.
+
+### Das Ergebnis: die Anlage entsteht aus den Skripten
+
+Alles aus `ulh`-Zweig `ngc-kette` (`223baac`), die Programme aus `nextgencloud`-`origin/main`
+(`8624a62`, `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`), das Release mit einem **Testschlüssel**
+unterschrieben (Kennung `QPGNzMY0a-wyp9ij7d-yGQ` — ein Testschlüssel, kein Schlüssel von NGC),
+dreimal `release ok`.
+
+| Schritt | Ergebnis |
+|---|---|
+| `ngc-all.sh install` | **RC=0**, `ngc-api.service` **active**, **NRestarts=0**, Port 7443 belegt |
+| `ngc-web.sh install` | **RC=0**, Apache **active**, Seite **200** |
+| Einrichtung im Browser | Einmal-Code → Schritt 2 mit Kennung, Adresse, Fingerabdruck → **Schreibtisch**; `ngc_session` **httpOnly** und **secure** |
+| Kopplungscode holen | *Benutzer & Rechte* → Reiter **Server** → **„Kopplungscode zeigen"** → `ngc-pair:…` |
+| `ngc-all.sh configure` mit dem Code | **RC=0**, `controller.json` und `trust-anchor.json` geschrieben, `ngc-controller.service` **active**, **NRestarts=0** |
+
+**Die vier Zahlen, in einem Lauf gemessen (19:15:16 UTC):** Seite `http=200`,
+`/api/v1/setup` durch Apache `http=404` (richtig: der Einmal-Code ist nach der Einrichtung
+verbraucht — **vor** der Einrichtung war dieselbe Adresse `200`), `ngc-controller.service`
+**active**, `/etc/ngc/trust-anchor.json` Modus **644**.
+
+### Befund 1: `apps/web` liegt nicht auf `main` — aus `origin/main` allein gibt es kein Release
+
+Gezählt je Zweig, nicht im Arbeitsbaum: `git ls-tree -r --name-only origin/main -- apps/web`
+ergibt **2** Dateien (`CLAUDE.md`, `VERSION`), `origin/web` **128**. Und
+`git merge-base --is-ancestor origin/web origin/main` sagt **nein**. Die Oberfläche, die
+`ngc-web-all.tar` trägt, ist also auf dem Hauptzweig **nicht vorhanden**; ich habe sie aus
+`origin/web` (`e86a1a6`) genommen und sage das bei jeder Zahl dazu. **Wer nur `main` klont, kann
+das Release nicht bauen** — und ein Nutzer, der `ngc-web` ausführt, bekommt kein Archiv.
+
+### Befund 2 (blockierend): für einen Testschlüssel gibt es keinen Weg außer der Dateiänderung
+
+Der öffentliche Release-Schlüssel steht **fest im Skript**: `ngc-all.sh:168–170`, ebenso
+`ngc-web.sh:105–107`, `ngc-api.sh` und `ngc-controller.sh`. Es ist eine nackte Zuweisung ohne
+Rückfall auf die Umgebung — anders als die Adresse daneben
+(`NGC_RELEASE_BASE="${NGC_RELEASE_BASE:-…}"`, `ngc-all.sh:161`). **Eine Installation mit einem
+eigenen Schlüssel ist darum nur mit einem `sed` in vier Skripten zu machen**, und genau das war
+der einzige Handgriff dieses Durchlaufs. Er ist nach der Messung **zurückgenommen**, und der
+Testschlüssel ist in **kein** Repo gekommen.
+
+**Was fehlt:** ein Weg, den Schlüssel von außen zu setzen, der im Betrieb nicht aufgeht. Zwei
+Formen sind denkbar und beide klein: ein `NGC_RELEASE_KEY_FILE`, das nur gelesen wird, wenn es
+gesetzt **und** die Datei root gehört; oder ein ausdrückliches `ngc-all.sh test-key <Datei>`, das
+sagt, dass es eine Probe ist. Ohne das eine oder andere kann **niemand** die Kette prüfen, ohne
+die Skripte zu verbiegen — und wer sie verbiegt, prüft nicht mehr die Skripte.
+
+### Befund 3: `/var/lib/ngc/staged` muss der Betreiber selbst anlegen
+
+`fetch_release` nimmt den Ordner, sobald `release.json` darin liegt, und die Fehlermeldung nennt
+ihn auch („put release.json and the files … into `${NGC_STAGE}` by hand"). **Nur legt kein Skript
+ihn an**, solange `install_release` noch nicht gelaufen ist: `mkdir -p /var/lib/ngc/staged` war
+mein zweiter Griff, und ohne Internet ist dieser Weg laut Skript „the only way that works".
+`ngc-all.sh:132` nennt den Pfad. **Was fehlt:** die Meldung sollte den `mkdir` mitnennen, oder
+`install_release` legt den Ordner vor dem ersten Versuch an.
+
+### Befund 4: `ReadWritePaths` nennt `/etc/ngc` nicht — bestätigt an einer frischen Anlage
+
+`ngc-all.sh:1322` und `ngc-api.sh:1065` schreiben
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`, **nicht**
+`/etc/ngc`. In der Einheit der frischen Anlage steht es wörtlich so. Die API muss aber
+`/etc/ngc/trust-anchor.json` hochziehen, wenn die Vertrauensliste wächst; eine Schwestersitzung
+hat am 17.10.2026 an der alten Anlage genau dort
+`the trust anchor outside the database could not be moved up` gemessen und es mit einem
+systemd-Zusatz (`ReadWritePaths=/etc/ngc`) behoben. **Hier ist belegt, dass der Mangel in der
+frischen Anlage ebenso entsteht** — die Erscheinung selbst ist in diesem Durchlauf nicht
+abgewartet (der Anker stand bei `seq: 1`, die Minutenwarnung
+`trust list could not be read … no trust list yet` hörte nach dem Aufnehmen des Servers auf).
+
+### Was ungemessen bleibt
+
+- **Ob Apps laufen** (Container, Terminal) — unverändert offen aus Punkt 61.
+- **Das Aufnehmen des Servers in der Oberfläche:** der Knopf **„Aufnehmen"** ist geklickt und die
+  Minutenwarnung der API hörte danach auf, aber die Liste „Wartende Server" zeigte den Eintrag
+  weiter, und der Anker blieb bei `seq: 1`. **Ob das ein Ausbleiben der Auffrischung oder ein
+  halber Vorgang ist, ist nicht gemessen.**
+- **Ein Nutzer mit `letsencrypt`**: gemessen wurde mit selbst unterschriebenem Zertifikat und
+  einem Browser, der es für diesen Lauf annimmt (`ignoreHTTPSErrors`,
+  `--host-resolver-rules`) — die Hosts-Datei des Rechners blieb unberührt.
+- **Der echte Release-Schlüssel von NGC**: alle Zahlen hier gelten für einen **Testschlüssel**.
+- **Die Zahlen gelten für diesen Ort:** Debian 13 in einem podman-Container in einer
+  WSL2-Instanz, ext4, `TMPDIR` auf `/var/tmp`. Nicht für C:, nicht für Z:, nicht für Blech.

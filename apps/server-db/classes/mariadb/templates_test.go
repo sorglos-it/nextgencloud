@@ -81,7 +81,7 @@ func TestGaleraTemplate(t *testing.T) {
 		"socket.ssl_ca=/etc/ngc/db-tls/ca.crt",
 		"socket.ssl_cert=/etc/ngc/db-tls/node.crt",
 		"socket.ssl_key=/etc/ngc/db-tls/node.key",
-		"socket.ssl_cipher=TLS_AES_256_GCM_SHA384",
+		"socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384",
 	}
 
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
@@ -185,5 +185,56 @@ func TestGaleraTemplate(t *testing.T) {
 			continue
 		}
 		t.Errorf("line %d of galera.cnf is not pinned by this test: %q", i+1, l)
+	}
+}
+
+// TestTheClusterCipherIsATLS12ListAndNotASuite is the case the byte-wise
+// comparison above cannot be: that one holds the template against its own
+// expectation, so moving a wrong value in both places keeps it green - the
+// same gap Punkt 56 found in the Apache template. This one knows something the
+// template does not say about itself.
+//
+// socket.ssl_cipher of Galera reaches SSL_CTX_set_cipher_list. That function
+// knows TLS 1.2 cipher names only; the TLS 1.3 suites have their own list and
+// their own setter, which Galera 26.4.23 does not offer. A TLS 1.3 name here
+// therefore restricts nothing and aborts the server at startup - measured on
+// Debian 13 on 17.10.2026 as "Error setting SSL cipher list to
+// 'TLS_AES_256_GCM_SHA384': 'no cipher match'", upon which the wsrep provider
+// and mariadbd fall.
+//
+// Two things are asserted, because dropping the option would pass the first
+// alone: the value is a TLS 1.2 name, and it still names AES-256-GCM, which is
+// the one suite Entwurf 4.5 allows. Measured against a running cluster, that
+// list refuses a TLS 1.2 peer offering AES-128-GCM or a CBC suite, and without
+// it both get through.
+func TestTheClusterCipherIsATLS12ListAndNotASuite(t *testing.T) {
+	body, err := os.ReadFile("../../templates/galera.cnf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	const key = "socket.ssl_cipher="
+	i := strings.Index(text, key)
+	if i < 0 {
+		t.Fatalf("the template names no %s at all", key)
+	}
+	rest := text[i+len(key):]
+	value := rest
+	if k := strings.IndexAny(rest, "\";\n\r"); k >= 0 {
+		value = rest[:k]
+	}
+	if value == "" {
+		t.Fatalf("%s has no value", key)
+	}
+	// TLS_* is the naming of the TLS 1.3 suites, and that is the whole bug.
+	if strings.HasPrefix(value, "TLS_") {
+		t.Errorf("socket.ssl_cipher is %q, a TLS 1.3 suite: Galera passes this "+
+			"to SSL_CTX_set_cipher_list, which knows TLS 1.2 names only, and the "+
+			"server aborts with \"no cipher match\"", value)
+	}
+	// And the pin has to stay a pin.
+	if !strings.Contains(value, "AES256-GCM") {
+		t.Errorf("socket.ssl_cipher is %q and does not name AES-256-GCM, the one "+
+			"suite Entwurf 4.5 allows", value)
 	}
 }
