@@ -94,6 +94,17 @@ ist keine Frage des Linters.
 
 ## Die Naht `dbopen.RegisterMigrator`
 
+> **Berichtigung vom 17.10.2026: diese Naht ist bedient, der ganze Abschnitt
+> beschreibt den Stand vom 12.10.2026.** Gemessen auf `origin/main`:
+> `apps/server-db/classes/register/register.go` meldet in `init` alle drei an
+> (`dbopen.Register`, `dbopen.RegisterMigrator`, `dbopen.RegisterBackuper`,
+> Zeilen 44–46), und `apps/server-api/main.go:39` bindet das Paket als leeren
+> Import ein. Der Paketkopf von `register.go` nennt diese Datei hier als Anlass.
+> **Also fällt der Satz „`ngc-api` kann heute nicht einmal starten" weg** —
+> `ngc-api` läuft seit dem 17.10.2026 als Dienst auf Debian, `active` mit
+> `NRestarts=0` (Punkte 56, 57, 62). Der Umsetzer, der unten als nötig genannt
+> ist, steckt in `register.go`.
+
 **Wer müsste sich anmelden: `apps/server-db`. GEMESSEN** aus dem Paketkopf von
 `dbopen/migrate.go` („apps/server-db implements it … and registers it here,
 exactly as it registers its Opener").
@@ -117,8 +128,12 @@ nicht. `migraterun.Run(ctx, cfg, owner string, now int64) (int, error)` gegen
 kleinen Umsetzer, der `owner` und `now` beschafft und die Zahl nach `out`
 schreibt.
 
-**Programmgröße: nicht gemessen.** Kein Programm dieses Repos ist je gebaut
-worden (STAND.md). Als Anhaltspunkt, ausdrücklich **kein** Binärmaß:
+**Programmgröße: nicht gemessen.** (Stand 12.10.2026 stand hier „Kein Programm
+dieses Repos ist je gebaut worden (STAND.md)". **Das gilt seit dem 17.10.2026
+nicht mehr:** alle drei Programme sind für Linux gebaut und gelaufen, `ngc-api`
+und `ngc-controller` als Dienste auf Debian 13 — Punkte 56, 57, 62. Gemessen ist
+die Programmgröße trotzdem nicht.) Als Anhaltspunkt, ausdrücklich **kein**
+Binärmaß:
 `vendor/github.com/ncruces/go-sqlite3` 556 KiB, `go-sql-driver/mysql` 296 KiB,
 `go-sqlite3-wasm/v6/sqlite3.dat` 103 092 Byte Quelle.
 
@@ -128,7 +143,9 @@ worden (STAND.md). Als Anhaltspunkt, ausdrücklich **kein** Binärmaß:
 
 **Dafür ist da. GEMESSEN:**
 
-- `ngc-api migrate` ist gebaut: `main.go`, `subcommand`, `migrate()`. Der
+- `ngc-api migrate` ist gebaut: `main.go`, `subcommand`, `migrate()` (am
+  17.10.2026 nachgesehen: `main.go:81` wählt den Unterbefehl, `:175` ist die
+  Funktion, `:180` ruft `dbopen.Migrate`). Der
   Unterbefehl wird sogar vor der Falle geschützt, dass `flag` beim ersten
   Nicht-Flag stehenbleibt und `-config` verliert.
 - Die Datei liegt bereit: `/var/lib/ngc/staged/ngc-api`, geschrieben von
@@ -142,7 +159,9 @@ worden (STAND.md). Als Anhaltspunkt, ausdrücklich **kein** Binärmaß:
 **Was fehlt — drei Dinge, alle gemessen:**
 
 1. **Die bereitgelegte Datei ist `0600` und damit nicht ausführbar.**
-   `stage.go:508–513` setzt den Modus ausdrücklich, mit Begründung;
+   `stage.go` setzt den Modus ausdrücklich, mit Begründung (am 17.10.2026
+   `:519–524`, am 12.10.2026 `:508–513` — eine Zeilennummer ist keine
+   Quellenangabe);
    `install.go` `copyInto` setzt `0755` erst beim Einbauen. Ein `exec` auf die
    Stage-Datei scheitert. (Nebenbefund derselben Stelle: **beide** Modi sind
    laut ihren eigenen Kommentaren von keinem Fall gedeckt.)
@@ -266,8 +285,10 @@ keinen Läufer. Richtig, und von dieser Messung gestützt.
 
 ## Was in dieser Messung NICHT gemessen ist
 
-- **Nichts ist gelaufen.** Kein Programm dieses Repos wurde je gebaut
-  (STAND.md). Alles oben ist am Quelltext gelesen, nicht am Verhalten.
+- **Nichts ist gelaufen** — so galt es am 12.10.2026, und alles oben ist am
+  Quelltext gelesen, nicht am Verhalten. **Überholt seit dem 17.10.2026:** die
+  Programme sind gebaut und laufen als Dienste (Punkte 56, 57, 62). Der
+  *Migrationsweg* selbst ist damit aber weiter nicht gemessen.
 - **Programmgrößen.** Nur Quellgrößen als Anhaltspunkt.
 - **Ob eine neue nullable Spalte der alten API wehtun kann.** Der Linter deckt
   die Form, nicht die Bedeutung.
