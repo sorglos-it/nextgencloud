@@ -1,9 +1,9 @@
 package classes
 
 import (
-	"encoding/json"
 	"archive/tar"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -279,13 +279,21 @@ func TestCheckNamesTheValidParts(t *testing.T) {
 // TestReleaseNamesTheShapeOfAVersion is the assertion for the second
 // afternoon: "release -version 0.0.1.0" answered "store: invalid release",
 // the contract's one sentinel for every defect of a release, and the
-// four-digit number is this house's own numbering, so it keeps arriving.
+// four-digit number was this house's own numbering, so it kept arriving.
 // The rule is still the contract's (store.ValidVersion); only the sentence
 // is ours.
+//
+// "0.0.1.0" LEFT this list on 17.10.2026: Thomas decided that the contract
+// learns the fourth place instead of the release tool folding it away, and it
+// did (shared/store/manifest.go:224; the order between the two spellings is
+// held by store.TestAFourPlaceNumberSortsAgainstAThreePlaceOne). A fifth
+// place and a leading zero in the fourth took its seat, so this list still
+// refuses a number of four-place shape and the case did not merely get
+// weaker.
 func TestReleaseNamesTheShapeOfAVersion(t *testing.T) {
 	t.Parallel()
 	f := newReleaseFixture(t, "ngc-web-all")
-	for _, v := range []string{"0.0.1.0", "1.1", "01.1.0", "", "v1.1.0"} {
+	for _, v := range []string{"0.0.1.0.0", "0.0.1.01", "1.1", "01.1.0", "", "v1.1.0"} {
 		opts := releaseOpts(1, "")
 		opts.Version = v
 		_, err := Release(f.dir, f.keyFile, opts)
@@ -306,7 +314,7 @@ func TestReleaseNamesTheShapeOfAVersion(t *testing.T) {
 // releaseParts.
 func TestNoReleaseFileNamesTheNames(t *testing.T) {
 	t.Parallel()
-	f := newReleaseFixture(t, "ngc-web")   // one dash short of ngc-web-all.tar
+	f := newReleaseFixture(t, "ngc-web") // one dash short of ngc-web-all.tar
 	_, err := Release(f.dir, f.keyFile, releaseOpts(1, ""))
 	if !errors.Is(err, ErrNoReleaseFile) {
 		t.Fatalf("%v, want ErrNoReleaseFile", err)

@@ -2,7 +2,9 @@
 
 Dieses Blatt gehört zu Aufgabe 25 des Controller-Plans
 (`docs/superpowers/plans/2026-09-23-ngc-plan-3-controller.md`, ab Zeile 2733) und ist die
-letzte Aufgabe des Pakets. Vorbild ist `docs/recovery-abnahme.md` des Recovery-Pakets.
+letzte Aufgabe des Pakets. Vorbild ist `docs/recovery-abnahme.md` des Recovery-Pakets —
+**die Datei liegt auf den Zweigen `recovery` und `recovery-integration`, nicht auf `main`**
+(nachgezählt am 17.10.2026 mit `git ls-tree -r --name-only <zweig>`).
 
 **Eine Zeile gilt erst als bestanden, wenn Ergebnis, Datum und Prüfer eingetragen sind.
 Prüfer ist immer ein Mensch.** Die Zeilen mit Zahlen daneben sind gemessen, aber nicht
@@ -156,8 +158,10 @@ und systemd; dieser Rechner ist Windows.
 
 Zu 8 ausdrücklich: **ein echter Durchlauf des Skripts ist nicht gemessen.** Was gemessen ist,
 sind seine Funktionen einzeln (90 Fälle) und dass es mit einer unbekannten Aktion mit Code 1
-antwortet. `install` braucht root, dpkg, systemd und ein Release von NGC, das es noch nicht
-gibt.
+antwortet. `install` braucht root, dpkg, systemd und ein Release von NGC. **Stand 12.10.2026: ein
+solches Release gab es nicht. Überholt seit dem 17.10.2026 (Punkte 56, 57, 62):** es gibt
+Releases, und `ngc-all.sh install` ist mit `RC=0` durchgelaufen — allerdings in der
+Zusammenfassung `ngc-all`, nicht mit `ngc-controller.sh install` allein.
 
 ## Die offenen Punkte, die beim Controller bleiben
 
@@ -165,8 +169,8 @@ Diese Liste ist der Teil dieses Blattes, nach dem der Nächste entscheidet, wo e
 mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
 
 1. **`serve.Deps.Updater` bleibt auf dem echten Server `nil`.** Die Verteilung
-   (`update.Manager`) ist gebaut und gemessen, **ihr Aufrufer fehlt**: `node/run.go:531` setzt
-   ausdrücklich `Updater: nil`. Jeder Install-Kanal endet damit `E_INTERNAL`. (Aufgaben 19/20
+   (`update.Manager`) ist gebaut und gemessen, **ihr Aufrufer fehlt**: `node/run.go` setzt
+   ausdrücklich `Updater: nil` (am 17.10.2026 Zeile 587, am 12.10.2026 Zeile 531). Jeder Install-Kanal endet damit `E_INTERNAL`. (Aufgaben 19/20
    und 24.) **Gemessen am 12.10.2026, und es ist schärfer als „ein Feld ist nicht gesetzt":**
    `grep -rn 'update\.New\|install\.New\|install\.Deps' apps/ --include=*.go | grep -v _test.go`
    → **0**. Kein Programm baut je einen `update.Manager` oder `install.Manager` — es gibt also
@@ -174,7 +178,13 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
    `update.Deps` nimmt die Vertrauensliste als **Wert**, während `chain.Keeper` sie unter dem
    Programm austauscht.
 2. **`ngc-api migrate` fehlt als Aufruf** (Punkt 28 der Verträge). Der Controller startet die
-   Migrationen als Programm — nur gibt es den Unterbefehl noch nicht. `openState` migriert
+   Migrationen als Programm — nur ruft ihn niemand.
+   **Berichtigt am 17.10.2026:** hier stand „nur gibt es den Unterbefehl noch nicht". Den
+   Unterbefehl gibt es: `apps/server-api/main.go:81` wählt `migrate`, `:175` ist die Funktion,
+   `:180` ruft `dbopen.Migrate`, und `apps/server-db/classes/register/register.go` meldet den
+   Migrator an. Offen bleibt, **wer ihn fährt** — und die Blockade aus
+   `docs/migrationen-wer-spielt-sie-ein.md`: `ngc-api migrate` verlangt eine vollständige
+   `api.json`, die ein reiner db-Knoten nicht hat. `openState` migriert
    allein das **eigene** Schema. Ein `migrate.go` im Controller gibt es bewusst nicht: ein
    Gerüst sähe aus wie eine Zusage. **Dazu gemessen am 12.10.2026:**
    `config.Controller.Migrate` liest **kein Programm** —
@@ -195,8 +205,8 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
    **kein `E_LICENSE` verlässt dieses Paket**: ein App-Kanal läuft heute auch für eine App,
    deren Lizenz abgelaufen ist. **Nachgemessen am 12.10.2026:**
    `grep -rn 'license.Allowed' apps/ --include=*.go | grep -v _test.go` → **ein** Aufruf im
-   Produktionscode, `node/run.go:506`; die Stelle in `serve/app.go:217-221` ist ein
-   **Kommentar**. Und `grep -rn 'CodeLicense\|E_LICENSE' apps/server-controller/` → **7**
+   Produktionscode, `node/run.go` (am 17.10.2026 Zeile 543, am 12.10.2026 Zeile 506); die
+   Stelle in `serve/app.go` (am 17.10.2026 Zeilen 219–221) ist ein **Kommentar**. Und `grep -rn 'CodeLicense\|E_LICENSE' apps/server-controller/` → **7**
    Treffer, **alle** in Kommentaren oder in `CLAUDE.md`, **keiner** im Code. `serve.Deps` um Liste und Installation zu erweitern ist der
    Eingriff, der dafür fehlt. (Aufgabe 18, Abweichung 5.)
 6. **Das Einrichten einer App-Aktualisierung IST gebaut und verdrahtet — und von keinem
@@ -226,8 +236,13 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
    (podman, Systembenutzer, POSIX-Shell, `/dev/ptmx`, Rechte, Plattenplatz). Sie sind kein Grün.
 10. **Der Balancer-Block** (`/etc/ngc/apache-apis.conf`) steht seit 12.10.2026 in
    `shared/ulh.md` und wird von `TestBalancerTemplateMatchesTheContract` byteweise gehalten —
-   **gemessen gegen die Vorlage, nicht gegen ein laufendes Apache.** `apachectl configtest` ist
-   nie gelaufen. **Hier stand bis zum 12.10.2026 „die Apache-Vorlage"**, und das kann jemanden
+   **gemessen gegen die Vorlage, nicht gegen ein laufendes Apache.** `apachectl configtest` war
+   am 12.10.2026 nie gelaufen. **Überholt am 16./17.10.2026 (Punkt 56, Befund 2):** es ist
+   gelaufen, und es hat die Vorlage **abgewiesen** — `upgrade=websocket` stand am `ProxyPass`
+   eines `balancer://`-Ziels statt am `BalancerMember`
+   (`AH00526: ProxyPass unknown Balancer parameter`). Behoben; die Vorlage trägt den Parameter
+   heute in Zeile 14 am `BalancerMember`, Zeile 19 ist das nackte `ProxyPass`, und
+   `apachectl configtest` sagt `Syntax OK`. **Hier stand bis zum 12.10.2026 „die Apache-Vorlage"**, und das kann jemanden
    glauben lassen, der virtuelle Host sei hier geprüft. Gemessen:
    `grep -c 'VirtualHost\|apache-vhost' shared/ulh.md` → **0**,
    `grep -c 'apache-apis' shared/ulh.md` → **2**. Die Vorlage des Auslieferungsweges
@@ -299,7 +314,15 @@ mehr sucht. Jeder Punkt kommt aus dem Bericht der Aufgabe, die ihn gemessen hat.
     Auslieferungsweg noch von niemandem übernommen.
 
 16. **Zu entscheiden (Lieferkette, Vertragspunkt 39): der `Containerfile` der Terminal-App nagelt
-    seine Basis NICHT fest — und dieser Container läuft als `root`.** Keine Entscheidung dieses
+    seine Basis NICHT fest — und dieser Container läuft als `root`.**
+
+    > **Berichtigung vom 17.10.2026: die Hälfte davon ist erledigt.** Auf `origin/main` steht
+    > `FROM docker.io/library/debian:13-slim@sha256:a29215f6…` (Zeile 30), ein Digest also, und
+    > `apps/server-controller/classes/runtime/build.go:98` hält die Form mit
+    > `basePinned = ^FROM[ 	]+[^ 	@]+@sha256:[0-9a-f]{64}[ 	]*$`; dazu gibt es
+    > `tools/pin-base.sh`. Die Tabelle unten misst den Stand vom 12.10.2026.
+    > **Offen bleibt die Frage, die dieser Punkt stellt:** wer den Digest anhebt, wenn Debian
+    > einen Sicherheitsfix veröffentlicht — und dass die App `root` braucht. Keine Entscheidung dieses
     Blattes; sie gehört Thomas und zum Release-Weg. Hier steht sie, damit eine Abnahme sie nicht
     übergeht. Gemessen am 12.10.2026:
 

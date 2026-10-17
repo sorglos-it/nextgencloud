@@ -3,10 +3,12 @@ package coreapp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sync/atomic"
@@ -522,13 +524,16 @@ func TestALicenceThatIsNoEnvelopeIsAProtocolError(t *testing.T) {
 	}
 }
 
-// TestActivatingAnUploadedAppHandsOverNoFile nails the open seam of Punkt 30
-// where it shows: ngc.store/upload keeps only the ui-tar, and the shell sends
-// no DATA on a FlowTransfer channel it opened (core.Action.MaxIn), so nobody
-// holds the package of an uploaded app and ActivateRequest.File stays nil.
+// TestActivatingAnUploadedAppHandsOverNoFile holds what the HANDLER does, and
+// that has not changed and must not: the shell sends no DATA on a
+// FlowTransfer channel it opened (core.Action.MaxIn), so this handler passes
+// no file and ActivateRequest.File stays nil.
 //
-// It is here so that the day somebody decides where that file lies, a case
-// says what changed instead of nothing.
+// WHAT CHANGED on 17.10.2026 is behind it, not here: appstore keeps the
+// package at the upload and finds it by the checksum of the signed task
+// (appstore/hold.go), so an uploaded app can be activated now. A handler that
+// started passing a file would mean somebody moved that decision back out of
+// the package that owns the disk, and this case says so.
 func TestActivatingAnUploadedAppHandsOverNoFile(t *testing.T) {
 	fx := newStoreFixture(t)
 	fx.PutApp(t, appY, true)
@@ -721,21 +726,31 @@ func (onlineSender) Call(context.Context, string, string, json.RawMessage, *sign
 	return nil, wire.CodeInternal
 }
 
-// TestAnUploadedAppCannotBeActivatedThroughTheRealAppStore is Punkt 30 from end
-// to end, with the real appstore behind the handler instead of a fake: a shell
-// opens ngc.store/controller/activate for an app of core.LocalStore, the
-// controller is online, everything is signed -- and the channel ends with
-// E_UNREACHABLE, because nobody holds the uploaded package.
+// TestAnUploadedAppCannotBeActivatedThroughTheRealAppStore is Punkt 30 from
+// end to end, with the real appstore behind the handler instead of a fake,
+// and since 17.10.2026 it measures BOTH sides of it:
 //
-// The control is in front of it: with the SAME request out of a store of the
-// trust list the answer is a different one, so the E_UNREACHABLE is about the
-// missing file and not about a wall that stops every activation.
+//   - A package this server never got is still E_UNREACHABLE. That is not a
+//     leftover of the old state, it is the named limit of the hold: a server
+//     that keeps nothing, a package that aged out and an upload that went to
+//     another API server behind the same database all read alike
+//     (appstore/hold.go).
+//   - A package that WAS uploaded here gets past the missing file. What it
+//     runs into next is the checksum of the signed task, which this case does
+//     not know, so the answer is E_VERIFY -- a DIFFERENT code, and that is
+//     the whole point: the file was found and read, and the wall behind it is
+//     the one that compares bytes.
+//
+// The control is in front of both: with the SAME request out of a store of
+// the trust list the answer is a third code, so none of this is a wall that
+// stops every activation.
 func TestAnUploadedAppCannotBeActivatedThroughTheRealAppStore(t *testing.T) {
 	var real *appstore.Stores
 	fx := newFixtureWith(t, func(h *harness, d *Deps) {
 		real = appstore.New(h.S)
 		real.Send = onlineSender{}
 		real.Spool = t.TempDir()
+		real.Hold = t.TempDir()
 		d.Store = real
 	})
 	fx.PutApp(t, appY, true)
@@ -759,14 +774,63 @@ func TestAnUploadedAppCannotBeActivatedThroughTheRealAppStore(t *testing.T) {
 	if code := drive(0xE1, trust.StoreGlobal); code != wire.CodeNotFound {
 		t.Fatalf("a store app answered %q, not the E_NOTFOUND of a catalog that is not there", code)
 	}
+	// A package this server never got: still E_UNREACHABLE, and the hold is
+	// wired while it says so -- otherwise this would only measure that
+	// nothing was wired.
+	if real.Hold == "" {
+		t.Fatal("no hold is wired -- this case would measure the absence of a hold")
+	}
 	if code := drive(0xE2, core.LocalStore); code != wire.CodeUnreachable {
-		t.Fatalf("an uploaded app answered %q; if that is no longer E_UNREACHABLE, "+
-			"somebody decided where the file lies (Punkt 30)", code)
+		t.Fatalf("an app this server never got answered %q, want E_UNREACHABLE", code)
+	}
+	// Now the package IS here. It is put in through the real Upload and not
+	// written into the hold by hand: what has to hold is that the two halves
+	// of the contract agree, and a file this case placed itself would only
+	// measure its own idea of the name.
+	pkg := uploadedPackage(t, real)
+	sum := sha256.Sum256(pkg)
+	tk := rootTask(t, fx, 0xE3, core.ActActivate,
+		`{"app":"`+appY+`","version":"2.0.0","sha256":"`+enc.B64.EncodeToString(sum[:])+`","ui":"`+
+			b64of(32, 2)+`","store":"`+core.LocalStore+`"}`)
+	code := endOf(t, fx.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceController,
+		Action: core.ActActivate, Window: wire.MinWindow, Task: tk}))
+	// E_VERIFY and not E_UNREACHABLE: the file was found and read, and what
+	// refused it is the comparison against the checksum of the task -- which
+	// this case cannot satisfy, because the ui hash it signs is made up. A
+	// third code out of the same channel is what says the file arrived.
+	if code != wire.CodeVerify {
+		t.Fatalf("an uploaded app answered %q, want the E_VERIFY of a package that "+
+			"was read; E_UNREACHABLE would mean the hold did not find it", code)
 	}
 	// And nothing stayed behind in the spool.
 	if es, err := os.ReadDir(real.Spool); err != nil || len(es) != 0 {
 		t.Fatalf("the spool holds %d entries (%v)", len(es), err)
 	}
+	// The hold still has it: a package is kept for its retry and goes by age,
+	// not by the one activation that used it (appstore/hold.go).
+	if es, err := os.ReadDir(real.Hold); err != nil || len(es) != 1 {
+		t.Fatalf("the hold holds %d entries (%v), want the one package", len(es), err)
+	}
+}
+
+// uploadedPackage puts a package through the real Upload and answers its
+// bytes, so a case can sign the checksum the hold knows it under.
+func uploadedPackage(t *testing.T, st *appstore.Stores) []byte {
+	t.Helper()
+	pkg, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "shared", "testdata", "packui.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vs []struct {
+		Package enc.Bytes `json:"package"`
+	}
+	if err := json.Unmarshal(pkg, &vs); err != nil || len(vs) == 0 {
+		t.Fatalf("packui.json: %v (%d vectors)", err, len(vs))
+	}
+	if _, err := st.Upload(context.Background(), bytes.NewReader(vs[0].Package)); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	return vs[0].Package
 }
 
 // refusingStore answers every controller step with one code and no error,
