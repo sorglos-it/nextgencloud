@@ -676,6 +676,10 @@ class Users {
       body: [
         el("p", null, "Der Server wird in die Vertrauensliste dieser Anlage eingetragen. "
           + "Danach darf er Aufgaben dieser Anlage ausführen."),
+        // A right nobody was told about is a right nobody can weigh.
+        el("p", null, "Sie selbst dürfen auf diesem Server dann Aufgaben mit "
+          + "Systemrechten ausführen — Apps einrichten, entfernen und das Terminal öffnen. "
+          + "Andere Verwalter nicht."),
         el("p", null, "In der Liste heißt er: " + id),
         el("p", "fp mono", seen.fp),
         el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck auf dem Server steht."),
@@ -687,7 +691,30 @@ class Users {
           next.nodes.push({
             id, kind: trust.NODE_CONTROLLER, name: n.name, noise: n.key,
             sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
-            rootUsers: [], rootRoles: [],
+            // THE ADMIN WHO LISTS THE SERVER MAY RUN ROOT TASKS ON IT,
+            // and nobody else yet. Both lists were empty until
+            // 17.10.2026, and no surface of this interface ever set
+            // them, so trust.MayRoot answered false for every user on
+            // every server a person had just listed: activate,
+            // install, uninstall, delete-data and the terminal all came
+            // back E_FORBIDDEN. Measured on a running installation that
+            // day: the package was uploaded, the node was offered as
+            // "ngc-2", and activating it answered "Keine Berechtigung."
+            // The server stood in the list and could do nothing.
+            //
+            // ONE USER AND NOT A ROLE, and that is the decision. A role
+            // here would hand every present and FUTURE member of it
+            // root on this machine, including members added by someone
+            // else later; naming the one person who compared the
+            // fingerprint and signed the version grants exactly what
+            // this act is evidence of. The wider way stays open and is
+            // a change of the list like any other -- there is no way
+            // back out of a right nobody noticed being given.
+            //
+            // this.session.user is a non-empty string here:
+            // cannotChange() asks for it, and fillPending shows the
+            // button only where that answered "".
+            rootUsers: [this.session.user], rootRoles: [],
           });
         });
         Users.say(box, "Der Server »" + n.name + "« ist aufgenommen.");
@@ -719,6 +746,13 @@ class Users {
         await this.joinNode((next) => {
           next.nodes.push({
             id: n.node, kind: trust.NODE_API, name: n.node, noise: n.noise,
+            // BOTH STAY EMPTY HERE, and not by oversight: an API node may
+            // carry no root lists at all (Go: ValidAPINode asks for
+            // len(RootUsers)+len(RootRoles) == 0), and trust.MayRoot only
+            // ever looks at a node of kind controller. A version that
+            // named anybody here would be refused as invalid. The line
+            // above in askJoin is the one that grants, and the two must
+            // NOT be made to match.
             sign: n.sign, url: n.url, tls: n.tls, rootUsers: [], rootRoles: [],
           });
         });
