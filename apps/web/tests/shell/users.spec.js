@@ -76,6 +76,7 @@ export const DEFAULTS = {
   ],
   "ngc.users/log/3": [],
   "ngc.users/pair-code": null, // filled in by world(), it needs the version
+  "ngc.users/join-code": null, // the same, under the other prefix
   "ngc.users/set-rights": {},
   "ngc.users/trust": { seq: 2 },
 };
@@ -180,6 +181,16 @@ export async function world(cfg = {}) {
   if (answers["ngc.users/pair-code"] === null && version !== null) {
     answers["ngc.users/pair-code"] = {
       code: await pairCode(cfg.codeFor === "next" ? await nextVersion(version) : version),
+      expires: 1790086400,
+    };
+  }
+  // The join code of the same installation, and cfg.codeFor reaches it too:
+  // the two codes differ in their prefix and in nothing else, so one world
+  // measures both ways through showCode.
+  if (answers["ngc.users/join-code"] === null && version !== null) {
+    answers["ngc.users/join-code"] = {
+      code: await pairCode(cfg.codeFor === "next" ? await nextVersion(version) : version,
+        "ngc-join:"),
       expires: 1790086400,
     };
   }
@@ -876,6 +887,103 @@ test("a pairing code that fits no version of this installation is not shown", as
   expect(await app(page).locator(".paircode .code").count()).toBe(0);
   expect(await page.evaluate(() => window.__ngcHints)).toEqual([2]);
 });
+
+// MEASURED on 17.10.2026 against a running installation: a second machine
+// that asks for the name of a server ALREADY in the trust list is accepted by
+// the API, and its request overwrites the waiting one under that name
+// (join.keep stores by node id). The row then offered "Aufnehmen", and
+// pressing it read "Die Anlage antwortet gerade nicht." - while the error
+// really thrown was "Diese Änderung ergibt keine gültige Vertrauensliste."
+// (probe in the deployed copy). Nothing was unreachable and nothing was
+// signed; the trust list stayed at its version.
+test("a waiting API server whose name is already listed is not offered, and the row says why",
+  async ({ page }) => {
+    await mount(page, { answers: { "ngc.users/pending-api": [{
+      node: "api-1", // the API node the genesis of this installation carries
+      noise: "PFxs4t2Z4Q0sPeBddzqhXj5tlx7U5BOJyTtLvdoXchI",
+      sign: "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+      tls: "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+      url: "wss://api-1.test:7443/tunnel", since: 1790000000,
+    }] } });
+    await openTab(page, "Server");
+    const row = app(page).locator(".pendapi .row", { hasText: "api-1" });
+    await expect(row).toBeVisible();
+    await expect(row.locator(".note")).toHaveText(
+      "Dieser Name ist in dieser Anlage schon vergeben. "
+      + "Der Server muss unter einem anderen Namen beitreten.");
+    // No button at all: a button that cannot do its job is a promise the
+    // surface does not keep, and this one would end in a dialog that names a
+    // fingerprint and then fails for a reason it does not name.
+    expect(await row.locator("button").count()).toBe(0);
+  });
+
+test("a waiting API server with a free name is still offered", async ({ page }) => {
+  // The control beside the case above: the default answer names api-2, which
+  // stands in no version, and that row keeps its button.
+  await mount(page);
+  await openTab(page, "Server");
+  const row = app(page).locator(".pendapi .row", { hasText: "api-2" });
+  await expect(row.getByRole("button", { name: "Server api-2 aufnehmen" })).toBeVisible();
+  expect(await row.locator(".note").count()).toBe(0);
+});
+
+// A join code is what ngc-api.sh asks for in its answer join_code, and until
+// this there was no way in the interface to get one: ngc.users/join-code
+// stood in contracts/core.js and nothing called it, so a second API server
+// could not be set up at all. The cases below are the three of the pairing
+// code, under the other prefix.
+test("a join code is shown only when it fits the version the shell verified",
+  async ({ page }) => {
+    await mount(page);
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+    const code = app(page).locator(".joincode .code");
+    await expect(code).toContainText("ngc-join:");
+    // The action really asked for is join-code and not pair-code: a button
+    // wired to the neighbouring action would show a code that works and
+    // spend the wrong one-time value on the API.
+    expect(await page.evaluate(() => window.__ngcCalls.map((c) => c.name)))
+      .toContain("join-code");
+    expect(await page.evaluate(() => window.__ngcHints)).toEqual([]);
+  });
+
+test("a join code that names a newer version makes the shell fetch the chain first",
+  async ({ page }) => {
+    await mount(page, { codeFor: "next", apiAhead: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+    await expect(app(page).locator(".joincode .code")).toContainText("ngc-join:");
+    expect(await page.evaluate(() => window.__ngcHints)).toEqual([2]);
+  });
+
+test("a join code that fits no version of this installation is not shown", async ({ page }) => {
+  await mount(page, { codeFor: "next" });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+  await expect(app(page).locator(".joincode .note")).toHaveText(
+    "Dieser Code passt nicht zu dieser Anlage.");
+  expect(await app(page).locator(".joincode .code").count()).toBe(0);
+});
+
+test("the pairing button refuses a join code and the join button a pairing code",
+  async ({ page }) => {
+    // The one reading each button makes is the prefix of its own action. A
+    // crossed wiring is therefore not a cosmetic mistake: it would put a code
+    // on screen that the other script cannot use, after the API has already
+    // spent the one-time value behind it.
+    await mount(page, { answers: {
+      "ngc.users/pair-code": { code: "ngc-join:AAAA", expires: 1790086400 },
+      "ngc.users/join-code": { code: "ngc-pair:AAAA", expires: 1790086400 },
+    } });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Kopplungscode zeigen" }).click();
+    await expect(app(page).locator(".paircode .note")).toHaveText(
+      "Dieser Code passt nicht zu dieser Anlage.");
+    await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+    await expect(app(page).locator(".joincode .note")).toHaveText(
+      "Dieser Code passt nicht zu dieser Anlage.");
+    expect(await app(page).locator(".paircode .code, .joincode .code").count()).toBe(0);
+  });
 
 // --------------------------------------------------------------------- 5 rights
 test("a right that is handed out is asked for first, and the question says what happens",
