@@ -490,6 +490,10 @@ func jsonPost(path, body string) *http.Request {
 func TestStartSaysComeBackWhenTheDatabaseIsBusy(t *testing.T) {
 	h, fx := newFixture(t)
 	h.S.DB = busyOnce{Store: h.S.DB}
+	// Die Zaehler von httpapi sind Zustand des Prozesses, und die Zeile hat
+	// seit der Bremse ein Fenster: ohne dieses Zuruecksetzen misst der Fall
+	// die Stille eines frueheren.
+	httpapi.ResetCountsForTest()
 	log := capturedLog(t)
 	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
 	for _, c := range []struct {
