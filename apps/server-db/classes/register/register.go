@@ -27,6 +27,7 @@ package register
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -42,6 +43,7 @@ import (
 func init() {
 	dbopen.Register(open)
 	dbopen.RegisterMigrator(migrate)
+	dbopen.RegisterBackuper(backup)
 }
 
 // open picks the driver and opens the store.
@@ -96,4 +98,33 @@ func migrate(ctx context.Context, cfg config.DB, owner string, out io.Writer) er
 	}
 	_, err = fmt.Fprintf(out, "%d Migrationen eingespielt.\n", n)
 	return err
+}
+
+// backup is ngc-api backup. It picks the driver the same way open does, and
+// the two drivers answer differently on purpose.
+//
+// SQLite is a file, so the copy is this part's own: sqlite.Backup takes the
+// write lock for one short transaction, copies the file and the journal
+// together and folds the two into one. Nothing of the content passes through
+// it, so the copy stays encrypted with the key of the configuration.
+//
+// MariaDB is NOT a file of this machine: the data lie on the database servers
+// of the cluster, and what makes a copy of them there is mariabackup, driven
+// by ngc-db on those machines. A copy taken from here could at best reach
+// over the network through the SQL connection, which would be a dump -- and a
+// dump is the one form this installation deliberately does not write, because
+// playing one back may run code. So this says which program does it instead
+// of making half a copy, for the same reason open refuses a driver it does
+// not know: an answer of nil here would let a cluster installation believe it
+// has backups.
+func backup(ctx context.Context, cfg config.DB, target string) error {
+	switch cfg.Driver {
+	case config.DriverSQLite:
+		return sqlite.Backup(cfg, target)
+	case config.DriverMariaDB:
+		return errors.New("register: diese Anlage hält ihre Daten in einem MariaDB-Verbund, " +
+			"nicht in einer Datei dieses Rechners - gesichert wird sie auf den Datenbankservern " +
+			"mit \"ngc-db backup\", nicht von hier")
+	}
+	return fmt.Errorf("register: the configuration names the database driver %q, and there is none of that name", cfg.Driver)
 }

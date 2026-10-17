@@ -120,3 +120,77 @@ func TestTheOwnerNamesThisProgramAndThisNode(t *testing.T) {
 		t.Fatalf("Owner: %q", dbopen.Owner)
 	}
 }
+
+// TestTheBackupIsRegistered is the same seam again for "ngc-api backup", and
+// it is the one of the three that had no caller at all until this round:
+// sqlite.Backup was built, measured and tested, and no program could reach
+// it. A case that only asked dbopen.Backup for a nil error would have passed
+// against a registration that writes nothing, so this one asks the file
+// system.
+func TestTheBackupIsRegistered(t *testing.T) {
+	cfg := dbFile(t)
+	// Something has to be there before it can be copied: Backup refuses a
+	// database that is not on disk, exactly so that a backup of an empty
+	// file cannot be played back over a running installation.
+	store, err := dbopen.Open(context.Background(), cfg, dbopen.OwnerOf("api-1"))
+	if err != nil {
+		t.Fatalf("the case did not set up what it measures: %v", err)
+	}
+	store.Close()
+	target := filepath.Join(filepath.Dir(cfg.Path), "sicherung.db")
+	if err := dbopen.Backup(context.Background(), cfg, target); err != nil {
+		t.Fatalf("dbopen.Backup: %v", err)
+	}
+	st, err := os.Stat(target)
+	if err != nil || st.Size() == 0 {
+		t.Fatalf("the backup file %q: %v", target, err)
+	}
+	// The copy stands on its own: no journal and no shared-memory file beside
+	// it, or what was handed out is half a database.
+	for _, beside := range []string{target + "-wal", target + "-shm"} {
+		if _, err := os.Stat(beside); !os.IsNotExist(err) {
+			t.Fatalf("%q stayed beside the backup: %v", beside, err)
+		}
+	}
+	// And it is ENCRYPTED, which is the sentence backupRun prints to the
+	// admin. Measured and not read: the first sixteen bytes of a plain
+	// SQLite file are "SQLite format 3", and a copy that showed them would
+	// mean the key never reached the copier.
+	head, err := os.ReadFile(target)
+	if err != nil || len(head) < 16 {
+		t.Fatalf("the backup could not be read: %v", err)
+	}
+	if bytes.HasPrefix(head, []byte("SQLite format 3")) {
+		t.Fatalf("the backup is a plain SQLite file, so it is not encrypted")
+	}
+	// The other way round, so this is not a case that would pass on any file
+	// at all: the ORIGINAL is encrypted too, and the two have the same size.
+	// A copy of a different length is not this database.
+	orig, err := os.Stat(cfg.Path)
+	if err != nil {
+		t.Fatalf("stat of the database: %v", err)
+	}
+	if orig.Size() != st.Size() {
+		t.Fatalf("the backup is %d bytes, the database %d", st.Size(), orig.Size())
+	}
+}
+
+// TestABackupOfAClusterNamesTheProgramThatCanDoIt holds the second half of
+// the registration: a MariaDB installation keeps its data on other machines,
+// and the one answer that must never come back here is a nil error with no
+// file written. An admin would then believe this installation has backups.
+func TestABackupOfAClusterNamesTheProgramThatCanDoIt(t *testing.T) {
+	cfg := dbFile(t)
+	cfg.Driver = config.DriverMariaDB
+	target := filepath.Join(filepath.Dir(cfg.Path), "sicherung.db")
+	err := dbopen.Backup(context.Background(), cfg, target)
+	if err == nil {
+		t.Fatalf("a cluster reported a backup that nothing wrote")
+	}
+	if !strings.Contains(err.Error(), "ngc-db") {
+		t.Fatalf("the error does not name the program that can do it: %v", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("a file although nothing was copied: %v", err)
+	}
+}

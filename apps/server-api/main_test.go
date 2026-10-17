@@ -16,10 +16,10 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
 
-// TestRunKnowsThreeWaysAndNoMore nails the command line down: what exists,
+// TestRunKnowsFourWaysAndNoMore nails the command line down: what exists,
 // what the exit code of each is, and that anything else is refused instead of
 // being quietly taken for "run the API".
-func TestRunKnowsThreeWaysAndNoMore(t *testing.T) {
+func TestRunKnowsFourWaysAndNoMore(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "api.json")
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("the case did not set up what it measures")
@@ -36,6 +36,11 @@ func TestRunKnowsThreeWaysAndNoMore(t *testing.T) {
 		// and a case that pretended otherwise would measure nothing.
 		{"run", nil, 1},
 		{"migrate", []string{"migrate"}, 1},
+		{"backup", []string{"backup", "/tmp/sicherung.db"}, 1},
+		// A backup without a target is refused at the command line and never
+		// reaches a default path: the admin would not see which file they got.
+		{"backup without a target", []string{"backup"}, 2},
+		{"backup with two targets", []string{"backup", "/tmp/a.db", "/tmp/b.db"}, 2},
 		{"join", []string{"-join", "NGCJOIN-xyz"}, 1},
 		{"an unknown subcommand", []string{"zerstoere-alles"}, 2},
 		{"a subcommand with an argument too many", []string{"migrate", "now"}, 2},
@@ -57,7 +62,7 @@ func TestRunKnowsThreeWaysAndNoMore(t *testing.T) {
 // the DEFAULT database and say nothing about it.
 func TestMigrateTakesTheConfigurationBehindIt(t *testing.T) {
 	named := filepath.Join(t.TempDir(), "other.json")
-	rest, cmd, ok := subcommand([]string{"migrate", "-config", named})
+	rest, cmd, _, ok := subcommand([]string{"migrate", "-config", named})
 	if !ok || cmd != "migrate" {
 		t.Fatalf("subcommand: cmd %q, ok %v", cmd, ok)
 	}
@@ -66,7 +71,7 @@ func TestMigrateTakesTheConfigurationBehindIt(t *testing.T) {
 	}
 	// And the other way round: a value that happens to read like a
 	// subcommand belongs to its flag and is not one.
-	rest, cmd, ok = subcommand([]string{"-config", "migrate"})
+	rest, cmd, _, ok = subcommand([]string{"-config", "migrate"})
 	if !ok || cmd != "" {
 		t.Fatalf("the value of -config was taken for a subcommand: cmd %q", cmd)
 	}
@@ -152,5 +157,36 @@ func TestJoinNamesNoValueWhateverGoesWrong(t *testing.T) {
 		if !strings.Contains(line, "Bitte ") {
 			t.Errorf("line %d says nothing to do next", i)
 		}
+	}
+}
+
+// TestBackupTakesItsTargetAndTheConfigurationBehindIt is the same measured
+// reason TestMigrateTakesTheConfigurationBehindIt names, with one more thing
+// to lose: the target. "ngc-api backup /mnt/stick/a.db -config other.json"
+// has to reach backupRun with BOTH, or it copies the wrong database or writes
+// to the wrong file -- and either way it reports success.
+func TestBackupTakesItsTargetAndTheConfigurationBehindIt(t *testing.T) {
+	named := filepath.Join(t.TempDir(), "other.json")
+	const target = "/mnt/stick/a.db"
+	rest, cmd, arg, ok := subcommand([]string{"backup", target, "-config", named})
+	if !ok || cmd != "backup" {
+		t.Fatalf("subcommand: cmd %q, ok %v", cmd, ok)
+	}
+	if arg != target {
+		t.Fatalf("the target became %q", arg)
+	}
+	if len(rest) != 2 || rest[0] != "-config" || rest[1] != named {
+		t.Fatalf("the flags behind the subcommand were lost: %v", rest)
+	}
+	// The target may stand behind the flags as well, and it is still the
+	// target and not a second subcommand.
+	_, cmd, arg, ok = subcommand([]string{"backup", "-config", named, target})
+	if !ok || cmd != "backup" || arg != target {
+		t.Fatalf("target behind the flags: cmd %q, arg %q, ok %v", cmd, arg, ok)
+	}
+	// And the value of -config is never the target.
+	_, _, arg, ok = subcommand([]string{"backup", "-config", target, "/mnt/b.db"})
+	if !ok || arg != "/mnt/b.db" {
+		t.Fatalf("the value of -config was taken for the target: arg %q", arg)
 	}
 }
