@@ -41,7 +41,7 @@ func reporterFor(t *testing.T, st *state.Store, turn func(*ReportConfig)) *Repor
 	t.Helper()
 	c := ReportConfig{
 		Version:  "1.2.3",
-		Node:     "ctl-7",
+		Node:     func() string { return "ctl-7" },
 		Roles:    []string{tunnel.RoleWeb, tunnel.RoleAPI},
 		OS:       "debian-13",
 		State:    st,
@@ -79,7 +79,7 @@ func TestHelloNamesNodeRolesAndContract(t *testing.T) {
 	// What is built here has to be a hello of the contract, with a node and
 	// without one: the controller is in no trust list until an admin lists it.
 	mustParseHello(t, h)
-	empty := reporterFor(t, newState(t), func(c *ReportConfig) { c.Node = "" }).Hello()
+	empty := reporterFor(t, newState(t), func(c *ReportConfig) { c.Node = func() string { return "" } }).Hello()
 	if empty.Node != "" {
 		t.Errorf("node = %q, want it left out", empty.Node)
 	}
@@ -528,4 +528,39 @@ func FuzzOSRelease(f *testing.F) {
 			t.Fatalf("the API refuses OS %q: %v", got, err)
 		}
 	})
+}
+
+// TestHelloFollowsTheListAndNotTheStart holds the assertion that cost the
+// chain on a running installation on 17.10.2026: a controller learns its node
+// ID only from a version of the trust list that lists it, and that version
+// arrives AFTER the Reporter was built. A hello built from a value taken at
+// the start therefore names no node for ever, and the API ends every tunnel of
+// a listed controller over it.
+//
+// Until this test the field was a string, and then this is NOT EXPRESSIBLE:
+// nothing can change after NewReporter has seen it, so no case can make the
+// hello follow a later list. The build break of this file against the old
+// field is that proof; what the compiler held there was the assignment below,
+// not the comparison.
+func TestHelloFollowsTheListAndNotTheStart(t *testing.T) {
+	id := ""
+	r := reporterFor(t, newState(t), func(c *ReportConfig) { c.Node = func() string { return id } })
+	if got := r.Hello().Node; got != "" {
+		t.Fatalf("before the list lists it: node = %q, want it left out", got)
+	}
+	// An admin lists the server; the next chain carries its node.
+	id = "ctl-2"
+	if got := r.Hello().Node; got != "ctl-2" {
+		t.Fatalf("after the list lists it: node = %q, want %q", got, "ctl-2")
+	}
+}
+
+// TestHelloNamesNoNodeWithoutAResolver holds the documented nil case: a
+// Reporter nobody handed a resolver names no node, which is what the contract
+// takes (tunnel.Hello.Node is omitempty).
+func TestHelloNamesNoNodeWithoutAResolver(t *testing.T) {
+	r := reporterFor(t, newState(t), func(c *ReportConfig) { c.Node = nil })
+	if got := r.Hello().Node; got != "" {
+		t.Fatalf("node = %q, want it left out", got)
+	}
 }

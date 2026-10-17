@@ -253,9 +253,23 @@ func (srv *Server) control(ctx context.Context, t *Tunnel, f wire.Frame) bool {
 			return false
 		}
 		// A hello that names another node than the one whose key made this
-		// tunnel ends it: the key decides, never the message. A controller
-		// that only paired has no node yet and names none.
-		if h.Node != t.Node {
+		// tunnel ends it: the key decides, never the message.
+		//
+		// NAMING NO NODE IS NOT NAMING ANOTHER ONE, and the field says so
+		// itself (tunnel.Hello.Node: "empty until the controller is in the
+		// trust list"). Two controllers send an empty one: the one that only
+		// paired, and -- measured on a running installation on 17.10.2026 --
+		// the one an admin has just listed. The second learns its ID only from
+		// a version of the list that lists it, and a controller gets versions
+		// of the list on this tunnel, AFTER its hello was taken. Comparing an
+		// empty node against t.Node closed that circle: the tunnel of a
+		// freshly listed controller was ended on every dial, and no app could
+		// ever run.
+		//
+		// What the rule protects is untouched: t.Node comes out of peerKey, so
+		// out of the KEY, and nothing below reads h.Node. An empty hello buys
+		// its sender no other node, only its own.
+		if h.Node != "" && h.Node != t.Node {
 			return false
 		}
 		t.setHello(h)

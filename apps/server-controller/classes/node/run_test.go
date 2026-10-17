@@ -21,6 +21,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
+	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -641,4 +642,59 @@ func (c *countLog) about(what string) int {
 		}
 	}
 	return n
+}
+
+// TestWireUpLetsTheListOutrankTheFile holds the precedence of wireUp's nodeID,
+// and it is a decision, not a detail: the VERIFIED LIST decides what this
+// server's node is, and controller.json only remembers it. A file that
+// outranked the list would go on naming a node an admin has renamed or taken
+// out, and the API ends the tunnel of a controller that names another node
+// than its key carries (controllers.control).
+//
+// A mutant that turns the two around passed every other case of this package
+// on 17.10.2026 — nothing held the order until this one.
+func TestWireUpLetsTheListOutrankTheFile(t *testing.T) {
+	ctx := context.Background()
+	st := newState(t)
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	// The list carries this server as "ctl-1" under the Noise key of
+	// trusttest.NodeKeys(0xC1); the file still remembers the old name.
+	ctlDH, _ := trusttest.NodeKeys(0xC1)
+	cfg := &config.Controller{
+		Node: "ctl-alt", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(ctlDH.Private), DBKey: config.NewSecret(make([]byte, 64)),
+		APIs: []config.APIRef{{URL: "wss://one.example:8443/tunnel"}},
+	}
+	key, err := staticKey(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keeper := chain.New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := keeper.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c := wireUp("1.2.3", cfg, key, st, keeper)
+	if got := c.APIs[0].Hello().Node; got != "ctl-1" {
+		t.Fatalf("the hello names %q, want %q out of the list", got, "ctl-1")
+	}
+	// The other way round is the fallback, and it has to stay: a server that
+	// no verified version lists keeps what the file remembers, so a controller
+	// paired but not listed yet still says what it was told.
+	bare := &config.Controller{
+		Node: "ctl-alt", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+		APIs: []config.APIRef{{URL: "wss://one.example:8443/tunnel"}},
+	}
+	bareKey, err := staticKey(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb := wireUp("1.2.3", bare, bareKey, st, chain.New(st, trust.Anchor{Seq: 1}))
+	if got := cb.APIs[0].Hello().Node; got != "ctl-alt" {
+		t.Fatalf("without a list the hello names %q, want %q out of the file", got, "ctl-alt")
+	}
 }
