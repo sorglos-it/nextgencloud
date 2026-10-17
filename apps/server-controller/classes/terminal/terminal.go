@@ -16,7 +16,7 @@
 // ngc.open("terminal", "shell", {cols, rows}), and a reader takes that for the
 // way the size travels. It is not. This program reads NO parameters: the size
 // comes in a resize frame and nowhere else (ParseFrame, pumpIn), and shellEnv
-// below builds the environment of the shell out of four fixed lines, so
+// below builds the environment of the shell out of five fixed lines, so
 // NGC_PARAMS reaches neither the shell nor the pseudo terminal.
 //
 // It stays that way on purpose, and the reason is measured on the other side:

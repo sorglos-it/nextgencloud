@@ -745,7 +745,13 @@ func TestShellEnvWritesNoHistory(t *testing.T) {
 		if strings.HasPrefix(e, "HISTFILE=") {
 			seen = true
 			if e != "HISTFILE=" {
-				t.Fatalf("shellEnv() names %q, want an empty HISTFILE", e)
+				// The LENGTH, never the value: a mutation that hands the
+				// ambient HISTFILE on would print it here, and the one this
+				// bolt exists for is a path inside the encrypted app data.
+				// The absence of the empty value is the whole assertion;
+				// the number is only there to tell "set" from "missing".
+				t.Fatalf("shellEnv() names a HISTFILE of %d bytes, want an empty one",
+					len(e)-len("HISTFILE="))
 			}
 		}
 	}
