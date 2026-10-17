@@ -2,6 +2,7 @@ package pairing
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -225,12 +227,171 @@ func TestDoKeepsTheCodeQuiet(t *testing.T) {
 		if err == nil {
 			t.Fatal("Do = nil, want an error")
 		}
-		for _, quiet := range []string{in.Code, enc.B64.EncodeToString(code.Secret)} {
-			if strings.Contains(err.Error(), quiet) {
-				t.Errorf("Do error = %q, want the code kept out of it", err)
+		for _, quiet := range quietValues(t, in, code) {
+			if strings.Contains(err.Error(), quiet.text) {
+				t.Errorf("Do error names the %s", quiet.what)
 			}
 		}
 	}
+}
+
+// quietValues lists what an error of Do may not carry, each with the name it
+// is called by in a failure: the message itself is never printed, because
+// printing it is the very thing under test -- a report of this test lands in
+// a chat and in a file somebody passes on.
+//
+// The last three are the ones this used to miss, and they were all really in
+// there, measured on 17.10.2026 against the code before this change:
+//
+//	Post "https://127.0.0.1:59819/tunnel/pair?secret=12HUBq8q...":
+//	dial tcp 127.0.0.1:59819: ... die Verbindung verweigerte.
+//
+// The address of the API, the path it posts to, and the base64url of the
+// SHA-256 of the one-time secret -- the value the API spends -- in one line
+// that goes on to the caller, and from there into a terminal or a journal.
+func quietValues(t *testing.T, in Input, code tunnel.PairCode) []struct{ what, text string } {
+	t.Helper()
+	host, port, ok := address(code.URL)
+	if !ok {
+		t.Fatalf("the address of the test code is none")
+	}
+	sum := sha256.Sum256(code.Secret)
+	return []struct{ what, text string }{
+		{"pairing code", in.Code},
+		{"one-time secret", enc.B64.EncodeToString(code.Secret)},
+		{"hash of the one-time secret", enc.B64.EncodeToString(sum[:])},
+		{"address of the API", net.JoinHostPort(host, port)},
+		{"path of the pairing", tunnel.PathPair},
+	}
+}
+
+// Every way out of Do that is not a pairing answers with one of the
+// categories, and the category is what the caller reads: a controller that
+// cannot pair has to tell the admin whether anything was sent at all, whether
+// the right server answered, and whether his code is spent. One line for all
+// of them named two possibilities and ruled out neither (node/main.go,
+// msgNotPaired), and the real cause of 17.10.2026 was neither of the two.
+func TestDoAnswersWithACategory(t *testing.T) {
+	apiNoise, _ := trusttest.NodeKeys(apiFill)
+	_, pin := trusttest.APITLS(apiTLSFill, apiHost)
+	_, foreign := trusttest.APITLS(otherFill, apiHost)
+	secret := bytes.Repeat([]byte{7}, tunnel.SecretSize)
+
+	refusing, _ := api(t, http.StatusForbidden)
+	answering, _ := api(t, http.StatusNoContent)
+	gone, _ := api(t, http.StatusNoContent)
+	goneCode := codeFor(gone, apiNoise.Public, pin, secret)
+	gone.Close()
+
+	// Something that takes the connection and then says nothing at all: no
+	// TLS, no answer. The client runs into its own deadline instead of coming
+	// back with a refusal, and nothing has to be waited for at the end -- a
+	// handler that blocks would hold the shutdown of its own server.
+	silent := silentListener(t)
+
+	for name, c := range map[string]struct {
+		in   Input
+		slow bool
+		want error
+	}{
+		// Nothing goes out: this server cannot pair with what it holds.
+		"unusable values": {func() Input {
+			in := input(codeFor(answering, apiNoise.Public, pin, secret))
+			in.Name = ""
+			return in
+		}(), false, ErrInput},
+		// Nobody is listening any more.
+		"no answer": {input(goneCode), false, ErrNoAnswer},
+		// Somebody answers, but it is not the server the code names.
+		"another server": {input(codeFor(answering, apiNoise.Public, foreign, secret)), false, ErrWrongAPI},
+		// The API answers, and it says no.
+		"the code refused": {input(codeFor(refusing, apiNoise.Public, pin, secret)), false, tunnel.ErrPair},
+		// Something takes the connection and never answers, and the context
+		// of the caller runs out: this is what the 30 seconds of Timeout do.
+		"no answer in time": {input(codeAt(silent, apiNoise.Public, pin, secret)), true, ErrTooSlow},
+		// The other half of "too slow", and it is a different error: a
+		// deadline of the transport itself is a net.Error that times out and
+		// is NOT context.DeadlineExceeded. Without this case the branch that
+		// reads it is never walked -- measured, a mutant that answered it
+		// with ErrNoAnswer LIVED until this case existed.
+		"handshake too slow": {func() Input {
+			in := input(codeAt(silent, apiNoise.Public, pin, secret))
+			in.Client = &http.Client{Transport: &http.Transport{
+				TLSClientConfig: tunnel.PinnedTLS(pin), TLSHandshakeTimeout: 50 * time.Millisecond}}
+			return in
+		}(), false, ErrTooSlow},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			if c.slow {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 300*time.Millisecond)
+				defer cancel()
+			}
+			_, err := Do(ctx, c.in)
+			if !errors.Is(err, c.want) {
+				t.Fatalf("Do = %v, want %v", err, c.want)
+			}
+			// The category comes back BARE. errors.Is alone would let a
+			// wrapping through, and a wrapping is where a value gets back
+			// in -- a status, an address, a count.
+			if err.Error() != c.want.Error() {
+				t.Errorf("Do wrapped the category with a word of its own")
+			}
+			// The category is the whole answer, and it has to stay sayable
+			// without saying anything: these are the values the error before
+			// this change carried.
+			for _, quiet := range quietValues(t, c.in, mustCode(t, c.in.Code)) {
+				if strings.Contains(err.Error(), quiet.text) {
+					t.Errorf("Do error names the %s", quiet.what)
+				}
+			}
+		})
+	}
+}
+
+// silentListener accepts connections and holds them without a word, and
+// gives back its address. It is not an API: it is what a deadline needs, a
+// peer that neither answers nor refuses.
+func silentListener(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	t.Cleanup(func() { ln.Close(); <-done })
+	return ln.Addr().String()
+}
+
+// codeAt builds a pairing code for a plain address, where no test server
+// stands.
+func codeAt(hostPort string, key, pin, secret []byte) tunnel.PairCode {
+	return tunnel.PairCode{URL: "wss://" + hostPort + "/tunnel", Key: key, TLS: pin, Secret: secret, Anchor: anchor()}
+}
+
+// mustCode reads back the code of an input, so a case can name what its own
+// error may not carry. It is the one place a code is parsed here, and what it
+// returns is never printed.
+func mustCode(t *testing.T, s string) tunnel.PairCode {
+	t.Helper()
+	code, err := tunnel.ParsePairCode(s)
+	if err != nil {
+		// A case with no usable code (ErrInput) still has an address to keep
+		// quiet about; it just is not in the code.
+		return tunnel.PairCode{URL: "wss://127.0.0.1:1/tunnel", Secret: bytes.Repeat([]byte{7}, tunnel.SecretSize)}
+	}
+	return code
 }
 
 // Show is what the admin compares with the shell; it names the two

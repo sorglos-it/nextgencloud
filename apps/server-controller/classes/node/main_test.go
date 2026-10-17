@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,7 +17,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/pairing"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/service"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -385,6 +388,22 @@ func newAPI(t *testing.T) testAPI {
 	var seen atomic.Int64
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen.Add(1)
+		// The whole request, not just its body. This stand read the body
+		// alone until 17.10.2026, and that is the blindness point 61 cost:
+		// a pairing with no query cannot come off against a real API
+		// (controllers/pair.go spends the one-time value the query NAMES
+		// and answers E_PROTOCOL without it), while a stand that looks only
+		// at the body calls it good. The same assertion lives in
+		// pairing/pairing_test.go; it is here as well because this is the
+		// way through node, and a rule held up by one place is held up by
+		// none the day that place is edited.
+		if r.Method != http.MethodPost || r.URL.Path != tunnel.PathPair {
+			t.Errorf("the API was asked %s %s, want POST %s", r.Method, r.URL.Path, tunnel.PathPair)
+		}
+		sum := sha256.Sum256(secret)
+		if want := enc.B64.EncodeToString(sum[:]); r.URL.Query().Get("secret") != want {
+			t.Error("the query of the request does not name the hash of the pairing secret")
+		}
 		b, _ := io.ReadAll(io.LimitReader(r.Body, tunnel.MaxPairRequest+1))
 		req, err := tunnel.ParsePairRequest(b)
 		if err != nil {
@@ -674,6 +693,114 @@ func TestPairSaysWhatIsLeftToDo(t *testing.T) {
 	for _, want := range []string{"Administrator", "eintragen"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("stderr = %q, want %q in it", got, want)
+		}
+	}
+}
+
+// Every category of pairing.Do gets its own line, and a failure the program
+// does not know gets the cautious one. The old single line named two
+// possibilities and ruled out neither -- and the real cause of 17.10.2026, a
+// request without its query, was neither of them (Verträge V1.2, Punkt 61).
+func TestPairAnswersEachFailureWithItsOwnLine(t *testing.T) {
+	seen := map[string]string{}
+	for _, c := range []struct {
+		err  error
+		want string
+		// again marks a case that is meant to land on a line already taken:
+		// the same category, only wrapped.
+		again bool
+	}{
+		{pairing.ErrInput, msgPairNothing, false},
+		{tunnel.ErrPairCode, msgBadCode, false},
+		{pairing.ErrNoAnswer, msgPairNoAnswer, false},
+		{pairing.ErrTooSlow, msgPairTooSlow, false},
+		{pairing.ErrWrongAPI, msgPairWrongAPI, false},
+		{tunnel.ErrPair, msgPairRefused, false},
+		{errors.New("something nobody wrote a line for"), msgNotPaired, false},
+		// Wrapped is how it really arrives when a caller adds its own word.
+		{fmt.Errorf("while pairing: %w", pairing.ErrNoAnswer), msgPairNoAnswer, true},
+	} {
+		got := pairFailure(c.err)
+		if got != c.want {
+			t.Errorf("pairFailure(%v) = %q, want %q", c.err, got, c.want)
+		}
+		if c.again {
+			continue
+		}
+		if other, ok := seen[got]; ok {
+			t.Errorf("pairFailure gives the same line to %v and to %s", c.err, other)
+		}
+		seen[got] = c.err.Error()
+	}
+	// Six categories plus the cautious line. Two that fell together would be
+	// a category that tells the admin nothing new, which is the whole point.
+	if len(seen) != 7 {
+		t.Errorf("the lines are %d different ones, want 7", len(seen))
+	}
+}
+
+// What the admin reads may carry no value, and this checks for the ABSENCE of
+// each: the address of the API, the port, the path of the pairing, the
+// pairing code, the one-time secret and the hash of it that the query names.
+// The values are built here and looked for; none of them is ever printed,
+// because the output of a test goes into a report and into a chat.
+func TestPairNamesNoValueWhateverGoesWrong(t *testing.T) {
+	api := newAPI(t)
+	host, port, found := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(api.code.URL, "wss://"), "/tunnel"), ":")
+	if !found {
+		t.Fatal("the address of the test code is none")
+	}
+	sum := sha256.Sum256(api.code.Secret)
+	quiet := []struct{ what, text string }{
+		{"pairing code", api.code.String()},
+		{"one-time secret", enc.B64.EncodeToString(api.code.Secret)},
+		{"hash of the one-time secret", enc.B64.EncodeToString(sum[:])},
+		{"address of the API", api.code.URL},
+		{"host of the API", host},
+		{"port of the API", port},
+		{"path of the pairing", tunnel.PathPair},
+		{"fingerprint of the anchor", tunnel.Fingerprint(api.code.Anchor.Hash)},
+	}
+	// Every line of a failed pairing, taken from the one place they are
+	// chosen, so a line added later is covered without a change here.
+	lines := []string{msgNotPaired}
+	for _, err := range []error{
+		pairing.ErrInput, tunnel.ErrPairCode, pairing.ErrNoAnswer,
+		pairing.ErrTooSlow, pairing.ErrWrongAPI, tunnel.ErrPair,
+	} {
+		lines = append(lines, pairFailure(err))
+	}
+	for i, line := range lines {
+		for _, q := range quiet {
+			// A one-character value would meet by accident; the shortest of
+			// these is a port, and a port is four digits here.
+			if len(q.text) >= 4 && strings.Contains(line, q.text) {
+				t.Errorf("line %d names the %s", i, q.what)
+			}
+		}
+		// A line that does not say what to do next is the line this replaced.
+		if !strings.Contains(line, "Bitte ") {
+			t.Errorf("line %d says nothing to do next", i)
+		}
+	}
+
+	// And the same thing measured through the program, not through the
+	// table: a pairing against a server that is gone writes one of them, and
+	// what it writes carries none of the values either.
+	api.srv.Close()
+	dir := t.TempDir()
+	cfgPath, anchorPath := filepath.Join(dir, "controller.json"), filepath.Join(dir, "trust-anchor.json")
+	writeController(t, cfgPath)
+	var out, errOut bytes.Buffer
+	if code := pair(cfgPath, anchorPath, nil, typed(api.code.String()), &out, &errOut); code != 1 {
+		t.Fatalf("pair = %d, want 1", code)
+	}
+	if got := errOut.String(); strings.TrimSpace(got) != msgPairNoAnswer {
+		t.Errorf("the pairing wrote another line than the one for a server that does not answer")
+	}
+	for _, q := range quiet {
+		if len(q.text) >= 4 && strings.Contains(out.String()+errOut.String(), q.text) {
+			t.Errorf("what the pairing wrote names the %s", q.what)
 		}
 	}
 }
