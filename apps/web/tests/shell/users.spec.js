@@ -1206,3 +1206,92 @@ test("a question belongs to its window and goes with it", async ({ page }) => {
   expect(await page.evaluate(() => window.__ngcCalls
     .filter((c) => c.name === "set-rights").length)).toBe(0);
 });
+
+// THE ADMIN WHO LISTS A SERVER MAY RUN ROOT TASKS ON IT, and until 17.10.2026
+// nobody could: both root lists of a newly listed controller were empty, and no
+// surface of this interface ever set them. trust.MayRoot then answers false for
+// every user, so activate, install, uninstall, delete-data and the terminal all
+// come back E_FORBIDDEN -- the server stands in the list and can do nothing.
+// Measured on a running installation that day: the package was uploaded, the
+// node was offered as "ngc-2", and activating it answered "Keine Berechtigung."
+//
+// It reads the VERSION THAT WAS SENT, not the screen: who may do what is the
+// list's business, and a sentence in the interface proves nothing about it.
+test("the listed server grants root tasks to the admin who listed it, and to nobody else", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  // The person is told what they are being given: a right nobody was told
+  // about is a right nobody can weigh.
+  await expect(dialog).toContainText("Systemrechten");
+  await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
+  await sign(page);
+  await expect(app(page).locator(".pending .note")).toHaveText("Der Server »dienste« ist aufgenommen.");
+
+  const sent = await page.evaluate(async () => {
+    const trust = await import("/assets/js/contracts/trust.js");
+    const s = trust.parseSigned(window.__ngcSent[0].bytes);
+    const l = await trust.parseList(s.payload);
+    const node = l.nodes.find((n) => n.id === "dienste");
+    return {
+      // WHOSE SESSION THIS IS, asked of the page and not written down
+      // here: the assurance is "the admin who listed it", so the value
+      // has to come from the same place the app read it from.
+      me: window.__ngcCtx.session.user,
+      rootUsers: node.rootUsers ?? [],
+      rootRoles: node.rootRoles ?? [],
+      // Every other controller is left exactly as it WAS -- not empty,
+      // unchanged: ctl-1 of this list already carries root roles, and
+      // taking one server on says nothing about another. So the two are
+      // held against the version in force, never against a value written
+      // down here.
+      others: l.nodes.filter((n) => n.kind === "controller" && n.id !== "dienste")
+        .map((n) => ({ id: n.id, users: n.rootUsers ?? [], roles: n.rootRoles ?? [] })),
+      before: window.__ngcCtx.trust.current().list.nodes
+        .filter((n) => n.kind === "controller")
+        .map((n) => ({ id: n.id, users: n.rootUsers ?? [], roles: n.rootRoles ?? [] })),
+    };
+  });
+  expect(typeof sent.me, "the session names its user").toBe("string");
+  expect(sent.me.length, "and it is not empty").toBeGreaterThan(0);
+  expect(sent.rootUsers).toEqual([sent.me]);
+  // A ROLE WOULD BE THE WIDER WAY and is not what this does: it would hand
+  // every present and future member of that role root on this machine.
+  expect(sent.rootRoles).toEqual([]);
+  expect(sent.before.length, "the list in force has controllers to compare against")
+    .toBeGreaterThan(0);
+  for (const o of sent.others) {
+    const was = sent.before.find((b) => b.id === o.id);
+    expect(was, `${o.id} stood in the version before`).toBeTruthy();
+    expect(o.users, `${o.id} was left alone`).toEqual(was.users);
+    expect(o.roles, `${o.id} was left alone`).toEqual(was.roles);
+  }
+});
+
+// The other half, and it must NOT be made to match: an API node may carry no
+// root lists at all (Go: ValidAPINode asks for len(RootUsers)+len(RootRoles)
+// == 0), and trust.MayRoot only ever looks at a node of kind controller. A
+// version that named anybody there would be refused as invalid.
+test("a listed API server carries no root lists at all", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
+  await sign(page);
+  await expect(app(page).locator(".pendapi .note"))
+    .toHaveText("Der Server »api-2« ist aufgenommen.");
+  const sent = await page.evaluate(async () => {
+    const trust = await import("/assets/js/contracts/trust.js");
+    const one = window.__ngcSent[window.__ngcSent.length - 1];
+    const s = trust.parseSigned(one.bytes);
+    const l = await trust.parseList(s.payload);
+    const node = l.nodes.find((n) => n.id === "api-2");
+    return { users: node.rootUsers ?? [], roles: node.rootRoles ?? [] };
+  });
+  expect(sent.users).toEqual([]);
+  expect(sent.roles).toEqual([]);
+});

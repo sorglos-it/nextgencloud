@@ -721,10 +721,36 @@ function checkPendingAPI(v) {
     && v.tls.length === HASH_SIZE && validTunnelURL(v.url) && whole(v.since) && v.since > 0;
 }
 
+// A node's version is what the server SAID in its last hello, and the hello's
+// own rule is a loose one (Go: tunnel.versionPattern, ^[0-9a-z.+-]{1,32}$).
+// It is loose on purpose: a build that is no release names itself
+// "0.0.0-dev", and the contract leans on that -- store.SupportsMinNGC lets
+// such a build pass no minNgc at all. Nothing signs this field and no
+// producer checks it either: core.NodeInfo.Version is handed on as it
+// arrived.
+//
+// IT WAS CHECKED WITH optVersion UNTIL 17.10.2026, which takes a RELEASE
+// version ("" or x.y.z) and nothing else. So one server reporting the very
+// version the contract tells it to report made the shell throw the WHOLE
+// answer away, and the person read "Die Antwort der Anlage war nicht in
+// Ordnung. Es wird nichts angezeigt." Measured on a running installation on
+// 17.10.2026: with the row unchanged but "0.2.0" in that one field the same
+// answer is taken, so nothing else about it was ever wrong. The install box
+// of the store asks for the same answer, so an app could not be installed
+// either ("Die Rechner konnten nicht geladen werden.").
+//
+// A reader stricter than its producer does not protect anything: it only
+// loses what it was given. Where the shell has to know whether a version is
+// a RELEASE version it asks that question itself (store.SupportsMinNGC is
+// the one place that needs it), and it must not ask it of a field that was
+// never promised to be one.
+const helloVersion = (s) => typeof s === "string" && /^[0-9a-z.+-]{1,32}$/.test(s);
+const optHelloVersion = (s) => s === "" || helloVersion(s);
+
 function checkNodeInfo(v) {
   return validName(v.node) && v.roles.length <= MAX_NODE_ROLES && noDuplicate(v.roles)
     && v.roles.every((r) => NODE_ROLES.has(r))
-    && optVersion(v.version) && (v.arch === "" || ARCHS.has(v.arch));
+    && optHelloVersion(v.version) && (v.arch === "" || ARCHS.has(v.arch));
 }
 
 function checkLogEntry(v) {
