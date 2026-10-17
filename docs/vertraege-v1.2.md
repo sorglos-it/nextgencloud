@@ -7,6 +7,165 @@ still unter den Tisch fallen.
 
 Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
+---
+
+## Inhaltsverzeichnis (Stand 18.10.2026)
+
+**Achtung, zwei Nummernreihen in einer Datei.** Die Nummern 19 bis 35 sind
+**doppelt vergeben**:
+
+- **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
+  Vertragspaket geordnet.
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 62"** darunter,
+  nach Datum geordnet.
+
+Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
+sofern nicht „dieser Liste" oder „des Vertrags" dabeisteht – dann Reihe A.
+**Darum die Überschrift zitieren, nicht die Nummer** (so steht es auch in
+`STAND.md`).
+
+Lücken gibt es in keiner der beiden Reihen.
+
+### Stand in Zahlen
+
+| Stand | Reihe A | Reihe B | zusammen |
+|---|---|---|---|
+| gilt | 35 | 34 | 69 |
+| überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
+| offen, wartet auf Thomas | 1 | 5 | 6 |
+| **Einträge** | **36** | **45** | **81** |
+
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
+
+- **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
+- **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
+- **Gilt, aber in einem Teil später berichtigt:** 28, 30, 32, 44, 49, 52, 53.
+- **Berichtigt sich selbst im eigenen Text:** 24, 35, 40, 43, U2.
+
+### Reihe A – Sammelliste für den Schnitt V1.2
+
+| Nr. | Überschrift | Stand | Art |
+|---|---|---|---|
+| 1 | Argon2-Vorgabewerte auf m=19456, t=2, p=1 senken | gilt | Entscheidung |
+| 2 | `proof_kdf.json` braucht neue Vektoren | gilt | Messung |
+| 3 | `validateKDF` engere Grenzen geben | gilt | Sicherheit |
+| 4 | `BlobNewest` oder ein `limit` für `BlobFrom` | gilt | Sicherheit |
+| 5 | Zeilengrenze für `AppList` und `BlobFrom` | gilt | Sicherheit |
+| 6 | `NewestSeq` ohne Vollscan, Anker vorrücken | gilt – Bedingung für 33b | Sicherheit |
+| 7 | Atomarer Zähler für die Anmeldesperre | gilt – **vor** dem zweiten API-Server | Sicherheit |
+| 8 | `memstore` hat keine Längenschranken | gilt | Messung |
+| 9 | `dbtest` prüft `Seq` nach `BlobGet` nicht | gilt | Messung |
+| 10 | Unauthentifiziertes GET-Angebot ist Klartext | **offen, wartet auf Thomas** – Entscheidung in **Punkt 43 (Reihe B)** | Sicherheit |
+| 11 | Der Anker gehört außerhalb der Datenbank | gilt | Sicherheit |
+| 12 | Kommentar über WebKit in `wire.go` berichtigen | gilt | Messung |
+| 13 | Ausgeschriebenes `"b":null` kostet den Tunnel | gilt | Entscheidung |
+| 14 | `shared/README.md:229` sagt „Wert" statt „Container" | gilt | Entscheidung |
+| 15 | Gemeinsamer Helfer für Dateirechte | gilt | Sicherheit |
+| 16 | RAW-Pfad hebt die Grenze einer Liste auf | gilt | Entscheidung |
+| 17 | `dbtest` pinnt `Updated` und `Seq` nur halb | gilt | Messung |
+| 18 | `dbapi` hat keine verlässliche Zeitquelle | gilt – sichere Seite gewählt | Entscheidung |
+| 19 | `UserByName` verrät den Namen über die Zeit | gilt | Sicherheit |
+| 20 | Leere DATA-Frames kosten keine Freigabe | gilt | Sicherheit |
+| 21 | Der Nonce der Anmeldung soll sich selbst tragen | gilt | Sicherheit |
+| 22 | `dbtest` nagelt `UserGet(ctx, "")` nicht fest | gilt | Messung |
+| 23 | `dbtest` kann einen falschen Store nicht erkennen | gilt – **eine Hälfte zu** | Messung |
+| 24 | Sieben Antworten laufen zwischen den Speichern auseinander | gilt | Messung |
+| 25 | Einmalwert hängt nicht nachweislich an `(kind, token)` | gilt | Sicherheit |
+| 26 | Streu-Frame: der Code ist strenger als der Vertrag | gilt | Entscheidung |
+| 27 | Frames nach dem CLOSE der Gegenseite – Vertrag schweigt | gilt | Entscheidung |
+| 28 | Der Vertrag widerspricht sich bei `OSRelease` | gilt | Messung |
+| 29 | `AppState` braucht ein fünftes Wort für „weiß niemand" | gilt | Entscheidung |
+| 30 | `PasswordToo` sucht den Benutzer ein zweites Mal | gilt | Sicherheit |
+| 31 | Eine gültige Anfrage verrät die Anmeldeart | gilt | Sicherheit |
+| 32 | Sind die `params`-Bytes kanonisch? | gilt | Entscheidung |
+| 33 | Führendes U+FEFF wird verschieden behandelt | gilt – bewusst zurückgestellt | Messung |
+| 33b | Wer die Datenbank schreibt, nimmt jede Rücknahme zurück | gilt – **der kritische Punkt** | Sicherheit |
+| 34 | `Hello.TrustSeq` ist eine Fenstermarke, keine Quittung | gilt | Entscheidung |
+| 35 | Zwei Vertragssätze behaupten eine Prüfung, die es nicht gibt | gilt | Messung |
+
+**Ohne Nummer, zwischen Reihe A und Reihe B:**
+
+| Kürzel | Überschrift | Stand | Art |
+|---|---|---|---|
+| U1 | `shared/dbapi` – die obere Grenze einer Protokollseite (500) | gilt – Gabelung benannt, nicht geschlossen | Messung |
+| U2 | `shared/trust` – Speicher-Obergrenze flattert unter `-race` | gilt – Störung des Messwerkzeugs, kein Loch | Messung |
+
+### Reihe B – Punkte nach Datum
+
+| Nr. | Überschrift | Stand | Art |
+|---|---|---|---|
+| 19 | Release-Signatur muss einen DIGEST decken | gilt – **vor** dem ersten Release | Sicherheit |
+| 20 | Die Lizenz ist eine nicht aufgerufene Funktion | gilt | Entscheidung |
+| 21 | Eine Aktion darf `use` heißen | gilt – örtlicher Riegel gebaut | Sicherheit |
+| 22 | Diagnoseschalter ohne Weg in die Konfiguration | gilt | Entscheidung |
+| 23 | `store.ValidPath` ist POSIX-sicher, nicht Windows-sicher | gilt – → v1.3 **P11** | Umgebung |
+| 24 | Ein Abbild ohne Referenz kann niemand entfernen | gilt – enthält eine **Selbstberichtigung**; → v1.3 **P5** | Messung |
+| 25 | Adressprüfung des Herunterladens nicht aufrufbar | gilt, **verschärft durch Punkt 45**; → v1.3 **P1** | Sicherheit |
+| 26 | Einmal-Code wird vor der MAC-Prüfung verbraucht | **offen, wartet auf Thomas** | Sicherheit |
+| 27 | Zwei Server mit demselben Namen verdrängen einander | **offen, wartet auf Thomas** | Entscheidung |
+| 28 | Controller startet Migrationen als Programm | Entscheidung gilt – **zwei Begründungen berichtigt** durch „Punkt 29, Nachtrag" | Entscheidung |
+| 29 | Jeder Rahmen des Terminals trägt seine Länge | gilt – Zahl nachgereicht im Nachtrag | Entscheidung |
+| 29n | **Punkt 29, Nachtrag** – Zahl der App-Kanäle (128) | gilt – **berichtigt Punkt 28** | Entscheidung |
+| 30 | Niemand hält die hochgeladene Datei | gilt – die Meldung „erledigt" war **falsch**; am Store-Weg gemessen in **Punkt 45** | Messung |
+| 31 | Nichts hält die Rechte des Katalogeintrags gegen das Manifest | gilt – → v1.3 **P12** | Sicherheit |
+| 32 | Controller ohne Migrationssperre startet nicht | Entscheidung gilt – offene Hälfte **gemessen in Punkt 44 und 48** | Entscheidung |
+| 33 | Rollenprüfung für NGC-Teile auf der falschen Seite | gilt | Sicherheit |
+| 34 | `ngc-api` kann heute keine Datenbank öffnen | gilt | Messung |
+| 35 | Weitergeleiteter Kanal hat keine Stillzeitgrenze | gilt, BLOCKED – → v1.3 **P8**; enthält eine **Selbstberichtigung** zu `-race` | Messung |
+| 36 | Zwei Härtungsschalter fehlen | **überholt durch Punkt 51** – beide gebaut | Sicherheit |
+| 37 | Der Plan hat denselben Fehler zweimal vorgegeben | gilt | Messung |
+| 38 | Ein Fehler in einem Kanal tötet den ganzen Server | **überholt durch Punkt 55** – gebaut | Entscheidung |
+| 39 | Abbild der Terminal-App hängt an einem Tag | **offen, wartet auf Thomas** | Sicherheit |
+| 40 | Das Terminal echot | gilt – enthält eine **Selbstberichtigung** | Sicherheit |
+| 41 | Terminal kann kein Passwort und kein `vi` | **offen, wartet auf Thomas** | Entscheidung |
+| 42 | `ngc.open(...)`-Parameter sind wirkungslos | gilt – **ENTSCHIEDEN** am 12.10.2026 | Entscheidung |
+| 43 | Vertrauensanker verriegelt den Weg nach einem Totalverlust | **offen, wartet auf Thomas** – gehört zu **Reihe A, Punkt 10** | Sicherheit |
+| 44 | API und Controller haben zum ersten Mal gesprochen | gilt – **berichtigt** die Meldung „Punkt 32 ist gefallen" | Messung |
+| 45 | Ein echter Store – Kettenprüfung war überall aus | gilt – **berichtigt rückwirkend jede frühere Store-Messung**; Nebenbefund 1 erledigt durch **Punkt 46** | Messung |
+| 46 | Der Rückdreh-Riegel hat jetzt einen Ausgang | gilt – gebaut | Sicherheit |
+| 47 | Der kleine Fall – eine Datenbankdatei je Programm | **teilweise überholt**: die Lücke ist **zu seit Punkt 59**; offen bleibt die Entscheidung über die fünf Skripte | Umgebung |
+| 48 | Zwei Programme auf einer SQLite-Datei – die Zahl ist vier | gilt – zwei Posten gebaut in **Punkt 49** | Messung |
+| 49 | Die Frist gehört zum Zweck | gilt – **berichtigt durch Punkt 54** (P9 ist ein Bruch) | Messung |
+| 50 | Der Benutzer hört, sein Passwort sei falsch | **behoben durch Punkt 52 und 53**, am Benutzer gesehen in **Punkt 58** | Messung |
+| 51 | Prozessdecke, `nosuid`/`nodev` | gilt – **offen: `noexec` auf `/data`** (Thomas); → v1.3 **P13** | Sicherheit |
+| 52 | Die Lüge über das Passwort ist weg | gilt – **berichtigt durch Punkt 54**; offener Posten gebaut in **Punkt 53** | Sicherheit |
+| 53 | Der Fehler überlebt `Live` | gilt – **berichtigt durch Punkt 54** | Messung |
+| 54 | „Ergänzung, kein Bruch" war falsch | gilt – **berichtigt Punkt 49, 52 und 53**; ordnet die v1.3-Reihe neu | Messung |
+| 55 | Punkt 38 ist gebaut – dreizehn Fangstellen | gilt – **erledigt Punkt 38** | Sicherheit |
+| 56 | Das kleine System läuft auf echtem Debian | **teilweise überholt** durch **Punkt 57, 59, 61**; offen bleibt der Store-Schlüssel | Umgebung |
+| 57 | NGC hat einen Release-Schlüssel | gilt – **offen: Hardware-Stick, Store-Schlüssel** (Thomas) | Umgebung |
+| 58 | Die Einrichtungsseite im echten Browser | gilt – die Frage darin ist in **Punkt 59** beantwortet | Umgebung |
+| 59 | Angemeldet. Der Schreibtisch steht im Browser | gilt – **schließt die Lücke aus Punkt 47**; die Aussperrung aus Punkt 60 ist in **Punkt 61** behoben | Messung |
+| 60 | Der Controller lässt sich nicht koppeln | **ÜBERHOLT durch Punkt 61 – in der Kernaussage falsch** | Messung |
+| 61 | Gekoppelt – Punkt 60 war falsch | gilt – **berichtigt Punkt 60** | Messung |
+| 62 | Die Anlage entsteht allein aus den Skripten | gilt – bestätigt **Punkt 61** an frischer Anlage | Umgebung |
+
+### Die Widersprüche auf einen Blick
+
+| Berichtigt / überholt | durch | worin |
+|---|---|---|
+| Punkt 60 | **Punkt 61** | „den Knopf gibt es nicht" – es gibt ihn; gezählt wurde über den falschen Zweig |
+| Punkt 49, 52, 53 | **Punkt 54** | P9 (`E_BUSY`) sei „Ergänzung, kein Bruch" – ein alter Leser wirft den ganzen Rahmen weg |
+| Punkt 28 (zwei Begründungen) | **Punkt 29, Nachtrag** | eigener SQL-Treiber nötig / `shared/` ändert sich nicht – beides gemessen falsch |
+| Punkt 36 | **Punkt 51** | beide Härtungsschalter sind gebaut und gemessen |
+| Punkt 38 | **Punkt 55** | je Kanal gefangen, dreizehn Fangstellen |
+| Punkt 47 (die Lücke) | **Punkt 59** | ohne `ngc-web` könne sich niemand anmelden – geht jetzt |
+| Punkt 50 | **Punkt 52 + 53** | die Falschauskunft über das Passwort ist weg |
+| Punkt 30 („erledigt" aus Aufgabe 24) | **Punkt 30 selbst**, 12.10.2026 | die Meldung war falsch, der Punkt gilt unverändert |
+| Punkt 24 („nimmt es mit dem Benutzer mit") | **Punkt 24 selbst** | gemessen falsch – das Abbild liegt im Datenverzeichnis |
+| Punkt 35 („`-race` nicht messbar") | **Punkt 35, Nachtrag** | der Übersetzer liegt unter `C:\esp\tools\llvm-mingw` |
+| Punkt 40 („der Plan hat es falsch gesagt") | **Punkt 40 selbst** | der Plan sagt zum Echo gar nichts |
+| Punkt 43 (Antwort B) | **Punkt 43 selbst**, Mutant C | B hebt den Schutz ganz auf und ist keine Antwort |
+| Punkt 32 („Annahme gefallen") | **Punkt 44** | zu scharf gemeldet – die offene Hälfte ist nur jetzt gemessen |
+| alle Store-Messungen vor dem 13.10. | **Punkt 45** | der Prüfstand hatte die TLS-Kettenprüfung aus |
+| Punkt 45 (Rückdreh ohne Ausgang) | **Punkt 46** | es gibt jetzt einen Weg zurück |
+| Punkt 56 (fehlender Release-Schlüssel) | **Punkt 57** | Schlüsselpaar da, Riegel gebaut |
+| Punkt 56/57 (Anmeldung ungemessen) | **Punkt 59** | im Browser bis zum Schreibtisch |
+
+**Die offenen Entscheidungen für Thomas** stehen gesammelt am Ende dieser Datei.
+
+---
+
 ## shared/proof — Passwortschlüssel
 
 1. **Vorgabewerte auf m=19456, t=2, p=1 senken.** Entscheidung von Thomas am
@@ -43,7 +202,8 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
    Mit `MaxData` = 80 MiB füllen wenige große Blobs einer Art den Speicher. Die
    Grenze gehört in den Vertrag, nicht in den einzelnen Store. (db, Zeile 39)
 
-6. **`state.NewestSeq` ohne Vollscan**, und ein Weg, **den Anker vorzurücken** —
+6. *(Stand: gilt – **33b** macht daraus die Bedingung dafür, dass der Entzug
+   eines Schlüssels überhaupt hält.)* **`state.NewestSeq` ohne Vollscan**, und ein Weg, **den Anker vorzurücken** —
    sonst steht die Fassungsliste bei `MaxVersions` = 4096 endgültig. Der Hebel
    liegt in `dbapi`, nicht im Controller. (controller, Zeile 19)
 
@@ -69,7 +229,8 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     es dicht; der Vertragstest hält aber weniger, als der Code zusagt.
     (api, Aufgabe 5, Fixrunde 4)
 
-23. **`dbtest` kann einen falschen Store nicht von einem richtigen
+23. *(Stand: gilt – eine Hälfte ist seit 24.09.2026 zu, siehe unten. Verwandt:
+    Reihe A, Punkt 35.)* **`dbtest` kann einen falschen Store nicht von einem richtigen
     unterscheiden — gemessen.** Ein absichtlich **zweischrittiges** `OnceUse`
     (lesen, dann bedingungslos schreiben) besteht `once`, `locks`,
     `concurrent once` und `concurrent lock` **alle**, dazu einen eigenen
@@ -108,7 +269,10 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ## shared/session — Einrichtung
 
-10. **Das unauthentifizierte GET-Angebot ist Klartext**: Installations-ID,
+10. *(Stand: **offen, wartet auf Thomas**. Die Entscheidung dazu ist
+   ausgearbeitet in **Punkt 43 der Überschriftenreihe** – dort sind Antwort A,
+   Antwort B und ein dritter Weg gemessen; B ist als keine Antwort belegt.)*
+   **Das unauthentifizierte GET-Angebot ist Klartext**: Installations-ID,
    Knotenschlüssel, TLS-Pin, Release-Schlüssel, Store-URL und -Schlüssel. Das ist
    eingefrorene Vertragsgestaltung, kein Fehler im Code — beim Schnitt bewusst
    entscheiden, ob es so bleibt.
@@ -274,7 +438,8 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     beide Seiten dasselbe ab. Gehört zum selben Schnitt wie Punkt 32.
     (web, Aufgabe 9)
 
-35. **Zwei Sätze des Vertrags behaupten eine Prüfung, die es nicht gibt.**
+35. *(Stand: gilt. Verwandt: Reihe A, Punkt 23 und der Abschnitt U1 unten.)*
+    **Zwei Sätze des Vertrags behaupten eine Prüfung, die es nicht gibt.**
     `shared/dbapi/dbtest/dbtest.go:2-3` sagt „Every implementation in
     apps/server-db/ has to pass Run, against MariaDB and SQLite", und
     `shared/dbapi/dbapi.go:3` sagt „dbtest checks every implementation".
@@ -309,7 +474,10 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ## Der eine kritische Punkt
 
-33b. **Wer die Datenbank schreiben kann, nimmt jede Rücknahme zurück — und kann die
+33b. *(Stand: gilt – **der kritische Punkt dieser Reihe**; hängt an Punkt 6
+    dieser Reihe. Der Weg zurück nach einem Totalverlust ist Punkt 43 der
+    Überschriftenreihe.)*
+    **Wer die Datenbank schreiben kann, nimmt jede Rücknahme zurück — und kann die
     Anlage übernehmen. Gebaut, nicht vermutet.**
 
     Die Vertrauensliste liegt als Folge von Fassungen in der Datenbank. Wer Zeilen
@@ -342,7 +510,10 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
     Bis dahin bleibt es offen, und die Kommentare im Code sagen es so.
     (api, Aufgabe 8)
 
-## shared/dbapi — die obere Grenze einer Protokollseite
+## U1 · shared/dbapi — die obere Grenze einer Protokollseite
+
+> **Stand: gilt.** Die Gabelung der zwei Speicher ist **benannt und bezahlt,
+> nicht geschlossen**. Art: Messung. Verwandt: Reihe A, Punkt 23 und 35.
 
 **Gemessen am 01.10.2026 vom db-Strang (Aufgabe 7), gemeldet als BLOCKED statt
 `shared/` anzufassen.** Der Vertrag zieht die Grenze einer Protokollseite bei
@@ -391,7 +562,11 @@ gehalten war nur „einer mehr als die Grenze". `>` zu `>=` zu machen blieb
 dass ein Test fällt. Wer Punkt 1 baut, stellt **beide** Zahlen: `500` geht durch,
 `501` nicht, und dem Vertrag werden dieselben zwei gestellt.
 
-## shared/trust — eine Speicher-Obergrenze, die unter -race FLATTERT
+## U2 · shared/trust — eine Speicher-Obergrenze, die unter -race FLATTERT
+
+> **Stand: gilt.** Eine Störung des **Messwerkzeugs**, kein Loch im Code.
+> Der Abschnitt berichtigt sich selbst: die erste Fassung sagte „nie grün",
+> gemessen ist „kann grün sein, ohne jede Reparatur". Art: Messung.
 
 **Berichtigt am 01.10.2026, nachdem ein Strang meine erste Fassung widerlegt hat.**
 Ich hatte geschrieben, der Fall könne unter `-race` **nie** grün sein. Gemessen
@@ -467,6 +642,8 @@ Messwerkzeugs, kein Loch im Code.
 
 ## Punkt 19: Die Release-Signatur muss einen DIGEST decken, nicht die Nachricht
 
+> **Stand: gilt.** Art: Sicherheit. Reihenfolge: **vor** dem ersten echten Release.
+
 **Herkunft:** die Schlüssel-Zeremonie am 02./03.10.2026, Thomas' YubiKey
 (5.4.3, OpenPGP 3.4), Seriennummer 18241912. Alles unten ist **gemessen**.
 
@@ -525,6 +702,8 @@ der Signierer wartet nur auf diesen einen Vertragssatz.
 
 ## Punkt 20: Die Lizenz war nie eine Vertragsfrage — sie ist eine nicht aufgerufene Funktion
 
+> **Stand: gilt.** Art: Entscheidung. `shared/` ändert sich dadurch nicht.
+
 **Entschieden am 03.10.2026. Zwei Stränge haben am selben Tag dieselbe Lücke
 gemeldet** — der API-Strang in Aufgabe 13 („Lizenz ist nirgends geprüft",
 gemessen: `grep -rn "CodeLicense\|VerifyLicense\|BlobLicense" apps/` ohne Tests
@@ -578,6 +757,8 @@ und sie ist jetzt benannt, statt in zwei Berichten zu liegen.
 
 ## Punkt 21: Eine Aktion darf `use` heißen — und dann ist das Recht dasselbe
 
+> **Stand: gilt.** Art: Sicherheit. Örtlicher Riegel gebaut, der Vertragssatz fehlt.
+
 **Gemessen am 03.10.2026** von der Prüfung der API-Aufgabe 13, und es ist der
 erste Fund dieser Sitzung, der eine Änderung in `shared/` **wirklich**
 braucht.
@@ -612,6 +793,8 @@ aufhängt, macht aus einer Namenskollision eine Lizenzumgehung.
 
 ## Punkt 22: Ein Diagnoseschalter ohne Weg in die Konfiguration ist keiner
 
+> **Stand: gilt.** Art: Entscheidung. Braucht ein Feld in `shared/config`.
+
 **Gemessen am 03.10.2026** in der Controller-Aufgabe 14, als Folge einer
 Entscheidung, die ich selbst getroffen habe.
 
@@ -640,6 +823,9 @@ zugleich, ob es weitere Schalter dieser Art gibt, die heute nur im Quelltext
 stehen; **gemessen ist bisher nur dieser eine.**
 
 ## Punkt 23: `store.ValidPath` ist POSIX-sicher, nicht Windows-sicher — und das ist jetzt gemessen
+
+> **Stand: gilt.** Art: Umgebung. Der fehlende Vertragssatz liegt in der
+> v1.3-Reihe als **P11**.
 
 **Gemeldet und belegt am 10.10.2026** aus Aufgabe 15 des Controllers, zweimal
 unabhängig (Prüfer und Umsetzer).
@@ -671,6 +857,10 @@ heute, wo es niemand sagt. **`shared/` ist eingefroren, also ist das hier
 notiert und nicht gebaut.**
 
 ## Punkt 24: Ein Abbild ohne Referenz kann niemand entfernen
+
+> **Stand: gilt.** Art: Messung. **Enthält eine Selbstberichtigung:** der Satz
+> „ein Deinstallieren nimmt es mit dem Benutzer mit" ist gemessen **falsch**.
+> Das Referenzfeld liegt in der v1.3-Reihe als **P5**.
 
 **Gemessen am 10.10.2026** in Aufgabe 16 des Controllers, und der Strang hat die
 Lücke benannt statt sie mit einer Notlösung zu überdecken.
@@ -717,6 +907,10 @@ statt sich dort auf den Benutzer zu verlassen.
 
 ## Punkt 25: Die Adressprüfung des Herunterladens ist von außen nicht aufrufbar
 
+> **Stand: gilt — und seit **Punkt 45** schärfer:** am echten Katalog prüft
+> **niemand** Pfad und Query einer absoluten Adresse. Art: Sicherheit.
+> In der v1.3-Reihe als **P1**.
+
 **Gemessen am 10.10.2026** in Aufgabe 19 der API; der Strang hat BLOCKED gemeldet
 statt sich eine zweite Zeichengrammatik zu bauen. Das war richtig.
 
@@ -747,6 +941,9 @@ einzigen.
 
 ## Punkt 26: Der Einmal-Code wird vor der MAC-Prüfung verbraucht
 
+> **Stand: offen, wartet auf Thomas.** Art: Sicherheit. Ungemessen ist, wie oft
+> ein Code neu ausgegeben wird. In der v1.3-Reihe als **N1** (kein Vertrag).
+
 **Gemessen am 12.10.2026** in Aufgabe 18 der API und dort als Bedenken gemeldet.
 `join.Accept` verbraucht den Einmal-Wert (`OnceUse`), **bevor** es die MAC prüft —
 übernommen aus `controllers.Pair`, mit Begründung im Kommentar.
@@ -768,6 +965,9 @@ entscheidet es für beide, mit einer Messung, wie oft ein Code neu ausgegeben wi
 
 ## Punkt 27: Zwei Server mit demselben Namen verdrängen einander
 
+> **Stand: offen, wartet auf Thomas.** Art: Entscheidung. Festgehalten, nicht
+> gebaut. In der v1.3-Reihe als **N2** (kein Vertrag).
+
 **Gemessen am 12.10.2026** in Aufgabe 18 der API. Eine zweite Beitrittsanfrage für
 denselben Knotennamen **überschreibt** die erste (`BlobPut` nach `req.Node`). Der
 Admin sieht dann nur die letzte und weiß nicht, dass es eine erste gab.
@@ -781,6 +981,12 @@ Schlüssel — der liegt in der Anfrage.
 Festgehalten, nicht gebaut. Wer es baut, entscheidet am Schlüssel, nicht am Namen.
 
 ## Punkt 28: Der Controller startet Migrationen als Programm, nicht selbst
+
+> ⚠ **Die Entscheidung gilt — zwei ihrer Begründungen sind gemessen falsch.**
+> Die Berichtigung steht unten im Abschnitt **„Punkt 29, Nachtrag → Berichtigung
+> vom 12.10.2026"**: der Controller trägt den SQL-Treiber längst, und `shared/`
+> ist sehr wohl betroffen. **Die echte Blockade ist die Konfiguration, nicht das
+> Entpacken.** Art: Entscheidung. In der v1.3-Reihe als **P7**.
 
 **Entschieden am 12.10.2026 vom Koordinator**, nachdem Aufgabe 21 des Controllers
 deswegen BLOCKED gemeldet hat. Der Entwurf führte die Frage selbst als offen
@@ -816,6 +1022,10 @@ schlimmer als nichts, es sieht aus wie eine Zusage.
 
 ## Punkt 29: Jeder Rahmen des Terminals trägt seine Länge
 
+> **Stand: gilt.** Art: Entscheidung. Die hier offen gelassene Zahl („wie viele
+> Terminals gleichzeitig") ist im Abschnitt **„Punkt 29, Nachtrag"** auf **128**
+> App-Kanäle gesetzt.
+
 **Gebaut und gemessen am 12.10.2026** in Aufgabe 23 des Controllers, als **Abweichung**
 vom Plan, und **mit der Sitzung Webinterface abzustimmen**, weil das Gegenstück dort sitzt.
 
@@ -841,6 +1051,11 @@ je Kanal 65 497 + 16 387 Byte Puffer, ein PTY-Paar, vier Goroutinen, ein Contain
 `serve` und in den Vertrag.
 
 ## Punkt 30: Niemand hält die hochgeladene Datei zwischen Hochladen und Aktivieren
+
+> **Stand: gilt unverändert.** Art: Messung. ⚠ Die Meldung der Aufgabe 24, dieser
+> Punkt sei **erledigt**, ist gemessen **falsch** (siehe Unterabschnitt). Am
+> Store-Weg nachgemessen in **Punkt 45**: das Store-Paket trägt, der
+> **Hochlade-Weg nicht**.
 
 **Gefunden am 12.10.2026** von Aufgabe 22 der API, beim Bauen, nicht beim Lesen.
 
@@ -883,6 +1098,9 @@ offen.
 
 ## Punkt 31: Nichts hält die Rechte des Katalogeintrags gegen das Manifest
 
+> **Stand: gilt.** Art: Sicherheit. Heute keine Lücke, solange niemand die
+> Katalogkopie als Grundlage nimmt. In der v1.3-Reihe als **P12**.
+
 **Gemessen am 12.10.2026** vom Strang, der das App-Einrichten beim Update gebaut hat — und
 zwar nicht als Nebenbefund, sondern als **Grund, einen vorgeschlagenen Weg zu verwerfen**.
 
@@ -915,6 +1133,11 @@ niemand die Katalogkopie als Grundlage einer Rechteentscheidung nimmt. Wer das t
 zuerst hier lesen.
 
 ## Punkt 32: Ein Controller, der die Migrationssperre nicht bekommt, startet nicht — und soll es nicht
+
+> **Stand: die Entscheidung gilt.** Art: Entscheidung. Die hier als ungemessen
+> benannte Hälfte ist inzwischen **gemessen** — **Punkt 44** (die Sperre hält zwei
+> Programme nicht auseinander) und **Punkt 48** (zwei Schreiber sind sicher, nur
+> langsam; die Zahl ist vier).
 
 **Gemessen am 12.10.2026** in Aufgabe 24 des Controllers, mit einem **echten zweiten Prozess**
 (`os.Args[0]` neu ausgeführt), nicht mit einer Attrappe:
@@ -961,7 +1184,12 @@ eingespielt.`, Code 0). Die Entscheidung oben bleibt davon unberührt — sie be
 Antwort des Datenbankpakets darauf ist `busyTimeout` von 10 Sekunden plus Wiederholung, und **die
 ist weiter ungemessen.**
 
-## Punkt 29, Nachtrag: die Zahl der App-Kanäle
+## Punkt 29, Nachtrag: die Zahl der App-Kanäle — und eine Berichtigung zu Punkt 28
+
+> **Stand: gilt.** Art: Entscheidung. Setzt die in **Punkt 29** offen gelassene
+> Zahl auf **128** App-Kanäle je Server. ⚠ **Der Unterabschnitt darunter
+> berichtigt Punkt 28** in zwei Begründungen; die Entscheidung von Punkt 28
+> bleibt.
 
 Aufgabe 24 des Controllers hat die Grenze gesetzt, die Punkt 29 verlangt hat:
 **`serve.DefaultMaxApps = 128`** App-Kanäle je Server, gebucht **vor** dem E2E-Handschlag,
@@ -1030,6 +1258,8 @@ Linter nicht deckt, ist die **Bedeutung** einer neuen Spalte.
 
 ## Punkt 33: Die Rollenprüfung für NGC-Teile sitzt auf der falschen Seite der Leitung
 
+> **Stand: gilt.** Art: Sicherheit. Zu bauen in `apps/`, ohne Vertragsänderung.
+
 **Gemessen am 12.10.2026** und von mir selbst nachgeprüft: in
 `apps/server-controller/classes/update/install.go` kommt das Wort `Roles` **kein einziges Mal**
 vor, und `update.Deps` hat kein solches Feld.
@@ -1048,6 +1278,8 @@ die eigene Rolle durchgeht.
 
 ## Punkt 34: `ngc-api` kann heute überhaupt keine Datenbank öffnen
 
+> **Stand: gilt.** Art: Messung. Der schärfste Fall von „gebaut ist nicht gelaufen".
+
 **Gemessen am 12.10.2026**, von mir nachgeprüft: `classes/server/server.go` ruft `dbopen.Open`,
 aber **kein Produktionscode ruft `dbopen.Register` oder `RegisterMigrator`** — nur Tests tun das
 (`git grep "dbopen.Register" api -- apps/` ohne Testdateien: **kein Treffer**).
@@ -1063,6 +1295,11 @@ Formanpassung braucht es: `migraterun.Run(ctx, cfg, owner, now) (int, error)` ge
 `dbopen.Migrator func(ctx, cfg, io.Writer) error`.
 
 ## Punkt 35: Ein weitergeleiteter Kanal hat keine Stillzeitgrenze
+
+> **Stand: gilt, BLOCKED.** Art: Messung. In der v1.3-Reihe als **P8** — und **P8**
+> hängt seit **Punkt 54** an **P10**, weil ein neuer Schließgrund ein **Bruch**
+> ist, keine Ergänzung. **Enthält eine Selbstberichtigung:** der Satz „`-race` ist
+> auf dieser Maschine nicht messbar" war falsch.
 
 **Gemessen am 12.10.2026**, nachdem die Zusage aus Aufgabe 17 („je Kanal eine Goroutine, Zahl
 gleichzeitiger nicht gemessen") nachgezählt wurde.
@@ -1104,7 +1341,13 @@ war **falsch** — der Übersetzer liegt unter `C:\esp\tools\llvm-mingw\bin\gcc.
 `-race` läuft (`relay` und `link`: 0 DATA RACE). Die Nebenläufigkeit dieses Pakets ist damit
 **nachmessbar und nachzumessen**; gezählt wurden bisher nur Goroutinen, nicht Zugriffsfolgen.
 
-## Punkt 36: Zwei Härtungsschalter fehlen — Entscheidung offen
+## Punkt 36: Zwei Härtungsschalter fehlen — Entscheidung offen — ERLEDIGT durch Punkt 51
+
+> ⚠ **Überholt durch Punkt 51.** Beide Schalter sind dort gebaut und gemessen:
+> `--pids-limit 512` (die Zahl ist gemessen, nicht geraten) und `nosuid,nodev` auf
+> beiden Einhängungen. **Neu offen aus Punkt 51: `noexec` auf `/data`** — diesen
+> Schalter nennt Punkt 36 gar nicht. Art: Sicherheit.
+> Der Text unten bleibt als Messung von damals stehen.
 
 **Gefunden am 12.10.2026**, als die Härtung des App-Containers endlich messbar gemacht wurde.
 Die Vorgeschichte gehört dazu, weil sie erklärt, wie die Lücke so lange bleiben konnte:
@@ -1139,6 +1382,8 @@ entsprechende Fall überspringt sich laut.
 
 ## Punkt 37: Der Plan hat denselben Fehler zweimal vorgegeben
 
+> **Stand: gilt.** Art: Messung. Eine Lehre über Vorlagen, kein offener Posten.
+
 **Festgehalten am 12.10.2026**, nachdem der kritische Befund K-1 der API behoben war.
 
 Zweimal hat ein Strang einen **Entwurfs-Codeblock des Plans** gelesen, ihn gegen seinen eigenen
@@ -1169,7 +1414,12 @@ eigenen Kommentar lesen**, bevor man ihn übernimmt. Das hat heute zweimal einen
 den sonst erst ein echter Server gefunden hätte — beim zweiten Mal einen, der den Prozess
 umbringt.
 
-## Punkt 38: Ein Fehler in einem Kanal tötet den ganzen Server — Entscheidung offen
+## Punkt 38: Ein Fehler in einem Kanal tötet den ganzen Server — Entscheidung offen — ENTSCHIEDEN, siehe Punkt 55
+
+> ⚠ **Überholt durch Punkt 55 — die Entscheidung ist getroffen und gebaut.**
+> Gewählt wurde der Vorschlag „je Kanal fangen": dreizehn Fangstellen, `E_INTERNAL`
+> am Kanal, Zähler und Minutenbericht gegen das Verschlucken. Art: Entscheidung.
+> Der Text unten bleibt als Abwägung von damals stehen.
 
 **Gemessen am 12.10.2026** in Aufgabe 30 der API, gefunden von einem **Fuzz-Samen**, nicht von
 einem Mutanten: `coreapp/testdata/fuzz/FuzzOpenParams/4b950b6123cdb67b`. **Der Samen muss im Repo
@@ -1213,6 +1463,10 @@ Ein Riegel, der im Kommentar steht und nicht im Code, ist kein Riegel.
 
 ## Punkt 39: Das Abbild der Terminal-App hängt an einem Tag, nicht an einem Digest
 
+> **Stand: offen, wartet auf Thomas.** Art: Sicherheit. Zwei Fragen in einer:
+> Digest festnageln ja/nein — und **wer hebt ihn an**, wenn Debian einen
+> Sicherheitsfix veröffentlicht.
+
 **Gefunden am 12.10.2026**, als das Kommando gebaut wurde, das dieses Abbild überhaupt erzeugt
 (vorher antwortete `ngc-controller image` immer „noch nicht gebaut" — ein Dienst ohne Erzeuger
 für sein Abbild läuft nie).
@@ -1249,6 +1503,9 @@ Server gebautes Abbild hat **niemand unterschrieben**.
 
 ## Punkt 40: Das Terminal echot — und die Oberfläche hätte Passwörter hingeschrieben
 
+> **Stand: gilt, behoben.** Art: Sicherheit. **Enthält eine Selbstberichtigung:**
+> nicht der Plan hat es falsch gesagt — der Plan sagt zum Echo **gar nichts**.
+
 **Gemessen am 12.10.2026** vom Webpaket, beim Bauen der Gegenseite des Terminal-Protokolls
 (Punkt 29). Es ist der Fund des Tages mit der direktesten Folge für einen Benutzer.
 
@@ -1277,6 +1534,9 @@ der Dienst echot, weil er ein PTY benutzt — und nicht, wo ein falscher Satz st
 
 ## Punkt 41: Das Terminal kann kein Passwort und kein `vi` — Entscheidung offen
 
+> **Stand: offen, wartet auf Thomas.** Art: Entscheidung. Keine Vertragsänderung —
+> das Format kann beides, es fehlt die Entscheidung über die Oberfläche.
+
 Dieselbe Runde, und es ist die Frage dahinter: die Oberfläche aus Plan 1 ist ein **Zeilenfeld**
 (`input type=text`). Sie schickt ganze Zeilen und zeigt alles Getippte.
 
@@ -1300,7 +1560,10 @@ Satz in der Doku verlässt. Und das Format kann es schon, es ist keine Vertrags�
 **Gemessen ist das nicht** — es ist eine Abwägung über Arbeit gegen Sicherheit, und die
 Entscheidung gehört Thomas.
 
-## Punkt 42: `ngc.open("terminal","shell",{cols,rows})` ist wirkungslos
+## Punkt 42: `ngc.open("terminal","shell",{cols,rows})` ist wirkungslos — ENTSCHIEDEN
+
+> **Stand: gilt — ENTSCHIEDEN am 12.10.2026** (Parameter bleiben Beiwerk).
+> Art: Entscheidung. Kein offener Posten mehr.
 
 Ebenfalls am 12.10.2026 gemessen: `terminal.go` **liest keine Parameter**, und `shellEnv` baut die
 Umgebung aus nichts. Die Fenstergröße wirkt **nur** über den Rahmen des Protokolls.
@@ -1328,6 +1591,11 @@ Rahmen da ist, hat das Pseudoterminal die Größe, die der Kern ihm gab), ein Ri
 Umgebung hält — so hat auch `NGC_PARAMS` keine Hintertür —, und die Berichtigung im Plan an
 Zeile 6750.
 ## Punkt 43: Der Vertrauensanker verriegelt den dokumentierten Weg nach einem Totalverlust
+
+> **Stand: offen, wartet auf Thomas.** Art: Sicherheit. **Dieser Punkt ist die
+> Entscheidung zu Punkt 10 der Reihe A** (Sammelliste oben), nicht zu Punkt 10
+> dieser Reihe — die gibt es nicht. **Antwort B ist gemessen keine Antwort**
+> (Mutant C); empfohlen ist der **dritte Weg** (Mutant D). Gebaut ist nichts.
 
 **Gelesen am 12.10.2026** beim Einhängen des Ankers, **aus dem Code**, nicht gemessen — und der
 Zustand liegt **schon auf `main`**, vor jeder Änderung dieser Runde.
@@ -1434,6 +1702,10 @@ nicht** — er gehört zu Punkt 10 des Vertrags.
 
 ## Punkt 44: API und Controller haben zum ersten Mal miteinander gesprochen
 
+> **Stand: gilt.** Art: Messung. **Berichtigt eine Meldung:** „Punkt 32 ist
+> gefallen" war zu scharf — Punkt 32 steht, nur seine offene Hälfte ist jetzt
+> gemessen.
+
 **Gemessen am 13.10.2026**, unter Linux in WSL, mit beiden Programmen für linux/amd64 gebaut. Das
 war auf **beiden** Abschlussprüfungslisten der größte Posten — „kein echter Controller, kein
 echter Tunnel" (API: Punkt 5 von 23, Controller: Punkt 13 von 22). Alles war gegen Attrappen
@@ -1507,6 +1779,12 @@ Sekunden später durch.
 
 ## Punkt 45: Ein echter Store — und alle früheren Store-Messungen hatten die Kettenprüfung aus
 
+> **Stand: gilt.** Art: Messung. ⚠ **Berichtigt rückwirkend jede Store-Messung vor
+> dem 13.10.2026**: der Prüfstand setzte den Transport des Testservers, die
+> TLS-Kette wurde nie beurteilt. Der Nebenbefund „Rückdreh-Falle ohne Ausgang" ist
+> **erledigt durch Punkt 46**. Verschärft **Punkt 25**. Der Widerspruch zur
+> **vierstelligen Hausnummerierung** ist weiter offen und wartet auf Thomas.
+
 **Gemessen am 13.10.2026.** „Kein echter Store" war Punkt 18 von 23 auf der Abschlussprüfungsliste
 der API. Gebaut wurde einer **nur mit dem Werkzeug** (`pack`, `encrypt`, `catalog`, `release`),
 und `check -store` sagt **`store ok`**.
@@ -1572,6 +1850,9 @@ Das gehört vor dem ersten Release entschieden, nicht danach.
 
 ## Punkt 46: Der Rückdreh-Riegel war eine Falle ohne Ausgang — jetzt gibt es einen
 
+> **Stand: gilt, gebaut.** Art: Sicherheit. Erledigt den Nebenbefund 1 aus
+> **Punkt 45**. ⚠ Die Fälle erben die abgeschaltete Kettenprüfung aus Punkt 45.
+
 **Gemessen am 13.10.2026.** Punkt 45 hatte es als Nebenbefund genannt: wer eine hohe Folgenummer
 unterschiebt, sperrt den echten Store dauerhaft aus. Nachgemessen ist es schlimmer, und zwar in
 drei Richtungen.
@@ -1617,7 +1898,15 @@ belegt, die im **selben** Lauf rot wird.
 statt es zu übergehen. Und die Zeile mit Zeit und Grund bleibt beim Entfernen stehen; das ist
 bewusst so, aber ungemessen.
 
-## Punkt 47: Der kleine Fall — eine Datenbankdatei je Programm, und eine gemessene Lücke
+## Punkt 47: Der kleine Fall — eine Datenbankdatei je Programm, und eine gemessene Lücke — Lücke zu seit Punkt 59
+
+> ⚠ **Teilweise überholt.** Die **gemessene Lücke** („ohne `ngc-web` kann sich
+> niemand anmelden, also auch keinen Kopplungscode holen") ist **zu seit Punkt 59**
+> und an einer frischen Anlage bestätigt in **Punkt 62**. **Offen bleibt die
+> Entscheidung:** die fünf `ngc-*`-Skripte nach `ulh`-`main` zusammenführen —
+> ein Push dort erreicht sofort alle Nutzer. Art: Umgebung.
+> Dazu **Punkt 48**: „ein Schreiber je Datei" ist eine Entscheidung über
+> **Einfachheit**, nicht über Sicherheit.
 
 **Gemessen am 13.10.2026.** Für ein kleines System (eine Maschine) ist der Treiber
 `config.DriverSQLite`: **eine Datei**, verschlüsselt mit AES-256-XTS über eine eigene VFS,
@@ -1648,6 +1937,9 @@ geprüft ist er erst auf echtem Debian (Feldplan).
 erreicht per Auto-Update **sofort alle Nutzer** — deshalb liegt das nicht bei mir.
 
 ## Punkt 48: Zwei Programme auf einer SQLite-Datei — sicher, aber mit einer Zahl: vier
+
+> **Stand: gilt.** Art: Messung. Zwei Posten der Liste „hingelegt, nicht gebaut"
+> sind in **Punkt 49** gebaut. Beantwortet die offene Hälfte von **Punkt 32**.
 
 **Gemessen am 13.10.2026**, die letzte offene Hälfte von Punkt 32. Alles mit **zwei echten
 Prozessen** über `sqlite.OpenDB` → Pool → `sqlstore` → `LogAdd`, keine Attrappe, auf **C:** und
@@ -1693,6 +1985,11 @@ Hängen beim Start — genau die Abwägung von Punkt 32).
 dieser Last.
 
 ## Punkt 49: Die Frist gehört zum Zweck — und „beschäftigt" ist nicht „weg"
+
+> **Stand: gilt, gebaut.** Art: Messung. ⚠ **Berichtigt durch Punkt 54:** der hier
+> als BLOCKED genannte Code `E_BUSY` (**P9**) ist **kein** „Ergänzung, kein Bruch" —
+> ein Leser, der ihn nicht kennt, wirft den ganzen Rahmen weg. **P9 hängt seit
+> Punkt 54 an P10.**
 
 **Gemessen und gebaut am 13.10.2026**, zwei Posten von Punkt 48s Liste „hingelegt, nicht gebaut".
 
@@ -1740,7 +2037,12 @@ nach der Änderung nicht nachgefahren** — belegt ist die Kette im Prüfstand, 
 Und ein Klient, dessen Rumpf länger als 5 s tröpfelt, hört künftig „beschäftigt" statt `E_PROTOCOL`
 bei 15 s; im Code benannt, nicht gemessen.
 
-## Punkt 50: Zwei echte APIs über HTTP — der Benutzer hört, sein Passwort sei falsch
+## Punkt 50: Zwei echte APIs über HTTP — der Benutzer hört, sein Passwort sei falsch — behoben durch Punkt 52 und 53
+
+> ⚠ **Der Befund ist behoben — durch Punkt 52** (die Unsymmetrie weg, „besetzt" wird
+> beantwortet) **und Punkt 53** (der Fehler überlebt `Live`). Der Wortlaut, den der
+> Benutzer liest, ist in **Punkt 58** im echten Browser **gesehen**, nicht mehr nur
+> abgelesen. Die P9-Einordnung ist durch **Punkt 54** berichtigt. Art: Messung.
 
 **Gemessen am 13.10.2026**, zwei echte `ngc-api` für linux/amd64 auf **einer** SQLite-Datei,
 Erst-Einrichtung echt über HTTP (GET+POST `/api/v1/setup`, Einmal-Code, `VerifySetup` grün).
@@ -1807,6 +2109,10 @@ nur bis `login/start`.
 
 ## Punkt 51: Die Prozessdecke und `nosuid`/`nodev` — und drei Fälle, die blind geblieben wären
 
+> **Stand: gilt, gebaut.** Art: Sicherheit. **Erledigt Punkt 36.**
+> **Offen und wartet auf Thomas: `noexec` auf `/data`.** Eine App-eigene
+> Prozessgrenze wäre ein Manifestfeld → v1.3 **P13**.
+
 **Gemessen und gebaut am 13.10.2026**, die zwei offenen Posten aus Punkt 36.
 
 **Die Kommandozeile ist jetzt vollständig belegt**, Zeile für Zeile aus
@@ -1856,6 +2162,10 @@ heute: eine App-eigene Prozessgrenze wäre ein Manifestfeld,
 `shared/store/manifest.go:50–51` — eingefroren.
 
 ## Punkt 52: Die Lüge über das Passwort ist weg — über die Unsymmetrie, nicht über die Meldung
+
+> **Stand: gilt, gebaut.** Art: Sicherheit. Behebt **Punkt 50**. Der hier offen
+> gebliebene Posten (`login/live.go:313`) ist in **Punkt 53** gebaut.
+> ⚠ **Berichtigt durch Punkt 54:** `E_BUSY` (**P9**) ist ein Bruch, keine Ergänzung.
 
 **Gemessen und gebaut am 13.10.2026**, der Posten aus Punkt 50.
 
@@ -1912,6 +2222,9 @@ gemessen. `login/finish` und `logout` antworten weiter ohne `Retry-After`.
 
 ## Punkt 53: Der Fehler überlebt `Live` — und er ging an drei Stellen verloren, nicht an einer
 
+> **Stand: gilt, gebaut.** Art: Messung. Schließt den offenen Posten aus **Punkt 52**.
+> ⚠ **Berichtigt durch Punkt 54:** `E_BUSY` (**P9**) ist ein Bruch, keine Ergänzung.
+
 **Gemessen und gebaut am 13.10.2026**, der offene Posten aus Punkt 52.
 
 **Die Fundstelle war größer als gedacht:** `login/live.go:212` gab `(*Live, wire.Code, bool)`
@@ -1959,7 +2272,13 @@ Baumlast von `check.sh` am Grundstand genauso rot wird — dort wurde er nur all
 haben weder Frist noch Grund. Und was der Benutzer bei `503 + Retry-After` **liest**, ist weiter
 ungemessen — die Oberfläche nimmt den `message` der Antwort nie (`contracts/wire.js:505`).
 
-## Punkt 54: „Ergänzung, kein Bruch" war falsch — ein neuer Code wirft den ganzen Rahmen weg
+## Punkt 54: „Ergänzung, kein Bruch" war falsch — ein neuer Code wirft den ganzen Rahmen weg — berichtigt Punkt 49, 52 und 53
+
+> **Stand: gilt.** Art: Messung. ⚠ **Dieser Punkt berichtigt Punkt 49, 52 und 53**
+> in dem, was sie über **P9** gesagt haben, und ebenso **P8** aus Punkt 35.
+> Folge für die v1.3-Reihe: **P10** ist neu und das Tor, **P4** ist erledigt und
+> gestrichen, **P10–P13** sind dazugekommen — und die **alte** Reihe hatte
+> `P6`, `P7`, `P8` **doppelt** vergeben (jetzt **N1–N3**).
 
 **Gemessen am 15.10.2026**, und es berichtigt, was die Punkte 49, 52 und 53 über P9 gesagt haben.
 
@@ -1994,6 +2313,9 @@ nicht die Form („wir fügen nur etwas hinzu"), sondern der **Leser der alten F
 messen, nicht argumentieren. Steht in `messen.md`.
 
 ## Punkt 55: Punkt 38 ist gebaut — dreizehn Fangstellen, und keine ist wie die andere
+
+> **Stand: gilt, gebaut.** Art: Sicherheit. **Erledigt Punkt 38** — die dort offene
+> Entscheidung ist damit getroffen.
 
 **Gebaut am 16.10.2026**, API und Controller, und auf `main` nachgeprüft: `go build` 0,
 `go test ./apps/...` **43 Pakete ok, 0 rot, Code 0**.
@@ -2032,7 +2354,13 @@ Stelle, die zählt**: die Zeile, die gestorben ist, als die letzten zwei Teile i
 Aus Anfrage, Sitzung, Benutzer oder Parametern wird hier **gar nichts** gelesen — der Aufruf
 übergibt eine Kanalnummer und einen festen Ortsnamen, einen dritten Weg hinein gibt es nicht.
 
-## Punkt 56: Das kleine System läuft — auf echtem Debian, mit drei Befunden auf dem Weg
+## Punkt 56: Das kleine System läuft — auf echtem Debian, mit drei Befunden auf dem Weg — Punkte 1, 3 und 4 zu seit Punkt 57/59/61
+
+> ⚠ **Teilweise überholt.** Offener Punkt 1 (Release-Schlüssel) ist **zu seit
+> Punkt 57**, ebenso der fehlende Riegel aus Befund 1. Punkt 3 (Anmeldung im
+> Browser) ist **zu seit Punkt 59**, Punkt 4 (Kopplung) **zu seit Punkt 61**.
+> **Offen bleibt der Store-Schlüssel** und die fünfte Schutzeinstellung aus
+> Befund 3. Art: Umgebung.
 
 **Gemessen am 16.10.2026** auf **Debian 13 (trixie), Apache 2.4.69, PHP 8.4, podman 5.4.2**,
 systemd läuft (WSL2-Instanz, also ein echtes Debian-Userland; was nur dort gilt, steht unten).
@@ -2122,6 +2450,11 @@ knows 4 of them.` Das Skript sagt es laut und macht weiter — richtig so, aber 
 
 ## Punkt 57: Der Riegel ist auf — NGC hat einen Release-Schlüssel, und nichts wird mehr ersetzt
 
+> **Stand: gilt.** Art: Umgebung. Das hier noch Ungemessene (Anmeldung im Browser,
+> Kopplung) ist in **Punkt 59** und **Punkt 61** gemessen. **Offen und wartet auf
+> Thomas:** der geheime Schlüssel gehört auf einen **Hardware-Stick**, und der
+> **Store-Schlüssel** ist weiter ein Platzhalter.
+
 **Gemessen am 17.10.2026** auf demselben Debian 13 wie Punkt 56, diesmal **ohne jede Ersetzung**:
 der öffentliche Schlüssel steht in den Skripten, der geheime unterschreibt.
 
@@ -2155,6 +2488,11 @@ Dinge bleiben, und keines davon ist Programmierarbeit:
 Passschlüssel), und damit die Kopplung des Controllers, die über die angemeldete Oberfläche läuft.
 
 ## Punkt 58: Die Einrichtungsseite im echten Browser — und der Satz aus Punkt 50, diesmal gesehen
+
+> **Stand: gilt.** Art: Umgebung. Die hier gestellte Frage („`ngc.test` eintragen
+> oder gleich mit echtem Namen messen") ist in **Punkt 59** praktisch beantwortet:
+> der Browser löst selbst auf, die `hosts`-Datei blieb unberührt. Was ein Nutzer
+> mit `letsencrypt` erlebt, ist weiter **ungemessen**.
 
 **Gemessen am 17.10.2026** in einem echten Browser gegen die Installation aus Punkt 57.
 
@@ -2203,6 +2541,11 @@ Namen und `letsencrypt`-Zertifikat messen, was ohnehin der Fall ist, den ein Nut
 
 ## Punkt 59: Angemeldet. Der Schreibtisch steht im Browser
 
+> **Stand: gilt.** Art: Messung. **Schließt die gemessene Lücke aus Punkt 47.**
+> ⚠ Einschränkung: „durchgängig" galt nur für diesen einen Seitenaufbau —
+> **Punkt 60** zeigt die Aussperrung danach, **Punkt 61** erklärt und behebt sie
+> (ohne Kopplung kein Anker, ohne Anker hält die Oberfläche jede Anlage für neu).
+
 **Gemessen am 17.10.2026**, echte HTTPS-Strecke gegen die Installation aus Punkt 57, in einem
 echten Browser (Chromium über Playwright). **Kein Eingriff am Windows-System:** der Browser löst
 `ngc.test` selbst auf (`--host-resolver-rules`) und nimmt das selbst unterschriebene Zertifikat
@@ -2240,7 +2583,18 @@ dem Wiedereintragen: Seite 200, `/api/v1/setup` 200, `NRestarts=0`.
 - Die Messung lief mit **selbst unterschriebenem** Zertifikat und einem Browser, der es für diesen
   Lauf annimmt. Was ein Nutzer mit `letsencrypt` erlebt, ist damit **nicht** gemessen.
 
-## Punkt 60: Der Controller lässt sich nicht koppeln — der Knopf dafür gibt es nicht
+## Punkt 60: Der Controller lässt sich nicht koppeln — der Knopf dafür gibt es nicht — ÜBERHOLT durch Punkt 61
+
+> ⚠ **ÜBERHOLT DURCH PUNKT 61 — in der Kernaussage falsch.**
+> **Den Knopf gibt es:** „Kopplungscode zeigen" in *Benutzer & Rechte* unter dem
+> Reiter **Server** (`apps/web/.../apps/users.js:600`). Die „null Treffer in
+> `apps/web`" kamen aus einem Arbeitsbaum auf `main`, wo der Ordner zwei Dateien
+> hat — der Oberflächencode liegt auf dem Zweig `web`.
+> **Der geschlossene Kreis stimmte in der Erscheinung, nicht in der Ursache:**
+> die Kopplung scheiterte an einer fehlenden Abfrage `?secret=…`, nicht an einem
+> fehlenden Knopf. Art: Messung.
+> Der Text unten bleibt als Messung von damals stehen — wer nur ihn liest, landet
+> auf dem alten Stand.
 
 **Gemessen am 17.10.2026** an der laufenden Installation aus Punkt 59. Der Auftrag war, den
 Controller zu koppeln. Er lässt sich nicht koppeln, und zwar nicht aus einem Fehler, sondern
@@ -2289,6 +2643,10 @@ Controller hat heute nur `pair`, das einen **fertigen** Code erwartet (`ngc-cont
 Container, der Weg über den Tunnel aus Punkt 44 im echten Betrieb.
 
 ## Punkt 61: Gekoppelt — und Punkt 60 war in seiner Kernaussage falsch
+
+> **Stand: gilt.** Art: Messung. **Berichtigt Punkt 60.** An einer frischen Anlage
+> bestätigt in **Punkt 62**. Noch offen: ob mit gekoppeltem Controller wirklich
+> **Apps laufen**.
 
 **Gemessen am 17.10.2026** auf Debian 13. **Zuerst die Berichtigung, weil sie mir gehört:**
 
@@ -2342,6 +2700,11 @@ Anlage für neu.
 das ist der nächste Messpunkt und bisher nur insoweit belegt, als der Tunnel steht.
 
 ## Punkt 62: Die Probe aufs Exempel — die Anlage entsteht allein aus den Skripten, mit vier Befunden
+
+> **Stand: gilt.** Art: Umgebung. Bestätigt **Punkt 61** und **Punkt 59** an einer
+> frisch angelegten Anlage, und **Punkt 47**s Lücke als geschlossen.
+> Befund 2 (kein Weg für einen Testschlüssel außer `sed` in vier Skripten) ist
+> **blockierend** und gehört zu den offenen Entscheidungen unten.
 
 **Gemessen am 17.10.2026** in einer **frisch angelegten** Debian-13-Umgebung, nicht in der
 gewachsenen Testanlage: WSL-Instanz `ngcfrisch` (`wsl --install Debian --name ngcfrisch`,
@@ -2441,3 +2804,60 @@ abgewartet (der Anker stand bei `seq: 1`, die Minutenwarnung
 - **Der echte Release-Schlüssel von NGC**: alle Zahlen hier gelten für einen **Testschlüssel**.
 - **Die Zahlen gelten für diesen Ort:** Debian 13 in einem podman-Container in einer
   WSL2-Instanz, ext4, `TMPDIR` auf `/var/tmp`. Nicht für C:, nicht für Z:, nicht für Blech.
+
+
+---
+
+## Offene Entscheidungen für Thomas
+
+Alles, was in dieser Datei auf eine Entscheidung wartet – an einer Stelle.
+Je Zeile: die Frage, der Punkt, und was passiert, wenn nicht entschieden wird.
+
+### Blockierend – ohne diese Entscheidung geht etwas gar nicht
+
+| Frage | Punkt | Wenn nicht entschieden wird |
+|---|---|---|
+| **Hardware-Stick für den Release-Schlüssel** – mit welchem Werkzeug unterschreibt er? | **57** (Nr. 1), Entwurf 4.8 | Der geheime Schlüssel bleibt als Datei in `/root/ngc-keys`. **Jeder, der auf dieser Maschine root ist, unterschreibt NGC-Releases.** |
+| **Der offizielle Store fehlt** – eigener Store-Schlüssel oder NGC-Store? | **56** (Nr. 2), **57** (Nr. 2) | `REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY` bleibt stehen. Jede Installation muss ihren **eigenen** Store nennen; es gibt keine Apps von NGC. |
+| **Vierstellige Hausnummerierung gegen dreistellige `store.ValidVersion`** | **45** | `ngc-store release -version 0.0.1.0` fällt durch. **Vor** dem ersten Release zu klären, nicht danach. |
+| **Die fünf `ngc-*`-Skripte nach `ulh`-`main` zusammenführen** | **47** | Kein Nutzer kann NGC installieren – auf `origin/main` liegt **kein** `ngc-*`-Skript. Ein Push dorthin erreicht per Auto-Update **sofort alle Nutzer**, darum liegt es nicht beim Agenten. |
+| **Ein Weg, den Release-Schlüssel von außen zu setzen** (`NGC_RELEASE_KEY_FILE` oder `ngc-all.sh test-key <Datei>`) | **62**, Befund 2 | Niemand kann die Kette mit einem eigenen Schlüssel prüfen, ohne die vier Skripte mit `sed` zu verbiegen – und wer sie verbiegt, prüft nicht mehr die Skripte. |
+
+### Die v1.3-Reihe – je Punkt JA oder NEIN
+
+Die Vorlage steht in [`vertraege-v1-3-vorschlag.md`](vertraege-v1-3-vorschlag.md):
+je Punkt der fertige Änderungssatz, der Preis, was ohne ihn für immer fehlt, und
+eine Empfehlung.
+
+| Frage | Punkt hier | Wenn nicht entschieden wird |
+|---|---|---|
+| **P10** – darf ein Vertrag von `shared/` überhaupt etwas dazubekommen? | **54** | **Jede** künftige Ergänzung bleibt für immer ein Bruch. P8 und P9 kosten dann das Dreifache. P10 ist das Tor. |
+| **P8** – eigener Schließgrund für die Leerlaufgrenze | **35** | Ein Leerlauf bleibt von einem Absturz nicht zu unterscheiden. Nur **nach** P10. |
+| **P9** – eigener Code `E_BUSY` für „besetzt" | **49, 50, 52, 53, 58** | Der Benutzer kann „Dienst weg", „Name löst nicht auf" und „Datenbank besetzt" **nicht unterscheiden** – er liest immer „Dienst nicht erreichbar." Nur **nach** P10. |
+| **P1** – `store.ValidDownloadURL` ausführen | **25, 45** | Pfad und Query einer Download-Adresse prüft dauerhaft **niemand**. |
+| **P2** – `Unattended` verbietet den ersten Einbau | – | Ein erster Einbau ohne Aufsicht geht gar nicht. |
+| **P3** – Format einer `ngc-web`-Release-Datei | **56** | ⚠ Punkt 56 sagt „P3 ist beantwortet", die Vorlage führt P3 weiter als „gilt". **Einer der beiden muss nachziehen.** |
+| **P5** – Referenzfeld in `dbapi.App` | **24** | Ein Abbild ohne Referenz bleibt für immer im Datenverzeichnis liegen, und `DataSize` zählt es als Benutzerdaten. |
+| **P6** – ein Kopplungscode gilt 24 Stunden | – | Die Zahl bleibt ungesetzt. Gehört zusammen mit **N1** entschieden (Punkt 26). |
+| **P7** – `ngc-api migrate` braucht eine ganze `api.json` | **28** | Ein reiner Datenbankknoten kann `ngc-api migrate` nicht starten. |
+| **P11** – `ValidPath` sagt nichts über die Schreibweise | **23** | Dieselbe Eingabe verhält sich auf Entwicklungs- und Zielplattform verschieden, und niemand sagt, ob das zugesagt ist. |
+| **P12** – Rechte im Katalog gegen das Manifest halten | **31** | Heute keine Lücke – aber wer die Katalogkopie je als Grundlage nimmt, baut eine Wand vor eine offene Tür. |
+| **P13** – Prozessdeckel je App im Manifest | **51** | Jede App teilt sich den einen Deckel von 512. Bedarf ist nicht gemessen. |
+
+### Sicherheit und Oberfläche
+
+| Frage | Punkt | Wenn nicht entschieden wird |
+|---|---|---|
+| **`noexec` auf `/data`** | **51** (Punkt 36 nennt es nicht) | Eine App darf unter `/data` abgelegte Skripte ausführen. Es ist eine **Verhaltensänderung** für jede App, die das heute tut – darum keine Agentensache. |
+| **Vertrauensanker nach einem Totalverlust** – Antwort A, Antwort B oder der dritte Weg? | **43**, dazu **Reihe A, Punkt 10** | Der dokumentierte Weg zurück ist offen **und endet in einer Wand**: die Einrichtung nimmt den Admin an, danach läuft nichts. **Antwort B ist gemessen keine Antwort**; empfohlen ist der dritte Weg (Mutant D). |
+| **Digest statt Tag für das Terminal-Abbild** – und **wer hebt ihn an**? | **39** | Zwei Bauten desselben Commits sind zwei Abbilder, und wer den Tag `debian:13-slim` beherrscht, beherrscht den Container mit `needs: ["root"]`. Ein festgenagelter Digest, den niemand pflegt, ist nach einem halben Jahr schlechter als ein Tag. |
+| **Terminal: Rohtasten oder Zeilenfeld?** | **41** | Beim Zeilenfeld tippt ein Admin irgendwann sein `sudo`-Passwort in ein Feld, das es **anzeigt**. Empfohlen: Rohtasten – das Format kann es schon, es ist keine Vertragsänderung. |
+| **Einmal-Code vor oder nach der MAC-Prüfung verbrauchen?** | **26** | Wer die Adresse kennt, verbrennt mit einer falschen MAC jeden wartenden Beitrittscode. Die Gegenrichtung lässt beliebig oft rechnen. Ungemessen: wie oft ein Code neu ausgegeben wird. Gilt für **beide** Stellen (`join.Accept`, `controllers.Pair`). |
+| **Zweite Beitrittsanfrage für denselben Namen: überschreiben oder abweisen?** | **27** | Die zweite überschreibt die erste, und der Admin erfährt nichts davon. Unterscheiden ließen sie sich am öffentlichen Schlüssel. |
+
+### Messorte
+
+| Frage | Punkt | Wenn nicht entschieden wird |
+|---|---|---|
+| **Weiter mit `ngc.test` und selbst unterschriebenem Zertifikat, oder auf einer Maschine mit echtem Namen und `letsencrypt`?** | **58, 59, 62** | Was ein Nutzer mit `letsencrypt` erlebt, bleibt ungemessen – alle Zahlen gelten für einen Browser, der das Zertifikat für den Lauf annimmt. |
+
