@@ -807,6 +807,14 @@ export async function startMockAPI({ world, port, phpPort }) {
   // a flag the browser set about its own work: "", "password", "passkey" or
   // "passkey+password".
   let lastProofs = "";
+  // How many login finishes this mock has taken apart (it counts where the
+  // body got through the contract, which is where lastProofs is reset too, so
+  // the two always speak about the same attempts). lastProofs cannot answer
+  // "no proof was sent" on its own: it is reset at the start of every finish
+  // and then set again, so a case that runs after a password login reads
+  // "password" either way. A count that only ever grows is order-independent -
+  // a case takes it before and after and compares.
+  let finishes = 0;
   // Seconds the NEXT login attempt is locked for, set through the test door.
   // A real API counts failed attempts; a mock is told - and it is told once:
   // the number is taken and cleared in the same step, so a case that locks
@@ -1041,6 +1049,10 @@ export async function startMockAPI({ world, port, phpPort }) {
       // Which proofs the last login carried. A word, so the asking side has
       // nothing to parse.
       if (url.searchParams.get("ask") === "proofs") { res.end(lastProofs); return; }
+      // How many login finishes got through the contract here. A number, so a case can
+      // measure that an attempt sent NO proof without depending on what the
+      // case before it left behind.
+      if (url.searchParams.get("ask") === "finishes") { res.end(String(finishes)); return; }
       // How many times the shell asked for the setup offer. A number, so the
       // case does not have to believe a flag the page set about its own work.
       if (url.searchParams.get("ask") === "setup") { res.end(String(setupOffers)); return; }
@@ -1204,6 +1216,7 @@ export async function startMockAPI({ world, port, phpPort }) {
       return null;
     }
     lastProofs = "";
+    finishes += 1;
     const cert = f.cert;
     // The certificate goes through the contract's own shape and check too:
     // it is a document from outside like any other, and

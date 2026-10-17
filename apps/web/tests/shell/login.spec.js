@@ -269,6 +269,44 @@ test("a role with passwordToo has the certificate signed twice", async ({ shell,
   await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
 });
 
+test("the passkey button never falls back to the password", async ({ shell, browserName }) => {
+  test.skip(browserName !== "chromium", "virtual authenticators only exist in Chromium");
+  await atLocalhost(shell);
+  // An authenticator that WORKS and holds nothing for this installation, which
+  // is the state every account is in today: there is no way to make a passkey
+  // (apps/web has no credentials.create, and no action of ngc.users writes a
+  // user key), so somebody who presses this button has none.
+  const cdp = await shell.context().newCDPSession(shell);
+  await cdp.send("WebAuthn.enable");
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      protocol: "ctap2", transport: "usb", hasUserVerification: true,
+      hasResidentKey: true, isUserVerified: true, automaticPresenceSimulation: true,
+    },
+  });
+
+  // anna has a password key and no passkey. MEASURED at a real installation on
+  // 17.10.2026: the desktop opened, the authenticator was never asked, and the
+  // person was told nothing - they pressed "log in with a passkey" and were let
+  // in by their password. The button has to fail instead, with the one sentence
+  // every other failure gets: an answer that said "this name has no passkey"
+  // would say that the name exists.
+  // Taken BEFORE the attempt and compared after: the count only ever grows, so
+  // this case does not care what the case before it left in the mock.
+  const before = await askMock(shell, "ask=finishes");
+  await shell.getByLabel("Benutzername").fill("anna");
+  await shell.getByLabel("Passwort").fill(PASSWORD);
+  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
+
+  await expect(shell.locator("#taskbar")).toBeHidden();
+  await expect(shell.getByText("Anmeldung fehlgeschlagen.")).toBeVisible();
+  // The mock is the one that would have had to check a proof, so it is the one
+  // asked. A flag this side set about its own work would say nothing.
+  expect(await askMock(shell, "ask=finishes"), "no proof was sent at all").toBe(before);
+
+  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+});
+
 test("a password login is told to switch to passkeys", async ({ shell }) => {
   await skipWithoutLogin(shell);
   await fillLogin(shell, "anna", PASSWORD);

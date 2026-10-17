@@ -87,6 +87,23 @@ async function openTrustFromChain() {
 // openTrust is the seam for task 20 and defaults to the stand-in above.
 export async function login({ name, password, totp, wantPasskey, openTrust = openTrustFromChain }) {
   const challenge = await http.loginStart(name);
+  // Pressed "log in with a passkey" where this name has none: the attempt
+  // stops HERE, before a session key, a certificate or an Argon2id run is
+  // spent on it, and before the TOTP question - which would otherwise tell
+  // somebody who cannot get in anyway that this name has a second factor.
+  //
+  // MEASURED at a real installation on 17.10.2026: it did not stop. The
+  // desktop came up, the authenticator was never asked, the login went
+  // through on the password that happened to be in the field, and the person
+  // was told nothing about which key had opened their session - with the
+  // standing advice "switch to passkeys" on the desktop it had just opened.
+  //
+  // The plainest Error there is, so the mask turns it into the one sentence
+  // every other failure gets (attempt below): an answer that said "this name
+  // has no passkey" would say that the name exists.
+  if (wantPasskey === true && challenge.passkeys.length === 0) {
+    throw new Error("login: this name has no passkey");
+  }
   // Asked BEFORE anything is spent: Argon2id takes about a second and a
   // passkey costs the person a gesture, and neither may be spent on an
   // attempt that was going to stop here anyway.
@@ -106,9 +123,8 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
   // told why; or nothing was typed in the password field, which for somebody
   // whose role forbids a password key is the only thing they can do.
   //
-  // Where the challenge offers no passkey the attempt goes on and fails like
-  // every other: an answer that said "this name has no passkey" would say
-  // that the name exists.
+  // A challenge that offers no passkey cannot get here with wantPasskey: the
+  // attempt stopped above.
   const usePasskey = challenge.passkeys.length > 0
     && (wantPasskey === true || challenge.passwordToo || password === "");
   const proofs = { proof: null, password: null };
