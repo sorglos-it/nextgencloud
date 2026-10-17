@@ -43,6 +43,7 @@ import { bytesOf } from "../contracts/b64.js";
 import { callBytes, openE2E, openOut, sendInBytes } from "./channel.js";
 import { NOT_TRUSTED, startTrust } from "../shell/trustlist.js";
 import { validAppID, validName } from "../contracts/text.js";
+import { t } from "../lang.js";
 
 // The flows of core.ACTIONS, as the texts the table holds. core.js keeps them
 // to itself on purpose - one name per flow, in one place - and the shell is
@@ -85,21 +86,19 @@ export class WorldError extends Error {
   }
 }
 
-const NO_ACTION = "Diese Anfrage kennt NGC nicht.";
-const WRONG_WAY = "Diese Anfrage geht so nicht.";
-const NO_NODE = "Diese App sagt nicht, auf welchem Rechner ihr Dienst läuft.";
+const NO_ACTION = t("world.noaction");
+const WRONG_WAY = t("world.wrongway");
+const NO_NODE = t("world.nonode");
 // No session key pair in this adapter. It is NOT a missing feature any more -
 // since Task 28 the login carries the pair through (auth/login.js, sessionDH)
 // and realWorld hands it here - so what is wrong is THIS session, and the
 // sentence says that and names what helps.
-const NO_SESSION_KEY = "Diese Anmeldung kann den eigenen Dienst einer App nicht erreichen. "
-  + "Bitte die Seite neu laden.";
+const NO_SESSION_KEY = t("world.nosessionkey");
 // No trust list in this adapter. A DIFFERENT fact from the one below: there is
 // no list to ask, so nothing is known about this server either way, and
 // "this server is not in your trust list" would be a sentence about the server
 // that says nothing true about it.
-const NO_TRUST_LIST = "NGC hat die Vertrauensliste dieser Anlage nicht geöffnet. "
-  + "Bitte die Seite neu laden.";
+const NO_TRUST_LIST = t("world.notrustlist");
 // A node the verified list does not carry. The sentence is shell/trustlist.js's
 // own, and not a second wording of it: it is the same fact, and NotTrusted is
 // what answers it.

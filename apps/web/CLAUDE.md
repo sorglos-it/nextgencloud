@@ -155,6 +155,54 @@ dunkel. Dazu:
   `/etc/ngc/trust-anchor.json` (`config`), verwaltet die Liste der API-Server. Kein App-Code läuft
   im Webserver.
 
+## Sprachen
+
+Kein sichtbarer Text steht fest im Code. Jeder Satz kommt über einen Schlüssel
+aus `apps/web/lang/<sprache>.json` – fünf Dateien, `de`, `en`, `fr`, `it`, `es`,
+mit genau denselben Schlüsseln.
+
+- **Eine neue Sprache ist eine Datei mehr und sonst nichts.** Kein Verzeichnis
+  der Sprachen im Code: `classes/Lang.php` liest den Ordner und beantwortet
+  damit `GET /lang/index.json`; `public/assets/js/lang.js` fragt diese Liste und
+  vergleicht sie mit dem, was der Browser sagt (`navigator.languages`, die
+  genaue Kennung vor der Sprache allein).
+- **Fehlt ein Schlüssel oder eine Sprache, kommt der englische Text.** Nie ein
+  leerer Platz und nie der nackte Schlüssel: `lang.js` lädt `en.json` immer mit.
+- **Platzhalter statt halber Sätze.** `{name}`, `{seconds}`, `{role}` – ein Satz
+  ist ein Schlüssel, damit andere Sprachen ihre eigene Satzstellung haben.
+- **PHP holt seine eigenen Seiten aus demselben Ordner** (`Lang::t`), weil die
+  Fehlerseiten vor jedem JavaScript ausgeliefert werden. Der Ordner liegt
+  **nicht** unter `public/`; nur eine geprüfte Kennung wird je ein Dateiname.
+- Geprüft wird das in `tests/lang/`: dieselben Schlüssel in allen fünf Dateien,
+  dieselben Platzhalter, kein Schlüssel ohne Text, kein Text ohne Schlüssel –
+  und ein nackter Schlüssel am Schirm ist ein Fehler.
+
+### Die gespiegelte wire-Tabelle bleibt deutsch
+
+Die vierzehn Sätze in `public/assets/js/contracts/wire.js` (`MESSAGES`,
+`message()`) sind **Vertragsgegenstand, nicht Oberfläche**: dieser Text wandert
+im CLOSE-Rahmen mit (`errorClose`), `parseClose` nimmt einen CLOSE nur für einen
+Code aus genau dieser Tabelle, `shared/wire/wire.go` trägt dieselben Wörter, und
+ein Test (`tests/contracts/wire.spec.js`) nagelt die Gleichheit fest. `shared/`
+ist eingefroren, also bleibt die Spiegelung deutsch und der Test unverändert.
+
+Was die Masken zeigen, ist daneben ein eigener Satz je Code aus `lang/`
+(`wire.E_LOGIN` und die anderen dreizehn, dazu `wire.unknown`), geholt über
+`codeText()` in `lang.js`. Zwei Dinge, wo vorher eines war: ein deutsches
+Vertragswort und ein Satz je Sprache.
+
+### Was noch deutsch im Code steht, und warum
+
+- `assets/apps/calculator/app.js` und `assets/apps/terminal/app.js` (8 Sätze).
+  Das sind **Apps**, keine Shell: ihr Dokument läuft in einer eigenen,
+  undurchsichtigen Herkunft mit `connect-src 'none'` (`Page::FRAME_CSP`), kann
+  `/lang/…` also nicht holen. Eine App übersetzt sich nur über eine Erweiterung
+  von `public/assets/ngc.js` – der öffentlichen MIT-Schnittstelle – und das ist
+  eine eigene Runde, nicht diese.
+- `public/assets/js/shell/fake-link.js` (16 Sätze). Eine **Attrappe für Tests**,
+  die mit der Datei verschwindet (siehe `standIn()` in `shell/main.js`). Ihre
+  Sätze sind erfundene App-Namen und Beschreibungen, also Testdaten.
+
 ## Tests
 
 - Playwright in `apps/web/tests/` gegen Chrome, Firefox und Safari; npm nur dort, feste Versionen.

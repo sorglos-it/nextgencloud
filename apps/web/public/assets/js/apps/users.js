@@ -59,6 +59,7 @@ import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
 import { b64encode } from "../contracts/b64.js";
 import { validTunnelURL } from "../contracts/url.js";
 import { coreApp, validAppID, validName } from "../contracts/text.js";
+import { t, tag } from "../lang.js";
 
 // How many log lines one page holds. The contract allows 1 to 500; fifty is
 // a screenful and a half, and paging is one button.
@@ -67,18 +68,17 @@ const LOG_LIMIT = 50;
 // The same sentence wherever an answer did not hold up. It says nothing about
 // what was wrong with it: that would describe the inside of the server, and
 // it is nothing the person can act on either.
-const BAD_LIST = "Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angezeigt.";
-const BAD_OFFER = "Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angeboten.";
-const NO_REACH = "Die Anlage antwortet gerade nicht.";
+const BAD_LIST = t("users.badlist");
+const BAD_OFFER = t("users.badoffer");
+const NO_REACH = t("users.noreach");
 // The question quotes the fingerprint, so it is not asked before the
 // fingerprint is there: a question that shows three dots where the
 // fingerprint belongs is a question nobody can answer.
-const NO_FINGERPRINT = "Der Fingerabdruck wird noch berechnet. Bitte noch einmal versuchen.";
+const NO_FINGERPRINT = t("users.nofingerprint");
 // The version IS stored; only this browser did not get there. Writing a
 // second version from here would be the fork, so nothing more is written and
 // the sentence says the one thing that fixes it.
-const BEHIND = "Der Server ist eingetragen. Bitte die Seite neu laden, damit NGC hier auf dem "
-  + "neuen Stand ist.";
+const BEHIND = t("users.behind");
 
 // Cancelled is what the person answered when the question for their key was
 // closed with Abbrechen. It is an answer and not a failure, and it reads
@@ -93,17 +93,18 @@ class Behind extends Error {}
 // words and it is text either way.
 const KINDS = {
   __proto__: null,
-  login: "Anmeldung", "login-failed": "Anmeldung gescheitert", channel: "Kanal", task: "Aufgabe",
-  trust: "Vertrauensliste", rights: "Rechte", app: "App", store: "Store", license: "Lizenz",
-  update: "Update",
+  login: t("users.kind.login"), "login-failed": t("users.kind.login-failed"),
+  channel: t("users.kind.channel"), task: t("users.kind.task"), trust: t("users.kind.trust"),
+  rights: t("users.kind.rights"), app: t("users.kind.app"), store: t("users.kind.store"),
+  license: t("users.kind.license"), update: t("users.kind.update"),
 };
 
 // The four tabs, in the order they stand on screen.
 const TABS = [
-  ["users", "Benutzer"],
-  ["rights", "Rollen und Rechte"],
-  ["servers", "Server"],
-  ["log", "Protokoll"],
+  ["users", t("users.tab.users")],
+  ["rights", t("users.tab.rights")],
+  ["servers", t("users.tab.servers")],
+  ["log", t("users.tab.log")],
 ];
 
 // ---------------------------------------------------------------- the one door
@@ -193,7 +194,7 @@ export async function buildNextVersion(version, change, { now, signer }) {
   next.issued = now;
   change(next);
   sortAll(next); // users, roles, nodes, stores and auto by id, name or target
-  if (!trust.validateList(next)) throw new Error("Diese Änderung ergibt keine gültige Vertrauensliste.");
+  if (!trust.validateList(next)) throw new Error(t("users.badchange"));
   const payload = trust.encodeList(next);
   // The signature is the person's own, asked for by confirm.js, and a person
   // may say no: null is an answer and nothing is built out of it.
@@ -263,7 +264,7 @@ class Users {
     this.root = el("div", "usersapp");
     this.tabs = el("div", "tabs");
     this.tabs.setAttribute("role", "tablist");
-    this.tabs.setAttribute("aria-label", "Benutzer und Rechte");
+    this.tabs.setAttribute("aria-label", t("users.title"));
     this.tabs.addEventListener("keydown", (e) => this.tabKey(e));
     this.panels = el("div", "panels");
     this.btn = new Map();
@@ -354,8 +355,9 @@ class Users {
     clear(p);
     const msg = el("p", "note", "");
     msg.setAttribute("role", "status");
-    const tbl = table(["Name", "Rollen", "Anmeldung in zwei Schritten", "Gesperrt", "Zuletzt angemeldet"]);
-    p.append(el("h3", null, "Benutzer"), msg, tbl.el);
+    const tbl = table([t("users.col.name"), t("users.col.roles"), t("users.col.totp"),
+      t("users.col.locked"), t("users.col.lastlogin")]);
+    p.append(el("h3", null, t("users.tab.users")), msg, tbl.el);
     let list;
     try {
       list = await this.call(core.ACT_LIST);
@@ -370,9 +372,9 @@ class Users {
       r.append(
         cell("nm", u.name),
         cell("roles", u.roles.join(", ")),
-        cell("totp", u.totp ? "ein" : "aus"),
-        cell("locked", u.locked ? "gesperrt" : ""),
-        cell("last", u.lastLogin > 0 ? when(u.lastLogin) : "noch nie"),
+        cell("totp", u.totp ? t("users.on") : t("users.off")),
+        cell("locked", u.locked ? t("users.locked") : ""),
+        cell("last", u.lastLogin > 0 ? when(u.lastLogin) : t("users.never")),
       );
       tbl.body.append(r);
     }
@@ -384,8 +386,8 @@ class Users {
     const msg = el("p", "note", "");
     msg.setAttribute("role", "status");
     p.append(
-      el("h3", null, "Rollen und Rechte"),
-      el("p", "hint", "Ein Haken heißt: alle mit dieser Rolle dürfen das."),
+      el("h3", null, t("users.tab.rights")),
+      el("p", "hint", t("users.rights.hint")),
       msg,
     );
     let roles;
@@ -425,13 +427,15 @@ class Users {
       // The name a screen reader reads carries the role, because the legend
       // of a fieldset is not part of a checkbox's name: without it every role
       // would offer the same handful of names over and over.
-      cb.setAttribute("aria-label", "Rolle " + r.role + ": " + rightName(right, this.apps));
+      cb.setAttribute("aria-label", t("users.rights.label",
+        { role: r.role, right: rightName(right, this.apps) }));
       lab.append(cb, el("span", "t", rightName(right, this.apps)));
       opts.append(lab);
       boxes.set(right, cb);
     }
-    if (all.length === 0) opts.append(el("p", "muted", "Es gibt noch keine App, für die es Rechte gäbe."));
-    const save = button("go", "Rechte speichern", "Rechte der Rolle " + r.role + " speichern");
+    if (all.length === 0) opts.append(el("p", "muted", t("users.rights.norights")));
+    const save = button("go", t("users.rights.save"),
+      t("users.rights.save.label", { role: r.role }));
     save.addEventListener("click", () => this.saveRights(r, boxes, save, msg));
     box.append(opts, save);
     return box;
@@ -442,31 +446,31 @@ class Users {
     const adds = want.filter((x) => !r.rights.includes(x));
     const gone = r.rights.filter((x) => !want.includes(x)).sort(plain);
     if (adds.length === 0 && gone.length === 0) {
-      text(msg, "An der Rolle »" + r.role + "« hat sich nichts geändert.");
+      text(msg, t("users.rights.nochange", { role: r.role }));
       return;
     }
     const body = [];
     if (adds.length > 0) {
-      body.push(el("p", null, "Alle mit der Rolle »" + r.role + "« dürfen danach zusätzlich:"));
+      body.push(el("p", null, t("users.rights.adds", { role: r.role })));
       body.push(list("adds", adds.map((x) => rightName(x, this.apps))));
     }
     if (gone.length > 0) {
-      body.push(el("p", null, "Weggenommen wird:"));
+      body.push(el("p", null, t("users.rights.gone")));
       body.push(list("gone", gone.map((x) => rightName(x, this.apps))));
     }
     const who = this.whoHas(r.role);
     if (who) body.push(el("p", "who", who));
     this.ask({
-      title: "Rechte der Rolle »" + r.role + "« ändern",
+      title: t("users.rights.asktitle", { role: r.role }),
       body,
-      go: "Rechte vergeben",
+      go: t("users.rights.askgo"),
       from: save,
       run: async () => {
         await this.call(core.ACT_SET_RIGHTS, { role: r.role, rights: want });
         r.rights = want;
-        text(msg, "Die Rechte der Rolle »" + r.role + "« sind gespeichert.");
+        text(msg, t("users.rights.saved", { role: r.role }));
       },
-      failed: "Die Rechte konnten nicht gespeichert werden.",
+      failed: t("users.rights.savefailed"),
       msg,
     });
   }
@@ -477,24 +481,20 @@ class Users {
   whoHas(role) {
     if (this.users === null) return "";
     const names = this.users.filter((u) => u.roles.includes(role)).map((u) => u.name);
-    if (names.length === 0) return "Zurzeit hat niemand diese Rolle.";
-    return "Das gilt sofort für " + names.length + (names.length === 1 ? " Person" : " Personen")
-      + " mit dieser Rolle: " + names.join(", ") + ".";
+    if (names.length === 0) return t("users.who.nobody");
+    return t(names.length === 1 ? "users.who.one" : "users.who.many",
+      { count: names.length, names: names.join(", ") });
   }
 
   // ---- Server -------------------------------------------------------------
   buildServers(p) {
     clear(p);
-    p.append(el("h3", null, "Server"));
-    const pending = section("pending", "Wartende Server",
-      "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
-    const pendapi = section("pendapi", "Wartende API-Server",
-      "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
-    const known = section("known", "Server dieser Anlage", "");
-    const code = section("paircode", "Kopplungscode",
-      "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
-    const join = section("joincode", "Beitrittscode",
-      "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
+    p.append(el("h3", null, t("users.tab.servers")));
+    const pending = section("pending", t("users.pending.head"), t("users.pending.hint"));
+    const pendapi = section("pendapi", t("users.pendapi.head"), t("users.pending.hint"));
+    const known = section("known", t("users.known.head"), "");
+    const code = section("paircode", t("users.paircode.head"), t("users.paircode.hint"));
+    const join = section("joincode", t("users.joincode.head"), t("users.paircode.hint"));
     p.append(pending, pendapi, known, code, join);
     this.fillPending(pending);
     this.fillPendingAPI(pendapi);
@@ -513,7 +513,7 @@ class Users {
     }
     if (this.dead) return;
     if (list.length === 0) {
-      Users.say(box, "Zurzeit wartet kein Server.");
+      Users.say(box, t("users.pending.none"));
       return;
     }
     const why = this.cannotChange();
@@ -532,7 +532,7 @@ class Users {
       }, () => text(fp, "—"));
       r.append(el("span", "nm", n.name), fp, el("span", "since", when(n.since)));
       if (why === "") {
-        const b = button("go", "Aufnehmen", "Server " + n.name + " aufnehmen");
+        const b = button("go", t("users.join"), t("users.join.label", { name: n.name }));
         b.addEventListener("click", () => this.askJoin(n, seen, b, box));
         r.append(b);
       }
@@ -551,7 +551,7 @@ class Users {
     }
     if (this.dead) return;
     if (list.length === 0) {
-      Users.say(box, "Zurzeit wartet kein API-Server.");
+      Users.say(box, t("users.pendapi.none"));
       return;
     }
     const why = this.cannotChange();
@@ -582,10 +582,9 @@ class Users {
       // reachability. Nothing was unreachable; the name was taken.
       const taken = this.nameTaken(n.node);
       if (taken) {
-        r.append(el("span", "note", "Dieser Name ist in dieser Anlage schon vergeben. "
-          + "Der Server muss unter einem anderen Namen beitreten."));
+        r.append(el("span", "note", t("users.join.taken")));
       } else if (joinable(n) && why === "") {
-        const b = button("go", "Aufnehmen", "Server " + n.node + " aufnehmen");
+        const b = button("go", t("users.join"), t("users.join.label", { name: n.node }));
         b.addEventListener("click", () => this.askJoinAPI(n, seen, b, box));
         r.append(b);
       }
@@ -605,7 +604,8 @@ class Users {
   }
 
   async fillNodes(box) {
-    const tbl = table(["Server", "Erreichbar", "Aufgaben", "Version", "Maschine"]);
+    const tbl = table([t("users.nodes.col.node"), t("users.nodes.col.online"),
+      t("users.nodes.col.roles"), t("users.nodes.col.version"), t("users.nodes.col.arch")]);
     box.append(tbl.el);
     let list;
     try {
@@ -619,7 +619,7 @@ class Users {
       const r = row();
       r.append(
         cell("nm", n.node),
-        cell("online", n.online ? "ja" : "nein"),
+        cell("online", n.online ? t("users.yes") : t("users.no")),
         cell("roles", n.roles.join(", ")),
         cell("version", n.version),
         cell("arch", n.arch),
@@ -629,7 +629,7 @@ class Users {
   }
 
   fillPairCode(box) {
-    const b = button("go", "Kopplungscode zeigen", null);
+    const b = button("go", t("users.paircode.show"), null);
     b.addEventListener("click", () => this.showCode(box, b, core.ACT_PAIR_CODE, tunnel.parsePairCode));
     box.append(b);
   }
@@ -687,13 +687,13 @@ class Users {
         v = this.trust.current();
       }
       if (!v?.list || !tunnel.checkCode(c, v)) {
-        Users.say(box, "Dieser Code passt nicht zu dieser Anlage.");
+        Users.say(box, t("users.paircode.wrong"));
         return;
       }
       box.append(el("p", "code mono", r.code));
-      Users.say(box, "Gültig bis " + when(r.expires) + ".");
+      Users.say(box, t("users.paircode.until", { when: when(r.expires) }));
     } catch (e) {
-      Users.say(box, reason(e, "Dieser Code passt nicht zu dieser Anlage."));
+      Users.say(box, reason(e, t("users.paircode.wrong")));
     } finally {
       if (!this.dead) b.disabled = false;
     }
@@ -704,12 +704,12 @@ class Users {
   // a button that cannot do its job is a promise the surface does not keep.
   cannotChange() {
     const cur = this.trust?.current?.();
-    if (!cur?.list) return "Die Vertrauensliste liegt noch nicht vor. Es kann gerade kein Server aufgenommen werden.";
+    if (!cur?.list) return t("users.nolist");
     // A version of the trust list is signed by the PERSON, with a key that
     // stands in the list itself; without knowing whose session this is, there
     // is nobody to ask.
     if (typeof this.session?.user !== "string" || this.session.user === "") {
-      return "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.";
+      return t("users.needlogin");
     }
     return "";
   }
@@ -722,19 +722,16 @@ class Users {
     const v = this.trust.current();
     const id = nodeID(n.name, v.list);
     this.ask({
-      title: "Server »" + n.name + "« aufnehmen",
+      title: t("users.join.title", { name: n.name }),
       body: [
-        el("p", null, "Der Server wird in die Vertrauensliste dieser Anlage eingetragen. "
-          + "Danach darf er Aufgaben dieser Anlage ausführen."),
+        el("p", null, t("users.join.lead")),
         // A right nobody was told about is a right nobody can weigh.
-        el("p", null, "Sie selbst dürfen auf diesem Server dann Aufgaben mit "
-          + "Systemrechten ausführen — Apps einrichten, entfernen und das Terminal öffnen. "
-          + "Andere Verwalter nicht."),
-        el("p", null, "In der Liste heißt er: " + id),
+        el("p", null, t("users.join.root")),
+        el("p", null, t("users.join.id", { id })),
         el("p", "fp mono", seen.fp),
-        el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck auf dem Server steht."),
+        el("p", null, t("users.join.compare")),
       ],
-      go: "Server aufnehmen",
+      go: t("users.join.go"),
       from,
       run: async () => {
         await this.joinNode((next) => {
@@ -767,10 +764,10 @@ class Users {
             rootUsers: [this.session.user], rootRoles: [],
           });
         });
-        Users.say(box, "Der Server »" + n.name + "« ist aufgenommen.");
+        Users.say(box, t("users.join.done", { name: n.name }));
         from.disabled = true;
       },
-      failed: "Der Server konnte nicht aufgenommen werden.",
+      failed: t("users.join.failed"),
       msg: box.querySelector(".note"),
     });
   }
@@ -781,16 +778,14 @@ class Users {
       return;
     }
     this.ask({
-      title: "API-Server »" + n.node + "« aufnehmen",
+      title: t("users.joinapi.title", { name: n.node }),
       body: [
-        el("p", null, "Der Server wird in die Vertrauensliste dieser Anlage eingetragen. "
-          + "Danach nimmt dieses Webinterface Verbindungen zu ihm auf und glaubt ihm."),
+        el("p", null, t("users.joinapi.lead")),
         el("p", "fp mono", seen.fp),
         chars(n.url),
-        el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck und genau diese "
-          + "Adresse auf dem Server stehen."),
+        el("p", null, t("users.joinapi.compare")),
       ],
-      go: "Server aufnehmen",
+      go: t("users.join.go"),
       from,
       run: async () => {
         await this.joinNode((next) => {
@@ -806,10 +801,10 @@ class Users {
             sign: n.sign, url: n.url, tls: n.tls, rootUsers: [], rootRoles: [],
           });
         });
-        Users.say(box, "Der Server »" + n.node + "« ist aufgenommen.");
+        Users.say(box, t("users.join.done", { name: n.node }));
         from.disabled = true;
       },
-      failed: "Der Server konnte nicht aufgenommen werden.",
+      failed: t("users.join.failed"),
       msg: box.querySelector(".note"),
     });
   }
@@ -866,10 +861,12 @@ class Users {
     clear(p);
     const msg = el("p", "note", "");
     msg.setAttribute("role", "status");
-    const tbl = table(["Zeit", "Benutzer", "Art", "App", "Aktion", "Server", "Ergebnis"]);
-    const more = button("go", "Mehr laden", null);
+    const tbl = table([t("users.log.col.time"), t("users.log.col.user"), t("users.log.col.kind"),
+      t("users.log.col.app"), t("users.log.col.action"), t("users.log.col.node"),
+      t("users.log.col.result")]);
+    const more = button("go", t("users.log.more"), null);
     more.addEventListener("click", () => this.loadLog(tbl, msg, more));
-    p.append(el("h3", null, "Protokoll"), msg, tbl.el, more);
+    p.append(el("h3", null, t("users.tab.log")), msg, tbl.el, more);
     this.log = [];
     this.loadLog(tbl, msg, more);
   }
@@ -908,7 +905,7 @@ class Users {
       tbl.body.append(r);
     }
     if (page.length < LOG_LIMIT) {
-      text(msg, this.log.length === 0 ? "Das Protokoll ist leer." : "Das ist der Anfang des Protokolls.");
+      text(msg, this.log.length === 0 ? t("users.log.empty") : t("users.log.start"));
       more.remove();
       return;
     }
@@ -949,7 +946,7 @@ class Users {
     box.setAttribute("aria-labelledby", h.id);
     box.append(h, ...body);
     const btns = el("div", "btns");
-    const no = button("no", "Abbrechen", null);
+    const no = button("no", t("users.cancel"), null);
     const yes = button("go danger", go, null);
     btns.append(no, yes);
     box.append(btns);
@@ -977,7 +974,7 @@ class Users {
         // Three different things to say: the person said no, the write went
         // through but this browser is behind it, or it did not go through.
         if (msg) {
-          text(msg, e instanceof Cancelled ? "Nichts geändert."
+          text(msg, e instanceof Cancelled ? t("users.nochange")
             : e instanceof Behind ? BEHIND : reason(e, failed));
         }
       }
@@ -1043,7 +1040,7 @@ function reason(e, refused = BAD_LIST) {
 // merely LOOKS like the right one is what this makes visible.
 function chars(s) {
   const box = el("span", "url mono");
-  box.setAttribute("aria-label", "Adresse " + s);
+  box.setAttribute("aria-label", t("users.address.label", { url: s }));
   for (const c of String(s)) box.append(el("span", "ch", c));
   return box;
 }
@@ -1052,12 +1049,12 @@ function rightName(right, apps) {
   const cut = right.indexOf("/");
   const id = right.slice(0, cut), action = right.slice(cut + 1);
   const a = apps.find((x) => x.id === id);
-  return (a ? a.name : id) + " · " + (action === core.RIGHT_USE ? "benutzen" : action);
+  return (a ? a.name : id) + " · " + (action === core.RIGHT_USE ? t("users.right.use") : action);
 }
 
 function list(cls, items) {
   const ul = el("ul", cls);
-  for (const t of items) ul.append(el("li", null, t));
+  for (const item of items) ul.append(el("li", null, item));
   return ul;
 }
 
@@ -1093,8 +1090,8 @@ const cell = (cls, txt) => el("td", cls, txt);
 // number is seconds, as every time in the contracts is.
 function when(seconds) {
   const d = new Date(seconds * 1000);
-  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })
-    + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString(tag, { day: "2-digit", month: "2-digit", year: "numeric" })
+    + " " + d.toLocaleTimeString(tag, { hour: "2-digit", minute: "2-digit" });
 }
 
 // usersApp builds the surface into the window's body and hands back the

@@ -21,7 +21,6 @@
 //   5. the API's certificate, checked against the trust list.
 //   6. the link, and the desktop.
 import { el, button, field, note, clear, text } from "../shell/dom.js";
-import { t } from "../shell/lang.js";
 import { b64encode, utf8 } from "../contracts/b64.js";
 import * as session from "../contracts/session.js";
 import * as sign from "../contracts/sign.js";
@@ -31,6 +30,7 @@ import { validTOTP } from "../contracts/text.js";
 import * as http from "../net/http.js";
 import { Link } from "../net/link.js";
 import { newSessionKeys, buildClientCert, proveWithPassword, proveWithPasskey } from "./keys.js";
+import { t } from "../lang.js";
 
 // The one sentence every failed login gets. It said wire.message(E_LOGIN)
 // until the five languages arrived, and that is why it is a key now: the
@@ -38,9 +38,9 @@ import { newSessionKeys, buildClientCert, proveWithPassword, proveWithPasskey } 
 // shared/wire/wire.go, which is German and is a CONTRACT - a mask that drew
 // its French sentence out of it would have to change the mirror. So the
 // contract's table stays what it is and the MASK owns the sentence it says,
-// in the five languages (shell/lang.js). The German text is the same text,
+// in the five languages (lang.js). The German text is the same text,
 // word for word, which is held by a case.
-const FAILED = () => t("login.failed");
+const FAILED = () => t("wire.E_LOGIN");
 
 // unreachableText picks between the two answers that share E_UNREACHABLE.
 //
@@ -57,8 +57,8 @@ const FAILED = () => t("login.failed");
 // is deliberately not a third wording: a sentence that promised "come back
 // soon" without a number would be a number nobody measured.
 function unreachableText(retryAfter) {
-  if (!Number.isSafeInteger(retryAfter) || retryAfter <= 0) return t("err.unreachable");
-  return t("err.busy", { seconds: retryAfter });
+  if (!Number.isSafeInteger(retryAfter) || retryAfter <= 0) return t("login.unreachable");
+  return t("login.busy", { seconds: retryAfter });
 }
 
 // NeedTOTP is no failure. The challenge said this user has a second factor
@@ -237,20 +237,20 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   // form that never submits itself, because a shell that navigates away from
   // itself is gone.
   box.setAttribute("novalidate", "novalidate");
-  const head = el("h1", "loginhead", "Bei NGC anmelden");
+  const head = el("h1", "loginhead", t("login.head"));
   head.id = "loginhead";
   box.setAttribute("aria-labelledby", head.id);
   box.append(head);
 
-  const name = field("Benutzername", "text");
+  const name = field(t("login.username"), "text");
   name.input.autocomplete = "username";
-  const pw = field("Passwort", "password");
+  const pw = field(t("login.password"), "password");
   pw.input.autocomplete = "current-password";
   box.append(name.box, pw.box);
 
   // The second factor is not on the page until the API asks for it: a field
   // nobody has to fill in is a field somebody tries to fill in.
-  const totp = field("Code aus der Authenticator-App", "text");
+  const totp = field(t("login.totp"), "text");
   totp.input.autocomplete = "one-time-code";
   totp.input.inputMode = "numeric";
   totp.input.maxLength = session.TOTP_DIGITS;
@@ -266,7 +266,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   }
 
   const row = el("div", "loginrow");
-  const go = button("b on", "Anmelden", null);
+  const go = button("b on", t("login.go"), null);
   go.type = "submit";
   go.disabled = !passwordKeys;
   row.append(go);
@@ -277,7 +277,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   // out of the challenge (keys.proveWithPasskey), which is the one the API
   // and the trust list agree on.
   const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
-  const withPasskey = hasParty ? button("b", "Mit Passkey anmelden", null) : null;
+  const withPasskey = hasParty ? button("b", t("login.withpasskey"), null) : null;
   if (withPasskey !== null) row.append(withPasskey);
   box.append(row);
 
@@ -323,7 +323,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
     clearInterval(lockTimer);
     let left = Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
     if (left === 0) {
-      say(t("login.locked"));
+      say(t("wire.E_LOCKED"));
       return;
     }
     // Belt and braces: attempt() has already switched the buttons off before
@@ -341,7 +341,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
         say("");
         return;
       }
-      say(t("login.locked.left", { seconds: left }));
+      say(t("login.locked.wait", { seconds: left }));
       left -= 1;
     };
     tick();
@@ -376,7 +376,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
         // The one answer that is not a failure. The password stays in hand
         // for the second round, so nobody types it twice.
         if (!totp.box.isConnected) box.insertBefore(totp.box, row);
-        say(t("login.totp.ask"));
+        say(t("login.needtotp"));
         totp.input.focus();
         return;
       }

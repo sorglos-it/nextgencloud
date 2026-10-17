@@ -433,7 +433,7 @@ async function mount(page, cfg = {}) {
   //
   // It had been a window all along and the language files only widened it: a
   // browser offering de-DE fetches de.json AND en.json before shell/main.js
-  // draws anything (shell/lang.js, load), where en-US fetches one. Measured
+  // draws anything (assets/js/lang.js, its top-level await), where en-US fetches one. Measured
   // on the branch before them: 0 of 30. So this is the window closed, not the
   // fetches hidden - every case here mounts through this function.
   //

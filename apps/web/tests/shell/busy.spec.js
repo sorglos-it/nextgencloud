@@ -158,75 +158,34 @@ test("a busy database during the first run never blames the one-time code", asyn
   await expect(shell.getByLabel("Einmal-Code")).toHaveValue(CODE);
 });
 
-// The five languages are files, so what is measured is that a FILE decides
-// the sentence - not that French is spelled right, which no test can say. It
-// asks for the same key in every one of the five and holds the answers
-// against each other: five answers, none empty, no placeholder left standing,
-// and the German one the text the cases above pin.
-test("every one of the five languages answers, and none of them twice", async ({ shell }) => {
-  const got = await shell.evaluate(async () => {
-    const lang = await import("/assets/js/shell/lang.js");
-    const out = {};
-    for (const name of lang.LANGS) {
-      await lang.load([name]);
-      out[name] = { chosen: lang.language(), text: lang.t("err.busy", { seconds: 5 }) };
-    }
-    return out;
-  });
-  expect(Object.keys(got), "five files").toEqual(["de", "en", "fr", "it", "es"]);
-  for (const [name, g] of Object.entries(got)) {
-    expect(g.chosen, name + " was chosen").toBe(name);
-    expect(g.text.length, name + " says something").toBeGreaterThan(10);
-    expect(g.text, name + " filled the placeholder in").toContain("5");
-    expect(g.text, name + " left no placeholder standing").not.toContain("{seconds}");
-  }
-  const texts = Object.values(got).map((g) => g.text);
-  expect(new Set(texts).size, "five different sentences").toBe(5);
-  expect(got.de.text).toBe("Dienst gerade überlastet. Bitte in 5 Sekunden noch einmal versuchen.");
-});
-
-// Every file holds the same keys, which is the one thing that can go wrong
-// without anybody noticing: a key missing in Italian is a mask with an empty
-// line in it, and only in Italian. The house rule asks for the English text
-// as the fallback, so the fallback is measured too - by asking for a key that
-// is in no file at all.
-test("the five files hold the same keys, and a key nobody has is empty", async ({ shell }) => {
-  const got = await shell.evaluate(async () => {
-    const lang = await import("/assets/js/shell/lang.js");
-    const keys = {};
-    for (const name of lang.LANGS) {
-      const res = await fetch("/assets/lang/" + name + ".json", { cache: "no-store" });
-      keys[name] = Object.keys(await res.json()).sort();
-    }
-    await lang.load(["it"]);
-    return { keys, missing: lang.t("no.such.key"), notAString: lang.t(null) };
-  });
-  const german = got.keys.de;
-  expect(german.length, "there are keys at all").toBeGreaterThan(10);
-  for (const [name, keys] of Object.entries(got.keys)) {
-    expect(keys, name + " holds the same keys as de").toEqual(german);
-  }
-  expect(got.missing, "a key nobody has is empty, not the key itself").toBe("");
-  expect(got.notAString, "a key that is no string is empty too").toBe("");
-});
-
-// THE FLOOR UNDER THE FILES. Every sentence of these two masks used to be a
-// constant in auth/login.js and auth/setup.js, so a mask always had one; with
-// the language files they are a fetch away, and a fetch can fail. MEASURED on
-// the branch before this case existed, rendered in chromium: with every
-// /assets/lang/*.json refused and a wrong password typed, the alert of the
-// login mask held "" and was not laid out at all (offsetHeight 0) - a mask
-// that says nothing where it used to say "Anmeldung fehlgeschlagen."
+// THE FLOOR UNDER THE FILES, and it is the one case of this block that the
+// language suites do not hold. Everything else that stood here until the two
+// language layers were made one - five languages answer, the five files hold
+// the same keys, a key nobody has, a hostile tag cannot become a path - is
+// measured against the surviving lookup in tests/lang/files.spec.js and
+// tests/lang/lookup.spec.js, which ask the same questions of
+// public/assets/js/lang.js and the /lang/ route of the one entry point.
+// Nothing was dropped to go green; the questions moved to the module that
+// answers them.
+//
+// What is measured here: every sentence of these two masks is a fetch away,
+// and a fetch can fail. MEASURED before the files existed, rendered in
+// chromium: with every language file refused and a wrong password typed, the
+// alert of the login mask held "" and was not laid out at all
+// (offsetHeight 0) - a mask that says nothing where it used to say
+// "Anmeldung fehlgeschlagen.".
 //
 // It is not an invented state: a release that ships assets/js/ and forgets
-// assets/lang/ is exactly this, and the packer names what goes out file by
+// apps/web/lang/ is exactly this, and the packer names what goes out file by
 // file (tools/release/extra-web.txt, release-packer branch, unmerged).
 //
-// English and not German, because English is what FALLBACK already is: a
-// second rule for the floor would be a second thing to get wrong.
+// The sentence it must say is lang.js's NOLANG - the one literal in that
+// folder, and the only sentence that cannot come out of the files it is
+// about. The run asks for German (playwright.config.js), so German is what
+// the floor has to answer.
 test("a mask with no language file at all still says something", async ({ shell }) => {
   await skipWithoutLogin(shell);
-  await shell.route("**/assets/lang/*.json", (route) => route.abort());
+  await shell.route("**/lang/*.json", (route) => route.abort());
   await shell.reload();
   await expect(shell.getByLabel("Benutzername")).toBeVisible();
 
@@ -236,50 +195,24 @@ test("a mask with no language file at all still says something", async ({ shell 
   await attemptOver(shell);
 
   const said = shell.getByRole("alert");
-  await expect(said).toHaveText("Login failed.");
+  await expect(said).toHaveText("NGC konnte seine Sprachdateien nicht laden. "
+    + "Bitte die Seite neu laden.");
   // Laid out, not merely present: an element with no text has no height, and
   // that is what the measurement above found.
   expect(await said.evaluate((n) => n.offsetHeight), "the alert is on the page").toBeGreaterThan(0);
 });
 
-// The one thing that can make the floor a lie: a sentence changed in the
-// English file and not in the built-in copy, or the other way round. Held key
-// for key AND value for value, so neither half can drift alone.
-test("the built-in sentences are the English file, word for word", async ({ shell }) => {
+// The floor's own drift risk: NOLANG is the only table in this interface that
+// is NOT a language file, so nothing holds it to the five. A tag whose line
+// is missing there answers out of English, and a person who reads neither
+// gets no instruction at all.
+test("the sentence of the floor is there in all five languages", async ({ shell }) => {
   const got = await shell.evaluate(async () => {
-    const { BUILT_IN, FALLBACK } = await import("/assets/js/shell/lang.js");
-    const res = await fetch("/assets/lang/" + FALLBACK + ".json", { cache: "no-store" });
-    return { file: await res.json(), builtIn: { ...BUILT_IN } };
+    const idx = await (await fetch("/lang/index.json", { cache: "no-store" })).json();
+    const { NOLANG } = await import("/assets/js/lang.js");
+    return { languages: idx.languages, tags: Object.keys(NOLANG) };
   });
-  expect(Object.keys(got.file).length, "there are sentences at all").toBeGreaterThan(10);
-  expect(got.builtIn).toEqual(got.file);
-});
-
-// A language tag from outside never becomes a path. pick() answers with one
-// of the five and nothing else, which is what keeps a tag like
-// "../../etc/ngc/web.json" out of the address fetchLang builds.
-test("a language tag from outside cannot become a path", async ({ shell }) => {
-  const got = await shell.evaluate(async () => {
-    const { pick, LANGS, FALLBACK } = await import("/assets/js/shell/lang.js");
-    return {
-      hostile: pick(["../../etc/ngc/web.json", "/etc/passwd", "de_DE/../.."]),
-      region: pick(["de-CH"]),
-      order: pick(["pt", "nl", "fr", "de"]),
-      none: pick([]),
-      notAList: pick("fr"),
-      junk: pick([null, 42, {}, "it"]),
-      langs: [...LANGS],
-      fallback: FALLBACK,
-    };
-  });
-  // "de_DE/../.." lower-cased has no "-" in it, so its primary subtag is the
-  // whole string and that is in no list: it leaves as the fallback.
-  expect(got.hostile, "none of those is a language").toBe("en");
-  expect(got.region, "a region is the same file as its language").toBe("de");
-  expect(got.order, "the browser's own order of preference decides").toBe("fr");
-  expect(got.none).toBe("en");
-  expect(got.notAList, "a string is no list of offers").toBe("en");
-  expect(got.junk, "what is no string is skipped, not refused").toBe("it");
-  expect(got.langs).toEqual(["de", "en", "fr", "it", "es"]);
-  expect(got.fallback).toBe("en");
+  expect(got.languages.length, "the folder holds languages at all").toBeGreaterThan(1);
+  expect([...got.tags].sort(), "one line of the floor per language file")
+    .toEqual([...got.languages].sort());
 });

@@ -9,6 +9,7 @@ use RuntimeException;
 // needs itself.
 require_once __DIR__ . '/Url.php';
 require_once __DIR__ . '/ConfigError.php';
+require_once __DIR__ . '/Lang.php';
 
 // Config reads the two files ngc-web and the controller with role web write:
 // /etc/ngc/web.json (config.Web) and /etc/ngc/trust-anchor.json (trust.Anchor).
@@ -165,9 +166,8 @@ final class Config
     {
         foreach (array_keys($o) as $k) {
             if (!in_array((string)$k, $allowed, true)) {
-                throw new ConfigError(
-                    'Unbekanntes Feld in ' . $file . ': ' . $prefix . self::safeName((string)$k)
-                );
+                throw new ConfigError(Lang::t('config.unknownfield',
+                    ['file' => $file, 'field' => $prefix . self::safeName((string)$k)]));
             }
         }
     }
@@ -178,7 +178,7 @@ final class Config
     private static function safeName(string $k): string
     {
         if ($k === '' || strlen($k) > 40 || preg_match('/\A[A-Za-z0-9_.-]+\z/', $k) !== 1) {
-            return '(unlesbarer Name)';
+            return Lang::t('config.unreadablename');
         }
         return $k;
     }

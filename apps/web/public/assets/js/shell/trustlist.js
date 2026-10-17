@@ -28,23 +28,22 @@ import { b64encode, bytesOf, equal, utf8 } from "../contracts/b64.js";
 import * as trust from "../contracts/trust.js";
 import * as http from "../net/http.js";
 import { el } from "./dom.js";
+import { t } from "../lang.js";
 
 // The one sentence the person gets when the chain does not hold. It is the
 // same sentence for every way it can break: which of them it was is nothing
 // anybody at this browser can act on, and naming it would tell whoever bent
 // the chain how close they got.
-export const ALARM = "Die Vertrauensliste dieser Anlage stimmt nicht. "
-  + "NGC hat Sie sicherheitshalber abgemeldet.";
+export const ALARM = t("trust.alarm");
 
 // No anchor from the server and none remembered from the initial setup: this
 // installation was never finished, and the person is told what is missing
 // rather than left with a page that does nothing.
-export const NOT_SET_UP = "Diese Anlage ist noch nicht fertig eingerichtet. "
-  + "Bitte den Controller des Webservers koppeln.";
+export const NOT_SET_UP = t("trust.notsetup");
 
 // A node the verified list does not carry gets no end-to-end channel. The
 // sentence says what is the matter and blames nobody.
-export const NOT_TRUSTED = "Dieser Server steht nicht in der Vertrauensliste.";
+export const NOT_TRUSTED = t("trust.nottrusted");
 
 // sha256.Size, and the length of a Noise public key. Two names for one number
 // would be one name too few: HASH_SIZE is what an anchor is, KEY_SIZE what a
@@ -558,7 +557,7 @@ export function showTrustAlarm() {
   // otherwise a screen reader would read on behind the alarm.
   box.tabIndex = -1;
 
-  const head = el("h2", "alarmhead", "Etwas stimmt hier nicht");
+  const head = el("h2", "alarmhead", t("trust.alarm.head"));
   head.id = "trustalarmhead";
   box.setAttribute("aria-labelledby", head.id);
   const main = el("p", "alarmmain", ALARM);
@@ -566,10 +565,9 @@ export function showTrustAlarm() {
   box.setAttribute("aria-describedby", main.id);
 
   box.append(head, main,
-    el("p", null, "Vielleicht hat sich jemand zwischen dieses Gerät und Ihre Anlage geschaltet."),
-    el("p", null, "Bitte geben Sie hier kein Passwort mehr ein. Schließen Sie dieses Fenster und "
-      + "fragen Sie die Person, die NGC für Sie eingerichtet hat."),
-    el("p", "alarmfoot", "Diese Meldung lässt sich mit Absicht nicht wegklicken."));
+    el("p", null, t("trust.alarm.middle")),
+    el("p", null, t("trust.alarm.what")),
+    el("p", "alarmfoot", t("trust.alarm.foot")));
   back.append(box);
   document.body.append(back);
   box.focus();

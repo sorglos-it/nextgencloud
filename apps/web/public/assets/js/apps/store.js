@@ -33,6 +33,7 @@ import { Budget, decode } from "../contracts/json.js";
 import { packageUI } from "../contracts/pack.js";
 import { proofShape, validateProof } from "../contracts/proof.js";
 import { PURPOSE_TRUST_LIST, parseEnvelope } from "../contracts/sign.js";
+import { t, tag } from "../lang.js";
 
 const EMPTY = new Uint8Array(0);
 
@@ -65,49 +66,50 @@ const A = {
 // The five tabs, in the order the brief names them. "Apps" is the one the
 // window opens on, because that is what somebody came here for; the sources
 // are for the administrator and stand first only in reading order.
-const TABS = [["quellen", "Quellen"], ["apps", "Apps"], ["installiert", "Installiert"],
-  ["hochladen", "Hochladen"], ["updates", "Updates"]];
+const TABS = [["quellen", t("store.tab.sources")], ["apps", t("store.tab.apps")],
+  ["installiert", t("store.tab.installed")], ["hochladen", t("store.tab.upload")],
+  ["updates", t("store.tab.updates")]];
 const TAB_APPS = 1;
 
 // What a right MEANS, in words somebody can judge. "network" and "root" are
 // the contract's names and say nothing to the person who has to allow them.
 const NEED_TEXT = {
   __proto__: null,
-  [catalog.NEED_NETWORK]: "Zugang zum Netz",
-  [catalog.NEED_ROOT]: "Volle Rechte in ihrem Container",
+  [catalog.NEED_NETWORK]: t("store.need.network"),
+  [catalog.NEED_ROOT]: t("store.need.root"),
 };
 
 // The parts of NGC by their name on screen. An app stands here under its id,
 // which is all an update row carries.
 const PART_TEXT = {
   __proto__: null,
-  [trust.AUTO_WEB]: "NGC Webinterface",
-  [trust.AUTO_API]: "NGC API",
-  [trust.AUTO_CONTROLLER]: "NGC Dienste",
-  [trust.AUTO_SYSTEM]: "Betriebssystem",
+  [trust.AUTO_WEB]: t("store.part.web"),
+  [trust.AUTO_API]: t("store.part.api"),
+  [trust.AUTO_CONTROLLER]: t("store.part.controller"),
+  [trust.AUTO_SYSTEM]: t("store.part.system"),
 };
 
 const STATE_TEXT = {
   __proto__: null,
-  [catalog.UPDATE_AVAILABLE]: "Neue Fassung da",
-  [catalog.UPDATE_DOWNLOADED]: "Bereit zum Einspielen",
-  [catalog.UPDATE_INSTALLING]: "Wird eingespielt",
-  [catalog.UPDATE_INSTALLED]: "Eingespielt",
-  [catalog.UPDATE_ROLLEDBACK]: "Zurückgenommen",
-  [catalog.UPDATE_FAILED]: "Hat nicht geklappt",
-  [catalog.UPDATE_REJECTED]: "Abgelehnt",
-  [catalog.UPDATE_NEEDSGRANTS]: "Braucht neue Rechte",
+  [catalog.UPDATE_AVAILABLE]: t("store.update.available"),
+  [catalog.UPDATE_DOWNLOADED]: t("store.update.downloaded"),
+  [catalog.UPDATE_INSTALLING]: t("store.update.installing"),
+  [catalog.UPDATE_INSTALLED]: t("store.update.installed"),
+  [catalog.UPDATE_ROLLEDBACK]: t("store.update.rolledback"),
+  [catalog.UPDATE_FAILED]: t("store.update.failed"),
+  [catalog.UPDATE_REJECTED]: t("store.update.rejected"),
+  [catalog.UPDATE_NEEDSGRANTS]: t("store.update.needsgrants"),
 };
 
 const APP_STATE_TEXT = {
   __proto__: null,
-  ok: "Läuft",
-  unreachable: "Nicht erreichbar",
-  unlicensed: "Keine gültige Lizenz",
+  ok: t("store.state.ok"),
+  unreachable: t("store.state.unreachable"),
+  unlicensed: t("store.state.unlicensed"),
 };
 
-const MODES = [[catalog.MODE_AUTO, "automatisch"], [catalog.MODE_SEMI, "auf Klick"],
-  [catalog.MODE_NOTIFY, "nur melden"]];
+const MODES = [[catalog.MODE_AUTO, t("store.mode.auto")], [catalog.MODE_SEMI, t("store.mode.semi")],
+  [catalog.MODE_NOTIFY, t("store.mode.notify")]];
 
 // What the controller has to be for an app with services to run on it.
 const ROLE_SERVICES = "services";
@@ -147,7 +149,7 @@ class Store {
     // with Tab. The word is written here, so the behaviour is written below
     // (key): a role that promises what it does not do is worse than no role.
     bar.setAttribute("role", "tablist");
-    bar.setAttribute("aria-label", "App-Store");
+    bar.setAttribute("aria-label", t("store.title"));
     this.panel = el("div", "storepanel");
     this.panel.id = "storepanel-" + this.win.id;
     this.panel.setAttribute("role", "tabpanel");
@@ -199,7 +201,7 @@ class Store {
   async render() {
     const n = ++this.turn;
     clear(this.panel);
-    this.panel.append(el("p", "muted", "Einen Moment …"));
+    this.panel.append(el("p", "muted", t("store.moment")));
     const draw = [this.drawSources, this.drawApps, this.drawInstalled, this.drawUpload, this.drawUpdates][this.at];
     let parts;
     try {
@@ -207,7 +209,7 @@ class Store {
     } catch {
       // Why an answer was no good is nothing the person can act on, and
       // saying more would describe the inside of the server.
-      parts = [el("p", "fail", "Das hat nicht geklappt. Bitte das Fenster schließen und noch einmal öffnen.")];
+      parts = [el("p", "fail", t("store.drawfailed"))];
     }
     if (n !== this.turn || this.abort.signal.aborted) return;
     clear(this.panel);
@@ -253,19 +255,19 @@ class Store {
   // ---- Quellen ------------------------------------------------------------
   async drawSources() {
     const rows = await this.need("sources", A.sources);
-    const out = [head("Quellen"), el("p", "muted", "Von hier holt NGC seine Apps.")];
+    const out = [head(t("store.tab.sources")), el("p", "muted", t("store.sources.lead"))];
     const box = el("div", "rows");
     for (const s of rows) {
       const r = el("div", "row srcrow");
       const main = el("div", "rowmain");
       main.append(el("b", null, s.name), el("span", "muted", s.url));
-      r.append(main, el("div", "rowside", s.checked > 0 ? "Zuletzt geprüft: " + when(s.checked) : "Noch nicht geprüft"));
+      r.append(main, el("div", "rowside", s.checked > 0 ? t("store.sources.checked", { when: when(s.checked) }) : t("store.sources.unchecked")));
       // The error the API sends is its own wording and may name anything at
       // all. What is shown is the one sentence the person can act on.
-      if (s.error !== "") r.append(el("p", "warnline", "Diese Quelle antwortet nicht. Bitte die Adresse prüfen."));
+      if (s.error !== "") r.append(el("p", "warnline", t("store.sources.silent")));
       box.append(r);
     }
-    if (rows.length === 0) box.append(el("p", "muted", "Noch keine Quelle eingetragen."));
+    if (rows.length === 0) box.append(el("p", "muted", t("store.sources.none")));
     out.push(box);
     return out;
   }
@@ -273,15 +275,15 @@ class Store {
   // ---- Apps ---------------------------------------------------------------
   async drawApps() {
     const sources = await this.need("sources", A.sources);
-    const out = [head("Apps")];
+    const out = [head(t("store.tab.apps"))];
     if (sources.length === 0) {
-      out.push(el("p", "fail", "Noch keine Quelle. Bitte im Reiter „Quellen“ eine eintragen."));
+      out.push(el("p", "fail", t("store.apps.nosource")));
       return out;
     }
     if (!sources.some((s) => s.id === this.source)) this.source = sources[0].id;
     if (sources.length > 1) {
       const sel = el("select", "source");
-      sel.setAttribute("aria-label", "Quelle");
+      sel.setAttribute("aria-label", t("store.source"));
       for (const s of sources) {
         const o = el("option", null, s.name);
         o.value = s.id;
@@ -292,7 +294,7 @@ class Store {
         this.source = sel.value;
         this.render();
       });
-      out.push(field("Quelle", sel));
+      out.push(field(t("store.source"), sel));
     }
     const src = sources.find((s) => s.id === this.source);
     let apps;
@@ -305,10 +307,10 @@ class Store {
       // nobody signed for. One sentence for all three would tell the person
       // nothing they could act on.
       out.push(el("p", "fail", e instanceof Untrusted
-        ? "Diesem Store wird noch nicht vertraut. Bitte ihn zuerst eintragen."
+        ? t("store.untrusted")
         : e instanceof catalog.Rollback
-          ? "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen."
-          : "Der Katalog dieses Stores ist nicht echt."));
+          ? t("store.rollback")
+          : t("store.badcatalog")));
       return out;
     }
     const box = el("div", "rows");
@@ -322,7 +324,7 @@ class Store {
       if (e.description !== "") main.append(el("span", "desc", e.description));
       const side = el("div", "rowside");
       if (e.price === null) {
-        const b = button("b", "Installieren", e.name + " installieren");
+        const b = button("b", t("store.install"), t("store.install.label", { name: e.name }));
         b.addEventListener("click", () => this.openInstall(r, {
           app: e.id, name: e.name, version: v.version, sha256: v.sha256, ui: v.ui,
           store: src.id, needs: v.needs,
@@ -330,14 +332,14 @@ class Store {
         side.append(b);
       } else {
         side.append(el("span", "muted", money(e.price)));
-        const b = button("b", "Kaufen", e.name + " kaufen");
+        const b = button("b", t("store.buy"), t("store.buy.label", { name: e.name }));
         b.addEventListener("click", () => this.openBuy(r, e));
         side.append(b);
       }
       r.append(main, side);
       box.append(r);
     }
-    if (apps.length === 0) box.append(el("p", "muted", "Dieser Store hat noch keine App."));
+    if (apps.length === 0) box.append(el("p", "muted", t("store.apps.empty")));
     out.push(box);
     return out;
   }
@@ -367,22 +369,23 @@ class Store {
     try {
       key = await this.ask(A.installKey, null);
     } catch {
-      this.say("error", "Der Schlüssel dieser Installation kam nicht an. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.nokey"));
       return;
     }
     if (this.abort.signal.aborted) return;
     const keyText = b64encode(key.key);
-    box.append(el("p", null, "Der Shop fragt nach diesen beiden Angaben:"));
-    box.append(pair("Installation", key.installation), pair("Schlüssel", keyText));
-    const copy = button("b", "Kopieren", "Installation und Schlüssel kopieren");
-    copy.addEventListener("click", () => this.copy("Installation: " + key.installation + "\nSchlüssel: " + keyText));
+    box.append(el("p", null, t("store.buy.lead")));
+    box.append(pair(t("store.buy.installation"), key.installation), pair(t("store.buy.key"), keyText));
+    const copy = button("b", t("store.copy"), t("store.copy.label"));
+    copy.addEventListener("click", () => this.copy(t("store.copy.text",
+      { installation: key.installation, key: keyText })));
     box.append(copy);
-    box.append(el("p", "muted", "Shop: " + entry.price.shop));
-    box.append(el("p", null, "Die Lizenzdatei aus dem Shop hier auswählen:"));
+    box.append(el("p", "muted", t("store.shop", { shop: entry.price.shop })));
+    box.append(el("p", null, t("store.license.pick")));
     const lab = el("label", "filelab");
     const pick = el("input", null);
     pick.type = "file";
-    lab.append(el("span", null, "Lizenz wählen"), pick);
+    lab.append(el("span", null, t("store.license.choose")), pick);
     pick.addEventListener("change", () => this.sendLicense(pick));
     box.append(lab);
     row.after(box);
@@ -392,44 +395,44 @@ class Store {
     const file = pick.files?.[0];
     if (!file) return;
     if (file.size > catalog.MAX_LICENSE) {
-      this.say("warn", "Diese Datei ist zu groß für eine Lizenz. Bitte die Datei aus dem Shop wählen.");
+      this.say("warn", t("store.license.toobig"));
       return;
     }
     try {
       const res = await this.ask(A.license, null, { stream: file.stream() });
-      this.say("info", res.state === "valid" ? "Die Lizenz gilt." : "Die Lizenz wurde angenommen.");
+      this.say("info", res.state === "valid" ? t("store.license.valid") : t("store.license.taken"));
     } catch {
-      this.say("error", "Diese Lizenz wurde nicht angenommen. Bitte die Datei aus dem Shop wählen.");
+      this.say("error", t("store.license.refused"));
     }
   }
 
   async copy(what) {
     try {
       await navigator.clipboard.writeText(what);
-      this.say("info", "Kopiert.");
+      this.say("info", t("store.copied"));
     } catch {
-      this.say("warn", "Kopieren geht hier nicht. Bitte den Text von Hand markieren.");
+      this.say("warn", t("store.copy.failed"));
     }
   }
 
   // ---- Installiert --------------------------------------------------------
   async drawInstalled() {
     const rows = await this.need("installed", A.installed);
-    const out = [head("Installiert")];
+    const out = [head(t("store.tab.installed"))];
     const box = el("div", "rows");
     for (const i of rows) {
       const r = el("div", "row instrow");
       const main = el("div", "rowmain");
       main.append(el("b", null, i.id), el("span", "muted", i.version + " · " + i.node));
-      main.append(el("span", null, (i.active ? "" : "Ausgeschaltet · ") + (APP_STATE_TEXT[i.state] ?? "")));
+      main.append(el("span", null, (i.active ? "" : t("store.installed.off")) + (APP_STATE_TEXT[i.state] ?? "")));
       const side = el("div", "rowside");
-      const b = button("b", "Entfernen", i.id + " entfernen");
+      const b = button("b", t("store.remove"), t("store.remove.label", { id: i.id }));
       b.addEventListener("click", () => this.remove(i));
       side.append(b);
       r.append(main, side);
       box.append(r);
     }
-    if (rows.length === 0) box.append(el("p", "muted", "Noch keine App eingerichtet."));
+    if (rows.length === 0) box.append(el("p", "muted", t("store.installed.none")));
     out.push(box);
     return out;
   }
@@ -439,7 +442,7 @@ class Store {
     // this a "critical" task (core.critical), and the policy of the trust
     // list decides whether it has to be confirmed.
     const ok = await this.rootTask(A.uninstall, { app: i.id, keepData: false }, i.node,
-      "Die App ist entfernt.");
+      t("store.removed"));
     if (ok) {
       this.cache.installed = undefined;
       this.render();
@@ -448,11 +451,11 @@ class Store {
 
   // ---- Hochladen ----------------------------------------------------------
   async drawUpload() {
-    const out = [head("Hochladen"), el("p", "muted", "Ein Paket von der Festplatte einrichten.")];
+    const out = [head(t("store.tab.upload")), el("p", "muted", t("store.upload.lead"))];
     const lab = el("label", "filelab");
     const pick = el("input", null);
     pick.type = "file";
-    lab.append(el("span", null, "Paket wählen"), pick);
+    lab.append(el("span", null, t("store.upload.choose")), pick);
     const facts = el("div", "upfacts");
     facts.hidden = true;
     const zone = el("div", "upzone");
@@ -476,16 +479,16 @@ class Store {
       // compared, never trusted (shared/README.md, rule "Selbst rechnen").
       mine = await packageUI(file.stream());
     } catch {
-      zone.append(el("p", "upfail", "Diese Datei ist kein NGC-Paket. Bitte eine Datei mit der Endung .ngc wählen."));
+      zone.append(el("p", "upfail", t("store.upload.nopackage")));
       return;
     }
     if (this.abort.signal.aborted) return;
     facts.hidden = false;
     facts.append(
-      pair("App", mine.manifest.name + " (" + mine.manifest.id + ")"),
-      pair("Version", mine.manifest.version),
-      pair("Prüfsumme", b64encode(mine.packageSha256)),
-      pair("UI-Prüfsumme", b64encode(mine.sha256)),
+      pair(t("store.upload.app"), mine.manifest.name + " (" + mine.manifest.id + ")"),
+      pair(t("store.upload.version"), mine.manifest.version),
+      pair(t("store.upload.sha"), b64encode(mine.packageSha256)),
+      pair(t("store.upload.uisha"), b64encode(mine.sha256)),
     );
     // SIGNED AND CONFIRMED BEFORE A SINGLE BYTE GOES OUT. The upload is
     // critical whatever its params, so the trust list asks the person again
@@ -499,25 +502,25 @@ class Store {
       clear(zone);
       return;
     }
-    const sending = el("p", "muted", "Wird übertragen …");
+    const sending = el("p", "muted", t("store.upload.sending"));
     zone.append(sending);
     let theirs;
     try {
       theirs = await this.ask(A.upload, null, {
         ...signed,
         stream: file.stream(),
-        onProgress: (n) => text(sending, "Wird übertragen … " + Math.round(n / 1024) + " KB"),
+        onProgress: (n) => text(sending, t("store.upload.sending.kb", { kb: Math.round(n / 1024) })),
       });
     } catch {
       clear(zone);
-      zone.append(el("p", "upfail", "Das Paket kam nicht an. Bitte es noch einmal wählen."));
+      zone.append(el("p", "upfail", t("store.upload.lost")));
       return;
     }
     if (this.abort.signal.aborted) return;
     clear(zone);
     if (!equal(mine.packageSha256, theirs.sha256) || !equal(mine.sha256, theirs.ui)
       || mine.manifest.id !== theirs.id || mine.manifest.version !== theirs.version) {
-      zone.append(el("p", "upfail", "Die Anlage hat ein anderes Paket bekommen, als geschickt wurde."));
+      zone.append(el("p", "upfail", t("store.upload.mismatch")));
       return;
     }
     zone.append(await this.installBox({
@@ -542,7 +545,7 @@ class Store {
     const box = el("div", "installbox");
     const ticks = [];
     if (spec.needs.length > 0) {
-      box.append(el("p", null, "Diese App möchte mehr dürfen als andere. Bitte jedes Recht einzeln erlauben:"));
+      box.append(el("p", null, t("store.needs.lead")));
       for (const n of spec.needs) {
         const lab = el("label", "tick");
         const cb = el("input", null);
@@ -558,28 +561,28 @@ class Store {
     try {
       nodes = await this.need("nodes", A.nodes);
     } catch {
-      box.append(el("p", "fail", "Die Rechner konnten nicht geladen werden. Bitte das Fenster neu öffnen."));
+      box.append(el("p", "fail", t("store.nodes.failed")));
       return box;
     }
     // Only a controller that is up and carries the services role can run an
     // app. Offering any other is offering a machine the task would die on.
     const usable = nodes.filter((n) => n.online && n.roles.includes(ROLE_SERVICES));
     if (usable.length === 0) {
-      box.append(el("p", "fail", "Kein Rechner für Dienste da. Bitte zuerst einen Rechner hinzufügen."));
+      box.append(el("p", "fail", t("store.nodes.none")));
       return box;
     }
     const sel = el("select", "target");
-    sel.setAttribute("aria-label", "Rechner");
+    sel.setAttribute("aria-label", t("store.node"));
     for (const n of usable) {
       const o = el("option", null, n.node);
       o.value = n.node;
       sel.append(o);
     }
-    box.append(field("Rechner", sel));
-    const go = button("b on", "Aktivieren", null);
+    box.append(field(t("store.node"), sel));
+    const go = button("b on", t("store.activate"), null);
     go.addEventListener("click", async () => {
       if (ticks.some((c) => !c.checked)) {
-        this.say("warn", "Bitte alle Rechte erlauben. Ohne sie kann die App nicht arbeiten.");
+        this.say("warn", t("store.needs.all"));
         return;
       }
       go.disabled = true;
@@ -588,7 +591,7 @@ class Store {
       const ok = await this.rootTask(A.activate, {
         app: spec.app, version: spec.version, sha256: spec.sha256, ui: spec.ui,
         store: spec.store, grants: spec.needs,
-      }, sel.value, "Die App ist eingerichtet.");
+      }, sel.value, t("store.activated"));
       go.disabled = false;
       if (ok) this.cache.installed = undefined;
     });
@@ -599,7 +602,7 @@ class Store {
   // ---- Updates ------------------------------------------------------------
   async drawUpdates() {
     const rows = await this.need("updates", A.updates);
-    const out = [head("Updates"), el("p", "muted", "Was es an neuen Fassungen gibt.")];
+    const out = [head(t("store.tab.updates")), el("p", "muted", t("store.updates.lead"))];
     const box = el("div", "rows");
     for (const u of rows) {
       const name = PART_TEXT[u.target] ?? u.target;
@@ -612,9 +615,9 @@ class Store {
       if (u.state !== "") main.append(el("span", null, STATE_TEXT[u.state] ?? ""));
       const side = el("div", "rowside");
       const sel = el("select", "mode");
-      sel.setAttribute("aria-label", "Updates für " + name);
-      for (const [v, t] of MODES) {
-        const o = el("option", null, t);
+      sel.setAttribute("aria-label", t("store.updates.mode.label", { name }));
+      for (const [v, label] of MODES) {
+        const o = el("option", null, label);
         o.value = v;
         if (u.mode === v) o.selected = true;
         sel.append(o);
@@ -622,21 +625,21 @@ class Store {
       sel.addEventListener("change", () => this.setMode(u, sel));
       side.append(sel);
       if (u.state === catalog.UPDATE_DOWNLOADED) {
-        const b = button("b on", "Jetzt aktualisieren", name + " jetzt aktualisieren");
+        const b = button("b on", t("store.updates.now"), t("store.updates.now.label", { name }));
         b.addEventListener("click", () => this.installUpdate(u));
         side.append(b);
       } else if (u.state === catalog.UPDATE_NEEDSGRANTS) {
         // NOT an update button: nothing is wrong with this version, the app
         // may simply not yet do what it now needs. So the offer is the
         // activation, where those rights are allowed one by one.
-        const b = button("b", "Neue Version mit neuen Rechten aktivieren", null);
+        const b = button("b", t("store.updates.regrant"), null);
         b.addEventListener("click", () => this.regrant(u, r));
         side.append(b);
       }
       r.append(main, side);
       box.append(r);
     }
-    if (rows.length === 0) box.append(el("p", "muted", "Alles auf dem neuesten Stand."));
+    if (rows.length === 0) box.append(el("p", "muted", t("store.updates.uptodate")));
     out.push(box);
     return out;
   }
@@ -652,7 +655,7 @@ class Store {
       ? { target: u.target, version: "", sha256: EMPTY }
       : { target: u.target, version: u.available, sha256: u.sha256 };
     const ok = await this.rootTask(A.install, params, u.node,
-      "Die neue Fassung wird eingespielt.");
+      t("store.updates.installing"));
     if (ok) {
       this.cache.updates = undefined;
       this.render();
@@ -668,26 +671,26 @@ class Store {
       sources = await this.need("sources", A.sources);
       installed = await this.need("installed", A.installed);
     } catch {
-      this.say("error", "Das hat nicht geklappt. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.tryagain"));
       return;
     }
     const app = installed.find((i) => i.id === u.target);
     const src = sources.find((s) => s.id === app?.store);
     if (src === undefined) {
-      this.say("warn", "Diese App kam nicht aus einem Store. Bitte die neue Fassung unter „Hochladen“ einrichten.");
+      this.say("warn", t("store.regrant.nostore"));
       return;
     }
     let apps;
     try {
       apps = await this.catalogOf(src);
     } catch {
-      this.say("error", "Der Katalog dieses Stores ist nicht echt.");
+      this.say("error", t("store.badcatalog"));
       return;
     }
     const e = apps.find((x) => x.id === u.target);
     const v = e?.versions.find((x) => x.version === u.available);
     if (v === undefined) {
-      this.say("warn", "Diese Fassung steht nicht im Katalog. Bitte es später noch einmal versuchen.");
+      this.say("warn", t("store.regrant.noversion"));
       return;
     }
     for (const old of row.parentNode.querySelectorAll(".installbox")) old.remove();
@@ -713,11 +716,11 @@ class Store {
       await this.ask(A.setUpdate, { target: u.target, mode, window: u.window });
     } catch {
       sel.value = u.mode;
-      this.say("error", "Das ließ sich nicht speichern. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.savefailed"));
       return;
     }
     u.mode = mode;
-    this.say("info", "Gespeichert.");
+    this.say("info", t("store.saved"));
   }
 
   // standingYes writes the next version of the trust list with the standing
@@ -726,19 +729,19 @@ class Store {
     const cur = this.ctx.trust?.current?.();
     const s = this.ctx.session;
     if (!cur?.list || !s) {
-      this.say("error", "Dafür ist eine Anmeldung nötig. Bitte neu anmelden.");
+      this.say("error", t("store.needlogin"));
       return false;
     }
     let installed;
     try {
       installed = await this.need("installed", A.installed);
     } catch {
-      this.say("error", "Das hat nicht geklappt. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.tryagain"));
       return false;
     }
     const key = approvalKey(target, cur.list, this.ctx.releaseKey, installed);
     if (key === undefined) {
-      this.say("warn", "Für diese Freigabe fehlt der Schlüssel. Bitte den Store dieser App zuerst eintragen.");
+      this.say("warn", t("store.approval.nokey"));
       return false;
     }
     // The hash the version in force was CHECKED with, not one taken again
@@ -751,13 +754,13 @@ class Store {
     try {
       payload = trust.encodeList(nextList(cur.list, prev, target, key));
     } catch {
-      this.say("error", "Das hat nicht geklappt. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.tryagain"));
       return false;
     }
     const p = await askSignature(PURPOSE_TRUST_LIST, payload, "list",
       { list: cur.list, user: s.user, signal: this.abort.signal });
     if (p === null) {
-      this.say("info", "Nichts geändert.");
+      this.say("info", t("store.nochange"));
       return false;
     }
     try {
@@ -768,14 +771,14 @@ class Store {
       // afterwards has already left the signature behind.
       await trust.advance({ list: cur.list, hash: prev }, [{ payload, proof: p }]);
     } catch {
-      this.say("error", "Diese Freigabe ergibt keine gültige Vertrauensliste. Bitte neu anmelden.");
+      this.say("error", t("store.approval.badlist"));
       return false;
     }
     let seq;
     try {
       seq = (await this.ask(A.trust, null, { stream: oneChunk(signedBytes(payload, p)) })).seq;
     } catch {
-      this.say("error", "Die Freigabe wurde nicht angenommen. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.approval.refused"));
       return false;
     }
     // THE ANSWER IS NOT A RECEIPT TO THROW AWAY, and Fixrunde 1 found what it
@@ -806,8 +809,7 @@ class Store {
       // The approval itself IS stored; only this browser did not get there.
       // So nothing more is written, and the sentence says the one thing that
       // fixes it. Writing a second version from here would be the fork.
-      this.say("warn", "Die Freigabe ist eingetragen. Bitte die Seite neu laden, "
-        + "damit NGC hier auf dem neuen Stand ist.");
+      this.say("warn", t("store.approval.behind"));
       return false;
     }
     return true;
@@ -874,7 +876,7 @@ class Store {
   async signedTask(action, params, node) {
     const s = this.ctx.session;
     if (!s) {
-      this.say("error", "Dafür ist eine Anmeldung nötig. Bitte neu anmelden.");
+      this.say("error", t("store.needlogin"));
       return null;
     }
     let built, taskBytes;
@@ -887,7 +889,7 @@ class Store {
       });
       taskBytes = envelopeBytes(await task.signTask(s.signKey, built.bytes));
     } catch {
-      this.say("error", "Das ließ sich nicht unterschreiben. Bitte neu anmelden.");
+      this.say("error", t("store.signfailed"));
       return null;
     }
     let confirmBytes = null;
@@ -897,7 +899,7 @@ class Store {
     // nothing needs confirming. Nothing is sent - the safer of the two, and
     // the API would refuse it a moment later anyway.
     if (!list) {
-      this.say("error", "Die Vertrauensliste fehlt. Bitte neu anmelden.");
+      this.say("error", t("store.nolist"));
       return null;
     }
     if (needConfirm(list, s.user, {
@@ -909,13 +911,13 @@ class Store {
       // what runs.
       const p = await askConfirm(built.bytes, { list, user: s.user, signal: this.abort.signal });
       if (p === null) {
-        this.say("info", "Nichts geändert.");
+        this.say("info", t("store.nochange"));
         return null;
       }
       try {
         confirmBytes = proofBytes(p);
       } catch {
-        this.say("error", "Die Bestätigung hat nicht gereicht. Bitte es noch einmal versuchen.");
+        this.say("error", t("store.confirm.short"));
         return null;
       }
     }
@@ -998,7 +1000,7 @@ const oneChunk = (bytes) => new Blob([bytes]).stream();
 
 // ---- small pieces of surface ----------------------------------------------
 
-const head = (t) => el("h2", "h", t);
+const head = (title) => el("h2", "h", title);
 
 // pair is a name and a value side by side: the value is text from outside
 // and goes in as text.
@@ -1016,7 +1018,7 @@ function field(name, control) {
   return row;
 }
 
-const when = (unix) => new Date(unix * 1000).toLocaleString("de-DE",
+const when = (unix) => new Date(unix * 1000).toLocaleString(tag,
   { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 // money writes a price the way the person's browser writes prices. A
@@ -1026,12 +1028,12 @@ function money(price) {
   const amount = price.amount / 100;
   let s;
   try {
-    s = new Intl.NumberFormat("de-DE", { style: "currency", currency: price.currency }).format(amount);
+    s = new Intl.NumberFormat(tag, { style: "currency", currency: price.currency }).format(amount);
   } catch {
     s = amount.toFixed(2) + " " + price.currency;
   }
   if (price.model === catalog.PRICE_SUBSCRIPTION) {
-    s += price.period === catalog.PERIOD_YEAR ? " im Jahr" : " im Monat";
+    s += price.period === catalog.PERIOD_YEAR ? t("store.price.year") : t("store.price.month");
   }
-  return s + (price.per === catalog.PER_USER ? " je Benutzer" : "");
+  return s + (price.per === catalog.PER_USER ? t("store.price.peruser") : "");
 }
