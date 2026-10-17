@@ -133,36 +133,74 @@ func (st *Stores) newHeld() (*os.File, error) {
 // whole or not at all and an activation can never open a half-written
 // package. A name that is already there is REPLACED, and that is right -- the
 // name is the checksum, so the bytes under it are the same bytes.
+// TWO SYNCS AND NOT ONE, and they promise different things -- the same two
+// shared/config.writeAtomic makes, and this had only the first until a second
+// pair of eyes read it against that function:
+//
+//   - f.Sync() BEFORE the rename sures the CONTENT. Without it a machine that
+//     loses power between the two can leave the right name over an empty or
+//     half-written file, and the next activation reads a package that passes no
+//     checksum.
+//   - the directory sync AFTER the rename sures the RENAME. Without it the
+//     crash leaves the OLD state: the file under its temporary name, which the
+//     next sweep takes away. That is the harmless one of the two, and it is
+//     tolerated where a system cannot sync a directory at all -- the file
+//     itself is whole either way.
+//
+// WHAT IS MEASURED IS THE ORDER, not the durability: no case can cut the power,
+// so nothing here can be held against a crash. But "sync, then rename, then
+// sync the directory" is observable, and holdSteps below is what makes it so --
+// a mutant that drops either sync loses a line in that list. Measured on
+// 17.10.2026: before holdSteps existed, a mutant that dropped f.Sync() lived
+// through the whole set.
 func (st *Stores) keepHeld(f *os.File, sum []byte) error {
 	name, ok := holdName(sum)
 	if !ok {
 		dropHeld(f)
 		return ErrStore
 	}
-	// Sync before the rename, so the name appears over bytes that are really
-	// on the disk and not only in a cache -- a machine that loses power
-	// between the two would otherwise leave a name over a hole, and the next
-	// activation would read a package that passes no checksum.
-	//
-	// NOT MEASURED, and it cannot be from here: no case can cut the power, so
-	// no mutant of this line dies. A mutant that drops the Sync lived through
-	// the whole set on 17.10.2026, and that is honest rather than a hole in
-	// the cases. What IS measured is everything the rename promises while the
-	// machine stays up.
 	if err := f.Sync(); err != nil {
 		dropHeld(f)
 		return err
 	}
+	holdStep("sync")
 	tmp := f.Name()
 	if err := f.Close(); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, filepath.Join(filepath.Dir(tmp), name)); err != nil {
+	dir := filepath.Dir(tmp)
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
+	holdStep("rename")
+	// The error is not reported, as in writeAtomic: a system that cannot sync
+	// a directory has still got the whole file under the right name, and
+	// failing the upload over the weaker of the two promises would throw away
+	// a package that is there.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+		holdStep("dirsync")
+	}
 	return nil
+}
+
+// holdSteps records the durability steps of keepHeld in the order they run. It
+// is nil in operation and set by a case, and it exists because of what can and
+// cannot be measured here: a crash cannot be staged, an ORDER can be read.
+//
+// A package-level variable and not a field of Stores, because what it watches
+// is not a property of one installation but of this one function; the cases
+// that set it do not run in parallel, and holdStep is what every writer goes
+// through so there is one place to look.
+var holdSteps func(step string)
+
+func holdStep(step string) {
+	if holdSteps != nil {
+		holdSteps(step)
+	}
 }
 
 // dropHeld throws a temporary file away, name and all. An upload that was

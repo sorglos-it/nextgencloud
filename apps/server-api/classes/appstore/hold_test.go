@@ -259,3 +259,41 @@ func TestARefusedUploadKeepsNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestKeptInThisOrder holds the two durability promises of keepHeld by their
+// ORDER, which is what can be measured: sync the content, then rename, then
+// sync the directory. A crash cannot be staged here, so nothing below says the
+// package survives one -- what it says is that the steps a crash would need
+// happen, and in the only order that helps.
+//
+// It is the answer to a mutant that lived: before holdSteps existed, taking
+// f.Sync() out passed every case of this package (measured 17.10.2026). The
+// list is read with the contract's own writer, holdStep, so a second place
+// that renamed without syncing would show here too.
+func TestKeptInThisOrder(t *testing.T) {
+	var steps []string
+	holdSteps = func(s string) { steps = append(steps, s) }
+	defer func() { holdSteps = nil }()
+
+	st, _ := newStores(t)
+	st.Hold = t.TempDir()
+	if _, err := st.Upload(ctx, bytes.NewReader(buildPackage(t, goodEntries(t)))); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	want := []string{"sync", "rename", "dirsync"}
+	if len(steps) != len(want) {
+		t.Fatalf("the steps were %v, want %v", steps, want)
+	}
+	for i := range want {
+		if steps[i] != want[i] {
+			t.Fatalf("the steps were %v, want %v", steps, want)
+		}
+	}
+	// The guard that makes this a measurement: the list is only worth reading
+	// if the package really landed. A run that kept nothing would show an
+	// empty list and pass the loop above without the lengths matching -- this
+	// says it out loud instead.
+	if es, err := os.ReadDir(st.Hold); err != nil || len(es) != 1 {
+		t.Fatalf("the hold holds %d entries (%v), want the one package", len(es), err)
+	}
+}
