@@ -599,59 +599,59 @@ func TestOnlyTheInstallationIDRefusesThisOne(t *testing.T) {
 	}
 }
 
-// TestAFutureIssueTimeLocksOutEveryLaterLicence is the same trap as the
-// rollback lock of a catalogue ("Punkt 46"), measured for a licence: only a
-// NEWER licence replaces the one held (license.go:97, cur.Issued >= l.Issued),
-// and nothing bounds Issued against the clock -- store.License.Validate asks
-// only l.Issued <= 0 (shared/store/catalog.go:321).
+// TestAFutureIssueTimeDoesNotLockOutLaterLicences is the trap of "Punkt 46"
+// measured for a licence, and the wall that now stops it. Only a NEWER licence
+// replaces the one held (TakeLicense, cur.Issued >= l.Issued), and Issued is a
+// number the STORE writes: store.License.Validate asks only l.Issued <= 0
+// (shared/store/catalog.go:321, frozen). So one licence issued far ahead --
+// from a store whose clock runs fast, or taken while this machine's own clock
+// was stepped forward -- used to make every correct licence afterwards a
+// no-op, and the admin was told the one held was newer.
 //
-// So one licence with an issue time far in the future, signed with the store's
-// OWN key, makes every correct licence afterwards a no-op. The admin is told
-// the licence was not taken because the one held is newer, and the term that
-// was actually bought never arrives.
-//
-// This case states the behaviour, it does not mend it: the line that would
-// bound Issued is in frozen shared/, so it is BLOCKED and belongs in the v1.3
-// row.
-func TestAFutureIssueTimeLocksOutEveryLaterLicence(t *testing.T) {
+// Until 18.10.2026 this case asserted exactly that lock and was green. The
+// wall does not belong in frozen shared/ (which sees no clock) but at the one
+// place a licence enters, so it is in TakeLicense, with session.MaxSkew as the
+// tolerance. The case therefore now asserts the opposite, and that it fell on
+// the old code is the red-before of the mend.
+func TestAFutureIssueTimeDoesNotLockOutLaterLicences(t *testing.T) {
 	lf, g := pathFixture(t)
 	const year = 365 * 86400
 
-	// A licence of the store's own key, issued ten years from now.
+	// A licence of the store's own key, issued ten years from now: no forgery,
+	// just a wrong clock somewhere.
 	future := g.licence(t, paidApp, lf.V.Installation, installPair.Public,
 		cli.LicenseOpts{Per: store.PerSite, Issued: testNow + 10*year,
 			Expires: testNow + 11*year})
-	res, err := lf.St.TakeLicense(ctx, paidApp, future)
-	if err != nil {
-		t.Fatalf("a licence issued ten years from now: %v", err)
+	if _, err := lf.St.TakeLicense(ctx, paidApp, future); !errors.Is(err, ErrLicense) {
+		t.Fatalf("a licence issued ten years from now: got %v, want ErrLicense", err)
 	}
-	if res.State != core.LicenseValid {
-		t.Fatalf("state = %q; want it to be taken as %q", res.State, core.LicenseValid)
+	// Nothing of it is stored, so nothing is in the way.
+	if row, ok := lf.keptLicense(t, paidApp); ok {
+		t.Fatalf("the licence from the future was stored, row at %d", row.Seq)
 	}
 
-	// Now the licence that was really bought, issued today, one month's term.
+	// The licence that was really bought gets in, and is what the row holds.
 	real := g.licence(t, paidApp, lf.V.Installation, installPair.Public,
 		cli.LicenseOpts{ID: "L-REAL", Per: store.PerSite, Issued: testNow,
 			Expires: testNow + 30*86400})
-	res, err = lf.St.TakeLicense(ctx, paidApp, real)
+	res, err := lf.St.TakeLicense(ctx, paidApp, real)
 	if err != nil {
 		t.Fatalf("the licence of today: %v", err)
 	}
-	// It is answered as if nothing were wrong, and nothing was kept.
+	if res.State != core.LicenseValid {
+		t.Errorf("state = %q, want %q", res.State, core.LicenseValid)
+	}
 	row, ok := lf.keptLicense(t, paidApp)
 	if !ok {
 		t.Fatal("no licence row")
 	}
-	if row.Seq != uint64(testNow+10*year) {
-		t.Fatalf("the kept licence is from %d; the future one is still in place at %d",
-			row.Seq, testNow+10*year)
+	if row.Seq != uint64(testNow) {
+		t.Fatalf("the kept licence is from %d, want today's %d", row.Seq, testNow)
 	}
-	t.Logf("the admin reads state=%q while the row still holds the licence of %d",
-		res.State, row.Seq)
 
-	// The control: without the future licence in the way, the very same real
-	// licence IS kept. So what the row above shows is the lock and not a
-	// licence that could never be taken.
+	// The control: the same real licence in an installation that never saw the
+	// future one is kept just the same. So the row above shows the licence and
+	// not an accident of this fixture.
 	lf2, g2 := pathFixture(t)
 	real2 := g2.licence(t, paidApp, lf2.V.Installation, installPair.Public,
 		cli.LicenseOpts{ID: "L-REAL", Per: store.PerSite, Issued: testNow,

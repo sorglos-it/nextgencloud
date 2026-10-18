@@ -17,6 +17,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
+	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -717,5 +718,54 @@ func TestOnlyTakeLicenseWritesToTheLog(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Errorf("entries written by the key functions: %d, want 0", len(after)-len(before))
+	}
+}
+
+// TestALicenseIssuedInTheFutureIsRefused holds the wall in front of the trap a
+// wrong clock sets. TakeLicense keeps only the newest licence, and "newest" is
+// store.License.Issued -- a number the store writes, which nobody held against
+// this API's own clock. A licence issued ahead of the installation (a store
+// whose clock runs fast, a licence minted for later, or a clock that was
+// stepped forward while it was taken) is therefore kept for good: every later
+// licence has a smaller Issued and is turned away as "not newer", while the
+// state keeps reading valid until the future licence itself expires.
+//
+// The tolerance is session.MaxSkew, the same number the whole installation
+// uses for two clocks that disagree, so a store a few seconds ahead still
+// works. What lies further ahead is no licence of this installation's present.
+func TestALicenseIssuedInTheFutureIsRefused(t *testing.T) {
+	lf := newLicenseFixture(t)
+	// The way to the check must be open: nothing is stored before, so a green
+	// case cannot come from an earlier wall.
+	if _, ok := lf.keptLicense(t, lf.App); ok {
+		t.Fatal("a licence is stored before the case ran")
+	}
+	// One second within the tolerance is taken: the wall sits at MaxSkew, not
+	// at "any second ahead".
+	edge := mint(t, lf.App, func(l *store.License) {
+		l.Issued = testNow + session.MaxSkew
+		l.Expires = l.Issued + 30*86400
+	})
+	if _, err := lf.St.TakeLicense(ctx, lf.App, edge); err != nil {
+		t.Fatalf("licence at the edge of the tolerance: %v", err)
+	}
+	ahead := mint(t, lf.App, func(l *store.License) {
+		l.Issued = testNow + session.MaxSkew + 1
+		l.Expires = l.Issued + 30*86400
+	})
+	if _, err := lf.St.TakeLicense(ctx, lf.App, ahead); !errors.Is(err, ErrLicense) {
+		t.Errorf("licence issued past the tolerance: got %v, want ErrLicense", err)
+	}
+	// And the damage it would do if it came through: nothing of it is stored,
+	// so a licence of the present is still newer and still gets in.
+	row, ok := lf.keptLicense(t, lf.App)
+	if !ok {
+		t.Fatal("the licence of the edge is gone")
+	}
+	if row.Seq != uint64(testNow+session.MaxSkew) {
+		t.Errorf("the stored row is at %d, want the edge's %d", row.Seq, testNow+session.MaxSkew)
+	}
+	if !bytes.Equal(row.Data, edge) {
+		t.Error("the licence from the future was stored")
 	}
 }
