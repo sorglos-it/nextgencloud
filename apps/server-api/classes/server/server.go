@@ -410,7 +410,34 @@ var (
 )
 
 // rounds keeps housekeeping and catalogs going until ctx ends.
+//
+// Both rounds run ONCE before the first tick, and that is a decision with a
+// price on each side. Measured on 18.10.2026 against a running installation:
+// an API that had just started held no catalog, ngc.store/catalog answers out
+// of the stored catalog alone, and the shell turns the "nothing stored" it is
+// handed into "Der Katalog dieses Stores ist nicht echt." -- so a fresh
+// installation accused its own store for up to an hour, and every restart put
+// the hour back to the start. A ticker fires for the first time after its
+// interval, never at zero, so without these two calls the first minute of
+// every API is a minute with no trust list and the first hour an hour with no
+// catalogs.
+//
+// The price, named: every start now reaches every store of the trust list
+// once. That is one GET per store on this goroutine, bounded by the store
+// client's own minute (appstore.New). Both go through Server.once, so the
+// catch and the one-round-at-a-time of a tick hold for them exactly as they
+// do for a tick.
+//
+// The ORDER buys nothing and is not relied on: state.Trust loads the chain
+// itself when nothing is cached (state/trust.go, Trust -> Refresh), so the
+// catalog round would find the trust list even if it ran first. It stands
+// first because it is the round every session needs, not because the other
+// one needs it -- said here because the opposite is the obvious guess, and a
+// comment that claims a dependency the code does not have is the error this
+// project trips over most.
 func (s *Server) rounds(ctx context.Context) {
+	s.once(func() { s.minute(ctx) })
+	s.once(func() { s.hour(ctx) })
 	minute := time.NewTicker(Minute)
 	hour := time.NewTicker(Hour)
 	defer minute.Stop()

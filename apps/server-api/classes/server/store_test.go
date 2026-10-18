@@ -400,3 +400,92 @@ func TestTheHousekeepingRoundSaysTheCountOfCaughtErrors(t *testing.T) {
 		t.Fatalf("the same caught error was said twice: %q", said.String())
 	}
 }
+
+// TestTheRoundsRunOnceAtTheStart holds what a freshly started API owes its
+// first minute: the housekeeping round and the CATALOG round each run once
+// before the first tick ever arrives.
+//
+// Why it is a case and not a nicety. Measured on 18.10.2026 against a running
+// installation: after setup the App-Store showed "Der Katalog dieses Stores
+// ist nicht echt." for every store, because ngc.store/catalog answers out of
+// the stored catalog alone and nothing had fetched one yet -- the first
+// catalog round was an hour away, no action of the shell triggers one, and the
+// shell turns every cause it is handed into that one sentence. So an
+// installation accused its own store for up to an hour, and a restart put the
+// hour back to the start.
+//
+// HOW IT IS MEASURED, and this is the whole of its weight: both beats are set
+// to an HOUR, so no tick can fire inside the window this case waits. A round
+// that runs here therefore ran because the start ran it. Without the two calls
+// at the top of Server.rounds the case waits its window out and fails.
+//
+// What it reads is each round's OWN line on a server whose setup is not
+// closed: the housekeeping round says it cannot read a trust list, the catalog
+// round says it cannot fetch catalogs. The first of the two is the check that
+// the way to the second is open at all -- a case that saw neither line would
+// prove nothing, and that is the shape this project has paid for before.
+func TestTheRoundsRunOnceAtTheStart(t *testing.T) {
+	srv, _, _ := newServer(t)
+	oldMinute, oldHour := Minute, Hour
+	// An hour each: long enough that no tick can explain a round below.
+	Minute, Hour = time.Hour, time.Hour
+	t.Cleanup(func() { Minute, Hour = oldMinute, oldHour })
+
+	var mu sync.Mutex
+	var said bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&locked{mu: &mu, w: &said}, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.rounds(ctx)
+	}()
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return said.String()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(read(), "catalogs could not be fetched") {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	line := read()
+	// The intermediate check first: the housekeeping round ran, so the way to
+	// the catalog round below was open.
+	if !strings.Contains(line, "trust list could not be read") {
+		t.Fatalf("the housekeeping round did not run at the start: %q", line)
+	}
+	if !strings.Contains(line, "catalogs could not be fetched") {
+		t.Fatalf("the catalog round did not run at the start, and the next tick "+
+			"is an hour away: %q", line)
+	}
+	// Once, not in a loop: a start that kept fetching would hammer every store
+	// of the installation, and the beat above would mean nothing.
+	if n := strings.Count(line, "catalogs could not be fetched"); n != 1 {
+		t.Fatalf("the catalog round ran %d times at the start; once is the whole point", n)
+	}
+}
+
+// locked serialises what the rounds write into one buffer: the two rounds run
+// on the goroutine of Server.rounds while the case reads, and a bytes.Buffer
+// is no safer than any other value under two goroutines. Without it the case
+// would measure Go's race detector instead of the rounds.
+type locked struct {
+	mu *sync.Mutex
+	w  *bytes.Buffer
+}
+
+func (l *locked) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
