@@ -1,0 +1,208 @@
+# What this run is for: every check in this repo is done by hand on one Windows
+# machine, and that machine has traps of its own - a go1.27 runtime crash that
+# is not a finding, dozens of cases that switch themselves off (podman, Linux
+# goroutines, symlinks, owners, root), a NAS drive where os.File.Chdir does not
+# work, and a virus scanner that gets in the way of freshly built test binaries.
+# This run is the other half: Linux, ext4, podman present, a clean machine every
+# time. It measures what the Windows machine cannot.
+#
+# IT ONLY MEASURES. It publishes nothing, pushes nothing, needs no secret, and
+# asks for read permission only (see "permissions" below). Anything that would
+# need a key does NOT run here and is named in the step that would need it.
+name: Linux-Pruefung
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "seconds of real fuzzing per target (0 = seeds only)"
+        default: "5"
+
+# Read only. No token with write rights ever reaches a step of this run.
+permissions:
+  contents: read
+
+# A second push to the same branch cancels the first: a run nobody reads any
+# more still costs minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The go tool stamps builds with VCS data and runs git for it; the stamp is
+  # of no use here and git in a checkout of a fork can fail on it.
+  GOFLAGS: -buildvcs=false
+
+jobs:
+  # ---------------------------------------------------------------- check
+  # Everything "bash tools/check.sh" does on the Windows machine: the structural
+  # checks first (a hollow tree, an unparsable file, a file no configuration
+  # compiles, a stale line in tools/modules.go, trusttest outside tests), then
+  # the PHP case, go vet for three targets, the test suite, and the builds for
+  # linux/amd64 and linux/arm64.
+  #
+  # The test run inside check.sh writes its JSON stream to a file, and
+  # tools/ci-count.sh turns it into three numbers: passed, FAILED and SKIPPED.
+  # "ok" is not a number of cases.
+  check:
+    name: check.sh + counted test run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # No credentials are left behind in .git/config for later steps.
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # podman: on the Windows machine every case that reads podman's argument
+      # list is skipped, and the hardening of the app container - the only wall
+      # between an app and the server - was held by nothing at all until that
+      # was found (12.10.2026). Here podman is present, so the cases that start
+      # it run instead of skipping.
+      - name: podman installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+          podman --version
+
+      - name: php nennen
+        # check.sh looks php up in four steps and stops if it finds none; the
+        # runner image carries one, this makes which one visible.
+        run: php -v | head -1
+
+      - name: check.sh
+        env:
+          # check.sh writes the JSON stream of its own test run here instead of
+          # running the suite a second time just to count it.
+          NGC_CHECK_TEST_JSON: ${{ runner.temp }}/test.json
+        run: bash tools/check.sh
+
+      - name: zaehlen - bestanden / rot / uebersprungen
+        if: always()
+        run: bash tools/ci-count.sh "${{ runner.temp }}/test.json" "Linux, normaler Benutzer (podman da)"
+
+      - name: Bericht in die Zusammenfassung
+        if: always()
+        run: |
+          {
+            echo '### Linux-Lauf, normaler Benutzer'
+            echo '```'
+            bash tools/ci-count.sh "${{ runner.temp }}/test.json" "Linux, normaler Benutzer" 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------- root
+  # The controller makes system users, hands directories to them and encrypts
+  # them - all of that needs root, and on the Windows machine every one of those
+  # cases says so and skips. A GitHub runner gives root for free, so they run
+  # here, in a job of their own: running the WHOLE suite as root would change
+  # what other cases measure (several assert exactly that they are NOT root).
+  root:
+    name: controller cases that need root
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: podman installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+      - name: als root
+        run: |
+          sudo -E env "PATH=$PATH" "GOFLAGS=$GOFLAGS" \
+            go test -count=1 -json ./apps/server-controller/... > "${{ runner.temp }}/root.json" || true
+      - name: zaehlen
+        run: NGC_COUNT_FLOOR=50 bash tools/ci-count.sh "${{ runner.temp }}/root.json" "Linux als root (controller)"
+
+  # ---------------------------------------------------------------- race
+  # The race detector needs cgo and a C compiler. On the Windows machine that
+  # compiler exists only inside the ESP toolchain and had to be hunted for; here
+  # it is simply there, so the Linux goroutines are measured on every push.
+  #
+  # shared/trust is left out ON PURPOSE and the reason is measured
+  # (12.10.2026): TestSignatureBeforeDecoding asserts a memory ceiling, and the
+  # instrumentation of the race detector itself takes more than the ceiling
+  # allows (65736 bytes against about 65544). It is not a race - over the other
+  # 30 packages the run shows 0 DATA RACE. The package is run WITHOUT -race in
+  # the step after, so it is not quietly dropped.
+  race:
+    name: -race (Linux goroutines)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: -race ueber alles ausser shared/trust
+        run: |
+          set -o pipefail
+          pkgs=$(go list ./... | grep -v '^github.com/sorglos-it/nextgencloud/shared/trust$')
+          n=$(printf '%s\n' "$pkgs" | grep -c .)
+          # A package list that comes back nearly empty is a failed list, not a
+          # small repo: go list answers "packages=0" when it cannot stat a tree.
+          [ "$n" -ge 20 ] || { echo "go list named only $n packages - the list failed"; exit 1; }
+          CGO_ENABLED=1 go test -count=1 -race -json $pkgs > "${{ runner.temp }}/race.json" || true
+      - name: zaehlen
+        run: bash tools/ci-count.sh "${{ runner.temp }}/race.json" "Linux mit -race (ohne shared/trust)"
+      - name: shared/trust ohne -race
+        run: go test -count=1 ./shared/trust/...
+
+  # ---------------------------------------------------------------- fuzz
+  # NOT a search - a fallback check. The seed corpus of every target already
+  # runs as ordinary cases in the job above; this adds a few seconds of real
+  # fuzzing per target so a seed that was checked in after a crash keeps being
+  # exercised.
+  #
+  # The budget is deliberate: there are about 90 targets, go fuzzes ONE at a
+  # time, and a run that takes 40 minutes gets switched off instead of read. Four
+  # shards times about 23 targets times the default 5 s is roughly 2-4 minutes of
+  # wall clock per shard. -fuzzminimizetime 0 keeps a found input from eating 60
+  # seconds of the budget on minimizing.
+  #
+  # COST, because that decides whether a run gets read or switched off: measured
+  # 18.10.2026 on four cores with a cold build cache, which is what a runner is.
+  # check.sh 148 s, the controller cases 90 s, -race 383 s, one fuzz shard 231 s.
+  # With four shards on every push that is about 30 billed minutes per push at
+  # roughly 8 minutes of wall clock. So the fuzz job runs on the DEFAULT BRANCH
+  # and by hand, not on every push of every branch: that halves the bill and the
+  # seed corpus of every target still runs as ordinary cases in the check job
+  # above, on every push. Drop the "if:" line to fuzz on every push.
+  fuzz:
+    name: fuzz (fallback, shard ${{ matrix.shard }}/4)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: fuzzen
+        env:
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '5' }}
+          SHARD: ${{ matrix.shard }}
+        run: bash tools/ci-fuzz.sh

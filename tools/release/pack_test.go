@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -195,7 +196,36 @@ func webFixture(t *testing.T, change func(files map[string]string)) string {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	git("init", "-q", "-b", "main")
+	// --template with an EMPTY directory, and this is not tidiness: this
+	// machine sets init.templateDir globally, so a plain "git init" copies
+	// the hooks of the knowledge-graph tool into every fixture repository,
+	// and the first commit below then starts a rebuild IN THE FIXTURE. It
+	// writes graphify-out/.rebuild.lock and holds it open, so t.TempDir
+	// cannot clear up after the case and go test prints a real "--- FAIL"
+	// over a file nothing in this repository ever asked for - measured
+	// 18.10.2026, TestArchiveKeepsTheExecutableBit, "unlinkat ...
+	// .rebuild.lock: the file is used by another process". A throwaway
+	// fixture has no business running the hooks of this machine.
+	empty := filepath.Join(t.TempDir(), "no-hooks")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", empty, err)
+	}
+	git("init", "-q", "-b", "main", "--template="+filepath.ToSlash(empty))
+	// The preparation checks itself: a template that did not take hold would
+	// bring the hooks back, and the failure would return now and then under
+	// whichever case happened to commit last. With an empty template git
+	// writes no hooks directory at all, so a MISSING one is the good answer
+	// here - measured: the first shape of this check demanded the directory
+	// and turned all twelve cases red.
+	hooks, err := os.ReadDir(filepath.Join(dir, ".git", "hooks"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read the hooks of the fixture: %v", err)
+	}
+	for _, h := range hooks {
+		if !strings.HasSuffix(h.Name(), ".sample") {
+			t.Fatalf("the fixture carries the hook %s, so a commit here runs programs of this machine", h.Name())
+		}
+	}
 	// THE RIGGING THAT MAKES THE CRLF CASE REAL. core.autocrlf=true is what
 	// rewrites the bytes, and on Linux it is off, so without this line
 	// TestPackWritesLFWhateverTheCheckoutDoes could not fall there - it would
@@ -261,6 +291,7 @@ func lines(t *testing.T, name string) []string {
 // TestArchiveIsClosed is the assertion this plan exists for: every file the
 // archive refers to is in the archive. The authority is the graph, not a list.
 func TestArchiveIsClosed(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")
@@ -284,6 +315,7 @@ func TestArchiveIsClosed(t *testing.T) {
 // falls for its own subject because the fixture writes those files without
 // consulting the list.
 func TestArchiveCarriesTheFilesNoReferenceReaches(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")
@@ -301,6 +333,7 @@ func TestArchiveCarriesTheFilesNoReferenceReaches(t *testing.T) {
 // TestPackRefusesATreeWithoutTheEntryPoint: public/index.php is the one file
 // ngc-web.sh checks itself (line 619), so it must never leave the build.
 func TestPackRefusesATreeWithoutTheEntryPoint(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, func(f map[string]string) { delete(f, "public/index.php") })
 	_, log, err := pack(t, repo, "main", "3")
@@ -313,6 +346,7 @@ func TestPackRefusesATreeWithoutTheEntryPoint(t *testing.T) {
 }
 
 func TestArchiveCarriesNoTests(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")
@@ -343,6 +377,7 @@ func TestArchiveCarriesNoTests(t *testing.T) {
 // extra-web.txt: an entry there would need a reason, and the only reason
 // available would be made up.
 func TestArchiveCarriesNoTestOnlyLink(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	const link = "public/assets/js/net/testlink.js"
 	repo := webFixture(t, func(f map[string]string) {
@@ -388,6 +423,7 @@ func TestArchiveCarriesNoTestOnlyLink(t *testing.T) {
 }
 
 func TestPackIsReproducible(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	sum := func() [32]byte {
@@ -411,6 +447,7 @@ func TestPackIsReproducible(t *testing.T) {
 // pass there for the wrong reason, because the trap is a setting of THIS
 // machine and not of the source.
 func TestPackWritesLFWhateverTheCheckoutDoes(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")
@@ -436,28 +473,41 @@ func TestPackWritesLFWhateverTheCheckoutDoes(t *testing.T) {
 // nothing instead of quietly measuring the gate against a rule that is gone.
 // That is how it was caught on 17.10.2026, when the contract learned the
 // fourth place: "1.2.3.4" moved from the refused list to the accepted one.
+// Nine spellings, nine throwaway repositories, nine runs of the script - and
+// the nine do not touch one another at all: every one builds its fixture
+// under its own t.TempDir, packs into another one, and the script only READS
+// this checkout. So they are subcases that run side by side. Measured
+// 18.10.2026 on D:: 21,00 s one after another, 2,97 s side by side, with the
+// same assertions and a name of its own per spelling in the log.
 func TestPackRefusesAVersionStoreWouldReject(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	for _, bad := range []string{"01.2.3", "1234567.0.0", "1.2", "v1.2.3", "1.2.3-rc1", "1.2.3.4.5", "1.2.3.04"} {
-		if store.ValidVersion(bad) {
-			t.Fatalf("%q is a valid version after all; the case is measuring nothing", bad)
-		}
-		repo := webFixture(t, func(f map[string]string) { f["VERSION"] = bad + "\n" })
-		_, log, err := pack(t, repo, "main", "3")
-		if err == nil {
-			t.Errorf("pack-release.sh accepted the version %q\n%s", bad, log)
-		}
+		t.Run("refuses "+bad, func(t *testing.T) {
+			t.Parallel()
+			if store.ValidVersion(bad) {
+				t.Fatalf("%q is a valid version after all; the case is measuring nothing", bad)
+			}
+			repo := webFixture(t, func(f map[string]string) { f["VERSION"] = bad + "\n" })
+			_, log, err := pack(t, repo, "main", "3")
+			if err == nil {
+				t.Errorf("pack-release.sh accepted the version %q\n%s", bad, log)
+			}
+		})
 	}
 	// And a good one of each spelling still passes, so the gate is not simply
 	// closed - the four-place one is what this house hands out (version.md).
 	for _, good := range []string{"0.12.0", "0.12.0.3"} {
-		if !store.ValidVersion(good) {
-			t.Fatalf("%q is no valid version; the case is measuring nothing", good)
-		}
-		repo := webFixture(t, func(f map[string]string) { f["VERSION"] = good + "\n" })
-		if _, log, err := pack(t, repo, "main", "3"); err != nil {
-			t.Errorf("pack-release.sh refused the valid version %s: %v\n%s", good, err, log)
-		}
+		t.Run("accepts "+good, func(t *testing.T) {
+			t.Parallel()
+			if !store.ValidVersion(good) {
+				t.Fatalf("%q is no valid version; the case is measuring nothing", good)
+			}
+			repo := webFixture(t, func(f map[string]string) { f["VERSION"] = good + "\n" })
+			if _, log, err := pack(t, repo, "main", "3"); err != nil {
+				t.Errorf("pack-release.sh refused the valid version %s: %v\n%s", good, err, log)
+			}
+		})
 	}
 }
 
@@ -467,6 +517,7 @@ func TestPackRefusesAVersionStoreWouldReject(t *testing.T) {
 // archive is built on Windows. apps/web has no 100755 file at all (measured),
 // so the fixture makes one in the INDEX, which is why this works here.
 func TestArchiveKeepsTheExecutableBit(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, func(f map[string]string) {
 		f["ngc-probe"] = "#!/bin/sh\nexit 0\n"
@@ -514,6 +565,7 @@ func TestArchiveKeepsTheExecutableBit(t *testing.T) {
 }
 
 func TestPayloadPassesVerifyRelease(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")
@@ -570,6 +622,7 @@ func TestPayloadPassesVerifyRelease(t *testing.T) {
 // never with the real release key: that key is not on this machine, and a test
 // that needed it would be a test nobody can run.
 func TestSignScriptMakesAReleaseVerifyShAccepts(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	needVerifyTools(t)
 	repo := webFixture(t, nil)
@@ -624,6 +677,7 @@ func TestSignScriptMakesAReleaseVerifyShAccepts(t *testing.T) {
 //
 // Both are scanned, and so is every file left in the directory.
 func TestSignScriptLeaksNoKey(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	repo := webFixture(t, nil)
 	out, log, err := pack(t, repo, "main", "3")

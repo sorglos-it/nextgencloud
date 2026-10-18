@@ -517,8 +517,22 @@ const MESSAGES = new Map([
   ["E_LOCKED", "Zu viele Fehlversuche. Bitte später erneut versuchen."],
 ]);
 
-// message returns the German text shown to users, and "" for a code that is
+// message returns the German text of the CONTRACT, and "" for a code that is
 // none (Go: Code.Message, which reads a map and gives the zero string).
+//
+// IT IS NOT WHAT A PERSON READS ANY MORE, and that is a decision, not a
+// leftover. This text goes ON THE WIRE: errorClose below writes it into the
+// CLOSE payload, parseClose takes a CLOSE only for a code this very map holds,
+// and shared/wire/wire.go carries the same fourteen German words - a test
+// (tests/contracts/wire.spec.js) nails the two tables to each other. shared/
+// is frozen, so these words cannot be translated without breaking that
+// agreement.
+//
+// What the surfaces show instead is one key per code in apps/web/lang/
+// ("wire.E_LOGIN" and the thirteen others), reached through codeText() in
+// public/assets/js/lang.js. So there are two things where there used to be
+// one: a contract object that stays German, and a sentence per language that
+// a person reads. Nothing here may be used to put text on a screen.
 export const message = (code) => MESSAGES.get(code) ?? "";
 
 // closeShape carries the exit code as optInt: a number that may be missing,

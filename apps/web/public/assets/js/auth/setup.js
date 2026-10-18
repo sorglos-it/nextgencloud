@@ -29,7 +29,6 @@
 //   6. the version, written ONCE, signed, MAC'd and sent.
 //   7. the anchor kept, and straight on into the workplace.
 import { el, button, field, note, clear, text } from "../shell/dom.js";
-import { t } from "../shell/lang.js";
 import { b64encode, utf8 } from "../contracts/b64.js";
 import { validLoginName } from "../contracts/text.js";
 import * as session from "../contracts/session.js";
@@ -41,6 +40,7 @@ import * as http from "../net/http.js";
 import { rememberAnchor, NOT_SET_UP } from "../shell/trustlist.js";
 import { proveWithPassword } from "./keys.js";
 import { login, loginView } from "./login.js";
+import { t } from "../lang.js";
 
 // THE SENTENCES. Every one of them says what to DO, because the person
 // reading them is setting a server up for the first time and has nothing to
@@ -52,18 +52,18 @@ import { login, loginView } from "./login.js";
 // that named the place of the mistake would be a measuring tape for anybody
 // guessing at the code.
 // They are functions and not strings because the sentence is read when it is
-// said, not when this file is loaded: shell/lang.js has the five languages by
+// said, not when this file is loaded: lang.js has the five languages by
 // then (shell/main.js loads them before the first mask is drawn), and a const
 // evaluated at import time would freeze whatever was there first.
-const INCOMPLETE = () => t("setup.code.incomplete");
-const NO_MATCH = () => t("setup.code.nomatch");
+const INCOMPLETE = () => t("setup.incomplete");
+const NO_MATCH = () => t("setup.nomatch");
 // The API said no to the version itself. There is no second try: the code is
 // good once, and an installation that refused version 1 has to be set up
 // again from the start.
 const REFUSED = () => t("setup.refused");
 const ALREADY = () => t("setup.already");
 const BROKEN = () => t("setup.broken");
-const UNREACHABLE = () => t("err.unreachable");
+const UNREACHABLE = () => t("setup.unreachable");
 // THE SENTENCE THAT WAS MISSING, and the measurement that asked for it is in
 // the report: the installation answered, it just could not answer this.
 //
@@ -83,13 +83,13 @@ const UNREACHABLE = () => t("err.unreachable");
 // again for nothing. The code is untouched by a 500, which is why this
 // sentence says so.
 const SILENT = () => t("setup.silent");
-const NO_NAME = () => t("setup.name.bad");
-const NO_PASSWORD = () => t("setup.password.missing");
-const DIFFERENT = () => t("setup.password.different");
+const NO_NAME = () => t("setup.noname");
+const NO_PASSWORD = () => t("setup.nopassword");
+const DIFFERENT = () => t("setup.different");
 // The automatic sign-in right after the setup did not work. The installation
 // IS set up by then, so this is not a failure of the setup and must not read
 // like one: the mask follows underneath and the person simply signs in.
-const SIGN_IN_YOURSELF = () => t("setup.signin");
+const SIGN_IN_YOURSELF = () => t("setup.signinyourself");
 
 // trust.ValidID is 16 bytes in base64url, which is what a user ID is.
 const ID_SIZE = 16;
@@ -288,7 +288,7 @@ export function setupView(root, { config, onDone } = {}) {
     // A form, so Enter works in every field - and one that never submits
     // itself, because a shell that navigates away from itself is gone.
     form.setAttribute("novalidate", "novalidate");
-    const head = el("h1", "loginhead", "NGC einrichten");
+    const head = el("h1", "loginhead", t("setup.head"));
     head.id = "setuptitle";
     form.setAttribute("aria-labelledby", head.id);
     form.append(head, el("p", "setuplead", lead));
@@ -309,9 +309,8 @@ export function setupView(root, { config, onDone } = {}) {
   // ------------------------------------------------------------- step one
 
   function askCode() {
-    const { form, said } = box("Diese Anlage ist neu. Auf dem Bildschirm des Servers "
-      + "steht ein Einmal-Code. Bitte tippen Sie ihn hier ein.");
-    const code = field("Einmal-Code", "text");
+    const { form, said } = box(t("setup.askcode"));
+    const code = field(t("setup.code"), "text");
     // Nothing of this field is remembered, suggested or corrected: it holds a
     // secret that is good once.
     code.input.autocomplete = "off";
@@ -323,7 +322,7 @@ export function setupView(root, { config, onDone } = {}) {
     // normalizeSetupCode takes without blinking.
     code.input.maxLength = 40;
     const row = el("div", "loginrow");
-    const go = button("b on", "Weiter", null);
+    const go = button("b on", t("setup.next"), null);
     go.type = "submit";
     row.append(go);
     form.append(code.box, row, said);
@@ -392,9 +391,9 @@ export function setupView(root, { config, onDone } = {}) {
   // list yet. "Already set up" would be true and useless; this says what to
   // do. (The POST keeps the brief's own sentence - see below.)
   function sentenceForOffer(e) {
-    if (e?.code === wire.CODES.NOTFOUND) return NOT_SET_UP;
+    if (e?.code === wire.CODES.NOTFOUND) return NOT_SET_UP();
     if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE();
-    if (e?.code === wire.CODES.LOCKED) return t("login.locked");
+    if (e?.code === wire.CODES.LOCKED) return t("wire.E_LOCKED");
     // An installation that answered and could not answer THIS is not a code
     // that does not fit. See SILENT above for the measurement and for the
     // line in setup.go that makes a busy database arrive as this code.
@@ -405,22 +404,22 @@ export function setupView(root, { config, onDone } = {}) {
   // ------------------------------------------------------------- step two
 
   function showOffer(code, info) {
-    const { form, said } = box("Bitte vergleichen: Steht hier dasselbe wie auf dem Bildschirm "
-      + "des Servers? Danach legen Sie Ihr Benutzerkonto an.");
+    const { form, said } = box(t("setup.compare"));
 
     // A heading per section and a definition list under it. The headings stay
     // OUTSIDE the lists: a <dl> may hold dt, dd and div and nothing else, and
     // a heading inside one is markup no screen reader has to make sense of.
-    form.append(el("h2", "setuphead", "Anlage"));
-    form.append(facts([line("Kennung", info.installation)]));
-    form.append(el("h2", "setuphead", "API-Server"));
+    form.append(el("h2", "setuphead", t("setup.installation")));
+    form.append(facts([line(t("setup.id"), info.installation)]));
+    form.append(el("h2", "setuphead", t("setup.apiservers")));
     // One list per server, so two servers never read as one. Every value goes
     // in character for character - that is what the person compares with the
     // screen, and a value this file prettied up would be a value that does
     // not match.
     for (const n of info.nodes) {
       form.append(facts([
-        line("Name", n.name), line("Adresse", n.url), line("Fingerabdruck", b64encode(n.tls)),
+        line(t("setup.name"), n.name), line(t("setup.address"), n.url),
+        line(t("setup.fingerprint"), b64encode(n.tls)),
       ]));
     }
 
@@ -430,26 +429,25 @@ export function setupView(root, { config, onDone } = {}) {
     // everybody.
     let storeBox = null;
     if (info.store !== null) {
-      form.append(el("h2", "setuphead", "App-Store"));
+      form.append(el("h2", "setuphead", t("setup.store")));
       const label = el("label", "setupcheck");
       storeBox = el("input", null);
       storeBox.type = "checkbox";
       storeBox.checked = true;
-      label.append(storeBox, el("span", null, "Apps aus dem NGC-Store installieren können"));
+      label.append(storeBox, el("span", null, t("setup.storeyes")));
       form.append(label, el("p", "setupvalue", info.store.url));
     }
 
-    form.append(el("h2", "setuphead", "Ihr Benutzerkonto"));
-    form.append(el("p", "setuplead", "Dieses Konto darf alles. Merken Sie sich das Passwort gut: "
-      + "ohne es kommt niemand mehr an diese Anlage."));
-    const name = field("Benutzername", "text");
+    form.append(el("h2", "setuphead", t("setup.account")));
+    form.append(el("p", "setuplead", t("setup.accountlead")));
+    const name = field(t("setup.username"), "text");
     name.input.autocomplete = "username";
-    const pw = field("Passwort", "password");
+    const pw = field(t("setup.password"), "password");
     pw.input.autocomplete = "new-password";
-    const again = field("Passwort wiederholen", "password");
+    const again = field(t("setup.passwordagain"), "password");
     again.input.autocomplete = "new-password";
     const row = el("div", "loginrow");
-    const go = button("b on", "Einrichten", null);
+    const go = button("b on", t("setup.go"), null);
     go.type = "submit";
     row.append(go);
     form.append(name.box, pw.box, again.box, row, said);
@@ -509,7 +507,7 @@ export function setupView(root, { config, onDone } = {}) {
     if (e?.code === wire.CODES.VERIFY) return REFUSED();
     if (e?.code === wire.CODES.NOTFOUND) return ALREADY();
     if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE();
-    if (e?.code === wire.CODES.LOCKED) return t("login.locked");
+    if (e?.code === wire.CODES.LOCKED) return t("wire.E_LOCKED");
     // E_INTERNAL keeps BROKEN here and does NOT get SILENT, and the
     // difference is the step and not the code: at this point the version has
     // been signed and sent, and whether the installation took it is exactly

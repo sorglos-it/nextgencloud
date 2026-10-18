@@ -43,6 +43,7 @@ import { bytesOf } from "../contracts/b64.js";
 import { callBytes, openE2E, openOut, sendInBytes } from "./channel.js";
 import { NOT_TRUSTED, startTrust } from "../shell/trustlist.js";
 import { validAppID, validName } from "../contracts/text.js";
+import { t } from "../lang.js";
 
 // The flows of core.ACTIONS, as the texts the table holds. core.js keeps them
 // to itself on purpose - one name per flow, in one place - and the shell is
@@ -85,25 +86,23 @@ export class WorldError extends Error {
   }
 }
 
-const NO_ACTION = "Diese Anfrage kennt NGC nicht.";
-const WRONG_WAY = "Diese Anfrage geht so nicht.";
-const NO_NODE = "Diese App sagt nicht, auf welchem Rechner ihr Dienst läuft.";
+const NO_ACTION = () => t("world.noaction");
+const WRONG_WAY = () => t("world.wrongway");
+const NO_NODE = () => t("world.nonode");
 // No session key pair in this adapter. It is NOT a missing feature any more -
 // since Task 28 the login carries the pair through (auth/login.js, sessionDH)
 // and realWorld hands it here - so what is wrong is THIS session, and the
 // sentence says that and names what helps.
-const NO_SESSION_KEY = "Diese Anmeldung kann den eigenen Dienst einer App nicht erreichen. "
-  + "Bitte die Seite neu laden.";
+const NO_SESSION_KEY = () => t("world.nosessionkey");
 // No trust list in this adapter. A DIFFERENT fact from the one below: there is
 // no list to ask, so nothing is known about this server either way, and
 // "this server is not in your trust list" would be a sentence about the server
 // that says nothing true about it.
-const NO_TRUST_LIST = "NGC hat die Vertrauensliste dieser Anlage nicht geöffnet. "
-  + "Bitte die Seite neu laden.";
+const NO_TRUST_LIST = () => t("world.notrustlist");
 // A node the verified list does not carry. The sentence is shell/trustlist.js's
 // own, and not a second wording of it: it is the same fact, and NotTrusted is
 // what answers it.
-const NO_CONTROLLER_KEY = NOT_TRUSTED;
+const NO_CONTROLLER_KEY = () => NOT_TRUSTED();
 
 // rowFor finds the action of three texts. null means "this is no action of
 // NGC's own" - the own service of an app, which goes to appChannel below.
@@ -116,7 +115,7 @@ const NO_CONTROLLER_KEY = NOT_TRUSTED;
 function rowFor(app, service, name) {
   const a = core.lookup(app, service, name);
   if (a === null) return null;
-  if (!core.shellOpens(a)) throw new WorldError(NO_ACTION);
+  if (!core.shellOpens(a)) throw new WorldError(NO_ACTION());
   return a;
 }
 
@@ -181,12 +180,12 @@ function rowFor(app, service, name) {
 // place, and it is the same mistake as letting one refusal hide behind another.
 async function appChannel(link, world, app, service, name, node, params) {
   if (!validAppID(app) || !validName(service) || !validName(name)) {
-    throw new WorldError(NO_ACTION);
+    throw new WorldError(NO_ACTION());
   }
   // The node is held to the contract's own rule for a node id (trust.validNode
   // uses text.validName), so a bridge that stopped sending it is refused here
   // and not by the controller three round trips later.
-  if (!validName(node)) throw new WorldError(NO_NODE, "node");
+  if (!validName(node)) throw new WorldError(NO_NODE(), "node");
   const sessionDH = world.sessionDH ?? null;
   // The private half is a non-extractable CryptoKey and stays one: it is
   // handed to noise.HandshakeKK and used, never read. What is checked here is
@@ -194,13 +193,13 @@ async function appChannel(link, world, app, service, name, node, params) {
   // somewhere inside the handshake, where nobody can tell a person why.
   if (sessionDH === null || !sessionDH.privateKey
     || !(sessionDH.publicRaw instanceof Uint8Array)) {
-    throw new WorldError(NO_SESSION_KEY, "session-key");
+    throw new WorldError(NO_SESSION_KEY(), "session-key");
   }
   // Asked BEFORE the lookup, because "nobody handed this adapter a trust store"
   // and "the store does not carry this node" are two different things to say to
   // a person - and the first one is not about the server at all.
   if (typeof world.trust?.controllerKey !== "function") {
-    throw new WorldError(NO_TRUST_LIST, "trust-list");
+    throw new WorldError(NO_TRUST_LIST(), "trust-list");
   }
   let controllerKey;
   try {
@@ -211,7 +210,7 @@ async function appChannel(link, world, app, service, name, node, params) {
     // failure with a sentence; anything else is this shell's own fault and
     // travels on, where a trace names it.
     if (e?.name !== "NotTrusted") throw e;
-    throw new WorldError(NO_CONTROLLER_KEY, "controller-key");
+    throw new WorldError(NO_CONTROLLER_KEY(), "controller-key");
   }
   return openE2E(link, {
     app, service, action: name, params, taskBytes: null, node, controllerKey, sessionDH,
@@ -428,7 +427,7 @@ export function adapterFor(link, world = {}) {
         // four is one the contract grew after this file, and an action whose
         // way nobody here knows is an action nobody here sends.
         default:
-          throw new WorldError(WRONG_WAY);
+          throw new WorldError(WRONG_WAY());
       }
     },
 
@@ -466,7 +465,7 @@ export function adapterFor(link, world = {}) {
       if (a === null) {
         return appStream(await appChannel(link, world, app, service, name, (opts ?? {}).node, p));
       }
-      if (a.flow !== FLOW_OUT) throw new WorldError(WRONG_WAY);
+      if (a.flow !== FLOW_OUT) throw new WorldError(WRONG_WAY());
       const ch = await openOut(link, a, { params: p });
       let gone = false;
       const s = {

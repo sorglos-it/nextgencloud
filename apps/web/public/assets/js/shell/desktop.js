@@ -13,6 +13,7 @@ import { UICache, openAppUI } from "./appframe.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
 } from "./theme.js";
+import { t } from "../lang.js";
 
 // The apps whose face the web interface itself builds: app id to the function
 // that fills the window's body. Every other app runs in the fenced frame of
@@ -45,7 +46,8 @@ const BUILTIN = {
 // Accent colours in the order of theme.js, with the name the swatch carries
 // for a screen reader. Six colours, no colour picker: a wall of choices is
 // what the design rules forbid, and a name is easier to hit than a hex value.
-const ACCENT_NAMES = ["Blau", "Türkis", "Pink", "Orange", "Violett", "Grün"];
+const ACCENT_NAMES = ["accent.blue", "accent.teal", "accent.pink", "accent.orange",
+  "accent.violet", "accent.green"].map((k) => t(k));
 
 // How long a friendly notice stays. An error stays until it is closed.
 const NOTICE_MS = 8000;
@@ -98,7 +100,7 @@ class Desktop {
     this.startBtn.id = "startbtn";
     const logo = el("span", "logo", "⊞");
     logo.setAttribute("aria-hidden", "true");
-    this.startBtn.append(logo, el("span", null, "Start"));
+    this.startBtn.append(logo, el("span", null, t("desktop.start")));
     this.startBtn.setAttribute("aria-expanded", "false");
     this.startBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -110,9 +112,9 @@ class Desktop {
 
     const tray = el("div", null);
     tray.id = "tray";
-    const themeBtn = button(null, "🌗", "Design wechseln");
+    const themeBtn = button(null, "🌗", t("desktop.theme"));
     themeBtn.id = "themebtn";
-    themeBtn.title = "Design wechseln";
+    themeBtn.title = t("desktop.theme");
     themeBtn.addEventListener("click", () => toggleTheme());
     this.clock = el("div", null);
     this.clock.id = "clock";
@@ -143,9 +145,9 @@ class Desktop {
     this.search = el("input", null);
     this.search.id = "smsearch";
     this.search.type = "text";
-    this.search.placeholder = "Apps durchsuchen …";
+    this.search.placeholder = t("desktop.search");
     this.search.autocomplete = "off";
-    this.search.setAttribute("aria-label", "Apps durchsuchen");
+    this.search.setAttribute("aria-label", t("desktop.search.label"));
     this.search.addEventListener("input", () => this.renderMenu(this.search.value));
     this.search.addEventListener("keydown", (e) => {
       if (e.key === "Escape") this.toggleMenu(false);
@@ -170,7 +172,7 @@ class Desktop {
     // and a role="menu" holding something else is a promise to a screen
     // reader that the shell would then break.
     this.list.setAttribute("role", "menu");
-    this.list.setAttribute("aria-label", "Alle Apps");
+    this.list.setAttribute("aria-label", t("desktop.allapps"));
     // A role="menu" is walked with the arrow keys and is ONE stop on the way
     // through with Tab. Round 1 found the shell saying "menu" and doing
     // neither: the arrows did nothing, and every tile was a tab stop of its
@@ -311,12 +313,12 @@ class Desktop {
   buildFoot() {
     const foot = el("div", null);
     foot.id = "smfoot";
-    const tile = button(null, "Fenster anordnen", null);
+    const tile = button(null, t("desktop.tile"), null);
     tile.addEventListener("click", () => {
       this.tile();
       this.toggleMenu(false);
     });
-    const closeAll = button(null, "Alle schließen", null);
+    const closeAll = button(null, t("desktop.closeall"), null);
     closeAll.addEventListener("click", () => {
       this.closeAll();
       this.toggleMenu(false);
@@ -345,7 +347,7 @@ class Desktop {
     this.status = el("p", "status", "");
     this.status.setAttribute("role", "status");
     this.status.setAttribute("aria-live", "polite");
-    this.noticeClose = button("noticeclose", "✕", "Meldung schließen");
+    this.noticeClose = button("noticeclose", "✕", t("desktop.noticeclose"));
     this.noticeClose.hidden = true;
     this.noticeClose.addEventListener("click", () => this.clearNotice());
     bar.append(this.status, this.noticeClose);
@@ -483,7 +485,7 @@ class Desktop {
       //
       // Why the answer was no good is nothing the person can act on, and
       // saying more would describe the inside of the server.
-      this.notice("error", "Die Liste der Apps konnte nicht geladen werden.");
+      this.notice("error", t("desktop.appsfailed"));
       return;
     }
     this.appList = list;
@@ -516,11 +518,11 @@ class Desktop {
     // out, opens no window: an empty frame with an error in it looks like a
     // broken app, and this is not the app's fault.
     if (a.state === "unreachable") {
-      this.notice("warn", a.name + " ist nicht erreichbar.");
+      this.notice("warn", t("desktop.unreachable", { name: a.name }));
       return null;
     }
     if (a.state === "unlicensed") {
-      this.notice("warn", "Keine gültige Lizenz.");
+      this.notice("warn", t("desktop.unlicensed"));
       return null;
     }
     // One window per app: two calculators help nobody, and a second window of
@@ -548,8 +550,7 @@ class Desktop {
       try {
         win.onClose = mount(win, this.appCtx()) || null;
       } catch {
-        this.placeholder(win, "Diese App konnte nicht geöffnet werden.",
-          "Bitte das Fenster schließen und es noch einmal versuchen.");
+        this.placeholder(win, t("desktop.openfailed"), t("desktop.openfailed.hint"));
       }
     } else {
       // Every other app: its signed user interface, in the fenced frame.

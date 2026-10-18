@@ -20,6 +20,7 @@
 import * as wire from "../contracts/wire.js";
 import * as core from "../contracts/core.js";
 import { bytesOf, concat, viewOf } from "../contracts/b64.js";
+import { codeText, t } from "../lang.js";
 
 // The states a channel walks through. "opening" is between the OPEN and the
 // first GRANT, when nothing may be sent yet; "closed" is final.
@@ -38,10 +39,13 @@ const TAG_SIZE = wire.MAX_PAYLOAD - wire.MAX_E2E_PLAINTEXT;
 
 // ChannelError carries the code a caller acts on. The text is wire's German
 // one, so the shell has a sentence to show and never a second wording of its
-// own; the code is what the tests and the callers branch on.
+// own; the code is what the tests and the callers branch on. The sentence
+// comes out of lang/ by that code (lang.js codeText), not out of the German
+// table of contracts/wire.js, which is the contract's own text - see
+// net/http.js for why the two are kept apart.
 export class ChannelError extends Error {
   constructor(code) {
-    super(wire.message(code) || "Ungültige Nachricht.");
+    super(codeText(code) || t("wire.E_PROTOCOL"));
     this.name = "ChannelError";
     this.code = code;
   }
@@ -548,22 +552,30 @@ export async function sendIn(link, action, opts = {}) {
 
 // sendInBytes is sendIn without the last step, for the same reason callBytes
 // exists.
+//
+// THE CONFIRMATION TRAVELS HERE TOO, and until 18.10.2026 it did not: this
+// function took no confirmBytes and dropped one without a word, while
+// callBytes beside it forwarded it. The row that pays for that is the upload -
+// contracts/core.js has ACT_UPLOAD as FLOW_IN, and core.critical says it is
+// critical, so the one action that MUST carry a confirmation was the one whose
+// helper could not carry it. A caller that hands a confirmation to a helper
+// which forgets it gets E_CONFIRM from the API and no word about why.
+//
+// MEASURED on a running installation on 17.10.2026 at ngc.store/api/upload,
+// and this is what the person saw: they had just typed their password for the
+// confirmation and still read "Das Paket kam nicht an." - the API had seen a
+// task without a confirmation and refused with E_CONFIRM (task.Check ->
+// VerifyConfirm on a nil Confirm). It is FIVE actions and not one: upload,
+// ngc.store/api/license, ngc.users/api/trust, ngc.users/controller/trust and
+// ngc.store/controller/license. Both this branch and main found it and wrote
+// the same line; the measurement is kept here because it names the screen it
+// was seen on.
 export async function sendInBytes(link, action,
   { params, taskBytes, confirmBytes, stream, onProgress } = {}) {
-  // confirmBytes TRAVELS, and that it did not was a blocker. callBytes a few
-  // lines up puts it in the OPEN; this one took the task and dropped the
-  // confirmation, so every FlowIn action the trust list asks a confirmation
-  // for was unreachable: the API saw a task without one and refused with
-  // E_CONFIRM (task.Check -> VerifyConfirm on a nil Confirm). Measured on a
-  // running installation on 17.10.2026 at ngc.store/api/upload, where the
-  // person had just typed their password and still read "Das Paket kam nicht
-  // an.". It is five actions, not one: upload, ngc.store/api/license,
-  // ngc.users/api/trust, ngc.users/controller/trust and
-  // ngc.store/controller/license.
   const ch = await link.open({
     app: action.app, service: action.service, action: action.name,
-    params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW, e2e: null,
-    taskBytes, confirmBytes,
+    params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW, e2e: null, taskBytes,
+    confirmBytes,
   });
   await ch.firstGrant();
   let sent = 0;

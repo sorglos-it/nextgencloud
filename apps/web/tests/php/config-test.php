@@ -250,11 +250,25 @@ printf("%-9s %d cases\n", 'bytes32', strlen($b64) * 2);
 
 // The message of an unknown field has to name it, and nothing else: that is
 // the only reason index.php is allowed to show.
+// THE LANGUAGE IS AN ARGUMENT NOW, and it is the one thing about this
+// helper that is not obvious. Since the five languages arrived the message
+// of a ConfigError comes out of apps/web/lang/ through Lang::t, and Lang
+// picks the language from HTTP_ACCEPT_LANGUAGE - which a run on the command
+// line does not have, so every message came back in English while the cases
+// below pin the German one. MEASURED on the merged tree: 4 of 323 cases red,
+// all four with the English sentence printed beside the German one.
+//
+// Setting the header here is not a way round that: it is what a request
+// really carries, and asking for the language makes the case measure one
+// thing more than it did - that the chosen language reaches the message.
+// Lang::reset() is needed because Lang remembers its choice for the process.
 /** @return string the message, or '' if the file was accepted */
-function messageOf(string $tmp, string $web): string
+function messageOf(string $tmp, string $web, string $accept = 'de'): string
 {
     file_put_contents($tmp . '/web.json', $web);
     @unlink($tmp . '/anchor.json');
+    $_SERVER['HTTP_ACCEPT_LANGUAGE'] = $accept;
+    Ngc\Lang::reset();
     try {
         Config::load($tmp . '/web.json', $tmp . '/anchor.json');
         return '';
@@ -262,6 +276,9 @@ function messageOf(string $tmp, string $web): string
         return $e->getMessage();
     } catch (Throwable) {
         return '(kein ConfigError)';
+    } finally {
+        unset($_SERVER['HTTP_ACCEPT_LANGUAGE']);
+        Ngc\Lang::reset();
     }
 }
 
@@ -282,6 +299,20 @@ foreach ($messages as [$web, $want]) {
     }
 }
 printf("%-9s %d cases\n", 'message', count($messages));
+
+// THAT THE SENTENCE REALLY COMES OUT OF THE FILES, and not out of a literal
+// that happens to be German. The same refusal asked for in English has to
+// answer with another sentence - a message written into the code anywhere
+// would answer the same words twice, and that is what this makes impossible.
+$first = $messages[0][0];
+$de = messageOf($tmp, $first, 'de');
+$en = messageOf($tmp, $first, 'en');
+check('language', 'the German answer is the German file', true, $de === $messages[0][1]);
+check('language', 'the English answer is another sentence', true, $en !== '' && $en !== $de);
+if ($en === '' || $en === $de) {
+    printf("      de: %s\n      en: %s\n", $de, $en);
+}
+printf("%-9s %d cases\n", 'language', 2);
 
 // The shipped files must also produce exactly the values /config.json sends.
 $c = Config::load(__DIR__ . '/../web.json', __DIR__ . '/../trust-anchor.json');

@@ -6,6 +6,7 @@
 // finger on a tablet or a phone does the same as a mouse. The smallest size is
 // 240 x 150, as it is there.
 import { el, button, text } from "./dom.js";
+import { t } from "../lang.js";
 
 // The smallest a window may get. Below that the title bar's three buttons
 // stop fitting and the window can no longer be closed by clicking.
@@ -72,7 +73,7 @@ export class Win {
     g.setAttribute("aria-hidden", "true");
     bar.append(g, el("span", "t", title));
     const btns = el("div", "wbtns");
-    for (const [cls, label] of [["mini", "Minimieren"], ["maxi", "Maximieren"], ["close", "Schließen"]]) {
+    for (const [cls, label] of [["mini", t("window.minimize")], ["maxi", t("window.maximize")], ["close", t("window.close")]]) {
       const b = button("wbtn " + cls, cls === "mini" ? "—" : cls === "maxi" ? "▢" : "✕", label);
       b.title = label;
       btns.append(b);
@@ -96,7 +97,7 @@ export class Win {
 
     // The taskbar entry is a button: it is pressed, and a keyboard has to
     // reach it like every other control in the bar.
-    this.tab = button("task", null, "Fenster " + title);
+    this.tab = button("task", null, t("window.task", { title }));
     const tg = el("span", null, icon ?? "");
     tg.setAttribute("aria-hidden", "true");
     this.tab.append(tg, el("span", "lbl", title));
@@ -114,10 +115,10 @@ export class Win {
     this.makeResizable();
   }
 
-  setTitle(t) {
-    text(this.el.querySelector(".t"), t);
-    text(this.tab.querySelector(".lbl"), t);
-    this.tab.setAttribute("aria-label", "Fenster " + t);
+  setTitle(title) {
+    text(this.el.querySelector(".t"), title);
+    text(this.tab.querySelector(".lbl"), title);
+    this.tab.setAttribute("aria-label", t("window.task", { title }));
   }
 
   open() {

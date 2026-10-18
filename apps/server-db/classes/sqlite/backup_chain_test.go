@@ -50,7 +50,12 @@ func TestBackupStopsWhenTheJournalOfTheCopyCannotBeFolded(t *testing.T) {
 	target := cfg.Path + ".backup"
 
 	var opened bool
-	err := backup(cfg, target, func(tmp string) {
+	// The busy deadline on a short clock: the TRUNCATE checkpoint below runs
+	// into the read lock this seam holds, and it waits this deadline out
+	// before it answers "busy". The wall is the same one, only the clock is
+	// shorter - measured 18.10.2026 on D:: 10,08 s with the default of ten
+	// seconds, 0,30 s here, same assertions.
+	err := backup(cfg, target, Options{BusyTimeout: shortBusy}, func(tmp string) {
 		copyCfg := cfg
 		copyCfg.Path = tmp
 		db, err := OpenDB(copyCfg)

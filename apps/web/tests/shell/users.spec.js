@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { signIn, skipWithoutLogin, skipWithoutSettledLang } from "../fixtures/page.js";
 
 // "Benutzer und Rechte": the surface where an admin hands out rights and lets
 // a new server into the installation. It is the most dangerous window NGC
@@ -433,7 +433,7 @@ async function mount(page, cfg = {}) {
   //
   // It had been a window all along and the language files only widened it: a
   // browser offering de-DE fetches de.json AND en.json before shell/main.js
-  // draws anything (shell/lang.js, load), where en-US fetches one. Measured
+  // draws anything (assets/js/lang.js, its top-level await), where en-US fetches one. Measured
   // on the branch before them: 0 of 30. So this is the window closed, not the
   // fetches hidden - every case here mounts through this function.
   //
@@ -634,6 +634,11 @@ test("joining a controller builds version N+1, checks it and sends exactly those
   });
 
 test("a change the trust list would refuse is never signed and never sent", async ({ page }) => {
+  // IT COMPARES A SENTENCE, so it needs the language tables to have settled.
+  // MEASURED on WebKit: the sentence arrives as lang.js's emergency line
+  // ("NGC could not load its language files"), although the document already
+  // says the chosen language - the gap names that disagreement.
+  await skipWithoutSettledLang(page);
   const out = await page.evaluate(async () => {
     const users = await import("/assets/js/apps/users.js");
     const { world } = await import("/assets/js/shell/fake-link.js");

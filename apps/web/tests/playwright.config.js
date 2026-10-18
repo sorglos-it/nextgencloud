@@ -71,18 +71,19 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],
-  // THE BROWSER'S LANGUAGE IS PART OF THE FIXTURE, not of the machine.
-  // Since the five languages arrived (public/assets/lang/, shell/lang.js) the
-  // sentences a mask says depend on what the browser offers, and Playwright
-  // offers the machine's own locale: measured, these browsers came up en-US
-  // here and three cases that pin a GERMAN sentence went red on a tree whose
-  // code was right. A suite whose answers change with the machine it runs on
-  // is a suite that measures the machine.
+  // THE LANGUAGE OF THE RUN, and it is not a nicety. Since apps/web has a
+  // lookup (public/assets/js/lang.js, apps/web/lang/*.json) the shell shows
+  // the language the BROWSER asks for, and Playwright's own default is
+  // en-US: measured, these browsers came up en-US here and cases that pin a
+  // GERMAN sentence went red on a tree whose code was right. A suite whose
+  // answers change with the machine it runs on is a suite that measures the
+  // machine.
   //
-  // de-DE, because German is what the cases of this suite pin and what the
+  // German, because German is what the cases of this suite pin and what the
   // shell is still written in outside the language files. A case that wants
-  // another language says so itself (test.use({ locale }), or lang.load() with
-  // the tag it wants - shell/busy.spec.js does both).
+  // another language says so itself: tests/lang/lookup.spec.js overrides it
+  // per case to measure the other four and the fall-back, and
+  // shell/busy.spec.js does the same.
   use: { baseURL: `http://127.0.0.1:${port}`, locale: "de-DE", trace: "retain-on-failure" },
   webServer: [
     {
