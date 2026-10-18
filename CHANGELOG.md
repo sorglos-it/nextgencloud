@@ -13,6 +13,21 @@ Zählerstand, falsche Plattform-PIN mit Sperre und geänderte PCR. Ein Befehl f�
 Arbeitsverzeichnis: Ausstiegscode **0**, **39 Fälle**, 62 161 ms. Kein Rust in diesem Paket.
 Abnahmeblatt: `docs/recovery-abnahme.md` — die Zeile für Paket 0 füllt ein Mensch aus.
 
+Fremdcode durchgezählt und aufgeräumt (`docs/fremdcode.md`, 18.10.2026). Der Passkey-Strang war in
+`go.mod` festgehalten, obwohl kein Teil eine Zeile davon aufruft: `tools/modules.go` ist weg, und
+mit ihm `go-webauthn/webauthn`, seine neun Mitgebrachten und `x/crypto/ocsp`. Gemessen:
+**19,6 MB in 976 Dateien und 21 Modulen → 16,6 MB in 692 Dateien und 12 Modulen.** Die fünf
+übrigen Module, die hinten waren, sind angehoben (x/crypto v0.58.0, x/sys v0.49.0, go-sqlite3
+v0.35.6, go-sqlite3-wasm v6.3.35401, barcode v1.1.0 statt einer Pseudofassung von 2019) – damit ist
+**kein Modul mehr hinter seinem `@latest`**, geprüft gegen `proxy.golang.org`. `check: ok`,
+`govulncheck` 0 erreichbare Lücken, und die drei Programme bauen weiter bitgleich (`git
+hash-object` zweimal gleich, auch mit leerem `GOCACHE`).
+
+Dabei zwei Fehler im Verfahren behoben: `govulncheck ./...` sah **12 der 22** Module, weil die zehn
+des Passkey-Strangs nur hinter einem Build-Tag standen – der Schalter `-tags modules` steht jetzt
+an allen drei Stellen, die den Befehl nennen, mit den Zahlen daneben. Und `tools/release-gate.sh`
+baute `ngc-store` ohne `-trimpath`, die einzige Bauzeile im Repo, die nicht reproduzierbar baute.
+
 ### Offen
 
 - **Recovery Paket 0, Kriterium 9 nur zur Hälfte belegt und hier nicht nachrüstbar:** die Sperre
