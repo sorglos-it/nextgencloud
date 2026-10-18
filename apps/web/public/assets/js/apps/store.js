@@ -869,8 +869,29 @@ class Store {
       // With a task the OPEN carries no params of its own: only the signed
       // ones count.
       await this.ask(action, null, { taskBytes, confirmBytes });
-    } catch {
-      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
+    } catch (e) {
+      // THE MACHINE'S OWN WORDS WHERE IT HAD ANY, and this used to be a catch
+      // without even a name for the error: whatever the controller said was
+      // dropped here, and the person read one sentence for every refusal
+      // there is.
+      //
+      // It is the sentence or nothing — never both. A server writes its own
+      // only where the code alone does not say what to do, and then this
+      // shell's "Bitte es noch einmal versuchen." is wrong twice over: it
+      // tells the person to repeat what cannot work, and it buries the one
+      // line that says why. The lead stays, so it is clear WHO refused.
+      //
+      // Measured on 18.10.2026 over the committed interface: nothing read a
+      // close's message anywhere, so a controller that answered E_INTERNAL
+      // because its data disk cannot encrypt reached the person as "Interner
+      // Fehler." plus the sentence below. net/channel.js now hands the words
+      // on; the contract has bounded and checked them long since (close,
+      // validText and MAX_MESSAGE_TEXT), and they go on screen as text and
+      // never as markup (shell/dom.js, text()).
+      const said = typeof e?.closeMessage === "string" ? e.closeMessage : "";
+      this.say("error", said !== ""
+        ? "Das hat der Rechner nicht angenommen. " + said
+        : "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
       return false;
     }
     this.say("info", done);

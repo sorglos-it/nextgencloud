@@ -50,6 +50,7 @@ import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contra
 import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
+import { ChannelError } from "../net/channel.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 
 const enc = new TextEncoder();
@@ -676,7 +677,17 @@ export async function fakeWorld() {
     "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),
     "ngc.store/license": async () => enc.encode(JSON.stringify({ app: TERMINAL, state: "valid" })),
     "ngc.store/set-update": async () => enc.encode("{}"),
-    "ngc.store/activate": async () => enc.encode("{}"),
+    // A refusal that carries the CONTROLLER'S OWN WORDS, which is the one
+    // thing a code alone cannot say: knobs.refuseActivate is the sentence.
+    // The error is the real ChannelError of net/channel.js, built the way that
+    // module builds one out of an arrived CLOSE, so the screen is measured
+    // against the object it really catches. That the sentence survives the
+    // frame is measured where the frame is, in shell/closemessage.spec.js.
+    "ngc.store/activate": async () => {
+      const said = typeof knobs.refuseActivate === "string" ? knobs.refuseActivate : "";
+      if (said !== "") throw new ChannelError("E_INTERNAL", said);
+      return enc.encode("{}");
+    },
     "ngc.store/deactivate": async () => enc.encode("{}"),
     "ngc.store/uninstall": async () => enc.encode("{}"),
     "ngc.store/delete-data": async () => enc.encode("{}"),

@@ -39,15 +39,40 @@ const TAG_SIZE = wire.MAX_PAYLOAD - wire.MAX_E2E_PLAINTEXT;
 // ChannelError carries the code a caller acts on. The text is wire's German
 // one, so the shell has a sentence to show and never a second wording of its
 // own; the code is what the tests and the callers branch on.
+//
+// closeMessage is what the OTHER SIDE wrote into its CLOSE, and only when it
+// is not the sentence this shell would say for that code anyway. The contract
+// fills a close with the code's own German sentence (Go: wire.Error), so the
+// ordinary case leaves this empty and nothing anywhere changes; it carries
+// something only where a server deliberately wrote its own words.
+//
+// It is a SECOND field and NOT this error's message, which stays wire's
+// sentence. Callers branch on the message text (apps/users.js, reason()), and
+// a message that suddenly came from a server would send those branches
+// somewhere else. Measured twice in one session: an error whose text no branch
+// recognises is shown as "Die Anlage antwortet gerade nicht." — an answer
+// about reachability for something else entirely.
+//
+// Why it exists at all: the sentence was thrown away here, and for some codes
+// it is the only thing there is to say. E_INTERNAL reads "Interner Fehler."
+// out of this shell's table, while the server that sent it may know that the
+// data disk cannot encrypt and that the person has to use ext4 or f2fs.
+// Measured over the committed interface: `message` appeared once in this whole
+// file — the table lookup below — and in no screen either; the frame carried
+// the sentence, the contract validated it (contracts/wire.js, close), and
+// nobody read it. The stand-in's own comment said so: "the real close carries
+// the code as well, and nothing on the app's side reads either".
 export class ChannelError extends Error {
-  constructor(code) {
+  constructor(code, closeMessage = "") {
     super(wire.message(code) || "Ungültige Nachricht.");
     this.name = "ChannelError";
     this.code = code;
+    const said = typeof closeMessage === "string" ? closeMessage : "";
+    this.closeMessage = said === this.message ? "" : said;
   }
 }
 
-const fail = (code) => new ChannelError(code);
+const fail = (code, closeMessage) => new ChannelError(code, closeMessage);
 
 export class Channel {
   // A channel is built by Link.open and by nobody else: the number and the
@@ -151,7 +176,13 @@ export class Channel {
     // up - so it is checked once here and on every chunk after.
     this.checkLimit();
     const status = await this.done();
-    if (status.status !== OK) throw fail(status.code);
+    // The status is a parsed CLOSE either way, and so its sentence travels
+    // either way: the transport's CLOSE for an ordinary channel (gotClose) and
+    // the controller's own inner end for an end-to-end one (endStatus, which
+    // Go fills with a whole wire.Close — e2e.Session.End). This is the one
+    // place a close with an error reaches a caller, so it is the one place
+    // that has to hand its words on.
+    if (status.status !== OK) throw fail(status.code, status.message);
     // EOF before the end is data that was cut off. On an end-to-end channel
     // the controller's end IS the end, so there is nothing to ask.
     if (!this.e2e && !this.gotEOF) throw fail(wire.CODES.PROTOCOL);

@@ -257,6 +257,58 @@ test("a right the admin did not allow stops the activation", async ({ page }) =>
   expect(await names(page)).not.toContain("ngc.store/activate");
 });
 
+// ------------------------------------------- 3b what the machine itself said
+// A refusal of an activation showed ONE sentence for every reason there is:
+// "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen."
+// The catch did not even give the error a name, so whatever the controller
+// said was dropped here.
+//
+// It matters most where the code says least. A controller that answers
+// E_INTERNAL because its data disk cannot encrypt knows what the person has to
+// do - use ext4 or f2fs - and "Bitte es noch einmal versuchen." is wrong twice
+// over: it asks for a repeat of what cannot work, and it buries the one line
+// that says why.
+//
+// The error here comes from the stand-in, built as the real ChannelError of
+// net/channel.js. That the sentence survives the frame at all is measured
+// where the frame is: shell/closemessage.spec.js.
+test("a refusal shows the words of the machine, not one sentence for everything",
+  async ({ page }) => {
+    const said = "Bitte ext4 oder f2fs mit aktivierter Verschlüsselung verwenden.";
+    await store(page, { refuseActivate: said });
+    await tab(page, "Hochladen").click();
+    await page.locator(".store input[type=file]").setInputFiles({
+      name: "notizen.ngc", mimeType: "application/octet-stream",
+      buffer: Buffer.from(buildPackage(manifest({ needs: ["network"] }))),
+    });
+    await expect(page.locator(".upfacts")).toBeVisible();
+    await page.locator(".store").getByRole("checkbox", { name: /Netz/ }).check();
+    await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+    // The lead stays, so it is clear WHO refused; the machine's own line
+    // follows it.
+    await expect(page.getByRole("status"))
+      .toHaveText("Das hat der Rechner nicht angenommen. " + said);
+    // And not the sentence that would send the person round in a circle.
+    await expect(page.getByRole("status")).not.toContainText("Bitte es noch einmal versuchen");
+  });
+
+test("a refusal with nothing to say keeps the sentence the shell has", async ({ page }) => {
+  // The control beside it: almost every close carries the code's own standard
+  // sentence (Go: wire.Error), and net/channel.js hands none of those on. Then
+  // there is nothing to show but the shell's own words, and they stay.
+  await store(page, { refuseActivate: "" });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream",
+    buffer: Buffer.from(buildPackage(manifest({ needs: [] }))),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  // It went through, because an empty knob is no refusal - the control that
+  // the knob is what makes the case above fail, and not the upload.
+  await expect(page.getByRole("status")).toContainText("Die App ist eingerichtet.");
+});
+
 // ---------------------------------------------------------------- 4. target
 
 test("the target list offers only controllers that are online and run services", async ({ page }) => {
