@@ -50,9 +50,14 @@ func withDirs(t *testing.T) (code, spool string) {
 	t.Helper()
 	dir := t.TempDir()
 	code, spool = filepath.Join(dir, "setup-code"), filepath.Join(dir, "spool")
-	oldCode, oldSpool := SetupCodeFile, SpoolDir
+	oldCode, oldSpool, oldAnchor := SetupCodeFile, SpoolDir, AnchorFile
 	SetupCodeFile, SpoolDir = code, spool
-	t.Cleanup(func() { SetupCodeFile, SpoolDir = oldCode, oldSpool })
+	// The anchor belongs in this directory too: without it Build reads the
+	// file of the machine (config.AnchorFile).
+	AnchorFile = filepath.Join(dir, "trust-anchor.json")
+	t.Cleanup(func() {
+		SetupCodeFile, SpoolDir, AnchorFile = oldCode, oldSpool, oldAnchor
+	})
 	return code, spool
 }
 

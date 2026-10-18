@@ -24,6 +24,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
 // The installation and the clock every case below starts from.
@@ -1146,9 +1147,21 @@ func TestActivateCarriesTheRefusalsOfAccept(t *testing.T) {
 // without them - that Host is a System at all, so a Manager of operation can
 // be wired with it. The calls themselves are measured in package runtime,
 // where their stand-ins live.
+//
+// WHAT IT HANDS IN MATTERS, and that was wrong until 18.10.2026: the id was
+// "no.app.at.all", which wire.ValidAppID ACCEPTS - it is a well-formed
+// reverse-DNS name. On windows EnsureUser then failed for want of useradd and
+// the case looked right; on linux AS ROOT it really made a system user
+// (measured: ngc-all-73e95399 with the home /var/lib/ngc/apps/no.app.at.all,
+// one line more in /etc/passwd). A case of this package may not change the
+// machine it runs on, so the id handed in has to be one no checker lets
+// through - the same one the next line uses.
 func TestHostIsTheSystemOfOperation(t *testing.T) {
 	var s System = Host{ServerKey: bytes.Repeat([]byte{0x5a}, 64)}
-	if _, err := s.EnsureUser(t.Context(), "no.app.at.all"); err == nil {
+	if wire.ValidAppID("../etc") {
+		t.Fatal("the id of this case is a well-formed app id, so EnsureUser would reach the machine")
+	}
+	if _, err := s.EnsureUser(t.Context(), "../etc"); err == nil {
 		t.Fatal("Host made a user for an app id that is none")
 	}
 	if err := s.DropRun("../etc"); err == nil {
