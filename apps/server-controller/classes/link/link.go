@@ -828,6 +828,21 @@ func Keep(ctx context.Context, cfg Config) {
 		}
 		t, err := Dial(ctx, cfg)
 		if err == nil {
+			// Said as well as announced, and that is the half that was
+			// missing. Measured on the small plant on 18.10.2026: the
+			// controller was restarted, came back with a standing tunnel --
+			// ss showed the socket to :7443 -- and wrote NOTHING about it.
+			// Only "tunnel ended" and "tunnel failed" below had a line, so
+			// the journal told an admin when the tunnel broke and never when
+			// it was back: after a restart there was no way to tell a
+			// controller that had reconnected from one that had not.
+			//
+			// It is no new stream of its own: every dial that gets through
+			// writes exactly one "tunnel ended" when it is over, so this
+			// line at most doubles what that one already writes and cannot
+			// grow past it. TunnelUp is a registry and may be nil; the line
+			// is not its business and stands before it.
+			log.Info("tunnel up", "api", cfg.API.URL)
 			// Announced before it is run, so a caller's registry holds it
 			// for the whole time it stands, and taken back after Close, so
 			// nothing of a tunnel that is over is ever sent on.

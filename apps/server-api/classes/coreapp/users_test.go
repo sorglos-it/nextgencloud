@@ -963,3 +963,213 @@ func noteOf(entries []core.LogEntry, kind string) (core.LogEntry, bool) {
 	}
 	return core.LogEntry{}, false
 }
+
+// joinRow puts a waiting join request into the database and gives it back.
+func joinRow(t *testing.T, fx *usersFx, node string, fill byte, url string) tunnel.JoinRequest {
+	t.Helper()
+	req := tunnel.JoinRequest{Node: node, Noise: bytes.Repeat([]byte{fill}, 32),
+		Sign: bytes.Repeat([]byte{fill + 1}, 32), TLS: bytes.Repeat([]byte{fill + 2}, 32),
+		URL: url, MAC: bytes.Repeat([]byte{fill + 3}, 32)}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobJoin, ID: req.Node, Data: raw,
+		Updated: testNow - 7}); err != nil {
+		t.Fatalf("join row: %v", err)
+	}
+	return req
+}
+
+// apiNodeOf builds the trust-list node that the request req becomes once an
+// admin takes it in: exactly the five values its fingerprint covers.
+func apiNodeOf(req tunnel.JoinRequest) trust.Node {
+	return trust.Node{ID: req.Node, Kind: trust.NodeAPI, Name: req.Node,
+		Noise: req.Noise, Sign: req.Sign, TLS: req.TLS, URL: req.URL}
+}
+
+// withNodes adds nodes to the next version and keeps the order Validate wants.
+func withNodes(t *testing.T, l *trust.List, nodes ...trust.Node) *trust.List {
+	t.Helper()
+	l.Nodes = append(slices.Clone(l.Nodes), nodes...)
+	slices.SortFunc(l.Nodes, func(a, b trust.Node) int { return strings.Compare(a.ID, b.ID) })
+	if err := l.Validate(); err != nil {
+		t.Fatalf("the version this case builds is no trust list: %v", err)
+	}
+	return l
+}
+
+// waitingAPIs is how many servers ngc.users/pending-api offers right now.
+func waitingAPIs(t *testing.T, fx *usersFx) []core.PendingAPI {
+	t.Helper()
+	body, _ := fx.userCall(t, core.ActPendingAPI, nil)
+	var list []core.PendingAPI
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatalf("pending-api %s: %v", body, err)
+	}
+	return list
+}
+
+// A server that now stands in the trust list waits for nothing any more.
+//
+// MEASURED on 17.10.2026 at a running installation: a second API was taken
+// into the list and its row went on standing under "Wartende API-Server" with
+// an Aufnehmen button. Counted over the committed tree the same day: nothing
+// ever deleted a dbapi.BlobJoin row.
+func TestAListedAPILeavesTheWaitingList(t *testing.T) {
+	fx := usersFixture(t)
+	req := joinRow(t, fx, "api-2", 0x11, "wss://api-2.test:7443/tunnel")
+	if n := len(waitingAPIs(t, fx)); n != 1 {
+		t.Fatalf("%d servers wait before the version, want 1", n)
+	}
+	l := withNodes(t, nextVersion(t, fx.harness), apiNodeOf(req))
+	if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l)); code != "" {
+		t.Fatalf("the version was refused with %q", code)
+	}
+	if list := waitingAPIs(t, fx); len(list) != 0 {
+		t.Fatalf("the server is listed and still waits: %+v", list)
+	}
+}
+
+// And the dangerous half, which is point 27 of docs/vertraege-v1.2.md: a
+// waiting request under the NAME of a listed server is not that server if its
+// keys differ. A second machine that asks for a taken name overwrites the row
+// of that name (join.keep stores by node id), so this row may be a stranger's
+// and the admin has to go on seeing it.
+func TestAWaitingAPIWithOtherKeysUnderAListedNameStays(t *testing.T) {
+	fx := usersFixture(t)
+	listed := joinRow(t, fx, "api-2", 0x11, "wss://api-2.test:7443/tunnel")
+	l := withNodes(t, nextVersion(t, fx.harness), apiNodeOf(listed))
+	if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l)); code != "" {
+		t.Fatalf("the version was refused with %q", code)
+	}
+	// Now a DIFFERENT machine asks for the same name, as it really can.
+	other := joinRow(t, fx, "api-2", 0x44, "wss://elsewhere.test:7443/tunnel")
+	list := waitingAPIs(t, fx)
+	if len(list) != 1 {
+		t.Fatalf("%d servers wait, want the stranger: %+v", len(list), list)
+	}
+	if !bytes.Equal(list[0].Noise, other.Noise) || list[0].URL != other.URL {
+		t.Fatalf("the row that stayed is not the stranger's: %+v", list[0])
+	}
+	// The next version changes something else entirely; the stranger's row is
+	// still none of this installation's servers and stays.
+	l2 := nextVersion(t, fx.harness)
+	if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l2)); code != "" {
+		t.Fatalf("the second version was refused with %q", code)
+	}
+	if list := waitingAPIs(t, fx); len(list) != 1 {
+		t.Fatalf("the stranger's row was taken out by a version it has nothing to do with: %+v", list)
+	}
+}
+
+// The same for a controller, and for it the key is not the better half but the
+// only one: its row carries the name it ASKED for, while the name it ends up
+// with in the list is one the shell made free.
+func TestAListedControllerLeavesTheWaitingList(t *testing.T) {
+	fx := usersFixture(t)
+	key := bytes.Repeat([]byte{0xC7}, 32)
+	stranger := bytes.Repeat([]byte{0xC8}, 32)
+	for _, p := range []dbapi.Pending{
+		{Name: "dienste", Key: key, Since: testNow - 3},
+		{Name: "andere", Key: stranger, Since: testNow - 2},
+	} {
+		if err := fx.S.DB.PendingPut(ctx, p); err != nil {
+			t.Fatalf("pending: %v", err)
+		}
+	}
+	// It is taken in under ANOTHER name, which is what the shell does when the
+	// one it asked for is taken.
+	l := withNodes(t, nextVersion(t, fx.harness), trust.Node{ID: "dienste-2",
+		Kind: trust.NodeController, Name: "dienste", Noise: key})
+	if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l)); code != "" {
+		t.Fatalf("the version was refused with %q", code)
+	}
+	body, _ := fx.userCall(t, core.ActPending, nil)
+	var list []core.Pending
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatalf("pending %s: %v", body, err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("%d controllers wait, want only the one that is not listed: %s", len(list), body)
+	}
+	if !bytes.Equal(list[0].Key, stranger) {
+		t.Fatalf("the wrong row was taken out: %s", body)
+	}
+}
+
+// A row the contract's parser refuses is left where it is: what is in it
+// cannot be read, so nothing can say it is settled. The row that CAN be read
+// goes, which is the control that the settling ran at all.
+func TestARowNobodyCanReadIsNotSettled(t *testing.T) {
+	fx := usersFixture(t)
+	req := joinRow(t, fx, "api-2", 0x11, "wss://api-2.test:7443/tunnel")
+	if err := fx.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobJoin, ID: "api-3",
+		Data: []byte(`{"node":"api-3"}`), Updated: testNow}); err != nil {
+		t.Fatalf("broken row: %v", err)
+	}
+	l := withNodes(t, nextVersion(t, fx.harness), apiNodeOf(req))
+	if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l)); code != "" {
+		t.Fatalf("the version was refused with %q", code)
+	}
+	rows, err := fx.S.DB.BlobFrom(ctx, dbapi.BlobJoin, 0)
+	if err != nil {
+		t.Fatalf("blobs: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "api-3" {
+		t.Fatalf("the rows left are %+v, want the unreadable one alone", rows)
+	}
+}
+
+// Found by a mutant that stayed ALIVE: comparing the Noise key alone passed
+// every case here, although the comment at sameAPI says all four values. A
+// join request is data a sender chose -- it is kept once its MAC checked out
+// against a one-time code -- so a row may well carry the listed server's
+// public Noise key beside its own address. Nothing of it ever enters the trust
+// list, but taking such a row out would take it off the admin's screen, and
+// the one thing this list is for is that he sees who asked.
+//
+// One case per value, so a comparison dropped anywhere falls here.
+func TestAWaitingAPIThatDiffersInOneValueStays(t *testing.T) {
+	listed := tunnel.JoinRequest{Node: "api-2", Noise: bytes.Repeat([]byte{0x11}, 32),
+		Sign: bytes.Repeat([]byte{0x12}, 32), TLS: bytes.Repeat([]byte{0x13}, 32),
+		URL: "wss://api-2.test:7443/tunnel", MAC: bytes.Repeat([]byte{0x14}, 32)}
+	for _, c := range []struct {
+		what   string
+		change func(r *tunnel.JoinRequest)
+	}{
+		{"noise", func(r *tunnel.JoinRequest) { r.Noise = bytes.Repeat([]byte{0x21}, 32) }},
+		{"sign", func(r *tunnel.JoinRequest) { r.Sign = bytes.Repeat([]byte{0x22}, 32) }},
+		{"tls", func(r *tunnel.JoinRequest) { r.TLS = bytes.Repeat([]byte{0x23}, 32) }},
+		{"url", func(r *tunnel.JoinRequest) { r.URL = "wss://elsewhere.test:7443/tunnel" }},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			fx := usersFixture(t)
+			// The version lists the server as it really is.
+			l := withNodes(t, nextVersion(t, fx.harness), apiNodeOf(listed))
+			if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l)); code != "" {
+				t.Fatalf("the version was refused with %q", code)
+			}
+			// And now a row under that same name differing in this one value.
+			req := listed
+			c.change(&req)
+			raw, err := json.Marshal(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fx.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobJoin, ID: req.Node,
+				Data: raw, Updated: testNow}); err != nil {
+				t.Fatalf("join row: %v", err)
+			}
+			// Any further version settles the lists again, and this row is not
+			// the listed server, so it has to survive it.
+			l2 := nextVersion(t, fx.harness)
+			if _, _, code := fx.sendTrust(t, fx.Admin.Sign(t, l2)); code != "" {
+				t.Fatalf("the second version was refused with %q", code)
+			}
+			if list := waitingAPIs(t, fx); len(list) != 1 {
+				t.Fatalf("a row differing in %s was taken out: %+v", c.what, list)
+			}
+		})
+	}
+}

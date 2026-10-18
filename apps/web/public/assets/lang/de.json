@@ -15,5 +15,8 @@
   "setup.name.bad": "Der Benutzername darf nur kleine Buchstaben, Ziffern und . _ - enthalten und muss mit einem Buchstaben oder einer Ziffer anfangen.",
   "setup.password.missing": "Bitte ein Passwort vergeben.",
   "setup.password.different": "Die beiden Passwörter sind nicht gleich.",
-  "setup.signin": "NGC ist eingerichtet. Bitte jetzt anmelden."
+  "setup.signin": "NGC ist eingerichtet. Bitte jetzt anmelden.",
+  "boot.noroute.password": "Dieser Browser kann die Passwort-Anmeldung von NGC nicht ausführen: er gibt den öffentlichen Teil eines Passwort-Schlüssels nicht heraus. Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen. Firefox kann es bis Version 141 nicht.",
+  "boot.noroute.passkeysoff": "In diesem Browser ist keine Anmeldung möglich: die Passwort-Anmeldung kann er nicht, und Passkeys sind hier abgeschaltet. Bitte Passkeys in den Browser-Einstellungen einschalten oder Chrome 137 oder Safari 17.4 oder neuer benutzen.",
+  "boot.tooold": "Dieser Browser ist zu alt für NGC. Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen."
 }

@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -770,18 +771,45 @@ type installer struct {
 }
 
 // lastSeq is the newest catalogue number this installation has already seen
-// from a store, and it answers 0 for every store - which means "none seen".
+// from that store, out of this controller's own state (state.Store.CatalogSeq,
+// written again by keepSeq below after every activation that worked). It is
+// what store.VerifyCatalog refuses an older catalogue against ("c.Seq <
+// lastSeq"), and until this pair existed it answered 0 for every store, which
+// is "none seen" and no guard at all.
 //
-// This is a GAP and not a decision of this file: nothing in this controller
-// books the catalogue number of an installation (state.Store has no place for
-// it, checked 18.10.2026), so store.VerifyCatalog cannot refuse an older
-// catalogue than the last one (its line "c.Seq < lastSeq"). What stays in
-// force is every other wall of install.Accept: the store's signature, the
-// checksum of the task, and the version of the row, which refuses a package
-// older than the one installed (install.Activate, step 2). What is missing is
-// only the roll-back of the CATALOGUE, and that needs a counter whoever owns
-// the local store has to add.
-func (installer) lastSeq(string) uint64 { return 0 }
+// A READ THAT FAILS REFUSES EVERY CATALOGUE. The signature install.Deps.LastSeq
+// has no error in it, so the only two answers are a number and a number, and
+// 0 is the one that opens the door: a database hiccup would let any catalogue
+// through. MaxUint64 is above every number a catalogue can carry
+// (enc.MaxSafeInteger), so a controller that cannot read its own memory
+// activates nothing out of a store and says so by refusing - which is the
+// safer of the two and not the quieter.
+//
+// It takes the context of the channel, so a read of it ends with the channel
+// and not after it.
+func (i installer) lastSeq(ctx context.Context) func(string) uint64 {
+	return func(store string) uint64 {
+		if i.state == nil || store == "" {
+			return math.MaxUint64
+		}
+		seq, err := i.state.CatalogSeq(ctx, store)
+		if err != nil {
+			return math.MaxUint64
+		}
+		return seq
+	}
+}
+
+// keepSeq writes that number down again, and it is the half without which
+// lastSeq reads 0 for ever. state.Store.KeepCatalogSeq never lowers what is
+// kept, so an activation out of an older catalogue that got through for
+// another reason cannot take the floor down with it.
+func (i installer) keepSeq(ctx context.Context, store string, seq uint64) error {
+	if i.state == nil {
+		return install.ErrInternal
+	}
+	return i.state.KeepCatalogSeq(ctx, store, seq)
+}
 
 // nodeOf is this server's node ID for one activation. It is a method and not
 // the bare field so that a case can hold the "afresh" of it: a reader that
@@ -797,13 +825,16 @@ func (i installer) nodeOf() string {
 	return i.node()
 }
 
-// deps is what the Manager of one activation is built with. It is named and
+// deps is what the Manager of one activation is built with. It takes the
+// context of the CHANNEL, because two of its fields read and write this
+// controller's state while the channel runs (lastSeq, keepSeq).
+// It is named and
 // not written inside Activate so that a case can READ it: what reaches
 // install.Deps is the whole of this wiring, and a case that only called the
 // pieces beside it would measure the pieces and not the wiring. Measured
 // 18.10.2026: with the node taken from the configuration instead of from
 // nodeOf, every case of the pieces stayed green.
-func (i installer) deps(list *trust.List) install.Deps {
+func (i installer) deps(ctx context.Context, list *trust.List) install.Deps {
 	return install.Deps{
 		State:  i.state,
 		Engine: i.engine,
@@ -820,7 +851,8 @@ func (i installer) deps(list *trust.List) install.Deps {
 		// activation cuts it down to what the disk really has free
 		// (install.bound), so this is the ceiling and not the promise.
 		Max:     store.MaxPackage,
-		LastSeq: i.lastSeq,
+		LastSeq: i.lastSeq(ctx),
+		KeepSeq: i.keepSeq,
 		Now:     func() int64 { return time.Now().Unix() },
 	}
 }
@@ -828,7 +860,7 @@ func (i installer) deps(list *trust.List) install.Deps {
 // Activate carries out one activation, on the trust list of its channel.
 func (i installer) Activate(ctx context.Context, list *trust.List, d access.Decision,
 	r io.Reader) ([]byte, error) {
-	return install.New(i.deps(list)).Activate(ctx, d, r)
+	return install.New(i.deps(ctx, list)).Activate(ctx, d, r)
 }
 
 // webSync brings Apache in line with the API servers of the trust list: the
@@ -861,16 +893,20 @@ func webSync(w *apache.Writer, k *chain.Keeper) func(ctx context.Context) error 
 		if apis == 0 {
 			return fmt.Errorf("node: version %d of the trust list names no API server", l.Seq)
 		}
+		// Both halves can be true at once: Sync leaves out a server it could
+		// not reach or whose pin did not match, writes the rest and names the
+		// ones it left. So the line that says Apache followed is written for
+		// what WAS written, and the error goes on to the caller, which logs
+		// it as a warning of its own. One of the two alone would hide half of
+		// what happened.
 		changed, err := w.Sync(ctx, l.Nodes)
-		if err != nil {
-			return err
-		}
 		if changed {
-			// The number and not the names: which servers an installation has
-			// is its own, and this line is read to see THAT Apache followed.
+			// The numbers and not the names: which servers an installation
+			// has is its own, and this line is read to see THAT Apache
+			// followed and over how many servers.
 			slog.Info("Apache was brought in line with the trust list",
 				"seq", l.Seq, "apis", apis)
 		}
-		return nil
+		return err
 	}
 }

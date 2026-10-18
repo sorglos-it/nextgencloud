@@ -14,6 +14,7 @@ import (
 	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -232,7 +233,7 @@ func TestADiskThatCannotEncryptSaysWhatToDo(t *testing.T) {
 // and then in acts, so an action in both would be served by the stream half
 // and the other half would be a line no case can reach.
 func TestNoActionIsBothBufferedAndStreamed(t *testing.T) {
-	s := New(Deps{})
+	s := New(Deps{Installer: &fakeInstaller{}})
 	if len(s.streams) == 0 {
 		t.Fatal("no streamed action at all: the fork of this build is gone")
 	}
@@ -248,7 +249,7 @@ func TestNoActionIsBothBufferedAndStreamed(t *testing.T) {
 // server whose map says "activate" of another app would serve a channel access
 // let through for something else.
 func TestEveryServedActionIsOneOfTheContract(t *testing.T) {
-	s := New(Deps{})
+	s := New(Deps{Installer: &fakeInstaller{}})
 	keys := make([]name, 0, len(s.acts)+len(s.streams))
 	for k := range s.acts {
 		keys = append(keys, k)
@@ -453,5 +454,166 @@ func TestCreditThatCannotBeGivenBackEndsTheChannel(t *testing.T) {
 		if cl == nil || cl.Code != c.want {
 			t.Errorf("%s: the channel owes %+v, want %q", name, cl, c.want)
 		}
+	}
+}
+
+// WHAT THE MAP SAYS IS WHAT THIS BUILD CAN DO. A server wired without an
+// installer refuses every activate channel (activate.go, and since the map is
+// conditional it does not even reach the action), so it may not answer "yes"
+// when it is asked whether it serves activations. Whoever wires this server
+// reads it back here instead of reading the literal it passed to New.
+//
+// The two buffered actions are in the same assertion on purpose: they are
+// wired unconditionally, so a Serves that answered "no" to everything would
+// pass the half above and fail here.
+func TestServesSaysWhatThisBuildCarriesOut(t *testing.T) {
+	without := New(Deps{})
+	if without.Serves(core.AppStore, core.ServiceController, core.ActActivate) {
+		t.Error("a server without an installer says it serves activations")
+	}
+	if len(without.streams) != 0 {
+		t.Errorf("streams of a server without an installer: %v", without.streams)
+	}
+	with := New(Deps{Installer: &fakeInstaller{}})
+	if !with.Serves(core.AppStore, core.ServiceController, core.ActActivate) {
+		t.Error("a server with an installer says it does not serve activations")
+	}
+	for _, k := range []name{trustKey, installKey} {
+		if !with.Serves(k[0], k[1], k[2]) {
+			t.Errorf("%v is wired and Serves says no", k)
+		}
+	}
+	// An action of another app is none of this server's, whatever its name.
+	if with.Serves(core.AppUsers, core.ServiceController, core.ActActivate) {
+		t.Error("an activate of another app is served")
+	}
+}
+
+// partialInstaller reads n bytes and then stops with its own error, the way
+// install.Accept stops once the transfer header or the manifest of a package
+// is not what the task named. What it leaves on the channel is the rest of the
+// package.
+type partialInstaller struct {
+	n    int
+	err  error
+	read int
+}
+
+func (p *partialInstaller) Activate(_ context.Context, _ *trust.List, _ access.Decision,
+	r io.Reader) ([]byte, error) {
+	b := make([]byte, p.n)
+	n, _ := io.ReadFull(r, b)
+	p.read = n
+	return nil, p.err
+}
+
+// WHAT THE ACTION DID NOT READ IS STILL ANSWERED. An installer that refuses a
+// package after its first bytes leaves the rest of it on the channel, and over
+// that rest the API may have gone past the bound of the action or been cut off
+// -- neither of which this side has noticed while it lies unread. So the rest
+// is read out (chanReader.drain) and what it says outranks the refusal of the
+// action.
+//
+// This is the case the mutant needs: an activate that answers chanReader.close
+// instead of drain reads a cl that is still nil here and sends the installer's
+// own code out over a channel that was cut off or overran. It passed every
+// other case of this package on 18.10.2026.
+func TestWhatTheActionDidNotReadIsStillAnswered(t *testing.T) {
+	a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+	if !ok {
+		t.Fatal("the contract has no activate action of the controller")
+	}
+	// The bound of the contract is 4303355908 bytes, too much to send in a
+	// case, so the action is cut down to a number a case can reach. What is
+	// measured is the line that counts, not the number in the contract.
+	small := a
+	small.MaxIn = 1000
+	for name, c := range map[string]struct {
+		in   []link.Inbound
+		act  core.Action
+		want wire.Code
+	}{
+		// The rest of the input goes past the bound: the action saw only its
+		// first 10 bytes and cannot know.
+		"the rest overran the bound": {
+			in: []link.Inbound{
+				{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x41}, 600)},
+				{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x41}, 600)},
+				{Kind: wire.TypeEOF},
+			},
+			act:  small,
+			want: wire.CodeTooLarge,
+		},
+		// The channel ended before its input did: there is no EOF frame, so
+		// the inbox is over while DATA was still owed.
+		"the rest was cut off": {
+			in: []link.Inbound{
+				{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x41}, 600)},
+			},
+			act:  a,
+			want: wire.CodeProtocol,
+		},
+	} {
+		// install.ErrVerify is a code of its own (E_VERIFY), so a wrong
+		// answer here is told apart from the right one and not just absent.
+		f := &partialInstaller{n: 10, err: install.ErrVerify}
+		s := New(Deps{Installer: f})
+		r := newChanReader(context.Background(), &fakeInbox{in: c.in}, c.act)
+		d := access.Decision{Action: c.act}
+		v, cl := s.activate(context.Background(), nil, d, r)
+		if f.read != 10 {
+			t.Fatalf("%s: the installer read %d bytes, want the 10 it asked for", name, f.read)
+		}
+		if v != nil {
+			t.Errorf("%s: result %v went out over a channel that owes a CLOSE", name, v)
+		}
+		if cl == nil {
+			t.Fatalf("%s: no CLOSE at all, want %q", name, c.want)
+		}
+		if cl.Code != c.want {
+			t.Errorf("%s: CLOSE %q, want %q of the unread rest", name, cl.Code, c.want)
+		}
+	}
+}
+
+// And the other side of it: where the action read its input whole, draining
+// finds nothing and the action's own refusal is what goes out. Without this
+// the case above would pass on a drain that answered E_PROTOCOL for every
+// channel.
+func TestAnInstallerThatReadEverythingKeepsItsOwnCode(t *testing.T) {
+	a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+	if !ok {
+		t.Fatal("the contract has no activate action of the controller")
+	}
+	f := &fakeInstaller{err: install.ErrVerify}
+	s := New(Deps{Installer: f})
+	box := &fakeInbox{in: []link.Inbound{
+		{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x42}, 40)},
+		{Kind: wire.TypeEOF},
+	}}
+	r := newChanReader(context.Background(), box, a)
+	_, cl := s.activate(context.Background(), nil, access.Decision{Action: a}, r)
+	if cl == nil || cl.Code != wire.CodeVerify {
+		t.Errorf("CLOSE = %+v, want the E_VERIFY of the installer", cl)
+	}
+	if len(f.read) != 40 {
+		t.Errorf("the installer read %d bytes, want all 40", len(f.read))
+	}
+}
+
+// A CATALOGUE BELOW THE FLOOR IS NAMED A VERIFICATION FAILURE. It is the one
+// error of package store that install hands on and that the controller can now
+// reach at all: before it had a memory for the floor, store.VerifyCatalog had
+// no number to refuse against. Named E_INTERNAL it would tell an admin his own
+// machine was broken where a store handed back an old catalogue.
+func TestACatalogueBelowTheFloorIsNamedAVerificationFailure(t *testing.T) {
+	cl := activateCode(store.ErrRollback)
+	if cl == nil || cl.Code != wire.CodeVerify {
+		t.Errorf("activateCode(store.ErrRollback) = %+v, want E_VERIFY", cl)
+	}
+	// And wrapped, the way install hands it on out of Accept.
+	cl = activateCode(errors.Join(errors.New("accept"), store.ErrRollback))
+	if cl == nil || cl.Code != wire.CodeVerify {
+		t.Errorf("a wrapped ErrRollback = %+v, want E_VERIFY", cl)
 	}
 }

@@ -255,8 +255,30 @@ const DefaultMaxApps = 128
 func New(d Deps) *Server {
 	s := &Server{d: d}
 	s.acts = map[name]action{trustKey: s.trust, installKey: s.install}
-	s.streams = map[name]stream{activateKey: s.activate}
+	// ONLY WHAT THIS BUILD REALLY CARRIES OUT goes in. An activate channel on
+	// a server wired without an installer ends E_INTERNAL either way - with
+	// the key it ends there inside the action (activate.go), without it at the
+	// same code in core - so leaving the key out changes nothing an API sees.
+	// What it changes is that Serves answers the question it is asked: a map
+	// that holds the key regardless says this server carries out activations
+	// that it refuses, and whoever wires it then reads back the literal it
+	// passed to New instead of what the server got.
+	s.streams = map[name]stream{}
+	if d.Installer != nil {
+		s.streams[activateKey] = s.activate
+	}
 	return s
+}
+
+// Serves says whether this build carries out that core action, in either map.
+// It is for whoever WIRES this server: a program that built it can ask what it
+// got instead of reading the literal it passed, and coreapp.Dispatcher.Serves
+// on the API side answers the same question for the same reason.
+func (s *Server) Serves(app, service, action string) bool {
+	k := name{app, service, action}
+	_, inActs := s.acts[k]
+	_, inStreams := s.streams[k]
+	return inActs || inStreams
 }
 
 // HandshakeFailures is how many end-to-end handshakes failed on this server
@@ -435,9 +457,11 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, list *trust.List,
 //
 // What it does NOT do is read the input itself, and that is the difference to
 // core: the action gets the reader and decides how much of the input it ever
-// holds (stream.go). Whatever is left unread when the action comes back stays
-// unread - the channel is over with the CLOSE below, and link drops what was
-// still on it.
+// holds (stream.go). What is left unread when the action comes back is read
+// out by the ACTION, not here: only the action knows whether it is done, and
+// only the rest of the input says whether the channel was cut off or overran
+// (chanReader.drain, and serve.Server.activate is the one action that has to
+// do it).
 func (s *Server) coreStream(ctx context.Context, ch *link.Channel, list *trust.List,
 	d access.Decision, flow stream) error {
 	// The first GRANT is the credit the API sends its input with; what this

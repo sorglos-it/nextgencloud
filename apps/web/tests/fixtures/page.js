@@ -1,5 +1,5 @@
 import { test as base } from "@playwright/test";
-import { USER_NAME, PASSWORD } from "./logins.js";
+import { USER_NAME, PASSWORD, PKCS8 } from "./logins.js";
 
 // The shell page for every test. The content security policy stays on, so a
 // test notices when the page starts breaking it. The contract tests import
@@ -115,6 +115,11 @@ export async function standInOn(page) {
 //                       document. contracts/noise.js publicOf, which only
 //                       HandshakeKK.forTest reaches - no running session does
 //                       it, and no case with fresh keys needs it.
+//   p256FromDocument    a P-256 key out of a PKCS#8 document, a signature by
+//                       it, and the signature checked. What the software
+//                       authenticator of fixtures/passkey.js does, and the
+//                       only signature step a PASSKEY login needs on this
+//                       side - contracts/proof.js ALG_ES256.
 //
 // Measured answers, so nobody has to guess what a "no" means:
 //
@@ -124,14 +129,20 @@ export async function standInOn(page) {
 //             document IN and then refuses the JWK export, because a PKCS#8
 //             seed carries no public key and Firefox, unlike Chrome and Safari,
 //             does not work it out.
-//   webkit    all five, at generateKey, with NotSupportedError: the curves
-//             themselves are missing.
+//   webkit    the first five, at generateKey, with NotSupportedError: the
+//             curves themselves are missing. p256FromDocument is EMPTY there -
+//             WebKit has P-256, it is the CFRG curves it lacks.
 //
 // Nothing here is decided by the engine's name. The day Playwright's WebKit
 // grows the curves, or Firefox the export, these answer yes by themselves and
 // the cases run with no edit here.
 export async function sessionKeyGaps(shell) {
-  return shell.evaluate(async () => {
+  // clara's private half, as the one P-256 document in the repository
+  // (fixtures/logins.js). It is passed IN rather than written a second time
+  // here: the step below measures the engine against the very key the software
+  // authenticator of fixtures/passkey.js imports, so a document that changed
+  // there changes this measurement with it.
+  return shell.evaluate(async (p256Base64) => {
     // PKCS#8 around a bare 32-byte CFRG seed: version 0, the OID of the curve,
     // then the seed in an OCTET STRING. Byte for byte the prefixes
     // contracts/proof.js and contracts/noise.js build their own documents from.
@@ -296,8 +307,63 @@ export async function sessionKeyGaps(shell) {
       }],
     ]);
 
-    return { curves, ed25519, ed25519FromSeed, x25519, x25519FromDocument };
-  });
+    // fixtures/passkey.js, the software authenticator: the P-256 private key
+    // out of the PKCS#8 document fixtures/logins.js holds, a signature by it,
+    // and that signature CHECKED against the public half of the same document.
+    // Same discipline as the two seed steps above - the half that comes out is
+    // USED, so an engine that imports the document wrongly is a "no" here
+    // instead of a login that fails later for a reason nobody named.
+    //
+    // It needs none of the five above: a passkey login touches no CFRG curve
+    // on this side of the wire. The cases ask for this one TOGETHER with
+    // ed25519 and x25519 (passkeyGap below), because the session the login
+    // opens needs those.
+    //
+    // MEASURED on 18.10.2026, playwright 1.55.1: EMPTY in chromium
+    // 140.0.7339.186, firefox 141.0 AND webkit 26.0 - P-256 is the one
+    // signature algorithm all three have, which is why the passkey route can
+    // be driven on every engine while the password route cannot. On webkit it
+    // is the ONLY empty gap of the six.
+    //
+    // How that was measured, three lines anybody can paste again - the whole
+    // answer for all three engines at once:
+    //
+    //   cat > shell/gaps.spec.js <<'EOF'
+    //   import { test, sessionKeyGaps } from "../fixtures/page.js";
+    //   test("gaps", async ({ shell }) => {
+    //     console.log("GAPS " + JSON.stringify(await sessionKeyGaps(shell))); });
+    //   EOF
+    //   npx playwright test shell/gaps.spec.js && rm shell/gaps.spec.js
+    //
+    // What it printed, one line per engine, in the order of the projects:
+    //
+    //   {"curves":"","ed25519":"","ed25519FromSeed":"","x25519":"",
+    //    "x25519FromDocument":"","p256FromDocument":""}
+    //   {... "ed25519FromSeed":"Ed25519 public half out of a PKCS#8 seed:
+    //    OperationError", "x25519FromDocument":"X25519 public half out of a
+    //    PKCS#8 document: OperationError", "p256FromDocument":""}
+    //   {"curves":"Ed25519 generateKey: NotSupportedError", ... everything but
+    //    "p256FromDocument":""}
+    const p256FromDocument = await walk([
+      ["P-256 sign and check out of a PKCS#8 document", async () => {
+        const text = atob(p256Base64);
+        const doc = new Uint8Array(text.length);
+        for (let i = 0; i < text.length; i++) doc[i] = text.charCodeAt(i);
+        const priv = await crypto.subtle.importKey(
+          "pkcs8", doc, { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+        const jwk = await crypto.subtle.exportKey("jwk", priv);
+        if (typeof jwk.x !== "string" || typeof jwk.y !== "string") return false;
+        const pub = await crypto.subtle.importKey(
+          "jwk", { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+          { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+        const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, priv, message);
+        return (await crypto.subtle.verify(
+          { name: "ECDSA", hash: "SHA-256" }, pub, sig, message)) === true;
+      }],
+    ]);
+
+    return { curves, ed25519, ed25519FromSeed, x25519, x25519FromDocument, p256FromDocument };
+  }, PKCS8.clara);
 }
 
 // ---- one gap per action ---------------------------------------------------
@@ -349,6 +415,27 @@ export async function skipWithoutSeedKeys(shell) {
   test.skip(gap !== "", `this engine makes no password key out of a seed - ${gap}`);
 }
 
+// WHAT A PASSKEY LOGIN NEEDS, and it is a different set from a password login:
+// the session keys (ed25519, x25519) and the P-256 step the authenticator
+// signs with - never ed25519FromSeed, which is the one step a PASSWORD key
+// stands on and the one Firefox 141 refuses. That is why this gap exists at
+// all: on Firefox the passkey is the ONLY route the mask offers, so the gap
+// that switches a passkey case off must not be the password's.
+//
+// Until 18.10.2026 the passkey cases were switched off by
+// `test.skip(browserName !== "chromium")` - by the NAME of the engine, because
+// Playwright's virtual authenticator is the CDP WebAuthn domain. The software
+// authenticator of fixtures/passkey.js removed the need for that name.
+export async function passkeyGap(shell) {
+  const g = await sessionKeyGaps(shell);
+  return g.ed25519 || g.x25519 || g.p256FromDocument;
+}
+
+export async function skipWithoutPasskey(shell) {
+  const gap = await passkeyGap(shell);
+  test.skip(gap !== "", `this engine cannot finish a passkey login - ${gap}`);
+}
+
 // An Ed25519 signature, made or checked - and nothing about a password seed.
 export async function signatureGap(shell) {
   return (await sessionKeyGaps(shell)).ed25519;
@@ -391,6 +478,34 @@ export async function skipWithoutLogin(shell) {
 export async function skipWithoutSetup(shell) {
   const gap = await loginGap(shell);
   test.skip(gap !== "", `this engine cannot finish the setup - ${gap}`);
+}
+
+// THE BROWSER'S OWN WebAuthn STACK, reached over the CDP WebAuthn domain. It
+// is asked for by the two cases that measure Playwright's virtual
+// authenticator, which is a deeper replacement than the software one: it sits
+// below navigator.credentials.get, inside the browser.
+//
+// It is MEASURED and not read off the engine's name, for the same reason as
+// everything else in this file - the sentence a skip prints names the thing
+// that is really missing. Today only Chromium answers; the day Playwright
+// grows a WebAuthn domain for another engine, these cases run there with no
+// edit here.
+export async function cdpGap(shell) {
+  try {
+    const cdp = await shell.context().newCDPSession(shell);
+    await cdp.send("WebAuthn.enable");
+    await cdp.detach();
+    return "";
+  } catch (err) {
+    // The first line only: Playwright's own errors carry a whole page of
+    // advice behind the sentence, and this string is what the skip prints.
+    return "CDP WebAuthn: " + ((err && err.message) || "threw").split(/\r?\n/)[0];
+  }
+}
+
+export async function skipWithoutCDPAuthenticator(shell) {
+  const gap = await cdpGap(shell);
+  test.skip(gap !== "", `this engine has no virtual authenticator of its own - ${gap}`);
 }
 
 export async function skipWithoutHandshake(shell) {

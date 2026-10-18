@@ -102,6 +102,31 @@ const (
 // named no limit at all. It counts output too, so a long build is not cut off.
 const IdleLimit = 30 * time.Minute
 
+// LastWord is how long the shell has to act on the last line once the input
+// has ended, and it is A DECISION the Linux run forced.
+//
+// The input of a terminal ends for two reasons that look the same here: the
+// person typed their last line - an "exit" ends a session that way - or the tab
+// went away. Until now the first was treated as the second: the moment pumpIn
+// reached the end of the stream the session was killed as a group and run
+// answered 0, so a shell that had just been handed "stty size" never ran it.
+// Measured on 18.10.2026 in a debian:13-slim container: the output of such a
+// terminal was "stty size\r\nexit\r\n" - the echo of the typed line and
+// nothing the shell ever said. The sister case looked green and was not; it
+// searched for "hallo" and found the echo of "echo hallo".
+//
+// So the shell gets a last word, and it is SHORT on purpose. IdleLimit above
+// would be the wrong bound: half an hour of a shell nobody is watching is what
+// that limit exists to prevent. Two seconds is long for a shell that was told
+// to exit - it ends in milliseconds - and short enough that a tab which closed
+// frees the container at once as far as anybody can tell.
+//
+// What it is NOT: time for a command to finish. A shell still working when the
+// last word is over is killed, exactly as before, and that is the price of a
+// terminal whose channel is gone. While it keeps talking it keeps the idle
+// watchdog awake too, so the two bounds do not fight each other.
+const LastWord = 2 * time.Second
+
 // maxTick bounds how long the idle watchdog sleeps between two looks. It looks
 // every quarter of the limit and never less often than this, so with IdleLimit
 // it looks twice a minute - not four times in half an hour, which is what the
