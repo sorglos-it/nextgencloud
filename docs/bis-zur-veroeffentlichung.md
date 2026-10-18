@@ -413,6 +413,29 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > Auch hier gilt der Satz von oben unverändert: **am Gerät ist nichts davon nachgemessen**,
 > und nach `main` geführt ist nichts.
 
+> **18.10.2026, 19:3x: der Versuch, diesen Zweig nach `main` zu führen, ist ABGEBROCHEN — und
+> der Grund ist derselbe Befund, zum dritten Mal.** `main` hat in wenigen Minuten **26
+> Commits** dazubekommen (bis `558f2e7`), darunter Arbeit an genau den Dateien dieses Zweigs:
+> Passkey-Knopf, Browsermotoren, Terminal, `auth/login.js`, `apps/store.js`, `net/channel.js`.
+>
+> **Das Schwere daran ist aber nicht die Zahl, sondern eine zweite Sprachschicht.** Gemessen:
+> `main` hat die **alte** Schicht an ihrem Ort **weiterbetrieben** —
+> `apps/web/public/assets/lang/*.json`, von 17 auf **20 Schlüssel**, Lader
+> `shell/lang.js`. Dieser Zweig trägt (über `web-reif`) die **neue**:
+> `apps/web/lang/*.json` mit **350 Schlüsseln**, Lader `public/assets/js/lang.js`, dazu
+> `classes/Lang.php`. **Zwei Sitzungen haben dieselbe Aufgabe zweimal gelöst, an zwei Orten.**
+>
+> Trockenprobe mit `git merge-tree` (der Baum ist dabei unangetastet): **11 Konfliktdateien**,
+> davon sechs als „modify/delete" — der alte Lader und alle fünf alten Sprachdateien, die
+> dieser Zweig verschoben hat. **Eine solche Zusammenführung blind auflösen heißt, entweder
+> 350 Sätze oder die 20 neuen von `main` zu verlieren, oder beide Schichten nebeneinander
+> stehen zu lassen mit einem Lader, der die falsche liest.**
+>
+> **Darum ist nichts nach `main` geführt.** Welche der zwei Sprachschichten bleibt, ist eine
+> Entscheidung über den Aufbau und keine Messung — und nach der Regel dieses Projekts fassen
+> zwei Schreiber nie dieselben Dateien an. Der Zweig selbst steht vollständig und geprüft
+> (`8307485`), es ist nichts verloren.
+
 ### H10 — Ein `ngc-web`-Update über den Controller kann heute nicht gehen.
 
 - **Was fehlt:** eine Entscheidung, **P3**: zieht das Release-Werkzeug auf `ui/` nach, oder
