@@ -556,6 +556,76 @@ func TestActivatingAnUploadedAppHandsOverNoFile(t *testing.T) {
 	}
 }
 
+// TestTheConfirmationTravelsToTheController is the wall of 18.10.2026, one
+// layer above relay.CallAs: the handler of ngc.store/controller/activate has
+// to hand the user's re-confirmation on, or the controller refuses the
+// channel it opens.
+//
+// WHAT WAS MEASURED ON THE REAL MACHINE that day, over the bytes the browser
+// really sent: the task named ngc-2, trust.MayRoot answered TRUE and
+// task.VerifyConfirm answered NIL -- the confirmation was valid. The
+// installation still refused with E_CONFIRM, and no journal of API or
+// controller held a line about it. The cause was one missing assignment in
+// relay.ownOpen, and this case holds the step before it: what the handler
+// carries over to appstore.
+//
+// The confirmation is held against the one the OPEN CARRIED, not against
+// "something non-nil": the proof of the SESSION travels beside it (Carried.
+// Proof, over the client certificate), and a handler that handed that one
+// over would satisfy every weaker check while the controller still refused.
+func TestTheConfirmationTravelsToTheController(t *testing.T) {
+	fx := newStoreFixture(t)
+	fx.PutApp(t, appY, true)
+	// With grants the action is critical (core.Critical), so the list demands
+	// the re-confirmation and the channel would not open without it. That is
+	// what makes this the real path and not a dry run.
+	tk := rootTask(t, fx.harness, 0xC7, core.ActActivate,
+		`{"app":"`+appY+`","version":"2.0.0","sha256":"`+b64of(32, 1)+`","ui":"`+
+			b64of(32, 2)+`","store":"`+core.LocalStore+`","grants":["root"]}`)
+	conf := confirmOf(fx.harness, tk)
+	c := fx.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceController,
+		Action: core.ActActivate, Window: wire.MinWindow, Task: tk, Confirm: conf})
+	c.result(t)
+	rq := fx.Store.act
+	if rq == nil {
+		t.Fatal("the app store was not called")
+	}
+	if rq.Confirm == nil {
+		t.Fatal("the re-confirmation did not reach the app store, so nothing carries it " +
+			"to the controller -- that is E_CONFIRM on a real installation")
+	}
+	if rq.Confirm.KeyID != conf.KeyID || !bytes.Equal(rq.Confirm.Sig, conf.Sig) {
+		t.Fatalf("another proof arrived as the confirmation: %+v, want key %s",
+			rq.Confirm, conf.KeyID)
+	}
+	// And the control in the same breath: the proof of the session is a
+	// different document and still travels in its own field.
+	if rq.Proof == nil {
+		t.Fatal("the proof of the session stopped travelling")
+	}
+	if rq.Proof.KeyID == rq.Confirm.KeyID && bytes.Equal(rq.Proof.Sig, rq.Confirm.Sig) {
+		t.Fatal("the proof of the session travelled as the confirmation")
+	}
+	// A CRITICAL ACTION WITHOUT A CONFIRMATION DOES NOT GET HERE AT ALL, so
+	// the case above really walked the path that needs one: the same OPEN
+	// without it is refused with E_CONFIRM before any handler runs
+	// (rights.Check -> task.Check). Without this half the case would also
+	// pass in a world where nothing ever needed confirming.
+	fx2 := newStoreFixture(t)
+	fx2.PutApp(t, appY, true)
+	tk2 := rootTask(t, fx2.harness, 0xC8, core.ActActivate,
+		`{"app":"`+appY+`","version":"2.0.0","sha256":"`+b64of(32, 1)+`","ui":"`+
+			b64of(32, 2)+`","store":"`+core.LocalStore+`","grants":["root"]}`)
+	cl := endOf(t, fx2.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceController,
+		Action: core.ActActivate, Window: wire.MinWindow, Task: tk2}))
+	if cl != wire.CodeConfirm {
+		t.Fatalf("without a confirmation the channel closed with %q, want E_CONFIRM", cl)
+	}
+	if fx2.Store.act != nil {
+		t.Fatal("the app store was called although the confirmation was missing")
+	}
+}
+
 // --- The two halves of the order in open ----------------------------------
 
 // TestAControllerActionWithoutAHandlerStillGoesToTheRelay is the half that
@@ -717,12 +787,12 @@ func (onlineSender) Node(string) (tunnel.Hello, bool) {
 }
 
 func (onlineSender) Transfer(context.Context, string, string, json.RawMessage, core.Transfer,
-	io.Reader, *sign.Envelope, []byte, *proof.Proof) ([]byte, wire.Code) {
+	io.Reader, *sign.Envelope, []byte, *proof.Proof, *proof.Proof) ([]byte, wire.Code) {
 	return nil, wire.CodeInternal
 }
 
 func (onlineSender) Call(context.Context, string, string, json.RawMessage, *sign.Envelope,
-	[]byte, *proof.Proof) ([]byte, wire.Code) {
+	[]byte, *proof.Proof, *proof.Proof) ([]byte, wire.Code) {
 	return nil, wire.CodeInternal
 }
 

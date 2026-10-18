@@ -31,7 +31,7 @@ import (
 // E_INTERNAL here rather than an OPEN the controller would have to refuse.
 func (rl *Relay) CallController(ctx context.Context, hop Hop, app, service, action string,
 	params json.RawMessage, in []byte) ([]byte, wire.Code) {
-	payload, code := ownOpen(app, service, action, params, nil, nil, nil)
+	payload, code := ownOpen(app, service, action, params, nil, nil, nil, nil)
 	if code != "" {
 		return nil, code
 	}
@@ -45,7 +45,7 @@ func (rl *Relay) CallController(ctx context.Context, hop Hop, app, service, acti
 // that (package rights), and the controller does it again.
 func (rl *Relay) Transfer(ctx context.Context, hop Hop, app, service, action string,
 	params json.RawMessage, head core.Transfer, file io.Reader, task *sign.Envelope,
-	client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	// Our own header through the writer of the contract before anything is
 	// opened: a header that does not validate is our mistake, and the channel
 	// should not exist for it.
@@ -53,7 +53,7 @@ func (rl *Relay) Transfer(ctx context.Context, hop Hop, app, service, action str
 	if err := core.WriteTransfer(&hb, head); err != nil {
 		return nil, wire.CodeInternal
 	}
-	payload, code := ownOpen(app, service, action, params, task, client, pr)
+	payload, code := ownOpen(app, service, action, params, task, client, pr, confirm)
 	if code != "" {
 		return nil, code
 	}
@@ -65,7 +65,7 @@ func (rl *Relay) Transfer(ctx context.Context, hop Hop, app, service, action str
 // ownOpen builds the payload of an OPEN the API sends for itself and checks it
 // through the parsers of the contract.
 func ownOpen(app, service, action string, params json.RawMessage, task *sign.Envelope,
-	client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	if !wire.CoreApp(app) {
 		return nil, wire.CodeInternal
 	}
@@ -73,6 +73,23 @@ func ownOpen(app, service, action string, params json.RawMessage, task *sign.Env
 	if task != nil {
 		// With a task only the signed params count, so the OPEN carries none.
 		o.Task = task
+		// AND THE USER'S RE-CONFIRMATION WITH IT. Until 18.10.2026 this line
+		// was missing, and that is the whole of it: the controller runs
+		// task.Check itself (access/access.go:212, Confirm: open.Confirm),
+		// the trust list demands a confirmation for a root task
+		// (trust.NeedsConfirm), and an OPEN without one is refused with
+		// ErrConfirm -> E_CONFIRM. Measured on the real machine on
+		// 18.10.2026 over the bytes the browser really sent: MayRoot true,
+		// task.VerifyConfirm nil - the confirmation was VALID and never
+		// arrived. The shell then read "Das hat der Rechner nicht
+		// angenommen" and nothing was written to any journal, because a
+		// refusal before the channel runs leaves no line.
+		//
+		// It travels as it stands and is verified nowhere here: the caller
+		// has done that (package rights), and the controller does it again
+		// over the very same bytes - which is the only reason it may be
+		// relayed at all.
+		o.Confirm = confirm
 	} else {
 		o.Params = params
 	}

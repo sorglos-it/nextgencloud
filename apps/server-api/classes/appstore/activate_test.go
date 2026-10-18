@@ -45,7 +45,13 @@ type sent struct {
 	task         *sign.Envelope
 	client       []byte
 	proof        *proof.Proof
-	transfer     bool
+	// confirm is the user's re-confirmation over the task, written down
+	// separately from proof: the two are different documents (certificate of
+	// the session against bytes of the task), and a sender that handed one
+	// over where the other belongs would pass any case that only asked
+	// "something travelled".
+	confirm  *proof.Proof
+	transfer bool
 }
 
 // fakeSender stands in for the relay. It is the whole way out of the package,
@@ -76,9 +82,10 @@ func (f *fakeSender) Node(node string) (tunnel.Hello, bool) {
 }
 
 func (f *fakeSender) Transfer(_ context.Context, node, action string, params json.RawMessage,
-	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte,
+	pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	s := sent{node: node, action: action, params: bytes.Clone(params), head: head,
-		task: tk, client: bytes.Clone(client), proof: pr, transfer: true}
+		task: tk, client: bytes.Clone(client), proof: pr, confirm: confirm, transfer: true}
 	if f.readErr != nil {
 		f.sents = append(f.sents, s)
 		return nil, wire.CodeUnreachable
@@ -94,9 +101,9 @@ func (f *fakeSender) Transfer(_ context.Context, node, action string, params jso
 }
 
 func (f *fakeSender) Call(_ context.Context, node, action string, params json.RawMessage,
-	tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	tk *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	f.sents = append(f.sents, sent{node: node, action: action, params: bytes.Clone(params),
-		task: tk, client: bytes.Clone(client), proof: pr})
+		task: tk, client: bytes.Clone(client), proof: pr, confirm: confirm})
 	return nil, f.code
 }
 

@@ -130,6 +130,7 @@ type sent struct {
 	file         []byte
 	transfer     bool
 	hadUser      bool // a task, a client certificate or a proof travelled
+	hadConfirm   bool // a re-confirmation of a user travelled
 }
 
 type fakeSender struct {
@@ -158,19 +159,21 @@ func (f *fakeSender) record(s sent) wire.Code {
 }
 
 func (f *fakeSender) Transfer(_ context.Context, node, action string, params json.RawMessage,
-	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte,
+	pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	b, err := io.ReadAll(file)
 	if err != nil {
 		return nil, wire.CodeUnreachable
 	}
 	return nil, f.record(sent{node: node, action: action, params: bytes.Clone(params), head: head,
-		file: b, transfer: true, hadUser: tk != nil || client != nil || pr != nil})
+		file: b, transfer: true, hadUser: tk != nil || client != nil || pr != nil,
+		hadConfirm: confirm != nil})
 }
 
 func (f *fakeSender) Call(_ context.Context, node, action string, params json.RawMessage,
-	tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	tk *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	return nil, f.record(sent{node: node, action: action, params: bytes.Clone(params),
-		hadUser: tk != nil || client != nil || pr != nil})
+		hadUser: tk != nil || client != nil || pr != nil, hadConfirm: confirm != nil})
 }
 
 func (f *fakeSender) list() []sent {

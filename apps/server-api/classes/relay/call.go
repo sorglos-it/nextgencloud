@@ -26,8 +26,8 @@ import (
 // method only puts them on the wire as they stand, exactly as Transfer does
 // for the transfer flow.
 func (rl *Relay) CallAs(ctx context.Context, hop Hop, app, service, action string,
-	params json.RawMessage, task *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
-	payload, code := ownOpen(app, service, action, params, task, client, pr)
+	params json.RawMessage, task *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
+	payload, code := ownOpen(app, service, action, params, task, client, pr, confirm)
 	if code != "" {
 		return nil, code
 	}

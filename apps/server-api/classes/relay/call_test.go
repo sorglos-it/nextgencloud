@@ -38,8 +38,16 @@ func TestCallAsPutsTheUserOnTheWire(t *testing.T) {
 		cl, _ := json.Marshal(wire.Close{Status: wire.StatusOK})
 		hop.send(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: cl})
 	}()
+	// THE RE-CONFIRMATION, and it is a DIFFERENT document from pr: pr covers
+	// the certificate of the session, this one covers the bytes of the task
+	// (purpose confirm/v1). Different key id and different signature on
+	// purpose, so a sender that hands one over where the other belongs fails
+	// this case instead of passing it.
+	conf := &proof.Proof{Kind: proof.KindPassword,
+		KeyID: enc.B64.EncodeToString(bytes.Repeat([]byte{7}, sign.KeyIDSize)),
+		Sig:   bytes.Repeat([]byte{3}, 64)}
 	body, code := rl.CallAs(context.Background(), hop, core.AppStore, core.ServiceController,
-		core.ActDeactivate, nil, task, client, pr)
+		core.ActDeactivate, nil, task, client, pr, conf)
 	if code != "" {
 		t.Fatalf("code %q, want none", code)
 	}
@@ -67,6 +75,27 @@ func TestCallAsPutsTheUserOnTheWire(t *testing.T) {
 	}
 	if o.Task == nil || !bytes.Equal(o.Task.Sig, task.Sig) {
 		t.Fatalf("the signed task did not travel: %+v", o.Task)
+	}
+	// AND THE CONFIRMATION WITH IT. Until 18.10.2026 ownOpen never set it,
+	// and that one missing line is why nothing could be activated on a real
+	// installation: the controller runs task.Check itself (access.go:212,
+	// Confirm: open.Confirm), the list demands a confirmation for a root task
+	// (trust.NeedsConfirm), and without one the channel is refused with
+	// E_CONFIRM -- before anything runs, so no journal says a word. Measured
+	// on the real machine the same day: the confirmation the browser sent was
+	// VALID (task.VerifyConfirm answered nil over those very bytes) and never
+	// arrived.
+	if o.Confirm == nil {
+		t.Fatalf("the re-confirmation of the user did not travel")
+	}
+	if o.Confirm.KeyID != conf.KeyID || !bytes.Equal(o.Confirm.Sig, conf.Sig) {
+		t.Fatalf("another proof travelled as the confirmation: %+v, want key %s",
+			o.Confirm, conf.KeyID)
+	}
+	// Not the proof of the session, which is the one mix-up this seam invites:
+	// two arguments of one type, next to each other.
+	if o.Confirm.KeyID == pr.KeyID {
+		t.Fatalf("the proof of the session travelled as the confirmation")
 	}
 	// And the cross-check against the other way round: the same call through
 	// CallController carries none of the three, which is why it could not be
@@ -106,7 +135,7 @@ func TestCallAsPutsTheUserOnTheWire(t *testing.T) {
 func TestCallAsRefusesWhatIsNoCoreApp(t *testing.T) {
 	rl := newRelay()
 	hop := newHop(wire.MaxTunnelChannels)
-	_, code := rl.CallAs(context.Background(), hop, "vendor.app", "main", "run", nil, nil, nil, nil)
+	_, code := rl.CallAs(context.Background(), hop, "vendor.app", "main", "run", nil, nil, nil, nil, nil)
 	if code != wire.CodeInternal {
 		t.Fatalf("code %q, want %q", code, wire.CodeInternal)
 	}

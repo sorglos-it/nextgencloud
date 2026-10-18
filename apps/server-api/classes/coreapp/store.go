@@ -316,6 +316,14 @@ func carried(rq *Call) (appstore.Carried, error) {
 	if json.Unmarshal(rq.Live.Row.Proof, &pr) != nil || pr.Validate() != nil {
 		return appstore.Carried{}, fail(wire.CodeInternal)
 	}
+	// AND THE RE-CONFIRMATION, which is NOT this pr: pr covers the
+	// certificate of the session, Confirm covers the bytes of the task
+	// (purpose confirm/v1). The controller asks for the second one wherever
+	// the list demands a confirmation, and until 18.10.2026 nothing carried
+	// it past this line - so every root task of this service was refused
+	// there with E_CONFIRM, and no journal of either program said a word.
+	// Nil is right wherever the list demanded none: rights.Check has weighed
+	// that already, and the controller weighs it again.
 	return appstore.Carried{Task: rq.TaskEnv, Client: rq.Live.Row.Cert, Proof: &pr,
-		Node: rq.Task.Node, Live: rq.Live}, nil
+		Confirm: rq.Confirm, Node: rq.Task.Node, Live: rq.Live}, nil
 }

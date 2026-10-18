@@ -43,11 +43,14 @@ type Sender interface {
 	Node(node string) (tunnel.Hello, bool)
 	// Transfer opens a core action of flow transfer on node, writes head and
 	// file on it and returns the result.
+	// confirm is the user's re-confirmation of task, or nil where the list
+	// demands none: the controller checks it itself and refuses the channel
+	// without it (E_CONFIRM), so a sender that drops it can activate nothing.
 	Transfer(ctx context.Context, node, action string, params json.RawMessage, head core.Transfer,
-		file io.Reader, task *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code)
+		file io.Reader, task *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code)
 	// Call opens a core action of flow call on node and returns the result.
 	Call(ctx context.Context, node, action string, params json.RawMessage,
-		task *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code)
+		task *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code)
 }
 
 // ErrTooLarge reports more bytes than a bound allows: a package over
@@ -115,8 +118,14 @@ type Carried struct {
 	Task   *sign.Envelope // the signed root task, as the shell sent it
 	Client []byte         // client certificate payload, as the user's proof covers it
 	Proof  *proof.Proof   // the user's proof over Client
-	Node   string         // the controller the task names
-	Live   *login.Live    // the session it runs for; only its user is read, for the log
+	// Confirm is the user's re-confirmation OVER THE TASK (purpose
+	// confirm/v1), nil where the list demands none. It is a second thing
+	// entirely from Proof, which covers the certificate of the session: the
+	// controller asks for this one where trust.NeedsConfirm says so, and
+	// until 18.10.2026 nothing carried it there.
+	Confirm *proof.Proof
+	Node    string      // the controller the task names
+	Live    *login.Live // the session it runs for; only its user is read, for the log
 }
 
 // user is the name the log entry of this step carries, audit.UserSystem where
@@ -233,7 +242,7 @@ func (st *Stores) Activate(ctx context.Context, rq ActivateRequest) (wire.Code, 
 		return wire.CodeInternal, err
 	}
 	if _, code := st.Send.Transfer(ctx, rq.Node, core.ActActivate, params, head, file,
-		rq.Task, rq.Client, rq.Proof); code != "" {
+		rq.Task, rq.Client, rq.Proof, rq.Confirm); code != "" {
 		return code, nil
 	}
 	return st.keepActivation(ctx, rq, pkg, head)

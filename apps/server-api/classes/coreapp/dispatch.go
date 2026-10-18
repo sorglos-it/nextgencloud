@@ -51,6 +51,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -194,6 +195,12 @@ type Call struct {
 	// anything out of it, because what decides is Task, which task.Check
 	// verified.
 	TaskEnv *sign.Envelope
+	// Confirm is the user's re-confirmation over the task, exactly as the
+	// shell sent it, or nil where the list demanded none (trust.NeedsConfirm;
+	// rights.Check has already weighed it). A handler that passes the task on
+	// to a controller passes this with it: the controller asks for it again
+	// over the same bytes and refuses the channel without it (E_CONFIRM).
+	Confirm *proof.Proof
 	In      io.Reader // FlowIn: at most Action.MaxIn bytes
 	Out     io.Writer // FlowOut: the API writes the data itself
 	Admin   bool
@@ -462,7 +469,7 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	}
 	out := &bytes.Buffer{}
 	rq := &Call{S: d.S, Live: s.Live, Action: action, Params: params, Task: t, TaskEnv: o.Task,
-		In: in, Out: out, Admin: admin, Rights: granted}
+		Confirm: o.Confirm, In: in, Out: out, Admin: admin, Rights: granted}
 	body, err := h(ctx, rq)
 	// The input is asked before the handler's own error: a handler answers
 	// what IT made of a broken stream, and the code of the channel belongs to

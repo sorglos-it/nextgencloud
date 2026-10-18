@@ -380,11 +380,11 @@ func TestTheStoreIsWired(t *testing.T) {
 	if _, ok := srv.st.Send.Node("ctl-1"); ok {
 		t.Fatalf("a node with no tunnel was reported as reachable")
 	}
-	body, c := srv.st.Send.Call(ctx, "ctl-1", core.ActDeactivate, nil, nil, nil, nil)
+	body, c := srv.st.Send.Call(ctx, "ctl-1", core.ActDeactivate, nil, nil, nil, nil, nil)
 	if c != wire.CodeUnreachable || body != nil {
 		t.Fatalf("call to a node without a tunnel: got %q/%v, want E_UNREACHABLE/nil", c, body)
 	}
-	_, c = srv.st.Send.Transfer(ctx, "ctl-1", core.ActActivate, nil, core.Transfer{}, nil, nil, nil, nil)
+	_, c = srv.st.Send.Transfer(ctx, "ctl-1", core.ActActivate, nil, core.Transfer{}, nil, nil, nil, nil, nil)
 	if c != wire.CodeUnreachable {
 		t.Fatalf("transfer to a node without a tunnel: got %q, want E_UNREACHABLE", c)
 	}

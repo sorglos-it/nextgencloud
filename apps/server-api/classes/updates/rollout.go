@@ -281,7 +281,10 @@ func (u *Updates) stageAndInstall(ctx context.Context, node, part string, rel *s
 	if err != nil {
 		return err
 	}
-	if _, code := u.Send.Call(ctx, node, core.ActInstall, params, nil, nil, nil); code != "" {
+	// NO TASK, NO USER, NO CONFIRMATION: the rollout acts for the
+	// installation itself, and the two actions it uses stand in
+	// core.WithoutUser. A confirmation belongs to a person who was asked.
+	if _, code := u.Send.Call(ctx, node, core.ActInstall, params, nil, nil, nil, nil); code != "" {
 		return u.abort(ctx, part, rel.Version, node, string(code))
 	}
 	return u.awaitInstalled(ctx, node, part, rel.Version)
@@ -353,7 +356,7 @@ func (u *Updates) stage(ctx context.Context, node, part string, rel *store.Relea
 		return err
 	}
 	if _, code := u.Send.Transfer(ctx, node, core.ActStage, params, head, tmp,
-		nil, nil, nil); code != "" {
+		nil, nil, nil, nil); code != "" {
 		return u.abort(ctx, part, rel.Version, node, string(code))
 	}
 	return nil
