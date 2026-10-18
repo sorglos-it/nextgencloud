@@ -248,14 +248,27 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > *überspringt*, nichts beweist (die Lehre von E15): die vier Sicherheitsfälle sind
 > **einzeln** nachgefahren — `12 grün, 0 übersprungen` in 18,3 s.
 >
-> **Was dabei an der Messung selbst auffiel, und es ist ein eigener Befund:** die
-> 432 Übersprünge liegen fast alle **nicht** in `chromium` (dort 1 von 435), sondern in
-> `firefox` und `webkit`. Die Browser sind installiert (alle fünf unter
+> **Was dabei an der Messung selbst auffiel, und es ist ein eigener Befund.** Die
+> 432 Übersprünge liegen fast alle **nicht** in `chromium`. Je Browser nachgezählt, derselbe
+> Baum, 435 Fälle je Browser:
+>
+> | Browser | grün | übersprungen | Anteil übersprungen |
+> |---|---:|---:|---:|
+> | `chromium` | 433 | **1** | 0,2 % |
+> | `firefox` | 247 | **188** | **43 %** |
+> | `webkit` | 192 | **243** | **56 %** |
+>
+> Die Browser sind installiert (`chromium`, `firefox`, `webkit` liegen alle unter
 > `ms-playwright/`) — es sind **Übersprünge im Fall selbst**, aus der Fähigkeitsprüfung
-> (`browserFits()`). **Ein Drittel der Browsermatrix prüft also das meiste nicht**, und genau
-> dort saß der Firefox-Befund vom 17.10. (`95a9547`). Das ist kein Mangel dieser
-> Zusammenführung, aber es gehört in diese Liste; die genaue Verteilung je Browser ist beim
-> Schreiben dieser Zeile noch am Laufen.
+> (`browserFits()`). **Auf `webkit` prüft der Prüfsatz also mehr nicht als doch**, und genau
+> in dieser Ecke saß der Firefox-Befund vom 17.10. (`95a9547`: die Maske nahm das Passwort an
+> und antwortete mit dem Satz für ein falsches). Das ist kein Mangel dieser Zusammenführung,
+> aber es ist der Grund, warum „der Web-Prüfsatz ist grün" für `firefox` und `webkit` **viel
+> weniger heißt** als für `chromium`. Gehört als eigener Posten eingetragen.
+>
+> **Eine Zahl geht dabei um eins nicht auf, und das sei gesagt statt geglättet:** die drei
+> Einzelläufe geben 872 grün, der Lauf über alle drei Browser 873. Die Übersprünge stimmen
+> genau (1 + 188 + 243 = 432). Woher der eine Fall kommt, ist **nicht** nachgemessen.
 >
 > **Noch nicht geprüft:** dass die Zusammenführung an einer **laufenden** Anlage trägt. Grün
 > ist hier der Prüfsatz, nicht das Gerät — und genau diese vier Befunde sind am 17.10. **am
