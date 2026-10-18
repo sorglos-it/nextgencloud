@@ -123,6 +123,27 @@ type Deps struct {
 	// the tasks that have run (access.Request), and the versions of the trust
 	// list behind Chain.
 	State *state.Store
+	// TrustChanged is called once a version of the trust list was verified
+	// and kept (trust.go). nil: nothing is told.
+	//
+	// It is the one place that knows the list GREW, and on a server with the
+	// role web that is what Apache has to be told: apache.Writer.Sync is the
+	// only half that puts a NEW API node into the balancer, the trust file and
+	// web.json, while apache.Writer.Compare only renews the certificate of a
+	// node that already stands there ("A node whose key is not in the file at
+	// all is left to Sync, which owns the list").
+	//
+	// Measured on 17.10.2026 at a two-machine installation: a second API
+	// joined and was taken into the trust list (anchor seq 1 -> 2), and
+	// apache-apis.conf kept its ONE BalancerMember, api-trust.pem its one
+	// certificate and web.json its one address, with the controller running.
+	// Counted over the committed tree the same day: Sync had no caller outside
+	// its own test file.
+	//
+	// It must do nothing slow, for the reason link.Config.TunnelUp must not:
+	// it is called in the goroutine of the channel, and whoever is wired to it
+	// only releases the work (node.wireUp sends on a channel of one place).
+	TrustChanged func()
 	// Now is the clock of the checks, in seconds. nil: time.Now().Unix().
 	Now func() int64
 	// Log is where this package writes. nil: slog.Default(). Nothing a peer

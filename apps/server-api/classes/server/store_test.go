@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/updates"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 )
@@ -398,5 +400,106 @@ func TestTheHousekeepingRoundSaysTheCountOfCaughtErrors(t *testing.T) {
 	srv.minute(ctx)
 	if strings.Contains(said.String(), "panics=") {
 		t.Fatalf("the same caught error was said twice: %q", said.String())
+	}
+}
+
+// trustFlaky is a store whose trust rows can be made unreachable, so a case
+// can measure the minute round against a fault that comes, goes and comes
+// back with the SAME words. Only BlobGet of the trust rows is touched: that is
+// the one call State.Refresh makes to read a version.
+type trustFlaky struct {
+	dbapi.Store
+	broken atomic.Bool
+}
+
+// errTrustAway is the one fault trustFlaky makes, by value, so a case can tell
+// the second coming of the same fault from a different one.
+var errTrustAway = errors.New("the trust rows could not be reached")
+
+func (f *trustFlaky) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error) {
+	if f.broken.Load() && kind == dbapi.BlobTrust {
+		return dbapi.Blob{}, errTrustAway
+	}
+	return f.Store.BlobGet(ctx, kind, id)
+}
+
+// TestTheTrustLineIsSaidOnChangeAndNotEveryMinute nails the line down that was
+// measured on the small plant on 18.10.2026: ngc-api had been up 54 minutes
+// and had written "trust list could not be read" 54 times, all with the same
+// cause, "state: no trust list yet" -- the normal state of an installation
+// that nobody has paired yet.
+//
+// Two halves, and the second is the one that keeps the quiet honest:
+//
+//   - the same fault, round after round, is said ONCE. Otherwise the round
+//     makes 1440 lines a day about a state nobody can act on, and the lines
+//     that do mean something are in between them.
+//   - a fault that CHANGED, and the same fault after a round that worked, are
+//     said again. A database that locks, frees and locks again is two events,
+//     and a memory that only ever said "already told you" would hide the
+//     second one for the life of the process.
+func TestTheTrustLineIsSaidOnChangeAndNotEveryMinute(t *testing.T) {
+	db := &trustFlaky{Store: memstore.New()}
+	withStore(t, db)
+	withDirs(t)
+	srv, err := Build(ctx, newConfig(t), "9.9.9")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var said bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&said, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	// The fixture has to be the lie-free one: without a trust list the round
+	// must really fail here, or everything below measures a round that had
+	// nothing to say anyway.
+	if _, err := srv.State.Refresh(ctx); err == nil {
+		t.Fatal("the fixture already has a trust list -- this case would measure a silence it did not cause")
+	}
+
+	round := func() string {
+		said.Reset()
+		srv.minute(ctx)
+		return said.String()
+	}
+
+	first := round()
+	if !strings.Contains(first, "trust list could not be read") {
+		t.Fatalf("the first round said nothing about the trust list: %q", first)
+	}
+	if !strings.Contains(first, "no trust list yet") {
+		t.Fatalf("the first round did not name the cause: %q", first)
+	}
+	if line := round(); strings.Contains(line, "trust list could not be read") {
+		t.Fatalf("the same cause was said a second time -- a line a minute for a state that does not change: %q", line)
+	}
+
+	// A DIFFERENT cause is a new thing to say.
+	db.broken.Store(true)
+	changed := round()
+	if !strings.Contains(changed, errTrustAway.Error()) {
+		t.Fatalf("a changed cause was swallowed: %q", changed)
+	}
+	if line := round(); strings.Contains(line, "trust list could not be read") {
+		t.Fatalf("the changed cause was said twice as well: %q", line)
+	}
+
+	// It recovers: a round that reads the list says nothing, and it forgets.
+	signedIn(t, db.Store)
+	db.broken.Store(false)
+	if line := round(); strings.Contains(line, "trust list could not be read") {
+		t.Fatalf("the round that READ the list still complained: %q", line)
+	}
+	if _, err := srv.State.Refresh(ctx); err != nil {
+		t.Fatalf("the recovery did not take: %v", err)
+	}
+
+	// And the same cause, after that good round, is said AGAIN. This is the
+	// half a plain "said it once" flag cannot do.
+	db.broken.Store(true)
+	again := round()
+	if !strings.Contains(again, errTrustAway.Error()) {
+		t.Fatalf("the fault came back after a good round and was not said again: %q", again)
 	}
 }

@@ -57,6 +57,15 @@ measured it. Anything not measured is listed as not measured.
 interfaces, so a change there changes all of them at once; everything that would need such a
 change is collected in `docs/vertraege-v1.2.md` for one cut instead of being changed quietly.
 
+## Checking
+
+`tools/check.sh` does format, vet, the Go tests and the build for linux/amd64 and arm64. The
+browser tests of the web interface are not part of it and run on their own:
+
+```
+cd apps/web/tests && npm install && npm run install-browsers && npm test
+```
+
 ## Reading along
 
 - [`docs/vertraege-v1.2.md`](docs/vertraege-v1.2.md) is the decision book: 61 points, each saying

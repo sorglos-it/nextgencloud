@@ -3,6 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"os"
@@ -14,11 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/apache"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -283,7 +286,97 @@ func TestEveryTunnelThatCameOffReleasesTheCertificateCheck(t *testing.T) {
 func TestWithoutTheRoleWebNothingIsChecked(t *testing.T) {
 	s := newRunStand(t)
 	s.cfg.Compare = nil
+	s.cfg.Sync = nil
 	cancel, done := s.start()
+	cancel()
+	if err := answerOf(t, done); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+// A version of the trust list that was kept brings Apache in line with it, and
+// that is the half nothing ran before: apache.Writer.Sync is the only one that
+// puts a NEW API server into the balancer, the trust file and web.json, and it
+// had no caller outside its own test file. Measured at a two-machine
+// installation on 17.10.2026: a second API was taken into the list (anchor
+// seq 1 -> 2) and apache-apis.conf kept its one BalancerMember.
+//
+// The certificate half does NOT run for it: the certificate of a node Sync
+// just wrote is the one it fetched to check that node's pin.
+func TestAKeptTrustListBringsApacheInLineWithIt(t *testing.T) {
+	s := newRunStand(t)
+	listed := make(chan struct{}, 1)
+	s.cfg.Listed = listed
+	var syncs, compares atomic.Int64
+	s.cfg.Sync = func(context.Context) error {
+		syncs.Add(1)
+		return nil
+	}
+	s.cfg.Compare = func(context.Context) error {
+		compares.Add(1)
+		return nil
+	}
+	cancel, done := s.start()
+	listed <- struct{}{}
+	until(t, func() bool { return syncs.Load() >= 1 })
+	if n := compares.Load(); n != 0 {
+		t.Fatalf("a kept trust list also ran the certificate check %d times", n)
+	}
+	cancel()
+	if err := answerOf(t, done); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+// And the other way round: a tunnel that came off runs the certificate check
+// and NOT the list. The two signals are not one.
+func TestATunnelThatCameOffDoesNotRewriteTheBalancer(t *testing.T) {
+	s := newRunStand(t)
+	var syncs, compares atomic.Int64
+	s.cfg.Sync = func(context.Context) error {
+		syncs.Add(1)
+		return nil
+	}
+	s.cfg.Compare = func(context.Context) error {
+		compares.Add(1)
+		return nil
+	}
+	s.api("wss://one.example:8443/tunnel")
+	s.keep = func(ctx context.Context, cfg link.Config) {
+		cfg.TunnelUp(nil)
+		<-ctx.Done()
+	}
+	cancel, done := s.start()
+	until(t, func() bool { return compares.Load() >= 1 })
+	if n := syncs.Load(); n != 0 {
+		t.Fatalf("a tunnel that came off rewrote the balancer %d times", n)
+	}
+	cancel()
+	if err := answerOf(t, done); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+// A Sync that failed is retried, and the daily beat is what retries it: Listed
+// fires once per version, so a version that arrived while an API was away
+// would otherwise leave the balancer behind the list until the next admin
+// changed something. The beat runs both halves.
+func TestTheDailyBeatRunsTheListAndTheCertificates(t *testing.T) {
+	s := newRunStand(t)
+	s.cfg.Web = 10 * time.Millisecond
+	var syncs, compares atomic.Int64
+	s.cfg.Sync = func(context.Context) error {
+		syncs.Add(1)
+		return errors.New("an API was not reachable")
+	}
+	s.cfg.Compare = func(context.Context) error {
+		compares.Add(1)
+		return nil
+	}
+	cancel, done := s.start()
+	// Twice, so it is the BEAT and not one run: a Sync that answered with an
+	// error is asked again.
+	until(t, func() bool { return syncs.Load() >= 2 && compares.Load() >= 1 })
 	cancel()
 	if err := answerOf(t, done); err != nil {
 		t.Fatalf("Run = %v", err)
@@ -511,9 +604,18 @@ func TestWireUpBuildsEveryHalfOutOfTheConfiguration(t *testing.T) {
 	if c.Restore == nil {
 		t.Fatal("nothing brings the apps of this server back up")
 	}
-	// No role web: nothing checks the certificates of the APIs.
+	// No role web: nothing checks the certificates of the APIs and nothing
+	// writes Apache's files.
 	if c.Compare != nil {
 		t.Fatal("a server without the role web checks certificates")
+	}
+	if c.Sync != nil {
+		t.Fatal("a server without the role web writes Apache's files")
+	}
+	// But the signal is wired whatever the roles are: it is the serve side
+	// that sends on it, and that side knows nothing of roles.
+	if c.Listed == nil {
+		t.Fatal("nothing can tell this controller that the trust list grew")
 	}
 	// The hello of this controller is the one the Reporter builds, with the
 	// node and the roles of the configuration in it.
@@ -526,8 +628,16 @@ func TestWireUpBuildsEveryHalfOutOfTheConfiguration(t *testing.T) {
 	// cases of serve hold.
 	web := &config.Controller{Node: cfg.Node, NoiseKey: cfg.NoiseKey, DBKey: cfg.DBKey,
 		Roles: []string{tunnel.RoleWeb}}
-	if wireUp("1.2.3", web, key, st, chain.New(st, trust.Anchor{Seq: 1})).Compare == nil {
+	w := wireUp("1.2.3", web, key, st, chain.New(st, trust.Anchor{Seq: 1}))
+	if w.Compare == nil {
 		t.Fatal("a server with the role web checks no certificates")
+	}
+	// Both halves, because neither does the other's work: Compare renews the
+	// certificate of a node already in the trust file, Sync is the only one
+	// that puts a server the list has newly got into the balancer, the trust
+	// file and web.json.
+	if w.Sync == nil {
+		t.Fatal("a server with the role web never writes the balancer out of the trust list")
 	}
 }
 
@@ -696,5 +806,145 @@ func TestWireUpLetsTheListOutrankTheFile(t *testing.T) {
 	cb := wireUp("1.2.3", bare, bareKey, st, chain.New(st, trust.Anchor{Seq: 1}))
 	if got := cb.APIs[0].Hello().Node; got != "ctl-alt" {
 		t.Fatalf("without a list the hello names %q, want %q out of the file", got, "ctl-alt")
+	}
+}
+
+// webSync is the half that owns the LIST, and this measures it at the files:
+// a trust list with two API nodes gives a balancer with two members, a trust
+// file with two certificates and a web.json with two addresses.
+//
+// It is the fix of what was measured at a two-machine installation on
+// 17.10.2026: a second API joined, an admin took it into the trust list (the
+// anchor went from seq 1 to 2) and apache-apis.conf kept its ONE
+// BalancerMember, api-trust.pem its one certificate and web.json its one
+// address - because nothing in this program ever called apache.Writer.Sync.
+func TestTheBalancerGetsEveryAPIOfTheTrustList(t *testing.T) {
+	dir := t.TempDir()
+	balancer := filepath.Join(dir, "apache-apis.conf")
+	trustFile := filepath.Join(dir, "api-trust.pem")
+	webConfig := filepath.Join(dir, "web.json")
+	admin := trusttest.NewSigner(1)
+	l := trusttest.Genesis(admin)
+	// The second API, as one stands in the list after a join: own keys, own
+	// address, own TLS pin. Sorted by ID, which Validate wants.
+	dh, sign := trusttest.NodeKeys(0xB2)
+	cert2, pin2 := trusttest.APITLS(0xE2, "api-2.test")
+	second := trust.Node{ID: "api-2", Kind: trust.NodeAPI, Name: "api-2",
+		Noise: enc.Bytes(dh.Public), Sign: enc.Bytes(sign.Public().(ed25519.PublicKey)),
+		URL: "wss://api-2.test:7443/tunnel", TLS: enc.Bytes(pin2)}
+	if !trust.ValidAPINode(second) {
+		t.Fatal("the second API node of this case is no valid API node")
+	}
+	l.Nodes = append(l.Nodes, second)
+	slices.SortFunc(l.Nodes, func(a, b trust.Node) int { return strings.Compare(a.ID, b.ID) })
+	if err := l.Validate(); err != nil {
+		t.Fatalf("a list nobody could have signed proves nothing: %v", err)
+	}
+	cert1, _ := trusttest.APITLS(0xE1, "api-1.test")
+	certs := map[string][]byte{
+		"wss://api-1.test:7443/tunnel": cert1.Certificate[0],
+		"wss://api-2.test:7443/tunnel": cert2.Certificate[0],
+	}
+	var tests, reloads int
+	w := apache.New(apache.Options{
+		WebConfig: webConfig, TrustFile: trustFile, BalancerFile: balancer,
+		Fetch: func(_ context.Context, n trust.Node) ([]byte, error) {
+			der, ok := certs[n.URL]
+			if !ok {
+				return nil, errors.New("no server at this address")
+			}
+			return der, nil
+		},
+		ConfigTest: func(context.Context) error { tests++; return nil },
+		Reload:     func(context.Context) error { reloads++; return nil },
+	})
+	st := newState(t)
+	v1 := admin.Sign(t, l)
+	if err := st.PutVersion(context.Background(), v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	k := chain.New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := k.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sync := webSync(w, k)
+	if err := sync(context.Background()); err != nil {
+		t.Fatalf("webSync = %v", err)
+	}
+	conf, err := os.ReadFile(balancer)
+	if err != nil {
+		t.Fatalf("no balancer was written: %v", err)
+	}
+	if n := strings.Count(string(conf), "BalancerMember"); n != 2 {
+		t.Errorf("the balancer names %d servers, want 2:\n%s", n, conf)
+	}
+	for _, host := range []string{"https://api-1.test:7443", "https://api-2.test:7443"} {
+		if !strings.Contains(string(conf), host) {
+			t.Errorf("the balancer does not name %s:\n%s", host, conf)
+		}
+	}
+	pem, err := os.ReadFile(trustFile)
+	if err != nil {
+		t.Fatalf("no trust file was written: %v", err)
+	}
+	if n := strings.Count(string(pem), "BEGIN CERTIFICATE"); n != 2 {
+		t.Errorf("the trust file holds %d certificates, want 2", n)
+	}
+	web, err := os.ReadFile(webConfig)
+	if err != nil {
+		t.Fatalf("web.json was not written: %v", err)
+	}
+	if n := strings.Count(string(web), ":7443"); n != 2 {
+		t.Errorf("web.json names %d addresses, want 2:\n%s", n, web)
+	}
+	if tests != 1 || reloads != 1 {
+		t.Errorf("%d config tests and %d reloads, want 1 and 1", tests, reloads)
+	}
+	// A second run writes nothing: the files already say what the list says,
+	// so the daily beat costs no reload.
+	if err := sync(context.Background()); err != nil {
+		t.Fatalf("the second webSync = %v", err)
+	}
+	if reloads != 1 {
+		t.Errorf("a second run reloaded Apache again (%d reloads)", reloads)
+	}
+}
+
+// A version that names no API server at all is not written: a balancer with no
+// member makes Apache answer every /api/ with 503, and what it has keeps
+// working instead.
+func TestAListWithoutAnAPIDoesNotEmptyTheBalancer(t *testing.T) {
+	dir := t.TempDir()
+	balancer := filepath.Join(dir, "apache-apis.conf")
+	if err := os.WriteFile(balancer, []byte("BalancerMember \"https://api-1.test:7443\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	admin := trusttest.NewSigner(1)
+	l := trusttest.Genesis(admin)
+	l.Nodes = slices.DeleteFunc(l.Nodes, func(n trust.Node) bool { return n.Kind == trust.NodeAPI })
+	st := newState(t)
+	v1 := admin.Sign(t, l)
+	if err := st.PutVersion(context.Background(), v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	k := chain.New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := k.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w := apache.New(apache.Options{
+		WebConfig: filepath.Join(dir, "web.json"), TrustFile: filepath.Join(dir, "api-trust.pem"),
+		BalancerFile: balancer,
+		Fetch: func(context.Context, trust.Node) ([]byte, error) {
+			return nil, errors.New("nothing should be fetched")
+		},
+		ConfigTest: func(context.Context) error { return errors.New("nothing should be tested") },
+		Reload:     func(context.Context) error { return errors.New("nothing should be reloaded") },
+	})
+	if err := webSync(w, k)(context.Background()); err == nil {
+		t.Fatal("a list without an API server was written without a word")
+	}
+	b, err := os.ReadFile(balancer)
+	if err != nil || !strings.Contains(string(b), "api-1.test") {
+		t.Fatalf("the balancer that was there is gone: %q (%v)", b, err)
 	}
 }

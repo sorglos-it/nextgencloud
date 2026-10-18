@@ -46,6 +46,28 @@ Zur MPL-2.0 des MariaDB-Treibers: Keine seiner Dateien trägt den Vermerk „Inc
 Secondary Licenses“, deshalb darf er nach Abschnitt 3.3 zusammen mit AGPL-3.0-Code verbreitet
 werden.
 
+## JavaScript, von Hand kopiert
+
+Kein Paketmanager, kein Bauschritt: Die Dateien liegen im Repo und werden von uns gepflegt.
+Kopiert wird nur der Importschluss dessen, was wirklich benutzt wird.
+
+| Ordner | Modul | Version | Lizenz | Wofür | Übernommen |
+|---|---|---|---|---|---|
+| `apps/web/public/assets/vendor/noble-hashes/` | @noble/hashes | 2.4.0 | MIT | Argon2id für den Passwortschlüssel (`proof.deriveSeed`); die Web Crypto API des Browsers hat kein Argon2id | 2026-09-24 |
+
+Quelle ist die Registry `registry.npmjs.org`, geprüft gegen die dort veröffentlichte Prüfsumme
+des Archivs, **bevor** eine Datei ausgepackt wurde:
+
+    @noble/hashes 2.4.0, dist.integrity
+    sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==
+
+Welche sieben Dateien kopiert sind, warum es 2.4.0 ist und nicht 1.8.0, die SHA-256 jeder
+einzelnen und wie man dieselbe Prüfung wiederholt: `apps/web/public/assets/vendor/noble-hashes/SOURCE.md`.
+Wer aktualisiert, macht dieselbe Prüfung und trägt die neuen Prüfsummen dort ein.
+
+Am 18.10.2026 gegen die Registry geprüft: **2.4.0 ist dort die neueste Fassung** (veröffentlicht
+27.08.2026), also ist hier nichts nachzuziehen.
+
 ## Mitgebracht
 
 Diese Module haben wir nicht ausgesucht; die oberen brauchen sie.
@@ -63,20 +85,6 @@ Eigene Änderungen an übernommenem Code: keine. **Gemessen am 18.10.2026**, nic
 einer Kopie `vendor/` gelöscht und mit `go mod vendor` neu geholt (das prüft gegen `go.sum` und die
 Prüfsummen-Datenbank), dann `diff -rq` gegen das Repo – **0 Unterschiede**. Dazu `go mod verify`:
 `all modules verified`.
-
-## JavaScript, von Hand kopiert
-
-Nicht über einen Paketmanager: die Dateien liegen im Repo und werden von uns gepflegt. NGC
-installiert zum Bauen und Ausliefern **nichts** mit npm.
-
-| Stück | Version | Lizenz | Wofür | Übernommen |
-|---|---|---|---|---|
-| @noble/hashes | 2.4.0 | MIT | Argon2id für den Passwortschlüssel im Browser (die Web Crypto API kennt kein Argon2id) und ein SHA-256 mit `update`/`digest` fürs Hochladen | 2026-09-24, `sha2.js` am 2026-09-25 |
-
-Liegt unter `apps/web/public/assets/vendor/noble-hashes/` (Zweig `web`, auf `main` gibt es
-`apps/web` noch nicht). Die vollständige Herkunft steht dort in `SOURCE.md`: Quelle, Registry-Hash,
-SHA-256 je Datei, warum 2.4.0 und nicht 1.8.0, und der Weg, es nachzuprüfen. Am 18.10.2026 geprüft:
-2.4.0 ist die **neueste** Fassung auf npm (veröffentlicht 27.08.2026).
 
 ## Nur zum Testen, und nicht im Repo
 

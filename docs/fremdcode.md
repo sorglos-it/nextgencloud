@@ -108,7 +108,7 @@ erwartete Liste prüfen, committen, **dann** prüfen lassen.
 
 | Stück | Fassung | Liegt | Herkunft belegt? |
 |---|---|---|---|
-| `@noble/hashes` (JS, Argon2id im Browser) | 2.4.0 | `apps/web/public/assets/vendor/noble-hashes/` – **nur auf dem Zweig `web`/`web-alles`**, nicht auf `main` | **ja, vorbildlich**: `SOURCE.md` nennt Quelle, Datum, Grund, SHA-256 je Datei, den Registry-Hash und den Weg, es nachzuprüfen |
+| `@noble/hashes` (JS, Argon2id im Browser) | 2.4.0 | `apps/web/public/assets/vendor/noble-hashes/` – zur Messung nur auf dem Zweig `web`, **seit dem 18.10.2026 auch auf `main`** (Punkt 63); 114 KB in 9 Dateien | **ja, vorbildlich**: `SOURCE.md` nennt Quelle, Datum, Grund, SHA-256 je Datei, den Registry-Hash und den Weg, es nachzuprüfen |
 | `debian:13-slim` (Abbild der Terminal-App) | Digest `sha256:a29215f6…` | [apps/server-controller/templates/terminal/Containerfile:30](apps/server-controller/templates/terminal/Containerfile) | ja, festgenagelt; `tools/pin-base.sh` ist der einzige Weg, die Zeile zu ändern |
 | `@playwright/test` (nur Tests) | 1.55.1 | `apps/web/tests/package.json` – **per npm installiert, nicht im Repo** | nein → siehe Punkt 6 |
 
@@ -314,6 +314,13 @@ Orten, nicht mit Suchern:
 
 **Ergebnis: ein kopiertes Stück ohne Herkunftsangabe gibt es nicht.** Die eine Handkopie im
 Projekt ist besser dokumentiert als die Module.
+
+Nachtrag vom 18.10.2026, nach dem Zusammenführen mit `main`: die Oberfläche ist inzwischen auf
+`main` (Punkt 63), also liegt die Handkopie jetzt dort. **Nachgezählt im zusammengeführten Baum,
+nicht angenommen:** es ist weiter genau eine – `noble-hashes`, 114 KB in 9 Dateien, mit
+`SOURCE.md`. Dazu `apps/web/package.json` (nur `"type": "module"`, keine Abhängigkeit) und
+`apps/web/tests/package.json` mit Playwright. Kein weiterer `vendor/`-Ordner, keine `.min.js`,
+keine neue Lizenzdatei.
 
 Drei kleinere Funde, keiner davon ein stiller Fremdcode-Einbau:
 

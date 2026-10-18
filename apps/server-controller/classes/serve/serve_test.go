@@ -874,6 +874,76 @@ func TestAnAnchorCopiedFromElsewhereBlamesEverySender(t *testing.T) {
 	}
 }
 
+// A version this server kept tells whoever asked to be told, and a version it
+// refused tells nobody. On a server with the role web that signal is the only
+// thing that brings Apache in line with the list: apache.Writer.Sync is the
+// one half that puts a NEW API node into the balancer, the trust file and
+// web.json, and it had no caller outside its own test file. Measured at a
+// two-machine installation on 17.10.2026 — a second API taken into the list,
+// anchor seq 1 -> 2, and apache-apis.conf kept its one BalancerMember.
+//
+// The refused half matters as much: a chain that does not verify must not make
+// this controller rewrite Apache's files out of the list it still holds.
+func TestAKeptVersionIsToldAndARefusedOneIsNot(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	var told atomic.Int64
+	w.rebuild(func(d *Deps) { d.TrustChanged = func() { told.Add(1) } })
+	ended := w.tunnel(t, func(a *apiSide) {
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, v2))
+		a.eof(1)
+		if _, cl := a.result(1); cl.Status != wire.StatusOK {
+			t.Errorf("the channel ended with %+v, want status ok", cl)
+		}
+		a.shut(1)
+		// The same version again: it no longer follows the one now held, so
+		// the verification refuses it and nothing was kept.
+		a.open(2, trustOpen(t))
+		a.data(2, chainOf(t, v2))
+		a.eof(2)
+		wantCode(t, a.closed(2), wire.CodeVerify)
+		a.shut(2)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if n := told.Load(); n != 1 {
+		t.Errorf("the change was told %d times, want 1: one version was kept and one refused", n)
+	}
+}
+
+// A controller built without that seam answers the channel exactly as before:
+// whether anything wants to be told is this build's business and not the
+// API's. nil is what a server with no role web is wired with.
+func TestAControllerThatTellsNobodyStillKeepsTheList(t *testing.T) {
+	w := newWorld(t)
+	v2 := w.next(t)
+	w.rebuild(func(d *Deps) { d.TrustChanged = nil })
+	ended := w.tunnel(t, func(a *apiSide) {
+		a.open(1, trustOpen(t))
+		a.data(1, chainOf(t, v2))
+		a.eof(1)
+		out, cl := a.result(1)
+		if cl.Status != wire.StatusOK || cl.Code != "" {
+			t.Errorf("the channel ended with %+v, want status ok", cl)
+		}
+		var got core.TrustResult
+		if err := json.Unmarshal(out, &got); err != nil || got.Seq != 2 {
+			t.Errorf("the controller answered %q (%v), want seq 2", out, err)
+		}
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if seq := w.keep.TrustSeq(); seq != 2 {
+		t.Errorf("the keeper holds version %d, want the one it just verified", seq)
+	}
+}
+
 // A trust list this server cannot keep is a local fault and worth a line — but
 // only one. How many channels meet it is the API's to choose, and a line for
 // each would let a peer fill this server's log. A keeper that never read its

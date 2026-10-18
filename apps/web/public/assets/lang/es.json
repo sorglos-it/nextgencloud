@@ -1,0 +1,19 @@
+{
+  "err.unreachable": "Servicio no disponible. Vuelva a intentarlo más tarde.",
+  "err.busy": "El servicio está ocupado en este momento. Vuelva a intentarlo en {seconds} segundos.",
+  "login.failed": "No se pudo iniciar sesión.",
+  "login.nopasswordkeys": "Este navegador no puede iniciar sesión con contraseña. Inicia sesión con una clave de acceso.",
+  "login.locked": "Demasiados intentos fallidos. Vuelva a intentarlo más tarde.",
+  "login.locked.left": "Demasiados intentos fallidos. Quedan {seconds} segundos.",
+  "login.totp.ask": "Introduzca el código de su aplicación de autenticación.",
+  "setup.code.incomplete": "El código de un solo uso está incompleto.",
+  "setup.code.nomatch": "El código de un solo uso no corresponde a esta instalación. Compruebe el código y vuelva a intentarlo.",
+  "setup.silent": "La instalación no responde en este momento. El código de un solo uso sigue siendo válido. Vuelva a intentarlo en un momento.",
+  "setup.refused": "La instalación rechazó la configuración. Vuelva a instalar NGC y use el nuevo código.",
+  "setup.already": "Esta instalación ya está configurada.",
+  "setup.broken": "La configuración no funcionó. Vuelva a cargar la página y inténtelo de nuevo.",
+  "setup.name.bad": "Un nombre de usuario solo puede contener minúsculas, dígitos y . _ - y debe empezar por una letra o un dígito.",
+  "setup.password.missing": "Elija una contraseña.",
+  "setup.password.different": "Las dos contraseñas no son iguales.",
+  "setup.signin": "NGC está configurado. Inicie sesión ahora."
+}
