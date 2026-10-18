@@ -168,6 +168,36 @@ final class Lang
         return $text;
     }
 
+    // page is the block templates/desktop.php writes into the document: the
+    // chosen language and English, which is what public/assets/js/lang.js
+    // reads instead of fetching anything. Two tables and not one, because the
+    // rule is that a key the chosen language has not got comes out of English.
+    //
+    // It goes in as JSON inside <script type="application/json">, which the
+    // browser does not execute - so the page's "script-src 'self'" stays as
+    // tight as it was and nothing was loosened for this.
+    public static function page(): string
+    {
+        $tag = self::tag();
+        $payload = [
+            'tag' => $tag,
+            'main' => self::read($tag) ?? new \stdClass(),
+            'base' => $tag === self::FALLBACK ? new \stdClass() : (self::read(self::FALLBACK) ?? new \stdClass()),
+        ];
+        try {
+            $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (\Throwable) {
+            // No tables, no block. lang.js then says the one sentence it can
+            // say without them, which is better than a page that does not come
+            // up at all.
+            return '';
+        }
+        // The one sequence that could end the script element early. Escaping
+        // it keeps the text a text however a translation is worded; no </ can
+        // reach the parser.
+        return str_replace('<', '\u003C', $json);
+    }
+
     // reset throws away what was read and chosen. Only the tests call it:
     // one process answers one request in operation, and there the cache is
     // what keeps a page from reading the same file five times.

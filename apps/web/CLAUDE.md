@@ -162,17 +162,35 @@ aus `apps/web/lang/<sprache>.json` – fünf Dateien, `de`, `en`, `fr`, `it`, `e
 mit genau denselben Schlüsseln.
 
 - **Eine neue Sprache ist eine Datei mehr und sonst nichts.** Kein Verzeichnis
-  der Sprachen im Code: `classes/Lang.php` liest den Ordner und beantwortet
-  damit `GET /lang/index.json`; `public/assets/js/lang.js` fragt diese Liste und
-  vergleicht sie mit dem, was der Browser sagt (`navigator.languages`, die
-  genaue Kennung vor der Sprache allein).
-- **Fehlt ein Schlüssel oder eine Sprache, kommt der englische Text.** Nie ein
-  leerer Platz und nie der nackte Schlüssel: `lang.js` lädt `en.json` immer mit.
+  der Sprachen im Code: `classes/Lang.php` liest den Ordner und waehlt gegen
+  `Accept-Language`. Dieselbe Liste beantwortet `GET /lang/index.json`, und
+  `GET /lang/<kennung>.json` gibt eine einzelne Datei heraus – fuer alles,
+  was nicht diese Seite ist.
+- **Die Tabellen stehen in der Seite, nicht im Netz.** `templates/desktop.php`
+  schreibt die gewaehlte Sprache und Englisch als JSON in
+  `<script type="application/json" id="ngc-lang">` im Kopf;
+  `public/assets/js/lang.js` liest sie von dort – ohne `await`, damit `t()`
+  ueberall ein gewoehnlicher Aufruf ist. Warum nicht mit `await` geholt: ein
+  Modul mit `top-level await` gibt WebKit nicht mehr an ein `import()` aus einer
+  eingespielten Auswertung heraus, und das hat 19 vorher gruene Faelle von
+  `tests/shell/users.spec.js` gekostet (gemessen; Begruendung steht in
+  `lang.js`).
+- **Fehlt ein Schlüssel oder eine Sprache, kommt der englische Text.** Nie
+  ein leerer Platz und nie der nackte Schlüssel: die Seite trägt
+  Englisch immer mit.
 - **Platzhalter statt halber Sätze.** `{name}`, `{seconds}`, `{role}` – ein Satz
   ist ein Schlüssel, damit andere Sprachen ihre eigene Satzstellung haben.
 - **PHP holt seine eigenen Seiten aus demselben Ordner** (`Lang::t`), weil die
   Fehlerseiten vor jedem JavaScript ausgeliefert werden. Der Ordner liegt
   **nicht** unter `public/`; nur eine geprüfte Kennung wird je ein Dateiname.
+- **Die Sprache wählt PHP, gemessen wird sie über HTTP.** Auf dem
+  WebKit von Playwright lässt sich `Accept-Language` von hier aus nicht
+  setzen – gemessen mit einer Sonde über alle drei Maschinen: ein
+  Kontext mit `locale: "is-IS"` **und** gesetztem Kopf bekommt auf diesem
+  Rechner trotzdem eine deutsche Seite, Chromium und Firefox eine englische.
+  Darum prüfen die Fälle zur Sprachwahl die Antwort des Servers
+  direkt, und die Browser-Fälle prüfen, dass die Seite zeigt, was in
+  ihrem Block steht.
 - Geprüft wird das in `tests/lang/`: dieselben Schlüssel in allen fünf Dateien,
   dieselben Platzhalter, kein Schlüssel ohne Text, kein Text ohne Schlüssel –
   und ein nackter Schlüssel am Schirm ist ein Fehler.
