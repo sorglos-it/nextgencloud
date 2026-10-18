@@ -175,8 +175,18 @@ jobs:
   # shards times about 23 targets times the default 5 s is roughly 2-4 minutes of
   # wall clock per shard. -fuzzminimizetime 0 keeps a found input from eating 60
   # seconds of the budget on minimizing.
+  #
+  # COST, because that decides whether a run gets read or switched off: measured
+  # 18.10.2026 on four cores with a cold build cache, which is what a runner is.
+  # check.sh 148 s, the controller cases 90 s, -race 383 s, one fuzz shard 231 s.
+  # With four shards on every push that is about 30 billed minutes per push at
+  # roughly 8 minutes of wall clock. So the fuzz job runs on the DEFAULT BRANCH
+  # and by hand, not on every push of every branch: that halves the bill and the
+  # seed corpus of every target still runs as ordinary cases in the check job
+  # above, on every push. Drop the "if:" line to fuzz on every push.
   fuzz:
     name: fuzz (fallback, shard ${{ matrix.shard }}/4)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
