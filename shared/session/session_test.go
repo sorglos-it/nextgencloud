@@ -1641,3 +1641,81 @@ func FuzzParseTrustChain(f *testing.F) {
 		_, _ = ParseTrustHint(b)
 	})
 }
+
+// TestChallengeKeyLabel names the value of ChallengeKeyLabel and holds the
+// made-up answer's HMAC apart from the two setup MACs of this package. It is
+// the companion of TestSetupMACs, which does the same for those two.
+//
+// WHY, ALTHOUGH A MUTANT THAT CHANGES THE LABEL ALREADY DIES TODAY. Measured
+// on 18.10.2026 against the untouched package: five mutants of this label --
+// another version, the label dropped from the derivation, the zero byte
+// dropped, label and name swapped, and the label set to "ngc/setup/v1" --
+// every one of them died. But every one died at TestVectors ALONE, the golden
+// file, and that kill is erased by one command: the failure says so itself,
+// "if intended, run go test -update and review the diff". Somebody who
+// changes this label is therefore invited to rewrite the vector, and with the
+// vector rewritten the suite is green and the domain separation is gone. No
+// case said anything about the label itself.
+//
+// So this case is not a second copy of the golden. The golden pins the BYTES
+// the derivation produces; this one pins the VALUE and the one property the
+// golden cannot express -- that the label keeps this HMAC in a domain of its
+// own. Punkt 52 of docs/vertraege-v1.2.md rests on it: the login must not
+// reveal whether a user exists, and the made-up answer for an unknown name is
+// what hides it.
+func TestChallengeKeyLabel(t *testing.T) {
+	if ChallengeKeyLabel != "ngc/login-unknown/v1" {
+		t.Errorf("the label is %q", ChallengeKeyLabel)
+	}
+	// The construction of makeUpChallenge, written out: the label, a zero
+	// byte and the name, keyed with the challenge key.
+	seed := func(key, label, name string) []byte {
+		m := hmac.New(sha256.New, []byte(key))
+		m.Write([]byte(label))
+		m.Write([]byte{0})
+		m.Write([]byte(name))
+		return m.Sum(nil)
+	}
+	// The key is the setup code here for one reason only: OfferMAC and
+	// SetupMAC key themselves with the canonical code, so with this value all
+	// three MACs below use the SAME key over the SAME bytes, and the label is
+	// the only thing that differs. Comparing MACs under different keys would
+	// prove nothing.
+	const name = "nobody"
+	own := seed(testSetupCode, ChallengeKeyLabel, name)
+	if len(own) != sha256.Size {
+		t.Fatalf("the seed is %d bytes", len(own))
+	}
+	// The ground set: the construction above has to reproduce a MAC this
+	// package really makes, or the comparisons below would hold two things
+	// that were never alike in the first place.
+	if !bytes.Equal(seed(testSetupCode, "ngc/setup/v1", name), SetupMAC(testSetupCode, []byte(name))) {
+		t.Fatal("the construction of this case is not the one setupHMAC uses")
+	}
+	if bytes.Equal(own, SetupMAC(testSetupCode, []byte(name))) ||
+		bytes.Equal(own, OfferMAC(testSetupCode, []byte(name))) {
+		t.Error("the label does not keep the made-up answer apart from the setup MACs")
+	}
+
+	// AND THE CONSTRUCTION, pinned HERE and not in the vector file. The seed
+	// is HMAC over the label, a zero byte and the name, and the made-up user
+	// is the first 16 drawn bytes of it, so this one value moves if the label
+	// leaves the derivation, if the zero byte goes, or if label and name
+	// change places. Those three mutants die at TestVectors too -- but that
+	// kill is the golden file's, and "go test -update" rewrites it. This line
+	// is code: a deliberate change to the derivation has to be re-stated
+	// here, by hand, with a reason.
+	//
+	// The value was taken from a throwaway probe against the untouched
+	// package on 18.10.2026, not computed by this case: a case that works out
+	// its own expectation from the same algorithm would hold the algorithm
+	// against itself.
+	f := newFixture(t)
+	c, err := Challenge(f.list, loginInput(name, false, bytes.Repeat([]byte{0x11}, NonceSize), 1790000000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.User != "lMXV0kEXLQP8x8S_ggwFIw" {
+		t.Errorf("the made-up user of %q is %q", name, c.User)
+	}
+}
