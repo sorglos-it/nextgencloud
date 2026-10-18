@@ -3,7 +3,55 @@
 **Gemessen am 18.10.2026** im Arbeitsbaum `D:\claude\ngc-fremdcode` (lokale Platte D:), Stand
 `origin/main` = `6f1b90d`. Fehlende Dateien gegen HEAD: **0** (im selben Lauf geprüft).
 
-Diese Datei entscheidet nichts. Sie legt die Zahlen hin, damit Thomas entscheiden kann.
+Diese Datei hat nichts entschieden. Sie hat die Zahlen hingelegt - und Thomas hat am selben Tag
+entschieden. **Was daraufhin getan wurde, steht gleich hier; die Messung dahinter bleibt stehen,
+wie sie gemacht wurde.** Wer die Zahlen eines Abschnitts liest, liest also den Stand **vor** dem
+Aufräumen, außer der Abschnitt sagt etwas anderes.
+
+## Entschieden und getan am 18.10.2026
+
+Thomas: Passkey-Strang raus, die acht hinteren Fassungen anheben. Beides erledigt.
+
+| | vorher (`6f1b90d`) | nachher | |
+|---|---|---|---|
+| Fremdcode im Repo | 19 643 720 B | **16 616 004 B** | −3,0 MB |
+| Dateien | 976 | **692** | −284 |
+| Module | 21 | **12** | −9 |
+| Fassungen hinter `@latest` | 8 | **0** | alle 12 geprüft |
+| `govulncheck` sieht | 12 von 22 Modulen | **12 von 12** | der blinde Fleck ist zu |
+
+- **Raus:** `tools/modules.go` – die Datei, die `github.com/go-webauthn/webauthn` in `go.mod`
+  festhielt, obwohl kein Teil eine Zeile davon aufruft. Mit ihr gingen neun Mitgezogene und
+  `x/crypto/ocsp`. Ihr eigener Kommentar hatte das so vorgesehen: „the file disappears with the
+  last line".
+- **Angehoben:** `x/crypto` v0.58.0, `x/sys` v0.49.0, `go-sqlite3` v0.35.6, `go-sqlite3-wasm`
+  v6.3.35401, `boombuler/barcode` v1.1.0 (vorher eine Pseudofassung von 2019). Die drei anderen,
+  die hinten waren (`cbor`, `msgp`, `fwd`), gingen mit dem Passkey-Strang.
+- **Nachgemessen, nicht angenommen:** `tools/check.sh` druckte `check: ok`. `govulncheck` 0
+  erreichbare Lücken, und beide Befehle – mit und ohne `-tags modules` – zählen jetzt dieselben
+  12 Module. Die drei Programme bauen weiter bitgleich: `cli` `760f28eedc8e`, `server-api`
+  `47123055eaa6`, `server-controller` `f6f3922bd14b`, je zweimal gleich, `cli` auch mit leerem
+  `GOCACHE`.
+- **Zwei Nebenwirkungen, beide Buchhaltung:** `stretchr/testify` v1.12.1 steht jetzt als
+  `// indirect` in `go.mod` – es ist die Testabhängigkeit von `pquerna/otp/totp`, dieselbe Fassung
+  war vorher schon ausgewählt und schon in `go.sum`, nur über die webauthn-Kette getragen; davon
+  wird **keine Datei** nach `vendor/` geschrieben. Und zwei Dateien verließen
+  `vendor/golang.org/x/sys`, weil v0.49.0 sie nicht mehr hat. **Alle 295 verschwundenen Pfade
+  wurden gegen diese Liste geprüft, bevor etwas vorgemerkt wurde** – ein hohler Baum sieht genauso
+  aus wie eine gewollte Löschung.
+- **Nicht getan, weil es deine Entscheidung ist:** die Pflegeerklärung für `flynn/noise`, TOTP
+  selbst schreiben, und der Satz dazu, wer eine Kryptobibliothek anheben darf.
+
+Was hier **nicht** gemessen ist: die Programme sind nach dem Fassungswechsel **nicht gelaufen** –
+gebaut ist nicht gelaufen. Gelaufen sind die Testsätze (`check: ok`, darunter `shared/proof`,
+`apps/server-db/classes/sqlite` und `apps/server-api/classes/login`, also die drei Stellen, die die
+angehobenen Module wirklich aufrufen).
+
+Eine Lehre über den Prüfstand selbst, am Rande gemessen: der Hohl-Baum-Wächter in
+`tools/check.sh` kann eine **gewollte** Löschung nicht von einem hohlen Baum unterscheiden – er
+zählt `git diff --diff-filter=D HEAD`, und das zählt Vorgemerktes mit. Bei dieser Arbeit meldete er
+295 fehlende Dateien und hatte recht damit. Die Reihenfolge ist also: Pfade einzeln gegen die
+erwartete Liste prüfen, committen, **dann** prüfen lassen.
 
 ## Die Kurzfassung in fünf Sätzen
 
@@ -15,10 +63,12 @@ Diese Datei entscheidet nichts. Sie legt die Zahlen hin, damit Thomas entscheide
 - **Zwei Bauten derselben Quelle sind bitgleich** – gemessen, auch mit leerem Zwischenspeicher.
 - **Keine bekannte Lücke betrifft NGC.** Eine Meldung auf Modulebene (`x/crypto/openpgp`) trifft
   Code, der **nicht einmal auf der Platte liegt**.
-- Die echten Lücken sind **nicht im Code, sondern im Verfahren**: niemand und nichts merkt, wenn
-  draußen eine neue Fassung erscheint, und der dokumentierte Prüfbefehl sieht nur die Hälfte.
+- Die echten Lücken waren **nicht im Code, sondern im Verfahren**: niemand und nichts merkt, wenn
+  draußen eine neue Fassung erscheint, und der dokumentierte Prüfbefehl sah nur die Hälfte. Der Prüfbefehl ist behoben, der
+  Passkey-Strang ist draußen; **dass niemand eine neue Lücke merkt, ist nicht behoben** – es
+  gibt weiter keinen Automaten und keinen benannten Zuständigen.
 
-## 1. Die vollständige Liste
+## 1. Die vollständige Liste – Stand vor dem Aufräumen
 
 ### Direkt ausgesucht (7 Module, go.mod erster Block)
 
@@ -207,7 +257,10 @@ oben ist damit ein Ergebnis und kein Zufall.
 - **Gültigkeitsbereich:** eine Werkzeugkette (go1.27.2), eine Maschine, ein Laufwerk (D:).
   Reproduzierbar *zwischen* zwei Rechnern ist damit **nicht** gemessen.
 
-## 5. Vorschlag je Modul – zu entscheiden von Thomas
+## 5. Vorschlag je Modul – entschieden am 18.10.2026
+
+**Thomas hat entschieden: Passkey-Strang raus, Fassungen anheben.** In der Tabelle steht der
+Vorschlag, wie er hingelegt wurde, und daneben, was daraus wurde.
 
 Die Hausregel sagt „ins Repo kopieren und selbst pflegen". **Der erste Teil ist überall erfüllt.**
 Zu entscheiden ist also nur der zweite: wo hört ein Paketverweis auf und fängt echte Pflege an.
@@ -215,18 +268,18 @@ Zu entscheiden ist also nur der zweite: wo hört ein Paketverweis auf und fängt
 Nach meiner Lesart ist die Grenze der Regel nicht die **Größe**, sondern die Frage: *kann NGC es
 reparieren, wenn draußen niemand mehr repariert?* Danach sortiert:
 
-| Modul | Vorschlag | Preis dieses Vorschlags |
-|---|---|---|
-| **`go-webauthn/*` samt 9 Mitgezogenen** | **Rausnehmen**, bis Passkeys wirklich gebaut werden. Die Zeile in `tools/modules.go` fällt weg, `go mod tidy`, `go mod vendor`. | Eine Stunde, minus 3,1 MB und 10 Module; wenn Passkeys kommen, derselbe Befehl zurück. Ohne das bleibt Fremdcode im Repo, den niemand aufruft und den der dokumentierte Prüfbefehl nicht sieht. |
-| **`flynn/noise`** | **Pflegeerklärung schreiben** (nicht neu schreiben): festhalten, dass es seit 02.02.2024 still steht, dass NGC bei einer Lücke selbst behebt, und **wer** es dann darf – wie `pin-base.sh` es für das Abbild tut. | Eine halbe Seite. Ohne das ist der Tunnel-Riegel an einem Projekt aufgehängt, dessen Pflegezustand niemand in NGC schriftlich hat. |
-| **`pquerna/otp` + `boombuler/barcode`** | **Kandidat zum Selbstschreiben.** TOTP sind 30 Zeilen HMAC-SHA1. Dann fällt auch die Pseudofassung von 2019 weg. | Ein Tag mit Vektoren aus RFC 6238 und Tests. Für den QR-Code braucht es dann einen Ersatz oder `barcode` bleibt – dann wenigstens auf v1.1.0 heben. |
-| **`x/crypto`** | **Bleibt. Auf v0.58.0 heben.** | Ein Befehl. Argon2id selbst schreiben verstößt gegen `code.md`. |
-| **`x/sys`** | **Bleibt, trotz 8,2 MB.** Hier ist die Grenze der Regel: das sind Linux-Systemaufrufe, nachschreiben ist Arbeit ohne Gewinn. Auf v0.49.0 heben. | Ein Befehl. Die 8,2 MB bleiben; sie kosten Plattenplatz, keine Pflege. |
-| **`ncruces/go-sqlite3` + `-wasm`** | **Bleibt. Auf v0.35.6 / v6.3.35401 heben**, danach die Datenbank-Fälle laufen lassen. | Ein Befehl plus ein Testlauf. SQLite nachbauen geht nicht, und cgo bricht den Bau ohne C-Übersetzer. |
-| **`coder/websocket`, `go-sql-driver/mysql`, `edwards25519`** | **Bleibt, aktuell, nichts zu tun.** | – |
-| **`@noble/hashes` (JS)** | **Bleibt wie es ist** – und seine `SOURCE.md` ist die Vorlage, nach der die Go-Seite dokumentiert sein sollte. Zusätzlich: eine Zeile mit Fassung und Lizenz in `THIRD-PARTY.md`. | Zehn Minuten. |
-| **`debian:13-slim`** | **Bleibt, erledigt.** Digest festgenagelt, `pin-base.sh` ist der Weg, die Pflicht steht geschrieben (Punkt 39). | – |
-| **`@playwright/test`** | **Entscheidung nötig** – siehe Punkt 6. | – |
+| Modul | Vorschlag | Preis dieses Vorschlags | Stand |
+|---|---|---|---|
+| **`go-webauthn/*` samt 9 Mitgezogenen** | **Rausnehmen**, bis Passkeys wirklich gebaut werden. Die Zeile in `tools/modules.go` fällt weg, `go mod tidy`, `go mod vendor`. | Eine Stunde, minus 3,1 MB und 10 Module; wenn Passkeys kommen, derselbe Befehl zurück. Ohne das bleibt Fremdcode im Repo, den niemand aufruft und den der dokumentierte Prüfbefehl nicht sieht. | **GETAN** – 10 Module, 284 Dateien, 3,0 MB weg |
+| **`flynn/noise`** | **Pflegeerklärung schreiben** (nicht neu schreiben): festhalten, dass es seit 02.02.2024 still steht, dass NGC bei einer Lücke selbst behebt, und **wer** es dann darf – wie `pin-base.sh` es für das Abbild tut. | Eine halbe Seite. Ohne das ist der Tunnel-Riegel an einem Projekt aufgehängt, dessen Pflegezustand niemand in NGC schriftlich hat. | **offen** – deine Entscheidung |
+| **`pquerna/otp` + `boombuler/barcode`** | **Kandidat zum Selbstschreiben.** TOTP sind 30 Zeilen HMAC-SHA1. Dann fällt auch die Pseudofassung von 2019 weg. | Ein Tag mit Vektoren aus RFC 6238 und Tests. Für den QR-Code braucht es dann einen Ersatz oder `barcode` bleibt – dann wenigstens auf v1.1.0 heben. | **teils** – `barcode` auf v1.1.0; TOTP selbst schreiben bleibt offen |
+| **`x/crypto`** | **Bleibt. Auf v0.58.0 heben.** | Ein Befehl. Argon2id selbst schreiben verstößt gegen `code.md`. | **GETAN** – v0.58.0 |
+| **`x/sys`** | **Bleibt, trotz 8,2 MB.** Hier ist die Grenze der Regel: das sind Linux-Systemaufrufe, nachschreiben ist Arbeit ohne Gewinn. Auf v0.49.0 heben. | Ein Befehl. Die 8,2 MB bleiben; sie kosten Plattenplatz, keine Pflege. | **GETAN** – v0.49.0 (die 8,2 MB bleiben) |
+| **`ncruces/go-sqlite3` + `-wasm`** | **Bleibt. Auf v0.35.6 / v6.3.35401 heben**, danach die Datenbank-Fälle laufen lassen. | Ein Befehl plus ein Testlauf. SQLite nachbauen geht nicht, und cgo bricht den Bau ohne C-Übersetzer. | **GETAN** – v0.35.6 / v6.3.35401, Datenbank-Fälle grün |
+| **`coder/websocket`, `go-sql-driver/mysql`, `edwards25519`** | **Bleibt, aktuell, nichts zu tun.** | – | unverändert, aktuell |
+| **`@noble/hashes` (JS)** | **Bleibt wie es ist** – und seine `SOURCE.md` ist die Vorlage, nach der die Go-Seite dokumentiert sein sollte. Zusätzlich: eine Zeile mit Fassung und Lizenz in `THIRD-PARTY.md`. | Zehn Minuten. | **GETAN** – Zeile mit Fassung und Lizenz steht in `THIRD-PARTY.md` |
+| **`debian:13-slim`** | **Bleibt, erledigt.** Digest festgenagelt, `pin-base.sh` ist der Weg, die Pflicht steht geschrieben (Punkt 39). | – | unverändert, war schon erledigt |
+| **`@playwright/test`** | **Entscheidung nötig** – siehe Punkt 6. | – | **benannt** in `THIRD-PARTY.md`; die Regelfrage bleibt offen |
 
 **Zwei Verfahrenspunkte, die mehr wert sind als jeder einzelne Modulwechsel. Der erste ist
 erledigt, der zweite ist deine Entscheidung:**
@@ -287,9 +340,10 @@ Drei kleinere Funde, keiner davon ein stiller Fremdcode-Einbau:
   Werkzeugkette, ein Laufwerk.
 - **Die Lückenlage gilt für den 18.10.2026** und für die Datenbank `vuln.go.dev`. Morgen kann sie
   anders sein, und heute merkt das niemand automatisch.
-- **Keine der acht neueren Fassungen wurde eingespielt oder gebaut.** Dieser Auftrag schlägt vor,
-  er entscheidet nicht. Dasselbe gilt für das Rausnehmen des Passkey-Strangs: vorgeschlagen, nicht
-  getan.
+- **Die acht Fassungen sind eingespielt und gebaut** – auf Entscheidung von Thomas am 18.10.2026,
+  nicht aus eigenem Antrieb. Fünf davon als Fassungswechsel, drei gingen mit dem Passkey-Strang.
+  Oben im Abschnitt „Entschieden und getan" stehen die Zahlen danach. **Gelaufen auf einer Anlage
+  ist nichts davon** – NGC hat noch keine.
 - **Die Schalter-Änderung in `tools/release-gate.sh` ist nicht von `shellcheck` gesehen** – das
   Werkzeug gibt es auf dieser Maschine nicht (`which shellcheck`: nichts). Geprüft ist stattdessen
   `bash -n tools/release-gate.sh` (Syntax ok) und dass **beide geänderten Zeilen wortwörtlich
