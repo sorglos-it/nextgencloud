@@ -694,12 +694,12 @@ func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Contex
 // interface so that nothing of serve reaches for package install; what this
 // program hands over is a closure, because the Manager behind it is built
 // anew for every call.
-type installerFunc func(ctx context.Context, d access.Decision, list *trust.List,
+type installerFunc func(ctx context.Context, list *trust.List, d access.Decision,
 	r io.Reader) ([]byte, error)
 
-func (f installerFunc) Activate(ctx context.Context, d access.Decision, list *trust.List,
+func (f installerFunc) Activate(ctx context.Context, list *trust.List, d access.Decision,
 	r io.Reader) ([]byte, error) {
-	return f(ctx, d, list, r)
+	return f(ctx, list, d, r)
 }
 
 // appDeps is what install.Manager is built out of for ONE activation. It is a
@@ -747,7 +747,7 @@ func (a appDeps) deps(list *trust.List) install.Deps {
 func appInstaller(version string, cfg *config.Controller, st *state.Store,
 	engine ctrlrt.Engine, nodeID func() string) installerFunc {
 	a := appDeps{version: version, cfg: cfg, st: st, engine: engine, nodeID: nodeID}
-	return func(ctx context.Context, d access.Decision, list *trust.List,
+	return func(ctx context.Context, list *trust.List, d access.Decision,
 		r io.Reader) ([]byte, error) {
 		// THE REFUSAL ABOVE, BUILT AND NOT ONLY WRITTEN. The comment said a
 		// store app is refused and nothing did it, until this line was added

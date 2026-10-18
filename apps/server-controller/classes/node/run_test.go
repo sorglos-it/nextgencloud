@@ -791,7 +791,7 @@ func TestTheInstallerRefusesEveryStoreButTheLocalOne(t *testing.T) {
 		d := access.Decision{Core: true, Action: activateActionOf(t),
 			Task: &task.Task{Params: params}}
 		r := &countingReader{}
-		_, err := inst.Activate(context.Background(), d, keeper.List(), r)
+		_, err := inst.Activate(context.Background(), keeper.List(), d, r)
 		return err, r.reads
 	}
 	// A store of the trust list is refused before anything is read, and with
@@ -838,7 +838,7 @@ func TestABrokenTaskOfAnActivationIsAVerificationFailure(t *testing.T) {
 		func() string { return cfg.Node })
 	d := access.Decision{Core: true, Action: activateActionOf(t),
 		Task: &task.Task{Params: json.RawMessage(`{"app":42}`)}}
-	_, err := inst.Activate(ctx, d, keeper.List(), &countingReader{})
+	_, err := inst.Activate(ctx, keeper.List(), d, &countingReader{})
 	if !errors.Is(err, install.ErrVerify) {
 		t.Fatalf("a task that does not parse answered %v, want install.ErrVerify", err)
 	}

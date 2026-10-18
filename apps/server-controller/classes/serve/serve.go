@@ -48,7 +48,6 @@ import (
 	"github.com/flynn/noise"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
-	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
@@ -130,7 +129,14 @@ type Deps struct {
 	LogStderr bool
 	// Chain holds the trust list. Every channel reads the newest verified
 	// version once, at its start, and decides on that one to its end.
-	Chain *chain.Keeper
+	//
+	// AN INTERFACE AND NOT THE KEEPER, for one reason: without it nothing
+	// could put two different versions in front of one channel, and so
+	// nothing could tell "the version this channel was decided on" from
+	// "whatever is newest at this line". chain.Keeper satisfies it as it is;
+	// the peer session that took the measurement found the gap
+	// (18.10.2026), and a case that cannot fail is no measurement.
+	Chain Chain
 	// State is this controller's local store: the apps it runs and the IDs of
 	// the tasks that have run (access.Request), and the versions of the trust
 	// list behind Chain.
@@ -157,7 +163,15 @@ type action func(ctx context.Context, d access.Decision, in []byte) (any, *wire.
 // Open decides the whole channel on ONE version (the comment there says why),
 // and a handler that reached for the newest list instead would check the
 // package against another version than the one the task was verified with.
-type transfer func(ctx context.Context, d access.Decision, list *trust.List, r io.Reader) (any, *wire.Close)
+type transfer func(ctx context.Context, list *trust.List, d access.Decision, r io.Reader) (any, *wire.Close)
+
+// Chain is the trust chain of this controller, as this package uses it: the
+// newest verified version, and applying the next one. chain.Keeper is the one
+// implementation; see Deps.Chain for why the seam is here.
+type Chain interface {
+	List() *trust.List
+	Apply(ctx context.Context, b []byte) (uint64, error)
+}
 
 // name is an action of core.All, as a key: core.Action holds a function and
 // cannot be compared. The three are named rather than counted, so a reader
@@ -364,7 +378,7 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 	if d.Core {
 		// The version held, not read anew: what runs below belongs to the
 		// channel this one decided.
-		return s.core(ctx, ch, d, list)
+		return s.core(ctx, ch, list, d)
 	}
 	return s.openApp(ctx, ch, d)
 }
@@ -372,14 +386,14 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 // core runs the channel of a core action of this controller: the first GRANT,
 // the input up to the EOF of the API, the action, and its result as DATA, EOF
 // and CLOSE ok.
-func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision, list *trust.List) error {
+func (s *Server) core(ctx context.Context, ch *link.Channel, list *trust.List, d access.Decision) error {
 	key := name{d.Action.App, d.Action.Service, d.Action.Name}
 	// What carries a file is looked for FIRST, and the two maps may never
 	// hold the same key: an action that stood in both would be served by
 	// whichever map is read first, which is a decision nobody wrote down.
 	// TestNoActionIsServedTwice holds that they do not overlap.
 	if flow, ok := s.flows[key]; ok {
-		return s.flow(ctx, ch, d, list, flow)
+		return s.flow(ctx, ch, list, d, flow)
 	}
 	run, ok := s.acts[key]
 	if !ok {

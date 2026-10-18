@@ -30,7 +30,7 @@ type fakeInstaller struct {
 	err   error
 }
 
-func (f *fakeInstaller) Activate(_ context.Context, _ access.Decision, list *trust.List,
+func (f *fakeInstaller) Activate(_ context.Context, list *trust.List, _ access.Decision,
 	r io.Reader) ([]byte, error) {
 	f.list = list
 	f.called = true
@@ -124,7 +124,7 @@ func TestActivateReachesTheInstallerWithThePackage(t *testing.T) {
 	f := &fakeInstaller{}
 	s := New(Deps{Installer: f})
 	pkg := bytes.Repeat([]byte{7}, 4096)
-	v, cl := s.activate(context.Background(), activateDecision(t), nil, bytes.NewReader(pkg))
+	v, cl := s.activate(context.Background(), nil, activateDecision(t), bytes.NewReader(pkg))
 	if cl != nil {
 		t.Fatalf("the channel ended %+v, want a result", cl)
 	}
@@ -146,7 +146,7 @@ func TestActivateReachesTheInstallerWithThePackage(t *testing.T) {
 // API.
 func TestActivateWithoutAnInstallerIsThisServersFault(t *testing.T) {
 	s := New(Deps{})
-	_, cl := s.activate(context.Background(), activateDecision(t), nil, bytes.NewReader(nil))
+	_, cl := s.activate(context.Background(), nil, activateDecision(t), bytes.NewReader(nil))
 	if cl == nil || cl.Code != wire.CodeInternal {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeInternal)
 	}
@@ -164,7 +164,7 @@ func TestActivateRefusesADecisionForAnotherAction(t *testing.T) {
 	}
 	d := activateDecision(t)
 	d.Action = other
-	_, cl := s.activate(context.Background(), d, nil, bytes.NewReader(nil))
+	_, cl := s.activate(context.Background(), nil, d, bytes.NewReader(nil))
 	if cl == nil || cl.Code != wire.CodeInternal {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeInternal)
 	}
@@ -187,7 +187,7 @@ func TestEveryFailureOfAnActivationHasItsCode(t *testing.T) {
 	} {
 		f := &fakeInstaller{err: c.err}
 		s := New(Deps{Installer: f})
-		_, cl := s.activate(context.Background(), activateDecision(t), nil, bytes.NewReader([]byte("x")))
+		_, cl := s.activate(context.Background(), nil, activateDecision(t), bytes.NewReader([]byte("x")))
 		if cl == nil || cl.Code != c.want {
 			t.Errorf("%v ended the channel %+v, want %s", c.err, cl, c.want)
 		}
@@ -345,7 +345,7 @@ func TestWhatTheInstallerLeftIsDrained(t *testing.T) {
 	s := New(Deps{Installer: f})
 	frames := &fakeFrames{in: []link.Inbound{data(1, 2, 3, 4), data(5, 6), eofFrame}}
 	in := &chanInput{ctx: context.Background(), ch: frames, max: 100}
-	_, cl := s.activate(context.Background(), activateDecision(t), nil, in)
+	_, cl := s.activate(context.Background(), nil, activateDecision(t), in)
 	if cl != nil {
 		t.Fatalf("the channel ended %+v, want a result", cl)
 	}
@@ -374,7 +374,7 @@ func TestTheBoundBeatsTheInstallersAnswer(t *testing.T) {
 	s := New(Deps{Installer: f})
 	frames := &fakeFrames{in: []link.Inbound{data(1, 2, 3), data(4, 5, 6), eofFrame}}
 	in := &chanInput{ctx: context.Background(), ch: frames, max: 4}
-	_, cl := s.activate(context.Background(), activateDecision(t), nil, in)
+	_, cl := s.activate(context.Background(), nil, activateDecision(t), in)
 	if cl == nil || cl.Code != wire.CodeVerify {
 		t.Fatalf("the installer answered %+v", cl)
 	}
@@ -395,11 +395,75 @@ func TestActivateHandsTheDecisionOverUntouched(t *testing.T) {
 	s := New(Deps{Installer: f})
 	d := activateDecision(t)
 	d.Opened.Open.Params = json.RawMessage(`{"app":"de.example.notes"}`)
-	if _, cl := s.activate(context.Background(), d, nil, bytes.NewReader(nil)); cl != nil {
+	if _, cl := s.activate(context.Background(), nil, d, bytes.NewReader(nil)); cl != nil {
 		t.Fatalf("the channel ended %+v", cl)
 	}
 	if string(seen.Params()) != `{"app":"de.example.notes"}` {
 		t.Fatalf("the installer got the params %q", seen.Params())
+	}
+}
+
+// twoVersions is a chain that hands out version 1 on the FIRST read and
+// version 2 on every later one, and counts the reads. It stands for the one
+// thing a real keeper does that a case cannot time: a new version landing
+// while a channel runs.
+type twoVersions struct {
+	first, later *trust.List
+	reads        int
+}
+
+func (c *twoVersions) List() *trust.List {
+	c.reads++
+	if c.reads == 1 {
+		return c.first
+	}
+	return c.later
+}
+
+func (c *twoVersions) Apply(context.Context, []byte) (uint64, error) { return 0, nil }
+
+// A VERSION THAT LANDS WHILE THE CHANNEL RUNS CHANGES NOTHING FOR IT. This is
+// the case that holds the ORDER and not only the handover: the list is read
+// once, before the check, and what runs afterwards gets that one. A handler
+// that read the chain again at its own line would install against a version
+// nobody checked the task against -- and until this fixture existed no case
+// could tell the two apart, because Deps.Chain was the keeper itself and
+// nothing could put two versions in front of one channel.
+func TestAVersionThatLandsWhileTheChannelRunsIsNotTheOneItInstallsWith(t *testing.T) {
+	w := newWorld(t)
+	f := &fakeInstaller{}
+	// The version the channel is decided on is the keeper's real one -- the
+	// task of the OPEN is signed against it. What comes AFTER the first read
+	// is another list, and it must not reach the installer.
+	decided := w.keep.List()
+	later := &trust.List{Installation: "spaeter"}
+	c := &twoVersions{first: decided, later: later}
+	w.rebuild(func(d *Deps) { d.Installer, d.Chain = f, c })
+	ended := w.tunnel(t, func(a *apiSide) {
+		a.open(1, activateChannelOpen(t, w, 0x56))
+		a.eof(1)
+		a.result(1)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	// ONCE, and that is the assurance itself: a second read is a second
+	// version, whatever it then does with it. The counter is also what says
+	// the fixture worked -- a chain that was never asked would let this case
+	// pass without measuring anything.
+	if c.reads != 1 {
+		t.Fatalf("the chain was read %d times for one channel, want once", c.reads)
+	}
+	if !f.called {
+		t.Fatal("the installer was never called -- then this case measures no version")
+	}
+	if f.list == later {
+		t.Fatal("the installer installs against the version that landed later, not the decided one")
+	}
+	if f.list != decided {
+		t.Fatalf("the installer got %v, want the version the channel was decided on", f.list)
 	}
 }
 
@@ -443,7 +507,7 @@ func TestTheListOfTheChannelReachesTheInstaller(t *testing.T) {
 	f := &fakeInstaller{}
 	s := New(Deps{Installer: f})
 	mine := &trust.List{Installation: "i-1"}
-	if _, cl := s.activate(context.Background(), activateDecision(t), mine,
+	if _, cl := s.activate(context.Background(), mine, activateDecision(t),
 		bytes.NewReader(nil)); cl != nil {
 		t.Fatalf("the channel ended %+v", cl)
 	}
@@ -454,7 +518,7 @@ func TestTheListOfTheChannelReachesTheInstaller(t *testing.T) {
 
 type recordingInstaller struct{ onCall func(access.Decision) }
 
-func (r *recordingInstaller) Activate(_ context.Context, d access.Decision, _ *trust.List,
+func (r *recordingInstaller) Activate(_ context.Context, _ *trust.List, d access.Decision,
 	_ io.Reader) ([]byte, error) {
 	r.onCall(d)
 	return []byte("{}"), nil

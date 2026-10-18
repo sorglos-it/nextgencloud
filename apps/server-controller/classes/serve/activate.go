@@ -58,13 +58,13 @@ var activateKey = name{core.AppStore, core.ServiceController, core.ActActivate}
 // keeper itself would take whatever version happened to be newest by then,
 // and an activation runs long enough for that to be another one.
 type Installer interface {
-	Activate(ctx context.Context, d access.Decision, list *trust.List, r io.Reader) ([]byte, error)
+	Activate(ctx context.Context, list *trust.List, d access.Decision, r io.Reader) ([]byte, error)
 }
 
 // activate carries out ngc.store/controller/activate. The package arrives as
 // it flows: nothing of it is held here, and what the installer does not read
 // is never taken off the channel either.
-func (s *Server) activate(ctx context.Context, d access.Decision, list *trust.List, r io.Reader) (any, *wire.Close) {
+func (s *Server) activate(ctx context.Context, list *trust.List, d access.Decision, r io.Reader) (any, *wire.Close) {
 	if s.d.Installer == nil {
 		// A controller without an installer is this program wired wrong, not
 		// a peer's doing: which halves a server was built with is nothing an
@@ -79,7 +79,7 @@ func (s *Server) activate(ctx context.Context, d access.Decision, list *trust.Li
 		// that names something else here is this program wired wrong.
 		return nil, refuse(wire.CodeInternal)
 	}
-	if _, err := s.d.Installer.Activate(ctx, d, list, r); err != nil {
+	if _, err := s.d.Installer.Activate(ctx, list, d, r); err != nil {
 		return nil, installCode(err)
 	}
 	return emptyResult{}, nil
@@ -211,13 +211,13 @@ func (in *chanInput) drain() *wire.Close {
 // the action a reader. Everything after the action is the same, and it is
 // written twice rather than factored out so that neither half has to carry an
 // if for the other.
-func (s *Server) flow(ctx context.Context, ch *link.Channel, d access.Decision, list *trust.List,
-	run transfer) error {
+func (s *Server) flow(ctx context.Context, ch *link.Channel, list *trust.List,
+	d access.Decision, run transfer) error {
 	if err := ch.Grant(firstGrant(d.Action), nil); err != nil {
 		return s.end(ch, wire.Error(wire.CodeInternal))
 	}
 	in := &chanInput{ctx: ctx, ch: ch, max: d.Action.MaxIn}
-	v, cl := run(ctx, d, list, in)
+	v, cl := run(ctx, list, d, in)
 	if sent := closeOf(in, cl); sent != nil {
 		return s.end(ch, *sent)
 	}
