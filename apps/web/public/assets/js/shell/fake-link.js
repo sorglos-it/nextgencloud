@@ -47,6 +47,8 @@
 import { b64encode } from "../contracts/b64.js";
 import { UIWriter } from "../contracts/uitar.js";
 import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contracts/sign.js";
+import { ChannelError } from "../net/channel.js";
+import * as wire from "../contracts/wire.js";
 import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
@@ -670,7 +672,17 @@ export async function fakeWorld() {
       return enc.encode(JSON.stringify({ seq: next.seq }));
     },
     "ngc.store/sources": async () => enc.encode(JSON.stringify(or("sources", SOURCES))),
-    "ngc.store/catalog": async () => await catalogFor(uiHashes()),
+    // noCatalog is what a real API answers while its hourly round has not
+    // fetched this store yet: appstore.Catalog finds no row, CodeFor turns
+    // dbapi.ErrNotFound into E_NOTFOUND, and the channel ends with it. The
+    // error is a ChannelError of the page's own net/channel.js and not an
+    // object made here: a stand-in that invented the shape of a refusal
+    // would measure its own invention, and .code is the whole field the app
+    // reads.
+    "ngc.store/catalog": async () => {
+      if (knobs.noCatalog === true) throw new ChannelError(wire.CODES.NOTFOUND);
+      return await catalogFor(uiHashes());
+    },
     "ngc.store/installed": async () => enc.encode(JSON.stringify(or("installed", INSTALLED))),
     "ngc.store/updates": async () => enc.encode(JSON.stringify(or("updates", UPDATES))),
     "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),

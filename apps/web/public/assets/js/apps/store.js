@@ -33,6 +33,7 @@ import { Budget, decode } from "../contracts/json.js";
 import { packageUI } from "../contracts/pack.js";
 import { proofShape, validateProof } from "../contracts/proof.js";
 import { PURPOSE_TRUST_LIST, parseEnvelope } from "../contracts/sign.js";
+import * as wire from "../contracts/wire.js";
 
 const EMPTY = new Uint8Array(0);
 
@@ -41,6 +42,30 @@ const EMPTY = new Uint8Array(0);
 // the person can do something about it that they can do about nothing else -
 // put the store in the list.
 class Untrusted extends Error {}
+
+// catalogFault is the one sentence a failed catalogOf gets, and it is one
+// place so the Apps tab and the update row cannot drift apart.
+//
+// E_NOTFOUND is the case this was written for. It does not mean a bad
+// catalog: it means the API holds no catalog of this store at all, because
+// the round that fetches them (hourly, Server.rounds) has not run since the
+// store was listed. Measured on a real installation on 18.10.2026: a store
+// that was signed, reachable and verified read "Der Katalog dieses Stores
+// ist nicht echt." in the Apps tab while the Quellen tab of the same window
+// said "Noch nicht geprüft" - the truth. The sentence accused the store of
+// forging what nobody had asked it for yet, which is a false statement
+// about somebody else's server, and it sent the person looking for an
+// attack instead of waiting.
+//
+// The API tells the cases apart already (appstore.CodeFor: dbapi.ErrNotFound
+// gives E_NOTFOUND, a signature gives E_VERIFY), so nothing had to be
+// measured anew here - only read.
+function catalogFault(e) {
+  if (e instanceof Untrusted) return "Diesem Store wird noch nicht vertraut. Bitte ihn zuerst eintragen.";
+  if (e instanceof catalog.Rollback) return "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen.";
+  if (e?.code === wire.CODES.NOTFOUND) return "Von diesem Store liegt noch kein Katalog vor. NGC holt ihn stündlich; bitte es später noch einmal versuchen.";
+  return "Der Katalog dieses Stores ist nicht echt.";
+}
 
 // The actions this app uses, looked up ONCE out of the frozen table. A row
 // that is no row of the contract answers null here and would fail loudly at
@@ -299,16 +324,13 @@ class Store {
     try {
       apps = await this.catalogOf(src);
     } catch (e) {
-      // Three different things go wrong here and each gets its own sentence,
+      // Four different things go wrong here and each gets its own sentence,
       // because each has a different thing to DO about it: a store nobody
-      // has vouched for yet, a store replaying an old catalog, and an answer
-      // nobody signed for. One sentence for all three would tell the person
-      // nothing they could act on.
-      out.push(el("p", "fail", e instanceof Untrusted
-        ? "Diesem Store wird noch nicht vertraut. Bitte ihn zuerst eintragen."
-        : e instanceof catalog.Rollback
-          ? "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen."
-          : "Der Katalog dieses Stores ist nicht echt."));
+      // has vouched for yet, a store this installation has not fetched from
+      // yet, a store replaying an old catalog, and an answer nobody signed
+      // for. One sentence for all four would tell the person nothing they
+      // could act on.
+      out.push(el("p", "fail", catalogFault(e)));
       return out;
     }
     const box = el("div", "rows");
@@ -667,8 +689,8 @@ class Store {
     let apps;
     try {
       apps = await this.catalogOf(src);
-    } catch {
-      this.say("error", "Der Katalog dieses Stores ist nicht echt.");
+    } catch (e) {
+      this.say("error", catalogFault(e));
       return;
     }
     const e = apps.find((x) => x.id === u.target);

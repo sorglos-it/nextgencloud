@@ -156,6 +156,20 @@ test("the Apps tab shows an app only out of a catalog its store really signed", 
   await expect(page.locator(".storepanel")).not.toContainText("Der Katalog dieses Stores ist nicht echt.");
 });
 
+test("a store whose catalog has not been fetched yet is not called a forger", async ({ page }) => {
+  // The ASSERTION is the sentence the person reads, and the point of it is
+  // the word it must NOT be: a store that was signed, reachable and verified
+  // is not a forger just because the hourly round has not run yet. Measured
+  // on the real installation on 18.10.2026, where this tab said "nicht echt"
+  // while the Quellen tab of the same window said "Noch nicht geprüft".
+  await store(page, { noCatalog: true });
+  await tab(page, "Apps").click();
+  await expect(page.locator(".storepanel")).toContainText(
+    "Von diesem Store liegt noch kein Katalog vor.");
+  await expect(page.locator(".storepanel")).not.toContainText("Der Katalog dieses Stores ist nicht echt.");
+  await expect(page.locator(".approw")).toHaveCount(0);
+});
+
 test("a catalog under a foreign signature shows the sentence and not one app", async ({ page }) => {
   // The store's entry in the trust list stays as it is; only the key that
   // signed the catalog is another one. That is the whole attack: an answer
