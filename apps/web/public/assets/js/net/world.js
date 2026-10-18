@@ -417,9 +417,14 @@ export function adapterFor(link, world = {}) {
         case FLOW_CALL:
         case FLOW_TRANSFER:
           return callBytes(link, a, { params: p, taskBytes, confirmBytes });
+        // THE CONFIRMATION GOES ON THIS WAY TOO. It did not until 18.10.2026,
+        // and the row that pays for it is the upload: core.critical() answers
+        // true for ngc.store/api/upload, so it is the one FlowIn action that
+        // must carry one - and this was the second of two places that dropped
+        // it (net/channel.js sendInBytes was the first).
         case FLOW_IN:
           return sendInBytes(link, a, {
-            params: p, taskBytes, stream: o.stream, onProgress: o.onProgress,
+            params: p, taskBytes, confirmBytes, stream: o.stream, onProgress: o.onProgress,
           });
         // FlowOut is a channel that stays open and belongs in open(); taking
         // it here would mean bounding an answer in the one place that cannot

@@ -307,6 +307,20 @@ for (const [what, twist] of TWISTS) {
     await page.locator(".store input[type=file]").setInputFiles({
       name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
     });
+    // THE QUESTION COMES FIRST NOW. Since 18.10.2026 the upload is signed and,
+    // where the policy asks, confirmed - and the stand-in's admin no longer
+    // sits at level `off`, where nothing is ever confirmed. So the way to the
+    // answer this case is about leads through the question, and a case that
+    // walked past it would stop at a dialog and blame the shell.
+    {
+      const pw = await page.evaluate(async () =>
+        (await import("/assets/js/shell/fake-link.js")).PASSWORD);
+      const box = page.getByRole("dialog", { name: "Bitte bestätigen" });
+      await expect(box).toBeVisible();
+      await box.locator("input[type=password]").fill(pw);
+      await box.getByRole("button", { name: "Bestätigen", exact: true }).click();
+      await expect(box).toHaveCount(0);
+    }
 
     // The sentence does not name the field: which number the API got wrong is
     // the inside of a server, and there is one thing the person can do about

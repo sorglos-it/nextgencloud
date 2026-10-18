@@ -330,6 +330,16 @@ test.describe("the adapter", () => {
         await link.call(core.APP_STORE, core.SERVICE_CONTROLLER, core.ACT_UNINSTALL, params,
           { taskBytes: utf8('{"t":1}'), confirmBytes: utf8('{"c":1}') });
         const task = rec.opens[rec.opens.length - 1];
+        // FlowIn WITH PAPERS, and it is a call of its own because the FlowIn
+        // above measures the BODY and this measures the two DOCUMENTS. Until
+        // 18.10.2026 this way dropped the confirmation: the switch passed
+        // taskBytes on and left confirmBytes out, so the upload - the one
+        // FlowIn row core.critical() calls critical - could not be confirmed at
+        // all, however the policy of the trust list read.
+        await link.call(core.APP_STORE, core.SERVICE_API, core.ACT_UPLOAD, null,
+          { taskBytes: utf8('{"t":2}'), confirmBytes: utf8('{"c":2}'),
+            stream: new Blob([utf8("ein paket")]).stream() });
+        const inPapers = rec.opens[rec.opens.length - 1];
         // FlowOut through open(): the listeners are hung up after the call
         // came back, exactly as shell/appframe.js hangs them up, and the
         // answer may not have been handed over before that.
@@ -346,6 +356,10 @@ test.describe("the adapter", () => {
             params: bare.params, task: bare.task, confirm: bare.confirm, ended: bare.ended },
           flowIn: { data: flowIn.data, params: flowIn.params, ended: flowIn.ended },
           task: { params: task.params, task: task.task, confirm: task.confirm },
+          inPapers: {
+            action: inPapers.action, params: inPapers.params, task: inPapers.task,
+            confirm: inPapers.confirm, data: inPapers.data, ended: inPapers.ended,
+          },
           ui: { action: ui.action, took: ui.took, status: end.status, seen: end.seen },
           maxCallResult: wire.MAX_CALL_RESULT,
           maxArchive: uitar.MAX_UI_TOTAL + uitar.MAX_ENTRIES * uitar.BLOCK,
@@ -362,8 +376,8 @@ test.describe("the adapter", () => {
             link.call(core.APP_USERS, core.SERVICE_CONTROLLER, core.ACT_TRUST, params,
               { stream: new Blob([utf8("x")]).stream() })),
           noRow: await refused(() => link.call("org.sorglos.terminal", "terminal", "shell", null, null)),
-          // None of the four refusals opened a channel: five went out, and
-          // five is what the five ways above asked for.
+          // None of the four refusals opened a channel: six went out, and six
+          // is what the six ways above asked for.
           opened: rec.opens.length,
         };
       });
@@ -378,6 +392,11 @@ test.describe("the adapter", () => {
         data: ["ein paket"], params: '{"app":"de.example.fotos"}', ended: true,
       });
       expect(got.task).toEqual({ params: "", task: '{"t":1}', confirm: '{"c":1}' });
+      // The body still travels as DATA, and BOTH documents are in the OPEN.
+      expect(got.inPapers).toEqual({
+        action: "upload", params: "", task: '{"t":2}', confirm: '{"c":2}',
+        data: ["ein paket"], ended: true,
+      });
       expect(got.ui).toEqual({
         action: "ui", took: got.maxArchive, status: "ok", seen: ["{}"],
       });
@@ -385,7 +404,7 @@ test.describe("the adapter", () => {
       expect(got.callAsOpen).toBe(true);
       expect(got.neverOpened).toBe(true);
       expect(got.noRow).toBe(true);
-      expect(got.opened).toBe(5);
+      expect(got.opened).toBe(6);
     });
 
   test("the node of an app's own service arrives, and the refusal names the piece that is missing",

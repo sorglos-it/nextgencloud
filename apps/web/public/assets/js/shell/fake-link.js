@@ -47,7 +47,9 @@
 import { b64encode } from "../contracts/b64.js";
 import { UIWriter } from "../contracts/uitar.js";
 import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contracts/sign.js";
-import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
+import {
+  encodeList, hash as listHash, LEVEL_CRITICAL, parseList, parseSigned, validStore,
+} from "../contracts/trust.js";
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
@@ -477,6 +479,16 @@ function listOf(store, admin, level) {
     rp: { id: "ngc.example.org", origins: ["https://ngc.example.org"] },
     users: [admin],
     roles: [{ name: "admin", level, black: [], white: [], passkeyOnly: false, passwordToo: false }],
+    // rootUsers NAMES THE ADMIN, AND THAT IS NOW A WORLD THE REAL SURFACE
+    // BUILDS. It was not until 18.10.2026: both places that take a server in
+    // wrote `rootUsers: []`, so every case of an activation ran in a world
+    // nobody could ever get into, and the real installation answered
+    // E_FORBIDDEN where these cases were green. apps/users.js askJoin now
+    // writes `[this.session.user]` - the person who vouched for the
+    // fingerprint - and the admin of this stand-in is that person.
+    //
+    // rootRoles stays empty on purpose: a role would hand root to every future
+    // member of it, and the surface does not write one either.
     nodes: [
       { id: "pi-1", kind: "controller", name: "Dienste 1", noise: new Uint8Array(32).fill(11),
         sign: new Uint8Array(0), url: "", tls: new Uint8Array(0), rootUsers: [admin.id], rootRoles: [] },
@@ -575,7 +587,20 @@ export async function fakeWorld() {
       credId: new Uint8Array(0), kdf,
     }],
   };
-  const level = typeof knobs.level === "string" && knobs.level !== "" ? knobs.level : "off";
+  // THE LEVEL OF THE ADMIN'S ROLE, AND THE DEFAULT IS THE REAL ONE.
+  //
+  // This read `"off"` until 18.10.2026. At level off nothing has to be
+  // confirmed (trust.needsConfirm returns false before it ever looks at
+  // op.critical), so every case of the upload and of an activation was green
+  // in a world where nobody is ever asked - and a stand-in that is more
+  // generous than the contract measures its own generosity. It is also a world
+  // the real surface NEVER builds: auth/setup.js:181 writes the first
+  // administrator's role at trust.LEVEL_CRITICAL, so that is what stands here,
+  // taken from the contract's own constant and not from a word typed twice.
+  //
+  // A case that wants the other world asks for it: `level: "off"` by the knob,
+  // and then it says in its own text why nobody is asked there.
+  const level = typeof knobs.level === "string" && knobs.level !== "" ? knobs.level : LEVEL_CRITICAL;
 
   // TWO VERSIONS, NOT ONE, AND THAT IS THE WHOLE POINT OF THIS BLOCK.
   //

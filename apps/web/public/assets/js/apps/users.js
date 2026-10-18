@@ -687,7 +687,20 @@ class Users {
           next.nodes.push({
             id, kind: trust.NODE_CONTROLLER, name: n.name, noise: n.key,
             sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
-            rootUsers: [], rootRoles: [],
+            // REPORTING A SERVER AND BEING ABLE TO USE IT WERE TWO THINGS, and
+            // this list wrote the empty one: a freshly taken-in controller
+            // stood in the trust list and could do nothing that needs a root
+            // task - activate, install, uninstall, delete data, terminal - and
+            // the API answered E_FORBIDDEN while the screen said "Das hat der
+            // Rechner nicht angenommen."
+            //
+            // ONE USER, NOT A ROLE, and that is the whole decision: rootRoles
+            // would hand root on this machine to every future member of the
+            // role, including people added long after anybody looked at this
+            // server. The person who took it in is the one who vouched for its
+            // fingerprint, so they are the one who may run root tasks on it;
+            // anybody else is added deliberately, later, in this same tab.
+            rootUsers: [this.session.user], rootRoles: [],
           });
         });
         Users.say(box, "Der Server »" + n.name + "« ist aufgenommen.");

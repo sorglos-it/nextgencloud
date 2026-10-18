@@ -69,6 +69,20 @@ const names = (page) => page.evaluate(() => window.__ngcSent.map((s) => s.app + 
 // world derives the admin's key from it (knob passwordKey), a password that
 // had drifted apart from it would make the signature fail and the case would
 // blame the shell for the fixture.
+//
+// EVERY UPLOAD NOW PASSES THROUGH HERE, and before 18.10.2026 none did. Two
+// things changed on the same day and they belong together: the upload is
+// signed and confirmed (apps/store.js - core.critical answers true for it),
+// and the stand-in no longer puts the admin's role at level `off`, where
+// nothing has to be confirmed at all. A case that leaves this out now stops at
+// the question instead of walking past it, which is the point: the question is
+// part of the way.
+//
+// AND THIS IS THE GUARD ON THE STAND-IN ITSELF. Put level `off` back into
+// shell/fake-link.js and no question comes - so the expect below finds no
+// dialog and every upload case goes red by name, instead of going green in a
+// world where nobody is ever asked. The level is measured by its EFFECT here,
+// which is the thing that matters, and not read out of the fixture's source.
 async function answerConfirm(page) {
   const pw = await page.evaluate(async () => (await import("/assets/js/shell/fake-link.js")).PASSWORD);
   const box = page.getByRole("dialog", { name: "Bitte bestätigen" });
@@ -177,6 +191,8 @@ test("the upload shows the checksum, the version and the UI checksum the shell c
   await page.locator(".store input[type=file]").setInputFiles({
     name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
   });
+  // The upload is critical, so the question comes before the bytes move.
+  await answerConfirm(page);
   await expect(page.locator(".upfacts")).toBeVisible();
   // The three numbers on screen are the ones pack.packageUI computed in this
   // page out of these very bytes - computed a second time here, out of the
@@ -204,6 +220,8 @@ test("an answer that names another package breaks the upload off and activates n
   await page.locator(".store input[type=file]").setInputFiles({
     name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
   });
+  // The upload is critical, so the question comes before the bytes move.
+  await answerConfirm(page);
   await expect(page.locator(".upfail"))
     .toHaveText("Die Anlage hat ein anderes Paket bekommen, als geschickt wurde.");
   await expect(page.locator(".store").getByRole("button", { name: "Aktivieren" })).toHaveCount(0);
@@ -219,11 +237,19 @@ test("the activate task carries the shell's own checksums and the manifest's nee
   await page.locator(".store input[type=file]").setInputFiles({
     name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(pkg),
   });
+  // The upload is critical, so the question comes before the bytes move.
+  await answerConfirm(page);
   await expect(page.locator(".upfacts")).toBeVisible();
   // Every right the manifest asks for has to be allowed by hand; the box is
   // named after the right, so nobody has to know which box means what.
   await page.locator(".store").getByRole("checkbox", { name: /Netz/ }).check();
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  // TWO QUESTIONS ON THIS WAY, and they are two different documents: the
+  // upload above, and this activation, which is critical because a right was
+  // granted (core.critical reads grants.length > 0) and root besides. What is
+  // signed the second time is the activate task, and the case reads those very
+  // bytes back below.
+  await answerConfirm(page);
   await expect.poll(() => names(page)).toContain("ngc.store/activate");
   const t = await sentTask(page, "activate");
   const mine = await page.evaluate(async (bytes) => {
@@ -242,6 +268,79 @@ test("the activate task carries the shell's own checksums and the manifest's nee
   });
 });
 
+// THE UPLOAD IS SIGNED AND CONFIRMED, and until 18.10.2026 it was neither.
+//
+// core.critical() answers true for ngc.store/api/upload - the contract's own
+// reckoning, read here out of core.js and not written down as a word - so the
+// API refuses it with E_CONFIRM without a confirmation. The shell sent no task
+// and no confirmation, and every case of the upload was green anyway, because
+// the stand-in put the admin's role at level `off`, where nobody is ever
+// asked. Two holes that hid each other.
+test("the upload carries a signed task, and the person's confirmation with it", async ({ page }) => {
+  await store(page);
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
+  });
+  await answerConfirm(page);
+  await expect(page.locator(".store").getByRole("button", { name: "Aktivieren" })).toBeVisible();
+  // The task is read with the page's own contracts, as every verifier reads
+  // one: sign.parseEnvelope and task.parseTask.
+  const t = await sentTask(page, "upload");
+  expect(t.app).toBe("ngc.store");
+  // SERVICE api, AND THAT IS THE POINT. The comment in apps/store.js used to
+  // say an api action could not be confirmed at all; what wire.encodeOpen
+  // really asks is a TASK beside the confirmation, and a task may name this
+  // service with no node (task.buildTask takes `node || ""`).
+  expect(t.service).toBe("api");
+  expect(t.action).toBe("upload");
+  expect(t.node).toBe("");
+  expect(t.hasSignature).toBe(true);
+  // AND THE CONFIRMATION TRAVELLED ON THE SAME OPEN. It is read back through
+  // wire.encodeOpen/parseOpen - the contract's own reader, the one the API
+  // runs - and not by a look at the text: parseOpen refuses a confirmation
+  // that is no proof (proof.validateProof), and it refuses one without a task
+  // beside it, which is exactly the pair this case is about.
+  const ok = await page.evaluate(async () => {
+    const b64 = await import("/assets/js/contracts/b64.js");
+    const wire = await import("/assets/js/contracts/wire.js");
+    const core = await import("/assets/js/contracts/core.js");
+    const action = core.lookup(core.APP_STORE, core.SERVICE_API, core.ACT_UPLOAD);
+    // What the contract says about this row, so the case stands on core.js and
+    // not on a decision taken in this file.
+    const critical = core.critical(action, null);
+    const rec = window.__ngcSent.find((s) => s.name === "upload");
+    if (!rec || !rec.confirm) return { there: false, kind: "", critical };
+    const open = wire.parseOpen(wire.encodeOpen({
+      app: action.app, service: action.service, action: action.name,
+      params: null, window: wire.DEFAULT_WINDOW, e2e: null,
+      taskBytes: b64.utf8(rec.task), confirmBytes: b64.utf8(rec.confirm),
+    }));
+    return { there: true, kind: open.confirm.kind, critical };
+  });
+  expect(ok).toEqual({ there: true, kind: "password", critical: true });
+});
+
+test("a person who says no to the question uploads nothing at all", async ({ page }) => {
+  await store(page);
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
+  });
+  const box = page.getByRole("dialog", { name: "Bitte bestätigen" });
+  await expect(box).toBeVisible();
+  await box.getByRole("button", { name: "Abbrechen", exact: true }).click();
+  await expect(box).toHaveCount(0);
+  // NOT ONE BYTE WENT OUT. The question stands before the file moves, so a no
+  // is a no about something that has not happened yet - a question asked after
+  // four gigabytes are on the wire would be a question about the past.
+  await expect(page.getByRole("status")).toContainText("Nichts geändert.");
+  expect(await names(page)).not.toContain("ngc.store/upload");
+  // And no way on from here: nothing was uploaded, so there is nothing to
+  // activate.
+  await expect(page.locator(".store").getByRole("button", { name: "Aktivieren" })).toHaveCount(0);
+});
+
 test("a right the admin did not allow stops the activation", async ({ page }) => {
   await store(page);
   await tab(page, "Hochladen").click();
@@ -250,6 +349,8 @@ test("a right the admin did not allow stops the activation", async ({ page }) =>
     mimeType: "application/octet-stream",
     buffer: Buffer.from(buildPackage(manifest({ needs: ["network"] }))),
   });
+  // The upload is critical, so the question comes before the bytes move.
+  await answerConfirm(page);
   await expect(page.locator(".upfacts")).toBeVisible();
   // The box stays empty on purpose.
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
@@ -277,7 +378,15 @@ test("the target list offers only controllers that are online and run services",
       ui: null,
     }))),
   });
-  await expect(page.locator(".upfacts")).toBeVisible();
+  // The upload is critical, so the question comes before the bytes move.
+  await answerConfirm(page);
+  // WAITED FOR THE SELECT AND NOT FOR .upfacts. The three numbers of the file
+  // stand on screen BEFORE anything is sent - they are the shell's own
+  // arithmetic over the bytes - so since the upload waits for a confirmation
+  // and then for the answer, .upfacts is no longer a sign that the
+  // installation box is there. A case that reads the list a moment too early
+  // reads an empty one and blames the filter.
+  await expect(page.locator(".store select.target")).toBeVisible();
   const opts = page.locator(".store select.target option");
   expect(await opts.allTextContents()).toEqual(["pi-1", "pi-3"]);
 });

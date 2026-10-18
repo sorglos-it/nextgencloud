@@ -487,11 +487,22 @@ class Store {
       pair("Prüfsumme", b64encode(mine.packageSha256)),
       pair("UI-Prüfsumme", b64encode(mine.sha256)),
     );
+    // THE PAPERS BEFORE THE BYTES. The upload is critical by the contract's
+    // own reckoning (core.critical), so it is signed, and where the trust list
+    // asks for it the person confirms the very same task bytes. Asked BEFORE
+    // the file starts moving: a question put after four gigabytes have gone
+    // over the wire is a question about something that already happened.
+    // A refusal has already said its own sentence; what stays on screen are
+    // the three numbers of the file and NO "Aktivieren" button, because
+    // nothing was uploaded.
+    const papers = await this.signAndConfirm(A.upload, null, "");
+    if (papers === null || this.abort.signal.aborted) return;
     const sending = el("p", "muted", "Wird übertragen …");
     zone.append(sending);
     let theirs;
     try {
       theirs = await this.ask(A.upload, null, {
+        ...papers,
         stream: file.stream(),
         onProgress: (n) => text(sending, "Wird übertragen … " + Math.round(n / 1024) + " KB"),
       });
@@ -808,20 +819,39 @@ class Store {
   // task without that signature, and the shell must not send one it knows
   // will be refused.
   //
-  // A GAP IN THE CONTRACT, NAMED HERE BECAUSE THIS IS WHERE IT SHOWS.
-  // wire.encodeOpen (and wire.parseOpen behind it) takes `confirm` only
-  // together with `task`: "if (confirm !== null) { if (task === null) return
-  // false }". So an action of service `api` - which carries no task - CANNOT
-  // BE CONFIRMED AT ALL, however the trust list's policy reads. The store
-  // therefore asks only for root tasks, and ngc.store/api/set-update goes out
-  // unconfirmed even for a role at level `hardcore`, whose `changes` rule
-  // would ask for one. That is the contract as it stands, not an omission
-  // here; it is in the coordinator's register.
-  async rootTask(action, params, node, done) {
+  // WHAT CAN BE CONFIRMED, AND WHAT STILL CANNOT. wire.encodeOpen (and
+  // wire.parseOpen behind it) takes `confirm` only together with `task`:
+  // "if (confirm !== null) { if (task === null) return false }". So the
+  // question is not the SERVICE but the task: an OPEN that carries one can be
+  // confirmed, whatever service it names, and task.buildTask takes `node || ""`
+  // for an action that is about no controller.
+  //
+  // Until 18.10.2026 this read "an action of service api CANNOT BE CONFIRMED
+  // AT ALL" and the store gave api actions no task at all. That was a
+  // description of this file, written as if it were the contract - and the
+  // upload paid for it: core.critical() answers true for ngc.store/api/upload,
+  // the API refuses it with E_CONFIRM without a confirmation, and the shell
+  // sent neither task nor confirmation. The upload now goes the same way a root
+  // task goes, through signAndConfirm below.
+  //
+  // WHAT IS STILL UNCONFIRMED, named so nobody reads the fix as wider than it
+  // is: ngc.store/api/set-update carries no task and so goes out unconfirmed
+  // even for a role at level `hardcore`, whose `changes` rule would ask for
+  // one. That one is a decision and not an omission - it is in the
+  // coordinator's register.
+
+  // ---- signing and, where the policy asks, confirming ---------------------
+  //
+  // signAndConfirm answers with the two byte strings an OPEN carries, or null
+  // when nothing may be sent. Every refusal says its own sentence first, so a
+  // caller only has to stop. It is ONE function because the upload and a root
+  // task must not drift apart on this: what the person confirms is the bytes
+  // that run, in both cases.
+  async signAndConfirm(action, params, node) {
     const s = this.ctx.session;
     if (!s) {
       this.say("error", "Dafür ist eine Anmeldung nötig. Bitte neu anmelden.");
-      return false;
+      return null;
     }
     let built, taskBytes;
     try {
@@ -834,7 +864,7 @@ class Store {
       taskBytes = envelopeBytes(await task.signTask(s.signKey, built.bytes));
     } catch {
       this.say("error", "Das ließ sich nicht unterschreiben. Bitte neu anmelden.");
-      return false;
+      return null;
     }
     let confirmBytes = null;
     const { list } = this.ctx.trust?.current?.() ?? {};
@@ -844,7 +874,7 @@ class Store {
     // the API would refuse it a moment later anyway.
     if (!list) {
       this.say("error", "Die Vertrauensliste fehlt. Bitte neu anmelden.");
-      return false;
+      return null;
     }
     if (needConfirm(list, s.user, {
       app: action.app, action: action.name, node,
@@ -856,19 +886,32 @@ class Store {
       const p = await askConfirm(built.bytes, { list, user: s.user, signal: this.abort.signal });
       if (p === null) {
         this.say("info", "Nichts geändert.");
-        return false;
+        return null;
       }
       try {
         confirmBytes = proofBytes(p);
       } catch {
         this.say("error", "Die Bestätigung hat nicht gereicht. Bitte es noch einmal versuchen.");
-        return false;
+        return null;
       }
     }
+    return { taskBytes, confirmBytes };
+  }
+
+  // ---- signing a root task ------------------------------------------------
+  //
+  // The task carries the parameters the shell computed, and it is signed
+  // before anything leaves. Where the trust list asks for it, the user signs
+  // the very same bytes a second time with their own key; the API refuses the
+  // task without that signature, and the shell must not send one it knows
+  // will be refused.
+  async rootTask(action, params, node, done) {
+    const papers = await this.signAndConfirm(action, params, node);
+    if (papers === null) return false;
     try {
       // With a task the OPEN carries no params of its own: only the signed
       // ones count.
-      await this.ask(action, null, { taskBytes, confirmBytes });
+      await this.ask(action, null, papers);
     } catch {
       this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
       return false;

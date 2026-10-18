@@ -679,6 +679,55 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
   expect(sent.hints).toEqual([2]);
 });
 
+// REPORTING A SERVER AND BEING ABLE TO USE IT WERE TWO THINGS, and this case
+// is the one that holds them together.
+//
+// Measured on 18.10.2026: both places that take a server in wrote
+// `rootUsers: []`, so a freshly taken-in controller stood in the trust list
+// and could do nothing that needs a root task - activate, install, uninstall,
+// delete data, terminal. The API answered E_FORBIDDEN and the screen said
+// "Das hat der Rechner nicht angenommen.": a sentence about the machine for a
+// right that was never written.
+//
+// ONE USER, NOT A ROLE. rootRoles stays empty on purpose - a role would hand
+// root on this machine to every future member of it, including people added
+// long after anybody looked at this server. The one who vouched for the
+// fingerprint is the one who may run root tasks on it.
+test("whoever takes a controller in may run root tasks on it, and nobody else yet",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note"))
+      .toHaveText("Der Server »dienste« ist aufgenommen.");
+
+    const got = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const { world } = await import("/assets/js/shell/fake-link.js");
+      const s = trust.parseSigned(window.__ngcSent[0].bytes);
+      const l = await trust.parseList(s.payload);
+      const node = l.nodes.find((n) => n.id === "dienste");
+      // WHO the session is, read out of the version the shell started from and
+      // not written down here: the user whose key signed this very list.
+      const w = await world({ signable: true });
+      const me = w.trust.current().list.users[0].id;
+      return {
+        rootUsers: node.rootUsers, rootRoles: node.rootRoles, me,
+        // The contract's own reckoning over the written node: does a root task
+        // on it reach this person at all?
+        granted: trust.mayRoot(l, me, "dienste"),
+      };
+    });
+    expect(got.rootUsers).toEqual([got.me]);
+    expect(got.rootRoles).toEqual([]);
+    expect(got.granted).toBe(true);
+  });
+
 test("two servers taken in one after the other give n+1 and n+2, not two at one number",
   async ({ page }) => {
     // K2 OF FIXRUNDE 2, AND THE PROOF IT OWES. The version in force here does
