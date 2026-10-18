@@ -524,6 +524,23 @@ heraus · **S2** = ein Riegel wirkt nicht · **S3** = Riegel ohne jede Messung.
 - **Fundstelle:** eigene Zählung am 18.10.2026 im Baum `d955f52`;
   `apps/web/public/assets/js/shell/lang.js:57`, `:61`, `:179`.
 
+> **Berichtigung vom 18.10.2026, 16:30: das ist zum großen Teil schon gebaut — auf einem
+> Zweig, der nirgends liegt.** `origin/web-reif` (`b436b8e`, 14 Commits vor `main`, gepusht
+> um 16:24) trägt die Sprachschicht: die fünf Sprachen liegen dort in `apps/web/lang/` mit je
+> **321 Sätzen** statt 17 Schlüsseln, dazu `apps/web/classes/Lang.php` und zwei eigene
+> Prüfsätze (`tests/lang/files.spec.js`, `tests/lang/lookup.spec.js`). Die deutschen
+> Zeichenketten im Code gehen von rund **233 auf 97** zurück — `users.js` von 78 auf **6**,
+> `store.js` von 91 auf **2**.
+>
+> **Also nicht 2–3 Tage, sondern eine Zusammenführung** — und eine Entscheidung dazu, denn
+> `web-reif` hat **dieselben drei Zweige** zusammengeführt wie `veroeffentlichungsliste`,
+> ohne voneinander zu wissen. Die zwei Zweige sind nicht deckungsgleich: `web-reif` fehlt
+> `0156cd8` (die Serveradresse) und das neuere `main`, `veroeffentlichungsliste` fehlt die
+> Sprachschicht. **Wer nur einen von beiden nach `main` nimmt, verliert, was im anderen
+> steckt.** Was von den 97 übrigen Zeichenketten noch Oberflächentext ist und was Kennungen
+> sind, ist **nicht** aufgeschlüsselt. Siehe `docs/befunde-17-18-10-2026.md`, Abschnitt 0,
+> Berichtigung Punkt 3.
+
 ### B2 — Eine Sicherung geht nur über die Befehlszeile. Eine Rücksicherung gar nicht.
 
 - **Was fehlt:** ein Knopf. `ngc-api backup` und `ngc-controller backup` sind Unterbefehle
