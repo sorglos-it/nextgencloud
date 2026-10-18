@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -120,26 +122,29 @@ func TestAnchorWall_WithoutAnAnchorTheWayBackGoesThrough(t *testing.T) {
 	}
 }
 
-// TestAnchorWall_ARestoredDatabaseEndsInAWall measures point 43 of
-// docs/vertraege-v1.2.md, which was read out of the code and not measured.
-// The installation was paired once, so trust-anchor.json stands above 1
-// (node.pair writes it, state.advanceAnchor moves it up). The database that
-// comes back from the backup holds no trust list. Point 10 of the contract
-// says the setup opens again, and it does -- and then:
+// TestAnchorWall_ARestoredDatabaseComesBack measures the third way of point
+// 43 of docs/vertraege-v1.2.md. The installation was paired once, so
+// trust-anchor.json stands above 1 (node.pair writes it, state.advanceAnchor
+// moves it up). The database that comes back from the backup holds no trust
+// list. Point 10 of the contract says the setup opens again -- and before the
+// third way it opened into a wall:
 //
-//	the setup opens                        measured here, 200
-//	version 1 is signed and stored         measured here, 204
-//	a cold node reads from the pin         measured here, state.ErrNoTrust
-//	the setup opens again                  measured here, 200
-//	and the second version 1 is refused    measured here, the row is taken
+//	the setup opens                        200
+//	version 1 is signed and stored         204
+//	a cold node reads from the pin         state.ErrNoTrust  <- the wall
+//	the setup opens again                  200
+//	and the second version 1 is refused    the row is taken
 //
-// So the way back is open and ends in a wall, and the wall closes behind the
-// admin: the row of version 1 is in the database, the pin still names 3, and
-// no further setup can mend it. Nothing in this repository removes the file
-// (grep: only config.SaveAnchor and node.pair write it, nothing deletes it;
-// tools/recovery-*.sh of branch recovery does not mention it), so the wall
-// stands as the code stands.
-func TestAnchorWall_ARestoredDatabaseEndsInAWall(t *testing.T) {
+// Measured on 18.10.2026 before the change: exactly this, with the pin left
+// at 3. The wall closed behind the admin -- his version 1 lay in the database
+// and no further setup could mend it.
+//
+// What the third way adds is one line of take: a setup that got through to
+// the end -- MAC of the local one-time code, signature, AddVersion -- reseals
+// the pin onto the version it just stored. Not the sight of an empty
+// database, which would hand the pin to anybody who can empty one (answer B
+// of point 43, measured there as no answer at all).
+func TestAnchorWall_ARestoredDatabaseComesBack(t *testing.T) {
 	h := newHandler(t)
 	anchorAt(t, h, pinnedSeq)
 	admin := trusttest.NewSigner(3)
@@ -151,37 +156,115 @@ func TestAnchorWall_ARestoredDatabaseEndsInAWall(t *testing.T) {
 	if w.Code != 204 {
 		t.Fatalf("the setup refused version 1 under the pin: %d %s", w.Code, w.Body)
 	}
-	// The node that took it sees no wall: its cache holds the version. This
-	// is why the wall has to be measured cold, and it is said here rather
-	// than left to the reader.
+	// The node that took it sees no wall even without the reseal: its cache
+	// holds the version. This is why the way back has to be measured cold,
+	// and it is said here rather than left to the reader.
 	if v, err := h.S.Trust(ctx); err != nil || v.List.Seq != 1 {
 		t.Fatalf("the taking node does not hold version 1: %v %v", v.List, err)
 	}
-	// The pin was not moved up by it either: advanceAnchor is forward only.
-	if a, err := config.LoadAnchor(h.S.AnchorFile); err != nil || a.Seq != pinnedSeq {
-		t.Fatalf("the pin stands at %v, want %d: %v", a.Seq, pinnedSeq, err)
+
+	// 3.: the pin now names the version that is there. This is the new line,
+	// and it is a step DOWN from 3 to 1 -- state.advanceAnchor would never
+	// write it, which is why take asks for a reseal and not a move up.
+	a, err := config.LoadAnchor(h.S.AnchorFile)
+	if err != nil || a.Seq != 1 {
+		t.Fatalf("the pin stands at %v, want 1: %v", a.Seq, err)
+	}
+	if !bytes.Equal(a.Hash, versionHash(t, h)) {
+		t.Fatalf("the pin names other bytes than the version that was stored")
 	}
 
-	// 3.: the wall. A restart, or any second node.
+	// 4.: the wall is gone. A restart, or any second node, runs on version 1.
 	cold := coldNode(t, h)
-	if v, err := cold.S.Trust(ctx); !errors.Is(err, state.ErrNoTrust) {
-		t.Fatalf("the cold node opened %v instead of answering ErrNoTrust: %v", v.List, err)
+	v, err := cold.S.Trust(ctx)
+	if err != nil || v.List.Seq != 1 {
+		t.Fatalf("a cold node does not open the list the setup took: %v %v", v.List, err)
 	}
+	// 5.: and the door is shut behind it, which is the other half of point 10.
+	wc := httptest.NewRecorder()
+	cold.Serve(wc, httptest.NewRequest(http.MethodGet, session.PathSetup, nil))
+	if wc.Code != 404 {
+		t.Fatalf("the setup stayed open after version 1: %d", wc.Code)
+	}
+}
 
-	// 4. and 5.: and it does not open a second time either. The cold node
-	// offers the setup again -- which is the damage, not the mending -- and
-	// the version 1 it would take is refused, because the row is there.
-	if _, err := cold.EnsureCode(); err != nil {
-		t.Fatalf("the cold node could not make a code: %v", err)
+// TestAnchorWall_TheResealedPinStillRefusesATruncatedChain is the half that
+// decided the shape of the line in take. Point 43 names two ways of freeing
+// the pin, and both open the way back: removing the file, and resealing it
+// onto version 1. Measured on 18.10.2026, side by side on this case:
+//
+//	removed   cold node on version 1, pin gone, versions 2 and 3 added,
+//	          top row deleted -> the cold node runs on version 2, silently
+//	resealed  cold node on version 1, pin at 1, versions 2 and 3 added,
+//	          pin follows to 3, top row deleted -> state.ErrNoTrust
+//
+// So removing the file gives the chain cut at the TOP back to whoever can
+// write the database -- the one form state.checkGap names and cannot catch --
+// and nothing in this repository ever writes the file again except a pairing.
+// Resealing costs nothing against that and keeps the guard, so take reseals.
+//
+// This case is the second half: after the way back, the pin is a pin again.
+func TestAnchorWall_TheResealedPinStillRefusesATruncatedChain(t *testing.T) {
+	h := newHandler(t)
+	anchorAt(t, h, pinnedSeq)
+	admin := trusttest.NewSigner(3)
+	info, code := openSetup(t, h)
+	raw := firstVersion(t, info, admin, code)
+	first, err := session.ParseSetup(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	info2, code2 := openSetup(t, cold)
-	w2 := httptest.NewRecorder()
-	cold.Serve(w2, post(firstVersion(t, info2, admin, code2)))
-	if w2.Code == 204 {
-		t.Fatalf("the second setup went through, so this case no longer measures the wall")
+	w := httptest.NewRecorder()
+	h.Serve(w, post(raw))
+	if w.Code != 204 {
+		t.Fatalf("the setup refused version 1 under the pin: %d %s", w.Code, w.Body)
 	}
-	// Still ErrNoTrust afterwards: the installation runs on nothing.
-	if v, err := cold.S.Trust(ctx); !errors.Is(err, state.ErrNoTrust) {
-		t.Fatalf("after the second setup the cold node holds %v: %v", v.List, err)
+	// The installation runs on: two more versions of the same admin, which
+	// the pin follows by itself (state.advanceAnchor).
+	second := admin.Sign(t, trusttest.Next(t, first.Trust))
+	if _, err := h.S.AddVersion(ctx, second); err != nil {
+		t.Fatalf("version 2: %v", err)
 	}
+	third := admin.Sign(t, trusttest.Next(t, second))
+	if _, err := h.S.AddVersion(ctx, third); err != nil {
+		t.Fatalf("version 3: %v", err)
+	}
+	// Intermediate check: the pin stands at the newest version. Without it
+	// the refusal below could be any other wall.
+	if a, err := config.LoadAnchor(h.S.AnchorFile); err != nil || a.Seq != 3 {
+		t.Fatalf("the pin stands at %v, want 3: %v", a.Seq, err)
+	}
+	// Intermediate check two: a cold node opens the whole chain under it.
+	if v, err := coldNode(t, h).S.Trust(ctx); err != nil || v.List.Seq != 3 {
+		t.Fatalf("the chain does not open under the resealed pin: %v %v", v.List, err)
+	}
+	// The attack: the top row away, the rest whole.
+	if err := h.S.DB.BlobDelete(ctx, dbapi.BlobTrust, "3"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if v, err := coldNode(t, h).S.Trust(ctx); !errors.Is(err, state.ErrNoTrust) {
+		t.Fatalf("the truncated chain opened at %v: %v", v.List, err)
+	}
+	// Control: the same rows, and no anchor at all -- which is what removing
+	// the file would leave behind. Then the older list IS put back in force,
+	// without a word, and that is the whole reason take reseals.
+	if err := os.Remove(h.S.AnchorFile); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	v, err := coldNode(t, h).S.Trust(ctx)
+	if err != nil || v.List.Seq != 2 {
+		t.Fatalf("control: with no anchor the cold node answered %v: %v", v.List, err)
+	}
+}
+
+// versionHash is the hash of the one trust version this installation holds,
+// read back out of the state rather than recomputed from the test's own
+// bytes.
+func versionHash(t testing.TB, h *Handler) []byte {
+	t.Helper()
+	v, err := h.S.Trust(ctx)
+	if err != nil {
+		t.Fatalf("trust: %v", err)
+	}
+	return v.Hash
 }

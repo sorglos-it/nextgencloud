@@ -355,7 +355,8 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 		fail(wire.CodeVerify)
 		return
 	}
-	if _, err := h.S.AddVersion(ctx, s.Trust); err != nil {
+	v, err := h.S.AddVersion(ctx, s.Trust)
+	if err != nil {
 		// A version 1 that is already there: somebody was quicker and the
 		// setup is over. His signature was good, so E_VERIFY would be a lie.
 		if errors.Is(err, state.ErrOldVersion) {
@@ -381,6 +382,31 @@ func (h *Handler) take(w http.ResponseWriter, r *http.Request, code string) {
 	// name of the file is said and never what stands in it.
 	if err := h.removeCode(); err != nil {
 		slog.Error("the setup code file could not be removed", "file", h.CodeFile, "error", err)
+	}
+	// And the pin outside the database follows the version this setup just
+	// stored -- the third way of docs/vertraege-v1.2.md, point 43. A setup
+	// that got this far is a FINISHED one: the MAC of the local one-time code
+	// held, the version is signed, and AddVersion took it. The sight of an
+	// empty database would not do; that would hand the pin to whoever can
+	// empty one (answer B there, and it was measured to be no answer).
+	//
+	// It reseals and does not remove, and that was measured rather than
+	// weighed: both open the documented way back, but a removed file leaves
+	// the installation with no pin at all -- nothing writes it again except a
+	// pairing -- and the chain cut at the TOP then passes silently, which is
+	// the one attack the anchor exists for (state.ResealAnchor names the two
+	// runs). The reseal keeps the guard and costs nothing beside it.
+	//
+	// A reseal that fails is said and not answered, for the same reason the
+	// code file above is: the version stands, the rows shut the setup from
+	// here on, and a 500 would send the admin back to a door that answers
+	// 404 with his own version already in. What it costs is named instead of
+	// hidden -- until the file is mended by hand this installation walks into
+	// the wall of point 43 on its next start -- and that is why the line is
+	// loud.
+	if err := h.S.ResealAnchor(v); err != nil {
+		slog.Error("the trust anchor outside the database could not be resealed onto the version this setup stored; this installation will not read its trust list after a restart until the file is mended",
+			"file", h.S.AnchorPath(), "error", err)
 	}
 	_ = lock.Clear(ctx, h.S.DB, lockName)
 	httpapi.NoContent(w)
