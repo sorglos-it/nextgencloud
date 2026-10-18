@@ -349,7 +349,28 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   }
 
   async function attempt(wantPasskey) {
-    if (busy || go.disabled) return;
+    // THE BUTTON THAT WAS PRESSED, and not `go`. `go` is the PASSWORD button,
+    // and enable() above holds it disabled for good on an engine that makes no
+    // password key out of a seed - so asking it here switched the PASSKEY
+    // button off as well, on the one engine where the passkey is the only way
+    // in.
+    //
+    // MEASURED on 18.10.2026 in firefox 141, with the software authenticator
+    // of tests/fixtures/passkey.js: the name typed, "Mit Passkey anmelden"
+    // pressed, and then nothing at all - no /api/v1/login/finish (the mock's
+    // counter stayed at 0), no desktop, and no sentence. The screen kept
+    // standing there with its own advice, "Dieser Browser kann die
+    // Passwort-Anmeldung nicht ausführen. Bitte mit Passkey anmelden." - advice
+    // that could not be followed. The passkey cases had never run outside
+    // chromium, where `go` is enabled and this line is invisible
+    // (tests/shell/login.spec.js, AUTHENTICATORS).
+    //
+    // It still refuses what it has to refuse: during an attempt and during a
+    // lock, enable(false) disables BOTH buttons, so either one is its own
+    // guard. The form's own submit path has its own `if (!passwordKeys)
+    // return` below.
+    const pressed = wantPasskey === true ? withPasskey : go;
+    if (busy || pressed === null || pressed.disabled) return;
     busy = true;
     // Read and empty in one step, with no await in between: from here on the
     // typed password is in one variable of this closure and nowhere on the
