@@ -141,11 +141,41 @@ async function load() {
   return { tag: chosen ?? FALLBACK, base, main, wanted };
 }
 
-const loaded = await load();
+// EVERY BINDING THIS FILE HANDS OUT IS DECLARED BEFORE THE AWAIT, AND WITH A
+// VALUE. It would be shorter to write `const loaded = await load()`, and that
+// is what stood here - MEASURED what it costs, in WebKit, 20 red of 20:
+//
+//   ReferenceError: Cannot access uninitialized variable.
+//     t@/assets/js/lang.js:169
+//     module code@/assets/js/apps/users.js:71
+//
+// The specification is on the side of the short version: a module that awaits
+// at its top level finishes before any body that imports it runs, so a
+// dependent calling t() in its own module code cannot be early. Chromium and
+// Firefox do that - 0 red of 20 each. THIS WEBKIT RUNS THE DEPENDENT'S BODY
+// FIRST, and then every one of those bindings is in its dead zone and reading
+// it THROWS. apps/users.js, net/world.js and shell/trustlist.js all name a
+// sentence in their module code, so all three died at their first line, and
+// with them every case that imported one.
+//
+// A let with a value cannot be in a dead zone. So an early t() answers out of
+// the empty table - which is NOLANG, the one sentence that says the files
+// could not be read - instead of throwing, and the page comes up. It is not a
+// repair of the engine and does not pretend to be: on an engine that gets the
+// order right nothing here changes, and on this one a sentence is briefly the
+// wrong one instead of a module being dead. The alternative was to make three
+// dozen module-level constants lazy across five files, which is a redesign and
+// not a merge.
+let loaded = { tag: FALLBACK, base: null, main: null, wanted: [] };
 
 // tag is the language in force, for lang="…" on the document and for anything
-// that formats a number or a date.
-export const tag = loaded.tag;
+// that formats a number or a date. It is a let for the same reason, and it
+// starts at the fall-back: a date formatted a moment too early is formatted
+// for English, not for an exception.
+export let tag = FALLBACK;
+
+loaded = await load();
+tag = loaded.tag;
 
 // fill puts the values into the text. A placeholder is {name}, and a name the
 // caller did not pass stays as it stands rather than becoming "undefined":

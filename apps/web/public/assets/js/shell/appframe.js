@@ -66,22 +66,22 @@ const CLOSE_OK = "ok";
 // What the person is told. Four sentences, because four things can go wrong
 // that they can tell apart; which rule inside a proof broke is not one of
 // them, and naming it would only describe the inside of the server.
-const NOT_GENUINE = t("appframe.notgenuine");
-const NO_ENTRY = t("appframe.noentry");
-const NEEDS_CLASSIC = t("appframe.needsclassic");
-const NOT_LOADED = t("appframe.notloaded");
+const NOT_GENUINE = () => t("appframe.notgenuine");
+const NO_ENTRY = () => t("appframe.noentry");
+const NEEDS_CLASSIC = () => t("appframe.needsclassic");
+const NOT_LOADED = () => t("appframe.notloaded");
 
 // What to do about it. One line each, because a message with no way out is
 // a dead end for somebody who did not choose any of this.
-const HINTS = new Map([
-  [NOT_GENUINE, t("appframe.askadmin")],
-  [NO_ENTRY, t("appframe.askadmin")],
-  [NEEDS_CLASSIC, t("appframe.askadmin")],
-  [NOT_LOADED, t("appframe.tryagain")],
+const HINTS = () => new Map([
+  [NOT_GENUINE(), t("appframe.askadmin")],
+  [NO_ENTRY(), t("appframe.askadmin")],
+  [NEEDS_CLASSIC(), t("appframe.askadmin")],
+  [NOT_LOADED(), t("appframe.tryagain")],
 ]);
 
 // Refused carries the sentence the person gets. Everything else that is
-// thrown on the way becomes NOT_LOADED, so an error of the engine can never
+// thrown on the way becomes NOT_LOADED(), so an error of the engine can never
 // turn into a window that shows an app all the same.
 class Refused extends Error {
   constructor(msg) {
@@ -558,7 +558,7 @@ async function verifiedUI(app, link, trust, cache) {
 // running a UI unchecked is the one thing this file exists to prevent.
 function trustList(trust) {
   const l = typeof trust?.current === "function" ? trust.current()?.list : null;
-  if (l === null || typeof l !== "object") throw new Refused(NOT_GENUINE);
+  if (l === null || typeof l !== "object") throw new Refused(NOT_GENUINE());
   return l;
 }
 
@@ -576,9 +576,9 @@ async function uiHash(app, link, list) {
     const proof = core.parseResult(action, await link.call(action.app, action.service, action.name, params));
     hash = await core.verifyUIProof(proof, app.id, app.version, list);
   } catch {
-    throw new Refused(NOT_GENUINE);
+    throw new Refused(NOT_GENUINE());
   }
-  if (!(hash instanceof Uint8Array) || hash.length !== 32) throw new Refused(NOT_GENUINE);
+  if (!(hash instanceof Uint8Array) || hash.length !== 32) throw new Refused(NOT_GENUINE());
   return hash;
 }
 
@@ -593,7 +593,7 @@ async function uiBytes(app, link) {
   try {
     stream = await link.open(action.app, action.service, action.name, params);
   } catch {
-    throw new Refused(NOT_LOADED);
+    throw new Refused(NOT_LOADED());
   }
   return await new Promise((resolve, reject) => {
     const parts = [];
@@ -631,7 +631,7 @@ async function uiBytes(app, link) {
       try {
         b = bytesOf(chunk, "appframe: not bytes");
       } catch {
-        give(new Refused(NOT_LOADED), CODES.PROTOCOL);
+        give(new Refused(NOT_LOADED()), CODES.PROTOCOL);
         return;
       }
       n += b.length;
@@ -640,12 +640,12 @@ async function uiBytes(app, link) {
       // rather than drained: the rest of an archive nobody will read costs
       // the person time and the machine memory.
       if (n > MAX_UITAR) {
-        give(new Refused(NOT_LOADED), CODES.TOOLARGE);
+        give(new Refused(NOT_LOADED()), CODES.TOOLARGE);
         return;
       }
       parts.push(b);
     };
-    stream.onClose = (status) => give(status === "ok" ? null : new Refused(NOT_LOADED));
+    stream.onClose = (status) => give(status === "ok" ? null : new Refused(NOT_LOADED()));
   });
 }
 
@@ -655,7 +655,7 @@ async function uiBytes(app, link) {
 // uiBytes and are held by this call alone, so the array the checksum was
 // taken over is by construction the array the archive is read out of.
 function uiTar(bytes, want) {
-  if (!equal(sha256(bytes), want)) throw new Refused(NOT_GENUINE);
+  if (!equal(sha256(bytes), want)) throw new Refused(NOT_GENUINE());
   let files;
   try {
     files = uitar.walkUI(bytes);
@@ -663,7 +663,7 @@ function uiTar(bytes, want) {
     // The archive is the one the signature vouches for and it is still no
     // ui-tar. That is not a broken download, it is a package that should
     // never have been signed.
-    throw new Refused(NOT_GENUINE);
+    throw new Refused(NOT_GENUINE());
   }
   return files;
 }
@@ -681,19 +681,19 @@ function buildDocument(app, files, token, library) {
   // The entry page of the manifest has to be a safe relative path before it
   // is looked up at all - store.validPath, the same rule the archive holds
   // its own names to.
-  if (typeof app.entry !== "string" || !validPath(app.entry)) throw new Refused(NO_ENTRY);
+  if (typeof app.entry !== "string" || !validPath(app.entry)) throw new Refused(NO_ENTRY());
   const entry = "ui/" + app.entry;
   const byPath = new Map();
   for (const f of files) byPath.set(f.path, f);
   const page = byPath.get(entry);
-  if (page === undefined) throw new Refused(NO_ENTRY);
+  if (page === undefined) throw new Refused(NO_ENTRY());
 
   let source;
   try {
     source = fromUtf8(page.data);
   } catch {
     // A page that is no UTF-8 is a page whose characters nobody can agree on.
-    throw new Refused(NO_ENTRY);
+    throw new Refused(NO_ENTRY());
   }
   const doc = new DOMParser().parseFromString(source, "text/html");
   const head = doc.head;
@@ -729,7 +729,7 @@ function buildDocument(app, files, token, library) {
     // A module cannot import anything out of a data: address - the browser
     // has no base to resolve against and refuses every specifier - so a
     // module would run halfway and stop, silently. Better to say it.
-    if ((s.getAttribute("type") ?? "").trim().toLowerCase() === "module") throw new Refused(NEEDS_CLASSIC);
+    if ((s.getAttribute("type") ?? "").trim().toLowerCase() === "module") throw new Refused(NEEDS_CLASSIC());
     if (s.hasAttribute("src")) {
       s.setAttribute("src", address(s.getAttribute("src")));
       continue;
@@ -879,13 +879,13 @@ function accent() {
 // An empty window would say neither, and a window that closed itself would
 // leave the person wondering whether they mis-clicked.
 function refuse(win, e) {
-  const msg = e instanceof Refused ? e.shown : NOT_LOADED;
+  const msg = e instanceof Refused ? e.shown : NOT_LOADED();
   const pad = el("div", "pad app");
   const p = el("p", null, msg);
   // An error the person did not ask for is announced at once; the desktop's
   // own strip is for what merely happened.
   p.setAttribute("role", "alert");
-  pad.append(p, el("p", "muted", HINTS.get(msg) ?? ""));
+  pad.append(p, el("p", "muted", HINTS().get(msg) ?? ""));
   clear(win.body);
   win.body.append(pad);
 }

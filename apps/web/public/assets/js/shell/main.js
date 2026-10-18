@@ -17,7 +17,7 @@ import { t } from "../lang.js";
 const NEEDED = ["Ed25519", "X25519"];
 
 // The standing advice for somebody who got in with a password alone.
-const HINT = t("shell.passkeyhint");
+const HINT = () => t("shell.passkeyhint");
 
 export async function browserFits() {
   // Both are needed for the session keys; a browser without them cannot open
@@ -295,7 +295,7 @@ async function showDesktop(root, config, anchor, world) {
   // two cases pin by that very count (desktop-keyboard.spec.js:
   // `getByRole("status")).toHaveCount(1)`, store.spec.js reads the one there
   // is). A live region is for news anyway; this is advice that stands there.
-  if (world.passwordHint) document.body.append(el("p", "passkeyhint", HINT));
+  if (world.passwordHint) document.body.append(el("p", "passkeyhint", HINT()));
 }
 
 start().catch(() => {

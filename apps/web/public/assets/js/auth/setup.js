@@ -391,7 +391,7 @@ export function setupView(root, { config, onDone } = {}) {
   // list yet. "Already set up" would be true and useless; this says what to
   // do. (The POST keeps the brief's own sentence - see below.)
   function sentenceForOffer(e) {
-    if (e?.code === wire.CODES.NOTFOUND) return NOT_SET_UP;
+    if (e?.code === wire.CODES.NOTFOUND) return NOT_SET_UP();
     if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE();
     if (e?.code === wire.CODES.LOCKED) return t("wire.E_LOCKED");
     // An installation that answered and could not answer THIS is not a code

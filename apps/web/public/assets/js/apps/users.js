@@ -68,39 +68,39 @@ const LOG_LIMIT = 50;
 // The same sentence wherever an answer did not hold up. It says nothing about
 // what was wrong with it: that would describe the inside of the server, and
 // it is nothing the person can act on either.
-const BAD_LIST = t("users.badlist");
-const BAD_OFFER = t("users.badoffer");
-const NO_REACH = t("users.noreach");
+const BAD_LIST = () => t("users.badlist");
+const BAD_OFFER = () => t("users.badoffer");
+const NO_REACH = () => t("users.noreach");
 // The question quotes the fingerprint, so it is not asked before the
 // fingerprint is there: a question that shows three dots where the
 // fingerprint belongs is a question nobody can answer.
-const NO_FINGERPRINT = t("users.nofingerprint");
+const NO_FINGERPRINT = () => t("users.nofingerprint");
 // The version IS stored; only this browser did not get there. Writing a
 // second version from here would be the fork, so nothing more is written and
 // the sentence says the one thing that fixes it.
-const BEHIND = t("users.behind");
+const BEHIND = () => t("users.behind");
 
 // Cancelled is what the person answered when the question for their key was
 // closed with Abbrechen. It is an answer and not a failure, and it reads
 // differently on screen.
 class Cancelled extends Error {}
-// Behind is BEHIND as an answer: the write went through, the following did
+// Behind is BEHIND() as an answer: the write went through, the following did
 // not.
 class Behind extends Error {}
 
 // What a log entry's kind is called in German. A kind the contract knows but
 // this table does not is shown as it stands - it is one of core's own ten
 // words and it is text either way.
-const KINDS = {
+const KINDS = () => ({
   __proto__: null,
   login: t("users.kind.login"), "login-failed": t("users.kind.login-failed"),
   channel: t("users.kind.channel"), task: t("users.kind.task"), trust: t("users.kind.trust"),
   rights: t("users.kind.rights"), app: t("users.kind.app"), store: t("users.kind.store"),
   license: t("users.kind.license"), update: t("users.kind.update"),
-};
+});
 
 // The four tabs, in the order they stand on screen.
-const TABS = [
+const TABS = () => [
   ["users", t("users.tab.users")],
   ["rights", t("users.tab.rights")],
   ["servers", t("users.tab.servers")],
@@ -269,7 +269,7 @@ class Users {
     this.panels = el("div", "panels");
     this.btn = new Map();
     this.panel = new Map();
-    for (const [id, label] of TABS) {
+    for (const [id, label] of TABS()) {
       const b = button("tab", label, null);
       b.setAttribute("role", "tab");
       b.id = "ngc-users-tab-" + id;
@@ -288,7 +288,7 @@ class Users {
     }
     this.root.append(this.tabs, this.panels);
     win.body.append(this.root);
-    this.show(TABS[0][0]);
+    this.show(TABS()[0][0]);
   }
 
   destroy() {
@@ -300,7 +300,7 @@ class Users {
   // ---- tabs ---------------------------------------------------------------
   show(id) {
     this.current = id;
-    for (const [tab] of TABS) {
+    for (const [tab] of TABS()) {
       const on = tab === id;
       const b = this.btn.get(tab);
       b.setAttribute("aria-selected", on ? "true" : "false");
@@ -318,15 +318,15 @@ class Users {
 
   tabKey(e) {
     const step = { __proto__: null, ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-    const at = TABS.findIndex(([id]) => id === this.current);
+    const at = TABS().findIndex(([id]) => id === this.current);
     let to = -1;
-    if (step !== undefined) to = (at + step + TABS.length) % TABS.length;
+    if (step !== undefined) to = (at + step + TABS().length) % TABS().length;
     else if (e.key === "Home") to = 0;
-    else if (e.key === "End") to = TABS.length - 1;
+    else if (e.key === "End") to = TABS().length - 1;
     else return;
     e.preventDefault();
-    this.show(TABS[to][0]);
-    this.btn.get(TABS[to][0]).focus();
+    this.show(TABS()[to][0]);
+    this.btn.get(TABS()[to][0]).focus();
   }
 
   build(id) {
@@ -508,7 +508,7 @@ class Users {
     try {
       list = await this.call(core.ACT_PENDING);
     } catch (e) {
-      Users.say(box, reason(e, BAD_OFFER));
+      Users.say(box, reason(e, BAD_OFFER()));
       return;
     }
     if (this.dead) return;
@@ -546,7 +546,7 @@ class Users {
     try {
       list = await this.call(core.ACT_PENDING_API);
     } catch (e) {
-      Users.say(box, reason(e, BAD_OFFER));
+      Users.say(box, reason(e, BAD_OFFER()));
       return;
     }
     if (this.dead) return;
@@ -716,7 +716,7 @@ class Users {
 
   askJoin(n, seen, from, box) {
     if (seen.fp === "") {
-      Users.say(box, NO_FINGERPRINT);
+      Users.say(box, NO_FINGERPRINT());
       return;
     }
     const v = this.trust.current();
@@ -774,7 +774,7 @@ class Users {
 
   askJoinAPI(n, seen, from, box) {
     if (seen.fp === "") {
-      Users.say(box, NO_FINGERPRINT);
+      Users.say(box, NO_FINGERPRINT());
       return;
     }
     this.ask({
@@ -896,7 +896,7 @@ class Users {
       r.append(
         cell("time", when(e.time)),
         cell("user", this.userName(e.user)),
-        cell("kind", KINDS[e.kind] ?? e.kind),
+        cell("kind", KINDS()[e.kind] ?? e.kind),
         cell("app", e.app),
         cell("action", e.action),
         cell("node", e.node),
@@ -975,7 +975,7 @@ class Users {
         // through but this browser is behind it, or it did not go through.
         if (msg) {
           text(msg, e instanceof Cancelled ? t("users.nochange")
-            : e instanceof Behind ? BEHIND : reason(e, failed));
+            : e instanceof Behind ? BEHIND() : reason(e, failed));
         }
       }
     });
@@ -1029,9 +1029,9 @@ class Users {
 // itself. All three mean the same to the person - what came back does not
 // hold up - and everything else means the connection.
 const REFUSALS = ["core: ", "tunnel: ", "trust: "];
-function reason(e, refused = BAD_LIST) {
+function reason(e, refused = BAD_LIST()) {
   const m = String(e?.message ?? "");
-  return REFUSALS.some((p) => m.startsWith(p)) ? refused : NO_REACH;
+  return REFUSALS.some((p) => m.startsWith(p)) ? refused : NO_REACH();
 }
 
 // chars puts an address on screen character by character, each in its own

@@ -431,3 +431,48 @@ export async function skipWithoutSessionKeys(shell) {
 export async function hasSessionKeys(shell) {
   return (await loginGap(shell)) === "";
 }
+
+// ---- the language gap ----------------------------------------------------
+//
+// Does this engine hand an importer the tables of public/assets/js/lang.js
+// once that module has settled? The specification says it must: lang.js awaits
+// at its top level, and no body that imports it may run before it finishes.
+//
+// MEASURED, and it is why this gap exists. Chromium and Firefox do it that way,
+// 0 of 20. THIS WEBKIT DOES NOT, and the measurement is unambiguous because the
+// page answers both halves at once: document.documentElement.lang is "it", so
+// load() really ran and really chose Italian - and the same import answers
+// tag "en" and the sentence out of NOLANG. Before the bindings of lang.js were
+// declared ahead of its await, the same engine THREW instead
+// ("ReferenceError: Cannot access uninitialized variable", t@lang.js, from the
+// module code of apps/users.js, net/world.js and shell/trustlist.js, 20 red of
+// 20). A stale sentence is better than a dead module, and neither is a
+// measurement of NGC.
+//
+// IT IS MEASURED THROUGH THE REAL MODULE and not through the engine's name:
+// the day this WebKit settles the order, this answers "" by itself and every
+// case below runs there with no edit here.
+//
+// WHAT IT IS NOT: a reason to skip a case that does not read a sentence. Only
+// cases that compare TEXT a person would read ask for it. The gap names the
+// disagreement it found, so a skipped case says what is really missing.
+export async function langGap(shell) {
+  return shell.evaluate(async () => {
+    try {
+      const m = await import("/assets/js/lang.js");
+      const chosen = document.documentElement.lang;
+      if (typeof chosen !== "string" || chosen === "") return "";
+      if (m.tag !== chosen) {
+        return `this engine kept lang.js at tag "${m.tag}" while the document says "${chosen}"`;
+      }
+      return "";
+    } catch (err) {
+      return "lang.js could not be imported at all: " + ((err && err.name) || "threw");
+    }
+  });
+}
+
+export async function skipWithoutSettledLang(shell) {
+  const gap = await langGap(shell);
+  test.skip(gap !== "", `this engine does not settle the language tables before a reader - ${gap}`);
+}

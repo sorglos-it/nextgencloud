@@ -66,30 +66,30 @@ const A = {
 // The five tabs, in the order the brief names them. "Apps" is the one the
 // window opens on, because that is what somebody came here for; the sources
 // are for the administrator and stand first only in reading order.
-const TABS = [["quellen", t("store.tab.sources")], ["apps", t("store.tab.apps")],
+const TABS = () => [["quellen", t("store.tab.sources")], ["apps", t("store.tab.apps")],
   ["installiert", t("store.tab.installed")], ["hochladen", t("store.tab.upload")],
   ["updates", t("store.tab.updates")]];
 const TAB_APPS = 1;
 
 // What a right MEANS, in words somebody can judge. "network" and "root" are
 // the contract's names and say nothing to the person who has to allow them.
-const NEED_TEXT = {
+const NEED_TEXT = () => ({
   __proto__: null,
   [catalog.NEED_NETWORK]: t("store.need.network"),
   [catalog.NEED_ROOT]: t("store.need.root"),
-};
+});
 
 // The parts of NGC by their name on screen. An app stands here under its id,
 // which is all an update row carries.
-const PART_TEXT = {
+const PART_TEXT = () => ({
   __proto__: null,
   [trust.AUTO_WEB]: t("store.part.web"),
   [trust.AUTO_API]: t("store.part.api"),
   [trust.AUTO_CONTROLLER]: t("store.part.controller"),
   [trust.AUTO_SYSTEM]: t("store.part.system"),
-};
+});
 
-const STATE_TEXT = {
+const STATE_TEXT = () => ({
   __proto__: null,
   [catalog.UPDATE_AVAILABLE]: t("store.update.available"),
   [catalog.UPDATE_DOWNLOADED]: t("store.update.downloaded"),
@@ -99,16 +99,16 @@ const STATE_TEXT = {
   [catalog.UPDATE_FAILED]: t("store.update.failed"),
   [catalog.UPDATE_REJECTED]: t("store.update.rejected"),
   [catalog.UPDATE_NEEDSGRANTS]: t("store.update.needsgrants"),
-};
+});
 
-const APP_STATE_TEXT = {
+const APP_STATE_TEXT = () => ({
   __proto__: null,
   ok: t("store.state.ok"),
   unreachable: t("store.state.unreachable"),
   unlicensed: t("store.state.unlicensed"),
-};
+});
 
-const MODES = [[catalog.MODE_AUTO, t("store.mode.auto")], [catalog.MODE_SEMI, t("store.mode.semi")],
+const MODES = () => [[catalog.MODE_AUTO, t("store.mode.auto")], [catalog.MODE_SEMI, t("store.mode.semi")],
   [catalog.MODE_NOTIFY, t("store.mode.notify")]];
 
 // What the controller has to be for an app with services to run on it.
@@ -156,7 +156,7 @@ class Store {
     // The panel is a tab stop of its own: what the arrows selected has to be
     // reachable without a mouse, and the panel scrolls.
     this.panel.tabIndex = 0;
-    this.tabs = TABS.map(([key, name], i) => {
+    this.tabs = TABS().map(([key, name], i) => {
       const b = button("tab", name, null);
       b.id = "storetab-" + this.win.id + "-" + key;
       b.setAttribute("role", "tab");
@@ -424,7 +424,7 @@ class Store {
       const r = el("div", "row instrow");
       const main = el("div", "rowmain");
       main.append(el("b", null, i.id), el("span", "muted", i.version + " · " + i.node));
-      main.append(el("span", null, (i.active ? "" : t("store.installed.off")) + (APP_STATE_TEXT[i.state] ?? "")));
+      main.append(el("span", null, (i.active ? "" : t("store.installed.off")) + (APP_STATE_TEXT()[i.state] ?? "")));
       const side = el("div", "rowside");
       const b = button("b", t("store.remove"), t("store.remove.label", { id: i.id }));
       b.addEventListener("click", () => this.remove(i));
@@ -552,7 +552,7 @@ class Store {
         cb.type = "checkbox";
         // The box is inside its label, so the words beside it ARE its name -
         // no id to keep in step, and a screen reader reads the right thing.
-        lab.append(cb, el("span", null, NEED_TEXT[n] ?? n));
+        lab.append(cb, el("span", null, NEED_TEXT()[n] ?? n));
         box.append(lab);
         ticks.push(cb);
       }
@@ -605,18 +605,18 @@ class Store {
     const out = [head(t("store.tab.updates")), el("p", "muted", t("store.updates.lead"))];
     const box = el("div", "rows");
     for (const u of rows) {
-      const name = PART_TEXT[u.target] ?? u.target;
+      const name = PART_TEXT()[u.target] ?? u.target;
       const r = el("div", "row uprow");
       const main = el("div", "rowmain");
       main.append(el("b", null, name));
       main.append(el("span", "muted", u.available !== "" && u.installed !== ""
         ? u.installed + " → " + u.available
         : u.installed || "—"));
-      if (u.state !== "") main.append(el("span", null, STATE_TEXT[u.state] ?? ""));
+      if (u.state !== "") main.append(el("span", null, STATE_TEXT()[u.state] ?? ""));
       const side = el("div", "rowside");
       const sel = el("select", "mode");
       sel.setAttribute("aria-label", t("store.updates.mode.label", { name }));
-      for (const [v, label] of MODES) {
+      for (const [v, label] of MODES()) {
         const o = el("option", null, label);
         o.value = v;
         if (u.mode === v) o.selected = true;

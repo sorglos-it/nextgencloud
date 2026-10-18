@@ -3,7 +3,7 @@
 // reaches the screen.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin, langGap, skipWithoutSettledLang } from "../fixtures/page.js";
 
 const WEB = fileURLToPath(new URL("../..", import.meta.url));
 const tableOf = (tag) => JSON.parse(readFileSync(WEB + "/lang/" + tag + ".json", "utf8"));
@@ -73,6 +73,9 @@ for (const [locale, key, want] of [
     const ctx = await browser.newContext({ locale });
     const page = await ctx.newPage();
     await page.goto("/");
+    // The gap is measured on THIS page, because this case brings its own.
+    test.skip(await langGap(page) !== "",
+      "this engine does not settle the language tables before a reader");
     const got = await page.evaluate(async (k) => {
       const lang = await import("/assets/js/lang.js");
       return { tag: lang.tag, text: lang.t(k), docLang: document.documentElement.lang };
@@ -87,6 +90,8 @@ test("a language nobody has falls back to English", async ({ browser }) => {
   const ctx = await browser.newContext({ locale: "is-IS" });
   const page = await ctx.newPage();
   await page.goto("/");
+  test.skip(await langGap(page) !== "",
+    "this engine does not settle the language tables before a reader");
   const got = await page.evaluate(async () => {
     const lang = await import("/assets/js/lang.js");
     return { tag: lang.tag, text: lang.t("login.go") };
@@ -99,6 +104,8 @@ test("a region nobody has falls back to the language", async ({ browser }) => {
   const ctx = await browser.newContext({ locale: "fr-CA" });
   const page = await ctx.newPage();
   await page.goto("/");
+  test.skip(await langGap(page) !== "",
+    "this engine does not settle the language tables before a reader");
   expect(await page.evaluate(async () => (await import("/assets/js/lang.js")).t("login.go")))
     .toBe("Se connecter");
   await ctx.close();
@@ -121,6 +128,8 @@ test("a key one language is missing reads out of English", async ({ browser }) =
     await route.fulfill({ json: body });
   });
   await page.goto("/");
+  test.skip(await langGap(page) !== "",
+    "this engine does not settle the language tables before a reader");
   const got = await page.evaluate(async () => {
     const lang = await import("/assets/js/lang.js");
     return { tag: lang.tag, missing: lang.t("login.go"), there: lang.t("login.password") };
@@ -132,6 +141,7 @@ test("a key one language is missing reads out of English", async ({ browser }) =
 });
 
 test("a key no language has is a sentence, not the key", async ({ shell }) => {
+  await skipWithoutSettledLang(shell);
   const got = await shell.evaluate(async () => {
     const lang = await import("/assets/js/lang.js");
     return lang.t("no.such.key.anywhere");
@@ -144,6 +154,7 @@ test("a key no language has is a sentence, not the key", async ({ shell }) => {
 });
 
 test("a placeholder gets its value, and an unnamed one stays visible", async ({ shell }) => {
+  await skipWithoutSettledLang(shell);
   const got = await shell.evaluate(async () => {
     const lang = await import("/assets/js/lang.js");
     return {

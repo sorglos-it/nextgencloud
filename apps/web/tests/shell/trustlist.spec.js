@@ -503,7 +503,7 @@ test("without an anchor the shell says the installation is not finished", async 
     // the file on the server is the one that counts.
     const fromServer = await anchorFor({ anchor: { seq: 7, hash } });
     return {
-      nothing, text: NOT_SET_UP,
+      nothing, text: NOT_SET_UP(),
       keptSeq: kept?.seq ?? 0, keptHash: kept === null ? "" : b64encode(kept.hash),
       serverSeq: fromServer?.seq ?? 0,
     };

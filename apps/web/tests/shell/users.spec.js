@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { signIn, skipWithoutLogin, skipWithoutSettledLang } from "../fixtures/page.js";
 
 // "Benutzer und Rechte": the surface where an admin hands out rights and lets
 // a new server into the installation. It is the most dangerous window NGC
@@ -634,6 +634,11 @@ test("joining a controller builds version N+1, checks it and sends exactly those
   });
 
 test("a change the trust list would refuse is never signed and never sent", async ({ page }) => {
+  // IT COMPARES A SENTENCE, so it needs the language tables to have settled.
+  // MEASURED on WebKit: the sentence arrives as lang.js's emergency line
+  // ("NGC could not load its language files"), although the document already
+  // says the chosen language - the gap names that disagreement.
+  await skipWithoutSettledLang(page);
   const out = await page.evaluate(async () => {
     const users = await import("/assets/js/apps/users.js");
     const { world } = await import("/assets/js/shell/fake-link.js");

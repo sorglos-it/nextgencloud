@@ -211,11 +211,17 @@ test("a mask with no language file at all is not silent, and says what to do", a
   const sentence = "NGC could not load its language files. Please reload the page.";
   const said = shell.locator("form.loginbox");
   await expect(said).toBeVisible();
-  const texts = await said.locator("label, button, h1, h2, p").allInnerTexts();
-  expect(texts.length, "the mask is laid out at all").toBeGreaterThan(2);
+  // The EMPTY ones are left out on purpose, and measured: the mask holds a
+  // button and a paragraph that carry no caption of their own at all (an icon
+  // and an alert that is only filled when something went wrong), so "" is not
+  // a sentence that got lost. What is measured is that nothing on this mask
+  // says anything OTHER than the one sentence - no caption out of a file that
+  // could not be read, and no naked key either.
+  const texts = (await said.locator("label, button, h1, h2, p").allInnerTexts())
+    .map((s) => s.trim()).filter((s) => s !== "");
+  expect(texts.length, "the mask says something at all").toBeGreaterThan(1);
   for (const text of texts) {
-    expect(text.trim(), "every caption is the one sentence that says what to do")
-      .toBe(sentence);
+    expect(text, "every caption that says anything says the one sentence").toBe(sentence);
   }
   // Laid out, not merely present: an element with no text has no height, and
   // an empty mask is what this case was first written against.
