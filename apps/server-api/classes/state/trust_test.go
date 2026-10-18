@@ -307,6 +307,7 @@ func TestRefreshSeesAnotherAPI(t *testing.T) {
 		t.Fatalf("version 1: %v", err)
 	}
 	other := New(s.Cfg, db, s.Box, s.Pin)
+	other.AnchorFile = s.AnchorFile
 	other.Now = s.Now
 	if _, err := other.Refresh(ctx); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -349,6 +350,7 @@ func TestChainPages(t *testing.T) {
 	}
 	// A fresh API reads the chain in blocks and arrives at the newest version.
 	other := New(s.Cfg, db, s.Box, s.Pin)
+	other.AnchorFile = s.AnchorFile
 	other.Now = s.Now
 	v, err := other.Refresh(ctx)
 	if err != nil || v.List.Seq != total {
@@ -422,6 +424,7 @@ func TestRefreshFindsAHole(t *testing.T) {
 			chainOf(t, s, admin, first, 4) // versions 1..5
 			dropRow(t, db, c.gone)
 			fresh := New(s.Cfg, db, s.Box, s.Pin)
+			fresh.AnchorFile = s.AnchorFile
 			fresh.Now = s.Now
 			if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
 				t.Fatalf("refresh over the hole answered %v", err)
@@ -449,6 +452,7 @@ func TestRefreshFindsAHoleAboveABlock(t *testing.T) {
 	chainOf(t, s, admin, first, session.MaxChainVersions+1) // versions 1..66
 	dropRow(t, db, session.MaxChainVersions+1)              // the first one of the second block
 	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
 		t.Fatalf("refresh over the hole answered %v", err)
@@ -473,6 +477,7 @@ func TestRefreshFindsAHoleWiderThanTheProbes(t *testing.T) {
 		dropRow(t, db, seq)
 	}
 	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	v, err := fresh.Refresh(ctx)
 	if !errors.Is(err, ErrSetting) {
@@ -536,6 +541,7 @@ func TestRefreshNamesTheFaultOfItsOwnRows(t *testing.T) {
 		t.Fatalf("row 2: %v", err)
 	}
 	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
 		t.Fatalf("a stored chain that does not hold together answered %v", err)
@@ -544,6 +550,7 @@ func TestRefreshNamesTheFaultOfItsOwnRows(t *testing.T) {
 	// anything: a store that did not answer must keep none of this package's
 	// names, or the place that reads them could not tell the two apart.
 	away := New(s.Cfg, noRow{Store: db}, s.Box, s.Pin)
+	away.AnchorFile = s.AnchorFile
 	away.Now = s.Now
 	_, err = away.Refresh(ctx)
 	if err == nil {
@@ -602,6 +609,7 @@ func TestRefreshReadsOnAfterARace(t *testing.T) {
 	}
 	chainOf(t, s, admin, first, 2) // versions 1..3
 	fresh := New(s.Cfg, &lateRow{Store: db, id: "2"}, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	v, err := fresh.Refresh(ctx)
 	if err != nil || v.List.Seq != 3 {

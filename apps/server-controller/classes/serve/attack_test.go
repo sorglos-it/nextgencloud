@@ -29,9 +29,9 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"os"
 	"os/exec"
 	goruntime "runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -426,8 +426,23 @@ func TestAttackContainerEscape(t *testing.T) {
 	if out, err := run("true"); err != nil {
 		t.Fatalf("the container does not start, so nothing below measures anything: %v (%s)", err, out)
 	}
-	if out, err := run("cat", "/etc/shadow"); err == nil && strings.Contains(out, ":") {
-		t.Errorf("/etc/shadow was readable in the container: %q", out)
+	// WHAT THIS ASKS, and the first measurement on real podman corrected it
+	// (18.10.2026): "a /etc/shadow came back and it has a colon in it" was
+	// true of the IMAGE's own file and said nothing about the host. Measured
+	// side by side: the host's file has 22 lines and one real hash, busybox's
+	// has 9 lines and none, and they are not equal. So the question is
+	// equality with the host's file, and nothing else. The value itself never
+	// goes into a message - a shadow file in a test log is a shadow file in a
+	// report.
+	host, herr := os.ReadFile("/etc/shadow")
+	if herr != nil {
+		t.Skipf("NOT MEASURED: the host's /etc/shadow cannot be read here, so there is nothing to compare against: %v", herr)
+	}
+	if len(host) == 0 {
+		t.Skip("NOT MEASURED: the host's /etc/shadow is empty, so equality would prove nothing")
+	}
+	if out, err := run("cat", "/etc/shadow"); err == nil && out == string(host) {
+		t.Errorf("the host's /etc/shadow was readable in the container (%d bytes, equal to the host's)", len(out))
 	}
 	if out, err := run("wget", "-q", "-T", "3", "-O", "-", "http://192.0.2.1/"); err == nil {
 		t.Errorf("the network was reachable out of the container: %q", out)

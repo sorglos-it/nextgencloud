@@ -677,3 +677,26 @@ func TestAStartThatCannotWriteTheCodeFileStillBlamesTheCodeFile(t *testing.T) {
 		t.Errorf("the start sends the admin to the trust anchor for a code file it cannot write: %q", err)
 	}
 }
+
+// TestBuildTakesTheAnchorFromThePackageVariable is the riegel that makes the
+// omission visible on EVERY platform. Build read the trust anchor of the
+// MACHINE (config.AnchorFile) until 18.10.2026: on windows that path can
+// never exist, so no case here ever noticed, while on linux with an
+// installation in place three cases of this package were red. This case does
+// not measure what the anchor says - it measures that Build looks where this
+// package was told to look.
+func TestBuildTakesTheAnchorFromThePackageVariable(t *testing.T) {
+	db := memstore.New()
+	withStore(t, db)
+	withDirs(t)
+	if AnchorFile == config.AnchorFile {
+		t.Fatal("withDirs left the anchor of the machine in place, so this case would measure that file")
+	}
+	srv, err := Build(ctx, newConfig(t), "9.9.9")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if srv.State.AnchorFile != AnchorFile {
+		t.Fatalf("Build reads %q, want %q", srv.State.AnchorFile, AnchorFile)
+	}
+}

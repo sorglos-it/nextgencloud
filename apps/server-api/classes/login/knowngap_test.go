@@ -83,6 +83,7 @@ func withdrawnAtTwelve(t *testing.T, h *Handler, fx fixture) string {
 func coldNode(t *testing.T, h *Handler) *Handler {
 	t.Helper()
 	c := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	c.S.AnchorFile = h.S.AnchorFile
 	c.S.Now = h.S.Now
 	return c
 }

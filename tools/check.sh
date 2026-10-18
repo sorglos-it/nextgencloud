@@ -127,14 +127,22 @@ uncovered=$(printf '%s\n' "$files" | grep -v '/testdata/' | grep -vxF -f "$cover
 allimports=$(listed '{{.ImportPath}}: {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}} ' "" GOOS=windows GOARCH=amd64)
 n=$(printf '%s\n' "$allimports" | grep -c . || true)
 [ "$n" -ge "$floor" ] || die "go list named only $n packages, fewer than the floor of $floor"
-for m in $(sed -n 's/^[[:space:]]*_ "\([^"]*\)".*/\1/p' tools/modules.go); do
-	# Only the package tools ITSELF is exempt, written with the colon that ends
-	# the import path in the listing: "^$mod/tools" without it also exempted
-	# every package BELOW tools/, and a measurement on 17.10.2026 went green
-	# because the probe import sat in tools/zprobe.
-	hit=$(printf '%s\n' "$allimports" | grep -v "^$mod/tools: " | grep -F " $m " || true)
-	[ -z "$hit" ] || die "tools/modules.go still names $m, but it is imported now - take that line out: $(printf '%s' "$hit" | tr '\n' ' ')"
-done
+# The file is meant to disappear with its last line, and on 18.10.2026 it did
+# (the passkey chain was taken out). Its absence is therefore the normal end
+# state, not a fault - but it is SAID OUT LOUD, because a check that quietly
+# finds nothing to check looks exactly like a check that passed.
+if [ -f tools/modules.go ]; then
+	for m in $(sed -n 's/^[[:space:]]*_ "\([^"]*\)".*/\1/p' tools/modules.go); do
+		# Only the package tools ITSELF is exempt, written with the colon that ends
+		# the import path in the listing: "^$mod/tools" without it also exempted
+		# every package BELOW tools/, and a measurement on 17.10.2026 went green
+		# because the probe import sat in tools/zprobe.
+		hit=$(printf '%s\n' "$allimports" | grep -v "^$mod/tools: " | grep -F " $m " || true)
+		[ -z "$hit" ] || die "tools/modules.go still names $m, but it is imported now - take that line out: $(printf '%s' "$hit" | tr '\n' ' ')"
+	done
+else
+	echo "check: no tools/modules.go - every vendored module is imported by a part"
+fi
 
 
 # The PHP side of the web interface checks itself against shared/testdata/ and

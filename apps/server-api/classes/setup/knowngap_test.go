@@ -72,6 +72,7 @@ func TestKnownGap_ARestartedNodeReopensTheSetupDoor(t *testing.T) {
 	// Node B shares the database and starts now: empty cache, and a start
 	// without a trust list makes a setup code of its own.
 	s := state.New(a.S.Cfg, a.S.DB, a.S.Box, a.S.Pin)
+	s.AnchorFile = a.S.AnchorFile
 	s.Now = a.S.Now
 	b := &Handler{S: s, CodeFile: filepath.Join(t.TempDir(), "setup-code")}
 	if _, err := b.EnsureCode(); err != nil {
