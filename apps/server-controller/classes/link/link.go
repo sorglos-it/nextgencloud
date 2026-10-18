@@ -141,6 +141,10 @@ type Config struct {
 	Handler Handler
 	Log     *slog.Logger // nil: slog.Default()
 	Now     func() int64 // nil: time.Now().Unix()
+	// Mono reads the monotonic clock, which is what the standing time of a
+	// tunnel is measured with. nil: time.Now(), whose readings carry one.
+	// Only a test sets it.
+	Mono func() time.Time
 	// Sleep waits between two attempts of Keep. Only a test sets it, to count
 	// the pauses instead of waiting them out.
 	Sleep func(time.Duration)
@@ -200,6 +204,16 @@ func (c Config) now() int64 {
 		return c.Now()
 	}
 	return time.Now().Unix()
+}
+
+// mono reads the monotonic clock: what how long a tunnel stood is measured
+// with. Config.Now is the wall clock and answers what time it is - two
+// different questions, and only a test sets either.
+func (c Config) mono() time.Time {
+	if c.Mono != nil {
+		return c.Mono()
+	}
+	return time.Now()
 }
 
 // every is the time between two pings and the time the tunnel then waits for
@@ -295,8 +309,12 @@ type Tunnel struct {
 	// case cannot be closed here at all.
 	writing atomic.Int64
 	// since is taken once the Noise session stands, so how long a tunnel
-	// stood is measured from just before the two hellos.
-	since int64
+	// stood is measured from just before the two hellos. It is a monotonic
+	// reading (Config.mono), not the wall clock: a step of the wall clock -
+	// an NTP correction, a hand on the clock - is no tunnel that stood, and
+	// Keep's pause is the only bound on an API that drops every tunnel at
+	// once.
+	since time.Time
 }
 
 // Dial opens the tunnel to the API of cfg: TLS against its pin, the WebSocket
@@ -345,7 +363,7 @@ func Dial(ctx context.Context, cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &Tunnel{cfg: cfg, c: c, tr: tr, since: cfg.now()}
+	t := &Tunnel{cfg: cfg, c: c, tr: tr, since: cfg.mono()}
 	t.life, t.stop = context.WithCancel(context.WithoutCancel(ctx))
 	// The channels of this tunnel live as long as it does and write through
 	// its one write lock.
@@ -839,7 +857,7 @@ func Keep(ctx context.Context, cfg Config) {
 			if cfg.TunnelDown != nil {
 				cfg.TunnelDown(t)
 			}
-			stood := cfg.now() - t.since
+			stood := int64(cfg.mono().Sub(t.since) / time.Second)
 			log.Info("tunnel ended", "api", cfg.API.URL, "seconds", stood)
 			// Only a tunnel that really stood begins again at the shortest
 			// pause: what ended that one was not an API that is away. A dial

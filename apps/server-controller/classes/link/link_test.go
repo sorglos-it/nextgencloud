@@ -1573,6 +1573,9 @@ func TestKeepWaitsLongerEachTime(t *testing.T) {
 // that plays TLS, Noise and hello and then says goodbye at once would
 // otherwise hold this controller at about a second per attempt for as long as
 // it likes - the growing pause is the only bound there is on that way.
+// monoBase is where the fake monotonic clock of these tests starts.
+var monoBase = time.Unix(1792300000, 0)
+
 func TestOnlyATunnelThatStoodResetsThePause(t *testing.T) {
 	var clock, rounds atomic.Int64
 	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1583,15 +1586,17 @@ func TestOnlyATunnelThatStoodResetsThePause(t *testing.T) {
 		defer a.c.CloseNow()
 		a.greet()
 		// The hello of the controller is read by now, so Dial has taken its
-		// own reading of the clock: the fourth tunnel stood a ping interval,
-		// the three before it no time at all.
+		// own reading of the monotonic clock: the fourth tunnel stood a ping
+		// interval, the three before it no time at all.
 		if rounds.Add(1) == 4 {
 			clock.Add(tunnel.PingInterval)
 		}
 		a.control(wire.CtlBye, nil)
 		a.quiet()
 	})
-	cfg.Now = clock.Load
+	// The standing time is read off the monotonic clock, so that is the one
+	// this test moves; the wall clock stands still beside it.
+	cfg.Mono = func() time.Time { return monoBase.Add(time.Duration(clock.Load()) * time.Second) }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var mu sync.Mutex
@@ -1901,5 +1906,61 @@ func TestKeepAnnouncesEveryTunnelOnceAndItsEnd(t *testing.T) {
 	}
 	if late {
 		t.Fatal("a tunnel was announced after an earlier one was already over")
+	}
+}
+
+// A step of the wall clock is no tunnel that stood. The pause is the only
+// bound on an API that plays TLS, Noise and hello and then says goodbye at
+// once; if the clock alone could reset it, that API gets one attempt per
+// second again by simply letting the controller's clock jump - or by waiting
+// for the next NTP correction. Measured on 18.10.2026: with the standing time
+// read off the wall clock, a forward step of a ping interval during a tunnel
+// that stood no time at all reset the pause to tunnel.ReconnectMin.
+func TestAClockStepDoesNotResetThePause(t *testing.T) {
+	var wall atomic.Int64
+	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		a := accept(t, w, r)
+		if a == nil {
+			return
+		}
+		defer a.c.CloseNow()
+		a.greet()
+		// Every tunnel stands no time at all; the wall clock jumps forward
+		// by a ping interval while each one is up, as an NTP correction or a
+		// hand on the clock would.
+		wall.Add(tunnel.PingInterval)
+		a.control(wire.CtlBye, nil)
+		a.quiet()
+	})
+	cfg.Now = wall.Load
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	var paused []time.Duration
+	cfg.Sleep = func(d time.Duration) {
+		mu.Lock()
+		paused = append(paused, d)
+		n := len(paused)
+		mu.Unlock()
+		if n == 3 {
+			cancel()
+		}
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); Keep(ctx, cfg) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Keep did not end with its context")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paused) != 3 {
+		t.Fatalf("Keep waited %v, want a pause after each of the three tunnels", paused)
+	}
+	for i, want := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second} {
+		if paused[i] < want || paused[i] >= want+want/5 {
+			t.Errorf("pause %d = %v, want %v with up to a fifth on top: a clock step reset the pause", i+1, paused[i], want)
+		}
 	}
 }
