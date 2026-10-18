@@ -209,6 +209,13 @@ go vet ./...
 # really compile it: -race itself needs cgo and a C compiler (here only in the
 # ESP toolchain), vet with the tag does not. Measured 17.10.2026.
 go vet -tags=race ./...
+# NOTE 18.10.2026: the CI branch offered a second way to count a run -
+# NGC_CHECK_TEST_JSON, a -json stream teed to a file for tools/ci-count.sh.
+# It is NOT taken here, and the reason is the line above: this run is -v into
+# a log BECAUSE the log is read back for tests that step aside in silence.
+# A -json run would have to carry that reading too, and a second run only to
+# count is what the CI branch set out to avoid. Whoever wants the JSON builds
+# it ON this mechanism, not beside it.
 # -v, and into a file, because of what go test does NOT print without it.
 # Measured 18.10.2026 on this machine: for a test that calls t.Skipf -- and
 # even for one that writes to os.Stderr itself -- a run without -v prints
