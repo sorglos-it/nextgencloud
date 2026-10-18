@@ -205,7 +205,21 @@ size=$(wc -c <"$work/ngc-web-all.tar" | tr -d ' ')
 # The checksum as BYTES, base64url without padding, the way enc.Bytes reads it.
 # Not through hex and back: that is one more place to get an escape wrong, and
 # this has to match a sha256sum on the server exactly.
-openssl dgst -sha256 -binary -- "$work/ngc-web-all.tar" >"$work/sum.bin" ||
+# WHY openssl IS RUN INSIDE $work AND GETS A BARE NAME. Measured on
+# 18.10.2026: openssl on this machine is a NATIVE windows binary
+# (/mingw64/bin/openssl), so it never sees a path like /tmp/tmp.XXXX itself -
+# the MSYS layer rewrites the argument on the way out. Two variables switch
+# that rewriting off, and docs/STAND.md tells everybody to export them,
+# because a worktree outside the repository needs them for git:
+#   MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+# With them set openssl got the string "/tmp/tmp.XXXX/ngc-web-all.tar" and
+# answered "No such file or directory" for a file that was measurably there
+# (probe right before the call: 40960 bytes, same path) - and all eleven cases
+# of tools/release went red, which read like a bug in the packer. A bare name
+# in the right directory needs no rewriting, so it holds either way, and on
+# Linux it changes nothing. The same reasoning applies to every other native
+# tool: give it a name, not a path, and go to the directory.
+(cd -- "$work" && openssl dgst -sha256 -binary -- ngc-web-all.tar) >"$work/sum.bin" ||
 	die "the checksum could not be built"
 [ "$(wc -c <"$work/sum.bin" | tr -d ' ')" = 32 ] || die "the checksum is not 32 bytes"
 sha=$(base64 -w0 <"$work/sum.bin" | tr '+/' '-_' | tr -d '=')

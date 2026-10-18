@@ -56,10 +56,29 @@ work=$(mktemp -d) || die "mktemp failed"
 trap 'rm -rf -- "$work"' EXIT
 trap 'exit 1' HUP INT TERM
 
+# WHY EVERY PATH THAT GOES INTO openssl GOES THROUGH nat(). Measured on
+# 18.10.2026: openssl on a windows machine with git-bash is a NATIVE binary
+# (/mingw64/bin/openssl), and it never sees an MSYS path like /tmp/tmp.XXXX
+# itself - the MSYS layer rewrites the argument when the process is started.
+# Two variables switch that rewriting off, and docs/STAND.md tells everybody to
+# export them, because a worktree outside the repository needs them for git:
+#   MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+# With them set this script died at its FIRST openssl call with "the key could
+# not be read as an Ed25519 key" - a sentence about the key, while the broken
+# argument was the -out path - and tools/release went red. cygpath exists only
+# where this rewriting exists, so on Linux nat() hands the path back untouched
+# and nothing changes there. A path that is already native is handed back as it
+# is, so a caller may pass either spelling.
+cygpath=
+command -v cygpath >/dev/null 2>&1 && cygpath=$(command -v cygpath)
+nat() {
+	if [ -n "$cygpath" ]; then "$cygpath" -w -- "$1"; else printf '%s' "$1"; fi
+}
+
 # The public key as the PEM the ulh scripts carry, and its key ID.
-openssl pkey -in "$key" -pubout -out "$work/release-key.pem" 2>/dev/null ||
+openssl pkey -in "$(nat "$key")" -pubout -out "$(nat "$work/release-key.pem")" 2>/dev/null ||
 	die "the key could not be read as an Ed25519 key"
-openssl pkey -pubin -in "$work/release-key.pem" -outform DER -out "$work/pub.der" 2>/dev/null ||
+openssl pkey -pubin -in "$(nat "$work/release-key.pem")" -outform DER -out "$(nat "$work/pub.der")" 2>/dev/null ||
 	die "the public key could not be written"
 [ "$(wc -c <"$work/pub.der" | tr -d ' ')" = 44 ] ||
 	die "that is no Ed25519 key (the public key is not 44 bytes of DER)"
@@ -68,7 +87,7 @@ dd if="$work/pub.der" of="$work/pub.raw" bs=1 skip=12 status=none ||
 	die "the public key could not be cut"
 # sign.KeyID (shared/sign/sign.go:106): base64url of the first 16 bytes
 # (sign.KeyIDSize) of the SHA-256 of the public key. As bytes, not through hex.
-openssl dgst -sha256 -binary -- "$work/pub.raw" >"$work/pub.sha" ||
+openssl dgst -sha256 -binary -- "$(nat "$work/pub.raw")" >"$work/pub.sha" ||
 	die "the key ID could not be built"
 dd if="$work/pub.sha" of="$work/kid.bin" bs=1 count=16 status=none ||
 	die "the key ID could not be cut"
@@ -87,8 +106,8 @@ kid=$(base64 -w0 <"$work/kid.bin" | tr '+/' '-_' | tr -d '=')
 # pkeyutl call below - and openssl must still be given the DIGEST as raw input
 # (-rawin), never "openssl dgst -sign", which would hash a second time.
 { printf 'ngc/release/v1\0'; cat "$dir/release.payload.json"; } >"$work/message.bin"
-openssl pkeyutl -sign -inkey "$key" -rawin -in "$work/message.bin" \
-	-out "$work/sig.bin" 2>/dev/null || die "signing failed"
+openssl pkeyutl -sign -inkey "$(nat "$key")" -rawin -in "$(nat "$work/message.bin")" \
+	-out "$(nat "$work/sig.bin")" 2>/dev/null || die "signing failed"
 [ "$(wc -c <"$work/sig.bin" | tr -d ' ')" = 64 ] ||
 	die "the signature is not 64 bytes; that is no Ed25519 signature"
 
