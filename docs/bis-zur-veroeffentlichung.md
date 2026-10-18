@@ -349,12 +349,47 @@ Reihenfolge: was ein Fremder zuerst trifft.
 >   Münze. Ob eine Wiederholung richtig ist oder die Grenze zu knapp, ist eine
 >   **Entscheidung**, keine Messung.
 >
-> **Was daran offen bleibt, und es ist die wichtigere Hälfte:** ob das nur die Prüfstände
-> betrifft oder die Oberfläche selbst. Der Fall `:382` heißt „starting an app puts the focus
-> in the window it opened" — **kommt der Fokus wirklich zu spät, dann verliert auch ein
-> Mensch, der gleich nach dem Öffnen tippt, seine ersten Tasten.** Das ist **nicht gemessen**;
-> gemessen ist nur, dass es unter Last passiert und allein nicht. Ob Prüfstand oder
-> Oberfläche, ist damit eine offene Frage und kein Urteil — siehe auch Abschnitt 5.
+> **NACHGEGANGEN am 18.10.2026 — Antwort: Prüfstand, nicht Oberfläche. Und meine eigene
+> Vermutung war falsch.**
+>
+> Die Vermutung war ein Rennen im Produkt: der Rahmen bekommt den Fokus, bevor das Dokument
+> der App da ist, und die erste Taste fällt in den Spalt. **Dreimal widerlegt:**
+>
+> 1. **Die erste Messung war ungültig, und das ist die Lehre daraus.** Ich habe
+>    `contentDocument` aus der Schale gelesen und „Dokument noch nicht da" daraus gelesen.
+>    Der Rahmen hat aber `sandbox="allow-scripts"` **ohne** `allow-same-origin`
+>    (`appframe.js:245`) — `contentDocument` ist darum **immer** `null`. Ich hatte die
+>    Sandbox gemessen, nicht das Rennen. Aufgefallen ist es daran, dass derselbe Wert
+>    **fünf Sekunden später auch noch** `null` war.
+> 2. **Durch den Rahmen gemessen, steht das Dokument immer schon.** `frameLocator` kommt
+>    hinein, die Schale nicht: in **17 Läufen** ist `.calc` in dem Augenblick, in dem
+>    `toBeFocused` durchgeht, **jedes Mal** da, und die Taste kommt **jedes Mal** an — auch
+>    mit CDP-Bremse (`Emulation.setCPUThrottlingRate`) auf **4×, 10× und 20×**, wo der Fokus
+>    erst nach **12,4–12,8 s** kommt. Kein einziger Tastenverlust.
+> 3. **Die Vermutung erklärt den Befund ohnehin nicht.** Im roten Lauf war `.calc`
+>    **vorhanden** (8× aufgelöst, Wert `0`). Das Dokument stand also; die Taste ging
+>    woanders hin. Ein Fokus-vor-Dokument-Rennen kann das nicht gewesen sein.
+>
+> **Der entscheidende Versuch:** derselbe volle Satz mit `--retries=1`. Ergebnis
+> **`1 flaky`, 933 grün, 431 übersprungen, 0 rot** (33,8 min) — der Fall fiel einmal und war
+> beim Wiederholen grün. Und es war **wieder ein anderer**: `appframe.spec.js:168` in
+> **`firefox`**. Damit sind es **drei Läufe, drei verschiedene Fälle**, alle in der Nähe des
+> App-Rahmens, keiner reproduzierbar.
+>
+> **Urteil:** nicht deterministisch, und mit einer Wiederholung ist der Satz **grün**. Für
+> die Oberfläche spricht nach dieser Messung nichts; **belegt ist aber nur, dass die
+> Wiederholung durchgeht — die Ursache ist weiter nicht benannt.** Ein Spalt steht im Code
+> und ich konnte ihn nicht aufziehen: nach dem einen `await` (`appframe.js:218`, das Prüfen
+> der UI-Dateien) laufen Anhängen und `frame.focus()` **synchron**, während das Dokument erst
+> über die Nachrichtenrunde ankommt (`frame-boot.js:58`, `document.write`) — und **nichts
+> fokussiert danach noch einmal**. Die CPU-Bremse bremst beide Seiten gleich, darum weitet
+> sie ihn nicht.
+>
+> **Was daraus folgt, und es ist eine Entscheidung, keine Messung:** `retries` fehlen ganz.
+> Bei 1365 Fällen ohne Wiederholung ist jeder Lauf eine Münze, und ein roter Satz sagt dann
+> nichts über den Stand. **Empfehlung: `retries: 1` in `playwright.config.js`** — sie macht
+> sprunghafte Fälle sichtbar (`flaky`) statt sie zu verstecken, anders als eine größere
+> Zeitgrenze.
 >
 > Auch hier gilt der Satz von oben unverändert: **am Gerät ist nichts davon nachgemessen**,
 > und nach `main` geführt ist nichts.
@@ -833,12 +868,11 @@ weiterträgt.
 - **Die Schwere-Einstufungen in Abschnitt 2 sind übernommen**, nicht neu vergeben — aus
   `docs/befunde-17-18-10-2026.md`. Wo ich eine selbst gesetzt habe (R6, „S2"), ist es ein
   Urteil, keine Messung.
-- **Ob der späte Fokus beim Öffnen einer App nur die Prüfstände trifft oder auch einen
-  Menschen, ist nicht gemessen.** Zwei vollständige Läufe zeigen je einen roten Fall aus
-  derselben Familie (Eingabe an eine gerade geöffnete App im `iframe`), allein sind beide
-  3 von 3 grün. Dass es „nur sprunghafte Prüfstände" sind, ist die **bequeme** Lesart und
-  belegt ist sie nicht; die andere wäre, dass die ersten Tasten nach dem Öffnen einer App
-  wirklich verloren gehen. Kasten unter H9.
+- ~~Ob der späte Fokus beim Öffnen einer App nur die Prüfstände trifft~~ — **am 18.10.2026
+  nachgegangen und beantwortet: Prüfstand.** Mit `--retries=1` ist der Satz grün
+  (`1 flaky`, 933 grün, 0 rot), und das vermutete Rennen im Produkt ist gemessen widerlegt
+  (17 Läufe, auch mit 20× CPU-Bremse). **Was offen bleibt, ist die Ursache**, nicht mehr die
+  Frage, wo sie sitzt. Kasten unter H9.
 - **Dass der rote Fall nicht von der `main`-Zusammenführung kommt, ist ein Schluss, keine
   Messung am Verhalten.** Belegt ist, dass sie keine Datei unter `apps/web` anfasst; ein
   vollständiger Lauf auf `main` **ohne** diesen Zweig ist zum Vergleich **nicht** gefahren.
