@@ -1,0 +1,19 @@
+{
+  "err.unreachable": "Service indisponible. Veuillez réessayer plus tard.",
+  "err.busy": "Le service est occupé pour le moment. Veuillez réessayer dans {seconds} secondes.",
+  "login.failed": "La connexion a échoué.",
+  "login.nopasswordkeys": "Ce navigateur ne peut pas effectuer de connexion par mot de passe. Veuillez vous connecter avec une clé d'accès.",
+  "login.locked": "Trop de tentatives échouées. Veuillez réessayer plus tard.",
+  "login.locked.left": "Trop de tentatives échouées. Encore {seconds} secondes.",
+  "login.totp.ask": "Veuillez saisir le code de votre application d'authentification.",
+  "setup.code.incomplete": "Le code à usage unique est incomplet.",
+  "setup.code.nomatch": "Le code à usage unique ne correspond pas à cette installation. Veuillez vérifier le code et réessayer.",
+  "setup.silent": "L'installation ne répond pas pour le moment. Le code à usage unique reste valable. Veuillez réessayer dans un instant.",
+  "setup.refused": "L'installation a refusé la configuration. Veuillez réinstaller NGC et utiliser le nouveau code.",
+  "setup.already": "Cette installation est déjà configurée.",
+  "setup.broken": "La configuration n'a pas abouti. Veuillez recharger la page et réessayer.",
+  "setup.name.bad": "Un nom d'utilisateur ne peut contenir que des minuscules, des chiffres et . _ - et doit commencer par une lettre ou un chiffre.",
+  "setup.password.missing": "Veuillez choisir un mot de passe.",
+  "setup.password.different": "Les deux mots de passe ne sont pas identiques.",
+  "setup.signin": "NGC est configuré. Veuillez vous connecter maintenant."
+}

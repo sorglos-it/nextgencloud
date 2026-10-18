@@ -1,0 +1,47 @@
+/* The look of the calculator. It stands in the app's own package and not in
+   the shell's stylesheet, because the frame the app runs in has an origin of
+   its own: nothing of shell.css reaches in here, and an app out of the store
+   brings its own look for exactly the same reason.
+
+   The colours are the shell's marks all the same, and they are copied rather
+   than shared on purpose - a store app cannot read the shell's tokens either,
+   so a shipped app that could would be a shipped app behaving differently.
+   What keeps them from drifting is the eye: the window frame around this page
+   is painted by shell.css, so a colour that no longer fits is visible in the
+   same window.
+
+   WHO DECIDES WHICH SET: the shell writes data-theme on <html> before the
+   first paint (appframe.buildDocument), and app.js keeps it and --accent
+   current from what ngc.js reports. Dark is the one without the attribute,
+   because that is the shell's own default. */
+:root{
+  --win-bg:#1e2430; --win-fg:#e8ecf3; --win-border:#38414f; --title-bg:#2a3240;
+  --field-bg:#151a23; --muted:#97a3b6; --accent:#2f7de1;
+}
+html[data-theme="light"]{
+  --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0; --title-bg:#e6ebf3;
+  --field-bg:#ffffff; --muted:#5b6a80;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+/* The font is the shell's list and not "inherit": there is nothing to inherit
+   from in a document of its own. overflow:hidden because the keys are laid
+   out to fill the window - a scrollbar would mean the grid got it wrong. */
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+     color:var(--win-fg);background:var(--win-bg);overflow:hidden;
+     -webkit-user-select:none;user-select:none;touch-action:manipulation}
+/* Everything that can be reached with a keyboard says so, as in the shell:
+   inside a frame there is no browser chrome either to tell you where you are. */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.calc{display:flex;flex-direction:column;height:100%;padding:10px;gap:8px}
+.calc .disp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:8px;
+            padding:10px 12px;text-align:right;font-variant-numeric:tabular-nums}
+.calc .disp .e{font-size:12px;color:var(--muted);min-height:16px;overflow:hidden}
+.calc .disp .v{font-size:28px;font-weight:600;overflow:hidden}
+.calc .keys{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.calc .keys button{border-radius:8px;border:1px solid var(--win-border);background:var(--title-bg);
+                   color:var(--win-fg);font:15px/1 inherit;cursor:pointer}
+.calc .keys button:hover{background:rgba(127,160,220,.25)}
+.calc .keys button.op{background:var(--field-bg)}
+.calc .keys button.eq{background:var(--accent);color:#fff;border-color:transparent}

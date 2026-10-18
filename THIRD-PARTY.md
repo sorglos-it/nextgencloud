@@ -30,6 +30,25 @@ Zur MPL-2.0 des MariaDB-Treibers: Keine seiner Dateien trägt den Vermerk „Inc
 Secondary Licenses“, deshalb darf er nach Abschnitt 3.3 zusammen mit AGPL-3.0-Code verbreitet
 werden.
 
+## JavaScript, von Hand kopiert
+
+Kein Paketmanager, kein Bauschritt: Die Dateien liegen im Repo und werden von uns gepflegt.
+Kopiert wird nur der Importschluss dessen, was wirklich benutzt wird.
+
+| Ordner | Modul | Version | Lizenz | Wofür | Übernommen |
+|---|---|---|---|---|---|
+| `apps/web/public/assets/vendor/noble-hashes/` | @noble/hashes | 2.4.0 | MIT | Argon2id für den Passwortschlüssel (`proof.deriveSeed`); die Web Crypto API des Browsers hat kein Argon2id | 2026-09-24 |
+
+Quelle ist die Registry `registry.npmjs.org`, geprüft gegen die dort veröffentlichte Prüfsumme
+des Archivs, **bevor** eine Datei ausgepackt wurde:
+
+    @noble/hashes 2.4.0, dist.integrity
+    sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==
+
+Welche sieben Dateien kopiert sind, warum es 2.4.0 ist und nicht 1.8.0, die SHA-256 jeder
+einzelnen und wie man dieselbe Prüfung wiederholt: `apps/web/public/assets/vendor/noble-hashes/SOURCE.md`.
+Wer aktualisiert, macht dieselbe Prüfung und trägt die neuen Prüfsummen dort ein.
+
 ## Mitgebracht
 
 Diese Module haben wir nicht ausgesucht; die oberen brauchen sie.

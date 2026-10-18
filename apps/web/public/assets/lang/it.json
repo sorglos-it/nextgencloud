@@ -1,0 +1,19 @@
+{
+  "err.unreachable": "Servizio non raggiungibile. Riprovare più tardi.",
+  "err.busy": "Il servizio è occupato in questo momento. Riprovare tra {seconds} secondi.",
+  "login.failed": "Accesso non riuscito.",
+  "login.nopasswordkeys": "Questo browser non può eseguire l'accesso con password. Accedi con una passkey.",
+  "login.locked": "Troppi tentativi non riusciti. Riprovare più tardi.",
+  "login.locked.left": "Troppi tentativi non riusciti. Ancora {seconds} secondi.",
+  "login.totp.ask": "Inserire il codice dell'app di autenticazione.",
+  "setup.code.incomplete": "Il codice monouso non è completo.",
+  "setup.code.nomatch": "Il codice monouso non corrisponde a questo impianto. Controllare il codice e riprovare.",
+  "setup.silent": "L'impianto non risponde in questo momento. Il codice monouso resta valido. Riprovare tra un istante.",
+  "setup.refused": "L'impianto ha rifiutato la configurazione. Reinstallare NGC e usare il nuovo codice.",
+  "setup.already": "Questo impianto è già configurato.",
+  "setup.broken": "La configurazione non è riuscita. Ricaricare la pagina e riprovare.",
+  "setup.name.bad": "Il nome utente può contenere solo lettere minuscole, cifre e . _ - e deve iniziare con una lettera o una cifra.",
+  "setup.password.missing": "Scegliere una password.",
+  "setup.password.different": "Le due password non coincidono.",
+  "setup.signin": "NGC è configurato. Effettuare ora l'accesso."
+}

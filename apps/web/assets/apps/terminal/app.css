@@ -1,0 +1,48 @@
+/* The look of the terminal. It stands in the app's own package and not in the
+   shell's stylesheet, for the same reason the calculator's does: the frame has
+   an origin of its own, so nothing of shell.css reaches in here. The shell
+   writes data-theme on <html> before the first paint; app.js keeps it and
+   --accent current from what ngc.js reports. */
+:root{
+  --win-bg:#1e2430; --win-fg:#e8ecf3; --win-border:#38414f;
+  --field-bg:#151a23; --muted:#97a3b6; --accent:#2f7de1; --alarm:#ff7b72;
+}
+html[data-theme="light"]{
+  --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
+  --field-bg:#ffffff; --muted:#5b6a80; --alarm:#b3261e;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+     color:var(--win-fg);background:var(--win-bg);overflow:hidden}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.term{display:flex;flex-direction:column;height:100%;padding:10px;gap:8px}
+
+/* The output. A fixed-width font because a service lays its answers out in
+   columns, and pre-wrap because the line breaks in them are the service's and
+   not the box's. It is the one part of this page that may be selected and
+   copied - everything else is a control. */
+.term .out{flex:1;overflow:auto;min-height:0;margin:0;padding:8px 10px;
+           background:var(--field-bg);border:1px solid var(--win-border);border-radius:8px;
+           font:13px/1.35 ui-monospace,"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
+           white-space:pre-wrap;overflow-wrap:anywhere;-webkit-user-select:text;user-select:text}
+/* One line of output per element, so a blank line the service sent is a blank
+   line on the screen: an element with no text in it draws no line box. */
+.term .out div{min-height:1.35em}
+/* The line the person typed, so the answer under it can be told from the
+   question above it without reading both. */
+
+.term .ask{display:flex;align-items:center;gap:8px}
+.term .ask .sign{color:var(--muted);
+                 font:13px/1 ui-monospace,"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace}
+.term .ask input{flex:1;min-width:0;padding:8px 10px;border-radius:7px;
+                 border:1px solid var(--win-border);background:var(--field-bg);color:var(--win-fg);
+                 font:13px/1.2 ui-monospace,"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace}
+.term .ask input:focus-visible{border-color:var(--accent)}
+/* A field that takes nothing has to look like one: there is no text in it to
+   go grey, so the whole field does. */
+.term .ask input:disabled{color:var(--muted);opacity:.55}
+
+.term .hint{margin:0;color:var(--muted);font-size:12px}
+.term .fail{margin:0;color:var(--alarm);font-size:13px}

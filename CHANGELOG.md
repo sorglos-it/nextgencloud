@@ -123,6 +123,59 @@ niemandem angemeldet und antworten `E_NOTFOUND`, was auch immer man ihnen schick
 gemessen**; `TestTheStoreChannelsHaveNoHandlerYet` haelt diesen Zustand fest und wird rot, sobald
 die Handler haengen. `govulncheck` ist gelaufen: 0 erreichbare Luecken.
 
+## apps/web 0.2.0
+
+Noch nicht etikettiert: dieser Abschnitt gehört zum Stand oben und beschreibt Plan 1, das
+Webinterface. `apps/web/VERSION` steht auf 0.2.0.
+
+- **Verträge in JavaScript:** V1, V2, V5, V6 und V7 als Module unter
+  `public/assets/js/contracts/`, jedes gegen `shared/testdata/` geprüft – Noise, Signaturen,
+  Beweise, Vertrauensliste, Sitzung, Aufgaben, Frames, Kern-Aktionen, Kataloge, ui-tar,
+  Kopplungscodes, striktes JSON samt Budget, UI-Prüfsummen, UI-Beweise, Hosts und Adressen.
+  Dazu ein Wächter über jeden Export jedes Vertrags, der zweimaliges Lesen derselben Bytes
+  ausschließt (`tests/contracts/bytes.spec.js`), und fünf Fuzz-Ziele für die Parser.
+- **Anmeldung in beiden Stufen:** Benutzer und Passwort mit Passwortschlüssel im Browser
+  (Argon2id nach `proof.KDF`, Ed25519), TOTP, Passkeys und Sticks über WebAuthn, dazu die Rolle
+  mit `passwordToo`, die das Zertifikat zweimal unterschreiben lässt. Das Passwort verlässt den
+  Browser nie – gemessen am Mitschnitt aller Anfragen und aller Socket-Frames, bei der Anmeldung
+  und bei der erneuten Bestätigung.
+- **Ersteinrichtung:** der Einmal-Code bleibt im Browser; das Angebot von `GET /api/v1/setup` wird
+  mit ihm geprüft, bevor irgendetwas daraus gelesen wird, und Fassung 1 der Vertrauensliste geht
+  mit einem MAC über genau die gesendeten Bytes hinaus.
+- **Sitzung mit Noise und Ende zu Ende:** eigene, nicht exportierbare Schlüsselpaare,
+  Sitzungszertifikat, geprüfte API-Antwort, Noise-Sitzung zur API, Frames und Freigaben nach
+  `wire`, eigene Kanalnummern bis `wire.MaxSessionChannels`, und je Kanal eine zweite
+  Noise-Sitzung zum Controller.
+- **Desktop:** Fenster verschieben, andocken, in der Größe ändern, maximieren, minimieren,
+  Taskleiste, Startmenü mit Suche, hell und dunkel, sechs Akzentfarben, fünf Hintergründe,
+  Tastaturbedienung und Namen für Screenreader. Hält Namen aus 10 000 Zeichen, reinen
+  Steuerzeichen, einem Null-Byte, einer Bidi-Umschaltung, doppelten Kennungen und 1001 Apps
+  stand; alles von außen ist Text, nie HTML.
+- **App-Fenster:** jede Oberfläche läuft in einem abgeschotteten Rahmen mit eigener Herkunft
+  (`/frame.html`, `sandbox allow-scripts` in der Kopfzeile), ohne Speicher und ohne eigene
+  Verbindung. Vorher wird ihr Beweis gegen die Vertrauensliste geprüft, das ui-tar gehasht und
+  erst danach gelesen; die Startseite muss eine Datei dieses Archivs sein.
+- **Die vier mitgelieferten Oberflächen:** App-Store (Kataloge, Hochladen, Aktivieren, Updates),
+  Benutzer und Rechte (wartende Controller und API-Server mit selbst gerechnetem Fingerabdruck,
+  neue Fassungen der Vertrauensliste), Rechner und Terminal.
+- **Browser-Tests:** die ganze Mappe gegen Chrome, Firefox und Safari über einen eingebauten
+  PHP-Server und eine Mock-API; die Sicherheitskopfzeilen werden nicht nur gelesen, sondern dem
+  Browser vorgehalten (`tests/shell/csp.spec.js`), und die acht Angriffe aus Entwurf 4.6 haben
+  ihre eigene Mappe (`tests/shell/attacks.spec.js`).
+- **Vorlage für den Webserver:** `apps/web/templates/apache-vhost.conf` – sechs Befehle der Reihe
+  nach, ein Name zum Einsetzen, dazu `apache-apis.conf.example` als die Form, die `ngc-web` für die
+  API-Server schreibt. Die Vorlage legt fest, dass nur `public/` von außen erreichbar ist, und setzt
+  vier Kopfzeilen für die Dateien, die Apache selbst ausliefert: `nosniff`,
+  `Cross-Origin-Resource-Policy`, HSTS und eine **eigene** Richtlinie, nicht die der Seite. Vorher
+  hatte das Repo keine Serverkonfiguration, und jede `.js` und `.css` ging ohne Wand hinaus. Die
+  Werte stehen nur in der Vorlage; die Mock-API liest sie von dort, also kann keine zweite Fassung
+  abdriften, und sie prüft dabei auch, dass der Block überhaupt unter dem DocumentRoot liegt. Die
+  Begründung je Kopfzeile steht in der Datei – samt der beiden, die bewusst fehlen.
+
+Zum Zeitpunkt dieses Eintrags liefen noch vier Aufgaben des Plans: der Adapter zwischen Desktop und
+Sitzung, die Oberfläche der Ersteinrichtung, der Rechner im abgeschotteten Rahmen und das
+Installationsskript. Was sie bringen, kommt mit ihnen.
+
 ## vertraege-v1 (22.09.2026)
 
 Die Verträge V1 bis V7 zwischen Webinterface, API, Controller und Datenbank stehen: Go-Pakete in

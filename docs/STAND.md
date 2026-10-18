@@ -245,6 +245,16 @@ weil `jq` auf diesem Rechner fehlt.
 
 ## Offene Entscheidungen
 
+- **ES GIBT KEINEN RELEASE-PACKER — gemessen am 01.10.2026, und das ist der eigentliche Grund,
+  warum NGC noch nicht installierbar ist.** Kein `tar -c`, kein Workflow, kein `tools/release*`,
+  weder auf `main` noch auf `web`; `shared/testdata/release/ngc-web-all.tar` sind **18 Byte Text**.
+  `verify_release` in `ngc-web.sh` prüft das Archiv als **undurchsichtigen Block** (Signatur,
+  SHA-256, Größe) und sagt kein Wort über den Inhalt; `unpack_release` verlangt danach **nur**
+  `public/index.php`. Die Vorlage `apps/web/templates/apache-vhost.conf` *beansprucht* in ihrem
+  eigenen Kommentar, im Release zu liegen — das ist Absicht, nicht gebaut.
+  **Folge:** Der Release-Schlüssel unterschreibt ein Archiv, das niemand packt. Wer die Reihenfolge
+  sucht: erst der Packer (mit einer Liste, was hineingehört und einer Prüfung, dass es drin ist),
+  dann der Schlüssel, dann Aufgabe 26.
 - **Vertragsfassung 1.2:** Was der nächste Schnitt an `shared/` tragen muss,
   steht gesammelt in [`vertraege-v1.2.md`](vertraege-v1.2.md) — **83 Einträge**
   aus allen vier Strängen, jeder mit Herkunft und Messung (bis 18.10.2026 stand
@@ -262,9 +272,48 @@ weil `jq` auf diesem Rechner fehlt.
 
 - **Release-Stick:** Mit welchem Werkzeug der Hardware-Stick das Release signiert, wird vor dem
   ersten Release entschieden. `ngc-store` signiert nur Test-Releases.
+  Stand 01.10.2026: PIV auf Firmware 5.4.3 kann kein Ed25519, und der Vertrag verlangt reines
+  Ed25519 (`shared/sign/sign.go` prüft `len(sig) != ed25519.SignatureSize`). Unterschrieben wird
+  `"ngc/" + purpose + NUL + payload`, gemessen **193 Byte** im Beispiel. Eine Probe, ob der
+  OpenPGP-Teil des Sticks diese Bytes **direkt** unterschreibt, liegt bereit; der normale
+  `gpg`-Weg unterschreibt einen Hash **plus OpenPGP-Anhang** und verifiziert daher nie.
 - **Für den Sicherheitsdurchgang (Plan 7) vorgemerkt:** eine feste Bindung der Oberfläche einer
   Store-App an ihren Store, die einen Wechsel des Admin-Schlüssels übersteht; `enc.Budget` soll
   Mitglieder in Rohwerten zählen; eine gemeinsame Prüfung der Form von URLs für alle Verträge.
+- **Aus Aufgabe 27 (Web), je mit Messung im Aufgabenbericht:**
+  - **Zurückgedrehte Vertrauensliste:** Liefert die API auf `from=N+1` eine ältere, gültig
+    unterschriebene Fassung, wirft die Shell heute ihre geprüfte Liste weg und schlägt Alarm.
+    Entwurf 4.6 will das Gegenteil: ablehnen, ohne Alarm, bei der neueren bleiben. Sonst kann eine
+    übernommene API jede Sitzung abmelden. Entscheiden, dann `shell/trustlist.js` nachziehen.
+  - **`wire.MaxCallResult` auf Ende-zu-Ende-Kanälen:** `net/channel.js` setzt die Grenze nur, wenn
+    der Aufrufer sie nennt. `channel.call` nennt sie, `channel.openE2E` nicht – richtig für eine
+    Aktion mit `stream`, offen für eine ohne. Festlegen, wer sie dort setzt, bevor die erste
+    solche App kommt.
+  - ~~**Sicherheitskopfzeilen für `assets/`**~~ – erledigt mit Aufgabe 29 (Web):
+    `apps/web/templates/apache-vhost.conf` ist die Vorlage für den virtuellen Host und setzt für
+    `assets/` vier Kopfzeilen: `nosniff`, `Cross-Origin-Resource-Policy`, HSTS und eine **eigene**
+    Richtlinie, nicht die der Seite. Je Kopfzeile steht die Begründung in der Datei, auch für die
+    bewusst fehlenden. `tests/shell/csp.spec.js` prüft es an einer `.js`, einer `.css`, einer Datei
+    ohne Endung und einer, die es nicht gibt; die Mock-API liest die Werte aus der Vorlage und
+    prüft dabei, dass der Block unter dem DocumentRoot liegt – ein Block woanders bricht den Lauf.
+  - **Offene Reste davon, drei:**
+    1. **`scripts/ngc-web.sh` im ulh-Repo (Aufgabe 26) nachziehen.** Es schreibt einen eigenen
+       virtuellen Host unter demselben Namen und ist eine Aufgabe älter. Vier Unterschiede: *für*
+       die Vorlage, dass das Skript für `assets/` **keine** Kopfzeile außer HSTS setzt (das Loch)
+       und dass es `/assets/` aus seiner Rewrite-Regel nimmt, sodass eine fehlende Datei dort von
+       Apache selbst beantwortet wird statt von `index.php`. **Gegen** die Vorlage, dass das Skript
+       die Zertifikatserneuerung mit mod_md löst – ein bewegliches Teil weniger als certbot in der
+       Vorlage – und dass es `ngc-web.conf` bei jedem `install`/`configure` **überschreibt**: ein
+       von Hand gehärteter Server verliert den Asset-Block ohne Warnung, bis das Skript ihn selbst
+       mitbringt.
+    2. **Kein Apache im Repo.** Fünf `curl`-Befehle in `apps/web/README.md` („What no test here can
+       measure") machen aus „ungemessen" „gemessen"; der wichtigste klärt, ob
+       `Header always set` auf dem Rückfall-404 **ergänzt** statt zu ersetzen. Ergebnis hierher.
+    3. **Nur `public/assets/` ist gedeckt.** Eine Datei direkt in `public/` hätte keine der vier
+       Kopfzeilen. Der Riegel ist ein Fall, nicht die Konfiguration: direkt im Webroot liegt nur
+       `index.php`, alles Neue gehört unter `assets/`.
+  - **`HEAD` auf `/`** antwortet 405 statt wie `GET`, und ein 405 trägt keine `Allow`-Kopfzeile.
+    Kein Loch, aber nicht nach HTTP. Lassen oder ändern.
 
 Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
