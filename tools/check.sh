@@ -173,6 +173,21 @@ else
 	exit 1
 fi
 "$php" apps/web/tests/php/config-test.php
+
+# What Node makes of the browser contracts under apps/web/public/assets/. They
+# are plain .js files, so Node takes their module type from the nearest
+# package.json ABOVE them - and without one inside the repository that is
+# whatever directory the checkout sits in. Measured on 18.10.2026: under
+# D:\claude, whose package.json says "type":"commonjs", the mock server died
+# in node before the first browser test ran. The guard belongs here and not in
+# the Playwright suite because that suite is exactly what stops starting.
+# Skipped where there is no node, loudly, because a check that is quietly not
+# a check is worse than none.
+if command -v node >/dev/null 2>&1; then
+	node apps/web/tests/module-type.js
+else
+	echo "module type: SKIPPED, no node on this machine"
+fi
 for arch in amd64 arm64; do
 	# trusttest holds fixed test keys: only test code may import it. The list
 	# is taken as each target is built (cgo off too), so files built only
