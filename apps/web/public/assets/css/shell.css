@@ -354,6 +354,10 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
                 padding:8px;word-break:break-all;-webkit-user-select:text;user-select:text}
 .usersapp .role{border:1px solid var(--win-border);border-radius:8px;margin:0 0 12px;padding:8px 12px 12px}
 .usersapp .role legend{padding:0 6px;font-weight:600}
+/* The root rights of one server wear the same frame as a role: it is the same
+   kind of thing on screen - a box of hooks that belong together. */
+.usersapp .rootr{border:1px solid var(--win-border);border-radius:8px;margin:0 0 12px;padding:8px 12px 12px}
+.usersapp .rootr legend{padding:0 6px;font-weight:600}
 .usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}
 .usersapp button.go{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);

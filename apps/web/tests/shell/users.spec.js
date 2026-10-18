@@ -169,7 +169,7 @@ export async function world(cfg = {}) {
   const answers = { __proto__: null, ...DEFAULTS, ...cfg.answers };
   const notices = new Set();
   const version = cfg.noVersion === true ? null
-    : cfg.signable === true ? await signableVersion() : await genesis();
+    : cfg.signable === true ? await signableVersion(cfg) : await genesis();
 
   // The chain the API keeps. Index 0 is seq 1.
   const kept = version === null ? [] : [signedOf(version.payload)];
@@ -317,11 +317,22 @@ export async function adminKey() {
 // one PASSWORD derives. Only then can the shell's own trust.advance check
 // what the person just signed, which is what buildNextVersion does before
 // anything goes out.
-async function signableVersion() {
+async function signableVersion(cfg = {}) {
   const trust = await import("/assets/js/contracts/trust.js");
   const g = await genesis();
   const list = structuredClone(g.list);
   list.users = [{ id: ADMIN_ID, name: "admin", roles: ["admin"], keys: [await adminKey()] }];
+  // A CONTROLLER WITH NO ROOT RIGHTS AT ALL, which is what every server
+  // listed before 18.10.2026 looks like: measured on the real Debian-13
+  // machine that day, node "ngc-2" stood in the signed list with rootUsers
+  // [] and rootRoles []. The genesis of shared/testdata hands ctl-1 the
+  // group "admin" instead, so a case about giving the right for the first
+  // time would be measuring a right that was already there.
+  if (cfg.rootless === true) {
+    for (const n of list.nodes) {
+      if (n.kind === "controller") { n.rootUsers = []; n.rootRoles = []; }
+    }
+  }
   // No passkey in this list, so it names no party to ask one of - and
   // confirm.js therefore asks for the password.
   list.rp = { id: "", origins: [] };
@@ -1098,3 +1109,177 @@ test("a question belongs to its window and goes with it", async ({ page }) => {
   expect(await page.evaluate(() => window.__ngcCalls
     .filter((c) => c.name === "set-rights").length)).toBe(0);
 });
+
+// --------------------------------------------------------------- Systemrechte
+//
+// EVERY SERVER HAS A GROUP OF ITS OWN, AND HOLDING IT IS WHAT ROOT ON THAT
+// SERVER IS (Thomas, 18.10.2026). Until that day both root lists of a newly
+// listed controller were empty, and no surface of this interface ever set
+// them: trust.mayRoot then answers false for every user, so activate,
+// install, uninstall, delete-data and the terminal all come back E_FORBIDDEN
+// -- the server stands in the list and can do nothing. Measured on the real
+// Debian-13 machine (10.2.3.208) that day: the package was uploaded, the node
+// was offered as "ngc-2", and "Aktivieren" answered after 49 seconds with
+// "Das hat der Rechner nicht angenommen."
+//
+// THESE CASES READ THE VERSION THAT WAS SENT, not the screen: who may do what
+// is the list's business, and a sentence in the interface proves nothing
+// about it. And they ask trust.mayRoot itself, because that is the function
+// the contract asks (apps/store.js -> core.js:878 -> Go: shared/trust).
+test("a listed server gets a group of its own, and the admin who listed it is in it",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // The person is told what is being made and what it gives: a right
+    // nobody was told about is a right nobody can weigh.
+    await expect(dialog).toContainText("root-dienste");
+    await expect(dialog).toContainText("Systemrechten");
+    await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note"))
+      .toHaveText("Der Server »dienste« ist aufgenommen.");
+
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const s = trust.parseSigned(window.__ngcSent[0].bytes);
+      const l = await trust.parseList(s.payload);
+      const node = l.nodes.find((n) => n.id === "dienste");
+      // WHOSE SESSION THIS IS, asked of the page and not written down here:
+      // the assurance is "the admin who listed it", so the value has to come
+      // from the same place the app read it from.
+      const me = window.__ngcCtx.session.user;
+      return {
+        me,
+        group: l.roles.find((r) => r.name === "root-dienste") ?? null,
+        rootUsers: node.rootUsers ?? [],
+        rootRoles: node.rootRoles ?? [],
+        mine: l.users.find((u) => u.id === me).roles,
+        // THE ASSURANCE ITSELF, asked of the contract: may this person run a
+        // root task on that server now.
+        mayRoot: trust.mayRoot(l, me, "dienste"),
+        // Every other controller is left exactly as it WAS -- not empty,
+        // unchanged: ctl-1 of this list already carries root roles, and
+        // taking one server on says nothing about another.
+        others: l.nodes.filter((n) => n.kind === "controller" && n.id !== "dienste")
+          .map((n) => ({ id: n.id, users: n.rootUsers ?? [], roles: n.rootRoles ?? [] })),
+        before: window.__ngcCtx.trust.current().list.nodes
+          .filter((n) => n.kind === "controller")
+          .map((n) => ({ id: n.id, users: n.rootUsers ?? [], roles: n.rootRoles ?? [] })),
+      };
+    });
+    expect(typeof sent.me, "the session names its user").toBe("string");
+    expect(sent.me.length, "and it is not empty").toBeGreaterThan(0);
+    expect(sent.group, "the server's own group stands in the version").toBeTruthy();
+    // LEVEL_ROOT: holding this group means root tasks on one machine, so
+    // trust.needsConfirm asks for the person's key once more over the bytes
+    // of the task. The heavier of the two, on purpose.
+    expect(sent.group.level).toBe("root");
+    expect(sent.rootRoles).toEqual(["root-dienste"]);
+    // THE GROUP CARRIES THE RIGHT, so no name is written into the node: a
+    // second place to look is a second place to forget.
+    expect(sent.rootUsers).toEqual([]);
+    expect(sent.mine).toContain("root-dienste");
+    expect(sent.mayRoot, "the admin may now run root tasks there").toBe(true);
+    expect(sent.before.length, "the list in force has controllers to compare against")
+      .toBeGreaterThan(0);
+    for (const o of sent.others) {
+      const was = sent.before.find((b) => b.id === o.id);
+      expect(was, o.id + " stood in the version before").toBeTruthy();
+      expect(o.users, o.id + " was left alone").toEqual(was.users);
+      expect(o.roles, o.id + " was left alone").toEqual(was.roles);
+    }
+  });
+
+// The other half, and it must NOT be made to match: an API node may carry no
+// root lists at all (Go: ValidAPINode asks for len(RootUsers)+len(RootRoles)
+// == 0), and trust.mayRoot only ever looks at a node of kind controller. A
+// version that named a group there would be refused as invalid.
+test("a listed API server carries no root lists at all", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
+  await sign(page);
+  await expect(app(page).locator(".pendapi .note"))
+    .toHaveText("Der Server »api-2« ist aufgenommen.");
+  const sent = await page.evaluate(async () => {
+    const trust = await import("/assets/js/contracts/trust.js");
+    const one = window.__ngcSent[window.__ngcSent.length - 1];
+    const s = trust.parseSigned(one.bytes);
+    const l = await trust.parseList(s.payload);
+    const node = l.nodes.find((n) => n.id === "api-2");
+    return { users: node.rootUsers ?? [], roles: node.rootRoles ?? [] };
+  });
+  expect(sent.users).toEqual([]);
+  expect(sent.roles).toEqual([]);
+});
+
+// A SERVER LISTED BEFORE 18.10.2026 HAS NO GROUP, and the real machine's
+// "ngc-2" is one of them: re-listing it would mean resetting the
+// installation, so the right has to be givable to a server that already
+// stands in the list. This is that way, and it is the one the VM needs.
+test("a server that has no group yet gets one, and the ticked person may run root tasks",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true, rootless: true });
+    await openTab(page, "Server");
+    const fs = app(page).locator(".rootrights fieldset", { hasText: "ctl-1" });
+    await expect(fs).toBeVisible();
+    // The box says that the group does not exist yet, because the save makes
+    // one and that is a change nobody should meet unannounced.
+    await expect(fs).toContainText("root-ctl-1");
+    // NOBODY HAS THE RIGHT AT THE START, and that is read off the version in
+    // force rather than taken for granted: the hooks are drawn from it.
+    const before = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const { list } = window.__ngcCtx.trust.current();
+      return { mayRoot: trust.mayRoot(list, window.__ngcCtx.session.user, "ctl-1") };
+    });
+    expect(before.mayRoot, "the right is not there before").toBe(false);
+    const cb = fs.getByRole("checkbox", { name: "Server ctl-1: Systemrechte für admin" });
+    await expect(cb).not.toBeChecked();
+    await cb.check();
+    await fs.getByRole("button", { name: "Systemrechte für ctl-1 speichern" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // The question says what it is about: which server, which people.
+    await expect(dialog).toContainText("ctl-1");
+    await expect(dialog).toContainText("admin");
+    await dialog.getByRole("button", { name: "Systemrechte vergeben" }).click();
+    await sign(page);
+    await expect(app(page).locator(".rootrights .note"))
+      .toHaveText("Die Systemrechte für »ctl-1« sind gespeichert.");
+
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const one = window.__ngcSent[window.__ngcSent.length - 1];
+      const s = trust.parseSigned(one.bytes);
+      const l = await trust.parseList(s.payload);
+      const node = l.nodes.find((n) => n.id === "ctl-1");
+      const me = window.__ngcCtx.session.user;
+      return {
+        group: l.roles.find((r) => r.name === "root-ctl-1") ?? null,
+        rootRoles: node.rootRoles ?? [],
+        rootUsers: node.rootUsers ?? [],
+        mayRoot: trust.mayRoot(l, me, "ctl-1"),
+        // The OTHER controller of this list was not touched: one server's
+        // group says nothing about the next one's.
+        other: l.nodes.filter((n) => n.kind === "controller" && n.id !== "ctl-1")
+          .map((n) => ({ id: n.id, roles: n.rootRoles ?? [], users: n.rootUsers ?? [] })),
+      };
+    });
+    expect(sent.group, "the group was made").toBeTruthy();
+    expect(sent.group.level).toBe("root");
+    expect(sent.rootRoles).toEqual(["root-ctl-1"]);
+    expect(sent.rootUsers).toEqual([]);
+    expect(sent.mayRoot, "the ticked person may now run root tasks there").toBe(true);
+    for (const o of sent.other) {
+      expect(o.roles, o.id + " was left alone").toEqual([]);
+      expect(o.users, o.id + " was left alone").toEqual([]);
+    }
+  });

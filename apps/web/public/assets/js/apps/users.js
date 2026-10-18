@@ -240,6 +240,49 @@ function nodeID(name, l) {
   return id;
 }
 
+// EVERY SERVER HAS A GROUP OF ITS OWN, AND HOLDING IT IS WHAT ROOT ON THAT
+// SERVER IS. Until 18.10.2026 both root lists of a newly listed controller
+// were empty, and no surface of this interface ever set them: trust.mayRoot
+// then answered false for every user, so activate, install, uninstall,
+// delete-data and the terminal all came back E_FORBIDDEN. Measured on the
+// real Debian-13 machine that day - the app stood at "Aktivieren" and the
+// person read "Das hat der Rechner nicht angenommen."
+//
+// THE RIGHT HANGS ON A GROUP AND NOT ON THE PERSON, and that is the decision
+// (Thomas, 18.10.2026): one group per server, and whoever is in it may run
+// root tasks there. So the right is given and taken where every other right
+// is - by putting a person into a group - and the list says in one place who
+// has it, instead of one name repeated in every node.
+//
+// THE NAME IS DERIVED AND NOT STORED, because a trust list has no field to
+// store it in (Go: trust.Role is name, level, black, white and the two
+// password flags - frozen). So it is "root-" and the node's own id, cut to
+// the 32 characters a name may have. Two ids that agree in the first 27
+// characters would be handed the same group, and then one server's group
+// would open the other: a join that finds the name taken REFUSES instead of
+// sharing it, and nothing else in this app ever looks a group up by guessing.
+const ROOT_PREFIX = "root-";
+const rootRoleName = (id) => (ROOT_PREFIX + id).slice(0, 32);
+
+// The group a server's root right hangs on, as it stands in the version in
+// force: the derived name, but only when the list really carries such a role
+// AND the node really names it. Either half missing means the server has no
+// group yet - which is every server listed before 18.10.2026, the real
+// machine's "ngc-2" among them - and the surface below offers to make one.
+function rootRoleOf(l, n) {
+  const name = rootRoleName(n.id);
+  if (!trust.role(l, name)) return "";
+  return Array.isArray(n.rootRoles) && n.rootRoles.includes(name) ? name : "";
+}
+
+// A fresh group stands at LEVEL_ROOT: holding it means root tasks on one
+// machine, and trust.needsConfirm then asks for the person's key once more
+// over the bytes of the task itself (op.root, read in apps/store.js before
+// anything is sent). The heavier of the two was chosen on purpose.
+const newRootRole = (name) => ({
+  name, level: trust.LEVEL_ROOT, black: [], white: [], passkeyOnly: false, passwordToo: false,
+});
+
 // ------------------------------------------------------------------- the app
 
 class Users {
@@ -485,18 +528,25 @@ class Users {
   // ---- Server -------------------------------------------------------------
   buildServers(p) {
     clear(p);
+    // Kept so that a change to the root rights can draw the tab again from
+    // the version that now stands, instead of asking the person to reload.
+    this.serversPanel = p;
     p.append(el("h3", null, "Server"));
     const pending = section("pending", "Wartende Server",
       "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
     const pendapi = section("pendapi", "Wartende API-Server",
       "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
     const known = section("known", "Server dieser Anlage", "");
+    const rootr = section("rootrights", "Systemrechte",
+      "Ein Haken heißt: diese Person darf auf diesem Server Apps einrichten, entfernen "
+      + "und das Terminal öffnen.");
     const code = section("paircode", "Kopplungscode",
       "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
-    p.append(pending, pendapi, known, code);
+    p.append(pending, pendapi, known, rootr, code);
     this.fillPending(pending);
     this.fillPendingAPI(pendapi);
     this.fillNodes(known);
+    this.fillRootRights(rootr);
     this.fillPairCode(code);
   }
 
@@ -597,6 +647,157 @@ class Users {
     }
   }
 
+  // ---- Systemrechte -------------------------------------------------------
+  //
+  // WHAT IS DRAWN HERE COMES OUT OF THE VERIFIED VERSION, not out of an
+  // answer of the API: who may run root tasks where is the trust list's
+  // business, and the list is the one document this browser checked itself
+  // from the pinned anchor. ngc.users/list and ngc.users/nodes are what the
+  // API says; they are good enough for a name beside a row and not good
+  // enough for a right.
+  fillRootRights(box) {
+    const cur = this.trust?.current?.();
+    if (!cur?.list) {
+      Users.say(box, "Die Vertrauensliste liegt noch nicht vor. Es werden keine Rechte angezeigt.");
+      return;
+    }
+    const ctls = cur.list.nodes.filter((n) => n.kind === trust.NODE_CONTROLLER);
+    if (ctls.length === 0) {
+      Users.say(box, "Es ist noch kein Server aufgenommen.");
+      return;
+    }
+    const why = this.cannotChange();
+    for (const n of ctls) box.append(this.rootBox(cur.list, n, why, box));
+    if (why !== "") Users.say(box, why);
+  }
+
+  rootBox(l, n, why, box) {
+    const group = rootRoleOf(l, n);
+    const fs = el("fieldset", "rootr");
+    fs.append(el("legend", null, n.name === "" ? n.id : n.name + " (" + n.id + ")"));
+    // A SERVER LISTED BEFORE 18.10.2026 HAS NO GROUP, and that is not an
+    // error to hide: the real machine's "ngc-2" is one of them. The first
+    // save makes the group and hangs the server on it.
+    if (group === "") {
+      fs.append(el("p", "hint", "Für diesen Server gibt es noch keine Gruppe. Sie wird beim "
+        + "Speichern angelegt und heißt dann »" + rootRoleName(n.id) + "«."));
+    }
+    const opts = el("div", "opts");
+    const boxes = new Map();
+    for (const u of l.users) {
+      const via = group !== "" && Array.isArray(u.roles) && u.roles.includes(group);
+      const may = trust.mayRoot(l, u.id, n.id);
+      // Where the right comes from somewhere ELSE - another group of this
+      // list, or the person's own name in rootUsers - this surface must not
+      // pretend it can take it away: the haken is set and locked, and the
+      // sentence says where it comes from. Taking it away is a change to
+      // that group, not to this server.
+      const other = may && !via;
+      const lab = el("label", "opt");
+      const cb = el("input", null);
+      cb.type = "checkbox";
+      cb.checked = may;
+      cb.disabled = other || why !== "";
+      cb.setAttribute("aria-label", "Server " + n.id + ": Systemrechte für " + u.name);
+      lab.append(cb, el("span", "t", u.name + (other ? " (" + this.rootVia(l, u, n) + ")" : "")));
+      opts.append(lab);
+      if (!other) boxes.set(u.id, { cb, was: via, name: u.name });
+    }
+    const save = button("go", "Systemrechte speichern", "Systemrechte für " + n.id + " speichern");
+    save.disabled = why !== "";
+    save.addEventListener("click", () => this.saveRootRights(n, group, boxes, save, box));
+    fs.append(opts, save);
+    return fs;
+  }
+
+  // rootVia names where a right this surface cannot change comes from. The
+  // own name in rootUsers is read first, because that is the one a group
+  // membership would not explain.
+  rootVia(l, u, n) {
+    if (Array.isArray(n.rootUsers) && n.rootUsers.includes(u.id)) return "als Person eingetragen";
+    const roles = Array.isArray(n.rootRoles) ? n.rootRoles : [];
+    const via = (Array.isArray(u.roles) ? u.roles : []).filter((r) => roles.includes(r));
+    return via.length === 0 ? "aus einer anderen Quelle" : "über die Gruppe »" + via.join("«, »") + "«";
+  }
+
+  saveRootRights(n, group, boxes, save, box) {
+    const adds = [...boxes.values()].filter((b) => b.cb.checked && !b.was);
+    const gone = [...boxes.values()].filter((b) => !b.cb.checked && b.was);
+    if (adds.length === 0 && gone.length === 0 && group !== "") {
+      Users.say(box, "An den Systemrechten für »" + n.id + "« hat sich nichts geändert.");
+      return;
+    }
+    const body = [el("p", null, "Auf dem Server »" + n.id + "« geht es um Aufgaben mit "
+      + "Systemrechten: Apps einrichten, entfernen, Daten löschen und das Terminal öffnen.")];
+    if (group === "") {
+      body.push(el("p", null, "Dafür wird die Gruppe »" + rootRoleName(n.id) + "« angelegt "
+        + "und dem Server zugeordnet."));
+    }
+    if (adds.length > 0) {
+      body.push(el("p", null, "Diese Personen dürfen das danach:"));
+      body.push(list("adds", adds.map((b) => b.name)));
+    }
+    if (gone.length > 0) {
+      body.push(el("p", null, "Diesen Personen wird es weggenommen:"));
+      body.push(list("gone", gone.map((b) => b.name)));
+    }
+    this.ask({
+      title: "Systemrechte für »" + n.id + "« ändern",
+      body,
+      go: "Systemrechte vergeben",
+      from: save,
+      run: async () => {
+        await this.joinNode((next) => {
+          const name = rootRoleName(n.id);
+          const node = trust.node(next, n.id);
+          if (!node || node.kind !== trust.NODE_CONTROLLER) {
+            throw new Error("trust: diesen Server gibt es in der Liste nicht mehr");
+          }
+          // The group of a server that had none yet. A name already in use
+          // by a role this node does NOT name belongs to somebody else's
+          // group, and hanging this server on it would open it to whoever
+          // is in there: refused, same as at the join.
+          if (!trust.role(next, name)) next.roles.push(newRootRole(name));
+          else if (!node.rootRoles.includes(name) && group === "") {
+            throw new Error("trust: die Gruppe »" + name + "« gibt es schon");
+          }
+          if (!node.rootRoles.includes(name)) node.rootRoles.push(name);
+          for (const [id, b] of boxes) {
+            const u = trust.user(next, id);
+            if (!u) throw new Error("trust: diesen Benutzer gibt es in der Liste nicht mehr");
+            const has = u.roles.includes(name);
+            if (b.cb.checked && !has) u.roles.push(name);
+            // A user must keep at least one group (Go: a user with no role
+            // is a version trust.List.Validate refuses), and taking the
+            // last one here would make the whole version invalid - which
+            // buildNextVersion would refuse with one sentence after the
+            // person had already signed nothing. So it is refused here,
+            // where the surface can say what it is about.
+            if (!b.cb.checked && has) {
+              if (u.roles.length === 1) {
+                throw new Error("trust: »" + b.name + "« hat sonst keine Gruppe mehr");
+              }
+              u.roles = u.roles.filter((r) => r !== name);
+            }
+          }
+        });
+        // The version in force has moved on (joinNode followed the chain to
+        // it), so the hooks are drawn again from THAT list - the one this
+        // browser checked - and not from the boxes that were just clicked.
+        const panel = this.serversPanel;
+        if (panel && panel.isConnected) {
+          this.buildServers(panel);
+          Users.say(panel.querySelector(".rootrights"),
+            "Die Systemrechte für »" + n.id + "« sind gespeichert.");
+        } else {
+          Users.say(box, "Die Systemrechte für »" + n.id + "« sind gespeichert.");
+        }
+      },
+      failed: "Die Systemrechte konnten nicht gespeichert werden.",
+      msg: box.querySelector(".note"),
+    });
+  }
+
   fillPairCode(box) {
     const b = button("go", "Kopplungscode zeigen", null);
     b.addEventListener("click", () => this.showPairCode(box, b));
@@ -676,6 +877,11 @@ class Users {
       body: [
         el("p", null, "Der Server wird in die Vertrauensliste dieser Anlage eingetragen. "
           + "Danach darf er Aufgaben dieser Anlage ausführen."),
+        // A right nobody was told about is a right nobody can weigh.
+        el("p", null, "Für den Server wird die Gruppe »" + rootRoleName(id) + "« angelegt. "
+          + "Wer in dieser Gruppe ist, darf auf diesem Server Aufgaben mit Systemrechten "
+          + "ausführen — Apps einrichten, entfernen und das Terminal öffnen. Sie kommen "
+          + "hinein; weitere Personen nehmen Sie unter »Systemrechte« dazu."),
         el("p", null, "In der Liste heißt er: " + id),
         el("p", "fp mono", seen.fp),
         el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck auf dem Server steht."),
@@ -684,11 +890,30 @@ class Users {
       from,
       run: async () => {
         await this.joinNode((next) => {
+          const group = rootRoleName(id);
+          // A name already in use belongs to somebody else's group, and
+          // hanging this server on it would open it to whoever is in there.
+          // Nothing is shared and nothing is renamed behind the person's
+          // back: the change is refused, and the list stays as it was.
+          if (trust.role(next, group)) {
+            throw new Error("trust: die Gruppe »" + group + "« gibt es schon");
+          }
+          next.roles.push(newRootRole(group));
           next.nodes.push({
             id, kind: trust.NODE_CONTROLLER, name: n.name, noise: n.key,
             sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
-            rootUsers: [], rootRoles: [],
+            // THE GROUP CARRIES THE RIGHT, so rootUsers stays empty: a name
+            // written in here would be a second place to look and a second
+            // place to forget.
+            rootUsers: [], rootRoles: [group],
           });
+          // The person who compared the fingerprint and signs this version
+          // is the one who goes into the group. A group nobody is in is the
+          // bug this whole change is about, so a session whose user is not
+          // in the list does not get a server nobody can use.
+          const me = trust.user(next, this.session.user);
+          if (!me) throw new Error("trust: diese Anmeldung steht nicht in der Liste");
+          me.roles.push(group);
         });
         Users.say(box, "Der Server »" + n.name + "« ist aufgenommen.");
         from.disabled = true;
@@ -719,6 +944,12 @@ class Users {
         await this.joinNode((next) => {
           next.nodes.push({
             id: n.node, kind: trust.NODE_API, name: n.node, noise: n.noise,
+            // BOTH STAY EMPTY HERE, and not by oversight: an API node may
+            // carry no root lists at all (Go: ValidAPINode asks for
+            // len(RootUsers)+len(RootRoles) == 0), and trust.mayRoot only
+            // ever looks at a node of kind controller. A version that named
+            // a group here would be refused as invalid. The line in askJoin
+            // is the one that grants, and the two must NOT be made to match.
             sign: n.sign, url: n.url, tls: n.tls, rootUsers: [], rootRoles: [],
           });
         });
