@@ -27,6 +27,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -265,6 +266,26 @@ func installCode(err error) *wire.Close {
 		return refuse(wire.CodeForbidden)
 	case errors.Is(err, install.ErrLicense), errors.Is(err, store.ErrLicense):
 		return refuse(wire.CodeLicense)
+	case errors.Is(err, ctrlrt.ErrNoFscrypt):
+		// THE ONE FAILURE OF THIS ACTION THAT SAYS WHAT TO DO. The disk of
+		// this server cannot encrypt a directory, and an app's data directory
+		// is never made without encryption (runtime.ErrNoFscrypt). The code
+		// stays E_INTERNAL, because it IS this server's own doing and no
+		// decision of the API: there is no code for a disk in the contract,
+		// and inventing a meaning for one of the others would make every
+		// peer read it wrong.
+		//
+		// What changes is the sentence. runtime.NoFscryptText has existed
+		// since the data directory did, and its comment said "the caller
+		// shows NoFscryptText for it" while NO caller did (counted
+		// 18.10.2026: the constant was read by nothing but its own test).
+		// Everyone who ran into this wall read the general sentence of
+		// E_INTERNAL instead and had nothing to go by -- measured by a peer
+		// session on a WSL kernel without CONFIG_FS_ENCRYPTION, where every
+		// activation ends here.
+		cl := wire.Error(wire.CodeInternal)
+		cl.Message = ctrlrt.NoFscryptText
+		return &cl
 	}
 	return refuse(wire.CodeInternal)
 }

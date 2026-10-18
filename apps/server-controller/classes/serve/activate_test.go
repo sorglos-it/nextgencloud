@@ -11,6 +11,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -191,6 +192,39 @@ func TestEveryFailureOfAnActivationHasItsCode(t *testing.T) {
 		if cl == nil || cl.Code != c.want {
 			t.Errorf("%v ended the channel %+v, want %s", c.err, cl, c.want)
 		}
+	}
+}
+
+// A DISK THAT CANNOT ENCRYPT SAYS WHAT TO DO, and that is the one failure of
+// this action that carries a sentence of its own. The code stays E_INTERNAL --
+// the contract has none for a disk, and it is this server's own doing -- but
+// the text is runtime.NoFscryptText, so the person at the other end reads
+// which file system to use instead of the general sentence of E_INTERNAL.
+//
+// The sentence existed and reached nobody: its comment said "the caller shows
+// NoFscryptText for it" while no caller did (18.10.2026). On a WSL kernel
+// without CONFIG_FS_ENCRYPTION every activation ends exactly here.
+func TestADiskThatCannotEncryptSaysWhatToDo(t *testing.T) {
+	f := &fakeInstaller{err: errors.Join(ctrlrt.ErrNoFscrypt, errors.New("inappropriate ioctl for device"))}
+	s := New(Deps{Installer: f})
+	_, cl := s.activate(context.Background(), nil, activateDecision(t), bytes.NewReader([]byte("x")))
+	if cl == nil {
+		t.Fatal("the channel went through, although no data directory could be made")
+	}
+	if cl.Code != wire.CodeInternal {
+		t.Fatalf("the channel ends %s, want %s -- the contract has no code for a disk",
+			cl.Code, wire.CodeInternal)
+	}
+	if cl.Message != ctrlrt.NoFscryptText {
+		t.Fatalf("the channel says %q, want the sentence of the disk", cl.Message)
+	}
+	// And it is NOT the sentence every other internal failure carries: a
+	// message that said the same for both would tell a person nothing.
+	other := &fakeInstaller{err: install.ErrInternal}
+	o := New(Deps{Installer: other})
+	_, ocl := o.activate(context.Background(), nil, activateDecision(t), bytes.NewReader([]byte("x")))
+	if ocl == nil || ocl.Message == ctrlrt.NoFscryptText {
+		t.Fatalf("an ordinary internal failure says %+v, want the general sentence", ocl)
 	}
 }
 
