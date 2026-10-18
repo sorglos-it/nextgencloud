@@ -9,4 +9,4 @@ import "syscall"
 // a child process is a call of Linux. Nothing is started here, so every test
 // that starts podman skips itself outside Linux. The file is here so that the
 // package and its tests build where they are written.
-func credential(uint32, uint32) (*syscall.SysProcAttr, error) { return nil, ErrNotRoot }
+func credential(uint32, uint32, []uint32) (*syscall.SysProcAttr, error) { return nil, ErrNotRoot }

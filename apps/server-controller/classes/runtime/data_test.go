@@ -22,6 +22,22 @@ func dataIn(t *testing.T) string {
 	was := paths
 	t.Cleanup(func() { paths = was })
 	paths.appData = filepath.Join(t.TempDir(), "apps")
+	// The group of the apps folder is a stand-in here, and it has to be: the
+	// real one runs groupadd, and a case may not make a group on the machine
+	// it runs on. Measured on the real VM on 19.10.2026 - without this the
+	// test binary ran as an ordinary user and two cases died of "groupadd:
+	// Permission denied", which is the apparatus and not the code. What the
+	// group IS called and HOW it is made is measured where it belongs
+	// (TestEnsureAppsGroupBuildsTheArgumentList).
+	// The gid is the one THIS process already has, where it is not root: the
+	// group of the apps folder is really set here (EnsureData sets the group
+	// and nothing else, with -1 for the owner), and a group the caller does
+	// not belong to is one only root may set.
+	gid := testAppsGID
+	if os.Geteuid() != 0 {
+		gid = os.Getegid()
+	}
+	paths.appsGID = func(context.Context) (int, error) { return gid, nil }
 	return paths.appData
 }
 

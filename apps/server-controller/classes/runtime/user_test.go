@@ -46,7 +46,7 @@ func fakeUseradd(t *testing.T) string {
 	// environment of a controller is read this way: it runs as root under
 	// systemd and carries whatever systemd gave it.
 	t.Setenv("NGC_LEAK", "this must not reach useradd")
-	for _, name := range []string{"useradd", "userdel"} {
+	for _, name := range []string{"useradd", "userdel", "groupadd", "usermod"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -55,6 +55,20 @@ func fakeUseradd(t *testing.T) string {
 	t.Cleanup(func() { paths = was })
 	paths.useradd = filepath.Join(dir, "useradd")
 	paths.userdel = filepath.Join(dir, "userdel")
+	paths.groupadd = filepath.Join(dir, "groupadd")
+	paths.usermod = filepath.Join(dir, "usermod")
+	// AND THE GROUP ITSELF IS A STAND-IN, for every case but the one that
+	// measures it (TestEnsureAppsGroupBuildsTheArgumentList, which puts the
+	// real one back). The real one runs groupadd and then READS THE GROUP BACK
+	// out of this machine - and a case may make no group here: measured on the
+	// real VM on 19.10.2026, the test binary ran as an ordinary user and got
+	// "groupadd: Permission denied" out of the real program, which turned five
+	// cases red for a reason that was the apparatus and not the code.
+	paths.appsGID = func(context.Context) (int, error) { return testAppsGID, nil }
+	// AND THIS MACHINE HAS NO SUCH GROUP, whatever it really has: the group
+	// database is the machine's, and a case that read it would pass or fail by
+	// where it runs (measured, on a VM where the group really existed).
+	paths.groupGID = func(string) (int, bool) { return 0, false }
 	paths.subuid = filepath.Join(dir, "subuid")
 	paths.subgid = filepath.Join(dir, "subgid")
 	// A space in the path on purpose. The program is started with a list and no
@@ -78,6 +92,45 @@ func loggedArgs(t *testing.T, log string) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+}
+
+// testAppsGID is the gid the stand-in answers with. Nothing else in this
+// package uses the number, so a chown that names it can only have got it from
+// there.
+const testAppsGID = 4242
+
+// THE ARGUMENT LIST OF groupadd, and no shell anywhere: --system, the name,
+// nothing else. The group is what makes the 0710 of the apps folder mean
+// something (see AppsGroup), so what it is called and how it is made is held
+// here as tightly as the user is.
+//
+// The real appsGID is put back for this one case, and it ENDS IN AN ERROR on
+// purpose: the stand-in makes no group, so reading it back afterwards finds
+// nothing - exactly as TestEnsureUserBuildsTheArgumentList works, and for the
+// same reason. What is measured is the call, not the result.
+func TestEnsureAppsGroupBuildsTheArgumentList(t *testing.T) {
+	log := fakeUseradd(t)
+	paths.appsGID = ensureAppsGroup
+	if _, err := paths.appsGID(context.Background()); err == nil {
+		t.Fatal("the stand-in made no group, so this had to fail")
+	}
+	// THE NAME IS WRITTEN DOWN ONCE, here and nowhere else, and it is held
+	// against the LETTERS and not against the constant: it goes into
+	// /etc/group, into the group of the apps folder on disk and into the
+	// secondary group of every app user, so a build that renamed it would
+	// leave every installation standing today with a folder whose group no
+	// user is in - and a case that compared AppsGroup with AppsGroup would
+	// have nothing at all to say about that (messen.md: a bound checked only
+	// by itself is not checked).
+	if AppsGroup != "ngc-apps" {
+		t.Fatalf("the group is called %q - it stands in /etc/group, in the group of "+
+			"the apps folder and in every app user, so renaming it needs a way to "+
+			"rename all three", AppsGroup)
+	}
+	want := []string{paths.groupadd, "--system", AppsGroup}
+	if got := loggedArgs(t, log); !slices.Equal(got, want) {
+		t.Fatalf("args =\n%q\nwant\n%q", got, want)
+	}
 }
 
 func TestUserNameIsStableAndShort(t *testing.T) {
@@ -168,6 +221,13 @@ func TestEnsureUserBuildsTheArgumentList(t *testing.T) {
 		paths.useradd,
 		"--system",
 		"--no-create-home",
+		// --groups AppsGroup since 19.10.2026, and it is not cosmetic: the
+		// folder the data directories lie in is 0710 root:ngc-apps, and a
+		// user outside that group cannot step through it. podman then fails
+		// on its own home with "permission denied" and the whole activation
+		// is rolled back - which is what happened on the real machine until
+		// that day, on every installation.
+		"--groups", AppsGroup,
 		"--shell", "/usr/sbin/nologin",
 		"--home-dir", paths.appData + "/" + app,
 		name,

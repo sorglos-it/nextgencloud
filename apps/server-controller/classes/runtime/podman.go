@@ -172,8 +172,28 @@ func (p *Podman) LoadImage(ctx context.Context, name, tarPath string) (string, e
 	if err != nil {
 		return "", err
 	}
-	if _, err := p.run(ctx, u, []string{"load", "--input", tarPath}, nil, nil, nil); err != nil {
+	// THE TAR GOES IN ON STDIN AND NOT AS A PATH, and that is the whole point
+	// of the change of 19.10.2026: podman runs as the app's own user, and the
+	// staged package lies under a directory of root (install.Accept writes it,
+	// 0700). With --input the app user has to OPEN that file itself, and it
+	// may not - measured on the real machine, from podman's own mouth:
+	//
+	//   Error: faccessat /var/lib/ngc/staged/accept-.../files/services/
+	//   amd64.tar: permission denied
+	//
+	// The file is opened HERE instead, by the controller, which is root and
+	// whose file it is; the child gets the open end and no path at all. So
+	// nothing of the staging directory has to be opened up for an app, which
+	// is the other way this could have been mended and the worse one: that
+	// directory holds the package of every app being set up.
+	f, err := os.Open(tarPath)
+	if err != nil {
 		return "", err
+	}
+	defer f.Close()
+	var loadErr bytes.Buffer
+	if _, err := p.run(ctx, u, []string{"load"}, f, nil, &loadErr); err != nil {
+		return "", withSaid(err, &loadErr)
 	}
 	return ref, nil
 }
@@ -332,7 +352,9 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 		return ErrHome
 	}
 	u := appUser{uid: c.UID, gid: c.GID, home: c.DataDir, run: runDir(c.Name)}
-	_, err = p.run(ctx, u, args, nil, nil, nil)
+	var createErr bytes.Buffer
+	_, err = p.run(ctx, u, args, nil, nil, &createErr)
+	err = withSaid(err, &createErr)
 	return err
 }
 
@@ -342,7 +364,9 @@ func (p *Podman) Start(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = p.run(ctx, u, []string{"start", name}, nil, nil, nil)
+	var startErr bytes.Buffer
+	_, err = p.run(ctx, u, []string{"start", name}, nil, nil, &startErr)
+	err = withSaid(err, &startErr)
 	return err
 }
 
@@ -488,13 +512,83 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 	return 0, err
 }
 
+// appGroups is the supplementary group list every podman of an app runs with:
+// the group of the apps folder, and nothing else. One group and not the ones
+// the user database happens to hold, because what this list is FOR is one
+// thing - stepping through that folder - and a process that carries more than
+// it needs carries it into every container it starts.
+func appGroups(ctx context.Context) ([]uint32, error) {
+	gid, err := paths.appsGID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if gid <= 0 {
+		return nil, errors.Join(ErrUser, errors.New("the gid of the apps group is not above 0"))
+	}
+	return []uint32{uint32(gid)}, nil
+}
+
+// said is what podman wrote on its error channel, cut to MaxSaid bytes and with
+// the line breaks turned into one line, so it can go into an error.
+//
+// WHY THIS EXISTS AT ALL, and it is the most expensive line of this round:
+// every call below handed nil for stderr, so what came back from a failure was
+// "exit status 1" and nothing else. On 18.10.2026 that cost a whole evening on
+// the real machine - the activation failed, the controller rolled everything
+// back, the API answered E_INTERNAL, no journal of either program held a word,
+// and the reason was one sentence podman had written and nobody had read:
+//
+//	cannot resolve /var/lib/ngc/apps/org.sorglos.terminal: lstat ...:
+//	permission denied
+//
+// It is CUT, because the output of a foreign program is not ours to let grow,
+// and it goes into the error of this package - which the controller logs for
+// an admin and never shows a browser (serve/activate.go answers the contract's
+// own code and its own sentence).
+const MaxSaid = 2000
+
+func said(b *bytes.Buffer) string {
+	t := strings.TrimSpace(b.String())
+	if len(t) > MaxSaid {
+		t = t[:MaxSaid] + " ..."
+	}
+	return strings.Join(strings.Fields(t), " ")
+}
+
+// withSaid joins what podman said to err, and answers err unchanged where it
+// said nothing. A failure whose cause the program named is a failure that says
+// so.
+func withSaid(err error, b *bytes.Buffer) error {
+	if err == nil {
+		return nil
+	}
+	if t := said(b); t != "" {
+		return errors.Join(err, errors.New("podman: "+t))
+	}
+	return err
+}
+
 // run starts podman with this argument list and nothing else: no shell, no
 // string built out of anything. It answers with the number podman ended with,
 // and an error whenever that number is not 0 - whether the number means the
 // command failed or podman did is a question only Exec asks.
 func (p *Podman) run(ctx context.Context, u appUser, args []string,
 	in io.Reader, out, errOut io.Writer) (int, error) {
-	attr, err := credential(u.uid, u.gid)
+	// THE SUPPLEMENTARY GROUPS, and without them nothing of this works: a
+	// child with a Credential calls setgroups, and a Credential without a
+	// group list sets NONE - so what /etc/group says about this user is
+	// nothing the process carries. The folder the data directories lie in is
+	// 0710 root:ngc-apps (data.go), so a podman without that group cannot
+	// reach the home of its own app. Measured on the real machine on
+	// 19.10.2026, with the group set on the folder and the user in it:
+	// "cannot resolve /var/lib/ngc/apps/org.sorglos.terminal: lstat ...:
+	// permission denied" - the membership was in the user database and not in
+	// the process.
+	groups, err := appGroups(ctx)
+	if err != nil {
+		return 0, err
+	}
+	attr, err := credential(u.uid, u.gid, groups)
 	if err != nil {
 		return 0, err
 	}

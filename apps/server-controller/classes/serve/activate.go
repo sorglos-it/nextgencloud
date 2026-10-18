@@ -75,6 +75,20 @@ func (s *Server) activate(ctx context.Context, list *trust.List, d access.Decisi
 		return nil, cl
 	}
 	if err != nil {
+		// ONE LINE PER FAILED ACTIVATION, and the comment in activateCode said
+		// for weeks that package install "reports what it did on the control
+		// channel of the API already, which is where an admin reads it".
+		// Measured on 18.10.2026 on the real machine: it does not. An
+		// activation failed four times over, and the journal of the controller
+		// and of the API held nothing at all - the log of the installation
+		// showed the CODE (E_INTERNAL) and no reason, and the reason was a
+		// sentence podman had written into a stderr nobody read.
+		//
+		// It is the controller's own error and not a peer's text, it goes to
+		// the journal of this server and to nobody else, and there is one of
+		// them per refused activation - a number the API decides, and the API
+		// is this installation's own.
+		s.log().Error("the activation failed", "err", err)
 		return nil, activateCode(err)
 	}
 	return emptyResult{}, nil

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,8 +33,12 @@ import (
 // package can reach it, and nothing inside it changes it at run time.
 var paths = struct {
 	useradd, userdel string
-	subuid, subgid   string
-	appData          string
+	// groupadd makes the one group every app user belongs to, usermod puts a
+	// user that already exists into it. Both are held here for the same
+	// reason as useradd: the real ones change this machine and a case may not.
+	groupadd, usermod string
+	subuid, subgid    string
+	appData           string
 	// runDir is config.RunDir, the tmpfs under which every app gets the
 	// runtime directory of its container (EnsureRun). A case puts a directory
 	// of its own here, because the real one is root's and a test may not write
@@ -61,6 +66,20 @@ var paths = struct {
 	// mode of the data directory, which the lines after these two set, had no
 	// case that could run anywhere here. With a stand-in they have one, and the
 	// real two keep their own cases on a filesystem that can do it.
+	// groupGID reads the gid of a group out of this machine's group database;
+	// ok is false where there is none. It is a seam for the reason the one
+	// above it is: whether a machine HAS the group decides what
+	// ensureAppsGroup does, and a case whose outcome depends on that is a case
+	// that measures the machine. Measured on the real VM on 19.10.2026: once
+	// the group was really there, the case about the argument list of groupadd
+	// went red - the group was found and groupadd was never run.
+	groupGID func(name string) (int, bool)
+	// appsGID answers the gid of AppsGroup and makes the group if it is not
+	// there. It is held here for the same reason as useradd and addKey: the
+	// real one runs groupadd, which changes this machine and does not exist on
+	// the one this is written on, and everything EnsureData does after it
+	// would otherwise have no case that could run here at all.
+	appsGID   func(ctx context.Context) (int, error)
 	addKey    func(mount string, key []byte) ([keyIdentifierSize]byte, error)
 	setPolicy func(dir string, id [keyIdentifierSize]byte) error
 	// mkdirAll, mkdir and chmod are how EnsureRun and EnsureData make the two
@@ -82,17 +101,25 @@ var paths = struct {
 }{
 	useradd:   "/usr/sbin/useradd",
 	userdel:   "/usr/sbin/userdel",
+	groupadd:  "/usr/sbin/groupadd",
+	usermod:   "/usr/sbin/usermod",
 	subuid:    "/etc/subuid",
 	subgid:    "/etc/subgid",
 	appData:   config.AppDataDir,
 	runDir:    runDirDefault,
 	chown:     os.Chown,
+	groupGID:  lookupGroupGID,
 	addKey:    addKey,
 	setPolicy: setPolicy,
 	mkdirAll:  os.MkdirAll,
 	mkdir:     os.Mkdir,
 	chmod:     os.Chmod,
 }
+
+// appsGID is wired here and not in the literal above: ensureAppsGroup reads
+// paths.groupadd, and a field of paths that names it would be paths
+// initialising itself.
+func init() { paths.appsGID = ensureAppsGroup }
 
 // The sub id ranges of the apps: 65536 ids each, which is what a user namespace
 // of a rootless container needs, and the first range begins at 524288.
@@ -175,6 +202,106 @@ func UserName(app string) string {
 // engine mounts as /data.
 func DataDirOf(app string) string { return paths.appData + "/" + app }
 
+// AppsGroup is the one group every app user belongs to, and the only thing
+// that may step through the folder the data directories lie in.
+//
+// WHY A GROUP AND NOT A WIDER MODE (Thomas, 19.10.2026). podman runs as the
+// app's own user (podman.go, run) and keeps the whole image store of the app
+// under its home, so that user has to TRAVERSE the folder above it. Until
+// 18.10.2026 that folder was 0700 root, and so no app could be set up at all:
+// measured on the real machine, out of podman's own mouth once somebody read
+// its stderr -- "cannot resolve /var/lib/ngc/apps/org.sorglos.terminal: lstat
+// ...: permission denied". The cheap mend is 0711, which lets EVERY local user
+// step through into a path it already knows. This is the tighter one: root
+// owns the folder, this group owns its group bit, the mode is 0710, and so
+// only the app users of this installation get through. Nobody else on the
+// machine does, and nobody at all gets the list of installed apps.
+const AppsGroup = "ngc-apps"
+
+// lookupGroupGID is the real group lookup: os/user, and a gid that is a number
+// above 0 or nothing at all. A gid of 0 is root's group and would be a group
+// nobody may be put into by accident.
+func lookupGroupGID(name string) (int, bool) {
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, false
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil || gid <= 0 {
+		return 0, false
+	}
+	return gid, true
+}
+
+// ensureAppsGroup makes AppsGroup if it is not there and answers with its gid.
+// It may be called again at any time: a group that exists is the answer, not a
+// failure, and groupadd says so with its own exit code 9.
+func ensureAppsGroup(ctx context.Context) (int, error) {
+	if gid, ok := paths.groupGID(AppsGroup); ok {
+		return gid, nil
+	}
+	cmd := exec.CommandContext(ctx, paths.groupadd, "--system", AppsGroup)
+	// No environment of this process, for the same reason useradd gets none.
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// 9 is "the group already exists": two activations at once both see no
+		// group and both make one, and the loser of that race is not an error
+		// - it is the state this function is for.
+		var ended *exec.ExitError
+		if !errors.As(err, &ended) || ended.ExitCode() != 9 {
+			return 0, errors.Join(ErrUser, errors.New("groupadd "+AppsGroup+": "+
+				err.Error()+": "+strings.TrimSpace(string(out))))
+		}
+	}
+	// Read back rather than believe, as everywhere else here: the gid is the
+	// system's to choose.
+	gid, ok := paths.groupGID(AppsGroup)
+	if !ok {
+		return 0, errors.Join(ErrUser,
+			errors.New("the group "+AppsGroup+" is not there after groupadd"))
+	}
+	return gid, nil
+}
+
+// joinAppsGroup puts a user that is already there into AppsGroup. -a, so the
+// groups it has stay: a user of an app installed before this change has its
+// own group and nothing else, and taking that away would take its files with
+// it.
+func joinAppsGroup(ctx context.Context, name string) error {
+	if inAppsGroup(name) {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, paths.usermod, "-a", "-G", AppsGroup, name)
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return errors.Join(ErrUser, errors.New("usermod "+name+": "+err.Error()+": "+
+			strings.TrimSpace(string(out))))
+	}
+	return nil
+}
+
+// inAppsGroup reports whether this user is already a member, so a call that
+// changes nothing is not made at all. It asks the USER for its groups and not
+// the group for its users: os/user answers a group with its name and its gid
+// and with no member list at all, and a member list read from somewhere else
+// would be a second truth.
+func inAppsGroup(name string) bool {
+	gid, ok := paths.groupGID(AppsGroup)
+	if !ok {
+		return false
+	}
+	u, err := user.Lookup(name)
+	if err != nil {
+		return false
+	}
+	ids, err := u.GroupIds()
+	if err != nil {
+		return false
+	}
+	return slices.Contains(ids, strconv.Itoa(gid))
+}
+
 // EnsureUser makes sure the system user of app is there and answers with it.
 //
 // It may be called again at any time and for a user that is already there: an
@@ -186,9 +313,21 @@ func EnsureUser(ctx context.Context, app string) (User, error) {
 		return User{}, ErrApp
 	}
 	name := UserName(app)
+	// The group before the user, because the user is made WITH it: a user
+	// outside AppsGroup cannot reach its own data directory (0710, see
+	// AppsGroup), so an app whose user is not in it is an app that cannot
+	// start.
+	if _, err := paths.appsGID(ctx); err != nil {
+		return User{}, err
+	}
 	if u, err := ofUserDB(name, app); err == nil {
 		// The user is there, the ranges may not be: a crash between the two
-		// leaves exactly that, so this is not an else.
+		// leaves exactly that, so this is not an else. And the group may not
+		// be either: every app installed before 19.10.2026 has a user that
+		// was made without it.
+		if err := joinAppsGroup(ctx, name); err != nil {
+			return User{}, err
+		}
 		if err := ensureSubIDs(name); err != nil {
 			return User{}, err
 		}
@@ -204,7 +343,12 @@ func EnsureUser(ctx context.Context, app string) (User, error) {
 	// engine reads out of the user database for every later call; without it
 	// the user would get /home/<name> and no container of this app would ever
 	// start. --shell nologin, because nobody logs in as an app.
-	args := []string{"--system", "--no-create-home",
+	// --groups AppsGroup, because that membership is what lets this user step
+	// through the folder its data directory lies in (0710). It is given at
+	// the useradd and not with a usermod afterwards: two calls leave a window
+	// in which the user exists and cannot reach its own directory, and
+	// something in that window would read as a failure of the directory.
+	args := []string{"--system", "--no-create-home", "--groups", AppsGroup,
 		"--shell", "/usr/sbin/nologin", "--home-dir", DataDirOf(app), name}
 	cmd := exec.CommandContext(ctx, paths.useradd, args...)
 	// No environment of this process: a controller runs as root and carries

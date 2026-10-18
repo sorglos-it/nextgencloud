@@ -15,7 +15,7 @@ import (
 // it the container is not started under this process's own user instead: the
 // data of the app belong to another user, and a container of this one would be
 // a second owner of them. So it refuses.
-func credential(uid, gid uint32) (*syscall.SysProcAttr, error) {
+func credential(uid, gid uint32, groups []uint32) (*syscall.SysProcAttr, error) {
 	if uid == uint32(os.Getuid()) && gid == uint32(os.Getgid()) {
 		// Nothing to switch, and more than unnecessary: setting a credential
 		// makes the child call setgroups as well, and that needs root even for
@@ -25,5 +25,11 @@ func credential(uid, gid uint32) (*syscall.SysProcAttr, error) {
 	if os.Geteuid() != 0 {
 		return nil, ErrNotRoot
 	}
-	return &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid}}, nil
+	// Groups, because a Credential without them is a child with NO
+	// supplementary group at all (Go calls setgroups for every Credential) -
+	// and one of them is what lets the app through the folder its own data
+	// directory lies in.
+	return &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: groups},
+	}, nil
 }

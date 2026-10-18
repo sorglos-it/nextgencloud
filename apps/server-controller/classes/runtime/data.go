@@ -103,9 +103,68 @@ func EnsureData(ctx context.Context, app string, u User, serverKey []byte) (stri
 		return "", err
 	}
 	dir := DataDirOf(app)
-	// 0700 from the start, not after the chown: between the two the directory
-	// exists, and for that moment it must not be readable by anyone else.
-	if err := paths.mkdirAll(paths.appData, 0o700); err != nil {
+	// THE FOLDER THAT HOLDS THEM ALL IS root:ngc-apps 0710.
+	//
+	// It was 0700 root until 18.10.2026, and then no app could be set up at
+	// all: podman runs as the app's own user (podman.go, run), its whole image
+	// store lies under this folder, and a user who may not TRAVERSE the folder
+	// above cannot reach its own. Measured on the real Debian-13 machine that
+	// day, out of podman's own mouth once somebody finally read its stderr:
+	//
+	//   cannot resolve /var/lib/ngc/apps/org.sorglos.terminal:
+	//   lstat /var/lib/ngc/apps/org.sorglos.terminal: permission denied
+	//
+	// Every activation ended there, rolled the app's user back and answered
+	// E_INTERNAL -- with the reason thrown away twice over, because p.run was
+	// handed nil for stderr.
+	//
+	// 0711 AND THE GROUP, both, and the order of that sentence is a measured
+	// decision (Thomas, 19.10.2026). The tighter 0710 was tried first and is
+	// REFUTED: with the folder at 0710 root:ngc-apps and the app user really
+	// in that group, the image loaded and the container was built, and crun
+	// then died on
+	//
+	//   open `/var/lib/ngc/apps/<app>/.local/share/containers/storage/
+	//   overlay/<id>/merged`: Permission denied: OCI permission denied
+	//
+	// because a rootless container runs in a user namespace and a
+	// SUPPLEMENTARY group is not mapped into it: inside, the process holds its
+	// own gid and nothing else, so a folder that only a group may traverse
+	// stops it. Measured A/B on the real machine the same night, the same
+	// build with this one mode changed: 0710 refused, 0711 ran - and that is
+	// the first app NGC has ever run.
+	//
+	// So the mode is 0711: execute and no read. A local user may step THROUGH
+	// this folder into a path it already knows, and may list nothing - the
+	// names of the installed apps stay unreadable, each app's own directory
+	// keeps its 0700 and its owner below, and its own fscrypt key is what
+	// really closes it.
+	//
+	// THE GROUP STAYS ALL THE SAME, and not out of stubbornness: it costs one
+	// system group, it says in the user database which users these are, and
+	// it is the bolt that is already in place on the day podman maps that
+	// membership into the namespace (or an app runs rootful). The gid is read
+	// back from the system and never written down.
+	gid, err := paths.appsGID(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := paths.mkdirAll(paths.appData, 0o711); err != nil {
+		return "", err
+	}
+	// For a folder an older build already made with 0700: mkdirAll leaves
+	// what is there alone, so these two lines are what mends an installation
+	// standing today. The group first and the mode second: between the two the
+	// folder is 0700 and reaches nobody, which is the safe half-way.
+	// ONLY THE GROUP, and the owner is left exactly as it is: -1 is "do not
+	// change" for chown(2). The folder belongs to root and has to go on
+	// belonging to root, so there is nothing to set - and a call that names an
+	// owner would be a call only root could make, for a change that was never
+	// needed.
+	if err := paths.chown(paths.appData, -1, gid); err != nil {
+		return "", err
+	}
+	if err := paths.chmod(paths.appData, 0o711); err != nil {
 		return "", err
 	}
 	made := false

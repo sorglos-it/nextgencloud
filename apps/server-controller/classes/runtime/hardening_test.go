@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -402,11 +403,32 @@ func TestHardeningEnsureRunAsksForTheTightModes(t *testing.T) {
 	}
 }
 
-// 12. The mode of a data directory: 0700 for the directory of all apps and 0700
-// for the app's own, asked for at the making and again afterwards. Nobody but
-// the app's user may enter it - it is where everything the app keeps lies, and
-// the encryption below it protects a stolen disk, not a neighbour on this
-// machine.
+// 12. The mode of a data directory: 0711 root:ngc-apps for the folder of all
+// apps and 0700 for the app's own, asked for at the making and again
+// afterwards. Nobody but the app's user may ENTER the app's own - it is where
+// everything the app keeps lies, and the encryption below it protects a stolen
+// disk, not a neighbour on this machine.
+//
+// THE FOLDER ABOVE WAS 0700 UNTIL 18.10.2026, and this case said so. It was
+// wrong, and no case could see it: podman runs as the app's own user and keeps
+// the image store of the app under that folder, so a user that may not
+// traverse it reaches nothing. Measured on the real machine, from podman's own
+// stderr - "cannot resolve /var/lib/ngc/apps/org.sorglos.terminal: lstat ...:
+// permission denied" - and every activation ended there, with the reason
+// thrown away. So no app had ever run, on any installation.
+//
+// 0711 AND the group (Thomas, 19.10.2026), and the mode is the half that was
+// measured: 0710 was tried first and refused, because a rootless container
+// runs in a user namespace where a supplementary group is not mapped - crun
+// died on "merged: Permission denied" with the group correctly set and the
+// user correctly in it. A/B on the real machine, the same build with this one
+// mode changed: 0710 refused, 0711 ran. The read bit is set for nobody either
+// way, so the list of installed apps stays unreadable.
+//
+// What is held here is the whole of what these lines do - which call, which
+// path, which mode - and the GROUP of the folder with it, because the mode
+// alone would be true of a 0710 folder that belongs to root and reaches
+// nobody.
 func TestHardeningEnsureDataAsksForTheTightMode(t *testing.T) {
 	root := filepath.ToSlash(filepath.Join(t.TempDir(), "apps"))
 	oldData, oldAdd, oldPolicy := paths.appData, paths.addKey, paths.setPolicy
@@ -418,6 +440,27 @@ func TestHardeningEnsureDataAsksForTheTightMode(t *testing.T) {
 	paths.addKey = func(string, []byte) ([keyIdentifierSize]byte, error) { return id, nil }
 	paths.setPolicy = func(string, [keyIdentifierSize]byte) error { return nil }
 	m := bendModes(t)
+	// The group is a stand-in: the real one runs groupadd, which this machine
+	// has not got and which a case may not run anywhere. What it answers is a
+	// gid nothing else here uses, so the chown below can only have got it from
+	// this call.
+	oldGID, oldChown := paths.appsGID, paths.chown
+	t.Cleanup(func() { paths.appsGID, paths.chown = oldGID, oldChown })
+	const groupGID = 4242
+	asked := 0
+	paths.appsGID = func(context.Context) (int, error) {
+		asked++
+		return groupGID, nil
+	}
+	var chowns []string
+	paths.chown = func(p string, uid, gid int) error {
+		chowns = append(chowns, fmt.Sprintf("%s %d:%d", filepath.ToSlash(p), uid, gid))
+		// The call is RECORDED and not made: os.Chown does not exist on the
+		// machine this is written on, and an error here would stop EnsureData
+		// before the calls this case is about. That the real chown works is
+		// measured on Linux, by the cases that run there.
+		return nil
+	}
 
 	dir, err := EnsureData(context.Background(), "org.sorglos.terminal",
 		User{Name: "ngc-a-00000000", UID: 1234, GID: 1234}, make([]byte, 32))
@@ -429,14 +472,29 @@ func TestHardeningEnsureDataAsksForTheTightMode(t *testing.T) {
 		t.Logf("EnsureData ended with %v - the mode calls below are still the case", err)
 	}
 	want := []string{
-		"mkdirAll " + root + " -rwx------",
+		"mkdirAll " + root + " -rwx--x--x",
+		"chmod " + root + " -rwx--x--x",
 		"mkdir " + root + "/org.sorglos.terminal -rwx------",
 	}
 	if len(m.calls) < len(want) || !slices.Equal(m.calls[:len(want)], want) {
 		t.Fatalf("EnsureData asked for\n%q\nwant it to begin with\n%q", m.calls, want)
 	}
+	// THE GROUP IS WHAT MAKES 0710 MEAN ANYTHING, so it is asked for and it is
+	// the one the system answered - never a number written down here twice.
+	if asked == 0 {
+		t.Fatal("EnsureData never asked for the group of the apps folder")
+	}
+	if !slices.Contains(chowns, fmt.Sprintf("%s -1:%d", root, groupGID)) {
+		t.Fatalf("the apps folder was chowned %q, want root and the gid of %s",
+			chowns, AppsGroup)
+	}
+	// Every OTHER directory stays 0700: the one of the app, and the tightening
+	// of one that was already there.
 	for _, c := range m.calls {
-		if strings.HasPrefix(c, "chmod ") && !strings.HasSuffix(c, " -rwx------") {
+		if !strings.HasPrefix(c, "chmod ") || strings.HasPrefix(c, "chmod "+root+" ") {
+			continue
+		}
+		if !strings.HasSuffix(c, " -rwx------") {
 			t.Fatalf("EnsureData asked for %q", c)
 		}
 	}
