@@ -385,11 +385,22 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > fokussiert danach noch einmal**. Die CPU-Bremse bremst beide Seiten gleich, darum weitet
 > sie ihn nicht.
 >
-> **Was daraus folgt, und es ist eine Entscheidung, keine Messung:** `retries` fehlen ganz.
-> Bei 1365 Fällen ohne Wiederholung ist jeder Lauf eine Münze, und ein roter Satz sagt dann
-> nichts über den Stand. **Empfehlung: `retries: 1` in `playwright.config.js`** — sie macht
-> sprunghafte Fälle sichtbar (`flaky`) statt sie zu verstecken, anders als eine größere
-> Zeitgrenze.
+> **Was daraus folgte, war eine Entscheidung und keine Messung** — und sie ist am 18.10.2026
+> getroffen: **`retries: 1` steht jetzt in `playwright.config.js`.** Vorher fehlten
+> Wiederholungen ganz; bei 1365 Fällen ist jeder Lauf dann eine Münze, und ein roter Satz sagt
+> nichts über den Stand. Eine **größere Zeitgrenze** wäre die falsche Antwort auf dasselbe
+> gewesen: sie ließe den Fall still durchgehen und nähme den Beleg mit, während `flaky` ein
+> Wort in der Zusammenfassung ist, das jemand lesen muss.
+>
+> **Dass die Zeile tut, was ihr Kommentar sagt, ist gemessen und nicht angenommen** — mit zwei
+> Wegwerf-Fällen, die wieder entfernt sind: einer, der **nur beim ersten Versuch** fällt, kommt
+> als **`1 flaky`** heraus; einer, der **immer** fällt, bleibt **`1 failed`**. Die Zeile ist
+> also kein Freibrief: **zwei Rote hintereinander sind weiter ein Befund.**
+>
+> **Eine Lücke dabei, damit sie nicht als geschlossen gilt:** der grüne vollständige Lauf war
+> mit der Befehlszeilen-Fahne `--retries=1`; für die Datei ist nachgemessen, dass Playwright
+> `retries = 1` daraus liest (`trace` bleibt `retain-on-failure`, der gescheiterte Versuch
+> behält also seine Spur) — **ein vollständiger Lauf mit der Datei selbst ist nicht gefahren.**
 >
 > Auch hier gilt der Satz von oben unverändert: **am Gerät ist nichts davon nachgemessen**,
 > und nach `main` geführt ist nichts.
