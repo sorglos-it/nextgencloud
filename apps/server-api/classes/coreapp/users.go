@@ -32,10 +32,12 @@
 package coreapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -242,6 +244,10 @@ func (d *Dispatcher) trust(ctx context.Context, rq *Call) ([]byte, error) {
 		return nil, fail(wire.CodeVerify)
 	}
 	seq := v.List.Seq
+	// A server that now stands in the list waits for nothing any more. Both
+	// waiting lists are emptied here, and that is the only place that can do
+	// it: a row is settled by the version, not by the request that made it.
+	d.settle(ctx, v.List)
 	_ = d.Log.Note(ctx, core.LogTrust, rq.Live.Verified.Cert().User, "", "",
 		strconv.FormatUint(seq, 10))
 	// The push outlives this channel on purpose: a new version has to reach
@@ -250,6 +256,105 @@ func (d *Dispatcher) trust(ctx context.Context, rq *Call) ([]byte, error) {
 	// context ends with the result.
 	go d.pushTrust(context.WithoutCancel(ctx), seq)
 	return result(core.TrustResult{Seq: seq})
+}
+
+// settle takes out of the two waiting lists every row whose server now stands
+// in l -- the join requests of API servers (dbapi.BlobJoin) and the pairings
+// of controllers (dbapi.Pending).
+//
+// MEASURED on 17.10.2026 at a running installation, and it is why this exists:
+// a second API server was taken into the trust list and its row went on
+// standing under "Wartende API-Server" with an Aufnehmen button, and the
+// controller's row did the same after it was taken in. Counted over the
+// committed tree the same day: BlobJoin was only ever written (BlobPut) and
+// read (BlobFrom), BlobDelete was used for four other kinds and never for this
+// one, and PendingDelete -- which the contract has -- had no caller in apps/
+// at all. So nothing emptied either list, ever.
+//
+// IT DECIDES ON THE KEYS AND NOT ON THE NAME, which is what point 27 of
+// docs/vertraege-v1.2.md asks of whoever builds this ("Wer es baut,
+// entscheidet am Schlüssel, nicht am Namen"). The difference is a measured
+// one, not a nicety: a request stored under the name of a server that is
+// already listed OVERWRITES the one that was there (join.keep stores by node
+// id), so a row carrying a listed NAME may well be a different machine with
+// different keys asking for that name. Such a row stays, and the shell tells
+// the admin the name is taken. Only a row that is the listed server itself --
+// same id and the same four values under its fingerprint -- is taken out.
+//
+// Nothing here can fail the channel: the version is in force, and a waiting
+// list that could not be emptied is a row too many on a screen, not a wrong
+// trust list. Each kind is logged once at most, with the count and never a
+// name or a key.
+func (d *Dispatcher) settle(ctx context.Context, l *trust.List) {
+	if l == nil {
+		return
+	}
+	rows, err := d.S.DB.BlobFrom(ctx, dbapi.BlobJoin, 0)
+	if err == nil {
+		gone := 0
+		for _, b := range rows {
+			req, err := tunnel.ParseJoinRequest(b.Data)
+			if err != nil || req.Node != b.ID {
+				// A row no parser takes is no offer either (pendingAPI skips
+				// it the same way). It is left where it is: what is in it is
+				// not readable, so nothing here can say it is settled.
+				continue
+			}
+			n, ok := l.Node(req.Node)
+			if !ok || n.Kind != trust.NodeAPI || !sameAPI(n, req) {
+				continue
+			}
+			if err := d.S.DB.BlobDelete(ctx, dbapi.BlobJoin, b.ID); err != nil {
+				continue
+			}
+			gone++
+		}
+		if gone > 0 {
+			slog.InfoContext(ctx, "API servers that are now listed left the waiting list",
+				"count", gone, "seq", l.Seq)
+		}
+	}
+	list, err := d.S.DB.PendingList(ctx)
+	if err != nil {
+		return
+	}
+	gone := 0
+	for _, p := range list {
+		// A controller's row carries a NAME it asked for and its Noise key,
+		// and the name it ends up with in the list is a different string
+		// (the shell makes one that is free). So the key is not the better
+		// half here, it is the only one.
+		if !listedController(l, p.Key) {
+			continue
+		}
+		if err := d.S.DB.PendingDelete(ctx, p.Key); err != nil {
+			continue
+		}
+		gone++
+	}
+	if gone > 0 {
+		slog.InfoContext(ctx, "controllers that are now listed left the waiting list",
+			"count", gone, "seq", l.Seq)
+	}
+}
+
+// sameAPI reports whether the listed node n is the very server that sent req:
+// the four values that its fingerprint covers besides the node id
+// (tunnel.JoinFingerprint of node, noise, sign, tls, url).
+func sameAPI(n trust.Node, req tunnel.JoinRequest) bool {
+	return bytes.Equal(n.Noise, req.Noise) && bytes.Equal(n.Sign, req.Sign) &&
+		bytes.Equal(n.TLS, req.TLS) && n.URL == req.URL
+}
+
+// listedController reports whether a controller with this Noise key stands in
+// l. The key is what a pairing is recognised by; the name is not.
+func listedController(l *trust.List, key []byte) bool {
+	for _, n := range l.Nodes {
+		if n.Kind == trust.NodeController && bytes.Equal(n.Noise, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // pairCode answers ngc.users/pair-code: a one-time code for the ulh script of
