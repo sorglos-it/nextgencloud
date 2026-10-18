@@ -28,6 +28,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -98,6 +99,23 @@ func activateCode(err error) *wire.Close {
 		return refuse(wire.CodeForbidden)
 	case errors.Is(err, install.ErrLicense):
 		return refuse(wire.CodeLicense)
+	case errors.Is(err, ctrlrt.ErrNoFscrypt):
+		// THE ONE FAILURE OF THIS SERVER THAT SAYS WHAT TO DO. The code stays
+		// E_INTERNAL with every other one below -- the contract has none for
+		// a disk, and inventing a second meaning for one of the others would
+		// make every peer read it wrong -- but the SENTENCE is the one the
+		// runtime wrote for a person.
+		//
+		// runtime.NoFscryptText has existed since the data directory did, and
+		// its comment said "the caller shows NoFscryptText for it" while no
+		// caller did: counted 18.10.2026, nothing read the constant but its
+		// own test. On a kernel without CONFIG_FS_ENCRYPTION every activation
+		// ends here (measured on 6.18.33.2-microsoft-standard-WSL2), and the
+		// person read the general sentence of E_INTERNAL instead of the file
+		// systems to use.
+		cl := wire.Error(wire.CodeInternal)
+		cl.Message = ctrlrt.NoFscryptText
+		return &cl
 	default:
 		// ErrInternal, ErrDisk, ErrSpace and anything the local store or the
 		// container engine answered with: all of them are this server's, and
