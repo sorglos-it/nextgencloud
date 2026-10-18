@@ -15,10 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/apache"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -762,6 +765,40 @@ func (c *countLog) about(what string) int {
 	return n
 }
 
+// The installer this controller hands an activate channel is wired up in
+// full: every field install.Activate reads in its own guard is there, so a
+// channel that arrives gets a refusal of its task and not "the installer is
+// not wired up".
+//
+// That is what the two errors tell apart, and it is the whole of this case.
+// A Manager missing one of State, Engine, Sys, List, StageDir, Max, LastSeq
+// or Now answers install.ErrInternal for every activation whatever the task
+// says; this one answers install.ErrForbidden, which is the guard behind it -
+// the one that asks for a signed root task. A decision without a task is the
+// cheapest way past the first guard and into the second.
+func TestTheInstallerOfThisControllerIsWiredUpInFull(t *testing.T) {
+	st := newState(t)
+	cfg := &config.Controller{
+		Node: "ctl-1", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+	}
+	i := installer{cfg: cfg, version: "1.2.3", state: st, engine: ctrlrt.NewPodman("podman"),
+		node: func() string { return cfg.Node }}
+	_, err := i.Activate(context.Background(), &trust.List{}, access.Decision{},
+		bytes.NewReader(nil))
+	if errors.Is(err, install.ErrInternal) {
+		t.Fatalf("the installer is wired wrong: %v", err)
+	}
+	if !errors.Is(err, install.ErrForbidden) {
+		t.Fatalf("an activation without a task gave %v, want install.ErrForbidden", err)
+	}
+	// And the catalogue counter is the gap this file names, not a number that
+	// drifted: it answers 0 for every store.
+	if n := i.lastSeq("ngc"); n != 0 {
+		t.Errorf("lastSeq = %d, want 0 with the comment that says why", n)
+	}
+}
+
 // TestWireUpLetsTheListOutrankTheFile holds the precedence of wireUp's nodeID,
 // and it is a decision, not a detail: the VERIFIED LIST decides what this
 // server's node is, and controller.json only remembers it. A file that
@@ -954,5 +991,59 @@ func TestAListWithoutAnAPIDoesNotEmptyTheBalancer(t *testing.T) {
 	b, err := os.ReadFile(balancer)
 	if err != nil || !strings.Contains(string(b), "api-1.test") {
 		t.Fatalf("the balancer that was there is gone: %q (%v)", b, err)
+	}
+}
+
+// The installer takes this server's node ID from the VERIFIED LIST and asks
+// for it afresh on every activation - not out of controller.json, and not
+// frozen at the start.
+//
+// This is the bug the running installation showed on 18.10.2026 and the
+// reason this case exists. Pairing writes controller.json without a node
+// (main.go), so an installer that read the file held every signed root task
+// against "" - and task.Check answers "malformed task or other target",
+// which the channel ends E_VERIFY and the user reads as a package that does
+// not check out. The task was fine; the server did not know its own name.
+//
+// Measured against both halves: the file alone is NOT enough, and the list
+// alone IS - and the second half is what a frozen value would fail, because
+// the ID arrives with a version of the list that is verified later.
+func TestTheInstallerAsksForItsNodeIDAfreshAndLetsTheListDecide(t *testing.T) {
+	st := newState(t)
+	cfg := &config.Controller{
+		Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+	}
+	// What pairing leaves behind: a configuration with no node at all.
+	if cfg.Node != "" {
+		t.Fatal("this case needs a configuration without a node")
+	}
+	var id string
+	i := installer{cfg: cfg, version: "1.2.3", state: st, engine: ctrlrt.NewPodman("podman"),
+		node: func() string { return id }}
+	// Read off install.Deps and not off nodeOf, and that is the point of the
+	// case: a first version of it called nodeOf and stayed GREEN with the
+	// node taken from the configuration again, because nothing it looked at
+	// was the line that hands the ID over (measured 18.10.2026).
+	if got := i.deps(&trust.List{}).Node; got != "" {
+		t.Fatalf("the installer hands over node %q before any list did", got)
+	}
+	// Read once per activation and not once per installer: the second call
+	// has to see the ID the first one did not.
+	id = "ngc-2"
+	if got := i.deps(&trust.List{}).Node; got != "ngc-2" {
+		t.Fatalf("the installer hands over node %q after the list did, want ngc-2", got)
+	}
+	// And a node in the file does NOT outrank the list: this is the same
+	// precedence wireUp.nodeID holds, carried into the activation.
+	cfg.Node = "aus-der-datei"
+	if got := i.deps(&trust.List{}).Node; got != "ngc-2" {
+		t.Fatalf("the file outranked the list: node %q, want ngc-2", got)
+	}
+	// The list of the channel is the list the Manager is built on, not one
+	// this installer reached for.
+	l := &trust.List{Seq: 7}
+	if got := i.deps(l); got.List != l {
+		t.Error("the Manager was built on another list than the channel's")
 	}
 }

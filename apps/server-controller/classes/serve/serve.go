@@ -52,6 +52,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -99,6 +100,9 @@ type Deps struct {
 	// controller that was not built with an updater, and every install
 	// channel ends E_INTERNAL.
 	Updater Updater
+	// Installer carries out ngc.store/controller/activate (activate.go). nil:
+	// an activate channel ends E_INTERNAL.
+	Installer Installer
 	// MaxApps bounds how many app channels this controller runs at once,
 	// over every tunnel it holds. 0 is DefaultMaxApps; a negative number is
 	// no bound at all, which only a case sets.
@@ -157,6 +161,13 @@ type Deps struct {
 // and answers either a result to encode or the CLOSE the channel ends with.
 type action func(ctx context.Context, d access.Decision, in []byte) (any, *wire.Close)
 
+// stream is what carries out one core action whose input is a file: instead of
+// the input it gets the reader that hands it out as it arrives, and the trust
+// list the channel was decided on, because what it hands the input to is built
+// on that list (activate.go).
+type stream func(ctx context.Context, list *trust.List, d access.Decision,
+	r *chanReader) (any, *wire.Close)
+
 // name is an action of core.All, as a key: core.Action holds a function and
 // cannot be compared.
 type name [3]string
@@ -172,12 +183,18 @@ var trustKey = name{core.AppUsers, core.ServiceController, core.ActTrust}
 // are written.
 type Server struct {
 	d Deps
-	// acts is what this build carries out: trust (trust.go) and install
-	// (update.go). The other core actions of service controller — activate,
-	// deactivate, uninstall, delete-data, stage and license — are carried out
-	// by the tasks that bring the app installer and the licence. Only a test
-	// puts something else in, to see a result this server would refuse.
+	// acts is what this build carries out with its input held whole: trust
+	// (trust.go) and install (update.go). The core actions of service
+	// controller that remain — deactivate, uninstall, delete-data, stage and
+	// license — are carried out by the tasks that build them; activate stands
+	// in streams instead, because its input is a file. Only a test puts
+	// something else in, to see a result this server would refuse.
 	acts map[name]action
+	// streams is what this build carries out with its input read as it flows:
+	// activate (activate.go). The two maps are one namespace — core looks in
+	// streams first and then in acts — so no action may stand in both, and
+	// TestNoActionIsBothBufferedAndStreamed holds that.
+	streams map[name]stream
 	// first bounds the wait for the shell's first inner message. Only a test
 	// sets it, to run the wait out in a fraction of a second; without it the
 	// wire.E2EFirstTimeout of the contract holds.
@@ -238,6 +255,7 @@ const DefaultMaxApps = 128
 func New(d Deps) *Server {
 	s := &Server{d: d}
 	s.acts = map[name]action{trustKey: s.trust, installKey: s.install}
+	s.streams = map[name]stream{activateKey: s.activate}
 	return s
 }
 
@@ -323,13 +341,14 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 	// version in place of it (chain.Keeper.Current, measured in
 	// TestTheListOfAChannelDoesNotChangeUnderIt) — so holding the pointer is
 	// holding the version.
-	d, cl := access.Check(ctx, access.Request{Payload: ch.OpenPayload(), List: s.d.Chain.List(),
+	list := s.d.Chain.List()
+	d, cl := access.Check(ctx, access.Request{Payload: ch.OpenPayload(), List: list,
 		Node: s.d.Node, Now: s.now(), Apps: s.d.State, Tasks: s.d.State})
 	if cl != nil {
 		return s.end(ch, *cl)
 	}
 	if d.Core {
-		return s.core(ctx, ch, d)
+		return s.core(ctx, ch, list, d)
 	}
 	return s.openApp(ctx, ch, d)
 }
@@ -337,8 +356,13 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 // core runs the channel of a core action of this controller: the first GRANT,
 // the input up to the EOF of the API, the action, and its result as DATA, EOF
 // and CLOSE ok.
-func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) error {
-	run, ok := s.acts[name{d.Action.App, d.Action.Service, d.Action.Name}]
+func (s *Server) core(ctx context.Context, ch *link.Channel, list *trust.List,
+	d access.Decision) error {
+	key := name{d.Action.App, d.Action.Service, d.Action.Name}
+	if flow, ok := s.streams[key]; ok {
+		return s.coreStream(ctx, ch, list, d, flow)
+	}
+	run, ok := s.acts[key]
 	if !ok {
 		// access let the channel through, so the action is one of this
 		// controller's — this build just does not carry it out yet. Nothing
@@ -349,7 +373,8 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) 
 		// lasts: with a trust list a stage or license channel gets here and
 		// ends E_INTERNAL, without one it never gets past access.firstChain
 		// and ends E_UNREACHABLE. An install channel does NOT reach this
-		// line any more: it stands in Server.acts since task 19. Both mean
+		// line any more: it stands in Server.acts since task 19, and an
+		// activate channel stands in Server.streams since this one. Both mean
 		// "this build does not carry that action out".
 		// Once the tasks that bring them are in,
 		// the line above is gone and with it the difference; until then the
@@ -395,6 +420,43 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) 
 	// this side ("Core apps", wire). It may be broken into as many frames as
 	// the credit of the moment allows, and nothing on the other side has to
 	// put a single frame back together.
+	if err := ch.SendStream(b); err != nil {
+		return s.end(ch, wire.Error(wire.CodeInternal))
+	}
+	if err := ch.EOF(); err != nil {
+		return s.end(ch, wire.Error(wire.CodeInternal))
+	}
+	return s.end(ch, wire.Close{Status: wire.StatusOK})
+}
+
+// coreStream runs the channel of a core action whose input is a file: the
+// first GRANT, the action with the input as a reader, and its result as DATA,
+// EOF and CLOSE ok.
+//
+// What it does NOT do is read the input itself, and that is the difference to
+// core: the action gets the reader and decides how much of the input it ever
+// holds (stream.go). Whatever is left unread when the action comes back stays
+// unread - the channel is over with the CLOSE below, and link drops what was
+// still on it.
+func (s *Server) coreStream(ctx context.Context, ch *link.Channel, list *trust.List,
+	d access.Decision, flow stream) error {
+	// The first GRANT is the credit the API sends its input with; what this
+	// side may send back is the window of the OPEN. A core channel carries no
+	// handshake in that GRANT (wire, "End to end").
+	if err := ch.Grant(firstGrant(d.Action), nil); err != nil {
+		return s.end(ch, wire.Error(wire.CodeInternal))
+	}
+	v, cl := flow(ctx, list, d, newChanReader(ctx, ch, d.Action))
+	if cl != nil {
+		return s.end(ch, *cl)
+	}
+	b, err := core.EncodeResult(v)
+	if err != nil {
+		// The same line as in core, and for the same reason: only the size
+		// of the result can bring this about, and the contract names
+		// E_TOOLARGE for it.
+		return s.end(ch, wire.Error(wire.CodeTooLarge))
+	}
 	if err := ch.SendStream(b); err != nil {
 		return s.end(ch, wire.Error(wire.CodeInternal))
 	}
