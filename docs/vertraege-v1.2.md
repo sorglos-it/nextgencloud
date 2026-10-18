@@ -2921,3 +2921,40 @@ geopfert.
 **Weiter BLOCKED, und es ist ein S1:** eine Lizenz mit Ausstellungszeit in der **Zukunft** sperrt
 jede spätere aus, während der Verwalter weiter „gültig" liest — mit dem **eigenen** Schlüssel des
 Stores unterschrieben, also kein Fälschungsfall. `shared/store/catalog.go:321`, eingefroren.
+
+## Punkt 64: Der erste Release, auf einer echten Maschine installiert — und das Terminal-Abbild gebaut
+
+**Gemessen am 18.10.2026** auf einer **echten Debian-13-VM** (`ngc`, 10.2.3.208, Kernel
+6.12.107, ext4, 62 GB frei) — nicht in WSL. Der Unterschied ist der Grund, warum es sie braucht:
+**`CONFIG_FS_ENCRYPTION=y`**, `fscrypt` vorhanden. Auf dem WSL-Rechner ist das aus, und ohne
+Dateiverschlüsselung startet dort **keine** NGC-App.
+
+**Der Weg lief zum ersten Mal mit einem richtigen Release durch**, nicht mit Dateien aus einem
+Arbeitsbaum:
+1. Release als **Entwurf** gebaut: fünf Teile (`ngc-web-all`, `ngc-api` und `ngc-controller` je
+   amd64 und arm64), unterschrieben mit dem echten Release-Schlüssel, **`release ok`** fünfmal und
+   **`Inhalt in Ordnung`** für alle Archive.
+2. Dateien auf die VM gelegt, `ngc-all install`: „The signature of the program files of ngc-api is
+   good" — **die Unterschrift wurde auf einer fremden Maschine geprüft**, mit dem Schlüssel, der
+   im Skript steht.
+3. `ngc-web install`: Apache nahm die Einstellungen an (`Syntax OK`), Seite **200**, Setup **200**.
+4. Im Browser eingerichtet und angemeldet, Kopplungscode geholt, Controller gekoppelt: `RC=0`,
+   `ngc-controller.service` **active**, `/etc/ngc/trust-anchor.json` mit **`0644`** (die Behebung
+   aus Punkt 61 trägt auf der echten Maschine).
+
+**Ein Fund beim Bauen des Release, und das Werkzeug hat ihn selbst gefangen:** der erste
+`ngc-web-all.tar` trug den Eintrag `./`, „den keine Installation auspackt" — abgewiesen von
+`ngc-store contents`, dem Riegel, der am selben Tag entstanden ist. Ohne ihn wäre ein Release
+hochgegangen, das die Skripte später abgelehnt hätten.
+
+**Und das Terminal-Abbild ist zum ersten Mal gebaut:** `ngc-controller image -arch amd64` auf der
+VM, podman 5.4.2 → `Successfully tagged localhost/ngc/terminal:1.0.0`, geschrieben nach
+`/tmp/terminal-amd64.tar`. Punkt 51 hatte den Befehl als gebaut, aber **nie gelaufen** vermerkt.
+
+**Was damit noch offen ist — und es ist die letzte Meile:** eine App läuft noch nicht. Dafür fehlt
+ein Paket (`manifest.json`, `ui/`, `services/amd64.tar`) und ein **erreichbarer Store**, dessen
+TLS-Kette die API annimmt (Punkt 45: sie verlangt sie wirklich). `podman ps` ist leer.
+
+**Nebenbefund zur Umgebung:** die VM ist über `ssh ngc` erreichbar, `sudo` ohne Passwort, podman
+und PHP schon da, Apache kam mit der Installation. Damit gibt es zum ersten Mal einen Ort, an dem
+die Dinge gemessen werden können, die WSL nicht kann.
