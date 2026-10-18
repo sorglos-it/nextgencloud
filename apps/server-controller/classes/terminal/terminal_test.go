@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -494,20 +495,52 @@ func TestRunSaysSoWhereThereIsNoPTY(t *testing.T) {
 
 // skipWithoutPTY says out loud what is not measured here and why, with the
 // date, so whoever reads it can see whether the reason still holds.
+//
+// Linux is not the whole precondition, and that cost the Linux run its first
+// two red cases. The shell is started with cmd.Dir = service.DataDir, so
+// WITHOUT THAT DIRECTORY cmd.Start fails and the case dies at a wall in front
+// of the one it is about: measured on 18.10.2026 in a debian:13-slim container
+// without /data, `exit 1, stderr "Die Shell ließ sich nicht starten."`, and
+// with /data created the same two cases reach the shell. On a GitHub runner
+// there is no /data, which is why both were red there and neither said why.
+//
+// So the directory is made where it can be made - as root, which the
+// "controller cases that need root" job is - and the case says out loud where
+// it cannot. It is removed again only if this case created it: a /data that
+// was already there is the real mount of a service and none of this case's
+// business.
 func skipWithoutPTY(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skipf("NICHT GEMESSEN auf %s: /dev/ptmx gibt es nur unter Linux (12.10.2026). "+
 			"Dieser Fall ist auf einem Linux-Server nachzuholen.", runtime.GOOS)
 	}
+	if fi, err := os.Stat(service.DataDir); err == nil && fi.IsDir() {
+		return
+	}
+	if err := os.MkdirAll(service.DataDir, 0o700); err != nil {
+		t.Skipf("NICHT GEMESSEN: die Shell startet in %s, und dieses Verzeichnis gibt es "+
+			"hier nicht und ließ sich nicht anlegen (%v). Ohne es scheitert cmd.Start und "+
+			"der Fall misst eine Wand davor. Als root läuft er (18.10.2026).",
+			service.DataDir, err)
+	}
+	t.Cleanup(func() { _ = os.Remove(service.DataDir) })
 }
 
-// TestRunEchoesThroughAPTY drives the real shell: "echo hallo" goes in as a
-// keys frame, "hallo" comes out, and "exit" ends it.
+// TestRunEchoesThroughAPTY drives the real shell: a line goes in as a keys
+// frame, the SHELL'S OWN answer comes out, and "exit" ends it.
+//
+// It used to look for "hallo" after sending "echo hallo", and the Linux run
+// said what that is worth: the terminal echoes the typed line, so "hallo" was
+// in the output before the shell had done anything at all. The case was green
+// while the shell never ran a command - measured, and the sister case on the
+// same bug was red. So the proof is an answer that CANNOT be the echo: the
+// typed line reads "echo $((6*7))" and only a shell turns it into 42.
 func TestRunEchoesThroughAPTY(t *testing.T) {
 	skipWithoutPTY(t)
 	goodEnv(t)
-	in := append(keys([]byte("echo hallo\n")), keys([]byte("exit\n"))...)
+	in := append(keys([]byte("echo hallo\n")), keys([]byte("echo $((6*7))\n"))...)
+	in = append(in, keys([]byte("exit\n"))...)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	code := run(context.Background(), bytes.NewReader(in), &out, &errOut, time.Minute)
@@ -516,6 +549,108 @@ func TestRunEchoesThroughAPTY(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "hallo") {
 		t.Fatalf("output %q, want hallo in it", out.String())
+	}
+	// 42 is in no line anybody typed.
+	if !strings.Contains(out.String(), "42") {
+		t.Fatalf("output %q, want the shell's own answer 42 in it", out.String())
+	}
+}
+
+// TestTheShellGetsItsLastWordAndNoMore is the other half of that decision
+// (terminal.go, LastWord), and it holds the bound as well as the wait.
+//
+// The first line proves the wait: "eins" is the shell's own answer to a line
+// whose echo does not carry it, and before the last word existed the session
+// was killed the moment the input ended, so nothing of it came out.
+//
+// The second proves the bound with a number that is not the bound: a sleep of
+// thirty seconds is left behind with no "exit" after it, and run comes back in
+// under ten. Both numbers are independent of LastWord, so the case cannot pass
+// by sharing a constant with the thing it measures.
+func TestTheShellGetsItsLastWordAndNoMore(t *testing.T) {
+	skipWithoutPTY(t)
+	goodEnv(t)
+	in := append(keys([]byte("echo ei''ns\n")), keys([]byte("sleep 30\n"))...)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	start := time.Now()
+	code := run(context.Background(), bytes.NewReader(in), &out, &errOut, time.Minute)
+	took := time.Since(start)
+	// A terminal whose channel ended is no failure: nothing went wrong.
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errOut.String())
+	}
+	// "ei''ns" is what was typed and "eins" is what the shell made of it.
+	if !strings.Contains(out.String(), "eins") {
+		t.Fatalf("output %q, want the shell's own answer eins in it", out.String())
+	}
+	if took > 10*time.Second {
+		t.Fatalf("it took %v: the sleep was waited out instead of being killed", took)
+	}
+}
+
+// TestTheShellsExitCodeComesBack is what the last word is FOR, beyond the
+// output: a session that ends with "exit 3" ends with 3, and the person's
+// shell keeps its own answer.
+//
+// It was written for a mutant that stayed alive: letting the second pump's
+// clean end break the wait leaves the exit code behind, because the code
+// arrives through the wait on the child and not through the pump. Nothing in
+// the set saw the difference, and a code nobody looks at is a code that can
+// quietly become zero.
+func TestTheShellsExitCodeComesBack(t *testing.T) {
+	skipWithoutPTY(t)
+	goodEnv(t)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	code := run(context.Background(), bytes.NewReader(keys([]byte("exit 3\n"))), &out, &errOut, time.Minute)
+	if code != 3 {
+		t.Fatalf("exit %d, want the 3 the shell was told, stderr %q", code, errOut.String())
+	}
+}
+
+// TestAFaultEndsTheTerminalAtOnce holds the other half of the last word: only
+// a CLEAN end of the input waits for the shell. A pump that broke is a reason
+// to stop at once, and the fault is what the caller hears about.
+//
+// What it holds: a channel that breaks ends the terminal with a failure and
+// without waiting. The number is independent of LastWord - a shell told to
+// "sleep 1" could not have finished in under a second either way.
+//
+// WHAT IT DOES NOT HOLD, and the attempt is written down rather than hidden:
+// the branch that makes only a CLEAN end wait (pty_linux.go, "if first ==
+// nil") has a mutant that STAYS ALIVE against this whole set. Dropping the
+// condition means a fault would wait too, and if the shell then ended inside
+// the last word the fault would be answered with the shell's exit code and no
+// error at all - a swallowed error that comes out as a success (V1.2 point
+// 50). Two shapes were tried on 18.10.2026 and neither decides it: with an
+// ordinary byte slice the input is consumed in microseconds, so the clean end
+// of pumpIn always wins the first race and the branch is never taken; with a
+// reader that holds the input open the whole run waited out the idle limit
+// instead (60 s), so the fault did not reach that race either. Deciding it
+// needs a seam inside runShell, which is more machinery than this change
+// carries. The guard is in the code and is RIGHT; it is unmeasured, and that
+// is said here instead of being left to look measured.
+//
+// What it does NOT nail is the sentence: a broken output channel comes back as
+// the error of the write, which is no errCut, so sentence() gives it the
+// default - "Die Shell ließ sich nicht starten.", although it did start.
+// Measured here, named here, and not fixed here: it is a wording of its own
+// and belongs to whoever owns these sentences.
+func TestAFaultEndsTheTerminalAtOnce(t *testing.T) {
+	skipWithoutPTY(t)
+	goodEnv(t)
+	in := append(keys([]byte("sleep 1\n")), keys([]byte("exit\n"))...)
+	var errOut bytes.Buffer
+	start := time.Now()
+	code := run(context.Background(), bytes.NewReader(in),
+		&errWriter{err: errors.New("the channel ended")}, &errOut, time.Minute)
+	took := time.Since(start)
+	if code == 0 {
+		t.Fatalf("exit 0 although the channel broke, after %v, stderr %q", took, errOut.String())
+	}
+	if took > time.Second {
+		t.Fatalf("it took %v: the fault waited for the shell instead of ending the terminal", took)
 	}
 }
 
