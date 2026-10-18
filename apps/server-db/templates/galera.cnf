@@ -28,7 +28,19 @@ innodb_autoinc_lock_mode=2
 
 # The replication between the nodes runs over TLS against the CA of the
 # installation - the same CA the API and the controller check.
-wsrep_provider_options="socket.ssl_ca=/etc/ngc/db-tls/ca.crt;socket.ssl_cert=/etc/ngc/db-tls/node.crt;socket.ssl_key=/etc/ngc/db-tls/node.key;socket.ssl_cipher=TLS_AES_256_GCM_SHA384"
+#
+# socket.ssl_cipher is the TLS 1.2 cipher LIST of Galera and nothing else: it
+# goes to SSL_CTX_set_cipher_list, which knows no TLS 1.3 suite. A TLS 1.3 name
+# there does not restrict TLS 1.3, it kills the server - measured on Debian 13
+# with Galera 26.4.23 on 17.10.2026: "Error setting SSL cipher list to
+# 'TLS_AES_256_GCM_SHA384': no cipher match", then the provider and the server
+# abort. So the value is the TLS 1.2 spelling of the one suite Entwurf 4.5
+# allows, and ECDSA because the CA of this installation signs Ed25519 only.
+# What it buys is measured too: with this list a TLS 1.2 peer offering
+# AES-128-GCM or a CBC suite gets a handshake failure, and without it both
+# come through. Under TLS 1.3 Galera offers no knob at all; measured, that
+# socket negotiates TLS_AES_256_GCM_SHA384 by itself.
+wsrep_provider_options="socket.ssl_ca=/etc/ngc/db-tls/ca.crt;socket.ssl_cert=/etc/ngc/db-tls/node.crt;socket.ssl_key=/etc/ngc/db-tls/node.key;socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384"
 
 # A new node copies the data with mariabackup, over TLS as well.
 wsrep_sst_method=mariabackup

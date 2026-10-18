@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -140,8 +141,33 @@ func (srv *Server) staticKey() (noise.DHKey, error) {
 }
 
 // run exchanges hello and then reads the tunnel until it ends.
+//
+// The one line it writes is the only word this API ever says about a tunnel,
+// and it was missing. Measured on 18.10.2026 at the running pair: the network
+// between controller and API was cut for 210 seconds, the controller wrote
+// nine lines about it, and ngc-api wrote NONE -- not when the tunnel died, not
+// when it came back. The side the admin and the shell talk to had nothing to
+// show that a server had fallen off. It is one line per ended tunnel, so the
+// flood of point 63 (12 289 lines out of one burst) cannot grow here: nothing
+// ends a tunnel more often than a controller can build one, and its pause
+// between two attempts grows on its own.
+//
+// Node and seconds only, deliberately. The one thing the API prints today is
+// net/http's own TLS error with an address and a port in it; a name that says
+// which server is gone is what an admin needs, and nothing else from the line
+// belongs in a journal.
 func (srv *Server) run(ctx context.Context, t *Tunnel) {
+	since := srv.S.Now()
 	defer srv.Tunnels.remove(t)
+	// Written BEFORE the tunnel is taken out of the registry, and that order is
+	// the whole reason this defer stands here and not above the one that
+	// removes: defers run backwards, so whoever waits for the registry to be
+	// empty has the line in hand when it is. The other way round the line comes
+	// after, and a case that waits for the empty registry reads an empty log --
+	// measured, 18.10.2026, one of two cases green by luck.
+	defer func() {
+		slog.Info("controller tunnel ended", "node", t.Node, "seconds", srv.S.Now()-since)
+	}()
 	// Whoever serves a channel waits in link.Channel.Next; once the tunnel is
 	// gone they hear that at once instead of waiting out their own clock.
 	defer t.table.Hangup()
@@ -253,9 +279,23 @@ func (srv *Server) control(ctx context.Context, t *Tunnel, f wire.Frame) bool {
 			return false
 		}
 		// A hello that names another node than the one whose key made this
-		// tunnel ends it: the key decides, never the message. A controller
-		// that only paired has no node yet and names none.
-		if h.Node != t.Node {
+		// tunnel ends it: the key decides, never the message.
+		//
+		// NAMING NO NODE IS NOT NAMING ANOTHER ONE, and the field says so
+		// itself (tunnel.Hello.Node: "empty until the controller is in the
+		// trust list"). Two controllers send an empty one: the one that only
+		// paired, and -- measured on a running installation on 17.10.2026 --
+		// the one an admin has just listed. The second learns its ID only from
+		// a version of the list that lists it, and a controller gets versions
+		// of the list on this tunnel, AFTER its hello was taken. Comparing an
+		// empty node against t.Node closed that circle: the tunnel of a
+		// freshly listed controller was ended on every dial, and no app could
+		// ever run.
+		//
+		// What the rule protects is untouched: t.Node comes out of peerKey, so
+		// out of the KEY, and nothing below reads h.Node. An empty hello buys
+		// its sender no other node, only its own.
+		if h.Node != "" && h.Node != t.Node {
 			return false
 		}
 		t.setHello(h)

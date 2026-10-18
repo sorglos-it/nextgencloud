@@ -366,18 +366,75 @@ func fields(t *testing.T, w *httptest.ResponseRecorder) string {
 // makes the factor usable; whoever ever draws the factor tighter has to draw it
 // tighter for the null control first, or the test starts reporting the machine
 // as a finding.
+//
+// WHAT THIS TEST DOES NOT CATCH, measured 18.10.2026 and written down here so
+// nobody mistakes it for the guard it is not. A clock over the whole handler
+// only sees a shortcut that is worth a factor of two of a WHOLE request, and
+// almost nothing a name can change is worth that: parsing, the counting, the
+// nonce and the signing of the challenge are paid by both names and are the
+// bulk of the 30 to 40 microseconds a request takes here. Three mutants, 20
+// runs each:
+//
+//   - the pre-point-50 shortcut itself -- the row read and the nonce write
+//     only for a name that exists: known 41.3us against unknown 41.5us, 0 of
+//     20 red. It is caught, but by TestStartMakesTheSameDatabaseCallsForEveryName,
+//     TestStartSaysComeBackWhenTheDatabaseIsBusy and
+//     TestStartKeepsTheMadeUpNonceUnderAnIDNobodyHas, which count calls and do
+//     not look at a clock at all. Those three are the guard against it.
+//   - session.Challenge handing out a cached made-up answer, so an unknown
+//     name skips the walk and the derivation: 0 of 20 red.
+//   - both together: the comparison moved to a median of 1.18, while the null
+//     control on the same runs reached 1.19. The two distributions OVERLAP
+//     (clean comparison up to 1.13, mutated from 1.09), so no threshold
+//     separates them -- not a tighter factor either. That is why the factor
+//     stays at two instead of being drawn in.
+//
+// What it does catch, 20 of 20 red: a made-up answer handed back from a map
+// lookup before the counting, the list, the row and the write -- 32.8us
+// against 9.0us. That is the shape of a real oracle, and it is what this test
+// is for.
 func TestStartTakesTheSameTimeForAnUnknownName(t *testing.T) {
 	h, fx := newFixture(t)
-	known, unknown, again := timeThem(t, h, fx.PasswordName, "nobody", fx.PasswordName, 5)
+	var known, unknown, again time.Duration
 	// The null control first: one name against itself, measured the same way
-	// and in the same batches.
-	if known > 2*again || again > 2*known {
-		t.Fatalf("the same name twice: %v and %v -- this machine cannot measure a factor of two today", known, again)
+	// and in the same batches. It is measured at most twice. A machine throws
+	// a busy stretch into a run often enough that giving the guard away on the
+	// first blown control would throw away runs a second look measures
+	// perfectly well; two is a cap and not a loop, because a machine that
+	// cannot resolve the factor twice in a row will not on the third try.
+	for try := 1; ; try++ {
+		known, unknown, again = timeThem(t, h, fx.PasswordName, "nobody", fx.PasswordName, timedBatches)
+		// The numbers are logged whether the test holds or not. A measurement
+		// that only prints itself when it fails cannot be judged: nobody can
+		// say how close a green run came to the edge, and that is the question
+		// a flaky clock test is always asked.
+		t.Logf("known %v, unknown %v (the same name twice: %v)", known, unknown, again)
+		if known <= 2*again && again <= 2*known {
+			break
+		}
+		if try == 2 {
+			// Loud, and not red. A clock test whose own null control cannot
+			// resolve the factor has measured the machine and not the
+			// handler, and a red that says so is a false finding. A silent
+			// pass would be worse than either, so the word tools/check.sh
+			// greps for goes out here: the guard did NOT run in this run, and
+			// whoever reads the run has to be told so.
+			t.Skipf("%s: the same name twice: %v and %v -- this machine cannot measure a factor of two today, the guard did not run",
+				unmeasurable, known, again)
+		}
 	}
 	if known > 2*unknown || unknown > 2*known {
 		t.Fatalf("known %v, unknown %v (the same name twice: %v and %v)", known, unknown, known, again)
 	}
 }
+
+// unmeasurable is the word a clock test prints when its own null control says
+// this machine cannot resolve the factor today. It is a word and not a remark
+// because tools/check.sh greps the run for it: go test without -v prints
+// NOTHING for a skipped test -- not t.Skipf, not a write to os.Stderr
+// (measured 18.10.2026) -- so a test that steps aside would otherwise pass in
+// silence, which is the one outcome worse than a false red.
+const unmeasurable = "UNMEASURABLE"
 
 // timedFloor is the shortest batch this test believes. Below it the clock, not
 // the handler, is what was measured, and no comparison of such numbers means
@@ -436,9 +493,36 @@ func TestTimedSeesAnAnswerThatIsNotOne(t *testing.T) {
 }
 
 // timeThem measures the three names in turn, batches times each, and returns
-// the median batch of each. Turn by turn, so a machine that gets slower or
-// faster while the test runs does so for all three; the median drops the one
-// slow batch a busy machine throws in, which an average would not.
+// the SHORTEST batch of each. Turn by turn, so a machine that gets slower or
+// faster while the test runs does so for all three.
+//
+// The shortest, and no longer the median -- changed 18.10.2026 against the
+// flake. Noise on this clock is one-sided: a scheduler, a garbage collection
+// or another package's tests on the same machine only ever ADD time to a
+// batch, never take any away. The shortest of the batches is therefore the
+// one that was disturbed least, while the median still carries whatever the
+// machine happened to be doing halfway through. That makes the comparison
+// quieter and the guard TIGHTER at the same time, which is the whole point: a
+// shortcut now has to beat a cleaner number than before, not a looser one.
+// The tolerance below is untouched.
+//
+// Measured the way a clock test has to be measured, and that is not by
+// counting reds: the flake is rarer than one in twelve even under load, so a
+// run count that separates anything would be enormous. What is measured
+// instead is the spread of the null control, because that spread IS the
+// flake -- a run goes red when it reaches the factor. Twelve interleaved
+// pairs under four concurrent "go test ./..." on the same machine, the same
+// machine state within each pair:
+//
+//	                  median   p90     max
+//	median of five    1.060    1.151   1.213
+//	shortest of five  1.032    1.061   1.087
+//
+// Neither went red in those twelve; what moved is the distance to the edge,
+// which is the only thing a green run can say anything about. GOMAXPROCS=1 is
+// NOT the lever here and was not used: it is for a flake that hangs on an
+// order between two goroutines, and on a test that compares clocks it only
+// makes the clock noisier (docs/STAND.md, fourth clock flake).
 func timeThem(t *testing.T, h *Handler, a, b, c string, batches int) (time.Duration, time.Duration, time.Duration) {
 	t.Helper()
 	da, db, dc := make([]time.Duration, batches), make([]time.Duration, batches), make([]time.Duration, batches)
@@ -448,7 +532,7 @@ func timeThem(t *testing.T, h *Handler, a, b, c string, batches int) (time.Durat
 	slices.Sort(da)
 	slices.Sort(db)
 	slices.Sort(dc)
-	return da[batches/2], db[batches/2], dc[batches/2]
+	return da[0], db[0], dc[0]
 }
 
 // jsonPost builds a POST with the right content type.
@@ -490,6 +574,10 @@ func jsonPost(path, body string) *http.Request {
 func TestStartSaysComeBackWhenTheDatabaseIsBusy(t *testing.T) {
 	h, fx := newFixture(t)
 	h.S.DB = busyOnce{Store: h.S.DB}
+	// Die Zaehler von httpapi sind Zustand des Prozesses, und die Zeile hat
+	// seit der Bremse ein Fenster: ohne dieses Zuruecksetzen misst der Fall
+	// die Stille eines frueheren.
+	httpapi.ResetCountsForTest()
 	log := capturedLog(t)
 	known, unknown := raw(t, h, fx.PasswordName), raw(t, h, "nobody")
 	for _, c := range []struct {

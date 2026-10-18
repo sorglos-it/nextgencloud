@@ -1,8 +1,11 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -438,5 +441,112 @@ func TestAPanicInTheHelloHookKeepsTheTunnel(t *testing.T) {
 	}
 	if got := guard.Panics(); got != before+1 {
 		t.Fatalf("the counter went %d -> %d; one panic must count once", before, got)
+	}
+}
+
+// TestTunnelTakesAHelloThatNamesNoNode holds the other half of the rule
+// TestTunnelEndsOnAForeignNode keeps: naming ANOTHER node ends the tunnel,
+// naming NO node does not. The contract says so of the field itself
+// (tunnel.Hello.Node, "empty until the controller is in the trust list"), and
+// a controller only ever learns its ID from a version of the list that lists
+// it -- which it cannot be handed before its hello is taken. Refusing the
+// empty one closed that circle: a controller an admin had just listed could
+// never say hello again.
+//
+// The ID still comes from the KEY and never from the message: the tunnel has
+// to reach the registry under the node of the fixture's controller, not under
+// nothing.
+func TestTunnelTakesAHelloThatNamesNoNode(t *testing.T) {
+	srv, fx := newServer(t)
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	h := controllerHello(fx)
+	h.Node = ""
+	c.writeControl(t, wire.CtlHello, h)
+	hello := c.readHello(t)
+	if hello.Contract != tunnel.Contract {
+		t.Fatalf("hello %+v", hello)
+	}
+	tun := waitForTunnel(t, srv, fx.ControllerNode)
+	if tun.Node != fx.ControllerNode {
+		t.Fatalf("the tunnel reached the registry as %q, want %q", tun.Node, fx.ControllerNode)
+	}
+	if tun.Hello().Node != "" {
+		t.Fatalf("the hello was changed on the way: %+v", tun.Hello())
+	}
+}
+
+// catchLog puts a log of its own in place of the default one for one case.
+// The whole package runs its cases one after another, so the default logger is
+// a shared fixture: it is put back by t.Cleanup, not left for the next case.
+func catchLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	return &buf
+}
+
+// TestAnEndedTunnelIsWrittenDown measures what was missing on 18.10.2026 at
+// the running pair: the network between controller and API was cut, the
+// controller wrote nine lines, and ngc-api wrote nothing at all. An admin
+// reading the API's journal could not see that a server had fallen off.
+//
+// What MUST be true of the code is: every way out of run writes one line, and
+// that line names the node. The node is what makes it worth anything -- "a
+// tunnel ended" without a name does not say WHICH server is gone, and an API
+// holds one tunnel per controller.
+//
+// The way out taken here is the idle time, because that is the one the cut
+// network really takes: nothing arrives any more, and no FIN gets through
+// either.
+func TestAnEndedTunnelIsWrittenDown(t *testing.T) {
+	srv, fx := newServer(t)
+	srv.Idle = 150 * time.Millisecond
+	log := catchLog(t)
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	c.writeControl(t, wire.CtlHello, controllerHello(fx))
+	c.readHello(t)
+	// The tunnel stood: without this the case would measure a hello that never
+	// got through, and the line would be about a tunnel that never was.
+	waitForTunnel(t, srv, fx.ControllerNode)
+	// Nothing more is sent, so the idle time ends it.
+	wantEnded(t, c)
+	waitForNoTunnel(t, srv)
+	got := log.String()
+	if !strings.Contains(got, "controller tunnel ended") {
+		t.Errorf("nothing was written down when the tunnel ended; the journal of the API holds: %q", got)
+	}
+	if !strings.Contains(got, fx.ControllerNode) {
+		t.Errorf("the line does not name the node %q, so it does not say which server is gone: %q", fx.ControllerNode, got)
+	}
+}
+
+// TestTheLineAboutAnEndedTunnelCarriesNoAddress is the other half, and it is a
+// rule of messen.md: name names and numbers, not values. The one thing the API
+// prints about a broken tunnel today is net/http's own TLS error with an
+// address and a port in it (measured in the half-cut case, four lines in 2.5
+// minutes). The line of our own must not add to that.
+func TestTheLineAboutAnEndedTunnelCarriesNoAddress(t *testing.T) {
+	srv, fx := newServer(t)
+	srv.Idle = 150 * time.Millisecond
+	log := catchLog(t)
+	c := dialTunnel(t, fx, fx.ControllerKeys)
+	c.writeControl(t, wire.CtlHello, controllerHello(fx))
+	c.readHello(t)
+	waitForTunnel(t, srv, fx.ControllerNode)
+	wantEnded(t, c)
+	waitForNoTunnel(t, srv)
+	line := log.String()
+	if !strings.Contains(line, "controller tunnel ended") {
+		t.Fatalf("no line to look at: %q", line)
+	}
+	// The listener of the fixture is on 127.0.0.1; its host and port must not
+	// turn up in the line.
+	host := strings.TrimPrefix(strings.TrimPrefix(fx.HTTP.URL, "https://"), "http://")
+	for _, bad := range []string{host, "127.0.0.1", "[::1]"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("the line carries the address %q: %q", bad, line)
+		}
 	}
 }

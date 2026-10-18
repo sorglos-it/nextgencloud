@@ -31,8 +31,24 @@ const (
 )
 
 // ErrNoReleaseFile reports a directory that holds no file Release can name a
-// part and an architecture for.
-var ErrNoReleaseFile = errors.New("ngc-store: the directory holds no release file")
+// part and an architecture for. The message names the file names it looked
+// for: whoever builds their first release had to read releaseParts to learn
+// them, and a directory with one wrong name looks exactly like an empty one.
+var ErrNoReleaseFile = errors.New("ngc-store: the directory holds no release file; the names are " +
+	strings.Join(ReleaseFileNames(), ", "))
+
+// ErrVersion reports a version that is not the contract's
+// (store.ValidVersion): MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH.BUILD, each
+// place without leading zeros.
+//
+// The fourth place is the build counter of this house's numbering
+// (Z:\GitHub\claude-md\version.md). Until 17.10.2026 the contract refused it
+// and this sentence said so; Thomas decided on 15.10.2026 that the contract
+// learns the place instead, and it did (shared/store/manifest.go:224). What
+// keeps arriving here now is a FIFTH place or a leading zero.
+var ErrVersion = errors.New("ngc-store: the version must be MAJOR.MINOR.PATCH or " +
+	"MAJOR.MINOR.PATCH.BUILD, three or four numbers without leading zeros " +
+	"(for example 1.1.0 or 1.1.0.3)")
 
 // releaseExt is the extension of a release file. verify.sh checks a file by
 // the name the signed release gives it, so the extension matters only here,
@@ -99,6 +115,14 @@ func Release(dir, keyFile string, opts ReleaseOpts) (sign.Envelope, error) {
 	// rule of Task 28 — the contract still accepts an equal number, writing
 	// one again is a mistake — and it is kept the same here on purpose, so
 	// that one tool does not have two ideas of what a sequence number is.
+	// The version is asked here and not left to r.Validate at the end: the
+	// contract answers every defect of a release with one sentinel, and a
+	// run that said "store: invalid release" to a version of four digits
+	// cost time on 16.10.2026. The rule itself stays the contract's
+	// (store.ValidVersion); this only says which rule was broken.
+	if !store.ValidVersion(opts.Version) {
+		return sign.Envelope{}, fmt.Errorf("%w: %q", ErrVersion, opts.Version)
+	}
 	last, err := lastReleaseSeq(dir, pub)
 	if err != nil {
 		return sign.Envelope{}, err
@@ -284,7 +308,25 @@ func Check(dir, part, arch string) error {
 		}
 	}
 	if entry == nil {
-		return fmt.Errorf("no single valid entry for %s %s", part, arch)
+		// Three mistakes that looked the same from here and are not the
+		// same for whoever made them: a part that is no part at all
+		// ("web" for store.ReleaseWeb, measured on 17.10.2026 as the
+		// reason an afternoon went), a part without this architecture, and
+		// a part this release simply does not carry. The tool knows the
+		// closed set (releaseParts) and the release it just read, so it
+		// names both. The sentence keeps "no single valid entry for <part>
+		// <arch>" in front, because that is the script's wording and what
+		// TestCheckMatchesTheScript holds the two to.
+		if !KnownPart(part) {
+			return fmt.Errorf("no single valid entry for %s %s: %q is no part of a release — the parts are: %s",
+				part, arch, part, PartList())
+		}
+		if _, ok := ReleaseFileName(part, arch); !ok {
+			return fmt.Errorf("no single valid entry for %s %s: %s has no architecture %q — the parts are: %s",
+				part, arch, part, arch, PartList())
+		}
+		return fmt.Errorf("no single valid entry for %s %s: this release lists %s",
+			part, arch, listedParts(r))
 	}
 	name, err := nameOf(entry.URL)
 	if err != nil {

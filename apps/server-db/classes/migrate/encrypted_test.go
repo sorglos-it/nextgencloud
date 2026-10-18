@@ -3,9 +3,11 @@ package migrate_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/migrate"
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlite"
@@ -24,7 +26,12 @@ import (
 // the first test, so openFile has the opener by the time it is called. If
 // this file goes, openFile says so and stops instead of opening a file of its
 // own.
-func init() { migrate.OpenEncrypted = sqlite.OpenDB }
+func init() {
+	migrate.OpenEncrypted = sqlite.OpenDB
+	migrate.OpenEncryptedBusy = func(cfg config.DB, busy time.Duration) (*sql.DB, error) {
+		return sqlite.OpenDBWith(cfg, sqlite.Options{BusyTimeout: busy})
+	}
+}
 
 // TestTheHookOpensAnEncryptedFile measures what the comment at OpenEncrypted
 // used to only assert.

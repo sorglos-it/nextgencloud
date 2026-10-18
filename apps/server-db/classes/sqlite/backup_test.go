@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlite"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -744,9 +745,17 @@ func TestBackupRefusesATargetTooLongForTheNameItWrites(t *testing.T) {
 // nicht ablegen", "die Datenbank ist nicht da"); the one failure a backup
 // under load really meets did not.
 //
-// The case takes about ten seconds on purpose: busy_timeout is what is being
-// waited out, and OpenDB sets it to 10 000 ms with no way in from outside.
-// Shortening it here would measure a different file than the one NGC opens.
+// busy_timeout is what is being waited out here, and until 18.10.2026 that
+// cost ten seconds because the number sat in a const with no way in from
+// outside. It has one now (sqlite.Options), so the case waits out the SAME
+// wall on a shorter clock: the neighbour really holds the write lock, the
+// copy really runs into it, and what is asserted is the sentence and the
+// refusal. The LENGTH of the production wait is asserted where it belongs,
+// against sqlite.DefaultBusyTimeout in TestPragmas and
+// TestTheZeroOptionsIsWhatNGCOpensWith - and that the number in Options is
+// really the one SQLite waits with is asserted in
+// TestTheBusyDeadlineOfTheOptionsReachesTheFile. Measured on D:: 12,51 s
+// before, 0,32 s after, same assertions.
 func TestBackupSaysWhoHoldsTheFile(t *testing.T) {
 	dir := t.TempDir()
 	cfg := backupConfig(dir, "state.db")
@@ -772,7 +781,7 @@ func TestBackupSaysWhoHoldsTheFile(t *testing.T) {
 	// The way to the measured line has to be open: the target is fine, the
 	// database is there, the journal mode is wal. Only the lock is in the way.
 	target := filepath.Join(dir, "backup.db")
-	err = sqlite.Backup(cfg, target)
+	err = sqlite.BackupWith(cfg, target, sqlite.Options{BusyTimeout: 250 * time.Millisecond})
 	if err == nil {
 		t.Fatalf("the backup ran while another program held the file")
 	}

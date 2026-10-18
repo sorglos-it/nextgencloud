@@ -58,6 +58,8 @@ func newHandler(t testing.TB) *Handler {
 	}
 	s := state.New(cfg, memstore.New(), box, make([]byte, 32))
 	s.Now = func() int64 { return 1790000000 }
+	// As in package state: a path of this run instead of the machine's file.
+	s.AnchorFile = filepath.Join(t.TempDir(), "trust-anchor.json")
 	h := &Handler{S: s, CodeFile: filepath.Join(t.TempDir(), "setup-code")}
 	if _, err := h.EnsureCode(); err != nil {
 		t.Fatalf("ensure code: %v", err)

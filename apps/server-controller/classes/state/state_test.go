@@ -586,3 +586,116 @@ func FuzzLicense(f *testing.F) {
 		}
 	})
 }
+
+// THE MEMORY FOR A CATALOGUE NUMBER, which is what makes the roll-back guard a
+// guard: store.VerifyCatalog refuses a catalogue below the number it is handed,
+// and the number it is handed is this one.
+func TestCatalogSeqRoundTrip(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	// A store nothing was ever activated from is "none seen", and that is 0
+	// and no error: a first activation has to be able to happen.
+	got, err := s.CatalogSeq(ctx, "global")
+	if err != nil || got != 0 {
+		t.Fatalf("CatalogSeq of an unseen store = %d, %v, want 0 and no error", got, err)
+	}
+	if err := s.KeepCatalogSeq(ctx, "global", 7); err != nil {
+		t.Fatalf("KeepCatalogSeq = %v", err)
+	}
+	if got, err := s.CatalogSeq(ctx, "global"); err != nil || got != 7 {
+		t.Fatalf("CatalogSeq = %d, %v, want 7", got, err)
+	}
+	// Each store has its own floor: one store's catalogue says nothing about
+	// another's, and a shared floor would shut a store out over a number it
+	// never issued.
+	if got, err := s.CatalogSeq(ctx, "other"); err != nil || got != 0 {
+		t.Errorf("CatalogSeq of another store = %d, %v, want 0", got, err)
+	}
+}
+
+// IT NEVER LOWERS WHAT IS KEPT. A floor that can be lowered is no floor: an
+// activation out of an older catalogue that got through for another reason
+// must not take the bar down with it.
+func TestKeepCatalogSeqNeverLowersTheFloor(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	if err := s.KeepCatalogSeq(ctx, "global", 9); err != nil {
+		t.Fatalf("KeepCatalogSeq = %v", err)
+	}
+	for _, seq := range []uint64{1, 8, 9} {
+		// Asking for something already true is no error: the caller wanted a
+		// floor of at least that, and it has one.
+		if err := s.KeepCatalogSeq(ctx, "global", seq); err != nil {
+			t.Errorf("KeepCatalogSeq(%d) = %v, want no error", seq, err)
+		}
+		if got, _ := s.CatalogSeq(ctx, "global"); got != 9 {
+			t.Fatalf("KeepCatalogSeq(%d) took the floor to %d, want it left at 9", seq, got)
+		}
+	}
+	if err := s.KeepCatalogSeq(ctx, "global", 10); err != nil {
+		t.Fatalf("KeepCatalogSeq(10) = %v", err)
+	}
+	if got, _ := s.CatalogSeq(ctx, "global"); got != 10 {
+		t.Errorf("the floor is %d, want 10: a higher number has to go in", got)
+	}
+}
+
+// What cannot be a floor is refused rather than written: a store without a
+// name, and a number outside what a document can carry back
+// (enc.MaxSafeInteger). 0 is "none seen" and is not something a caller may
+// write - it is the answer for a store that has no row.
+func TestKeepCatalogSeqRefusesWhatIsNoFloor(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	for name, c := range map[string]struct {
+		store string
+		seq   uint64
+	}{
+		"no store":             {"", 7},
+		"zero":                 {"global", 0},
+		"above a safe integer": {"global", enc.MaxSafeInteger + 1},
+	} {
+		if err := s.KeepCatalogSeq(ctx, c.store, c.seq); !errors.Is(err, dbapi.ErrInvalid) {
+			t.Errorf("%s: KeepCatalogSeq = %v, want dbapi.ErrInvalid", name, err)
+		}
+	}
+	// And the read side refuses the same nameless store rather than answering
+	// 0 for it: 0 would be "none seen" for every store at once.
+	if _, err := s.CatalogSeq(ctx, ""); !errors.Is(err, dbapi.ErrInvalid) {
+		t.Errorf("CatalogSeq(\"\") = %v, want dbapi.ErrInvalid", err)
+	}
+}
+
+// A READ THAT FAILS IS HANDED ON AND NEVER TAKEN FOR 0. Taking a database
+// hiccup for "none seen" would open exactly the door this number closes, and
+// the caller on the other side of it fails closed (node.installer.lastSeq
+// answers MaxUint64 and refuses every catalogue).
+func TestCatalogSeqHandsOnAReadThatFailed(t *testing.T) {
+	errRead := errors.New("the database could not be read")
+	s := New(brokenRead{Local: memstore.New(), err: errRead})
+	ctx := t.Context()
+	got, err := s.CatalogSeq(ctx, "global")
+	if !errors.Is(err, errRead) {
+		t.Fatalf("CatalogSeq = %d, %v, want the error of the database", got, err)
+	}
+	if got != 0 {
+		t.Errorf("CatalogSeq gave %d beside its error, want 0 and the error read", got)
+	}
+	// The write side hands it on too: it reads the floor before it raises it,
+	// and a floor written over an unread one is a floor that could go down.
+	if err := s.KeepCatalogSeq(ctx, "global", 9); !errors.Is(err, errRead) {
+		t.Errorf("KeepCatalogSeq = %v, want the error of the database", err)
+	}
+}
+
+// brokenRead is a database whose BlobGet fails and whose every other call is
+// the real one: what is measured is the one read, not a store that answers
+// nothing.
+type brokenRead struct {
+	dbapi.Local
+	err error
+}
+
+func (b brokenRead) BlobGet(context.Context, string, string) (dbapi.Blob, error) {
+	return dbapi.Blob{}, b.err
+}

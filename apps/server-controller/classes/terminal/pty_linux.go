@@ -149,12 +149,46 @@ func runShell(ctx context.Context, in io.Reader, out io.Writer, idle time.Durati
 	case <-runCtx.Done():
 		first = runCtx.Err()
 	}
+	// A pump that ended WITHOUT a fault is the shell's input complete, and that
+	// is not the same as the shell being finished: the last line is in the
+	// terminal and the shell has not acted on it yet. It gets LastWord to do
+	// so, and that is the decision this bound carries (terminal.go, LastWord) -
+	// before it, the session was killed here and the answer of a shell that had
+	// just been told "exit" was thrown away.
+	//
+	// Only a CLEAN end waits. A fault is a reason to stop at once: whatever
+	// broke, nothing more is going to come of this terminal.
+	if first == nil {
+		grace := time.NewTimer(LastWord)
+		defer grace.Stop()
+	wait:
+		for {
+			select {
+			case <-done:
+				return cmd.ProcessState.ExitCode(), nil
+			case err := <-fail:
+				// The other pump reaching the end of the pseudo terminal is
+				// the shell going away, not a fault - the exit code is on its
+				// way through done and is worth waiting the rest of the grace
+				// for. A real fault ends the wait.
+				if err != nil {
+					first = err
+					break wait
+				}
+			case <-grace.C:
+				break wait
+			case <-runCtx.Done():
+				first = runCtx.Err()
+				break wait
+			}
+		}
+	}
 	// Negative PID: the whole session, not only the shell.
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	<-done
 	if first == nil {
-		// The input ended between two frames, which is the shell's input
-		// complete. Nothing went wrong, so this is a success.
+		// The input ended between two frames and the shell did not end inside
+		// its last word. Nothing went wrong, so this is a success.
 		return 0, nil
 	}
 	return 0, first

@@ -1,0 +1,432 @@
+/* The colour marks of docs/prototype.html, taken over unchanged: the shell
+   and every later window read their colours only from these tokens. */
+:root{
+  --bar-h: 44px;
+  --accent: #2f7de1;
+  --accent-2: #16d1c3;
+  --win-bg: #1e2430;
+  --win-fg: #e8ecf3;
+  --win-border: #38414f;
+  --title-bg: #2a3240;
+  --title-bg-active: #333e50;
+  --bar-bg: rgba(20,25,34,.72);
+  --bar-fg: #e8ecf3;
+  --menu-bg: rgba(24,30,40,.92);
+  --shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  --radius: 10px;
+  --field-bg: #151a23;
+  --muted: #97a3b6;
+  --page-bg: #0d1017;
+  /* The smallest a window may be. It stands here because this is where a
+     window is drawn; window.js reads these two and lays out by them, so the
+     size that is drawn and the size that is reckoned with are one number. */
+  --win-min-w: 240px;
+  --win-min-h: 150px;
+  /* The one colour that means "stop". It stands with the others because the
+     shell reads every colour from these tokens, and an alarm painted in a
+     hex value of its own would be the one thing a theme cannot follow. */
+  --alarm: #ff7b72;
+  /* What lies over the rest of the screen while the alarm stands. It is a
+     token of its own because the two designs need different weights: the
+     same near-black over a light page reads as a fault in the page. */
+  --alarm-veil: rgba(6,9,16,.86);
+}
+html[data-theme="light"]{
+  --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
+  --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
+  --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
+  --menu-bg: rgba(250,251,254,.94);
+  --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+  --field-bg:#ffffff; --muted:#5b6a80;
+  --page-bg:#e7ecf4;
+  --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
+}
+/* The default while nobody has chosen a design. It bites only where the
+   document carries no data-theme at all: with JavaScript off, and where
+   theme.js found no storage to remember a choice in and handed the decision
+   here. A chosen theme always writes the attribute and wins. */
+@media (prefers-color-scheme: light){
+  html:not([data-theme]){
+    --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
+    --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
+    --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
+    --menu-bg: rgba(250,251,254,.94);
+    --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+    --field-bg:#ffffff; --muted:#5b6a80;
+    --page-bg:#e7ecf4;
+    --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;
+     color:var(--bar-fg);background:var(--page-bg);-webkit-user-select:none;user-select:none;
+     touch-action:manipulation}
+#root{position:fixed;inset:0}
+.msg{max-width:32rem;margin:20vh auto;padding:1.5rem;text-align:center;color:var(--win-fg);
+     background:var(--win-bg);border:1px solid var(--win-border);border-radius:var(--radius)}
+
+/* Everything that can be reached with a keyboard says so. The shell is one
+   page with no browser chrome inside it: without a visible ring there is no
+   way to tell where you are. */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- Desktop ---------- */
+#desktop{position:fixed;inset:var(--bar-h) 0 0 0;overflow:hidden}
+#wallpaper{position:absolute;inset:0;background-size:cover;background-position:center;
+           transition:background .3s}
+#icons{position:absolute;inset:12px auto 12px 12px;display:flex;flex-direction:column;
+       flex-wrap:wrap;align-content:flex-start;gap:4px;max-height:calc(100% - 24px)}
+.dicon{width:92px;padding:10px 4px 8px;border:1px solid transparent;border-radius:8px;
+       text-align:center;cursor:pointer;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);
+       background:none;font:inherit;display:flex;flex-direction:column;align-items:center;gap:4px}
+.dicon:hover{background:rgba(255,255,255,.12)}
+.dicon.off{opacity:.55}
+.dicon .g{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
+          font-size:20px;font-weight:600;border-radius:10px;color:#fff;
+          background:linear-gradient(135deg,var(--accent),var(--accent-2));text-shadow:none}
+.dicon .n{font-size:12px;word-break:break-word;overflow:hidden;max-height:2.9em}
+
+/* ---------- Taskleiste (oben) ---------- */
+#taskbar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);display:flex;align-items:center;
+         gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(18px) saturate(150%);
+         border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000}
+#startbtn{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;
+          border-radius:8px;cursor:pointer;font:inherit;font-weight:600;color:#fff;
+          background:linear-gradient(135deg,var(--accent),var(--accent-2));
+          box-shadow:0 2px 8px rgba(0,0,0,.3)}
+#startbtn:hover{filter:brightness(1.12)}
+#startbtn.open{filter:brightness(.9)}
+#startbtn .logo{font-size:16px}
+#tasks{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden}
+.task{display:flex;align-items:center;gap:7px;height:34px;max-width:190px;padding:0 12px;
+      border-radius:8px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;
+      background:rgba(127,127,127,.14);border:1px solid transparent;color:var(--bar-fg)}
+.task:hover{background:rgba(127,127,127,.26)}
+.task.active{background:rgba(127,127,127,.32);border-color:rgba(127,127,127,.45)}
+.task.min{opacity:.6}
+.task .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tray{display:flex;align-items:center;gap:12px;padding-right:4px;white-space:nowrap}
+#tray button{background:none;border:0;color:inherit;font:inherit;cursor:pointer;opacity:.85;
+             font-size:16px}
+#tray button:hover{opacity:1}
+#clock{text-align:right;line-height:1.15;font-variant-numeric:tabular-nums;font-size:12.5px}
+#clock b{display:block;font-size:13.5px;font-weight:600}
+
+/* ---------- Startmenü ---------- */
+#startmenu{position:fixed;top:calc(var(--bar-h) + 6px);left:8px;width:min(420px,calc(100vw - 16px));
+           max-height:min(620px,calc(100vh - var(--bar-h) - 20px));background:var(--menu-bg);
+           backdrop-filter:blur(22px) saturate(150%);border:1px solid rgba(127,127,127,.30);
+           border-radius:14px;box-shadow:var(--shadow);z-index:100001;display:none;
+           flex-direction:column;overflow:hidden;color:var(--win-fg)}
+#startmenu.open{display:flex;animation:pop .13s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1}}
+#smsearch{margin:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--win-border);
+          background:var(--field-bg);color:var(--win-fg);font:inherit;outline:none}
+#smsearch:focus{border-color:var(--accent)}
+#smhead,#smlookhead{padding:0 16px 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+                    color:var(--muted)}
+#smlist{overflow:auto;padding:8px;display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px}
+.smitem{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px;
+        border-radius:10px;cursor:pointer;text-align:center;font-size:12.5px}
+.smitem:hover{background:rgba(127,160,220,.20)}
+.smitem.off{opacity:.55}
+.smitem .g{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+           font-size:18px;font-weight:600;border-radius:9px;color:#fff;
+           background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.smitem .n{overflow:hidden;word-break:break-word;max-height:2.9em}
+.smempty{padding:14px;color:var(--muted)}
+#smlook{padding:4px 12px 10px;border-top:1px solid rgba(127,127,127,.25)}
+#smfoot{display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(127,127,127,.25)}
+#smfoot button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--win-border);
+               background:transparent;color:inherit;font:inherit;cursor:pointer}
+#smfoot button:hover{background:rgba(127,160,220,.2)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.swatches{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.swatches button{width:28px;height:28px;border-radius:50%;border:2px solid transparent;
+                 cursor:pointer;padding:0}
+.swatches button.on{border-color:var(--win-fg)}
+.wpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
+.wpgrid button{height:40px;border-radius:8px;border:2px solid transparent;cursor:pointer;
+               background-size:cover;padding:0}
+.wpgrid button.on{border-color:var(--accent)}
+
+/* ---------- Fenster ---------- */
+.win{position:absolute;display:flex;flex-direction:column;
+     min-width:var(--win-min-w);min-height:var(--win-min-h);
+     background:var(--win-bg);color:var(--win-fg);border:1px solid var(--win-border);
+     border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.win:focus{outline:none}
+.win.min{display:none}
+.win.max{border-radius:0}
+.win.anim{transition:left .16s,top .16s,width .16s,height .16s}
+.titlebar{display:flex;align-items:center;height:36px;padding-left:12px;gap:8px;
+          background:var(--title-bg);border-bottom:1px solid var(--win-border);cursor:default;
+          flex:0 0 auto;touch-action:none}
+.win.focus .titlebar{background:var(--title-bg-active)}
+.titlebar .g{display:flex;align-items:center;justify-content:center;width:20px;height:20px;
+             font-size:12px;font-weight:600;border-radius:6px;color:#fff;
+             background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.titlebar .t{flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+             white-space:nowrap;opacity:.9}
+.win.focus .titlebar .t{opacity:1}
+.wbtns{display:flex;height:100%}
+.wbtn{width:44px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
+      line-height:1;opacity:.8}
+.wbtn:hover{background:rgba(127,127,127,.25);opacity:1}
+.wbtn.close:hover{background:#e13e3e;color:#fff}
+.body{flex:1;overflow:auto;position:relative;background:var(--win-bg)}
+.rs{position:absolute;z-index:5}
+.rs.e{right:0;top:0;width:6px;height:100%;cursor:ew-resize}
+.rs.s{left:0;bottom:0;height:6px;width:100%;cursor:ns-resize}
+.rs.w{left:0;top:0;width:6px;height:100%;cursor:ew-resize}
+.rs.n{left:0;top:0;height:6px;width:100%;cursor:ns-resize}
+.rs.se{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
+.rs.sw{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
+.win.max .rs{display:none}
+#snaphint{position:absolute;border:2px solid var(--accent);background:rgba(47,125,225,.22);
+          border-radius:8px;display:none;pointer-events:none;z-index:99999}
+
+/* The frame an app runs in. It fills the window's body edge to edge: a border
+   of the shell around an app's page would read as part of the app. The frame
+   has an origin of its own, so nothing of this stylesheet reaches inside it -
+   an app brings its own look and is told the shell's through ngc.js. */
+.appframe{display:block;width:100%;height:100%;border:0;background:var(--win-bg)}
+
+/* ---------- App-Inhalte ---------- */
+.pad{padding:16px}
+.app p{margin:0 0 10px}
+.muted{color:var(--muted)}
+button.b,.b{padding:7px 12px;border-radius:7px;border:1px solid var(--win-border);
+            background:var(--field-bg);color:var(--win-fg);font:inherit;cursor:pointer}
+button.b:hover{border-color:var(--accent)}
+button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
+
+/* The look of an app that ships with NGC does NOT stand here. Until task 25
+   the calculator's did, and the rules reached it because it was built straight
+   into the window. It runs in the frame now, which is a document with an origin
+   of its own: nothing of this stylesheet gets in there. Every app brings its
+   own look - public/assets/apps/<app>/app.css for the two that ship with NGC. */
+
+/* App-Store */
+.store{display:flex;flex-direction:column;height:100%}
+.tabs{display:flex;gap:4px;padding:8px 8px 0;border-bottom:1px solid var(--win-border);flex-wrap:wrap}
+.tab{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:8px 8px 0 0;
+     background:none;color:var(--win-fg);font:inherit;cursor:pointer;opacity:.7;margin-bottom:-1px}
+.tab:hover{opacity:1;background:rgba(127,160,220,.14)}
+.tab.on{opacity:1;background:var(--field-bg);border-color:var(--win-border)}
+.storepanel{flex:1;overflow:auto;padding:14px 16px}
+.storepanel:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.store .h{margin:0 0 4px;font-size:15px}
+.store p{margin:0 0 10px}
+.rows{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+     padding:10px 12px;border:1px solid var(--win-border);border-radius:9px;background:var(--field-bg)}
+.rowmain{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.rowmain .desc{color:var(--muted);font-size:12.5px}
+.rowmain span{overflow-wrap:anywhere}
+.rowside{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.warnline{width:100%;margin:6px 0 0;color:#d2932a}
+.store .fail,.upfail{padding:10px 12px;border:1px solid #e13e3e;border-radius:9px}
+.kv{display:flex;gap:8px;flex-wrap:wrap;padding:3px 0}
+.kv .k{min-width:9rem;color:var(--muted)}
+.kv .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
+.fieldrow{display:flex;gap:8px;align-items:center;margin:10px 0}
+.fieldrow .k{color:var(--muted)}
+.store select,.store input[type=file]{padding:6px 8px;border-radius:7px;border:1px solid var(--win-border);
+                                      background:var(--field-bg);color:var(--win-fg);font:inherit}
+.filelab{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.upfacts{margin-top:10px;padding:10px 12px;border:1px solid var(--win-border);border-radius:9px;
+         background:var(--field-bg)}
+.upfacts[hidden]{display:none}
+.installbox,.buy{margin-top:8px;padding:12px;border:1px solid var(--accent);border-radius:9px}
+.tick{display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer}
+.store .installbox button,.store .buy button{margin-top:10px}
+
+/* ---------- Bestätigen ---------- */
+/* One question over everything, and nothing behind it can be clicked. */
+.confirmback{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
+             justify-content:center;z-index:100003;padding:16px}
+.confirmbox{width:min(420px,100%);padding:18px;border-radius:12px;border:1px solid var(--win-border);
+            background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.confirmhead{margin:0 0 8px;font-size:16px}
+.confirmbox p{margin:0 0 12px}
+.confirmlabel{display:block;margin-bottom:4px;color:var(--muted);font-size:12.5px}
+.confirmbox input{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--win-border);
+                  background:var(--field-bg);color:var(--win-fg);font:inherit}
+.confirmrow{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+
+/* ---------- Alarm der Vertrauensliste ---------- */
+/* Over everything, including a question that is still open: this one is not
+   one of several things on the screen, it is the only one left. There is
+   nothing to press in it on purpose - see shell/trustlist.js. */
+.alarmback{position:fixed;inset:0;background:var(--alarm-veil);display:flex;align-items:center;
+           justify-content:center;z-index:100010;padding:16px}
+.alarmbox{width:min(460px,100%);padding:20px 22px;border-radius:12px;border:2px solid var(--alarm);
+          background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.alarmhead{margin:0 0 12px;font-size:17px;color:var(--alarm)}
+.alarmbox p{margin:0 0 10px}
+.alarmmain{font-weight:600}
+.alarmfoot{margin:16px 0 0;color:var(--muted);font-size:12.5px}
+.alarmbox:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* ---------- Meldungen ---------- */
+/* One strip at the bottom edge, for one message at a time. The live region
+   stays in the page whether it holds anything or not, because a region that
+   appears only when there is news is announced by nobody. */
+/* pointer-events:none on the strip itself: while it is empty it is a box of
+   no size, and a box of no size must not be able to swallow a click either. */
+.noticebar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;
+           align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));z-index:100002;
+           pointer-events:none}
+.status,.alert,.noticeclose{pointer-events:auto}
+.status,.alert{margin:0;padding:10px 14px;border-radius:10px;border:1px solid var(--win-border);
+               background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.status.warn{border-color:#d2932a}
+.status.error{border-color:#e13e3e}
+/* NOT display:none, and this rule comes last on purpose.
+   The empty strip used to be taken out of the page, and a live region that is
+   not in the page when the news arrives is a live region no screen reader
+   watches - so a blind person was told nothing, ever. It stays, and takes up
+   no room: no padding, no border, no background, no shadow, and an empty
+   block box is zero high. */
+.status:empty{padding:0;border:0;background:none;box-shadow:none}
+/* A serious failure that stops the shell: not a strip that goes away, a box
+   that stays and says what to do. */
+.alert{display:block;max-width:32rem;margin:20vh auto;text-align:center;border-color:#e13e3e}
+.noticeclose{border:1px solid var(--win-border);background:var(--win-bg);color:var(--win-fg);
+             border-radius:10px;width:34px;height:34px;font:inherit;cursor:pointer}
+.noticeclose[hidden]{display:none}
+.noticeclose:hover{border-color:var(--accent)}
+
+@media (max-width:640px){
+  #icons{display:none}
+  .task .lbl{display:none}
+}
+
+/* ---------- Benutzer und Rechte ---------- */
+/* The most dangerous window of NGC, and it is meant to look like it: the
+   button that gives something away is the only red one in the whole shell,
+   and the question that stands in front of it covers its window. */
+.usersapp{display:flex;flex-direction:column;height:100%;position:relative;
+          color:var(--win-fg);background:var(--win-bg)}
+.usersapp .tabs{display:flex;gap:2px;padding:8px 8px 0;border-bottom:1px solid var(--win-border);
+                flex-wrap:wrap}
+.usersapp .tab{border:1px solid transparent;border-bottom:0;background:none;color:inherit;
+               font:inherit;padding:7px 14px;border-radius:8px 8px 0 0;cursor:pointer;
+               opacity:.75}
+.usersapp .tab:hover{background:rgba(127,127,127,.15);opacity:1}
+.usersapp .tab.on{background:var(--field-bg);border-color:var(--win-border);opacity:1;
+                  font-weight:600;margin-bottom:-1px}
+.usersapp .panels{flex:1;overflow:auto;padding:14px 16px 20px}
+.usersapp h3{margin:0 0 10px;font-size:15px}
+.usersapp h4{margin:0 0 6px;font-size:13px;text-transform:none}
+.usersapp section{margin:0 0 20px;padding:0 0 14px;border-bottom:1px solid var(--win-border)}
+.usersapp section:last-child{border-bottom:0}
+.usersapp .hint{margin:0 0 8px;color:var(--muted);font-size:12px}
+/* "note", not "msg": .msg above is the shell's own boot-message card. An empty
+   note keeps no room but stays in the page, so a screen reader can find it. */
+.usersapp .note{margin:0 0 8px;font-size:13px}
+.usersapp .note:empty{margin:0}
+.usersapp table{width:100%;border-collapse:collapse;font-size:13px}
+.usersapp th{text-align:left;font-weight:600;padding:4px 10px 6px 0;color:var(--muted);
+             border-bottom:1px solid var(--win-border);white-space:nowrap}
+.usersapp td{padding:5px 10px 5px 0;border-bottom:1px solid var(--win-border);
+             vertical-align:top;word-break:break-word}
+.usersapp .mono{font-family:ui-monospace,"Cascadia Mono","Consolas",monospace}
+/* An address stands character by character: each one in its own box, so a
+   host that only looks like the right one cannot hide between the letters. */
+.usersapp .url{display:inline-flex;flex-wrap:wrap}
+.usersapp .url .ch{display:inline-block;min-width:.72em;text-align:center;
+                   border-bottom:1px solid var(--win-border)}
+/* .row above is display:flex for the shell's own little rows of buttons. A
+   table row is not one of those: without this the cells of a <tr class="row">
+   leave their columns and the headings above them mean nothing. */
+.usersapp tr.row{display:table-row}
+.usersapp .pending .row,.usersapp .pendapi .row{display:flex;flex-wrap:wrap;gap:10px;
+             align-items:center;padding:8px 0;border-bottom:1px solid var(--win-border)}
+.usersapp .row .nm{font-weight:600}
+.usersapp .row .since{color:var(--muted);font-size:12px}
+.usersapp .fp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
+              padding:2px 6px}
+.usersapp .code{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
+                padding:8px;word-break:break-all;-webkit-user-select:text;user-select:text}
+.usersapp .role{border:1px solid var(--win-border);border-radius:8px;margin:0 0 12px;padding:8px 12px 12px}
+.usersapp .role legend{padding:0 6px;font-weight:600}
+.usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
+.usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}
+.usersapp button.go{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);
+                    color:inherit;font:inherit;padding:6px 12px;cursor:pointer}
+.usersapp button.go:hover{border-color:var(--accent)}
+.usersapp button.go[disabled]{opacity:.5;cursor:default}
+.usersapp .askback{position:absolute;inset:0;z-index:10;display:flex;align-items:center;
+                   justify-content:center;padding:16px;background:rgba(0,0,0,.45)}
+.usersapp .ask{max-width:30rem;width:100%;max-height:100%;overflow:auto;padding:18px;
+               border:1px solid var(--win-border);border-radius:var(--radius);
+               background:var(--win-bg);box-shadow:var(--shadow)}
+.usersapp .ask h2{margin:0 0 10px;font-size:16px}
+.usersapp .ask p{margin:0 0 8px}
+.usersapp .ask ul{margin:0 0 10px;padding-left:20px}
+.usersapp .ask .who{color:var(--muted)}
+.usersapp .ask .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.usersapp .ask .no{border:1px solid var(--win-border);border-radius:8px;background:var(--win-bg);
+                   color:inherit;font:inherit;padding:7px 14px;cursor:pointer}
+.usersapp .ask .danger{background:#e13e3e;border-color:transparent;color:#fff;font-weight:600}
+
+/* ---------- Anmeldung ---------- */
+/* One box in the middle of an empty page, and nothing else on it: the person
+   has one thing to do here, and everything that is not that is in the way. */
+.loginbox{width:min(360px,calc(100vw - 32px));margin:14vh auto;padding:22px;
+          border:1px solid var(--win-border);border-radius:12px;
+          background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+.loginhead{margin:0 0 16px;font-size:18px}
+/* The caption sits over its field and not beside it: at 360px a caption
+   beside the box leaves the box too narrow to read a password in. */
+.field{display:block;margin-bottom:12px}
+.fieldname{display:block;margin-bottom:4px;color:var(--muted);font-size:12.5px}
+.field input{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--win-border);
+             background:var(--field-bg);color:var(--win-fg);font:inherit}
+/* Under 380px the two buttons stop fitting side by side and go below each
+   other, rather than each being cut in half. */
+.loginrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.loginrow .b{flex:1 1 auto;justify-content:center;text-align:center}
+.loginrow .b[disabled]{opacity:.5;cursor:default}
+/* The live region of the mask. It stays in the page empty or not, for the
+   reason .status:empty gives: a region that appears only when there is news
+   is a region no screen reader watches. */
+.note{margin:14px 0 0;padding:10px 12px;border-radius:8px;border:1px solid var(--win-border);
+      background:var(--field-bg);color:var(--win-fg)}
+.note.warn{border-color:#d2932a}
+.note.error{border-color:#e13e3e}
+.note:empty{margin:0;padding:0;border:0;background:none}
+/* The standing advice to move to passkeys. Bottom LEFT, because the notice
+   bar of the desktop sits in the middle and this one never goes away: two
+   strips over each other is one strip nobody can read. */
+.passkeyhint{position:fixed;left:16px;bottom:18px;z-index:100001;margin:0;padding:8px 12px;
+             border-radius:10px;border:1px solid #d2932a;background:var(--win-bg);
+             color:var(--win-fg);box-shadow:var(--shadow);font-size:12.5px;
+             max-width:min(280px,calc(100vw - 32px))}
+
+/* ---------- Ersteinrichtung ---------- */
+/* The same card as the login, two sizes wider: this one carries the offer of
+   the installation as well, and an address or a fingerprint that wraps over
+   four lines is a value nobody compares with a screen. It scrolls, because the
+   card is taller than a phone and the shell's own body never scrolls. */
+.setupbox{width:min(460px,calc(100vw - 32px));margin:6vh auto;max-height:88vh;overflow-y:auto}
+.setuplead{margin:0 0 16px;color:var(--muted)}
+.setuphead{margin:18px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;
+           color:var(--muted)}
+.setupfacts{margin:0 0 10px;padding:8px 10px;border-radius:8px;border:1px solid var(--win-border);
+            background:var(--field-bg)}
+.setupline{display:flex;flex-wrap:wrap;gap:2px 10px}
+.setupcaption{flex:0 0 7.5rem;color:var(--muted);font-size:12.5px}
+/* The values the person compares with the server, character for character:
+   a fixed-width font so a 1 cannot pass for an l, a break that can fall
+   anywhere so nothing is cut off, and selectable - the shell switches
+   selection off for the whole page, and a fingerprint nobody can select is a
+   fingerprint nobody can check. */
+.setupvalue{flex:1 1 12rem;margin:0;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+            font-size:12.5px;word-break:break-all;-webkit-user-select:text;user-select:text}
+.setupcheck{display:flex;gap:9px;align-items:flex-start;margin:0 0 4px;cursor:pointer}
+.setupcheck input{margin:2px 0 0;width:16px;height:16px;accent-color:var(--accent)}

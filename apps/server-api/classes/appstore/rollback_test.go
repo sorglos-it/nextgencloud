@@ -4,8 +4,12 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
@@ -396,5 +400,103 @@ func TestDeletingTheCatalogRowIsTheWayBack(t *testing.T) {
 	}
 	if got := fx.keptSeq(t, v.Store); got != 1 {
 		t.Fatalf("kept Seq: got %d, want 1", got)
+	}
+}
+
+// TestTheWayBackOfTheAnchorLeavesTheStoreLockedOut holds the one thing both
+// ways back of this installation have in common: nothing.
+//
+// There are two walls that a signature cannot stand in for, and both are
+// walls against a number going backwards. The trust list has one -- the pin
+// in trust-anchor.json -- and a store has one, the Seq of its catalog row.
+// Both got a way back, and the two ways were decided apart from each other:
+// the pin is to be cleared by a finished setup (contract V1.2, "Der
+// Vertrauensanker verriegelt den dokumentierten Weg nach einem Totalverlust",
+// third way), the row by taking the store out of the trust list and putting
+// it back ("Der Rueckdreh-Riegel war eine Falle ohne Ausgang").
+//
+// This case asks what a total loss leaves behind when the first way is taken,
+// and the answer is that the second wall stands untouched: the pin is a FILE
+// and the row is in the DATABASE, so a restored database brings the number of
+// every store back with it while the pin is gone. The admin who has just
+// recovered is through the one wall and still in front of the other, and
+// nothing tells him so -- store.ErrRollback is the same answer here as for an
+// attack.
+//
+// What this does NOT measure: whether the way back of the pin works. That is
+// not built (it belongs to point 10 of the contract), so what stands in for it
+// here is its one operation, the one that was measured against main without
+// any change of code: the file goes away, and anchorFor reads every file
+// error as "no anchor".
+func TestTheWayBackOfTheAnchorLeavesTheStoreLockedOut(t *testing.T) {
+	fx, v := newFixture(t)
+	// A pin of this installation's own, so there is something to take away.
+	// newFixture leaves State.AnchorFile empty, which means the path of a real
+	// installation -- a file this machine does not have, so without this the
+	// case would take away nothing and measure the absence it created itself.
+	path := filepath.Join(t.TempDir(), "trust-anchor.json")
+	fx.S.AnchorFile = path
+	// A pairing lays the file down and advanceAnchor only moves one that is
+	// already there, so the pairing is what this stands in for: the version
+	// the fixture has, written as the pin.
+	cur, err := fx.S.Trust(ctx)
+	if err != nil {
+		t.Fatalf("trust: %v", err)
+	}
+	if err := config.SaveAnchor(path, trust.Anchor{Seq: cur.List.Seq, Hash: cur.Hash}); err != nil {
+		t.Fatalf("SaveAnchor: %v", err)
+	}
+	priv := ownStore(t, fx, v)
+	pin, err := config.LoadAnchor(path)
+	if err != nil {
+		t.Fatalf("no pin was written, so there is nothing below to take away: %v", err)
+	}
+	if pin.Seq <= cur.List.Seq {
+		t.Fatalf("the pin did not move with the new version: Seq %d, want more than %d", pin.Seq, cur.List.Seq)
+	}
+	st := fx.theStore(t)
+
+	// The intermediate check: the healthy store at Seq 1 goes through. Without
+	// it a refusal further down could be the signature, the key or the address.
+	fx.setFile(CatalogFile, catalogOf(t, priv, v.Store, 1))
+	if err := fx.St.refreshOne(ctx, st); err != nil {
+		t.Fatalf("the healthy store at Seq 1 was refused, so nothing below measures the Seq bar: %v", err)
+	}
+
+	// The trap: one catalog with a high number, signed with the store's own
+	// key. A test run, a restored state -- no attacker is needed for this.
+	fx.setFile(CatalogFile, catalogOf(t, priv, v.Store, 57))
+	if err := fx.St.refreshOne(ctx, st); err != nil {
+		t.Fatalf("Seq 57 was refused, so the trap is not set: %v", err)
+	}
+	if got := fx.keptSeq(t, v.Store); got != 57 {
+		t.Fatalf("kept Seq after 57: got %d, want 57", got)
+	}
+
+	// The way back of the trust list, reduced to its one operation.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the pin is still there, so nothing below measures its absence: %v", err)
+	}
+
+	// And here is the point: the row did not go with it.
+	if got := fx.keptSeq(t, v.Store); got != 57 {
+		t.Fatalf("the row of the store went with the pin: Seq %d, want 57 -- if this ever becomes true, the two ways back have been joined and this case is the wrong one to hold it", got)
+	}
+	fx.setFile(CatalogFile, catalogOf(t, priv, v.Store, 1))
+	before := fx.hits()
+	if err := fx.St.refreshOne(ctx, st); !errors.Is(err, store.ErrRollback) {
+		if fx.hits() == before {
+			t.Fatal("the store was never asked, so the answer below is an earlier wall and not the Seq")
+		}
+		t.Fatalf("after the pin was taken away the healthy store is taken: %v -- the two walls are not independent after all", err)
+	}
+	if fx.hits() == before {
+		t.Fatal("the store was never asked, so the refusal is an earlier wall and not the Seq")
+	}
+	if got := fx.keptSeq(t, v.Store); got != 57 {
+		t.Fatalf("kept Seq after the refusal: got %d, want 57", got)
 	}
 }

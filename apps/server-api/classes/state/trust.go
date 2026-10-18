@@ -197,6 +197,11 @@ func (s *State) anchorPath() string {
 	return s.AnchorFile
 }
 
+// AnchorPath is where this State reads and writes the anchor outside the
+// database, so that whoever has to say in a log which file did not hold names
+// the one that was really used and not config.AnchorFile by hearsay.
+func (s *State) AnchorPath() string { return s.anchorPath() }
+
 // advanceAnchor moves the pin in trust-anchor.json up to v, the version
 // AddVersion has just verified and stored. It is the writer the reader above
 // was missing: a pin that only a pairing ever sets stands at the version the
@@ -244,6 +249,61 @@ func (s *State) advanceAnchor(v trust.Version) {
 		slog.Error("the trust anchor outside the database could not be moved up; this API still pins the older version",
 			slog.Uint64("pinned", cur.Seq), slog.Uint64("stored", v.List.Seq))
 	}
+}
+
+// ResealAnchor puts the pin in trust-anchor.json onto v, and it is the one
+// writer here that may move it DOWN. advanceAnchor may not, on purpose: a pin
+// an older version could pull back down would be no pin. This one is not
+// reached by a version, but by a first setup that got through to the end
+// (setup.take) -- the third way of docs/vertraege-v1.2.md, point 43.
+//
+// WHY IT IS NEEDED. After a total loss the database comes back without a
+// trust list. The contract (point 10) opens the setup again, and it does; the
+// new admin signs version 1 and it is stored. But the file still names the
+// version of the installation that is gone, so the next refresh reads from
+// that number, finds nothing, and stays at ErrNoTrust -- the way back is open
+// and ends in a wall, measured in setup.TestAnchorWall_*.
+//
+// WHY IT IS NOT A HOLE. Who gets here has held the LOCAL one-time code (its
+// MAC over the exact bytes), has handed in a version an admin signed, and
+// that version is stored. A writer of the database alone has none of that: he
+// cannot read the file only root may read, and while row 1 lies there
+// AddVersion answers him ErrOldVersion. What he CAN do is delete the file --
+// but that he can do today, with one unlink, and anchorFor reads every fault
+// of the file as "no anchor" (it says so of itself). So this hands him
+// nothing he does not already have.
+//
+// MEASURED, 18.10.2026, against the other answer. Removing the file instead
+// also opens the way back -- and leaves the installation with no pin at all,
+// because nothing in this repository writes the file again except a pairing.
+// On the same case: with the file removed, two further versions, the top row
+// deleted, a cold node runs on version 2 without a word; resealed, the pin
+// follows to 3 by itself and the same attack answers ErrNoTrust. The reseal
+// keeps the one guard the anchor is for and costs nothing beside it, so it
+// and not the removal is what take does.
+//
+// TWO BOUNDS, both the ones advanceAnchor keeps:
+//
+//   - Only over a file that is already there. Whether this installation has
+//     an anchor belongs to whoever set it up, not to a setup that happens to
+//     run; an unreadable file reads as "no pin" for the same reason it does
+//     in anchorFor. An installation without the file never gets one here.
+//   - It never fails a version. The error is returned rather than swallowed,
+//     so the caller can say what happened in a log, but the version is stored
+//     and stands either way -- see the call in setup.take.
+func (s *State) ResealAnchor(v trust.Version) error {
+	if v.List == nil {
+		return nil
+	}
+	path := s.anchorPath()
+	cur, err := config.LoadAnchor(path)
+	if err != nil {
+		return nil
+	}
+	if cur.Seq == v.List.Seq && bytes.Equal(cur.Hash, v.Hash) {
+		return nil
+	}
+	return config.SaveAnchor(path, trust.Anchor{Seq: v.List.Seq, Hash: v.Hash})
 }
 
 // ownRows is what a fault of trust.Open or trust.Advance means inside a

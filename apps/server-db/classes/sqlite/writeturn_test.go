@@ -13,10 +13,11 @@ import (
 )
 
 // TestTheTurnBoundIsOneChainOfTheOpenDatabase asks the OPEN DATABASE for its
-// busy_timeout and checks the bound against that, not against busyTimeout in
-// this package. Both numbers are written out besides, because a bound that is
-// only compared with the constant it came from is not checked at all: a
-// mutation of busyTimeout alone has to be visible here.
+// busy_timeout and checks the bound against that, not against
+// DefaultBusyTimeout in this package. Both numbers are written out besides,
+// because a bound that is only compared with the constant it came from is not
+// checked at all: a mutation of DefaultBusyTimeout alone has to be visible
+// here.
 func TestTheTurnBoundIsOneChainOfTheOpenDatabase(t *testing.T) {
 	write, read, err := OpenRW(testConfig(t, "state.db"))
 	if err != nil {
@@ -32,8 +33,8 @@ func TestTheTurnBoundIsOneChainOfTheOpenDatabase(t *testing.T) {
 	if ms != 10000 {
 		t.Errorf("the open database waits %d ms for a lock, want 10000", ms)
 	}
-	if busyTimeout != 10000 {
-		t.Errorf("busyTimeout is %d, and the measurement of the bound is 10000", busyTimeout)
+	if DefaultBusyTimeout != 10*time.Second {
+		t.Errorf("DefaultBusyTimeout is %v, and the measurement of the bound is 10s", DefaultBusyTimeout)
 	}
 	// Eight tries of ten seconds: the figure dbwait.StartWait's ninety
 	// seconds are built on. Written out, not computed from maxTries, which
@@ -68,23 +69,20 @@ func TestASecondWriterIsNotMadeToWaitAChainPerWriter(t *testing.T) {
 	first.Close()
 
 	// A short busy_timeout for this one file, so one chain is well under a
-	// second. The handles come from OpenDB, so they carry the PRAGMAs of the
-	// package; this overrides the one that decides the length of a chain.
-	write, err := OpenDB(cfg)
+	// second. It comes through Options, which is what Options is for: the
+	// deadline is the one thing a measurement has to be able to shorten, and
+	// EVERY connection of both handles gets it, because the connector runs
+	// the PRAGMA on each one. Setting it with a bare Exec would reach only
+	// whichever connection served that statement.
+	const turnBusy = 25 * time.Millisecond
+	write, readH, err := OpenRWWith(cfg, Options{BusyTimeout: turnBusy})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer write.Close()
-	readH, err := OpenDB(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer readH.Close()
-	if _, err := write.Exec("PRAGMA busy_timeout=25"); err != nil {
-		t.Fatal(err)
-	}
 	var ms int64
-	if err := write.QueryRow("PRAGMA busy_timeout").Scan(&ms); err != nil || ms != 25 {
+	if err := write.QueryRow("PRAGMA busy_timeout").Scan(&ms); err != nil || ms != turnBusy.Milliseconds() {
 		t.Fatalf("the short timeout did not take: %d ms, %v", ms, err)
 	}
 	chain := time.Duration(ms) * time.Millisecond * 8 // 200 ms

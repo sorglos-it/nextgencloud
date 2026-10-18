@@ -8,8 +8,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"runtime"
 	"slices"
 	"strings"
@@ -796,4 +798,151 @@ func FuzzOpen(f *testing.F) {
 		}
 		_, _ = trust.Open(a, got)
 	})
+}
+
+// capKey returns a distinct password key for every n, so a list can carry
+// thousands of users whose keys all differ (validateUsers refuses one key ID
+// twice). The KDF fields are metadata, exactly as in trusttest.NewSigner, so
+// no Argon2id runs here.
+func capKey(n int) proof.UserKey {
+	seed := make([]byte, ed25519.SeedSize)
+	binary.BigEndian.PutUint32(seed, uint32(n)+1)
+	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	return proof.UserKey{
+		ID: sign.KeyID(pub), Kind: proof.KindPassword, Alg: proof.AlgEdDSA, Public: enc.Bytes(pub),
+		KDF: &proof.KDF{Alg: proof.KDFArgon2id, Salt: bytes.Repeat([]byte{7}, proof.SaltSize),
+			MemKiB: proof.DefaultMemKiB, Time: proof.DefaultTime, Par: proof.DefaultPar},
+	}
+}
+
+// capUsers returns n admins with one key each. base64url is not
+// order-preserving, so the IDs are sorted afterwards: Validate wants them
+// strictly increasing.
+func capUsers(n int) []trust.User {
+	us := make([]trust.User, n)
+	for i := range us {
+		id := make([]byte, 16)
+		binary.BigEndian.PutUint32(id[12:], uint32(i)+1)
+		us[i] = trust.User{ID: enc.B64.EncodeToString(id), Name: fmt.Sprintf("u%d", i),
+			Roles: []string{trust.RoleAdmin}, Keys: []proof.UserKey{capKey(i)}}
+	}
+	slices.SortFunc(us, func(a, b trust.User) int { return strings.Compare(a.ID, b.ID) })
+	return us
+}
+
+// ctlNode returns the controller node of Genesis with n root users taken from
+// us. A root user has to be a user of the same list, so the two belong
+// together and no case may build one without the other.
+func ctlNode(us []trust.User, n int) trust.Node {
+	ctl := trusttest.Genesis(admin).Nodes[1]
+	ctl.RootRoles = nil
+	ctl.RootUsers = make([]string, n)
+	for i := range ctl.RootUsers {
+		ctl.RootUsers[i] = us[i].ID
+	}
+	return ctl
+}
+
+// TestTheSizeCapsOfAListAreValidated drives every size cap of a trust list at
+// its limit and one over it. Both sides are asserted for each cap, because a
+// rule that refused everything would pass a one-sided case, and a cap that was
+// never reached would pass one too.
+//
+// WHICH WALL THIS MEASURES, because there are two and they are not the same.
+// Every cap stands twice: once in listBudget (trust.go:204), which bounds each
+// array while a version from OUTSIDE is decoded, and once as a comparison
+// inside Validate. A case that fed JSON would be turned away by the budget and
+// would never reach Validate -- it would measure the earlier wall. These cases
+// therefore build the list in Go and call Validate, which is also the path the
+// interface takes when it signs a new version (coreapp/users.go). The budget
+// is held against these same constants by TestTheBudgetAndTheCapsAgree in
+// package trust, so the two walls cannot drift apart unnoticed -- and they
+// would drift silently, because Parse maps both refusals to ErrInvalid.
+//
+// Measured on 18.10.2026: before these cases, a mutant that dropped any ONE of
+// these nine comparisons LIVED -- all 141 cases of this package stayed green.
+// Three of the nine (MaxUsers, MaxRoles, MaxOrigins) were held to be covered;
+// what covers them is a budget elsewhere, not this line.
+func TestTheSizeCapsOfAListAreValidated(t *testing.T) {
+	for name, c := range map[string]struct {
+		limit int
+		fill  func(l *trust.List, n int)
+	}{
+		"users": {trust.MaxUsers, func(l *trust.List, n int) {
+			l.Users = capUsers(n)
+			// Genesis's controller grants root to the admin role, which stays.
+			l.Nodes = l.Nodes[:1]
+		}},
+		"roles": {trust.MaxRoles, func(l *trust.List, n int) {
+			l.Roles = []trust.Role{{Name: trust.RoleAdmin, Level: trust.LevelCritical}}
+			for i := 0; i < n-1; i++ {
+				l.Roles = append(l.Roles, trust.Role{Name: fmt.Sprintf("r%04d", i), Level: trust.LevelOff})
+			}
+		}},
+		"nodes": {trust.MaxNodes, func(l *trust.List, n int) {
+			ctl := trusttest.Genesis(admin).Nodes[1]
+			ctl.RootRoles = nil
+			l.Nodes = make([]trust.Node, n)
+			for i := range l.Nodes {
+				l.Nodes[i] = ctl
+				l.Nodes[i].ID = fmt.Sprintf("c%04d", i)
+				l.Nodes[i].Name = fmt.Sprintf("Dienste %d", i)
+			}
+		}},
+		"stores": {trust.MaxStores, func(l *trust.List, n int) {
+			global := trusttest.Genesis(admin).Stores[0]
+			l.Stores = make([]trust.Store, n)
+			for i := range l.Stores {
+				l.Stores[i] = global
+				l.Stores[i].ID = fmt.Sprintf("s%04d", i)
+			}
+		}},
+		"auto": {trust.MaxAuto, func(l *trust.List, n int) {
+			key := trusttest.Genesis(admin).Auto[0].Key
+			l.Auto = make([]trust.Auto, n)
+			for i := range l.Auto {
+				l.Auto[i] = trust.Auto{Target: fmt.Sprintf("co.example.a%04d", i), Key: key}
+			}
+		}},
+		"origins of the relying party": {trust.MaxOrigins, func(l *trust.List, n int) {
+			l.RP.Origins = make([]string, n)
+			for i := range l.RP.Origins {
+				l.RP.Origins[i] = fmt.Sprintf("https://a%04d.example.org", i)
+			}
+		}},
+		"keys of one user": {trust.MaxKeysPerUser, func(l *trust.List, n int) {
+			l.Users = capUsers(1)
+			l.Nodes = l.Nodes[:1]
+			l.Users[0].Keys = make([]proof.UserKey, n)
+			for i := range l.Users[0].Keys {
+				l.Users[0].Keys[i] = capKey(i)
+			}
+		}},
+		"root users of one controller": {trust.MaxRoot, func(l *trust.List, n int) {
+			l.Users = capUsers(n)
+			l.Nodes = append(l.Nodes[:1], ctlNode(l.Users, n))
+		}},
+		"entries of one list of a role": {trust.MaxEntries, func(l *trust.List, n int) {
+			black := make([]string, n)
+			for i := range black {
+				black[i] = fmt.Sprintf("node/n%04d", i)
+			}
+			l.Roles[0].Black = black
+		}},
+	} {
+		// The intermediate check: at exactly the cap the list has to validate.
+		// Without it one malformed item would make the cap+1 case pass for the
+		// wrong reason -- it would measure an earlier wall instead of the cap.
+		at := trusttest.Genesis(admin)
+		c.fill(at, c.limit)
+		if err := at.Validate(); err != nil {
+			t.Errorf("%s: a list at the cap of %d was refused: %v", name, c.limit, err)
+			continue
+		}
+		over := trusttest.Genesis(admin)
+		c.fill(over, c.limit+1)
+		if err := over.Validate(); err != trust.ErrInvalid {
+			t.Errorf("%s: %d of them gave %v, want %v", name, c.limit+1, err, trust.ErrInvalid)
+		}
+	}
 }

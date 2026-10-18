@@ -16,7 +16,7 @@
 // ngc.open("terminal", "shell", {cols, rows}), and a reader takes that for the
 // way the size travels. It is not. This program reads NO parameters: the size
 // comes in a resize frame and nowhere else (ParseFrame, pumpIn), and shellEnv
-// below builds the environment of the shell out of four fixed lines, so
+// below builds the environment of the shell out of five fixed lines, so
 // NGC_PARAMS reaches neither the shell nor the pseudo terminal.
 //
 // It stays that way on purpose, and the reason is measured on the other side:
@@ -101,6 +101,31 @@ const (
 // in the container. This is the safer of the two readings of the plan, which
 // named no limit at all. It counts output too, so a long build is not cut off.
 const IdleLimit = 30 * time.Minute
+
+// LastWord is how long the shell has to act on the last line once the input
+// has ended, and it is A DECISION the Linux run forced.
+//
+// The input of a terminal ends for two reasons that look the same here: the
+// person typed their last line - an "exit" ends a session that way - or the tab
+// went away. Until now the first was treated as the second: the moment pumpIn
+// reached the end of the stream the session was killed as a group and run
+// answered 0, so a shell that had just been handed "stty size" never ran it.
+// Measured on 18.10.2026 in a debian:13-slim container: the output of such a
+// terminal was "stty size\r\nexit\r\n" - the echo of the typed line and
+// nothing the shell ever said. The sister case looked green and was not; it
+// searched for "hallo" and found the echo of "echo hallo".
+//
+// So the shell gets a last word, and it is SHORT on purpose. IdleLimit above
+// would be the wrong bound: half an hour of a shell nobody is watching is what
+// that limit exists to prevent. Two seconds is long for a shell that was told
+// to exit - it ends in milliseconds - and short enough that a tab which closed
+// frees the container at once as far as anybody can tell.
+//
+// What it is NOT: time for a command to finish. A shell still working when the
+// last word is over is killed, exactly as before, and that is the price of a
+// terminal whose channel is gone. While it keeps talking it keeps the idle
+// watchdog awake too, so the two bounds do not fight each other.
+const LastWord = 2 * time.Second
 
 // maxTick bounds how long the idle watchdog sleeps between two looks. It looks
 // every quarter of the limit and never less often than this, so with IdleLimit
@@ -253,7 +278,7 @@ func EncodeOutput(b []byte) []byte {
 }
 
 // shellEnv is the whole environment of the shell. It is built from nothing but
-// these four lines and HOME, so NGC_PARAMS - which carries whatever the user
+// these five lines and HOME, so NGC_PARAMS - which carries whatever the user
 // typed into the app - cannot travel on: a shell that had it would put it in
 // front of the next person who reads the process list. This is also the second
 // half of "the parameters are decoration" (see the head of this file): there is
@@ -273,6 +298,23 @@ func shellEnv() []string {
 		"HOME=" + home,
 		"PATH=" + service.Path,
 		"LANG=C.UTF-8",
+		// The empty HISTFILE is the bolt of the one disk a typed secret can
+		// reach: the root filesystem of the container is read only and /data
+		// is the only writable mount, so HOME above is the encrypted app
+		// data. A shell of the bash family would create HOME/.bash_history
+		// there and write every typed line into it - a "mysql -p<secret>"
+		// would outlive the tab. Empty, bash writes NO file; it is not
+		// cleaned up afterwards, it never comes into being
+		// (TestShellEnvWritesNoHistory). The image's shell is /bin/sh, which
+		// is dash and keeps no history either way, so this line holds for the
+		// day that symlink is something else.
+		//
+		// What it does NOT reach is named instead of hidden: a program the
+		// user starts in the shell keeps its own history in HOME the same way
+		// (.mysql_history, .psql_history, .lesshst, .viminfo). Keeping those
+		// out needs a HOME that is not the persistent mount, which is a tmpfs
+		// for the container and lives in package runtime, not here.
+		"HISTFILE=",
 	}
 }
 

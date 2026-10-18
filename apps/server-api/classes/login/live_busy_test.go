@@ -158,6 +158,10 @@ func TestFinishSaysComeBackWhenTheDatabaseIsBusy(t *testing.T) {
 	h, fx := newFixture(t)
 	c := start(t, h, fx.PasswordName)
 	h.S.DB = busyLock{Store: h.S.DB}
+	// Die Zaehler von httpapi sind Zustand des Prozesses, und die Zeile hat
+	// seit der Bremse ein Fenster: ohne dieses Zuruecksetzen misst der Fall
+	// die Stille eines frueheren.
+	httpapi.ResetCountsForTest()
 	log := capturedLog(t)
 	w := httptest.NewRecorder()
 	h.Finish(w, jsonPost(session.PathLoginFinish, string(finishBody(t, fx, fx.Password, c, ""))))

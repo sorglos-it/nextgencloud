@@ -2,6 +2,15 @@
 
 **Stand 12.10.2026.** Dieses Blatt liegt beim Einrichten neben der Tastatur.
 
+> **Durchgesehen am 17.10.2026 gegen `origin/main` und die Vertragspunkte 56–62.**
+> Zwischen dem 16. und dem 17.10.2026 ist NGC zum ersten Mal auf echtem Debian
+> gelaufen — eine Anlage entsteht heute allein aus den Skripten (Punkt 62).
+> Mehrere Punkte dieses Blattes beschreiben darum eine Lage, die es nicht mehr
+> gibt. Jeder betroffene Punkt trägt unten einen Kasten „Überholt". **Ein
+> Prüfplan mit Erledigtem wird nicht abgearbeitet** — wer hier weiterarbeitet,
+> liest die Kästen zuerst. Die Zahl „44 offene Punkte" ist damit **zu hoch** und
+> nicht neu gezählt.
+
 Es führt die beiden Abschlussprüfungen vom 12.10.2026 zusammen (api: 23 Punkte,
 controller: 22) und ordnet sie nach dem, **was voneinander abhängt**. Jeder Punkt
 ist am Code auf `main` (`592e4da`) nachgesehen. Was inzwischen erledigt ist,
@@ -135,12 +144,126 @@ antwortet über seinen Pfad, nicht über die Maschine.**
 
 ---
 
+---
+
+# Nachtrag 13.10.2026: der kleine Fall auf einem echten Debian
+
+**Erstmals nicht in WSL.** Gemessen auf der VM `ngc-recovery` (Debian 13.7,
+Kernel 6.12.107, systemd als PID 1, root über `sudo`), Treiber **SQLite**, alles
+auf **einer** Maschine. Grundlage `main` **309dc2a**. Vollständig mit Befehlen
+und Zahlen: `.superpowers/sdd/klein-echter-server-report.md`.
+
+Je Abschnitt ein Messskript als **Datei** über `ssh … sudo sh -s`, Sonde
+`(exit 7)` als erste Zeile (in allen fünf Läufen **7**), jeder Ausstiegscode in
+der Fernshell in eine Datei geschrieben, keine Pipe vor einer Messung.
+`ngc-api` ist hier und dort bitgleich
+(`sha256 63cfa507419568a6f6a67a43e1e1d893ef1af3bc26c037ff11e8f24c60fbca3b`).
+
+## Abgearbeitet
+
+| Punkt | Stufe | Zahl |
+|---|---|---|
+| **S1** | **ausgeführt** | *Dieser Punkt ist auf `main` bereits zu*, nicht erst durch diese Messung: `apps/server-api/main.go` bindet `apps/server-db/classes/register` blank ein. Gelaufen: Migration **1**, zweiter Lauf **0**, Datei **102400** Byte |
+| **E1** | **ausgeführt** | `ngc-api` startet auf echtem Debian, `GET /api/v1/setup` = **200** mit `SetupOffer`, unbekannter Pfad **404 E_NOTFOUND**, SIGTERM Code **0** |
+| **E2** | **ausgeführt** | `1 Migration eingespielt.` / `0 Migrationen eingespielt.` — wiederholbar |
+| **E4** | **halb ausgeführt** | 8 Pfade mit `stat -c '%a %U:%G'`: `api.json`, `controller.json`, `api.key` **0600** ✓; **die drei SQLite-Dateien 0644** ✗ (Befund unten). Die 0700 von `/var/lib/ngc` hat mein Skript gesetzt, nicht das Programm |
+| **E5** | **ausgeführt** | **Beide** Dienstdateien geladen: `verify`-Text leer, `is-active`=`active`, HTTP 200; `kill -9` → wieder da nach **5069 ms** (api) und **5034 ms** (ctl), `NRestarts`=1. **`RestartSec=5` wird wirklich abgewartet** (Vertragspunkt 32) |
+| **E19** | **ausgeführt** | API und Controller über einen echten Tunnel, **eine** Maschine: Controller-`state.db` von `versions=0` auf `versions=1`, `seq=1`, **derselbe Prüfwert wie bei der API** (`5HqEAYbu…ue0TH8`); 8 s am Stück, **0** `tunnel failed` |
+| **E32** | **ausgeführt** | Zwei Controller derselben Kennung auf **einer** `state.db`: **beide bleiben 12 s am Leben**, `versions=1` und Prüfwert unverändert — aber **6 `tunnel failed`-Zeilen** gegen **0** bei einem Controller (Befund unten) |
+
+**Dazu, als Nebenbefund und eine gute Nachricht:** `/api/v1/setup` antwortet
+**200** solange keine Vertrauensliste in der Datenbank steht und **404**, sobald
+Version 1 da ist. Der Weg der Ersteinrichtung schließt sich von selbst. Zweimal
+gemessen.
+
+## Zwei Befunde
+
+**1. Die verschlüsselte Datenbank wird mit 0644 angelegt.** Eigens nachgemessen,
+damit es nicht am `umask` hängt: frisches Verzeichnis 0700, `umask` **0022**,
+`ngc-api migrate` → `644 root:root …/m.db`. Der Controller legt seine `state.db`
+genauso an. Solange `/var/lib/ngc` 0700 ist, passiert nichts — **nur setzt diese
+0700 heute niemand**, weil `ngc-all.sh` fehlt. Entscheidbar im Bericht.
+
+**2. Ein zweiter Controller meldet „die API ist nicht erreichbar", und die API
+schweigt.** Die Datei trennt die beiden nicht (dieselbe Erscheinung wie bei zwei
+`ngc-api`, nur stirbt hier keiner an einem Port). Was der Admin sechsmal liest,
+ist `err="link: the API cannot be reached"` — **die API ist erreichbar**, sie
+antwortet gleichzeitig mit 200. Ihr Protokoll hat in beiden Läufen genau zwei
+Zeilen und sagt über einen zweiten Controller **nichts**.
+**Welche Seite den Kanal schließt, ist nicht gemessen** — die Vermutung „die API
+nimmt je Knoten einen Kanal" passt zur Schichtung, bleibt aber eine Vermutung,
+bis eine Sonde an jeder schließenden Stelle sitzt.
+
+## Wo es klemmt
+
+**1. `ngc-all.sh` gibt es nicht.** Der Zweig `ngc-all` im ulh-Repo liegt da
+(`3a228ed`), ist aber **nur der Zusammenschluss von `ngc-api` und
+`ngc-controller` in eine Kategorie** — im Baum dieses Zweigs **0** Dateien mit
+`ngc-all` im Namen. Und `render_api_json` in `ngc-api.sh` schreibt
+`"driver": "mariadb"` als **feste Zeile**, nicht aus `NGC_DB_DRIVER`. Damit kann
+**kein** ulh-Skript den kleinen Fall einrichten, und **E6–E9 sind nicht
+messbar**. Alles oben ist von Hand aufgesetzt.
+
+**2. Der Prüfsatz läuft auf diesem Server nicht (E33).** Gemessen mit einem
+Wegwerf-Modul, das nur `go 1.27` verlangt:
+`go: go.mod requires go >= 1.27 (running go 1.24.4; GOTOOLCHAIN=local)`.
+**Der Maßstab des ganzen Feldzugs — ob die 69 Skip-Stellen einbrechen — bleibt
+damit ungemessen**, und zwar auf jeder Maschine mit Debians eigenem Go. Drei
+Wege stehen im Bericht; keiner davon ist gegangen, weil (a) eine Installation
+wäre.
+
+**Nicht erreicht und warum:** E3 (nicht der kleine Fall) · E10–E12 (hängen am
+Einrichtungsskript) · E13 (`/dev/sda2` dieser VM kann kein `encrypt`) · E14–E18
+(kein podman, nichts installiert) · E20–E28 (brauchen Shell und echte Kopplung)
+· E29 (VM hat **3612 MB** RAM, der Plan verlangt über 8 GB) · M1–M4 (mehr als
+eine Maschine).
+
+## Noch ein Flattrer im Gesamtsatz, und er hängt an Speicher statt an einer Uhr
+
+`bash tools/check.sh` ohne Pipe, Arbeitsbaum auf der **lokalen Platte C:**:
+**1 rot von 1** im Gesamtsatz, **0 rot von 5** allein.
+
+```
+--- FAIL: TestUploadHoldsNoPackageOnTheChannel (11.62s)   apps/server-api/classes/coreapp
+```
+
+Ein echtes `--- FAIL`, also kein Laufzeitfehler von go1.27.1. **Der Fall ist
+nicht falsch** — er prüft seine eigene Vorrichtung und weigert sich zu urteilen,
+sobald seine Nullkontrolle unter das Achtfache fällt:
+
+| | Strom hält bei 256 MiB | Nullkontrolle | Verhältnis | Urteil |
+|---|---|---|---|---|
+| allein | **6 578 624 B** | 337 491 504 B | **51×** | PASS |
+| im Gesamtsatz | **64 257 224 B** | 336 604 784 B | **5,2×** | unter 8× → verweigert |
+
+Unter der Last von über 1500 gleichzeitigen Fällen steigt die **gehaltene** Menge
+des Stromlaufs selbst von 6,6 MB auf 64 MB. **Dritter Flattrer des Gesamtsatzes**
+neben den zwei Zeitfällen in `STAND.md` — und der erste, der an Speicher hängt,
+nicht an einer Frist. **Ursache des Last-Einflusses nicht gemessen.**
+
+## Eine Lücke in der geerbten Vorrichtung
+
+`tools/tunnelprobe` ist die Vorrichtung der Messung vom 13.10. Nach
+abgeschalteten Riegeln durchsucht (`InsecureSkipVerify`, `Transport`,
+`RoundTripper`, `Dialer`, `VerifyPeer`, `SkipVerify`): **kein Treffer**. Aber
+**ihre Aufrufreihenfolge steht nirgends im Repo** — wer die Messung wiederholen
+will, muss sie aus dem Code herleiten. Sie ist: `config` → `ngc-api migrate` →
+`trust` → API starten → Controller starten → `ctlstate`.
+
+---
+
 # Stufe 0 — Schreibtisch, kein Gerät
 
 **Diese sieben kommen vor jeder Reise.** Ohne S1 startet nichts, ohne S2 und S3
 gibt es keine Einrichtung.
 
 ### S1 — `ngc-api` kann gar nicht starten (Vertragspunkt 34)
+
+> **Überholt, gemessen am 17.10.2026.** `apps/server-db/classes/register/register.go`
+> meldet in `init` Opener, Migrator und Backuper an (Zeilen 44–46), und
+> `apps/server-api/main.go:39` bindet das Paket als leeren Import ein.
+> `ngc-api` läuft als Dienst auf Debian 13, `active` mit `NRestarts=0`
+> (Punkte 56, 57, 62). **S1 ist zu, und damit der Riegel vor Stufe 1.**
 
 Heute nachgesehen auf `main`: `dbopen.Register` hat **0** Produktionsaufrufer (nur
 Testvorrichtungen), `dbopen.RegisterMigrator` ebenso **0**. `apps/server-db` hat
@@ -158,6 +281,17 @@ bei einer laufenden MariaDB.
 
 ### S2 — Der Release-Packer liegt nicht auf `main`
 
+> **Überholt, gemessen am 17.10.2026.** Unterschrieben wird heute mit
+> `ngc-store release` aus `apps/cli` — `pack-release.sh` und `sign-release.sh`
+> braucht niemand mehr. Es gibt Releases: dreimal `release ok` für `ngc-web all`,
+> `ngc-api amd64` und `ngc-controller amd64` (Punkte 56, 57, 62). `tools/` auf
+> `main` hat heute `check.sh`, `modules.go`, `pin-base.sh` und `tunnelprobe`;
+> `local.env` ist weg.
+> **Was an diesem Punkt bleibt:** `apps/web` liegt **nicht** auf `main`
+> (`git ls-tree -r --name-only origin/main -- apps/web` = 2 Dateien,
+> `origin/web` = 128) — wer nur `main` klont, kann das Release nicht bauen
+> (Punkt 62, Befund 1).
+
 Gemessen: `tools/` auf `main` hat `check.sh`, `local.env`, `modules.go` — und
 sonst nichts. `pack-release.sh`, `sign-release.sh` und `tools/release/` liegen auf
 dem Zweig `release-packer` (`merge-base --is-ancestor` → **nein**).
@@ -166,6 +300,12 @@ dem Zweig `release-packer` (`merge-base --is-ancestor` → **nein**).
 (`fetch_release`, `verify_release`). Ohne Release gibt es keine Einrichtung.
 
 ### S3 — Die vier Einrichtungsskripte liegen auf vier getrennten Zweigen
+
+> **Teilweise überholt.** Punkt 62 hat eine ganze Anlage aus **einem** ulh-Zweig
+> gebaut (`ngc-kette`, `223baac`), dazu `ngc-all.sh` als Zusammenfassung — die
+> Skripte stehen sich also nicht im Weg. **Nicht überholt:** ob sie auf ulh-`main`
+> liegen, ist nicht nachgezählt, und ein Push dorthin erreicht per Auto-Update
+> sofort alle Nutzer. Das entscheidet Thomas.
 
 Heute im ulh-Repo nachgesehen. Auf `main`: **kein** `ngc-*`-Skript.
 
@@ -191,9 +331,10 @@ Entscheidung, keine Messung** — sie muss vor S2/S3 fallen.
 
 ### S5 — Das Einbau- und Aktualisierungs-Teilsystem wird von niemandem gebaut
 
-Heute gemessen: `update.New(` und `install.New(` haben **0** Produktionsaufrufer
-(je ein Treffer, und der steht in `serve/update_test.go`). `run.go:531` setzt
-`Updater: nil`.
+Am 17.10.2026 nachgemessen, **unverändert gültig**:
+`grep -rn 'update\.New\|install\.New\|install\.Deps' apps/ --include=*.go | grep -v _test`
+→ **0**. `run.go` setzt `Updater: nil` (am 17.10.2026 Zeile 587, am 12.10.2026
+Zeile 531).
 
 Folge: weder `install`, noch `stage`, noch die Rücknahme, noch `Resume` nach
 einem Neustart ist je durch ein Programm gelaufen. **Das ist Bauen, nicht
@@ -261,8 +402,10 @@ zeigt eine geöffnete Verbindung.
 Konfiguration abgewiesen. Erst eine vollständige `api.json` (das macht
 `ngc-api.sh` mit `render_api_json`), sonst misst man die frühere Wand.
 
-**E2 — `ngc-api migrate`.** Heute: „dieses Programm wurde ohne die
-Datenbank-Migrationen gebaut".
+**E2 — `ngc-api migrate`.** Am 12.10.2026 antwortete es „dieses Programm wurde
+ohne die Datenbank-Migrationen gebaut". **Überholt:** der Unterbefehl ist
+verdrahtet (`apps/server-api/main.go:81`, `:175`, `:180`), und der Migrator ist
+angemeldet (`register.go:45`). Gelaufen ist er nicht.
 *Messen:* `ngc-api migrate` legt das Schema an; ein zweiter Lauf ändert nichts
 (idempotent).
 
@@ -341,11 +484,16 @@ lesbar, ins Netz kommt nichts.
 müsse „die Installation herausfinden": Bildspeicher im Datenverzeichnis, Netz für
 diesen Benutzer.
 
-**E17 — Das Terminal-Abbild.** `ngc-controller image` antwortet heute
-nachweislich „Dieser Teil ist noch nicht gebaut." (gelaufen, Code 1).
-**Aber der `Containerfile` liegt da**
-(`apps/server-controller/templates/terminal/Containerfile`, Basis
-`docker.io/library/debian:13-slim`).
+**E17 — Das Terminal-Abbild.** **Berichtigt am 17.10.2026:** hier stand,
+`ngc-controller image` antworte „Dieser Teil ist noch nicht gebaut."
+Das war schon am 12.10.2026 überholt und steht so auch in
+`docs/controller-abnahme.md`, Punkt 15: `grep -rn "notReady" apps/server-controller/`
+→ **0**, der Befehl ist ein Paket (`classes/node/image.go`,
+`classes/runtime/build.go`) und läuft bis zu der Zeile, die podman startet.
+Der `Containerfile` liegt da
+(`apps/server-controller/templates/terminal/Containerfile`) und nagelt seine
+Basis seitdem mit einem Digest fest: `debian:13-slim@sha256:a29215f6…`,
+gehalten von `build.go:98`.
 *Messen:* `podman build` auf einer Baumaschine mit dem gebauten
 `ngc-controller` im Kontext; das Abbild als Datei; `CMD` ist
 `ngc-controller hold`.
@@ -396,9 +544,12 @@ Oberfläche verweigern.
 *Messen:* ein Controller schickt eine Meldung, eine offene Shell sieht sie; mit
 **keiner** offenen Shell steht die Warnzeile im Protokoll.
 
-**E28 — `controller.json`: zehn Felder ohne Leser.** Gemessen 0 Leser außerhalb
-von `shared/config`: `Migrate`, `Podman`, `WebConfig`, `AppDataDir`, `StageDir`,
-`BalancerFile`, `APITrustFile`, `WebRoot`, `BinDir`, `APIPort`.
+**E28 — `controller.json`: zwei Felder ohne Leser.** **Nachgezählt am 17.10.2026**
+(`grep -rn '\.<Feld>' apps/ shared/ --include=*.go` ohne Tests und ohne
+`shared/config/`): acht der zehn haben heute Leser — `Podman` 5, `WebConfig` 3,
+`AppDataDir` 10, `StageDir` 21, `BalancerFile` 8, `APITrustFile` 3, `WebRoot` 15,
+`BinDir` 11. **Ohne Leser sind noch zwei:** `Migrate` und `APIPort`.
+Am 12.10.2026 stand hier „zehn Felder".
 **Ein Admin, der sie setzt, sieht die Prüfung durchgehen und bekommt kein
 Verhalten.** Das ist die bösartigste Sorte Fehler in diesem Haufen.
 *Messen:* je Feld einen Wert setzen, der sichtbar wirken müsste.
@@ -468,9 +619,12 @@ Berichten liest, sucht umsonst.
 | „Die Programme bauen für Linux nur in der Theorie" | **sechs Binärdateien, Code 0**, amd64 und arm64, `CGO_ENABLED=0` |
 | ctrl-12 (halb): „Das Terminal-Abbild hat keinen Erzeuger" | der `Containerfile` ist da; nur `ngc-controller image` ist leer. Bleibt als **E17** |
 
-**Nicht gefunden:** `docs/recovery-abnahme.md` gibt es nicht. Die Recovery-Arbeit
-ist ein eigener Strang (Rust, `docs/recovery-modus.md`) und in diesem Feldzug
-nicht enthalten.
+**Nicht auf `main`:** `docs/recovery-abnahme.md` liegt auf den Zweigen `recovery`
+und `recovery-integration`, nicht auf `main` — am 17.10.2026 mit
+`git ls-tree -r --name-only <zweig>` je Zweig nachgezählt. Hier stand „gibt es
+nicht"; das war ein Zähler über den falschen Baum. Die Recovery-Arbeit ist ein
+eigener Strang (Rust, `docs/recovery-modus.md`) und in diesem Feldzug nicht
+enthalten.
 
 ---
 
@@ -486,6 +640,9 @@ So steht es oben, und so ist es gemeint (`messen.md`):
 | **ausgeführt** | ein Lauf hat die Zeile erreicht, mit Code und Fallzahl daneben | dass es auf einem echten Server so läuft |
 
 Stand heute über den ganzen Feldzug:
+
+**Stand 12.10.2026; überholt seit dem 17.10.2026** — eine ganze Anlage steht
+(Punkte 56–62), die Tabelle ist nicht neu gezählt.
 
 | | Punkte |
 |---|---|
@@ -519,12 +676,228 @@ Alle fünf sind in diesem Projekt bezahlt worden.
 
 # Die kürzeste Fassung
 
-1. **S1 zuerst** — ohne `dbopen.Register` startet `ngc-api` nicht, und dann ist
-   kein einziger Punkt der Stufe 1 messbar.
-2. **S2 und S3** — ohne Release und ohne die vier Skripte in einem Stand gibt es
-   keine Einrichtung.
+1. ~~**S1 zuerst** — ohne `dbopen.Register` startet `ngc-api` nicht.~~
+   **Erledigt am 17.10.2026** (siehe S1).
+2. ~~**S2 und S3** — ohne Release und ohne die vier Skripte in einem Stand gibt
+   es keine Einrichtung.~~ **Erledigt** (siehe S2, S3); offen bleibt nur, dass
+   `apps/web` nicht auf `main` liegt.
 3. **Dann eine Maschine.** 33 Punkte, in der Reihenfolge 1.1 → 1.6.
 4. **Vor der Reise:** ein Dateisystem, das `encrypt` kann, und 8 GB RAM.
 5. **Zwei Maschinen erst zum Schluss**, für die vier Punkte der Stufe 2.
 6. **Der Maßstab ist die 69.** Fällt die Zahl der Skips auf Debian nicht
    deutlich, hat der Feldzug nichts gemessen.
+
+---
+
+# Feldlauf vom 16.10.2026 — auf einem ECHTEN Debian
+
+**Ort:** VM `ngc-recovery`, Debian 13.7, Kernel 6.12.107+deb13-amd64, 4 Kerne,
+**7927 MB RAM** (der Plan oben nennt noch 4 GB — die VM hat seitdem mehr), 61 GB
+frei auf ext4, `sudo` ohne Passwort. **Kein WSL.** Jede Zahl unten ist auf
+dieser Maschine entstanden, als `root`, mit dem Stand `b385abf`.
+
+Die Programme sind unter Windows für linux/amd64 gebaut (`CGO_ENABLED=0`,
+`-ldflags -X main.Version=…`) und auf die VM gelegt; `go` ist dort jetzt
+**1.27.2** (von go.dev geholt, das Debian-Paket war 1.24.4 und `go.mod`
+verlangt 1.27).
+
+**Dichtheitsprobe vor der ersten Messung:** `(exit 7)` über `ssh` gibt **7**,
+auch in `sh -c`. Anders als bei WSL trägt `ssh` den Ausstiegscode. Fehlende
+Dateien im Arbeitsbaum vor jeder Zahl: **0**.
+
+## Was jetzt gemessen ist
+
+| Punkt | Ergebnis |
+|---|---|
+| **S1** | **erledigt, nicht mehr offen.** `apps/server-db/classes/register/register.go` ruft `dbopen.Register` und `RegisterMigrator`, `apps/server-api/main.go:38` importiert es blank. Der Plan oben ist auf `592e4da` geschrieben, das Paket kam danach. |
+| **S2** | **offen.** `git merge-base --is-ancestor origin/release-packer origin/main` → **Code 1**. Dazu liegt jetzt ein zweiter Zweig `origin/release-weg` mit `tools/release/`. Beide nicht auf `main`. |
+| **S3 / Punkt 47** | **überholt.** Alle fünf Skripte liegen zusammen auf `origin/ngc-zusammenfuehrung` (`133e80a`) und auf `origin/ngc-werkzeuge`. Punkt 47s Satz „Kein einziges ist veröffentlicht" stimmt nicht mehr. Nach ulh-`main` zusammengeführt sind sie weiter nicht — das bleibt die Entscheidung des Nutzers. |
+| **S7 (shellcheck)** | **geschlossen.** `shellcheck 0.10.0` aus Debian-`trixie`. Über alle fünf Skripte: **0 Funde ab Stufe `warning`**, 16 Hinweise auf Stufe `note` (5× SC1091 „bootstrap.sh nicht mitgegeben", 3× SC1003 und 8× SC2016 — alle gewollte einfache Anführungszeichen). Kontrolle: ein Skript mit `echo $bar` gibt SC2154 und Code 1, `shellcheck` lebt also. `bash -n` = 0 für alle fünf; Gegenprobe mit kaputtem Skript = **2**. |
+| **E33** | **der Maßstab ist erreicht.** `go test -v -count=1 ./...` als root: **3187 `=== RUN`**, **3168 PASS**, **15 `--- SKIP`**, **3 `--- FAIL`**, Ausstiegscode **1**. Die 69 statischen `t.Skip`-Stellen (hier nachgezählt: genau 69) brechen auf **15 echte Übersprünge** ein. Von den 15 sind 8 Kindprozess-Helfer, 3 fehlende Umgebungsvariablen (Galera), 2 fscrypt, 1 podman-Abbild, 1 „Linux hat ein PTY". |
+| **E11** | **nebenbei belegt.** Der Lauf hat mit echtem `useradd` einen Systembenutzer angelegt: `ngc-all-73e95399`, UID 999, Zuhause `/var/lib/ngc/apps/no.app.at.all`, Shell `/usr/sbin/nologin`. Genau die Form, die E11 verlangt. |
+| **E12** | **nebenbei belegt.** `/etc/subuid` nach dem Lauf: `ngc-all-73e95399:524288:65536` — Beginn 524288, Breite 65536, wie der Vertrag sagt. Erster echter Beleg. |
+| **E13** | **Vorbedingung bewiesen, der Fall bleibt übersprungen.** `/dev/sda2` kann weiter kein `encrypt`. Eine Loop-Datei mit `mkfs.ext4 -O encrypt` kann es: Verzeichnis mit `AES_256_XTS`/`AES_256_CTS`, Policy-Fassung 2; nach `fscrypt lock` zeigt `ls` nur noch `yilY99gjrpJXJePQ1v7cfTnHrHV4U1ZVCarQSfZghWMo2Tbn17SS8g`, `cat` gibt Code **1**. **Kein Klartext nach Schlüsselentzug** — nicht widerlegt. Der Prüffall selbst überspringt sich weiter: `data_test.go:209` will `NGC_TEST_FSCRYPT_DIR`. |
+| **E14** | **erstmals gelaufen, hält.** podman **5.4.2**. Die ganze Argumentliste `--cap-drop ALL --security-opt no-new-privileges --read-only --network none --user 0:0`: `create`=0, `start`=0, `exec`=0, `rm`=0. Kein „unknown flag" — **nicht widerlegt**. |
+| **E5** | **erstmals geladen und gelaufen, grün.** `systemd-analyze verify` über `ngc-api.service`: **leere Textausgabe** (der Beleg, nicht die Null). `daemon-reload`=0, `enable --now`=0, `is-active`=**active**. |
+| **E1** | **geschlossen.** `ngc-api 0.2.0` startete als systemd-Dienst gegen die vorhandene `/etc/ngc/api.json`, öffnete die SQLite-Datei und meldete `INFO ngc-api listening listen=127.0.0.1:7443 node=api-1`. `ss -ltn` zeigt den Port. **Keine Zeile „die Datenbank ist nicht erreichbar"** — nicht widerlegt. Erstes Mal, dass `ngc-api` auf einem echten Debian Dienst war. |
+| **E5, zweite Hälfte** | **grün, mit Zahl.** `kill -9` auf die Haupt-PID, dann die Zeit bis zur neuen PID: **5,22 s** bei `RestartSec=5`. `NRestarts=2`, `is-active=active`. Weder blieb der Dienst weg noch kam er sofort zurück — **nicht widerlegt**. |
+
+## Der erste echte Klemmer: der kleine Fall hat keinen Release-Schlüssel
+
+**Gemessen, nicht gelesen.** `ngc-all.sh install` als root auf dem echten
+Debian, mit `NGC_NAME=feldzug NGC_HOSTNAME=192.168.0.99`:
+
+```
+AUSSTIEGSCODE=1
+▶ Setting up NextGenCloud on 192.168.0.99
+✓ Everything this machine needs is installed already.
+✓ openssl 3.5.7
+✗ This script has no real release key of NGC yet. Without it nobody can check
+  whether the program files are genuine, so the setup stops here. Please get a
+  newer version of ulh.
+```
+
+**Die Ursache ist eine Zeile.** `ngc-all.sh:168` setzt den Schlüssel auf den
+Platzhalter `REPLACE-THIS-LINE-WITH-THE-NGC-RELEASE-KEY`, und `install_release`
+(`ngc-all.sh:722-726`) prüft genau darauf, **als allererste Anweisung**, vor
+jedem Holen und vor jedem Entpacken.
+
+**Der Weg über `/var/lib/ngc/staged` hilft nicht.** Die Platzhalterprüfung steht
+**vor** `fetch_release`; eine von Hand hingelegte Datei kommt gar nicht erst an
+die Reihe. Das ist am Code nachgesehen, nicht vermutet.
+
+**Und es gibt auch nichts zu holen:** `gh release list --repo
+sorglos-it/nextgencloud` gibt **null Zeilen**.
+
+**Das ist S4 und S2, zusammengefallen:** solange nicht entschieden ist, womit
+unterschrieben wird (S4), gibt es keinen echten `NGC_RELEASE_KEY`; solange
+`pack-release.sh` nicht auf `main` liegt (S2), gibt es kein Release zum
+Unterschreiben. **Hier wurde nicht improvisiert** — einen eigenen Schlüssel in
+das Skript zu schreiben hieße, ein verändertes Skript zu messen und nicht das
+echte.
+
+**Also sind E6, E7, E8, E9, E17, E19–E26 und E28 von diesem einen Riegel
+abhängig und bleiben NICHT GEMESSEN.**
+
+## Drei rote Fälle, alle erstmals sichtbar
+
+Alle drei laufen nur dort, wo Linux und root da sind. Keiner davon blockiert
+eine andere Messung, darum ist keiner behoben.
+
+**1. `apps/server-controller/classes/install/activate_test.go:1076` — die
+Annahme des Falls ist falsch, und er verändert die Maschine.**
+
+```
+--- FAIL: TestHostIsTheSystemOfOperation (0.08s)
+    activate_test.go:1077: Host made a user for an app id that is none
+```
+
+Der Fall gibt `Host.EnsureUser` die Kennung `"no.app.at.all"` und nennt sie „an
+app id that is none". **Sie ist aber eine völlig regelgerechte Kennung**: vier
+Labels aus Kleinbuchstaben mit Punkten, `wire.ValidAppID` nimmt sie an — und
+soll das auch, der Nachbarfall `TestEnsureUserRefusesWhatIsNoApp`
+(`runtime/user_test.go:204`) prüft mit wirklich kaputten Kennungen und ist grün.
+Der Fall war nur deshalb je grün, weil `useradd` fehlte: der Fehler kam vom
+fehlenden Werkzeug, nicht von einer Prüfung. Als root legt der Aufruf an, was er
+soll — und lässt **einen Systembenutzer und einen subuid-Bereich auf der
+Maschine zurück** (siehe E11/E12 oben, das ist derselbe Benutzer). Ein Prüffall,
+der die Maschine verändert und sie nicht aufräumt.
+
+**2. `apps/server-controller/classes/node/run_test.go:421` — der Fall liest die
+Konfiguration der echten Maschine und hängt 10 Minuten.**
+
+```
+panic: test timed out after 10m0s
+    running tests: TestMainWithoutACommandRunsTheController (10m0s)
+FAIL  .../apps/server-controller/classes/node  600.010s
+```
+
+`Main("1.2.3", nil, …)` soll Code 1 und `msgNoConfig` geben. Auf dieser Maschine
+liegt aber ein echtes `/etc/ngc/controller.json` (vom 13.10.2026, von einem
+früheren Lauf). Der Fall findet es, **startet den echten Controller** und kommt
+nie zurück; das Protokoll zeigt die Tunnel-Schleife mit wachsendem Abstand
+(1, 2, 5, 8, 16 s) gegen `wss://localhost:7443/tunnel`. Allein nachgefahren mit
+`timeout 60`: Ausstiegscode **124**, reproduzierbar. **Auf jedem eingerichteten
+Server fällt dieser Fall so** — und er kostet dort jedes Mal 10 Minuten.
+
+**3. `apps/server-controller/classes/terminal/terminal_test.go:515` und `:531` —
+E18 ist rot, und die Ursache lag unter einer verschluckten Meldung.**
+
+Zuerst:
+
+```
+--- FAIL: TestRunEchoesThroughAPTY
+    terminal_test.go:515: exit 1, stderr "Die Shell ließ sich nicht starten.\n"
+```
+
+`msgNoRun` ist der `default`-Zweig von `sentence()` (`terminal.go:158`) — die
+echte Ursache wird nirgends ausgegeben. Gesucht und gefunden: `runShell` setzt
+`cmd.Dir = service.DataDir` = `/data` (`shared/service/service.go:33`), und
+**`/data` gibt es auf einer frischen Maschine nicht**; `cmd.Start()` scheitert
+am `chdir`.
+
+Nach `mkdir /data` läuft das PTY wirklich — und die Fälle bleiben rot, jetzt
+aus dem eigentlichen Grund:
+
+```
+terminal_test.go:518: output "", want hallo in it
+terminal_test.go:534: output "stty size\r\nexit\r\n", want the size 24 80 in it
+```
+
+In der Ausgabe steht nur das **Echo der Leitungsdisziplin**, keine Antwort der
+Shell, und der Lauf ist nach **0,006 s** vorbei, bei einer Leerlaufgrenze von
+einer Minute. Also: der `bytes.Reader` der Vorrichtung ist sofort am Ende,
+`pumpIn` gibt `nil` zurück, `runShell` nimmt das als Erfolg
+(`if first == nil { return 0, nil }`), **tötet die Sitzungsgruppe mit
+`SIGKILL`** und gibt zurück — bevor die Shell auch nur `echo` ausführen konnte.
+**Was die Shell noch schreiben wollte, geht verloren, wenn die Eingabe endet.**
+Ob das die Vorrichtung ist (ein WebSocket endet nicht so) oder der Code, ist
+eine Entscheidung und keine Messung; **gemessen ist: E18 ist rot, 2 von 2,
+allein nachgefahren, als root auf echtem Debian.**
+
+## Ein vierter Fund: E15 misst das falsche Dateisystem
+
+`TestAttackContainerEscape` übersprang sich mit „podman holds no
+docker.io/library/busybox:latest". Nach `podman pull` läuft er **erstmals** —
+und ist rot:
+
+```
+attack_test.go:430: /etc/shadow was readable in the container:
+"root:*:::::::\ndaemon:*:::::::\n…"
+```
+
+**Das ist kein Ausbruch.** Gegengemessen, nur Namen, keine Werte:
+
+| | Einträge |
+|---|---|
+| `/etc/shadow` des **Wirts** | 29, darunter `berry`, `mysql`, `ngc-all-73e95399` |
+| `/etc/shadow` des **Abbilds** busybox | 9: root daemon bin sys sync mail www-data operator nobody |
+
+Gelesen wurden die **9 des Abbilds**, alle mit `*` statt eines Hashes. Der Wirt
+war nie erreichbar. Die Zusicherung des Falls („`/etc/shadow` ist im Container
+nicht lesbar") kann gegen ein Abbild, das selbst eines mitbringt, **nie** halten,
+solange der Container mit `--user 0:0` läuft. **Was E15 eigentlich messen soll —
+dass der Wirt nicht erreichbar ist — ist damit weiter NICHT GEMESSEN**, und der
+Fall sah bis heute durch seinen Übersprung harmlos aus.
+
+## Was NICHT GEMESSEN bleibt, und warum
+
+- **E6, E7, E8, E9, E17, E19–E26, E28** — alle hinter dem Release-Riegel oben.
+  Ohne eingerichtete Programme gibt es keinen Tunnel, keinen Store, keine App.
+- **E2, E3** — `ngc-api migrate` und eine echte MariaDB. MariaDB **läuft** auf
+  der VM (`systemctl is-active mariadb` = `active`), aber der kleine Fall ist
+  SQLite; ein MariaDB-Lauf braucht `api.json` mit Konten und CA, und die schreibt
+  `ngc-api.sh` — wieder hinter dem Riegel. Die drei Konformitätsfälle
+  überspringen sich entsprechend: `conformance_test.go:79/87/108` wollen
+  `NGC_DB_NODES`, `NGC_DB_CA`, `NGC_DB_FAILOVER`.
+- **E10** — `apt-get` echt, samt Abbruch mitten im Einspielen. Nicht gefahren:
+  ein halb kaputtes `dpkg` auf der Maschine hätte jede folgende Messung dieses
+  Laufs vergiftet.
+- **E13 als Prüffall** — die Vorbedingung ist bewiesen (oben), aber
+  `data_test.go:209` will `NGC_TEST_FSCRYPT_DIR`; mit gesetzter Variable gegen
+  die Loop-Datei ist er nicht gefahren.
+- **E16, E18 (ganz), E27, E29–E32, M1–M4** — nicht angefasst.
+- **`govulncheck`** (S7) — nicht gefahren.
+
+## Was dieser Lauf auf der Maschine hinterlässt
+
+Damit es der Nächste nicht für einen Befund hält:
+
+- `/etc/systemd/system/ngc-api.service` — geladen, danach gestoppt und
+  deaktiviert (`is-active=inactive`).
+- `/usr/lib/ngc/ngc-api` — das Programm, von Hand hingelegt, nicht von `ulh`.
+- `/root/crypt.img` — die Loop-Datei für E13, wieder ausgehängt.
+- `/data` — leeres Verzeichnis, für die PTY-Fälle angelegt.
+- Benutzer `ngc-all-73e95399` und seine Zeile in `/etc/subuid`/`/etc/subgid` —
+  **vom Prüfsatz angelegt**, nicht von Hand (siehe roter Fall 1).
+- Neu eingespielte Pakete: `jq podman mariadb-server apache2 php-fpm fscrypt
+  shellcheck uidmap slirp4netns`, dazu Go 1.27.2 unter `/usr/local/go`.
+- `/etc/ngc/*` und `/var/lib/ngc/*` lagen **schon vorher** da, vom 13.10.2026.
+
+## Die Antwort auf die Frage des Feldzugs
+
+**Nein.** Ein kleines System läuft heute nicht auf einem echten Debian durch. Es
+hängt an genau einer Stelle: `ngc-all.sh` hat keinen echten `NGC_RELEASE_KEY`,
+also gibt es kein prüfbares Release, also wird nichts eingerichtet. Alles
+darunter — Dateisystem, Benutzer, subuid, podman, systemd, und `ngc-api`
+selbst — trägt nachweislich.

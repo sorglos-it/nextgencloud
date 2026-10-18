@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
@@ -155,32 +158,94 @@ func (f *systemFixture) run() ([]byte, error) {
 
 // buildAptStub builds the stand-in. It needs the go toolchain; without it the
 // case says so out loud rather than passing quietly.
+// aptStubOnce builds the stand-in ONCE for the whole package, and that is a
+// measured saving and not a tidy-up: eleven cases called buildAptStub, every
+// one of them ran "go build" over the same twenty lines, and every one of
+// them paid about a second for it. Measured 18.10.2026 on D:, same 103 cases
+// and the same assertions - the numbers are in the report of that round.
+//
+// What each case still gets is a stand-in of ITS OWN: buildAptStub copies the
+// built program into the case's own directory, because the stand-in writes
+// calls.txt and reads failon.txt NEXT TO ITSELF (see aptStubSource). One
+// shared program would mean one shared call log, and the cases would read
+// each other's calls - exactly the kind of case that passes alone and fails
+// in company.
+var aptStubOnce struct {
+	sync.Once
+	prog string // the built program, outside any case's directory
+	err  error  // what went wrong, so every case gets the same answer
+	skip string // the one reason that is a skip and not an error
+}
+
+// aptStubProgram builds the stand-in at the first call and answers the same
+// program afterwards. Its directory is deliberately NOT a t.TempDir: the
+// first case to ask would take it away again when it ends.
+func aptStubProgram() (string, string, error) {
+	aptStubOnce.Do(func() {
+		gobin, err := exec.LookPath("go")
+		if err != nil {
+			aptStubOnce.skip = fmt.Sprintf("LOUD SKIP: no go toolchain to build the apt stand-in with: %v", err)
+			return
+		}
+		dir, err := os.MkdirTemp("", "ngc-aptstub-")
+		if err != nil {
+			aptStubOnce.err = err
+			return
+		}
+		src := filepath.Join(dir, "aptstub.go")
+		if err := os.WriteFile(src, []byte(aptStubSource), 0o600); err != nil {
+			aptStubOnce.err = err
+			return
+		}
+		prog := filepath.Join(dir, "aptstub.exe")
+		build := exec.Command(gobin, "build", "-o", prog, src)
+		build.Dir = dir
+		// A folder of its own, so the module of this repo is not in the way.
+		build.Env = append(os.Environ(), "GO111MODULE=off", "GOFLAGS=")
+		if out, err := build.CombinedOutput(); err != nil {
+			aptStubOnce.err = fmt.Errorf("the apt stand-in does not build: %v: %s", err, out)
+			return
+		}
+		if _, err := os.Stat(prog); err != nil {
+			aptStubOnce.err = fmt.Errorf("the apt stand-in was not built: %w", err)
+			return
+		}
+		aptStubOnce.prog = prog
+	})
+	return aptStubOnce.prog, aptStubOnce.skip, aptStubOnce.err
+}
+
+// buildAptStub puts a stand-in into dir and answers its path.
 func buildAptStub(t testing.TB, dir string) string {
 	t.Helper()
-	gobin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skipf("LOUD SKIP: no go toolchain to build the apt stand-in with: %v", err)
+	built, skip, err := aptStubProgram()
+	if skip != "" {
+		t.Skip(skip)
 	}
-	src := dir + "/aptstub.go"
-	if err := os.WriteFile(src, []byte(aptStubSource), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	prog := dir + "/aptstub.exe"
-	build := exec.Command(gobin, "build", "-o", prog, src)
-	build.Dir = dir
-	// A folder of its own, so the module of this repo is not in the way.
-	build.Env = append(os.Environ(), "GO111MODULE=off", "GOFLAGS=")
 	// A stand-in that does not build is a fault of THIS file and not a
 	// missing tool, so it fails instead of skipping. Measured why that
-	// matters: with a skip here, ten cases skipped and `go test` printed a
+	// matters: with a skip here, ten cases skipped and "go test" printed a
 	// bare "ok" - the skip lines only show under -v.
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("the apt stand-in does not build: %v\n%s", err, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(built)
+	if err != nil {
+		t.Fatalf("read the built apt stand-in: %v", err)
+	}
+	prog := filepath.Join(dir, "aptstub.exe")
+	if err := os.WriteFile(prog, b, 0o700); err != nil {
+		t.Fatalf("copy the apt stand-in: %v", err)
 	}
 	// The measurement checks its own preparation: a stand-in that is not
-	// there would make every case below green for the wrong reason.
-	if _, err := os.Stat(prog); err != nil {
-		t.Fatalf("the apt stand-in was not built: %v", err)
+	// there, or not the whole program, would make every case below green for
+	// the wrong reason.
+	st, err := os.Stat(prog)
+	if err != nil {
+		t.Fatalf("the apt stand-in was not put down: %v", err)
+	}
+	if st.Size() != int64(len(b)) {
+		t.Fatalf("the copy of the apt stand-in is %d bytes, the original is %d", st.Size(), len(b))
 	}
 	return prog
 }

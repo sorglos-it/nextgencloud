@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	goruntime "runtime"
 	"slices"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
 // The installation and the clock every case below starts from.
@@ -241,8 +243,20 @@ type stand struct {
 	apps   *apps
 	deps   Deps
 	grants []string
+	// storeID is what the SIGNED TASK says the package came from: the store of
+	// the trust list, or core.LocalStore for an app an admin uploaded. It is a
+	// field of its own because it decides which branch of install.approved the
+	// activation takes, and a case that wants the uploaded branch must be able
+	// to say so without writing a second stand.
+	storeID string
 	// pad makes the package larger, for a case about the bound of the disk.
 	pad int
+	// kept is what Deps.KeepSeq was asked to write down, per store, and
+	// keptErr what it answers. The floor of a store is the one thing an
+	// activation leaves behind that no other call of this stand shows, so a
+	// case reads it here.
+	kept    map[string]uint64
+	keptErr error
 }
 
 // newStand is an activation that has to come off: a store app of the trust
@@ -251,7 +265,7 @@ type stand struct {
 func newStand(t *testing.T) *stand {
 	t.Helper()
 	mf := appManifest(testApp, testVer, "")
-	s := &stand{t: t, mf: mf, eng: &engine{}, apps: newApps(),
+	s := &stand{t: t, mf: mf, eng: &engine{}, apps: newApps(), storeID: testStore,
 		sys: &sys{user: runtime.User{Name: "ngc-notes-0123abcd", UID: 4711, GID: 4712},
 			data: "/var/lib/ngc/apps/" + testApp}}
 	s.f = catalogFixture(t)
@@ -260,7 +274,8 @@ func newStand(t *testing.T) *stand {
 		Roles: []string{tunnel.RoleServices}, Node: "ctl-1", NGC: testNGC,
 		StageDir: filepath.Join(t.TempDir(), "staged"), Hold: "/usr/lib/ngc/ngc-controller",
 		Max: store.MaxPackage, LastSeq: func(string) uint64 { return 0 },
-		Now: func() int64 { return testNow }}
+		KeepSeq: s.keepSeq,
+		Now:     func() int64 { return testNow }}
 	return s
 }
 
@@ -292,7 +307,7 @@ func (s *stand) withManifest(fn func(m *store.Manifest)) *stand {
 // checksum and its UI hash, and the grants an admin allowed.
 func (s *stand) params() core.ActivateParams {
 	return core.ActivateParams{App: s.mf.ID, Version: s.mf.Version, SHA256: enc.Bytes(s.f.in.SHA256),
-		UI: enc.Bytes(s.f.in.UI), Store: testStore, Grants: s.grants}
+		UI: enc.Bytes(s.f.in.UI), Store: s.storeID, Grants: s.grants}
 }
 
 // decision is the checked channel: the task carries the parameters, and the
@@ -324,6 +339,21 @@ func (s *stand) activate() ([]byte, error) {
 	return New(s.deps).Activate(s.t.Context(), s.decision(s.params()), bytes.NewReader(s.f.stream()))
 }
 
+// upload turns this stand into an app an ADMIN UPLOADED: the header carries no
+// catalog and no store, and the signed task names core.LocalStore. That is the
+// branch of install.approved where no catalog binds the file to a name and the
+// checksum of the signed task is the whole proof -- the one an upload takes.
+//
+// The package, the checksum and the UI hash are left exactly as they are: what
+// an upload changes is where the file is allowed to come from, nothing about
+// the file.
+func (s *stand) upload() *stand {
+	s.t.Helper()
+	s.f.tr.Catalog, s.f.tr.Store = nil, ""
+	s.storeID = core.LocalStore
+	return s
+}
+
 // row is the row the activation wrote, or the zero value.
 func (s *stand) row() dbapi.App { return s.apps.rows[s.mf.ID] }
 
@@ -341,11 +371,16 @@ func (s *stand) staged() int {
 	return len(es)
 }
 
-// Grants have to be the needs of the package as a set: a grant too few is a
-// container with less than the app asked for, a grant too many is a right an
-// admin signed for nothing.
-func TestActivateGrantsMustEqualNeeds(t *testing.T) {
-	cases := map[string]struct {
+// grantCases is the rights table of an activation: what the package needs,
+// what the task granted, and what has to come of it. It is a function of its
+// own so BOTH SOURCES run the same table and can never drift apart in what
+// they allow -- a case added here is added for a bought app and an uploaded
+// one in the same edit.
+func grantCases() map[string]struct {
+	needs, grants []string
+	want          error
+} {
+	return map[string]struct {
 		needs, grants []string
 		want          error
 	}{
@@ -358,34 +393,82 @@ func TestActivateGrantsMustEqualNeeds(t *testing.T) {
 		"a grant without a need":  {nil, []string{store.NeedNetwork}, ErrForbidden},
 		"two grants for one need": {[]string{store.NeedRoot}, []string{store.NeedRoot, store.NeedNetwork}, ErrForbidden},
 	}
-	for name, c := range cases {
+}
+
+// runGrants bends one stand to needs and grants, activates it, and holds the
+// answer against want. wantStore is what the row has to name afterwards, and
+// it is the INTERMEDIATE CHECK of this case: without it a stand whose source
+// did not take could fall back to the other branch and the whole table would
+// be measured twice on one path.
+func runGrants(t *testing.T, s *stand, needs, grants []string, want error, wantStore string) {
+	t.Helper()
+	s.withManifest(func(m *store.Manifest) { m.Needs = needs })
+	s.grants = grants
+	_, err := s.activate()
+	if !errors.Is(err, want) {
+		t.Fatalf("Activate answered %v, want %v", err, want)
+	}
+	if want != nil {
+		if len(s.sys.calls) != 0 {
+			t.Fatalf("a refused activation changed this machine: %v", s.sys.calls)
+		}
+		if len(s.eng.log()) != 0 {
+			t.Fatalf("a refused activation called the engine: %v", s.eng.log())
+		}
+		if s.staged() != 0 {
+			t.Fatal("a refused activation left the staged package behind")
+		}
+		return
+	}
+	// The needs of the package reach the container, and they are the grants
+	// of the task by then.
+	if s.eng.created.Network != slices.Contains(needs, store.NeedNetwork) ||
+		s.eng.created.Root != slices.Contains(needs, store.NeedRoot) {
+		t.Fatalf("the container got network=%v root=%v for needs %v",
+			s.eng.created.Network, s.eng.created.Root, needs)
+	}
+	if got := s.row().Store; got != wantStore {
+		t.Fatalf("the activation wrote store %q, want %q", got, wantStore)
+	}
+}
+
+// Grants have to be the needs of the package as a set: a grant too few is a
+// container with less than the app asked for, a grant too many is a right an
+// admin signed for nothing.
+func TestActivateGrantsMustEqualNeeds(t *testing.T) {
+	for name, c := range grantCases() {
 		t.Run(name, func(t *testing.T) {
-			s := newStand(t)
-			s.withManifest(func(m *store.Manifest) { m.Needs = c.needs })
-			s.grants = c.grants
-			_, err := s.activate()
-			if !errors.Is(err, c.want) {
-				t.Fatalf("Activate answered %v, want %v", err, c.want)
-			}
-			if c.want != nil {
-				if len(s.sys.calls) != 0 {
-					t.Fatalf("a refused activation changed this machine: %v", s.sys.calls)
-				}
-				if len(s.eng.log()) != 0 {
-					t.Fatalf("a refused activation called the engine: %v", s.eng.log())
-				}
-				if s.staged() != 0 {
-					t.Fatal("a refused activation left the staged package behind")
-				}
-				return
-			}
-			// The needs of the package reach the container, and they are the
-			// grants of the task by then.
-			if s.eng.created.Network != slices.Contains(c.needs, store.NeedNetwork) ||
-				s.eng.created.Root != slices.Contains(c.needs, store.NeedRoot) {
-				t.Fatalf("the container got network=%v root=%v for needs %v",
-					s.eng.created.Network, s.eng.created.Root, c.needs)
-			}
+			runGrants(t, newStand(t), c.needs, c.grants, c.want, testStore)
+		})
+	}
+}
+
+// THE SAME TABLE FOR AN APP AN ADMIN UPLOADED, and that is Punkt 31 asked
+// where it has to be asked for Punkt 30's app.
+//
+// Punkt 31 is about a rights check that reads the CATALOG COPY instead of the
+// manifest -- "eine Wand vor einer offenen Tuer". An uploaded app has no
+// catalog copy at all, so for it the question is not which copy is read but
+// whether the rule runs on that path AT ALL: install.approved takes a branch
+// of its own for an upload (package.go, the default of the switch), where no
+// signature of a store and no catalog entry stand in front of the file, and a
+// rights rule that only ever ran behind a verified catalog would be a rule
+// with a way round it.
+//
+// Measured rather than read: the rule is one line for both sources
+// (activate.go, sameSet), and this case is what holds it to that. A mutant
+// that lets an upload past sameSet dies here and nowhere else -- before this
+// case the whole table ran on the store branch only.
+//
+// WHAT IS NOT MEASURED HERE, because it is not this package's: that an upload
+// was signed and confirmed at all. That stands in front of the controller, in
+// the API's task check, and the shell has to send both (measured on a running
+// installation on 17.10.2026, where it sent neither and every upload ended
+// E_CONFIRM).
+func TestAnUploadedAppsGrantsMustEqualNeedsToo(t *testing.T) {
+	for name, c := range grantCases() {
+		t.Run(name, func(t *testing.T) {
+			runGrants(t, newStand(t).upload(), c.needs, c.grants, c.want, core.LocalStore)
 		})
 	}
 }
@@ -922,6 +1005,7 @@ func TestActivateSaysWhenItIsNotWiredUp(t *testing.T) {
 		"no stagedir": func(d *Deps) { d.StageDir = "" },
 		"no bound":    func(d *Deps) { d.Max = 0 },
 		"no lastseq":  func(d *Deps) { d.LastSeq = nil },
+		"no keepseq":  func(d *Deps) { d.KeepSeq = nil },
 		"no clock":    func(d *Deps) { d.Now = nil },
 	}
 	for name, bend := range cases {
@@ -1071,12 +1155,247 @@ func TestActivateCarriesTheRefusalsOfAccept(t *testing.T) {
 // without them - that Host is a System at all, so a Manager of operation can
 // be wired with it. The calls themselves are measured in package runtime,
 // where their stand-ins live.
+//
+// WHAT IT HANDS IN MATTERS, and that was wrong until 18.10.2026: the id was
+// "no.app.at.all", which wire.ValidAppID ACCEPTS - it is a well-formed
+// reverse-DNS name. On windows EnsureUser then failed for want of useradd and
+// the case looked right; on linux AS ROOT it really made a system user
+// (measured: ngc-all-73e95399 with the home /var/lib/ngc/apps/no.app.at.all,
+// one line more in /etc/passwd). A case of this package may not change the
+// machine it runs on, so the id handed in has to be one no checker lets
+// through - the same one the next line uses.
 func TestHostIsTheSystemOfOperation(t *testing.T) {
 	var s System = Host{ServerKey: bytes.Repeat([]byte{0x5a}, 64)}
-	if _, err := s.EnsureUser(t.Context(), "no.app.at.all"); err == nil {
+	if wire.ValidAppID("../etc") {
+		t.Fatal("the id of this case is a well-formed app id, so EnsureUser would reach the machine")
+	}
+	if _, err := s.EnsureUser(t.Context(), "../etc"); err == nil {
 		t.Fatal("Host made a user for an app id that is none")
 	}
 	if err := s.DropRun("../etc"); err == nil {
 		t.Fatal("Host dropped a runtime directory for a name that is none")
+	}
+}
+
+// AN UPLOADED APP IS HARDENED LIKE A BOUGHT ONE, and that is Punkt 51's
+// question asked for Punkt 30's app: once an uploaded package can be activated
+// at all, does it run behind the same eleven switches as one out of a store?
+//
+// The answer is measured and not read, and it is measured as an IDENTITY: the
+// same manifest activated twice, once as a store app of the trust list and
+// once as an upload, hands the engine containers that are equal in every
+// field. Whatever the eleven switches are made of, they are made of these
+// fields alone (runtime.Container) -- so two equal containers cannot differ in
+// one switch, and a field somebody adds later is covered without this case
+// being touched.
+//
+// WHERE THE OTHER HALF OF THE PROOF IS, named rather than assumed: that a
+// container becomes those eleven switches is pinned in
+// runtime/hardening_test.go, which reads the argument list createArgs builds.
+// createArgs is not exported, so this case cannot read the list itself; what
+// it closes is the half runtime cannot see, that an activation out of an
+// upload reaches that function with the same container. Neither half carries
+// the other.
+//
+// NOT MEASURED, the same limit Punkt 51 names for all eleven: that podman
+// obeys a switch it was sent.
+func TestAnUploadedAppIsHardenedLikeABoughtOne(t *testing.T) {
+	// The four grant combinations, because two of the eleven switches are the
+	// grants themselves (--network none, --cap-drop ALL) and a run with no
+	// needs would never show them.
+	for _, needs := range [][]string{
+		nil,
+		{store.NeedNetwork},
+		{store.NeedRoot},
+		{store.NeedNetwork, store.NeedRoot},
+	} {
+		t.Run(strings.Join(append([]string{"needs"}, needs...), "-"), func(t *testing.T) {
+			// CPU and Memory are set away from the contract's defaults on
+			// purpose: zero is what both carry when nothing was read, and two
+			// zeroes compare equal. Two of the eleven switches are these
+			// numbers.
+			set := func(s *stand) *stand {
+				s.withManifest(func(m *store.Manifest) {
+					m.Needs = slices.Clone(needs)
+					m.CPU, m.Memory = 1500, 512
+				})
+				s.grants = slices.Clone(needs)
+				return s
+			}
+			bought := set(newStand(t))
+			if _, err := bought.activate(); err != nil {
+				t.Fatalf("the store app was not activated: %v", err)
+			}
+			uploaded := set(newStand(t).upload())
+			if _, err := uploaded.activate(); err != nil {
+				t.Fatalf("the uploaded app was not activated: %v", err)
+			}
+
+			// THE INTERMEDIATE CHECK, without which this case would compare
+			// one path with itself: the two runs really went down the two
+			// different branches of install.approved. The row says which
+			// source the activation wrote down, and core.LocalStore is the one
+			// an upload has.
+			if got := bought.row().Store; got != testStore {
+				t.Fatalf("the store app wrote store %q, want %q", got, testStore)
+			}
+			if got := uploaded.row().Store; got != core.LocalStore {
+				t.Fatalf("the uploaded app wrote store %q, want %q", got, core.LocalStore)
+			}
+
+			got, want := uploaded.eng.created, bought.eng.created
+			// And without this one the case would pass on two zero values: an
+			// activation that never reached Create leaves the field as it was.
+			if want.Name == "" || want.Image == "" || want.DataDir == "" || want.Hold == "" ||
+				want.UID == 0 || want.GID == 0 || want.CPU == 0 || want.Memory == 0 {
+				t.Fatalf("the store app handed the engine an empty container: %+v", want)
+			}
+			if want.Network != slices.Contains(needs, store.NeedNetwork) ||
+				want.Root != slices.Contains(needs, store.NeedRoot) {
+				t.Fatalf("the store app's container does not carry its grants: %+v", want)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("the uploaded app runs in\n%+v\nand the bought one in\n%+v", got, want)
+			}
+		})
+	}
+}
+
+// keepSeq is what Deps.KeepSeq does in this stand: it writes the floor down
+// and answers what a case told it to.
+func (s *stand) keepSeq(_ context.Context, store string, seq uint64) error {
+	if s.keptErr != nil {
+		return s.keptErr
+	}
+	if s.kept == nil {
+		s.kept = map[string]uint64{}
+	}
+	s.kept[store] = seq
+	return nil
+}
+
+// THE FLOOR OF A STORE IS RAISED BY THE ACTIVATION THAT USED IT. Deps.LastSeq
+// is what store.VerifyCatalog refuses an older catalogue against, and it reads
+// a number somebody has to write: until this pair existed nothing wrote one,
+// so it read 0 for ever and the roll-back guard was a line that could not
+// fire.
+//
+// The number written is the one of the CATALOGUE the package came out of
+// (Package.Seq, 7 in this fixture) and not the version of the app: the two are
+// different orders, and the version is already held by the row of the app
+// (Activate, step 2).
+func TestAnActivationRaisesTheFloorOfItsStore(t *testing.T) {
+	s := newStand(t)
+	if _, err := s.activate(); err != nil {
+		t.Fatalf("the activation of the stand failed: %v", err)
+	}
+	if got := s.kept[testStore]; got != 7 {
+		t.Errorf("the floor of %q is %d, want the 7 of the catalogue", testStore, got)
+	}
+	if len(s.kept) != 1 {
+		t.Errorf("floors written: %v, want the one store of this activation", s.kept)
+	}
+}
+
+// An app an ADMIN UPLOADED came out of no catalogue, so there is no number to
+// remember and nothing is written. Without this case the one above would pass
+// on a keepSeq that wrote something for every activation, and a floor under
+// core.LocalStore is a floor no catalogue is ever held against.
+func TestAnUploadedAppRaisesNoFloor(t *testing.T) {
+	s := newStand(t)
+	s.upload()
+	if _, err := s.activate(); err != nil {
+		t.Fatalf("the activation of an uploaded app failed: %v", err)
+	}
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none for an upload", s.kept)
+	}
+}
+
+// An activation that FAILED raises no floor. The other order -- the floor
+// first -- would shut a store out of catalogues this installation never acted
+// on, and it would do it on a package that was refused.
+func TestAFailedActivationRaisesNoFloor(t *testing.T) {
+	s := newStand(t)
+	// A grant the package does not need: refused before this machine is
+	// changed at all (Activate, step 4).
+	s.grants = []string{store.NeedNetwork, store.NeedRoot}
+	if _, err := s.activate(); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("the activation answered %v, want ErrForbidden", err)
+	}
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none for a refused activation", s.kept)
+	}
+}
+
+// A floor that cannot be written FAILS the activation and takes the setup back
+// with it: a container left running out of a catalogue this installation has
+// no memory of is exactly the state the next activation could be rolled back
+// into. keepSeq stands inside setUp for that reason and not after it.
+//
+// WHAT IT DOES NOT TAKE BACK IS THE ROW, and that is measured, not intended:
+// putRow has no undo, so it is already written when this fails -- the same
+// hole keepLicence beside it has, and older than either. It is named here
+// rather than fixed, because taking a row back means putting the row of the
+// version BEFORE back, and nothing in this package holds it.
+func TestAFloorThatCannotBeWrittenFailsTheActivation(t *testing.T) {
+	s := newStand(t)
+	s.keptErr = errors.New("the floor could not be written")
+	_, err := s.activate()
+	if err == nil {
+		t.Fatal("the activation came off although its floor could not be written")
+	}
+	// The container is the part a user would see running, and it is gone: the
+	// undo of the setup ran.
+	log := s.eng.log()
+	if !slices.Contains(log, "Start") {
+		t.Fatalf("the engine log is %v, so the activation never got as far as the floor", log)
+	}
+	if i := slices.Index(log, "Start"); !slices.Contains(log[i+1:], "Remove") {
+		t.Errorf("the engine log is %v, want the container removed again after Start", log)
+	}
+	// And the floor itself was never written down.
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none", s.kept)
+	}
+}
+
+// AND THE GUARD FIRES ON THAT NUMBER. The two cases above show the floor being
+// written and read; this one shows what it is for: a catalogue below the floor
+// is refused, and refused as a verification failure, which is what the shell
+// tells an admin (serve.activateCode).
+//
+// Together with TestTheFloorOfAStoreGoesThroughTheStateOfThisController in
+// package node the chain is closed: an activation writes the number, the next
+// one reads it out of the same state, and this line is what it then does with
+// it.
+func TestACatalogueBelowTheFloorIsRefused(t *testing.T) {
+	s := newStand(t)
+	// The catalogue of this fixture is number 7; a floor of 8 means this
+	// installation already acted on a newer one.
+	s.deps.LastSeq = func(string) uint64 { return 8 }
+	_, err := s.activate()
+	// store.ErrRollback and not install.ErrVerify: the refusal comes out of
+	// the contract's own catalogue check (store.VerifyCatalog) and is handed
+	// on as it is. serve.activateCode names it E_VERIFY, and
+	// TestACatalogueBelowTheFloorIsNamedAVerificationFailure holds that.
+	if !errors.Is(err, store.ErrRollback) {
+		t.Fatalf("a catalogue below the floor answered %v, want store.ErrRollback", err)
+	}
+	// Nothing of this machine was touched, and the floor was not written
+	// either: a refused package leaves no trace.
+	if len(s.sys.calls) != 0 || len(s.eng.log()) != 0 {
+		t.Errorf("this machine was changed: %v, %v", s.sys.calls, s.eng.log())
+	}
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none", s.kept)
+	}
+	// And the same stand with the floor at the catalogue's own number comes
+	// off: what refuses above is the number and not something else of this
+	// case (a test whose floor refused everything would pass the half above).
+	ok := newStand(t)
+	ok.deps.LastSeq = func(string) uint64 { return 7 }
+	if _, err := ok.activate(); err != nil {
+		t.Errorf("a catalogue at the floor answered %v, want it through", err)
 	}
 }

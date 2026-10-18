@@ -98,9 +98,9 @@ func (h Host) DropRun(name string) error { return runtime.DropRun(name) }
 // Deps are what a Manager needs. What is nil or empty of it AND read by the
 // guard of Activate is this program wired wrong and ends every activation
 // with ErrInternal: none of it can be brought about by a peer, so it is
-// answered once and the same way. The guard reads eight of these fields
-// (State, Engine, Sys, List, StageDir, Max, LastSeq, Now - counted
-// 12.10.2026); Roles, Node, NGC and ReleaseKey empty go through it, and an
+// answered once and the same way. The guard reads nine of these
+// fields (State, Engine, Sys, List, StageDir, Max, LastSeq, KeepSeq, Now -
+// counted 18.10.2026); Roles, Node, NGC and ReleaseKey empty go through it, and an
 // empty Hold is filled on purpose (Manager.hold).
 type Deps struct {
 	// State is this controller's local store: the row of the app and the
@@ -138,8 +138,16 @@ type Deps struct {
 	// (bound), and a Manager without it answers ErrInternal rather than let a
 	// peer fill the disk.
 	Max int64
-	// LastSeq is the newest catalogue number already seen from a store.
+	// LastSeq is the newest catalogue number already seen from a store. It is
+	// what keeps a store from handing back a catalogue older than one already
+	// acted on (store.VerifyCatalog, "c.Seq < lastSeq").
 	LastSeq func(store string) uint64
+	// KeepSeq writes that number down again after an activation out of that
+	// store worked. It is the OTHER HALF of LastSeq and required for the same
+	// reason: a bar that nothing ever raises is read as 0 for ever, and a
+	// guard without memory is no guard. An activation of an uploaded app
+	// (core.LocalStore) comes with no catalogue and never reaches it.
+	KeepSeq func(ctx context.Context, store string, seq uint64) error
 	// Now is the clock the licence is held against, in seconds. nil is this
 	// program wired wrong as well: a licence checked against the zero time
 	// never runs out.
@@ -178,7 +186,8 @@ var emptyResult = []byte("{}")
 //	11 the start action of the manifest - task 18, not carried out here
 func (m *Manager) Activate(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error) {
 	if m == nil || m.d.State == nil || m.d.Engine == nil || m.d.Sys == nil || m.d.List == nil ||
-		m.d.StageDir == "" || m.d.Max <= 0 || m.d.LastSeq == nil || m.d.Now == nil || r == nil {
+		m.d.StageDir == "" || m.d.Max <= 0 || m.d.LastSeq == nil || m.d.KeepSeq == nil ||
+		m.d.Now == nil || r == nil {
 		return nil, ErrInternal
 	}
 	// A root task is what this action is: without one nothing names an app, a
@@ -271,7 +280,7 @@ func (m *Manager) Activate(ctx context.Context, d access.Decision, r io.Reader) 
 	}
 
 	set := appSetup{app: p.App, version: p.Version, store: p.Store, sha256: p.SHA256,
-		grants: p.Grants, files: filepath.Join(pkg.Dir, FilesDir)}
+		grants: p.Grants, files: filepath.Join(pkg.Dir, FilesDir), seq: pkg.Seq}
 	if err := m.setUp(ctx, set, mf, old, installed, pkg.Transfer.License, lic); err != nil {
 		return nil, err
 	}
@@ -296,6 +305,11 @@ type appSetup struct {
 	grants  []string
 	// files is the directory unpackApp wrote the package's files into.
 	files string
+	// seq is the number of the catalogue this package came out of
+	// (install.Package.Seq), 0 where no catalogue named it - an uploaded app,
+	// and an update, which reads the row and no catalogue (update.go). Only a
+	// number over 0 is ever written down (Manager.keepSeq).
+	seq uint64
 }
 
 // undo is one step of the setup taken back.
@@ -378,6 +392,9 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 		if err := m.keepLicence(ctx, p.app, env, lic); err != nil {
 			return err
 		}
+		if err := m.keepSeq(ctx, p); err != nil {
+			return err
+		}
 		ok = true
 		return nil
 	}
@@ -452,8 +469,31 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 	if err := m.keepLicence(ctx, p.app, env, lic); err != nil {
 		return err
 	}
+	if err := m.keepSeq(ctx, p); err != nil {
+		return err
+	}
 	ok = true
 	return nil
+}
+
+// keepSeq raises the floor of the store this package came out of, so the next
+// activation out of it cannot be handed an older catalogue (Deps.LastSeq).
+//
+// IT RUNS LAST, after the row and the licence, and inside setUp rather than
+// after it: an activation whose floor could not be written is undone whole by
+// the undos above, rather than leaving a container running that this
+// installation has no memory of. The other order - the floor first - would
+// raise the bar for an activation that then failed and shut a store out of
+// catalogues it never acted on.
+//
+// A package no catalogue named writes nothing: an uploaded app
+// (core.LocalStore) is covered by the checksum of its signed task alone, and
+// there is no number to remember.
+func (m *Manager) keepSeq(ctx context.Context, p appSetup) error {
+	if p.seq == 0 || p.store == "" || p.store == core.LocalStore {
+		return nil
+	}
+	return m.d.KeepSeq(ctx, p.store, p.seq)
 }
 
 // putRow writes the row of the app. The manifest goes in as JSON and not as it

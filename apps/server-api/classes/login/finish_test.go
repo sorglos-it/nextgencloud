@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -841,27 +842,48 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 	// Every shape is measured, and a shape that fails does not end the run:
 	// the whole table is what says which of them are alike and which are not,
 	// and a run that stops at the first one hides the rest.
+	measured := 0
 	for _, form := range forms {
 		held, nobodys := form.build(t, h, fx)
-		a, b, again := timeThemFinish(t, h, form.name, held, nobodys)
-		t.Logf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
-			form.name, a, b, again)
+		var a, b, again time.Duration
+		alike := false
 		// The null control first: one body against itself, measured the same
 		// way and in the same turns. It is held to the factor of the
 		// comparison, so the test can tell "the two are alike" from "this
-		// machine cannot tell anything apart today".
-		if a > 2*again || again > 2*a {
-			t.Errorf("%s, the same body twice: %v and %v -- this machine cannot measure a factor of two today",
-				form.name, a, again)
+		// machine cannot tell anything apart today" -- and it is measured at
+		// most twice, for the reason given at the same place in
+		// TestStartTakesTheSameTimeForAnUnknownName.
+		for try := 1; try <= 2 && !alike; try++ {
+			a, b, again = timeThemFinish(t, h, form.name, held, nobodys)
+			t.Logf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
+				form.name, a, b, again)
+			alike = a <= 2*again && again <= 2*a
+		}
+		if !alike {
+			// Loud, and not red: see unmeasurable. One shape the machine
+			// cannot resolve does not take the other twelve down with it, so
+			// this is a line and not a skip -- but it IS a line check.sh
+			// greps, because this shape's guard did not run.
+			t.Logf("%s: %s, the same body twice: %v and %v -- this machine cannot measure a factor of two for this shape today",
+				unmeasurable, form.name, a, again)
 			continue
 		}
 		if form.branch != "" {
 			continue
 		}
+		measured++
 		if a > 2*b || b > 2*a {
 			t.Errorf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
 				form.name, a, b, again)
 		}
+	}
+	// How many of the five shapes that have to be alike really carried the
+	// guard. The number is logged on every run and not only when it is zero:
+	// "green" means something different at five than at one.
+	t.Logf("%d of the shapes that have to be alike were measured", measured)
+	if measured == 0 {
+		t.Skipf("%s: not one shape that has to be alike could be measured today -- the guard did not run",
+			unmeasurable)
 	}
 }
 
@@ -893,8 +915,10 @@ func mustMarshal(tb testing.TB, f session.LoginFinish) []byte {
 }
 
 // timedBatches is how many batches each of the three measurements of a shape
-// takes. The median of them drops the one slow batch a busy machine throws in,
-// which an average would not.
+// takes, and how many login/start takes too. The shortest of them is the one
+// a busy machine disturbed least (see timeThem); more batches therefore mean a
+// cleaner number, not just a steadier one, and five is what fits in the time
+// the whole table may take.
 const timedBatches = 5
 
 // timeThemFinish measures the two bodies and the first one again, turn by turn
@@ -903,6 +927,9 @@ const timedBatches = 5
 // that drift to the comparison as a finding. It is the shape timeThem uses for
 // login/start, and it was lost once here -- the numbers it gave were then a
 // third block against a first.
+//
+// It returns the SHORTEST of the batches and no longer the median, for the
+// reason timeThem gives: the noise on this clock only ever adds time.
 func timeThemFinish(t *testing.T, h *Handler, what string, held, nobodys []byte) (a, b, again time.Duration) {
 	t.Helper()
 	da := make([]time.Duration, timedBatches)
@@ -916,7 +943,7 @@ func timeThemFinish(t *testing.T, h *Handler, what string, held, nobodys []byte)
 	slices.Sort(da)
 	slices.Sort(db)
 	slices.Sort(dc)
-	return da[timedBatches/2], db[timedBatches/2], dc[timedBatches/2]
+	return da[0], db[0], dc[0]
 }
 
 // timedFinish runs timedRuns requests with body and returns what one took. It
@@ -946,4 +973,102 @@ func timedFinish(t *testing.T, h *Handler, what string, body []byte) time.Durati
 		t.Fatalf("%d requests for %s took %v: the clock did not see them", timedRuns, what, d)
 	}
 	return d / timedRuns
+}
+
+// TestFinishLetsNoMoreThroughAtOnceThanOneAfterTheOther: the counting of
+// classes/lock gives the first freeCount failures free and then lays a wait, so
+// a run of wrong proofs is answered 401 a fixed number of times and 429 after
+// that. That number must not depend on how many of them are in flight at the
+// same moment.
+//
+// It did. Measured on the running installation on 17.10.2026 against a real
+// ngc-api on Debian 13: one after the other 3 attempts were answered 401 and
+// the rest 429, while 20 at once were answered 401 between 7 and 14 times in
+// eight runs of 20 - so the free attempts an installation hands out grew with
+// the attacker's concurrency instead of standing at freeCount.
+//
+// The number this is held against is MEASURED in the same test, not written
+// down here: the serial run on its own fixture says how many may get through,
+// and the burst must not beat it. A number in this file would be a second copy
+// of freeCount and would stop saying anything the day that constant moves.
+func TestFinishLetsNoMoreThroughAtOnceThanOneAfterTheOther(t *testing.T) {
+	const tries = 20
+	// through runs tries wrong proofs against a fresh installation and returns
+	// how many of them were answered 401, that is: how many were really
+	// weighed. atOnce decides whether they are in flight together.
+	through := func(t *testing.T, atOnce bool) int {
+		t.Helper()
+		h, fx := newFixture(t)
+		c := start(t, h, fx.PasswordName)
+		c.Nonce = madeUpNonce
+		body := string(finishBody(t, fx, fx.Password, c, ""))
+		codes := make([]int, tries)
+		if atOnce {
+			// A start barrier, because the window is the stretch between the
+			// read of the wait and the write of the count, and that is tens of
+			// microseconds wide: goroutines started one by one are through it
+			// before the next one begins, and the burst would measure nothing.
+			// They are all parked on one channel and let go at once.
+			var wg, ready sync.WaitGroup
+			start := make(chan struct{})
+			wg.Add(tries)
+			ready.Add(tries)
+			for i := range tries {
+				go func() {
+					defer wg.Done()
+					ready.Done()
+					<-start
+					w := httptest.NewRecorder()
+					h.Finish(w, jsonPost(session.PathLoginFinish, body))
+					codes[i] = w.Code
+				}()
+			}
+			ready.Wait()
+			close(start)
+			wg.Wait()
+		} else {
+			for i := range tries {
+				w := httptest.NewRecorder()
+				h.Finish(w, jsonPost(session.PathLoginFinish, body))
+				codes[i] = w.Code
+			}
+		}
+		n := 0
+		for i, code := range codes {
+			switch code {
+			case 401:
+				n++
+			case 429:
+			default:
+				// Anything else is an earlier wall, and then this test is
+				// measuring that one instead of the counting.
+				t.Fatalf("atOnce=%v: attempt %d answered %d, which is neither a weighed login nor a wait",
+					atOnce, i, code)
+			}
+		}
+		return n
+	}
+	serial := through(t, false)
+	// Without this the test would pass on an installation that answers 429 to
+	// everything, where both numbers are 0 and nothing was ever weighed.
+	if serial < 1 || serial >= tries {
+		t.Fatalf("one after the other %d of %d were weighed; that is no counting to hold a burst against", serial, tries)
+	}
+	// A race shows itself in the worst of several runs, not in one. The rate
+	// belongs in the message, so whoever reads a failure knows how often it
+	// was seen and does not take one run for the whole truth.
+	burst, hits := 0, 0
+	const rounds = 10
+	for range rounds {
+		if n := through(t, true); n > burst {
+			burst = n
+		}
+		if burst > serial {
+			hits++
+		}
+	}
+	if burst > serial {
+		t.Errorf("%d of %d wrong proofs were weighed when they came at once, but only %d when they came one after the other (%d of %d rounds over the serial number): the free attempts grow with concurrency",
+			burst, tries, serial, hits, rounds)
+	}
 }

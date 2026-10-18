@@ -12,10 +12,20 @@ apps/web/
 ├── public/          Webroot: nur das ist von außen erreichbar (Apache zeigt auf diesen Ordner)
 │   ├── index.php    einziger Einstiegspunkt, liefert den Desktop aus
 │   └── assets/      Desktop (Fenster, Taskleiste, Startmenü, Anmeldung), die Verträge in
-│                    JavaScript, ngc.js für Apps (MIT) und die Oberflächen der mitgelieferten
-│                    Apps; Fremdcode für den Browser in assets/vendor/
+│                    JavaScript, ngc.js für Apps (MIT); Fremdcode für den Browser in
+│                    assets/vendor/
+├── assets/          NICHT im Webroot, und das ist der Zweck: je mitgelieferte App ein
+│                    Ordner (apps/calculator, apps/terminal) mit genau dem, was im ui/
+│                    ihres Pakets liegt - index.html, app.css, app.js. Eine .html unter
+│                    public/ wäre ein Dokument der Herkunft der Shell und damit genau
+│                    der zweite Weg, den der abgeschottete Rahmen zumacht.
 ├── classes/         PHP: web.json und trust-anchor.json lesen, Liste der API-Server
-├── templates/       Gerüst der Desktop-Seite
+├── templates/       Gerüst der Desktop-Seite und des App-Fensters, dazu zwei Vorlagen
+│                    für Apache: apache-vhost.conf (der virtuelle Host - nur public/ ist
+│                    erreichbar, und die Kopfzeilen für die Dateien, die Apache selbst
+│                    ausliefert; eine eigene Richtlinie, nicht die der Seite, Begründung
+│                    je Zeile in der Datei) und apache-apis.conf.example (die Form, die
+│                    ngc-web für die API-Server schreibt - nie von Hand kopieren)
 └── tests/           Playwright; npm nur hier
 ```
 

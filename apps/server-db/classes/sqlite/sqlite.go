@@ -22,9 +22,47 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/config"
 )
 
-// busyTimeout is how long a writer waits for another one before it gives up
-// with "busy"; the store repeats such an operation itself.
-const busyTimeout = 10000 // milliseconds
+// DefaultBusyTimeout is how long a writer waits for another one before it
+// gives up with "busy"; the store repeats such an operation itself. Every
+// part of NGC opens with this one - OpenDB and Backup take no options - and
+// TestOpenDBSetsThePragmasOfTheFile holds the number against the file.
+const DefaultBusyTimeout = 10 * time.Second
+
+// Options are the knobs of one pool that are not part of the configuration.
+// The zero Options is what NGC runs with, so OpenDB(cfg) and
+// OpenDBWith(cfg, Options{}) open the same file in the same way.
+//
+// BusyTimeout exists because the deadline is the one thing a MEASUREMENT has
+// to be able to shorten. Three cases wait this deadline out on purpose - the
+// sentence an admin reads when a neighbour holds the file (Punkt 48: 10 s
+// times eight tries is 80,6 s) - and they used to take ten seconds each
+// because the number sat in a const with no way in from outside. They now
+// wait out the SAME deadline on a shorter clock: what they assert is the
+// sentence and the refusal, not the length of the wait, and the length of the
+// production wait is asserted in one place, against this constant.
+//
+// It is a deadline and not a switch: zero means DefaultBusyTimeout, and a
+// negative one is refused rather than turned into "do not wait at all" - a
+// pool that gives up immediately is a different file than the one NGC opens,
+// and nothing should reach it by leaving a field empty the wrong way.
+type Options struct {
+	BusyTimeout time.Duration
+}
+
+// busyMillis is what the PRAGMA is given. SQLite takes whole milliseconds, so
+// a deadline below one millisecond would silently become "do not wait": it is
+// refused with the same sentence as a negative one.
+func (o Options) busyMillis() (int64, error) {
+	d := o.BusyTimeout
+	if d == 0 {
+		d = DefaultBusyTimeout
+	}
+	if d < time.Millisecond {
+		return 0, fmt.Errorf("sqlite: busy timeout %v, want at least 1ms or zero for the default of %v",
+			o.BusyTimeout, DefaultBusyTimeout)
+	}
+	return d.Milliseconds(), nil
+}
 
 // keySize is the key of the file: 64 bytes are AES-256-XTS, two AES-256 keys
 // (config.DB.Key carries exactly this many).
@@ -95,7 +133,24 @@ const maxMemory = 512 << 20
 // The handle carries ONE connection, which is what a writer needs: every
 // caller of OpenDB writes, or reads pages for a backup. Whoever wants reads
 // beside the writes takes OpenRW.
-func OpenDB(cfg config.DB) (*sql.DB, error) {
+func OpenDB(cfg config.DB) (*sql.DB, error) { return OpenDBWith(cfg, Options{}) }
+
+// OpenDBWith is OpenDB with the knobs of Options. Nothing in NGC calls it
+// with a non-zero Options; what it is for is a measurement that has to wait
+// out the busy deadline without waiting ten seconds for it.
+//
+// The two live together and neither gives way: the handle carries one write
+// connection (see writeConns), and Options shortens the deadline that one
+// connection waits on. A measurement of the split needs BOTH - the queue in
+// front of the write handle is bounded by one chain of the OPEN database
+// (sqlstore.takeTurn reads the busy_timeout pragma back off it), so shortening
+// the deadline here shortens the bound there as well, and a measurement of
+// the queue does not have to sit out eight ten-second tries either.
+func OpenDBWith(cfg config.DB, opt Options) (*sql.DB, error) {
+	busy, err := opt.busyMillis()
+	if err != nil {
+		return nil, err
+	}
 	if cfg.Driver != config.DriverSQLite {
 		return nil, fmt.Errorf("sqlite: driver %q, want %q", cfg.Driver, config.DriverSQLite)
 	}
@@ -119,7 +174,7 @@ func OpenDB(cfg config.DB) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db := sql.OpenDB(connector{inner: inner, hexkey: hexkey})
+	db := sql.OpenDB(connector{inner: inner, hexkey: hexkey, busy: busy})
 	db.SetMaxOpenConns(writeConns)
 	db.SetMaxIdleConns(maxIdleConns)
 	db.SetConnMaxIdleTime(idleTimeout)
@@ -142,10 +197,20 @@ func OpenDB(cfg config.DB) (*sql.DB, error) {
 // the only caller, and it gives the handle to NewSplit, which uses it for
 // queries only.
 func OpenRW(cfg config.DB) (write, read *sql.DB, err error) {
-	if write, err = OpenDB(cfg); err != nil {
+	return OpenRWWith(cfg, Options{})
+}
+
+// OpenRWWith is OpenRW with the knobs of Options, and it is OpenDBWith's
+// reason for existing carried to the split: both handles get the SAME
+// deadline, because a measurement that shortens one and not the other would
+// be measuring two different files.
+//
+// Nothing in NGC calls it with a non-zero Options.
+func OpenRWWith(cfg config.DB, opt Options) (write, read *sql.DB, err error) {
+	if write, err = OpenDBWith(cfg, opt); err != nil {
 		return nil, nil, err
 	}
-	if read, err = OpenDB(cfg); err != nil {
+	if read, err = OpenDBWith(cfg, opt); err != nil {
 		write.Close()
 		return nil, nil, err
 	}
@@ -163,6 +228,10 @@ func OpenRW(cfg config.DB) (write, read *sql.DB, err error) {
 type connector struct {
 	inner  driver.Connector
 	hexkey config.SecretText
+	// busy is the busy_timeout of every connection of this pool, in
+	// milliseconds. It is set once, when the pool is opened, and read by
+	// every connection the pool makes afterwards.
+	busy int64
 }
 
 // Driver implements database/sql/driver.Connector.
@@ -198,7 +267,7 @@ func (c connector) prepare(ctx context.Context, conn driver.Conn) error {
 	}
 	for _, pragma := range []string{
 		"PRAGMA hexkey='" + c.hexkey.Text() + "'",
-		fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeout),
+		fmt.Sprintf("PRAGMA busy_timeout=%d", c.busy),
 		"PRAGMA journal_mode=wal",
 		"PRAGMA synchronous=normal",
 		"PRAGMA temp_store=memory",

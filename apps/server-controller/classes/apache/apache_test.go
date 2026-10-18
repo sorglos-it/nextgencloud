@@ -207,7 +207,27 @@ func TestSyncWritesOnlyCertificatesThatMatchTheirPin(t *testing.T) {
 	}
 
 	// The second server answers with the certificate of the first: another
-	// key, so its pin does not match.
+	// key, so its pin does not match. It is left OUT, and the one that is
+	// good is written.
+	//
+	// THIS CASE USED TO ASSERT THAT NOTHING WAS WRITTEN AT ALL, and that
+	// decision was changed on 18.10.2026 for a measured reason, not for
+	// convenience. All-or-nothing means one server froze what Apache knew for
+	// the whole installation, and it froze it at the worst moment: the list had
+	// just changed because a server moved or joined. Measured at a two-machine
+	// installation, with the controller's own line: `WARN Apache could not be
+	// brought in line with the trust list err="dial tcp …:7443: connect: no
+	// route to host"`, twice, while the balancer went on naming a server that
+	// was not there.
+	//
+	// What is unchanged, and is what this case's name is about: a certificate
+	// whose pin does not match NEVER reaches the trust file, and the member it
+	// belongs to never reaches the balancer. Leaving such a member in is the
+	// expensive mistake, also measured: Apache then answers the client 500
+	// (AH00898 "Error during SSL Handshake with remote server"), 1 in 24 and
+	// 1 in 40 requests, and does not mark that worker as failed. A member it
+	// simply cannot reach costs an answer from nobody: 30 of 30 requests were
+	// answered right over the other member.
 	bad := newStand(t)
 	bad.certs[n1.URL] = der1
 	bad.certs[n2.URL] = der1
@@ -215,17 +235,106 @@ func TestSyncWritesOnlyCertificatesThatMatchTheirPin(t *testing.T) {
 	if !errors.Is(err, ErrPin) {
 		t.Fatalf("wrong pin: err=%v, want ErrPin", err)
 	}
+	// Written AND an error: the good member is in, the bad one is named.
+	if !changed {
+		t.Error("wrong pin: the good server was not written")
+	}
+	if n := strings.Count(bad.read(t, bad.trustFile), "BEGIN CERTIFICATE"); n != 1 {
+		t.Errorf("wrong pin: %d certificates in the trust file, want the good one alone", n)
+	}
+	conf := bad.read(t, bad.balancerFile)
+	if !strings.Contains(conf, "api-1.ngc.test:7443") {
+		t.Errorf("wrong pin: the good server is not in the balancer:\n%s", conf)
+	}
+	if strings.Contains(conf, "api-2.ngc.test:7443") {
+		t.Errorf("wrong pin: the server with the wrong pin reached the balancer:\n%s", conf)
+	}
+	if bad.tests != 1 || bad.reloads != 1 {
+		t.Errorf("wrong pin: tests=%d reloads=%d, want 1 and 1", bad.tests, bad.reloads)
+	}
+
+	// And the floor of the decision: if NOT ONE server can be written, nothing
+	// is. A balancer without a member makes Apache answer every /api/ with
+	// 503, so what it has keeps working.
+	none := newStand(t)
+	none.certs[n1.URL] = der2
+	none.certs[n2.URL] = der1
+	changed, err = none.w.Sync(context.Background(), []trust.Node{n1, n2})
+	if !errors.Is(err, ErrPin) || !errors.Is(err, ErrForm) {
+		t.Fatalf("no server at all: err=%v, want both ErrPin and ErrForm", err)
+	}
 	if changed {
-		t.Error("wrong pin: reported a change")
+		t.Error("no server at all: reported a change")
 	}
-	if got := bad.read(t, bad.trustFile); got != "" {
-		t.Errorf("wrong pin: trust file written:\n%s", got)
+	if got := none.read(t, none.balancerFile); got != "" {
+		t.Errorf("no server at all: balancer written:\n%s", got)
 	}
-	if got := bad.read(t, bad.balancerFile); got != "" {
-		t.Errorf("wrong pin: balancer file written:\n%s", got)
+	if none.tests != 0 || none.reloads != 0 {
+		t.Errorf("no server at all: tests=%d reloads=%d, want 0 and 0", none.tests, none.reloads)
 	}
-	if bad.tests != 0 || bad.reloads != 0 {
-		t.Errorf("wrong pin: tests=%d reloads=%d, want 0 and 0", bad.tests, bad.reloads)
+}
+
+// A server that is away does not hold the others up. This is the finding it
+// was built for: one API that could not be reached used to make Sync write
+// nothing at all, so the balancer went on naming a server that had moved.
+//
+// The node that was away comes back by itself: node.watchWeb runs Sync again
+// on every change of the trust list and once a day.
+func TestSyncWritesTheServersItCouldReach(t *testing.T) {
+	n1, der1, _ := apiNode("api-1", "api-1.ngc.test", 0xD1)
+	n2, der2, _ := apiNode("api-2", "api-2.ngc.test", 0xD2)
+
+	// Intermediate check, so a refusal below comes from the fetch and not
+	// from the way in: both reachable, both written.
+	ok := newStand(t)
+	ok.certs[n1.URL] = der1
+	ok.certs[n2.URL] = der2
+	if changed, err := ok.w.Sync(context.Background(), []trust.Node{n1, n2}); err != nil || !changed {
+		t.Fatalf("both reachable: changed=%v err=%v", changed, err)
+	}
+	if n := strings.Count(ok.read(t, ok.trustFile), "BEGIN CERTIFICATE"); n != 2 {
+		t.Fatalf("both reachable: %d certificates", n)
+	}
+
+	// Now the second one is away: no certificate at its address.
+	away := newStand(t)
+	away.certs[n1.URL] = der1
+	changed, err := away.w.Sync(context.Background(), []trust.Node{n1, n2})
+	if err == nil {
+		t.Fatal("a server that was away was not named")
+	}
+	if !strings.Contains(err.Error(), "api-2") {
+		t.Errorf("the error does not name the server that was away: %v", err)
+	}
+	if !changed {
+		t.Error("the server that could be reached was not written")
+	}
+	conf := away.read(t, away.balancerFile)
+	if !strings.Contains(conf, "api-1.ngc.test:7443") {
+		t.Errorf("the reachable server is not in the balancer:\n%s", conf)
+	}
+	if strings.Contains(conf, "api-2.ngc.test:7443") {
+		t.Errorf("the server that was away reached the balancer:\n%s", conf)
+	}
+	if n := strings.Count(away.read(t, away.trustFile), "BEGIN CERTIFICATE"); n != 1 {
+		t.Errorf("%d certificates in the trust file, want the reachable one alone", n)
+	}
+	if away.tests != 1 || away.reloads != 1 {
+		t.Errorf("tests=%d reloads=%d, want 1 and 1", away.tests, away.reloads)
+	}
+
+	// Every one away: nothing is written, and the web.json of the moment
+	// before stays as it is.
+	none := newStand(t)
+	changed, err = none.w.Sync(context.Background(), []trust.Node{n1, n2})
+	if !errors.Is(err, ErrForm) {
+		t.Fatalf("every server away: err=%v, want ErrForm among it", err)
+	}
+	if changed {
+		t.Error("every server away: reported a change")
+	}
+	if got := none.read(t, none.balancerFile); got != "" {
+		t.Errorf("every server away: balancer written:\n%s", got)
 	}
 }
 
@@ -498,5 +607,59 @@ func TestBalancerTemplateMatchesTheContract(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("the controller and %s write two different files.\ncontroller:\n%s\ncontract:\n%s", ulhContract, got, want)
+	}
+}
+
+// TestWorkerParametersStayOnTheBalancerMember is the case the byte-wise
+// comparison above cannot be: testdata/apache-apis.conf is whatever we wrote
+// into it, so a line Apache refuses matches itself just fine. Measured on a
+// real Debian 13 with Apache 2.4.69 on 16.10.2026: "upgrade=websocket" on the
+// ProxyPass of a balancer:// target is
+//
+//	AH00526: Syntax error ... ProxyPass unknown Balancer parameter
+//
+// and the setup of ngc-web stops there. The parameter is a WORKER parameter,
+// so it belongs on the BalancerMember; with it moved, the same apachectl
+// configtest says "Syntax OK". The version note of the plan was right and the
+// place was wrong -- upgrade= needs Apache 2.4.47, but never on a ProxyPass
+// that points at a balancer.
+//
+// Checked here, and not left to a configtest, because this machine has no
+// Apache: what the case holds is the RULE, so the next renderer cannot put a
+// worker parameter back on that line.
+func TestWorkerParametersStayOnTheBalancerMember(t *testing.T) {
+	got := string(Render([]config.WebAPI{
+		{URL: "https://api-1.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE1}, 32)},
+		{URL: "https://api-2.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE2}, 32)},
+	}))
+	members := 0
+	for _, line := range strings.Split(got, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "BalancerMember "):
+			members++
+			if !strings.Contains(trimmed, "upgrade=websocket") {
+				t.Errorf("a BalancerMember carries no upgrade=websocket, so the websocket of the browser cannot pass: %q", trimmed)
+			}
+		case strings.HasPrefix(trimmed, "ProxyPass ") && strings.Contains(trimmed, "balancer://"):
+			// Every key=value on this line is read as a BALANCER parameter.
+			for _, word := range strings.Fields(trimmed)[1:] {
+				if !strings.Contains(word, "=") || strings.HasPrefix(word, "\"") {
+					continue
+				}
+				name := word[:strings.Index(word, "=")]
+				switch name {
+				case "stickysession", "nofailover", "timeout", "maxattempts",
+					"lbmethod", "failonstatus", "failontimeout", "growth",
+					"forcerecovery", "scolonpathdelim", "hcheck":
+					// A balancer parameter; Apache takes these here.
+				default:
+					t.Errorf("ProxyPass to a balancer carries %q, which Apache reads as a balancer parameter and refuses (AH00526, measured on Apache 2.4.69); a worker parameter belongs on the BalancerMember: %q", name, trimmed)
+				}
+			}
+		}
+	}
+	if members != 2 {
+		t.Fatalf("two APIs went in, %d BalancerMember lines came out", members)
 	}
 }
