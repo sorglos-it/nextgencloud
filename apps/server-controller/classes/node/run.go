@@ -51,15 +51,19 @@ import (
 	// signal ends the pairing question. Renaming that one for an import would
 	// be the tail wagging the dog.
 	catch "github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/apache"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/license"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/serve"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
@@ -566,6 +570,25 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		Licensed: licensed,
 		Send:     reg.Control,
 	})
+	// THE INSTALLER OF APPS, and it is built PER CALL on purpose.
+	// install.Deps takes the trust list as a VALUE and this server’s node as
+	// a string, and both move: the list is replaced version by version
+	// (chain.Keeper.Current) and the node is only learned once a version
+	// lists this server (nodeID above). A Manager built once here would
+	// install against the list of this moment -- which is the reason the
+	// updater beside it is still unwired, written out below.
+	//
+	// WHAT IT CARRIES OUT AND WHAT IT REFUSES. Only an app an admin
+	// UPLOADED (core.LocalStore). An app out of a store of the trust list is
+	// refused with install.ErrInternal, and that is the safer of the two
+	// answers rather than a gap nobody sees: install.AcceptInput.LastSeq is
+	// the newest catalogue number already seen from that store, and it is
+	// what keeps a store from handing back an older catalogue. This
+	// controller’s state has no memory of that number (state.Store has no
+	// method for it, counted 18.10.2026), and a guard without memory is no
+	// guard. So a store activation does not run until somebody gives it one;
+	// nothing is lost by it, because no store activation ran before either.
+	installer := appInstaller(version, cfg, st, engine, keeper, nodeID)
 	srv := serve.New(serve.Deps{
 		// serve.Deps may not change once New has seen it, so this one is the
 		// ID AS IT STANDS AT THE START, and that is a named price: a server an
@@ -575,6 +598,7 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		// the price small is that the chain now arrives at all -- without it
 		// the ID was never learned and no restart ever helped.
 		Node: nodeID(), Noise: key, Engine: engine, Chain: keeper, State: st,
+		Installer: installer,
 		// No updater yet, and this is a seam named rather than papered over:
 		// update.Deps takes the trust list as a VALUE (update.Deps.List),
 		// while this controller's list is replaced version by version under
@@ -663,5 +687,66 @@ func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Contex
 			}
 		}
 		return errors.Join(errs...)
+	}
+}
+
+// installerFunc is one function as a serve.Installer. The seam takes an
+// interface so that nothing of serve reaches for package install; what this
+// program hands over is a closure, because the Manager behind it is built
+// anew for every call.
+type installerFunc func(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error)
+
+func (f installerFunc) Activate(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error) {
+	return f(ctx, d, r)
+}
+
+// appInstaller is the installer of apps this program hands the server, and
+// it is a named function so that a case can reach it: a test-only accessor
+// on the server would be a door in the product for the sake of a case.
+//
+// It builds its Manager ANEW for every call -- see the comment at its one
+// caller for why -- and refuses every store but the uploaded one.
+func appInstaller(version string, cfg *config.Controller, st *state.Store,
+	engine ctrlrt.Engine, keeper *chain.Keeper, nodeID func() string) installerFunc {
+	return func(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error) {
+		// THE REFUSAL ABOVE, BUILT AND NOT ONLY WRITTEN. The comment said a
+		// store app is refused and nothing did it, until this line was added
+		// on 18.10.2026 -- a comment that says the opposite of the code is
+		// worse than no comment, and this one would have promised a guard
+		// that was not there.
+		//
+		// The params are read through the contract’s own parser, so bytes that
+		// are no params of this action are the peer’s fault and read as one;
+		// the Manager reads them again the same way, which is one question
+		// asked twice and cheaper than a value carried between the two.
+		a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+		if !ok {
+			return nil, install.ErrInternal
+		}
+		params, err := core.ParseParams(a, d.Params())
+		if err != nil {
+			return nil, install.ErrVerify
+		}
+		p, ok := params.(*core.ActivateParams)
+		if !ok || p.Store != core.LocalStore {
+			return nil, install.ErrInternal
+		}
+		return install.New(install.Deps{
+			State: st, Engine: engine, Sys: install.Host{ServerKey: cfg.DBKey.Bytes()},
+			// The list and the node AS THEY ARE NOW, which is the whole
+			// reason this closure exists.
+			List: keeper.List(), Node: nodeID(), Roles: cfg.Roles,
+			NGC: version, ReleaseKey: cfg.ReleaseKey, StageDir: config.StageDir,
+			// store.MaxPackage is the contract’s own bound, and it is safe to
+			// name here although a package costs twice its size while it is
+			// checked: install.bound cuts this down to what the disk really
+			// has free at every activation, and answers ErrSpace rather than
+			// filling it.
+			Max: store.MaxPackage,
+			// No memory of a catalogue number, and the closure above refuses
+			// every store that would need one before this is ever read.
+			LastSeq: func(string) uint64 { return 0 },
+			Now:     func() int64 { return time.Now().Unix() },
+		}).Activate(ctx, d, r)
 	}
 }

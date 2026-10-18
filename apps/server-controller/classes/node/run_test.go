@@ -3,7 +3,9 @@ package node
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,11 +16,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/serve"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -697,4 +705,169 @@ func TestWireUpLetsTheListOutrankTheFile(t *testing.T) {
 	if got := cb.APIs[0].Hello().Node; got != "ctl-alt" {
 		t.Fatalf("without a list the hello names %q, want %q out of the file", got, "ctl-alt")
 	}
+}
+
+// THE INSTALLER OF APPS IS WIRED, and until 18.10.2026 it was not: serve.Deps
+// carried no installer, serve.Server served no activate at all, and every
+// activation of an uploaded app ended E_INTERNAL -- measured on a running
+// installation that day, with the package in hand and the admin allowed.
+//
+// It is held through the server this function built, not against the literal:
+// what matters is that a channel reaches an installer, and that is what
+// serve.Server asks for.
+func TestWireUpWiresTheInstaller(t *testing.T) {
+	st := newState(t)
+	cfg := &config.Controller{
+		Node: "ctl-1", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+		APIs: []config.APIRef{{URL: "wss://one.example:8443/tunnel"}},
+	}
+	key, err := staticKey(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := wireUp("1.2.3", cfg, key, st, chain.New(st, trust.Anchor{Seq: 1}))
+	if len(c.APIs) == 0 {
+		t.Fatal("wireUp wired no tunnel, so no server either")
+	}
+	// The server is reached the way operation reaches it: as the handler of
+	// a tunnel. Asking the literal would only ask what this case passed.
+	h, ok := c.APIs[0].Handler.(*serve.Server)
+	if !ok {
+		t.Fatalf("the handler of the tunnel is %T, not the server of package serve", c.APIs[0].Handler)
+	}
+	if !h.Serves(core.AppStore, core.ServiceController, core.ActActivate) {
+		t.Fatal("the server does not serve ngc.store/controller/activate -- no app can be activated")
+	}
+	// The control beside it: an action this build really does not carry out
+	// still answers false, so the question is a question and not a yes.
+	if h.Serves(core.AppStore, core.ServiceController, core.ActUninstall) {
+		t.Fatal("the server claims to serve uninstall, which this build does not carry out")
+	}
+}
+
+// THE INSTALLER CARRIES OUT UPLOADED APPS AND REFUSES THE REST, and the
+// refusal is built rather than only written: the comment at wireUp claimed it
+// for a while and nothing did it (18.10.2026). What it protects is named
+// there -- install.AcceptInput.LastSeq is the guard against a store handing
+// back an older catalogue, and this controller's state has no memory of that
+// number.
+func TestTheInstallerRefusesEveryStoreButTheLocalOne(t *testing.T) {
+	ctx := context.Background()
+	st := newState(t)
+	cfg := &config.Controller{
+		Node: "ctl-1", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+		APIs: []config.APIRef{{URL: "wss://one.example:8443/tunnel"}},
+	}
+	// A VERIFIED list, because without one install.Activate answers
+	// ErrInternal to everything and the refusal would be indistinguishable
+	// from the fixture being incomplete.
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	keeper := chain.New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := keeper.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The installer the server is wired with, built by the same function
+	// wireUp hands to serve.Deps -- named rather than closed over so a case
+	// can reach it without a door in the product that only a test uses.
+	inst := appInstaller("1.2.3", cfg, st, ctrlrt.NewPodman(podmanOf(cfg)),
+		keeper, func() string { return cfg.Node })
+	// The refusal is told apart from every other ErrInternal by WHEN it comes:
+	// a store app is turned away before a byte of the package is read, the
+	// uploaded one is not. Both answer the same code in this fixture (the
+	// keeper holds no verified list), so the code alone would measure nothing
+	// -- a mutant that lets the foreign store through lived until this reader
+	// counted the reads (18.10.2026).
+	run := func(store string) (error, int) {
+		params := json.RawMessage(`{"app":"de.example.notes","version":"1.0.0","sha256":"` +
+			b32(1) + `","ui":"` + b32(2) + `","store":"` + store + `"}`)
+		// A signed task, because install.Activate takes nothing else: the
+		// closure reads the same bytes through Decision.Params.
+		d := access.Decision{Core: true, Action: activateActionOf(t),
+			Task: &task.Task{Params: params}}
+		r := &countingReader{}
+		_, err := inst.Activate(context.Background(), d, r)
+		return err, r.reads
+	}
+	// A store of the trust list is refused before anything is read, and with
+	// the code of this build's own limit.
+	if err, reads := run(trust.StoreGlobal); !errors.Is(err, install.ErrInternal) {
+		t.Fatalf("a store app answered %v, want install.ErrInternal", err)
+	} else if reads != 0 {
+		t.Fatalf("a store app was read %d times, want none before the refusal", reads)
+	}
+	// The uploaded one is NOT refused there: it gets past the store question
+	// and runs into the Manager, which has no verified trust list in this
+	// fixture and says so with the same code -- so the two are told apart by
+	// a second run that gives it one.
+	if err, reads := run(core.LocalStore); err == nil {
+		t.Fatal("an uploaded app went through without a trust list")
+	} else if reads == 0 {
+		t.Fatal("an uploaded app was never read -- it was turned away like a store app")
+	}
+}
+
+// TestABrokenTaskOfAnActivationIsAVerificationFailure holds the code of the
+// closure's own parse: a signed task whose parameters this NGC cannot read is
+// not an internal mistake but a task that says something else -- the same
+// reading install.Activate itself writes down (activate.go). A mutant that
+// answered ErrInternal there lived until this case (18.10.2026).
+func TestABrokenTaskOfAnActivationIsAVerificationFailure(t *testing.T) {
+	ctx := context.Background()
+	st := newState(t)
+	cfg := &config.Controller{
+		Node: "ctl-1", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+		APIs: []config.APIRef{{URL: "wss://one.example:8443/tunnel"}},
+	}
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	keeper := chain.New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := keeper.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inst := appInstaller("1.2.3", cfg, st, ctrlrt.NewPodman(podmanOf(cfg)),
+		keeper, func() string { return cfg.Node })
+	d := access.Decision{Core: true, Action: activateActionOf(t),
+		Task: &task.Task{Params: json.RawMessage(`{"app":42}`)}}
+	_, err := inst.Activate(ctx, d, &countingReader{})
+	if !errors.Is(err, install.ErrVerify) {
+		t.Fatalf("a task that does not parse answered %v, want install.ErrVerify", err)
+	}
+}
+
+// activateActionOf is the action of the contract, read and not written.
+func activateActionOf(t *testing.T) core.Action {
+	t.Helper()
+	a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+	if !ok {
+		t.Fatal("the contract has no activate action")
+	}
+	return a
+}
+
+// b32 is a base64url value of 32 bytes, as a checksum of the contract.
+func b32(fill byte) string {
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = fill
+	}
+	return enc.B64.EncodeToString(b)
+}
+
+// countingReader counts how often it was read and always answers the end of
+// the stream, so a reader that is never touched is told from one that is.
+type countingReader struct{ reads int }
+
+func (r *countingReader) Read([]byte) (int, error) {
+	r.reads++
+	return 0, io.EOF
 }

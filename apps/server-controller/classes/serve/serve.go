@@ -40,6 +40,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -94,6 +95,16 @@ type Deps struct {
 	// is its configuration and not a peer's, so a channel that meets a
 	// missing one says nothing else about itself.
 	Engine runtime.Engine
+	// Installer carries out ngc.store/controller/activate: it installs an app
+	// from the package the API sends and starts its container (activate.go).
+	// nil is a controller that was not built with an installer, and every
+	// activate channel ends E_INTERNAL -- which is what every one of them did
+	// until 18.10.2026, when the action had no handler at all.
+	//
+	// WHOEVER WIRES IT BUILDS IT PER CALL. See the doc of Installer: the trust
+	// list and this server's node both move, and install.Deps takes them as
+	// values.
+	Installer Installer
 	// Updater carries out ngc.store/controller/install: the parts of NGC, the
 	// apps and the system packages of this server (update.go). nil is a
 	// controller that was not built with an updater, and every install
@@ -136,9 +147,16 @@ type Deps struct {
 // and answers either a result to encode or the CLOSE the channel ends with.
 type action func(ctx context.Context, d access.Decision, in []byte) (any, *wire.Close)
 
+// transfer is the same for an action that carries a file: it gets the reader
+// of the channel instead of the bytes, and whatever it does not read is
+// drained afterwards (chanInput.drain). A FlowTransfer action may carry
+// gigabytes, so the input of one never becomes a value here.
+type transfer func(ctx context.Context, d access.Decision, r io.Reader) (any, *wire.Close)
+
 // name is an action of core.All, as a key: core.Action holds a function and
-// cannot be compared.
-type name [3]string
+// cannot be compared. The three are named rather than counted, so a reader
+// of a key cannot take the service for the action.
+type name struct{ app, service, action string }
 
 // trustKey is ngc.users/controller/trust, the one core action this package
 // carries out itself (trust.go).
@@ -151,12 +169,19 @@ var trustKey = name{core.AppUsers, core.ServiceController, core.ActTrust}
 // are written.
 type Server struct {
 	d Deps
-	// acts is what this build carries out: trust (trust.go) and install
-	// (update.go). The other core actions of service controller — activate,
-	// deactivate, uninstall, delete-data, stage and license — are carried out
-	// by the tasks that bring the app installer and the licence. Only a test
-	// puts something else in, to see a result this server would refuse.
+	// acts is what this build carries out without a file: trust (trust.go) and
+	// install (update.go). What carries a file stands in flows. The core
+	// actions of service controller still in neither — deactivate, uninstall,
+	// delete-data, stage and license — are carried out by the tasks that bring
+	// them. Only a test puts something else in, to see a result this server
+	// would refuse.
 	acts map[name]action
+	// flows is what this build carries out WITH a file: activate
+	// (activate.go). It is a map of its own and not a second kind of value in
+	// acts, because the two shapes differ where it matters — an action of acts
+	// is handed its whole input as bytes, an action of flows is handed a
+	// reader and never sees the file at once.
+	flows map[name]transfer
 	// first bounds the wait for the shell's first inner message. Only a test
 	// sets it, to run the wait out in a fraction of a second; without it the
 	// wire.E2EFirstTimeout of the contract holds.
@@ -217,7 +242,29 @@ const DefaultMaxApps = 128
 func New(d Deps) *Server {
 	s := &Server{d: d}
 	s.acts = map[name]action{trustKey: s.trust, installKey: s.install}
+	// ONLY WHAT THIS BUILD REALLY CARRIES OUT goes in. An activate without an
+	// installer answers E_INTERNAL either way (activate.go), so leaving the
+	// key out changes nothing an API sees -- what it changes is that Serves
+	// answers the question it is asked. A case that only read the key would
+	// otherwise call a server wired without an installer "serving"
+	// activations, and a mutant that wired nil lived through exactly that
+	// on 18.10.2026.
+	s.flows = map[name]transfer{}
+	if d.Installer != nil {
+		s.flows[activateKey] = s.activate
+	}
 	return s
+}
+
+// Serves says whether this build carries out that core action, in either
+// map. It is for whoever WIRES this server: a program that built it can ask
+// what it got instead of reading the literal it passed, and coreapp.Serves
+// on the API side answers the same question for the same reason.
+func (s *Server) Serves(app, service, action string) bool {
+	k := name{app, service, action}
+	_, inActs := s.acts[k]
+	_, inFlows := s.flows[k]
+	return inActs || inFlows
 }
 
 // HandshakeFailures is how many end-to-end handshakes failed on this server
@@ -317,7 +364,15 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 // the input up to the EOF of the API, the action, and its result as DATA, EOF
 // and CLOSE ok.
 func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) error {
-	run, ok := s.acts[name{d.Action.App, d.Action.Service, d.Action.Name}]
+	key := name{d.Action.App, d.Action.Service, d.Action.Name}
+	// What carries a file is looked for FIRST, and the two maps may never
+	// hold the same key: an action that stood in both would be served by
+	// whichever map is read first, which is a decision nobody wrote down.
+	// TestNoActionIsServedTwice holds that they do not overlap.
+	if flow, ok := s.flows[key]; ok {
+		return s.flow(ctx, ch, d, flow)
+	}
+	run, ok := s.acts[key]
 	if !ok {
 		// access let the channel through, so the action is one of this
 		// controller's — this build just does not carry it out yet. Nothing
