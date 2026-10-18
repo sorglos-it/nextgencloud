@@ -300,12 +300,48 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > | `main` `940b445` (Ausgang) | 834 | 414 | **0** | 1248 | 22,5 min |
 > | nach den drei Zweigen | 873 | 432 | **0** | 1305 | 23,7 min |
 > | **vereint mit `web-reif`** | **933** | 432 | **0** | 1365 | 27,5 min |
+> | dazu `main` `7eeeee5` (PR #80), Lauf 1 | 932 | 432 | **1** | 1365 | 28,0 min |
+> | dieselbe Fassung, Lauf 2 | 932 | 432 | **1** | 1365 | 27,8 min |
 >
 > **+99 grün gegenüber dem Ausgang, und die Übersprünge sind seit dem zweiten Stand
 > unverändert 432** — die Sprachschicht bringt 60 grüne Fälle und **keinen** neuen
 > Übersprung. Die sechs Fälle, die mit `0156cd8` kamen, sind **einzeln** nachgefahren und
 > laufen wirklich: **6 grün, 0 übersprungen** in 11,4 s (`users.spec.js:1623`, `:1695`,
 > `:1722`, `:1743`, `:1784`, `:1809`).
+>
+> **Der rote Fall wird hier genannt statt weggerundet — und der zweite Lauf hat ihn zu einem
+> eigenen Befund gemacht.** Zwei vollständige Läufe auf **demselben** Baum, je **genau einer
+> rot**, und **jedes Mal ein anderer Fall**:
+>
+> | Lauf | roter Fall | woran |
+> |---|---|---|
+> | 1 | `shell/appframe.spec.js:250` | `:199` — das Eingabefeld des Terminals im `iframe` ist nach 5 s **nicht da** („element(s) not found") |
+> | 2 | `shell/desktop-keyboard.spec.js:382` | `:288` — der Tastendruck „7" kommt nicht an, der Rechner im `iframe` steht nach 5 s noch auf `0` (der Rahmen war da, 8× aufgelöst) |
+>
+> **Beide sind dieselbe Familie:** die Schale schickt etwas an eine **gerade geöffnete**
+> App im `iframe`, bevor diese es annehmen kann — einmal ein Feld, das noch nicht da ist,
+> einmal eine Taste, die vor dem Fokus eintrifft. **Was gemessen ist:**
+>
+> - **Allein sind beide grün, je 3 von 3** (7,6–8,2 s), und die ganze Datei
+>   `desktop-keyboard.spec.js` ist grün (**17 Fälle**). Sie scheitern **nur** im vollen Lauf
+>   über 1365 Fälle.
+> - **Es ist nicht die Gleichzeitigkeit im Satz:** `playwright.config.js:71–72` sagt
+>   `fullyParallel: false` und `workers: 1`. Der Satz läuft seriell.
+> - **Es kann nicht von dieser Zusammenführung kommen:** sie fasst **keine einzige Datei
+>   unter `apps/web`** an — `main` bewegte sich allein in Go, `comm -12` über die zwei
+>   Dateinamenslisten gibt **keinen** gemeinsamen Treffer. Der Lauf mit **933 grün / 0 rot**
+>   davor war also der glückliche, nicht der Beweis eines besseren Zustands.
+> - **Keine `retries` eingestellt.** Ein einziges zu langsames Laden färbt damit den ganzen
+>   Satz rot; bei 1365 Fällen und einer 5-Sekunden-Grenze macht das jeden Lauf zu einer
+>   Münze. Ob eine Wiederholung richtig ist oder die Grenze zu knapp, ist eine
+>   **Entscheidung**, keine Messung.
+>
+> **Was daran offen bleibt, und es ist die wichtigere Hälfte:** ob das nur die Prüfstände
+> betrifft oder die Oberfläche selbst. Der Fall `:382` heißt „starting an app puts the focus
+> in the window it opened" — **kommt der Fokus wirklich zu spät, dann verliert auch ein
+> Mensch, der gleich nach dem Öffnen tippt, seine ersten Tasten.** Das ist **nicht gemessen**;
+> gemessen ist nur, dass es unter Last passiert und allein nicht. Ob Prüfstand oder
+> Oberfläche, ist damit eine offene Frage und kein Urteil — siehe auch Abschnitt 5.
 >
 > Auch hier gilt der Satz von oben unverändert: **am Gerät ist nichts davon nachgemessen**,
 > und nach `main` geführt ist nichts.
@@ -675,9 +711,14 @@ heraus · **S2** = ein Riegel wirkt nicht · **S3** = Riegel ohne jede Messung.
 > einem belegten Namen die Zeile **überschreibt** — das ist die Gegenseite des Befundes aus
 > `2cd0e31` und das, was Punkt 27 verlangt.
 >
-> **Nicht in diesem Zweig:** `main` ist seit dieser Zusammenführung weitergelaufen, und
-> PR #80 ist hier **nicht** hineingeführt. Wer diesen Zweig nach `main` führt, bekommt es
-> dabei mit; `users.go` ist eine Datei, die beide Seiten anfassen.
+> **Nachtrag: PR #80 ist jetzt hier hineingeführt** (18.10.2026, `main` `7eeeee5`), und zwar
+> ohne einen Konflikt. **Dabei fällt ein Satz von mir, der falsch war:** ich hatte geschrieben,
+> `users.go` sei „eine Datei, die beide Seiten anfassen". Gegen die gemeinsame Basis
+> (`6315517`) ist das **nicht** so — `main` bewegte sich allein in Go
+> (`coreapp/users.go`, `apache`, `node/run.go`), dieser Zweig allein unter `apps/web` und
+> `docs`. **Kein Dateiname kommt auf beiden Seiten vor**, nachgezählt mit `comm -12` über die
+> zwei Namenslisten. Der Satz stammte aus einer früheren Basis, in der `web-reif` noch
+> eigene Änderungen an `users.go` mitbrachte.
 
 ### B7 — Eine migrierte, aber nicht eingerichtete Anlage lügt bei jeder Anmeldung.
 
@@ -759,3 +800,12 @@ weiterträgt.
 - **Die Schwere-Einstufungen in Abschnitt 2 sind übernommen**, nicht neu vergeben — aus
   `docs/befunde-17-18-10-2026.md`. Wo ich eine selbst gesetzt habe (R6, „S2"), ist es ein
   Urteil, keine Messung.
+- **Ob der späte Fokus beim Öffnen einer App nur die Prüfstände trifft oder auch einen
+  Menschen, ist nicht gemessen.** Zwei vollständige Läufe zeigen je einen roten Fall aus
+  derselben Familie (Eingabe an eine gerade geöffnete App im `iframe`), allein sind beide
+  3 von 3 grün. Dass es „nur sprunghafte Prüfstände" sind, ist die **bequeme** Lesart und
+  belegt ist sie nicht; die andere wäre, dass die ersten Tasten nach dem Öffnen einer App
+  wirklich verloren gehen. Kasten unter H9.
+- **Dass der rote Fall nicht von der `main`-Zusammenführung kommt, ist ein Schluss, keine
+  Messung am Verhalten.** Belegt ist, dass sie keine Datei unter `apps/web` anfasst; ein
+  vollständiger Lauf auf `main` **ohne** diesen Zweig ist zum Vergleich **nicht** gefahren.
