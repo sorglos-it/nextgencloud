@@ -139,10 +139,36 @@ func Render(apis []config.WebAPI) []byte {
 // its node before it is written, Apache is reloaded only after a configtest,
 // and a failing configtest puts the previous files back. changed says whether
 // anything about the files was different from what already stood there.
+//
+// A SERVER THAT IS AWAY DOES NOT HOLD THE OTHERS UP, and that is a measured
+// decision, not a convenience. This used to answer the first Fetch that failed
+// and write nothing at all, so one API that was down froze what Apache knew
+// for the whole installation — exactly at the moment the list had changed
+// because a server had moved or a new one had joined. Measured on 18.10.2026
+// at a two-machine installation: `WARN Apache could not be brought in line
+// with the trust list err="dial tcp …:7443: connect: no route to host"`, twice,
+// and the balancer kept naming a server that was not there any more.
+//
+// What it costs to leave such a node OUT is small and measured at the same
+// installation: Apache answers over the members that are left (30 of 30 right
+// answers with one dead member in the file), marks a member it cannot reach as
+// failed for retry=5 seconds (AH00959) and pays about 3 s once per window. What
+// it costs to leave a WRONG one IN is not small: a member whose certificate
+// does not match its address makes Apache answer the client 500
+// (AH00898/AH01097, measured 1 in 24 and 1 in 40 requests) and that worker is
+// not marked failed, so every turn of lbmethod=byrequests hits it again.
+//
+// A node left out comes back by itself: node.watchWeb runs Sync again on every
+// change of the list and once a day, so a server that is reachable with the
+// right pin is written back then. The errors of the nodes that were left out
+// come back joined, so the log names every one of them, and the answer is
+// changed AND an error: the files were written, and something about the list
+// could not be.
 func (w *Writer) Sync(ctx context.Context, nodes []trust.Node) (bool, error) {
 	var (
 		apis  []config.WebAPI
 		certs [][]byte
+		errs  []error
 	)
 	for _, n := range nodes {
 		if n.Kind != trust.NodeAPI {
@@ -160,19 +186,32 @@ func (w *Writer) Sync(ctx context.Context, nodes []trust.Node) (bool, error) {
 		}
 		der, err := w.o.Fetch(ctx, n)
 		if err != nil {
-			return false, err
+			errs = append(errs, fmt.Errorf("node %q: %w", n.ID, err))
+			continue
 		}
 		if err := checkPin(der, n.TLS); err != nil {
-			return false, fmt.Errorf("%w: node %q", err, n.ID)
+			// The sharper of the two: something answers at that address and it
+			// is not the server the list names. It is left out for the same
+			// reason it is named loudly — a pin that does not match is the one
+			// thing a balancer must not carry.
+			errs = append(errs, fmt.Errorf("node %q: %w", n.ID, err))
+			continue
 		}
 		apis = append(apis, config.WebAPI{URL: url, TLS: n.TLS})
 		certs = append(certs, der)
 	}
 	conf := Render(apis)
 	if conf == nil {
-		return false, ErrForm
+		// Not one API could be written. A balancer without a member makes
+		// Apache answer every /api/ with 503, so what it has keeps working and
+		// the reasons go back to the caller.
+		return false, errors.Join(append(errs, ErrForm)...)
 	}
-	return w.apply(ctx, bundle(certs), conf, apis)
+	changed, err := w.apply(ctx, bundle(certs), conf, apis)
+	if err != nil {
+		return changed, err
+	}
+	return changed, errors.Join(errs...)
 }
 
 // Compare checks the certificate one API serves against the one in the trust
