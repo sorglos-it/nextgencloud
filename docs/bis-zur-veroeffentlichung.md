@@ -274,6 +274,41 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > ist hier der Prüfsatz, nicht das Gerät — und genau diese vier Befunde sind am 17.10. **am
 > laufenden System** gefunden worden, nicht im Prüfsatz. Nach `main` geführt ist **nichts**:
 > das liegt beim Koordinator.
+>
+> **Nachtrag vom 18.10.2026, 17:10: die zweite Hälfte ist auch drin.** `origin/web-reif`
+> hatte **dieselben drei Zweige** zusammengeführt, ohne dass die beiden Sitzungen voneinander
+> wussten — und keiner der zwei Zweige trug alles. Beide sind jetzt **einer**:
+>
+> - **Ein Konflikt**, in `users.js`, und wieder derselbe Schnitt: `web-reif` hatte seine
+>   deutschen Sätze durch `t()` ersetzt, `0156cd8` hatte neue deutsche Sätze dazugelegt.
+>   Keine Seite durfte gewinnen — der Abschnitt „Eingetragene Server" steht jetzt in der
+>   `t()`-Form, weil `fillListed()` unter dem Konflikt schon darauf zeigte. Wer hier
+>   `web-reif` allein genommen hätte, hätte eine Oberfläche gebaut, die auf eine
+>   Zeichenkette zeigt, die es nicht gibt.
+> - **29 Sätze in allen fünf Sprachen nachgetragen** (de, en, fr, it, es — die Projektregel
+>   ist alle fünf, nie nur de/en): Adresse ändern, Stilllegen, der letzte API-Server.
+>   Nachgemessen: je **350 Schlüssel**, in allen fünf **dieselbe Menge**, **dieselbe
+>   Reihenfolge** und **dieselben Platzhalter**; kein leerer Satz; kein im Code benutzter
+>   Schlüssel ohne Übersetzung; `users.js` ohne eine lebende deutsche Zeichenkette.
+> - **`tools/check.sh`: `check: ok`** (325 Fälle, 0 rot, 84 übersprungen aus der Umgebung).
+>   Die Sprachprüfsätze einzeln: **21 grün**.
+>
+> **Die drei Stände nebeneinander, derselbe Prüfsatz, derselbe Rechner:**
+>
+> | Stand | grün | übersprungen | rot | Fälle | Dauer |
+> |---|---:|---:|---:|---:|---:|
+> | `main` `940b445` (Ausgang) | 834 | 414 | **0** | 1248 | 22,5 min |
+> | nach den drei Zweigen | 873 | 432 | **0** | 1305 | 23,7 min |
+> | **vereint mit `web-reif`** | **933** | 432 | **0** | 1365 | 27,5 min |
+>
+> **+99 grün gegenüber dem Ausgang, und die Übersprünge sind seit dem zweiten Stand
+> unverändert 432** — die Sprachschicht bringt 60 grüne Fälle und **keinen** neuen
+> Übersprung. Die sechs Fälle, die mit `0156cd8` kamen, sind **einzeln** nachgefahren und
+> laufen wirklich: **6 grün, 0 übersprungen** in 11,4 s (`users.spec.js:1623`, `:1695`,
+> `:1722`, `:1743`, `:1784`, `:1809`).
+>
+> Auch hier gilt der Satz von oben unverändert: **am Gerät ist nichts davon nachgemessen**,
+> und nach `main` geführt ist nichts.
 
 ### H10 — Ein `ngc-web`-Update über den Controller kann heute nicht gehen.
 
@@ -537,9 +572,30 @@ heraus · **S2** = ein Riegel wirkt nicht · **S3** = Riegel ohne jede Messung.
 > ohne voneinander zu wissen. Die zwei Zweige sind nicht deckungsgleich: `web-reif` fehlt
 > `0156cd8` (die Serveradresse) und das neuere `main`, `veroeffentlichungsliste` fehlt die
 > Sprachschicht. **Wer nur einen von beiden nach `main` nimmt, verliert, was im anderen
-> steckt.** Was von den 97 übrigen Zeichenketten noch Oberflächentext ist und was Kennungen
-> sind, ist **nicht** aufgeschlüsselt. Siehe `docs/befunde-17-18-10-2026.md`, Abschnitt 0,
-> Berichtigung Punkt 3.
+> steckt.** Siehe `docs/befunde-17-18-10-2026.md`, Abschnitt 0, Berichtigung Punkt 3.
+>
+> **Zweite Berichtigung, 18.10.2026, 17:10: zusammengeführt, und jetzt ist auch
+> aufgeschlüsselt, was übrig ist.** `origin/web-reif` ist in diesen Zweig hineingeführt; die
+> 29 Sätze, die `0156cd8` mitbrachte (Adresse ändern, Stilllegen), sind in **allen fünf
+> Sprachen** nachgetragen — je **350 Schlüssel**, gleiche Menge, gleiche Reihenfolge,
+> gleiche Platzhalter in allen fünf (nachgemessen), und `users.js` hat **keine** lebende
+> deutsche Zeichenkette mehr.
+>
+> **Was von B1 wirklich übrig ist, Zeile für Zeile nachgesehen:** von 105 deutschen
+> Zeichenketten im Oberflächen-Code stehen **68 nicht in Kommentaren**, und davon sind die
+> meisten **keine Oberflächentexte**: `contracts/wire.js` (14) sind die **Vertragstexte** der
+> vierzehn Fehlercodes — sie reisen im CLOSE-Rahmen, `shared/wire/wire.go` hält dieselben
+> Wörter, und `lang.js` sagt selbst, dass das absichtlich nicht dasselbe ist wie
+> Oberflächentext; `shell/fake-link.js` (17) ist die Attrappe des Prüfsatzes; der Rest sind
+> Kennungen und Namen (`ApiError`, `NotTrusted`, `Content-Type`, `Retry-After`, `ArrowDown`,
+> `Backspace`, Schriftnamen wie `Cascadia Mono`).
+>
+> **Übrig bleiben rund 13 Sätze, die ein Nutzer wirklich liest:** `shell/desktop.js` vier
+> („Alle Apps", „Aussehen", „Hintergrund", „Keine Treffer."), `shell/theme.js` drei
+> Themennamen („Weltraum", „Polarlicht", „Abendrot"), `assets/apps/terminal/app.js` fünf
+> Sätze und `assets/apps/calculator/app.js` einen („Vorzeichen"). **Größe damit: ein halber
+> Tag, nicht 2–3 Tage** — und der Schreibtischrahmen ist die wichtigere Hälfte davon, die
+> zwei Beispiel-Apps die unwichtigere.
 
 ### B2 — Eine Sicherung geht nur über die Befehlszeile. Eine Rücksicherung gar nicht.
 
