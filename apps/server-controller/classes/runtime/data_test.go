@@ -75,6 +75,71 @@ func fscryptDir(t *testing.T) string {
 	return paths.appData
 }
 
+// A DIRECTORY THAT ALREADY CARRIES ANOTHER KEY'S POLICY IS ErrPolicy, and
+// nothing of it is overwritten: what lies in there opens with the other key
+// only, and binding it to a new one would make a folder whose name says one
+// app and whose contents belong to another.
+//
+// It was unmeasured until 19.10.2026, and that is how it was found: a
+// neighbouring session ran this package as root on the real machine and
+// reported a LIVING mutant - take the EEXIST -> ErrPolicy line out of
+// setPolicy and all 195 cases stayed green. There was no case for ErrPolicy in
+// the whole package.
+//
+// The kernel is what decides here, so this case asks the kernel: the same
+// empty directory is bound twice, once with each of two identifiers. And both
+// halves are read, because only together do they say what the contract
+// promises - the SAME policy again is accepted (that is what makes EnsureData
+// repeatable for an install that failed halfway), ANOTHER one is refused.
+//
+// It also holds that the refusal is not the OTHER one: a filesystem that
+// cannot encrypt at all answers every one of these calls, and a case that took
+// ErrNoFscrypt for ErrPolicy would be green on a machine where nothing works.
+func TestADirectoryWithAnotherKeysPolicyIsRefused(t *testing.T) {
+	root := fscryptDir(t)
+	if err := os.MkdirAll(root, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "org.example.policy")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Two keys of this test's own, and two identifiers the KERNEL derived from
+	// them: the identifier is never written down here, it is read back from
+	// the call that added the key (addKey).
+	first, err := addKey(root, bytes.Repeat([]byte{0x21}, 64))
+	if err != nil {
+		t.Fatalf("the first key could not be added: %v", err)
+	}
+	second, err := addKey(root, bytes.Repeat([]byte{0x22}, 64))
+	if err != nil {
+		t.Fatalf("the second key could not be added: %v", err)
+	}
+	if first == second {
+		t.Fatal("the two keys got one identifier - then this case measures nothing")
+	}
+	if err := setPolicy(dir, first); err != nil {
+		t.Fatalf("the first policy could not be set: %v", err)
+	}
+	// The SAME one again: accepted, and that is the half EnsureData rests on.
+	if err := setPolicy(dir, first); err != nil {
+		t.Fatalf("the same policy again answered %v, want it to be accepted", err)
+	}
+	// And the other one: refused, as ErrPolicy and not as anything else.
+	err = setPolicy(dir, second)
+	if err == nil {
+		t.Fatal("another key's policy was accepted - the data of that directory " +
+			"would then be reachable under two keys")
+	}
+	if errors.Is(err, ErrNoFscrypt) {
+		t.Fatalf("this filesystem cannot encrypt at all (%v) - the case measured the "+
+			"earlier wall and not the policy", err)
+	}
+	if !errors.Is(err, ErrPolicy) {
+		t.Fatalf("setPolicy answered %v, want ErrPolicy", err)
+	}
+}
+
 // The key of an app is tied to both halves and to nothing else: change the
 // server's key or the app, and it is a different key. It is 64 bytes, which is
 // what AES-256-XTS takes, and it never leaves this process - the test shows

@@ -940,9 +940,27 @@ func TestLoadImageAnswersWithTheTagOfTheTar(t *testing.T) {
 	if ref != "ngc/terminal:1.0.0" {
 		t.Fatalf("ref = %q", ref)
 	}
-	want := []string{"load", "--input", tarPath}
+	// THE TAR GOES IN ON STDIN AND THE ARGUMENT LIST NAMES NO PATH, since
+	// 19.10.2026. With --input the app's own user had to open a file under
+	// /var/lib/ngc/staged, which is root's, and may not: measured on the real
+	// machine, from podman's own mouth - "faccessat /var/lib/ngc/staged/
+	// accept-.../files/services/amd64.tar: permission denied". The controller
+	// opens it now and hands the child the open end.
+	//
+	// Both halves are held, because the first without the second would pass
+	// for a call that sends nothing at all: the argument list, and the BYTES
+	// that arrived on stdin - the file itself, compared, not its length.
+	want := []string{"load"}
 	if args := f.args(t); !slices.Equal(args, want) {
 		t.Fatalf("args = %q, want %q", args, want)
+	}
+	tar, err := os.ReadFile(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.gotOnStdin(t); got != string(tar) {
+		t.Fatalf("podman read %d bytes on stdin, want the %d bytes of the tar",
+			len(got), len(tar))
 	}
 }
 
