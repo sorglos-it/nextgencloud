@@ -33,6 +33,15 @@ func (s *Server) trust(ctx context.Context, _ access.Decision, in []byte) (any, 
 	seq, err := s.d.Chain.Apply(ctx, in)
 	switch {
 	case err == nil:
+		// The list is kept, so the answer stands whatever comes of this: what
+		// Deps.TrustChanged releases is Apache's business and not the API's,
+		// and a web server that could not be told belongs in the log of THIS
+		// server and not in a refused channel. It may do nothing slow, so it
+		// is called here and not behind a goroutine of its own: one send on a
+		// channel of one place is all node.wireUp puts behind it.
+		if s.d.TrustChanged != nil {
+			s.d.TrustChanged()
+		}
 		return core.TrustResult{Seq: seq}, nil
 	case errors.Is(err, chain.ErrStore):
 		// The one failure here that is worth a line: it takes a local store

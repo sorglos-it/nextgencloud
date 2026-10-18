@@ -236,6 +236,20 @@ type RunConfig struct {
 	// told (apache.Writer.Compare). It runs once a day and after every tunnel
 	// that came off. nil: this server has no role web and checks nothing.
 	Compare func(ctx context.Context) error
+	// Sync brings the balancer, the trust file and web.json in line with the
+	// API servers of the trust list (apache.Writer.Sync). It runs whenever a
+	// version of the list was verified and kept (Listed) and once a day. nil:
+	// this server has no role web and writes nothing.
+	//
+	// It is the half that owns the LIST, where Compare owns the certificate of
+	// a node already written. Both are needed and neither does the other's
+	// work: without this one a second API server that joined and was taken in
+	// never reaches Apache at all (measured, serve.Deps.TrustChanged).
+	Sync func(ctx context.Context) error
+	// Listed releases Sync: one place in the buffer, because what it releases
+	// does not depend on how many versions arrived, only that one did. nil:
+	// only the daily beat runs Sync.
+	Listed <-chan struct{}
 	// The intervals. 0 is the constant of this file.
 	Status, Purge, Web, Grace time.Duration
 	// Now is the clock of Purge, in seconds. nil: time.Now().Unix().
@@ -381,27 +395,59 @@ func (c RunConfig) clock(ctx context.Context) {
 	}
 }
 
-// watchWeb runs the certificate check of a server with the role web: once a
-// day, and once for every tunnel that came off (built).
+// watchWeb is what a server with the role web tells Apache, and it is one
+// goroutine for both halves: the list (Sync) whenever a version of the trust
+// list was verified and kept (Listed), and the certificates (Compare) for
+// every tunnel that came off (built). The daily beat runs both.
 //
-// It is a goroutine of its own and no case of clock, because the check reaches
+// Sync before Compare on the day, and that order is the point: Sync writes the
+// trust file out of the list and Compare then finds nothing left to renew,
+// while the other way round Compare would work on a file Sync is about to
+// write anyway.
+//
+// The daily beat carries Sync and not only Compare because a Sync that failed
+// is otherwise never retried: Listed fires once per version, and a version
+// that arrived while an API was unreachable would leave the balancer behind
+// the list until the next admin changed something. Sync writes nothing when
+// the files already say what the list says (apache.Writer.apply compares the
+// bytes), so the beat costs one read per API and no reload.
+//
+// It is a goroutine of its own and no case of clock, because both halves reach
 // out over the network: a slow API would hold the status of this server behind
-// it.
+// them.
 func (c RunConfig) watchWeb(ctx context.Context, built <-chan struct{}) {
-	if c.Compare == nil {
+	if c.Compare == nil && c.Sync == nil {
 		return
 	}
 	day := time.NewTicker(c.every(c.Web, WebEvery))
 	defer day.Stop()
 	for {
+		var sync, compare bool
 		select {
 		case <-ctx.Done():
 			return
 		case <-day.C:
+			sync, compare = true, true
 		case <-built:
+			compare = true
+		case <-c.Listed:
+			// A version of the trust list arrived. Only the list half runs:
+			// the certificate of a node Sync just wrote is the one it fetched
+			// to check its pin.
+			sync = true
 		}
-		if err := c.Compare(ctx); err != nil && ctx.Err() == nil {
-			c.logger().Warn("the certificates of the APIs could not be checked", "err", err)
+		if sync && c.Sync != nil {
+			if err := c.Sync(ctx); err != nil && ctx.Err() == nil {
+				// The list is kept either way - this is what Apache was not
+				// told. Named as such, because the balancer then answers for
+				// a set of API servers that is not the installation's.
+				c.logger().Warn("Apache could not be brought in line with the trust list", "err", err)
+			}
+		}
+		if compare && c.Compare != nil {
+			if err := c.Compare(ctx); err != nil && ctx.Err() == nil {
+				c.logger().Warn("the certificates of the APIs could not be checked", "err", err)
+			}
 		}
 	}
 }
@@ -566,7 +612,24 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		Licensed: licensed,
 		Send:     reg.Control,
 	})
+	// The signal that a version of the trust list was verified and kept,
+	// coalescing like built in Run: one place is enough, because what it
+	// releases works on the list AS IT NOW STANDS and not on the version that
+	// released it. It is never closed - the writer is the goroutine of a
+	// channel, and closing it would be a send on a closed channel for the rest
+	// of the program.
+	listed := make(chan struct{}, 1)
 	srv := serve.New(serve.Deps{
+		// The one thing this does is release watchWeb, and it does it without
+		// holding the channel that brought the list: serve.Deps.TrustChanged
+		// may do nothing slow, and writing Apache's files plus a configtest
+		// and a reload is as slow as it gets.
+		TrustChanged: func() {
+			select {
+			case listed <- struct{}{}:
+			default:
+			}
+		},
 		// serve.Deps may not change once New has seen it, so this one is the
 		// ID AS IT STANDS AT THE START, and that is a named price: a server an
 		// admin lists while it runs says its node in the hello at once (nodeID
@@ -586,7 +649,7 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		// this task.
 		Updater: nil,
 	})
-	c := RunConfig{State: st, Chain: keeper, Report: rep}
+	c := RunConfig{State: st, Chain: keeper, Report: rep, Listed: listed}
 	for _, a := range cfg.APIs {
 		c.APIs = append(c.APIs, link.Config{
 			API: a, Noise: key, Hello: rep.Hello, Handler: srv,
@@ -605,7 +668,11 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		})
 	}
 	if slices.Contains(cfg.Roles, tunnel.RoleWeb) {
-		c.Compare = webCompare(cfg, keeper)
+		w := apache.New(apache.Options{
+			WebConfig: cfg.WebConfig, TrustFile: config.APITrustFile, BalancerFile: config.BalancerFile,
+		})
+		c.Compare = webCompare(w, keeper)
+		c.Sync = webSync(w, keeper)
 	}
 	return c
 }
@@ -636,10 +703,7 @@ func installationOf(k *chain.Keeper) string {
 // A node it cannot reach does not stop the others: the next API may be up, and
 // what Apache has for the one that is away keeps working until Sync takes it
 // out. The errors are joined so the log names every one of them.
-func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Context) error {
-	w := apache.New(apache.Options{
-		WebConfig: cfg.WebConfig, TrustFile: config.APITrustFile, BalancerFile: config.BalancerFile,
-	})
+func webCompare(w *apache.Writer, k *chain.Keeper) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		l := k.List()
 		if l == nil {
@@ -663,5 +727,49 @@ func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Contex
 			}
 		}
 		return errors.Join(errs...)
+	}
+}
+
+// webSync brings Apache in line with the API servers of the trust list: the
+// balancer, the certificates it proxies to and web.json, all three out of the
+// one list (apache.Writer.Sync).
+//
+// It is the half that puts a NEW server in, and nothing else does: Compare
+// renews the certificate of a node that already stands in the trust file and
+// leaves a node that does not to this one. A server that joined and was taken
+// into the trust list therefore reaches Apache here or not at all - measured
+// on 17.10.2026, where it was not at all (serve.Deps.TrustChanged).
+//
+// A list with no API node at all is NOT written: Sync would render a balancer
+// with no member, and Apache answers every /api/ with 503 then. It cannot
+// happen from a verified list - a list whose own API is gone is one no browser
+// could have signed - and if it ever does, what Apache has keeps working and
+// the log says why nothing was written.
+func webSync(w *apache.Writer, k *chain.Keeper) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		l := k.List()
+		if l == nil {
+			return nil
+		}
+		apis := 0
+		for _, n := range l.Nodes {
+			if n.Kind == trust.NodeAPI {
+				apis++
+			}
+		}
+		if apis == 0 {
+			return fmt.Errorf("node: version %d of the trust list names no API server", l.Seq)
+		}
+		changed, err := w.Sync(ctx, l.Nodes)
+		if err != nil {
+			return err
+		}
+		if changed {
+			// The number and not the names: which servers an installation has
+			// is its own, and this line is read to see THAT Apache followed.
+			slog.Info("Apache was brought in line with the trust list",
+				"seq", l.Seq, "apis", apis)
+		}
+		return nil
 	}
 }
