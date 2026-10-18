@@ -33,6 +33,10 @@ import { Budget, decode } from "../contracts/json.js";
 import { packageUI } from "../contracts/pack.js";
 import { proofShape, validateProof } from "../contracts/proof.js";
 import { PURPOSE_TRUST_LIST, parseEnvelope } from "../contracts/sign.js";
+// Only for CODES: one refusal of the controller (FORBIDDEN) is worth its own
+// sentence, and the code it is read from belongs to the contract, not to this
+// app.
+import * as wire from "../contracts/wire.js";
 
 const EMPTY = new Uint8Array(0);
 
@@ -869,8 +873,20 @@ class Store {
       // With a task the OPEN carries no params of its own: only the signed
       // ones count.
       await this.ask(action, null, { taskBytes, confirmBytes });
-    } catch {
-      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
+    } catch (e) {
+      // ONE REFUSAL SAYS SOMETHING THE PERSON CAN ACT ON, and until
+      // 18.10.2026 this catch threw it away: the code was not even bound, so
+      // every refusal read "Das hat der Rechner nicht angenommen" - the
+      // sentence that cost a whole evening on the real machine, because a
+      // task without root rights on that server looks exactly like a server
+      // that is having a bad day. What is read is OUR OWN code
+      // (wire.CODES.FORBIDDEN, set by the controller), never a text from the
+      // other side: the sentence below is this app's, and nothing of a
+      // foreign answer reaches the screen.
+      this.say("error", e?.code === wire.CODES.FORBIDDEN
+        ? "Dafür fehlen Ihnen auf diesem Server die Systemrechte. Sie werden in "
+          + "»Benutzer und Rechte« unter »Server« bei »Systemrechte« vergeben."
+        : "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
       return false;
     }
     this.say("info", done);

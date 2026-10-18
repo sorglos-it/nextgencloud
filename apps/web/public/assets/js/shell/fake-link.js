@@ -45,6 +45,7 @@
 //
 // It is not in contracts/ on purpose: nothing in there is a fake.
 import { b64encode } from "../contracts/b64.js";
+import { CODES } from "../contracts/wire.js";
 import { UIWriter } from "../contracts/uitar.js";
 import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contracts/sign.js";
 import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
@@ -733,6 +734,18 @@ export async function fakeWorld() {
         confirm: o.confirmBytes ? new TextDecoder().decode(o.confirmBytes) : "",
         body: b64encode(body),
       });
+      // A REFUSAL OF THE OTHER SIDE, as the real link hands one over: a
+      // ChannelError carrying one of wire's own codes (net/channel.js, fail).
+      // The knob names actions, so a case can measure what the surface makes
+      // of E_FORBIDDEN without inventing an error shape of its own - an
+      // error the stand-in made up differently from the real one would
+      // measure the stand-in.
+      if (or("refuse", []).includes(name)) {
+        const { ChannelError } = await import("../net/channel.js");
+        const code = typeof knobs.refuseCode === "string" && knobs.refuseCode !== ""
+          ? knobs.refuseCode : CODES.FORBIDDEN;
+        throw new ChannelError(code);
+      }
       const make = results[`${app}/${name}`];
       if (make === undefined) throw new Error(`fake-link: nothing for ${app}/${service}/${name}`);
       return await make(body, params);

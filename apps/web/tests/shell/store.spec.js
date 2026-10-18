@@ -257,6 +257,52 @@ test("a right the admin did not allow stops the activation", async ({ page }) =>
   expect(await names(page)).not.toContain("ngc.store/activate");
 });
 
+// ------------------------------------------------- 3b. a refusal that says why
+//
+// ONE REFUSAL IS WORTH ITS OWN SENTENCE. Until 18.10.2026 the catch around
+// the activation did not even BIND the error (`} catch {`), so every refusal
+// of the controller read "Das hat der Rechner nicht angenommen. Bitte es noch
+// einmal versuchen." - and a task that fails for want of root rights on that
+// server looks exactly like a server having a bad day. Measured on the real
+// Debian-13 machine that day: 49 seconds of waiting, then that sentence, and
+// nothing in the log tab, nothing in the journal of API or controller.
+//
+// What is read is NGC's OWN code (wire.CODES.FORBIDDEN, set by the
+// controller), never a text from the other side.
+test("a refused activation says that the system rights are missing, and where they are given",
+  async ({ page }) => {
+    await store(page, { refuse: ["activate"] });
+    await tab(page, "Hochladen").click();
+    await page.locator(".store input[type=file]").setInputFiles({
+      name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
+    });
+    await expect(page.locator(".upfacts")).toBeVisible();
+    await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+    // The task really went out: what is measured is the answer to it, not a
+    // surface that never sent anything.
+    await expect.poll(() => names(page)).toContain("ngc.store/activate");
+    const said = page.getByRole("status");
+    await expect(said).toContainText("Systemrechte");
+    await expect(said).toContainText("Server");
+    await expect(said).not.toContainText("Das hat der Rechner nicht angenommen");
+  });
+
+// The other side of it, and it is the half that keeps the sentence honest:
+// any OTHER refusal keeps the general wording. A surface that blamed the
+// rights for every failure would send the person to the wrong screen.
+test("a refusal that is not about rights keeps the general sentence", async ({ page }) => {
+  await store(page, { refuse: ["activate"], refuseCode: "E_UNREACHABLE" });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  await expect.poll(() => names(page)).toContain("ngc.store/activate");
+  await expect(page.getByRole("status"))
+    .toContainText("Das hat der Rechner nicht angenommen");
+});
+
 // ---------------------------------------------------------------- 4. target
 
 test("the target list offers only controllers that are online and run services", async ({ page }) => {
