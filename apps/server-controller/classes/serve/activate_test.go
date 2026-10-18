@@ -194,7 +194,7 @@ func TestEachInstallErrorHasItsOwnCode(t *testing.T) {
 // and then in acts, so an action in both would be served by the stream half
 // and the other half would be a line no case can reach.
 func TestNoActionIsBothBufferedAndStreamed(t *testing.T) {
-	s := New(Deps{})
+	s := New(Deps{Installer: &fakeInstaller{}})
 	if len(s.streams) == 0 {
 		t.Fatal("no streamed action at all: the fork of this build is gone")
 	}
@@ -210,7 +210,7 @@ func TestNoActionIsBothBufferedAndStreamed(t *testing.T) {
 // server whose map says "activate" of another app would serve a channel access
 // let through for something else.
 func TestEveryServedActionIsOneOfTheContract(t *testing.T) {
-	s := New(Deps{})
+	s := New(Deps{Installer: &fakeInstaller{}})
 	keys := make([]name, 0, len(s.acts)+len(s.streams))
 	for k := range s.acts {
 		keys = append(keys, k)
@@ -415,5 +415,37 @@ func TestCreditThatCannotBeGivenBackEndsTheChannel(t *testing.T) {
 		if cl == nil || cl.Code != c.want {
 			t.Errorf("%s: the channel owes %+v, want %q", name, cl, c.want)
 		}
+	}
+}
+
+// WHAT THE MAP SAYS IS WHAT THIS BUILD CAN DO. A server wired without an
+// installer refuses every activate channel (activate.go, and since the map is
+// conditional it does not even reach the action), so it may not answer "yes"
+// when it is asked whether it serves activations. Whoever wires this server
+// reads it back here instead of reading the literal it passed to New.
+//
+// The two buffered actions are in the same assertion on purpose: they are
+// wired unconditionally, so a Serves that answered "no" to everything would
+// pass the half above and fail here.
+func TestServesSaysWhatThisBuildCarriesOut(t *testing.T) {
+	without := New(Deps{})
+	if without.Serves(core.AppStore, core.ServiceController, core.ActActivate) {
+		t.Error("a server without an installer says it serves activations")
+	}
+	if len(without.streams) != 0 {
+		t.Errorf("streams of a server without an installer: %v", without.streams)
+	}
+	with := New(Deps{Installer: &fakeInstaller{}})
+	if !with.Serves(core.AppStore, core.ServiceController, core.ActActivate) {
+		t.Error("a server with an installer says it does not serve activations")
+	}
+	for _, k := range []name{trustKey, installKey} {
+		if !with.Serves(k[0], k[1], k[2]) {
+			t.Errorf("%v is wired and Serves says no", k)
+		}
+	}
+	// An action of another app is none of this server's, whatever its name.
+	if with.Serves(core.AppUsers, core.ServiceController, core.ActActivate) {
+		t.Error("an activate of another app is served")
 	}
 }

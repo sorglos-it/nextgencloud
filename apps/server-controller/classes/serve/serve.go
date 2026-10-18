@@ -255,8 +255,30 @@ const DefaultMaxApps = 128
 func New(d Deps) *Server {
 	s := &Server{d: d}
 	s.acts = map[name]action{trustKey: s.trust, installKey: s.install}
-	s.streams = map[name]stream{activateKey: s.activate}
+	// ONLY WHAT THIS BUILD REALLY CARRIES OUT goes in. An activate channel on
+	// a server wired without an installer ends E_INTERNAL either way - with
+	// the key it ends there inside the action (activate.go), without it at the
+	// same code in core - so leaving the key out changes nothing an API sees.
+	// What it changes is that Serves answers the question it is asked: a map
+	// that holds the key regardless says this server carries out activations
+	// that it refuses, and whoever wires it then reads back the literal it
+	// passed to New instead of what the server got.
+	s.streams = map[name]stream{}
+	if d.Installer != nil {
+		s.streams[activateKey] = s.activate
+	}
 	return s
+}
+
+// Serves says whether this build carries out that core action, in either map.
+// It is for whoever WIRES this server: a program that built it can ask what it
+// got instead of reading the literal it passed, and coreapp.Dispatcher.Serves
+// on the API side answers the same question for the same reason.
+func (s *Server) Serves(app, service, action string) bool {
+	k := name{app, service, action}
+	_, inActs := s.acts[k]
+	_, inStreams := s.streams[k]
+	return inActs || inStreams
 }
 
 // HandshakeFailures is how many end-to-end handshakes failed on this server
