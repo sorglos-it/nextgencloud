@@ -843,8 +843,22 @@ class Store {
       // With a task the OPEN carries no params of its own: only the signed
       // ones count.
       await this.ask(action, null, signed);
-    } catch {
-      this.say("error", t("store.node.refused"));
+    } catch (e) {
+      // THE SENTENCE OF THE SERVER, WHERE IT HAS ONE, and it is marked as his.
+      // This shell's own sentence says what happened and what to try; for a
+      // general code (wire.isGeneral - E_INTERNAL) it is all there is, and the
+      // server may have sent the only line that says what to DO: a controller
+      // whose file system cannot encrypt a directory names the file systems to
+      // use. Until origin/main's aee6ece nothing of this shell read
+      // close.message, so that sentence reached nobody (measured 18.10.2026).
+      //
+      // The lead-in is a TRANSLATED sentence and no longer a German literal:
+      // this file went through the language layer in between, so the words of
+      // the other end are marked as theirs in all five languages. They are put
+      // in as text and never as markup (desktop.notice over text()).
+      const says = serverSays(e);
+      this.say("error", t("store.node.refused")
+        + (says === "" ? "" : " " + t("store.serversays", { says })));
       return false;
     }
     this.say("info", done);
@@ -923,6 +937,16 @@ class Store {
     }
     return { taskBytes, confirmBytes };
   }
+}
+
+// serverSays is the sentence the other side sent along, or "". It reads
+// ChannelError.serverText and asks nothing else: that field is empty unless
+// the code is a general one and the contract let the text through
+// (net/channel.ChannelError), so the decision which sentences may be shown
+// stays in ONE place and not in every caller that shows an error.
+function serverSays(e) {
+  const t = e?.serverText;
+  return typeof t === "string" ? t : "";
 }
 
 // ---- the key of a standing approval ---------------------------------------

@@ -535,6 +535,31 @@ const MESSAGES = new Map([
 // a person reads. Nothing here may be used to put text on a screen.
 export const message = (code) => MESSAGES.get(code) ?? "";
 
+// GENERAL are the codes whose text above says WHAT went wrong and nothing
+// about what to do: for them, and only for them, a sentence the server sent
+// along may be shown beside this table's own (Channel.serverText).
+//
+// WHY ONLY THIS ONE. Every other code names a thing the person can act on:
+// no permission, no licence, not found, signature invalid, confirm again.
+// E_INTERNAL names nothing - "Interner Fehler." is true and useless - and it
+// is the code a server has to use when what went wrong is its own machine
+// and the contract has no code for it. The server's own sentence is then the
+// only thing that says what to do: a controller whose file system cannot
+// encrypt a directory sends "Bitte ext4 oder f2fs mit aktivierter
+// Verschlüsselung verwenden" (runtime.NoFscryptText), and until this set
+// existed the person read "Interner Fehler." and had nothing (measured
+// 18.10.2026: no file of this shell ever read close.message).
+//
+// It is a SET and not a rule over the codes, so that adding one is a
+// decision somebody writes down here. A shell that showed the message for
+// every code would let a server put its words in place of the shell's own
+// everywhere, and a person could no longer tell the two apart.
+const GENERAL = new Set(["E_INTERNAL"]);
+
+// isGeneral answers whether this code's own text leaves the person without
+// anything to do, so a sentence of the server may stand beside it.
+export const isGeneral = (code) => GENERAL.has(code);
+
 // closeShape carries the exit code as optInt: a number that may be missing,
 // Go's *int. With plain int a CLOSE without an exit code and one with the exit
 // code 0 would decode to the same 0.

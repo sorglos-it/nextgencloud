@@ -7,7 +7,6 @@
   "config.unknownfield": "Champ inconnu dans {file} : {field}",
   "config.unreadablename": "(nom illisible)",
   "shell.insecure": "NGC a besoin d'une connexion sécurisée. Veuillez ouvrir la page en https://.",
-  "shell.oldbrowser": "Ce navigateur est trop ancien pour NGC. Veuillez utiliser Chrome 137, Firefox 130 ou Safari 17.4 ou plus récent.",
   "shell.nopasswordkeys": "Ce navigateur ne peut pas effectuer la connexion par mot de passe de NGC : il ne livre pas la moitié publique d'une clé de mot de passe. Veuillez utiliser Chrome 137 ou Safari 17.4 ou plus récent. Firefox n'en est pas capable jusqu'à la version 141.",
   "shell.loadfailed": "NGC n'a pas pu être chargé. Veuillez recharger la page. Si cela persiste, NGC ne fonctionne pas pour le moment.",
   "shell.passkeyhint": "Le passage aux clés d'accès est recommandé",
@@ -348,5 +347,8 @@
   "users.retire.lastapi": "C'est le seul serveur API de cette installation. Il ne peut pas être mis hors service, car l'installation ne serait plus joignable ensuite.",
   "users.retire.done": "Le serveur « {id} » est hors service.",
   "users.retire.failed": "Le serveur n'a pas pu être mis hors service.",
+  "boot.tooold": "Ce navigateur est trop ancien pour NGC. Veuillez utiliser Chrome 137 ou Safari 17.4 ou plus récent.",
+  "boot.noroute.passkeysoff": "Aucune connexion n'est possible dans ce navigateur : il ne peut pas effectuer la connexion par mot de passe et les clés d'accès y sont désactivées. Veuillez activer les clés d'accès dans les paramètres du navigateur ou utiliser Chrome 137 ou Safari 17.4 ou plus récent.",
+  "store.serversays": "La machine dit : {says}",
   "page.noscript": "NGC a besoin de JavaScript."
 }

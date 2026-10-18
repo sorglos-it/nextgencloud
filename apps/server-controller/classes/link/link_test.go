@@ -10,10 +10,12 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1901,5 +1903,78 @@ func TestKeepAnnouncesEveryTunnelOnceAndItsEnd(t *testing.T) {
 	}
 	if late {
 		t.Fatal("a tunnel was announced after an earlier one was already over")
+	}
+}
+
+// TestKeepSaysTheTunnelIsUpAndNotOnlyThatItEnded nails down the asymmetry that
+// was measured on the small plant on 18.10.2026: ngc-controller was restarted,
+// came back with a standing tunnel -- ss showed the socket to :7443 -- and the
+// journal held no line about it at all. "tunnel ended" and "tunnel failed"
+// each had one; coming up had none. An admin could see when a tunnel broke and
+// never when it was back, so after any restart a controller with a tunnel and
+// one without looked exactly alike.
+//
+// Both halves are measured in one run, because the ORDER is what makes the
+// line worth anything: up before ended, for the same tunnel.
+func TestKeepSaysTheTunnelIsUpAndNotOnlyThatItEnded(t *testing.T) {
+	served := make(chan struct{})
+	cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		a := accept(t, w, r)
+		if a == nil {
+			return
+		}
+		defer a.c.CloseNow()
+		a.greet()
+		close(served)
+		a.quiet()
+	})
+	var said syncBuf
+	cfg.Log = slog.New(slog.NewTextHandler(&said, nil))
+	cfg.Sleep = func(time.Duration) {}
+	// Waited for on THIS side and not on the server's: measured by the case
+	// beside this one, the handler can have greeted while this side's Dial is
+	// still running, and a cancel at that moment makes Keep come back before
+	// it has written anything at all -- a silence that would look exactly
+	// like the defect this case is about.
+	var once sync.Once
+	up := make(chan struct{})
+	cfg.TunnelUp = func(*Tunnel) { once.Do(func() { close(up) }) }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); Keep(ctx, cfg) }()
+	select {
+	case <-up:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Keep never got a tunnel off -- nothing below would measure a line")
+	}
+	<-served
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Keep did not end with its context")
+	}
+	out := said.String()
+	at := strings.Index(out, "tunnel up")
+	if at < 0 {
+		t.Fatalf("a tunnel stood and nothing said so: %q", out)
+	}
+	// The line names WHICH API, or it says nothing to a controller with more
+	// than one. Cut at ITS newline first: a mutant that took the api out of
+	// this line stayed alive against out[at:], because the "tunnel ended"
+	// line further down names the API too -- the assertion was reading the
+	// neighbour's line.
+	line := out[at:]
+	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+		line = line[:nl]
+	}
+	if !strings.Contains(line, cfg.API.URL) {
+		t.Fatalf("the line does not name the API: %q", line)
+	}
+	// And it is said while the tunnel stands, not afterwards together with
+	// its end: a line that only arrives with the end is the end's line.
+	if end := strings.Index(out, "tunnel ended"); end >= 0 && end < at {
+		t.Fatalf("the end was said before the start: %q", out)
 	}
 }

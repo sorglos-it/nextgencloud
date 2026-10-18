@@ -34,8 +34,9 @@
 //     cannot fail for the thing it is named after. It is replaced here by a
 //     case that logs dora in and asks the MOCK how many proofs it had to
 //     check - a number this side cannot produce by itself.
-import { test, expect, skipWithoutLogin, skipWithoutSeedKeys, skipWithoutShell, standInOn } from "../fixtures/page.js";
+import { test, expect, skipWithoutLogin, skipWithoutSeedKeys, skipWithoutShell, skipWithoutPasskey, skipWithoutCDPAuthenticator, standInOn } from "../fixtures/page.js";
 import { PASSWORD, PASSKEY_USERS, TOTP_CODE, USER_NAME } from "../fixtures/logins.js";
+import { putSoftwareAuthenticator, putEmptySoftwareAuthenticator } from "../fixtures/passkey.js";
 
 // The mock's test door. It is on /api/ so it travels the same origin as
 // everything else, and it is the mock's alone: nothing of the shell knows it.
@@ -146,6 +147,9 @@ async function atLocalhost(shell) {
 // withAuthenticator puts a virtual authenticator in front of the browser and
 // loads one credential of the mock's world into it: the very key pair the
 // mock holds the public half of, so the assertion it makes verifies.
+//
+// who: null puts an authenticator there that WORKS and holds nothing - the
+// state every NGC account is in today, and what the third case below needs.
 async function withAuthenticator(shell, who) {
   const cdp = await shell.context().newCDPSession(shell);
   await cdp.send("WebAuthn.enable");
@@ -155,15 +159,19 @@ async function withAuthenticator(shell, who) {
       hasResidentKey: true, isUserVerified: true, automaticPresenceSimulation: true,
     },
   });
-  const u = PASSKEY_USERS[who];
-  await cdp.send("WebAuthn.addCredential", {
-    authenticatorId,
-    credential: {
-      credentialId: u.credIdBase64, rpId: u.rpId, privateKey: u.privateKeyBase64,
-      isResidentCredential: true, userHandle: u.userHandleBase64, signCount: 0,
-    },
-  });
-  return { cdp, authenticatorId };
+  if (who !== null) {
+    const u = PASSKEY_USERS[who];
+    await cdp.send("WebAuthn.addCredential", {
+      authenticatorId,
+      credential: {
+        credentialId: u.credIdBase64, rpId: u.rpId, privateKey: u.privateKeyBase64,
+        isResidentCredential: true, userHandle: u.userHandleBase64, signCount: 0,
+      },
+    });
+  }
+  const done = async () =>
+    cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+  return { cdp, authenticatorId, done };
 }
 
 test("the password never leaves the browser", async ({ shell }) => {
@@ -250,80 +258,146 @@ test("TOTP is asked for when the challenge says so", async ({ shell }) => {
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
-test("a passkey signs the certificate, on a browser that has never been here",
-  async ({ shell, browserName }) => {
-  test.skip(browserName !== "chromium", "virtual authenticators only exist in Chromium");
-  await atLocalhost(shell);
-  // A browser that has never seen this installation: nothing remembered, no
-  // trust list yet. The key ID comes from the challenge alone, so this has to
-  // work on the first try.
-  await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
-  const { cdp, authenticatorId } = await withAuthenticator(shell, "clara");
-
-  await shell.getByLabel("Benutzername").fill("clara");
-  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
-  await expect(shell.locator("#taskbar")).toBeVisible();
-  expect(await askMock(shell, "ask=proofs"), "one proof, by the passkey").toBe("passkey");
-
-  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
-});
-
-test("a role with passwordToo has the certificate signed twice", async ({ shell, browserName }) => {
-  test.skip(browserName !== "chromium", "virtual authenticators only exist in Chromium");
-  await atLocalhost(shell);
-  const { cdp, authenticatorId } = await withAuthenticator(shell, "dora");
-
-  // dora is in a role with passwordToo: the proof comes from the passkey and
-  // the password proof from the password key, both over the same certificate.
-  await shell.getByLabel("Benutzername").fill("dora");
-  await shell.getByLabel("Passwort").fill(PASSWORD);
-  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
-  await expect(shell.locator("#taskbar")).toBeVisible();
-  // The mock is the one that had to check both, so it is the one asked. A
-  // flag this side sets about its own work would say nothing.
-  expect(await askMock(shell, "ask=proofs"), "both proofs, over the same bytes")
-    .toBe("passkey+password");
-
-  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
-});
-
-test("the passkey button never falls back to the password", async ({ shell, browserName }) => {
-  test.skip(browserName !== "chromium", "virtual authenticators only exist in Chromium");
-  await atLocalhost(shell);
-  // An authenticator that WORKS and holds nothing for this installation, which
-  // is the state every account is in today: there is no way to make a passkey
-  // (apps/web has no credentials.create, and no action of ngc.users writes a
-  // user key), so somebody who presses this button has none.
-  const cdp = await shell.context().newCDPSession(shell);
-  await cdp.send("WebAuthn.enable");
-  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
-    options: {
-      protocol: "ctap2", transport: "usb", hasUserVerification: true,
-      hasResidentKey: true, isUserVerified: true, automaticPresenceSimulation: true,
+// THE TWO AUTHENTICATORS, and the three cases below run on both.
+//
+// Until 18.10.2026 every case here carried
+// `test.skip(browserName !== "chromium", "virtual authenticators only exist in
+// Chromium")` - a skip by the NAME of the engine, and the only passkey
+// measurement NGC had. On Firefox that is worse than it looks: the password
+// field is disabled there (contracts/proof.js publicFromSeed, OperationError
+// on a PKCS#8 seed), so the passkey is the ONLY route the mask offers, and it
+// was the one route nobody had ever driven. That is the shape the Firefox bug
+// of 17.10.2026 grew in.
+//
+// So there are two now, and what each one replaces is written down:
+//
+//   "the browser's own authenticator" is Playwright's virtual authenticator
+//   over the CDP WebAuthn domain. It sits INSIDE the browser, below
+//   navigator.credentials.get, and the page cannot tell it from hardware.
+//   It is the deeper measurement and it runs where CDP runs - asked for by
+//   skipWithoutCDPAuthenticator, which MEASURES that domain instead of
+//   naming Chromium.
+//
+//   "a software authenticator" is fixtures/passkey.js: navigator.credentials
+//   .get replaced in the page, signing a real ES256 assertion with Web Crypto.
+//   It runs on every engine that can sign with P-256, which all three can.
+//
+// WHAT THE SOFTWARE ONE DOES NOT MEASURE, named here as well as at its own
+// file, because this is where the numbers are read: it sets the UP and UV
+// flags itself, so no number from a case that uses it says anything about an
+// authenticator refusing to sign without user verification. Everything else
+// on the checking side is untouched - mock/api.js runs contracts/proof.js
+// verify in full over the assertion, and that was measured by bending one
+// byte of the signature on purpose: with `raw[0] ^= 1;` in fixtures/passkey.js
+// the three cases that really sign go red (3 failed, 2 passed, 1 skipped on
+// chromium and firefox, 18.10.2026), and that file names the whole command.
+const AUTHENTICATORS = [
+  {
+    what: "the browser's own authenticator",
+    allowed: async (shell) => {
+      await skipWithoutPasskey(shell);
+      await skipWithoutCDPAuthenticator(shell);
     },
+    put: withAuthenticator,
+    putEmpty: async (shell) => (await withAuthenticator(shell, null)).done,
+  },
+  {
+    what: "a software authenticator",
+    allowed: skipWithoutPasskey,
+    put: async (shell, who) => {
+      await putSoftwareAuthenticator(shell, who);
+      return { done: async () => {} };
+    },
+    putEmpty: async (shell) => {
+      await putEmptySoftwareAuthenticator(shell);
+      return async () => {};
+    },
+  },
+];
+
+for (const a of AUTHENTICATORS) {
+  test(`a passkey signs the certificate, on a browser that has never been here, with ${a.what}`,
+    async ({ shell }) => {
+    await a.allowed(shell);
+    const { done } = await a.put(shell, "clara");
+    await atLocalhost(shell);
+    // A browser that has never seen this installation: nothing remembered, no
+    // trust list yet. The key ID comes from the challenge alone, so this has to
+    // work on the first try. Cleared AFTER the move, because what is cleared is
+    // the store of this origin.
+    await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+
+    await shell.getByLabel("Benutzername").fill("clara");
+    await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
+    await expect(shell.locator("#taskbar")).toBeVisible();
+    expect(await askMock(shell, "ask=proofs"), "one proof, by the passkey").toBe("passkey");
+
+    await done();
   });
 
-  // anna has a password key and no passkey. MEASURED at a real installation on
-  // 17.10.2026: the desktop opened, the authenticator was never asked, and the
-  // person was told nothing - they pressed "log in with a passkey" and were let
-  // in by their password. The button has to fail instead, with the one sentence
-  // every other failure gets: an answer that said "this name has no passkey"
-  // would say that the name exists.
-  // Taken BEFORE the attempt and compared after: the count only ever grows, so
-  // this case does not care what the case before it left in the mock.
-  const before = await askMock(shell, "ask=finishes");
-  await shell.getByLabel("Benutzername").fill("anna");
-  await shell.getByLabel("Passwort").fill(PASSWORD);
-  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
+  test(`a role with passwordToo has the certificate signed twice, with ${a.what}`,
+    async ({ shell }) => {
+    await a.allowed(shell);
+    // This one case needs the PASSWORD key too, on top of the passkey: dora's
+    // role asks for both proofs. So it asks for the seed step as well, and is
+    // the one passkey case that stays off on Firefox 141 - named by the step
+    // that is missing, not by the engine.
+    await skipWithoutSeedKeys(shell);
+    const { done } = await a.put(shell, "dora");
+    await atLocalhost(shell);
 
-  await expect(shell.locator("#taskbar")).toBeHidden();
-  await expect(shell.getByText("Anmeldung fehlgeschlagen.")).toBeVisible();
-  // The mock is the one that would have had to check a proof, so it is the one
-  // asked. A flag this side set about its own work would say nothing.
-  expect(await askMock(shell, "ask=finishes"), "no proof was sent at all").toBe(before);
+    // dora is in a role with passwordToo: the proof comes from the passkey and
+    // the password proof from the password key, both over the same certificate.
+    await shell.getByLabel("Benutzername").fill("dora");
+    await shell.getByLabel("Passwort").fill(PASSWORD);
+    await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
+    await expect(shell.locator("#taskbar")).toBeVisible();
+    // The mock is the one that had to check both, so it is the one asked. A
+    // flag this side sets about its own work would say nothing.
+    expect(await askMock(shell, "ask=proofs"), "both proofs, over the same bytes")
+      .toBe("passkey+password");
 
-  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
-});
+    await done();
+  });
+
+  test(`the passkey button never falls back to the password, with ${a.what}`,
+    async ({ shell }) => {
+    await a.allowed(shell);
+    // An authenticator that WORKS and holds nothing for this installation, which
+    // is the state every account is in today: there is no way to make a passkey
+    // (apps/web has no credentials.create, and no action of ngc.users writes a
+    // user key), so somebody who presses this button has none.
+    const done = await a.putEmpty(shell);
+    await atLocalhost(shell);
+    // anna has a password key and no passkey. MEASURED at a real installation on
+    // 17.10.2026: the desktop opened, the authenticator was never asked, and the
+    // person was told nothing - they pressed "log in with a passkey" and were let
+    // in by their password. The button has to fail instead, with the one sentence
+    // every other failure gets: an answer that said "this name has no passkey"
+    // would say that the name exists.
+    //
+    // The password is typed only where there IS a field to type it into: on
+    // Firefox 141 the password route is shut and the field disabled, and
+    // nothing of that route is needed here - the attempt has to die before any
+    // password key is built. That is why this case asks for no seed step.
+    //
+    // Taken BEFORE the attempt and compared after: the count only ever grows, so
+    // this case does not care what the case before it left in the mock.
+    const before = await askMock(shell, "ask=finishes");
+    await shell.getByLabel("Benutzername").fill("anna");
+    const pw = shell.getByLabel("Passwort");
+    if (await pw.isEnabled()) await pw.fill(PASSWORD);
+    await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
+
+    await expect(shell.locator("#taskbar")).toBeHidden();
+    await expect(shell.getByText("Anmeldung fehlgeschlagen.")).toBeVisible();
+    // The mock is the one that would have had to check a proof, so it is the one
+    // asked. A flag this side set about its own work would say nothing.
+    expect(await askMock(shell, "ask=finishes"), "no proof was sent at all").toBe(before);
+
+    await done();
+  });
+}
 
 test("a password login is told to switch to passkeys", async ({ shell }) => {
   await skipWithoutLogin(shell);

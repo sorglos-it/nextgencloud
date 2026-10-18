@@ -49,6 +49,9 @@ var (
 	// room trust.ParseSigned gives it, so a version this store writes is one
 	// it can read back.
 	maxVersion = enc.B64.EncodedLen(sign.MaxPayload) + 64<<10
+	// maxCatalogSeq bounds the document of one remembered catalogue number: a
+	// store ID and a number, and nothing else ever goes in it.
+	maxCatalogSeq = 4 << 10
 	// licenseBudget bounds one licence while it is decoded (enc.Budget): the
 	// base64url of a payload of store.MaxLicense bytes plus room for the key
 	// ID, the signature, the member names and the time it was issued. It has
@@ -189,6 +192,65 @@ func (s *Store) NewestSeq(ctx context.Context) (uint64, error) {
 		return 0, ErrDocument
 	}
 	return newest.Seq, nil
+}
+
+// CatalogSeq is the newest catalogue number this installation has already seen
+// from that store, and 0 while it has seen none. It is what
+// store.VerifyCatalog is handed as lastSeq, so it is what keeps a store from
+// handing back a catalogue older than one already acted on.
+//
+// A read that fails for another reason is HANDED ON and not taken for 0:
+// taking a database hiccup for "none seen" would open exactly the door this
+// number closes (the same decision as appstore.Stores.lastSeq on the API
+// side).
+func (s *Store) CatalogSeq(ctx context.Context, store string) (uint64, error) {
+	if store == "" {
+		return 0, dbapi.ErrInvalid
+	}
+	b, err := s.db.BlobGet(ctx, dbapi.BlobCatalog, store)
+	if errors.Is(err, dbapi.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return b.Seq, nil
+}
+
+// KeepCatalogSeq writes down that a catalogue of that number was acted on.
+//
+// IT NEVER LOWERS WHAT IS KEPT. The number is a floor, and a floor that can be
+// lowered is no floor: an activation out of an older catalogue that got through
+// for another reason must not take the bar down with it. So what is kept is
+// read first and a smaller number is no error and no write - the caller asked
+// for something already true.
+//
+// Read and then written, with no transaction around the two: dbapi.Local has
+// none, and two activations out of the same store at the same instant could
+// therefore keep the lower of the two numbers. What that costs is one
+// catalogue of slack for that instant, not a lost floor, and it is named here
+// rather than fixed with a lock this store has nowhere to put.
+func (s *Store) KeepCatalogSeq(ctx context.Context, store string, seq uint64) error {
+	if store == "" || seq < 1 || seq > enc.MaxSafeInteger {
+		return dbapi.ErrInvalid
+	}
+	kept, err := s.CatalogSeq(ctx, store)
+	if err != nil {
+		return err
+	}
+	if seq <= kept {
+		return nil
+	}
+	// The document holds the store and the number, so a row read back on its
+	// own says what it is about; the number that is asked for is Blob.Seq, as
+	// dbapi.BlobCatalog names it.
+	return s.putJSON(ctx, dbapi.BlobCatalog, store, seq, maxCatalogSeq, catalogSeen{Store: store, Seq: seq})
+}
+
+// catalogSeen is the document of CatalogSeq.
+type catalogSeen struct {
+	Store string `json:"store"`
+	Seq   uint64 `json:"seq"`
 }
 
 // validApp checks the row of an app. A row is input from outside on the way

@@ -7,7 +7,6 @@
   "config.unknownfield": "Campo sconosciuto in {file}: {field}",
   "config.unreadablename": "(nome illeggibile)",
   "shell.insecure": "NGC ha bisogno di una connessione sicura. Aprire la pagina con https://.",
-  "shell.oldbrowser": "Questo browser è troppo vecchio per NGC. Usare Chrome 137, Firefox 130 o Safari 17.4 o più recenti.",
   "shell.nopasswordkeys": "Questo browser non può eseguire l'accesso con password di NGC: non fornisce la metà pubblica di una chiave di password. Utilizzare Chrome 137 o Safari 17.4 o più recenti. Firefox non ne è capace fino alla versione 141.",
   "shell.loadfailed": "NGC non ha potuto essere caricato. Ricaricare la pagina. Se il problema resta, NGC in questo momento non è in funzione.",
   "shell.passkeyhint": "Si consiglia di passare alle passkey",
@@ -348,5 +347,8 @@
   "users.retire.lastapi": "Questo è l'unico server API di questo impianto. Non può essere messo fuori servizio, perché dopo l'impianto non sarebbe più raggiungibile.",
   "users.retire.done": "Il server «{id}» è fuori servizio.",
   "users.retire.failed": "Non è stato possibile mettere il server fuori servizio.",
+  "boot.tooold": "Questo browser è troppo vecchio per NGC. Usa Chrome 137 o Safari 17.4 o più recente.",
+  "boot.noroute.passkeysoff": "In questo browser non è possibile alcun accesso: non può eseguire l'accesso con password e le passkey qui sono disattivate. Attiva le passkey nelle impostazioni del browser oppure usa Chrome 137 o Safari 17.4 o più recente.",
+  "store.serversays": "La macchina dice: {says}",
   "page.noscript": "NGC ha bisogno di JavaScript."
 }

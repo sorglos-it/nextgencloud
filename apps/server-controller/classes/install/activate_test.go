@@ -251,6 +251,12 @@ type stand struct {
 	storeID string
 	// pad makes the package larger, for a case about the bound of the disk.
 	pad int
+	// kept is what Deps.KeepSeq was asked to write down, per store, and
+	// keptErr what it answers. The floor of a store is the one thing an
+	// activation leaves behind that no other call of this stand shows, so a
+	// case reads it here.
+	kept    map[string]uint64
+	keptErr error
 }
 
 // newStand is an activation that has to come off: a store app of the trust
@@ -268,7 +274,8 @@ func newStand(t *testing.T) *stand {
 		Roles: []string{tunnel.RoleServices}, Node: "ctl-1", NGC: testNGC,
 		StageDir: filepath.Join(t.TempDir(), "staged"), Hold: "/usr/lib/ngc/ngc-controller",
 		Max: store.MaxPackage, LastSeq: func(string) uint64 { return 0 },
-		Now: func() int64 { return testNow }}
+		KeepSeq: s.keepSeq,
+		Now:     func() int64 { return testNow }}
 	return s
 }
 
@@ -998,6 +1005,7 @@ func TestActivateSaysWhenItIsNotWiredUp(t *testing.T) {
 		"no stagedir": func(d *Deps) { d.StageDir = "" },
 		"no bound":    func(d *Deps) { d.Max = 0 },
 		"no lastseq":  func(d *Deps) { d.LastSeq = nil },
+		"no keepseq":  func(d *Deps) { d.KeepSeq = nil },
 		"no clock":    func(d *Deps) { d.Now = nil },
 	}
 	for name, bend := range cases {
@@ -1250,5 +1258,144 @@ func TestAnUploadedAppIsHardenedLikeABoughtOne(t *testing.T) {
 				t.Fatalf("the uploaded app runs in\n%+v\nand the bought one in\n%+v", got, want)
 			}
 		})
+	}
+}
+
+// keepSeq is what Deps.KeepSeq does in this stand: it writes the floor down
+// and answers what a case told it to.
+func (s *stand) keepSeq(_ context.Context, store string, seq uint64) error {
+	if s.keptErr != nil {
+		return s.keptErr
+	}
+	if s.kept == nil {
+		s.kept = map[string]uint64{}
+	}
+	s.kept[store] = seq
+	return nil
+}
+
+// THE FLOOR OF A STORE IS RAISED BY THE ACTIVATION THAT USED IT. Deps.LastSeq
+// is what store.VerifyCatalog refuses an older catalogue against, and it reads
+// a number somebody has to write: until this pair existed nothing wrote one,
+// so it read 0 for ever and the roll-back guard was a line that could not
+// fire.
+//
+// The number written is the one of the CATALOGUE the package came out of
+// (Package.Seq, 7 in this fixture) and not the version of the app: the two are
+// different orders, and the version is already held by the row of the app
+// (Activate, step 2).
+func TestAnActivationRaisesTheFloorOfItsStore(t *testing.T) {
+	s := newStand(t)
+	if _, err := s.activate(); err != nil {
+		t.Fatalf("the activation of the stand failed: %v", err)
+	}
+	if got := s.kept[testStore]; got != 7 {
+		t.Errorf("the floor of %q is %d, want the 7 of the catalogue", testStore, got)
+	}
+	if len(s.kept) != 1 {
+		t.Errorf("floors written: %v, want the one store of this activation", s.kept)
+	}
+}
+
+// An app an ADMIN UPLOADED came out of no catalogue, so there is no number to
+// remember and nothing is written. Without this case the one above would pass
+// on a keepSeq that wrote something for every activation, and a floor under
+// core.LocalStore is a floor no catalogue is ever held against.
+func TestAnUploadedAppRaisesNoFloor(t *testing.T) {
+	s := newStand(t)
+	s.upload()
+	if _, err := s.activate(); err != nil {
+		t.Fatalf("the activation of an uploaded app failed: %v", err)
+	}
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none for an upload", s.kept)
+	}
+}
+
+// An activation that FAILED raises no floor. The other order -- the floor
+// first -- would shut a store out of catalogues this installation never acted
+// on, and it would do it on a package that was refused.
+func TestAFailedActivationRaisesNoFloor(t *testing.T) {
+	s := newStand(t)
+	// A grant the package does not need: refused before this machine is
+	// changed at all (Activate, step 4).
+	s.grants = []string{store.NeedNetwork, store.NeedRoot}
+	if _, err := s.activate(); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("the activation answered %v, want ErrForbidden", err)
+	}
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none for a refused activation", s.kept)
+	}
+}
+
+// A floor that cannot be written FAILS the activation and takes the setup back
+// with it: a container left running out of a catalogue this installation has
+// no memory of is exactly the state the next activation could be rolled back
+// into. keepSeq stands inside setUp for that reason and not after it.
+//
+// WHAT IT DOES NOT TAKE BACK IS THE ROW, and that is measured, not intended:
+// putRow has no undo, so it is already written when this fails -- the same
+// hole keepLicence beside it has, and older than either. It is named here
+// rather than fixed, because taking a row back means putting the row of the
+// version BEFORE back, and nothing in this package holds it.
+func TestAFloorThatCannotBeWrittenFailsTheActivation(t *testing.T) {
+	s := newStand(t)
+	s.keptErr = errors.New("the floor could not be written")
+	_, err := s.activate()
+	if err == nil {
+		t.Fatal("the activation came off although its floor could not be written")
+	}
+	// The container is the part a user would see running, and it is gone: the
+	// undo of the setup ran.
+	log := s.eng.log()
+	if !slices.Contains(log, "Start") {
+		t.Fatalf("the engine log is %v, so the activation never got as far as the floor", log)
+	}
+	if i := slices.Index(log, "Start"); !slices.Contains(log[i+1:], "Remove") {
+		t.Errorf("the engine log is %v, want the container removed again after Start", log)
+	}
+	// And the floor itself was never written down.
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none", s.kept)
+	}
+}
+
+// AND THE GUARD FIRES ON THAT NUMBER. The two cases above show the floor being
+// written and read; this one shows what it is for: a catalogue below the floor
+// is refused, and refused as a verification failure, which is what the shell
+// tells an admin (serve.activateCode).
+//
+// Together with TestTheFloorOfAStoreGoesThroughTheStateOfThisController in
+// package node the chain is closed: an activation writes the number, the next
+// one reads it out of the same state, and this line is what it then does with
+// it.
+func TestACatalogueBelowTheFloorIsRefused(t *testing.T) {
+	s := newStand(t)
+	// The catalogue of this fixture is number 7; a floor of 8 means this
+	// installation already acted on a newer one.
+	s.deps.LastSeq = func(string) uint64 { return 8 }
+	_, err := s.activate()
+	// store.ErrRollback and not install.ErrVerify: the refusal comes out of
+	// the contract's own catalogue check (store.VerifyCatalog) and is handed
+	// on as it is. serve.activateCode names it E_VERIFY, and
+	// TestACatalogueBelowTheFloorIsNamedAVerificationFailure holds that.
+	if !errors.Is(err, store.ErrRollback) {
+		t.Fatalf("a catalogue below the floor answered %v, want store.ErrRollback", err)
+	}
+	// Nothing of this machine was touched, and the floor was not written
+	// either: a refused package leaves no trace.
+	if len(s.sys.calls) != 0 || len(s.eng.log()) != 0 {
+		t.Errorf("this machine was changed: %v, %v", s.sys.calls, s.eng.log())
+	}
+	if len(s.kept) != 0 {
+		t.Errorf("floors written: %v, want none", s.kept)
+	}
+	// And the same stand with the floor at the catalogue's own number comes
+	// off: what refuses above is the number and not something else of this
+	// case (a test whose floor refused everything would pass the half above).
+	ok := newStand(t)
+	ok.deps.LastSeq = func(string) uint64 { return 7 }
+	if _, err := ok.activate(); err != nil {
+		t.Errorf("a catalogue at the floor answered %v, want it through", err)
 	}
 }

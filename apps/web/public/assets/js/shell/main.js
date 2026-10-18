@@ -33,6 +33,20 @@ export async function browserFits() {
   return true;
 }
 
+// NO_PASSWORD_LOGIN names the engines this shell says cannot do the password
+// login. It is DATA and not prose on purpose: the sentence that warns also
+// names the way IN ("use Chrome"), so no case can parse the one out of the
+// other - the first attempt at it read "Chrome" out of the warning. The case
+// that holds the two sentences apart reads this list
+// (tests/shell/engines.spec.js).
+//
+// It lives HERE, beside the gate that decides it, and no longer in the
+// language module: since the language layer moved to apps/web/lang/ that
+// module is a lookup and holds no knowledge about engines. A name goes OUT of
+// here the day an engine is measured to do it, and then the advice may name it
+// again.
+export const NO_PASSWORD_LOGIN = Object.freeze(["Firefox"]);
+
 // passwordLoginFits: can this engine make the PASSWORD KEY of a seed?
 //
 // browserFits above asks for the two curves, and that is the gate between a
@@ -79,6 +93,47 @@ export async function passwordLoginFits() {
   }
 }
 
+// passkeyFits: can this engine ASK AN AUTHENTICATOR at all?
+//
+// The third question of this file, and the one that was missing. browserFits()
+// asks for the two curves, passwordLoginFits() for the public half of a
+// password seed - and where the second one says no, the shell hands the person
+// on to the passkey route and says so in the mask. NOTHING asked whether that
+// route exists in this engine. The passkey button was drawn off the
+// CONFIGURATION alone (auth/login.js, hasParty): that answers whether the
+// INSTALLATION has a relying party, never whether the BROWSER can ask for one.
+//
+// MEASURED, and the state is reachable without any exotic build (18.10.2026,
+// Playwright's Firefox 141 with security.webauth.webauthn = false - one pref,
+// which an administrator or a hardened profile really does set):
+//
+//   navigator.credentials        undefined
+//   window.PublicKeyCredential   undefined
+//
+// With the curves present and the seed step missing, that engine got the mask
+// with the password field switched off and the passkey button ENABLED - the
+// only button on it. auth/keys.js proveWithPasskey then runs into
+// navigator.credentials.get of undefined, the attempt is caught, and the
+// person reads "Anmeldung fehlgeschlagen." - a sentence about their login
+// where there was no way in at all. The same lie as the one the password gate
+// above was built for, one route further along.
+//
+// IT ASKS FOR THE CALL THE PATH MAKES, and that is not pedantry but the
+// measurement: on WebKit 26, PublicKeyCredential is an OBJECT while
+// navigator.credentials is undefined. A gate that asked for
+// PublicKeyCredential would say yes there and be wrong - the engine cannot be
+// asked for an assertion. proveWithPasskey calls navigator.credentials.get,
+// so that is what is held up.
+//
+// It does the work it can do without a gesture and no more: calling get()
+// here would put an authenticator prompt in front of somebody who has not
+// typed a name yet. What stands between this gate and a working passkey is
+// whether this person HAS one, and no browser can be asked that - the
+// challenge of the API answers it (auth/login.js, challenge.passkeys).
+export function passkeyFits() {
+  return typeof navigator?.credentials?.get === "function";
+}
+
 function message(text) {
   const root = document.getElementById("root");
   root.replaceChildren();
@@ -108,7 +163,14 @@ async function start() {
     return;
   }
   if (!(await browserFits())) {
-    message(t("shell.oldbrowser"));
+    // IT USED TO RECOMMEND FIREFOX 130, and that was a sentence this same
+    // shell contradicts: passwordLoginFits() below says Firefox cannot do a
+    // password login up to 141. Somebody on WebKit 26 who followed the advice
+    // would install the one browser that gets them to a mask and no further.
+    // Held against each other by a case now, in all five languages
+    // (apps/web/tests/shell/engines.spec.js), so the two sentences cannot
+    // drift apart again.
+    message(t("boot.tooold"));
     return;
   }
   // The configuration says where the shell connects, which trust list it
@@ -166,8 +228,18 @@ async function start() {
   // same way auth/login.js decides whether to draw the passkey button at all.
   const passwordKeys = await passwordLoginFits();
   const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
-  if (!passwordKeys && (anchor === null || !hasParty)) {
-    message(t("shell.nopasswordkeys"));
+  // THE OTHER ROUTE, and whether it exists HERE. hasParty is the
+  // installation's half of that question and passkeyFits() the engine's; a
+  // route needs both halves, and until 18.10.2026 only the first one was ever
+  // asked (see passkeyFits above for what that cost).
+  const canAsk = passkeyFits();
+  const passkeyRoute = hasParty && canAsk;
+  if (!passwordKeys && (anchor === null || !passkeyRoute)) {
+    // Two reasons, two sentences, because they are fixed in different places:
+    // the first one needs another browser, the second one needs passkeys
+    // switched back on in this one. One sentence for both would send somebody
+    // to install a browser they already have.
+    message(hasParty && !canAsk ? t("boot.noroute.passkeysoff") : t("shell.nopasswordkeys"));
     return;
   }
   if (anchor === null) {
@@ -208,7 +280,7 @@ async function start() {
   // config come from above - the setup mask needs them too, so they are won
   // once for both ways through this function.
   loginView(root, {
-    config, passwordKeys,
+    config, passwordKeys, passkeys: canAsk,
     onSession: (world) => showDesktop(root, config, anchor, world).catch(() => {
       // A trust list that does not open has already put its own alarm on the
       // screen and ended the session; anything else broke on the way to the

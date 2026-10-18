@@ -7,7 +7,6 @@
   "config.unknownfield": "Unbekanntes Feld in {file}: {field}",
   "config.unreadablename": "(unlesbarer Name)",
   "shell.insecure": "NGC braucht eine sichere Verbindung. Bitte die Seite über https:// aufrufen.",
-  "shell.oldbrowser": "Dieser Browser ist zu alt für NGC. Bitte Chrome 137, Firefox 130 oder Safari 17.4 oder neuer benutzen.",
   "shell.nopasswordkeys": "Dieser Browser kann die Passwort-Anmeldung von NGC nicht ausführen: er gibt den öffentlichen Teil eines Passwort-Schlüssels nicht heraus. Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen. Firefox kann es bis Version 141 nicht.",
   "shell.loadfailed": "NGC konnte nicht geladen werden. Bitte die Seite neu laden. Bleibt es dabei, läuft NGC gerade nicht.",
   "shell.passkeyhint": "Umstellen auf Passkeys empfohlen",
@@ -348,5 +347,8 @@
   "users.retire.lastapi": "Das ist der einzige API-Server dieser Anlage. Er kann nicht stillgelegt werden, weil die Anlage danach nicht mehr erreichbar wäre.",
   "users.retire.done": "Der Server »{id}« ist stillgelegt.",
   "users.retire.failed": "Der Server konnte nicht stillgelegt werden.",
+  "boot.tooold": "Dieser Browser ist zu alt für NGC. Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen.",
+  "boot.noroute.passkeysoff": "In diesem Browser ist keine Anmeldung möglich: die Passwort-Anmeldung kann er nicht, und Passkeys sind hier abgeschaltet. Bitte Passkeys in den Browser-Einstellungen einschalten oder Chrome 137 oder Safari 17.4 oder neuer benutzen.",
+  "store.serversays": "Der Rechner sagt: {says}",
   "page.noscript": "NGC braucht JavaScript."
 }

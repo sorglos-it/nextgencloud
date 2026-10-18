@@ -43,15 +43,42 @@ const TAG_SIZE = wire.MAX_PAYLOAD - wire.MAX_E2E_PLAINTEXT;
 // comes out of lang/ by that code (lang.js codeText), not out of the German
 // table of contracts/wire.js, which is the contract's own text - see
 // net/http.js for why the two are kept apart.
+//
+// serverText is the sentence the OTHER side sent in its CLOSE, and it is kept
+// only where this shell's own text says nothing to do about it
+// (wire.isGeneral - today E_INTERNAL alone). It never replaces message: the
+// code stays the branch, the shell's wording stays the shell's, and whoever
+// shows this has to mark the sentence as the server's, because it is words
+// from the other end of the line in the person's own window.
+//
+// Three things keep it from being a hole:
+//   - Only for a general code. For every other one the shell has a sentence
+//     that says what to do, and a server could otherwise overwrite it.
+//   - Only what parseClose let through. The contract reads message as
+//     validText, so control characters and over-long text never get here.
+//   - Not when it only repeats this shell's own sentence, so nothing is
+//     shown twice.
 export class ChannelError extends Error {
-  constructor(code) {
+  constructor(code, serverText) {
     super(codeText(code) || t("wire.E_PROTOCOL"));
     this.name = "ChannelError";
     this.code = code;
+    const own = this.message;
+    // No test for the empty sentence: a CLOSE without one answers "" through
+    // the last line anyway, and a condition that cannot fail would be a
+    // guard no case can hold (a mutant that dropped it changed nothing,
+    // 18.10.2026).
+    this.serverText = typeof serverText === "string" && serverText !== own &&
+      wire.isGeneral(code)
+      ? serverText
+      : "";
   }
 }
 
-const fail = (code) => new ChannelError(code);
+// fail builds the error of a code. The second argument is the CLOSE that
+// arrived, where one did: a failure this shell decided itself has no sentence
+// from anybody else, so most callers pass nothing.
+const fail = (code, close) => new ChannelError(code, close?.message);
 
 export class Channel {
   // A channel is built by Link.open and by nobody else: the number and the
@@ -492,7 +519,7 @@ export class Channel {
     if (this.first === null) {
       const early = this.firstWaiters;
       this.firstWaiters = [];
-      const e = status.status === OK ? fail(wire.CODES.PROTOCOL) : fail(status.code);
+      const e = status.status === OK ? fail(wire.CODES.PROTOCOL) : fail(status.code, status);
       for (const w of early) w.no(e);
       this.error = this.error ?? e;
     }

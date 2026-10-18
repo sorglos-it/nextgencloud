@@ -209,15 +209,25 @@ export function t(key, params) {
 // in the CLOSE frame and shared/wire/wire.go holds the same fourteen words -
 // while this is what a person reads. A code that is none answers "", exactly
 // as wire.message does, so a caller can keep its own `|| fallback`.
-export const codeText = (code) => (has("wire." + code) ? t("wire." + code) : "");
+// IT IS A function AND NOT A const ARROW, and that is load-bearing: line 177
+// is a top-level await, so every const declared BELOW it stays uninitialized
+// until the language files have arrived. A caller in that window got
+// "ReferenceError: Cannot access uninitialized variable" - measured in WebKit
+// on 18.10.2026, where net/channel.js builds a ChannelError and asks for the
+// sentence of a code. A function declaration is initialized when the module
+// is instantiated, before the await, which is also why t() above never had
+// the problem. Do not turn either of these two back into a const.
+export function codeText(code) {
+  return has("wire." + code) ? t("wire." + code) : "";
+}
 
 // has says whether a key is really there. Only the tests ask: t() can never
 // answer "no", which is the point of it, so a test that wants to prove a key
 // is missing needs a second question.
-export const has = (key) => (
-  (loaded.main && typeof loaded.main[key] === "string")
-  || (loaded.base && typeof loaded.base[key] === "string")
-);
+export function has(key) {
+  return (loaded.main && typeof loaded.main[key] === "string")
+    || (loaded.base && typeof loaded.base[key] === "string");
+}
 
 // The document says which language it is in. A screen reader picks its voice
 // from this, and a page that says "de" while it shows French is read out

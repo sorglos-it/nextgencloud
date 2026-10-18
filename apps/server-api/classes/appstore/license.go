@@ -29,6 +29,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
+	"github.com/sorglos-it/nextgencloud/shared/session"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -88,6 +89,17 @@ func (st *Stores) TakeLicense(ctx context.Context, app string, body []byte) (cor
 	l, err := st.verify(ctx, app, env)
 	if err != nil {
 		return core.LicenseResult{}, err
+	}
+	// What counts as newer below is store.License.Issued, and that number is
+	// the store's, not this installation's. A licence issued ahead of the
+	// present would therefore be kept for good: every later one has a smaller
+	// Issued and is turned away as "not newer", while State keeps reading
+	// valid until the future licence itself expires. store.License.Validate
+	// cannot hold this -- it sees no clock -- so the wall is here, at the one
+	// place a licence enters. The tolerance is session.MaxSkew, the number the
+	// installation already uses for two clocks that disagree.
+	if l.Issued > st.S.Now()+session.MaxSkew {
+		return core.LicenseResult{}, ErrLicense
 	}
 	// Only a newer licence replaces the one held, so an old one cannot bring
 	// back a shorter term or fewer users. A licence of the same issue time is

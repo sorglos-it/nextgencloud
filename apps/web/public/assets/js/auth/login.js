@@ -229,7 +229,14 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
 // switched off and the mask SAYS SO, instead of taking a password, running
 // Argon2id over it and answering "Anmeldung fehlgeschlagen." - the sentence
 // for a wrong password, which is what Firefox 141 got until this round.
-export function loginView(root, { config, onSession, openTrust, passwordKeys = true } = {}) {
+// passkeys says whether this engine can ASK AN AUTHENTICATOR at all
+// (shell/main.js passkeyFits, measured there and not guessed here). false
+// means no passkey button, whatever the installation offers: a button that
+// runs into navigator.credentials.get of undefined would answer
+// "Anmeldung fehlgeschlagen." - the same lie as above, one route further on.
+// It is the ENGINE's half of that question; hasParty below is the
+// installation's, and a route needs both.
+export function loginView(root, { config, onSession, openTrust, passwordKeys = true, passkeys = true } = {}) {
   clear(root);
 
   const box = el("form", "loginbox");
@@ -277,7 +284,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   // out of the challenge (keys.proveWithPasskey), which is the one the API
   // and the trust list agree on.
   const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
-  const withPasskey = hasParty ? button("b", t("login.withpasskey"), null) : null;
+  const withPasskey = hasParty && passkeys ? button("b", t("login.withpasskey"), null) : null;
   if (withPasskey !== null) row.append(withPasskey);
   box.append(row);
 
@@ -349,7 +356,28 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   }
 
   async function attempt(wantPasskey) {
-    if (busy || go.disabled) return;
+    // THE BUTTON THAT WAS PRESSED, and not `go`. `go` is the PASSWORD button,
+    // and enable() above holds it disabled for good on an engine that makes no
+    // password key out of a seed - so asking it here switched the PASSKEY
+    // button off as well, on the one engine where the passkey is the only way
+    // in.
+    //
+    // MEASURED on 18.10.2026 in firefox 141, with the software authenticator
+    // of tests/fixtures/passkey.js: the name typed, "Mit Passkey anmelden"
+    // pressed, and then nothing at all - no /api/v1/login/finish (the mock's
+    // counter stayed at 0), no desktop, and no sentence. The screen kept
+    // standing there with its own advice, "Dieser Browser kann die
+    // Passwort-Anmeldung nicht ausführen. Bitte mit Passkey anmelden." - advice
+    // that could not be followed. The passkey cases had never run outside
+    // chromium, where `go` is enabled and this line is invisible
+    // (tests/shell/login.spec.js, AUTHENTICATORS).
+    //
+    // It still refuses what it has to refuse: during an attempt and during a
+    // lock, enable(false) disables BOTH buttons, so either one is its own
+    // guard. The form's own submit path has its own `if (!passwordKeys)
+    // return` below.
+    const pressed = wantPasskey === true ? withPasskey : go;
+    if (busy || pressed === null || pressed.disabled) return;
     busy = true;
     // Read and empty in one step, with no await in between: from here on the
     // typed password is in one variable of this closure and nowhere on the
