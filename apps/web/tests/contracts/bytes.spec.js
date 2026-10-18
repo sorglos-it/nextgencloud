@@ -569,7 +569,9 @@ const NEEDS_X25519 = [
 // less than it holds and asserts the hashes come out unmoved; taking
 // b64.bytesOf out of the reader turns it red, measured. Answers again, the
 // way uitar.spec.js and sign.spec.js hold theirs.
-const CALLABLES = 214;
+// 215 since 18.10.2026: wire.isGeneral, the codes whose own text says
+// nothing to do, so that a sentence of the server may stand beside it.
+const CALLABLES = 215;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
