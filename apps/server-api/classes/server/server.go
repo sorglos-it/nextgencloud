@@ -95,6 +95,15 @@ var SpoolDir = filepath.Join(config.DataDir, "spool")
 // the other one answers E_UNREACHABLE as before.
 var HoldDir = filepath.Join(config.DataDir, "uploads")
 
+// AnchorFile is the trust anchor outside the database
+// (config.AnchorFile, "/etc/ngc/trust-anchor.json"). It is a variable of this
+// package for the same reason the three above are: a case has to be able to
+// put it into its own directory. Without that every case here read the file of
+// the MACHINE it runs on - on windows that path can never exist and nothing
+// showed, on linux with an installation in place three cases of this package
+// were red (18.10.2026).
+var AnchorFile = config.AnchorFile
+
 // errNoTunnel reports that the controller a licence is meant for is away.
 var errNoTunnel = errors.New("server: no tunnel to that controller")
 
@@ -127,6 +136,10 @@ type Server struct {
 	// rows against each other. A tick that finds the round busy is dropped and
 	// not queued: the next tick does the same work anyway.
 	round sync.Mutex
+	// trustSaid is the text of the last fault the minute round said about the
+	// trust list, "" after a round that read it. Written and read only there,
+	// under s.round; see Server.minute.
+	trustSaid string
 }
 
 // Build makes everything the API needs and fails if anything is missing.
@@ -163,6 +176,7 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 		return nil, errors.New("die Datenbank ist nicht erreichbar")
 	}
 	s := state.New(cfg, db, box, pin)
+	s.AnchorFile = AnchorFile
 	lg := &audit.Log{DB: db, Now: s.Now}
 	lh := login.New(s)
 	tunnels := controllers.NewRegistry()
@@ -201,6 +215,23 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	bs := &browser.Server{S: s, Login: lh, Open: d, Sessions: sessions}
 	sh := &setup.Handler{S: s, CodeFile: SetupCodeFile}
 	if _, err := sh.EnsureCode(); err != nil {
+		// Two faults end up here and they send the admin to two different
+		// files. EnsureCode reads the trust list BEFORE it ever looks at the
+		// code file, so a list it cannot read -- rows that contradict each
+		// other, or a pin in config.AnchorFile naming a version the rows do
+		// not carry -- used to come out under the name of the code file.
+		// Measured on 18.10.2026 at the installation on Debian 13: such a pin
+		// killed the API in a restart loop, and the one line it printed
+		// blamed a file that was never touched.
+		//
+		// Which of the two it was is asked and not guessed: the question is
+		// exactly "can the trust list be read", so it is put to state.Trust
+		// instead of to a list of sentinels that the next error would not be
+		// on. ErrNoTrust is the open setup and belongs to the code file.
+		if _, terr := s.Trust(ctx); terr != nil && !errors.Is(terr, state.ErrNoTrust) {
+			return nil, errors.New("die Vertrauensliste dieser Anlage lässt sich nicht lesen; " +
+				"zuerst " + config.AnchorFile + " prüfen, dann die Datenbank")
+		}
 		return nil, errors.New("der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen")
 	}
 	controllers.Version = version
@@ -486,7 +517,30 @@ func (s *Server) minute(ctx context.Context) {
 		slog.Warn("housekeeping failed", "error", err)
 	}
 	if _, err := s.State.Refresh(ctx); err != nil {
-		slog.Warn("trust list could not be read", "error", err)
+		// Said when it CHANGES, not once a minute. Measured on the small
+		// plant on 18.10.2026: 54 identical lines in the 54 minutes one
+		// ngc-api had been up, every one of them "state: no trust list yet"
+		// -- the expected state of an installation that is set up and not
+		// yet paired, so the line said nothing a reader could act on and
+		// buried the lines that do. guard.Report two calls below refuses to
+		// make exactly this noise, and in exactly these words ("a line every
+		// minute saying none is the kind of noise that teaches people to stop
+		// reading the log"); this call was the one place in the round that
+		// still made it.
+		//
+		// The memory is the MESSAGE and not a flag: a different fault is a
+		// new thing to say, and the same fault after a good round is too --
+		// which is what the else below is for. A database that locks, frees
+		// and locks again is two events, not one.
+		//
+		// No lock around the field: Server.once holds s.round while a round
+		// runs, and this round is the only reader and the only writer.
+		if msg := err.Error(); msg != s.trustSaid {
+			s.trustSaid = msg
+			slog.Warn("trust list could not be read", "error", err)
+		}
+	} else {
+		s.trustSaid = ""
 	}
 	guard.Report()
 	httpapi.Report()

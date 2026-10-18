@@ -127,47 +127,24 @@ uncovered=$(printf '%s\n' "$files" | grep -v '/testdata/' | grep -vxF -f "$cover
 allimports=$(listed '{{.ImportPath}}: {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}} ' "" GOOS=windows GOARCH=amd64)
 n=$(printf '%s\n' "$allimports" | grep -c . || true)
 [ "$n" -ge "$floor" ] || die "go list named only $n packages, fewer than the floor of $floor"
-for m in $(sed -n 's/^[[:space:]]*_ "\([^"]*\)".*/\1/p' tools/modules.go); do
-	# Only the package tools ITSELF is exempt, written with the colon that ends
-	# the import path in the listing: "^$mod/tools" without it also exempted
-	# every package BELOW tools/, and a measurement on 17.10.2026 went green
-	# because the probe import sat in tools/zprobe.
-	hit=$(printf '%s\n' "$allimports" | grep -v "^$mod/tools: " | grep -F " $m " || true)
-	[ -z "$hit" ] || die "tools/modules.go still names $m, but it is imported now - take that line out: $(printf '%s' "$hit" | tr '\n' ' ')"
-done
+# The file is meant to disappear with its last line, and on 18.10.2026 it did
+# (the passkey chain was taken out). Its absence is therefore the normal end
+# state, not a fault - but it is SAID OUT LOUD, because a check that quietly
+# finds nothing to check looks exactly like a check that passed.
+if [ -f tools/modules.go ]; then
+	for m in $(sed -n 's/^[[:space:]]*_ "\([^"]*\)".*/\1/p' tools/modules.go); do
+		# Only the package tools ITSELF is exempt, written with the colon that ends
+		# the import path in the listing: "^$mod/tools" without it also exempted
+		# every package BELOW tools/, and a measurement on 17.10.2026 went green
+		# because the probe import sat in tools/zprobe.
+		hit=$(printf '%s\n' "$allimports" | grep -v "^$mod/tools: " | grep -F " $m " || true)
+		[ -z "$hit" ] || die "tools/modules.go still names $m, but it is imported now - take that line out: $(printf '%s' "$hit" | tr '\n' ' ')"
+	done
+else
+	echo "check: no tools/modules.go - every vendored module is imported by a part"
+fi
 
-for arch in amd64 arm64; do
-	# trusttest holds fixed test keys: only test code may import it. The list
-	# is taken as each target is built (cgo off too), so files built only
-	# there count as well. Only .Imports here: a TEST importing it is exactly
-	# what is allowed.
-	imports=$(listed '{{.ImportPath}}: {{join .Imports " "}}' "" CGO_ENABLED=0 GOOS=linux GOARCH="$arch")
-	n=$(printf '%s\n' "$imports" | grep -c . || true)
-	[ "$n" -ge "$floor" ] || die "go list (linux/$arch) named only $n packages, fewer than the floor of $floor"
-	bad=$(printf '%s\n' "$imports" | grep 'shared/trust/trusttest' | grep -v "^$mod/shared/trust/trusttest:" || true)
-	if [ -n "$bad" ]; then
-		echo "trusttest imported outside tests (linux/$arch):"
-		echo "$bad"
-		exit 1
-	fi
-done
 
-go vet ./...
-# The race-only test code is counted as covered above, so something has to
-# really compile it: -race itself needs cgo and a C compiler (here only in the
-# ESP toolchain), vet with the tag does not. Measured 17.10.2026.
-go vet -tags=race ./...
-go test ./...
-for arch in amd64 arm64; do
-	# go build compiles no test file, so the tests that only exist on the
-	# target (//go:build linux) would never be seen on a machine that builds
-	# elsewhere: a typo in them would still say "check: ok". go vet compiles
-	# them as the target and is the only thing here that does.
-	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go vet ./...
-	# -tags modules builds tools/modules.go too, so the vendored modules that no
-	# part imports yet are proven to build for both targets.
-	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -tags modules ./...
-done
 # The PHP side of the web interface checks itself against shared/testdata/ and
 # needs nothing but PHP. Skipping it quietly would mean the drift it is written
 # to catch never shows in a normal run, and a path to one machine's php has no
@@ -196,4 +173,86 @@ else
 	exit 1
 fi
 "$php" apps/web/tests/php/config-test.php
+
+# What Node makes of the browser contracts under apps/web/public/assets/. They
+# are plain .js files, so Node takes their module type from the nearest
+# package.json ABOVE them - and without one inside the repository that is
+# whatever directory the checkout sits in. Measured on 18.10.2026: under
+# D:\claude, whose package.json says "type":"commonjs", the mock server died
+# in node before the first browser test ran. The guard belongs here and not in
+# the Playwright suite because that suite is exactly what stops starting.
+# Skipped where there is no node, loudly, because a check that is quietly not
+# a check is worse than none.
+if command -v node >/dev/null 2>&1; then
+	node apps/web/tests/module-type.js
+else
+	echo "module type: SKIPPED, no node on this machine"
+fi
+for arch in amd64 arm64; do
+	# trusttest holds fixed test keys: only test code may import it. The list
+	# is taken as each target is built (cgo off too), so files built only
+	# there count as well. Only .Imports here: a TEST importing it is exactly
+	# what is allowed.
+	imports=$(listed '{{.ImportPath}}: {{join .Imports " "}}' "" CGO_ENABLED=0 GOOS=linux GOARCH="$arch")
+	n=$(printf '%s\n' "$imports" | grep -c . || true)
+	[ "$n" -ge "$floor" ] || die "go list (linux/$arch) named only $n packages, fewer than the floor of $floor"
+	bad=$(printf '%s\n' "$imports" | grep 'shared/trust/trusttest' | grep -v "^$mod/shared/trust/trusttest:" || true)
+	if [ -n "$bad" ]; then
+		echo "trusttest imported outside tests (linux/$arch):"
+		echo "$bad"
+		exit 1
+	fi
+done
+
+go vet ./...
+# The race-only test code is counted as covered above, so something has to
+# really compile it: -race itself needs cgo and a C compiler (here only in the
+# ESP toolchain), vet with the tag does not. Measured 17.10.2026.
+go vet -tags=race ./...
+# NOTE 18.10.2026: the CI branch offered a second way to count a run -
+# NGC_CHECK_TEST_JSON, a -json stream teed to a file for tools/ci-count.sh.
+# It is NOT taken here, and the reason is the line above: this run is -v into
+# a log BECAUSE the log is read back for tests that step aside in silence.
+# A -json run would have to carry that reading too, and a second run only to
+# count is what the CI branch set out to avoid. Whoever wants the JSON builds
+# it ON this mechanism, not beside it.
+# -v, and into a file, because of what go test does NOT print without it.
+# Measured 18.10.2026 on this machine: for a test that calls t.Skipf -- and
+# even for one that writes to os.Stderr itself -- a run without -v prints
+# nothing at all beyond "ok <package>". The clock tests in
+# apps/server-api/classes/login step aside when their own null control says
+# the machine cannot resolve their factor today, which is the honest answer
+# and better than a false red; but a guard that steps aside in silence is
+# worse than both, so the run is read back here and every such test is named.
+# No pipe: the exit code of a pipe belongs to its last link, and this script
+# has been dead behind a "0" once already.
+log=$(mktemp)
+if ! go test -v ./... > "$log" 2>&1; then
+	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || cat "$log"
+	rm -f "$log"
+	exit 1
+fi
+# UNMEASURABLE is named line by line, every other skip only counted. The
+# difference is not tidiness: this tree skips dozens of tests on every run for
+# plain reasons (no jq, no Linux, no PTY), and a guard that stood aside
+# because the clock was too noisy would drown in that list. The count is still
+# printed, because a day on which it jumps is worth a look.
+skipped=$(grep -c -- '--- SKIP' "$log" || true)
+quiet=$(grep -c -- 'UNMEASURABLE' "$log" || true)
+echo "check: $skipped test(s) skipped (environment), $quiet guard(s) unmeasurable"
+if [ "$quiet" != 0 ]; then
+	echo "check: these guards did NOT run -- the run says nothing about what they hold:"
+	grep -- 'UNMEASURABLE' "$log" | sed 's/^[[:space:]]*/    /'
+fi
+rm -f "$log"
+for arch in amd64 arm64; do
+	# go build compiles no test file, so the tests that only exist on the
+	# target (//go:build linux) would never be seen on a machine that builds
+	# elsewhere: a typo in them would still say "check: ok". go vet compiles
+	# them as the target and is the only thing here that does.
+	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go vet ./...
+	# -tags modules builds tools/modules.go too, so the vendored modules that no
+	# part imports yet are proven to build for both targets.
+	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -tags modules ./...
+done
 echo "check: ok"

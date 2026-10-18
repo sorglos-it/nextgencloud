@@ -32,7 +32,7 @@ steht als Textblock da und muss nach dem JA nur noch abgeschrieben werden.
 | **P10** — kein Vertrag darf etwas dazubekommen | **neu, gemessen** | **Tor für P8 + P9** |
 | P1 — `validHTTPSURL` nicht ausgeführt | gilt | Sicherheit, Naht |
 | P2 — `Unattended` verbietet den ersten Einbau | gilt, **schlimmer** | geht gar nicht |
-| P3 — Format einer `ngc-web`-Release-Datei | gilt | geht gar nicht |
+| P3 — Format einer `ngc-web`-Release-Datei | gilt — **dringender**: die zwei Formen sind gemessen verschieden, `WalkUI` weist das Wurzel-tar ab (Nachtrag 18.10.2026) | geht gar nicht |
 | **P4** — Balancer-Vorlage in `shared/ulh.md` | **ERLEDIGT** | gestrichen |
 | P5 — Referenzfeld in `dbapi.App` | gilt | geht gar nicht |
 | P6 — Kopplungscode 24 Stunden | gilt | Sicherheit, Zahl |
@@ -41,7 +41,7 @@ steht als Textblock da und muss nach dem JA nur noch abgeschrieben werden.
 | P9 — „besetzt" braucht `E_BUSY` | gilt, **teurer als gedacht** | hängt an P10 |
 | **P11** — `ValidPath` sagt nichts zur Schreibweise | **neu** | Satz, kostenlos |
 | **P12** — Rechte im Katalog nie gegen das Manifest | **neu** | Sicherheit |
-| **P13** — kein Prozessdeckel je App im Manifest | **neu** | Feld |
+| **P13** — kein Prozessdeckel je App im Manifest | **neu** — Empfehlung **NEIN für V1.3** (Bedarf nicht gemessen), unten unter „Die Reihenfolge" darum als **gestrichen** geführt | Feld |
 
 ---
 
@@ -337,6 +337,53 @@ ersetzen** (ein `index.html` unter `ui/` reicht), und einen Fall, der es mit
 
 **Empfehlung: JA, in der Form, die der Controller gebaut hat** — sie benutzt die eine
 sichere Auspack-Funktion, die es schon gibt, statt eine zweite zu verlangen.
+
+### Nachtrag 18.10.2026: „P3 ist beantwortet" stimmt nicht — die zwei Annahmen sind aufeinandergetroffen
+
+`vertraege-v1.2.md`, **Punkt 56** (16.10.2026) schreibt: „Damit ist auch **P3 beantwortet**,
+gemessen am Code der Skripte". Gegengelesen ist das **falsch** — und zwar so, dass es den
+Punkt nicht erledigt, sondern **zuspitzt**:
+
+| Seite | Form, die sie annimmt | Beleg |
+|---|---|---|
+| die **Skripte** (`ngc-store release`, ulh) | Namen im **Wurzelverzeichnis**: `public/index.php`, `templates/apache-vhost.conf`, 83 Einträge | `vertraege-v1.2.md`, Punkt 56 |
+| der **Controller** beim Update | Namen **unter `ui/`**, Präfix wird durch `config.WebRoot` ersetzt | `apps/server-controller/classes/update/install.go:869–880` („whose names have to be rooted at `ui/`"), `shared/store/ui.go:193` |
+
+**Die beiden Formen sind nicht dieselbe.** Punkt 56 hat gemessen, was der **Einrichtungsweg**
+baut und auspackt; P3 fragt, was der **Updateweg** auspackt. Dass beides heute nebeneinander
+gutgeht, liegt allein daran, dass noch nie ein `ngc-web`-Update über den Controller gelaufen ist.
+
+**Was P3 „ohne die Änderung" vorhergesagt hat, ist damit keine Vermutung mehr:** trifft das
+Release-Werkzeug eine andere Annahme als der Controller, ist das Webinterface nach dem ersten
+Update **leer oder halb**. Genau dieser Fall liegt vor.
+
+**Gemessen am 18.10.2026** mit einer Sonde gegen den Stand dieses Zweigs (eigenes Modul mit
+`replace`, nichts im Baum geändert), beide Läufe aus **einem** Aufruf:
+
+```
+tar gebaut: 2048 Byte
+Zwischenpruefung ui/...      err=<nil>                        Dateien=[ui/public/index.php]
+Wurzel (ohne ui/)            err=store: invalid app package   Dateien=[]
+```
+
+Dieselbe Vorrichtung, derselbe Inhalt, **ein** Unterschied: im zweiten Lauf steht im
+Namensfeld jedes Kopfblocks `public/index.php` statt `ui/public/index.php` (Prüfsumme nach
+der Regel aus `ui.go:31–33` neu gerechnet). Die **Zwischenprüfung** ist der Beleg, dass der
+Weg bis zur gemeinten Regel offen ist — sonst misst die Sonde ihre eigene Bauweise.
+
+**Also: `store.WalkUI` weist ein Wurzel-tar ab, mit `ErrPackage`.** Ein `ngc-web`-Update über
+den Controller **kann** mit einem Archiv in der Form, die Punkt 56 gemessen hat, nicht gehen —
+es scheitert am ersten Kopfblock, bevor eine einzige Datei entpackt ist.
+
+**Was an dieser Zahl noch fehlt:** gefahren wurde gegen ein **nachgebautes** Wurzel-tar, nicht
+gegen das echte `ngc-web-all.tar` der Skripte (das liegt im Repo `ulh`, nicht hier). Die Form
+stimmt mit Punkt 56 überein; die Gegenprobe am echten Archiv ist **einen Aufruf wert**, sobald
+eines vorliegt.
+
+**Die Empfehlung bleibt JA, aber die Entscheidung ist jetzt eine andere Frage:** nicht mehr
+„welche Form schreiben wir auf", sondern „**welche der zwei gebauten Formen zieht nach**" —
+das Release-Werkzeug auf `ui/`, oder der Controller auf ein Wurzel-tar (dann braucht `shared/`
+die zweite Auspack-Funktion, und das ist der teure Weg, gegen den P3 oben argumentiert).
 
 ---
 
@@ -954,7 +1001,9 @@ zu V1.3.
 
 **Einzeln entscheidbar:** P1, P2, P5, P6, P7, P11, P12.
 **Nicht einzeln:** P8 und P9 — beide nur nach P10.
-**Gestrichen:** P4 (erledigt), P13 (Bedarf nicht gemessen).
+**Gestrichen:** P4 — **erledigt**, es gibt nichts mehr zu entscheiden.
+**Zurückgestellt:** P13 — der Punkt steht, nur sein **Bedarf ist nicht gemessen**;
+er kommt wieder, sobald eine App an den 512 anstößt.
 
 ### Die drei dringendsten
 

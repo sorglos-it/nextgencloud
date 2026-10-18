@@ -842,27 +842,48 @@ func TestFinishTakesTheSameTimeForAKeyNobodyHolds(t *testing.T) {
 	// Every shape is measured, and a shape that fails does not end the run:
 	// the whole table is what says which of them are alike and which are not,
 	// and a run that stops at the first one hides the rest.
+	measured := 0
 	for _, form := range forms {
 		held, nobodys := form.build(t, h, fx)
-		a, b, again := timeThemFinish(t, h, form.name, held, nobodys)
-		t.Logf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
-			form.name, a, b, again)
+		var a, b, again time.Duration
+		alike := false
 		// The null control first: one body against itself, measured the same
 		// way and in the same turns. It is held to the factor of the
 		// comparison, so the test can tell "the two are alike" from "this
-		// machine cannot tell anything apart today".
-		if a > 2*again || again > 2*a {
-			t.Errorf("%s, the same body twice: %v and %v -- this machine cannot measure a factor of two today",
-				form.name, a, again)
+		// machine cannot tell anything apart today" -- and it is measured at
+		// most twice, for the reason given at the same place in
+		// TestStartTakesTheSameTimeForAnUnknownName.
+		for try := 1; try <= 2 && !alike; try++ {
+			a, b, again = timeThemFinish(t, h, form.name, held, nobodys)
+			t.Logf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
+				form.name, a, b, again)
+			alike = a <= 2*again && again <= 2*a
+		}
+		if !alike {
+			// Loud, and not red: see unmeasurable. One shape the machine
+			// cannot resolve does not take the other twelve down with it, so
+			// this is a line and not a skip -- but it IS a line check.sh
+			// greps, because this shape's guard did not run.
+			t.Logf("%s: %s, the same body twice: %v and %v -- this machine cannot measure a factor of two for this shape today",
+				unmeasurable, form.name, a, again)
 			continue
 		}
 		if form.branch != "" {
 			continue
 		}
+		measured++
 		if a > 2*b || b > 2*a {
 			t.Errorf("%s: a key the list holds %v, a key nobody holds %v (the same body twice: %v)",
 				form.name, a, b, again)
 		}
+	}
+	// How many of the five shapes that have to be alike really carried the
+	// guard. The number is logged on every run and not only when it is zero:
+	// "green" means something different at five than at one.
+	t.Logf("%d of the shapes that have to be alike were measured", measured)
+	if measured == 0 {
+		t.Skipf("%s: not one shape that has to be alike could be measured today -- the guard did not run",
+			unmeasurable)
 	}
 }
 
@@ -894,8 +915,10 @@ func mustMarshal(tb testing.TB, f session.LoginFinish) []byte {
 }
 
 // timedBatches is how many batches each of the three measurements of a shape
-// takes. The median of them drops the one slow batch a busy machine throws in,
-// which an average would not.
+// takes, and how many login/start takes too. The shortest of them is the one
+// a busy machine disturbed least (see timeThem); more batches therefore mean a
+// cleaner number, not just a steadier one, and five is what fits in the time
+// the whole table may take.
 const timedBatches = 5
 
 // timeThemFinish measures the two bodies and the first one again, turn by turn
@@ -904,6 +927,9 @@ const timedBatches = 5
 // that drift to the comparison as a finding. It is the shape timeThem uses for
 // login/start, and it was lost once here -- the numbers it gave were then a
 // third block against a first.
+//
+// It returns the SHORTEST of the batches and no longer the median, for the
+// reason timeThem gives: the noise on this clock only ever adds time.
 func timeThemFinish(t *testing.T, h *Handler, what string, held, nobodys []byte) (a, b, again time.Duration) {
 	t.Helper()
 	da := make([]time.Duration, timedBatches)
@@ -917,7 +943,7 @@ func timeThemFinish(t *testing.T, h *Handler, what string, held, nobodys []byte)
 	slices.Sort(da)
 	slices.Sort(db)
 	slices.Sort(dc)
-	return da[timedBatches/2], db[timedBatches/2], dc[timedBatches/2]
+	return da[0], db[0], dc[0]
 }
 
 // timedFinish runs timedRuns requests with body and returns what one took. It

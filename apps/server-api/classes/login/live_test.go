@@ -166,6 +166,7 @@ func TestAWithdrawalSurvivesTheRowsBeingDropped(t *testing.T) {
 		}
 	}
 	cold := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	cold.S.AnchorFile = h.S.AnchorFile
 	cold.S.Now = h.S.Now
 	live, code, _, ok := cold.Live(ctx, r)
 	if ok {
@@ -220,6 +221,7 @@ func TestLiveSeesAWithdrawalAnotherAPIWrote(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
 	other := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	other.S.AnchorFile = h.S.AnchorFile
 	other.S.Now = h.S.Now
 	r := getCookie(session.PathTrust, cookie)
 	if _, _, _, ok := other.Live(ctx, r); !ok {
@@ -540,6 +542,7 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 			// The cold node is built after the damage and shares the store, so
 			// it meets the same installation with an empty cache.
 			cold := New(state.New(warm.S.Cfg, warm.S.DB, warm.S.Box, warm.S.Pin))
+			cold.S.AnchorFile = warm.S.AnchorFile
 			cold.S.Now = warm.S.Now
 			for _, node := range []struct {
 				what string
@@ -631,6 +634,7 @@ func TestTheTwoNodesPartWhereTheAnswerNeedsNoRow(t *testing.T) {
 			// The cold node is built after the damage and shares the store, so
 			// it meets the same installation with an empty cache.
 			cold := New(state.New(warm.S.Cfg, warm.S.DB, warm.S.Box, warm.S.Pin))
+			cold.S.AnchorFile = warm.S.AnchorFile
 			cold.S.Now = warm.S.Now
 			for _, a := range c.asks {
 				w := httptest.NewRecorder()

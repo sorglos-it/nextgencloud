@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -30,6 +31,15 @@ var ctx = context.Background()
 // driver instead would leave these tests measuring a database nobody runs,
 // and the hexkey PRAGMA could change in sqlite without a test here noticing.
 var OpenEncrypted func(config.DB) (*sql.DB, error)
+
+// OpenEncryptedBusy is the same opener with the busy deadline of the pool
+// given, and it is handed over by the same file for the same reason. Only
+// TestApplySaysWhoHoldsTheFile uses it: that case waits the deadline out on
+// purpose, and the production one is ten seconds (sqlite.DefaultBusyTimeout,
+// Punkt 48). It goes through the same sqlite.OpenDBWith the server would, so
+// what it measures is still the file NGC opens - with a shorter clock on the
+// one number that case is not about.
+var OpenEncryptedBusy func(config.DB, time.Duration) (*sql.DB, error)
 
 // openFile gives every test its own encrypted, empty file.
 func openFile(t *testing.T) *sql.DB {
