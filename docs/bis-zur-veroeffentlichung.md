@@ -206,6 +206,62 @@ Reihenfolge: was ein Fremder zuerst trifft.
 - **Fundstelle:** eigene Messung am 18.10.2026 im Baum `d955f52`;
   `docs/befunde-17-18-10-2026.md`, Abschnitte 0–2; `vertraege-v1.2.md`, Punkt 63.
 
+> **ERLEDIGT am 18.10.2026, auf diesem Zweig.** Alle drei Zweige sind zusammengeführt;
+> `git merge-base --is-ancestor origin/<zweig> HEAD` sagt für alle drei **ja**. Gegenprobe am
+> Code: `users.js:943` schreibt jetzt `rootUsers: [this.session.user]`, `:982` lässt den
+> API-Knoten bei `[]` (so will es `trust.ValidAPINode`), und `channel.js:552` nimmt
+> `confirmBytes` an.
+>
+> **Die drei Kommentarbehauptungen sind gegen den Go-Code gelesen, nicht geglaubt** — und alle
+> drei halten: `trust.ValidAPINode` verlangt `len(RootUsers)+len(RootRoles) == 0`
+> (`trust.go:176`), `tunnel.versionPattern` ist `^[0-9a-z.+-]{1,32}$` (`tunnel.go:426`), und
+> `MayRoot` gibt für jeden Knoten, der kein Controller ist, `false` (`trust.go:422`).
+>
+> **Ein Konflikt, und er war der lehrreichen Sorte:** `users.spec.js` — beide Seiten hängen
+> **verschiedene neue Fälle an dieselbe Stelle**. Das ist kein Entweder-oder; **beide Blöcke
+> stehen jetzt**, alle acht Fälle beider Seiten sind einzeln nachgewiesen, `node --check`
+> grün.
+>
+> **Zwei Dinge, die der Auftrag nicht vorhersah:**
+> 1. **`ngc-zweitemaschine-web` ist eine lebende Baustelle.** Beim ersten Messen war sie
+>    1 Commit vor `main`, beim Zusammenführen 3: `0156cd8` („Let an admin change a listed
+>    server's address or retire it", 15:20 Uhr) und `7be1f5e` (15:29 Uhr) sind **während
+>    dieser Sitzung** entstanden. Mitgekommen ist damit **mehr als die vier Behebungen** —
+>    nämlich ein neuer Befund samt Behebung: die Adresse eines eingetragenen Servers ließ sich
+>    nie ändern, gemessen am 18.10.2026 an einer Zwei-Maschinen-Anlage, deren Server neue
+>    Adressen bekommen hatten (Apache lieferte weiter an die alten und antwortete 500).
+>    **Das steht in keiner Befundliste** und gehört vom Koordinator eingetragen.
+> 2. **`main` ist ebenfalls weitergelaufen** (`d955f52` → `8c98bdc`) und hat Controller-Arbeit
+>    am Aktivierungsweg gebracht (`serve/activate.go`, `serve/stream.go`, +950 Zeilen).
+>    Deshalb ist `origin/main` hier mit zusammengeführt, damit der Prüfsatz nicht gegen einen
+>    veralteten Stand gemessen wird. **`Updater: nil` steht trotzdem noch**
+>    (`node/run.go:653`) — H7 ist davon **nicht** berührt.
+>
+> **Gemessen, beide Sätze, auf demselben Baum:**
+>
+> | | Go `tools/check.sh` | Web-Prüfsatz |
+> |---|---|---|
+> | vorher (`940b445`) | `check: ok`, 0 rot | **834 grün, 414 übersprungen, 0 rot** (1248, 22,5 min) |
+> | nachher (`267a9cb` + `main`) | `check: ok`, 0 rot | **873 grün, 432 übersprungen, 0 rot** (1305, 23,7 min) |
+>
+> **+39 grün, +18 übersprungen, nichts rot, nichts verloren.** Und weil ein neuer Fall, der
+> *überspringt*, nichts beweist (die Lehre von E15): die vier Sicherheitsfälle sind
+> **einzeln** nachgefahren — `12 grün, 0 übersprungen` in 18,3 s.
+>
+> **Was dabei an der Messung selbst auffiel, und es ist ein eigener Befund:** die
+> 432 Übersprünge liegen fast alle **nicht** in `chromium` (dort 1 von 435), sondern in
+> `firefox` und `webkit`. Die Browser sind installiert (alle fünf unter
+> `ms-playwright/`) — es sind **Übersprünge im Fall selbst**, aus der Fähigkeitsprüfung
+> (`browserFits()`). **Ein Drittel der Browsermatrix prüft also das meiste nicht**, und genau
+> dort saß der Firefox-Befund vom 17.10. (`95a9547`). Das ist kein Mangel dieser
+> Zusammenführung, aber es gehört in diese Liste; die genaue Verteilung je Browser ist beim
+> Schreiben dieser Zeile noch am Laufen.
+>
+> **Noch nicht geprüft:** dass die Zusammenführung an einer **laufenden** Anlage trägt. Grün
+> ist hier der Prüfsatz, nicht das Gerät — und genau diese vier Befunde sind am 17.10. **am
+> laufenden System** gefunden worden, nicht im Prüfsatz. Nach `main` geführt ist **nichts**:
+> das liegt beim Koordinator.
+
 ### H10 — Ein `ngc-web`-Update über den Controller kann heute nicht gehen.
 
 - **Was fehlt:** eine Entscheidung, **P3**: zieht das Release-Werkzeug auf `ui/` nach, oder
@@ -542,7 +598,7 @@ messbar.
 
 | # | Was | Wer | Größe |
 |---|---|---|---|
-| **1** | **Die drei Zweige `ngc-knotenfassung`, `ngc-upload-bestaetigung`, `ngc-zweitemaschine-web` nach `main` führen** (H9). Vier Sicherheitsbehebungen liegen auf Zweigen, die **nichts** enthält — auch `web-alles` nicht; ohne sie ist jeder gekoppelte Server nutzlos, kein Paket hochladbar und keine zweite Maschine aufzusetzen. | **Agent** | 2–4 h |
+| **1** | ~~Die drei Zweige zusammenführen~~ (H9) — **am 18.10.2026 erledigt**, auf Zweig `veroeffentlichungsliste`, beide Prüfsätze grün (siehe Kasten unter H9). **Was bleibt: der Koordinator führt diesen Zweig nach `main`** und misst die vier Befunde an einer laufenden Anlage nach — gefunden wurden sie dort, nicht im Prüfsatz. | **Thomas / Koordinator** | 1 h |
 | **2** | **Den Updater verdrahten** (H7). `Updater: nil` heißt: auf **keiner** Anlage kann eine App installiert werden. Das ist der Zweck des Produkts, und solange er fehlt, messen alle anderen Punkte eine Hülle. | **Thomas entscheidet** (Vertrauensliste als Wert oder als Kette), **Agent baut** | 1–3 Tage |
 | **3** | **Repo öffnen, Release veröffentlichen, Skripte nach ulh-`main`** (H1, H2, H3). Diese drei sind **eine** Entscheidung, weil keine ohne die anderen etwas nützt — und ein Push nach ulh-`main` erreicht per Auto-Update **sofort alle Nutzer**. | **nur Thomas** | Entscheidung + 1 Tag |
 | **4** | **Den Release-Schlüssel klären** (H4), dazu den falschen Kommentar (H4a) und den Weg für einen Testschlüssel (H6). Bis dahin prüft jede fremde Installation gegen einen Schlüssel, dessen geheime Hälfte in `/root` auf einer Testmaschine liegt. | **nur Thomas** (Stick oder Datei; der Stick zieht Punkt 19 nach) | Entscheidung + 2–4 h |
