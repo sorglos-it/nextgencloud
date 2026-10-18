@@ -61,24 +61,48 @@ var SetupCodeFile = filepath.Join(config.DataDir, "setup-code")
 //     disk, so a spool is only ever good for the one run that made it. That is
 //     all it is used for: appstore.Activate writes the package, reads it twice
 //     and removes it again within the one call (task 22, mutant spool-kept).
-//   - Nothing waits here BETWEEN two calls, and that is a GAP and not a
-//     solution. Task 24 wrote here that the shell sends the uploaded package
-//     again on the activate channel; read against shared/core that is wrong.
-//     ngc.store/controller/activate is a FlowTransfer action, and
-//     core.Action.MaxIn says MaxIn bounds there "what the API sends the
-//     controller -- the shell sends none, even when it opened the channel",
-//     while core.ShellOpens says the shell sends EOF at once. So nobody holds
-//     the package of an uploaded app between ngc.store/upload (which keeps
-//     only the ui-tar) and its activation, and an activation out of
-//     core.LocalStore answers E_UNREACHABLE. That is Punkt 30 of
-//     docs/vertraege-v1.2.md, still open, and coreapp.storeActivate says it
-//     again where a reader of the handler will see it.
-//     An app out of a store of the trust list is not affected: its package is
+//   - Nothing waits here BETWEEN two calls, and nothing may: Build EMPTIES
+//     this directory at every start (sweepSpool), because what lies in it
+//     belongs to one call that is long over. What waits between the upload
+//     and the activation of an app lies in HoldDir below, which is a
+//     different directory for exactly that reason -- a package that an
+//     emptying at start would take with it is a package the activation after
+//     a restart will not find.
+//     An app out of a store of the trust list needs neither: its package is
 //     downloaded here against the checksum of the verified catalog entry.
 //
 // It is not the directory of the operating system: a package may be gigabytes
 // and /tmp is a RAM disk on many systems. Build sweeps it, see sweepSpool.
 var SpoolDir = filepath.Join(config.DataDir, "spool")
+
+// HoldDir is where an upload keeps its package until an activation fetches
+// it (appstore.Stores.Hold). IT CLOSES PUNKT 30, which was open from
+// 12.10.2026 until 17.10.2026: ngc.store/upload keeps only the ui-tar, and
+// the shell sends no DATA on the activate channel either, so an activation of
+// an uploaded app found no file and answered E_UNREACHABLE. Measured on a
+// running installation on 17.10.2026, with everything else in the chain
+// working: the package was uploaded, the node was offered, the admin had the
+// right -- and the activation said "Dienst nicht erreichbar."
+//
+// Why it is a directory of ITS OWN and not SpoolDir: the spool is emptied at
+// every start, and a held package has to survive a restart between the two
+// calls. What this one gets instead is a sweep BY AGE, at every upload and
+// once at every start (appstore.Stores.SweepHold).
+//
+// The limit stays what it always was, and appstore/hold.go writes it out:
+// several API servers share the database and NOT the disk, so a package
+// uploaded to one of them is not on the other, and an activation that reaches
+// the other one answers E_UNREACHABLE as before.
+var HoldDir = filepath.Join(config.DataDir, "uploads")
+
+// AnchorFile is the trust anchor outside the database
+// (config.AnchorFile, "/etc/ngc/trust-anchor.json"). It is a variable of this
+// package for the same reason the three above are: a case has to be able to
+// put it into its own directory. Without that every case here read the file of
+// the MACHINE it runs on - on windows that path can never exist and nothing
+// showed, on linux with an installation in place three cases of this package
+// were red (18.10.2026).
+var AnchorFile = config.AnchorFile
 
 // errNoTunnel reports that the controller a licence is meant for is away.
 var errNoTunnel = errors.New("server: no tunnel to that controller")
@@ -112,6 +136,10 @@ type Server struct {
 	// rows against each other. A tick that finds the round busy is dropped and
 	// not queued: the next tick does the same work anyway.
 	round sync.Mutex
+	// trustSaid is the text of the last fault the minute round said about the
+	// trust list, "" after a round that read it. Written and read only there,
+	// under s.round; see Server.minute.
+	trustSaid string
 }
 
 // Build makes everything the API needs and fails if anything is missing.
@@ -148,6 +176,7 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 		return nil, errors.New("die Datenbank ist nicht erreichbar")
 	}
 	s := state.New(cfg, db, box, pin)
+	s.AnchorFile = AnchorFile
 	lg := &audit.Log{DB: db, Now: s.Now}
 	lh := login.New(s)
 	tunnels := controllers.NewRegistry()
@@ -160,6 +189,12 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	// Stores.Send nil and every step of it answered E_INTERNAL until here.
 	st.Send = &sender{Tunnels: tunnels, Relay: rl}
 	st.Spool = SpoolDir
+	// The hold of uploaded packages, and the sweep that keeps it from growing
+	// without end. It runs here, at the build of the server, because this is
+	// the one moment a machine that takes no further upload still passes
+	// through (HoldDir).
+	st.Hold = HoldDir
+	st.SweepHold()
 	// ONE adapter for both packages, which is what task 23 asked for: Send is
 	// the very same value appstore got, not a second one of its own. It can
 	// be, because updates.Updates.Send is of type appstore.Sender -- stage and
@@ -180,6 +215,23 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	bs := &browser.Server{S: s, Login: lh, Open: d, Sessions: sessions}
 	sh := &setup.Handler{S: s, CodeFile: SetupCodeFile}
 	if _, err := sh.EnsureCode(); err != nil {
+		// Two faults end up here and they send the admin to two different
+		// files. EnsureCode reads the trust list BEFORE it ever looks at the
+		// code file, so a list it cannot read -- rows that contradict each
+		// other, or a pin in config.AnchorFile naming a version the rows do
+		// not carry -- used to come out under the name of the code file.
+		// Measured on 18.10.2026 at the installation on Debian 13: such a pin
+		// killed the API in a restart loop, and the one line it printed
+		// blamed a file that was never touched.
+		//
+		// Which of the two it was is asked and not guessed: the question is
+		// exactly "can the trust list be read", so it is put to state.Trust
+		// instead of to a list of sentinels that the next error would not be
+		// on. ErrNoTrust is the open setup and belongs to the code file.
+		if _, terr := s.Trust(ctx); terr != nil && !errors.Is(terr, state.ErrNoTrust) {
+			return nil, errors.New("die Vertrauensliste dieser Anlage lässt sich nicht lesen; " +
+				"zuerst " + config.AnchorFile + " prüfen, dann die Datenbank")
+		}
 		return nil, errors.New("der Einmal-Code für die Ersteinrichtung lässt sich nicht anlegen")
 	}
 	controllers.Version = version
@@ -449,6 +501,11 @@ func (s *Server) once(fn func()) {
 // minute is the housekeeping round: expired sessions out, trust list afresh,
 // and the count of caught programming errors said out loud if it has grown.
 //
+// httpapi.Report stands beside guard.Report and for the same reason: it says
+// how many callers were turned away because the database was busy or away,
+// and without it those two counts would be numbers no running program ever
+// reads. It is after guard.Report because a panic weighs more than a queue.
+//
 // guard.Report is LAST on purpose. A panic in either step above is caught by
 // Server.once around this round, so the count it would report is one this
 // round can no longer reach -- it reaches the log at the next tick instead,
@@ -460,9 +517,33 @@ func (s *Server) minute(ctx context.Context) {
 		slog.Warn("housekeeping failed", "error", err)
 	}
 	if _, err := s.State.Refresh(ctx); err != nil {
-		slog.Warn("trust list could not be read", "error", err)
+		// Said when it CHANGES, not once a minute. Measured on the small
+		// plant on 18.10.2026: 54 identical lines in the 54 minutes one
+		// ngc-api had been up, every one of them "state: no trust list yet"
+		// -- the expected state of an installation that is set up and not
+		// yet paired, so the line said nothing a reader could act on and
+		// buried the lines that do. guard.Report two calls below refuses to
+		// make exactly this noise, and in exactly these words ("a line every
+		// minute saying none is the kind of noise that teaches people to stop
+		// reading the log"); this call was the one place in the round that
+		// still made it.
+		//
+		// The memory is the MESSAGE and not a flag: a different fault is a
+		// new thing to say, and the same fault after a good round is too --
+		// which is what the else below is for. A database that locks, frees
+		// and locks again is two events, not one.
+		//
+		// No lock around the field: Server.once holds s.round while a round
+		// runs, and this round is the only reader and the only writer.
+		if msg := err.Error(); msg != s.trustSaid {
+			s.trustSaid = msg
+			slog.Warn("trust list could not be read", "error", err)
+		}
+	} else {
+		s.trustSaid = ""
 	}
 	guard.Report()
+	httpapi.Report()
 }
 
 // hour is the catalog round.

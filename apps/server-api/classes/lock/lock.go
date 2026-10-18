@@ -142,11 +142,72 @@ func validNow(now int64) bool { return now >= 1 && now <= maxNow }
 // that hash alike still get two rows -- the space is what keeps them apart,
 // and it is the only thing that does.
 func key(space, name string) string {
-	h := sha256.Sum256([]byte(name))
-	n := binary.BigEndian.Uint16(h[:2]) % buckets
+	n := bucketOf(name)
 	const digits = "0123456789abcdef"
 	return space + string([]byte{
 		digits[n>>12&0xf], digits[n>>8&0xf], digits[n>>4&0xf], digits[n&0xf]})
+}
+
+// bucketOf is the row a name falls in. key writes it as hex and Hold takes its
+// mutex, and both go through here: a mutex that stood for another row than the
+// one the failure is counted in would guard nothing.
+func bucketOf(name string) uint16 {
+	h := sha256.Sum256([]byte(name))
+	return binary.BigEndian.Uint16(h[:2]) % buckets
+}
+
+// holds is one mutex per row of each counting, and it is what makes "the first
+// freeCount failures are free" a number instead of a starting point.
+//
+// counting below makes the read and the write of ONE failure a single step.
+// That was not enough, and the gap was measured, not reasoned about: the
+// caller reads the wait, then weighs the proof, then counts the failure, and
+// the first of those is a read of its own. A burst fired at one moment all
+// read the same free row before any of them had counted, so all of them were
+// weighed. Measured on 17.10.2026, 20 wrong proofs against one row: 17 of them
+// weighed when they came at once against 3 when they came one after the other,
+// in 10 of 10 rounds; and on a real installation on Debian 13, 7 to 14 of 20.
+// The free attempts an installation hands out grew with the attacker's
+// concurrency.
+//
+// So the whole decision of one attempt - read the wait, weigh the proof, count
+// the failure - belongs inside one hold of its row. Hold hands that out.
+//
+// What it costs, and it is a real price: two attempts in one row are now
+// weighed one after the other, and a row holds every name that falls in it. A
+// login of one name therefore waits for a login of another that shares its row
+// - for the length of one verification, and there are buckets many rows, so
+// with a few dozen accounts a pair sharing one is rare (see buckets). For the
+// burst this is not a cost but the whole point: that is what the wait is for.
+//
+// And the same caveat as counting's: this is one process. A second API on the
+// same database would read the row while this one holds its mutex, and then
+// the counting would have to be the database's. The contract has no call for
+// one today.
+var holds [2][buckets]sync.Mutex
+
+// Hold takes the row name is counted in and hands back its release. The caller
+// holds it until the attempt is decided, failure counted and all.
+func Hold(name string) func() { return hold(nameSpace, name) }
+
+// HoldKey is Hold for the counting of the key IDs -- the other set of rows, for
+// the same reason Fail and FailKey are two (see nameSpace and keySpace).
+func HoldKey(keyID string) func() { return hold(keySpace, keyID) }
+
+func hold(space, name string) func() {
+	m := &holds[spaceRow(space)][bucketOf(name)]
+	m.Lock()
+	return m.Unlock
+}
+
+// spaceRow is which of the two sets of mutexes a space uses. The two spaces are
+// the only ones there are, and a name must never reach the other's row: that is
+// the same separation key rests on, and the reason for it stands at keySpace.
+func spaceRow(space string) int {
+	if space == keySpace {
+		return 1
+	}
+	return 0
 }
 
 // expired reports whether a row may be removed, which is the moment the

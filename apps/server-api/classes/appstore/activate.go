@@ -405,7 +405,30 @@ func (st *Stores) spoolPackage(ctx context.Context, rq ActivateRequest, w io.Wri
 	p := rq.Params
 	if p.Store == core.LocalStore {
 		if rq.File == nil || rq.Size <= 0 {
-			return 0, ErrStore
+			// NO FILE FROM THE CALLER, so the one this server kept at the
+			// upload is used -- found by the checksum of the SIGNED task and
+			// by nothing else (hold.go). This is Punkt 30: until the hold
+			// existed the one line here was the whole branch, and an uploaded
+			// app could not be activated at all.
+			//
+			// The caller still wins where it brings a file: nothing here
+			// decides for a caller that knows better, and every case that
+			// hands one over measures the same path as before.
+			n, err := st.copyHeld(p.SHA256, w, st.uploadLimit())
+			if err != nil {
+				// ErrStore and not the error of the disk: for whoever asked,
+				// "this server has no such file" is one case, and it is the
+				// one that was answered before -- a server without a hold, a
+				// package that aged out and an upload that went to another API
+				// server all read alike. ErrTooLarge keeps its own code,
+				// because a bound that was passed must not read as a missing
+				// file.
+				if errors.Is(err, ErrTooLarge) {
+					return 0, err
+				}
+				return 0, ErrStore
+			}
+			return n, nil
 		}
 		if rq.Size > st.uploadLimit() {
 			return 0, ErrTooLarge

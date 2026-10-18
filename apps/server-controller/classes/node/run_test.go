@@ -533,13 +533,21 @@ func TestMainWithoutACommandRunsTheController(t *testing.T) {
 func TestRunWithStopsAtAStoreThatDoesNotOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "controller.json")
 	cfg := writeController(t, path)
-	// The real opener, and what it stumbles over is named rather than
-	// guessed: controller.json holds the Linux path /var/lib/ngc/controller.db,
-	// and on this machine the store refuses it by its own grammar ("the path
-	// must be an absolute, clean file name"). On a Linux server the same call
-	// would get as far as the directory. Either way this case measures the
-	// one thing it is about: a store that did not open stops the start, with
-	// that one German line and without the path in it.
+	// The real opener, and the file it stumbles over may not open on ANY
+	// platform. The path writeController leaves behind
+	// (/var/lib/ngc/controller.db) does not do that: on windows the store
+	// refuses it by its own grammar (filepath.IsAbs is false for it there),
+	// but on linux as root the very same path OPENS, runWith goes on to start
+	// the whole controller, and this case never ends - measured on
+	// 18.10.2026, where it held the run of this package for 628 s until it
+	// was killed. /dev/null is a character device and no directory, so every
+	// open below it fails with ENOTDIR, while the path still passes both
+	// grammars (config.DB.Validate wants the leading "/", sqlite.validPath
+	// wants an absolute, clean name).
+	cfg.DB = "/dev/null/controller.db"
+	if err := config.SaveController(path, cfg); err != nil {
+		t.Fatalf("the case did not set up what it measures: %v", err)
+	}
 	var out, errOut strings.Builder
 	if code := runWith("1.2.3", path, openState, &out, &errOut); code != 1 {
 		t.Fatalf("runWith = %d, want 1", code)

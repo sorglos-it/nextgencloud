@@ -2,6 +2,15 @@
 
 **Stand 12.10.2026.** Dieses Blatt liegt beim Einrichten neben der Tastatur.
 
+> **Durchgesehen am 17.10.2026 gegen `origin/main` und die Vertragspunkte 56–62.**
+> Zwischen dem 16. und dem 17.10.2026 ist NGC zum ersten Mal auf echtem Debian
+> gelaufen — eine Anlage entsteht heute allein aus den Skripten (Punkt 62).
+> Mehrere Punkte dieses Blattes beschreiben darum eine Lage, die es nicht mehr
+> gibt. Jeder betroffene Punkt trägt unten einen Kasten „Überholt". **Ein
+> Prüfplan mit Erledigtem wird nicht abgearbeitet** — wer hier weiterarbeitet,
+> liest die Kästen zuerst. Die Zahl „44 offene Punkte" ist damit **zu hoch** und
+> nicht neu gezählt.
+
 Es führt die beiden Abschlussprüfungen vom 12.10.2026 zusammen (api: 23 Punkte,
 controller: 22) und ordnet sie nach dem, **was voneinander abhängt**. Jeder Punkt
 ist am Code auf `main` (`592e4da`) nachgesehen. Was inzwischen erledigt ist,
@@ -142,6 +151,12 @@ gibt es keine Einrichtung.
 
 ### S1 — `ngc-api` kann gar nicht starten (Vertragspunkt 34)
 
+> **Überholt, gemessen am 17.10.2026.** `apps/server-db/classes/register/register.go`
+> meldet in `init` Opener, Migrator und Backuper an (Zeilen 44–46), und
+> `apps/server-api/main.go:39` bindet das Paket als leeren Import ein.
+> `ngc-api` läuft als Dienst auf Debian 13, `active` mit `NRestarts=0`
+> (Punkte 56, 57, 62). **S1 ist zu, und damit der Riegel vor Stufe 1.**
+
 Heute nachgesehen auf `main`: `dbopen.Register` hat **0** Produktionsaufrufer (nur
 Testvorrichtungen), `dbopen.RegisterMigrator` ebenso **0**. `apps/server-db` hat
 fünf Pakete mit Code, aber **keine `main.go` und keine Anmeldung**.
@@ -158,6 +173,17 @@ bei einer laufenden MariaDB.
 
 ### S2 — Der Release-Packer liegt nicht auf `main`
 
+> **Überholt, gemessen am 17.10.2026.** Unterschrieben wird heute mit
+> `ngc-store release` aus `apps/cli` — `pack-release.sh` und `sign-release.sh`
+> braucht niemand mehr. Es gibt Releases: dreimal `release ok` für `ngc-web all`,
+> `ngc-api amd64` und `ngc-controller amd64` (Punkte 56, 57, 62). `tools/` auf
+> `main` hat heute `check.sh`, `modules.go`, `pin-base.sh` und `tunnelprobe`;
+> `local.env` ist weg.
+> **Was an diesem Punkt bleibt:** `apps/web` liegt **nicht** auf `main`
+> (`git ls-tree -r --name-only origin/main -- apps/web` = 2 Dateien,
+> `origin/web` = 128) — wer nur `main` klont, kann das Release nicht bauen
+> (Punkt 62, Befund 1).
+
 Gemessen: `tools/` auf `main` hat `check.sh`, `local.env`, `modules.go` — und
 sonst nichts. `pack-release.sh`, `sign-release.sh` und `tools/release/` liegen auf
 dem Zweig `release-packer` (`merge-base --is-ancestor` → **nein**).
@@ -166,6 +192,12 @@ dem Zweig `release-packer` (`merge-base --is-ancestor` → **nein**).
 (`fetch_release`, `verify_release`). Ohne Release gibt es keine Einrichtung.
 
 ### S3 — Die vier Einrichtungsskripte liegen auf vier getrennten Zweigen
+
+> **Teilweise überholt.** Punkt 62 hat eine ganze Anlage aus **einem** ulh-Zweig
+> gebaut (`ngc-kette`, `223baac`), dazu `ngc-all.sh` als Zusammenfassung — die
+> Skripte stehen sich also nicht im Weg. **Nicht überholt:** ob sie auf ulh-`main`
+> liegen, ist nicht nachgezählt, und ein Push dorthin erreicht per Auto-Update
+> sofort alle Nutzer. Das entscheidet Thomas.
 
 Heute im ulh-Repo nachgesehen. Auf `main`: **kein** `ngc-*`-Skript.
 
@@ -191,9 +223,10 @@ Entscheidung, keine Messung** — sie muss vor S2/S3 fallen.
 
 ### S5 — Das Einbau- und Aktualisierungs-Teilsystem wird von niemandem gebaut
 
-Heute gemessen: `update.New(` und `install.New(` haben **0** Produktionsaufrufer
-(je ein Treffer, und der steht in `serve/update_test.go`). `run.go:531` setzt
-`Updater: nil`.
+Am 17.10.2026 nachgemessen, **unverändert gültig**:
+`grep -rn 'update\.New\|install\.New\|install\.Deps' apps/ --include=*.go | grep -v _test`
+→ **0**. `run.go` setzt `Updater: nil` (am 17.10.2026 Zeile 587, am 12.10.2026
+Zeile 531).
 
 Folge: weder `install`, noch `stage`, noch die Rücknahme, noch `Resume` nach
 einem Neustart ist je durch ein Programm gelaufen. **Das ist Bauen, nicht
@@ -261,8 +294,10 @@ zeigt eine geöffnete Verbindung.
 Konfiguration abgewiesen. Erst eine vollständige `api.json` (das macht
 `ngc-api.sh` mit `render_api_json`), sonst misst man die frühere Wand.
 
-**E2 — `ngc-api migrate`.** Heute: „dieses Programm wurde ohne die
-Datenbank-Migrationen gebaut".
+**E2 — `ngc-api migrate`.** Am 12.10.2026 antwortete es „dieses Programm wurde
+ohne die Datenbank-Migrationen gebaut". **Überholt:** der Unterbefehl ist
+verdrahtet (`apps/server-api/main.go:81`, `:175`, `:180`), und der Migrator ist
+angemeldet (`register.go:45`). Gelaufen ist er nicht.
 *Messen:* `ngc-api migrate` legt das Schema an; ein zweiter Lauf ändert nichts
 (idempotent).
 
@@ -341,11 +376,16 @@ lesbar, ins Netz kommt nichts.
 müsse „die Installation herausfinden": Bildspeicher im Datenverzeichnis, Netz für
 diesen Benutzer.
 
-**E17 — Das Terminal-Abbild.** `ngc-controller image` antwortet heute
-nachweislich „Dieser Teil ist noch nicht gebaut." (gelaufen, Code 1).
-**Aber der `Containerfile` liegt da**
-(`apps/server-controller/templates/terminal/Containerfile`, Basis
-`docker.io/library/debian:13-slim`).
+**E17 — Das Terminal-Abbild.** **Berichtigt am 17.10.2026:** hier stand,
+`ngc-controller image` antworte „Dieser Teil ist noch nicht gebaut."
+Das war schon am 12.10.2026 überholt und steht so auch in
+`docs/controller-abnahme.md`, Punkt 15: `grep -rn "notReady" apps/server-controller/`
+→ **0**, der Befehl ist ein Paket (`classes/node/image.go`,
+`classes/runtime/build.go`) und läuft bis zu der Zeile, die podman startet.
+Der `Containerfile` liegt da
+(`apps/server-controller/templates/terminal/Containerfile`) und nagelt seine
+Basis seitdem mit einem Digest fest: `debian:13-slim@sha256:a29215f6…`,
+gehalten von `build.go:98`.
 *Messen:* `podman build` auf einer Baumaschine mit dem gebauten
 `ngc-controller` im Kontext; das Abbild als Datei; `CMD` ist
 `ngc-controller hold`.
@@ -396,9 +436,12 @@ Oberfläche verweigern.
 *Messen:* ein Controller schickt eine Meldung, eine offene Shell sieht sie; mit
 **keiner** offenen Shell steht die Warnzeile im Protokoll.
 
-**E28 — `controller.json`: zehn Felder ohne Leser.** Gemessen 0 Leser außerhalb
-von `shared/config`: `Migrate`, `Podman`, `WebConfig`, `AppDataDir`, `StageDir`,
-`BalancerFile`, `APITrustFile`, `WebRoot`, `BinDir`, `APIPort`.
+**E28 — `controller.json`: zwei Felder ohne Leser.** **Nachgezählt am 17.10.2026**
+(`grep -rn '\.<Feld>' apps/ shared/ --include=*.go` ohne Tests und ohne
+`shared/config/`): acht der zehn haben heute Leser — `Podman` 5, `WebConfig` 3,
+`AppDataDir` 10, `StageDir` 21, `BalancerFile` 8, `APITrustFile` 3, `WebRoot` 15,
+`BinDir` 11. **Ohne Leser sind noch zwei:** `Migrate` und `APIPort`.
+Am 12.10.2026 stand hier „zehn Felder".
 **Ein Admin, der sie setzt, sieht die Prüfung durchgehen und bekommt kein
 Verhalten.** Das ist die bösartigste Sorte Fehler in diesem Haufen.
 *Messen:* je Feld einen Wert setzen, der sichtbar wirken müsste.
@@ -468,9 +511,12 @@ Berichten liest, sucht umsonst.
 | „Die Programme bauen für Linux nur in der Theorie" | **sechs Binärdateien, Code 0**, amd64 und arm64, `CGO_ENABLED=0` |
 | ctrl-12 (halb): „Das Terminal-Abbild hat keinen Erzeuger" | der `Containerfile` ist da; nur `ngc-controller image` ist leer. Bleibt als **E17** |
 
-**Nicht gefunden:** `docs/recovery-abnahme.md` gibt es nicht. Die Recovery-Arbeit
-ist ein eigener Strang (Rust, `docs/recovery-modus.md`) und in diesem Feldzug
-nicht enthalten.
+**Nicht auf `main`:** `docs/recovery-abnahme.md` liegt auf den Zweigen `recovery`
+und `recovery-integration`, nicht auf `main` — am 17.10.2026 mit
+`git ls-tree -r --name-only <zweig>` je Zweig nachgezählt. Hier stand „gibt es
+nicht"; das war ein Zähler über den falschen Baum. Die Recovery-Arbeit ist ein
+eigener Strang (Rust, `docs/recovery-modus.md`) und in diesem Feldzug nicht
+enthalten.
 
 ---
 
@@ -486,6 +532,9 @@ So steht es oben, und so ist es gemeint (`messen.md`):
 | **ausgeführt** | ein Lauf hat die Zeile erreicht, mit Code und Fallzahl daneben | dass es auf einem echten Server so läuft |
 
 Stand heute über den ganzen Feldzug:
+
+**Stand 12.10.2026; überholt seit dem 17.10.2026** — eine ganze Anlage steht
+(Punkte 56–62), die Tabelle ist nicht neu gezählt.
 
 | | Punkte |
 |---|---|
@@ -519,10 +568,11 @@ Alle fünf sind in diesem Projekt bezahlt worden.
 
 # Die kürzeste Fassung
 
-1. **S1 zuerst** — ohne `dbopen.Register` startet `ngc-api` nicht, und dann ist
-   kein einziger Punkt der Stufe 1 messbar.
-2. **S2 und S3** — ohne Release und ohne die vier Skripte in einem Stand gibt es
-   keine Einrichtung.
+1. ~~**S1 zuerst** — ohne `dbopen.Register` startet `ngc-api` nicht.~~
+   **Erledigt am 17.10.2026** (siehe S1).
+2. ~~**S2 und S3** — ohne Release und ohne die vier Skripte in einem Stand gibt
+   es keine Einrichtung.~~ **Erledigt** (siehe S2, S3); offen bleibt nur, dass
+   `apps/web` nicht auf `main` liegt.
 3. **Dann eine Maschine.** 33 Punkte, in der Reihenfolge 1.1 → 1.6.
 4. **Vor der Reise:** ein Dateisystem, das `encrypt` kann, und 8 GB RAM.
 5. **Zwei Maschinen erst zum Schluss**, für die vier Punkte der Stufe 2.

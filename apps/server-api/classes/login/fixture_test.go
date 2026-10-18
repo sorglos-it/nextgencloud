@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -77,6 +78,9 @@ func newFixture(tb testing.TB) (*Handler, fixture) {
 	}
 	s := state.New(cfg, memstore.New(), box, make([]byte, 32))
 	s.Now = func() int64 { return testNow }
+	// A path of this run that nothing wrote: so no case below depends on
+	// whether the machine it runs on happens to carry config.AnchorFile.
+	s.AnchorFile = filepath.Join(tb.TempDir(), "trust-anchor.json")
 
 	// trusttest.Genesis takes the signer of Users[1] and gives Users[0] its
 	// own passkey (trusttest.GenesisPasskeyFill). The password admin has to be
