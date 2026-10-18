@@ -97,8 +97,24 @@ fi
 step "3. known vulnerabilities"
 # RUN once (12.10.2026, 0 reachable vulnerabilities) - and the CHANGELOG had
 # claimed it before that, which is why it is a step here and not a habit.
+#
+# WHY -tags modules: without it this scans 12 of the 22 vendored modules.
+# Measured 18.10.2026 with -show verbose, same commit, twice:
+#
+#   govulncheck ./...               -> "scanned the following 12 modules"
+#   govulncheck -tags modules ./... -> "scanned the following 22 modules"
+#
+# The ten it misses are the passkey chain (go-webauthn and its nine, 3.1 MB).
+# No part imports them yet; tools/modules.go holds them in go.mod behind the
+# build tag "modules", and a package no build reaches is a package this tool
+# never looks at. Both runs found 0 reachable vulnerabilities, so the gap has
+# cost nothing so far - which is exactly why it would have stayed invisible.
+# The numbers are in docs/fremdcode.md.
+#
+# When the last line of tools/modules.go is gone the tag matches no file any
+# more, and that is harmless: go then builds the same packages either way.
 if command -v govulncheck >/dev/null 2>&1; then
-	govulncheck ./... || bad "govulncheck reports reachable vulnerabilities"
+	govulncheck -tags modules ./... || bad "govulncheck reports reachable vulnerabilities"
 else
 	missing "govulncheck" "go install golang.org/x/vuln/cmd/govulncheck@latest"
 fi
@@ -128,7 +144,19 @@ else
 	done
 	# ngc-store check judges one part at a time, the same way
 	# shared/testdata/release/verify.sh judges it on the server.
-	go build -buildvcs=false -o "${TMPDIR:-/tmp}/ngc-store" ./apps/cli || bad "ngc-store does not build"
+	#
+	# -trimpath, although this binary is thrown away after the loop: it was
+	# the only line in the repo that builds a program without it, and a
+	# build without -trimpath carries the path it was built in. Measured
+	# 18.10.2026 on this same package, CGO_ENABLED=0 GOOS=linux
+	# GOARCH=amd64: built in two directories WITHOUT the flag it gave two
+	# different binaries (git hash-object fae54d3d / 1cfba7e5), WITH it one
+	# (d5803996, that one also from an empty GOCACHE). The line here builds
+	# for the host instead, so its own hash is a different number - what
+	# carries over is that the path stops leaking in.
+	# docs/release-weg.md:70 names the flag for the shipped parts; this
+	# keeps the one exception out. RUN 18.10.2026, exit 0.
+	go build -buildvcs=false -trimpath -o "${TMPDIR:-/tmp}/ngc-store" ./apps/cli || bad "ngc-store does not build"
 	for pa in "ngc-web all" "ngc-api amd64" "ngc-api arm64" "ngc-controller amd64" "ngc-controller arm64"; do
 		set -- $pa
 		if [ -f "$dir/$1-$2.tar" ]; then

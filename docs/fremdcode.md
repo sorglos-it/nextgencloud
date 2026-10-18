@@ -200,9 +200,10 @@ oben ist damit ein Ergebnis und kein Zufall.
 
 - **`docs/release-weg.md:70` und `:139` nennen `-trimpath` und frühere Prüfsummen.** Mein Lauf
   bestätigt das unabhängig und fügt den kalten Zwischenspeicher dazu.
-- **Offen, und es ist kein Widerspruch, sondern eine Lücke:** `tools/release-gate.sh:131` baut
-  `ngc-store` **ohne** `-trimpath`. Dort ist es nur eine Rauchprobe, kein Auslieferungsbau – aber
-  es ist die einzige Zeile im Repo, die ein Programm baut, und sie baut nicht reproduzierbar.
+- **War eine Lücke, ist behoben** (18.10.2026, in diesem Zweig): `tools/release-gate.sh` baute
+  `ngc-store` **ohne** `-trimpath` – die einzige Zeile im Repo, die ein Programm baut und es nicht
+  reproduzierbar baut. Jetzt steht der Schalter dort, mit den Zahlen im Kommentar. Die Zeile ist
+  danach einmal gelaufen, Ausstiegscode 0.
 - **Gültigkeitsbereich:** eine Werkzeugkette (go1.27.2), eine Maschine, ein Laufwerk (D:).
   Reproduzierbar *zwischen* zwei Rechnern ist damit **nicht** gemessen.
 
@@ -227,13 +228,19 @@ reparieren, wenn draußen niemand mehr repariert?* Danach sortiert:
 | **`debian:13-slim`** | **Bleibt, erledigt.** Digest festgenagelt, `pin-base.sh` ist der Weg, die Pflicht steht geschrieben (Punkt 39). | – |
 | **`@playwright/test`** | **Entscheidung nötig** – siehe Punkt 6. | – |
 
-**Zwei Verfahrensvorschläge, die mehr wert sind als jeder einzelne Modulwechsel:**
+**Zwei Verfahrenspunkte, die mehr wert sind als jeder einzelne Modulwechsel. Der erste ist
+erledigt, der zweite ist deine Entscheidung:**
 
-1. `govulncheck -tags modules ./...` statt `govulncheck ./...` in `release-gate.sh` und in
-   `THIRD-PARTY.md`. **Ein Wort, und der blinde Fleck aus Punkt 4 ist zu.** Entfällt mit dem
-   Rausnehmen des Passkey-Strangs von selbst.
-2. **Einen Satz dazu, wer eine Kryptobibliothek anheben darf**, nach dem Muster von
-   `pin-base.sh`. Heute darf es jeder, der schreiben darf.
+1. **Erledigt am 18.10.2026** (in diesem Zweig, keine Entscheidung nötig – es war ein Fehler, keine
+   Wahl): `govulncheck -tags modules ./...` statt `govulncheck ./...`, an allen drei Stellen, die
+   den Befehl nennen – `tools/release-gate.sh`, `THIRD-PARTY.md`, `CLAUDE.md`. Je Stelle stehen die
+   gemessenen Zahlen dabei (12 gegen 22 Module), damit niemand den Schalter für Beiwerk hält und
+   wieder wegnimmt. Der Befehl ist danach wortwörtlich gelaufen: **0 erreichbare Lücken,
+   Ausstiegscode 0.** Mit dem Rausnehmen des Passkey-Strangs wird der Schalter wirkungslos, aber
+   nicht falsch – der Kommentar sagt das.
+2. **Offen, und es ist deine Entscheidung: wer darf eine Kryptobibliothek anheben?** Nach dem
+   Muster von `tools/pin-base.sh`, das für das Container-Abbild genau diese Frage beantwortet
+   (Punkt 39). Heute darf es jeder, der schreiben darf – und `flynn/noise` sichert den Tunnel.
 
 ## 6. Wurde die Regel irgendwo still verletzt?
 
@@ -261,13 +268,16 @@ Drei kleinere Funde, keiner davon ein stiller Fremdcode-Einbau:
   Fremdcode in NGC, auf das die Hausregel **nicht** angewandt wurde. Es wird nicht ausgeliefert
   (nur Tests), aber es läuft auf dieser Maschine und lädt zusätzlich Browser nach
   (`playwright install --with-deps`). Draußen ist heute **1.64.1** – neun Minor-Fassungen weiter.
-  *Zu entscheiden:* gilt die Regel auch für Werkzeug, das nur testet? Ich schlage vor: nein, aber
-  die Fassung gehört mit Begründung in `THIRD-PARTY.md`, damit die Lücke benannt ist statt still.
-- **`THIRD-PARTY.md` nennt den JS-Teil nur im Vorwort**, ohne Zeile in einer der beiden Tabellen –
-  also ohne Fassung und ohne Lizenz. Die Angaben stehen vollständig in `SOURCE.md`, aber wer die
-  Lizenzliste liest, findet `@noble/hashes` dort nicht.
-- **`THIRD-PARTY.md` nennt `x/crypto/ocsp` nicht**, obwohl es in `vendor/` liegt. Es kommt über
-  `go-webauthn/x/revoke` herein – fällt mit dem Passkey-Strang weg.
+  *Zu entscheiden bleibt:* gilt die Regel auch für Werkzeug, das nur testet? Ich schlage vor: nein.
+  **Benannt ist es jetzt** – `THIRD-PARTY.md` hat am 18.10.2026 einen Abschnitt „Nur zum Testen,
+  und nicht im Repo" bekommen, mit Fassung, Begründung und dem Abstand nach draußen. Eine benannte
+  Ausnahme ist keine stille mehr.
+- **`THIRD-PARTY.md` nannte den JS-Teil nur im Vorwort**, ohne Zeile in einer der beiden Tabellen –
+  also ohne Fassung und ohne Lizenz. **Behoben am 18.10.2026:** eigener Abschnitt „JavaScript, von
+  Hand kopiert" mit `@noble/hashes` 2.4.0, MIT, Übernahmedatum und dem Verweis auf `SOURCE.md`.
+- **`THIRD-PARTY.md` nannte `x/crypto/ocsp` nicht**, obwohl es in `vendor/` liegt. **Behoben am
+  18.10.2026**, in derselben Zeile wie `xts`. Es kommt über `go-webauthn/x/revoke` herein und
+  fällt mit dem Passkey-Strang weg.
 
 ## Was diese Messung nicht sagt
 
@@ -278,4 +288,12 @@ Drei kleinere Funde, keiner davon ein stiller Fremdcode-Einbau:
 - **Die Lückenlage gilt für den 18.10.2026** und für die Datenbank `vuln.go.dev`. Morgen kann sie
   anders sein, und heute merkt das niemand automatisch.
 - **Keine der acht neueren Fassungen wurde eingespielt oder gebaut.** Dieser Auftrag schlägt vor,
-  er entscheidet nicht.
+  er entscheidet nicht. Dasselbe gilt für das Rausnehmen des Passkey-Strangs: vorgeschlagen, nicht
+  getan.
+- **Die Schalter-Änderung in `tools/release-gate.sh` ist nicht von `shellcheck` gesehen** – das
+  Werkzeug gibt es auf dieser Maschine nicht (`which shellcheck`: nichts). Geprüft ist stattdessen
+  `bash -n tools/release-gate.sh` (Syntax ok) und dass **beide geänderten Zeilen wortwörtlich
+  gelaufen sind**, je mit Ausstiegscode 0. Das Skript als Ganzes ist weiter nie durchgelaufen, wie
+  sein eigener Kopf sagt.
+- **`tools/check.sh` ist nach den Änderungen gelaufen und hat `check: ok` gedruckt** – die Zeile,
+  nicht die Null.
