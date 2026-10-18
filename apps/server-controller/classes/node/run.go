@@ -760,16 +760,20 @@ func webSync(w *apache.Writer, k *chain.Keeper) func(ctx context.Context) error 
 		if apis == 0 {
 			return fmt.Errorf("node: version %d of the trust list names no API server", l.Seq)
 		}
+		// Both halves can be true at once: Sync leaves out a server it could
+		// not reach or whose pin did not match, writes the rest and names the
+		// ones it left. So the line that says Apache followed is written for
+		// what WAS written, and the error goes on to the caller, which logs
+		// it as a warning of its own. One of the two alone would hide half of
+		// what happened.
 		changed, err := w.Sync(ctx, l.Nodes)
-		if err != nil {
-			return err
-		}
 		if changed {
-			// The number and not the names: which servers an installation has
-			// is its own, and this line is read to see THAT Apache followed.
+			// The numbers and not the names: which servers an installation
+			// has is its own, and this line is read to see THAT Apache
+			// followed and over how many servers.
 			slog.Info("Apache was brought in line with the trust list",
 				"seq", l.Seq, "apis", apis)
 		}
-		return nil
+		return err
 	}
 }
