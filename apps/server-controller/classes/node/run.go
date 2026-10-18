@@ -46,8 +46,10 @@ import (
 	"github.com/flynn/noise"
 	"golang.org/x/crypto/curve25519"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/apache"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/license"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
@@ -55,6 +57,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 )
@@ -529,6 +532,14 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		// then an install channel ends E_INTERNAL, exactly as it did before
 		// this task.
 		Updater: nil,
+		// The installer is built per channel, not once here, and that is the
+		// same seam the updater above names - only on this side it can be
+		// closed. install.Deps takes the trust list as a VALUE as well, and
+		// serve hands the list the channel was decided on to every call
+		// (serve.Installer), so the Manager of a channel is built on that one
+		// version instead of on whatever the keeper holds in the instant the
+		// installer reaches for it.
+		Installer: installer{cfg: cfg, version: version, state: st, engine: engine},
 	})
 	c := RunConfig{State: st, Chain: keeper, Report: rep}
 	for _, a := range cfg.APIs {
@@ -608,4 +619,53 @@ func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Contex
 		}
 		return errors.Join(errs...)
 	}
+}
+
+// installer builds the install.Manager of one activate channel. It holds only
+// what cannot change while this controller runs; the trust list comes with the
+// call, because that is the one thing that does change under it (see
+// serve.Installer).
+type installer struct {
+	cfg     *config.Controller
+	version string
+	state   *state.Store
+	engine  ctrlrt.Engine
+}
+
+// lastSeq is the newest catalogue number this installation has already seen
+// from a store, and it answers 0 for every store - which means "none seen".
+//
+// This is a GAP and not a decision of this file: nothing in this controller
+// books the catalogue number of an installation (state.Store has no place for
+// it, checked 18.10.2026), so store.VerifyCatalog cannot refuse an older
+// catalogue than the last one (its line "c.Seq < lastSeq"). What stays in
+// force is every other wall of install.Accept: the store's signature, the
+// checksum of the task, and the version of the row, which refuses a package
+// older than the one installed (install.Activate, step 2). What is missing is
+// only the roll-back of the CATALOGUE, and that needs a counter whoever owns
+// the local store has to add.
+func (installer) lastSeq(string) uint64 { return 0 }
+
+// Activate carries out one activation, on the trust list of its channel.
+func (i installer) Activate(ctx context.Context, list *trust.List, d access.Decision,
+	r io.Reader) ([]byte, error) {
+	return install.New(install.Deps{
+		State:  i.state,
+		Engine: i.engine,
+		Sys:    install.Host{ServerKey: i.cfg.DBKey.Bytes()},
+		List:   list,
+		Roles:  i.cfg.Roles,
+		Node:   i.cfg.Node,
+		NGC:    i.version,
+		// An activation never takes a release; install.Accept asks for the
+		// key all the same (install.Deps.ReleaseKey).
+		ReleaseKey: i.cfg.ReleaseKey,
+		StageDir:   config.StageDir,
+		// store.MaxPackage is the bound of the contract (4 GiB). Every
+		// activation cuts it down to what the disk really has free
+		// (install.bound), so this is the ceiling and not the promise.
+		Max:     store.MaxPackage,
+		LastSeq: i.lastSeq,
+		Now:     func() int64 { return time.Now().Unix() },
+	}).Activate(ctx, d, r)
 }

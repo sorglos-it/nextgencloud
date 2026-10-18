@@ -14,9 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/task"
@@ -641,4 +644,37 @@ func (c *countLog) about(what string) int {
 		}
 	}
 	return n
+}
+
+// The installer this controller hands an activate channel is wired up in
+// full: every field install.Activate reads in its own guard is there, so a
+// channel that arrives gets a refusal of its task and not "the installer is
+// not wired up".
+//
+// That is what the two errors tell apart, and it is the whole of this case.
+// A Manager missing one of State, Engine, Sys, List, StageDir, Max, LastSeq
+// or Now answers install.ErrInternal for every activation whatever the task
+// says; this one answers install.ErrForbidden, which is the guard behind it -
+// the one that asks for a signed root task. A decision without a task is the
+// cheapest way past the first guard and into the second.
+func TestTheInstallerOfThisControllerIsWiredUpInFull(t *testing.T) {
+	st := newState(t)
+	cfg := &config.Controller{
+		Node: "ctl-1", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+	}
+	i := installer{cfg: cfg, version: "1.2.3", state: st, engine: ctrlrt.NewPodman("podman")}
+	_, err := i.Activate(context.Background(), &trust.List{}, access.Decision{},
+		bytes.NewReader(nil))
+	if errors.Is(err, install.ErrInternal) {
+		t.Fatalf("the installer is wired wrong: %v", err)
+	}
+	if !errors.Is(err, install.ErrForbidden) {
+		t.Fatalf("an activation without a task gave %v, want install.ErrForbidden", err)
+	}
+	// And the catalogue counter is the gap this file names, not a number that
+	// drifted: it answers 0 for every store.
+	if n := i.lastSeq("ngc"); n != 0 {
+		t.Errorf("lastSeq = %d, want 0 with the comment that says why", n)
+	}
 }
