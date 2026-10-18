@@ -115,6 +115,7 @@ func refPresent(t *testing.T, root string) bool {
 // throwaway module: 67 files, 59 reached, 0 missing, 0 bare, 8 orphans - the
 // seven of extra-web.txt and the one of open-web.txt.
 func TestRealArchiveIsClosed(t *testing.T) {
+	t.Parallel()
 	needTools(t)
 	root := repoRoot(t)
 	if !refPresent(t, root) {
