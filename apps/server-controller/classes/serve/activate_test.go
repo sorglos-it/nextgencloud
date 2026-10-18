@@ -449,3 +449,115 @@ func TestServesSaysWhatThisBuildCarriesOut(t *testing.T) {
 		t.Error("an activate of another app is served")
 	}
 }
+
+// partialInstaller reads n bytes and then stops with its own error, the way
+// install.Accept stops once the transfer header or the manifest of a package
+// is not what the task named. What it leaves on the channel is the rest of the
+// package.
+type partialInstaller struct {
+	n    int
+	err  error
+	read int
+}
+
+func (p *partialInstaller) Activate(_ context.Context, _ *trust.List, _ access.Decision,
+	r io.Reader) ([]byte, error) {
+	b := make([]byte, p.n)
+	n, _ := io.ReadFull(r, b)
+	p.read = n
+	return nil, p.err
+}
+
+// WHAT THE ACTION DID NOT READ IS STILL ANSWERED. An installer that refuses a
+// package after its first bytes leaves the rest of it on the channel, and over
+// that rest the API may have gone past the bound of the action or been cut off
+// -- neither of which this side has noticed while it lies unread. So the rest
+// is read out (chanReader.drain) and what it says outranks the refusal of the
+// action.
+//
+// This is the case the mutant needs: an activate that answers chanReader.close
+// instead of drain reads a cl that is still nil here and sends the installer's
+// own code out over a channel that was cut off or overran. It passed every
+// other case of this package on 18.10.2026.
+func TestWhatTheActionDidNotReadIsStillAnswered(t *testing.T) {
+	a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+	if !ok {
+		t.Fatal("the contract has no activate action of the controller")
+	}
+	// The bound of the contract is 4303355908 bytes, too much to send in a
+	// case, so the action is cut down to a number a case can reach. What is
+	// measured is the line that counts, not the number in the contract.
+	small := a
+	small.MaxIn = 1000
+	for name, c := range map[string]struct {
+		in   []link.Inbound
+		act  core.Action
+		want wire.Code
+	}{
+		// The rest of the input goes past the bound: the action saw only its
+		// first 10 bytes and cannot know.
+		"the rest overran the bound": {
+			in: []link.Inbound{
+				{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x41}, 600)},
+				{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x41}, 600)},
+				{Kind: wire.TypeEOF},
+			},
+			act:  small,
+			want: wire.CodeTooLarge,
+		},
+		// The channel ended before its input did: there is no EOF frame, so
+		// the inbox is over while DATA was still owed.
+		"the rest was cut off": {
+			in: []link.Inbound{
+				{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x41}, 600)},
+			},
+			act:  a,
+			want: wire.CodeProtocol,
+		},
+	} {
+		// install.ErrVerify is a code of its own (E_VERIFY), so a wrong
+		// answer here is told apart from the right one and not just absent.
+		f := &partialInstaller{n: 10, err: install.ErrVerify}
+		s := New(Deps{Installer: f})
+		r := newChanReader(context.Background(), &fakeInbox{in: c.in}, c.act)
+		d := access.Decision{Action: c.act}
+		v, cl := s.activate(context.Background(), nil, d, r)
+		if f.read != 10 {
+			t.Fatalf("%s: the installer read %d bytes, want the 10 it asked for", name, f.read)
+		}
+		if v != nil {
+			t.Errorf("%s: result %v went out over a channel that owes a CLOSE", name, v)
+		}
+		if cl == nil {
+			t.Fatalf("%s: no CLOSE at all, want %q", name, c.want)
+		}
+		if cl.Code != c.want {
+			t.Errorf("%s: CLOSE %q, want %q of the unread rest", name, cl.Code, c.want)
+		}
+	}
+}
+
+// And the other side of it: where the action read its input whole, draining
+// finds nothing and the action's own refusal is what goes out. Without this
+// the case above would pass on a drain that answered E_PROTOCOL for every
+// channel.
+func TestAnInstallerThatReadEverythingKeepsItsOwnCode(t *testing.T) {
+	a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+	if !ok {
+		t.Fatal("the contract has no activate action of the controller")
+	}
+	f := &fakeInstaller{err: install.ErrVerify}
+	s := New(Deps{Installer: f})
+	box := &fakeInbox{in: []link.Inbound{
+		{Kind: wire.TypeData, Data: bytes.Repeat([]byte{0x42}, 40)},
+		{Kind: wire.TypeEOF},
+	}}
+	r := newChanReader(context.Background(), box, a)
+	_, cl := s.activate(context.Background(), nil, access.Decision{Action: a}, r)
+	if cl == nil || cl.Code != wire.CodeVerify {
+		t.Errorf("CLOSE = %+v, want the E_VERIFY of the installer", cl)
+	}
+	if len(f.read) != 40 {
+		t.Errorf("the installer read %d bytes, want all 40", len(f.read))
+	}
+}

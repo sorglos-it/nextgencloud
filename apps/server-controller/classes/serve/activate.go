@@ -70,7 +70,13 @@ func (s *Server) activate(ctx context.Context, list *trust.List, d access.Decisi
 	// package broken when the channel broke would send the API looking at the
 	// package. What the channel said about itself outranks what the installer
 	// made of the half it got.
-	if cl := r.close(); cl != nil {
+	//
+	// drain and not close: an installer that refused after the first bytes
+	// left the rest of the package unread, and what it did not read this side
+	// has not noticed yet - a cut-off channel or input past MaxIn. drain reads
+	// it out, which is also what frees a channel the API is still sending
+	// into, and only then is there something to be asked (stream.go).
+	if cl := r.drain(); cl != nil {
 		return nil, cl
 	}
 	if err != nil {

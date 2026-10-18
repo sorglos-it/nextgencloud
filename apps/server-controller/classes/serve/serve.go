@@ -457,9 +457,11 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, list *trust.List,
 //
 // What it does NOT do is read the input itself, and that is the difference to
 // core: the action gets the reader and decides how much of the input it ever
-// holds (stream.go). Whatever is left unread when the action comes back stays
-// unread - the channel is over with the CLOSE below, and link drops what was
-// still on it.
+// holds (stream.go). What is left unread when the action comes back is read
+// out by the ACTION, not here: only the action knows whether it is done, and
+// only the rest of the input says whether the channel was cut off or overran
+// (chanReader.drain, and serve.Server.activate is the one action that has to
+// do it).
 func (s *Server) coreStream(ctx context.Context, ch *link.Channel, list *trust.List,
 	d access.Decision, flow stream) error {
 	// The first GRANT is the credit the API sends its input with; what this

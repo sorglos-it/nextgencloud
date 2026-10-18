@@ -141,10 +141,41 @@ func (r *chanReader) give() error {
 	return nil
 }
 
-// close is the CLOSE this channel owes because of its input, or nil when the
-// input was not what stopped. A caller reads it after the action came back and
-// lets it outrank the error of the action (serve.Server.activate).
+// close is what this reader has NOTICED so far about its channel: the CLOSE it
+// owes, or nil. It is the raw field and not the answer a caller wants - what
+// the action never read has not been noticed yet, so a caller that decides on
+// this one decides on half the channel. drain is the answer; this is what drain
+// reads.
 func (r *chanReader) close() *wire.Close { return r.cl }
+
+// drain reads out what the action left and answers the CLOSE this side owes.
+//
+// IT HAS TO RUN EVEN WHERE THE ACTION SUCCEEDED, and that is the whole of it.
+// An installer that refused a package after its first bytes - a checksum in
+// the transfer header, a manifest naming another app - leaves the rest of a
+// four gigabyte file on the channel, and over that rest the API may have been
+// cut off or may have sent past core.Action.MaxIn. Neither is noticed while it
+// lies unread, so a channel closed over it is answered on what half of it
+// said.
+//
+// Reading it out is also what frees the channel: the API is still sending into
+// it, with credit this side handed out, and the frames it sends have nowhere
+// to go until they are taken off.
+//
+// IT IS drain() AND NEVER chanReader.cl. A mutant that answers cl instead
+// passed every case of this package on 18.10.2026, which is why
+// TestWhatTheActionDidNotReadIsStillAnswered holds the difference. The bound
+// still holds while it drains: what comes past MaxIn is refused here exactly
+// as it is in Read, because it is Read that does it.
+func (r *chanReader) drain() *wire.Close {
+	var buf [32 << 10]byte
+	for r.cl == nil && !r.done {
+		if _, err := r.Read(buf[:]); err != nil && err != io.EOF {
+			break
+		}
+	}
+	return r.cl
+}
 
 // The errors this reader hands an action. Which of them it was does not reach
 // the channel - chanReader.cl carries the CLOSE - so they exist to be told
