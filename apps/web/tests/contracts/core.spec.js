@@ -626,3 +626,56 @@ test("validateParams holds the rules of Go's Validate methods", async ({ shell }
     "parameters that are no object": false,
   });
 });
+
+// A NODE'S VERSION IS A HELLO VERSION, NOT A RELEASE VERSION, and the whole
+// answer hangs on the difference. core.NodeInfo.Version is what the server
+// said in its last hello; the hello's own rule is Go's tunnel.versionPattern,
+// ^[0-9a-z.+-]{1,32}$, and nothing in Go ever checks the field again -- the
+// API hands it on as it arrived.
+//
+// Until 17.10.2026 the shell read it with its RELEASE rule ("" or x.y.z). So a
+// server reporting "0.0.0-dev" -- the very name the contract tells a build that
+// is no release to use, and the one store.SupportsMinNGC leans on -- made the
+// shell throw the WHOLE answer away, and the person read "Die Antwort der
+// Anlage war nicht in Ordnung. Es wird nichts angezeigt." Measured on a running
+// installation that day, and with "0.2.0" in that one field the same answer was
+// taken, so nothing else about it was ever wrong.
+//
+// THE PATTERN IS READ OUT OF GO, not copied here: a test that wrote the regular
+// expression down a second time would pin the copy, and the day the contract
+// moves, nothing would go red. goSource reads shared/ itself.
+test("a node's version is read with the hello's rule, as Go writes it", async ({ shell }) => {
+  const go = goSource("tunnel/tunnel.go");
+  const m = /versionPattern = regexp\.MustCompile\(`\^(.+)\$`\)/.exec(go);
+  expect(m, "shared/tunnel/tunnel.go names its version pattern").not.toBeNull();
+  const body = m[1];
+  // Values built from Go's own pattern, and values no pattern of it takes.
+  const good = ["0.0.0-dev", "0.2.0", "1.0.0+build.7", "a", "0".repeat(32), ""];
+  const bad = ["0".repeat(33), "0.0.0-DEV", "0.0.0 dev", "0.0.0_dev", "ä"];
+  const got = await shell.evaluate(async (d) => {
+    const c = await import("/assets/js/contracts/core.js");
+    const action = c.lookup("ngc.users", "api", "nodes");
+    const row = (v) => [{
+      node: "ngc-2", online: true, roles: ["web", "api", "db", "services"],
+      version: v, arch: "amd64",
+    }];
+    const takes = (v) => {
+      try { c.parseResult(action, new TextEncoder().encode(JSON.stringify(row(v)))); return true; }
+      catch { return false; }
+    };
+    return { good: d.good.map(takes), bad: d.bad.map(takes) };
+  }, { good, bad });
+  // Every value Go's pattern takes has to pass here, and the empty one beside
+  // it: the field is omitempty, so a server that said nothing arrives as "".
+  const re = new RegExp("^" + body + "$");
+  good.forEach((v, i) => {
+    if (v !== "") expect(re.test(v), `Go takes ${JSON.stringify(v)}`).toBe(true);
+    expect(got.good[i], `the shell takes ${JSON.stringify(v)}`).toBe(true);
+  });
+  // And a reader that takes everything is no reader: what Go's pattern refuses
+  // is refused here too, so the row is still checked.
+  bad.forEach((v, i) => {
+    expect(re.test(v), `Go refuses ${JSON.stringify(v)}`).toBe(false);
+    expect(got.bad[i], `the shell refuses ${JSON.stringify(v)}`).toBe(false);
+  });
+});
