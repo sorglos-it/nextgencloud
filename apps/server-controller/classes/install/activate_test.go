@@ -363,11 +363,16 @@ func (s *stand) staged() int {
 	return len(es)
 }
 
-// Grants have to be the needs of the package as a set: a grant too few is a
-// container with less than the app asked for, a grant too many is a right an
-// admin signed for nothing.
-func TestActivateGrantsMustEqualNeeds(t *testing.T) {
-	cases := map[string]struct {
+// grantCases is the rights table of an activation: what the package needs,
+// what the task granted, and what has to come of it. It is a function of its
+// own so BOTH SOURCES run the same table and can never drift apart in what
+// they allow -- a case added here is added for a bought app and an uploaded
+// one in the same edit.
+func grantCases() map[string]struct {
+	needs, grants []string
+	want          error
+} {
+	return map[string]struct {
 		needs, grants []string
 		want          error
 	}{
@@ -380,34 +385,82 @@ func TestActivateGrantsMustEqualNeeds(t *testing.T) {
 		"a grant without a need":  {nil, []string{store.NeedNetwork}, ErrForbidden},
 		"two grants for one need": {[]string{store.NeedRoot}, []string{store.NeedRoot, store.NeedNetwork}, ErrForbidden},
 	}
-	for name, c := range cases {
+}
+
+// runGrants bends one stand to needs and grants, activates it, and holds the
+// answer against want. wantStore is what the row has to name afterwards, and
+// it is the INTERMEDIATE CHECK of this case: without it a stand whose source
+// did not take could fall back to the other branch and the whole table would
+// be measured twice on one path.
+func runGrants(t *testing.T, s *stand, needs, grants []string, want error, wantStore string) {
+	t.Helper()
+	s.withManifest(func(m *store.Manifest) { m.Needs = needs })
+	s.grants = grants
+	_, err := s.activate()
+	if !errors.Is(err, want) {
+		t.Fatalf("Activate answered %v, want %v", err, want)
+	}
+	if want != nil {
+		if len(s.sys.calls) != 0 {
+			t.Fatalf("a refused activation changed this machine: %v", s.sys.calls)
+		}
+		if len(s.eng.log()) != 0 {
+			t.Fatalf("a refused activation called the engine: %v", s.eng.log())
+		}
+		if s.staged() != 0 {
+			t.Fatal("a refused activation left the staged package behind")
+		}
+		return
+	}
+	// The needs of the package reach the container, and they are the grants
+	// of the task by then.
+	if s.eng.created.Network != slices.Contains(needs, store.NeedNetwork) ||
+		s.eng.created.Root != slices.Contains(needs, store.NeedRoot) {
+		t.Fatalf("the container got network=%v root=%v for needs %v",
+			s.eng.created.Network, s.eng.created.Root, needs)
+	}
+	if got := s.row().Store; got != wantStore {
+		t.Fatalf("the activation wrote store %q, want %q", got, wantStore)
+	}
+}
+
+// Grants have to be the needs of the package as a set: a grant too few is a
+// container with less than the app asked for, a grant too many is a right an
+// admin signed for nothing.
+func TestActivateGrantsMustEqualNeeds(t *testing.T) {
+	for name, c := range grantCases() {
 		t.Run(name, func(t *testing.T) {
-			s := newStand(t)
-			s.withManifest(func(m *store.Manifest) { m.Needs = c.needs })
-			s.grants = c.grants
-			_, err := s.activate()
-			if !errors.Is(err, c.want) {
-				t.Fatalf("Activate answered %v, want %v", err, c.want)
-			}
-			if c.want != nil {
-				if len(s.sys.calls) != 0 {
-					t.Fatalf("a refused activation changed this machine: %v", s.sys.calls)
-				}
-				if len(s.eng.log()) != 0 {
-					t.Fatalf("a refused activation called the engine: %v", s.eng.log())
-				}
-				if s.staged() != 0 {
-					t.Fatal("a refused activation left the staged package behind")
-				}
-				return
-			}
-			// The needs of the package reach the container, and they are the
-			// grants of the task by then.
-			if s.eng.created.Network != slices.Contains(c.needs, store.NeedNetwork) ||
-				s.eng.created.Root != slices.Contains(c.needs, store.NeedRoot) {
-				t.Fatalf("the container got network=%v root=%v for needs %v",
-					s.eng.created.Network, s.eng.created.Root, c.needs)
-			}
+			runGrants(t, newStand(t), c.needs, c.grants, c.want, testStore)
+		})
+	}
+}
+
+// THE SAME TABLE FOR AN APP AN ADMIN UPLOADED, and that is Punkt 31 asked
+// where it has to be asked for Punkt 30's app.
+//
+// Punkt 31 is about a rights check that reads the CATALOG COPY instead of the
+// manifest -- "eine Wand vor einer offenen Tuer". An uploaded app has no
+// catalog copy at all, so for it the question is not which copy is read but
+// whether the rule runs on that path AT ALL: install.approved takes a branch
+// of its own for an upload (package.go, the default of the switch), where no
+// signature of a store and no catalog entry stand in front of the file, and a
+// rights rule that only ever ran behind a verified catalog would be a rule
+// with a way round it.
+//
+// Measured rather than read: the rule is one line for both sources
+// (activate.go, sameSet), and this case is what holds it to that. A mutant
+// that lets an upload past sameSet dies here and nowhere else -- before this
+// case the whole table ran on the store branch only.
+//
+// WHAT IS NOT MEASURED HERE, because it is not this package's: that an upload
+// was signed and confirmed at all. That stands in front of the controller, in
+// the API's task check, and the shell has to send both (measured on a running
+// installation on 17.10.2026, where it sent neither and every upload ended
+// E_CONFIRM).
+func TestAnUploadedAppsGrantsMustEqualNeedsToo(t *testing.T) {
+	for name, c := range grantCases() {
+		t.Run(name, func(t *testing.T) {
+			runGrants(t, newStand(t).upload(), c.needs, c.grants, c.want, core.LocalStore)
 		})
 	}
 }
