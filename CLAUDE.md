@@ -101,7 +101,8 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 - In `shared/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
   Passkey-Admin, `Users[1]` der Passwort-Admin aus `NewSigner(1)`.
 - `shared/trust/trusttest` nur in Tests importieren; `tools/check.sh` bricht sonst ab.
-- Fremdcode prüfen: `govulncheck ./...`.
+- Fremdcode prüfen: `govulncheck -tags modules ./...`. Ohne den Schalter sieht es 12 der 22
+  Module (am 18.10.2026 gemessen, `docs/fremdcode.md`).
 - Keine Tests löschen oder überspringen, um grün zu werden.
 
 ## Git
