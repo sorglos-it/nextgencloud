@@ -315,6 +315,8 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > | **vereint mit `web-reif`** | **933** | 432 | **0** | 1365 | 27,5 min |
 > | dazu `main` `7eeeee5` (PR #80), Lauf 1 | 932 | 432 | **1** | 1365 | 28,0 min |
 > | dieselbe Fassung, Lauf 2 | 932 | 432 | **1** | 1365 | 27,8 min |
+> | mit `--retries=1` (Fahne) | **933** | 431 | **0** (1 `flaky`) | 1365 | 33,8 min |
+> | mit `retries: 1` aus der Datei | **933** | 432 | **0** (0 `flaky`) | 1365 | 23,0 min |
 >
 > **+99 grün gegenüber dem Ausgang, und die Übersprünge sind seit dem zweiten Stand
 > unverändert 432** — die Sprachschicht bringt 60 grüne Fälle und **keinen** neuen
@@ -397,10 +399,16 @@ Reihenfolge: was ein Fremder zuerst trifft.
 > als **`1 flaky`** heraus; einer, der **immer** fällt, bleibt **`1 failed`**. Die Zeile ist
 > also kein Freibrief: **zwei Rote hintereinander sind weiter ein Befund.**
 >
-> **Eine Lücke dabei, damit sie nicht als geschlossen gilt:** der grüne vollständige Lauf war
-> mit der Befehlszeilen-Fahne `--retries=1`; für die Datei ist nachgemessen, dass Playwright
-> `retries = 1` daraus liest (`trace` bleibt `retain-on-failure`, der gescheiterte Versuch
-> behält also seine Spur) — **ein vollständiger Lauf mit der Datei selbst ist nicht gefahren.**
+> **Die Lücke ist geschlossen:** ein vollständiger Lauf **ohne jede Befehlszeilen-Fahne**,
+> allein aus der Datei, gibt **933 grün, 432 übersprungen, 0 rot, 0 `flaky`** (23,0 min,
+> Ausstiegscode 0) — und `retry #` kommt im Protokoll **kein einziges Mal** vor, die
+> Wiederholung wurde also gar nicht gebraucht. `trace` bleibt `retain-on-failure`, der
+> gescheiterte Versuch behält damit seine Spur.
+>
+> **Was das sagt und was nicht:** derselbe Baum liefert nun in fünf vollständigen Läufen
+> **933 grün** und nie einen zweiten Roten — 23,0 bis 33,8 min. Dass einer der fünf gar
+> keinen roten Versuch hatte, ist **kein** Beweis, dass es nicht wiederkommt: die Ursache
+> ist weiter nicht benannt, und genau dafür steht die Zeile.
 >
 > Auch hier gilt der Satz von oben unverändert: **am Gerät ist nichts davon nachgemessen**,
 > und nach `main` geführt ist nichts.
