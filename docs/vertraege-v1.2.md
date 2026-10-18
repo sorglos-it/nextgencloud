@@ -2361,6 +2361,12 @@ Aus Anfrage, Sitzung, Benutzer oder Parametern wird hier **gar nichts** gelesen 
 > Browser) ist **zu seit Punkt 59**, Punkt 4 (Kopplung) **zu seit Punkt 61**.
 > **Offen bleibt der Store-Schlüssel** und die fünfte Schutzeinstellung aus
 > Befund 3. Art: Umgebung.
+> ⚠ **Ein Satz dieses Punktes ist gemessen falsch:** „Damit ist auch **P3**
+> beantwortet". Gemessen am 18.10.2026 ist die Form, die hier steht (Namen im
+> Wurzelverzeichnis), **nicht** die, die der Controller beim Update auspackt
+> (Namen unter `ui/`) — `store.WalkUI` weist das Wurzel-tar mit `ErrPackage`
+> ab. P3 ist damit nicht beantwortet, sondern **dringender**. Einzelheiten im
+> Nachtrag zu P3 in [`vertraege-v1-3-vorschlag.md`](vertraege-v1-3-vorschlag.md).
 
 **Gemessen am 16.10.2026** auf **Debian 13 (trixie), Apache 2.4.69, PHP 8.4, podman 5.4.2**,
 systemd läuft (WSL2-Instanz, also ein echtes Debian-Userland; was nur dort gilt, steht unten).
@@ -2836,7 +2842,7 @@ eine Empfehlung.
 | **P9** – eigener Code `E_BUSY` für „besetzt" | **49, 50, 52, 53, 58** | Der Benutzer kann „Dienst weg", „Name löst nicht auf" und „Datenbank besetzt" **nicht unterscheiden** – er liest immer „Dienst nicht erreichbar." Nur **nach** P10. |
 | **P1** – `store.ValidDownloadURL` ausführen | **25, 45** | Pfad und Query einer Download-Adresse prüft dauerhaft **niemand**. |
 | **P2** – `Unattended` verbietet den ersten Einbau | – | Ein erster Einbau ohne Aufsicht geht gar nicht. |
-| **P3** – Format einer `ngc-web`-Release-Datei | **56** | ⚠ Punkt 56 sagt „P3 ist beantwortet", die Vorlage führt P3 weiter als „gilt". **Einer der beiden muss nachziehen.** |
+| **P3** – Format einer `ngc-web`-Release-Datei: zieht das Release-Werkzeug auf `ui/` nach, oder der Controller auf ein Wurzel-tar? | **56** | ⚠ Punkt 56 sagt „P3 ist beantwortet" – **das ist seit dem 18.10.2026 als falsch gemessen.** Die Skripte bauen Namen im Wurzelverzeichnis, der Controller packt nur Namen unter `ui/` aus; `store.WalkUI` weist das Wurzel-tar mit `ErrPackage` ab. **Ein `ngc-web`-Update über den Controller kann heute nicht gehen** – es fällt am ersten Kopfblock. |
 | **P5** – Referenzfeld in `dbapi.App` | **24** | Ein Abbild ohne Referenz bleibt für immer im Datenverzeichnis liegen, und `DataSize` zählt es als Benutzerdaten. |
 | **P6** – ein Kopplungscode gilt 24 Stunden | – | Die Zahl bleibt ungesetzt. Gehört zusammen mit **N1** entschieden (Punkt 26). |
 | **P7** – `ngc-api migrate` braucht eine ganze `api.json` | **28** | Ein reiner Datenbankknoten kann `ngc-api migrate` nicht starten. |
