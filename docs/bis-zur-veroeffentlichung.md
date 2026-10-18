@@ -60,6 +60,19 @@ Reihenfolge: was ein Fremder zuerst trifft.
 - **Fundstelle:** `gh release list`, 18.10.2026; ulh `ngc-api.sh:81`;
   `docs/installation-kleines-system.md:58`; `vertraege-v1.2.md`, Punkt 62 Befund 3.
 
+> **Nachtrag, 18.10.2026, Punkt 64: die Kette trägt jetzt — veröffentlicht ist trotzdem
+> nichts.** Auf einer echten Debian-13-VM ist zum ersten Mal ein **richtiges** Release
+> gefahren statt Dateien aus einem Arbeitsbaum: fünf Teile, fünfmal `release ok`, und auf der
+> fremden Maschine „The signature of the program files of ngc-api is good" — **die
+> Unterschrift wurde also auf einer anderen Maschine gegen den Schlüssel geprüft, der im
+> Skript steht.** Dabei hat `ngc-store contents` (der Riegel aus `c4158b7`) einen
+> `ngc-web-all.tar` mit dem Eintrag `./` abgewiesen — ohne ihn wäre ein Release hochgegangen,
+> das die Skripte später abgelehnt hätten.
+>
+> **Was das an H2 ändert und was nicht:** das Release war ein **Entwurf**, kein
+> veröffentlichtes. `gh release list` gibt weiter null Zeilen, und der Schlüssel im Skript ist
+> weiter der dateibasierte (H4 steht unverändert). Der Weg ist bewiesen, die Tür noch zu.
+
 ### H3 — Auf ulh-`main` liegt kein einziges `ngc-*`-Skript.
 
 - **Was fehlt:** `git ls-tree -r --name-only origin/main apps/cli/assets/scripts/ | grep -i ngc`
@@ -360,6 +373,26 @@ Reihenfolge: was ein Fremder zuerst trifft.
   ~4 Stunden.
 - **Fundstelle:** `vertraege-v1.2.md`, P3-Zeile mit ⚠; `docs/release-weg.md`, D2 und D3;
   `docs/befunde-17-18-10-2026.md`, Abschnitt 2.
+
+### H11 — Ohne Dateiverschlüsselung im Kern startet keine einzige App.
+
+- **Was fehlt:** ein Hinweis, bevor jemand installiert. Der Controller legt die Daten jeder App
+  in einen **verschlüsselten Ordner** (`fscrypt`, AES-256-XTS für den Inhalt, AES-256-CTS für
+  die Namen). Kann das Dateisystem das nicht, gibt es `ErrNoFscrypt`, und der Anrufer
+  **aktiviert keine App mit Daten** — „ein unverschlüsseltes Datenverzeichnis ist das eine,
+  was dies niemals still tun darf" (`runtime/data.go:54–57`). Der Satz für den Menschen steht
+  da und ist gut („Der Datenträger kann keine verschlüsselten Ordner (fscrypt). Bitte ext4
+  oder f2fs mit aktivierter Verschlüsselung verwenden.", `:47`) — **er kommt nur zu spät**:
+  erst beim Aktivieren, nicht beim Installieren.
+- **Warum es zählt:** am 18.10.2026 auf einer echten Debian-13-VM gemessen, und es ist der
+  Grund, warum es diese VM überhaupt brauchte: **auf dem WSL-Rechner ist `CONFIG_FS_ENCRYPTION`
+  aus, und dort startet keine NGC-App.** Wer NGC zum ersten Mal ausprobiert, tut das in WSL
+  (R8) oder in einem Container — und bekommt einen Schreibtisch, auf dem nie eine App laufen
+  wird, ohne dass ihm das jemand vorher sagt.
+- **Größe:** 2 Stunden (eine Prüfung in `ngc-all install`/`ngc-controller install`, die den
+  vorhandenen Satz **vor** der Installation zeigt).
+- **Fundstelle:** `apps/server-controller/classes/runtime/data.go:16`, `:47`, `:54–57`,
+  `data_linux.go:12`, am 18.10.2026 gelesen; `vertraege-v1.2.md`, Punkt 64, erster Absatz.
 
 ---
 
