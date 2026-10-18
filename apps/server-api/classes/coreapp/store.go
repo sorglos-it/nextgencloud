@@ -222,23 +222,20 @@ func (d *Dispatcher) storeSetUpdate(ctx context.Context, rq *Call) ([]byte, erro
 // storeActivate answers ngc.store/controller/activate: the app is installed
 // and started on the controller the signed task names.
 //
-// The uploaded package of an app of core.LocalStore is NOT here, and that is
-// the one seam of the contract that is still open rather than quietly filled
-// (Punkt 30 of docs/vertraege-v1.2.md). Measured, not assumed:
-// ngc.store/upload keeps only the ui-tar and never the package
-// (appstore.Upload), and the shell sends no DATA on this channel either --
-// core.Action.MaxIn says for a FlowTransfer action that it bounds "what the
-// API sends the controller ... the shell sends none, even when it opened the
-// channel", and core.ShellOpens says the shell sends EOF at once. So nobody
-// holds the file, ActivateRequest.File stays nil, and an activation out of
-// core.LocalStore ends in E_UNREACHABLE (appstore.spoolPackage, ErrStore).
-// An app out of a store of the trust list is whole: its package is downloaded
-// against the checksum of the verified catalog entry.
+// THE HANDLER STILL HANDS OVER NO FILE, and it still must not: the shell
+// sends no DATA on this channel (core.Action.MaxIn bounds for a FlowTransfer
+// action "what the API sends the controller ... the shell sends none, even
+// when it opened the channel", and core.ShellOpens says it sends EOF at
+// once), so ActivateRequest.File stays nil here as it always did.
 //
-// Where that file is to lie is a decision with a disk, a crash and a second
-// API server in it, and it is not one to take inside a handler.
-// TestActivatingAnUploadedAppHandsOverNoFile holds the state as it is, so the day
-// somebody decides it, a case says what changed.
+// WHAT CHANGED on 17.10.2026 is who finds the package: appstore keeps it at
+// the upload and looks it up by the checksum of the SIGNED task
+// (appstore/hold.go, server.HoldDir). So an activation of an uploaded app
+// goes through now, and where the file lies was decided where that decision
+// belongs -- in the package that owns the disk and in the server that names
+// the directory, not in this handler. Punkt 30 of docs/vertraege-v1.2.md is
+// closed with it; what remains of it is one named limit, that several API
+// servers share the database and not the disk.
 func (d *Dispatcher) storeActivate(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.ActivateParams)
 	if !ok {

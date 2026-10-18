@@ -104,6 +104,14 @@ type Stores struct {
 	// the server wires it, and every step that would need it answers
 	// E_INTERNAL while it is.
 	Send Sender
+	// Hold is the directory an upload keeps its package in until an
+	// activation fetches it, and hold.go is where that decision is written
+	// out. Empty means nothing is kept and an activation of an uploaded app
+	// answers E_UNREACHABLE, which is what happened before the hold existed.
+	Hold string
+	// HoldFor is how long a kept package waits for its activation. 0 means
+	// DefaultHoldFor; a case sets it short instead of waiting an hour.
+	HoldFor time.Duration
 	// Spool is the directory the package of an activation is written to while
 	// it is read (fetchPackage). Empty means the directory the operating
 	// system names, which is what a test uses; a server sets it to its data

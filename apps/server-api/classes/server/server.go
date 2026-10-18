@@ -61,24 +61,39 @@ var SetupCodeFile = filepath.Join(config.DataDir, "setup-code")
 //     disk, so a spool is only ever good for the one run that made it. That is
 //     all it is used for: appstore.Activate writes the package, reads it twice
 //     and removes it again within the one call (task 22, mutant spool-kept).
-//   - Nothing waits here BETWEEN two calls, and that is a GAP and not a
-//     solution. Task 24 wrote here that the shell sends the uploaded package
-//     again on the activate channel; read against shared/core that is wrong.
-//     ngc.store/controller/activate is a FlowTransfer action, and
-//     core.Action.MaxIn says MaxIn bounds there "what the API sends the
-//     controller -- the shell sends none, even when it opened the channel",
-//     while core.ShellOpens says the shell sends EOF at once. So nobody holds
-//     the package of an uploaded app between ngc.store/upload (which keeps
-//     only the ui-tar) and its activation, and an activation out of
-//     core.LocalStore answers E_UNREACHABLE. That is Punkt 30 of
-//     docs/vertraege-v1.2.md, still open, and coreapp.storeActivate says it
-//     again where a reader of the handler will see it.
-//     An app out of a store of the trust list is not affected: its package is
+//   - Nothing waits here BETWEEN two calls, and nothing may: Build EMPTIES
+//     this directory at every start (sweepSpool), because what lies in it
+//     belongs to one call that is long over. What waits between the upload
+//     and the activation of an app lies in HoldDir below, which is a
+//     different directory for exactly that reason -- a package that an
+//     emptying at start would take with it is a package the activation after
+//     a restart will not find.
+//     An app out of a store of the trust list needs neither: its package is
 //     downloaded here against the checksum of the verified catalog entry.
 //
 // It is not the directory of the operating system: a package may be gigabytes
 // and /tmp is a RAM disk on many systems. Build sweeps it, see sweepSpool.
 var SpoolDir = filepath.Join(config.DataDir, "spool")
+
+// HoldDir is where an upload keeps its package until an activation fetches
+// it (appstore.Stores.Hold). IT CLOSES PUNKT 30, which was open from
+// 12.10.2026 until 17.10.2026: ngc.store/upload keeps only the ui-tar, and
+// the shell sends no DATA on the activate channel either, so an activation of
+// an uploaded app found no file and answered E_UNREACHABLE. Measured on a
+// running installation on 17.10.2026, with everything else in the chain
+// working: the package was uploaded, the node was offered, the admin had the
+// right -- and the activation said "Dienst nicht erreichbar."
+//
+// Why it is a directory of ITS OWN and not SpoolDir: the spool is emptied at
+// every start, and a held package has to survive a restart between the two
+// calls. What this one gets instead is a sweep BY AGE, at every upload and
+// once at every start (appstore.Stores.SweepHold).
+//
+// The limit stays what it always was, and appstore/hold.go writes it out:
+// several API servers share the database and NOT the disk, so a package
+// uploaded to one of them is not on the other, and an activation that reaches
+// the other one answers E_UNREACHABLE as before.
+var HoldDir = filepath.Join(config.DataDir, "uploads")
 
 // errNoTunnel reports that the controller a licence is meant for is away.
 var errNoTunnel = errors.New("server: no tunnel to that controller")
@@ -160,6 +175,12 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	// Stores.Send nil and every step of it answered E_INTERNAL until here.
 	st.Send = &sender{Tunnels: tunnels, Relay: rl}
 	st.Spool = SpoolDir
+	// The hold of uploaded packages, and the sweep that keeps it from growing
+	// without end. It runs here, at the build of the server, because this is
+	// the one moment a machine that takes no further upload still passes
+	// through (HoldDir).
+	st.Hold = HoldDir
+	st.SweepHold()
 	// ONE adapter for both packages, which is what task 23 asked for: Send is
 	// the very same value appstore got, not a second one of its own. It can
 	// be, because updates.Updates.Send is of type appstore.Sender -- stage and
@@ -476,6 +497,11 @@ func (s *Server) once(fn func()) {
 // minute is the housekeeping round: expired sessions out, trust list afresh,
 // and the count of caught programming errors said out loud if it has grown.
 //
+// httpapi.Report stands beside guard.Report and for the same reason: it says
+// how many callers were turned away because the database was busy or away,
+// and without it those two counts would be numbers no running program ever
+// reads. It is after guard.Report because a panic weighs more than a queue.
+//
 // guard.Report is LAST on purpose. A panic in either step above is caught by
 // Server.once around this round, so the count it would report is one this
 // round can no longer reach -- it reaches the log at the next tick instead,
@@ -490,6 +516,7 @@ func (s *Server) minute(ctx context.Context) {
 		slog.Warn("trust list could not be read", "error", err)
 	}
 	guard.Report()
+	httpapi.Report()
 }
 
 // hour is the catalog round.

@@ -253,7 +253,8 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
   noch gültig und die API erreichbar?"
 - **Ursache (Punkt 61):** `pairing.go` schickte die Anfrage an `tunnel.PathPair` **ohne
   jede Abfrage**. Die API verbraucht aber den Einmalwert, den die **Abfrage** benennt:
-  `?secret=<base64url des SHA-256 des Kopplungsgeheimnisses>`. Ohne sie: `E_PROTOCOL`.
+  `?secret=<base64url des SHA-256 des Kopplungsgeheimnisses>`. Fehlt sie, weist die API
+  die Anfrage ab (Protokollfehler).
   **Behoben** — heute baut `pairing.go:168–169` genau diese Abfrage.
 - **Und daraus wurde der Kreis, in den Punkt 60 gelaufen ist:**
   1. Keine Kopplung → kein `/etc/ngc/trust-anchor.json`.

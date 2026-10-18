@@ -51,6 +51,7 @@ func TestFailFaultTellsBusyFromAway(t *testing.T) {
 		{"away", errAway, "", "could not be reached", "did not come free"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			reset(t)
 			buf := logging(t)
 			w := httptest.NewRecorder()
 			code := FailFault(w, c.err, FromRows)
@@ -162,6 +163,7 @@ func TestAUserRouteBoundsHowLongTheDatabaseMayTake(t *testing.T) {
 // shape the measurement found: a store that never answers. Before, the caller
 // waited 80,6 s and then heard the same word as for a database that is gone.
 func TestAUserRouteEndsInBusyAndNotInSilence(t *testing.T) {
+	reset(t)
 	buf := logging(t)
 	// The handler is the store's caller: it waits on the context it was
 	// given, exactly as a store call does while another program holds the
