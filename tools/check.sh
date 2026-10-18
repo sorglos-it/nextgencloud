@@ -209,7 +209,35 @@ go vet ./...
 # really compile it: -race itself needs cgo and a C compiler (here only in the
 # ESP toolchain), vet with the tag does not. Measured 17.10.2026.
 go vet -tags=race ./...
-go test ./...
+# -v, and into a file, because of what go test does NOT print without it.
+# Measured 18.10.2026 on this machine: for a test that calls t.Skipf -- and
+# even for one that writes to os.Stderr itself -- a run without -v prints
+# nothing at all beyond "ok <package>". The clock tests in
+# apps/server-api/classes/login step aside when their own null control says
+# the machine cannot resolve their factor today, which is the honest answer
+# and better than a false red; but a guard that steps aside in silence is
+# worse than both, so the run is read back here and every such test is named.
+# No pipe: the exit code of a pipe belongs to its last link, and this script
+# has been dead behind a "0" once already.
+log=$(mktemp)
+if ! go test -v ./... > "$log" 2>&1; then
+	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || cat "$log"
+	rm -f "$log"
+	exit 1
+fi
+# UNMEASURABLE is named line by line, every other skip only counted. The
+# difference is not tidiness: this tree skips dozens of tests on every run for
+# plain reasons (no jq, no Linux, no PTY), and a guard that stood aside
+# because the clock was too noisy would drown in that list. The count is still
+# printed, because a day on which it jumps is worth a look.
+skipped=$(grep -c -- '--- SKIP' "$log" || true)
+quiet=$(grep -c -- 'UNMEASURABLE' "$log" || true)
+echo "check: $skipped test(s) skipped (environment), $quiet guard(s) unmeasurable"
+if [ "$quiet" != 0 ]; then
+	echo "check: these guards did NOT run -- the run says nothing about what they hold:"
+	grep -- 'UNMEASURABLE' "$log" | sed 's/^[[:space:]]*/    /'
+fi
+rm -f "$log"
 for arch in amd64 arm64; do
 	# go build compiles no test file, so the tests that only exist on the
 	# target (//go:build linux) would never be seen on a machine that builds
