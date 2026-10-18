@@ -29,6 +29,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -96,9 +97,21 @@ func (s *Server) activate(ctx context.Context, list *trust.List, d access.Decisi
 // ErrSource is E_VERIFY and not E_FORBIDDEN: a package whose store is in no
 // approved source is one this installation cannot judge at all, which is a
 // verification failure and not a right that is missing.
+//
+// store.ErrRollback is named here and comes STRAIGHT OUT OF THE CONTRACT, not
+// out of package install: store.VerifyCatalog answers it for a catalogue below
+// the floor this installation already acted on, and install hands it on as it
+// is. It could not be reached before this controller had a memory for that
+// floor (node.installer.lastSeq answered 0 for every store); now that it can,
+// an admin reading "Interner Fehler." for it would be told his own machine was
+// broken where a store handed back an old catalogue. The other errors of
+// package store that install hands on this way are NOT named here and fall to
+// E_INTERNAL - counted 18.10.2026 and reported, not fixed: this one is the one
+// this build made reachable.
 func activateCode(err error) *wire.Close {
 	switch {
-	case errors.Is(err, install.ErrVerify), errors.Is(err, install.ErrSource):
+	case errors.Is(err, install.ErrVerify), errors.Is(err, install.ErrSource),
+		errors.Is(err, store.ErrRollback):
 		return refuse(wire.CodeVerify)
 	case errors.Is(err, install.ErrForbidden):
 		return refuse(wire.CodeForbidden)

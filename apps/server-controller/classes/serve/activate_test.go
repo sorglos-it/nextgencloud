@@ -13,6 +13,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -559,5 +560,22 @@ func TestAnInstallerThatReadEverythingKeepsItsOwnCode(t *testing.T) {
 	}
 	if len(f.read) != 40 {
 		t.Errorf("the installer read %d bytes, want all 40", len(f.read))
+	}
+}
+
+// A CATALOGUE BELOW THE FLOOR IS NAMED A VERIFICATION FAILURE. It is the one
+// error of package store that install hands on and that the controller can now
+// reach at all: before it had a memory for the floor, store.VerifyCatalog had
+// no number to refuse against. Named E_INTERNAL it would tell an admin his own
+// machine was broken where a store handed back an old catalogue.
+func TestACatalogueBelowTheFloorIsNamedAVerificationFailure(t *testing.T) {
+	cl := activateCode(store.ErrRollback)
+	if cl == nil || cl.Code != wire.CodeVerify {
+		t.Errorf("activateCode(store.ErrRollback) = %+v, want E_VERIFY", cl)
+	}
+	// And wrapped, the way install hands it on out of Accept.
+	cl = activateCode(errors.Join(errors.New("accept"), store.ErrRollback))
+	if cl == nil || cl.Code != wire.CodeVerify {
+		t.Errorf("a wrapped ErrRollback = %+v, want E_VERIFY", cl)
 	}
 }

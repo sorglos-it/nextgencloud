@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,8 @@ import (
 	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -792,10 +795,10 @@ func TestTheInstallerOfThisControllerIsWiredUpInFull(t *testing.T) {
 	if !errors.Is(err, install.ErrForbidden) {
 		t.Fatalf("an activation without a task gave %v, want install.ErrForbidden", err)
 	}
-	// And the catalogue counter is the gap this file names, not a number that
-	// drifted: it answers 0 for every store.
-	if n := i.lastSeq("ngc"); n != 0 {
-		t.Errorf("lastSeq = %d, want 0 with the comment that says why", n)
+	// And the catalogue counter is wired to this controller's own state: 0
+	// for a store nothing was ever activated from, which is "none seen".
+	if n := i.lastSeq(context.Background())("ngc"); n != 0 {
+		t.Errorf("lastSeq of an unseen store = %d, want 0", n)
 	}
 }
 
@@ -1025,25 +1028,114 @@ func TestTheInstallerAsksForItsNodeIDAfreshAndLetsTheListDecide(t *testing.T) {
 	// case: a first version of it called nodeOf and stayed GREEN with the
 	// node taken from the configuration again, because nothing it looked at
 	// was the line that hands the ID over (measured 18.10.2026).
-	if got := i.deps(&trust.List{}).Node; got != "" {
+	if got := i.deps(context.Background(), &trust.List{}).Node; got != "" {
 		t.Fatalf("the installer hands over node %q before any list did", got)
 	}
 	// Read once per activation and not once per installer: the second call
 	// has to see the ID the first one did not.
 	id = "ngc-2"
-	if got := i.deps(&trust.List{}).Node; got != "ngc-2" {
+	if got := i.deps(context.Background(), &trust.List{}).Node; got != "ngc-2" {
 		t.Fatalf("the installer hands over node %q after the list did, want ngc-2", got)
 	}
 	// And a node in the file does NOT outrank the list: this is the same
 	// precedence wireUp.nodeID holds, carried into the activation.
 	cfg.Node = "aus-der-datei"
-	if got := i.deps(&trust.List{}).Node; got != "ngc-2" {
+	if got := i.deps(context.Background(), &trust.List{}).Node; got != "ngc-2" {
 		t.Fatalf("the file outranked the list: node %q, want ngc-2", got)
 	}
 	// The list of the channel is the list the Manager is built on, not one
 	// this installer reached for.
 	l := &trust.List{Seq: 7}
-	if got := i.deps(l); got.List != l {
+	if got := i.deps(context.Background(), l); got.List != l {
 		t.Error("the Manager was built on another list than the channel's")
 	}
+}
+
+// THE TWO HALVES ARE WIRED TO THE SAME MEMORY, and that is the whole of this
+// case: Deps.LastSeq reading a number nothing writes is 0 for ever, and
+// store.VerifyCatalog then has no floor to refuse an older catalogue against.
+// Measured through the state of this controller and not through a stub, because
+// the stub is what could agree with itself.
+func TestTheFloorOfAStoreGoesThroughTheStateOfThisController(t *testing.T) {
+	st := newState(t)
+	cfg := &config.Controller{
+		Node: "ctl-1", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(make([]byte, 32)), DBKey: config.NewSecret(make([]byte, 64)),
+	}
+	i := installer{cfg: cfg, version: "1.2.3", state: st, engine: ctrlrt.NewPodman("podman"),
+		node: func() string { return cfg.Node }}
+	ctx := t.Context()
+	read := i.lastSeq(ctx)
+	if n := read("global"); n != 0 {
+		t.Fatalf("lastSeq of an unseen store = %d, want 0", n)
+	}
+	if err := i.keepSeq(ctx, "global", 7); err != nil {
+		t.Fatalf("keepSeq = %v", err)
+	}
+	// The SAME reader, built before the write: it reads the state at every
+	// call and holds no number of its own, so an activation after another one
+	// sees what the earlier one wrote.
+	if n := read("global"); n != 7 {
+		t.Errorf("lastSeq after keepSeq(7) = %d, want 7", n)
+	}
+	// And the floor does not go down again.
+	if err := i.keepSeq(ctx, "global", 3); err != nil {
+		t.Fatalf("keepSeq(3) = %v", err)
+	}
+	if n := read("global"); n != 7 {
+		t.Errorf("lastSeq after keepSeq(3) = %d, want the floor left at 7", n)
+	}
+	// What deps hands the Manager is this pair and not something beside it.
+	d := i.deps(ctx, &trust.List{})
+	if d.LastSeq == nil || d.KeepSeq == nil {
+		t.Fatal("deps hands the Manager no memory at all")
+	}
+	if n := d.LastSeq("global"); n != 7 {
+		t.Errorf("the LastSeq of deps = %d, want the 7 in the state", n)
+	}
+}
+
+// A READ THAT FAILS REFUSES EVERY CATALOGUE. install.Deps.LastSeq has no error
+// in it, so the only answers are numbers, and 0 is the one that opens the
+// door: a controller that cannot read its own memory would let any catalogue
+// through. MaxUint64 is above every number a catalogue can carry, so it
+// refuses them all.
+func TestAFloorThatCannotBeReadRefusesEveryCatalogue(t *testing.T) {
+	i := installer{cfg: &config.Controller{}, version: "1.2.3"}
+	read := i.lastSeq(t.Context())
+	if n := read("global"); n != math.MaxUint64 {
+		t.Errorf("lastSeq without a state = %d, want MaxUint64 and no catalogue through", n)
+	}
+	// A store without a name is no store, and 0 for it would be "none seen"
+	// for every store at once.
+	if n := read(""); n != math.MaxUint64 {
+		t.Errorf("lastSeq of a nameless store = %d, want MaxUint64", n)
+	}
+	if err := i.keepSeq(t.Context(), "global", 7); err == nil {
+		t.Error("keepSeq without a state answered no error")
+	}
+	// And the case that matters more, because a state is always there in
+	// operation: the state is wired, and the READ of it fails. 0 here is the
+	// open door, and a mutant that took the error for 0 passed every other
+	// case of this change.
+	broken := state.New(brokenRead{Local: memstore.New(), err: errors.New("no read")})
+	t.Cleanup(func() { _ = broken.Close() })
+	b := installer{cfg: &config.Controller{}, version: "1.2.3", state: broken}
+	if n := b.lastSeq(t.Context())("global"); n != math.MaxUint64 {
+		t.Errorf("lastSeq over a database that cannot be read = %d, want MaxUint64", n)
+	}
+	if err := b.keepSeq(t.Context(), "global", 7); err == nil {
+		t.Error("keepSeq over a database that cannot be read answered no error")
+	}
+}
+
+// brokenRead is a database whose BlobGet fails and whose every other call is
+// the real one: what is measured is the one read.
+type brokenRead struct {
+	dbapi.Local
+	err error
+}
+
+func (b brokenRead) BlobGet(context.Context, string, string) (dbapi.Blob, error) {
+	return dbapi.Blob{}, b.err
 }
