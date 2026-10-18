@@ -138,8 +138,8 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
 .smitem .n{overflow:hidden;word-break:break-word;max-height:2.9em}
 .smempty{padding:14px;color:var(--muted)}
 #smlook{padding:4px 12px 10px;border-top:1px solid rgba(127,127,127,.25)}
-#smfoot{display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(127,127,127,.25)}
-#smfoot button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--win-border);
+#smfoot{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid rgba(127,127,127,.25)}
+#smfoot button{flex:1 1 7rem;padding:8px;border-radius:8px;border:1px solid var(--win-border);
                background:transparent;color:inherit;font:inherit;cursor:pointer}
 #smfoot button:hover{background:rgba(127,160,220,.2)}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}

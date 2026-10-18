@@ -5,6 +5,8 @@
 // prototype in docs/prototype.html builds the same surface with innerHTML;
 // look and handling are taken from it, that habit is not.
 import { el, button, text, clear } from "./dom.js";
+import { t } from "./lang.js";
+import * as http from "../net/http.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { storeApp } from "../apps/store.js";
@@ -78,6 +80,8 @@ class Desktop {
     this.uid = 0;
     this.appList = [];
     this.noticeTimer = 0;
+    // True while a logout request is out; see signOut().
+    this.goingOut = false;
     // Which tile of the start menu carries the one tabindex of the list.
     this.active = 0;
 
@@ -308,6 +312,19 @@ class Desktop {
     for (const b of this.paperRow.children) b.classList.toggle("on", b.style.background === bg);
   }
 
+  // The foot of the start menu: the two things somebody does to the windows,
+  // and the one thing somebody does to the session.
+  //
+  // THE WAY OUT IS HERE because this is where a person who has never seen NGC
+  // looks for it - the menu behind the one button the taskbar has - and because
+  // it is the only surface of the shell that is reached deliberately, so a
+  // click cannot end a session by accident. It is a PLAIN BUTTON like the two
+  // beside it, so the menu's own trapTab() finds it without a line being added
+  // there, and a screen reader announces it as what it is.
+  //
+  // ITS NAME COMES OUT OF THE LANGUAGE FILES and not out of this source. The
+  // rest of this file is still German where it stands (lang.js says so and
+  // counts it), and a new sentence must not grow that number.
   buildFoot() {
     const foot = el("div", null);
     foot.id = "smfoot";
@@ -321,8 +338,95 @@ class Desktop {
       this.closeAll();
       this.toggleMenu(false);
     });
-    foot.append(tile, closeAll);
+    const out = button(null, t("logout.button"), null);
+    out.id = "smlogout";
+    out.addEventListener("click", () => { this.signOut(); });
+    foot.append(tile, closeAll, out);
     return foot;
+  }
+
+  // ---- the way out ---------------------------------------------------------
+  //
+  // signOut ends the session: the API is told, and only then is anything on
+  // this screen taken down.
+  //
+  // THE ORDER IS THE WHOLE POINT, and it is point 50 of the contracts: a
+  // screen that reads "signed out" to somebody who is not is worse than a
+  // screen that reads "that did not work". So:
+  //
+  //   the API says yes  -> the desktop goes, and the login mask is back
+  //   the API says no   -> the desktop STAYS, and the notice bar says the
+  //                        attempt failed and that the person is still in
+  //
+  // The second half is the one that had to be decided, because both answers
+  // are a lie in one direction. Leaving the desktop up is the honest one: it
+  // is what the session really is, it is recoverable with a second press, and
+  // whoever is about to walk away from a shared machine learns that they must
+  // not. Taking the screen down instead would show the login mask over a
+  // cookie that is still valid - the one state in which a person believes they
+  // are out and is not.
+  //
+  // A BUSY OR UNREACHABLE API IS EXACTLY THIS CASE and not a rare one: the
+  // five ways in front of the WebSocket reach their store through dbwait, and
+  // a store under load answers E_BUSY (shared/README.md, "Vor dem WebSocket").
+  // net/http.js logout() rejects with an ApiError for all of it.
+  async signOut() {
+    // One at a time. A second click while the first request is out would send
+    // a second logout and could tear the screen down twice.
+    if (this.goingOut) return;
+    this.goingOut = true;
+    try {
+      await http.logout();
+    } catch {
+      // NO LATCH IS LEFT BEHIND: the flag goes back, so the next press is a
+      // real attempt. A one-way flag here would turn one busy moment into a
+      // session that can never be ended on this page again.
+      this.goingOut = false;
+      this.toggleMenu(false);
+      // "error", so the strip waits for the person instead of clearing itself
+      // after eight seconds - this is not news that goes stale.
+      this.notice("error", t("logout.failed"));
+      return;
+    }
+    this.tearDown();
+  }
+
+  // tearDown takes everything of this session off the page, and then reloads.
+  //
+  // THE RELOAD IS THE PROOF AND NOT A SHORTCUT. Windows, taskbar tiles, the
+  // proven-interface cache, the trust list with its listeners, the session
+  // object and every timer live in the JavaScript of this document, and the
+  // only way to be sure none of them is left is to end the document. What
+  // follows it is shell/main.js from the top, which draws the login mask
+  // before anything else - so the person lands at "Bei NGC anmelden".
+  //
+  // The pieces are still taken down BY HAND first, in this order, because a
+  // reload is not instant: the link gets its "bye" on channel 0 so the API
+  // learns the session is over rather than finding a torn socket, and the
+  // windows close through their own close() so an app is not killed mid-frame.
+  //
+  // WHAT STAYS IN THIS BROWSER, named rather than quietly left:
+  //
+  //   localStorage - ngc.theme, ngc.accent, ngc.wallpaper. What the desktop
+  //     LOOKS like and nothing about who was in it (theme.js says the same).
+  //     It is kept on purpose: the next person at this machine gets the look
+  //     of the machine, and wiping it would say something about a session it
+  //     knows nothing about.
+  //   indexedDB "ngc" - the verified trust list and the anchor of the initial
+  //     setup (trustlist.js, STORE_TRUST and STORE_SETUP). Facts about the
+  //     INSTALLATION, not about a session, and deleting them is what the
+  //     alarm path already refuses to do: the kept version is the only thing
+  //     that lets the next start notice a chain rolled back to an older
+  //     number (trustlist.js #raise, "deliberately NOT deleted").
+  //   the session cookie - ngc_session is HttpOnly, so no line here ever saw
+  //     it. The API deletes it, which is why the API has to answer first.
+  tearDown() {
+    clearInterval(this.clockTimer);
+    clearTimeout(this.noticeTimer);
+    this.closeAll();
+    this.uiCache.clear();
+    if (typeof this.link?.close === "function") this.link.close();
+    location.reload();
   }
 
   buildDesktop(root) {
