@@ -2867,3 +2867,57 @@ eine Empfehlung.
 |---|---|---|
 | **Weiter mit `ngc.test` und selbst unterschriebenem Zertifikat, oder auf einer Maschine mit echtem Namen und `letsencrypt`?** | **58, 59, 62** | Was ein Nutzer mit `letsencrypt` erlebt, bleibt ungemessen – alle Zahlen gelten für einen Browser, der das Zertifikat für den Lauf annimmt. |
 
+
+## Punkt 63: Die Oberfläche ist auf `main` — und was dabei an Land kam, wog schwerer als der Umzug
+
+**Zusammengeführt am 18.10.2026.** `apps/web` hatte auf `main` **zwei** Dateien; jetzt sind es
+**136**. Bau grün, 44 Pakete, 0 rot. Damit liegt zum ersten Mal der Schreibtisch, der seit
+Punkt 59 nachweislich läuft, auch dort, wo gemessen wird.
+
+**Der eigentliche Fund ist nicht der Umzug, sondern was außerhalb lag.** Die Befundliste
+(`docs/befunde-17-18-10-2026.md`, aus den Commit-Botschaften der zehn Messsitzungen
+zusammengetragen, deren Berichte verloren sind) nennt vier Sicherheitsbefunde, die **nicht auf
+`main` waren**:
+
+- **„Mit Passkey anmelden" meldete mit dem PASSWORT aus dem Feld an.** Der Authentifikator wurde
+  nie gefragt (0 Berechtigungen angefasst), die Sitzung öffnete der Passwortschlüssel, **und auf
+  dem Schirm stand nichts davon** — unter dem stehenden Hinweis „Umstellen auf Passkeys
+  empfohlen". Der Kommentar über `usePasskey` behauptete das Gegenteil des Codes.
+- **Der Hochladeweg war nie unterschrieben**, und die Bestätigung fiel auf dem Weg weg — bei
+  **fünf** Aktionen, nicht einer. Ursache der falschen Annahme war eine Notiz, die den Vertrag
+  falsch las.
+- **Der Prüfstand war großzügiger als der Vertrag, dreimal an einem Tag**: `fake-link.js` setzte
+  die Rollenstufe auf `off` (dort muss nichts bestätigt werden) → jeder Fall des Hochladens war
+  grün, **während kein Paket hochladbar war**; dieselbe Attrappe schrieb `rootUsers` in ihre eigene
+  Liste → jeder Fall zum Aktivieren lief in einer Welt, die die echte Oberfläche nie erzeugt.
+- **Firefox:** die Maske nahm das Passwort an, ließ Argon2id laufen und antwortete mit dem Satz für
+  ein **falsches Passwort**. Ursache: `exportKey("jwk")` eines aus PKCS#8-Saat importierten
+  Ed25519-Schlüssels gibt dort `OperationError`, und `browserFits()` fragte nur die beiden
+  `generateKey`. **Die Lüge aus Punkt 50, in neuer Gestalt.**
+
+**Auf `main` behoben wurde in denselben Tagen:**
+- **Die freien Anmeldeversuche wuchsen mit der Gleichzeitigkeit des Angreifers.** `login/finish`
+  las die Wartezeit **außerhalb** der zählenden Sperre; ein Schwall las dieselbe freie Zeile.
+  Gemessen am laufenden System: **7, 13, 14, 12, 8, 7, 12, 7 von 20** falschen Nachweisen
+  durchgelassen, wo **3** erlaubt sind (seriell: genau 3). Jetzt Sperre je Zeile.
+- **`tools/check.sh` druckte `check: ok`, obwohl etwas rot war — acht Löcher.** Das schlimmste ist
+  der **Lieferkettenriegel**: `bad=$(go list … || true)` ließ ein **gescheitertes** `go list` leer
+  zurück, der Riegel ging durch, **ohne je zu laufen**. Ein Prüfwerkzeug, das weniger prüft, als es
+  vorgibt, ist die gefährlichste Stelle im Repo.
+- **`pin-base.sh --verify` ließ einen `Containerfile` durch, der eine MARKE zieht** — es verglich
+  nur die erste `FROM`-Zeile. Genau das, wovor Punkt 39 schützen soll.
+- **Unangemeldete konnten die Platte per Protokoll füllen**: 4096 gleichzeitige `login/start` →
+  **12 289 Protokollzeilen, 995 558 Byte Journal**, bis 480 Zeilen je Sekunde. Jetzt 1 Zeile,
+  246 Byte, dazu ein Zähler.
+- **`galera.cnf` schränkte nichts ein und brach den Server ab**: `socket.ssl_cipher` erreicht
+  `SSL_CTX_set_cipher_list`, das nur TLS-1.2-Namen kennt → `no cipher match` → `Aborting`.
+  **Richtiger Wert, falscher Knopf** — dieselbe Form wie Punkt 56.
+
+**Beim Zusammenführen selbst gab es genau einen Konflikt, und er war einer der lehrreichen Sorte:**
+`tools/check.sh` lag auf beiden Seiten geändert — hier die acht geschlossenen Löcher, dort der
+PHP-Schritt der Oberfläche. **Beide Hälften stehen jetzt**, keine wurde zugunsten der anderen
+geopfert.
+
+**Weiter BLOCKED, und es ist ein S1:** eine Lizenz mit Ausstellungszeit in der **Zukunft** sperrt
+jede spätere aus, während der Verwalter weiter „gültig" liest — mit dem **eigenen** Schlüssel des
+Stores unterschrieben, also kein Fälschungsfall. `shared/store/catalog.go:321`, eingefroren.
