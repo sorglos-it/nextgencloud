@@ -11,6 +11,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
+	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
@@ -186,6 +187,43 @@ func TestEachInstallErrorHasItsOwnCode(t *testing.T) {
 		}
 		if cl.Code != c.want {
 			t.Errorf("%s: code %q, want %q", name, cl.Code, c.want)
+		}
+	}
+}
+
+// A DISK THAT CANNOT ENCRYPT SAYS WHAT TO DO. It keeps the code of every
+// other failure of this machine -- the contract has none for a disk -- and it
+// is the one that carries a sentence of its own: runtime.NoFscryptText names
+// the file systems to use.
+//
+// The sentence existed and reached nobody. Its own comment said "the caller
+// shows NoFscryptText for it" while no caller did: counted 18.10.2026,
+// nothing read the constant but its own test. On a kernel without
+// CONFIG_FS_ENCRYPTION every activation ends here, so this was the sentence
+// everybody on such a machine did NOT get.
+func TestADiskThatCannotEncryptSaysWhatToDo(t *testing.T) {
+	// As the runtime answers it: joined with what the system call said.
+	err := errors.Join(ctrlrt.ErrNoFscrypt, errors.New("inappropriate ioctl for device"))
+	cl := activateCode(err)
+	if cl == nil {
+		t.Fatal("no CLOSE at all")
+	}
+	if cl.Code != wire.CodeInternal {
+		t.Fatalf("code %q, want %q -- the contract has none for a disk", cl.Code, wire.CodeInternal)
+	}
+	if cl.Message != ctrlrt.NoFscryptText {
+		t.Fatalf("the channel says %q, want the sentence of the disk", cl.Message)
+	}
+	// And NOT for the failures beside it: one sentence for all of them would
+	// tell a person nothing.
+	for name, other := range map[string]error{
+		"wired wrong":         install.ErrInternal,
+		"no room on the disk": install.ErrDisk,
+		"something else":      errors.New("x"),
+	} {
+		o := activateCode(other)
+		if o == nil || o.Message == ctrlrt.NoFscryptText {
+			t.Errorf("%s: says %+v, want the general sentence", name, o)
 		}
 	}
 }
