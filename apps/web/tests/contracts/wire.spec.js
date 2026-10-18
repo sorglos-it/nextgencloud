@@ -93,6 +93,86 @@ test("no error code falls out of Object.prototype", async ({ shell }) => {
   expect(got.missing).toBe("");
 });
 
+// WHICH CODES LEAVE THE PERSON WITHOUT ANYTHING TO DO, and that set decides
+// where a sentence of the server may be shown beside the shell's own
+// (net/channel.ChannelError.serverText). It is written out here code by code
+// rather than derived, because a set that grew by itself would let a server
+// put its words in place of the shell's own somewhere nobody decided.
+test("only a code that says nothing to do takes a sentence of the server", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const w = await import("/assets/js/contracts/wire.js");
+    const all = Object.values(w.CODES);
+    return {
+      general: all.filter((c) => w.isGeneral(c)).sort(),
+      internal: w.isGeneral("E_INTERNAL"),
+      unknown: w.isGeneral("E_WHAT"),
+      missing: w.isGeneral(undefined),
+      inherited: w.isGeneral("toString"),
+      // Every code of the contract has a text, and only the one above says
+      // nothing about what to do.
+      texts: all.every((c) => w.message(c) !== ""),
+    };
+  });
+  // E_INTERNAL alone. "Interner Fehler." is true and useless, and it is the
+  // code a server has to use when what went wrong is its own machine.
+  expect(got.general).toEqual(["E_INTERNAL"]);
+  expect(got.internal).toBe(true);
+  expect(got.texts).toBe(true);
+  // And nothing that is no code of the contract gets in.
+  expect(got.unknown).toBe(false);
+  expect(got.missing).toBe(false);
+  expect(got.inherited).toBe(false);
+});
+
+// WHAT THE PERSON READS WHEN THE SERVER SENT A SENTENCE ALONG. The bytes go
+// through parseClose and the contract's validText, and only then into the
+// error the shell holds, so this measures the whole way from a CLOSE to what
+// is shown -- everything except the socket itself.
+//
+// Until this was built nothing of this shell read close.message. A controller
+// whose file system cannot encrypt a directory sends "Bitte ext4 oder f2fs
+// mit aktivierter Verschlüsselung verwenden" (runtime.NoFscryptText), and the
+// person read "Interner Fehler." -- the one sentence that said what to DO was
+// dropped one line before the screen (measured 18.10.2026).
+//
+// The code stays the branch: serverText stands BESIDE message and never in
+// place of it, so every caller that acts on a code goes on as before.
+test("a CLOSE with a sentence becomes an error that carries it beside its own", async ({ shell }) => {
+  const got = await shell.evaluate(async () => {
+    const w = await import("/assets/js/contracts/wire.js");
+    const { ChannelError } = await import("/assets/js/net/channel.js");
+    // The bytes as a server sends them, read back the way the shell reads
+    // every CLOSE.
+    const close = (code, message) =>
+      w.parseClose(w.encodeClose({ status: "error", code, message, exitCode: null }));
+    const err = (code, message) => {
+      const c = close(code, message);
+      const e = new ChannelError(c.code, c.message);
+      return { code: e.code, said: e.message, server: e.serverText };
+    };
+    const disk = "Bitte ext4 oder f2fs mit aktivierter Verschlüsselung verwenden.";
+    return {
+      disk: err("E_INTERNAL", disk),
+      // A code that has a sentence of its own keeps it, and the server's
+      // words get no room: otherwise a server could put its wording in place
+      // of this shell's anywhere.
+      forbidden: err("E_FORBIDDEN", "Nimm doch einfach einen anderen Benutzer."),
+      // Nothing is said twice, and a CLOSE without a sentence adds nothing.
+      twice: err("E_INTERNAL", "Interner Fehler."),
+      none: err("E_INTERNAL", ""),
+    };
+  });
+  expect(got.disk).toEqual({
+    code: "E_INTERNAL", said: "Interner Fehler.",
+    server: "Bitte ext4 oder f2fs mit aktivierter Verschlüsselung verwenden.",
+  });
+  expect(got.forbidden).toEqual({
+    code: "E_FORBIDDEN", said: "Keine Berechtigung.", server: "",
+  });
+  expect(got.twice.server).toBe("");
+  expect(got.none.server).toBe("");
+});
+
 // The numbers are the contract. Every one of them is written out here, not
 // derived a second time, so a shift of one in wire.js cannot hide behind the
 // same arithmetic in the test.

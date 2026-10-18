@@ -869,13 +869,37 @@ class Store {
       // With a task the OPEN carries no params of its own: only the signed
       // ones count.
       await this.ask(action, null, { taskBytes, confirmBytes });
-    } catch {
-      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
+    } catch (e) {
+      // THE SENTENCE OF THE SERVER, WHERE IT HAS ONE, and it is marked as
+      // his. This shell's own sentence says what happened and what to try;
+      // for a general code (wire.isGeneral - E_INTERNAL) it is all there is,
+      // and the server may have sent the only line that says what to DO: a
+      // controller whose file system cannot encrypt a directory names the
+      // file systems to use. Until this line nothing of this shell ever read
+      // close.message, so that sentence reached nobody (measured
+      // 18.10.2026).
+      //
+      // "Der Rechner sagt:" is not decoration. These are words from the
+      // other end of the line, shown in the person's own window, and a
+      // person has to be able to tell them from the shell's own. They are
+      // put in as text and never as markup (desktop.notice over text()).
+      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen." +
+        (serverSays(e) === "" ? "" : " Der Rechner sagt: " + serverSays(e)));
       return false;
     }
     this.say("info", done);
     return true;
   }
+}
+
+// serverSays is the sentence the other side sent along, or "". It reads
+// ChannelError.serverText and asks nothing else: that field is empty unless
+// the code is a general one and the contract let the text through
+// (net/channel.ChannelError), so the decision which sentences may be shown
+// stays in ONE place and not in every caller that shows an error.
+function serverSays(e) {
+  const t = e?.serverText;
+  return typeof t === "string" ? t : "";
 }
 
 // ---- the key of a standing approval ---------------------------------------
