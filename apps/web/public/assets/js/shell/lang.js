@@ -72,8 +72,27 @@ export const MAX_LANG = 8 << 10;
 // one case where no file could be read at all. The case that holds the two
 // equal is "the built-in sentences are the English file, word for word" in
 // shell/busy.spec.js.
+// THE BROWSERS THIS SHELL KNOWS CANNOT DO A PASSWORD LOGIN, as data and in one
+// place, because two sentences have to agree about them.
+//
+// MEASURED (18.10.2026, Playwright's Firefox 141 on Windows): exportKey("jwk")
+// of an Ed25519 key imported from a PKCS#8 seed answers OperationError, so
+// contracts/proof.js publicFromSeed has no way to the public half and no
+// password gets in. shell/main.js passwordLoginFits() measures it per engine at
+// run time - this list is not a gate and must never become one. It is only
+// here so the ADVICE the shell gives cannot recommend one of them: a case holds
+// boot.tooold against this list in all five languages
+// (apps/web/tests/shell/engines.spec.js).
+//
+// A name goes OUT of here the day an engine is measured to do it, and then the
+// advice may name it again.
+export const NO_PASSWORD_LOGIN = Object.freeze(["Firefox"]);
+
 export const BUILT_IN = Object.freeze({
   __proto__: null,
+  "boot.tooold": "This browser is too old for NGC. Please use Chrome 137 or Safari 17.4 or newer.",
+  "boot.noroute.password": "This browser cannot do NGC's password login: it does not hand out the public half of a password key. Please use Chrome 137 or Safari 17.4 or newer. Firefox cannot do it up to version 141.",
+  "boot.noroute.passkeysoff": "No login is possible in this browser: it cannot do the password login, and passkeys are switched off here. Please switch passkeys on in the browser settings, or use Chrome 137 or Safari 17.4 or newer.",
   "err.unreachable": "Service unavailable. Please try again later.",
   "err.busy": "The service is busy right now. Please try again in {seconds} seconds.",
   "login.failed": "Login failed.",
