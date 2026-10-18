@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -165,13 +166,13 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 // holds against him (checkGap says so of itself, and checkInstallation says it
 // again). The file does.
 //
-// A missing file is not an error and not a finding: nothing writes
-// trust-anchor.json yet -- the design gives that to the controller, and
-// apps/server-controller carries no classes on this branch. So an
-// installation without the file behaves exactly as before, and one WITH it
-// refuses a root that is not the pinned one. config.SaveAnchor therefore
-// still has no caller here; the writer is another part's work, not this
-// reader's.
+// A missing file is not an error and not a finding, and an installation
+// without it behaves exactly as before. Who makes it is the design's
+// decision of 22.09.2026: the first controller that pairs writes it
+// (node.pair, config.SaveAnchor). From there this API moves it up itself, to
+// every version it verified and stored (advanceAnchor). This said "nothing
+// writes trust-anchor.json yet" until 12.10.2026, when both writers were
+// measured here.
 //
 // Any other fault of the file reads as "no anchor" and not as a refusal, on
 // purpose: an unreadable or half-written anchor would otherwise shut the
@@ -180,15 +181,69 @@ func (s *State) refreshLocked(ctx context.Context) (trust.Version, error) {
 // can DELETE the file takes the pin away. Whoever can do that owns the
 // machine the API runs on, which is a bigger loss than this check.
 func (s *State) anchorFor() (trust.Anchor, bool) {
-	path := s.AnchorFile
-	if path == "" {
-		path = config.AnchorFile
-	}
-	a, err := config.LoadAnchor(path)
+	a, err := config.LoadAnchor(s.anchorPath())
 	if err != nil {
 		return trust.Anchor{}, false
 	}
 	return a, true
+}
+
+// anchorPath is where the anchor outside the database lives. Empty means
+// config.AnchorFile; only a test names its own (State.AnchorFile).
+func (s *State) anchorPath() string {
+	if s.AnchorFile == "" {
+		return config.AnchorFile
+	}
+	return s.AnchorFile
+}
+
+// advanceAnchor moves the pin in trust-anchor.json up to v, the version
+// AddVersion has just verified and stored. It is the writer the reader above
+// was missing: a pin that only a pairing ever sets stands at the version the
+// list had then, and a writer of the database may do as he likes above that
+// number -- which is the one form checkGap names and cannot catch, the chain
+// cut at the TOP.
+//
+// WHY A VERSION MAY MOVE IT BY ITSELF, with no admin asked. The only way to
+// get here is trust.Open or trust.Advance taking v: v is the next number, it
+// names the hash of the version before it, and an admin of the list that was
+// already pinned signed it. A writer of the database cannot make such a
+// version -- he has no admin key -- and he cannot replay an older one, because
+// its number is below the one that is stored. So moving the pin on a verified
+// version hands him nothing. The other way round it costs: a pin that only an
+// admin sets by hand stands at 1 on nearly every installation, and then the
+// promise "the anchor is outside the database" protects nobody. Measured on
+// this branch before the change: the file was read and never written here.
+//
+// THREE BOUNDS, each with a case of its own:
+//
+//   - Only forward. A lower number is never written (the file may be ahead of
+//     this process -- another API on the same database, or a pairing done
+//     since), and a pin that could be lowered would be no pin.
+//   - Only over a file that is already there. Whether the file exists is the
+//     installation's decision, and it belongs to whoever set it up, not to the
+//     next version that happens to be signed; see State.AnchorFile. An
+//     unreadable file reads as "no pin" here for the same reason it does in
+//     anchorFor -- this is not the place to tell a damaged one from a missing
+//     one.
+//   - It never fails a version. There is no error to return: a version an
+//     admin signed and the database took stands, and a pin that lags is a
+//     smaller loss than asking him to sign the same change again under a
+//     number that is now taken (see the write loop of AddVersion). What the
+//     installation then runs on is said in the log, not swallowed.
+func (s *State) advanceAnchor(v trust.Version) {
+	path := s.anchorPath()
+	cur, err := config.LoadAnchor(path)
+	if err != nil {
+		return
+	}
+	if v.List.Seq <= cur.Seq {
+		return
+	}
+	if err := config.SaveAnchor(path, trust.Anchor{Seq: v.List.Seq, Hash: v.Hash}); err != nil {
+		slog.Error("the trust anchor outside the database could not be moved up; this API still pins the older version",
+			slog.Uint64("pinned", cur.Seq), slog.Uint64("stored", v.List.Seq))
+	}
 }
 
 // ownRows is what a fault of trust.Open or trust.Advance means inside a
@@ -270,13 +325,21 @@ func (s *State) readBlock(ctx context.Context, from uint64) ([]trust.Signed, err
 // Against a writer of the database no check that lives in the database holds.
 // Only something outside it can say which version is the newest, and the
 // contract has that thing: trust.Anchor with config.LoadAnchor and
-// trust-anchor.json, meant for the controller to write once it exists --
-// apps/server-controller/main.go today only logs that it is not built and
-// stops, so nothing writes that file yet. Wiring it is on the V1.2 list.
+// trust-anchor.json. Since 12.10.2026 both halves of it run: a pairing makes
+// the file (node.pair) and advanceAnchor moves it up to every version this
+// API stored. Where the file is there, the first of the two forms above is
+// shut: TestTheRaisedAnchorRefusesATruncatedChain cuts the chain at the top
+// and the cold API refuses, with the pin of a pairing beside it as the
+// control that still takes the older list. The second form -- the Seq of the
+// top row lowered -- is not measured and is reasoned only: the pin names the
+// number, readBlock fetches that row by its ID, and the Seq of the column is
+// never looked at there, so the attack would gain nothing. Reasoned, not
+// measured.
 //
-// So what this is: cheaper on the hot path than the eight looks it replaced,
-// and one form of the attack shut -- not the promise that an older list cannot
-// be put back in force.
+// So what this check is, on its own: cheaper on the hot path than the eight
+// looks it replaced, and one form of the attack shut -- never the promise
+// that an older list cannot be put back in force. That promise lives in the
+// file, and only on an installation that has one.
 //
 // For the form it does catch it rests on a trust row carrying its version
 // number in Seq, and that rests on AddVersion, which is this API's own writer
@@ -407,6 +470,10 @@ func (s *State) AddVersion(ctx context.Context, sg trust.Signed) (trust.Version,
 		return trust.Version{}, err
 	}
 	s.cur = next
+	// The pin follows the row, never the other way round: it is moved only
+	// after the version is stored, so a pin can never name a version this
+	// database does not hold.
+	s.advanceAnchor(next)
 	return next, nil
 }
 

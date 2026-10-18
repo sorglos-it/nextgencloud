@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -75,7 +76,26 @@ var (
 	// ErrProgram reports the program in the build context: missing, or no
 	// 64 bit ELF program at all.
 	ErrProgram = errors.New("runtime: the program in the build context is missing or is no ELF program")
+	// ErrBase reports a Containerfile whose base is not nailed down: a FROM
+	// that names a tag and no digest, or no FROM at all. A tag is a NAME, and
+	// a name says nothing about the bytes that end up in the image.
+	ErrBase = errors.New("runtime: the base of the Containerfile is not pinned to a digest")
 )
+
+// basePinned is a FROM line whose base carries a digest. The three parts that
+// matter, and why each is held:
+//
+//   - "@sha256:" and 64 characters of LOWER CASE hex. Lower case because that
+//     is the only form a registry answers and the only one podman compares
+//     byte for byte; a digest typed in upper case is a different string to
+//     everything that reads it.
+//   - Nothing after the digest but space. A second word would be another
+//     argument of FROM ("AS builder" is one), and this build has no stage to
+//     name, so anything there was not meant.
+//   - The repository in front of the "@" is not inspected beyond "no space
+//     and no @". Which repository the base comes from is a decision of the
+//     Containerfile; THAT the bytes are nailed down is the decision here.
+var basePinned = regexp.MustCompile(`^FROM[ \t]+[^ \t@]+@sha256:[0-9a-f]{64}[ \t]*$`)
 
 // BuildSpec is one image to build. Every field becomes an argument of podman,
 // so every field is held against something below.
@@ -155,11 +175,13 @@ func buildArgs(s BuildSpec) ([]string, error) {
 		"--arch", s.Arch,
 		"--file", s.File,
 		"--tag", s.Ref,
-		// The base image is named by a TAG (see the Containerfile), so what
-		// that tag means is whatever the registry says today. Pulling it every
-		// time at least makes the result the one of the registry instead of
-		// the one of a cache this machine filled months ago. It does NOT pin
-		// anything - see the note at Build.
+		// The base is pinned by DIGEST (see the Containerfile), so this no
+		// longer decides WHICH image is used - the digest does, and a cached
+		// layer under that digest is the same bytes as a fetched one. It stays
+		// because a digest that is NOT in the cache has to be fetchable at
+		// all: with --pull=never a build machine that never saw this base
+		// would fail late, and with the default it could reach for whatever a
+		// local tag of that name points at.
 		"--pull=always",
 		s.Context,
 	}, nil
@@ -216,6 +238,53 @@ func checkProgram(s BuildSpec) error {
 	return ErrArch
 }
 
+// CheckBase holds the Containerfile at path against the one thing a build
+// cannot repair afterwards: that its base is nailed to a digest.
+//
+// Why this is a function of the PACKAGE and not only of a case: a case can
+// read the one Containerfile that stands in this repo today, and it does
+// (build_test.go). What a case cannot do is stop a build. Build calls this
+// before podman starts, so a Containerfile whose base went back to a bare tag
+// ends in a refusal and not in an image - including one that somebody puts
+// beside the repo and points -file at.
+//
+// Measured without podman, and that is the whole reason it reads a file and
+// decides nothing else: the input is a path, so a case hands it a file in a
+// temporary directory, and the refusals are the measurement.
+//
+// EVERY FROM line has to be pinned, not the first one: a Containerfile with
+// two stages has two bases, and the unpinned one would be the one that got in.
+// No FROM line at all is refused too - a file that names no base is not the
+// Containerfile this build is for, and treating "nothing to check" as "all
+// good" is how a check turns hollow.
+func CheckBase(file string) error {
+	if err := validBuildArg(file); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return errors.Join(ErrBase, err)
+	}
+	found := false
+	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
+		// Leading space is allowed by the format, so it is trimmed before the
+		// line is read - otherwise an indented FROM would be invisible here
+		// and visible to podman.
+		line = strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(line, "FROM") {
+			continue
+		}
+		found = true
+		if !basePinned.MatchString(strings.TrimRight(line, " \t")) {
+			return ErrBase
+		}
+	}
+	if !found {
+		return ErrBase
+	}
+	return nil
+}
+
 // Build makes the image and writes it to s.Out. bin is the builder (podman);
 // out and errOut are where its own output goes, because an admin who has to
 // fix a build reads what podman wrote, not what this says about it.
@@ -224,12 +293,12 @@ func checkProgram(s BuildSpec) error {
 // this was written on, so neither line below has ever started. What IS
 // measured is everything above it (build_test.go).
 //
-// And one thing this cannot fix, named because it belongs to the build: the
-// Containerfile of the terminal app names its base by a tag
-// (docker.io/library/debian:13-slim), not by a digest. Two builds of the same
-// commit are therefore not the same image, and whoever controls that tag
-// controls what runs in the container. Pinning it is a decision about how the
-// base gets its security fixes afterwards, and it is not this file's to make.
+// The base of the Containerfile is PINNED TO A DIGEST, and CheckBase above
+// refuses a build whose Containerfile went back to a bare tag. What that buys:
+// two builds of the same commit start from the same bytes, and whoever gains
+// control of the tag gains nothing. What it does NOT buy, and it is the cost
+// that comes with it: a pinned base receives no security fix by itself. Who
+// raises the digest and how it is measured stands in tools/pin-base.sh.
 func Build(ctx context.Context, bin string, s BuildSpec, out, errOut io.Writer) error {
 	build, err := buildArgs(s)
 	if err != nil {
@@ -240,7 +309,13 @@ func Build(ctx context.Context, bin string, s BuildSpec, out, errOut io.Writer) 
 		return err
 	}
 	// The program comes before the build: a build that takes minutes and ends
-	// in an image for the wrong machine is worse than a refusal now.
+	// in an image for the wrong machine is worse than a refusal now. The base
+	// comes before both for the same reason and a sharper one: an image built
+	// off an unpinned base is not wrong in a way anybody SEES - it installs,
+	// it runs, and only its bytes are somebody else's choice.
+	if err := CheckBase(s.File); err != nil {
+		return err
+	}
 	if err := checkProgram(s); err != nil {
 		return err
 	}

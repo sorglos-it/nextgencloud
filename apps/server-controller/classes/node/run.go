@@ -47,6 +47,11 @@ import (
 	"golang.org/x/crypto/curve25519"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
+	// Named catch here and guard everywhere else: this package already has a
+	// function guard (ask.go), which gives the terminal its echo back when a
+	// signal ends the pairing question. Renaming that one for an import would
+	// be the tail wagging the dog.
+	catch "github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/apache"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
@@ -234,6 +239,20 @@ type RunConfig struct {
 	// told (apache.Writer.Compare). It runs once a day and after every tunnel
 	// that came off. nil: this server has no role web and checks nothing.
 	Compare func(ctx context.Context) error
+	// Sync brings the balancer, the trust file and web.json in line with the
+	// API servers of the trust list (apache.Writer.Sync). It runs whenever a
+	// version of the list was verified and kept (Listed) and once a day. nil:
+	// this server has no role web and writes nothing.
+	//
+	// It is the half that owns the LIST, where Compare owns the certificate of
+	// a node already written. Both are needed and neither does the other's
+	// work: without this one a second API server that joined and was taken in
+	// never reaches Apache at all (measured, serve.Deps.TrustChanged).
+	Sync func(ctx context.Context) error
+	// Listed releases Sync: one place in the buffer, because what it releases
+	// does not depend on how many versions arrived, only that one did. nil:
+	// only the daily beat runs Sync.
+	Listed <-chan struct{}
 	// The intervals. 0 is the constant of this file.
 	Status, Purge, Web, Grace time.Duration
 	// Now is the clock of Purge, in seconds. nil: time.Now().Unix().
@@ -295,12 +314,28 @@ func Run(ctx context.Context, c RunConfig) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// One goroutine per API, and a panic in one of them took the
+			// whole controller with every tunnel and every channel of every
+			// user (V1.2 point 38). Caught, this one API has no tunnel for
+			// the life of the process -- the catch is around the keeper and
+			// not around a round, because Keep IS the loop and there is no
+			// outer beat to come back to. That price is named rather than
+			// hidden: the line is ERROR and counted, so an installation whose
+			// controller no longer reaches one of its APIs can be found.
+			// wg.Done above still runs, so a stop does not wait out the
+			// grace period for it.
+			defer func() { _ = catch.HitTo(log, recover(), "node.keep", 0) }()
 			keep(ctx, cfg)
 		}()
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// The same, and the price is the certificates of the APIs no longer
+		// being compared while this process lives. The daily beat is inside
+		// watchWeb, so a catch here ends it; what it must not do is end the
+		// process.
+		defer func() { _ = catch.HitTo(log, recover(), "node.watchWeb", 0) }()
 		c.watchWeb(ctx, built)
 	}()
 	c.clock(ctx)
@@ -309,7 +344,15 @@ func Run(ctx context.Context, c RunConfig) error {
 	// channel somebody holds open is one systemd kills, and that is worse
 	// than a goroutine left behind in a process that is ending.
 	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
+	go func() {
+		// close is deferred, not the last statement, so a panic in the wait
+		// -- a WaitGroup counter that went negative is one -- neither ends
+		// the process nor makes this stop sit out the whole grace period for
+		// a goroutine that will never report.
+		defer close(done)
+		defer func() { _ = catch.HitTo(log, recover(), "node.grace", 0) }()
+		wg.Wait()
+	}()
 	timer := time.NewTimer(c.grace())
 	defer timer.Stop()
 	select {
@@ -339,6 +382,14 @@ func (c RunConfig) clock(ctx context.Context) {
 			return
 		case <-status.C:
 			c.Report.SendStatus(ctx)
+			// The count of caught programming errors, said out loud when it
+			// has grown and silent when it has not: without this call
+			// guard.Panics() would be a number no running controller ever
+			// reads, which is a diagnostic with no way out (V1.2 point 22).
+			// On the status tick because that is this program's own beat --
+			// the only round of the controller that keeps turning whatever
+			// the tunnels do.
+			catch.Report()
 		case <-purge.C:
 			if err := c.State.Purge(ctx, c.now()); err != nil && !errors.Is(err, dbapi.ErrNotFound) {
 				c.logger().Warn("the expired one-time task IDs could not be dropped", "err", err)
@@ -347,27 +398,59 @@ func (c RunConfig) clock(ctx context.Context) {
 	}
 }
 
-// watchWeb runs the certificate check of a server with the role web: once a
-// day, and once for every tunnel that came off (built).
+// watchWeb is what a server with the role web tells Apache, and it is one
+// goroutine for both halves: the list (Sync) whenever a version of the trust
+// list was verified and kept (Listed), and the certificates (Compare) for
+// every tunnel that came off (built). The daily beat runs both.
 //
-// It is a goroutine of its own and no case of clock, because the check reaches
+// Sync before Compare on the day, and that order is the point: Sync writes the
+// trust file out of the list and Compare then finds nothing left to renew,
+// while the other way round Compare would work on a file Sync is about to
+// write anyway.
+//
+// The daily beat carries Sync and not only Compare because a Sync that failed
+// is otherwise never retried: Listed fires once per version, and a version
+// that arrived while an API was unreachable would leave the balancer behind
+// the list until the next admin changed something. Sync writes nothing when
+// the files already say what the list says (apache.Writer.apply compares the
+// bytes), so the beat costs one read per API and no reload.
+//
+// It is a goroutine of its own and no case of clock, because both halves reach
 // out over the network: a slow API would hold the status of this server behind
-// it.
+// them.
 func (c RunConfig) watchWeb(ctx context.Context, built <-chan struct{}) {
-	if c.Compare == nil {
+	if c.Compare == nil && c.Sync == nil {
 		return
 	}
 	day := time.NewTicker(c.every(c.Web, WebEvery))
 	defer day.Stop()
 	for {
+		var sync, compare bool
 		select {
 		case <-ctx.Done():
 			return
 		case <-day.C:
+			sync, compare = true, true
 		case <-built:
+			compare = true
+		case <-c.Listed:
+			// A version of the trust list arrived. Only the list half runs:
+			// the certificate of a node Sync just wrote is the one it fetched
+			// to check its pin.
+			sync = true
 		}
-		if err := c.Compare(ctx); err != nil && ctx.Err() == nil {
-			c.logger().Warn("the certificates of the APIs could not be checked", "err", err)
+		if sync && c.Sync != nil {
+			if err := c.Sync(ctx); err != nil && ctx.Err() == nil {
+				// The list is kept either way - this is what Apache was not
+				// told. Named as such, because the balancer then answers for
+				// a set of API servers that is not the installation's.
+				c.logger().Warn("Apache could not be brought in line with the trust list", "err", err)
+			}
+		}
+		if compare && c.Compare != nil {
+			if err := c.Compare(ctx); err != nil && ctx.Err() == nil {
+				c.logger().Warn("the certificates of the APIs could not be checked", "err", err)
+			}
 		}
 	}
 }
@@ -508,8 +591,20 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 	licensed := func(ctx context.Context, a dbapi.App) (bool, error) {
 		return license.Allowed(ctx, st, keeper.List(), installationOf(keeper), a, time.Now().Unix())
 	}
+	// The node ID of THIS server, asked afresh for every hello: it comes out
+	// of the verified list by this server's own Noise key, and it falls back
+	// to what the configuration holds while no verified version lists the key.
+	// Which way round the two stand is a decision: the LIST decides, the file
+	// only remembers. A file that outranked the list would keep naming a node
+	// an admin has since renamed or removed.
+	nodeID := func() string {
+		if id := keeper.NodeID(key.Public); id != "" {
+			return id
+		}
+		return cfg.Node
+	}
 	rep := NewReporter(ReportConfig{
-		Version: version, Node: cfg.Node, Roles: cfg.Roles, OS: osName, State: st,
+		Version: version, Node: nodeID, Roles: cfg.Roles, OS: osName, State: st,
 		TrustSeq: keeper.TrustSeq,
 		// The engine takes the name of a container, and the container of an
 		// app is named after its system user: this is the mapping report.go
@@ -520,8 +615,32 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		Licensed: licensed,
 		Send:     reg.Control,
 	})
+	// The signal that a version of the trust list was verified and kept,
+	// coalescing like built in Run: one place is enough, because what it
+	// releases works on the list AS IT NOW STANDS and not on the version that
+	// released it. It is never closed - the writer is the goroutine of a
+	// channel, and closing it would be a send on a closed channel for the rest
+	// of the program.
+	listed := make(chan struct{}, 1)
 	srv := serve.New(serve.Deps{
-		Node: cfg.Node, Noise: key, Engine: engine, Chain: keeper, State: st,
+		// The one thing this does is release watchWeb, and it does it without
+		// holding the channel that brought the list: serve.Deps.TrustChanged
+		// may do nothing slow, and writing Apache's files plus a configtest
+		// and a reload is as slow as it gets.
+		TrustChanged: func() {
+			select {
+			case listed <- struct{}{}:
+			default:
+			}
+		},
+		// serve.Deps may not change once New has seen it, so this one is the
+		// ID AS IT STANDS AT THE START, and that is a named price: a server an
+		// admin lists while it runs says its node in the hello at once (nodeID
+		// above) and takes the chain, but its app channels and its tasks go on
+		// with what it knew at the start until it is restarted once. What makes
+		// the price small is that the chain now arrives at all -- without it
+		// the ID was never learned and no restart ever helped.
+		Node: nodeID(), Noise: key, Engine: engine, Chain: keeper, State: st,
 		// No updater yet, and this is a seam named rather than papered over:
 		// update.Deps takes the trust list as a VALUE (update.Deps.List),
 		// while this controller's list is replaced version by version under
@@ -539,9 +658,10 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		// (serve.Installer), so the Manager of a channel is built on that one
 		// version instead of on whatever the keeper holds in the instant the
 		// installer reaches for it.
-		Installer: installer{cfg: cfg, version: version, state: st, engine: engine},
+		Installer: installer{cfg: cfg, version: version, state: st, engine: engine,
+			node: nodeID},
 	})
-	c := RunConfig{State: st, Chain: keeper, Report: rep}
+	c := RunConfig{State: st, Chain: keeper, Report: rep, Listed: listed}
 	for _, a := range cfg.APIs {
 		c.APIs = append(c.APIs, link.Config{
 			API: a, Noise: key, Hello: rep.Hello, Handler: srv,
@@ -560,7 +680,11 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		})
 	}
 	if slices.Contains(cfg.Roles, tunnel.RoleWeb) {
-		c.Compare = webCompare(cfg, keeper)
+		w := apache.New(apache.Options{
+			WebConfig: cfg.WebConfig, TrustFile: config.APITrustFile, BalancerFile: config.BalancerFile,
+		})
+		c.Compare = webCompare(w, keeper)
+		c.Sync = webSync(w, keeper)
 	}
 	return c
 }
@@ -591,10 +715,7 @@ func installationOf(k *chain.Keeper) string {
 // A node it cannot reach does not stop the others: the next API may be up, and
 // what Apache has for the one that is away keeps working until Sync takes it
 // out. The errors are joined so the log names every one of them.
-func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Context) error {
-	w := apache.New(apache.Options{
-		WebConfig: cfg.WebConfig, TrustFile: config.APITrustFile, BalancerFile: config.BalancerFile,
-	})
+func webCompare(w *apache.Writer, k *chain.Keeper) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		l := k.List()
 		if l == nil {
@@ -630,6 +751,22 @@ type installer struct {
 	version string
 	state   *state.Store
 	engine  ctrlrt.Engine
+	// node is the ID of THIS server, asked afresh for every activation
+	// (wireUp.nodeID): out of the verified list by this server's own Noise
+	// key, and only then out of the configuration.
+	//
+	// Asked afresh and not frozen, and that is the whole difference to
+	// serve.Deps.Node beside it: serve.New may not be handed a changing
+	// value, but this Manager is built per channel, so it can have the ID as
+	// it now stands. It matters because the node of the SIGNED task is held
+	// against this one (task.Check over Input.Node), and pairing empties
+	// config.Controller.Node - so a Manager that read the file would hold
+	// every root task of a paired server against "" and answer E_VERIFY.
+	// Measured 18.10.2026 on a running installation: with the ID out of the
+	// file the activation ended "task: malformed task or other target"; with
+	// the ID filled in, the task verified and the channel ran on into
+	// install.Accept.
+	node func() string
 }
 
 // lastSeq is the newest catalogue number this installation has already seen
@@ -646,16 +783,34 @@ type installer struct {
 // the local store has to add.
 func (installer) lastSeq(string) uint64 { return 0 }
 
-// Activate carries out one activation, on the trust list of its channel.
-func (i installer) Activate(ctx context.Context, list *trust.List, d access.Decision,
-	r io.Reader) ([]byte, error) {
-	return install.New(install.Deps{
+// nodeOf is this server's node ID for one activation. It is a method and not
+// the bare field so that a case can hold the "afresh" of it: a reader that
+// kept the ID would answer the same thing twice where this one answers what
+// the list now says.
+func (i installer) nodeOf() string {
+	if i.node == nil {
+		// A controller wired without it is this program wired wrong, and an
+		// empty ID is what install.Activate refuses anyway: every signed task
+		// names a node, and "" matches none.
+		return ""
+	}
+	return i.node()
+}
+
+// deps is what the Manager of one activation is built with. It is named and
+// not written inside Activate so that a case can READ it: what reaches
+// install.Deps is the whole of this wiring, and a case that only called the
+// pieces beside it would measure the pieces and not the wiring. Measured
+// 18.10.2026: with the node taken from the configuration instead of from
+// nodeOf, every case of the pieces stayed green.
+func (i installer) deps(list *trust.List) install.Deps {
+	return install.Deps{
 		State:  i.state,
 		Engine: i.engine,
 		Sys:    install.Host{ServerKey: i.cfg.DBKey.Bytes()},
 		List:   list,
 		Roles:  i.cfg.Roles,
-		Node:   i.cfg.Node,
+		Node:   i.nodeOf(),
 		NGC:    i.version,
 		// An activation never takes a release; install.Accept asks for the
 		// key all the same (install.Deps.ReleaseKey).
@@ -667,5 +822,55 @@ func (i installer) Activate(ctx context.Context, list *trust.List, d access.Deci
 		Max:     store.MaxPackage,
 		LastSeq: i.lastSeq,
 		Now:     func() int64 { return time.Now().Unix() },
-	}).Activate(ctx, d, r)
+	}
+}
+
+// Activate carries out one activation, on the trust list of its channel.
+func (i installer) Activate(ctx context.Context, list *trust.List, d access.Decision,
+	r io.Reader) ([]byte, error) {
+	return install.New(i.deps(list)).Activate(ctx, d, r)
+}
+
+// webSync brings Apache in line with the API servers of the trust list: the
+// balancer, the certificates it proxies to and web.json, all three out of the
+// one list (apache.Writer.Sync).
+//
+// It is the half that puts a NEW server in, and nothing else does: Compare
+// renews the certificate of a node that already stands in the trust file and
+// leaves a node that does not to this one. A server that joined and was taken
+// into the trust list therefore reaches Apache here or not at all - measured
+// on 17.10.2026, where it was not at all (serve.Deps.TrustChanged).
+//
+// A list with no API node at all is NOT written: Sync would render a balancer
+// with no member, and Apache answers every /api/ with 503 then. It cannot
+// happen from a verified list - a list whose own API is gone is one no browser
+// could have signed - and if it ever does, what Apache has keeps working and
+// the log says why nothing was written.
+func webSync(w *apache.Writer, k *chain.Keeper) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		l := k.List()
+		if l == nil {
+			return nil
+		}
+		apis := 0
+		for _, n := range l.Nodes {
+			if n.Kind == trust.NodeAPI {
+				apis++
+			}
+		}
+		if apis == 0 {
+			return fmt.Errorf("node: version %d of the trust list names no API server", l.Seq)
+		}
+		changed, err := w.Sync(ctx, l.Nodes)
+		if err != nil {
+			return err
+		}
+		if changed {
+			// The number and not the names: which servers an installation has
+			// is its own, and this line is read to see THAT Apache followed.
+			slog.Info("Apache was brought in line with the trust list",
+				"seq", l.Seq, "apis", apis)
+		}
+		return nil
+	}
 }

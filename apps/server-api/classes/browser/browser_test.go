@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -684,5 +685,47 @@ func TestSocketRefusesABrokenAPICertificate(t *testing.T) {
 	}
 	if c.Code != wire.CodeInternal {
 		t.Fatalf("code %q", c.Code)
+	}
+}
+
+// TestAPanicInTheStarterEndsTheChannelAndKeepsTheLink is the catch of the
+// STARTER (browser.channel), which is not the catch inside coreapp.OpenChannel:
+// that one begins to hold only once the call has begun, so a panic in entering
+// it -- a nil Opener, an interface of the wrong shape -- lands in a bare
+// goroutine, where nothing above can catch it and the whole process goes with
+// it, every session of every user (V1.2 point 38).
+//
+// The harness's dispatcher stands in for that hole exactly: it is not coreapp
+// and carries no catch of its own, so its panic is a panic of the goroutine.
+// Two things are measured, and the second is the one that matters more: the
+// link LIVES (the next channel is served), and the broken channel ENDS with
+// E_INTERNAL instead of leaving the browser waiting for an answer that is
+// never coming (V1.2 point 50).
+func TestAPanicInTheStarterEndsTheChannelAndKeepsTheLink(t *testing.T) {
+	h := newServer(t)
+	before := guard.Panics()
+	h.Grant = func(_ context.Context, _ *Session, c *link.Channel, _ wire.Open) {
+		if c.Num == 2 {
+			panic("a programming error in the work of one channel")
+		}
+	}
+	p := dialSession(t, h)
+	defer p.close()
+	p.writeOpen(t, 2, openOf())
+	wantClose(t, p, 2, wire.CodeInternal)
+	if got := guard.Panics(); got != before+1 {
+		t.Fatalf("the counter went %d -> %d; one panic must count once", before, got)
+	}
+	// The link itself is untouched: a second channel is served as before. This
+	// is the half the control mutation kills -- a catch that ended the session
+	// would pass the line above and fail here.
+	p.writeOpen(t, 4, openOf())
+	select {
+	case o := <-h.Opened:
+		if o.c.Num != 4 {
+			t.Fatalf("channel %d was served, 4 was opened", o.c.Num)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the link died with the channel")
 	}
 }

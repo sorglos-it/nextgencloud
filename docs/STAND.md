@@ -76,23 +76,37 @@ Vollständig mit Messungen: `Z:\GitHub\claude-md\messen.md` (gilt für jedes Pro
 - **`$?` ist in `wsl -- sh -c '…'` schon tot**, auch in einfachen Anführungszeichen (Sonde:
   im Befehlstext **0**, dieselben Zeilen als **Datei** 7 und 1). Messskript als Datei, Code **in**
   WSL schreiben, Sonde `(exit 7)` vor der ersten echten Messung.
-- **Zwei Zeitfälle flattern unter der Last des vollen Satzes**, und der Satz ist seit dem
-  12.10.2026 groß (über 1000 Fälle in einem Lauf). Gemessen, je mit der Rate:
-  - `TestThePoolRetiresAConnectionAtItsLifetime` (`apps/server-db/classes/mariadb`): **1 rot von
-    4** Gesamtläufen — allein **0 von 10**, das db-Paket allein **0 von 5**.
-  - `TestCloseEndsTheLinkInOrder` (`apps/server-api/classes/link`): **1 rot von 3**
-    Gesamtläufen mit einem TCP-Reset — allein **0 von 30**.
+- **Zeitfälle flattern unter Last, und bisher war jedes Mal die Vorrichtung schuld, nicht der
+  Code.** Am 12.10.2026 zwei Fälle gemessen, nachgestellt (je einzeln in **16 gleichzeitigen
+  Prozessen** — die billigere Nachstellung des vollen Satzes; reine Rechenlast warf keinen um) und
+  behoben:
+  - `TestThePoolRetiresAConnectionAtItsLifetime`: **25 rot von 1600 → 0 von 1600**. Ursache
+    gemessen: `database/sql` zieht eine überfällige Verbindung an **zwei** Stellen ein — beim
+    Herausnehmen **und** beim Zurückgeben. Bei einer Frist von 1 ms greift die zweite unter Last
+    immer. Die erwartete Zahl war **abgeleitet** und hing daran, dass ein
+    Unter-Millisekunden-Fenster genau einmal getroffen wird. Behoben, indem die **Uhr aus der
+    Zusicherung** genommen wurde (die Ersatzverbindung wird gehalten, also kann sie niemand
+    zurückgeben) — die Zusicherung bleibt exakt `== 1`.
+  - `TestCloseEndsTheLinkInOrder`: **5 rot von 3200 → 0 von 3200**. Ursache gemessen: die Attrappe
+    setzte `SO_LINGER 0`, ihr Close schickte also **RST** statt FIN, und **auf Windows verwirft ein
+    eintreffendes RST den noch ungelesenen Empfangspuffer** — damit verschluckte es das Echo des
+    Close-Rahmens, das schon abgeschickt war. Behoben, indem die **Ursache** wegfiel (Gegenseite
+    ohne `SO_LINGER 0`); die Fälle, die einen Reset brauchen, behalten ihn.
 
-  Beide sind **echte `--- FAIL`**, fallen also **nicht** unter die Laufzeit-Trennlinie oben und
-  dürfen nicht als Rauschen verworfen werden. Beide messen eine **Frist** (Lebenszeit einer
-  Verbindung, Reihenfolge beim Schließen), und beide haben zu wenig Luft, wenn dreißig Pakete
-  gleichzeitig um die Maschine streiten. **Ursache nicht gemessen.**
+  **Beide Male war die erste Frage die richtige: ist es ein echter Fehler?** Beim Reset wurde das
+  ausdrücklich geprüft, bevor dem Fall Luft gegeben wurde — der Rahmen ging raus, mit dem richtigen
+  Status, und die Gegenseite sah ihn. **Einem Fall Luft zu geben, der einen echten Fehler verdeckt,
+  ist schlimmer als das Flattern.**
 
-  **Darum für jede Meldung:** einen roten Zeitfall **allein nachfahren** und die Rate nennen
-  („1 von 4 im Gesamtsatz, 0 von 10 allein"), nicht den Lauf wiederholen, bis er grün ist. Und
-  wer einen Zeitfall schreibt, gibt ihm Luft oder nimmt ihm die Uhr — in diesem Projekt sind
-  Fristen schon mehrfach die einzige flatternde Stelle gewesen (die Drei in der
-  Recovery-Buchführung hing an genau einem `TPM_RC_RETRY`).
+  **Darum für jede Meldung:** einen roten Zeitfall **allein nachfahren** und die Rate nennen, und
+  eine Behebung mit **Rate gegen Rate** belegen (gleiche Zahl Läufe vorher und nachher), nicht mit
+  „jetzt ging es". Und je Fall einen Mutanten: die übliche falsche Behebung ist, die Zusicherung so
+  weit zu lockern, dass sie immer stimmt.
+
+  **Offen, unter dreifach überzeichneter Last gefunden:** `TestAWrongSubprotocolIsRefused` fiel in
+  1 von 10 Paketläufen um („not at once but after 2.4 s") — dieselbe Sorte, ein „sofort" an der Uhr
+  gemessen. **Ursache nicht gemessen**, und ob die Last der Lage im vollen Satz entspricht, ist
+  offen.
 - **`ok` ohne `-v` sagt nichts über die Zahl der gelaufenen Fälle.** Am 12.10.2026
   gemessen: `go test` druckte `ok`, unter `-v` waren **10 von 11** Fällen `SKIP` — die
   Attrappe baute nicht (ein Heredoc hatte die Escapes gefressen), und **`t.Skipf` schreibt
@@ -231,16 +245,75 @@ weil `jq` auf diesem Rechner fehlt.
 
 ## Offene Entscheidungen
 
+- **ES GIBT KEINEN RELEASE-PACKER — gemessen am 01.10.2026, und das ist der eigentliche Grund,
+  warum NGC noch nicht installierbar ist.** Kein `tar -c`, kein Workflow, kein `tools/release*`,
+  weder auf `main` noch auf `web`; `shared/testdata/release/ngc-web-all.tar` sind **18 Byte Text**.
+  `verify_release` in `ngc-web.sh` prüft das Archiv als **undurchsichtigen Block** (Signatur,
+  SHA-256, Größe) und sagt kein Wort über den Inhalt; `unpack_release` verlangt danach **nur**
+  `public/index.php`. Die Vorlage `apps/web/templates/apache-vhost.conf` *beansprucht* in ihrem
+  eigenen Kommentar, im Release zu liegen — das ist Absicht, nicht gebaut.
+  **Folge:** Der Release-Schlüssel unterschreibt ein Archiv, das niemand packt. Wer die Reihenfolge
+  sucht: erst der Packer (mit einer Liste, was hineingehört und einer Prüfung, dass es drin ist),
+  dann der Schlüssel, dann Aufgabe 26.
 - **Vertragsfassung 1.2:** Was der nächste Schnitt an `shared/` tragen muss,
-  steht gesammelt in [`vertraege-v1.2.md`](vertraege-v1.2.md) — 18 Punkte aus
-  allen vier Strängen, jeder mit Herkunft und Messung. Mehrere Module verweisen
-  im Code darauf; die Datei ist die Liste, die dort gemeint ist.
+  steht gesammelt in [`vertraege-v1.2.md`](vertraege-v1.2.md) — **83 Einträge**
+  aus allen vier Strängen, jeder mit Herkunft und Messung (bis 18.10.2026 stand
+  hier „18 Punkte"). Mehrere Module verweisen im Code darauf; die Datei ist die
+  Liste, die dort gemeint ist.
+  - Seit dem 18.10.2026 hat sie **ein Inhaltsverzeichnis mit Stand je Punkt**
+    (gilt · überholt durch Punkt N · berichtigt Punkt N · offen) und **die
+    offenen Entscheidungen gesammelt am Ende**. Wer eine Entscheidung sucht,
+    liest diesen einen Abschnitt, nicht 83 Einträge.
+  - **Die Nummern 19 bis 35 sind dort doppelt vergeben:** einmal als Punkt der
+    Sammelliste am Anfang, einmal als Abschnitt `## Punkt N` darunter. „Punkt
+    30" meint also zwei verschiedene Dinge. Das ist der zweite Grund für die
+    Regel oben unter „Wie hier gearbeitet wird": **die Überschrift zitieren,
+    nicht die Nummer.**
 
 - **Release-Stick:** Mit welchem Werkzeug der Hardware-Stick das Release signiert, wird vor dem
   ersten Release entschieden. `ngc-store` signiert nur Test-Releases.
+  Stand 01.10.2026: PIV auf Firmware 5.4.3 kann kein Ed25519, und der Vertrag verlangt reines
+  Ed25519 (`shared/sign/sign.go` prüft `len(sig) != ed25519.SignatureSize`). Unterschrieben wird
+  `"ngc/" + purpose + NUL + payload`, gemessen **193 Byte** im Beispiel. Eine Probe, ob der
+  OpenPGP-Teil des Sticks diese Bytes **direkt** unterschreibt, liegt bereit; der normale
+  `gpg`-Weg unterschreibt einen Hash **plus OpenPGP-Anhang** und verifiziert daher nie.
 - **Für den Sicherheitsdurchgang (Plan 7) vorgemerkt:** eine feste Bindung der Oberfläche einer
   Store-App an ihren Store, die einen Wechsel des Admin-Schlüssels übersteht; `enc.Budget` soll
   Mitglieder in Rohwerten zählen; eine gemeinsame Prüfung der Form von URLs für alle Verträge.
+- **Aus Aufgabe 27 (Web), je mit Messung im Aufgabenbericht:**
+  - **Zurückgedrehte Vertrauensliste:** Liefert die API auf `from=N+1` eine ältere, gültig
+    unterschriebene Fassung, wirft die Shell heute ihre geprüfte Liste weg und schlägt Alarm.
+    Entwurf 4.6 will das Gegenteil: ablehnen, ohne Alarm, bei der neueren bleiben. Sonst kann eine
+    übernommene API jede Sitzung abmelden. Entscheiden, dann `shell/trustlist.js` nachziehen.
+  - **`wire.MaxCallResult` auf Ende-zu-Ende-Kanälen:** `net/channel.js` setzt die Grenze nur, wenn
+    der Aufrufer sie nennt. `channel.call` nennt sie, `channel.openE2E` nicht – richtig für eine
+    Aktion mit `stream`, offen für eine ohne. Festlegen, wer sie dort setzt, bevor die erste
+    solche App kommt.
+  - ~~**Sicherheitskopfzeilen für `assets/`**~~ – erledigt mit Aufgabe 29 (Web):
+    `apps/web/templates/apache-vhost.conf` ist die Vorlage für den virtuellen Host und setzt für
+    `assets/` vier Kopfzeilen: `nosniff`, `Cross-Origin-Resource-Policy`, HSTS und eine **eigene**
+    Richtlinie, nicht die der Seite. Je Kopfzeile steht die Begründung in der Datei, auch für die
+    bewusst fehlenden. `tests/shell/csp.spec.js` prüft es an einer `.js`, einer `.css`, einer Datei
+    ohne Endung und einer, die es nicht gibt; die Mock-API liest die Werte aus der Vorlage und
+    prüft dabei, dass der Block unter dem DocumentRoot liegt – ein Block woanders bricht den Lauf.
+  - **Offene Reste davon, drei:**
+    1. **`scripts/ngc-web.sh` im ulh-Repo (Aufgabe 26) nachziehen.** Es schreibt einen eigenen
+       virtuellen Host unter demselben Namen und ist eine Aufgabe älter. Vier Unterschiede: *für*
+       die Vorlage, dass das Skript für `assets/` **keine** Kopfzeile außer HSTS setzt (das Loch)
+       und dass es `/assets/` aus seiner Rewrite-Regel nimmt, sodass eine fehlende Datei dort von
+       Apache selbst beantwortet wird statt von `index.php`. **Gegen** die Vorlage, dass das Skript
+       die Zertifikatserneuerung mit mod_md löst – ein bewegliches Teil weniger als certbot in der
+       Vorlage – und dass es `ngc-web.conf` bei jedem `install`/`configure` **überschreibt**: ein
+       von Hand gehärteter Server verliert den Asset-Block ohne Warnung, bis das Skript ihn selbst
+       mitbringt.
+    2. **Kein Apache im Repo.** Fünf `curl`-Befehle in `apps/web/README.md` („What no test here can
+       measure") machen aus „ungemessen" „gemessen"; der wichtigste klärt, ob
+       `Header always set` auf dem Rückfall-404 **ergänzt** statt zu ersetzen. Ergebnis hierher.
+    3. **Nur `public/assets/` ist gedeckt.** Eine Datei direkt in `public/` hätte keine der vier
+       Kopfzeilen. Der Riegel ist ein Fall, nicht die Konfiguration: direkt im Webroot liegt nur
+       `index.php`, alles Neue gehört unter `assets/`.
+  - **`HEAD` auf `/`** antwortet 405 statt wie `GET`, und ein 405 trägt keine `Allow`-Kopfzeile.
+    Kein Loch, aber nicht nach HTTP. Lassen oder ändern.
 
 Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 
@@ -305,3 +378,44 @@ Alle weiteren Entscheidungen stehen im Entwurf, Kapitel 6.
 - Repo: <https://github.com/sorglos-it/nextgencloud> (privat)
 - Facebook-Post: zurückgestellt, solange das Repo privat ist; Vermerk in
   `Z:\GitHub\facebook\README.md`, Abschnitt „Bestand“
+
+### Ein dritter Zeitflattrer: `TestStartTakesTheSameTimeForAnUnknownName`
+
+`apps/server-api/classes/login`. Er verlangt, dass ein unbekannter Name nicht schneller abgelehnt
+wird als ein bekannter, und misst dafür einen Faktor zwei. Am 13.10.2026 einmal rot im vollen
+`tools/check.sh`-Lauf (`263,877µs` gegen `118,197µs`, „this machine cannot measure a factor of two
+today"), **allein 0 von 10 rot**, und der zweite vollständige Lauf ebenfalls grün mit `check: ok`.
+
+Gleiche Familie wie die zwei oben: eine abgeleitete Erwartung gegen ein Fenster im
+Mikrosekundenbereich, auf einer Maschine mit anderen Lasten. **Ursache nicht gemessen** — er liegt
+auf keinem Weg, der an diesem Tag geändert wurde (der Fall ruft den Handler direkt, nicht über den
+Router). Wer ihn rot sieht: erst allein wiederholen, und mit `GOMAXPROCS=1` prüfen, bevor er zum
+Befund wird.
+
+### `tools/check.sh` scheitert im Arbeitsbaum mit Code 128 — UNC-Pfad, nicht Eigentum
+
+Nicht „dubious ownership": `git worktree add` schreibt in die `.git`-Datei einen **UNC-Pfad**
+(`//nas.mein.lan/freigaben/…`), den Git-Bash über seine Pfadumschreibung zerlegt —
+`fatal: not a git repository: /mnt/c/<baum>/Z:/GitHub/…`. **Abhilfe gemessen:**
+`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`, dann läuft derselbe Befehl. `Z:/…` in die
+`.git`-Datei zu schreiben hilft **nicht** (`fatal: not a git repository: (NULL)`).
+
+### `git stash push` ohne `-u` lässt neue Testdateien stehen
+
+Der „Grundstand"-Lauf misst dann **alte Quelle gegen neue Fälle**. Einmal war das nützlich (es
+wurde die Rot-vorher-Messung des ganzen Satzes), aber es wäre leicht als Grundstand durchgegangen.
+Mit `-u` dagegen verschwindet ein eigener Messordner im Arbeitsbaum mitten im Lauf —
+**Messdateien gehören in den Scratchpad, nicht in den Baum.**
+
+### Ein vierter Zeitflattrer: `TestFinishTakesTheSameTimeForAKeyNobodyHolds`
+
+`apps/server-api/classes/login`, 1 von 2 `check.sh`-Läufen rot (174,57 s), allein 0 von 3. Der
+Null-Kontrollzweig des Falls feuert selbst („this machine cannot measure a factor of two today").
+Gleiche Familie wie die drei darüber. **Freigemessen** mit zehn verschachtelten Paaren
+(Grundstand und Änderung abwechselnd, gleicher Maschinenzustand je Paar): **0/10 gegen 0/10**.
+
+**Und eine Lehre dazu:** `GOMAXPROCS=1` ist bei einem Fall, der **Uhrzeiten** vergleicht, der
+falsche Hebel — `messen.md` nennt es für ein Flattern an einer Reihenfolge zwischen Goroutinen.
+Das Verengen des Planers macht die Uhr nur verrauschter; der Lauf war nach über 30 Minuten nicht
+durch. Bei einem Zeitvergleich trennt der **gepaarte Lauf gegen den Grundstand**, nicht der
+verengte Planer.

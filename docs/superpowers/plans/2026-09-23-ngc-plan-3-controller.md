@@ -2599,6 +2599,14 @@ einem Baurechner, nicht auf dem Zielserver.
 
 Abschnitt „Terminal-App bauen“ in `apps/server-controller/CLAUDE.md`, drei Zeilen:
 
+> **BERICHTIGT am 12.10.2026: es sind zwei Zeilen je Architektur.** Seit Aufgabe „Erzeuger des
+> Abbilds" gibt es `ngc-controller image -arch <amd64|arm64> -out <Datei>`; das Kommando ruft
+> `podman build` und `podman save` selbst (`classes/runtime/build.go`) und liest den Tag des
+> Abbilds aus `manifest.json`, so dass er nie von der Fassung im Manifest abweichen kann. Es
+> bleiben also das `go build` unten und danach das Kommando. Die gültige Fassung steht in
+> `apps/server-controller/CLAUDE.md`; die drei Zeilen hier sind der Plan von damals.
+
+
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(cat apps/server-controller/VERSION)" -o build/ngc-controller ./apps/server-controller
 podman build --arch amd64 -f apps/server-controller/templates/terminal/Containerfile -t ngc/terminal:1.0.0 build/

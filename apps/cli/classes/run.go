@@ -33,9 +33,29 @@ Aufrufe:
                                                   Release zum Testen unterschreiben
   ngc-store check <Verzeichnis> <Teil> <Architektur>  Release prüfen wie verify.sh
   ngc-store check -store <Store> <Verzeichnis>    ganzen Store prüfen
+  ngc-store contents <Verzeichnis>                Inhalt der Release-Tars prüfen
+
+Von null zu einem geprüften Release:
+  1. Die Archive mit genau diesen Namen in ein leeres Verzeichnis legen:
+       ngc-web-all.tar           darin  public/index.php
+                                        templates/apache-vhost.conf
+       ngc-api-amd64.tar         darin  genau die Dateien ngc-api und ngc-store
+       ngc-controller-amd64.tar  darin  genau die Datei ngc-controller
+     Für arm64 heißen sie ngc-api-arm64.tar und ngc-controller-arm64.tar.
+     Ein Teil darf fehlen; ein falsch benannter wird übergangen.
+  2. ngc-store contents <Verzeichnis>
+     Sagt, was in einem Archiv fehlt oder zu viel ist — hier, nicht erst auf
+     dem Server.
+  3. ngc-store release -version 1.1.0 -seq 1 <Verzeichnis> <Schlüsseldatei>
+     Die Fassung ist MAJOR.MINOR.PATCH oder MAJOR.MINOR.PATCH.BUILD, also
+     drei oder vier Zahlen, jede ohne führende Null (1.1.0, 1.1.0.3).
+     Schreibt release.json und release-key.pem in das Verzeichnis.
+  4. ngc-store check <Verzeichnis> ngc-web all
+     Je Teil einmal. Die Teile heißen ngc-web, ngc-api und ngc-controller —
+     mit dem Vorsatz "ngc-", wie die Dateien.
 
 Zusätze von "release", vor den Angaben:
-  -version <Fassung>  die NGC-Fassung dieses Release; nötig
+  -version <Fassung>  die NGC-Fassung dieses Release, drei oder vier Zahlen; nötig
   -seq <Folge>        Folgenummer, höher als die letzte; nötig
   -notes <Text>       was sich geändert hat
   -base <Adresse>     wo die Dateien liegen; leer schreibt nur die Namen
@@ -123,6 +143,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
 			return 1
 		}
+		// The public half of the signing key goes beside the catalog, the
+		// way runRelease writes ReleaseKeyFile beside a release and for the
+		// same reason: without it nobody can check the store, not even this
+		// tool's own "check -store", and a store nobody can check is the one
+		// thing this tool must not produce. Measured while the first real
+		// store was built: every subcommand ran green and "check -store"
+		// then refused the finished store, because no subcommand wrote
+		// StoreKeyFile.
+		if err := writePublicKey(args[1], StoreKeyFile, args[2]); err != nil {
+			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
+			return 1
+		}
 		out := filepath.Join(args[1], CatalogFile)
 		if err := writeCatalog(out, env); err != nil {
 			fmt.Fprintf(stderr, "Katalog nicht geschrieben: %v\n", err)
@@ -142,6 +174,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runRelease(args[1:], stdout, stderr)
 	case "check":
 		return runCheck(args[1:], stdout, stderr)
+	case "contents":
+		if len(args) != 2 {
+			fmt.Fprint(stderr, Usage)
+			return 2
+		}
+		return runContents(args[1], stdout, stderr)
 	}
 	fmt.Fprint(stderr, Usage)
 	return 2
@@ -311,6 +349,12 @@ func runRelease(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s %d %s\n", opts.Version, opts.Seq, out)
+	// Signing says nothing about what is inside the archives — it hashes
+	// bytes. The one sentence that keeps a wrongly packed release from
+	// travelling to a server is the name of the subcommand that looks
+	// inside, so it is printed where the release was just made and not
+	// only in the usage nobody reads twice.
+	fmt.Fprint(stdout, "Inhalt der Archive nicht geprüft: ngc-store contents <Verzeichnis>\n")
 	return 0
 }
 
@@ -375,6 +419,31 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprint(stdout, "release ok\n")
+	return 0
+}
+
+// runContents judges the release archives in a directory against the form
+// the installation scripts unpack (CheckContents). It is the step between
+// packing and signing: a wrongly packed archive is signed, downloaded and
+// unpacked without a word today, and the first place it shows is the
+// server, where half an interface or a missing ngc-store costs an
+// installation.
+//
+// A directory in which no release file lies at all is its own answer and
+// not "ok": a run that judged nothing must never read like a run that
+// found nothing wrong (docs: messen.md).
+func runContents(dir string, stdout, stderr io.Writer) int {
+	seen, err := CheckDirContents(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Inhalt falsch: %v\n", err)
+		return 1
+	}
+	if len(seen) == 0 {
+		fmt.Fprintf(stderr, "Kein Release-Archiv in %s geprüft. Die Namen sind: %s\n",
+			dir, strings.Join(ReleaseFileNames(), ", "))
+		return 1
+	}
+	fmt.Fprintf(stdout, "Inhalt in Ordnung: %s\n", strings.Join(seen, ", "))
 	return 0
 }
 

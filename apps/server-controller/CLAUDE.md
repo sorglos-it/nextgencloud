@@ -132,23 +132,89 @@ so klein wie möglich.
 ## Terminal-App bauen
 
 Das Abbild der Terminal-App entsteht auf einem **Baurechner**, nie auf dem Zielserver: der
-Zielserver hat keinen Bauer und soll keinen brauchen. Drei Zeilen je Architektur, aus dem Stamm
-des Repos:
+Zielserver hat keinen Bauer und soll keinen brauchen.
+
+### Schritt 0, Pflicht vor jedem Release: die Basis prüfen
+
+**Entschieden von Thomas am 15.10.2026.** Vor jedem Release läuft
+
+```bash
+tools/pin-base.sh --verify
+```
+
+Ausstiegscode **0** heißt: die festgenagelte Prüfsumme ist die aktuelle, weiterbauen.
+Ausstiegscode **2** heißt: die Marke hat sich bewegt — dann `tools/pin-base.sh --write`,
+und die Änderung wird als **eigener Commit** gefahren, damit die Basis jedes
+ausgelieferten Abbilds im Diff des Releases sichtbar ist. Wer sie bewusst **nicht** anhebt,
+schreibt den Grund dazu. Ausstiegscode **1** heißt: die Messung ist gescheitert — dann wird
+**kein** Release geschnitten, denn über eine Basis ist damit nichts gesagt.
+
+**Warum das Pflicht ist und nicht „wenn jemand dran denkt":** die Basis hängt seit dem
+15.10.2026 an einer **Prüfsumme**, nicht an der Marke `debian:13-slim`. Das schließt die
+Lieferkette (wer die Marke beherrscht, beherrschte sonst den `needs: ["root"]`-Container),
+kostet aber genau das: **eine festgenagelte Basis bekommt von sich aus keinen
+Sicherheitsfix.** Debian veröffentlicht einen, die Marke wandert, die Prüfsumme nicht.
+
+**Ändern darf die Zahl, wer ein Release unterschreiben darf** — die Prüfsumme entscheidet,
+was im Container der schärfsten App läuft, das ist dieselbe Macht wie das Unterschreiben.
+Und: **nie von Hand**, immer über das Werkzeug. Eine von Hand getippte Prüfsumme ist eine
+Zahl, die niemand gemessen hat; das Werkzeug holt sie und prüft sie gegen die Bytes, die sie
+benennt.
+
+**Noch nicht verdrahtet, und das steht hier statt als Lücke:** auf diesem Zweig schneidet
+kein Programm ein Release (`apps/cli/classes/release.go` unterschreibt die Dateien eines
+Release-Verzeichnisses und sieht den Containerfile nie). Der Riegel `--verify` ist also da
+und aufrufbar, aber **erzwungen ist er bisher nur durch diesen Abschnitt.** Ihn in den
+Release-Weg zu hängen gehört zum Release-Packer, sobald der auf `main` ist.
+
+### Dann: zwei Zeilen je Architektur
+
+Aus dem Stamm des Repos:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(cat apps/server-controller/VERSION)" -o build/ngc-controller ./apps/server-controller
-podman build --arch amd64 -f apps/server-controller/templates/terminal/Containerfile -t ngc/terminal:1.0.0 build/
-podman save --format docker-archive -o services/amd64.tar ngc/terminal:1.0.0
+go run ./apps/server-controller image -arch amd64 -out services/amd64.tar
 ```
 
-Dasselbe mit `arm64` an allen drei Stellen und `services/arm64.tar` als Ziel. Das Paket baut
-danach die Sitzung API mit `ngc-store pack` aus `templates/terminal/manifest.json`, der `ui/` der
+Dasselbe mit `arm64` an beiden Stellen und `services/arm64.tar` als Ziel. Das Paket baut danach
+die Sitzung API mit `ngc-store pack` aus `templates/terminal/manifest.json`, der `ui/` der
 Sitzung Webinterface und den beiden Tars.
 
-**Nicht gelaufen:** keine der drei Zeilen ist hier ausgeführt worden – auf dieser Maschine gibt es
-kein `podman`. Gemessen ist der erste Teil davon: `CGO_ENABLED=0 GOOS=linux go build` für `amd64`
-und `arm64` übersetzt (12.10.2026), und `store.ParseManifest` nimmt das Manifest an
-(`TestManifestMatchesTheContract`). Die Stufen „im Abbild enthalten" und „ausgeführt" fehlen.
+Bis zum 12.10.2026 standen hier **drei** Zeilen: die beiden `podman`-Aufrufe von Hand. Seit es
+das Kommando `image` gibt, ruft es sie selbst – `podman build --arch … --file … --tag …
+--pull=always` und danach `podman save --format docker-archive --output …`
+(`classes/runtime/build.go`, `buildArgs` und `saveArgs`). Und es nimmt dabei zwei Fehler ab, die
+von Hand niemand bemerkt: den **Namen** des Abbilds liest es aus `manifest.json` (`ngc/terminal:`
+plus `version`), also kann der Tag nie von der Fassung im Manifest abweichen, und die
+**Architektur** prüft es am ELF-Kopf des Programms in `build/` – wer `GOARCH` in der ersten
+Zeile vergisst, bekommt sonst ein Abbild, das baut, lädt, einbaut und erst auf dem Server an
+„exec format error" stirbt.
+
+**Zwei Fallen der zweiten Zeile, beide gemessen am 12.10.2026:**
+- `GOOS`/`GOARCH` gelten **nur** für die erste Zeile. Mit `GOOS=linux` davor übersetzt `go run`
+  sich selbst für Linux und kann es dann auf Windows nicht starten
+  (`exec: "…\exe\server-controller": executable file not found`). Darum `go run` und nicht
+  `build/ngc-controller`: das Programm in `build/` ist das **Ziel**-Programm, auf einem
+  amd64-Baurechner zufällig lauffähig und für `arm64` nie.
+- `-out` darf ein Unterverzeichnis nennen – `services/amd64.tar` geht, gemessen am Lauf oben.
+  Was `validOut` (`classes/node/main.go:384`) verbietet, ist allein `..`; hier stand zuerst, es
+  nehme überhaupt kein Verzeichnis, und das war am Code falsch. Das Verzeichnis muss es geben:
+  geschrieben wird es von `podman save`, und was der mit einem fehlenden Verzeichnis tut, ist
+  hier **nicht gemessen**.
+
+**Welche Stufe erreicht ist** (geschrieben · übersetzt · im Abbild enthalten · ausgeführt), am
+12.10.2026 im Arbeitsbaum auf `C:` gemessen:
+- Zeile 1: **ausgeführt**, für beide Architekturen. `file build/ngc-controller` sagt
+  „ELF 64-bit … x86-64, statically linked" bzw. „ARM aarch64".
+- Zeile 2: **ausgeführt bis zum Bauer**, nicht weiter. Der Aufruf antwortet
+  „podman ist auf diesem Rechner nicht zu finden …" mit Code 1 – und weil diese Meldung
+  **nach** `imageSpec` kommt, ist damit gemessen, dass Manifest und Pfade dieser Zeile stimmen
+  (`msgNoApp` würde vorher kommen). Gesucht wurde podman in `PATH`, in
+  `C:\Program Files\RedHat\Podman`, `C:\Program Files\Docker`,
+  `C:\ProgramData\chocolatey\bin`, `C:\Program Files\Rancher Desktop`,
+  `%LOCALAPPDATA%\Programs\podman` und im `PATH` der WSL – nirgends.
+- **Es fehlen** „im Abbild enthalten" und „ausgeführt" für das Abbild selbst: kein Container ist
+  je gebaut, gespeichert, geladen oder gestartet worden.
 
 Der Dienst selbst ist `ngc-controller terminal`; er läuft **im Container**, liest die Rahmen des
 Kanals von stdin und schreibt die rohe Ausgabe der Shell nach stdout. `ngc-controller hold` hält

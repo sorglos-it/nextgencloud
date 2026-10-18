@@ -85,23 +85,6 @@ func ioctl(fd, req, arg uintptr) error {
 	return nil
 }
 
-// shellEnv is the whole environment of the shell. It is built from nothing, so
-// NGC_PARAMS - which carries whatever the user typed into the app - cannot
-// travel on: a shell that had it would put it in front of the next person who
-// reads the process list.
-func shellEnv() []string {
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = service.DataDir
-	}
-	return []string{
-		"TERM=xterm-256color",
-		"HOME=" + home,
-		"PATH=" + service.Path,
-		"LANG=C.UTF-8",
-	}
-}
-
 // runShell starts the shell on a pseudo terminal and runs the two pumps and
 // the idle watchdog until one of them, or the shell itself, ends.
 //
@@ -137,13 +120,26 @@ func runShell(ctx context.Context, in io.Reader, out io.Writer, idle time.Durati
 	// Buffered for all three, so none of them is held alive by a send nobody
 	// takes once the first answer has been read.
 	fail := make(chan error, 3)
-	go func() {
-		fail <- pumpIn(in, ptmx, func(cols, rows uint16) error { return setWinsize(ptmx, cols, rows) }, act)
-	}()
-	go func() { fail <- pumpOut(out, ptmx, act) }()
-	go func() { fail <- watch(runCtx, act) }()
+	// Each of the four is a goroutine of its own, so a panic in one of them
+	// was the end of the whole ngc-controller -- every terminal of every user
+	// and every other channel of every tunnel (V1.2 point 38). ended turns it
+	// into the end of THIS terminal and no more, and it needs no new
+	// machinery to do it: the pumps already say how they ended through fail,
+	// and the first answer there kills the shell's session and comes back
+	// below. What a caught panic answers with is errBug, so it takes the same
+	// WAY out as every other failure of a pump and then gets a sentence of
+	// its own (terminal.go, sentence) -- the shell did start, and telling the
+	// person it did not would be a false answer.
+	go ended(fail, "terminal.pumpIn", func() error {
+		return pumpIn(in, ptmx, func(cols, rows uint16) error { return setWinsize(ptmx, cols, rows) }, act)
+	})
+	go ended(fail, "terminal.pumpOut", func() error { return pumpOut(out, ptmx, act) })
+	go ended(fail, "terminal.watch", func() error { return watch(runCtx, act) })
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	// The same for the wait on the child: it answers through done, and a
+	// panic in it would otherwise leave the select below waiting for a shell
+	// that has already ended.
+	go ended(done, "terminal.wait", cmd.Wait)
 
 	var first error
 	select {

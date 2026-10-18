@@ -1,9 +1,28 @@
 # Der Release-Schlüssel
 
-Mit diesem Schlüssel wird jedes NGC-Release unterschrieben. Wer ein Release
-installiert, prüft es dagegen. **Der private Teil liegt auf einem YubiKey und
-hat ihn nie verlassen** — er kann auch dann nicht gestohlen werden, wenn der
-Rechner des Entwicklers übernommen wird.
+Mit diesem Schlüssel soll jedes NGC-Release unterschrieben werden. Wer ein
+Release installiert, prüft es dagegen. **Der private Teil liegt auf einem
+YubiKey und hat ihn nie verlassen** — er kann auch dann nicht gestohlen werden,
+wenn der Rechner des Entwicklers übernommen wird.
+
+> **Berichtigung vom 17.10.2026: dieser Schlüssel hat noch kein einziges
+> Release unterschrieben, und in den Installationsskripten steht ein anderer.**
+>
+> - Die Karte kann `Message(purpose, payload)` nicht unterschreiben (unten
+>   gemessen). Der Ausweg ist Punkt 19 der Verträge: die Unterschrift soll
+>   `sha512(Message(...))` decken. **Punkt 19 ist nicht gebaut** —
+>   `shared/sign/sign.go` unterschreibt in `Sign` weiter die nackte Nachricht
+>   (`ed25519.Sign(priv, Message(purpose, payload))`). Solange das so ist, kann
+>   dieser Stick kein NGC-Release unterschreiben.
+> - Die Anlagen, die seit dem 17.10.2026 laufen, benutzen darum ein **zweites**
+>   Schlüsselpaar: Kennung `pN6Z6a9NR0aG6aEJIJ5EHg`, der geheime Teil als Datei
+>   `/root/ngc-keys/release.key` auf der Messmaschine (Punkt 57). Dessen
+>   öffentlicher Teil steht in `ngc-all.sh`, `ngc-api.sh`, `ngc-controller.sh`
+>   und `ngc-web.sh` — nicht der von dieser Seite.
+> - Punkt 19 hatte „den Schlüssel als Datei halten" ausdrücklich **verworfen**.
+>   Genau das ist heute der Betriebszustand. Welcher der beiden Schlüssel der
+>   echte wird, entscheidet Thomas. Bis dahin gilt: **was unten steht, ist die
+>   Zeremonie, nicht die heutige Lage.**
 
 ## Woran man ein echtes Release erkennt
 

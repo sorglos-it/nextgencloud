@@ -11,10 +11,10 @@ SSLProxyProtocol TLSv1.3
 SSLProxyCipherSuite TLSv1.3 TLS_AES_256_GCM_SHA384
 
 <Proxy "balancer://ngc-api">
-{{range .APIs}}    BalancerMember "{{.URL}}" retry=5 timeout=65 keepalive=On
+{{range .APIs}}    BalancerMember "{{.URL}}" retry=5 timeout=65 keepalive=On upgrade=websocket
 {{end}}    ProxySet lbmethod=byrequests failontimeout=On
 </Proxy>
 
 ProxyPreserveHost Off
-ProxyPass        "/api/" "balancer://ngc-api/api/" upgrade=websocket
+ProxyPass        "/api/" "balancer://ngc-api/api/"
 ProxyPassReverse "/api/" "balancer://ngc-api/api/"

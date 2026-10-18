@@ -2,9 +2,10 @@
 //
 // Three ways to start it, and no more:
 //
-//	ngc-api                 run the API
-//	ngc-api -join <code>    join an installation and fetch its shared keys
-//	ngc-api migrate         bring the database schema up to this release
+//	ngc-api                  run the API
+//	ngc-api -join <code>     join an installation and fetch its shared keys
+//	ngc-api migrate          bring the database schema up to this release
+//	ngc-api backup <file>    write a copy of the database to <file>
 //
 // migrate is a subcommand of this program and not a library the controller
 // calls: one runner over one schema (Verträge V1.2, Punkt 28). The controller
@@ -55,7 +56,7 @@ func main() { os.Exit(run(os.Args[1:])) }
 
 // run is main with the exit code as a value, so a test can drive it.
 func run(args []string) int {
-	args, cmd, ok := subcommand(args)
+	args, cmd, arg, ok := subcommand(args)
 	if !ok {
 		return 2
 	}
@@ -79,6 +80,8 @@ func run(args []string) int {
 	switch {
 	case cmd == "migrate":
 		return migrate(ctx, *path)
+	case cmd == "backup":
+		return backupRun(ctx, *path, arg)
 	case *joinCode != "":
 		return joinRun(ctx, *path, *joinCode)
 	}
@@ -94,7 +97,7 @@ func run(args []string) int {
 // configuration -- and that is a migration of the wrong database, silently.
 // Anything other than one known subcommand is refused here rather than taken
 // for "run the API".
-func subcommand(args []string) (rest []string, cmd string, ok bool) {
+func subcommand(args []string) (rest []string, cmd, arg string, ok bool) {
 	rest = make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -108,13 +111,35 @@ func subcommand(args []string) (rest []string, cmd string, ok bool) {
 			}
 			continue
 		}
-		if cmd != "" || a != "migrate" {
-			fmt.Fprintf(os.Stderr, "ngc-api: unbekannter Befehl %q\n", a)
-			return nil, "", false
+		// The one word that is not a flag and not the subcommand belongs to
+		// "backup": the file it writes. It is an argument and not a flag
+		// because it is not optional -- a backup without a target is not a
+		// backup with a default but a question nobody asked. "migrate" takes
+		// none, and a second word for either is refused rather than dropped:
+		// "ngc-api backup /mnt/a /mnt/b" would otherwise write one of the
+		// two and say nothing about the other.
+		switch {
+		case cmd == "":
+			if a != "migrate" && a != "backup" {
+				fmt.Fprintf(os.Stderr, "ngc-api: unbekannter Befehl %q\n", a)
+				return nil, "", "", false
+			}
+			cmd = a
+		case cmd == "backup" && arg == "":
+			arg = a
+		default:
+			fmt.Fprintf(os.Stderr, "ngc-api: zu viele Angaben hinter %q: %q\n", cmd, a)
+			return nil, "", "", false
 		}
-		cmd = a
 	}
-	return rest, cmd, true
+	// A target is required, and the refusal names the whole call: an admin who
+	// typed "ngc-api backup" has a backup plan in mind, and the worst answer
+	// here is a default path they never see again.
+	if cmd == "backup" && arg == "" {
+		fmt.Fprintln(os.Stderr, "ngc-api: backup braucht den Namen der Datei, die geschrieben werden soll: ngc-api backup /pfad/sicherung.db")
+		return nil, "", "", false
+	}
+	return rest, cmd, arg, true
 }
 
 // load reads api.json and says so in German when it cannot.
@@ -192,8 +217,95 @@ func joinRun(ctx context.Context, path, code string) int {
 		NoiseFile: joinNoiseFile, SignFile: joinSignFile,
 	})
 	if err != nil {
-		slog.Error("der Beitritt ist fehlgeschlagen", "error", err)
+		slog.Error(joinFailure(err))
 		return 1
 	}
+	return 0
+}
+
+// What a failed join says, one line per CATEGORY of join.Run, and each of
+// them says what to do next. None names a value: not the address of the
+// issuing API, not the path of a key file, not the code and no answer of a
+// server. The line before them was
+//
+//	slog.Error("der Beitritt ist fehlgeschlagen", "error", err)
+//
+// and measured on 17.10.2026 the error behind it read "Post
+// \"https://.../tunnel/join?secret=d5En6nQB...\": dial tcp ..." -- the
+// address AND the base64url of the SHA-256 of the one-time secret, into the
+// journal of this machine. A second one answered a key that could not be
+// written with the path of that key file. join.Run keeps both to itself now;
+// these lines are what is left to say.
+const (
+	msgJoinFailed   = "Der Beitritt ist gescheitert. Bitte einen neuen Beitrittscode in NextGenCloud erzeugen und es noch einmal versuchen."
+	msgJoinNothing  = "Der Beitritt wurde nicht abgeschickt: dieser Server passt mit seinen eigenen Angaben nicht zu einem Beitritt. Bitte die Einrichtung dieses Servers mit ulh wiederholen. Der Beitrittscode ist noch gültig."
+	msgJoinBadCode  = "Kein gültiger Beitrittscode. Bitte den Code aus NextGenCloud vollständig einfügen und es noch einmal versuchen."
+	msgJoinNoAnswer = "Die API hat nicht geantwortet. Bitte prüfen, ob der erste Server von NextGenCloud läuft und von hier aus erreichbar ist, dann noch einmal versuchen. Der Beitrittscode ist noch gültig."
+	msgJoinTooSlow  = "Die API hat nicht rechtzeitig geantwortet. Bitte in ein paar Minuten noch einmal versuchen. Ob der Beitrittscode dabei verbraucht wurde, lässt sich von hier aus nicht sagen; falls es wieder scheitert, einen neuen erzeugen."
+	msgJoinWrongAPI = "Es hat ein anderer Server geantwortet als der, den der Beitrittscode nennt. Bitte nicht wiederholen: in NextGenCloud einen neuen Beitrittscode erzeugen und, wenn es wieder geschieht, das Netz dieses Servers prüfen."
+	msgJoinRefused  = "Die API hat den Beitrittscode abgelehnt. Er ist wahrscheinlich schon benutzt oder abgelaufen. Bitte in NextGenCloud einen neuen erzeugen und diesen einfügen."
+	msgJoinSecret   = "Ein Schlüssel dieses Servers ließ sich nicht speichern. Bitte Platz und Rechte auf diesem Server prüfen und den Beitritt mit einem neuen Beitrittscode wiederholen."
+	// Nobody signed the server in. Nothing is lost and nothing is spent: the
+	// request stands in the API and waits for an administrator.
+	msgJoinNotListed = "Innerhalb einer Stunde hat niemand diesen Server in die Vertrauensliste eingetragen. Bitte als Administrator bei NextGenCloud anmelden, diesen Server dort eintragen und den Beitritt danach noch einmal aufrufen."
+)
+
+// joinFailure picks the line for what join.Run came back with. It asks the
+// categories and never the text, and a failure that is none of them gets the
+// cautious line -- an unknown failure may well have spent the code.
+func joinFailure(err error) string {
+	switch {
+	case errors.Is(err, join.ErrJoinInput):
+		return msgJoinNothing
+	case errors.Is(err, tunnel.ErrJoinCode):
+		return msgJoinBadCode
+	case errors.Is(err, join.ErrJoinNoAnswer):
+		return msgJoinNoAnswer
+	case errors.Is(err, join.ErrJoinTooSlow):
+		return msgJoinTooSlow
+	case errors.Is(err, join.ErrJoinWrongAPI):
+		return msgJoinWrongAPI
+	case errors.Is(err, join.ErrJoinRefused):
+		return msgJoinRefused
+	case errors.Is(err, join.ErrJoinSecret):
+		return msgJoinSecret
+	case errors.Is(err, join.ErrJoinTimeout):
+		return msgJoinNotListed
+	}
+	return msgJoinFailed
+}
+
+// backupRun is ngc-api backup <file>. It writes a copy of the database this
+// configuration names and then says the one sentence the file itself cannot.
+//
+// THAT SENTENCE IS THE POINT OF THIS FUNCTION as much as the copy is. The
+// file is encrypted with db.key of api.json, and nothing of that key is in
+// it. A backup kept without the key opens on no machine, ever, by anybody --
+// and a plan that keeps only the database is exactly what an admin builds who
+// was never told. It is printed to stdout, after the copy and not before, so
+// it is read as what happened and not as advice that might apply.
+//
+// The key itself is NOT printed, and not the path it came from either: a
+// backup run goes into a journal, a report and a screen somebody photographs.
+// What is named is the file to keep beside the copy, which is api.json, and
+// that path the admin already has -- it is the -config they just typed.
+func backupRun(ctx context.Context, path, target string) int {
+	cfg, ok := load(path)
+	if !ok {
+		return 1
+	}
+	if err := dbopen.Backup(ctx, cfg.DB, target); err != nil {
+		if errors.Is(err, dbopen.ErrNoBackuper) {
+			slog.Error("dieses Programm wurde ohne den Datenbankteil gebaut, es kann nicht sichern")
+			return 1
+		}
+		slog.Error("die Sicherung ist fehlgeschlagen", "error", err)
+		return 1
+	}
+	fmt.Printf("Die Sicherung liegt in %s.\n", target)
+	fmt.Printf("WICHTIG: Diese Datei ist verschlüsselt, und der Schlüssel steht NICHT darin.\n"+
+		"Er steht in %s. Ohne diese Konfiguration lässt sich die Sicherung auf keinem\n"+
+		"Rechner mehr öffnen - von niemandem, auch nicht von NextGenCloud. Bewahren Sie\n"+
+		"beide Dateien auf, und den Schlüssel an einem anderen Ort als die Sicherung.\n", path)
 	return 0
 }

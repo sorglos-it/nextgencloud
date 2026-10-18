@@ -1,9 +1,12 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -304,6 +307,7 @@ func TestRefreshSeesAnotherAPI(t *testing.T) {
 		t.Fatalf("version 1: %v", err)
 	}
 	other := New(s.Cfg, db, s.Box, s.Pin)
+	other.AnchorFile = s.AnchorFile
 	other.Now = s.Now
 	if _, err := other.Refresh(ctx); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -346,6 +350,7 @@ func TestChainPages(t *testing.T) {
 	}
 	// A fresh API reads the chain in blocks and arrives at the newest version.
 	other := New(s.Cfg, db, s.Box, s.Pin)
+	other.AnchorFile = s.AnchorFile
 	other.Now = s.Now
 	v, err := other.Refresh(ctx)
 	if err != nil || v.List.Seq != total {
@@ -419,6 +424,7 @@ func TestRefreshFindsAHole(t *testing.T) {
 			chainOf(t, s, admin, first, 4) // versions 1..5
 			dropRow(t, db, c.gone)
 			fresh := New(s.Cfg, db, s.Box, s.Pin)
+			fresh.AnchorFile = s.AnchorFile
 			fresh.Now = s.Now
 			if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
 				t.Fatalf("refresh over the hole answered %v", err)
@@ -446,6 +452,7 @@ func TestRefreshFindsAHoleAboveABlock(t *testing.T) {
 	chainOf(t, s, admin, first, session.MaxChainVersions+1) // versions 1..66
 	dropRow(t, db, session.MaxChainVersions+1)              // the first one of the second block
 	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
 		t.Fatalf("refresh over the hole answered %v", err)
@@ -470,6 +477,7 @@ func TestRefreshFindsAHoleWiderThanTheProbes(t *testing.T) {
 		dropRow(t, db, seq)
 	}
 	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	v, err := fresh.Refresh(ctx)
 	if !errors.Is(err, ErrSetting) {
@@ -533,6 +541,7 @@ func TestRefreshNamesTheFaultOfItsOwnRows(t *testing.T) {
 		t.Fatalf("row 2: %v", err)
 	}
 	fresh := New(s.Cfg, db, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	if _, err := fresh.Refresh(ctx); !errors.Is(err, ErrSetting) {
 		t.Fatalf("a stored chain that does not hold together answered %v", err)
@@ -541,6 +550,7 @@ func TestRefreshNamesTheFaultOfItsOwnRows(t *testing.T) {
 	// anything: a store that did not answer must keep none of this package's
 	// names, or the place that reads them could not tell the two apart.
 	away := New(s.Cfg, noRow{Store: db}, s.Box, s.Pin)
+	away.AnchorFile = s.AnchorFile
 	away.Now = s.Now
 	_, err = away.Refresh(ctx)
 	if err == nil {
@@ -599,6 +609,7 @@ func TestRefreshReadsOnAfterARace(t *testing.T) {
 	}
 	chainOf(t, s, admin, first, 2) // versions 1..3
 	fresh := New(s.Cfg, &lateRow{Store: db, id: "2"}, s.Box, s.Pin)
+	fresh.AnchorFile = s.AnchorFile
 	fresh.Now = s.Now
 	v, err := fresh.Refresh(ctx)
 	if err != nil || v.List.Seq != 3 {
@@ -722,5 +733,197 @@ func putTrustRow(tb testing.TB, db dbapi.Store, seq uint64, sg trust.Signed) {
 	if err := db.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobTrust,
 		ID: strconv.FormatUint(seq, 10), Seq: seq, Data: data, Updated: 1790000000}); err != nil {
 		tb.Fatal(err)
+	}
+}
+
+// TestTheAnchorMovesUpWithEveryVersion: once the file exists, the pin follows
+// the versions this API verified and stored itself. Without that the pin stays
+// where the pairing of a controller left it (config.SaveAnchor in
+// server-controller/classes/node), and everything above that number is
+// unpinned -- which is the half of the promise that was missing.
+func TestTheAnchorMovesUpWithEveryVersion(t *testing.T) {
+	s, _ := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	// The pin as a pairing leaves it behind: the list as it stood then.
+	writeAnchor(t, s, trust.Anchor{Seq: 1, Hash: trust.Hash(first)})
+	// Intermediate check: the file is the one this state reads and writes, so
+	// a number that does not move below is this API and not a wrong path.
+	if a, err := config.LoadAnchor(s.AnchorFile); err != nil || a.Seq != 1 {
+		t.Fatalf("the pin of the pairing does not read back: %v %v", a, err)
+	}
+	second := admin.Sign(t, trusttest.Next(t, first))
+	v, err := s.AddVersion(ctx, second)
+	if err != nil {
+		t.Fatalf("version 2: %v", err)
+	}
+	a, err := config.LoadAnchor(s.AnchorFile)
+	if err != nil {
+		t.Fatalf("LoadAnchor after version 2: %v", err)
+	}
+	if a.Seq != 2 {
+		t.Fatalf("the pin stands at %d, want 2", a.Seq)
+	}
+	if !bytes.Equal(a.Hash, v.Hash) {
+		t.Fatalf("the pin names another version's hash")
+	}
+}
+
+// TestWithoutTheAnchorFileNoVersionMakesOne: whether the file exists decides
+// what the pin does (State.AnchorFile), and that decision belongs to whoever
+// set the installation up -- not to the next version that happens to be
+// signed. An API that made the file itself would turn the pin on everywhere,
+// and an installation whose database is rebuilt after a total loss would then
+// be shut out of its own new list by a file nobody asked for.
+func TestWithoutTheAnchorFileNoVersionMakesOne(t *testing.T) {
+	s, _ := newTrusted(t)
+	_, first := genesis(t)
+	// Intermediate check: nothing is there before, so a file found afterwards
+	// was written by this version and not by the harness.
+	if _, err := os.Stat(s.AnchorFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the anchor file exists before the version: %v", err)
+	}
+	v, err := s.AddVersion(ctx, first)
+	if err != nil || v.List.Seq != 1 {
+		t.Fatalf("version 1: %v %v", v.List, err)
+	}
+	if _, err := os.Stat(s.AnchorFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a version made the anchor file: %v", err)
+	}
+}
+
+// TestABrokenAnchorPathDoesNotStopAVersion: a pin that cannot be moved up is
+// not a reason to refuse a version an admin signed. Refusing would ask him to
+// sign the same change again, and AddVersion says what a second version under
+// a taken number costs. So the version stands and the pin lags, which the log
+// says.
+func TestABrokenAnchorPathDoesNotStopAVersion(t *testing.T) {
+	s, db := newTrusted(t)
+	_, first := genesis(t)
+	// A directory where the file belongs: readable as a path, never as JSON.
+	s.AnchorFile = filepath.Join(t.TempDir(), "in-the-way")
+	if err := os.Mkdir(s.AnchorFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1 with a broken anchor path: %v", err)
+	}
+	// And it really was stored, so the case is not green because AddVersion
+	// stopped before the pin.
+	if _, err := db.BlobGet(ctx, dbapi.BlobTrust, "1"); err != nil {
+		t.Fatalf("version 1 was not stored: %v", err)
+	}
+}
+
+// TestTheRaisedAnchorRefusesATruncatedChain is what the writer is for. A
+// writer of the database who cuts the chain at the TOP is the one form
+// state.checkGap names and cannot catch: above a chain that was cut there is
+// nothing, and the end of a chain looks from below like the end of what the
+// store holds. With the pin at the newest version the cold API refuses
+// instead of putting the older list back in force.
+func TestTheRaisedAnchorRefusesATruncatedChain(t *testing.T) {
+	s, db := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	writeAnchor(t, s, trust.Anchor{Seq: 1, Hash: trust.Hash(first)})
+	newest := chainOf(t, s, admin, first, 2) // versions 1..3
+	_ = newest
+	// Intermediate check one: the pin moved up on its own. Without this the
+	// refusal below could come from the pin of the pairing.
+	if a, err := config.LoadAnchor(s.AnchorFile); err != nil || a.Seq != 3 {
+		t.Fatalf("the pin stands at %v, want 3: %v", a.Seq, err)
+	}
+	// Intermediate check two: the way to the refusal is open -- a cold API
+	// opens the whole chain under that pin.
+	s.cur = trust.Version{}
+	if v, err := s.Refresh(ctx); err != nil || v.List.Seq != 3 {
+		t.Fatalf("the chain does not open under the raised pin: %v %v", v.List, err)
+	}
+	// The attack: the top row away, the rest whole.
+	if err := db.BlobDelete(ctx, dbapi.BlobTrust, "3"); err != nil {
+		t.Fatal(err)
+	}
+	s.cur = trust.Version{}
+	if v, err := s.Refresh(ctx); !errors.Is(err, ErrNoTrust) {
+		t.Fatalf("the truncated chain opened at %v: %v", v.List, err)
+	}
+	// Control: the same rows, and the pin back where a pairing left it. Then
+	// the older list IS put back in force, without a word -- so what refused
+	// above is the raised pin and no wall in front of it.
+	writeAnchor(t, s, trust.Anchor{Seq: 1, Hash: trust.Hash(first)})
+	s.cur = trust.Version{}
+	v, err := s.Refresh(ctx)
+	if err != nil || v.List.Seq != 2 {
+		t.Fatalf("control: the pin of the pairing answered %v: %v", v.List, err)
+	}
+}
+
+// TestTheAnchorIsNeverLowered: the file may stand above what this process
+// knows -- another API on the same database wrote a version, or an admin
+// paired a controller since -- and a pin that an older version could pull back
+// down would be no pin at all. advanceAnchor is called directly: AddVersion
+// cannot reach this state by itself, because a refresh under a pin above its
+// rows finds no list to add to.
+func TestTheAnchorIsNeverLowered(t *testing.T) {
+	s, _ := newTrusted(t)
+	admin, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	second := admin.Sign(t, trusttest.Next(t, first))
+	v, err := s.AddVersion(ctx, second)
+	if err != nil {
+		t.Fatalf("version 2: %v", err)
+	}
+	ahead := trust.Anchor{Seq: 9, Hash: bytes.Repeat([]byte{7}, 32)}
+	writeAnchor(t, s, ahead)
+	// Intermediate check: the pin really stands above the version, otherwise
+	// the call below would be an ordinary move up and prove nothing.
+	if a, err := config.LoadAnchor(s.AnchorFile); err != nil || a.Seq <= v.List.Seq {
+		t.Fatalf("the pin ahead did not take: %v %v", a.Seq, err)
+	}
+	s.advanceAnchor(v)
+	a, err := config.LoadAnchor(s.AnchorFile)
+	if err != nil {
+		t.Fatalf("LoadAnchor: %v", err)
+	}
+	if a.Seq != ahead.Seq || !bytes.Equal(a.Hash, ahead.Hash) {
+		t.Fatalf("the pin was pulled down to %d", a.Seq)
+	}
+	// The same number is not a move either: two versions can never share one,
+	// so a write here would mean the hash of a fork replacing the pinned one.
+	same := trust.Anchor{Seq: v.List.Seq, Hash: bytes.Repeat([]byte{3}, 32)}
+	writeAnchor(t, s, same)
+	s.advanceAnchor(v)
+	if a, err := config.LoadAnchor(s.AnchorFile); err != nil || !bytes.Equal(a.Hash, same.Hash) {
+		t.Fatalf("the pin at the same number was rewritten: %v %v", a, err)
+	}
+}
+
+// TestAnAnchorThatCannotBeSavedLeavesTheFileAlone: config.SaveAnchor refuses
+// an anchor without a 32-byte hash, and advanceAnchor has no error to give
+// back. So the file has to stay as it was and the log has to say it -- a
+// half-written pin would shut the API out of its own list.
+func TestAnAnchorThatCannotBeSavedLeavesTheFileAlone(t *testing.T) {
+	s, _ := newTrusted(t)
+	_, first := genesis(t)
+	if _, err := s.AddVersion(ctx, first); err != nil {
+		t.Fatalf("version 1: %v", err)
+	}
+	was := trust.Anchor{Seq: 1, Hash: trust.Hash(first)}
+	writeAnchor(t, s, was)
+	// A verified version never carries a short hash; this is the one branch
+	// of SaveAnchor that AddVersion cannot reach, so it is called here.
+	s.advanceAnchor(trust.Version{List: &trust.List{Seq: 5}, Hash: []byte{1, 2, 3}})
+	a, err := config.LoadAnchor(s.AnchorFile)
+	if err != nil {
+		t.Fatalf("LoadAnchor: %v", err)
+	}
+	if a.Seq != was.Seq || !bytes.Equal(a.Hash, was.Hash) {
+		t.Fatalf("the refused anchor changed the file: %v", a)
 	}
 }

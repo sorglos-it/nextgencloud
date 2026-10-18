@@ -1,0 +1,19 @@
+{
+  "err.unreachable": "Dienst nicht erreichbar. Bitte später erneut versuchen.",
+  "err.busy": "Dienst gerade überlastet. Bitte in {seconds} Sekunden noch einmal versuchen.",
+  "login.failed": "Anmeldung fehlgeschlagen.",
+  "login.nopasswordkeys": "Dieser Browser kann die Passwort-Anmeldung nicht ausführen. Bitte mit Passkey anmelden.",
+  "login.locked": "Zu viele Fehlversuche. Bitte später erneut versuchen.",
+  "login.locked.left": "Zu viele Fehlversuche. Noch {seconds} Sekunden.",
+  "login.totp.ask": "Bitte den Code aus der Authenticator-App eingeben.",
+  "setup.code.incomplete": "Der Einmal-Code ist nicht vollständig.",
+  "setup.code.nomatch": "Der Einmal-Code passt nicht zu dieser Anlage. Bitte den Code prüfen und noch einmal versuchen.",
+  "setup.silent": "Die Anlage antwortet gerade nicht. Der Einmal-Code bleibt gültig. Bitte in einem Moment noch einmal versuchen.",
+  "setup.refused": "Die Anlage hat die Einrichtung abgelehnt. Bitte NGC neu installieren und den neuen Code benutzen.",
+  "setup.already": "Diese Anlage ist schon eingerichtet.",
+  "setup.broken": "Die Einrichtung hat nicht geklappt. Bitte die Seite neu laden und es noch einmal versuchen.",
+  "setup.name.bad": "Der Benutzername darf nur kleine Buchstaben, Ziffern und . _ - enthalten und muss mit einem Buchstaben oder einer Ziffer anfangen.",
+  "setup.password.missing": "Bitte ein Passwort vergeben.",
+  "setup.password.different": "Die beiden Passwörter sind nicht gleich.",
+  "setup.signin": "NGC ist eingerichtet. Bitte jetzt anmelden."
+}

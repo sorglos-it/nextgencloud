@@ -608,3 +608,38 @@ func TestRunWritesTheCatalog(t *testing.T) {
 		t.Fatalf("wrong call: exit %d %q", code, errOut.String())
 	}
 }
+
+// TestCatalogWritesTheStoreKeyBeside is the gap the first real store fell
+// into: every subcommand ran green, and "check -store" then refused the
+// finished store, because nothing wrote StoreKeyFile. The case walks only
+// through Run, writes no file of its own and asks CheckStore -- so it fails
+// again the moment the public half stops being written.
+func TestCatalogWritesTheStoreKeyBeside(t *testing.T) {
+	dir := t.TempDir()
+	packApp(t, dir, "org.sorglos.notes", "1.0.0")
+	key := filepath.Join(t.TempDir(), "store.key")
+	var errOut bytes.Buffer
+	if code := Run([]string{"catalog", dir, key, "teststore", "1"}, io.Discard, &errOut); code != 0 {
+		t.Fatalf("catalog: exit %d %q", code, errOut.String())
+	}
+	pem := read(t, filepath.Join(dir, StoreKeyFile))
+	if !bytes.HasPrefix(pem, []byte("-----BEGIN PUBLIC KEY-----")) {
+		t.Fatalf("%s is no public key: %q", StoreKeyFile, pem)
+	}
+	// Nothing of the seed may stand in the directory the store is served
+	// from: the file beside the catalog is the public half and nothing else.
+	seed := read(t, key)
+	if bytes.Contains(pem, bytes.TrimSpace(seed)) {
+		t.Fatalf("%s carries the key file's content", StoreKeyFile)
+	}
+	if err := CheckStore(dir, "teststore", 0); err != nil {
+		t.Fatalf("the store built through the subcommands does not check out: %v", err)
+	}
+	// And the check really needs that file: without it, it refuses.
+	if err := os.Remove(filepath.Join(dir, StoreKeyFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckStore(dir, "teststore", 0); err == nil {
+		t.Fatal("CheckStore took a store without the store key")
+	}
+}

@@ -528,10 +528,23 @@ func TestAnAllowedOriginGetsThrough(t *testing.T) {
 // TestAWrongSubprotocolIsRefused: the library negotiates the empty subprotocol
 // for a client that asks for another one, so without this rule such a client
 // would get a link and speak something else. Noise does not cover it.
+//
+// WHICH rule refused the link is asked on the wire and not on a clock, and the
+// clock it used to ask with is why it fluttered. Accept answers the same
+// ErrLink for both ways out, so the case used to tell them apart by time: the
+// subprotocol rule answers at once, a link that got past it waits out
+// Options.Handshake. Measured on 12.10.2026: the real path takes 0.5 to 1.0 ms
+// (240 runs, 24 at a time, local disk), the path without the rule 2.0004 to
+// 2.0009 s (5 of 5) -- so the bound of 500 ms sat between two tightly held
+// numbers and a stall of half a second turned into a red. The red that started
+// this said 2.4162658 s, which is MORE than the unguarded path ever takes, so
+// it was never the condition this case guards.
+//
+// What tells the two apart without a clock is the close frame: the refusal
+// closes with the reason "subprotocol", the handshake that ran out with
+// "handshake" (link.go, Accept). The ctx below is a liveness bound and no
+// discriminator -- no healthy run comes near it.
 func TestAWrongSubprotocolIsRefused(t *testing.T) {
-	// Two seconds for the handshake, so "refused at once" and "waited for a
-	// message 1 that never came" are two different times: without the rule the
-	// answer is the same ErrLink, only later.
 	back, srv := acceptOnce(t, Options{Handshake: 2 * time.Second})
 	defer srv.Close()
 	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):],
@@ -540,13 +553,18 @@ func TestAWrongSubprotocolIsRefused(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.CloseNow()
-	go func() { _, _, _ = conn.Read(ctx) }()
-	start := time.Now()
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, _, rerr := conn.Read(rctx)
+	var ce websocket.CloseError
+	if !errors.As(rerr, &ce) {
+		t.Fatalf("the client read %v, not a close frame", rerr)
+	}
+	if ce.Code != websocket.StatusPolicyViolation || ce.Reason != "subprotocol" {
+		t.Fatalf("the link was closed as %d %q, not for the subprotocol", ce.Code, ce.Reason)
+	}
 	if err := <-back; !errors.Is(err, ErrLink) {
 		t.Fatalf("Accept answered %v", err)
-	}
-	if d := time.Since(start); d > 500*time.Millisecond {
-		t.Fatalf("the wrong subprotocol was not refused at once but after %v", d)
 	}
 }
 

@@ -27,7 +27,7 @@ func TestLiveAndLogout(t *testing.T) {
 	cookie := loginOnce(t, h, fx)
 	r := httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
-	live, _, ok := h.Live(ctx, r)
+	live, _, _, ok := h.Live(ctx, r)
 	if !ok || live.Verified.Cert().User != fx.PasswordUser {
 		t.Fatalf("live %v %+v", ok, live)
 	}
@@ -40,7 +40,7 @@ func TestLiveAndLogout(t *testing.T) {
 	if w.Code != 204 {
 		t.Fatalf("logout %d", w.Code)
 	}
-	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+	if _, code, _, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
 		t.Fatalf("after the logout the session answered %q (open %v)", code, ok)
 	}
 }
@@ -51,7 +51,7 @@ func TestLiveEndsAfterIdleAndLifetime(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, session.PathTrust, nil)
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
 	h.S.Now = func() int64 { return testNow + h.S.Cfg.IdleTimeout + 1 }
-	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+	if _, code, _, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
 		t.Fatalf("an idle session answered %q (open %v)", code, ok)
 	}
 	cookie = loginOnce(t, h, fx)
@@ -59,7 +59,7 @@ func TestLiveEndsAfterIdleAndLifetime(t *testing.T) {
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
 	base := h.S.Now()
 	h.S.Now = func() int64 { return base + h.S.Cfg.SessionLifetime + 1 }
-	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+	if _, code, _, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
 		t.Fatalf("a session past its lifetime answered %q (open %v)", code, ok)
 	}
 }
@@ -71,7 +71,7 @@ func TestLiveRefusesABadCookie(t *testing.T) {
 		if value != "" {
 			r.AddCookie(&http.Cookie{Name: session.CookieName, Value: value})
 		}
-		if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+		if _, code, _, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
 			t.Fatalf("cookie %q answered %q (taken %v)", value, code, ok)
 		}
 	}
@@ -95,12 +95,12 @@ func TestLiveEndsASessionTheConfigNoLongerAllows(t *testing.T) {
 	h.S.Cfg.SessionLifetime, h.S.Cfg.IdleTimeout = 600, 300
 	for _, at := range []int64{200, 400} {
 		h.S.Now = func() int64 { return testNow + at }
-		if _, _, ok := h.Live(ctx, r); !ok {
+		if _, _, _, ok := h.Live(ctx, r); !ok {
 			t.Fatalf("the session was gone after %d seconds", at)
 		}
 	}
 	h.S.Now = func() int64 { return testNow + 601 }
-	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+	if _, code, _, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
 		t.Fatalf("a session outlived a shortened lifetime: %q (open %v)", code, ok)
 	}
 	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); !isNotFound(err) {
@@ -166,8 +166,9 @@ func TestAWithdrawalSurvivesTheRowsBeingDropped(t *testing.T) {
 		}
 	}
 	cold := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	cold.S.AnchorFile = h.S.AnchorFile
 	cold.S.Now = h.S.Now
-	live, code, ok := cold.Live(ctx, r)
+	live, code, _, ok := cold.Live(ctx, r)
 	if ok {
 		t.Fatalf("the cold node took the session of a withdrawn user and read version %d as the newest",
 			live.Trust.List.Seq)
@@ -194,11 +195,11 @@ func TestLiveEndsASessionTheTrustListNoLongerHolds(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
 	r := getCookie(session.PathTrust, cookie)
-	if _, _, ok := h.Live(ctx, r); !ok {
+	if _, _, _, ok := h.Live(ctx, r); !ok {
 		t.Fatal("the session was not open before the user was withdrawn")
 	}
 	withdrawPasswordUser(t, h, fx)
-	if _, code, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
+	if _, code, _, ok := h.Live(ctx, r); ok || code != wire.CodeLogin {
 		t.Fatalf("a session of a withdrawn user answered %q (open %v)", code, ok)
 	}
 	if _, err := h.S.DB.SessionGet(ctx, tokenOf(t, cookie)); !isNotFound(err) {
@@ -220,13 +221,14 @@ func TestLiveSeesAWithdrawalAnotherAPIWrote(t *testing.T) {
 	h, fx := newFixture(t)
 	cookie := loginOnce(t, h, fx)
 	other := New(state.New(h.S.Cfg, h.S.DB, h.S.Box, h.S.Pin))
+	other.S.AnchorFile = h.S.AnchorFile
 	other.S.Now = h.S.Now
 	r := getCookie(session.PathTrust, cookie)
-	if _, _, ok := other.Live(ctx, r); !ok {
+	if _, _, _, ok := other.Live(ctx, r); !ok {
 		t.Fatal("the second API refused a session that is open")
 	}
 	withdrawPasswordUser(t, h, fx)
-	if _, code, ok := other.Live(ctx, r); ok || code != wire.CodeLogin {
+	if _, code, _, ok := other.Live(ctx, r); ok || code != wire.CodeLogin {
 		t.Fatalf("the second API kept a withdrawn user's session: %q (open %v)", code, ok)
 	}
 }
@@ -420,7 +422,7 @@ func TestARefusedRequestDoesNotMoveSeen(t *testing.T) {
 		t.Fatalf("box: %v", err)
 	}
 	h.S.Box = box
-	if _, code, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
+	if _, code, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
 		t.Fatalf("a session key that does not open answered %q (open %v)", code, ok)
 	}
 	after, err := h.S.DB.SessionGet(ctx, token)
@@ -483,11 +485,11 @@ func threeVersions(t *testing.T) (*Handler, string) {
 // with config.LoadAnchor and trust-anchor.json is the second. Neither was
 // missing.
 //
-// What is not wired up is the file, and only the file: config.LoadAnchor,
-// config.SaveAnchor and config.AnchorFile have no caller in this project
-// outside shared/config, and nothing writes trust-anchor.json today --
-// apps/server-controller/main.go, the one program meant to write it, logs
-// that it is not built yet and stops. The type is wired up everywhere --
+// The file is wired up as of 12.10.2026, and this said the opposite until
+// then: node.pair writes trust-anchor.json when a controller pairs
+// (apps/server-controller/classes/node/main.go), state.refreshLocked reads it,
+// and state.advanceAnchor moves it up to every version this API verified and
+// stored. The type is wired up everywhere --
 // state.refreshLocked and state.AddVersion build a trust.Anchor every time
 // they open a chain, out of the rows themselves, and session and tunnel
 // carry one too. That is why an anchor that comes from outside is a small
@@ -540,6 +542,7 @@ func TestOneFaultIsOneAnswerOnEveryNode(t *testing.T) {
 			// The cold node is built after the damage and shares the store, so
 			// it meets the same installation with an empty cache.
 			cold := New(state.New(warm.S.Cfg, warm.S.DB, warm.S.Box, warm.S.Pin))
+			cold.S.AnchorFile = warm.S.AnchorFile
 			cold.S.Now = warm.S.Now
 			for _, node := range []struct {
 				what string
@@ -631,6 +634,7 @@ func TestTheTwoNodesPartWhereTheAnswerNeedsNoRow(t *testing.T) {
 			// The cold node is built after the damage and shares the store, so
 			// it meets the same installation with an empty cache.
 			cold := New(state.New(warm.S.Cfg, warm.S.DB, warm.S.Box, warm.S.Pin))
+			cold.S.AnchorFile = warm.S.AnchorFile
 			cold.S.Now = warm.S.Now
 			for _, a := range c.asks {
 				w := httptest.NewRecorder()
@@ -758,7 +762,7 @@ func TestADamagedProofCostsNoLookAtTheList(t *testing.T) {
 	damageProof(t, h, cookie)
 	c := &trustReads{Store: h.S.DB}
 	h.S.DB = c
-	if _, code, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
+	if _, code, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
 		t.Fatalf("a damaged proof answered %q (open %v)", code, ok)
 	}
 	if got := c.take(); got != 0 {
@@ -769,7 +773,7 @@ func TestADamagedProofCostsNoLookAtTheList(t *testing.T) {
 	// would call the database away over a row that is broken, and the
 	// database would be mended by waiting, which this is not.
 	h.S.DB = noTrust{h.S.DB}
-	if _, code, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
+	if _, code, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); ok || code != wire.CodeInternal {
 		t.Fatalf("a damaged proof beside a list nobody can read answered %q (open %v)", code, ok)
 	}
 }
@@ -878,7 +882,7 @@ func TestPurgeRunsBesideRequests(t *testing.T) {
 		go func() { defer wg.Done(); fail <- h.Purge(ctx) }()
 		go func() {
 			defer wg.Done()
-			if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+			if _, _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 				fail <- errors.New("an open session was refused while Purge ran")
 			}
 		}()
@@ -900,7 +904,7 @@ func TestPurgeRunsBesideRequests(t *testing.T) {
 			t.Fatalf("beside the requests: %v", err)
 		}
 	}
-	if _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
+	if _, _, _, ok := h.Live(ctx, getCookie(session.PathTrust, cookie)); !ok {
 		t.Fatal("the open session did not survive the housekeeping")
 	}
 }

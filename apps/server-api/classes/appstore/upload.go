@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"io"
+	"log/slog"
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -29,9 +30,31 @@ import (
 func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, error) {
 	max := st.uploadLimit()
 	sum := sha256.New()
+	// THE PACKAGE IS KEPT, and it is written in the SAME pass that hashes
+	// and walks it: a second pass would have to read the file again, and
+	// there is no file -- r is the channel. hold.go says where it lands and
+	// why. A server that keeps nothing (Stores.Hold empty) takes this upload
+	// exactly as before: held stays nil and every step below skips.
+	//
+	// The sweep runs FIRST, before a byte is written, so room is made on the
+	// disk before it is filled and not after. It is not reported: a sweep
+	// that failed must not cost the upload.
+	st.sweepHold(st.holdNow())
+	var w io.Writer = sum
+	held, holdErr := st.newHeld()
+	if holdErr == nil {
+		// Both, and in one go: what the hold gets is byte for byte what the
+		// sum is taken over, so a package whose name is its checksum cannot
+		// hold other bytes than the name says.
+		w = io.MultiWriter(sum, held)
+	}
+	// Whatever happens below, a temporary file never survives this call
+	// unnamed: keepHeld renames it on the one good way out and the variable
+	// is cleared there, so this throws away exactly what was not kept.
+	defer func() { dropHeld(held) }()
 	// max+1 and not max: one byte over the bound is what tells it is over,
 	// and nothing beyond that is read at all.
-	count := &counted{r: io.TeeReader(io.LimitReader(r, max+1), sum)}
+	count := &counted{r: io.TeeReader(io.LimitReader(r, max+1), w)}
 	var ui bytes.Buffer
 	m, uiHash, err := store.PackageUI(count, &ui)
 	if err != nil {
@@ -55,7 +78,26 @@ func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, e
 	if err := st.KeepUI(ctx, m.ID, m.Version, ui.Bytes()); err != nil {
 		return core.UploadResult{}, err
 	}
-	return core.UploadResult{ID: m.ID, Version: m.Version, SHA256: enc.Bytes(sum.Sum(nil)),
+	digest := sum.Sum(nil)
+	// LAST, after the walk, the bound and the row: the name of a kept
+	// package is its checksum, and a checksum of bytes that were refused
+	// names a package no activation may ever find. A hold that cannot be
+	// written does NOT cost the upload -- the ui-tar is in, the answer is
+	// true, and all that is lost is the shortcut for the activation, which
+	// then answers E_UNREACHABLE as it did before the hold existed.
+	if holdErr == nil {
+		if err := st.keepHeld(held, digest); err != nil {
+			// Said out loud and not swallowed: the upload is good and its
+			// answer is true, but the activation that follows will not find
+			// the file and will read as "this server does not have it". The
+			// one line here is the only place that knows the difference
+			// between a disk that refused and a package nobody uploaded.
+			slog.Error("the uploaded package could not be kept for its activation",
+				"app", m.ID, "version", m.Version, "err", err)
+		}
+		held = nil
+	}
+	return core.UploadResult{ID: m.ID, Version: m.Version, SHA256: enc.Bytes(digest),
 		UI: enc.Bytes(uiHash)}, nil
 }
 

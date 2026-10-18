@@ -103,7 +103,14 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// table has no 404 for this path at all.
 	v, err := h.S.Trust(ctx)
 	if err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		// FailCoded and not Fail at all five of this path's E_UNREACHABLE:
+		// the code is the one written here and is not recomputed, and the
+		// error only decides whether the answer carries the Retry-After and
+		// the log reason of a database another program holds (httpapi/busy.go,
+		// P9). None of the five reads a login name before it, and the three
+		// below sit past session.VerifyClient, so none of them can fall
+		// differently for a name that exists and one that does not.
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	now := h.S.Now()
@@ -133,9 +140,24 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// this path is not given -- login/finish learns no login name, only the
 	// user ID in the certificate -- and it is a question for V1.2.
 	owner, _, known := v.List.KeyOwner(f.Proof.KeyID)
+	// The whole decision of this attempt sits inside one hold of the row it
+	// would be counted in: the wait is read, the proof is weighed, the failure
+	// is counted. Without it the read is a step of its own, and a burst fired
+	// at one moment all read the same free row before any of them had counted
+	// - so all of them were weighed and the free attempts grew with the
+	// attacker's concurrency. Measured, with the numbers, at lock.holds.
+	//
+	// It is taken AFTER KeyOwner because which of the two countings this
+	// attempt belongs to is what KeyOwner decides, and a hold of the wrong row
+	// guards nothing.
+	defer holdOf(owner.Name, f.Proof.KeyID, known)()
 	wait, err := waitOf(ctx, h.S.DB, owner.Name, f.Proof.KeyID, known, now)
 	if err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		// The one of the five that a key the list does not hold reaches too,
+		// and it answers both the same: busy is a state of the installation
+		// and never of the row that was asked for, which is the reading
+		// login/start rests on as well.
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	if wait > 0 {
@@ -218,7 +240,7 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	// already knows this user exists.
 	row, err := h.S.DB.UserGet(ctx, cert.User)
 	if err != nil && !isNotFound(err) {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	if len(row.TOTP) > 0 && !h.checkTOTP(row, f.TOTP, now) {
@@ -246,7 +268,7 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 		// the write is the one that happens, and it is the one a second try
 		// can get past. None of them is the caller's doing, so this answer
 		// says nothing about the login either.
-		httpapi.Fail(w, wire.CodeUnreachable)
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	// The counting is left where it is: a login that worked clears no bucket.
@@ -263,7 +285,7 @@ func (h *Handler) Finish(w http.ResponseWriter, r *http.Request) {
 	row.ID, row.Name, row.Roles = owner.ID, owner.Name, owner.Roles
 	row.Failures, row.Locked, row.LastLogin = 0, 0, now
 	if err := h.S.DB.UserPut(ctx, row); err != nil {
-		httpapi.Fail(w, wire.CodeUnreachable)
+		httpapi.FailCoded(w, wire.CodeUnreachable, err)
 		return
 	}
 	b := mustJSON(w, res)
@@ -290,6 +312,18 @@ func waitOf(ctx context.Context, db dbapi.Local, name, keyID string, known bool,
 		return lock.Check(ctx, db, name, now)
 	}
 	return lock.CheckKey(ctx, db, keyID, now)
+}
+
+// holdOf takes the row this attempt will be counted in, the same way waitOf
+// reads it and countFailure writes it: the login name where the trust list
+// holds the key, the key ID where it does not. The three have to agree on the
+// row, so they are given the same three arguments and each makes the same
+// choice from them.
+func holdOf(name, keyID string, known bool) func() {
+	if known {
+		return lock.Hold(name)
+	}
+	return lock.HoldKey(keyID)
 }
 
 func countFailure(ctx context.Context, db dbapi.Local, name, keyID string, known bool, now int64) error {

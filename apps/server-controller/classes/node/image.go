@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 
 	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -57,8 +58,10 @@ const (
 	buildDir = "build"
 	// terminalDir holds the two files of the app: the Containerfile and the
 	// manifest. Both paths are relative to the root of the repo, which is where
-	// the three documented lines are run from
-	// (apps/server-controller/CLAUDE.md, "Terminal-App bauen").
+	// the two documented lines are run from (apps/server-controller/CLAUDE.md,
+	// "Terminal-App bauen"): one go build per architecture and this command.
+	// It said THREE lines until 12.10.2026, which was the count before this
+	// command existed and took the two podman calls over.
 	terminalDir = "apps/server-controller/templates/terminal"
 	// imageRepo is the repository half of the name every terminal image gets.
 	// The tag half is the version out of the manifest, never a version of its
@@ -88,7 +91,11 @@ func buildImage(version string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usageImage)
 		return 2
 	}
-	spec, err := imageSpec(opts, out)
+	// "." and not a path of its own: the command is run from the root of the
+	// repo, which is where the two files of the app and the build directory
+	// lie. The root is an ARGUMENT of imageSpec and is not read out of the
+	// process, and that is a measuring decision - see the comment there.
+	spec, err := imageSpec(".", opts, out)
 	if err != nil {
 		fmt.Fprintln(stderr, msgNoApp)
 		return 1
@@ -136,23 +143,52 @@ func imageMessage(err error) string {
 // manifest is a package nothing can install. The manifest goes through
 // store.ParseManifest, the same door the API packs it with, so an image is
 // only built for a manifest that can be packed.
-func imageSpec(opts Options, out string) (ctrlrt.BuildSpec, error) {
-	m, err := readManifest()
+//
+// root is where the repo stands. It is an argument, and the one reason is
+// measuring: the command works from the directory it was called in, and the
+// only other way to let a case put the two files somewhere else would be to
+// move the working directory of the whole PROCESS. That was the first shape of
+// this - three t.Chdir calls - and it failed 4 times out of 4 on the checkout
+// on Z:, which is a network drive: os.File.Chdir, the only thing
+// testing.Chdir restores the directory with, answers "chdir .: path not found"
+// there and works on a local disk (probe of 12.10.2026, both drives). A
+// working directory is shared by every case of a package and by every process
+// one of them starts, so it is a shared fixture, and a shared fixture is the
+// wrong place to put something only one case needs. With root as an argument
+// nothing of the process moves and the whole question is gone.
+//
+// path.Join and not filepath.Join: every value here becomes an argument of
+// podman, which runs on Linux, so the separator is the slash. For "." it joins
+// to nothing, so the arguments of a real call are the plain relative paths.
+func imageSpec(root string, opts Options, out string) (ctrlrt.BuildSpec, error) {
+	m, err := readManifest(root)
 	if err != nil {
 		return ctrlrt.BuildSpec{}, err
 	}
 	return ctrlrt.BuildSpec{
 		Arch:    opts.Arch,
 		Ref:     imageRepo + ":" + m.Version,
-		File:    terminalDir + "/Containerfile",
-		Context: buildDir,
+		File:    imagePath(root, terminalDir, "Containerfile"),
+		Context: imagePath(root, buildDir),
 		Out:     out,
 	}, nil
 }
 
-// readManifest reads the manifest of the terminal app.
-func readManifest() (*store.Manifest, error) {
-	b, err := os.ReadFile(terminalDir + "/manifest.json")
+// imagePath joins a place of the repo below root.
+//
+// path.Join and not filepath.Join: every value built with it becomes an
+// argument of podman, which runs on Linux, so the separator is the slash. It
+// is a function of its own so that a case can read what the root of the real
+// call ("." - see buildImage) joins to WITHOUT a manifest on the disk beside
+// it: a case that had to read the manifest to see the paths would be back to
+// needing a working directory.
+func imagePath(root string, parts ...string) string {
+	return path.Join(append([]string{root}, parts...)...)
+}
+
+// readManifest reads the manifest of the terminal app below root.
+func readManifest(root string) (*store.Manifest, error) {
+	b, err := os.ReadFile(imagePath(root, terminalDir, "manifest.json"))
 	if err != nil {
 		return nil, err
 	}

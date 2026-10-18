@@ -37,6 +37,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/service"
@@ -146,6 +147,10 @@ func RunService(ctx context.Context, in CallInput) wire.Close {
 		pr    *io.PipeReader
 		src   *source
 		fed   = make(chan struct{})
+		// broke says a programming error ended the feeding. It is read after
+		// <-fed, so the write and the read are ordered by that channel and
+		// not by a lock.
+		broke bool
 	)
 	if in.In != nil {
 		var pw *io.PipeWriter
@@ -153,6 +158,27 @@ func RunService(ctx context.Context, in CallInput) wire.Close {
 		stdin, src = pr, &source{r: in.In}
 		go func() {
 			defer close(fed)
+			// A goroutine of its own, feeding ONE call: a panic in it -- in
+			// the reader this call was handed, say -- would take the whole
+			// ngc-controller with every channel of every tunnel (V1.2 point
+			// 38). It ends this call instead, and loudly: E_INTERNAL below.
+			//
+			// The catch does the same two things the ordinary end of the
+			// copy does, and it has to: a program whose input is neither
+			// closed nor cancelled waits for an end that is not coming. The
+			// write end is closed, so the program sees its input end, and
+			// the context goes, so the program goes with it. Without both,
+			// the catch would trade a crash for a call that hangs until its
+			// time limit. The error the write end is closed with is this
+			// side's own and reaches the program as nothing but the end of
+			// its input.
+			defer func() {
+				if guard.HitTo(in.logger(), recover(), "serve.feed", 0) {
+					broke = true
+					pw.CloseWithError(io.ErrUnexpectedEOF)
+					cancel()
+				}
+			}()
 			_, err := io.Copy(pw, src)
 			// A clean end closes the input of the program, so a program that
 			// reads to the end of its input gets there. A cut-off input does
@@ -184,6 +210,12 @@ func RunService(ctx context.Context, in CallInput) wire.Close {
 	}
 
 	switch {
+	case broke:
+		// FIRST, ahead of the cut-off input: a programming error of ours is
+		// not an input the peer cut off, and it must not be answered as one.
+		// Whatever the program made of the half input it got, the call did
+		// not do what was asked, and the one who asked is told so.
+		return wire.Error(wire.CodeInternal)
 	case src != nil && src.err != nil:
 		return *cutOff()
 	case execErr == nil:

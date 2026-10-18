@@ -222,10 +222,11 @@ func TestCreateBuildsTheArgumentList(t *testing.T) {
 	}
 	args := f.args(t)
 	want := []string{"create", "--name", "ngc-terminal-1a2b3c4d", "--network", "none",
-		"--cpus", "1.000", "--memory", "256m", "--read-only", "--cap-drop", "ALL",
+		"--cpus", "1.000", "--memory", "256m", "--pids-limit", "512",
+		"--read-only", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
-		"--volume", "/var/lib/ngc/apps/org.sorglos.terminal:/data:rw",
-		"--volume", "/usr/lib/ngc/ngc-controller:/ngc/ngc-hold:ro",
+		"--volume", "/var/lib/ngc/apps/org.sorglos.terminal:/data:rw,nosuid,nodev",
+		"--volume", "/usr/lib/ngc/ngc-controller:/ngc/ngc-hold:ro,nosuid,nodev",
 		"--user", "0:0", "ngc/terminal:1.0.0", "/ngc/ngc-hold", "hold"}
 	if !slices.Equal(args, want) {
 		t.Fatalf("args =\n%q\nwant\n%q", args, want)

@@ -113,6 +113,10 @@ func (s *lyingStore) AppGet(ctx context.Context, id string) (dbapi.App, error) {
 type fakeRelay struct {
 	ch    chan relayed
 	calls chan pushed
+	// panics makes Forward panic instead of forwarding, which is how
+	// TestAPanicInAnAppChannelLeavesTheCoreChannelsAlone puts a programming
+	// error on the app-channel way through open.
+	panics bool
 }
 
 // relayed is one forwarded channel.
@@ -169,6 +173,9 @@ func (r *fakeRelay) maybeCalled() (pushed, bool) {
 
 func (r *fakeRelay) Forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
 	raw []byte, t *task.Task, node string) {
+	if r.panics {
+		panic("a programming error on the way to the relay")
+	}
 	// A copy, because the real relay has to make one too: the bytes came out
 	// of the link's read buffer, and a case that kept the slice would measure
 	// whatever the next frame wrote over it.
@@ -346,7 +353,22 @@ func (h *harness) Open(t *testing.T, o wire.Open) *chann {
 		o.Window = wire.MinWindow
 	}
 	h.num++
-	c := &chann{h: h, num: h.num, credit: uint64(o.Window)}
+	// No credit at all until the first GRANT, and that is not pedantry: the
+	// Window of an OPEN is what WE grant the API (link.Table.Open counts it as
+	// the channel's out), while the API's own receive allowance starts at zero
+	// and arrives as a GRANT of wire.DefaultWindow from the dispatcher. A
+	// fixture that counted the window as its OWN credit was four kilobytes
+	// ahead of the API's books for the life of the channel, and a chunk that
+	// fits into those four kilobytes goes out as DATA the API never granted --
+	// which it answers, rightly, with CLOSE E_PROTOCOL.
+	//
+	// Measured on 12.10.2026: it made TestInputBeyondMaxInCloses flutter. Its
+	// last chunk is 2113 bytes, the API's remaining allowance at that moment
+	// was 88, and the difference was exactly the 4096 this line handed out
+	// (probe: "PROTOERR site=251 len=2113 in=88"). Whether it fell depended on
+	// how far the link's reader had run ahead of the dispatcher's GRANT, which
+	// is why it was one red in some hundreds -- and 24 of 160 at GOMAXPROCS=1.
+	c := &chann{h: h, num: h.num}
 	h.peer.writeOpen(t, c.num, o)
 	return c
 }
@@ -357,7 +379,8 @@ func (h *harness) Open(t *testing.T, o wire.Open) *chann {
 func (h *harness) OpenRaw(t *testing.T, payload []byte, window uint32) *chann {
 	t.Helper()
 	h.num++
-	c := &chann{h: h, num: h.num, credit: uint64(window)}
+	// Credit zero, for the reason Open gives.
+	c := &chann{h: h, num: h.num}
 	h.peer.write(t, wire.Frame{Type: wire.TypeOpen, Channel: c.num, Payload: payload})
 	return c
 }

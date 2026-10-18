@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
@@ -141,7 +142,11 @@ type Handler struct {
 }
 
 // startContext is the context of the start, where no request carries one.
-func startContext() context.Context { return context.Background() }
+// It carries the deadline of the start (dbwait.Start) and not none at all:
+// without one, a second program on the same database holds this call for the
+// measured 80,6 s of a full retry chain and the start says nothing meanwhile.
+// The caller cancels it, so nothing of the start outlives EnsureCode.
+func startContext() (context.Context, context.CancelFunc) { return dbwait.Start(context.Background()) }
 
 // EnsureCode makes the one-time code if the installation has no trust list
 // yet, and reports whether a code now exists. With a trust list it removes a
@@ -151,7 +156,8 @@ func startContext() context.Context { return context.Background() }
 // cannot be read comes back with the error of the reading and no advice to
 // remove anything: it may hold the code the admin was given.
 func (h *Handler) EnsureCode() (made bool, err error) {
-	ctx := startContext()
+	ctx, cancel := startContext()
+	defer cancel()
 	if _, err := h.S.Trust(ctx); err == nil {
 		return false, h.removeCode()
 	} else if !errors.Is(err, state.ErrNoTrust) {

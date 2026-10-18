@@ -47,6 +47,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
@@ -118,9 +119,15 @@ type Server struct {
 // Socket upgrades a request with a session to a link and runs it.
 func (srv *Server) Socket(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	live, code, ok := srv.Login.Live(ctx, r)
+	live, code, err, ok := srv.Login.Live(ctx, r)
 	if !ok {
-		httpapi.Fail(w, code)
+		// FailCoded and not Fail: the upgrade is refused before a link
+		// exists, so what goes out here is an ordinary HTTP answer, and a
+		// database another program holds gets the Retry-After and the log
+		// reason that tell it from one that is away (httpapi/busy.go). The
+		// code is Live's own and is not recomputed from the error, so a
+		// request without a session stays E_LOGIN.
+		httpapi.FailCoded(w, code, err)
 		return
 	}
 	pub := apiPublic(live)
@@ -222,7 +229,26 @@ func (srv *Server) channel(ctx context.Context, s *Session, f wire.Frame) bool {
 		// for the browser would wait for itself. It is the same reason feed hands
 		// nothing on into a queue nobody reads yet.
 		// TestTheDispatcherRunsBesideTheReader holds this line.
-		go srv.Open.OpenChannel(ctx, s, c, o, raw)
+		go func() {
+			// The catch of the STARTER, and it is not the one inside
+			// OpenChannel twice over: OpenChannel's own defers are in place
+			// only once that call has begun, so everything up to and
+			// including entering it is uncovered -- a nil Opener here panics
+			// in this goroutine, where nothing above can catch it, and takes
+			// the whole server with every other session of every other user
+			// (V1.2 point 38). This is channel work, so the channel ends the
+			// way every caught channel ends, with E_INTERNAL, and does not
+			// leave the browser waiting for an answer that is not coming
+			// (V1.2 point 50). The close is attempted and its answer dropped:
+			// a link we can no longer write to says nothing more here than
+			// the line guard already wrote.
+			defer func() {
+				if guard.Hit(recover(), "browser.channel", c.Num) {
+					_ = s.Close(ctx, wire.CodeInternal, c.Num)
+				}
+			}()
+			srv.Open.OpenChannel(ctx, s, c, o, raw)
+		}()
 		return true
 	default:
 		c, ok := s.table.Get(f.Channel)

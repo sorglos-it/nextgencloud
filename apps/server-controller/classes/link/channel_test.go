@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -1278,5 +1281,102 @@ func channelFrames(t *testing.T, b []byte, tried, taken *atomic.Int64) {
 		if _, ok := m.c.m[num]; !ok && !closed[num] {
 			t.Fatalf("number %d is free again although no CLOSE for it ever arrived", num)
 		}
+	}
+}
+
+// syncBuf is a log a case can read while another goroutine writes it. The line
+// of a catch is written in the goroutine of the channel, and the case reads it
+// after the CLOSE has arrived -- the lock is what makes that read legal under
+// -race, not the order alone.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// panicSecret is what a panic value carries by accident: whatever the caller
+// that panicked had in hand. The case below looks for it in the log, so a line
+// that began printing the value shows up as a failure and not as a nicer log.
+const panicSecret = "NGC-TEST-SECRET-0123456789"
+
+// TestAPanickingHandlerEndsOnlyItsOwnChannel is V1.2 point 38 on this side of
+// the link, and the API's own case of that name is its twin.
+//
+// What it measures is not that a panic is caught -- that is the easy half --
+// but that the NEIGHBOURS live: a second channel on the SAME tunnel, opened
+// after the crash, is served and answers. Without the catch in handle this
+// case does not fail, it ends the test BINARY: take starts every handler with
+// go, and a panic in a goroutine is final. That is the whole of the contract
+// point -- one channel of one user took every channel of every tunnel, and
+// with them the shells, the terminals and the service calls of the whole
+// installation.
+//
+// The status alone cannot tell this from a handler that answered an error:
+// both end E_INTERNAL on purpose, because to the API they ARE the same thing,
+// a channel of this controller that did not do its work. What tells them apart
+// is the count and the line, and both are measured here.
+func TestAPanickingHandlerEndsOnlyItsOwnChannel(t *testing.T) {
+	var said syncBuf
+	before := guard.Panics()
+	var neighbour atomic.Bool
+	h := opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
+		if ch.Num() == 1 {
+			panic(fmt.Errorf("the bearer token is %s", panicSecret))
+		}
+		neighbour.Store(true)
+		return ch.Close(wire.Close{Status: wire.StatusOK})
+	})
+	_, ended := runningPinging(t, nil, nil, func(c *Config) {
+		c.Handler = h
+		c.Log = slog.New(slog.NewTextHandler(&said, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	}, func(a *apiSide) {
+		a.send(openFrame(t, 1, wire.MinWindow))
+		f := a.want(wire.TypeClose, 1)
+		cl, err := wire.ParseClose(f.Payload)
+		if err != nil || cl.Status != wire.StatusError {
+			a.t.Errorf("the channel of the panicking handler ended with %+v (%v), want %q",
+				cl, err, wire.StatusError)
+		}
+		// A second CLOSE for the same number would be read here instead of
+		// the marker: the catch in run must not write one of its own.
+		a.marker(1)
+		// The neighbour, on the same tunnel and after the crash. This is the
+		// assertion; everything above it is the setup.
+		a.send(openFrame(t, 2, wire.MinWindow))
+		a.want(wire.TypeClose, 2)
+		a.control(wire.CtlBye, nil)
+		a.quiet()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want the panic of a handler to end its channel and not the link", err)
+	}
+	if !neighbour.Load() {
+		t.Fatal("the neighbour's handler never ran")
+	}
+	if got := guard.Panics(); got != before+1 {
+		t.Fatalf("the counter went %d -> %d; one panic counts once", before, got)
+	}
+	line := said.String()
+	for _, want := range []string{"level=ERROR", "site=link.run", "channel=1", "where=link/channel_test.go:"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("%s is missing from the crash line: %q", want, line)
+		}
+	}
+	// And what is NOT in it. A line that printed the panic value would hand on
+	// whatever the handler that panicked had in hand, and this controller runs
+	// as root.
+	if strings.Contains(line, panicSecret) || strings.Contains(line, "bearer token") {
+		t.Fatalf("the value of the panic reached the log: %q", line)
 	}
 }

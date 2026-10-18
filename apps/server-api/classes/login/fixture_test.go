@@ -5,15 +5,18 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
 
 	"github.com/pquerna/otp/totp"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/dbwait"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/lock"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
@@ -75,6 +78,9 @@ func newFixture(tb testing.TB) (*Handler, fixture) {
 	}
 	s := state.New(cfg, memstore.New(), box, make([]byte, 32))
 	s.Now = func() int64 { return testNow }
+	// A path of this run that nothing wrote: so no case below depends on
+	// whether the machine it runs on happens to carry config.AnchorFile.
+	s.AnchorFile = filepath.Join(tb.TempDir(), "trust-anchor.json")
 
 	// trusttest.Genesis takes the signer of Users[1] and gives Users[0] its
 	// own passkey (trusttest.GenesisPasskeyFill). The password admin has to be
@@ -466,4 +472,36 @@ func jsonPostCookie(path, cookie string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, path, nil)
 	r.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
 	return r
+}
+
+// busyOnce reads but cannot write a one-time value because another program
+// holds the database: the one write failure that is a state of the
+// INSTALLATION and never of the row handed in. Its error carries
+// dbwait.ErrBusy the way package sqlstore hands the named cause of the
+// deadline back (point 49), which is the only thing login/start reads it for.
+type busyOnce struct{ dbapi.Store }
+
+func (busyOnce) OnceCreate(context.Context, string, []byte, string, int64) error {
+	return fmt.Errorf("sqlstore: the write did not get through: %w", dbwait.ErrBusy)
+}
+
+// seeOnce remembers what was written beside the nonce, so a test can hold the
+// ID of a made-up challenge against the users that exist.
+type seeOnce struct {
+	dbapi.Store
+	mu   sync.Mutex
+	data []string
+}
+
+func (s *seeOnce) OnceCreate(ctx context.Context, kind string, value []byte, data string, expires int64) error {
+	s.mu.Lock()
+	s.data = append(s.data, data)
+	s.mu.Unlock()
+	return s.Store.OnceCreate(ctx, kind, value, data, expires)
+}
+
+func (s *seeOnce) written() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.data)
 }
