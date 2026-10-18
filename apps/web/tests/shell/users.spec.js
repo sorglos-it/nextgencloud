@@ -76,6 +76,16 @@ export const DEFAULTS = {
   ],
   "ngc.users/log/3": [],
   "ngc.users/pair-code": null, // filled in by world(), it needs the version
+  // WHICH APPS THE INSTALLATION HAS, which is a different question from which
+  // apps a person may use (ngc.desktop/apps, the APPS below). "neu" is
+  // installed and stands in nobody's list: that is the case the rights panel
+  // was blind to until 19.10.2026.
+  "ngc.store/installed": [
+    { id: "de.example.neu", version: "1.0.0", store: "local", node: "pi-1",
+      active: true, state: "ok", license: "none" },
+    { id: "de.example.fotos", version: "2.1.0", store: "local", node: "pi-1",
+      active: true, state: "ok", license: "none" },
+  ],
   "ngc.users/set-rights": {},
   "ngc.users/trust": { seq: 2 },
 };
@@ -1109,6 +1119,64 @@ test("a question belongs to its window and goes with it", async ({ page }) => {
   expect(await page.evaluate(() => window.__ngcCalls
     .filter((c) => c.name === "set-rights").length)).toBe(0);
 });
+
+// ---------------------------------------------------- Rechte einer neuen App
+//
+// A FRESHLY INSTALLED APP COULD NEVER BE MADE USABLE, and this is the dead end
+// it stood in until 19.10.2026:
+//
+//   the desktop offers an app only to somebody who holds <app>/use (API:
+//   coreapp/desktop.go, apps), ctx.apps IS that list, and the rights this
+//   panel offered were built out of it alone. So an app nobody could use yet
+//   appeared in no list, no right for it could be handed out, and without the
+//   right it never appeared in one.
+//
+// Measured on the real Debian-13 machine that day: the terminal app was set up
+// and RUNNING on ngc-2, the app store said "Läuft", and both roles in this
+// panel read "Es gibt noch keine App, für die es Rechte gäbe".
+test("a right can be given for an app that is installed and on nobody's desktop", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page);
+  await openTab(page, "Rollen und Rechte");
+  // The app of the desktop is still offered - this adds to that list, it does
+  // not replace it.
+  await expect(app(page).getByRole("checkbox", { name: "Rolle technik: Fotos · teilen" }))
+    .toHaveCount(1);
+  // And the one that is only INSTALLED is offered now. Its name is its id:
+  // ngc.store/installed carries no manifest, so there is no prettier name to
+  // show, and the store shows the same id.
+  const box = app(page).getByRole("checkbox", { name: "Rolle technik: de.example.neu · benutzen" });
+  await expect(box).toHaveCount(1);
+  await expect(box).not.toBeChecked();
+  // It really goes out as a right, with the role it belongs to: what is
+  // measured is the call, not the hook.
+  await box.check();
+  await app(page).getByRole("button", { name: "Rechte der Rolle technik speichern" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Rechte vergeben" }).click();
+  await expect(app(page).getByText("Die Rechte der Rolle »technik« sind gespeichert."))
+    .toBeVisible();
+  const sent = await page.evaluate(() => {
+    const c = window.__ngcCalls.filter((x) => x.name === "set-rights");
+    return c.map((x) => new TextDecoder().decode(x.params));
+  });
+  expect(sent.length, "one call, for one role").toBe(1);
+  expect(sent[0]).toContain("de.example.neu/use");
+  expect(sent[0]).toContain("technik");
+});
+
+// An app store that does not answer costs the panel one line and not its
+// contents: the roles and the rights already given are what this surface is
+// mostly for, and they came from another action.
+test("a store that does not answer leaves the rights that are already given on screen",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { answers: { "ngc.store/installed": new Error("core: nope") } });
+    await openTab(page, "Rollen und Rechte");
+    await expect(app(page).getByRole("checkbox", { name: "Rolle technik: Fotos · benutzen" }))
+      .toHaveCount(1);
+    await expect(app(page).getByText("Welche Apps eingerichtet sind, war nicht zu erfahren. "
+      + "Es werden nur die Rechte angeboten, die schon vergeben sind.")).toBeVisible();
+  });
 
 // --------------------------------------------------------------- Systemrechte
 //

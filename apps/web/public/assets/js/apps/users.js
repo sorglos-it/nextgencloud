@@ -451,6 +451,38 @@ class Users {
         known.add(a.id + "/" + act);
       }
     }
+    // AND EVERY APP THAT IS INSTALLED, which until 19.10.2026 was the one
+    // thing missing - and it made this surface a dead end that nobody could
+    // get out of:
+    //
+    //   the desktop offers an app only to somebody who holds <app>/use
+    //   (API: coreapp/desktop.go, apps), this.apps IS that list, and the
+    //   rights offered here were built out of it. So a freshly installed app
+    //   stood in nobody's list, no right for it could be handed out, and
+    //   without the right it never got into a list. Measured on the real
+    //   machine that day: the terminal was set up and running on ngc-2, the
+    //   store said "Läuft", and both roles here read "Es gibt noch keine App,
+    //   für die es Rechte gäbe".
+    //
+    // ngc.store/installed is what breaks it: it answers the apps of the
+    // INSTALLATION, whether or not the person may use them. Only "use" is
+    // offered from it - the result carries no manifest, so the actions of an
+    // app are not known here - and that is enough: once the right is given,
+    // the app stands on the desktop and its actions appear above.
+    //
+    // A failure is NOT a failure of this panel: the roles and their rights
+    // are on screen already, and an app store that does not answer costs one
+    // line of them. It is said, not swallowed.
+    try {
+      for (const a of await this.installed()) {
+        if (!validAppID(a.id) || coreApp(a.id)) continue;
+        known.add(a.id + "/" + core.RIGHT_USE);
+      }
+    } catch (e) {
+      text(msg, "Welche Apps eingerichtet sind, war nicht zu erfahren. Es werden nur die "
+        + "Rechte angeboten, die schon vergeben sind.");
+    }
+    if (this.dead) return;
     const all = [...known].filter(core.validRight).sort(plain);
     for (const r of roles) p.append(this.roleBox(r, all, msg));
   }
@@ -1159,6 +1191,16 @@ class Users {
       this.askBox.remove();
       this.askBox = null;
     }
+  }
+
+  // installed asks the app store which apps this installation has. It is the
+  // ONE call this app makes to another app's service, and it is a read: the
+  // alternative would be a field of its own in ngc.users/rights, and that is
+  // shared/core - frozen (core.RightsResult). Every admin may open it (core:
+  // the row of ngc.store/installed is Admin), which is who stands in front of
+  // this surface at all (cannotChange).
+  installed() {
+    return ask(this.link, core.lookup(core.APP_STORE, core.SERVICE_API, core.ACT_INSTALLED), null);
   }
 
   // ---- one call -----------------------------------------------------------
