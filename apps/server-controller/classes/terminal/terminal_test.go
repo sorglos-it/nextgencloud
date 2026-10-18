@@ -20,6 +20,7 @@ import (
 	"io"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -519,23 +520,91 @@ func TestRunEchoesThroughAPTY(t *testing.T) {
 	}
 }
 
-// TestResizeIsAppliedNotEchoed drives the real shell too: stty reads the size
-// off the pty, so the four bytes reached the ioctl - and they are not in the
-// output.
+// holdOpen hands out what it was given and then blocks instead of answering
+// EOF. That is what the channel of an open terminal does, and it is the
+// difference the measurement of 18.10.2026 turned on: an input that ENDS makes
+// pumpIn answer nil, and runShell then kills the whole session group at once -
+// before the shell has written its answer. The old fixture of
+// TestResizeIsAppliedNotEchoed did exactly that and was red 10 of 10 on Linux
+// with an empty stderr, because nothing had gone wrong at all: it had measured
+// its own race, not the size.
+type holdOpen struct {
+	r    *bytes.Reader
+	done <-chan struct{}
+}
+
+func (h holdOpen) Read(p []byte) (int, error) {
+	if h.r.Len() > 0 {
+		return h.r.Read(p)
+	}
+	<-h.done
+	return 0, io.EOF
+}
+
+// seenWriter takes the output of the shell and says when a wanted text has
+// arrived in it. pumpOut writes from its own goroutine while the case reads,
+// so both go through the lock.
+type seenWriter struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	want []byte
+	hit  chan struct{}
+	once sync.Once
+}
+
+func newSeenWriter(want string) *seenWriter {
+	return &seenWriter{want: []byte(want), hit: make(chan struct{})}
+}
+
+func (w *seenWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if bytes.Contains(w.buf.Bytes(), w.want) {
+		w.once.Do(func() { close(w.hit) })
+	}
+	return n, err
+}
+
+func (w *seenWriter) seen() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return bytes.Clone(w.buf.Bytes())
+}
+
+// TestResizeIsAppliedNotEchoed drives the real shell: stty reads the size off
+// the pty, so "24 80" in the output is the proof that the four bytes reached
+// the ioctl - and the same output holds that those four bytes themselves were
+// not passed through.
+//
+// It waits for the answer instead of reading a buffer once: the shell writes
+// when it is ready, and the run ends when this case cancels it, not when the
+// input runs out.
 func TestResizeIsAppliedNotEchoed(t *testing.T) {
 	skipWithoutPTY(t)
 	goodEnv(t)
-	in := append(resize(80, 24), keys([]byte("stty size\nexit\n"))...)
-	var out bytes.Buffer
-	if code := run(context.Background(), bytes.NewReader(in), &out, io.Discard, time.Minute); code != 0 {
-		t.Fatalf("exit %d", code)
+	in := append(resize(80, 24), keys([]byte("stty size\n"))...)
+	done := make(chan struct{})
+	defer close(done)
+	out := newSeenWriter("24 80")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ended := make(chan int, 1)
+	go func() {
+		ended <- run(ctx, holdOpen{bytes.NewReader(in), done}, out, io.Discard, time.Minute)
+	}()
+	select {
+	case <-out.hit:
+	case code := <-ended:
+		t.Fatalf("the run ended with %d before the size arrived, output %q", code, out.seen())
+	case <-time.After(30 * time.Second):
+		t.Fatalf("output %q, want the size 24 80 in it", out.seen())
 	}
-	if !strings.Contains(out.String(), "24 80") {
-		t.Fatalf("output %q, want the size 24 80 in it", out.String())
-	}
-	if bytes.Contains(out.Bytes(), []byte{0, 80, 0, 24}) {
+	if bytes.Contains(out.seen(), []byte{0, 80, 0, 24}) {
 		t.Fatal("the four bytes of the size were echoed")
 	}
+	cancel()
+	<-ended
 }
 
 // TestHoldEndsWithItsSignal: hold is what keeps the container of the app alive
