@@ -654,6 +654,31 @@ heraus · **S2** = ein Riegel wirkt nicht · **S3** = Riegel ohne jede Messung.
 - **Größe:** halber Tag Messen, dann 2 Stunden.
 - **Fundstelle:** `vertraege-v1.2.md`, Punkt 62, „Was ungemessen bleibt".
 
+> **ERLEDIGT auf `main`, 18.10.2026 — und die offene Frage ist beantwortet: es war der halbe
+> Vorgang, nicht die Auffrischung.** PR #80 (`7eeeee5`, Commit `5195a6f`, „Empty both waiting
+> lists once a server is listed") ist auf `main` zusammengeführt, **nachdem** dieser Zweig
+> entstand. Es ist **serverseitig**, nicht in der Oberfläche
+> (`apps/server-api/classes/coreapp/users.go`, +105 Zeilen, +210 Zeilen Fälle).
+>
+> Die Ursache, dort am Code ausgezählt: `dbapi.BlobJoin` wurde **nur geschrieben und
+> gelesen**, `BlobDelete` für vier andere Arten benutzt und **nie für diese**, und
+> `PendingDelete` — das der Vertrag hat und das den **Noise-Schlüssel** nimmt — hatte in
+> `apps/` **gar keinen Anrufer**. **Keine der beiden Listen wurde je geleert.** Am laufenden
+> System am 18.10. vorher: ein wartender Controller und **drei** wartende API-Server, jeder
+> schon in der Vertrauensliste; zwei weitere Fassungen änderten daran nichts. Nachher:
+> wartende Controller 1 → 0.
+>
+> **Zwei Dinge daran, die über B6 hinausgehen:** die Zeile lud auch dazu ein, denselben
+> Server **zweimal** aufzunehmen, und die Liste trug ihn dann unter **zwei Kennungen** — das
+> ist in genau diesem Lauf passiert. Und das Leeren entscheidet **auf den Schlüsseln**, nicht
+> auf dem Namen, weil eine Anfrage unter der Knotenkennung liegt und ein zweiter Rechner mit
+> einem belegten Namen die Zeile **überschreibt** — das ist die Gegenseite des Befundes aus
+> `2cd0e31` und das, was Punkt 27 verlangt.
+>
+> **Nicht in diesem Zweig:** `main` ist seit dieser Zusammenführung weitergelaufen, und
+> PR #80 ist hier **nicht** hineingeführt. Wer diesen Zweig nach `main` führt, bekommt es
+> dabei mit; `users.go` ist eine Datei, die beide Seiten anfassen.
+
 ### B7 — Eine migrierte, aber nicht eingerichtete Anlage lügt bei jeder Anmeldung.
 
 - **Was fehlt:** ein dritter Grund. `state.ErrNoTrust` erreicht die zweite Zeile: die Anlage
