@@ -1176,3 +1176,169 @@ test("a question belongs to its window and goes with it", async ({ page }) => {
   expect(await page.evaluate(() => window.__ngcCalls
     .filter((c) => c.name === "set-rights").length)).toBe(0);
 });
+
+// ------------------------------------------------- 4b eingetragene Server
+// A node's address was written once, when an admin took the server in, and
+// nothing could change it afterwards: counted over the committed interface, no
+// screen changed or removed a node, and the contract knew nodes only to read
+// them. What that cost was measured on 18.10.2026 at a two-machine
+// installation whose servers had got new addresses: Apache went on proxying to
+// the old ones and answered the client 500 on a share of the requests, and
+// nothing in NextGenCloud could put it right.
+test("the address of a listed API server can be changed, and only the address changes",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    const row = app(page).locator(".listed .row", { hasText: "api-1" });
+    await expect(row).toBeVisible();
+    const before = await page.evaluate(() => {
+      const api = window.__ngcCtx.trust.current().list.nodes.find((n) => n.id === "api-1");
+      const b64 = (u) => btoa(String.fromCharCode(...u));
+      return { noise: b64(api.noise), sign: b64(api.sign), tls: b64(api.tls) };
+    });
+    await row.getByRole("button", { name: "Adresse von api-1 ändern" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    // The field carries the address that stands, so a change is an edit and
+    // not a retype of the whole thing.
+    const feld = dlg.locator("input.addr");
+    await expect(feld).toHaveValue("wss://api-1.test:7443/tunnel");
+    // The question names the other half of the move, which this screen cannot
+    // do: the server makes its certificate for the address its own api.json
+    // names, and the web server proxies only to a certificate that carries the
+    // address it dials. Measured at a running installation: Apache answers the
+    // client 500 while the two disagree.
+    await expect(dlg).toContainText("Sagen Sie dem Server auch selbst seine neue Adresse");
+    await feld.fill("wss://10.0.0.9:7443/tunnel");
+    await dlg.getByRole("button", { name: "Adresse ändern" }).click();
+    await sign(page);
+    await expect(app(page).locator(".listed .note"))
+      .toHaveText("Die Adresse von »api-1« ist geändert.");
+
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const one = window.__ngcSent[0];
+      const s = trust.parseSigned(one.bytes);
+      const l = await trust.parseList(s.payload);
+      const api = l.nodes.find((n) => n.id === "api-1");
+      const b64 = (u) => btoa(String.fromCharCode(...u));
+      return {
+        count: window.__ngcSent.length,
+        where: one.app + "/" + one.service + "/" + one.name,
+        seq: l.seq,
+        nodes: l.nodes.map((n) => n.id),
+        url: api.url,
+        noise: b64(api.noise), sign: b64(api.sign), tls: b64(api.tls),
+      };
+    });
+    expect(sent.count).toBe(1);
+    expect(sent.where).toBe("ngc.users/api/trust");
+    expect(sent.seq).toBe(2);
+    // The new address, and NOTHING else about the server: the keys are the
+    // ones it had, which is what makes an address change a small change.
+    expect(sent.url).toBe("wss://10.0.0.9:7443/tunnel");
+    expect(sent.noise).toBe(before.noise);
+    expect(sent.sign).toBe(before.sign);
+    expect(sent.tls).toBe(before.tls);
+    // And no node came or went.
+    expect(sent.nodes).toEqual(["api-1", "ctl-1"]);
+  });
+
+test("an address that is no tunnel address is refused before anything is signed",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    const row = app(page).locator(".listed .row", { hasText: "api-1" });
+    await row.getByRole("button", { name: "Adresse von api-1 ändern" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.locator("input.addr").fill("https://api-1.test:7443");
+    await dlg.getByRole("button", { name: "Adresse ändern" }).click();
+    // The sentence says what an address looks like. It does NOT say the
+    // installation is not answering, which is what every error this surface
+    // does not know by name turns into.
+    await expect(app(page).locator(".listed .note")).toHaveText(
+      "Das ist keine Adresse, unter der ein API-Server erreichbar ist. "
+      + "Sie muss so aussehen: wss://name-des-servers:7443/tunnel");
+    // Nothing was asked of the person and nothing left the browser.
+    expect(await page.locator(".confirmbox").count()).toBe(0);
+    expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+  });
+
+test("the same address again changes nothing and says so", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  const row = app(page).locator(".listed .row", { hasText: "api-1" });
+  await row.getByRole("button", { name: "Adresse von api-1 ändern" }).click();
+  const dlg = page.getByRole("dialog");
+  await dlg.getByRole("button", { name: "Adresse ändern" }).click();
+  await expect(app(page).locator(".listed .note")).toHaveText(
+    "Das ist die Adresse, die schon eingetragen ist. Es wurde nichts geändert.");
+  expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+});
+
+test("a listed server can be retired, and it is the only way back from a take-up",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    // The controller of the fixture: a server with no address of its own.
+    const row = app(page).locator(".listed .row", { hasText: "ctl-1" });
+    await expect(row).toBeVisible();
+    // It has no address, so nothing offers to change one.
+    expect(await row.getByRole("button", { name: /Adresse/ }).count()).toBe(0);
+    await row.getByRole("button", { name: "Server ctl-1 stilllegen" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toContainText("Der Server selbst läuft weiter");
+    await dlg.getByRole("button", { name: "Server stilllegen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".listed .note"))
+      .toHaveText("Der Server »ctl-1« ist stillgelegt.");
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const s = trust.parseSigned(window.__ngcSent[0].bytes);
+      const l = await trust.parseList(s.payload);
+      return { count: window.__ngcSent.length, seq: l.seq, nodes: l.nodes.map((n) => n.id) };
+    });
+    expect(sent.count).toBe(1);
+    expect(sent.seq).toBe(2);
+    expect(sent.nodes).toEqual(["api-1"]);
+  });
+
+test("the only API server of an installation is not offered for retiring", async ({ page }) => {
+  // An installation whose list names no API server cannot be reached at all
+  // any more, and the balancer of its web server would have no member - which
+  // makes Apache answer every /api/ with 503 (measured in
+  // apps/server-controller/classes/apache).
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  const row = app(page).locator(".listed .row", { hasText: "api-1" });
+  await expect(row).toBeVisible();
+  // The address may be changed; the server may not be taken out.
+  await expect(row.getByRole("button", { name: "Adresse von api-1 ändern" })).toBeVisible();
+  expect(await row.getByRole("button", { name: "Server api-1 stilllegen" }).count()).toBe(0);
+  await expect(app(page).locator(".listed .note")).toHaveText(
+    "Der einzige API-Server dieser Anlage kann nicht stillgelegt werden. "
+    + "Nehmen Sie zuerst einen weiteren auf.");
+});
+
+test("without a session nothing about a listed server is offered", async ({ page }) => {
+  // The signature of a version is the PERSON's, with a key that stands in the
+  // list itself; without knowing whose session this is there is nobody to ask.
+  // So the surface says it in one sentence instead of drawing buttons that
+  // cannot do their job - the rule cannotChange already keeps for the two
+  // take-ups.
+  await mount(page, { noSession: true });
+  await openTab(page, "Server");
+  // The section is there and the servers are shown; only the buttons are not.
+  // Without this line the case would also pass on a surface that shows nothing
+  // of the trust list at all, and measure nothing.
+  await expect(app(page).locator(".listed")).toHaveCount(1);
+  await expect(app(page).locator(".listed .row")).toHaveCount(2);
+  await expect(app(page).locator(".listed .note")).toHaveText(
+    "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.");
+  expect(await app(page).locator(".listed .row button").count()).toBe(0);
+});
