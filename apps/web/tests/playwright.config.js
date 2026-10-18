@@ -70,6 +70,27 @@ export default defineConfig({
   testDir: ".",
   fullyParallel: false,
   workers: 1,
+  // ONE RETRY, and it is there to make a jumpy case VISIBLE, not to hide it.
+  // Measured on 18.10.2026 over four full runs of this suite (1365 cases each,
+  // workers 1, so nothing here runs beside anything else): three runs ended
+  // with exactly one red case, and it was a DIFFERENT case every time -
+  // appframe.spec.js:250, desktop-keyboard.spec.js:382, appframe.spec.js:168,
+  // the last one in firefox. None of them reproduces: run on their own they are
+  // green 3 of 3, and the whole desktop-keyboard file is green. The fourth run,
+  // with this line, ended `1 flaky, 933 passed, 0 red`.
+  //
+  // Without it every run is a coin: one slow load among 1365 cases turns the
+  // suite red, and a red suite then says nothing about the tree. A LARGER
+  // TIMEOUT would be the wrong answer to the same thing - it would make the
+  // case pass quietly and take the evidence with it, while `flaky` is a word in
+  // the summary that somebody has to read. `trace: retain-on-failure` below
+  // keeps the trace of the attempt that failed, so a flaky case stays
+  // diagnosable.
+  //
+  // What it is NOT: a licence for a case that fails twice. Two reds in a row
+  // are a finding, and the cause of these three is still not named - only that
+  // the retry passes (docs/bis-zur-veroeffentlichung.md, the box under H9).
+  retries: 1,
   reporter: [["list"]],
   // THE LANGUAGE OF THE RUN, and it is not a nicety. Since apps/web has a
   // lookup (public/assets/js/lang.js, apps/web/lang/*.json) the shell shows
