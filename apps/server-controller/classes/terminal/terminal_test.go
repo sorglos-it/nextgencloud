@@ -503,21 +503,53 @@ func skipWithoutPTY(t *testing.T) {
 	}
 }
 
-// TestRunEchoesThroughAPTY drives the real shell: "echo hallo" goes in as a
-// keys frame, "hallo" comes out, and "exit" ends it.
+// TestRunEchoesThroughAPTY drives the real shell: it sends a sum the shell has
+// to work out, and the proof is the RESULT, which stands nowhere in what was
+// typed.
+//
+// The old shape of this case sent "echo hallo" and looked for "hallo". That is
+// satisfied by the keyboard echo of the pty alone - measured on 18.10.2026 with
+// two probes in WSL/ext4: with "qqqnosuchcmd hallo" the case stayed green and
+// the whole output was "$ qqqnosuchcmd hallo\r\nexit\r\n", and with
+// "echo hallo" the word arrived exactly ONCE, so the answer of the shell never
+// came. The same SIGKILL that turned TestResizeIsAppliedNotEchoed red (see
+// holdOpen below) hit this case too; it just could not notice.
+//
+// So it holds the two things the echo cannot give: the product of the sum, and
+// that the run is still alive when it arrives. holdOpen and seenWriter below
+// are what keeps it that way.
 func TestRunEchoesThroughAPTY(t *testing.T) {
 	skipWithoutPTY(t)
 	goodEnv(t)
-	in := append(keys([]byte("echo hallo\n")), keys([]byte("exit\n"))...)
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-	code := run(context.Background(), bytes.NewReader(in), &out, &errOut, time.Minute)
-	if code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, errOut.String())
+	// 111111 * 111111 = 12345654321. The digits of the result are in neither
+	// the factors nor anything else of the line, so they can only come out of
+	// the arithmetic of the shell.
+	const line = "echo $((111111*111111))\n"
+	const want = "12345654321"
+	in := keys([]byte(line))
+	// The fixture checks itself (messen.md): if the wanted text were ever in
+	// the keys, this case would be back to measuring the echo.
+	if bytes.Contains(in, []byte(want)) {
+		t.Fatalf("fixture: %s stands in the keys already", want)
 	}
-	if !strings.Contains(out.String(), "hallo") {
-		t.Fatalf("output %q, want hallo in it", out.String())
+	done := make(chan struct{})
+	defer close(done)
+	out := newSeenWriter(want)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ended := make(chan int, 1)
+	go func() {
+		ended <- run(ctx, holdOpen{bytes.NewReader(in), done}, out, io.Discard, time.Minute)
+	}()
+	select {
+	case <-out.hit:
+	case code := <-ended:
+		t.Fatalf("the run ended with %d before the shell answered, output %q", code, out.seen())
+	case <-time.After(30 * time.Second):
+		t.Fatalf("output %q, want %s in it", out.seen(), want)
 	}
+	cancel()
+	<-ended
 }
 
 // holdOpen hands out what it was given and then blocks instead of answering
