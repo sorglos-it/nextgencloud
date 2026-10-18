@@ -95,6 +95,15 @@ var SpoolDir = filepath.Join(config.DataDir, "spool")
 // the other one answers E_UNREACHABLE as before.
 var HoldDir = filepath.Join(config.DataDir, "uploads")
 
+// AnchorFile is the trust anchor outside the database
+// (config.AnchorFile, "/etc/ngc/trust-anchor.json"). It is a variable of this
+// package for the same reason the three above are: a case has to be able to
+// put it into its own directory. Without that every case here read the file of
+// the MACHINE it runs on - on windows that path can never exist and nothing
+// showed, on linux with an installation in place three cases of this package
+// were red (18.10.2026).
+var AnchorFile = config.AnchorFile
+
 // errNoTunnel reports that the controller a licence is meant for is away.
 var errNoTunnel = errors.New("server: no tunnel to that controller")
 
@@ -163,6 +172,7 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 		return nil, errors.New("die Datenbank ist nicht erreichbar")
 	}
 	s := state.New(cfg, db, box, pin)
+	s.AnchorFile = AnchorFile
 	lg := &audit.Log{DB: db, Now: s.Now}
 	lh := login.New(s)
 	tunnels := controllers.NewRegistry()
