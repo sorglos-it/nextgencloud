@@ -76,6 +76,7 @@ export const DEFAULTS = {
   ],
   "ngc.users/log/3": [],
   "ngc.users/pair-code": null, // filled in by world(), it needs the version
+  "ngc.users/join-code": null, // the same, under the other prefix
   "ngc.users/set-rights": {},
   "ngc.users/trust": { seq: 2 },
 };
@@ -180,6 +181,16 @@ export async function world(cfg = {}) {
   if (answers["ngc.users/pair-code"] === null && version !== null) {
     answers["ngc.users/pair-code"] = {
       code: await pairCode(cfg.codeFor === "next" ? await nextVersion(version) : version),
+      expires: 1790086400,
+    };
+  }
+  // The join code of the same installation, and cfg.codeFor reaches it too:
+  // the two codes differ in their prefix and in nothing else, so one world
+  // measures both ways through showCode.
+  if (answers["ngc.users/join-code"] === null && version !== null) {
+    answers["ngc.users/join-code"] = {
+      code: await pairCode(cfg.codeFor === "next" ? await nextVersion(version) : version,
+        "ngc-join:"),
       expires: 1790086400,
     };
   }
@@ -877,6 +888,103 @@ test("a pairing code that fits no version of this installation is not shown", as
   expect(await page.evaluate(() => window.__ngcHints)).toEqual([2]);
 });
 
+// MEASURED on 17.10.2026 against a running installation: a second machine
+// that asks for the name of a server ALREADY in the trust list is accepted by
+// the API, and its request overwrites the waiting one under that name
+// (join.keep stores by node id). The row then offered "Aufnehmen", and
+// pressing it read "Die Anlage antwortet gerade nicht." - while the error
+// really thrown was "Diese Änderung ergibt keine gültige Vertrauensliste."
+// (probe in the deployed copy). Nothing was unreachable and nothing was
+// signed; the trust list stayed at its version.
+test("a waiting API server whose name is already listed is not offered, and the row says why",
+  async ({ page }) => {
+    await mount(page, { answers: { "ngc.users/pending-api": [{
+      node: "api-1", // the API node the genesis of this installation carries
+      noise: "PFxs4t2Z4Q0sPeBddzqhXj5tlx7U5BOJyTtLvdoXchI",
+      sign: "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+      tls: "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+      url: "wss://api-1.test:7443/tunnel", since: 1790000000,
+    }] } });
+    await openTab(page, "Server");
+    const row = app(page).locator(".pendapi .row", { hasText: "api-1" });
+    await expect(row).toBeVisible();
+    await expect(row.locator(".note")).toHaveText(
+      "Dieser Name ist in dieser Anlage schon vergeben. "
+      + "Der Server muss unter einem anderen Namen beitreten.");
+    // No button at all: a button that cannot do its job is a promise the
+    // surface does not keep, and this one would end in a dialog that names a
+    // fingerprint and then fails for a reason it does not name.
+    expect(await row.locator("button").count()).toBe(0);
+  });
+
+test("a waiting API server with a free name is still offered", async ({ page }) => {
+  // The control beside the case above: the default answer names api-2, which
+  // stands in no version, and that row keeps its button.
+  await mount(page);
+  await openTab(page, "Server");
+  const row = app(page).locator(".pendapi .row", { hasText: "api-2" });
+  await expect(row.getByRole("button", { name: "Server api-2 aufnehmen" })).toBeVisible();
+  expect(await row.locator(".note").count()).toBe(0);
+});
+
+// A join code is what ngc-api.sh asks for in its answer join_code, and until
+// this there was no way in the interface to get one: ngc.users/join-code
+// stood in contracts/core.js and nothing called it, so a second API server
+// could not be set up at all. The cases below are the three of the pairing
+// code, under the other prefix.
+test("a join code is shown only when it fits the version the shell verified",
+  async ({ page }) => {
+    await mount(page);
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+    const code = app(page).locator(".joincode .code");
+    await expect(code).toContainText("ngc-join:");
+    // The action really asked for is join-code and not pair-code: a button
+    // wired to the neighbouring action would show a code that works and
+    // spend the wrong one-time value on the API.
+    expect(await page.evaluate(() => window.__ngcCalls.map((c) => c.name)))
+      .toContain("join-code");
+    expect(await page.evaluate(() => window.__ngcHints)).toEqual([]);
+  });
+
+test("a join code that names a newer version makes the shell fetch the chain first",
+  async ({ page }) => {
+    await mount(page, { codeFor: "next", apiAhead: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+    await expect(app(page).locator(".joincode .code")).toContainText("ngc-join:");
+    expect(await page.evaluate(() => window.__ngcHints)).toEqual([2]);
+  });
+
+test("a join code that fits no version of this installation is not shown", async ({ page }) => {
+  await mount(page, { codeFor: "next" });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+  await expect(app(page).locator(".joincode .note")).toHaveText(
+    "Dieser Code passt nicht zu dieser Anlage.");
+  expect(await app(page).locator(".joincode .code").count()).toBe(0);
+});
+
+test("the pairing button refuses a join code and the join button a pairing code",
+  async ({ page }) => {
+    // The one reading each button makes is the prefix of its own action. A
+    // crossed wiring is therefore not a cosmetic mistake: it would put a code
+    // on screen that the other script cannot use, after the API has already
+    // spent the one-time value behind it.
+    await mount(page, { answers: {
+      "ngc.users/pair-code": { code: "ngc-join:AAAA", expires: 1790086400 },
+      "ngc.users/join-code": { code: "ngc-pair:AAAA", expires: 1790086400 },
+    } });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Kopplungscode zeigen" }).click();
+    await expect(app(page).locator(".paircode .note")).toHaveText(
+      "Dieser Code passt nicht zu dieser Anlage.");
+    await app(page).getByRole("button", { name: "Beitrittscode zeigen" }).click();
+    await expect(app(page).locator(".joincode .note")).toHaveText(
+      "Dieser Code passt nicht zu dieser Anlage.");
+    expect(await app(page).locator(".paircode .code, .joincode .code").count()).toBe(0);
+  });
+
 // --------------------------------------------------------------------- 5 rights
 test("a right that is handed out is asked for first, and the question says what happens",
   async ({ page }) => {
@@ -1097,4 +1205,170 @@ test("a question belongs to its window and goes with it", async ({ page }) => {
   // And nothing went out while the question was still open.
   expect(await page.evaluate(() => window.__ngcCalls
     .filter((c) => c.name === "set-rights").length)).toBe(0);
+});
+
+// ------------------------------------------------- 4b eingetragene Server
+// A node's address was written once, when an admin took the server in, and
+// nothing could change it afterwards: counted over the committed interface, no
+// screen changed or removed a node, and the contract knew nodes only to read
+// them. What that cost was measured on 18.10.2026 at a two-machine
+// installation whose servers had got new addresses: Apache went on proxying to
+// the old ones and answered the client 500 on a share of the requests, and
+// nothing in NextGenCloud could put it right.
+test("the address of a listed API server can be changed, and only the address changes",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    const row = app(page).locator(".listed .row", { hasText: "api-1" });
+    await expect(row).toBeVisible();
+    const before = await page.evaluate(() => {
+      const api = window.__ngcCtx.trust.current().list.nodes.find((n) => n.id === "api-1");
+      const b64 = (u) => btoa(String.fromCharCode(...u));
+      return { noise: b64(api.noise), sign: b64(api.sign), tls: b64(api.tls) };
+    });
+    await row.getByRole("button", { name: "Adresse von api-1 ändern" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    // The field carries the address that stands, so a change is an edit and
+    // not a retype of the whole thing.
+    const feld = dlg.locator("input.addr");
+    await expect(feld).toHaveValue("wss://api-1.test:7443/tunnel");
+    // The question names the other half of the move, which this screen cannot
+    // do: the server makes its certificate for the address its own api.json
+    // names, and the web server proxies only to a certificate that carries the
+    // address it dials. Measured at a running installation: Apache answers the
+    // client 500 while the two disagree.
+    await expect(dlg).toContainText("Sagen Sie dem Server auch selbst seine neue Adresse");
+    await feld.fill("wss://10.0.0.9:7443/tunnel");
+    await dlg.getByRole("button", { name: "Adresse ändern" }).click();
+    await sign(page);
+    await expect(app(page).locator(".listed .note"))
+      .toHaveText("Die Adresse von »api-1« ist geändert.");
+
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const one = window.__ngcSent[0];
+      const s = trust.parseSigned(one.bytes);
+      const l = await trust.parseList(s.payload);
+      const api = l.nodes.find((n) => n.id === "api-1");
+      const b64 = (u) => btoa(String.fromCharCode(...u));
+      return {
+        count: window.__ngcSent.length,
+        where: one.app + "/" + one.service + "/" + one.name,
+        seq: l.seq,
+        nodes: l.nodes.map((n) => n.id),
+        url: api.url,
+        noise: b64(api.noise), sign: b64(api.sign), tls: b64(api.tls),
+      };
+    });
+    expect(sent.count).toBe(1);
+    expect(sent.where).toBe("ngc.users/api/trust");
+    expect(sent.seq).toBe(2);
+    // The new address, and NOTHING else about the server: the keys are the
+    // ones it had, which is what makes an address change a small change.
+    expect(sent.url).toBe("wss://10.0.0.9:7443/tunnel");
+    expect(sent.noise).toBe(before.noise);
+    expect(sent.sign).toBe(before.sign);
+    expect(sent.tls).toBe(before.tls);
+    // And no node came or went.
+    expect(sent.nodes).toEqual(["api-1", "ctl-1"]);
+  });
+
+test("an address that is no tunnel address is refused before anything is signed",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    const row = app(page).locator(".listed .row", { hasText: "api-1" });
+    await row.getByRole("button", { name: "Adresse von api-1 ändern" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.locator("input.addr").fill("https://api-1.test:7443");
+    await dlg.getByRole("button", { name: "Adresse ändern" }).click();
+    // The sentence says what an address looks like. It does NOT say the
+    // installation is not answering, which is what every error this surface
+    // does not know by name turns into.
+    await expect(app(page).locator(".listed .note")).toHaveText(
+      "Das ist keine Adresse, unter der ein API-Server erreichbar ist. "
+      + "Sie muss so aussehen: wss://name-des-servers:7443/tunnel");
+    // Nothing was asked of the person and nothing left the browser.
+    expect(await page.locator(".confirmbox").count()).toBe(0);
+    expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+  });
+
+test("the same address again changes nothing and says so", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  const row = app(page).locator(".listed .row", { hasText: "api-1" });
+  await row.getByRole("button", { name: "Adresse von api-1 ändern" }).click();
+  const dlg = page.getByRole("dialog");
+  await dlg.getByRole("button", { name: "Adresse ändern" }).click();
+  await expect(app(page).locator(".listed .note")).toHaveText(
+    "Das ist die Adresse, die schon eingetragen ist. Es wurde nichts geändert.");
+  expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+});
+
+test("a listed server can be retired, and it is the only way back from a take-up",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    // The controller of the fixture: a server with no address of its own.
+    const row = app(page).locator(".listed .row", { hasText: "ctl-1" });
+    await expect(row).toBeVisible();
+    // It has no address, so nothing offers to change one.
+    expect(await row.getByRole("button", { name: /Adresse/ }).count()).toBe(0);
+    await row.getByRole("button", { name: "Server ctl-1 stilllegen" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toContainText("Der Server selbst läuft weiter");
+    await dlg.getByRole("button", { name: "Server stilllegen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".listed .note"))
+      .toHaveText("Der Server »ctl-1« ist stillgelegt.");
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const s = trust.parseSigned(window.__ngcSent[0].bytes);
+      const l = await trust.parseList(s.payload);
+      return { count: window.__ngcSent.length, seq: l.seq, nodes: l.nodes.map((n) => n.id) };
+    });
+    expect(sent.count).toBe(1);
+    expect(sent.seq).toBe(2);
+    expect(sent.nodes).toEqual(["api-1"]);
+  });
+
+test("the only API server of an installation is not offered for retiring", async ({ page }) => {
+  // An installation whose list names no API server cannot be reached at all
+  // any more, and the balancer of its web server would have no member - which
+  // makes Apache answer every /api/ with 503 (measured in
+  // apps/server-controller/classes/apache).
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  const row = app(page).locator(".listed .row", { hasText: "api-1" });
+  await expect(row).toBeVisible();
+  // The address may be changed; the server may not be taken out.
+  await expect(row.getByRole("button", { name: "Adresse von api-1 ändern" })).toBeVisible();
+  expect(await row.getByRole("button", { name: "Server api-1 stilllegen" }).count()).toBe(0);
+  await expect(app(page).locator(".listed .note")).toHaveText(
+    "Der einzige API-Server dieser Anlage kann nicht stillgelegt werden. "
+    + "Nehmen Sie zuerst einen weiteren auf.");
+});
+
+test("without a session nothing about a listed server is offered", async ({ page }) => {
+  // The signature of a version is the PERSON's, with a key that stands in the
+  // list itself; without knowing whose session this is there is nobody to ask.
+  // So the surface says it in one sentence instead of drawing buttons that
+  // cannot do their job - the rule cannotChange already keeps for the two
+  // take-ups.
+  await mount(page, { noSession: true });
+  await openTab(page, "Server");
+  // The section is there and the servers are shown; only the buttons are not.
+  // Without this line the case would also pass on a surface that shows nothing
+  // of the trust list at all, and measure nothing.
+  await expect(app(page).locator(".listed")).toHaveCount(1);
+  await expect(app(page).locator(".listed .row")).toHaveCount(2);
+  await expect(app(page).locator(".listed .note")).toHaveText(
+    "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.");
+  expect(await app(page).locator(".listed .row button").count()).toBe(0);
 });

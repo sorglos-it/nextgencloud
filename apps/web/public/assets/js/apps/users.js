@@ -491,13 +491,19 @@ class Users {
     const pendapi = section("pendapi", "Wartende API-Server",
       "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
     const known = section("known", "Server dieser Anlage", "");
+    const listed = section("listed", "Eingetragene Server",
+      "Diese Server stehen in der Vertrauensliste dieser Anlage.");
     const code = section("paircode", "Kopplungscode",
       "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
-    p.append(pending, pendapi, known, code);
+    const join = section("joincode", "Beitrittscode",
+      "Der Code wird nur gezeigt, wenn er zu dieser Anlage passt.");
+    p.append(pending, pendapi, known, listed, code, join);
     this.fillPending(pending);
     this.fillPendingAPI(pendapi);
     this.fillNodes(known);
+    this.fillListed(listed);
     this.fillPairCode(code);
+    this.fillJoinCode(join);
   }
 
   async fillPending(box) {
@@ -563,7 +569,25 @@ class Users {
         if (!this.dead) text(fp, f);
       }, () => text(fp, "—"));
       r.append(el("span", "nm", n.node), fp, chars(n.url), el("span", "since", when(n.since)));
-      if (joinable(n) && why === "") {
+      // A name that already stands in the trust list cannot be taken in: a
+      // version with two nodes of one id is not a valid list (Go:
+      // trust.List.Validate wants the ids strictly ascending), so
+      // buildNextVersion refuses this change before anything is signed.
+      //
+      // MEASURED on 17.10.2026 against a running installation, and this is
+      // what it is for: a second machine that asks for the name of a server
+      // already listed is ACCEPTED by the API, and its request OVERWRITES the
+      // waiting one of that name (join.keep stores by node id). The admin then
+      // saw this row with the other machine's fingerprint, pressed Aufnehmen,
+      // and read "Die Anlage antwortet gerade nicht." - the error really
+      // thrown was "Diese Änderung ergibt keine gültige Vertrauensliste.", and
+      // reason() has no prefix for it, so it fell to the sentence about
+      // reachability. Nothing was unreachable; the name was taken.
+      const taken = this.nameTaken(n.node);
+      if (taken) {
+        r.append(el("span", "note", "Dieser Name ist in dieser Anlage schon vergeben. "
+          + "Der Server muss unter einem anderen Namen beitreten."));
+      } else if (joinable(n) && why === "") {
         const b = button("go", "Aufnehmen", "Server " + n.node + " aufnehmen");
         b.addEventListener("click", () => this.askJoinAPI(n, seen, b, box));
         r.append(b);
@@ -571,6 +595,189 @@ class Users {
       box.append(r);
     }
     if (why !== "") Users.say(box, why);
+  }
+
+  // nameTaken says whether a node of this id already stands in the version
+  // the shell verified. Without a version it answers false: cannotChange
+  // already says that nothing can be taken in then, and a row would otherwise
+  // carry two sentences that say different things.
+  nameTaken(id) {
+    const list = this.trust?.current?.()?.list;
+    if (!list || !Array.isArray(list.nodes)) return false;
+    return list.nodes.some((n) => n !== null && typeof n === "object" && n.id === id);
+  }
+
+  // fillListed is the only screen that shows what the VERIFIED trust list
+  // itself carries, and the only one that can change it afterwards. The rows
+  // come out of this.trust.current() and not out of an action of the API: what
+  // an admin is about to re-sign has to be the version the shell checked, not
+  // a list a server described.
+  //
+  // It is here because of a measured hole. A node's address was written once,
+  // when the admin took the server in, and nothing could ever change it again:
+  // counted over the committed interface, no screen changed or removed a node
+  // and shared/core had ActNodes to read them and no action to set one. What
+  // that cost was measured on 18.10.2026 at a two-machine installation whose
+  // servers had got new addresses: Apache went on proxying to the old ones,
+  // answered the client 500 on a share of the requests (the certificate of the
+  // machine now at that address does not match it, AH00898), and nothing in
+  // NextGenCloud could put it right. The server itself repairs its own
+  // certificate at the next start; the signed list cannot repair itself.
+  //
+  // The key is NOT touched by an address change, and that is what makes it a
+  // small change: a server keeps its keys when it moves, the pin in the list
+  // goes on proving them, and the only thing that was wrong was where to find
+  // it.
+  fillListed(box) {
+    const l = this.trust?.current?.()?.list;
+    if (!l || !Array.isArray(l.nodes)) {
+      Users.say(box, "Die Vertrauensliste liegt noch nicht vor.");
+      return;
+    }
+    const nodes = l.nodes.filter((n) => n !== null && typeof n === "object");
+    const apis = nodes.filter((n) => n.kind === trust.NODE_API);
+    if (nodes.length === 0) {
+      Users.say(box, "In der Vertrauensliste steht noch kein Server.");
+      return;
+    }
+    const why = this.cannotChange();
+    for (const n of nodes) {
+      const r = el("div", "row");
+      const api = n.kind === trust.NODE_API;
+      r.append(el("span", "nm", n.id), el("span", "kind", api ? "API-Server" : "Server"));
+      if (api) r.append(chars(n.url));
+      if (why === "") {
+        // Only an API server has an address: the contract keeps a controller's
+        // url empty (Go: trust.List.Validate refuses a controller with one),
+        // so there is nothing to change for one and no button that pretends
+        // otherwise.
+        if (api) {
+          const b = button("b", "Adresse ändern", "Adresse von " + n.id + " ändern");
+          b.addEventListener("click", () => this.askAddress(n, b, box));
+          r.append(b);
+        }
+        // The last API server is not offered: an installation whose list names
+        // none cannot be reached at all any more, and the balancer of the web
+        // server would have no member, which makes Apache answer every /api/
+        // with 503.
+        if (!api || apis.length > 1) {
+          const b = button("b", "Stilllegen", "Server " + n.id + " stilllegen");
+          b.addEventListener("click", () => this.askRetire(n, b, box, apis.length));
+          r.append(b);
+        }
+      }
+      box.append(r);
+    }
+    if (why !== "") Users.say(box, why);
+    else if (apis.length === 1) {
+      Users.say(box, "Der einzige API-Server dieser Anlage kann nicht stillgelegt werden. "
+        + "Nehmen Sie zuerst einen weiteren auf.");
+    }
+  }
+
+  // askAddress asks for the new address of an API server and writes it into
+  // the next version of the trust list.
+  //
+  // The address is checked HERE and not by letting the signing fall over: a
+  // version that trust.validateList refuses throws a sentence about the list,
+  // and reason() turns anything it does not know into "Die Anlage antwortet
+  // gerade nicht." -- an answer about reachability for a typo. Measured once
+  // already, for a name that was taken.
+  askAddress(n, from, box) {
+    const feld = el("input", "addr mono");
+    feld.type = "text";
+    feld.value = n.url;
+    feld.setAttribute("aria-label", "Neue Adresse von " + n.id);
+    this.ask({
+      title: "Adresse von »" + n.id + "« ändern",
+      body: [
+        el("p", null, "Diese Anlage erreicht den Server danach unter der neuen Adresse. "
+          + "Die Schlüssel des Servers bleiben dieselben; nur wo er zu finden ist, ändert sich."),
+        feld,
+        el("p", null, "Die Adresse sieht so aus: wss://name-des-servers:7443/tunnel. "
+          + "Statt des Namens darf auch eine IPv4-Adresse stehen."),
+        el("p", null, "Tragen Sie sie nur ein, wenn der Server unter genau dieser Adresse "
+          + "erreichbar ist."),
+        // The other half of the move, and it is not this screen's to do: the
+        // server makes its own certificate for the address IT knows (its
+        // api.json), and the web server proxies only to a certificate that
+        // carries the address it dials. So the list may be right and the
+        // connection still refused, until the server itself was told. It is
+        // said here rather than left to be found: measured at a running
+        // installation, Apache answers the client 500 in exactly that case
+        // (AH00898, "Error during SSL Handshake with remote server").
+        el("p", null, "Wichtig: Sagen Sie dem Server auch selbst seine neue Adresse "
+          + "(auf dem Server mit ulh, Eintrag ngc-api) und starten Sie ihn neu. Sonst "
+          + "weist der Webserver ihn ab, weil sein Zertifikat noch die alte Adresse nennt."),
+      ],
+      go: "Adresse ändern",
+      from,
+      run: async () => {
+        const neu = String(feld.value).trim();
+        if (neu === n.url) {
+          Users.say(box, "Das ist die Adresse, die schon eingetragen ist. Es wurde nichts geändert.");
+          return;
+        }
+        if (!validTunnelURL(neu)) {
+          Users.say(box, "Das ist keine Adresse, unter der ein API-Server erreichbar ist. "
+            + "Sie muss so aussehen: wss://name-des-servers:7443/tunnel");
+          return;
+        }
+        await this.joinNode((next) => {
+          const node = next.nodes.find((x) => x !== null && typeof x === "object" && x.id === n.id);
+          // The version is built from the list the shell verified, so the node
+          // is there; a list it is not in is not one this screen was drawn
+          // from, and writing a second node of that id would be a fork of the
+          // name rather than a change of the address.
+          if (!node) throw new Error("Dieser Server steht nicht mehr in der Vertrauensliste.");
+          node.url = neu;
+        });
+        Users.say(box, "Die Adresse von »" + n.id + "« ist geändert.");
+        from.disabled = true;
+      },
+      failed: "Die Adresse konnte nicht geändert werden.",
+      msg: box.querySelector(".note"),
+    });
+  }
+
+  // askRetire takes a server out of the trust list. It is the way back from
+  // every take-up, and the only one: a node cannot be edited into nothing.
+  askRetire(n, from, box, apis) {
+    const api = n.kind === trust.NODE_API;
+    this.ask({
+      title: "Server »" + n.id + "« stilllegen",
+      body: [
+        el("p", null, "Der Server wird aus der Vertrauensliste dieser Anlage genommen. "
+          + "Danach glaubt diese Anlage ihm nicht mehr und nimmt keine Verbindung mehr zu ihm auf."),
+        ...(api ? [chars(n.url)] : []),
+        el("p", null, "Der Server selbst läuft weiter; seine Dienste hören nicht auf. "
+          + "Um ihn wieder aufzunehmen, muss er erneut beitreten."),
+      ],
+      go: "Server stilllegen",
+      from,
+      run: async () => {
+        // The count is taken again from the version in force and not from what
+        // the screen was drawn with: between drawing and clicking a neighbour
+        // may have taken the other API server out, and then this one is the
+        // last.
+        const now = this.trust?.current?.()?.list?.nodes ?? [];
+        const left = now.filter((x) => x !== null && typeof x === "object"
+          && x.kind === trust.NODE_API).length;
+        if (api && left <= 1) {
+          Users.say(box, "Das ist der einzige API-Server dieser Anlage. Er kann nicht "
+            + "stillgelegt werden, weil die Anlage danach nicht mehr erreichbar wäre.");
+          return;
+        }
+        await this.joinNode((next) => {
+          next.nodes = next.nodes.filter((x) => !(x !== null && typeof x === "object"
+            && x.id === n.id));
+        });
+        Users.say(box, "Der Server »" + n.id + "« ist stillgelegt.");
+        from.disabled = true;
+      },
+      failed: "Der Server konnte nicht stillgelegt werden.",
+      msg: box.querySelector(".note"),
+    });
   }
 
   async fillNodes(box) {
@@ -599,26 +806,45 @@ class Users {
 
   fillPairCode(box) {
     const b = button("go", "Kopplungscode zeigen", null);
-    b.addEventListener("click", () => this.showPairCode(box, b));
+    b.addEventListener("click", () => this.showCode(box, b, core.ACT_PAIR_CODE, tunnel.parsePairCode));
     box.append(b);
   }
 
-  // A pairing code is pasted into the script of a new controller, and it
-  // names the API to dial and the version to believe. So it is shown only
-  // once tunnel.checkCode has agreed with the version THE SHELL verified -
-  // never because the API sent it. If the code names a higher number than
-  // the shell has, the chain is fetched first and the question asked again;
-  // a code that still does not fit is not put on screen at all, because a
-  // code on screen is a code somebody will paste.
-  async showPairCode(box, b) {
+  // A join code is pasted into the script of a FURTHER API server
+  // (ngc-api.sh, answer join_code), and it names the same three things a
+  // pairing code does. So it is shown under the same one rule, and the
+  // apps/web contract names the two together: "Kopplungs- und Beitrittscodes
+  // (Kern-Aktionen pair-code und join-code) zeigst du erst, wenn ... stimmt"
+  // (apps/web/CLAUDE.md). Without this way nothing could answer that
+  // question of the script at all.
+  fillJoinCode(box) {
+    const b = button("go", "Beitrittscode zeigen", null);
+    b.addEventListener("click", () => this.showCode(box, b, core.ACT_JOIN_CODE, tunnel.parseJoinCode));
+    box.append(b);
+  }
+
+  // A pairing code is pasted into the script of a new controller, a join code
+  // into that of a new API server, and both name the API to dial and the
+  // version to believe. So either is shown only once tunnel.checkCode has
+  // agreed with the version THE SHELL verified - never because the API sent
+  // it. If the code names a higher number than the shell has, the chain is
+  // fetched first and the question asked again; a code that still does not
+  // fit is not put on screen at all, because a code on screen is a code
+  // somebody will paste.
+  //
+  // parse is the reader of the one prefix this action answers with, so a
+  // join code shown under the pairing button, or the other way round, is
+  // refused before anything reaches the screen: the prefix is part of what
+  // the reader checks (contracts/tunnel.js, parseCode).
+  async showCode(box, b, action, parse) {
     const old = box.querySelector(".code");
     if (old) old.remove();
     Users.say(box, "");
     b.disabled = true;
     try {
-      const r = await this.call(core.ACT_PAIR_CODE);
+      const r = await this.call(action);
       if (this.dead) return;
-      const c = tunnel.parsePairCode(r.code);
+      const c = parse(r.code);
       let v = this.trust?.current?.() ?? null;
       // FIXRUNDE 2, K1. This used to call refresh() with NO number and then
       // work with what came back. Both halves were wrong, and each on its own
