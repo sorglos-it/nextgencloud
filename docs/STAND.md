@@ -246,9 +246,19 @@ weil `jq` auf diesem Rechner fehlt.
 ## Offene Entscheidungen
 
 - **Vertragsfassung 1.2:** Was der nächste Schnitt an `shared/` tragen muss,
-  steht gesammelt in [`vertraege-v1.2.md`](vertraege-v1.2.md) — 18 Punkte aus
-  allen vier Strängen, jeder mit Herkunft und Messung. Mehrere Module verweisen
-  im Code darauf; die Datei ist die Liste, die dort gemeint ist.
+  steht gesammelt in [`vertraege-v1.2.md`](vertraege-v1.2.md) — **83 Einträge**
+  aus allen vier Strängen, jeder mit Herkunft und Messung (bis 18.10.2026 stand
+  hier „18 Punkte"). Mehrere Module verweisen im Code darauf; die Datei ist die
+  Liste, die dort gemeint ist.
+  - Seit dem 18.10.2026 hat sie **ein Inhaltsverzeichnis mit Stand je Punkt**
+    (gilt · überholt durch Punkt N · berichtigt Punkt N · offen) und **die
+    offenen Entscheidungen gesammelt am Ende**. Wer eine Entscheidung sucht,
+    liest diesen einen Abschnitt, nicht 83 Einträge.
+  - **Die Nummern 19 bis 35 sind dort doppelt vergeben:** einmal als Punkt der
+    Sammelliste am Anfang, einmal als Abschnitt `## Punkt N` darunter. „Punkt
+    30" meint also zwei verschiedene Dinge. Das ist der zweite Grund für die
+    Regel oben unter „Wie hier gearbeitet wird": **die Überschrift zitieren,
+    nicht die Nummer.**
 
 - **Release-Stick:** Mit welchem Werkzeug der Hardware-Stick das Release signiert, wird vor dem
   ersten Release entschieden. `ngc-store` signiert nur Test-Releases.
