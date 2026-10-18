@@ -588,7 +588,7 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 	// method for it, counted 18.10.2026), and a guard without memory is no
 	// guard. So a store activation does not run until somebody gives it one;
 	// nothing is lost by it, because no store activation ran before either.
-	installer := appInstaller(version, cfg, st, engine, keeper, nodeID)
+	installer := appInstaller(version, cfg, st, engine, nodeID)
 	srv := serve.New(serve.Deps{
 		// serve.Deps may not change once New has seen it, so this one is the
 		// ID AS IT STANDS AT THE START, and that is a named price: a server an
@@ -694,10 +694,48 @@ func webCompare(cfg *config.Controller, k *chain.Keeper) func(ctx context.Contex
 // interface so that nothing of serve reaches for package install; what this
 // program hands over is a closure, because the Manager behind it is built
 // anew for every call.
-type installerFunc func(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error)
+type installerFunc func(ctx context.Context, d access.Decision, list *trust.List,
+	r io.Reader) ([]byte, error)
 
-func (f installerFunc) Activate(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error) {
-	return f(ctx, d, r)
+func (f installerFunc) Activate(ctx context.Context, d access.Decision, list *trust.List,
+	r io.Reader) ([]byte, error) {
+	return f(ctx, d, list, r)
+}
+
+// appDeps is what install.Manager is built out of for ONE activation. It is a
+// type of its own so a case can read what the wiring hands over -- the node
+// above all, which comes out of the verified list and not out of the file, and
+// which no case saw while this was a literal inside the closure (18.10.2026).
+type appDeps struct {
+	version string
+	cfg     *config.Controller
+	st      *state.Store
+	engine  ctrlrt.Engine
+	nodeID  func() string
+}
+
+// deps are the dependencies of the Manager for an activation that runs
+// against THIS version of the trust list.
+func (a appDeps) deps(list *trust.List) install.Deps {
+	return install.Deps{
+		State: a.st, Engine: a.engine, Sys: install.Host{ServerKey: a.cfg.DBKey.Bytes()},
+		// The list of the CHANNEL, handed over by serve, and the node as the
+		// newest verified version names it. A list reached for here instead
+		// would be whichever version is newest by now, and the package would
+		// be checked against another one than the task was verified with.
+		List: list, Node: a.nodeID(), Roles: a.cfg.Roles,
+		NGC: a.version, ReleaseKey: a.cfg.ReleaseKey, StageDir: config.StageDir,
+		// store.MaxPackage is the contract's own bound, and it is safe to
+		// name here although a package costs twice its size while it is
+		// checked: install.bound cuts this down to what the disk really has
+		// free at every activation, and answers ErrSpace rather than filling
+		// it.
+		Max: store.MaxPackage,
+		// No memory of a catalogue number, and appInstaller refuses every
+		// store that would need one before this is ever read.
+		LastSeq: func(string) uint64 { return 0 },
+		Now:     func() int64 { return time.Now().Unix() },
+	}
 }
 
 // appInstaller is the installer of apps this program hands the server, and
@@ -707,8 +745,10 @@ func (f installerFunc) Activate(ctx context.Context, d access.Decision, r io.Rea
 // It builds its Manager ANEW for every call -- see the comment at its one
 // caller for why -- and refuses every store but the uploaded one.
 func appInstaller(version string, cfg *config.Controller, st *state.Store,
-	engine ctrlrt.Engine, keeper *chain.Keeper, nodeID func() string) installerFunc {
-	return func(ctx context.Context, d access.Decision, r io.Reader) ([]byte, error) {
+	engine ctrlrt.Engine, nodeID func() string) installerFunc {
+	a := appDeps{version: version, cfg: cfg, st: st, engine: engine, nodeID: nodeID}
+	return func(ctx context.Context, d access.Decision, list *trust.List,
+		r io.Reader) ([]byte, error) {
 		// THE REFUSAL ABOVE, BUILT AND NOT ONLY WRITTEN. The comment said a
 		// store app is refused and nothing did it, until this line was added
 		// on 18.10.2026 -- a comment that says the opposite of the code is
@@ -719,11 +759,11 @@ func appInstaller(version string, cfg *config.Controller, st *state.Store,
 		// are no params of this action are the peer’s fault and read as one;
 		// the Manager reads them again the same way, which is one question
 		// asked twice and cheaper than a value carried between the two.
-		a, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
+		act, ok := core.Lookup(core.AppStore, core.ServiceController, core.ActActivate)
 		if !ok {
 			return nil, install.ErrInternal
 		}
-		params, err := core.ParseParams(a, d.Params())
+		params, err := core.ParseParams(act, d.Params())
 		if err != nil {
 			return nil, install.ErrVerify
 		}
@@ -731,22 +771,6 @@ func appInstaller(version string, cfg *config.Controller, st *state.Store,
 		if !ok || p.Store != core.LocalStore {
 			return nil, install.ErrInternal
 		}
-		return install.New(install.Deps{
-			State: st, Engine: engine, Sys: install.Host{ServerKey: cfg.DBKey.Bytes()},
-			// The list and the node AS THEY ARE NOW, which is the whole
-			// reason this closure exists.
-			List: keeper.List(), Node: nodeID(), Roles: cfg.Roles,
-			NGC: version, ReleaseKey: cfg.ReleaseKey, StageDir: config.StageDir,
-			// store.MaxPackage is the contract’s own bound, and it is safe to
-			// name here although a package costs twice its size while it is
-			// checked: install.bound cuts this down to what the disk really
-			// has free at every activation, and answers ErrSpace rather than
-			// filling it.
-			Max: store.MaxPackage,
-			// No memory of a catalogue number, and the closure above refuses
-			// every store that would need one before this is ever read.
-			LastSeq: func(string) uint64 { return 0 },
-			Now:     func() int64 { return time.Now().Unix() },
-		}).Activate(ctx, d, r)
+		return install.New(a.deps(list)).Activate(ctx, d, r)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/install"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/link"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -19,14 +20,19 @@ import (
 // the error a case gave it.
 type fakeInstaller struct {
 	called bool
-	read   []byte
+	// list is the trust list the server handed over, kept so a case can see
+	// WHICH version an activation ran against.
+	list *trust.List
+	read []byte
 	// limit, where it is above zero, is how much this installer reads before
 	// it answers -- which is how a case measures that the rest is drained.
 	limit int
 	err   error
 }
 
-func (f *fakeInstaller) Activate(_ context.Context, _ access.Decision, r io.Reader) ([]byte, error) {
+func (f *fakeInstaller) Activate(_ context.Context, _ access.Decision, list *trust.List,
+	r io.Reader) ([]byte, error) {
+	f.list = list
 	f.called = true
 	var err error
 	if f.limit > 0 {
@@ -118,7 +124,7 @@ func TestActivateReachesTheInstallerWithThePackage(t *testing.T) {
 	f := &fakeInstaller{}
 	s := New(Deps{Installer: f})
 	pkg := bytes.Repeat([]byte{7}, 4096)
-	v, cl := s.activate(context.Background(), activateDecision(t), bytes.NewReader(pkg))
+	v, cl := s.activate(context.Background(), activateDecision(t), nil, bytes.NewReader(pkg))
 	if cl != nil {
 		t.Fatalf("the channel ended %+v, want a result", cl)
 	}
@@ -140,7 +146,7 @@ func TestActivateReachesTheInstallerWithThePackage(t *testing.T) {
 // API.
 func TestActivateWithoutAnInstallerIsThisServersFault(t *testing.T) {
 	s := New(Deps{})
-	_, cl := s.activate(context.Background(), activateDecision(t), bytes.NewReader(nil))
+	_, cl := s.activate(context.Background(), activateDecision(t), nil, bytes.NewReader(nil))
 	if cl == nil || cl.Code != wire.CodeInternal {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeInternal)
 	}
@@ -158,7 +164,7 @@ func TestActivateRefusesADecisionForAnotherAction(t *testing.T) {
 	}
 	d := activateDecision(t)
 	d.Action = other
-	_, cl := s.activate(context.Background(), d, bytes.NewReader(nil))
+	_, cl := s.activate(context.Background(), d, nil, bytes.NewReader(nil))
 	if cl == nil || cl.Code != wire.CodeInternal {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeInternal)
 	}
@@ -181,7 +187,7 @@ func TestEveryFailureOfAnActivationHasItsCode(t *testing.T) {
 	} {
 		f := &fakeInstaller{err: c.err}
 		s := New(Deps{Installer: f})
-		_, cl := s.activate(context.Background(), activateDecision(t), bytes.NewReader([]byte("x")))
+		_, cl := s.activate(context.Background(), activateDecision(t), nil, bytes.NewReader([]byte("x")))
 		if cl == nil || cl.Code != c.want {
 			t.Errorf("%v ended the channel %+v, want %s", c.err, cl, c.want)
 		}
@@ -339,7 +345,7 @@ func TestWhatTheInstallerLeftIsDrained(t *testing.T) {
 	s := New(Deps{Installer: f})
 	frames := &fakeFrames{in: []link.Inbound{data(1, 2, 3, 4), data(5, 6), eofFrame}}
 	in := &chanInput{ctx: context.Background(), ch: frames, max: 100}
-	_, cl := s.activate(context.Background(), activateDecision(t), in)
+	_, cl := s.activate(context.Background(), activateDecision(t), nil, in)
 	if cl != nil {
 		t.Fatalf("the channel ended %+v, want a result", cl)
 	}
@@ -368,7 +374,7 @@ func TestTheBoundBeatsTheInstallersAnswer(t *testing.T) {
 	s := New(Deps{Installer: f})
 	frames := &fakeFrames{in: []link.Inbound{data(1, 2, 3), data(4, 5, 6), eofFrame}}
 	in := &chanInput{ctx: context.Background(), ch: frames, max: 4}
-	_, cl := s.activate(context.Background(), activateDecision(t), in)
+	_, cl := s.activate(context.Background(), activateDecision(t), nil, in)
 	if cl == nil || cl.Code != wire.CodeVerify {
 		t.Fatalf("the installer answered %+v", cl)
 	}
@@ -389,7 +395,7 @@ func TestActivateHandsTheDecisionOverUntouched(t *testing.T) {
 	s := New(Deps{Installer: f})
 	d := activateDecision(t)
 	d.Opened.Open.Params = json.RawMessage(`{"app":"de.example.notes"}`)
-	if _, cl := s.activate(context.Background(), d, bytes.NewReader(nil)); cl != nil {
+	if _, cl := s.activate(context.Background(), d, nil, bytes.NewReader(nil)); cl != nil {
 		t.Fatalf("the channel ended %+v", cl)
 	}
 	if string(seen.Params()) != `{"app":"de.example.notes"}` {
@@ -397,9 +403,59 @@ func TestActivateHandsTheDecisionOverUntouched(t *testing.T) {
 	}
 }
 
+// AND IT IS THE LIST OF THE DECISION, over a real channel. The case above
+// hands the list to Server.activate itself, so it cannot see whether Open
+// passes on the version it decided the channel on -- a mutant that handed
+// core() a nil list lived on it. This one goes through the whole way, and the
+// list that arrives is the keeper's own version.
+func TestTheVersionAChannelWasDecidedOnIsTheOneTheInstallerGets(t *testing.T) {
+	w := newWorld(t)
+	f := &fakeInstaller{}
+	w.rebuild(func(d *Deps) { d.Installer = f })
+	ended := w.tunnel(t, func(a *apiSide) {
+		a.open(1, activateChannelOpen(t, w, 0x4c))
+		a.eof(1)
+		a.result(1)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if !f.called {
+		t.Fatal("the installer was never called -- then this case measures no list")
+	}
+	if f.list == nil {
+		t.Fatal("the installer got no trust list, although the channel was decided on one")
+	}
+	if f.list != w.keep.List() {
+		t.Fatalf("the installer got %v, want the version the channel was decided on",
+			f.list.Installation)
+	}
+}
+
+// THE LIST OF THE CHANNEL REACHES THE INSTALLER, byte-identical and not a
+// version read anew. Server.Open decides a whole channel on one version, and
+// an activation runs long enough for the next one to land in between: an
+// installer handed the newest list instead would check the package against
+// another version than the one that verified the task.
+func TestTheListOfTheChannelReachesTheInstaller(t *testing.T) {
+	f := &fakeInstaller{}
+	s := New(Deps{Installer: f})
+	mine := &trust.List{Installation: "i-1"}
+	if _, cl := s.activate(context.Background(), activateDecision(t), mine,
+		bytes.NewReader(nil)); cl != nil {
+		t.Fatalf("the channel ended %+v", cl)
+	}
+	if f.list != mine {
+		t.Fatalf("the installer got %v, want the list of the channel", f.list)
+	}
+}
+
 type recordingInstaller struct{ onCall func(access.Decision) }
 
-func (r *recordingInstaller) Activate(_ context.Context, d access.Decision, _ io.Reader) ([]byte, error) {
+func (r *recordingInstaller) Activate(_ context.Context, d access.Decision, _ *trust.List,
+	_ io.Reader) ([]byte, error) {
 	r.onCall(d)
 	return []byte("{}"), nil
 }

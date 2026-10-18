@@ -53,6 +53,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
@@ -151,7 +152,12 @@ type action func(ctx context.Context, d access.Decision, in []byte) (any, *wire.
 // of the channel instead of the bytes, and whatever it does not read is
 // drained afterwards (chanInput.drain). A FlowTransfer action may carry
 // gigabytes, so the input of one never becomes a value here.
-type transfer func(ctx context.Context, d access.Decision, r io.Reader) (any, *wire.Close)
+// It gets the trust list of the channel as well, because an action that
+// carries a file runs long enough for the next version to land in between:
+// Open decides the whole channel on ONE version (the comment there says why),
+// and a handler that reached for the newest list instead would check the
+// package against another version than the one the task was verified with.
+type transfer func(ctx context.Context, d access.Decision, list *trust.List, r io.Reader) (any, *wire.Close)
 
 // name is an action of core.All, as a key: core.Action holds a function and
 // cannot be compared. The three are named rather than counted, so a reader
@@ -349,13 +355,16 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 	// version in place of it (chain.Keeper.Current, measured in
 	// TestTheListOfAChannelDoesNotChangeUnderIt) — so holding the pointer is
 	// holding the version.
-	d, cl := access.Check(ctx, access.Request{Payload: ch.OpenPayload(), List: s.d.Chain.List(),
+	list := s.d.Chain.List()
+	d, cl := access.Check(ctx, access.Request{Payload: ch.OpenPayload(), List: list,
 		Node: s.d.Node, Now: s.now(), Apps: s.d.State, Tasks: s.d.State})
 	if cl != nil {
 		return s.end(ch, *cl)
 	}
 	if d.Core {
-		return s.core(ctx, ch, d)
+		// The version held, not read anew: what runs below belongs to the
+		// channel this one decided.
+		return s.core(ctx, ch, d, list)
 	}
 	return s.openApp(ctx, ch, d)
 }
@@ -363,14 +372,14 @@ func (s *Server) Open(ctx context.Context, ch *link.Channel, _ tunnel.Opened) er
 // core runs the channel of a core action of this controller: the first GRANT,
 // the input up to the EOF of the API, the action, and its result as DATA, EOF
 // and CLOSE ok.
-func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision) error {
+func (s *Server) core(ctx context.Context, ch *link.Channel, d access.Decision, list *trust.List) error {
 	key := name{d.Action.App, d.Action.Service, d.Action.Name}
 	// What carries a file is looked for FIRST, and the two maps may never
 	// hold the same key: an action that stood in both would be served by
 	// whichever map is read first, which is a decision nobody wrote down.
 	// TestNoActionIsServedTwice holds that they do not overlap.
 	if flow, ok := s.flows[key]; ok {
-		return s.flow(ctx, ch, d, flow)
+		return s.flow(ctx, ch, d, list, flow)
 	}
 	run, ok := s.acts[key]
 	if !ok {

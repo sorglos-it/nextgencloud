@@ -776,7 +776,7 @@ func TestTheInstallerRefusesEveryStoreButTheLocalOne(t *testing.T) {
 	// wireUp hands to serve.Deps -- named rather than closed over so a case
 	// can reach it without a door in the product that only a test uses.
 	inst := appInstaller("1.2.3", cfg, st, ctrlrt.NewPodman(podmanOf(cfg)),
-		keeper, func() string { return cfg.Node })
+		func() string { return cfg.Node })
 	// The refusal is told apart from every other ErrInternal by WHEN it comes:
 	// a store app is turned away before a byte of the package is read, the
 	// uploaded one is not. Both answer the same code in this fixture (the
@@ -791,7 +791,7 @@ func TestTheInstallerRefusesEveryStoreButTheLocalOne(t *testing.T) {
 		d := access.Decision{Core: true, Action: activateActionOf(t),
 			Task: &task.Task{Params: params}}
 		r := &countingReader{}
-		_, err := inst.Activate(context.Background(), d, r)
+		_, err := inst.Activate(context.Background(), d, keeper.List(), r)
 		return err, r.reads
 	}
 	// A store of the trust list is refused before anything is read, and with
@@ -835,12 +835,69 @@ func TestABrokenTaskOfAnActivationIsAVerificationFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	inst := appInstaller("1.2.3", cfg, st, ctrlrt.NewPodman(podmanOf(cfg)),
-		keeper, func() string { return cfg.Node })
+		func() string { return cfg.Node })
 	d := access.Decision{Core: true, Action: activateActionOf(t),
 		Task: &task.Task{Params: json.RawMessage(`{"app":42}`)}}
-	_, err := inst.Activate(ctx, d, &countingReader{})
+	_, err := inst.Activate(ctx, d, keeper.List(), &countingReader{})
 	if !errors.Is(err, install.ErrVerify) {
 		t.Fatalf("a task that does not parse answered %v, want install.ErrVerify", err)
+	}
+}
+
+// TestTheManagerOfAnActivationGetsTheListAndTheNodeOfTheChannel holds the two
+// values of install.Deps that MOVE, and it reads them where the wiring hands
+// them over rather than guessing from an answer: the list is the one of the
+// channel (serve hands it in, so an activation checks the package against the
+// version its task was verified with), and the node is what the newest
+// verified version names -- not what controller.json remembers.
+//
+// Both lived as mutants while they stood in a literal inside the closure:
+// nothing of this package could see a Deps that only install ever read
+// (18.10.2026).
+func TestTheManagerOfAnActivationGetsTheListAndTheNodeOfTheChannel(t *testing.T) {
+	ctx := context.Background()
+	st := newState(t)
+	// The list names this server "ctl-1" under the Noise key of
+	// trusttest.NodeKeys(0xC1); the file goes on remembering another name.
+	admin := trusttest.NewSigner(1)
+	v1 := admin.Sign(t, trusttest.Genesis(admin))
+	if err := st.PutVersion(ctx, v1, 1); err != nil {
+		t.Fatal(err)
+	}
+	ctlDH, _ := trusttest.NodeKeys(0xC1)
+	cfg := &config.Controller{
+		Node: "ctl-aus-der-datei", Name: "srv-1", Roles: []string{tunnel.RoleServices},
+		NoiseKey: config.NewSecret(ctlDH.Private), DBKey: config.NewSecret(make([]byte, 64)),
+		APIs: []config.APIRef{{URL: "wss://one.example:8443/tunnel"}},
+	}
+	key, err := staticKey(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keeper := chain.New(st, trust.Anchor{Seq: 1, Hash: trust.Hash(v1)})
+	if err := keeper.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nodeID := func() string {
+		if id := keeper.NodeID(key.Public); id != "" {
+			return id
+		}
+		return cfg.Node
+	}
+	a := appDeps{version: "1.2.3", cfg: cfg, st: st,
+		engine: ctrlrt.NewPodman(podmanOf(cfg)), nodeID: nodeID}
+	// The list of the channel, handed over and not reached for: a second,
+	// different list proves it is THIS one that arrives.
+	mine := &trust.List{Installation: "i-1"}
+	if got := a.deps(mine); got.List != mine {
+		t.Fatalf("the Manager installs against %v, want the list of the channel", got.List)
+	}
+	if got := a.deps(nil); got.List != nil {
+		t.Fatal("the Manager reached for a list of its own where the channel brought none")
+	}
+	// And the node out of the verified version, not out of the file.
+	if got := a.deps(mine).Node; got != "ctl-1" {
+		t.Fatalf("the Manager installs as node %q, want %q out of the list", got, "ctl-1")
 	}
 }
 
