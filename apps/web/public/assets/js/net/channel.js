@@ -548,10 +548,20 @@ export async function sendIn(link, action, opts = {}) {
 
 // sendInBytes is sendIn without the last step, for the same reason callBytes
 // exists.
-export async function sendInBytes(link, action, { params, taskBytes, stream, onProgress } = {}) {
+//
+// THE CONFIRMATION TRAVELS HERE TOO, and until 18.10.2026 it did not: this
+// function took no confirmBytes and dropped one without a word, while
+// callBytes beside it forwarded it. The row that pays for that is the upload -
+// contracts/core.js has ACT_UPLOAD as FLOW_IN, and core.critical says it is
+// critical, so the one action that MUST carry a confirmation was the one whose
+// helper could not carry it. A caller that hands a confirmation to a helper
+// which forgets it gets E_CONFIRM from the API and no word about why.
+export async function sendInBytes(link, action,
+  { params, taskBytes, confirmBytes, stream, onProgress } = {}) {
   const ch = await link.open({
     app: action.app, service: action.service, action: action.name,
     params: taskBytes ? null : params, window: wire.DEFAULT_WINDOW, e2e: null, taskBytes,
+    confirmBytes,
   });
   await ch.firstGrant();
   let sent = 0;
