@@ -47,7 +47,8 @@
 import { b64encode } from "../contracts/b64.js";
 import { UIWriter } from "../contracts/uitar.js";
 import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contracts/sign.js";
-import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
+import { encodeList, hash as listHash, needsConfirm, parseList, parseSigned, validStore } from "../contracts/trust.js";
+import { critical as criticalOf, lookup as lookupAction } from "../contracts/core.js";
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
@@ -720,10 +721,49 @@ export async function fakeWorld() {
     return out;
   };
 
+  // refuseWithoutConfirm is the one rule of the API this stand-in keeps
+  // itself, and it is here because leaving it out cost a whole blocker.
+  //
+  // WHAT IT COST. ngc.store/api/upload is critical for every params
+  // (core.critical), and the setup writes the admin role at level critical
+  // (auth/setup.js), so trust.needsConfirm asks for the user's confirmation on
+  // EVERY installation. The API refuses an OPEN without it with E_CONFIRM
+  // (task.Check -> ErrNoTask). The store sent none, and nothing here said so:
+  // this stand-in took every call as it came, and `level` defaults to "off"
+  // below, where nothing needs confirming at all. So every case of the upload
+  // was green while no package could be uploaded on a real installation -- the
+  // mock was more generous than the contract, and the measurement measured its
+  // own generosity.
+  //
+  // It reads the policy out of the list IN FORCE with the contract's own
+  // function, never with a rule of its own: a stand-in that decided for itself
+  // would let through exactly what a verifier refuses, which is how this got
+  // out in the first place.
+  const refuseWithoutConfirm = (app, service, name, o) => {
+    const row = lookupAction(app, service, name);
+    if (row === null) return;
+    const op = {
+      // The node matters only for a root task, and a root task carries it
+      // inside its signed bytes; what is read here is the policy for the
+      // action, so "" is the honest value and not a guess.
+      app, action: name, node: "",
+      root: row.root === true, changes: row.changes === true,
+      critical: criticalOf(row, null),
+    };
+    if (!needsConfirm(inForce.list, admin.id, op)) return;
+    if (!o.confirmBytes || o.confirmBytes.length === 0) {
+      throw new Error(`fake-link: ${app}/${service}/${name} needs the user's confirmation (E_CONFIRM)`);
+    }
+    if (!o.taskBytes || o.taskBytes.length === 0) {
+      throw new Error(`fake-link: ${app}/${service}/${name} carries a confirmation without a task (wire.parseOpen)`);
+    }
+  };
+
   const link = {
     async call(app, service, name, params, opts) {
       window.__ngcChannelsOpened++;
       const o = opts ?? {};
+      refuseWithoutConfirm(app, service, name, o);
       const body = await collect(o.stream);
       o.onProgress?.(body.length);
       window.__ngcSent.push({

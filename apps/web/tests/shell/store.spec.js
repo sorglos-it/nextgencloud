@@ -36,6 +36,31 @@ async function store(page, world = {}) {
 
 const tab = (page, name) => page.getByRole("tab", { name, exact: true });
 
+// confirmWith answers the second question - the one the trust list asks for a
+// critical action (shell/confirm.js) - with the password the stand-in really
+// derives its key from. Reading the password out of the world and not writing
+// it here a second time is the point: a password that had drifted from the key
+// would make the signature fail, and the case would blame the shell for the
+// fixture.
+async function confirmWith(page) {
+  const dialog = page.getByRole("dialog", { name: "Bitte bestätigen" });
+  await expect(dialog).toBeVisible();
+  const PASSWORD = await page.evaluate(async () =>
+    (await import("/assets/js/shell/fake-link.js")).PASSWORD);
+  expect(typeof PASSWORD, "the stand-in names the password it derives from").toBe("string");
+  await dialog.locator("input[type=password]").fill(PASSWORD);
+  await dialog.getByRole("button", { name: "Bestätigen", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
+
+// denyConfirm says no to the same question.
+async function denyConfirm(page) {
+  const dialog = page.getByRole("dialog", { name: "Bitte bestätigen" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
+
 // sent reads back what the shell handed the link, with the contracts of the
 // page and not with a parser of the test's own: a task is read by
 // sign.parseEnvelope and task.parseTask, exactly as every verifier reads it.
@@ -572,4 +597,58 @@ test("a name out of the catalog stays text, and nothing of it runs", async ({ pa
   await tab(page, "Apps").click();
   await expect(page.locator(".approw").first()).toContainText("<img src=x onerror=alert(1)>Böse");
   expect(await page.locator(".store img, .store script, .store svg, .store iframe").count()).toBe(0);
+});
+
+// ---------------------------------- 2b. the upload needs the confirmation
+
+// A PACKAGE COULD NEVER BE UPLOADED ON A REAL INSTALLATION, and every case
+// above was green while that was true. Measured on a running installation on
+// 17.10.2026: the upload ended at once, the person read "Das Paket kam nicht
+// an.", and nothing reached the API.
+//
+// The chain, each link read in the code: ngc.store/api/upload is critical for
+// every params (core.critical); the setup writes the admin role at level
+// critical (auth/setup.js); trust.needsConfirm therefore asks for the user's
+// confirmation; and the API refuses an OPEN without it with E_CONFIRM
+// (task.Check -> ErrNoTask). The store sent neither a task nor a
+// confirmation.
+//
+// WHY NOTHING WENT RED: shell/fake-link.js took every call as it came, and
+// its role level defaults to "off", where nothing needs confirming at all.
+// The cases ran in a world whose policy asked for nothing. So this one names
+// the level it measures, and the stand-in now keeps the rule itself.
+test("the upload carries a signed task and the user's confirmation where the list asks for one", async ({ page }) => {
+  await store(page, { level: "critical", passwordKey: true });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
+  });
+  // The question is asked, and answering it is what sends the package.
+  await confirmWith(page);
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await expect.poll(() => names(page)).toContain("ngc.store/upload");
+  const sent = await page.evaluate(() => {
+    const rec = window.__ngcSent.find((s) => s.name === "upload");
+    return { task: (rec?.task ?? "").length, confirm: (rec?.confirm ?? "").length, body: (rec?.body ?? "").length };
+  });
+  expect(sent.task).toBeGreaterThan(0);
+  expect(sent.confirm).toBeGreaterThan(0);
+  expect(sent.body).toBeGreaterThan(0);
+  // And the package got through: the activate box stands, which only appears
+  // once the shell's checksums and the API's answer agree.
+  await expect(page.locator(".store").getByRole("button", { name: "Aktivieren" })).toBeVisible();
+});
+
+// The other half of the same rule: a person who says no to the question sends
+// nothing at all. A shell that sent the package first and asked afterwards
+// would have handed the installation a package nobody confirmed.
+test("saying no to the confirmation sends no package", async ({ page }) => {
+  await store(page, { level: "critical", passwordKey: true });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream", buffer: Buffer.from(PKG),
+  });
+  await denyConfirm(page);
+  expect(await names(page)).not.toContain("ngc.store/upload");
+  await expect(page.locator(".store").getByRole("button", { name: "Aktivieren" })).toHaveCount(0);
 });
