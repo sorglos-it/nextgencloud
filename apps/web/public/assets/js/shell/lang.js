@@ -60,8 +60,8 @@ export const LANGS = Object.freeze(["de", "en", "fr", "it", "es"]);
 // missing key is answered out of.
 export const FALLBACK = "en";
 
-// MEASURED with `wc -c public/assets/lang/*.json`: the five files are 1 278
-// to 1 482 bytes, the largest of them French. The bound is here so an answer
+// MEASURED with `wc -c public/assets/lang/*.json`: the five files are 1 502
+// to 1 772 bytes, the largest of them French. The bound is here so an answer
 // that is NOT a language file is dropped while it arrives rather than after
 // it is all in memory - the same reason net/config.js bounds /config.json.
 export const MAX_LANG = 8 << 10;
@@ -91,6 +91,8 @@ export const BUILT_IN = Object.freeze({
   "setup.password.missing": "Please choose a password.",
   "setup.password.different": "The two passwords are not the same.",
   "setup.signin": "NGC is set up. Please sign in now.",
+  "logout.button": "Sign out",
+  "logout.failed": "NGC could not sign you out. You are still signed in. Please try again.",
 });
 
 // A map of strings, read through the house decoder with a budget: a language

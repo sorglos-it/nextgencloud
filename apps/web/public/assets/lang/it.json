@@ -15,5 +15,7 @@
   "setup.name.bad": "Il nome utente può contenere solo lettere minuscole, cifre e . _ - e deve iniziare con una lettera o una cifra.",
   "setup.password.missing": "Scegliere una password.",
   "setup.password.different": "Le due password non coincidono.",
-  "setup.signin": "NGC è configurato. Effettuare ora l'accesso."
+  "setup.signin": "NGC è configurato. Effettuare ora l'accesso.",
+  "logout.button": "Esci",
+  "logout.failed": "NGC non ha potuto disconnetterti. Sei ancora connesso. Riprova."
 }

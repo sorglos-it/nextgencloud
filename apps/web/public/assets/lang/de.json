@@ -15,5 +15,7 @@
   "setup.name.bad": "Der Benutzername darf nur kleine Buchstaben, Ziffern und . _ - enthalten und muss mit einem Buchstaben oder einer Ziffer anfangen.",
   "setup.password.missing": "Bitte ein Passwort vergeben.",
   "setup.password.different": "Die beiden Passwörter sind nicht gleich.",
-  "setup.signin": "NGC ist eingerichtet. Bitte jetzt anmelden."
+  "setup.signin": "NGC ist eingerichtet. Bitte jetzt anmelden.",
+  "logout.button": "Abmelden",
+  "logout.failed": "NGC konnte Sie nicht abmelden. Sie sind noch angemeldet. Bitte erneut versuchen."
 }
