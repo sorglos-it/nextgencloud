@@ -642,7 +642,7 @@ class Users {
   // (apps/web/CLAUDE.md). Without this way nothing could answer that
   // question of the script at all.
   fillJoinCode(box) {
-    const b = button("go", "Beitrittscode zeigen", null);
+    const b = button("go", t("users.joincode.show"), null);
     b.addEventListener("click", () => this.showCode(box, b, core.ACT_JOIN_CODE, tunnel.parseJoinCode));
     box.append(b);
   }

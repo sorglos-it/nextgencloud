@@ -844,7 +844,7 @@ class Store {
       // ones count.
       await this.ask(action, null, signed);
     } catch {
-      this.say("error", "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
+      this.say("error", t("store.node.refused"));
       return false;
     }
     this.say("info", done);

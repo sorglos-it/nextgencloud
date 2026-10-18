@@ -167,9 +167,7 @@ async function start() {
   const passwordKeys = await passwordLoginFits();
   const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
   if (!passwordKeys && (anchor === null || !hasParty)) {
-    message("Dieser Browser kann die Passwort-Anmeldung von NGC nicht ausführen: er gibt den "
-      + "öffentlichen Teil eines Passwort-Schlüssels nicht heraus. Bitte Chrome 137 oder "
-      + "Safari 17.4 oder neuer benutzen. Firefox kann es bis Version 141 nicht.");
+    message(t("shell.nopasswordkeys"));
     return;
   }
   if (anchor === null) {

@@ -112,7 +112,7 @@ class Desktop {
 
     const tray = el("div", null);
     tray.id = "tray";
-    const themeBtn = button(null, "🌗", "Design wechseln");
+    const themeBtn = button(null, "🌗", t("desktop.theme"));
     themeBtn.id = "themebtn";
     themeBtn.title = t("desktop.theme");
     themeBtn.addEventListener("click", () => toggleTheme());

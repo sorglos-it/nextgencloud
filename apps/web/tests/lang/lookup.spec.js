@@ -3,7 +3,7 @@
 // reaches the screen.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { test, expect, signIn } from "../fixtures/page.js";
+import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 
 const WEB = fileURLToPath(new URL("../..", import.meta.url));
 const tableOf = (tag) => JSON.parse(readFileSync(WEB + "/lang/" + tag + ".json", "utf8"));
@@ -174,7 +174,15 @@ test("no naked key stands on the mask", async ({ shell }) => {
   expect(await nakedKeys(shell, keys)).toEqual([]);
 });
 
+// IT NEEDS A DESKTOP, so it needs a password login - and that is a question
+// about the ENGINE, not about this file. MEASURED on the merged tree: this
+// case hung 30 s on Firefox with the password field "element is not enabled",
+// because shell/main.js disables that way where the engine cannot read the
+// public half of a password seed out of a PKCS#8 document (Firefox 141). The
+// gate is right and the case was simply older than it; the skip names the
+// missing step instead of letting the case time out.
 test("no naked key stands on the desktop", async ({ shell }) => {
+  await skipWithoutLogin(shell);
   const keys = Object.keys(tableOf("de"));
   await signIn(shell);
   await expect(shell.getByRole("button", { name: "Start" })).toBeVisible();
