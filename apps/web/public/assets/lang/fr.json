@@ -15,5 +15,8 @@
   "setup.name.bad": "Un nom d'utilisateur ne peut contenir que des minuscules, des chiffres et . _ - et doit commencer par une lettre ou un chiffre.",
   "setup.password.missing": "Veuillez choisir un mot de passe.",
   "setup.password.different": "Les deux mots de passe ne sont pas identiques.",
-  "setup.signin": "NGC est configuré. Veuillez vous connecter maintenant."
+  "setup.signin": "NGC est configuré. Veuillez vous connecter maintenant.",
+  "boot.noroute.password": "Ce navigateur ne peut pas effectuer la connexion par mot de passe de NGC : il ne fournit pas la partie publique d'une clé de mot de passe. Veuillez utiliser Chrome 137 ou Safari 17.4 ou plus récent. Firefox ne le peut pas jusqu'à la version 141.",
+  "boot.noroute.passkeysoff": "Aucune connexion n'est possible dans ce navigateur : il ne peut pas effectuer la connexion par mot de passe et les clés d'accès y sont désactivées. Veuillez activer les clés d'accès dans les paramètres du navigateur ou utiliser Chrome 137 ou Safari 17.4 ou plus récent.",
+  "boot.tooold": "Ce navigateur est trop ancien pour NGC. Veuillez utiliser Chrome 137 ou Safari 17.4 ou plus récent."
 }

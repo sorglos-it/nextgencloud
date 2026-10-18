@@ -229,7 +229,14 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
 // switched off and the mask SAYS SO, instead of taking a password, running
 // Argon2id over it and answering "Anmeldung fehlgeschlagen." - the sentence
 // for a wrong password, which is what Firefox 141 got until this round.
-export function loginView(root, { config, onSession, openTrust, passwordKeys = true } = {}) {
+// passkeys says whether this engine can ASK AN AUTHENTICATOR at all
+// (shell/main.js passkeyFits, measured there and not guessed here). false
+// means no passkey button, whatever the installation offers: a button that
+// runs into navigator.credentials.get of undefined would answer
+// "Anmeldung fehlgeschlagen." - the same lie as above, one route further on.
+// It is the ENGINE's half of that question; hasParty below is the
+// installation's, and a route needs both.
+export function loginView(root, { config, onSession, openTrust, passwordKeys = true, passkeys = true } = {}) {
   clear(root);
 
   const box = el("form", "loginbox");
@@ -277,7 +284,7 @@ export function loginView(root, { config, onSession, openTrust, passwordKeys = t
   // out of the challenge (keys.proveWithPasskey), which is the one the API
   // and the trust list agree on.
   const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
-  const withPasskey = hasParty ? button("b", "Mit Passkey anmelden", null) : null;
+  const withPasskey = hasParty && passkeys ? button("b", "Mit Passkey anmelden", null) : null;
   if (withPasskey !== null) row.append(withPasskey);
   box.append(row);
 
