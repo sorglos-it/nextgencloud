@@ -3,11 +3,13 @@
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 import { loadConfig } from "../net/config.js";
+import { load as loadLang } from "./lang.js";
 import { anchorFor } from "./trustlist.js";
 import { loginView } from "../auth/login.js";
 import { setupView } from "../auth/setup.js";
 import { el } from "./dom.js";
 import { realWorld } from "../net/world.js";
+import * as proof from "../contracts/proof.js";
 // A STAND-IN, and the only line of the shell that still knows about it. What
 // it is for and when it goes stands at standIn() below.
 import { fakeWorld } from "./fake-link.js";
@@ -31,6 +33,52 @@ export async function browserFits() {
   return true;
 }
 
+// passwordLoginFits: can this engine make the PASSWORD KEY of a seed?
+//
+// browserFits above asks for the two curves, and that is the gate between a
+// page load and the mask - rightly so, because an engine with the curves can
+// open a session and can log in with a passkey. It is NOT enough for a
+// password, and that gap is what this function measures.
+//
+// MEASURED, not guessed (Firefox 141 on Windows, 17.10.2026): importKey
+// "pkcs8" of a bare 32-byte Ed25519 seed is taken, exportKey "pkcs8" of it
+// works, signing with it works - and exportKey "jwk" answers OperationError.
+// That one call is the whole gap: contracts/proof.js publicFromSeed has no
+// other way to the public half, because Web Crypto hands out no public key of
+// a private one. Chromium 140 and WebKit 26 work it out of the seed; Firefox
+// does not.
+//
+// WHAT IT COST BEFORE THIS GATE EXISTED, rendered in Firefox and not read in
+// the source: the mask came up, the password was taken, Argon2id ran for a
+// second and a half, and the answer was "Anmeldung fehlgeschlagen." - the
+// sentence for a wrong password. Nothing on the screen said that no password
+// in the world would have got in.
+//
+// IT DOES THE WORK AND NOT A PREPARATION FOR IT, the lesson
+// apps/web/tests/fixtures/page.js paid for twice: the public half that comes
+// out has to CHECK the signature the private half of the same seed just made.
+// An engine whose export is there but bent gets a length check through and
+// then hands out a public key belonging to no private key.
+//
+// The seed is 32 random bytes made here, used here and wiped here: it is the
+// key of nobody.
+export async function passwordLoginFits() {
+  const seed = crypto.getRandomValues(new Uint8Array(32));
+  try {
+    const priv = await proof.privateFromSeed(seed);
+    const pub = await proof.publicFromSeed(seed);
+    if (!(pub instanceof Uint8Array) || pub.length !== 32) return false;
+    const msg = new TextEncoder().encode("ngc: can this engine prove a password");
+    const sig = await crypto.subtle.sign({ name: "Ed25519" }, priv, msg);
+    const half = await crypto.subtle.importKey("raw", pub, { name: "Ed25519" }, false, ["verify"]);
+    return (await crypto.subtle.verify({ name: "Ed25519" }, half, sig, msg)) === true;
+  } catch {
+    return false;
+  } finally {
+    seed.fill(0);
+  }
+}
+
 function message(text) {
   const root = document.getElementById("root");
   root.replaceChildren();
@@ -44,6 +92,13 @@ async function start() {
   // The theme first, before anything is drawn: the page would otherwise be
   // painted dark and repainted light one frame later.
   initTheme();
+  // The sentences next, and before any mask is drawn, for the same reason:
+  // a mask that appeared in German and swapped its texts a frame later would
+  // be read in the wrong language by whoever was quick. It never throws - a
+  // language file that cannot be fetched leaves the sentences empty, and the
+  // five lines below say their own words anyway (they are the shell's own
+  // messages, not a mask's, and still German in the source: see lang.js).
+  await loadLang();
   // Without a secure connection there is no crypto.subtle at all. Checking
   // the browser first would blame the browser for it, and the person would
   // install another one for nothing.
@@ -90,6 +145,33 @@ async function start() {
   // thing anything else on the page could write between the check above and
   // that read.
   const root = document.getElementById("root");
+  // CAN A PASSWORD GET IN HERE AT ALL? One measurement, taken before anything
+  // is drawn, and the answer decides which of three screens this boot ends in.
+  //
+  // IT IS NOT A SECOND browserFits AND MUST NOT BECOME ONE. An engine that
+  // cannot make a password key can still log in with a PASSKEY - the whole
+  // passkey path (auth/keys.js proveWithPasskey) never reads a public half out
+  // of a key document - so refusing the shell here would lock out somebody for
+  // whom everything works. That is the mistake the suite paid for once on the
+  // other side of this file (apps/web/tests/fixtures/page.js: a guard that is
+  // too strict switches working cases off silently), and it is worse in a
+  // shipped shell than in a test.
+  //
+  // So: the setup NEEDS it, because it makes the first admin out of a typed
+  // password and has no other way; a login needs it unless this installation
+  // has a relying party, in which case the passkey button is a way in and the
+  // mask says that the other one is closed (auth/login.js, passwordKeys).
+  //
+  // The relying party is read off the CONFIGURATION, the same field and the
+  // same way auth/login.js decides whether to draw the passkey button at all.
+  const passwordKeys = await passwordLoginFits();
+  const hasParty = typeof config?.rp?.id === "string" && config.rp.id !== "";
+  if (!passwordKeys && (anchor === null || !hasParty)) {
+    message("Dieser Browser kann die Passwort-Anmeldung von NGC nicht ausführen: er gibt den "
+      + "öffentlichen Teil eines Passwort-Schlüssels nicht heraus. Bitte Chrome 137 oder "
+      + "Safari 17.4 oder neuer benutzen. Firefox kann es bis Version 141 nicht.");
+    return;
+  }
   if (anchor === null) {
     // NO ANCHOR ANYWHERE, AND THIS USED TO BE WHERE THE SHELL GAVE UP. There
     // are two ways to get here and only one of them is a fault: an
@@ -129,7 +211,7 @@ async function start() {
   // config come from above - the setup mask needs them too, so they are won
   // once for both ways through this function.
   loginView(root, {
-    config,
+    config, passwordKeys,
     onSession: (world) => showDesktop(root, config, anchor, world).catch(() => {
       // A trust list that does not open has already put its own alarm on the
       // screen and ended the session; anything else broke on the way to the

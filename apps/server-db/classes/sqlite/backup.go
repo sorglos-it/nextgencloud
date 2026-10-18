@@ -1,0 +1,482 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/ncruces/go-sqlite3"
+
+	"github.com/sorglos-it/nextgencloud/shared/config"
+)
+
+// Backup writes a copy of the encrypted file to target.
+//
+// The copy is the bytes of the file, not a dump: it is encrypted exactly like
+// the original, with the same key from the configuration. Whoever keeps the
+// backup has to keep that configuration somewhere else, or the copy can never
+// be opened again - and whoever steals the backup alone has nothing.
+//
+// It does open the file, and it has to: a plain copy of a database in use is
+// half of two states. What it does not do is go through the database for the
+// content - it reads no row, applies no migration and adds no table, so what a
+// backup holds is what lay in the file. It also never creates the file it is
+// asked to copy: opening a missing path would make an empty database, and a
+// backup of that, played back, is an erased installation.
+func Backup(cfg config.DB, target string) error {
+	return backup(cfg, target, nil)
+}
+
+// backup is Backup with a seam between the copy and the fold, and that is the
+// whole of the seam: betweenCopyAndFold is called once, with the name the copy
+// carries at that moment, and only a test ever hands one in.
+//
+// It exists because of the one answer in fold that nothing else can bring
+// about: the checkpoint says "busy" when another connection holds a read lock
+// on the copy, and while Backup runs alone there is no such connection. A
+// test that opens the copy at this point makes that answer come back for real
+// instead of the check being read as "cannot fire" and resting on nobody -
+// see the chain named at fold.
+func backup(cfg config.DB, target string, betweenCopyAndFold func(tmp string)) error {
+	if err := checkTarget(cfg.Path, target); err != nil {
+		return err
+	}
+	// The file has to be there already. OpenDB below would create it.
+	st, err := os.Stat(cfg.Path)
+	if err != nil {
+		return fmt.Errorf("sqlite: die Datenbank ist nicht da, es gibt nichts zu sichern: %w", err)
+	}
+	if !st.Mode().IsRegular() {
+		return errors.New("sqlite: der Pfad der Datenbank zeigt nicht auf eine Datei")
+	}
+	db, err := OpenDB(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	// Written beside the target and renamed at the end, so a backup is never
+	// half a file: under the target's own name a reader finds either the whole
+	// copy or nothing.
+	tmp := target + ".part"
+	journal, err := freeze(ctx, conn, cfg.Path, tmp)
+	if err != nil {
+		removeCopy(tmp)
+		return err
+	}
+	if betweenCopyAndFold != nil {
+		betweenCopyAndFold(tmp)
+	}
+	if journal {
+		if err := fold(ctx, cfg, tmp); err != nil {
+			removeCopy(tmp)
+			return err
+		}
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		removeCopy(tmp)
+		return fmt.Errorf("sqlite: die Sicherung ließ sich nicht ablegen: %w", err)
+	}
+	return nil
+}
+
+// freeze copies the file, and the journal beside it where there is one, to tmp
+// while nobody may change either of them. It reports whether a journal came
+// along.
+//
+// What the lock does, and what it does NOT do. The transaction writes nothing
+// and still holds the write lock (_txlock=immediate makes it a BEGIN
+// IMMEDIATE, so the lock is taken when the transaction begins and not at a
+// first write), so from then on no other connection commits. Measured on
+// 10.10.2026 under eight writers, 1 MiB each, eight copying windows: the
+// JOURNAL stood still in 8 of 8 windows, and the FILE changed in 7 of 8 -
+// with the lock held. A control run with the writers quiet showed the file
+// unchanged in 3 of 3, so the measurement sees what it claims to see.
+//
+// So the lock freezes the journal, not the file. Suspicion, not measured: the
+// automatic checkpoint runs after the commit, that is after the writer has
+// given the lock back, and it then moves pages into the file while this reads
+// it. An earlier version of this comment claimed the opposite - that no other
+// connection moves a page out of the journal - and that was wrong.
+//
+// Therefore the promise "a copy that is consistent in itself" does NOT rest
+// on the file standing still. It rests on the file and the journal being
+// copied TOGETHER: replaying every frame of the journal over the file repairs
+// a file that a checkpoint tore while it was read, and fold below does that
+// replay on the copy. Take the journal away and the copy is torn - that is
+// the mutant that dies (m4 of the report), not the one that takes the lock
+// out.
+//
+// Why the journal is copied instead of being folded into the file first, which
+// would make the copy one file right away: every mode of PRAGMA wal_checkpoint
+// that empties the journal wants that same write lock, and the passive mode,
+// which does not want it, does not get through either while writers keep
+// coming. Both measured on 03.10.2026 under eight writers of 1 MiB each:
+// TRUNCATE answers busy while the lock is held, and PASSIVE answered busy in
+// all twenty tries over two seconds. A file and the journal beside it are a
+// database together, and fold below turns the pair into one file afterwards,
+// on the copy, where no other writer is in the way.
+//
+// Why the lock stays although no test here falls without it: taking it out
+// leaves TestBackupHoldsUnderWriteLoad green, measured 03.10.2026 and
+// confirmed 10.10.2026 (mutant m1, alive, code 0). What it rules out is the
+// one case no test here can schedule: a writer restarting the journal from
+// its first frame between the two copies below, which would leave the copy
+// with a file missing pages and a journal that no longer carries them. That
+// case was looked for and is out of reach here - 14 680 probes in twelve
+// seconds showed one single WAL header and a journal growing monotonically
+// from 20 to 169 MB, so it never started over. The lock stays because it
+// costs one short transaction, not because a test demands it.
+func freeze(ctx context.Context, conn *sql.Conn, path, tmp string) (bool, error) {
+	// The journal is looked for under the one name SQLite gives it in WAL
+	// mode, and nothing here looks for a rollback journal ("-journal"). What
+	// holds that is not this function but the connection: the connector runs
+	// PRAGMA journal_mode=wal on every connection it hands out - which is
+	// itself a WRITE to a database this function promises not to write, and
+	// that is the honest reading of it. So the dependency is ASKED here
+	// instead of assumed; a file in any other mode would be copied without
+	// its journal, and the copy would be torn. PRAGMA journal_mode without a
+	// value only reads. (Kl-1 of the review of 10.10.2026.)
+	var mode string
+	if err := conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return false, fmt.Errorf("sqlite: die Datenbank steht im Journalmodus %q, gesichert wird nur wal", mode)
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return false, busyOrStep(err)
+	}
+	// Nothing to commit: the transaction is only here for its lock.
+	defer tx.Rollback()
+	// One buffer for both files: the copies run one after the other, and the
+	// whole point of copyBuf is that this number does not grow with the
+	// database.
+	buf := make([]byte, copyBuf)
+	if _, err := copyFile(path, tmp, buf); err != nil {
+		return false, err
+	}
+	// SQLite names the journal after the file.
+	journal, err := copyFile(path+"-wal", tmp+"-wal", buf)
+	if err != nil {
+		return false, err
+	}
+	if !journal {
+		// An empty journal is no journal, and an empty file beside the copy
+		// would survive the rename under the backup's own name.
+		os.Remove(tmp + "-wal")
+	}
+	return journal, nil
+}
+
+// fold makes the copy stand on its own: opening the pair with the same key
+// replays the journal into the copy, and the checkpoint empties it. It runs on
+// the copy and not on the database, so no other writer is in the way and the
+// mode that wants the write lock gets it.
+//
+// Nothing of the content passes through here either: SQLite moves its own
+// pages, with the key from the configuration, so the copy stays encrypted
+// exactly as the original is.
+func fold(ctx context.Context, cfg config.DB, tmp string) error {
+	cfg.Path = tmp
+	db, err := OpenDB(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var busy, frames, folded int64
+	if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &folded); err != nil {
+		return err
+	}
+	// SQLite's own answer is what says it worked: whether it had to give up,
+	// and how many frames are left in the journal. A copy whose journal still
+	// holds frames is not a database on its own, and renaming it into place
+	// would hand out a backup missing its newest transactions - or half of one.
+	//
+	// THE CHAIN THIS CHECK CLOSES, written here in one place because the
+	// review of 10.10.2026 (W-3) found it spread over three comments and
+	// resting on nobody:
+	//
+	//  1. freeze does NOT promise a file that stood still - measured, the
+	//     file changed in 7 of 8 copying windows with the write lock held.
+	//  2. What the promise "a copy that is consistent in itself" rests on is
+	//     that file and journal are copied TOGETHER and the journal is
+	//     replayed over the copy here.
+	//  3. That the replay really FINISHED is said by nothing but the two
+	//     comparisons below.
+	//
+	// Until 12.10.2026 the third link was unheld: the copy is a file nothing
+	// else has a connection to, so there was nobody to be busy against, and
+	// taking the check out left every case green (measured 03.10.2026, and
+	// again on 12.10.2026 against the K-1 fix - that fix changed nothing
+	// here). Through the seam betweenCopyAndFold in backup, a test now opens
+	// the copy at exactly that moment and holds a read transaction on it, so
+	// the checkpoint answers busy for real:
+	// TestBackupStopsWhenTheJournalOfTheCopyCannotBeFolded. With the two
+	// comparisons taken out, that case is red (mutant m-fold, measured
+	// 12.10.2026).
+	//
+	// What is STILL unheld, and it is the link above: the write lock of
+	// freeze itself. No case here falls without it (mutant m-lock, alive,
+	// code 0, measured 12.10.2026), and the case it rules out - a writer
+	// restarting the journal from its first frame between the two copies -
+	// is out of reach on this machine; freeze says so at its own line. The
+	// chain has one measured link and one named one, and that is the state.
+	if busy != 0 || frames != 0 {
+		return fmt.Errorf("sqlite: die Sicherung ließ sich nicht abschließen: %d Einträge blieben im Journal (busy %d)", frames, busy)
+	}
+	// Closing the last connection takes the journal and the shared-memory file
+	// away by itself; both are removed anyway, so the copy is one file and the
+	// rename leaves nothing beside it.
+	// Closed here and not only by the defer above: removeBeside may run only
+	// once the last connection is gone, or SQLite writes the journal again
+	// behind it. The defer then closes a pool that is already closed, which
+	// sql.DB answers with nil - said here because a second Close reads like
+	// an oversight.
+	if err := db.Close(); err != nil {
+		return err
+	}
+	removeBeside(tmp)
+	return nil
+}
+
+// removeCopy takes away a copy that never got its name, journal and all.
+// os.Remove's own errors are dropped on purpose: they would hide the error that
+// led here, and what stays behind carries the ".part" name, which is never
+// handed out as a backup.
+func removeCopy(tmp string) {
+	os.Remove(tmp)
+	removeBeside(tmp)
+}
+
+// removeBeside takes away the two files SQLite keeps next to a database.
+func removeBeside(tmp string) {
+	os.Remove(tmp + "-wal")
+	os.Remove(tmp + "-shm")
+}
+
+// written names everything Backup writes while it works, built from the
+// target it was given: the finished backup, the copy under its ".part" name,
+// and the journal and shared-memory file SQLite keeps next to each of the
+// two. Six names, and the copy is written under the ".part" one FIRST, with
+// O_TRUNC - so every question that guards the target has to be asked at all
+// six and not only at the one the caller named.
+//
+// Measured on 12.10.2026, with this list taken out again so the old guard
+// answered: a hard link named "backup.db.part" pointing at the running
+// database made Backup answer nil while the database went from 102400 bytes
+// to 0 - and a hard link named "backup.db.part-wal" did exactly the same,
+// which the report of 10.10.2026 did not name. freeze only writes that
+// second name when the database has a journal of its own, but fold opens the
+// copy, and SQLite then writes ITS journal under that name. Six names, one
+// question each.
+func written(target string) []string {
+	return append(beside(target), beside(target+".part")...)
+}
+
+// beside names a database and everything that belongs to it: the file itself,
+// the journal and the shared-memory file SQLite keeps next to it. Writing any
+// of the three while the database is open is writing the database.
+func beside(path string) []string {
+	return []string{path, path + "-wal", path + "-shm"}
+}
+
+// checkTarget refuses a target that would write the database it is copying.
+//
+// Comparing the two strings is not enough, and that was measured on
+// 10.10.2026: cfg.Path goes through validPath (absolute and filepath.Clean),
+// the target went through nothing, so "/dir/./state.db" and
+// "/dir/sub/../state.db" named the database and did not equal its path. They
+// reached os.Rename; what refused them was Windows, not this code, and on
+// linux/amd64 and linux/arm64 - the targets NGC builds for - os.Rename would
+// have replaced the running database. So the target goes through the same
+// check as the path, and both are compared only once they are clean.
+//
+// The journal and the shared-memory file count as the database: a copy
+// landing on "state.db-wal" destroys the transactions the file does not carry
+// yet. The ".part" name belongs in the comparison too, because that is the
+// name the copy carries while it is written, before the rename.
+//
+// A name is not the only way to reach the same file, so two more questions
+// follow the comparison - and all three are asked at every one of those
+// names, not at the target alone. That the ".part" name belonged in the
+// string comparison but in neither of the two questions was the critical
+// finding of 12.10.2026 (K-1): a hard link under "backup.db.part" let Backup
+// answer nil and left the running database at 0 bytes, because that is the
+// name freeze opens with O_TRUNC.
+//
+// A target that is a symbolic link is refused outright, and that is the safer
+// of the two readings: following it would have to answer where it points at
+// the moment of the write, which is not the moment it was looked at. The
+// price, in one sentence: a backup cannot be written through a link, not even
+// one that points somewhere harmless. NOT MEASURED HERE - this machine does
+// not let a test make a symbolic link ("Dem Client fehlt ein erforderliches
+// Recht"), and no Linux Go toolchain is on it either, which was looked for.
+// TestBackupRefusesALinkAsItsTarget and
+// TestBackupRefusesALinkAtEveryNameItWrites say so and skip loudly instead of
+// passing.
+//
+// And a target that IS the database without being a link to it: a hard link
+// carries no mark of its own, Lstat calls it a plain file, and writing
+// through it writes the database. os.SameFile answers that from what the
+// operating system knows about the two files instead of from their names, and
+// it is measured, on a hard link, in
+// TestBackupRefusesAnotherNameOfTheSameFile and, for each of the six names,
+// in TestBackupRefusesAnotherNameOfTheSameFileAtEveryNameItWrites.
+//
+// The length is measured on those six names too and not on the target: the
+// longest thing written beside it is ".part-wal". Measured on 12.10.2026
+// before that: a target of 248 bytes was ACCEPTED, so the copy and its
+// journal were written under names of 253 and 257 bytes, past
+// config.MaxField and measured by nothing. The report of 10.10.2026 had this
+// as Kl-3 and read it as failing later, in fold; it does not fail at all
+// (TestBackupRefusesATargetTooLongForTheNameItWrites).
+func checkTarget(path, target string) error {
+	if target == "" {
+		return errors.New("sqlite: die Sicherung braucht einen eigenen Dateinamen, nicht den der Datenbank")
+	}
+	if !validPath(path) {
+		return errors.New("sqlite: der Pfad der Datenbank ist kein absoluter, einfacher Dateiname")
+	}
+	if !validPath(target) {
+		return errors.New("sqlite: der Name der Sicherung muss ein absoluter, einfacher Dateiname sein")
+	}
+	// Every name the copy ever carries against every name the database owns.
+	mine := written(target)
+	// The length is measured on the names that are written, not on the one
+	// that was handed in: ".part-wal" is nine bytes more, and a target that
+	// is just short enough would otherwise be written under a name nothing
+	// ever measured.
+	for _, a := range mine {
+		if len(a) > config.MaxField {
+			return errors.New("sqlite: der Name der Sicherung ist mit allem, was daneben geschrieben wird, zu lang")
+		}
+	}
+	for _, a := range mine {
+		for _, b := range beside(path) {
+			if a == b {
+				return errors.New("sqlite: die Sicherung braucht einen eigenen Dateinamen, nicht den der Datenbank")
+			}
+		}
+	}
+	// Lstat, not Stat: Stat follows the link and would answer about the
+	// database at the other end of it. Asked at every name that is written,
+	// because a link waiting under the ".part" name is written through just
+	// as surely as one under the target's own.
+	for _, a := range mine {
+		if st, err := os.Lstat(a); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return errors.New("sqlite: der Name der Sicherung zeigt auf einen Verweis, nicht auf eine Datei")
+		}
+	}
+	// Here Stat is the right one: the question is no longer how the target is
+	// written but which file it ends up being. A name that is not there yet
+	// is the normal case and answers an error, which is not a finding.
+	for _, a := range mine {
+		to, err := os.Stat(a)
+		if err != nil {
+			continue
+		}
+		for _, b := range beside(path) {
+			from, err := os.Stat(b)
+			if err != nil {
+				// the missing database is reported by Backup itself, with its own sentence
+				continue
+			}
+			if os.SameFile(to, from) {
+				return errors.New("sqlite: der Name der Sicherung meint dieselbe Datei wie die Datenbank")
+			}
+		}
+	}
+	return nil
+}
+
+// copyBuf is how much of a file is in memory at a time. It is a fixed size
+// and not the size of the file on purpose: the file and its journal together
+// were measured at 49 MB on 03.10.2026, and the journal alone grew to 169 MB
+// in twelve seconds under eight writers. Reading either one whole would go
+// around the 512 MiB this package allows a connection (maxMemory) and would
+// grow with the installation; a controller with 512 MB of RAM must not die of
+// its own backup. 256 KiB holds the number of write calls down to four per
+// mebibyte and is nothing next to that ceiling.
+const copyBuf = 256 << 10
+
+// copyFile writes src to dst byte for byte, in pieces of copyBuf. Nothing of
+// the content is held longer than one piece, so what this costs does not
+// depend on how big the database has become.
+//
+// It reports whether the source held anything: a journal that is not there
+// and one of zero length both mean the file is the whole database already. A
+// source that is there but empty is still copied, so the database itself
+// always arrives under the copy's name, however small it is.
+//
+// That answer is taken from in.Stat() BEFORE the copy, not from what was
+// written: it is the length at the moment the source was opened and nothing
+// else (Kl-2 of the review of 10.10.2026, which found the line not saying
+// so). freeze is the only caller, and of its two calls only the one for the
+// journal reads the answer at all - under the write lock, which is what
+// freezes the journal. It is NOT a count of the bytes copied, and nothing may
+// read it as one: a journal that grew between the Stat and the copy would be
+// IN the copy, only this answer would be the older of the two.
+func copyFile(src, dst string, buf []byte) (bool, error) {
+	in, err := os.Open(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer in.Close()
+	st, err := in.Stat()
+	if err != nil {
+		return false, err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return false, fmt.Errorf("sqlite: die Sicherung ließ sich nicht schreiben: %w", err)
+	}
+	// Close before the caller goes on: the bytes of the last piece are in the
+	// file only once this answered, and the copy is read again right after.
+	if _, err := io.CopyBuffer(out, in, buf); err != nil {
+		out.Close()
+		return false, fmt.Errorf("sqlite: die Sicherung ließ sich nicht schreiben: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return false, fmt.Errorf("sqlite: die Sicherung ließ sich nicht schreiben: %w", err)
+	}
+	return st.Size() > 0, nil
+}
+
+// busyOrStep names the step of the one failure a backup under load really
+// meets, and for the one cause a reader cannot guess it names the cause too.
+//
+// Every other failure of this file says in German which step gave up -- the
+// target, the missing database, the journal mode, the placing of the copy.
+// The write lock of freeze handed its error on bare, and that is the step that
+// gives way first: measured on 13.10.2026 with two ngc-api on one file and the
+// backup as a third pool, it gave up after 10,005 s with the driver's
+// "sqlite3: database is locked" and nothing else -- no step, no word that
+// busy_timeout had already waited its ten seconds, nothing that says this
+// passes by itself. An admin reads that as a damaged database and goes looking
+// in the wrong place.
+//
+// It is deliberately not the sentence of migrate's busyOr, although the cause
+// is the same one: this is a backup that did not happen, so what to do next is
+// to back up again later, not to start a program again.
+func busyOrStep(err error) error {
+	if errors.Is(err, sqlite3.BUSY) || errors.Is(err, sqlite3.LOCKED) {
+		return fmt.Errorf("sqlite: ein anderes Programm schreibt gerade in die Datenbank, darum "+
+			"konnte die Sicherung die Schreibsperre nicht nehmen - das geht von selbst vorbei, "+
+			"bitte später erneut sichern: %w", err)
+	}
+	return fmt.Errorf("sqlite: die Sicherung konnte die Schreibsperre nicht nehmen: %w", err)
+}

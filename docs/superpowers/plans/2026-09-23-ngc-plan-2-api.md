@@ -6097,6 +6097,49 @@ git commit -m "Add the tunnels to the controllers and the pairing" \
 Entschieden wird bei jedem Kanal neu, aus Benutzer, Rolle, App, Aktion und Lizenz — nie aus
 Parametern des OPEN.
 
+> **Berichtigt am 03.10.2026 — drei Entscheidungen des Koordinators. Punkt 1
+> aendert den CODE, nicht diesen Plan; Punkt 2 berichtigt meine eigene
+> Formel im Aufgabenkopf; Punkt 3 ist eine gemessene Luecke mit oertlichem
+> Riegel.**
+>
+> **1. `E_FORBIDDEN` und `E_NOTFOUND` müssen für einen Benutzer OHNE Recht
+> dasselbe sagen.** Gemessen von der Prüfung: der Unterschied verriet einem
+> Benutzer ohne Recht, dass die App **installiert und aktiv** ist, und der
+> Kommentar im Code behauptete das Gegenteil.
+>
+> **Entscheidung des Koordinators: gleichziehen**, weil das die sicherere
+> Variante ist. Betroffen ist die **App**-Stufe — fehlende App, nicht aktive
+> App und fehlendes `<app>/use`-Recht geben jetzt alle `E_FORBIDDEN`. Der
+> Preis, vollständig: wer kein Recht hat, kann einen Tippfehler im App-Namen
+> nicht mehr von einem fehlenden Recht unterscheiden — seine Fehlersuche wird
+> schwerer. Ein Fall hält fest, dass **beide** Wege denselben Code geben.
+>
+> **Was davon NICHT betroffen ist, und ich hatte es zuerst falsch
+> aufgeschrieben:** der Fall `fx.CheckApp(t, fx.OfficeUser, "nothing")` in
+> Schritt 1 erwartet weiter `wire.CodeNotFound` und bleibt **richtig**. Er
+> fragt nach einer **Aktion, die das Manifest nicht hat**, und zwar für einen
+> Benutzer, der das Sichtbarkeitsrecht **hat** — wer die App sehen darf, darf
+> auch erfahren, dass eine Aktion nicht existiert. Das ist ein anderes Paar
+> als das oben. **Mein erster Nachtrag erklärte diesen Fall für überholt; das
+> war falsch, nachgemessen an `check.go:87-110`.**
+>
+> **2. „Nie aus Parametern des OPEN" hat immer UNSIGNIERTE Teile gemeint.**
+> Gemessen: `Task`+`Confirm` aus dem OPEN verschieben die Entscheidung
+> **öffnend** (`plain="E_CONFIRM" | task="E_CONFIRM" | task+confirm=""`). Das
+> ist richtig und bleibt — genau dafür ist `E_CONFIRM` da: der Kanal sagt „hol
+> eine Unterschrift", und die unterschriebene Aufgabe ist die Antwort darauf.
+> Ein unterschriebenes Stück ist kein Parameter, sondern ein **Beleg**, denn
+> die Unterschrift wird selbst geprüft. **Meine Formel im Auftrag war zu
+> lose**, nicht der Code.
+>
+> **3. Eine Namensraum-Kollision ist offen und nur örtlich geschlossen.** Ein
+> Manifest darf eine Aktion `use` heißen; dann ist das Aktionsrecht dasselbe
+> wie `<app>/use`, und gemessen mit **nur** dem Sichtbarkeitsrecht öffnet der
+> Kanal. Die saubere Fassung gehört in `shared/store` bzw. `core.ValidRight`
+> und ist eingefroren — siehe `docs/vertraege-v1.2.md`, Punkt 21. Bis dahin
+> fängt eine Zeile in `check.go` es ab, mit Verweis daneben. **Die
+> Lizenzprüfung darf später nicht an `<app>/use` hängen** — dieselbe Zeile.
+
 **Files:**
 - Create: `apps/server-api/classes/rights/rights.go`, `apps/server-api/classes/rights/check.go`
 - Test: `apps/server-api/classes/rights/rights_test.go`
@@ -6454,6 +6497,25 @@ git commit -m "Add the rights and task check of a channel" \
 
 ### Task 14: Protokoll
 
+> **Berichtigt am 03.10.2026, zwei Dinge.**
+>
+> **1. Die „Interfaces"-Liste dieser Aufgabe ist unvollständig: `Note` fehlt.**
+> Der Quelltext in Schritt 3 enthält
+> `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error`,
+> die Liste darüber nennt es nicht — die Aufgabe widerspricht also sich
+> selbst. Und `Note` ist nicht nebensächlich: **es ist der einzige Eingang
+> für „Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen"**, die der
+> Entwurf (Zeile 630-632) ausdrücklich verlangt. Die vier anderen Eingänge
+> decken Anmeldungen, Kanäle und Root-Aufgaben. Der Strang hat die Lücke
+> gemeldet und `Note` gebaut, weil es im Auftrag stand — richtig.
+>
+> **2. Ein Fall dieser Aufgabe war falsch, nicht der Code.** Ein selbst
+> geschriebener Fall verlangte, dass `Add` ein leeres `Result` zurückweist;
+> der Auftrag setzt dort ausdrücklich `Result = "ok"`. **Der Auftrag hatte
+> recht**, und der Fall heißt jetzt `TestAddFillsAnEmptyResult`. Festgehalten,
+> weil es die Gegenrichtung zu den vielen Planberichtigungen dieses Tages ist:
+> nicht jeder Widerspruch zwischen Plan und Code ist ein Planfehler.
+
 **Files:**
 - Create: `apps/server-api/classes/audit/audit.go`
 - Test: `apps/server-api/classes/audit/audit_test.go`
@@ -6467,6 +6529,9 @@ git commit -m "Add the rights and task check of a channel" \
   - `func (lg *Log) Login(ctx, user, result, detail string) error`
   - `func (lg *Log) Channel(ctx, user, app, action, node string, code wire.Code) error`
   - `func (lg *Log) Task(ctx, user, app, action, node, signature string) error`
+  - `func (lg *Log) Note(ctx context.Context, kind, user, app, node, detail string) error` –
+    der Eingang für Änderungen an Benutzern, Rechten, Apps, Stores und Lizenzen
+    (am 03.10.2026 nachgetragen, siehe Berichtigung im Kopf dieser Aufgabe)
   - `func (lg *Log) Query(ctx context.Context, q core.LogQuery) ([]core.LogEntry, error)`
 
 - [ ] **Step 1: Write the failing test**
@@ -6647,6 +6712,24 @@ git commit -m "Add the log of the API" \
 
 ---
 ### Task 15: Versand der Kern-Aktionen und `ngc.desktop`
+
+> **Berichtigt am 10.10.2026 — zwei Zeilen dieser Aufgabe, beide gemessen.**
+>
+> **1. `string(o.Task.Sig)` ist falsch und hätte die Unterschrift still
+> verloren.** `audit.Task` dekodiert sein letztes Feld als base64url und
+> verlangt genau 64 Byte (`audit.go:203-205`); rohe Bytes als `string`
+> scheitern am Dekodieren. Das Protokoll **verliert deshalb kein Ereignis** —
+> es hätte den Eintrag geschrieben und die Unterschrift durch den Platzhalter
+> `-` ersetzt. Also kein Fehler, den jemand bemerkt: ein Prüfprotokoll voller
+> Root-Aufgaben **ohne** die Unterschrift, die sie beweist. Richtig ist
+> `enc.B64.EncodeToString(o.Task.Sig)`.
+>
+> **2. Die Aufgabe, nicht das OPEN, nennt App und Aktion.** Der Plan
+> protokolliert `o.App, o.Action` — die **Behauptung** des OPEN. Gebaut ist
+> `t.App, t.Action` aus der geprüften, signierten Aufgabe. Das ist dieselbe
+> Regel wie bei `rights.Check` und sie gilt im Protokoll genauso: **was
+> festgehalten wird, ist das Aufgelöste, nie das Behauptete** — sonst steht im
+> Protokoll, was der Angreifer hineingeschrieben hat.
 
 **Files:**
 - Create: `apps/server-api/classes/coreapp/dispatch.go`, `apps/server-api/classes/coreapp/desktop.go`
@@ -6867,7 +6950,9 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 		return code
 	}
 	if t != nil {
-		_ = d.Log.Task(ctx, verified.Cert().User, o.App, o.Action, t.Node, string(o.Task.Sig))
+		// BERICHTIGT 10.10.2026: base64url, und die Werte aus der geprueften Aufgabe.
+		// string(o.Task.Sig) scheitert am Dekodieren -> Platzhalter statt Unterschrift.
+		_ = d.Log.Task(ctx, verified.Cert().User, t.App, t.Action, t.Node, enc.B64.EncodeToString(o.Task.Sig))
 	}
 	if action.Service == core.ServiceController {
 		// A root task of service controller runs on a controller; the API only
@@ -6898,6 +6983,14 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 		return wire.CodeProtocol
 	}
 	params = p
+	// BERICHTIGT 12.10.2026: Dieser Block sammelt die ganze Eingabe in einem
+	// []byte — bei ngc.store/api/upload bis store.MaxPackage = 4 GiB. Gemessen
+	// als kritischer Befund K-1 der Abschlusspruefung: 64 MiB Eingabe hielten
+	// 191 MiB, und der Verbrauch wuchs linear mit der Eingabe. Gebaut ist statt
+	// dessen ein Strom (browser.Input, ein Rahmen zur Zeit, Guthaben beim
+	// Verbrauchen zurueck): 64 MiB Eingabe halten 3 MiB. ReadInput ist entfernt,
+	// nicht als zweite Fassung stehen gelassen. Wer diesen Block abschreibt,
+	// baut den Befund wieder ein.
 	var in io.Reader = bytes.NewReader(nil)
 	if action.Flow == core.FlowIn {
 		body, code := s.ReadInput(ctx, c, action.MaxIn)
@@ -6978,6 +7071,11 @@ func (s *Session) Grant(ctx context.Context, c *link.Channel, credit uint32) err
 	return nil
 }
 
+// BERICHTIGT 12.10.2026: ReadInput gibt es nicht mehr — es sammelte bis 4 GiB
+// im Arbeitsspeicher (Befund K-1). An seiner Stelle steht browser.Input, ein
+// io.Reader auf die DATA-Rahmen. Der Block unten ist der Stand, der behoben
+// wurde; er steht hier, weil der Plan ihn vorgegeben hat.
+//
 // ReadInput reads the DATA of a FlowIn channel up to the shell's EOF, at most
 // max bytes; more is E_TOOLARGE.
 func (s *Session) ReadInput(ctx context.Context, c *link.Channel, max int64) ([]byte, wire.Code) {
@@ -8272,8 +8370,12 @@ import (
 // and answers what it read. The shell computes the same values from the file
 // it sent and refuses a mismatch, so nothing here has to be trusted.
 func (st *Stores) Upload(ctx context.Context, r io.Reader) (core.UploadResult, error) {
-	// The package is read twice: once for its checksum and once through
-	// store.Walk, so the bytes go to disk only in the caller's buffer.
+	// BERICHTIGT 12.10.2026: Der Kommentar unten sagte das Gegenteil des Codes —
+	// io.ReadAll haelt das ganze Paket (bis store.MaxPackage = 4 GiB) im
+	// Speicher. Gemessen in Aufgabe 20: diese Fassung haelt bei 128 MiB
+	// Eingabe 268 MiB, die gebaute Fassung (io.TeeReader neben
+	// store.PackageUI, Rest verworfen, Laenge erst danach) haelt bei
+	// 32/128/512 MiB je 0 MiB. Gebaut ist der Durchlauf, nicht dieser Block.
 	raw, err := io.ReadAll(io.LimitReader(r, store.MaxPackage+1))
 	if err != nil || int64(len(raw)) > store.MaxPackage {
 		return core.UploadResult{}, ErrStore
@@ -9315,7 +9417,16 @@ git commit -m "Wire the API together and take the websocket and totp modules" \
 
 ---
 
-### Task 25: ulh-Skript `scripts/ngc-api.sh`
+### Task 25: ulh-Skript `ngc-api.sh`
+
+> **BERICHTIGT 12.10.2026:** Die Pfade dieser Aufgabe gibt es im ulh-Repo nicht mehr.
+> Gebaut wurde nach den Geschwistern `ngc-db` und `ngc-web`:
+> `apps/cli/assets/scripts/ngc-api.sh` (Modus 100755) und
+> `apps/cli/tests/ngc-api.test.sh`, dazu `catalog.yaml` (statt `config.yaml`),
+> `menu.test.sh`, `docs/scripts.md` (erzeugt mit `tools/gen-scripts-doc.sh`),
+> `docs/guide.md`, `README.md`, `CHANGELOG.md`. `SCRIPTS.md` und `TREE.md`
+> gibt es dort nicht. Wer eine weitere Aufgabe fuer ulh schreibt, nimmt diese
+> Pfade, nicht die alten.
 
 Dieses Skript liegt **nicht** in diesem Repo, sondern im öffentlichen ulh-Repo
 (`sorglos-it/ulh`), auf dem Branch `ngc-api`, und kommt per Pull Request nach dessen `main`.
@@ -10060,7 +10171,12 @@ func TestTestStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("content key: %v", err)
 	}
-	if err := Encrypt(paid, strings.TrimSuffix(paid, ".ngc")+".enc",
+	// BERICHTIGT 12.10.2026: Hier stand strings.TrimSuffix(paid, ".ngc")+".enc"
+	// — also "app.enc". Gebaut und gemessen ist aber "app.ngc.enc": Aufgabe 27
+	// schreibt path+EncSuffix, und Aufgabe 28 sucht den Katalog-Eintrag unter
+	// genau diesem Namen (Konstante EncSuffix in apps/cli/classes/catalog.go).
+	// Mit dem alten Namen findet der Katalog die verschluesselte Fassung nicht.
+	if err := Encrypt(paid, paid+EncSuffix,
 		filepath.Join(dir, "content.key")); err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}

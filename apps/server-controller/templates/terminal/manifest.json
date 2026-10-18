@@ -1,0 +1,18 @@
+{
+  "id": "org.sorglos.terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "publisher": "Sorglos Thomas Weirich",
+  "description": "Befehle auf dem Server ausführen.",
+  "ui": { "entry": "index.html", "width": 720, "height": 420 },
+  "actions": [
+    { "name": "shell", "title": "Befehle auf dem Server ausführen", "service": "terminal", "stream": true, "critical": true }
+  ],
+  "services": [
+    { "name": "terminal", "command": ["/usr/lib/ngc/ngc-controller", "terminal"] }
+  ],
+  "runtime": "podman",
+  "needs": ["root"],
+  "cpu": 1000,
+  "memory": 256
+}

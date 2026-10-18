@@ -21,6 +21,7 @@
 //   5. the API's certificate, checked against the trust list.
 //   6. the link, and the desktop.
 import { el, button, field, note, clear, text } from "../shell/dom.js";
+import { t } from "../shell/lang.js";
 import { b64encode, utf8 } from "../contracts/b64.js";
 import * as session from "../contracts/session.js";
 import * as sign from "../contracts/sign.js";
@@ -31,11 +32,34 @@ import * as http from "../net/http.js";
 import { Link } from "../net/link.js";
 import { newSessionKeys, buildClientCert, proveWithPassword, proveWithPasskey } from "./keys.js";
 
-// The one sentence every failed login gets. It is wire's own text for
-// E_LOGIN and not a second copy: the table is the contract's, and a shell
-// with words of its own is a shell that says something different from the
-// API about the same thing.
-const FAILED = wire.message(wire.CODES.LOGIN);
+// The one sentence every failed login gets. It said wire.message(E_LOGIN)
+// until the five languages arrived, and that is why it is a key now: the
+// table in contracts/wire.js mirrors Go's messages map of frozen
+// shared/wire/wire.go, which is German and is a CONTRACT - a mask that drew
+// its French sentence out of it would have to change the mirror. So the
+// contract's table stays what it is and the MASK owns the sentence it says,
+// in the five languages (shell/lang.js). The German text is the same text,
+// word for word, which is held by a case.
+const FAILED = () => t("login.failed");
+
+// unreachableText picks between the two answers that share E_UNREACHABLE.
+//
+// A Retry-After is there or it is not: net/http.js answers 0 for a missing
+// header, for an HTTP-date, for a sign and for anything past 2^53-1, so
+// "a number of seconds above zero" is the whole question here and the shape
+// of the header was decided one layer down.
+//
+// A busy database WITHOUT a readable number gets the SAME sentence as one
+// that is away, and that is the honest answer rather than a gap: without the
+// header there is nothing left that tells the two apart, because the code is
+// the same E_UNREACHABLE for both. It is not dead code - FailRetry writes the
+// number, but a proxy that rewrote or dropped the header lands here - and it
+// is deliberately not a third wording: a sentence that promised "come back
+// soon" without a number would be a number nobody measured.
+function unreachableText(retryAfter) {
+  if (!Number.isSafeInteger(retryAfter) || retryAfter <= 0) return t("err.unreachable");
+  return t("err.busy", { seconds: retryAfter });
+}
 
 // NeedTOTP is no failure. The challenge said this user has a second factor
 // and no code was typed yet, so the mask asks for one and nothing was spent:
@@ -87,6 +111,23 @@ async function openTrustFromChain() {
 // openTrust is the seam for task 20 and defaults to the stand-in above.
 export async function login({ name, password, totp, wantPasskey, openTrust = openTrustFromChain }) {
   const challenge = await http.loginStart(name);
+  // Pressed "log in with a passkey" where this name has none: the attempt
+  // stops HERE, before a session key, a certificate or an Argon2id run is
+  // spent on it, and before the TOTP question - which would otherwise tell
+  // somebody who cannot get in anyway that this name has a second factor.
+  //
+  // MEASURED at a real installation on 17.10.2026: it did not stop. The
+  // desktop came up, the authenticator was never asked, the login went
+  // through on the password that happened to be in the field, and the person
+  // was told nothing about which key had opened their session - with the
+  // standing advice "switch to passkeys" on the desktop it had just opened.
+  //
+  // The plainest Error there is, so the mask turns it into the one sentence
+  // every other failure gets (attempt below): an answer that said "this name
+  // has no passkey" would say that the name exists.
+  if (wantPasskey === true && challenge.passkeys.length === 0) {
+    throw new Error("login: this name has no passkey");
+  }
   // Asked BEFORE anything is spent: Argon2id takes about a second and a
   // passkey costs the person a gesture, and neither may be spent on an
   // attempt that was going to stop here anyway.
@@ -106,9 +147,8 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
   // told why; or nothing was typed in the password field, which for somebody
   // whose role forbids a password key is the only thing they can do.
   //
-  // Where the challenge offers no passkey the attempt goes on and fails like
-  // every other: an answer that said "this name has no passkey" would say
-  // that the name exists.
+  // A challenge that offers no passkey cannot get here with wantPasskey: the
+  // attempt stopped above.
   const usePasskey = challenge.passkeys.length > 0
     && (wantPasskey === true || challenge.passwordToo || password === "");
   const proofs = { proof: null, password: null };
@@ -183,7 +223,13 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
 // loginView builds the mask into root and calls onSession once somebody is
 // in. Every text is German and goes in as textContent; nothing of an answer
 // ever becomes markup.
-export function loginView(root, { config, onSession, openTrust } = {}) {
+// passwordKeys says whether this engine can make a password key at all
+// (shell/main.js passwordLoginFits, measured there and not guessed here).
+// false means the passkey button is the only way in: the password route is
+// switched off and the mask SAYS SO, instead of taking a password, running
+// Argon2id over it and answering "Anmeldung fehlgeschlagen." - the sentence
+// for a wrong password, which is what Firefox 141 got until this round.
+export function loginView(root, { config, onSession, openTrust, passwordKeys = true } = {}) {
   clear(root);
 
   const box = el("form", "loginbox");
@@ -209,9 +255,20 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
   totp.input.inputMode = "numeric";
   totp.input.maxLength = session.TOTP_DIGITS;
 
+  // The standing sentence of an engine without password keys. It is its own
+  // element and not `said` below: `said` is emptied at the start of every
+  // attempt, and a reason that disappeared when somebody pressed the passkey
+  // button would be a reason nobody reads twice.
+  if (!passwordKeys) {
+    pw.input.disabled = true;
+    pw.input.autocomplete = "off";
+    box.append(note(t("login.nopasswordkeys"), "warn"));
+  }
+
   const row = el("div", "loginrow");
   const go = button("b on", "Anmelden", null);
   go.type = "submit";
+  go.disabled = !passwordKeys;
   row.append(go);
   // The passkey button only where this installation has a relying party at
   // all; without one navigator.credentials.get has nothing to ask for. This
@@ -253,7 +310,10 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
   }
 
   function enable(on) {
-    go.disabled = !on;
+    // Never back on where there is no password key: enable(true) runs in the
+    // finally of every attempt, and a button that came back after the first
+    // passkey attempt would offer a way that cannot work.
+    go.disabled = !on || !passwordKeys;
     if (withPasskey !== null) withPasskey.disabled = !on;
   }
 
@@ -263,7 +323,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
     clearInterval(lockTimer);
     let left = Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
     if (left === 0) {
-      say(wire.message(wire.CODES.LOCKED));
+      say(t("login.locked"));
       return;
     }
     // Belt and braces: attempt() has already switched the buttons off before
@@ -281,7 +341,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
         say("");
         return;
       }
-      say(`${wire.message(wire.CODES.LOCKED)} Noch ${left} Sekunden.`);
+      say(t("login.locked.left", { seconds: left }));
       left -= 1;
     };
     tick();
@@ -316,7 +376,7 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
         // The one answer that is not a failure. The password stays in hand
         // for the second round, so nobody types it twice.
         if (!totp.box.isConnected) box.insertBefore(totp.box, row);
-        say("Bitte den Code aus der Authenticator-App eingeben.");
+        say(t("login.totp.ask"));
         totp.input.focus();
         return;
       }
@@ -331,10 +391,34 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
       // whether the name exists.
       //
       // The one exception is a server nobody can reach, which says nothing
-      // about any account and everything about what to do next.
-      say(e?.code === wire.CODES.UNREACHABLE
-        ? `${wire.message(wire.CODES.UNREACHABLE)} Bitte später erneut versuchen.`
-        : FAILED);
+      // about any account and everything about what to do next - and SINCE
+      // POINT 49 THERE ARE TWO OF THOSE, which is what the branch below is
+      // about.
+      //
+      // "The database is busy" and "the database is away" arrive as the SAME
+      // E_UNREACHABLE: a word of its own for busy would be a new wire.Code,
+      // and that list is in frozen shared/wire/wire.go:450-462 - BLOCKED,
+      // point 49, P9. The only thing that tells them apart on the wire is the
+      // Retry-After the API puts beside the busy one
+      // (apps/server-api/classes/httpapi/busy.go, FailCoded, httpapi.RetryBusy
+      // = 5). net/http.js already reads that header into ApiError.retryAfter
+      // for EVERY error answer, so nothing new had to be read - it was being
+      // thrown away here.
+      //
+      // MEASURED BEFORE THIS BRANCH EXISTED, rendered in a browser and not
+      // read in the source: both answers drew "Dienst nicht erreichbar. Bitte
+      // später erneut versuchen.", 59 ms for busy and 157 ms for away, and
+      // the person had no way to know that waiting five seconds was the whole
+      // of it. Point 52 took the lie about the PASSWORD off this screen; this
+      // takes the vagueness off it.
+      //
+      // IT DOES NOT LOCK THE MASK, and that is the difference to E_LOCKED
+      // above. A lock is the API's own count against whoever is trying; busy
+      // is a state of the installation that says nothing about this person,
+      // and a mask that switched itself off for five seconds would take a
+      // choice away for no reason. The sentence names the seconds, the
+      // buttons stay on, and whoever wants to press again at once may.
+      say(e?.code === wire.CODES.UNREACHABLE ? unreachableText(e?.retryAfter) : FAILED());
     } finally {
       busy = false;
       // Not after a login that worked: the mask is off the page by then, and
@@ -346,6 +430,9 @@ export function loginView(root, { config, onSession, openTrust } = {}) {
 
   box.addEventListener("submit", (e) => {
     e.preventDefault();
+    // Enter in the name field submits the form even with the button off, so
+    // the password route is closed here too and not only on the button.
+    if (!passwordKeys) return;
     void attempt(false);
   });
   withPasskey?.addEventListener("click", () => void attempt(true));

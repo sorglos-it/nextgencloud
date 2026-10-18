@@ -1,0 +1,40 @@
+# Image of the terminal app. It is built on a build machine, never on the
+# target server: the server has no builder and must not need one.
+#
+# The context of the build is the directory the controller was built into
+# (build/), so this file copies one statically linked program and nothing
+# else. The commands are in apps/server-controller/CLAUDE.md, section
+# "Terminal-App bauen".
+
+# The base is pinned by DIGEST, and the tag stays in front of it only so a
+# reader sees which release the digest belongs to.
+#
+# The digest is MEASURED, not copied from somewhere: it is the one
+# registry-1.docker.io answers for library/debian:13-slim, and it was verified
+# against the bytes it names - sha256 over the 8973 bytes of the returned
+# manifest index equals the digest in the Docker-Content-Digest header. The
+# index carries both architectures NGC is built for (amd64, arm64), so one
+# digest serves both --arch builds. Measured 15.10.2026, twice by two paths
+# (by hand and by tools/pin-base.sh, same value). Change this line with that
+# tool, never by hand: a digest typed by a person is a number nobody measured.
+#
+# NOT MEASURED, and it has to be said here because it is what the pin rests
+# on: that podman prefers the digest over the tag when both are given. There is
+# no podman and no docker on the machine this was written on. What IS measured
+# is that a build refuses a Containerfile without a digest
+# (runtime.CheckBase). If this ever turns out to be wrong, the tag has to come
+# off the line entirely.
+#
+# Raising it is not optional: a pinned base gets no security fix by itself.
+# Who raises it and when stands in tools/pin-base.sh.
+FROM docker.io/library/debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+
+# /bin/sh comes from the base image; nothing is installed on top of it. The
+# fewer programs in here, the less a shell in this container can reach.
+RUN mkdir -p /usr/lib/ngc /data
+COPY ngc-controller /usr/lib/ngc/ngc-controller
+
+# The manifest names the program with its argument list (service "terminal"),
+# so the image needs no entry point of its own. hold is what keeps the
+# container up between channels.
+CMD ["/usr/lib/ngc/ngc-controller", "hold"]

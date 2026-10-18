@@ -1497,23 +1497,49 @@ Erwartet: `ok: Zweig eines Stick-Paars (1+2) öffnet mit zwei echten Signaturen`
 
 - [ ] **Schritt 7: Zusichern, dass wirklich Sitzungsdaten signiert werden**
 
+> **BERICHTIGT am 10.10.2026 — die alte Fassung dieses Schrittes nannte
+> richtiges Verhalten FALSCH.** Sie verlangte, dass die zwei Sticks
+> **verschiedene** Bytes zu signieren bekommen (`cmp -s` → `fail`). Gemessen
+> auf `ngc-recovery`: `tpm2_policysigned` gibt die Sitzung als **bearbeitetes
+> Objekt** hinein, nicht im Sitzungsbereich — `nonceTPM` **rollt zwischen den
+> zwei Sticks nicht**. Also:
+>
+> | Lage | Bytes |
+> |---|---|
+> | dieselbe Sitzung, Stick 1 gegen Stick 2 | **gleich** |
+> | zwei verschiedene Sitzungen | **verschieden** |
+> | Mitschnitt in eine frische Sitzung gespielt | **abgewiesen, 0x5DB** |
+>
+> Die Signatur hängt also sehr wohl an der Sitzung — nur nicht an der Stelle,
+> an der der alte Fall sie suchte. Wer die alte Zeile baut, bekommt ein Rot und
+> hält es für einen Fehler im TPM.
+
 Das gehört in den Testlauf, nicht in einen Blick von Hand. Ans Ende von `tools/recovery-test.sh`:
 
 ```bash
-# 52 bytes: 48 byte nonce of this session plus 4 byte expiration. Two sticks
-# in one session get different bytes; if they did not, the signature would not
-# hang on the session at all.
+# 52 bytes: 48 byte nonce of this session plus 4 byte expiration.
 [ "$(wc -c < dist/recovery/work/tosign-1.bin)" -eq 52 ] \
 	|| fail "die zu signierenden Daten sind nicht 52 Byte lang"
-if cmp -s dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-2.bin; then
-	fail "beide Sticks bekommen dieselben Daten zum Signieren"
+# The bytes must not be all zero: that would mean no nonce went in at all.
+if [ -z "$(xxd -p dist/recovery/work/tosign-1.bin | tr -d '0\n')" ]; then
+	fail "die zu signierenden Daten sind lauter Nullen"
 fi
-ok "die Sticks signieren je 52 Byte aus ihrer eigenen Sitzung"
+# A NEW session must hand out DIFFERENT bytes. Inside one session both sticks
+# get the same bytes - tpm2_policysigned passes the session as the handled
+# object, so nonceTPM does not roll between the two. Measured 10.10.2026;
+# a replayed signature is refused by the TPM itself with 0x5DB.
+if cmp -s dist/recovery/work/tosign-1.bin dist/recovery/work/tosign-fresh.bin; then
+	fail "eine neue Sitzung gibt dieselben Daten aus - die Nonce steht still"
+fi
+ok "die Sticks signieren 52 Byte, und eine neue Sitzung gibt andere aus"
 ```
 
 Ausführen: `tools/recovery-test.sh`
-Erwartet: `ok: die Sticks signieren je 52 Byte aus ihrer eigenen Sitzung`. Schlägt einer der beiden
-Fälle fehl, hängt die Signatur nicht an der Sitzung — dann **stoppen und den Koordinator fragen**.
+Erwartet: `ok: die Sticks signieren 52 Byte, und eine neue Sitzung gibt andere aus`. Schlägt einer
+der Fälle fehl, hängt die Signatur nicht an der Sitzung — dann **stoppen und den Koordinator
+fragen**. **Nicht** `cmp` aus diffutils voraussetzen, wo `recovery-env.sh` es nicht als fehlend
+melden kann: `xxd` ist geprüft, `cmp` steht hier nur, weil es in der Umgebungsliste geführt wird —
+fehlt es dort, nimm `xxd`-Vergleich.
 
 - [ ] **Schritt 8: Commit**
 
@@ -1527,6 +1553,30 @@ git commit -m "Open a branch with two real stick signatures" \
 ---
 
 ### Aufgabe 8: Plattform-PIN, Zähler und Wörterbuchschutz
+
+> **BERICHTIGT am 10.10.2026 — Schritt 4 dieser Aufgabe erzeugte einen STILLEN
+> FALSCHWERT, und das ist die schlimmste Sorte Fehler in diesem Projekt.**
+>
+> Der Schritt verlangt die PIN auf **jedem** Objekt und dazu „der Normalstart
+> öffnet trotzdem". Über die **Policy** ist das richtig, über die **Sitzung**
+> falsch: der authValue hängt am **Objekt**, und der Sitzungsschlüssel einer
+> gesalzenen, verschlüsselnden Sitzung hängt am authValue. Gemessen, eine
+> Variable je Zeile: authValue ja **plus** verschlüsselte Sitzung **plus** PIN
+> nicht übergeben ist der **einzige** Fall, der kippt — und er kippt mit
+> **Ausstiegscode 0 und Müll** (`ba1eaca0fc726c49` statt
+> `544553542d44454b` = `TEST-DEK`). Die vier anderen Kombinationen geben den
+> richtigen Wert. **In Paket 6 wäre dieser Müll der echte DEK.**
+>
+> **Gebaut ist: der `pcr`-Zweig bekommt GAR KEINEN authValue.** Das hält die
+> Zusage des Plans buchstäblich und rührt die Parameterverschlüsselung aus
+> Aufgabe 6 nicht an.
+>
+> **Und daraus folgt eine Entwurfsänderung, die der Koordinator am 10.10.2026
+> entschieden hat:** Slot A wird **zwei Objekte** — `A-auto` ohne authValue mit
+> nur `PolicyPCR`, und `A-recovery` mit authValue und `PolicyOR` über die
+> Stick-Paare. Sie steht mit Begründung und Preis in
+> `docs/recovery-modus.md`, Abschnitt 6. **Wer Aufgabe 9 baut, baut gegen diese
+> Fassung, nicht gegen die alte.**
 
 **Dateien:**
 - Ändern: `tools/recovery-policy.sh`, `tools/recovery-test.sh`
@@ -2172,15 +2222,22 @@ Erwartet: `GRUEN: alle Fälle von Paket 0 bestanden.` und ein Protokoll unter `d
 
 - [ ] **Schritt 3: Prüfen, dass Rot auch wirklich rot ist**
 
-Ausführen:
+**Dieses Rezept beißt nicht — am 12.10.2026 gemessen, der Lauf wurde GRUEN:**
+`recovery-test.sh` ruft `prepare` selbst auf und legt den weggelegten Stick neu an.
+Ein weggelegter Schlüssel ist darum **keine** Nulllinie.
+
+Ausführen stattdessen (gemessen, beide rot):
 ```bash
-mv dist/recovery/keys/stick2.pem dist/recovery/keys/stick2.weg
+# 1. hohles Gruen: recovery-test.sh durch eine Attrappe ersetzen, die 0 zurueckgibt
+# 2. einen Riegel aus der ausgelieferten recovery-policy.sh herausschneiden
 tools/recovery-ci.sh; echo "Rueckgabe: $?"
-mv dist/recovery/keys/stick2.weg dist/recovery/keys/stick2.pem
+# danach die echte Datei zurueck und bitgleich nachweisen:
+git hash-object tools/recovery-test.sh tools/recovery-policy.sh
 tools/recovery-ci.sh; echo "Rueckgabe: $?"
 ```
-Erwartet: erst `ROT`, die letzten 20 Zeilen und `Rueckgabe: 1`; danach wieder `GRUEN` und
-`Rueckgabe: 0`. Ein CI-Job, der nie rot wird, prüft nichts.
+Erwartet: erst `ROT`, die letzten 20 Zeilen und `Rueckgabe: 1` — und zwar **auch** gegen die
+Attrappe, die 0 zurückgibt (der Job muss merken, dass kein einziger Fall gelaufen ist);
+danach wieder `GRUEN` und `Rueckgabe: 0`. Ein CI-Job, der nie rot wird, prüft nichts.
 
 - [ ] **Schritt 4: Commit**
 
@@ -2300,8 +2357,16 @@ Reservestick sowie QEMU mit Secure-Boot-OVMF einrichten und prüfen. Nachgewiese
 Abnahmekriterium von Paket 0: Versiegeln und Öffnen eines Testgeheimnisses mit einer PolicyOR aus
 sieben Zweigen (Normalstart über PCR, sechs Stick-Paare mit PolicySigned, Plattform-PIN und
 NV-Zähler) gegen swtpm, dazu die Negativfälle Replay, halber Zweig, fremder Stick, alter
-Zählerstand, falsche PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
+Zählerstand, falsche **Plattform**-PIN mit Sperre und geänderte PCR. Ein Befehl fährt alles durch:
 `tools/recovery-ci.sh`. Kein Rust in diesem Paket.
+
+**Berichtigt am 12.10.2026 (Aufgabe 12), gemessen:** hier stand „falsche PIN mit Sperre“. Das
+liest sich wie die **Stick**-PIN, und die sperrt in dieser Umgebung nicht — SoftHSM2 2.6 sperrt eine
+Benutzer-PIN nie (neun falsche PINs, jedes Mal nur `user PIN count low`, danach loggte die richtige
+PIN mit Rückgabe 0 ein). Belegt ist allein die **Plattform**-PIN-Sperre. Die Liste unten war
+außerdem zu kurz: sechs gemessene offene Punkte fehlten (K9 zur Hälfte, die 24 h als Wirkung, der
+Flatter-Punkt, ein DEK, PIN beim Versiegeln, der nicht sinkende Zähler). Wie es gebaut wurde, steht
+in `CHANGELOG.md` und `docs/recovery-abnahme.md`.
 
 ### Offen
 

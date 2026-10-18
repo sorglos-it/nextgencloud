@@ -29,6 +29,7 @@
 //   6. the version, written ONCE, signed, MAC'd and sent.
 //   7. the anchor kept, and straight on into the workplace.
 import { el, button, field, note, clear, text } from "../shell/dom.js";
+import { t } from "../shell/lang.js";
 import { b64encode, utf8 } from "../contracts/b64.js";
 import { validLoginName } from "../contracts/text.js";
 import * as session from "../contracts/session.js";
@@ -50,26 +51,45 @@ import { login, loginView } from "./login.js";
 // installation" for every other way a code can be wrong. A third sentence
 // that named the place of the mistake would be a measuring tape for anybody
 // guessing at the code.
-const INCOMPLETE = "Der Einmal-Code ist nicht vollständig.";
-const NO_MATCH = "Der Einmal-Code passt nicht zu dieser Anlage. "
-  + "Bitte den Code prüfen und noch einmal versuchen.";
+// They are functions and not strings because the sentence is read when it is
+// said, not when this file is loaded: shell/lang.js has the five languages by
+// then (shell/main.js loads them before the first mask is drawn), and a const
+// evaluated at import time would freeze whatever was there first.
+const INCOMPLETE = () => t("setup.code.incomplete");
+const NO_MATCH = () => t("setup.code.nomatch");
 // The API said no to the version itself. There is no second try: the code is
 // good once, and an installation that refused version 1 has to be set up
 // again from the start.
-const REFUSED = "Die Anlage hat die Einrichtung abgelehnt. "
-  + "Bitte NGC neu installieren und den neuen Code benutzen.";
-const ALREADY = "Diese Anlage ist schon eingerichtet.";
-const BROKEN = "Die Einrichtung hat nicht geklappt. "
-  + "Bitte die Seite neu laden und es noch einmal versuchen.";
-const UNREACHABLE = `${wire.message(wire.CODES.UNREACHABLE)} Bitte später erneut versuchen.`;
-const NO_NAME = "Der Benutzername darf nur kleine Buchstaben, Ziffern und . _ - enthalten "
-  + "und muss mit einem Buchstaben oder einer Ziffer anfangen.";
-const NO_PASSWORD = "Bitte ein Passwort vergeben.";
-const DIFFERENT = "Die beiden Passwörter sind nicht gleich.";
+const REFUSED = () => t("setup.refused");
+const ALREADY = () => t("setup.already");
+const BROKEN = () => t("setup.broken");
+const UNREACHABLE = () => t("err.unreachable");
+// THE SENTENCE THAT WAS MISSING, and the measurement that asked for it is in
+// the report: the installation answered, it just could not answer this.
+//
+// A busy database during the first run does NOT arrive here as E_UNREACHABLE.
+// apps/server-api/classes/setup/setup.go:94-99 (fault) turns every
+// E_UNREACHABLE on this path into E_INTERNAL, and the comment above it says
+// so in as many words - "nothing on this path can say 503 any more". So the
+// answer is 500 E_INTERNAL with no Retry-After, and until this key existed
+// E_INTERNAL fell through sentenceForOffer's last line into NO_MATCH: the
+// person was told to CHECK THE ONE-TIME CODE. Measured, rendered in a
+// browser: "Der Einmal-Code passt nicht zu dieser Anlage. Bitte den Code
+// prüfen und noch einmal versuchen." for a database that was merely busy.
+//
+// That is point 50's own mistake moved one screen along - a false statement
+// about the one thing the person holds, and a worse one than the login's was:
+// a code is good ONCE, so somebody who believes this sentence installs NGC
+// again for nothing. The code is untouched by a 500, which is why this
+// sentence says so.
+const SILENT = () => t("setup.silent");
+const NO_NAME = () => t("setup.name.bad");
+const NO_PASSWORD = () => t("setup.password.missing");
+const DIFFERENT = () => t("setup.password.different");
 // The automatic sign-in right after the setup did not work. The installation
 // IS set up by then, so this is not a failure of the setup and must not read
 // like one: the mask follows underneath and the person simply signs in.
-const SIGN_IN_YOURSELF = "NGC ist eingerichtet. Bitte jetzt anmelden.";
+const SIGN_IN_YOURSELF = () => t("setup.signin");
 
 // trust.ValidID is 16 bytes in base64url, which is what a user ID is.
 const ID_SIZE = 16;
@@ -332,7 +352,7 @@ export function setupView(root, { config, onDone } = {}) {
         if (canonical === null) {
           // Nothing is asked of the API: without the code its MAC cannot be
           // checked, so there would be nothing to do with the answer.
-          text(said, INCOMPLETE);
+          text(said, INCOMPLETE());
           return;
         }
         // Inside the try, and it may be: showOffer puts its step on the page
@@ -373,9 +393,13 @@ export function setupView(root, { config, onDone } = {}) {
   // do. (The POST keeps the brief's own sentence - see below.)
   function sentenceForOffer(e) {
     if (e?.code === wire.CODES.NOTFOUND) return NOT_SET_UP;
-    if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE;
-    if (e?.code === wire.CODES.LOCKED) return wire.message(wire.CODES.LOCKED);
-    return NO_MATCH;
+    if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE();
+    if (e?.code === wire.CODES.LOCKED) return t("login.locked");
+    // An installation that answered and could not answer THIS is not a code
+    // that does not fit. See SILENT above for the measurement and for the
+    // line in setup.go that makes a busy database arrive as this code.
+    if (e?.code === wire.CODES.INTERNAL) return SILENT();
+    return NO_MATCH();
   }
 
   // ------------------------------------------------------------- step two
@@ -453,9 +477,9 @@ export function setupView(root, { config, onDone } = {}) {
         // are emptied - all of it synchronous, so nothing is on the page any
         // longer than before - because a typo in the user name must not cost
         // somebody the password they have just thought up twice.
-        if (!validLoginName(who)) { text(said, NO_NAME); return; }
-        if (typed === "") { text(said, NO_PASSWORD); return; }
-        if (typed !== repeated) { text(said, DIFFERENT); return; }
+        if (!validLoginName(who)) { text(said, NO_NAME()); return; }
+        if (typed === "") { text(said, NO_PASSWORD()); return; }
+        if (typed !== repeated) { text(said, DIFFERENT()); return; }
         // Emptied now, with no await between the last read and this line:
         // from here the two typed passwords are in two variables of this
         // closure and nowhere on the page. The same promise login.js keeps.
@@ -482,11 +506,18 @@ export function setupView(root, { config, onDone } = {}) {
   // E_VERIFY is the end of the road and says so; E_NOTFOUND means somebody
   // else got there first.
   function sentenceForSetup(e) {
-    if (e?.code === wire.CODES.VERIFY) return REFUSED;
-    if (e?.code === wire.CODES.NOTFOUND) return ALREADY;
-    if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE;
-    if (e?.code === wire.CODES.LOCKED) return wire.message(wire.CODES.LOCKED);
-    return BROKEN;
+    if (e?.code === wire.CODES.VERIFY) return REFUSED();
+    if (e?.code === wire.CODES.NOTFOUND) return ALREADY();
+    if (e?.code === wire.CODES.UNREACHABLE) return UNREACHABLE();
+    if (e?.code === wire.CODES.LOCKED) return t("login.locked");
+    // E_INTERNAL keeps BROKEN here and does NOT get SILENT, and the
+    // difference is the step and not the code: at this point the version has
+    // been signed and sent, and whether the installation took it is exactly
+    // what nobody knows any more. "Reload the page and try again" is the only
+    // true instruction left - the shell finds out on the reload whether there
+    // is an admin now. SILENT's promise, that the code is untouched, cannot
+    // be made here.
+    return BROKEN();
   }
 
   // signIn walks the person straight into the workplace with the name and the
@@ -507,7 +538,7 @@ export function setupView(root, { config, onDone } = {}) {
       // person signs in by hand, and what follows needs the same anchor this
       // setup just made.
       loginView(root, { config, onSession: (w) => onDone?.(w, anchor) });
-      root.prepend(note(SIGN_IN_YOURSELF, "info"));
+      root.prepend(note(SIGN_IN_YOURSELF(), "info"));
       return;
     }
     clear(root);

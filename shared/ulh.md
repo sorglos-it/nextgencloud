@@ -1,10 +1,16 @@
 # Installation über ulh
 
 NGC wird mit [ulh](https://github.com/sorglos-it/ulh) installiert, konfiguriert und deinstalliert.
-Die Skripte liegen direkt im öffentlichen ulh-Repo: `scripts/<skript>.sh`, eingetragen in dessen
-`config.yaml` unter der Kategorie „NextGenCloud". Aufbau nach ulhs Vorlage `scripts/_template.sh`
-und ulhs `DOCS.md` (Abschnitt „Script Development"); `SCRIPTS.md` und `TREE.md` in ulh werden
-mitgepflegt. Jedes Teil schreibt das Skript für seinen Server auf einem eigenen Branch im ulh-Repo
+Die Skripte liegen direkt im öffentlichen ulh-Repo: `apps/cli/assets/scripts/<skript>.sh`,
+eingetragen in dessen `apps/cli/assets/catalog.yaml` unter der Kategorie „NextGenCloud", mit einem
+Test in `apps/cli/tests/<skript>.test.sh`. Aufbau nach einem vorhandenen Skript in
+`apps/cli/assets/scripts/` und ulhs `docs/guide.md`; `docs/scripts.md` wird nicht von Hand
+gepflegt, sondern mit `bash tools/gen-scripts-doc.sh` erzeugt, und `CHANGELOG.md` bekommt eine
+Zeile. Der Eintrag im Katalog braucht alle fünf Sprachen (de, en, fr, it, es) — eine fehlende
+Übersetzung macht ulhs eigenen Test rot; was die Skripte selbst ausgeben, ist englisch.
+(Bis 22.09.2026 lagen die Skripte in `scripts/`, der Katalog hieß `config.yaml`, und es gab
+`SCRIPTS.md`, `TREE.md` und `scripts/_template.sh`. Alles fünf ist seit dem Umbau von ulh
+auf den Projektstruktur-Standard weg; gemessen am 02.10.2026 auf ulhs `main`.) Jedes Teil schreibt das Skript für seinen Server auf einem eigenen Branch im ulh-Repo
 (`ngc-web`, `ngc-api`, `ngc-controller`, `ngc-db`) und liefert per Pull Request; der Koordinator
 hält diese Konventionen fest und führt zusammen. Jede ulh-Installation holt beim Start `main`,
 deshalb kommt nur Geprüftes dorthin.
@@ -26,11 +32,18 @@ nichts, was schon stimmt.
 
 Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
 
-- `ngc-db`: `nodes` (Liste der Knoten, je `<host>:<port>` nach `trust.ValidHostPort`),
-  `bootstrap` (erster Knoten: ja/nein), `password_ngc`, `password_migrate`. Der erste Knoten
-  erzeugt die CA der Installation und zeigt ihr Zertifikat (PEM); wie die anderen Knoten ihre
-  Zertifikate bekommen, legt der Plan der Datenbank fest. Der private Schlüssel der CA kommt nie
-  in answer.yaml, in eine Konfigurationsdatei oder ins Repo.
+- `ngc-db`: `hostname` (Name oder IPv4-Adresse **dieses** Knotens, nach `trust.ValidHost` und
+  `host.sh`; er muss in `nodes` vorkommen und wird der Name im Knotenzertifikat),
+  `nodes` (Liste der Knoten, je `<host>:<port>` nach `trust.ValidHostPort`),
+  `bootstrap` (erster Knoten: ja/nein), `password_ngc`, `password_migrate` (zwei verschiedene
+  Passwörter, ohne Komma: ulh reiht die Antworten mit Kommas) und `ca_dir` (Ordner für den
+  privaten Schlüssel der CA, Vorgabe `/etc/ngc/db-ca`, nur beim Bootstrap-Knoten). Der erste Knoten
+  erzeugt die CA der Installation und zeigt ihr Zertifikat (PEM); die anderen zeigen ihre Anfrage
+  (CSR) und bekommen das Zertifikat mit `ngc-db sign` auf dem Bootstrap-Knoten. Der private
+  Schlüssel der CA und der des Knotens kommen nie in answer.yaml, in eine Konfigurationsdatei oder
+  ins Repo. Das Passwort für die Kopie zu einem neuen Knoten (`wsrep_sst_auth`) steht ebenfalls
+  nicht in answer.yaml: `ngc-db` erzeugt es je Installation und legt es mit Modus 0400 für `mysql`
+  ab.
 - `ngc-api`: `node` (z. B. `api-1`; auch der Name in der Vertrauensliste und Teil des
   Fingerabdrucks beim Beitritt), `hostname` (Name, unter dem Controller und Apache den Server
   erreichen, nach `trust.ValidHost`; die Skripte prüfen wie `shared/testdata/ulh/host.sh`:
@@ -50,7 +63,9 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   `apis`)
 - `ngc-controller`: `name` (Name des Servers nach `wire.ValidName`: Kleinbuchstaben, Ziffern und
   Bindestrich, beginnt mit einem Buchstaben, höchstens 32 Zeichen), `pair_code` (der Kopplungscode
-  aus der Shell: `ngc-pair:` und base64url des JSON, geprüft mit `tunnel.ParsePairCode`), `roles`
+  aus der Shell: `ngc-pair:` und base64url des JSON, geprüft mit `tunnel.ParsePairCode`; nie in der
+  Kommandozeile, das Skript reicht ihn mit `printf '%s\n' "$pair_code" | ngc-controller pair`
+  durch), `roles`
   (`web`, `api`, `db`, `services`); mit Rolle `db` zusätzlich `migrate_nodes` (je
   `<host>:<port>` nach `trust.ValidHostPort`), `migrate_name`, `migrate_user` (`ngc_migrate`),
   `migrate_password` und `migrate_ca` (Zertifikat der CA von `ngc-db`) für `migrate` in
@@ -144,7 +159,11 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   bekommen hat, mit dem in dieser Datei; weicht es ab (derselbe Schlüssel, das beweist der
   Fingerabdruck), schreibt er die Datei neu und lädt Apache neu. So sperrt weder ein erneuertes
   Zertifikat noch ein Datum Apache aus. Den Beitritt und die Kopplung führen die Programme aus
-  (`ngc-api`, `ngc-controller`); sie prüfen TLS mit dem Fingerabdruck aus dem Code.
+  (`ngc-api`, `ngc-controller`); sie prüfen TLS mit dem Fingerabdruck aus dem Code. Der
+  Kopplungscode steht dabei nie in der Kommandozeile: `ngc-controller pair` fragt ihn am Terminal
+  ab und nimmt ihn sonst als erste Zeile der Standardeingabe. So reicht das Skript ihn mit einer
+  eingebauten Shell-Anweisung durch (`printf '%s\n' "$pair_code" | ngc-controller pair`) und legt
+  ihn in keine Prozessliste: `/proc/<pid>/cmdline` liest ohne `hidepid` jeder lokale Benutzer.
 - **Lastverteilung in Apache:** `config.BalancerFile` (`/etc/ngc/apache-apis.conf`).
   - Es schreiben nur `ngc-web` bei `install`/`configure` (aus `apis` und `api_pins`, nach der
     Prüfung der Fingerabdrücke) und danach der Controller mit Rolle `web` (aus `web.json`),
@@ -153,8 +172,38 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
   - Der virtuelle Host von `ngc-web` bindet die Datei ein.
   - Inhalt: je API ein `BalancerMember` mit der Adresse aus `web.json`, die TLS-Einstellungen der
     Regel „TLS intern“ und die Weiterleitung von `/api/` samt WebSocket an den Balancer.
-  - Die genaue Form legt der Plan des Webinterface fest und trägt sie hier als Vorlage ein; der
-    Controller schreibt genau diese Form.
+  - Die genaue Form ist diese Vorlage; `ngc-web` und der Controller schreiben genau sie,
+    Zeile für Zeile. Das Beispiel zeigt zwei APIs; je weiterer API kommt genau eine weitere
+    `BalancerMember`-Zeile dazu, mit derselben Einrückung und denselben Werten hinter der
+    Adresse. Es gibt keine andere erlaubte Abweichung.
+
+    ```apache
+    # /etc/ngc/apache-apis.conf
+    # Written by ngc-web (install, configure) and after that by ngc-controller with
+    # role web, both from /etc/ngc/web.json. Never edit by hand; every write is
+    # atomic, mode 0644, and Apache is reloaded only after apachectl configtest.
+    SSLProxyEngine on
+    SSLProxyVerify require
+    SSLProxyCACertificateFile /etc/ngc/tls/api-trust.pem
+    SSLProxyCheckPeerName on
+    SSLProxyCheckPeerExpire on
+    SSLProxyProtocol TLSv1.3
+    SSLProxyCipherSuite TLSv1.3 TLS_AES_256_GCM_SHA384
+
+    <Proxy "balancer://ngc-api">
+        BalancerMember "https://api-1.ngc.test:7443" retry=5 timeout=65 keepalive=On upgrade=websocket
+        BalancerMember "https://api-2.ngc.test:7443" retry=5 timeout=65 keepalive=On upgrade=websocket
+        ProxySet lbmethod=byrequests failontimeout=On
+    </Proxy>
+
+    ProxyPreserveHost Off
+    ProxyPass        "/api/" "balancer://ngc-api/api/"
+    ProxyPassReverse "/api/" "balancer://ngc-api/api/"
+    ```
+
+    Wer diese Vorlage ändert, ändert einen Vertrag: `TestBalancerTemplateMatchesTheContract`
+    in `apps/server-controller/classes/apache` vergleicht sie byteweise mit dem, was
+    `apache.Render` erzeugt, und wird rot, sobald eine der beiden Seiten allein wandert.
 - **Reihenfolge nach der Ersteinrichtung:** zuerst den Controller des Webservers koppeln. Erst er
   schreibt `trust-anchor.json`; bis dahin kann sich nur der Browser anmelden, der die
   Ersteinrichtung gemacht hat.

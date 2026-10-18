@@ -64,7 +64,7 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
 
 ## Technik
 
-- Go 1.27 (`go.mod`: `go 1.27`, `toolchain go1.27.1`), Bau für linux/amd64 und linux/arm64 mit
+- Go 1.27 (`go.mod`: `go 1.27`, `toolchain go1.27.2`), Bau für linux/amd64 und linux/arm64 mit
   `CGO_ENABLED=0`. Ziel sind Debian und Ubuntu. Windows wird nicht umgesetzt.
 - Texte für Menschen prüft `wire.ValidText` mit den Unicode-Tabellen von Go (Unicode 17.0 mit
   Go 1.27). Ein Go-Update, das neue Unicode-Tabellen bringt, ist deshalb eine Vertragsänderung:
@@ -90,12 +90,19 @@ Das Repo folgt dem Projektstruktur-Standard: Teilprogramme unter `apps/`, die Ve
   `TestHostScript` in `shared/trust`, der `sh` und `grep` braucht, die
   Dateirechte-Prüfung in `shared/config`), müssen dort grün sein.
 - Jeder Parser bekommt einen Fuzz-Test (`go test -fuzz`), jede Kryptografie einen Test gegen die
-  Vektoren in `shared/testdata/`. Fuzz-Ziele in `shared/store` nur mit
-  `-fuzzminimizetime=1s`, sonst bleibt das Verkleinern der Eingaben hängen.
+  Vektoren in `shared/testdata/`. **Jedes** Fuzz-Ziel mit Saaten von mehr als
+  etwa einem Kilobyte braucht `-fuzzminimizetime` (0 fuer Durchsatz, 1s fuers Suchen), sonst
+  verbringt der Lauf seine Zeit im Verkleinern der Eingaben. Berichtigt am 12.10.2026: hier
+  stand vorher "Fuzz-Ziele in `shared/store`" — die Regel war am Paket festgemacht statt an der
+  Saatgroesse, und `FuzzUpload` in `appstore` lief durch `store.PackageUI` und war darum nicht
+  gedeckt. Gemessen: 15 bis 637 474 Laeufe je 30 s am selben Code, und `execs` zaehlt die
+  Minimierungslaeufe nicht mit. Wie eine Fuzz-Zahl zu melden ist, steht in
+  `Z:\GitHub\claude-md\messen.md`.
 - In `shared/trust/trusttest` enthält `Genesis` zwei nach ID sortierte Admins: `Users[0]` ist der
   Passkey-Admin, `Users[1]` der Passwort-Admin aus `NewSigner(1)`.
 - `shared/trust/trusttest` nur in Tests importieren; `tools/check.sh` bricht sonst ab.
-- Fremdcode prüfen: `govulncheck ./...`.
+- Fremdcode prüfen: `govulncheck -tags modules ./...`. Ohne den Schalter sieht es 12 der 22
+  Module (am 18.10.2026 gemessen, `docs/fremdcode.md`).
 - Keine Tests löschen oder überspringen, um grün zu werden.
 
 ## Git

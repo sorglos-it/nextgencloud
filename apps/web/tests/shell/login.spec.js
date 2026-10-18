@@ -34,8 +34,8 @@
 //     cannot fail for the thing it is named after. It is replaced here by a
 //     case that logs dora in and asks the MOCK how many proofs it had to
 //     check - a number this side cannot produce by itself.
-import { test, expect, skipWithoutLogin, skipWithoutShell, standInOn } from "../fixtures/page.js";
-import { PASSWORD, PASSKEY_USERS, TOTP_CODE } from "../fixtures/logins.js";
+import { test, expect, skipWithoutLogin, skipWithoutSeedKeys, skipWithoutShell, standInOn } from "../fixtures/page.js";
+import { PASSWORD, PASSKEY_USERS, TOTP_CODE, USER_NAME } from "../fixtures/logins.js";
 
 // The mock's test door. It is on /api/ so it travels the same origin as
 // everything else, and it is the mock's alone: nothing of the shell knows it.
@@ -196,6 +196,12 @@ test("the password never leaves the browser", async ({ shell }) => {
 });
 
 test("the password field is empty again the moment it has been used", async ({ shell }) => {
+  // The password ROUTE of the mask, which since 17.10.2026 is shut where the
+  // engine makes no password key out of a seed: the field is disabled and the
+  // button with it (auth/login.js, passwordKeys), so there is nothing to type
+  // into. Not skipWithoutLogin - these three measure a login that FAILS and
+  // need no X25519 and no desktop.
+  await skipWithoutSeedKeys(shell);
   // A login that FAILS is what this can be measured on: the mask is still
   // there afterwards, and the field has to be empty all the same. After a
   // login that works the mask is gone and there is nothing left to look at.
@@ -208,6 +214,12 @@ test("the password field is empty again the moment it has been used", async ({ s
 });
 
 test("a wrong password says only that the login failed", async ({ shell }) => {
+  // The password ROUTE of the mask, which since 17.10.2026 is shut where the
+  // engine makes no password key out of a seed: the field is disabled and the
+  // button with it (auth/login.js, passwordKeys), so there is nothing to type
+  // into. Not skipWithoutLogin - these three measure a login that FAILS and
+  // need no X25519 and no desktop.
+  await skipWithoutSeedKeys(shell);
   await fillLogin(shell, "anna", "falsch");
   await expect(shell.getByRole("alert")).toHaveText("Anmeldung fehlgeschlagen.");
   // An unknown name must give exactly the same answer.
@@ -216,6 +228,12 @@ test("a wrong password says only that the login failed", async ({ shell }) => {
 });
 
 test("E_LOCKED waits the given seconds", async ({ shell }) => {
+  // The password ROUTE of the mask, which since 17.10.2026 is shut where the
+  // engine makes no password key out of a seed: the field is disabled and the
+  // button with it (auth/login.js, passwordKeys), so there is nothing to type
+  // into. Not skipWithoutLogin - these three measure a login that FAILS and
+  // need no X25519 and no desktop.
+  await skipWithoutSeedKeys(shell);
   await tellMock(shell, "lock=30");
   await fillLogin(shell, "anna", PASSWORD);
   await expect(shell.getByRole("alert")).toContainText("Zu viele Fehlversuche");
@@ -269,9 +287,137 @@ test("a role with passwordToo has the certificate signed twice", async ({ shell,
   await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
 });
 
+test("the passkey button never falls back to the password", async ({ shell, browserName }) => {
+  test.skip(browserName !== "chromium", "virtual authenticators only exist in Chromium");
+  await atLocalhost(shell);
+  // An authenticator that WORKS and holds nothing for this installation, which
+  // is the state every account is in today: there is no way to make a passkey
+  // (apps/web has no credentials.create, and no action of ngc.users writes a
+  // user key), so somebody who presses this button has none.
+  const cdp = await shell.context().newCDPSession(shell);
+  await cdp.send("WebAuthn.enable");
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      protocol: "ctap2", transport: "usb", hasUserVerification: true,
+      hasResidentKey: true, isUserVerified: true, automaticPresenceSimulation: true,
+    },
+  });
+
+  // anna has a password key and no passkey. MEASURED at a real installation on
+  // 17.10.2026: the desktop opened, the authenticator was never asked, and the
+  // person was told nothing - they pressed "log in with a passkey" and were let
+  // in by their password. The button has to fail instead, with the one sentence
+  // every other failure gets: an answer that said "this name has no passkey"
+  // would say that the name exists.
+  // Taken BEFORE the attempt and compared after: the count only ever grows, so
+  // this case does not care what the case before it left in the mock.
+  const before = await askMock(shell, "ask=finishes");
+  await shell.getByLabel("Benutzername").fill("anna");
+  await shell.getByLabel("Passwort").fill(PASSWORD);
+  await press(shell, shell.getByRole("button", { name: "Mit Passkey anmelden" }));
+
+  await expect(shell.locator("#taskbar")).toBeHidden();
+  await expect(shell.getByText("Anmeldung fehlgeschlagen.")).toBeVisible();
+  // The mock is the one that would have had to check a proof, so it is the one
+  // asked. A flag this side set about its own work would say nothing.
+  expect(await askMock(shell, "ask=finishes"), "no proof was sent at all").toBe(before);
+
+  await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+});
+
 test("a password login is told to switch to passkeys", async ({ shell }) => {
   await skipWithoutLogin(shell);
   await fillLogin(shell, "anna", PASSWORD);
   await expect(shell.locator("#taskbar")).toBeVisible();
   await expect(shell.getByText("Umstellen auf Passkeys empfohlen")).toBeVisible();
+});
+
+// ---- the mask of an engine without password keys -------------------------
+//
+// bootOver waits for shell/main.js to have FINISHED, and the heading is what
+// says so: loginView is the last thing start() does, so once the heading
+// stands nothing of the boot draws over #root any more.
+//
+// MEASURED, and it cost a red case: the three cases below build their own mask
+// into #root, and on Firefox the boot was still running - loadLang, loadConfig,
+// anchorFor and passwordLoginFits are four awaits - so main.js drew ITS mask
+// over the one the case had just made, and the case measured the shell's
+// screen instead of its own. Chromium got there first and the same case was
+// green. A case whose answer depends on which engine wins a race is a case
+// that measures the race.
+async function bootOver(shell) {
+  await expect(shell.getByRole("heading", { name: "Bei NGC anmelden" })).toBeVisible();
+}
+
+//
+// THE THREE CASES ABOVE SKIP exactly where this one is interesting, so this
+// one does not wait for such an engine: it builds the mask with
+// passwordKeys: false itself, which is what shell/main.js hands it there
+// (passwordLoginFits, measured per engine). So the promise is pinned on every
+// engine that can draw a mask at all, and not only on whichever Firefox
+// happens to be installed.
+//
+// WHAT IT PINS, and all three halves matter:
+//
+//   the reason is ON THE SCREEN - until this round Firefox 141 took the
+//   password, ran Argon2id over it and answered "Anmeldung fehlgeschlagen.",
+//   the sentence for a wrong password;
+//   the route is SHUT and not merely unlabelled - a field somebody can type
+//   into is a field somebody types into;
+//   the way that WORKS is offered - a passkey needs no public half of a seed
+//   (auth/keys.js proveWithPasskey), so refusing the whole shell would have
+//   locked out somebody for whom everything works.
+test("a mask without password keys says so and shuts the password route", async ({ shell }) => {
+  await bootOver(shell);
+  await shell.evaluate(async () => {
+    const { loginView } = await import("/assets/js/auth/login.js");
+    loginView(document.getElementById("root"), {
+      config: { rp: { id: "ngc.example.org", origins: ["https://ngc.example.org"] } },
+      passwordKeys: false,
+    });
+  });
+  await expect(shell.locator(".note.warn"))
+    .toHaveText("Dieser Browser kann die Passwort-Anmeldung nicht ausführen. "
+      + "Bitte mit Passkey anmelden.");
+  await expect(shell.getByLabel("Passwort")).toBeDisabled();
+  await expect(shell.getByRole("button", { name: "Anmelden", exact: true })).toBeDisabled();
+  await expect(shell.getByRole("button", { name: "Mit Passkey anmelden" })).toBeEnabled();
+});
+
+// The counterpart, so the case above cannot pass by drawing that sentence
+// always: with password keys the mask is the mask it has always been, and the
+// sentence is nowhere on it.
+test("a mask with password keys carries neither the sentence nor a disabled field", async ({ shell }) => {
+  await bootOver(shell);
+  await shell.evaluate(async () => {
+    const { loginView } = await import("/assets/js/auth/login.js");
+    loginView(document.getElementById("root"), {
+      config: { rp: { id: "ngc.example.org", origins: ["https://ngc.example.org"] } },
+    });
+  });
+  await expect(shell.locator(".note.warn")).toHaveCount(0);
+  await expect(shell.getByLabel("Passwort")).toBeEnabled();
+  await expect(shell.getByRole("button", { name: "Anmelden", exact: true })).toBeEnabled();
+});
+
+// AND THAT ENTER DOES NOT GET PAST IT. The button is off, but a form submits
+// on Enter in any field, and the password route would then be open through a
+// door nobody looked at. The mock counts the logins, so this is not a matter
+// of what the screen says afterwards: nothing may be asked at all.
+test("Enter asks for no login where the password route is shut", async ({ shell }) => {
+  await bootOver(shell);
+  await shell.evaluate(async () => {
+    const { loginView } = await import("/assets/js/auth/login.js");
+    loginView(document.getElementById("root"), {
+      config: { rp: { id: "ngc.example.org", origins: ["https://ngc.example.org"] } },
+      passwordKeys: false,
+    });
+  });
+  let asked = 0;
+  shell.on("request", (r) => { if (r.url().includes("/api/v1/login")) asked += 1; });
+  await shell.getByLabel("Benutzername").fill(USER_NAME);
+  await shell.getByLabel("Benutzername").press("Enter");
+  await shell.waitForTimeout(500);
+  expect(asked, "Enter started no login").toBe(0);
+  await expect(shell.locator(".note.warn")).toBeVisible();
 });

@@ -326,6 +326,29 @@ export async function loginGap(shell) {
   return g.ed25519 || g.x25519 || g.ed25519FromSeed;
 }
 
+// THE PASSWORD SEED STEP ALONE: the public half of a PKCS#8 seed, and nothing
+// else. contracts/proof.js publicFromSeed, and with it everything that stands
+// on a password key - auth/keys.js proveWithPassword, auth/setup.js, and the
+// cases of contracts/proof.spec.js and contracts/session.spec.js that build a
+// certificate out of a seed.
+//
+// WHY IT IS ITS OWN GAP AND NOT loginGap: those cases need no X25519 and no
+// running session, only this one step, and a case must ask for what it really
+// performs. Asking loginGap there would switch a case off for a curve it never
+// touches; asking "is there an Ed25519 key at all" - which is what those two
+// files did until 17.10.2026 - let eight of them run into
+// OperationError on Firefox 141, which has Ed25519 and refuses exactly this
+// export.
+export async function seedKeyGap(shell) {
+  const g = await sessionKeyGaps(shell);
+  return g.ed25519 || g.ed25519FromSeed;
+}
+
+export async function skipWithoutSeedKeys(shell) {
+  const gap = await seedKeyGap(shell);
+  test.skip(gap !== "", `this engine makes no password key out of a seed - ${gap}`);
+}
+
 // An Ed25519 signature, made or checked - and nothing about a password seed.
 export async function signatureGap(shell) {
   return (await sessionKeyGaps(shell)).ed25519;

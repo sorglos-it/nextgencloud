@@ -807,6 +807,14 @@ export async function startMockAPI({ world, port, phpPort }) {
   // a flag the browser set about its own work: "", "password", "passkey" or
   // "passkey+password".
   let lastProofs = "";
+  // How many login finishes this mock has taken apart (it counts where the
+  // body got through the contract, which is where lastProofs is reset too, so
+  // the two always speak about the same attempts). lastProofs cannot answer
+  // "no proof was sent" on its own: it is reset at the start of every finish
+  // and then set again, so a case that runs after a password login reads
+  // "password" either way. A count that only ever grows is order-independent -
+  // a case takes it before and after and compares.
+  let finishes = 0;
   // Seconds the NEXT login attempt is locked for, set through the test door.
   // A real API counts failed attempts; a mock is told - and it is told once:
   // the number is taken and cleared in the same step, so a case that locks
@@ -819,6 +827,51 @@ export async function startMockAPI({ world, port, phpPort }) {
     const s = lockFor;
     lockFor = 0;
     return s;
+  }
+
+  // How the NEXT request to an API path answers instead of doing its work:
+  // "" for normally, "busy" for a database another process holds, "away" for
+  // one that cannot be reached at all. Taken and cleared in the same step, as
+  // the lock above is and for the same reason.
+  //
+  // IT MIRRORS apps/server-api/classes/httpapi/busy.go (FailCoded) AND NOT A
+  // GUESS, because what the shell is measured against here is one header:
+  //   busy -> 503 E_UNREACHABLE WITH Retry-After: 5 (httpapi.RetryBusy), and
+  //           a log line reason=db-busy
+  //   away -> 503 E_UNREACHABLE WITHOUT any Retry-After
+  // The CODE IS THE SAME in both, which is the whole point of point 49: a
+  // word of its own (E_BUSY) is in frozen shared/wire/wire.go:450-462 and
+  // BLOCKED, so the header is the only thing that tells them apart.
+  //
+  // The setup path is the one exception and it is the server's, not this
+  // file's: apps/server-api/classes/setup/setup.go:94-99 (fault) turns EVERY
+  // E_UNREACHABLE into E_INTERNAL, and its own comment says so - "nothing on
+  // this path can say 503 any more". COUNTED, because the first version of
+  // this comment said "fifteen places" and both halves of that were wrong:
+  // `grep -c 'httpapi\.Fail[A-Za-z]*(' setup.go` answers 14, and ONE of them
+  // is httpapi.FailRetry at setup.go:324, which DOES set a Retry-After - for
+  // E_LOCKED, the failed-code bucket, and never for a busy database. The 13
+  // plain httpapi.Fail calls set none. So a busy database during the first
+  // run reaches the browser as 500 E_INTERNAL with no header, and that is
+  // what sendFault below hands back; E_LOCKED is the setup mask's own branch
+  // (auth/setup.js, sentenceForOffer) and not this one.
+  const RETRY_BUSY = 5;
+  let faultNext = "";
+  function takeFault() {
+    const f = faultNext;
+    faultNext = "";
+    return f;
+  }
+
+  // sendFault answers one of the two the way busy.go does. onSetupPath takes
+  // the server's own conversion with it.
+  function sendFault(res, kind, onSetupPath) {
+    if (onSetupPath) {
+      sendError(res, wire.CODES.INTERNAL);
+      return;
+    }
+    if (kind === "busy") res.setHeader("Retry-After", String(RETRY_BUSY));
+    sendError(res, wire.CODES.UNREACHABLE);
   }
 
   // ------------------------------------------------- a fresh installation
@@ -1026,6 +1079,13 @@ export async function startMockAPI({ world, port, phpPort }) {
         // there is no session before a login.
         const lock = url.searchParams.get("lock");
         if (lock !== null) lockFor = /^[0-9]{1,4}$/.test(lock) ? Number(lock) : 0;
+        // How the next API request fails instead of working: "busy" or
+        // "away", and anything else clears it. It needs no session either -
+        // a database nobody can write to is a state of the installation and
+        // not of a caller, which is exactly why point 52 could answer it for
+        // every name alike.
+        const fault = url.searchParams.get("fault");
+        if (fault !== null) faultNext = fault === "busy" || fault === "away" ? fault : "";
         // A fresh installation needs no session either: there is no user yet.
         // "1" takes the admin away, "0" puts the world buildWorld made back.
         const setup = url.searchParams.get("setup");
@@ -1041,6 +1101,10 @@ export async function startMockAPI({ world, port, phpPort }) {
       // Which proofs the last login carried. A word, so the asking side has
       // nothing to parse.
       if (url.searchParams.get("ask") === "proofs") { res.end(lastProofs); return; }
+      // How many login finishes got through the contract here. A number, so a case can
+      // measure that an attempt sent NO proof without depending on what the
+      // case before it left behind.
+      if (url.searchParams.get("ask") === "finishes") { res.end(String(finishes)); return; }
       // How many times the shell asked for the setup offer. A number, so the
       // case does not have to believe a flag the page set about its own work.
       if (url.searchParams.get("ask") === "setup") { res.end(String(setupOffers)); return; }
@@ -1048,6 +1112,16 @@ export async function startMockAPI({ world, port, phpPort }) {
       res.end(state?.sawPlaintext === true ? "1" : "0");
       return;
     }
+
+    // A database that is busy or away answers BEFORE the path does any work
+    // of its own, which is where the real API answers it too: the five ways
+    // in front of the WebSocket reach their store through dbwait, and what
+    // comes back is a fault and never a row (point 49). It stands here, after
+    // the test door and before every path, so one line covers setup, login,
+    // logout and trust alike - and so the door itself can still be reached
+    // while the next request is set to fail.
+    const fault = takeFault();
+    if (fault !== "") { sendFault(res, fault, path === session.PATH_SETUP); return; }
 
     // The setup, and only while there is no admin: 404 E_NOTFOUND otherwise,
     // which is what the contract gives this path "as soon as there is an
@@ -1204,6 +1278,7 @@ export async function startMockAPI({ world, port, phpPort }) {
       return null;
     }
     lastProofs = "";
+    finishes += 1;
     const cert = f.cert;
     // The certificate goes through the contract's own shape and check too:
     // it is a document from outside like any other, and
