@@ -507,6 +507,26 @@ export function adapterFor(link, world = {}) {
     onNotice(fn) {
       if (typeof fn === "function") notices.add(fn);
     },
+
+    // close ends the SESSION LINK under this adapter: "bye" on channel 0, then
+    // the socket (net/link.js close()).
+    //
+    // IT IS HERE BECAUSE THE DESKTOP HAS NO OTHER HANDLE. shell/desktop.js is
+    // handed this adapter and nothing else - the raw link stays in
+    // shell/main.js - so until this door existed the shell could end a session
+    // on the API and still hold the socket open, and the only thing that ever
+    // closed one was shell/main.js for the stand-in and realWorld() for a
+    // trust list that would not open. shell/desktop.js tearDown() is the
+    // caller: a socket nobody reads holds a channel budget and a session on
+    // the API for nothing, which is the reason the two places above give too.
+    //
+    // A link that has no close() is no error here. The stand-in's one answers
+    // this shape as well (shell/fake-link.js), and the desktop asks before it
+    // calls - a session that cannot be hung up is not a reason to leave the
+    // screen standing.
+    close() {
+      if (typeof link?.close === "function") link.close();
+    },
   };
 }
 

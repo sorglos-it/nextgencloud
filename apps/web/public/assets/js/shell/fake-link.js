@@ -764,6 +764,12 @@ export async function fakeWorld() {
     onNotice(fn) {
       if (typeof fn === "function") notices.add(fn);
     },
+    // Nothing to hang up: the stand-in has no socket. It is here because the
+    // shape of this object is the shape net/world.js adapterFor() answers, and
+    // shell/desktop.js tearDown() asks for close() on whichever of the two it
+    // was handed. A stand-in that was missing a door the real one has would
+    // let a case pass over a shell that throws in operation.
+    close() {},
   };
 
   // A TEST HOOK, and it leaves with this file. The desktop's test sends a
