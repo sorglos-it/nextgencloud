@@ -186,7 +186,17 @@ go vet ./...
 # really compile it: -race itself needs cgo and a C compiler (here only in the
 # ESP toolchain), vet with the tag does not. Measured 17.10.2026.
 go vet -tags=race ./...
-go test ./...
+# "ok" says nothing about the number of cases that ran: measured 12.10.2026,
+# go test printed "ok" while 10 of 11 cases were SKIP. Set NGC_CHECK_TEST_JSON
+# to a path and the JSON stream of THIS run lands there, so a caller can count
+# passed / FAILED / SKIPPED (tools/ci-count.sh) instead of running the whole
+# suite a second time only to count it. set -o pipefail is on at the top, so a
+# red run still ends the script although tee exits 0.
+if [ -n "${NGC_CHECK_TEST_JSON:-}" ]; then
+	go test -count=1 -json ./... | tee "$NGC_CHECK_TEST_JSON" >/dev/null
+else
+	go test ./...
+fi
 for arch in amd64 arm64; do
 	# go build compiles no test file, so the tests that only exist on the
 	# target (//go:build linux) would never be seen on a machine that builds
