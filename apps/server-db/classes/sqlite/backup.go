@@ -28,7 +28,15 @@ import (
 // asked to copy: opening a missing path would make an empty database, and a
 // backup of that, played back, is an erased installation.
 func Backup(cfg config.DB, target string) error {
-	return backup(cfg, target, nil)
+	return backup(cfg, target, Options{}, nil)
+}
+
+// BackupWith is Backup with the knobs of Options. Nothing in NGC calls it
+// with a non-zero Options; what it is for is a measurement of the "a
+// neighbour holds the file" sentence that does not have to wait the ten
+// seconds of DefaultBusyTimeout for it.
+func BackupWith(cfg config.DB, target string, opt Options) error {
+	return backup(cfg, target, opt, nil)
 }
 
 // backup is Backup with a seam between the copy and the fold, and that is the
@@ -41,7 +49,7 @@ func Backup(cfg config.DB, target string) error {
 // test that opens the copy at this point makes that answer come back for real
 // instead of the check being read as "cannot fire" and resting on nobody -
 // see the chain named at fold.
-func backup(cfg config.DB, target string, betweenCopyAndFold func(tmp string)) error {
+func backup(cfg config.DB, target string, opt Options, betweenCopyAndFold func(tmp string)) error {
 	if err := checkTarget(cfg.Path, target); err != nil {
 		return err
 	}
@@ -53,7 +61,7 @@ func backup(cfg config.DB, target string, betweenCopyAndFold func(tmp string)) e
 	if !st.Mode().IsRegular() {
 		return errors.New("sqlite: der Pfad der Datenbank zeigt nicht auf eine Datei")
 	}
-	db, err := OpenDB(cfg)
+	db, err := OpenDBWith(cfg, opt)
 	if err != nil {
 		return err
 	}
@@ -77,7 +85,7 @@ func backup(cfg config.DB, target string, betweenCopyAndFold func(tmp string)) e
 		betweenCopyAndFold(tmp)
 	}
 	if journal {
-		if err := fold(ctx, cfg, tmp); err != nil {
+		if err := fold(ctx, cfg, opt, tmp); err != nil {
 			removeCopy(tmp)
 			return err
 		}
@@ -187,9 +195,9 @@ func freeze(ctx context.Context, conn *sql.Conn, path, tmp string) (bool, error)
 // Nothing of the content passes through here either: SQLite moves its own
 // pages, with the key from the configuration, so the copy stays encrypted
 // exactly as the original is.
-func fold(ctx context.Context, cfg config.DB, tmp string) error {
+func fold(ctx context.Context, cfg config.DB, opt Options, tmp string) error {
 	cfg.Path = tmp
-	db, err := OpenDB(cfg)
+	db, err := OpenDBWith(cfg, opt)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -15,10 +16,18 @@ import (
 // Pi do it: the API and the controller each have a pool of their own on one
 // file. openFile cannot be used for this - it makes a TempDir of its own on
 // every call, so two calls are two files.
+// busyShort is the deadline the pools of this file wait with. The wall is
+// the same one the server meets - another program holds the write lock of the
+// file - and this is only the clock: sqlite.DefaultBusyTimeout is ten
+// seconds, and the case is about the SENTENCE, not about the length of the
+// wait. Measured 18.10.2026 on D:: 10,04 s with the production deadline,
+// 0,33 s with this one, same assertions.
+const busyShort = 250 * time.Millisecond
+
 func openTwice(t *testing.T) (*sql.DB, *sql.DB) {
 	t.Helper()
-	if OpenEncrypted == nil {
-		t.Fatal("OpenEncrypted is not set; encrypted_test.go is what sets it")
+	if OpenEncryptedBusy == nil {
+		t.Fatal("OpenEncryptedBusy is not set; encrypted_test.go is what sets it")
 	}
 	cfg := config.DB{
 		Driver: config.DriverSQLite,
@@ -26,7 +35,7 @@ func openTwice(t *testing.T) (*sql.DB, *sql.DB) {
 		Key:    config.NewSecret(bytes.Repeat([]byte{7}, 64)),
 	}
 	open := func() *sql.DB {
-		db, err := OpenEncrypted(cfg)
+		db, err := OpenEncryptedBusy(cfg, busyShort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,9 +58,14 @@ func openTwice(t *testing.T) (*sql.DB, *sql.DB) {
 // both open one file and each migrates at its own start, that is the sentence
 // the admin gets at a failed start.
 //
-// The test takes about ten seconds on purpose: busy_timeout is what is being
-// waited out, and OpenDB sets it to 10 000 ms with no way in from outside.
-// Shortening it here would measure a different file than the one NGC opens.
+// busy_timeout is what is being waited out, and until 18.10.2026 that cost
+// ten seconds because the number sat in a const with no way in from outside.
+// It has one now (sqlite.Options), so this case waits out the SAME wall on
+// the shorter clock of busyShort above: a real neighbour really holds the
+// write lock of the real encrypted file, through the real opener. What is
+// asserted is the sentence. That the production deadline is still ten
+// seconds, and that the number given really reaches SQLite, is asserted in
+// the sqlite package itself.
 func TestApplySaysWhoHoldsTheFile(t *testing.T) {
 	writer, runner := openTwice(t)
 	if err := bootstrap(ctx, writer, sqlstore.SQLite); err != nil {
