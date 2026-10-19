@@ -717,12 +717,12 @@ func (onlineSender) Node(string) (tunnel.Hello, bool) {
 }
 
 func (onlineSender) Transfer(context.Context, string, string, json.RawMessage, core.Transfer,
-	io.Reader, *sign.Envelope, []byte, *proof.Proof) ([]byte, wire.Code) {
+	io.Reader, *sign.Envelope, []byte, *proof.Proof, *proof.Proof) ([]byte, wire.Code) {
 	return nil, wire.CodeInternal
 }
 
 func (onlineSender) Call(context.Context, string, string, json.RawMessage, *sign.Envelope,
-	[]byte, *proof.Proof) ([]byte, wire.Code) {
+	[]byte, *proof.Proof, *proof.Proof) ([]byte, wire.Code) {
 	return nil, wire.CodeInternal
 }
 
@@ -1100,5 +1100,42 @@ func TestUploadHoldsNoPackageOnTheChannel(t *testing.T) {
 	if null < largeSend/2 {
 		t.Fatalf("the null control collected %d bytes and the heap rose by only %d "+
 			"-- the gauge does not see a held package at all", largeSend, null)
+	}
+}
+
+// TestTheReConfirmationOfTheOpenReachesTheHandler is the first of the three
+// steps the confirmation has to survive on its way to a controller: off the
+// OPEN (Call.Confirm), into what the handler carries (appstore.Carried), and
+// onto the API's own OPEN (relay.ownOpen). Until 20.10.2026 the first two
+// steps did not exist at all, and the third dropped it silently, so a
+// controller answered E_CONFIRM for a confirmation this API had taken.
+//
+// It asks for the pointer and not merely for "not nil": a confirmation that
+// was replaced on the way by the login proof of the session would pass the
+// weaker question.
+func TestTheReConfirmationOfTheOpenReachesTheHandler(t *testing.T) {
+	fx := newStoreFixture(t)
+	fx.PutApp(t, appY, true)
+	tk := rootTask(t, fx.harness, 0xD7, core.ActActivate,
+		`{"app":"`+appY+`","version":"2.0.0","sha256":"`+b64of(32, 1)+`","ui":"`+
+			b64of(32, 2)+`","store":"`+core.LocalStore+`"}`)
+	confirm := confirmOf(fx.harness, tk)
+	c := fx.Open(t, wire.Open{App: core.AppStore, Service: core.ServiceController,
+		Action: core.ActActivate, Window: wire.MinWindow, Task: tk, Confirm: confirm})
+	c.result(t)
+	rq := fx.Store.act
+	if rq == nil {
+		t.Fatalf("the handler never ran")
+	}
+	if rq.Confirm == nil {
+		t.Fatalf("the handler carries no re-confirmation; the controller would answer E_CONFIRM")
+	}
+	if rq.Confirm.KeyID != confirm.KeyID || !bytes.Equal(rq.Confirm.Sig, confirm.Sig) {
+		t.Fatalf("the re-confirmation did not travel as it stands")
+	}
+	// And the login proof is still its own, not the confirmation under
+	// another name: both travel, and they are two different signatures.
+	if rq.Proof == nil || rq.Proof.KeyID == "" {
+		t.Fatalf("the proof of the session did not travel")
 	}
 }

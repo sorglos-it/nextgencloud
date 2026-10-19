@@ -31,7 +31,7 @@ import (
 // E_INTERNAL here rather than an OPEN the controller would have to refuse.
 func (rl *Relay) CallController(ctx context.Context, hop Hop, app, service, action string,
 	params json.RawMessage, in []byte) ([]byte, wire.Code) {
-	payload, code := ownOpen(app, service, action, params, nil, nil, nil)
+	payload, code := ownOpen(app, service, action, params, nil, nil, nil, nil)
 	if code != "" {
 		return nil, code
 	}
@@ -40,12 +40,13 @@ func (rl *Relay) CallController(ctx context.Context, hop Hop, app, service, acti
 
 // Transfer opens a channel to a controller for a core action with flow
 // transfer and writes the header and the file on it. task is the signed task
-// the action needs, client and proof the user it is carried out for; all three
-// travel as they stand, and nothing here verifies them -- the caller has done
-// that (package rights), and the controller does it again.
+// the action needs, client and proof the user it is carried out for, confirm
+// their re-confirmation of the task where the trust list asked for one; all
+// four travel as they stand, and nothing here verifies them -- the caller has
+// done that (package rights), and the controller does it again.
 func (rl *Relay) Transfer(ctx context.Context, hop Hop, app, service, action string,
 	params json.RawMessage, head core.Transfer, file io.Reader, task *sign.Envelope,
-	client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	// Our own header through the writer of the contract before anything is
 	// opened: a header that does not validate is our mistake, and the channel
 	// should not exist for it.
@@ -53,7 +54,7 @@ func (rl *Relay) Transfer(ctx context.Context, hop Hop, app, service, action str
 	if err := core.WriteTransfer(&hb, head); err != nil {
 		return nil, wire.CodeInternal
 	}
-	payload, code := ownOpen(app, service, action, params, task, client, pr)
+	payload, code := ownOpen(app, service, action, params, task, client, pr, confirm)
 	if code != "" {
 		return nil, code
 	}
@@ -64,8 +65,19 @@ func (rl *Relay) Transfer(ctx context.Context, hop Hop, app, service, action str
 
 // ownOpen builds the payload of an OPEN the API sends for itself and checks it
 // through the parsers of the contract.
+//
+// THE RE-CONFIRMATION BELONGS IN HERE, and until 20.10.2026 it did not. This
+// is the one place where an OPEN of the shell is not relayed byte for byte
+// (relay.forward passes Forwarded.Raw) but written anew, and what is not
+// written here does not travel. The row that paid for it was
+// ngc.store/controller/activate: the API accepted task and confirmation,
+// wrote its "ok" line into the log (coreapp.Dispatcher.logTask) and then
+// opened a channel of its own without the confirmation, so the controller
+// asked for one, got none and closed with E_CONFIRM. Measured on the running
+// installation on 19.10.2026: the controller's own check reported
+// confirmPresent=false while the shell had sent one and the API had taken it.
 func ownOpen(app, service, action string, params json.RawMessage, task *sign.Envelope,
-	client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	if !wire.CoreApp(app) {
 		return nil, wire.CodeInternal
 	}
@@ -73,6 +85,10 @@ func ownOpen(app, service, action string, params json.RawMessage, task *sign.Env
 	if task != nil {
 		// With a task only the signed params count, so the OPEN carries none.
 		o.Task = task
+		// wire.Open.Validate takes a confirmation only together with a task,
+		// so one without a task is dropped here rather than turned into an
+		// OPEN of ours that no controller may parse.
+		o.Confirm = confirm
 	} else {
 		o.Params = params
 	}
