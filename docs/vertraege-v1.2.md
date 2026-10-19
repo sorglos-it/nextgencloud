@@ -3018,3 +3018,195 @@ Abruf um eine volle Stunde. Eine Anlage, an der gearbeitet wird, holt also nie e
 **Mein Vorschlag:** beides, und der Knopf zuerst — er ist der kleinere Eingriff und die Antwort
 auf die Frage, die ein Verwalter in diesem Augenblick wirklich hat. **Gemessen ist der Befund,
 nicht der Vorschlag.**
+
+## Punkt 67: Rust für NGC — ein Vertrag ist bitgleich nachgebaut, und genau das ist das Argument dagegen
+
+Thomas hat ein Entscheidungspapier bestellt: kein Umbau, keine Meinung, sondern ein Versuch mit
+Zahlen. Der steht hier. **Alles unter „Gemessen" ist gemessen; alles unter „Abgewogen" ist nicht
+gemessen und als Abwägung gekennzeichnet.** Der Vorschlag am Ende ist eine Abwägung.
+
+### Der Versuch
+
+`shared/sign` ist der kleinste abgeschlossene Vertrag mit echter Krypto: 136 Zeilen Go, Ed25519,
+SHA-256, base64url, strenges JSON — und er hat eine Vektordatei, aus der heute **beide**
+bestehenden Fassungen prüfen (`shared/testdata/sign.json`). Deshalb er und nicht `enc` (zu
+grundlegend, kein eigener Vektor) oder `task` (hängt an `wire`).
+
+Er ist in Rust nachgebaut und gegen dieselbe Datei gerechnet — `versuch-rust/sign/`, Beleg und
+kein Bestandteil. **Gemessen am 20.10.2026, Debian 13 unter WSL, rustc 1.99.1:**
+
+```
+32 OK, 0 FAIL
+```
+
+Darunter die harte Zeile: **die Vektordatei aus Rust neu gebaut ist Byte für Byte die Datei, die
+Gos Golden-Test geschrieben hat.** Schlüssel aus dem Seed, Kennung, Nachrichtenbytes,
+Unterschrift, JSON-Form — alles gleich. Dazu die **vollständige Ablehnungstabelle** aus
+`shared/sign/sign_test.go` (18 Fälle: unbekanntes Mitglied, doppeltes Mitglied, Mitglied in
+anderer Schreibweise, `null`, Daten dahinter, Polsterung im base64, Budget überschritten …) —
+alle 18 lehnt Rust ab wie Go.
+
+**Bitgleichheit ist also kein Problem.** Wer dagegen argumentiert, dass Rust auseinanderläuft,
+argumentiert gegen eine Messung.
+
+### Der Preis, in Zahlen
+
+**Gemessen.** `cargo vendor` für diesen **einen** 136-Zeilen-Vertrag:
+
+| | Kisten | Dateien | Bytes | Rust-Zeilen |
+|---|---|---|---|---|
+| Rust, nur `shared/sign` | **41** | 1 733 | 22 018 383 | **577 163** |
+| Go, ganzes NGC heute | 12 | 692 | 16 616 004 | — |
+
+Die vier größten: `libc` 133 739, `fiat-crypto` 83 364, `syn` 67 002 und ein **zweites** `syn`
+(2.0.119) 65 391 Zeilen — zwei Fassungen desselben Makro-Übersetzers im selben Baum. Go bringt
+Ed25519, SHA-256, base64url und JSON in der Standardbibliothek mit: für `shared/sign` ist die
+Zahl **null**.
+
+Das ist die Stelle, an der die Hausregel bricht. „Fremdcode wird ins Repo kopiert und selbst
+gepflegt" (`CLAUDE.md`, `THIRD-PARTY.md`) ist heute tragbar, weil es 12 Module sind und das
+Aufräumen am 18.10.2026 drei MB herausgeholt hat. 41 Kisten mit 577 000 Zeilen für einen Vertrag
+pflegt niemand selbst. Lizenzen wären kein Hindernis (alles MIT/Apache/BSD, AGPL-verträglich) —
+die Menge ist es.
+
+### Die zweite Umsetzung: wie wird heute gleichgehalten?
+
+**Gemessen.** Der Weg existiert und ist schmal:
+
+- `shared/testdata/` hält die Vektoren, `shared/internal/golden/golden.go` schreibt und prüft sie
+  aus Go, `apps/web/tests/fixtures/vectors.js` liest **dieselben Dateien** aus dem Repo
+  („The shared test data is the common truth for Go and JavaScript").
+- 27 Prüfdateien unter `apps/web/tests/contracts/` stehen gegen die Go-Pakete.
+
+**Und der Weg trägt die Verträge nicht allein.** `apps/web/tests/contracts/sign.spec.js` sagt es
+selbst: `sign.json` *„is the only vector there is for this contract, and it says nothing about
+what has to be refused, so the cases below spell that out from the Go source"*. Die Vektoren
+beweisen, was **angenommen** wird. Was **abgelehnt** wird, ist je Sprache von Hand nachgeschrieben
+— 847 Zeilen in `sign.spec.js` gegen 339 Zeilen `sign_test.go`.
+
+Die zweite Fassung ist auch keine Übersetzung. `sign.js` sind 420 Zeilen gegen 136 in Go, und der
+Überhang ist **kein** Rauschen: er verteidigt gegen ein Bedrohungsmodell, das Go nicht hat (ein
+Aufrufer, dessen `length`-Getter Code ist). Rust hätte dieses Problem so wenig wie Go — eine
+Rust-Fassung wäre also die **dritte** Lesart von `sign`, nicht die zweite Kopie der ersten.
+
+Und eine Lücke ist gemessen, die genau da sitzt, wo die großen Verträge stehen. Gos
+`enc.DecodeStrict` lehnt ein doppeltes Mitglied **in jeder Tiefe** ab, auch innerhalb einer
+`json.RawMessage`. Beide Seiten gemessen, derselbe Eingabestring `{"inner":{"a":1,"a":2}}`:
+
+| | flach | eine Ebene tiefer |
+|---|---|---|
+| Go `enc.DecodeStrict` | abgelehnt | **abgelehnt** (`duplicate object member name "a" within "/inner"`) |
+| Rust `serde_json` | abgelehnt | **genommen**, `inner = {"a":2}` — der letzte gewinnt |
+
+`core`, `store` und `wire` ruhen auf dieser Zusage. Rust bekäme sie nicht aus `serde_json`; sie
+wäre zu bauen. Dazu kommt `wire.ValidText`: `shared/wire/wire.go`, Zeile 282 bindet den Vertrag
+ausdrücklich an *„Go's: Unicode 17.0 with Go 1.27"*. Eine Rust-Fassung bringt ihre eigenen
+Unicode-Tabellen mit — eine **dritte** Tabellenfassung, die gleichzuhalten ist.
+
+### Bauen und Ausliefern
+
+**Gemessen, Go heute** (eigener `GOCACHE`, damit kein fremder Lauf gestört wird; drei
+Binärdateien `cli`, `server-api`, `server-controller`):
+
+| | kalt | warm (3 Läufe) |
+|---|---|---|
+| `linux/amd64` | 17,983 s | 2,143 / 1,796 / 1,699 s |
+| `linux/arm64` | 17,850 s | — |
+| `./shared/...` allein | 8,629 s | — |
+| `go test ./shared/...` | 15,340 s | — |
+
+**Gemessen, Rust:** der erste Bau dieses einen Vertrags mit 41 Kisten: **10,25 s**; `target/`
+danach **682 MB**. Statische Binärdatei `x86_64-unknown-linux-musl`: 834 312 Bytes, auf Anhieb.
+
+**Der arm64-Befund:** `aarch64-unknown-linux-musl` scheitert im Standardfall am Binder
+(`collect2: error: ld returned 1 exit status`). Mit
+`-C linker=rust-lld -C link-self-contained=yes` baut er — 811 040 Bytes, 5,5 s. Also **ein
+Schalter, kein Kreuz-gcc**. Go braucht für dasselbe `GOARCH=arm64` und sonst nichts.
+
+**Der Windows-Befund ist härter:** auf diesem Rechner ist **kein Rust installiert und kein
+C-Übersetzer vorhanden** — kein Visual Studio, kein gcc. Der ganze Versuch läuft deshalb in der
+Debian-WSL. Go baut hier beide Ziele direkt aus PowerShell. Rust auf Windows hieße: MSVC-Build-Tools
+oder MinGW dazu, oder jeder Bau geht durch WSL.
+
+Die Werkzeugkette selbst: 11,4 s Installation, **613 MB**, mit beiden Zielen **1,0 GB**.
+
+**Nicht gemessen, Abwägung:** 90 Fuzz-Ziele laufen heute mit `go test -fuzz` und null
+Zusatzwerkzeug. Rust braucht dafür `cargo-fuzz` (nightly, libFuzzer) oder AFL. Was das an
+CI-Zeit und an Pflege kostet, ist nicht gemessen.
+
+### Welche Teile kämen in Frage?
+
+**Gemessen** (Zeilen ohne Tests): `apps/server-api` 15 435, `apps/server-controller` 15 336,
+`apps/server-db` 7 210, `apps/cli` 2 258, `shared/` 9 468 — zusammen **49 707** Zeilen Go, dazu
+92 640 Zeilen Tests und 1 791 Testfunktionen.
+
+**Abgewogen, Teil für Teil:**
+
+- **`ngc-controller`** — fasst podman an und Dateisysteme. Gemessen: podman läuft über
+  `exec.CommandContext` (`runtime/podman.go:501`), nicht über eine Bibliothek; das Dateisystem über
+  `syscall.Statfs` und zwei ioctls. Beides ist in Rust genauso erreichbar, über `libc` — das schon
+  mitvendort ist. **Gewinn: keiner, der zu benennen wäre.** Wer Prozesse startet und ioctls
+  ausführt, gewinnt an Speichersicherheit nichts, was Go nicht schon gibt. **Preis: 15 336 Zeilen
+  plus 29 143 Zeilen Tests.**
+- **`ngc-api`** — Netz und Krypto. Hier wäre der Gewinn am ehesten zu erwarten, und er ist am
+  teuersten zu holen: Noise (`flynn/noise`) hätte in Rust kein Gegenstück, das dieselben Bytes
+  erzeugt, ohne gegen die Go-Fassung gemessen zu werden; dasselbe für die XTS-verschlüsselte
+  SQLite-Datei. **Preis: 15 435 + 34 700 Zeilen, und zwei Krypto-Verträge, deren Bitgleichheit
+  jeweils ein eigener Versuch wie dieser wäre.**
+- **`ngc-store` (`apps/cli`)** — 2 258 Zeilen, das kleine Werkzeug. **Der einzige Teil, bei dem
+  die Rechnung aufgehen könnte:** es ist klein, es hat keine Noise-Sitzung, und es wäre der
+  natürliche Ort für einen zweiten echten Versuch. **Preis: es müsste trotzdem `sign`, `enc`,
+  `store` und `wire` ein zweites Mal haben — also die 9 468 Zeilen `shared/` zuerst.**
+- **Die Oberfläche** — reines JavaScript ohne Bauschritt, läuft im Browser. Rust käme nur als
+  WebAssembly, das heißt: ein Bauschritt, wo heute keiner ist. Steht gegen `CLAUDE.md`, Zeile 77.
+  **Kommt nicht in Frage.**
+- **`shared/` selbst** — ist **eingefroren**. Nichts daran ist angefasst worden; die Go-Gegenprobe
+  zur Tiefen-Messung lief in einer Testdatei, die danach wieder weg war.
+
+**Hochgerechnet, aus der einen gemessenen Zahl:** `sign.go` 136 Zeilen Go → 192 Zeilen Rust,
+Faktor **1,41**. Auf `shared/` angewandt: etwa **13 300** Zeilen Rust, und das ist die *untere*
+Schranke, denn `sign` ist der leichteste Fall — die strenge JSON-Schicht aus `enc` und die
+Unicode-Tabellen aus `wire` sind im Faktor nicht drin, weil sie in Rust kein Gegenstück haben.
+Die 32 Beweisfälle brauchten 159 Zeilen Prüfprogramm gegen 339 Zeilen `sign_test.go` — die
+Prüfseite wäre also nicht billiger, nur anders geschnitten.
+
+### Was gewinnt der Benutzer?
+
+**Nichts Sichtbares.** Das ist die ehrliche Antwort, und sie ist nicht gemessen worden, weil es
+nichts zu messen gibt: die Binärdateien wandern auf eine Maschine, die ohnehin podman laufen
+lässt; 24,5 MB `server-api` gegen vielleicht 5 MB in Rust entscheidet auf keiner Anlage etwas.
+Kein Benutzer sieht eine Antwortzeit, die von der Sprache kommt.
+
+**Abgewogen, der eine Punkt, der zählen könnte:** Speichersicherheit in dem Teil, der Bytes von
+außen entgegennimmt, bevor eine Unterschrift geprüft ist. Nur: Go ist dort auch speichersicher.
+Was Rust zusätzlich gibt, ist Freiheit von Wettläufen bei geteiltem Zustand — und dafür ist nicht
+gemessen, dass NGC ein Problem hätte. Ein `go test -race`-Befund, der eine Umschreibung
+rechtfertigt, liegt nicht vor.
+
+### Vorschlag
+
+**Nein, und zwar nicht „später nochmal", sondern aus der Rechnung heraus.**
+
+Die Begründung in einem Satz: der Versuch hat bewiesen, dass Rust den Vertrag **bitgleich**
+treffen kann — und dieselbe Messung hat gezeigt, dass dafür 41 fremde Kisten mit 577 163 Zeilen
+in ein Repo müssten, dessen Hausregel lautet, Fremdcode selbst zu pflegen. Das sind nicht zwei
+Argumente, das ist eins: **die Bitgleichheit war nie der Engpass, die Hausregel ist es.** Wer Rust
+in NGC will, muss zuerst die Regel „keine Laufzeitabhängigkeiten" abschaffen. Solange die Regel
+gilt, ist die Antwort schon gegeben.
+
+Dazu drei Dinge, die auch ohne Rust aus diesem Versuch mitzunehmen sind — und die mehr wert sind
+als die Sprachfrage:
+
+1. **Die Ablehnungsseite steht in keinem Vektor.** `sign.json` kennt einen gültigen Umschlag und
+   sonst nichts; die 18 Ablehnungen stehen dreimal von Hand da (Go, JavaScript, und nun Rust).
+   Eine Vektordatei, die auch die **abzulehnenden** Eingaben trägt, würde die zwei bestehenden
+   Fassungen enger halten. Das ist eine Änderung in `shared/testdata` und damit an einem
+   eingefrorenen Ordner — Thomas' Entscheidung, nicht meine.
+2. **Die Tiefen-Lücke ist der Maßstab** für jede künftige Fremdsprache: wer `core`, `store` oder
+   `wire` nachbaut, muss das doppelte Mitglied eine Ebene tiefer ablehnen. `serde_json` tut es
+   nicht. Das gehört in die Vertragsdoku, bevor es jemand bemerkt, indem er es falsch macht.
+3. **`CLAUDE.md` Zeile 74–76 ist überholt.** Dort steht noch, `tools/modules.go` halte die Module
+   fest; `THIRD-PARTY.md` sagt, die Datei ist seit dem 18.10.2026 weg. Eine Zeile, zwei Wahrheiten.
+
+**Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: 41 Kisten, 577 163 Zeilen,
+für 136 Zeilen Go.
