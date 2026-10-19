@@ -3018,3 +3018,150 @@ Abruf um eine volle Stunde. Eine Anlage, an der gearbeitet wird, holt also nie e
 **Mein Vorschlag:** beides, und der Knopf zuerst — er ist der kleinere Eingriff und die Antwort
 auf die Frage, die ein Verwalter in diesem Augenblick wirklich hat. **Gemessen ist der Befund,
 nicht der Vorschlag.**
+
+## Punkt 68: Fremde Programme nach NGC portieren — das Programm ja, die Oberfläche nie
+
+Thomas' Frage, wörtlich: „können wir Rust und solche Programme einfach portieren oder nicht
+oder was müssen wir schaffen dass wir es können". Anlass war Wordcraft, ein Word-Nachbau in
+Rust (272 101 Zeilen, 405 fremde Kisten, MIT/Apache). Die Frage ist nicht die von Punkt 67 —
+dort ging es um NGCs **eigenen** Quelltext, hier um NGCs **Apps**.
+
+Die Antwort steht in zwei Zahlen aus `shared/store`:
+
+> **`MaxPackage` = 4 GiB. `MaxUIFile` = 16 MiB.**
+> (`shared/store/catalog.go:25`, `shared/store/pack.go:22`)
+
+NGC gibt einem fremden **Programm** vier Gigabyte und seiner **Oberfläche** sechzehn Megabyte.
+Genau deshalb portiert das eine und das andere nicht.
+
+### Teil A: gemessen, es trägt — ein 120-MB-Paket aus fremdem Rust
+
+Der Versuch liegt unter `versuch-port/`, Beleg und kein Bestandteil. Gemessen am 20.10.2026,
+Debian 13 unter WSL, rustc 1.99.1, podman 5.4.2:
+
+| Schritt | Ergebnis | Dauer |
+|---|---|---|
+| `wordcraft-cli` statisch, `x86_64-unknown-linux-musl` | 41 986 968 Bytes | 4 min 05 s |
+| Adapter (Go, statisch, linux/amd64) | 2 846 880 Bytes | — |
+| `podman build --arch amd64` | Abbild gebaut | 6,9 s |
+| `podman save --format docker-archive` | 126 142 464 Bytes | 7,8 s |
+| `ngc-store pack` | **126 150 656 Bytes**, SHA-256 `9881f5f6…` | 1,75 s |
+| `store.Walk` liest es zurück | `services/amd64.tar` → `Art=image Arch=amd64`; Manifest: 3 Aktionen, 1 Dienst | 0,09 s |
+
+**Kein musl-gcc nötig** — Rust bringt seine eigene musl-libc mit. Das Paket ist von NGCs
+**eigenem Leser** angenommen worden, nicht nur von einem Packer geschrieben.
+
+Der Dienstvertrag (`shared/service/service.go:19-37`) ist vollständig sprachneutral:
+Umgebungsvariablen rein, stdin/stdout/stderr als Kanal, Ausstiegscode als Status. Es gibt
+**keine Bibliothek**, die ein Dienst einbinden müsste — das Terminal liest die Variablen von
+Hand (`terminal/terminal.go:447-477`), ein Rust-Programm kann genau dasselbe.
+
+### Vier Dinge, die ein Port lernen muss — jedes im Versuch bezahlt
+
+1. **Die Aktion kommt als Umgebungsvariable, nicht als Argument.** `NGC_ACTION` und
+   `NGC_PARAMS` (`service.go:19-29`) gegen `wordcraft-cli convert <in> <out>`. **Jeder Port
+   braucht einen Adapter**, und nichts in NGC bringt einen mit. Der hier sind 120 Zeilen Go.
+2. **Der Adapter darf keine Shell sein.** `NGC_PARAMS` ist JSON von außen; ein Dateiname in
+   einer Shell-Zeile ist der Weg, auf dem ein Dokument zu einem Befehl wird. Gemessen beim
+   Schreiben: die erste Fassung benutzte `path/filepath` und wurde auf Windows gebaut —
+   `filepath.IsAbs("/etc/passwd")` ist dort **false**, und `../etc/passwd` wurde zu
+   `\data\etc\passwd`. Ein Prüfer, dessen Antwort vom Baurechner abhängt, ist kein Prüfer.
+   Richtig ist `path` und **ablehnen statt entschärfen**.
+3. **Der Container muss von selbst oben bleiben.** Der Controller fährt mit `podman exec`
+   hinein; NGCs eigene Apps halten den Container mit `ngc-controller hold`
+   (`node/main.go:161`). Ein fremdes Abbild hat das Programm nicht und muss seinen eigenen
+   Leerlauf mitbringen — hier `/bin/sleep infinity`.
+4. **`ngc-controller image` kann genau eine App bauen: das Terminal.** Die Pfade sind
+   Konstanten (`node/image.go:65` `terminalDir`, `:70` `imageRepo`). Wer eine andere App baut,
+   ruft podman selbst — was dieser Versuch getan hat. **NGC hat kein Werkzeug für fremde
+   App-Abbilder.**
+
+### Teil B: gemessen, es trägt nicht — die Oberfläche, vierfach versperrt
+
+Wordcrafts WebAssembly-Bau ist wirklich gelaufen (`trunk build --release`, 7 min):
+
+| Blocker | Beleg im Quelltext | Messung am Bau |
+|---|---|---|
+| ES-Modul | `appframe.js:731` lehnt `type="module"` ab (`NEEDS_CLASSIC`) | `dist/web/index.html` hat `<script type="module">`, die glue-JS hat `export` |
+| kein Netz | `connect-src 'none'` (`Page.php:54`) | glue-JS benutzt `fetch(` und `instantiateStreaming` |
+| kein WASM | `script-src data:` ohne `'wasm-unsafe-eval'` (`Page.php:52`) | der Browser verweigert `WebAssembly.instantiate` |
+| zu groß | `MaxUIFile` 16 MiB (`pack.go:22`) | **44 027 637 Bytes** = 42 MB; als `data:`-Adresse 56 MB, also auch über `MaxUITotal` 64 MiB |
+
+Die ersten drei wären behebbar. Der vierte nicht, ohne `shared/` anzufassen.
+
+Und das trifft nicht nur WASM. Jede portierte Oberfläche steht vor: kein
+`localStorage`/IndexedDB (opake Herkunft, `frame-boot.js:43`), keine Worker
+(`worker-src 'none'`), kein `eval`, kein Datei-Download (kein `allow-downloads`,
+`appframe.js:244`), `MAX_PARAMS` 8 KiB, `MAX_CALL_RESULT` 8 MiB, 8 Kanäle je Fenster. Die
+ganze App-API sind 117 Zeilen: `ngc.call`, `ngc.open`, `ngc.theme`/`onTheme` — sonst nichts.
+
+**Gesucht und nicht gefunden:** in ganz `apps/web/` gibt es **keinen** Datei-Download und
+**keinen** Upload, auch nicht in der Shell selbst. Eine Dokument-App kann heute nichts vom
+Rechner des Nutzers öffnen und nichts dorthin speichern.
+
+### Die Hausregel steht nicht im Weg — aber sie sagt es nicht
+
+`CLAUDE.md:72` bindet „keine Laufzeitabhängigkeiten" an **`go mod vendor`**, also an NGCs
+eigenen Quelltext. `shared/store/manifest.go:41` hat dagegen ein Feld `Publisher`, und
+`CoreApp` (`wire.go:307`) trennt fremde Apps von Kern-Apps. Eine App ist ein unterschriebenes
+Paket eines Herausgebers, kein Teil von NGCs Quelltext. Die 405 Kisten von Wordcraft fallen
+also **nicht** unter Punkt 67.
+
+**Nur: kein Dokument sagt das.** Das ist eine Regellücke, keine Programmierfrage, und sie
+gehört in `THIRD-PARTY.md` — ein Satz, der entscheidet, ob ein App-Abbild unter die
+Fremdcode-Regel fällt. Vorschlag im Pull Request; geändert ist dort nichts.
+
+### Was wir schaffen müssen
+
+Nach Wirkung geteilt durch Preis, nicht nach Reihenfolge im Quelltext.
+
+1. **`ngc.asset(path)` — eine App liest ihre eigenen geprüften Dateien als Bytes.**
+   Heute bekommt eine App nur, was HTML referenziert; Bytes nie. Das ui-tar liegt schon
+   geprüft im Speicher (`appframe.js:656-668`), also ist es eine kleine Ergänzung in
+   `ngc.js` und `appframe.js`. Schließt auf: WASM ohne `fetch`, große Schriften,
+   Wörterbücher, Vorlagen. **Billigster und wirksamster Einzelschritt, ohne
+   Sicherheitspreis.**
+2. **Datei herein und heraus, über die Shell.** Nicht `allow-downloads` an den Rahmen geben,
+   sondern die Shell besitzt den Dialog und die App bekommt und schickt Bytes über die
+   Brücke — dann bleibt die App eingesperrt. Ohne das hat **keine** Dokument-App Sinn.
+3. **Ein Werkzeug für fremde App-Abbilder.** `ngc-controller image` mit Pfaden als
+   Argumenten statt als Konstanten, oder ein eigener Unterbefehl in `ngc-store`. Heute baut
+   jeder Herausgeber mit podman von Hand, und die Digest-Pflicht (`runtime.CheckBase`) prüft
+   dabei niemand.
+4. **Ein Adapter-Muster, einmal dokumentiert.** Vier Fallen stehen oben; jeder Port tritt
+   sonst in alle vier. Gehört nach `apps/server-controller/templates/` neben das Terminal.
+5. **`'wasm-unsafe-eval'` in `FRAME_CSP`** (`Page.php:52`) — eine Sicherheitsentscheidung.
+   Erst nötig, wenn ein konkretes Programm es braucht. Der ES-Modul-Blocker ist dafür
+   **nicht** zu lösen: `wasm-bindgen --target no-modules` erzeugt ein klassisches Skript,
+   das ist App-Seite.
+6. **Worker im Rahmen** (`worker-src`, `Page.php:54`) — kleiner als Nr. 5, gleiche Art.
+7. **`MaxUIFile`/`MaxUITotal` anheben** — ⚠ `shared/` ist eingefroren, steht als **P14** im
+   v1.3-Vorschlag. Ohne das passt kein WASM dieser Größenklasse je in ein Paket.
+8. **Rahmenprotokoll mit Längenkopf, einmal in `shared/`** — ⚠ ebenfalls eingefroren, **P15**.
+   `serve` gibt Streams ohne Nachrichtengrenzen durch; das Terminal hat sich dafür einen
+   eigenen 3-Byte-Kopf erfunden (`terminal.go:76-96`), und jede weitere App erfindet ihn neu.
+9. **Quote für `/data`.** Heute nur gemessen, nicht begrenzt (`runtime/data.go:223-258`), und
+   die alten App-Abbilder liegen mit drin (`install/update.go:206-218`).
+
+### Vorschlag
+
+**Portieren ja — den Programmteil. Die Oberfläche schreiben wir immer selbst.**
+
+Und das ist keine Schwäche, die zu beheben wäre: es ist der Grund, warum jede NGC-App im
+selben Käfig sitzt und warum eine fremde App keinen eigenen Weg nach draußen hat. Wer die
+Oberfläche portierbar macht, gibt genau diesen Käfig auf. Die vier Blocker aus Teil B sind
+zusammen die Tür, und man öffnet sie nicht aus Bequemlichkeit.
+
+Reihenfolge: **Nr. 1 zuerst** (`ngc.asset`), dann **Nr. 2** (Datei herein/heraus), dann
+**Nr. 3 und 4** (Werkzeug und Adapter-Muster — sie kosten nichts an Sicherheit und nehmen
+jedem künftigen Port die vier Fallen ab). Nr. 5 bis 9 erst, wenn ein benanntes Programm sie
+braucht — und Nr. 7 sagt, dass das für Wordcraft ohnehin nicht reicht.
+
+Zu Wordcraft selbst: was man bekommt, ist `wordcraft-cli` als Dienst — `convert`, `text`,
+`info`, `render` — mit einer Oberfläche, die wir schreiben. Nie Wordcrafts Editor. Wer den
+will, schreibt ihn neu: gemessen sind das für „docx lesen und anzeigen" etwa 22–25k Zeilen,
+für „lesen, bearbeiten, speichern" 75–85k, dazu 8–15k Oberfläche.
+
+**Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: ein 120-MB-Paket aus
+fremdem Rust, von NGCs eigenem Leser angenommen — und 42 MB Oberfläche, die in 16 MiB nicht
+passen.

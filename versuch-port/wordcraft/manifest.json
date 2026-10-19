@@ -1,0 +1,19 @@
+{
+  "id": "it.sorglos.portversuch",
+  "name": "Portierversuch",
+  "version": "0.0.1",
+  "publisher": "Sorglos Thomas Weirich",
+  "description": "Beleg zu Punkt 68: ein fremdes Rust-Programm als NGC-Dienst.",
+  "ui": { "entry": "index.html", "width": 720, "height": 480 },
+  "actions": [
+    { "name": "text", "title": "Text aus einem Dokument lesen", "service": "wordcraft" },
+    { "name": "info", "title": "Angaben zu einem Dokument lesen", "service": "wordcraft" },
+    { "name": "convert", "title": "Ein Dokument umwandeln", "service": "wordcraft", "timeout": 120 }
+  ],
+  "services": [
+    { "name": "wordcraft", "command": ["/usr/lib/ngc/adapter"] }
+  ],
+  "runtime": "podman",
+  "cpu": 1000,
+  "memory": 256
+}
