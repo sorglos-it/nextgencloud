@@ -2958,3 +2958,63 @@ TLS-Kette die API annimmt (Punkt 45: sie verlangt sie wirklich). `podman ps` ist
 **Nebenbefund zur Umgebung:** die VM ist über `ssh ngc` erreichbar, `sudo` ohne Passwort, podman
 und PHP schon da, Apache kam mit der Installation. Damit gibt es zum ersten Mal einen Ort, an dem
 die Dinge gemessen werden können, die WSL nicht kann.
+
+## Punkt 65: „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt
+
+Am 19.10.2026, auf der Debian-VM, aus einem veröffentlichten Release installiert: angemeldet,
+Controller gekoppelt, Laden läuft. Im Laden steht dann der Satz
+
+> Der Katalog dieses Stores ist nicht echt.
+
+**Der Katalog ist echt.** Gemessen am selben Stand:
+
+- `catalog.json` von `https://store.ngc.test` → 200, `kid WM0yymuJtd9UxaUONGIXow`.
+- Der Schlüssel in `/etc/ngc/api.json` (`storeKey`) hat **dieselbe** Kennung — nachgerechnet mit
+  `sign.KeyID`.
+- `sign.Verify(env, storeKey, sign.PurposeCatalog)` → `nil`. Kein Fehler.
+
+Die Oberfläche unterscheidet drei Fälle und hat für jeden einen eigenen Satz
+(`apps/web/public/assets/js/apps/store.js`, Zeile 307): nicht vertraut, alter Katalog, nicht echt.
+Der dritte ist der `else`-Zweig — und in ihn fällt **alles andere**, auch der Fall, in dem die API
+den Katalog einfach noch nicht geholt hat: `Stores.Catalog` liest die Zeile aus der Datenbank
+(`BlobGet(BlobCatalog, id)`), und solange es keine gibt, schlägt der Aufruf fehl. Die Oberfläche
+sieht einen Fehler, der weder `Untrusted` noch `Rollback` ist, und sagt „nicht echt".
+
+Das ist dieselbe Klasse wie die Anmeldelüge: ein leerer Zustand wird als Angriff dargestellt. Wer
+das liest, sucht an der falschen Stelle — und zwar lange, denn gegen eine gefälschte Unterschrift
+kann ein Verwalter nichts tun. Der Satz nimmt ihm die Handlung, die es gäbe: warten.
+
+**Zu bauen:** der leere Zustand bekommt einen eigenen Satz („Der Katalog ist noch nicht geholt.")
+und der `else`-Zweig bleibt für das, was er benennt. Prüfbar: ein Stand mit leerer Katalogzeile
+muss den neuen Satz zeigen, und ein Stand mit verbogener Unterschrift den alten — beide in einem
+Lauf, sonst beweist keiner etwas.
+
+## Punkt 66: Eine frische Anlage hat eine Stunde lang keinen Laden
+
+Dieselbe Messung, die Punkt 65 erklärt, legt den zweiten Befund daneben.
+
+Kataloge holt allein die Stundenrunde: `apps/server-api/classes/server/server.go` legt bei Zeile
+386 `time.NewTicker(Hour)` an, und `Server.hour` (Zeile 421) ruft `Stores.Refresh`. Es gibt
+**keinen** Abruf beim Start und **keine** Handauslösung. Der Kommentar bei Zeile 436 sagt das auch
+so: „The first beat is an hour after the start and not at the start".
+
+Für eine laufende Anlage ist das richtig gedacht — eine Anlage, die beim Hochkommen anfängt, ihre
+eigenen Teile zu tauschen, ist schlimmer. Für eine **frische** Anlage heißt es: der Verwalter
+richtet ein, koppelt, öffnet den Laden — und findet eine Stunde lang nichts, mit dem Satz aus
+Punkt 65 darunter. Gemessen: Anlage um 16:45 installiert, API um 17:20 neu gestartet, erster
+Katalogabruf dadurch bei ~18:20.
+
+Der Neustart ist der zweite Teil des Befundes: **jeder** Neustart der API verschiebt den ersten
+Abruf um eine volle Stunde. Eine Anlage, an der gearbeitet wird, holt also nie einen Katalog.
+
+**Zu bauen — eins von beiden, Thomas entscheidet:**
+
+- **Erster Abruf kurz nach dem Start** (z. B. eine Minute), die Stundenrunde danach unverändert.
+  Preis: jede Anlage greift beim Hochkommen einmal nach außen. Das ist kein Tausch von Teilen,
+  nur ein Lesen — die Begründung bei Zeile 436 trifft darauf nicht zu.
+- **Ein Knopf „Jetzt nachsehen"** im Laden, für den Verwalter. Preis: ein Weg mehr, den jemand
+  von außen auslösen kann; braucht also dieselbe Ratenbegrenzung wie jeder andere Aufruf.
+
+**Mein Vorschlag:** beides, und der Knopf zuerst — er ist der kleinere Eingriff und die Antwort
+auf die Frage, die ein Verwalter in diesem Augenblick wirklich hat. **Gemessen ist der Befund,
+nicht der Vorschlag.**
