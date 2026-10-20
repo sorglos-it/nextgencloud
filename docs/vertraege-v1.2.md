@@ -3466,160 +3466,64 @@ eine Änderung am Helfer, die alle vier Fälle dieses Tests berührt, und sie is
 gemessen**. Wer den Teil besitzt, entscheidet das; die Kontrolle hier macht den Lauf
 inzwischen ehrlich, statt ihn zu verdecken.
 
-### Nachtrag 20.10.2026, vierter Teil: der Rückstau zuerst — gebaut, gemessen, verworfen
+### Nachtrag 21.10.2026: drei Umbauten am Schild, alle verworfen — das Fazit
 
-Der offene Punkt aus dem dritten Teil lautete: `congested` sollte den Rückstau erst
-durchlaufen lassen und den Stuffer **danach** anhalten, dann gäbe es das Rennen gar nicht.
-Thomas hat das entschieden, es ist gebaut und gemessen — **und es ist schlechter.** Es ist
-nicht ausgeliefert.
+Der offene Punkt aus dem dritten Teil lautete: das Rennen nach dem Drain beseitigen, statt es
+nur zu benennen. Dafür sind drei Umbauten gebaut und gemessen worden, alle unter 128
+Lastschleifen auf 64 Kernen, immer derselbe Rechner. „Läufe" zählt Durchgänge des Unterfalls;
+„Schild oben" ist, wie oft der Stuffer beim ersten Hinsehen noch schrieb:
 
-**Gebaut war:** der Drain-Faden merkt sich `s.sent` vor `p.free()`, öffnet das Rohr, wartet
-auf einen Schreibvorgang, der **danach** herauskam (also fließt die Leitung wieder), und hält
-erst dann den Stuffer an. Dazu ein `quietStuffer`, der vor dem Schließen auf `s.done` wartet,
-damit der Steckplatz still ist.
-
-**Das Erste wirkte.** Vorher stand der Stuffer in der Protokollzeile **jedes Mal** auf
-„already finished"; danach in 7 von 12 Läufen auf „still writing" — der Schild bleibt also
-wirklich länger oben.
-
-**Das Zweite ist der Preis, und er ist höher als der Gewinn.** Gemessen am 20.10.2026, je
-8 Läufe **beider** Unterfälle unter 128 Lastschleifen auf 64 Kernen, derselbe Rechner,
-dieselbe Last:
-
-| Stand | PASS | FAIL |
-|---|---|---|
-| nur Nullkontrolle (so wie es jetzt ist) | **16** | **0** |
-| mit „Rückstau zuerst" **und** `quietStuffer` | 14 | **2** |
-
-Und die zwei Fehlschläge sind immer derselbe, und es ist nicht der alte:
-
-```
-link_test.go: Run = link: the API cannot be reached, want an orderly end
-```
-
-**Warum es nicht geht.** Die zwei Ziele arbeiten gegeneinander. Der Schild besteht darin, dass
-der Stuffer schreibt — und jeder Frame ist `wire.MaxPayload`, also rund 64 KB. Den Schild
-länger oben zu halten heißt, **mehr** in das Rohr zu schieben; und das Schließen danach muss
-hinter diesem Rückstau her. `Close` hat dafür fünf Sekunden, und unter Last reichen sie nicht
-mehr. Der Kommentar über `t.Cleanup(p.free)` sagt genau das, von der anderen Seite her: eine
-Schließnachricht, die im Rohr steht, kostet `Close` seine fünf Sekunden. **Die Reihenfolge
-`p.free(); s.halt()` war kein Versäumnis, sie war die Entscheidung.**
-
-`quietStuffer` hilft dagegen nicht: er macht den Schreiber still, aber die Bytes, die er schon
-abgesetzt hat, stehen weiter im Rohr. Gemessen 2 von 8 auch mit ihm.
-
-**Was es bräuchte**, und es ist **nicht gemessen**: ein Rohr, das sagt, wann sein Rückstau
-durch ist. `pipe` hat keinen Zähler (`link_test.go:991`), also müsste der Weiterleiter die
-durchgeschobenen Bytes zählen, und gewartet würde auf „leer" — nicht auf „wächst nicht mehr",
-denn das wäre wieder eine Zeitheuristik der Art, die dieses Projekt überall herausnimmt. Das
-ist ein Umbau am Helfer, der alle vier Fälle dieses Tests berührt, und er gehört dem Teil, der
-ihn besitzt.
-
-**Es bleibt bei der Nullkontrolle.** Sie verdeckt nichts: ein toter Tunnel mit Schild oben ist
-weiter rot, und ein toter Tunnel mit Schild unten ist ein benannter `UNMEASURABLE`-Skip, den
-`check.sh` Zeile für Zeile ausgibt. Der Unterschied zum vierten Teil hier ist der Punkt: die
-Kontrolle macht einen unsicheren Lauf **ehrlich**, der Umbau hätte einen sicheren Lauf
-**unsicher** gemacht.
-
-**Und ein Messfehler von mir gehört dazu:** die 25 grünen Läufe aus dem dritten Teil waren nur
-der **kurze** Unterfall. Die Kombination beider Unterfälle unter Last hatte ich vor der
-Änderung nie gemessen — also hätte ich 2 von 8 fast für den Ausgangszustand gehalten. Erst der
-nachgeholte Vergleichslauf auf dem Stand ohne die Änderung (16/16) hat die Zahl zu einem Befund
-gemacht. **Ohne Vergleichswert ist eine Fehlerrate keine Aussage.**
-
-### Nachtrag 21.10.2026: der Byte-Zähler im Rohr — der Schild hält jetzt 8 von 8, und es geht trotzdem nicht
-
-Thomas hat den nächsten Schritt entschieden: `pipe` einen Byte-Zähler geben und auf einen
-leeren Rückstau warten. Gebaut, gemessen, **wieder verworfen** — aber diesmal ist der Befund
-viel genauer, und er sagt, warum dieser Test das nicht haben kann.
-
-**Gebaut war:**
-
-- `pipe.fwd atomic.Int64`, hochgezählt **nach** jedem `out.Write` in `toAPI`, also Bytes, die
-  wirklich weitergingen.
-- `drained(t, p)`: wartet, bis `settleFor` lang nichts mehr durchkam.
-- `quietStuffer(t, s)`: hält den Stuffer an und wartet auf `s.done`.
-- Der Drain-Faden in `congested` hält **nichts** mehr an, nur noch `p.free()`. Wer den Schild
-  wie lange hochhält, entscheidet jetzt der Fall selbst — der kurze wartet bis `pings > 0`,
-  dann `quietStuffer`, dann `drained`, dann schließen.
-
-**Das Ziel ist erreicht, und das ist eine echte Zahl:** der Stuffer stand in der Protokollzeile
-in **8 von 8** Läufen auf „still writing" — vorher **immer** auf „already finished". Der Schild
-bleibt also bis zum ersten Ping oben, und das Rennen aus dem CI-Rotlauf ist damit weg.
-
-**Der Preis bleibt, und er ist kleiner geworden, aber nicht null.** Je 8 Läufe beider
-Unterfälle unter 128 Lastschleifen auf 64 Kernen, derselbe Rechner:
-
-| Stand | PASS | FAIL | Schild oben |
+| Umbau | Läufe | **Fehlschläge** | Schild oben |
 |---|---|---|---|
-| nur Nullkontrolle (so wie es bleibt) | **16** | **0** | 0 von 8 |
-| „Rückstau zuerst" + `quietStuffer` (20.10.) | 14 | 2 | 5 von 12 |
-| Zähler + `drained`, `settleFor` 50 ms | 15 | 1 | **8 von 8** |
-| Zähler + `drained`, `settleFor` 200 ms | 15 | 1 | **8 von 8** |
+| **Ausgangsstand**, nur Nullkontrolle | 30 | **0** | 0 von 30 |
+| **1. Rückstau zuerst:** erst auf einen Schreibvorgang warten, dann `s.halt()`, dazu `quietStuffer` | 20 | **2** | 12 von 20 |
+| **2. Byte-Zähler im Rohr:** `pipe.fwd`, `drained()` wartet auf Ruhe (50 **und** 200 ms geprüft) | 16 | **2** | 16 von 16 |
+| **3. Drosselung:** 4 KiB statt `wire.MaxPayload` ab dem Drain | 30 | **3** | 27 von 28 |
 
-Die Ruhezeit ist also **nicht** der Hebel: vierfache Wartezeit, dasselbe Ergebnis.
+Die zwei hinteren erreichen das Ziel — der Schild bleibt bis zum ersten Ping oben, wo er im
+Ausgangsstand **nie** oben war. Nur kostet jeder von ihnen Fehlschläge, wo der Ausgangsstand in
+30 Läufen keinen hat.
 
-**Warum der Zähler es nicht heilen kann.** Die Meldung ist jedes Mal
+**Keiner ist ausgeliefert.** Alle Fehlschläge sind dieselbe Meldung, und sie ist nicht die
+alte:
 
 ```
 Run = link: the API cannot be reached, want an orderly end
 ```
 
-und `ErrAPI` kommt nach `link.go:283` aus der **Leseseite**, nicht von einer Schließnachricht,
-die im Rohr steckt. Die API-Seite liest durchgehend (`apiSide.quiet`), das Rohr ist also nicht
-verstopft. Was sich geändert hat, ist die **Menge in Flug** im Augenblick des Schließens: der
-Schild besteht darin, dass der Stuffer schreibt, und jeder Frame ist `wire.MaxPayload`. Im
-roten Lauf hatte er **16 Nachrichten** abgesetzt, rund ein Megabyte, gegen 5 bis 12 vorher. Je
-länger der Schild oben bleibt, desto mehr steht im Flug, wenn der Abschlussdialog beginnt — und
-desto eher bricht er. Ein Zähler im Rohr sieht das, ändert es aber nicht.
+**Der Satz, der alle drei erklärt:**
 
-**Die Ziele sind unvereinbar, und zwar nicht durch ein Versehen:**
+> Der Schild **ist** der Verkehr. Mehr Schild heißt mehr in Flug, und der geordnete Abschluss
+> braucht das Gegenteil. Kleinere Frames senken die Menge und machen den Schild dafür lückig.
 
-> Der Schild **ist** der Verkehr. Ihn länger oben halten heißt mehr in Flug haben. Der geordnete
-> Abschluss braucht das Gegenteil.
+Die Einzelheiten, soweit sie etwas tragen:
 
-**Es bleibt bei der Nullkontrolle.** Sie macht den unsicheren Lauf ehrlich: toter Tunnel mit
-Schild oben ist rot, toter Tunnel mit Schild unten ist ein benannter `UNMEASURABLE`-Skip, den
-`check.sh` ausgibt. Zwei Umbauten haben jetzt gemessen gezeigt, dass jede Verlängerung des
-Schildes an einer anderen Stelle teurer ist als dort.
+- **Zu 1 und 2:** `ErrAPI` kommt aus der **Leseseite** (`link.go:283`), nicht von einer
+  Schließnachricht, die im Rohr steckt — die API-Seite liest durchgehend (`apiSide.quiet`).
+  Entscheidend ist die **Menge in Flug** beim Abschlussdialog: im roten Lauf 16 Frames à
+  `wire.MaxPayload`, rund ein Megabyte, gegen 5 bis 12 vorher.
+- **Zu 2:** ein Zähler im Rohr kann kein „leer" melden. Was der Controller hinter der Sperre
+  aufstaute, liegt in **seinem** Sendepuffer — Megabytes auf Linux, wie der Kommentar bei
+  `pipe.free` sagt —, und dort sieht kein Rohr hinein. Es bleibt „es kam eine Weile nichts
+  durch", also eine Ruhezeit und kein Beweis; vierfache Ruhezeit änderte das Ergebnis nicht.
+- **Zu 3:** `writing` ist nur oben, **während** `t.c.Write` läuft. Ein 4-KiB-Frame auf offenem
+  Rohr ist in Mikrosekunden durch, der Schild bekommt also Lücken — und `ping()` liest den
+  Zähler in einem einzigen Augenblick. Ein lückiger Schild ist schlechter als keiner, weil er
+  die Lücke zufällig macht.
+- **Und eine Messregel, teuer bezahlt:** Umbau 3 sah in den ersten zwei Stichproben wie die
+  Lösung aus — 8 Läufe mit 16 PASS / 0 FAIL, dann 8 weitere mit 0 FAIL. Erst die dritte, mit
+  14 Läufen des kurzen Unterfalls, brachte die 3 Fehlschläge. Umbau 1 zeigt dasselbe von der
+  anderen Seite: eine Stichprobe davon war 12 von 12 grün. **Eine Stichprobe von acht ist keine
+  Rate** — nach dem ersten Lauf ausgeliefert, wäre zweimal eine Verschlechterung eingezogen,
+  die wie eine Verbesserung aussah.
 
-**Was noch offen wäre**, und es ist nicht gemessen: den Abschluss von der Menge in Flug
-unabhängig machen — also den Fall so schneiden, dass zwischen „der Ping ist durch" und
-`tn.Close()` erst alles in Flug abgeräumt wird, ohne dass der Schild dafür fallen muss. Dazu
-müsste der Stuffer sein Schreiben **drosseln** statt es einzustellen: kleine Frames statt
-`MaxPayload`, gerade genug, um den Schreibvorgang im Steckplatz zu halten. Das ändert, was der
-Test über die Sperre des Schreibers aussagt, und gehört damit dem Teil, der ihn besitzt.
+**Nicht gemessen und offen:** ob der Unterfall überhaupt eine Aussage über `ping()` **nach** dem
+Drain treffen kann, oder ob seine ganze Aussage davor liegt. Das entscheidet, wem der Teil
+gehört.
 
-**Beide Versuche liegen nicht im Repo.** Sie waren Messungen, und ihr Ergebnis sind die Zahlen
-oben.
+### Nachtrag 21.10.2026: und dabei kam ein Fehler in meiner eigenen Nullkontrolle heraus
 
-### Nachtrag 21.10.2026: die Drosselung — verworfen, und sie hat einen Fehler in meiner eigenen Kontrolle aufgedeckt
-
-Dritter und letzter Versuch am offenen Punkt: den Stuffer **drosseln** statt anhalten, kleine
-Frames (4 KiB) statt `wire.MaxPayload`, gerade genug, um den Schreibvorgang zu halten. Gebaut,
-gemessen, verworfen. Der Nebenbefund ist wichtiger als der Versuch.
-
-**Der erste Lauf sah aus wie die Lösung:** 8 Läufe beider Unterfälle unter Last, **16 PASS,
-0 FAIL**, Schild in 8 von 8 oben. Also eine zweite, größere Stichprobe — und die hat es
-umgedreht:
-
-| Stichprobe | PASS | FAIL |
-|---|---|---|
-| 8 Läufe beider Unterfälle | 15 | 0 (1 Skip) |
-| 14 Läufe des kurzen Unterfalls | 11 | **3** |
-
-**3 Fehlschläge in 22 gegen 0 in 16** im Ausgangsstand. **Eine Stichprobe von acht ist keine
-Rate** — hätte ich nach dem ersten Lauf ausgeliefert, wäre eine Verschlechterung eingezogen,
-die wie eine Verbesserung aussah.
-
-**Warum die Drosselung nicht geht**, und es war vorher zu überlegen: `writing` ist nur oben,
-**während** `t.c.Write` läuft. Ein 4-KiB-Frame auf einem offenen Rohr ist in Mikrosekunden
-durch, also hat der Schild jetzt **Lücken** — und `ping()` liest den Zähler in einem einzigen
-Augenblick. Ein Schild mit Lücken ist schlechter als keiner, weil er die Lücke zufällig macht.
-
-#### Der eigentliche Befund: meine Nullkontrolle hatte einen falschen Zweig
-
-Im Drosselversuch druckte der Test diese Zeile:
+Umbau 3 hat den Test diese Zeile drucken lassen:
 
 ```
 the tunnel counted as gone 22ms after the way opened although a write of ours
@@ -3628,43 +3532,28 @@ still stands in the socket (writing 0)
 
 **Die Meldung widerspricht sich selbst** — „a write still stands" und „writing 0" in einem
 Satz. Die Ursache ist mein `shieldGone`: es fragt, ob der **Stuffer-Faden lebt**, und das ist
-nicht dasselbe wie **ein Schreibvorgang läuft**. Mit Drosselung lebt der Faden und schreibt
-trotzdem gerade nicht.
+nicht dasselbe wie **ein Schreibvorgang läuft**. Bei Drosselung lebt der Faden und schreibt
+gerade trotzdem nicht.
 
-Und dahinter steckt der tiefere Fehler: `ping()` liest `t.writing` in **seinem** Augenblick,
-direkt nachdem der Ping aufgab (`link.go:736`). Ein toter Tunnel heißt also, **dieser** Lesevorgang
-sah Null. Der Augenblick ist vorbei, wenn die Schleife hinsieht, und **keine** spätere Lesung
-von `writing` und **kein** Zustand des Stuffers holt ihn zurück. Ein rotes Urteil in dieser
-Schleife war damit von Anfang an nicht begründbar — es hätte eine Maschine für einen Defekt
-erklärt.
+Dahinter steckt der tiefere Fehler: `ping()` liest `t.writing` in **seinem** Augenblick, direkt
+nachdem der Ping aufgab (`link.go:736`). Ein toter Tunnel heißt also, **dieser** Lesevorgang sah
+Null. Der Augenblick ist vorbei, wenn die Schleife hinsieht, und keine spätere Lesung von
+`writing` und kein Zustand des Stuffers holt ihn zurück. **Ein rotes Urteil in dieser Schleife
+war von Anfang an nicht begründbar** — es hätte eine Maschine für einen Defekt erklärt.
 
-**Behoben:** in dieser Schleife ist ein toter Tunnel jetzt **immer** `UNMEASURABLE`, mit allen
-Zahlen (Zeit, Pings, `writing` jetzt, Zustand des Stuffers) und mit der Begründung im Code. Der
-rote Zweig ist weg, weil er nie einen hätte geben dürfen.
+**Behoben:** dort ist ein toter Tunnel jetzt **immer** `UNMEASURABLE`, mit allen Zahlen (Zeit,
+Pings, `writing` jetzt, Zustand des Stuffers) und der Begründung im Code. Der rote Zweig ist
+weg, weil er nie einen hätte geben dürfen.
 
-**Das nimmt keinen Wächter weg** — dieselbe Begründung wie im dritten Teil: der Wächter ist die
+**Es nimmt keinen Wächter weg**, dieselbe Begründung wie im dritten Teil: der Wächter ist die
 Schleife **vor** dem Drain, wo `waitWriting` beweist, dass ein Schreibvorgang steht, und die
 Frist von dreißig Sekunden, in der ein Ping ankommen muss. Beide sind unverändert rot, wenn sie
 brechen.
 
-#### Stand nach der Korrektur
+**Stand danach:** 22 Läufe unter derselben Last **22 PASS, 0 FAIL, 0 SKIP**; `check.sh: ok`,
+**3350 passed, 0 FAILED, 87 SKIPPED**, `0 guard(s) unmeasurable`.
 
-- 22 Läufe unter derselben Last: **22 PASS, 0 FAIL, 0 SKIP**.
-- `check.sh: ok`, **3350 passed, 0 FAILED, 87 SKIPPED**, `0 guard(s) unmeasurable`.
-- **Der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er als „nur übersetzt"
-  ausgewiesen werden; im Drosselversuch hat er zum ersten Mal gefeuert und seine Zeile gedruckt
-  (`UNMEASURABLE: … the API saw 0 pings`). Damit steht er auf der vierten Stufe, und zwar durch
-  einen Versuch, der selbst verworfen wurde.
-
-#### Was von drei verworfenen Umbauten bleibt
-
-Dreimal wurde versucht, den Schild über den Drain hinaus zu verlängern — Rückstau zuerst,
-Byte-Zähler, Drosselung — und jedes Mal war der Preis an anderer Stelle höher:
-
-> Der Schild **ist** der Verkehr. Mehr Schild heißt mehr in Flug, und der geordnete Abschluss
-> braucht das Gegenteil. Kleinere Frames senken die Menge und machen dafür den Schild lückig.
-
-Es bleibt bei der Nullkontrolle, und sie ist jetzt die richtige: sie behauptet nichts über
-einen Augenblick, den niemand mehr sehen kann. **Nicht gemessen und offen:** ob der Unterfall
-überhaupt eine Aussage über `ping()` nach dem Drain treffen kann oder ob seine ganze Aussage
-vor dem Drain liegt. Das entscheidet, wem der Teil gehört.
+Und: **der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er als „nur
+übersetzt" ausgewiesen werden; in Umbau 3 hat er zum ersten Mal gefeuert und seine Zeile
+gedruckt. Er steht damit auf der vierten Stufe — durch einen Versuch, der selbst verworfen
+wurde.
