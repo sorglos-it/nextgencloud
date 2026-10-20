@@ -3393,3 +3393,75 @@ Nullkontrolle sagt, dass die Maschine den Faktor heute nicht auflösen kann, und
 `UNMEASURABLE`. Ob dieser Test dasselbe bekommen soll oder eine größere Frist, entscheidet, wem
 er gehört. **Ein Wächter, den ein Fremder leise zum Überspringen bringt, ist schlimmer als ein
 roter Lauf** — darum steht er hier als Befund und nicht als Änderungssatz.
+
+### Nachtrag 20.10.2026, dritter Teil: der Zeittest hat eine Nullkontrolle — und was sie NICHT ist
+
+Thomas hat entschieden, den Test zu härten, nach dem Muster der Uhrtests in
+`apps/server-api/classes/login`. Das ist getan, und das Wichtigste daran ist eine
+Einschränkung.
+
+**Erst die Ursache, genau.** `ping()` (`link.go:736`) macht einen Tunnel nur für einen Ping
+tot, der scheiterte, **während kein Schreibvorgang von uns lief**:
+
+```go
+mine := t.writing.Load() > 0
+...
+if mine { continue }
+t.dead.Store(true)
+```
+
+Der Unterfall baut genau diesen Schild: der Stuffer hält einen Schreibvorgang im Steckplatz,
+also überspringt jeder scheiternde Ping sich selbst. Nach `close(drain)` räumt der Drain-Faden
+in `congested` aber **beides** weg — `p.free()` und dann `s.halt()`. Damit fällt der Schild,
+und wenn der erste Ping danach noch im Rückstau scheitert, tut `ping()` genau das, was es
+verspricht: `dead`. Kein Defekt, sondern das Aufräumen des Tests, das mit dem Rückstau um die
+Wette läuft. Auf einem schnellen Rechner gewinnt der Ping, auf einem belasteten Läufer nicht.
+
+**Die Nullkontrolle** liest das am Stuffer selbst ab, nicht per Abtastung: er schließt `done`,
+wenn sein Faden zurückkommt, also beweist ein geschlossenes `done` in diesem Augenblick, dass
+der Schild weg ist (`shieldGone`). Dann:
+
+- Schild **oben** und Tunnel tot → **rot**, das ist der Defekt, für den der Test da ist.
+- Schild **unten** und Tunnel tot → **`UNMEASURABLE`**-Skip, mit Zahlen. Der Lauf hat die
+  Maschine gemessen, nicht `ping()`.
+
+Dasselbe Wort und dieselbe Begründung wie in `login`: `go test` ohne `-v` druckt für einen
+übersprungenen Test **nichts**, und `tools/check.sh` grept danach — ein Test, der sich still
+zur Seite stellt, wäre schlimmer als ein falsches Rot.
+
+#### Was die Kontrolle ausdrücklich nicht ist
+
+**Sie nimmt keinen Wächter weg, und der Skip dort war nie der Wächter.** Gemessen, fünf grüne
+Läufe in Folge: wenn diese Schleife zum ersten Mal hinsieht, ist der Stuffer **jedes Mal**
+„already finished" — der Schild ist dort also immer unten, und der Test besteht, weil der Ping
+nach **fünf bis sechs Millisekunden** da ist. Die `dead`-Prüfung in dieser Schleife war damit
+von Anfang an nur eine Abkürzung, um nicht dreißig Sekunden auf einen längst toten Tunnel zu
+warten.
+
+Der eigentliche Wächter ist die Schleife **vor** dem Drain: dort steht nachweislich ein
+Schreibvorgang von uns im Steckplatz (`waitWriting`), und ein toter Tunnel ist dort rot ohne
+Ausweg. Dazu die eine Zusage, die dem Unterfall den Namen gibt: nach dem Öffnen **muss** ein
+Ping die API erreichen — das ist die Frist von dreißig Sekunden. **Beides ist unverändert.**
+
+#### Welche Stufe von „geprüft" das erreicht
+
+Nach der Vierteilung: geschrieben / übersetzt / enthalten / **ausgeführt**.
+
+- Die Entscheidung selbst ist **ausgeführt**: `TestShieldGoneReadsTheStuffer` hält `shieldGone`
+  und `stufferState` an beide Antworten, absichtlich herbeigeführt.
+- Der **Skip-Zweig selbst ist hier nicht gelaufen.** 25 Läufe des Unterfalls unter 128
+  Lastschleifen auf 64 Kernen: **50 PASS, 0 FAIL, 0 SKIP**, erster Ping nach 5 bis 37 ms. Diese
+  Maschine kommt nicht in die Lage.
+- **Der Auslöser ist aber gemessen — in der CI.** Genau diese Zeile war am 20.10.2026 um 10:43
+  rot (`the tunnel counted as gone although the API answers every ping it sees`), und davor um
+  09:57 der Schwestertest. Dort wird aus dem Rot künftig ein benannter Skip, und `check.sh`
+  nennt ihn Zeile für Zeile.
+
+Nach der Änderung lokal: `check.sh: ok`, **3350 passed, 0 FAILED, 87 SKIPPED**, und
+`0 guard(s) unmeasurable` — es stellt sich also nichts unbemerkt zur Seite.
+
+**Offen bleibt:** ob das Aufräumen in `congested` die bessere Stelle wäre — erst den Rückstau
+durchlassen und den Stuffer **danach** anhalten, dann gäbe es das Rennen gar nicht. Das wäre
+eine Änderung am Helfer, die alle vier Fälle dieses Tests berührt, und sie ist **nicht
+gemessen**. Wer den Teil besitzt, entscheidet das; die Kontrolle hier macht den Lauf
+inzwischen ehrlich, statt ihn zu verdecken.

@@ -1304,12 +1304,58 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 		close(drain)
-		for deadline := time.Now().Add(30 * time.Second); pings.Load() == 0; {
+		// From here the shield of this test comes down: the drain goroutine
+		// of congested frees the pipe and then halts the stuffer, so the
+		// write of ours that stood in the socket ends. Between that and the
+		// first ping that gets through there is a race, and it is the race
+		// this loop used to lose on a busy machine - see shieldGone.
+		opened := time.Now()
+		for deadline := opened.Add(30 * time.Second); pings.Load() == 0; {
 			if !time.Now().Before(deadline) {
 				t.Fatal("the API saw no ping although the way to it is open again: a skipped ping cost the tunnel its heartbeat")
 			}
 			if tn.dead.Load() {
-				t.Fatal("the tunnel counted as gone although the API answers every ping it sees")
+				// THE NULL CONTROL, and it decides between a finding and a
+				// machine. ping() makes a link dead only for a ping that
+				// failed while NO write of ours was running; as long as one
+				// is, the ping skips itself and the tunnel is none the worse.
+				// So a dead tunnel means one of two things here:
+				//
+				//   - the stuffer was still writing: the shield was up, the
+				//     ping should have skipped itself, and it did not. That is
+				//     the defect this test exists for, and it stays red.
+				//   - the stuffer had already finished: no write of ours was
+				//     left to skip behind, the first ping after the drain ran
+				//     into the backlog that is still going out, and ping()
+				//     did exactly what it promises. The test measured the
+				//     machine, not the code.
+				//
+				// Which of the two it was is read off the stuffer itself and
+				// not sampled: it closes done when its goroutine returns, so
+				// a closed done at this moment proves the shield is gone.
+				//
+				// AND WHAT THIS LOOP IS NOT: it is not the guard of this
+				// subtest, and the skip below takes no guard away. Measured
+				// 20.10.2026, five green runs in a row: by the time this loop
+				// first looks, the stuffer is "already finished" every single
+				// time, and the test passes because the ping arrives in five
+				// or six milliseconds. So the dead check here was always a
+				// shortcut - a way not to sit out thirty seconds for a tunnel
+				// that is already gone - and the branch above it, shield up
+				// and dead, is close to unreachable from here.
+				//
+				// The guard is the loop BEFORE the drain: there a write of
+				// ours provably stands in the socket (waitWriting), and a
+				// dead tunnel is red with no way out. Plus the one assertion
+				// that gives this subtest its name: after the way is open, a
+				// ping has to reach the API, which is the deadline above.
+				// Neither is touched here.
+				if shieldGone(s) {
+					t.Skipf("%s: the tunnel counted as gone %v after the way opened, and the stuffer had already finished - no write of ours was left for the ping to skip behind, so this run says nothing about ping(); the API saw %d pings",
+						unmeasurable, time.Since(opened).Round(time.Millisecond), pings.Load())
+				}
+				t.Fatalf("the tunnel counted as gone %v after the way opened although a write of ours still stands in the socket (writing %d) and the API answers every ping it sees",
+					time.Since(opened).Round(time.Millisecond), tn.writing.Load())
 			}
 			select {
 			case err := <-ended:
@@ -1318,10 +1364,71 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
+		// Logged whether the case held or not. A measurement that only prints
+		// itself when it fails cannot be judged: nobody can say how close a
+		// green run came to the edge, and that is the question a flaky clock
+		// test is always asked.
+		t.Logf("the first ping after the drain came %v after it opened; the stuffer sent %d messages and was %s",
+			time.Since(opened).Round(time.Millisecond), s.sent.Load(), stufferState(s))
 		if err := waitFor(t, endedAfter(t, tn, ended)); err != nil {
 			t.Fatalf("Run = %v, want an orderly end", err)
 		}
 	})
+}
+
+// unmeasurable is the word a test prints when its own null control says this
+// machine could not hold the case up today. It is a word and not a remark
+// because tools/check.sh greps the run for it: go test without -v prints
+// NOTHING for a skipped test, so a test that steps aside would otherwise pass
+// in silence, which is the one outcome worse than a false red. The same word
+// in the same job as the clock tests of apps/server-api/classes/login.
+const unmeasurable = "UNMEASURABLE"
+
+// shieldGone reports whether the stuffer has finished, which is what takes
+// the write of this side out of the socket. It is read off the channel the
+// stuffer closes when its goroutine returns, so the answer is exact at the
+// moment it is asked - not a sample of tn.writing, which is up only while
+// t.c.Write runs and is 0 between two messages quite regularly (holdWriting).
+func shieldGone(s *stuffer) bool {
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// stufferState says the same thing in words, for the log line.
+func stufferState(s *stuffer) string {
+	if shieldGone(s) {
+		return "already finished"
+	}
+	return "still writing"
+}
+
+// TestShieldGoneReadsTheStuffer holds shieldGone to both answers. Without it
+// the null control above would be code nobody ran: the branch it guards fires
+// only on a machine slow enough to lose the race after the drain, and this
+// machine is not (measured 20.10.2026 - five runs, the ping arrived in five to
+// six milliseconds every time). So the decision itself is measured here, where
+// both answers can be made to happen on purpose.
+func TestShieldGoneReadsTheStuffer(t *testing.T) {
+	s := newStuffer()
+	if shieldGone(s) {
+		t.Error("a stuffer that never ran counts as gone")
+	}
+	if got := stufferState(s); got != "still writing" {
+		t.Errorf("stufferState = %q", got)
+	}
+	// What the writer goroutine does at its end, and the only thing
+	// shieldGone reads.
+	close(s.done)
+	if !shieldGone(s) {
+		t.Error("a finished stuffer does not count as gone")
+	}
+	if got := stufferState(s); got != "already finished" {
+		t.Errorf("stufferState = %q", got)
+	}
 }
 
 // A panic on the way through the write may not leave a message of this side
