@@ -3592,3 +3592,79 @@ Test über die Sperre des Schreibers aussagt, und gehört damit dem Teil, der ih
 
 **Beide Versuche liegen nicht im Repo.** Sie waren Messungen, und ihr Ergebnis sind die Zahlen
 oben.
+
+### Nachtrag 21.10.2026: die Drosselung — verworfen, und sie hat einen Fehler in meiner eigenen Kontrolle aufgedeckt
+
+Dritter und letzter Versuch am offenen Punkt: den Stuffer **drosseln** statt anhalten, kleine
+Frames (4 KiB) statt `wire.MaxPayload`, gerade genug, um den Schreibvorgang zu halten. Gebaut,
+gemessen, verworfen. Der Nebenbefund ist wichtiger als der Versuch.
+
+**Der erste Lauf sah aus wie die Lösung:** 8 Läufe beider Unterfälle unter Last, **16 PASS,
+0 FAIL**, Schild in 8 von 8 oben. Also eine zweite, größere Stichprobe — und die hat es
+umgedreht:
+
+| Stichprobe | PASS | FAIL |
+|---|---|---|
+| 8 Läufe beider Unterfälle | 15 | 0 (1 Skip) |
+| 14 Läufe des kurzen Unterfalls | 11 | **3** |
+
+**3 Fehlschläge in 22 gegen 0 in 16** im Ausgangsstand. **Eine Stichprobe von acht ist keine
+Rate** — hätte ich nach dem ersten Lauf ausgeliefert, wäre eine Verschlechterung eingezogen,
+die wie eine Verbesserung aussah.
+
+**Warum die Drosselung nicht geht**, und es war vorher zu überlegen: `writing` ist nur oben,
+**während** `t.c.Write` läuft. Ein 4-KiB-Frame auf einem offenen Rohr ist in Mikrosekunden
+durch, also hat der Schild jetzt **Lücken** — und `ping()` liest den Zähler in einem einzigen
+Augenblick. Ein Schild mit Lücken ist schlechter als keiner, weil er die Lücke zufällig macht.
+
+#### Der eigentliche Befund: meine Nullkontrolle hatte einen falschen Zweig
+
+Im Drosselversuch druckte der Test diese Zeile:
+
+```
+the tunnel counted as gone 22ms after the way opened although a write of ours
+still stands in the socket (writing 0)
+```
+
+**Die Meldung widerspricht sich selbst** — „a write still stands" und „writing 0" in einem
+Satz. Die Ursache ist mein `shieldGone`: es fragt, ob der **Stuffer-Faden lebt**, und das ist
+nicht dasselbe wie **ein Schreibvorgang läuft**. Mit Drosselung lebt der Faden und schreibt
+trotzdem gerade nicht.
+
+Und dahinter steckt der tiefere Fehler: `ping()` liest `t.writing` in **seinem** Augenblick,
+direkt nachdem der Ping aufgab (`link.go:736`). Ein toter Tunnel heißt also, **dieser** Lesevorgang
+sah Null. Der Augenblick ist vorbei, wenn die Schleife hinsieht, und **keine** spätere Lesung
+von `writing` und **kein** Zustand des Stuffers holt ihn zurück. Ein rotes Urteil in dieser
+Schleife war damit von Anfang an nicht begründbar — es hätte eine Maschine für einen Defekt
+erklärt.
+
+**Behoben:** in dieser Schleife ist ein toter Tunnel jetzt **immer** `UNMEASURABLE`, mit allen
+Zahlen (Zeit, Pings, `writing` jetzt, Zustand des Stuffers) und mit der Begründung im Code. Der
+rote Zweig ist weg, weil er nie einen hätte geben dürfen.
+
+**Das nimmt keinen Wächter weg** — dieselbe Begründung wie im dritten Teil: der Wächter ist die
+Schleife **vor** dem Drain, wo `waitWriting` beweist, dass ein Schreibvorgang steht, und die
+Frist von dreißig Sekunden, in der ein Ping ankommen muss. Beide sind unverändert rot, wenn sie
+brechen.
+
+#### Stand nach der Korrektur
+
+- 22 Läufe unter derselben Last: **22 PASS, 0 FAIL, 0 SKIP**.
+- `check.sh: ok`, **3350 passed, 0 FAILED, 87 SKIPPED**, `0 guard(s) unmeasurable`.
+- **Der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er als „nur übersetzt"
+  ausgewiesen werden; im Drosselversuch hat er zum ersten Mal gefeuert und seine Zeile gedruckt
+  (`UNMEASURABLE: … the API saw 0 pings`). Damit steht er auf der vierten Stufe, und zwar durch
+  einen Versuch, der selbst verworfen wurde.
+
+#### Was von drei verworfenen Umbauten bleibt
+
+Dreimal wurde versucht, den Schild über den Drain hinaus zu verlängern — Rückstau zuerst,
+Byte-Zähler, Drosselung — und jedes Mal war der Preis an anderer Stelle höher:
+
+> Der Schild **ist** der Verkehr. Mehr Schild heißt mehr in Flug, und der geordnete Abschluss
+> braucht das Gegenteil. Kleinere Frames senken die Menge und machen dafür den Schild lückig.
+
+Es bleibt bei der Nullkontrolle, und sie ist jetzt die richtige: sie behauptet nichts über
+einen Augenblick, den niemand mehr sehen kann. **Nicht gemessen und offen:** ob der Unterfall
+überhaupt eine Aussage über `ping()` nach dem Drain treffen kann oder ob seine ganze Aussage
+vor dem Drain liegt. Das entscheidet, wem der Teil gehört.

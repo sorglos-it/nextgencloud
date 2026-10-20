@@ -1315,24 +1315,13 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 				t.Fatal("the API saw no ping although the way to it is open again: a skipped ping cost the tunnel its heartbeat")
 			}
 			if tn.dead.Load() {
-				// THE NULL CONTROL, and it decides between a finding and a
-				// machine. ping() makes a link dead only for a ping that
-				// failed while NO write of ours was running; as long as one
-				// is, the ping skips itself and the tunnel is none the worse.
-				// So a dead tunnel means one of two things here:
-				//
-				//   - the stuffer was still writing: the shield was up, the
-				//     ping should have skipped itself, and it did not. That is
-				//     the defect this test exists for, and it stays red.
-				//   - the stuffer had already finished: no write of ours was
-				//     left to skip behind, the first ping after the drain ran
-				//     into the backlog that is still going out, and ping()
-				//     did exactly what it promises. The test measured the
-				//     machine, not the code.
-				//
-				// Which of the two it was is read off the stuffer itself and
-				// not sampled: it closes done when its goroutine returns, so
-				// a closed done at this moment proves the shield is gone.
+				// THE NULL CONTROL. ping() makes a link dead only for a
+				// ping that failed while NO write of ours was running; as
+				// long as one is, the ping skips itself and the tunnel is
+				// none the worse (link.go:736). After the drain the stuffer
+				// is on its way out, so a dead tunnel here says the shield
+				// was down at the moment ping() looked - which is what
+				// ping() promises and not what this subtest is about.
 				//
 				// AND WHAT THIS LOOP IS NOT: it is not the guard of this
 				// subtest, and the skip below takes no guard away. Measured
@@ -1350,12 +1339,30 @@ func TestAPingLostToOurOwnWriteDoesNotKillTheTunnel(t *testing.T) {
 				// that gives this subtest its name: after the way is open, a
 				// ping has to reach the API, which is the deadline above.
 				// Neither is touched here.
-				if shieldGone(s) {
-					t.Skipf("%s: the tunnel counted as gone %v after the way opened, and the stuffer had already finished - no write of ours was left for the ping to skip behind, so this run says nothing about ping(); the API saw %d pings",
-						unmeasurable, time.Since(opened).Round(time.Millisecond), pings.Load())
-				}
-				t.Fatalf("the tunnel counted as gone %v after the way opened although a write of ours still stands in the socket (writing %d) and the API answers every ping it sees",
-					time.Since(opened).Round(time.Millisecond), tn.writing.Load())
+				// ALWAYS unmeasurable, and never red. The first version of
+				// this control had two branches - stuffer finished meant a
+				// skip, stuffer still running meant a defect and a red - and
+				// that second branch was WRONG. Measured 21.10.2026, and the
+				// message it printed said so itself:
+				//
+				//   the tunnel counted as gone 22ms after the way opened
+				//   although a write of ours still stands in the socket
+				//   (writing 0)
+				//
+				// A stuffer goroutine that is alive is not a write that is
+				// running. ping() reads t.writing at ITS OWN instant, right
+				// after its ping gave up (link.go:736), and a dead link means
+				// that read saw zero. That instant is gone by the time this
+				// loop looks, and no later reading of writing, and no state
+				// of the stuffer, can put it back. So there is nothing here
+				// to hold against ping(), whatever the shield looks like now.
+				//
+				// What the numbers are still for: they say how the run went,
+				// and a run that keeps landing here is worth a look even
+				// though no single one of them is a finding.
+				t.Skipf("%s: the tunnel counted as gone %v after the way opened - ping() decided on a count of running writes that no test can see afterwards, so this run says nothing about it; the API saw %d pings, writing is %d now and the stuffer was %s",
+					unmeasurable, time.Since(opened).Round(time.Millisecond),
+					pings.Load(), tn.writing.Load(), stufferState(s))
 			}
 			select {
 			case err := <-ended:
