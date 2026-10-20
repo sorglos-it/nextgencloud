@@ -3331,3 +3331,65 @@ unverändert bei 3349 passed, 0 FAILED, 87 SKIPPED und Ausstieg 0.
 
 Beide gehören zusammen mit Punkt 69 selbst in eine Reihe: **eine Prüfung, die schweigt, ist
 schlimmer als eine, die rot ist.**
+
+### Nachtrag 20.10.2026, zweiter Teil: die CI hat sich selbst überfahren
+
+Der Nachtrag oben nannte „Last" als Vermutung. Sie ist jetzt **gemessen**, und die Ursache ist
+ein Fehler im Arbeitsablauf selbst.
+
+`.github/workflows/linux.yml` läuft `on: push` **und** `on: pull_request`. Ein Zweig mit
+offenem Pull Request löst also beides aus. Der Riegel dagegen war:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+```
+
+**`github.ref` ist für die zwei Ereignisse nicht dieselbe Zeichenkette:** `refs/heads/<zweig>`
+beim Push, `refs/pull/<n>/merge` beim Pull Request. Zwei Gruppen, also hat `cancel-in-progress`
+nichts abgebrochen — und **beide Läufe liefen vollständig durch**. Das ist der Beweis, nicht die
+Vermutung: gemessen zweimal, am 20.10.2026 um 09:57 und um 10:43, Start zwei Sekunden
+auseinander, beide bis zum Ende. Zwei komplette Suiten gleichzeitig, darunter zwei `-race`-Läufe
+(der Auftrag mit 40 Minuten Zeitgrenze).
+
+Und beide Male fiel **nur im pull_request-Lauf** ein Zeittest des Tunnels um, während der
+push-Lauf auf **demselben Commit** grün war:
+
+| Lauf | umgefallen |
+|---|---|
+| 09:57 | `TestAPanicInTheHelloHookKeepsTheTunnel` |
+| 10:43 | `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel/one_interval,_in_a_fraction_of_a_second` |
+
+Der zweite nennt sich selbst „in a fraction of a second" und brauchte **2,46 s**, der
+Elterntest **26,45 s**.
+
+**Behoben:** die Gruppe wird auf den **Zweig** geschlüsselt statt auf `github.ref` —
+`github.head_ref || github.ref_name` ergibt bei beiden Ereignissen dieselbe Zeichenkette, also
+bricht der eine Lauf den anderen ab. Jeder Push wird weiter gemessen, wofür der `-race`-Auftrag
+ausdrücklich da ist; was aufhört, ist zweimal zahlen und Zeitverhalten unter doppelter Last
+messen.
+
+**Nicht gemessen:** ob diese Zeittests unter einfacher Last verlässlich sind. Die doppelte Last
+ist weg, die Frage nicht beantwortet.
+
+#### Offen, und es gehört nicht mir
+
+`apps/server-controller/classes/link/link_test.go`, Zeile 1312:
+
+```
+the tunnel counted as gone although the API answers every ping it sees
+```
+
+Die Stelle steht **nach** `close(drain)`: die Drosselung ist gelöst, und der Test wartet bis zu
+30 Sekunden auf einen Ping — bricht aber ab, sobald `tn.dead` gesetzt ist. Auf einem langsamen
+Läufer ist der Tunnel in der Drosselphase (dreimal 300 ms plus Einplanung) schon totgemeldet,
+bevor der erste Ping durchkommt. Der Test setzt voraus, dass das Lösen der Drosselung den Ping
+vor die Todesfrist bringt, und unter Last stimmt das nicht.
+
+**Hier wird daran nichts geändert.** Es ist der Wächter eines anderen Teils, und dieses Projekt
+hat für genau diesen Fall ein eigenes Muster — `tools/check.sh` nennt es im Kommentar: die
+Uhrtests in `apps/server-api/classes/login` stellen sich zur Seite, wenn ihre eigene
+Nullkontrolle sagt, dass die Maschine den Faktor heute nicht auflösen kann, und melden das als
+`UNMEASURABLE`. Ob dieser Test dasselbe bekommen soll oder eine größere Frist, entscheidet, wem
+er gehört. **Ein Wächter, den ein Fremder leise zum Überspringen bringt, ist schlimmer als ein
+roter Lauf** — darum steht er hier als Befund und nicht als Änderungssatz.
