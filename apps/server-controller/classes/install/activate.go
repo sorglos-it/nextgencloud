@@ -421,6 +421,14 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 	if err != nil {
 		return m.why(p.app, stepImage, err)
 	}
+	// The engine reads that file as the app's user and not as root, so the way
+	// to it is opened and the file handed over first (handImage, image.go).
+	// Without this the activation ends here, at one of the five shut doors of a
+	// staging directory this package writes for root alone - measured on
+	// 20.10.2026: "faccessat ... permission denied", exit 125.
+	if err := handImage(m.d.StageDir, tarPath, u); err != nil {
+		return m.why(p.app, stepImage, err)
+	}
 	loaded, err := m.d.Engine.LoadImage(ctx, u.Name, tarPath)
 	if err != nil {
 		return m.why(p.app, stepImage, err)
