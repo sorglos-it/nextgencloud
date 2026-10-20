@@ -3265,3 +3265,69 @@ stimmen, hat niemand gegengerechnet. Das ist dieselbe Frage wie hier, nur eine S
 
 **Und die eigentliche Lücke:** nichts sagt Bescheid, wenn `main` rot ist. Drei Tage lang hat
 das niemand bemerkt, und bemerkt wurde es erst, weil ein Pull Request daneben rot war.
+
+### Nachtrag 20.10.2026: derselbe Commit, einmal grün und einmal rot — und niemand konnte sagen warum
+
+Nach der Behebung oben lief der **push**-Lauf vollständig **grün**, alle drei Aufträge. Der
+**pull_request**-Lauf auf **demselben Commit** war **rot**. `main` hatte sich nicht bewegt —
+`git merge-base` ist weiter `4c08ef7`, der Merge ist also inhaltsgleich mit der Zweigspitze.
+
+Und in jedem Auftrag fiel ein **anderer** Test um:
+
+| Auftrag | umgefallen |
+|---|---|
+| `check.sh + counted test run` | `TestAPackageLargerThanOneWindowGetsThrough` (`apps/server-controller/classes/serve`) |
+| `controller cases that need root` | derselbe |
+| `-race (Linux goroutines)` | `TestAPanicInTheHelloHookKeepsTheTunnel` (`apps/server-api/classes/controllers`) |
+
+**Lokal gemessen, je 20 Läufe: beide 20/20 grün.** Beides sind Tests über Nebenläufigkeit und
+Flusskontrolle — ein Paket, das größer als ein Kreditfenster ist, und ein Panik im Hello-Haken,
+der den Tunnel halten soll. Das Bild passt zu Last, nicht zu einem Defekt in diesem Zweig.
+
+**Nicht gemessen, und deshalb ausdrücklich offen:** ob diese zwei Tests wirklich wackeln. Ein
+grüner und ein roter Lauf sind keine Rate. Dafür bräuchte es dieselben Tests mehrfach unter
+Last auf dem Runner, und das ist hier nicht gelaufen.
+
+#### Was daran wirklich kaputt war: die CI sagte nie, WARUM
+
+Zu jedem dieser Fehlschläge stand in den Protokollen **nur der Name**:
+
+```
+--- FAIL: TestAPackageLargerThanOneWindowGetsThrough (0.01s)
+```
+
+Keine Zeile mehr. `go test -v` schreibt die Ausgabe eines Tests **vor** diese Zeile, und
+`check.sh` grepte nur die Zeile selbst heraus. Bei den Aufträgen `-race` und `root` war es noch
+dichter: sie leiten `go test -json` in eine Datei, die kein Schritt je zeigt, und `ci-count.sh`
+nannte ebenfalls nur Namen. **Eine rote Prüfung, die den Grund verschweigt, lässt sich von einem
+Wackler nicht unterscheiden — und genau das ist die einzige Frage, die ein roter Lauf
+beantworten muss.**
+
+Behoben an beiden Stellen:
+
+- **`tools/check.sh`** druckt jeden umgefallenen Test mit seinem Block, von `=== RUN` bis
+  `--- FAIL` — dort landen `t.Errorf` und `t.Fatal`. Unterfälle kommen mit den Zeilen ihres
+  Elterntests.
+- **`tools/ci-count.sh`** druckt zu jedem roten Fall die `Output`-Sätze aus dem JSON-Strom.
+  Damit sagen auch `-race` und `root` den Grund, ohne dass eine Datei hochgeladen werden muss.
+
+Gemessen am 20.10.2026 gegen ein echtes rotes Protokoll (ein Test mit zwei `t.Errorf`, einer mit
+`t.Fatal` in `t.Run`): beide nennen Test, Datei, Zeile und Text; der grüne Lauf bleibt
+unverändert bei 3349 passed, 0 FAILED, 87 SKIPPED und Ausstieg 0.
+
+#### Zwei Messfallen auf dem Weg dahin, beide bezahlt
+
+1. **Das Heredoc hat `\n` zu einem echten Zeilenumbruch gemacht.** Der erste awk-Block ging
+   über eine Shell-Heredoc ins Skript und trug danach eine Zeichenkette über zwei Zeilen —
+   ein ungültiges awk-Programm. `bash -n tools/check.sh` meldete **ok**, weil der Fehler
+   innerhalb einer einfach zitierten Zeichenkette lag und erst zur Laufzeit zählt, also genau
+   auf einem roten Lauf. Gefunden nur, weil der Block gegen ein echtes Protokoll geprüft wurde.
+   **Ein Syntaxprüfer der Hülle prüft nicht den Inhalt.** Der Block steht jetzt ohne jeden
+   Gegenstrich da und wird über eine Datei geschrieben, nicht über ein Heredoc.
+2. **`substr($0, 10)` griff ein Zeichen zu früh.** `go test` schreibt drei Leerzeichen nach
+   `RUN`, der Name kam mit führendem Leerzeichen heraus und passte auf nichts: der Block
+   druckte **leer**, und das sieht aus wie „es gab nichts zu zeigen". Jetzt `$3`, weil ein
+   Testname kein Leerzeichen trägt.
+
+Beide gehören zusammen mit Punkt 69 selbst in eine Reihe: **eine Prüfung, die schweigt, ist
+schlimmer als eine, die rot ist.**

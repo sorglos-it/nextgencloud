@@ -261,7 +261,46 @@ if [ -n "${NGC_CHECK_TEST_JSON:-}" ]; then
 		die "the JSON stream of the test run is empty - ci-count.sh would have nothing to count"
 fi
 if [ "$rc" != 0 ]; then
-	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || cat "$log"
+	# The NAME of a failing test is not why it failed, and until 20.10.2026
+	# this printed only the name: a red CI run said
+	# "--- FAIL: TestAPackageLargerThanOneWindowGetsThrough (0.01s)" and not
+	# one line more, because go test -v writes a test's own output BEFORE
+	# that line and the grep took only the line itself. Nobody could tell a
+	# load-sensitive wobble from a real defect, which is exactly the question
+	# a red run has to answer.
+	#
+	# So every failing test is printed with its block: from its "=== RUN" to
+	# its "--- FAIL", which is where t.Errorf and t.Fatal land. The old grep
+	# stays as the summary at the end, and "cat" stays as the fallback for a
+	# failure that has no case at all (a build error).
+	if grep -qE -- '^--- FAIL|^[[:space:]]+--- FAIL' "$log"; then
+		echo "check: the failing tests with their own output:"
+		# Two passes over the same log: the first collects the names that
+		# failed, the second prints every line of those tests. A subtest is
+		# covered by its top level name, so a failure inside t.Run comes
+		# with the lines of the parent that lead to it.
+		awk '
+			NR == FNR {
+				if ($0 ~ /^(--- |[[:space:]]+--- )FAIL: / && match($0, /: [^ ]+/))
+					bad[substr($0, RSTART + 2, RLENGTH - 2)] = 1
+				next
+			}
+			/^=== RUN / {
+				# $3 and not substr($0, 10): go test writes three spaces after
+				# RUN, and counting them gave a name with a leading space that
+				# matched nothing - measured 20.10.2026, the block printed
+				# empty. A test name carries no space, so the field is exact.
+				cur = $3
+				i = index(cur, "/")
+				top = (i ? substr(cur, 1, i - 1) : cur)
+			}
+			{ if (cur in bad || top in bad) print }
+		' "$log" "$log"
+	else
+		cat "$log"
+	fi
+	echo "check: summary of the failures:"
+	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || true
 	rm -f "$log"
 	exit 1
 fi
