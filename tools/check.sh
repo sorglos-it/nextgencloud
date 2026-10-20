@@ -209,13 +209,29 @@ go vet ./...
 # really compile it: -race itself needs cgo and a C compiler (here only in the
 # ESP toolchain), vet with the tag does not. Measured 17.10.2026.
 go vet -tags=race ./...
-# NOTE 18.10.2026: the CI branch offered a second way to count a run -
-# NGC_CHECK_TEST_JSON, a -json stream teed to a file for tools/ci-count.sh.
-# It is NOT taken here, and the reason is the line above: this run is -v into
-# a log BECAUSE the log is read back for tests that step aside in silence.
-# A -json run would have to carry that reading too, and a second run only to
-# count is what the CI branch set out to avoid. Whoever wants the JSON builds
-# it ON this mechanism, not beside it.
+# NGC_CHECK_TEST_JSON, the -json stream tools/ci-count.sh counts, is written
+# below - and it is built ON this one run, not beside it.
+#
+# NOTE 18.10.2026 said the mechanism was "NOT taken here" and ended with
+# "whoever wants the JSON builds it ON this mechanism". The workflow kept
+# setting the variable and kept running ci-count.sh on the file, so from that
+# day every Linux run was red on a file nobody wrote: "test.json is empty -
+# nothing ran". Measured on main, runs of 18., 19. and 20.10.2026, all three
+# with that same line. The two halves had drifted apart, and the error message
+# was right both times - the file really was empty.
+#
+# What closes it without a second run: go tool test2json turns exactly the -v
+# output this script already has into that stream. It comes with the Go
+# toolchain, so it adds no dependency, and the text log stays the primary
+# thing - it is still what the readback below greps.
+#
+# One limit, named rather than left to be found: a merged -v stream of
+# "go test ./..." does not tell test2json which package each line belongs to,
+# so ci-count.sh reports "packages: 1 ok" however many ran, and a failing
+# package comes out with an empty name. Measured 20.10.2026, both the green
+# and the red path. The CASE numbers are right - 3349 passed, 0 failed, 87
+# skipped locally - and those are what ci-count judges; the package line is
+# not a finding and must not be read as one.
 # -v, and into a file, because of what go test does NOT print without it.
 # Measured 18.10.2026 on this machine: for a test that calls t.Skipf -- and
 # even for one that writes to os.Stderr itself -- a run without -v prints
@@ -227,7 +243,24 @@ go vet -tags=race ./...
 # No pipe: the exit code of a pipe belongs to its last link, and this script
 # has been dead behind a "0" once already.
 log=$(mktemp)
-if ! go test -v ./... > "$log" 2>&1; then
+# The run stands in an "if", not bare with $? after it: this script is
+# "set -e", so a bare red run would end it here and the conversion below -
+# the one the CI counts - would never happen.
+if go test -v ./... >"$log" 2>&1; then
+	rc=0
+else
+	rc=$?
+fi
+# Converted BEFORE the exit code is acted on, so a red run is counted too:
+# the workflow step runs with "if: always()" and a count that only exists
+# for green runs is a count that is missing exactly when it is needed.
+if [ -n "${NGC_CHECK_TEST_JSON:-}" ]; then
+	go tool test2json -t <"$log" >"$NGC_CHECK_TEST_JSON" ||
+		die "go tool test2json could not turn the test log into a JSON stream"
+	[ -s "$NGC_CHECK_TEST_JSON" ] ||
+		die "the JSON stream of the test run is empty - ci-count.sh would have nothing to count"
+fi
+if [ "$rc" != 0 ]; then
 	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || cat "$log"
 	rm -f "$log"
 	exit 1

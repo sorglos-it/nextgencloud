@@ -3190,3 +3190,78 @@ für „lesen, bearbeiten, speichern" 75–85k, dazu 8–15k Oberfläche.
 **Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: ein 120-MB-Paket aus
 fremdem Rust, von NGCs eigenem Leser angenommen — und 42 MB Oberfläche, die in 16 MiB nicht
 passen.
+
+## Punkt 69: Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt
+
+Gefunden beim Grünmachen des Pull Requests zu Punkt 68 — und es war nicht dessen Fehler.
+
+**Gemessen:** die letzten drei Läufe von `Linux-Pruefung` auf `main` sind **rot**, am 18., 19.
+und 20.10.2026. Jedes Mal dieselbe Zeile, und jedes Mal im Schritt `zaehlen`:
+
+```
+ci-count: /home/runner/work/_temp/test.json is empty - nothing ran, and that is not a result
+```
+
+`check.sh` selbst war in allen drei Läufen **grün** (`323 passed, 0 failed`). Rot war nur der
+Zähler — über eine Datei, die niemand schrieb.
+
+### Zwei Hälften, die auseinandergelaufen sind
+
+`.github/workflows/linux.yml` setzt `NGC_CHECK_TEST_JSON` und sagt dazu:
+
+> check.sh writes the JSON stream of its own test run here instead of running the suite a
+> second time just to count it.
+
+`tools/check.sh` sagte an derselben Stelle das Gegenteil, mit Datum:
+
+> NOTE 18.10.2026: … NGC_CHECK_TEST_JSON, a -json stream teed to a file for
+> tools/ci-count.sh. **It is NOT taken here** … Whoever wants the JSON builds it ON this
+> mechanism, not beside it.
+
+Der Satz ist richtig begründet: der Lauf schreibt `-v` in ein Protokoll, **weil** das
+Protokoll zurückgelesen wird — für Tests, die sich still zur Seite stellen. Ein zweiter Lauf
+nur zum Zählen war genau das, was vermieden werden sollte. Nur: der Workflow wurde nicht
+mitgezogen. Seit dem 18.10.2026 lief `ci-count.sh` auf eine leere Datei, und die Meldung war
+beide Male wahr — die Datei *war* leer.
+
+**Das ist die Klasse „zwei Stellen, eine Wahrheit", und hier mit der schlimmsten Folge:** eine
+Prüfung, die immer rot ist, prüft nichts mehr. Wer drei Tage lang rote Läufe sieht, hört auf
+hinzusehen — und der nächste echte Befund geht darin unter. Punkt 68 ist genau so an einem
+Fehler vorbeigelaufen, der gar nicht ihm gehörte.
+
+### Behoben, ohne einen zweiten Testlauf
+
+`go tool test2json` macht aus genau der `-v`-Ausgabe, die `check.sh` schon hat, den
+JSON-Strom, den `ci-count.sh` zählt. Es gehört zur Go-Werkzeugkette, kostet also keine
+Abhängigkeit, und das Textprotokoll bleibt das Erste — es ist weiter das, was zurückgelesen
+wird. Also genau, was die NOTE verlangte: **auf** dem Mechanismus, nicht daneben.
+
+Gemessen am 20.10.2026, beide Pfade:
+
+| | Ergebnis |
+|---|---|
+| grüner Lauf, `NGC_CHECK_TEST_JSON` gesetzt | `check.sh` Ausstieg 0, 3 476 197 Bytes JSON; `ci-count` **3349 passed, 0 FAILED, 87 SKIPPED**, Ausstieg 0 |
+| roter Lauf (ein Test mit `t.Fatal`) | `test2json` wandelt, `ci-count` nennt den Test, `ci-count: red`, Ausstieg 1 |
+
+Zwei Kleinigkeiten, die dabei auffielen und mit im Satz stehen:
+
+- **Der Lauf steht jetzt in einem `if`.** `check.sh` ist `set -euo pipefail`; ein bloßes
+  `go test …` mit `rc=$?` dahinter hätte das Skript bei rotem Lauf sofort beendet, und die
+  Wandlung wäre nie gelaufen — also hätte die CI **gerade dann** nicht gezählt, wenn es
+  darauf ankommt. Der Workflow-Schritt läuft mit `if: always()`; jetzt hält die eine Hälfte
+  das, was die andere verspricht.
+- **`packages: 1 ok` ist kein Befund.** Ein gemischter `-v`-Strom von `go test ./...` sagt
+  `test2json` nicht, zu welchem Paket eine Zeile gehört, also meldet `ci-count` ein Paket,
+  wie viele auch liefen, und ein rotes Paket kommt ohne Namen heraus. Die **Fall**-Zahlen
+  sind richtig, und nur die beurteilt `ci-count`. Steht als Kommentar an der Stelle, damit
+  es niemand als Fund liest.
+
+### Was offen bleibt
+
+**Nicht gemessen:** ob die drei anderen Aufträge (`-race`, `root`, `fuzz`) ihre
+JSON-Ströme richtig schreiben. Sie waren in allen Läufen grün, also schreiben sie etwas —
+aber sie bauen ihren Strom selbst im Workflow, nicht über `check.sh`, und ob ihre Zahlen
+stimmen, hat niemand gegengerechnet. Das ist dieselbe Frage wie hier, nur eine Stelle weiter.
+
+**Und die eigentliche Lücke:** nichts sagt Bescheid, wenn `main` rot ist. Drei Tage lang hat
+das niemand bemerkt, und bemerkt wurde es erst, weil ein Pull Request daneben rot war.
