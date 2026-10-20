@@ -3465,3 +3465,64 @@ durchlassen und den Stuffer **danach** anhalten, dann gäbe es das Rennen gar ni
 eine Änderung am Helfer, die alle vier Fälle dieses Tests berührt, und sie ist **nicht
 gemessen**. Wer den Teil besitzt, entscheidet das; die Kontrolle hier macht den Lauf
 inzwischen ehrlich, statt ihn zu verdecken.
+
+### Nachtrag 20.10.2026, vierter Teil: der Rückstau zuerst — gebaut, gemessen, verworfen
+
+Der offene Punkt aus dem dritten Teil lautete: `congested` sollte den Rückstau erst
+durchlaufen lassen und den Stuffer **danach** anhalten, dann gäbe es das Rennen gar nicht.
+Thomas hat das entschieden, es ist gebaut und gemessen — **und es ist schlechter.** Es ist
+nicht ausgeliefert.
+
+**Gebaut war:** der Drain-Faden merkt sich `s.sent` vor `p.free()`, öffnet das Rohr, wartet
+auf einen Schreibvorgang, der **danach** herauskam (also fließt die Leitung wieder), und hält
+erst dann den Stuffer an. Dazu ein `quietStuffer`, der vor dem Schließen auf `s.done` wartet,
+damit der Steckplatz still ist.
+
+**Das Erste wirkte.** Vorher stand der Stuffer in der Protokollzeile **jedes Mal** auf
+„already finished"; danach in 7 von 12 Läufen auf „still writing" — der Schild bleibt also
+wirklich länger oben.
+
+**Das Zweite ist der Preis, und er ist höher als der Gewinn.** Gemessen am 20.10.2026, je
+8 Läufe **beider** Unterfälle unter 128 Lastschleifen auf 64 Kernen, derselbe Rechner,
+dieselbe Last:
+
+| Stand | PASS | FAIL |
+|---|---|---|
+| nur Nullkontrolle (so wie es jetzt ist) | **16** | **0** |
+| mit „Rückstau zuerst" **und** `quietStuffer` | 14 | **2** |
+
+Und die zwei Fehlschläge sind immer derselbe, und es ist nicht der alte:
+
+```
+link_test.go: Run = link: the API cannot be reached, want an orderly end
+```
+
+**Warum es nicht geht.** Die zwei Ziele arbeiten gegeneinander. Der Schild besteht darin, dass
+der Stuffer schreibt — und jeder Frame ist `wire.MaxPayload`, also rund 64 KB. Den Schild
+länger oben zu halten heißt, **mehr** in das Rohr zu schieben; und das Schließen danach muss
+hinter diesem Rückstau her. `Close` hat dafür fünf Sekunden, und unter Last reichen sie nicht
+mehr. Der Kommentar über `t.Cleanup(p.free)` sagt genau das, von der anderen Seite her: eine
+Schließnachricht, die im Rohr steht, kostet `Close` seine fünf Sekunden. **Die Reihenfolge
+`p.free(); s.halt()` war kein Versäumnis, sie war die Entscheidung.**
+
+`quietStuffer` hilft dagegen nicht: er macht den Schreiber still, aber die Bytes, die er schon
+abgesetzt hat, stehen weiter im Rohr. Gemessen 2 von 8 auch mit ihm.
+
+**Was es bräuchte**, und es ist **nicht gemessen**: ein Rohr, das sagt, wann sein Rückstau
+durch ist. `pipe` hat keinen Zähler (`link_test.go:991`), also müsste der Weiterleiter die
+durchgeschobenen Bytes zählen, und gewartet würde auf „leer" — nicht auf „wächst nicht mehr",
+denn das wäre wieder eine Zeitheuristik der Art, die dieses Projekt überall herausnimmt. Das
+ist ein Umbau am Helfer, der alle vier Fälle dieses Tests berührt, und er gehört dem Teil, der
+ihn besitzt.
+
+**Es bleibt bei der Nullkontrolle.** Sie verdeckt nichts: ein toter Tunnel mit Schild oben ist
+weiter rot, und ein toter Tunnel mit Schild unten ist ein benannter `UNMEASURABLE`-Skip, den
+`check.sh` Zeile für Zeile ausgibt. Der Unterschied zum vierten Teil hier ist der Punkt: die
+Kontrolle macht einen unsicheren Lauf **ehrlich**, der Umbau hätte einen sicheren Lauf
+**unsicher** gemacht.
+
+**Und ein Messfehler von mir gehört dazu:** die 25 grünen Läufe aus dem dritten Teil waren nur
+der **kurze** Unterfall. Die Kombination beider Unterfälle unter Last hatte ich vor der
+Änderung nie gemessen — also hätte ich 2 von 8 fast für den Ausgangszustand gehalten. Erst der
+nachgeholte Vergleichslauf auf dem Stand ohne die Änderung (16/16) hat die Zahl zu einem Befund
+gemacht. **Ohne Vergleichswert ist eine Fehlerrate keine Aussage.**
