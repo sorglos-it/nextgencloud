@@ -1,8 +1,13 @@
 package main
 
-import "testing"
+import (
+	"testing"
 
-const dataDir = "/data"
+	"github.com/sorglos-it/nextgencloud/shared/service"
+)
+
+// The folder comes from the contract, not from a copy of it.
+const dataDir = service.DataDir
 
 // TestUnderRefusesEscapes: the file name comes from the browser, so every way
 // out of the data folder, and every name nobody typed on purpose, is refused
@@ -22,9 +27,9 @@ func TestUnderRefusesEscapes(t *testing.T) {
 // Linux path whatever machine this was built on.
 func TestUnderTakesPlainNames(t *testing.T) {
 	for name, want := range map[string]string{
-		"probe.docx":    "/data/probe.docx",
-		"briefe/a.docx": "/data/briefe/a.docx",
-		"a.b.c-1.docx":  "/data/a.b.c-1.docx",
+		"probe.docx":    dataDir + "/probe.docx",
+		"briefe/a.docx": dataDir + "/briefe/a.docx",
+		"a.b.c-1.docx":  dataDir + "/a.b.c-1.docx",
 	} {
 		got, err := under(dataDir, name)
 		if err != nil || got != want {
@@ -60,7 +65,7 @@ func TestArgvPassesNoFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0] != "text" || got[1] != "/data/a.docx" {
+	if len(got) != 2 || got[0] != "text" || got[1] != dataDir+"/a.docx" {
 		t.Errorf("got %q", got)
 	}
 }

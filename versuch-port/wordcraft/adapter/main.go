@@ -10,9 +10,17 @@
 // with encoding/json and the program is started with an argument vector, with
 // no shell anywhere.
 //
-// The names of the variables are copied here rather than imported from
-// shared/service, because this module is deliberately outside NGC's Go
-// module. In a real app they would be imported.
+// It is a package of this module, like tools/kaputt-probe, and therefore
+// type-checked by tools/check.sh and tested by go test like everything else.
+// A module of its own was tried first and was WRONG: check.sh refuses any Go
+// file that git tracks and no configuration compiles ("no checked
+// configuration compiles these files"), and it is right to - evidence in the
+// repo that nothing type-checks is evidence nobody can trust. Being in the
+// module also means the variable names come from shared/service instead of
+// being copied, which is what a real app would do.
+//
+// No release path builds it: tools/release-gate.sh names the packages it
+// builds one by one and this is not one of them.
 package main
 
 import (
@@ -24,13 +32,14 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+
+	"github.com/sorglos-it/nextgencloud/shared/service"
 )
 
-// The program being wrapped, and where the app's data lives.
-const (
-	tool    = "/usr/lib/ngc/wordcraft-cli"
-	dataEnv = "NGC_DATA"
-)
+// tool is the program being wrapped. Where the data lives and what the
+// variables are called comes from shared/service, so this adapter cannot
+// drift away from the contract it serves.
+const tool = "/usr/lib/ngc/wordcraft-cli"
 
 // params are the members this adapter understands. Anything else in
 // NGC_PARAMS is refused rather than ignored: a parameter nobody reads is a
@@ -50,19 +59,25 @@ func main() {
 }
 
 func run(out io.Writer) error {
-	data := os.Getenv(dataEnv)
+	data := os.Getenv(service.EnvData)
 	if data == "" {
 		return errors.New("adapter: NGC_DATA is not set")
 	}
+	// The contract fixes the folder; a different value means the controller
+	// and this program disagree about where the app's data is, and then no
+	// path check below means anything.
+	if data != service.DataDir {
+		return errors.New("adapter: NGC_DATA is not the folder of the contract")
+	}
 	var p params
-	if raw := os.Getenv("NGC_PARAMS"); raw != "" {
+	if raw := os.Getenv(service.EnvParams); raw != "" {
 		dec := json.NewDecoder(strings.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&p); err != nil {
 			return errors.New("adapter: parameters are not the expected object")
 		}
 	}
-	args, err := argv(os.Getenv("NGC_ACTION"), data, p)
+	args, err := argv(os.Getenv(service.EnvAction), data, p)
 	if err != nil {
 		return err
 	}
@@ -72,7 +87,7 @@ func run(out io.Writer) error {
 	cmd.Stderr = os.Stderr
 	// A fresh environment: the variables NGC set carry the user and must not
 	// reach a program that was never written for them.
-	cmd.Env = []string{"LANG=C.UTF-8", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + data}
+	cmd.Env = []string{"LANG=C.UTF-8", "PATH=" + service.Path, "HOME=" + data}
 	return cmd.Run()
 }
 

@@ -3042,11 +3042,11 @@ Debian 13 unter WSL, rustc 1.99.1, podman 5.4.2:
 | Schritt | Ergebnis | Dauer |
 |---|---|---|
 | `wordcraft-cli` statisch, `x86_64-unknown-linux-musl` | 41 986 968 Bytes | 4 min 05 s |
-| Adapter (Go, statisch, linux/amd64) | 2 846 880 Bytes | — |
-| `podman build --arch amd64` | Abbild gebaut | 6,9 s |
-| `podman save --format docker-archive` | 126 142 464 Bytes | 7,8 s |
-| `ngc-store pack` | **126 150 656 Bytes**, SHA-256 `9881f5f6…` | 1,75 s |
-| `store.Walk` liest es zurück | `services/amd64.tar` → `Art=image Arch=amd64`; Manifest: 3 Aktionen, 1 Dienst | 0,09 s |
+| Adapter (Go, statisch, linux/amd64), 145 Zeilen | 3 940 512 Bytes | — |
+| `podman build --arch amd64` | Abbild gebaut | 4,0 s |
+| `podman save --format docker-archive` | 127 236 096 Bytes | 7,5 s |
+| `ngc-store pack` | **127 244 288 Bytes**, SHA-256 `9aae8b99…` | 0,99 s |
+| `store.Walk` liest es zurück | `services/amd64.tar` → `Art=image Arch=amd64`; Manifest: 3 Aktionen, 1 Dienst | 0,08 s |
 
 **Kein musl-gcc nötig** — Rust bringt seine eigene musl-libc mit. Das Paket ist von NGCs
 **eigenem Leser** angenommen worden, nicht nur von einem Packer geschrieben.
@@ -3060,7 +3060,11 @@ Hand (`terminal/terminal.go:447-477`), ein Rust-Programm kann genau dasselbe.
 
 1. **Die Aktion kommt als Umgebungsvariable, nicht als Argument.** `NGC_ACTION` und
    `NGC_PARAMS` (`service.go:19-29`) gegen `wordcraft-cli convert <in> <out>`. **Jeder Port
-   braucht einen Adapter**, und nichts in NGC bringt einen mit. Der hier sind 120 Zeilen Go.
+   braucht einen Adapter**, und nichts in NGC bringt einen mit. Der hier sind 145 Zeilen Go,
+   davon 61 Kommentar. Er bindet `shared/service` ein, statt die Namen abzuschreiben, und das
+   kostet gemessen **1 093 632 Bytes**: 2 846 880 ohne, 3 940 512 mit — `shared/service` zieht
+   `shared/trust` und `shared/wire` mit. Richtig ist es trotzdem, denn abgeschriebene Namen
+   sind die zweite Stelle, an der ein Vertrag auseinanderläuft.
 2. **Der Adapter darf keine Shell sein.** `NGC_PARAMS` ist JSON von außen; ein Dateiname in
    einer Shell-Zeile ist der Weg, auf dem ein Dokument zu einem Befehl wird. Gemessen beim
    Schreiben: die erste Fassung benutzte `path/filepath` und wurde auf Windows gebaut —
@@ -3075,6 +3079,27 @@ Hand (`terminal/terminal.go:447-477`), ein Rust-Programm kann genau dasselbe.
    Konstanten (`node/image.go:65` `terminalDir`, `:70` `imageRepo`). Wer eine andere App baut,
    ruft podman selbst — was dieser Versuch getan hat. **NGC hat kein Werkzeug für fremde
    App-Abbilder.**
+
+### Zwei Messfehler, beide im Versuch bezahlt
+
+Sie stehen hier, weil beide wie ein Erfolg aussahen.
+
+**`tools/check.sh` war grün, und das war wertlos.** Der Wächter bei `check.sh:121` verlangt,
+dass **jede von git erfasste** `.go`-Datei von mindestens einer der vier Konfigurationen
+übersetzt wird. Der Adapter lag zuerst in einem **eigenen** Go-Modul, damit `./...` des
+Hauptmoduls ihn nicht erreicht — „Beleg, kein Bestandteil". Lokal lief `check.sh` grün, weil
+er **vor** `git add` lief und der Wächter untracked Dateien nicht sieht. Die CI sah sie und
+sagte: `no checked configuration compiles these files`. Der Wächter hat recht: Beleg im Repo,
+den nichts typprüft, ist Beleg, dem niemand trauen kann. Das Muster dafür steht längst da —
+`tools/kaputt-probe/main.go` ist auch Wegwerf-Messcode und liegt im Hauptmodul. Der Adapter
+liegt jetzt dort ebenfalls; ausgeliefert wird er nicht, weil `tools/release-gate.sh` die
+Pakete einzeln benennt, die es baut.
+
+**`podman save` hat eine vorhandene Datei nicht überschrieben.** Nach dem Umbau des Adapters
+meldete derselbe Befehl `SAVE_MS=965` statt 7 500 und `ls` zeigte **dieselbe Größe und
+denselben Zeitstempel** wie vorher. Gemessen wäre dann das alte Abbild gewesen. Erst
+`rm services/amd64.tar` davor gab ein echtes Ergebnis — 127 236 096 statt 126 142 464 Bytes.
+Eine Messung schreibt ihr Ziel vorher weg.
 
 ### Teil B: gemessen, es trägt nicht — die Oberfläche, vierfach versperrt
 
