@@ -3526,3 +3526,69 @@ der **kurze** Unterfall. Die Kombination beider Unterfälle unter Last hatte ich
 Änderung nie gemessen — also hätte ich 2 von 8 fast für den Ausgangszustand gehalten. Erst der
 nachgeholte Vergleichslauf auf dem Stand ohne die Änderung (16/16) hat die Zahl zu einem Befund
 gemacht. **Ohne Vergleichswert ist eine Fehlerrate keine Aussage.**
+
+### Nachtrag 21.10.2026: der Byte-Zähler im Rohr — der Schild hält jetzt 8 von 8, und es geht trotzdem nicht
+
+Thomas hat den nächsten Schritt entschieden: `pipe` einen Byte-Zähler geben und auf einen
+leeren Rückstau warten. Gebaut, gemessen, **wieder verworfen** — aber diesmal ist der Befund
+viel genauer, und er sagt, warum dieser Test das nicht haben kann.
+
+**Gebaut war:**
+
+- `pipe.fwd atomic.Int64`, hochgezählt **nach** jedem `out.Write` in `toAPI`, also Bytes, die
+  wirklich weitergingen.
+- `drained(t, p)`: wartet, bis `settleFor` lang nichts mehr durchkam.
+- `quietStuffer(t, s)`: hält den Stuffer an und wartet auf `s.done`.
+- Der Drain-Faden in `congested` hält **nichts** mehr an, nur noch `p.free()`. Wer den Schild
+  wie lange hochhält, entscheidet jetzt der Fall selbst — der kurze wartet bis `pings > 0`,
+  dann `quietStuffer`, dann `drained`, dann schließen.
+
+**Das Ziel ist erreicht, und das ist eine echte Zahl:** der Stuffer stand in der Protokollzeile
+in **8 von 8** Läufen auf „still writing" — vorher **immer** auf „already finished". Der Schild
+bleibt also bis zum ersten Ping oben, und das Rennen aus dem CI-Rotlauf ist damit weg.
+
+**Der Preis bleibt, und er ist kleiner geworden, aber nicht null.** Je 8 Läufe beider
+Unterfälle unter 128 Lastschleifen auf 64 Kernen, derselbe Rechner:
+
+| Stand | PASS | FAIL | Schild oben |
+|---|---|---|---|
+| nur Nullkontrolle (so wie es bleibt) | **16** | **0** | 0 von 8 |
+| „Rückstau zuerst" + `quietStuffer` (20.10.) | 14 | 2 | 5 von 12 |
+| Zähler + `drained`, `settleFor` 50 ms | 15 | 1 | **8 von 8** |
+| Zähler + `drained`, `settleFor` 200 ms | 15 | 1 | **8 von 8** |
+
+Die Ruhezeit ist also **nicht** der Hebel: vierfache Wartezeit, dasselbe Ergebnis.
+
+**Warum der Zähler es nicht heilen kann.** Die Meldung ist jedes Mal
+
+```
+Run = link: the API cannot be reached, want an orderly end
+```
+
+und `ErrAPI` kommt nach `link.go:283` aus der **Leseseite**, nicht von einer Schließnachricht,
+die im Rohr steckt. Die API-Seite liest durchgehend (`apiSide.quiet`), das Rohr ist also nicht
+verstopft. Was sich geändert hat, ist die **Menge in Flug** im Augenblick des Schließens: der
+Schild besteht darin, dass der Stuffer schreibt, und jeder Frame ist `wire.MaxPayload`. Im
+roten Lauf hatte er **16 Nachrichten** abgesetzt, rund ein Megabyte, gegen 5 bis 12 vorher. Je
+länger der Schild oben bleibt, desto mehr steht im Flug, wenn der Abschlussdialog beginnt — und
+desto eher bricht er. Ein Zähler im Rohr sieht das, ändert es aber nicht.
+
+**Die Ziele sind unvereinbar, und zwar nicht durch ein Versehen:**
+
+> Der Schild **ist** der Verkehr. Ihn länger oben halten heißt mehr in Flug haben. Der geordnete
+> Abschluss braucht das Gegenteil.
+
+**Es bleibt bei der Nullkontrolle.** Sie macht den unsicheren Lauf ehrlich: toter Tunnel mit
+Schild oben ist rot, toter Tunnel mit Schild unten ist ein benannter `UNMEASURABLE`-Skip, den
+`check.sh` ausgibt. Zwei Umbauten haben jetzt gemessen gezeigt, dass jede Verlängerung des
+Schildes an einer anderen Stelle teurer ist als dort.
+
+**Was noch offen wäre**, und es ist nicht gemessen: den Abschluss von der Menge in Flug
+unabhängig machen — also den Fall so schneiden, dass zwischen „der Ping ist durch" und
+`tn.Close()` erst alles in Flug abgeräumt wird, ohne dass der Schild dafür fallen muss. Dazu
+müsste der Stuffer sein Schreiben **drosseln** statt es einzustellen: kleine Frames statt
+`MaxPayload`, gerade genug, um den Schreibvorgang im Steckplatz zu halten. Das ändert, was der
+Test über die Sperre des Schreibers aussagt, und gehört damit dem Teil, der ihn besitzt.
+
+**Beide Versuche liegen nicht im Repo.** Sie waren Messungen, und ihr Ergebnis sind die Zahlen
+oben.
