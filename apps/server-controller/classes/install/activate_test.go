@@ -144,8 +144,12 @@ func (e *engine) Exec(_ context.Context, _ runtime.Exec) (int, error) { return 0
 type sys struct {
 	calls []string
 	fail  string
-	user  runtime.User
-	data  string
+	// failWith is what the failing call answers, where a case is about the
+	// KIND of the cause and not about the failure (reason_test.go). nil is
+	// errSys, which no reason of the closed list names.
+	failWith error
+	user     runtime.User
+	data     string
 }
 
 var errSys = errors.New("the machine says no")
@@ -153,6 +157,9 @@ var errSys = errors.New("the machine says no")
 func (s *sys) did(call string) error {
 	s.calls = append(s.calls, call)
 	if s.fail == call {
+		if s.failWith != nil {
+			return s.failWith
+		}
 		return errSys
 	}
 	return nil

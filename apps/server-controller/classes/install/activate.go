@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -148,6 +149,11 @@ type Deps struct {
 	// guard without memory is no guard. An activation of an uploaded app
 	// (core.LocalStore) comes with no catalogue and never reaches it.
 	KeepSeq func(ctx context.Context, store string, seq uint64) error
+	// Log is where the one line of a failed setup goes (Manager.why): the
+	// step it stopped at and the kind of the cause, both out of a closed
+	// list. nil is slog.Default(), which under systemd is the journal of this
+	// service - so an installation that wires nothing still says why.
+	Log *slog.Logger
 	// Now is the clock the licence is held against, in seconds. nil is this
 	// program wired wrong as well: a licence checked against the zero time
 	// never runs out.
@@ -337,7 +343,7 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 
 	u, err := m.d.Sys.EnsureUser(ctx, p.app)
 	if err != nil {
-		return err
+		return m.why(p.app, stepUser, err)
 	}
 	if !installed {
 		// Only for an app that was not installed. An update must never take
@@ -348,7 +354,7 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 	}
 	dataDir, err := m.d.Sys.EnsureData(ctx, p.app, u)
 	if err != nil {
-		return err
+		return m.why(p.app, stepData, err)
 	}
 	if !installed {
 		// And for the same reason the data of an app that was installed is
@@ -387,19 +393,19 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 		// the app takes it with the user. A reference in the row would fix it
 		// and is a change to shared/dbapi - reported, not built.
 		if err := m.putRow(ctx, p, mf, old); err != nil {
-			return err
+			return m.why(p.app, stepRow, err)
 		}
 		if err := m.keepLicence(ctx, p.app, env, lic); err != nil {
-			return err
+			return m.why(p.app, stepLicence, err)
 		}
 		if err := m.keepSeq(ctx, p); err != nil {
-			return err
+			return m.why(p.app, stepSeq, err)
 		}
 		ok = true
 		return nil
 	}
 	if _, err := m.d.Sys.EnsureRun(ctx, u); err != nil {
-		return err
+		return m.why(p.app, stepRun, err)
 	}
 	// The runtime directory is a tmpfs and holds nothing of the app
 	// (runtime.EnsureRun), so taking it back costs nothing and leaves nothing
@@ -413,18 +419,18 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 	tarPath := filepath.Join(p.files, "services", goruntime.GOARCH+".tar")
 	ref, err := runtime.ImageTag(tarPath)
 	if err != nil {
-		return err
+		return m.why(p.app, stepImage, err)
 	}
 	loaded, err := m.d.Engine.LoadImage(ctx, u.Name, tarPath)
 	if err != nil {
-		return err
+		return m.why(p.app, stepImage, err)
 	}
 	if loaded != ref {
 		// The engine answers with the reference it read out of the tar itself,
 		// so the two can only differ if the engine read another tar than this
 		// call named. Nothing is believed about it: the image goes out again.
 		_ = m.d.Engine.RemoveImage(ctx, u.Name, loaded)
-		return ErrVerify
+		return m.why(p.app, stepImage, ErrVerify)
 	}
 	undos = append(undos, undo{"image", func() { _ = m.d.Engine.RemoveImage(ctx, u.Name, ref) }})
 
@@ -438,7 +444,7 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 	// there takes the name, and Create below fails on it.
 	if running, err := m.d.Engine.Running(ctx, u.Name); err == nil && running {
 		if err := m.d.Engine.Stop(ctx, u.Name); err != nil {
-			return err
+			return m.why(p.app, stepContainer, err)
 		}
 	}
 	_ = m.d.Engine.Remove(ctx, u.Name)
@@ -453,24 +459,24 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 		Root:    slices.Contains(mf.Needs, store.NeedRoot),
 	}
 	if err := m.d.Engine.Create(ctx, c); err != nil {
-		return err
+		return m.why(p.app, stepContainer, err)
 	}
 	undos = append(undos, undo{"container", func() {
 		_ = m.d.Engine.Stop(ctx, u.Name)
 		_ = m.d.Engine.Remove(ctx, u.Name)
 	}})
 	if err := m.d.Engine.Start(ctx, u.Name); err != nil {
-		return err
+		return m.why(p.app, stepContainer, err)
 	}
 
 	if err := m.putRow(ctx, p, mf, old); err != nil {
-		return err
+		return m.why(p.app, stepRow, err)
 	}
 	if err := m.keepLicence(ctx, p.app, env, lic); err != nil {
-		return err
+		return m.why(p.app, stepLicence, err)
 	}
 	if err := m.keepSeq(ctx, p); err != nil {
-		return err
+		return m.why(p.app, stepSeq, err)
 	}
 	ok = true
 	return nil
