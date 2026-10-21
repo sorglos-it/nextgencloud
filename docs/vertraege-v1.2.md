@@ -3557,3 +3557,91 @@ Und: **der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er a
 übersetzt" ausgewiesen werden; in Umbau 3 hat er zum ersten Mal gefeuert und seine Zeile
 gedruckt. Er steht damit auf der vierten Stufe — durch einen Versuch, der selbst verworfen
 wurde.
+
+## Punkt 70: Ein Paket über eine Fenstergröße kommt unter Last nicht durch — `E_PROTOCOL` statt `ok`
+
+Gefunden, weil die CI endlich sagt, **warum** ein Test umfällt (Punkt 69). Der Befund gehört
+nicht zu dem Zweig, auf dem er auftrat: `apps/server-controller/classes/serve/`, `shared/` und
+`apps/server-api/` sind dort **byteweise der Stand von `main`** (`git diff origin/main --stat`
+auf diese Pfade: leer). Also ein Befund auf `main`.
+
+### Was umfällt
+
+`TestAPackageLargerThanOneWindowGetsThrough`
+(`apps/server-controller/classes/serve/activate_test.go:276`). Der Fall schickt **6 Rahmen à
+60 000 Bytes** = 360 000, also mehr als `wire.DefaultWindow` (262 144), und hält damit
+`chanReader.give`: jeder an den Installierer gegebene Rahmen muss den Kredit sofort
+zurückzahlen.
+
+Gemessen am 21.10.2026, derselbe Rechner, `go test -count=20`:
+
+| | Fehlschläge |
+|---|---|
+| ohne Last | **0 von 20** |
+| unter 128 Lastschleifen auf 64 Kernen | **4 von 20** |
+
+Und die Meldungen sind dieselben drei, jedes Mal:
+
+```
+CLOSE = {Status:error Code:E_PROTOCOL Message:Ungültige Nachricht.}, want ok
+result = "", want the empty object
+the installer read 60000 bytes, want 360000
+```
+
+**Die gelesene Menge ist immer ein Vielfaches von 60 000** — gemessen 0, 60 000, 60 000 und
+120 000 Bytes. Der Transfer bricht also an einer **Rahmengrenze** ab, nicht mitten in einem
+Rahmen, und zwar nach null, einem oder zwei von sechs.
+
+Dazu im `-race`-Auftrag derselben CI-Läufe, im gleichen Paket:
+`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel` (`app_test.go:672`) meldet `E_INTERNAL`,
+wo `E_TIMEOUT` erwartet ist. Nicht lokal nachgestellt — hier gibt es kein `-race` (kein
+C-Übersetzer), also **nicht gemessen**, ob es dieselbe Ursache ist.
+
+### Was ich dazu NICHT sage
+
+**Die Ursache ist nicht gemessen.** Zwei Vermutungen sind geprüft und beide **widerlegt**:
+
+- *Die API-Seite schickt DATA, bevor der Kanal offen ist.* Nein: `apiSide.open`
+  (`serve_test.go:420`) wartet auf das GRANT, bevor der Test weiterläuft.
+- *`Channel.room()` schlägt zu.* Die Stelle wäre die richtige — ihr Kommentar nennt
+  ausdrücklich `E_PROTOCOL` für einen Gegenpart, der seinen Kredit in Stücke unter
+  `queueCost` (32 Bytes) zerlegt (`channel.go:698`). Nur passt die Rechnung nicht: bei
+  262 144 Bytes Kredit erlaubt `(ch.in+ch.bytes)/32+2` über achttausend wartende Rahmen, und
+  es sind sechs.
+
+Was danach käme, wäre Raten im Protokoll eines fremden Teils, und eine geratene Ursache prüft
+der Empfänger nicht mehr nach. Darum steht hier die **Erscheinung** und nicht die Ursache.
+
+### Was es für den Nutzer heißt — falls es nicht nur der Test ist
+
+`ActActivate` ist der Weg, auf dem ein **App-Paket** zum Controller geht. Wenn der Abbruch nicht
+im Test, sondern im Kanal sitzt, dann scheitert auf einer belasteten Maschine die Installation
+eines Pakets, das größer als ein Fenster ist — und der Verwalter liest „Ungültige Nachricht",
+also die Meldung für ein kaputtes Paket, obwohl das Paket in Ordnung ist. Dieselbe Klasse wie
+Punkt 65: ein Zustand der Maschine wird als Fehler der Sache gezeigt.
+
+**Das ist der Grund, warum der Befund nicht als Testwackler abgelegt werden sollte**, auch wenn
+er sich als einer herausstellen kann. Welches von beidem es ist, entscheidet nur, wer das
+Protokoll kennt.
+
+### Nachstellen
+
+```powershell
+go test -count=20 -run TestAPackageLargerThanOneWindowGetsThrough .\apps\server-controller\classes\serve\
+```
+
+Ohne Last läuft das durch. Mit Last — auf diesem Rechner 128 beschäftigte Schleifen neben dem
+Lauf — fallen vier von zwanzig um. Der Lauf braucht etwa zwanzig Sekunden.
+
+### Was zu entscheiden ist
+
+Nichts davon ist in diesem Zweig geändert, und nichts sollte es sein: `serve` und `link` gehören
+einem anderen Teil. Zwei Wege, und sie schließen sich aus:
+
+- **Es ist der Test:** dann muss die API-Seite des Tests ihren Kredit einhalten statt alle sechs
+  Rahmen zu schieben und darauf zu setzen, dass die Gegenseite schnell genug zurückzahlt. Der
+  Fall messe dann weiter, was er messen will — nur ohne Wettlauf.
+- **Es ist der Kanal:** dann ist es ein Fehler, den ein Verwalter als kaputtes Paket zu sehen
+  bekommt, und er gehört vor jede Auslieferung.
+
+**Gemessen ist die Erscheinung und die Rate, nicht die Ursache.**
