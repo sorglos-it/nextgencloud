@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -576,5 +577,56 @@ func TestAnAdminOpensAnInstalledAppWithoutARow(t *testing.T) {
 	// The control in the same shape: a user who is no admin is still refused.
 	if code := fx.CheckApp(t, fx.OfficeUser, termAct); code != wire.CodeForbidden {
 		t.Fatalf("a user who is no admin got in: %q", code)
+	}
+}
+
+// TestAnAdminHoldsTheRightsOfTheRealTerminalApp measures against the manifest
+// the installation on the Debian VM really runs, read from the repository and
+// not retyped: apps/server-controller/templates/terminal/manifest.json is the
+// app that was set up there on 21.10.2026 and that nobody could see.
+//
+// The fixture's own manifest is a small one written for these cases; this one
+// carries a UI, a critical action and needs root, and the point of the case is
+// that none of that changes who holds the right.
+func TestAnAdminHoldsTheRightsOfTheRealTerminalApp(t *testing.T) {
+	const path = "../../../../apps/server-controller/templates/terminal/manifest.json"
+	raw, err := os.ReadFile(path)
+	// Not skipped: this file is in the repository, so one that cannot be read
+	// is a hollow tree and not a machine without a tool (messen.md).
+	if err != nil {
+		t.Fatalf("the manifest of the real app is missing: %v", err)
+	}
+	m, err := store.ParseManifest(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The case would be worthless against a manifest that is not the one it
+	// names, so what it was measured on is checked before anything is
+	// measured: the app of the VM, with its one action.
+	if m.ID != "org.sorglos.terminal" || len(m.Actions) != 1 || m.Actions[0].Name != "shell" {
+		t.Fatalf("not the manifest this case is written for: %+v", m)
+	}
+	fx := newFixture(t)
+	if err := fx.DB.AppPut(ctx, dbapi.App{ID: m.ID, Version: m.Version, Store: trust.StoreGlobal,
+		Node: ctlNode, Active: true, Manifest: raw}); err != nil {
+		t.Fatalf("app row: %v", err)
+	}
+	got, _, err := Of(ctx, fx.DB, fx.List, fx.AdminUser)
+	if err != nil {
+		t.Fatalf("of: %v", err)
+	}
+	for _, want := range []string{m.ID + "/" + core.RightUse, m.ID + "/shell"} {
+		if !got[want] {
+			t.Errorf("an admin does not hold %q on the real app: %v", want, got)
+		}
+	}
+	// The control, in the same case and on the same row: a user who is no
+	// admin and has no row holds nothing of it.
+	other, _, err := Of(ctx, fx.DB, fx.List, fx.OfficeUser)
+	if err != nil {
+		t.Fatalf("office: %v", err)
+	}
+	if other[m.ID+"/"+core.RightUse] || other[m.ID+"/shell"] {
+		t.Fatalf("a user who is no admin holds the real app's rights: %v", other)
 	}
 }
