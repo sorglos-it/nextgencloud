@@ -3645,3 +3645,55 @@ einem anderen Teil. Zwei Wege, und sie schließen sich aus:
   bekommt, und er gehört vor jede Auslieferung.
 
 **Gemessen ist die Erscheinung und die Rate, nicht die Ursache.**
+
+### Nachtrag 22.10.2026: ein dritter Zeittest, und seine Schranke ist eine Haaresbreite
+
+Derselbe Weg wie oben: die CI sagt seit Punkt 69, **warum** ein Test umfällt, und damit fällt
+der dritte auf. Er gehört ebenfalls nicht zum Zweig, auf dem er auftrat — `apps/` und `shared/`
+sind dort byteweise `main` (`git diff origin/main --stat` auf diese Pfade: leer).
+
+`TestAFaultEndsTheTerminalAtOnce` (`apps/server-controller/classes/terminal/terminal_test.go:654`),
+im `root`-Auftrag:
+
+```
+it took 1.002616831s: the fault waited for the shell instead of ending the terminal
+```
+
+**Die Schranke ist `took > time.Second`** (Zeile 653), und überschritten wurde sie um **2,6
+Millisekunden**.
+
+**Was die Schranke trennen soll**, steht drei Zeilen darüber: `run(...)` bekommt `time.Minute`
+mitgegeben. Der Fehlerfall, den der Test ausschließt, ist also, dass der Fehler **auf die Shell
+wartet** — und das wären **60 Sekunden**. Zwischen „sofort" und „wartet" liegt damit eine Minute,
+geprüft wird aber auf eine Sekunde. Eine Schranke bei fünf Sekunden würde dasselbe trennen und
+hätte zweieinhalb Millisekunden Last nicht bemerkt.
+
+**Nicht gemessen, und zwar nicht aus Nachlässigkeit:** der Fall ist auf diesem Rechner nicht
+nachstellbar. Er stellt sich unter Windows selbst zur Seite — 20 von 20 Läufen unter Volllast,
+jedes Mal mit seiner eigenen Zeile:
+
+```
+NICHT GEMESSEN auf windows: /dev/ptmx gibt es nur unter Linux (12.10.2026)
+```
+
+Also: die **Erscheinung** ist aus der CI gemessen (eine Zahl, 1,002616831 s), die **Rate** nicht.
+
+### Drei Zeittests, ein Muster
+
+Mit Punkt 70 oben und dem Tunnel-Test aus Punkt 69 sind es drei, alle im Controller, alle nur
+unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
+
+| Test | Schranke | gemessen | Alternative, die er trennt |
+|---|---|---|---|
+| `TestAFaultEndsTheTerminalAtOnce` | 1 s | 1,0026 s | 60 s |
+| `TestAPackageLargerThanOneWindowGetsThrough` | — | `E_PROTOCOL` nach 0–2 von 6 Rahmen | — |
+| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Tunnel tot vor dem ersten Ping | — |
+
+Der erste ist der einfachste von allen: **eine Zahl, die zu knapp gewählt ist.** Die anderen
+zwei sind Wettläufe. Nur der erste lässt sich ohne Kenntnis des Protokolls entscheiden — und
+auch er gehört dem Teil, der ihn besitzt.
+
+**Was daraus folgt und bisher nirgends stand:** eine Prüfung, die auf einem belasteten Läufer
+drei verschiedene Tests verlieren kann, ist keine Prüfung mehr, die einen echten Befund von
+Rauschen trennt. Das ist die Fortsetzung von Punkt 69 mit anderen Mitteln: dort war sie rot und
+schwieg, hier ist sie rot und meint es verschieden.
