@@ -21,10 +21,20 @@
 // refusal is written as the CLOSE of the channel instead, and what must be
 // watched all the same is counted (HandshakeFailures, StoreFailures).
 //
-// No line of this package is written per channel. A local fault an operator
-// has to see — the trust list that cannot be kept — writes once and is counted
-// from then on (trust.go), because how often a channel meets that fault is the
-// API's to choose and how often it is written must not be.
+// No line of this package is written per channel BEFORE the first inner
+// message of a shell. A local fault an operator has to see — the trust list
+// that cannot be kept — writes once and is counted from then on (trust.go),
+// because how often a channel meets that fault is the API's to choose and how
+// often it is written must not be.
+//
+// Behind that first message the rule turns around, and since 22.10.2026 it
+// does: an app channel that ends other than ok writes ONE line with the
+// reason (reason.go). What changed is not the rule but who the channel
+// belongs to — past its first inner message a channel is a real shell of an
+// installed app, every way it can end there is a fault of this machine, and
+// before that line existed the person in the browser read "Die Verbindung
+// wurde abgeschnitten." while the journal of this controller held nothing at
+// all (measured on 21.10.2026 on the Debian machine).
 //
 // What this build carries out is ngc.users/controller/trust (trust.go) and
 // the app channels of this controller from end to end (app.go): the handshake,
@@ -150,6 +160,20 @@ type Deps struct {
 	TrustChanged func()
 	// Now is the clock of the checks, in seconds. nil: time.Now().Unix().
 	Now func() int64
+	// Prepare makes everything ready that the container of an app needs
+	// before the engine is asked about it, and it is called for every app
+	// channel: today that is the runtime directory of the container
+	// (runtime.RunForApp). It has to be callable again at any time and for a
+	// container that already runs.
+	//
+	// It stands here and not in runtime.Engine because making a directory and
+	// handing it to another user needs root, which this controller has and
+	// the engine deliberately does not use (runtime, run.go).
+	//
+	// nil: nothing is prepared. That is for a case with a stand-in engine; a
+	// controller that wires nothing here is a controller whose apps die with
+	// the next boot of the machine.
+	Prepare func(ctx context.Context, app string) error
 	// Log is where this package writes. nil: slog.Default(). Nothing a peer
 	// brings about is written here more than once, and almost all of it not at
 	// all (see the doc of this package).
