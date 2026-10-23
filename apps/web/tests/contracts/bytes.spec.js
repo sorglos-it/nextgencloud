@@ -571,7 +571,30 @@ const NEEDS_X25519 = [
 // way uitar.spec.js and sign.spec.js hold theirs.
 // 215 since 18.10.2026: wire.isGeneral, the codes whose own text says
 // nothing to do, so that a sentence of the server may stand beside it.
-const CALLABLES = 215;
+//
+// 217 since 23.10.2026: task.envelopeBytes and proof.proofBytes. Both used to
+// stand in apps/store.js, and net/world.js needs them too since an app's own
+// channel can carry a signed task - so they moved into the contracts they
+// belong to rather than being copied.
+//
+// NEITHER BRINGS A LINE TO ENTRIES, for the reason task.verifyApproval brings
+// none: what they take is an OBJECT - an envelope, a proof - and not caller
+// bytes, so the probe never becomes the bytes they work on. The bytes they
+// read are MEMBERS of that object and go straight to b64.b64encode, whose
+// own line is in the list above ("b64.b64encode#0": "view"). What holds the
+// result is that each of them reads its own work back before handing it over
+// (parseEnvelope and validateProof), which task.spec.js and proof.spec.js
+// measure where those live.
+// 216 since 23.10.2026: core.refusedField, which reads the field name off a
+// refusal the contract made. It takes no bytes of a caller at all - it reads
+// one property of an Error the contract itself threw - so it brings no line to
+// ENTRIES either.
+//
+// 218 since 23.10.2026, when the two rounds above met in one tree: two from
+// the task of an app's own channel and one from core.refusedField. The number
+// is the sum and not one of the two - a merge that kept either would count
+// what the other added as "not in the list".
+const CALLABLES = 218;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that

@@ -47,6 +47,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -197,7 +198,12 @@ func (rl *Relay) Forward(ctx context.Context, s *browser.Session, c *link.Channe
 	if rl.Log == nil {
 		return
 	}
-	_ = rl.Log.Channel(ctx, s.Live.Verified.Cert().User, o.App, o.Action, node, code)
+	// The reason of a forwarded channel is the backstop of its code and
+	// nothing finer: what refused is on the far side, and the words of the far
+	// side are not this API's to write into its own log (package reason). The
+	// controller writes its own reason into its own journal (#95).
+	_ = rl.Log.Channel(ctx, s.Live.Verified.Cert().User, o.App, o.Action, node, code,
+		reason.ForCode(code))
 }
 
 // forward finds the tunnel and runs the channel; it answers the code the

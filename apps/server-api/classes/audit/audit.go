@@ -27,6 +27,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -185,14 +186,31 @@ func (lg *Log) Login(ctx context.Context, user, result, detail string) error {
 	return lg.add(ctx, core.LogEntry{User: user, Kind: kind, Result: result, Detail: detail}, lost)
 }
 
-// Channel notes that a channel opened or was refused.
-func (lg *Log) Channel(ctx context.Context, user, app, action, node string, code wire.Code) error {
+// Channel notes that a channel opened or was refused. why says which check
+// said no and becomes the detail of the entry; a channel that opened carries
+// reason.None and no detail.
+//
+// Why the detail is bounded to the closed list of package reason and not to
+// the shape of a text: a code alone is no reason -- "E_INTERNAL" tells an
+// administrator nothing -- but the field that fixes that is the one field of
+// this log a caller could otherwise fill freely, and this package takes no
+// free text (see the package comment). So a sentence outside the list is
+// dropped and the entry is written all the same, as everything else here is:
+// whoever looks for a hole does not need the field, only the event to be
+// missing.
+func (lg *Log) Channel(ctx context.Context, user, app, action, node string, code wire.Code,
+	why reason.Reason) error {
 	result := "ok"
 	if code != "" {
 		result = string(code)
 	}
-	return lg.Add(ctx, core.LogEntry{User: user, Kind: core.LogChannel, App: app, Action: action,
-		Node: node, Result: result})
+	detail := string(why)
+	lost := why != reason.None && !reason.Known(why)
+	if lost {
+		detail = Dropped
+	}
+	return lg.add(ctx, core.LogEntry{User: user, Kind: core.LogChannel, App: app, Action: action,
+		Node: node, Result: result, Detail: detail}, lost)
 }
 
 // Task notes a signed task with its signature, so it can be shown later who
