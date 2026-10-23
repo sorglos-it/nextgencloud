@@ -28,10 +28,10 @@ Das ist der Kern des Befundes, nicht eine Randbemerkung:
    `-ldflags "-X main.Version=…"` steht in `docs/release-weg.md`, `CLAUDE.md` und in alten Plänen.
    **Kein Skript im Repo baut die Server.** Der Rückfall im Code ist `0.0.0-dev`, und die
    Oberfläche verwirft auf eine Version, die `validVersion` ablehnt, die **ganze** Antwort.
-3. **Hürde 5 — ein Dateimodus.** `apps/server-controller/classes/runtime/data.go` legt
-   `config.AppDataDir` mit `0700` an. Kein Unit-Test kann das als Fehler erkennen, weil es im
-   Prozess als root richtig aussieht; falsch wird es erst, wenn ein *anderer* Benutzer
-   hindurchmuss.
+3. **Hürde 5 — ein Dateimodus.** `apps/server-controller/classes/runtime/data.go` legte
+   `config.AppDataDir` mit `0700` an (seit PR 92: `0711`). Kein Unit-Test kann das als Fehler
+   erkennen, weil es im Prozess als root richtig aussieht; falsch wird es erst, wenn ein
+   *anderer* Benutzer hindurchmuss.
 
 Die anderen drei (3 Katalogfrist, 4 leere `rootUsers`, 6 geschlossener Rechtekreis) sind je für
 sich korrekter Code. Sie werden erst beim Zusammensetzen zu einer Sackgasse.
@@ -74,29 +74,30 @@ Lauf, damit der nächste dort anfängt und nicht beim Inventar.
 | 4 | aufnehmen | Ein frisch aufgenommener Controller ist über die Oberfläche **änderbar** — nicht nur `rootUsers: []`. | 4 | UNMEASURABLE |
 | 5 | Systemrechte setzen | Systemrechte sind über die Oberfläche setzbar. | 4 | UNMEASURABLE |
 | 6 | Katalog da | Der Katalog ist **Minuten** nach der Installation da, nicht eine Stunde. | 3 | UNMEASURABLE |
-| 7 | App einrichten | Der Modus von `config.AppDataDir` muss einen App-Benutzer **hindurchlassen** (x-Bit für andere) — die Begründung ist die Aussage, nicht die Zahl. | 5 | **ROT** |
+| 7 | App einrichten | Der Modus von `config.AppDataDir` muss einen App-Benutzer **hindurchlassen** (x-Bit für andere) — die Begründung ist die Aussage, nicht die Zahl. | 5 | grün (seit PR 92) |
 | 8 | App erscheint im Menü | Die Rechte-Seite bietet Rechte auch für Apps an, die man noch **nicht** sieht. | 6 | UNMEASURABLE |
 
 Warum 3, 4, 5, 6 und 8 keine statische Hälfte haben, steht als Kommentar im Lauf selbst — mit
 Grund je Station, damit der Nächste eine Lücke in der Suche sehen kann statt einem Satz zu glauben
 (`messen.md`: eine Abwesenheit belegt man mit Orten).
 
-## 4. Die drei roten Stationen sind drei lebende Befunde
+## 4. Die roten Stationen sind lebende Befunde
 
-Der Lauf ist heute auf `main` **dreifach rot**, und jedes Rot ist eine Hürde aus dem Oktober, die
-im Code noch steht:
+Gemessen auf dieser Zweigspitze (`main` vom 23.10.2026, 17:1x): **zwei rot**, Ausstiegscode 1.
 
 1. `ngc-api.service` (ulh `ngc-kette`) gewährt `/var/lib/ngc /etc/ngc/tls`; die API schreibt
    `/etc/ngc/trust-anchor.json`. **Hürde 1 ist nicht behoben**, nur auf der einen Maschine
    umgangen.
 2. Es gibt kein `tools/build-servers.sh`. **Hürde 2 kann jederzeit wiederkehren**, weil der
    nächste Release wieder von Hand gebaut wird.
-3. `data.go` legt `config.AppDataDir` mit `0700` an. **Hürde 5 ist nicht behoben**, nur auf der
-   einen Maschine auf `0711` gesetzt.
 
-Behoben wird das nicht hier: Hürde 1 liegt in einem anderen Repo auf Zweigen, an denen andere
-Sitzungen arbeiten, und 5 ist eine Zeile in einer Datei, die zu einem anderen Auftrag gehört.
-Der Auftrag dieses Zuges war der **Lauf**.
+**Station 7 ist grün — und das ist die erste echte Probe des Laufs.** Bei der ersten Messung
+(Basis `b782635`) war sie rot, weil `data.go` dort noch `0o700` schrieb. PR 92 hat daraus `0o711`
+gemacht; derselbe Lauf, unverändert, meldet seitdem `ok`. Die Station folgt also der Behebung und
+nicht einer abgetippten Zahl.
+
+Behoben wird 1 nicht hier: die Datei liegt in einem anderen Repo auf Zweigen, an denen andere
+Sitzungen arbeiten. Der Auftrag dieses Zuges war der **Lauf**.
 
 ## 5. Der Lauf prüft erst sich selbst
 
