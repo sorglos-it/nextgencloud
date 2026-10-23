@@ -3912,6 +3912,70 @@ Und: **der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er a
 gedruckt. Er steht damit auf der vierten Stufe — durch einen Versuch, der selbst verworfen
 wurde.
 
+### Nachtrag 23.10.2026: die Behebung war richtig — und lag drei Tage auf einem Zweig
+
+Der Abschnitt „Behoben, ohne einen zweiten Testlauf" oben stimmt in jedem Punkt. Der Haken
+ist, was er nicht sagt: **wo** die Behebung lag.
+
+**Gemessen:**
+
+```
+git rev-list --ancestry-path 92ee9f1..origin/main      -> erster main-Commit: 6e35852
+git log --merges --ancestry-path 92ee9f1..origin/main | tail -3
+   -> 1b9f206  2026-10-23 17:19:05  Merge pull request #91
+      36b3511  2026-10-23 17:19:24  Merge pull request #93
+      bc09575  2026-10-23 17:20:22  Merge pull request #86
+```
+
+`92ee9f1` („fix: write the test JSON stream …") ist vom **20.10.2026 11:57**. In `main` kam er
+am **23.10.2026 17:20** an — **drei Tage und fünf Stunden** später. In dieser Zeit stand die
+Behebung hier als erledigt, und die Prüfung war weiter rot.
+
+**Darum waren auch `pull_request`-Läufe rot, und das ist der Teil, der am meisten täuscht.** Ein
+`pull_request`-Lauf prüft den Merge — aber der Merge entsteht gegen den damaligen Stand von
+`main`, und der hatte den Schreiber nicht:
+
+| | gemessen |
+|---|---|
+| `fix/stille-ablehnung`, Spitze `64e2d52` (23.10. 16:21) | `test2json` **0×** in `tools/check.sh` |
+| `docs/sechs-waende`, Spitze `9eb7be4` | `test2json` **0×** |
+| Basis, gegen die dessen Merge gerechnet wurde (`b782635`) | enthält `92ee9f1` **nicht** |
+
+**Die Größe des Schadens, über alle 182 Läufe von `Linux-Pruefung`:**
+
+| | |
+|---|---|
+| rote Läufe | 93 |
+| davon mit rotem `check.sh + counted test run` | 82 |
+| davon mit **grünem `check.sh`** — rot nur am Zählschritt | **42** |
+
+Die 42 liegen auf 20 Zweigen; 18 hatten einen Pull Request: **3 offene** (#71, #82, #88) und
+**15 gemergte**, 14 davon am 23.10. Von den am 23.10. gemergten Pull Requests waren **14 durch
+dieses eine Loch rot**, während sie zusammengeführt wurden.
+
+Alle Zahlen sind **Stand 23.10.2026 22:00**, und sie laufen weg: `main` nimmt in dieser Phase
+etwa zehn Merges je Stunde. Beim Nachrechnen eine Stunde später waren es schon 21 am 23.10.
+gemergte Pull Requests statt 20 und 6 offene statt 5. Die drei offenen oben waren es zu beiden
+Zeitpunkten.
+
+**Die Klasse ist eine neue, und sie ist schlimmer als „zwei Stellen, eine Wahrheit":** eine
+Behebung, die geschrieben, gemessen und ins Entscheidungsbuch eingetragen ist, aber nicht in
+`main` liegt. Das Buch sagt dann die Unwahrheit, ohne dass jemand gelogen hat — und wer hier
+nachliest, hört auf zu suchen. Die vier Stufen aus `messen.md` (geschrieben · übersetzt · im
+Abbild enthalten · ausgeführt) haben für CI-Werkzeug offenbar eine fünfte: **in `main`.**
+
+**Behoben wird daran hier nichts** — der Schreiber ist seit 17:20 drin. Was dazukommt
+(PR #109): die Zählung ist auf Zusicherungen gestellt (`tools/ci-count-test.sh`, 5 Zusicherungen,
+7 Mutanten tot, 1 Kontrolle lebendig), `ci-count.sh` trennt **fehlende** von **leerer** Datei
+und nennt den Schritt davor als Befund statt die Datei, und die Prüfung hält jetzt fest, dass
+Arbeitsablauf und `check.sh` sich über `NGC_CHECK_TEST_JSON` noch einig sind — genau die
+Prüfung, deren Fehlen die zwei Hälften drei Tage auseinanderlaufen ließ. Beide Riegel bleiben
+rot; ein Zählwerk, das bei leerer Eingabe grün wird, wäre schlimmer als der Zustand davor.
+
+**Offen, und jetzt das größere Loch:** oben stand „nichts sagt Bescheid, wenn `main` rot ist".
+Dazu kommt: **nichts sagt Bescheid, wenn eine als behoben verbuchte Behebung nicht in `main`
+liegt.** Beides ist nicht gebaut.
+
 ## Punkt 70: Ein Paket über eine Fenstergröße kommt unter Last nicht durch — `E_PROTOCOL` statt `ok`
 
 Gefunden, weil die CI endlich sagt, **warum** ein Test umfällt (Punkt 69). Der Befund gehört

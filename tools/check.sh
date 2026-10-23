@@ -243,6 +243,17 @@ go vet -tags=race ./...
 # No pipe: the exit code of a pipe belongs to its last link, and this script
 # has been dead behind a "0" once already.
 log=$(mktemp)
+# The file ci-count.sh reads is created HERE, before the run, and that is a
+# decision, not tidiness. ci-count.sh tells three cases apart - file missing,
+# file empty, file counted - and "missing" is only honest if this script really
+# creates it the moment it reaches its tests. Without this line a stop earlier
+# in the script (structural check, go vet) and a test run that wrote nothing
+# look the same to the counter, and for three days in October 2026 the CI said
+# "is empty - nothing ran" while the real cause was one step away.
+if [ -n "${NGC_CHECK_TEST_JSON:-}" ]; then
+	: >"$NGC_CHECK_TEST_JSON" ||
+		die "cannot write the test JSON stream to $NGC_CHECK_TEST_JSON"
+fi
 # The run stands in an "if", not bare with $? after it: this script is
 # "set -e", so a bare red run would end it here and the conversion below -
 # the one the CI counts - would never happen.
