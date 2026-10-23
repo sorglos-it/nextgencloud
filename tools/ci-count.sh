@@ -39,15 +39,17 @@ floor=${NGC_COUNT_FLOOR:-200}
 #
 # So check.sh truncates the file BEFORE its test run (see the writer there).
 # After that the three cases are distinct and each names where to look:
-#   file missing  -> check.sh never reached its test run; the cause is in that step
+#   file missing  -> the producing step never got far enough; the cause is in THAT step
+#                    (check.sh here, the go test step in the -race and root jobs)
 #   file empty    -> the run happened and produced no stream
 #   file non-empty-> count it
 # All three stay RED. "nothing ran" must never pass as a result, and a counter
 # that goes green on empty input would be worse than the state this replaces.
 if [ ! -e "$log" ]; then
-	echo "ci-count: $log does not exist - the test run never got far enough to write it." >&2
-	echo "ci-count: that is NOT a count of zero and NOT a green run. Read the step that runs check.sh:" >&2
-	echo "ci-count: it stopped before its tests (structural check, go vet, a build), and THAT is the finding." >&2
+	echo "ci-count: $log does not exist - the run that should have written it never got that far." >&2
+	echo "ci-count: that is NOT a count of zero and NOT a green run. The finding is in the step BEFORE" >&2
+	echo "ci-count: this one - check.sh (it stops at a structural check, go vet or a build before its" >&2
+	echo "ci-count: tests) or, in the -race and root jobs, the go test step itself. Read that step." >&2
 	exit 2
 fi
 [ -s "$log" ] || { echo "ci-count: $log is empty - the run wrote no stream at all, and that is not a result" >&2; exit 2; }
