@@ -162,13 +162,18 @@ func TestAnActionWithoutAHandlerIsNotFound(t *testing.T) {
 // appX, the database answers the row of appY for it, and the rights of appY
 // are what open the channel. A dispatcher that passed the OPEN's app ID into
 // rights.Request would refuse here.
+// Both halves run as a user who is NO admin, and they have to: an admin holds
+// the right of every installed app without a row (rights.Of, adminApps), so
+// the half that must be REFUSED cannot be set up on an admin at all -- there
+// is no way to withhold appY from one.
 func TestTheResolvedAppDecidesAndNotTheOpen(t *testing.T) {
 	fx := newFixture(t)
 	fx.PutApp(t, appY, true)
+	bob := nonAdminSession(t, fx)
 	fx.Lying.swapFrom, fx.Lying.swapTo = appX, appY
 	// Only the resolved app is granted; nothing of appX is.
-	fx.Grant(t, appY+"/"+core.RightUse, appY+"/"+appAct)
-	c := fx.Open(t, wire.Open{App: appX, Service: appSvc, Action: appAct,
+	grantRole(t, fx, userRole, appY+"/"+core.RightUse, appY+"/"+appAct)
+	c := bob.Open(t, wire.Open{App: appX, Service: appSvc, Action: appAct,
 		Window: wire.MinWindow, E2E: make([]byte, wire.HandshakeSize)})
 	r := fx.Relay.forwarded(t)
 	if r.Open.App != appX {
@@ -189,9 +194,10 @@ func TestTheResolvedAppDecidesAndNotTheOpen(t *testing.T) {
 func TestTheRightsOfTheClaimedAppDoNotOpenIt(t *testing.T) {
 	fx := newFixture(t)
 	fx.PutApp(t, appY, true)
+	bob := nonAdminSession(t, fx)
 	fx.Lying.swapFrom, fx.Lying.swapTo = appX, appY
-	fx.Grant(t, appX+"/"+core.RightUse, appX+"/"+appAct)
-	c := fx.Open(t, wire.Open{App: appX, Service: appSvc, Action: appAct,
+	grantRole(t, fx, userRole, appX+"/"+core.RightUse, appX+"/"+appAct)
+	c := bob.Open(t, wire.Open{App: appX, Service: appSvc, Action: appAct,
 		Window: wire.MinWindow, E2E: make([]byte, wire.HandshakeSize)})
 	if cl := c.closed(t); cl.Code != wire.CodeForbidden {
 		t.Fatalf("close %+v", cl)

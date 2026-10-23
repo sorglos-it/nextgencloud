@@ -356,6 +356,15 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .role legend{padding:0 6px;font-weight:600}
 .usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}
+/* Who may run root tasks on a server: the heading of each half of the picker,
+   and the same fact in the row of a listed server. The lists of the picker
+   scroll inside the question - an installation may have many users, and a
+   question taller than the window hides its own buttons. */
+.usersapp .sub{margin:8px 0 2px;font-weight:600;font-size:13px}
+.usersapp .rootpick .opts{max-height:9rem;overflow:auto}
+.usersapp .row .root{color:var(--muted);font-size:12px}
+/* A right the role admin holds without a row: named, with no box to clear. */
+.usersapp .opt.fixed{cursor:default;padding-left:20px}
 .usersapp button.go{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);
                     color:inherit;font:inherit;padding:6px 12px;cursor:pointer}
 .usersapp button.go:hover{border-color:var(--accent)}

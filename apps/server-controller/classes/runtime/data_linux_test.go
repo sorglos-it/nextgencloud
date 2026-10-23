@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -170,5 +171,90 @@ func TestAddKeyRefusesAKeyOfTheWrongLength(t *testing.T) {
 		if _, err := addKey(dir, bytes.Repeat([]byte{1}, n)); !errors.Is(err, ErrKey) {
 			t.Errorf("addKey with %d bytes = %v, want ErrKey", n, err)
 		}
+	}
+}
+
+// The mode of the directory ABOVE every app's, read off the disk and not off a
+// recorder. That difference is why this case exists at all: the three
+// directory calls of this package go through paths, and a case that bends them
+// measures the number the call was MADE with. user.go says what that is worth
+// in the one sentence this case answers - "with the calls going straight to os,
+// every 0o700 in run.go and data.go could be turned into 0o777 and the whole
+// controller set stayed green". So here nothing is bent but the two kernel
+// calls that need a filesystem with encryption, and the mode is stat'ed.
+//
+// What must be true: a foreign user can ENTER /var/lib/ngc/apps (podman runs
+// as the app's user, with its directory in there as its home) and can LIST
+// none of it (the installed apps are nothing a user of this machine reads off
+// a directory). That is 0711, and both halves are read.
+//
+// The second half of the case is the one that was broken on the machine: a
+// parent directory that was ALREADY there at 0700 - every installation made by
+// a build before this one - because os.MkdirAll leaves the mode of an existing
+// directory alone and would walk past it for ever.
+func TestTheDirectoryAboveEveryAppIsEnterableAndNotListable(t *testing.T) {
+	var id [keyIdentifierSize]byte
+	oldData, oldAdd, oldPolicy := paths.appData, paths.addKey, paths.setPolicy
+	t.Cleanup(func() {
+		paths.appData, paths.addKey, paths.setPolicy = oldData, oldAdd, oldPolicy
+	})
+	paths.addKey = func(string, []byte) ([keyIdentifierSize]byte, error) { return id, nil }
+	paths.setPolicy = func(string, [keyIdentifierSize]byte) error { return nil }
+
+	for _, c := range []struct {
+		name   string
+		before os.FileMode // 0: the directory is not there at all
+	}{
+		{"a fresh installation", 0},
+		{"one an older build left at 0700", 0o700},
+		{"one somebody widened to 0777", 0o777},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "apps")
+			paths.appData = root
+			if c.before != 0 {
+				if err := os.MkdirAll(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				// MkdirAll applies the umask, so the mode is set and then read
+				// back: a preparation that did not take would make this case
+				// measure the fresh path three times over.
+				if err := os.Chmod(root, c.before); err != nil {
+					t.Fatal(err)
+				}
+				fi, err := os.Stat(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fi.Mode().Perm() != c.before {
+					t.Fatalf("the preparation left %v, not %v - nothing was measured here",
+						fi.Mode().Perm(), c.before)
+				}
+			}
+
+			// The chown to a uid that is not this process's needs root, and
+			// this case does not. It happens after the lines this case is
+			// about, so an error is noted: what is read below is the disk.
+			_, err := EnsureData(context.Background(), "org.sorglos.terminal",
+				User{Name: "ngc-a-00000000", UID: 1234, GID: 1234}, make([]byte, 32))
+			if err != nil {
+				t.Logf("EnsureData ended with %v - the mode below is still the case", err)
+			}
+			fi, statErr := os.Stat(root)
+			if statErr != nil {
+				t.Fatalf("EnsureData left no directory above the apps: %v", statErr)
+			}
+			perm := fi.Mode().Perm()
+			if perm&0o001 == 0 {
+				t.Fatalf("%v: an app's user cannot enter the directory of all apps - this is "+
+					"the mode podman answered EACCES on", perm)
+			}
+			if perm&0o004 != 0 || perm&0o040 != 0 {
+				t.Fatalf("%v: the directory of all apps can be listed by someone else", perm)
+			}
+			if perm != 0o711 {
+				t.Fatalf("the directory of all apps is %v, want -rwx--x--x", perm)
+			}
+		})
 	}
 }

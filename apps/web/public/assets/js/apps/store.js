@@ -35,6 +35,7 @@ import { proofShape, validateProof } from "../contracts/proof.js";
 import { PURPOSE_TRUST_LIST, parseEnvelope } from "../contracts/sign.js";
 import { APPS, NODES } from "../shell/changed.js";
 import { freshness } from "../shell/stale.js";
+import { CODES } from "../contracts/wire.js";
 
 const EMPTY = new Uint8Array(0);
 
@@ -332,16 +333,34 @@ class Store {
     try {
       apps = await this.catalogOf(src);
     } catch (e) {
-      // Three different things go wrong here and each gets its own sentence,
+      // FOUR different things go wrong here and each gets its own sentence,
       // because each has a different thing to DO about it: a store nobody
-      // has vouched for yet, a store replaying an old catalog, and an answer
-      // nobody signed for. One sentence for all three would tell the person
-      // nothing they could act on.
+      // has vouched for yet, a store whose catalog this installation has not
+      // fetched yet, a store replaying an old catalog, and an answer nobody
+      // signed for. One sentence for all four would tell the person nothing
+      // they could act on.
+      //
+      // The empty case is the one that was missing, and it was the loudest:
+      // until the hourly round has run once there is no catalog row, so
+      // ngc.store/catalog answers E_NOTFOUND (appstore.CodeFor over
+      // dbapi.ErrNotFound) -- and that answer used to fall through to "nicht
+      // echt", which tells a verified, healthy store's administrator that
+      // they are being attacked and leaves them nothing to do. Waiting is
+      // the thing to do, so the sentence says so (V1.2 point 65).
+      //
+      // E_NOTFOUND on THIS action can only mean "this API has nothing under
+      // that name yet" -- the missing row, or an API too old to carry the
+      // action at all. Neither is a forgery, and both are mended by waiting
+      // or by looking at the source list, so one sentence covers both. An ID
+      // the trust list does not name never gets here: it is refused before
+      // the request (Untrusted), and the API answers it E_UNREACHABLE.
       out.push(el("p", "fail", e instanceof Untrusted
         ? "Diesem Store wird noch nicht vertraut. Bitte ihn zuerst eintragen."
-        : e instanceof catalog.Rollback
-          ? "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen."
-          : "Der Katalog dieses Stores ist nicht echt."));
+        : e?.code === CODES.NOTFOUND
+          ? "Der Katalog dieses Stores ist noch nicht geholt. NGC sieht stündlich nach; unter Quellen steht, wann es das letzte Mal geklappt hat."
+          : e instanceof catalog.Rollback
+            ? "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen."
+            : "Der Katalog dieses Stores ist nicht echt."));
       return out;
     }
     const box = el("div", "rows");
