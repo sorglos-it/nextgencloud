@@ -37,6 +37,17 @@ const WORLD = `const enc = new TextEncoder();
 const KEY_A = "wcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcE";
 const KEY_B = "wsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsI";
 
+// What the detail field carries, kind by kind, so the log tab is read against
+// all three and not only against the one it was asked for. The values are
+// FILLED IN by serveWorld out of LOG_DETAILS below: this world is a source
+// STRING, so a binding of the spec cannot reach in here, and a markup detail
+// written out by hand would have to survive two rounds of escaping - the
+// template literal and the module - which is exactly the kind of quiet
+// breakage the one that was tried first caused (the module did not parse and
+// the shell never booted).
+const DETAILS = null;
+
+
 export const DEFAULTS = {
   "ngc.users/list": [
     { id: "ICAgICAgICAgICAgICAgIA", name: "admin2", roles: ["admin"], totp: true, locked: false, lastLogin: 1790000000 },
@@ -84,12 +95,20 @@ export const DEFAULTS = {
 function logPageOne() {
   const rows = [{ id: "00000000000000000000000000000000", time: 1790003600,
     user: "ISEhISEhISEhISEhISEhIQ", kind: "task", app: "ngc.store", action: "activate",
-    node: "ctl-1", result: "ok", detail: "" }];
+    node: "ctl-1", result: "ok", detail: DETAILS.signature }];
   for (let i = 1; i < 50; i++) {
     rows.push({ id: String(i).padStart(32, "0"), time: 1790003600 - i,
       user: "IiIiIiIiIiIiIiIiIiIiIg", kind: "login", app: "", action: "", node: "",
-      result: "ok", detail: "" });
+      result: "ok", detail: DETAILS.method });
   }
+  // A refused channel and one whose detail is markup, in place of two of the
+  // logins, so the page still holds the 50 the limit asks for.
+  rows[1] = { id: String(1).padStart(32, "0"), time: 1790003599,
+    user: "IiIiIiIiIiIiIiIiIiIiIg", kind: "channel", app: "de.example.fotos",
+    action: "teilen", node: "pi-1", result: "E_FORBIDDEN", detail: DETAILS.reason };
+  rows[2] = { id: String(2).padStart(32, "0"), time: 1790003598,
+    user: "IiIiIiIiIiIiIiIiIiIiIg", kind: "channel", app: "de.example.fotos",
+    action: "teilen", node: "pi-1", result: "E_FORBIDDEN", detail: DETAILS.markup };
   return rows;
 }
 
@@ -361,6 +380,20 @@ export async function fakeWorld() {
 }
 `;
 
+// What the detail field of a log entry carries, kind by kind. The log has ONE
+// such field and the contract says nothing about its words: audit.Task writes
+// the base64url of the signature (86 characters), audit.Login the method, and
+// a refused channel the German sentence out of the API's closed list. The
+// cases below are read against all three.
+const LOG_DETAILS = {
+  signature: "c2lnbmF0dXJlLW9mLXRoZS10YXNrLXNpeHR5LWZvdXItYnl0ZXMtbG9uZy1leGFjdGx5LXBhZGRlZDE",
+  method: "passkey",
+  reason: "Für diese Aktion fehlt dir das Recht.",
+  // No API writes this one. It stands for an API that was taken over, and it
+  // has to arrive on screen as its own characters.
+  markup: "<img src=x onerror=\"window.__ngcXss = true\">",
+};
+
 // The genesis payload of shared/testdata/trust.json, read out of the
 // repository so the version the cases work with is the one Go signs.
 import { vectors } from "../fixtures/vectors.js";
@@ -396,7 +429,10 @@ async function hasEd25519(page, c) {
 
 async function serveWorld(page) {
   const src = WORLD.replace("const GENESIS_PAYLOAD = null;",
-    "const GENESIS_PAYLOAD = " + JSON.stringify(GENESIS.chain[0].payload) + ";");
+    "const GENESIS_PAYLOAD = " + JSON.stringify(GENESIS.chain[0].payload) + ";")
+    // JSON.stringify and not a hand-written literal: the markup detail holds
+    // quotes, and it has to come out of this the same bytes it went in as.
+    .replace("const DETAILS = null;", "const DETAILS = " + JSON.stringify(LOG_DETAILS) + ";");
   await page.route("**/assets/js/shell/fake-link.js", (route) => route.fulfill({
     status: 200,
     headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
@@ -1161,6 +1197,54 @@ test("the log pages with the time and the id of its last row", async ({ page }) 
   // The second page was shorter than the limit, so that was the end of it.
   await expect(app(page).locator(".log .note")).toHaveText("Das ist der Anfang des Protokolls.");
   expect(await app(page).getByRole("button", { name: "Mehr laden" }).count()).toBe(0);
+});
+
+// The reason of a refused channel reaches the screen. This is the half of the
+// silent refusal that lives in the surface: PR 103 writes the sentence into
+// core.LogEntry.Detail, and before this column the log threw it away - the row
+// said E_FORBIDDEN and nothing about why.
+test("the log shows the detail of every row, and a refused channel its reason", async ({ page }) => {
+  await mount(page);
+  await openTab(page, "Protokoll");
+  const rows = app(page).locator(".log .row");
+  await expect(rows).toHaveCount(50);
+
+  // The heading is there and it is the eighth column, in the order the row
+  // cells are appended in - a heading on one side and the cell on the other
+  // would put every detail under "Ergebnis".
+  await expect(app(page).locator(".log thead th").nth(7)).toHaveText("Näheres");
+  await expect(app(page).locator(".log thead th")).toHaveCount(8);
+
+  // The refused channel: its reason stands in the row, word for word as the
+  // API sent it.
+  const refused = rows.nth(1);
+  await expect(refused.locator(".kind")).toHaveText("Kanal");
+  await expect(refused.locator(".result")).toHaveText("E_FORBIDDEN");
+  await expect(refused.locator(".detail")).toHaveText(LOG_DETAILS.reason);
+
+  // And the column is NOT only about channels: the task carries its signature
+  // and the login its method, and both stand there too. That is why the
+  // heading is "Näheres" and not "Grund" - a heading that promised a reason
+  // would be a lie on these two rows.
+  await expect(rows.first().locator(".detail")).toHaveText(LOG_DETAILS.signature);
+  await expect(rows.nth(3).locator(".kind")).toHaveText("Anmeldung");
+  await expect(rows.nth(3).locator(".detail")).toHaveText(LOG_DETAILS.method);
+});
+
+// A detail out of a taken-over API is text. Nothing in it becomes markup, and
+// nothing in it runs.
+test("a detail that is markup arrives as its own characters", async ({ page }) => {
+  await mount(page);
+  await openTab(page, "Protokoll");
+  const cell = app(page).locator(".log .row").nth(2).locator(".detail");
+  await expect(cell).toHaveText(LOG_DETAILS.markup);
+  // The characters are a text node and no element: an <img> inside the cell
+  // would mean el took markup, which it cannot.
+  expect(await cell.locator("img").count()).toBe(0);
+  expect(await cell.evaluate((e) => e.childNodes.length === 1
+    && e.childNodes[0].nodeType === 3)).toBe(true);
+  // And the handler never ran.
+  expect(await page.evaluate(() => window.__ngcXss === undefined)).toBe(true);
 });
 
 // ------------------------------------------------------------ users and tabs

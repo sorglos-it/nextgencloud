@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+Das Protokoll („Benutzer und Rechte" → Protokoll) hat eine achte Spalte „Näheres". Darin steht,
+was die Anlage zu einer Zeile notiert hat: bei einer abgelehnten Kanalöffnung der Grund der
+Ablehnung, bei einer Aufgabe ihre Unterschrift, bei einer Anmeldung die Methode. Vorher warf die
+Ansicht dieses Feld weg – die Zeile sagte „E_FORBIDDEN" und kein Klick sagte, warum. Die Spalte
+heißt bewusst nicht „Grund": der Vertrag hat EIN solches Feld, und eine 86 Zeichen lange
+Unterschrift unter „Grund" wäre falsch beschriftet. Der Text geht als Text in die Zelle, nie als
+Markup.
 Eine Angabe, die nur angezeigt wird, verwirft die Antwort nicht mehr — und bleibt sie verworfen,
 nennt der Satz auf dem Schirm das Feld (`docs/vertraege-v1.2.md`, Punkt 71, Vorschläge b und c).
 In `contracts/core.js` trennt die Rechnerliste jetzt zwei Seiten: `version` und `arch` werden
