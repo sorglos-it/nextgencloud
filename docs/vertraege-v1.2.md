@@ -2816,6 +2816,13 @@ abgewartet (der Anker stand bei `seq: 1`, die Minutenwarnung
 
 ## Offene Entscheidungen für Thomas
 
+> **Überholt, Stand 23.10.2026.** Dieser Abschnitt ist eine Momentaufnahme vom 18.10.2026 und
+> kennt die Punkte 63–71 nicht; mehreres darin ist inzwischen gebaut (vierstellige Nummern,
+> Systemrechte beim Aufnehmen, Katalogabruf beim Start). **Das gültige Blatt ist
+> [`thomas-entscheidet.md`](thomas-entscheidet.md)** — dort steht jede offene Entscheidung aus
+> dieser Datei, aus dem v1.3-Vorschlag und aus den offenen PRs, am Quelltext nachgesehen und nach
+> dem geordnet, was am meisten blockiert.
+
 Alles, was in dieser Datei auf eine Entscheidung wartet – an einer Stelle.
 Je Zeile: die Frage, der Punkt, und was passiert, wenn nicht entschieden wird.
 
