@@ -154,6 +154,10 @@ test("a refused open also says the reason on the desktop's own strip", async ({ 
   await expect(shell.getByRole("status")).toHaveText(
     "Terminal: Nicht bestätigt. Die App wurde nicht geöffnet.",
   );
+  // AND IT WAITS FOR THE PERSON. The class is what says so: desktop.notice
+  // clears a strip of any other level by itself after NOTICE_MS, and measured
+  // on 23.10.2026 it did - the reason was gone before it had been read.
+  await expect(shell.getByRole("status")).toHaveClass("status error");
   // The window stands and the app keeps its own sentence as well: the strip is
   // beside it, not instead of it.
   await expect(t.frame.getByRole("alert")).toContainText("Nicht bestätigt.");

@@ -361,9 +361,16 @@ const whyOpenFailed = (e) => {
       // ONCE PER WINDOW. An app that opens channels in a loop would otherwise
       // write the desktop full, and the second strip says nothing the first
       // did not.
+      //
+      // "error" AND NOT "warn", because this strip has to WAIT FOR THE PERSON:
+      // a warn goes by itself after NOTICE_MS (8 s, desktop.js), and measured
+      // on 23.10.2026 that is what happened - the reason stood on the strip,
+      // Thomas looked at the window first and by the time he looked up the
+      // strip had cleared itself. A channel that was refused is not something
+      // that "merely happened"; it is the one thing he has to read.
       if (!saidWhy) {
         saidWhy = true;
-        notice?.("warn", app.name + ": " + why);
+        notice?.("error", app.name + ": " + why);
       }
       return;
     }
