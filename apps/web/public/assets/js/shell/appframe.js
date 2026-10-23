@@ -182,7 +182,7 @@ async function ngcLibrary() {
 
 // openAppUI fills win with the app's user interface, or with the reason it
 // will not run it.
-export async function openAppUI(win, { app, link, trust, cache } = {}) {
+export async function openAppUI(win, { app, link, trust, cache, notice } = {}) {
   // The window may be closed before any of this is done - fetching a UI takes
   // as long as it takes. From here on every step asks whether it still has a
   // window, and the listeners it hangs up come down with it.
@@ -269,6 +269,49 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
     toFrame({ id, op: "closed", status: "error", message: codeMessage(code) });
   };
 
+// whyOpenFailed turns what link.open threw into the ONE sentence the app may
+// show the person. It is the third station of the same fault, and the first two
+// are what makes it worth its own function: measured on the Debian machine on
+// 23.10.2026, a refused terminal channel left no reason in the controller's
+// journal (now it does), lost its code on the way through the end-to-end
+// channel (now it survives), and then arrived here - where every failure, each
+// with a reason of its own by that point, was replaced by the one sentence of
+// E_UNREACHABLE. The person read "Die Verbindung wurde abgeschnitten." and the
+// browser console held nothing at all, because nothing had gone wrong
+// uncaught.
+//
+// WHAT IT MAY HAND OVER IS OUR OWN TEXT AND NOTHING ELSE, and that is the
+// whole rule of this function:
+//
+//   - a ChannelError carries a code OF THE CONTRACT, so the sentence is
+//     wire.message of that code - written in this repository, not by whoever
+//     was at the other end;
+//   - a WorldError (net/world.js) IS one of the shell's own sentences, and it
+//     is the one that says what the person can do about it ("Bitte neu
+//     anmelden", "Nicht bestätigt");
+//   - anything else has no reason to show, and gets the sentence it got
+//     before.
+//
+// A SERVER'S OWN MESSAGE IS NOT PASSED ON. ChannelError keeps one in
+// serverText where the contract allows it, and an app's window is the wrong
+// place for it: the text would be somebody else's words inside a frame the
+// person reads as the app's. apps/store.js shows such a sentence where it
+// shows it, marked as the server's, to an administrator.
+const whyOpenFailed = (e) => {
+  if (e?.name === "ChannelError" && typeof e.code === "string" && e.code !== "") {
+    const said = codeMessage(e.code);
+    if (said !== "") return said;
+  }
+  if (e?.name === "WorldError" && typeof e.message === "string" && e.message !== "") {
+    return e.message;
+  }
+  return codeMessage(CODES.UNREACHABLE);
+};
+
+  // Whether the reason of a refused open has already been put on the strip
+  // for this window (doOpen).
+  let saidWhy = false;
+
   // doOpen gives the app a channel that stays open.
   //
   // THE APP ID IS THE SHELL'S, exactly as in doCall: it comes from the window
@@ -301,9 +344,34 @@ export async function openAppUI(win, { app, link, trust, cache } = {}) {
     let stream;
     try {
       stream = await link.open(app.id, m.service, m.action, params, { node: app.node });
-    } catch {
+    } catch (e) {
       streams.delete(m.id);
-      toFrame({ id: m.id, op: "closed", status: "error", message: codeMessage(CODES.UNREACHABLE) });
+      const why = whyOpenFailed(e);
+      toFrame({ id: m.id, op: "closed", status: "error", message: why });
+      // AND ON THE DESKTOP'S OWN STRIP, once per window.
+      //
+      // Telling the app is not enough, and that is measured rather than
+      // reasoned: on 23.10.2026 the terminal of the Debian machine showed its
+      // own sentence and nothing else, because the app that was installed
+      // there was built before there was a reason to pass on. An app decides
+      // for itself what it does with what it is told - an old one, or one that
+      // ignores the message, leaves the person with nothing - while the strip
+      // belongs to the shell and says the same thing whatever the app does.
+      //
+      // ONCE PER WINDOW. An app that opens channels in a loop would otherwise
+      // write the desktop full, and the second strip says nothing the first
+      // did not.
+      //
+      // "error" AND NOT "warn", because this strip has to WAIT FOR THE PERSON:
+      // a warn goes by itself after NOTICE_MS (8 s, desktop.js), and measured
+      // on 23.10.2026 that is what happened - the reason stood on the strip,
+      // Thomas looked at the window first and by the time he looked up the
+      // strip had cleared itself. A channel that was refused is not something
+      // that "merely happened"; it is the one thing he has to read.
+      if (!saidWhy) {
+        saidWhy = true;
+        notice?.("error", app.name + ": " + why);
+      }
       return;
     }
     // The window was closed, or the number was given up, while the channel was

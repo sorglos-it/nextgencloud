@@ -34,7 +34,9 @@ import (
 	"io"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
 	"github.com/sorglos-it/nextgencloud/shared/sign"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -67,7 +69,7 @@ func (d *Dispatcher) registerStore() {
 func (d *Dispatcher) storeSources(ctx context.Context, rq *Call) ([]byte, error) {
 	list, err := d.Store.Sources(ctx)
 	if err != nil {
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(list)
 }
@@ -81,11 +83,11 @@ func (d *Dispatcher) storeSources(ctx context.Context, rq *Call) ([]byte, error)
 func (d *Dispatcher) storeCatalog(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.StoreParams)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	_, env, err := d.Store.Catalog(ctx, p.Store)
 	if err != nil {
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(core.CatalogResult{Catalog: env})
 }
@@ -94,7 +96,7 @@ func (d *Dispatcher) storeCatalog(ctx context.Context, rq *Call) ([]byte, error)
 func (d *Dispatcher) storeInstalled(ctx context.Context, rq *Call) ([]byte, error) {
 	rows, err := d.Store.Installed(ctx)
 	if err != nil {
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(rows)
 }
@@ -117,7 +119,7 @@ func (d *Dispatcher) storeInstalled(ctx context.Context, rq *Call) ([]byte, erro
 func (d *Dispatcher) storeUpload(ctx context.Context, rq *Call) ([]byte, error) {
 	res, err := d.Store.Upload(ctx, rq.In)
 	if err != nil {
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(res)
 }
@@ -143,15 +145,15 @@ func (d *Dispatcher) storeLicense(ctx context.Context, rq *Call) ([]byte, error)
 	// for the limit that keeps a licence out of memory.
 	body, err := io.ReadAll(io.LimitReader(rq.In, core.MaxLicenseIn+1))
 	if err != nil || int64(len(body)) > core.MaxLicenseIn {
-		return nil, fail(wire.CodeTooLarge)
+		return nil, failWhy(wire.CodeTooLarge, reason.TooLarge)
 	}
 	app, ok := appOfLicense(body)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.License)
 	}
 	res, err := d.Store.TakeLicense(ctx, app, body)
 	if err != nil {
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(res)
 }
@@ -180,7 +182,7 @@ func appOfLicense(body []byte) (string, bool) {
 func (d *Dispatcher) storeInstallKey(ctx context.Context, rq *Call) ([]byte, error) {
 	k, err := d.Store.InstallKey(ctx)
 	if err != nil {
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(k)
 }
@@ -189,7 +191,7 @@ func (d *Dispatcher) storeInstallKey(ctx context.Context, rq *Call) ([]byte, err
 func (d *Dispatcher) storeUpdates(ctx context.Context, rq *Call) ([]byte, error) {
 	rows, err := d.Updates.Rows(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(rows)
 }
@@ -207,14 +209,14 @@ func (d *Dispatcher) storeUpdates(ctx context.Context, rq *Call) ([]byte, error)
 func (d *Dispatcher) storeSetUpdate(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.UpdateSetting)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	switch err := d.Updates.SetSetting(ctx, *p); {
 	case err == nil:
 	case errors.Is(err, core.ErrParams):
-		return nil, fail(wire.CodeForbidden)
+		return nil, failWhy(wire.CodeForbidden, reason.Params)
 	default:
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(struct{}{})
 }
@@ -239,7 +241,7 @@ func (d *Dispatcher) storeSetUpdate(ctx context.Context, rq *Call) ([]byte, erro
 func (d *Dispatcher) storeActivate(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.ActivateParams)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	c, err := carried(rq)
 	if err != nil {
@@ -253,7 +255,7 @@ func (d *Dispatcher) storeActivate(ctx context.Context, rq *Call) ([]byte, error
 func (d *Dispatcher) storeDeactivate(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.AppParams)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	c, err := carried(rq)
 	if err != nil {
@@ -267,7 +269,7 @@ func (d *Dispatcher) storeDeactivate(ctx context.Context, rq *Call) ([]byte, err
 func (d *Dispatcher) storeUninstall(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.UninstallParams)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	c, err := carried(rq)
 	if err != nil {
@@ -275,6 +277,40 @@ func (d *Dispatcher) storeUninstall(ctx context.Context, rq *Call) ([]byte, erro
 	}
 	code, err := d.Store.Uninstall(ctx, appstore.UninstallRequest{Carried: c, Params: p})
 	return storeAnswer(code, err)
+}
+
+// storeFail turns an error of package appstore into the code of the contract
+// and the sentence that says which check said no. The code is appstore.CodeFor
+// and nothing else, so the answer to the shell is unchanged; what is added is
+// the reason, and it is read off the SAME error, so the two cannot tell
+// different stories about one refusal.
+//
+// The groups are the groups of CodeFor, in its order: the first that matches
+// decides there too. Nothing of the error text travels -- a store is a
+// stranger, and appstore/sources.go says in full why a stranger writes no line
+// an administrator reads.
+func storeFail(err error) error {
+	code := appstore.CodeFor(err)
+	switch {
+	case errors.Is(err, appstore.ErrTooLarge):
+		return failWhy(code, reason.TooLarge)
+	case errors.Is(err, appstore.ErrLicense):
+		return failWhy(code, reason.License)
+	case errors.Is(err, appstore.ErrStore):
+		return failWhy(code, reason.StoreAnswer)
+	case errors.Is(err, dbapi.ErrNotFound):
+		return failWhy(code, reason.RowGone)
+	case code == wire.CodeVerify:
+		// The verify group of CodeFor: package, manifest, catalog, release,
+		// rollback, licence, ui-proof, transfer, signature, key, envelope.
+		// One sentence covers them because what the reader has to do is the
+		// same for all of them, and the detail belongs to the store that sent
+		// the bytes, not to this log.
+		return failWhy(code, reason.Signature)
+	}
+	// CodeFor answers E_INTERNAL for everything it does not know, and so does
+	// this: a fault of the installation, with no check that said no.
+	return failWhy(code, reason.Defect)
 }
 
 // storeAnswer turns what the three controller steps answer into the end of the
@@ -285,13 +321,17 @@ func (d *Dispatcher) storeUninstall(ctx context.Context, rq *Call) ([]byte, erro
 // action without one answers {} (core.Flow).
 func storeAnswer(code wire.Code, err error) ([]byte, error) {
 	if code != "" {
-		return nil, fail(code)
+		// The code came from the far side, so the sentence says that and no
+		// more: the words of a controller are not this API to write into its
+		// own log, and the controller writes its own reason into its own
+		// journal.
+		return nil, failWhy(code, reason.NodeRefused)
 	}
 	if err != nil {
 		// Unreachable as the three are written today: a code comes with every
 		// error. It is here so a future step that forgets the code does not
 		// turn a failure into a success.
-		return nil, fail(appstore.CodeFor(err))
+		return nil, storeFail(err)
 	}
 	return result(struct{}{})
 }
@@ -307,7 +347,7 @@ func carried(rq *Call) (appstore.Carried, error) {
 	if rq.Task == nil || rq.TaskEnv == nil || rq.Live == nil {
 		// open answers E_CONFIRM for a root task without a task, so this is
 		// our own mistake and not a refusal of the shell's.
-		return appstore.Carried{}, fail(wire.CodeInternal)
+		return appstore.Carried{}, failWhy(wire.CodeInternal, reason.OwnTask)
 	}
 	// The proof of this session, as the proof covers it. It goes through its
 	// own Validate again for the reason relay.forward gives: a row that cannot
@@ -315,7 +355,7 @@ func carried(rq *Call) (appstore.Carried, error) {
 	// ending the whole tunnel, every other channel on it with it.
 	var pr proof.Proof
 	if json.Unmarshal(rq.Live.Row.Proof, &pr) != nil || pr.Validate() != nil {
-		return appstore.Carried{}, fail(wire.CodeInternal)
+		return appstore.Carried{}, failWhy(wire.CodeInternal, reason.OwnProof)
 	}
 	return appstore.Carried{Task: rq.TaskEnv, Client: rq.Live.Row.Cert, Proof: &pr,
 		Confirm: rq.Confirm, Node: rq.Task.Node, Live: rq.Live}, nil

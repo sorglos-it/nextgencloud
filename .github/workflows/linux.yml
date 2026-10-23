@@ -26,8 +26,25 @@ permissions:
 
 # A second push to the same branch cancels the first: a run nobody reads any
 # more still costs minutes.
+#
+# The group is keyed on the BRANCH and not on github.ref, and that is the
+# whole point of the line. A branch with an open pull request fires both
+# events, and github.ref is not the same string for them -
+# "refs/heads/<branch>" for push, "refs/pull/<n>/merge" for pull_request - so
+# the two runs landed in two groups and BOTH ran. Measured 20.10.2026 twice:
+# the push run and the pull_request run of the same commit started two seconds
+# apart and both ran to the end, which is the proof that nothing cancelled
+# them. Two full suites at once, two -race runs among them, and the timing
+# tests of the tunnel fell over in the pull_request one while the push one was
+# green - the same commit, the same content, main unmoved.
+#
+# github.head_ref is the branch on a pull_request and empty otherwise, and
+# github.ref_name is the branch on a push, so both events give one string and
+# one of the two runs is cancelled. Every push is still measured, which the
+# -race job below says it is there for; what stops is paying twice and
+# measuring timing under twice the load.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
