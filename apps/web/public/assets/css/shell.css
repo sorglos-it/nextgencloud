@@ -356,6 +356,8 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .role legend{padding:0 6px;font-weight:600}
 .usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}
+/* A right the role admin holds without a row: named, with no box to clear. */
+.usersapp .opt.fixed{cursor:default;padding-left:20px}
 .usersapp button.go{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);
                     color:inherit;font:inherit;padding:6px 12px;cursor:pointer}
 .usersapp button.go:hover{border-color:var(--accent)}
