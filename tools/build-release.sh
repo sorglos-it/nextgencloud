@@ -4,9 +4,19 @@
 #
 # Usage: build-release.sh <version> [-ref <git ref>] [outdir]
 #   <version>  the NGC version of this release, MAJOR.MINOR.PATCH.
-#   -ref       the git ref pack-release.sh archives apps/web from; default HEAD.
-#              For a PUBLISHED release this must be a TAG - a name moves.
+#   -ref       the git ref the WHOLE release is built from, binaries and web
+#              tree alike; default HEAD. For a PUBLISHED release this must be a
+#              TAG - a name moves.
 #   [outdir]   where to write; default dist/release/<version>/ (dist/ is ignored)
+#
+# EVERYTHING COMES OUT OF <ref>, NOT OUT OF THE WORK TREE. The first version of
+# this script handed <ref> to pack-release.sh for apps/web and then ran go build
+# in the work tree - so the web archive came from the tag and the binaries came
+# from whatever was lying around, uncommitted edits included. A release whose
+# parts come from two different sources is not a release of anything. The ref is
+# therefore unpacked into a temporary directory with git archive and the
+# binaries are built THERE; vendor/ is in the repository, so that build needs no
+# network and no work tree.
 #
 # It writes the five archives a release lists and nothing else:
 #   ngc-web-all.tar          through tools/pack-release.sh
@@ -38,14 +48,24 @@
 #
 # So the one job of this script is to make an unstamped release IMPOSSIBLE,
 # not merely unlikely. Two gates, and both run for every single binary:
-#   1. go version -m <file>  must show -ldflags with -X main.Version=<version>,
-#      GOOS=linux, GOARCH=<arch> and CGO_ENABLED=0. This reads the build
-#      record and needs no runner, so it holds for the foreign architecture
-#      too.
+#   1. go version -m <file>  must show GOOS=linux, GOARCH=<arch> and
+#      CGO_ENABLED=0. This reads the build record, so it holds for the foreign
+#      architecture without running anything - but it says NOTHING about the
+#      stamp, see below.
 #   2. <file> -version  must ANSWER with the version, and the answer must pass
-#      the rule of the WEB interface, not a laxer one. Gate 1 proves what the
-#      linker was TOLD; only gate 2 proves what the program SAYS, and the
-#      program is what the manager sees. "Gebaut ist nicht gelaufen."
+#      the rule of the WEB interface, not a laxer one. This is the gate that
+#      carries the whole claim, and it is the one that would have caught
+#      v0.2.0. "Gebaut ist nicht gelaufen."
+#
+# WHY THE BUILD RECORD CANNOT PROVE THE STAMP, measured on 23.10.2026 on the
+# Debian VM, go1.27.2: a binary built with -ldflags "-X main.Version=0.2.0" has
+# a build record of -buildmode=exe, -compiler=gc, -trimpath=true, CGO_ENABLED=0,
+# GOARCH=amd64, GOOS=linux - and NO -ldflags line at all, while the same binary
+# answers "ngc-api 0.2.0 (contract 1)". Go does not record -ldflags. The first
+# version of this script asked the record for it and went red on a correctly
+# stamped binary. So there is no cheap paper check for the stamp: the only proof
+# is the program's own answer, for every architecture, which is why qemu-user is
+# a hard requirement here and not a nicety.
 # ===========================================================================
 #
 # WHY THE RULE HERE IS THE WEB'S AND NOT store.ValidVersion. The two differ,
@@ -202,24 +222,24 @@ trap 'exit 1' HUP INT TERM
 # apart. There is deliberately no way for a caller to add to it.
 ldflags="-X main.Version=$version"
 
-# check_stamp asks the BUILD RECORD what the linker was told. go version -m
-# prints the settings of the binary itself, whatever architecture it is for, so
-# this gate holds for the foreign one too - but it only ever proves intent.
-check_stamp() {
+# check_target asks the BUILD RECORD what the binary is FOR. It proves the
+# target and the static link, not the stamp - Go records no -ldflags line
+# (measured, see the header). It runs anyway, because a release that ships a
+# dynamically linked binary or the wrong architecture fails at the user in a way
+# nobody can read either.
+check_target() {
 	cs_file=$1
 	cs_arch=$2
 	go version -m -- "$cs_file" >"$work/buildinfo" 2>&1 || die "the build record of $cs_file cannot be read:
 $(cat "$work/buildinfo")"
-	grep -q -- "-ldflags=.*-X main\.Version=$version" "$work/buildinfo" || die "$cs_file carries NO version stamp: its build record shows no -ldflags with -X main.Version=$version. That is the build that shipped 0.0.0-dev in v0.2.0. The record says:
-$(grep -- '-ldflags\|GOOS\|GOARCH\|CGO_ENABLED' "$work/buildinfo" || echo '  (no build settings at all)')"
 	grep -q -- 'GOOS=linux' "$work/buildinfo" || die "$cs_file is not built for linux"
 	grep -q -- "GOARCH=$cs_arch" "$work/buildinfo" || die "$cs_file is not built for $cs_arch"
 	grep -q -- 'CGO_ENABLED=0' "$work/buildinfo" || die "$cs_file is not built statically (CGO_ENABLED=0 is missing from its build record)"
 }
 
-# check_version asks the PROGRAM. This is the gate that would have caught
-# v0.2.0: the build record of those binaries was never looked at, but one call
-# of -version said 0.0.0-dev out loud.
+# check_version asks the PROGRAM. This is the gate that carries the claim and
+# the one that would have caught v0.2.0: one call of -version says 0.0.0-dev out
+# loud, and no amount of reading the build record would have.
 #
 # The answer is "<name> <version>" and, for the two that carry the tunnel
 # contract, " (contract N)" behind it. Both fields are checked: a binary that
@@ -285,6 +305,15 @@ case $stamp in
 '' | *[!0-9]*) die "the commit has no usable date: $ref" ;;
 esac
 
+# The source of this release, unpacked from the ref. Nothing of the work tree
+# reaches the binaries from here on.
+src=$work/src
+mkdir -p -- "$src"
+git -c core.autocrlf=false archive --format=tar "$commit" | tar -xf - -C "$src" ||
+	die "the source of $ref could not be unpacked"
+[ -f "$src/go.mod" ] || die "$ref carries no go.mod"
+[ -d "$src/vendor" ] || die "$ref carries no vendor/, so the binaries cannot be built without the network"
+
 echo "== programs, stamped $version, from $commit"
 for arch in amd64 arm64; do
 	runner=$(runner_for "$arch") || die "no runner for $arch"
@@ -292,9 +321,9 @@ for arch in amd64 arm64; do
 	mkdir -p -- "$bindir"
 	for prog in $api_progs $controller_progs; do
 		pkg=$(pkg_for "$prog") || die "no package for $prog"
-		CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-			go build -trimpath -ldflags "$ldflags" -o "$bindir/$prog" "$pkg" || die "$prog for $arch did not build"
-		check_stamp "$bindir/$prog" "$arch"
+		(cd -- "$src" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+			go build -trimpath -ldflags "$ldflags" -o "$bindir/$prog" "$pkg") || die "$prog for $arch did not build"
+		check_target "$bindir/$prog" "$arch"
 		check_version "$bindir/$prog" "$prog" "$runner"
 		echo "  $arch/$prog   $(sed -n '1p' "$work/ver.out")"
 	done
