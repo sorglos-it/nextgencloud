@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import { signIn, skipWithoutLogin } from "../fixtures/page.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
@@ -289,6 +290,145 @@ test("a right the admin did not allow stops the activation", async ({ page }) =>
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
   await expect(page.getByRole("status")).toContainText("Bitte alle Rechte erlauben");
   expect(await names(page)).not.toContain("ngc.store/activate");
+});
+
+// ------------------------------------------- 3b what the machine itself said
+// A refusal of an activation showed ONE sentence for every reason there is:
+// "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen."
+// The catch did not even give the error a name, so whatever the controller
+// said was dropped here.
+//
+// It matters most where the code says least. A controller that answers
+// E_INTERNAL because its data disk cannot encrypt knows what the person has to
+// do - use ext4 or f2fs - and "Bitte es noch einmal versuchen." is wrong twice
+// over: it asks for a repeat of what cannot work, and it buries the one line
+// that says why.
+//
+// IT IS THE SENTENCE BESIDE THE SHELL'S OWN, NOT INSTEAD OF IT, and marked as
+// the server's. An earlier draft of this case showed the server's line ALONE
+// and held that "Bitte es noch einmal versuchen." must then be gone. That is
+// the other of the two decisions that were open, and it was not taken: the
+// shell's own sentence says who refused and what this screen did, the person
+// must be able to tell words from the other end of the line from the window's
+// own, and dropping a wording on a server's say-so is the more generous of the
+// two - the house rule reads the other way. So "Der Rechner sagt:" leads the
+// server's line in, and nothing of the shell's is given up for it.
+//
+// The error here comes from the stand-in, built as the real ChannelError of
+// net/channel.js - so the guard that decides WHETHER a sentence may be shown
+// really runs. That the sentence survives the frame at all is measured where
+// the frame is: shell/closemessage.spec.js.
+test("a refusal shows the words of the machine, marked as the machine's",
+  async ({ page }) => {
+    const said = "Bitte ext4 oder f2fs mit aktivierter Verschlüsselung verwenden.";
+    await store(page, { refuseActivate: said });
+    await tab(page, "Hochladen").click();
+    await page.locator(".store input[type=file]").setInputFiles({
+      name: "notizen.ngc", mimeType: "application/octet-stream",
+      buffer: Buffer.from(buildPackage(manifest({ needs: ["network"] }))),
+    });
+    await expect(page.locator(".upfacts")).toBeVisible();
+    await page.locator(".store").getByRole("checkbox", { name: /Netz/ }).check();
+    await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+    // Whole and in this order: the shell's own first, then whose words follow,
+    // then the words.
+    await expect(page.getByRole("status")).toHaveText(
+      "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen. "
+      + "Der Rechner sagt: " + said,
+    );
+  });
+
+test("a sentence under a code that says what to do never reaches the screen", async ({ page }) => {
+  // THE GUARD, AT THE SCREEN. E_VERIFY says "Unterschrift ungültig.", which
+  // names what is wrong, so a server may not put its words beside it - and the
+  // screen must not have a second way in. The stand-in hands the same sentence
+  // under that code, and nothing of it arrives.
+  const said = "Bitte ext4 oder f2fs mit aktivierter Verschlüsselung verwenden.";
+  await store(page, { refuseActivate: said, refuseActivateCode: "E_VERIFY" });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream",
+    buffer: Buffer.from(buildPackage(manifest({ needs: [] }))),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  await expect(page.getByRole("status"))
+    .toHaveText("Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
+  await expect(page.getByRole("status")).not.toContainText("Der Rechner sagt");
+  await expect(page.getByRole("status")).not.toContainText("f2fs");
+});
+
+// noFscryptText is the controller's own sentence, READ OUT OF THE GO SOURCE
+// and not copied here. It is the one occasion this whole change exists for -- a
+// controller whose data disk cannot encrypt a directory names the file systems
+// that work (apps/server-controller/classes/runtime/data.go, NoFscryptText; the
+// controller puts it in its CLOSE under E_INTERNAL in serve/activate.go) -- and
+// a copy in this file would go on passing after somebody reworded the German.
+// Two lines joined by + in Go, so both halves are picked up.
+function noFscryptText() {
+  const src = readFileSync(new URL("../../../../apps/server-controller/classes/runtime/data.go", import.meta.url), "utf8");
+  const at = src.indexOf("const NoFscryptText =");
+  if (at < 0) throw new Error("NoFscryptText is not in runtime/data.go any more");
+  const parts = [...src.slice(at, src.indexOf("\n\n", at)).matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+  if (parts.length === 0) throw new Error("NoFscryptText has no text in runtime/data.go");
+  return parts.join("");
+}
+
+test("the sentence of a disk that cannot encrypt arrives on the screen", async ({ page }) => {
+  // THE OCCASION, end to end on this side of the line: the controller's own
+  // words, under the code it really sends, in the window the person is looking
+  // at. Before this change nothing of this shell read close.message, so this
+  // sentence reached nobody and the person was told "Interner Fehler." and to
+  // try again - on a kernel where every activation ends the same way.
+  const said = noFscryptText();
+  expect(said).toContain("ext4");
+  await store(page, { refuseActivate: said });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream",
+    buffer: Buffer.from(buildPackage(manifest({ needs: [] }))),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen. "
+    + "Der Rechner sagt: " + said,
+  );
+});
+
+test("the words of the machine go on the screen as text, never as markup", async ({ page }) => {
+  // These are characters from the other end of the line, in the person's own
+  // window. A dialog is already a failure in this file (store(), above); this
+  // one holds the other half: the sentence is READ OUT as it came, and no tag
+  // of it became an element.
+  const said = "<b>ext4</b> & f2fs <img src=x onerror=alert(1)>";
+  await store(page, { refuseActivate: said });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream",
+    buffer: Buffer.from(buildPackage(manifest({ needs: [] }))),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  await expect(page.getByRole("status")).toContainText("Der Rechner sagt: " + said);
+  expect(await page.locator("[role=status] b, [role=status] img").count()).toBe(0);
+});
+
+test("a refusal with nothing to say keeps the sentence the shell has", async ({ page }) => {
+  // The control beside it: almost every close carries the code's own standard
+  // sentence (Go: wire.Error), and net/channel.js hands none of those on. Then
+  // there is nothing to show but the shell's own words, and they stay.
+  await store(page, { refuseActivate: "" });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc", mimeType: "application/octet-stream",
+    buffer: Buffer.from(buildPackage(manifest({ needs: [] }))),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
+  // It went through, because an empty knob is no refusal - the control that
+  // the knob is what makes the case above fail, and not the upload.
+  await expect(page.getByRole("status")).toContainText("Die App ist eingerichtet.");
 });
 
 // ---------------------------------------------------------------- 4. target

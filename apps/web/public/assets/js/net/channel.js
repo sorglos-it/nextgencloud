@@ -178,7 +178,21 @@ export class Channel {
     // up - so it is checked once here and on every chunk after.
     this.checkLimit();
     const status = await this.done();
-    if (status.status !== OK) throw fail(status.code);
+    // THE CLOSE TRAVELS HERE TOO, and this is the door the ordinary refusal
+    // comes through: callBytes waits for the grant and then reads result(), so
+    // an action that was accepted, worked on and then refused ends up on this
+    // line - the activation of an app on a disk that cannot encrypt among
+    // them. settle() below hands the close on for a channel refused BEFORE its
+    // grant; that one alone left this path carrying nothing, measured at the
+    // assertion itself (shell/closemessage.spec.js, "a close after the grant",
+    // serverText "" against the sentence, 18.10.2026).
+    //
+    // status is a parsed CLOSE either way: the transport's for an ordinary
+    // channel (gotClose) and the controller's own inner end for an end-to-end
+    // one (endStatus, which Go fills with a whole wire.Close - e2e.Session.End
+    // takes one, and parseE2E reads it with the same parseClose). Whether the
+    // sentence may be SHOWN is not decided here but once, in ChannelError.
+    if (status.status !== OK) throw fail(status.code, status);
     // EOF before the end is data that was cut off. On an end-to-end channel
     // the controller's end IS the end, so there is nothing to ask.
     if (!this.e2e && !this.gotEOF) throw fail(wire.CODES.PROTOCOL);

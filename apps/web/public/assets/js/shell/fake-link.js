@@ -50,8 +50,8 @@ import { keyIDAsync, message as signedMessage, PURPOSE_CATALOG } from "../contra
 import { encodeList, hash as listHash, parseList, parseSigned, validStore } from "../contracts/trust.js";
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
-import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 import { ChannelError } from "../net/channel.js";
+import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 import { CODES } from "../contracts/wire.js";
 
 const enc = new TextEncoder();
@@ -704,7 +704,29 @@ export async function fakeWorld() {
     "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),
     "ngc.store/license": async () => enc.encode(JSON.stringify({ app: TERMINAL, state: "valid" })),
     "ngc.store/set-update": async () => enc.encode("{}"),
-    "ngc.store/activate": async () => enc.encode("{}"),
+    // A refusal that carries the CONTROLLER'S OWN WORDS, which is the one
+    // thing a code alone cannot say: knobs.refuseActivate is the sentence and
+    // knobs.refuseActivateCode the code under it, E_INTERNAL unless a case
+    // names another.
+    //
+    // THE ERROR IS THE REAL ChannelError of net/channel.js, and that is the
+    // whole point of building it here instead of making up an object: the
+    // decision which sentences may be shown lives in that constructor (only a
+    // general code, never the shell's own wording twice), so a case that hands
+    // this stand-in a sentence under E_VERIFY gets exactly what the real
+    // channel would give it - nothing. This stand-in therefore cannot be more
+    // generous than the contract on this point; it has no say in it. What it
+    // does NOT go through is the frame, so parseClose never sees the sentence
+    // here - that step is measured where the frame is, in
+    // shell/closemessage.spec.js, with the contract's own encoder.
+    "ngc.store/activate": async () => {
+      const said = typeof knobs.refuseActivate === "string" ? knobs.refuseActivate : "";
+      const code = typeof knobs.refuseActivateCode === "string" && knobs.refuseActivateCode !== ""
+        ? knobs.refuseActivateCode
+        : "E_INTERNAL";
+      if (said !== "") throw new ChannelError(code, said);
+      return enc.encode("{}");
+    },
     "ngc.store/deactivate": async () => enc.encode("{}"),
     "ngc.store/uninstall": async () => enc.encode("{}"),
     "ngc.store/delete-data": async () => enc.encode("{}"),
