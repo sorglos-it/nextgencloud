@@ -1357,7 +1357,15 @@ class Users {
     clear(p);
     const msg = el("p", "note", "");
     msg.setAttribute("role", "status");
-    const tbl = table(["Zeit", "Benutzer", "Art", "App", "Aktion", "Server", "Ergebnis"]);
+    // "Näheres" and not "Grund": the contract has ONE detail field, and what
+    // it carries depends on the kind. A refused channel puts the reason for
+    // the refusal in it, and that is the line this column was asked for - but
+    // a task puts the base64url of its signature there and a login the method
+    // the person proved themselves with. A heading that said "Grund" would
+    // call an 86-character signature a reason, which is worse than no column:
+    // it would be read as the answer to "why did this not work".
+    const tbl = table(["Zeit", "Benutzer", "Art", "App", "Aktion", "Server", "Ergebnis",
+      "Näheres"]);
     const more = button("go", "Mehr laden", null);
     more.addEventListener("click", () => this.loadLog(tbl, msg, more));
     p.append(el("h3", null, "Protokoll"), msg, tbl.el, more);
@@ -1395,6 +1403,12 @@ class Users {
         cell("action", e.action),
         cell("node", e.node),
         cell("result", e.result),
+        // Text, never markup: the detail comes from the API, so it goes in
+        // through the one helper that cannot take markup - el fills
+        // textContent. A reason out of the API's closed German list reads as
+        // itself; an <img onerror=...> from a compromised API reads as its own
+        // characters and does nothing.
+        cell("detail", e.detail),
       );
       tbl.body.append(r);
     }

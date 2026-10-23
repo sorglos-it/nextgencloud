@@ -2,6 +2,14 @@
 
 ## Unveröffentlicht
 
+Das Protokoll („Benutzer und Rechte" → Protokoll) hat eine achte Spalte „Näheres". Darin steht,
+was die Anlage zu einer Zeile notiert hat: bei einer abgelehnten Kanalöffnung der Grund der
+Ablehnung, bei einer Aufgabe ihre Unterschrift, bei einer Anmeldung die Methode. Vorher warf die
+Ansicht dieses Feld weg – die Zeile sagte „E_FORBIDDEN" und kein Klick sagte, warum. Die Spalte
+heißt bewusst nicht „Grund": der Vertrag hat EIN solches Feld, und eine 86 Zeichen lange
+Unterschrift unter „Grund" wäre falsch beschriftet. Der Text geht als Text in die Zelle, nie als
+Markup.
+
 Wer auf einem Server Aufgaben mit Systemrechten ausführen darf, ist jetzt eine Frage in der
 Oberfläche – vorher war es eine Lücke. Beim Aufnehmen eines Servers („Benutzer und Rechte“ →
 Server) wählt der Verwalter einzelne Personen und/oder ganze Rollen aus, und bei jedem
