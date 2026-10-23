@@ -1,5 +1,106 @@
 # Changelog
 
+## 0.2.2
+
+**Der Grund für diese Fassung: aus 0.2.1 installiert, blieb nach dem ersten Neustart jede App
+aus — für immer, und der Status zeigte sie nicht einmal als aus.**
+
+`config.RunDir` ist eine tmpfs und wird der Unit als `RuntimeDirectory` mit
+`RuntimeDirectoryPreserve=no` übergeben, also ist nach jedem Neustart der Maschine oder des
+Dienstes das Verzeichnis darüber neu und das der App **weg**. Rootloses podman liest seine
+Konfiguration aus `XDG_RUNTIME_DIR`, also kann `Engine.Running` ohne dieses Verzeichnis nicht
+antworten — und `node.Restore` gab bei dessen Fehler **eine Zeile darüber** auf, wo das
+Verzeichnis entstanden wäre: `runtime.EnsureRun` hatte genau einen Aufrufer, die Einrichtung.
+`Running` brauchte, was nur `EnsureRun` herstellt, und `EnsureRun` lag nicht auf diesem Weg. Ein
+geschlossener Kreis.
+
+Gemessen am 23.10.2026 auf der Debian-VM, als Benutzer der App und mit genau den Argumenten, die
+`Podman.Running` übergibt:
+
+```
+lstat /run/ngc/ngc-terminal-439982dd: permission denied          exit 1
+```
+
+und mit dem Modus des Verzeichnisses darüber von Hand richtiggestellt, derselbe Aufruf einen
+Schritt weiter:
+
+```
+lstat /run/ngc/ngc-terminal-439982dd: no such file or directory
+```
+
+**Zwei Ursachen übereinander** — darum war es der Modus allein nicht. `Restore` legt das
+Laufzeitverzeichnis jetzt an, **bevor** es die Engine etwas fragt (`runtime.RunForApp`, das den
+Benutzer der App sucht und keinen anlegt: eine App-Kennung ohne Benutzer ist eine App, die hier
+nicht installiert ist, und die bleibt aus). Damit ist auch der Modus auf jedem Restore
+richtiggestellt und nicht nur bei einer Einrichtung — 0711, damit eine App zu ihrem eigenen
+Verzeichnis durchlaufen darf, ohne die Namen der anderen zu lesen.
+
+**Was es gekostet hat, solange es stand, und es ist mehr als eine Logzeile:** `appState` macht aus
+genau diesem Fehler „nichts zu sagen", und der Reporter lässt die App dann **ganz** aus dem
+Bericht. Der Verwalter sah damit eine App, die aussieht wie eine, die auf diesem Server **nie
+installiert** war — nicht gestoppt, nicht fehlgeschlagen, abwesend. Dass das so entschieden ist,
+steht in `report.go` begründet; was fehlte, war der Fall, in dem der Fehler überhaupt auftritt.
+
+**Dieselbe blinde Zone wie bei vier der sechs Wände aus Punkt 71:** ein Dateimodus und eine
+systemd-Unit, die in einem anderen Repo entsteht. `EnsureRun` hat sogar einen Fall für den Modus
+(`TestEnsureRunTightensTheDirectoryAboveItToo`) — er prüft die Funktion, die auf diesem Weg nie
+lief. Fünf neue Fälle in `node` schließen das, und jeder ist rot, wenn man den Aufruf entfernt und
+das Feld stehen lässt; einer liest die **Position** und nicht bloß den Aufruf, denn hinter
+`Running` wäre er grün und der Kreis stünde noch.
+
+**Am Gerät nachgewiesen, nicht nur gebaut:** `/run/ngc` von 700 auf 711, das Verzeichnis der App
+angelegt und ihrem Benutzer übergeben, `podman ps` meldet den Container `Up`, und die Warnung
+„the engine does not say whether an app runs" kommt nicht mehr. Die Terminal-App jener Maschine
+war seit Stunden unten und lief wieder.
+
+**Noch offen, und zwar woanders:** die Unit schreibt `RuntimeDirectoryMode=0700`, an sechs Stellen
+im Repo `ulh` samt zwei erwarteten Unit-Dateien in deren Prüfsätzen. Keine App bleibt dadurch mehr
+unten, aber solange die Zahl dort 0700 sagt, arbeitet die Vorlage gegen den Code. Dazu ein
+**nicht gemessener** Fund: `ngc-api` und `ngc-controller` melden systemd **dasselbe** `/run/ngc`
+mit `Preserve=no`, ein Neustart des einen könnte also die Laufzeitverzeichnisse der Apps des
+anderen mitnehmen.
+
+### Eine Datenbank, ein Schreibkanal — die Grenze von vier ist weg
+
+Fährt in `ngc-api` und `ngc-controller` mit (`apps/server-db` ist in beide verlinkt, in
+`ngc-store` nicht). Statt eines Vorrats von vier Verbindungen hat ein Prozess **einen**
+Schreibgriff, und die Lesefreiheit bleibt: die erste Lesung hinter blockierten Schreibern bleibt
+0,005 s bei 4 und 0,006 s bei 64.
+
+**Und ein Griff aus einer Verbindung ist selbst eine Warteschlange — die war unbegrenzt.** Drei
+Schreiber eines Prozesses gegen eine Sperre, die ein zweiter Prozess nie losgibt, gemessen am
+16.10.2026:
+
+| | |
+|---|---|
+| vorher, ein Vorrat von vier | 80,5 s · 80,6 s · 80,7 s |
+| dieser Zweig, vor der Grenze | 190,0 s · 220,0 s · 240,3 s |
+| dieser Zweig, mit der Grenze | 80,0 s · 80,0 s · 80,6 s |
+
+Ohne Grenze lief jeder Schreiber seine eigene Kette von acht Versuchen **nachdem** der vorige
+aufgegeben hatte — schlechter als der Vorrat, den er ersetzte, und es bricht eine Zahl aus einem
+anderen Paket: `dbwait.StartWait` sind neunzig Sekunden **weil** eine Kette 80,6 s ist. Ein
+Programm, das hinter einem Schreiber hochkommt, wäre also abgewiesen worden, wo es vorher
+hochkam. Die Grenze ist **eine** Kette, und sie wird aus der **offenen Datenbank** gelesen
+(`maxTries` mal deren eigenem `busy_timeout`), nicht aus einer Konstante — damit keine der beiden
+Zahlen von dem wegdriften kann, was sie bewacht. Ein Griff, der keine von beiden beantwortet,
+bekommt keine Warteschlange, also bleibt MariaDB, wie es war.
+
+### Nicht im Release
+
+`tools/ci-count.sh` zählt die Prüffälle nachweisbar und verdeckt die wirkliche Ursache eines roten
+Laufs nicht mehr (`tools/ci-count-test.sh`). Werkzeuge fahren in keinem Release mit.
+
+### Die Nummern der Teile
+
+`apps/web/VERSION` bleibt auf **0.2.1**, und das ist kein Versehen: zwischen 0.2.1 und dieser
+Fassung ist unter `apps/web/` **keine Zeile** geändert. Die Nummer eines Teils sagt die Wahrheit
+über das Teil, nicht über das Release — darum stand sie bei 0.2.1 nach, als die Oberfläche sich
+wirklich geändert hatte, und bleibt hier stehen.
+
+`shared/` ist auch zwischen 0.2.1 und 0.2.2 nicht angefasst (`git diff` über das Verzeichnis:
+leer). `contract 1` bleibt `contract 1`.
+
 ## 0.2.1
 
 **Der Grund für diese Fassung: 0.2.0 ist für jeden, der es herunterlädt, unbrauchbar.** Die
