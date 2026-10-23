@@ -59,6 +59,8 @@ import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
 import { b64encode } from "../contracts/b64.js";
 import { validTunnelURL } from "../contracts/url.js";
 import { coreApp, validAppID, validName } from "../contracts/text.js";
+import { APPS, NODES, RIGHTS, USERS } from "../shell/changed.js";
+import { freshness } from "../shell/stale.js";
 
 // How many log lines one page holds. The contract allows 1 to 500; fifty is
 // a screenful and a half, and paging is one button.
@@ -399,6 +401,9 @@ function userOf(l, id) {
 
 class Users {
   constructor(win, ctx) {
+    this.ctx = ctx ?? null;
+    // The sentence to carry over the next build of the Server panel.
+    this.keep = "";
     this.link = ctx?.link ?? null;
     this.trust = ctx?.trust ?? null;
     this.session = ctx?.session ?? null;
@@ -417,6 +422,11 @@ class Users {
     // app stood installed. Whoever narrows the API's list again breaks THIS
     // page, not just the menu.
     this.apps = Array.isArray(ctx?.apps) ? ctx.apps : [];
+    // AND READ AGAIN AT EVERY BUILD. ctx.apps answers the desktop's list as it
+    // stands now (shell/desktop.js, appCtx), and a panel that is built again
+    // because an app came or went must not build itself from the list that was
+    // there when this window opened.
+    this.appsNow = () => (Array.isArray(this.ctx?.apps) ? this.ctx.apps : this.apps);
     this.users = null; // ngc.users/list, once, shared by the log and the question
     this.log = [];
     this.loaded = new Set();
@@ -451,15 +461,54 @@ class Users {
       this.panels.append(p);
       this.panel.set(id, p);
     }
-    this.root.append(this.tabs, this.panels);
+    // Since when these screens have been standing, and the one button that
+    // asks again. Every panel here is built from answers of the API that
+    // another admin can change, and no message of the session link says so: a
+    // screen that can be old must not look fresh (shell/stale.js).
+    this.fresh = freshness(() => this.rebuild(this.current));
+    this.root.append(this.tabs, this.fresh.el, this.panels);
     win.body.append(this.root);
+
+    // WHAT THE PERSON WALKED INTO (report of 19.-21.10.2026): a right granted
+    // here and a server taken in here showed up only after Ctrl+F5, because
+    // every panel was built exactly once (this.loaded) and nothing ever asked
+    // it to be built again. Now whoever changed something says which STATE
+    // moved, and the panels that show that state are built again.
+    //
+    // A SERVER NEEDS NO LINE OF ITS OWN: joinNode writes a new version of the
+    // trust list and follows it, which is a change of the list, and the
+    // desktop turns every settled version into all four topics
+    // (shell/desktop.js, startDesktop). So the machinery that was already
+    // there carries it; only the ear was missing.
+    const ch = ctx?.changed ?? null;
+    this.off = [];
+    if (ch !== null) {
+      this.off.push(ch.on(NODES, () => this.rebuild("servers")));
+      this.off.push(ch.on(USERS, () => this.rebuild("users")));
+      this.off.push(ch.on(RIGHTS, () => this.rebuild("rights")));
+      // An app that came or went changes which rights there are to hand out.
+      this.off.push(ch.on(APPS, () => this.rebuild("rights")));
+    }
+
     this.show(TABS[0][0]);
   }
 
   destroy() {
     this.dead = true;
     this.abort.abort();
+    this.fresh?.stop();
+    for (const off of this.off ?? []) off();
+    this.off = [];
     this.closeAsk();
+  }
+
+  // rebuild draws one panel again. A panel that was never opened is left
+  // alone: it is built from scratch when it is shown, so there is nothing
+  // stale in it to replace, and asking the API for a screen nobody is looking
+  // at would be a question for nothing.
+  rebuild(id) {
+    if (this.dead || !this.loaded.has(id)) return;
+    this.build(id);
   }
 
   // ---- tabs ---------------------------------------------------------------
@@ -495,6 +544,7 @@ class Users {
   }
 
   build(id) {
+    this.fresh?.done();
     const p = this.panel.get(id);
     if (id === "users") this.buildUsers(p);
     if (id === "rights") this.buildRights(p);
@@ -568,6 +618,7 @@ class Users {
     // stands on screen that the contract would refuse on the way out.
     const known = new Set();
     for (const r of roles) for (const right of r.rights) known.add(right);
+    this.apps = this.appsNow();
     for (const a of this.apps) {
       if (!validAppID(a.id) || coreApp(a.id)) continue;
       for (const act of [core.RIGHT_USE, ...(Array.isArray(a.actions) ? a.actions : [])]) {
@@ -645,6 +696,13 @@ class Users {
         await this.call(core.ACT_SET_RIGHTS, { role: r.role, rights: want });
         r.rights = want;
         text(msg, "Die Rechte der Rolle »" + r.role + "« sind gespeichert.");
+        // THE START MENU. A right that was just granted is what decides
+        // whether an app stands in it (core.ActApps answers what this user may
+        // use), and until this line it did not move until the page was
+        // reloaded. The rights panel is NOT asked to build itself again from
+        // here: the sentence above it is the answer to the click, and the
+        // boxes already show what was sent.
+        this.ctx?.changed?.tell(RIGHTS);
       },
       failed: "Die Rechte konnten nicht gespeichert werden.",
       msg,
@@ -665,7 +723,14 @@ class Users {
   // ---- Server -------------------------------------------------------------
   buildServers(p) {
     clear(p);
-    p.append(el("h3", null, "Server"));
+    const top = el("p", "note", "");
+    top.setAttribute("role", "status");
+    // What was said right before this panel was built again. Taking a server
+    // in replaces this whole panel - that is the point - and the sentence that
+    // confirmed it would go with it. So it is carried over, once.
+    text(top, this.keep ?? "");
+    this.keep = "";
+    p.append(el("h3", null, "Server"), top);
     const pending = section("pending", "Wartende Server",
       "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
     const pendapi = section("pendapi", "Wartende API-Server",
@@ -1203,12 +1268,13 @@ class Users {
             rootUsers: want.rootUsers, rootRoles: want.rootRoles,
           });
         });
-        Users.say(box, "Der Server »" + n.name + "« ist aufgenommen. "
+        this.keep = "Der Server »" + n.name + "« ist aufgenommen. "
           + (want.rootUsers.length + want.rootRoles.length === 0
             ? "Auf diesem Server darf noch niemand Apps einrichten."
             : "Aufgaben mit Systemrechten dürfen dort: "
               + [...want.rootUsers.map((uid) => userOf(v.list, uid)),
-                ...want.rootRoles.map((r) => "Rolle " + r)].join(", ") + "."));
+                ...want.rootRoles.map((r) => "Rolle " + r)].join(", ") + ".");
+        Users.say(box, this.keep);
         from.disabled = true;
       },
       failed: "Der Server konnte nicht aufgenommen werden.",
@@ -1246,7 +1312,8 @@ class Users {
             sign: n.sign, url: n.url, tls: n.tls, rootUsers: [], rootRoles: [],
           });
         });
-        Users.say(box, "Der Server »" + n.node + "« ist aufgenommen.");
+        this.keep = "Der Server »" + n.node + "« ist aufgenommen.";
+        Users.say(box, this.keep);
         from.disabled = true;
       },
       failed: "Der Server konnte nicht aufgenommen werden.",
