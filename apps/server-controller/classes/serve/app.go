@@ -323,7 +323,33 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 		// wrong number breaks the channel for good, while a CLOSE always
 		// gets out, because it costs no credit.
 		if end.Status == wire.StatusOK {
-			end = wire.Error(wire.CodeInternal)
+			// A program that ended well while the clock was already out is
+			// not an internal fault, and it was reported as one: measured
+			// 23.10.2026 under -race and load, 2 of 150 runs of
+			// TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel came back
+			// E_INTERNAL instead of E_TIMEOUT (V1.2 point 70). A probe at
+			// this line printed the whole difference:
+			//
+			//   148x  outErr=context deadline exceeded  end=E_TIMEOUT
+			//     2x  outErr=context deadline exceeded  end=ok
+			//
+			// Both times inCtx.Err() was the deadline. So the clock HAD run
+			// out and the send of the sealed message died of it; only
+			// RunService answered ok, because the program happened to exit
+			// cleanly before the deadline reached it. Which of the two
+			// observers wins is a race, and the comment on inCtx above
+			// predicted this symptom for the day two clocks disagree.
+			//
+			// The way out is not a third clock: it is to stop asking
+			// RunService what the output already knows. The failure of the
+			// send carries its own reason, so that reason is what goes into
+			// the CLOSE - and a send that failed for anything else is still
+			// the internal fault it always was.
+			if errors.Is(out.err, context.DeadlineExceeded) || errors.Is(inCtx.Err(), context.DeadlineExceeded) {
+				end = wire.Error(wire.CodeTimeout)
+			} else {
+				end = wire.Error(wire.CodeInternal)
+			}
 		}
 		return s.cutApp(ch, d.App.ID, ReasonCut, end)
 	}

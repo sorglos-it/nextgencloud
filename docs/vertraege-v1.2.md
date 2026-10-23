@@ -3891,11 +3891,11 @@ wsl -d Debian -u root -- /mnt/d/claude/rust/serve.test -test.run TestAPackageLar
 
 ### Was noch zu entscheiden ist
 
-Für diesen Fall nichts mehr. Offen bleibt der zweite aus dem Nachtrag unten
+Für diesen Fall nichts mehr. Der zweite
 (`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel`, `E_INTERNAL` statt `E_TIMEOUT` im
-`-race`-Auftrag): **nicht gemessen**, weil es hier kein `-race` gibt — kein C-Übersetzer. Er
-sitzt im selben Paket und an derselben Kreditmechanik, also lohnt zuerst die Frage, ob er
-dieselbe Ursache hat.
+`-race`-Auftrag) stand hier als „nicht gemessen, weil es hier kein `-race` gibt". **Auch der ist
+inzwischen gemessen und behoben** — siehe den letzten Nachtrag. Er hatte eine andere Ursache als
+der Kanal, und anders als dieser war er **kein** Testfehler.
 
 ### Nachtrag 22.10.2026: ein dritter Zeittest, und seine Schranke ist eine Haaresbreite
 
@@ -3949,7 +3949,7 @@ unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
 |---|---|---|---|
 | `TestAFaultEndsTheTerminalAtOnce` | 1 s → **5 s** | 1,0026 s (CI), 1,5 ms (Linux) | `sleep 1` → **`sleep 30`** |
 | `TestAPackageLargerThanOneWindowGetsThrough` | Kredit 262 144 | **behoben** (`dataPaid`), 0 von 20 | der Test überzog beim 5. Rahmen |
-| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Tunnel tot vor dem ersten Ping | — |
+| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Nullkontrolle, 2 von 14 `UNMEASURABLE` | Wettlauf bleibt, ehrlich benannt |
 
 Der erste ist der einfachste von allen und **ist behoben** (siehe oben): zwei Zahlen, die
 dieselbe waren. Die anderen zwei sind Wettläufe und bleiben offen; sie lassen sich ohne Kenntnis
@@ -4016,3 +4016,90 @@ sichtbar — es sagt nicht „übersprungen", es sagt grün. Ein Fall, der auf Z
 auf Scheduling beruht, ist auf dem Betriebssystem zu messen, auf dem er läuft; dafür reicht
 `go test -c -o <datei>` und ein Lauf in der WSL, und das kostet eine Minute. Dieselbe Regel wie
 „ein Testergebnis gilt für das Laufwerk, auf dem es gemessen wurde" — nur eine Ebene höher.
+
+### Nachtrag 23.10.2026: der letzte offene Fall — und er war kein Wackler, sondern eine Lüge im Fehlercode
+
+`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel` war der Rest: im `-race`-Auftrag kam
+`E_INTERNAL`, wo `E_TIMEOUT` erwartet ist. Oben stand „nicht gemessen, es gibt hier kein
+`-race`". Das gilt nicht mehr: in der Debian-WSL steht Go 1.27.2 und gcc, also läuft `-race`
+jetzt auf diesem Rechner.
+
+**Nachgestellt**, `go test -race` auf Linux, 256 Lastschleifen auf 128 Kernen:
+
+| Läufe | Fehlschläge |
+|---|---|
+| 10, ohne Last | 0 |
+| 40, unter Last | 1 |
+| 150, unter Last | **2** |
+
+#### Die Ursache, mit einer Sonde gemessen
+
+Eine Sonde an `app.go` bei der Zeile, die den Fehlercode setzt, hat den ganzen Unterschied
+gedruckt:
+
+```
+148x  outErr=context deadline exceeded  endStatus="error"  endCode="E_TIMEOUT"
+  2x  outErr=context deadline exceeded  endStatus="ok"     endCode=""
+```
+
+**Beide Male war `inCtx.Err()` die abgelaufene Frist.** Die Uhr war also aus, und der Versuch,
+die schon versiegelte Nachricht hinauszuschicken, starb daran. Nur `RunService` antwortete
+**ok** — weil das Programm zufällig sauber endete, bevor die Frist es erreichte. Und dann greift
+
+```go
+if end.Status == wire.StatusOK {
+    end = wire.Error(wire.CodeInternal)      // app.go
+}
+```
+
+und macht aus einer Zeitüberschreitung einen **internen Fehler**.
+
+**Der Quelltext hatte das vorhergesagt.** Der Kommentar über `inCtx` (Zeile 265–271) beschreibt
+genau dieses Symptom als schon einmal gemessen und nennt als Behebung „eine Uhr für alles". Die
+eine Uhr ist da — und reicht nicht, denn das Rennen ist nicht zwischen zwei Fristen, sondern
+zwischen **zwei Beobachtern derselben Frist**: dem Sender, der an ihr scheitert, und
+`RunService`, das ein sauber beendetes Programm sieht.
+
+#### Behoben, ohne eine dritte Uhr
+
+Der Grund des Sendefehlers entscheidet, nicht mehr der Status von `RunService`:
+
+```go
+if errors.Is(out.err, context.DeadlineExceeded) || errors.Is(inCtx.Err(), context.DeadlineExceeded) {
+    end = wire.Error(wire.CodeTimeout)
+} else {
+    end = wire.Error(wire.CodeInternal)
+}
+```
+
+Die Auskunft lag schon da; sie wurde nur nicht gelesen. Ein Sendefehler aus einem **anderen**
+Grund bleibt der interne Fehler, der er war.
+
+| | Fehlschläge |
+|---|---|
+| vorher, 150 Läufe `-race` unter Last | 2 |
+| **nachher, 150 Läufe `-race` unter Last** | **0** |
+
+Dazu: das **ganze** Paket unter `-race` grün, und die `E_INTERNAL`-Erwartungen der anderen Tests
+liegen alle im Installierer-Pfad (`activate_test.go`), nicht hier.
+
+#### Was der Benutzer davon hat — diesmal etwas
+
+Anders als beim Kanal ist das **kein** Testfehler. Eine Aktion, deren Ausgabe die Uhr
+abgeschnitten hat, meldete dem Browser gelegentlich „Interner Fehler" statt
+„Zeitüberschreitung". Das ist dieselbe Klasse wie Punkt 65: ein Zustand wird als die falsche
+Ursache gezeigt — nur hier mit einer Handlung dahinter, denn auf eine Zeitüberschreitung
+reagiert ein Benutzer anders (länger warten, kleinere Ausgabe) als auf einen internen Fehler
+(melden).
+
+#### Und eine Messregel, die drei Runden gekostet hat
+
+**`/tmp` in der WSL ist zwischen zwei Aufrufen leer.** Der erste Sondenlauf schrieb sein
+Protokoll nach `/tmp`, und beim Auswerten im nächsten Aufruf war die Datei weg — „PROBE-Zeilen:
+(nichts)" sieht aus wie „die Sonde hat nicht gefeuert" und war „das Protokoll ist nicht mehr
+da". Lauf **und** Auswertung gehören in einen Aufruf, und das Protokoll nach `/mnt/d`.
+
+**Und zum dritten Mal in dieser Reihe: ein Heredoc frisst `\n`.** Die Sonde ging als
+`fmt.Fprintf(..., "…%v\n", …)` über ein Shell-Heredoc in den Quelltext und stand dort als echter
+Zeilenumbruch mitten in der Zeichenkette — `string literal not terminated`. Patches mit Escapes
+gehören in eine Datei, nicht in ein Heredoc.
