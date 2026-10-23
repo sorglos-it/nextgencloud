@@ -3597,9 +3597,60 @@ Dazu im `-race`-Auftrag derselben CI-Läufe, im gleichen Paket:
 wo `E_TIMEOUT` erwartet ist. Nicht lokal nachgestellt — hier gibt es kein `-race` (kein
 C-Übersetzer), also **nicht gemessen**, ob es dieselbe Ursache ist.
 
-### Was ich dazu NICHT sage
+### Die Ursache — gemessen am 23.10.2026, und es war der Test
 
-**Die Ursache ist nicht gemessen.** Zwei Vermutungen sind geprüft und beide **widerlegt**:
+**Dieser Abschnitt hieß zuerst „Was ich dazu NICHT sage" und sagte, die Ursache sei nicht
+gemessen. Jetzt ist sie es.** Die zwei Vermutungen, die hier als widerlegt standen, waren
+beide richtig widerlegt — nur war die dritte Stelle die richtige:
+
+```go
+case wire.TypeData:
+    n := uint64(len(f.Payload))
+    if n > ch.in || !ch.room() {        // channel.go:629
+        ch.claimLocked(closeProtocol)
+```
+
+`ch.in` ist der Kredit, den **diese** Seite gewährt hat und der noch nicht verbraucht ist. Der
+erste GRANT gibt `wire.DefaultWindow` = 262 144 Bytes. Der Test schob **sechs** Rahmen à 60 000
+sofort hinaus, ohne auf weitere GRANTs zu warten: vier passen (240 000), beim **fünften** fehlen
+37 856 Bytes, und wenn der GRANT für die schon gelesenen Rahmen noch nicht da ist, lehnt der
+Kanal ab — **völlig zu Recht**. Ein Sender dieses Vertrags darf seinen Kredit nicht überziehen.
+
+**Die Zahl, die es beweist**, kommt aus der Mutationsprobe unten: `22144 bytes of credit left
+and 60000 to send` — und 262 144 − 4 × 60 000 ist genau 22 144.
+
+**Es war also der Test und nicht der Kanal.** Die gute Nachricht steckt darin: an `ActActivate`
+ist nichts zu reparieren, und die Sorge aus dem Absatz weiter unten — ein Verwalter liest
+„Ungültige Nachricht" über ein heiles Paket — trifft nicht zu, solange die API ihren Kredit
+einhält. Die echte API tut das; nur der Test tat es nicht.
+
+### Behoben: die API-Seite des Tests zahlt
+
+Neu ist `apiSide.dataPaid` (`serve_test.go`): wo der Kredit nicht reicht, wartet die Senderseite
+erst auf den GRANT und schreibt dann. Das ist, was jeder echte Gegenpart tut.
+
+| | Fehlschläge |
+|---|---|
+| vorher, Linux unter Last | 5 von 20 |
+| vorher, Windows unter Last | 4 von 20 |
+| **nachher, Linux unter Last** | **0 von 20** |
+
+**Und der Wächter ist nicht weicher geworden, sondern schärfer** — Mutationsprobe: `give` so
+verändert, dass es keinen Kredit mehr zurückgibt. Dann endet der Test nicht grün und nicht mit
+`E_PROTOCOL`, sondern mit
+
+```
+waiting for a GRANT on channel 1, 22144 bytes of credit left and 60000 to send: context dead
+Run did not end
+```
+
+Vorher gaben ein kaputtes `give` und eine belastete Maschine **dasselbe** Rot. Jetzt sind sie zu
+unterscheiden: das eine wartet auf einen GRANT und nennt den Kredit, das andere ist kein Rot
+mehr.
+
+`check.sh: ok`, 3350 passed, 0 FAILED, 87 SKIPPED.
+
+### Die zwei Vermutungen davor, als widerlegt notiert
 
 - *Die API-Seite schickt DATA, bevor der Kanal offen ist.* Nein: `apiSide.open`
   (`serve_test.go:420`) wartet auf das GRANT, bevor der Test weiterläuft.
@@ -3609,42 +3660,51 @@ C-Übersetzer), also **nicht gemessen**, ob es dieselbe Ursache ist.
   262 144 Bytes Kredit erlaubt `(ch.in+ch.bytes)/32+2` über achttausend wartende Rahmen, und
   es sind sechs.
 
-Was danach käme, wäre Raten im Protokoll eines fremden Teils, und eine geratene Ursache prüft
-der Empfänger nicht mehr nach. Darum steht hier die **Erscheinung** und nicht die Ursache.
+Beide waren an der falschen Stelle, und das Raten hat erst aufgehört, als die Linux-Messung
+eine verlässliche Nachstellung gab (5 von 20) — damit ließ sich der Zweig mutieren, statt ihn zu
+erraten.
 
-### Was es für den Nutzer heißt — falls es nicht nur der Test ist
+### Was es für den Nutzer heißt: nichts — und das stand nicht von Anfang an fest
 
-`ActActivate` ist der Weg, auf dem ein **App-Paket** zum Controller geht. Wenn der Abbruch nicht
-im Test, sondern im Kanal sitzt, dann scheitert auf einer belasteten Maschine die Installation
-eines Pakets, das größer als ein Fenster ist — und der Verwalter liest „Ungültige Nachricht",
-also die Meldung für ein kaputtes Paket, obwohl das Paket in Ordnung ist. Dieselbe Klasse wie
-Punkt 65: ein Zustand der Maschine wird als Fehler der Sache gezeigt.
+`ActActivate` ist der Weg, auf dem ein **App-Paket** zum Controller geht. Solange die Ursache
+offen war, stand hier die Sorge: sitzt der Abbruch im Kanal, dann scheitert auf einer belasteten
+Maschine die Installation eines Pakets über eine Fenstergröße, und der Verwalter liest
+„Ungültige Nachricht" — die Meldung für ein kaputtes Paket — über ein heiles. Dieselbe Klasse wie
+Punkt 65.
 
-**Das ist der Grund, warum der Befund nicht als Testwackler abgelegt werden sollte**, auch wenn
-er sich als einer herausstellen kann. Welches von beidem es ist, entscheidet nur, wer das
-Protokoll kennt.
+**Die Sorge trifft nicht zu.** Der Kanal hat recht gehandelt, und die echte API hält ihren
+Kredit ein; nur der Test tat es nicht. An `ActActivate` ist nichts zu reparieren.
+
+**Und das ist der Grund, einen solchen Befund nicht als Wackler abzulegen, bevor man ihn
+kennt** — auch wenn er sich dann als einer herausstellt. Er stand als Frage da und nicht als
+Antwort, und die Antwort kam aus einer Messung, nicht aus einer Einschätzung.
 
 ### Nachstellen
+
+Der Fall ist behoben, also läuft er jetzt durch. Um die **alte** Erscheinung zu sehen, muss
+`dataPaid` im Test wieder durch `data` ersetzt werden; dann gilt:
 
 ```powershell
 go test -count=20 -run TestAPackageLargerThanOneWindowGetsThrough .\apps\server-controller\classes\serve\
 ```
 
-Ohne Last läuft das durch. Mit Last — auf diesem Rechner 128 beschäftigte Schleifen neben dem
-Lauf — fallen vier von zwanzig um. Der Lauf braucht etwa zwanzig Sekunden.
+Ohne Last läuft das durch. Mit Last — 128 beschäftigte Schleifen neben dem Lauf — fielen vier
+von zwanzig um, auf Linux fünf von zwanzig. Der Lauf braucht etwa zwanzig Sekunden.
 
-### Was zu entscheiden ist
+**Auf Linux** (wo die CI steht), mit dem für `linux/amd64` übersetzten Testbinär:
 
-Nichts davon ist in diesem Zweig geändert, und nichts sollte es sein: `serve` und `link` gehören
-einem anderen Teil. Zwei Wege, und sie schließen sich aus:
+```powershell
+go test -c -o D:\claude\rust\serve.test .\apps\server-controller\classes\serve\
+wsl -d Debian -u root -- /mnt/d/claude/rust/serve.test -test.run TestAPackageLargerThanOneWindowGetsThrough -test.count=20
+```
 
-- **Es ist der Test:** dann muss die API-Seite des Tests ihren Kredit einhalten statt alle sechs
-  Rahmen zu schieben und darauf zu setzen, dass die Gegenseite schnell genug zurückzahlt. Der
-  Fall messe dann weiter, was er messen will — nur ohne Wettlauf.
-- **Es ist der Kanal:** dann ist es ein Fehler, den ein Verwalter als kaputtes Paket zu sehen
-  bekommt, und er gehört vor jede Auslieferung.
+### Was noch zu entscheiden ist
 
-**Gemessen ist die Erscheinung und die Rate, nicht die Ursache.**
+Für diesen Fall nichts mehr. Offen bleibt der zweite aus dem Nachtrag unten
+(`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel`, `E_INTERNAL` statt `E_TIMEOUT` im
+`-race`-Auftrag): **nicht gemessen**, weil es hier kein `-race` gibt — kein C-Übersetzer. Er
+sitzt im selben Paket und an derselben Kreditmechanik, also lohnt zuerst die Frage, ob er
+dieselbe Ursache hat.
 
 ### Nachtrag 22.10.2026: ein dritter Zeittest, und seine Schranke ist eine Haaresbreite
 
@@ -3697,7 +3757,7 @@ unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
 | Test | Schranke | gemessen | Alternative, die er trennt |
 |---|---|---|---|
 | `TestAFaultEndsTheTerminalAtOnce` | 1 s → **5 s** | 1,0026 s (CI), 1,5 ms (Linux) | `sleep 1` → **`sleep 30`** |
-| `TestAPackageLargerThanOneWindowGetsThrough` | — | `E_PROTOCOL` nach 0–2 von 6 Rahmen | — |
+| `TestAPackageLargerThanOneWindowGetsThrough` | Kredit 262 144 | **behoben** (`dataPaid`), 0 von 20 | der Test überzog beim 5. Rahmen |
 | `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Tunnel tot vor dem ersten Ping | — |
 
 Der erste ist der einfachste von allen und **ist behoben** (siehe oben): zwei Zahlen, die
