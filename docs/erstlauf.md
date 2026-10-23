@@ -7,6 +7,30 @@ Release auf einer echten Maschine installiert. Dabei standen **sechs** Hürden i
 einzeln klein, zusammen unüberwindbar. **Keine davon hat ein Prüfsatz bemerkt.** Dieser Lauf baut
 den Weg nach, damit eine siebte nicht wieder erst von Hand gefunden wird.
 
+## 0. Der Weg war nach der letzten Station nicht zu Ende
+
+Am 23.10.2026 wurde der Weg zum ersten Mal ganz durchgegangen — und **hinter** Station 8 standen
+noch **zwei** Hürden. Der Lauf von diesem Tag hätte keine davon bemerkt:
+
+1. **Der geschlossene Kreis beim Freigeben.** Der Schreibtisch zeigt eine App nur dem, der das
+   Recht `<app>/use` hält; die Rechte-Seite baute ihre Liste der Apps **aus diesem Schreibtisch**.
+   Das erste Recht einer frisch eingerichteten App war damit für niemanden zu vergeben. Behoben
+   (`rights.adminApps`) — **Station 8 wäre damit weiter grün**, denn Station 8 fragt nach dem
+   **Menü**, und der Kreis liegt in der **Seite, die das Menü füllt**.
+2. **Die App ging auf und antwortete nicht.** `muh` kam zurück als
+   `/bin/sh: 2: muh: not found`, `ls` kam zurück als **nichts** — und dasselbe `ls` im Container
+   lieferte eine Liste. Die Ausgabe ging also **auf dem Weg** verloren, und ein offenes Fenster
+   bewies gar nichts. Behoben mit dem Stand von `main` (PR 95/100).
+
+Daraus sind **Station 9 und Station 10** geworden. Beide werden gemessen, indem der Code
+**ausgeführt** wird (`tools/erstlauf-probe`), nicht indem ein Wort gesucht wird — beide Hürden
+waren in jeder Textsuche grün, während die Anlage stand.
+
+**Und beide Ströme getrennt.** Bei Hürde 2 kam **einer** der beiden Ströme an und der andere
+nicht. Eine Station, die „es kam etwas zurück" liest, wäre genau auf diesen Fehler grün gewesen.
+Station 10 fragt darum zwei Dinge auf zwei Zeilen: kommt **stdout** auf dem Kanal an, den der
+Mensch ansieht, und bleibt **stderr** davon weg und landet im Journal.
+
 ## 1. Was es heute schon gibt — und wo es aufhört
 
 | Prüfsatz | Was er umfasst | Wo er aufhört |
@@ -83,10 +107,8 @@ Gemessen am 23.10.2026, mit den Orten:
   Anlage, in der andere Sitzungen arbeiten; ihr Zustand ist mehrfach von Hand verändert. Sie wurde
   **nicht angefasst**.
 
-Die Wegwerf-Instanz heißt `ngc-erstlauf` und liegt in `D:\claude
-gc-erstlauf-vm`; das
-Testrelease in `D:\claude
-gc-erstlauf-release`. Beides ist meins und darf weg.
+Die Wegwerf-Instanz heißt `ngc-erstlauf` und liegt in `D:\claude\ngc-erstlauf-vm`; das
+Testrelease in `D:\claude\ngc-erstlauf-release`. Beides ist meins und darf weg.
 
 **Lieber ein ehrlicher Lauf über die halbe Strecke als ein grüner, der nichts beweist.**
 
@@ -110,6 +132,10 @@ dass NGCs eigener Schlüssel im Skript steht und stimmt.
 | 6 | Katalog da | Der Katalog ist **Minuten** nach der Installation da, nicht eine Stunde. | 3 | UNMEASURABLE |
 | 7 | App einrichten | Der Modus von `config.AppDataDir` muss einen App-Benutzer **hindurchlassen** (x-Bit für andere) — die Begründung ist die Aussage, nicht die Zahl. | 5 | grün (seit PR 92) |
 | 8 | App erscheint im Menü | Die Rechte-Seite bietet Rechte auch für Apps an, die man noch **nicht** sieht. | 6 | UNMEASURABLE |
+| 9 | Recht „benutzen" vergeben | **A:** Eine frisch eingerichtete App ohne jede Rechte-Zeile steht in den eigenen Rechten eines Admins (`rights.Of` — also in seinem Menü, also in der Liste der Rechte-Seite), der Vertrag nimmt das Recht an (`core.ValidRight`), und nach `rights.Set` **hält** ein Benutzer der Rolle es wirklich. Gemessen durch **Ausführen**, nicht durch `grep`. | 9 | grün |
+| 10 | App ist wirklich bedienbar | **A:** Was ein Dienst auf **stdout** schreibt, kommt auf dem Kanal des Menschen an; was er auf **stderr** schreibt, kommt dort **nicht** an, sondern in der Journal-Zeile des Aufrufs. Zwei Zeilen, zwei Ströme. | 10 | grün |
+| 9+ | Benutzer anlegen (Unterschrift) | — | — | **NICHT GEPRÜFT**, in keiner Phase — siehe Abschnitt 6 |
+| 10+ | App antwortet auf der Maschine | podmans eigene Engine verdrahtet die beiden Ströme genauso. | — | UNMEASURABLE |
 
 Warum 3, 4, 5, 6 und 8 keine statische Hälfte haben, steht als Kommentar im Lauf selbst — mit
 Grund je Station, damit der Nächste eine Lücke in der Suche sehen kann statt einem Satz zu glauben
@@ -192,3 +218,68 @@ Nach `messen.md`, und jede dieser Prüfungen hat eine gemessene Vorgeschichte:
   Kommentar hätte das erfüllt, und die Station wäre grün geworden, während der Release weiter
   `0.0.0-dev` trägt — genau das Loch, gegen das sie geschrieben ist. Darum wird der Erbauer
   **ausgeführt** und die Programme werden **gefragt**.
+
+## 6. Station 9 und 10: was gemessen ist, und was ehrlich nicht
+
+### Was der Lauf nicht klicken kann, und darum nicht meldet
+
+Ein zweiter Mensch braucht einen **Benutzer**, und ein Benutzer entsteht nur als **neue Fassung
+der Vertrauensliste** — die wird **im Browser mit dem Schlüssel der Person unterschrieben**; die
+API prüft eine Liste, die man ihr reicht, und stellt keine aus. Keine Phase dieses Laufs hält
+diesen Schlüssel. Die Sonde baut ihre Liste darum **im Speicher** und sagt das.
+
+Das ist **keine Station, die auf eine Maschine wartet**: `--machine` hilft hier nicht. Sie wird
+deshalb als eigene Zeile `station 9 Benutzer anlegen (Unterschrift): UNMEASURABLE` gemeldet und
+zählt in die Liste „diese Stationen liefen NICHT" — nicht übersprungen, nicht grün.
+
+Dasselbe für die zweite Hälfte von Station 10: **wo** die beiden Ströme sich trennen, ist gemessen
+(`serve.RunService`); dass **podmans** eigene Engine sie genauso übergibt (`runtime.Podman.Exec`),
+ist nirgends gemessen und braucht einen Container.
+
+### Die Sonde prüft erst sich selbst
+
+- **Eigene Vorbereitung:** `rights.All` muss für die zwei Rollen der Liste antworten und für beide
+  **leere** Rechte melden — eine Vorrichtung, in der schon Rechte stehen, ist nicht der frische
+  Fall. Die beiden Benutzer-IDs werden gegen `trust.ValidID` gehalten, bevor etwas daraus
+  geschlossen wird.
+- **Ein Fehler der Sonde ist kein Befund:** schreibt die Engine der Sonde nicht, oder endet
+  `serve.RunService` nicht mit `ok`, dann sagt die Sonde `broken:` und der Lauf bricht ab, statt
+  eine Zahl zu nennen.
+- **Der Lauf zählt Zeilen, nicht Ausstiegscodes:** `tools/erstlauf.sh` verlangt **jede** der fünf
+  Prüf-Kennungen (`recht-angeboten`, `recht-gueltig`, `recht-vergeben`, `ausgabe-stdout`,
+  `ausgabe-stderr`). Fällt eine weg, meldet der Lauf „cannot measure" — eine Sonde, die weniger
+  druckt, als sie schuldet, kann den Lauf nicht still kleiner machen.
+- **Die Vorbereitung, die die Sonde absichtlich NICHT nachbildet:** der Kreis läuft durch zwei Orte
+  außerhalb von `package rights` — den Filter des Menüs (`coreapp/desktop.go`,
+  `rq.Rights[a.ID+"/"+core.RightUse]`) und die Liste der Rechte-Seite (`apps/users.js`,
+  `this.appsNow()` samt `core.RIGHT_USE`). Eine Sonde, die diese Bedingung selbst abschreibt,
+  beweist ihre eigene Kopie. Der Lauf prüft stattdessen, dass beide Orte noch dort lesen, und sagt
+  „cannot measure", wenn einer umgezogen ist.
+- **Und was die Vorbereitung bei Station 10 bewusst NICHT festnagelt:** welcher der beiden Ströme
+  welchen Platz bekommt. Würde das hier festgenagelt, dann käme ein **Tausch** der beiden — genau
+  der Fehler vom 23.10.2026 — als „cannot measure" zurück statt als rote Station.
+
+### Beweis, dass die beiden Stationen den Fehler FINDEN
+
+`messen.md`: eine Prüfung, die den Fehler nicht nachweislich findet, misst nichts. Alle Läufe am
+23.10.2026 im Arbeitsbaum `D:\claude\nextgencloud-erstlauf-weiter`, Basis `0bf7201`, jeweils
+`bash tools/erstlauf.sh`:
+
+| Änderung | Station 9 | Station 10 |
+|---|---|---|
+| unverändert (`main`) | **ok** | **ok** |
+| `rights.adminApps`: die Zeile `out[a.ID+"/"+core.RightUse] = true` entfernt | **FAIL** — „der Admin hält `de.example.frisch/use` NICHT … das erste Recht einer frisch eingerichteten App kann dann niemandem gegeben werden" | ok (unberührt) |
+| `serve.RunService`: `Stdout` und `Stderr` **getauscht** | ok (unberührt) | **FAIL** — „der Kanal trug das STDERR des Dienstes und NICHT sein stdout — das ist genau der Fehler vom 23.10.2026", **und** eine zweite Zeile für den anderen Strom |
+| `serve.RunService`: `Stdout` auf `io.Discard`, `in.Out` bleibt genannt | ok (unberührt) | **FAIL** — „nichts von dem, was der Dienst auf STDOUT schrieb, kam auf dem Kanal an (er trug 0 Bytes)" |
+| **Kontrolle:** `errs` → `errRing` in `call.go`, Laufvariable `a` → `row` in `adminApps` | **ok** | **ok** |
+
+Die Kontrolle ist mit Absicht eine **Umbenennung in genau den beiden Zeilen, um die es geht**: sie
+beweist, dass die Stationen dem **Verhalten** folgen und nicht einer Schreibweise. Ein weiterer
+Lauf, bei dem `in.Out` ganz aus `call.go` verschwand, meldete
+`erstlauf: the run cannot measure station 10` und Code 1 — also auch dort kein grüner Lauf,
+sondern eine Vorbereitung, die abbricht.
+
+### Was der Lauf heute meldet
+
+Phase A allein, `main` (`0bf7201`), gemessen 23.10.2026: **1 rot** (Station 1 — Hürde 1 ist weiter
+offen und liegt im ulh-Repo), **7 unmeasurable**, Ausstiegscode 1. Station 9 und 10 melden `ok`.

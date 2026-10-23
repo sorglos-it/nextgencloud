@@ -12,13 +12,22 @@
 #
 # THE ORDER IS THE WAY, not a severity: install -> API and controller run ->
 # pair the controller -> adopt it -> set system rights -> catalog is there ->
-# set up an app -> the app shows in the menu. A station that cannot be reached
-# makes every station behind it unmeasured, so the run stops at the first red
-# and says where it stood.
+# set up an app -> the app shows in the menu -> the right "use" can be handed
+# to somebody -> the app really answers. A station that cannot be reached makes
+# every station behind it unmeasured, so the run stops at the first red and says
+# where it stood.
+#
+# THE LAST TWO WERE ADDED ON 23.10.2026, and why is the point of them: on that
+# day the way was walked to the end for the first time, and TWO more obstacles
+# stood behind the last station. The way did not end where the run thought it
+# did. Whoever walks it further and finds a third one adds station 11 - a run
+# that ends one station before the person's goal is a run that measures the
+# wrong way.
 #
 # WHAT THIS RUN CAN AND CANNOT DO, and the reason is in docs/erstlauf.md:
-# stations 1, 2 and 7 have a half that is decidable from the sources of this
-# repository and of ulh together, and that half runs anywhere. Everything else
+# stations 1, 2, 7, 9 and 10 have a half that is decidable from the sources of
+# this repository and of ulh together - 9 and 10 by RUNNING the code through
+# tools/erstlauf-probe - and that half runs anywhere. Everything else
 # needs a machine that is installed from scratch, because podman-in-podman and
 # fscrypt are not available in a container (this machine's WSL kernel says
 # "# CONFIG_FS_ENCRYPTION is not set", measured 23.10.2026), and because a
@@ -97,7 +106,7 @@ while [ $# -gt 0 ]; do
 		shift 2
 		;;
 	-h | --help)
-		sed -n '2,30p' "$self"
+		sed -n '2,38p' "$self"
 		exit 0
 		;;
 	*)
@@ -410,6 +419,120 @@ fi
 # ---------------------------------------------------------------------------
 if [ -z "$machine" ]; then
 	unmeasurable 8 "App erscheint im Menue" "needs an app that really runs, and a click through the interface with a second user; pass --machine <ssh target>"
+fi
+
+# ---------------------------------------------------------------------------
+# station 9  Recht "benutzen" vergeben
+# station 10 Die App ist wirklich bedienbar
+#
+# WHY THE WAY DID NOT END AT STATION 8. On 23.10.2026 the way was walked to the
+# end for the first time - and two more obstacles stood BEHIND the last station,
+# and the run of that day would have noticed neither:
+#
+#   9  The desktop showed an app only to somebody holding the right "use", and
+#      the rights page offered that right only for apps one could already see.
+#      A closed circle: the first right of a freshly set up app could be given
+#      to nobody. It is fixed (rights.adminApps), and station 8 above would
+#      still be green with it broken again, because station 8 asks about the
+#      MENU and the circle is about the PAGE THAT FILLS IT.
+#  10  The app opened and did not answer. "muh" came back as
+#      "/bin/sh: 2: muh: not found", "ls" came back as NOTHING, and the same
+#      "ls" inside the container printed a listing - so the output went astray
+#      on the way, and an open window proved nothing at all.
+#
+# These two are therefore stations of their own, and they are measured by
+# RUNNING the code: tools/erstlauf-probe asks rights.Of, rights.Set and
+# serve.RunService through their exported doors. Its head says why that is a
+# program and not a grep, and not a go test.
+#
+# BOTH STREAMS, SEPARATELY, and that is the whole lesson of obstacle 10: one of
+# the two arrived and the other did not. A station that read "something came
+# back" would have been green on the very fault, so the probe asks for stdout on
+# the channel and for stderr in the journal, each on its own line.
+# ---------------------------------------------------------------------------
+s9="Recht benutzen vergeben"
+s10="App ist wirklich bedienbar"
+
+# The preparation of station 9, and it is the half the probe deliberately does
+# NOT restate: the circle runs through two places outside package rights, and a
+# probe that copied their condition would be proving its own copy. If either
+# moved, this run says it cannot measure instead of reporting green.
+menugo=apps/server-api/classes/coreapp/desktop.go
+grep -q 'rq\.Rights\[a\.ID+"/"+core\.RightUse\]' "$menugo" ||
+	broken 9 "$s9" "$menugo no longer filters the desktop's app list by core.RightUse - the circle this station is about ran through that filter, and where it now runs cannot be read from here"
+pagejs=apps/web/public/assets/js/apps/users.js
+grep -q 'this\.apps = this\.appsNow();' "$pagejs" ||
+	broken 9 "$s9" "the rights page of $pagejs no longer builds its offer from the desktop's app list (this.appsNow()) - the other half of the circle is somewhere else now"
+grep -q 'core\.RIGHT_USE' "$pagejs" ||
+	broken 9 "$s9" "the rights page of $pagejs no longer puts core.RIGHT_USE into the rights it offers - then the right this station is about is offered by nothing"
+grep -q 'adminApps(ctx, db, out)' apps/server-api/classes/rights/rights.go ||
+	broken 9 "$s9" "rights.Of no longer calls adminApps - the one function that opens the circle; what opens it now cannot be read from here"
+
+# The preparation of station 10: the probe asks serve.RunService, so the two
+# streams have to still part there. What is asked for is that both ends are
+# handed over in that one call and that the channel's writer is in this file at
+# all - NOT which of the two gets which. That is on purpose and it is the whole
+# difference between a preparation and a measurement: a run that pinned the
+# assignment here would answer "cannot measure" for a SWAP of the two streams,
+# which is precisely the fault of 23.10.2026 and has to come back as a red
+# station instead.
+callgo=apps/server-controller/classes/serve/call.go
+grep -Eq 'Stdout: [^,]+, Stderr: [^,]+,' "$callgo" ||
+	broken 10 "$s10" "$callgo no longer hands the engine a Stdout and a Stderr in one call - that line is the seam where the person's channel and the journal part, and this station measures it through serve.RunService"
+grep -q 'in\.Out' "$callgo" ||
+	broken 10 "$s10" "$callgo never names in.Out - the output of a service no longer reaches the writer the caller handed in, and where it goes now cannot be read from here"
+
+probelog=$work/probe.log
+set +e
+go run ./tools/erstlauf-probe >"$probelog" 2>&1
+prc=$?
+set -e
+[ "$prc" != 3 ] ||
+	broken 9 "$s9 / $s10" "tools/erstlauf-probe could not measure: $(tr '\n' ' ' <"$probelog")"
+# Every check this probe owes, by name. A probe that printed fewer lines than
+# it owes measured less than this run reports, and that is the "a run that hits
+# no case still reports all in order" trap of messen.md.
+for id in recht-angeboten recht-gueltig recht-vergeben ausgabe-stdout ausgabe-stderr; do
+	grep -q "^check $id: " "$probelog" ||
+		broken 9 "$s9 / $s10" "tools/erstlauf-probe printed no line for the check '$id' (exit $prc), so this run would count a station it never measured: $(tr '\n' ' ' <"$probelog")"
+done
+# The probe's own lines are the sentences, and they are carried over as they
+# come: the probe is the only thing here that saw the answer.
+p9=$(grep -c '^check recht-.*: FAIL' "$probelog" || true)
+p9u=$(grep -c '^check recht-.*: UNMEASURABLE' "$probelog" || true)
+p10=$(grep -c '^check ausgabe-.*: FAIL' "$probelog" || true)
+p10u=$(grep -c '^check ausgabe-.*: UNMEASURABLE' "$probelog" || true)
+if [ "$p9" != 0 ]; then
+	fail 9 "$s9" "$(grep '^check recht-.*: FAIL' "$probelog" | sed 's/^check [^:]*: FAIL -- //' | tr '\n' ' ')"
+elif [ "$p9u" != 0 ]; then
+	unmeasurable 9 "$s9" "$(grep '^check recht-.*: UNMEASURABLE' "$probelog" | sed 's/^check [^:]*: UNMEASURABLE -- //' | tr '\n' ' ')"
+else
+	pass 9 "$s9" "a freshly set up app with no rights row anywhere can be freed for a second person: the right is in the offer, the contract takes it, and the user of the role holds it afterwards"
+fi
+if [ "$p10" != 0 ]; then
+	fail 10 "$s10" "$(grep '^check ausgabe-.*: FAIL' "$probelog" | sed 's/^check [^:]*: FAIL -- //' | tr '\n' ' ')"
+elif [ "$p10u" != 0 ]; then
+	unmeasurable 10 "$s10" "$(grep '^check ausgabe-.*: UNMEASURABLE' "$probelog" | sed 's/^check [^:]*: UNMEASURABLE -- //' | tr '\n' ' ')"
+else
+	pass 10 "$s10" "a service's STDOUT reaches the channel the person looks at and its STDERR reaches the journal instead - the two streams measured apart, which is the only way the fault of 23.10.2026 shows"
+fi
+
+# ---------------------------------------------------------------------------
+# WHAT NO PHASE OF THIS RUN CAN CLICK, AND IS THEREFORE NOT MEASURED.
+#
+# This is not a station that is waiting for a machine: --machine does not help
+# here, and saying nothing about it would be the dishonest half of station 9.
+# A second person needs a USER, and a user only comes into being with a new
+# version of the trust list, which is signed IN THE BROWSER with the key of the
+# person doing it (apps/web, the question for the person's key; the API only
+# ever verifies a list it is handed). Nothing in a shell holds that key, so
+# neither phase can make the user that station 9 hands the right to. The probe
+# builds its own list in memory and says so - it measures the rights, never the
+# signature.
+# ---------------------------------------------------------------------------
+unmeasurable 9 "Benutzer anlegen (Unterschrift)" "a new user is a new version of the trust list, and that version is signed in the BROWSER with the person's own key - no phase of this run holds it, so the probe of station 9 builds its list in memory and nothing here says a real user can be created"
+if [ -z "$machine" ]; then
+	unmeasurable 10 "App antwortet auf der Maschine" "station 10 above measures the seam where the two streams part (serve.RunService with a probe engine); that podman's own engine wires them the same way needs a running container, so pass --machine <ssh target>"
 fi
 
 # ---------------------------------------------------------------------------

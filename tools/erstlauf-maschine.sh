@@ -355,6 +355,18 @@ else
 	unmeasurable 7 "App einrichten" "this kernel has no CONFIG_FS_ENCRYPTION ($(uname -r)), and runtime.ErrNoFscrypt ends EVERY activation on such a kernel (apps/server-controller/classes/serve/activate.go says so at the line) - no app can be set up here, whatever else is right"
 fi
 unmeasurable 8 "App erscheint im Menue" "needs station 7, and a second user to show that the rights page offers an app one cannot see yet"
+# ---------------------------------------------------------------------------
+# station 9  Recht "benutzen" vergeben
+# station 10 Die App ist wirklich bedienbar
+#
+# The two obstacles that stood BEHIND the last station on 23.10.2026. Phase A
+# measures the half that lives in the code of this repository, and it measures
+# it by RUNNING that code (tools/erstlauf-probe); what is missing HERE is named
+# with its place, so the next person sees a gap in the search rather than a
+# sentence to believe.
+# ---------------------------------------------------------------------------
+unmeasurable 9 "Recht benutzen vergeben" "needs station 7 and a SECOND USER - and a user is a new version of the trust list, which is signed in the BROWSER with that person own key; nothing on this machine holds that key, so no phase of this run can create the user the right would be given to"
+unmeasurable 10 "App ist wirklich bedienbar" "needs station 7: an app that really runs. Phase A measures where the two streams part in serve.RunService with a probe engine; what is measured NOWHERE is that podman own engine (runtime.Podman.Exec) hands them over the same way, and that needs a container on this machine"
 
 # ---------------------------------------------------------------------------
 echo "erstlauf-maschine: $fails red, $unmeasured unmeasurable"
