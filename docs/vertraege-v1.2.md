@@ -3018,3 +3018,145 @@ Abruf um eine volle Stunde. Eine Anlage, an der gearbeitet wird, holt also nie e
 **Mein Vorschlag:** beides, und der Knopf zuerst — er ist der kleinere Eingriff und die Antwort
 auf die Frage, die ein Verwalter in diesem Augenblick wirklich hat. **Gemessen ist der Befund,
 nicht der Vorschlag.**
+
+## Punkt 71: Sechs Wände auf einem Weg — vom Release bis zur laufenden App, und vier standen nicht im geprüften Code
+
+**Gemessen vom 19. bis 21.10.2026** auf der Debian-VM aus Punkt 64, von einem **veröffentlichten
+Release** aus: installieren, einrichten, anmelden, Controller koppeln, Laden öffnen, App
+einrichten. Der Weg bis „die App läuft" ist in diesen drei Tagen **nicht ein einziges Mal**
+durchgelaufen. Nicht an einer großen Stelle, sondern an sechs kleinen hintereinander.
+
+Jede der sechs ist für sich vertretbar begründet. Das ist der Befund, nicht die Zahl.
+
+**1. Die Unit lässt den Ordner nicht schreiben, in dem die Datei liegt.** `ngc-api.service` wird
+mit `ProtectSystem=strict` geschrieben, und die schreibbaren Pfade sind
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`
+(`ulh`, `apps/cli/assets/scripts/ngc-api.sh:1065`, Zweig `ngc-kette`; `ngc-all.sh:1322` schreibt
+dieselbe Zeile). **`/etc/ngc` selbst steht nicht dabei.** Der Anker dort wird aber **atomar**
+geschrieben: `config.SaveAnchor` (`shared/config/config.go:451`) ruft `writeAtomic`, und das legt
+erst eine Datei `.trust-anchor.json.tmp-*` **im selben Ordner** an (`config.go:464`). Ein Ordner,
+in dem keine Datei entstehen darf, lässt kein atomares Ersetzen zu — auch dann nicht, wenn die
+Zieldatei selbst `0644` trägt. Gemessen im Journal:
+
+> the trust anchor outside the database could not be moved up; this API still pins the older
+> version — `pinned=1 stored=2`
+
+Das ist die einzige der sechs, die den Grund **selbst nennt** (`state/trust.go:249`). Die Folge
+steht in derselben Zeile: die Anlage bleibt auf der alten Vertrauensliste festgenagelt.
+
+**2. Mein eigener Fehler: die Release-Binärdateien hießen `0.0.0-dev`.** Ich habe beim Bauen
+`-ldflags "-X main.Version=…"` vergessen; der Vorgabewert steht im Quelltext und ist genau dafür
+da (`apps/server-api/main.go:43`: „Version is set when building", dann `var Version = "0.0.0-dev"`).
+Kosmetisch — bis der Controller seine Version im Hallo mitschickt. Die Oberfläche prüft jede
+Rechnerzeile mit `checkNodeInfo` (`contracts/core.js:724`), dort `optVersion`, dort
+`validVersion` (`contracts/text.js:84`) gegen `^(0|[1-9][0-9]{0,5})\.…$` — **genau**
+MAJOR.MINOR.PATCH. `0.0.0-dev` fällt durch. Und der Vertrag der Liste ist
+`every(v, checkNodeInfo)` (`core.js:585`): **eine** unpassende Zeile verwirft **die ganze
+Antwort**. Auf dem Schirm stand:
+
+> Die Rechner konnten nicht geladen werden. Bitte das Fenster neu öffnen.
+
+(`apps/web/public/assets/js/apps/store.js:548`) — und das Fenster neu öffnen hilft nicht, denn die
+Version bleibt dieselbe.
+
+**3. Eine Stunde kein Katalog.** Das ist Punkt 65 und 66, hier nur als Glied der Kette:
+`apps/server-api/classes/server/server.go:386` legt den Stundenticker an, `Server.hour` (ab `:421`)
+holt die Kataloge, es gibt keinen Abruf beim Start und keine Handauslösung. Bis dahin steht „Der
+Katalog dieses Stores ist nicht echt." — wo „noch nicht geholt" gemeint ist.
+
+**4. Der frisch aufgenommene Controller darf niemandem etwas erlauben.** Die Oberfläche trägt ihn
+mit `rootUsers: []` und `rootRoles: []` in die Vertrauensliste ein
+(`apps/web/public/assets/js/apps/users.js:941` in `askJoin`, dasselbe bei `:973` in `askJoinAPI`),
+und **keine Seite der Oberfläche konnte diese beiden Listen danach ändern**. `trust.MayRoot`
+(`shared/trust/trust.go:419`) fragt genau sie: der Benutzer steht in `RootUsers`, oder eine seiner
+Rollen in `RootRoles` — sonst `false`. Geprüft wird das an jeder Root-Aufgabe
+(`shared/task/task.go:199`, `shared/core/uiproof.go:132`). Zwei leere Listen, die niemand füllen
+kann, heißen: **auf diesem Controller kann nie eine App eingerichtet werden.**
+
+**5. `0700` auf dem Ordner über dem Heimatverzeichnis.** Der Controller legt `/var/lib/ngc/apps`
+mit `0o700` an (`apps/server-controller/classes/runtime/data.go:108`), und der Kommentar darüber
+begründet es richtig: zwischen `mkdir` und `chown` darf niemand anderes hineinsehen. Nur gehört
+der Ordner **root**, und darunter liegt das Heimatverzeichnis des App-Benutzers. Rootloses
+`podman load` dieses Benutzers bekam `EACCES` — **auf sein eigenes Heimatverzeichnis**, weil es
+den Weg dorthin nicht durchlaufen durfte. Gefunden wurde das mit `strace` am laufenden Dienst;
+podman meldete es nicht, das Journal nannte es nicht.
+
+**6. Kein Recht ohne App, keine App ohne Recht.** Der Schreibtisch zeigt eine App nur, wenn der
+Anfragende das Recht `benutzen` hält: `apps()` überspringt jede Zeile ohne
+`rq.Rights[a.ID+"/"+core.RightUse]` (`apps/server-api/classes/coreapp/desktop.go:161`). Die Seite
+„Rollen und Rechte" baut ihre Auswahl aus `this.apps` (`users.js:416`) — und das ist genau diese
+gefilterte Liste, durchgereicht aus `appCtx()` (`shell/desktop.js:579`: `apps: this.appList`).
+Eine neu eingerichtete App, die noch niemand benutzen darf, steht also in keinem Schreibtisch und
+damit in keiner Rechteliste. **Der Haken, der sie sichtbar machen würde, kann nur dort gesetzt
+werden, wo sie schon sichtbar ist.**
+
+### Was das heißt
+
+**Die blinde Zone hat einen Namen: es ist alles, was kein Go und kein JavaScript ist.** Vier der
+sechs lagen nicht im Code, den die Prüfsätze abdecken, sondern in einer **systemd-Unit** (1), einem
+**Bau-Flag** (2), einem **Dateimodus** (5) und einer **Vorgabe in einem Dialog** (4). Die
+Prüfsätze sind gut — sie haben hier nur nichts zu prüfen gehabt. Die Unit entsteht in einem
+anderen Repo, zur Laufzeit, aus Shell-Variablen; das Flag entsteht beim Bauen; der Modus ist eine
+Zahl, die für sich richtig ist; die leeren Listen sind ein gültiger Wert. Jedes Stück für sich
+besteht jede Prüfung, die es gibt.
+
+**Dreimal war der Satz auf dem Schirm nicht die Ursache.** „Der Katalog ist nicht echt" (3) für
+„noch nicht geholt", „Die Rechner konnten nicht geladen werden" (2) für „eine Zeile trug eine
+Version, die ich nicht lesen kann", und das stille Fehlen der App (6) für „dir fehlt ein Recht".
+Das ist dieselbe Klasse wie die Anmeldelüge aus **Punkt 50**, über die **Punkt 52** entscheidet und
+die **Punkt 65** am Katalog wiederfindet: ein **leerer Zustand** wird als **Angriff** oder als
+**Ablehnung** dargestellt. Wer das liest, sucht an der falschen Stelle, und zwar lange.
+
+**Dreimal protokollierte nichts den Grund.** Bei (2) nicht, weil es im Browser keine einzige
+Stelle gibt, die etwas schreibt: `grep -rc 'console\.'` über `apps/web/public/assets/js` ergibt
+**0**. Eine verworfene Antwort hinterlässt nirgends eine Spur. Bei (4) und (6) nicht, weil kein
+Fehler auftrat — die Oberfläche tat genau, was im Code steht. Bei (5) war die Ursache **nur mit
+`strace` am laufenden Dienst** zu finden. Allein (1) sagte selbst, was fehlt.
+
+**Zwei der sechs sind keine Fehler, sondern fehlende Oberflächen.** Systemrechte je Server (4) und
+Rechtevergabe für eine neue App (6) hat niemand gebaut. Nicht aus Nachlässigkeit, sondern weil
+**nie jemand den Weg zu Ende gegangen war**: jede einzelne Teilstrecke war geprüft, und die Lücke
+lag zwischen zwei geprüften Teilstrecken. Das ist der Grund, warum dieser Durchlauf etwas gefunden
+hat, was siebzig Punkte vorher nicht gefunden haben — nicht weil schlechter geprüft wurde, sondern
+weil zum ersten Mal **eine** Person **einen** Weg von Anfang bis Ende gegangen ist.
+
+**Der Schluss daraus, und er ist unbequem:** ein Durchlauf von Anfang bis Ende gehört in die
+Prüfung, nicht in die Woche eines Menschen. Solange er von Hand läuft, läuft er selten, und was
+nur selten läuft, bricht zwischen zwei Läufen an der nächsten kleinen Stelle.
+
+### Offene Entscheidungen — gemessen ist das oben, abgewogen ist das hier
+
+**a) Bekommt die einrichtende Person die Rechte automatisch?** Heute nicht (4). Ein frisch
+aufgenommener Controller hat leere `rootUsers`/`rootRoles`, und wer ihn gerade mit seinem Schlüssel
+in die Vertrauensliste geschrieben hat, darf dort nichts tun.
+
+> **Mein Vorschlag: ja, und nur sie, nur dieser Controller, nur `rootUsers`.** Wer eine Version der
+> Vertrauensliste unterschreiben kann, hat die Anlage ohnehin in der Hand — er kann sich das Recht
+> im nächsten Schritt selbst eintragen, sobald es dafür eine Oberfläche gibt. Es ihm beim Aufnehmen
+> zu geben, fügt **keine** Macht hinzu, sondern erspart einen Weg, den es noch nicht gibt.
+> **Nicht** über `rootRoles`: eine Rolle gibt das Recht an alle weiter, die sie heute oder morgen
+> tragen, und das ist eine andere Entscheidung als „ich für diesen Rechner". Die Oberfläche zum
+> Ändern braucht es trotzdem — sonst kann niemand **zweiter** je dazukommen, und niemand es wieder
+> wegnehmen.
+
+**b) Verwirft ein kosmetisch ungültiges Feld weiter die ganze Antwort?** Heute ja (2): eine
+Versionszeichenkette, die niemand anzeigt, nimmt die Liste aller Rechner mit.
+
+> **Mein Vorschlag: nein — aber die Trennlinie ist nicht „kosmetisch", sondern „trägt eine
+> Entscheidung".** `version` und `arch` einer Rechnerzeile werden angezeigt, nicht gerechnet; ist
+> der Wert unlesbar, gehört er **leer** gemacht und die Zeile behalten. Ein Schlüssel, ein
+> Fingerabdruck, eine Kennung, eine Prüfsumme bleiben hart: fällt dort etwas durch, ist die Antwort
+> zu verwerfen, und zwar ganz. Der Vertrag ist dann nicht weicher, er benennt nur, was er wirklich
+> braucht.
+>
+> **Und beide Hälften davon sind nur prüfbar, wenn sie zusammen geprüft werden:** ein Lauf, in dem
+> eine kaputte Version die Liste **nicht** mehr verwirft, und ein Lauf, in dem ein verbogener
+> Schlüssel sie **immer noch** verwirft. Einer allein beweist nichts.
+
+**c) Woher kommt das nächste Mal der Grund?** Offen gelassen, weil es eine eigene Entscheidung ist:
+ohne eine einzige Stelle im Browser, die festhält **was** verworfen wurde, ist (2) bei der nächsten
+Gelegenheit genauso stumm. Dagegen steht, dass ein solcher Platz schnell dorthin schreibt, wo
+jemand mitliest.
+
+> **Mein Vorschlag:** kein Protokoll, aber der **Satz auf dem Schirm nennt das Feld**: „Eine Angabe
+> dieses Servers ist unlesbar (`version`)." Das benennt die Stelle, ohne irgendwo etwas abzulegen.
