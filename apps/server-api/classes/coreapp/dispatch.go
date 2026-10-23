@@ -46,6 +46,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -239,13 +240,30 @@ func (d *Dispatcher) Serves(app, service, name string) bool {
 	return ok
 }
 
-// errClose carries the code a channel closes with.
-type errClose struct{ code wire.Code }
+// errClose carries the code a channel closes with and the sentence that says
+// which check said no.
+//
+// The sentence is a value of the closed list of package reason and never a
+// text of an error: the Error method below is what a Go caller sees, and it
+// stays the code alone, so no error text of ours can drift into a log or onto
+// a screen through it.
+type errClose struct {
+	code   wire.Code
+	reason reason.Reason
+}
 
 func (e errClose) Error() string { return string(e.code) }
 
-// fail returns an error that closes the channel with code.
-func fail(code wire.Code) error { return errClose{code} }
+// fail returns an error that closes the channel with code and the backstop
+// reason of that code. Every refusal of this package says something; a site
+// that knows more than the code says it with failWhy, and the backstop names
+// the layer and that the reason is missing (reason.ForCode), so a gap reads as
+// a gap in the log and not as an explanation.
+func fail(code wire.Code) error { return errClose{code, reason.ForCode(code)} }
+
+// failWhy returns an error that closes the channel with code and names the
+// check that said no.
+func failWhy(code wire.Code, why reason.Reason) error { return errClose{code, why} }
 
 // codeOf returns the code an error closes with; anything unexpected is
 // E_INTERNAL, and nothing of the error ever reaches the shell.
@@ -255,6 +273,17 @@ func codeOf(err error) wire.Code {
 		return e.code
 	}
 	return wire.CodeInternal
+}
+
+// reasonOf returns the sentence an error carries. An error that is none of
+// ours gets the backstop of E_INTERNAL, which is the code codeOf answers for
+// it: the two functions agree on the same error by construction.
+func reasonOf(err error) reason.Reason {
+	var e errClose
+	if errors.As(err, &e) {
+		return e.reason
+	}
+	return reason.ForCode(wire.CodeInternal)
 }
 
 // OpenChannel serves one channel the browser opened.
@@ -271,15 +300,25 @@ func codeOf(err error) wire.Code {
 func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *link.Channel,
 	o wire.Open, raw []byte) {
 	defer func() { _ = guard.Hit(recover(), "coreapp.OpenChannel", c.Num) }()
-	code, node := d.serve(ctx, s, c, o, raw)
+	code, node, why := d.serve(ctx, s, c, o, raw)
 	user := s.Live.Verified.Cert().User
 	// The answer is dropped on purpose: audit.ErrDropped means the entry was
 	// written with one field replaced, and a channel that ran must not be
 	// turned into a failed one by a complaint about the log. See the package
 	// comment.
-	_ = d.Log.Channel(ctx, user, o.App, o.Action, node, code)
+	//
+	// The reason goes into the log line of EVERY refused channel, and that is
+	// the hole this closes: the line carried the code and nothing else, so
+	// "E_INTERNAL" was all anybody could read of a decision that had a name
+	// (measured 19.-21.10.2026 on the Debian machine, three refusals in a
+	// row).
+	_ = d.Log.Channel(ctx, user, o.App, o.Action, node, code, why)
 	if code != "" {
-		_ = s.Close(ctx, code, c.Num)
+		// The screen gets the narrower list: reason.Screen keeps the one
+		// sentence out that would tell a user without a right whether an app
+		// is installed. CloseBecause falls back to the German text of the code
+		// for anything it may not say, which is what the shell got before.
+		_ = s.CloseBecause(ctx, code, why, c.Num)
 	}
 }
 
@@ -293,22 +332,25 @@ func (d *Dispatcher) OpenChannel(ctx context.Context, s *browser.Session, c *lin
 // without a word is a false answer of its own, and the browser would wait for
 // a result that is never coming (V1.2 point 50).
 func (d *Dispatcher) serve(ctx context.Context, s *browser.Session, c *link.Channel,
-	o wire.Open, raw []byte) (code wire.Code, node string) {
+	o wire.Open, raw []byte) (code wire.Code, node string, why reason.Reason) {
 	defer func() {
 		if guard.Hit(recover(), "coreapp.open", c.Num) {
-			code, node = wire.CodeInternal, ""
+			// A panic is a defect of ours, so the line says that and names no
+			// check: no check said no here.
+			code, node, why = wire.CodeInternal, "", reason.InsideAPI
 		}
 	}()
 	return d.open(ctx, s, c, o, raw)
 }
 
 // open does the work and returns the code to close with -- "" when the channel
-// ran and closed itself -- and the node the channel went to, for the log.
+// ran and closed itself -- the node the channel went to, for the log, and the
+// sentence that says which check said no.
 func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Channel,
-	o wire.Open, raw []byte) (wire.Code, string) {
+	o wire.Open, raw []byte) (wire.Code, string, reason.Reason) {
 	v, err := d.S.Trust(ctx)
 	if err != nil {
-		return wire.CodeUnreachable, ""
+		return wire.CodeUnreachable, "", reason.Trust
 	}
 	now := d.S.Now()
 	verified := s.Live.Verified
@@ -317,13 +359,13 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 	}
 	action, ok := core.Lookup(o.App, o.Service, o.Action)
 	if !ok {
-		return wire.CodeNotFound, ""
+		return wire.CodeNotFound, "", reason.ActionUnknown
 	}
 	node := nodeOfTask(o)
-	t, code := rights.Check(ctx, d.S.DB, v.List, rights.Request{
+	t, code, why := rights.Check(ctx, d.S.DB, v.List, rights.Request{
 		Action: action, Node: node, Open: o, Session: &verified}, now)
 	if code != "" {
-		return code, node
+		return code, node, why
 	}
 	d.logTask(ctx, verified.Cert().User, o, t)
 	if action.Service == core.ServiceController {
@@ -334,7 +376,7 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 		// case already, and this says it a second time instead of
 		// dereferencing nil.
 		if t == nil {
-			return wire.CodeConfirm, node
+			return wire.CodeConfirm, node, reason.NoTask
 		}
 		node = t.Node
 	} else {
@@ -365,46 +407,52 @@ func (d *Dispatcher) open(ctx context.Context, s *browser.Session, c *link.Chann
 	h, ok := d.handlers[action.App+"/"+action.Service+"/"+action.Name]
 	if !ok {
 		if action.Service == core.ServiceController {
+			// The relay writes the log line of a forwarded channel itself
+			// (relay.Forward), so nothing of this one is said twice.
 			d.Relay.Forward(ctx, s, c, o, raw, t, node)
-			return "", node
+			return "", node, reason.None
 		}
-		return wire.CodeNotFound, node
+		return wire.CodeNotFound, node, reason.ActionUnserved
 	}
 	granted, admin, err := rights.Of(ctx, d.S.DB, v.List, verified.Cert().User)
 	if err != nil {
-		return wire.CodeUnreachable, node
+		return wire.CodeUnreachable, node, reason.DB
 	}
-	return d.run(ctx, s, c, o, action, t, h, granted, admin), node
+	code, why = d.run(ctx, s, c, o, action, t, h, granted, admin)
+	return code, node, why
 }
 
 // forward resolves an app channel and hands it to the relay. App, manifest and
 // node all come from the row; the OPEN only picked which row to read.
 func (d *Dispatcher) forward(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
-	raw []byte, l *trustList, verified *verifiedSession, now int64) (wire.Code, string) {
+	raw []byte, l *trustList, verified *verifiedSession,
+	now int64) (wire.Code, string, reason.Reason) {
 	row, err := d.S.DB.AppGet(ctx, o.App)
 	switch {
 	case errors.Is(err, dbapi.ErrNotFound):
 		// An app that is not installed answers exactly like a missing right,
 		// so the answer tells a user without the right nothing about the
-		// installation (package rights, Check).
-		return wire.CodeForbidden, ""
+		// installation (package rights, Check). The LOG says which of the two
+		// it was -- its reader is an admin of this installation -- and
+		// reason.Screen keeps that sentence off the screen.
+		return wire.CodeForbidden, "", reason.AppUnknown
 	case err != nil:
-		return wire.CodeUnreachable, ""
+		return wire.CodeUnreachable, "", reason.DB
 	}
 	m, err := store.ParseManifest(row.Manifest)
 	if err != nil {
 		// A manifest the database cannot hold is a broken row, and a broken
 		// row grants nothing.
-		return wire.CodeForbidden, ""
+		return wire.CodeForbidden, "", reason.AppUnknown
 	}
-	t, code := rights.Check(ctx, d.S.DB, l, rights.Request{
+	t, code, why := rights.Check(ctx, d.S.DB, l, rights.Request{
 		App: &row, Manifest: m, Node: row.Node, Open: o, Session: verified}, now)
 	if code != "" {
-		return code, row.Node
+		return code, row.Node, why
 	}
 	d.logTask(ctx, verified.Cert().User, o, t)
 	d.Relay.Forward(ctx, s, c, o, raw, t, row.Node)
-	return "", row.Node
+	return "", row.Node, reason.None
 }
 
 // logTask notes a signed task with its signature. The signature goes in as
@@ -425,7 +473,8 @@ func (d *Dispatcher) logTask(ctx context.Context, user string, o wire.Open, t *t
 // run answers the first GRANT, reads the input, calls the handler and sends
 // the result.
 func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channel, o wire.Open,
-	action core.Action, t *task.Task, h Handler, granted map[string]bool, admin bool) wire.Code {
+	action core.Action, t *task.Task, h Handler, granted map[string]bool,
+	admin bool) (wire.Code, reason.Reason) {
 	// With a task the signed params are the params; the OPEN carries none of
 	// its own then (wire.Open.Validate, and rights.Check again).
 	raw := o.Params
@@ -434,13 +483,13 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	}
 	params, err := core.ParseParams(action, raw)
 	if err != nil {
-		return wire.CodeProtocol
+		return wire.CodeProtocol, reason.Params
 	}
 	// A core channel carries no end-to-end handshake of its own, so this GRANT
 	// carries no Noise message 2: the session to the API is already encrypted
 	// end to end (package wire, "Core apps").
 	if err := s.SendGrant(ctx, c, wire.DefaultWindow, nil); err != nil {
-		return wire.CodeInternal
+		return wire.CodeInternal, reason.InsideAPI
 	}
 	// The DATA of a FlowIn channel is STREAMED to the handler and not read
 	// into a []byte first. It matters for one action and it decides whether
@@ -469,10 +518,12 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	// the break itself. A handler that swallowed the error of its reader
 	// cannot answer a result for half an upload either.
 	if stream != nil && stream.Code() != "" {
-		return stream.Code()
+		// The break of the input and not a check that said no: the stream
+		// names the code, and what it broke is the bound of this action.
+		return stream.Code(), reason.TooLarge
 	}
 	if err != nil {
-		return codeOf(err)
+		return codeOf(err), reasonOf(err)
 	}
 	// What a handler did not read is read away here, so a channel never ends
 	// quietly on half an input. Every FlowIn handler of this API reads to the
@@ -480,7 +531,7 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	// sentence true for the next one.
 	if stream != nil {
 		if code := stream.Drain(); code != "" {
-			return code
+			return code, reason.TooLarge
 		}
 	}
 	if action.Flow == core.FlowOut {
@@ -489,15 +540,15 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 		// is store.MaxUITotal.
 		body = out.Bytes()
 		if len(body) > store.MaxUITotal {
-			return wire.CodeTooLarge
+			return wire.CodeTooLarge, reason.TooLarge
 		}
 	} else if len(body) > wire.MaxCallResult {
-		return wire.CodeTooLarge
+		return wire.CodeTooLarge, reason.TooLarge
 	}
 	if err := s.SendResult(ctx, c, body); err != nil {
-		return wire.CodeInternal
+		return wire.CodeInternal, reason.InsideAPI
 	}
-	return ""
+	return "", reason.None
 }
 
 // nodeOfTask returns the node a task names, "" when the OPEN carries none: the
