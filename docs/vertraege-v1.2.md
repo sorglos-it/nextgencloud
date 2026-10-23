@@ -3708,3 +3708,60 @@ des Protokolls nicht entscheiden.
 drei verschiedene Tests verlieren kann, ist keine Prüfung mehr, die einen echten Befund von
 Rauschen trennt. Das ist die Fortsetzung von Punkt 69 mit anderen Mitteln: dort war sie rot und
 schwieg, hier ist sie rot und meint es verschieden.
+
+### Nachtrag 23.10.2026: die zwei Wettläufe unter Linux — und Windows war das falsche Messgerät
+
+Beide offenen Fälle sind jetzt dort gemessen, wo die CI sie verliert: Testbinäre für
+`linux/amd64` übersetzt und in der Debian-WSL gelaufen, 128 Kerne, 256 Lastschleifen daneben.
+
+#### Der Kanal: bestätigt, und keine Windows-Eigenheit
+
+`TestAPackageLargerThanOneWindowGetsThrough`, 20 Läufe: **5 Fehlschläge**.
+
+| | Fehlschläge |
+|---|---|
+| Windows unter Last | 4 von 20 |
+| **Linux unter Last** | **5 von 20** |
+| Windows ohne Last | 0 von 20 |
+
+Dieselbe Erscheinung, dieselbe Rate, dieselben Zahlen: `CLOSE` mit `E_PROTOCOL`, und der
+Installierer las **60 000 Bytes dreimal und 120 000 Bytes zweimal** — also nach einem oder zwei
+von sechs Rahmen abgebrochen, an der Rahmengrenze. **Der Befund aus Punkt 70 steht damit auf
+zwei Betriebssystemen**, und die Ursache bleibt ungemessen.
+
+#### Der Tunnel: die Nullkontrolle feuert, und sie hat recht
+
+`TestAPingLostToOurOwnWriteDoesNotKillTheTunnel/one_interval`, 14 Läufe:
+**12 PASS, 0 FAIL, 2 `UNMEASURABLE`-Skips.**
+
+Die zwei Skips sind die Kontrolle aus Punkt 69, wörtlich im Protokoll:
+
+```
+UNMEASURABLE: the tunnel counted as gone 1.135s after the way opened - ping() decided
+on a count of running writes that no test can see afterwards
+```
+
+**Und jetzt die Zahl, die alles erklärt.** Wie lange der erste Ping nach dem Öffnen braucht:
+
+| | Ping-Ankunft |
+|---|---|
+| Windows unter Last | 5 bis 37 ms |
+| **Linux unter Last** | **507 ms bis 1,147 s** |
+
+Zwischen zwanzig- und zweihundertfach länger. Das Ping-Intervall des Falls ist **300 ms** —
+auf Linux liegt die Ankunft also regelmäßig **jenseits** eines Intervalls, auf Windows nie in
+seiner Nähe. Darum hat dieser Rechner den Fall in 22 Läufen nie verloren und die CI zweimal.
+
+**Die zwei Skips liegen mitten in derselben Verteilung wie die Durchläufe** — gefeuert bei
+869 ms und 1,135 s, bestanden bei 866 ms, 912 ms und 1,099 bis 1,147 s. Es ist in diesem Fenster
+ein Münzwurf, und genau das heißt „unmeasurable". **Ein rotes Urteil dort wäre Rauschen
+gewesen**, und die Korrektur aus Punkt 69, die den roten Zweig ganz entfernt hat, ist damit
+nicht nur begründet, sondern gemessen.
+
+#### Was daraus für das Messen folgt
+
+**Windows war für diese zwei Fälle das falsche Messgerät**, und das war vorher nicht
+sichtbar — es sagt nicht „übersprungen", es sagt grün. Ein Fall, der auf Zeiten im Netz oder
+auf Scheduling beruht, ist auf dem Betriebssystem zu messen, auf dem er läuft; dafür reicht
+`go test -c -o <datei>` und ein Lauf in der WSL, und das kostet eine Minute. Dieselbe Regel wie
+„ein Testergebnis gilt für das Laufwerk, auf dem es gemessen wurde" — nur eine Ebene höher.
