@@ -94,6 +94,14 @@ jobs:
         # runner image carries one, this makes which one visible.
         run: php -v | head -1
 
+      # BEFORE check.sh, and for the same reason check.sh puts its structural
+      # checks before its builds: a counter that counts wrong makes the three
+      # minutes after it worthless. This step also asserts that this workflow
+      # and check.sh still agree on NGC_CHECK_TEST_JSON - the drift that made
+      # 42 of 82 red runs here report "nothing ran" while check.sh was green.
+      - name: zaehlwerk selbst pruefen
+        run: bash tools/ci-count-test.sh
+
       - name: check.sh
         env:
           # check.sh writes the JSON stream of its own test run here instead of
