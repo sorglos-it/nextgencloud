@@ -665,10 +665,10 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
   await sign(page);
-  // The sentence says the rest too: nothing was ticked in the question, so
-  // nobody may run a root task on that server yet.
+  // The sentence says the rest too: the box of the person doing this starts
+  // ticked (V1.2 point 71), so the answer names them and nobody else.
   await expect(app(page).locator(".pending .note")).toHaveText(
-    "Der Server »dienste« ist aufgenommen. Auf diesem Server darf noch niemand Apps einrichten.");
+    "Der Server »dienste« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: admin.");
 
   const sent = await page.evaluate(async () => {
     const trust = await import("/assets/js/contracts/trust.js");
@@ -714,7 +714,7 @@ test("two servers taken in one after the other give n+1 and n+2, not two at one 
     await sign(page);
     await expect(app(page).locator(".pending .note"))
       .toHaveText("Der Server »dienste« ist aufgenommen. "
-        + "Auf diesem Server darf noch niemand Apps einrichten.");
+        + "Aufgaben mit Systemrechten dürfen dort: admin.");
 
     await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
@@ -1497,24 +1497,51 @@ function othersUntouched(got) {
   }
 }
 
-test("a server taken in with nothing ticked grants root to nobody, and the answer says so",
+test("the box of the person taking the server in starts ticked, and only theirs",
   async ({ page }) => {
-    // NO DEFAULT, and that is the decision this case pins: whom to trust with
-    // root on a machine belongs to the owner of the installation. A surface
-    // that ticked something by itself would hand the right out in the one
-    // moment nobody is looking, and there is no way back out of a right
-    // nobody noticed being given. So the take-up goes through, the lists stay
-    // empty, and the sentence says what that means.
+    // V1.2 point 71: a take-up that ends with two empty lists leaves a machine
+    // on which nobody can set up an app. The person signing this version holds
+    // the installation anyway, so their box starts ticked - theirs alone, and
+    // no role, because a role would hand the right on to whoever carries it
+    // later.
     await skipWithoutLogin(page);
     await mount(page, { signable: true });
     await openTab(page, "Server");
     await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg).toBeVisible();
-    // Nothing is ticked when the question opens.
-    expect(await dlg.locator(".rootpick input:checked").count()).toBe(0);
-    // And the question says what a tick would mean, before anybody sets one.
+    // Exactly one box, and it is the one of this session's user.
+    expect(await dlg.locator(".rootpick input:checked").count()).toBe(1);
+    await expect(dlg.getByRole("checkbox",
+      { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })).toBeChecked();
+    // And the question says what the tick means, and that it can go.
     await expect(dlg).toContainText("Apps einrichten, entfernen, Daten löschen und das Terminal");
+    await expect(dlg).toContainText("Ihr Haken ist gesetzt.");
+    await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note")).toHaveText(
+      "Der Server »dienste« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: admin.");
+    const first = await sentRoot(page, "dienste");
+    expect(first.users).toEqual([first.me]);
+    expect(first.roles).toEqual([]);
+    othersUntouched(first);
+  });
+
+test("the tick can be taken off again, and then the server grants root to nobody",
+  async ({ page }) => {
+    // The pre-tick is an offer, not a decision: an installation in which this
+    // person is not the one who sets up apps there has to be able to say so,
+    // in the same breath, and the sentence afterwards has to say what that
+    // means.
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("checkbox",
+      { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" }).uncheck();
+    expect(await dlg.locator(".rootpick input:checked").count()).toBe(0);
     await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
     await sign(page);
     await expect(app(page).locator(".pending .note")).toHaveText(
@@ -1563,6 +1590,10 @@ test("a role can be ticked instead, and then it is the role that stands in the l
     await expect(dlg).toContainText("Eine Rolle gilt auch für alle, die ihr später beitreten.");
     await dlg.getByRole("checkbox", { name: "Rolle admin darf Aufgaben mit Systemrechten ausführen" })
       .check();
+    // The own box starts ticked and comes off here: this case is about the
+    // role standing in the list ALONE.
+    await dlg.getByRole("checkbox", { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })
+      .uncheck();
     await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
     await sign(page);
     await expect(app(page).locator(".pending .note")).toHaveText(
@@ -1699,6 +1730,11 @@ test("the boxes of the question can be reached with the keyboard alone", async (
     await page.keyboard.press("Tab");
   }
   await expect(boxes.first()).toBeFocused();
+  // The first box is the own one and starts ticked (V1.2 point 71), so the
+  // keyboard is shown on BOTH edges: it takes the tick off and puts it back.
+  await expect(boxes.first()).toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(boxes.first()).not.toBeChecked();
   await page.keyboard.press("Space");
   await expect(boxes.first()).toBeChecked();
   await expect(dlg.getByRole("checkbox",

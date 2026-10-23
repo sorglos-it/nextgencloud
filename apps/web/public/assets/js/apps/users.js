@@ -294,10 +294,23 @@ const NO_ROOT = "Mit Systemrechten: niemand";
 // has to be built from the version the shell checked. It is also what makes the
 // result valid without a second check - trust.List.Validate refuses a root list
 // naming a user or a role the list does not have.
-function rootPicker(l, node) {
+// mine is the id of the user whose session this is, and it is used in ONE
+// case: a controller that is not in the list yet, where that person's box
+// starts ticked. Only theirs, only rootUsers, and abwaehlbar - the box is a
+// box like every other. The reason is V1.2 point 71: a take-up that ends with
+// two empty lists leaves a machine on which nobody can set up an app, and the
+// only way out of it used to be a surface that did not exist. Whoever can sign
+// a version of the trust list holds the installation anyway, so offering them
+// the tick adds no power; it only removes the case where someone takes a
+// controller in and finds out at the first app that they may do nothing there.
+// A role is NOT pre-ticked: a role hands the right to everyone who carries it
+// today or tomorrow, which is a different decision from "me on this machine".
+function rootPicker(l, node, mine = "") {
   const allUsers = Array.isArray(l?.users) ? l.users.filter(isObj) : [];
   const allRoles = Array.isArray(l?.roles) ? l.roles.filter(isObj) : [];
-  const nowUsers = node !== null && Array.isArray(node.rootUsers) ? node.rootUsers : [];
+  const nowUsers = node !== null && Array.isArray(node.rootUsers)
+    ? node.rootUsers
+    : (node === null && typeof mine === "string" && mine !== "" ? [mine] : []);
   const nowRoles = node !== null && Array.isArray(node.rootRoles) ? node.rootRoles : [];
   const fs = el("fieldset", "role rootpick");
   fs.append(el("legend", null, "Aufgaben mit Systemrechten"));
@@ -1152,9 +1165,10 @@ class Users {
     }
     const v = this.trust.current();
     const id = nodeID(n.name, v.list);
-    // Nothing is ticked: whom to trust with root on a machine is the owner's
-    // decision, and a default would make it in the one moment nobody looks.
-    const pick = rootPicker(v.list, null);
+    // The box of the person doing this starts ticked, and nothing else does.
+    // It can be taken off again, and the answer below says either way what
+    // follows from it (rootPicker carries the why).
+    const pick = rootPicker(v.list, null, this.session?.user ?? "");
     this.ask({
       title: "Server »" + n.name + "« aufnehmen",
       body: [
@@ -1164,7 +1178,8 @@ class Users {
         el("p", "fp mono", seen.fp),
         el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck auf dem Server steht."),
         pick.el,
-        el("p", null, "Ohne einen Haken kann auf diesem Server niemand eine App einrichten. "
+        el("p", null, "Ihr Haken ist gesetzt. Nehmen Sie ihn weg, wenn Sie auf diesem Server "
+          + "selbst nichts einrichten sollen — dann kann es dort zunächst niemand. "
           + "Das lässt sich später unter »Eingetragene Server« ändern."),
       ],
       go: "Server aufnehmen",
@@ -1180,10 +1195,11 @@ class Users {
           next.nodes.push({
             id, kind: trust.NODE_CONTROLLER, name: n.name, noise: n.key,
             sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
-            // WHAT THE PERSON TICKED, and nothing of this file's own: these
-            // two lists are the whole reason a taken-in controller can do
-            // anything at all (trust.MayRoot), and a surface that filled them
-            // in by itself would be deciding who gets root on a machine.
+            // WHAT THE PERSON TICKED, read off the boxes. One box starts
+            // ticked (rootPicker, mine), and it is theirs alone; everything
+            // else in these two lists got there by a hand. They are the whole
+            // reason a taken-in controller can do anything at all
+            // (trust.MayRoot), so nothing is added here that no box carried.
             rootUsers: want.rootUsers, rootRoles: want.rootRoles,
           });
         });
