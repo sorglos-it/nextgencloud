@@ -4186,6 +4186,16 @@ auf einer echten VM ist keines von beiden geprüft.
 - **(1) ist offen, und zwar woanders:** die Unit steht nur auf dem Zweig `ngc-kette` von `ulh`,
   der nicht verschmolzen ist; auf dessen `main` gibt es die NGC-Skripte gar nicht. Dort schreibt
   `ngc-api.sh` weiter `ReadWritePaths` ohne `/etc/ngc`.
-- **(6) ist offen:** `apps()` filtert in `main` unverändert auf `core.RightUse`
-  (`coreapp/desktop.go:161`), und die Rechteseite baut ihre Auswahl unverändert aus `this.apps`
-  (`apps/users.js:609` auf `main`). **Der Henne-Ei-Fall ist noch da.**
+- **(6) ist behoben, und ich hatte es zuerst falsch abgeschrieben.** `apps()` filtert in `main`
+  tatsächlich unverändert auf `core.RightUse`, und die Rechteseite baut ihre Auswahl unverändert
+  aus dieser Liste — nur ist das nicht mehr der Kreis, weil die Liste für einen Verwalter
+  vollständig ist: `rights.Of` ruft für einen Admin `adminApps`
+  (`apps/server-api/classes/rights/rights.go:56`), und das setzt `<app>/use` **und** jede Aktion
+  jeder eingerichteten App, **ohne Zeile in der Datenbank**. Damit steht die App im Menü, also
+  auch in der Rechteliste. Behoben am **21.10.2026** mit `c0f0022` — am letzten Tag der Messung,
+  weshalb der Befund oben gilt und dieser Nachtrag ihn nicht aufhebt.
+  Dass das Recht in **keiner** Zeile liegt, ist dabei der Kern: ein Recht, das in einer Zeile
+  läge, könnte man dem Verwalter wegnehmen, indem man die Seite ohne den Haken speichert.
+  **Was davon bleibt,** klein, aber echt: `adminApps` und das Menü lassen eine **abgeschaltete**
+  App beide aus (`!a.Active`). Deren Rechte lassen sich also nicht vorbereiten, solange sie aus
+  ist — das ist so gewollt und hier nur vermerkt, nicht als Befund.
