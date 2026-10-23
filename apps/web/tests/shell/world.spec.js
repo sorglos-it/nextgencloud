@@ -388,6 +388,60 @@ test.describe("the adapter", () => {
       expect(got.opened).toBe(5);
     });
 
+  // THE CONFIRMATION ON A FlowIn ROW, which is the upload and nothing else.
+  // contracts/core.js has ACT_UPLOAD as FlowIn and core.critical says upload is
+  // critical, so it is the one action of the table that MUST be able to carry a
+  // re-confirmation - and the case above only ever sent one down the FlowCall
+  // branch. net/channel.js's sendInBytes grew the parameter for it on
+  // 18.10.2026; what is measured here is that the caller hands it over, because
+  // a confirmation dropped between the two is an E_CONFIRM from the API with
+  // nothing on this side to show for it.
+  //
+  // WHY THE CASE ABOVE COULD NOT SEE IT: it sends the confirmation on
+  // ngc.store/controller/uninstall, a FlowCall row, which goes through
+  // callBytes. The FlowIn branch is a second piece of code, and a second piece
+  // of code needs a second measurement.
+  //
+  // THE ROW IS LOOKED UP, not written out: core.critical is asked whether
+  // upload really is the critical FlowIn row, so a contract that moved it makes
+  // this case say so instead of quietly measuring a row that no longer matters.
+  test("a confirmation travels on the FlowIn row as well, which is the upload",
+    async ({ shell }) => {
+      await plant(shell);
+      const got = await shell.evaluate(async () => {
+        const core = await import("/assets/js/contracts/core.js");
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const rec = window.__ngcRecorder();
+        const link = adapterFor(rec);
+        const row = core.lookup(core.APP_STORE, core.SERVICE_API, core.ACT_UPLOAD);
+        await link.call(core.APP_STORE, core.SERVICE_API, core.ACT_UPLOAD, null, {
+          taskBytes: utf8('{"t":9}'),
+          confirmBytes: utf8('{"c":9}'),
+          stream: new Blob([utf8("ein paket")]).stream(),
+        });
+        const sent = rec.opens[rec.opens.length - 1];
+        return {
+          // The row really is the FlowIn one that wants a confirmation; if the
+          // contract ever moves that, these three say which part moved.
+          flow: row.flow, critical: core.critical(row),
+          task: sent.task, confirm: sent.confirm, data: sent.data, ended: sent.ended,
+        };
+      });
+      expect(got.flow).toBe("in");
+      expect(got.critical).toBe(true);
+      // The signed task AND the confirmation of it, both in the OPEN. The task
+      // is asserted beside the confirmation on purpose: a branch that forwarded
+      // neither would otherwise look the same as one that forwarded only the
+      // task, and those are two different defects.
+      expect(got.task).toBe('{"t":9}');
+      expect(got.confirm).toBe('{"c":9}');
+      // And the body still travelled as DATA: the confirmation did not displace
+      // what the FlowIn row is for.
+      expect(got.data).toEqual(["ein paket"]);
+      expect(got.ended).toBe(true);
+    });
+
   test("the node of an app's own service arrives, and the refusal names the piece that is missing",
     async ({ shell }) => {
       await plant(shell);

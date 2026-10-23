@@ -318,10 +318,31 @@ func TestAcceptRefusesAHandshakeWithoutWaiting(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.CloseNow()
+	// BEFORE the write, and that is the whole of this line. What is measured
+	// below is a wait that happens on the OTHER side: the handler reaches
+	// closeBounded once it has read this frame and starts its timer there
+	// (link.go, "t := time.NewTimer(CloseWait)"). A start taken after Write
+	// returns is a start that can lie AFTER that timer began - Write comes
+	// back once the frame is handed over, and the server may be through its
+	// read by then - and the difference then measures the scheduler.
+	//
+	// Measured on 20.10.2026: the margin was 0.32 to 0.50 ms over ten runs of
+	// this case alone (d between 1.000320 s and 1.000503 s against a 1 s
+	// bound), and under the load of the -race run in CI it went the other way:
+	// "the refused handshake held the handler 998.882957ms, CloseWait is 1s",
+	// 1.12 ms short. Nothing about the code had changed.
+	//
+	// Taken before the write, start cannot be later than the server's zero -
+	// the server cannot read a frame that was not written yet - so the lower
+	// side holds by construction instead of by a margin. Measured both ways
+	// with a 2 ms delay that stands in for the load: after the write it fails
+	// 5 of 5 at 998.0-998.2 ms, before the write it passes 5 of 5. The upper
+	// side is untouched and still does its work: with CloseWait raised to
+	// 1900 ms this case fails at 1.901 s.
+	start := time.Now()
 	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	start := time.Now()
 	select {
 	case err := <-back:
 		if err == nil {
@@ -349,10 +370,14 @@ func TestAcceptRefusesAHandshakeWithoutWaiting(t *testing.T) {
 func TestARefusalDoesNotWaitOnTheRulebreaker(t *testing.T) {
 	l, _, conn, done := dialTest(t)
 	defer done()
+	// Before the write, for the reason spelled out in
+	// TestAcceptRefusesAHandshakeWithoutWaiting: the wait being measured
+	// starts on the other side, and a start taken after Write returns can lie
+	// after it.
+	start := time.Now()
 	if err := conn.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	start := time.Now()
 	if _, err := l.Read(ctx); err == nil {
 		t.Fatal("a text message was taken")
 	}
