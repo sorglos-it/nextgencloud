@@ -262,7 +262,7 @@ esac
 
 # The store being GONE is the other half, and it is not measured by switching
 # it off: that would leave the installation in a state the next station reads.
-unmeasurable D2 "$sd2 (Laden weg)" "whether a store nobody can reach leaves the LAST GOOD catalog in place (appstore.Refresh promises it) can only be seen once a catalog has ever arrived, and that needs station 6"
+unmeasurable D2 "$sd2 (Laden weg)" "a catalog HAS arrived now, so this is measurable at last - but it costs an hour of wall clock: the store round first beats an hour after the start and then hourly (server.go says why), so switching nginx off and asking again is a run of its own, not a line in this one. The same holds for the rollback guard (store.ErrRollback), which needs a catalog with a LOWER seq served after a higher one"
 
 # ---------------------------------------------------------------------------
 # station D3  zwei API-Server
@@ -316,18 +316,72 @@ else
 	drei=offen
 fi
 
+# ---------------------------------------------------------------------------
+# station 4  aufnehmen      station 6  Katalog da
+#
+# Both are read from the DATABASE NODE, and that is said rather than hidden:
+# the trust list and the catalogs live in the database (dbapi.BlobTrust,
+# dbapi.BlobCatalog), and NGC exposes neither to anybody who is not signed in -
+# which is right, and leaves a run like this one no other place to look. What
+# is asked here is therefore the RESULT of the two clicks, not the clicks.
+s4="aufnehmen"
+s6="Katalog da"
+# base64url WITH its padding put back, and the whole thing allowed to fail.
+# Both halves were learned the hard way in this very script (24.10.2026): a
+# payload is base64url without padding, "base64 -d" refuses it for exactly
+# that - and under "set -e" a failing command substitution ends the run with
+# no line and no message, so the stations after this one simply were not
+# there. A measuring script that disappears mid-run is worse than a red one.
+entpacke() {
+	local b=$1
+	case $(( ${#b} % 4 )) in
+	2) b="$b==" ;;
+	3) b="$b=" ;;
+	esac
+	printf '%s' "$b" | tr '_-' '/+' | base64 -d 2>/dev/null || true
+}
+roh=$(auf "$DB" "mariadb -Nse 'select data from ngc.ngc_blob where kind=\"trust\" order by cast(id as unsigned) desc limit 1'" |
+	sed -n 's/.*"payload":"\([^"]*\)".*/\1/p' || true)
+liste=$(entpacke "$roh")
+if [ -z "$liste" ]; then
+	unmeasurable 4 "$s4" "no trust list could be read from $DB - the first setup has to come off first"
+else
+	lseq=$(printf '%s' "$liste" | sed -n 's/.*"seq":\([0-9]*\).*/\1/p' | head -1 || true)
+	# One line per node in the list, counted by the "kind" every entry carries.
+	knoten=$(printf '%s' "$liste" | grep -o '"kind":"[a-z]*"' | wc -l || true)
+	if [ "${knoten:-0}" -ge 2 ]; then
+		pass 4 "$s4" "the trust list stands at version $lseq and holds $knoten nodes, so servers really were adopted - every one of them cost an admin a click"
+	else
+		fail 4 "$s4" "the trust list stands at version $lseq and holds $knoten node(s): nothing was adopted, so a paired server takes no tasks"
+	fi
+fi
+
+kat=$(auf "$DB" "mariadb -Nse 'select char_length(data) from ngc.ngc_blob where kind=\"catalog\"'" | head -1 || true)
+lage=$(auf "$DB" "mariadb -Nse 'select data from ngc.ngc_blob where id=\"store.global\"'" || true)
+case $lage in
+*'"error"'*)
+	fail 6 "$s6" "the installation kept no catalog and says why: $lage"
+	;;
+*'"checked"'*)
+	if [ "${kat:-0}" -gt 0 ]; then
+		pass 6 "$s6" "a catalog of $kat bytes is stored and the store's row says $lage - fetched over the network from a store on its OWN machine, with its certificate checked"
+	else
+		fail 6 "$s6" "the store's row says $lage but no catalog is stored"
+	fi
+	;;
+*)
+	unmeasurable 6 "$s6" "the installation has not tried a store round yet (no store.global row). The round first beats an HOUR after the start, on purpose: server.go, 'an installation that comes up must not begin replacing its own parts before anybody has looked at it'"
+	;;
+esac
+
 if [ "$offen" = offen ]; then
 	warum="the first setup has not happened: /var/lib/ngc/setup-code is still there, so this installation has no admin and no trust list yet. Open https://$ZONE in a browser and type the code in"
 	[ "$drei" = getan ] || unmeasurable 3 "$s3" "$warum - the pairing code comes from a signed-in admin"
-	unmeasurable 4 "aufnehmen" "$warum - adopting is a click of an admin"
 	unmeasurable 5 "Systemrechte setzen" "needs station 4"
-	unmeasurable 6 "Katalog da" "$warum; the API says it itself: 'catalogs could not be fetched error=state: no trust list yet' (journalctl -u ngc-api on api-1)"
 	unmeasurable 8 "App erscheint im Menue" "needs station 7, and a second user to show that the rights page offers an app one cannot see yet"
 else
 	[ "$drei" = getan ] || unmeasurable 3 "$s3" "no controller is paired yet: the code is shown in the browser (Benutzer und Server -> Server -> Kopplungscode), is good ONCE (dbapi.OncePair) and for 24 hours - a script cannot be the admin that mints it"
-	unmeasurable 4 "aufnehmen" "needs station 3, and then a click through the interface"
-	unmeasurable 5 "Systemrechte setzen" "needs station 4"
-	unmeasurable 6 "Katalog da" "needs a controller that was adopted, so station 4"
+	unmeasurable 5 "Systemrechte setzen" "the servers are adopted, and giving one its system rights is a click of a signed-in admin on the rights page - there is no file on a machine that says it was done"
 	unmeasurable 8 "App erscheint im Menue" "needs station 7 and a second user"
 fi
 
@@ -365,7 +419,10 @@ for paar in "svc-1|$SVC1" "svc-2|$SVC2"; do
 		pass 7 "$s7 ($name)" "kernel can encrypt, /var/lib/ngc/apps is $quelle with the encrypt feature, mode 0$modus lets an app user through, podman $(auf "$ip" "podman --version 2>/dev/null | awk '{print \$3}'")"
 	fi
 done
-unmeasurable 7 "App einrichten (die App selbst)" "the disk is ready on both services nodes, what is missing is a catalog and an adopted controller - stations 4 and 6"
+# What is missing for the app itself is named by what the catalog HOLDS, not
+# by a station number: a signed catalog with no app in it is a catalog that
+# arrived - station 6 is green on it - and still leaves nothing to install.
+unmeasurable 7 "App einrichten (die App selbst)" "the disk is ready on both services nodes and a catalog arrived, but it carries no app: 'ngc-store catalog' over an empty directory signs an empty list. Pack one with 'ngc-store pack', put it on the store beside catalog.json and sign the catalog again with a higher seq"
 
 # ---------------------------------------------------------------------------
 echo "erstlauf-verteilt: $fails red, $unmeasured unmeasurable"

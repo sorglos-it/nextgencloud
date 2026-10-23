@@ -337,13 +337,41 @@ mit Begründung).
 
 ## Was der Erstlauf verteilt NICHT durchläuft, und warum
 
-`bash tools/erstlauf-verteilt.sh` → **0 rot, 9 unmessbar, Ausstieg 2**, keine
-`ok`-Zeile. Durchgelaufen: Station 1, Station 2 (API), D1 (Datenbank
-getrennt), D2 (Laden getrennt, mit Gegenprobe), Station 7 für den Datenträger
-auf beiden Dienste-Knoten.
+**Erster Lauf, vor der Ersteinrichtung:** 0 rot, **9 unmessbar**, Ausstieg 2.
+Durchgelaufen waren Station 1, Station 2 (API), D1, D2 und Station 7 für den
+Datenträger.
 
-Alles Übrige hängt an **einem** Punkt, und der ist keine Lücke im Aufbau,
-sondern ein Mensch: die **Ersteinrichtung geschieht im Browser**. `GET`/`POST`
+**Stand nach der Ersteinrichtung** (Thomas hat den Einmal-Code eingegeben,
+fünf Controller gekoppelt und alle aufgenommen): **0 rot, 4 unmessbar,
+Ausstieg 2**, keine `ok`-Zeile — **elf Stationen melden ok**:
+
+| Station | was sie misst |
+|---|---|
+| 1 | das veröffentlichte Release unter NGCs eigenem Schlüssel |
+| 2 | ngc-api 0.2.1 aktiv mit stehendem MainPID |
+| 2 (Controller) | ngc-controller 0.2.1 auf svc-1 |
+| 3 | svc-1 gekoppelt: `controller.json`, Marke, Dienst hält |
+| 4 | Vertrauensliste **Fassung 6 mit sieben Knoten** |
+| 6 | **Katalog da** — 202 Bytes gespeichert, `{"checked":…}` |
+| D1 | Datenbank auf einer anderen Maschine, Verbindung steht |
+| D2 | Laden auf eigener Maschine, Zertifikat geprüft, mit Gegenprobe |
+| D3 | zweiter API-Server aktiv |
+| 7 (×2) | Datenträger auf svc-1 und svc-2 kann verschlüsseln |
+
+Vier bleiben, und keine davon ist eine Lücke im Aufbau:
+
+- **Station 5 Systemrechte** — ein Klick eines angemeldeten Admins auf der
+  Rechteseite; auf keiner Maschine liegt eine Datei, die ihn bezeugt.
+- **Station 7 (die App selbst)** und **Station 8** — der Katalog ist da, aber
+  **leer**: `ngc-store catalog` über einem leeren Ordner unterschreibt eine
+  leere Liste. Es fehlt ein gepacktes App-Paket, nicht ein Stück Anlage.
+- **D2 (Laden weg) und der Rückfall-Schutz** — jetzt endlich messbar, kosten
+  aber je eine Stunde Wanduhr, weil die Ladenrunde stündlich schlägt. Das ist
+  ein eigener Lauf, keine Zeile in diesem.
+
+Vor der Ersteinrichtung hing alles Übrige an **einem** Punkt, und der ist
+keine Lücke im Aufbau, sondern ein Mensch: die **Ersteinrichtung geschieht im
+Browser**. `GET`/`POST`
 auf `/api/v1/setup`, beide Seiten weisen mit einem MAC nach, dass sie den
 Einmal-Code aus `/var/lib/ngc/setup-code` haben
 (`apps/server-api/classes/setup/setup.go`). Vorher gibt es keinen Admin und
