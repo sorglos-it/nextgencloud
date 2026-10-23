@@ -1,45 +1,119 @@
 # Changelog
 
+## 0.2.1
+
+**Der Grund für diese Fassung: 0.2.0 ist für jeden, der es herunterlädt, unbrauchbar.** Die
+Binärdateien dieses Releases wurden von Hand gebaut, und die Hand hat `-ldflags
+"-X main.Version=…"` vergessen. Gemessen am 19.10.2026 auf der Debian-VM, aus den Dateien des
+veröffentlichten Releases selbst: `ngc-api 0.0.0-dev (contract 1)` und `ngc-controller 0.0.0-dev
+(contract 1)`. Das ist nicht kosmetisch. Der Controller schickt seine Fassung im Hallo mit, die
+API gibt sie in `ngc.users/nodes` weiter, und die Oberfläche prüft jede Rechnerzeile mit
+`validVersion` — `0.0.0-dev` fällt durch, und **eine** unpassende Zeile verwarf die **ganze**
+Antwort. Auf dem Schirm stand „Die Rechner konnten nicht geladen werden. Bitte das Fenster neu
+öffnen.", und das Fenster neu zu öffnen half nicht, denn die Fassung blieb dieselbe. Aus einem
+veröffentlichten Release konnte damit **niemand** eine App einrichten.
+
+**`shared/` ist zwischen 0.2.0 und dieser Fassung nicht angefasst** (`git diff` über das
+Verzeichnis: leer). Die Verträge sind byteweise dieselben, `contract 1` bleibt `contract 1`. Das
+ist der Grund, warum diese Fassung eine Patch-Nummer trägt und keine Minor: es gibt keine
+Anlage, die nach dem Update ein anderes Protokoll sieht. **Dagegen hält sich ehrlich:** zwischen
+den beiden Nummern liegen 83 Commits und rund 10 000 neue Zeilen, darunter Oberflächen, die es
+vorher nicht gab — nach reiner Semantik wäre das eine Minor. Den Ausschlag gibt, dass 0.2.0 keine
+benutzbare Grundlage war, der etwas hinzugefügt wurde; es ist das erste Release, das überhaupt
+läuft.
+
+### Damit es sich nicht wiederholen kann
+
+`tools/build-release.sh` baut jetzt **jedes** Programm eines Releases und stempelt die Fassung
+hinein. Es hält keinen Schlüssel und unterschreibt nichts. Zwei Riegel laufen für jede einzelne
+Binärdatei: das Bauprotokoll muss `GOOS=linux`, `GOARCH=<arch>` und `CGO_ENABLED=0` zeigen, und
+das Programm muss auf `-version` **antworten**, mit einer Fassung, die die Regel der
+**Oberfläche** besteht — nicht die laxere aus `store.ValidVersion`, die eine vierte Stelle
+erlaubt, die der Verwalter dann wegwirft. Der zweite Riegel ist der, der 0.2.0 gefangen hätte;
+der erste hätte es nicht, denn **Go schreibt `-ldflags` nicht ins Bauprotokoll** (gemessen am
+23.10.2026, go1.27.2: ein richtig gestempeltes Programm hat keine `-ldflags`-Zeile und antwortet
+trotzdem `0.2.0`). Darum ist `qemu-user` für die fremde Architektur keine Annehmlichkeit, sondern
+Voraussetzung, und das Skript läuft nur auf Linux statt den Riegel abzuschalten, wo er nicht
+greift. Es gibt keine Hintertür: eine Sonderfassung wie `0.2.0-confirmfix` fällt durch, ein
+Zwischenbau bekommt eine Patch-Nummer. Alles kommt aus dem übergebenen Git-Ref, nicht aus dem
+Arbeitsbaum — die erste Fassung des Skripts packte das Web-Archiv aus dem Tag und baute die
+Programme aus dem, was herumlag.
+
+`tools/erstlauf.sh` geht den Weg vom Release bis zur App im Menü als **Prüflauf** statt in der
+Woche eines Menschen: acht Stationen, drei davon ohne Maschine, fünf brauchen eine
+(`tools/erstlauf-maschine.sh` setzt eine Wegwerfmaschine auf). Das ist der unbequeme Schluss aus
+Punkt 71: was nur von Hand läuft, läuft selten, und was selten läuft, bricht zwischen zwei
+Läufen an der nächsten kleinen Stelle.
+
+### Die Sätze auf dem Schirm sagen jetzt, was los ist
+
+- **Eine Angabe, die nur angezeigt wird, verwirft die Antwort nicht mehr.** In
+  `contracts/core.js` trennt die Rechnerliste zwei Seiten: `version` und `arch` werden gezeigt und
+  von nichts gelesen, also macht `softenNodes` einen unlesbaren Wert **leer** und **behält die
+  Zeile**; `node` und `roles` tragen eine Entscheidung und bleiben hart, die ganze Antwort fällt
+  wie bisher. Bleibt sie verworfen, nennt der Satz das Feld: „Eine Angabe dieses Servers ist
+  unlesbar (`noise`)."
+- **„Der Katalog dieses Stores ist nicht echt."** stand da, wo „noch nicht geholt" gemeint war —
+  ein leerer Zustand als Angriff dargestellt. Der leere Zustand hat jetzt seinen eigenen Satz, und
+  der Server holt den ersten Katalog eine **Minute** nach dem Start statt erst nach einer Stunde.
+- **Jeder abgelehnte Kanal nennt die Prüfung, die nein gesagt hat**, und der Grund einer
+  abgelehnten App-Kanalöffnung kommt bis zur Person durch, auf einem eigenen Streifen des
+  Schreibtischs, der auf sie wartet statt zu verschwinden.
+- Das Protokoll hat eine achte Spalte **„Näheres"**: bei einer abgelehnten Kanalöffnung der Grund,
+  bei einer Aufgabe ihre Unterschrift, bei einer Anmeldung die Methode. Vorher warf die Ansicht
+  dieses Feld weg — die Zeile sagte „E_FORBIDDEN", und kein Klick sagte, warum.
+- Die Oberflächen ziehen ihren neuen Zustand **selbst** nach; „lad mal neu" ist keine Antwort.
+
+### Wer auf einem Server Systemrechte hat, ist eine Frage statt einer Lücke
+
+Beim Aufnehmen eines Servers wählt der Verwalter Personen und/oder Rollen aus, bei jedem
+eingetragenen Server steht in der Zeile, wer dort Systemrechte hat, und ein Knopf ändert es
+danach jederzeit. Der Haken der aufnehmenden Person ist **vorgekreuzt und abwählbar** — nur ihrer,
+keine Rolle, nur dieser Controller. Vorher schrieben die einzigen zwei Stellen, die `rootUsers`
+und `rootRoles` überhaupt schrieben, sie **leer**, und keine weitere Stelle schrieb sie je: auf
+jedem frisch aufgenommenen Controller konnte **niemand** je eine App einrichten. Gemessen am
+19.10.2026 an einer Vollinstallation aus einem veröffentlichten Release — „Aktivieren" antwortete
+„Das hat der Rechner nicht angenommen.", ohne Satz des Servers und ohne eine Zeile in irgendeinem
+Protokoll, weil die Ablehnung in der Rechteprüfung passiert. Dazu behoben: die Tastaturfalle der
+Frage kannte nur ihre zwei Knöpfe, so dass die Ankreuzfelder mit der Tastatur nicht erreichbar
+waren. Und ein Verwalter hält die Rechte jeder **eingerichteten** App ohne Zeile in der Datenbank
+(`adminApps`) — damit steht eine neue App im Menü und deshalb auch in der Rechteliste; vorher war
+das ein Kreis: kein Recht ohne App, keine App ohne Recht.
+
+### Am Gerät
+
+- Der Controller legt `/var/lib/ngc/apps` mit `0711` an statt `0700` und setzt den Modus danach
+  noch einmal; das Verzeichnis der App selbst bleibt `0700`. Damit darf der App-Benutzer den Weg
+  zu seinem eigenen Heimatverzeichnis **durchlaufen**, ohne lesen zu können — rootloses `podman
+  load` bekam vorher `EACCES` auf sein eigenes Zuhause, und gefunden wurde das nur mit `strace`
+  am laufenden Dienst.
+- Das Laufzeitverzeichnis einer App entsteht **vor** dem Motor, und das vorbereitete Abbild wird
+  der App übergeben, damit der Motor es lesen kann.
+- Ein abgeschnittener Kanal hinterlässt **eine** Zeile, nicht zwei.
+- Eine Zeitüberschreitung wird nicht mehr als interner Fehler gemeldet (gemessen unter `-race`),
+  und ein Absturz oder ein gebrochener Verweis ist keine Prüfung, die abgelehnt hat.
+
+### Nicht im Release, aber in diesem Stand
+
+Punkte 63 bis 71 der Vertragsfassung 1.2 (rund 1 300 Zeilen), darunter **Punkt 71: sechs Wände
+auf einem Weg** — der Durchlauf vom Release bis zur laufenden App, der in drei Tagen nicht ein
+einziges Mal durchlief, und die Feststellung, dass vier der sechs Stellen in keinem Prüfsatz
+lagen, weil sie kein Go und kein JavaScript sind: eine systemd-Unit, ein Bau-Flag, ein Dateimodus
+und eine Vorgabe in einem Dialog. Dazu Punkt 67 (Rust für NGC: ein Vertrag ist bitgleich
+nachgebaut, und genau das ist das Argument dagegen — `versuch-rust/`) und Punkt 68 (fremde
+Programme portieren: das Programm ja, die Oberfläche nie — `versuch-port/`). Beide Versuche liegen
+im Baum und fahren in keinem Release mit.
+
+**Was weiter offen ist:** Wand (1) aus Punkt 71 steht noch, und zwar in einem anderen Repo —
+`ngc-api.service` schreibt `ReadWritePaths` ohne `/etc/ngc`, so dass der atomar geschriebene
+Vertrauensanker dort nicht ersetzt werden kann und die Anlage auf der alten Liste festgenagelt
+bleibt. Das liegt auf dem nicht verschmolzenen Zweig `ngc-kette` von `ulh`.
+
 ## Unveröffentlicht
 
-Das Protokoll („Benutzer und Rechte" → Protokoll) hat eine achte Spalte „Näheres". Darin steht,
-was die Anlage zu einer Zeile notiert hat: bei einer abgelehnten Kanalöffnung der Grund der
-Ablehnung, bei einer Aufgabe ihre Unterschrift, bei einer Anmeldung die Methode. Vorher warf die
-Ansicht dieses Feld weg – die Zeile sagte „E_FORBIDDEN" und kein Klick sagte, warum. Die Spalte
-heißt bewusst nicht „Grund": der Vertrag hat EIN solches Feld, und eine 86 Zeichen lange
-Unterschrift unter „Grund" wäre falsch beschriftet. Der Text geht als Text in die Zelle, nie als
-Markup.
-Eine Angabe, die nur angezeigt wird, verwirft die Antwort nicht mehr — und bleibt sie verworfen,
-nennt der Satz auf dem Schirm das Feld (`docs/vertraege-v1.2.md`, Punkt 71, Vorschläge b und c).
-In `contracts/core.js` trennt die Rechnerliste jetzt zwei Seiten: `version` und `arch` werden
-gezeigt und sonst von nichts gelesen, also macht `softenNodes` einen unlesbaren Wert **leer** und
-**behält die Zeile**; `node` und `roles` tragen eine Entscheidung und bleiben hart, die ganze
-Antwort fällt wie bisher. Dazu gibt die Vertragstabelle den Namen des gefallenen Feldes nach oben
-(`fault`, `core.refusedField`), und `apps/store.js` wie `apps/users.js` sagen „Eine Angabe dieses
-Servers ist unlesbar (`noise`).“ statt nur „Die Rechner konnten nicht geladen werden.“ — das
-Fenster neu zu öffnen half bei dem Fall, der wirklich passiert ist, nämlich
-Release-Binärdateien mit `0.0.0-dev`, überhaupt nicht.
-
-Wer auf einem Server Aufgaben mit Systemrechten ausführen darf, ist jetzt eine Frage in der
-Oberfläche – vorher war es eine Lücke. Beim Aufnehmen eines Servers („Benutzer und Rechte“ →
-Server) wählt der Verwalter einzelne Personen und/oder ganze Rollen aus, und bei jedem
-eingetragenen Server steht in der Zeile, wer dort Systemrechte hat, mit einem Knopf
-„Systemrechte ändern“ daneben. Beim Aufnehmen ist **ein** Haken gesetzt: der der Person, die den
-Server gerade aufnimmt – nur ihrer, keine Rolle, und abwählbar. Wer eine Version der
-Vertrauensliste unterschreiben kann, hat die Anlage ohnehin in der Hand, also fügt der Haken keine
-Macht hinzu; er nimmt den Fall weg, in dem jemand einen Server aufnimmt und erst beim ersten
-Einrichten merkt, dass er dort nichts darf. Die Frage sagt, was ein Haken bedeutet und dass er
-weggenommen werden kann, und ohne Haken sagt die Antwort, dass dort niemand eine App einrichten
-kann (V1.2 Punkt 71, Entscheidung a). Gemessen am 19.10.2026 an einer Vollinstallation aus einem veröffentlichten Release: ein
-aufgenommener Controller („ngc-2“) konnte nichts, was eine Root-Aufgabe braucht – „Aktivieren“
-antwortete „Das hat der Rechner nicht angenommen.“, ohne Satz des Servers und ohne eine Zeile im
-Protokoll von `ngc-api` oder `ngc-controller`, weil die Ablehnung in der Rechteprüfung passiert.
-Ursache: `rootUsers` und `rootRoles` wurden von den einzigen zwei Stellen, die sie überhaupt
-schrieben, **leer** geschrieben, und keine weitere Stelle der Oberfläche schrieb sie je – also
-konnte auf jedem frisch aufgenommenen Controller **niemand** je eine App installieren. Dazu
-behoben: die Tastaturfalle der Frage kannte nur ihre zwei Knöpfe, so dass die Ankreuzfelder (und
-das Adressfeld) mit der Tastatur allein nicht erreichbar waren. Verträge in `shared/` sind dafür
-unverändert geblieben.
+*Der folgende Abschnitt ist älter als 0.2.0 und stand zum Zeitpunkt des Tags schon da — er
+beschreibt Arbeit, die in den Binärdateien von 0.2.0 steckt, aber nie unter einer Nummer
+etikettiert wurde. Er bleibt stehen, bis jemand ihn zuordnet.*
 
 Testumgebung für den Recovery-Modus (Paket 0): Skripte in `tools/`, die auf der VM `ngc-recovery`
 den TPM-Simulator swtpm, fünf SoftHSM2-Token als Ersatz für vier Root-Sticks und einen
