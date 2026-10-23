@@ -52,7 +52,6 @@ import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
 import { ChannelError } from "../net/channel.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
-import { ChannelError } from "../net/channel.js";
 import { CODES } from "../contracts/wire.js";
 
 const enc = new TextEncoder();
