@@ -11,6 +11,14 @@
 # The script is held to the rule it enforces: it refuses to print a number it
 # cannot stand behind (empty file, no case at all, fewer cases than the floor)
 # and says so instead.
+#
+# AND IT PRINTS WHY A CASE FAILED, not only its name. Until 20.10.2026 it
+# named the test and nothing else, and the stream it reads was the only place
+# the reason existed - the -race and root jobs pipe go test -json into a file
+# that no step ever shows. A red run that does not say why cannot be told
+# apart from a load-sensitive wobble, and that is the one question a red run
+# has to answer. The output records of a failing test are kept and printed
+# under its name.
 set -euo pipefail
 
 log=${1:-}
@@ -31,11 +39,38 @@ awk -v title="$title" -v floor="$floor" '
 		if (match($0, /"Package":"[^"]*"/)) return substr($0, RSTART + 11, RLENGTH - 12)
 		return ""
 	}
+	# unesc turns the JSON string of an Output record back into text. Only
+	# the four escapes go test really emits are handled; anything else stays
+	# as it stands, which is honest about what was not decoded.
+	function unesc(v) {
+		gsub(/\\n/, "\n", v)
+		gsub(/\\t/, "\t", v)
+		gsub(/\\"/, "\"", v)
+		gsub(/\\\\/, "\\", v)
+		return v
+	}
+	function outtext() {
+		i = index($0, "\"Output\":\"")
+		if (i == 0) return ""
+		v = substr($0, i + 10)
+		# awk has no non-greedy match: /"Output":".*"/ ate the member AFTER
+		# the value and printed ","OutputType":"frame into the text, measured
+		# 20.10.2026. So the end is found by hand - either the next member or
+		# the end of the object.
+		j = index(v, "\",\"")
+		if (j > 0) v = substr(v, 1, j - 1)
+		else sub(/"}[[:space:]]*$/, "", v)
+		return unesc(v)
+	}
 	{
 		t = name(); p = pkg()
 		top = (index(t, "/") == 0)
+		# Kept for every case, because which one fails is known only at the
+		# end. One run of this repo is a few MB of text; that is the price of
+		# being able to say why.
+		if ($0 ~ /"Action":"output"/ && t != "") said[t] = said[t] outtext()
 		if ($0 ~ /"Action":"pass"/)  { if (t == "") { pkgok++ }   else { pass++;  if (top) toppass++ } }
-		if ($0 ~ /"Action":"fail"/)  { if (t == "") { pkgbad++; badpkg[p] = 1 } else { fail++; failed[t "  (" p ")"] = 1 } }
+		if ($0 ~ /"Action":"fail"/)  { if (t == "") { pkgbad++; badpkg[p] = 1 } else { fail++; k = t "  (" p ")"; failed[k] = 1; failtext[k] = said[t] } }
 		if ($0 ~ /"Action":"skip"/)  { if (t == "") { pkgnone++ } else { skip++; if (top) topskip++; skipped[t "  (" p ")"] = 1 } }
 	}
 	END {
@@ -45,7 +80,13 @@ awk -v title="$title" -v floor="$floor" '
 			pass, fail, skip, toppass, topskip
 		printf "packages: %d ok, %d failed, %d without test files\n", pkgok, pkgbad, pkgnone
 
-		if (fail > 0) { print "\nFAILED:"; for (k in failed) print "  " k }
+		if (fail > 0) {
+			print "\nFAILED - with what the test itself said:"
+			for (k in failed) {
+				print "  " k
+				if (k in failtext && failtext[k] != "") printf "%s", failtext[k]
+			}
+		}
 		if (pkgbad > 0) { print "\nfailed packages (a build error lands here, with no case of its own):"; for (k in badpkg) print "  " k }
 		if (skip > 0) {
 			print "\nSKIPPED - a skipped case is not a case that ran:"

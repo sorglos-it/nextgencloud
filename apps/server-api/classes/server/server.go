@@ -456,23 +456,51 @@ func (s *Server) serve(ctx context.Context, ln net.Listener) error {
 
 // Minute and Hour are the two beats of the background rounds; a test makes
 // them milliseconds instead of waiting.
+//
+// FirstCatalog is how long after the start the catalog round runs for the
+// FIRST time, and it is a beat of its own because the hour alone was a
+// measured fault (V1.2 point 66): an installation that has just been set up
+// has no catalog row, the store then says so for a whole hour, and every
+// restart of ngc-api pushed that first fetch out by another full hour -- so an
+// installation somebody is working on never fetched one at all.
+//
+// A minute and not at once: nothing in the round needs to be the first thing
+// the process does, and a plant that comes up after a power cut should answer
+// its own users before it reaches outside.
+//
+// What this does NOT touch is the reason the rollout round waits an hour
+// ("an installation that comes up must not begin replacing its own parts
+// before anybody has looked at it", Server.rollouts). That sentence is about
+// REPLACING parts, and this fetches a signed document and writes it to a row
+// -- nothing is installed, activated or exchanged by it, and store.Refresh
+// leaves the last good catalog in place for every store that fails.
 var (
-	Minute = time.Minute
-	Hour   = time.Hour
+	Minute       = time.Minute
+	Hour         = time.Hour
+	FirstCatalog = time.Minute
 )
 
 // rounds keeps housekeeping and catalogs going until ctx ends.
 func (s *Server) rounds(ctx context.Context) {
 	minute := time.NewTicker(Minute)
 	hour := time.NewTicker(Hour)
+	// A timer and not a ticker: it fires once, and the hourly beat above is
+	// untouched by it -- the two are not synchronised and nothing here resets
+	// hour, so a plant still fetches on its own hour afterwards.
+	first := time.NewTimer(FirstCatalog)
 	defer minute.Stop()
 	defer hour.Stop()
+	defer first.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-minute.C:
 			s.once(func() { s.minute(ctx) })
+		case <-first.C:
+			// Through s.once like every other round, so the first fetch
+			// cannot run beside a round that is already going.
+			s.once(func() { s.hour(ctx) })
 		case <-hour.C:
 			s.once(func() { s.hour(ctx) })
 		}

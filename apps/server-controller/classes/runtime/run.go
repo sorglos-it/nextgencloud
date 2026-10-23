@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
 // The runtime directory of an app, /run/ngc/<name>, is where rootless podman
@@ -115,3 +116,22 @@ func DropRun(name string) error {
 
 // runDirDefault is config.RunDir, held here so paths has one place for it.
 const runDirDefault = config.RunDir
+
+// RunForApp makes the runtime directory of an installed app's container, named
+// by the app id instead of by the user. It is what a caller outside the install
+// has: an app channel knows the app, not its user.
+//
+// It LOOKS THE USER UP and never makes one. An app id that has no user is an
+// app that is not installed here, and making a user for it on the way to a
+// container would turn a channel for an app nobody installed into an
+// installation nobody asked for. Such a call answers ErrUser.
+func RunForApp(ctx context.Context, app string) (string, error) {
+	if !wire.ValidAppID(app) {
+		return "", ErrApp
+	}
+	u, err := ofUserDB(UserName(app), app)
+	if err != nil {
+		return "", err
+	}
+	return EnsureRun(ctx, u)
+}
