@@ -3662,21 +3662,32 @@ it took 1.002616831s: the fault waited for the shell instead of ending the termi
 **Die Schranke ist `took > time.Second`** (Zeile 653), und überschritten wurde sie um **2,6
 Millisekunden**.
 
-**Was die Schranke trennen soll**, steht drei Zeilen darüber: `run(...)` bekommt `time.Minute`
-mitgegeben. Der Fehlerfall, den der Test ausschließt, ist also, dass der Fehler **auf die Shell
-wartet** — und das wären **60 Sekunden**. Zwischen „sofort" und „wartet" liegt damit eine Minute,
-geprüft wird aber auf eine Sekunde. Eine Schranke bei fünf Sekunden würde dasselbe trennen und
-hätte zweieinhalb Millisekunden Last nicht bemerkt.
+**Hier stand zuerst, die Schranke trenne gegen `time.Minute`, also gegen 60 Sekunden, und fünf
+Sekunden würden dasselbe trennen. Das war falsch**, und der Test sagt es selbst drei Zeilen
+weiter oben (Zeile 619): *„a shell told to `sleep 1` could not have finished in under a second
+either way"*. Die Eingabe ist `sleep 1`, die Schranke ist eine Sekunde — **die zwei Seiten der
+Entscheidung waren dieselbe Zahl.** Eine Schranke von fünf Sekunden allein hätte den Wächter
+abgeschafft: ein Lauf, der das `sleep 1` wirklich abgewartet hätte, wäre durchgegangen.
 
-**Nicht gemessen, und zwar nicht aus Nachlässigkeit:** der Fall ist auf diesem Rechner nicht
-nachstellbar. Er stellt sich unter Windows selbst zur Seite — 20 von 20 Läufen unter Volllast,
-jedes Mal mit seiner eigenen Zeile:
+**Behoben wurde deshalb der Abstand, nicht die Schranke:** die Shell schläft jetzt **30
+Sekunden** — dieselbe Zahl, die der Nachbartest in Zeile 574 schon benutzt — und die Schranke
+heißt `faultWithin` und steht bei **5 Sekunden**. Der Nachbar bindet 10 Sekunden gegen dieselben
+30; 5 gegen 30 ist strenger und hat denselben Abstand im Rücken.
 
-```
-NICHT GEMESSEN auf windows: /dev/ptmx gibt es nur unter Linux (12.10.2026)
-```
+**Und jetzt ist der Fall gemessen, nicht nur aus der CI abgelesen.** Unter Windows stellt er
+sich selbst zur Seite — 20 von 20 Läufen, jedes Mal mit `NICHT GEMESSEN auf windows: /dev/ptmx
+gibt es nur unter Linux`. Also wurde das Testbinär für `linux/amd64` übersetzt und in der
+Debian-WSL gelaufen, wo es `/dev/ptmx` gibt:
 
-Also: die **Erscheinung** ist aus der CI gemessen (eine Zahl, 1,002616831 s), die **Rate** nicht.
+| | Ergebnis |
+|---|---|
+| 10 Läufe unter Linux | **10 PASS**, je 0,00–0,01 s |
+| Mutationsprobe, `faultWithin` auf 1 ns | **3 von 3 rot** — die Behauptung greift also |
+| was die Mutation nebenbei misst | das Terminal endet in **1,2 bis 1,9 ms** |
+
+Damit stehen alle drei Zahlen nebeneinander: richtig endet es in **1,5 ms**, die Schranke liegt
+bei **5 s**, und ein Lauf, der auf die Shell wartet, kann nicht vor **30 s** zurückkommen. Das
+ist der Abstand, den die alte Fassung nicht hatte.
 
 ### Drei Zeittests, ein Muster
 
@@ -3685,13 +3696,13 @@ unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
 
 | Test | Schranke | gemessen | Alternative, die er trennt |
 |---|---|---|---|
-| `TestAFaultEndsTheTerminalAtOnce` | 1 s | 1,0026 s | 60 s |
+| `TestAFaultEndsTheTerminalAtOnce` | 1 s → **5 s** | 1,0026 s (CI), 1,5 ms (Linux) | `sleep 1` → **`sleep 30`** |
 | `TestAPackageLargerThanOneWindowGetsThrough` | — | `E_PROTOCOL` nach 0–2 von 6 Rahmen | — |
 | `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Tunnel tot vor dem ersten Ping | — |
 
-Der erste ist der einfachste von allen: **eine Zahl, die zu knapp gewählt ist.** Die anderen
-zwei sind Wettläufe. Nur der erste lässt sich ohne Kenntnis des Protokolls entscheiden — und
-auch er gehört dem Teil, der ihn besitzt.
+Der erste ist der einfachste von allen und **ist behoben** (siehe oben): zwei Zahlen, die
+dieselbe waren. Die anderen zwei sind Wettläufe und bleiben offen; sie lassen sich ohne Kenntnis
+des Protokolls nicht entscheiden.
 
 **Was daraus folgt und bisher nirgends stand:** eine Prüfung, die auf einem belasteten Läufer
 drei verschiedene Tests verlieren kann, ist keine Prüfung mehr, die einen echten Befund von
