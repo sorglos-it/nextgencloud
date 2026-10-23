@@ -21,13 +21,14 @@ import (
 // -- so before this method there was no way at all to run them from the API,
 // and appstore.Sender.Call had no implementation that could work.
 //
-// Nothing here verifies task, client or pr. The caller has done that (package
+// Nothing here verifies task, client, pr or confirm. The caller has done that (package
 // rights, through the dispatcher), and the controller does it again; this
 // method only puts them on the wire as they stand, exactly as Transfer does
 // for the transfer flow.
 func (rl *Relay) CallAs(ctx context.Context, hop Hop, app, service, action string,
-	params json.RawMessage, task *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
-	payload, code := ownOpen(app, service, action, params, task, client, pr)
+	params json.RawMessage, task *sign.Envelope, client []byte,
+	pr, confirm *proof.Proof) ([]byte, wire.Code) {
+	payload, code := ownOpen(app, service, action, params, task, client, pr, confirm)
 	if code != "" {
 		return nil, code
 	}

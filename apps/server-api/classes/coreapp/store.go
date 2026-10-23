@@ -336,9 +336,10 @@ func storeAnswer(code wire.Code, err error) ([]byte, error) {
 	return result(struct{}{})
 }
 
-// carried is who an action of service controller runs for, and where. All four
-// parts travel to the controller as they stand, because the controller checks
-// task and proof itself and would read any change as a forgery.
+// carried is who an action of service controller runs for, and where. All of
+// it travels to the controller as it stands, because the controller checks
+// task, proof and re-confirmation itself and would read any change as a
+// forgery.
 //
 // The node is the VERIFIED task's own (task.Task.Node), never the guess the
 // dispatcher read out of the unsigned payload to pick the target.
@@ -357,5 +358,5 @@ func carried(rq *Call) (appstore.Carried, error) {
 		return appstore.Carried{}, failWhy(wire.CodeInternal, reason.OwnProof)
 	}
 	return appstore.Carried{Task: rq.TaskEnv, Client: rq.Live.Row.Cert, Proof: &pr,
-		Node: rq.Task.Node, Live: rq.Live}, nil
+		Confirm: rq.Confirm, Node: rq.Task.Node, Live: rq.Live}, nil
 }

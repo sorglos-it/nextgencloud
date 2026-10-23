@@ -45,6 +45,7 @@ type sent struct {
 	task         *sign.Envelope
 	client       []byte
 	proof        *proof.Proof
+	confirm      *proof.Proof
 	transfer     bool
 }
 
@@ -76,9 +77,10 @@ func (f *fakeSender) Node(node string) (tunnel.Hello, bool) {
 }
 
 func (f *fakeSender) Transfer(_ context.Context, node, action string, params json.RawMessage,
-	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte,
+	pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	s := sent{node: node, action: action, params: bytes.Clone(params), head: head,
-		task: tk, client: bytes.Clone(client), proof: pr, transfer: true}
+		task: tk, client: bytes.Clone(client), proof: pr, confirm: confirm, transfer: true}
 	if f.readErr != nil {
 		f.sents = append(f.sents, s)
 		return nil, wire.CodeUnreachable
@@ -94,9 +96,9 @@ func (f *fakeSender) Transfer(_ context.Context, node, action string, params jso
 }
 
 func (f *fakeSender) Call(_ context.Context, node, action string, params json.RawMessage,
-	tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	tk *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	f.sents = append(f.sents, sent{node: node, action: action, params: bytes.Clone(params),
-		task: tk, client: bytes.Clone(client), proof: pr})
+		task: tk, client: bytes.Clone(client), proof: pr, confirm: confirm})
 	return nil, f.code
 }
 
@@ -1417,5 +1419,35 @@ func TestActivateRefusesALicenceOfAnotherStore(t *testing.T) {
 	}
 	if len(af.Send.sents) != 0 {
 		t.Fatalf("the paid app travelled without a licence that holds")
+	}
+}
+
+// TestActivateHandsTheReConfirmationToTheController is the step between the
+// shell and relay.ownOpen: a confirmation the dispatcher took off the OPEN
+// (coreapp.Call.Confirm, into Carried.Confirm) has to reach the sender, or
+// the controller asks for one the API already held and the channel closes
+// with E_CONFIRM while the log line of the task reads "ok".
+func TestActivateHandsTheReConfirmationToTheController(t *testing.T) {
+	af := newActFixture(t)
+	pkg, ui := vectorPackage(t, "long file name") // org.sorglos.calculator, no services
+	af.listCatalog(t, "org.sorglos.calculator", "1.0.0", pkg, ui, nil, nil)
+	rq := af.storeRequest(t, ctlNode, "org.sorglos.calculator", "1.0.0", pkg, ui, nil, 0x62)
+	// A key ID of its own, so a confirmation the way out replaced by the
+	// login proof would not pass for the right one.
+	kid := make([]byte, sign.KeyIDSize)
+	kid[0] = 7
+	confirm := &proof.Proof{Kind: proof.KindPassword,
+		KeyID: enc.B64.EncodeToString(kid), Sig: []byte("confirmed")}
+	rq.Confirm = confirm
+
+	code, err := af.St.Activate(ctx, rq)
+	if code != "" || err != nil {
+		t.Fatalf("Activate: code %q, err %v", code, err)
+	}
+	if len(af.Send.sents) != 1 {
+		t.Fatalf("%d channels to the controller, want 1", len(af.Send.sents))
+	}
+	if af.Send.sents[0].confirm != confirm {
+		t.Fatalf("the re-confirmation did not reach the controller: %v", af.Send.sents[0].confirm)
 	}
 }
