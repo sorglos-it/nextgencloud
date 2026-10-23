@@ -51,6 +51,8 @@ import { encodeList, hash as listHash, parseList, parseSigned, validStore } from
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
+import { ChannelError } from "../net/channel.js";
+import { CODES } from "../contracts/wire.js";
 
 const enc = new TextEncoder();
 
@@ -328,7 +330,12 @@ function terminalStream(h) {
   // A controller that fell over: the channel ends without an "ok". The text is
   // the one wire.message gives for E_UNREACHABLE; the real close carries the
   // code as well, and nothing on the app's side reads either.
-  if (h.cut) setTimeout(() => s.onClose?.("error", "Dienst nicht erreichbar."), 0);
+  // An ending with no sentence at all is sent with no second argument, and
+  // not with "": that is what the real bridge does for a close that carries
+  // none (public/assets/ngc.js hands m.message on as it is).
+  if (h.cut) {
+    setTimeout(() => (h.said === "" ? s.onClose?.("error") : s.onClose?.("error", h.said)), 0);
+  }
   return s;
 }
 
@@ -438,6 +445,15 @@ async function world(knobs) {
 //   terminalOutput - what the terminal's service answers, whatever was sent.
 //   terminalCut    - the terminal's channel ends without an "ok", the way a
 //            controller that fell over ends one.
+//   openFailsCode  - the same, but a ChannelError with this code of the
+//            contract. "" is off.
+//   openFails      - every open of an app's own service throws a WorldError
+//            with this sentence, the way net/world.js throws one where it
+//            cannot sign a task. "" is off.
+//   terminalSaid   - the sentence the shell sends with that ending. The real
+//            shell sends one since 23.10.2026 (shell/appframe.js,
+//            whyOpenFailed); "" is the ending that carries none, which is
+//            what the app has to stay readable for.
 //
 // The proof is always signed over the archive the hooks produced, except for
 // swapUI: otherwise a case meant for the entry rule would die at the checksum
@@ -450,6 +466,9 @@ function hooks() {
     module: t.module === true,
     output: typeof t.terminalOutput === "string" ? t.terminalOutput : "",
     cut: t.terminalCut === true,
+    said: typeof t.terminalSaid === "string" ? t.terminalSaid : "Dienst nicht erreichbar.",
+    openFails: typeof t.openFails === "string" ? t.openFails : "",
+    openFailsCode: typeof t.openFailsCode === "string" ? t.openFailsCode : "",
   };
 }
 
@@ -670,7 +689,16 @@ export async function fakeWorld() {
       return enc.encode(JSON.stringify({ seq: next.seq }));
     },
     "ngc.store/sources": async () => enc.encode(JSON.stringify(or("sources", SOURCES))),
-    "ngc.store/catalog": async () => await catalogFor(uiHashes()),
+    // knob noCatalog: the API has no catalog row for this store yet, which is
+    // every installation for the first hour (V1.2 point 66). The real
+    // dispatcher answers that with E_NOTFOUND out of appstore.CodeFor over
+    // dbapi.ErrNotFound, and the error the shell catches is the link's own
+    // ChannelError - the same class and the same code the wire builds, not a
+    // shape of the test's own.
+    "ngc.store/catalog": async () => {
+      if (knobs.noCatalog === true) throw new ChannelError(CODES.NOTFOUND, "");
+      return await catalogFor(uiHashes());
+    },
     "ngc.store/installed": async () => enc.encode(JSON.stringify(or("installed", INSTALLED))),
     "ngc.store/updates": async () => enc.encode(JSON.stringify(or("updates", UPDATES))),
     "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),
@@ -744,6 +772,28 @@ export async function fakeWorld() {
     async open(app, service, name, params) {
       window.__ngcChannelsOpened++;
       const h = hooks();
+      // An open that THROWS, with a sentence of the shell's own kind. The real
+      // one does that since 23.10.2026: net/world.js signs a task for a
+      // channel the server refuses without one, and where it cannot sign it
+      // throws a WorldError whose sentence says what the person can do. It is
+      // shell/appframe.js that has to carry that sentence to the app
+      // (whyOpenFailed), and this knob is how a case reaches that way.
+      if (h.openFails !== "" && app !== "ngc.desktop") {
+        const e = new Error(h.openFails);
+        e.name = "WorldError";
+        throw e;
+      }
+      // And the other kind the frame has to tell apart: a ChannelError, which
+      // carries a CODE of the contract and no sentence of its own worth
+      // showing. The frame turns the code into its German sentence
+      // (whyOpenFailed); the code of the error is what travels, never its
+      // message.
+      if (h.openFailsCode !== "" && app !== "ngc.desktop") {
+        const e = new Error("fake-link: this message may not reach the app");
+        e.name = "ChannelError";
+        e.code = h.openFailsCode;
+        throw e;
+      }
       if (`${app}/${name}` === "ngc.desktop/ui") {
         const files = shipped.get(appOf(params));
         if (files === undefined) throw new Error(`fake-link: no ui for ${appOf(params)}`);

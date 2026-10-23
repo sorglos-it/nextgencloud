@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -187,16 +188,16 @@ func TestCheckWithoutAUser(t *testing.T) {
 	}
 	req := Request{Action: stage, Node: ctlNode,
 		Open: wire.Open{App: stage.App, Service: stage.Service, Action: stage.Name, Window: wire.MinWindow}}
-	if _, code := Check(ctx, fx.DB, fx.List, req, now); code != "" {
+	if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != "" {
 		t.Fatalf("stage without a user: %q", code)
 	}
 	list, _ := core.Lookup(core.AppUsers, core.ServiceAPI, core.ActList)
 	req.Action, req.Node = list, ""
 	req.Open = wire.Open{App: list.App, Service: list.Service, Action: list.Name, Window: wire.MinWindow}
-	if _, code := Check(ctx, fx.DB, fx.List, req, now); code != wire.CodeForbidden {
+	if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != wire.CodeForbidden {
 		t.Fatalf("list without a user: %q", code)
 	}
-	if _, code := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: fx.Manifest, Node: ctlNode,
+	if _, code, _ := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: fx.Manifest, Node: ctlNode,
 		Open: wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}}, now); code != wire.CodeForbidden {
 		t.Fatalf("app channel without a user: %q", code)
 	}
@@ -236,13 +237,18 @@ func TestCheckNeedsBothRights(t *testing.T) {
 
 // TestCheckHidesWhetherAnAppIsThere: an app without a row, without a manifest
 // or no longer active answers exactly like a missing right, so the answer
-// tells a user nothing about the installation. An admin sees the same, since
-// nothing grants an admin a right on an app.
+// tells a user nothing about the installation.
+//
+// An admin sees the same here, and the reason is in the fixture: an admin
+// holds the right of every INSTALLED app (rights.Of, adminApps), and this
+// case writes no app row at all -- the rows it varies live in the Request and
+// never in the database. What is measured is the answer of a broken request,
+// which is the same for everybody.
 func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 	fx := newFixture(t)
 	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}
 	// The yardstick: installed and active, but without the right.
-	_, want := fx.checkAppOpen(t, fx.OfficeUser, open)
+	_, want, _ := fx.checkAppOpen(t, fx.OfficeUser, open)
 	if want != wire.CodeForbidden {
 		t.Fatalf("no right: %q", want)
 	}
@@ -253,7 +259,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 	} {
 		for _, user := range []string{fx.OfficeUser, fx.AdminUser} {
 			req.Session = fx.session(t, user)
-			if _, code := Check(ctx, fx.DB, fx.List, req, now); code != want {
+			if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != want {
 				t.Fatalf("%s as %s: %q instead of %q", name, user, code, want)
 			}
 		}
@@ -265,7 +271,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 		Rights: []string{termApp + "/" + core.RightUse, termApp + "/" + termAct}}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
 		t.Fatalf("with the rights: %q", code)
 	}
 	for name, req := range map[string]Request{
@@ -274,7 +280,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 		"inactive":    {App: &dbapi.App{ID: termApp, Node: ctlNode}, Manifest: fx.Manifest, Node: ctlNode, Open: open},
 	} {
 		req.Session = fx.session(t, fx.OfficeUser)
-		if _, code := Check(ctx, fx.DB, fx.List, req, now); code != want {
+		if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != want {
 			t.Fatalf("%s with the rights: %q instead of %q", name, code, want)
 		}
 	}
@@ -303,7 +309,7 @@ func TestCheckRefusesAnActionNamedUse(t *testing.T) {
 		if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice, Rights: rights}); err != nil {
 			t.Fatalf("set: %v", err)
 		}
-		_, code := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: m, Node: ctlNode,
+		_, code, _ := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: m, Node: ctlNode,
 			Session: fx.session(t, fx.OfficeUser),
 			Open:    wire.Open{App: termApp, Service: termSvc, Action: core.RightUse, Window: wire.MinWindow}}, now)
 		if code != wire.CodeNotFound {
@@ -325,13 +331,13 @@ func TestCheckRefusesAnOpenWithTaskAndParams(t *testing.T) {
 		Task: fx.appTask(t, fx.OfficeUser, termAct), Params: json.RawMessage(`{}`)}
 	// The params come first: a task counts once, so the other order would read
 	// the replay guard and not this one.
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
 		t.Fatalf("task and params: %q", code)
 	}
 	// The same task without params opens, so the params are what was refused —
 	// and the task was not spent on the refusal.
 	open.Params = nil
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
 		t.Fatalf("task alone: %q", code)
 	}
 }
@@ -349,20 +355,20 @@ func TestCheckOpensOnASignedReconfirmation(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
 		t.Fatalf("plain: %q", code)
 	}
 	open.Task = fx.appTask(t, fx.OfficeUser, termAct)
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
 		t.Fatalf("task alone: %q", code)
 	}
 	// Another user's key is no answer, even for the same task.
 	open.Confirm = fx.confirm(t, fx.AdminUser, open.Task)
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
 		t.Fatalf("someone else confirmed: %q", code)
 	}
 	open.Confirm = fx.confirm(t, fx.OfficeUser, open.Task)
-	tk, code := fx.checkAppOpen(t, fx.OfficeUser, open)
+	tk, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open)
 	if code != "" || tk == nil {
 		t.Fatalf("task and confirmation: %q %v", code, tk)
 	}
@@ -398,12 +404,12 @@ func TestCheckIgnoresTheMembersOfTheOpen(t *testing.T) {
 				t.Fatalf("set: %v", err)
 			}
 		}
-		_, want := fx.checkAppOpen(t, fx.OfficeUser, plain)
+		_, want, _ := fx.checkAppOpen(t, fx.OfficeUser, plain)
 		if granted != (want == "") {
 			t.Fatalf("granted=%v answered %q", granted, want)
 		}
 		for name, open := range ignored {
-			if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != want {
+			if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != want {
 				t.Fatalf("granted=%v, %s: %q instead of %q", granted, name, code, want)
 			}
 		}
@@ -420,7 +426,7 @@ func TestCheckNeverGainsFromATaskInTheOpen(t *testing.T) {
 		Window: wire.MinWindow, Task: fx.DeactivateTask(t)}
 	// Without the right it stays forbidden: the right is checked before any
 	// task is read, so the root task of an admin buys the office user nothing.
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeForbidden {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeForbidden {
 		t.Fatalf("without the right: %q", code)
 	}
 	if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice,
@@ -432,7 +438,7 @@ func TestCheckNeverGainsFromATaskInTheOpen(t *testing.T) {
 	if code := fx.CheckApp(t, fx.OfficeUser, termAct); code != "" {
 		t.Fatalf("plain: %q", code)
 	}
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeVerify {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeVerify {
 		t.Fatalf("with the right: %q", code)
 	}
 }
@@ -450,7 +456,177 @@ func TestCheckTakesTheChannelFromTheRowNotTheOpen(t *testing.T) {
 	open := wire.Open{App: core.AppStore, Service: core.ServiceController, Action: termAct, Window: wire.MinWindow}
 	open.Task = fx.signTask(t, fx.OfficeUser, task.Task{ID: bytes.Repeat([]byte{0x62}, task.IDSize),
 		Node: ctlNode, App: open.App, Service: open.Service, Action: open.Action})
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
 		t.Fatalf("code %q", code)
+	}
+}
+
+// --- the implicit rights of an admin --------------------------------------
+//
+// The circle these cases hold open: an app only reached the menu with
+// <app>/use (coreapp.Dispatcher.apps), and the page that hands rights out
+// built its list of apps from that menu -- so a freshly installed app was in
+// nobody's menu and its right in nobody's list. Measured on the Debian VM on
+// 21.10.2026: org.sorglos.terminal was set up and the rights page said "Es
+// gibt noch keine App, für die es Rechte gäbe."
+
+// TestAnAdminHoldsTheRightsOfAnInstalledAppWithoutARow is the decisive case:
+// no row grants anything, and the admin holds use AND the action of the
+// installed app. The office user is the control in the same case -- what
+// grants the right is being an admin and not the app row.
+func TestAnAdminHoldsTheRightsOfAnInstalledAppWithoutARow(t *testing.T) {
+	fx := newFixture(t)
+	if err := fx.DB.AppPut(ctx, *fx.App); err != nil {
+		t.Fatalf("app row: %v", err)
+	}
+	got, admin, err := Of(ctx, fx.DB, fx.List, fx.AdminUser)
+	if err != nil || !admin {
+		t.Fatalf("of: %v %v", admin, err)
+	}
+	if !got[termApp+"/"+core.RightUse] {
+		t.Fatalf("an admin does not hold %q: %v", termApp+"/"+core.RightUse, got)
+	}
+	if !got[termApp+"/"+termAct] {
+		t.Fatalf("an admin does not hold the action %q: %v", termApp+"/"+termAct, got)
+	}
+	// Nothing is invented: an action the manifest does not name is not there.
+	if got[termApp+"/nosuchaction"] {
+		t.Fatalf("a right appeared that no manifest names: %v", got)
+	}
+	// The control: the same app row, a user who is no admin, no row -- and
+	// nothing at all. Without this half the case would also pass if Of handed
+	// every app to everybody.
+	other, otherAdmin, err := Of(ctx, fx.DB, fx.List, fx.OfficeUser)
+	if err != nil || otherAdmin {
+		t.Fatalf("office: %v %v", otherAdmin, err)
+	}
+	if other[termApp+"/"+core.RightUse] || other[termApp+"/"+termAct] {
+		t.Fatalf("a user who is no admin holds the app's rights: %v", other)
+	}
+}
+
+// TestTheRightOfAnAdminSurvivesAnEmptyRow: the right lives in no row, so the
+// row the rights page writes when nothing is ticked cannot take it away.
+// Before and after in ONE case, so a green run cannot come from the right
+// never having been there.
+func TestTheRightOfAnAdminSurvivesAnEmptyRow(t *testing.T) {
+	fx := newFixture(t)
+	if err := fx.DB.AppPut(ctx, *fx.App); err != nil {
+		t.Fatalf("app row: %v", err)
+	}
+	use := termApp + "/" + core.RightUse
+	before, _, err := Of(ctx, fx.DB, fx.List, fx.AdminUser)
+	if err != nil || !before[use] {
+		t.Fatalf("before: %v %v", before, err)
+	}
+	if err := Set(ctx, fx.DB, core.RoleRights{Role: trust.RoleAdmin}); err != nil {
+		t.Fatalf("empty row: %v", err)
+	}
+	after, _, err := Of(ctx, fx.DB, fx.List, fx.AdminUser)
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	if !after[use] {
+		t.Fatalf("an empty row for the role admin took %q away: %v", use, after)
+	}
+}
+
+// TestAnAdminHoldsNothingOfARowTheMenuWouldNotShow: the implicit right follows
+// the row the menu shows and not the installation as such. Each state is
+// measured against the SAME app, with the working state last, so the case
+// cannot be green because this app never grants anything.
+func TestAnAdminHoldsNothingOfARowTheMenuWouldNotShow(t *testing.T) {
+	use := termApp + "/" + core.RightUse
+	for _, c := range []struct {
+		name string
+		row  func(a *dbapi.App)
+		want bool
+	}{
+		{"deactivated", func(a *dbapi.App) { a.Active = false }, false},
+		{"no version", func(a *dbapi.App) { a.Version = "" }, false},
+		{"broken manifest", func(a *dbapi.App) { a.Manifest = []byte("{not json") }, false},
+		{"as installed", func(a *dbapi.App) {}, true},
+	} {
+		fx := newFixture(t)
+		row := *fx.App
+		c.row(&row)
+		if err := fx.DB.AppPut(ctx, row); err != nil {
+			t.Fatalf("%s: app row: %v", c.name, err)
+		}
+		got, _, err := Of(ctx, fx.DB, fx.List, fx.AdminUser)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got[use] != c.want {
+			t.Errorf("%s: holds %q = %v, want %v", c.name, use, got[use], c.want)
+		}
+	}
+}
+
+// TestAnAdminOpensAnInstalledAppWithoutARow goes one step further than Of: the
+// right is not only in the map, it opens the channel. Without this case the
+// menu could show an app that refuses every click.
+func TestAnAdminOpensAnInstalledAppWithoutARow(t *testing.T) {
+	fx := newFixture(t)
+	if err := fx.DB.AppPut(ctx, *fx.App); err != nil {
+		t.Fatalf("app row: %v", err)
+	}
+	if code := fx.CheckApp(t, fx.AdminUser, termAct); code != "" {
+		t.Fatalf("an admin cannot open the installed app: %q", code)
+	}
+	// The control in the same shape: a user who is no admin is still refused.
+	if code := fx.CheckApp(t, fx.OfficeUser, termAct); code != wire.CodeForbidden {
+		t.Fatalf("a user who is no admin got in: %q", code)
+	}
+}
+
+// TestAnAdminHoldsTheRightsOfTheRealTerminalApp measures against the manifest
+// the installation on the Debian VM really runs, read from the repository and
+// not retyped: apps/server-controller/templates/terminal/manifest.json is the
+// app that was set up there on 21.10.2026 and that nobody could see.
+//
+// The fixture's own manifest is a small one written for these cases; this one
+// carries a UI, a critical action and needs root, and the point of the case is
+// that none of that changes who holds the right.
+func TestAnAdminHoldsTheRightsOfTheRealTerminalApp(t *testing.T) {
+	const path = "../../../../apps/server-controller/templates/terminal/manifest.json"
+	raw, err := os.ReadFile(path)
+	// Not skipped: this file is in the repository, so one that cannot be read
+	// is a hollow tree and not a machine without a tool (messen.md).
+	if err != nil {
+		t.Fatalf("the manifest of the real app is missing: %v", err)
+	}
+	m, err := store.ParseManifest(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The case would be worthless against a manifest that is not the one it
+	// names, so what it was measured on is checked before anything is
+	// measured: the app of the VM, with its one action.
+	if m.ID != "org.sorglos.terminal" || len(m.Actions) != 1 || m.Actions[0].Name != "shell" {
+		t.Fatalf("not the manifest this case is written for: %+v", m)
+	}
+	fx := newFixture(t)
+	if err := fx.DB.AppPut(ctx, dbapi.App{ID: m.ID, Version: m.Version, Store: trust.StoreGlobal,
+		Node: ctlNode, Active: true, Manifest: raw}); err != nil {
+		t.Fatalf("app row: %v", err)
+	}
+	got, _, err := Of(ctx, fx.DB, fx.List, fx.AdminUser)
+	if err != nil {
+		t.Fatalf("of: %v", err)
+	}
+	for _, want := range []string{m.ID + "/" + core.RightUse, m.ID + "/shell"} {
+		if !got[want] {
+			t.Errorf("an admin does not hold %q on the real app: %v", want, got)
+		}
+	}
+	// The control, in the same case and on the same row: a user who is no
+	// admin and has no row holds nothing of it.
+	other, _, err := Of(ctx, fx.DB, fx.List, fx.OfficeUser)
+	if err != nil {
+		t.Fatalf("office: %v", err)
+	}
+	if other[m.ID+"/"+core.RightUse] || other[m.ID+"/shell"] {
+		t.Fatalf("a user who is no admin holds the real app's rights: %v", other)
 	}
 }

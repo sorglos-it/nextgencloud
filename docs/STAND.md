@@ -245,6 +245,19 @@ weil `jq` auf diesem Rechner fehlt.
 
 ## Offene Entscheidungen
 
+- **Eine Anlage kann keinen zweiten Benutzer bekommen — aber es fehlt nur die Oberfläche, nicht
+  der Vertrag (gemessen am 23.10.2026).** Thomas: „ich kann dort keine user anlegen die funktion
+  gibt es nicht." Stimmt — kein Knopf, kein Formular, kein Befehl, auf keiner Ebene
+  (`ngc-store` kann es nicht, `apps/cli-recovery/` gibt es nicht, der Recovery-Modus zielt auf
+  einen Not-Admin und nicht auf einen Mitbewohner). **Aber:** `ngc.users/api/trust` nimmt jede
+  Fassung an, und `trust.Advance` erlaubt einem Admin als Unterzeichner jede Änderung, also auch
+  einen neuen Benutzer. Die Schwierigkeit ist, dass ein Benutzer einen Schlüssel braucht und der
+  bei einem Passwortkonto das Passwort selbst ist, das den Browser nie verlassen darf.
+  **Entwurf mit Messung, Abwägung der drei Abläufe und der Anfrage an den Koordinator:**
+  [`superpowers/specs/2026-10-23-zweiter-benutzer.md`](superpowers/specs/2026-10-23-zweiter-benutzer.md).
+  Empfehlung dort: Erstpasswort durch den Admin jetzt (ohne eine Zeile in `shared/`, Preis im
+  Formular benannt), Einladungscode als Ziel. **Nicht gebaut, nichts entschieden** — der
+  Koordinator bestätigt zuerst, dass der Weg über eine Shell-gebaute Fassung der gewollte ist.
 - **ES GIBT KEINEN RELEASE-PACKER — gemessen am 01.10.2026, und das ist der eigentliche Grund,
   warum NGC noch nicht installierbar ist.** Kein `tar -c`, kein Workflow, kein `tools/release*`,
   weder auf `main` noch auf `web`; `shared/testdata/release/ngc-web-all.tar` sind **18 Byte Text**.

@@ -10,6 +10,7 @@ import { Win, minSize } from "./window.js";
 import { storeApp } from "../apps/store.js";
 import { usersApp } from "../apps/users.js";
 import { UICache, openAppUI } from "./appframe.js";
+import { APPS, Changed, RIGHTS } from "./changed.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
 } from "./theme.js";
@@ -47,6 +48,12 @@ const BUILTIN = {
 // what the design rules forbid, and a name is easier to hit than a hex value.
 const ACCENT_NAMES = ["Blau", "Türkis", "Pink", "Orange", "Violett", "Grün"];
 
+// How long two returns to this window have to be apart before the apps are
+// asked for a second time. Switching back to a tab raises "visibilitychange"
+// and "focus" within a few milliseconds of each other, and one return is one
+// question. The same floor, and the same reason, as shell/stale.js.
+const LOOK_FLOOR_MS = 1500;
+
 // How long a friendly notice stays. An error stays until it is closed.
 const NOTICE_MS = 8000;
 
@@ -70,6 +77,13 @@ class Desktop {
     // of the trust list, which is what ties a proof to the list it was
     // checked against.
     this.uiCache = new UICache();
+
+    // The one bus of this desktop: whoever changes something says so here,
+    // and whoever shows it hears it. It is built HERE and not by whoever
+    // starts the desktop, because the surfaces get it out of appCtx() and a
+    // second bus would be a surface talking to nobody. Why it exists at all,
+    // and what it deliberately does not cover, stands in shell/changed.js.
+    this.changed = new Changed();
 
     this.windows = new Map();
     this.focused = null;
@@ -353,6 +367,15 @@ class Desktop {
   }
 
   wireGlobal() {
+    // THE START MENU AND THE ICONS ARE THE SCREEN POINT 61 WAS WRITTEN FOR:
+    // an app was installed, the right to use it was granted, and the menu went
+    // on showing the list from before until somebody pressed Ctrl+F5. Both of
+    // those are a click in this very window, so both are told here now - the
+    // store after an activation, "Benutzer und Rechte" after a change to the
+    // rights - and the list is asked for again. core.ActApps answers what this
+    // user may use, so a right is as much a reason to ask again as an install.
+    this.changed.on(APPS, () => this.load());
+    this.changed.on(RIGHTS, () => this.load());
     // A click anywhere else closes the start menu - the way every desktop
     // does it, and the only way out that needs no explaining.
     document.addEventListener("pointerdown", (e) => {
@@ -557,7 +580,13 @@ class Desktop {
       // why it will not - and it owns win.onClose from its first line, so a
       // window closed while the interface is still on its way takes its
       // listeners with it.
-      openAppUI(win, { app: a, link: this.link, trust: this.trust, cache: this.uiCache });
+      openAppUI(win, {
+        app: a, link: this.link, trust: this.trust, cache: this.uiCache,
+        // The strip of this desktop, for the reason a refused channel of this
+        // app has (appframe, doOpen): an app says what it likes in its own
+        // window, and this says it where the shell speaks.
+        notice: (level, txt) => this.notice(level, txt),
+      });
     }
     return win;
   }
@@ -568,6 +597,7 @@ class Desktop {
   // no reference to the desktop itself and cannot reach the other windows
   // through it.
   appCtx() {
+    const self = this;
     return {
       link: this.link,
       trust: this.trust,
@@ -576,7 +606,15 @@ class Desktop {
       // The apps this desktop knows about: "Benutzer und Rechte" needs them to
       // say who may see what. One place builds what a built-in app is given,
       // so a second app cannot quietly be handed something different.
-      apps: this.appList,
+      // A GETTER AND NOT THE ARRAY. load() replaces this.appList with the new
+      // answer, so a surface that was handed the array itself would hold the
+      // list of the moment its window opened - which is exactly the staleness
+      // this task is about, one level further in.
+      get apps() { return self.appList; },
+      // The bus, so a surface both tells what IT changed and hears what
+      // another one changed. Handed over in appCtx and nowhere else, for the
+      // reason written above it: one place builds what a built-in app gets.
+      changed: this.changed,
       notice: (level, txt) => this.notice(level, txt),
     };
   }
@@ -680,8 +718,29 @@ export function startDesktop(root, { link, session, trust, releaseKey } = {}) {
     trust.onChange(() => {
       d.uiCache.clear();
       d.load();
+      // AND EVERY OTHER SURFACE, not just the apps. The list carries the
+      // nodes, the stores and the root rights; which of them moved cannot be
+      // read from the outside, and a version arrives for a change somebody
+      // else made just as much as for one of ours. Once per settled version,
+      // because that is how often TrustStore tells it.
+      d.changed.tellAll();
     });
   }
+  // Coming back to the window is the moment a person expects to see what is
+  // there NOW - a second admin may have installed something while this one was
+  // in another tab, and no message of the link says so (shell/changed.js). It
+  // is one question per return, not one per second, and the floor keeps the
+  // two events a single return raises from asking twice.
+  let last = 0;
+  const back = () => {
+    if (document.visibilityState === "hidden") return;
+    const now = Date.now();
+    if (now - last < LOOK_FLOOR_MS) return;
+    last = now;
+    d.load();
+  };
+  document.addEventListener("visibilitychange", back);
+  window.addEventListener("focus", back);
   d.load();
   return d;
 }

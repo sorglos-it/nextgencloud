@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
@@ -62,7 +63,8 @@ func TestAddIgnoresTheCallersIDAndTime(t *testing.T) {
 
 func TestChannelKeepsTheCode(t *testing.T) {
 	lg := newLog()
-	if err := lg.Channel(ctx, user, "org.sorglos.terminal", "shell", "services-1", wire.CodeForbidden); err != nil {
+	if err := lg.Channel(ctx, user, "org.sorglos.terminal", "shell", "services-1", wire.CodeForbidden,
+		reason.NoRight); err != nil {
 		t.Fatalf("channel: %v", err)
 	}
 	if e := only(t, lg); e.Result != string(wire.CodeForbidden) || e.Node != "services-1" {
@@ -292,7 +294,7 @@ func TestOnlyAnUnknownKindIsRefused(t *testing.T) {
 	// And the entry points cannot reach it, whatever they are handed.
 	for _, err := range []error{
 		lg.Login(ctx, "\x00", "\x00", "\x00"),
-		lg.Channel(ctx, "\x00", "\x00", "\x00", "\x00", wire.Code("\x00")),
+		lg.Channel(ctx, "\x00", "\x00", "\x00", "\x00", wire.Code("\x00"), reason.Reason("\x00")),
 		lg.Task(ctx, "\x00", "\x00", "\x00", "\x00", "\x00"),
 	} {
 		if errors.Is(err, ErrEntry) {
