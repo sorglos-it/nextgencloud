@@ -19,132 +19,15 @@ const (
 )
 
 type store struct {
-	db  *sql.DB // writes, and the transactions of write
-	rdb *sql.DB // reads; the same handle unless NewSplit gave a second one
-	d   Dialect
-	// turn bounds how long a writer waits in FRONT of the write handle, or is
-	// nil where nobody queues there. See NewSplit and takeTurn.
-	turn chan struct{}
-	// turnWait is the bound of that wait, one chain of the open database.
-	turnWait time.Duration
-}
-
-// ErrTurn is what a writer gets when no turn at the write handle came free
-// within one chain of the database. It is not a context error: the caller's
-// own deadline is still open, and what ran out is the queue of this process -
-// so the caller is told that and not something about his own deadline.
-var ErrTurn = errors.New("sqlstore: no turn at the write handle came free")
-
-// takeTurn keeps a writer out of the write handle until it is his turn, and
-// gives back the function that ends it. It exists because a write handle of
-// ONE connection is itself a queue, and an unbounded one: measured on D: on
-// 16.10.2026 with three writers of one process without a deadline of their
-// own, against a lock a second process never releases, the whole thing took
-//
-//	main (one pool of four)          80.5 s   80.6 s   80.7 s
-//	the split, before this bound    190.0 s  220.0 s  240.3 s
-//
-// reproduced 2 of 2, and 160 s with two writers: the last one waits about one
-// chain PER writer, because each of them runs its own chain of eight tries
-// after the one before gave up. That is worse than what the split replaced,
-// and it breaks a number that is not in this package: dbwait.StartWait is
-// ninety seconds BECAUSE one chain is 80.6 s, so a program coming up behind
-// one writer of its own would be refused where it used to come up.
-//
-// With the bound a writer waits at most ONE chain for his turn. The whole
-// thing is then bounded by two chains - his wait plus the chain of whoever
-// holds the turn - instead of growing with the number of writers. The reads of
-// his process stay free the whole time either way, which is what the split is
-// for and what this does not touch.
-//
-// The turn is held across the WHOLE operation including its repeats: a writer
-// who gave up his turn between two tries would queue again at the next one,
-// and the bound would say nothing.
-func (s *store) takeTurn(ctx context.Context) (func(), error) {
-	if s.turn == nil {
-		return func() {}, nil
-	}
-	t := time.NewTimer(s.turnWait)
-	defer t.Stop()
-	select {
-	case s.turn <- struct{}{}:
-		return func() { <-s.turn }, nil
-	case <-ctx.Done():
-		return nil, cause(ctx, ctx.Err())
-	case <-t.C:
-		// Not the caller's reason: his context is still open, so nothing HE
-		// named has run out. See ErrTurn.
-		return nil, ErrTurn
-	}
-}
-
-// oneChain asks the OPEN DATABASE how long one chain of tries can take:
-// maxTries times its own busy_timeout. It is read from the database and not
-// from the constant in the sqlite package, because a bound that is only
-// checked against the number it came from is not checked - and because this
-// package cannot see that constant at all.
-//
-// A database that does not answer (MariaDB, a handle already closed) gets no
-// bound and no queue, which is the behaviour of every caller before this.
-func oneChain(db *sql.DB) (time.Duration, bool) {
-	var ms int64
-	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&ms); err != nil || ms <= 0 {
-		return 0, false
-	}
-	return time.Duration(maxTries) * time.Duration(ms) * time.Millisecond, true
+	db *sql.DB
+	d  Dialect
 }
 
 // New returns dbapi.Store on an open database. It creates nothing: the schema
-// comes from the migrations. Reads and writes go to the same handle, which is
-// what MariaDB wants: there the pool is a pool over several nodes, and a
-// writer that waits waits on the server, not on a connection of ours.
-func New(db *sql.DB, d Dialect) dbapi.Store { return &store{db: db, rdb: db, d: d} }
+// comes from the migrations.
+func New(db *sql.DB, d Dialect) dbapi.Store { return &store{db: db, d: d} }
 
-// NewSplit returns dbapi.Store that writes through write and reads through
-// read. It exists for SQLite, where there is exactly one writer in the file
-// and a writer that waits HOLDS its connection: with one pool, four waiting
-// writers take every connection and the next read of the process waits for
-// them (measured 13.10.2026, point 48: 4 blocked writers -> 9.5 s for the
-// first read, 3 -> 0.007 s). With a write handle of one connection the
-// waiting happens in Go, in front of the handle, and the read handle keeps
-// its connections. In WAL mode a reader needs no lock the writer holds, so
-// the read never waits for the write at all.
-//
-// The two handles are two pools on one file, so they are two SQLite builds
-// and cost memory twice (sqlite.maxMemory is a ceiling, not a reservation,
-// and the read handle binds no blob of its own). NOT MEASURED: what the two
-// hold together at the peak of a backup, which is the open question of
-// sqlite.go's own comment with one pool more.
-// The write handle is also a QUEUE, and NewSplit bounds how long anyone waits
-// in it: see takeTurn for the measurement that made that necessary. The size
-// of the queue is read off the handle itself (MaxOpenConnections) rather than
-// written down here, so it cannot drift away from the pool it guards; the
-// bound is read off the open database (oneChain). A handle that answers
-// neither gets no queue, which is the behaviour of everything before this.
-func NewSplit(write, read *sql.DB, d Dialect) dbapi.Store {
-	s := &store{db: write, rdb: read, d: d}
-	if n := write.Stats().MaxOpenConnections; n > 0 {
-		if w, ok := oneChain(write); ok {
-			s.turn, s.turnWait = make(chan struct{}, n), w
-		}
-	}
-	return s
-}
-
-// Close closes both handles. The read handle goes first, so that a read that
-// is still running cannot be waiting for the writer while the writer is gone.
-// Both errors are kept: the first one that is not nil is returned, and the
-// other handle is closed either way.
-func (s *store) Close() error {
-	var first error
-	if s.rdb != s.db {
-		first = s.rdb.Close()
-	}
-	if err := s.db.Close(); first == nil {
-		first = err
-	}
-	return first
-}
+func (s *store) Close() error { return s.db.Close() }
 
 // write runs fn in one transaction and repeats the whole of it while the
 // database says the transaction was rolled back: a Galera certification
@@ -152,11 +35,7 @@ func (s *store) Close() error {
 // long, SQLite's "busy". An error that may have been committed is never
 // repeated, because repeating it could turn a success into ErrUsed.
 func (s *store) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	done, err := s.takeTurn(ctx)
-	if err != nil {
-		return err
-	}
-	defer done()
+	var err error
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
 			return cause(ctx, ctx.Err())
@@ -218,11 +97,7 @@ func cause(ctx context.Context, err error) error {
 // how many rows it matched. It repeats the statement on the same conflicts as
 // write.
 func (s *store) exec(ctx context.Context, stmt string, args ...any) (int64, error) {
-	done, err := s.takeTurn(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer done()
+	var err error
 	for try := range maxTries {
 		if try > 0 && !wait(ctx, try) {
 			return 0, cause(ctx, ctx.Err())

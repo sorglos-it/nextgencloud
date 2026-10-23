@@ -121,7 +121,7 @@ func (s *store) logPage(ctx context.Context, stmt string, args []any) ([]core.Lo
 	var out []core.LogEntry
 	err := s.query(ctx, func() error {
 		out = nil
-		rows, err := s.rdb.QueryContext(ctx, stmt, args...)
+		rows, err := s.db.QueryContext(ctx, stmt, args...)
 		if err != nil {
 			return err
 		}

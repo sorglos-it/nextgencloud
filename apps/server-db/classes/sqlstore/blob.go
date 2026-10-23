@@ -51,7 +51,7 @@ func (s *store) BlobGet(ctx context.Context, kind, id string) (dbapi.Blob, error
 	out := dbapi.Blob{Kind: kind, ID: id}
 	err := s.query(ctx, func() error {
 		var seq int64
-		err := s.rdb.QueryRowContext(ctx, blobSelect, []byte(kind), []byte(id)).Scan(&seq, &out.Data, &out.Updated)
+		err := s.db.QueryRowContext(ctx, blobSelect, []byte(kind), []byte(id)).Scan(&seq, &out.Data, &out.Updated)
 		if errors.Is(err, sql.ErrNoRows) {
 			return dbapi.ErrNotFound
 		}
@@ -77,7 +77,7 @@ func (s *store) BlobFrom(ctx context.Context, kind string, seq uint64) ([]dbapi.
 	var out []dbapi.Blob
 	err := s.query(ctx, func() error {
 		out = nil
-		rows, err := s.rdb.QueryContext(ctx, blobFrom, []byte(kind), int64(seq))
+		rows, err := s.db.QueryContext(ctx, blobFrom, []byte(kind), int64(seq))
 		if err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func (s *store) AppGet(ctx context.Context, id string) (dbapi.App, error) {
 	err := s.query(ctx, func() error {
 		var active int64
 		var grants string
-		err := s.rdb.QueryRowContext(ctx, appSelect, []byte(id)).Scan(appColumns(&out, &active, &grants)...)
+		err := s.db.QueryRowContext(ctx, appSelect, []byte(id)).Scan(appColumns(&out, &active, &grants)...)
 		if errors.Is(err, sql.ErrNoRows) {
 			return dbapi.ErrNotFound
 		}
@@ -187,7 +187,7 @@ func (s *store) AppList(ctx context.Context) ([]dbapi.App, error) {
 	var out []dbapi.App
 	err := s.query(ctx, func() error {
 		out = nil
-		rows, err := s.rdb.QueryContext(ctx, appList)
+		rows, err := s.db.QueryContext(ctx, appList)
 		if err != nil {
 			return err
 		}
