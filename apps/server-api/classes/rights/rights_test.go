@@ -188,16 +188,16 @@ func TestCheckWithoutAUser(t *testing.T) {
 	}
 	req := Request{Action: stage, Node: ctlNode,
 		Open: wire.Open{App: stage.App, Service: stage.Service, Action: stage.Name, Window: wire.MinWindow}}
-	if _, code := Check(ctx, fx.DB, fx.List, req, now); code != "" {
+	if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != "" {
 		t.Fatalf("stage without a user: %q", code)
 	}
 	list, _ := core.Lookup(core.AppUsers, core.ServiceAPI, core.ActList)
 	req.Action, req.Node = list, ""
 	req.Open = wire.Open{App: list.App, Service: list.Service, Action: list.Name, Window: wire.MinWindow}
-	if _, code := Check(ctx, fx.DB, fx.List, req, now); code != wire.CodeForbidden {
+	if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != wire.CodeForbidden {
 		t.Fatalf("list without a user: %q", code)
 	}
-	if _, code := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: fx.Manifest, Node: ctlNode,
+	if _, code, _ := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: fx.Manifest, Node: ctlNode,
 		Open: wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}}, now); code != wire.CodeForbidden {
 		t.Fatalf("app channel without a user: %q", code)
 	}
@@ -248,7 +248,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 	fx := newFixture(t)
 	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}
 	// The yardstick: installed and active, but without the right.
-	_, want := fx.checkAppOpen(t, fx.OfficeUser, open)
+	_, want, _ := fx.checkAppOpen(t, fx.OfficeUser, open)
 	if want != wire.CodeForbidden {
 		t.Fatalf("no right: %q", want)
 	}
@@ -259,7 +259,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 	} {
 		for _, user := range []string{fx.OfficeUser, fx.AdminUser} {
 			req.Session = fx.session(t, user)
-			if _, code := Check(ctx, fx.DB, fx.List, req, now); code != want {
+			if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != want {
 				t.Fatalf("%s as %s: %q instead of %q", name, user, code, want)
 			}
 		}
@@ -271,7 +271,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 		Rights: []string{termApp + "/" + core.RightUse, termApp + "/" + termAct}}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
 		t.Fatalf("with the rights: %q", code)
 	}
 	for name, req := range map[string]Request{
@@ -280,7 +280,7 @@ func TestCheckHidesWhetherAnAppIsThere(t *testing.T) {
 		"inactive":    {App: &dbapi.App{ID: termApp, Node: ctlNode}, Manifest: fx.Manifest, Node: ctlNode, Open: open},
 	} {
 		req.Session = fx.session(t, fx.OfficeUser)
-		if _, code := Check(ctx, fx.DB, fx.List, req, now); code != want {
+		if _, code, _ := Check(ctx, fx.DB, fx.List, req, now); code != want {
 			t.Fatalf("%s with the rights: %q instead of %q", name, code, want)
 		}
 	}
@@ -309,7 +309,7 @@ func TestCheckRefusesAnActionNamedUse(t *testing.T) {
 		if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice, Rights: rights}); err != nil {
 			t.Fatalf("set: %v", err)
 		}
-		_, code := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: m, Node: ctlNode,
+		_, code, _ := Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: m, Node: ctlNode,
 			Session: fx.session(t, fx.OfficeUser),
 			Open:    wire.Open{App: termApp, Service: termSvc, Action: core.RightUse, Window: wire.MinWindow}}, now)
 		if code != wire.CodeNotFound {
@@ -331,13 +331,13 @@ func TestCheckRefusesAnOpenWithTaskAndParams(t *testing.T) {
 		Task: fx.appTask(t, fx.OfficeUser, termAct), Params: json.RawMessage(`{}`)}
 	// The params come first: a task counts once, so the other order would read
 	// the replay guard and not this one.
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
 		t.Fatalf("task and params: %q", code)
 	}
 	// The same task without params opens, so the params are what was refused —
 	// and the task was not spent on the refusal.
 	open.Params = nil
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != "" {
 		t.Fatalf("task alone: %q", code)
 	}
 }
@@ -355,20 +355,20 @@ func TestCheckOpensOnASignedReconfirmation(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 	open := wire.Open{App: termApp, Service: termSvc, Action: termAct, Window: wire.MinWindow}
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
 		t.Fatalf("plain: %q", code)
 	}
 	open.Task = fx.appTask(t, fx.OfficeUser, termAct)
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
 		t.Fatalf("task alone: %q", code)
 	}
 	// Another user's key is no answer, even for the same task.
 	open.Confirm = fx.confirm(t, fx.AdminUser, open.Task)
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeConfirm {
 		t.Fatalf("someone else confirmed: %q", code)
 	}
 	open.Confirm = fx.confirm(t, fx.OfficeUser, open.Task)
-	tk, code := fx.checkAppOpen(t, fx.OfficeUser, open)
+	tk, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open)
 	if code != "" || tk == nil {
 		t.Fatalf("task and confirmation: %q %v", code, tk)
 	}
@@ -404,12 +404,12 @@ func TestCheckIgnoresTheMembersOfTheOpen(t *testing.T) {
 				t.Fatalf("set: %v", err)
 			}
 		}
-		_, want := fx.checkAppOpen(t, fx.OfficeUser, plain)
+		_, want, _ := fx.checkAppOpen(t, fx.OfficeUser, plain)
 		if granted != (want == "") {
 			t.Fatalf("granted=%v answered %q", granted, want)
 		}
 		for name, open := range ignored {
-			if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != want {
+			if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != want {
 				t.Fatalf("granted=%v, %s: %q instead of %q", granted, name, code, want)
 			}
 		}
@@ -426,7 +426,7 @@ func TestCheckNeverGainsFromATaskInTheOpen(t *testing.T) {
 		Window: wire.MinWindow, Task: fx.DeactivateTask(t)}
 	// Without the right it stays forbidden: the right is checked before any
 	// task is read, so the root task of an admin buys the office user nothing.
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeForbidden {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeForbidden {
 		t.Fatalf("without the right: %q", code)
 	}
 	if err := Set(ctx, fx.DB, core.RoleRights{Role: roleOffice,
@@ -438,7 +438,7 @@ func TestCheckNeverGainsFromATaskInTheOpen(t *testing.T) {
 	if code := fx.CheckApp(t, fx.OfficeUser, termAct); code != "" {
 		t.Fatalf("plain: %q", code)
 	}
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeVerify {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, foreign); code != wire.CodeVerify {
 		t.Fatalf("with the right: %q", code)
 	}
 }
@@ -456,7 +456,7 @@ func TestCheckTakesTheChannelFromTheRowNotTheOpen(t *testing.T) {
 	open := wire.Open{App: core.AppStore, Service: core.ServiceController, Action: termAct, Window: wire.MinWindow}
 	open.Task = fx.signTask(t, fx.OfficeUser, task.Task{ID: bytes.Repeat([]byte{0x62}, task.IDSize),
 		Node: ctlNode, App: open.App, Service: open.Service, Action: open.Action})
-	if _, code := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
+	if _, code, _ := fx.checkAppOpen(t, fx.OfficeUser, open); code != wire.CodeVerify {
 		t.Fatalf("code %q", code)
 	}
 }
