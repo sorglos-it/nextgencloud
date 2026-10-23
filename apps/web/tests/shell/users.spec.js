@@ -665,7 +665,10 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
   await sign(page);
-  await expect(app(page).locator(".pending .note")).toHaveText("Der Server »dienste« ist aufgenommen.");
+  // The sentence says the rest too: nothing was ticked in the question, so
+  // nobody may run a root task on that server yet.
+  await expect(app(page).locator(".pending .note")).toHaveText(
+    "Der Server »dienste« ist aufgenommen. Auf diesem Server darf noch niemand Apps einrichten.");
 
   const sent = await page.evaluate(async () => {
     const trust = await import("/assets/js/contracts/trust.js");
@@ -710,7 +713,8 @@ test("two servers taken in one after the other give n+1 and n+2, not two at one 
     await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
     await sign(page);
     await expect(app(page).locator(".pending .note"))
-      .toHaveText("Der Server »dienste« ist aufgenommen.");
+      .toHaveText("Der Server »dienste« ist aufgenommen. "
+        + "Auf diesem Server darf noch niemand Apps einrichten.");
 
     await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
@@ -1437,4 +1441,266 @@ test("without a session nothing about a listed server is offered", async ({ page
   await expect(app(page).locator(".listed .note")).toHaveText(
     "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.");
   expect(await app(page).locator(".listed .row button").count()).toBe(0);
+});
+
+// ------------------------------------------------- Aufgaben mit Systemrechten
+//
+// WHO MAY RUN ROOT TASKS ON A CONTROLLER. Measured on 19.10.2026 at a full
+// installation out of a published release: a paired and taken-in controller
+// ("ngc-2") was offered by the app store, and "Aktivieren" answered "Das hat
+// der Rechner nicht angenommen." with no sentence of the server and no log
+// line on either side - the refusal happens in the rights check.
+// trust.MayRoot lets a root task through only where the user stands in the
+// node's rootUsers or one of their roles in its rootRoles, and the two places
+// that wrote those lists wrote them EMPTY, with no screen anywhere to fill
+// them afterwards. So nobody could ever install an app on a freshly taken-in
+// server.
+//
+// EVERY CASE BELOW READS THE VERSION THAT WAS SENT, not the screen: who may do
+// what is the list's business, and a sentence in the interface proves nothing
+// about it.
+
+// sentRoot reads the root lists of one node out of the version that went over
+// ngc.users/api/trust, plus what the version in force had - so "unchanged" is
+// held against the list and never against a value written down here.
+async function sentRoot(page, id) {
+  return page.evaluate(async (want) => {
+    const trust = await import("/assets/js/contracts/trust.js");
+    const one = window.__ngcSent[window.__ngcSent.length - 1];
+    const s = trust.parseSigned(one.bytes);
+    const l = await trust.parseList(s.payload);
+    const node = l.nodes.find((n) => n.id === want);
+    const b64 = (u) => btoa(String.fromCharCode(...u));
+    return {
+      count: window.__ngcSent.length,
+      seq: l.seq,
+      me: window.__ngcCtx.session.user,
+      users: node.rootUsers ?? [], roles: node.rootRoles ?? [],
+      noise: b64(node.noise),
+      // Every OTHER node as it was: taking one server on, or changing one,
+      // says nothing about another.
+      others: l.nodes.filter((n) => n.id !== want)
+        .map((n) => ({ id: n.id, users: n.rootUsers ?? [], roles: n.rootRoles ?? [] })),
+      before: window.__ngcCtx.trust.current().list.nodes
+        .map((n) => ({ id: n.id, users: n.rootUsers ?? [], roles: n.rootRoles ?? [],
+          noise: b64(n.noise) })),
+    };
+  }, id);
+}
+
+function othersUntouched(got) {
+  for (const o of got.others) {
+    const was = got.before.find((b) => b.id === o.id);
+    expect(was, `${o.id} stood in the version before`).toBeTruthy();
+    expect(o.users, `${o.id} was left alone`).toEqual(was.users);
+    expect(o.roles, `${o.id} was left alone`).toEqual(was.roles);
+  }
+}
+
+test("a server taken in with nothing ticked grants root to nobody, and the answer says so",
+  async ({ page }) => {
+    // NO DEFAULT, and that is the decision this case pins: whom to trust with
+    // root on a machine belongs to the owner of the installation. A surface
+    // that ticked something by itself would hand the right out in the one
+    // moment nobody is looking, and there is no way back out of a right
+    // nobody noticed being given. So the take-up goes through, the lists stay
+    // empty, and the sentence says what that means.
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    // Nothing is ticked when the question opens.
+    expect(await dlg.locator(".rootpick input:checked").count()).toBe(0);
+    // And the question says what a tick would mean, before anybody sets one.
+    await expect(dlg).toContainText("Apps einrichten, entfernen, Daten löschen und das Terminal");
+    await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note")).toHaveText(
+      "Der Server »dienste« ist aufgenommen. Auf diesem Server darf noch niemand Apps einrichten.");
+    const got = await sentRoot(page, "dienste");
+    expect(got.count).toBe(1);
+    expect(got.users).toEqual([]);
+    expect(got.roles).toEqual([]);
+    othersUntouched(got);
+  });
+
+test("the person ticked at the take-up is the one who may run root tasks there",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByRole("checkbox", { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })
+      .check();
+    await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note")).toHaveText(
+      "Der Server »dienste« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: admin.");
+    const got = await sentRoot(page, "dienste");
+    // WHOSE SESSION THIS IS, asked of the page and not written down here: the
+    // id in the list has to be the id of the user whose box was ticked.
+    expect(typeof got.me, "the session names its user").toBe("string");
+    expect(got.me.length, "and it is not empty").toBeGreaterThan(0);
+    expect(got.users).toEqual([got.me]);
+    // A ROLE IS THE OTHER, WIDER GIFT and was not given here: it would cover
+    // every present and future member of it.
+    expect(got.roles).toEqual([]);
+    othersUntouched(got);
+  });
+
+test("a role can be ticked instead, and then it is the role that stands in the list",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dlg = page.getByRole("dialog");
+    // The question says what the wider way costs, next to the boxes that give
+    // it.
+    await expect(dlg).toContainText("Eine Rolle gilt auch für alle, die ihr später beitreten.");
+    await dlg.getByRole("checkbox", { name: "Rolle admin darf Aufgaben mit Systemrechten ausführen" })
+      .check();
+    await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note")).toHaveText(
+      "Der Server »dienste« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: Rolle admin.");
+    const got = await sentRoot(page, "dienste");
+    expect(got.users).toEqual([]);
+    expect(got.roles).toEqual(["admin"]);
+    othersUntouched(got);
+  });
+
+test("a listed server carries no root lists at all where it is an API server",
+  async ({ page }) => {
+    // The other half, and it must NOT be made to match: an API node may carry
+    // no root lists at all (Go: ValidAPINode asks for
+    // len(RootUsers)+len(RootRoles) == 0), and trust.MayRoot only ever looks at
+    // a node of kind controller. A version that named anybody there would be
+    // refused as invalid - so this question has no picker and no button.
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
+    const dlg = page.getByRole("dialog");
+    expect(await dlg.locator(".rootpick").count()).toBe(0);
+    await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pendapi .note"))
+      .toHaveText("Der Server »api-2« ist aufgenommen.");
+    const got = await sentRoot(page, "api-2");
+    expect(got.users).toEqual([]);
+    expect(got.roles).toEqual([]);
+    const row = app(page).locator(".listed .row", { hasText: "api-1" });
+    expect(await row.getByRole("button", { name: /Systemrechte/ }).count()).toBe(0);
+    expect(await row.locator(".root").count()).toBe(0);
+  });
+
+test("the row of a listed controller says who may run root tasks on it", async ({ page }) => {
+  // A server nobody may set up an app on looks exactly like a working one
+  // until somebody tries, and the refusal then says nothing about rights. So
+  // the row says it, with the NAME of the user and not their id.
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  const row = app(page).locator(".listed .row", { hasText: "ctl-1" });
+  // The controller of the fixture carries a root ROLE, and that is what the
+  // row reads out of the verified list.
+  await expect(row.locator(".root")).toHaveText("Mit Systemrechten: Rolle admin");
+  const what = await page.evaluate(() => {
+    const n = window.__ngcCtx.trust.current().list.nodes.find((x) => x.id === "ctl-1");
+    return { users: n.rootUsers ?? [], roles: n.rootRoles ?? [] };
+  });
+  expect(what.roles, "and that is what the list in force says").toEqual(["admin"]);
+  expect(what.users).toEqual([]);
+});
+
+test("a server taken in wrong is not dead: the root rights can be changed afterwards",
+  async ({ page }) => {
+    // THE WAY BACK, and until this screen there was none: nothing in the whole
+    // interface wrote those two lists after a take-up, so a server taken in
+    // without them could never run a root task again. Re-pairing a machine is
+    // not a repair for a tick that was missing.
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    const row = app(page).locator(".listed .row", { hasText: "ctl-1" });
+    await row.getByRole("button", { name: "Systemrechte auf ctl-1 ändern" }).click();
+    const dlg = page.getByRole("dialog");
+    // The boxes start on what the list says, so the question shows the state
+    // it is about rather than an empty sheet.
+    await expect(dlg.getByRole("checkbox",
+      { name: "Rolle admin darf Aufgaben mit Systemrechten ausführen" })).toBeChecked();
+    await expect(dlg.getByRole("checkbox",
+      { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })).not.toBeChecked();
+    // From the whole role to the one person.
+    await dlg.getByRole("checkbox", { name: "Rolle admin darf Aufgaben mit Systemrechten ausführen" })
+      .uncheck();
+    await dlg.getByRole("checkbox", { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })
+      .check();
+    await dlg.getByRole("button", { name: "Systemrechte ändern" }).click();
+    await sign(page);
+    await expect(app(page).locator(".listed .note"))
+      .toHaveText("Die Systemrechte auf »ctl-1« sind geändert.");
+    // The row stops saying the old thing, and it says the NAME of the person:
+    // the row is the one place somebody reads who may do this, and a line that
+    // is now wrong is worse than no line. It is read out of the version that
+    // now stands, which the shell followed the chain to.
+    await expect(row.locator(".root")).toHaveText("Mit Systemrechten: admin");
+    const got = await sentRoot(page, "ctl-1");
+    expect(got.count).toBe(1);
+    expect(got.seq).toBe(2);
+    expect(got.users).toEqual([got.me]);
+    expect(got.roles).toEqual([]);
+    // The KEYS of the server are untouched: what moved is who may tell it to
+    // do something as root, not what it is.
+    expect(got.noise).toBe(got.before.find((b) => b.id === "ctl-1").noise);
+    othersUntouched(got);
+  });
+
+test("the same choice again writes nothing and says so", async ({ page }) => {
+  // A version that changes nothing still costs a signature and a number in the
+  // chain, so the question answered without a change is answered with a
+  // sentence.
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  const row = app(page).locator(".listed .row", { hasText: "ctl-1" });
+  await row.getByRole("button", { name: "Systemrechte auf ctl-1 ändern" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Systemrechte ändern" }).click();
+  await expect(app(page).locator(".listed .note"))
+    .toHaveText("Daran hat sich nichts geändert. Es wurde nichts geschrieben.");
+  // Nothing was asked of the person and nothing left the browser.
+  expect(await page.locator(".confirmbox").count()).toBe(0);
+  expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+});
+
+test("the boxes of the question can be reached with the keyboard alone", async ({ page }) => {
+  // THE TAB TRAP USED TO BE TWO BUTTONS AND NOTHING ELSE, which was true as
+  // long as a question was only sentences. A question whose answer IS a list
+  // of checkboxes cannot be answered that way at all - the trap takes Tab away
+  // and hands it to a button - and a question that needs a mouse is a question
+  // this app's own rules refuse.
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Server");
+  await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+  const dlg = page.getByRole("dialog");
+  // The focus stands on Abbrechen, as everywhere in this app: a stray Enter
+  // must not give anything away.
+  await expect(dlg.getByRole("button", { name: "Abbrechen" })).toBeFocused();
+  // Tab walks the whole question and comes round: the two boxes of this
+  // fixture are reached, ticked with the keyboard, and the version carries it.
+  const boxes = dlg.locator(".rootpick input");
+  await expect(boxes).toHaveCount(2);
+  for (let i = 0; i < 8 && !(await boxes.first().evaluate((b) => b === document.activeElement)); i++) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(boxes.first()).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(boxes.first()).toBeChecked();
+  await expect(dlg.getByRole("checkbox",
+    { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })).toBeChecked();
 });

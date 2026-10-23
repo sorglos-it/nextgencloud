@@ -2,6 +2,23 @@
 
 ## Unveröffentlicht
 
+Wer auf einem Server Aufgaben mit Systemrechten ausführen darf, ist jetzt eine Frage in der
+Oberfläche – vorher war es eine Lücke. Beim Aufnehmen eines Servers („Benutzer und Rechte“ →
+Server) wählt der Verwalter einzelne Personen und/oder ganze Rollen aus, und bei jedem
+eingetragenen Server steht in der Zeile, wer dort Systemrechte hat, mit einem Knopf
+„Systemrechte ändern“ daneben. Vorgabe gibt es keine: nichts ist angehakt, die Frage sagt, was
+ein Haken bedeutet, und ohne Haken sagt die Antwort, dass dort noch niemand eine App einrichten
+kann. Gemessen am 19.10.2026 an einer Vollinstallation aus einem veröffentlichten Release: ein
+aufgenommener Controller („ngc-2“) konnte nichts, was eine Root-Aufgabe braucht – „Aktivieren“
+antwortete „Das hat der Rechner nicht angenommen.“, ohne Satz des Servers und ohne eine Zeile im
+Protokoll von `ngc-api` oder `ngc-controller`, weil die Ablehnung in der Rechteprüfung passiert.
+Ursache: `rootUsers` und `rootRoles` wurden von den einzigen zwei Stellen, die sie überhaupt
+schrieben, **leer** geschrieben, und keine weitere Stelle der Oberfläche schrieb sie je – also
+konnte auf jedem frisch aufgenommenen Controller **niemand** je eine App installieren. Dazu
+behoben: die Tastaturfalle der Frage kannte nur ihre zwei Knöpfe, so dass die Ankreuzfelder (und
+das Adressfeld) mit der Tastatur allein nicht erreichbar waren. Verträge in `shared/` sind dafür
+unverändert geblieben.
+
 Testumgebung für den Recovery-Modus (Paket 0): Skripte in `tools/`, die auf der VM `ngc-recovery`
 den TPM-Simulator swtpm, fünf SoftHSM2-Token als Ersatz für vier Root-Sticks und einen
 Reservestick sowie QEMU mit Secure-Boot-OVMF einrichten und prüfen. Nachgewiesen ist das
