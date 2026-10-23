@@ -3073,6 +3073,14 @@ Rollen in `RootRoles` — sonst `false`. Geprüft wird das an jeder Root-Aufgabe
 (`shared/task/task.go:199`, `shared/core/uiproof.go:132`). Zwei leere Listen, die niemand füllen
 kann, heißen: **auf diesem Controller kann nie eine App eingerichtet werden.**
 
+**Nachtrag zu (4), gemessen am 23.10.2026 an PR #87:** die fehlende Oberfläche ist dort gebaut.
+`rootPicker` zeichnet die Auswahl aus der **geprüften** Vertrauensliste, beim Aufnehmen und
+danach jederzeit änderbar, und `askJoin` schreibt nicht mehr `rootUsers: []`, sondern das
+Angekreuzte. Für `askJoinAPI` bleibt die Liste leer, und das ist richtig: `MayRoot` gibt für
+alles, was kein `NodeController` ist, ohnehin `false`. Die Haken **beginnen leer** — damit kann
+eine Anlage weiterhin mit einem Controller enden, auf dem niemand etwas darf, nur jetzt
+sichtbar und mit einem Weg heraus.
+
 **5. `0700` auf dem Ordner über dem Heimatverzeichnis.** Der Controller legt `/var/lib/ngc/apps`
 mit `0o700` an (`apps/server-controller/classes/runtime/data.go:108`), und der Kommentar darüber
 begründet es richtig: zwischen `mkdir` und `chown` darf niemand anderes hineinsehen. Nur gehört
@@ -3126,18 +3134,18 @@ nur selten läuft, bricht zwischen zwei Läufen an der nächsten kleinen Stelle.
 
 ### Offene Entscheidungen — gemessen ist das oben, abgewogen ist das hier
 
-**a) Bekommt die einrichtende Person die Rechte automatisch?** Heute nicht (4). Ein frisch
-aufgenommener Controller hat leere `rootUsers`/`rootRoles`, und wer ihn gerade mit seinem Schlüssel
-in die Vertrauensliste geschrieben hat, darf dort nichts tun.
+**a) Bekommt die einrichtende Person die Rechte automatisch?** Durch PR #87 ist das nicht mehr
+die ganze Frage, sondern eine kleine: dort wird beim Aufnehmen **gefragt**, und die Haken beginnen
+leer. Offen ist nur noch, ob der Haken **der unterschreibenden Person** auf diesem einen
+Controller **vorgekreuzt** ist.
 
-> **Mein Vorschlag: ja, und nur sie, nur dieser Controller, nur `rootUsers`.** Wer eine Version der
-> Vertrauensliste unterschreiben kann, hat die Anlage ohnehin in der Hand — er kann sich das Recht
-> im nächsten Schritt selbst eintragen, sobald es dafür eine Oberfläche gibt. Es ihm beim Aufnehmen
-> zu geben, fügt **keine** Macht hinzu, sondern erspart einen Weg, den es noch nicht gibt.
+> **Mein Vorschlag: ja — vorgekreuzt, nicht erzwungen, und nur sie, nur dieser Controller, nur
+> `rootUsers`.** Wer eine Version der Vertrauensliste unterschreiben kann, hat die Anlage ohnehin
+> in der Hand; ihr den Haken anzubieten fügt **keine** Macht hinzu, sondern nimmt den Fall weg, in
+> dem jemand einen Controller aufnimmt und erst beim ersten Einrichten merkt, dass er dort nichts
+> darf. Abwählbar bleibt er, denn es gibt Anlagen, in denen genau diese Person es nicht sein soll.
 > **Nicht** über `rootRoles`: eine Rolle gibt das Recht an alle weiter, die sie heute oder morgen
-> tragen, und das ist eine andere Entscheidung als „ich für diesen Rechner". Die Oberfläche zum
-> Ändern braucht es trotzdem — sonst kann niemand **zweiter** je dazukommen, und niemand es wieder
-> wegnehmen.
+> tragen, und das ist eine andere Entscheidung als „ich für diesen Rechner".
 
 **b) Verwirft ein kosmetisch ungültiges Feld weiter die ganze Antwort?** Heute ja (2): eine
 Versionszeichenkette, die niemand anzeigt, nimmt die Liste aller Rechner mit.
