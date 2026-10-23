@@ -141,6 +141,24 @@ test("a refused open says the sentence of its code, not the words of the error",
     await expect(t.frame.getByRole("alert")).not.toContainText("fake-link");
   });
 
+test("a refused open also says the reason on the desktop's own strip", async ({ shell }) => {
+  await shell.evaluate(() => {
+    window.__ngcTest.openFails = "Nicht bestätigt. Die App wurde nicht geöffnet.";
+  });
+  const t = await terminal(shell);
+  // THE STRIP BELONGS TO THE SHELL, and that is the point of this case:
+  // telling the app is not enough. Measured on 23.10.2026, the terminal that
+  // was installed on the Debian machine had been built before there was a
+  // reason to pass on, so it showed its own sentence and nothing else - while
+  // the shell knew the reason all along.
+  await expect(shell.getByRole("status")).toHaveText(
+    "Terminal: Nicht bestätigt. Die App wurde nicht geöffnet.",
+  );
+  // The window stands and the app keeps its own sentence as well: the strip is
+  // beside it, not instead of it.
+  await expect(t.frame.getByRole("alert")).toContainText("Nicht bestätigt.");
+});
+
 test("an ending with no sentence says the one thing it knows", async ({ shell }) => {
   await shell.evaluate(() => {
     window.__ngcTest.terminalCut = true;

@@ -580,7 +580,13 @@ class Desktop {
       // why it will not - and it owns win.onClose from its first line, so a
       // window closed while the interface is still on its way takes its
       // listeners with it.
-      openAppUI(win, { app: a, link: this.link, trust: this.trust, cache: this.uiCache });
+      openAppUI(win, {
+        app: a, link: this.link, trust: this.trust, cache: this.uiCache,
+        // The strip of this desktop, for the reason a refused channel of this
+        // app has (appframe, doOpen): an app says what it likes in its own
+        // window, and this says it where the shell speaks.
+        notice: (level, txt) => this.notice(level, txt),
+      });
     }
     return win;
   }

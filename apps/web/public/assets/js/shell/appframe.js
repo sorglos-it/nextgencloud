@@ -182,7 +182,7 @@ async function ngcLibrary() {
 
 // openAppUI fills win with the app's user interface, or with the reason it
 // will not run it.
-export async function openAppUI(win, { app, link, trust, cache } = {}) {
+export async function openAppUI(win, { app, link, trust, cache, notice } = {}) {
   // The window may be closed before any of this is done - fetching a UI takes
   // as long as it takes. From here on every step asks whether it still has a
   // window, and the listeners it hangs up come down with it.
@@ -308,6 +308,10 @@ const whyOpenFailed = (e) => {
   return codeMessage(CODES.UNREACHABLE);
 };
 
+  // Whether the reason of a refused open has already been put on the strip
+  // for this window (doOpen).
+  let saidWhy = false;
+
   // doOpen gives the app a channel that stays open.
   //
   // THE APP ID IS THE SHELL'S, exactly as in doCall: it comes from the window
@@ -342,7 +346,25 @@ const whyOpenFailed = (e) => {
       stream = await link.open(app.id, m.service, m.action, params, { node: app.node });
     } catch (e) {
       streams.delete(m.id);
-      toFrame({ id: m.id, op: "closed", status: "error", message: whyOpenFailed(e) });
+      const why = whyOpenFailed(e);
+      toFrame({ id: m.id, op: "closed", status: "error", message: why });
+      // AND ON THE DESKTOP'S OWN STRIP, once per window.
+      //
+      // Telling the app is not enough, and that is measured rather than
+      // reasoned: on 23.10.2026 the terminal of the Debian machine showed its
+      // own sentence and nothing else, because the app that was installed
+      // there was built before there was a reason to pass on. An app decides
+      // for itself what it does with what it is told - an old one, or one that
+      // ignores the message, leaves the person with nothing - while the strip
+      // belongs to the shell and says the same thing whatever the app does.
+      //
+      // ONCE PER WINDOW. An app that opens channels in a loop would otherwise
+      // write the desktop full, and the second strip says nothing the first
+      // did not.
+      if (!saidWhy) {
+        saidWhy = true;
+        notice?.("warn", app.name + ": " + why);
+      }
       return;
     }
     // The window was closed, or the number was given up, while the channel was
