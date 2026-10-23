@@ -390,8 +390,19 @@ class Users {
     this.trust = ctx?.trust ?? null;
     this.session = ctx?.session ?? null;
     // The apps of this desktop, so a right can be shown as "Fotos · teilen"
-    // instead of "de.example.fotos/teilen". A missing list is no error: the
+    // instead of "de.example.fotos/teilen", and so buildRights knows which
+    // rights there are to hand out at all. A missing list is no error: the
     // rights that a role already holds are shown as they stand.
+    //
+    // This list is ngc.desktop/apps, which only shows an app the viewer holds
+    // <app>/use for -- and it is a complete list here all the same, because
+    // only an admin reaches this app (core.Action.Admin) and an admin holds
+    // the right of every installed app without a row (rights.Of, adminApps on
+    // the API). Before that it was a closed circle: a freshly installed app
+    // was in nobody's menu, so its right was in nobody's list either, and the
+    // page said "Es gibt noch keine App, für die es Rechte gäbe." while the
+    // app stood installed. Whoever narrows the API's list again breaks THIS
+    // page, not just the menu.
     this.apps = Array.isArray(ctx?.apps) ? ctx.apps : [];
     this.users = null; // ngc.users/list, once, shared by the log and the question
     this.log = [];
@@ -559,6 +570,20 @@ class Users {
     box.append(el("legend", null, r.role));
     const opts = el("div", "opts");
     const boxes = new Map();
+    // The role admin holds every app right on the API itself and holds it
+    // without a row (rights.Of, adminApps), so there is nothing here to tick
+    // and nothing to clear: a haken that cannot change anything would be a
+    // lie, and one that looked clearable would promise a removal the API does
+    // not carry out. The rights stand, named, with no box and no save button.
+    if (r.role === trust.ROLE_ADMIN) {
+      box.append(
+        el("p", "hint", "Diese Rolle darf jede eingerichtete App benutzen. Das ist fest und lässt sich nicht abwählen."),
+      );
+      for (const right of all) opts.append(el("p", "opt fixed", rightName(right, this.apps)));
+      if (all.length === 0) opts.append(el("p", "muted", "Es ist noch keine App eingerichtet."));
+      box.append(opts);
+      return box;
+    }
     for (const right of all) {
       const lab = el("label", "opt");
       const cb = el("input", null);

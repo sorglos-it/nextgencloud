@@ -1018,6 +1018,72 @@ test("a right that is handed out is asked for first, and the question says what 
     expect(sent).toEqual(['{"role":"technik","rights":["de.example.fotos/teilen","de.example.fotos/use"]}']);
   });
 
+// ROLES_WITH_ADMIN is the rights answer with the role admin in it, which the
+// DEFAULTS do not carry: the admin holds NOTHING in its row, which is the
+// state of every installation that has just set an app up.
+// BOESE is the name of the app of this fixture that tries to be markup. The
+// rights page shows the name as it stands, so a case that names a right of
+// this app has to name the whole thing.
+const BOESE = "<img src=x onerror=alert(1)>Böse";
+
+const ROLES_WITH_ADMIN = {
+  "ngc.users/rights": [
+    { role: "admin", rights: [] },
+    { role: "technik", rights: ["de.example.fotos/use"] },
+    { role: "user", rights: [] },
+  ],
+};
+
+test("an app that is set up can be handed out although no role holds its right",
+  async ({ page }) => {
+    // The circle this closes: an app only reaches the menu with <app>/use
+    // (coreapp.Dispatcher.apps), and THIS list is built from that menu - so an
+    // app nobody could see had no right to give either, and the page said "Es
+    // gibt noch keine App, für die es Rechte gäbe." while the app stood
+    // installed. Measured on the Debian VM on 21.10.2026 with
+    // org.sorglos.terminal.
+    //
+    // de.example.boese is the app of this fixture that NO role holds anything
+    // of, so its right can only be here because the app is in the menu.
+    await mount(page, { answers: ROLES_WITH_ADMIN });
+    await openTab(page, "Rollen und Rechte");
+    await expect(app(page).getByRole("checkbox",
+      { name: "Rolle technik: " + BOESE + " · benutzen" })).toBeVisible();
+    await expect(app(page).getByRole("checkbox", { name: "Rolle technik: Fotos · teilen" })).toBeVisible();
+    // And the sentence that stood on the screen is not there.
+    await expect(app(page).locator(".opts .muted")).toHaveCount(0);
+  });
+
+test("the role admin holds every app right, with no box to clear and nothing to save",
+  async ({ page }) => {
+    // The API grants an admin the right of every installed app without a row
+    // (rights.Of, adminApps), so there is nothing here to tick and nothing to
+    // take away. A haken that cannot change anything would be a lie, and one
+    // that looked clearable would promise a removal the API does not carry
+    // out.
+    await mount(page, { answers: ROLES_WITH_ADMIN });
+    await openTab(page, "Rollen und Rechte");
+    const box = app(page).locator("fieldset.role").filter({ has: page.locator("legend", { hasText: "admin" }) });
+    await expect(box.locator(".hint")).toHaveText(
+      "Diese Rolle darf jede eingerichtete App benutzen. Das ist fest und lässt sich nicht abwählen.");
+    // The rights stand there, named the same way the boxes name them.
+    // The order is the one the page sorts by, which is the RIGHT and not the
+    // name: de.example.boese/use, de.example.fotos/teilen, .../use.
+    await expect(box.locator(".opt.fixed")).toHaveText(
+      [BOESE + " · benutzen", "Fotos · teilen", "Fotos · benutzen"]);
+    // Nothing to click: no checkbox, and no way to send a change at all.
+    expect(await box.getByRole("checkbox").count()).toBe(0);
+    expect(await box.getByRole("button").count()).toBe(0);
+
+    // The living control in the same screen: another role DOES get boxes and a
+    // save button for exactly those rights. Without this half the case would
+    // also pass on a page that drew no rights at all.
+    const other = app(page).locator("fieldset.role").filter({ has: page.locator("legend", { hasText: "technik" }) });
+    expect(await other.getByRole("checkbox").count()).toBe(3);
+    await expect(other.getByRole("button", { name: "Rechte der Rolle technik speichern" })).toBeVisible();
+    expect(await other.locator(".opt.fixed").count()).toBe(0);
+  });
+
 test("Abbrechen sends nothing and leaves the boxes as they were", async ({ page }) => {
   await mount(page);
   await openTab(page, "Rollen und Rechte");

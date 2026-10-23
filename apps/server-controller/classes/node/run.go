@@ -642,6 +642,13 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 		// the price small is that the chain now arrives at all -- without it
 		// the ID was never learned and no restart ever helped.
 		Node: nodeID(), Noise: key, Engine: engine, Chain: keeper, State: st,
+		// What every app channel needs before the engine is asked anything:
+		// the runtime directory of the container, which the tmpfs under /run
+		// loses at every boot (serve.Deps.Prepare).
+		Prepare: func(ctx context.Context, app string) error {
+			_, err := ctrlrt.RunForApp(ctx, app)
+			return err
+		},
 		// No updater yet, and this is a seam named rather than papered over:
 		// update.Deps takes the trust list as a VALUE (update.Deps.List),
 		// while this controller's list is replaced version by version under
