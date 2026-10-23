@@ -19,7 +19,7 @@
 // what the Web Crypto API returned.
 import * as wire from "../contracts/wire.js";
 import * as core from "../contracts/core.js";
-import { bytesOf, concat, viewOf } from "../contracts/b64.js";
+import { BadInput, bytesOf, concat, viewOf } from "../contracts/b64.js";
 
 // The states a channel walks through. "opening" is between the OPEN and the
 // first GRANT, when nothing may be sent yet; "closed" is final.
@@ -473,9 +473,27 @@ export class Channel {
   // truncated is the end of a channel whose answer stopped in the middle.
   // Nothing of it counts, so every waiter gets the error and nobody gets the
   // bytes that did arrive.
-  truncated() {
-    const e = fail(wire.CODES.PROTOCOL);
-    this.close(wire.CODES.PROTOCOL).catch(() => {});
+  //
+  // THE REASON IS THE OTHER SIDE'S WHERE THE OTHER SIDE GAVE ONE, and that is
+  // what `cl` is for. The contract says of a CLOSE before the controller's own
+  // end that the receiver "treats the data as cut off and reports an error"
+  // (shared/wire, "End to end") - it does NOT say which error, and the data is
+  // discarded here either way. Until 23.10.2026 this always said E_PROTOCOL,
+  // and what that cost was measured on the real machine that day: a channel the
+  // API refused with E_CONFIRM - the terminal, whose manifest says
+  // needs:["root"] - reached the shell as E_PROTOCOL, "Ungültige Nachricht."
+  // The one code the shell has to act on was the one code that could not get
+  // through, and the person read "Die Verbindung wurde abgeschnitten." while
+  // nothing anywhere said why.
+  //
+  // A CLOSE of status ok, and an EOF, carry no reason at all: those stay
+  // E_PROTOCOL, because a channel that ends in the middle without a word IS a
+  // protocol error.
+  truncated(cl = null) {
+    const code = cl !== null && cl.status !== OK && typeof cl.code === "string"
+      && cl.code !== "" ? cl.code : wire.CODES.PROTOCOL;
+    const e = fail(code, cl);
+    this.close(code).catch(() => {});
     this.giveUp(e);
     return undefined;
   }
@@ -496,8 +514,9 @@ export class Channel {
     this.link.free(this.number);
     this.state = CLOSED;
     // A CLOSE before the controller's end cuts an end-to-end channel off the
-    // same way an early EOF does.
-    if (this.e2e && !this.gotEnd) return this.truncated();
+    // same way an early EOF does - with the reason it carries, where it
+    // carries one (truncated).
+    if (this.e2e && !this.gotEnd) return this.truncated(c);
     return this.settle();
   }
 
@@ -650,7 +669,16 @@ export async function openOut(link, action, { params } = {}) {
 // openE2E opens a channel to an app: Noise message 1 goes into the OPEN, and
 // the prologue binds controller, app, service, action and the exact params and
 // task bytes of that OPEN.
-export async function openE2E(link, { app, service, action, params, taskBytes, node, controllerKey, sessionDH }) {
+// confirmBytes travels WITH a task and never without one: wire.encodeOpen
+// takes it only together with a task ("if (confirm !== null) { if (task ===
+// null) return false }"), so a confirmation on a channel that carries no task
+// would be a frame the contract refuses. It is NOT in the prologue either, and
+// that is the contract's doing and not a shortcut: noisep.E2EPrologue hashes
+// node, app, service, action, params and the TASK - the confirmation is the
+// user's second signature over those very task bytes, so it is bound to what
+// the prologue already covers.
+export async function openE2E(link,
+  { app, service, action, params, taskBytes, confirmBytes, node, controllerKey, sessionDH }) {
   // Read once, here: the prologue hashes these bytes and encodeOpen writes
   // them, and a second reading could hash one document and send another -
   // then the controller's prologue and ours differ and nothing decrypts, or
@@ -659,13 +687,32 @@ export async function openE2E(link, { app, service, action, params, taskBytes, n
     ? new Uint8Array(0) : bytesOf(params, "channel: params are not bytes");
   const taskBytesOrEmpty = taskBytes === null || taskBytes === undefined
     ? new Uint8Array(0) : bytesOf(taskBytes, "channel: task is not bytes");
+  // PARAMS BESIDE A TASK ARE REFUSED HERE, and this door says no instead of
+  // quietly picking one of the two.
+  //
+  // The contract takes an OPEN with a task and no params of its own - only the
+  // signed ones count (wire.validateOpen, Go wire.Open.validate) - and the
+  // prologue of BOTH sides hashes "params and task as the OPEN carried them"
+  // (e2e.Accept over noisep.E2EPrologue). So a caller that hands over both
+  // leaves this function two answers and no way to tell which one the person
+  // meant: send the params and break the contract, or drop them and hash bytes
+  // that nobody will ever see again. The first version of this line did drop
+  // them silently; what the mutation run of 23.10.2026 showed is that no case
+  // could ever hold that branch, because the one caller with a task
+  // (net/world.js, signedRetry) puts its params INTO the task and hands none
+  // over here. A branch no case can hold is a branch that gets written down -
+  // so it is a refusal now, and the case for it is in channels.spec.js.
+  if (taskBytesOrEmpty.length > 0 && paramsBytes.length > 0) {
+    throw new BadInput("channel: params beside a task");
+  }
   const prologue = await wireE2EPrologue(node, app, service, action, paramsBytes, taskBytesOrEmpty);
   const hs = await noiseHandshake(prologue, sessionDH, controllerKey);
   const msg1 = await hs.writeMessage1();
   const ch = await link.open({
-    app, service, action, params: taskBytesOrEmpty.length > 0 ? null : paramsBytes,
+    app, service, action, params: paramsBytes.length > 0 ? paramsBytes : null,
     window: wire.DEFAULT_WINDOW, e2e: msg1,
     taskBytes: taskBytesOrEmpty.length > 0 ? taskBytesOrEmpty : null,
+    confirmBytes: taskBytesOrEmpty.length > 0 ? (confirmBytes ?? null) : null,
   });
   // Message 2 travels in the first GRANT of the side that accepted the
   // channel; that GRANT without it, or a handshake in any other GRANT, is a

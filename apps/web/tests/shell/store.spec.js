@@ -316,6 +316,59 @@ test("the target list offers only controllers that are online and run services",
   expect(await opts.allTextContents()).toEqual(["pi-1", "pi-3"]);
 });
 
+test("a controller whose version is unreadable is still offered as a target", async ({ page }) => {
+  // The release binaries that went out stamped 0.0.0-dev
+  // (docs/vertraege-v1.2.md, point 71). version is shown and nothing else, so
+  // it is emptied and the machine stays offerable - a machine that runs
+  // services does not stop running them because a word in a column cannot be
+  // read.
+  await store(page, {
+    nodes: [
+      { node: "pi-1", online: true, roles: ["services"], version: "0.0.0-dev", arch: "arm64" },
+      { node: "pi-2", online: true, roles: ["services"], version: "1.0.0", arch: "arm64" },
+    ],
+  });
+  await tab(page, "Hochladen").click();
+  await page.locator(".store input[type=file]").setInputFiles({
+    name: "notizen.ngc",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from(buildPackage(manifest({
+      services: [{ name: "dienst", command: ["/usr/bin/dienst"] }],
+      ui: null,
+    }))),
+  });
+  await expect(page.locator(".upfacts")).toBeVisible();
+  const opts = page.locator(".store select.target option");
+  expect(await opts.allTextContents()).toEqual(["pi-1", "pi-2"]);
+  await expect(page.locator(".installbox p.fail")).toHaveCount(0);
+});
+
+test("a role the contract does not know throws the list away, and the box names the field",
+  async ({ page }) => {
+    // roles decide whether an app may run on that machine at all, so an
+    // unreadable one is not softened: the whole answer goes. What changes is
+    // the sentence - it names the field instead of asking for the window to be
+    // opened again, which would have changed nothing.
+    await store(page, {
+      nodes: [
+        { node: "pi-1", online: true, roles: ["dienste"], version: "1.0.0", arch: "arm64" },
+      ],
+    });
+    await tab(page, "Hochladen").click();
+    await page.locator(".store input[type=file]").setInputFiles({
+      name: "notizen.ngc",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from(buildPackage(manifest({
+        services: [{ name: "dienst", command: ["/usr/bin/dienst"] }],
+        ui: null,
+      }))),
+    });
+    await expect(page.locator(".upfacts")).toBeVisible();
+    await expect(page.locator(".installbox p.fail")).toHaveText(
+      "Eine Angabe dieses Servers ist unlesbar (roles).");
+    expect(await page.locator(".store select.target").count()).toBe(0);
+  });
+
 // ---------------------------------------------------------------- 5. updates
 
 test("a downloaded update installs on one click, with a signed root task", async ({ page }) => {

@@ -9,14 +9,28 @@ Ansicht dieses Feld weg – die Zeile sagte „E_FORBIDDEN" und kein Klick sagte
 heißt bewusst nicht „Grund": der Vertrag hat EIN solches Feld, und eine 86 Zeichen lange
 Unterschrift unter „Grund" wäre falsch beschriftet. Der Text geht als Text in die Zelle, nie als
 Markup.
+Eine Angabe, die nur angezeigt wird, verwirft die Antwort nicht mehr — und bleibt sie verworfen,
+nennt der Satz auf dem Schirm das Feld (`docs/vertraege-v1.2.md`, Punkt 71, Vorschläge b und c).
+In `contracts/core.js` trennt die Rechnerliste jetzt zwei Seiten: `version` und `arch` werden
+gezeigt und sonst von nichts gelesen, also macht `softenNodes` einen unlesbaren Wert **leer** und
+**behält die Zeile**; `node` und `roles` tragen eine Entscheidung und bleiben hart, die ganze
+Antwort fällt wie bisher. Dazu gibt die Vertragstabelle den Namen des gefallenen Feldes nach oben
+(`fault`, `core.refusedField`), und `apps/store.js` wie `apps/users.js` sagen „Eine Angabe dieses
+Servers ist unlesbar (`noise`).“ statt nur „Die Rechner konnten nicht geladen werden.“ — das
+Fenster neu zu öffnen half bei dem Fall, der wirklich passiert ist, nämlich
+Release-Binärdateien mit `0.0.0-dev`, überhaupt nicht.
 
 Wer auf einem Server Aufgaben mit Systemrechten ausführen darf, ist jetzt eine Frage in der
 Oberfläche – vorher war es eine Lücke. Beim Aufnehmen eines Servers („Benutzer und Rechte“ →
 Server) wählt der Verwalter einzelne Personen und/oder ganze Rollen aus, und bei jedem
 eingetragenen Server steht in der Zeile, wer dort Systemrechte hat, mit einem Knopf
-„Systemrechte ändern“ daneben. Vorgabe gibt es keine: nichts ist angehakt, die Frage sagt, was
-ein Haken bedeutet, und ohne Haken sagt die Antwort, dass dort noch niemand eine App einrichten
-kann. Gemessen am 19.10.2026 an einer Vollinstallation aus einem veröffentlichten Release: ein
+„Systemrechte ändern“ daneben. Beim Aufnehmen ist **ein** Haken gesetzt: der der Person, die den
+Server gerade aufnimmt – nur ihrer, keine Rolle, und abwählbar. Wer eine Version der
+Vertrauensliste unterschreiben kann, hat die Anlage ohnehin in der Hand, also fügt der Haken keine
+Macht hinzu; er nimmt den Fall weg, in dem jemand einen Server aufnimmt und erst beim ersten
+Einrichten merkt, dass er dort nichts darf. Die Frage sagt, was ein Haken bedeutet und dass er
+weggenommen werden kann, und ohne Haken sagt die Antwort, dass dort niemand eine App einrichten
+kann (V1.2 Punkt 71, Entscheidung a). Gemessen am 19.10.2026 an einer Vollinstallation aus einem veröffentlichten Release: ein
 aufgenommener Controller („ngc-2“) konnte nichts, was eine Root-Aufgabe braucht – „Aktivieren“
 antwortete „Das hat der Rechner nicht angenommen.“, ohne Satz des Servers und ohne eine Zeile im
 Protokoll von `ngc-api` oder `ngc-controller`, weil die Ablehnung in der Rechteprüfung passiert.

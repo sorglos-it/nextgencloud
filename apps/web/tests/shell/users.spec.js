@@ -577,8 +577,12 @@ test("an address that is no tunnel address is never offered", async ({ page }) =
     url: "https://api-3.test:7443/tunnel", since: 1790000000,
   }] } });
   await openTab(page, "Server");
+  // The sentence NAMES the field since the two halves of point 71 landed: the
+  // whole answer still goes, and url is what it fell over. The sentence that
+  // stood here before, "Die Antwort der Anlage war nicht in Ordnung", is what
+  // a refusal that names no field still says.
   await expect(app(page).locator(".pendapi .note")).toHaveText(
-    "Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angeboten.");
+    "Eine Angabe dieses Servers ist unlesbar (url).");
   expect(await app(page).locator(".pendapi .row").count()).toBe(0);
 
   const asked = await page.evaluate(async () => {
@@ -701,10 +705,10 @@ test("the trust list goes over ngc.users/api/trust as one signed version", async
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Server aufnehmen" }).click();
   await sign(page);
-  // The sentence says the rest too: nothing was ticked in the question, so
-  // nobody may run a root task on that server yet.
+  // The sentence says the rest too: the box of the person doing this starts
+  // ticked (V1.2 point 71), so the answer names them and nobody else.
   await expect(app(page).locator(".pending .note")).toHaveText(
-    "Der Server »dienste« ist aufgenommen. Auf diesem Server darf noch niemand Apps einrichten.");
+    "Der Server »dienste« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: admin.");
 
   const sent = await page.evaluate(async () => {
     const trust = await import("/assets/js/contracts/trust.js");
@@ -750,7 +754,7 @@ test("two servers taken in one after the other give n+1 and n+2, not two at one 
     await sign(page);
     await expect(app(page).locator(".pending .note"))
       .toHaveText("Der Server »dienste« ist aufgenommen. "
-        + "Auf diesem Server darf noch niemand Apps einrichten.");
+        + "Aufgaben mit Systemrechten dürfen dort: admin.");
 
     await app(page).getByRole("button", { name: "Server api-2 aufnehmen" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Server aufnehmen" }).click();
@@ -1527,6 +1531,71 @@ test("without a session nothing about a listed server is offered", async ({ page
   expect(await app(page).locator(".listed .row button").count()).toBe(0);
 });
 
+// ------------------------------------------- 9 a field that is only shown
+//
+// THE TWO HALVES OF ONE DECISION, and they belong in one run because either
+// alone proves nothing: a surface that keeps every row would be green on the
+// first case and wrong, and one that drops every answer would be green on the
+// second and wrong.
+//
+// What happened (docs/vertraege-v1.2.md, point 71): the release binaries went
+// out stamped 0.0.0-dev, the controller sent that in its hello, and
+// checkNodeInfo held version to MAJOR.MINOR.PATCH. The list contract is
+// every(v, checkNodeInfo), so that ONE row threw away the WHOLE machine list
+// and the window could say nothing but that it got nothing.
+test("a version the contract cannot read empties the column and keeps the row", async ({ page }) => {
+  await mount(page, { answers: { "ngc.users/nodes": [
+    { node: "ctl-1", online: true, roles: ["services"], version: "1.0.0", arch: "amd64" },
+    // The row that used to take the other two with it. arch is wrong as well,
+    // so both fields that are only shown are measured in one row.
+    { node: "ctl-2", online: true, roles: ["services"], version: "0.0.0-dev", arch: "riscv64" },
+    { node: "api-1", online: true, roles: ["api"], version: "1.0.0", arch: "amd64" },
+  ] } });
+  await openTab(page, "Server");
+  const rows = app(page).locator(".known tbody tr.row");
+  await expect(rows).toHaveCount(3);
+  expect(await rows.locator(".nm").allTextContents()).toEqual(["ctl-1", "ctl-2", "api-1"]);
+  // The unreadable values are gone, and NOTHING of them is on screen - not
+  // "0.0.0-dev", not a dash, not a hint of what was there.
+  const bad = app(page).locator(".known tbody tr.row", { hasText: "ctl-2" });
+  await expect(bad.locator(".version")).toHaveText("");
+  await expect(bad.locator(".arch")).toHaveText("");
+  // The rows beside it keep theirs: softening is not blanking the column.
+  const good = app(page).locator(".known tbody tr.row", { hasText: "ctl-1" });
+  await expect(good.locator(".version")).toHaveText("1.0.0");
+  await expect(good.locator(".arch")).toHaveText("amd64");
+  // And not a word of failure in that section: its status line is the empty
+  // one section() builds, never a sentence about an answer that did not hold.
+  await expect(app(page).locator(".known .note")).toHaveText("");
+});
+
+test("a key of the wrong length still throws the whole answer away, and the sentence names it",
+  async ({ page }) => {
+    // noise is 31 bytes where the contract wants 32. It is not a field that is
+    // shown: it is hashed into the fingerprint an admin compares by eye before
+    // letting a server in, so a short one is no answer at all.
+    await mount(page, { answers: { "ngc.users/pending-api": [
+      {
+        node: "api-2", noise: "PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PA",
+        sign: "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+        tls: "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+        url: "wss://api-2.test:7443/tunnel", since: 1790000000,
+      },
+      // A second, perfectly good row: it goes with the first one, which is
+      // what "the whole answer" means.
+      {
+        node: "api-3", noise: "PFxs4t2Z4Q0sPeBddzqhXj5tlx7U5BOJyTtLvdoXchI",
+        sign: "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+        tls: "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+        url: "wss://api-3.test:7443/tunnel", since: 1790000000,
+      },
+    ] } });
+    await openTab(page, "Server");
+    await expect(app(page).locator(".pendapi .note")).toHaveText(
+      "Eine Angabe dieses Servers ist unlesbar (noise).");
+    expect(await app(page).locator(".pendapi .row").count()).toBe(0);
+  });
+
 // ------------------------------------------------- Aufgaben mit Systemrechten
 //
 // WHO MAY RUN ROOT TASKS ON A CONTROLLER. Measured on 19.10.2026 at a full
@@ -1581,24 +1650,51 @@ function othersUntouched(got) {
   }
 }
 
-test("a server taken in with nothing ticked grants root to nobody, and the answer says so",
+test("the box of the person taking the server in starts ticked, and only theirs",
   async ({ page }) => {
-    // NO DEFAULT, and that is the decision this case pins: whom to trust with
-    // root on a machine belongs to the owner of the installation. A surface
-    // that ticked something by itself would hand the right out in the one
-    // moment nobody is looking, and there is no way back out of a right
-    // nobody noticed being given. So the take-up goes through, the lists stay
-    // empty, and the sentence says what that means.
+    // V1.2 point 71: a take-up that ends with two empty lists leaves a machine
+    // on which nobody can set up an app. The person signing this version holds
+    // the installation anyway, so their box starts ticked - theirs alone, and
+    // no role, because a role would hand the right on to whoever carries it
+    // later.
     await skipWithoutLogin(page);
     await mount(page, { signable: true });
     await openTab(page, "Server");
     await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
     const dlg = page.getByRole("dialog");
     await expect(dlg).toBeVisible();
-    // Nothing is ticked when the question opens.
-    expect(await dlg.locator(".rootpick input:checked").count()).toBe(0);
-    // And the question says what a tick would mean, before anybody sets one.
+    // Exactly one box, and it is the one of this session's user.
+    expect(await dlg.locator(".rootpick input:checked").count()).toBe(1);
+    await expect(dlg.getByRole("checkbox",
+      { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })).toBeChecked();
+    // And the question says what the tick means, and that it can go.
     await expect(dlg).toContainText("Apps einrichten, entfernen, Daten löschen und das Terminal");
+    await expect(dlg).toContainText("Ihr Haken ist gesetzt.");
+    await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".pending .note")).toHaveText(
+      "Der Server »dienste« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: admin.");
+    const first = await sentRoot(page, "dienste");
+    expect(first.users).toEqual([first.me]);
+    expect(first.roles).toEqual([]);
+    othersUntouched(first);
+  });
+
+test("the tick can be taken off again, and then the server grants root to nobody",
+  async ({ page }) => {
+    // The pre-tick is an offer, not a decision: an installation in which this
+    // person is not the one who sets up apps there has to be able to say so,
+    // in the same breath, and the sentence afterwards has to say what that
+    // means.
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Server");
+    await app(page).getByRole("button", { name: "Server dienste aufnehmen" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("checkbox",
+      { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" }).uncheck();
+    expect(await dlg.locator(".rootpick input:checked").count()).toBe(0);
     await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
     await sign(page);
     await expect(app(page).locator(".pending .note")).toHaveText(
@@ -1647,6 +1743,10 @@ test("a role can be ticked instead, and then it is the role that stands in the l
     await expect(dlg).toContainText("Eine Rolle gilt auch für alle, die ihr später beitreten.");
     await dlg.getByRole("checkbox", { name: "Rolle admin darf Aufgaben mit Systemrechten ausführen" })
       .check();
+    // The own box starts ticked and comes off here: this case is about the
+    // role standing in the list ALONE.
+    await dlg.getByRole("checkbox", { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })
+      .uncheck();
     await dlg.getByRole("button", { name: "Server aufnehmen" }).click();
     await sign(page);
     await expect(app(page).locator(".pending .note")).toHaveText(
@@ -1783,6 +1883,11 @@ test("the boxes of the question can be reached with the keyboard alone", async (
     await page.keyboard.press("Tab");
   }
   await expect(boxes.first()).toBeFocused();
+  // The first box is the own one and starts ticked (V1.2 point 71), so the
+  // keyboard is shown on BOTH edges: it takes the tick off and puts it back.
+  await expect(boxes.first()).toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(boxes.first()).not.toBeChecked();
   await page.keyboard.press("Space");
   await expect(boxes.first()).toBeChecked();
   await expect(dlg.getByRole("checkbox",

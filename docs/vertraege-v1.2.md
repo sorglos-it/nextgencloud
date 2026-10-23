@@ -3891,11 +3891,11 @@ wsl -d Debian -u root -- /mnt/d/claude/rust/serve.test -test.run TestAPackageLar
 
 ### Was noch zu entscheiden ist
 
-Für diesen Fall nichts mehr. Offen bleibt der zweite aus dem Nachtrag unten
+Für diesen Fall nichts mehr. Der zweite
 (`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel`, `E_INTERNAL` statt `E_TIMEOUT` im
-`-race`-Auftrag): **nicht gemessen**, weil es hier kein `-race` gibt — kein C-Übersetzer. Er
-sitzt im selben Paket und an derselben Kreditmechanik, also lohnt zuerst die Frage, ob er
-dieselbe Ursache hat.
+`-race`-Auftrag) stand hier als „nicht gemessen, weil es hier kein `-race` gibt". **Auch der ist
+inzwischen gemessen und behoben** — siehe den letzten Nachtrag. Er hatte eine andere Ursache als
+der Kanal, und anders als dieser war er **kein** Testfehler.
 
 ### Nachtrag 22.10.2026: ein dritter Zeittest, und seine Schranke ist eine Haaresbreite
 
@@ -3949,7 +3949,7 @@ unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
 |---|---|---|---|
 | `TestAFaultEndsTheTerminalAtOnce` | 1 s → **5 s** | 1,0026 s (CI), 1,5 ms (Linux) | `sleep 1` → **`sleep 30`** |
 | `TestAPackageLargerThanOneWindowGetsThrough` | Kredit 262 144 | **behoben** (`dataPaid`), 0 von 20 | der Test überzog beim 5. Rahmen |
-| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Tunnel tot vor dem ersten Ping | — |
+| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Nullkontrolle, 2 von 14 `UNMEASURABLE` | Wettlauf bleibt, ehrlich benannt |
 
 Der erste ist der einfachste von allen und **ist behoben** (siehe oben): zwei Zahlen, die
 dieselbe waren. Die anderen zwei sind Wettläufe und bleiben offen; sie lassen sich ohne Kenntnis
@@ -4016,3 +4016,272 @@ sichtbar — es sagt nicht „übersprungen", es sagt grün. Ein Fall, der auf Z
 auf Scheduling beruht, ist auf dem Betriebssystem zu messen, auf dem er läuft; dafür reicht
 `go test -c -o <datei>` und ein Lauf in der WSL, und das kostet eine Minute. Dieselbe Regel wie
 „ein Testergebnis gilt für das Laufwerk, auf dem es gemessen wurde" — nur eine Ebene höher.
+
+### Nachtrag 23.10.2026: der letzte offene Fall — und er war kein Wackler, sondern eine Lüge im Fehlercode
+
+`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel` war der Rest: im `-race`-Auftrag kam
+`E_INTERNAL`, wo `E_TIMEOUT` erwartet ist. Oben stand „nicht gemessen, es gibt hier kein
+`-race`". Das gilt nicht mehr: in der Debian-WSL steht Go 1.27.2 und gcc, also läuft `-race`
+jetzt auf diesem Rechner.
+
+**Nachgestellt**, `go test -race` auf Linux, 256 Lastschleifen auf 128 Kernen:
+
+| Läufe | Fehlschläge |
+|---|---|
+| 10, ohne Last | 0 |
+| 40, unter Last | 1 |
+| 150, unter Last | **2** |
+
+#### Die Ursache, mit einer Sonde gemessen
+
+Eine Sonde an `app.go` bei der Zeile, die den Fehlercode setzt, hat den ganzen Unterschied
+gedruckt:
+
+```
+148x  outErr=context deadline exceeded  endStatus="error"  endCode="E_TIMEOUT"
+  2x  outErr=context deadline exceeded  endStatus="ok"     endCode=""
+```
+
+**Beide Male war `inCtx.Err()` die abgelaufene Frist.** Die Uhr war also aus, und der Versuch,
+die schon versiegelte Nachricht hinauszuschicken, starb daran. Nur `RunService` antwortete
+**ok** — weil das Programm zufällig sauber endete, bevor die Frist es erreichte. Und dann greift
+
+```go
+if end.Status == wire.StatusOK {
+    end = wire.Error(wire.CodeInternal)      // app.go
+}
+```
+
+und macht aus einer Zeitüberschreitung einen **internen Fehler**.
+
+**Der Quelltext hatte das vorhergesagt.** Der Kommentar über `inCtx` (Zeile 265–271) beschreibt
+genau dieses Symptom als schon einmal gemessen und nennt als Behebung „eine Uhr für alles". Die
+eine Uhr ist da — und reicht nicht, denn das Rennen ist nicht zwischen zwei Fristen, sondern
+zwischen **zwei Beobachtern derselben Frist**: dem Sender, der an ihr scheitert, und
+`RunService`, das ein sauber beendetes Programm sieht.
+
+#### Behoben, ohne eine dritte Uhr
+
+Der Grund des Sendefehlers entscheidet, nicht mehr der Status von `RunService`:
+
+```go
+if errors.Is(out.err, context.DeadlineExceeded) || errors.Is(inCtx.Err(), context.DeadlineExceeded) {
+    end = wire.Error(wire.CodeTimeout)
+} else {
+    end = wire.Error(wire.CodeInternal)
+}
+```
+
+Die Auskunft lag schon da; sie wurde nur nicht gelesen. Ein Sendefehler aus einem **anderen**
+Grund bleibt der interne Fehler, der er war.
+
+| | Fehlschläge |
+|---|---|
+| vorher, 150 Läufe `-race` unter Last | 2 |
+| **nachher, 150 Läufe `-race` unter Last** | **0** |
+
+Dazu: das **ganze** Paket unter `-race` grün, und die `E_INTERNAL`-Erwartungen der anderen Tests
+liegen alle im Installierer-Pfad (`activate_test.go`), nicht hier.
+
+#### Was der Benutzer davon hat — diesmal etwas
+
+Anders als beim Kanal ist das **kein** Testfehler. Eine Aktion, deren Ausgabe die Uhr
+abgeschnitten hat, meldete dem Browser gelegentlich „Interner Fehler" statt
+„Zeitüberschreitung". Das ist dieselbe Klasse wie Punkt 65: ein Zustand wird als die falsche
+Ursache gezeigt — nur hier mit einer Handlung dahinter, denn auf eine Zeitüberschreitung
+reagiert ein Benutzer anders (länger warten, kleinere Ausgabe) als auf einen internen Fehler
+(melden).
+
+#### Und eine Messregel, die drei Runden gekostet hat
+
+**`/tmp` in der WSL ist zwischen zwei Aufrufen leer.** Der erste Sondenlauf schrieb sein
+Protokoll nach `/tmp`, und beim Auswerten im nächsten Aufruf war die Datei weg — „PROBE-Zeilen:
+(nichts)" sieht aus wie „die Sonde hat nicht gefeuert" und war „das Protokoll ist nicht mehr
+da". Lauf **und** Auswertung gehören in einen Aufruf, und das Protokoll nach `/mnt/d`.
+
+**Und zum dritten Mal in dieser Reihe: ein Heredoc frisst `\n`.** Die Sonde ging als
+`fmt.Fprintf(..., "…%v\n", …)` über ein Shell-Heredoc in den Quelltext und stand dort als echter
+Zeilenumbruch mitten in der Zeichenkette — `string literal not terminated`. Patches mit Escapes
+gehören in eine Datei, nicht in ein Heredoc.
+## Punkt 71: Sechs Wände auf einem Weg — vom Release bis zur laufenden App, und vier standen nicht im geprüften Code
+
+**Gemessen vom 19. bis 21.10.2026** auf der Debian-VM aus Punkt 64, von einem **veröffentlichten
+Release** aus: installieren, einrichten, anmelden, Controller koppeln, Laden öffnen, App
+einrichten. Der Weg bis „die App läuft" ist in diesen drei Tagen **nicht ein einziges Mal**
+durchgelaufen. Nicht an einer großen Stelle, sondern an sechs kleinen hintereinander.
+
+Jede der sechs ist für sich vertretbar begründet. Das ist der Befund, nicht die Zahl.
+
+**1. Die Unit lässt den Ordner nicht schreiben, in dem die Datei liegt.** `ngc-api.service` wird
+mit `ProtectSystem=strict` geschrieben, und die schreibbaren Pfade sind
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`
+(`ulh`, `apps/cli/assets/scripts/ngc-api.sh:1065`, Zweig `ngc-kette`; `ngc-all.sh:1322` schreibt
+dieselbe Zeile). **`/etc/ngc` selbst steht nicht dabei.** Der Anker dort wird aber **atomar**
+geschrieben: `config.SaveAnchor` (`shared/config/config.go:451`) ruft `writeAtomic`, und das legt
+erst eine Datei `.trust-anchor.json.tmp-*` **im selben Ordner** an (`config.go:464`). Ein Ordner,
+in dem keine Datei entstehen darf, lässt kein atomares Ersetzen zu — auch dann nicht, wenn die
+Zieldatei selbst `0644` trägt. Gemessen im Journal:
+
+> the trust anchor outside the database could not be moved up; this API still pins the older
+> version — `pinned=1 stored=2`
+
+Das ist die einzige der sechs, die den Grund **selbst nennt** (`state/trust.go:249`). Die Folge
+steht in derselben Zeile: die Anlage bleibt auf der alten Vertrauensliste festgenagelt.
+
+**2. Mein eigener Fehler: die Release-Binärdateien hießen `0.0.0-dev`.** Ich habe beim Bauen
+`-ldflags "-X main.Version=…"` vergessen; der Vorgabewert steht im Quelltext und ist genau dafür
+da (`apps/server-api/main.go:43`: „Version is set when building", dann `var Version = "0.0.0-dev"`).
+Kosmetisch — bis der Controller seine Version im Hallo mitschickt. Die Oberfläche prüft jede
+Rechnerzeile mit `checkNodeInfo` (`contracts/core.js:724`), dort `optVersion`, dort
+`validVersion` (`contracts/text.js:84`) gegen `^(0|[1-9][0-9]{0,5})\.…$` — **genau**
+MAJOR.MINOR.PATCH. `0.0.0-dev` fällt durch. Und der Vertrag der Liste ist
+`every(v, checkNodeInfo)` (`core.js:585`): **eine** unpassende Zeile verwirft **die ganze
+Antwort**. Auf dem Schirm stand:
+
+> Die Rechner konnten nicht geladen werden. Bitte das Fenster neu öffnen.
+
+(`apps/web/public/assets/js/apps/store.js:548`) — und das Fenster neu öffnen hilft nicht, denn die
+Version bleibt dieselbe.
+
+**3. Eine Stunde kein Katalog.** Das ist Punkt 65 und 66, hier nur als Glied der Kette:
+`apps/server-api/classes/server/server.go:386` legt den Stundenticker an, `Server.hour` (ab `:421`)
+holt die Kataloge, es gibt keinen Abruf beim Start und keine Handauslösung. Bis dahin steht „Der
+Katalog dieses Stores ist nicht echt." — wo „noch nicht geholt" gemeint ist.
+
+**4. Der frisch aufgenommene Controller darf niemandem etwas erlauben.** Die Oberfläche trägt ihn
+mit `rootUsers: []` und `rootRoles: []` in die Vertrauensliste ein
+(`apps/web/public/assets/js/apps/users.js:941` in `askJoin`, dasselbe bei `:973` in `askJoinAPI`),
+und **keine Seite der Oberfläche konnte diese beiden Listen danach ändern**. `trust.MayRoot`
+(`shared/trust/trust.go:419`) fragt genau sie: der Benutzer steht in `RootUsers`, oder eine seiner
+Rollen in `RootRoles` — sonst `false`. Geprüft wird das an jeder Root-Aufgabe
+(`shared/task/task.go:199`, `shared/core/uiproof.go:132`). Zwei leere Listen, die niemand füllen
+kann, heißen: **auf diesem Controller kann nie eine App eingerichtet werden.**
+
+**Nachtrag zu (4), gemessen am 23.10.2026 an PR #87:** die fehlende Oberfläche ist dort gebaut.
+`rootPicker` zeichnet die Auswahl aus der **geprüften** Vertrauensliste, beim Aufnehmen und
+danach jederzeit änderbar, und `askJoin` schreibt nicht mehr `rootUsers: []`, sondern das
+Angekreuzte. Für `askJoinAPI` bleibt die Liste leer, und das ist richtig: `MayRoot` gibt für
+alles, was kein `NodeController` ist, ohnehin `false`. Die Haken **beginnen leer** — damit kann
+eine Anlage weiterhin mit einem Controller enden, auf dem niemand etwas darf, nur jetzt
+sichtbar und mit einem Weg heraus.
+
+**5. `0700` auf dem Ordner über dem Heimatverzeichnis.** Der Controller legt `/var/lib/ngc/apps`
+mit `0o700` an (`apps/server-controller/classes/runtime/data.go:108`), und der Kommentar darüber
+begründet es richtig: zwischen `mkdir` und `chown` darf niemand anderes hineinsehen. Nur gehört
+der Ordner **root**, und darunter liegt das Heimatverzeichnis des App-Benutzers. Rootloses
+`podman load` dieses Benutzers bekam `EACCES` — **auf sein eigenes Heimatverzeichnis**, weil es
+den Weg dorthin nicht durchlaufen durfte. Gefunden wurde das mit `strace` am laufenden Dienst;
+podman meldete es nicht, das Journal nannte es nicht.
+
+**6. Kein Recht ohne App, keine App ohne Recht.** Der Schreibtisch zeigt eine App nur, wenn der
+Anfragende das Recht `benutzen` hält: `apps()` überspringt jede Zeile ohne
+`rq.Rights[a.ID+"/"+core.RightUse]` (`apps/server-api/classes/coreapp/desktop.go:161`). Die Seite
+„Rollen und Rechte" baut ihre Auswahl aus `this.apps` (`users.js:416`) — und das ist genau diese
+gefilterte Liste, durchgereicht aus `appCtx()` (`shell/desktop.js:579`: `apps: this.appList`).
+Eine neu eingerichtete App, die noch niemand benutzen darf, steht also in keinem Schreibtisch und
+damit in keiner Rechteliste. **Der Haken, der sie sichtbar machen würde, kann nur dort gesetzt
+werden, wo sie schon sichtbar ist.**
+
+### Was das heißt
+
+**Die blinde Zone hat einen Namen: es ist alles, was kein Go und kein JavaScript ist.** Vier der
+sechs lagen nicht im Code, den die Prüfsätze abdecken, sondern in einer **systemd-Unit** (1), einem
+**Bau-Flag** (2), einem **Dateimodus** (5) und einer **Vorgabe in einem Dialog** (4). Die
+Prüfsätze sind gut — sie haben hier nur nichts zu prüfen gehabt. Die Unit entsteht in einem
+anderen Repo, zur Laufzeit, aus Shell-Variablen; das Flag entsteht beim Bauen; der Modus ist eine
+Zahl, die für sich richtig ist; die leeren Listen sind ein gültiger Wert. Jedes Stück für sich
+besteht jede Prüfung, die es gibt.
+
+**Dreimal war der Satz auf dem Schirm nicht die Ursache.** „Der Katalog ist nicht echt" (3) für
+„noch nicht geholt", „Die Rechner konnten nicht geladen werden" (2) für „eine Zeile trug eine
+Version, die ich nicht lesen kann", und das stille Fehlen der App (6) für „dir fehlt ein Recht".
+Das ist dieselbe Klasse wie die Anmeldelüge aus **Punkt 50**, über die **Punkt 52** entscheidet und
+die **Punkt 65** am Katalog wiederfindet: ein **leerer Zustand** wird als **Angriff** oder als
+**Ablehnung** dargestellt. Wer das liest, sucht an der falschen Stelle, und zwar lange.
+
+**Dreimal protokollierte nichts den Grund.** Bei (2) nicht, weil es im Browser keine einzige
+Stelle gibt, die etwas schreibt: `grep -rc 'console\.'` über `apps/web/public/assets/js` ergibt
+**0**. Eine verworfene Antwort hinterlässt nirgends eine Spur. Bei (4) und (6) nicht, weil kein
+Fehler auftrat — die Oberfläche tat genau, was im Code steht. Bei (5) war die Ursache **nur mit
+`strace` am laufenden Dienst** zu finden. Allein (1) sagte selbst, was fehlt.
+
+**Zwei der sechs sind keine Fehler, sondern fehlende Oberflächen.** Systemrechte je Server (4) und
+Rechtevergabe für eine neue App (6) hat niemand gebaut. Nicht aus Nachlässigkeit, sondern weil
+**nie jemand den Weg zu Ende gegangen war**: jede einzelne Teilstrecke war geprüft, und die Lücke
+lag zwischen zwei geprüften Teilstrecken. Das ist der Grund, warum dieser Durchlauf etwas gefunden
+hat, was siebzig Punkte vorher nicht gefunden haben — nicht weil schlechter geprüft wurde, sondern
+weil zum ersten Mal **eine** Person **einen** Weg von Anfang bis Ende gegangen ist.
+
+**Der Schluss daraus, und er ist unbequem:** ein Durchlauf von Anfang bis Ende gehört in die
+Prüfung, nicht in die Woche eines Menschen. Solange er von Hand läuft, läuft er selten, und was
+nur selten läuft, bricht zwischen zwei Läufen an der nächsten kleinen Stelle.
+
+### Offene Entscheidungen — gemessen ist das oben, abgewogen ist das hier
+
+**a) Bekommt die einrichtende Person die Rechte automatisch?** Durch PR #87 ist das nicht mehr
+die ganze Frage, sondern eine kleine: dort wird beim Aufnehmen **gefragt**, und die Haken beginnen
+leer. Offen ist nur noch, ob der Haken **der unterschreibenden Person** auf diesem einen
+Controller **vorgekreuzt** ist.
+
+> **Mein Vorschlag: ja — vorgekreuzt, nicht erzwungen, und nur sie, nur dieser Controller, nur
+> `rootUsers`.** Wer eine Version der Vertrauensliste unterschreiben kann, hat die Anlage ohnehin
+> in der Hand; ihr den Haken anzubieten fügt **keine** Macht hinzu, sondern nimmt den Fall weg, in
+> dem jemand einen Controller aufnimmt und erst beim ersten Einrichten merkt, dass er dort nichts
+> darf. Abwählbar bleibt er, denn es gibt Anlagen, in denen genau diese Person es nicht sein soll.
+> **Nicht** über `rootRoles`: eine Rolle gibt das Recht an alle weiter, die sie heute oder morgen
+> tragen, und das ist eine andere Entscheidung als „ich für diesen Rechner".
+
+**b) Verwirft ein kosmetisch ungültiges Feld weiter die ganze Antwort?** Heute ja (2): eine
+Versionszeichenkette, die niemand anzeigt, nimmt die Liste aller Rechner mit.
+
+> **Mein Vorschlag: nein — aber die Trennlinie ist nicht „kosmetisch", sondern „trägt eine
+> Entscheidung".** `version` und `arch` einer Rechnerzeile werden angezeigt, nicht gerechnet; ist
+> der Wert unlesbar, gehört er **leer** gemacht und die Zeile behalten. Ein Schlüssel, ein
+> Fingerabdruck, eine Kennung, eine Prüfsumme bleiben hart: fällt dort etwas durch, ist die Antwort
+> zu verwerfen, und zwar ganz. Der Vertrag ist dann nicht weicher, er benennt nur, was er wirklich
+> braucht.
+>
+> **Und beide Hälften davon sind nur prüfbar, wenn sie zusammen geprüft werden:** ein Lauf, in dem
+> eine kaputte Version die Liste **nicht** mehr verwirft, und ein Lauf, in dem ein verbogener
+> Schlüssel sie **immer noch** verwirft. Einer allein beweist nichts.
+
+**c) Woher kommt das nächste Mal der Grund?** Offen gelassen, weil es eine eigene Entscheidung ist:
+ohne eine einzige Stelle im Browser, die festhält **was** verworfen wurde, ist (2) bei der nächsten
+Gelegenheit genauso stumm. Dagegen steht, dass ein solcher Platz schnell dorthin schreibt, wo
+jemand mitliest.
+
+> **Mein Vorschlag:** kein Protokoll, aber der **Satz auf dem Schirm nennt das Feld**: „Eine Angabe
+> dieses Servers ist unlesbar (`version`)." Das benennt die Stelle, ohne irgendwo etwas abzulegen.
+
+**Nachtrag vom 23.10.2026: alle drei sind entschieden und gebaut, die Prüfung steht.** Thomas hat
+a) mit „vorgekreuzt, abwählbar, nur `rootUsers`, nur dieser Controller" entschieden — gebaut in
+PR #105, das damit eine Entscheidung von PR #87 umdreht (dessen Begründung, eine Vorgabe entscheide
+in dem Augenblick, in dem niemand hinsieht, steht dort daneben). b) und c) liegen in PR #104: die
+Anzeigefelder `version` und `arch` werden leer gemacht statt die Antwort zu verwerfen, die harten
+Felder fallen weiter ganz, und der Satz nennt das Feld. **Was daran gemessen ist und was nicht,
+steht in den beiden PRs** — in allen drei Motoren laufen nur die Abnahmefälle von b) und c), und
+auf einer echten VM ist keines von beiden geprüft.
+
+**Was damit von den sechs Wänden noch steht,** nachgesehen am 23.10.2026 gegen `main`:
+
+- **(2)** beantwortet in PR #104, **(4)** in PR #87 und #105, **(3)** liegt in PR #86.
+- **(5) ist still behoben:** `main` legt `/var/lib/ngc/apps` mit `0o711` an und setzt den Modus
+  danach noch einmal (`runtime/data.go:122` und `:131`), während das Verzeichnis der App selbst
+  `0o700` bleibt. Damit darf der App-Benutzer den Weg durchlaufen, ohne lesen zu können — genau
+  das, was `podman load` brauchte.
+- **(1) ist offen, und zwar woanders:** die Unit steht nur auf dem Zweig `ngc-kette` von `ulh`,
+  der nicht verschmolzen ist; auf dessen `main` gibt es die NGC-Skripte gar nicht. Dort schreibt
+  `ngc-api.sh` weiter `ReadWritePaths` ohne `/etc/ngc`.
+- **(6) ist behoben, und ich hatte es zuerst falsch abgeschrieben.** `apps()` filtert in `main`
+  tatsächlich unverändert auf `core.RightUse`, und die Rechteseite baut ihre Auswahl unverändert
+  aus dieser Liste — nur ist das nicht mehr der Kreis, weil die Liste für einen Verwalter
+  vollständig ist: `rights.Of` ruft für einen Admin `adminApps`
+  (`apps/server-api/classes/rights/rights.go:56`), und das setzt `<app>/use` **und** jede Aktion
+  jeder eingerichteten App, **ohne Zeile in der Datenbank**. Damit steht die App im Menü, also
+  auch in der Rechteliste. Behoben am **21.10.2026** mit `c0f0022` — am letzten Tag der Messung,
+  weshalb der Befund oben gilt und dieser Nachtrag ihn nicht aufhebt.
+  Dass das Recht in **keiner** Zeile liegt, ist dabei der Kern: ein Recht, das in einer Zeile
+  läge, könnte man dem Verwalter wegnehmen, indem man die Seite ohne den Haken speichert.
+  **Was davon bleibt,** klein, aber echt: `adminApps` und das Menü lassen eine **abgeschaltete**
+  App beide aus (`!a.Active`). Deren Rechte lassen sich also nicht vorbereiten, solange sie aus
+  ist — das ist so gewollt und hier nur vermerkt, nicht als Befund.
