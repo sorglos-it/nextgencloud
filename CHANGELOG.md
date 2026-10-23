@@ -22,6 +22,11 @@ vorher nicht gab — nach reiner Semantik wäre das eine Minor. Den Ausschlag gi
 benutzbare Grundlage war, der etwas hinzugefügt wurde; es ist das erste Release, das überhaupt
 läuft.
 
+ steht auf 0.2.1. Es ist die Fassung des Webteils, nicht die des
+Releases — die kommt über  hinein —, aber die Oberfläche hat sich zwischen den
+beiden Nummern stark geändert, und ein Release 0.2.1, dessen Webteil sich 0.2.0 nennt, wäre
+an einer Stelle unwahr.
+
 ### Damit es sich nicht wiederholen kann
 
 `tools/build-release.sh` baut jetzt **jedes** Programm eines Releases und stempelt die Fassung
