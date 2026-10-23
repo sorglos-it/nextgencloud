@@ -230,10 +230,13 @@ func (s *Server) ensure(ctx context.Context, app, name string) (*wire.Close, str
 // runApp runs the service of the app behind a handshake that stands.
 func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session,
 	d access.Decision, first wire.E2EMessage) error {
+	// The one line this channel may leave, whichever station writes it
+	// (reason.go, once).
+	o := &once{}
 	p, cl := s.plan(d)
 	if cl != nil {
-		s.sayCut(d.App.ID, ReasonPlan, *cl)
-		return s.answer(ctx, ch, d.App.ID, sess, *cl)
+		o.say(s, d.App.ID, ReasonPlan, *cl)
+		return s.answer(ctx, ch, o, d.App.ID, sess, *cl)
 	}
 	// Here the licence of the app belongs, between the handshake that stands
 	// and the container that is started: an app whose licence has run out
@@ -241,8 +244,8 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// licence and this is the one place it goes; until then no app channel is
 	// refused for one, and no E_LICENSE leaves this package.
 	if cl, reason := s.ensure(ctx, d.App.ID, p.container); cl != nil {
-		s.sayCut(d.App.ID, reason, *cl)
-		return s.answer(ctx, ch, d.App.ID, sess, *cl)
+		o.say(s, d.App.ID, reason, *cl)
+		return s.answer(ctx, ch, o, d.App.ID, sess, *cl)
 	}
 	// The input hangs on a clock of its own, and it is the clock of the
 	// action: a shell that neither ends its input nor sends more would
@@ -304,8 +307,8 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// writing it. Nothing was sealed past that limit, so this end still
 	// travels inside the session.
 	if out.tooLarge {
-		s.sayCut(d.App.ID, ReasonTooLarge, wire.Error(wire.CodeTooLarge))
-		return s.answer(ctx, ch, d.App.ID, sess, wire.Error(wire.CodeTooLarge))
+		o.say(s, d.App.ID, ReasonTooLarge, wire.Error(wire.CodeTooLarge))
+		return s.answer(ctx, ch, o, d.App.ID, sess, wire.Error(wire.CodeTooLarge))
 	}
 	if out.err != nil {
 		// One inner message was sealed and did not get out - the credit ran
@@ -325,12 +328,12 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 		if end.Status == wire.StatusOK {
 			end = wire.Error(wire.CodeInternal)
 		}
-		return s.cutApp(ch, d.App.ID, ReasonCut, end)
+		return s.cutApp(ch, o, d.App.ID, ReasonCut, end)
 	}
 	if end.Status != wire.StatusOK {
-		s.sayCut(d.App.ID, ReasonService, end)
+		o.say(s, d.App.ID, ReasonService, end)
 	}
-	return s.answer(ctx, ch, d.App.ID, sess, end)
+	return s.answer(ctx, ch, o, d.App.ID, sess, end)
 }
 
 // answer puts the outcome of the call into the E2EEnd of this side and ends
@@ -341,10 +344,11 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 // Only where the end itself could not be sent does the CLOSE carry the error.
 // Then the shell got no E2EEnd, and a side that sees the CLOSE of the
 // transport before it reports an error of its own (wire, "End to end").
-func (s *Server) answer(ctx context.Context, ch *link.Channel, app string, sess *e2e.Session, cl wire.Close) error {
+func (s *Server) answer(ctx context.Context, ch *link.Channel, o *once, app string,
+	sess *e2e.Session, cl wire.Close) error {
 	ct, err := sess.End(cl)
 	if err != nil {
-		return s.cutApp(ch, app, ReasonInternal, wire.Error(wire.CodeInternal))
+		return s.cutApp(ch, o, app, ReasonInternal, wire.Error(wire.CodeInternal))
 	}
 	// The end of this side needs credit like everything else, and a peer that
 	// gives none must not keep this channel open for it: after this wait the
@@ -354,10 +358,10 @@ func (s *Server) answer(ctx context.Context, ch *link.Channel, app string, sess 
 	wait, cancel := context.WithTimeout(ctx, s.lastWait())
 	defer cancel()
 	if err := ch.SendWhole(wait, ct); err != nil {
-		return s.cutApp(ch, app, ReasonInternal, wire.Error(wire.CodeInternal))
+		return s.cutApp(ch, o, app, ReasonInternal, wire.Error(wire.CodeInternal))
 	}
 	if err := ch.EOF(); err != nil {
-		return s.cutApp(ch, app, ReasonInternal, wire.Error(wire.CodeInternal))
+		return s.cutApp(ch, o, app, ReasonInternal, wire.Error(wire.CodeInternal))
 	}
 	return s.end(ch, wire.Close{Status: wire.StatusOK})
 }

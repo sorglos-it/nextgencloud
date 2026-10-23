@@ -63,19 +63,38 @@ const (
 var reasons = []string{ReasonPlan, ReasonRunDir, ReasonContainer, ReasonTooLarge, ReasonCut,
 	ReasonService, ReasonInternal}
 
+// once is the ONE line a channel may leave. It belongs to one app channel and
+// is touched only by the goroutine of that channel.
+//
+// WHY IT IS NEEDED, measured on 23.10.2026 under -race on Linux: a channel
+// whose container could not be reached wrote TWO lines - E_UNREACHABLE with
+// the reason of the container, and behind it E_INTERNAL from answer, because
+// the end of that very refusal could not be sent any more (the shell was
+// already gone). The second line is no second fault: it is the first one
+// failing to reach the shell, and an operator reading "could not be carried
+// out server-side" under "the container will not start" is sent to look in the
+// wrong place. The first reason is the one that is true.
+//
+// It is a struct and not a bool in Server on purpose: Server serves every
+// channel of this controller at once, and a flag in it would be one channel
+// silencing the line of another.
+type once struct{ said bool }
+
+// say writes the line unless this channel has already left one.
+func (o *once) say(s *Server, app, reason string, cl wire.Close) {
+	if o == nil || o.said {
+		return
+	}
+	o.said = true
+	s.log().Warn("Die Verbindung einer App wurde abgebrochen.",
+		"app", app, "code", string(cl.Code), "grund", reason)
+}
+
 // cutApp ends an app channel that did not end ok and leaves ONE line in the
 // journal saying why. The line is written before the CLOSE goes out, so a
 // channel whose CLOSE is the last thing that happens before the tunnel goes
 // has its reason written down all the same.
-func (s *Server) cutApp(ch *link.Channel, app, reason string, cl wire.Close) error {
-	s.sayCut(app, reason, cl)
+func (s *Server) cutApp(ch *link.Channel, o *once, app, reason string, cl wire.Close) error {
+	o.say(s, app, reason, cl)
 	return s.end(ch, cl)
-}
-
-// sayCut writes the one line. It is its own function because two callers have
-// no channel to end any more: answer has already sent the end of the service
-// inside the session, and the CLOSE behind it carries ok.
-func (s *Server) sayCut(app, reason string, cl wire.Close) {
-	s.log().Warn("Die Verbindung einer App wurde abgebrochen.",
-		"app", app, "code", string(cl.Code), "grund", reason)
 }
