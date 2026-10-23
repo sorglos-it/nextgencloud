@@ -541,8 +541,12 @@ test("an address that is no tunnel address is never offered", async ({ page }) =
     url: "https://api-3.test:7443/tunnel", since: 1790000000,
   }] } });
   await openTab(page, "Server");
+  // The sentence NAMES the field since the two halves of point 71 landed: the
+  // whole answer still goes, and url is what it fell over. The sentence that
+  // stood here before, "Die Antwort der Anlage war nicht in Ordnung", is what
+  // a refusal that names no field still says.
   await expect(app(page).locator(".pendapi .note")).toHaveText(
-    "Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angeboten.");
+    "Eine Angabe dieses Servers ist unlesbar (url).");
   expect(await app(page).locator(".pendapi .row").count()).toBe(0);
 
   const asked = await page.evaluate(async () => {
@@ -1442,6 +1446,71 @@ test("without a session nothing about a listed server is offered", async ({ page
     "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.");
   expect(await app(page).locator(".listed .row button").count()).toBe(0);
 });
+
+// ------------------------------------------- 9 a field that is only shown
+//
+// THE TWO HALVES OF ONE DECISION, and they belong in one run because either
+// alone proves nothing: a surface that keeps every row would be green on the
+// first case and wrong, and one that drops every answer would be green on the
+// second and wrong.
+//
+// What happened (docs/vertraege-v1.2.md, point 71): the release binaries went
+// out stamped 0.0.0-dev, the controller sent that in its hello, and
+// checkNodeInfo held version to MAJOR.MINOR.PATCH. The list contract is
+// every(v, checkNodeInfo), so that ONE row threw away the WHOLE machine list
+// and the window could say nothing but that it got nothing.
+test("a version the contract cannot read empties the column and keeps the row", async ({ page }) => {
+  await mount(page, { answers: { "ngc.users/nodes": [
+    { node: "ctl-1", online: true, roles: ["services"], version: "1.0.0", arch: "amd64" },
+    // The row that used to take the other two with it. arch is wrong as well,
+    // so both fields that are only shown are measured in one row.
+    { node: "ctl-2", online: true, roles: ["services"], version: "0.0.0-dev", arch: "riscv64" },
+    { node: "api-1", online: true, roles: ["api"], version: "1.0.0", arch: "amd64" },
+  ] } });
+  await openTab(page, "Server");
+  const rows = app(page).locator(".known tbody tr.row");
+  await expect(rows).toHaveCount(3);
+  expect(await rows.locator(".nm").allTextContents()).toEqual(["ctl-1", "ctl-2", "api-1"]);
+  // The unreadable values are gone, and NOTHING of them is on screen - not
+  // "0.0.0-dev", not a dash, not a hint of what was there.
+  const bad = app(page).locator(".known tbody tr.row", { hasText: "ctl-2" });
+  await expect(bad.locator(".version")).toHaveText("");
+  await expect(bad.locator(".arch")).toHaveText("");
+  // The rows beside it keep theirs: softening is not blanking the column.
+  const good = app(page).locator(".known tbody tr.row", { hasText: "ctl-1" });
+  await expect(good.locator(".version")).toHaveText("1.0.0");
+  await expect(good.locator(".arch")).toHaveText("amd64");
+  // And not a word of failure in that section: its status line is the empty
+  // one section() builds, never a sentence about an answer that did not hold.
+  await expect(app(page).locator(".known .note")).toHaveText("");
+});
+
+test("a key of the wrong length still throws the whole answer away, and the sentence names it",
+  async ({ page }) => {
+    // noise is 31 bytes where the contract wants 32. It is not a field that is
+    // shown: it is hashed into the fingerprint an admin compares by eye before
+    // letting a server in, so a short one is no answer at all.
+    await mount(page, { answers: { "ngc.users/pending-api": [
+      {
+        node: "api-2", noise: "PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PA",
+        sign: "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+        tls: "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+        url: "wss://api-2.test:7443/tunnel", since: 1790000000,
+      },
+      // A second, perfectly good row: it goes with the first one, which is
+      // what "the whole answer" means.
+      {
+        node: "api-3", noise: "PFxs4t2Z4Q0sPeBddzqhXj5tlx7U5BOJyTtLvdoXchI",
+        sign: "Zej5sLxurhJBafBXb5c2LSlajPX3cLReFDV85kfTPuw",
+        tls: "0yeBC6i9XzXXJCoODo_Q7qxV74LKjC1p0rR1cXxkldo",
+        url: "wss://api-3.test:7443/tunnel", since: 1790000000,
+      },
+    ] } });
+    await openTab(page, "Server");
+    await expect(app(page).locator(".pendapi .note")).toHaveText(
+      "Eine Angabe dieses Servers ist unlesbar (noise).");
+    expect(await app(page).locator(".pendapi .row").count()).toBe(0);
+  });
 
 // ------------------------------------------------- Aufgaben mit Systemrechten
 //

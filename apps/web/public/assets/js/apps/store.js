@@ -597,8 +597,17 @@ class Store {
     let nodes = [];
     try {
       nodes = await this.need("nodes", A.nodes);
-    } catch {
-      box.append(el("p", "fail", "Die Rechner konnten nicht geladen werden. Bitte das Fenster neu öffnen."));
+    } catch (e) {
+      // WHICH ANGABE, where the contract can say it. "The machines could not
+      // be loaded" names nothing the person can act on, and the one case that
+      // really happened - a controller whose version the release had stamped
+      // 0.0.0-dev - is not helped by opening the window again, because the
+      // version stays the same (docs/vertraege-v1.2.md, point 71). The field
+      // name comes out of the contract's own table, never off the wire.
+      const bad = core.refusedField(e);
+      box.append(el("p", "fail", bad === ""
+        ? "Die Rechner konnten nicht geladen werden. Bitte das Fenster neu öffnen."
+        : "Eine Angabe dieses Servers ist unlesbar (" + bad + ")."));
       return box;
     }
     // Only a controller that is up and carries the services role can run an
