@@ -29,10 +29,9 @@ import * as catalog from "../contracts/catalog.js";
 import * as task from "../contracts/task.js";
 import * as trust from "../contracts/trust.js";
 import { b64encode, equal, utf8 } from "../contracts/b64.js";
-import { Budget, decode } from "../contracts/json.js";
 import { packageUI } from "../contracts/pack.js";
-import { proofShape, validateProof } from "../contracts/proof.js";
-import { PURPOSE_TRUST_LIST, parseEnvelope } from "../contracts/sign.js";
+import { proofBytes } from "../contracts/proof.js";
+import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
 
 const EMPTY = new Uint8Array(0);
 
@@ -831,7 +830,7 @@ class Store {
         params: core.encodeParams(action, params),
         now: Math.floor(Date.now() / 1000),
       });
-      taskBytes = envelopeBytes(await task.signTask(s.signKey, built.bytes));
+      taskBytes = task.envelopeBytes(await task.signTask(s.signKey, built.bytes));
     } catch {
       this.say("error", "Das ließ sich nicht unterschreiben. Bitte neu anmelden.");
       return false;
@@ -943,24 +942,10 @@ function nextList(list, prev, target, key) {
 // verifier will decode out of exactly these bytes - the same reason
 // task.buildTask and wire.encodeOpen read their own work back.
 
-function envelopeBytes(env) {
-  const b = utf8(JSON.stringify({ payload: b64encode(env.payload), kid: env.kid, sig: b64encode(env.sig) }));
-  parseEnvelope(b, task.MAX_TASK);
-  return b;
-}
-
-// A proof is at most a passkey's: signature, authenticator data and client
-// data, each in base64url, plus the member names.
-const proofBudget = new Budget({ size: 64 << 10 });
-
-function proofBytes(p) {
-  const o = { kind: p.kind, kid: p.kid, sig: b64encode(p.sig) };
-  if (p.authData.length > 0) o.authData = b64encode(p.authData);
-  if (p.clientData.length > 0) o.clientData = b64encode(p.clientData);
-  const b = utf8(JSON.stringify(o));
-  if (!validateProof(decode(b, proofBudget, proofShape))) throw new Error("store: this proof does not hold");
-  return b;
-}
+// envelopeBytes and proofBytes used to stand here. They are contracts/task.js
+// and contracts/proof.js now: net/world.js signs a task for an app's own
+// channel since 23.10.2026 and needs the same two encoders, and an encoder
+// that a signature hangs on has one home.
 
 function signedBytes(payload, p) {
   const proof = { kind: p.kind, kid: p.kid, sig: b64encode(p.sig) };

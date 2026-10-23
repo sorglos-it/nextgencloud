@@ -41,6 +41,14 @@ import * as wire from "../contracts/wire.js";
 import * as uitar from "../contracts/uitar.js";
 import { bytesOf } from "../contracts/b64.js";
 import { callBytes, openE2E, openOut, sendInBytes } from "./channel.js";
+// A file under net/ reaching into shell/ for the question the person is asked:
+// the same seam the head of this file names for shell/trustlist.js. The policy
+// is not here - needConfirm is one line over the list an admin signed - and
+// neither is the dialog; what is here is the one place that knows an app's own
+// channel needs both.
+import { askConfirm, needConfirm } from "../shell/confirm.js";
+import { buildTask, envelopeBytes, signTask } from "../contracts/task.js";
+import { proofBytes } from "../contracts/proof.js";
 import { NOT_TRUSTED, startTrust } from "../shell/trustlist.js";
 import { validAppID, validName } from "../contracts/text.js";
 
@@ -100,6 +108,16 @@ const NO_SESSION_KEY = "Diese Anmeldung kann den eigenen Dienst einer App nicht 
 // that says nothing true about it.
 const NO_TRUST_LIST = "NGC hat die Vertrauensliste dieser Anlage nicht geöffnet. "
   + "Bitte die Seite neu laden.";
+// A step the server will only run on a signed task, and no session here that
+// could sign one. The sentence names what helps, like the one above it.
+const NO_SESSION_FOR_TASK = "Diese Anmeldung kann den Auftrag für diese App nicht unterschreiben. "
+  + "Bitte neu anmelden.";
+// The signature itself did not come off, or the confirmation did not hold.
+const NO_SIGNATURE = "Der Auftrag für diese App ließ sich nicht unterschreiben. "
+  + "Bitte neu anmelden.";
+// The person said no. That is an answer and it is said as one: nothing is
+// broken, and there is nothing to try again differently.
+const NOT_CONFIRMED = "Nicht bestätigt. Die App wurde nicht geöffnet.";
 // A node the verified list does not carry. The sentence is shell/trustlist.js's
 // own, and not a second wording of it: it is the same fact, and NotTrusted is
 // what answers it.
@@ -130,7 +148,8 @@ function rowFor(app, service, name) {
 //   app, service, action  the surface's three texts, held against the
 //                         contract's own rules (text.validAppID, validName)
 //   params                the caller's bytes, copied once at the door
-//   taskBytes             null - see below
+//   taskBytes             null on the first open, a signed task on a second
+//                         one - see below
 //   node                  the option bag of both doors. shell/appframe.js
 //                         reads it out of the app's own row (app.node); it is
 //                         the one thing the link could not know by itself
@@ -140,26 +159,41 @@ function rowFor(app, service, name) {
 //                         VERIFIED LIST - never out of an answer of the API,
 //                         which is the whole point of end to end
 //
-// TASKBYTES IS NULL, and that is right for the ordinary step - measured on BOTH
-// sides, not assumed:
+// THE FIRST OPEN CARRIES NO TASK, AND A SECOND ONE DOES WHERE THE SERVER ASKED
+// FOR IT. Until 23.10.2026 there was only the first, and the gap this file
+// named itself - an app that wants root, with nothing wired to it - was
+// measured on the real machine that day: the terminal's manifest says
+// `needs: ["root"]`, shared/store/manifest.go:129 turns that into
+// task.Rule{Root: true}, and shared/task/task.go:174 answers a channel WITHOUT
+// a task with ErrNoTask then, without asking anything else. The API maps it to
+// E_CONFIRM and closes the channel itself, so the controller never saw it and
+// wrote nothing; the audit log of the API held the only trace. In the browser
+// that was "Die Verbindung wurde abgeschnitten." and nothing else, three times.
 //
-//   - This side: shell/appframe.js puts exactly one thing in the option bag of
-//     both doors, `node` (doCall and doOpen), and nothing in the shell builds a
-//     signed root task for an app's own service.
-//   - The other side: the controller's access.Check hands task.Check the OPEN's
-//     task, and WITHOUT one task.Check answers "no task needed" as long as the
-//     app does not want root and trust.List.NeedsConfirm says no for this user.
-//     Who the user is comes from the end-to-end handshake itself - Noise
-//     message 1 travels in the OPEN - and not from a signed task (measured in
-//     apps/server-controller, classes/access; plan 3, task 11).
+// THE SHELL CANNOT DECIDE THIS BEFOREHAND, and signedRetry below is no place
+// where a policy lives. To decide it one would have to know whether the app
+// wants root, and NOTHING the shell holds says so: the row of an installed app
+// (core.desktopAppShape) carries id, name, version, icon, entry, width, height,
+// actions, state, core and node - no `needs`, and no `critical` per action.
+// Putting one in there is a change of the contract in frozen shared/, so this
+// works the other way round: the ordinary open goes out as it always did, and
+// ONLY an E_CONFIRM - the server saying "not without a signed task" - makes the
+// shell sign one and ask the person.
 //
-// WHAT IS NOT REACHABLE THIS WAY, and it now has a name: an app that wants root,
-// or a user whose policy in the trust list wants this step confirmed. The
-// controller answers that with E_CONFIRM, and THEN the shell has to ask the
-// person and send a signed task (contracts/task.js and shell/confirm.js are
-// both there; nothing wires them to an app's own service yet). That is its own
-// task, and it needs a surface somebody designed - and the code does not even
-// arrive here yet, which the task report hands on as a find of its own.
+// THE PRICE, SAID PLAINLY: an app that needs a task pays one refused channel
+// per open. That is one round trip, it happens before anything of the app runs,
+// and it buys a shell that keeps no copy of a policy living in a manifest it
+// cannot read. Always signing instead would spend a signature and a once-task
+// on every open of every app, and would still have to ask the person without
+// knowing whether anybody wanted it asked.
+//
+// WHAT IS ASKED OF THE PERSON, and why it is the strict side: needConfirm wants
+// {root, critical, changes} and the shell knows none of the three for an app's
+// own service. It passes all three as true, so the question is asked wherever
+// the policy of the trust list would ask it for the heaviest kind of step. That
+// is not over-asking: the server has just said that what went out was not
+// enough, and a shell that guessed "surely no confirmation" would send a second
+// channel it already knows may be refused - and tell the person nothing.
 //
 // THE ORDER OF THE FOUR REFUSALS is the order in which each one can be decided
 // at all, and each one keeps its own word AND its own sentence:
@@ -213,9 +247,83 @@ async function appChannel(link, world, app, service, name, node, params) {
     if (e?.name !== "NotTrusted") throw e;
     throw new WorldError(NO_CONTROLLER_KEY, "controller-key");
   }
-  return openE2E(link, {
-    app, service, action: name, params, taskBytes: null, node, controllerKey, sessionDH,
-  });
+  const where = { app, service, action: name, node, controllerKey, sessionDH };
+  try {
+    return await openE2E(link, { ...where, params, taskBytes: null });
+  } catch (e) {
+    // ONLY E_CONFIRM, and only where the channel was really refused for it.
+    // Every other failure travels on untouched - a channel that broke, a node
+    // that is not trusted, a fault of this shell. Signing a task for one of
+    // those would send a second channel after a first that failed for a reason
+    // no task answers.
+    if (e?.name !== "ChannelError" || e.code !== wire.CODES.CONFIRM) throw e;
+    const signed = await signedRetry(world, where, params);
+    return openE2E(link, { ...where, params: null, ...signed });
+  }
+}
+
+// signedRetry puts the second open together: the task that carries the
+// parameters, signed with the session key, and the confirmation of the person
+// where the trust list asks for one. It answers {taskBytes, confirmBytes}.
+//
+// THE PARAMETERS MOVE INTO THE TASK and the OPEN carries none of its own. That
+// is the rule apps/store.js keeps for every signed action - with a task the
+// OPEN carries no params of its own, only the signed ones count - and
+// channel.openE2E holds it from its side: with a task it sends params: null and
+// the prologue hashes the task. Two answers to one question, one of them
+// unsigned, is what that avoids.
+//
+// WHAT IT REFUSES, each with a sentence of its own, because each is a different
+// thing to tell a person: no session to sign with, no trust list to read the
+// policy from, a signature that would not come off - and the person saying no,
+// which is an ANSWER and not a failure (NOT_CONFIRMED).
+async function signedRetry(world, where, params) {
+  const s = world.session ?? null;
+  // certHash is BYTES (session.certHash answers a Uint8Array), inst is the
+  // installation's name, and the signing key is a non-extractable CryptoKey
+  // behind a kid. What is asked here is only that all three are THERE: a task
+  // built out of a half session would fail inside buildTask, where nobody can
+  // tell a person why.
+  if (s === null || !s.signKey?.privateKey || typeof s.inst !== "string"
+    || !(s.certHash instanceof Uint8Array)) {
+    throw new WorldError(NO_SESSION_FOR_TASK, "session");
+  }
+  // No list, no decision. The policy of what has to be confirmed lives in the
+  // list an admin signed, and a shell that cannot read it must not decide that
+  // nothing needs confirming - the same line apps/store.js holds, and the safer
+  // of the two either way.
+  const { list } = world.trust?.current?.() ?? {};
+  if (!list) throw new WorldError(NO_TRUST_LIST, "trust-list");
+  let built;
+  let taskBytes;
+  try {
+    built = buildTask({
+      inst: s.inst, certHash: s.certHash, node: where.node,
+      app: where.app, service: where.service, action: where.action,
+      params: params ?? null, now: Math.floor(Date.now() / 1000),
+    });
+    taskBytes = envelopeBytes(await signTask(s.signKey, built.bytes));
+  } catch {
+    throw new WorldError(NO_SIGNATURE, "signature");
+  }
+  // All three true: the shell knows none of them for an app's own service, and
+  // the heaviest kind of step is the one to ask about (see the head of
+  // appChannel).
+  if (!needConfirm(list, s.user, {
+    app: where.app, action: where.action, node: where.node,
+    root: true, critical: true, changes: true,
+  })) {
+    return { taskBytes, confirmBytes: null };
+  }
+  // The BYTES of the task, not a sentence about it: what is confirmed is what
+  // runs (shell/confirm.js, Go task.VerifyConfirm).
+  const p = await askConfirm(built.bytes, { list, user: s.user });
+  if (p === null) throw new WorldError(NOT_CONFIRMED, "confirm");
+  try {
+    return { taskBytes, confirmBytes: proofBytes(p) };
+  } catch {
+    throw new WorldError(NO_SIGNATURE, "signature");
+  }
 }
 
 // appStream hands the app frame the channel of an app's own service in the
@@ -366,7 +474,7 @@ function own(bytes, what) {
 // did, and JavaScript says nothing about it.
 //
 // THE SECOND ARGUMENT IS THE WORLD AROUND THE LINK, and only an app's own
-// service needs it: {sessionDH, trust}. An adapter built without it still
+// service needs it: {sessionDH, trust, session}. An adapter built without it still
 // answers every action of NGC's own - those go to the API over the session that
 // is already open - and refuses an app's own service with the word for the
 // piece it has not got. realWorld below is what hands both over.
@@ -549,7 +657,11 @@ export async function realWorld({ config, anchor, session, link, sessionDH } = {
     throw e;
   }
   return {
-    link: adapterFor(link, { trust, sessionDH: sessionDH ?? null }),
+    // The session goes to the adapter as well, and ONLY for the task of an
+    // app's own channel (signedRetry). What is used of it is inst, certHash,
+    // user and the right to sign with signKey - the same four apps/store.js
+    // uses for every signed action.
+    link: adapterFor(link, { trust, sessionDH: sessionDH ?? null, session: session ?? null }),
     trust, session: session ?? null, releaseKey: null,
   };
 }
